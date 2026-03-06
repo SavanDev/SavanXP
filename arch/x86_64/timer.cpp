@@ -1,0 +1,73 @@
+#include "kernel/timer.hpp"
+
+#include "kernel/cpu.hpp"
+
+namespace {
+
+constexpr uint8_t kTimerVector = 48;
+constexpr uint8_t kApicDivideBy16 = 0x3;
+constexpr uint32_t kPeriodicInitialCount = 50000;
+
+volatile uint64_t g_ticks = 0;
+uint32_t g_frequency_hz = 0;
+timer::Backend g_backend = timer::Backend::none;
+
+void local_apic_timer_handler() {
+    g_ticks = g_ticks + 1;
+}
+
+} // namespace
+
+namespace timer {
+
+void initialize(uint32_t frequency_hz) {
+    if (frequency_hz == 0) {
+        frequency_hz = 100;
+    }
+
+    g_ticks = 0;
+    g_frequency_hz = frequency_hz;
+    g_backend = Backend::none;
+
+    if (!arch::x86_64::initialize_local_apic()) {
+        return;
+    }
+
+    if (!arch::x86_64::register_interrupt_handler(
+            kTimerVector,
+            local_apic_timer_handler,
+            arch::x86_64::InterruptEoi::local_apic)) {
+        return;
+    }
+
+    if (!arch::x86_64::local_apic_start_periodic_timer(
+            kTimerVector,
+            kPeriodicInitialCount,
+            kApicDivideBy16)) {
+        return;
+    }
+
+    arch::x86_64::enable_interrupts();
+    g_backend = Backend::local_apic;
+}
+
+Backend backend() {
+    return g_backend;
+}
+
+uint32_t frequency_hz() {
+    return g_frequency_hz;
+}
+
+uint64_t ticks() {
+    return g_ticks;
+}
+
+void wait_ticks(uint64_t tick_count) {
+    const uint64_t deadline = ticks() + tick_count;
+    while (ticks() < deadline) {
+        arch::x86_64::halt_once();
+    }
+}
+
+} // namespace timer
