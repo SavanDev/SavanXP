@@ -18,13 +18,17 @@ El kernel ya bootea a una terminal funcional inicial:
 - Driver de teclado `PS/2` por `IRQ1` y `TTY` canonica para la consola
   foreground.
 - `VFS` minima montando un `initramfs` `cpio newc`, con archivos dinamicos en
-  memoria para redireccion simple.
+  memoria para redireccion simple y un volumen persistente `SVFS` montado en
+  `/disk`.
 - Loader `ELF64` estatico para procesos simples en `ring 3`.
 - Userland inicial con `init`, `sh`, `echo`, `uname`, `ls`, `cat`, `sleep`,
-  `ticker` y `demo`.
+  `ticker`, `demo`, `true`, `false`, `ps`, `fdtest`, `waittest`,
+  `pipestress`, `spawnloop` y `badptr`.
 - Timer `local APIC/x2APIC` activo para tiempo base del sistema.
 - Scheduler round-robin preemptivo con bloqueo por `wait`, `read` y `sleep`.
 - Shell con `pipes` y redireccion basica (`|`, `<`, `>`).
+- Handles refcounted con `dup`, `dup2`, `waitpid(-1)` y procesos zombie/reap.
+- Validacion basica de punteros de userland en syscalls principales.
 - Script `build.ps1` con `build`, `run`, `debug` y `clean`.
 
 ## Prerrequisitos
@@ -52,3 +56,17 @@ si no existe en `tools/limine`.
 Durante `run` y `debug`, QEMU expone la salida serie en la terminal. El kernel
 entra a una shell inicial de userland y el `debugcon` queda guardado en
 `build/debugcon.log`.
+
+## Persistencia experimental
+
+El build genera una imagen `build/disk.img` la primera vez y la conecta como un
+disco IDE legacy adicional en QEMU. Esa imagen se monta en `/disk` mediante un
+filesystem experimental propio (`SVFS`), de modo que:
+
+```text
+ls /disk
+cat /disk/README
+echo hola > /disk/notes.txt
+```
+
+deberian sobrevivir a reinicios posteriores mientras no ejecutes `clean`.

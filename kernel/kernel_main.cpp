@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/block.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/heap.hpp"
@@ -10,6 +11,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ps2.hpp"
+#include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/vfs.hpp"
@@ -88,10 +90,13 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     ps2::initialize();
     process::initialize();
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
+    block::initialize();
+    svfs::initialize();
 
     if (!vfs::ready()) {
         panic("vfs: initramfs unavailable");
     }
+    const bool disk_mounted = svfs::mount_at_root();
 
     const MemorySummary memory = summarize_memory(boot_info);
     console::printf(
@@ -115,7 +120,14 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
         ps2::ready() ? 1u : 0u,
         boot_info.initramfs_size
     );
-    console::write_line("userland: init + shell + echo/uname/ls/cat/sleep/ticker/demo + pipes/redir");
+    console::printf(
+        "disk: block=%u svfs=%u files=%llu mount=%s\n",
+        block::ready() ? 1u : 0u,
+        svfs::mounted() ? 1u : 0u,
+        static_cast<unsigned long long>(svfs::file_count()),
+        disk_mounted ? "/disk" : "unavailable"
+    );
+    console::write_line("userland: init + shell + tests (ps/fdtest/waittest/pipestress/spawnloop/badptr)");
     console::write_line("");
 
     process::start_init("/bin/init");

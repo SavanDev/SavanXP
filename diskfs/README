@@ -1,0 +1,4 @@
+SavanXP persistent disk
+
+This file lives on /disk via the experimental SVFS image.
+If you can read it after boot, the block layer and persistent mount are alive.

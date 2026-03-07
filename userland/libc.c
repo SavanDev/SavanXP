@@ -76,6 +76,14 @@ long pipe(int fds[2]) {
     return syscall1(SAVANXP_SYS_PIPE, (unsigned long)fds);
 }
 
+long dup(int fd) {
+    return syscall1(SAVANXP_SYS_DUP, (unsigned long)fd);
+}
+
+long dup2(int oldfd, int newfd) {
+    return syscall2(SAVANXP_SYS_DUP2, (unsigned long)oldfd, (unsigned long)newfd);
+}
+
 long waitpid(int pid, int* status) {
     return syscall2(SAVANXP_SYS_WAITPID, (unsigned long)pid, (unsigned long)status);
 }
@@ -94,6 +102,10 @@ unsigned long uptime_ms(void) {
 
 long clear_screen(void) {
     return syscall0(SAVANXP_SYS_CLEAR);
+}
+
+long proc_info(unsigned long index, struct savanxp_process_info* info) {
+    return syscall2(SAVANXP_SYS_PROC_INFO, index, (unsigned long)info);
 }
 
 void exit(int code) {

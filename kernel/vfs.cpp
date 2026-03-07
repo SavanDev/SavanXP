@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include "kernel/svfs.hpp"
 #include "kernel/string.hpp"
 #include "shared/syscall.h"
 
@@ -59,6 +60,7 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
     memset(&slot, 0, sizeof(slot));
     strcpy(slot.name, name);
     slot.vnode.type = type;
+    slot.vnode.backend = vfs::Backend::memory;
     slot.vnode.name = slot.name;
     slot.vnode.parent = parent;
     slot.vnode.first_child = -1;
@@ -92,7 +94,7 @@ int find_child(int parent, const char* name) {
     return -1;
 }
 
-int ensure_directory(int parent, const char* name) {
+int ensure_directory_node(int parent, const char* name) {
     const int existing = find_child(parent, name);
     if (existing >= 0) {
         return existing;
@@ -124,7 +126,7 @@ void add_entry(const char* path, vfs::NodeType type, const void* data, size_t si
         component[length < sizeof(component) ? length : (sizeof(component) - 1)] = '\0';
 
         if (cursor[length] == '/') {
-            parent = ensure_directory(parent, component);
+            parent = ensure_directory_node(parent, component);
             if (parent < 0) {
                 return;
             }
@@ -196,7 +198,7 @@ DynamicFile* allocate_dynamic_file() {
 }
 
 bool attach_dynamic_storage(vfs::Vnode& node, bool truncate_existing) {
-    if (node.type != vfs::NodeType::file) {
+    if (node.type != vfs::NodeType::file || node.backend != vfs::Backend::memory) {
         return false;
     }
 
@@ -269,6 +271,12 @@ bool split_parent_path(const char* path, char* parent_path, size_t parent_capaci
     memcpy(parent_path, path, parent_length);
     parent_path[parent_length] = '\0';
     return true;
+}
+
+bool is_svfs_path(const char* path) {
+    return path != nullptr &&
+        strncmp(path, "/disk", 5) == 0 &&
+        (path[5] == '\0' || path[5] == '/');
 }
 
 } // namespace
@@ -352,9 +360,24 @@ Vnode* open(const char* path, uint32_t flags) {
     int index = resolve_index(path);
     if (index >= 0) {
         Vnode& node = g_nodes[index].vnode;
-        if (wants_write || wants_truncate) {
+        if ((wants_write || wants_truncate) && node.backend == Backend::memory) {
             if (!attach_dynamic_storage(node, wants_truncate)) {
                 return nullptr;
+            }
+        } else if ((wants_write || wants_truncate) && node.backend == Backend::svfs) {
+            if (!node.writable) {
+                return nullptr;
+            }
+            if (wants_truncate) {
+                svfs::FileRecord* file = svfs::file_from_vnode(node);
+                if (file == nullptr) {
+                    return nullptr;
+                }
+                size_t written = 0;
+                if (!svfs::write_file(*file, 0, nullptr, 0, true, written)) {
+                    return nullptr;
+                }
+                node.size = file->size;
             }
         }
         return &node;
@@ -380,6 +403,17 @@ Vnode* open(const char* path, uint32_t flags) {
         return nullptr;
     }
 
+    if (is_svfs_path(path)) {
+        svfs::FileRecord* file = svfs::create_file(path);
+        if (file == nullptr) {
+            return nullptr;
+        }
+        if (file->vnode != nullptr) {
+            return file->vnode;
+        }
+        return install_external_file(path, Backend::svfs, file, file->size, true);
+    }
+
     const int node_index = add_node(NodeType::file, leaf_name, index);
     if (node_index < 0) {
         return nullptr;
@@ -393,45 +427,164 @@ Vnode* open(const char* path, uint32_t flags) {
     return &node;
 }
 
+Vnode* ensure_directory(const char* path) {
+    if (!g_ready || path == nullptr || *path == '\0') {
+        return nullptr;
+    }
+
+    const int existing = resolve_index(path);
+    if (existing >= 0) {
+        return g_nodes[existing].vnode.type == NodeType::directory ? &g_nodes[existing].vnode : nullptr;
+    }
+
+    char component[kMaxNameLength] = {};
+    const char* cursor = path;
+    int parent = 0;
+
+    while (*cursor == '/') {
+        ++cursor;
+    }
+
+    if (*cursor == '\0') {
+        return &g_nodes[0].vnode;
+    }
+
+    for (;;) {
+        size_t length = 0;
+        while (cursor[length] != '\0' && cursor[length] != '/') {
+            if (length + 1 < sizeof(component)) {
+                component[length] = cursor[length];
+            }
+            ++length;
+        }
+        component[length < sizeof(component) ? length : (sizeof(component) - 1)] = '\0';
+        parent = ensure_directory_node(parent, component);
+        if (parent < 0) {
+            return nullptr;
+        }
+        if (cursor[length] == '\0') {
+            return &g_nodes[parent].vnode;
+        }
+        cursor += length;
+        while (*cursor == '/') {
+            ++cursor;
+        }
+    }
+}
+
+Vnode* install_external_file(const char* path, Backend backend, void* data, size_t size, bool writable) {
+    if (!g_ready || path == nullptr || *path == '\0') {
+        return nullptr;
+    }
+
+    char parent_path[kMaxNameLength * 2] = {};
+    char leaf_name[kMaxNameLength] = {};
+    if (!split_parent_path(path, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+        return nullptr;
+    }
+
+    Vnode* parent = ensure_directory(parent_path);
+    if (parent == nullptr || parent->type != NodeType::directory) {
+        return nullptr;
+    }
+
+    const int parent_index = resolve_index(parent_path);
+    if (parent_index < 0) {
+        return nullptr;
+    }
+
+    int index = find_child(parent_index, leaf_name);
+    if (index < 0) {
+        index = add_node(NodeType::file, leaf_name, parent_index);
+        if (index < 0) {
+            return nullptr;
+        }
+    }
+
+    Vnode& node = g_nodes[index].vnode;
+    node.type = NodeType::file;
+    node.backend = backend;
+    node.data = data;
+    node.size = size;
+    node.writable = writable;
+    return &node;
+}
+
 size_t read(Vnode& node, size_t offset, void* buffer, size_t count) {
     if (node.type != NodeType::file || buffer == nullptr || count == 0) {
         return 0;
     }
 
-    if (offset >= node.size || node.data == nullptr) {
+    if (offset >= node.size) {
         return 0;
     }
 
     const size_t available = node.size - offset;
     const size_t to_copy = available < count ? available : count;
-    memcpy(buffer, static_cast<const uint8_t*>(node.data) + offset, to_copy);
-    return to_copy;
+    switch (node.backend) {
+        case Backend::memory:
+            if (node.data == nullptr) {
+                return 0;
+            }
+            memcpy(buffer, static_cast<const uint8_t*>(node.data) + offset, to_copy);
+            return to_copy;
+        case Backend::svfs: {
+            svfs::FileRecord* file = svfs::file_from_vnode(node);
+            if (file == nullptr || !svfs::read_file(*file, offset, buffer, to_copy)) {
+                return 0;
+            }
+            node.size = file->size;
+            return to_copy;
+        }
+        default:
+            return 0;
+    }
 }
 
 size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate) {
-    if (node.type != NodeType::file || !node.writable || node.data == nullptr || buffer == nullptr) {
+    if (node.type != NodeType::file || !node.writable) {
         return 0;
     }
 
-    if (truncate) {
-        node.size = 0;
-        offset = 0;
+    switch (node.backend) {
+        case Backend::memory: {
+            if (node.data == nullptr || buffer == nullptr) {
+                return 0;
+            }
+            if (truncate) {
+                node.size = 0;
+                offset = 0;
+            }
+
+            if (offset > kDynamicFileCapacity) {
+                return 0;
+            }
+
+            const size_t available = kDynamicFileCapacity - offset;
+            const size_t to_copy = available < count ? available : count;
+            memcpy(static_cast<uint8_t*>(node.data) + offset, buffer, to_copy);
+
+            const size_t new_size = offset + to_copy;
+            if (new_size > node.size) {
+                node.size = new_size;
+            }
+            return to_copy;
+        }
+        case Backend::svfs: {
+            svfs::FileRecord* file = svfs::file_from_vnode(node);
+            if (file == nullptr) {
+                return 0;
+            }
+            size_t written = 0;
+            if (!svfs::write_file(*file, offset, buffer, count, truncate, written)) {
+                return 0;
+            }
+            node.size = file->size;
+            return written;
+        }
+        default:
+            return 0;
     }
-
-    if (offset > kDynamicFileCapacity) {
-        return 0;
-    }
-
-    const size_t available = kDynamicFileCapacity - offset;
-    const size_t to_copy = available < count ? available : count;
-    memcpy(static_cast<uint8_t*>(node.data) + offset, buffer, to_copy);
-
-    const size_t new_size = offset + to_copy;
-    if (new_size > node.size) {
-        node.size = new_size;
-    }
-
-    return to_copy;
 }
 
 const Vnode* child_at(const Vnode& directory, size_t index) {

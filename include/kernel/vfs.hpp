@@ -11,8 +11,14 @@ enum class NodeType : uint8_t {
     file = 2,
 };
 
+enum class Backend : uint8_t {
+    memory = 0,
+    svfs = 1,
+};
+
 struct Vnode {
     NodeType type;
+    Backend backend;
     const char* name;
     void* data;
     size_t size;
@@ -27,6 +33,8 @@ bool ready();
 const Vnode* root();
 const Vnode* resolve(const char* path);
 Vnode* open(const char* path, uint32_t flags);
+Vnode* ensure_directory(const char* path);
+Vnode* install_external_file(const char* path, Backend backend, void* data, size_t size, bool writable);
 size_t read(Vnode& node, size_t offset, void* buffer, size_t count);
 size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate);
 const Vnode* child_at(const Vnode& directory, size_t index);

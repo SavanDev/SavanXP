@@ -29,5 +29,6 @@ bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_addres
 uint64_t current_pml4();
 uint64_t hhdm_offset();
 uint64_t* physical_to_virtual(uint64_t physical_address);
+bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write);
 
 } // namespace vm

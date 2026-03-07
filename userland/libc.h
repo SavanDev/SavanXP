@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "shared/syscall.h"
+
 long read(int fd, void* buffer, size_t count);
 long write(int fd, const void* buffer, size_t count);
 long open(const char* path);
@@ -12,11 +14,14 @@ long readdir(int fd, char* buffer, size_t count);
 long spawn(const char* path, const char* const* argv, int argc);
 long spawn_fd(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd);
 long pipe(int fds[2]);
+long dup(int fd);
+long dup2(int oldfd, int newfd);
 long waitpid(int pid, int* status);
 long yield(void);
 long sleep_ms(unsigned long milliseconds);
 unsigned long uptime_ms(void);
 long clear_screen(void);
+long proc_info(unsigned long index, struct savanxp_process_info* info);
 void exit(int code) __attribute__((noreturn));
 
 size_t strlen(const char* text);

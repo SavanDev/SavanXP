@@ -5,20 +5,24 @@
 
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
+#include "shared/syscall.h"
 
 namespace process {
 
 constexpr size_t kMaxProcesses = 16;
 constexpr size_t kMaxFileHandles = 16;
+constexpr size_t kMaxOpenFiles = 64;
+constexpr size_t kProcessNameLength = 32;
 
 enum class State : uint8_t {
     unused = 0,
-    runnable = 1,
+    ready = 1,
     running = 2,
     blocked_read = 3,
-    blocked_wait = 4,
-    sleeping = 5,
-    exited = 6,
+    blocked_write = 4,
+    blocked_wait = 5,
+    sleeping = 6,
+    zombie = 7,
 };
 
 struct SavedContext {
@@ -48,17 +52,37 @@ enum class HandleKind : uint8_t {
     none = 0,
     tty = 1,
     vnode = 2,
-    pipe_read = 3,
-    pipe_write = 4,
+    pipe = 3,
 };
 
-struct FileHandle {
+enum OpenFlags : uint32_t {
+    open_read = 1u << 0,
+    open_write = 1u << 1,
+};
+
+struct Pipe {
+    bool in_use;
+    uint32_t reader_refs;
+    uint32_t writer_refs;
+    size_t read_pos;
+    size_t write_pos;
+    size_t size;
+    uint8_t* buffer;
+};
+
+struct OpenFile {
     bool in_use;
     HandleKind kind;
+    uint32_t flags;
+    uint32_t refcount;
     vfs::Vnode* node;
-    void* pipe;
+    Pipe* pipe;
     size_t offset;
     size_t iterator_index;
+};
+
+struct FdEntry {
+    OpenFile* file;
 };
 
 struct Process {
@@ -69,16 +93,20 @@ struct Process {
     int exit_code;
     uint32_t waiting_for_pid;
     uint64_t wait_status_address;
+    uint64_t blocked_io_fd;
     uint64_t blocked_read_buffer;
     uint64_t blocked_read_capacity;
-    uint64_t blocked_read_fd;
+    uint64_t blocked_write_buffer;
+    uint64_t blocked_write_length;
+    uint64_t blocked_write_progress;
     uint64_t wake_tick;
     uint32_t time_slice;
+    char name[kProcessNameLength];
     vm::VmSpace address_space;
     uint64_t kernel_stack_base;
     uint64_t kernel_stack_size;
     SavedContext* context;
-    FileHandle handles[kMaxFileHandles];
+    FdEntry handles[kMaxFileHandles];
 };
 
 void initialize();
@@ -92,5 +120,6 @@ void terminate_current_from_exception(uint8_t vector);
 SavedContext* handle_syscall(SavedContext* context);
 SavedContext* handle_timer_tick(SavedContext* context);
 void notify_tty_line_ready();
+bool snapshot_process(size_t index, savanxp_process_info& info);
 
 } // namespace process

@@ -148,7 +148,7 @@ int parse_pipeline(char* line, struct CommandStage* stages, int capacity) {
 int run_builtin(struct CommandStage* stage) {
     if (strcmp(stage->argv[0], "help") == 0) {
         puts("Builtins: help clear exit\n");
-        puts("Commands: echo uname ls cat sleep ticker demo\n");
+        puts("Commands: echo uname ls cat sleep ticker demo true false ps fdtest waittest pipestress spawnloop badptr\n");
         puts("Examples: echo hola | cat\n");
         puts("          cat < /README\n");
         puts("          echo hola > /notes.txt\n");
@@ -193,7 +193,7 @@ int execute_pipeline(struct CommandStage* stages, int stage_count) {
                 close(previous_read_fd);
             }
             wait_for_children(pids, pid_count);
-            return 0;
+            return -1;
         }
 
         if (stages[index].input_path != 0) {
@@ -209,7 +209,7 @@ int execute_pipeline(struct CommandStage* stages, int stage_count) {
                     close(pipe_fds[1]);
                 }
                 wait_for_children(pids, pid_count);
-                return 0;
+                return -1;
             }
         } else if (previous_read_fd >= 0) {
             input_fd = previous_read_fd;
@@ -232,7 +232,7 @@ int execute_pipeline(struct CommandStage* stages, int stage_count) {
                     close(previous_read_fd);
                 }
                 wait_for_children(pids, pid_count);
-                return 0;
+                return -1;
             }
         } else if (!is_last) {
             output_fd = pipe_fds[1];
@@ -258,7 +258,7 @@ int execute_pipeline(struct CommandStage* stages, int stage_count) {
                 close(previous_read_fd);
             }
             wait_for_children(pids, pid_count);
-            return 0;
+            return -1;
         }
 
         pids[pid_count++] = pid;
@@ -282,8 +282,7 @@ int execute_pipeline(struct CommandStage* stages, int stage_count) {
         close(previous_read_fd);
     }
 
-    wait_for_children(pids, pid_count);
-    return 1;
+    return wait_for_children(pids, pid_count);
 }
 
 int main(void) {
@@ -322,8 +321,12 @@ int main(void) {
             continue;
         }
 
-        if (!execute_pipeline(stages, stage_count)) {
+        const int status = execute_pipeline(stages, stage_count);
+        if (status < 0) {
             continue;
+        }
+        if (status != 0) {
+            printf("sh: exit %d\n", status);
         }
     }
 }

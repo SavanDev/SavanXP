@@ -13,13 +13,20 @@ $ImageRoot = Join-Path $BuildRoot "image"
 $BootRoot = Join-Path $ImageRoot "boot"
 $EfiBootRoot = Join-Path $ImageRoot "EFI\\BOOT"
 $RootfsBuild = Join-Path $BuildRoot "rootfs"
+$DiskRoot = Join-Path $ProjectRoot "diskfs"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
+$DiskImage = Join-Path $BuildRoot "disk.img"
 $ToolRoot = Join-Path $ProjectRoot "tools"
 $LimineRoot = Join-Path $ToolRoot "limine"
 $LimineBranch = "v10.x-binary"
 $KernelElf = Join-Path $BuildRoot "kernel.elf"
 $VarsTemplate = Join-Path $BuildRoot "OVMF_VARS.fd"
 $DebugConLog = Join-Path $BuildRoot "debugcon.log"
+
+$SvfsSectorSize = 512
+$SvfsDirectorySectors = 8
+$SvfsMaxFiles = 64
+$SvfsTotalSectors = 4096
 
 $KernelSources = @(
     "arch/x86_64/context.S",
@@ -34,6 +41,8 @@ $KernelSources = @(
     "kernel/physical_memory.cpp",
     "kernel/vmm.cpp",
     "kernel/vfs.cpp",
+    "kernel/block.cpp",
+    "kernel/svfs.cpp",
     "kernel/elf.cpp",
     "kernel/process.cpp",
     "kernel/panic.cpp",
@@ -49,7 +58,15 @@ $UserPrograms = @(
     @{ Name = "cat"; Source = "userland/cat.c" },
     @{ Name = "sleep"; Source = "userland/sleep.c" },
     @{ Name = "ticker"; Source = "userland/ticker.c" },
-    @{ Name = "demo"; Source = "userland/demo.c" }
+    @{ Name = "demo"; Source = "userland/demo.c" },
+    @{ Name = "true"; Source = "userland/true.c" },
+    @{ Name = "false"; Source = "userland/false.c" },
+    @{ Name = "ps"; Source = "userland/ps.c" },
+    @{ Name = "fdtest"; Source = "userland/fdtest.c" },
+    @{ Name = "waittest"; Source = "userland/waittest.c" },
+    @{ Name = "pipestress"; Source = "userland/pipestress.c" },
+    @{ Name = "spawnloop"; Source = "userland/spawnloop.c" },
+    @{ Name = "badptr"; Source = "userland/badptr.c" }
 )
 
 function New-Directory([string]$Path) {
@@ -229,6 +246,78 @@ function Write-CpioEntry([System.IO.BinaryWriter]$Writer, [string]$RelativePath,
     }
 }
 
+function Set-AsciiField([byte[]]$Buffer, [int]$Offset, [string]$Text, [int]$Capacity) {
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes($Text)
+    $count = [Math]::Min($bytes.Length, $Capacity - 1)
+    [Array]::Copy($bytes, 0, $Buffer, $Offset, $count)
+    $Buffer[$Offset + $count] = 0
+}
+
+function Set-UInt32Le([byte[]]$Buffer, [int]$Offset, [uint32]$Value) {
+    $bytes = [System.BitConverter]::GetBytes($Value)
+    [Array]::Copy($bytes, 0, $Buffer, $Offset, 4)
+}
+
+function Ensure-SvfsDisk([string]$SourceRoot, [string]$OutputPath) {
+    if (Test-Path $OutputPath) {
+        return
+    }
+
+    New-Directory (Split-Path -Parent $OutputPath)
+
+    $totalBytes = $SvfsTotalSectors * $SvfsSectorSize
+    $image = New-Object byte[] $totalBytes
+    $directoryLba = 1
+    $dataLba = $directoryLba + $SvfsDirectorySectors
+    $nextFreeLba = $dataLba
+
+    Set-AsciiField -Buffer $image -Offset 0 -Text "SVFS1" -Capacity 8
+    Set-UInt32Le -Buffer $image -Offset 8 -Value 1
+    Set-UInt32Le -Buffer $image -Offset 12 -Value $SvfsTotalSectors
+    Set-UInt32Le -Buffer $image -Offset 16 -Value $directoryLba
+    Set-UInt32Le -Buffer $image -Offset 20 -Value $SvfsDirectorySectors
+    Set-UInt32Le -Buffer $image -Offset 24 -Value $dataLba
+    Set-UInt32Le -Buffer $image -Offset 28 -Value $SvfsMaxFiles
+
+    $items = @()
+    if (Test-Path $SourceRoot) {
+        $items = Get-ChildItem -Path $SourceRoot -File | Sort-Object Name
+    }
+
+    $entryIndex = 0
+    foreach ($item in $items) {
+        if ($entryIndex -ge $SvfsMaxFiles) {
+            throw "SVFS: demasiados archivos semilla."
+        }
+
+        $name = $item.Name
+        if ($name.Length -ge 48) {
+            throw "SVFS: nombre demasiado largo '$name'."
+        }
+
+        $bytes = [System.IO.File]::ReadAllBytes($item.FullName)
+        $sectors = [Math]::Max([uint32]1, [uint32][Math]::Ceiling($bytes.Length / [double]$SvfsSectorSize))
+        if (($nextFreeLba + $sectors) -gt $SvfsTotalSectors) {
+            throw "SVFS: la imagen no tiene espacio suficiente para '$name'."
+        }
+
+        [Array]::Copy($bytes, 0, $image, $nextFreeLba * $SvfsSectorSize, $bytes.Length)
+
+        $entryOffset = ($directoryLba * $SvfsSectorSize) + ($entryIndex * 64)
+        $image[$entryOffset] = 1
+        Set-AsciiField -Buffer $image -Offset ($entryOffset + 4) -Text $name -Capacity 48
+        Set-UInt32Le -Buffer $image -Offset ($entryOffset + 52) -Value $nextFreeLba
+        Set-UInt32Le -Buffer $image -Offset ($entryOffset + 56) -Value $sectors
+        Set-UInt32Le -Buffer $image -Offset ($entryOffset + 60) -Value ([uint32]$bytes.Length)
+
+        $nextFreeLba += $sectors
+        $entryIndex += 1
+    }
+
+    Set-UInt32Le -Buffer $image -Offset 32 -Value $nextFreeLba
+    [System.IO.File]::WriteAllBytes($OutputPath, $image)
+}
+
 function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
     $stream = [System.IO.File]::Open($OutputPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
     try {
@@ -329,6 +418,7 @@ function Build-Kernel {
     }
 
     Build-Userland -Compiler $clang -Linker $ld
+    Ensure-SvfsDisk -SourceRoot $DiskRoot -OutputPath $DiskImage
 
     $linkArgs = @(
         "-m", "elf_x86_64",
@@ -372,6 +462,9 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
         "-drive", "if=pflash,format=raw,file=$VarsTemplate",
         "-drive", "file=fat:rw:build/image,format=raw",
+        "-device", "isa-ide,id=svide",
+        "-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage",
+        "-device", "ide-hd,drive=svdisk,bus=svide.0",
         "-serial", "stdio",
         "-debugcon", "file:$DebugConLog",
         "-global", "isa-debugcon.iobase=0xe9",
