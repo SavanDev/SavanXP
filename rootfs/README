@@ -1,0 +1,10 @@
+SavanXP
+
+Estado del experimento:
+- Boot UEFI con Limine
+- PMM y heap tempranos
+- GDT, IDT, IRQs y timer local APIC
+- Consola de texto sobre framebuffer
+- TTY canonica y teclado PS/2
+- Syscalls minimas e initramfs
+- Userland inicial con shell y comandos basicos

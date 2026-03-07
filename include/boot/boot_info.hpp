@@ -47,6 +47,8 @@ struct BootInfo {
     FirmwareType firmware_type;
     uint64_t hhdm_offset;
     FramebufferInfo framebuffer;
+    const void* initramfs_address;
+    uint64_t initramfs_size;
     const MemoryRegion* memory_map;
     size_t memory_map_entries;
 };

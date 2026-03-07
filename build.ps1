@@ -12,6 +12,8 @@ $ObjRoot = Join-Path $BuildRoot "obj"
 $ImageRoot = Join-Path $BuildRoot "image"
 $BootRoot = Join-Path $ImageRoot "boot"
 $EfiBootRoot = Join-Path $ImageRoot "EFI\\BOOT"
+$RootfsBuild = Join-Path $BuildRoot "rootfs"
+$InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
 $ToolRoot = Join-Path $ProjectRoot "tools"
 $LimineRoot = Join-Path $ToolRoot "limine"
 $LimineBranch = "v10.x-binary"
@@ -19,16 +21,35 @@ $KernelElf = Join-Path $BuildRoot "kernel.elf"
 $VarsTemplate = Join-Path $BuildRoot "OVMF_VARS.fd"
 $DebugConLog = Join-Path $BuildRoot "debugcon.log"
 
-$CxxSources = @(
+$KernelSources = @(
+    "arch/x86_64/context.S",
     "arch/x86_64/entry.cpp",
     "arch/x86_64/cpu_init.cpp",
     "arch/x86_64/timer.cpp",
     "kernel/kernel_main.cpp",
     "kernel/console.cpp",
+    "kernel/tty.cpp",
+    "kernel/ps2.cpp",
     "kernel/heap.cpp",
     "kernel/physical_memory.cpp",
+    "kernel/vmm.cpp",
+    "kernel/vfs.cpp",
+    "kernel/elf.cpp",
+    "kernel/process.cpp",
     "kernel/panic.cpp",
     "kernel/runtime.cpp"
+)
+
+$UserPrograms = @(
+    @{ Name = "init"; Source = "userland/init.c" },
+    @{ Name = "sh"; Source = "userland/sh.c" },
+    @{ Name = "echo"; Source = "userland/echo.c" },
+    @{ Name = "uname"; Source = "userland/uname.c" },
+    @{ Name = "ls"; Source = "userland/ls.c" },
+    @{ Name = "cat"; Source = "userland/cat.c" },
+    @{ Name = "sleep"; Source = "userland/sleep.c" },
+    @{ Name = "ticker"; Source = "userland/ticker.c" },
+    @{ Name = "demo"; Source = "userland/demo.c" }
 )
 
 function New-Directory([string]$Path) {
@@ -131,6 +152,152 @@ function Get-CommonFlags {
     )
 }
 
+function Get-UserFlags {
+    return @(
+        "-target", "x86_64-unknown-none-elf",
+        "-ffreestanding",
+        "-fno-stack-protector",
+        "-fno-pic",
+        "-fno-pie",
+        "-mno-red-zone",
+        "-mcmodel=small",
+        "-mno-mmx",
+        "-mno-sse",
+        "-mno-sse2",
+        "-mgeneral-regs-only",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-language-extension-token",
+        "-Wno-c23-extensions",
+        "-I", (Join-Path $ProjectRoot "include"),
+        "-I", (Join-Path $ProjectRoot "userland")
+    )
+}
+
+function Compile-Object([string]$Compiler, [string]$SourcePath, [string]$ObjectPath, [string[]]$Flags, [string]$Language = "") {
+    $languageArgs = @()
+    if ($Language) {
+        $languageArgs = @("-x", $Language)
+    }
+
+    $compileArgs = @(
+        "-c"
+    ) + $languageArgs + @(
+        $SourcePath,
+        "-o", $ObjectPath
+    ) + $Flags
+
+    & $Compiler @compileArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la compilacion de $SourcePath."
+    }
+}
+
+function Write-CpioEntry([System.IO.BinaryWriter]$Writer, [string]$RelativePath, [byte[]]$Data, [uint32]$Mode) {
+    $pathBytes = [System.Text.Encoding]::ASCII.GetBytes($RelativePath)
+    $nameSize = $pathBytes.Length + 1
+    $fileSize = if ($Data) { $Data.Length } else { 0 }
+    $fields = @(
+        "070701",
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString($Mode, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(1, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString($fileSize, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0')),
+        ([Convert]::ToString($nameSize, 16).PadLeft(8, '0')),
+        ([Convert]::ToString(0, 16).PadLeft(8, '0'))
+    )
+    $headerBytes = [System.Text.Encoding]::ASCII.GetBytes(($fields -join ""))
+    $Writer.Write($headerBytes)
+    $Writer.Write($pathBytes)
+    $Writer.Write([byte]0)
+    while (($Writer.BaseStream.Position % 4) -ne 0) {
+        $Writer.Write([byte]0)
+    }
+    if ($fileSize -gt 0) {
+        $Writer.Write($Data)
+    }
+    while (($Writer.BaseStream.Position % 4) -ne 0) {
+        $Writer.Write([byte]0)
+    }
+}
+
+function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
+    $stream = [System.IO.File]::Open($OutputPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+    try {
+        $writer = New-Object System.IO.BinaryWriter($stream)
+        $items = Get-ChildItem -Path $SourceRoot -Recurse | Sort-Object FullName
+        foreach ($item in $items) {
+            $relative = $item.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
+            if ([string]::IsNullOrWhiteSpace($relative)) {
+                continue
+            }
+
+            if ($item.PSIsContainer) {
+                Write-CpioEntry -Writer $writer -RelativePath $relative -Data $null -Mode 16877
+            } else {
+                $mode = if ($relative.StartsWith("bin/")) { 33261 } else { 33188 }
+                Write-CpioEntry -Writer $writer -RelativePath $relative -Data ([System.IO.File]::ReadAllBytes($item.FullName)) -Mode $mode
+            }
+        }
+        Write-CpioEntry -Writer $writer -RelativePath "TRAILER!!!" -Data $null -Mode 0
+        $writer.Flush()
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Build-Userland([string]$Compiler, [string]$Linker) {
+    $userFlags = Get-UserFlags
+    $userObjRoot = Join-Path $ObjRoot "user"
+    $binRoot = Join-Path $RootfsBuild "bin"
+    New-Directory $userObjRoot
+    New-Directory $RootfsBuild
+    New-Directory $binRoot
+
+    Copy-Item (Join-Path $ProjectRoot "rootfs\\README") (Join-Path $RootfsBuild "README") -Force
+
+    foreach ($program in $UserPrograms) {
+        $objectFiles = @()
+        foreach ($source in @("userland/crt0.S", "userland/libc.c", $program.Source)) {
+            $sourcePath = Join-Path $ProjectRoot $source
+            $objectName = "$($program.Name)_$([IO.Path]::GetFileNameWithoutExtension($source)).o"
+            $objectPath = Join-Path $userObjRoot $objectName
+            $objectFiles += $objectPath
+            $language = ""
+            if ($source.EndsWith(".c")) {
+                $language = "c"
+            } elseif ($source.EndsWith(".S")) {
+                $language = "assembler-with-cpp"
+            }
+            Compile-Object -Compiler $Compiler -SourcePath $sourcePath -ObjectPath $objectPath -Flags $userFlags -Language $language
+        }
+
+        $outputPath = Join-Path $binRoot $program.Name
+        $linkArgs = @(
+            "-m", "elf_x86_64",
+            "-T", (Join-Path $ProjectRoot "userland\\linker.ld"),
+            "-z", "max-page-size=0x1000",
+            "--build-id=none",
+            "-o", $outputPath
+        ) + $objectFiles
+
+        & $Linker @linkArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fallo el link de userland para $($program.Name)."
+        }
+    }
+
+    New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
+}
+
 function Build-Kernel {
     $clang = Require-Executable "clang++" @(
         "clang++",
@@ -147,26 +314,21 @@ function Build-Kernel {
     New-Directory $ObjRoot
     New-Directory $BootRoot
     New-Directory $EfiBootRoot
+    if (Test-Path $RootfsBuild) {
+        Remove-Item -Recurse -Force $RootfsBuild
+    }
 
     $commonFlags = Get-CommonFlags
     $objectFiles = @()
 
-    foreach ($source in $CxxSources) {
+    foreach ($source in $KernelSources) {
         $sourcePath = Join-Path $ProjectRoot $source
         $objectPath = Join-Path $ObjRoot (([IO.Path]::GetFileNameWithoutExtension($source)) + ".o")
         $objectFiles += $objectPath
-
-        $compileArgs = @(
-            "-c",
-            $sourcePath,
-            "-o", $objectPath
-        ) + $commonFlags
-
-        & $clang @compileArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Fallo la compilacion de $source."
-        }
+        Compile-Object -Compiler $clang -SourcePath $sourcePath -ObjectPath $objectPath -Flags $commonFlags
     }
+
+    Build-Userland -Compiler $clang -Linker $ld
 
     $linkArgs = @(
         "-m", "elf_x86_64",
@@ -184,6 +346,7 @@ function Build-Kernel {
     Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $ImageRoot "limine.conf") -Force
     New-Directory (Join-Path $BootRoot "limine")
     Copy-Item $KernelElf (Join-Path $BootRoot "kernel.elf") -Force
+    Copy-Item $InitramfsPath (Join-Path $BootRoot "initramfs.cpio") -Force
     Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $BootRoot "limine\\limine.conf") -Force
     Copy-Item (Join-Path $LimineRoot "BOOTX64.EFI") (Join-Path $EfiBootRoot "BOOTX64.EFI") -Force
     Set-Content -Path (Join-Path $ImageRoot "startup.nsh") -Value "fs0:\EFI\BOOT\BOOTX64.EFI" -NoNewline

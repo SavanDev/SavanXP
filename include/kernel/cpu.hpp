@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "kernel/process.hpp"
+
 namespace arch::x86_64 {
 
 using IrqHandler = void (*)();
@@ -19,6 +21,10 @@ bool initialize_local_apic();
 bool local_apic_ready();
 bool local_apic_x2apic_mode();
 bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uint8_t divide_value);
+void initialize_syscall_gate();
+void acknowledge_local_apic_interrupt();
+void set_kernel_stack(uint64_t stack_top);
+[[noreturn]] void resume_context(process::SavedContext* context, uint64_t cr3);
 void enable_irq(uint8_t irq);
 void disable_irq(uint8_t irq);
 void enable_interrupts();

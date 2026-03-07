@@ -53,6 +53,15 @@ volatile limine_memmap_request g_memmap_request = {
     .response = nullptr,
 };
 
+[[gnu::used, gnu::section(".limine_requests")]]
+volatile limine_module_request g_module_request = {
+    .id = LIMINE_MODULE_REQUEST_ID,
+    .revision = 0,
+    .response = nullptr,
+    .internal_module_count = 0,
+    .internal_modules = nullptr,
+};
+
 [[gnu::used, gnu::section(".limine_requests_end_marker")]]
 volatile uint64_t g_limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
@@ -127,6 +136,12 @@ boot::BootInfo build_boot_info() {
         info.framebuffer.pitch = framebuffer->pitch;
         info.framebuffer.bpp = framebuffer->bpp;
         info.framebuffer.available = true;
+    }
+
+    if (g_module_request.response != nullptr && g_module_request.response->module_count != 0) {
+        limine_file* module = g_module_request.response->modules[0];
+        info.initramfs_address = module->address;
+        info.initramfs_size = module->size;
     }
 
     if (g_memmap_request.response != nullptr) {

@@ -1,6 +1,8 @@
 #include "kernel/timer.hpp"
 
 #include "kernel/cpu.hpp"
+#include "kernel/process.hpp"
+#include "kernel/ps2.hpp"
 
 namespace {
 
@@ -11,10 +13,6 @@ constexpr uint32_t kPeriodicInitialCount = 50000;
 volatile uint64_t g_ticks = 0;
 uint32_t g_frequency_hz = 0;
 timer::Backend g_backend = timer::Backend::none;
-
-void local_apic_timer_handler() {
-    g_ticks = g_ticks + 1;
-}
 
 } // namespace
 
@@ -33,13 +31,6 @@ void initialize(uint32_t frequency_hz) {
         return;
     }
 
-    if (!arch::x86_64::register_interrupt_handler(
-            kTimerVector,
-            local_apic_timer_handler,
-            arch::x86_64::InterruptEoi::local_apic)) {
-        return;
-    }
-
     if (!arch::x86_64::local_apic_start_periodic_timer(
             kTimerVector,
             kPeriodicInitialCount,
@@ -47,7 +38,6 @@ void initialize(uint32_t frequency_hz) {
         return;
     }
 
-    arch::x86_64::enable_interrupts();
     g_backend = Backend::local_apic;
 }
 
@@ -70,4 +60,15 @@ void wait_ticks(uint64_t tick_count) {
     }
 }
 
+process::SavedContext* handle_interrupt(process::SavedContext* context) {
+    g_ticks = g_ticks + 1;
+    ps2::poll();
+    arch::x86_64::acknowledge_local_apic_interrupt();
+    return process::handle_timer_tick(context);
+}
+
 } // namespace timer
+
+extern "C" process::SavedContext* savanxp_handle_timer_interrupt(process::SavedContext* context) {
+    return timer::handle_interrupt(context);
+}

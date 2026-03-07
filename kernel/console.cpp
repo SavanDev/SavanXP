@@ -3,30 +3,48 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/string.hpp"
+
 namespace {
 
 constexpr uint16_t kCom1Port = 0x3f8;
 constexpr uint16_t kDebugConPort = 0x00e9;
-constexpr uint32_t kBackgroundTop = 0x00111b20U;
-constexpr uint32_t kBackgroundBottom = 0x00070d10U;
-constexpr uint32_t kPanelColour = 0x0014252cU;
-constexpr uint32_t kPanelAccent = 0x001f8b4cU;
-constexpr uint32_t kPanelAccentMuted = 0x0011452aU;
-constexpr uint32_t kPrimaryText = 0x00f1f7f2U;
-constexpr uint32_t kSecondaryText = 0x0096c9aaU;
+constexpr uint32_t kBackground = 0x00060b10U;
+constexpr uint32_t kHeader = 0x00133b2dU;
+constexpr uint32_t kText = 0x00d5f4dfU;
+constexpr uint32_t kCursor = 0x0027d37bU;
+constexpr uint32_t kShadow = 0x00020406U;
+constexpr uint32_t kPaddingX = 16;
+constexpr uint32_t kPaddingY = 18;
+constexpr uint32_t kScale = 2;
+constexpr uint32_t kGlyphWidth = 5;
+constexpr uint32_t kGlyphHeight = 7;
+constexpr uint32_t kCellWidth = (kGlyphWidth + 1) * kScale;
+constexpr uint32_t kCellHeight = (kGlyphHeight + 1) * kScale;
+constexpr size_t kMaxColumns = 128;
+constexpr size_t kMaxRows = 64;
 
 struct Glyph {
     char character;
-    uint8_t rows[7];
+    uint8_t rows[kGlyphHeight];
 };
 
 constexpr Glyph kGlyphs[] = {
     {' ', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+    {'!', {0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04}},
+    {'"', {0x0a, 0x0a, 0x0a, 0x00, 0x00, 0x00, 0x00}},
+    {'#', {0x0a, 0x1f, 0x0a, 0x0a, 0x1f, 0x0a, 0x00}},
+    {'(', {0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02}},
+    {')', {0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08}},
+    {'*', {0x00, 0x04, 0x15, 0x0e, 0x15, 0x04, 0x00}},
     {'+', {0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00}},
+    {',', {0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c, 0x08}},
     {'-', {0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00}},
     {'.', {0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c}},
     {'/', {0x01, 0x02, 0x04, 0x08, 0x10, 0x00, 0x00}},
-    {':', {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00}},
+    {'<', {0x01, 0x02, 0x04, 0x08, 0x04, 0x02, 0x01}},
+    {':', {0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00}},
+    {'>', {0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10}},
     {'0', {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e}},
     {'1', {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e}},
     {'2', {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f}},
@@ -37,6 +55,8 @@ constexpr Glyph kGlyphs[] = {
     {'7', {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}},
     {'8', {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e}},
     {'9', {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e}},
+    {'=', {0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00, 0x00}},
+    {'?', {0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04}},
     {'A', {0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11}},
     {'B', {0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e}},
     {'C', {0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e}},
@@ -63,10 +83,47 @@ constexpr Glyph kGlyphs[] = {
     {'X', {0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11}},
     {'Y', {0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04}},
     {'Z', {0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f}},
+    {'[', {0x0e, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0e}},
+    {'\\', {0x10, 0x08, 0x04, 0x02, 0x01, 0x00, 0x00}},
+    {']', {0x0e, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0e}},
+    {'_', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f}},
+    {'|', {0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
+    {'a', {0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11}},
+    {'b', {0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e}},
+    {'c', {0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e}},
+    {'d', {0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e}},
+    {'e', {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f}},
+    {'f', {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10}},
+    {'g', {0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f}},
+    {'h', {0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11}},
+    {'i', {0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f}},
+    {'j', {0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0e}},
+    {'k', {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}},
+    {'l', {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f}},
+    {'m', {0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11}},
+    {'n', {0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11}},
+    {'o', {0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e}},
+    {'p', {0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10}},
+    {'q', {0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d}},
+    {'r', {0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11}},
+    {'s', {0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e}},
+    {'t', {0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
+    {'u', {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e}},
+    {'v', {0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04}},
+    {'w', {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a}},
+    {'x', {0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11}},
+    {'y', {0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04}},
+    {'z', {0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f}},
 };
 
 bool g_serial_ready = false;
 boot::FramebufferInfo g_framebuffer = {};
+char g_cells[kMaxRows][kMaxColumns] = {};
+size_t g_columns = 0;
+size_t g_rows = 0;
+size_t g_cursor_row = 0;
+size_t g_cursor_column = 0;
+bool g_cursor_drawn = false;
 
 inline void out8(uint16_t port, uint8_t value) {
     asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -76,12 +133,6 @@ inline uint8_t in8(uint16_t port) {
     uint8_t value = 0;
     asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
     return value;
-}
-
-char to_upper(char value) {
-    return (value >= 'a' && value <= 'z')
-        ? static_cast<char>(value - ('a' - 'A'))
-        : value;
 }
 
 void serial_write_char(char value) {
@@ -101,7 +152,6 @@ void plot_pixel(uint64_t x, uint64_t y, uint32_t colour) {
     if (!g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
         return;
     }
-
     if (x >= g_framebuffer.width || y >= g_framebuffer.height) {
         return;
     }
@@ -112,13 +162,8 @@ void plot_pixel(uint64_t x, uint64_t y, uint32_t colour) {
 }
 
 void fill_rect(uint64_t x, uint64_t y, uint64_t width, uint64_t height, uint32_t colour) {
-    if (!g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
-        return;
-    }
-
     const uint64_t end_x = (x + width) < g_framebuffer.width ? (x + width) : g_framebuffer.width;
     const uint64_t end_y = (y + height) < g_framebuffer.height ? (y + height) : g_framebuffer.height;
-
     for (uint64_t row = y; row < end_y; ++row) {
         for (uint64_t column = x; column < end_x; ++column) {
             plot_pixel(column, row, colour);
@@ -126,109 +171,113 @@ void fill_rect(uint64_t x, uint64_t y, uint64_t width, uint64_t height, uint32_t
     }
 }
 
-uint32_t blend_channel(uint32_t from, uint32_t to, uint64_t position, uint64_t total) {
-    if (total == 0) {
-        return to;
-    }
-
-    return static_cast<uint32_t>(((from * (total - position)) + (to * position)) / total);
-}
-
-uint32_t interpolate_colour(uint32_t top, uint32_t bottom, uint64_t position, uint64_t total) {
-    const uint32_t top_blue = top & 0xff;
-    const uint32_t top_green = (top >> 8) & 0xff;
-    const uint32_t top_red = (top >> 16) & 0xff;
-    const uint32_t bottom_blue = bottom & 0xff;
-    const uint32_t bottom_green = (bottom >> 8) & 0xff;
-    const uint32_t bottom_red = (bottom >> 16) & 0xff;
-
-    return blend_channel(top_blue, bottom_blue, position, total) |
-        (blend_channel(top_green, bottom_green, position, total) << 8) |
-        (blend_channel(top_red, bottom_red, position, total) << 16);
-}
-
 void draw_background() {
     if (!g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
         return;
     }
 
-    for (uint64_t y = 0; y < g_framebuffer.height; ++y) {
-        const uint32_t colour = interpolate_colour(
-            kBackgroundTop,
-            kBackgroundBottom,
-            y,
-            g_framebuffer.height == 0 ? 1 : g_framebuffer.height
-        );
-        fill_rect(0, y, g_framebuffer.width, 1, colour);
-    }
-
-    fill_rect(0, 0, 24, g_framebuffer.height, kPanelAccent);
-    fill_rect(24, 0, 12, g_framebuffer.height, kPanelAccentMuted);
+    fill_rect(0, 0, g_framebuffer.width, g_framebuffer.height, kBackground);
+    fill_rect(0, 0, g_framebuffer.width, 6, kHeader);
+    fill_rect(0, 6, g_framebuffer.width, 2, kShadow);
+    fill_rect(0, 0, 8, g_framebuffer.height, kHeader);
 }
 
 const uint8_t* glyph_for(char character) {
-    const char glyph_key = to_upper(character);
     for (const Glyph& glyph : kGlyphs) {
-        if (glyph.character == glyph_key) {
+        if (glyph.character == character) {
             return glyph.rows;
         }
     }
-
     return kGlyphs[0].rows;
 }
 
-void draw_glyph(uint64_t x, uint64_t y, uint32_t colour, uint32_t scale, char character) {
+void draw_glyph(uint64_t x, uint64_t y, char character, uint32_t colour) {
     const uint8_t* glyph = glyph_for(character);
-    for (uint64_t row = 0; row < 7; ++row) {
-        for (uint64_t column = 0; column < 5; ++column) {
-            if ((glyph[row] & (1u << (4 - column))) == 0) {
+    for (uint64_t row = 0; row < kGlyphHeight; ++row) {
+        for (uint64_t column = 0; column < kGlyphWidth; ++column) {
+            if ((glyph[row] & (1u << (kGlyphWidth - 1 - column))) == 0) {
                 continue;
             }
-
             fill_rect(
-                x + (column * scale),
-                y + (row * scale),
-                scale,
-                scale,
+                x + (column * kScale),
+                y + (row * kScale),
+                kScale,
+                kScale,
                 colour
             );
         }
     }
 }
 
-void draw_text(uint64_t x, uint64_t y, uint32_t colour, uint32_t scale, const char* text) {
-    if (text == nullptr) {
+void erase_cursor() {
+    if (!g_cursor_drawn || !g_framebuffer.available) {
         return;
     }
 
-    uint64_t cursor_x = x;
-    for (const char* cursor = text; *cursor != '\0'; ++cursor) {
-        draw_glyph(cursor_x, y, colour, scale, *cursor);
-        cursor_x += 6 * scale;
+    const uint64_t x = kPaddingX + (g_cursor_column * kCellWidth);
+    const uint64_t y = kPaddingY + (g_cursor_row * kCellHeight) + (kCellHeight - 3);
+    fill_rect(x, y, kCellWidth - 2, 2, kBackground);
+    g_cursor_drawn = false;
+}
+
+void render_cell(size_t row, size_t column) {
+    if (!g_framebuffer.available || row >= g_rows || column >= g_columns) {
+        return;
     }
+
+    const uint64_t x = kPaddingX + (column * kCellWidth);
+    const uint64_t y = kPaddingY + (row * kCellHeight);
+    fill_rect(x, y, kCellWidth, kCellHeight, kBackground);
+    draw_glyph(x, y, g_cells[row][column], kText);
 }
 
-void draw_card(uint64_t x, uint64_t y, uint64_t width, uint64_t height, const char* text) {
-    fill_rect(x + 6, y + 6, width, height, 0x0003080aU);
-    fill_rect(x, y, width, height, kPanelColour);
-    fill_rect(x, y, 8, height, kPanelAccent);
-    draw_text(x + 22, y + 14, kPrimaryText, 2, text);
+void draw_cursor() {
+    if (!g_framebuffer.available || g_cursor_row >= g_rows || g_cursor_column >= g_columns) {
+        return;
+    }
+
+    const uint64_t x = kPaddingX + (g_cursor_column * kCellWidth);
+    const uint64_t y = kPaddingY + (g_cursor_row * kCellHeight) + (kCellHeight - 3);
+    fill_rect(x, y, kCellWidth - 2, 2, kCursor);
+    g_cursor_drawn = true;
 }
 
-void framebuffer_fill(uint32_t colour) {
-    fill_rect(0, 0, g_framebuffer.width, g_framebuffer.height, colour);
-}
-
-void framebuffer_draw_boot_mark() {
+void redraw_all() {
     if (!g_framebuffer.available) {
         return;
     }
 
-    const uint64_t band_height = g_framebuffer.height > 24 ? 24 : g_framebuffer.height;
-    for (uint64_t x = 0; x < g_framebuffer.width; ++x) {
-        const uint32_t colour = (x % 32 < 16) ? kPanelAccent : kPanelAccentMuted;
-        fill_rect(x, 0, 1, band_height, colour);
+    draw_background();
+    for (size_t row = 0; row < g_rows; ++row) {
+        for (size_t column = 0; column < g_columns; ++column) {
+            render_cell(row, column);
+        }
     }
+    draw_cursor();
+}
+
+void scroll_up() {
+    if (g_rows == 0) {
+        return;
+    }
+
+    erase_cursor();
+    for (size_t row = 1; row < g_rows; ++row) {
+        memcpy(g_cells[row - 1], g_cells[row], g_columns);
+    }
+    memset(g_cells[g_rows - 1], ' ', g_columns);
+    g_cursor_row = g_rows - 1;
+    redraw_all();
+}
+
+void newline() {
+    erase_cursor();
+    g_cursor_column = 0;
+    ++g_cursor_row;
+    if (g_cursor_row >= g_rows) {
+        scroll_up();
+    }
+    draw_cursor();
 }
 
 void write_unsigned(uint64_t value, uint32_t base) {
@@ -236,7 +285,7 @@ void write_unsigned(uint64_t value, uint32_t base) {
     size_t index = 0;
 
     if (value == 0) {
-        serial_write_char('0');
+        console::write_char('0');
         return;
     }
 
@@ -247,17 +296,16 @@ void write_unsigned(uint64_t value, uint32_t base) {
     }
 
     while (index > 0) {
-        serial_write_char(buffer[--index]);
+        console::write_char(buffer[--index]);
     }
 }
 
 void write_signed(int64_t value) {
     if (value < 0) {
-        serial_write_char('-');
+        console::write_char('-');
         write_unsigned(static_cast<uint64_t>(-value), 10);
         return;
     }
-
     write_unsigned(static_cast<uint64_t>(value), 10);
 }
 
@@ -278,10 +326,81 @@ void early_init() {
 
 void init(const boot::BootInfo& boot_info) {
     g_framebuffer = boot_info.framebuffer;
-    if (g_framebuffer.available) {
-        framebuffer_fill(kBackgroundTop);
-        framebuffer_draw_boot_mark();
+    memset(g_cells, ' ', sizeof(g_cells));
+    g_cursor_row = 0;
+    g_cursor_column = 0;
+    g_cursor_drawn = false;
+
+    if (g_framebuffer.available && g_framebuffer.width > (kPaddingX * 2) && g_framebuffer.height > (kPaddingY * 2)) {
+        g_columns = (g_framebuffer.width - (kPaddingX * 2)) / kCellWidth;
+        g_rows = (g_framebuffer.height - (kPaddingY * 2)) / kCellHeight;
+        if (g_columns > kMaxColumns) {
+            g_columns = kMaxColumns;
+        }
+        if (g_rows > kMaxRows) {
+            g_rows = kMaxRows;
+        }
+        redraw_all();
     }
+}
+
+void clear() {
+    memset(g_cells, ' ', sizeof(g_cells));
+    g_cursor_row = 0;
+    g_cursor_column = 0;
+    g_cursor_drawn = false;
+    redraw_all();
+}
+
+void write_char(char character) {
+    if (character == '\r') {
+        return;
+    }
+
+    if (character == '\n') {
+        serial_write_char('\r');
+        serial_write_char('\n');
+        newline();
+        return;
+    }
+
+    if (character == '\b') {
+        serial_write_char('\b');
+        serial_write_char(' ');
+        serial_write_char('\b');
+
+        if (g_cursor_column == 0) {
+            return;
+        }
+
+        erase_cursor();
+        --g_cursor_column;
+        g_cells[g_cursor_row][g_cursor_column] = ' ';
+        render_cell(g_cursor_row, g_cursor_column);
+        draw_cursor();
+        return;
+    }
+
+    serial_write_char(character);
+
+    if (!g_framebuffer.available || g_rows == 0 || g_columns == 0) {
+        return;
+    }
+
+    erase_cursor();
+    if (g_cursor_column >= g_columns) {
+        newline();
+        erase_cursor();
+    }
+
+    g_cells[g_cursor_row][g_cursor_column] = character;
+    render_cell(g_cursor_row, g_cursor_column);
+    ++g_cursor_column;
+    if (g_cursor_column >= g_columns) {
+        newline();
+        return;
+    }
+    draw_cursor();
 }
 
 void write(const char* text) {
@@ -290,35 +409,29 @@ void write(const char* text) {
     }
 
     for (const char* cursor = text; *cursor != '\0'; ++cursor) {
-        if (*cursor == '\n') {
-            serial_write_char('\r');
-        }
-        serial_write_char(*cursor);
+        write_char(*cursor);
     }
 }
 
 void write_line(const char* text) {
     write(text);
-    write("\n");
+    write_char('\n');
 }
 
 void vprintf(const char* format, va_list args) {
     for (const char* cursor = format; *cursor != '\0'; ++cursor) {
         if (*cursor != '%') {
-            if (*cursor == '\n') {
-                serial_write_char('\r');
-            }
-            serial_write_char(*cursor);
+            write_char(*cursor);
             continue;
         }
 
         ++cursor;
         switch (*cursor) {
             case '%':
-                serial_write_char('%');
+                write_char('%');
                 break;
             case 'c':
-                serial_write_char(static_cast<char>(va_arg(args, int)));
+                write_char(static_cast<char>(va_arg(args, int)));
                 break;
             case 's': {
                 const char* string = va_arg(args, const char*);
@@ -332,6 +445,9 @@ void vprintf(const char* format, va_list args) {
             case 'u':
                 write_unsigned(va_arg(args, unsigned int), 10);
                 break;
+            case 'x':
+                write_unsigned(va_arg(args, unsigned int), 16);
+                break;
             case 'l':
                 ++cursor;
                 if (*cursor == 'l') {
@@ -340,19 +456,12 @@ void vprintf(const char* format, va_list args) {
                         write_unsigned(va_arg(args, uint64_t), 10);
                     } else if (*cursor == 'x') {
                         write_unsigned(va_arg(args, uint64_t), 16);
-                    } else {
-                        write("<?>");
                     }
                 } else if (*cursor == 'u') {
                     write_unsigned(va_arg(args, unsigned long), 10);
                 } else if (*cursor == 'x') {
                     write_unsigned(va_arg(args, unsigned long), 16);
-                } else {
-                    write("<?>");
                 }
-                break;
-            case 'x':
-                write_unsigned(va_arg(args, unsigned int), 16);
                 break;
             case 'p':
                 write("0x");
@@ -370,32 +479,6 @@ void printf(const char* format, ...) {
     va_start(args, format);
     vprintf(format, args);
     va_end(args);
-}
-
-void show_welcome_screen(const char* const* lines, size_t line_count) {
-    if (!g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
-        return;
-    }
-
-    draw_background();
-
-    fill_rect(54, 44, g_framebuffer.width > 120 ? (g_framebuffer.width - 108) : g_framebuffer.width, 162, 0x00050a0cU);
-    fill_rect(48, 38, g_framebuffer.width > 120 ? (g_framebuffer.width - 108) : g_framebuffer.width, 162, kPanelColour);
-    fill_rect(48, 38, 10, 162, kPanelAccent);
-
-    draw_text(78, 60, kSecondaryText, 2, "WELCOME TO");
-    draw_text(78, 94, kPrimaryText, 5, "SAVANXP");
-    draw_text(78, 158, kSecondaryText, 2, "AI BUILT HOBBY OS EXPERIMENT");
-
-    draw_text(78, 226, kSecondaryText, 2, "CURRENT MILESTONES");
-
-    uint64_t card_y = 268;
-    for (size_t index = 0; index < line_count; ++index) {
-        draw_card(78, card_y, g_framebuffer.width > 180 ? (g_framebuffer.width - 156) : g_framebuffer.width, 44, lines[index]);
-        card_y += 54;
-    }
-
-    draw_text(78, card_y + 18, kSecondaryText, 2, "SERIAL CONSOLE ACTIVE");
 }
 
 } // namespace console

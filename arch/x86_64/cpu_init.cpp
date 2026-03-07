@@ -2,16 +2,19 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/process.hpp"
 
 namespace {
 
 constexpr uint16_t kKernelCodeSelector = 0x08;
 constexpr uint16_t kKernelDataSelector = 0x10;
+constexpr uint16_t kTssSelector = 0x28;
 constexpr uint8_t kIrqCount = 16;
 constexpr uint8_t kPicVectorBase = 32;
-constexpr uint8_t kLocalApicTimerVector = 48;
-constexpr uint8_t kIdtEntryCount = kLocalApicTimerVector + 1;
+constexpr uint8_t kSyscallVector = 0x80;
+constexpr uint16_t kIdtEntryCount = 129;
 constexpr uint8_t kInterruptGate = 0x8e;
+constexpr uint8_t kUserInterruptGate = 0xee;
 constexpr uint16_t kPicMasterCommand = 0x20;
 constexpr uint16_t kPicMasterData = 0x21;
 constexpr uint16_t kPicSlaveCommand = 0xa0;
@@ -29,6 +32,9 @@ constexpr uint32_t kApicCurrentCount = 0x390;
 constexpr uint32_t kApicDivideConfiguration = 0x3e0;
 constexpr uint32_t kApicSoftwareEnable = 1u << 8;
 constexpr uint32_t kApicTimerPeriodic = 1u << 17;
+
+extern "C" void x86_64_syscall_entry();
+extern "C" void x86_64_timer_entry();
 
 struct [[gnu::packed]] GdtDescriptor {
     uint16_t limit;
@@ -50,6 +56,24 @@ struct [[gnu::packed]] IdtEntry {
     uint32_t zero;
 };
 
+struct [[gnu::packed]] Tss {
+    uint32_t reserved0;
+    uint64_t rsp0;
+    uint64_t rsp1;
+    uint64_t rsp2;
+    uint64_t reserved1;
+    uint64_t ist1;
+    uint64_t ist2;
+    uint64_t ist3;
+    uint64_t ist4;
+    uint64_t ist5;
+    uint64_t ist6;
+    uint64_t ist7;
+    uint64_t reserved2;
+    uint16_t reserved3;
+    uint16_t iomap_base;
+};
+
 struct InterruptFrame {
     uint64_t rip;
     uint64_t cs;
@@ -67,12 +91,17 @@ struct ExternalHandlerSlot {
     InterruptEoi eoi;
 };
 
-uint64_t g_gdt[] = {
+uint64_t g_gdt[7] = {
     0x0000000000000000ULL,
     0x00af9a000000ffffULL,
     0x00af92000000ffffULL,
+    0x00aff2000000ffffULL,
+    0x00affa000000ffffULL,
+    0,
+    0,
 };
 
+Tss g_tss = {};
 GdtDescriptor g_gdt_descriptor = {
     .limit = static_cast<uint16_t>(sizeof(g_gdt) - 1),
     .base = reinterpret_cast<uint64_t>(&g_gdt[0]),
@@ -105,11 +134,7 @@ void io_wait() {
 }
 
 void cpuid(uint32_t leaf, uint32_t subleaf, uint32_t& eax, uint32_t& ebx, uint32_t& ecx, uint32_t& edx) {
-    asm volatile(
-        "cpuid"
-        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-        : "a"(leaf), "c"(subleaf)
-    );
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(leaf), "c"(subleaf));
 }
 
 uint64_t read_msr(uint32_t msr) {
@@ -120,7 +145,7 @@ uint64_t read_msr(uint32_t msr) {
 }
 
 void write_msr(uint32_t msr, uint64_t value) {
-    const uint32_t low = static_cast<uint32_t>(value & 0xffffffffULL);
+    const uint32_t low = static_cast<uint32_t>(value);
     const uint32_t high = static_cast<uint32_t>(value >> 32);
     asm volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
 }
@@ -146,38 +171,11 @@ void local_apic_eoi() {
 const char* exception_name(uint8_t vector) {
     switch (vector) {
         case 0: return "divide error";
-        case 1: return "debug";
-        case 2: return "non-maskable interrupt";
         case 3: return "breakpoint";
-        case 4: return "overflow";
-        case 5: return "bound range exceeded";
         case 6: return "invalid opcode";
-        case 7: return "device not available";
-        case 8: return "double fault";
-        case 9: return "coprocessor segment overrun";
-        case 10: return "invalid tss";
-        case 11: return "segment not present";
-        case 12: return "stack-segment fault";
         case 13: return "general protection fault";
         case 14: return "page fault";
-        case 15: return "reserved";
-        case 16: return "x87 floating-point";
-        case 17: return "alignment check";
-        case 18: return "machine check";
-        case 19: return "simd floating-point";
-        case 20: return "virtualization";
-        case 21: return "control protection";
-        case 22: return "reserved";
-        case 23: return "reserved";
-        case 24: return "reserved";
-        case 25: return "reserved";
-        case 26: return "reserved";
-        case 27: return "reserved";
-        case 28: return "hypervisor injection";
-        case 29: return "vmm communication";
-        case 30: return "security";
-        case 31: return "reserved";
-        default: return "unknown";
+        default: return "exception";
     }
 }
 
@@ -187,12 +185,7 @@ uint64_t read_cr2() {
     return value;
 }
 
-[[noreturn]] void stop_on_exception(
-    uint8_t vector,
-    InterruptFrame* frame,
-    uint64_t error_code,
-    bool has_error_code
-) {
+[[noreturn]] void stop_on_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code, bool has_error_code) {
     console::write_line("");
     console::printf("exception: #%u %s\n", static_cast<unsigned>(vector), exception_name(vector));
     if (has_error_code) {
@@ -210,15 +203,16 @@ uint64_t read_cr2() {
     arch::x86_64::halt_forever();
 }
 
-void handle_exception(
-    uint8_t vector,
-    InterruptFrame* frame,
-    uint64_t error_code,
-    bool has_error_code
-) {
+void handle_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code, bool has_error_code) {
     if (vector == 3 && g_breakpoint_probe_active) {
         g_breakpoint_probe_hits = g_breakpoint_probe_hits + 1;
         return;
+    }
+
+    if (frame != nullptr && (frame->cs & 0x3) == 0x3 && process::current() != nullptr) {
+        (void)error_code;
+        (void)has_error_code;
+        process::terminate_current_from_exception(vector);
     }
 
     stop_on_exception(vector, frame, error_code, has_error_code);
@@ -254,17 +248,29 @@ void dispatch_external_vector(uint8_t vector) {
     }
 }
 
-void set_idt_gate(uint8_t vector, InterruptHandler handler) {
+void set_idt_gate(uint8_t vector, InterruptHandler handler, uint8_t attributes) {
     const uint64_t address = reinterpret_cast<uint64_t>(handler);
     g_idt[vector] = {
         .offset_low = static_cast<uint16_t>(address & 0xffff),
         .selector = kKernelCodeSelector,
         .ist = 0,
-        .type_attributes = kInterruptGate,
+        .type_attributes = attributes,
         .offset_mid = static_cast<uint16_t>((address >> 16) & 0xffff),
         .offset_high = static_cast<uint32_t>((address >> 32) & 0xffffffff),
         .zero = 0,
     };
+}
+
+void install_tss_descriptor() {
+    const uint64_t base = reinterpret_cast<uint64_t>(&g_tss);
+    const uint64_t limit = sizeof(g_tss) - 1;
+    g_gdt[5] = (limit & 0xffffULL) |
+        ((base & 0xffffffULL) << 16) |
+        (0x89ULL << 40) |
+        (((limit >> 16) & 0xfULL) << 48) |
+        (((base >> 24) & 0xffULL) << 56);
+    g_gdt[6] = base >> 32;
+    g_tss.iomap_base = sizeof(g_tss);
 }
 
 void load_gdt() {
@@ -287,6 +293,8 @@ void load_gdt() {
           "i"(static_cast<uint64_t>(kKernelCodeSelector))
         : "rax", "memory"
     );
+
+    asm volatile("ltr %0" : : "r"(kTssSelector) : "memory");
 }
 
 void load_idt() {
@@ -338,6 +346,12 @@ void run_breakpoint_probe() {
         handle_exception(VECTOR, frame, error_code, true); \
     }
 
+#define DEFINE_EXTERNAL_ISR(VECTOR) \
+    __attribute__((interrupt)) void vector_##VECTOR(InterruptFrame* frame) { \
+        (void)frame; \
+        dispatch_external_vector(VECTOR); \
+    }
+
 DEFINE_ISR_NOERR(0)
 DEFINE_ISR_NOERR(1)
 DEFINE_ISR_NOERR(2)
@@ -371,12 +385,6 @@ DEFINE_ISR_ERR(29)
 DEFINE_ISR_ERR(30)
 DEFINE_ISR_NOERR(31)
 
-#define DEFINE_EXTERNAL_ISR(VECTOR) \
-    __attribute__((interrupt)) void vector_##VECTOR(InterruptFrame* frame) { \
-        (void)frame; \
-        dispatch_external_vector(VECTOR); \
-    }
-
 DEFINE_EXTERNAL_ISR(32)
 DEFINE_EXTERNAL_ISR(33)
 DEFINE_EXTERNAL_ISR(34)
@@ -393,62 +401,61 @@ DEFINE_EXTERNAL_ISR(44)
 DEFINE_EXTERNAL_ISR(45)
 DEFINE_EXTERNAL_ISR(46)
 DEFINE_EXTERNAL_ISR(47)
-DEFINE_EXTERNAL_ISR(48)
-
 #undef DEFINE_ISR_NOERR
 #undef DEFINE_ISR_ERR
 #undef DEFINE_EXTERNAL_ISR
 
 void initialize_idt() {
-    set_idt_gate(0, reinterpret_cast<InterruptHandler>(isr_0));
-    set_idt_gate(1, reinterpret_cast<InterruptHandler>(isr_1));
-    set_idt_gate(2, reinterpret_cast<InterruptHandler>(isr_2));
-    set_idt_gate(3, reinterpret_cast<InterruptHandler>(isr_3));
-    set_idt_gate(4, reinterpret_cast<InterruptHandler>(isr_4));
-    set_idt_gate(5, reinterpret_cast<InterruptHandler>(isr_5));
-    set_idt_gate(6, reinterpret_cast<InterruptHandler>(isr_6));
-    set_idt_gate(7, reinterpret_cast<InterruptHandler>(isr_7));
-    set_idt_gate(8, reinterpret_cast<InterruptHandler>(isr_8));
-    set_idt_gate(9, reinterpret_cast<InterruptHandler>(isr_9));
-    set_idt_gate(10, reinterpret_cast<InterruptHandler>(isr_10));
-    set_idt_gate(11, reinterpret_cast<InterruptHandler>(isr_11));
-    set_idt_gate(12, reinterpret_cast<InterruptHandler>(isr_12));
-    set_idt_gate(13, reinterpret_cast<InterruptHandler>(isr_13));
-    set_idt_gate(14, reinterpret_cast<InterruptHandler>(isr_14));
-    set_idt_gate(15, reinterpret_cast<InterruptHandler>(isr_15));
-    set_idt_gate(16, reinterpret_cast<InterruptHandler>(isr_16));
-    set_idt_gate(17, reinterpret_cast<InterruptHandler>(isr_17));
-    set_idt_gate(18, reinterpret_cast<InterruptHandler>(isr_18));
-    set_idt_gate(19, reinterpret_cast<InterruptHandler>(isr_19));
-    set_idt_gate(20, reinterpret_cast<InterruptHandler>(isr_20));
-    set_idt_gate(21, reinterpret_cast<InterruptHandler>(isr_21));
-    set_idt_gate(22, reinterpret_cast<InterruptHandler>(isr_22));
-    set_idt_gate(23, reinterpret_cast<InterruptHandler>(isr_23));
-    set_idt_gate(24, reinterpret_cast<InterruptHandler>(isr_24));
-    set_idt_gate(25, reinterpret_cast<InterruptHandler>(isr_25));
-    set_idt_gate(26, reinterpret_cast<InterruptHandler>(isr_26));
-    set_idt_gate(27, reinterpret_cast<InterruptHandler>(isr_27));
-    set_idt_gate(28, reinterpret_cast<InterruptHandler>(isr_28));
-    set_idt_gate(29, reinterpret_cast<InterruptHandler>(isr_29));
-    set_idt_gate(30, reinterpret_cast<InterruptHandler>(isr_30));
-    set_idt_gate(31, reinterpret_cast<InterruptHandler>(isr_31));
-    set_idt_gate(32, reinterpret_cast<InterruptHandler>(vector_32));
-    set_idt_gate(33, reinterpret_cast<InterruptHandler>(vector_33));
-    set_idt_gate(34, reinterpret_cast<InterruptHandler>(vector_34));
-    set_idt_gate(35, reinterpret_cast<InterruptHandler>(vector_35));
-    set_idt_gate(36, reinterpret_cast<InterruptHandler>(vector_36));
-    set_idt_gate(37, reinterpret_cast<InterruptHandler>(vector_37));
-    set_idt_gate(38, reinterpret_cast<InterruptHandler>(vector_38));
-    set_idt_gate(39, reinterpret_cast<InterruptHandler>(vector_39));
-    set_idt_gate(40, reinterpret_cast<InterruptHandler>(vector_40));
-    set_idt_gate(41, reinterpret_cast<InterruptHandler>(vector_41));
-    set_idt_gate(42, reinterpret_cast<InterruptHandler>(vector_42));
-    set_idt_gate(43, reinterpret_cast<InterruptHandler>(vector_43));
-    set_idt_gate(44, reinterpret_cast<InterruptHandler>(vector_44));
-    set_idt_gate(45, reinterpret_cast<InterruptHandler>(vector_45));
-    set_idt_gate(46, reinterpret_cast<InterruptHandler>(vector_46));
-    set_idt_gate(47, reinterpret_cast<InterruptHandler>(vector_47));
-    set_idt_gate(48, reinterpret_cast<InterruptHandler>(vector_48));
+    set_idt_gate(0, reinterpret_cast<InterruptHandler>(isr_0), kInterruptGate);
+    set_idt_gate(1, reinterpret_cast<InterruptHandler>(isr_1), kInterruptGate);
+    set_idt_gate(2, reinterpret_cast<InterruptHandler>(isr_2), kInterruptGate);
+    set_idt_gate(3, reinterpret_cast<InterruptHandler>(isr_3), kInterruptGate);
+    set_idt_gate(4, reinterpret_cast<InterruptHandler>(isr_4), kInterruptGate);
+    set_idt_gate(5, reinterpret_cast<InterruptHandler>(isr_5), kInterruptGate);
+    set_idt_gate(6, reinterpret_cast<InterruptHandler>(isr_6), kInterruptGate);
+    set_idt_gate(7, reinterpret_cast<InterruptHandler>(isr_7), kInterruptGate);
+    set_idt_gate(8, reinterpret_cast<InterruptHandler>(isr_8), kInterruptGate);
+    set_idt_gate(9, reinterpret_cast<InterruptHandler>(isr_9), kInterruptGate);
+    set_idt_gate(10, reinterpret_cast<InterruptHandler>(isr_10), kInterruptGate);
+    set_idt_gate(11, reinterpret_cast<InterruptHandler>(isr_11), kInterruptGate);
+    set_idt_gate(12, reinterpret_cast<InterruptHandler>(isr_12), kInterruptGate);
+    set_idt_gate(13, reinterpret_cast<InterruptHandler>(isr_13), kInterruptGate);
+    set_idt_gate(14, reinterpret_cast<InterruptHandler>(isr_14), kInterruptGate);
+    set_idt_gate(15, reinterpret_cast<InterruptHandler>(isr_15), kInterruptGate);
+    set_idt_gate(16, reinterpret_cast<InterruptHandler>(isr_16), kInterruptGate);
+    set_idt_gate(17, reinterpret_cast<InterruptHandler>(isr_17), kInterruptGate);
+    set_idt_gate(18, reinterpret_cast<InterruptHandler>(isr_18), kInterruptGate);
+    set_idt_gate(19, reinterpret_cast<InterruptHandler>(isr_19), kInterruptGate);
+    set_idt_gate(20, reinterpret_cast<InterruptHandler>(isr_20), kInterruptGate);
+    set_idt_gate(21, reinterpret_cast<InterruptHandler>(isr_21), kInterruptGate);
+    set_idt_gate(22, reinterpret_cast<InterruptHandler>(isr_22), kInterruptGate);
+    set_idt_gate(23, reinterpret_cast<InterruptHandler>(isr_23), kInterruptGate);
+    set_idt_gate(24, reinterpret_cast<InterruptHandler>(isr_24), kInterruptGate);
+    set_idt_gate(25, reinterpret_cast<InterruptHandler>(isr_25), kInterruptGate);
+    set_idt_gate(26, reinterpret_cast<InterruptHandler>(isr_26), kInterruptGate);
+    set_idt_gate(27, reinterpret_cast<InterruptHandler>(isr_27), kInterruptGate);
+    set_idt_gate(28, reinterpret_cast<InterruptHandler>(isr_28), kInterruptGate);
+    set_idt_gate(29, reinterpret_cast<InterruptHandler>(isr_29), kInterruptGate);
+    set_idt_gate(30, reinterpret_cast<InterruptHandler>(isr_30), kInterruptGate);
+    set_idt_gate(31, reinterpret_cast<InterruptHandler>(isr_31), kInterruptGate);
+    set_idt_gate(32, reinterpret_cast<InterruptHandler>(vector_32), kInterruptGate);
+    set_idt_gate(33, reinterpret_cast<InterruptHandler>(vector_33), kInterruptGate);
+    set_idt_gate(34, reinterpret_cast<InterruptHandler>(vector_34), kInterruptGate);
+    set_idt_gate(35, reinterpret_cast<InterruptHandler>(vector_35), kInterruptGate);
+    set_idt_gate(36, reinterpret_cast<InterruptHandler>(vector_36), kInterruptGate);
+    set_idt_gate(37, reinterpret_cast<InterruptHandler>(vector_37), kInterruptGate);
+    set_idt_gate(38, reinterpret_cast<InterruptHandler>(vector_38), kInterruptGate);
+    set_idt_gate(39, reinterpret_cast<InterruptHandler>(vector_39), kInterruptGate);
+    set_idt_gate(40, reinterpret_cast<InterruptHandler>(vector_40), kInterruptGate);
+    set_idt_gate(41, reinterpret_cast<InterruptHandler>(vector_41), kInterruptGate);
+    set_idt_gate(42, reinterpret_cast<InterruptHandler>(vector_42), kInterruptGate);
+    set_idt_gate(43, reinterpret_cast<InterruptHandler>(vector_43), kInterruptGate);
+    set_idt_gate(44, reinterpret_cast<InterruptHandler>(vector_44), kInterruptGate);
+    set_idt_gate(45, reinterpret_cast<InterruptHandler>(vector_45), kInterruptGate);
+    set_idt_gate(46, reinterpret_cast<InterruptHandler>(vector_46), kInterruptGate);
+    set_idt_gate(47, reinterpret_cast<InterruptHandler>(vector_47), kInterruptGate);
+    set_idt_gate(48, reinterpret_cast<InterruptHandler>(x86_64_timer_entry), kInterruptGate);
+    set_idt_gate(kSyscallVector, reinterpret_cast<InterruptHandler>(x86_64_syscall_entry), kUserInterruptGate);
     load_idt();
 }
 
@@ -458,6 +465,7 @@ namespace arch::x86_64 {
 
 void initialize_cpu() {
     disable_interrupts();
+    install_tss_descriptor();
     load_gdt();
     remap_pic();
     initialize_idt();
@@ -468,7 +476,6 @@ bool register_irq_handler(uint8_t irq, IrqHandler handler) {
     if (irq >= kIrqCount) {
         return false;
     }
-
     return register_interrupt_handler(static_cast<uint8_t>(kPicVectorBase + irq), handler, InterruptEoi::pic);
 }
 
@@ -476,11 +483,7 @@ bool register_interrupt_handler(uint8_t vector, IrqHandler handler, InterruptEoi
     if (vector >= kIdtEntryCount || vector < kPicVectorBase) {
         return false;
     }
-
-    g_external_handlers[vector] = {
-        .handler = handler,
-        .eoi = eoi,
-    };
+    g_external_handlers[vector] = {.handler = handler, .eoi = eoi};
     return true;
 }
 
@@ -529,6 +532,19 @@ bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uin
     return read_local_apic(kApicCurrentCount) != 0;
 }
 
+void initialize_syscall_gate() {
+    set_idt_gate(kSyscallVector, reinterpret_cast<InterruptHandler>(x86_64_syscall_entry), kUserInterruptGate);
+    load_idt();
+}
+
+void acknowledge_local_apic_interrupt() {
+    local_apic_eoi();
+}
+
+void set_kernel_stack(uint64_t stack_top) {
+    g_tss.rsp0 = stack_top;
+}
+
 void enable_irq(uint8_t irq) {
     if (irq >= kIrqCount) {
         return;
@@ -537,7 +553,6 @@ void enable_irq(uint8_t irq) {
     const uint16_t port = irq < 8 ? kPicMasterData : kPicSlaveData;
     const uint8_t bit = irq < 8 ? irq : static_cast<uint8_t>(irq - 8);
     out8(port, static_cast<uint8_t>(in8(port) & ~(1u << bit)));
-
     if (irq >= 8) {
         out8(kPicMasterData, static_cast<uint8_t>(in8(kPicMasterData) & ~(1u << 2)));
     }
@@ -547,7 +562,6 @@ void disable_irq(uint8_t irq) {
     if (irq >= kIrqCount) {
         return;
     }
-
     const uint16_t port = irq < 8 ? kPicMasterData : kPicSlaveData;
     const uint8_t bit = irq < 8 ? irq : static_cast<uint8_t>(irq - 8);
     out8(port, static_cast<uint8_t>(in8(port) | (1u << bit)));

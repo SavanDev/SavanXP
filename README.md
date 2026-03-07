@@ -5,19 +5,27 @@ bootloader y flujo de trabajo pensado para Windows nativo.
 
 ## Estado actual
 
-El primer hito deja armado:
+El kernel ya bootea a una terminal funcional inicial:
 
-- Kernel `freestanding` en C++ con ABI de entrada propio.
 - Integracion con Limine para recibir `bootloader info`, `firmware type`,
-  `framebuffer`, `memory map` y `HHDM`.
-- Consola temprana por serie (`COM1`) con salida de depuracion.
-- Pantalla de bienvenida sobre framebuffer con resumen visual del progreso.
-- GDT/IDT basicas con manejo minimo de excepciones y self-test por `int3`.
-- Allocador fisico temprano sobre regiones `usable` del mapa de memoria.
-- Heap temprano del kernel sobre paginas del PMM.
-- Cableado de IRQs listo y timer basado en `local APIC/x2APIC` con probe de
-  interrupcion por vector dedicado.
-- Script `build.ps1` con comandos `build`, `run`, `debug` y `clean`.
+  `framebuffer`, `memory map`, `HHDM` y un modulo `initramfs`.
+- Consola de texto sobre framebuffer con scroll, cursor y salida serie
+  temprana por `COM1` / `debugcon`.
+- GDT/IDT con segmentos de usuario, `TSS`, excepciones basicas y puerta de
+  syscall por `int 0x80`.
+- Allocador fisico temprano, heap del kernel y VMM minimo para espacios de
+  usuario.
+- Driver de teclado `PS/2` por `IRQ1` y `TTY` canonica para la consola
+  foreground.
+- `VFS` minima montando un `initramfs` `cpio newc`, con archivos dinamicos en
+  memoria para redireccion simple.
+- Loader `ELF64` estatico para procesos simples en `ring 3`.
+- Userland inicial con `init`, `sh`, `echo`, `uname`, `ls`, `cat`, `sleep`,
+  `ticker` y `demo`.
+- Timer `local APIC/x2APIC` activo para tiempo base del sistema.
+- Scheduler round-robin preemptivo con bloqueo por `wait`, `read` y `sleep`.
+- Shell con `pipes` y redireccion basica (`|`, `<`, `>`).
+- Script `build.ps1` con `build`, `run`, `debug` y `clean`.
 
 ## Prerrequisitos
 
@@ -42,5 +50,5 @@ si no existe en `tools/limine`.
 ```
 
 Durante `run` y `debug`, QEMU expone la salida serie en la terminal. El kernel
-imprime un banner, datos de firmware/bootloader y un resumen del mapa de
-memoria.
+entra a una shell inicial de userland y el `debugcon` queda guardado en
+`build/debugcon.log`.

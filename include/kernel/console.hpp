@@ -8,10 +8,11 @@ namespace console {
 
 void early_init();
 void init(const boot::BootInfo& boot_info);
+void clear();
+void write_char(char character);
 void write(const char* text);
 void write_line(const char* text);
 void vprintf(const char* format, va_list args);
 void printf(const char* format, ...);
-void show_welcome_screen(const char* const* lines, size_t line_count);
 
 } // namespace console

@@ -59,6 +59,53 @@ extern "C" int memcmp(const void* left, const void* right, size_t count) {
     return 0;
 }
 
+size_t strlen(const char* text) {
+    size_t length = 0;
+    while (text != nullptr && text[length] != '\0') {
+        ++length;
+    }
+    return length;
+}
+
+int strcmp(const char* left, const char* right) {
+    size_t index = 0;
+    for (;;) {
+        const unsigned char lhs = left != nullptr ? static_cast<unsigned char>(left[index]) : 0;
+        const unsigned char rhs = right != nullptr ? static_cast<unsigned char>(right[index]) : 0;
+        if (lhs != rhs) {
+            return lhs < rhs ? -1 : 1;
+        }
+        if (lhs == 0) {
+            return 0;
+        }
+        ++index;
+    }
+}
+
+int strncmp(const char* left, const char* right, size_t count) {
+    for (size_t index = 0; index < count; ++index) {
+        const unsigned char lhs = left != nullptr ? static_cast<unsigned char>(left[index]) : 0;
+        const unsigned char rhs = right != nullptr ? static_cast<unsigned char>(right[index]) : 0;
+        if (lhs != rhs) {
+            return lhs < rhs ? -1 : 1;
+        }
+        if (lhs == 0) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
+char* strcpy(char* destination, const char* source) {
+    size_t index = 0;
+    while (source[index] != '\0') {
+        destination[index] = source[index];
+        ++index;
+    }
+    destination[index] = '\0';
+    return destination;
+}
+
 extern "C" int __cxa_atexit(void (*)(void*), void*, void*) {
     return 0;
 }
@@ -70,4 +117,3 @@ extern "C" void __cxa_pure_virtual() {
 }
 
 void* __dso_handle = nullptr;
-
