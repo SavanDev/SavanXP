@@ -152,6 +152,29 @@ void reset_process_slot(process::Process& proc) {
     proc.state = process::State::unused;
 }
 
+void release_kernel_stack(process::Process& proc) {
+    if (proc.kernel_stack_base == 0 || proc.kernel_stack_size == 0) {
+        return;
+    }
+
+    const uint64_t physical_base = proc.kernel_stack_base - vm::hhdm_offset();
+    const uint64_t page_count = proc.kernel_stack_size / memory::kPageSize;
+    (void)memory::free_pages(physical_base, page_count);
+    proc.kernel_stack_base = 0;
+    proc.kernel_stack_size = 0;
+    proc.context = nullptr;
+}
+
+void release_address_space(process::Process& proc) {
+    vm::destroy_address_space(proc.address_space);
+    proc.context = nullptr;
+}
+
+void release_process_resources(process::Process& proc) {
+    release_address_space(proc);
+    release_kernel_stack(proc);
+}
+
 bool read_from_process_memory(const process::Process& proc, void* destination, uint64_t user_address, size_t count, bool require_write = false) {
     if (destination == nullptr || count == 0) {
         return false;
@@ -263,9 +286,19 @@ void retain_open_file(process::OpenFile* file) {
     }
 }
 
+void discard_open_file(process::OpenFile*& file_ptr) {
+    if (file_ptr == nullptr) {
+        return;
+    }
+    process_assert(file_ptr->refcount == 0, "process: discard referenced open file");
+    memset(file_ptr, 0, sizeof(*file_ptr));
+    file_ptr = nullptr;
+}
+
 int install_fd(process::Process& proc, int fd, process::OpenFile* file);
 void wake_blocked_readers_for_pipe(process::Pipe& pipe);
 void wake_blocked_writers_for_pipe(process::Pipe& pipe);
+void release_all_handles(process::Process& proc);
 
 void release_open_file(process::OpenFile*& file_ptr) {
     process::OpenFile* file = file_ptr;
@@ -346,12 +379,38 @@ bool initialize_standard_handles(process::Process& proc) {
     process::OpenFile* stdout_file = create_tty_open_file(process::open_write);
     process::OpenFile* stderr_file = create_tty_open_file(process::open_write);
     if (stdin_file == nullptr || stdout_file == nullptr || stderr_file == nullptr) {
+        discard_open_file(stdin_file);
+        discard_open_file(stdout_file);
+        discard_open_file(stderr_file);
         return false;
     }
 
-    return install_fd(proc, 0, stdin_file) >= 0 &&
-        install_fd(proc, 1, stdout_file) >= 0 &&
-        install_fd(proc, 2, stderr_file) >= 0;
+    if (install_fd(proc, 0, stdin_file) < 0) {
+        discard_open_file(stdin_file);
+        discard_open_file(stdout_file);
+        discard_open_file(stderr_file);
+        return false;
+    }
+    stdin_file = nullptr;
+
+    if (install_fd(proc, 1, stdout_file) < 0) {
+        release_all_handles(proc);
+        discard_open_file(stdout_file);
+        discard_open_file(stderr_file);
+        return false;
+    }
+    stdout_file = nullptr;
+
+    if (install_fd(proc, 2, stderr_file) < 0) {
+        release_all_handles(proc);
+        discard_open_file(stdin_file);
+        discard_open_file(stdout_file);
+        discard_open_file(stderr_file);
+        return false;
+    }
+    stderr_file = nullptr;
+
+    return true;
 }
 
 bool inherit_handle(process::Process& child, int child_fd, const process::Process& parent, int parent_fd) {
@@ -394,6 +453,90 @@ process::SavedContext* fabricate_initial_context(
     return context;
 }
 
+bool load_image_bytes(const vfs::Vnode& image, const void*& data, size_t& size, memory::PageAllocation& backing) {
+    data = nullptr;
+    size = 0;
+    memset(&backing, 0, sizeof(backing));
+
+    if (image.type != vfs::NodeType::file || image.size == 0) {
+        return false;
+    }
+
+    if (image.backend == vfs::Backend::memory && image.data != nullptr) {
+        data = image.data;
+        size = image.size;
+        return true;
+    }
+
+    const uint64_t page_count = (image.size + memory::kPageSize - 1) / memory::kPageSize;
+    if (!memory::allocate_contiguous_pages(page_count, backing)) {
+        return false;
+    }
+
+    memset(backing.virtual_address, 0, page_count * memory::kPageSize);
+    const size_t copied = vfs::read(*const_cast<vfs::Vnode*>(&image), 0, backing.virtual_address, image.size);
+    if (copied != image.size) {
+        (void)memory::free_allocation(backing);
+        memset(&backing, 0, sizeof(backing));
+        return false;
+    }
+
+    data = backing.virtual_address;
+    size = image.size;
+    return true;
+}
+
+bool prepare_exec_image(process::Process& proc, const char* path, int argc, const char* const* argv) {
+    const vfs::Vnode* image = vfs::resolve(path);
+    if (image == nullptr || image->type != vfs::NodeType::file) {
+        return false;
+    }
+
+    const void* image_bytes = nullptr;
+    size_t image_size = 0;
+    memory::PageAllocation image_backing = {};
+    if (!load_image_bytes(*image, image_bytes, image_size, image_backing)) {
+        return false;
+    }
+
+    vm::VmSpace new_space = {};
+    if (!vm::create_address_space(new_space)) {
+        if (image_backing.physical_address != 0) {
+            (void)memory::free_allocation(image_backing);
+        }
+        return false;
+    }
+
+    elf::LoadResult load_result = {};
+    if (!elf::load_user_image(image_bytes, image_size, new_space, argc, argv, load_result)) {
+        vm::destroy_address_space(new_space);
+        if (image_backing.physical_address != 0) {
+            (void)memory::free_allocation(image_backing);
+        }
+        return false;
+    }
+    if (image_backing.physical_address != 0) {
+        (void)memory::free_allocation(image_backing);
+    }
+
+    vm::VmSpace old_space = proc.address_space;
+    proc.address_space = new_space;
+    vm::destroy_address_space(old_space);
+    set_process_name(proc, path);
+    proc.blocked_io_fd = 0;
+    proc.blocked_read_buffer = 0;
+    proc.blocked_read_capacity = 0;
+    proc.blocked_write_buffer = 0;
+    proc.blocked_write_length = 0;
+    proc.blocked_write_progress = 0;
+    proc.waiting_for_pid = 0;
+    proc.wait_status_address = 0;
+    proc.wake_tick = 0;
+    reset_time_slice(proc);
+    fabricate_initial_context(proc, load_result.entry_point, load_result.stack_pointer, argc, load_result.stack_pointer);
+    return true;
+}
+
 process::Process* create_idle_process() {
     process::Process* proc = allocate_process_slot(true);
     if (proc == nullptr) {
@@ -407,6 +550,7 @@ process::Process* create_idle_process() {
 
     memory::PageAllocation kernel_stack = {};
     if (!memory::allocate_contiguous_pages(kKernelStackPages, kernel_stack)) {
+        release_address_space(*proc);
         reset_process_slot(*proc);
         return nullptr;
     }
@@ -418,6 +562,13 @@ process::Process* create_idle_process() {
     memory::PageAllocation code_page = {};
     memory::PageAllocation stack_page = {};
     if (!memory::allocate_page(code_page) || !memory::allocate_page(stack_page)) {
+        if (code_page.physical_address != 0) {
+            (void)memory::free_allocation(code_page);
+        }
+        if (stack_page.physical_address != 0) {
+            (void)memory::free_allocation(stack_page);
+        }
+        release_process_resources(*proc);
         reset_process_slot(*proc);
         return nullptr;
     }
@@ -426,11 +577,20 @@ process::Process* create_idle_process() {
     memcpy(code_page.virtual_address, kIdleCode, sizeof(kIdleCode));
     memset(stack_page.virtual_address, 0, memory::kPageSize);
 
-    if (!vm::map_page(proc->address_space, kIdleCodeAddress, code_page.physical_address, vm::kPageUser) ||
-        !vm::map_page(proc->address_space,
+    const bool code_mapped = vm::map_page(proc->address_space, kIdleCodeAddress, code_page.physical_address, vm::kPageUser);
+    const bool stack_mapped = code_mapped &&
+        vm::map_page(proc->address_space,
             vm::kUserStackTop - memory::kPageSize,
             stack_page.physical_address,
-            vm::kPageUser | vm::kPageWrite)) {
+            vm::kPageUser | vm::kPageWrite);
+    if (!code_mapped || !stack_mapped) {
+        if (!code_mapped) {
+            (void)memory::free_allocation(code_page);
+            (void)memory::free_allocation(stack_page);
+        } else if (!stack_mapped) {
+            (void)memory::free_allocation(stack_page);
+        }
+        release_process_resources(*proc);
         reset_process_slot(*proc);
         return nullptr;
     }
@@ -452,20 +612,37 @@ process::Process* create_process_internal(
         return nullptr;
     }
 
+    const void* image_bytes = nullptr;
+    size_t image_size = 0;
+    memory::PageAllocation image_backing = {};
+    if (!load_image_bytes(*image, image_bytes, image_size, image_backing)) {
+        return nullptr;
+    }
+
     process::Process* proc = allocate_process_slot(false);
     if (proc == nullptr) {
+        if (image_backing.physical_address != 0) {
+            (void)memory::free_allocation(image_backing);
+        }
         return nullptr;
     }
 
     proc->parent_pid = parent != nullptr ? parent->pid : 0;
     set_process_name(*proc, path);
     if (!vm::create_address_space(proc->address_space)) {
+        if (image_backing.physical_address != 0) {
+            (void)memory::free_allocation(image_backing);
+        }
         reset_process_slot(*proc);
         return nullptr;
     }
 
     memory::PageAllocation kernel_stack = {};
     if (!memory::allocate_contiguous_pages(kKernelStackPages, kernel_stack)) {
+        if (image_backing.physical_address != 0) {
+            (void)memory::free_allocation(image_backing);
+        }
+        release_address_space(*proc);
         reset_process_slot(*proc);
         return nullptr;
     }
@@ -475,6 +652,10 @@ process::Process* create_process_internal(
 
     if (parent == nullptr) {
         if (!initialize_standard_handles(*proc)) {
+            if (image_backing.physical_address != 0) {
+                (void)memory::free_allocation(image_backing);
+            }
+            release_process_resources(*proc);
             reset_process_slot(*proc);
             return nullptr;
         }
@@ -483,16 +664,27 @@ process::Process* create_process_internal(
             !inherit_handle(*proc, 1, *parent, stdout_fd >= 0 ? stdout_fd : 1) ||
             !inherit_handle(*proc, 2, *parent, 2)) {
             release_all_handles(*proc);
+            if (image_backing.physical_address != 0) {
+                (void)memory::free_allocation(image_backing);
+            }
+            release_process_resources(*proc);
             reset_process_slot(*proc);
             return nullptr;
         }
     }
 
     elf::LoadResult load_result = {};
-    if (!elf::load_user_image(image->data, image->size, proc->address_space, argc, argv, load_result)) {
+    if (!elf::load_user_image(image_bytes, image_size, proc->address_space, argc, argv, load_result)) {
         release_all_handles(*proc);
+        if (image_backing.physical_address != 0) {
+            (void)memory::free_allocation(image_backing);
+        }
+        release_process_resources(*proc);
         reset_process_slot(*proc);
         return nullptr;
+    }
+    if (image_backing.physical_address != 0) {
+        (void)memory::free_allocation(image_backing);
     }
 
     fabricate_initial_context(*proc, load_result.entry_point, load_result.stack_pointer, argc, load_result.stack_pointer);
@@ -547,6 +739,7 @@ process::Process* find_waiting_parent_for(uint32_t child_pid) {
 void reap_process(process::Process& proc) {
     proc_log("proc: reap pid=%u\n", proc.pid);
     release_all_handles(proc);
+    release_process_resources(proc);
     reset_process_slot(proc);
 }
 
@@ -802,6 +995,15 @@ process::OpenFile* fd_to_open(process::Process& proc, uint64_t fd) {
     return proc.handles[fd].file;
 }
 
+bool vnode_has_open_references(const vfs::Vnode& node) {
+    for (const process::OpenFile& file : g_open_files) {
+        if (file.in_use && file.kind == process::HandleKind::vnode && file.node == &node) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int duplicate_fd(process::Process& proc, uint64_t oldfd) {
     process::OpenFile* file = fd_to_open(proc, oldfd);
     if (file == nullptr) {
@@ -832,10 +1034,10 @@ int close_fd(process::Process& proc, uint64_t fd) {
 int open_node(process::Process& proc, const char* path, uint32_t flags) {
     vfs::Vnode* node = vfs::open(path, flags);
     if (node == nullptr) {
-        return negative_error(SAVANXP_ENOENT);
+        return negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
     }
     if (node->type == vfs::NodeType::directory && (flags & SAVANXP_OPEN_WRITE) != 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SAVANXP_EISDIR);
     }
 
     process::OpenFile* file = allocate_open_file();
@@ -851,7 +1053,118 @@ int open_node(process::Process& proc, const char* path, uint32_t flags) {
         file->flags = process::open_read;
     }
     file->node = node;
-    return allocate_fd(proc, file);
+    if ((flags & SAVANXP_OPEN_APPEND) != 0 && node->type == vfs::NodeType::file) {
+        file->offset = node->size;
+    }
+    const int fd = allocate_fd(proc, file);
+    if (fd < 0) {
+        discard_open_file(file);
+    }
+    return fd;
+}
+
+int seek_fd(process::Process& proc, uint64_t fd, int64_t offset, uint64_t whence) {
+    process::OpenFile* file = fd_to_open(proc, fd);
+    if (file == nullptr || file->kind != process::HandleKind::vnode || file->node == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (file->node->type != vfs::NodeType::file) {
+        return negative_error(SAVANXP_EISDIR);
+    }
+
+    int64_t base = 0;
+    switch (whence) {
+        case SAVANXP_SEEK_SET:
+            break;
+        case SAVANXP_SEEK_CUR:
+            base = static_cast<int64_t>(file->offset);
+            break;
+        case SAVANXP_SEEK_END:
+            base = static_cast<int64_t>(file->node->size);
+            break;
+        default:
+            return negative_error(SAVANXP_EINVAL);
+    }
+
+    const int64_t position = base + offset;
+    if (position < 0) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    file->offset = static_cast<size_t>(position);
+    return static_cast<int>(file->offset);
+}
+
+int unlink_path(const char* path) {
+    const vfs::Vnode* node = vfs::resolve(path);
+    if (node == nullptr) {
+        return negative_error(SAVANXP_ENOENT);
+    }
+    if (node->type == vfs::NodeType::directory) {
+        return negative_error(SAVANXP_EISDIR);
+    }
+    if (vnode_has_open_references(*node)) {
+        return negative_error(SAVANXP_EBUSY);
+    }
+    if (!vfs::unlink(path)) {
+        return negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
+}
+
+int mkdir_path(const char* path) {
+    if (path == nullptr || *path == '\0') {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (vfs::mkdir(path) == nullptr) {
+        return negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
+}
+
+int rmdir_path(const char* path) {
+    const vfs::Vnode* node = vfs::resolve(path);
+    if (node == nullptr) {
+        return negative_error(SAVANXP_ENOENT);
+    }
+    if (node->type != vfs::NodeType::directory) {
+        return negative_error(SAVANXP_ENOTDIR);
+    }
+    if (vnode_has_open_references(*node)) {
+        return negative_error(SAVANXP_EBUSY);
+    }
+    if (!vfs::rmdir(path)) {
+        return negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
+}
+
+int truncate_path(const char* path, uint64_t size) {
+    const vfs::Vnode* node = vfs::resolve(path);
+    if (node == nullptr) {
+        return negative_error(SAVANXP_ENOENT);
+    }
+    if (node->type != vfs::NodeType::file) {
+        return negative_error(SAVANXP_EISDIR);
+    }
+    if (!vfs::truncate(path, static_cast<size_t>(size))) {
+        return negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
+}
+
+int rename_path(const char* old_path, const char* new_path) {
+    const vfs::Vnode* node = vfs::resolve(old_path);
+    if (node == nullptr) {
+        return negative_error(SAVANXP_ENOENT);
+    }
+    if (node->type == vfs::NodeType::directory && vnode_has_open_references(*node)) {
+        return negative_error(SAVANXP_EBUSY);
+    }
+    if (!vfs::rename(old_path, new_path)) {
+        return negative_error(static_cast<savanxp_error_code>(vfs::last_error()));
+    }
+    return 0;
 }
 
 int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity) {
@@ -1040,6 +1353,8 @@ int create_pipe(process::Process& proc, uint64_t user_fd_array) {
     process::OpenFile* reader = allocate_open_file();
     process::OpenFile* writer = allocate_open_file();
     if (reader == nullptr || writer == nullptr) {
+        discard_open_file(reader);
+        discard_open_file(writer);
         return negative_error(SAVANXP_ENOMEM);
     }
 
@@ -1054,11 +1369,15 @@ int create_pipe(process::Process& proc, uint64_t user_fd_array) {
 
     const int read_fd = allocate_fd(proc, reader);
     if (read_fd < 0) {
+        discard_open_file(reader);
+        discard_open_file(writer);
+        memset(pipe, 0, sizeof(*pipe));
         return read_fd;
     }
     const int write_fd = allocate_fd(proc, writer);
     if (write_fd < 0) {
         (void)close_fd(proc, read_fd);
+        discard_open_file(writer);
         return write_fd;
     }
 
@@ -1273,6 +1592,24 @@ SavedContext* handle_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(child != nullptr ? static_cast<int>(child->pid) : negative_error(SAVANXP_ENOENT));
             return context;
         }
+        case SAVANXP_SYS_EXEC: {
+            char path[128] = {};
+            char argv_storage[16][64] = {};
+            const char* argv_local[16] = {};
+            int argc = 0;
+            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), argv_storage, argv_local, argc)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+
+            if (!prepare_exec_image(*g_current, path, argc, argv_local)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOENT));
+                return context;
+            }
+
+            switch_to_process(g_current);
+            return g_current->context;
+        }
         case SAVANXP_SYS_WAITPID: {
             const uint32_t waited_pid = static_cast<int64_t>(context->rdi) == -1 ? kWaitAnyPid : static_cast<uint32_t>(context->rdi);
             Process* child = find_zombie_child(g_current->pid, waited_pid);
@@ -1341,6 +1678,56 @@ SavedContext* handle_syscall(SavedContext* context) {
                 return context;
             }
             context->rax = 1;
+            return context;
+        }
+        case SAVANXP_SYS_SEEK:
+            context->rax = static_cast<uint64_t>(seek_fd(*g_current, context->rdi, static_cast<int64_t>(context->rsi), context->rdx));
+            return context;
+        case SAVANXP_SYS_UNLINK: {
+            char path[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(unlink_path(path));
+            return context;
+        }
+        case SAVANXP_SYS_MKDIR: {
+            char path[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(mkdir_path(path));
+            return context;
+        }
+        case SAVANXP_SYS_RMDIR: {
+            char path[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(rmdir_path(path));
+            return context;
+        }
+        case SAVANXP_SYS_TRUNCATE: {
+            char path[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(truncate_path(path, context->rsi));
+            return context;
+        }
+        case SAVANXP_SYS_RENAME: {
+            char old_path[128] = {};
+            char new_path[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, old_path, sizeof(old_path)) ||
+                !copy_user_string(*g_current, context->rsi, new_path, sizeof(new_path))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(rename_path(old_path, new_path));
             return context;
         }
         default:

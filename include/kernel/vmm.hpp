@@ -25,6 +25,7 @@ struct VmSpace {
 void initialize(const boot::BootInfo& boot_info);
 bool ready();
 bool create_address_space(VmSpace& space);
+void destroy_address_space(VmSpace& space);
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags);
 uint64_t current_pml4();
 uint64_t hhdm_offset();

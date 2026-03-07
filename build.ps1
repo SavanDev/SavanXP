@@ -66,7 +66,15 @@ $UserPrograms = @(
     @{ Name = "waittest"; Source = "userland/waittest.c" },
     @{ Name = "pipestress"; Source = "userland/pipestress.c" },
     @{ Name = "spawnloop"; Source = "userland/spawnloop.c" },
-    @{ Name = "badptr"; Source = "userland/badptr.c" }
+    @{ Name = "badptr"; Source = "userland/badptr.c" },
+    @{ Name = "mv"; Source = "userland/mv.c" },
+    @{ Name = "rm"; Source = "userland/rm.c" },
+    @{ Name = "rmdir"; Source = "userland/rmdir.c" },
+    @{ Name = "truncate"; Source = "userland/truncate.c" },
+    @{ Name = "seektest"; Source = "userland/seektest.c" },
+    @{ Name = "renametest"; Source = "userland/renametest.c" },
+    @{ Name = "truncatetest"; Source = "userland/truncatetest.c" },
+    @{ Name = "errtest"; Source = "userland/errtest.c" }
 )
 
 function New-Directory([string]$Path) {

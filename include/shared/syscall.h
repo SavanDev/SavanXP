@@ -20,6 +20,13 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_DUP = 14,
     SAVANXP_SYS_DUP2 = 15,
     SAVANXP_SYS_PROC_INFO = 16,
+    SAVANXP_SYS_SEEK = 17,
+    SAVANXP_SYS_UNLINK = 18,
+    SAVANXP_SYS_EXEC = 19,
+    SAVANXP_SYS_MKDIR = 20,
+    SAVANXP_SYS_RMDIR = 21,
+    SAVANXP_SYS_TRUNCATE = 22,
+    SAVANXP_SYS_RENAME = 23,
 };
 
 enum savanxp_open_flags {
@@ -27,6 +34,7 @@ enum savanxp_open_flags {
     SAVANXP_OPEN_WRITE = 1u << 1,
     SAVANXP_OPEN_CREATE = 1u << 2,
     SAVANXP_OPEN_TRUNCATE = 1u << 3,
+    SAVANXP_OPEN_APPEND = 1u << 4,
 };
 
 enum savanxp_error_code {
@@ -34,9 +42,21 @@ enum savanxp_error_code {
     SAVANXP_EBADF = 9,
     SAVANXP_ENOENT = 2,
     SAVANXP_ENOMEM = 12,
+    SAVANXP_EBUSY = 16,
+    SAVANXP_EEXIST = 17,
+    SAVANXP_EISDIR = 21,
+    SAVANXP_ENOTDIR = 20,
+    SAVANXP_ENOSPC = 28,
     SAVANXP_EPIPE = 32,
     SAVANXP_ENOSYS = 38,
+    SAVANXP_ENOTEMPTY = 39,
     SAVANXP_ECHILD = 10,
+};
+
+enum savanxp_seek_whence {
+    SAVANXP_SEEK_SET = 0,
+    SAVANXP_SEEK_CUR = 1,
+    SAVANXP_SEEK_END = 2,
 };
 
 enum savanxp_process_state {

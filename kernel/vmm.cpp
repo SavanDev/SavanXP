@@ -99,6 +99,29 @@ uint64_t* next_table(uint64_t* table, uint64_t index, uint64_t flags) {
     return next;
 }
 
+void destroy_table(uint64_t table_physical, uint8_t level) {
+    uint64_t* table = vm::physical_to_virtual(table_physical);
+    if (table == nullptr) {
+        return;
+    }
+
+    for (size_t index = 0; index < 512; ++index) {
+        const uint64_t entry = table[index];
+        if ((entry & vm::kPagePresent) == 0) {
+            continue;
+        }
+
+        const uint64_t child_physical = entry & kPageMask;
+        if (level == 1) {
+            (void)memory::free_pages(child_physical, 1);
+            continue;
+        }
+
+        destroy_table(child_physical, static_cast<uint8_t>(level - 1));
+        (void)memory::free_pages(child_physical, 1);
+    }
+}
+
 } // namespace
 
 namespace vm {
@@ -132,6 +155,27 @@ bool create_address_space(VmSpace& space) {
     space.pml4_physical = pml4_physical;
     space.pml4_virtual = pml4_virtual;
     return true;
+}
+
+void destroy_address_space(VmSpace& space) {
+    if (!g_ready || space.pml4_physical == 0 || space.pml4_virtual == nullptr) {
+        return;
+    }
+
+    for (uint64_t index = 0; index < kKernelPml4Start; ++index) {
+        const uint64_t entry = space.pml4_virtual[index];
+        if ((entry & kPagePresent) == 0) {
+            continue;
+        }
+
+        destroy_table(entry & kPageMask, 3);
+        (void)memory::free_pages(entry & kPageMask, 1);
+        space.pml4_virtual[index] = 0;
+    }
+
+    (void)memory::free_pages(space.pml4_physical, 1);
+    space.pml4_physical = 0;
+    space.pml4_virtual = nullptr;
 }
 
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags) {

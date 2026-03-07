@@ -23,12 +23,25 @@ El kernel ya bootea a una terminal funcional inicial:
 - Loader `ELF64` estatico para procesos simples en `ring 3`.
 - Userland inicial con `init`, `sh`, `echo`, `uname`, `ls`, `cat`, `sleep`,
   `ticker`, `demo`, `true`, `false`, `ps`, `fdtest`, `waittest`,
-  `pipestress`, `spawnloop` y `badptr`.
+  `pipestress`, `spawnloop`, `badptr`, `rm`, `rmdir`, `truncate`,
+  `seektest`, `truncatetest` y `errtest`.
 - Timer `local APIC/x2APIC` activo para tiempo base del sistema.
 - Scheduler round-robin preemptivo con bloqueo por `wait`, `read` y `sleep`.
-- Shell con `pipes` y redireccion basica (`|`, `<`, `>`).
+- Shell con `pipes`, redireccion (`|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`)
+  y resolucion de comandos en `/disk/bin` con fallback a `/bin`.
+- Shell con parser mejorado para comillas simples/dobles y builtins `exec`,
+  `which` y `mkdir`.
 - Handles refcounted con `dup`, `dup2`, `waitpid(-1)` y procesos zombie/reap.
-- Validacion basica de punteros de userland en syscalls principales.
+- Reclaim real de paginas para `exit`/`exec`, destruccion de `VmSpace` y
+  liberacion de stacks de kernel al reapear procesos.
+- `SVFS` con subdirectorios persistentes simples bajo `/disk`, `mkdir`,
+  `rmdir` de directorios vacios, `truncate` explicito por path y `rename`
+  persistente para archivos/directorios.
+- SDK v1 minima en `C` (`crt0.S`, `libc.[ch]`, `userland/linker.ld`,
+  `include/shared/syscall.h`) y tooling host para instalar apps externas
+  directo en `build/disk.img`.
+- Validacion basica de punteros de userland en syscalls principales, mas
+  syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate` y `rename`.
 - Script `build.ps1` con `build`, `run`, `debug` y `clean`.
 
 ## Prerrequisitos
@@ -57,6 +70,34 @@ Durante `run` y `debug`, QEMU expone la salida serie en la terminal. El kernel
 entra a una shell inicial de userland y el `debugcon` queda guardado en
 `build/debugcon.log`.
 
+## Apps externas
+
+El flujo principal para probar programas propios ya no requiere reconstruir el
+`initramfs`. Compilas desde Windows contra la SDK v1 e instalas el ELF directo
+en `build/disk.img`:
+
+```powershell
+.\build.ps1 build
+.\tools\build-user.ps1 -Source .\sdk\hello\main.c -Name hello
+.\build.ps1 run
+```
+
+Dentro de SavanXP:
+
+```text
+which hello
+hello
+hello > /disk/out.txt
+```
+
+Tambien hay un wrapper para compilar, instalar y arrancar QEMU en un paso:
+
+```powershell
+.\tools\run-user.ps1 -Source .\sdk\errdemo\main.c -Name errdemo
+```
+
+Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`.
+
 ## Persistencia experimental
 
 El build genera una imagen `build/disk.img` la primera vez y la conecta como un
@@ -65,8 +106,14 @@ filesystem experimental propio (`SVFS`), de modo que:
 
 ```text
 ls /disk
+ls /disk/bin
 cat /disk/README
 echo hola > /disk/notes.txt
+mv /disk/notes.txt /disk/tmp/notes.txt
+rm /disk/tmp/notes.txt
+seektest
+renametest
+truncatetest
 ```
 
 deberian sobrevivir a reinicios posteriores mientras no ejecutes `clean`.

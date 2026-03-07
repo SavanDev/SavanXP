@@ -15,6 +15,11 @@ constexpr uint32_t kDirectoryLba = 1;
 constexpr uint32_t kDirectorySectors = 8;
 constexpr uint32_t kDefaultFileSectors = 16;
 
+enum class EntryType : uint8_t {
+    file = 0,
+    directory = 1,
+};
+
 struct Superblock {
     char magic[8];
     uint32_t version;
@@ -38,6 +43,10 @@ struct DirectoryEntry {
 
 static_assert(sizeof(Superblock) == block::kSectorSize);
 static_assert(sizeof(DirectoryEntry) == 64);
+
+constexpr uint8_t kEntryUnused = 0;
+constexpr uint8_t kEntryActive = 1;
+constexpr uint8_t kEntryDeleted = 2;
 
 Superblock g_superblock = {};
 DirectoryEntry g_directory[kMaxFiles] = {};
@@ -64,28 +73,83 @@ bool flush_directory() {
     return block::write(g_device_index, g_superblock.directory_lba, g_superblock.directory_sectors, g_directory);
 }
 
-bool parse_leaf_name(const char* path, char* name, size_t capacity) {
-    if (path == nullptr || name == nullptr || capacity == 0) {
+EntryType entry_type(const DirectoryEntry& entry) {
+    return entry.reserved[0] == static_cast<uint8_t>(EntryType::directory)
+        ? EntryType::directory
+        : EntryType::file;
+}
+
+void set_entry_type(DirectoryEntry& entry, EntryType type) {
+    entry.reserved[0] = static_cast<uint8_t>(type);
+}
+
+bool parse_relative_path(const char* path, char* relative, size_t capacity, bool allow_root = false) {
+    if (path == nullptr || relative == nullptr || capacity == 0) {
         return false;
     }
-    if (strncmp(path, "/disk/", 6) != 0) {
+    if (strncmp(path, "/disk", 5) != 0 || (path[5] != '\0' && path[5] != '/')) {
         return false;
     }
 
-    const char* leaf = path + 6;
-    if (*leaf == '\0') {
-        return false;
+    const char* cursor = path + 5;
+    while (*cursor == '/') {
+        ++cursor;
+    }
+
+    if (*cursor == '\0') {
+        if (!allow_root) {
+            return false;
+        }
+        relative[0] = '\0';
+        return true;
     }
 
     size_t length = 0;
-    while (leaf[length] != '\0') {
-        if (leaf[length] == '/' || length + 1 >= capacity) {
+    bool previous_slash = false;
+    while (*cursor != '\0') {
+        const char current = *cursor++;
+        if (current == '/') {
+            if (previous_slash || *cursor == '\0') {
+                return false;
+            }
+            previous_slash = true;
+        } else {
+            previous_slash = false;
+        }
+
+        if (length + 1 >= capacity) {
             return false;
         }
-        name[length] = leaf[length];
-        ++length;
+        relative[length++] = current;
     }
-    name[length] = '\0';
+
+    relative[length] = '\0';
+    return true;
+}
+
+bool split_relative_parent(const char* relative, char* parent, size_t parent_capacity) {
+    if (relative == nullptr || parent == nullptr || parent_capacity == 0) {
+        return false;
+    }
+
+    size_t length = strlen(relative);
+    size_t slash = length;
+    while (slash > 0 && relative[slash - 1] != '/') {
+        --slash;
+    }
+
+    if (slash == 0) {
+        parent[0] = '\0';
+        return true;
+    }
+
+    const size_t parent_length = slash - 1;
+    if (parent_length >= parent_capacity) {
+        return false;
+    }
+
+    memcpy(parent, relative, parent_length);
+    parent[parent_length] = '\0';
     return true;
 }
 
@@ -97,11 +161,12 @@ void refresh_file_from_directory(size_t index) {
     const DirectoryEntry& entry = g_directory[index];
     svfs::FileRecord& file = g_files[index];
     memset(&file, 0, sizeof(file));
-    if (entry.in_use == 0) {
+    if (entry.in_use != kEntryActive) {
         return;
     }
 
     file.in_use = true;
+    file.directory = entry_type(entry) == EntryType::directory;
     strcpy(file.name, entry.name);
     file.start_lba = entry.start_lba;
     file.sector_count = entry.sector_count;
@@ -117,6 +182,102 @@ svfs::FileRecord* find_file_by_name(const char* name) {
     return nullptr;
 }
 
+bool relative_directory_exists(const char* name) {
+    if (name == nullptr || *name == '\0') {
+        return true;
+    }
+
+    svfs::FileRecord* entry = find_file_by_name(name);
+    return entry != nullptr && entry->directory;
+}
+
+bool relative_path_is_prefix(const char* prefix, const char* path) {
+    if (prefix == nullptr || path == nullptr) {
+        return false;
+    }
+    const size_t prefix_length = strlen(prefix);
+    if (prefix_length == 0) {
+        return true;
+    }
+    return strncmp(path, prefix, prefix_length) == 0 &&
+        (path[prefix_length] == '\0' || path[prefix_length] == '/');
+}
+
+bool relative_path_has_children(const char* name) {
+    if (name == nullptr || *name == '\0') {
+        for (const svfs::FileRecord& file : g_files) {
+            if (file.in_use) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    for (const svfs::FileRecord& file : g_files) {
+        if (!file.in_use) {
+            continue;
+        }
+        if (relative_path_is_prefix(name, file.name) && strcmp(file.name, name) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool relative_path_exists_conflict(const char* old_name, const char* new_name) {
+    for (const svfs::FileRecord& file : g_files) {
+        if (!file.in_use || strcmp(file.name, old_name) == 0) {
+            continue;
+        }
+        if (strcmp(file.name, new_name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool can_rename_subtree(const svfs::FileRecord& target, const char* new_relative) {
+    if (relative_path_exists_conflict(target.name, new_relative)) {
+        return false;
+    }
+    if (!target.directory) {
+        return true;
+    }
+    if (relative_path_is_prefix(target.name, new_relative)) {
+        return false;
+    }
+
+    const size_t old_prefix_length = strlen(target.name);
+    for (const svfs::FileRecord& file : g_files) {
+        if (!file.in_use || !relative_path_is_prefix(target.name, file.name)) {
+            continue;
+        }
+
+        char candidate[48] = {};
+        size_t candidate_length = 0;
+        const size_t new_prefix_length = strlen(new_relative);
+        if (new_prefix_length >= sizeof(candidate)) {
+            return false;
+        }
+        memcpy(candidate, new_relative, new_prefix_length);
+        candidate_length = new_prefix_length;
+
+        const char* suffix = file.name + old_prefix_length;
+        while (*suffix != '\0') {
+            if (candidate_length + 1 >= sizeof(candidate)) {
+                return false;
+            }
+            candidate[candidate_length++] = *suffix++;
+        }
+        candidate[candidate_length] = '\0';
+
+        if (relative_path_exists_conflict(file.name, candidate)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 size_t read_write_capacity(const svfs::FileRecord& file) {
     return static_cast<size_t>(file.sector_count) * block::kSectorSize;
 }
@@ -129,6 +290,60 @@ bool zero_file_storage(const svfs::FileRecord& file) {
         }
     }
     return true;
+}
+
+svfs::FileRecord* install_directory_entry(const char* relative_name) {
+    if (relative_name == nullptr || *relative_name == '\0') {
+        return nullptr;
+    }
+
+    if (svfs::FileRecord* existing = find_file_by_name(relative_name)) {
+        return existing->directory ? existing : nullptr;
+    }
+
+    char parent[48] = {};
+    if (!split_relative_parent(relative_name, parent, sizeof(parent)) || !relative_directory_exists(parent)) {
+        return nullptr;
+    }
+
+    size_t entry_index = kMaxFiles;
+    for (size_t index = 0; index < kMaxFiles; ++index) {
+        if (g_directory[index].in_use == kEntryUnused || g_directory[index].in_use == kEntryDeleted) {
+            entry_index = index;
+            break;
+        }
+    }
+    if (entry_index == kMaxFiles) {
+        return nullptr;
+    }
+
+    DirectoryEntry& entry = g_directory[entry_index];
+    memset(&entry, 0, sizeof(entry));
+    entry.in_use = kEntryActive;
+    set_entry_type(entry, EntryType::directory);
+    strcpy(entry.name, relative_name);
+    if (!flush_directory()) {
+        memset(&entry, 0, sizeof(entry));
+        return nullptr;
+    }
+
+    refresh_file_from_directory(entry_index);
+    return &g_files[entry_index];
+}
+
+void mount_record(svfs::FileRecord& file) {
+    char path[64] = "/disk/";
+    strcpy(path + 6, file.name);
+    if (file.directory) {
+        file.vnode = vfs::ensure_directory(path);
+    } else {
+        file.vnode = vfs::install_external_file(path, vfs::Backend::svfs, &file, file.size, true);
+    }
+}
+
+void ensure_standard_directories() {
+    (void)install_directory_entry("bin");
+    (void)install_directory_entry("tmp");
 }
 
 } // namespace
@@ -168,6 +383,7 @@ void initialize() {
         for (size_t entry = 0; entry < kMaxFiles; ++entry) {
             refresh_file_from_directory(entry);
         }
+        ensure_standard_directories();
         return;
     }
 }
@@ -191,13 +407,21 @@ bool mount_at_root() {
 
     for (size_t index = 0; index < kMaxFiles; ++index) {
         FileRecord& file = g_files[index];
-        if (!file.in_use) {
+        if (!file.in_use || !file.directory) {
             continue;
         }
+        mount_record(file);
+        if (file.vnode == nullptr) {
+            return false;
+        }
+    }
 
-        char path[64] = "/disk/";
-        strcpy(path + 6, file.name);
-        file.vnode = vfs::install_external_file(path, vfs::Backend::svfs, &file, file.size, true);
+    for (size_t index = 0; index < kMaxFiles; ++index) {
+        FileRecord& file = g_files[index];
+        if (!file.in_use || file.directory) {
+            continue;
+        }
+        mount_record(file);
         if (file.vnode == nullptr) {
             return false;
         }
@@ -210,7 +434,7 @@ bool mount_at_root() {
 size_t file_count() {
     size_t count = 0;
     for (const FileRecord& file : g_files) {
-        if (file.in_use) {
+        if (file.in_use && !file.directory) {
             ++count;
         }
     }
@@ -218,7 +442,7 @@ size_t file_count() {
 }
 
 bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count) {
-    if (!file.in_use || buffer == nullptr || count == 0) {
+    if (!file.in_use || file.directory || buffer == nullptr || count == 0) {
         return false;
     }
     if (offset + count > file.size) {
@@ -251,7 +475,7 @@ bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count) {
 
 bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
     written = 0;
-    if (!file.in_use) {
+    if (!file.in_use || file.directory) {
         return false;
     }
 
@@ -325,62 +549,226 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
     return true;
 }
 
+bool truncate_file(FileRecord& file, size_t size) {
+    if (!file.in_use || file.directory) {
+        return false;
+    }
+
+    const size_t capacity = read_write_capacity(file);
+    if (size > capacity) {
+        return false;
+    }
+
+    if (size > file.size) {
+        uint8_t zero[block::kSectorSize] = {};
+        size_t remaining = size - file.size;
+        size_t file_offset = file.size;
+        while (remaining != 0) {
+            const uint32_t lba = file.start_lba + static_cast<uint32_t>(file_offset / block::kSectorSize);
+            const size_t sector_offset = file_offset % block::kSectorSize;
+            const size_t chunk = (block::kSectorSize - sector_offset) < remaining
+                ? (block::kSectorSize - sector_offset)
+                : remaining;
+            uint8_t sector[block::kSectorSize] = {};
+            if (sector_offset != 0 || chunk != block::kSectorSize) {
+                if (!block::read(g_device_index, lba, 1, sector)) {
+                    return false;
+                }
+            }
+            memcpy(sector + sector_offset, zero, chunk);
+            if (!block::write(g_device_index, lba, 1, sector)) {
+                return false;
+            }
+            file_offset += chunk;
+            remaining -= chunk;
+        }
+    }
+
+    file.size = static_cast<uint32_t>(size);
+    g_directory[file_index(file)].size = file.size;
+    if (!flush_directory()) {
+        return false;
+    }
+    if (file.vnode != nullptr) {
+        file.vnode->size = file.size;
+    }
+    return true;
+}
+
 FileRecord* create_file(const char* path) {
-    char name[48] = {};
-    if (!parse_leaf_name(path, name, sizeof(name)) || g_device_index == static_cast<size_t>(-1)) {
+    char relative[48] = {};
+    if (!parse_relative_path(path, relative, sizeof(relative)) || g_device_index == static_cast<size_t>(-1)) {
         return nullptr;
     }
 
-    if (FileRecord* existing = find_file_by_name(name)) {
-        return existing;
+    char parent[48] = {};
+    if (!split_relative_parent(relative, parent, sizeof(parent)) || !relative_directory_exists(parent)) {
+        return nullptr;
+    }
+
+    if (FileRecord* existing = find_file_by_name(relative)) {
+        return existing->directory ? nullptr : existing;
     }
 
     size_t free_index = kMaxFiles;
+    size_t reusable_index = kMaxFiles;
     for (size_t index = 0; index < kMaxFiles; ++index) {
-        if (!g_files[index].in_use) {
+        if (g_directory[index].in_use == kEntryDeleted && g_directory[index].sector_count >= kDefaultFileSectors) {
+            reusable_index = index;
+            break;
+        }
+        if (g_directory[index].in_use == kEntryUnused) {
             free_index = index;
             break;
         }
     }
-    if (free_index == kMaxFiles) {
+    const bool reusing_extent = reusable_index != kMaxFiles;
+    if (!reusing_extent && free_index == kMaxFiles) {
+        return nullptr;
+    }
+    if (!reusing_extent && g_superblock.next_free_lba + kDefaultFileSectors > g_superblock.total_sectors) {
         return nullptr;
     }
 
-    if (g_superblock.next_free_lba + kDefaultFileSectors > g_superblock.total_sectors) {
-        return nullptr;
-    }
-
-    DirectoryEntry& entry = g_directory[free_index];
+    const size_t entry_index = reusing_extent ? reusable_index : free_index;
+    DirectoryEntry& entry = g_directory[entry_index];
+    const uint32_t preserved_lba = entry.start_lba;
+    const uint32_t preserved_sectors = entry.sector_count;
     memset(&entry, 0, sizeof(entry));
-    entry.in_use = 1;
-    strcpy(entry.name, name);
-    entry.start_lba = g_superblock.next_free_lba;
-    entry.sector_count = kDefaultFileSectors;
+    entry.in_use = kEntryActive;
+    set_entry_type(entry, EntryType::file);
+    strcpy(entry.name, relative);
+    entry.start_lba = reusing_extent ? preserved_lba : g_superblock.next_free_lba;
+    entry.sector_count = reusing_extent ? preserved_sectors : kDefaultFileSectors;
     entry.size = 0;
 
-    g_superblock.next_free_lba += kDefaultFileSectors;
-    if (!flush_superblock() || !flush_directory()) {
+    if (!reusing_extent) {
+        g_superblock.next_free_lba += kDefaultFileSectors;
+    }
+    if ((!reusing_extent && !flush_superblock()) || !flush_directory()) {
         return nullptr;
     }
 
-    refresh_file_from_directory(free_index);
-    if (!zero_file_storage(g_files[free_index])) {
+    refresh_file_from_directory(entry_index);
+    if (!zero_file_storage(g_files[entry_index])) {
         return nullptr;
     }
 
     if (mounted()) {
-        char vnode_path[64] = "/disk/";
-        strcpy(vnode_path + 6, g_files[free_index].name);
-        g_files[free_index].vnode = vfs::install_external_file(
-            vnode_path,
-            vfs::Backend::svfs,
-            &g_files[free_index],
-            0,
-            true
-        );
+        mount_record(g_files[entry_index]);
     }
 
-    return &g_files[free_index];
+    return &g_files[entry_index];
+}
+
+FileRecord* create_directory(const char* path) {
+    char relative[48] = {};
+    if (!parse_relative_path(path, relative, sizeof(relative)) || g_device_index == static_cast<size_t>(-1)) {
+        return nullptr;
+    }
+    FileRecord* directory = install_directory_entry(relative);
+    if (directory != nullptr && mounted() && directory->vnode == nullptr) {
+        mount_record(*directory);
+    }
+    return directory;
+}
+
+bool remove_directory(FileRecord& file) {
+    if (!file.in_use || !file.directory || relative_path_has_children(file.name)) {
+        return false;
+    }
+
+    DirectoryEntry& entry = g_directory[file_index(file)];
+    entry.in_use = kEntryDeleted;
+    memset(entry.name, 0, sizeof(entry.name));
+    entry.size = 0;
+    entry.start_lba = 0;
+    entry.sector_count = 0;
+    set_entry_type(entry, EntryType::directory);
+    if (!flush_directory()) {
+        entry.in_use = kEntryActive;
+        strcpy(entry.name, file.name);
+        set_entry_type(entry, EntryType::directory);
+        return false;
+    }
+
+    memset(&file, 0, sizeof(file));
+    return true;
+}
+
+bool rename_path(const char* old_path, const char* new_path) {
+    char old_relative[48] = {};
+    char new_relative[48] = {};
+    if (!parse_relative_path(old_path, old_relative, sizeof(old_relative)) ||
+        !parse_relative_path(new_path, new_relative, sizeof(new_relative)) ||
+        strcmp(old_relative, new_relative) == 0) {
+        return false;
+    }
+
+    FileRecord* target = find_file_by_name(old_relative);
+    if (target == nullptr) {
+        return false;
+    }
+
+    char new_parent[48] = {};
+    if (!split_relative_parent(new_relative, new_parent, sizeof(new_parent)) || !relative_directory_exists(new_parent)) {
+        return false;
+    }
+    if (!can_rename_subtree(*target, new_relative)) {
+        return false;
+    }
+
+    const size_t old_prefix_length = strlen(old_relative);
+    const size_t new_prefix_length = strlen(new_relative);
+    for (size_t index = 0; index < kMaxFiles; ++index) {
+        FileRecord& file = g_files[index];
+        if (!file.in_use || !relative_path_is_prefix(old_relative, file.name)) {
+            continue;
+        }
+
+        char candidate[48] = {};
+        memcpy(candidate, new_relative, new_prefix_length);
+        size_t candidate_length = new_prefix_length;
+        const char* suffix = file.name + old_prefix_length;
+        while (*suffix != '\0') {
+            if (candidate_length + 1 >= sizeof(candidate)) {
+                return false;
+            }
+            candidate[candidate_length++] = *suffix++;
+        }
+        candidate[candidate_length] = '\0';
+        strcpy(g_directory[index].name, candidate);
+    }
+
+    if (!flush_directory()) {
+        return false;
+    }
+
+    for (size_t index = 0; index < kMaxFiles; ++index) {
+        refresh_file_from_directory(index);
+    }
+    return true;
+}
+
+bool unlink_file(FileRecord& file) {
+    if (!file.in_use || file.directory) {
+        return false;
+    }
+
+    DirectoryEntry& entry = g_directory[file_index(file)];
+    entry.in_use = kEntryDeleted;
+    memset(entry.name, 0, sizeof(entry.name));
+    entry.size = 0;
+    set_entry_type(entry, EntryType::file);
+    if (!flush_directory()) {
+        entry.in_use = kEntryActive;
+        strcpy(entry.name, file.name);
+        entry.size = file.size;
+        return false;
+    }
+
+    memset(&file, 0, sizeof(file));
+    return true;
 }
 
 FileRecord* file_from_vnode(vfs::Vnode& node) {

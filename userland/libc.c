@@ -72,6 +72,26 @@ long spawn_fd(const char* path, const char* const* argv, int argc, int stdin_fd,
         (unsigned long)stdout_fd);
 }
 
+long spawn_fds(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd, int stderr_fd) {
+    long saved = dup(2);
+    if (saved < 0) {
+        return saved;
+    }
+    if (dup2(stderr_fd, 2) < 0) {
+        close((int)saved);
+        return -1;
+    }
+
+    long pid = spawn_fd(path, argv, argc, stdin_fd, stdout_fd);
+    (void)dup2((int)saved, 2);
+    close((int)saved);
+    return pid;
+}
+
+long exec(const char* path, const char* const* argv, int argc) {
+    return syscall3(SAVANXP_SYS_EXEC, (unsigned long)path, (unsigned long)argv, (unsigned long)argc);
+}
+
 long pipe(int fds[2]) {
     return syscall1(SAVANXP_SYS_PIPE, (unsigned long)fds);
 }
@@ -82,6 +102,30 @@ long dup(int fd) {
 
 long dup2(int oldfd, int newfd) {
     return syscall2(SAVANXP_SYS_DUP2, (unsigned long)oldfd, (unsigned long)newfd);
+}
+
+long seek(int fd, long offset, int whence) {
+    return syscall3(SAVANXP_SYS_SEEK, (unsigned long)fd, (unsigned long)offset, (unsigned long)whence);
+}
+
+long unlink(const char* path) {
+    return syscall1(SAVANXP_SYS_UNLINK, (unsigned long)path);
+}
+
+long mkdir(const char* path) {
+    return syscall1(SAVANXP_SYS_MKDIR, (unsigned long)path);
+}
+
+long rmdir(const char* path) {
+    return syscall1(SAVANXP_SYS_RMDIR, (unsigned long)path);
+}
+
+long truncate(const char* path, unsigned long size) {
+    return syscall2(SAVANXP_SYS_TRUNCATE, (unsigned long)path, size);
+}
+
+long rename(const char* old_path, const char* new_path) {
+    return syscall2(SAVANXP_SYS_RENAME, (unsigned long)old_path, (unsigned long)new_path);
 }
 
 long waitpid(int pid, int* status) {

@@ -28,6 +28,7 @@ NodeSlot g_nodes[kMaxNodes] = {};
 DynamicFile g_dynamic_files[kMaxDynamicFiles] = {};
 size_t g_node_count = 0;
 bool g_ready = false;
+int g_last_error = SAVANXP_ENOENT;
 
 uint32_t parse_hex_u32(const char* text, size_t count) {
     uint32_t value = 0;
@@ -86,7 +87,8 @@ int add_node(vfs::NodeType type, const char* name, int parent) {
 int find_child(int parent, const char* name) {
     int index = g_nodes[parent].vnode.first_child;
     while (index >= 0) {
-        if (strcmp(g_nodes[index].vnode.name, name) == 0) {
+        if (g_nodes[index].vnode.type != vfs::NodeType::invalid &&
+            strcmp(g_nodes[index].vnode.name, name) == 0) {
             return index;
         }
         index = g_nodes[index].vnode.next_sibling;
@@ -279,6 +281,91 @@ bool is_svfs_path(const char* path) {
         (path[5] == '\0' || path[5] == '/');
 }
 
+bool set_node_name(int index, const char* name) {
+    if (index < 0 || static_cast<size_t>(index) >= g_node_count || name == nullptr) {
+        return false;
+    }
+    if (strlen(name) >= kMaxNameLength) {
+        return false;
+    }
+    strcpy(g_nodes[index].name, name);
+    g_nodes[index].vnode.name = g_nodes[index].name;
+    return true;
+}
+
+void detach_node(int index) {
+    if (index <= 0 || static_cast<size_t>(index) >= g_node_count) {
+        return;
+    }
+
+    const int parent = g_nodes[index].vnode.parent;
+    if (parent < 0 || static_cast<size_t>(parent) >= g_node_count) {
+        return;
+    }
+
+    if (g_nodes[parent].vnode.first_child == index) {
+        g_nodes[parent].vnode.first_child = g_nodes[index].vnode.next_sibling;
+    } else {
+        int sibling = g_nodes[parent].vnode.first_child;
+        while (sibling >= 0) {
+            if (g_nodes[sibling].vnode.next_sibling == index) {
+                g_nodes[sibling].vnode.next_sibling = g_nodes[index].vnode.next_sibling;
+                break;
+            }
+            sibling = g_nodes[sibling].vnode.next_sibling;
+        }
+    }
+
+    g_nodes[index].vnode.next_sibling = -1;
+}
+
+void attach_node(int index, int parent) {
+    if (index < 0 || parent < 0 || static_cast<size_t>(index) >= g_node_count || static_cast<size_t>(parent) >= g_node_count) {
+        return;
+    }
+
+    g_nodes[index].vnode.parent = parent;
+    g_nodes[index].vnode.next_sibling = -1;
+    if (g_nodes[parent].vnode.first_child < 0) {
+        g_nodes[parent].vnode.first_child = index;
+        return;
+    }
+
+    int sibling = g_nodes[parent].vnode.first_child;
+    while (g_nodes[sibling].vnode.next_sibling >= 0) {
+        sibling = g_nodes[sibling].vnode.next_sibling;
+    }
+    g_nodes[sibling].vnode.next_sibling = index;
+}
+
+bool node_is_ancestor(int ancestor, int node) {
+    while (node >= 0) {
+        if (node == ancestor) {
+            return true;
+        }
+        node = g_nodes[node].vnode.parent;
+    }
+    return false;
+}
+
+bool node_has_valid_children(const vfs::Vnode& node) {
+    int child = node.first_child;
+    while (child >= 0) {
+        if (g_nodes[child].vnode.type != vfs::NodeType::invalid) {
+            return true;
+        }
+        child = g_nodes[child].vnode.next_sibling;
+    }
+    return false;
+}
+
+void invalidate_node(vfs::Vnode& node) {
+    node.type = vfs::NodeType::invalid;
+    node.data = nullptr;
+    node.size = 0;
+    node.writable = false;
+}
+
 } // namespace
 
 namespace vfs {
@@ -339,6 +426,10 @@ bool ready() {
     return g_ready;
 }
 
+int last_error() {
+    return g_last_error;
+}
+
 const Vnode* root() {
     return g_node_count != 0 ? &g_nodes[0].vnode : nullptr;
 }
@@ -349,7 +440,9 @@ const Vnode* resolve(const char* path) {
 }
 
 Vnode* open(const char* path, uint32_t flags) {
+    g_last_error = SAVANXP_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0') {
+        g_last_error = SAVANXP_EINVAL;
         return nullptr;
     }
 
@@ -362,19 +455,23 @@ Vnode* open(const char* path, uint32_t flags) {
         Vnode& node = g_nodes[index].vnode;
         if ((wants_write || wants_truncate) && node.backend == Backend::memory) {
             if (!attach_dynamic_storage(node, wants_truncate)) {
+                g_last_error = SAVANXP_ENOMEM;
                 return nullptr;
             }
         } else if ((wants_write || wants_truncate) && node.backend == Backend::svfs) {
             if (!node.writable) {
+                g_last_error = SAVANXP_EBADF;
                 return nullptr;
             }
             if (wants_truncate) {
                 svfs::FileRecord* file = svfs::file_from_vnode(node);
                 if (file == nullptr) {
+                    g_last_error = SAVANXP_EBADF;
                     return nullptr;
                 }
                 size_t written = 0;
                 if (!svfs::write_file(*file, 0, nullptr, 0, true, written)) {
+                    g_last_error = SAVANXP_EINVAL;
                     return nullptr;
                 }
                 node.size = file->size;
@@ -390,37 +487,47 @@ Vnode* open(const char* path, uint32_t flags) {
     char parent_path[kMaxNameLength * 2] = {};
     char leaf_name[kMaxNameLength] = {};
     if (!split_parent_path(path, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+        g_last_error = SAVANXP_EINVAL;
         return nullptr;
     }
 
     index = resolve_index(parent_path);
     if (index < 0) {
+        g_last_error = SAVANXP_ENOENT;
         return nullptr;
     }
 
     Vnode& parent = g_nodes[index].vnode;
     if (parent.type != NodeType::directory) {
+        g_last_error = SAVANXP_EINVAL;
         return nullptr;
     }
 
     if (is_svfs_path(path)) {
         svfs::FileRecord* file = svfs::create_file(path);
         if (file == nullptr) {
+            g_last_error = SAVANXP_ENOSPC;
             return nullptr;
         }
         if (file->vnode != nullptr) {
             return file->vnode;
         }
-        return install_external_file(path, Backend::svfs, file, file->size, true);
+        Vnode* node = install_external_file(path, Backend::svfs, file, file->size, true);
+        if (node == nullptr) {
+            g_last_error = SAVANXP_ENOMEM;
+        }
+        return node;
     }
 
     const int node_index = add_node(NodeType::file, leaf_name, index);
     if (node_index < 0) {
+        g_last_error = SAVANXP_ENOMEM;
         return nullptr;
     }
 
     Vnode& node = g_nodes[node_index].vnode;
     if (!attach_dynamic_storage(node, true)) {
+        g_last_error = SAVANXP_ENOMEM;
         return nullptr;
     }
 
@@ -429,6 +536,7 @@ Vnode* open(const char* path, uint32_t flags) {
 
 Vnode* ensure_directory(const char* path) {
     if (!g_ready || path == nullptr || *path == '\0') {
+        g_last_error = SAVANXP_EINVAL;
         return nullptr;
     }
 
@@ -460,6 +568,7 @@ Vnode* ensure_directory(const char* path) {
         component[length < sizeof(component) ? length : (sizeof(component) - 1)] = '\0';
         parent = ensure_directory_node(parent, component);
         if (parent < 0) {
+            g_last_error = SAVANXP_ENOMEM;
             return nullptr;
         }
         if (cursor[length] == '\0') {
@@ -472,24 +581,57 @@ Vnode* ensure_directory(const char* path) {
     }
 }
 
+Vnode* mkdir(const char* path) {
+    g_last_error = SAVANXP_ENOENT;
+    if (!g_ready || path == nullptr || *path == '\0') {
+        g_last_error = SAVANXP_EINVAL;
+        return nullptr;
+    }
+
+    const int existing = resolve_index(path);
+    if (existing >= 0) {
+        if (g_nodes[existing].vnode.type == NodeType::directory) {
+            g_last_error = SAVANXP_EEXIST;
+            return &g_nodes[existing].vnode;
+        }
+        g_last_error = SAVANXP_EEXIST;
+        return nullptr;
+    }
+
+    if (is_svfs_path(path)) {
+        svfs::FileRecord* directory = svfs::create_directory(path);
+        if (directory == nullptr) {
+            g_last_error = SAVANXP_EINVAL;
+            return nullptr;
+        }
+        return directory->vnode != nullptr ? directory->vnode : ensure_directory(path);
+    }
+
+    return ensure_directory(path);
+}
+
 Vnode* install_external_file(const char* path, Backend backend, void* data, size_t size, bool writable) {
     if (!g_ready || path == nullptr || *path == '\0') {
+        g_last_error = SAVANXP_EINVAL;
         return nullptr;
     }
 
     char parent_path[kMaxNameLength * 2] = {};
     char leaf_name[kMaxNameLength] = {};
     if (!split_parent_path(path, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+        g_last_error = SAVANXP_EINVAL;
         return nullptr;
     }
 
     Vnode* parent = ensure_directory(parent_path);
     if (parent == nullptr || parent->type != NodeType::directory) {
+        g_last_error = SAVANXP_ENOENT;
         return nullptr;
     }
 
     const int parent_index = resolve_index(parent_path);
     if (parent_index < 0) {
+        g_last_error = SAVANXP_ENOENT;
         return nullptr;
     }
 
@@ -497,6 +639,7 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
     if (index < 0) {
         index = add_node(NodeType::file, leaf_name, parent_index);
         if (index < 0) {
+            g_last_error = SAVANXP_ENOMEM;
             return nullptr;
         }
     }
@@ -508,6 +651,197 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
     node.size = size;
     node.writable = writable;
     return &node;
+}
+
+bool unlink(const char* path) {
+    g_last_error = SAVANXP_ENOENT;
+    if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+
+    const int index = resolve_index(path);
+    if (index < 0) {
+        return false;
+    }
+
+    Vnode& node = g_nodes[index].vnode;
+    if (node.type == NodeType::directory) {
+        g_last_error = SAVANXP_EISDIR;
+        return false;
+    }
+
+    switch (node.backend) {
+        case Backend::memory:
+            invalidate_node(node);
+            return true;
+        case Backend::svfs: {
+            svfs::FileRecord* file = svfs::file_from_vnode(node);
+            if (file == nullptr || !svfs::unlink_file(*file)) {
+                g_last_error = SAVANXP_EINVAL;
+                return false;
+            }
+            invalidate_node(node);
+            return true;
+        }
+        default:
+            g_last_error = SAVANXP_EINVAL;
+            return false;
+    }
+}
+
+bool rmdir(const char* path) {
+    g_last_error = SAVANXP_ENOENT;
+    if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0 || strcmp(path, "/disk") == 0) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+
+    const int index = resolve_index(path);
+    if (index < 0) {
+        return false;
+    }
+
+    Vnode& node = g_nodes[index].vnode;
+    if (node.type != NodeType::directory) {
+        g_last_error = SAVANXP_ENOTDIR;
+        return false;
+    }
+    if (node_has_valid_children(node)) {
+        g_last_error = SAVANXP_ENOTEMPTY;
+        return false;
+    }
+
+    if (is_svfs_path(path)) {
+        svfs::FileRecord* file = svfs::file_from_vnode(node);
+        if (file == nullptr || !svfs::remove_directory(*file)) {
+            if (g_last_error == SAVANXP_ENOENT) {
+                g_last_error = SAVANXP_EINVAL;
+            }
+            return false;
+        }
+    }
+
+    invalidate_node(node);
+    return true;
+}
+
+bool truncate(const char* path, size_t size) {
+    g_last_error = SAVANXP_ENOENT;
+    if (!g_ready || path == nullptr || *path == '\0') {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+
+    const int index = resolve_index(path);
+    if (index < 0) {
+        return false;
+    }
+
+    Vnode& node = g_nodes[index].vnode;
+    if (node.type != NodeType::file) {
+        g_last_error = SAVANXP_EISDIR;
+        return false;
+    }
+    if (!node.writable) {
+        g_last_error = SAVANXP_EBADF;
+        return false;
+    }
+
+    switch (node.backend) {
+        case Backend::memory: {
+            if (node.data == nullptr) {
+                g_last_error = SAVANXP_EBADF;
+                return false;
+            }
+            if (size > kDynamicFileCapacity) {
+                g_last_error = SAVANXP_ENOSPC;
+                return false;
+            }
+            if (size > node.size) {
+                memset(static_cast<uint8_t*>(node.data) + node.size, 0, size - node.size);
+            }
+            node.size = size;
+            return true;
+        }
+        case Backend::svfs: {
+            svfs::FileRecord* file = svfs::file_from_vnode(node);
+            if (file == nullptr || !svfs::truncate_file(*file, size)) {
+                g_last_error = size > node.size ? SAVANXP_ENOSPC : SAVANXP_EINVAL;
+                return false;
+            }
+            node.size = file->size;
+            return true;
+        }
+        default:
+            g_last_error = SAVANXP_EINVAL;
+            return false;
+    }
+}
+
+bool rename(const char* old_path, const char* new_path) {
+    g_last_error = SAVANXP_ENOENT;
+    if (!g_ready || old_path == nullptr || new_path == nullptr ||
+        *old_path == '\0' || *new_path == '\0' ||
+        strcmp(old_path, "/") == 0 || strcmp(new_path, "/") == 0 ||
+        strcmp(old_path, new_path) == 0 ||
+        strcmp(old_path, "/disk") == 0 || strcmp(new_path, "/disk") == 0) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+
+    const int node_index = resolve_index(old_path);
+    if (node_index < 0) {
+        return false;
+    }
+    if (resolve_index(new_path) >= 0) {
+        g_last_error = SAVANXP_EEXIST;
+        return false;
+    }
+
+    char parent_path[kMaxNameLength * 2] = {};
+    char leaf_name[kMaxNameLength] = {};
+    if (!split_parent_path(new_path, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+
+    const int new_parent = resolve_index(parent_path);
+    if (new_parent < 0) {
+        g_last_error = SAVANXP_ENOENT;
+        return false;
+    }
+    if (g_nodes[new_parent].vnode.type != NodeType::directory) {
+        g_last_error = SAVANXP_ENOTDIR;
+        return false;
+    }
+    if (find_child(new_parent, leaf_name) >= 0) {
+        g_last_error = SAVANXP_EEXIST;
+        return false;
+    }
+
+    Vnode& node = g_nodes[node_index].vnode;
+    if (node.type == NodeType::directory && node_is_ancestor(node_index, new_parent)) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+
+    if (is_svfs_path(old_path) != is_svfs_path(new_path)) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+    if (is_svfs_path(old_path) && !svfs::rename_path(old_path, new_path)) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+
+    detach_node(node_index);
+    if (!set_node_name(node_index, leaf_name)) {
+        g_last_error = SAVANXP_EINVAL;
+        return false;
+    }
+    attach_node(node_index, new_parent);
+    return true;
 }
 
 size_t read(Vnode& node, size_t offset, void* buffer, size_t count) {
@@ -591,11 +925,13 @@ const Vnode* child_at(const Vnode& directory, size_t index) {
     int child = directory.first_child;
     size_t current = 0;
     while (child >= 0) {
-        if (current == index) {
-            return &g_nodes[child].vnode;
+        if (g_nodes[child].vnode.type != NodeType::invalid) {
+            if (current == index) {
+                return &g_nodes[child].vnode;
+            }
+            ++current;
         }
         child = g_nodes[child].vnode.next_sibling;
-        ++current;
     }
     return nullptr;
 }
@@ -604,7 +940,9 @@ size_t child_count(const Vnode& directory) {
     size_t count = 0;
     int child = directory.first_child;
     while (child >= 0) {
-        ++count;
+        if (g_nodes[child].vnode.type != NodeType::invalid) {
+            ++count;
+        }
         child = g_nodes[child].vnode.next_sibling;
     }
     return count;
