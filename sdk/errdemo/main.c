@@ -1,6 +1,6 @@
-#include "libc.h"
+#include "savanxp/libc.h"
 
 int main(void) {
-    puts_fd(2, "errdemo: stderr works\n");
+    puts_err("errdemo: stderr works\n");
     return 0;
 }
