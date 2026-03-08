@@ -1,6 +1,7 @@
 #include "libc.h"
 
 #include "shared/syscall.h"
+#include "shared/version.h"
 
 #define MAX_STAGES 8
 #define MAX_ARGS 16
@@ -339,6 +340,7 @@ static int parse_pipeline(char* line, struct CommandStage* stages, int capacity)
 
 static int run_builtin(struct CommandStage* stage) {
     if (strcmp(stage->argv[0], "help") == 0) {
+        printf("%s shell\n", SAVANXP_DISPLAY_NAME);
         puts("Builtins: help clear exit exec which mkdir\n");
         puts("Commands: echo uname ls cat sleep ticker demo true false ps fdtest waittest pipestress spawnloop badptr mv rm rmdir truncate seektest renametest truncatetest errtest\n");
         puts("Examples: echo \"hola mundo\" | cat\n");
@@ -608,7 +610,7 @@ int main(void) {
     char line[256];
     struct CommandStage stages[MAX_STAGES];
 
-    puts("Welcome to SavanXP\n");
+    printf("Welcome to %s\n", SAVANXP_DISPLAY_NAME);
     puts("Builtins: help clear exit exec which mkdir\n");
 
     for (;;) {

@@ -1,5 +1,7 @@
 # SavanXP
 
+Version actual del experimento: `v0.1.0`
+
 Experimento de hobby OS en `C++` sobre `x86_64 + UEFI`, con `Limine` como
 bootloader y flujo de trabajo pensado para Windows nativo.
 

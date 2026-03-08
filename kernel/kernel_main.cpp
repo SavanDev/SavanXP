@@ -16,6 +16,7 @@
 #include "kernel/tty.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
+#include "shared/version.h"
 
 namespace {
 
@@ -62,7 +63,7 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
 [[noreturn]] void kernel_main(const boot::BootInfo& boot_info) {
     arch::x86_64::initialize_cpu();
 
-    console::write_line("=== SavanXP terminal bootstrap ===");
+    console::printf("=== %s bootstrap ===\n", SAVANXP_DISPLAY_NAME);
     console::printf(
         "boot: %s %s on %s\n",
         boot_info.bootloader_name != nullptr ? boot_info.bootloader_name : "unknown",
@@ -126,6 +127,10 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
         svfs::mounted() ? 1u : 0u,
         static_cast<unsigned long long>(svfs::file_count()),
         disk_mounted ? "/disk" : "unavailable"
+    );
+    console::printf(
+        "system: %s terminal + shell + sdk v1 + persistent /disk\n",
+        SAVANXP_VERSION_STRING
     );
     console::write_line("userland: init + shell + tests (ps/fdtest/waittest/pipestress/spawnloop/badptr)");
     console::write_line("");
