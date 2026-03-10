@@ -7,6 +7,14 @@
 #include "kernel/vmm.hpp"
 #include "shared/syscall.h"
 
+namespace device {
+struct Device;
+}
+
+namespace net {
+struct Socket;
+}
+
 namespace process {
 
 constexpr size_t kMaxProcesses = 16;
@@ -53,6 +61,8 @@ enum class HandleKind : uint8_t {
     tty = 1,
     vnode = 2,
     pipe = 3,
+    device = 4,
+    socket = 5,
 };
 
 enum OpenFlags : uint32_t {
@@ -76,6 +86,8 @@ struct OpenFile {
     uint32_t flags;
     uint32_t refcount;
     vfs::Vnode* node;
+    device::Device* device;
+    net::Socket* socket;
     Pipe* pipe;
     size_t offset;
     size_t iterator_index;
@@ -112,7 +124,11 @@ struct Process {
 void initialize();
 bool ready();
 Process* current();
+uint32_t current_pid();
 Process* find(uint32_t pid);
+bool copy_from_user(void* destination, uint64_t user_address, size_t count);
+bool copy_to_user(uint64_t user_address, const void* source, size_t count);
+bool validate_user_range(uint64_t user_address, size_t count, bool require_write);
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid);
 [[noreturn]] void start_init(const char* path);
 void terminate_current(int exit_code);

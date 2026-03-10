@@ -342,7 +342,7 @@ static int run_builtin(struct CommandStage* stage) {
     if (strcmp(stage->argv[0], "help") == 0) {
         printf("%s shell\n", SAVANXP_DISPLAY_NAME);
         puts("Builtins: help clear exit exec which mkdir\n");
-        puts("Commands: echo uname ls cat sleep ticker demo true false ps fdtest waittest pipestress spawnloop badptr mv rm rmdir truncate seektest renametest truncatetest errtest\n");
+        puts("Commands: echo uname ls cat sleep ticker demo true false ps fdtest waittest pipestress spawnloop badptr mv rm rmdir truncate seektest renametest truncatetest errtest netinfo ping udpsend udprecv udptest tcpget beep gfxdemo\n");
         puts("Examples: echo \"hola mundo\" | cat\n");
         puts("          cat < /README\n");
         puts("          echo hola 1> /disk/out.txt\n");
@@ -356,6 +356,14 @@ static int run_builtin(struct CommandStage* stage) {
         puts("          truncate /disk/log.txt 3\n");
         puts("          rmdir /disk/tmp/demo\n");
         puts("          exec uname\n");
+        puts("          netinfo\n");
+        puts("          ping 10.0.2.2  (QEMU user-net smoke test)\n");
+        puts("          udptest\n");
+        puts("          udpsend 10.0.2.15 7000 hola\n");
+        puts("          udprecv 7000 5000\n");
+        puts("          tcpget 104.18.26.120 80 example.com /\n");
+        puts("          beep 440 200\n");
+        puts("          gfxdemo\n");
         return 0;
     }
 

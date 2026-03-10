@@ -128,6 +128,30 @@ long rename(const char* old_path, const char* new_path) {
     return syscall2(SAVANXP_SYS_RENAME, (unsigned long)old_path, (unsigned long)new_path);
 }
 
+long ioctl(int fd, unsigned long request, unsigned long arg) {
+    return syscall3(SAVANXP_SYS_IOCTL, (unsigned long)fd, request, arg);
+}
+
+long socket(unsigned long domain, unsigned long type, unsigned long protocol) {
+    return syscall3(SAVANXP_SYS_SOCKET, domain, type, protocol);
+}
+
+long bind(int fd, const struct savanxp_sockaddr_in* address) {
+    return syscall2(SAVANXP_SYS_BIND, (unsigned long)fd, (unsigned long)address);
+}
+
+long sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address) {
+    return syscall5(SAVANXP_SYS_SENDTO, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count, (unsigned long)address, 0);
+}
+
+long recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
+    return syscall5(SAVANXP_SYS_RECVFROM, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count, (unsigned long)address, timeout_ms);
+}
+
+long connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
+    return syscall3(SAVANXP_SYS_CONNECT, (unsigned long)fd, (unsigned long)address, timeout_ms);
+}
+
 long waitpid(int pid, int* status) {
     return syscall2(SAVANXP_SYS_WAITPID, (unsigned long)pid, (unsigned long)status);
 }
@@ -156,6 +180,127 @@ void exit(int code) {
     syscall1(SAVANXP_SYS_EXIT, (unsigned long)code);
     for (;;) {
         asm volatile("hlt");
+    }
+}
+
+int result_is_error(long result) {
+    return result < 0;
+}
+
+int result_error_code(long result) {
+    return result < 0 ? (int)(-result) : 0;
+}
+
+const char* error_string(int error_code) {
+    switch (error_code) {
+        case 0:
+            return "ok";
+        case SAVANXP_EIO:
+            return "io error";
+        case SAVANXP_EAGAIN:
+            return "try again";
+        case SAVANXP_EINVAL:
+            return "invalid argument";
+        case SAVANXP_EBADF:
+            return "bad file descriptor";
+        case SAVANXP_ENOENT:
+            return "no such file or directory";
+        case SAVANXP_ENOMEM:
+            return "out of memory";
+        case SAVANXP_EBUSY:
+            return "resource busy";
+        case SAVANXP_EEXIST:
+            return "already exists";
+        case SAVANXP_ENODEV:
+            return "no such device";
+        case SAVANXP_ENOTDIR:
+            return "not a directory";
+        case SAVANXP_EISDIR:
+            return "is a directory";
+        case SAVANXP_ENOSPC:
+            return "no space left";
+        case SAVANXP_EPIPE:
+            return "broken pipe";
+        case SAVANXP_ENOSYS:
+            return "not implemented";
+        case SAVANXP_ENOTEMPTY:
+            return "directory not empty";
+        case SAVANXP_ECHILD:
+            return "no child process";
+        case SAVANXP_ETIMEDOUT:
+            return "timed out";
+        default:
+            return "unknown error";
+    }
+}
+
+const char* result_error_string(long result) {
+    return error_string(result_error_code(result));
+}
+
+const char* process_state_string(unsigned long state) {
+    switch (state) {
+        case SAVANXP_PROC_UNUSED:
+            return "unused";
+        case SAVANXP_PROC_READY:
+            return "ready";
+        case SAVANXP_PROC_RUNNING:
+            return "running";
+        case SAVANXP_PROC_BLOCKED_READ:
+            return "blocked_read";
+        case SAVANXP_PROC_BLOCKED_WRITE:
+            return "blocked_write";
+        case SAVANXP_PROC_BLOCKED_WAIT:
+            return "blocked_wait";
+        case SAVANXP_PROC_SLEEPING:
+            return "sleeping";
+        case SAVANXP_PROC_ZOMBIE:
+            return "zombie";
+        default:
+            return "unknown";
+    }
+}
+
+const char* net_status_string(unsigned long status) {
+    switch (status) {
+        case SAVANXP_NET_STATUS_UNKNOWN:
+            return "unknown";
+        case SAVANXP_NET_STATUS_IDLE:
+            return "idle";
+        case SAVANXP_NET_STATUS_READY:
+            return "ready";
+        case SAVANXP_NET_STATUS_NO_DEVICE:
+            return "no device";
+        case SAVANXP_NET_STATUS_BRING_UP_FAILED:
+            return "bring-up failed";
+        case SAVANXP_NET_STATUS_TX_FAILED:
+            return "tx failed";
+        case SAVANXP_NET_STATUS_TX_TIMEOUT:
+            return "tx timeout";
+        case SAVANXP_NET_STATUS_RX_INVALID:
+            return "rx invalid";
+        case SAVANXP_NET_STATUS_ARP_RESOLVING:
+            return "arp resolving";
+        case SAVANXP_NET_STATUS_ARP_RESOLVED:
+            return "arp resolved";
+        case SAVANXP_NET_STATUS_ARP_TIMEOUT:
+            return "arp timeout";
+        case SAVANXP_NET_STATUS_ICMP_SENT:
+            return "icmp sent";
+        case SAVANXP_NET_STATUS_ICMP_REPLY:
+            return "icmp reply";
+        case SAVANXP_NET_STATUS_ICMP_TIMEOUT:
+            return "icmp timeout";
+        case SAVANXP_NET_STATUS_TCP_SYN_SENT:
+            return "tcp syn sent";
+        case SAVANXP_NET_STATUS_TCP_ESTABLISHED:
+            return "tcp established";
+        case SAVANXP_NET_STATUS_TCP_FIN:
+            return "tcp fin";
+        case SAVANXP_NET_STATUS_TCP_TIMEOUT:
+            return "tcp timeout";
+        default:
+            return "unknown";
     }
 }
 
@@ -225,16 +370,20 @@ void puts_fd(int fd, const char* text) {
     write(fd, text, strlen(text));
 }
 
+void puts_err(const char* text) {
+    puts_fd(2, text);
+}
+
 void puts(const char* text) {
     puts_fd(1, text);
 }
 
-static void write_unsigned(unsigned long value, unsigned long base) {
+static void write_unsigned_fd(int fd, unsigned long value, unsigned long base) {
     char buffer[32];
     size_t index = 0;
 
     if (value == 0) {
-        putchar(1, '0');
+        putchar(fd, '0');
         return;
     }
 
@@ -245,52 +394,68 @@ static void write_unsigned(unsigned long value, unsigned long base) {
     }
 
     while (index > 0) {
-        putchar(1, buffer[--index]);
+        putchar(fd, buffer[--index]);
     }
 }
 
-static void write_signed(long value) {
+static void write_signed_fd(int fd, long value) {
     if (value < 0) {
-        putchar(1, '-');
-        write_unsigned((unsigned long)(-value), 10);
+        putchar(fd, '-');
+        write_unsigned_fd(fd, (unsigned long)(-value), 10);
         return;
     }
-    write_unsigned((unsigned long)value, 10);
+    write_unsigned_fd(fd, (unsigned long)value, 10);
 }
 
-void printf(const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-
+static void vprintf_fd(int fd, const char* format, va_list args) {
     for (const char* cursor = format; *cursor != '\0'; ++cursor) {
         if (*cursor != '%') {
-            putchar(1, *cursor);
+            putchar(fd, *cursor);
             continue;
         }
 
         ++cursor;
         switch (*cursor) {
             case '%':
-                putchar(1, '%');
+                putchar(fd, '%');
                 break;
             case 's':
-                puts_fd(1, va_arg(args, const char*));
+                puts_fd(fd, va_arg(args, const char*));
                 break;
             case 'd':
             case 'i':
-                write_signed(va_arg(args, int));
+                write_signed_fd(fd, va_arg(args, int));
                 break;
             case 'u':
-                write_unsigned(va_arg(args, unsigned int), 10);
+                write_unsigned_fd(fd, va_arg(args, unsigned int), 10);
                 break;
             case 'x':
-                write_unsigned(va_arg(args, unsigned int), 16);
+                write_unsigned_fd(fd, va_arg(args, unsigned int), 16);
                 break;
             default:
-                puts_fd(1, "%?");
+                puts_fd(fd, "%?");
                 break;
         }
     }
+}
 
+void printf_fd(int fd, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    vprintf_fd(fd, format, args);
+    va_end(args);
+}
+
+void eprintf(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    vprintf_fd(2, format, args);
+    va_end(args);
+}
+
+void printf(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    vprintf_fd(1, format, args);
     va_end(args);
 }

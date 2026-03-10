@@ -1,4 +1,7 @@
 build/
-tools/
+tools/*
+!tools/doom-smoke.ps1
+!tools/vscode-extension/
+!tools/vscode-extension/**
 *.log
-
+sdk/doomgeneric/wad/*.wad

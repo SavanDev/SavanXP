@@ -128,6 +128,7 @@ constexpr uint8_t kGlyphs[kPrintableCount][kGlyphHeight] = {
 
 bool g_serial_ready = false;
 boot::FramebufferInfo g_framebuffer = {};
+bool g_console_visible = true;
 char g_cells[kMaxRows][kMaxColumns] = {};
 size_t g_columns = 0;
 size_t g_rows = 0;
@@ -182,7 +183,7 @@ void fill_rect(uint64_t x, uint64_t y, uint64_t width, uint64_t height, uint32_t
 }
 
 void draw_background() {
-    if (!g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
+    if (!g_console_visible || !g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
         return;
     }
 
@@ -219,7 +220,7 @@ void draw_glyph(uint64_t x, uint64_t y, char character, uint32_t colour) {
 }
 
 void erase_cursor() {
-    if (!g_cursor_drawn || !g_framebuffer.available) {
+    if (!g_cursor_drawn || !g_console_visible || !g_framebuffer.available) {
         return;
     }
 
@@ -230,7 +231,7 @@ void erase_cursor() {
 }
 
 void render_cell(size_t row, size_t column) {
-    if (!g_framebuffer.available || row >= g_rows || column >= g_columns) {
+    if (!g_console_visible || !g_framebuffer.available || row >= g_rows || column >= g_columns) {
         return;
     }
 
@@ -241,7 +242,7 @@ void render_cell(size_t row, size_t column) {
 }
 
 void draw_cursor() {
-    if (!g_framebuffer.available || g_cursor_row >= g_rows || g_cursor_column >= g_columns) {
+    if (!g_console_visible || !g_framebuffer.available || g_cursor_row >= g_rows || g_cursor_column >= g_columns) {
         return;
     }
 
@@ -252,7 +253,7 @@ void draw_cursor() {
 }
 
 void redraw_all() {
-    if (!g_framebuffer.available) {
+    if (!g_console_visible || !g_framebuffer.available) {
         return;
     }
 
@@ -339,6 +340,7 @@ void init(const boot::BootInfo& boot_info) {
     g_cursor_row = 0;
     g_cursor_column = 0;
     g_cursor_drawn = false;
+    g_console_visible = true;
 
     if (g_framebuffer.available && g_framebuffer.width > (kPaddingX * 2) && g_framebuffer.height > (kPaddingY * 2)) {
         g_columns = (g_framebuffer.width - (kPaddingX * 2)) / kCellWidth;
@@ -351,6 +353,42 @@ void init(const boot::BootInfo& boot_info) {
         }
         redraw_all();
     }
+}
+
+const boot::FramebufferInfo& framebuffer_info() {
+    return g_framebuffer;
+}
+
+bool framebuffer_ready() {
+    return g_framebuffer.available && g_framebuffer.address != nullptr && g_framebuffer.bpp == 32;
+}
+
+void set_framebuffer_console_enabled(bool enabled) {
+    g_console_visible = enabled;
+    if (enabled) {
+        g_cursor_drawn = false;
+        redraw_all();
+    } else {
+        g_cursor_drawn = false;
+    }
+}
+
+void redraw() {
+    redraw_all();
+}
+
+bool present_pixels(const void* pixels, size_t byte_count) {
+    if (!framebuffer_ready() || pixels == nullptr) {
+        return false;
+    }
+
+    const uint64_t framebuffer_bytes = g_framebuffer.pitch * g_framebuffer.height;
+    if (byte_count != framebuffer_bytes) {
+        return false;
+    }
+
+    memcpy(g_framebuffer.address, pixels, byte_count);
+    return true;
 }
 
 void clear() {

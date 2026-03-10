@@ -19,6 +19,11 @@ El kernel ya bootea a una terminal funcional inicial:
   usuario.
 - Driver de teclado `PS/2` por `IRQ1` y `TTY` canonica para la consola
   foreground.
+- Enumeracion PCI minima por config-space en `q35` y capa de dispositivos
+  expuesta como nodos bajo `/dev`.
+- Dispositivos iniciales en `/dev`: `fb0`, `input0`, `net0` y `pcspk`.
+- `ioctl` como syscall publica para dispositivos y ABI compartida extendida
+  para framebuffer, input, red y PC speaker.
 - `VFS` minima montando un `initramfs` `cpio newc`, con archivos dinamicos en
   memoria para redireccion simple y un volumen persistente `SVFS` montado en
   `/disk`.
@@ -28,6 +33,16 @@ El kernel ya bootea a una terminal funcional inicial:
   `pipestress`, `spawnloop`, `badptr`, `rm`, `rmdir`, `truncate`,
   `seektest`, `truncatetest` y `errtest`.
 - Timer `local APIC/x2APIC` activo para tiempo base del sistema.
+- Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
+  echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo, mas
+  contadores y estado diagnostico expuestos por `NET_IOC_GET_INFO`.
+- GUI fullscreen inicial con framebuffer exclusivo, cola de eventos de
+  teclado, primitivas 2D reutilizables en `gfx_*`, ejemplo externo
+  `sdk/gfxhello` y demo `gfxdemo`.
+- Primer juego externo porteado: `sdk/doomgeneric`, jugable en fullscreen
+  sobre `/dev/fb0` + `/dev/input0`, usado como prueba real de apps graficas
+  externas, assets persistentes en `/disk` y compatibilidad de input.
+- Sonido minimo por `PC speaker` con comando `beep`.
 - Scheduler round-robin preemptivo con bloqueo por `wait`, `read` y `sleep`.
 - Shell con `pipes`, redireccion (`|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`)
   y resolucion de comandos en `/disk/bin` con fallback a `/bin`.
@@ -43,8 +58,60 @@ El kernel ya bootea a una terminal funcional inicial:
   `include/shared/syscall.h`) y tooling host para instalar apps externas
   directo en `build/disk.img`.
 - Validacion basica de punteros de userland en syscalls principales, mas
-  syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate` y `rename`.
+  syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate`, `rename`
+  e `ioctl`.
 - Script `build.ps1` con `build`, `run`, `debug` y `clean`.
+
+## Validacion reciente
+
+Flujos ya probados manualmente en QEMU:
+
+- `netinfo` reporta `net0` presente con IP fija `10.0.2.15/24` y gateway
+  `10.0.2.2`, junto con `status`, contadores TX/RX y timeouts.
+- `ping 10.0.2.2` responde correctamente en el setup `QEMU user-net`.
+- `udptest` valida envio/recepcion UDP local sobre la IP del guest.
+- `tcpget 104.18.26.120 80 example.com /` devolvio un `HTTP/1.1 200 OK`
+  el 9 de marzo de 2026 y valida el cliente TCP minimo por IPv4 literal.
+- `beep 440 200` y `beep 880 100` reproducen sonido por `PC speaker`.
+- `gfxdemo` toma el framebuffer, procesa teclado y devuelve el control a la
+  shell al salir.
+- `doomgeneric` arranca como ELF externo desde `/disk/bin`, detecta IWAD en
+  `/disk/games/doom`, entra al juego, responde a teclado (`Ctrl` dispara,
+  `Espacio` usa) y devuelve el control limpio a la shell al salir.
+- `tools/doom-smoke.ps1` automatiza un smoke test de Doom: boot de la VM,
+  lanzamiento desde shell, entrada a partida y verificacion visual de
+  disparo mediante capturas.
+- Shell, `/disk`, `ps`, `mkdir`, `ls` y lectura de archivos siguen operando
+  luego de probar GUI, red y sonido.
+
+Notas del entorno de prueba actual:
+
+- Para esta configuracion, `ping 10.0.2.2` es la prueba de red confiable.
+- `ping` hacia Internet (`1.1.1.1`, `8.8.8.8`, etc.) no se considera criterio
+  de aceptacion mientras se use `QEMU user-net`/SLIRP.
+- UDP v1 ya esta soportado; TCP v1 hoy cubre cliente minimo (`connect` + `read/write`).
+- La IP de ejemplos HTTP puede cambiar con el tiempo; la validada el
+  9 de marzo de 2026 para `example.com:80` fue `104.18.26.120`.
+
+## Siguiente orden recomendado
+
+Orden sugerido para las cuatro lineas de trabajo siguientes:
+
+1. Limpiar UX y documentacion.
+2. Agregar logs y errores mas claros en red.
+3. Empezar la libreria GUI en serio sobre la base fullscreen actual.
+4. Pasar de `ping` a sockets/UDP/TCP minimos.
+
+Razon del orden:
+
+- Primero conviene estabilizar la superficie ya valida y dejarla facil de usar
+  y depurar.
+- Luego conviene mejorar observabilidad de red antes de abrir una API de
+  sockets mas grande.
+- La GUI ya tiene una base funcional y puede crecer en paralelo con menor
+  riesgo que una pila de red completa.
+- Sockets/UDP/TCP es el salto mas grande de diseño y ABI, asi que rinde mas
+  encararlo despues de consolidar lo anterior.
 
 ## Prerrequisitos
 
@@ -98,7 +165,24 @@ Tambien hay un wrapper para compilar, instalar y arrancar QEMU en un paso:
 .\tools\run-user.ps1 -Source .\sdk\errdemo\main.c -Name errdemo
 ```
 
-Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`.
+Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`. Tambien
+hay ejemplos/aplicaciones graficas externas en `sdk/gfxhello` y
+`sdk/doomgeneric`.
+
+## Extension de VS Code
+
+El repo incluye una extension experimental en `tools/vscode-extension` para
+trabajar con apps externas del SDK desde VS Code. La extension agrega:
+
+- comandos para crear, compilar, instalar y ejecutar apps del SDK
+- un panel lateral `SavanXP` con ejemplos bajo `sdk/` y snippets curados
+- acceso rapido a `sdk/v1/REFERENCE.md`
+
+Para cargarla en modo desarrollo:
+
+```powershell
+code --extensionDevelopmentPath .\tools\vscode-extension
+```
 
 ## Persistencia experimental
 

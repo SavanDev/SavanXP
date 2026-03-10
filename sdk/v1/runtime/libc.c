@@ -126,6 +126,30 @@ long rename(const char* old_path, const char* new_path) {
     return syscall2(SAVANXP_SYS_RENAME, (unsigned long)old_path, (unsigned long)new_path);
 }
 
+long ioctl(int fd, unsigned long request, unsigned long arg) {
+    return syscall3(SAVANXP_SYS_IOCTL, (unsigned long)fd, request, arg);
+}
+
+long socket(unsigned long domain, unsigned long type, unsigned long protocol) {
+    return syscall3(SAVANXP_SYS_SOCKET, domain, type, protocol);
+}
+
+long bind(int fd, const struct savanxp_sockaddr_in* address) {
+    return syscall2(SAVANXP_SYS_BIND, (unsigned long)fd, (unsigned long)address);
+}
+
+long sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address) {
+    return syscall5(SAVANXP_SYS_SENDTO, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count, (unsigned long)address, 0);
+}
+
+long recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
+    return syscall5(SAVANXP_SYS_RECVFROM, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count, (unsigned long)address, timeout_ms);
+}
+
+long connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
+    return syscall3(SAVANXP_SYS_CONNECT, (unsigned long)fd, (unsigned long)address, timeout_ms);
+}
+
 long waitpid(int pid, int* status) {
     return syscall2(SAVANXP_SYS_WAITPID, (unsigned long)pid, (unsigned long)status);
 }
@@ -169,6 +193,10 @@ const char* error_string(int error_code) {
     switch (error_code) {
         case 0:
             return "ok";
+        case SAVANXP_EIO:
+            return "io error";
+        case SAVANXP_EAGAIN:
+            return "try again";
         case SAVANXP_EINVAL:
             return "invalid argument";
         case SAVANXP_EBADF:
@@ -181,6 +209,8 @@ const char* error_string(int error_code) {
             return "resource busy";
         case SAVANXP_EEXIST:
             return "already exists";
+        case SAVANXP_ENODEV:
+            return "no such device";
         case SAVANXP_ENOTDIR:
             return "not a directory";
         case SAVANXP_EISDIR:
@@ -195,6 +225,8 @@ const char* error_string(int error_code) {
             return "directory not empty";
         case SAVANXP_ECHILD:
             return "no child process";
+        case SAVANXP_ETIMEDOUT:
+            return "timed out";
         default:
             return "unknown error";
     }
@@ -222,6 +254,49 @@ const char* process_state_string(unsigned long state) {
             return "sleeping";
         case SAVANXP_PROC_ZOMBIE:
             return "zombie";
+        default:
+            return "unknown";
+    }
+}
+
+const char* net_status_string(unsigned long status) {
+    switch (status) {
+        case SAVANXP_NET_STATUS_UNKNOWN:
+            return "unknown";
+        case SAVANXP_NET_STATUS_IDLE:
+            return "idle";
+        case SAVANXP_NET_STATUS_READY:
+            return "ready";
+        case SAVANXP_NET_STATUS_NO_DEVICE:
+            return "no device";
+        case SAVANXP_NET_STATUS_BRING_UP_FAILED:
+            return "bring-up failed";
+        case SAVANXP_NET_STATUS_TX_FAILED:
+            return "tx failed";
+        case SAVANXP_NET_STATUS_TX_TIMEOUT:
+            return "tx timeout";
+        case SAVANXP_NET_STATUS_RX_INVALID:
+            return "rx invalid";
+        case SAVANXP_NET_STATUS_ARP_RESOLVING:
+            return "arp resolving";
+        case SAVANXP_NET_STATUS_ARP_RESOLVED:
+            return "arp resolved";
+        case SAVANXP_NET_STATUS_ARP_TIMEOUT:
+            return "arp timeout";
+        case SAVANXP_NET_STATUS_ICMP_SENT:
+            return "icmp sent";
+        case SAVANXP_NET_STATUS_ICMP_REPLY:
+            return "icmp reply";
+        case SAVANXP_NET_STATUS_ICMP_TIMEOUT:
+            return "icmp timeout";
+        case SAVANXP_NET_STATUS_TCP_SYN_SENT:
+            return "tcp syn sent";
+        case SAVANXP_NET_STATUS_TCP_ESTABLISHED:
+            return "tcp established";
+        case SAVANXP_NET_STATUS_TCP_FIN:
+            return "tcp fin";
+        case SAVANXP_NET_STATUS_TCP_TIMEOUT:
+            return "tcp timeout";
         default:
             return "unknown";
     }

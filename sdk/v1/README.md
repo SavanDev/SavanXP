@@ -18,20 +18,38 @@ Incluye:
 
 Categorías soportadas:
 
-- syscalls: `read`, `write`, `open`, `close`, `readdir`
+- syscalls: `read`, `write`, `open`, `close`, `readdir`, `ioctl`, `socket`, `bind`, `sendto`, `recvfrom`, `connect`
 - procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`
 - descriptores: `pipe`, `dup`, `dup2`, `seek`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`
+- graficos: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_poll_event`
+- primitivas software: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`, `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`, `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`, `gfx_blit_text`
+
+Nodos de dispositivo expuestos actualmente:
+
+- `/dev/fb0`
+- `/dev/input0`
+- `/dev/net0`
+- `/dev/pcspk`
+
+Ioctl groups visibles:
+
+- `FB_IOC_*`
+- `NET_IOC_*`
+- `PCSPK_IOC_*`
 
 Errores visibles:
 
+- `SAVANXP_EIO`
+- `SAVANXP_EAGAIN`
 - `SAVANXP_EINVAL`
 - `SAVANXP_EBADF`
 - `SAVANXP_ENOENT`
 - `SAVANXP_ENOMEM`
 - `SAVANXP_EBUSY`
 - `SAVANXP_EEXIST`
+- `SAVANXP_ENODEV`
 - `SAVANXP_ENOTDIR`
 - `SAVANXP_EISDIR`
 - `SAVANXP_ENOSPC`
@@ -39,6 +57,7 @@ Errores visibles:
 - `SAVANXP_ENOSYS`
 - `SAVANXP_ENOTEMPTY`
 - `SAVANXP_ECHILD`
+- `SAVANXP_ETIMEDOUT`
 
 Reglas del ABI:
 
@@ -61,6 +80,34 @@ Helpers públicos del runtime:
 - errores: `result_is_error`, `result_error_code`, `result_error_string`
 - logging: `puts_err`, `printf_fd`, `eprintf`
 - introspección: `process_state_string`
+- rendering: `struct savanxp_gfx_context`
+
+Tipos compartidos para dispositivos:
+
+- `struct savanxp_fb_info`
+- `struct savanxp_input_event`
+- `struct savanxp_net_info`
+- `enum savanxp_net_status`
+- `struct savanxp_net_ping_request`
+- `struct savanxp_net_ping_result`
+- `struct savanxp_pcspk_beep`
+- `struct savanxp_sockaddr_in`
+
+Sockets v1:
+
+- `socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP)`
+- `bind(fd, &addr)`
+- `sendto(fd, buffer, len, &addr)`
+- `recvfrom(fd, buffer, len, &addr, timeout_ms)`
+- `socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP)`
+- `connect(fd, &addr, timeout_ms)`
+- sockets TCP conectados usan `write(fd, ...)` y `read(fd, ...)`
+- servidor TCP todavia no existe en v1; el alcance actual es cliente minimo
+
+Diagnostico de red v1:
+
+- `savanxp_net_info.last_status` expone la ultima etapa observada por el driver
+- `savanxp_net_info` incluye contadores basicos de TX/RX, ARP y ping timeout
 
 ## Flujo recomendado
 
@@ -96,6 +143,30 @@ El tooling:
 - compila todas las fuentes `.c` y `.S` del directorio en forma recursiva
 - agrega automáticamente `-I <source>` y `-I <source>/include` si existe
 - usa `sdk/v1` como runtime público en vez del árbol interno de `userland`
+
+Smoke tests útiles en el estado actual:
+
+- `netinfo`
+- `ping 10.0.2.2`
+- `udptest`
+- `tcpget 104.18.26.120 80 example.com /`
+- `beep 440 200`
+- `gfxdemo`
+
+Ejemplo externo recomendado para GUI:
+
+```powershell
+.\tools\build-user.ps1 -Source .\sdk\gfxhello -Name gfxhello
+.\tools\build-user.ps1 -Source .\sdk\udptest -Name udptest
+.\tools\build-user.ps1 -Source .\sdk\tcpget -Name tcpget
+```
+
+Nota de red:
+
+- con `QEMU user-net` la prueba confiable del stack ICMP v1 es `ping 10.0.2.2`
+- un `ping` directo a Internet puede fallar aunque el driver RTL8139 esté bien
+- la IP usada por `tcpget` puede cambiar; el 9 de marzo de 2026 el valor
+  validado para `example.com:80` fue `104.18.26.120`
 
 ## Estructura mínima recomendada
 

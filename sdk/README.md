@@ -28,6 +28,10 @@ Ejemplos incluidos:
 - `sdk/procpeek/main.c`: snapshot simple de procesos
 - `sdk/spawnwait/main.c`: `spawn` + `waitpid`
 - `sdk/statusdemo/main.c`: errores, estados de proceso y metadata del SDK
+- `sdk/gfxhello/main.c`: app fullscreen usando `gfx_*` desde el SDK
+- `sdk/doomgeneric/`: port de DoomGeneric con script propio y carpeta `wad/` para copiar `doom1.wad`
+- `sdk/udptest/main.c`: self-test local de sockets UDP IPv4
+- `sdk/tcpget/main.c`: cliente HTTP minimo sobre sockets TCP IPv4
 - `sdk/multifile/*`: app externa con varias fuentes y headers locales
 - `sdk/template/main.c`: punto de partida mínimo para apps nuevas
 
@@ -82,4 +86,10 @@ Compilar, instalar y arrancar QEMU en un paso:
 
 ```powershell
 .\tools\run-user.ps1 -Source .\sdk\errdemo -Name errdemo
+```
+
+Caso DoomGeneric:
+
+```powershell
+.\sdk\doomgeneric\build.ps1
 ```

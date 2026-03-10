@@ -5,7 +5,9 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/device.hpp"
 #include "kernel/elf.hpp"
+#include "kernel/net.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -325,6 +327,10 @@ void release_open_file(process::OpenFile*& file_ptr) {
             wake_blocked_readers_for_pipe(*file->pipe);
         }
         free_pipe_if_unused(file->pipe);
+    } else if (file->kind == process::HandleKind::device && file->device != nullptr) {
+        device::close(file->device);
+    } else if (file->kind == process::HandleKind::socket && file->socket != nullptr) {
+        net::close_socket(file->socket);
     }
 
     memset(file, 0, sizeof(*file));
@@ -1045,7 +1051,7 @@ int open_node(process::Process& proc, const char* path, uint32_t flags) {
         return negative_error(SAVANXP_ENOMEM);
     }
 
-    file->kind = process::HandleKind::vnode;
+    file->kind = node->backend == vfs::Backend::device ? process::HandleKind::device : process::HandleKind::vnode;
     file->flags =
         ((flags & SAVANXP_OPEN_READ) != 0 ? process::open_read : 0) |
         ((flags & SAVANXP_OPEN_WRITE) != 0 ? process::open_write : 0);
@@ -1053,6 +1059,7 @@ int open_node(process::Process& proc, const char* path, uint32_t flags) {
         file->flags = process::open_read;
     }
     file->node = node;
+    file->device = node->backend == vfs::Backend::device ? static_cast<device::Device*>(node->data) : nullptr;
     if ((flags & SAVANXP_OPEN_APPEND) != 0 && node->type == vfs::NodeType::file) {
         file->offset = node->size;
     }
@@ -1061,6 +1068,62 @@ int open_node(process::Process& proc, const char* path, uint32_t flags) {
         discard_open_file(file);
     }
     return fd;
+}
+
+int create_socket_fd(process::Process& proc, uint64_t domain, uint64_t type, uint64_t protocol) {
+    net::Socket* socket = nullptr;
+    const int create_result = net::create_socket(static_cast<uint32_t>(domain), static_cast<uint32_t>(type), static_cast<uint32_t>(protocol), socket);
+    if (create_result < 0 || socket == nullptr) {
+        return create_result < 0 ? create_result : negative_error(SAVANXP_ENOMEM);
+    }
+
+    process::OpenFile* file = allocate_open_file();
+    if (file == nullptr) {
+        net::close_socket(socket);
+        return negative_error(SAVANXP_ENOMEM);
+    }
+
+    file->kind = process::HandleKind::socket;
+    file->flags = process::open_read | process::open_write;
+    file->socket = socket;
+    const int fd = allocate_fd(proc, file);
+    if (fd < 0) {
+        net::close_socket(socket);
+        discard_open_file(file);
+    }
+    return fd;
+}
+
+int bind_fd(process::Process& proc, uint64_t fd, uint64_t user_address) {
+    process::OpenFile* file = fd_to_open(proc, fd);
+    if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    return net::bind_socket(file->socket, user_address);
+}
+
+int connect_fd(process::Process& proc, uint64_t fd, uint64_t user_address, uint32_t timeout_ms) {
+    process::OpenFile* file = fd_to_open(proc, fd);
+    if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    return net::connect_socket(file->socket, user_address, timeout_ms);
+}
+
+int sendto_fd(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t count, uint64_t user_address) {
+    process::OpenFile* file = fd_to_open(proc, fd);
+    if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    return net::sendto_socket(file->socket, user_buffer, count, user_address);
+}
+
+int recvfrom_fd(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms) {
+    process::OpenFile* file = fd_to_open(proc, fd);
+    if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    return net::recvfrom_socket(file->socket, user_buffer, count, user_address, timeout_ms);
 }
 
 int seek_fd(process::Process& proc, uint64_t fd, int64_t offset, uint64_t whence) {
@@ -1194,6 +1257,15 @@ int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
     return static_cast<int>(to_copy);
 }
 
+int ioctl_handle(process::Process& proc, uint64_t fd, uint64_t request, uint64_t argument) {
+    (void)proc;
+    process::OpenFile* file = fd_to_open(proc, fd);
+    if (file == nullptr || file->kind != process::HandleKind::device || file->device == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    return device::ioctl(file->device, request, argument);
+}
+
 int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t count) {
     process::OpenFile* file = fd_to_open(proc, fd);
     if (file == nullptr || count == 0) {
@@ -1256,6 +1328,10 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
             }
             return result;
         }
+        case process::HandleKind::device:
+            return device::read(file->device, user_buffer, count);
+        case process::HandleKind::socket:
+            return net::read_socket(file->socket, user_buffer, count);
         default:
             return negative_error(SAVANXP_EBADF);
     }
@@ -1335,6 +1411,10 @@ int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
             proc.state = process::State::blocked_write;
             return kBlockedResult;
         }
+        case process::HandleKind::device:
+            return device::write(file->device, user_buffer, count);
+        case process::HandleKind::socket:
+            return net::write_socket(file->socket, user_buffer, count);
         default:
             return negative_error(SAVANXP_EBADF);
     }
@@ -1452,6 +1532,10 @@ Process* current() {
     return g_current;
 }
 
+uint32_t current_pid() {
+    return g_current != nullptr ? g_current->pid : 0;
+}
+
 Process* find(uint32_t pid) {
     for (Process& proc : g_processes) {
         if (proc.state != State::unused && proc.pid == pid) {
@@ -1480,6 +1564,27 @@ bool snapshot_process(size_t index, savanxp_process_info& info) {
         return true;
     }
     return false;
+}
+
+bool copy_from_user(void* destination, uint64_t user_address, size_t count) {
+    if (g_current == nullptr) {
+        return false;
+    }
+    return read_from_process_memory(*g_current, destination, user_address, count);
+}
+
+bool copy_to_user(uint64_t user_address, const void* source, size_t count) {
+    if (g_current == nullptr) {
+        return false;
+    }
+    return write_to_process_memory(*g_current, user_address, source, count);
+}
+
+bool validate_user_range(uint64_t user_address, size_t count, bool require_write) {
+    if (g_current == nullptr) {
+        return false;
+    }
+    return vm::is_user_range_accessible(g_current->address_space, user_address, count, require_write);
 }
 
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid) {
@@ -1730,6 +1835,30 @@ SavedContext* handle_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(rename_path(old_path, new_path));
             return context;
         }
+        case SAVANXP_SYS_IOCTL:
+            context->rax = static_cast<uint64_t>(ioctl_handle(*g_current, context->rdi, context->rsi, context->rdx));
+            return context;
+        case SAVANXP_SYS_SOCKET:
+            context->rax = static_cast<uint64_t>(create_socket_fd(*g_current, context->rdi, context->rsi, context->rdx));
+            return context;
+        case SAVANXP_SYS_BIND:
+            context->rax = static_cast<uint64_t>(bind_fd(*g_current, context->rdi, context->rsi));
+            return context;
+        case SAVANXP_SYS_SENDTO:
+            context->rax = static_cast<uint64_t>(sendto_fd(*g_current, context->rdi, context->rsi, static_cast<size_t>(context->rdx), context->r10));
+            return context;
+        case SAVANXP_SYS_RECVFROM:
+            context->rax = static_cast<uint64_t>(recvfrom_fd(
+                *g_current,
+                context->rdi,
+                context->rsi,
+                static_cast<size_t>(context->rdx),
+                context->r10,
+                static_cast<uint32_t>(context->r8)));
+            return context;
+        case SAVANXP_SYS_CONNECT:
+            context->rax = static_cast<uint64_t>(connect_fd(*g_current, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
+            return context;
         default:
             context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOSYS));
             return context;

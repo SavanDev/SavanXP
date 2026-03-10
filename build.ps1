@@ -26,7 +26,7 @@ $DebugConLog = Join-Path $BuildRoot "debugcon.log"
 $SvfsSectorSize = 512
 $SvfsDirectorySectors = 8
 $SvfsMaxFiles = 64
-$SvfsTotalSectors = 4096
+$SvfsTotalSectors = 32768
 
 $KernelSources = @(
     "arch/x86_64/context.S",
@@ -35,9 +35,14 @@ $KernelSources = @(
     "arch/x86_64/timer.cpp",
     "kernel/kernel_main.cpp",
     "kernel/console.cpp",
+    "kernel/device.cpp",
+    "kernel/pci.cpp",
     "kernel/tty.cpp",
+    "kernel/ui.cpp",
     "kernel/ps2.cpp",
+    "kernel/pcspeaker.cpp",
     "kernel/heap.cpp",
+    "kernel/net.cpp",
     "kernel/physical_memory.cpp",
     "kernel/vmm.cpp",
     "kernel/vfs.cpp",
@@ -74,7 +79,15 @@ $UserPrograms = @(
     @{ Name = "seektest"; Source = "userland/seektest.c" },
     @{ Name = "renametest"; Source = "userland/renametest.c" },
     @{ Name = "truncatetest"; Source = "userland/truncatetest.c" },
-    @{ Name = "errtest"; Source = "userland/errtest.c" }
+    @{ Name = "errtest"; Source = "userland/errtest.c" },
+    @{ Name = "netinfo"; Source = "userland/netinfo.c" },
+    @{ Name = "ping"; Source = "userland/ping.c" },
+    @{ Name = "udpsend"; Source = "userland/udpsend.c" },
+    @{ Name = "udprecv"; Source = "userland/udprecv.c" },
+    @{ Name = "udptest"; Source = "userland/udptest.c" },
+    @{ Name = "tcpget"; Source = "userland/tcpget.c" },
+    @{ Name = "beep"; Source = "userland/beep.c" },
+    @{ Name = "gfxdemo"; Source = "userland/gfxdemo.c" }
 )
 
 function New-Directory([string]$Path) {
@@ -261,6 +274,18 @@ function Set-AsciiField([byte[]]$Buffer, [int]$Offset, [string]$Text, [int]$Capa
     $Buffer[$Offset + $count] = 0
 }
 
+function Get-AsciiField([byte[]]$Buffer, [int]$Offset, [int]$Capacity) {
+    $length = 0
+    while ($length -lt ($Capacity - 1) -and $Buffer[$Offset + $length] -ne 0) {
+        $length += 1
+    }
+    return [System.Text.Encoding]::ASCII.GetString($Buffer, $Offset, $length)
+}
+
+function Get-UInt32Le([byte[]]$Buffer, [int]$Offset) {
+    return [System.BitConverter]::ToUInt32($Buffer, $Offset)
+}
+
 function Set-UInt32Le([byte[]]$Buffer, [int]$Offset, [uint32]$Value) {
     $bytes = [System.BitConverter]::GetBytes($Value)
     [Array]::Copy($bytes, 0, $Buffer, $Offset, 4)
@@ -268,6 +293,19 @@ function Set-UInt32Le([byte[]]$Buffer, [int]$Offset, [uint32]$Value) {
 
 function Ensure-SvfsDisk([string]$SourceRoot, [string]$OutputPath) {
     if (Test-Path $OutputPath) {
+        $bytes = [System.IO.File]::ReadAllBytes($OutputPath)
+        if ($bytes.Length -ge $SvfsSectorSize) {
+            $magic = Get-AsciiField $bytes 0 8
+            if ($magic.StartsWith("SVFS1")) {
+                $currentTotalSectors = Get-UInt32Le $bytes 12
+                if ($currentTotalSectors -lt $SvfsTotalSectors) {
+                    $newBytes = New-Object byte[] ($SvfsTotalSectors * $SvfsSectorSize)
+                    [Array]::Copy($bytes, 0, $newBytes, 0, $bytes.Length)
+                    Set-UInt32Le -Buffer $newBytes -Offset 12 -Value $SvfsTotalSectors
+                    [System.IO.File]::WriteAllBytes($OutputPath, $newBytes)
+                }
+            }
+        }
         return
     }
 
@@ -363,7 +401,7 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
 
     foreach ($program in $UserPrograms) {
         $objectFiles = @()
-        foreach ($source in @("userland/crt0.S", "userland/libc.c", $program.Source)) {
+        foreach ($source in @("userland/crt0.S", "userland/libc.c", "userland/gfx.c", $program.Source)) {
             $sourcePath = Join-Path $ProjectRoot $source
             $objectName = "$($program.Name)_$([IO.Path]::GetFileNameWithoutExtension($source)).o"
             $objectPath = Join-Path $userObjRoot $objectName
@@ -464,12 +502,15 @@ function Run-Qemu([switch]$WaitForDebugger) {
     }
 
     $args = @(
-        "-machine", "q35",
+        "-machine", "q35,pcspk-audiodev=audio0",
         "-m", "256M",
         "-cpu", "max",
+        "-audiodev", "sdl,id=audio0",
         "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
         "-drive", "if=pflash,format=raw,file=$VarsTemplate",
         "-drive", "file=fat:rw:build/image,format=raw",
+        "-netdev", "user,id=net0",
+        "-device", "rtl8139,netdev=net0",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage",
         "-device", "ide-hd,drive=svdisk,bus=svide.0",

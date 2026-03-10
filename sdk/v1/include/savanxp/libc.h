@@ -24,6 +24,12 @@ long mkdir(const char* path);
 long rmdir(const char* path);
 long truncate(const char* path, unsigned long size);
 long rename(const char* old_path, const char* new_path);
+long ioctl(int fd, unsigned long request, unsigned long arg);
+long socket(unsigned long domain, unsigned long type, unsigned long protocol);
+long bind(int fd, const struct savanxp_sockaddr_in* address);
+long sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address);
+long recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
+long connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
 long waitpid(int pid, int* status);
 long yield(void);
 long sleep_ms(unsigned long milliseconds);
@@ -32,11 +38,38 @@ long clear_screen(void);
 long proc_info(unsigned long index, struct savanxp_process_info* info);
 void exit(int code) __attribute__((noreturn));
 
+struct savanxp_gfx_context {
+    int fb_fd;
+    int input_fd;
+    struct savanxp_fb_info info;
+};
+
+long gfx_open(struct savanxp_gfx_context* context);
+long gfx_close(struct savanxp_gfx_context* context);
+long gfx_acquire(struct savanxp_gfx_context* context);
+long gfx_release(struct savanxp_gfx_context* context);
+long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixels);
+int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
+uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
+uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);
+size_t gfx_buffer_pixels(const struct savanxp_fb_info* info);
+size_t gfx_buffer_bytes(const struct savanxp_fb_info* info);
+void gfx_clear(uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t colour);
+void gfx_pixel(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, uint32_t colour);
+void gfx_hline(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, uint32_t colour);
+void gfx_vline(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int height, uint32_t colour);
+void gfx_rect(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, int height, uint32_t colour);
+void gfx_frame(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, int height, uint32_t colour);
+int gfx_text_width(const char* text);
+int gfx_text_height(void);
+void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour);
+
 int result_is_error(long result);
 int result_error_code(long result);
 const char* error_string(int error_code);
 const char* result_error_string(long result);
 const char* process_state_string(unsigned long state);
+const char* net_status_string(unsigned long status);
 
 size_t strlen(const char* text);
 int strcmp(const char* left, const char* right);

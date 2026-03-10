@@ -5,6 +5,8 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/tty.hpp"
+#include "kernel/ui.hpp"
+#include "shared/syscall.h"
 
 namespace {
 
@@ -94,6 +96,55 @@ char translate_scancode(uint8_t scancode, bool shifted, bool alt_gr) {
     return shifted ? kShifted[scancode] : kNormal[scancode];
 }
 
+uint32_t special_key(uint8_t scancode, bool extended) {
+    if (extended) {
+        switch (scancode) {
+            case 0x48: return SAVANXP_KEY_UP;
+            case 0x50: return SAVANXP_KEY_DOWN;
+            case 0x4b: return SAVANXP_KEY_LEFT;
+            case 0x4d: return SAVANXP_KEY_RIGHT;
+            case 0x47: return SAVANXP_KEY_HOME;
+            case 0x4f: return SAVANXP_KEY_END;
+            case 0x49: return SAVANXP_KEY_PAGE_UP;
+            case 0x51: return SAVANXP_KEY_PAGE_DOWN;
+            case 0x52: return SAVANXP_KEY_INSERT;
+            case 0x53: return SAVANXP_KEY_DELETE;
+            case 0x1d: return SAVANXP_KEY_CTRL;
+            case 0x38: return SAVANXP_KEY_ALT;
+            default: return SAVANXP_KEY_NONE;
+        }
+    }
+
+    switch (scancode) {
+        case 0x01: return SAVANXP_KEY_ESC;
+        case 0x0e: return SAVANXP_KEY_BACKSPACE;
+        case 0x0f: return SAVANXP_KEY_TAB;
+        case 0x1c: return SAVANXP_KEY_ENTER;
+        case 0x2a:
+        case 0x36:
+            return SAVANXP_KEY_SHIFT;
+        case 0x1d:
+            return SAVANXP_KEY_CTRL;
+        case 0x38:
+            return SAVANXP_KEY_ALT;
+        case 0x3a:
+            return SAVANXP_KEY_CAPSLOCK;
+        case 0x3b: return SAVANXP_KEY_F1;
+        case 0x3c: return SAVANXP_KEY_F2;
+        case 0x3d: return SAVANXP_KEY_F3;
+        case 0x3e: return SAVANXP_KEY_F4;
+        case 0x3f: return SAVANXP_KEY_F5;
+        case 0x40: return SAVANXP_KEY_F6;
+        case 0x41: return SAVANXP_KEY_F7;
+        case 0x42: return SAVANXP_KEY_F8;
+        case 0x43: return SAVANXP_KEY_F9;
+        case 0x44: return SAVANXP_KEY_F10;
+        case 0x57: return SAVANXP_KEY_F11;
+        case 0x58: return SAVANXP_KEY_F12;
+        default: return SAVANXP_KEY_NONE;
+    }
+}
+
 void process_scancode(uint8_t scancode) {
     if (scancode == 0xe0) {
         g_extended = true;
@@ -108,17 +159,31 @@ void process_scancode(uint8_t scancode) {
         if (key == 0x38) {
             g_alt_gr_pressed = !released;
         }
+
+        const uint32_t key_code = special_key(key, true);
+        if (key_code != SAVANXP_KEY_NONE) {
+            ui::handle_key_event(key_code, !released, 0);
+            g_extended = false;
+            return;
+        }
         g_extended = false;
         return;
     }
 
-    if (key == 0x2a || key == 0x36) {
+    const uint32_t key_code = special_key(key, false);
+    if (key_code == SAVANXP_KEY_SHIFT) {
         device.shift_pressed = !released;
-        return;
     }
-
-    if (key == 0x1d) {
+    if (key_code == SAVANXP_KEY_CTRL) {
         device.ctrl_pressed = !released;
+    }
+    if (ui::graphics_active()) {
+        const char translated = translate_scancode(key, device.shift_pressed, g_alt_gr_pressed);
+        ui::handle_key_event(
+            key_code != SAVANXP_KEY_NONE ? key_code : static_cast<uint32_t>(static_cast<uint8_t>(translated)),
+            !released,
+            released ? 0 : translated
+        );
         return;
     }
 
@@ -126,12 +191,12 @@ void process_scancode(uint8_t scancode) {
         return;
     }
 
-    if (key == 0x0e) {
+    if (key_code == SAVANXP_KEY_BACKSPACE) {
         tty::handle_backspace();
         return;
     }
 
-    if (key == 0x1c) {
+    if (key_code == SAVANXP_KEY_ENTER) {
         tty::submit_line();
         return;
     }

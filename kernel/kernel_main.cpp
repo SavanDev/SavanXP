@@ -6,14 +6,19 @@
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/device.hpp"
 #include "kernel/heap.hpp"
+#include "kernel/net.hpp"
 #include "kernel/panic.hpp"
+#include "kernel/pci.hpp"
+#include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ps2.hpp"
 #include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
+#include "kernel/ui.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 #include "shared/version.h"
@@ -91,6 +96,11 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     ps2::initialize();
     process::initialize();
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
+    device::initialize();
+    pci::initialize();
+    ui::initialize(boot_info.framebuffer);
+    pcspeaker::initialize();
+    net::initialize();
     block::initialize();
     svfs::initialize();
 
@@ -120,6 +130,13 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
         "input: ps2=%u tty=1 initramfs=%llu bytes\n",
         ps2::ready() ? 1u : 0u,
         boot_info.initramfs_size
+    );
+    console::printf(
+        "devices: pci=%llu fb=%u net=%u speaker=%u\n",
+        static_cast<unsigned long long>(pci::device_count()),
+        ui::framebuffer_available() ? 1u : 0u,
+        net::present() ? 1u : 0u,
+        pcspeaker::ready() ? 1u : 0u
     );
     console::printf(
         "disk: block=%u svfs=%u files=%llu mount=%s\n",
