@@ -176,6 +176,22 @@ long proc_info(unsigned long index, struct savanxp_process_info* info) {
     return syscall2(SAVANXP_SYS_PROC_INFO, index, (unsigned long)info);
 }
 
+long getpid(void) {
+    return syscall0(SAVANXP_SYS_GETPID);
+}
+
+long chdir(const char* path) {
+    return syscall1(SAVANXP_SYS_CHDIR, (unsigned long)path);
+}
+
+long getcwd(char* buffer, size_t count) {
+    return syscall2(SAVANXP_SYS_GETCWD, (unsigned long)buffer, (unsigned long)count);
+}
+
+long system_info(struct savanxp_system_info* info) {
+    return syscall1(SAVANXP_SYS_SYSTEM_INFO, (unsigned long)info);
+}
+
 void exit(int code) {
     syscall1(SAVANXP_SYS_EXIT, (unsigned long)code);
     for (;;) {

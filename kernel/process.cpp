@@ -3,16 +3,22 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+#include "kernel/block.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/elf.hpp"
 #include "kernel/net.hpp"
 #include "kernel/panic.hpp"
+#include "kernel/pci.hpp"
+#include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/ps2.hpp"
 #include "kernel/string.hpp"
+#include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
+#include "kernel/ui.hpp"
 
 namespace {
 
@@ -24,6 +30,7 @@ constexpr uint32_t kDefaultTimeSlice = 4;
 constexpr size_t kMaxPipeCount = 16;
 constexpr size_t kPipeCapacity = 4096;
 constexpr size_t kPipeChunkSize = 256;
+constexpr size_t kMaxPathComponents = 16;
 constexpr uint32_t kWaitAnyPid = 0xffffffffu;
 constexpr int kBlockedResult = -0x70000000;
 constexpr bool kLogProc = false;
@@ -42,6 +49,8 @@ process::OpenFile g_open_files[process::kMaxOpenFiles] = {};
 uint32_t g_next_pid = 1;
 size_t g_schedule_cursor = 0;
 bool g_ready = false;
+savanxp_system_info g_boot_system_info = {};
+bool g_boot_system_info_ready = false;
 
 uint64_t read_cr3() {
     uint64_t value = 0;
@@ -55,6 +64,20 @@ void write_cr3(uint64_t value) {
 
 int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
+}
+
+uint64_t current_uptime_ms() {
+    return (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+}
+
+uint32_t exported_timer_backend(timer::Backend backend) {
+    switch (backend) {
+        case timer::Backend::local_apic:
+            return SAVANXP_TIMER_LOCAL_APIC;
+        case timer::Backend::none:
+        default:
+            return SAVANXP_TIMER_NONE;
+    }
 }
 
 void process_assert(bool condition, const char* message) {
@@ -131,6 +154,137 @@ void set_process_name(process::Process& proc, const char* path) {
         ++index;
     }
     proc.name[index] = '\0';
+}
+
+void set_process_cwd_root(process::Process& proc) {
+    memset(proc.cwd, 0, sizeof(proc.cwd));
+    strcpy(proc.cwd, "/");
+}
+
+bool normalize_process_path(const char* cwd, const char* input, char* output, size_t capacity) {
+    if (cwd == nullptr || input == nullptr || output == nullptr || capacity < 2) {
+        return false;
+    }
+
+    char working[process::kProcessPathLength] = {};
+    size_t working_length = 0;
+    if (input[0] == '/') {
+        working_length = strlen(input);
+        if (working_length >= sizeof(working)) {
+            return false;
+        }
+        memcpy(working, input, working_length + 1);
+    } else {
+        const size_t cwd_length = strlen(cwd);
+        const size_t input_length = strlen(input);
+        if (cwd_length + (cwd_length > 1 ? 1u : 0u) + input_length >= sizeof(working)) {
+            return false;
+        }
+        memcpy(working, cwd, cwd_length + 1);
+        working_length = cwd_length;
+        if (working_length > 1 && working[working_length - 1] != '/') {
+            working[working_length++] = '/';
+            working[working_length] = '\0';
+        }
+        memcpy(working + working_length, input, input_length + 1);
+    }
+
+    char components[kMaxPathComponents][48] = {};
+    size_t component_count = 0;
+    char* cursor = working;
+    while (*cursor != '\0') {
+        while (*cursor == '/') {
+            ++cursor;
+        }
+        if (*cursor == '\0') {
+            break;
+        }
+
+        char* start = cursor;
+        while (*cursor != '\0' && *cursor != '/') {
+            ++cursor;
+        }
+
+        const size_t length = static_cast<size_t>(cursor - start);
+        if (length == 0) {
+            continue;
+        }
+        if (length == 1 && start[0] == '.') {
+            continue;
+        }
+        if (length == 2 && start[0] == '.' && start[1] == '.') {
+            if (component_count > 0) {
+                --component_count;
+            }
+            continue;
+        }
+        if (component_count >= kMaxPathComponents || length >= sizeof(components[0])) {
+            return false;
+        }
+        memcpy(components[component_count], start, length);
+        components[component_count][length] = '\0';
+        ++component_count;
+    }
+
+    size_t written = 0;
+    output[written++] = '/';
+    for (size_t index = 0; index < component_count; ++index) {
+        const size_t length = strlen(components[index]);
+        if (written + length + 1 >= capacity) {
+            return false;
+        }
+        memcpy(output + written, components[index], length);
+        written += length;
+        if (index + 1 < component_count) {
+            output[written++] = '/';
+        }
+    }
+    output[written] = '\0';
+    return true;
+}
+
+bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
+    const char* cwd = proc.cwd[0] != '\0' ? proc.cwd : "/";
+    return normalize_process_path(cwd, input, output, capacity);
+}
+
+void fill_stat_for_vnode(const vfs::Vnode& node, savanxp_stat& stat) {
+    memset(&stat, 0, sizeof(stat));
+    if (node.backend == vfs::Backend::device) {
+        stat.st_mode = SAVANXP_S_IFCHR | 0666u;
+        return;
+    }
+
+    if (node.type == vfs::NodeType::directory) {
+        stat.st_mode = SAVANXP_S_IFDIR | (node.writable ? 0755u : 0555u);
+        return;
+    }
+
+    stat.st_mode = SAVANXP_S_IFREG | (node.writable ? 0644u : 0444u);
+    stat.st_size = static_cast<uint32_t>(node.size);
+}
+
+void fill_stat_for_open_file(const process::OpenFile& file, savanxp_stat& stat) {
+    memset(&stat, 0, sizeof(stat));
+    switch (file.kind) {
+        case process::HandleKind::tty:
+        case process::HandleKind::device:
+            stat.st_mode = SAVANXP_S_IFCHR | 0666u;
+            return;
+        case process::HandleKind::pipe:
+            stat.st_mode = SAVANXP_S_IFIFO | 0666u;
+            return;
+        case process::HandleKind::socket:
+            stat.st_mode = SAVANXP_S_IFSOCK | 0666u;
+            return;
+        case process::HandleKind::vnode:
+            if (file.node != nullptr) {
+                fill_stat_for_vnode(*file.node, stat);
+            }
+            return;
+        default:
+            return;
+    }
 }
 
 process::Process* allocate_process_slot(bool idle) {
@@ -564,6 +718,7 @@ process::Process* create_idle_process() {
     proc->kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
     proc->kernel_stack_size = kKernelStackPages * memory::kPageSize;
     set_process_name(*proc, "idle");
+    set_process_cwd_root(*proc);
 
     memory::PageAllocation code_page = {};
     memory::PageAllocation stack_page = {};
@@ -635,6 +790,11 @@ process::Process* create_process_internal(
 
     proc->parent_pid = parent != nullptr ? parent->pid : 0;
     set_process_name(*proc, path);
+    if (parent != nullptr && parent->cwd[0] != '\0') {
+        strcpy(proc->cwd, parent->cwd);
+    } else {
+        set_process_cwd_root(*proc);
+    }
     if (!vm::create_address_space(proc->address_space)) {
         if (image_backing.physical_address != 0) {
             (void)memory::free_allocation(image_backing);
@@ -1230,6 +1390,64 @@ int rename_path(const char* old_path, const char* new_path) {
     return 0;
 }
 
+int stat_path(process::Process& proc, const char* path, uint64_t user_stat_address) {
+    if (!vm::is_user_range_accessible(proc.address_space, user_stat_address, sizeof(savanxp_stat), true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    const vfs::Vnode* node = vfs::resolve(path);
+    if (node == nullptr) {
+        return negative_error(SAVANXP_ENOENT);
+    }
+
+    savanxp_stat stat = {};
+    fill_stat_for_vnode(*node, stat);
+    return write_to_process_memory(proc, user_stat_address, &stat, sizeof(stat))
+        ? 0
+        : negative_error(SAVANXP_EINVAL);
+}
+
+int fstat_fd(process::Process& proc, uint64_t fd, uint64_t user_stat_address) {
+    process::OpenFile* file = fd_to_open(proc, fd);
+    if (file == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (!vm::is_user_range_accessible(proc.address_space, user_stat_address, sizeof(savanxp_stat), true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    savanxp_stat stat = {};
+    fill_stat_for_open_file(*file, stat);
+    return write_to_process_memory(proc, user_stat_address, &stat, sizeof(stat))
+        ? 0
+        : negative_error(SAVANXP_EINVAL);
+}
+
+int chdir_path(process::Process& proc, const char* path) {
+    const vfs::Vnode* node = vfs::resolve(path);
+    if (node == nullptr) {
+        return negative_error(SAVANXP_ENOENT);
+    }
+    if (node->type != vfs::NodeType::directory) {
+        return negative_error(SAVANXP_ENOTDIR);
+    }
+    if (strlen(path) >= sizeof(proc.cwd)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    strcpy(proc.cwd, path);
+    return 0;
+}
+
+int getcwd_path(process::Process& proc, uint64_t user_buffer, size_t capacity) {
+    const size_t length = strlen(proc.cwd) + 1;
+    if (capacity < length || !vm::is_user_range_accessible(proc.address_space, user_buffer, capacity, true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    return write_to_process_memory(proc, user_buffer, proc.cwd, length)
+        ? static_cast<int>(length - 1)
+        : negative_error(SAVANXP_EINVAL);
+}
+
 int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity) {
     process::OpenFile* file = fd_to_open(proc, fd);
     if (file == nullptr || file->kind != process::HandleKind::vnode || file->node == nullptr ||
@@ -1517,10 +1735,12 @@ void initialize() {
     memset(g_pipes, 0, sizeof(g_pipes));
     memset(g_pipe_storage, 0, sizeof(g_pipe_storage));
     memset(g_open_files, 0, sizeof(g_open_files));
+    memset(&g_boot_system_info, 0, sizeof(g_boot_system_info));
     g_current = nullptr;
     g_idle = nullptr;
     g_next_pid = 1;
     g_schedule_cursor = 0;
+    g_boot_system_info_ready = false;
     g_ready = true;
 }
 
@@ -1564,6 +1784,32 @@ bool snapshot_process(size_t index, savanxp_process_info& info) {
         return true;
     }
     return false;
+}
+
+void set_boot_system_info(const savanxp_system_info& info) {
+    memcpy(&g_boot_system_info, &info, sizeof(g_boot_system_info));
+    g_boot_system_info_ready = true;
+}
+
+bool snapshot_system_info(savanxp_system_info& info) {
+    memset(&info, 0, sizeof(info));
+    if (g_boot_system_info_ready) {
+        memcpy(&info, &g_boot_system_info, sizeof(info));
+    }
+
+    info.input_ready = ps2::ready() ? 1u : 0u;
+    info.framebuffer_ready = ui::framebuffer_available() ? 1u : 0u;
+    info.net_present = net::present() ? 1u : 0u;
+    info.speaker_ready = pcspeaker::ready() ? 1u : 0u;
+    info.block_ready = block::ready() ? 1u : 0u;
+    info.svfs_mounted = svfs::mounted() ? 1u : 0u;
+    info.timer_backend = exported_timer_backend(timer::backend());
+    info.timer_frequency_hz = timer::frequency_hz();
+    info.pci_device_count = static_cast<uint32_t>(pci::device_count());
+    info.svfs_file_count = static_cast<uint32_t>(svfs::file_count());
+    info.memory_total_pages = memory::total_page_count();
+    info.uptime_ms = current_uptime_ms();
+    return true;
 }
 
 bool copy_from_user(void* destination, uint64_t user_address, size_t count) {
@@ -1662,11 +1908,13 @@ SavedContext* handle_syscall(SavedContext* context) {
         }
         case SAVANXP_SYS_OPEN: {
             char path[128] = {};
-            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+            char resolved[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(open_node(*g_current, path, static_cast<uint32_t>(context->rsi)));
+            context->rax = static_cast<uint64_t>(open_node(*g_current, resolved, static_cast<uint32_t>(context->rsi)));
             return context;
         }
         case SAVANXP_SYS_CLOSE:
@@ -1678,10 +1926,12 @@ SavedContext* handle_syscall(SavedContext* context) {
         case SAVANXP_SYS_SPAWN:
         case SAVANXP_SYS_SPAWN_FD: {
             char path[128] = {};
+            char resolved[128] = {};
             char argv_storage[16][64] = {};
             const char* argv_local[16] = {};
             int argc = 0;
-            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), argv_storage, argv_local, argc)) {
+            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), argv_storage, argv_local, argc) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -1693,21 +1943,23 @@ SavedContext* handle_syscall(SavedContext* context) {
                 stdout_fd = static_cast<int>(context->r8);
             }
 
-            Process* child = create_process_internal(path, argc, argv_local, g_current, stdin_fd, stdout_fd);
+            Process* child = create_process_internal(resolved, argc, argv_local, g_current, stdin_fd, stdout_fd);
             context->rax = static_cast<uint64_t>(child != nullptr ? static_cast<int>(child->pid) : negative_error(SAVANXP_ENOENT));
             return context;
         }
         case SAVANXP_SYS_EXEC: {
             char path[128] = {};
+            char resolved[128] = {};
             char argv_storage[16][64] = {};
             const char* argv_local[16] = {};
             int argc = 0;
-            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), argv_storage, argv_local, argc)) {
+            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), argv_storage, argv_local, argc) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
 
-            if (!prepare_exec_image(*g_current, path, argc, argv_local)) {
+            if (!prepare_exec_image(*g_current, resolved, argc, argv_local)) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOENT));
                 return context;
             }
@@ -1748,7 +2000,7 @@ SavedContext* handle_syscall(SavedContext* context) {
             context->rax = 0;
             return choose_next_context(context);
         case SAVANXP_SYS_UPTIME_MS:
-            context->rax = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+            context->rax = current_uptime_ms();
             return context;
         case SAVANXP_SYS_CLEAR:
             tty::clear();
@@ -1790,49 +2042,61 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         case SAVANXP_SYS_UNLINK: {
             char path[128] = {};
-            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+            char resolved[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(unlink_path(path));
+            context->rax = static_cast<uint64_t>(unlink_path(resolved));
             return context;
         }
         case SAVANXP_SYS_MKDIR: {
             char path[128] = {};
-            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+            char resolved[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(mkdir_path(path));
+            context->rax = static_cast<uint64_t>(mkdir_path(resolved));
             return context;
         }
         case SAVANXP_SYS_RMDIR: {
             char path[128] = {};
-            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+            char resolved[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(rmdir_path(path));
+            context->rax = static_cast<uint64_t>(rmdir_path(resolved));
             return context;
         }
         case SAVANXP_SYS_TRUNCATE: {
             char path[128] = {};
-            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path))) {
+            char resolved[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(truncate_path(path, context->rsi));
+            context->rax = static_cast<uint64_t>(truncate_path(resolved, context->rsi));
             return context;
         }
         case SAVANXP_SYS_RENAME: {
             char old_path[128] = {};
             char new_path[128] = {};
+            char resolved_old[128] = {};
+            char resolved_new[128] = {};
             if (!copy_user_string(*g_current, context->rdi, old_path, sizeof(old_path)) ||
-                !copy_user_string(*g_current, context->rsi, new_path, sizeof(new_path))) {
+                !copy_user_string(*g_current, context->rsi, new_path, sizeof(new_path)) ||
+                !resolve_process_path(*g_current, old_path, resolved_old, sizeof(resolved_old)) ||
+                !resolve_process_path(*g_current, new_path, resolved_new, sizeof(resolved_new))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(rename_path(old_path, new_path));
+            context->rax = static_cast<uint64_t>(rename_path(resolved_old, resolved_new));
             return context;
         }
         case SAVANXP_SYS_IOCTL:
@@ -1859,6 +2123,53 @@ SavedContext* handle_syscall(SavedContext* context) {
         case SAVANXP_SYS_CONNECT:
             context->rax = static_cast<uint64_t>(connect_fd(*g_current, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
             return context;
+        case SAVANXP_SYS_GETPID:
+            context->rax = current_pid();
+            return context;
+        case SAVANXP_SYS_STAT: {
+            char path[128] = {};
+            char resolved[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(stat_path(*g_current, resolved, context->rsi));
+            return context;
+        }
+        case SAVANXP_SYS_FSTAT:
+            context->rax = static_cast<uint64_t>(fstat_fd(*g_current, context->rdi, context->rsi));
+            return context;
+        case SAVANXP_SYS_CHDIR: {
+            char path[128] = {};
+            char resolved[128] = {};
+            if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            context->rax = static_cast<uint64_t>(chdir_path(*g_current, resolved));
+            return context;
+        }
+        case SAVANXP_SYS_GETCWD:
+            context->rax = static_cast<uint64_t>(getcwd_path(*g_current, context->rdi, static_cast<size_t>(context->rsi)));
+            return context;
+        case SAVANXP_SYS_SYSTEM_INFO: {
+            if (!vm::is_user_range_accessible(g_current->address_space, context->rdi, sizeof(savanxp_system_info), true)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+
+            savanxp_system_info info = {};
+            if (!snapshot_system_info(info) ||
+                !write_to_process_memory(*g_current, context->rdi, &info, sizeof(info))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+
+            context->rax = 0;
+            return context;
+        }
         default:
             context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOSYS));
             return context;

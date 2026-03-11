@@ -87,7 +87,8 @@ $UserPrograms = @(
     @{ Name = "udptest"; Source = "userland/udptest.c" },
     @{ Name = "tcpget"; Source = "userland/tcpget.c" },
     @{ Name = "beep"; Source = "userland/beep.c" },
-    @{ Name = "gfxdemo"; Source = "userland/gfxdemo.c" }
+    @{ Name = "gfxdemo"; Source = "userland/gfxdemo.c" },
+    @{ Name = "sysinfo"; Source = "userland/sysinfo.c" }
 )
 
 function New-Directory([string]$Path) {

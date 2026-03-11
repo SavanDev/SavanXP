@@ -36,6 +36,12 @@ long sleep_ms(unsigned long milliseconds);
 unsigned long uptime_ms(void);
 long clear_screen(void);
 long proc_info(unsigned long index, struct savanxp_process_info* info);
+long system_info(struct savanxp_system_info* info);
+long savanxp_getpid(void);
+long savanxp_stat(const char* path, struct savanxp_stat* info);
+long savanxp_fstat(int fd, struct savanxp_stat* info);
+long savanxp_chdir(const char* path);
+long savanxp_getcwd(char* buffer, size_t count);
 void exit(int code) __attribute__((noreturn));
 
 struct savanxp_gfx_context {

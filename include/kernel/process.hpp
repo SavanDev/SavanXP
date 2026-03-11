@@ -21,6 +21,7 @@ constexpr size_t kMaxProcesses = 16;
 constexpr size_t kMaxFileHandles = 16;
 constexpr size_t kMaxOpenFiles = 64;
 constexpr size_t kProcessNameLength = 32;
+constexpr size_t kProcessPathLength = 128;
 
 enum class State : uint8_t {
     unused = 0,
@@ -114,6 +115,7 @@ struct Process {
     uint64_t wake_tick;
     uint32_t time_slice;
     char name[kProcessNameLength];
+    char cwd[kProcessPathLength];
     vm::VmSpace address_space;
     uint64_t kernel_stack_base;
     uint64_t kernel_stack_size;
@@ -137,5 +139,7 @@ SavedContext* handle_syscall(SavedContext* context);
 SavedContext* handle_timer_tick(SavedContext* context);
 void notify_tty_line_ready();
 bool snapshot_process(size_t index, savanxp_process_info& info);
+void set_boot_system_info(const savanxp_system_info& info);
+bool snapshot_system_info(savanxp_system_info& info);
 
 } // namespace process

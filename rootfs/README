@@ -8,3 +8,8 @@ Estado del experimento:
 - TTY canonica y teclado PS/2
 - Syscalls minimas e initramfs
 - Userland inicial con shell y comandos basicos
+
+Atajos utiles:
+- `help` para comandos y ejemplos
+- `sysinfo` para diagnostico del sistema
+- `/disk` como espacio persistente principal

@@ -174,6 +174,30 @@ long proc_info(unsigned long index, struct savanxp_process_info* info) {
     return syscall2(SAVANXP_SYS_PROC_INFO, index, (unsigned long)info);
 }
 
+long system_info(struct savanxp_system_info* info) {
+    return syscall1(SAVANXP_SYS_SYSTEM_INFO, (unsigned long)info);
+}
+
+long savanxp_getpid(void) {
+    return syscall0(SAVANXP_SYS_GETPID);
+}
+
+long savanxp_stat(const char* path, struct savanxp_stat* info) {
+    return syscall2(SAVANXP_SYS_STAT, (unsigned long)path, (unsigned long)info);
+}
+
+long savanxp_fstat(int fd, struct savanxp_stat* info) {
+    return syscall2(SAVANXP_SYS_FSTAT, (unsigned long)fd, (unsigned long)info);
+}
+
+long savanxp_chdir(const char* path) {
+    return syscall1(SAVANXP_SYS_CHDIR, (unsigned long)path);
+}
+
+long savanxp_getcwd(char* buffer, size_t count) {
+    return syscall2(SAVANXP_SYS_GETCWD, (unsigned long)buffer, (unsigned long)count);
+}
+
 void exit(int code) {
     syscall1(SAVANXP_SYS_EXIT, (unsigned long)code);
     for (;;) {
@@ -195,6 +219,8 @@ const char* error_string(int error_code) {
             return "ok";
         case SAVANXP_EIO:
             return "io error";
+        case SAVANXP_EACCES:
+            return "permission denied";
         case SAVANXP_EAGAIN:
             return "try again";
         case SAVANXP_EINVAL:
@@ -217,6 +243,8 @@ const char* error_string(int error_code) {
             return "is a directory";
         case SAVANXP_ENOSPC:
             return "no space left";
+        case SAVANXP_ENOTTY:
+            return "not a tty";
         case SAVANXP_EPIPE:
             return "broken pipe";
         case SAVANXP_ENOSYS:

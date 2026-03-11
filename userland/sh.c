@@ -38,6 +38,42 @@ static void errputs(const char* text) {
     puts_fd(2, text);
 }
 
+static void current_directory(char* buffer, size_t capacity) {
+    if (capacity == 0) {
+        return;
+    }
+
+    if (getcwd(buffer, capacity) < 0 || buffer[0] == '\0') {
+        strcpy(buffer, "/");
+    }
+}
+
+static void print_prompt(void) {
+    char cwd[128] = {};
+    current_directory(cwd, sizeof(cwd));
+    puts("savanxp:");
+    puts(cwd);
+    puts("$ ");
+}
+
+static void print_help(void) {
+    printf("%s shell\n", SAVANXP_DISPLAY_NAME);
+    puts("Builtins: help clear exit exec which mkdir cd pwd\n");
+    puts("Core: sysinfo uname ps ls cat echo sleep ticker demo true false\n");
+    puts("Storage: mkdir mv rm rmdir truncate seektest renametest truncatetest\n");
+    puts("Diagnostics: sysinfo errtest fdtest waittest pipestress spawnloop badptr\n");
+    puts("Network: netinfo ping udptest udpsend udprecv tcpget\n");
+    puts("Graphics/audio: gfxdemo beep\n");
+    puts("Examples: sysinfo\n");
+    puts("          cd /disk\n");
+    puts("          pwd\n");
+    puts("          echo \"hola mundo\" | cat\n");
+    puts("          cat < /README\n");
+    puts("          echo hola > /disk/out.txt\n");
+    puts("          errtest > /disk/mixed.txt 2>&1\n");
+    puts("          ping 10.0.2.2  (QEMU user-net smoke test)\n");
+}
+
 static void copy_path(char* path, size_t capacity, const char* prefix, const char* suffix) {
     size_t index = 0;
     if (capacity == 0) {
@@ -87,7 +123,9 @@ static int is_builtin(const char* command) {
         strcmp(command, "exit") == 0 ||
         strcmp(command, "exec") == 0 ||
         strcmp(command, "which") == 0 ||
-        strcmp(command, "mkdir") == 0;
+        strcmp(command, "mkdir") == 0 ||
+        strcmp(command, "cd") == 0 ||
+        strcmp(command, "pwd") == 0;
 }
 
 static char* parse_word(char** cursor_ptr, char* delimiter_out) {
@@ -340,30 +378,7 @@ static int parse_pipeline(char* line, struct CommandStage* stages, int capacity)
 
 static int run_builtin(struct CommandStage* stage) {
     if (strcmp(stage->argv[0], "help") == 0) {
-        printf("%s shell\n", SAVANXP_DISPLAY_NAME);
-        puts("Builtins: help clear exit exec which mkdir\n");
-        puts("Commands: echo uname ls cat sleep ticker demo true false ps fdtest waittest pipestress spawnloop badptr mv rm rmdir truncate seektest renametest truncatetest errtest netinfo ping udpsend udprecv udptest tcpget beep gfxdemo\n");
-        puts("Examples: echo \"hola mundo\" | cat\n");
-        puts("          cat < /README\n");
-        puts("          echo hola 1> /disk/out.txt\n");
-        puts("          echo hola > /notes.txt\n");
-        puts("          errtest 2> /disk/errors.txt\n");
-        puts("          errtest > /disk/mixed.txt 2>&1\n");
-        puts("          echo hola >> /disk/log.txt\n");
-        puts("          which uname\n");
-        puts("          mkdir /disk/tmp/demo\n");
-        puts("          mv /disk/tmp/a.txt /disk/tmp/b.txt\n");
-        puts("          truncate /disk/log.txt 3\n");
-        puts("          rmdir /disk/tmp/demo\n");
-        puts("          exec uname\n");
-        puts("          netinfo\n");
-        puts("          ping 10.0.2.2  (QEMU user-net smoke test)\n");
-        puts("          udptest\n");
-        puts("          udpsend 10.0.2.15 7000 hola\n");
-        puts("          udprecv 7000 5000\n");
-        puts("          tcpget 104.18.26.120 80 example.com /\n");
-        puts("          beep 440 200\n");
-        puts("          gfxdemo\n");
+        print_help();
         return 0;
     }
 
@@ -421,6 +436,31 @@ static int run_builtin(struct CommandStage* stage) {
             errputs("sh: mkdir failed\n");
             return -1;
         }
+        return 0;
+    }
+
+    if (strcmp(stage->argv[0], "cd") == 0) {
+        const char* path = stage->argc >= 2 ? stage->argv[1] : "/";
+        if (stage->argc > 2) {
+            errputs("sh: cd takes one path\n");
+            return -1;
+        }
+        const long result = chdir(path);
+        if (result < 0) {
+            eprintf("sh: cd failed (%s)\n", result_error_string(result));
+            return -1;
+        }
+        return 0;
+    }
+
+    if (strcmp(stage->argv[0], "pwd") == 0) {
+        char cwd[128] = {};
+        if (getcwd(cwd, sizeof(cwd)) < 0) {
+            errputs("sh: pwd failed\n");
+            return -1;
+        }
+        puts(cwd);
+        putchar(1, '\n');
         return 0;
     }
 
@@ -618,11 +658,11 @@ int main(void) {
     char line[256];
     struct CommandStage stages[MAX_STAGES];
 
-    printf("Welcome to %s\n", SAVANXP_DISPLAY_NAME);
-    puts("Builtins: help clear exit exec which mkdir\n");
+    printf("%s\n", SAVANXP_DISPLAY_NAME);
+    puts("Type 'help' for commands and 'sysinfo' for diagnostics.\n");
 
     for (;;) {
-        puts("SavanXP > ");
+        print_prompt();
         memset(line, 0, sizeof(line));
 
         const long count = read(0, line, sizeof(line) - 1);

@@ -46,6 +46,12 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_SENDTO = 27,
     SAVANXP_SYS_RECVFROM = 28,
     SAVANXP_SYS_CONNECT = 29,
+    SAVANXP_SYS_GETPID = 30,
+    SAVANXP_SYS_STAT = 31,
+    SAVANXP_SYS_FSTAT = 32,
+    SAVANXP_SYS_CHDIR = 33,
+    SAVANXP_SYS_GETCWD = 34,
+    SAVANXP_SYS_SYSTEM_INFO = 35,
 };
 
 enum savanxp_open_flags {
@@ -58,6 +64,7 @@ enum savanxp_open_flags {
 
 enum savanxp_error_code {
     SAVANXP_EIO = 5,
+    SAVANXP_EACCES = 13,
     SAVANXP_EAGAIN = 11,
     SAVANXP_EINVAL = 22,
     SAVANXP_EBADF = 9,
@@ -70,10 +77,25 @@ enum savanxp_error_code {
     SAVANXP_EISDIR = 21,
     SAVANXP_ENOSPC = 28,
     SAVANXP_EPIPE = 32,
+    SAVANXP_ENOTTY = 25,
     SAVANXP_ENOSYS = 38,
     SAVANXP_ENOTEMPTY = 39,
     SAVANXP_ECHILD = 10,
     SAVANXP_ETIMEDOUT = 110,
+};
+
+enum savanxp_mode_bits : uint32_t {
+    SAVANXP_S_IFMT = 0170000u,
+    SAVANXP_S_IFREG = 0100000u,
+    SAVANXP_S_IFDIR = 0040000u,
+    SAVANXP_S_IFCHR = 0020000u,
+    SAVANXP_S_IFIFO = 0010000u,
+    SAVANXP_S_IFSOCK = 0140000u,
+};
+
+struct savanxp_stat {
+    uint32_t st_mode;
+    uint32_t st_size;
 };
 
 enum savanxp_seek_whence {
@@ -99,6 +121,36 @@ struct savanxp_process_info {
     int32_t exit_code;
     uint32_t state;
     char name[32];
+};
+
+enum savanxp_timer_backend {
+    SAVANXP_TIMER_NONE = 0,
+    SAVANXP_TIMER_LOCAL_APIC = 1,
+};
+
+struct savanxp_system_info {
+    char bootloader_name[32];
+    char bootloader_version[32];
+    char firmware[16];
+    uint8_t input_ready;
+    uint8_t framebuffer_ready;
+    uint8_t net_present;
+    uint8_t speaker_ready;
+    uint8_t block_ready;
+    uint8_t svfs_mounted;
+    uint16_t reserved0;
+    uint32_t timer_backend;
+    uint32_t timer_frequency_hz;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint32_t framebuffer_bpp;
+    uint32_t pci_device_count;
+    uint32_t svfs_file_count;
+    uint64_t memory_usable_bytes;
+    uint64_t memory_reclaimable_bytes;
+    uint64_t memory_total_pages;
+    uint64_t initramfs_size;
+    uint64_t uptime_ms;
 };
 
 #define SAVANXP_IOCTL(group, number) ((((group) & 0xffffu) << 16) | ((number) & 0xffffu))
