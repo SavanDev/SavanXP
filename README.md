@@ -1,6 +1,8 @@
 # SavanXP
 
-Version actual del experimento: `v0.1.0`
+Version actual del experimento: `v0.1.1`
+
+Historial de versiones: `CHANGELOG.md`
 
 Experimento de hobby OS en `C++` sobre `x86_64 + UEFI`, con `Limine` como
 bootloader y flujo de trabajo pensado para Windows nativo.
@@ -31,7 +33,7 @@ El kernel ya bootea a una terminal funcional inicial:
 - Userland inicial con `init`, `sh`, `echo`, `uname`, `ls`, `cat`, `sleep`,
   `ticker`, `demo`, `true`, `false`, `ps`, `fdtest`, `waittest`,
   `pipestress`, `spawnloop`, `badptr`, `rm`, `rmdir`, `truncate`,
-  `seektest`, `truncatetest` y `errtest`.
+  `seektest`, `truncatetest`, `errtest` y `sysinfo`.
 - Timer `local APIC/x2APIC` activo para tiempo base del sistema.
 - Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
   echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo, mas
@@ -47,7 +49,7 @@ El kernel ya bootea a una terminal funcional inicial:
 - Shell con `pipes`, redireccion (`|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`)
   y resolucion de comandos en `/disk/bin` con fallback a `/bin`.
 - Shell con parser mejorado para comillas simples/dobles y builtins `exec`,
-  `which` y `mkdir`.
+  `which`, `mkdir`, `cd` y `pwd`.
 - Handles refcounted con `dup`, `dup2`, `waitpid(-1)` y procesos zombie/reap.
 - Reclaim real de paginas para `exit`/`exec`, destruccion de `VmSpace` y
   liberacion de stacks de kernel al reapear procesos.
@@ -61,37 +63,6 @@ El kernel ya bootea a una terminal funcional inicial:
   syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate`, `rename`
   e `ioctl`.
 - Script `build.ps1` con `build`, `run`, `debug` y `clean`.
-
-## Validacion reciente
-
-Flujos ya probados manualmente en QEMU:
-
-- `netinfo` reporta `net0` presente con IP fija `10.0.2.15/24` y gateway
-  `10.0.2.2`, junto con `status`, contadores TX/RX y timeouts.
-- `ping 10.0.2.2` responde correctamente en el setup `QEMU user-net`.
-- `udptest` valida envio/recepcion UDP local sobre la IP del guest.
-- `tcpget 104.18.26.120 80 example.com /` devolvio un `HTTP/1.1 200 OK`
-  el 9 de marzo de 2026 y valida el cliente TCP minimo por IPv4 literal.
-- `beep 440 200` y `beep 880 100` reproducen sonido por `PC speaker`.
-- `gfxdemo` toma el framebuffer, procesa teclado y devuelve el control a la
-  shell al salir.
-- `doomgeneric` arranca como ELF externo desde `/disk/bin`, detecta IWAD en
-  `/disk/games/doom`, entra al juego, responde a teclado (`Ctrl` dispara,
-  `Espacio` usa) y devuelve el control limpio a la shell al salir.
-- `tools/doom-smoke.ps1` automatiza un smoke test de Doom: boot de la VM,
-  lanzamiento desde shell, entrada a partida y verificacion visual de
-  disparo mediante capturas.
-- Shell, `/disk`, `ps`, `mkdir`, `ls` y lectura de archivos siguen operando
-  luego de probar GUI, red y sonido.
-
-Notas del entorno de prueba actual:
-
-- Para esta configuracion, `ping 10.0.2.2` es la prueba de red confiable.
-- `ping` hacia Internet (`1.1.1.1`, `8.8.8.8`, etc.) no se considera criterio
-  de aceptacion mientras se use `QEMU user-net`/SLIRP.
-- UDP v1 ya esta soportado; TCP v1 hoy cubre cliente minimo (`connect` + `read/write`).
-- La IP de ejemplos HTTP puede cambiar con el tiempo; la validada el
-  9 de marzo de 2026 para `example.com:80` fue `104.18.26.120`.
 
 ## Siguiente orden recomendado
 
@@ -136,8 +107,9 @@ si no existe en `tools/limine`.
 ```
 
 Durante `run` y `debug`, QEMU expone la salida serie en la terminal. El kernel
-entra a una shell inicial de userland y el `debugcon` queda guardado en
-`build/debugcon.log`.
+entra a una shell inicial de userland con prompt contextual y el `debugcon`
+queda guardado en `build/debugcon.log`. Para ver el snapshot de arranque y
+estado base del sistema desde la shell, usa `sysinfo`.
 
 ## Apps externas
 

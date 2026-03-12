@@ -9,8 +9,10 @@ Incluye:
 
 - `include/savanxp/libc.h`
 - `include/savanxp/syscall.h`
+- headers estandar en `include/` (`unistd.h`, `fcntl.h`, `stdio.h`, `stdlib.h`, `string.h`, `dirent.h`, `sys/stat.h`, `sys/socket.h`, etc.)
 - `runtime/crt0.S`
 - `runtime/libc.c`
+- `runtime/posix.c`
 - `linker.ld`
 - `REFERENCE.md`
 
@@ -19,6 +21,8 @@ Incluye:
 Categorías soportadas:
 
 - syscalls: `read`, `write`, `open`, `close`, `readdir`, `ioctl`, `socket`, `bind`, `sendto`, `recvfrom`, `connect`
+- syscalls POSIX base: `getpid`, `stat`, `fstat`, `chdir`, `getcwd`
+- introspeccion del sistema: `system_info`
 - procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`
 - descriptores: `pipe`, `dup`, `dup2`, `seek`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
@@ -82,12 +86,19 @@ Helpers públicos del runtime:
 - introspección: `process_state_string`
 - rendering: `struct savanxp_gfx_context`
 
+Capas públicas:
+
+- `savanxp/*` sigue expuesto como capa baja del ABI y wrappers crudos.
+- los headers estándar en `sdk/v1/include` montan una capa POSIX/libc arriba sin romper apps viejas.
+
 Tipos compartidos para dispositivos:
 
 - `struct savanxp_fb_info`
 - `struct savanxp_input_event`
 - `struct savanxp_net_info`
+- `struct savanxp_system_info`
 - `enum savanxp_net_status`
+- `enum savanxp_timer_backend`
 - `struct savanxp_net_ping_request`
 - `struct savanxp_net_ping_result`
 - `struct savanxp_pcspk_beep`

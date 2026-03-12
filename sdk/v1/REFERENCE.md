@@ -9,8 +9,10 @@ Se consideran parte del contrato:
 
 - `include/savanxp/libc.h`
 - `include/savanxp/syscall.h`
+- headers estandar bajo `include/`
 - `runtime/crt0.S`
 - `runtime/libc.c`
+- `runtime/posix.c`
 - `linker.ld`
 - `tools/build-user.ps1`
 - `tools/new-user-app.ps1`
@@ -39,7 +41,7 @@ Se consideran parte del contrato:
 - procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `exit`
 - descriptores: `pipe`, `dup`, `dup2`, `seek`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
-- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`
+- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `getpid`, `stat`, `fstat`, `chdir`, `getcwd`, `system_info`
 
 ## Errores visibles
 
@@ -81,7 +83,9 @@ Tipos compartidos:
 - `struct savanxp_fb_info`
 - `struct savanxp_input_event`
 - `struct savanxp_net_info`
+- `struct savanxp_system_info`
 - `enum savanxp_net_status`
+- `enum savanxp_timer_backend`
 - `struct savanxp_net_ping_request`
 - `struct savanxp_net_ping_result`
 - `struct savanxp_pcspk_beep`
@@ -147,16 +151,36 @@ Contrato actual:
 3. Instalar en `/disk/bin`
 4. Ejecutar desde la shell por nombre o ruta
 
+## Capa POSIX
+
+Headers estándar nuevos expuestos en `sdk/v1/include`:
+
+- `unistd.h`, `fcntl.h`, `errno.h`
+- `stdio.h`, `stdlib.h`, `string.h`, `strings.h`, `ctype.h`, `math.h`, `time.h`
+- `dirent.h`, `sys/types.h`, `sys/stat.h`, `sys/wait.h`
+- `sys/socket.h`, `netinet/in.h`, `arpa/inet.h`
+
+Convención de compatibilidad:
+
+- `savanxp/*` se conserva como capa baja.
+- la capa POSIX/libc vive en `runtime/posix.c` y se usa desde los headers estándar.
+
+Límites prácticos de esta primera ola POSIX:
+
+- allocator simple tipo arena; `free()` hoy no recicla memoria.
+- `DIR->d_type` se informa por `stat()` best-effort.
+- `setsockopt`/`getsockopt` cubren solo timeouts y flags básicos de cliente.
+
 ## No incluido en v1
 
 - `fork`
 - señales
 - librerías compartidas
 - loader dinámico
-- `errno` global
 - compatibilidad POSIX completa
-- sockets
-- TCP/UDP
+- `listen` / `accept`
+- `select` / `poll`
+- `mmap` / `munmap`
 - DNS
 - DHCP
 - audio PCM
