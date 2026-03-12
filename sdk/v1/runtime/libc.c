@@ -178,6 +178,10 @@ long system_info(struct savanxp_system_info* info) {
     return syscall1(SAVANXP_SYS_SYSTEM_INFO, (unsigned long)info);
 }
 
+long sync(void) {
+    return syscall0(SAVANXP_SYS_SYNC);
+}
+
 long savanxp_getpid(void) {
     return syscall0(SAVANXP_SYS_GETPID);
 }

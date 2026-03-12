@@ -5,6 +5,9 @@
 
 namespace vfs {
 
+constexpr size_t kMaxPathLength = 256;
+constexpr size_t kMaxPathComponentLength = 64;
+
 enum class NodeType : uint8_t {
     invalid = 0,
     directory = 1,
@@ -33,6 +36,7 @@ void initialize(const void* archive, size_t size);
 bool ready();
 int last_error();
 const Vnode* root();
+bool normalize_path(const char* cwd, const char* input, char* output, size_t capacity);
 const Vnode* resolve(const char* path);
 Vnode* open(const char* path, uint32_t flags);
 Vnode* ensure_directory(const char* path);

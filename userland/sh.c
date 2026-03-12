@@ -49,7 +49,7 @@ static void current_directory(char* buffer, size_t capacity) {
 }
 
 static void print_prompt(void) {
-    char cwd[128] = {};
+    char cwd[256] = {};
     current_directory(cwd, sizeof(cwd));
     puts("savanxp:");
     puts(cwd);
@@ -60,7 +60,7 @@ static void print_help(void) {
     printf("%s shell\n", SAVANXP_DISPLAY_NAME);
     puts("Builtins: help clear exit exec which mkdir cd pwd\n");
     puts("Core: sysinfo uname ps ls cat echo sleep ticker demo true false\n");
-    puts("Storage: mkdir mv rm rmdir truncate seektest renametest truncatetest\n");
+    puts("Storage: mkdir mv rm rmdir truncate sync seektest renametest truncatetest\n");
     puts("Diagnostics: sysinfo errtest fdtest waittest pipestress spawnloop badptr\n");
     puts("Network: netinfo ping udptest udpsend udprecv tcpget\n");
     puts("Graphics/audio: gfxdemo beep\n");
@@ -392,7 +392,7 @@ static int run_builtin(struct CommandStage* stage) {
     }
 
     if (strcmp(stage->argv[0], "exec") == 0) {
-        char path[128];
+        char path[256];
         if (stage->argc < 2) {
             errputs("sh: exec needs a command\n");
             return -1;
@@ -413,7 +413,7 @@ static int run_builtin(struct CommandStage* stage) {
     }
 
     if (strcmp(stage->argv[0], "which") == 0) {
-        char path[128];
+        char path[256];
         if (stage->argc < 2) {
             errputs("sh: which needs a command\n");
             return -1;
@@ -454,7 +454,7 @@ static int run_builtin(struct CommandStage* stage) {
     }
 
     if (strcmp(stage->argv[0], "pwd") == 0) {
-        char cwd[128] = {};
+        char cwd[256] = {};
         if (getcwd(cwd, sizeof(cwd)) < 0) {
             errputs("sh: pwd failed\n");
             return -1;
@@ -491,7 +491,7 @@ static int execute_pipeline(struct CommandStage* stages, int stage_count) {
         int input_fd = 0;
         int output_fd = 1;
         int error_fd = 2;
-        char path[128];
+        char path[256];
         long pid = -1;
 
         if (!is_last && pipe(pipe_fds) < 0) {

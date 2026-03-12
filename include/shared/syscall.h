@@ -39,6 +39,7 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_CHDIR = 33,
     SAVANXP_SYS_GETCWD = 34,
     SAVANXP_SYS_SYSTEM_INFO = 35,
+    SAVANXP_SYS_SYNC = 36,
 };
 
 enum savanxp_open_flags {

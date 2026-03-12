@@ -20,6 +20,7 @@
 #define chdir sx_chdir
 #define getcwd sx_getcwd
 #define getpid sx_getpid
+#define sync sx_sync
 #define dup sx_dup
 #define dup2 sx_dup2
 #define pipe sx_pipe
@@ -37,6 +38,7 @@ int sx_isatty(int fd);
 int sx_chdir(const char* path);
 char* sx_getcwd(char* buffer, size_t size);
 pid_t sx_getpid(void);
+int sx_sync(void);
 int sx_dup(int fd);
 int sx_dup2(int oldfd, int newfd);
 int sx_pipe(int fds[2]);

@@ -54,15 +54,15 @@ El kernel ya bootea a una terminal funcional inicial:
 - Handles refcounted con `dup`, `dup2`, `waitpid(-1)` y procesos zombie/reap.
 - Reclaim real de paginas para `exit`/`exec`, destruccion de `VmSpace` y
   liberacion de stacks de kernel al reapear procesos.
-- `SVFS` con subdirectorios persistentes simples bajo `/disk`, `mkdir`,
-  `rmdir` de directorios vacios, `truncate` explicito por path y `rename`
-  persistente para archivos/directorios.
+- `SVFS2` como filesystem persistente de `/disk`, con `superblock`
+  primario/secundario, journal fijo de metadatos, bitmap de bloques, bitmap
+  de inodos y tabla de inodos con extents para archivos/directorios.
 - SDK v1 minima en `C` (`crt0.S`, `libc.[ch]`, `userland/linker.ld`,
   `include/shared/syscall.h`) y tooling host para instalar apps externas
   directo en `build/disk.img`.
 - Validacion basica de punteros de userland en syscalls principales, mas
-  syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate`, `rename`
-  e `ioctl`.
+  syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate`, `rename`,
+  `sync` e `ioctl`.
 - Script `build.ps1` con `build`, `run`, `debug` y `clean`.
 
 ## Siguiente orden recomendado
@@ -167,7 +167,7 @@ code --extensionDevelopmentPath .\tools\vscode-extension
 
 El build genera una imagen `build/disk.img` la primera vez y la conecta como un
 disco IDE legacy adicional en QEMU. Esa imagen se monta en `/disk` mediante un
-filesystem experimental propio (`SVFS`), de modo que:
+filesystem experimental propio (`SVFS2`), de modo que:
 
 ```text
 ls /disk
@@ -175,6 +175,7 @@ ls /disk/bin
 cat /disk/README
 echo hola > /disk/notes.txt
 mv /disk/notes.txt /disk/tmp/notes.txt
+sync
 rm /disk/tmp/notes.txt
 seektest
 renametest
@@ -182,3 +183,11 @@ truncatetest
 ```
 
 deberian sobrevivir a reinicios posteriores mientras no ejecutes `clean`.
+
+Notas practicas del estado actual:
+
+- `build.ps1 build` ya crea imagenes nuevas directamente en formato `SVFS2`.
+- `tools/build-user.ps1` instala ELF externos sobre `SVFS2` sin reconstruir
+  `initramfs`.
+- Si existe una imagen vieja de `SVFS1`, el flujo actual la recrea; no hay
+  migracion in-place en esta etapa.

@@ -40,6 +40,7 @@ long getpid(void);
 long chdir(const char* path);
 long getcwd(char* buffer, size_t count);
 long system_info(struct savanxp_system_info* info);
+long sync(void);
 void exit(int code) __attribute__((noreturn));
 
 struct savanxp_gfx_context {

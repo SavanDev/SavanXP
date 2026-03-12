@@ -17,9 +17,10 @@ enum class MountStatus : uint8_t {
 struct FileRecord {
     bool in_use;
     bool directory;
-    char name[48];
-    uint32_t start_lba;
-    uint32_t sector_count;
+    uint32_t inode_id;
+    uint32_t parent_inode_id;
+    char name[64];
+    char path[256];
     uint32_t size;
     vfs::Vnode* vnode;
 };
@@ -29,6 +30,7 @@ MountStatus status();
 bool mounted();
 bool mount_at_root();
 size_t file_count();
+bool sync();
 bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count);
 bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written);
 bool truncate_file(FileRecord& file, size_t size);

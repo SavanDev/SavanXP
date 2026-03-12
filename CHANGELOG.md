@@ -11,6 +11,11 @@ Notas de corte:
 
 ### Agregado
 
+- `SVFS2` como nueva version del filesystem persistente de `/disk`, con
+  `superblock` primario/secundario, journal fijo de metadatos, bitmap de
+  bloques, bitmap de inodos y tabla de inodos con extents.
+- Syscall nueva `sync` y comando userland `sync` para forzar checkpoint
+  explicito del estado persistente.
 - Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
   echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo.
 - ABI publica extendida para dispositivos y `ioctl`, con nodos `/dev/fb0`,
@@ -36,6 +41,15 @@ Notas de corte:
 
 ### Cambiado
 
+- La capa VFS ahora centraliza la normalizacion de paths y amplio la capacidad
+  de rutas internas a `256` bytes, de modo que `process`, `cwd` y operaciones
+  de filesystem comparten una sola resolucion canonica.
+- El tooling host sobre `build/disk.img` (`build.ps1`, `tools/build-user.ps1`
+  y `tools/UserAppCommon.ps1`) dejo de escribir `SVFS1` y paso a crear e
+  instalar directamente sobre imagenes `SVFS2`.
+- Las rutas persistentes de `/disk` dejaron de depender de nombres-path como
+  identidad on-disk y pasaron a montarse desde inodos estables cacheados en
+  memoria del kernel.
 - El kernel ahora resuelve paths relativos contra un `cwd` por proceso, de
   modo que `open`, `exec`, `spawn` y operaciones de filesystem comparten
   directorio actual.
@@ -50,6 +64,11 @@ Notas de corte:
 
 ### Limites conocidos
 
+- La validacion reciente del salto a `SVFS2` cubre compilacion completa y
+  verificacion host-side del flujo `build-user`, pero todavia no incluye
+  smoke tests de reboot/replay dentro de QEMU.
+- Si la recuperacion del journal o del metadata base falla al montar, el
+  volumen queda offline; aun no existe un modo degradado de solo lectura.
 - `free()` todavia no recicla memoria; el allocator userland sigue siendo de
   tipo arena/bump.
 - `DIR->d_type` se completa por `stat()` best-effort en userland.

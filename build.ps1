@@ -23,6 +23,8 @@ $KernelElf = Join-Path $BuildRoot "kernel.elf"
 $VarsTemplate = Join-Path $BuildRoot "OVMF_VARS.fd"
 $DebugConLog = Join-Path $BuildRoot "debugcon.log"
 
+. (Join-Path $ToolRoot "UserAppCommon.ps1")
+
 $SvfsSectorSize = 512
 $SvfsDirectorySectors = 8
 $SvfsMaxFiles = 64
@@ -77,6 +79,7 @@ $UserPrograms = @(
     @{ Name = "rm"; Source = "userland/rm.c" },
     @{ Name = "rmdir"; Source = "userland/rmdir.c" },
     @{ Name = "truncate"; Source = "userland/truncate.c" },
+    @{ Name = "sync"; Source = "userland/sync.c" },
     @{ Name = "seektest"; Source = "userland/seektest.c" },
     @{ Name = "renametest"; Source = "userland/renametest.c" },
     @{ Name = "truncatetest"; Source = "userland/truncatetest.c" },
@@ -295,76 +298,7 @@ function Set-UInt32Le([byte[]]$Buffer, [int]$Offset, [uint32]$Value) {
 }
 
 function Ensure-SvfsDisk([string]$SourceRoot, [string]$OutputPath) {
-    if (Test-Path $OutputPath) {
-        $bytes = [System.IO.File]::ReadAllBytes($OutputPath)
-        if ($bytes.Length -ge $SvfsSectorSize) {
-            $magic = Get-AsciiField $bytes 0 8
-            if ($magic.StartsWith("SVFS1")) {
-                $currentTotalSectors = Get-UInt32Le $bytes 12
-                if ($currentTotalSectors -lt $SvfsTotalSectors) {
-                    $newBytes = New-Object byte[] ($SvfsTotalSectors * $SvfsSectorSize)
-                    [Array]::Copy($bytes, 0, $newBytes, 0, $bytes.Length)
-                    Set-UInt32Le -Buffer $newBytes -Offset 12 -Value $SvfsTotalSectors
-                    [System.IO.File]::WriteAllBytes($OutputPath, $newBytes)
-                }
-            }
-        }
-        return
-    }
-
-    New-Directory (Split-Path -Parent $OutputPath)
-
-    $totalBytes = $SvfsTotalSectors * $SvfsSectorSize
-    $image = New-Object byte[] $totalBytes
-    $directoryLba = 1
-    $dataLba = $directoryLba + $SvfsDirectorySectors
-    $nextFreeLba = $dataLba
-
-    Set-AsciiField -Buffer $image -Offset 0 -Text "SVFS1" -Capacity 8
-    Set-UInt32Le -Buffer $image -Offset 8 -Value 1
-    Set-UInt32Le -Buffer $image -Offset 12 -Value $SvfsTotalSectors
-    Set-UInt32Le -Buffer $image -Offset 16 -Value $directoryLba
-    Set-UInt32Le -Buffer $image -Offset 20 -Value $SvfsDirectorySectors
-    Set-UInt32Le -Buffer $image -Offset 24 -Value $dataLba
-    Set-UInt32Le -Buffer $image -Offset 28 -Value $SvfsMaxFiles
-
-    $items = @()
-    if (Test-Path $SourceRoot) {
-        $items = Get-ChildItem -Path $SourceRoot -File | Sort-Object Name
-    }
-
-    $entryIndex = 0
-    foreach ($item in $items) {
-        if ($entryIndex -ge $SvfsMaxFiles) {
-            throw "SVFS: demasiados archivos semilla."
-        }
-
-        $name = $item.Name
-        if ($name.Length -ge 48) {
-            throw "SVFS: nombre demasiado largo '$name'."
-        }
-
-        $bytes = [System.IO.File]::ReadAllBytes($item.FullName)
-        $sectors = [Math]::Max([uint32]1, [uint32][Math]::Ceiling($bytes.Length / [double]$SvfsSectorSize))
-        if (($nextFreeLba + $sectors) -gt $SvfsTotalSectors) {
-            throw "SVFS: la imagen no tiene espacio suficiente para '$name'."
-        }
-
-        [Array]::Copy($bytes, 0, $image, $nextFreeLba * $SvfsSectorSize, $bytes.Length)
-
-        $entryOffset = ($directoryLba * $SvfsSectorSize) + ($entryIndex * 64)
-        $image[$entryOffset] = 1
-        Set-AsciiField -Buffer $image -Offset ($entryOffset + 4) -Text $name -Capacity 48
-        Set-UInt32Le -Buffer $image -Offset ($entryOffset + 52) -Value $nextFreeLba
-        Set-UInt32Le -Buffer $image -Offset ($entryOffset + 56) -Value $sectors
-        Set-UInt32Le -Buffer $image -Offset ($entryOffset + 60) -Value ([uint32]$bytes.Length)
-
-        $nextFreeLba += $sectors
-        $entryIndex += 1
-    }
-
-    Set-UInt32Le -Buffer $image -Offset 32 -Value $nextFreeLba
-    [System.IO.File]::WriteAllBytes($OutputPath, $image)
+    Initialize-Svfs2DiskImage -SourceRoot $SourceRoot -OutputPath $OutputPath
 }
 
 function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {

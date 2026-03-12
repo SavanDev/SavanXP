@@ -192,6 +192,10 @@ long system_info(struct savanxp_system_info* info) {
     return syscall1(SAVANXP_SYS_SYSTEM_INFO, (unsigned long)info);
 }
 
+long sync(void) {
+    return syscall0(SAVANXP_SYS_SYNC);
+}
+
 void exit(int code) {
     syscall1(SAVANXP_SYS_EXIT, (unsigned long)code);
     for (;;) {

@@ -28,7 +28,7 @@
 #define SX_FILE_POOL_CAPACITY 32
 #define SX_DIR_POOL_CAPACITY 16
 #define SX_SOCKET_STATE_CAPACITY 32
-#define SX_PATH_CAPACITY 128
+#define SX_PATH_CAPACITY 256
 
 typedef long ssize_t;
 typedef long off_t;
@@ -740,6 +740,15 @@ pid_t sx_getpid(void) {
         return -1;
     }
     return (pid_t)result;
+}
+
+int sx_sync(void) {
+    long result = sync();
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return 0;
 }
 
 DIR* sx_opendir(const char* path) {

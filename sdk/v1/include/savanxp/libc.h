@@ -37,6 +37,7 @@ unsigned long uptime_ms(void);
 long clear_screen(void);
 long proc_info(unsigned long index, struct savanxp_process_info* info);
 long system_info(struct savanxp_system_info* info);
+long sync(void);
 long savanxp_getpid(void);
 long savanxp_stat(const char* path, struct savanxp_stat* info);
 long savanxp_fstat(int fd, struct savanxp_stat* info);

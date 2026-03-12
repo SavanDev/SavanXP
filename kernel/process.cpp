@@ -30,7 +30,6 @@ constexpr uint32_t kDefaultTimeSlice = 4;
 constexpr size_t kMaxPipeCount = 16;
 constexpr size_t kPipeCapacity = 4096;
 constexpr size_t kPipeChunkSize = 256;
-constexpr size_t kMaxPathComponents = 16;
 constexpr uint32_t kWaitAnyPid = 0xffffffffu;
 constexpr int kBlockedResult = -0x70000000;
 constexpr bool kLogProc = false;
@@ -161,91 +160,9 @@ void set_process_cwd_root(process::Process& proc) {
     strcpy(proc.cwd, "/");
 }
 
-bool normalize_process_path(const char* cwd, const char* input, char* output, size_t capacity) {
-    if (cwd == nullptr || input == nullptr || output == nullptr || capacity < 2) {
-        return false;
-    }
-
-    char working[process::kProcessPathLength] = {};
-    size_t working_length = 0;
-    if (input[0] == '/') {
-        working_length = strlen(input);
-        if (working_length >= sizeof(working)) {
-            return false;
-        }
-        memcpy(working, input, working_length + 1);
-    } else {
-        const size_t cwd_length = strlen(cwd);
-        const size_t input_length = strlen(input);
-        if (cwd_length + (cwd_length > 1 ? 1u : 0u) + input_length >= sizeof(working)) {
-            return false;
-        }
-        memcpy(working, cwd, cwd_length + 1);
-        working_length = cwd_length;
-        if (working_length > 1 && working[working_length - 1] != '/') {
-            working[working_length++] = '/';
-            working[working_length] = '\0';
-        }
-        memcpy(working + working_length, input, input_length + 1);
-    }
-
-    char components[kMaxPathComponents][48] = {};
-    size_t component_count = 0;
-    char* cursor = working;
-    while (*cursor != '\0') {
-        while (*cursor == '/') {
-            ++cursor;
-        }
-        if (*cursor == '\0') {
-            break;
-        }
-
-        char* start = cursor;
-        while (*cursor != '\0' && *cursor != '/') {
-            ++cursor;
-        }
-
-        const size_t length = static_cast<size_t>(cursor - start);
-        if (length == 0) {
-            continue;
-        }
-        if (length == 1 && start[0] == '.') {
-            continue;
-        }
-        if (length == 2 && start[0] == '.' && start[1] == '.') {
-            if (component_count > 0) {
-                --component_count;
-            }
-            continue;
-        }
-        if (component_count >= kMaxPathComponents || length >= sizeof(components[0])) {
-            return false;
-        }
-        memcpy(components[component_count], start, length);
-        components[component_count][length] = '\0';
-        ++component_count;
-    }
-
-    size_t written = 0;
-    output[written++] = '/';
-    for (size_t index = 0; index < component_count; ++index) {
-        const size_t length = strlen(components[index]);
-        if (written + length + 1 >= capacity) {
-            return false;
-        }
-        memcpy(output + written, components[index], length);
-        written += length;
-        if (index + 1 < component_count) {
-            output[written++] = '/';
-        }
-    }
-    output[written] = '\0';
-    return true;
-}
-
 bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
     const char* cwd = proc.cwd[0] != '\0' ? proc.cwd : "/";
-    return normalize_process_path(cwd, input, output, capacity);
+    return vfs::normalize_path(cwd, input, output, capacity);
 }
 
 void fill_stat_for_vnode(const vfs::Vnode& node, savanxp_stat& stat) {
@@ -1907,8 +1824,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_OPEN: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
@@ -1925,8 +1842,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         case SAVANXP_SYS_SPAWN:
         case SAVANXP_SYS_SPAWN_FD: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             char argv_storage[16][64] = {};
             const char* argv_local[16] = {};
             int argc = 0;
@@ -1948,8 +1865,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_EXEC: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             char argv_storage[16][64] = {};
             const char* argv_local[16] = {};
             int argc = 0;
@@ -2041,8 +1958,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(seek_fd(*g_current, context->rdi, static_cast<int64_t>(context->rsi), context->rdx));
             return context;
         case SAVANXP_SYS_UNLINK: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
@@ -2052,8 +1969,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_MKDIR: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
@@ -2063,8 +1980,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_RMDIR: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
@@ -2074,8 +1991,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_TRUNCATE: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
@@ -2085,10 +2002,10 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_RENAME: {
-            char old_path[128] = {};
-            char new_path[128] = {};
-            char resolved_old[128] = {};
-            char resolved_new[128] = {};
+            char old_path[process::kProcessPathLength] = {};
+            char new_path[process::kProcessPathLength] = {};
+            char resolved_old[process::kProcessPathLength] = {};
+            char resolved_new[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, old_path, sizeof(old_path)) ||
                 !copy_user_string(*g_current, context->rsi, new_path, sizeof(new_path)) ||
                 !resolve_process_path(*g_current, old_path, resolved_old, sizeof(resolved_old)) ||
@@ -2127,8 +2044,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             context->rax = current_pid();
             return context;
         case SAVANXP_SYS_STAT: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
@@ -2141,8 +2058,8 @@ SavedContext* handle_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(fstat_fd(*g_current, context->rdi, context->rsi));
             return context;
         case SAVANXP_SYS_CHDIR: {
-            char path[128] = {};
-            char resolved[128] = {};
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
             if (!copy_user_string(*g_current, context->rdi, path, sizeof(path)) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
@@ -2170,6 +2087,9 @@ SavedContext* handle_syscall(SavedContext* context) {
             context->rax = 0;
             return context;
         }
+        case SAVANXP_SYS_SYNC:
+            context->rax = static_cast<uint64_t>(svfs::sync() ? 0 : negative_error(SAVANXP_EIO));
+            return context;
         default:
             context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOSYS));
             return context;

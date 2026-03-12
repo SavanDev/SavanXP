@@ -21,7 +21,7 @@ constexpr size_t kMaxProcesses = 16;
 constexpr size_t kMaxFileHandles = 16;
 constexpr size_t kMaxOpenFiles = 64;
 constexpr size_t kProcessNameLength = 32;
-constexpr size_t kProcessPathLength = 128;
+constexpr size_t kProcessPathLength = 256;
 
 enum class State : uint8_t {
     unused = 0,
