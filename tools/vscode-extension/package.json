@@ -1,0 +1,118 @@
+{
+  "name": "savanxp-ide",
+  "displayName": "SavanXP IDE",
+  "description": "VS Code integration for building and exploring SavanXP SDK apps.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "engines": {
+    "vscode": "^1.110.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "savanxp",
+    "sdk",
+    "osdev",
+    "vscode"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onView:savanxpExplorer",
+    "onCommand:savanxp.refreshExplorer",
+    "onCommand:savanxp.newSdkApp",
+    "onCommand:savanxp.buildSdkApp",
+    "onCommand:savanxp.buildSdkAppNoInstall",
+    "onCommand:savanxp.runSdkApp",
+    "onCommand:savanxp.openSdkReference",
+    "onCommand:savanxp.buildBaseImage",
+    "onCommand:savanxp.openExample",
+    "onCommand:savanxp.openExampleFolder",
+    "onCommand:savanxp.buildExample",
+    "onCommand:savanxp.buildExampleNoInstall",
+    "onCommand:savanxp.runExample",
+    "onCommand:savanxp.newAppFromExample",
+    "onCommand:savanxp.previewSnippet",
+    "onCommand:savanxp.insertSnippet"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "savanxp.refreshExplorer", "title": "Refresh", "category": "SavanXP" },
+      { "command": "savanxp.newSdkApp", "title": "New SDK App", "category": "SavanXP" },
+      { "command": "savanxp.buildSdkApp", "title": "Build SDK App", "category": "SavanXP" },
+      { "command": "savanxp.buildSdkAppNoInstall", "title": "Build SDK App (No Install)", "category": "SavanXP" },
+      { "command": "savanxp.runSdkApp", "title": "Run SDK App", "category": "SavanXP" },
+      { "command": "savanxp.openSdkReference", "title": "Open SDK Reference", "category": "SavanXP" },
+      { "command": "savanxp.buildBaseImage", "title": "Build Base OS Image", "category": "SavanXP" },
+      { "command": "savanxp.openExample", "title": "Open Example", "category": "SavanXP" },
+      { "command": "savanxp.openExampleFolder", "title": "Reveal Example Folder", "category": "SavanXP" },
+      { "command": "savanxp.buildExample", "title": "Build Example", "category": "SavanXP" },
+      { "command": "savanxp.buildExampleNoInstall", "title": "Build Example (No Install)", "category": "SavanXP" },
+      { "command": "savanxp.runExample", "title": "Run Example", "category": "SavanXP" },
+      { "command": "savanxp.newAppFromExample", "title": "Create App From Example", "category": "SavanXP" },
+      { "command": "savanxp.previewSnippet", "title": "Preview Snippet", "category": "SavanXP" },
+      { "command": "savanxp.insertSnippet", "title": "Insert Snippet", "category": "SavanXP" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "savanxp",
+          "title": "SavanXP",
+          "icon": "media/savanxp.svg"
+        }
+      ]
+    },
+    "views": {
+      "savanxp": [
+        {
+          "id": "savanxpExplorer",
+          "name": "Explorer"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "savanxp.refreshExplorer", "when": "view == savanxpExplorer", "group": "navigation" },
+        { "command": "savanxp.newSdkApp", "when": "view == savanxpExplorer", "group": "navigation" },
+        { "command": "savanxp.buildBaseImage", "when": "view == savanxpExplorer", "group": "navigation" },
+        { "command": "savanxp.openSdkReference", "when": "view == savanxpExplorer", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "savanxp.openExample", "when": "view == savanxpExplorer && viewItem == example", "group": "inline" },
+        { "command": "savanxp.buildExample", "when": "view == savanxpExplorer && viewItem == example", "group": "inline" },
+        { "command": "savanxp.runExample", "when": "view == savanxpExplorer && viewItem == example", "group": "inline" },
+        { "command": "savanxp.buildExampleNoInstall", "when": "view == savanxpExplorer && viewItem == example", "group": "navigation" },
+        { "command": "savanxp.openExampleFolder", "when": "view == savanxpExplorer && viewItem == example", "group": "navigation" },
+        { "command": "savanxp.newAppFromExample", "when": "view == savanxpExplorer && viewItem == example", "group": "navigation" },
+        { "command": "savanxp.previewSnippet", "when": "view == savanxpExplorer && viewItem == snippet", "group": "inline" },
+        { "command": "savanxp.insertSnippet", "when": "view == savanxpExplorer && viewItem == snippet", "group": "inline" }
+      ]
+    },
+    "configuration": {
+      "title": "SavanXP",
+      "properties": {
+        "savanxp.projectRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the SavanXP repository root. Leave empty to auto-detect from the current workspace."
+        },
+        "savanxp.defaultDestination": {
+          "type": "string",
+          "default": "/disk/bin/{name}",
+          "description": "Default install destination for SDK apps. Use {name} as a placeholder for the app name."
+        },
+        "savanxp.autoBuildBaseImage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run `build.ps1 build` before install/run commands when `build/disk.img` is missing."
+        },
+        "savanxp.powershellPath": {
+          "type": "string",
+          "default": "powershell.exe",
+          "description": "PowerShell executable used to run the existing SavanXP scripts."
+        }
+      }
+    }
+  }
+}

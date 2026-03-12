@@ -1,0 +1,79 @@
+[
+  {
+    "id": "output-puts",
+    "category": "Output",
+    "title": "puts to stdout",
+    "description": "Write a simple line to stdout.",
+    "body": "puts(\"${1:hello from sdk}\\n\");"
+  },
+  {
+    "id": "output-printf",
+    "category": "Output",
+    "title": "printf with args",
+    "description": "Format values to stdout.",
+    "body": "printf(\"${1:value}=%d\\n\", ${2:value});"
+  },
+  {
+    "id": "output-eprintf",
+    "category": "Output",
+    "title": "eprintf to stderr",
+    "description": "Write a formatted error message to stderr.",
+    "body": "eprintf(\"${1:error}: %s\\n\", ${2:detail});"
+  },
+  {
+    "id": "errors-check-result",
+    "category": "Errors",
+    "title": "Check syscall result",
+    "description": "Turn a negative result into a readable error.",
+    "body": "long result = ${1:call};\nif (result_is_error(result)) {\n    eprintf(\"${2:call} failed: %s\\n\", result_error_string(result));\n    return 1;\n}"
+  },
+  {
+    "id": "errors-code",
+    "category": "Errors",
+    "title": "Decode error code",
+    "description": "Extract the numeric error code from a failed result.",
+    "body": "long result = ${1:call};\nif (result_is_error(result)) {\n    int code = result_error_code(result);\n    eprintf(\"${2:call} failed (%d): %s\\n\", code, error_string(code));\n    return 1;\n}"
+  },
+  {
+    "id": "fs-open-read-write",
+    "category": "Filesystem",
+    "title": "Open, write and close",
+    "description": "Create a simple write flow for a file descriptor.",
+    "body": "long fd = open(\"${1:/disk/tmp/example.txt}\");\nif (result_is_error(fd)) {\n    eprintf(\"open failed: %s\\n\", result_error_string(fd));\n    return 1;\n}\n\nconst char* text = \"${2:hello}\\n\";\nlong wrote = write((int)fd, text, strlen(text));\nif (result_is_error(wrote)) {\n    eprintf(\"write failed: %s\\n\", result_error_string(wrote));\n    close((int)fd);\n    return 1;\n}\n\nclose((int)fd);"
+  },
+  {
+    "id": "fs-mkdir-rename",
+    "category": "Filesystem",
+    "title": "mkdir and rename",
+    "description": "Create a directory and rename a file or directory.",
+    "body": "long mk = mkdir(\"${1:/disk/tmp}\");\nif (result_is_error(mk) && result_error_code(mk) != SAVANXP_EEXIST) {\n    eprintf(\"mkdir failed: %s\\n\", result_error_string(mk));\n    return 1;\n}\n\nlong mv = rename(\"${2:/disk/tmp/source.txt}\", \"${3:/disk/tmp/dest.txt}\");\nif (result_is_error(mv)) {\n    eprintf(\"rename failed: %s\\n\", result_error_string(mv));\n    return 1;\n}"
+  },
+  {
+    "id": "fs-truncate-unlink",
+    "category": "Filesystem",
+    "title": "truncate and unlink",
+    "description": "Shrink a file and then remove it.",
+    "body": "long trunc = truncate(\"${1:/disk/tmp/example.txt}\", ${2:0});\nif (result_is_error(trunc)) {\n    eprintf(\"truncate failed: %s\\n\", result_error_string(trunc));\n    return 1;\n}\n\nlong rm = unlink(\"${1:/disk/tmp/example.txt}\");\nif (result_is_error(rm)) {\n    eprintf(\"unlink failed: %s\\n\", result_error_string(rm));\n    return 1;\n}"
+  },
+  {
+    "id": "process-spawn-wait",
+    "category": "Processes",
+    "title": "spawn and waitpid",
+    "description": "Launch another user program and wait for its exit status.",
+    "body": "const char* argv[] = { \"${1:hello}\", \"${2:arg}\", 0 };\nlong pid = spawn(\"${3:/disk/bin/hello}\", argv, 2);\nif (result_is_error(pid)) {\n    eprintf(\"spawn failed: %s\\n\", result_error_string(pid));\n    return 1;\n}\n\nint status = 0;\nlong waited = waitpid((int)pid, &status);\nif (result_is_error(waited)) {\n    eprintf(\"waitpid failed: %s\\n\", result_error_string(waited));\n    return 1;\n}\n\nprintf(\"child status=%d\\n\", status);"
+  },
+  {
+    "id": "utils-sleep-uptime",
+    "category": "Utilities",
+    "title": "sleep_ms and uptime_ms",
+    "description": "Delay work and inspect system uptime.",
+    "body": "unsigned long before = uptime_ms();\nsleep_ms(${1:250});\nunsigned long after = uptime_ms();\nprintf(\"slept for %lu ms\\n\", after - before);"
+  },
+  {
+    "id": "utils-proc-info",
+    "category": "Utilities",
+    "title": "Enumerate proc_info",
+    "description": "Walk the process table snapshot exposed by the SDK.",
+    "body": "struct savanxp_process_info info;\nfor (unsigned long index = 0;; ++index) {\n    long result = proc_info(index, &info);\n    if (result_is_error(result)) {\n        if (result_error_code(result) == SAVANXP_ENOENT) {\n            break;\n        }\n        eprintf(\"proc_info failed: %s\\n\", result_error_string(result));\n        return 1;\n    }\n\n    printf(\"pid=%d state=%s name=%s\\n\", info.pid, process_state_string(info.state), info.name);\n}"
+  }
+]
