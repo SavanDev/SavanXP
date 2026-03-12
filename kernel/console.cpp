@@ -10,10 +10,8 @@ namespace {
 constexpr uint16_t kCom1Port = 0x3f8;
 constexpr uint16_t kDebugConPort = 0x00e9;
 constexpr uint32_t kBackground = 0x00060b10U;
-constexpr uint32_t kHeader = 0x00133b2dU;
 constexpr uint32_t kText = 0x00d5f4dfU;
 constexpr uint32_t kCursor = 0x0027d37bU;
-constexpr uint32_t kShadow = 0x00020406U;
 constexpr uint32_t kPaddingX = 16;
 constexpr uint32_t kPaddingY = 18;
 constexpr uint32_t kScale = 2;
@@ -188,9 +186,6 @@ void draw_background() {
     }
 
     fill_rect(0, 0, g_framebuffer.width, g_framebuffer.height, kBackground);
-    fill_rect(0, 0, g_framebuffer.width, 6, kHeader);
-    fill_rect(0, 6, g_framebuffer.width, 2, kShadow);
-    fill_rect(0, 0, 8, g_framebuffer.height, kHeader);
 }
 
 const uint8_t* glyph_for(char character) {
