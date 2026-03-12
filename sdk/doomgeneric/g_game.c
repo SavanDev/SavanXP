@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <errno.h>
 
 #include "doomdef.h" 
 #include "doomkeys.h"
@@ -1672,8 +1673,15 @@ void G_DoSaveGame (void)
     // Now rename the temporary savegame file to the actual savegame
     // file, overwriting the old savegame if there was one there.
 
-    remove(savegame_file);
-    rename(temp_savegame_file, savegame_file);
+    if (remove(savegame_file) < 0 && errno != ENOENT)
+    {
+    }
+
+    if (rename(temp_savegame_file, savegame_file) < 0)
+    {
+        I_Error("Failed to install savegame '%s' -> '%s' (errno=%d)",
+                temp_savegame_file, savegame_file, errno);
+    }
     
     gameaction = ga_nothing;
     M_StringCopy(savedescription, "", sizeof(savedescription));

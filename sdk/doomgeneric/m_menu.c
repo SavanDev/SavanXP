@@ -656,8 +656,8 @@ void M_SaveGame (int choice)
     }
 	
     if (gamestate != GS_LEVEL)
-	return;
-	
+        return;
+    
     M_SetupNextMenu(&SaveDef);
     M_ReadSaveStrings();
 }

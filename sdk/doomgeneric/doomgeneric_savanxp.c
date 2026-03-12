@@ -125,11 +125,11 @@ void DG_Init(void) {
 
     if (gfx_open(&g_gfx) < 0) {
         eprintf("doomgeneric: gfx_open failed\n");
-        sx_exit(1);
+        sx_shutdown_exit(1);
     }
     if (gfx_acquire(&g_gfx) < 0) {
         eprintf("doomgeneric: gfx_acquire failed\n");
-        sx_exit(1);
+        sx_shutdown_exit(1);
     }
 
     sx_register_shutdown(sx_shutdown_graphics);
@@ -137,7 +137,7 @@ void DG_Init(void) {
     g_present_buffer = (uint32_t *)calloc(1, gfx_buffer_bytes(&g_gfx.info));
     if (g_present_buffer == 0) {
         eprintf("doomgeneric: unable to allocate present buffer\n");
-        sx_exit(1);
+        sx_shutdown_exit(1);
     }
 
     g_scale = g_gfx.info.width / DOOMGENERIC_RESX;
@@ -146,7 +146,7 @@ void DG_Init(void) {
     }
     if (g_scale == 0) {
         eprintf("doomgeneric: framebuffer too small (%ux%u)\n", g_gfx.info.width, g_gfx.info.height);
-        sx_exit(1);
+        sx_shutdown_exit(1);
     }
 
     g_offset_x = (int)(g_gfx.info.width - (DOOMGENERIC_RESX * g_scale)) / 2;
@@ -157,7 +157,7 @@ void DG_DrawFrame(void) {
     sx_blit_frame();
     if (gfx_present(&g_gfx, g_present_buffer) < 0) {
         eprintf("doomgeneric: gfx_present failed\n");
-        sx_exit(1);
+        sx_shutdown_exit(1);
     }
 }
 

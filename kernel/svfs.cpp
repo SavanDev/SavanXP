@@ -160,7 +160,9 @@ size_t file_index(const svfs::FileRecord& file) {
 void refresh_file_from_directory(size_t index) {
     const DirectoryEntry& entry = g_directory[index];
     svfs::FileRecord& file = g_files[index];
+    vfs::Vnode* existing_vnode = file.vnode;
     memset(&file, 0, sizeof(file));
+    file.vnode = existing_vnode;
     if (entry.in_use != kEntryActive) {
         return;
     }
@@ -171,6 +173,9 @@ void refresh_file_from_directory(size_t index) {
     file.start_lba = entry.start_lba;
     file.sector_count = entry.sector_count;
     file.size = entry.size;
+    if (file.vnode != nullptr) {
+        file.vnode->size = file.size;
+    }
 }
 
 svfs::FileRecord* find_file_by_name(const char* name) {
@@ -282,6 +287,10 @@ size_t read_write_capacity(const svfs::FileRecord& file) {
     return static_cast<size_t>(file.sector_count) * block::kSectorSize;
 }
 
+uint32_t sectors_for_size(size_t size) {
+    return size == 0 ? 0u : static_cast<uint32_t>((size + block::kSectorSize - 1) / block::kSectorSize);
+}
+
 bool zero_file_storage(const svfs::FileRecord& file) {
     uint8_t zero[block::kSectorSize] = {};
     for (uint32_t sector = 0; sector < file.sector_count; ++sector) {
@@ -289,6 +298,101 @@ bool zero_file_storage(const svfs::FileRecord& file) {
             return false;
         }
     }
+    return true;
+}
+
+bool zero_storage_range(uint32_t start_lba, uint32_t sector_count) {
+    uint8_t zero[block::kSectorSize] = {};
+    for (uint32_t sector = 0; sector < sector_count; ++sector) {
+        if (!block::write(g_device_index, start_lba + sector, 1, zero)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool relocate_file_storage(svfs::FileRecord& file, uint32_t new_start_lba, uint32_t new_sector_count) {
+    uint8_t sector[block::kSectorSize] = {};
+
+    if (!zero_storage_range(new_start_lba, new_sector_count)) {
+        return false;
+    }
+
+    for (uint32_t index = 0; index < file.sector_count; ++index) {
+        if (!block::read(g_device_index, file.start_lba + index, 1, sector)) {
+            return false;
+        }
+        if (!block::write(g_device_index, new_start_lba + index, 1, sector)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ensure_file_capacity(svfs::FileRecord& file, size_t required_size) {
+    if (!file.in_use || file.directory) {
+        return false;
+    }
+
+    const size_t current_capacity = read_write_capacity(file);
+    if (required_size <= current_capacity) {
+        return true;
+    }
+
+    uint32_t required_sectors = sectors_for_size(required_size);
+    uint32_t new_sector_count = file.sector_count;
+
+    if (new_sector_count == 0) {
+        new_sector_count = kDefaultFileSectors;
+    }
+    while (new_sector_count < required_sectors) {
+        if (new_sector_count < kDefaultFileSectors) {
+            new_sector_count = kDefaultFileSectors;
+        } else {
+            new_sector_count *= 2;
+        }
+    }
+
+    DirectoryEntry& entry = g_directory[file_index(file)];
+    const uint32_t current_end_lba = file.start_lba + file.sector_count;
+
+    if (current_end_lba == g_superblock.next_free_lba) {
+        const uint32_t additional_sectors = new_sector_count - file.sector_count;
+        if (g_superblock.next_free_lba + additional_sectors <= g_superblock.total_sectors) {
+            if (!zero_storage_range(g_superblock.next_free_lba, additional_sectors)) {
+                return false;
+            }
+
+            g_superblock.next_free_lba += additional_sectors;
+            entry.sector_count = new_sector_count;
+            if (!flush_superblock() || !flush_directory()) {
+                return false;
+            }
+
+            file.sector_count = new_sector_count;
+            return true;
+        }
+    }
+
+    if (g_superblock.next_free_lba + new_sector_count > g_superblock.total_sectors) {
+        return false;
+    }
+
+    const uint32_t new_start_lba = g_superblock.next_free_lba;
+    if (!relocate_file_storage(file, new_start_lba, new_sector_count)) {
+        return false;
+    }
+
+    g_superblock.next_free_lba += new_sector_count;
+    entry.start_lba = new_start_lba;
+    entry.sector_count = new_sector_count;
+    if (!flush_superblock() || !flush_directory()) {
+        return false;
+    }
+
+    file.start_lba = new_start_lba;
+    file.sector_count = new_sector_count;
     return true;
 }
 
@@ -498,11 +602,11 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
         return true;
     }
 
-    const size_t capacity = read_write_capacity(file);
-    if (offset >= capacity) {
+    if (!ensure_file_capacity(file, offset + count)) {
         return true;
     }
 
+    const size_t capacity = read_write_capacity(file);
     const size_t to_write = (capacity - offset) < count ? (capacity - offset) : count;
     const auto* bytes = static_cast<const uint8_t*>(buffer);
     size_t remaining = to_write;
@@ -554,8 +658,7 @@ bool truncate_file(FileRecord& file, size_t size) {
         return false;
     }
 
-    const size_t capacity = read_write_capacity(file);
-    if (size > capacity) {
+    if (!ensure_file_capacity(file, size)) {
         return false;
     }
 

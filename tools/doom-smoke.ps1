@@ -27,52 +27,6 @@ function Resolve-ExistingPath([string[]]$Candidates) {
     return $null
 }
 
-function Invoke-QmpHandshake {
-    param(
-        [System.IO.StreamReader]$Reader,
-        [System.IO.StreamWriter]$Writer
-    )
-
-    $null = $Reader.ReadLine()
-    $Writer.WriteLine('{"execute":"qmp_capabilities"}')
-    $null = $Reader.ReadLine()
-}
-
-function Invoke-QmpCommand {
-    param(
-        [System.IO.StreamReader]$Reader,
-        [System.IO.StreamWriter]$Writer,
-        [string]$Json
-    )
-
-    $Writer.WriteLine($Json)
-    return $Reader.ReadLine()
-}
-
-function Invoke-HmpCommand {
-    param(
-        [System.IO.StreamReader]$Reader,
-        [System.IO.StreamWriter]$Writer,
-        [string]$CommandLine
-    )
-
-    $escaped = $CommandLine.Replace('\', '\\').Replace('"', '\"')
-    $payload = '{"execute":"human-monitor-command","arguments":{"command-line":"' + $escaped + '"}}'
-    return Invoke-QmpCommand -Reader $Reader -Writer $Writer -Json $payload
-}
-
-function Send-QmpKey {
-    param(
-        [System.IO.StreamReader]$Reader,
-        [System.IO.StreamWriter]$Writer,
-        [string]$Key,
-        [int]$DelayMs = 100
-    )
-
-    Invoke-HmpCommand -Reader $Reader -Writer $Writer -CommandLine ("sendkey " + $Key) | Out-Null
-    Start-Sleep -Milliseconds $DelayMs
-}
-
 if ($BuildFirst) {
     & powershell -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "build.ps1") build
     if ($LASTEXITCODE -ne 0) {
@@ -213,14 +167,17 @@ $levelHash = (Get-FileHash $LevelShot -Algorithm SHA256).Hash
 $fireHash = (Get-FileHash $FireShot -Algorithm SHA256).Hash
 $serialText = Get-Content $SerialLog -Raw
 
-if ($serialText -notmatch "Welcome to SavanXP") {
-    throw "La VM no llego al prompt de shell."
+if ($serialText -notmatch "savanxp:/\$") {
+    throw "La VM no llego al shell actual."
+}
+if ($menuHash -eq $levelHash) {
+    throw "La captura del menu y la de partida son iguales; smoke inconclusa."
 }
 if ($levelHash -eq $fireHash) {
-    throw "La captura despues de disparar no cambio; smoke test inconclusa."
+    throw "La captura despues de disparar no cambio; smoke inconclusa."
 }
 
-$returnedToShell = ([regex]::Matches($serialText, "SavanXP >")).Count -ge 2
+$returnedToShell = ([regex]::Matches($serialText, "savanxp:/\$")).Count -ge 2
 
 [pscustomobject]@{
     SerialLog = $SerialLog

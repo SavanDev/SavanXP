@@ -58,10 +58,11 @@ La smoke actual:
 - bootea la VM
 - lanza `doomgeneric` desde la shell
 - entra a una partida
-- toma capturas antes y despues de disparar para verificar cambio visual real
+- toma capturas del menu, de una partida y despues de disparar para verificar cambio visual real
 
-La salida limpia de Doom a la shell todavia queda marcada como señal
-diagnostica en el script (`ReturnedToShell`), no como criterio duro de fallo.
+No valida `save/load`, cambio de nivel ni otros flujos largos. La salida limpia
+de Doom a la shell sigue quedando como señal diagnostica (`ReturnedToShell`),
+no como criterio duro de fallo.
 
 Fuera de alcance de esta etapa:
 
