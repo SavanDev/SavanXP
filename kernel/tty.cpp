@@ -2,9 +2,10 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/input.hpp"
 #include "kernel/process.hpp"
-#include "kernel/ps2.hpp"
 #include "kernel/string.hpp"
+#include "shared/syscall.h"
 
 namespace {
 
@@ -26,6 +27,30 @@ void clear() {
     g_main_tty.pending_length = 0;
     g_main_tty.line_ready = false;
     console::clear();
+}
+
+void handle_key_event(const input::KeyEvent& event) {
+    if (!event.pressed) {
+        return;
+    }
+
+    if (event.key == SAVANXP_KEY_BACKSPACE) {
+        handle_backspace();
+        return;
+    }
+
+    if (event.key == SAVANXP_KEY_ENTER) {
+        submit_line();
+        return;
+    }
+
+    if ((event.modifiers & input::modifier_ctrl) != 0 &&
+        (event.ascii == 'l' || event.ascii == 'L')) {
+        clear();
+        return;
+    }
+
+    handle_input_char(event.ascii);
 }
 
 void handle_input_char(char character) {
@@ -64,7 +89,7 @@ size_t read_line(char* buffer, size_t capacity) {
     }
 
     while (!g_main_tty.line_ready) {
-        ps2::poll();
+        input::poll();
         arch::x86_64::enable_interrupts();
         arch::x86_64::halt_once();
     }

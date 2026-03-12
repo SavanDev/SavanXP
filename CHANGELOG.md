@@ -31,12 +31,17 @@ Notas de corte:
   y `getcwd`.
 - Smoke test externo `sdk/posixsmoke`, compilado solo contra headers
   estandar.
+- Utilidad `keytest` para inspeccionar eventos de teclado sobre `/dev/input0`
+  en fullscreen y validar `key down/up`, `keycode` y `ascii`.
 
 ### Cambiado
 
 - El kernel ahora resuelve paths relativos contra un `cwd` por proceso, de
   modo que `open`, `exec`, `spawn` y operaciones de filesystem comparten
   directorio actual.
+- El stack de teclado `PS/2` se reforzo con init del controlador mas robusta,
+  decodificacion desacoplada de `TTY`/`UI`, mejor soporte de `AltGr`, locks y
+  teclas especiales.
 - `sdk/doomgeneric` dejo de depender de su set privado de headers estandar y
   paso a consumir la capa publica del SDK, reduciendo `savanxp_compat.c` a
   glue especifico del port.
@@ -49,6 +54,8 @@ Notas de corte:
   tipo arena/bump.
 - `DIR->d_type` se completa por `stat()` best-effort en userland.
 - `setsockopt`/`getsockopt` cubren solo flags y timeouts basicos del cliente.
+- Segun el host y la captura de teclado de QEMU, `ImpPnt` puede no entrar al
+  guest como tecla dedicada y requerir `Alt+ImpPnt` para pruebas manuales.
 - La validacion reciente de `v0.1.1` es host-side; el smoke POSIX nuevo aun no
   fue corrido dentro de QEMU en esta tanda.
 

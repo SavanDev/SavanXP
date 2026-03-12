@@ -8,6 +8,7 @@
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/heap.hpp"
+#include "kernel/input.hpp"
 #include "kernel/net.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/pci.hpp"
@@ -99,6 +100,7 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     }
 
     tty::initialize();
+    input::initialize();
     timer::initialize(100);
     ps2::initialize();
     process::initialize();

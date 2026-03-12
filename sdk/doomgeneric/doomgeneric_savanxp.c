@@ -59,6 +59,7 @@ static unsigned char sx_map_keycode(uint32_t key, int ascii) {
         case SAVANXP_KEY_SHIFT: return KEY_RSHIFT;
         case SAVANXP_KEY_CTRL: return KEY_FIRE;
         case SAVANXP_KEY_ALT: return KEY_RALT;
+        case SAVANXP_KEY_ALT_GR: return KEY_RALT;
         case SAVANXP_KEY_CAPSLOCK: return KEY_CAPSLOCK;
         case SAVANXP_KEY_HOME: return KEY_HOME;
         case SAVANXP_KEY_END: return KEY_END;

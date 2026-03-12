@@ -1,8 +1,8 @@
 #include "kernel/timer.hpp"
 
 #include "kernel/cpu.hpp"
+#include "kernel/input.hpp"
 #include "kernel/process.hpp"
-#include "kernel/ps2.hpp"
 
 namespace {
 
@@ -62,7 +62,7 @@ void wait_ticks(uint64_t tick_count) {
 
 process::SavedContext* handle_interrupt(process::SavedContext* context) {
     g_ticks = g_ticks + 1;
-    ps2::poll();
+    input::poll();
     arch::x86_64::acknowledge_local_apic_interrupt();
     return process::handle_timer_tick(context);
 }

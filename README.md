@@ -19,8 +19,9 @@ El kernel ya bootea a una terminal funcional inicial:
   syscall por `int 0x80`.
 - Allocador fisico temprano, heap del kernel y VMM minimo para espacios de
   usuario.
-- Driver de teclado `PS/2` por `IRQ1` y `TTY` canonica para la consola
-  foreground.
+- Driver de teclado `PS/2` por `IRQ1` con init/controlador mas robusto,
+  decodificacion desacoplada, soporte expandido de teclas especiales y `TTY`
+  canonica para la consola foreground.
 - Enumeracion PCI minima por config-space en `q35` y capa de dispositivos
   expuesta como nodos bajo `/dev`.
 - Dispositivos iniciales en `/dev`: `fb0`, `input0`, `net0` y `pcspk`.
@@ -33,7 +34,7 @@ El kernel ya bootea a una terminal funcional inicial:
 - Userland inicial con `init`, `sh`, `echo`, `uname`, `ls`, `cat`, `sleep`,
   `ticker`, `demo`, `true`, `false`, `ps`, `fdtest`, `waittest`,
   `pipestress`, `spawnloop`, `badptr`, `rm`, `rmdir`, `truncate`,
-  `seektest`, `truncatetest`, `errtest` y `sysinfo`.
+  `seektest`, `truncatetest`, `errtest`, `sysinfo` y `keytest`.
 - Timer `local APIC/x2APIC` activo para tiempo base del sistema.
 - Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
   echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo, mas
@@ -141,6 +142,11 @@ Tambien hay un wrapper para compilar, instalar y arrancar QEMU en un paso:
 Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`. Tambien
 hay ejemplos/aplicaciones graficas externas en `sdk/gfxhello` y
 `sdk/doomgeneric`.
+
+Para diagnosticar teclado fullscreen y `/dev/input0`, existe la app `keytest`.
+Muestra `key down/up`, `keycode` y `ascii` en tiempo real. Nota practica:
+segun el host y la captura de teclado de QEMU, `ImpPnt` puede llegar al guest
+solo como `Alt+ImpPnt`.
 
 ## Extension de VS Code
 

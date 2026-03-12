@@ -37,6 +37,7 @@ $KernelSources = @(
     "kernel/console.cpp",
     "kernel/device.cpp",
     "kernel/pci.cpp",
+    "kernel/input.cpp",
     "kernel/tty.cpp",
     "kernel/ui.cpp",
     "kernel/ps2.cpp",
@@ -88,6 +89,7 @@ $UserPrograms = @(
     @{ Name = "tcpget"; Source = "userland/tcpget.c" },
     @{ Name = "beep"; Source = "userland/beep.c" },
     @{ Name = "gfxdemo"; Source = "userland/gfxdemo.c" },
+    @{ Name = "keytest"; Source = "userland/keytest.c" },
     @{ Name = "sysinfo"; Source = "userland/sysinfo.c" }
 )
 

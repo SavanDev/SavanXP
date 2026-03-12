@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/input.hpp"
+
 namespace tty {
 
 struct TtyDevice {
@@ -17,6 +19,7 @@ struct TtyDevice {
 void initialize();
 TtyDevice& main();
 void clear();
+void handle_key_event(const input::KeyEvent& event);
 void handle_input_char(char character);
 void handle_backspace();
 void submit_line();
