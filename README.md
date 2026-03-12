@@ -68,21 +68,22 @@ El kernel ya bootea a una terminal funcional inicial:
 
 Orden sugerido para las cuatro lineas de trabajo siguientes:
 
-1. Limpiar UX y documentacion.
-2. Agregar logs y errores mas claros en red.
-3. Empezar la libreria GUI en serio sobre la base fullscreen actual.
-4. Pasar de `ping` a sockets/UDP/TCP minimos.
+1. Agregar logs y errores mas claros en red.
+2. Empezar la libreria GUI en serio sobre la base fullscreen actual.
+3. Consolidar la SDK v1/POSIX y correr smoke tests reales dentro de QEMU.
+4. Ampliar sockets/TCP desde el cliente minimo actual hacia una API mas completa.
 
 Razon del orden:
 
-- Primero conviene estabilizar la superficie ya valida y dejarla facil de usar
-  y depurar.
-- Luego conviene mejorar observabilidad de red antes de abrir una API de
-  sockets mas grande.
-- La GUI ya tiene una base funcional y puede crecer en paralelo con menor
-  riesgo que una pila de red completa.
-- Sockets/UDP/TCP es el salto mas grande de diseño y ABI, asi que rinde mas
-  encararlo despues de consolidar lo anterior.
+- Red ya tiene una base usable, pero todavia necesita mejor observabilidad para
+  diagnosticar timeouts, estados intermedios y fallos reales sin depender tanto
+  del host.
+- La GUI fullscreen ya probo el camino tecnico; el siguiente paso natural es
+  convertir esas primitivas en una libreria reutilizable y menos demo-driven.
+- La capa POSIX/libc ya existe, asi que conviene validarla mejor dentro del
+  sistema antes de seguir agrandando la ABI o sumar mas ports externos.
+- El stack actual ya supero `ping` y tiene UDP + cliente TCP minimo; el salto
+  pendiente ahora es completar mejor la API de sockets y el soporte de TCP.
 
 ## Prerrequisitos
 
