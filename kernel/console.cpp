@@ -386,6 +386,32 @@ bool present_pixels(const void* pixels, size_t byte_count) {
     return true;
 }
 
+bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (!framebuffer_ready() || pixels == nullptr || source_pitch == 0 || width == 0 || height == 0) {
+        return false;
+    }
+    if (x >= g_framebuffer.width || y >= g_framebuffer.height) {
+        return false;
+    }
+    if (width > (g_framebuffer.width - x) || height > (g_framebuffer.height - y)) {
+        return false;
+    }
+
+    const uint32_t row_bytes = width * sizeof(uint32_t);
+    if (source_pitch < row_bytes) {
+        return false;
+    }
+
+    auto* destination = static_cast<uint8_t*>(g_framebuffer.address);
+    const auto* source = static_cast<const uint8_t*>(pixels);
+    for (uint32_t row = 0; row < height; ++row) {
+        const size_t source_offset = static_cast<size_t>(y + row) * source_pitch + (static_cast<size_t>(x) * sizeof(uint32_t));
+        const size_t destination_offset = static_cast<size_t>(y + row) * g_framebuffer.pitch + (static_cast<size_t>(x) * sizeof(uint32_t));
+        memcpy(destination + destination_offset, source + source_offset, row_bytes);
+    }
+    return true;
+}
+
 void clear() {
     memset(g_cells, ' ', sizeof(g_cells));
     g_cursor_row = 0;

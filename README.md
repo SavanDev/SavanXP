@@ -1,11 +1,16 @@
 # SavanXP
 
-Version actual del experimento: `v0.1.1`
+Version actual del proyecto: `v0.1.1`
 
 Historial de versiones: `CHANGELOG.md`
 
-Experimento de hobby OS en `C++` sobre `x86_64 + UEFI`, con `Limine` como
-bootloader y flujo de trabajo pensado para Windows nativo.
+Proyecto de sistema operativo en `C++` sobre `x86_64 + UEFI`, con `Limine`
+como bootloader y flujo de trabajo pensado para Windows nativo.
+
+SavanXP ya no se plantea como un experimento aislado. El proyecto analiza
+hasta donde se puede diseñar y construir un sistema operativo real con ayuda
+de la IA, usando a Codex como colaborador principal dentro del proceso de
+desarrollo.
 
 ## Estado actual
 
@@ -42,9 +47,20 @@ El kernel ya bootea a una terminal funcional inicial:
 - GUI fullscreen inicial con framebuffer exclusivo, cola de eventos de
   teclado, primitivas 2D reutilizables en `gfx_*`, ejemplo externo
   `sdk/gfxhello` y demo `gfxdemo`.
+- Pipeline fullscreen ya optimizado para mayor fluidez, con primitivas
+  `gfx_*` mas baratas, `present` parcial por regiones sucias
+  (`FB_IOC_PRESENT_REGION`) y demos/UI que evitan redibujar o copiar toda la
+  pantalla cuando no hubo cambios.
 - Primer juego externo porteado: `sdk/doomgeneric`, jugable en fullscreen
   sobre `/dev/fb0` + `/dev/input0`, usado como prueba real de apps graficas
   externas, assets persistentes en `/disk` y compatibilidad de input.
+- Backend de `sdk/doomgeneric` afinado para fullscreen, con escalado por filas
+  cacheadas en lugar de divisiones por pixel en cada frame, reduciendo costo
+  de CPU y mejorando la sensacion visual durante el juego.
+- Validacion real del port de `doomgeneric` ya cerrada para arranque,
+  jugabilidad basica y `save/load`; los ajustes quedaron repartidos entre
+  `SVFS2` en kernel, la capa `POSIX`/`stdio` de la SDK y el backend propio del
+  port, sin mover semantica de libc al kernel.
 - Sonido minimo por `PC speaker` con comando `beep`.
 - Scheduler round-robin preemptivo con bloqueo por `wait`, `read` y `sleep`.
 - Shell con `pipes`, redireccion (`|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`)

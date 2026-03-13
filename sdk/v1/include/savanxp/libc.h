@@ -56,6 +56,7 @@ long gfx_close(struct savanxp_gfx_context* context);
 long gfx_acquire(struct savanxp_gfx_context* context);
 long gfx_release(struct savanxp_gfx_context* context);
 long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixels);
+long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_t* pixels, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);

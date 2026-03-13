@@ -148,6 +148,47 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
                 ? 0
                 : negative_error(SAVANXP_EINVAL);
         }
+        case FB_IOC_PRESENT_REGION: {
+            savanxp_fb_present_region region = {};
+            if (g_owner_pid == 0 || g_owner_pid != process::current_pid()) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            if (!process::validate_user_range(argument, sizeof(region), true) ||
+                !process::copy_from_user(&region, argument, sizeof(region))) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            if (region.pixels == 0 || region.source_pitch == 0 || region.width == 0 || region.height == 0) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            if (region.x >= g_framebuffer.width || region.y >= g_framebuffer.height) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            if (region.width > (g_framebuffer.width - region.x) || region.height > (g_framebuffer.height - region.y)) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+
+            const uint64_t row_bytes = static_cast<uint64_t>(region.width) * sizeof(uint32_t);
+            if (region.source_pitch < row_bytes) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+
+            const uint64_t last_row = static_cast<uint64_t>(region.y + region.height - 1);
+            const uint64_t touched_bytes = (last_row * region.source_pitch) +
+                (static_cast<uint64_t>(region.x) * sizeof(uint32_t)) +
+                row_bytes;
+            if (!process::validate_user_range(region.pixels, touched_bytes, false)) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+
+            return console::present_region(
+                reinterpret_cast<const void*>(region.pixels),
+                region.source_pitch,
+                region.x,
+                region.y,
+                region.width,
+                region.height
+            ) ? 0 : negative_error(SAVANXP_EINVAL);
+        }
         default:
             return negative_error(SAVANXP_ENOSYS);
     }

@@ -11,11 +11,17 @@
 
 static struct savanxp_gfx_context g_gfx = {-1, -1, {0, 0, 0, 0, 0}};
 static uint32_t *g_present_buffer = 0;
+static uint32_t *g_scaled_row = 0;
 static uint32_t g_scale = 1;
 static int g_offset_x = 0;
 static int g_offset_y = 0;
 
 static void sx_shutdown_video(void) {
+    if (g_scaled_row != 0) {
+        free(g_scaled_row);
+        g_scaled_row = 0;
+    }
+
     if (g_present_buffer != 0) {
         free(g_present_buffer);
         g_present_buffer = 0;
@@ -132,17 +138,27 @@ static unsigned char sx_map_keycode(uint32_t key, int ascii) {
 
 static void sx_blit_frame(void) {
     const int scaled_width = DOOMGENERIC_RESX * (int)g_scale;
-    const int scaled_height = DOOMGENERIC_RESY * (int)g_scale;
     const uint32_t pitch = gfx_stride_pixels(&g_gfx.info);
+    int source_y;
 
-    gfx_clear(g_present_buffer, &g_gfx.info, gfx_rgb(0, 0, 0));
+    for (source_y = 0; source_y < DOOMGENERIC_RESY; ++source_y) {
+        const uint32_t *source_row = DG_ScreenBuffer + ((size_t)source_y * DOOMGENERIC_RESX);
+        uint32_t *expanded = g_scaled_row;
+        uint32_t *destination_row = g_present_buffer + ((size_t)(g_offset_y + (source_y * (int)g_scale)) * pitch) + (size_t)g_offset_x;
+        int source_x;
+        int repeat_y;
 
-    for (int y = 0; y < scaled_height; ++y) {
-        const int source_y = y / (int)g_scale;
-        uint32_t *row = g_present_buffer + (size_t)(g_offset_y + y) * pitch + (size_t)g_offset_x;
-        for (int x = 0; x < scaled_width; ++x) {
-            const int source_x = x / (int)g_scale;
-            row[x] = DG_ScreenBuffer[source_y * DOOMGENERIC_RESX + source_x];
+        for (source_x = 0; source_x < DOOMGENERIC_RESX; ++source_x) {
+            uint32_t colour = source_row[source_x];
+            uint32_t repeat_x;
+            for (repeat_x = 0; repeat_x < g_scale; ++repeat_x) {
+                *expanded++ = colour;
+            }
+        }
+
+        memcpy(destination_row, g_scaled_row, (size_t)scaled_width * sizeof(uint32_t));
+        for (repeat_y = 1; repeat_y < (int)g_scale; ++repeat_y) {
+            memcpy(destination_row + ((size_t)repeat_y * pitch), g_scaled_row, (size_t)scaled_width * sizeof(uint32_t));
         }
     }
 }
@@ -174,6 +190,13 @@ void DG_Init(void) {
 
     g_offset_x = (int)(g_gfx.info.width - (DOOMGENERIC_RESX * g_scale)) / 2;
     g_offset_y = (int)(g_gfx.info.height - (DOOMGENERIC_RESY * g_scale)) / 2;
+
+    g_scaled_row = (uint32_t *)malloc((size_t)(DOOMGENERIC_RESX * g_scale) * sizeof(uint32_t));
+    if (g_scaled_row == 0) {
+        sx_fail("doomgeneric: unable to allocate scale cache");
+    }
+
+    gfx_clear(g_present_buffer, &g_gfx.info, gfx_rgb(0, 0, 0));
 }
 
 void DG_DrawFrame(void) {

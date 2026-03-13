@@ -13,6 +13,7 @@ bool framebuffer_ready();
 void set_framebuffer_console_enabled(bool enabled);
 void redraw();
 bool present_pixels(const void* pixels, size_t byte_count);
+bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void clear();
 void write_char(char character);
 void write(const char* text);

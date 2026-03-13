@@ -38,6 +38,8 @@ Notas de corte:
   estandar.
 - Utilidad `keytest` para inspeccionar eventos de teclado sobre `/dev/input0`
   en fullscreen y validar `key down/up`, `keycode` y `ascii`.
+- `FB_IOC_PRESENT_REGION` como extension de la ABI grafica para presentar solo
+  una region del framebuffer desde userland.
 
 ### Cambiado
 
@@ -59,6 +61,14 @@ Notas de corte:
 - `sdk/doomgeneric` dejo de depender de su set privado de headers estandar y
   paso a consumir la capa publica del SDK, reduciendo `savanxp_compat.c` a
   glue especifico del port.
+- Las primitivas `gfx_*` del runtime compartido se optimizaron para trabajar
+  con spans/rectangulos contiguos y reducir el costo de dibujo por frame.
+- `gfxdemo`, `sdk/gfxhello` y `keytest` dejaron de refrescar la pantalla
+  completa en cada iteracion y ahora usan regiones sucias o redraw bajo
+  demanda para mejorar fluidez en fullscreen.
+- El backend de `sdk/doomgeneric` reemplazo el escalado basado en divisiones
+  por pixel por una expansion por filas cacheadas, bajando el costo de CPU por
+  frame durante el render fullscreen.
 - La documentacion principal y la referencia del SDK se actualizaron para
   reflejar la superficie POSIX/libc disponible y sus limites practicos.
 

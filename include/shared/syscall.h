@@ -137,6 +137,9 @@ struct savanxp_system_info {
     uint64_t memory_usable_bytes;
     uint64_t memory_reclaimable_bytes;
     uint64_t memory_total_pages;
+    uint64_t svfs_total_bytes;
+    uint64_t svfs_used_bytes;
+    uint64_t svfs_free_bytes;
     uint64_t initramfs_size;
     uint64_t uptime_ms;
 };
@@ -154,6 +157,7 @@ enum savanxp_fb_ioctl {
     FB_IOC_ACQUIRE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 2),
     FB_IOC_RELEASE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 3),
     FB_IOC_PRESENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 4),
+    FB_IOC_PRESENT_REGION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 5),
 };
 
 enum savanxp_net_ioctl {
@@ -208,6 +212,15 @@ struct savanxp_fb_info {
     uint32_t pitch;
     uint32_t bpp;
     uint32_t buffer_size;
+};
+
+struct savanxp_fb_present_region {
+    uint64_t pixels;
+    uint32_t source_pitch;
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
 };
 
 enum savanxp_input_event_type {

@@ -126,6 +126,63 @@ size_t gfx_buffer_bytes(const struct savanxp_fb_info* info) {
     return gfx_buffer_pixels(info) * sizeof(uint32_t);
 }
 
+static int gfx_clip_rect(const struct savanxp_fb_info* info, int* x, int* y, int* width, int* height) {
+    int clipped_x;
+    int clipped_y;
+    int clipped_width;
+    int clipped_height;
+
+    if (info == 0 || x == 0 || y == 0 || width == 0 || height == 0 || info->pitch == 0) {
+        return 0;
+    }
+
+    clipped_x = *x;
+    clipped_y = *y;
+    clipped_width = *width;
+    clipped_height = *height;
+
+    if (clipped_width <= 0 || clipped_height <= 0) {
+        return 0;
+    }
+
+    if (clipped_x < 0) {
+        clipped_width += clipped_x;
+        clipped_x = 0;
+    }
+    if (clipped_y < 0) {
+        clipped_height += clipped_y;
+        clipped_y = 0;
+    }
+    if (clipped_width <= 0 || clipped_height <= 0) {
+        return 0;
+    }
+    if (clipped_x >= (int)info->width || clipped_y >= (int)info->height) {
+        return 0;
+    }
+    if (clipped_x + clipped_width > (int)info->width) {
+        clipped_width = (int)info->width - clipped_x;
+    }
+    if (clipped_y + clipped_height > (int)info->height) {
+        clipped_height = (int)info->height - clipped_y;
+    }
+    if (clipped_width <= 0 || clipped_height <= 0) {
+        return 0;
+    }
+
+    *x = clipped_x;
+    *y = clipped_y;
+    *width = clipped_width;
+    *height = clipped_height;
+    return 1;
+}
+
+static void gfx_fill_span(uint32_t* destination, int count, uint32_t colour) {
+    int index;
+    for (index = 0; index < count; ++index) {
+        destination[index] = colour;
+    }
+}
+
 long gfx_open(struct savanxp_gfx_context* context) {
     if (context == 0) {
         return -SAVANXP_EINVAL;
@@ -186,6 +243,21 @@ long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixe
     return ioctl(context->fb_fd, FB_IOC_PRESENT, (unsigned long)pixels);
 }
 
+long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_t* pixels, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    struct savanxp_fb_present_region region;
+    if (context == 0 || context->fb_fd < 0 || pixels == 0 || width == 0 || height == 0) {
+        return -SAVANXP_EINVAL;
+    }
+
+    region.pixels = (uint64_t)(unsigned long)pixels;
+    region.source_pitch = context->info.pitch;
+    region.x = x;
+    region.y = y;
+    region.width = width;
+    region.height = height;
+    return ioctl(context->fb_fd, FB_IOC_PRESENT_REGION, (unsigned long)&region);
+}
+
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event) {
     long result;
     if (context == 0 || context->input_fd < 0 || event == 0) {
@@ -202,23 +274,16 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
 }
 
 void gfx_clear(uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t colour) {
-    uint32_t width;
-    uint32_t height;
     uint32_t pitch_pixels;
     uint32_t y;
-    uint32_t x;
 
     if (pixels == 0 || info == 0 || info->pitch == 0) {
         return;
     }
 
-    width = info->pitch / 4u;
-    height = info->height;
     pitch_pixels = info->pitch / 4;
-    for (y = 0; y < height; ++y) {
-        for (x = 0; x < width; ++x) {
-            pixels[y * pitch_pixels + x] = colour;
-        }
+    for (y = 0; y < info->height; ++y) {
+        gfx_fill_span(pixels + ((size_t)y * pitch_pixels), (int)pitch_pixels, colour);
     }
 }
 
@@ -233,35 +298,43 @@ void gfx_pixel(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int 
 }
 
 void gfx_hline(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, uint32_t colour) {
-    int column;
-    if (width <= 0) {
+    uint32_t pitch_pixels;
+    uint32_t* row;
+    int height = 1;
+    if (pixels == 0 || !gfx_clip_rect(info, &x, &y, &width, &height)) {
         return;
     }
-    for (column = 0; column < width; ++column) {
-        gfx_pixel(pixels, info, x + column, y, colour);
-    }
+
+    pitch_pixels = info->pitch / 4u;
+    row = pixels + ((size_t)y * pitch_pixels) + (uint32_t)x;
+    gfx_fill_span(row, width, colour);
 }
 
 void gfx_vline(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int height, uint32_t colour) {
+    uint32_t pitch_pixels;
     int row;
-    if (height <= 0) {
+    int width = 1;
+    if (pixels == 0 || !gfx_clip_rect(info, &x, &y, &width, &height)) {
         return;
     }
+
+    pitch_pixels = info->pitch / 4u;
     for (row = 0; row < height; ++row) {
-        gfx_pixel(pixels, info, x, y + row, colour);
+        pixels[(size_t)(y + row) * pitch_pixels + (uint32_t)x] = colour;
     }
 }
 
 void gfx_rect(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, int height, uint32_t colour) {
+    uint32_t pitch_pixels;
     int row;
-    int column;
-    if (width <= 0 || height <= 0) {
+    if (pixels == 0 || !gfx_clip_rect(info, &x, &y, &width, &height)) {
         return;
     }
+
+    pitch_pixels = info->pitch / 4u;
     for (row = 0; row < height; ++row) {
-        for (column = 0; column < width; ++column) {
-            gfx_pixel(pixels, info, x + column, y + row, colour);
-        }
+        uint32_t* destination = pixels + ((size_t)(y + row) * pitch_pixels) + (uint32_t)x;
+        gfx_fill_span(destination, width, colour);
     }
 }
 

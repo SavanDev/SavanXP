@@ -221,6 +221,7 @@ static void draw_scene(struct savanxp_gfx_context* gfx) {
 int main(void) {
     struct savanxp_gfx_context gfx;
     struct savanxp_input_event event;
+    int needs_redraw = 1;
 
     clear_lines();
 
@@ -250,16 +251,23 @@ int main(void) {
                 (event.key == 'c' || event.key == 'C') &&
                 (event.ascii == 'c' || event.ascii == 'C')) {
                 clear_lines();
+                needs_redraw = 1;
                 continue;
             }
             push_event_line(&event);
+            needs_redraw = 1;
+        }
+
+        if (!needs_redraw) {
+            sleep_ms(16);
+            continue;
         }
 
         draw_scene(&gfx);
         if (gfx_present(&gfx, g_backbuffer) < 0) {
             break;
         }
-        sleep_ms(16);
+        needs_redraw = 0;
     }
 
     gfx_release(&gfx);
