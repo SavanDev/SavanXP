@@ -1010,13 +1010,16 @@ size_t read(Vnode& node, size_t offset, void* buffer, size_t count) {
 }
 
 size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate) {
+    g_last_error = SAVANXP_EINVAL;
     if (node.type != NodeType::file || !node.writable) {
+        g_last_error = SAVANXP_EBADF;
         return 0;
     }
 
     switch (node.backend) {
         case Backend::memory: {
             if (node.data == nullptr || buffer == nullptr) {
+                g_last_error = SAVANXP_EBADF;
                 return 0;
             }
             if (truncate) {
@@ -1025,6 +1028,7 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
             }
 
             if (offset > kDynamicFileCapacity) {
+                g_last_error = SAVANXP_ENOSPC;
                 return 0;
             }
 
@@ -1041,16 +1045,19 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
         case Backend::svfs: {
             svfs::FileRecord* file = svfs::file_from_vnode(node);
             if (file == nullptr) {
+                g_last_error = SAVANXP_EBADF;
                 return 0;
             }
             size_t written = 0;
             if (!svfs::write_file(*file, offset, buffer, count, truncate, written)) {
+                g_last_error = SAVANXP_ENOSPC;
                 return 0;
             }
             node.size = file->size;
             return written;
         }
         default:
+            g_last_error = SAVANXP_EINVAL;
             return 0;
     }
 }

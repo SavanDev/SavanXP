@@ -29,6 +29,7 @@
 #define SX_DIR_POOL_CAPACITY 16
 #define SX_SOCKET_STATE_CAPACITY 32
 #define SX_PATH_CAPACITY 256
+#define SX_FILE_BUFFER_CAPACITY 512
 
 typedef long ssize_t;
 typedef long off_t;
@@ -78,6 +79,10 @@ struct sx_FILE {
     int eof;
     int error;
     int is_stdio;
+    int can_read;
+    int can_write;
+    size_t write_buffer_used;
+    unsigned char write_buffer[SX_FILE_BUFFER_CAPACITY];
 };
 
 struct sx_DIR {
@@ -101,9 +106,9 @@ struct sx_socket_state {
 static unsigned char g_heap[SX_HEAP_SIZE];
 static size_t g_heap_used = 0;
 static struct sx_FILE g_file_pool[SX_FILE_POOL_CAPACITY] = {};
-static struct sx_FILE g_stdin_file = {0, 1, 0, 0, 1};
-static struct sx_FILE g_stdout_file = {1, 1, 0, 0, 1};
-static struct sx_FILE g_stderr_file = {2, 1, 0, 0, 1};
+static struct sx_FILE g_stdin_file = {0, 1, 0, 0, 1, 1, 0, 0, {0}};
+static struct sx_FILE g_stdout_file = {1, 1, 0, 0, 1, 0, 1, 0, {0}};
+static struct sx_FILE g_stderr_file = {2, 1, 0, 0, 1, 0, 1, 0, {0}};
 static struct sx_DIR g_dir_pool[SX_DIR_POOL_CAPACITY] = {};
 static struct sx_socket_state g_socket_states[SX_SOCKET_STATE_CAPACITY] = {};
 
@@ -119,6 +124,8 @@ int sx_usleep(unsigned long microseconds);
 int* sx_errno_location(void) {
     return &g_errno;
 }
+
+size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream);
 
 static int sx_result_to_errno(long result) {
     return result < 0 ? result_error_code(result) : 0;
@@ -850,7 +857,7 @@ static void sx_release_file(FILE* stream) {
 
 static int sx_emit_file_char(char character, void* context) {
     FILE* stream = (FILE*)context;
-    if (sx_write(stream->fd, &character, 1) < 0) {
+    if (sx_fwrite(&character, 1, 1, stream) != 1) {
         stream->error = 1;
         return 0;
     }
@@ -870,6 +877,92 @@ static int sx_emit_buffer_char(char character, void* context) {
     }
     sink->written += 1;
     return 1;
+}
+
+static int sx_flush_stream(FILE* stream) {
+    size_t written = 0;
+    if (stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return EOF;
+    }
+    if (stream->write_buffer_used == 0) {
+        return 0;
+    }
+
+    while (written < stream->write_buffer_used) {
+        const ssize_t result = sx_write(
+            stream->fd,
+            stream->write_buffer + written,
+            stream->write_buffer_used - written);
+        if (result <= 0) {
+            stream->error = 1;
+            if (result == 0) {
+                g_errno = SAVANXP_EIO;
+            }
+            return EOF;
+        }
+        written += (size_t)result;
+    }
+
+    stream->write_buffer_used = 0;
+    return 0;
+}
+
+static size_t sx_buffered_write(FILE* stream, const unsigned char* buffer, size_t total) {
+    size_t consumed = 0;
+    if (stream == 0 || buffer == 0) {
+        return 0;
+    }
+
+    while (consumed < total) {
+        if (stream->write_buffer_used == 0 && (total - consumed) >= SX_FILE_BUFFER_CAPACITY) {
+            const ssize_t direct = sx_write(stream->fd, buffer + consumed, total - consumed);
+            if (direct <= 0) {
+                stream->error = 1;
+                if (direct == 0) {
+                    g_errno = SAVANXP_EIO;
+                }
+                break;
+            }
+            consumed += (size_t)direct;
+            continue;
+        }
+
+        {
+            const size_t available = SX_FILE_BUFFER_CAPACITY - stream->write_buffer_used;
+            const size_t chunk = (total - consumed) < available ? (total - consumed) : available;
+            sx_memcpy(stream->write_buffer + stream->write_buffer_used, buffer + consumed, chunk);
+            stream->write_buffer_used += chunk;
+            consumed += chunk;
+        }
+
+        if (stream->write_buffer_used == SX_FILE_BUFFER_CAPACITY && sx_flush_stream(stream) == EOF) {
+            break;
+        }
+    }
+
+    return consumed;
+}
+
+static size_t sx_direct_write(FILE* stream, const unsigned char* buffer, size_t total) {
+    size_t consumed = 0;
+    if (stream == 0 || buffer == 0) {
+        return 0;
+    }
+
+    while (consumed < total) {
+        const ssize_t result = sx_write(stream->fd, buffer + consumed, total - consumed);
+        if (result <= 0) {
+            stream->error = 1;
+            if (result == 0) {
+                g_errno = SAVANXP_EIO;
+            }
+            break;
+        }
+        consumed += (size_t)result;
+    }
+
+    return consumed;
 }
 
 static int sx_write_padded(int (*emit)(char, void*), void* context, const char* text, size_t text_length, int width, char pad) {
@@ -1127,10 +1220,14 @@ FILE* sx_fopen(const char* path, const char* mode) {
         return 0;
     }
     stream->fd = fd;
+    stream->can_read = (flags & O_RDWR) == O_RDWR || (flags & O_WRONLY) == 0;
+    stream->can_write = (flags & O_WRONLY) != 0 || (flags & O_RDWR) == O_RDWR;
     return stream;
 }
 
 int sx_fclose(FILE* stream) {
+    int flush_result = 0;
+    int close_result = 0;
     if (stream == 0) {
         g_errno = SAVANXP_EINVAL;
         return EOF;
@@ -1138,16 +1235,18 @@ int sx_fclose(FILE* stream) {
     if (stream->is_stdio) {
         return 0;
     }
-    if (sx_close(stream->fd) < 0) {
-        return EOF;
-    }
+    flush_result = sx_flush_stream(stream);
+    close_result = sx_close(stream->fd);
     sx_release_file(stream);
-    return 0;
+    return (flush_result == EOF || close_result < 0) ? EOF : 0;
 }
 
 size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
     ssize_t result = 0;
     if (stream == 0 || buffer == 0 || size == 0 || count == 0) {
+        return 0;
+    }
+    if (stream->can_write && stream->write_buffer_used != 0 && sx_flush_stream(stream) == EOF) {
         return 0;
     }
     result = sx_read(stream->fd, buffer, size * count);
@@ -1162,16 +1261,21 @@ size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
 }
 
 size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream) {
-    ssize_t result = 0;
     if (stream == 0 || buffer == 0 || size == 0 || count == 0) {
         return 0;
     }
-    result = sx_write(stream->fd, buffer, size * count);
-    if (result < 0) {
+    if (!stream->can_write) {
+        g_errno = SAVANXP_EBADF;
         stream->error = 1;
         return 0;
     }
-    return (size_t)result / size;
+    {
+        const size_t total = size * count;
+        const size_t written = stream->is_stdio
+            ? sx_direct_write(stream, (const unsigned char*)buffer, total)
+            : sx_buffered_write(stream, (const unsigned char*)buffer, total);
+        return written / size;
+    }
 }
 
 int sx_fseek(FILE* stream, long offset, int whence) {
@@ -1179,16 +1283,36 @@ int sx_fseek(FILE* stream, long offset, int whence) {
         g_errno = SAVANXP_EINVAL;
         return -1;
     }
+    if (stream->write_buffer_used != 0 && sx_flush_stream(stream) == EOF) {
+        return -1;
+    }
+    stream->eof = 0;
     return sx_lseek(stream->fd, offset, whence) < 0 ? -1 : 0;
 }
 
 long sx_ftell(FILE* stream) {
-    return stream == 0 ? -1 : sx_lseek(stream->fd, 0, SEEK_CUR);
+    long position = 0;
+    if (stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    position = sx_lseek(stream->fd, 0, SEEK_CUR);
+    if (position < 0) {
+        stream->error = 1;
+        return -1;
+    }
+    if (stream->can_write && stream->write_buffer_used != 0) {
+        position += (long)stream->write_buffer_used;
+    }
+    return position;
 }
 
 int sx_fflush(FILE* stream) {
-    (void)stream;
-    return 0;
+    if (stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return EOF;
+    }
+    return sx_flush_stream(stream);
 }
 
 int sx_vfprintf(FILE* stream, const char* format, va_list args) {

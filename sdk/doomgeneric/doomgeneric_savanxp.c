@@ -15,6 +15,31 @@ static uint32_t g_scale = 1;
 static int g_offset_x = 0;
 static int g_offset_y = 0;
 
+static void sx_shutdown_video(void) {
+    if (g_present_buffer != 0) {
+        free(g_present_buffer);
+        g_present_buffer = 0;
+    }
+
+    if (g_gfx.fb_fd >= 0 || g_gfx.input_fd >= 0) {
+        gfx_release(&g_gfx);
+        gfx_close(&g_gfx);
+        g_gfx.fb_fd = -1;
+        g_gfx.input_fd = -1;
+    }
+}
+
+static void sx_fail(const char *message) {
+    eprintf("%s\n", message);
+    sx_shutdown_exit(1);
+}
+
+static void sx_prepare_data_dirs(void) {
+    if (sx_make_dirs(FILES_DIR) < 0 || sx_make_dirs(FILES_DIR "/savegames") < 0) {
+        sx_fail("doomgeneric: failed to prepare data directories");
+    }
+}
+
 static unsigned char sx_unshift_ascii(unsigned char key) {
     switch (key) {
         case '!': return '1';
@@ -46,7 +71,7 @@ static unsigned char sx_unshift_ascii(unsigned char key) {
     }
 }
 
-static unsigned char sx_map_keycode(uint32_t key, int ascii) {
+static unsigned char sx_map_special_key(uint32_t key) {
     switch (key) {
         case SAVANXP_KEY_BACKSPACE: return KEY_BACKSPACE;
         case SAVANXP_KEY_TAB: return KEY_TAB;
@@ -80,27 +105,29 @@ static unsigned char sx_map_keycode(uint32_t key, int ascii) {
         case SAVANXP_KEY_F11: return KEY_F11;
         case SAVANXP_KEY_F12: return KEY_F12;
         default:
-            if (ascii == ' ') {
-                return KEY_USE;
-            }
-            if (ascii > 0) {
-                return sx_unshift_ascii((unsigned char)ascii);
-            }
-            if (key >= 32 && key <= 126) {
-                if (key == ' ') {
-                    return KEY_USE;
-                }
-                return sx_unshift_ascii((unsigned char)key);
-            }
             return 0;
     }
 }
 
-static void sx_shutdown_graphics(void) {
-    if (g_gfx.fb_fd >= 0 || g_gfx.input_fd >= 0) {
-        gfx_release(&g_gfx);
-        gfx_close(&g_gfx);
+static unsigned char sx_map_printable_key(uint32_t key, int ascii) {
+    if (ascii == ' ' || key == ' ') {
+        return KEY_USE;
     }
+
+    if (ascii > 0) {
+        return sx_unshift_ascii((unsigned char)ascii);
+    }
+
+    if (key >= 32 && key <= 126) {
+        return sx_unshift_ascii((unsigned char)key);
+    }
+
+    return 0;
+}
+
+static unsigned char sx_map_keycode(uint32_t key, int ascii) {
+    const unsigned char special = sx_map_special_key(key);
+    return special != 0 ? special : sx_map_printable_key(key, ascii);
 }
 
 static void sx_blit_frame(void) {
@@ -121,24 +148,20 @@ static void sx_blit_frame(void) {
 }
 
 void DG_Init(void) {
-    sx_make_dirs(FILES_DIR);
-    sx_make_dirs(FILES_DIR "/savegames");
+    sx_prepare_data_dirs();
 
     if (gfx_open(&g_gfx) < 0) {
-        eprintf("doomgeneric: gfx_open failed\n");
-        sx_shutdown_exit(1);
+        sx_fail("doomgeneric: gfx_open failed");
     }
     if (gfx_acquire(&g_gfx) < 0) {
-        eprintf("doomgeneric: gfx_acquire failed\n");
-        sx_shutdown_exit(1);
+        sx_fail("doomgeneric: gfx_acquire failed");
     }
 
-    sx_register_shutdown(sx_shutdown_graphics);
+    sx_register_shutdown(sx_shutdown_video);
 
     g_present_buffer = (uint32_t *)calloc(1, gfx_buffer_bytes(&g_gfx.info));
     if (g_present_buffer == 0) {
-        eprintf("doomgeneric: unable to allocate present buffer\n");
-        sx_shutdown_exit(1);
+        sx_fail("doomgeneric: unable to allocate present buffer");
     }
 
     g_scale = g_gfx.info.width / DOOMGENERIC_RESX;
@@ -146,8 +169,7 @@ void DG_Init(void) {
         g_scale = g_gfx.info.height / DOOMGENERIC_RESY;
     }
     if (g_scale == 0) {
-        eprintf("doomgeneric: framebuffer too small (%ux%u)\n", g_gfx.info.width, g_gfx.info.height);
-        sx_shutdown_exit(1);
+        sx_fail("doomgeneric: framebuffer too small");
     }
 
     g_offset_x = (int)(g_gfx.info.width - (DOOMGENERIC_RESX * g_scale)) / 2;
@@ -157,8 +179,7 @@ void DG_Init(void) {
 void DG_DrawFrame(void) {
     sx_blit_frame();
     if (gfx_present(&g_gfx, g_present_buffer) < 0) {
-        eprintf("doomgeneric: gfx_present failed\n");
-        sx_shutdown_exit(1);
+        sx_fail("doomgeneric: gfx_present failed");
     }
 }
 

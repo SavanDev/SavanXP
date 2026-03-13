@@ -29,12 +29,6 @@ Ensure-SvfsDirectory $image "games/doom"
 
 if (Test-Path -LiteralPath $WadPath) {
     $wadBytes = [System.IO.File]::ReadAllBytes((Resolve-Path $WadPath).Path)
-    $requiredSectors = [uint32][Math]::Max(1, [Math]::Ceiling($wadBytes.Length / 512.0))
-    $existingWad = Find-SvfsEntryByName $image "games/doom/doom1.wad"
-    $currentWadSectors = if ($existingWad -and $existingWad.Type -eq 0) { [uint32]$existingWad.SectorCount } else { [uint32]0 }
-    if ($currentWadSectors -lt $requiredSectors) {
-        Ensure-SvfsFreeSectors $image ([uint32]($requiredSectors - $currentWadSectors))
-    }
     Install-SvfsFile -Image $image -DestinationPath "/disk/games/doom/doom1.wad" -Data $wadBytes
     Write-Host "WAD instalado en: /disk/games/doom/doom1.wad"
 } else {

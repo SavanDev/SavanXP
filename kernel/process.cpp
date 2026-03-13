@@ -1513,6 +1513,12 @@ int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
                     return negative_error(SAVANXP_EINVAL);
                 }
                 const size_t produced = vfs::write(*file->node, file->offset, scratch, step, false);
+                if (produced == 0 && step != 0) {
+                    const int error = vfs::last_error();
+                    return written != 0
+                        ? static_cast<int>(written)
+                        : negative_error(static_cast<savanxp_error_code>(error != 0 ? error : SAVANXP_EIO));
+                }
                 file->offset += produced;
                 written += produced;
                 if (produced < step) {

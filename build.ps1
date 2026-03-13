@@ -28,7 +28,7 @@ $DebugConLog = Join-Path $BuildRoot "debugcon.log"
 $SvfsSectorSize = 512
 $SvfsDirectorySectors = 8
 $SvfsMaxFiles = 64
-$SvfsTotalSectors = 32768
+$SvfsTotalSectors = 131072
 
 $KernelSources = @(
     "arch/x86_64/context.S",

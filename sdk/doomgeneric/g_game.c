@@ -1658,7 +1658,11 @@ void G_DoSaveGame (void)
     
     // Finish up, close the savegame file.
 
-    fclose(save_stream);
+    if (fclose(save_stream) != 0)
+    {
+        I_Error("Failed to finalize savegame '%s' (errno=%d)",
+                temp_savegame_file, errno);
+    }
 
     if (recovery_savegame_file != NULL)
     {

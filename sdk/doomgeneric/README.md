@@ -6,8 +6,26 @@ Estado actual del port:
 - sin audio ni mouse en esta primera etapa
 - usa `/dev/fb0` y `/dev/input0`
 - guarda config y saves bajo `/disk/games/doom`
+- se apoya en el input PS/2 actual para teclas especiales y en SVFS v2 para
+  archivos que crecen en runtime
 - sirve como primer juego porteado y como prueba fuerte de apps graficas
   externas sobre el ABI actual de SavanXP
+
+Que fixes quedaron en cada capa:
+
+- Kernel / sistema:
+  `SVFS2` ahora monta una imagen mas grande y mantiene un layout consistente
+  para journal, bitmap de bloques, bitmap de inodos y tabla de inodos; tambien
+  soporta crecimiento real de archivos en runtime y mejor propagacion de
+  errores de escritura desde `VFS`/process.
+- SDK / runtime POSIX:
+  la libc minima ahora resuelve mejor `snprintf`/`vsnprintf`, `FILE*`,
+  `fflush`, `fclose`, `fseek` y `ftell`; el fix clave para `save/load` fue
+  corregir `ftell()` para contar bytes pendientes en el buffer de escritura.
+- Port especifico de Doom:
+  el backend `doomgeneric_savanxp.c` sigue concentrando framebuffer, input,
+  mapeo de teclas y salida limpia; ademas se ajustaron rutas de config/saves y
+  algunos detalles de compatibilidad del menu/config del juego.
 
 Build del port:
 

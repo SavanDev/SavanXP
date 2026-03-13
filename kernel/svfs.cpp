@@ -18,19 +18,20 @@ constexpr uint16_t kInodeTypeDirectory = 2;
 constexpr uint32_t kPrimarySuperblockLba = 0;
 constexpr uint32_t kSecondarySuperblockLba = 1;
 constexpr uint32_t kJournalLba = 2;
-constexpr uint32_t kBlockBitmapLba = 44;
-constexpr uint32_t kBlockBitmapSectors = 8;
-constexpr uint32_t kInodeBitmapLba = kBlockBitmapLba + kBlockBitmapSectors;
+constexpr uint32_t kBlockBitmapSectors = 32;
 constexpr uint32_t kInodeBitmapSectors = 1;
-constexpr uint32_t kInodeTableLba = kInodeBitmapLba + kInodeBitmapSectors;
 constexpr uint32_t kInodeTableSectors = 32;
-constexpr uint32_t kDataLba = kInodeTableLba + kInodeTableSectors;
 constexpr uint32_t kJournalMetadataSectors = kBlockBitmapSectors + kInodeBitmapSectors + kInodeTableSectors;
 constexpr uint32_t kJournalSectors = 1 + kJournalMetadataSectors;
+constexpr uint32_t kBlockBitmapLba = kJournalLba + kJournalSectors;
+constexpr uint32_t kInodeBitmapLba = kBlockBitmapLba + kBlockBitmapSectors;
+constexpr uint32_t kInodeTableLba = kInodeBitmapLba + kInodeBitmapSectors;
+constexpr uint32_t kDataLba = kInodeTableLba + kInodeTableSectors;
 constexpr uint32_t kMaxInodes = 128;
 constexpr uint32_t kMaxRecords = kMaxInodes - 1;
 constexpr uint32_t kRootInodeId = 1;
 constexpr uint32_t kMaxExtents = 8;
+constexpr uint32_t kMinimumGrowthSectors = 64;
 constexpr size_t kBlockBitmapBytes = static_cast<size_t>(kBlockBitmapSectors) * block::kSectorSize;
 constexpr size_t kInodeBitmapBytes = static_cast<size_t>(kInodeBitmapSectors) * block::kSectorSize;
 constexpr size_t kMaxRelativePath = 255;
@@ -635,7 +636,18 @@ bool ensure_inode_capacity(Inode& inode, size_t required_size) {
     if (required_sectors <= current_sectors) {
         return true;
     }
-    return allocate_blocks(inode, required_sectors - current_sectors);
+
+    uint32_t target_sectors = required_sectors;
+    if (current_sectors < kMinimumGrowthSectors) {
+        target_sectors = kMinimumGrowthSectors;
+    } else if (target_sectors < current_sectors * 2u) {
+        target_sectors = current_sectors * 2u;
+    }
+    if (target_sectors < required_sectors) {
+        target_sectors = required_sectors;
+    }
+
+    return allocate_blocks(inode, target_sectors - current_sectors);
 }
 
 bool locate_inode_offset(const Inode& inode, size_t offset, uint32_t& lba, size_t& sector_offset) {
