@@ -1731,6 +1731,9 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.pci_device_count = static_cast<uint32_t>(pci::device_count());
     info.svfs_file_count = static_cast<uint32_t>(svfs::file_count());
     info.memory_total_pages = memory::total_page_count();
+    info.svfs_total_bytes = svfs::total_bytes();
+    info.svfs_used_bytes = svfs::used_bytes();
+    info.svfs_free_bytes = svfs::free_bytes();
     info.uptime_ms = current_uptime_ms();
     return true;
 }

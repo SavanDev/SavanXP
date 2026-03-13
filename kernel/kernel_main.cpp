@@ -140,6 +140,9 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     system_info.memory_usable_bytes = memory.usable_bytes;
     system_info.memory_reclaimable_bytes = memory.reclaimable_bytes;
     system_info.memory_total_pages = memory::total_page_count();
+    system_info.svfs_total_bytes = svfs::total_bytes();
+    system_info.svfs_used_bytes = svfs::used_bytes();
+    system_info.svfs_free_bytes = svfs::free_bytes();
     system_info.initramfs_size = boot_info.initramfs_size;
     process::set_boot_system_info(system_info);
 

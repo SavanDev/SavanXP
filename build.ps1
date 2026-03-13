@@ -64,6 +64,7 @@ $UserPrograms = @(
     @{ Name = "uname"; Source = "userland/uname.c" },
     @{ Name = "ls"; Source = "userland/ls.c" },
     @{ Name = "cat"; Source = "userland/cat.c" },
+    @{ Name = "df"; Source = "userland/df.c" },
     @{ Name = "sleep"; Source = "userland/sleep.c" },
     @{ Name = "ticker"; Source = "userland/ticker.c" },
     @{ Name = "demo"; Source = "userland/demo.c" },

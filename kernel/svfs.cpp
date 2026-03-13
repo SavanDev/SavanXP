@@ -559,6 +559,16 @@ bool append_extent(Inode& inode, uint32_t start_lba, uint32_t sector_count) {
     return true;
 }
 
+uint32_t allocated_data_sector_count() {
+    uint32_t count = 0;
+    for (uint32_t sector = g_superblock.data_lba; sector < g_superblock.total_sectors; ++sector) {
+        if (bitmap_test(g_block_bitmap, sector)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 bool allocate_blocks(Inode& inode, uint32_t additional_sectors) {
     while (additional_sectors != 0) {
         uint32_t run_start = 0;
@@ -1039,6 +1049,26 @@ size_t file_count() {
         }
     }
     return count;
+}
+
+uint64_t total_bytes() {
+    if (g_device_index == static_cast<size_t>(-1) || !g_metadata_ready || g_superblock.total_sectors <= g_superblock.data_lba) {
+        return 0;
+    }
+    return static_cast<uint64_t>(g_superblock.total_sectors - g_superblock.data_lba) * block::kSectorSize;
+}
+
+uint64_t used_bytes() {
+    if (g_device_index == static_cast<size_t>(-1) || !g_metadata_ready) {
+        return 0;
+    }
+    return static_cast<uint64_t>(allocated_data_sector_count()) * block::kSectorSize;
+}
+
+uint64_t free_bytes() {
+    const uint64_t total = total_bytes();
+    const uint64_t used = used_bytes();
+    return total >= used ? (total - used) : 0;
 }
 
 bool sync() {

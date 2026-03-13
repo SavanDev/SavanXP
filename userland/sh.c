@@ -59,12 +59,13 @@ static void print_prompt(void) {
 static void print_help(void) {
     printf("%s shell\n", SAVANXP_DISPLAY_NAME);
     puts("Builtins: help clear exit exec which mkdir cd pwd\n");
-    puts("Core: sysinfo uname ps ls cat echo sleep ticker demo true false\n");
+    puts("Core: sysinfo uname ps ls cat df echo sleep ticker demo true false\n");
     puts("Storage: mkdir mv rm rmdir truncate sync seektest renametest truncatetest\n");
     puts("Diagnostics: sysinfo errtest fdtest waittest pipestress spawnloop badptr\n");
     puts("Network: netinfo ping udptest udpsend udprecv tcpget\n");
     puts("Graphics/audio: gfxdemo beep\n");
     puts("Examples: sysinfo\n");
+    puts("          df\n");
     puts("          cd /disk\n");
     puts("          pwd\n");
     puts("          echo \"hola mundo\" | cat\n");

@@ -117,6 +117,9 @@ int main(void) {
     puts("disk:\n");
     print_bool_line("mounted", info.svfs_mounted);
     print_u64_line("svfs_files", info.svfs_file_count);
+    print_mib_line("svfs_total", info.svfs_total_bytes);
+    print_mib_line("svfs_used", info.svfs_used_bytes);
+    print_mib_line("svfs_free", info.svfs_free_bytes);
 
     puts("uptime:\n");
     print_u64_line("milliseconds", info.uptime_ms);

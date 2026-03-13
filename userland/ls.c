@@ -1,7 +1,7 @@
 #include "libc.h"
 
 int main(int argc, char** argv) {
-    const char* path = argc > 1 ? argv[1] : "/";
+    const char* path = argc > 1 ? argv[1] : ".";
     char entry[64];
     long fd = open(path);
     if (fd < 0) {
