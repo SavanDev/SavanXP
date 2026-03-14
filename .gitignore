@@ -1,6 +1,10 @@
 build/
 tools/*
+!tools/build-user.ps1
 !tools/doom-smoke.ps1
+!tools/new-user-app.ps1
+!tools/run-user.ps1
+!tools/UserAppCommon.ps1
 !tools/vscode-extension/
 !tools/vscode-extension/**
 *.log
