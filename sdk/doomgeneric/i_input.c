@@ -46,6 +46,7 @@ int vanilla_keyboard_mapping = 1;
 // Is the shift key currently down?
 
 static int shiftdown = 0;
+extern int usemouse;
 
 // Lookup table for mapping AT keycodes to their doom keycode
 static const char at_to_doom[] =
@@ -275,12 +276,27 @@ static void UpdateShiftStatus(int pressed, unsigned char key)
     }
 }
 
+static int AccelerateMouse(int value)
+{
+    const int direction = value < 0 ? -1 : 1;
+    int magnitude = abs(value);
+
+    if (magnitude > mouse_threshold)
+    {
+        magnitude = mouse_threshold + ((magnitude - mouse_threshold) * 2);
+    }
+
+    return magnitude * direction;
+}
 
 void I_GetEvent(void)
 {
     event_t event;
     int pressed;
     unsigned char key;
+    int mouse_buttons;
+    int mouse_delta_x;
+    int mouse_delta_y;
 
     
 	while (DG_GetKey(&pressed, &key))
@@ -323,16 +339,15 @@ void I_GetEvent(void)
         }
     }
 
-
-                /*
-            case SDL_MOUSEMOTION:
-                event.type = ev_mouse;
-                event.data1 = mouse_button_state;
-                event.data2 = AccelerateMouse(sdlevent.motion.xrel);
-                event.data3 = -AccelerateMouse(sdlevent.motion.yrel);
-                D_PostEvent(&event);
-                break;
-                */
+    if (usemouse
+     && DG_GetMouse(&mouse_buttons, &mouse_delta_x, &mouse_delta_y))
+    {
+        event.type = ev_mouse;
+        event.data1 = mouse_buttons;
+        event.data2 = AccelerateMouse(mouse_delta_x);
+        event.data3 = -AccelerateMouse(mouse_delta_y);
+        D_PostEvent(&event);
+    }
 }
 
 void I_InitInput(void)

@@ -1,5 +1,6 @@
 #include "savanxp/libc.h"
 
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -11,10 +12,15 @@
 
 static struct savanxp_gfx_context g_gfx = {-1, -1, {0, 0, 0, 0, 0}};
 static uint32_t *g_present_buffer = 0;
+static uint32_t *g_previous_frame = 0;
 static uint32_t *g_scaled_row = 0;
+static int g_mouse_fd = -1;
 static uint32_t g_scale = 1;
 static int g_offset_x = 0;
 static int g_offset_y = 0;
+static uint32_t g_scaled_width = 0;
+static uint32_t g_scaled_height = 0;
+static int g_previous_frame_valid = 0;
 
 static void sx_shutdown_video(void) {
     if (g_scaled_row != 0) {
@@ -22,9 +28,19 @@ static void sx_shutdown_video(void) {
         g_scaled_row = 0;
     }
 
+    if (g_previous_frame != 0) {
+        free(g_previous_frame);
+        g_previous_frame = 0;
+    }
+
     if (g_present_buffer != 0) {
         free(g_present_buffer);
         g_present_buffer = 0;
+    }
+
+    if (g_mouse_fd >= 0) {
+        close(g_mouse_fd);
+        g_mouse_fd = -1;
     }
 
     if (g_gfx.fb_fd >= 0 || g_gfx.input_fd >= 0) {
@@ -136,12 +152,11 @@ static unsigned char sx_map_keycode(uint32_t key, int ascii) {
     return special != 0 ? special : sx_map_printable_key(key, ascii);
 }
 
-static void sx_blit_frame(void) {
-    const int scaled_width = DOOMGENERIC_RESX * (int)g_scale;
+static void sx_blit_rows(int start_row, int end_row) {
     const uint32_t pitch = gfx_stride_pixels(&g_gfx.info);
-    int source_y;
+    int source_y = 0;
 
-    for (source_y = 0; source_y < DOOMGENERIC_RESY; ++source_y) {
+    for (source_y = start_row; source_y <= end_row; ++source_y) {
         const uint32_t *source_row = DG_ScreenBuffer + ((size_t)source_y * DOOMGENERIC_RESX);
         uint32_t *expanded = g_scaled_row;
         uint32_t *destination_row = g_present_buffer + ((size_t)(g_offset_y + (source_y * (int)g_scale)) * pitch) + (size_t)g_offset_x;
@@ -156,9 +171,9 @@ static void sx_blit_frame(void) {
             }
         }
 
-        memcpy(destination_row, g_scaled_row, (size_t)scaled_width * sizeof(uint32_t));
+        memcpy(destination_row, g_scaled_row, (size_t)g_scaled_width * sizeof(uint32_t));
         for (repeat_y = 1; repeat_y < (int)g_scale; ++repeat_y) {
-            memcpy(destination_row + ((size_t)repeat_y * pitch), g_scaled_row, (size_t)scaled_width * sizeof(uint32_t));
+            memcpy(destination_row + ((size_t)repeat_y * pitch), g_scaled_row, (size_t)g_scaled_width * sizeof(uint32_t));
         }
     }
 }
@@ -171,6 +186,11 @@ void DG_Init(void) {
     }
     if (gfx_acquire(&g_gfx) < 0) {
         sx_fail("doomgeneric: gfx_acquire failed");
+    }
+
+    g_mouse_fd = (int)mouse_open();
+    if (g_mouse_fd < 0) {
+        g_mouse_fd = -1;
     }
 
     sx_register_shutdown(sx_shutdown_video);
@@ -188,20 +208,62 @@ void DG_Init(void) {
         sx_fail("doomgeneric: framebuffer too small");
     }
 
-    g_offset_x = (int)(g_gfx.info.width - (DOOMGENERIC_RESX * g_scale)) / 2;
-    g_offset_y = (int)(g_gfx.info.height - (DOOMGENERIC_RESY * g_scale)) / 2;
+    g_scaled_width = (uint32_t)(DOOMGENERIC_RESX * g_scale);
+    g_scaled_height = (uint32_t)(DOOMGENERIC_RESY * g_scale);
+    g_offset_x = (int)(g_gfx.info.width - g_scaled_width) / 2;
+    g_offset_y = (int)(g_gfx.info.height - g_scaled_height) / 2;
 
-    g_scaled_row = (uint32_t *)malloc((size_t)(DOOMGENERIC_RESX * g_scale) * sizeof(uint32_t));
+    g_scaled_row = (uint32_t *)malloc((size_t)g_scaled_width * sizeof(uint32_t));
     if (g_scaled_row == 0) {
         sx_fail("doomgeneric: unable to allocate scale cache");
+    }
+
+    g_previous_frame = (uint32_t *)malloc((size_t)DOOMGENERIC_RESX * (size_t)DOOMGENERIC_RESY * sizeof(uint32_t));
+    if (g_previous_frame == 0) {
+        sx_fail("doomgeneric: unable to allocate previous frame buffer");
     }
 
     gfx_clear(g_present_buffer, &g_gfx.info, gfx_rgb(0, 0, 0));
 }
 
 void DG_DrawFrame(void) {
-    sx_blit_frame();
-    if (gfx_present(&g_gfx, g_present_buffer) < 0) {
+    int dirty_start = DOOMGENERIC_RESY;
+    int dirty_end = -1;
+    int source_y = 0;
+
+    if (!g_previous_frame_valid) {
+        dirty_start = 0;
+        dirty_end = DOOMGENERIC_RESY - 1;
+        memcpy(g_previous_frame, DG_ScreenBuffer, (size_t)DOOMGENERIC_RESX * (size_t)DOOMGENERIC_RESY * sizeof(uint32_t));
+        g_previous_frame_valid = 1;
+    } else {
+        for (source_y = 0; source_y < DOOMGENERIC_RESY; ++source_y) {
+            const uint32_t *current_row = DG_ScreenBuffer + ((size_t)source_y * DOOMGENERIC_RESX);
+            uint32_t *previous_row = g_previous_frame + ((size_t)source_y * DOOMGENERIC_RESX);
+
+            if (memcmp(previous_row, current_row, (size_t)DOOMGENERIC_RESX * sizeof(uint32_t)) == 0) {
+                continue;
+            }
+
+            memcpy(previous_row, current_row, (size_t)DOOMGENERIC_RESX * sizeof(uint32_t));
+            if (source_y < dirty_start) {
+                dirty_start = source_y;
+            }
+            dirty_end = source_y;
+        }
+    }
+
+    if (dirty_end < dirty_start) {
+        return;
+    }
+
+    sx_blit_rows(dirty_start, dirty_end);
+    if (gfx_present_region(&g_gfx,
+                           g_present_buffer,
+                           (uint32_t)g_offset_x,
+                           (uint32_t)(g_offset_y + (dirty_start * (int)g_scale)),
+                           g_scaled_width,
+                           (uint32_t)((dirty_end - dirty_start + 1) * (int)g_scale)) < 0) {
         sx_fail("doomgeneric: gfx_present failed");
     }
 }
@@ -238,6 +300,46 @@ int DG_GetKey(int *pressed, unsigned char *doom_key) {
     }
 
     return 0;
+}
+
+int DG_GetMouse(int *buttons, int *delta_x, int *delta_y) {
+    struct savanxp_mouse_event event;
+    int accumulated_x = 0;
+    int accumulated_y = 0;
+    int mapped_buttons = 0;
+    int have_event = 0;
+    int poll_result;
+
+    if (buttons == 0 || delta_x == 0 || delta_y == 0 || g_mouse_fd < 0) {
+        return 0;
+    }
+
+    while ((poll_result = mouse_poll_event(g_mouse_fd, &event)) > 0) {
+        accumulated_x += event.delta_x;
+        accumulated_y += event.delta_y;
+        mapped_buttons = 0;
+
+        if ((event.buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0) {
+            mapped_buttons |= 1 << 0;
+        }
+        if ((event.buttons & SAVANXP_MOUSE_BUTTON_RIGHT) != 0) {
+            mapped_buttons |= 1 << 1;
+        }
+        if ((event.buttons & SAVANXP_MOUSE_BUTTON_MIDDLE) != 0) {
+            mapped_buttons |= 1 << 2;
+        }
+
+        have_event = 1;
+    }
+
+    if (!have_event) {
+        return 0;
+    }
+
+    *buttons = mapped_buttons;
+    *delta_x = accumulated_x;
+    *delta_y = accumulated_y;
+    return 1;
 }
 
 void DG_SetWindowTitle(const char *title) {
