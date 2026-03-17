@@ -207,6 +207,11 @@ void DG_DrawFrame(void) {
 }
 
 void DG_SleepMs(uint32_t ms) {
+    if (ms <= 1) {
+        yield();
+        return;
+    }
+
     sleep_ms(ms);
 }
 

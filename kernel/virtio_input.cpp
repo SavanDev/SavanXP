@@ -304,6 +304,11 @@ bool mouse_ready() {
     return g_ready;
 }
 
+void set_framebuffer_extent(uint32_t width, uint32_t height) {
+    g_framebuffer_width = width;
+    g_framebuffer_height = height;
+}
+
 void begin_graphics_session() {
     g_have_screen_position = false;
 }

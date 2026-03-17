@@ -42,7 +42,9 @@ El kernel ya bootea a una terminal funcional inicial:
   `pipestress`, `spawnloop`, `badptr`, `rm`, `rmdir`, `truncate`,
   `seektest`, `truncatetest`, `errtest`, `sysinfo`, `keytest`, `mousetest`
   y `desktop`.
-- Timer `local APIC/x2APIC` activo para tiempo base del sistema.
+- Timer `local APIC/x2APIC` activo y calibrado contra `RTC/CMOS` para dar un
+  tiempo base mas estable en QEMU y mantener `uptime_ms` / `sleep_ms`
+  alineados con tiempo real.
 - Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
   echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo, mas
   contadores y estado diagnostico expuestos por `NET_IOC_GET_INFO`.
@@ -58,9 +60,16 @@ El kernel ya bootea a una terminal funcional inicial:
   grafico nuevo `virtio-gpu` 2D para QEMU.
 - Nodo nuevo `/dev/gpu0` con ABI publica `GPU_IOC_*`, manteniendo `/dev/fb0`
   como compatibilidad para lo ya construido.
-- En QEMU, la salida grafica puede pasar a `virtio-vga`, permitiendo
-  redimensionar la ventana sin deformar la imagen y conservando la relacion
-  de aspecto del contenido fullscreen.
+- En QEMU, la salida grafica puede pasar a `virtio-vga` manteniendo una
+  resolucion de trabajo consistente durante el handoff desde el framebuffer de
+  boot al backend del driver, sin volver a encogerse a `640x480` al terminar
+  el arranque.
+- La consola y el desktop ya quedan limpios sobre `virtio-gpu`: el redraw de
+  la shell fullscreen cubre tambien los margenes externos y no deja residuos
+  visuales de apps graficas previas.
+- `virtio-input` queda alineado con el framebuffer activo, de modo que el
+  mouse bajo QEMU vuelve a seguir correctamente al puntero del host incluso
+  despues del cambio al backend `virtio-gpu`.
 - Primer juego externo porteado: `sdk/doomgeneric`, jugable en fullscreen
   sobre `/dev/fb0` + `/dev/input0`, usado como prueba real de apps graficas
   externas, assets persistentes en `/disk` y compatibilidad de input.
@@ -193,6 +202,9 @@ drivers `virtio` modernos.
 El perfil actual tambien agrega `virtio-vga`; cuando `virtio-gpu` queda
 operativo, `/dev/fb0` conserva la ABI previa pero presenta sobre el backend
 nuevo, y `/dev/gpu0` queda disponible para pruebas directas.
+El arranque pide `1280x800x32` al framebuffer de boot y `build.ps1 run`
+inicializa `virtio-vga` con `xres=1280,yres=800`, de modo que el handoff
+normal ya queda en esa misma geometria cuando el driver grafico toma control.
 En ese camino, redimensionar la ventana de QEMU mantiene la relacion de
 aspecto del contenido fullscreen en lugar de deformarlo.
 Cuando `virtio-input` queda activo, el stack `PS/2` conserva el teclado y deja
@@ -200,13 +212,13 @@ el mouse auxiliar solo como fallback para entornos sin `virtio-tablet`.
 El escritorio tambien puede leer hora real desde `RTC/CMOS`; en QEMU el launcher
 usa `-rtc base=localtime` para que el reloj siga la hora local del host.
 
-Este primer salto a `virtio-gpu` mejora el backend y la compatibilidad con
-resize, pero no cambia mucho la fluidez percibida por si solo: los `present`
-siguen siendo sincronos y con copia de pixeles por CPU antes del
-`TRANSFER_TO_HOST_2D`/`FLUSH`. Portar apps a `/dev/gpu0` simplifica el camino
-y habilita mejoras futuras, aunque el salto grande en suavidad quedara mas
-ligado a `mmap`/buffers compartidos, doble buffer real y una subida menos
-bloqueante.
+Este primer salto a `virtio-gpu` ya mejora de forma visible la experiencia de
+la GUI fullscreen en QEMU, pero el camino de presentacion sigue siendo
+sincrono y con copia de pixeles por CPU antes del `TRANSFER_TO_HOST_2D` /
+`FLUSH`. El backend nuevo deja una base mejor, aunque la fluidez final todavia
+depende bastante del tamano del frame y de cada port concreto; en particular,
+el tuning restante de `sdk/doomgeneric` ya cae mas del lado del port que del
+driver del SO.
 
 Para probar el escritorio inicial:
 

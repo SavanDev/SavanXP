@@ -475,7 +475,7 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
-        "-device", "virtio-vga",
+        "-device", "virtio-vga,xres=1280,yres=800",
         "-device", "virtio-tablet-pci",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage",

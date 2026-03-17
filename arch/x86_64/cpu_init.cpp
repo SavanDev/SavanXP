@@ -521,6 +521,17 @@ bool local_apic_x2apic_mode() {
     return g_local_apic_x2apic;
 }
 
+bool local_apic_start_oneshot_timer(uint8_t vector, uint32_t initial_count, uint8_t divide_value) {
+    if (!g_local_apic_ready || !g_local_apic_x2apic || vector >= kIdtEntryCount || initial_count == 0) {
+        return false;
+    }
+
+    write_local_apic(kApicDivideConfiguration, divide_value);
+    write_local_apic(kApicLvtTimer, vector);
+    write_local_apic(kApicInitialCount, initial_count);
+    return read_local_apic(kApicCurrentCount) != 0;
+}
+
 bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uint8_t divide_value) {
     if (!g_local_apic_ready || !g_local_apic_x2apic || vector >= kIdtEntryCount) {
         return false;
@@ -530,6 +541,13 @@ bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uin
     write_local_apic(kApicLvtTimer, kApicTimerPeriodic | vector);
     write_local_apic(kApicInitialCount, initial_count);
     return read_local_apic(kApicCurrentCount) != 0;
+}
+
+uint32_t local_apic_current_timer_count() {
+    if (!g_local_apic_ready || !g_local_apic_x2apic) {
+        return 0;
+    }
+    return read_local_apic(kApicCurrentCount);
 }
 
 void initialize_syscall_gate() {

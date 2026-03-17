@@ -21,33 +21,50 @@ Notas de corte:
   `GPU_IOC_PRESENT_REGION`.
 - Utilidad nueva `gputest` para validar el camino directo de presentacion
   sobre `/dev/gpu0`.
+- Calibracion del timer `local APIC/x2APIC` contra `RTC/CMOS` durante el boot
+  para que `uptime_ms` y `sleep_ms` queden mejor alineados con tiempo real en
+  QEMU.
 
 ### Cambiado
 
 - `/dev/fb0` conserva compatibilidad con las apps fullscreen existentes, pero
   ahora puede presentar sobre `virtio-gpu` cuando el backend queda disponible.
-- El perfil de QEMU en `build.ps1 run` ahora agrega `virtio-vga`, y la salida
-  grafica puede redimensionarse manteniendo la relacion de aspecto del
-  contenido fullscreen.
+- El perfil de QEMU en `build.ps1 run` ahora agrega `virtio-vga` con
+  `xres=1280,yres=800`, y `limine.conf` pide `1280x800x32` para que el
+  framebuffer de boot y el backend grafico queden alineados durante el
+  handoff.
 - La consola y la UI fullscreen pueden seguir visibles sobre el recurso
   primario de `virtio-gpu`, incluyendo el retorno desde sesiones graficas
-  exclusivas.
+  exclusivas y el redraw limpio de toda la shell sin dejar residuos en los
+  margenes.
+- `virtio-gpu` ahora intenta conservar el modo grande del framebuffer de boot
+  antes de caer al scanout nativo reportado por el dispositivo, evitando que
+  el sistema vuelva a `640x480` al finalizar el arranque cuando el modo mayor
+  es aceptado.
+- `virtio-input` paso a usar la geometria efectiva del framebuffer activo para
+  normalizar el tablet absoluto, corrigiendo la desincronizacion del mouse con
+  el host despues del cambio a `virtio-gpu`.
 - El heap del kernel dejo de ser lineal-only y ahora recicla bloques
   liberados, hace `split/coalesce` y puede devolver arenas completas al
   allocador fisico cuando quedan vacias.
 - El runtime POSIX de `sdk/v1` reemplazo su allocator tipo arena/bump por un
   heap fijo reciclable, de modo que `malloc`, `free`, `calloc` y `realloc`
   ya reutilizan memoria en apps externas.
+- `sdk/doomgeneric` ya no corre acelerado por un reloj base incorrecto; el
+  tiempo del juego vuelve a apoyarse sobre un backend de tiempo mas cercano al
+  real, dejando el tuning de rendimiento restante del lado del port.
 
 ### Limites conocidos
 
-- Este MVP de `virtio-gpu` mejora el backend de display y el resize en QEMU,
-  pero no introduce todavia un salto fuerte de fluidez: la subida de pixeles
-  sigue siendo sincronica, con copia por CPU y sin `mmap`, page flipping ni
-  doble buffer real.
+- Este MVP de `virtio-gpu` mejora de forma visible la GUI fullscreen en QEMU,
+  pero la subida de pixeles sigue siendo sincronica, con copia por CPU y sin
+  `mmap`, page flipping ni doble buffer real.
 - Portar apps a `/dev/gpu0` reduce capas y deja mejor encaminada la evolucion,
   pero la mejora grande en suavidad queda para una etapa posterior con buffers
   compartidos y presentacion menos bloqueante.
+- El rendimiento final de ports externos grandes como `sdk/doomgeneric`
+  todavia depende mucho del costo de escalado y del tamano del frame una vez
+  que el sistema ya corre a resoluciones mas altas.
 
 ## [0.1.2] - 2026-03-14
 

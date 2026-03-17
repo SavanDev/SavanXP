@@ -292,6 +292,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     if (virtio_gpu::ready()) {
         g_framebuffer_info = virtio_gpu::framebuffer_info();
     }
+    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
 
     g_framebuffer_device.ioctl = framebuffer_ioctl;
     g_framebuffer_device.close = framebuffer_close;

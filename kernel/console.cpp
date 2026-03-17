@@ -135,6 +135,7 @@ size_t g_rows = 0;
 size_t g_cursor_row = 0;
 size_t g_cursor_column = 0;
 bool g_cursor_drawn = false;
+bool g_batch_redraw = false;
 
 bool using_gpu_backend() {
     return virtio_gpu::ready() &&
@@ -143,7 +144,7 @@ bool using_gpu_backend() {
 }
 
 void flush_region(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
-    if (!g_console_visible || !using_gpu_backend()) {
+    if (!g_console_visible || !using_gpu_backend() || g_batch_redraw) {
         return;
     }
     (void)virtio_gpu::flush_rect(x, y, width, height);
@@ -277,6 +278,7 @@ void redraw_all() {
         return;
     }
 
+    g_batch_redraw = true;
     draw_background();
     for (size_t row = 0; row < g_rows; ++row) {
         for (size_t column = 0; column < g_columns; ++column) {
@@ -284,6 +286,8 @@ void redraw_all() {
         }
     }
     draw_cursor();
+    g_batch_redraw = false;
+    flush_full();
 }
 
 void scroll_up() {

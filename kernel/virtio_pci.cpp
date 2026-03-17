@@ -221,6 +221,8 @@ bool setup_queue(Device& device, uint16_t queue_index, uint16_t queue_limit, siz
     queue.last_used_index = 0;
     queue.next_avail_index = 0;
 
+    cfg->queue_size = chosen_size;
+    memory_barrier();
     cfg->queue_desc = queue.allocation.physical_address + queue.layout.desc_offset;
     cfg->queue_driver = queue.allocation.physical_address + queue.layout.avail_offset;
     cfg->queue_device = queue.allocation.physical_address + queue.layout.used_offset;

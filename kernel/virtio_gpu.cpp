@@ -20,6 +20,7 @@ constexpr uint32_t kVirtioGpuFormatB8G8R8X8Unorm = 2u;
 constexpr uint32_t kVirtioGpuFlagFence = 1u << 0;
 constexpr uint32_t kVirtioGpuCmdGetDisplayInfo = 0x0100u;
 constexpr uint32_t kVirtioGpuCmdResourceCreate2d = 0x0101u;
+constexpr uint32_t kVirtioGpuCmdResourceUnref = 0x0102u;
 constexpr uint32_t kVirtioGpuCmdSetScanout = 0x0103u;
 constexpr uint32_t kVirtioGpuCmdResourceFlush = 0x0104u;
 constexpr uint32_t kVirtioGpuCmdTransferToHost2d = 0x0105u;
@@ -72,6 +73,12 @@ struct [[gnu::packed]] VirtioGpuResourceCreate2d {
     uint32_t format;
     uint32_t width;
     uint32_t height;
+};
+
+struct [[gnu::packed]] VirtioGpuResourceUnref {
+    VirtioGpuCtrlHdr header;
+    uint32_t resource_id;
+    uint32_t padding;
 };
 
 struct [[gnu::packed]] VirtioGpuMemEntry {
@@ -128,6 +135,7 @@ uint32_t g_scanout_height = 0;
 uint64_t g_next_fence_id = 1;
 bool g_present = false;
 bool g_ready = false;
+uint32_t g_last_response_type = 0;
 
 int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
@@ -205,8 +213,10 @@ bool submit_command(const void* request, size_t request_bytes, void* response, s
 bool send_ok_nodata_command(const void* request, size_t request_bytes) {
     VirtioGpuCtrlHdr response = {};
     if (!submit_command(request, request_bytes, &response, sizeof(response))) {
+        g_last_response_type = 0;
         return false;
     }
+    g_last_response_type = response.type;
     return response.type == kVirtioGpuRespOkNoData;
 }
 
@@ -214,8 +224,10 @@ bool get_display_info(VirtioGpuRespDisplayInfo& display_info) {
     VirtioGpuCtrlHdr request = {};
     initialize_header(request, kVirtioGpuCmdGetDisplayInfo);
     if (!submit_command(&request, sizeof(request), &display_info, sizeof(display_info))) {
+        g_last_response_type = 0;
         return false;
     }
+    g_last_response_type = display_info.header.type;
     return display_info.header.type == kVirtioGpuRespOkDisplayInfo;
 }
 
@@ -226,6 +238,13 @@ bool create_primary_resource() {
     request.format = kVirtioGpuFormatB8G8R8X8Unorm;
     request.width = g_framebuffer_info.width;
     request.height = g_framebuffer_info.height;
+    return send_ok_nodata_command(&request, sizeof(request));
+}
+
+bool destroy_primary_resource() {
+    VirtioGpuResourceUnref request = {};
+    initialize_header(request.header, kVirtioGpuCmdResourceUnref);
+    request.resource_id = kGpuResourceId;
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
@@ -315,17 +334,9 @@ bool choose_scanout(const VirtioGpuRespDisplayInfo& display_info, const boot::Fr
         return false;
     }
 
-    uint32_t width = g_scanout_width;
-    uint32_t height = g_scanout_height;
-    if (boot_framebuffer.available &&
-        boot_framebuffer.width != 0 &&
-        boot_framebuffer.height != 0 &&
-        boot_framebuffer.bpp == 32 &&
-        boot_framebuffer.width <= g_scanout_width &&
-        boot_framebuffer.height <= g_scanout_height) {
-        width = static_cast<uint32_t>(boot_framebuffer.width);
-        height = static_cast<uint32_t>(boot_framebuffer.height);
-    }
+    (void)boot_framebuffer;
+    const uint32_t width = g_scanout_width;
+    const uint32_t height = g_scanout_height;
 
     g_framebuffer_info = {
         .width = width,
@@ -344,6 +355,61 @@ bool choose_scanout(const VirtioGpuRespDisplayInfo& display_info, const boot::Fr
         .flags = 0,
     };
     return true;
+}
+
+void set_framebuffer_mode(uint32_t width, uint32_t height) {
+    g_framebuffer_info = {
+        .width = width,
+        .height = height,
+        .pitch = static_cast<uint32_t>(width * sizeof(uint32_t)),
+        .bpp = 32,
+        .buffer_size = static_cast<uint32_t>(width * height * sizeof(uint32_t)),
+    };
+    g_gpu_info = {
+        .width = width,
+        .height = height,
+        .pitch = static_cast<uint32_t>(width * sizeof(uint32_t)),
+        .bpp = 32,
+        .buffer_size = static_cast<uint32_t>(width * height * sizeof(uint32_t)),
+        .backend = SAVANXP_GPU_BACKEND_VIRTIO,
+        .flags = 0,
+    };
+}
+
+void release_surface() {
+    if (g_surface.physical_address != 0 && g_surface.page_count != 0) {
+        (void)memory::free_allocation(g_surface);
+    }
+    memset(&g_surface, 0, sizeof(g_surface));
+}
+
+bool configure_primary_surface(uint32_t width, uint32_t height) {
+    bool resource_created = false;
+
+    release_surface();
+    set_framebuffer_mode(width, height);
+
+    const uint64_t page_count = static_cast<uint64_t>((g_framebuffer_info.buffer_size + memory::kPageSize - 1) / memory::kPageSize);
+    if (!memory::allocate_contiguous_pages(page_count, g_surface)) {
+        return false;
+    }
+    memset(g_surface.virtual_address, 0, g_surface.page_count * memory::kPageSize);
+
+    if (!create_primary_resource()) {
+        release_surface();
+        return false;
+    }
+    resource_created = true;
+    if (!attach_primary_backing() ||
+        !set_primary_scanout() ||
+        !transfer_rect(0, 0, g_framebuffer_info.width, g_framebuffer_info.height) ||
+        !flush_rect_internal(0, 0, g_framebuffer_info.width, g_framebuffer_info.height)) {
+        (void)destroy_primary_resource();
+        release_surface();
+        return false;
+    }
+
+    return resource_created;
 }
 
 int gpu_ioctl(uint64_t request, uint64_t argument) {
@@ -430,6 +496,22 @@ void fail_device(const char* reason) {
     g_ready = false;
 }
 
+void log_command_failure(const char* stage) {
+    if (stage == nullptr) {
+        stage = "unknown stage";
+    }
+
+    if (g_last_response_type != 0) {
+        console::printf(
+            "virtio-gpu: %s failed (resp=0x%x)\n",
+            stage,
+            static_cast<unsigned>(g_last_response_type)
+        );
+    } else {
+        console::printf("virtio-gpu: %s failed (no response)\n", stage);
+    }
+}
+
 } // namespace
 
 namespace virtio_gpu {
@@ -443,6 +525,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_present = false;
     g_ready = false;
     g_next_fence_id = 1;
+    g_last_response_type = 0;
 
     pci::DeviceInfo pci_device = {};
     if (!pci::ready() || !virtio_pci::find_modern_device(kVirtioGpuModernDevice, kVirtioGpuSubsystemDevice, pci_device)) {
@@ -472,20 +555,59 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_ready = true;
 
     VirtioGpuRespDisplayInfo display_info = {};
-    if (!get_display_info(display_info) || !choose_scanout(display_info, framebuffer)) {
+    if (!get_display_info(display_info)) {
+        log_command_failure("GET_DISPLAY_INFO");
         fail_device("failed to query display info");
         return;
     }
-
-    const uint64_t page_count = static_cast<uint64_t>((g_framebuffer_info.buffer_size + memory::kPageSize - 1) / memory::kPageSize);
-    if (!memory::allocate_contiguous_pages(page_count, g_surface)) {
-        fail_device("failed to allocate primary surface");
+    if (!choose_scanout(display_info, framebuffer)) {
+        fail_device("failed to choose scanout");
         return;
     }
-    memset(g_surface.virtual_address, 0, g_surface.page_count * memory::kPageSize);
 
-    if (!create_primary_resource() || !attach_primary_backing() || !set_primary_scanout() || !flush()) {
-        fail_device("failed to create primary scanout");
+    const uint32_t native_width = g_framebuffer_info.width;
+    const uint32_t native_height = g_framebuffer_info.height;
+    uint32_t preferred_width = native_width;
+    uint32_t preferred_height = native_height;
+
+    if (framebuffer.available &&
+        framebuffer.width != 0 &&
+        framebuffer.height != 0 &&
+        framebuffer.bpp == 32 &&
+        (framebuffer.width > native_width || framebuffer.height > native_height)) {
+        preferred_width = static_cast<uint32_t>(framebuffer.width);
+        preferred_height = static_cast<uint32_t>(framebuffer.height);
+    }
+
+    if (!configure_primary_surface(preferred_width, preferred_height)) {
+        if (preferred_width != native_width || preferred_height != native_height) {
+            console::printf(
+                "virtio-gpu: preferred mode %ux%u rejected, falling back to %ux%u\n",
+                static_cast<unsigned>(preferred_width),
+                static_cast<unsigned>(preferred_height),
+                static_cast<unsigned>(native_width),
+                static_cast<unsigned>(native_height)
+            );
+        } else {
+            log_command_failure("initial RESOURCE_CREATE_2D/SET_SCANOUT");
+        }
+
+        if ((preferred_width != native_width || preferred_height != native_height) &&
+            configure_primary_surface(native_width, native_height)) {
+            console::printf(
+                "virtio-gpu: using native scanout mode %ux%u\n",
+                static_cast<unsigned>(native_width),
+                static_cast<unsigned>(native_height)
+            );
+        } else {
+            log_command_failure("initial RESOURCE_CREATE_2D/SET_SCANOUT");
+            fail_device("failed to configure primary scanout");
+            return;
+        }
+    }
+
+    if (g_surface.virtual_address == nullptr) {
+        fail_device("failed to allocate primary surface");
         return;
     }
 
