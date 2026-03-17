@@ -63,7 +63,7 @@ static void print_help(void) {
     puts("Storage: mkdir mv rm rmdir truncate sync seektest renametest truncatetest\n");
     puts("Diagnostics: sysinfo errtest fdtest waittest pipestress spawnloop badptr\n");
     puts("Network: netinfo ping udptest udpsend udprecv tcpget\n");
-    puts("Graphics/audio: desktop gfxdemo keytest mousetest beep\n");
+    puts("Graphics/audio: desktop gfxdemo gputest keytest mousetest beep\n");
     puts("Examples: sysinfo\n");
     puts("          df\n");
     puts("          cd /disk\n");

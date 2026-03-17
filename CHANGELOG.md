@@ -7,7 +7,7 @@ Notas de corte:
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
 
-## [Unreleased]
+## [0.1.3] - 2026-03-17
 
 ### Agregado
 

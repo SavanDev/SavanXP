@@ -8,6 +8,7 @@
 #include "kernel/ps2.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
+#include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
 #include "shared/syscall.h"
 
@@ -41,6 +42,7 @@ device::Device g_mouse_device = {
 };
 
 boot::FramebufferInfo g_framebuffer = {};
+savanxp_fb_info g_framebuffer_info = {};
 savanxp_input_event g_input_queue[kInputQueueCapacity] = {};
 size_t g_input_read_index = 0;
 size_t g_input_write_index = 0;
@@ -112,6 +114,20 @@ void release_graphics_session() {
     console::set_framebuffer_console_enabled(true);
 }
 
+bool present_pixels_internal(const void* pixels, size_t byte_count) {
+    if (virtio_gpu::ready()) {
+        return virtio_gpu::present_from_kernel(pixels, byte_count);
+    }
+    return console::present_pixels(pixels, byte_count);
+}
+
+bool present_region_internal(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (virtio_gpu::ready()) {
+        return virtio_gpu::present_region_from_kernel(pixels, source_pitch, x, y, width, height);
+    }
+    return console::present_region(pixels, source_pitch, x, y, width, height);
+}
+
 int read_input_device(uint64_t user_buffer, size_t count) {
     if (count < sizeof(savanxp_input_event)) {
         return negative_error(SAVANXP_EINVAL);
@@ -166,15 +182,11 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
             }
 
             savanxp_fb_info info = {};
-            info.width = static_cast<uint32_t>(g_framebuffer.width);
-            info.height = static_cast<uint32_t>(g_framebuffer.height);
-            info.pitch = static_cast<uint32_t>(g_framebuffer.pitch);
-            info.bpp = g_framebuffer.bpp;
-            info.buffer_size = static_cast<uint32_t>(g_framebuffer.pitch * g_framebuffer.height);
+            info = g_framebuffer_info;
             return process::copy_to_user(argument, &info, sizeof(info)) ? 0 : negative_error(SAVANXP_EINVAL);
         }
         case FB_IOC_ACQUIRE: {
-            if (!console::framebuffer_ready()) {
+            if (g_framebuffer_info.width == 0 || g_framebuffer_info.height == 0 || g_framebuffer_info.pitch == 0) {
                 return negative_error(SAVANXP_ENODEV);
             }
 
@@ -182,41 +194,34 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
             if (pid == 0) {
                 return negative_error(SAVANXP_EBADF);
             }
-            if (g_owner_pid != 0 && g_owner_pid != pid) {
+            if (!ui::acquire_graphics_session(pid)) {
                 return negative_error(SAVANXP_EBUSY);
             }
-
-            g_owner_pid = pid;
-            reset_input_queue();
-            reset_mouse_queue();
-            virtio_input::begin_graphics_session();
-            console::set_framebuffer_console_enabled(false);
             return 0;
         }
         case FB_IOC_RELEASE:
-            if (g_owner_pid != 0 && g_owner_pid != process::current_pid()) {
+            if (!ui::owns_graphics_session(process::current_pid())) {
                 return negative_error(SAVANXP_EBUSY);
             }
-            virtio_input::end_graphics_session();
-            release_graphics_session();
+            ui::release_graphics_session(process::current_pid());
             return 0;
         case FB_IOC_PRESENT: {
-            if (g_owner_pid == 0 || g_owner_pid != process::current_pid()) {
+            if (!ui::owns_graphics_session(process::current_pid())) {
                 return negative_error(SAVANXP_EBUSY);
             }
 
-            const size_t byte_count = static_cast<size_t>(g_framebuffer.pitch * g_framebuffer.height);
+            const size_t byte_count = static_cast<size_t>(g_framebuffer_info.pitch) * g_framebuffer_info.height;
             if (!process::validate_user_range(argument, byte_count, false)) {
                 return negative_error(SAVANXP_EINVAL);
             }
 
-            return console::present_pixels(reinterpret_cast<const void*>(argument), byte_count)
+            return present_pixels_internal(reinterpret_cast<const void*>(argument), byte_count)
                 ? 0
                 : negative_error(SAVANXP_EINVAL);
         }
         case FB_IOC_PRESENT_REGION: {
             savanxp_fb_present_region region = {};
-            if (g_owner_pid == 0 || g_owner_pid != process::current_pid()) {
+            if (!ui::owns_graphics_session(process::current_pid())) {
                 return negative_error(SAVANXP_EBUSY);
             }
             if (!process::validate_user_range(argument, sizeof(region), true) ||
@@ -226,10 +231,10 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
             if (region.pixels == 0 || region.source_pitch == 0 || region.width == 0 || region.height == 0) {
                 return negative_error(SAVANXP_EINVAL);
             }
-            if (region.x >= g_framebuffer.width || region.y >= g_framebuffer.height) {
+            if (region.x >= g_framebuffer_info.width || region.y >= g_framebuffer_info.height) {
                 return negative_error(SAVANXP_EINVAL);
             }
-            if (region.width > (g_framebuffer.width - region.x) || region.height > (g_framebuffer.height - region.y)) {
+            if (region.width > (g_framebuffer_info.width - region.x) || region.height > (g_framebuffer_info.height - region.y)) {
                 return negative_error(SAVANXP_EINVAL);
             }
 
@@ -246,7 +251,7 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
                 return negative_error(SAVANXP_EINVAL);
             }
 
-            return console::present_region(
+            return present_region_internal(
                 reinterpret_cast<const void*>(region.pixels),
                 region.source_pitch,
                 region.x,
@@ -261,9 +266,8 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
 }
 
 void framebuffer_close() {
-    if (g_owner_pid != 0 && g_owner_pid == process::current_pid()) {
-        virtio_input::end_graphics_session();
-        release_graphics_session();
+    if (ui::owns_graphics_session(process::current_pid())) {
+        ui::release_graphics_session(process::current_pid());
     }
 }
 
@@ -273,10 +277,21 @@ namespace ui {
 
 void initialize(const boot::FramebufferInfo& framebuffer) {
     g_framebuffer = framebuffer;
+    g_framebuffer_info = {
+        .width = static_cast<uint32_t>(framebuffer.width),
+        .height = static_cast<uint32_t>(framebuffer.height),
+        .pitch = static_cast<uint32_t>(framebuffer.pitch),
+        .bpp = framebuffer.bpp,
+        .buffer_size = static_cast<uint32_t>(framebuffer.pitch * framebuffer.height),
+    };
     reset_input_queue();
     reset_mouse_queue();
     g_owner_pid = 0;
     g_mouse_available = false;
+
+    if (virtio_gpu::ready()) {
+        g_framebuffer_info = virtio_gpu::framebuffer_info();
+    }
 
     g_framebuffer_device.ioctl = framebuffer_ioctl;
     g_framebuffer_device.close = framebuffer_close;
@@ -309,6 +324,34 @@ bool graphics_active() {
     return g_owner_pid != 0;
 }
 
+bool acquire_graphics_session(uint32_t pid) {
+    if (pid == 0) {
+        return false;
+    }
+    if (g_owner_pid != 0) {
+        return g_owner_pid == pid;
+    }
+
+    g_owner_pid = pid;
+    reset_input_queue();
+    reset_mouse_queue();
+    virtio_input::begin_graphics_session();
+    console::set_framebuffer_console_enabled(false);
+    return true;
+}
+
+void release_graphics_session(uint32_t pid) {
+    if (g_owner_pid == 0 || g_owner_pid != pid) {
+        return;
+    }
+    virtio_input::end_graphics_session();
+    ::release_graphics_session();
+}
+
+bool owns_graphics_session(uint32_t pid) {
+    return g_owner_pid != 0 && g_owner_pid == pid;
+}
+
 void handle_key_event(uint32_t key, bool pressed, char ascii) {
     if (!graphics_active()) {
         return;
@@ -328,7 +371,11 @@ void handle_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
 }
 
 bool framebuffer_available() {
-    return console::framebuffer_ready();
+    return g_framebuffer_info.width != 0 && g_framebuffer_info.height != 0 && g_framebuffer_info.pitch != 0;
+}
+
+const savanxp_fb_info& framebuffer_info() {
+    return g_framebuffer_info;
 }
 
 bool mouse_available() {

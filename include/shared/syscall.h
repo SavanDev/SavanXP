@@ -161,6 +161,7 @@ enum savanxp_ioctl_group {
     SAVANXP_IOCTL_GROUP_FB = 0x1001,
     SAVANXP_IOCTL_GROUP_NET = 0x1002,
     SAVANXP_IOCTL_GROUP_PCSPK = 0x1003,
+    SAVANXP_IOCTL_GROUP_GPU = 0x1004,
 };
 
 enum savanxp_fb_ioctl {
@@ -203,6 +204,14 @@ enum savanxp_pcspk_ioctl {
     PCSPK_IOC_STOP = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_PCSPK, 2),
 };
 
+enum savanxp_gpu_ioctl {
+    GPU_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 1),
+    GPU_IOC_ACQUIRE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 2),
+    GPU_IOC_RELEASE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 3),
+    GPU_IOC_PRESENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 4),
+    GPU_IOC_PRESENT_REGION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 5),
+};
+
 enum savanxp_socket_domain {
     SAVANXP_AF_INET = 1,
 };
@@ -226,6 +235,30 @@ struct savanxp_fb_info {
 };
 
 struct savanxp_fb_present_region {
+    uint64_t pixels;
+    uint32_t source_pitch;
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+};
+
+enum savanxp_gpu_backend {
+    SAVANXP_GPU_BACKEND_NONE = 0,
+    SAVANXP_GPU_BACKEND_VIRTIO = 1,
+};
+
+struct savanxp_gpu_info {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t bpp;
+    uint32_t buffer_size;
+    uint32_t backend;
+    uint32_t flags;
+};
+
+struct savanxp_gpu_present_region {
     uint64_t pixels;
     uint32_t source_pitch;
     uint32_t x;

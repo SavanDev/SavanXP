@@ -215,6 +215,38 @@ int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
     return 1;
 }
 
+long gpu_open(void) {
+    return open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+}
+
+long gpu_get_info(int fd, struct savanxp_gpu_info* info) {
+    return ioctl(fd, GPU_IOC_GET_INFO, (unsigned long)info);
+}
+
+long gpu_acquire(int fd) {
+    return ioctl(fd, GPU_IOC_ACQUIRE, 0);
+}
+
+long gpu_release(int fd) {
+    return ioctl(fd, GPU_IOC_RELEASE, 0);
+}
+
+long gpu_present(int fd, const uint32_t* pixels) {
+    return ioctl(fd, GPU_IOC_PRESENT, (unsigned long)pixels);
+}
+
+long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    struct savanxp_gpu_present_region region = {
+        .pixels = (uint64_t)(unsigned long)pixels,
+        .source_pitch = source_pitch,
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+    };
+    return ioctl(fd, GPU_IOC_PRESENT_REGION, (unsigned long)&region);
+}
+
 void exit(int code) {
     syscall1(SAVANXP_SYS_EXIT, (unsigned long)code);
     for (;;) {

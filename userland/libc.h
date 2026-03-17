@@ -44,6 +44,12 @@ long realtime(struct savanxp_realtime* value);
 long sync(void);
 long mouse_open(void);
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event);
+long gpu_open(void);
+long gpu_get_info(int fd, struct savanxp_gpu_info* info);
+long gpu_acquire(int fd);
+long gpu_release(int fd);
+long gpu_present(int fd, const uint32_t* pixels);
+long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void exit(int code) __attribute__((noreturn));
 
 struct savanxp_gfx_context {

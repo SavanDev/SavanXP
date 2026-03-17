@@ -1,6 +1,6 @@
 # SavanXP
 
-Version actual del proyecto: `v0.1.2`
+Version actual del proyecto: `v0.1.3`
 
 Historial de versiones: `CHANGELOG.md`
 

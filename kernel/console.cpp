@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/string.hpp"
+#include "kernel/virtio_gpu.hpp"
 
 namespace {
 
@@ -126,6 +127,7 @@ constexpr uint8_t kGlyphs[kPrintableCount][kGlyphHeight] = {
 
 bool g_serial_ready = false;
 boot::FramebufferInfo g_framebuffer = {};
+boot::FramebufferInfo g_boot_framebuffer = {};
 bool g_console_visible = true;
 char g_cells[kMaxRows][kMaxColumns] = {};
 size_t g_columns = 0;
@@ -133,6 +135,26 @@ size_t g_rows = 0;
 size_t g_cursor_row = 0;
 size_t g_cursor_column = 0;
 bool g_cursor_drawn = false;
+
+bool using_gpu_backend() {
+    return virtio_gpu::ready() &&
+        g_framebuffer.address != nullptr &&
+        g_framebuffer.address == virtio_gpu::framebuffer_address();
+}
+
+void flush_region(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (!g_console_visible || !using_gpu_backend()) {
+        return;
+    }
+    (void)virtio_gpu::flush_rect(x, y, width, height);
+}
+
+void flush_full() {
+    if (!g_console_visible || !using_gpu_backend()) {
+        return;
+    }
+    (void)virtio_gpu::flush();
+}
 
 inline void out8(uint16_t port, uint8_t value) {
     asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -222,6 +244,7 @@ void erase_cursor() {
     const uint64_t x = kPaddingX + (g_cursor_column * kCellWidth);
     const uint64_t y = kPaddingY + (g_cursor_row * kCellHeight) + (kCellHeight - 3);
     fill_rect(x, y, kCellWidth - 2, 2, kBackground);
+    flush_region(static_cast<uint32_t>(x), static_cast<uint32_t>(y), kCellWidth - 2, 2);
     g_cursor_drawn = false;
 }
 
@@ -234,6 +257,7 @@ void render_cell(size_t row, size_t column) {
     const uint64_t y = kPaddingY + (row * kCellHeight);
     fill_rect(x, y, kCellWidth, kCellHeight, kBackground);
     draw_glyph(x, y, g_cells[row][column], kText);
+    flush_region(static_cast<uint32_t>(x), static_cast<uint32_t>(y), kCellWidth, kCellHeight);
 }
 
 void draw_cursor() {
@@ -244,6 +268,7 @@ void draw_cursor() {
     const uint64_t x = kPaddingX + (g_cursor_column * kCellWidth);
     const uint64_t y = kPaddingY + (g_cursor_row * kCellHeight) + (kCellHeight - 3);
     fill_rect(x, y, kCellWidth - 2, 2, kCursor);
+    flush_region(static_cast<uint32_t>(x), static_cast<uint32_t>(y), kCellWidth - 2, 2);
     g_cursor_drawn = true;
 }
 
@@ -331,6 +356,7 @@ void early_init() {
 
 void init(const boot::BootInfo& boot_info) {
     g_framebuffer = boot_info.framebuffer;
+    g_boot_framebuffer = boot_info.framebuffer;
     memset(g_cells, ' ', sizeof(g_cells));
     g_cursor_row = 0;
     g_cursor_column = 0;
@@ -372,6 +398,41 @@ void redraw() {
     redraw_all();
 }
 
+void set_external_framebuffer(void* address, const savanxp_fb_info& info) {
+    if (address == nullptr || info.width == 0 || info.height == 0 || info.pitch == 0 || info.bpp != 32) {
+        return;
+    }
+
+    g_framebuffer.address = address;
+    g_framebuffer.width = info.width;
+    g_framebuffer.height = info.height;
+    g_framebuffer.pitch = info.pitch;
+    g_framebuffer.bpp = static_cast<uint8_t>(info.bpp);
+    g_framebuffer.available = true;
+
+    if (g_framebuffer.width > (kPaddingX * 2) && g_framebuffer.height > (kPaddingY * 2)) {
+        g_columns = (g_framebuffer.width - (kPaddingX * 2)) / kCellWidth;
+        g_rows = (g_framebuffer.height - (kPaddingY * 2)) / kCellHeight;
+        if (g_columns > kMaxColumns) {
+            g_columns = kMaxColumns;
+        }
+        if (g_rows > kMaxRows) {
+            g_rows = kMaxRows;
+        }
+    } else {
+        g_columns = 0;
+        g_rows = 0;
+    }
+    if (g_rows != 0 && g_cursor_row >= g_rows) {
+        g_cursor_row = g_rows - 1;
+    }
+    if (g_columns != 0 && g_cursor_column >= g_columns) {
+        g_cursor_column = g_columns - 1;
+    }
+    g_cursor_drawn = false;
+    redraw_all();
+}
+
 bool present_pixels(const void* pixels, size_t byte_count) {
     if (!framebuffer_ready() || pixels == nullptr) {
         return false;
@@ -383,6 +444,7 @@ bool present_pixels(const void* pixels, size_t byte_count) {
     }
 
     memcpy(g_framebuffer.address, pixels, byte_count);
+    flush_full();
     return true;
 }
 
@@ -409,6 +471,7 @@ bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint3
         const size_t destination_offset = static_cast<size_t>(y + row) * g_framebuffer.pitch + (static_cast<size_t>(x) * sizeof(uint32_t));
         memcpy(destination + destination_offset, source + source_offset, row_bytes);
     }
+    flush_region(x, y, width, height);
     return true;
 }
 

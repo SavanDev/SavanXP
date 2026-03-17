@@ -20,6 +20,7 @@
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
+#include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
@@ -109,6 +110,7 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     process::initialize();
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
+    virtio_gpu::initialize(boot_info.framebuffer);
     ui::initialize(boot_info.framebuffer);
     pcspeaker::initialize();
     net::initialize();
@@ -134,9 +136,9 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     system_info.timer_backend =
         timer::backend() == timer::Backend::local_apic ? SAVANXP_TIMER_LOCAL_APIC : SAVANXP_TIMER_NONE;
     system_info.timer_frequency_hz = timer::frequency_hz();
-    system_info.framebuffer_width = static_cast<uint32_t>(boot_info.framebuffer.width);
-    system_info.framebuffer_height = static_cast<uint32_t>(boot_info.framebuffer.height);
-    system_info.framebuffer_bpp = boot_info.framebuffer.bpp;
+    system_info.framebuffer_width = ui::framebuffer_info().width;
+    system_info.framebuffer_height = ui::framebuffer_info().height;
+    system_info.framebuffer_bpp = ui::framebuffer_info().bpp;
     system_info.pci_device_count = static_cast<uint32_t>(pci::device_count());
     system_info.svfs_file_count = static_cast<uint32_t>(svfs::file_count());
     system_info.memory_usable_bytes = memory.usable_bytes;
