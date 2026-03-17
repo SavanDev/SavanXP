@@ -176,7 +176,8 @@ Convención de compatibilidad:
 
 Límites prácticos de esta primera ola POSIX:
 
-- allocator simple tipo arena; `free()` hoy no recicla memoria.
+- allocator de heap fijo dentro del runtime; `free()` recicla bloques y
+  `realloc()` libera el bloque viejo cuando necesita moverlo.
 - `DIR->d_type` se informa por `stat()` best-effort.
 - `setsockopt`/`getsockopt` cubren solo timeouts y flags básicos de cliente.
 

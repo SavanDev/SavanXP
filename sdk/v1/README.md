@@ -93,6 +93,8 @@ Capas públicas:
 
 - `savanxp/*` sigue expuesto como capa baja del ABI y wrappers crudos.
 - los headers estándar en `sdk/v1/include` montan una capa POSIX/libc arriba sin romper apps viejas.
+- la libc pública incluye allocator sobre heap fijo del runtime, con `malloc`,
+  `free`, `calloc` y `realloc` reciclables dentro de ese espacio.
 
 Tipos compartidos para dispositivos:
 

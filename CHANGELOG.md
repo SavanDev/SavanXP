@@ -7,6 +7,48 @@ Notas de corte:
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
 
+## [Unreleased]
+
+### Agregado
+
+- Base compartida `virtio_pci` para drivers `virtio` modernos sobre PCI/MMIO,
+  reutilizada por `virtio-input` y preparada para colas sincronas por polling.
+- Driver nuevo `virtio-gpu` 2D para QEMU, con soporte MVP de
+  `GET_DISPLAY_INFO`, `RESOURCE_CREATE_2D`, `RESOURCE_ATTACH_BACKING`,
+  `SET_SCANOUT`, `TRANSFER_TO_HOST_2D` y `RESOURCE_FLUSH`.
+- Nodo nuevo `/dev/gpu0` con ABI publica `GPU_IOC_GET_INFO`,
+  `GPU_IOC_ACQUIRE`, `GPU_IOC_RELEASE`, `GPU_IOC_PRESENT` y
+  `GPU_IOC_PRESENT_REGION`.
+- Utilidad nueva `gputest` para validar el camino directo de presentacion
+  sobre `/dev/gpu0`.
+
+### Cambiado
+
+- `/dev/fb0` conserva compatibilidad con las apps fullscreen existentes, pero
+  ahora puede presentar sobre `virtio-gpu` cuando el backend queda disponible.
+- El perfil de QEMU en `build.ps1 run` ahora agrega `virtio-vga`, y la salida
+  grafica puede redimensionarse manteniendo la relacion de aspecto del
+  contenido fullscreen.
+- La consola y la UI fullscreen pueden seguir visibles sobre el recurso
+  primario de `virtio-gpu`, incluyendo el retorno desde sesiones graficas
+  exclusivas.
+- El heap del kernel dejo de ser lineal-only y ahora recicla bloques
+  liberados, hace `split/coalesce` y puede devolver arenas completas al
+  allocador fisico cuando quedan vacias.
+- El runtime POSIX de `sdk/v1` reemplazo su allocator tipo arena/bump por un
+  heap fijo reciclable, de modo que `malloc`, `free`, `calloc` y `realloc`
+  ya reutilizan memoria en apps externas.
+
+### Limites conocidos
+
+- Este MVP de `virtio-gpu` mejora el backend de display y el resize en QEMU,
+  pero no introduce todavia un salto fuerte de fluidez: la subida de pixeles
+  sigue siendo sincronica, con copia por CPU y sin `mmap`, page flipping ni
+  doble buffer real.
+- Portar apps a `/dev/gpu0` reduce capas y deja mejor encaminada la evolucion,
+  pero la mejora grande en suavidad queda para una etapa posterior con buffers
+  compartidos y presentacion menos bloqueante.
+
 ## [0.1.2] - 2026-03-14
 
 ### Agregado

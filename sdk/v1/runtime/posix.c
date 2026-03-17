@@ -25,6 +25,9 @@
 #define DT_REG 8
 #define DT_SOCK 12
 #define SX_HEAP_SIZE (48u * 1024u * 1024u)
+#define SX_ALLOC_ALIGNMENT ((size_t)sizeof(uintptr_t))
+#define SX_ALLOC_MIN_SPLIT_SIZE (SX_ALLOC_ALIGNMENT * 2u)
+#define SX_ALLOC_MAGIC 0x53584148u
 #define SX_FILE_POOL_CAPACITY 32
 #define SX_DIR_POOL_CAPACITY 16
 #define SX_SOCKET_STATE_CAPACITY 32
@@ -94,6 +97,10 @@ struct sx_DIR {
 
 typedef struct sx_alloc_header {
     size_t size;
+    uint32_t magic;
+    uint32_t free;
+    struct sx_alloc_header* next;
+    struct sx_alloc_header* prev;
 } sx_alloc_header;
 
 struct sx_socket_state {
@@ -103,8 +110,11 @@ struct sx_socket_state {
     unsigned long send_timeout_ms;
 };
 
-static unsigned char g_heap[SX_HEAP_SIZE];
-static size_t g_heap_used = 0;
+static union {
+    uintptr_t alignment;
+    unsigned char bytes[SX_HEAP_SIZE];
+} g_heap = {0};
+static sx_alloc_header* g_heap_head = 0;
 static struct sx_FILE g_file_pool[SX_FILE_POOL_CAPACITY] = {};
 static struct sx_FILE g_stdin_file = {0, 1, 0, 0, 1, 1, 0, 0, {0}};
 static struct sx_FILE g_stdout_file = {1, 1, 0, 0, 1, 0, 1, 0, {0}};
@@ -119,6 +129,7 @@ FILE* stderr = &g_stderr_file;
 static int g_errno = 0;
 
 void* sx_malloc(size_t size);
+void sx_free(void* pointer);
 int sx_usleep(unsigned long microseconds);
 
 int* sx_errno_location(void) {
@@ -137,6 +148,108 @@ static void sx_set_errno_from_result(long result) {
 
 static size_t sx_min_size(size_t left, size_t right) {
     return left < right ? left : right;
+}
+
+static size_t sx_align_size(size_t size) {
+    const size_t mask = SX_ALLOC_ALIGNMENT - 1u;
+    if (size == 0 || size > ((size_t)-1) - mask) {
+        return 0;
+    }
+    return (size + mask) & ~mask;
+}
+
+static void sx_allocator_init(void) {
+    if (g_heap_head != 0 || SX_HEAP_SIZE <= sizeof(sx_alloc_header)) {
+        return;
+    }
+
+    g_heap_head = (sx_alloc_header*)g_heap.bytes;
+    g_heap_head->size = SX_HEAP_SIZE - sizeof(sx_alloc_header);
+    g_heap_head->magic = SX_ALLOC_MAGIC;
+    g_heap_head->free = 1;
+    g_heap_head->next = 0;
+    g_heap_head->prev = 0;
+}
+
+static int sx_block_is_valid(const sx_alloc_header* block) {
+    const unsigned char* heap_start = g_heap.bytes;
+    const unsigned char* heap_end = g_heap.bytes + SX_HEAP_SIZE;
+    const unsigned char* block_start = 0;
+    const unsigned char* payload = 0;
+
+    if (block == 0) {
+        return 0;
+    }
+
+    block_start = (const unsigned char*)block;
+    payload = (const unsigned char*)(block + 1);
+
+    return block_start >= heap_start
+        && payload <= heap_end
+        && block->magic == SX_ALLOC_MAGIC;
+}
+
+static int sx_blocks_are_adjacent(const sx_alloc_header* left, const sx_alloc_header* right) {
+    return left != 0
+        && right != 0
+        && ((const unsigned char*)(left + 1) + left->size) == (const unsigned char*)right;
+}
+
+static void sx_merge_with_next(sx_alloc_header* block) {
+    sx_alloc_header* next = 0;
+    if (block == 0 || !block->free) {
+        return;
+    }
+
+    next = block->next;
+    while (next != 0 && next->free && sx_blocks_are_adjacent(block, next)) {
+        block->size += sizeof(sx_alloc_header) + next->size;
+        block->next = next->next;
+        if (block->next != 0) {
+            block->next->prev = block;
+        }
+        next = block->next;
+    }
+}
+
+static void sx_split_block(sx_alloc_header* block, size_t size) {
+    size_t remaining = 0;
+    sx_alloc_header* tail = 0;
+
+    if (block == 0 || block->size <= size) {
+        return;
+    }
+
+    remaining = block->size - size;
+    if (remaining < sizeof(sx_alloc_header) + SX_ALLOC_MIN_SPLIT_SIZE) {
+        return;
+    }
+
+    tail = (sx_alloc_header*)((unsigned char*)(block + 1) + size);
+    tail->size = remaining - sizeof(sx_alloc_header);
+    tail->magic = SX_ALLOC_MAGIC;
+    tail->free = 1;
+    tail->next = block->next;
+    tail->prev = block;
+    if (tail->next != 0) {
+        tail->next->prev = tail;
+    }
+
+    block->size = size;
+    block->next = tail;
+    sx_merge_with_next(tail);
+}
+
+static sx_alloc_header* sx_find_free_block(size_t size) {
+    sx_alloc_header* block = 0;
+    sx_allocator_init();
+
+    for (block = g_heap_head; block != 0; block = block->next) {
+        if (block->free && block->size >= size) {
+            return block;
+        }
+    }
+    return 0;
 }
 
 static struct sx_socket_state* sx_find_socket_state(int fd) {
@@ -374,20 +487,33 @@ int sx_strncasecmp(const char* left, const char* right, unsigned long count) {
 
 void* sx_malloc(size_t size) {
     sx_alloc_header* header = 0;
-    const size_t aligned = (size + sizeof(size_t) - 1u) & ~(sizeof(size_t) - 1u);
-    const size_t total = aligned + sizeof(sx_alloc_header);
-    if (total == sizeof(sx_alloc_header) || g_heap_used + total > SX_HEAP_SIZE) {
+    const size_t aligned = sx_align_size(size);
+
+    if (aligned == 0) {
         g_errno = SAVANXP_ENOMEM;
         return 0;
     }
-    header = (sx_alloc_header*)(g_heap + g_heap_used);
-    header->size = aligned;
-    g_heap_used += total;
+
+    header = sx_find_free_block(aligned);
+    if (header == 0) {
+        g_errno = SAVANXP_ENOMEM;
+        return 0;
+    }
+
+    sx_split_block(header, aligned);
+    header->free = 0;
     return (void*)(header + 1);
 }
 
 void* sx_calloc(size_t count, size_t size) {
+    const size_t max_size = (size_t)-1;
     const size_t total = count * size;
+
+    if (count != 0 && size > max_size / count) {
+        g_errno = SAVANXP_ENOMEM;
+        return 0;
+    }
+
     void* pointer = sx_malloc(total);
     if (pointer != 0) {
         sx_memset(pointer, 0, total);
@@ -398,23 +524,72 @@ void* sx_calloc(size_t count, size_t size) {
 void* sx_realloc(void* pointer, size_t size) {
     sx_alloc_header* header = 0;
     void* replacement = 0;
+    size_t aligned = 0;
+
     if (pointer == 0) {
         return sx_malloc(size);
     }
     if (size == 0) {
+        sx_free(pointer);
         return 0;
     }
+
     header = ((sx_alloc_header*)pointer) - 1;
+    if (!sx_block_is_valid(header) || header->free) {
+        g_errno = SAVANXP_EINVAL;
+        return 0;
+    }
+
+    aligned = sx_align_size(size);
+    if (aligned == 0) {
+        g_errno = SAVANXP_ENOMEM;
+        return 0;
+    }
+
+    if (aligned <= header->size) {
+        sx_split_block(header, aligned);
+        return pointer;
+    }
+
+    while (header->next != 0
+        && header->next->free
+        && sx_blocks_are_adjacent(header, header->next)
+        && header->size < aligned) {
+        sx_merge_with_next(header);
+    }
+
+    if (header->size >= aligned) {
+        sx_split_block(header, aligned);
+        return pointer;
+    }
+
     replacement = sx_malloc(size);
     if (replacement == 0) {
         return 0;
     }
     sx_memcpy(replacement, pointer, sx_min_size(header->size, size));
+    sx_free(pointer);
     return replacement;
 }
 
 void sx_free(void* pointer) {
-    (void)pointer;
+    sx_alloc_header* header = 0;
+
+    if (pointer == 0) {
+        return;
+    }
+
+    header = ((sx_alloc_header*)pointer) - 1;
+    if (!sx_block_is_valid(header) || header->free) {
+        g_errno = SAVANXP_EINVAL;
+        return;
+    }
+
+    header->free = 1;
+    sx_merge_with_next(header);
+    if (header->prev != 0 && header->prev->free) {
+        sx_merge_with_next(header->prev);
+    }
 }
 
 static unsigned long sx_parse_unsigned(const char* text, char** endptr, int base, int* success) {

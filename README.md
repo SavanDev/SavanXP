@@ -54,6 +54,13 @@ El kernel ya bootea a una terminal funcional inicial:
   `gfx_*` mas baratas, `present` parcial por regiones sucias
   (`FB_IOC_PRESENT_REGION`) y demos/UI que evitan redibujar o copiar toda la
   pantalla cuando no hubo cambios.
+- Base `virtio_pci` reutilizable para drivers `virtio` modernos y backend
+  grafico nuevo `virtio-gpu` 2D para QEMU.
+- Nodo nuevo `/dev/gpu0` con ABI publica `GPU_IOC_*`, manteniendo `/dev/fb0`
+  como compatibilidad para lo ya construido.
+- En QEMU, la salida grafica puede pasar a `virtio-vga`, permitiendo
+  redimensionar la ventana sin deformar la imagen y conservando la relacion
+  de aspecto del contenido fullscreen.
 - Primer juego externo porteado: `sdk/doomgeneric`, jugable en fullscreen
   sobre `/dev/fb0` + `/dev/input0`, usado como prueba real de apps graficas
   externas, assets persistentes en `/disk` y compatibilidad de input.
@@ -79,6 +86,9 @@ El kernel ya bootea a una terminal funcional inicial:
 - SDK v1 minima en `C` (`crt0.S`, `libc.[ch]`, `userland/linker.ld`,
   `include/shared/syscall.h`) y tooling host para instalar apps externas
   directo en `build/disk.img`.
+- Heap del kernel y runtime POSIX del SDK ahora reciclan bloques liberados con
+  `free()`/`realloc()`, dejando una base comun mejor encaminada para futuras
+  extensiones como `mmap` o heaps mas sofisticados.
 - Validacion basica de punteros de userland en syscalls principales, mas
   syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate`, `rename`,
   `sync` e `ioctl`.
@@ -161,7 +171,13 @@ Tambien hay un wrapper para compilar, instalar y arrancar QEMU en un paso:
 
 Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`. Tambien
 hay ejemplos/aplicaciones graficas externas en `sdk/gfxhello` y
-`sdk/doomgeneric`.
+`sdk/doomgeneric`, y una utilidad especifica `gputest` para validar el camino
+directo sobre `/dev/gpu0`.
+
+Dentro de la `sdk/v1`, el runtime POSIX ya no usa un allocator solo tipo
+arena/bump: `malloc`, `free`, `calloc` y `realloc` reciclan memoria dentro del
+heap fijo actual, lo que vuelve mucho mas utiles ports y apps externas sin
+depender todavia de `sbrk`/`mmap`.
 
 Para diagnosticar input fullscreen existen `keytest` sobre `/dev/input0` y
 `mousetest` sobre `/dev/mouse0`. `keytest` muestra `key down/up`, `keycode` y
@@ -174,10 +190,23 @@ para el escritorio cuando esta disponible. La ABI publica no cambia: las apps
 siguen leyendo `/dev/mouse0` con deltas para mantener compatibilidad.
 Debajo de eso, el kernel ahora cuenta con una base MMIO PCI reutilizable para
 drivers `virtio` modernos.
+El perfil actual tambien agrega `virtio-vga`; cuando `virtio-gpu` queda
+operativo, `/dev/fb0` conserva la ABI previa pero presenta sobre el backend
+nuevo, y `/dev/gpu0` queda disponible para pruebas directas.
+En ese camino, redimensionar la ventana de QEMU mantiene la relacion de
+aspecto del contenido fullscreen en lugar de deformarlo.
 Cuando `virtio-input` queda activo, el stack `PS/2` conserva el teclado y deja
 el mouse auxiliar solo como fallback para entornos sin `virtio-tablet`.
 El escritorio tambien puede leer hora real desde `RTC/CMOS`; en QEMU el launcher
 usa `-rtc base=localtime` para que el reloj siga la hora local del host.
+
+Este primer salto a `virtio-gpu` mejora el backend y la compatibilidad con
+resize, pero no cambia mucho la fluidez percibida por si solo: los `present`
+siguen siendo sincronos y con copia de pixeles por CPU antes del
+`TRANSFER_TO_HOST_2D`/`FLUSH`. Portar apps a `/dev/gpu0` simplifica el camino
+y habilita mejoras futuras, aunque el salto grande en suavidad quedara mas
+ligado a `mmap`/buffers compartidos, doble buffer real y una subida menos
+bloqueante.
 
 Para probar el escritorio inicial:
 
