@@ -26,10 +26,13 @@
 #include "kernel/vmm.hpp"
 #include "shared/version.h"
 
-namespace {
+namespace
+{
 
-const char* firmware_type_name(boot::FirmwareType firmware_type) {
-    switch (firmware_type) {
+    const char *firmware_type_name(boot::FirmwareType firmware_type)
+    {
+        switch (firmware_type)
+        {
         case boot::FirmwareType::x86_bios:
             return "x86 BIOS";
         case boot::FirmwareType::efi32:
@@ -40,70 +43,84 @@ const char* firmware_type_name(boot::FirmwareType firmware_type) {
             return "SBI";
         default:
             return "unknown";
-    }
-}
-
-uint64_t mib_from_bytes(uint64_t value) {
-    return value / (1024ULL * 1024ULL);
-}
-
-void copy_string_field(char* destination, size_t capacity, const char* source) {
-    if (destination == nullptr || capacity == 0) {
-        return;
-    }
-
-    size_t index = 0;
-    while (source != nullptr && source[index] != '\0' && index + 1 < capacity) {
-        destination[index] = source[index];
-        ++index;
-    }
-    destination[index] = '\0';
-}
-
-struct MemorySummary {
-    uint64_t usable_bytes;
-    uint64_t reclaimable_bytes;
-};
-
-MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
-    MemorySummary summary = {};
-    for (size_t index = 0; index < boot_info.memory_map_entries; ++index) {
-        const boot::MemoryRegion& entry = boot_info.memory_map[index];
-        if (entry.type == boot::MemoryRegionType::usable) {
-            summary.usable_bytes += entry.length;
-        } else if (entry.type == boot::MemoryRegionType::acpi_reclaimable ||
-                   entry.type == boot::MemoryRegionType::bootloader_reclaimable) {
-            summary.reclaimable_bytes += entry.length;
         }
     }
-    return summary;
-}
+
+    uint64_t mib_from_bytes(uint64_t value)
+    {
+        return value / (1024ULL * 1024ULL);
+    }
+
+    void copy_string_field(char *destination, size_t capacity, const char *source)
+    {
+        if (destination == nullptr || capacity == 0)
+        {
+            return;
+        }
+
+        size_t index = 0;
+        while (source != nullptr && source[index] != '\0' && index + 1 < capacity)
+        {
+            destination[index] = source[index];
+            ++index;
+        }
+        destination[index] = '\0';
+    }
+
+    struct MemorySummary
+    {
+        uint64_t usable_bytes;
+        uint64_t reclaimable_bytes;
+    };
+
+    MemorySummary summarize_memory(const boot::BootInfo &boot_info)
+    {
+        MemorySummary summary = {};
+        for (size_t index = 0; index < boot_info.memory_map_entries; ++index)
+        {
+            const boot::MemoryRegion &entry = boot_info.memory_map[index];
+            if (entry.type == boot::MemoryRegionType::usable)
+            {
+                summary.usable_bytes += entry.length;
+            }
+            else if (entry.type == boot::MemoryRegionType::acpi_reclaimable ||
+                     entry.type == boot::MemoryRegionType::bootloader_reclaimable)
+            {
+                summary.reclaimable_bytes += entry.length;
+            }
+        }
+        return summary;
+    }
 
 } // namespace
 
-[[noreturn]] void kernel_main(const boot::BootInfo& boot_info) {
+[[noreturn]] void kernel_main(const boot::BootInfo &boot_info)
+{
     arch::x86_64::initialize_cpu();
 
     console::printf("%s booting...\n", SAVANXP_DISPLAY_NAME);
 
     memory::initialize(boot_info);
-    if (!memory::ready()) {
+    if (!memory::ready())
+    {
         panic("pmm: no usable memory");
     }
 
     heap::initialize();
-    if (!heap::ready()) {
+    if (!heap::ready())
+    {
         panic("heap: bootstrap failed");
     }
 
     vm::initialize(boot_info);
-    if (!vm::ready()) {
+    if (!vm::ready())
+    {
         panic("vmm: bootstrap failed");
     }
 
     tty::initialize();
     input::initialize();
-    timer::initialize(100);
+    timer::initialize(200);
     pci::initialize();
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();
@@ -117,7 +134,8 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     block::initialize();
     svfs::initialize();
 
-    if (!vfs::ready()) {
+    if (!vfs::ready())
+    {
         panic("vfs: initramfs unavailable");
     }
     const bool disk_mounted = svfs::mount_at_root();
@@ -155,13 +173,11 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
         static_cast<unsigned>(mib_from_bytes(memory.usable_bytes)),
         static_cast<unsigned>(mib_from_bytes(memory.reclaimable_bytes)),
         system_info.framebuffer_width,
-        system_info.framebuffer_height
-    );
+        system_info.framebuffer_height);
     console::printf(
         "handoff: starting /bin/init (%s, /disk %s)\n",
         system_info.net_present != 0 ? "net online" : "net absent",
-        disk_mounted ? "mounted" : "offline"
-    );
+        disk_mounted ? "mounted" : "offline");
     console::write_line("");
 
     process::start_init("/bin/init");

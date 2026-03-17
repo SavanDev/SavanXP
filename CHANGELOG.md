@@ -3,9 +3,18 @@
 Registro de cambios visibles por version para SavanXP.
 
 Notas de corte:
+
 - `v0.1.0` se reconstruyo de forma retroactiva desde el historial hasta `d822857`.
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
+
+## [Unreleased]
+
+### Cambiado
+
+- El timer base del sistema pasa a calibrarse con objetivo de `200 Hz` en vez
+  de `100 Hz`, mejorando un poco la respuesta percibida del mouse y el
+  redondeo practico de `sleep_ms()` para loops graficos e input.
 
 ## [0.1.3] - 2026-03-17
 
