@@ -6,6 +6,7 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/input.hpp"
+#include "kernel/virtio_input.hpp"
 #include "shared/syscall.h"
 
 namespace {
@@ -16,11 +17,15 @@ constexpr uint16_t kCommandPort = 0x64;
 
 constexpr uint8_t kStatusOutputReady = 1u << 0;
 constexpr uint8_t kStatusInputBusy = 1u << 1;
+constexpr uint8_t kStatusAuxiliaryOutput = 1u << 5;
 
 constexpr uint8_t kControllerCommandReadConfig = 0x20;
 constexpr uint8_t kControllerCommandWriteConfig = 0x60;
+constexpr uint8_t kControllerCommandWriteSecondPort = 0xd4;
 constexpr uint8_t kControllerCommandSelfTest = 0xaa;
 constexpr uint8_t kControllerCommandTestFirstPort = 0xab;
+constexpr uint8_t kControllerCommandEnableSecondPort = 0xa8;
+constexpr uint8_t kControllerCommandTestSecondPort = 0xa9;
 constexpr uint8_t kControllerCommandDisableFirstPort = 0xad;
 constexpr uint8_t kControllerCommandEnableFirstPort = 0xae;
 constexpr uint8_t kControllerCommandDisableSecondPort = 0xa7;
@@ -38,6 +43,10 @@ constexpr uint8_t kKeyboardCommandSetDefaults = 0xf6;
 constexpr uint8_t kKeyboardCommandEnableScanning = 0xf4;
 constexpr uint8_t kKeyboardCommandReset = 0xff;
 
+constexpr uint8_t kMouseCommandSetDefaults = 0xf6;
+constexpr uint8_t kMouseCommandEnableDataReporting = 0xf4;
+constexpr uint8_t kMouseCommandReset = 0xff;
+
 constexpr uint8_t kKeyboardResponseAck = 0xfa;
 constexpr uint8_t kKeyboardResponseResend = 0xfe;
 constexpr uint8_t kKeyboardResponseBatOk = 0xaa;
@@ -46,15 +55,24 @@ constexpr uint8_t kKeyboardResponseSelfTestFailed1 = 0xfd;
 constexpr uint8_t kKeyboardResponseBufferError0 = 0x00;
 constexpr uint8_t kKeyboardResponseBufferError1 = 0xff;
 
+constexpr uint8_t kMouseResponseAck = 0xfa;
+constexpr uint8_t kMouseResponseResend = 0xfe;
+constexpr uint8_t kMouseResponseBatOk = 0xaa;
+
 constexpr uint8_t kScancodeSet2 = 0x02;
 
 constexpr size_t kRawQueueCapacity = 256;
 constexpr uint32_t kIoWaitSpinCount = 100000;
 constexpr uint32_t kCommandRetryCount = 3;
+struct RawByte {
+    uint8_t value;
+    bool auxiliary;
+};
 
 bool g_ready = false;
+bool g_mouse_ready = false;
 
-uint8_t g_raw_queue[kRawQueueCapacity] = {};
+RawByte g_raw_queue[kRawQueueCapacity] = {};
 size_t g_raw_read_index = 0;
 size_t g_raw_write_index = 0;
 size_t g_raw_count = 0;
@@ -74,6 +92,9 @@ bool g_caps_lock_enabled = false;
 bool g_num_lock_enabled = false;
 bool g_scroll_lock_enabled = false;
 bool g_led_sync_pending = false;
+
+uint8_t g_mouse_packet[3] = {};
+uint8_t g_mouse_packet_index = 0;
 
 inline void out8(uint16_t port, uint8_t value) {
     asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -127,6 +148,17 @@ bool data_read(uint8_t& value) {
     return true;
 }
 
+bool read_output_byte(uint8_t& value, bool& auxiliary) {
+    if (!wait_output_ready()) {
+        return false;
+    }
+
+    const uint8_t status = in8(kStatusPort);
+    auxiliary = (status & kStatusAuxiliaryOutput) != 0;
+    value = in8(kDataPort);
+    return true;
+}
+
 void flush_controller_output() {
     while ((in8(kStatusPort) & kStatusOutputReady) != 0) {
         (void)in8(kDataPort);
@@ -151,6 +183,10 @@ void reset_input_state() {
     g_scroll_lock_enabled = false;
     g_led_sync_pending = false;
     reset_decoder_state();
+    g_mouse_packet[0] = 0;
+    g_mouse_packet[1] = 0;
+    g_mouse_packet[2] = 0;
+    g_mouse_packet_index = 0;
 }
 
 void clear_raw_queue() {
@@ -160,18 +196,21 @@ void clear_raw_queue() {
     g_raw_overflow = false;
 }
 
-void enqueue_raw_byte(uint8_t value) {
+void enqueue_raw_byte(uint8_t value, bool auxiliary) {
     if (g_raw_count == kRawQueueCapacity) {
         g_raw_overflow = true;
         return;
     }
 
-    g_raw_queue[g_raw_write_index] = value;
+    g_raw_queue[g_raw_write_index] = {
+        .value = value,
+        .auxiliary = auxiliary,
+    };
     g_raw_write_index = (g_raw_write_index + 1) % kRawQueueCapacity;
     g_raw_count += 1;
 }
 
-bool dequeue_raw_byte(uint8_t& value) {
+bool dequeue_raw_byte(RawByte& value) {
     if (g_raw_count == 0) {
         return false;
     }
@@ -184,7 +223,8 @@ bool dequeue_raw_byte(uint8_t& value) {
 
 void drain_controller_output_to_queue() {
     while ((in8(kStatusPort) & kStatusOutputReady) != 0) {
-        enqueue_raw_byte(in8(kDataPort));
+        const uint8_t status = in8(kStatusPort);
+        enqueue_raw_byte(in8(kDataPort), (status & kStatusAuxiliaryOutput) != 0);
     }
 }
 
@@ -247,6 +287,41 @@ bool keyboard_send_command(uint8_t command, uint8_t argument) {
     return keyboard_send_byte_with_ack(command) && keyboard_send_byte_with_ack(argument);
 }
 
+bool write_mouse_data(uint8_t value) {
+    return controller_write(kControllerCommandWriteSecondPort) && data_write(value);
+}
+
+bool mouse_wait_for_ack() {
+    for (;;) {
+        uint8_t value = 0;
+        bool auxiliary = false;
+        if (!read_output_byte(value, auxiliary)) {
+            return false;
+        }
+        if (!auxiliary) {
+            continue;
+        }
+        if (value == kMouseResponseAck) {
+            return true;
+        }
+        if (value == kMouseResponseResend) {
+            return false;
+        }
+    }
+}
+
+bool mouse_send_byte_with_ack(uint8_t value) {
+    for (uint32_t attempt = 0; attempt < kCommandRetryCount; ++attempt) {
+        if (!write_mouse_data(value)) {
+            return false;
+        }
+        if (mouse_wait_for_ack()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool keyboard_reset_device() {
     for (uint32_t attempt = 0; attempt < kCommandRetryCount; ++attempt) {
         if (!data_write(kKeyboardCommandReset)) {
@@ -268,6 +343,38 @@ bool keyboard_reset_device() {
             return false;
         }
         return response == kKeyboardResponseBatOk;
+    }
+    return false;
+}
+
+bool mouse_reset_device() {
+    for (uint32_t attempt = 0; attempt < kCommandRetryCount; ++attempt) {
+        if (!write_mouse_data(kMouseCommandReset)) {
+            return false;
+        }
+
+        uint8_t response = 0;
+        bool auxiliary = false;
+        if (!read_output_byte(response, auxiliary)) {
+            return false;
+        }
+        if (!auxiliary) {
+            continue;
+        }
+        if (response == kMouseResponseResend) {
+            continue;
+        }
+        if (response != kMouseResponseAck) {
+            return false;
+        }
+
+        if (!read_output_byte(response, auxiliary) || !auxiliary || response != kMouseResponseBatOk) {
+            return false;
+        }
+        if (!read_output_byte(response, auxiliary) || !auxiliary) {
+            return false;
+        }
+        return true;
     }
     return false;
 }
@@ -332,7 +439,6 @@ bool is_alpha_character(char value) {
 }
 
 char translate_main_block(uint8_t scancode, bool shift_active, bool caps_lock_active, bool alt_gr_active) {
-    // ASCII-oriented Latin American layout. Non-ASCII/dead keys stay unmapped.
     static const char kNormal[] = {
         0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\'', 0, '\b',
         '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '\'', '+', '\n', 0,
@@ -376,36 +482,21 @@ char translate_main_block(uint8_t scancode, bool shift_active, bool caps_lock_ac
 
 char translate_keypad(uint8_t scancode, bool shift_active, bool num_lock_active) {
     switch (scancode) {
-        case 0x37:
-            return '*';
-        case 0x4a:
-            return '-';
-        case 0x4e:
-            return '+';
-        case 0x47:
-            return (!shift_active && num_lock_active) ? '7' : 0;
-        case 0x48:
-            return (!shift_active && num_lock_active) ? '8' : 0;
-        case 0x49:
-            return (!shift_active && num_lock_active) ? '9' : 0;
-        case 0x4b:
-            return (!shift_active && num_lock_active) ? '4' : 0;
-        case 0x4c:
-            return (!shift_active && num_lock_active) ? '5' : 0;
-        case 0x4d:
-            return (!shift_active && num_lock_active) ? '6' : 0;
-        case 0x4f:
-            return (!shift_active && num_lock_active) ? '1' : 0;
-        case 0x50:
-            return (!shift_active && num_lock_active) ? '2' : 0;
-        case 0x51:
-            return (!shift_active && num_lock_active) ? '3' : 0;
-        case 0x52:
-            return (!shift_active && num_lock_active) ? '0' : 0;
-        case 0x53:
-            return (!shift_active && num_lock_active) ? '.' : 0;
-        default:
-            return 0;
+        case 0x37: return '*';
+        case 0x4a: return '-';
+        case 0x4e: return '+';
+        case 0x47: return (!shift_active && num_lock_active) ? '7' : 0;
+        case 0x48: return (!shift_active && num_lock_active) ? '8' : 0;
+        case 0x49: return (!shift_active && num_lock_active) ? '9' : 0;
+        case 0x4b: return (!shift_active && num_lock_active) ? '4' : 0;
+        case 0x4c: return (!shift_active && num_lock_active) ? '5' : 0;
+        case 0x4d: return (!shift_active && num_lock_active) ? '6' : 0;
+        case 0x4f: return (!shift_active && num_lock_active) ? '1' : 0;
+        case 0x50: return (!shift_active && num_lock_active) ? '2' : 0;
+        case 0x51: return (!shift_active && num_lock_active) ? '3' : 0;
+        case 0x52: return (!shift_active && num_lock_active) ? '0' : 0;
+        case 0x53: return (!shift_active && num_lock_active) ? '.' : 0;
+        default: return 0;
     }
 }
 
@@ -413,12 +504,9 @@ char translate_ascii(uint8_t scancode, bool extended) {
     const bool shift_active = keyboard_shift_active();
     if (extended) {
         switch (scancode) {
-            case 0x1c:
-                return '\n';
-            case 0x35:
-                return '/';
-            default:
-                return 0;
+            case 0x1c: return '\n';
+            case 0x35: return '/';
+            default: return 0;
         }
     }
 
@@ -466,10 +554,8 @@ uint32_t translate_key_code(uint8_t scancode, bool extended) {
         case 0x2a:
         case 0x36:
             return SAVANXP_KEY_SHIFT;
-        case 0x38:
-            return SAVANXP_KEY_ALT;
-        case 0x3a:
-            return SAVANXP_KEY_CAPSLOCK;
+        case 0x38: return SAVANXP_KEY_ALT;
+        case 0x3a: return SAVANXP_KEY_CAPSLOCK;
         case 0x3b: return SAVANXP_KEY_F1;
         case 0x3c: return SAVANXP_KEY_F2;
         case 0x3d: return SAVANXP_KEY_F3;
@@ -494,8 +580,7 @@ uint32_t translate_key_code(uint8_t scancode, bool extended) {
         case 0x53: return g_num_lock_enabled ? SAVANXP_KEY_NONE : SAVANXP_KEY_DELETE;
         case 0x57: return SAVANXP_KEY_F11;
         case 0x58: return SAVANXP_KEY_F12;
-        default:
-            return SAVANXP_KEY_NONE;
+        default: return SAVANXP_KEY_NONE;
     }
 }
 
@@ -509,6 +594,15 @@ void emit_key_event(uint32_t key, bool pressed, char ascii_key, char ascii_text)
         .pressed = pressed,
         .ascii = static_cast<char>(pressed ? ascii_text : 0),
         .modifiers = current_modifiers(),
+    });
+}
+
+void emit_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
+    input::submit_mouse_event({
+        .delta_x = delta_x,
+        .delta_y = delta_y,
+        .buttons = buttons,
+        .source = input::MouseSource::ps2,
     });
 }
 
@@ -634,7 +728,7 @@ void process_print_screen_state(uint8_t byte, bool& handled) {
     }
 }
 
-void process_scancode_byte(uint8_t byte) {
+void process_keyboard_byte(uint8_t byte) {
     if (byte == 0x54 || byte == 0xd4) {
         emit_key_event(SAVANXP_KEY_PRINT_SCREEN, byte == 0x54, 0, 0);
         return;
@@ -694,24 +788,132 @@ void process_scancode_byte(uint8_t byte) {
     handle_make_break_code(byte, false);
 }
 
+int32_t decode_mouse_delta(uint8_t value, bool negative) {
+    int32_t delta = static_cast<int32_t>(value);
+    if (negative) {
+        delta -= 0x100;
+    }
+    return delta;
+}
+
+void process_mouse_packet() {
+    const uint8_t first = g_mouse_packet[0];
+    const uint8_t second = g_mouse_packet[1];
+    const uint8_t third = g_mouse_packet[2];
+
+    if ((first & 0x08u) == 0) {
+        return;
+    }
+    if ((first & 0xc0u) != 0) {
+        return;
+    }
+
+    uint32_t buttons = 0;
+    if ((first & 0x01u) != 0) {
+        buttons |= SAVANXP_MOUSE_BUTTON_LEFT;
+    }
+    if ((first & 0x02u) != 0) {
+        buttons |= SAVANXP_MOUSE_BUTTON_RIGHT;
+    }
+    if ((first & 0x04u) != 0) {
+        buttons |= SAVANXP_MOUSE_BUTTON_MIDDLE;
+    }
+
+    const int32_t delta_x = decode_mouse_delta(second, (first & 0x10u) != 0);
+    const int32_t raw_delta_y = decode_mouse_delta(third, (first & 0x20u) != 0);
+    emit_mouse_event(delta_x, -raw_delta_y, buttons);
+}
+
+void process_mouse_byte(uint8_t byte) {
+    if (byte == kMouseResponseAck || byte == kMouseResponseResend) {
+        return;
+    }
+
+    if (g_mouse_packet_index == 0 && (byte & 0x08u) == 0) {
+        return;
+    }
+
+    g_mouse_packet[g_mouse_packet_index++] = byte;
+    if (g_mouse_packet_index < 3) {
+        return;
+    }
+
+    process_mouse_packet();
+    g_mouse_packet_index = 0;
+}
+
 void service_pending_led_update() {
     if (!g_led_sync_pending || !g_ready) {
         return;
     }
 
-    arch::x86_64::disable_irq(1);
+    arch::x86_64::disable_interrupts();
     if (g_raw_count != 0 || (in8(kStatusPort) & kStatusOutputReady) != 0) {
-        arch::x86_64::enable_irq(1);
+        arch::x86_64::enable_interrupts();
         return;
     }
 
     if (synchronize_leds_locked()) {
         g_led_sync_pending = false;
     }
-    arch::x86_64::enable_irq(1);
+    arch::x86_64::enable_interrupts();
 }
 
-bool initialize_controller() {
+bool detect_second_port() {
+    uint8_t config = 0;
+    if (!controller_write(kControllerCommandEnableSecondPort)) {
+        return false;
+    }
+    if (!controller_read_config(config)) {
+        return false;
+    }
+    const bool second_port_present = (config & kConfigDisableSecondPortClock) == 0;
+    if (!controller_write(kControllerCommandDisableSecondPort)) {
+        return false;
+    }
+    return second_port_present;
+}
+
+bool initialize_keyboard() {
+    flush_controller_output();
+    if (!keyboard_reset_device()) {
+        console::write_line("ps2: keyboard reset failed");
+        return false;
+    }
+    if (!keyboard_send_command(kKeyboardCommandSetDefaults)) {
+        console::write_line("ps2: failed to restore keyboard defaults");
+        return false;
+    }
+    if (!keyboard_send_command(kKeyboardCommandSetScancode, kScancodeSet2)) {
+        console::write_line("ps2: failed to select keyboard scancode set 2");
+        return false;
+    }
+    if (!synchronize_leds_locked()) {
+        console::write_line("ps2: failed to synchronize keyboard LEDs");
+        return false;
+    }
+    return true;
+}
+
+bool initialize_mouse() {
+    flush_controller_output();
+    if (!mouse_reset_device()) {
+        console::write_line("ps2: mouse reset failed");
+        return false;
+    }
+    if (!mouse_send_byte_with_ack(kMouseCommandSetDefaults)) {
+        console::write_line("ps2: failed to restore mouse defaults");
+        return false;
+    }
+    if (!mouse_send_byte_with_ack(kMouseCommandEnableDataReporting)) {
+        console::write_line("ps2: failed to enable mouse data reporting");
+        return false;
+    }
+    return true;
+}
+
+bool initialize_controller(bool& second_port_present) {
+    second_port_present = false;
     flush_controller_output();
 
     if (!controller_write(kControllerCommandDisableFirstPort) ||
@@ -732,14 +934,32 @@ bool initialize_controller() {
         return false;
     }
 
+    second_port_present = detect_second_port();
+    if (second_port_present) {
+        if (!controller_write(kControllerCommandEnableSecondPort)) {
+            second_port_present = false;
+        } else if (!controller_write(kControllerCommandTestSecondPort) || !controller_expect_byte(0x00)) {
+            console::write_line("ps2: second PS/2 port test failed");
+            second_port_present = false;
+        } else if (!controller_write(kControllerCommandDisableSecondPort)) {
+            second_port_present = false;
+        }
+    }
+
     uint8_t config = 0;
     if (!controller_read_config(config)) {
         console::write_line("ps2: failed to read controller config");
         return false;
     }
 
-    config &= static_cast<uint8_t>(~(kConfigIrqFirstPort | kConfigIrqSecondPort | kConfigDisableFirstPortClock));
-    config |= static_cast<uint8_t>(kConfigDisableSecondPortClock | kConfigTranslation);
+    config &= static_cast<uint8_t>(~(kConfigIrqFirstPort | kConfigIrqSecondPort));
+    config &= static_cast<uint8_t>(~kConfigDisableFirstPortClock);
+    if (second_port_present) {
+        config &= static_cast<uint8_t>(~kConfigDisableSecondPortClock);
+    } else {
+        config |= kConfigDisableSecondPortClock;
+    }
+    config |= kConfigTranslation;
     if (!controller_write_config(config)) {
         console::write_line("ps2: failed to write controller config");
         return false;
@@ -749,34 +969,40 @@ bool initialize_controller() {
         console::write_line("ps2: failed to enable first PS/2 port");
         return false;
     }
+    if (second_port_present && !controller_write(kControllerCommandEnableSecondPort)) {
+        console::write_line("ps2: failed to enable second PS/2 port");
+        second_port_present = false;
+    }
 
-    flush_controller_output();
-    if (!keyboard_reset_device()) {
-        console::write_line("ps2: keyboard reset failed");
+    if (!initialize_keyboard()) {
         return false;
     }
-    if (!keyboard_send_command(kKeyboardCommandSetDefaults)) {
-        console::write_line("ps2: failed to restore keyboard defaults");
-        return false;
+
+    const bool prefer_virtio_mouse = virtio_input::mouse_ready();
+    if (second_port_present && prefer_virtio_mouse) {
+        console::write_line("ps2: skipping auxiliary mouse because virtio-input is active");
     }
-    if (!keyboard_send_command(kKeyboardCommandSetScancode, kScancodeSet2)) {
-        console::write_line("ps2: failed to select keyboard scancode set 2");
-        return false;
-    }
-    if (!synchronize_leds_locked()) {
-        console::write_line("ps2: failed to synchronize keyboard LEDs");
-        return false;
-    }
+
+    g_mouse_ready = second_port_present && !prefer_virtio_mouse && initialize_mouse();
 
     if (!controller_read_config(config)) {
         console::write_line("ps2: failed to reload controller config");
         return false;
     }
-    config &= static_cast<uint8_t>(~kConfigIrqSecondPort);
+
+    config |= kConfigIrqFirstPort;
+    if (g_mouse_ready) {
+        config |= kConfigIrqSecondPort;
+        config &= static_cast<uint8_t>(~kConfigDisableSecondPortClock);
+    } else {
+        config &= static_cast<uint8_t>(~kConfigIrqSecondPort);
+        config |= kConfigDisableSecondPortClock;
+        (void)controller_write(kControllerCommandDisableSecondPort);
+    }
     config &= static_cast<uint8_t>(~kConfigDisableFirstPortClock);
-    config |= static_cast<uint8_t>(kConfigDisableSecondPortClock | kConfigTranslation | kConfigIrqFirstPort);
+    config |= kConfigTranslation;
     if (!controller_write_config(config)) {
-        console::write_line("ps2: failed to enable keyboard IRQs");
+        console::write_line("ps2: failed to enable PS/2 IRQs");
         return false;
     }
 
@@ -788,16 +1014,22 @@ void keyboard_irq() {
     drain_controller_output_to_queue();
 }
 
+void mouse_irq() {
+    drain_controller_output_to_queue();
+}
+
 } // namespace
 
 namespace ps2 {
 
 void initialize() {
     g_ready = false;
+    g_mouse_ready = false;
     clear_raw_queue();
     reset_input_state();
 
-    if (!initialize_controller()) {
+    bool second_port_present = false;
+    if (!initialize_controller(second_port_present)) {
         return;
     }
 
@@ -805,13 +1037,24 @@ void initialize() {
         console::write_line("ps2: failed to register irq1");
         return;
     }
+    if (g_mouse_ready && !arch::x86_64::register_irq_handler(12, mouse_irq)) {
+        console::write_line("ps2: failed to register irq12");
+        g_mouse_ready = false;
+    }
 
     arch::x86_64::enable_irq(1);
+    if (g_mouse_ready) {
+        arch::x86_64::enable_irq(12);
+    }
     g_ready = true;
 }
 
 bool ready() {
     return g_ready;
+}
+
+bool mouse_ready() {
+    return g_mouse_ready;
 }
 
 void poll() {
@@ -822,9 +1065,15 @@ void poll() {
         console::write_line("ps2: raw input queue overflow");
     }
 
-    uint8_t value = 0;
+    RawByte value = {};
     while (dequeue_raw_byte(value)) {
-        process_scancode_byte(value);
+        if (value.auxiliary) {
+            if (g_mouse_ready) {
+                process_mouse_byte(value.value);
+            }
+        } else {
+            process_keyboard_byte(value.value);
+        }
     }
 
     service_pending_led_update();

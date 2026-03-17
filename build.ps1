@@ -13,6 +13,7 @@ $ImageRoot = Join-Path $BuildRoot "image"
 $BootRoot = Join-Path $ImageRoot "boot"
 $EfiBootRoot = Join-Path $ImageRoot "EFI\\BOOT"
 $RootfsBuild = Join-Path $BuildRoot "rootfs"
+$GeneratedRoot = Join-Path $BuildRoot "generated"
 $DiskRoot = Join-Path $ProjectRoot "diskfs"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
 $DiskImage = Join-Path $BuildRoot "disk.img"
@@ -42,8 +43,10 @@ $KernelSources = @(
     "kernel/input.cpp",
     "kernel/tty.cpp",
     "kernel/ui.cpp",
+    "kernel/virtio_input.cpp",
     "kernel/ps2.cpp",
     "kernel/pcspeaker.cpp",
+    "kernel/rtc.cpp",
     "kernel/heap.cpp",
     "kernel/net.cpp",
     "kernel/physical_memory.cpp",
@@ -92,8 +95,10 @@ $UserPrograms = @(
     @{ Name = "udptest"; Source = "userland/udptest.c" },
     @{ Name = "tcpget"; Source = "userland/tcpget.c" },
     @{ Name = "beep"; Source = "userland/beep.c" },
+    @{ Name = "desktop"; Source = "userland/desktop.c" },
     @{ Name = "gfxdemo"; Source = "userland/gfxdemo.c" },
     @{ Name = "keytest"; Source = "userland/keytest.c" },
+    @{ Name = "mousetest"; Source = "userland/mousetest.c" },
     @{ Name = "sysinfo"; Source = "userland/sysinfo.c" }
 )
 
@@ -216,7 +221,8 @@ function Get-UserFlags {
         "-Wno-language-extension-token",
         "-Wno-c23-extensions",
         "-I", (Join-Path $ProjectRoot "include"),
-        "-I", (Join-Path $ProjectRoot "userland")
+        "-I", (Join-Path $ProjectRoot "userland"),
+        "-I", $GeneratedRoot
     )
 }
 
@@ -327,6 +333,19 @@ function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
     }
 }
 
+function Generate-CursorAsset {
+    New-Directory $GeneratedRoot
+
+    $scriptPath = Join-Path $ToolRoot "GenerateCursorAsset.ps1"
+    $sourcePath = Join-Path $ProjectRoot "assets\\cursor.png"
+    $outputPath = Join-Path $GeneratedRoot "cursor_asset.h"
+
+    & powershell -ExecutionPolicy Bypass -File $scriptPath -SourcePath $sourcePath -OutputPath $outputPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion del asset del cursor."
+    }
+}
+
 function Build-Userland([string]$Compiler, [string]$Linker) {
     $userFlags = Get-UserFlags
     $userObjRoot = Join-Path $ObjRoot "user"
@@ -390,6 +409,7 @@ function Build-Kernel {
     if (Test-Path $RootfsBuild) {
         Remove-Item -Recurse -Force $RootfsBuild
     }
+    New-Directory $GeneratedRoot
 
     $commonFlags = Get-CommonFlags
     $objectFiles = @()
@@ -401,6 +421,7 @@ function Build-Kernel {
         Compile-Object -Compiler $clang -SourcePath $sourcePath -ObjectPath $objectPath -Flags $commonFlags
     }
 
+    Generate-CursorAsset
     Build-Userland -Compiler $clang -Linker $ld
     Ensure-SvfsDisk -SourceRoot $DiskRoot -OutputPath $DiskImage
 
@@ -444,11 +465,14 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-m", "256M",
         "-cpu", "max",
         "-audiodev", "sdl,id=audio0",
+        "-display", "gtk,grab-on-hover=on,show-cursor=off,window-close=on",
+        "-rtc", "base=localtime",
         "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
         "-drive", "if=pflash,format=raw,file=$VarsTemplate",
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
+        "-device", "virtio-tablet-pci",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage",
         "-device", "ide-hd,drive=svdisk,bus=svide.0",

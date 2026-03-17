@@ -5,13 +5,16 @@
 
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
+#include "kernel/ps2.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
+#include "kernel/virtio_input.hpp"
 #include "shared/syscall.h"
 
 namespace {
 
 constexpr size_t kInputQueueCapacity = 128;
+constexpr size_t kMouseQueueCapacity = 128;
 
 device::Device g_framebuffer_device = {
     .name = "fb0",
@@ -29,13 +32,26 @@ device::Device g_input_device = {
     .close = nullptr,
 };
 
+device::Device g_mouse_device = {
+    .name = "mouse0",
+    .read = nullptr,
+    .write = nullptr,
+    .ioctl = nullptr,
+    .close = nullptr,
+};
+
 boot::FramebufferInfo g_framebuffer = {};
 savanxp_input_event g_input_queue[kInputQueueCapacity] = {};
 size_t g_input_read_index = 0;
 size_t g_input_write_index = 0;
 size_t g_input_count = 0;
+savanxp_mouse_event g_mouse_queue[kMouseQueueCapacity] = {};
+size_t g_mouse_read_index = 0;
+size_t g_mouse_write_index = 0;
+size_t g_mouse_count = 0;
 uint32_t g_owner_pid = 0;
 bool g_ready = false;
+bool g_mouse_available = false;
 
 int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
@@ -46,6 +62,13 @@ void reset_input_queue() {
     g_input_read_index = 0;
     g_input_write_index = 0;
     g_input_count = 0;
+}
+
+void reset_mouse_queue() {
+    memset(g_mouse_queue, 0, sizeof(g_mouse_queue));
+    g_mouse_read_index = 0;
+    g_mouse_write_index = 0;
+    g_mouse_count = 0;
 }
 
 void enqueue_event(uint32_t type, uint32_t key, int32_t ascii) {
@@ -63,6 +86,21 @@ void enqueue_event(uint32_t type, uint32_t key, int32_t ascii) {
     g_input_count += 1;
 }
 
+void enqueue_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
+    if (g_mouse_count == kMouseQueueCapacity) {
+        g_mouse_read_index = (g_mouse_read_index + 1) % kMouseQueueCapacity;
+        g_mouse_count -= 1;
+    }
+
+    g_mouse_queue[g_mouse_write_index] = {
+        .delta_x = delta_x,
+        .delta_y = delta_y,
+        .buttons = buttons,
+    };
+    g_mouse_write_index = (g_mouse_write_index + 1) % kMouseQueueCapacity;
+    g_mouse_count += 1;
+}
+
 void release_graphics_session() {
     if (g_owner_pid == 0) {
         return;
@@ -70,6 +108,7 @@ void release_graphics_session() {
 
     g_owner_pid = 0;
     reset_input_queue();
+    reset_mouse_queue();
     console::set_framebuffer_console_enabled(true);
 }
 
@@ -90,6 +129,30 @@ int read_input_device(uint64_t user_buffer, size_t count) {
         g_input_read_index = (g_input_read_index + 1) % kInputQueueCapacity;
         g_input_count -= 1;
         copied += sizeof(savanxp_input_event);
+    }
+
+    return static_cast<int>(copied);
+}
+
+int read_mouse_device(uint64_t user_buffer, size_t count) {
+    virtio_input::poll();
+
+    if (count < sizeof(savanxp_mouse_event)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (!process::validate_user_range(user_buffer, count, true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    size_t copied = 0;
+    while (g_mouse_count != 0 && copied + sizeof(savanxp_mouse_event) <= count) {
+        const savanxp_mouse_event& event = g_mouse_queue[g_mouse_read_index];
+        if (!process::copy_to_user(user_buffer + copied, &event, sizeof(event))) {
+            return negative_error(SAVANXP_EINVAL);
+        }
+        g_mouse_read_index = (g_mouse_read_index + 1) % kMouseQueueCapacity;
+        g_mouse_count -= 1;
+        copied += sizeof(savanxp_mouse_event);
     }
 
     return static_cast<int>(copied);
@@ -125,6 +188,8 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
 
             g_owner_pid = pid;
             reset_input_queue();
+            reset_mouse_queue();
+            virtio_input::begin_graphics_session();
             console::set_framebuffer_console_enabled(false);
             return 0;
         }
@@ -132,6 +197,7 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
             if (g_owner_pid != 0 && g_owner_pid != process::current_pid()) {
                 return negative_error(SAVANXP_EBUSY);
             }
+            virtio_input::end_graphics_session();
             release_graphics_session();
             return 0;
         case FB_IOC_PRESENT: {
@@ -196,6 +262,7 @@ int framebuffer_ioctl(uint64_t request, uint64_t argument) {
 
 void framebuffer_close() {
     if (g_owner_pid != 0 && g_owner_pid == process::current_pid()) {
+        virtio_input::end_graphics_session();
         release_graphics_session();
     }
 }
@@ -207,18 +274,28 @@ namespace ui {
 void initialize(const boot::FramebufferInfo& framebuffer) {
     g_framebuffer = framebuffer;
     reset_input_queue();
+    reset_mouse_queue();
     g_owner_pid = 0;
+    g_mouse_available = false;
 
     g_framebuffer_device.ioctl = framebuffer_ioctl;
     g_framebuffer_device.close = framebuffer_close;
     g_input_device.read = read_input_device;
     g_input_device.close = nullptr;
+    g_mouse_device.read = read_mouse_device;
+    g_mouse_device.close = nullptr;
 
     if (!device::register_node("/dev/fb0", &g_framebuffer_device, true)) {
         return;
     }
     if (!device::register_node("/dev/input0", &g_input_device, false)) {
         return;
+    }
+    if (ps2::mouse_ready() || virtio_input::mouse_ready()) {
+        if (!device::register_node("/dev/mouse0", &g_mouse_device, false)) {
+            return;
+        }
+        g_mouse_available = true;
     }
 
     g_ready = true;
@@ -243,8 +320,19 @@ void handle_key_event(uint32_t key, bool pressed, char ascii) {
     );
 }
 
+void handle_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
+    if (!graphics_active() || !g_mouse_available) {
+        return;
+    }
+    enqueue_mouse_event(delta_x, delta_y, buttons);
+}
+
 bool framebuffer_available() {
     return console::framebuffer_ready();
+}
+
+bool mouse_available() {
+    return g_mouse_available;
 }
 
 } // namespace ui

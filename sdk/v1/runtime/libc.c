@@ -178,8 +178,27 @@ long system_info(struct savanxp_system_info* info) {
     return syscall1(SAVANXP_SYS_SYSTEM_INFO, (unsigned long)info);
 }
 
+long realtime(struct savanxp_realtime* value) {
+    return syscall1(SAVANXP_SYS_REALTIME, (unsigned long)value);
+}
+
 long sync(void) {
     return syscall0(SAVANXP_SYS_SYNC);
+}
+
+long mouse_open(void) {
+    return open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
+}
+
+int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
+    const long result = read(fd, event, sizeof(*event));
+    if (result < 0) {
+        return (int)result;
+    }
+    if (result != (long)sizeof(*event)) {
+        return 0;
+    }
+    return 1;
 }
 
 long savanxp_getpid(void) {

@@ -1,6 +1,6 @@
 # SavanXP
 
-Version actual del proyecto: `v0.1.1`
+Version actual del proyecto: `v0.1.2`
 
 Historial de versiones: `CHANGELOG.md`
 
@@ -24,12 +24,13 @@ El kernel ya bootea a una terminal funcional inicial:
   syscall por `int 0x80`.
 - Allocador fisico temprano, heap del kernel y VMM minimo para espacios de
   usuario.
-- Driver de teclado `PS/2` por `IRQ1` con init/controlador mas robusto,
-  decodificacion desacoplada, soporte expandido de teclas especiales y `TTY`
-  canonica para la consola foreground.
+- Stack `PS/2` inicial con teclado por `IRQ1`, mouse auxiliar por `IRQ12`,
+  decodificacion desacoplada, soporte expandido de teclas especiales y
+  degradacion segura a teclado-only si el mouse no inicializa.
 - Enumeracion PCI minima por config-space en `q35` y capa de dispositivos
   expuesta como nodos bajo `/dev`.
-- Dispositivos iniciales en `/dev`: `fb0`, `input0`, `net0` y `pcspk`.
+- Dispositivos iniciales en `/dev`: `fb0`, `input0`, `mouse0`, `net0` y
+  `pcspk`.
 - `ioctl` como syscall publica para dispositivos y ABI compartida extendida
   para framebuffer, input, red y PC speaker.
 - `VFS` minima montando un `initramfs` `cpio newc`, con archivos dinamicos en
@@ -39,14 +40,16 @@ El kernel ya bootea a una terminal funcional inicial:
 - Userland inicial con `init`, `sh`, `echo`, `uname`, `ls`, `cat`, `sleep`,
   `ticker`, `demo`, `true`, `false`, `ps`, `fdtest`, `waittest`,
   `pipestress`, `spawnloop`, `badptr`, `rm`, `rmdir`, `truncate`,
-  `seektest`, `truncatetest`, `errtest`, `sysinfo` y `keytest`.
+  `seektest`, `truncatetest`, `errtest`, `sysinfo`, `keytest`, `mousetest`
+  y `desktop`.
 - Timer `local APIC/x2APIC` activo para tiempo base del sistema.
 - Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
   echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo, mas
   contadores y estado diagnostico expuestos por `NET_IOC_GET_INFO`.
 - GUI fullscreen inicial con framebuffer exclusivo, cola de eventos de
-  teclado, primitivas 2D reutilizables en `gfx_*`, ejemplo externo
-  `sdk/gfxhello` y demo `gfxdemo`.
+  teclado y mouse, primitivas 2D reutilizables en `gfx_*`, ejemplo externo
+  `sdk/gfxhello`, demo `gfxdemo`, tester `mousetest` y primer shell grafico
+  `desktop`.
 - Pipeline fullscreen ya optimizado para mayor fluidez, con primitivas
   `gfx_*` mas baratas, `present` parcial por regiones sucias
   (`FB_IOC_PRESENT_REGION`) y demos/UI que evitan redibujar o copiar toda la
@@ -86,7 +89,7 @@ El kernel ya bootea a una terminal funcional inicial:
 Orden sugerido para las cuatro lineas de trabajo siguientes:
 
 1. Agregar logs y errores mas claros en red.
-2. Empezar la libreria GUI en serio sobre la base fullscreen actual.
+2. Evolucionar el desktop shell y la libreria GUI sobre la base fullscreen actual.
 3. Consolidar la SDK v1/POSIX y correr smoke tests reales dentro de QEMU.
 4. Ampliar sockets/TCP desde el cliente minimo actual hacia una API mas completa.
 
@@ -96,7 +99,8 @@ Razon del orden:
   diagnosticar timeouts, estados intermedios y fallos reales sin depender tanto
   del host.
 - La GUI fullscreen ya probo el camino tecnico; el siguiente paso natural es
-  convertir esas primitivas en una libreria reutilizable y menos demo-driven.
+  consolidar el desktop shell inicial y convertir esas primitivas en una
+  libreria reutilizable y menos demo-driven.
 - La capa POSIX/libc ya existe, asi que conviene validarla mejor dentro del
   sistema antes de seguir agrandando la ABI o sumar mas ports externos.
 - El stack actual ya supero `ping` y tiene UDP + cliente TCP minimo; el salto
@@ -159,10 +163,27 @@ Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`. Tambien
 hay ejemplos/aplicaciones graficas externas en `sdk/gfxhello` y
 `sdk/doomgeneric`.
 
-Para diagnosticar teclado fullscreen y `/dev/input0`, existe la app `keytest`.
-Muestra `key down/up`, `keycode` y `ascii` en tiempo real. Nota practica:
-segun el host y la captura de teclado de QEMU, `ImpPnt` puede llegar al guest
-solo como `Alt+ImpPnt`.
+Para diagnosticar input fullscreen existen `keytest` sobre `/dev/input0` y
+`mousetest` sobre `/dev/mouse0`. `keytest` muestra `key down/up`, `keycode` y
+`ascii` en tiempo real. `mousetest` valida cursor, deltas y botones. Nota
+practica: segun el host y la captura de teclado de QEMU, `ImpPnt` puede llegar
+al guest solo como `Alt+ImpPnt`.
+
+En QEMU, `build.ps1 run` agrega `virtio-tablet-pci` y el kernel lo prioriza
+para el escritorio cuando esta disponible. La ABI publica no cambia: las apps
+siguen leyendo `/dev/mouse0` con deltas para mantener compatibilidad.
+Debajo de eso, el kernel ahora cuenta con una base MMIO PCI reutilizable para
+drivers `virtio` modernos.
+Cuando `virtio-input` queda activo, el stack `PS/2` conserva el teclado y deja
+el mouse auxiliar solo como fallback para entornos sin `virtio-tablet`.
+El escritorio tambien puede leer hora real desde `RTC/CMOS`; en QEMU el launcher
+usa `-rtc base=localtime` para que el reloj siga la hora local del host.
+
+Para probar el escritorio inicial:
+
+```text
+desktop
+```
 
 ## Extension de VS Code
 

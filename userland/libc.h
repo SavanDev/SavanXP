@@ -40,7 +40,10 @@ long getpid(void);
 long chdir(const char* path);
 long getcwd(char* buffer, size_t count);
 long system_info(struct savanxp_system_info* info);
+long realtime(struct savanxp_realtime* value);
 long sync(void);
+long mouse_open(void);
+int mouse_poll_event(int fd, struct savanxp_mouse_event* event);
 void exit(int code) __attribute__((noreturn));
 
 struct savanxp_gfx_context {

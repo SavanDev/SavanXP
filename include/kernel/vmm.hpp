@@ -15,6 +15,8 @@ enum PageFlags : uint64_t {
     kPagePresent = 1ULL << 0,
     kPageWrite = 1ULL << 1,
     kPageUser = 1ULL << 2,
+    kPageWriteThrough = 1ULL << 3,
+    kPageCacheDisable = 1ULL << 4,
 };
 
 struct VmSpace {
@@ -27,6 +29,7 @@ bool ready();
 bool create_address_space(VmSpace& space);
 void destroy_address_space(VmSpace& space);
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags);
+bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base);
 uint64_t current_pml4();
 uint64_t hhdm_offset();
 uint64_t* physical_to_virtual(uint64_t physical_address);

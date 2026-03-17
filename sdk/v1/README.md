@@ -1,7 +1,8 @@
-# SDK v1
+# SDK v1.1
 
 `sdk/v1` es la superficie pública actual para compilar apps externas en `C`
-contra SavanXP.
+contra SavanXP. El nivel de contrato vigente dentro de esta carpeta es `SDK
+1.1`.
 
 ## Superficie pública
 
@@ -16,7 +17,7 @@ Incluye:
 - `linker.ld`
 - `REFERENCE.md`
 
-## ABI pública v1
+## ABI pública v1.1
 
 Categorías soportadas:
 
@@ -28,12 +29,14 @@ Categorías soportadas:
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`
 - graficos: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_poll_event`
+- mouse: `mouse_open`, `mouse_poll_event`
 - primitivas software: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`, `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`, `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`, `gfx_blit_text`
 
 Nodos de dispositivo expuestos actualmente:
 
 - `/dev/fb0`
 - `/dev/input0`
+- `/dev/mouse0`
 - `/dev/net0`
 - `/dev/pcspk`
 
@@ -95,6 +98,7 @@ Tipos compartidos para dispositivos:
 
 - `struct savanxp_fb_info`
 - `struct savanxp_input_event`
+- `struct savanxp_mouse_event`
 - `struct savanxp_net_info`
 - `struct savanxp_system_info`
 - `enum savanxp_net_status`

@@ -7,6 +7,51 @@ Notas de corte:
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
 
+## [0.1.2] - 2026-03-14
+
+### Agregado
+
+- Soporte basico de mouse `PS/2` sobre el puerto auxiliar del controlador
+  `i8042`, con IRQ12, paquetes estandar de 3 bytes y degradacion segura a
+  teclado-only si el mouse no inicializa.
+- Nodo nuevo `/dev/mouse0` con eventos dedicados de mouse para apps graficas,
+  sin romper la semantica previa de `/dev/input0`.
+- ABI compartida extendida con `struct savanxp_mouse_event`, flags publicos de
+  botones y helpers nuevos `mouse_open` / `mouse_poll_event` en la libc/runtime.
+- Nuevo shell grafico fullscreen `desktop`, inspirado en el lenguaje visual de
+  Windows 2000, con taskbar, boton Inicio, reloj y cursor.
+- Nueva utilidad `mousetest` para validar `/dev/mouse0`, movimiento relativo y
+  botones desde userland.
+
+### Cambiado
+
+- La capa fullscreen del kernel ahora registra `/dev/mouse0` junto con
+  `/dev/fb0` y `/dev/input0`, y limpia colas de teclado/mouse al adquirir o
+  liberar la sesion grafica exclusiva.
+- Bajo QEMU, el escritorio y `mousetest` ahora priorizan un backend absoluto
+  `virtio-tablet-pci` cuando esta disponible, mientras `/dev/mouse0` conserva
+  la ABI de deltas para no romper apps ya compiladas.
+- El kernel ahora reserva una ventana MMIO propia para drivers PCI modernos y
+  la usa para mapear BARs de memoria de forma segura durante el boot.
+- En entornos QEMU con `virtio-tablet-pci`, el stack `PS/2` deja de inicializar
+  el mouse auxiliar y queda teclado-only; el mouse `PS/2` se conserva como
+  fallback cuando `virtio-input` no esta disponible.
+- Se agrego lectura de `RTC/CMOS` en el kernel y un helper publico aditivo para
+  consultar hora real desde userland; el reloj del escritorio ya no depende
+  solo de `uptime`.
+- La shell builtin ahora publica `desktop` y `mousetest` dentro del help
+  interactivo.
+- La documentacion principal y la referencia del SDK v1 reflejan el nuevo
+  input de mouse, el escritorio inicial y el salto a `v0.1.2`.
+
+### Limites conocidos
+
+- `v0.1.2` expone solo movimiento relativo y botones basicos en la ABI
+  publica; internamente puede usar puntero absoluto bajo QEMU, pero no hay
+  rueda, ventanas reales, compositor ni input raw para juegos.
+- `gfx_poll_event` sigue siendo teclado-only en esta etapa; el mouse entra por
+  `/dev/mouse0`.
+
 ## [0.1.1] - 2026-03-10
 
 ### Agregado

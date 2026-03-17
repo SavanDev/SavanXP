@@ -4,7 +4,7 @@
 
 #define SAVANXP_SDK_VERSION 1
 #define SAVANXP_SDK_VERSION_MAJOR 1
-#define SAVANXP_SDK_VERSION_MINOR 0
+#define SAVANXP_SDK_VERSION_MINOR 1
 
 #define SAVANXP_STDIN_FILENO 0
 #define SAVANXP_STDOUT_FILENO 1
@@ -53,6 +53,7 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_GETCWD = 34,
     SAVANXP_SYS_SYSTEM_INFO = 35,
     SAVANXP_SYS_SYNC = 36,
+    SAVANXP_SYS_REALTIME = 37,
 };
 
 enum savanxp_open_flags {
@@ -154,6 +155,16 @@ struct savanxp_system_info {
     uint64_t uptime_ms;
 };
 
+struct savanxp_realtime {
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    uint8_t valid;
+};
+
 #define SAVANXP_IOCTL(group, number) ((((group) & 0xffffu) << 16) | ((number) & 0xffffu))
 
 enum savanxp_ioctl_group {
@@ -238,6 +249,12 @@ enum savanxp_input_event_type {
     SAVANXP_INPUT_EVENT_KEY_UP = 2,
 };
 
+enum savanxp_mouse_button {
+    SAVANXP_MOUSE_BUTTON_LEFT = 1u << 0,
+    SAVANXP_MOUSE_BUTTON_RIGHT = 1u << 1,
+    SAVANXP_MOUSE_BUTTON_MIDDLE = 1u << 2,
+};
+
 enum savanxp_key_code {
     SAVANXP_KEY_NONE = 0,
     SAVANXP_KEY_BACKSPACE = 8,
@@ -283,6 +300,12 @@ struct savanxp_input_event {
     uint32_t type;
     uint32_t key;
     int32_t ascii;
+};
+
+struct savanxp_mouse_event {
+    int32_t delta_x;
+    int32_t delta_y;
+    uint32_t buttons;
 };
 
 struct savanxp_net_info {

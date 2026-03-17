@@ -7,9 +7,13 @@ namespace {
 
 constexpr uint64_t kPageMask = 0x000ffffffffff000ULL;
 constexpr uint64_t kKernelPml4Start = 256;
+constexpr uint64_t kKernelPml4WindowBytes = 1ULL << 39;
 
 uint64_t g_hhdm_offset = 0;
 uint64_t g_kernel_pml4_physical = 0;
+uint64_t g_kernel_mmio_base = 0;
+uint64_t g_kernel_mmio_next = 0;
+uint64_t g_kernel_mmio_limit = 0;
 bool g_ready = false;
 
 uint64_t pml4_index(uint64_t virtual_address) {
@@ -26,6 +30,22 @@ uint64_t pd_index(uint64_t virtual_address) {
 
 uint64_t pt_index(uint64_t virtual_address) {
     return (virtual_address >> 12) & 0x1ff;
+}
+
+uint64_t align_up(uint64_t value, uint64_t alignment) {
+    const uint64_t mask = alignment - 1;
+    return (value + mask) & ~mask;
+}
+
+uint64_t sign_extend_48(uint64_t value) {
+    if ((value & (1ULL << 47)) != 0) {
+        value |= 0xffff000000000000ULL;
+    }
+    return value;
+}
+
+uint64_t pml4_base(uint64_t index) {
+    return sign_extend_48(index << 39);
 }
 
 bool canonical_user_address(uint64_t virtual_address) {
@@ -122,6 +142,70 @@ void destroy_table(uint64_t table_physical, uint8_t level) {
     }
 }
 
+uint64_t* kernel_pml4() {
+    return vm::physical_to_virtual(g_kernel_pml4_physical);
+}
+
+void invalidate_page(uint64_t virtual_address) {
+    asm volatile("invlpg (%0)" : : "r"(virtual_address) : "memory");
+}
+
+bool reserve_kernel_mmio_window() {
+    uint64_t* pml4 = kernel_pml4();
+    if (pml4 == nullptr) {
+        return false;
+    }
+
+    for (uint64_t index = 510; index >= kKernelPml4Start; --index) {
+        if (pml4[index] == 0) {
+            g_kernel_mmio_base = pml4_base(index);
+            g_kernel_mmio_next = g_kernel_mmio_base;
+            g_kernel_mmio_limit = g_kernel_mmio_base + kKernelPml4WindowBytes;
+            return true;
+        }
+        if (index == kKernelPml4Start) {
+            break;
+        }
+    }
+
+    return false;
+}
+
+bool map_kernel_page(uint64_t virtual_address, uint64_t physical_address, uint64_t flags) {
+    if (!g_ready || (virtual_address & (memory::kPageSize - 1)) != 0 || (physical_address & (memory::kPageSize - 1)) != 0) {
+        return false;
+    }
+
+    uint64_t* pml4 = kernel_pml4();
+    if (pml4 == nullptr) {
+        return false;
+    }
+
+    uint64_t* pdpt = next_table(pml4, pml4_index(virtual_address), 0);
+    if (pdpt == nullptr) {
+        return false;
+    }
+
+    uint64_t* pd = next_table(pdpt, pdpt_index(virtual_address), 0);
+    if (pd == nullptr) {
+        return false;
+    }
+
+    uint64_t* pt = next_table(pd, pd_index(virtual_address), 0);
+    if (pt == nullptr) {
+        return false;
+    }
+
+    const uint64_t entry_index = pt_index(virtual_address);
+    if ((pt[entry_index] & vm::kPagePresent) != 0) {
+        return false;
+    }
+
+    pt[entry_index] = (physical_address & kPageMask) | flags | vm::kPagePresent;
+    invalidate_page(virtual_address);
+    return true;
+}
+
 } // namespace
 
 namespace vm {
@@ -129,7 +213,13 @@ namespace vm {
 void initialize(const boot::BootInfo& boot_info) {
     g_hhdm_offset = boot_info.hhdm_offset;
     g_kernel_pml4_physical = read_cr3() & kPageMask;
+    g_kernel_mmio_base = 0;
+    g_kernel_mmio_next = 0;
+    g_kernel_mmio_limit = 0;
     g_ready = g_hhdm_offset != 0 && g_kernel_pml4_physical != 0;
+    if (g_ready) {
+        (void)reserve_kernel_mmio_window();
+    }
 }
 
 bool ready() {
@@ -199,6 +289,36 @@ bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_addres
     }
 
     pt[pt_index(virtual_address)] = (physical_address & kPageMask) | flags | kPagePresent;
+    return true;
+}
+
+bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base) {
+    if (!g_ready || g_kernel_mmio_base == 0 || virtual_base == nullptr || size == 0) {
+        return false;
+    }
+
+    const uint64_t aligned_physical = physical_base & kPageMask;
+    const uint64_t intra_page_offset = physical_base - aligned_physical;
+    const uint64_t total_bytes = align_up(intra_page_offset + static_cast<uint64_t>(size), memory::kPageSize);
+    const uint64_t mapping_base = align_up(g_kernel_mmio_next, memory::kPageSize);
+
+    if (mapping_base < g_kernel_mmio_base ||
+        mapping_base + total_bytes < mapping_base ||
+        mapping_base + total_bytes > g_kernel_mmio_limit) {
+        return false;
+    }
+
+    for (uint64_t offset = 0; offset < total_bytes; offset += memory::kPageSize) {
+        if (!map_kernel_page(
+                mapping_base + offset,
+                aligned_physical + offset,
+                (flags | vm::kPageWrite | vm::kPageCacheDisable) & ~vm::kPageUser)) {
+            return false;
+        }
+    }
+
+    g_kernel_mmio_next = mapping_base + total_bytes;
+    *virtual_base = reinterpret_cast<void*>(mapping_base + intra_page_offset);
     return true;
 }
 

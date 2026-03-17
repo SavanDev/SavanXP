@@ -1,9 +1,9 @@
-# SDK v1 Reference
+# SDK v1.1 Reference
 
 ## Estabilidad
 
-La carpeta `sdk/v1` es la superficie pública congelada para la primera versión
-del SDK externo de SavanXP.
+La carpeta `sdk/v1` es la superficie pública congelada del SDK externo de
+SavanXP. El nivel vigente documentado en esta carpeta es `SDK 1.1`.
 
 Se consideran parte del contrato:
 
@@ -42,6 +42,7 @@ Se consideran parte del contrato:
 - descriptores: `pipe`, `dup`, `dup2`, `seek`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `getpid`, `stat`, `fstat`, `chdir`, `getcwd`, `system_info`
+- tiempo real: `realtime`
 
 ## Errores visibles
 
@@ -69,6 +70,7 @@ Nodos reservados actualmente:
 
 - `/dev/fb0`
 - `/dev/input0`
+- `/dev/mouse0`
 - `/dev/net0`
 - `/dev/pcspk`
 
@@ -82,8 +84,10 @@ Tipos compartidos:
 
 - `struct savanxp_fb_info`
 - `struct savanxp_input_event`
+- `struct savanxp_mouse_event`
 - `struct savanxp_net_info`
 - `struct savanxp_system_info`
+- `struct savanxp_realtime`
 - `enum savanxp_net_status`
 - `enum savanxp_timer_backend`
 - `struct savanxp_net_ping_request`
@@ -121,6 +125,8 @@ Helpers públicos expuestos por el runtime:
 - `gfx_release`
 - `gfx_present`
 - `gfx_poll_event`
+- `mouse_open`
+- `mouse_poll_event`
 - `gfx_rgb`
 - `gfx_stride_pixels`
 - `gfx_buffer_pixels`
@@ -140,8 +146,11 @@ Contrato actual:
 - una sola app puede adquirir el framebuffer a la vez
 - el modo gráfico es fullscreen exclusivo
 - `gfx_present` copia un frame completo de 32-bpp desde userland
-- los eventos vienen desde `/dev/input0`
-- no hay `mmap`, ventanas, mouse ni compositor en v1
+- `gfx_poll_event` sigue consumiendo teclado desde `/dev/input0`
+- el mouse entra por `/dev/mouse0` con `mouse_open` / `mouse_poll_event`
+- bajo QEMU, el kernel puede respaldar `/dev/mouse0` con un backend absoluto
+  `virtio-tablet-pci`, traducido a deltas para preservar la ABI 1.1
+- no hay `mmap`, ventanas, rueda ni compositor en v1
 - el backbuffer sigue siendo propiedad de la app; `gfx_buffer_pixels` y `gfx_buffer_bytes` ayudan a validarlo
 
 ## Flujo recomendado

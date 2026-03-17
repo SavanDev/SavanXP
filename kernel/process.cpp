@@ -14,6 +14,7 @@
 #include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/ps2.hpp"
+#include "kernel/rtc.hpp"
 #include "kernel/string.hpp"
 #include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
@@ -2099,6 +2100,22 @@ SavedContext* handle_syscall(SavedContext* context) {
         case SAVANXP_SYS_SYNC:
             context->rax = static_cast<uint64_t>(svfs::sync() ? 0 : negative_error(SAVANXP_EIO));
             return context;
+        case SAVANXP_SYS_REALTIME: {
+            if (!vm::is_user_range_accessible(g_current->address_space, context->rdi, sizeof(savanxp_realtime), true)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+
+            savanxp_realtime value = {};
+            if (!rtc::read_time(&value) ||
+                !write_to_process_memory(*g_current, context->rdi, &value, sizeof(value))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EIO));
+                return context;
+            }
+
+            context->rax = 0;
+            return context;
+        }
         default:
             context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOSYS));
             return context;

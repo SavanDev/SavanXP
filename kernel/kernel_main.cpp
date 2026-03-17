@@ -20,6 +20,7 @@
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
+#include "kernel/virtio_input.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 #include "shared/version.h"
@@ -102,11 +103,12 @@ MemorySummary summarize_memory(const boot::BootInfo& boot_info) {
     tty::initialize();
     input::initialize();
     timer::initialize(100);
+    pci::initialize();
+    virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();
     process::initialize();
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
-    pci::initialize();
     ui::initialize(boot_info.framebuffer);
     pcspeaker::initialize();
     net::initialize();
