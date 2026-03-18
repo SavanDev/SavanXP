@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 
+#include "../poll.h"
 #include "sys/types.h"
 
 struct sockaddr {

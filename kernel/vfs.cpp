@@ -8,10 +8,10 @@
 
 namespace {
 
-constexpr size_t kMaxNodes = 384;
+constexpr size_t kMaxNodes = 768;
 constexpr size_t kMaxNameLength = vfs::kMaxPathComponentLength;
-constexpr size_t kMaxDynamicFiles = 16;
-constexpr size_t kDynamicFileCapacity = 8192;
+constexpr size_t kMaxDynamicFiles = 32;
+constexpr size_t kDynamicFileCapacity = 16384;
 constexpr size_t kMaxNormalizedPathComponents = 32;
 
 struct NodeSlot {

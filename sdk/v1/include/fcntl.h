@@ -6,7 +6,13 @@
 #define O_CREAT 0x0100
 #define O_TRUNC 0x0200
 #define O_APPEND 0x0400
+#define O_NONBLOCK 0x0800
+
+#define F_GETFL 1
+#define F_SETFL 2
 
 #define open sx_open
+#define fcntl sx_fcntl
 
 int sx_open(const char* path, int flags, ...);
+int sx_fcntl(int fd, int command, ...);

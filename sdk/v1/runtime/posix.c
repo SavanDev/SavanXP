@@ -11,6 +11,9 @@
 #define O_CREAT 0x0100
 #define O_TRUNC 0x0200
 #define O_APPEND 0x0400
+#define O_NONBLOCK 0x0800
+#define F_GETFL 1
+#define F_SETFL 2
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
@@ -28,9 +31,9 @@
 #define SX_ALLOC_ALIGNMENT ((size_t)sizeof(uintptr_t))
 #define SX_ALLOC_MIN_SPLIT_SIZE (SX_ALLOC_ALIGNMENT * 2u)
 #define SX_ALLOC_MAGIC 0x53584148u
-#define SX_FILE_POOL_CAPACITY 32
-#define SX_DIR_POOL_CAPACITY 16
-#define SX_SOCKET_STATE_CAPACITY 32
+#define SX_FILE_POOL_CAPACITY 64
+#define SX_DIR_POOL_CAPACITY 32
+#define SX_SOCKET_STATE_CAPACITY 64
 #define SX_PATH_CAPACITY 256
 #define SX_FILE_BUFFER_CAPACITY 512
 
@@ -75,6 +78,29 @@ struct timespec {
     time_t tv_sec;
     long tv_nsec;
 };
+
+struct timeval {
+    long tv_sec;
+    long tv_usec;
+};
+
+struct pollfd {
+    int fd;
+    short events;
+    short revents;
+};
+
+#define POLLIN 0x0001
+#define POLLOUT 0x0004
+#define POLLERR 0x0008
+#define POLLHUP 0x0010
+#define POLLNVAL 0x0020
+
+#define SX_FD_SETSIZE 64
+
+typedef struct fd_set {
+    unsigned long bits[(SX_FD_SETSIZE + (8 * sizeof(unsigned long)) - 1) / (8 * sizeof(unsigned long))];
+} fd_set;
 
 struct sx_FILE {
     int fd;
@@ -129,6 +155,7 @@ FILE* stderr = &g_stderr_file;
 static int g_errno = 0;
 
 void* sx_malloc(size_t size);
+void* sx_calloc(size_t count, size_t size);
 void sx_free(void* pointer);
 int sx_usleep(unsigned long microseconds);
 
@@ -317,6 +344,49 @@ static int sx_join_dir_path(const char* base, const char* leaf, char* output, si
     written += leaf_length;
     output[written] = '\0';
     return 1;
+}
+
+static unsigned long sx_timeout_from_timeval(const struct timeval* timeout) {
+    unsigned long milliseconds = 0;
+    if (timeout == 0) {
+        return (unsigned long)-1;
+    }
+    if (timeout->tv_sec < 0 || timeout->tv_usec < 0) {
+        return 0;
+    }
+    milliseconds = (unsigned long)timeout->tv_sec * 1000UL;
+    milliseconds += (unsigned long)((timeout->tv_usec + 999L) / 1000L);
+    return milliseconds;
+}
+
+void sx_fd_zero(fd_set* set) {
+    if (set != 0) {
+        memset(set, 0, sizeof(*set));
+    }
+}
+
+void sx_fd_set(int fd, fd_set* set) {
+    const unsigned long bit = (unsigned long)fd;
+    if (set == 0 || fd < 0 || fd >= SX_FD_SETSIZE) {
+        return;
+    }
+    set->bits[bit / (8 * sizeof(unsigned long))] |= 1UL << (bit % (8 * sizeof(unsigned long)));
+}
+
+void sx_fd_clr(int fd, fd_set* set) {
+    const unsigned long bit = (unsigned long)fd;
+    if (set == 0 || fd < 0 || fd >= SX_FD_SETSIZE) {
+        return;
+    }
+    set->bits[bit / (8 * sizeof(unsigned long))] &= ~(1UL << (bit % (8 * sizeof(unsigned long))));
+}
+
+int sx_fd_isset(int fd, const fd_set* set) {
+    const unsigned long bit = (unsigned long)fd;
+    if (set == 0 || fd < 0 || fd >= SX_FD_SETSIZE) {
+        return 0;
+    }
+    return (set->bits[bit / (8 * sizeof(unsigned long))] & (1UL << (bit % (8 * sizeof(unsigned long))))) != 0;
 }
 
 void* sx_memcpy(void* destination, const void* source, size_t count) {
@@ -779,6 +849,9 @@ int sx_open(const char* path, int flags, ...) {
     if ((flags & O_APPEND) != 0) {
         raw_flags |= SAVANXP_OPEN_APPEND;
     }
+    if ((flags & O_NONBLOCK) != 0) {
+        raw_flags |= SAVANXP_OPEN_NONBLOCK;
+    }
     result = open_mode(path, raw_flags);
     if (result < 0) {
         sx_set_errno_from_result(result);
@@ -839,6 +912,159 @@ int sx_pipe(int fds[2]) {
         return -1;
     }
     return 0;
+}
+
+int sx_fcntl(int fd, int command, ...) {
+    unsigned long raw_value = 0;
+    long result = 0;
+    if (command == F_SETFL) {
+        va_list args;
+        const int value = 0;
+        va_start(args, command);
+        raw_value = (unsigned long)va_arg(args, int);
+        va_end(args);
+
+        {
+            unsigned long translated = 0;
+            if ((raw_value & O_NONBLOCK) != 0) {
+                translated |= SAVANXP_OPEN_NONBLOCK;
+            }
+            raw_value = translated;
+        }
+    }
+
+    result = fcntl(fd, (unsigned long)command, raw_value);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+
+    if (command == F_GETFL) {
+        int flags = 0;
+        const unsigned long raw = (unsigned long)result;
+        if ((raw & SAVANXP_OPEN_WRITE) != 0 && (raw & SAVANXP_OPEN_READ) != 0) {
+            flags |= O_RDWR;
+        } else if ((raw & SAVANXP_OPEN_WRITE) != 0) {
+            flags |= O_WRONLY;
+        } else {
+            flags |= O_RDONLY;
+        }
+        if ((raw & SAVANXP_OPEN_NONBLOCK) != 0) {
+            flags |= O_NONBLOCK;
+        }
+        return flags;
+    }
+
+    return (int)result;
+}
+
+int sx_poll(struct pollfd* fds, unsigned long count, int timeout_ms) {
+    struct savanxp_pollfd* raw = 0;
+    long result = 0;
+
+    if (count != 0 && fds == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+
+    raw = (struct savanxp_pollfd*)sx_calloc(count != 0 ? (size_t)count : 1u, sizeof(*raw));
+    if (raw == 0) {
+        g_errno = SAVANXP_ENOMEM;
+        return -1;
+    }
+
+    for (unsigned long index = 0; index < count; ++index) {
+        raw[index].fd = fds[index].fd;
+        raw[index].events = fds[index].events;
+        raw[index].revents = 0;
+    }
+
+    result = poll(raw, count, timeout_ms);
+    if (result < 0) {
+        sx_free(raw);
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+
+    for (unsigned long index = 0; index < count; ++index) {
+        fds[index].revents = raw[index].revents;
+    }
+
+    sx_free(raw);
+    return (int)result;
+}
+
+int sx_select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout) {
+    struct pollfd pollfds[SX_FD_SETSIZE];
+    int fd_map[SX_FD_SETSIZE];
+    int poll_count = 0;
+    int ready_count = 0;
+    int result = 0;
+
+    if (nfds < 0 || nfds > SX_FD_SETSIZE) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+
+    for (int fd = 0; fd < nfds; ++fd) {
+        short events = 0;
+        if (readfds != 0 && sx_fd_isset(fd, readfds)) {
+            events = (short)(events | POLLIN);
+        }
+        if (writefds != 0 && sx_fd_isset(fd, writefds)) {
+            events = (short)(events | POLLOUT);
+        }
+        if (exceptfds != 0 && sx_fd_isset(fd, exceptfds)) {
+            events = (short)(events | POLLERR | POLLHUP);
+        }
+        if (events == 0) {
+            continue;
+        }
+
+        pollfds[poll_count].fd = fd;
+        pollfds[poll_count].events = events;
+        pollfds[poll_count].revents = 0;
+        fd_map[poll_count] = fd;
+        poll_count += 1;
+    }
+
+    if (readfds != 0) {
+        sx_fd_zero(readfds);
+    }
+    if (writefds != 0) {
+        sx_fd_zero(writefds);
+    }
+    if (exceptfds != 0) {
+        sx_fd_zero(exceptfds);
+    }
+
+    result = sx_poll(pollfds, (unsigned long)poll_count, timeout != 0 ? (int)sx_timeout_from_timeval(timeout) : -1);
+    if (result < 0) {
+        return -1;
+    }
+
+    for (int index = 0; index < poll_count; ++index) {
+        const short revents = pollfds[index].revents;
+        const int fd = fd_map[index];
+        int marked = 0;
+        if (readfds != 0 && (revents & (POLLIN | POLLHUP)) != 0) {
+            sx_fd_set(fd, readfds);
+            marked = 1;
+        }
+        if (writefds != 0 && (revents & POLLOUT) != 0) {
+            sx_fd_set(fd, writefds);
+            marked = 1;
+        }
+        if (exceptfds != 0 && (revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            sx_fd_set(fd, exceptfds);
+            marked = 1;
+        }
+        if (marked) {
+            ready_count += 1;
+        }
+    }
+
+    return ready_count;
 }
 
 int sx_stat(const char* path, struct stat* info) {
@@ -1593,6 +1819,15 @@ pid_t sx_waitpid(pid_t pid, int* status, int options) {
     return (pid_t)result;
 }
 
+pid_t sx_fork(void) {
+    long result = fork();
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return (pid_t)result;
+}
+
 unsigned sx_sleep(unsigned seconds) {
     return sx_usleep((unsigned long)seconds * 1000000UL) < 0 ? seconds : 0;
 }
@@ -1864,6 +2099,19 @@ int sx_shutdown(int fd, int how) {
     (void)fd;
     (void)how;
     return 0;
+}
+
+int sx_kill(pid_t pid, int signal_number) {
+    long result = kill((int)pid, signal_number);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return 0;
+}
+
+int sx_raise(int signal_number) {
+    return sx_kill(sx_getpid(), signal_number);
 }
 
 void sx_exit(int code) {

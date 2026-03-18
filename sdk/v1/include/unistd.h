@@ -24,6 +24,7 @@
 #define dup sx_dup
 #define dup2 sx_dup2
 #define pipe sx_pipe
+#define fork sx_fork
 #define sleep sx_sleep
 #define usleep sx_usleep
 
@@ -42,5 +43,6 @@ int sx_sync(void);
 int sx_dup(int fd);
 int sx_dup2(int oldfd, int newfd);
 int sx_pipe(int fds[2]);
+pid_t sx_fork(void);
 unsigned sx_sleep(unsigned seconds);
 int sx_usleep(unsigned long microseconds);

@@ -292,6 +292,88 @@ bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_addres
     return true;
 }
 
+bool clone_address_space(const VmSpace& source, VmSpace& destination) {
+    if (!g_ready || source.pml4_physical == 0 || source.pml4_virtual == nullptr) {
+        return false;
+    }
+
+    VmSpace clone = {};
+    if (!create_address_space(clone)) {
+        return false;
+    }
+
+    for (uint64_t pml4_slot = 0; pml4_slot < kKernelPml4Start; ++pml4_slot) {
+        const uint64_t pml4e = source.pml4_virtual[pml4_slot];
+        if ((pml4e & kPagePresent) == 0 || (pml4e & kPageUser) == 0) {
+            continue;
+        }
+
+        uint64_t* pdpt = physical_to_virtual(pml4e & kPageMask);
+        if (pdpt == nullptr) {
+            destroy_address_space(clone);
+            return false;
+        }
+
+        for (uint64_t pdpt_slot = 0; pdpt_slot < 512; ++pdpt_slot) {
+            const uint64_t pdpte = pdpt[pdpt_slot];
+            if ((pdpte & kPagePresent) == 0 || (pdpte & kPageUser) == 0) {
+                continue;
+            }
+
+            uint64_t* pd = physical_to_virtual(pdpte & kPageMask);
+            if (pd == nullptr) {
+                destroy_address_space(clone);
+                return false;
+            }
+
+            for (uint64_t pd_slot = 0; pd_slot < 512; ++pd_slot) {
+                const uint64_t pde = pd[pd_slot];
+                if ((pde & kPagePresent) == 0 || (pde & kPageUser) == 0) {
+                    continue;
+                }
+
+                uint64_t* pt = physical_to_virtual(pde & kPageMask);
+                if (pt == nullptr) {
+                    destroy_address_space(clone);
+                    return false;
+                }
+
+                for (uint64_t pt_slot = 0; pt_slot < 512; ++pt_slot) {
+                    const uint64_t pte = pt[pt_slot];
+                    if ((pte & kPagePresent) == 0 || (pte & kPageUser) == 0) {
+                        continue;
+                    }
+
+                    memory::PageAllocation page = {};
+                    if (!memory::allocate_page(page)) {
+                        destroy_address_space(clone);
+                        return false;
+                    }
+
+                    const uint64_t source_physical = pte & kPageMask;
+                    uint64_t flags = kPageUser;
+                    if ((pte & kPageWrite) != 0) {
+                        flags |= kPageWrite;
+                    }
+
+                    memcpy(page.virtual_address, physical_to_virtual(source_physical), memory::kPageSize);
+
+                    const uint64_t virtual_address =
+                        sign_extend_48((pml4_slot << 39) | (pdpt_slot << 30) | (pd_slot << 21) | (pt_slot << 12));
+                    if (!map_page(clone, virtual_address, page.physical_address, flags)) {
+                        (void)memory::free_allocation(page);
+                        destroy_address_space(clone);
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    destination = clone;
+    return true;
+}
+
 bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base) {
     if (!g_ready || g_kernel_mmio_base == 0 || virtual_base == nullptr || size == 0) {
         return false;

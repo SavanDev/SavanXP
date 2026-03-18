@@ -20,14 +20,14 @@ constexpr uint32_t kSecondarySuperblockLba = 1;
 constexpr uint32_t kJournalLba = 2;
 constexpr uint32_t kBlockBitmapSectors = 32;
 constexpr uint32_t kInodeBitmapSectors = 1;
-constexpr uint32_t kInodeTableSectors = 32;
+constexpr uint32_t kInodeTableSectors = 64;
 constexpr uint32_t kJournalMetadataSectors = kBlockBitmapSectors + kInodeBitmapSectors + kInodeTableSectors;
 constexpr uint32_t kJournalSectors = 1 + kJournalMetadataSectors;
 constexpr uint32_t kBlockBitmapLba = kJournalLba + kJournalSectors;
 constexpr uint32_t kInodeBitmapLba = kBlockBitmapLba + kBlockBitmapSectors;
 constexpr uint32_t kInodeTableLba = kInodeBitmapLba + kInodeBitmapSectors;
 constexpr uint32_t kDataLba = kInodeTableLba + kInodeTableSectors;
-constexpr uint32_t kMaxInodes = 128;
+constexpr uint32_t kMaxInodes = 256;
 constexpr uint32_t kMaxRecords = kMaxInodes - 1;
 constexpr uint32_t kRootInodeId = 1;
 constexpr uint32_t kMaxExtents = 8;
@@ -113,6 +113,12 @@ size_t g_device_index = static_cast<size_t>(-1);
 svfs::MountStatus g_status = svfs::MountStatus::unavailable;
 bool g_metadata_ready = false;
 volatile uint32_t g_mutation_lock = 0;
+
+enum class RecoveryState : uint8_t {
+    failed = 0,
+    writable = 1,
+    read_only = 2,
+};
 
 uint32_t checksum_bytes(const void* data, size_t count) {
     const auto* bytes = static_cast<const uint8_t*>(data);
@@ -251,13 +257,18 @@ bool write_journal_payload() {
             g_inodes);
 }
 
-bool replay_journal() {
+RecoveryState recover_journal() {
     JournalHeader header = {};
     if (!block::read(g_device_index, g_superblock.journal_lba, 1, &header)) {
-        return false;
+        return RecoveryState::failed;
     }
     if (!valid_journal(header) || header.pending == 0) {
-        return (g_superblock.flags & kFlagClean) != 0 ? true : write_superblocks(g_superblock.sequence, kFlagClean);
+        if ((g_superblock.flags & kFlagClean) != 0) {
+            return RecoveryState::writable;
+        }
+        return write_superblocks(g_superblock.sequence, kFlagClean)
+            ? RecoveryState::writable
+            : RecoveryState::read_only;
     }
 
     const uint32_t cursor = g_superblock.journal_lba + 1;
@@ -268,13 +279,13 @@ bool replay_journal() {
             cursor + g_superblock.block_bitmap_sectors + g_superblock.inode_bitmap_sectors,
             g_superblock.inode_table_sectors,
             g_inodes)) {
-        return false;
+        return RecoveryState::failed;
     }
 
     if (!write_home_metadata() || !write_superblocks(header.sequence, kFlagClean) || !clear_journal()) {
-        return false;
+        return RecoveryState::read_only;
     }
-    return true;
+    return RecoveryState::writable;
 }
 
 bool commit_metadata() {
@@ -925,7 +936,12 @@ void mount_record(svfs::FileRecord& record) {
     if (record.directory) {
         record.vnode = vfs::ensure_directory(absolute);
     } else {
-        record.vnode = vfs::install_external_file(absolute, vfs::Backend::svfs, &record, record.size, true);
+        record.vnode = vfs::install_external_file(
+            absolute,
+            vfs::Backend::svfs,
+            &record,
+            record.size,
+            g_status != svfs::MountStatus::read_only);
     }
 }
 
@@ -978,9 +994,14 @@ bool load_filesystem_from_device(size_t device_index) {
 
     g_superblock = (!secondary_ok || (primary_ok && primary.sequence >= secondary.sequence)) ? primary : secondary;
     g_device_index = device_index;
-    if (!read_home_metadata() || !replay_journal() || !rebuild_record_cache()) {
+    if (!read_home_metadata()) {
         return false;
     }
+    const RecoveryState recovery = recover_journal();
+    if (recovery == RecoveryState::failed || !rebuild_record_cache()) {
+        return false;
+    }
+    g_status = recovery == RecoveryState::read_only ? svfs::MountStatus::read_only : svfs::MountStatus::mounted;
     g_metadata_ready = true;
     return true;
 }
@@ -1027,6 +1048,10 @@ MountStatus status() {
 }
 
 bool mounted() {
+    return g_status == MountStatus::mounted || g_status == MountStatus::read_only;
+}
+
+bool writable() {
     return g_status == MountStatus::mounted;
 }
 
@@ -1075,6 +1100,9 @@ bool sync() {
     if (g_device_index == static_cast<size_t>(-1) || !g_metadata_ready) {
         return false;
     }
+    if (!writable()) {
+        return true;
+    }
     MutationGuard guard;
     return write_superblocks(g_superblock.sequence, kFlagClean) && clear_journal();
 }
@@ -1095,6 +1123,9 @@ bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count) {
 
 bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t count, bool truncate, size_t& written) {
     written = 0;
+    if (!writable()) {
+        return false;
+    }
     if (!file.in_use || file.directory) {
         return false;
     }
@@ -1151,6 +1182,9 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
 }
 
 bool truncate_file(FileRecord& file, size_t size) {
+    if (!writable()) {
+        return false;
+    }
     if (!file.in_use || file.directory) {
         return false;
     }
@@ -1185,6 +1219,9 @@ bool truncate_file(FileRecord& file, size_t size) {
 }
 
 FileRecord* create_file(const char* path) {
+    if (!writable()) {
+        return nullptr;
+    }
     char relative[256] = {};
     char parent_relative[256] = {};
     char leaf[64] = {};
@@ -1229,6 +1266,9 @@ FileRecord* create_file(const char* path) {
 }
 
 FileRecord* create_directory(const char* path) {
+    if (!writable()) {
+        return nullptr;
+    }
     char relative[256] = {};
     char parent_relative[256] = {};
     char leaf[64] = {};
@@ -1273,6 +1313,9 @@ FileRecord* create_directory(const char* path) {
 }
 
 bool remove_directory(FileRecord& file) {
+    if (!writable()) {
+        return false;
+    }
     if (!file.in_use || !file.directory) {
         return false;
     }
@@ -1300,6 +1343,9 @@ bool remove_directory(FileRecord& file) {
 }
 
 bool rename_path(const char* old_path, const char* new_path) {
+    if (!writable()) {
+        return false;
+    }
     FileRecord* target = find_record_by_path(old_path);
     char new_relative[256] = {};
     char new_parent_relative[256] = {};
@@ -1343,6 +1389,9 @@ bool rename_path(const char* old_path, const char* new_path) {
 }
 
 bool unlink_file(FileRecord& file) {
+    if (!writable()) {
+        return false;
+    }
     if (!file.in_use || file.directory) {
         return false;
     }

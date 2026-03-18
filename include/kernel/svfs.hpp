@@ -12,6 +12,7 @@ namespace svfs {
 enum class MountStatus : uint8_t {
     unavailable = 0,
     mounted = 1,
+    read_only = 2,
 };
 
 struct FileRecord {
@@ -28,6 +29,7 @@ struct FileRecord {
 void initialize();
 MountStatus status();
 bool mounted();
+bool writable();
 bool mount_at_root();
 size_t file_count();
 uint64_t total_bytes();

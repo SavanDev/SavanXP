@@ -13,6 +13,7 @@ $ImageRoot = Join-Path $BuildRoot "image"
 $BootRoot = Join-Path $ImageRoot "boot"
 $EfiBootRoot = Join-Path $ImageRoot "EFI\\BOOT"
 $RootfsBuild = Join-Path $BuildRoot "rootfs"
+$DiskBuildRoot = Join-Path $BuildRoot "diskfs"
 $GeneratedRoot = Join-Path $BuildRoot "generated"
 $DiskRoot = Join-Path $ProjectRoot "diskfs"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
@@ -102,7 +103,11 @@ $UserPrograms = @(
     @{ Name = "gputest"; Source = "userland/gputest.c" },
     @{ Name = "keytest"; Source = "userland/keytest.c" },
     @{ Name = "mousetest"; Source = "userland/mousetest.c" },
-    @{ Name = "sysinfo"; Source = "userland/sysinfo.c" }
+    @{ Name = "sysinfo"; Source = "userland/sysinfo.c" },
+    @{ Name = "forktest"; Source = "userland/forktest.c" },
+    @{ Name = "polltest"; Source = "userland/polltest.c" },
+    @{ Name = "sigtest"; Source = "userland/sigtest.c" },
+    @{ Name = "busybox"; Source = "userland/busybox.c" }
 )
 
 function New-Directory([string]$Path) {
@@ -412,6 +417,9 @@ function Build-Kernel {
     if (Test-Path $RootfsBuild) {
         Remove-Item -Recurse -Force $RootfsBuild
     }
+    if (Test-Path $DiskBuildRoot) {
+        Remove-Item -Recurse -Force $DiskBuildRoot
+    }
     New-Directory $GeneratedRoot
 
     $commonFlags = Get-CommonFlags
@@ -426,7 +434,10 @@ function Build-Kernel {
 
     Generate-CursorAsset
     Build-Userland -Compiler $clang -Linker $ld
-    Ensure-SvfsDisk -SourceRoot $DiskRoot -OutputPath $DiskImage
+    Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
+    New-Directory (Join-Path $DiskBuildRoot "bin")
+    Copy-Item (Join-Path $RootfsBuild "bin\\*") (Join-Path $DiskBuildRoot "bin") -Force
+    Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
 
     $linkArgs = @(
         "-m", "elf_x86_64",

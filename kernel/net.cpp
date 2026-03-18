@@ -49,10 +49,10 @@ struct Socket {
     uint32_t initial_sequence;
     size_t packet_queue_head;
     size_t packet_queue_size;
-    UdpPacket queue[8];
+    UdpPacket queue[16];
     size_t rx_head;
     size_t rx_size;
-    uint8_t rx_buffer[4096];
+    uint8_t rx_buffer[8192];
 };
 
 } // namespace net
@@ -104,7 +104,7 @@ constexpr uint8_t kIpProtocolIcmp = 1;
 constexpr uint8_t kIpProtocolUdp = 17;
 constexpr uint8_t kIpProtocolTcp = 6;
 constexpr uint16_t kPingIdentifier = 0x5358;
-constexpr size_t kMaxSockets = 16;
+constexpr size_t kMaxSockets = 32;
 constexpr uint16_t kEphemeralPortStart = 49152;
 constexpr uint16_t kEphemeralPortEnd = 65535;
 constexpr uint16_t kTcpWindowSize = 4096;
@@ -1366,7 +1366,8 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     return 0;
 }
 
-int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address) {
+int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, bool nonblocking) {
+    (void)nonblocking;
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_DGRAM || socket->protocol != SAVANXP_IPPROTO_UDP || count == 0 || count > 1024) {
         return count == 0 ? 0 : negative_error(SAVANXP_EINVAL);
     }
@@ -1410,7 +1411,7 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
     return static_cast<int>(count);
 }
 
-int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms) {
+int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms, bool nonblocking) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_DGRAM || socket->protocol != SAVANXP_IPPROTO_UDP || count == 0 || !process::validate_user_range(user_buffer, count, true)) {
         return negative_error(SAVANXP_EINVAL);
     }
@@ -1447,6 +1448,10 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
             return static_cast<int>(to_copy);
         }
 
+        if (nonblocking) {
+            return negative_error(SAVANXP_EAGAIN);
+        }
+
         if (timeout_ms != 0) {
             const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
             if (now_ms - start_ms >= timeout_ms) {
@@ -1457,7 +1462,7 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
     }
 }
 
-int read_socket(Socket* socket, uint64_t user_buffer, size_t count) {
+int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || !socket->connected || count == 0) {
         return count == 0 ? 0 : negative_error(SAVANXP_EBADF);
     }
@@ -1473,6 +1478,9 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count) {
         }
         if (socket->fin_received) {
             return 0;
+        }
+        if (nonblocking) {
+            return negative_error(SAVANXP_EAGAIN);
         }
         const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
         if (now_ms - start_ms >= 5000u) {
@@ -1490,7 +1498,7 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count) {
     return static_cast<int>(copied);
 }
 
-int write_socket(Socket* socket, uint64_t user_buffer, size_t count) {
+int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || !socket->connected) {
         return negative_error(SAVANXP_EBADF);
     }
@@ -1512,6 +1520,10 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count) {
     }
     socket->send_next += static_cast<uint32_t>(count);
 
+    if (nonblocking) {
+        return static_cast<int>(count);
+    }
+
     const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (socket->send_unacked < socket->send_next) {
         poll_receive();
@@ -1525,6 +1537,39 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count) {
         wait_for_tick();
     }
     return static_cast<int>(count);
+}
+
+bool socket_can_read(const Socket* socket) {
+    if (socket == nullptr || !socket->in_use) {
+        return false;
+    }
+    if (socket->type == SAVANXP_SOCK_DGRAM) {
+        return socket->packet_queue_size != 0;
+    }
+    if (socket->type == SAVANXP_SOCK_STREAM) {
+        return socket->rx_size != 0 || socket->fin_received;
+    }
+    return false;
+}
+
+bool socket_can_write(const Socket* socket) {
+    if (socket == nullptr || !socket->in_use) {
+        return false;
+    }
+    if (socket->type == SAVANXP_SOCK_DGRAM) {
+        return true;
+    }
+    if (socket->type == SAVANXP_SOCK_STREAM) {
+        return socket->connected && !socket->fin_received;
+    }
+    return false;
+}
+
+bool socket_has_hangup(const Socket* socket) {
+    if (socket == nullptr || !socket->in_use) {
+        return false;
+    }
+    return socket->type == SAVANXP_SOCK_STREAM && socket->fin_received;
 }
 
 void initialize() {

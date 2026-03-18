@@ -54,6 +54,10 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_SYSTEM_INFO = 35,
     SAVANXP_SYS_SYNC = 36,
     SAVANXP_SYS_REALTIME = 37,
+    SAVANXP_SYS_FCNTL = 38,
+    SAVANXP_SYS_POLL = 39,
+    SAVANXP_SYS_FORK = 40,
+    SAVANXP_SYS_KILL = 41,
 };
 
 enum savanxp_open_flags {
@@ -62,6 +66,7 @@ enum savanxp_open_flags {
     SAVANXP_OPEN_CREATE = 1u << 2,
     SAVANXP_OPEN_TRUNCATE = 1u << 3,
     SAVANXP_OPEN_APPEND = 1u << 4,
+    SAVANXP_OPEN_NONBLOCK = 1u << 5,
 };
 
 enum savanxp_error_code {
@@ -123,6 +128,33 @@ struct savanxp_process_info {
     int32_t exit_code;
     uint32_t state;
     char name[32];
+};
+
+enum savanxp_fcntl_command {
+    SAVANXP_F_GETFL = 1,
+    SAVANXP_F_SETFL = 2,
+};
+
+enum savanxp_poll_events {
+    SAVANXP_POLLIN = 0x0001,
+    SAVANXP_POLLOUT = 0x0004,
+    SAVANXP_POLLERR = 0x0008,
+    SAVANXP_POLLHUP = 0x0010,
+    SAVANXP_POLLNVAL = 0x0020,
+};
+
+struct savanxp_pollfd {
+    int32_t fd;
+    int16_t events;
+    int16_t revents;
+};
+
+enum savanxp_signal_number {
+    SAVANXP_SIGINT = 2,
+    SAVANXP_SIGKILL = 9,
+    SAVANXP_SIGPIPE = 13,
+    SAVANXP_SIGTERM = 15,
+    SAVANXP_SIGCHLD = 17,
 };
 
 enum savanxp_timer_backend {

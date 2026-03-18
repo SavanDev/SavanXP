@@ -128,8 +128,16 @@ long rename(const char* old_path, const char* new_path) {
     return syscall2(SAVANXP_SYS_RENAME, (unsigned long)old_path, (unsigned long)new_path);
 }
 
+long fcntl(int fd, unsigned long command, unsigned long value) {
+    return syscall3(SAVANXP_SYS_FCNTL, (unsigned long)fd, command, value);
+}
+
 long ioctl(int fd, unsigned long request, unsigned long arg) {
     return syscall3(SAVANXP_SYS_IOCTL, (unsigned long)fd, request, arg);
+}
+
+long poll(struct savanxp_pollfd* fds, unsigned long count, long timeout_ms) {
+    return syscall3(SAVANXP_SYS_POLL, (unsigned long)fds, count, (unsigned long)timeout_ms);
 }
 
 long socket(unsigned long domain, unsigned long type, unsigned long protocol) {
@@ -154,6 +162,14 @@ long connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long ti
 
 long waitpid(int pid, int* status) {
     return syscall2(SAVANXP_SYS_WAITPID, (unsigned long)pid, (unsigned long)status);
+}
+
+long fork(void) {
+    return syscall0(SAVANXP_SYS_FORK);
+}
+
+long kill(int pid, int signal_number) {
+    return syscall2(SAVANXP_SYS_KILL, (unsigned long)pid, (unsigned long)signal_number);
 }
 
 long yield(void) {

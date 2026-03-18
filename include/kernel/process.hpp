@@ -17,9 +17,9 @@ struct Socket;
 
 namespace process {
 
-constexpr size_t kMaxProcesses = 16;
-constexpr size_t kMaxFileHandles = 16;
-constexpr size_t kMaxOpenFiles = 64;
+constexpr size_t kMaxProcesses = 32;
+constexpr size_t kMaxFileHandles = 32;
+constexpr size_t kMaxOpenFiles = 128;
 constexpr size_t kProcessNameLength = 32;
 constexpr size_t kProcessPathLength = 256;
 
@@ -69,6 +69,7 @@ enum class HandleKind : uint8_t {
 enum OpenFlags : uint32_t {
     open_read = 1u << 0,
     open_write = 1u << 1,
+    open_nonblock = 1u << 2,
 };
 
 struct Pipe {
@@ -94,6 +95,15 @@ struct OpenFile {
     size_t iterator_index;
 };
 
+enum SignalFlags : uint32_t {
+    signal_none = 0,
+    signal_sigint = 1u << 0,
+    signal_sigkill = 1u << 1,
+    signal_sigpipe = 1u << 2,
+    signal_sigterm = 1u << 3,
+    signal_sigchld = 1u << 4,
+};
+
 struct FdEntry {
     OpenFile* file;
 };
@@ -114,6 +124,8 @@ struct Process {
     uint64_t blocked_write_progress;
     uint64_t wake_tick;
     uint32_t time_slice;
+    uint32_t pending_signals;
+    uint32_t last_signal;
     char name[kProcessNameLength];
     char cwd[kProcessPathLength];
     vm::VmSpace address_space;
