@@ -1,15 +1,24 @@
 SavanXP
 
-Estado del experimento:
+Sistema en estado experimental, pero ya usable para pruebas dentro de la shell.
+
+Estado general:
 - Boot UEFI con Limine
-- PMM y heap tempranos
-- GDT, IDT, IRQs y timer local APIC
 - Consola de texto sobre framebuffer
-- TTY canonica y teclado PS/2
-- Syscalls minimas e initramfs
-- Userland inicial con shell y comandos basicos
+- TTY canonica con teclado PS/2
+- Syscalls, procesos y shell de userland
+- /disk como volumen persistente principal
 
 Atajos utiles:
-- `help` para comandos y ejemplos
-- `sysinfo` para diagnostico del sistema
-- `/disk` como espacio persistente principal
+- `help` para ver comandos y ejemplos
+- `sysinfo` para diagnostico general del sistema
+- `df` para ver espacio total, usado y libre de /disk
+- `cd /disk` para entrar al volumen persistente
+- `pwd` para ver el directorio actual
+- `ls` para listar el directorio actual
+- `sync` para forzar escritura de metadatos a disco
+
+Notas:
+- `/README` vive en el initramfs
+- `/disk/README` vive en el filesystem persistente SVFS
+- Los binarios externos instalados en `/disk/bin` se pueden ejecutar desde la shell
