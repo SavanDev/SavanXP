@@ -10,6 +10,8 @@ Notas de corte:
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-19
+
 ### Agregado
 
 - Syscalls y wrappers POSIX nuevos para `fork`, `kill`, `raise`, `poll`,
