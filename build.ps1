@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "run", "debug", "clean")]
+    [ValidateSet("build", "run", "debug", "smoke", "clean")]
     [string]$Command = "build"
 )
 
@@ -24,6 +24,9 @@ $LimineBranch = "v10.x-binary"
 $KernelElf = Join-Path $BuildRoot "kernel.elf"
 $VarsTemplate = Join-Path $BuildRoot "OVMF_VARS.fd"
 $DebugConLog = Join-Path $BuildRoot "debugcon.log"
+$SmokeSerialLog = Join-Path $BuildRoot "smoke-serial.log"
+$SmokeStdoutLog = Join-Path $BuildRoot "smoke-qemu-stdout.log"
+$SmokeStderrLog = Join-Path $BuildRoot "smoke-qemu-stderr.log"
 
 . (Join-Path $ToolRoot "UserAppCommon.ps1")
 
@@ -107,7 +110,8 @@ $UserPrograms = @(
     @{ Name = "forktest"; Source = "userland/forktest.c" },
     @{ Name = "polltest"; Source = "userland/polltest.c" },
     @{ Name = "sigtest"; Source = "userland/sigtest.c" },
-    @{ Name = "busybox"; Source = "userland/busybox.c" }
+    @{ Name = "busybox"; Source = "userland/busybox.c" },
+    @{ Name = "smoke"; Source = "userland/smoke.c" }
 )
 
 function New-Directory([string]$Path) {
@@ -398,7 +402,7 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
     New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
 }
 
-function Build-Kernel {
+function Build-Kernel([switch]$SmokeMode) {
     $clang = Require-Executable "clang++" @(
         "clang++",
         "C:\\Program Files\\LLVM\\bin\\clang++.exe"
@@ -434,9 +438,16 @@ function Build-Kernel {
 
     Generate-CursorAsset
     Build-Userland -Compiler $clang -Linker $ld
+    if ($SmokeMode) {
+        Set-Content -Path (Join-Path $RootfsBuild "SMOKE") -Value "smoke" -NoNewline
+        New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
+    }
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
     Copy-Item (Join-Path $RootfsBuild "bin\\*") (Join-Path $DiskBuildRoot "bin") -Force
+    if (Test-Path $DiskImage) {
+        Remove-Item $DiskImage -Force
+    }
     Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
 
     $linkArgs = @(
@@ -505,6 +516,90 @@ function Run-Qemu([switch]$WaitForDebugger) {
     & $qemu @args
 }
 
+function Run-SmokeQemu {
+    $qemu = Require-Executable "qemu-system-x86_64" @(
+        "qemu-system-x86_64",
+        "C:\\Program Files\\qemu\\qemu-system-x86_64.exe"
+    )
+    Build-Kernel -SmokeMode
+
+    $ovmf = Resolve-OvmfPair
+    Copy-Item $ovmf.Vars $VarsTemplate -Force
+    if (Test-Path $DebugConLog) {
+        Remove-Item $DebugConLog -Force
+    }
+    if (Test-Path $SmokeSerialLog) {
+        Remove-Item $SmokeSerialLog -Force
+    }
+    if (Test-Path $SmokeStdoutLog) {
+        Remove-Item $SmokeStdoutLog -Force
+    }
+    if (Test-Path $SmokeStderrLog) {
+        Remove-Item $SmokeStderrLog -Force
+    }
+
+    $args = @(
+        "-machine", "q35,pcspk-audiodev=audio0",
+        "-m", "256M",
+        "-cpu", "max",
+        "-audiodev", "none,id=audio0",
+        "-display", "none",
+        "-rtc", "base=localtime",
+        "-drive", "if=pflash,format=raw,readonly=on,file=""$($ovmf.Code)""",
+        "-drive", "if=pflash,format=raw,file=""$VarsTemplate""",
+        "-drive", "file=fat:rw:build/image,format=raw",
+        "-netdev", "user,id=net0",
+        "-device", "rtl8139,netdev=net0",
+        "-device", "virtio-vga,xres=1280,yres=800",
+        "-device", "virtio-tablet-pci",
+        "-device", "isa-ide,id=svide",
+        "-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$DiskImage""",
+        "-device", "ide-hd,drive=svdisk,bus=svide.0",
+        "-serial", "file:$SmokeSerialLog",
+        "-debugcon", "file:$DebugConLog",
+        "-global", "isa-debugcon.iobase=0xe9",
+        "-no-reboot",
+        "-no-shutdown"
+    )
+
+    $process = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -RedirectStandardOutput $SmokeStdoutLog -RedirectStandardError $SmokeStderrLog
+    try {
+        $deadline = (Get-Date).AddMinutes(2)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 1000
+            if (-not (Test-Path $SmokeSerialLog)) {
+                if ($process.HasExited) {
+                    break
+                }
+                continue
+            }
+
+            $content = Get-Content $SmokeSerialLog -Raw
+            if ($content -match "SMOKE PASS") {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                Write-Host "Smoke PASS"
+                return
+            }
+            if ($content -match "SMOKE FAIL") {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                throw "Smoke FAIL. Revisar $SmokeSerialLog"
+            }
+            if ($process.HasExited) {
+                break
+            }
+        }
+    } finally {
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($process.HasExited) {
+        throw "Smoke aborted. Revisar $SmokeSerialLog y $SmokeStderrLog"
+    }
+    throw "Smoke timeout. Revisar $SmokeSerialLog y $SmokeStderrLog"
+}
+
 switch ($Command) {
     "build" {
         Build-Kernel
@@ -514,6 +609,9 @@ switch ($Command) {
     }
     "debug" {
         Run-Qemu -WaitForDebugger
+    }
+    "smoke" {
+        Run-SmokeQemu
     }
     "clean" {
         if (Test-Path $BuildRoot) {

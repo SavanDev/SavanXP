@@ -45,5 +45,6 @@ bool remove_directory(FileRecord& file);
 bool rename_path(const char* old_path, const char* new_path);
 bool unlink_file(FileRecord& file);
 FileRecord* file_from_vnode(vfs::Vnode& node);
+void refresh_vnode(vfs::Vnode& node);
 
 } // namespace svfs

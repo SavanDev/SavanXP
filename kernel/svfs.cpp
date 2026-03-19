@@ -1427,4 +1427,23 @@ FileRecord* file_from_vnode(vfs::Vnode& node) {
     return nullptr;
 }
 
+void refresh_vnode(vfs::Vnode& node) {
+    FileRecord* record = file_from_vnode(node);
+    if (record == nullptr) {
+        return;
+    }
+
+    record->vnode = &node;
+    node.writable = writable();
+    if (record->directory) {
+        return;
+    }
+
+    Inode* inode = inode_for_id(record->inode_id);
+    if (inode != nullptr) {
+        record->size = inode->size;
+        node.size = inode->size;
+    }
+}
+
 } // namespace svfs

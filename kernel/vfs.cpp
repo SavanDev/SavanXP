@@ -200,6 +200,13 @@ DynamicFile* allocate_dynamic_file() {
     return nullptr;
 }
 
+void refresh_external_node(vfs::Vnode& node) {
+    if (node.backend != vfs::Backend::svfs) {
+        return;
+    }
+    svfs::refresh_vnode(node);
+}
+
 bool attach_dynamic_storage(vfs::Vnode& node, bool truncate_existing) {
     if (node.type != vfs::NodeType::file || node.backend != vfs::Backend::memory) {
         return false;
@@ -520,7 +527,11 @@ const Vnode* resolve(const char* path) {
         return nullptr;
     }
     const int index = resolve_index(normalized);
-    return index >= 0 ? &g_nodes[index].vnode : nullptr;
+    if (index < 0) {
+        return nullptr;
+    }
+    refresh_external_node(g_nodes[index].vnode);
+    return &g_nodes[index].vnode;
 }
 
 Vnode* open(const char* path, uint32_t flags) {
@@ -543,6 +554,7 @@ Vnode* open(const char* path, uint32_t flags) {
     int index = resolve_index(normalized);
     if (index >= 0) {
         Vnode& node = g_nodes[index].vnode;
+        refresh_external_node(node);
         if ((wants_write || wants_truncate) && node.backend == Backend::memory) {
             if (!attach_dynamic_storage(node, wants_truncate)) {
                 g_last_error = SAVANXP_ENOMEM;
