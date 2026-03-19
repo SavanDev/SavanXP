@@ -322,6 +322,26 @@ function Ensure-SvfsDisk([string]$SourceRoot, [string]$OutputPath) {
     Initialize-Svfs2DiskImage -SourceRoot $SourceRoot -OutputPath $OutputPath
 }
 
+function Sync-SvfsDiskTree($Image, [string]$SourceRoot, [string]$DestinationRoot = "/disk") {
+    if (-not (Test-Path $SourceRoot)) {
+        return
+    }
+
+    $items = Get-ChildItem -Path $SourceRoot -Recurse | Sort-Object FullName
+    foreach ($item in $items) {
+        $relative = $item.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
+        if ([string]::IsNullOrWhiteSpace($relative)) {
+            continue
+        }
+
+        if ($item.PSIsContainer) {
+            Ensure-SvfsDirectory $Image $relative
+        } else {
+            Install-SvfsFile -Image $Image -DestinationPath ("$DestinationRoot/$relative") -Data ([System.IO.File]::ReadAllBytes($item.FullName))
+        }
+    }
+}
+
 function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
     $stream = [System.IO.File]::Open($OutputPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
     try {
@@ -447,10 +467,10 @@ function Build-Kernel([switch]$SmokeMode) {
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
     Copy-Item (Join-Path $RootfsBuild "bin\\*") (Join-Path $DiskBuildRoot "bin") -Force
-    if (Test-Path $DiskImage) {
-        Remove-Item $DiskImage -Force
-    }
     Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
+    $diskImage = Open-SvfsImage $DiskImage
+    Sync-SvfsDiskTree -Image $diskImage -SourceRoot $DiskBuildRoot
+    Save-SvfsImage $diskImage
 
     $linkArgs = @(
         "-m", "elf_x86_64",

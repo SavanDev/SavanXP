@@ -3,13 +3,35 @@
 Estado actual del port:
 
 - jugable en modo `fullscreen` exclusivo
-- sin audio ni mouse en esta primera etapa
-- usa `/dev/fb0` y `/dev/input0`
+- sin audio en esta etapa
+- usa `/dev/fb0`, `/dev/input0` y `/dev/mouse0`
 - guarda config y saves bajo `/disk/games/doom`
-- se apoya en el input PS/2 actual para teclas especiales y en SVFS v2 para
-  archivos que crecen en runtime
+- se apoya en el stack actual de input (`PS/2` o `virtio-input`, segun el
+  entorno) para teclado y mouse
+- se apoya en `SVFS2` para config, saves y archivos que crecen en runtime
 - sirve como primer juego porteado y como prueba fuerte de apps graficas
   externas sobre el ABI actual de SavanXP
+
+Ventajas practicas de `v0.1.4` para el port:
+
+- el timer base a `200 Hz` mejora un poco la respuesta percibida del mouse y
+  el redondeo practico de `sleep_ms()` durante el loop del juego
+- los techos internos mas altos para procesos, descriptores y `VFS/SVFS2`
+  dejan mas margen para ports grandes y assets persistentes
+- `SVFS2` ya puede montar `/disk` en modo degradado de solo lectura frente a
+  recovery incompleto, lo que evita que el port quede inutilizable por dejar
+  el volumen directamente offline
+- el build principal instala tambien binarios internos en `/disk/bin`, asi que
+  la shell y las pruebas generales del sistema ejercitan mas seguido el mismo
+  userland persistente que usa el port
+
+Cosas nuevas de `v0.1.4` que todavia no cambian demasiado a Doom:
+
+- `poll`, `select`, `fcntl` y `O_NONBLOCK` son una mejora real de la SDK, pero
+  el backend actual de Doom sigue funcionando bien con `gfx_poll_event()` y
+  `mouse_poll_event()` sin necesitar una refactorizacion inmediata
+- `busybox` mejora la shell y el entorno general, pero no cambia la logica del
+  port en si
 
 Que fixes quedaron en cada capa:
 
@@ -54,6 +76,10 @@ Controles esperados en la build actual:
 - `Espacio`: usar / abrir puertas
 - `Alt`: strafe
 - `Shift`: correr
+- mouse: girar / mover vista
+- click izquierdo: disparar
+- click derecho: strafe
+- click medio: avanzar
 - `Esc`: menu / salir al menu
 - `F1` a `F10`: teclas especiales del juego
 
@@ -63,6 +89,7 @@ Checklist corta de validacion manual:
 - encuentra `doom1.wad` en `/disk/games/doom/doom1.wad`
 - `New Game` entra a una partida sin volver a la shell
 - `Ctrl` dispara y `Espacio` activa puertas/switches
+- el mouse responde en menu y durante la partida
 - al salir, la shell recupera el framebuffer sin corrupcion visual
 
 Smoke test automatizada:
@@ -85,6 +112,5 @@ no como criterio duro de fallo.
 Fuera de alcance de esta etapa:
 
 - audio PCM / musica
-- mouse
 - ventanas o compositor
 - multiplayer real
