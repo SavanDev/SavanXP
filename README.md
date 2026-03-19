@@ -1,6 +1,6 @@
 # SavanXP
 
-Version actual del proyecto: `v0.1.3`
+Version actual del proyecto: `v0.1.4`
 
 Historial de versiones: `CHANGELOG.md`
 
@@ -37,11 +37,12 @@ El kernel ya bootea a una terminal funcional inicial:
   memoria para redireccion simple y un volumen persistente `SVFS` montado en
   `/disk`.
 - Loader `ELF64` estatico para procesos simples en `ring 3`.
-- Userland inicial con `init`, `sh`, `echo`, `uname`, `ls`, `cat`, `sleep`,
-  `ticker`, `demo`, `true`, `false`, `ps`, `fdtest`, `waittest`,
-  `pipestress`, `spawnloop`, `badptr`, `rm`, `rmdir`, `truncate`,
-  `seektest`, `truncatetest`, `errtest`, `sysinfo`, `keytest`, `mousetest`
-  y `desktop`.
+- Userland inicial con `init`, `sh`, `busybox`, `uname`, `df`, `ticker`,
+  `demo`, `ps`, `fdtest`, `waittest`, `pipestress`, `spawnloop`, `badptr`,
+  `rmdir`, `truncate`, `seektest`, `truncatetest`, `errtest`, `sysinfo`,
+  `keytest`, `mousetest`, `desktop`, `forktest`, `polltest`, `sigtest`
+  y `smoke`; los comandos comodin `echo`, `cat`, `ls`, `mkdir`, `rm`, `mv`,
+  `cp`, `true`, `false` y `sleep` ya salen del multicall `busybox`.
 - Timer `local APIC/x2APIC` activo y calibrado contra `RTC/CMOS` para dar un
   tiempo base mas estable en QEMU y mantener `uptime_ms` / `sleep_ms`
   alineados con tiempo real.
@@ -87,6 +88,9 @@ El kernel ya bootea a una terminal funcional inicial:
 - Shell con parser mejorado para comillas simples/dobles y builtins `exec`,
   `which`, `mkdir`, `cd` y `pwd`.
 - Handles refcounted con `dup`, `dup2`, `waitpid(-1)` y procesos zombie/reap.
+- Syscalls y capa POSIX ampliadas con `fork`, `kill`, `raise`,
+  `fcntl(F_GETFL/F_SETFL)`, `O_NONBLOCK`, `poll` y `select`, dejando una base
+  mucho mas realista para ports y utilidades estilo BusyBox.
 - Reclaim real de paginas para `exit`/`exec`, destruccion de `VmSpace` y
   liberacion de stacks de kernel al reapear procesos.
 - `SVFS2` como filesystem persistente de `/disk`, con `superblock`
@@ -98,19 +102,24 @@ El kernel ya bootea a una terminal funcional inicial:
 - Heap del kernel y runtime POSIX del SDK ahora reciclan bloques liberados con
   `free()`/`realloc()`, dejando una base comun mejor encaminada para futuras
   extensiones como `mmap` o heaps mas sofisticados.
+- `SVFS2` ya puede montar `/disk` en modo degradado de solo lectura si el
+  recovery no deja el volumen en condiciones seguras para `RW`, evitando
+  dejarlo offline frente a fallos recuperables.
 - Validacion basica de punteros de userland en syscalls principales, mas
   syscalls `seek`, `unlink`, `exec`, `mkdir`, `rmdir`, `truncate`, `rename`,
   `sync` e `ioctl`.
-- Script `build.ps1` con `build`, `run`, `debug` y `clean`.
+- `build.ps1` con `build`, `run`, `debug`, `smoke` y `clean`; la variante
+  `smoke` recompila, prepara `/disk/bin`, arranca QEMU headless y espera un
+  `SMOKE PASS/FAIL` automatizado desde userland.
 
 ## Siguiente orden recomendado
 
 Orden sugerido para las cuatro lineas de trabajo siguientes:
 
-1. Agregar logs y errores mas claros en red.
+1. Completar el subset real de BusyBox sobre la base nueva y ampliar tests de compatibilidad.
 2. Evolucionar el desktop shell y la libreria GUI sobre la base fullscreen actual.
-3. Consolidar la SDK v1/POSIX y correr smoke tests reales dentro de QEMU.
-4. Ampliar sockets/TCP desde el cliente minimo actual hacia una API mas completa.
+3. Ampliar la API de sockets desde el cliente minimo actual hacia servidor TCP y mejor observabilidad.
+4. Profundizar señales, TTY y compatibilidad POSIX alrededor de ports mas ambiciosos.
 
 Razon del orden:
 
@@ -120,8 +129,9 @@ Razon del orden:
 - La GUI fullscreen ya probo el camino tecnico; el siguiente paso natural es
   consolidar el desktop shell inicial y convertir esas primitivas en una
   libreria reutilizable y menos demo-driven.
-- La capa POSIX/libc ya existe, asi que conviene validarla mejor dentro del
-  sistema antes de seguir agrandando la ABI o sumar mas ports externos.
+- La capa POSIX/libc ya cubre `fork`, `poll/select`, `kill` y `O_NONBLOCK`,
+  asi que el siguiente salto natural es endurecer compatibilidad real con
+  utilidades y ports mas ambiciosos.
 - El stack actual ya supero `ping` y tiene UDP + cliente TCP minimo; el salto
   pendiente ahora es completar mejor la API de sockets y el soporte de TCP.
 
@@ -144,19 +154,23 @@ si no existe en `tools/limine`.
 .\build.ps1 build
 .\build.ps1 run
 .\build.ps1 debug
+.\build.ps1 smoke
 .\build.ps1 clean
 ```
 
 Durante `run` y `debug`, QEMU expone la salida serie en la terminal. El kernel
 entra a una shell inicial de userland con prompt contextual y el `debugcon`
-queda guardado en `build/debugcon.log`. Para ver el snapshot de arranque y
+queda guardado en `build/debugcon.log`. `smoke` usa una sesion headless aparte,
+corre el runner `/disk/bin/smoke` y deja logs en `build/smoke-*.log`. Para ver
+el snapshot de arranque y
 estado base del sistema desde la shell, usa `sysinfo`.
 
 ## Apps externas
 
 El flujo principal para probar programas propios ya no requiere reconstruir el
 `initramfs`. Compilas desde Windows contra la SDK v1 e instalas el ELF directo
-en `build/disk.img`:
+en `build/disk.img`; el build principal tambien replica los binarios internos
+a `/disk/bin` para que la shell resuelva primero el userland persistente:
 
 ```powershell
 .\build.ps1 build
@@ -182,6 +196,10 @@ Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`. Tambien
 hay ejemplos/aplicaciones graficas externas en `sdk/gfxhello` y
 `sdk/doomgeneric`, y una utilidad especifica `gputest` para validar el camino
 directo sobre `/dev/gpu0`.
+
+La smoke automatizada actual valida `forktest`, `polltest`, `sigtest`,
+`busybox` y escritura/lectura real sobre `/disk`, de modo que los cambios de
+ABI base ya no dependen solo de verificacion host-side.
 
 Dentro de la `sdk/v1`, el runtime POSIX ya no usa un allocator solo tipo
 arena/bump: `malloc`, `free`, `calloc` y `realloc` reciclan memoria dentro del

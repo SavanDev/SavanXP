@@ -1,5 +1,19 @@
 #include "libc.h"
 
+static unsigned long parse_number(const char* text) {
+    unsigned long value = 0;
+    if (text == 0 || text[0] == '\0') {
+        return 0;
+    }
+    for (size_t index = 0; text[index] != '\0'; ++index) {
+        if (text[index] < '0' || text[index] > '9') {
+            return 0;
+        }
+        value = value * 10 + (unsigned long)(text[index] - '0');
+    }
+    return value;
+}
+
 const char* applet_name(const char* path) {
     const char* name = path;
     if (path == 0) {
@@ -190,6 +204,23 @@ int cmd_cp(int argc, const char* const* argv) {
     return 0;
 }
 
+int cmd_true(void) {
+    return 0;
+}
+
+int cmd_false(void) {
+    return 1;
+}
+
+int cmd_sleep(int argc, const char* const* argv) {
+    if (argc < 2) {
+        puts("usage: busybox sleep <milliseconds>\n");
+        return 1;
+    }
+    sleep_ms(parse_number(argv[1]));
+    return 0;
+}
+
 int cmd_ps(void) {
     struct savanxp_process_info info = {};
     puts("PID  PPID STATE         NAME\n");
@@ -228,7 +259,7 @@ int main(int argc, const char* const* argv) {
     const char* applet = applet_name(argc > 0 ? argv[0] : "");
     if (strcmp(applet, "busybox") == 0) {
         if (argc < 2) {
-            puts("busybox applets: sh ls cat echo mkdir rm mv cp ps\n");
+            puts("busybox applets: sh ls cat echo mkdir rm mv cp ps true false sleep\n");
             return 1;
         }
         applet = argv[1];
@@ -259,6 +290,15 @@ int main(int argc, const char* const* argv) {
     }
     if (strcmp(applet, "ps") == 0) {
         return cmd_ps();
+    }
+    if (strcmp(applet, "true") == 0) {
+        return cmd_true();
+    }
+    if (strcmp(applet, "false") == 0) {
+        return cmd_false();
+    }
+    if (strcmp(applet, "sleep") == 0) {
+        return cmd_sleep(argc, argv);
     }
     if (strcmp(applet, "sh") == 0) {
         return cmd_sh(argc, argv);

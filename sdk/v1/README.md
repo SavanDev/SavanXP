@@ -10,7 +10,9 @@ Incluye:
 
 - `include/savanxp/libc.h`
 - `include/savanxp/syscall.h`
-- headers estandar en `include/` (`unistd.h`, `fcntl.h`, `stdio.h`, `stdlib.h`, `string.h`, `dirent.h`, `sys/stat.h`, `sys/socket.h`, etc.)
+- headers estandar en `include/` (`unistd.h`, `fcntl.h`, `poll.h`,
+  `sys/select.h`, `signal.h`, `stdio.h`, `stdlib.h`, `string.h`, `dirent.h`,
+  `sys/stat.h`, `sys/socket.h`, etc.)
 - `runtime/crt0.S`
 - `runtime/libc.c`
 - `runtime/posix.c`
@@ -24,10 +26,10 @@ Categorías soportadas:
 - syscalls: `read`, `write`, `open`, `close`, `readdir`, `ioctl`, `socket`, `bind`, `sendto`, `recvfrom`, `connect`
 - syscalls POSIX base: `getpid`, `stat`, `fstat`, `chdir`, `getcwd`
 - introspeccion del sistema: `system_info`
-- procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`
-- descriptores: `pipe`, `dup`, `dup2`, `seek`
+- procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `fork`, `kill`
+- descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
-- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`
+- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `poll`, `select`, `raise`
 - graficos: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_poll_event`
 - mouse: `mouse_open`, `mouse_poll_event`
 - primitivas software: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`, `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`, `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`, `gfx_blit_text`
@@ -74,6 +76,10 @@ Reglas del ABI:
 - Las syscalls devuelven `>= 0` en éxito y `< 0` en error.
 - `main(int argc, char** argv)` está soportado.
 - `waitpid(SAVANXP_WAIT_ANY, &status)` está soportado.
+- `fork()` clona el espacio de direcciones y descriptores del proceso actual.
+- las señales disponibles en `SDK 1.1` son de accion por defecto (`SIGINT`,
+  `SIGTERM`, `SIGKILL`, `SIGPIPE`, `SIGCHLD`); no hay handlers POSIX
+  completos todavia.
 
 Límites congelados para v1:
 
@@ -119,6 +125,10 @@ Sockets v1:
 - `socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP)`
 - `connect(fd, &addr, timeout_ms)`
 - sockets TCP conectados usan `write(fd, ...)` y `read(fd, ...)`
+- `poll`/`select` cubren sockets, pipes, TTY/input y archivos regulares como
+  `ready` inmediato
+- `fcntl(fd, F_SETFL, O_NONBLOCK)` expone modo no bloqueante para pipes,
+  sockets y entradas compatibles
 - servidor TCP todavia no existe en v1; el alcance actual es cliente minimo
 
 Diagnostico de red v1:
@@ -169,6 +179,11 @@ Smoke tests útiles en el estado actual:
 - `tcpget 104.18.26.120 80 example.com /`
 - `beep 440 200`
 - `gfxdemo`
+- `forktest`
+- `polltest`
+- `sigtest`
+- `busybox ls /disk/bin`
+- `smoke` via `.\build.ps1 smoke`
 
 Ejemplo externo recomendado para GUI:
 

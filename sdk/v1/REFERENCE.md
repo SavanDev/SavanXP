@@ -38,10 +38,10 @@ Se consideran parte del contrato:
 
 - I/O: `read`, `write`, `open`, `close`, `readdir`, `ioctl`
 - sockets: `socket`, `bind`, `sendto`, `recvfrom`, `connect`
-- procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `exit`
-- descriptores: `pipe`, `dup`, `dup2`, `seek`
+- procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `exit`, `fork`, `kill`
+- descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
-- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `getpid`, `stat`, `fstat`, `chdir`, `getcwd`, `system_info`
+- utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `getpid`, `stat`, `fstat`, `chdir`, `getcwd`, `system_info`, `poll`, `select`, `raise`
 - tiempo real: `realtime`
 
 ## Errores visibles
@@ -107,6 +107,8 @@ Sockets v1:
 - `connect(fd, &addr, timeout_ms)`
 - `write(fd, ...)` para enviar
 - `read(fd, ...)` para recibir hasta EOF o timeout
+- `poll` y `select` cubren sockets, pipes, TTY/input y archivos regulares
+- `fcntl(fd, F_GETFL/F_SETFL)` expone `O_NONBLOCK`
 - servidor TCP, `listen` y `accept` quedan fuera de v1
 
 Diagnostico de red:
@@ -164,7 +166,7 @@ Contrato actual:
 
 Headers estándar nuevos expuestos en `sdk/v1/include`:
 
-- `unistd.h`, `fcntl.h`, `errno.h`
+- `unistd.h`, `fcntl.h`, `poll.h`, `sys/select.h`, `signal.h`, `errno.h`
 - `stdio.h`, `stdlib.h`, `string.h`, `strings.h`, `ctype.h`, `math.h`, `time.h`
 - `dirent.h`, `sys/types.h`, `sys/stat.h`, `sys/wait.h`
 - `sys/socket.h`, `netinet/in.h`, `arpa/inet.h`
@@ -180,17 +182,22 @@ Límites prácticos de esta primera ola POSIX:
   `realloc()` libera el bloque viejo cuando necesita moverlo.
 - `DIR->d_type` se informa por `stat()` best-effort.
 - `setsockopt`/`getsockopt` cubren solo timeouts y flags básicos de cliente.
+- `fork()` y `kill()` ya existen, pero las señales siguen siendo de accion por
+  defecto; no hay `sigaction`, `signal()`, `sigprocmask` ni masks completas.
+- `select`/`poll` buscan coherencia de uso antes que compatibilidad POSIX
+  exhaustiva; no todos los tipos de descriptor tienen semantica Unix completa.
 
 ## No incluido en v1
 
-- `fork`
-- señales
 - librerías compartidas
 - loader dinámico
 - compatibilidad POSIX completa
 - `listen` / `accept`
-- `select` / `poll`
 - `mmap` / `munmap`
+- handlers y masks completos de señales (`sigaction`, `signal`,
+  `sigprocmask`, `sigsuspend`)
 - DNS
 - DHCP
+- `termios` y job control
+- `chmod`, `chown`, `link`, `symlink`, `readlink`, `utime*`
 - audio PCM

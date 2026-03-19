@@ -10,11 +10,32 @@ Notas de corte:
 
 ## [Unreleased]
 
+### Agregado
+
+- Syscalls y wrappers POSIX nuevos para `fork`, `kill`, `raise`, `poll`,
+  `select` y `fcntl(F_GETFL/F_SETFL)` con soporte de `O_NONBLOCK`.
+- Runner automatizado `.\build.ps1 smoke`, que recompila, instala en
+  `/disk/bin`, arranca QEMU headless y valida `fork`, señales basicas, polling
+  y persistencia real sobre `SVFS2`.
+- Userland multicall `busybox` para empezar el reemplazo de utilidades
+  comodin, incluyendo `echo`, `cat`, `ls`, `mkdir`, `rm`, `mv`, `cp`, `true`,
+  `false` y `sleep`.
+
 ### Cambiado
 
+- El sistema pasa a reportarse como `v0.1.4` en kernel, shell, `uname`,
+  `sysinfo` y componentes que consumen la version compartida.
 - El timer base del sistema pasa a calibrarse con objetivo de `200 Hz` en vez
   de `100 Hz`, mejorando un poco la respuesta percibida del mouse y el
   redondeo practico de `sleep_ms()` para loops graficos e input.
+- Los techos internos suben para procesos, descriptores, pipes, sockets, VFS
+  y `SVFS2`, dejando mas margen para ports y userland real.
+- `SVFS2` ya puede montar `/disk` en modo degradado de solo lectura si la
+  recuperacion no deja al volumen seguro para `RW`, evitando que quede
+  directamente offline frente a fallos recuperables.
+- El build principal instala tambien los binarios internos en `/disk/bin`, de
+  modo que la shell y la smoke automatizada ejercitan la misma copia
+  persistente del userland.
 
 ## [0.1.3] - 2026-03-17
 
