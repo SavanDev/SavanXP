@@ -210,6 +210,63 @@ long timer_cancel(int handle) {
     return syscall1(SAVANXP_SYS_TIMER_CANCEL, (unsigned long)handle);
 }
 
+long section_create(unsigned long size, unsigned long flags) {
+    return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);
+}
+
+void* map_view(int handle, unsigned long flags) {
+    return (void*)syscall2(SAVANXP_SYS_MAP_VIEW, (unsigned long)handle, flags);
+}
+
+long unmap_view(void* base) {
+    return syscall1(SAVANXP_SYS_UNMAP_VIEW, (unsigned long)base);
+}
+
+void* mmap(void* address, size_t length, int prot, int flags, int fd, long offset) {
+    unsigned long section_flags = 0;
+    unsigned long view_flags = 0;
+    long section = 0;
+    void* mapped = MAP_FAILED;
+
+    if (address != 0 || length == 0 || fd != -1 || offset != 0) {
+        return (void*)(intptr_t)-SAVANXP_EINVAL;
+    }
+    if ((flags & MAP_ANONYMOUS) == 0 || ((flags & MAP_SHARED) == 0) == ((flags & MAP_PRIVATE) == 0)) {
+        return (void*)(intptr_t)-SAVANXP_EINVAL;
+    }
+    if ((prot & ~(PROT_READ | PROT_WRITE)) != 0 || (prot & (PROT_READ | PROT_WRITE)) == 0) {
+        return (void*)(intptr_t)-SAVANXP_ENOSYS;
+    }
+
+    if ((prot & PROT_READ) != 0) {
+        section_flags |= SAVANXP_SECTION_READ;
+    }
+    if ((prot & PROT_WRITE) != 0) {
+        section_flags |= SAVANXP_SECTION_WRITE;
+    }
+
+    section = section_create((unsigned long)length, section_flags);
+    if (section < 0) {
+        return (void*)(intptr_t)section;
+    }
+
+    view_flags = section_flags;
+    if ((flags & MAP_PRIVATE) != 0) {
+        view_flags |= SAVANXP_VIEW_PRIVATE;
+    }
+
+    mapped = map_view((int)section, view_flags);
+    close((int)section);
+    return mapped;
+}
+
+int munmap(void* address, size_t length) {
+    if (address == 0 || address == MAP_FAILED || length == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return (int)unmap_view(address);
+}
+
 long yield(void) {
     return syscall0(SAVANXP_SYS_YIELD);
 }

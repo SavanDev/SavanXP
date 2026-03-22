@@ -108,6 +108,8 @@ $UserPrograms = @(
     @{ Name = "sigtest"; Source = "userland/sigtest.c" },
     @{ Name = "eventtest"; Source = "userland/eventtest.c" },
     @{ Name = "timertest"; Source = "userland/timertest.c" },
+    @{ Name = "sectiontest"; Source = "userland/sectiontest.c" },
+    @{ Name = "mmaptest"; Source = "userland/mmaptest.c" },
     @{ Name = "smoke"; Source = "userland/smoke.c" }
 )
 

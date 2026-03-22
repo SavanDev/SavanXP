@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/physical_memory.hpp"
+
 namespace device {
 struct Device;
 }
@@ -25,6 +27,7 @@ namespace object {
 constexpr size_t kMaxIoObjects = 128;
 constexpr size_t kMaxEventObjects = 64;
 constexpr size_t kMaxTimerObjects = 64;
+constexpr size_t kMaxSectionObjects = 32;
 
 enum class Type : uint8_t {
     none = 0,
@@ -90,6 +93,17 @@ struct TimerObject {
     uint64_t period_ticks;
 };
 
+struct SectionObject {
+    Header header;
+    bool in_use;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t access_mask;
+    uint64_t size_bytes;
+    uint64_t page_count;
+    uint64_t* physical_pages;
+};
+
 void retain(Header* object);
 void release(Header*& object);
 IoObject* as_io(Header* object);
@@ -98,8 +112,12 @@ EventObject* as_event(Header* object);
 const EventObject* as_event(const Header* object);
 TimerObject* as_timer(Header* object);
 const TimerObject* as_timer(const Header* object);
+SectionObject* as_section(Header* object);
+const SectionObject* as_section(const Header* object);
 EventObject* create_event(bool manual_reset, bool initial_state);
 TimerObject* create_timer(bool manual_reset);
+SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask);
+SectionObject* clone_section(const SectionObject& source);
 void set_event(EventObject* event_object);
 void reset_event(EventObject* event_object);
 void set_timer(TimerObject* timer_object, uint64_t due_tick, uint64_t period_ticks);

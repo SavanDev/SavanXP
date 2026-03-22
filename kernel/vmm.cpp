@@ -1,5 +1,6 @@
 #include "kernel/vmm.hpp"
 
+#include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 
@@ -52,6 +53,22 @@ bool canonical_user_address(uint64_t virtual_address) {
     return virtual_address >= vm::kUserBase && virtual_address < kKernelPml4Start * (1ULL << 39);
 }
 
+bool canonical_user_range(uint64_t virtual_address, uint64_t size) {
+    if (size == 0) {
+        return false;
+    }
+
+    const uint64_t last = virtual_address + size - 1;
+    if (last < virtual_address) {
+        return false;
+    }
+
+    const uint64_t stack_bottom = vm::kUserStackTop - (vm::kUserStackPages * memory::kPageSize);
+    return canonical_user_address(virtual_address) &&
+        canonical_user_address(last) &&
+        last < stack_bottom;
+}
+
 uint64_t* page_table_for(const vm::VmSpace& space, uint64_t virtual_address, bool require_write) {
     if (!canonical_user_address(virtual_address)) {
         return nullptr;
@@ -84,6 +101,98 @@ uint64_t* page_table_for(const vm::VmSpace& space, uint64_t virtual_address, boo
     }
 
     return pt;
+}
+
+const vm::VmSpace::SectionView* section_view_for_address(const vm::VmSpace& space, uint64_t virtual_address) {
+    for (const vm::VmSpace::SectionView& view : space.section_views) {
+        if (view.section == nullptr) {
+            continue;
+        }
+        if (virtual_address >= view.base_address && virtual_address < (view.base_address + view.size_bytes)) {
+            return &view;
+        }
+    }
+    return nullptr;
+}
+
+vm::VmSpace::SectionView* find_section_view(vm::VmSpace& space, uint64_t base_address) {
+    for (vm::VmSpace::SectionView& view : space.section_views) {
+        if (view.section != nullptr && view.base_address == base_address) {
+            return &view;
+        }
+    }
+    return nullptr;
+}
+
+vm::VmSpace::SectionView* find_free_section_view(vm::VmSpace& space) {
+    for (vm::VmSpace::SectionView& view : space.section_views) {
+        if (view.section == nullptr) {
+            return &view;
+        }
+    }
+    return nullptr;
+}
+
+bool user_range_is_free(const vm::VmSpace& space, uint64_t virtual_address, uint64_t size) {
+    if (!canonical_user_range(virtual_address, size)) {
+        return false;
+    }
+
+    const uint64_t last = virtual_address + size - 1;
+    const uint64_t last_page = last & ~(memory::kPageSize - 1);
+    for (uint64_t page = virtual_address; page <= last_page; page += memory::kPageSize) {
+        if (page_table_for(space, page, false) != nullptr) {
+            return false;
+        }
+        if (page == last_page) {
+            break;
+        }
+    }
+
+    for (const vm::VmSpace::SectionView& view : space.section_views) {
+        if (view.section == nullptr) {
+            continue;
+        }
+        const uint64_t view_end = view.base_address + view.size_bytes;
+        const uint64_t range_end = virtual_address + size;
+        if (virtual_address < view_end && range_end > view.base_address) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool choose_section_view_base(vm::VmSpace& space, uint64_t size, uint64_t& base_address) {
+    const uint64_t aligned_size = align_up(size, memory::kPageSize);
+    const uint64_t start = align_up(space.next_section_base != 0 ? space.next_section_base : vm::kSectionViewBase, memory::kPageSize);
+    const uint64_t stack_bottom = vm::kUserStackTop - (vm::kUserStackPages * memory::kPageSize);
+
+    for (uint64_t candidate = start; candidate < stack_bottom; candidate += memory::kPageSize) {
+        if (candidate + aligned_size < candidate || candidate + aligned_size > stack_bottom) {
+            break;
+        }
+        if (!user_range_is_free(space, candidate, aligned_size)) {
+            continue;
+        }
+        base_address = candidate;
+        space.next_section_base = candidate + aligned_size;
+        return true;
+    }
+
+    for (uint64_t candidate = vm::kSectionViewBase; candidate < start; candidate += memory::kPageSize) {
+        if (candidate + aligned_size < candidate || candidate + aligned_size > stack_bottom) {
+            break;
+        }
+        if (!user_range_is_free(space, candidate, aligned_size)) {
+            continue;
+        }
+        base_address = candidate;
+        space.next_section_base = candidate + aligned_size;
+        return true;
+    }
+
+    return false;
 }
 
 uint64_t read_cr3() {
@@ -244,12 +353,20 @@ bool create_address_space(VmSpace& space) {
 
     space.pml4_physical = pml4_physical;
     space.pml4_virtual = pml4_virtual;
+    space.next_section_base = kSectionViewBase;
+    memset(space.section_views, 0, sizeof(space.section_views));
     return true;
 }
 
 void destroy_address_space(VmSpace& space) {
     if (!g_ready || space.pml4_physical == 0 || space.pml4_virtual == nullptr) {
         return;
+    }
+
+    for (size_t index = 0; index < kMaxSectionViews; ++index) {
+        if (space.section_views[index].section != nullptr) {
+            (void)unmap_section_view(space, space.section_views[index].base_address);
+        }
     }
 
     for (uint64_t index = 0; index < kKernelPml4Start; ++index) {
@@ -266,6 +383,8 @@ void destroy_address_space(VmSpace& space) {
     (void)memory::free_pages(space.pml4_physical, 1);
     space.pml4_physical = 0;
     space.pml4_virtual = nullptr;
+    space.next_section_base = 0;
+    memset(space.section_views, 0, sizeof(space.section_views));
 }
 
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags) {
@@ -288,7 +407,41 @@ bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_addres
         return false;
     }
 
-    pt[pt_index(virtual_address)] = (physical_address & kPageMask) | flags | kPagePresent;
+    const uint64_t entry_index = pt_index(virtual_address);
+    if ((pt[entry_index] & kPagePresent) != 0) {
+        return false;
+    }
+
+    pt[entry_index] = (physical_address & kPageMask) | flags | kPagePresent;
+    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+        invalidate_page(virtual_address);
+    }
+    return true;
+}
+
+bool unmap_page(VmSpace& space, uint64_t virtual_address, uint64_t* physical_address) {
+    if (!g_ready || (virtual_address & 0xfff) != 0) {
+        return false;
+    }
+
+    uint64_t* pt = page_table_for(space, virtual_address, false);
+    if (pt == nullptr) {
+        return false;
+    }
+
+    const uint64_t entry_index = pt_index(virtual_address);
+    const uint64_t entry = pt[entry_index];
+    if ((entry & kPagePresent) == 0) {
+        return false;
+    }
+
+    if (physical_address != nullptr) {
+        *physical_address = entry & kPageMask;
+    }
+    pt[entry_index] = 0;
+    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+        invalidate_page(virtual_address);
+    }
     return true;
 }
 
@@ -301,6 +454,7 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
     if (!create_address_space(clone)) {
         return false;
     }
+    clone.next_section_base = source.next_section_base;
 
     for (uint64_t pml4_slot = 0; pml4_slot < kKernelPml4Start; ++pml4_slot) {
         const uint64_t pml4e = source.pml4_virtual[pml4_slot];
@@ -360,6 +514,9 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
 
                     const uint64_t virtual_address =
                         sign_extend_48((pml4_slot << 39) | (pdpt_slot << 30) | (pd_slot << 21) | (pt_slot << 12));
+                    if (section_view_for_address(source, virtual_address) != nullptr) {
+                        continue;
+                    }
                     if (!map_page(clone, virtual_address, page.physical_address, flags)) {
                         (void)memory::free_allocation(page);
                         destroy_address_space(clone);
@@ -370,7 +527,111 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
         }
     }
 
+    for (const VmSpace::SectionView& view : source.section_views) {
+        if (view.section == nullptr) {
+            continue;
+        }
+
+        uint64_t base_address = view.base_address;
+        if (view.share_on_fork != 0) {
+            if (!map_section_view(clone, *view.section, view.access_mask, base_address, true)) {
+                destroy_address_space(clone);
+                return false;
+            }
+            continue;
+        }
+
+        object::SectionObject* cloned_section = object::clone_section(*view.section);
+        if (cloned_section == nullptr) {
+            destroy_address_space(clone);
+            return false;
+        }
+
+        if (!map_section_view(clone, *cloned_section, view.access_mask, base_address, false)) {
+            object::Header* header = &cloned_section->header;
+            object::release(header);
+            destroy_address_space(clone);
+            return false;
+        }
+
+        object::Header* header = &cloned_section->header;
+        object::release(header);
+    }
+
     destination = clone;
+    return true;
+}
+
+bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint64_t& base_address, bool share_on_fork) {
+    if (!g_ready || !section.in_use || section.page_count == 0 || section.physical_pages == nullptr) {
+        return false;
+    }
+
+    if ((access_mask & section.access_mask) != access_mask) {
+        return false;
+    }
+
+    const uint64_t view_size = section.size_bytes;
+    if (view_size == 0) {
+        return false;
+    }
+
+    if (base_address == 0) {
+        if (!choose_section_view_base(space, view_size, base_address)) {
+            return false;
+        }
+    } else if (!user_range_is_free(space, base_address, view_size)) {
+        return false;
+    }
+
+    VmSpace::SectionView* view = find_free_section_view(space);
+    if (view == nullptr) {
+        return false;
+    }
+
+    uint64_t page_flags = kPageUser;
+    if ((access_mask & object::access_write) != 0) {
+        page_flags |= kPageWrite;
+    }
+
+    for (uint64_t page_index = 0; page_index < section.page_count; ++page_index) {
+        const uint64_t virtual_address = base_address + (page_index * memory::kPageSize);
+        if (!map_page(space, virtual_address, section.physical_pages[page_index], page_flags)) {
+            for (uint64_t rollback = 0; rollback < page_index; ++rollback) {
+                (void)unmap_page(space, base_address + (rollback * memory::kPageSize), nullptr);
+            }
+            return false;
+        }
+    }
+
+    object::retain(&section.header);
+    view->base_address = base_address;
+    view->size_bytes = view_size;
+    view->section = &section;
+    view->access_mask = access_mask;
+    view->share_on_fork = share_on_fork ? 1u : 0u;
+    view->reserved0 = 0;
+    view->reserved1 = 0;
+    if (base_address + view_size > space.next_section_base) {
+        space.next_section_base = base_address + view_size;
+    }
+    return true;
+}
+
+bool unmap_section_view(VmSpace& space, uint64_t base_address) {
+    VmSpace::SectionView* view = find_section_view(space, base_address);
+    if (view == nullptr) {
+        return false;
+    }
+
+    const uint64_t page_count = view->size_bytes / memory::kPageSize;
+    for (uint64_t page_index = 0; page_index < page_count; ++page_index) {
+        (void)unmap_page(space, view->base_address + (page_index * memory::kPageSize), nullptr);
+    }
+
+    object::Header* header = &view->section->header;
+    object::release(header);
+    memset(view, 0, sizeof(*view));
     return true;
 }
 

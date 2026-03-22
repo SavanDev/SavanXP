@@ -18,6 +18,16 @@ Notas de corte:
   `/dev/audio0` con formato fijo `S16LE stereo 48 kHz`.
 - Utilidad nueva `audiotest` y coverage automatizado en `.\build.ps1 smoke`
   para validar `/dev/audio0`.
+- Object manager minimo con handles kernel genéricos para I/O, eventos,
+  timers y sections.
+- Syscalls nuevas `EVENT_*`, `WAIT_ONE`, `WAIT_MANY`, `TIMER_*`,
+  `SECTION_CREATE`, `MAP_VIEW` y `UNMAP_VIEW`, con wrappers actualizados en
+  userland y SDK v1.
+- Soporte inicial de `Section/View` anónimo en el kernel, incluyendo memoria
+  compartida entre procesos, herencia `shared` vs `private` al hacer `fork()`
+  y tests nuevos `eventtest`, `timertest`, `sectiontest` y `mmaptest`.
+- Capa POSIX nueva para `mmap` / `munmap` anónimo en `sdk/v1`, más header
+  estándar `sys/mman.h`.
 
 ### Cambiado
 
@@ -28,6 +38,9 @@ Notas de corte:
   rotando recursos sin cambiar la ABI publica de `/dev/fb0` y `/dev/gpu0`.
 - Los perfiles `run` y `smoke` de QEMU agregan `virtio-sound-pci` con un
   `audiodev` separado del camino de `pcspeaker`.
+- `sleep_ms()` ahora corre sobre timers waitables del kernel en vez de un
+  camino especial separado, y `fork()` preserva views anónimas compartidas o
+  privadas segun el tipo de mapping.
 
 ## [0.1.4] - 2026-03-19
 

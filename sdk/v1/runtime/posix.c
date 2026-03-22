@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <termios.h>
 
 #define EOF (-1)
@@ -2173,6 +2174,68 @@ pid_t sx_fork(void) {
 
 pid_t sx_vfork(void) {
     return sx_fork();
+}
+
+void* sx_mmap(void* address, size_t length, int prot, int flags, int fd, off_t offset) {
+    unsigned long section_flags = 0;
+    unsigned long view_flags = 0;
+    long section = 0;
+    void* mapped = MAP_FAILED;
+
+    if (address != 0 || length == 0 || fd != -1 || offset != 0) {
+        g_errno = SAVANXP_EINVAL;
+        return MAP_FAILED;
+    }
+    if ((flags & MAP_ANONYMOUS) == 0 || ((flags & MAP_SHARED) == 0) == ((flags & MAP_PRIVATE) == 0)) {
+        g_errno = SAVANXP_EINVAL;
+        return MAP_FAILED;
+    }
+    if ((prot & ~(PROT_READ | PROT_WRITE)) != 0 || (prot & (PROT_READ | PROT_WRITE)) == 0) {
+        g_errno = SAVANXP_ENOSYS;
+        return MAP_FAILED;
+    }
+
+    if ((prot & PROT_READ) != 0) {
+        section_flags |= SAVANXP_SECTION_READ;
+    }
+    if ((prot & PROT_WRITE) != 0) {
+        section_flags |= SAVANXP_SECTION_WRITE;
+    }
+
+    section = section_create(length, section_flags);
+    if (section < 0) {
+        sx_set_errno_from_result(section);
+        return MAP_FAILED;
+    }
+
+    view_flags = section_flags;
+    if ((flags & MAP_PRIVATE) != 0) {
+        view_flags |= SAVANXP_VIEW_PRIVATE;
+    }
+
+    mapped = map_view((int)section, view_flags);
+    (void)close((int)section);
+    if (result_is_error((long)mapped)) {
+        sx_set_errno_from_result((long)mapped);
+        return MAP_FAILED;
+    }
+
+    return mapped;
+}
+
+int sx_munmap(void* address, size_t length) {
+    long result = 0;
+    if (address == 0 || address == MAP_FAILED || length == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+
+    result = unmap_view(address);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return 0;
 }
 
 static int sx_try_exec_path(const char* path, char* const argv[]) {

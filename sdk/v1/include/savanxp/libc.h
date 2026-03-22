@@ -43,6 +43,9 @@ long wait_many(const int* handles, unsigned long count, unsigned long flags, lon
 long timer_create(unsigned long flags);
 long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
 long timer_cancel(int handle);
+long section_create(unsigned long size, unsigned long flags);
+void* map_view(int handle, unsigned long flags);
+long unmap_view(void* base);
 long yield(void);
 long sleep_ms(unsigned long milliseconds);
 unsigned long uptime_ms(void);

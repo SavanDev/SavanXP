@@ -66,6 +66,9 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_TIMER_CREATE = 47,
     SAVANXP_SYS_TIMER_SET = 48,
     SAVANXP_SYS_TIMER_CANCEL = 49,
+    SAVANXP_SYS_SECTION_CREATE = 50,
+    SAVANXP_SYS_MAP_VIEW = 51,
+    SAVANXP_SYS_UNMAP_VIEW = 52,
 };
 
 enum savanxp_open_flags {
@@ -179,6 +182,15 @@ enum savanxp_wait_flags {
 enum savanxp_timer_flags {
     SAVANXP_TIMER_AUTO_RESET = 0,
     SAVANXP_TIMER_MANUAL_RESET = 1u << 0,
+};
+
+enum savanxp_section_flags {
+    SAVANXP_SECTION_READ = 1u << 0,
+    SAVANXP_SECTION_WRITE = 1u << 1,
+};
+
+enum savanxp_view_flags {
+    SAVANXP_VIEW_PRIVATE = 1u << 8,
 };
 
 enum savanxp_timer_backend {

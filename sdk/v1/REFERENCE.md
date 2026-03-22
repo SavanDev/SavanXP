@@ -155,7 +155,8 @@ Contrato actual:
 - el mouse entra por `/dev/mouse0` con `mouse_open` / `mouse_poll_event`
 - bajo QEMU, el kernel puede respaldar `/dev/mouse0` con un backend absoluto
   `virtio-tablet-pci`, traducido a deltas para preservar la ABI 1.1
-- no hay `mmap`, ventanas, rueda ni compositor en v1
+- hay `mmap` / `munmap` anónimo básico; no hay `mmap` file-backed, ventanas,
+  rueda ni compositor en v1
 - el backbuffer sigue siendo propiedad de la app; `gfx_buffer_pixels` y `gfx_buffer_bytes` ayudan a validarlo
 
 Audio PCM v1.2:
@@ -181,7 +182,7 @@ Headers estándar nuevos expuestos en `sdk/v1/include`:
 - `unistd.h`, `fcntl.h`, `poll.h`, `sys/select.h`, `signal.h`, `errno.h`
 - `stdio.h`, `stdlib.h`, `string.h`, `strings.h`, `ctype.h`, `math.h`, `time.h`
 - `dirent.h`, `sys/types.h`, `sys/stat.h`, `sys/wait.h`
-- `sys/socket.h`, `netinet/in.h`, `arpa/inet.h`
+- `sys/socket.h`, `sys/mman.h`, `netinet/in.h`, `arpa/inet.h`
 
 Convención de compatibilidad:
 
@@ -194,6 +195,8 @@ Límites prácticos de esta primera ola POSIX:
   `realloc()` libera el bloque viejo cuando necesita moverlo.
 - `DIR->d_type` se informa por `stat()` best-effort.
 - `setsockopt`/`getsockopt` cubren solo timeouts y flags básicos de cliente.
+- `mmap` / `munmap` cubren solo mappings anónimos; no hay file-backed
+  mappings, offsets arbitrarios ni copy-on-write real.
 - `fork()` y `kill()` ya existen, pero las señales siguen siendo de accion por
   defecto; no hay `sigaction`, `signal()`, `sigprocmask` ni masks completas.
 - `select`/`poll` buscan coherencia de uso antes que compatibilidad POSIX
@@ -205,7 +208,7 @@ Límites prácticos de esta primera ola POSIX:
 - loader dinámico
 - compatibilidad POSIX completa
 - `listen` / `accept`
-- `mmap` / `munmap`
+- `mmap` file-backed / `munmap` parcial por rango
 - handlers y masks completos de señales (`sigaction`, `signal`,
   `sigprocmask`, `sigsuspend`)
 - DNS

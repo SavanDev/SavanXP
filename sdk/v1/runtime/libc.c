@@ -208,6 +208,18 @@ long timer_cancel(int handle) {
     return syscall1(SAVANXP_SYS_TIMER_CANCEL, (unsigned long)handle);
 }
 
+long section_create(unsigned long size, unsigned long flags) {
+    return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);
+}
+
+void* map_view(int handle, unsigned long flags) {
+    return (void*)syscall2(SAVANXP_SYS_MAP_VIEW, (unsigned long)handle, flags);
+}
+
+long unmap_view(void* base) {
+    return syscall1(SAVANXP_SYS_UNMAP_VIEW, (unsigned long)base);
+}
+
 long yield(void) {
     return syscall0(SAVANXP_SYS_YIELD);
 }

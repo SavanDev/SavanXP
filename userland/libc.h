@@ -5,6 +5,17 @@
 
 #include "shared/syscall.h"
 
+#define PROT_NONE 0x0
+#define PROT_READ 0x1
+#define PROT_WRITE 0x2
+#define PROT_EXEC 0x4
+
+#define MAP_SHARED 0x01
+#define MAP_PRIVATE 0x02
+#define MAP_ANONYMOUS 0x20
+#define MAP_ANON MAP_ANONYMOUS
+#define MAP_FAILED ((void*)(intptr_t)-1)
+
 long read(int fd, void* buffer, size_t count);
 long write(int fd, const void* buffer, size_t count);
 long open(const char* path);
@@ -43,6 +54,11 @@ long wait_many(const int* handles, unsigned long count, unsigned long flags, lon
 long timer_create(unsigned long flags);
 long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
 long timer_cancel(int handle);
+long section_create(unsigned long size, unsigned long flags);
+void* map_view(int handle, unsigned long flags);
+long unmap_view(void* base);
+void* mmap(void* address, size_t length, int prot, int flags, int fd, long offset);
+int munmap(void* address, size_t length);
 long yield(void);
 long sleep_ms(unsigned long milliseconds);
 unsigned long uptime_ms(void);

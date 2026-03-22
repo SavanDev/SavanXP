@@ -83,6 +83,8 @@ int main(void) {
     const char* sigtest_argv[] = {"/disk/bin/sigtest", 0};
     const char* eventtest_argv[] = {"/disk/bin/eventtest", 0};
     const char* timertest_argv[] = {"/disk/bin/timertest", 0};
+    const char* sectiontest_argv[] = {"/disk/bin/sectiontest", 0};
+    const char* mmaptest_argv[] = {"/disk/bin/mmaptest", 0};
     const char* sh_argv[] = {"/bin/sh", "-c", "echo busybox-shell > /disk/smoke/sh.txt", 0};
     const char* echo_argv[] = {"/bin/echo", "busybox-echo", 0};
     const char* cat_argv[] = {"/bin/cat", "/disk/smoke/sh.txt", 0};
@@ -101,6 +103,8 @@ int main(void) {
         !file_exists("/disk/bin/sigtest") ||
         !file_exists("/disk/bin/eventtest") ||
         !file_exists("/disk/bin/timertest") ||
+        !file_exists("/disk/bin/sectiontest") ||
+        !file_exists("/disk/bin/mmaptest") ||
         !file_exists("/disk/bin/busybox") ||
         !file_exists("/disk/bin/sh") ||
         !file_exists("/disk/bin/ls") ||
@@ -122,6 +126,8 @@ int main(void) {
         !run_and_expect("/disk/bin/sigtest", sigtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/eventtest", eventtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/timertest", timertest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/sectiontest", sectiontest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/mmaptest", mmaptest_argv, 1, 0) ||
         !prepare_smoke_directory() ||
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
         !validate_file_contains("/disk/smoke/sh.txt", "busybox-shell") ||

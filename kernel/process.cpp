@@ -165,6 +165,17 @@ uint32_t object_access_for_open_flags(uint32_t open_flags) {
     return access;
 }
 
+uint32_t object_access_for_section_flags(uint32_t flags, uint32_t default_access) {
+    uint32_t access = object::access_none;
+    if ((flags & SAVANXP_SECTION_READ) != 0) {
+        access |= object::access_read;
+    }
+    if ((flags & SAVANXP_SECTION_WRITE) != 0) {
+        access |= object::access_write;
+    }
+    return access != object::access_none ? access : default_access;
+}
+
 void clear_handle_entry(process::HandleEntry& entry) {
     entry.object = nullptr;
     entry.granted_access = object::access_none;
@@ -2174,6 +2185,60 @@ int cancel_timer_handle(process::Process& proc, uint64_t fd) {
     return 0;
 }
 
+int create_section_handle(process::Process& proc, uint64_t size, uint32_t flags) {
+    if (size == 0) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    const uint32_t section_access = object_access_for_section_flags(
+        flags,
+        object::access_read | object::access_write);
+    object::SectionObject* section_object = object::create_section(size, section_access);
+    if (section_object == nullptr) {
+        return negative_error(SAVANXP_ENOMEM);
+    }
+
+    const uint32_t handle_access = object::access_query | object::access_synchronize | section_access;
+    const int handle = allocate_fd(proc, &section_object->header, handle_access, object::handle_none);
+    if (handle < 0) {
+        object::Header* header = &section_object->header;
+        object::release(header);
+        return handle;
+    }
+    return handle;
+}
+
+int64_t map_view_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
+    object::Header* handle_object = lookup_handle(proc, fd, object::access_query);
+    object::SectionObject* section_object = object::as_section(handle_object);
+    if (section_object == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+
+    const uint32_t requested_access = object_access_for_section_flags(flags, section_object->access_mask);
+    const bool share_on_fork = (flags & SAVANXP_VIEW_PRIVATE) == 0;
+    const process::HandleEntry& entry = proc.handles[fd];
+    if ((requested_access & entry.granted_access) != requested_access) {
+        return negative_error(SAVANXP_EACCES);
+    }
+    if ((requested_access & section_object->access_mask) != requested_access) {
+        return negative_error(SAVANXP_EACCES);
+    }
+
+    uint64_t base_address = 0;
+    if (!vm::map_section_view(proc.address_space, *section_object, requested_access, base_address, share_on_fork)) {
+        return negative_error(SAVANXP_ENOMEM);
+    }
+    return static_cast<int64_t>(base_address);
+}
+
+int unmap_view_address(process::Process& proc, uint64_t base_address) {
+    if (base_address == 0 || !vm::unmap_section_view(proc.address_space, base_address)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    return 0;
+}
+
 int begin_object_wait(process::Process& proc, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms) {
     if (count == 0 || count > process::kMaxWaitHandles) {
         return negative_error(SAVANXP_EINVAL);
@@ -2818,6 +2883,15 @@ SavedContext* handle_syscall(SavedContext* context) {
             return context;
         case SAVANXP_SYS_TIMER_CANCEL:
             context->rax = static_cast<uint64_t>(cancel_timer_handle(*g_current, context->rdi));
+            return context;
+        case SAVANXP_SYS_SECTION_CREATE:
+            context->rax = static_cast<uint64_t>(create_section_handle(*g_current, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
+        case SAVANXP_SYS_MAP_VIEW:
+            context->rax = static_cast<uint64_t>(map_view_handle(*g_current, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
+        case SAVANXP_SYS_UNMAP_VIEW:
+            context->rax = static_cast<uint64_t>(unmap_view_address(*g_current, context->rdi));
             return context;
         default:
             context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOSYS));
