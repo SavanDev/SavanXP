@@ -68,7 +68,7 @@ Se consideran parte del contrato:
 
 Nodos reservados actualmente:
 
-- `/dev/fb0`
+- `/dev/gpu0`
 - `/dev/input0`
 - `/dev/mouse0`
 - `/dev/net0`
@@ -77,7 +77,7 @@ Nodos reservados actualmente:
 
 Ioctl groups:
 
-- framebuffer: `FB_IOC_GET_INFO`, `FB_IOC_ACQUIRE`, `FB_IOC_RELEASE`, `FB_IOC_PRESENT`
+- gpu: `GPU_IOC_GET_INFO`, `GPU_IOC_ACQUIRE`, `GPU_IOC_RELEASE`, `GPU_IOC_PRESENT`, `GPU_IOC_PRESENT_REGION`, `GPU_IOC_SET_MODE`, `GPU_IOC_IMPORT_SECTION`, `GPU_IOC_RELEASE_SURFACE`, `GPU_IOC_PRESENT_SURFACE_REGION`, `GPU_IOC_WAIT_IDLE`
 - network: `NET_IOC_GET_INFO`, `NET_IOC_UP`, `NET_IOC_PING`
 - pc speaker: `PCSPK_IOC_BEEP`, `PCSPK_IOC_STOP`
 - audio: `AUDIO_IOC_GET_INFO`
@@ -148,15 +148,21 @@ Helpers públicos expuestos por el runtime:
 
 Contrato actual:
 
-- una sola app puede adquirir el framebuffer a la vez
-- el modo gráfico es fullscreen exclusivo
-- `gfx_present` copia un frame completo de 32-bpp desde userland
-- `gfx_poll_event` sigue consumiendo teclado desde `/dev/input0`
-- el mouse entra por `/dev/mouse0` con `mouse_open` / `mouse_poll_event`
+- el camino preferido es compositor-first sobre `/dev/gpu0`, con una sola app
+  fullscreen activa por sesion
+- `gfx_open` intenta primero el modo cliente del compositor usando la
+  convencion heredada por `fork()+exec()` en `fd 3..6`
+- si esos fds no existen, `gfx_open` cae al camino directo legacy sobre
+  `/dev/gpu0`
+- `gfx_present` y `gfx_present_region` siguen aceptando 32-bpp desde
+  userland, pero en modo cliente notifican regiones sucias al compositor
+- `gfx_poll_event` y `mouse_open`/`mouse_poll_event` leen del compositor si la
+  app fue lanzada como cliente; en fallback siguen usando `/dev/input0` y
+  `/dev/mouse0`
 - bajo QEMU, el kernel puede respaldar `/dev/mouse0` con un backend absoluto
   `virtio-tablet-pci`, traducido a deltas para preservar la ABI 1.1
-- hay `mmap` / `munmap` anónimo básico; no hay `mmap` file-backed, ventanas,
-  rueda ni compositor en v1
+- hay `mmap` / `munmap` anónimo básico; no hay `mmap` file-backed, ventanas
+  arbitrarias ni rueda en v1
 - el backbuffer sigue siendo propiedad de la app; `gfx_buffer_pixels` y `gfx_buffer_bytes` ayudan a validarlo
 
 Audio PCM v1.2:

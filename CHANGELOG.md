@@ -10,8 +10,16 @@ Notas de corte:
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-22
+
 ### Agregado
 
+- Sesion `desktop-first` con compositor `desktop`, shell fullscreen
+  `shellapp`, surfaces de cliente compartidas por `SectionObject` y
+  lanzamiento de apps graficas via `fd 3..6`.
+- ABI publica extendida en `/dev/gpu0` con `GPU_IOC_SET_MODE`,
+  `GPU_IOC_IMPORT_SECTION`, `GPU_IOC_RELEASE_SURFACE`,
+  `GPU_IOC_PRESENT_SURFACE_REGION` y `GPU_IOC_WAIT_IDLE`.
 - ABI publica nueva para audio con `SAVANXP_IOCTL_GROUP_AUDIO`,
   `AUDIO_IOC_GET_INFO` y `struct savanxp_audio_info`.
 - Driver `virtio-sound` playback-only sobre `virtio_pci`, exponiendo
@@ -31,16 +39,28 @@ Notas de corte:
 
 ### Cambiado
 
+- El sistema pasa a reportarse como `v0.2.0` en kernel, shell, `uname`,
+  `sysinfo` y componentes que consumen la version compartida.
+- El arranque normal pasa a supervisar `desktop` desde `init`; `/SMOKE` sigue
+  evitando el desktop y mantiene la smoke automatizada headless.
+- `gfx_open` y el runtime grafico pasan a ser compositor-first, con fallback
+  directo sobre `/dev/gpu0`; el nodo legacy `/dev/fb0` deja de exponerse en
+  el sistema actual.
 - El build principal ahora instala el multicall BusyBox portado en `/bin` y
   `/disk/bin` para `ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp` y
   `ps`.
-- `virtio-gpu` pasa a presentar sobre un set interno de tres superficies,
-  rotando recursos sin cambiar la ABI publica de `/dev/fb0` y `/dev/gpu0`.
+- `virtio-gpu` pasa a presentar sobre un set interno de tres superficies y el
+  camino legacy `FB_IOC_*` sale de la ABI vigente.
 - Los perfiles `run` y `smoke` de QEMU agregan `virtio-sound-pci` con un
   `audiodev` separado del camino de `pcspeaker`.
 - `sleep_ms()` ahora corre sobre timers waitables del kernel en vez de un
   camino especial separado, y `fork()` preserva views anónimas compartidas o
   privadas segun el tipo de mapping.
+- El menu Inicio deja de ofrecer `Exit Desktop`, y `shellapp` puede cerrarse
+  con `exit` para volver al desktop y reabrirse despues desde `Menu -> Shell`.
+- El compositor desktop reduce algo de trabajo redundante en el camino de
+  presentacion y corrige mejor el enrutado/polling de input para clientes
+  fullscreen.
 
 ## [0.1.4] - 2026-03-19
 

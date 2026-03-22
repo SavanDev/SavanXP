@@ -312,16 +312,33 @@ long sync(void) {
 }
 
 long mouse_open(void) {
+    long duplicated = dup(5);
+    if (duplicated >= 0) {
+        return duplicated;
+    }
     return open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
 }
 
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
-    const long result = read(fd, event, sizeof(*event));
-    if (result < 0) {
-        return (int)result;
+    struct savanxp_pollfd pollfd = {
+        .fd = fd,
+        .events = SAVANXP_POLLIN | SAVANXP_POLLHUP,
+        .revents = 0,
+    };
+    if (fd < 0 || event == 0) {
+        return -SAVANXP_EINVAL;
     }
-    if (result != (long)sizeof(*event)) {
+    if (poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
         return 0;
+    }
+    {
+        const long result = read(fd, event, sizeof(*event));
+        if (result < 0) {
+            return (int)result;
+        }
+        if (result != (long)sizeof(*event)) {
+            return 0;
+        }
     }
     return 1;
 }
@@ -348,6 +365,26 @@ long gpu_acquire(int fd) {
 
 long gpu_release(int fd) {
     return ioctl(fd, GPU_IOC_RELEASE, 0);
+}
+
+long gpu_set_mode(int fd, struct savanxp_gpu_mode* mode) {
+    return ioctl(fd, GPU_IOC_SET_MODE, (unsigned long)mode);
+}
+
+long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_request) {
+    return ioctl(fd, GPU_IOC_IMPORT_SECTION, (unsigned long)import_request);
+}
+
+long gpu_release_surface(int fd, uint32_t surface_id) {
+    return ioctl(fd, GPU_IOC_RELEASE_SURFACE, (unsigned long)surface_id);
+}
+
+long gpu_present_surface_region(int fd, const struct savanxp_gpu_surface_present* present_request) {
+    return ioctl(fd, GPU_IOC_PRESENT_SURFACE_REGION, (unsigned long)present_request);
+}
+
+long gpu_wait_idle(int fd) {
+    return ioctl(fd, GPU_IOC_WAIT_IDLE, 0);
 }
 
 long gpu_present(int fd, const uint32_t* pixels) {

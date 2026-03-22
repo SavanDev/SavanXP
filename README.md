@@ -1,6 +1,6 @@
 # SavanXP
 
-Version actual del proyecto: `v0.1.4`
+Version actual del proyecto: `v0.2.0`
 
 Historial de versiones: `CHANGELOG.md`
 
@@ -14,7 +14,7 @@ desarrollo.
 
 ## Estado actual
 
-El kernel ya bootea a una terminal funcional inicial:
+El kernel ya bootea a una sesion desktop-first funcional:
 
 - Integracion con Limine para recibir `bootloader info`, `firmware type`,
   `framebuffer`, `memory map`, `HHDM` y un modulo `initramfs`.
@@ -29,8 +29,8 @@ El kernel ya bootea a una terminal funcional inicial:
   degradacion segura a teclado-only si el mouse no inicializa.
 - Enumeracion PCI minima por config-space en `q35` y capa de dispositivos
   expuesta como nodos bajo `/dev`.
-- Dispositivos iniciales en `/dev`: `fb0`, `input0`, `mouse0`, `net0`,
-  `pcspk`, `gpu0` y `audio0`.
+- Dispositivos iniciales en `/dev`: `gpu0`, `input0`, `mouse0`, `net0`,
+  `pcspk` y `audio0`.
 - `ioctl` como syscall publica para dispositivos y ABI compartida extendida
   para framebuffer, input, red y PC speaker.
 - `VFS` minima montando un `initramfs` `cpio newc`, con archivos dinamicos en
@@ -49,18 +49,18 @@ El kernel ya bootea a una terminal funcional inicial:
 - Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
   echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo, mas
   contadores y estado diagnostico expuestos por `NET_IOC_GET_INFO`.
-- GUI fullscreen inicial con framebuffer exclusivo, cola de eventos de
-  teclado y mouse, primitivas 2D reutilizables en `gfx_*`, ejemplo externo
-  `sdk/gfxhello`, demo `gfxdemo`, tester `mousetest` y primer shell grafico
-  `desktop`.
+- Sesion `desktop-first` sobre compositor propio, taskbar/start menu,
+  shell fullscreen `shellapp`, primitivas 2D reutilizables en `gfx_*`,
+  ejemplo externo `sdk/gfxhello`, demo `gfxdemo` y testers graficos
+  migrados al camino cliente del compositor.
 - Pipeline fullscreen ya optimizado para mayor fluidez, con primitivas
-  `gfx_*` mas baratas, `present` parcial por regiones sucias
-  (`FB_IOC_PRESENT_REGION`) y demos/UI que evitan redibujar o copiar toda la
-  pantalla cuando no hubo cambios.
+  `gfx_*` mas baratas, present parcial por regiones sucias en `gpu0` y
+  demos/UI que evitan redibujar o copiar toda la pantalla cuando no hubo
+  cambios.
 - Base `virtio_pci` reutilizable para drivers `virtio` modernos y backend
   grafico nuevo `virtio-gpu` 2D para QEMU.
-- Nodo nuevo `/dev/gpu0` con ABI publica `GPU_IOC_*`, manteniendo `/dev/fb0`
-  como compatibilidad para lo ya construido.
+- Nodo `/dev/gpu0` como ABI publica principal (`GPU_IOC_*`), incluyendo
+  mode-setting, import de sections y present por superficie.
 - En QEMU, la salida grafica puede pasar a `virtio-vga` manteniendo una
   resolucion de trabajo consistente durante el handoff desde el framebuffer de
   boot al backend del driver, sin volver a encogerse a `640x480` al terminar
@@ -71,9 +71,9 @@ El kernel ya bootea a una terminal funcional inicial:
 - `virtio-input` queda alineado con el framebuffer activo, de modo que el
   mouse bajo QEMU vuelve a seguir correctamente al puntero del host incluso
   despues del cambio al backend `virtio-gpu`.
-- Primer juego externo porteado: `sdk/doomgeneric`, jugable en fullscreen
-  sobre `/dev/fb0` + `/dev/input0`, usado como prueba real de apps graficas
-  externas, assets persistentes en `/disk` y compatibilidad de input.
+- Primer juego externo porteado: `sdk/doomgeneric`, usado como prueba real de
+  apps graficas externas, assets persistentes en `/disk` y compatibilidad de
+  input.
 - Backend de `sdk/doomgeneric` afinado para fullscreen, con escalado por filas
   cacheadas en lugar de divisiones por pixel en cada frame, reduciendo costo
   de CPU y mejorando la sensacion visual durante el juego.
@@ -220,8 +220,8 @@ siguen leyendo `/dev/mouse0` con deltas para mantener compatibilidad.
 Debajo de eso, el kernel ahora cuenta con una base MMIO PCI reutilizable para
 drivers `virtio` modernos.
 El perfil actual tambien agrega `virtio-vga`; cuando `virtio-gpu` queda
-operativo, `/dev/fb0` conserva la ABI previa pero presenta sobre el backend
-nuevo, y `/dev/gpu0` queda disponible para pruebas directas.
+operativo, `gpu0` pasa a ser el backend grafico de trabajo y queda disponible
+para pruebas directas.
 El arranque pide `1280x800x32` al framebuffer de boot y `build.ps1 run`
 inicializa `virtio-vga` con `xres=1280,yres=800`, de modo que el handoff
 normal ya queda en esa misma geometria cuando el driver grafico toma control.

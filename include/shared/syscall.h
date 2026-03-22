@@ -233,14 +233,6 @@ enum savanxp_ioctl_group {
     SAVANXP_IOCTL_GROUP_AUDIO = 0x1005,
 };
 
-enum savanxp_fb_ioctl {
-    FB_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 1),
-    FB_IOC_ACQUIRE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 2),
-    FB_IOC_RELEASE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 3),
-    FB_IOC_PRESENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 4),
-    FB_IOC_PRESENT_REGION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_FB, 5),
-};
-
 enum savanxp_net_ioctl {
     NET_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 1),
     NET_IOC_UP = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 2),
@@ -279,6 +271,11 @@ enum savanxp_gpu_ioctl {
     GPU_IOC_RELEASE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 3),
     GPU_IOC_PRESENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 4),
     GPU_IOC_PRESENT_REGION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 5),
+    GPU_IOC_SET_MODE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 6),
+    GPU_IOC_IMPORT_SECTION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 7),
+    GPU_IOC_RELEASE_SURFACE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 8),
+    GPU_IOC_PRESENT_SURFACE_REGION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 9),
+    GPU_IOC_WAIT_IDLE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 10),
 };
 
 enum savanxp_audio_ioctl {
@@ -334,6 +331,53 @@ struct savanxp_gpu_info {
 struct savanxp_gpu_present_region {
     uint64_t pixels;
     uint32_t source_pitch;
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+};
+
+enum savanxp_gpu_surface_flags {
+    SAVANXP_GPU_SURFACE_FLAG_NONE = 0,
+    SAVANXP_GPU_SURFACE_FLAG_SCANOUT = 1u << 0,
+};
+
+struct savanxp_gpu_mode {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t bpp;
+    uint32_t buffer_size;
+};
+
+struct savanxp_gpu_surface_import {
+    int32_t section_handle;
+    int32_t surface_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t bpp;
+    uint32_t buffer_size;
+    uint32_t flags;
+};
+
+struct savanxp_gpu_surface_present {
+    uint32_t surface_id;
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+};
+
+#define SAVANXP_GPU_CLIENT_SURFACE_MAGIC 0x53584746u
+
+struct savanxp_gpu_client_surface_header {
+    uint32_t magic;
+    uint32_t pixels_offset;
+    struct savanxp_fb_info info;
+};
+
+struct savanxp_gpu_client_present_packet {
     uint32_t x;
     uint32_t y;
     uint32_t width;

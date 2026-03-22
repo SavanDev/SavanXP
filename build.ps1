@@ -71,7 +71,8 @@ $KernelSources = @(
 
 $UserPrograms = @(
     @{ Name = "init"; Source = "userland/init.c" },
-    @{ Name = "sh"; Source = "userland/sh.c" },
+    @{ Name = "sh"; Sources = @("userland/sh.c", "userland/shell_core.c") },
+    @{ Name = "shellapp"; Sources = @("userland/shellapp.c", "userland/shell_core.c") },
     @{ Name = "uname"; Source = "userland/uname.c" },
     @{ Name = "df"; Source = "userland/df.c" },
     @{ Name = "ticker"; Source = "userland/ticker.c" },
@@ -404,7 +405,8 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
 
     foreach ($program in $UserPrograms) {
         $objectFiles = @()
-        foreach ($source in @("userland/crt0.S", "userland/libc.c", "userland/gfx.c", $program.Source)) {
+        $programSources = if ($program.ContainsKey("Sources")) { $program.Sources } else { @($program.Source) }
+        foreach ($source in @("userland/crt0.S", "userland/libc.c", "userland/gfx.c") + $programSources) {
             $sourcePath = Join-Path $ProjectRoot $source
             $objectName = "$($program.Name)_$([IO.Path]::GetFileNameWithoutExtension($source)).o"
             $objectPath = Join-Path $userObjRoot $objectName

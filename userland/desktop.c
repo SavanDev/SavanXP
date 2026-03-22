@@ -2,8 +2,6 @@
 #include "shared/version.h"
 #include "cursor_asset.h"
 
-#define GFX_MAX_WIDTH 1920
-#define GFX_MAX_HEIGHT 1080
 #define TASKBAR_HEIGHT 36
 #define START_BUTTON_WIDTH 88
 #define CLOCK_BOX_WIDTH 84
@@ -17,23 +15,41 @@ struct desktop_menu_item
 {
     const char *label;
     const char *path;
-    int exits_desktop;
 };
 
 struct desktop_session
 {
     struct savanxp_gfx_context gfx;
+    int gpu_fd;
+    int input_fd;
     int mouse_fd;
+    int display_section_fd;
+    uint32_t display_surface_id;
+    void *display_view;
+    uint32_t *display_pixels;
+    struct
+    {
+        const char *path;
+        long pid;
+        int section_fd;
+        int input_write_fd;
+        int mouse_write_fd;
+        int present_read_fd;
+        void *mapped_view;
+        struct savanxp_gpu_client_surface_header *header;
+        uint32_t *pixels;
+    } client;
 };
 
-static uint32_t g_backbuffer[GFX_MAX_WIDTH * GFX_MAX_HEIGHT];
+static uint32_t *g_backbuffer = 0;
+static const char *k_shellapp_path = "/bin/shellapp";
 
 static const struct desktop_menu_item k_menu_items[] = {
-    {"Doom", "/disk/bin/doomgeneric", 0},
-    {"Gfx Demo", "/bin/gfxdemo", 0},
-    {"Key Test", "/bin/keytest", 0},
-    {"Mouse Test", "/bin/mousetest", 0},
-    {"Exit Desktop", 0, 1},
+    {"Shell", "/bin/shellapp"},
+    {"Doom", "/disk/bin/doomgeneric"},
+    {"Gfx Demo", "/bin/gfxdemo"},
+    {"Key Test", "/bin/keytest"},
+    {"Mouse Test", "/bin/mousetest"},
 };
 
 static int menu_item_count(void)
@@ -219,14 +235,8 @@ static void draw_start_menu(struct savanxp_gfx_context *gfx, int selected_index)
         const int item_y = items_y + (index * MENU_ITEM_HEIGHT);
         const int icon_x = content_x + 4;
         const int text_x = content_x + 32;
-        const uint32_t icon_color = k_menu_items[index].exits_desktop ? gfx_rgb(144, 40, 40) : gfx_rgb(0, 124, 96);
+        const uint32_t icon_color = gfx_rgb(0, 124, 96);
         const int arrow_x = content_x + content_width - 18;
-
-        if (k_menu_items[index].exits_desktop)
-        {
-            gfx_hline(g_backbuffer, &gfx->info, content_x, item_y - 3, content_width - 8, gfx_rgb(172, 172, 172));
-            gfx_hline(g_backbuffer, &gfx->info, content_x, item_y - 2, content_width - 8, gfx_rgb(255, 255, 255));
-        }
 
         if (index == selected_index)
         {
@@ -235,20 +245,14 @@ static void draw_start_menu(struct savanxp_gfx_context *gfx, int selected_index)
             gfx_rect(g_backbuffer, &gfx->info, icon_x, item_y + 7, 16, 16, gfx_rgb(255, 255, 255));
             gfx_rect(g_backbuffer, &gfx->info, icon_x + 2, item_y + 9, 12, 12, icon_color);
             gfx_blit_text(g_backbuffer, &gfx->info, text_x, item_y + 9, k_menu_items[index].label, gfx_rgb(255, 255, 255));
-            if (!k_menu_items[index].exits_desktop)
-            {
-                gfx_blit_text(g_backbuffer, &gfx->info, arrow_x, item_y + 9, ">", gfx_rgb(255, 255, 255));
-            }
+            gfx_blit_text(g_backbuffer, &gfx->info, arrow_x, item_y + 9, ">", gfx_rgb(255, 255, 255));
         }
         else
         {
             gfx_rect(g_backbuffer, &gfx->info, icon_x, item_y + 7, 16, 16, gfx_rgb(255, 255, 255));
             gfx_rect(g_backbuffer, &gfx->info, icon_x + 2, item_y + 9, 12, 12, icon_color);
             gfx_blit_text(g_backbuffer, &gfx->info, text_x, item_y + 9, k_menu_items[index].label, gfx_rgb(0, 0, 0));
-            if (!k_menu_items[index].exits_desktop)
-            {
-                gfx_blit_text(g_backbuffer, &gfx->info, arrow_x, item_y + 9, ">", gfx_rgb(88, 88, 88));
-            }
+            gfx_blit_text(g_backbuffer, &gfx->info, arrow_x, item_y + 9, ">", gfx_rgb(88, 88, 88));
         }
     }
 }
@@ -331,7 +335,14 @@ static int selected_item_from_cursor(struct savanxp_gfx_context *gfx, int cursor
 
 static void draw_desktop(struct desktop_session *session, int cursor_x, int cursor_y, int menu_open, int selected_index)
 {
-    draw_background(&session->gfx);
+    if (session->client.pixels != 0)
+    {
+        memcpy(g_backbuffer, session->client.pixels, session->gfx.info.buffer_size);
+    }
+    else
+    {
+        draw_background(&session->gfx);
+    }
     draw_taskbar(session, menu_open);
     if (menu_open)
     {
@@ -340,104 +351,293 @@ static void draw_desktop(struct desktop_session *session, int cursor_x, int curs
     draw_cursor(&session->gfx, cursor_x, cursor_y);
 }
 
-static void close_graphics_session(struct desktop_session *session)
+static void close_fd_if_needed(int *fd)
 {
-    gfx_release(&session->gfx);
-    if (session->mouse_fd >= 0)
+    if (fd != 0 && *fd >= 0)
     {
-        close(session->mouse_fd);
-        session->mouse_fd = -1;
+        close(*fd);
+        *fd = -1;
     }
-    gfx_close(&session->gfx);
 }
 
-static int open_graphics_session(struct desktop_session *session)
+static void close_fd_unless_target(int *fd, int target_fd)
 {
-    long mouse_fd;
+    if (fd != 0 && *fd >= 0 && *fd != target_fd)
+    {
+        close(*fd);
+        *fd = -1;
+    }
+}
 
-    if (gfx_open(&session->gfx) < 0)
-    {
-        return -1;
-    }
-    if (session->gfx.info.width > GFX_MAX_WIDTH || session->gfx.info.height > GFX_MAX_HEIGHT || (session->gfx.info.pitch / 4u) > GFX_MAX_WIDTH)
-    {
-        gfx_close(&session->gfx);
-        return -1;
-    }
-    if (gfx_acquire(&session->gfx) < 0)
-    {
-        gfx_close(&session->gfx);
-        return -1;
-    }
+static void reset_client(struct desktop_session *session)
+{
+    memset(&session->client, 0, sizeof(session->client));
+    session->client.section_fd = -1;
+    session->client.input_write_fd = -1;
+    session->client.mouse_write_fd = -1;
+    session->client.present_read_fd = -1;
+}
 
-    mouse_fd = mouse_open();
-    session->mouse_fd = mouse_fd >= 0 ? (int)mouse_fd : -1;
+static int route_packet(int fd, const void *packet, size_t size)
+{
+    return fd >= 0 && write(fd, packet, size) == (long)size;
+}
+
+static int present_frame(struct desktop_session *session)
+{
+    struct savanxp_gpu_surface_present present = {
+        .surface_id = session->display_surface_id,
+        .x = 0,
+        .y = 0,
+        .width = session->gfx.info.width,
+        .height = session->gfx.info.height,
+    };
+
+    if (gpu_present_surface_region(session->gpu_fd, &present) < 0)
+    {
+        return -1;
+    }
     return 0;
 }
 
-static int launch_menu_item(const struct desktop_menu_item *item)
+static void destroy_client(struct desktop_session *session, int terminate_client)
 {
-    const char *argv[2];
-    long pid;
     int status = 0;
 
-    if (item->exits_desktop)
+    if (session->client.pid > 0)
     {
-        return 1;
+        if (terminate_client)
+        {
+            (void)kill((int)session->client.pid, SAVANXP_SIGKILL);
+        }
+        waitpid((int)session->client.pid, &status);
     }
-
-    argv[0] = item->path;
-    argv[1] = 0;
-    pid = spawn(item->path, argv, 1);
-    if (pid < 0)
+    close_fd_if_needed(&session->client.input_write_fd);
+    close_fd_if_needed(&session->client.mouse_write_fd);
+    close_fd_if_needed(&session->client.present_read_fd);
+    if (session->client.mapped_view != 0 && !result_is_error((long)session->client.mapped_view))
     {
-        eprintf("desktop: failed to launch %s (%s)\n", item->label, result_error_string(pid));
-        return 0;
+        (void)unmap_view(session->client.mapped_view);
     }
-
-    waitpid((int)pid, &status);
-    return 0;
+    close_fd_if_needed(&session->client.section_fd);
+    reset_client(session);
 }
 
-static int handoff_and_launch(struct desktop_session *session, const struct desktop_menu_item *item)
+static int launch_client(struct desktop_session *session, const char *path)
 {
-    close_graphics_session(session);
+    struct savanxp_gpu_client_surface_header *header;
+    unsigned long section_size = (unsigned long)sizeof(*header) + session->gfx.info.buffer_size;
+    int input_pipe[2] = {-1, -1};
+    int mouse_pipe[2] = {-1, -1};
+    int present_pipe[2] = {-1, -1};
+    const char *argv[2] = {path, 0};
+    long pid;
 
-    if (launch_menu_item(item) != 0)
+    reset_client(session);
+    session->client.section_fd = (int)section_create(section_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (session->client.section_fd < 0)
     {
-        return 1;
+        return -1;
     }
-
-    if (open_graphics_session(session) < 0)
+    session->client.mapped_view = map_view(session->client.section_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (result_is_error((long)session->client.mapped_view))
     {
-        puts_fd(2, "desktop: failed to reopen graphics session\n");
+        close_fd_if_needed(&session->client.section_fd);
         return -1;
     }
 
+    header = (struct savanxp_gpu_client_surface_header *)session->client.mapped_view;
+    header->magic = SAVANXP_GPU_CLIENT_SURFACE_MAGIC;
+    header->pixels_offset = sizeof(*header);
+    header->info = session->gfx.info;
+    session->client.header = header;
+    session->client.pixels = (uint32_t *)((unsigned char *)session->client.mapped_view + header->pixels_offset);
+    memset(session->client.pixels, 0, session->gfx.info.buffer_size);
+
+    if (pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(present_pipe) < 0)
+    {
+        goto fail;
+    }
+
+    pid = fork();
+    if (pid < 0)
+    {
+        goto fail;
+    }
+    if (pid == 0)
+    {
+        if (dup2(session->client.section_fd, 3) < 0 ||
+            dup2(input_pipe[0], 4) < 0 ||
+            dup2(mouse_pipe[0], 5) < 0 ||
+            dup2(present_pipe[1], 6) < 0)
+        {
+            exit(1);
+        }
+
+        close_fd_unless_target(&input_pipe[0], 4);
+        close_fd_if_needed(&input_pipe[1]);
+        close_fd_unless_target(&mouse_pipe[0], 5);
+        close_fd_if_needed(&mouse_pipe[1]);
+        close_fd_if_needed(&present_pipe[0]);
+        close_fd_unless_target(&present_pipe[1], 6);
+        close_fd_unless_target(&session->client.section_fd, 3);
+        if (exec(path, argv, 1) < 0)
+        {
+            eprintf("desktop: exec failed for %s\n", path);
+        }
+        exit(1);
+    }
+
+    session->client.path = path;
+    session->client.pid = pid;
+    session->client.input_write_fd = input_pipe[1];
+    session->client.mouse_write_fd = mouse_pipe[1];
+    session->client.present_read_fd = present_pipe[0];
+    close_fd_if_needed(&input_pipe[0]);
+    close_fd_if_needed(&mouse_pipe[0]);
+    close_fd_if_needed(&present_pipe[1]);
     return 0;
+
+fail:
+    close_fd_if_needed(&input_pipe[0]);
+    close_fd_if_needed(&input_pipe[1]);
+    close_fd_if_needed(&mouse_pipe[0]);
+    close_fd_if_needed(&mouse_pipe[1]);
+    close_fd_if_needed(&present_pipe[0]);
+    close_fd_if_needed(&present_pipe[1]);
+    if (session->client.mapped_view != 0 && !result_is_error((long)session->client.mapped_view))
+    {
+        (void)unmap_view(session->client.mapped_view);
+    }
+    close_fd_if_needed(&session->client.section_fd);
+    reset_client(session);
+    return -1;
+}
+
+static int switch_client(struct desktop_session *session, const char *path)
+{
+    destroy_client(session, 1);
+    return launch_client(session, path);
+}
+
+static int open_compositor_session(struct desktop_session *session)
+{
+    struct savanxp_gpu_mode mode = {0};
+    struct savanxp_gpu_surface_import import_request = {0};
+
+    memset(session, 0, sizeof(*session));
+    session->gpu_fd = -1;
+    session->input_fd = -1;
+    session->mouse_fd = -1;
+    session->display_section_fd = -1;
+    reset_client(session);
+
+    session->gpu_fd = (int)gpu_open();
+    if (session->gpu_fd < 0)
+    {
+        return -1;
+    }
+    if (gpu_acquire(session->gpu_fd) < 0)
+    {
+        return -1;
+    }
+    if (gpu_set_mode(session->gpu_fd, &mode) < 0)
+    {
+        return -1;
+    }
+
+    session->gfx.info.width = mode.width;
+    session->gfx.info.height = mode.height;
+    session->gfx.info.pitch = mode.pitch;
+    session->gfx.info.bpp = mode.bpp;
+    session->gfx.info.buffer_size = mode.buffer_size;
+    session->input_fd = (int)open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    session->mouse_fd = (int)open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
+    if (session->input_fd < 0 || session->mouse_fd < 0)
+    {
+        return -1;
+    }
+
+    session->display_section_fd = (int)section_create(session->gfx.info.buffer_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (session->display_section_fd < 0)
+    {
+        return -1;
+    }
+    session->display_view = map_view(session->display_section_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (result_is_error((long)session->display_view))
+    {
+        return -1;
+    }
+    session->display_pixels = (uint32_t *)session->display_view;
+    memset(session->display_pixels, 0, session->gfx.info.buffer_size);
+    g_backbuffer = session->display_pixels;
+
+    import_request.section_handle = session->display_section_fd;
+    import_request.width = session->gfx.info.width;
+    import_request.height = session->gfx.info.height;
+    import_request.pitch = session->gfx.info.pitch;
+    import_request.bpp = session->gfx.info.bpp;
+    import_request.buffer_size = session->gfx.info.buffer_size;
+    import_request.flags = SAVANXP_GPU_SURFACE_FLAG_SCANOUT;
+    if (gpu_import_section(session->gpu_fd, &import_request) < 0)
+    {
+        return -1;
+    }
+    session->display_surface_id = (uint32_t)import_request.surface_id;
+    return 0;
+}
+
+static void close_compositor_session(struct desktop_session *session)
+{
+    destroy_client(session, 1);
+    if (session->display_surface_id != 0 && session->gpu_fd >= 0)
+    {
+        (void)gpu_release_surface(session->gpu_fd, session->display_surface_id);
+    }
+    if (session->display_view != 0 && !result_is_error((long)session->display_view))
+    {
+        (void)unmap_view(session->display_view);
+    }
+    close_fd_if_needed(&session->display_section_fd);
+    close_fd_if_needed(&session->input_fd);
+    close_fd_if_needed(&session->mouse_fd);
+    if (session->gpu_fd >= 0)
+    {
+        (void)gpu_release(session->gpu_fd);
+        close_fd_if_needed(&session->gpu_fd);
+    }
+    g_backbuffer = 0;
+}
+
+static int launch_selected_item(struct desktop_session *session, int index)
+{
+    if (index < 0 || index >= menu_item_count())
+    {
+        return 0;
+    }
+    return switch_client(session, k_menu_items[index].path) < 0 ? -1 : 0;
 }
 
 int main(void)
 {
-    struct desktop_session session = {{-1, -1, {0, 0, 0, 0, 0}}, -1};
-    struct savanxp_input_event key_event;
-    struct savanxp_mouse_event mouse_event;
-    int cursor_x;
-    int cursor_y;
+    struct desktop_session session;
+    struct savanxp_input_event key_event = {0};
+    struct savanxp_mouse_event mouse_event = {0};
+    int cursor_x = 24;
+    int cursor_y = 24;
     int menu_open = 0;
     int selected_index = 0;
     uint32_t last_buttons = 0;
     unsigned long last_clock_stamp = 0;
     int needs_redraw = 1;
 
-    if (open_graphics_session(&session) < 0)
+    if (open_compositor_session(&session) < 0 || launch_client(&session, k_shellapp_path) < 0)
     {
-        puts_fd(2, "desktop: failed to open graphics session\n");
+        puts_fd(2, "desktop: compositor startup failed\n");
+        close_compositor_session(&session);
         return 1;
     }
 
-    cursor_x = 0;
-    cursor_y = 0;
     {
         char clock_text[6];
         last_clock_stamp = current_clock_stamp(clock_text);
@@ -445,143 +645,169 @@ int main(void)
 
     for (;;)
     {
-        while (gfx_poll_event(&session.gfx, &key_event) > 0)
+        struct savanxp_pollfd poll_fds[3];
+        int poll_count = 0;
+        long count = 0;
+
+        poll_fds[poll_count].fd = session.input_fd;
+        poll_fds[poll_count].events = SAVANXP_POLLIN;
+        poll_fds[poll_count].revents = 0;
+        ++poll_count;
+        poll_fds[poll_count].fd = session.mouse_fd;
+        poll_fds[poll_count].events = SAVANXP_POLLIN;
+        poll_fds[poll_count].revents = 0;
+        ++poll_count;
+        if (session.client.present_read_fd >= 0)
         {
-            if (key_event.type != SAVANXP_INPUT_EVENT_KEY_DOWN)
-            {
-                continue;
-            }
-
-            if (key_event.key == SAVANXP_KEY_SUPER)
-            {
-                menu_open = !menu_open;
-                if (menu_open)
-                {
-                    selected_index = 0;
-                }
-                needs_redraw = 1;
-                continue;
-            }
-
-            if (key_event.key == SAVANXP_KEY_ESC)
-            {
-                if (menu_open)
-                {
-                    menu_open = 0;
-                    needs_redraw = 1;
-                    continue;
-                }
-                close_graphics_session(&session);
-                return 0;
-            }
-
-            if (key_event.key == SAVANXP_KEY_UP || key_event.key == SAVANXP_KEY_DOWN)
-            {
-                if (!menu_open)
-                {
-                    menu_open = 1;
-                    selected_index = 0;
-                }
-                else if (key_event.key == SAVANXP_KEY_UP)
-                {
-                    selected_index = (selected_index + menu_item_count() - 1) % menu_item_count();
-                }
-                else
-                {
-                    selected_index = (selected_index + 1) % menu_item_count();
-                }
-                needs_redraw = 1;
-                continue;
-            }
-
-            if (key_event.key == SAVANXP_KEY_ENTER && menu_open)
-            {
-                const int launch_result = handoff_and_launch(&session, &k_menu_items[selected_index]);
-                if (launch_result > 0)
-                {
-                    return 0;
-                }
-                if (launch_result < 0)
-                {
-                    return 1;
-                }
-                cursor_x = clamp_int(cursor_x, 0, (int)session.gfx.info.width - 1);
-                cursor_y = clamp_int(cursor_y, 0, (int)session.gfx.info.height - 1);
-                last_buttons = 0;
-                menu_open = 0;
-                needs_redraw = 1;
-            }
+            poll_fds[poll_count].fd = session.client.present_read_fd;
+            poll_fds[poll_count].events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
+            poll_fds[poll_count].revents = 0;
+            ++poll_count;
         }
 
-        while (session.mouse_fd >= 0 && mouse_poll_event(session.mouse_fd, &mouse_event) > 0)
+        if (poll(poll_fds, (unsigned long)poll_count, 16) < 0)
         {
-            uint32_t pressed_buttons = mouse_event.buttons;
-            const uint32_t left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
-            const uint32_t right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
-            const uint32_t left_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
-            const uint32_t right_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
+            break;
+        }
 
-            cursor_x = clamp_int(cursor_x + mouse_event.delta_x, 0, (int)session.gfx.info.width - 1);
-            cursor_y = clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session.gfx.info.height - 1);
-
-            if (menu_open)
+        if ((poll_fds[0].revents & SAVANXP_POLLIN) != 0)
+        {
+            while ((count = read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
-                const int hovered = selected_item_from_cursor(&session.gfx, cursor_x, cursor_y);
-                if (hovered >= 0)
-                {
-                    selected_index = hovered;
-                }
-            }
-
-            if (left_pressed != 0 && left_was_pressed == 0)
-            {
-                const int taskbar_y = (int)session.gfx.info.height - TASKBAR_HEIGHT;
-                const int hovered = menu_open ? selected_item_from_cursor(&session.gfx, cursor_x, cursor_y) : -1;
-
-                if (point_in_rect(cursor_x, cursor_y, 4, taskbar_y + 4, START_BUTTON_WIDTH, TASKBAR_HEIGHT - 8))
+                if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_SUPER)
                 {
                     menu_open = !menu_open;
                     if (menu_open)
                     {
                         selected_index = 0;
                     }
+                    needs_redraw = 1;
                 }
-                else if (menu_open && hovered >= 0)
+                else if (menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
                 {
-                    const int launch_result = handoff_and_launch(&session, &k_menu_items[hovered]);
-                    if (launch_result > 0)
+                    if (key_event.key == SAVANXP_KEY_ESC)
                     {
-                        return 0;
+                        menu_open = 0;
                     }
-                    if (launch_result < 0)
+                    else if (key_event.key == SAVANXP_KEY_UP)
                     {
-                        return 1;
+                        selected_index = (selected_index + menu_item_count() - 1) % menu_item_count();
                     }
-                    cursor_x = clamp_int(cursor_x, 0, (int)session.gfx.info.width - 1);
-                    cursor_y = clamp_int(cursor_y, 0, (int)session.gfx.info.height - 1);
-                    pressed_buttons = 0;
-                    menu_open = 0;
+                    else if (key_event.key == SAVANXP_KEY_DOWN)
+                    {
+                        selected_index = (selected_index + 1) % menu_item_count();
+                    }
+                    else if (key_event.key == SAVANXP_KEY_ENTER)
+                    {
+                        int launch_result = launch_selected_item(&session, selected_index);
+                        if (launch_result < 0)
+                        {
+                            puts_fd(2, "desktop: failed to switch client\n");
+                        }
+                        menu_open = 0;
+                        last_buttons = 0;
+                    }
+                    needs_redraw = 1;
                 }
-                else if (menu_open)
+                else if (session.client.input_write_fd >= 0)
                 {
-                    menu_open = 0;
+                    (void)route_packet(session.client.input_write_fd, &key_event, sizeof(key_event));
                 }
-                needs_redraw = 1;
             }
+        }
 
-            if (right_pressed != 0 && right_was_pressed == 0 && menu_open)
+        if ((poll_fds[1].revents & SAVANXP_POLLIN) != 0)
+        {
+            while ((count = read(session.mouse_fd, &mouse_event, sizeof(mouse_event))) == (long)sizeof(mouse_event))
             {
-                menu_open = 0;
+                uint32_t pressed_buttons = mouse_event.buttons;
+                uint32_t left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
+                uint32_t right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
+                uint32_t left_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
+                uint32_t right_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
+                int taskbar_y = (int)session.gfx.info.height - TASKBAR_HEIGHT;
+
+                cursor_x = clamp_int(cursor_x + mouse_event.delta_x, 0, (int)session.gfx.info.width - 1);
+                cursor_y = clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session.gfx.info.height - 1);
+                if (menu_open)
+                {
+                    int hovered = selected_item_from_cursor(&session.gfx, cursor_x, cursor_y);
+                    if (hovered >= 0)
+                    {
+                        selected_index = hovered;
+                    }
+                }
+
+                if (left_pressed != 0 && left_was_pressed == 0)
+                {
+                    int hovered = menu_open ? selected_item_from_cursor(&session.gfx, cursor_x, cursor_y) : -1;
+                    if (point_in_rect(cursor_x, cursor_y, 4, taskbar_y + 4, START_BUTTON_WIDTH, TASKBAR_HEIGHT - 8))
+                    {
+                        menu_open = !menu_open;
+                        if (menu_open)
+                        {
+                            selected_index = 0;
+                        }
+                    }
+                    else if (menu_open && hovered >= 0)
+                    {
+                        int launch_result = launch_selected_item(&session, hovered);
+                        if (launch_result < 0)
+                        {
+                            puts_fd(2, "desktop: failed to switch client\n");
+                        }
+                        menu_open = 0;
+                        pressed_buttons = 0;
+                    }
+                    else if (menu_open)
+                    {
+                        menu_open = 0;
+                    }
+                    else if (session.client.mouse_write_fd >= 0)
+                    {
+                        (void)route_packet(session.client.mouse_write_fd, &mouse_event, sizeof(mouse_event));
+                    }
+                }
+                else if (!menu_open && session.client.mouse_write_fd >= 0)
+                {
+                    (void)route_packet(session.client.mouse_write_fd, &mouse_event, sizeof(mouse_event));
+                }
+
+                if (right_pressed != 0 && right_was_pressed == 0 && menu_open)
+                {
+                    menu_open = 0;
+                }
+                last_buttons = pressed_buttons;
                 needs_redraw = 1;
             }
+        }
 
-            last_buttons = pressed_buttons;
-            needs_redraw = 1;
+        if (poll_count >= 3 && session.client.present_read_fd >= 0)
+        {
+            if ((poll_fds[2].revents & SAVANXP_POLLHUP) != 0)
+            {
+                destroy_client(&session, 0);
+                needs_redraw = 1;
+            }
+            else if ((poll_fds[2].revents & SAVANXP_POLLIN) != 0)
+            {
+                struct savanxp_gpu_client_present_packet packet;
+                count = read(session.client.present_read_fd, &packet, sizeof(packet));
+                if (count == (long)sizeof(packet))
+                {
+                    needs_redraw = 1;
+                }
+                if (count < 0)
+                {
+                    destroy_client(&session, 0);
+                    needs_redraw = 1;
+                }
+            }
         }
 
         {
             char clock_text[6];
-            const unsigned long clock_stamp = current_clock_stamp(clock_text);
+            unsigned long clock_stamp = current_clock_stamp(clock_text);
             if (clock_stamp != last_clock_stamp)
             {
                 last_clock_stamp = clock_stamp;
@@ -591,19 +817,16 @@ int main(void)
 
         if (!needs_redraw)
         {
-            sleep_ms(16);
             continue;
         }
-
         draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index);
-        if (gfx_present(&session.gfx, g_backbuffer) < 0)
+        if (present_frame(&session) < 0)
         {
+            puts_fd(2, "desktop: present failed\n");
             break;
         }
         needs_redraw = 0;
     }
-
-    close_graphics_session(&session);
-    puts_fd(2, "desktop: present failed\n");
+    close_compositor_session(&session);
     return 1;
 }

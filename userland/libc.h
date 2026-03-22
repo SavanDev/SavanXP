@@ -78,6 +78,11 @@ long gpu_open(void);
 long gpu_get_info(int fd, struct savanxp_gpu_info* info);
 long gpu_acquire(int fd);
 long gpu_release(int fd);
+long gpu_set_mode(int fd, struct savanxp_gpu_mode* mode);
+long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_request);
+long gpu_release_surface(int fd, uint32_t surface_id);
+long gpu_present_surface_region(int fd, const struct savanxp_gpu_surface_present* present_request);
+long gpu_wait_idle(int fd);
 long gpu_present(int fd, const uint32_t* pixels);
 long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void exit(int code) __attribute__((noreturn));
@@ -86,6 +91,11 @@ struct savanxp_gfx_context {
     int fb_fd;
     int input_fd;
     struct savanxp_fb_info info;
+    int present_fd;
+    int mode;
+    void* mapped_view;
+    uint32_t* pixels;
+    uint32_t pixels_offset;
 };
 
 long gfx_open(struct savanxp_gfx_context* context);

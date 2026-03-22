@@ -5,9 +5,11 @@
 
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
+#include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/ui.hpp"
+#include "kernel/virtio_input.hpp"
 #include "kernel/virtio_pci.hpp"
 
 namespace {
@@ -28,6 +30,7 @@ constexpr uint32_t kVirtioGpuCmdResourceAttachBacking = 0x0106u;
 constexpr uint32_t kVirtioGpuRespOkNoData = 0x1100u;
 constexpr uint32_t kVirtioGpuRespOkDisplayInfo = 0x1101u;
 constexpr uint32_t kGpuSurfaceCount = 3u;
+constexpr uint32_t kImportedSurfaceCount = 8u;
 constexpr uint32_t kFirstGpuResourceId = 1u;
 constexpr size_t kRequestBufferBytes = 512;
 constexpr size_t kResponseBufferBytes = 512;
@@ -159,13 +162,30 @@ struct Surface {
     memory::PageAllocation allocation;
     uint32_t resource_id;
 };
+
+struct ImportedSurface {
+    bool in_use;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t surface_id;
+    uint32_t resource_id;
+    uint32_t flags;
+    savanxp_fb_info info;
+    object::SectionObject* section;
+};
 Surface* surface_at(uint32_t surface_index);
 Surface* front_surface();
+ImportedSurface* imported_surface_at(uint32_t surface_id);
+void release_imported_surface(ImportedSurface& surface);
+void release_all_imported_surfaces();
+bool any_imported_surface_in_use();
 
 Surface g_surfaces[kGpuSurfaceCount] = {};
+ImportedSurface g_imported_surfaces[kImportedSurfaceCount] = {};
 savanxp_fb_info g_framebuffer_info = {};
 savanxp_gpu_info g_gpu_info = {};
 uint32_t g_scanout_id = 0;
+uint32_t g_scanout_resource_id = 0;
 uint32_t g_scanout_width = 0;
 uint32_t g_scanout_height = 0;
 uint32_t g_front_surface_index = 0;
@@ -453,6 +473,154 @@ Surface* front_surface() {
     return surface_at(g_front_surface_index);
 }
 
+ImportedSurface* imported_surface_at(uint32_t surface_id) {
+    if (surface_id == 0) {
+        return nullptr;
+    }
+
+    for (ImportedSurface& surface : g_imported_surfaces) {
+        if (surface.in_use && surface.surface_id == surface_id) {
+            return &surface;
+        }
+    }
+    return nullptr;
+}
+
+bool create_resource(uint32_t resource_id, const savanxp_fb_info& info) {
+    VirtioGpuResourceCreate2d request = {};
+    initialize_header(request.header, kVirtioGpuCmdResourceCreate2d);
+    request.resource_id = resource_id;
+    request.format = kVirtioGpuFormatB8G8R8X8Unorm;
+    request.width = info.width;
+    request.height = info.height;
+    return send_ok_nodata_command(&request, sizeof(request));
+}
+
+bool destroy_resource(uint32_t resource_id) {
+    if (resource_id == 0) {
+        return false;
+    }
+
+    VirtioGpuResourceUnref request = {};
+    initialize_header(request.header, kVirtioGpuCmdResourceUnref);
+    request.resource_id = resource_id;
+    if (resource_id == g_scanout_resource_id) {
+        g_scanout_resource_id = 0;
+    }
+    return send_ok_nodata_command(&request, sizeof(request));
+}
+
+bool attach_resource_backing(uint32_t resource_id, uint64_t physical_address, uint32_t length) {
+    if (resource_id == 0 || physical_address == 0 || length == 0) {
+        return false;
+    }
+
+    VirtioGpuResourceAttachBacking request = {};
+    initialize_header(request.header, kVirtioGpuCmdResourceAttachBacking);
+    request.resource_id = resource_id;
+    request.nr_entries = 1;
+    request.entry.addr = physical_address;
+    request.entry.length = length;
+    return send_ok_nodata_command(&request, sizeof(request));
+}
+
+bool build_scanout_request_for_resource(uint32_t resource_id, const savanxp_fb_info& info, VirtioGpuSetScanout& request) {
+    if (resource_id == 0) {
+        return false;
+    }
+
+    request = {};
+    initialize_header(request.header, kVirtioGpuCmdSetScanout);
+    request.rect = {
+        .x = 0,
+        .y = 0,
+        .width = info.width,
+        .height = info.height,
+    };
+    request.scanout_id = g_scanout_id;
+    request.resource_id = resource_id;
+    return true;
+}
+
+bool set_scanout_resource(uint32_t resource_id, const savanxp_fb_info& info) {
+    VirtioGpuSetScanout request = {};
+    if (resource_id == g_scanout_resource_id) {
+        return true;
+    }
+    if (!(build_scanout_request_for_resource(resource_id, info, request) &&
+        send_ok_nodata_command(&request, sizeof(request)))) {
+        return false;
+    }
+    g_scanout_resource_id = resource_id;
+    return true;
+}
+
+bool build_transfer_request_for_resource(
+    uint32_t resource_id,
+    const savanxp_fb_info& info,
+    uint32_t x,
+    uint32_t y,
+    uint32_t width,
+    uint32_t height,
+    VirtioGpuTransferToHost2d& request) {
+    if (resource_id == 0) {
+        return false;
+    }
+
+    request = {};
+    initialize_header(request.header, kVirtioGpuCmdTransferToHost2d);
+    request.rect = {
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+    };
+    request.offset = (static_cast<uint64_t>(y) * info.pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
+    request.resource_id = resource_id;
+    return true;
+}
+
+bool transfer_rect_resource(
+    uint32_t resource_id,
+    const savanxp_fb_info& info,
+    uint32_t x,
+    uint32_t y,
+    uint32_t width,
+    uint32_t height) {
+    VirtioGpuTransferToHost2d request = {};
+    return build_transfer_request_for_resource(resource_id, info, x, y, width, height, request) &&
+        send_ok_nodata_command(&request, sizeof(request));
+}
+
+bool build_flush_request_for_resource(
+    uint32_t resource_id,
+    uint32_t x,
+    uint32_t y,
+    uint32_t width,
+    uint32_t height,
+    VirtioGpuResourceFlush& request) {
+    if (resource_id == 0) {
+        return false;
+    }
+
+    request = {};
+    initialize_header(request.header, kVirtioGpuCmdResourceFlush);
+    request.rect = {
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+    };
+    request.resource_id = resource_id;
+    return true;
+}
+
+bool flush_rect_resource(uint32_t resource_id, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    VirtioGpuResourceFlush request = {};
+    return build_flush_request_for_resource(resource_id, x, y, width, height, request) &&
+        send_ok_nodata_command(&request, sizeof(request));
+}
+
 bool surface_pending(uint32_t surface_index) {
     for (uint32_t index = 0; index < kGpuSurfaceCount; ++index) {
         if (g_pending_presents[index].in_use && g_pending_presents[index].surface_index == surface_index) {
@@ -514,6 +682,40 @@ void wait_for_idle_internal() {
     }
 }
 
+bool any_imported_surface_in_use() {
+    for (const ImportedSurface& surface : g_imported_surfaces) {
+        if (surface.in_use) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void release_imported_surface(ImportedSurface& surface) {
+    if (!surface.in_use) {
+        return;
+    }
+
+    if (surface.resource_id != 0) {
+        if (surface.resource_id == g_scanout_resource_id) {
+            g_scanout_resource_id = 0;
+        }
+        (void)destroy_resource(surface.resource_id);
+    }
+    if (surface.section != nullptr) {
+        object::Header* header = &surface.section->header;
+        object::release(header);
+    }
+    memset(&surface, 0, sizeof(surface));
+}
+
+void release_all_imported_surfaces() {
+    wait_for_idle_internal();
+    for (ImportedSurface& surface : g_imported_surfaces) {
+        release_imported_surface(surface);
+    }
+}
+
 void release_surface_allocation(uint32_t surface_index) {
     Surface* surface = surface_at(surface_index);
     if (surface == nullptr) {
@@ -534,6 +736,7 @@ void release_surface_allocations() {
     }
     reset_present_tracking();
     g_front_surface_index = 0;
+    g_scanout_resource_id = 0;
 }
 
 bool create_surface_resource(uint32_t surface_index) {
@@ -541,14 +744,7 @@ bool create_surface_resource(uint32_t surface_index) {
     if (surface == nullptr) {
         return false;
     }
-
-    VirtioGpuResourceCreate2d request = {};
-    initialize_header(request.header, kVirtioGpuCmdResourceCreate2d);
-    request.resource_id = surface->resource_id;
-    request.format = kVirtioGpuFormatB8G8R8X8Unorm;
-    request.width = g_framebuffer_info.width;
-    request.height = g_framebuffer_info.height;
-    return send_ok_nodata_command(&request, sizeof(request));
+    return create_resource(surface->resource_id, g_framebuffer_info);
 }
 
 bool destroy_surface_resource(uint32_t surface_index) {
@@ -556,11 +752,7 @@ bool destroy_surface_resource(uint32_t surface_index) {
     if (surface == nullptr || surface->resource_id == 0) {
         return false;
     }
-
-    VirtioGpuResourceUnref request = {};
-    initialize_header(request.header, kVirtioGpuCmdResourceUnref);
-    request.resource_id = surface->resource_id;
-    return send_ok_nodata_command(&request, sizeof(request));
+    return destroy_resource(surface->resource_id);
 }
 
 bool attach_surface_backing(uint32_t surface_index) {
@@ -568,14 +760,7 @@ bool attach_surface_backing(uint32_t surface_index) {
     if (surface == nullptr) {
         return false;
     }
-
-    VirtioGpuResourceAttachBacking request = {};
-    initialize_header(request.header, kVirtioGpuCmdResourceAttachBacking);
-    request.resource_id = surface->resource_id;
-    request.nr_entries = 1;
-    request.entry.addr = surface->allocation.physical_address;
-    request.entry.length = g_framebuffer_info.buffer_size;
-    return send_ok_nodata_command(&request, sizeof(request));
+    return attach_resource_backing(surface->resource_id, surface->allocation.physical_address, g_framebuffer_info.buffer_size);
 }
 
 bool build_scanout_request(uint32_t surface_index, VirtioGpuSetScanout& request) {
@@ -583,18 +768,7 @@ bool build_scanout_request(uint32_t surface_index, VirtioGpuSetScanout& request)
     if (surface == nullptr) {
         return false;
     }
-
-    request = {};
-    initialize_header(request.header, kVirtioGpuCmdSetScanout);
-    request.rect = {
-        .x = 0,
-        .y = 0,
-        .width = g_framebuffer_info.width,
-        .height = g_framebuffer_info.height,
-    };
-    request.scanout_id = g_scanout_id;
-    request.resource_id = surface->resource_id;
-    return true;
+    return build_scanout_request_for_resource(surface->resource_id, g_framebuffer_info, request);
 }
 
 bool set_scanout_surface(uint32_t surface_index) {
@@ -608,18 +782,7 @@ bool build_transfer_request(uint32_t surface_index, uint32_t x, uint32_t y, uint
     if (surface == nullptr) {
         return false;
     }
-
-    request = {};
-    initialize_header(request.header, kVirtioGpuCmdTransferToHost2d);
-    request.rect = {
-        .x = x,
-        .y = y,
-        .width = width,
-        .height = height,
-    };
-    request.offset = (static_cast<uint64_t>(y) * g_framebuffer_info.pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
-    request.resource_id = surface->resource_id;
-    return true;
+    return build_transfer_request_for_resource(surface->resource_id, g_framebuffer_info, x, y, width, height, request);
 }
 
 bool transfer_rect(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -633,17 +796,7 @@ bool build_flush_request(uint32_t surface_index, uint32_t x, uint32_t y, uint32_
     if (surface == nullptr) {
         return false;
     }
-
-    request = {};
-    initialize_header(request.header, kVirtioGpuCmdResourceFlush);
-    request.rect = {
-        .x = x,
-        .y = y,
-        .width = width,
-        .height = height,
-    };
-    request.resource_id = surface->resource_id;
-    return true;
+    return build_flush_request_for_resource(surface->resource_id, x, y, width, height, request);
 }
 
 bool flush_rect_internal(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -869,6 +1022,195 @@ bool configure_primary_surface(uint32_t width, uint32_t height) {
     return true;
 }
 
+bool fill_mode_info(savanxp_gpu_mode& mode) {
+    mode = {
+        .width = g_framebuffer_info.width,
+        .height = g_framebuffer_info.height,
+        .pitch = g_framebuffer_info.pitch,
+        .bpp = g_framebuffer_info.bpp,
+        .buffer_size = g_framebuffer_info.buffer_size,
+    };
+    return true;
+}
+
+bool normalize_import_info(const savanxp_gpu_surface_import& request, savanxp_fb_info& info) {
+    const uint32_t width = request.width != 0 ? request.width : g_framebuffer_info.width;
+    const uint32_t height = request.height != 0 ? request.height : g_framebuffer_info.height;
+    const uint32_t bpp = request.bpp != 0 ? request.bpp : 32u;
+    const uint32_t pitch = request.pitch != 0 ? request.pitch : static_cast<uint32_t>(width * sizeof(uint32_t));
+    const uint32_t buffer_size = request.buffer_size != 0 ? request.buffer_size : static_cast<uint32_t>(pitch * height);
+
+    if (width == 0 || height == 0 || bpp != 32u || pitch < (width * sizeof(uint32_t))) {
+        return false;
+    }
+    if (buffer_size < (pitch * height)) {
+        return false;
+    }
+    if (width != g_framebuffer_info.width || height != g_framebuffer_info.height) {
+        return false;
+    }
+
+    info = {
+        .width = width,
+        .height = height,
+        .pitch = pitch,
+        .bpp = static_cast<uint32_t>(bpp),
+        .buffer_size = buffer_size,
+    };
+    return true;
+}
+
+ImportedSurface* allocate_imported_surface_slot() {
+    for (uint32_t index = 0; index < kImportedSurfaceCount; ++index) {
+        ImportedSurface& surface = g_imported_surfaces[index];
+        if (!surface.in_use) {
+            memset(&surface, 0, sizeof(surface));
+            surface.in_use = true;
+            surface.surface_id = index + 1u;
+            surface.resource_id = kFirstGpuResourceId + kGpuSurfaceCount + index;
+            return &surface;
+        }
+    }
+    return nullptr;
+}
+
+int set_mode_ioctl(uint64_t argument) {
+    if (!process::validate_user_range(argument, sizeof(savanxp_gpu_mode), true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    savanxp_gpu_mode mode = {};
+    if (!process::copy_from_user(&mode, argument, sizeof(mode))) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    const uint32_t requested_width = mode.width != 0 ? mode.width : g_framebuffer_info.width;
+    const uint32_t requested_height = mode.height != 0 ? mode.height : g_framebuffer_info.height;
+    if (requested_width == 0 || requested_height == 0) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (mode.bpp != 0 && mode.bpp != 32u) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (any_imported_surface_in_use()) {
+        return negative_error(SAVANXP_EBUSY);
+    }
+
+    if ((requested_width != g_framebuffer_info.width || requested_height != g_framebuffer_info.height) &&
+        !configure_primary_surface(requested_width, requested_height)) {
+        return negative_error(SAVANXP_EIO);
+    }
+
+    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
+    fill_mode_info(mode);
+    return process::copy_to_user(argument, &mode, sizeof(mode)) ? 0 : negative_error(SAVANXP_EINVAL);
+}
+
+int import_surface_ioctl(uint64_t argument) {
+    if (!process::validate_user_range(argument, sizeof(savanxp_gpu_surface_import), true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    savanxp_gpu_surface_import request = {};
+    if (!process::copy_from_user(&request, argument, sizeof(request))) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (request.section_handle < 0) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    process::Process* current = process::current();
+    if (current == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+
+    if (static_cast<uint64_t>(request.section_handle) >= process::kMaxFileHandles) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    process::HandleEntry& entry = current->handles[request.section_handle];
+    if (entry.object == nullptr || (entry.granted_access & object::access_query) == 0) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    object::SectionObject* section_object = object::as_section(entry.object);
+    if (section_object == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+
+    savanxp_fb_info info = {};
+    if (!normalize_import_info(request, info)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (section_object->size_bytes < info.buffer_size || section_object->allocation.physical_address == 0) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    ImportedSurface* imported = allocate_imported_surface_slot();
+    if (imported == nullptr) {
+        return negative_error(SAVANXP_ENOMEM);
+    }
+
+    imported->flags = request.flags;
+    imported->info = info;
+    imported->section = section_object;
+    object::retain(&section_object->header);
+
+    if (!create_resource(imported->resource_id, imported->info) ||
+        !attach_resource_backing(imported->resource_id, section_object->allocation.physical_address, imported->info.buffer_size)) {
+        release_imported_surface(*imported);
+        return negative_error(SAVANXP_EIO);
+    }
+
+    request.surface_id = static_cast<int32_t>(imported->surface_id);
+    request.width = imported->info.width;
+    request.height = imported->info.height;
+    request.pitch = imported->info.pitch;
+    request.bpp = imported->info.bpp;
+    request.buffer_size = imported->info.buffer_size;
+    return process::copy_to_user(argument, &request, sizeof(request)) ? 0 : negative_error(SAVANXP_EINVAL);
+}
+
+int release_surface_ioctl(uint64_t argument) {
+    const uint32_t surface_id = static_cast<uint32_t>(argument);
+    ImportedSurface* surface = imported_surface_at(surface_id);
+    if (surface == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    release_imported_surface(*surface);
+    return 0;
+}
+
+int present_surface_region_ioctl(uint64_t argument) {
+    if (!process::validate_user_range(argument, sizeof(savanxp_gpu_surface_present), true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    savanxp_gpu_surface_present present = {};
+    if (!process::copy_from_user(&present, argument, sizeof(present))) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    ImportedSurface* surface = imported_surface_at(present.surface_id);
+    if (surface == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (present.width == 0 || present.height == 0 ||
+        present.x >= surface->info.width || present.y >= surface->info.height ||
+        present.width > (surface->info.width - present.x) ||
+        present.height > (surface->info.height - present.y)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    if (!set_scanout_resource(surface->resource_id, surface->info) ||
+        !transfer_rect_resource(surface->resource_id, surface->info, present.x, present.y, present.width, present.height) ||
+        !flush_rect_resource(surface->resource_id, present.x, present.y, present.width, present.height)) {
+        return negative_error(SAVANXP_EIO);
+    }
+
+    if (surface->section != nullptr) {
+        console::set_external_framebuffer(surface->section->allocation.virtual_address, surface->info);
+    }
+    return 0;
+}
+
 int gpu_ioctl(uint64_t request, uint64_t argument) {
     switch (request) {
         case GPU_IOC_GET_INFO: {
@@ -888,6 +1230,7 @@ int gpu_ioctl(uint64_t request, uint64_t argument) {
             if (!ui::owns_graphics_session(process::current_pid())) {
                 return negative_error(SAVANXP_EBUSY);
             }
+            release_all_imported_surfaces();
             ui::release_graphics_session(process::current_pid());
             return 0;
         case GPU_IOC_PRESENT: {
@@ -934,6 +1277,32 @@ int gpu_ioctl(uint64_t request, uint64_t argument) {
                 region.height
             ) ? 0 : negative_error(SAVANXP_EIO);
         }
+        case GPU_IOC_SET_MODE:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            return set_mode_ioctl(argument);
+        case GPU_IOC_IMPORT_SECTION:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            return import_surface_ioctl(argument);
+        case GPU_IOC_RELEASE_SURFACE:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            return release_surface_ioctl(argument);
+        case GPU_IOC_PRESENT_SURFACE_REGION:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            return present_surface_region_ioctl(argument);
+        case GPU_IOC_WAIT_IDLE:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            virtio_gpu::wait_for_idle();
+            return 0;
         default:
             return negative_error(SAVANXP_ENOSYS);
     }
@@ -941,11 +1310,13 @@ int gpu_ioctl(uint64_t request, uint64_t argument) {
 
 void gpu_close() {
     if (ui::owns_graphics_session(process::current_pid())) {
+        release_all_imported_surfaces();
         ui::release_graphics_session(process::current_pid());
     }
 }
 
 void fail_device(const char* reason) {
+    release_all_imported_surfaces();
     virtio_pci::fail_device(g_device);
     if (reason != nullptr) {
         console::printf("virtio-gpu: %s\n", reason);
@@ -977,11 +1348,13 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     memset(&g_device, 0, sizeof(g_device));
     memset(&g_control_queue, 0, sizeof(g_control_queue));
     memset(g_surfaces, 0, sizeof(g_surfaces));
+    memset(g_imported_surfaces, 0, sizeof(g_imported_surfaces));
     memset(&g_framebuffer_info, 0, sizeof(g_framebuffer_info));
     memset(&g_gpu_info, 0, sizeof(g_gpu_info));
     g_front_surface_index = 0;
     g_present = false;
     g_ready = false;
+    g_scanout_resource_id = 0;
     g_next_fence_id = 1;
     g_last_response_type = 0;
     g_command_slot_capacity = 0;

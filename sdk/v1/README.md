@@ -36,16 +36,21 @@ Categorías soportadas:
 
 Nodos de dispositivo expuestos actualmente:
 
-- `/dev/fb0`
+- `/dev/gpu0`
 - `/dev/input0`
 - `/dev/mouse0`
 - `/dev/net0`
 - `/dev/pcspk`
 - `/dev/audio0`
 
+Notas graficas:
+
+- `/dev/gpu0` es el backend grafico oficial para sesiones normales.
+- las apps fullscreen nuevas o migradas deben usar `gfx_*` o `GPU_IOC_*`
+  sobre ese backend.
+
 Ioctl groups visibles:
 
-- `FB_IOC_*`
 - `NET_IOC_*`
 - `PCSPK_IOC_*`
 - `GPU_IOC_*`

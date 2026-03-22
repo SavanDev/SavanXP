@@ -101,6 +101,7 @@ struct SectionObject {
     uint32_t access_mask;
     uint64_t size_bytes;
     uint64_t page_count;
+    memory::PageAllocation allocation;
     uint64_t* physical_pages;
 };
 

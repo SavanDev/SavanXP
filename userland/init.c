@@ -1,7 +1,7 @@
 #include "libc.h"
 
 int main(void) {
-    const char* shell_argv[] = {"/bin/sh", 0};
+    const char* desktop_argv[] = {"/bin/desktop", 0};
     const char* smoke_argv[] = {"/disk/bin/smoke", 0};
 
     long smoke_trigger = open("/SMOKE");
@@ -28,13 +28,15 @@ int main(void) {
 
     for (;;) {
         int status = 0;
-        long pid = spawn("/bin/sh", shell_argv, 1);
+        long pid = spawn("/bin/desktop", desktop_argv, 1);
         if (pid < 0) {
-            puts("init: failed to spawn shell\n");
-            return 1;
+            printf("init: failed to spawn desktop (%s)\n", result_error_string(pid));
+            sleep_ms(1000);
+            continue;
         }
 
         waitpid((int)pid, &status);
-        puts("init: shell exited, restarting\n");
+        printf("init: desktop exited with %d, restarting\n", status);
+        sleep_ms(250);
     }
 }
