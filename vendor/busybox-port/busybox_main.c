@@ -8,7 +8,6 @@ int mv_main(int argc, char** argv);
 int cp_main(int argc, char** argv);
 int bb_ls_main(int argc, char** argv);
 int bb_ps_main(int argc, char** argv);
-int bb_sh_main(int argc, char** argv);
 int bb_true_main(int argc, char** argv);
 int bb_false_main(int argc, char** argv);
 int bb_sleep_main(int argc, char** argv);
@@ -28,7 +27,6 @@ static const struct AppletEntry kApplets[] = {
     {"mv", mv_main},
     {"ps", bb_ps_main},
     {"rm", rm_main},
-    {"sh", bb_sh_main},
     {"sleep", bb_sleep_main},
     {"true", bb_true_main},
 };
@@ -60,7 +58,6 @@ const char applet_names[] ALIGN1 =
     "mv\0"
     "ps\0"
     "rm\0"
-    "sh\0"
     "sleep\0"
     "true\0"
     "\0";

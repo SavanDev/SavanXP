@@ -70,7 +70,7 @@ $KernelSources = @(
 
 $UserPrograms = @(
     @{ Name = "init"; Source = "userland/init.c" },
-    @{ Name = "sh_legacy"; Source = "userland/sh.c" },
+    @{ Name = "sh"; Source = "userland/sh.c" },
     @{ Name = "uname"; Source = "userland/uname.c" },
     @{ Name = "df"; Source = "userland/df.c" },
     @{ Name = "ticker"; Source = "userland/ticker.c" },
@@ -110,7 +110,6 @@ $UserPrograms = @(
 
 $BusyBoxApplets = @(
     "busybox",
-    "sh",
     "ls",
     "cat",
     "echo",
