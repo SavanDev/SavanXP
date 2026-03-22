@@ -32,7 +32,7 @@ Notas de corte:
 ### Cambiado
 
 - El build principal ahora instala el multicall BusyBox portado en `/bin` y
-  `/disk/bin` para `sh`, `ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp` y
+  `/disk/bin` para `ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp` y
   `ps`.
 - `virtio-gpu` pasa a presentar sobre un set interno de tres superficies,
   rotando recursos sin cambiar la ABI publica de `/dev/fb0` y `/dev/gpu0`.
