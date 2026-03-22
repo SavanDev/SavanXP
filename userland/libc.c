@@ -172,6 +172,44 @@ long kill(int pid, int signal_number) {
     return syscall2(SAVANXP_SYS_KILL, (unsigned long)pid, (unsigned long)signal_number);
 }
 
+long event_create(unsigned long flags) {
+    return syscall1(SAVANXP_SYS_EVENT_CREATE, flags);
+}
+
+long event_set(int handle) {
+    return syscall1(SAVANXP_SYS_EVENT_SET, (unsigned long)handle);
+}
+
+long event_reset(int handle) {
+    return syscall1(SAVANXP_SYS_EVENT_RESET, (unsigned long)handle);
+}
+
+long wait_one(int handle, long timeout_ms) {
+    return syscall2(SAVANXP_SYS_WAIT_ONE, (unsigned long)handle, (unsigned long)timeout_ms);
+}
+
+long wait_many(const int* handles, unsigned long count, unsigned long flags, long timeout_ms) {
+    return syscall5(
+        SAVANXP_SYS_WAIT_MANY,
+        (unsigned long)handles,
+        count,
+        flags,
+        (unsigned long)timeout_ms,
+        0);
+}
+
+long timer_create(unsigned long flags) {
+    return syscall1(SAVANXP_SYS_TIMER_CREATE, flags);
+}
+
+long timer_set(int handle, unsigned long due_ms, unsigned long period_ms) {
+    return syscall3(SAVANXP_SYS_TIMER_SET, (unsigned long)handle, due_ms, period_ms);
+}
+
+long timer_cancel(int handle) {
+    return syscall1(SAVANXP_SYS_TIMER_CANCEL, (unsigned long)handle);
+}
+
 long yield(void) {
     return syscall0(SAVANXP_SYS_YIELD);
 }

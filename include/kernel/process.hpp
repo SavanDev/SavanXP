@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/object.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 #include "shared/syscall.h"
@@ -19,7 +20,7 @@ namespace process {
 
 constexpr size_t kMaxProcesses = 32;
 constexpr size_t kMaxFileHandles = 32;
-constexpr size_t kMaxOpenFiles = 128;
+constexpr size_t kMaxWaitHandles = 8;
 constexpr size_t kProcessNameLength = 32;
 constexpr size_t kProcessPathLength = 256;
 
@@ -82,19 +83,6 @@ struct Pipe {
     uint8_t* buffer;
 };
 
-struct OpenFile {
-    bool in_use;
-    HandleKind kind;
-    uint32_t flags;
-    uint32_t refcount;
-    vfs::Vnode* node;
-    device::Device* device;
-    net::Socket* socket;
-    Pipe* pipe;
-    size_t offset;
-    size_t iterator_index;
-};
-
 enum SignalFlags : uint32_t {
     signal_none = 0,
     signal_sigint = 1u << 0,
@@ -104,8 +92,16 @@ enum SignalFlags : uint32_t {
     signal_sigchld = 1u << 4,
 };
 
-struct FdEntry {
-    OpenFile* file;
+enum class WaitReason : uint8_t {
+    none = 0,
+    child = 1,
+    object = 2,
+};
+
+struct HandleEntry {
+    object::Header* object;
+    uint32_t granted_access;
+    uint32_t flags;
 };
 
 struct Process {
@@ -114,8 +110,13 @@ struct Process {
     State state;
     bool idle;
     int exit_code;
+    WaitReason wait_reason;
+    uint8_t wait_handle_count;
+    uint8_t wait_all;
+    uint16_t wait_reserved;
     uint32_t waiting_for_pid;
     uint64_t wait_status_address;
+    object::Header* waited_objects[kMaxWaitHandles];
     uint64_t blocked_io_fd;
     uint64_t blocked_read_buffer;
     uint64_t blocked_read_capacity;
@@ -128,11 +129,12 @@ struct Process {
     uint32_t last_signal;
     char name[kProcessNameLength];
     char cwd[kProcessPathLength];
+    object::TimerObject* sleep_timer;
     vm::VmSpace address_space;
     uint64_t kernel_stack_base;
     uint64_t kernel_stack_size;
     SavedContext* context;
-    FdEntry handles[kMaxFileHandles];
+    HandleEntry handles[kMaxFileHandles];
 };
 
 void initialize();

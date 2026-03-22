@@ -35,6 +35,14 @@ long connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long ti
 long waitpid(int pid, int* status);
 long fork(void);
 long kill(int pid, int signal_number);
+long event_create(unsigned long flags);
+long event_set(int handle);
+long event_reset(int handle);
+long wait_one(int handle, long timeout_ms);
+long wait_many(const int* handles, unsigned long count, unsigned long flags, long timeout_ms);
+long timer_create(unsigned long flags);
+long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
+long timer_cancel(int handle);
 long yield(void);
 long sleep_ms(unsigned long milliseconds);
 unsigned long uptime_ms(void);

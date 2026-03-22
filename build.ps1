@@ -57,6 +57,7 @@ $KernelSources = @(
     "kernel/rtc.cpp",
     "kernel/heap.cpp",
     "kernel/net.cpp",
+    "kernel/object.cpp",
     "kernel/physical_memory.cpp",
     "kernel/vmm.cpp",
     "kernel/vfs.cpp",
@@ -105,6 +106,8 @@ $UserPrograms = @(
     @{ Name = "forktest"; Source = "userland/forktest.c" },
     @{ Name = "polltest"; Source = "userland/polltest.c" },
     @{ Name = "sigtest"; Source = "userland/sigtest.c" },
+    @{ Name = "eventtest"; Source = "userland/eventtest.c" },
+    @{ Name = "timertest"; Source = "userland/timertest.c" },
     @{ Name = "smoke"; Source = "userland/smoke.c" }
 )
 

@@ -58,6 +58,14 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_POLL = 39,
     SAVANXP_SYS_FORK = 40,
     SAVANXP_SYS_KILL = 41,
+    SAVANXP_SYS_EVENT_CREATE = 42,
+    SAVANXP_SYS_EVENT_SET = 43,
+    SAVANXP_SYS_EVENT_RESET = 44,
+    SAVANXP_SYS_WAIT_ONE = 45,
+    SAVANXP_SYS_WAIT_MANY = 46,
+    SAVANXP_SYS_TIMER_CREATE = 47,
+    SAVANXP_SYS_TIMER_SET = 48,
+    SAVANXP_SYS_TIMER_CANCEL = 49,
 };
 
 enum savanxp_open_flags {
@@ -155,6 +163,22 @@ enum savanxp_signal_number {
     SAVANXP_SIGPIPE = 13,
     SAVANXP_SIGTERM = 15,
     SAVANXP_SIGCHLD = 17,
+};
+
+enum savanxp_event_flags {
+    SAVANXP_EVENT_AUTO_RESET = 0,
+    SAVANXP_EVENT_MANUAL_RESET = 1u << 0,
+    SAVANXP_EVENT_INITIAL_SET = 1u << 1,
+};
+
+enum savanxp_wait_flags {
+    SAVANXP_WAIT_FLAG_ANY = 0,
+    SAVANXP_WAIT_FLAG_ALL = 1u << 0,
+};
+
+enum savanxp_timer_flags {
+    SAVANXP_TIMER_AUTO_RESET = 0,
+    SAVANXP_TIMER_MANUAL_RESET = 1u << 0,
 };
 
 enum savanxp_timer_backend {
