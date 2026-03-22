@@ -3,6 +3,8 @@
 #include "sys/types.h"
 
 struct stat {
+    unsigned long st_dev;
+    unsigned long st_ino;
     unsigned int st_mode;
     unsigned int st_size;
 };
@@ -22,6 +24,7 @@ struct stat {
 
 int sx_stat(const char* path, struct stat* info);
 int sx_fstat(int fd, struct stat* info);
+int sx_lstat(const char* path, struct stat* info);
 
 static inline int stat(const char* path, struct stat* info) {
     return sx_stat(path, info);
@@ -29,4 +32,8 @@ static inline int stat(const char* path, struct stat* info) {
 
 static inline int fstat(int fd, struct stat* info) {
     return sx_fstat(fd, info);
+}
+
+static inline int lstat(const char* path, struct stat* info) {
+    return sx_lstat(path, info);
 }

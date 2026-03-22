@@ -28,74 +28,52 @@ static int file_exists(const char* path) {
     return 1;
 }
 
-static int validate_copied_readme(void) {
-    char buffer[16] = {};
-    sync();
-    long fd = open("/disk/smoke/readme.copy");
-    if (fd < 0) {
-        puts("SMOKE FAIL missing copied README\n");
-        return 0;
+static int text_contains(const char* text, const char* needle) {
+    size_t needle_length = strlen(needle);
+    if (needle_length == 0) {
+        return 1;
     }
-    {
-        long size = seek((int)fd, 0, SAVANXP_SEEK_END);
-        printf("smoke: copied README size=%d\n", (int)size);
-        (void)seek((int)fd, 0, SAVANXP_SEEK_SET);
+    for (size_t index = 0; text[index] != '\0'; ++index) {
+        if (strncmp(text + index, needle, needle_length) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int validate_file_contains(const char* path, const char* needle) {
+    char buffer[256] = {};
+    sync();
+    long fd = open(path);
+    if (fd < 0) {
+        printf("SMOKE FAIL missing %s\n", path);
+        return 0;
     }
     if (read((int)fd, buffer, sizeof(buffer) - 1) <= 0) {
         close((int)fd);
-        puts("SMOKE FAIL unable to read copied README\n");
+        printf("SMOKE FAIL unable to read %s\n", path);
         return 0;
     }
     close((int)fd);
-    puts("smoke: copied README readable\n");
+    if (!text_contains(buffer, needle)) {
+        printf("SMOKE FAIL %s missing content '%s'\n", path, needle);
+        return 0;
+    }
+    printf("smoke: validated %s\n", path);
     return 1;
 }
 
-static int write_readme_copy(void) {
-    char buffer[256];
-    long total = 0;
-    long source = open("/README");
-    if (source < 0) {
-        puts("SMOKE FAIL missing /README\n");
-        return 0;
-    }
+static int file_missing(const char* path) {
+    return !file_exists(path);
+}
 
-    if (mkdir("/disk/smoke") < 0) {
-        close((int)source);
+static int prepare_smoke_directory(void) {
+    const char* mkdir_argv[] = {"/disk/bin/mkdir", "/disk/smoke", 0};
+    if (!run_and_expect("/disk/bin/mkdir", mkdir_argv, 2, 0)) {
         puts("SMOKE FAIL mkdir /disk/smoke\n");
         return 0;
     }
-
-    long destination = open_mode("/disk/smoke/readme.copy", SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
-    if (destination < 0) {
-        close((int)source);
-        puts("SMOKE FAIL open destination on /disk\n");
-        return 0;
-    }
-
-    for (;;) {
-        long count = read((int)source, buffer, sizeof(buffer));
-        if (count < 0) {
-            close((int)source);
-            close((int)destination);
-            puts("SMOKE FAIL read /README\n");
-            return 0;
-        }
-        if (count == 0) {
-            break;
-        }
-        if (write((int)destination, buffer, (size_t)count) != count) {
-            close((int)source);
-            close((int)destination);
-            puts("SMOKE FAIL write /disk/smoke/readme.copy\n");
-            return 0;
-        }
-        total += count;
-    }
-
-    close((int)source);
-    close((int)destination);
-    printf("smoke: wrote README copy to /disk bytes=%d\n", (int)total);
+    printf("smoke: prepared /disk/smoke\n");
     return 1;
 }
 
@@ -103,15 +81,36 @@ int main(void) {
     const char* forktest_argv[] = {"/disk/bin/forktest", 0};
     const char* polltest_argv[] = {"/disk/bin/polltest", 0};
     const char* sigtest_argv[] = {"/disk/bin/sigtest", 0};
-    const char* bb_ls_argv[] = {"/disk/bin/busybox", "ls", "/disk/bin", 0};
-    const char* bb_ps_argv[] = {"/disk/bin/busybox", "ps", 0};
+    const char* ash_argv[] = {"/bin/ash", "-c", "echo busybox-ash > /disk/smoke/ash.txt", 0};
+    const char* sh_argv[] = {"/bin/sh", "-c", "echo busybox-shell > /disk/smoke/sh.txt", 0};
+    const char* echo_argv[] = {"/bin/echo", "busybox-echo", 0};
+    const char* cat_argv[] = {"/bin/cat", "/disk/smoke/sh.txt", 0};
+    const char* ls_argv[] = {"/bin/ls", "/disk/bin", 0};
+    const char* cp_argv[] = {"/bin/cp", "/README", "/disk/smoke/readme.copy", 0};
+    const char* mv_argv[] = {"/bin/mv", "/disk/smoke/readme.copy", "/disk/smoke/readme.moved", 0};
+    const char* rm_argv[] = {"/bin/rm", "/disk/smoke/readme.moved", 0};
+    const char* ps_argv[] = {"/bin/ps", 0};
+    const char* gputest_argv[] = {"/disk/bin/gputest", "--smoke", 0};
+    const char* audiotest_argv[] = {"/disk/bin/audiotest", "--smoke", 0};
 
     puts("SMOKE START\n");
 
     if (!file_exists("/disk/bin/forktest") ||
         !file_exists("/disk/bin/polltest") ||
         !file_exists("/disk/bin/sigtest") ||
-        !file_exists("/disk/bin/busybox")) {
+        !file_exists("/disk/bin/busybox") ||
+        !file_exists("/disk/bin/ash") ||
+        !file_exists("/disk/bin/sh") ||
+        !file_exists("/disk/bin/ls") ||
+        !file_exists("/disk/bin/cat") ||
+        !file_exists("/disk/bin/echo") ||
+        !file_exists("/disk/bin/mkdir") ||
+        !file_exists("/disk/bin/rm") ||
+        !file_exists("/disk/bin/mv") ||
+        !file_exists("/disk/bin/cp") ||
+        !file_exists("/disk/bin/ps") ||
+        !file_exists("/disk/bin/gputest") ||
+        !file_exists("/disk/bin/audiotest")) {
         puts("SMOKE FAIL missing binaries in /disk/bin\n");
         return 1;
     }
@@ -119,10 +118,23 @@ int main(void) {
     if (!run_and_expect("/disk/bin/forktest", forktest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/polltest", polltest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/sigtest", sigtest_argv, 1, 0) ||
-        !run_and_expect("/disk/bin/busybox", bb_ls_argv, 3, 0) ||
-        !run_and_expect("/disk/bin/busybox", bb_ps_argv, 2, 0) ||
-        !write_readme_copy() ||
-        !validate_copied_readme()) {
+        !prepare_smoke_directory() ||
+        !run_and_expect("/bin/ash", ash_argv, 3, 0) ||
+        !validate_file_contains("/disk/smoke/ash.txt", "busybox-ash") ||
+        !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
+        !validate_file_contains("/disk/smoke/sh.txt", "busybox-shell") ||
+        !run_and_expect("/bin/echo", echo_argv, 2, 0) ||
+        !run_and_expect("/bin/cat", cat_argv, 2, 0) ||
+        !run_and_expect("/bin/ls", ls_argv, 2, 0) ||
+        !run_and_expect("/bin/cp", cp_argv, 3, 0) ||
+        !validate_file_contains("/disk/smoke/readme.copy", "SavanXP") ||
+        !run_and_expect("/bin/mv", mv_argv, 3, 0) ||
+        !file_exists("/disk/smoke/readme.moved") ||
+        !run_and_expect("/bin/rm", rm_argv, 2, 0) ||
+        !file_missing("/disk/smoke/readme.moved") ||
+        !run_and_expect("/bin/ps", ps_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/gputest", gputest_argv, 2, 0) ||
+        !run_and_expect("/disk/bin/audiotest", audiotest_argv, 2, 0)) {
         puts("SMOKE FAIL\n");
         return 1;
     }

@@ -22,6 +22,7 @@
 #include "kernel/ui.hpp"
 #include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
+#include "kernel/virtio_sound.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 #include "shared/version.h"
@@ -130,6 +131,7 @@ namespace
     virtio_gpu::initialize(boot_info.framebuffer);
     ui::initialize(boot_info.framebuffer);
     pcspeaker::initialize();
+    virtio_sound::initialize();
     net::initialize();
     block::initialize();
     svfs::initialize();

@@ -1,9 +1,9 @@
-# SDK v1.1 Reference
+# SDK v1.2 Reference
 
 ## Estabilidad
 
 La carpeta `sdk/v1` es la superficie pública congelada del SDK externo de
-SavanXP. El nivel vigente documentado en esta carpeta es `SDK 1.1`.
+SavanXP. El nivel vigente documentado en esta carpeta es `SDK 1.2`.
 
 Se consideran parte del contrato:
 
@@ -73,12 +73,14 @@ Nodos reservados actualmente:
 - `/dev/mouse0`
 - `/dev/net0`
 - `/dev/pcspk`
+- `/dev/audio0`
 
 Ioctl groups:
 
 - framebuffer: `FB_IOC_GET_INFO`, `FB_IOC_ACQUIRE`, `FB_IOC_RELEASE`, `FB_IOC_PRESENT`
 - network: `NET_IOC_GET_INFO`, `NET_IOC_UP`, `NET_IOC_PING`
 - pc speaker: `PCSPK_IOC_BEEP`, `PCSPK_IOC_STOP`
+- audio: `AUDIO_IOC_GET_INFO`
 
 Tipos compartidos:
 
@@ -93,6 +95,7 @@ Tipos compartidos:
 - `struct savanxp_net_ping_request`
 - `struct savanxp_net_ping_result`
 - `struct savanxp_pcspk_beep`
+- `struct savanxp_audio_info`
 - `struct savanxp_sockaddr_in`
 
 Sockets v1:
@@ -155,6 +158,15 @@ Contrato actual:
 - no hay `mmap`, ventanas, rueda ni compositor en v1
 - el backbuffer sigue siendo propiedad de la app; `gfx_buffer_pixels` y `gfx_buffer_bytes` ayudan a validarlo
 
+Audio PCM v1.2:
+
+- `audio_open` abre `/dev/audio0` en modo escritura.
+- `AUDIO_IOC_GET_INFO` expone `48000 Hz`, `2` canales, `16` bits y tamaños
+  de periodo/buffer fijos para el backend actual.
+- `write(fd, pcm, bytes)` sobre `/dev/audio0` acepta PCM interleaved
+  `S16LE stereo` y exige múltiplos de `frame_bytes`.
+- el backend actual usa `virtio-sound` sobre PCI y es playback-only.
+
 ## Flujo recomendado
 
 1. Crear una app desde `sdk/template` o con `tools/new-user-app.ps1`
@@ -200,4 +212,4 @@ Límites prácticos de esta primera ola POSIX:
 - DHCP
 - `termios` y job control
 - `chmod`, `chown`, `link`, `symlink`, `readlink`, `utime*`
-- audio PCM
+- captura de audio, mixer y `mmap`/shared buffers para audio

@@ -24,10 +24,16 @@ extern FILE* stderr;
 #define fprintf sx_fprintf
 #define vfprintf sx_vfprintf
 #define printf sx_printf
+#define sprintf sx_sprintf
+#define vprintf sx_vprintf
 #define snprintf sx_snprintf
 #define vsnprintf sx_vsnprintf
 #define fgets sx_fgets
 #define feof sx_feof
+#define ferror sx_ferror
+#define clearerr sx_clearerr
+#define fputs sx_fputs
+#define putc sx_putc
 #define putchar sx_putchar
 #define puts sx_puts
 #define remove sx_remove
@@ -43,10 +49,16 @@ int sx_fflush(FILE* stream);
 int sx_fprintf(FILE* stream, const char* format, ...);
 int sx_vfprintf(FILE* stream, const char* format, va_list args);
 int sx_printf(const char* format, ...);
+int sx_sprintf(char* buffer, const char* format, ...);
+int sx_vprintf(const char* format, va_list args);
 int sx_snprintf(char* buffer, size_t size, const char* format, ...);
 int sx_vsnprintf(char* buffer, size_t size, const char* format, va_list args);
 char* sx_fgets(char* buffer, int size, FILE* stream);
 int sx_feof(FILE* stream);
+int sx_ferror(FILE* stream);
+void sx_clearerr(FILE* stream);
+int sx_fputs(const char* text, FILE* stream);
+int sx_putc(int character, FILE* stream);
 int sx_putchar(int character);
 int sx_puts(const char* text);
 int sx_remove(const char* path);

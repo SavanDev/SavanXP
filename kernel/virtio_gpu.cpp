@@ -27,7 +27,8 @@ constexpr uint32_t kVirtioGpuCmdTransferToHost2d = 0x0105u;
 constexpr uint32_t kVirtioGpuCmdResourceAttachBacking = 0x0106u;
 constexpr uint32_t kVirtioGpuRespOkNoData = 0x1100u;
 constexpr uint32_t kVirtioGpuRespOkDisplayInfo = 0x1101u;
-constexpr uint32_t kGpuResourceId = 1u;
+constexpr uint32_t kGpuSurfaceCount = 3u;
+constexpr uint32_t kFirstGpuResourceId = 1u;
 constexpr size_t kRequestBufferBytes = 512;
 constexpr size_t kResponseBufferBytes = 512;
 constexpr size_t kQueueExtraBytes = kRequestBufferBytes + kResponseBufferBytes;
@@ -126,12 +127,17 @@ device::Device g_gpu_device = {
 
 virtio_pci::Device g_device = {};
 virtio_pci::Queue g_control_queue = {};
-memory::PageAllocation g_surface = {};
+struct Surface {
+    memory::PageAllocation allocation;
+    uint32_t resource_id;
+};
+Surface g_surfaces[kGpuSurfaceCount] = {};
 savanxp_fb_info g_framebuffer_info = {};
 savanxp_gpu_info g_gpu_info = {};
 uint32_t g_scanout_id = 0;
 uint32_t g_scanout_width = 0;
 uint32_t g_scanout_height = 0;
+uint32_t g_front_surface_index = 0;
 uint64_t g_next_fence_id = 1;
 bool g_present = false;
 bool g_ready = false;
@@ -231,34 +237,89 @@ bool get_display_info(VirtioGpuRespDisplayInfo& display_info) {
     return display_info.header.type == kVirtioGpuRespOkDisplayInfo;
 }
 
-bool create_primary_resource() {
+Surface* surface_at(uint32_t surface_index) {
+    if (surface_index >= kGpuSurfaceCount) {
+        return nullptr;
+    }
+    return &g_surfaces[surface_index];
+}
+
+Surface* front_surface() {
+    return surface_at(g_front_surface_index);
+}
+
+uint32_t next_surface_index() {
+    return (g_front_surface_index + 1u) % kGpuSurfaceCount;
+}
+
+void release_surface_allocation(uint32_t surface_index) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr) {
+        return;
+    }
+
+    if (surface->allocation.physical_address != 0 && surface->allocation.page_count != 0) {
+        (void)memory::free_allocation(surface->allocation);
+    }
+    memset(&surface->allocation, 0, sizeof(surface->allocation));
+}
+
+void release_surface_allocations() {
+    for (uint32_t surface_index = 0; surface_index < kGpuSurfaceCount; ++surface_index) {
+        release_surface_allocation(surface_index);
+        g_surfaces[surface_index].resource_id = 0;
+    }
+    g_front_surface_index = 0;
+}
+
+bool create_surface_resource(uint32_t surface_index) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr) {
+        return false;
+    }
+
     VirtioGpuResourceCreate2d request = {};
     initialize_header(request.header, kVirtioGpuCmdResourceCreate2d);
-    request.resource_id = kGpuResourceId;
+    request.resource_id = surface->resource_id;
     request.format = kVirtioGpuFormatB8G8R8X8Unorm;
     request.width = g_framebuffer_info.width;
     request.height = g_framebuffer_info.height;
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
-bool destroy_primary_resource() {
+bool destroy_surface_resource(uint32_t surface_index) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr || surface->resource_id == 0) {
+        return false;
+    }
+
     VirtioGpuResourceUnref request = {};
     initialize_header(request.header, kVirtioGpuCmdResourceUnref);
-    request.resource_id = kGpuResourceId;
+    request.resource_id = surface->resource_id;
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
-bool attach_primary_backing() {
+bool attach_surface_backing(uint32_t surface_index) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr) {
+        return false;
+    }
+
     VirtioGpuResourceAttachBacking request = {};
     initialize_header(request.header, kVirtioGpuCmdResourceAttachBacking);
-    request.resource_id = kGpuResourceId;
+    request.resource_id = surface->resource_id;
     request.nr_entries = 1;
-    request.entry.addr = g_surface.physical_address;
+    request.entry.addr = surface->allocation.physical_address;
     request.entry.length = g_framebuffer_info.buffer_size;
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
-bool set_primary_scanout() {
+bool set_scanout_surface(uint32_t surface_index) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr) {
+        return false;
+    }
+
     VirtioGpuSetScanout request = {};
     initialize_header(request.header, kVirtioGpuCmdSetScanout);
     request.rect = {
@@ -268,11 +329,16 @@ bool set_primary_scanout() {
         .height = g_framebuffer_info.height,
     };
     request.scanout_id = g_scanout_id;
-    request.resource_id = kGpuResourceId;
+    request.resource_id = surface->resource_id;
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
-bool transfer_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool transfer_rect(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr) {
+        return false;
+    }
+
     VirtioGpuTransferToHost2d request = {};
     initialize_header(request.header, kVirtioGpuCmdTransferToHost2d);
     request.rect = {
@@ -282,11 +348,16 @@ bool transfer_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
         .height = height,
     };
     request.offset = (static_cast<uint64_t>(y) * g_framebuffer_info.pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
-    request.resource_id = kGpuResourceId;
+    request.resource_id = surface->resource_id;
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
-bool flush_rect_internal(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool flush_rect_internal(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr) {
+        return false;
+    }
+
     VirtioGpuResourceFlush request = {};
     initialize_header(request.header, kVirtioGpuCmdResourceFlush);
     request.rect = {
@@ -295,19 +366,52 @@ bool flush_rect_internal(uint32_t x, uint32_t y, uint32_t width, uint32_t height
         .width = width,
         .height = height,
     };
-    request.resource_id = kGpuResourceId;
+    request.resource_id = surface->resource_id;
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
-bool copy_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool copy_region_to_surface(uint32_t surface_index, const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr || surface->allocation.virtual_address == nullptr) {
+        return false;
+    }
+
     const uint8_t* source = static_cast<const uint8_t*>(pixels);
-    uint8_t* destination = static_cast<uint8_t*>(g_surface.virtual_address);
+    uint8_t* destination = static_cast<uint8_t*>(surface->allocation.virtual_address);
     const size_t row_bytes = static_cast<size_t>(width) * sizeof(uint32_t);
 
     for (uint32_t row = 0; row < height; ++row) {
         const size_t source_offset = static_cast<size_t>(y + row) * source_pitch + (static_cast<size_t>(x) * sizeof(uint32_t));
         const size_t destination_offset = static_cast<size_t>(y + row) * g_framebuffer_info.pitch + (static_cast<size_t>(x) * sizeof(uint32_t));
         memcpy(destination + destination_offset, source + source_offset, row_bytes);
+    }
+    return true;
+}
+
+bool clone_surface(uint32_t destination_surface_index, uint32_t source_surface_index) {
+    Surface* destination_surface = surface_at(destination_surface_index);
+    Surface* source_surface = surface_at(source_surface_index);
+    if (destination_surface == nullptr || source_surface == nullptr ||
+        destination_surface->allocation.virtual_address == nullptr ||
+        source_surface->allocation.virtual_address == nullptr) {
+        return false;
+    }
+
+    memcpy(destination_surface->allocation.virtual_address, source_surface->allocation.virtual_address, g_framebuffer_info.buffer_size);
+    return true;
+}
+
+bool present_surface(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (!set_scanout_surface(surface_index) ||
+        !transfer_rect(surface_index, x, y, width, height) ||
+        !flush_rect_internal(surface_index, x, y, width, height)) {
+        return false;
+    }
+
+    g_front_surface_index = surface_index;
+    Surface* surface = front_surface();
+    if (surface != nullptr) {
+        console::set_external_framebuffer(surface->allocation.virtual_address, g_framebuffer_info);
     }
     return true;
 }
@@ -376,40 +480,63 @@ void set_framebuffer_mode(uint32_t width, uint32_t height) {
     };
 }
 
-void release_surface() {
-    if (g_surface.physical_address != 0 && g_surface.page_count != 0) {
-        (void)memory::free_allocation(g_surface);
-    }
-    memset(&g_surface, 0, sizeof(g_surface));
-}
-
 bool configure_primary_surface(uint32_t width, uint32_t height) {
-    bool resource_created = false;
+    bool resource_created[kGpuSurfaceCount] = {};
 
-    release_surface();
+    release_surface_allocations();
     set_framebuffer_mode(width, height);
 
     const uint64_t page_count = static_cast<uint64_t>((g_framebuffer_info.buffer_size + memory::kPageSize - 1) / memory::kPageSize);
-    if (!memory::allocate_contiguous_pages(page_count, g_surface)) {
-        return false;
-    }
-    memset(g_surface.virtual_address, 0, g_surface.page_count * memory::kPageSize);
-
-    if (!create_primary_resource()) {
-        release_surface();
-        return false;
-    }
-    resource_created = true;
-    if (!attach_primary_backing() ||
-        !set_primary_scanout() ||
-        !transfer_rect(0, 0, g_framebuffer_info.width, g_framebuffer_info.height) ||
-        !flush_rect_internal(0, 0, g_framebuffer_info.width, g_framebuffer_info.height)) {
-        (void)destroy_primary_resource();
-        release_surface();
-        return false;
+    for (uint32_t surface_index = 0; surface_index < kGpuSurfaceCount; ++surface_index) {
+        Surface* surface = surface_at(surface_index);
+        if (surface == nullptr) {
+            continue;
+        }
+        surface->resource_id = kFirstGpuResourceId + surface_index;
+        if (!memory::allocate_contiguous_pages(page_count, surface->allocation)) {
+            release_surface_allocations();
+            return false;
+        }
+        memset(surface->allocation.virtual_address, 0, surface->allocation.page_count * memory::kPageSize);
     }
 
-    return resource_created;
+    for (uint32_t surface_index = 0; surface_index < kGpuSurfaceCount; ++surface_index) {
+        if (!create_surface_resource(surface_index)) {
+            for (uint32_t destroy_index = 0; destroy_index < surface_index; ++destroy_index) {
+                if (resource_created[destroy_index]) {
+                    (void)destroy_surface_resource(destroy_index);
+                }
+            }
+            release_surface_allocations();
+            return false;
+        }
+        resource_created[surface_index] = true;
+    }
+
+    for (uint32_t surface_index = 0; surface_index < kGpuSurfaceCount; ++surface_index) {
+        if (!attach_surface_backing(surface_index)) {
+            for (uint32_t destroy_index = 0; destroy_index < kGpuSurfaceCount; ++destroy_index) {
+                if (resource_created[destroy_index]) {
+                    (void)destroy_surface_resource(destroy_index);
+                }
+            }
+            release_surface_allocations();
+            return false;
+        }
+    }
+
+    g_front_surface_index = 0;
+    if (!present_surface(g_front_surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height)) {
+        for (uint32_t surface_index = 0; surface_index < kGpuSurfaceCount; ++surface_index) {
+            if (resource_created[surface_index]) {
+                (void)destroy_surface_resource(surface_index);
+            }
+        }
+        release_surface_allocations();
+        return false;
+    }
+
+    return true;
 }
 
 int gpu_ioctl(uint64_t request, uint64_t argument) {
@@ -519,9 +646,10 @@ namespace virtio_gpu {
 void initialize(const boot::FramebufferInfo& framebuffer) {
     memset(&g_device, 0, sizeof(g_device));
     memset(&g_control_queue, 0, sizeof(g_control_queue));
-    memset(&g_surface, 0, sizeof(g_surface));
+    memset(g_surfaces, 0, sizeof(g_surfaces));
     memset(&g_framebuffer_info, 0, sizeof(g_framebuffer_info));
     memset(&g_gpu_info, 0, sizeof(g_gpu_info));
+    g_front_surface_index = 0;
     g_present = false;
     g_ready = false;
     g_next_fence_id = 1;
@@ -606,7 +734,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         }
     }
 
-    if (g_surface.virtual_address == nullptr) {
+    if (front_surface() == nullptr || front_surface()->allocation.virtual_address == nullptr) {
         fail_device("failed to allocate primary surface");
         return;
     }
@@ -618,7 +746,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         return;
     }
 
-    console::set_external_framebuffer(g_surface.virtual_address, g_framebuffer_info);
+    console::set_external_framebuffer(front_surface()->allocation.virtual_address, g_framebuffer_info);
     console::printf(
         "virtio-gpu: ready pci=%x:%x.%u scanout=%u mode=%ux%u\n",
         static_cast<unsigned>(g_device.pci_device.bus),
@@ -643,7 +771,8 @@ const savanxp_fb_info& framebuffer_info() {
 }
 
 void* framebuffer_address() {
-    return g_surface.virtual_address;
+    Surface* surface = front_surface();
+    return surface != nullptr ? surface->allocation.virtual_address : nullptr;
 }
 
 bool flush() {
@@ -656,7 +785,8 @@ bool flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
         width > (g_framebuffer_info.width - x) || height > (g_framebuffer_info.height - y)) {
         return false;
     }
-    return transfer_rect(x, y, width, height) && flush_rect_internal(x, y, width, height);
+    return transfer_rect(g_front_surface_index, x, y, width, height) &&
+        flush_rect_internal(g_front_surface_index, x, y, width, height);
 }
 
 bool present_from_kernel(const void* pixels, size_t byte_count) {
@@ -664,8 +794,14 @@ bool present_from_kernel(const void* pixels, size_t byte_count) {
         return false;
     }
 
-    memcpy(g_surface.virtual_address, pixels, byte_count);
-    return flush();
+    const uint32_t surface_index = next_surface_index();
+    Surface* surface = surface_at(surface_index);
+    if (surface == nullptr || surface->allocation.virtual_address == nullptr) {
+        return false;
+    }
+
+    memcpy(surface->allocation.virtual_address, pixels, byte_count);
+    return present_surface(surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height);
 }
 
 bool present_region_from_kernel(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -676,7 +812,10 @@ bool present_region_from_kernel(const void* pixels, uint32_t source_pitch, uint3
         return false;
     }
 
-    return copy_region(pixels, source_pitch, x, y, width, height) && flush_rect(x, y, width, height);
+    const uint32_t surface_index = next_surface_index();
+    return clone_surface(surface_index, g_front_surface_index) &&
+        copy_region_to_surface(surface_index, pixels, source_pitch, x, y, width, height) &&
+        present_surface(surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height);
 }
 
 } // namespace virtio_gpu

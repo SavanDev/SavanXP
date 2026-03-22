@@ -69,7 +69,103 @@ static void copy_region(uint32_t *destination, const uint32_t *source, const str
     }
 }
 
-int main(void)
+static int setup_gpu(struct savanxp_gpu_info* gpu_info, struct savanxp_fb_info* fb_info, long* gpu_fd) {
+    *gpu_fd = gpu_open();
+    if (*gpu_fd < 0)
+    {
+        puts_fd(2, "gputest: /dev/gpu0 not available\n");
+        return 0;
+    }
+    if (gpu_get_info((int)*gpu_fd, gpu_info) < 0)
+    {
+        puts_fd(2, "gputest: GPU_IOC_GET_INFO failed\n");
+        close((int)*gpu_fd);
+        return 0;
+    }
+    if (gpu_info->width > GPUTEST_MAX_WIDTH || gpu_info->height > GPUTEST_MAX_HEIGHT || (gpu_info->pitch / 4u) > GPUTEST_MAX_WIDTH)
+    {
+        puts_fd(2, "gputest: surface too large for static backbuffer\n");
+        close((int)*gpu_fd);
+        return 0;
+    }
+    if (gpu_acquire((int)*gpu_fd) < 0)
+    {
+        puts_fd(2, "gputest: GPU_IOC_ACQUIRE failed\n");
+        close((int)*gpu_fd);
+        return 0;
+    }
+
+    fb_info->width = gpu_info->width;
+    fb_info->height = gpu_info->height;
+    fb_info->pitch = gpu_info->pitch;
+    fb_info->bpp = gpu_info->bpp;
+    fb_info->buffer_size = gpu_info->buffer_size;
+    return 1;
+}
+
+static int run_smoke_mode(void) {
+    struct savanxp_gpu_info gpu_info = {0};
+    struct savanxp_fb_info fb_info = {0};
+    long gpu_fd;
+    int previous_box_x = 120;
+    int previous_box_y = 160;
+    static const int positions[][2] = {
+        {160, 160},
+        {200, 192},
+        {264, 216},
+        {312, 168},
+    };
+
+    if (!setup_gpu(&gpu_info, &fb_info, &gpu_fd)) {
+        return 1;
+    }
+
+    draw_static_scene(&fb_info);
+    memcpy(g_pixels, g_background, gpu_info.buffer_size);
+    draw_box(&fb_info, previous_box_x, previous_box_y);
+    if (gpu_present((int)gpu_fd, g_pixels) < 0)
+    {
+        puts_fd(2, "gputest: initial GPU_IOC_PRESENT failed\n");
+        gpu_release((int)gpu_fd);
+        close((int)gpu_fd);
+        return 1;
+    }
+
+    for (size_t index = 0; index < (sizeof(positions) / sizeof(positions[0])); ++index)
+    {
+        const int box_x = positions[index][0];
+        const int box_y = positions[index][1];
+        const int dirty_x = previous_box_x < box_x ? previous_box_x : box_x;
+        const int dirty_y = previous_box_y < box_y ? previous_box_y : box_y;
+        const int dirty_right = (previous_box_x + GPUTEST_BOX_SIZE) > (box_x + GPUTEST_BOX_SIZE)
+            ? (previous_box_x + GPUTEST_BOX_SIZE)
+            : (box_x + GPUTEST_BOX_SIZE);
+        const int dirty_bottom = (previous_box_y + GPUTEST_BOX_SIZE) > (box_y + GPUTEST_BOX_SIZE)
+            ? (previous_box_y + GPUTEST_BOX_SIZE)
+            : (box_y + GPUTEST_BOX_SIZE);
+        const int dirty_width = dirty_right - dirty_x;
+        const int dirty_height = dirty_bottom - dirty_y;
+
+        copy_region(g_pixels, g_background, &fb_info, dirty_x, dirty_y, dirty_width, dirty_height);
+        draw_box(&fb_info, box_x, box_y);
+        if (gpu_present_region((int)gpu_fd, g_pixels, fb_info.pitch, (uint32_t)dirty_x, (uint32_t)dirty_y, (uint32_t)dirty_width, (uint32_t)dirty_height) < 0)
+        {
+            puts_fd(2, "gputest: GPU_IOC_PRESENT_REGION failed\n");
+            gpu_release((int)gpu_fd);
+            close((int)gpu_fd);
+            return 1;
+        }
+
+        previous_box_x = box_x;
+        previous_box_y = box_y;
+    }
+
+    gpu_release((int)gpu_fd);
+    close((int)gpu_fd);
+    return 0;
+}
+
+int main(int argc, char** argv)
 {
     struct savanxp_gpu_info gpu_info = {0};
     struct savanxp_fb_info fb_info = {0};
@@ -81,28 +177,12 @@ int main(void)
     int previous_box_x;
     int previous_box_y;
 
-    gpu_fd = gpu_open();
-    if (gpu_fd < 0)
-    {
-        puts_fd(2, "gputest: /dev/gpu0 not available\n");
-        return 1;
+    if (argc > 1 && strcmp(argv[1], "--smoke") == 0) {
+        return run_smoke_mode();
     }
-    if (gpu_get_info((int)gpu_fd, &gpu_info) < 0)
-    {
-        puts_fd(2, "gputest: GPU_IOC_GET_INFO failed\n");
-        close((int)gpu_fd);
-        return 1;
-    }
-    if (gpu_info.width > GPUTEST_MAX_WIDTH || gpu_info.height > GPUTEST_MAX_HEIGHT || (gpu_info.pitch / 4u) > GPUTEST_MAX_WIDTH)
-    {
-        puts_fd(2, "gputest: surface too large for static backbuffer\n");
-        close((int)gpu_fd);
-        return 1;
-    }
-    if (gpu_acquire((int)gpu_fd) < 0)
-    {
-        puts_fd(2, "gputest: GPU_IOC_ACQUIRE failed\n");
-        close((int)gpu_fd);
+
+    (void)argv;
+    if (!setup_gpu(&gpu_info, &fb_info, &gpu_fd)) {
         return 1;
     }
 
@@ -114,12 +194,6 @@ int main(void)
         close((int)gpu_fd);
         return 1;
     }
-
-    fb_info.width = gpu_info.width;
-    fb_info.height = gpu_info.height;
-    fb_info.pitch = gpu_info.pitch;
-    fb_info.bpp = gpu_info.bpp;
-    fb_info.buffer_size = gpu_info.buffer_size;
 
     draw_static_scene(&fb_info);
     memcpy(g_pixels, g_background, gpu_info.buffer_size);

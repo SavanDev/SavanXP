@@ -29,8 +29,8 @@ El kernel ya bootea a una terminal funcional inicial:
   degradacion segura a teclado-only si el mouse no inicializa.
 - Enumeracion PCI minima por config-space en `q35` y capa de dispositivos
   expuesta como nodos bajo `/dev`.
-- Dispositivos iniciales en `/dev`: `fb0`, `input0`, `mouse0`, `net0` y
-  `pcspk`.
+- Dispositivos iniciales en `/dev`: `fb0`, `input0`, `mouse0`, `net0`,
+  `pcspk`, `gpu0` y `audio0`.
 - `ioctl` como syscall publica para dispositivos y ABI compartida extendida
   para framebuffer, input, red y PC speaker.
 - `VFS` minima montando un `initramfs` `cpio newc`, con archivos dinamicos en
@@ -82,6 +82,8 @@ El kernel ya bootea a una terminal funcional inicial:
   `SVFS2` en kernel, la capa `POSIX`/`stdio` de la SDK y el backend propio del
   port, sin mover semantica de libc al kernel.
 - Sonido minimo por `PC speaker` con comando `beep`.
+- Playback PCM minimo sobre `virtio-sound`, expuesto como `/dev/audio0` con
+  `AUDIO_IOC_GET_INFO` y la utilidad `audiotest`.
 - Scheduler round-robin preemptivo con bloqueo por `wait`, `read` y `sleep`.
 - Shell con `pipes`, redireccion (`|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`)
   y resolucion de comandos en `/disk/bin` con fallback a `/bin`.

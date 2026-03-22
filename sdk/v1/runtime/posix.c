@@ -1,8 +1,13 @@
 #include "savanxp/libc.h"
 
+#include <errno.h>
+#include <pwd.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/wait.h>
+#include <termios.h>
 
 #define EOF (-1)
 #define O_RDONLY 0x0000
@@ -12,6 +17,7 @@
 #define O_TRUNC 0x0200
 #define O_APPEND 0x0400
 #define O_NONBLOCK 0x0800
+#define F_DUPFD 0
 #define F_GETFL 1
 #define F_SETFL 2
 #define SEEK_SET 0
@@ -40,8 +46,12 @@
 typedef long ssize_t;
 typedef long off_t;
 typedef int pid_t;
+typedef unsigned int mode_t;
+typedef unsigned int uid_t;
+typedef unsigned int gid_t;
 typedef unsigned int socklen_t;
 typedef long time_t;
+typedef long clock_t;
 typedef uint32_t in_addr_t;
 typedef uint16_t in_port_t;
 
@@ -49,6 +59,8 @@ typedef struct sx_FILE FILE;
 typedef struct sx_DIR DIR;
 
 struct stat {
+    unsigned long st_dev;
+    unsigned long st_ino;
     unsigned int st_mode;
     unsigned int st_size;
 };
@@ -84,6 +96,21 @@ struct timeval {
     long tv_usec;
 };
 
+struct tms {
+    clock_t tms_utime;
+    clock_t tms_stime;
+    clock_t tms_cutime;
+    clock_t tms_cstime;
+};
+
+struct utsname {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+};
+
 struct pollfd {
     int fd;
     short events;
@@ -95,6 +122,8 @@ struct pollfd {
 #define POLLERR 0x0008
 #define POLLHUP 0x0010
 #define POLLNVAL 0x0020
+#define FNM_NOESCAPE 0x01
+#define FNM_PATHNAME 0x02
 
 #define SX_FD_SETSIZE 64
 
@@ -147,10 +176,21 @@ static struct sx_FILE g_stdout_file = {1, 1, 0, 0, 1, 0, 1, 0, {0}};
 static struct sx_FILE g_stderr_file = {2, 1, 0, 0, 1, 0, 1, 0, {0}};
 static struct sx_DIR g_dir_pool[SX_DIR_POOL_CAPACITY] = {};
 static struct sx_socket_state g_socket_states[SX_SOCKET_STATE_CAPACITY] = {};
+static char g_path_env[] = "/disk/bin:/bin";
+static char g_path_env_entry[] = "PATH=/disk/bin:/bin";
+static char g_term_env_entry[] = "TERM=savanxp";
+static char* g_environ_storage[] = { g_path_env_entry, g_term_env_entry, 0 };
+static mode_t g_umask_value = 022;
+static struct sigaction g_signal_actions[NSIG] = {};
+static sigset_t g_signal_mask = 0;
+static char g_passwd_root_name[] = "root";
+static char g_passwd_root_dir[] = "/";
+static struct passwd g_passwd_root = { g_passwd_root_name, g_passwd_root_dir };
 
 FILE* stdin = &g_stdin_file;
 FILE* stdout = &g_stdout_file;
 FILE* stderr = &g_stderr_file;
+char** environ = g_environ_storage;
 
 static int g_errno = 0;
 
@@ -158,6 +198,7 @@ void* sx_malloc(size_t size);
 void* sx_calloc(size_t count, size_t size);
 void sx_free(void* pointer);
 int sx_usleep(unsigned long microseconds);
+int sx_vsnprintf(char* buffer, size_t size, const char* format, va_list args);
 
 int* sx_errno_location(void) {
     return &g_errno;
@@ -175,6 +216,18 @@ static void sx_set_errno_from_result(long result) {
 
 static size_t sx_min_size(size_t left, size_t right) {
     return left < right ? left : right;
+}
+
+static unsigned long sx_hash_text(const char* text) {
+    unsigned long hash = 2166136261u;
+    if (text == 0) {
+        return 0;
+    }
+    while (*text != '\0') {
+        hash ^= (unsigned char)*text++;
+        hash *= 16777619u;
+    }
+    return hash;
 }
 
 static size_t sx_align_size(size_t size) {
@@ -393,6 +446,10 @@ void* sx_memcpy(void* destination, const void* source, size_t count) {
     return memcpy(destination, source, count);
 }
 
+void* sx_mempcpy(void* destination, const void* source, size_t count) {
+    return (unsigned char*)sx_memcpy(destination, source, count) + count;
+}
+
 void* sx_memset(void* destination, int value, size_t count) {
     return memset(destination, value, count);
 }
@@ -464,6 +521,26 @@ char* sx_strchr(const char* text, int character) {
     return character == 0 ? (char*)text : 0;
 }
 
+char* sx_strchrnul(const char* text, int character) {
+    while (*text != '\0') {
+        if (*text == (char)character) {
+            return (char*)text;
+        }
+        ++text;
+    }
+    return (char*)text;
+}
+
+char* sx_strpbrk(const char* text, const char* accept) {
+    while (*text != '\0') {
+        if (sx_strchr(accept, *text) != 0) {
+            return (char*)text;
+        }
+        ++text;
+    }
+    return 0;
+}
+
 char* sx_strrchr(const char* text, int character) {
     char* result = 0;
     while (*text != '\0') {
@@ -488,6 +565,96 @@ char* sx_strstr(const char* haystack, const char* needle) {
     return 0;
 }
 
+size_t sx_strcspn(const char* text, const char* reject) {
+    size_t length = 0;
+    while (text[length] != '\0') {
+        if (sx_strchr(reject, text[length]) != 0) {
+            break;
+        }
+        ++length;
+    }
+    return length;
+}
+
+size_t sx_strspn(const char* text, const char* accept) {
+    size_t length = 0;
+    while (text[length] != '\0') {
+        if (sx_strchr(accept, text[length]) == 0) {
+            break;
+        }
+        ++length;
+    }
+    return length;
+}
+
+char* sx_strerror(int error_number) {
+    switch (error_number) {
+        case 0: return "ok";
+        case ESRCH: return "no such process";
+        case EINTR: return "interrupted system call";
+        case ENOENT: return "no such file or directory";
+        case EIO: return "i/o error";
+        case EBADF: return "bad file descriptor";
+        case ECHILD: return "no child processes";
+        case EAGAIN: return "resource temporarily unavailable";
+        case ENOMEM: return "out of memory";
+        case EACCES: return "permission denied";
+        case EBUSY: return "device or resource busy";
+        case EEXIST: return "file exists";
+        case ENODEV: return "no such device";
+        case ENOTDIR: return "not a directory";
+        case EISDIR: return "is a directory";
+        case EINVAL: return "invalid argument";
+        case ENOTTY: return "inappropriate ioctl";
+        case ENOSPC: return "no space left on device";
+        case EPIPE: return "broken pipe";
+        case ERANGE: return "result out of range";
+        case ENOSYS: return "function not implemented";
+        case ENOTEMPTY: return "directory not empty";
+        case ETIMEDOUT: return "timed out";
+        default: return "error";
+    }
+}
+
+char* sx_strtok_r(char* text, const char* delimiters, char** save_ptr) {
+    char* current = text != 0 ? text : (save_ptr != 0 ? *save_ptr : 0);
+    char* token_start = 0;
+    if (current == 0 || delimiters == 0 || save_ptr == 0) {
+        return 0;
+    }
+    while (*current != '\0' && sx_strchr(delimiters, *current) != 0) {
+        ++current;
+    }
+    if (*current == '\0') {
+        *save_ptr = current;
+        return 0;
+    }
+    token_start = current;
+    while (*current != '\0' && sx_strchr(delimiters, *current) == 0) {
+        ++current;
+    }
+    if (*current != '\0') {
+        *current++ = '\0';
+    }
+    *save_ptr = current;
+    return token_start;
+}
+
+char* sx_stpncpy(char* destination, const char* source, size_t count) {
+    size_t index = 0;
+    while (index < count && source[index] != '\0') {
+        destination[index] = source[index];
+        ++index;
+    }
+    while (index < count) {
+        destination[index++] = '\0';
+    }
+    while (index != 0 && destination[index - 1] == '\0' && source[index - 1] == '\0') {
+        --index;
+    }
+    return destination + index;
+}
+
 char* sx_strdup(const char* text) {
     const size_t length = sx_strlen(text) + 1;
     char* copy = (char*)sx_malloc(length);
@@ -508,6 +675,29 @@ int sx_isprint(int character) {
 
 int sx_isdigit(int character) {
     return character >= '0' && character <= '9';
+}
+
+int sx_isalpha(int character) {
+    return (character >= 'a' && character <= 'z')
+        || (character >= 'A' && character <= 'Z');
+}
+
+int sx_isalnum(int character) {
+    return sx_isalpha(character) || sx_isdigit(character);
+}
+
+int sx_islower(int character) {
+    return character >= 'a' && character <= 'z';
+}
+
+int sx_isupper(int character) {
+    return character >= 'A' && character <= 'Z';
+}
+
+int sx_isxdigit(int character) {
+    return sx_isdigit(character)
+        || (character >= 'a' && character <= 'f')
+        || (character >= 'A' && character <= 'F');
 }
 
 int sx_tolower(int character) {
@@ -764,7 +954,15 @@ int sx_abs(int value) {
 }
 
 char* sx_getenv(const char* name) {
-    (void)name;
+    if (name == 0) {
+        return 0;
+    }
+    if (strcmp(name, "PATH") == 0) {
+        return g_path_env;
+    }
+    if (strcmp(name, "TERM") == 0) {
+        return (char*)"savanxp";
+    }
     return 0;
 }
 
@@ -917,13 +1115,50 @@ int sx_pipe(int fds[2]) {
 int sx_fcntl(int fd, int command, ...) {
     unsigned long raw_value = 0;
     long result = 0;
-    if (command == F_SETFL) {
+    if (command == F_DUPFD || command == F_SETFL) {
         va_list args;
-        const int value = 0;
         va_start(args, command);
         raw_value = (unsigned long)va_arg(args, int);
         va_end(args);
+    }
 
+    if (command == F_DUPFD) {
+        int minimum_fd = (int)raw_value;
+        int scratch[64] = {};
+        size_t scratch_count = 0;
+
+        if (minimum_fd < 0) {
+            g_errno = SAVANXP_EINVAL;
+            return -1;
+        }
+
+        for (;;) {
+            int duplicated = sx_dup(fd);
+            if (duplicated < 0) {
+                for (size_t index = 0; index < scratch_count; ++index) {
+                    sx_close(scratch[index]);
+                }
+                return -1;
+            }
+            if (duplicated >= minimum_fd) {
+                for (size_t index = 0; index < scratch_count; ++index) {
+                    sx_close(scratch[index]);
+                }
+                return duplicated;
+            }
+            if (scratch_count >= (sizeof(scratch) / sizeof(scratch[0]))) {
+                sx_close(duplicated);
+                for (size_t index = 0; index < scratch_count; ++index) {
+                    sx_close(scratch[index]);
+                }
+                g_errno = SAVANXP_EINVAL;
+                return -1;
+            }
+            scratch[scratch_count++] = duplicated;
+        }
+    }
+
+    if (command == F_SETFL) {
         {
             unsigned long translated = 0;
             if ((raw_value & O_NONBLOCK) != 0) {
@@ -1075,6 +1310,8 @@ int sx_stat(const char* path, struct stat* info) {
         return -1;
     }
     if (info != 0) {
+        info->st_dev = 1;
+        info->st_ino = sx_hash_text(path);
         info->st_mode = raw.st_mode;
         info->st_size = raw.st_size;
     }
@@ -1089,10 +1326,16 @@ int sx_fstat(int fd, struct stat* info) {
         return -1;
     }
     if (info != 0) {
+        info->st_dev = 1;
+        info->st_ino = (unsigned long)(fd + 1);
         info->st_mode = raw.st_mode;
         info->st_size = raw.st_size;
     }
     return 0;
+}
+
+int sx_lstat(const char* path, struct stat* info) {
+    return sx_stat(path, info);
 }
 
 int sx_access(const char* path, int mode) {
@@ -1150,12 +1393,64 @@ pid_t sx_getpid(void) {
     return (pid_t)result;
 }
 
+pid_t sx_getppid(void) {
+    return 1;
+}
+
+pid_t sx_getpgrp(void) {
+    return sx_getpid();
+}
+
+int sx_setpgid(pid_t pid, pid_t pgrp) {
+    pid_t self = sx_getpid();
+    if ((pid != 0 && pid != self) || (pgrp != 0 && pgrp != self)) {
+        g_errno = SAVANXP_ENOSYS;
+        return -1;
+    }
+    return 0;
+}
+
+pid_t sx_setsid(void) {
+    return sx_getpid();
+}
+
 int sx_sync(void) {
     long result = sync();
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
     }
+    return 0;
+}
+
+int sx_tcgetattr(int fd, struct termios* value) {
+    (void)fd;
+    if (value == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    memset(value, 0, sizeof(*value));
+    value->c_lflag = ICANON | ECHO | ECHOK | ECHONL;
+    value->c_cc[VMIN] = 1;
+    value->c_cc[VTIME] = 0;
+    return 0;
+}
+
+int sx_tcsetattr(int fd, int optional_actions, const struct termios* value) {
+    (void)fd;
+    (void)optional_actions;
+    (void)value;
+    return 0;
+}
+
+pid_t sx_tcgetpgrp(int fd) {
+    (void)fd;
+    return sx_getpid();
+}
+
+int sx_tcsetpgrp(int fd, pid_t pgrp) {
+    (void)fd;
+    (void)pgrp;
     return 0;
 }
 
@@ -1738,6 +2033,19 @@ int sx_printf(const char* format, ...) {
     return written;
 }
 
+int sx_sprintf(char* buffer, const char* format, ...) {
+    int written = 0;
+    va_list args;
+    va_start(args, format);
+    written = sx_vsnprintf(buffer, (size_t)-1, format, args);
+    va_end(args);
+    return written;
+}
+
+int sx_vprintf(const char* format, va_list args) {
+    return sx_vfprintf(stdout, format, args);
+}
+
 int sx_vsnprintf(char* buffer, size_t size, const char* format, va_list args) {
     sx_buffer_sink sink = {buffer, size, 0};
     int written = sx_vformat(sx_emit_buffer_char, &sink, format, args);
@@ -1783,6 +2091,37 @@ int sx_feof(FILE* stream) {
     return stream != 0 ? stream->eof : 1;
 }
 
+int sx_ferror(FILE* stream) {
+    return stream != 0 ? stream->error : 1;
+}
+
+void sx_clearerr(FILE* stream) {
+    if (stream == 0) {
+        return;
+    }
+    stream->eof = 0;
+    stream->error = 0;
+}
+
+int sx_fputs(const char* text, FILE* stream) {
+    size_t length = 0;
+    if (text == 0 || stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return EOF;
+    }
+    length = sx_strlen(text);
+    return sx_fwrite(text, 1, length, stream) == length ? 0 : EOF;
+}
+
+int sx_putc(int character, FILE* stream) {
+    unsigned char value = (unsigned char)character;
+    if (stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return EOF;
+    }
+    return sx_fwrite(&value, 1, 1, stream) == 1 ? character : EOF;
+}
+
 int sx_putchar(int character) {
     char value = (char)character;
     return sx_write(stdout->fd, &value, 1) < 0 ? EOF : character;
@@ -1807,9 +2146,13 @@ int sx_rename(const char* old_path, const char* new_path) {
 
 pid_t sx_waitpid(pid_t pid, int* status, int options) {
     long result = 0;
-    if (options != 0) {
+    if ((options & ~(WNOHANG | WUNTRACED | WCONTINUED)) != 0) {
         g_errno = SAVANXP_EINVAL;
         return -1;
+    }
+    if ((options & WNOHANG) != 0) {
+        g_errno = SAVANXP_ENOSYS;
+        return 0;
     }
     result = waitpid(pid, status);
     if (result < 0) {
@@ -1826,6 +2169,109 @@ pid_t sx_fork(void) {
         return -1;
     }
     return (pid_t)result;
+}
+
+pid_t sx_vfork(void) {
+    return sx_fork();
+}
+
+static int sx_try_exec_path(const char* path, char* const argv[]) {
+    int argc = 0;
+    const char* const* raw_argv = (const char* const*)argv;
+    while (argv != 0 && argv[argc] != 0) {
+        ++argc;
+    }
+
+    long result = exec(path, raw_argv, argc);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return 0;
+}
+
+static int sx_try_exec_search(const char* prefix, const char* file, char* const argv[]) {
+    char path[SX_PATH_CAPACITY] = {};
+    size_t written = 0;
+    if (prefix == 0 || file == 0) {
+        return -1;
+    }
+
+    while (prefix[written] != '\0' && written + 1 < sizeof(path)) {
+        path[written] = prefix[written];
+        ++written;
+    }
+    if (written + 1 >= sizeof(path)) {
+        g_errno = SAVANXP_ENOENT;
+        return -1;
+    }
+    if (written == 0 || path[written - 1] != '/') {
+        path[written++] = '/';
+    }
+    for (size_t index = 0; file[index] != '\0' && written + 1 < sizeof(path); ++index) {
+        path[written++] = file[index];
+    }
+    path[written] = '\0';
+    return sx_try_exec_path(path, argv);
+}
+
+int sx_execvp(const char* file, char* const argv[]) {
+    int has_separator = 0;
+    if (file == 0 || file[0] == '\0') {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    for (const char* cursor = file; *cursor != '\0'; ++cursor) {
+        if (*cursor == '/') {
+            has_separator = 1;
+            break;
+        }
+    }
+    if (has_separator) {
+        return sx_try_exec_path(file, argv);
+    }
+    if (sx_try_exec_search("/disk/bin", file, argv) == 0) {
+        return 0;
+    }
+    if (g_errno != SAVANXP_ENOENT) {
+        return -1;
+    }
+    return sx_try_exec_search("/bin", file, argv);
+}
+
+int sx_execv(const char* path, char* const argv[]) {
+    return sx_try_exec_path(path, argv);
+}
+
+int sx_execve(const char* path, char* const argv[], char* const envp[]) {
+    (void)envp;
+    return sx_try_exec_path(path, argv);
+}
+
+void sx__exit(int code) {
+    exit(code);
+}
+
+uid_t sx_getuid(void) {
+    return 0;
+}
+
+uid_t sx_geteuid(void) {
+    return 0;
+}
+
+gid_t sx_getgid(void) {
+    return 0;
+}
+
+gid_t sx_getegid(void) {
+    return 0;
+}
+
+mode_t sx_umask(mode_t mask) {
+    mode_t previous = g_umask_value;
+    g_umask_value = mask;
+    return previous;
 }
 
 unsigned sx_sleep(unsigned seconds) {
@@ -1874,6 +2320,177 @@ int sx_nanosleep(const struct timespec* request, struct timespec* remaining) {
     milliseconds = (unsigned long)request->tv_sec * 1000UL;
     milliseconds += (unsigned long)((request->tv_nsec + 999999L) / 1000000L);
     return sx_usleep(milliseconds * 1000UL);
+}
+
+int sx_gettimeofday(struct timeval* value, void* timezone_ptr) {
+    unsigned long milliseconds = uptime_ms();
+    (void)timezone_ptr;
+    if (value == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    value->tv_sec = (long)(milliseconds / 1000UL);
+    value->tv_usec = (long)((milliseconds % 1000UL) * 1000UL);
+    return 0;
+}
+
+clock_t sx_times(struct tms* buffer) {
+    const unsigned long ticks = uptime_ms();
+    if (buffer != 0) {
+        buffer->tms_utime = (clock_t)ticks;
+        buffer->tms_stime = 0;
+        buffer->tms_cutime = 0;
+        buffer->tms_cstime = 0;
+    }
+    return (clock_t)ticks;
+}
+
+static void sx_copy_uname_field(char* destination, size_t capacity, const char* source) {
+    size_t index = 0;
+    if (destination == 0 || capacity == 0) {
+        return;
+    }
+    while (source != 0 && source[index] != '\0' && index + 1 < capacity) {
+        destination[index] = source[index];
+        ++index;
+    }
+    destination[index] = '\0';
+}
+
+int sx_uname(struct utsname* value) {
+    if (value == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+
+    sx_copy_uname_field(value->sysname, sizeof(value->sysname), "SavanXP");
+    sx_copy_uname_field(value->nodename, sizeof(value->nodename), "savanxp");
+    sx_copy_uname_field(value->release, sizeof(value->release), "0.1");
+    sx_copy_uname_field(value->version, sizeof(value->version), "sdk-v1");
+    sx_copy_uname_field(value->machine, sizeof(value->machine), "x86_64");
+    return 0;
+}
+
+struct passwd* sx_getpwnam(const char* name) {
+    if (name == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    if (sx_strcmp(name, "root") == 0) {
+        return &g_passwd_root;
+    }
+    return 0;
+}
+
+static int sx_valid_signal_number(int signal_number) {
+    return signal_number > 0 && signal_number < NSIG;
+}
+
+static int sx_fnmatch_class_matches(const char** pattern_ptr, char character) {
+    const char* pattern = *pattern_ptr;
+    int negate = 0;
+    int matched = 0;
+
+    if (*pattern == '!' || *pattern == '^') {
+        negate = 1;
+        ++pattern;
+    }
+
+    while (*pattern != '\0' && *pattern != ']') {
+        if (pattern[1] == '-' && pattern[2] != '\0' && pattern[2] != ']') {
+            const char start = pattern[0];
+            const char end = pattern[2];
+            if (character >= start && character <= end) {
+                matched = 1;
+            }
+            pattern += 3;
+            continue;
+        }
+        if (*pattern == character) {
+            matched = 1;
+        }
+        ++pattern;
+    }
+
+    if (*pattern == ']') {
+        ++pattern;
+    }
+    *pattern_ptr = pattern;
+    return negate ? !matched : matched;
+}
+
+static int sx_fnmatch_internal(const char* pattern, const char* string, int flags) {
+    while (*pattern != '\0') {
+        if (*pattern == '*') {
+            while (*pattern == '*') {
+                ++pattern;
+            }
+            if (*pattern == '\0') {
+                if ((flags & FNM_PATHNAME) != 0) {
+                    for (; *string != '\0'; ++string) {
+                        if (*string == '/') {
+                            return 1;
+                        }
+                    }
+                }
+                return 0;
+            }
+            while (*string != '\0') {
+                if ((flags & FNM_PATHNAME) != 0 && *string == '/') {
+                    break;
+                }
+                if (sx_fnmatch_internal(pattern, string, flags) == 0) {
+                    return 0;
+                }
+                ++string;
+            }
+            return sx_fnmatch_internal(pattern, string, flags);
+        }
+
+        if (*string == '\0') {
+            return 1;
+        }
+
+        if (*pattern == '?') {
+            if ((flags & FNM_PATHNAME) != 0 && *string == '/') {
+                return 1;
+            }
+            ++pattern;
+            ++string;
+            continue;
+        }
+
+        if (*pattern == '[') {
+            ++pattern;
+            if ((flags & FNM_PATHNAME) != 0 && *string == '/') {
+                return 1;
+            }
+            if (!sx_fnmatch_class_matches(&pattern, *string)) {
+                return 1;
+            }
+            ++string;
+            continue;
+        }
+
+        if (*pattern == '\\' && (flags & FNM_NOESCAPE) == 0 && pattern[1] != '\0') {
+            ++pattern;
+        }
+        if (*pattern != *string) {
+            return 1;
+        }
+        ++pattern;
+        ++string;
+    }
+
+    return *string == '\0' ? 0 : 1;
+}
+
+int sx_fnmatch(const char* pattern, const char* string, int flags) {
+    if (pattern == 0 || string == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return 1;
+    }
+    return sx_fnmatch_internal(pattern, string, flags);
 }
 
 unsigned long sx_htonl(unsigned long value) {
@@ -2102,7 +2719,7 @@ int sx_shutdown(int fd, int how) {
 }
 
 int sx_kill(pid_t pid, int signal_number) {
-    long result = kill((int)pid, signal_number);
+    long result = (kill)((int)pid, signal_number);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2112,6 +2729,174 @@ int sx_kill(pid_t pid, int signal_number) {
 
 int sx_raise(int signal_number) {
     return sx_kill(sx_getpid(), signal_number);
+}
+
+sighandler_t sx_signal(int signal_number, sighandler_t handler) {
+    sighandler_t previous = SIG_DFL;
+    if (!sx_valid_signal_number(signal_number)) {
+        g_errno = SAVANXP_EINVAL;
+        return SIG_ERR;
+    }
+    previous = g_signal_actions[signal_number].sa_handler;
+    g_signal_actions[signal_number].sa_handler = handler;
+    g_signal_actions[signal_number].sa_mask = 0;
+    g_signal_actions[signal_number].sa_flags = 0;
+    return previous != 0 ? previous : SIG_DFL;
+}
+
+int sx_sigaction(int signal_number, const struct sigaction* action, struct sigaction* old_action) {
+    if (!sx_valid_signal_number(signal_number)) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    if (old_action != 0) {
+        *old_action = g_signal_actions[signal_number];
+        if (old_action->sa_handler == 0) {
+            old_action->sa_handler = SIG_DFL;
+        }
+    }
+    if (action != 0) {
+        g_signal_actions[signal_number] = *action;
+    }
+    return 0;
+}
+
+int sx_sigemptyset(sigset_t* set) {
+    if (set == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    *set = 0;
+    return 0;
+}
+
+int sx_sigfillset(sigset_t* set) {
+    if (set == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    *set = ~0ul;
+    return 0;
+}
+
+int sx_sigaddset(sigset_t* set, int signal_number) {
+    if (set == 0 || !sx_valid_signal_number(signal_number)) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    *set |= (1ul << signal_number);
+    return 0;
+}
+
+int sx_sigdelset(sigset_t* set, int signal_number) {
+    if (set == 0 || !sx_valid_signal_number(signal_number)) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    *set &= ~(1ul << signal_number);
+    return 0;
+}
+
+int sx_sigismember(const sigset_t* set, int signal_number) {
+    if (set == 0 || !sx_valid_signal_number(signal_number)) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    return ((*set & (1ul << signal_number)) != 0) ? 1 : 0;
+}
+
+int sx_sigprocmask(int how, const sigset_t* set, sigset_t* old_set) {
+    if (old_set != 0) {
+        *old_set = g_signal_mask;
+    }
+    if (set == 0) {
+        return 0;
+    }
+    switch (how) {
+        case SIG_BLOCK:
+            g_signal_mask |= *set;
+            return 0;
+        case SIG_UNBLOCK:
+            g_signal_mask &= ~(*set);
+            return 0;
+        case SIG_SETMASK:
+            g_signal_mask = *set;
+            return 0;
+        default:
+            g_errno = SAVANXP_EINVAL;
+            return -1;
+    }
+}
+
+int sx_sigsuspend(const sigset_t* mask) {
+    (void)mask;
+    g_errno = EINTR;
+    return -1;
+}
+
+char* sx_strsignal(int signal_number) {
+    switch (signal_number) {
+        case SIGHUP: return "Hangup";
+        case SIGINT: return "Interrupt";
+        case SIGQUIT: return "Quit";
+        case SIGKILL: return "Killed";
+        case SIGPIPE: return "Broken pipe";
+        case SIGALRM: return "Alarm";
+        case SIGTERM: return "Terminated";
+        case SIGCHLD: return "Child exited";
+        case SIGTSTP: return "Stopped";
+        case SIGTTIN: return "TTY input";
+        case SIGTTOU: return "TTY output";
+        default: return "Signal";
+    }
+}
+
+void* sx_bsearch(const void* key, const void* base, size_t count, size_t size,
+    int (*compar)(const void*, const void*)) {
+    size_t left = 0;
+    size_t right = count;
+    const unsigned char* bytes = (const unsigned char*)base;
+    if (key == 0 || base == 0 || compar == 0 || size == 0) {
+        return 0;
+    }
+    while (left < right) {
+        const size_t mid = left + ((right - left) / 2);
+        const void* element = bytes + (mid * size);
+        const int result = compar(key, element);
+        if (result == 0) {
+            return (void*)element;
+        }
+        if (result < 0) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    return 0;
+}
+
+void sx_qsort(void* base, size_t count, size_t size, int (*compar)(const void*, const void*)) {
+    unsigned char* bytes = (unsigned char*)base;
+    unsigned char* tmp = 0;
+    if (base == 0 || compar == 0 || size == 0 || count < 2) {
+        return;
+    }
+    tmp = (unsigned char*)sx_malloc(size);
+    if (tmp == 0) {
+        return;
+    }
+    for (size_t outer = 0; outer + 1 < count; ++outer) {
+        for (size_t inner = outer + 1; inner < count; ++inner) {
+            unsigned char* left = bytes + (outer * size);
+            unsigned char* right = bytes + (inner * size);
+            if (compar(left, right) > 0) {
+                sx_memcpy(tmp, left, size);
+                sx_memcpy(left, right, size);
+                sx_memcpy(right, tmp, size);
+            }
+        }
+    }
+    sx_free(tmp);
 }
 
 void sx_exit(int code) {

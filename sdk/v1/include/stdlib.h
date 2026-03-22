@@ -18,6 +18,11 @@
 #define exit sx_exit
 #define strtol sx_strtol
 #define strtoul sx_strtoul
+#define bsearch sx_bsearch
+#define qsort sx_qsort
+#define alloca __builtin_alloca
+
+extern char** environ;
 
 void* sx_malloc(size_t size);
 void* sx_calloc(size_t count, size_t size);
@@ -32,3 +37,6 @@ void sx_abort(void);
 void sx_exit(int code) __attribute__((noreturn));
 long sx_strtol(const char* text, char** endptr, int base);
 unsigned long sx_strtoul(const char* text, char** endptr, int base);
+void* sx_bsearch(const void* key, const void* base, size_t count, size_t size,
+    int (*compar)(const void*, const void*));
+void sx_qsort(void* base, size_t count, size_t size, int (*compar)(const void*, const void*));

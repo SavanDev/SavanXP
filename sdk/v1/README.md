@@ -1,8 +1,8 @@
-# SDK v1.1
+# SDK v1.2
 
 `sdk/v1` es la superficie pública actual para compilar apps externas en `C`
 contra SavanXP. El nivel de contrato vigente dentro de esta carpeta es `SDK
-1.1`.
+1.2`.
 
 ## Superficie pública
 
@@ -19,7 +19,7 @@ Incluye:
 - `linker.ld`
 - `REFERENCE.md`
 
-## ABI pública v1.1
+## ABI pública v1.2
 
 Categorías soportadas:
 
@@ -41,12 +41,15 @@ Nodos de dispositivo expuestos actualmente:
 - `/dev/mouse0`
 - `/dev/net0`
 - `/dev/pcspk`
+- `/dev/audio0`
 
 Ioctl groups visibles:
 
 - `FB_IOC_*`
 - `NET_IOC_*`
 - `PCSPK_IOC_*`
+- `GPU_IOC_*`
+- `AUDIO_IOC_*`
 
 Errores visibles:
 
@@ -77,7 +80,7 @@ Reglas del ABI:
 - `main(int argc, char** argv)` está soportado.
 - `waitpid(SAVANXP_WAIT_ANY, &status)` está soportado.
 - `fork()` clona el espacio de direcciones y descriptores del proceso actual.
-- las señales disponibles en `SDK 1.1` son de accion por defecto (`SIGINT`,
+- las señales disponibles en `SDK 1.2` son de accion por defecto (`SIGINT`,
   `SIGTERM`, `SIGKILL`, `SIGPIPE`, `SIGCHLD`); no hay handlers POSIX
   completos todavia.
 
@@ -114,6 +117,7 @@ Tipos compartidos para dispositivos:
 - `struct savanxp_net_ping_request`
 - `struct savanxp_net_ping_result`
 - `struct savanxp_pcspk_beep`
+- `struct savanxp_audio_info`
 - `struct savanxp_sockaddr_in`
 
 Sockets v1:
@@ -178,6 +182,7 @@ Smoke tests útiles en el estado actual:
 - `udptest`
 - `tcpget 104.18.26.120 80 example.com /`
 - `beep 440 200`
+- `audiotest`
 - `gfxdemo`
 - `forktest`
 - `polltest`

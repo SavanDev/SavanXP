@@ -655,9 +655,46 @@ static int execute_pipeline(struct CommandStage* stages, int stage_count) {
     return wait_for_children(pids, pid_count);
 }
 
-int main(void) {
+static int execute_command_text(char* line, struct CommandStage* stages) {
+    const int stage_count = parse_pipeline(line, stages, MAX_STAGES);
+    if (stage_count == 0) {
+        return 0;
+    }
+    if (stage_count < 0) {
+        errputs("sh: parse error\n");
+        return 1;
+    }
+
+    if (stage_count == 1 &&
+        stages[0].input_path == 0 &&
+        stages[0].stdout_path == 0 &&
+        stages[0].stderr_path == 0 &&
+        is_builtin(stages[0].argv[0])) {
+        const int status = run_builtin(&stages[0]);
+        return status > 0 ? 0 : status;
+    }
+
+    {
+        const int status = execute_pipeline(stages, stage_count);
+        return status < 0 ? 1 : status;
+    }
+}
+
+int main(int argc, char** argv) {
     char line[256];
     struct CommandStage stages[MAX_STAGES];
+
+    if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
+        size_t index = 0;
+        memset(line, 0, sizeof(line));
+        while (argv[2][index] != '\0' && index + 1 < sizeof(line)) {
+            line[index] = argv[2][index];
+            ++index;
+        }
+        line[index] = '\0';
+        trim_newline(line);
+        return execute_command_text(line, stages);
+    }
 
     printf("%s\n", SAVANXP_DISPLAY_NAME);
     puts("Type 'help' for commands and 'sysinfo' for diagnostics.\n");
@@ -672,33 +709,6 @@ int main(void) {
         }
 
         trim_newline(line);
-        const int stage_count = parse_pipeline(line, stages, MAX_STAGES);
-        if (stage_count == 0) {
-            continue;
-        }
-        if (stage_count < 0) {
-            errputs("sh: parse error\n");
-            continue;
-        }
-
-        if (stage_count == 1 &&
-            stages[0].input_path == 0 &&
-            stages[0].stdout_path == 0 &&
-            stages[0].stderr_path == 0 &&
-            is_builtin(stages[0].argv[0])) {
-            const int status = run_builtin(&stages[0]);
-            if (status > 0) {
-                return 0;
-            }
-            continue;
-        }
-
-        {
-            const int status = execute_pipeline(stages, stage_count);
-            if (status < 0) {
-                continue;
-            }
-            (void)status;
-        }
+        (void)execute_command_text(line, stages);
     }
 }

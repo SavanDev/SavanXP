@@ -204,6 +204,7 @@ enum savanxp_ioctl_group {
     SAVANXP_IOCTL_GROUP_NET = 0x1002,
     SAVANXP_IOCTL_GROUP_PCSPK = 0x1003,
     SAVANXP_IOCTL_GROUP_GPU = 0x1004,
+    SAVANXP_IOCTL_GROUP_AUDIO = 0x1005,
 };
 
 enum savanxp_fb_ioctl {
@@ -252,6 +253,10 @@ enum savanxp_gpu_ioctl {
     GPU_IOC_RELEASE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 3),
     GPU_IOC_PRESENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 4),
     GPU_IOC_PRESENT_REGION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 5),
+};
+
+enum savanxp_audio_ioctl {
+    AUDIO_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 1),
 };
 
 enum savanxp_socket_domain {
@@ -307,6 +312,22 @@ struct savanxp_gpu_present_region {
     uint32_t y;
     uint32_t width;
     uint32_t height;
+};
+
+enum savanxp_audio_backend {
+    SAVANXP_AUDIO_BACKEND_NONE = 0,
+    SAVANXP_AUDIO_BACKEND_VIRTIO = 1,
+};
+
+struct savanxp_audio_info {
+    uint32_t sample_rate_hz;
+    uint32_t channels;
+    uint32_t bits_per_sample;
+    uint32_t frame_bytes;
+    uint32_t period_bytes;
+    uint32_t buffer_bytes;
+    uint32_t backend;
+    uint32_t flags;
 };
 
 enum savanxp_input_event_type {

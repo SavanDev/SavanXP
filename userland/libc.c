@@ -231,6 +231,14 @@ int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
     return 1;
 }
 
+long audio_open(void) {
+    return open_mode("/dev/audio0", SAVANXP_OPEN_WRITE);
+}
+
+long audio_get_info(int fd, struct savanxp_audio_info* info) {
+    return ioctl(fd, AUDIO_IOC_GET_INFO, (unsigned long)info);
+}
+
 long gpu_open(void) {
     return open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
 }

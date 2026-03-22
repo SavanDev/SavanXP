@@ -10,6 +10,25 @@ Notas de corte:
 
 ## [Unreleased]
 
+### Agregado
+
+- ABI publica nueva para audio con `SAVANXP_IOCTL_GROUP_AUDIO`,
+  `AUDIO_IOC_GET_INFO` y `struct savanxp_audio_info`.
+- Driver `virtio-sound` playback-only sobre `virtio_pci`, exponiendo
+  `/dev/audio0` con formato fijo `S16LE stereo 48 kHz`.
+- Utilidad nueva `audiotest` y coverage automatizado en `.\build.ps1 smoke`
+  para validar `/dev/audio0`.
+
+### Cambiado
+
+- El build principal ahora instala el multicall BusyBox portado en `/bin` y
+  `/disk/bin` para `sh`, `ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp` y
+  `ps`.
+- `virtio-gpu` pasa a presentar sobre un set interno de tres superficies,
+  rotando recursos sin cambiar la ABI publica de `/dev/fb0` y `/dev/gpu0`.
+- Los perfiles `run` y `smoke` de QEMU agregan `virtio-sound-pci` con un
+  `audiodev` separado del camino de `pcspeaker`.
+
 ## [0.1.4] - 2026-03-19
 
 ### Agregado

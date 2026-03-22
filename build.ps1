@@ -16,6 +16,7 @@ $RootfsBuild = Join-Path $BuildRoot "rootfs"
 $DiskBuildRoot = Join-Path $BuildRoot "diskfs"
 $GeneratedRoot = Join-Path $BuildRoot "generated"
 $DiskRoot = Join-Path $ProjectRoot "diskfs"
+$BusyBoxPortRoot = Join-Path $ProjectRoot "vendor\\busybox-port"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
 $DiskImage = Join-Path $BuildRoot "disk.img"
 $ToolRoot = Join-Path $ProjectRoot "tools"
@@ -50,6 +51,7 @@ $KernelSources = @(
     "kernel/virtio_pci.cpp",
     "kernel/virtio_gpu.cpp",
     "kernel/virtio_input.cpp",
+    "kernel/virtio_sound.cpp",
     "kernel/ps2.cpp",
     "kernel/pcspeaker.cpp",
     "kernel/rtc.cpp",
@@ -68,12 +70,12 @@ $KernelSources = @(
 
 $UserPrograms = @(
     @{ Name = "init"; Source = "userland/init.c" },
-    @{ Name = "sh"; Source = "userland/sh.c" },
+    @{ Name = "sh_legacy"; Source = "userland/sh.c" },
     @{ Name = "uname"; Source = "userland/uname.c" },
     @{ Name = "df"; Source = "userland/df.c" },
     @{ Name = "ticker"; Source = "userland/ticker.c" },
     @{ Name = "demo"; Source = "userland/demo.c" },
-    @{ Name = "ps"; Source = "userland/ps.c" },
+    @{ Name = "ps_legacy"; Source = "userland/ps.c" },
     @{ Name = "fdtest"; Source = "userland/fdtest.c" },
     @{ Name = "waittest"; Source = "userland/waittest.c" },
     @{ Name = "pipestress"; Source = "userland/pipestress.c" },
@@ -93,6 +95,7 @@ $UserPrograms = @(
     @{ Name = "udptest"; Source = "userland/udptest.c" },
     @{ Name = "tcpget"; Source = "userland/tcpget.c" },
     @{ Name = "beep"; Source = "userland/beep.c" },
+    @{ Name = "audiotest"; Source = "userland/audiotest.c" },
     @{ Name = "desktop"; Source = "userland/desktop.c" },
     @{ Name = "gfxdemo"; Source = "userland/gfxdemo.c" },
     @{ Name = "gputest"; Source = "userland/gputest.c" },
@@ -102,18 +105,24 @@ $UserPrograms = @(
     @{ Name = "forktest"; Source = "userland/forktest.c" },
     @{ Name = "polltest"; Source = "userland/polltest.c" },
     @{ Name = "sigtest"; Source = "userland/sigtest.c" },
-    @{ Name = "busybox"; Source = "userland/busybox.c" },
-    @{ Name = "echo"; Source = "userland/busybox.c" },
-    @{ Name = "cat"; Source = "userland/busybox.c" },
-    @{ Name = "ls"; Source = "userland/busybox.c" },
-    @{ Name = "mkdir"; Source = "userland/busybox.c" },
-    @{ Name = "rm"; Source = "userland/busybox.c" },
-    @{ Name = "mv"; Source = "userland/busybox.c" },
-    @{ Name = "cp"; Source = "userland/busybox.c" },
-    @{ Name = "true"; Source = "userland/busybox.c" },
-    @{ Name = "false"; Source = "userland/busybox.c" },
-    @{ Name = "sleep"; Source = "userland/busybox.c" },
     @{ Name = "smoke"; Source = "userland/smoke.c" }
+)
+
+$BusyBoxApplets = @(
+    "busybox",
+    "ash",
+    "sh",
+    "ls",
+    "cat",
+    "echo",
+    "mkdir",
+    "rm",
+    "mv",
+    "cp",
+    "ps",
+    "true",
+    "false",
+    "sleep"
 )
 
 function New-Directory([string]$Path) {
@@ -424,6 +433,20 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
     New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
 }
 
+function Install-BusyBox {
+    New-Directory $RootfsBuild
+    New-Directory (Join-Path $RootfsBuild "bin")
+
+    $busyboxOutput = Join-Path $RootfsBuild "bin\\busybox"
+    $builtBusyBox = Build-ExternalUserProgram -SourcePath $BusyBoxPortRoot -ProgramName "busybox" -OutputPath $busyboxOutput
+    foreach ($applet in $BusyBoxApplets) {
+        if ($applet -eq "busybox") {
+            continue
+        }
+        Copy-Item $builtBusyBox (Join-Path $RootfsBuild "bin\\$applet") -Force
+    }
+}
+
 function Build-Kernel([switch]$SmokeMode) {
     $clang = Require-Executable "clang++" @(
         "clang++",
@@ -460,13 +483,17 @@ function Build-Kernel([switch]$SmokeMode) {
 
     Generate-CursorAsset
     Build-Userland -Compiler $clang -Linker $ld
+    Install-BusyBox
     if ($SmokeMode) {
         Set-Content -Path (Join-Path $RootfsBuild "SMOKE") -Value "smoke" -NoNewline
-        New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
     }
+    New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
     Copy-Item (Join-Path $RootfsBuild "bin\\*") (Join-Path $DiskBuildRoot "bin") -Force
+    if (Test-Path $DiskImage) {
+        Remove-Item $DiskImage -Force
+    }
     Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
     $diskImage = Open-SvfsImage $DiskImage
     Sync-SvfsDiskTree -Image $diskImage -SourceRoot $DiskBuildRoot
@@ -512,6 +539,7 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-m", "256M",
         "-cpu", "max",
         "-audiodev", "sdl,id=audio0",
+        "-audiodev", "sdl,id=audio1",
         "-display", "gtk,grab-on-hover=on,show-cursor=off,window-close=on",
         "-rtc", "base=localtime",
         "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
@@ -520,6 +548,7 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
         "-device", "virtio-vga,xres=1280,yres=800",
+        "-device", "virtio-sound-pci,audiodev=audio1,streams=1",
         "-device", "virtio-tablet-pci",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage",
@@ -565,6 +594,7 @@ function Run-SmokeQemu {
         "-m", "256M",
         "-cpu", "max",
         "-audiodev", "none,id=audio0",
+        "-audiodev", "none,id=audio1",
         "-display", "none",
         "-rtc", "base=localtime",
         "-drive", "if=pflash,format=raw,readonly=on,file=""$($ovmf.Code)""",
@@ -573,6 +603,7 @@ function Run-SmokeQemu {
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
         "-device", "virtio-vga,xres=1280,yres=800",
+        "-device", "virtio-sound-pci,audiodev=audio1,streams=1",
         "-device", "virtio-tablet-pci",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$DiskImage""",

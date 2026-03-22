@@ -68,6 +68,7 @@ function Get-UserCompileFlags {
 function Get-ExternalSourceSpec([string]$SourcePath) {
     $sourceFull = (Resolve-Path $SourcePath).Path
     $sourceItem = Get-Item $sourceFull
+    $excluded = @{}
 
     if (-not $sourceItem.PSIsContainer) {
         return [pscustomobject]@{
@@ -77,7 +78,21 @@ function Get-ExternalSourceSpec([string]$SourcePath) {
         }
     }
 
+    $excludeFile = Join-Path $sourceFull "compile-exclude.txt"
+    if (Test-Path $excludeFile) {
+        foreach ($entry in (Get-Content $excludeFile)) {
+            $trimmed = $entry.Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith("#")) {
+                continue
+            }
+            $excluded[(Join-Path $sourceFull $trimmed)] = $true
+        }
+    }
+
     $sourceFiles = @(Get-ChildItem $sourceFull -Recurse -File -Include *.c,*.S | Sort-Object FullName)
+    if ($excluded.Count -ne 0) {
+        $sourceFiles = @($sourceFiles | Where-Object { -not $excluded.ContainsKey($_.FullName) })
+    }
     if ($sourceFiles.Count -eq 0) {
         throw "El directorio '$SourcePath' no contiene fuentes .c o .S."
     }
@@ -154,6 +169,7 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
     $libcObject = Join-Path $objectRoot "libc.o"
     $posixObject = Join-Path $objectRoot "posix.o"
     $gfxObject = Join-Path $objectRoot "gfx.o"
+    $setjmpObject = Join-Path $objectRoot "setjmp.o"
     $crtObject = Join-Path $objectRoot "crt0.o"
     $appObjects = @()
 
@@ -186,12 +202,17 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion del runtime gfx."
     }
 
+    & $compiler -c (Join-Path $Script:SdkRoot "runtime\\setjmp.S") -o $setjmpObject @compileFlags
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la compilacion del runtime setjmp."
+    }
+
     & $compiler -c (Join-Path $Script:SdkRoot "runtime\\crt0.S") -o $crtObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion de crt0."
     }
 
-    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject @appObjects
+    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $setjmpObject @appObjects
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo el link de '$SourcePath'."
     }
