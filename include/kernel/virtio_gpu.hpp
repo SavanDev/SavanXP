@@ -12,6 +12,7 @@ bool ready();
 bool present();
 const savanxp_fb_info& framebuffer_info();
 void* framebuffer_address();
+void wait_for_idle();
 bool flush();
 bool flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 bool present_from_kernel(const void* pixels, size_t byte_count);

@@ -345,6 +345,9 @@ void release_graphics_session(uint32_t pid) {
     if (g_owner_pid == 0 || g_owner_pid != pid) {
         return;
     }
+    if (virtio_gpu::ready()) {
+        virtio_gpu::wait_for_idle();
+    }
     virtio_input::end_graphics_session();
     ::release_graphics_session();
 }

@@ -15,7 +15,7 @@ namespace {
 constexpr uint16_t kVirtioGpuModernDevice = 0x1050u;
 constexpr uint16_t kVirtioGpuSubsystemDevice = 16u;
 constexpr uint16_t kVirtioGpuControlQueue = 0;
-constexpr uint16_t kVirtioGpuMaxDescriptors = 2;
+constexpr uint16_t kVirtioGpuQueueDescriptorLimit = 16;
 constexpr uint32_t kVirtioGpuFormatB8G8R8X8Unorm = 2u;
 constexpr uint32_t kVirtioGpuFlagFence = 1u << 0;
 constexpr uint32_t kVirtioGpuCmdGetDisplayInfo = 0x0100u;
@@ -31,7 +31,9 @@ constexpr uint32_t kGpuSurfaceCount = 3u;
 constexpr uint32_t kFirstGpuResourceId = 1u;
 constexpr size_t kRequestBufferBytes = 512;
 constexpr size_t kResponseBufferBytes = 512;
-constexpr size_t kQueueExtraBytes = kRequestBufferBytes + kResponseBufferBytes;
+constexpr size_t kCommandSlotBytes = kRequestBufferBytes + kResponseBufferBytes;
+constexpr uint16_t kCommandSlotCount = kVirtioGpuQueueDescriptorLimit / 2u;
+constexpr size_t kQueueExtraBytes = kCommandSlotBytes * kCommandSlotCount;
 constexpr size_t kResponseBufferOffset = kRequestBufferBytes;
 constexpr uint32_t kCommandTimeoutSpins = 5000000u;
 
@@ -117,6 +119,32 @@ struct [[gnu::packed]] VirtioGpuResourceFlush {
     uint32_t padding;
 };
 
+enum CommandStage : uint8_t {
+    kCommandStageNone = 0,
+    kCommandStageSync = 1,
+    kCommandStagePresentTransfer = 2,
+    kCommandStagePresentFlush = 3,
+    kCommandStagePresentScanout = 4,
+};
+
+struct CommandSlot {
+    bool in_use;
+    bool completed;
+    uint16_t head_descriptor;
+    uint16_t response_bytes;
+    uint32_t response_type;
+    CommandStage stage;
+    uint32_t pending_present_index;
+};
+
+struct PendingPresent {
+    bool in_use;
+    bool completed;
+    bool failed;
+    uint32_t surface_index;
+    uint32_t pending_commands;
+};
+
 device::Device g_gpu_device = {
     .name = "gpu0",
     .read = nullptr,
@@ -131,6 +159,9 @@ struct Surface {
     memory::PageAllocation allocation;
     uint32_t resource_id;
 };
+Surface* surface_at(uint32_t surface_index);
+Surface* front_surface();
+
 Surface g_surfaces[kGpuSurfaceCount] = {};
 savanxp_fb_info g_framebuffer_info = {};
 savanxp_gpu_info g_gpu_info = {};
@@ -142,6 +173,11 @@ uint64_t g_next_fence_id = 1;
 bool g_present = false;
 bool g_ready = false;
 uint32_t g_last_response_type = 0;
+uint16_t g_command_slot_capacity = 0;
+CommandSlot g_command_slots[kCommandSlotCount] = {};
+PendingPresent g_pending_presents[kGpuSurfaceCount] = {};
+uint32_t g_pending_present_order[kGpuSurfaceCount] = {};
+uint32_t g_pending_present_count = 0;
 
 int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
@@ -158,61 +194,230 @@ void initialize_header(VirtioGpuCtrlHdr& header, uint32_t type) {
     header.fence_id = g_next_fence_id++;
 }
 
-bool wait_for_used_element(virtio_pci::UsedElement& element) {
-    const volatile virtio_pci::UsedHeader* used = virtio_pci::queue_used_header(g_control_queue);
-    const virtio_pci::UsedElement* ring = virtio_pci::queue_used_ring(g_control_queue);
+uint8_t* slot_request_buffer(uint16_t slot_index) {
+    return virtio_pci::queue_extra(g_control_queue, static_cast<size_t>(slot_index) * kCommandSlotBytes);
+}
 
-    for (uint32_t spin = 0; spin < kCommandTimeoutSpins; ++spin) {
-        virtio_pci::memory_barrier();
-        if (g_control_queue.last_used_index == used->idx) {
+uint8_t* slot_response_buffer(uint16_t slot_index) {
+    return slot_request_buffer(slot_index) + kResponseBufferOffset;
+}
+
+uint64_t slot_request_physical(uint16_t slot_index) {
+    return virtio_pci::queue_extra_physical(g_control_queue, static_cast<size_t>(slot_index) * kCommandSlotBytes);
+}
+
+uint64_t slot_response_physical(uint16_t slot_index) {
+    return slot_request_physical(slot_index) + kResponseBufferOffset;
+}
+
+void reset_present_tracking() {
+    memset(g_command_slots, 0, sizeof(g_command_slots));
+    memset(g_pending_presents, 0, sizeof(g_pending_presents));
+    memset(g_pending_present_order, 0, sizeof(g_pending_present_order));
+    g_pending_present_count = 0;
+}
+
+bool reserve_command_slot(uint16_t& slot_index) {
+    for (uint16_t index = 0; index < g_command_slot_capacity; ++index) {
+        if (g_command_slots[index].in_use) {
             continue;
         }
-
-        element = ring[g_control_queue.last_used_index % g_control_queue.size];
-        g_control_queue.last_used_index = static_cast<uint16_t>(g_control_queue.last_used_index + 1);
+        g_command_slots[index] = {};
+        g_command_slots[index].in_use = true;
+        g_command_slots[index].head_descriptor = static_cast<uint16_t>(index * 2u);
+        slot_index = index;
         return true;
     }
     return false;
 }
 
-bool submit_command(const void* request, size_t request_bytes, void* response, size_t response_bytes) {
-    if (!g_ready || !g_control_queue.enabled || request == nullptr || response == nullptr ||
+void release_command_slot(uint16_t slot_index) {
+    if (slot_index >= g_command_slot_capacity) {
+        return;
+    }
+    g_command_slots[slot_index] = {};
+}
+
+bool reserve_pending_present(uint32_t surface_index, uint32_t& pending_index) {
+    for (uint32_t index = 0; index < kGpuSurfaceCount; ++index) {
+        if (g_pending_presents[index].in_use) {
+            continue;
+        }
+        g_pending_presents[index] = {
+            .in_use = true,
+            .completed = false,
+            .failed = false,
+            .surface_index = surface_index,
+            .pending_commands = 0,
+        };
+        g_pending_present_order[g_pending_present_count++] = index;
+        pending_index = index;
+        return true;
+    }
+    return false;
+}
+
+void release_pending_head() {
+    if (g_pending_present_count == 0) {
+        return;
+    }
+    for (uint32_t index = 1; index < g_pending_present_count; ++index) {
+        g_pending_present_order[index - 1] = g_pending_present_order[index];
+    }
+    g_pending_present_count -= 1;
+}
+
+bool submit_command_slot(uint16_t slot_index, const void* request, size_t request_bytes, size_t response_bytes) {
+    if (!g_ready || !g_control_queue.enabled || slot_index >= g_command_slot_capacity || request == nullptr ||
         request_bytes == 0 || response_bytes == 0 ||
         request_bytes > kRequestBufferBytes || response_bytes > kResponseBufferBytes) {
         return false;
     }
 
-    void* request_buffer = virtio_pci::queue_extra(g_control_queue);
-    void* response_buffer = virtio_pci::queue_extra(g_control_queue, kResponseBufferOffset);
+    CommandSlot& slot = g_command_slots[slot_index];
+    if (!slot.in_use) {
+        return false;
+    }
+
+    void* request_buffer = slot_request_buffer(slot_index);
+    void* response_buffer = slot_response_buffer(slot_index);
     memcpy(request_buffer, request, request_bytes);
     memset(response_buffer, 0, response_bytes);
+    slot.completed = false;
+    slot.response_bytes = static_cast<uint16_t>(response_bytes);
+    slot.response_type = 0;
 
     virtio_pci::Descriptor* descriptors = virtio_pci::queue_descriptors(g_control_queue);
-    descriptors[0] = {
-        .addr = virtio_pci::queue_extra_physical(g_control_queue),
+    const uint16_t head = slot.head_descriptor;
+    descriptors[head] = {
+        .addr = slot_request_physical(slot_index),
         .len = static_cast<uint32_t>(request_bytes),
         .flags = virtio_pci::kDescriptorFlagNext,
-        .next = 1,
+        .next = static_cast<uint16_t>(head + 1u),
     };
-    descriptors[1] = {
-        .addr = virtio_pci::queue_extra_physical(g_control_queue, kResponseBufferOffset),
+    descriptors[head + 1u] = {
+        .addr = slot_response_physical(slot_index),
         .len = static_cast<uint32_t>(response_bytes),
         .flags = virtio_pci::kDescriptorFlagWrite,
         .next = 0,
     };
 
-    if (!virtio_pci::submit_descriptor_head(g_control_queue, 0)) {
+    if (!virtio_pci::submit_descriptor_head(g_control_queue, head)) {
         return false;
     }
     virtio_pci::memory_barrier();
     virtio_pci::notify_queue(g_device, g_control_queue);
+    return true;
+}
 
-    virtio_pci::UsedElement element = {};
-    if (!wait_for_used_element(element) || element.id != 0) {
+void finalize_completed_presents() {
+    while (g_pending_present_count != 0) {
+        PendingPresent& present = g_pending_presents[g_pending_present_order[0]];
+        if (!present.in_use || !present.completed) {
+            break;
+        }
+
+        if (!present.failed) {
+            g_front_surface_index = present.surface_index;
+            Surface* surface = surface_at(g_front_surface_index);
+            if (surface != nullptr) {
+                console::set_external_framebuffer(surface->allocation.virtual_address, g_framebuffer_info);
+            }
+        }
+
+        present = {};
+        release_pending_head();
+    }
+}
+
+void poll_command_completions() {
+    if (!g_ready || !g_control_queue.enabled) {
+        return;
+    }
+
+    const volatile virtio_pci::UsedHeader* used = virtio_pci::queue_used_header(g_control_queue);
+    const virtio_pci::UsedElement* ring = virtio_pci::queue_used_ring(g_control_queue);
+
+    while (true) {
+        virtio_pci::memory_barrier();
+        if (g_control_queue.last_used_index == used->idx) {
+            break;
+        }
+
+        const virtio_pci::UsedElement element = ring[g_control_queue.last_used_index % g_control_queue.size];
+        g_control_queue.last_used_index = static_cast<uint16_t>(g_control_queue.last_used_index + 1u);
+        if (element.id >= g_control_queue.size || (element.id % 2u) != 0) {
+            continue;
+        }
+
+        const uint16_t slot_index = static_cast<uint16_t>(element.id / 2u);
+        if (slot_index >= g_command_slot_capacity) {
+            continue;
+        }
+
+        CommandSlot& slot = g_command_slots[slot_index];
+        if (!slot.in_use || slot.head_descriptor != element.id) {
+            continue;
+        }
+
+        const VirtioGpuCtrlHdr* response = reinterpret_cast<const VirtioGpuCtrlHdr*>(slot_response_buffer(slot_index));
+        slot.completed = true;
+        slot.response_type = response->type;
+        g_last_response_type = slot.response_type;
+
+        if (slot.stage != kCommandStageSync && slot.pending_present_index < kGpuSurfaceCount) {
+            PendingPresent& present = g_pending_presents[slot.pending_present_index];
+            if (present.in_use) {
+                if (slot.response_type != kVirtioGpuRespOkNoData) {
+                    present.failed = true;
+                }
+                if (present.pending_commands != 0) {
+                    present.pending_commands -= 1u;
+                }
+                if (present.pending_commands == 0) {
+                    present.completed = true;
+                }
+            }
+            release_command_slot(slot_index);
+        }
+    }
+
+    finalize_completed_presents();
+}
+
+bool wait_for_command_slot(uint16_t slot_index) {
+    if (slot_index >= g_command_slot_capacity || !g_command_slots[slot_index].in_use) {
         return false;
     }
 
-    memcpy(response, response_buffer, response_bytes);
+    for (uint32_t spin = 0; spin < kCommandTimeoutSpins; ++spin) {
+        poll_command_completions();
+        if (g_command_slots[slot_index].completed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool submit_command(const void* request, size_t request_bytes, void* response, size_t response_bytes) {
+    if (response == nullptr) {
+        return false;
+    }
+
+    uint16_t slot_index = 0;
+    if (!reserve_command_slot(slot_index)) {
+        return false;
+    }
+
+    g_command_slots[slot_index].stage = kCommandStageSync;
+    g_command_slots[slot_index].pending_present_index = 0;
+    if (!submit_command_slot(slot_index, request, request_bytes, response_bytes) || !wait_for_command_slot(slot_index)) {
+        release_command_slot(slot_index);
+        return false;
+    }
+
+    memcpy(response, slot_response_buffer(slot_index), response_bytes);
+    release_command_slot(slot_index);
     return true;
 }
 
@@ -248,8 +453,65 @@ Surface* front_surface() {
     return surface_at(g_front_surface_index);
 }
 
-uint32_t next_surface_index() {
-    return (g_front_surface_index + 1u) % kGpuSurfaceCount;
+bool surface_pending(uint32_t surface_index) {
+    for (uint32_t index = 0; index < kGpuSurfaceCount; ++index) {
+        if (g_pending_presents[index].in_use && g_pending_presents[index].surface_index == surface_index) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool surface_available(uint32_t surface_index) {
+    return surface_index < kGpuSurfaceCount &&
+        surface_index != g_front_surface_index &&
+        !surface_pending(surface_index);
+}
+
+bool find_available_surface(uint32_t& surface_index) {
+    poll_command_completions();
+    for (uint32_t index = 0; index < kGpuSurfaceCount; ++index) {
+        if (surface_available(index)) {
+            surface_index = index;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool wait_for_available_surface(uint32_t& surface_index) {
+    if (find_available_surface(surface_index)) {
+        return true;
+    }
+
+    for (uint32_t spin = 0; spin < kCommandTimeoutSpins; ++spin) {
+        poll_command_completions();
+        if (find_available_surface(surface_index)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool acquire_present_surface(uint32_t& surface_index) {
+    return find_available_surface(surface_index) || wait_for_available_surface(surface_index);
+}
+
+void wait_for_idle_internal() {
+    while (g_pending_present_count != 0) {
+        bool progressed = false;
+        for (uint32_t spin = 0; spin < kCommandTimeoutSpins; ++spin) {
+            const uint32_t before = g_pending_present_count;
+            poll_command_completions();
+            if (g_pending_present_count < before) {
+                progressed = true;
+                break;
+            }
+        }
+        if (!progressed) {
+            break;
+        }
+    }
 }
 
 void release_surface_allocation(uint32_t surface_index) {
@@ -265,10 +527,12 @@ void release_surface_allocation(uint32_t surface_index) {
 }
 
 void release_surface_allocations() {
+    wait_for_idle_internal();
     for (uint32_t surface_index = 0; surface_index < kGpuSurfaceCount; ++surface_index) {
         release_surface_allocation(surface_index);
         g_surfaces[surface_index].resource_id = 0;
     }
+    reset_present_tracking();
     g_front_surface_index = 0;
 }
 
@@ -314,13 +578,13 @@ bool attach_surface_backing(uint32_t surface_index) {
     return send_ok_nodata_command(&request, sizeof(request));
 }
 
-bool set_scanout_surface(uint32_t surface_index) {
+bool build_scanout_request(uint32_t surface_index, VirtioGpuSetScanout& request) {
     Surface* surface = surface_at(surface_index);
     if (surface == nullptr) {
         return false;
     }
 
-    VirtioGpuSetScanout request = {};
+    request = {};
     initialize_header(request.header, kVirtioGpuCmdSetScanout);
     request.rect = {
         .x = 0,
@@ -330,16 +594,22 @@ bool set_scanout_surface(uint32_t surface_index) {
     };
     request.scanout_id = g_scanout_id;
     request.resource_id = surface->resource_id;
-    return send_ok_nodata_command(&request, sizeof(request));
+    return true;
 }
 
-bool transfer_rect(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool set_scanout_surface(uint32_t surface_index) {
+    VirtioGpuSetScanout request = {};
+    return build_scanout_request(surface_index, request) &&
+        send_ok_nodata_command(&request, sizeof(request));
+}
+
+bool build_transfer_request(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height, VirtioGpuTransferToHost2d& request) {
     Surface* surface = surface_at(surface_index);
     if (surface == nullptr) {
         return false;
     }
 
-    VirtioGpuTransferToHost2d request = {};
+    request = {};
     initialize_header(request.header, kVirtioGpuCmdTransferToHost2d);
     request.rect = {
         .x = x,
@@ -349,16 +619,22 @@ bool transfer_rect(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t widt
     };
     request.offset = (static_cast<uint64_t>(y) * g_framebuffer_info.pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
     request.resource_id = surface->resource_id;
-    return send_ok_nodata_command(&request, sizeof(request));
+    return true;
 }
 
-bool flush_rect_internal(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool transfer_rect(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    VirtioGpuTransferToHost2d request = {};
+    return build_transfer_request(surface_index, x, y, width, height, request) &&
+        send_ok_nodata_command(&request, sizeof(request));
+}
+
+bool build_flush_request(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height, VirtioGpuResourceFlush& request) {
     Surface* surface = surface_at(surface_index);
     if (surface == nullptr) {
         return false;
     }
 
-    VirtioGpuResourceFlush request = {};
+    request = {};
     initialize_header(request.header, kVirtioGpuCmdResourceFlush);
     request.rect = {
         .x = x,
@@ -367,7 +643,13 @@ bool flush_rect_internal(uint32_t surface_index, uint32_t x, uint32_t y, uint32_
         .height = height,
     };
     request.resource_id = surface->resource_id;
-    return send_ok_nodata_command(&request, sizeof(request));
+    return true;
+}
+
+bool flush_rect_internal(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    VirtioGpuResourceFlush request = {};
+    return build_flush_request(surface_index, x, y, width, height, request) &&
+        send_ok_nodata_command(&request, sizeof(request));
 }
 
 bool copy_region_to_surface(uint32_t surface_index, const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -401,7 +683,7 @@ bool clone_surface(uint32_t destination_surface_index, uint32_t source_surface_i
     return true;
 }
 
-bool present_surface(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool present_surface_sync(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     if (!set_scanout_surface(surface_index) ||
         !transfer_rect(surface_index, x, y, width, height) ||
         !flush_rect_internal(surface_index, x, y, width, height)) {
@@ -413,6 +695,54 @@ bool present_surface(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t wi
     if (surface != nullptr) {
         console::set_external_framebuffer(surface->allocation.virtual_address, g_framebuffer_info);
     }
+    return true;
+}
+
+bool submit_present_surface(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    uint32_t pending_index = 0;
+    uint16_t slot_indices[3] = {};
+    VirtioGpuTransferToHost2d transfer_request = {};
+    VirtioGpuResourceFlush flush_request = {};
+    VirtioGpuSetScanout scanout_request = {};
+
+    if (!reserve_pending_present(surface_index, pending_index) ||
+        !reserve_command_slot(slot_indices[0]) ||
+        !reserve_command_slot(slot_indices[1]) ||
+        !reserve_command_slot(slot_indices[2]) ||
+        !build_transfer_request(surface_index, x, y, width, height, transfer_request) ||
+        !build_flush_request(surface_index, x, y, width, height, flush_request) ||
+        !build_scanout_request(surface_index, scanout_request)) {
+        for (uint32_t slot = 0; slot < 3; ++slot) {
+            release_command_slot(slot_indices[slot]);
+        }
+        if (pending_index < kGpuSurfaceCount && g_pending_presents[pending_index].in_use) {
+            g_pending_presents[pending_index] = {};
+            if (g_pending_present_count != 0 && g_pending_present_order[g_pending_present_count - 1] == pending_index) {
+                g_pending_present_count -= 1u;
+            }
+        }
+        return false;
+    }
+
+    g_pending_presents[pending_index].pending_commands = 3;
+
+    g_command_slots[slot_indices[0]].stage = kCommandStagePresentTransfer;
+    g_command_slots[slot_indices[0]].pending_present_index = pending_index;
+    g_command_slots[slot_indices[1]].stage = kCommandStagePresentFlush;
+    g_command_slots[slot_indices[1]].pending_present_index = pending_index;
+    g_command_slots[slot_indices[2]].stage = kCommandStagePresentScanout;
+    g_command_slots[slot_indices[2]].pending_present_index = pending_index;
+
+    if (!submit_command_slot(slot_indices[0], &transfer_request, sizeof(transfer_request), sizeof(VirtioGpuCtrlHdr)) ||
+        !submit_command_slot(slot_indices[1], &flush_request, sizeof(flush_request), sizeof(VirtioGpuCtrlHdr)) ||
+        !submit_command_slot(slot_indices[2], &scanout_request, sizeof(scanout_request), sizeof(VirtioGpuCtrlHdr))) {
+        g_pending_presents[pending_index].failed = true;
+        g_pending_presents[pending_index].completed = true;
+        g_pending_presents[pending_index].pending_commands = 0;
+        finalize_completed_presents();
+        return false;
+    }
+
     return true;
 }
 
@@ -526,7 +856,7 @@ bool configure_primary_surface(uint32_t width, uint32_t height) {
     }
 
     g_front_surface_index = 0;
-    if (!present_surface(g_front_surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height)) {
+    if (!present_surface_sync(g_front_surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height)) {
         for (uint32_t surface_index = 0; surface_index < kGpuSurfaceCount; ++surface_index) {
             if (resource_created[surface_index]) {
                 (void)destroy_surface_resource(surface_index);
@@ -654,6 +984,8 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_ready = false;
     g_next_fence_id = 1;
     g_last_response_type = 0;
+    g_command_slot_capacity = 0;
+    reset_present_tracking();
 
     pci::DeviceInfo pci_device = {};
     if (!pci::ready() || !virtio_pci::find_modern_device(kVirtioGpuModernDevice, kVirtioGpuSubsystemDevice, pci_device)) {
@@ -674,8 +1006,17 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         fail_device("feature negotiation failed");
         return;
     }
-    if (!virtio_pci::setup_queue(g_device, kVirtioGpuControlQueue, kVirtioGpuMaxDescriptors, kQueueExtraBytes, 16, g_control_queue)) {
+    if (!virtio_pci::setup_queue(g_device, kVirtioGpuControlQueue, kVirtioGpuQueueDescriptorLimit, kQueueExtraBytes, 16, g_control_queue)) {
         fail_device("failed to setup control queue");
+        return;
+    }
+    g_command_slot_capacity = g_control_queue.size / 2u;
+    if (g_command_slot_capacity > kCommandSlotCount) {
+        g_command_slot_capacity = kCommandSlotCount;
+    }
+    reset_present_tracking();
+    if (g_command_slot_capacity < 3u) {
+        fail_device("control queue too small for buffered presenter");
         return;
     }
 
@@ -775,6 +1116,13 @@ void* framebuffer_address() {
     return surface != nullptr ? surface->allocation.virtual_address : nullptr;
 }
 
+void wait_for_idle() {
+    if (!g_ready) {
+        return;
+    }
+    wait_for_idle_internal();
+}
+
 bool flush() {
     return flush_rect(0, 0, g_framebuffer_info.width, g_framebuffer_info.height);
 }
@@ -794,14 +1142,21 @@ bool present_from_kernel(const void* pixels, size_t byte_count) {
         return false;
     }
 
-    const uint32_t surface_index = next_surface_index();
+    uint32_t surface_index = 0;
+    if (!acquire_present_surface(surface_index)) {
+        return false;
+    }
     Surface* surface = surface_at(surface_index);
     if (surface == nullptr || surface->allocation.virtual_address == nullptr) {
         return false;
     }
 
     memcpy(surface->allocation.virtual_address, pixels, byte_count);
-    return present_surface(surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height);
+    if (!submit_present_surface(surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height)) {
+        return false;
+    }
+    uint32_t free_surface = 0;
+    return acquire_present_surface(free_surface);
 }
 
 bool present_region_from_kernel(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -812,10 +1167,14 @@ bool present_region_from_kernel(const void* pixels, uint32_t source_pitch, uint3
         return false;
     }
 
-    const uint32_t surface_index = next_surface_index();
+    uint32_t surface_index = 0;
+    if (!acquire_present_surface(surface_index)) {
+        return false;
+    }
     return clone_surface(surface_index, g_front_surface_index) &&
         copy_region_to_surface(surface_index, pixels, source_pitch, x, y, width, height) &&
-        present_surface(surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height);
+        submit_present_surface(surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height) &&
+        acquire_present_surface(surface_index);
 }
 
 } // namespace virtio_gpu
