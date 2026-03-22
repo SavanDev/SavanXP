@@ -81,7 +81,6 @@ int main(void) {
     const char* forktest_argv[] = {"/disk/bin/forktest", 0};
     const char* polltest_argv[] = {"/disk/bin/polltest", 0};
     const char* sigtest_argv[] = {"/disk/bin/sigtest", 0};
-    const char* ash_argv[] = {"/bin/ash", "-c", "echo busybox-ash > /disk/smoke/ash.txt", 0};
     const char* sh_argv[] = {"/bin/sh", "-c", "echo busybox-shell > /disk/smoke/sh.txt", 0};
     const char* echo_argv[] = {"/bin/echo", "busybox-echo", 0};
     const char* cat_argv[] = {"/bin/cat", "/disk/smoke/sh.txt", 0};
@@ -99,7 +98,6 @@ int main(void) {
         !file_exists("/disk/bin/polltest") ||
         !file_exists("/disk/bin/sigtest") ||
         !file_exists("/disk/bin/busybox") ||
-        !file_exists("/disk/bin/ash") ||
         !file_exists("/disk/bin/sh") ||
         !file_exists("/disk/bin/ls") ||
         !file_exists("/disk/bin/cat") ||
@@ -119,8 +117,6 @@ int main(void) {
         !run_and_expect("/disk/bin/polltest", polltest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/sigtest", sigtest_argv, 1, 0) ||
         !prepare_smoke_directory() ||
-        !run_and_expect("/bin/ash", ash_argv, 3, 0) ||
-        !validate_file_contains("/disk/smoke/ash.txt", "busybox-ash") ||
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
         !validate_file_contains("/disk/smoke/sh.txt", "busybox-shell") ||
         !run_and_expect("/bin/echo", echo_argv, 2, 0) ||

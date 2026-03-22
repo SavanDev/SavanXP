@@ -6,7 +6,6 @@ int mkdir_main(int argc, char** argv);
 int rm_main(int argc, char** argv);
 int mv_main(int argc, char** argv);
 int cp_main(int argc, char** argv);
-int ash_main(int argc, char** argv);
 int bb_ls_main(int argc, char** argv);
 int bb_ps_main(int argc, char** argv);
 int bb_sh_main(int argc, char** argv);
@@ -20,7 +19,6 @@ struct AppletEntry {
 };
 
 static const struct AppletEntry kApplets[] = {
-    {"ash", ash_main},
     {"cat", cat_main},
     {"cp", cp_main},
     {"echo", echo_main},
@@ -53,7 +51,6 @@ static int run_applet(const char* name, int argc, char** argv) {
 }
 
 const char applet_names[] ALIGN1 =
-    "ash\0"
     "cat\0"
     "cp\0"
     "echo\0"

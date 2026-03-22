@@ -110,7 +110,6 @@ $UserPrograms = @(
 
 $BusyBoxApplets = @(
     "busybox",
-    "ash",
     "sh",
     "ls",
     "cat",

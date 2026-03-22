@@ -1,0 +1,6 @@
+# Keep the upstream ash port parked outside the default build for now.
+applet_ash.c
+ash_ptr_hack_port.c
+math_port.c
+random_port.c
+shell_common_port.c
