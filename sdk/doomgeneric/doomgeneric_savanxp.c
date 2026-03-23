@@ -10,17 +10,22 @@
 #include "i_system.h"
 #include "savanxp_compat.h"
 
-static struct savanxp_gfx_context g_gfx = {-1, -1, {0, 0, 0, 0, 0}};
+static struct savanxp_gfx_context g_gfx = {-1, -1, {0, 0, 0, 0, 0}, -1, 0, 0, 0, 0};
 static uint32_t *g_present_buffer = 0;
 static uint32_t *g_previous_frame = 0;
 static uint32_t *g_scaled_row = 0;
 static int g_mouse_fd = -1;
+static int g_present_buffer_owned = 0;
 static uint32_t g_scale = 1;
 static int g_offset_x = 0;
 static int g_offset_y = 0;
 static uint32_t g_scaled_width = 0;
 static uint32_t g_scaled_height = 0;
 static int g_previous_frame_valid = 0;
+
+static int sx_uses_client_surface(void) {
+    return g_gfx.mapped_view != 0 && g_gfx.pixels != 0 && g_gfx.present_fd >= 0;
+}
 
 static void sx_shutdown_video(void) {
     if (g_scaled_row != 0) {
@@ -33,10 +38,11 @@ static void sx_shutdown_video(void) {
         g_previous_frame = 0;
     }
 
-    if (g_present_buffer != 0) {
+    if (g_present_buffer_owned && g_present_buffer != 0) {
         free(g_present_buffer);
-        g_present_buffer = 0;
     }
+    g_present_buffer = 0;
+    g_present_buffer_owned = 0;
 
     if (g_mouse_fd >= 0) {
         close(g_mouse_fd);
@@ -195,9 +201,15 @@ void DG_Init(void) {
 
     sx_register_shutdown(sx_shutdown_video);
 
-    g_present_buffer = (uint32_t *)calloc(1, gfx_buffer_bytes(&g_gfx.info));
-    if (g_present_buffer == 0) {
-        sx_fail("doomgeneric: unable to allocate present buffer");
+    if (sx_uses_client_surface()) {
+        g_present_buffer = g_gfx.pixels;
+        g_present_buffer_owned = 0;
+    } else {
+        g_present_buffer = (uint32_t *)calloc(1, gfx_buffer_bytes(&g_gfx.info));
+        g_present_buffer_owned = 1;
+        if (g_present_buffer == 0) {
+            sx_fail("doomgeneric: unable to allocate present buffer");
+        }
     }
 
     g_scale = g_gfx.info.width / DOOMGENERIC_RESX;

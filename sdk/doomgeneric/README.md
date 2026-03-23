@@ -2,36 +2,57 @@
 
 Estado actual del port:
 
-- jugable en modo `fullscreen` exclusivo
+- jugable como app grafica externa sobre el stack actual de `gfx_*`
 - sin audio en esta etapa
-- usa `/dev/fb0`, `/dev/input0` y `/dev/mouse0`
+- usa `gfx_open()` en modo compositor-first, con fallback directo a `/dev/gpu0`
+- usa `/dev/input0` y `/dev/mouse0` para teclado y mouse
 - guarda config y saves bajo `/disk/games/doom`
-- se apoya en el stack actual de input (`PS/2` o `virtio-input`, segun el
-  entorno) para teclado y mouse
+- se integra mejor con la sesion `desktop-first` actual; cuando entra como
+  cliente del compositor recibe superficie compartida y presentacion via
+  `fd 3..6`
+- se apoya en el stack actual de input (`PS/2`, `virtio-input` o `virtio-tablet`,
+  segun el entorno) para teclado y mouse
 - se apoya en `SVFS2` para config, saves y archivos que crecen en runtime
 - sirve como primer juego porteado y como prueba fuerte de apps graficas
   externas sobre el ABI actual de SavanXP
 
-Ventajas practicas de `v0.1.4` para el port:
+Que cambio con `v0.2.0` y como impacta al port:
 
-- el timer base a `200 Hz` mejora un poco la respuesta percibida del mouse y
-  el redondeo practico de `sleep_ms()` durante el loop del juego
-- los techos internos mas altos para procesos, descriptores y `VFS/SVFS2`
-  dejan mas margen para ports grandes y assets persistentes
-- `SVFS2` ya puede montar `/disk` en modo degradado de solo lectura frente a
-  recovery incompleto, lo que evita que el port quede inutilizable por dejar
-  el volumen directamente offline
-- el build principal instala tambien binarios internos en `/disk/bin`, asi que
-  la shell y las pruebas generales del sistema ejercitan mas seguido el mismo
-  userland persistente que usa el port
+- la documentacion vieja basada en `/dev/fb0` ya no describe el camino real;
+  el port hoy vive sobre `gfx_*` y el runtime decide si corre como cliente del
+  compositor o con fallback directo a `gpu0`
+- el backend no se rompio de lleno porque ya usaba `gfx_open()` y
+  `gfx_present_region()`; ademas, cuando el runtime entrega una superficie
+  compartida de cliente, Doom ahora renderiza directo ahi en lugar de usar un
+  buffer extra propio
+- el modelo natural de ejecucion ya no es "tomar el framebuffer exclusivo",
+  sino integrarse al desktop y a `shellapp`; Doom sigue siendo fullscreen,
+  pero ahora dentro del modelo del compositor
 
-Cosas nuevas de `v0.1.4` que todavia no cambian demasiado a Doom:
+Ventajas practicas de `v0.2.0` para el port:
 
-- `poll`, `select`, `fcntl` y `O_NONBLOCK` son una mejora real de la SDK, pero
-  el backend actual de Doom sigue funcionando bien con `gfx_poll_event()` y
-  `mouse_poll_event()` sin necesitar una refactorizacion inmediata
-- `busybox` mejora la shell y el entorno general, pero no cambia la logica del
-  port en si
+- `gfx_open()` ahora es compositor-first, asi que Doom puede correr como
+  cliente grafico real sin rehacerse alrededor de una ABI nueva
+- la presentacion por regiones sobre superficies compartidas encaja bien con
+  el backend actual, que ya detecta filas sucias y evita redibujar todo el
+  frame
+- `sleep_ms()` ahora corre sobre timers waitables del kernel, mejorando el
+  pacing del loop principal
+- `SVFS2` y el runtime POSIX ya quedaron lo bastante firmes como para sostener
+  `save/load` sin workarounds del lado del juego
+- `/dev/audio0` deja por primera vez una base realista para agregar sonido al
+  port sin tener que inventar infraestructura nueva
+
+Cosas nuevas de `v0.2.0` que todavia no cambian demasiado a Doom:
+
+- el port no necesita hablar directo con `GPU_IOC_*`; `gfx_*` ya absorbe casi
+  todo el cambio de arquitectura
+- Doom tampoco necesita por ahora `poll`, `select`, `fcntl` u otros extras del
+  runtime nuevo, porque su backend actual ya funciona bien con
+  `gfx_poll_event()` y `mouse_poll_event()`
+- el mayor salto pendiente no es de compatibilidad sino de aprovechamiento:
+  agregar audio real y, si hiciera falta mas tuning, seguir bajando el costo
+  del present en modo cliente
 
 Que fixes quedaron en cada capa:
 
@@ -45,9 +66,10 @@ Que fixes quedaron en cada capa:
   `fflush`, `fclose`, `fseek` y `ftell`; el fix clave para `save/load` fue
   corregir `ftell()` para contar bytes pendientes en el buffer de escritura.
 - Port especifico de Doom:
-  el backend `doomgeneric_savanxp.c` sigue concentrando framebuffer, input,
-  mapeo de teclas y salida limpia; ademas se ajustaron rutas de config/saves y
-  algunos detalles de compatibilidad del menu/config del juego.
+  el backend `doomgeneric_savanxp.c` sigue concentrando render, input, mapeo
+  de teclas, mouse y salida limpia; ademas se ajustaron rutas de config/saves,
+  algunos detalles de compatibilidad del menu/config del juego y el render
+  parcial por filas sucias.
 
 Build del port:
 
@@ -111,6 +133,7 @@ no como criterio duro de fallo.
 
 Fuera de alcance de esta etapa:
 
-- audio PCM / musica
-- ventanas o compositor
+- audio PCM / musica dentro del juego
+- integracion con ventanas propias; el port sigue siendo fullscreen aunque ya
+  se apoye mejor en el compositor
 - multiplayer real

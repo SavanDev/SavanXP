@@ -496,9 +496,6 @@ function Build-Kernel([switch]$SmokeMode) {
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
     Copy-Item (Join-Path $RootfsBuild "bin\\*") (Join-Path $DiskBuildRoot "bin") -Force
-    if (Test-Path $DiskImage) {
-        Remove-Item $DiskImage -Force
-    }
     Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
     $diskImage = Open-SvfsImage $DiskImage
     Sync-SvfsDiskTree -Image $diskImage -SourceRoot $DiskBuildRoot
