@@ -4,10 +4,11 @@ Estado actual del port:
 
 - jugable como app grafica externa sobre el stack actual de `gfx_*`
 - sin audio en esta etapa
-- usa `gfx_open()` en modo compositor-first, con fallback directo a `/dev/gpu0`
+- usa `gfx_open()` como cliente del compositor; el runtime ya no cae a un
+  framebuffer exclusivo directo
 - usa `/dev/input0` y `/dev/mouse0` para teclado y mouse
 - guarda config y saves bajo `/disk/games/doom`
-- se integra mejor con la sesion `desktop-first` actual; cuando entra como
+- se integra mejor con la sesion grafica actual; cuando entra como
   cliente del compositor recibe superficie compartida y presentacion via
   `fd 3..6`
 - se apoya en el stack actual de input (`PS/2`, `virtio-input` o `virtio-tablet`,
@@ -16,20 +17,20 @@ Estado actual del port:
 - sirve como primer juego porteado y como prueba fuerte de apps graficas
   externas sobre el ABI actual de SavanXP
 
-Que cambio con `v0.2.0` y como impacta al port:
+Que cambio con `v0.2.1` y como impacta al port:
 
 - la documentacion vieja basada en `/dev/fb0` ya no describe el camino real;
-  el port hoy vive sobre `gfx_*` y el runtime decide si corre como cliente del
-  compositor o con fallback directo a `gpu0`
+  el port hoy vive sobre `gfx_*` y corre como cliente del compositor
 - el backend no se rompio de lleno porque ya usaba `gfx_open()` y
   `gfx_present_region()`; ademas, cuando el runtime entrega una superficie
   compartida de cliente, Doom ahora renderiza directo ahi en lugar de usar un
   buffer extra propio
 - el modelo natural de ejecucion ya no es "tomar el framebuffer exclusivo",
-  sino integrarse al desktop y a `shellapp`; Doom sigue siendo fullscreen,
-  pero ahora dentro del modelo del compositor
+  sino integrarse al desktop y a `shellapp`; Doom sigue ocupando todo el
+  work area disponible del compositor, con la taskbar del desktop visible
+  fuera de esa superficie
 
-Ventajas practicas de `v0.2.0` para el port:
+Ventajas practicas de `v0.2.1` para el port:
 
 - `gfx_open()` ahora es compositor-first, asi que Doom puede correr como
   cliente grafico real sin rehacerse alrededor de una ABI nueva
@@ -43,7 +44,7 @@ Ventajas practicas de `v0.2.0` para el port:
 - `/dev/audio0` deja por primera vez una base realista para agregar sonido al
   port sin tener que inventar infraestructura nueva
 
-Cosas nuevas de `v0.2.0` que todavia no cambian demasiado a Doom:
+Cosas nuevas de `v0.2.1` que todavia no cambian demasiado a Doom:
 
 - el port no necesita hablar directo con `GPU_IOC_*`; `gfx_*` ya absorbe casi
   todo el cambio de arquitectura
@@ -114,7 +115,7 @@ Checklist corta de validacion manual:
 - el mouse responde en menu y durante la partida
 - al salir, la shell recupera el framebuffer sin corrupcion visual
 
-Smoke test automatizada:
+Smoke visual opcional:
 
 ```powershell
 .\tools\doom-smoke.ps1
@@ -123,17 +124,17 @@ Smoke test automatizada:
 La smoke actual:
 
 - bootea la VM
-- lanza `doomgeneric` desde la shell
+- espera al `desktop` y lanza `doomgeneric` desde la sesion grafica
 - entra a una partida
 - toma capturas del menu, de una partida y despues de disparar para verificar cambio visual real
 
-No valida `save/load`, cambio de nivel ni otros flujos largos. La salida limpia
-de Doom a la shell sigue quedando como señal diagnostica (`ReturnedToShell`),
-no como criterio duro de fallo.
+No valida `save/load`, cambio de nivel ni otros flujos largos. En el modelo
+desktop-first actual sirve como smoke visual del port y del retorno al
+desktop, no como prueba principal del stack GPU del SO.
 
 Fuera de alcance de esta etapa:
 
 - audio PCM / musica dentro del juego
-- integracion con ventanas propias; el port sigue siendo fullscreen aunque ya
-  se apoye mejor en el compositor
+- integracion con ventanas propias; el port sigue ocupando el work area
+  completa aunque ya se apoye mejor en el compositor
 - multiplayer real

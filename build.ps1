@@ -335,6 +335,66 @@ function Ensure-SvfsDisk([string]$SourceRoot, [string]$OutputPath) {
     Initialize-Svfs2DiskImage -SourceRoot $SourceRoot -OutputPath $OutputPath
 }
 
+function Get-ByteArraySha256([byte[]]$Bytes) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace("-", "")
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-SvfsPersistenceSnapshot($Image, [string[]]$Paths) {
+    $snapshot = @{}
+    foreach ($path in $Paths) {
+        $info = Get-Svfs2PathInfo $Image $path
+        if (-not $info) {
+            continue
+        }
+
+        $record = [ordered]@{
+            Path = $info.Path
+            EntryType = $info.Entry.Type
+            InodeType = $info.Inode.Type
+            Size = [uint32]$info.Inode.Size
+        }
+        if ($info.Entry.Type -eq 1 -and $info.Inode.Type -eq 1) {
+            $record.Hash = Get-ByteArraySha256 (Read-Svfs2InodeBytes $Image $info.Inode)
+        }
+        $snapshot[$path] = [pscustomobject]$record
+    }
+    return $snapshot
+}
+
+function Assert-SvfsPersistenceRetained($Image, $BeforeSnapshot) {
+    foreach ($path in $BeforeSnapshot.Keys) {
+        $before = $BeforeSnapshot[$path]
+        $after = Get-Svfs2PathInfo $Image $path
+        if (-not $after) {
+            throw "La build perdio el path persistente '$path'."
+        }
+        if ($after.Entry.Type -ne $before.EntryType -or $after.Inode.Type -ne $before.InodeType) {
+            throw "La build cambio el tipo persistente de '$path' (antes entry=$($before.EntryType)/inode=$($before.InodeType), ahora entry=$($after.Entry.Type)/inode=$($after.Inode.Type))."
+        }
+        if ($before.PSObject.Properties.Match("Hash").Count -ne 0) {
+            $afterHash = Get-ByteArraySha256 (Read-Svfs2InodeBytes $Image $after.Inode)
+            if ($afterHash -ne $before.Hash) {
+                throw "La build modifico el contenido persistente de '$path'."
+            }
+        }
+    }
+}
+
+function Repair-SvfsReachableMetadataAndReport($Image, [string]$Phase) {
+    $repair = Repair-Svfs2ReachableMetadata $Image
+    if ($repair.InodeBitsFixed -eq 0 -and $repair.BlockBitsFixed -eq 0) {
+        return
+    }
+
+    Write-Host ("SVFS2: metadata repaired before {0} (inode bits={1}, block bits={2}, reachable inodes={3})" -f `
+        $Phase, $repair.InodeBitsFixed, $repair.BlockBitsFixed, $repair.ReachableInodes)
+}
+
 function Sync-SvfsDiskTree($Image, [string]$SourceRoot, [string]$DestinationRoot = "/disk") {
     if (-not (Test-Path $SourceRoot)) {
         return
@@ -498,7 +558,16 @@ function Build-Kernel([switch]$SmokeMode) {
     Copy-Item (Join-Path $RootfsBuild "bin\\*") (Join-Path $DiskBuildRoot "bin") -Force
     Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
     $diskImage = Open-SvfsImage $DiskImage
+    Repair-SvfsReachableMetadataAndReport $diskImage "pre-sync"
+    Assert-Svfs2Consistency $diskImage $DiskImage
+    $persistentSnapshot = Get-SvfsPersistenceSnapshot $diskImage @(
+        "/disk/bin/doomgeneric",
+        "/disk/games/doom/doom1.wad"
+    )
     Sync-SvfsDiskTree -Image $diskImage -SourceRoot $DiskBuildRoot
+    Repair-SvfsReachableMetadataAndReport $diskImage "post-sync"
+    Assert-Svfs2Consistency $diskImage $DiskImage
+    Assert-SvfsPersistenceRetained $diskImage $persistentSnapshot
     Save-SvfsImage $diskImage
 
     $linkArgs = @(
@@ -590,7 +659,6 @@ function Run-SmokeQemu {
     if (Test-Path $SmokeStderrLog) {
         Remove-Item $SmokeStderrLog -Force
     }
-
     $args = @(
         "-machine", "q35,pcspk-audiodev=audio0",
         "-m", "256M",
@@ -631,6 +699,7 @@ function Run-SmokeQemu {
 
             $content = Get-Content $SmokeSerialLog -Raw
             if ($content -match "SMOKE PASS") {
+                Start-Sleep -Milliseconds 2000
                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                 Write-Host "Smoke PASS"
                 return

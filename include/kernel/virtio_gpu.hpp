@@ -10,6 +10,7 @@ namespace virtio_gpu {
 void initialize(const boot::FramebufferInfo& framebuffer);
 bool ready();
 bool present();
+void poll();
 const savanxp_fb_info& framebuffer_info();
 void* framebuffer_address();
 void wait_for_idle();

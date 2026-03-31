@@ -523,6 +523,7 @@ function Find-Svfs2Path($Image, [string]$RelativePath) {
 
     $current = $Script:Svfs2RootInode
     $parent = $Script:Svfs2RootInode
+    $match = $null
     foreach ($component in $RelativePath.Split('/')) {
         $entries = Get-Svfs2DirEntries $Image $current
         $match = $entries | Where-Object { $_.InodeId -ne 0 -and $_.Name -eq $component } | Select-Object -First 1
@@ -532,13 +533,289 @@ function Find-Svfs2Path($Image, [string]$RelativePath) {
         $parent = $current
         $current = [uint32]$match.InodeId
     }
-    $inode = Get-Svfs2Inode $Image $current
     return [pscustomobject]@{
         InodeId = $current
         ParentInodeId = $parent
         Name = ($RelativePath.Split('/') | Select-Object -Last 1)
-        Type = $inode.Type
+        Type = [uint16]$match.Type
     }
+}
+
+function Get-Svfs2TypeName([uint16]$Type) {
+    switch ($Type) {
+        1 { return "file" }
+        2 { return "directory" }
+        default { return "type $Type" }
+    }
+}
+
+function Get-Svfs2PathInfo($Image, [string]$Path) {
+    $relative = if ($Path -eq "/disk" -or $Path -eq "/disk/") {
+        ""
+    } else {
+        Get-RelativeSvfsPath $Path
+    }
+
+    $entry = Find-Svfs2Path $Image $relative
+    if (-not $entry) {
+        return $null
+    }
+
+    $inode = Get-Svfs2Inode $Image $entry.InodeId
+    return [pscustomobject]@{
+        Path = if ($relative) { "/disk/$relative" } else { "/disk" }
+        RelativePath = $relative
+        Entry = $entry
+        Inode = $inode
+    }
+}
+
+function Read-Svfs2FileBytesByPath($Image, [string]$Path) {
+    $info = Get-Svfs2PathInfo $Image $Path
+    if (-not $info) {
+        return $null
+    }
+    if ($info.Entry.Type -ne 1 -or $info.Inode.Type -ne 1) {
+        throw "'$Path' no es un archivo regular en SVFS2."
+    }
+    return Read-Svfs2InodeBytes $Image $info.Inode
+}
+
+function Repair-Svfs2ReachableMetadata($Image) {
+    $queue = New-Object System.Collections.Generic.Queue[object]
+    $visited = @{}
+    $fixedInodeBits = 0
+    $fixedBlockBits = 0
+
+    $queue.Enqueue([pscustomobject]@{
+        InodeId = $Script:Svfs2RootInode
+    })
+
+    while ($queue.Count -gt 0) {
+        $current = $queue.Dequeue()
+        if ($visited.ContainsKey($current.InodeId)) {
+            continue
+        }
+        $visited[$current.InodeId] = $true
+
+        try {
+            $inode = Get-Svfs2Inode $Image ([uint32]$current.InodeId)
+        } catch {
+            continue
+        }
+
+        $inodeBit = [uint32]($current.InodeId - 1)
+        if (-not (Get-Svfs2BitmapBit $Image.InodeBitmap $inodeBit)) {
+            Set-Svfs2BitmapBit $Image.InodeBitmap $inodeBit $true
+            $fixedInodeBits += 1
+        }
+
+        foreach ($extent in $inode.Extents | Select-Object -First $inode.ExtentCount) {
+            if ($extent.StartLba -eq 0 -or $extent.SectorCount -eq 0) {
+                continue
+            }
+
+            for ($sector = 0; $sector -lt $extent.SectorCount; $sector += 1) {
+                $absoluteSector = [uint32]($extent.StartLba + $sector)
+                if ($absoluteSector -ge $Image.TotalSectors) {
+                    break
+                }
+                if (-not (Get-Svfs2BitmapBit $Image.BlockBitmap $absoluteSector)) {
+                    Set-Svfs2BitmapBit $Image.BlockBitmap $absoluteSector $true
+                    $fixedBlockBits += 1
+                }
+            }
+        }
+
+        if ($inode.Type -ne 2) {
+            continue
+        }
+
+        foreach ($entry in Get-Svfs2DirEntries $Image ([uint32]$current.InodeId)) {
+            if ($entry.InodeId -eq 0 -or $entry.InodeId -gt $Script:Svfs2MaxInodes) {
+                continue
+            }
+
+            $queue.Enqueue([pscustomobject]@{
+                InodeId = [uint32]$entry.InodeId
+            })
+        }
+    }
+
+    return [pscustomobject]@{
+        InodeBitsFixed = $fixedInodeBits
+        BlockBitsFixed = $fixedBlockBits
+        ReachableInodes = $visited.Count
+    }
+}
+
+function Test-Svfs2Consistency($Image) {
+    $issues = New-Object System.Collections.Generic.List[string]
+    $queue = New-Object System.Collections.Generic.Queue[object]
+    $visited = @{}
+    $claimedSectors = @{}
+    $reportedAliases = @{}
+    $reportedOverlaps = @{}
+
+    $queue.Enqueue([pscustomobject]@{
+        Path = "/disk"
+        RelativePath = ""
+        InodeId = $Script:Svfs2RootInode
+        ExpectedType = 2
+    })
+
+    while ($queue.Count -gt 0) {
+        $current = $queue.Dequeue()
+        if ($visited.ContainsKey($current.InodeId)) {
+            $firstPath = [string]$visited[$current.InodeId]
+            if ($firstPath -ne $current.Path) {
+                $aliasKey = "{0}|{1}" -f $current.InodeId, (($firstPath, $current.Path | Sort-Object) -join "|")
+                if (-not $reportedAliases.ContainsKey($aliasKey)) {
+                    $reportedAliases[$aliasKey] = $true
+                    $issues.Add(("$($current.Path): inode $($current.InodeId) ya estaba referenciado por $firstPath"))
+                }
+            }
+            continue
+        }
+        $visited[$current.InodeId] = $current.Path
+
+        try {
+            $inode = Get-Svfs2Inode $Image ([uint32]$current.InodeId)
+        } catch {
+            $issues.Add(("$($current.Path): inode $($current.InodeId) no se pudo leer ({0})" -f $_.Exception.Message))
+            continue
+        }
+
+        if (-not (Get-Svfs2BitmapBit $Image.InodeBitmap ([uint32]($current.InodeId - 1)))) {
+            $issues.Add(("$($current.Path): el inode $($current.InodeId) no esta marcado en el bitmap"))
+        }
+
+        if ($inode.Id -ne $current.InodeId) {
+            $issues.Add(("$($current.Path): inode esperado $($current.InodeId) pero se leyo $($inode.Id)"))
+            continue
+        }
+
+        if ($inode.Type -ne $current.ExpectedType) {
+            $issues.Add(("$($current.Path): la entrada dice {0} pero el inode $($current.InodeId) es {1}" -f (Get-Svfs2TypeName $current.ExpectedType), (Get-Svfs2TypeName $inode.Type)))
+        }
+
+        $capacity = Get-Svfs2InodeCapacityBytes $inode
+        if ($inode.Size -gt $capacity) {
+            $issues.Add(("$($current.Path): inode $($current.InodeId) declara size=$($inode.Size) pero su capacidad es $capacity"))
+        }
+
+        $missingBlocks = $false
+        foreach ($extent in $inode.Extents | Select-Object -First $inode.ExtentCount) {
+            if (($extent.StartLba -eq 0) -xor ($extent.SectorCount -eq 0)) {
+                $issues.Add(("$($current.Path): inode $($current.InodeId) tiene extent invalido start=$($extent.StartLba) sectors=$($extent.SectorCount)"))
+                continue
+            }
+            if ($extent.StartLba -eq 0 -and $extent.SectorCount -eq 0) {
+                continue
+            }
+
+            $extentLast = [uint64]$extent.StartLba + [uint64]$extent.SectorCount - 1
+            if ($extentLast -ge [uint64]$Image.TotalSectors) {
+                $issues.Add(("$($current.Path): inode $($current.InodeId) usa extent fuera de rango start=$($extent.StartLba) sectors=$($extent.SectorCount)"))
+                continue
+            }
+
+            for ($sector = 0; $sector -lt $extent.SectorCount; $sector += 1) {
+                $absoluteSector = [uint32]($extent.StartLba + $sector)
+                if (-not (Get-Svfs2BitmapBit $Image.BlockBitmap $absoluteSector)) {
+                    $missingBlocks = $true
+                }
+
+                if ($claimedSectors.ContainsKey($absoluteSector)) {
+                    $owner = $claimedSectors[$absoluteSector]
+                    if ($owner.InodeId -ne $current.InodeId) {
+                        $low = [Math]::Min([int]$owner.InodeId, [int]$current.InodeId)
+                        $high = [Math]::Max([int]$owner.InodeId, [int]$current.InodeId)
+                        $overlapKey = "$low|$high"
+                        if (-not $reportedOverlaps.ContainsKey($overlapKey)) {
+                            $reportedOverlaps[$overlapKey] = $true
+                            $issues.Add(("$($current.Path): inode $($current.InodeId) comparte sectores con $($owner.Path) (inode $($owner.InodeId))"))
+                        }
+                    }
+                    continue
+                }
+
+                $claimedSectors[$absoluteSector] = [pscustomobject]@{
+                    InodeId = $current.InodeId
+                    Path = $current.Path
+                }
+            }
+        }
+        if ($missingBlocks) {
+            $issues.Add(("$($current.Path): inode $($current.InodeId) usa bloques no marcados en el bitmap"))
+        }
+
+        if ($inode.Type -ne 2) {
+            continue
+        }
+
+        foreach ($entry in Get-Svfs2DirEntries $Image ([uint32]$current.InodeId)) {
+            if ($entry.InodeId -eq 0) {
+                continue
+            }
+
+            $entryPath = if ($current.RelativePath) {
+                "/disk/$($current.RelativePath)/$($entry.Name)"
+            } else {
+                "/disk/$($entry.Name)"
+            }
+
+            if ([string]::IsNullOrWhiteSpace($entry.Name) -or $entry.NameLength -eq 0) {
+                $issues.Add(("${entryPath}: entrada de directorio vacia para inode $($entry.InodeId)"))
+                continue
+            }
+            if ($entry.NameLength -ne $entry.Name.Length) {
+                $issues.Add(("${entryPath}: NameLength=$($entry.NameLength) no coincide con longitud real $($entry.Name.Length)"))
+            }
+            if ($entry.InodeId -gt $Script:Svfs2MaxInodes) {
+                $issues.Add(("${entryPath}: referencia a inode invalido $($entry.InodeId)"))
+                continue
+            }
+
+            $queue.Enqueue([pscustomobject]@{
+                Path = $entryPath
+                RelativePath = if ($current.RelativePath) { "$($current.RelativePath)/$($entry.Name)" } else { $entry.Name }
+                InodeId = [uint32]$entry.InodeId
+                ExpectedType = [uint16]$entry.Type
+            })
+        }
+    }
+
+    return $issues.ToArray()
+}
+
+function Assert-Svfs2Consistency($Image, [string]$DiskPath = "") {
+    $issues = @(Test-Svfs2Consistency $Image)
+    if ($issues.Count -eq 0) {
+        return
+    }
+
+    $resolvedDiskPath = ""
+    if (-not [string]::IsNullOrWhiteSpace($DiskPath) -and -not $DiskPath.TrimStart().StartsWith("@{")) {
+        $resolvedDiskPath = $DiskPath
+    } elseif ($null -ne $Image -and $Image.PSObject.Properties.Name -contains "DiskPath" -and -not [string]::IsNullOrWhiteSpace([string]$Image.DiskPath)) {
+        $resolvedDiskPath = [string]$Image.DiskPath
+    }
+
+    $prefix = if ([string]::IsNullOrWhiteSpace($resolvedDiskPath)) {
+        "La imagen SVFS2 tiene inconsistencias:"
+    } else {
+        "La imagen SVFS2 '$resolvedDiskPath' tiene inconsistencias:"
+    }
+
+    $details = ($issues | Select-Object -First 8 | ForEach-Object { "- $_" }) -join [Environment]::NewLine
+    $suffix = if ($issues.Count -gt 8) {
+        [Environment]::NewLine + ("- ... y {0} mas" -f ($issues.Count - 8))
+    } else {
+        ""
+    }
+
+    throw ($prefix + [Environment]::NewLine + $details + $suffix)
 }
 
 function Get-Svfs2NextFreeInode($Image) {

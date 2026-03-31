@@ -6,7 +6,7 @@
 namespace virtio_pci {
 
 void memory_barrier() {
-    asm volatile("" : : : "memory");
+    asm volatile("mfence" : : : "memory");
 }
 
 size_t align_up(size_t value, size_t alignment) {
@@ -125,6 +125,13 @@ uint8_t* device_cfg_base(Device& device) {
 
 const uint8_t* device_cfg_base(const Device& device) {
     return device.device_view.base;
+}
+
+uint8_t read_isr_status(Device& device) {
+    if (!device.isr_view.valid || device.isr_view.base == nullptr) {
+        return 0;
+    }
+    return *reinterpret_cast<volatile uint8_t*>(device.isr_view.base);
 }
 
 void set_device_status(Device& device, uint8_t status) {

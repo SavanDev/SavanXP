@@ -77,7 +77,7 @@ Nodos reservados actualmente:
 
 Ioctl groups:
 
-- gpu: `GPU_IOC_GET_INFO`, `GPU_IOC_ACQUIRE`, `GPU_IOC_RELEASE`, `GPU_IOC_PRESENT`, `GPU_IOC_PRESENT_REGION`, `GPU_IOC_SET_MODE`, `GPU_IOC_IMPORT_SECTION`, `GPU_IOC_RELEASE_SURFACE`, `GPU_IOC_PRESENT_SURFACE_REGION`, `GPU_IOC_WAIT_IDLE`
+- gpu: `GPU_IOC_GET_INFO`, `GPU_IOC_ACQUIRE`, `GPU_IOC_RELEASE`, `GPU_IOC_PRESENT`, `GPU_IOC_PRESENT_REGION`, `GPU_IOC_SET_MODE`, `GPU_IOC_IMPORT_SECTION`, `GPU_IOC_RELEASE_SURFACE`, `GPU_IOC_PRESENT_SURFACE_REGION`, `GPU_IOC_WAIT_IDLE`, `GPU_IOC_GET_STATS`, `GPU_IOC_GET_SCANOUTS`, `GPU_IOC_REFRESH_SCANOUTS`, `GPU_IOC_SET_CURSOR`, `GPU_IOC_MOVE_CURSOR`
 - network: `NET_IOC_GET_INFO`, `NET_IOC_UP`, `NET_IOC_PING`
 - pc speaker: `PCSPK_IOC_BEEP`, `PCSPK_IOC_STOP`
 - audio: `AUDIO_IOC_GET_INFO`
@@ -85,6 +85,10 @@ Ioctl groups:
 Tipos compartidos:
 
 - `struct savanxp_fb_info`
+- `struct savanxp_gpu_stats`
+- `struct savanxp_gpu_scanout_state`
+- `struct savanxp_gpu_cursor_image`
+- `struct savanxp_gpu_cursor_position`
 - `struct savanxp_input_event`
 - `struct savanxp_mouse_event`
 - `struct savanxp_net_info`
@@ -148,19 +152,20 @@ Helpers públicos expuestos por el runtime:
 
 Contrato actual:
 
-- el camino preferido es compositor-first sobre `/dev/gpu0`, con una sola app
-  fullscreen activa por sesion
-- `gfx_open` intenta primero el modo cliente del compositor usando la
-  convencion heredada por `fork()+exec()` en `fd 3..6`
-- si esos fds no existen, `gfx_open` cae al camino directo legacy sobre
-  `/dev/gpu0`
-- `gfx_present` y `gfx_present_region` siguen aceptando 32-bpp desde
-  userland, pero en modo cliente notifican regiones sucias al compositor
+- `gfx_*` es la API soportada para apps graficas normales.
+- `gfx_open` abre solo el modo cliente del compositor usando la convencion
+  heredada por `fork()+exec()` en `fd 3..6`.
+- si esos fds no existen, `gfx_open` falla; el fallback directo legacy ya no
+  es parte del camino normal.
+- `gfx_present` y `gfx_present_region` aceptan 32-bpp desde userland y
+  notifican regiones sucias al compositor.
 - `gfx_poll_event` y `mouse_open`/`mouse_poll_event` leen del compositor si la
-  app fue lanzada como cliente; en fallback siguen usando `/dev/input0` y
-  `/dev/mouse0`
+  app fue lanzada como cliente; para diagnostico de bajo nivel siguen
+  existiendo `/dev/input0` y `/dev/mouse0`.
 - bajo QEMU, el kernel puede respaldar `/dev/mouse0` con un backend absoluto
   `virtio-tablet-pci`, traducido a deltas para preservar la ABI 1.1
+- `/dev/gpu0` queda reservado como ABI de bajo nivel para `desktop`,
+  `gputest` y tooling diagnostico (`GPU_IOC_PRESENT*` incluidos).
 - hay `mmap` / `munmap` anónimo básico; no hay `mmap` file-backed, ventanas
   arbitrarias ni rueda en v1
 - el backbuffer sigue siendo propiedad de la app; `gfx_buffer_pixels` y `gfx_buffer_bytes` ayudan a validarlo

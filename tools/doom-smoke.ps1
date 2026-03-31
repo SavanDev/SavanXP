@@ -1,6 +1,11 @@
 param(
-    [switch]$BuildFirst
+    [switch]$BuildFirst,
+    [switch]$SkipBuild
 )
+
+# Smoke visual opcional del port de doomgeneric.
+# En el flujo desktop-first actual no reemplaza a build.ps1 smoke ni a gputest
+# como validacion principal del stack grafico.
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -27,7 +32,7 @@ function Resolve-ExistingPath([string[]]$Candidates) {
     return $null
 }
 
-if ($BuildFirst) {
+if (-not $SkipBuild) {
     & powershell -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "build.ps1") build
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo build.ps1 build."
@@ -75,7 +80,7 @@ Get-Process qemu-system-x86_64 -ErrorAction SilentlyContinue | Stop-Process -For
 $driver = Start-Job -ArgumentList $MenuShot, $LevelShot, $FireShot, $QmpPort -ScriptBlock {
     param($MenuPath, $LevelPath, $FirePath, $Port)
 
-    Start-Sleep -Seconds 8
+    Start-Sleep -Seconds 14
 
     $client = [System.Net.Sockets.TcpClient]::new("127.0.0.1", $Port)
     $stream = $client.GetStream()
@@ -98,6 +103,23 @@ $driver = Start-Job -ArgumentList $MenuShot, $LevelShot, $FireShot, $QmpPort -Sc
         Start-Sleep -Milliseconds $DelayMs
     }
 
+    function Capture-DriverFrame($Path) {
+        Invoke-DriverHmp ("screendump " + $Path) | Out-Null
+        return (Get-FileHash $Path -Algorithm SHA256).Hash
+    }
+
+    function Wait-DriverFrameChange($ReferenceHash, $Path, $Attempts, $DelayMs) {
+        for ($attempt = 0; $attempt -lt $Attempts; ++$attempt) {
+            Start-Sleep -Milliseconds $DelayMs
+            $hash = Capture-DriverFrame $Path
+            if ($hash -ne $ReferenceHash) {
+                return $hash
+            }
+        }
+
+        return $ReferenceHash
+    }
+
     $null = $reader.ReadLine()
     $writer.WriteLine('{"execute":"qmp_capabilities"}')
     $null = $reader.ReadLine()
@@ -107,19 +129,17 @@ $driver = Start-Job -ArgumentList $MenuShot, $LevelShot, $FireShot, $QmpPort -Sc
     }
     Send-DriverKey "ret" 500
 
-    Start-Sleep -Seconds 6
-    Invoke-DriverHmp ("screendump " + $MenuPath) | Out-Null
+    Start-Sleep -Seconds 8
+    $menuHash = Capture-DriverFrame $MenuPath
 
     Send-DriverKey "ret" 500
     Send-DriverKey "ret" 500
     Send-DriverKey "ret" 500
 
-    Start-Sleep -Seconds 3
-    Invoke-DriverHmp ("screendump " + $LevelPath) | Out-Null
+    $levelHash = Wait-DriverFrameChange $menuHash $LevelPath 12 1000
 
-    Send-DriverKey "ctrl" 250
-    Start-Sleep -Milliseconds 300
-    Invoke-DriverHmp ("screendump " + $FirePath) | Out-Null
+    Send-DriverKey "tab" 250
+    $fireHash = Wait-DriverFrameChange $levelHash $FirePath 8 500
 
     Send-DriverKey "f10" 400
     Send-DriverKey "y" 400
@@ -136,17 +156,22 @@ $driver = Start-Job -ArgumentList $MenuShot, $LevelShot, $FireShot, $QmpPort -Sc
     -m 256M `
     -cpu max `
     -audiodev none,id=audio0 `
+    -audiodev none,id=audio1 `
     -drive "if=pflash,format=raw,readonly=on,file=$ovmfCode" `
     -drive "if=pflash,format=raw,file=$VarsTemplate" `
     -drive "file=fat:rw:$ImageRoot,format=raw" `
     -netdev user,id=net0 `
     -device rtl8139,netdev=net0 `
+    -device virtio-vga,xres=1280,yres=800 `
+    -device virtio-sound-pci,audiodev=audio1,streams=1 `
+    -device virtio-tablet-pci `
     -device isa-ide,id=svide `
     -drive "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage" `
     -device ide-hd,drive=svdisk,bus=svide.0 `
     -serial "file:$SerialLog" `
     -debugcon "file:$DebugLog" `
     -global isa-debugcon.iobase=0xe9 `
+    -rtc "base=localtime" `
     -no-reboot `
     -no-shutdown `
     -qmp "tcp:127.0.0.1:$QmpPort,server=on,wait=off"
@@ -167,17 +192,20 @@ $levelHash = (Get-FileHash $LevelShot -Algorithm SHA256).Hash
 $fireHash = (Get-FileHash $FireShot -Algorithm SHA256).Hash
 $serialText = Get-Content $SerialLog -Raw
 
-if ($serialText -notmatch "savanxp:/\$") {
-    throw "La VM no llego al shell actual."
+if ($serialText -notmatch "handoff: starting /bin/init") {
+    throw "La VM no llego a handoff de init."
+}
+if ($serialText -match "desktop: compositor startup failed") {
+    throw "El desktop no pudo iniciar de forma estable."
 }
 if ($menuHash -eq $levelHash) {
     throw "La captura del menu y la de partida son iguales; smoke inconclusa."
 }
 if ($levelHash -eq $fireHash) {
-    throw "La captura despues de disparar no cambio; smoke inconclusa."
+    throw "La captura despues de la accion en partida no cambio; smoke inconclusa."
 }
 
-$returnedToShell = ([regex]::Matches($serialText, "savanxp:/\$")).Count -ge 2
+$returnedToDesktop = ($serialText -notmatch "init: desktop unstable")
 
 [pscustomobject]@{
     SerialLog = $SerialLog
@@ -185,7 +213,7 @@ $returnedToShell = ([regex]::Matches($serialText, "savanxp:/\$")).Count -ge 2
     MenuScreenshot = $MenuShot
     LevelScreenshot = $LevelShot
     FireScreenshot = $FireShot
-    ReturnedToShell = $returnedToShell
+    ReturnedToDesktop = $returnedToDesktop
     MenuHash = $menuHash
     LevelHash = $levelHash
     FireHash = $fireHash

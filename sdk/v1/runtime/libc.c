@@ -61,28 +61,49 @@ long spawn(const char* path, const char* const* argv, int argc) {
 }
 
 long spawn_fd(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd) {
-    return syscall5(
-        SAVANXP_SYS_SPAWN_FD,
-        (unsigned long)path,
-        (unsigned long)argv,
-        (unsigned long)argc,
-        (unsigned long)stdin_fd,
-        (unsigned long)stdout_fd);
+    long saved_stdin = dup(0);
+    long saved_stdout = dup(1);
+    long pid = -1;
+
+    if (saved_stdin < 0 || saved_stdout < 0) {
+        if (saved_stdin >= 0) {
+            close((int)saved_stdin);
+        }
+        if (saved_stdout >= 0) {
+            close((int)saved_stdout);
+        }
+        return -1;
+    }
+
+    if (dup2(stdin_fd, 0) < 0 || dup2(stdout_fd, 1) < 0) {
+        (void)dup2((int)saved_stdin, 0);
+        (void)dup2((int)saved_stdout, 1);
+        close((int)saved_stdin);
+        close((int)saved_stdout);
+        return -1;
+    }
+
+    pid = spawn(path, argv, argc);
+    (void)dup2((int)saved_stdin, 0);
+    (void)dup2((int)saved_stdout, 1);
+    close((int)saved_stdin);
+    close((int)saved_stdout);
+    return pid;
 }
 
 long spawn_fds(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd, int stderr_fd) {
-    long saved = dup(2);
-    if (saved < 0) {
-        return saved;
+    long saved_stderr = dup(2);
+    if (saved_stderr < 0) {
+        return saved_stderr;
     }
     if (dup2(stderr_fd, 2) < 0) {
-        close((int)saved);
+        close((int)saved_stderr);
         return -1;
     }
 
     long pid = spawn_fd(path, argv, argc, stdin_fd, stdout_fd);
-    (void)dup2((int)saved, 2);
-    close((int)saved);
+    (void)dup2((int)saved_stderr, 2);
+    close((int)saved_stderr);
     return pid;
 }
 
@@ -326,6 +347,26 @@ long gpu_present_surface_region(int fd, const struct savanxp_gpu_surface_present
 
 long gpu_wait_idle(int fd) {
     return ioctl(fd, GPU_IOC_WAIT_IDLE, 0);
+}
+
+long gpu_get_stats(int fd, struct savanxp_gpu_stats* stats) {
+    return ioctl(fd, GPU_IOC_GET_STATS, (unsigned long)stats);
+}
+
+long gpu_get_scanouts(int fd, struct savanxp_gpu_scanout_state* state) {
+    return ioctl(fd, GPU_IOC_GET_SCANOUTS, (unsigned long)state);
+}
+
+long gpu_refresh_scanouts(int fd) {
+    return ioctl(fd, GPU_IOC_REFRESH_SCANOUTS, 0);
+}
+
+long gpu_set_cursor(int fd, const struct savanxp_gpu_cursor_image* image) {
+    return ioctl(fd, GPU_IOC_SET_CURSOR, (unsigned long)image);
+}
+
+long gpu_move_cursor(int fd, const struct savanxp_gpu_cursor_position* position) {
+    return ioctl(fd, GPU_IOC_MOVE_CURSOR, (unsigned long)position);
 }
 
 long gpu_present(int fd, const uint32_t* pixels) {

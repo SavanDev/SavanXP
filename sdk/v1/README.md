@@ -30,7 +30,7 @@ Categorías soportadas:
 - descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `poll`, `select`, `raise`
-- graficos: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_poll_event`
+- graficos: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_present_region`, `gfx_poll_event`
 - mouse: `mouse_open`, `mouse_poll_event`
 - primitivas software: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`, `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`, `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`, `gfx_blit_text`
 
@@ -45,9 +45,11 @@ Nodos de dispositivo expuestos actualmente:
 
 Notas graficas:
 
-- `/dev/gpu0` es el backend grafico oficial para sesiones normales.
-- las apps fullscreen nuevas o migradas deben usar `gfx_*` o `GPU_IOC_*`
-  sobre ese backend.
+- `gfx_*` es el camino grafico soportado para apps normales.
+- `gfx_open` espera la superficie cliente entregada por `desktop`; si la app
+  no fue lanzada como cliente del compositor, falla.
+- `/dev/gpu0` queda como interfaz de bajo nivel para compositor, tooling y
+  diagnostico directo.
 
 Ioctl groups visibles:
 

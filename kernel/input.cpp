@@ -3,6 +3,7 @@
 #include "kernel/ps2.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
+#include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
 
 namespace input {
@@ -11,6 +12,7 @@ void initialize() {
 }
 
 void poll() {
+    virtio_gpu::poll();
     virtio_input::poll();
     ps2::poll();
 }

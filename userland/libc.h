@@ -83,6 +83,11 @@ long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_reques
 long gpu_release_surface(int fd, uint32_t surface_id);
 long gpu_present_surface_region(int fd, const struct savanxp_gpu_surface_present* present_request);
 long gpu_wait_idle(int fd);
+long gpu_get_stats(int fd, struct savanxp_gpu_stats* stats);
+long gpu_get_scanouts(int fd, struct savanxp_gpu_scanout_state* state);
+long gpu_refresh_scanouts(int fd);
+long gpu_set_cursor(int fd, const struct savanxp_gpu_cursor_image* image);
+long gpu_move_cursor(int fd, const struct savanxp_gpu_cursor_position* position);
 long gpu_present(int fd, const uint32_t* pixels);
 long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void exit(int code) __attribute__((noreturn));

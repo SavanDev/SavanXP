@@ -40,11 +40,12 @@ void destroy_section(Header* header) {
         return;
     }
 
-    if (section_object->allocation.physical_address != 0 && section_object->allocation.page_count != 0) {
-        (void)memory::free_allocation(section_object->allocation);
-    }
-
     if (section_object->physical_pages != nullptr) {
+        for (uint64_t page_index = 0; page_index < section_object->page_count; ++page_index) {
+            if (section_object->physical_pages[page_index] != 0) {
+                (void)memory::free_pages(section_object->physical_pages[page_index], 1);
+            }
+        }
         heap::free(section_object->physical_pages);
     }
 
@@ -185,16 +186,21 @@ SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
         }
         memset(section_object.physical_pages, 0, static_cast<size_t>(page_count * sizeof(uint64_t)));
 
-        if (!memory::allocate_contiguous_pages(page_count, section_object.allocation)) {
-            heap::free(section_object.physical_pages);
-            memset(&section_object, 0, sizeof(section_object));
-            return nullptr;
-        }
-
-        memset(section_object.allocation.virtual_address, 0, page_count * memory::kPageSize);
         for (uint64_t page_index = 0; page_index < page_count; ++page_index) {
-            section_object.physical_pages[page_index] =
-                section_object.allocation.physical_address + (page_index * memory::kPageSize);
+            memory::PageAllocation page = {};
+            if (!memory::allocate_page(page)) {
+                for (uint64_t rollback = 0; rollback < page_index; ++rollback) {
+                    if (section_object.physical_pages[rollback] != 0) {
+                        (void)memory::free_pages(section_object.physical_pages[rollback], 1);
+                    }
+                }
+                heap::free(section_object.physical_pages);
+                memset(&section_object, 0, sizeof(section_object));
+                return nullptr;
+            }
+
+            memset(page.virtual_address, 0, memory::kPageSize);
+            section_object.physical_pages[page_index] = page.physical_address;
         }
 
         section_object.header.type = Type::section;
@@ -203,6 +209,11 @@ SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
         section_object.access_mask = access_mask;
         section_object.size_bytes = aligned_size;
         section_object.page_count = page_count;
+        section_object.allocation = {
+            .physical_address = 0,
+            .virtual_address = nullptr,
+            .page_count = page_count,
+        };
         return &section_object;
     }
 
@@ -219,7 +230,18 @@ SectionObject* clone_section(const SectionObject& source) {
         return nullptr;
     }
 
-    memcpy(section_object->allocation.virtual_address, source.allocation.virtual_address, source.size_bytes);
+    uint64_t remaining = source.size_bytes;
+    for (uint64_t page_index = 0; page_index < source.page_count; ++page_index) {
+        const size_t page_bytes = static_cast<size_t>(remaining > memory::kPageSize ? memory::kPageSize : remaining);
+        memcpy(
+            vm::physical_to_virtual(section_object->physical_pages[page_index]),
+            vm::physical_to_virtual(source.physical_pages[page_index]),
+            page_bytes);
+        if (remaining <= memory::kPageSize) {
+            break;
+        }
+        remaining -= memory::kPageSize;
+    }
     return section_object;
 }
 

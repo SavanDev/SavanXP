@@ -315,6 +315,54 @@ bool map_kernel_page(uint64_t virtual_address, uint64_t physical_address, uint64
     return true;
 }
 
+bool unmap_kernel_page(uint64_t virtual_address) {
+    if (!g_ready || (virtual_address & (memory::kPageSize - 1)) != 0) {
+        return false;
+    }
+
+    uint64_t* pml4 = kernel_pml4();
+    if (pml4 == nullptr) {
+        return false;
+    }
+
+    const uint64_t pml4e = pml4[pml4_index(virtual_address)];
+    if ((pml4e & vm::kPagePresent) == 0) {
+        return false;
+    }
+
+    uint64_t* pdpt = vm::physical_to_virtual(pml4e & kPageMask);
+    if (pdpt == nullptr) {
+        return false;
+    }
+    const uint64_t pdpte = pdpt[pdpt_index(virtual_address)];
+    if ((pdpte & vm::kPagePresent) == 0) {
+        return false;
+    }
+
+    uint64_t* pd = vm::physical_to_virtual(pdpte & kPageMask);
+    if (pd == nullptr) {
+        return false;
+    }
+    const uint64_t pde = pd[pd_index(virtual_address)];
+    if ((pde & vm::kPagePresent) == 0) {
+        return false;
+    }
+
+    uint64_t* pt = vm::physical_to_virtual(pde & kPageMask);
+    if (pt == nullptr) {
+        return false;
+    }
+
+    const uint64_t entry_index = pt_index(virtual_address);
+    if ((pt[entry_index] & vm::kPagePresent) == 0) {
+        return false;
+    }
+
+    pt[entry_index] = 0;
+    invalidate_page(virtual_address);
+    return true;
+}
+
 } // namespace
 
 namespace vm {
@@ -635,6 +683,56 @@ bool unmap_section_view(VmSpace& space, uint64_t base_address) {
     return true;
 }
 
+bool map_kernel_pages(const uint64_t* physical_pages, uint64_t page_count, uint64_t flags, void** virtual_base) {
+    if (!g_ready || g_kernel_mmio_base == 0 || virtual_base == nullptr || physical_pages == nullptr || page_count == 0) {
+        return false;
+    }
+
+    const uint64_t total_bytes = align_up(page_count * memory::kPageSize, memory::kPageSize);
+    const uint64_t mapping_base = align_up(g_kernel_mmio_next, memory::kPageSize);
+    if (mapping_base < g_kernel_mmio_base ||
+        mapping_base + total_bytes < mapping_base ||
+        mapping_base + total_bytes > g_kernel_mmio_limit) {
+        return false;
+    }
+
+    uint64_t mapped_pages = 0;
+    for (uint64_t page_index = 0; page_index < page_count; ++page_index) {
+        if ((physical_pages[page_index] & (memory::kPageSize - 1)) != 0 ||
+            !map_kernel_page(
+                mapping_base + (page_index * memory::kPageSize),
+                physical_pages[page_index],
+                (flags | vm::kPageWrite) & ~vm::kPageUser)) {
+            for (uint64_t rollback = 0; rollback < mapped_pages; ++rollback) {
+                (void)unmap_kernel_page(mapping_base + (rollback * memory::kPageSize));
+            }
+            return false;
+        }
+        mapped_pages += 1;
+    }
+
+    g_kernel_mmio_next = mapping_base + total_bytes;
+    *virtual_base = reinterpret_cast<void*>(mapping_base);
+    return true;
+}
+
+bool unmap_kernel_pages(void* virtual_base, uint64_t page_count) {
+    if (!g_ready || virtual_base == nullptr || page_count == 0) {
+        return false;
+    }
+
+    const uint64_t mapping_base = reinterpret_cast<uint64_t>(virtual_base);
+    if ((mapping_base & (memory::kPageSize - 1)) != 0) {
+        return false;
+    }
+
+    bool unmapped_any = false;
+    for (uint64_t page_index = 0; page_index < page_count; ++page_index) {
+        unmapped_any = unmap_kernel_page(mapping_base + (page_index * memory::kPageSize)) || unmapped_any;
+    }
+    return unmapped_any;
+}
+
 bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base) {
     if (!g_ready || g_kernel_mmio_base == 0 || virtual_base == nullptr || size == 0) {
         return false;
@@ -651,13 +749,18 @@ bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void**
         return false;
     }
 
+    uint64_t mapped_bytes = 0;
     for (uint64_t offset = 0; offset < total_bytes; offset += memory::kPageSize) {
         if (!map_kernel_page(
                 mapping_base + offset,
                 aligned_physical + offset,
                 (flags | vm::kPageWrite | vm::kPageCacheDisable) & ~vm::kPageUser)) {
+            for (uint64_t rollback = 0; rollback < mapped_bytes; rollback += memory::kPageSize) {
+                (void)unmap_kernel_page(mapping_base + rollback);
+            }
             return false;
         }
+        mapped_bytes += memory::kPageSize;
     }
 
     g_kernel_mmio_next = mapping_base + total_bytes;

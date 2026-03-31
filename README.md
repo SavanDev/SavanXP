@@ -1,6 +1,6 @@
 # SavanXP
 
-Version actual del proyecto: `v0.2.0`
+Version actual del proyecto: `v0.2.1`
 
 Historial de versiones: `CHANGELOG.md`
 
@@ -14,7 +14,8 @@ desarrollo.
 
 ## Estado actual
 
-El kernel ya bootea a una sesion desktop-first funcional:
+El kernel ya bootea a una sesion grafica funcional con `desktop` como
+compositor/sesion principal:
 
 - Integracion con Limine para recibir `bootloader info`, `firmware type`,
   `framebuffer`, `memory map`, `HHDM` y un modulo `initramfs`.
@@ -49,38 +50,46 @@ El kernel ya bootea a una sesion desktop-first funcional:
 - Red minima sobre `rtl8139` + `QEMU user-net`, con `ARP`, `IPv4`, `ICMP`
   echo request/reply, sockets UDP IPv4 basicos y cliente TCP minimo, mas
   contadores y estado diagnostico expuestos por `NET_IOC_GET_INFO`.
-- Sesion `desktop-first` sobre compositor propio, taskbar/start menu,
-  shell fullscreen `shellapp`, primitivas 2D reutilizables en `gfx_*`,
+- Sesion grafica sobre compositor propio `desktop`, taskbar/start menu
+  persistentes, apps cliente renderizando sobre un work area estable,
+  `shellapp`, primitivas 2D reutilizables en `gfx_*`,
   ejemplo externo `sdk/gfxhello`, demo `gfxdemo` y testers graficos
   migrados al camino cliente del compositor.
-- Pipeline fullscreen ya optimizado para mayor fluidez, con primitivas
-  `gfx_*` mas baratas, present parcial por regiones sucias en `gpu0` y
-  demos/UI que evitan redibujar o copiar toda la pantalla cuando no hubo
-  cambios.
+- Pipeline grafico del compositor ya optimizado para mayor fluidez, con
+  primitivas `gfx_*` mas baratas, present parcial por regiones sucias en
+  `gpu0`, apps limitadas al area util y demos/UI que evitan redibujar o
+  copiar toda la pantalla cuando no hubo cambios.
+- `virtio-gpu` 2D ya expone estadisticas ampliadas, enumeracion de scanouts,
+  refresh basico por hotplug, bottom-half interno apoyado por IRQ cuando la
+  linea PCI esta disponible y cursor plane opcional con fallback transparente
+  al cursor software del desktop.
 - Base `virtio_pci` reutilizable para drivers `virtio` modernos y backend
   grafico nuevo `virtio-gpu` 2D para QEMU.
-- Nodo `/dev/gpu0` como ABI publica principal (`GPU_IOC_*`), incluyendo
-  mode-setting, import de sections y present por superficie.
+- Nodo `/dev/gpu0` como interfaz grafica de bajo nivel (`GPU_IOC_*`) para
+  compositor, mode-setting, import de sections, present por superficie y
+  diagnostico directo.
 - En QEMU, la salida grafica puede pasar a `virtio-vga` manteniendo una
   resolucion de trabajo consistente durante el handoff desde el framebuffer de
   boot al backend del driver, sin volver a encogerse a `640x480` al terminar
   el arranque.
 - La consola y el desktop ya quedan limpios sobre `virtio-gpu`: el redraw de
-  la shell fullscreen cubre tambien los margenes externos y no deja residuos
-  visuales de apps graficas previas.
+  `shellapp` y de las apps cliente queda acotado al work area del desktop,
+  mientras la taskbar permanece visible y sin residuos visuales.
 - `virtio-input` queda alineado con el framebuffer activo, de modo que el
   mouse bajo QEMU vuelve a seguir correctamente al puntero del host incluso
   despues del cambio al backend `virtio-gpu`.
-- Primer juego externo porteado: `sdk/doomgeneric`, usado como prueba real de
-  apps graficas externas, assets persistentes en `/disk` y compatibilidad de
-  input.
-- Backend de `sdk/doomgeneric` afinado para fullscreen, con escalado por filas
-  cacheadas en lugar de divisiones por pixel en cada frame, reduciendo costo
-  de CPU y mejorando la sensacion visual durante el juego.
-- Validacion real del port de `doomgeneric` ya cerrada para arranque,
+- Primer juego externo porteado: `sdk/doomgeneric`, mantenido como port
+  externo de referencia para apps graficas, assets persistentes en `/disk` y
+  compatibilidad de input.
+- Backend de `sdk/doomgeneric` afinado para integrarse al compositor, con
+  escalado por filas cacheadas en lugar de divisiones por pixel en cada frame,
+  reduciendo costo de CPU y mejorando la sensacion visual durante el juego.
+- Validacion del port de `doomgeneric` ya cerrada para arranque,
   jugabilidad basica y `save/load`; los ajustes quedaron repartidos entre
   `SVFS2` en kernel, la capa `POSIX`/`stdio` de la SDK y el backend propio del
-  port, sin mover semantica de libc al kernel.
+  port, sin mover semantica de libc al kernel. Dentro del flujo desktop-first
+  actual, `doomgeneric` queda como regresion de persistencia y smoke visual
+  opcional, no como prueba principal del stack grafico.
 - Sonido minimo por `PC speaker` con comando `beep`.
 - Playback PCM minimo sobre `virtio-sound`, expuesto como `/dev/audio0` con
   `AUDIO_IOC_GET_INFO` y la utilidad `audiotest`.
@@ -119,7 +128,7 @@ El kernel ya bootea a una sesion desktop-first funcional:
 Orden sugerido para las cuatro lineas de trabajo siguientes:
 
 1. Completar el subset real de BusyBox sobre la base nueva y ampliar tests de compatibilidad.
-2. Evolucionar el desktop shell y la libreria GUI sobre la base fullscreen actual.
+2. Evolucionar el desktop shell y la libreria GUI sobre la base actual de work area + compositor.
 3. Ampliar la API de sockets desde el cliente minimo actual hacia servidor TCP y mejor observabilidad.
 4. Profundizar señales, TTY y compatibilidad POSIX alrededor de ports mas ambiciosos.
 
@@ -128,9 +137,9 @@ Razon del orden:
 - Red ya tiene una base usable, pero todavia necesita mejor observabilidad para
   diagnosticar timeouts, estados intermedios y fallos reales sin depender tanto
   del host.
-- La GUI fullscreen ya probo el camino tecnico; el siguiente paso natural es
-  consolidar el desktop shell inicial y convertir esas primitivas en una
-  libreria reutilizable y menos demo-driven.
+- La GUI sobre compositor y work area ya probo el camino tecnico; el
+  siguiente paso natural es consolidar el desktop shell inicial y convertir
+  esas primitivas en una libreria reutilizable y menos demo-driven.
 - La capa POSIX/libc ya cubre `fork`, `poll/select`, `kill` y `O_NONBLOCK`,
   asi que el siguiente salto natural es endurecer compatibilidad real con
   utilidades y ports mas ambiciosos.
@@ -196,19 +205,23 @@ Tambien hay un wrapper para compilar, instalar y arrancar QEMU en un paso:
 
 Los ejemplos base estan en `sdk/hello`, `sdk/errdemo` y `sdk/fsdemo`. Tambien
 hay ejemplos/aplicaciones graficas externas en `sdk/gfxhello` y
-`sdk/doomgeneric`, y una utilidad especifica `gputest` para validar el camino
-directo sobre `/dev/gpu0`.
+`sdk/doomgeneric`, mientras `gputest` queda como utilidad principal para
+validar el camino directo sobre `/dev/gpu0`.
 
 La smoke automatizada actual valida `forktest`, `polltest`, `sigtest`,
 `busybox` y escritura/lectura real sobre `/disk`, de modo que los cambios de
 ABI base ya no dependen solo de verificacion host-side.
+
+`tools/doom-smoke.ps1` sigue disponible como smoke visual/manual del port de
+`doomgeneric`, pero ya no se considera la prueba principal del paradigma
+desktop-first ni del stack GPU del SO.
 
 Dentro de la `sdk/v1`, el runtime POSIX ya no usa un allocator solo tipo
 arena/bump: `malloc`, `free`, `calloc` y `realloc` reciclan memoria dentro del
 heap fijo actual, lo que vuelve mucho mas utiles ports y apps externas sin
 depender todavia de `sbrk`/`mmap`.
 
-Para diagnosticar input fullscreen existen `keytest` sobre `/dev/input0` y
+Para diagnosticar input grafico dentro del work area existen `keytest` sobre `/dev/input0` y
 `mousetest` sobre `/dev/mouse0`. `keytest` muestra `key down/up`, `keycode` y
 `ascii` en tiempo real. `mousetest` valida cursor, deltas y botones. Nota
 practica: segun el host y la captura de teclado de QEMU, `ImpPnt` puede llegar
@@ -220,25 +233,25 @@ siguen leyendo `/dev/mouse0` con deltas para mantener compatibilidad.
 Debajo de eso, el kernel ahora cuenta con una base MMIO PCI reutilizable para
 drivers `virtio` modernos.
 El perfil actual tambien agrega `virtio-vga`; cuando `virtio-gpu` queda
-operativo, `gpu0` pasa a ser el backend grafico de trabajo y queda disponible
-para pruebas directas.
+operativo, `desktop` mantiene el scanout como duenio estable y `gpu0` queda
+disponible para compositor y pruebas directas.
 El arranque pide `1280x800x32` al framebuffer de boot y `build.ps1 run`
 inicializa `virtio-vga` con `xres=1280,yres=800`, de modo que el handoff
 normal ya queda en esa misma geometria cuando el driver grafico toma control.
 En ese camino, redimensionar la ventana de QEMU mantiene la relacion de
-aspecto del contenido fullscreen en lugar de deformarlo.
+aspecto del contenido del desktop y de las apps cliente en lugar de
+deformarlo.
 Cuando `virtio-input` queda activo, el stack `PS/2` conserva el teclado y deja
 el mouse auxiliar solo como fallback para entornos sin `virtio-tablet`.
 El escritorio tambien puede leer hora real desde `RTC/CMOS`; en QEMU el launcher
 usa `-rtc base=localtime` para que el reloj siga la hora local del host.
 
-Este primer salto a `virtio-gpu` ya mejora de forma visible la experiencia de
-la GUI fullscreen en QEMU, pero el camino de presentacion sigue siendo
-sincrono y con copia de pixeles por CPU antes del `TRANSFER_TO_HOST_2D` /
-`FLUSH`. El backend nuevo deja una base mejor, aunque la fluidez final todavia
-depende bastante del tamano del frame y de cada port concreto; en particular,
-el tuning restante de `sdk/doomgeneric` ya cae mas del lado del port que del
-driver del SO.
+El stack actual usa `gfx_*` como camino normal para apps graficas: el runtime
+ya espera una superficie cliente del compositor y deja `/dev/gpu0` como ABI
+de bajo nivel para `desktop` y herramientas diagnosticas como `gputest`.
+Debajo de eso, `virtio-gpu` sigue presentando con copia por CPU antes del
+`TRANSFER_TO_HOST_2D` / `RESOURCE_FLUSH`, asi que la fluidez final todavia
+depende bastante del tamano del frame y de cada port concreto.
 
 Para probar el escritorio inicial:
 

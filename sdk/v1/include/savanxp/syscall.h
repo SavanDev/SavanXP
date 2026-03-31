@@ -286,6 +286,11 @@ enum savanxp_gpu_ioctl {
     GPU_IOC_RELEASE_SURFACE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 8),
     GPU_IOC_PRESENT_SURFACE_REGION = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 9),
     GPU_IOC_WAIT_IDLE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 10),
+    GPU_IOC_GET_STATS = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 11),
+    GPU_IOC_GET_SCANOUTS = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 12),
+    GPU_IOC_REFRESH_SCANOUTS = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 13),
+    GPU_IOC_SET_CURSOR = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 14),
+    GPU_IOC_MOVE_CURSOR = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 15),
 };
 
 enum savanxp_audio_ioctl {
@@ -326,6 +331,13 @@ struct savanxp_fb_present_region {
 enum savanxp_gpu_backend {
     SAVANXP_GPU_BACKEND_NONE = 0,
     SAVANXP_GPU_BACKEND_VIRTIO = 1,
+};
+
+enum savanxp_gpu_info_flags {
+    SAVANXP_GPU_INFO_FLAG_IRQ_DRIVEN = 1u << 0,
+    SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE = 1u << 1,
+    SAVANXP_GPU_INFO_FLAG_SCANOUT_ENUMERATION = 1u << 2,
+    SAVANXP_GPU_INFO_FLAG_HOTPLUG_REFRESH = 1u << 3,
 };
 
 struct savanxp_gpu_info {
@@ -377,6 +389,83 @@ struct savanxp_gpu_surface_present {
     uint32_t y;
     uint32_t width;
     uint32_t height;
+};
+
+enum savanxp_gpu_scanout_flags {
+    SAVANXP_GPU_SCANOUT_FLAG_ENABLED = 1u << 0,
+    SAVANXP_GPU_SCANOUT_FLAG_ACTIVE = 1u << 1,
+    SAVANXP_GPU_SCANOUT_FLAG_PRIMARY = 1u << 2,
+    SAVANXP_GPU_SCANOUT_FLAG_PREFERRED = 1u << 3,
+};
+
+struct savanxp_gpu_scanout_info {
+    uint32_t scanout_id;
+    uint32_t flags;
+    uint32_t native_width;
+    uint32_t native_height;
+    uint32_t preferred_width;
+    uint32_t preferred_height;
+    uint32_t active_width;
+    uint32_t active_height;
+};
+
+struct savanxp_gpu_scanout_state {
+    uint32_t count;
+    uint32_t active_scanout_id;
+    struct savanxp_gpu_scanout_info scanouts[16];
+};
+
+struct savanxp_gpu_cursor_image {
+    uint64_t pixels;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t hotspot_x;
+    uint32_t hotspot_y;
+};
+
+struct savanxp_gpu_cursor_position {
+    uint32_t x;
+    uint32_t y;
+    uint32_t visible;
+    uint32_t reserved0;
+};
+
+struct savanxp_gpu_stats {
+    uint64_t present_enqueued;
+    uint64_t present_completed;
+    uint64_t present_coalesced;
+    uint64_t pending_depth_max;
+    uint64_t transfer_stage_submitted;
+    uint64_t transfer_stage_ticks;
+    uint64_t flush_stage_submitted;
+    uint64_t flush_stage_ticks;
+    uint64_t scanout_stage_submitted;
+    uint64_t scanout_stage_ticks;
+    uint64_t sync_command_submitted;
+    uint64_t sync_command_ticks;
+    uint64_t wait_command_polls;
+    uint64_t wait_command_ticks;
+    uint64_t wait_surface_polls;
+    uint64_t wait_surface_ticks;
+    uint64_t wait_idle_polls;
+    uint64_t wait_idle_ticks;
+    uint64_t wait_pending_slot_polls;
+    uint64_t wait_pending_slot_ticks;
+    uint64_t command_timeouts;
+    uint64_t surface_timeouts;
+    uint64_t idle_timeouts;
+    uint64_t pending_slot_timeouts;
+    uint64_t resource_timeouts;
+    uint64_t irq_notifications;
+    uint64_t irq_config_events;
+    uint64_t command_completions;
+    uint64_t recovery_attempts;
+    uint64_t recovery_successes;
+    uint64_t degraded_entries;
+    uint64_t scanout_refreshes;
+    uint64_t cursor_updates;
+    uint64_t cursor_moves;
 };
 
 #define SAVANXP_GPU_CLIENT_SURFACE_MAGIC 0x53584746u

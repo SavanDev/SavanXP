@@ -103,8 +103,24 @@ static int setup_gpu(struct savanxp_gpu_info* gpu_info, struct savanxp_fb_info* 
     return 1;
 }
 
+static int validate_stats_progress(const struct savanxp_gpu_stats* before, const struct savanxp_gpu_stats* after) {
+    if (after->present_enqueued <= before->present_enqueued ||
+        after->present_completed <= before->present_completed ||
+        after->transfer_stage_submitted <= before->transfer_stage_submitted ||
+        after->flush_stage_submitted <= before->flush_stage_submitted ||
+        after->scanout_stage_submitted <= before->scanout_stage_submitted ||
+        after->command_completions <= before->command_completions) {
+        puts_fd(2, "gputest: GPU stats did not advance as expected\n");
+        return 0;
+    }
+    return 1;
+}
+
 static int run_smoke_mode(void) {
     struct savanxp_gpu_info gpu_info = {0};
+    struct savanxp_gpu_scanout_state scanouts = {0};
+    struct savanxp_gpu_stats stats_before = {0};
+    struct savanxp_gpu_stats stats_after = {0};
     struct savanxp_fb_info fb_info = {0};
     long gpu_fd;
     int previous_box_x = 120;
@@ -117,6 +133,24 @@ static int run_smoke_mode(void) {
     };
 
     if (!setup_gpu(&gpu_info, &fb_info, &gpu_fd)) {
+        return 1;
+    }
+    if (gpu_get_stats((int)gpu_fd, &stats_before) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_GET_STATS failed\n");
+        gpu_release((int)gpu_fd);
+        close((int)gpu_fd);
+        return 1;
+    }
+    if (gpu_get_scanouts((int)gpu_fd, &scanouts) < 0 || scanouts.count == 0) {
+        puts_fd(2, "gputest: GPU_IOC_GET_SCANOUTS failed\n");
+        gpu_release((int)gpu_fd);
+        close((int)gpu_fd);
+        return 1;
+    }
+    if (gpu_refresh_scanouts((int)gpu_fd) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_REFRESH_SCANOUTS failed\n");
+        gpu_release((int)gpu_fd);
+        close((int)gpu_fd);
         return 1;
     }
 
@@ -158,6 +192,18 @@ static int run_smoke_mode(void) {
 
         previous_box_x = box_x;
         previous_box_y = box_y;
+    }
+
+    if (gpu_wait_idle((int)gpu_fd) < 0 || gpu_get_stats((int)gpu_fd, &stats_after) < 0) {
+        puts_fd(2, "gputest: unable to fetch final GPU stats\n");
+        gpu_release((int)gpu_fd);
+        close((int)gpu_fd);
+        return 1;
+    }
+    if (!validate_stats_progress(&stats_before, &stats_after)) {
+        gpu_release((int)gpu_fd);
+        close((int)gpu_fd);
+        return 1;
     }
 
     gpu_release((int)gpu_fd);

@@ -68,13 +68,29 @@ static int file_missing(const char* path) {
 }
 
 static int prepare_smoke_directory(void) {
+    long existing = open("/disk/smoke");
     const char* mkdir_argv[] = {"/disk/bin/mkdir", "/disk/smoke", 0};
+    if (existing >= 0) {
+        close((int)existing);
+        (void)unlink("/disk/smoke/sh.txt");
+        (void)unlink("/disk/smoke/readme.copy");
+        (void)unlink("/disk/smoke/readme.moved");
+        printf("smoke: reusing /disk/smoke\n");
+        return 1;
+    }
     if (!run_and_expect("/disk/bin/mkdir", mkdir_argv, 2, 0)) {
         puts("SMOKE FAIL mkdir /disk/smoke\n");
         return 0;
     }
     printf("smoke: prepared /disk/smoke\n");
     return 1;
+}
+
+static void cleanup_smoke_directory(void) {
+    (void)unlink("/disk/smoke/sh.txt");
+    (void)unlink("/disk/smoke/readme.copy");
+    (void)unlink("/disk/smoke/readme.moved");
+    (void)rmdir("/disk/smoke");
 }
 
 int main(void) {
@@ -147,6 +163,9 @@ int main(void) {
         return 1;
     }
 
+    cleanup_smoke_directory();
+    sync();
+    sleep_ms(250);
     puts("SMOKE PASS\n");
     return 0;
 }

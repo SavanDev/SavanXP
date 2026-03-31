@@ -126,6 +126,7 @@ volatile CommonCfg* common_cfg(Device& device);
 const volatile CommonCfg* common_cfg(const Device& device);
 uint8_t* device_cfg_base(Device& device);
 const uint8_t* device_cfg_base(const Device& device);
+uint8_t read_isr_status(Device& device);
 void set_device_status(Device& device, uint8_t status);
 uint8_t device_status(const Device& device);
 bool negotiate_features(Device& device, uint32_t driver_features_word0, uint32_t driver_features_word1);

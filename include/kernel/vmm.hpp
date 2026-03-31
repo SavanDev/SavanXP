@@ -51,6 +51,8 @@ bool unmap_page(VmSpace& space, uint64_t virtual_address, uint64_t* physical_add
 bool clone_address_space(const VmSpace& source, VmSpace& destination);
 bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint64_t& base_address, bool share_on_fork);
 bool unmap_section_view(VmSpace& space, uint64_t base_address);
+bool map_kernel_pages(const uint64_t* physical_pages, uint64_t page_count, uint64_t flags, void** virtual_base);
+bool unmap_kernel_pages(void* virtual_base, uint64_t page_count);
 bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base);
 uint64_t current_pml4();
 uint64_t hhdm_offset();

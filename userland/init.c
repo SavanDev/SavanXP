@@ -2,7 +2,10 @@
 
 int main(void) {
     const char* desktop_argv[] = {"/bin/desktop", 0};
+    const char* shell_argv[] = {"/bin/sh", 0};
     const char* smoke_argv[] = {"/disk/bin/smoke", 0};
+    unsigned long last_desktop_start_ms = 0;
+    int rapid_failures = 0;
 
     long smoke_trigger = open("/SMOKE");
     if (smoke_trigger >= 0) {
@@ -28,6 +31,7 @@ int main(void) {
 
     for (;;) {
         int status = 0;
+        unsigned long runtime_ms = 0;
         long pid = spawn("/bin/desktop", desktop_argv, 1);
         if (pid < 0) {
             printf("init: failed to spawn desktop (%s)\n", result_error_string(pid));
@@ -35,8 +39,30 @@ int main(void) {
             continue;
         }
 
+        last_desktop_start_ms = uptime_ms();
         waitpid((int)pid, &status);
+        runtime_ms = uptime_ms() - last_desktop_start_ms;
         printf("init: desktop exited with %d, restarting\n", status);
+
+        if (status != 0 && runtime_ms < 2000UL) {
+            rapid_failures += 1;
+        } else {
+            rapid_failures = 0;
+        }
+
+        if (rapid_failures >= 3) {
+            printf("init: desktop unstable, falling back to /bin/sh\n");
+            pid = spawn("/bin/sh", shell_argv, 1);
+            if (pid < 0) {
+                printf("init: failed to spawn fallback shell (%s)\n", result_error_string(pid));
+                sleep_ms(1000);
+            } else {
+                waitpid((int)pid, &status);
+                printf("init: fallback shell exited with %d, retrying desktop\n", status);
+            }
+            rapid_failures = 0;
+        }
+
         sleep_ms(250);
     }
 }

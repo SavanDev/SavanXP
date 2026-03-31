@@ -11,6 +11,7 @@
 #define SHELLAPP_HEADER_HEIGHT 30
 #define SHELLAPP_LINE_HEIGHT 18
 #define SHELLAPP_CURSOR_PERIOD_MS 500UL
+#define SHELLAPP_PRESENT_INTERVAL_MS 16UL
 #define SHELLAPP_RESERVED_BOTTOM 42
 
 struct shellapp_line {
@@ -26,6 +27,12 @@ struct shellapp_state {
     int current_line_open;
     int cursor_visible;
     int needs_redraw;
+    int dirty_valid;
+    int dirty_x;
+    int dirty_y;
+    int dirty_width;
+    int dirty_height;
+    unsigned long last_present_ms;
     unsigned long next_cursor_toggle_ms;
 };
 
@@ -123,12 +130,94 @@ static void shellapp_clear_history(void) {
     memset(g_lines, 0, sizeof(g_lines));
     g_shellapp.line_count = 0;
     g_shellapp.current_line_open = 0;
+}
+
+static int shellapp_prompt_y(const struct savanxp_fb_info* info) {
+    return (int)info->height - SHELLAPP_RESERVED_BOTTOM - SHELLAPP_MARGIN_Y - gfx_text_height();
+}
+
+static void shellapp_invalidate_rect(int x, int y, int width, int height) {
+    const struct savanxp_fb_info* info = &g_shellapp.gfx.info;
+    int right = 0;
+    int bottom = 0;
+
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    if (x < 0) {
+        width += x;
+        x = 0;
+    }
+    if (y < 0) {
+        height += y;
+        y = 0;
+    }
+    if (width <= 0 || height <= 0 || x >= (int)info->width || y >= (int)info->height) {
+        return;
+    }
+    if (x + width > (int)info->width) {
+        width = (int)info->width - x;
+    }
+    if (y + height > (int)info->height) {
+        height = (int)info->height - y;
+    }
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (!g_shellapp.dirty_valid) {
+        g_shellapp.dirty_valid = 1;
+        g_shellapp.dirty_x = x;
+        g_shellapp.dirty_y = y;
+        g_shellapp.dirty_width = width;
+        g_shellapp.dirty_height = height;
+        g_shellapp.needs_redraw = 1;
+        return;
+    }
+
+    right = g_shellapp.dirty_x + g_shellapp.dirty_width;
+    bottom = g_shellapp.dirty_y + g_shellapp.dirty_height;
+    if (x < g_shellapp.dirty_x) {
+        g_shellapp.dirty_x = x;
+    }
+    if (y < g_shellapp.dirty_y) {
+        g_shellapp.dirty_y = y;
+    }
+    if (x + width > right) {
+        right = x + width;
+    }
+    if (y + height > bottom) {
+        bottom = y + height;
+    }
+    g_shellapp.dirty_width = right - g_shellapp.dirty_x;
+    g_shellapp.dirty_height = bottom - g_shellapp.dirty_y;
     g_shellapp.needs_redraw = 1;
+}
+
+static void shellapp_invalidate_full(void) {
+    shellapp_invalidate_rect(0, 0, (int)g_shellapp.gfx.info.width, (int)g_shellapp.gfx.info.height);
+}
+
+static void shellapp_invalidate_header(void) {
+    shellapp_invalidate_rect(0, 0, (int)g_shellapp.gfx.info.width, SHELLAPP_HEADER_HEIGHT + 2);
+}
+
+static void shellapp_invalidate_content(void) {
+    shellapp_invalidate_rect(
+        0,
+        SHELLAPP_HEADER_HEIGHT,
+        (int)g_shellapp.gfx.info.width,
+        (int)g_shellapp.gfx.info.height - SHELLAPP_HEADER_HEIGHT);
+}
+
+static void shellapp_invalidate_prompt(void) {
+    const int y = shellapp_prompt_y(&g_shellapp.gfx.info) - 8;
+    shellapp_invalidate_rect(0, y, (int)g_shellapp.gfx.info.width, (int)g_shellapp.gfx.info.height - y);
 }
 
 static void shellapp_redraw(void) {
     const struct savanxp_fb_info* info = &g_shellapp.gfx.info;
-    const int prompt_y = (int)info->height - SHELLAPP_RESERVED_BOTTOM - SHELLAPP_MARGIN_Y - gfx_text_height();
+    const int prompt_y = shellapp_prompt_y(info);
     const int history_top = SHELLAPP_HEADER_HEIGHT + SHELLAPP_MARGIN_Y;
     const int history_bottom = prompt_y - SHELLAPP_LINE_HEIGHT;
     const int visible_lines = history_bottom > history_top ? (history_bottom - history_top) / SHELLAPP_LINE_HEIGHT : 0;
@@ -163,10 +252,41 @@ static void shellapp_redraw(void) {
         gfx_rect(g_shellapp.frame, info, cursor_x, prompt_y + gfx_text_height() + 1, 10, 2, gfx_rgb(128, 226, 164));
     }
 
-    if (gfx_present(&g_shellapp.gfx, g_shellapp.frame) < 0) {
-        exit(1);
+    if (g_shellapp.dirty_valid) {
+        long present_result = 0;
+        if (g_shellapp.dirty_x == 0 &&
+            g_shellapp.dirty_y == 0 &&
+            g_shellapp.dirty_width == (int)info->width &&
+            g_shellapp.dirty_height == (int)info->height) {
+            present_result = gfx_present(&g_shellapp.gfx, g_shellapp.frame);
+        } else {
+            present_result = gfx_present_region(
+                &g_shellapp.gfx,
+                g_shellapp.frame,
+                (uint32_t)g_shellapp.dirty_x,
+                (uint32_t)g_shellapp.dirty_y,
+                (uint32_t)g_shellapp.dirty_width,
+                (uint32_t)g_shellapp.dirty_height);
+        }
+        if (present_result < 0) {
+            exit(1);
+        }
     }
     g_shellapp.needs_redraw = 0;
+    g_shellapp.dirty_valid = 0;
+    g_shellapp.dirty_x = 0;
+    g_shellapp.dirty_y = 0;
+    g_shellapp.dirty_width = 0;
+    g_shellapp.dirty_height = 0;
+    g_shellapp.last_present_ms = uptime_ms();
+}
+
+static void shellapp_request_redraw(int immediate) {
+    g_shellapp.needs_redraw = 1;
+    if (immediate || g_shellapp.last_present_ms == 0 ||
+        uptime_ms() - g_shellapp.last_present_ms >= SHELLAPP_PRESENT_INTERVAL_MS) {
+        shellapp_redraw();
+    }
 }
 
 static void shellapp_sink_emit(void* context, int fd, const char* bytes, size_t length) {
@@ -178,14 +298,15 @@ static void shellapp_sink_emit(void* context, int fd, const char* bytes, size_t 
         ++index;
     }
 
-    g_shellapp.needs_redraw = 1;
-    shellapp_redraw();
+    shellapp_invalidate_content();
+    shellapp_request_redraw(0);
 }
 
 static void shellapp_sink_clear(void* context) {
     (void)context;
     shellapp_clear_history();
-    shellapp_redraw();
+    shellapp_invalidate_content();
+    shellapp_request_redraw(1);
 }
 
 static void shellapp_submit_input(void) {
@@ -220,8 +341,8 @@ static void shellapp_submit_input(void) {
     memset(g_shellapp.input, 0, sizeof(g_shellapp.input));
     g_shellapp.cursor_visible = 1;
     g_shellapp.next_cursor_toggle_ms = uptime_ms() + SHELLAPP_CURSOR_PERIOD_MS;
-    g_shellapp.needs_redraw = 1;
-    shellapp_redraw();
+    shellapp_invalidate_content();
+    shellapp_request_redraw(1);
 
     if (line[0] == '\0') {
         return;
@@ -232,7 +353,9 @@ static void shellapp_submit_input(void) {
         exit(0);
     }
 
-    g_shellapp.needs_redraw = 1;
+    shellapp_invalidate_header();
+    shellapp_invalidate_content();
+    shellapp_request_redraw(1);
 }
 
 static void shellapp_handle_key(const struct savanxp_input_event* event) {
@@ -245,6 +368,7 @@ static void shellapp_handle_key(const struct savanxp_input_event* event) {
     if (event->key == SAVANXP_KEY_BACKSPACE) {
         if (length > 0) {
             g_shellapp.input[length - 1] = '\0';
+            shellapp_invalidate_prompt();
             g_shellapp.needs_redraw = 1;
         }
         return;
@@ -262,6 +386,7 @@ static void shellapp_handle_key(const struct savanxp_input_event* event) {
             ++spaces;
         }
         g_shellapp.input[length] = '\0';
+        shellapp_invalidate_prompt();
         g_shellapp.needs_redraw = 1;
         return;
     }
@@ -269,6 +394,7 @@ static void shellapp_handle_key(const struct savanxp_input_event* event) {
     if (event->ascii >= 32 && event->ascii <= 126 && length + 1 < sizeof(g_shellapp.input)) {
         g_shellapp.input[length] = (char)event->ascii;
         g_shellapp.input[length + 1] = '\0';
+        shellapp_invalidate_prompt();
         g_shellapp.needs_redraw = 1;
     }
 }
@@ -297,11 +423,11 @@ int main(void) {
 
     g_shellapp.frame = g_shellapp.gfx.pixels != 0 ? g_shellapp.gfx.pixels : g_backbuffer;
     g_shellapp.cursor_visible = 1;
-    g_shellapp.needs_redraw = 1;
     g_shellapp.next_cursor_toggle_ms = uptime_ms() + SHELLAPP_CURSOR_PERIOD_MS;
     shellapp_append_text_line(1, SAVANXP_DISPLAY_NAME " shell app");
-    shellapp_append_text_line(1, "Desktop-first session on /dev/gpu0. Press Super for the launcher.");
+    shellapp_append_text_line(1, "Desktop compositor session. Press Super for the launcher.");
     shellapp_append_text_line(1, "Builtins keep state here; external commands run through /bin/sh -c.");
+    shellapp_invalidate_full();
 
     for (;;) {
         long timeout_ms = (long)(g_shellapp.next_cursor_toggle_ms > uptime_ms()
@@ -323,7 +449,7 @@ int main(void) {
         if (ready == 0) {
             g_shellapp.cursor_visible = !g_shellapp.cursor_visible;
             g_shellapp.next_cursor_toggle_ms = uptime_ms() + SHELLAPP_CURSOR_PERIOD_MS;
-            g_shellapp.needs_redraw = 1;
+            shellapp_invalidate_prompt();
             continue;
         }
         if ((pollfd.revents & SAVANXP_POLLHUP) != 0) {
@@ -339,6 +465,7 @@ int main(void) {
 
         g_shellapp.cursor_visible = 1;
         g_shellapp.next_cursor_toggle_ms = uptime_ms() + SHELLAPP_CURSOR_PERIOD_MS;
+        shellapp_invalidate_prompt();
         shellapp_handle_key(&event);
     }
 
