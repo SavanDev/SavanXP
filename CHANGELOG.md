@@ -10,6 +10,55 @@ Notas de corte:
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-03-30
+
+### Agregado
+
+- ABI publica nueva en `/dev/gpu0` para diagnostico y control 2D extendido:
+  `GPU_IOC_GET_STATS`, `GPU_IOC_GET_SCANOUTS`,
+  `GPU_IOC_REFRESH_SCANOUTS`, `GPU_IOC_SET_CURSOR` y
+  `GPU_IOC_MOVE_CURSOR`.
+- Estadisticas ampliadas de `virtio-gpu` para presents, stages, waits,
+  timeouts, completions, IRQs, recovery y operaciones de cursor.
+- Enumeracion de scanouts y refresh basico de display info/hotplug en el
+  backend `virtio-gpu`, manteniendo `desktop` single-display por defecto.
+- Soporte inicial de cursor plane por hardware en `virtio-gpu`, con fallback
+  transparente al cursor software del `desktop` cuando el backend no lo
+  expone o falla.
+- Coverage automatizado adicional en `gputest --smoke` para validar progreso
+  del driver via `GPU_IOC_GET_STATS` y enumeracion de scanouts.
+
+### Cambiado
+
+- El sistema pasa a reportarse como `v0.2.1` en kernel, shell, `uname`,
+  `sysinfo` y componentes que consumen la version compartida.
+- El modelo grafico normal queda definitivamente desktop-first: la taskbar
+  permanece visible, las apps cliente renderizan sobre un work area estable y
+  el `desktop` pasa a ser el dueño normal del scanout.
+- `shellapp`, `gfxdemo`, `keytest`, `mousetest` y `doomgeneric` quedan
+  alineados al camino cliente del compositor en vez del fullscreen directo
+  legacy sobre `/dev/gpu0`.
+- La taskbar y el menu Inicio reciben una pasada de pulido visual y de
+  comportamiento para encajar mejor con el nuevo contrato desktop-first.
+- El backend `virtio-gpu` deja de depender de reentradas oportunistas del
+  caller para progresar: el scheduler interno ahora coalescea presents por
+  recurso, reduce `SET_SCANOUT` redundantes y avanza trabajo en segundo plano
+  con apoyo de IRQ cuando la linea PCI esta disponible.
+- `virtio-gpu` agrega recovery deliberado y modo degradado predecible frente
+  a timeouts del device, intentando restaurar el scanout primario y la
+  consola sin exigir reinicio inmediato del SO.
+- El build principal y la tooling asociada dejan mas explicito que
+  `build/disk.img` es persistente por defecto: se valida consistencia de
+  `SVFS2`, se evita recrear la imagen salvo corrupcion real y se conserva
+  `doomgeneric` junto con `doom1.wad` como regresion practica de
+  persistencia.
+- Los perfiles de QEMU usados por `run`, `smoke` y las utilidades graficas se
+  alinean mejor con el hardware virtual real del stack actual
+  (`virtio-gpu` + `virtio-tablet` + `desktop`).
+- `tools/doom-smoke.ps1` sigue disponible como smoke visual del port de
+  `doomgeneric`, pero deja de figurar como prueba principal del stack GPU
+  ahora que el paradigma normal del sistema es desktop-first.
+
 ## [0.2.0] - 2026-03-22
 
 ### Agregado
