@@ -428,6 +428,14 @@ long gpu_move_cursor(int fd, const struct savanxp_gpu_cursor_position* position)
     return ioctl(fd, GPU_IOC_MOVE_CURSOR, (unsigned long)position);
 }
 
+long gpu_get_present_timeline(int fd, struct savanxp_gpu_present_timeline* timeline) {
+    return ioctl(fd, GPU_IOC_GET_PRESENT_TIMELINE, (unsigned long)timeline);
+}
+
+long gpu_wait_present(int fd, struct savanxp_gpu_present_wait* wait_request) {
+    return ioctl(fd, GPU_IOC_WAIT_PRESENT, (unsigned long)wait_request);
+}
+
 long gpu_present(int fd, const uint32_t* pixels) {
     return ioctl(fd, GPU_IOC_PRESENT, (unsigned long)pixels);
 }

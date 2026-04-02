@@ -2,6 +2,7 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/device.hpp"
 #include "kernel/input.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
@@ -89,6 +90,7 @@ size_t read_line(char* buffer, size_t capacity) {
     }
 
     while (!g_main_tty.line_ready) {
+        device::service_background();
         input::poll();
         arch::x86_64::enable_interrupts();
         arch::x86_64::halt_once();

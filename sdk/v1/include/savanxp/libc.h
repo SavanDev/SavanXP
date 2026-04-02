@@ -72,6 +72,8 @@ long gpu_get_scanouts(int fd, struct savanxp_gpu_scanout_state* state);
 long gpu_refresh_scanouts(int fd);
 long gpu_set_cursor(int fd, const struct savanxp_gpu_cursor_image* image);
 long gpu_move_cursor(int fd, const struct savanxp_gpu_cursor_position* position);
+long gpu_get_present_timeline(int fd, struct savanxp_gpu_present_timeline* timeline);
+long gpu_wait_present(int fd, struct savanxp_gpu_present_wait* wait_request);
 long gpu_present(int fd, const uint32_t* pixels);
 long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 long savanxp_getpid(void);

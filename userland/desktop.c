@@ -32,6 +32,7 @@ struct desktop_session
     int mouse_fd;
     int display_section_fd;
     uint32_t display_surface_id;
+    uint64_t pending_present_sequence;
     void *display_view;
     uint32_t *display_pixels;
     int hw_cursor_enabled;
@@ -438,6 +439,36 @@ static void draw_embossed_text(struct savanxp_gfx_context *gfx, int x, int y, co
     gfx_blit_text(g_backbuffer, &gfx->info, x, y, text, dark);
 }
 
+static void draw_vertical_text(struct savanxp_gfx_context *gfx, int x, int y, const char *text, uint32_t colour, int step)
+{
+    char glyph[2] = {0, 0};
+    int cursor_y = y;
+
+    if (gfx == 0 || text == 0)
+    {
+        return;
+    }
+
+    if (step <= 0)
+    {
+        step = gfx_text_height();
+    }
+
+    while (*text != '\0')
+    {
+        if (*text == ' ')
+        {
+            cursor_y += step / 2;
+            ++text;
+            continue;
+        }
+
+        glyph[0] = *text++;
+        gfx_blit_text(g_backbuffer, &gfx->info, x, cursor_y, glyph, colour);
+        cursor_y += step;
+    }
+}
+
 static void draw_background(struct savanxp_gfx_context *gfx)
 {
     const char *watermark = SAVANXP_DISPLAY_NAME;
@@ -520,6 +551,7 @@ static void draw_start_menu(struct savanxp_gfx_context *gfx, int selected_index)
     const int strip_x = menu_x + 6;
     const int strip_inner_x = strip_x + 4;
     const int strip_inner_y = menu_y + 16;
+    const int strip_center_x = strip_x + (MENU_STRIP_WIDTH / 2);
     const int content_x = start_menu_content_x(menu_x);
     const int content_width = start_menu_content_width();
     const int header_y = menu_y + 8;
@@ -533,9 +565,20 @@ static void draw_start_menu(struct savanxp_gfx_context *gfx, int selected_index)
     gfx_hline(g_backbuffer, &gfx->info, strip_x, menu_y + 6, MENU_STRIP_WIDTH, gfx_rgb(80, 152, 216));
     gfx_rect(g_backbuffer, &gfx->info, strip_inner_x, strip_inner_y, MENU_STRIP_WIDTH - 8, 20, gfx_rgb(0, 124, 96));
     gfx_blit_text(g_backbuffer, &gfx->info, strip_inner_x + 4, strip_inner_y + 5, "S", gfx_rgb(255, 255, 255));
-    gfx_blit_text(g_backbuffer, &gfx->info, strip_inner_x + 2, menu_y + menu_height - 102, "Savan", gfx_rgb(255, 255, 255));
-    gfx_blit_text(g_backbuffer, &gfx->info, strip_inner_x + 2, menu_y + menu_height - 84, "XP", gfx_rgb(255, 255, 255));
-    gfx_blit_text(g_backbuffer, &gfx->info, strip_inner_x + 2, menu_y + menu_height - 38, SAVANXP_VERSION_STRING, gfx_rgb(214, 233, 248));
+    draw_vertical_text(
+        gfx,
+        strip_center_x - (gfx_text_width("S") / 2),
+        strip_inner_y + 34,
+        SAVANXP_SYSTEM_NAME,
+        gfx_rgb(255, 255, 255),
+        gfx_text_height() + 2);
+    draw_vertical_text(
+        gfx,
+        strip_center_x - (gfx_text_width("0") / 2),
+        menu_y + menu_height - 84,
+        SAVANXP_VERSION_STRING,
+        gfx_rgb(214, 233, 248),
+        gfx_text_height());
 
     gfx_rect(g_backbuffer, &gfx->info, content_x - 4, header_y, content_width + 4, MENU_HEADER_HEIGHT - 10, gfx_rgb(234, 233, 227));
     gfx_blit_text(g_backbuffer, &gfx->info, content_x + 4, header_y + 12, SAVANXP_SYSTEM_NAME, gfx_rgb(0, 0, 0));
@@ -857,6 +900,52 @@ static int route_packet(int fd, const void *packet, size_t size)
     return fd >= 0 && write(fd, packet, size) == (long)size;
 }
 
+static int sync_pending_present(struct desktop_session *session, int wait_for_target, int *ready)
+{
+    struct savanxp_gpu_present_wait wait_request = {0};
+    struct savanxp_gpu_present_timeline timeline = {0};
+    long result;
+
+    if (ready != 0)
+    {
+        *ready = 1;
+    }
+    if (session == 0 || session->gpu_fd < 0 || session->pending_present_sequence == 0)
+    {
+        return 0;
+    }
+
+    if (!wait_for_target)
+    {
+        result = gpu_get_present_timeline(session->gpu_fd, &timeline);
+        if (result < 0)
+        {
+            return desktop_stage_failed("GPU_IOC_GET_PRESENT_TIMELINE", result);
+        }
+        if (timeline.retired_sequence < session->pending_present_sequence)
+        {
+            if (ready != 0)
+            {
+                *ready = 0;
+            }
+            return 0;
+        }
+    }
+
+    wait_request.target_sequence = session->pending_present_sequence;
+    result = gpu_wait_present(session->gpu_fd, &wait_request);
+    session->pending_present_sequence = 0;
+    if (result < 0)
+    {
+        return desktop_stage_failed("GPU_IOC_WAIT_PRESENT", result);
+    }
+    if ((wait_request.flags & SAVANXP_GPU_PRESENT_TIMELINE_FLAG_TARGET_FAILED) != 0)
+    {
+        return desktop_stage_failed("GPU wait target failed", -SAVANXP_EIO);
+    }
+    return 0;
+}
+
 static int present_frame(struct desktop_session *session, const struct desktop_dirty_rect *dirty)
 {
     struct savanxp_gpu_surface_present present = {
@@ -866,11 +955,20 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
         .width = dirty != 0 ? (uint32_t)dirty->width : session->gfx.info.width,
         .height = dirty != 0 ? (uint32_t)dirty->height : session->gfx.info.height,
     };
+    struct savanxp_gpu_present_timeline timeline = {0};
+    long result;
 
-    if (gpu_present_surface_region(session->gpu_fd, &present) < 0)
+    result = gpu_present_surface_region(session->gpu_fd, &present);
+    if (result < 0)
     {
-        return -1;
+        return desktop_stage_failed("GPU_IOC_PRESENT_SURFACE_REGION", result);
     }
+    result = gpu_get_present_timeline(session->gpu_fd, &timeline);
+    if (result < 0)
+    {
+        return desktop_stage_failed("GPU_IOC_GET_PRESENT_TIMELINE", result);
+    }
+    session->pending_present_sequence = timeline.submitted_sequence;
     return 0;
 }
 
@@ -1023,6 +1121,7 @@ static int open_compositor_session(struct desktop_session *session)
     session->mouse_fd = -1;
     session->display_section_fd = -1;
     session->hw_cursor_enabled = 0;
+    session->pending_present_sequence = 0;
     reset_client(session);
 
     session->gpu_fd = (int)gpu_open();
@@ -1409,9 +1508,17 @@ int main(void)
             }
         }
 
-        if (!dirty.valid)
         {
-            continue;
+            int frame_ready = 1;
+
+            if (sync_pending_present(&session, 0, &frame_ready) < 0)
+            {
+                break;
+            }
+            if (!dirty.valid || !frame_ready)
+            {
+                continue;
+            }
         }
         draw_desktop_region(&session, cursor_x, cursor_y, menu_open, selected_index, &dirty);
         if (present_frame(&session, &dirty) < 0)

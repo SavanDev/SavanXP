@@ -1,5 +1,6 @@
 #include "kernel/device.hpp"
 
+#include "kernel/virtio_gpu.hpp"
 #include "kernel/vfs.hpp"
 #include "shared/syscall.h"
 
@@ -64,6 +65,10 @@ void close(Device* device) {
     if (device != nullptr && device->close != nullptr) {
         device->close();
     }
+}
+
+void service_background() {
+    virtio_gpu::poll();
 }
 
 } // namespace device

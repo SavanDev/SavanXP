@@ -109,11 +109,37 @@ static int validate_stats_progress(const struct savanxp_gpu_stats* before, const
         after->transfer_stage_submitted <= before->transfer_stage_submitted ||
         after->flush_stage_submitted <= before->flush_stage_submitted ||
         after->scanout_stage_submitted <= before->scanout_stage_submitted ||
-        after->command_completions <= before->command_completions) {
+        after->command_completions <= before->command_completions ||
+        after->present_end_to_end_samples <= before->present_end_to_end_samples ||
+        after->present_end_to_end_max_ticks == 0) {
         puts_fd(2, "gputest: GPU stats did not advance as expected\n");
         return 0;
     }
     return 1;
+}
+
+static int wait_for_latest_present(int gpu_fd) {
+    struct savanxp_gpu_present_timeline timeline = {0};
+    struct savanxp_gpu_present_wait wait_request = {0};
+
+    if (gpu_get_present_timeline(gpu_fd, &timeline) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_GET_PRESENT_TIMELINE failed\n");
+        return 0;
+    }
+    if (timeline.submitted_sequence == 0) {
+        return 1;
+    }
+
+    wait_request.target_sequence = timeline.submitted_sequence;
+    if (gpu_wait_present(gpu_fd, &wait_request) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_WAIT_PRESENT failed\n");
+        return 0;
+    }
+    if ((wait_request.flags & SAVANXP_GPU_PRESENT_TIMELINE_FLAG_TARGET_FAILED) != 0) {
+        puts_fd(2, "gputest: present wait target failed\n");
+        return 0;
+    }
+    return wait_request.retired_sequence >= wait_request.target_sequence;
 }
 
 static int run_smoke_mode(void) {
@@ -164,6 +190,11 @@ static int run_smoke_mode(void) {
         close((int)gpu_fd);
         return 1;
     }
+    if (!wait_for_latest_present((int)gpu_fd)) {
+        gpu_release((int)gpu_fd);
+        close((int)gpu_fd);
+        return 1;
+    }
 
     for (size_t index = 0; index < (sizeof(positions) / sizeof(positions[0])); ++index)
     {
@@ -185,6 +216,11 @@ static int run_smoke_mode(void) {
         if (gpu_present_region((int)gpu_fd, g_pixels, fb_info.pitch, (uint32_t)dirty_x, (uint32_t)dirty_y, (uint32_t)dirty_width, (uint32_t)dirty_height) < 0)
         {
             puts_fd(2, "gputest: GPU_IOC_PRESENT_REGION failed\n");
+            gpu_release((int)gpu_fd);
+            close((int)gpu_fd);
+            return 1;
+        }
+        if (!wait_for_latest_present((int)gpu_fd)) {
             gpu_release((int)gpu_fd);
             close((int)gpu_fd);
             return 1;

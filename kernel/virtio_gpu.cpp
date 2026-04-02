@@ -42,6 +42,7 @@ constexpr uint32_t kVirtioGpuEventDisplay = 1u << 0;
 constexpr uint32_t kGpuSurfaceCount = 3u;
 constexpr uint32_t kImportedSurfaceCount = 8u;
 constexpr uint32_t kPendingPresentCapacity = kGpuSurfaceCount + kImportedSurfaceCount;
+constexpr uint32_t kRetiredPresentHistoryCapacity = 64u;
 constexpr uint32_t kFirstGpuResourceId = 1u;
 constexpr size_t kRequestBufferBytes = 32768;
 constexpr size_t kResponseBufferBytes = 512;
@@ -215,6 +216,16 @@ struct PendingPresent {
     uint32_t y;
     uint32_t width;
     uint32_t height;
+    uint64_t sequence;
+    uint64_t enqueue_tick;
+};
+
+struct RetiredPresentStatus {
+    bool valid;
+    bool failed;
+    uint16_t reserved0;
+    uint32_t reserved1;
+    uint64_t sequence;
 };
 
 struct CursorCommandSlot {
@@ -336,6 +347,11 @@ CursorCommandSlot g_cursor_command = {};
 PendingPresent g_pending_presents[kPendingPresentCapacity] = {};
 uint32_t g_pending_present_order[kPendingPresentCapacity] = {};
 uint32_t g_pending_present_count = 0;
+RetiredPresentStatus g_retired_present_history[kRetiredPresentHistoryCapacity] = {};
+uint32_t g_retired_present_history_next = 0;
+uint64_t g_next_present_sequence = 1;
+uint64_t g_last_submitted_present_sequence = 0;
+uint64_t g_last_retired_present_sequence = 0;
 uint8_t g_irq_line = 0xffu;
 bool g_irq_registered = false;
 bool g_irq_work_pending = false;
@@ -513,7 +529,72 @@ void update_active_scanout_mode(uint32_t width, uint32_t height) {
     refresh_cached_scanout_state();
 }
 
+uint32_t current_present_timeline_flags() {
+    return g_degraded ? SAVANXP_GPU_PRESENT_TIMELINE_FLAG_DEGRADED : 0u;
+}
+
+void fill_present_timeline(savanxp_gpu_present_timeline& timeline) {
+    timeline = {
+        .submitted_sequence = g_last_submitted_present_sequence,
+        .retired_sequence = g_last_retired_present_sequence,
+        .pending_count = g_pending_present_count,
+        .flags = current_present_timeline_flags(),
+    };
+}
+
+void remember_retired_present(uint64_t sequence, bool failed) {
+    if (sequence == 0) {
+        return;
+    }
+
+    RetiredPresentStatus& entry = g_retired_present_history[g_retired_present_history_next];
+    entry = {
+        .valid = true,
+        .failed = failed,
+        .reserved0 = 0,
+        .reserved1 = 0,
+        .sequence = sequence,
+    };
+    g_retired_present_history_next =
+        static_cast<uint32_t>((g_retired_present_history_next + 1u) % kRetiredPresentHistoryCapacity);
+    if (sequence > g_last_retired_present_sequence) {
+        g_last_retired_present_sequence = sequence;
+    }
+}
+
+bool query_retired_present(uint64_t sequence, bool& failed) {
+    if (sequence == 0) {
+        failed = false;
+        return true;
+    }
+
+    for (uint32_t index = 0; index < kRetiredPresentHistoryCapacity; ++index) {
+        const RetiredPresentStatus& entry = g_retired_present_history[index];
+        if (entry.valid && entry.sequence == sequence) {
+            failed = entry.failed;
+            return true;
+        }
+    }
+
+    if (sequence <= g_last_retired_present_sequence) {
+        failed = false;
+        return true;
+    }
+    return false;
+}
+
+void retire_pending_presents_as_failed() {
+    for (uint32_t index = 0; index < kPendingPresentCapacity; ++index) {
+        const PendingPresent& present = g_pending_presents[index];
+        if (!present.in_use || present.sequence == 0) {
+            continue;
+        }
+        remember_retired_present(present.sequence, true);
+    }
+}
+
 void reset_present_tracking() {
+    retire_pending_presents_as_failed();
     memset(g_command_slots, 0, sizeof(g_command_slots));
     memset(g_pending_presents, 0, sizeof(g_pending_presents));
     memset(g_pending_present_order, 0, sizeof(g_pending_present_order));
@@ -679,7 +760,10 @@ bool enqueue_pending_present(const PendingPresent& pending, uint32_t& pending_in
 
     g_pending_presents[pending_index] = pending;
     g_pending_presents[pending_index].in_use = true;
+    g_pending_presents[pending_index].sequence = g_next_present_sequence++;
+    g_pending_presents[pending_index].enqueue_tick = timer::ticks();
     g_pending_present_order[g_pending_present_count++] = pending_index;
+    g_last_submitted_present_sequence = g_pending_presents[pending_index].sequence;
     g_gpu_stats.present_enqueued += 1u;
     if (g_pending_present_count > g_gpu_stats.pending_depth_max) {
         g_gpu_stats.pending_depth_max = g_pending_present_count;
@@ -866,8 +950,17 @@ void finalize_completed_presents() {
             break;
         }
 
+        remember_retired_present(present.sequence, present.failed);
         if (!present.failed) {
+            const uint64_t completion_tick = timer::ticks();
+            const uint64_t elapsed_ticks =
+                completion_tick >= present.enqueue_tick ? (completion_tick - present.enqueue_tick) : 0u;
             g_gpu_stats.present_completed += 1u;
+            g_gpu_stats.present_end_to_end_ticks += elapsed_ticks;
+            g_gpu_stats.present_end_to_end_samples += 1u;
+            if (elapsed_ticks > g_gpu_stats.present_end_to_end_max_ticks) {
+                g_gpu_stats.present_end_to_end_max_ticks = elapsed_ticks;
+            }
             if (present.target == kPendingPresentTargetPrimary) {
                 g_front_surface_index = present.surface_index;
             }
@@ -1476,6 +1569,44 @@ bool wait_for_resource_idle(uint32_t resource_id) {
     return false;
 }
 
+bool wait_for_present_sequence_internal(uint64_t target_sequence, bool& target_failed) {
+    if (!g_ready) {
+        return false;
+    }
+    if (query_retired_present(target_sequence, target_failed)) {
+        return true;
+    }
+
+    for (uint32_t spin = 0; spin < kIdleActivePollIterations; ++spin) {
+        g_gpu_stats.wait_present_polls += 1u;
+        service_queue_progress();
+        if (query_retired_present(target_sequence, target_failed)) {
+            return true;
+        }
+        pause_briefly();
+    }
+
+    const uint64_t deadline_tick = wait_deadline(kIdleWaitTicks);
+    for (;;) {
+        service_queue_progress();
+        if (query_retired_present(target_sequence, target_failed)) {
+            return true;
+        }
+        if (!wait_for_gpu_tick(deadline_tick)) {
+            break;
+        }
+        g_gpu_stats.wait_present_ticks += 1u;
+    }
+
+    g_gpu_stats.present_wait_timeouts += 1u;
+    console::printf(
+        "virtio-gpu: wait timeout present sequence=%llu\n",
+        static_cast<unsigned long long>(target_sequence));
+    enter_degraded_mode("wait timeout present");
+    (void)recover_device("wait timeout present");
+    return false;
+}
+
 bool any_imported_surface_in_use() {
     for (const ImportedSurface& surface : g_imported_surfaces) {
         if (surface.in_use) {
@@ -1959,6 +2090,8 @@ bool submit_present_surface(uint32_t surface_index, uint32_t x, uint32_t y, uint
         .y = y,
         .width = width,
         .height = height,
+        .sequence = 0,
+        .enqueue_tick = 0,
     });
 }
 
@@ -1980,6 +2113,8 @@ bool submit_imported_present(const ImportedSurface& surface, uint32_t x, uint32_
         .y = y,
         .width = width,
         .height = height,
+        .sequence = 0,
+        .enqueue_tick = 0,
     });
 }
 
@@ -2411,6 +2546,46 @@ int get_stats_ioctl(uint64_t argument) {
         : negative_error(SAVANXP_EINVAL);
 }
 
+int get_present_timeline_ioctl(uint64_t argument) {
+    savanxp_gpu_present_timeline timeline = {};
+    if (!process::validate_user_range(argument, sizeof(timeline), true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    fill_present_timeline(timeline);
+    return process::copy_to_user(argument, &timeline, sizeof(timeline))
+        ? 0
+        : negative_error(SAVANXP_EINVAL);
+}
+
+int wait_present_ioctl(uint64_t argument) {
+    savanxp_gpu_present_wait request = {};
+    bool target_failed = false;
+
+    if (!process::validate_user_range(argument, sizeof(request), true) ||
+        !process::copy_from_user(&request, argument, sizeof(request))) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (request.target_sequence != 0 &&
+        request.target_sequence > g_last_submitted_present_sequence) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (request.target_sequence != 0 &&
+        !wait_for_present_sequence_internal(request.target_sequence, target_failed)) {
+        return negative_error(SAVANXP_ETIMEDOUT);
+    }
+
+    request.retired_sequence = g_last_retired_present_sequence;
+    request.pending_count = g_pending_present_count;
+    request.flags = current_present_timeline_flags();
+    if (target_failed) {
+        request.flags |= SAVANXP_GPU_PRESENT_TIMELINE_FLAG_TARGET_FAILED;
+    }
+    return process::copy_to_user(argument, &request, sizeof(request))
+        ? 0
+        : negative_error(SAVANXP_EINVAL);
+}
+
 int get_scanouts_ioctl(uint64_t argument) {
     if (!process::validate_user_range(argument, sizeof(g_scanout_state), true)) {
         return negative_error(SAVANXP_EINVAL);
@@ -2557,6 +2732,16 @@ int gpu_ioctl(uint64_t request, uint64_t argument) {
                 return negative_error(SAVANXP_EBUSY);
             }
             return get_stats_ioctl(argument);
+        case GPU_IOC_GET_PRESENT_TIMELINE:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            return get_present_timeline_ioctl(argument);
+        case GPU_IOC_WAIT_PRESENT:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            return wait_present_ioctl(argument);
         case GPU_IOC_GET_SCANOUTS:
             return get_scanouts_ioctl(argument);
         case GPU_IOC_REFRESH_SCANOUTS:
@@ -2794,6 +2979,10 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     memset(&g_gpu_info, 0, sizeof(g_gpu_info));
     memset(&g_scanout_state, 0, sizeof(g_scanout_state));
     memset(&g_gpu_stats, 0, sizeof(g_gpu_stats));
+    memset(g_command_slots, 0, sizeof(g_command_slots));
+    memset(g_pending_presents, 0, sizeof(g_pending_presents));
+    memset(g_pending_present_order, 0, sizeof(g_pending_present_order));
+    memset(g_retired_present_history, 0, sizeof(g_retired_present_history));
     g_front_surface_index = 0;
     g_present = false;
     g_ready = false;
@@ -2802,13 +2991,18 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_preferred_scanout_width = 0;
     g_preferred_scanout_height = 0;
     g_next_fence_id = 1;
+    g_next_present_sequence = 1;
+    g_last_submitted_present_sequence = 0;
+    g_last_retired_present_sequence = 0;
     g_last_response_type = 0;
     g_command_slot_capacity = 0;
     g_cursor_command = {};
+    g_retired_present_history_next = 0;
     g_irq_line = 0xffu;
     g_irq_registered = false;
     g_irq_work_pending = false;
     g_scanout_refresh_pending = false;
+    g_pending_present_count = 0;
     reset_present_tracking();
 
     pci::DeviceInfo pci_device = {};

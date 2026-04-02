@@ -2,6 +2,7 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/device.hpp"
 #include "kernel/input.hpp"
 #include "kernel/process.hpp"
 #include "kernel/rtc.hpp"
@@ -163,6 +164,7 @@ namespace timer
     process::SavedContext *handle_interrupt(process::SavedContext *context)
     {
         g_ticks = g_ticks + 1;
+        device::service_background();
         input::poll();
         arch::x86_64::acknowledge_local_apic_interrupt();
         return process::handle_timer_tick(context);

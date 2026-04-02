@@ -1389,6 +1389,7 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
             return 0;
         }
 
+        device::service_background();
         input::poll();
         net::poll();
         arch::x86_64::enable_interrupts();

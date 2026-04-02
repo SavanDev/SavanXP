@@ -291,6 +291,8 @@ enum savanxp_gpu_ioctl {
     GPU_IOC_REFRESH_SCANOUTS = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 13),
     GPU_IOC_SET_CURSOR = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 14),
     GPU_IOC_MOVE_CURSOR = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 15),
+    GPU_IOC_GET_PRESENT_TIMELINE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 16),
+    GPU_IOC_WAIT_PRESENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 17),
 };
 
 enum savanxp_audio_ioctl {
@@ -431,6 +433,25 @@ struct savanxp_gpu_cursor_position {
     uint32_t reserved0;
 };
 
+enum savanxp_gpu_present_timeline_flags {
+    SAVANXP_GPU_PRESENT_TIMELINE_FLAG_DEGRADED = 1u << 0,
+    SAVANXP_GPU_PRESENT_TIMELINE_FLAG_TARGET_FAILED = 1u << 1,
+};
+
+struct savanxp_gpu_present_timeline {
+    uint64_t submitted_sequence;
+    uint64_t retired_sequence;
+    uint32_t pending_count;
+    uint32_t flags;
+};
+
+struct savanxp_gpu_present_wait {
+    uint64_t target_sequence;
+    uint64_t retired_sequence;
+    uint32_t pending_count;
+    uint32_t flags;
+};
+
 struct savanxp_gpu_stats {
     uint64_t present_enqueued;
     uint64_t present_completed;
@@ -466,6 +487,12 @@ struct savanxp_gpu_stats {
     uint64_t scanout_refreshes;
     uint64_t cursor_updates;
     uint64_t cursor_moves;
+    uint64_t wait_present_polls;
+    uint64_t wait_present_ticks;
+    uint64_t present_wait_timeouts;
+    uint64_t present_end_to_end_ticks;
+    uint64_t present_end_to_end_samples;
+    uint64_t present_end_to_end_max_ticks;
 };
 
 #define SAVANXP_GPU_CLIENT_SURFACE_MAGIC 0x53584746u

@@ -77,7 +77,7 @@ Nodos reservados actualmente:
 
 Ioctl groups:
 
-- gpu: `GPU_IOC_GET_INFO`, `GPU_IOC_ACQUIRE`, `GPU_IOC_RELEASE`, `GPU_IOC_PRESENT`, `GPU_IOC_PRESENT_REGION`, `GPU_IOC_SET_MODE`, `GPU_IOC_IMPORT_SECTION`, `GPU_IOC_RELEASE_SURFACE`, `GPU_IOC_PRESENT_SURFACE_REGION`, `GPU_IOC_WAIT_IDLE`, `GPU_IOC_GET_STATS`, `GPU_IOC_GET_SCANOUTS`, `GPU_IOC_REFRESH_SCANOUTS`, `GPU_IOC_SET_CURSOR`, `GPU_IOC_MOVE_CURSOR`
+- gpu: `GPU_IOC_GET_INFO`, `GPU_IOC_ACQUIRE`, `GPU_IOC_RELEASE`, `GPU_IOC_PRESENT`, `GPU_IOC_PRESENT_REGION`, `GPU_IOC_SET_MODE`, `GPU_IOC_IMPORT_SECTION`, `GPU_IOC_RELEASE_SURFACE`, `GPU_IOC_PRESENT_SURFACE_REGION`, `GPU_IOC_WAIT_IDLE`, `GPU_IOC_GET_STATS`, `GPU_IOC_GET_SCANOUTS`, `GPU_IOC_REFRESH_SCANOUTS`, `GPU_IOC_SET_CURSOR`, `GPU_IOC_MOVE_CURSOR`, `GPU_IOC_GET_PRESENT_TIMELINE`, `GPU_IOC_WAIT_PRESENT`
 - network: `NET_IOC_GET_INFO`, `NET_IOC_UP`, `NET_IOC_PING`
 - pc speaker: `PCSPK_IOC_BEEP`, `PCSPK_IOC_STOP`
 - audio: `AUDIO_IOC_GET_INFO`
@@ -89,6 +89,8 @@ Tipos compartidos:
 - `struct savanxp_gpu_scanout_state`
 - `struct savanxp_gpu_cursor_image`
 - `struct savanxp_gpu_cursor_position`
+- `struct savanxp_gpu_present_timeline`
+- `struct savanxp_gpu_present_wait`
 - `struct savanxp_input_event`
 - `struct savanxp_mouse_event`
 - `struct savanxp_net_info`

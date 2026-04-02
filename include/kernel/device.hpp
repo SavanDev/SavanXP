@@ -20,5 +20,6 @@ int read(Device* device, uint64_t user_buffer, size_t count);
 int write(Device* device, uint64_t user_buffer, size_t count);
 int ioctl(Device* device, uint64_t request, uint64_t argument);
 void close(Device* device);
+void service_background();
 
 } // namespace device
