@@ -1,6 +1,6 @@
 # SavanXP
 
-Version actual del proyecto: `v0.2.1`
+Version actual del proyecto: `v0.2.2`
 
 Historial de versiones: `CHANGELOG.md`
 
@@ -107,8 +107,9 @@ compositor/sesion principal:
 - `SVFS2` como filesystem persistente de `/disk`, con `superblock`
   primario/secundario, journal fijo de metadatos, bitmap de bloques, bitmap
   de inodos y tabla de inodos con extents para archivos/directorios.
-- SDK v1 minima en `C` (`crt0.S`, `libc.[ch]`, `userland/linker.ld`,
-  `include/shared/syscall.h`) y tooling host para instalar apps externas
+- SDK v1 minima en `C` bajo `subsystems/posix/sdk/v1`
+  (`runtime/crt0.S`, `runtime/libc.c`, `runtime/posix.c`, `linker.ld`,
+  `include/savanxp/syscall.h`) y tooling host para instalar apps externas
   directo en `build/disk.img`.
 - Heap del kernel y runtime POSIX del SDK ahora reciclan bloques liberados con
   `free()`/`realloc()`, dejando una base comun mejor encaminada para futuras
@@ -216,7 +217,7 @@ ABI base ya no dependen solo de verificacion host-side.
 `doomgeneric`, pero ya no se considera la prueba principal del paradigma
 desktop-first ni del stack GPU del SO.
 
-Dentro de la `sdk/v1`, el runtime POSIX ya no usa un allocator solo tipo
+Dentro de `subsystems/posix/sdk/v1`, el runtime POSIX ya no usa un allocator solo tipo
 arena/bump: `malloc`, `free`, `calloc` y `realloc` reciclan memoria dentro del
 heap fijo actual, lo que vuelve mucho mas utiles ports y apps externas sin
 depender todavia de `sbrk`/`mmap`.
@@ -266,7 +267,7 @@ trabajar con apps externas del SDK desde VS Code. La extension agrega:
 
 - comandos para crear, compilar, instalar y ejecutar apps del SDK
 - un panel lateral `SavanXP` con ejemplos bajo `sdk/` y snippets curados
-- acceso rapido a `sdk/v1/REFERENCE.md`
+- acceso rapido a `subsystems/posix/sdk/v1/REFERENCE.md`
 
 Para cargarla en modo desarrollo:
 

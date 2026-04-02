@@ -6,7 +6,7 @@
 #include "kernel/device.hpp"
 #include "kernel/process.hpp"
 #include "kernel/timer.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace {
 

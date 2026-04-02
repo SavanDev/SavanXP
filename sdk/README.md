@@ -1,8 +1,8 @@
 # SDK
 
-Esta carpeta contiene ejemplos de apps externas en `C` para SavanXP. Se compilan en Windows y se instalan directo en `build/disk.img`, sin reconstruir `initramfs`.
+Esta carpeta contiene ejemplos y ports externos en `C` para SavanXP. Se compilan en Windows y se instalan directo en `build/disk.img`, sin reconstruir `initramfs`.
 
-La superficie pública actual está en `sdk/v1`.
+La superficie pública canónica del SDK ahora está en `subsystems/posix/sdk/v1`.
 
 Flujo base:
 
@@ -86,6 +86,12 @@ Compilar, instalar y arrancar QEMU en un paso:
 
 ```powershell
 .\tools\run-user.ps1 -Source .\sdk\errdemo -Name errdemo
+```
+
+Referencia canónica del SDK:
+
+```text
+subsystems/posix/sdk/v1
 ```
 
 Caso DoomGeneric:

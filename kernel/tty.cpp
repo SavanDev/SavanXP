@@ -6,7 +6,7 @@
 #include "kernel/input.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace {
 

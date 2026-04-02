@@ -6,7 +6,7 @@
 #include "kernel/object.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace device {
 struct Device;

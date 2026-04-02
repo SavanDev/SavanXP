@@ -1,6 +1,6 @@
 # SDK v1.2
 
-`sdk/v1` es la superficie pública actual para compilar apps externas en `C`
+`subsystems/posix/sdk/v1` es la superficie pública actual para compilar apps externas en `C`
 contra SavanXP. El nivel de contrato vigente dentro de esta carpeta es `SDK
 1.2`.
 
@@ -108,7 +108,7 @@ Helpers públicos del runtime:
 Capas públicas:
 
 - `savanxp/*` sigue expuesto como capa baja del ABI y wrappers crudos.
-- los headers estándar en `sdk/v1/include` montan una capa POSIX/libc arriba sin romper apps viejas.
+- los headers estándar en `subsystems/posix/sdk/v1/include` montan una capa POSIX/libc arriba sin romper apps viejas.
 - la libc pública incluye allocator sobre heap fijo del runtime, con `malloc`,
   `free`, `calloc` y `realloc` reciclables dentro de ese espacio.
 
@@ -180,7 +180,7 @@ El tooling:
 - acepta un archivo `.c` individual o un directorio
 - compila todas las fuentes `.c` y `.S` del directorio en forma recursiva
 - agrega automáticamente `-I <source>` y `-I <source>/include` si existe
-- usa `sdk/v1` como runtime público en vez del árbol interno de `userland`
+- usa `subsystems/posix/sdk/v1` como runtime público en vez del árbol interno de `subsystems/posix/userland`
 
 Smoke tests útiles en el estado actual:
 
@@ -233,4 +233,4 @@ miapp/
 El ejemplo `sdk/template` sirve como punto de partida y `sdk/multifile`
 demuestra compilación con varias unidades de traducción.
 
-Para el detalle de límites y contratos estables, ver `sdk/v1/REFERENCE.md`.
+Para el detalle de límites y contratos estables, ver `subsystems/posix/sdk/v1/REFERENCE.md`.

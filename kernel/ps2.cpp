@@ -7,7 +7,7 @@
 #include "kernel/cpu.hpp"
 #include "kernel/input.hpp"
 #include "kernel/virtio_input.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace {
 

@@ -2,7 +2,7 @@
 
 #include "kernel/virtio_gpu.hpp"
 #include "kernel/vfs.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace {
 

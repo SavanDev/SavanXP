@@ -12,7 +12,7 @@
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace net {
 

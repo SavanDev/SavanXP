@@ -4,7 +4,7 @@
 
 #define SAVANXP_SDK_VERSION 1
 #define SAVANXP_SDK_VERSION_MAJOR 1
-#define SAVANXP_SDK_VERSION_MINOR 1
+#define SAVANXP_SDK_VERSION_MINOR 2
 
 #define SAVANXP_STDIN_FILENO 0
 #define SAVANXP_STDOUT_FILENO 1
@@ -219,6 +219,9 @@ struct savanxp_system_info {
     uint64_t memory_usable_bytes;
     uint64_t memory_reclaimable_bytes;
     uint64_t memory_total_pages;
+    uint64_t svfs_total_bytes;
+    uint64_t svfs_used_bytes;
+    uint64_t svfs_free_bytes;
     uint64_t initramfs_size;
     uint64_t uptime_ms;
 };

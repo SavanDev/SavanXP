@@ -8,7 +8,7 @@ const PROJECT_MARKERS = [
     "build.ps1",
     path.join("tools", "build-user.ps1"),
     path.join("tools", "new-user-app.ps1"),
-    path.join("sdk", "v1", "REFERENCE.md")
+    path.join("subsystems", "posix", "sdk", "v1", "REFERENCE.md")
 ];
 
 const EXAMPLE_DESCRIPTIONS = {
@@ -78,7 +78,7 @@ function activate(context) {
             return;
         }
 
-        const referencePath = path.join(project.rootPath, "sdk", "v1", "REFERENCE.md");
+        const referencePath = path.join(project.rootPath, "subsystems", "posix", "sdk", "v1", "REFERENCE.md");
         await openTextDocument(referencePath);
     });
     register("savanxp.buildBaseImage", async () => {
@@ -395,7 +395,7 @@ function listExamples(rootPath) {
     }
 
     return fs.readdirSync(sdkRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && entry.name !== "v1")
+        .filter((entry) => entry.isDirectory())
         .map((entry) => ({
             name: entry.name,
             description: EXAMPLE_DESCRIPTIONS[entry.name] || "SDK example",
@@ -519,7 +519,7 @@ function resolveExampleFromActiveEditor(rootPath) {
 
     const relative = path.relative(sdkRoot, filePath);
     const parts = relative.split(path.sep);
-    if (parts.length === 0 || parts[0] === "v1") {
+    if (parts.length === 0) {
         return null;
     }
 

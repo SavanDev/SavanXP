@@ -20,6 +20,11 @@ $BusyBoxPortRoot = Join-Path $ProjectRoot "vendor\\busybox-port"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
 $DiskImage = Join-Path $BuildRoot "disk.img"
 $ToolRoot = Join-Path $ProjectRoot "tools"
+$SubsystemRoot = Join-Path $ProjectRoot "subsystems"
+$PosixRoot = Join-Path $SubsystemRoot "posix"
+$PosixKernelRoot = Join-Path $PosixRoot "kernel"
+$PosixSdkRoot = Join-Path $PosixRoot "sdk\\v1"
+$PosixUserlandRoot = Join-Path $PosixRoot "userland"
 $LimineRoot = Join-Path $ToolRoot "limine"
 $LimineBranch = "v10.x-binary"
 $KernelElf = Join-Path $BuildRoot "kernel.elf"
@@ -35,6 +40,12 @@ $SvfsSectorSize = 512
 $SvfsDirectorySectors = 8
 $SvfsMaxFiles = 64
 $SvfsTotalSectors = 131072
+
+$PosixKernelSources = @(
+    Get-ChildItem -Path $PosixKernelRoot -Filter "*.cpp" -File |
+        Sort-Object FullName |
+        ForEach-Object { $_.FullName.Substring($ProjectRoot.Length + 1).Replace("\", "/") }
+)
 
 $KernelSources = @(
     "arch/x86_64/context.S",
@@ -67,51 +78,51 @@ $KernelSources = @(
     "kernel/process.cpp",
     "kernel/panic.cpp",
     "kernel/runtime.cpp"
-)
+) + $PosixKernelSources
 
 $UserPrograms = @(
-    @{ Name = "init"; Source = "userland/init.c" },
-    @{ Name = "sh"; Sources = @("userland/sh.c", "userland/shell_core.c") },
-    @{ Name = "shellapp"; Sources = @("userland/shellapp.c", "userland/shell_core.c") },
-    @{ Name = "uname"; Source = "userland/uname.c" },
-    @{ Name = "df"; Source = "userland/df.c" },
-    @{ Name = "ticker"; Source = "userland/ticker.c" },
-    @{ Name = "demo"; Source = "userland/demo.c" },
-    @{ Name = "ps_legacy"; Source = "userland/ps.c" },
-    @{ Name = "fdtest"; Source = "userland/fdtest.c" },
-    @{ Name = "waittest"; Source = "userland/waittest.c" },
-    @{ Name = "pipestress"; Source = "userland/pipestress.c" },
-    @{ Name = "spawnloop"; Source = "userland/spawnloop.c" },
-    @{ Name = "badptr"; Source = "userland/badptr.c" },
-    @{ Name = "rmdir"; Source = "userland/rmdir.c" },
-    @{ Name = "truncate"; Source = "userland/truncate.c" },
-    @{ Name = "sync"; Source = "userland/sync.c" },
-    @{ Name = "seektest"; Source = "userland/seektest.c" },
-    @{ Name = "renametest"; Source = "userland/renametest.c" },
-    @{ Name = "truncatetest"; Source = "userland/truncatetest.c" },
-    @{ Name = "errtest"; Source = "userland/errtest.c" },
-    @{ Name = "netinfo"; Source = "userland/netinfo.c" },
-    @{ Name = "ping"; Source = "userland/ping.c" },
-    @{ Name = "udpsend"; Source = "userland/udpsend.c" },
-    @{ Name = "udprecv"; Source = "userland/udprecv.c" },
-    @{ Name = "udptest"; Source = "userland/udptest.c" },
-    @{ Name = "tcpget"; Source = "userland/tcpget.c" },
-    @{ Name = "beep"; Source = "userland/beep.c" },
-    @{ Name = "audiotest"; Source = "userland/audiotest.c" },
-    @{ Name = "desktop"; Source = "userland/desktop.c" },
-    @{ Name = "gfxdemo"; Source = "userland/gfxdemo.c" },
-    @{ Name = "gputest"; Source = "userland/gputest.c" },
-    @{ Name = "keytest"; Source = "userland/keytest.c" },
-    @{ Name = "mousetest"; Source = "userland/mousetest.c" },
-    @{ Name = "sysinfo"; Source = "userland/sysinfo.c" },
-    @{ Name = "forktest"; Source = "userland/forktest.c" },
-    @{ Name = "polltest"; Source = "userland/polltest.c" },
-    @{ Name = "sigtest"; Source = "userland/sigtest.c" },
-    @{ Name = "eventtest"; Source = "userland/eventtest.c" },
-    @{ Name = "timertest"; Source = "userland/timertest.c" },
-    @{ Name = "sectiontest"; Source = "userland/sectiontest.c" },
-    @{ Name = "mmaptest"; Source = "userland/mmaptest.c" },
-    @{ Name = "smoke"; Source = "userland/smoke.c" }
+    @{ Name = "init"; Source = "subsystems/posix/userland/init.c" },
+    @{ Name = "sh"; Sources = @("subsystems/posix/userland/sh.c", "subsystems/posix/userland/shell_core.c") },
+    @{ Name = "shellapp"; Sources = @("subsystems/posix/userland/shellapp.c", "subsystems/posix/userland/shell_core.c") },
+    @{ Name = "uname"; Source = "subsystems/posix/userland/uname.c" },
+    @{ Name = "df"; Source = "subsystems/posix/userland/df.c" },
+    @{ Name = "ticker"; Source = "subsystems/posix/userland/ticker.c" },
+    @{ Name = "demo"; Source = "subsystems/posix/userland/demo.c" },
+    @{ Name = "ps_legacy"; Source = "subsystems/posix/userland/ps.c" },
+    @{ Name = "fdtest"; Source = "subsystems/posix/userland/fdtest.c" },
+    @{ Name = "waittest"; Source = "subsystems/posix/userland/waittest.c" },
+    @{ Name = "pipestress"; Source = "subsystems/posix/userland/pipestress.c" },
+    @{ Name = "spawnloop"; Source = "subsystems/posix/userland/spawnloop.c" },
+    @{ Name = "badptr"; Source = "subsystems/posix/userland/badptr.c" },
+    @{ Name = "rmdir"; Source = "subsystems/posix/userland/rmdir.c" },
+    @{ Name = "truncate"; Source = "subsystems/posix/userland/truncate.c" },
+    @{ Name = "sync"; Source = "subsystems/posix/userland/sync.c" },
+    @{ Name = "seektest"; Source = "subsystems/posix/userland/seektest.c" },
+    @{ Name = "renametest"; Source = "subsystems/posix/userland/renametest.c" },
+    @{ Name = "truncatetest"; Source = "subsystems/posix/userland/truncatetest.c" },
+    @{ Name = "errtest"; Source = "subsystems/posix/userland/errtest.c" },
+    @{ Name = "netinfo"; Source = "subsystems/posix/userland/netinfo.c" },
+    @{ Name = "ping"; Source = "subsystems/posix/userland/ping.c" },
+    @{ Name = "udpsend"; Source = "subsystems/posix/userland/udpsend.c" },
+    @{ Name = "udprecv"; Source = "subsystems/posix/userland/udprecv.c" },
+    @{ Name = "udptest"; Source = "subsystems/posix/userland/udptest.c" },
+    @{ Name = "tcpget"; Source = "subsystems/posix/userland/tcpget.c" },
+    @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
+    @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c" },
+    @{ Name = "desktop"; Source = "subsystems/posix/userland/desktop.c" },
+    @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c" },
+    @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c" },
+    @{ Name = "keytest"; Source = "subsystems/posix/userland/keytest.c" },
+    @{ Name = "mousetest"; Source = "subsystems/posix/userland/mousetest.c" },
+    @{ Name = "sysinfo"; Source = "subsystems/posix/userland/sysinfo.c" },
+    @{ Name = "forktest"; Source = "subsystems/posix/userland/forktest.c" },
+    @{ Name = "polltest"; Source = "subsystems/posix/userland/polltest.c" },
+    @{ Name = "sigtest"; Source = "subsystems/posix/userland/sigtest.c" },
+    @{ Name = "eventtest"; Source = "subsystems/posix/userland/eventtest.c" },
+    @{ Name = "timertest"; Source = "subsystems/posix/userland/timertest.c" },
+    @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c" },
+    @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c" },
+    @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c" }
 )
 
 $BusyBoxApplets = @(
@@ -225,6 +236,7 @@ function Get-CommonFlags {
         "-Wextra",
         "-Wpedantic",
         "-I", (Join-Path $ProjectRoot "include"),
+        "-I", (Join-Path $PosixSdkRoot "include"),
         "-I", (Join-Path $ProjectRoot "vendor")
     )
 }
@@ -248,7 +260,8 @@ function Get-UserFlags {
         "-Wno-language-extension-token",
         "-Wno-c23-extensions",
         "-I", (Join-Path $ProjectRoot "include"),
-        "-I", (Join-Path $ProjectRoot "userland"),
+        "-I", (Join-Path $PosixSdkRoot "include"),
+        "-I", $PosixUserlandRoot,
         "-I", $GeneratedRoot
     )
 }
@@ -466,7 +479,11 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
     foreach ($program in $UserPrograms) {
         $objectFiles = @()
         $programSources = if ($program.ContainsKey("Sources")) { $program.Sources } else { @($program.Source) }
-        foreach ($source in @("userland/crt0.S", "userland/libc.c", "userland/gfx.c") + $programSources) {
+        foreach ($source in @(
+            "subsystems/posix/sdk/v1/runtime/crt0.S",
+            "subsystems/posix/sdk/v1/runtime/libc.c",
+            "subsystems/posix/sdk/v1/runtime/gfx.c"
+        ) + $programSources) {
             $sourcePath = Join-Path $ProjectRoot $source
             $objectName = "$($program.Name)_$([IO.Path]::GetFileNameWithoutExtension($source)).o"
             $objectPath = Join-Path $userObjRoot $objectName
@@ -483,7 +500,7 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
         $outputPath = Join-Path $binRoot $program.Name
         $linkArgs = @(
             "-m", "elf_x86_64",
-            "-T", (Join-Path $ProjectRoot "userland\\linker.ld"),
+            "-T", (Join-Path $PosixSdkRoot "linker.ld"),
             "-z", "max-page-size=0x1000",
             "--build-id=none",
             "-o", $outputPath

@@ -10,6 +10,55 @@ Notas de corte:
 
 ## [Unreleased]
 
+### Agregado
+
+- ABI publica nueva en `/dev/gpu0` para seguimiento explicito de presents con
+  `GPU_IOC_GET_PRESENT_TIMELINE` y `GPU_IOC_WAIT_PRESENT`.
+- Estadisticas ampliadas de `virtio-gpu` con latencia end-to-end por frame,
+  incluyendo muestras acumuladas y peor caso observado.
+
+### Cambiado
+
+- El progreso en background de `virtio-gpu` deja de depender del subsistema de
+  input y pasa a bombearse desde un servicio de dispositivos del kernel
+  invocado en timer y waits bloqueantes.
+- El `desktop` pasa a trabajar con presupuesto de un frame visible: si ya hay
+  un present en vuelo, coalescea dirty rects y espera el retiro explicito del
+  frame anterior antes de reutilizar su surface importada.
+- `gputest --smoke` ahora valida tambien la timeline de presents y el pacing
+  explicito del driver, no solo stats/stages internos.
+- El banner lateral del menu Inicio cambia a texto vertical para aprovechar
+  mejor la franja del costado y encajar mas limpio en el layout actual.
+
+## [0.2.2] - 2026-04-01
+
+### Agregado
+
+- Arbol nuevo `subsystems/` con `subsystems/posix` como primer subsistema
+  explicito del SO, separando `kernel`, `userland` y `sdk` bajo un mismo
+  ownership.
+
+### Cambiado
+
+- La entrada y el dispatcher POSIX de syscalls pasan a vivir bajo
+  `subsystems/posix/kernel`, mientras `kernel/` conserva el scheduler,
+  procesos base, VM, VFS, drivers y demas mecanismos genericos.
+- El SDK canonico v1 pasa a `subsystems/posix/sdk/v1`; el build principal,
+  `tools/build-user.ps1` y la extension de VS Code consumen ahora esa ruta
+  como referencia publica del subsistema POSIX.
+- El userland interno se mueve a `subsystems/posix/userland` y compila contra
+  el runtime canonico compartido del SDK, eliminando duplicados internos y
+  dejando `sdk/` top-level como raiz de ejemplos y ports.
+- La definicion publica del ABI visible queda unificada en
+  `subsystems/posix/sdk/v1/include/savanxp/syscall.h`, sin copia paralela en
+  `include/shared`.
+- El sistema pasa a reportarse como `v0.2.2` en kernel, shell, `uname`,
+  `sysinfo` y componentes que consumen la version compartida.
+- La migracion vuelve a validar el flujo de imagen persistente:
+  `.\sdk\doomgeneric\build.ps1`, `.\build.ps1 build` y `.\build.ps1 smoke`
+  siguen conservando `doomgeneric` y `doom1.wad` en `build/disk.img` sin
+  recreacion normal de la imagen.
+
 ## [0.2.1] - 2026-03-30
 
 ### Agregado
@@ -83,7 +132,7 @@ Notas de corte:
 - Soporte inicial de `Section/View` anónimo en el kernel, incluyendo memoria
   compartida entre procesos, herencia `shared` vs `private` al hacer `fork()`
   y tests nuevos `eventtest`, `timertest`, `sectiontest` y `mmaptest`.
-- Capa POSIX nueva para `mmap` / `munmap` anónimo en `sdk/v1`, más header
+- Capa POSIX nueva para `mmap` / `munmap` anónimo en `subsystems/posix/sdk/v1`, más header
   estándar `sys/mman.h`.
 
 ### Cambiado
@@ -180,7 +229,7 @@ Notas de corte:
 - El heap del kernel dejo de ser lineal-only y ahora recicla bloques
   liberados, hace `split/coalesce` y puede devolver arenas completas al
   allocador fisico cuando quedan vacias.
-- El runtime POSIX de `sdk/v1` reemplazo su allocator tipo arena/bump por un
+- El runtime POSIX de `subsystems/posix/sdk/v1` reemplazo su allocator tipo arena/bump por un
   heap fijo reciclable, de modo que `malloc`, `free`, `calloc` y `realloc`
   ya reutilizan memoria en apps externas.
 - `sdk/doomgeneric` ya no corre acelerado por un reloj base incorrecto; el
@@ -266,7 +315,7 @@ Notas de corte:
   `unistd.h`, `fcntl.h`, `stdio.h`, `stdlib.h`, `string.h`, `dirent.h`,
   `sys/stat.h`, `sys/socket.h`, `netinet/in.h`, `arpa/inet.h`, `time.h`
   y asociados.
-- Runtime nuevo `sdk/v1/runtime/posix.c` para apps externas, con `stdio`
+- Runtime nuevo `subsystems/posix/sdk/v1/runtime/posix.c` para apps externas, con `stdio`
   basico, `DIR*`, heap simple tipo arena, conversiones, helpers de string,
   tiempo y sockets cliente.
 - Syscalls/base ABI nuevas para `getpid`, `stat`, `fstat`, `chdir`

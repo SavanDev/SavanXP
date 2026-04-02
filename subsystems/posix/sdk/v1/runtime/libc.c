@@ -1,8 +1,6 @@
-#include "libc.h"
+#include "savanxp/libc.h"
 
 #include <stdarg.h>
-
-#include "shared/syscall.h"
 
 static long syscall3(unsigned long number, unsigned long a, unsigned long b, unsigned long c) {
     long result;
@@ -243,51 +241,6 @@ long unmap_view(void* base) {
     return syscall1(SAVANXP_SYS_UNMAP_VIEW, (unsigned long)base);
 }
 
-void* mmap(void* address, size_t length, int prot, int flags, int fd, long offset) {
-    unsigned long section_flags = 0;
-    unsigned long view_flags = 0;
-    long section = 0;
-    void* mapped = MAP_FAILED;
-
-    if (address != 0 || length == 0 || fd != -1 || offset != 0) {
-        return (void*)(intptr_t)-SAVANXP_EINVAL;
-    }
-    if ((flags & MAP_ANONYMOUS) == 0 || ((flags & MAP_SHARED) == 0) == ((flags & MAP_PRIVATE) == 0)) {
-        return (void*)(intptr_t)-SAVANXP_EINVAL;
-    }
-    if ((prot & ~(PROT_READ | PROT_WRITE)) != 0 || (prot & (PROT_READ | PROT_WRITE)) == 0) {
-        return (void*)(intptr_t)-SAVANXP_ENOSYS;
-    }
-
-    if ((prot & PROT_READ) != 0) {
-        section_flags |= SAVANXP_SECTION_READ;
-    }
-    if ((prot & PROT_WRITE) != 0) {
-        section_flags |= SAVANXP_SECTION_WRITE;
-    }
-
-    section = section_create((unsigned long)length, section_flags);
-    if (section < 0) {
-        return (void*)(intptr_t)section;
-    }
-
-    view_flags = section_flags;
-    if ((flags & MAP_PRIVATE) != 0) {
-        view_flags |= SAVANXP_VIEW_PRIVATE;
-    }
-
-    mapped = map_view((int)section, view_flags);
-    close((int)section);
-    return mapped;
-}
-
-int munmap(void* address, size_t length) {
-    if (address == 0 || address == MAP_FAILED || length == 0) {
-        return -SAVANXP_EINVAL;
-    }
-    return (int)unmap_view(address);
-}
-
 long yield(void) {
     return syscall0(SAVANXP_SYS_YIELD);
 }
@@ -330,6 +283,51 @@ long realtime(struct savanxp_realtime* value) {
 
 long sync(void) {
     return syscall0(SAVANXP_SYS_SYNC);
+}
+
+void* mmap(void* address, size_t length, int prot, int flags, int fd, long offset) {
+    unsigned long section_flags = 0;
+    unsigned long view_flags = 0;
+    long section = 0;
+    void* mapped = (void*)(intptr_t)-1;
+
+    if (address != 0 || length == 0 || fd != -1 || offset != 0) {
+        return (void*)(intptr_t)-SAVANXP_EINVAL;
+    }
+    if ((flags & 0x20) == 0 || ((flags & 0x01) == 0) == ((flags & 0x02) == 0)) {
+        return (void*)(intptr_t)-SAVANXP_EINVAL;
+    }
+    if ((prot & ~0x3) != 0 || (prot & 0x3) == 0) {
+        return (void*)(intptr_t)-SAVANXP_ENOSYS;
+    }
+
+    if ((prot & 0x1) != 0) {
+        section_flags |= SAVANXP_SECTION_READ;
+    }
+    if ((prot & 0x2) != 0) {
+        section_flags |= SAVANXP_SECTION_WRITE;
+    }
+
+    section = section_create((unsigned long)length, section_flags);
+    if (section < 0) {
+        return (void*)(intptr_t)section;
+    }
+
+    view_flags = section_flags;
+    if ((flags & 0x02) != 0) {
+        view_flags |= SAVANXP_VIEW_PRIVATE;
+    }
+
+    mapped = map_view((int)section, view_flags);
+    close((int)section);
+    return mapped;
+}
+
+int munmap(void* address, size_t length) {
+    if (address == 0 || address == (void*)(intptr_t)-1 || length == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return (int)unmap_view(address);
 }
 
 long mouse_open(void) {
@@ -452,6 +450,26 @@ long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, u
     return ioctl(fd, GPU_IOC_PRESENT_REGION, (unsigned long)&region);
 }
 
+long savanxp_getpid(void) {
+    return syscall0(SAVANXP_SYS_GETPID);
+}
+
+long savanxp_stat(const char* path, struct savanxp_stat* info) {
+    return syscall2(SAVANXP_SYS_STAT, (unsigned long)path, (unsigned long)info);
+}
+
+long savanxp_fstat(int fd, struct savanxp_stat* info) {
+    return syscall2(SAVANXP_SYS_FSTAT, (unsigned long)fd, (unsigned long)info);
+}
+
+long savanxp_chdir(const char* path) {
+    return syscall1(SAVANXP_SYS_CHDIR, (unsigned long)path);
+}
+
+long savanxp_getcwd(char* buffer, size_t count) {
+    return syscall2(SAVANXP_SYS_GETCWD, (unsigned long)buffer, (unsigned long)count);
+}
+
 void exit(int code) {
     syscall1(SAVANXP_SYS_EXIT, (unsigned long)code);
     for (;;) {
@@ -473,6 +491,8 @@ const char* error_string(int error_code) {
             return "ok";
         case SAVANXP_EIO:
             return "io error";
+        case SAVANXP_EACCES:
+            return "permission denied";
         case SAVANXP_EAGAIN:
             return "try again";
         case SAVANXP_EINVAL:
@@ -495,6 +515,8 @@ const char* error_string(int error_code) {
             return "is a directory";
         case SAVANXP_ENOSPC:
             return "no space left";
+        case SAVANXP_ENOTTY:
+            return "not a tty";
         case SAVANXP_EPIPE:
             return "broken pipe";
         case SAVANXP_ENOSYS:
@@ -647,11 +669,11 @@ void puts_fd(int fd, const char* text) {
 }
 
 void puts_err(const char* text) {
-    puts_fd(2, text);
+    puts_fd(SAVANXP_STDERR_FILENO, text);
 }
 
 void puts(const char* text) {
-    puts_fd(1, text);
+    puts_fd(SAVANXP_STDOUT_FILENO, text);
 }
 
 static void write_unsigned_fd(int fd, unsigned long value, unsigned long base) {
@@ -725,13 +747,13 @@ void printf_fd(int fd, const char* format, ...) {
 void eprintf(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    vprintf_fd(2, format, args);
+    vprintf_fd(SAVANXP_STDERR_FILENO, format, args);
     va_end(args);
 }
 
 void printf(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    vprintf_fd(1, format, args);
+    vprintf_fd(SAVANXP_STDOUT_FILENO, format, args);
     va_end(args);
 }

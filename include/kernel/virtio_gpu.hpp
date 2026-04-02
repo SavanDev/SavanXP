@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 #include "boot/boot_info.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace virtio_gpu {
 

@@ -7,9 +7,9 @@ This extension adds a SavanXP-focused explorer to VS Code for external SDK apps.
 - Detects a SavanXP repository from the current workspace or from `savanxp.projectRoot`
 - Builds and runs SDK examples through the existing PowerShell scripts
 - Shows a side panel with:
-  - `Examples`: the folders under `sdk/`, excluding `sdk/v1`
+  - `Examples`: the folders under `sdk/`
   - `SDK Snippets`: curated insertable snippets for the public SDK
-- Opens `sdk/v1/REFERENCE.md` directly from the panel
+- Opens `subsystems/posix/sdk/v1/REFERENCE.md` directly from the panel
 
 ## Load the extension
 
@@ -32,6 +32,6 @@ Or open `tools/vscode-extension` in VS Code and launch the extension host with `
 
 ## Notes
 
-- The extension only targets external apps built against `sdk/v1`.
+- The extension only targets external apps built against `subsystems/posix/sdk/v1`.
 - It does not replace `clangd` or the VS Code C/C++ extension.
 - Build and run commands reuse `tools/build-user.ps1`, `tools/new-user-app.ps1`, `tools/run-user.ps1` and `build.ps1`.

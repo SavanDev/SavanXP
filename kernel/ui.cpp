@@ -10,7 +10,7 @@
 #include "kernel/string.hpp"
 #include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace {
 

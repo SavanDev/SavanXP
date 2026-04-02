@@ -4,7 +4,7 @@
 
 #include "kernel/svfs.hpp"
 #include "kernel/string.hpp"
-#include "shared/syscall.h"
+#include "savanxp/syscall.h"
 
 namespace {
 

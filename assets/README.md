@@ -5,4 +5,4 @@ Sugerencias:
 - fondo transparente
 - hotspot asumido en `0,0` por ahora, o sea la punta superior izquierda
 
-Durante `.\build.ps1 build`, el archivo se convierte automaticamente a `build/generated/cursor_asset.h` y queda embebido en el binario de `userland/desktop.c`.
+Durante `.\build.ps1 build`, el archivo se convierte automaticamente a `build/generated/cursor_asset.h` y queda embebido en el binario de `subsystems/posix/userland/desktop.c`.

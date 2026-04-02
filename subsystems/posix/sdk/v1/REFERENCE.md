@@ -2,7 +2,7 @@
 
 ## Estabilidad
 
-La carpeta `sdk/v1` es la superficie pública congelada del SDK externo de
+La carpeta `subsystems/posix/sdk/v1` es la superficie pública congelada del SDK externo de
 SavanXP. El nivel vigente documentado en esta carpeta es `SDK 1.2`.
 
 Se consideran parte del contrato:
@@ -190,7 +190,7 @@ Audio PCM v1.2:
 
 ## Capa POSIX
 
-Headers estándar nuevos expuestos en `sdk/v1/include`:
+Headers estándar nuevos expuestos en `subsystems/posix/sdk/v1/include`:
 
 - `unistd.h`, `fcntl.h`, `poll.h`, `sys/select.h`, `signal.h`, `errno.h`
 - `stdio.h`, `stdlib.h`, `string.h`, `strings.h`, `ctype.h`, `math.h`, `time.h`
