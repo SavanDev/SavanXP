@@ -25,6 +25,9 @@ Notas de corte:
 - El `desktop` pasa a trabajar con presupuesto de un frame visible: si ya hay
   un present en vuelo, coalescea dirty rects y espera el retiro explicito del
   frame anterior antes de reutilizar su surface importada.
+- Primer corte interno del `desktop` para desacoplar menu/layout/render del
+  loop principal, manteniendo el binario `desktop` unico y el contrato
+  `desktop-first` sin cambios visibles.
 - `gputest --smoke` ahora valida tambien la timeline de presents y el pacing
   explicito del driver, no solo stats/stages internos.
 - El banner lateral del menu Inicio cambia a texto vertical para aprovechar

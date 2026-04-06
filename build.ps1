@@ -109,7 +109,12 @@ $UserPrograms = @(
     @{ Name = "tcpget"; Source = "subsystems/posix/userland/tcpget.c" },
     @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
     @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c" },
-    @{ Name = "desktop"; Source = "subsystems/posix/userland/desktop.c" },
+    @{ Name = "desktop"; Sources = @(
+        "subsystems/posix/userland/desktop.c",
+        "subsystems/posix/userland/desktop_menu.c",
+        "subsystems/posix/userland/desktop_layout.c",
+        "subsystems/posix/userland/desktop_render.c"
+    ) },
     @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c" },
     @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c" },
     @{ Name = "keytest"; Source = "subsystems/posix/userland/keytest.c" },
