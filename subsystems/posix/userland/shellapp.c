@@ -12,7 +12,6 @@
 #define SHELLAPP_LINE_HEIGHT 18
 #define SHELLAPP_CURSOR_PERIOD_MS 500UL
 #define SHELLAPP_PRESENT_INTERVAL_MS 16UL
-#define SHELLAPP_RESERVED_BOTTOM 42
 
 struct shellapp_line {
     char text[SHELLAPP_LINE_LENGTH];
@@ -133,7 +132,7 @@ static void shellapp_clear_history(void) {
 }
 
 static int shellapp_prompt_y(const struct savanxp_fb_info* info) {
-    return (int)info->height - SHELLAPP_RESERVED_BOTTOM - SHELLAPP_MARGIN_Y - gfx_text_height();
+    return (int)info->height - SHELLAPP_MARGIN_Y - gfx_text_height();
 }
 
 static void shellapp_invalidate_rect(int x, int y, int width, int height) {
