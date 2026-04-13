@@ -74,7 +74,7 @@ struct FB_ScreenInfo
 
 static struct FB_ScreenInfo s_Fb;
 int fb_scaling = 1;
-int usemouse = 1;
+int usemouse = 0;
 
 
 #ifdef CMAP256

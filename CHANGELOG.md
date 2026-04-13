@@ -58,9 +58,9 @@ Notas de corte:
 - El sistema pasa a reportarse como `v0.2.2` en kernel, shell, `uname`,
   `sysinfo` y componentes que consumen la version compartida.
 - La migracion vuelve a validar el flujo de imagen persistente:
-  `.\sdk\doomgeneric\build.ps1`, `.\build.ps1 build` y `.\build.ps1 smoke`
-  siguen conservando `doomgeneric` y `doom1.wad` en `build/disk.img` sin
-  recreacion normal de la imagen.
+  `.\sdk\doomgeneric\build.ps1` y `.\build.ps1 build` siguen conservando
+  `doomgeneric` y `doom1.wad` en `build/disk.img` sin recreacion normal de la
+  imagen.
 
 ## [0.2.1] - 2026-03-30
 
@@ -107,9 +107,9 @@ Notas de corte:
 - Los perfiles de QEMU usados por `run`, `smoke` y las utilidades graficas se
   alinean mejor con el hardware virtual real del stack actual
   (`virtio-gpu` + `virtio-tablet` + `desktop`).
-- `tools/doom-smoke.ps1` sigue disponible como smoke visual del port de
-  `doomgeneric`, pero deja de figurar como prueba principal del stack GPU
-  ahora que el paradigma normal del sistema es desktop-first.
+- `doomgeneric` pasa a vivir definitivamente como cliente del compositor y
+  queda orientado a validacion manual dentro de la sesion grafica normal,
+  en vez de depender de una smoke host-side propia.
 
 ## [0.2.0] - 2026-03-22
 
@@ -312,8 +312,8 @@ Notas de corte:
 - GUI fullscreen inicial con primitivas `gfx_*`, demo interna `gfxdemo` y
   ejemplo externo `sdk/gfxhello`.
 - Sonido minimo por `PC speaker` con comando `beep`.
-- Primer port externo grande en `sdk/doomgeneric`, con smoke test host-side
-  en `tools/doom-smoke.ps1`.
+- Primer port externo grande en `sdk/doomgeneric`, usado como hito practico
+  de apps externas graficas sobre el ABI del sistema.
 - Capa POSIX/libc inicial para SDK v1 con headers estandar publicos:
   `unistd.h`, `fcntl.h`, `stdio.h`, `stdlib.h`, `string.h`, `dirent.h`,
   `sys/stat.h`, `sys/socket.h`, `netinet/in.h`, `arpa/inet.h`, `time.h`

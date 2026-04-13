@@ -14,7 +14,6 @@ static struct savanxp_gfx_context g_gfx = {-1, -1, {0, 0, 0, 0, 0}, -1, 0, 0, 0,
 static uint32_t *g_present_buffer = 0;
 static uint32_t *g_previous_frame = 0;
 static uint32_t *g_scaled_row = 0;
-static int g_mouse_fd = -1;
 static int g_present_buffer_owned = 0;
 static uint32_t g_scale = 1;
 static int g_offset_x = 0;
@@ -43,11 +42,6 @@ static void sx_shutdown_video(void) {
     }
     g_present_buffer = 0;
     g_present_buffer_owned = 0;
-
-    if (g_mouse_fd >= 0) {
-        close(g_mouse_fd);
-        g_mouse_fd = -1;
-    }
 
     if (g_gfx.fb_fd >= 0 || g_gfx.input_fd >= 0) {
         gfx_release(&g_gfx);
@@ -194,11 +188,6 @@ void DG_Init(void) {
         sx_fail("doomgeneric: gfx_acquire failed");
     }
 
-    g_mouse_fd = (int)mouse_open();
-    if (g_mouse_fd < 0) {
-        g_mouse_fd = -1;
-    }
-
     sx_register_shutdown(sx_shutdown_video);
 
     if (sx_uses_client_surface()) {
@@ -315,43 +304,10 @@ int DG_GetKey(int *pressed, unsigned char *doom_key) {
 }
 
 int DG_GetMouse(int *buttons, int *delta_x, int *delta_y) {
-    struct savanxp_mouse_event event;
-    int accumulated_x = 0;
-    int accumulated_y = 0;
-    int mapped_buttons = 0;
-    int have_event = 0;
-    int poll_result;
-
-    if (buttons == 0 || delta_x == 0 || delta_y == 0 || g_mouse_fd < 0) {
-        return 0;
-    }
-
-    while ((poll_result = mouse_poll_event(g_mouse_fd, &event)) > 0) {
-        accumulated_x += event.delta_x;
-        accumulated_y += event.delta_y;
-        mapped_buttons = 0;
-
-        if ((event.buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0) {
-            mapped_buttons |= 1 << 0;
-        }
-        if ((event.buttons & SAVANXP_MOUSE_BUTTON_RIGHT) != 0) {
-            mapped_buttons |= 1 << 1;
-        }
-        if ((event.buttons & SAVANXP_MOUSE_BUTTON_MIDDLE) != 0) {
-            mapped_buttons |= 1 << 2;
-        }
-
-        have_event = 1;
-    }
-
-    if (!have_event) {
-        return 0;
-    }
-
-    *buttons = mapped_buttons;
-    *delta_x = accumulated_x;
-    *delta_y = accumulated_y;
-    return 1;
+    (void)buttons;
+    (void)delta_x;
+    (void)delta_y;
+    return 0;
 }
 
 void DG_SetWindowTitle(const char *title) {

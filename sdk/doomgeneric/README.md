@@ -2,77 +2,62 @@
 
 Estado actual del port:
 
-- jugable como app grafica externa sobre el stack actual de `gfx_*`
-- sin audio en esta etapa
-- usa `gfx_open()` como cliente del compositor; el runtime ya no cae a un
-  framebuffer exclusivo directo
-- usa `/dev/input0` y `/dev/mouse0` para teclado y mouse
-- guarda config y saves bajo `/disk/games/doom`
-- se integra mejor con la sesion grafica actual; cuando entra como
-  cliente del compositor recibe superficie compartida y presentacion via
-  `fd 3..6`
-- se apoya en el stack actual de input (`PS/2`, `virtio-input` o `virtio-tablet`,
-  segun el entorno) para teclado y mouse
-- se apoya en `SVFS2` para config, saves y archivos que crecen en runtime
-- sirve como primer juego porteado y como prueba fuerte de apps graficas
-  externas sobre el ABI actual de SavanXP
+- jugable como app grafica externa sobre el stack `gfx_*` actual
+- pensado para el modelo `desktop-first` de `SavanXP v0.2.2`
+- render interno restaurado a `320x200`, con escalado entero y centrado
+  dentro del `work area` del desktop
+- control exclusivamente por teclado
+- efectos de sonido por `/dev/audio0`
+- musica deshabilitada de forma explicita en esta etapa
+- config y saves persistentes bajo `/disk/games/doom`
+- validacion del port solo por pruebas manuales
 
-Que cambio con `v0.2.1` y como impacta al port:
+## Estado tecnico en `v0.2.2`
 
-- la documentacion vieja basada en `/dev/fb0` ya no describe el camino real;
-  el port hoy vive sobre `gfx_*` y corre como cliente del compositor
-- el backend no se rompio de lleno porque ya usaba `gfx_open()` y
-  `gfx_present_region()`; ademas, cuando el runtime entrega una superficie
-  compartida de cliente, Doom ahora renderiza directo ahi en lugar de usar un
-  buffer extra propio
-- el modelo natural de ejecucion ya no es "tomar el framebuffer exclusivo",
-  sino integrarse al desktop y a `shellapp`; Doom sigue ocupando todo el
-  work area disponible del compositor, con la taskbar del desktop visible
-  fuera de esa superficie
+El port sigue compilando desde `sdk/doomgeneric`, pero la SDK canonica del
+sistema ahora vive bajo `subsystems/posix/sdk/v1`. El build del port ya usa
+esa ruta a traves de la tooling compartida del repo.
 
-Ventajas practicas de `v0.2.1` para el port:
+El backend no toma el scanout completo ni vuelve al fullscreen exclusivo
+legacy. El camino normal sigue siendo:
 
-- `gfx_open()` ahora es compositor-first, asi que Doom puede correr como
-  cliente grafico real sin rehacerse alrededor de una ABI nueva
-- la presentacion por regiones sobre superficies compartidas encaja bien con
-  el backend actual, que ya detecta filas sucias y evita redibujar todo el
-  frame
-- `sleep_ms()` ahora corre sobre timers waitables del kernel, mejorando el
-  pacing del loop principal
-- `SVFS2` y el runtime POSIX ya quedaron lo bastante firmes como para sostener
-  `save/load` sin workarounds del lado del juego
-- `/dev/audio0` deja por primera vez una base realista para agregar sonido al
-  port sin tener que inventar infraestructura nueva
+- `gfx_open()` como cliente del compositor
+- superficie compartida cuando el runtime la entrega
+- `gfx_present_region()` para presentar solo la banda sucia del frame
 
-Cosas nuevas de `v0.2.1` que todavia no cambian demasiado a Doom:
+La imagen del juego vuelve a salir de un frame interno `320x200`. Eso corrige
+el tamaño visual que habia quedado demasiado chico desde `v0.2.2`, porque el
+escalado entero vuelve a aprovechar mejor el area cliente disponible.
 
-- el port no necesita hablar directo con `GPU_IOC_*`; `gfx_*` ya absorbe casi
-  todo el cambio de arquitectura
-- Doom tampoco necesita por ahora `poll`, `select`, `fcntl` u otros extras del
-  runtime nuevo, porque su backend actual ya funciona bien con
-  `gfx_poll_event()` y `mouse_poll_event()`
-- el mayor salto pendiente no es de compatibilidad sino de aprovechamiento:
-  agregar audio real y, si hiciera falta mas tuning, seguir bajando el costo
-  del present en modo cliente
+## Audio
 
-Que fixes quedaron en cada capa:
+El port ahora habilita solo `SFX`.
 
-- Kernel / sistema:
-  `SVFS2` ahora monta una imagen mas grande y mantiene un layout consistente
-  para journal, bitmap de bloques, bitmap de inodos y tabla de inodos; tambien
-  soporta crecimiento real de archivos en runtime y mejor propagacion de
-  errores de escritura desde `VFS`/process.
-- SDK / runtime POSIX:
-  la libc minima ahora resuelve mejor `snprintf`/`vsnprintf`, `FILE*`,
-  `fflush`, `fclose`, `fseek` y `ftell`; el fix clave para `save/load` fue
-  corregir `ftell()` para contar bytes pendientes en el buffer de escritura.
-- Port especifico de Doom:
-  el backend `doomgeneric_savanxp.c` sigue concentrando render, input, mapeo
-  de teclas, mouse y salida limpia; ademas se ajustaron rutas de config/saves,
-  algunos detalles de compatibilidad del menu/config del juego y el render
-  parcial por filas sucias.
+- usa `/dev/audio0`
+- consulta el formato con `AUDIO_IOC_GET_INFO`
+- mezcla a `PCM S16LE stereo 48 kHz`
+- degrada limpio a "sin SFX" si el dispositivo no esta disponible
 
-Build del port:
+La musica no se reproduce todavia. El backend musical queda en no-op para que
+el juego siga arrancando, entrando a partida y usando menu sin ruido ni crash.
+
+## Input
+
+El port queda intencionalmente en modo teclado-only. `DG_GetMouse()` sigue
+existiendo como hook por compatibilidad con DoomGeneric, pero no publica input
+real y el backend ya no abre `/dev/mouse0`.
+
+Controles esperados:
+
+- flechas: mover / rotar
+- `Ctrl`: disparar
+- `Espacio`: usar / abrir puertas
+- `Alt`: strafe
+- `Shift`: correr
+- `Esc`: menu
+- `F1` a `F10`: teclas especiales del juego
+
+## Build del port
 
 ```powershell
 .\sdk\doomgeneric\build.ps1
@@ -90,51 +75,22 @@ Ubicacion esperada del WAD:
 sdk/doomgeneric/wad/doom1.wad
 ```
 
-Por licencia no se incluye ningun WAD en el repo. Copia tu `doom1.wad` antes de correr el build.
+Por licencia no se incluye ningun WAD en el repo. Copia tu `doom1.wad` antes
+de correr el build.
 
-Controles esperados en la build actual:
+## Pruebas manuales recomendadas
 
-- flechas: mover/rotar
-- `Ctrl`: disparar
-- `Espacio`: usar / abrir puertas
-- `Alt`: strafe
-- `Shift`: correr
-- mouse: girar / mover vista
-- click izquierdo: disparar
-- click derecho: strafe
-- click medio: avanzar
-- `Esc`: menu / salir al menu
-- `F1` a `F10`: teclas especiales del juego
+- arrancar el sistema y ejecutar `doomgeneric`
+- confirmar que la imagen se ve grande dentro del `work area` del desktop
+- verificar `New Game`
+- verificar disparo, puertas, correr y `Esc`
+- verificar que se oyen al menos menu, disparo o puertas
+- guardar, salir, volver a abrir y cargar una partida
+- confirmar retorno limpio a shell o desktop al cerrar
 
-Checklist corta de validacion manual:
+## Fuera de alcance de esta etapa
 
-- el juego arranca desde `doomgeneric`
-- encuentra `doom1.wad` en `/disk/games/doom/doom1.wad`
-- `New Game` entra a una partida sin volver a la shell
-- `Ctrl` dispara y `Espacio` activa puertas/switches
-- el mouse responde en menu y durante la partida
-- al salir, la shell recupera el framebuffer sin corrupcion visual
-
-Smoke visual opcional:
-
-```powershell
-.\tools\doom-smoke.ps1
-```
-
-La smoke actual:
-
-- bootea la VM
-- espera al `desktop` y lanza `doomgeneric` desde la sesion grafica
-- entra a una partida
-- toma capturas del menu, de una partida y despues de disparar para verificar cambio visual real
-
-No valida `save/load`, cambio de nivel ni otros flujos largos. En el modelo
-desktop-first actual sirve como smoke visual del port y del retorno al
-desktop, no como prueba principal del stack GPU del SO.
-
-Fuera de alcance de esta etapa:
-
-- audio PCM / musica dentro del juego
-- integracion con ventanas propias; el port sigue ocupando el work area
-  completa aunque ya se apoye mejor en el compositor
+- musica MIDI / MUS
+- mouse ingame
 - multiplayer real
+- ventanas redimensionables o integracion multi-window
