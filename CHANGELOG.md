@@ -12,8 +12,27 @@ Notas de corte:
 
 ### Agregado
 
-- ABI publica nueva en `/dev/gpu0` para seguimiento explicito de presents con
-  `GPU_IOC_GET_PRESENT_TIMELINE` y `GPU_IOC_WAIT_PRESENT`.
+- Politica y trazabilidad explicita para adopcion de componentes inspirados en
+  SerenityOS, con documentacion nueva en `docs/THIRD_PARTY_ADOPTION.md` y
+  `docs/THIRD_PARTY_PROVENANCE.md`.
+- Capa grafica 2D reutilizable `sxgfx` en el SDK POSIX v1, con `sx_bitmap`,
+  `sx_painter`, alpha blending, clipping y `sx_rect_set` para manejar damage
+  multiple desde userland.
+- Fachada `display` inspirada en `DisplayConnector` sobre el backend
+  `virtio-gpu`, con propiedades de conector, import/release de surfaces,
+  batching de presents, timeline y eventos waitables exportables a userland.
+- Contrato grafico `SAVANXP_GPU_CLIENT_SURFACE_VERSION_3` para apps cliente,
+  basado en `section_create/map_view` mas batches de dirty rects y eventos
+  `submit/retire/shutdown` en lugar del pipe legacy de presents.
+- ABI publica nueva y ampliada en `/dev/gpu0` para seguimiento explicito de
+  presents, batching y capacidades del conector, incluyendo timeline,
+  waits/events y consultas de propiedades/scanouts sin ownership del display.
+- Compositor de escritorio multi-window real, con overlays simultaneos,
+  z-order simple, ventana activa, arrastre desde la titlebar y boton de cierre
+  en la esquina superior derecha.
+- Pipeline de assets bitmap propio para el desktop, con iconos PNG embebidos y
+  arte generado dentro del repo para taskbar, menu Inicio, titlebars y franja
+  lateral, eliminando la dependencia de assets de SerenityOS.
 - Estadisticas ampliadas de `virtio-gpu` con latencia end-to-end por frame,
   incluyendo muestras acumuladas y peor caso observado.
 
@@ -22,16 +41,30 @@ Notas de corte:
 - El progreso en background de `virtio-gpu` deja de depender del subsistema de
   input y pasa a bombearse desde un servicio de dispositivos del kernel
   invocado en timer y waits bloqueantes.
-- El `desktop` pasa a trabajar con presupuesto de un frame visible: si ya hay
-  un present en vuelo, coalescea dirty rects y espera el retiro explicito del
-  frame anterior antes de reutilizar su surface importada.
-- Primer corte interno del `desktop` para desacoplar menu/layout/render del
-  loop principal, manteniendo el binario `desktop` unico y el contrato
-  `desktop-first` sin cambios visibles.
+- El `desktop` deja atras el modelo de un solo cliente fullscreen y pasa a un
+  compositor por surfaces con invalidacion por multiples rectangulos,
+  composicion por clipping y presents batched hacia el scanout principal.
+- El loop principal del `desktop` se desacopla en layout/render/menu/session,
+  manteniendo el binario unico pero separando mejor la responsabilidad del
+  compositor, el shell de fondo y las ventanas overlay.
+- `shellapp`, `doomgeneric` y las demas apps cliente migran al canal async de
+  surfaces version 3; el terminal fuerza redraw completo cuando el scroll mueve
+  el historial para evitar artefactos visuales en la ventana.
+- La sincronizacion compositor-GPU pasa a usar timeline explicita y retiro del
+  frame anterior antes de reciclar el backbuffer visible, reduciendo tearing
+  logico y mejorando el pacing del desktop.
+- El menu Inicio y la taskbar reciben varias pasadas de pulido visual y de
+  comportamiento: layout mas limpio, sidebar bitmap, textos que caben mejor,
+  hover estable y mejor feedback del cliente activo.
+- Las ventanas overlay ya pueden moverse dentro del area util del desktop y
+  cerrarse directamente desde su titlebar con una cruz clasica estilo shell.
+- El arte embebido del desktop pasa a generarse desde assets propios del repo,
+  sustituyendo las referencias temporales usadas durante el prototipado
+  inspirado en SerenityOS.
 - `gputest --smoke` ahora valida tambien la timeline de presents y el pacing
   explicito del driver, no solo stats/stages internos.
-- El banner lateral del menu Inicio cambia a texto vertical para aprovechar
-  mejor la franja del costado y encajar mas limpio en el layout actual.
+- El flujo de `build/disk.img` persistente se vuelve a validar despues de cada
+  tanda grande de cambios con `doomgeneric` como prueba real de no regresion.
 
 ## [0.2.2] - 2026-04-01
 

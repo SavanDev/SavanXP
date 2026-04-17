@@ -4,11 +4,11 @@
 #define DESKTOP_RGB_LITERAL(red, green, blue) (((uint32_t)(red) << 16) | ((uint32_t)(green) << 8) | (uint32_t)(blue))
 
 static const struct desktop_menu_item k_menu_items[] = {
-    {"Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_RGB_LITERAL(0, 124, 96)},
-    {"Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_RGB_LITERAL(181, 81, 55)},
-    {"Gfx Demo", "/bin/gfxdemo", "2D rendering and dirty regions", DESKTOP_RGB_LITERAL(34, 142, 96)},
-    {"Key Test", "/bin/keytest", "Keyboard diagnostics", DESKTOP_RGB_LITERAL(41, 111, 188)},
-    {"Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_RGB_LITERAL(156, 104, 38)},
+    {"Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_SHELL, DESKTOP_RGB_LITERAL(0, 124, 96)},
+    {"Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DOOM, DESKTOP_RGB_LITERAL(181, 81, 55)},
+    {"Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_GFX_DEMO, DESKTOP_RGB_LITERAL(34, 142, 96)},
+    {"Key Test", "/bin/keytest", "Keyboard diagnostics", DESKTOP_ICON_KEY_TEST, DESKTOP_RGB_LITERAL(41, 111, 188)},
+    {"Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_MOUSE_TEST, DESKTOP_RGB_LITERAL(156, 104, 38)},
 };
 
 int desktop_menu_item_count(void)

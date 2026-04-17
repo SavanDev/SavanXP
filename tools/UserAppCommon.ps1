@@ -169,6 +169,7 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
     $libcObject = Join-Path $objectRoot "libc.o"
     $posixObject = Join-Path $objectRoot "posix.o"
     $gfxObject = Join-Path $objectRoot "gfx.o"
+    $gfx2dObject = Join-Path $objectRoot "gfx2d.o"
     $setjmpObject = Join-Path $objectRoot "setjmp.o"
     $crtObject = Join-Path $objectRoot "crt0.o"
     $appObjects = @()
@@ -202,6 +203,11 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion del runtime gfx."
     }
 
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime\\gfx2d.c") -o $gfx2dObject @compileFlags
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la compilacion del runtime gfx2d."
+    }
+
     & $compiler -c (Join-Path $Script:SdkRoot "runtime\\setjmp.S") -o $setjmpObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime setjmp."
@@ -212,7 +218,7 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion de crt0."
     }
 
-    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $setjmpObject @appObjects
+    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $gfx2dObject $setjmpObject @appObjects
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo el link de '$SourcePath'."
     }

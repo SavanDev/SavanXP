@@ -358,6 +358,8 @@ bool g_irq_work_pending = false;
 bool g_scanout_refresh_pending = false;
 uint32_t g_driver_busy_depth = 0;
 bool g_background_service_active = false;
+object::EventObject* g_present_retire_event = nullptr;
+object::EventObject* g_scanout_event = nullptr;
 
 int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
@@ -365,6 +367,30 @@ int negative_error(savanxp_error_code code) {
 
 uint64_t page_count_for_bytes(uint32_t byte_count) {
     return (static_cast<uint64_t>(byte_count) + memory::kPageSize - 1u) / memory::kPageSize;
+}
+
+bool ensure_driver_event(object::EventObject*& event_object) {
+    if (event_object != nullptr) {
+        return true;
+    }
+    event_object = object::create_event(true, false);
+    return event_object != nullptr;
+}
+
+void signal_driver_event(object::EventObject*& event_object) {
+    if (!ensure_driver_event(event_object)) {
+        return;
+    }
+    object::set_event(event_object);
+    process::notify_object_signal(&event_object->header);
+}
+
+int export_driver_event_handle(object::EventObject*& event_object) {
+    const uint32_t access = object::access_query | object::access_modify | object::access_synchronize;
+    if (!ensure_driver_event(event_object)) {
+        return negative_error(SAVANXP_ENOMEM);
+    }
+    return process::export_handle(&event_object->header, access, object::handle_none);
 }
 
 struct DriverBusyGuard {
@@ -412,6 +438,7 @@ uint32_t current_gpu_info_flags() {
     if (g_cursor_queue.enabled) {
         flags |= SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE;
     }
+    flags |= SAVANXP_GPU_INFO_FLAG_ASYNC_PRESENT_EVENTS;
     return flags;
 }
 
@@ -542,6 +569,110 @@ void fill_present_timeline(savanxp_gpu_present_timeline& timeline) {
     };
 }
 
+void fill_connector_properties(savanxp_gpu_connector_properties& properties) {
+    uint32_t flags = SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING |
+        SAVANXP_GPU_CONNECTOR_FLAG_PARTIAL_PRESENT |
+        SAVANXP_GPU_CONNECTOR_FLAG_SCANOUT_ENUMERATION |
+        SAVANXP_GPU_CONNECTOR_FLAG_HOTPLUG_REFRESH |
+        SAVANXP_GPU_CONNECTOR_FLAG_SAFE_MODE |
+        SAVANXP_GPU_CONNECTOR_FLAG_ASYNC_PRESENT_EVENTS;
+
+    if (g_cursor_queue.enabled) {
+        flags |= SAVANXP_GPU_CONNECTOR_FLAG_CURSOR_PLANE;
+    }
+
+    refresh_cached_scanout_state();
+    properties = {
+        .flags = flags,
+        .active_scanout_id = g_scanout_id,
+        .preferred_width = g_preferred_scanout_width != 0 ? g_preferred_scanout_width : g_framebuffer_info.width,
+        .preferred_height = g_preferred_scanout_height != 0 ? g_preferred_scanout_height : g_framebuffer_info.height,
+        .batch_capacity = kPendingPresentCapacity,
+        .max_dirty_rects = SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS,
+    };
+}
+
+bool normalize_present_batch_bounds(
+    const savanxp_gpu_surface_present_batch& batch,
+    const ImportedSurface& surface,
+    uint32_t& x,
+    uint32_t& y,
+    uint32_t& width,
+    uint32_t& height) {
+    bool any = false;
+    uint32_t min_x = surface.info.width;
+    uint32_t min_y = surface.info.height;
+    uint32_t max_x = 0;
+    uint32_t max_y = 0;
+
+    if ((batch.flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0) {
+        x = 0;
+        y = 0;
+        width = surface.info.width;
+        height = surface.info.height;
+        return width != 0 && height != 0;
+    }
+
+    if (batch.rect_count == 0 || batch.rect_count > SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
+        return false;
+    }
+
+    for (uint32_t index = 0; index < batch.rect_count; ++index) {
+        const savanxp_gpu_dirty_rect& rect = batch.rects[index];
+        uint64_t rect_right = 0;
+        uint64_t rect_bottom = 0;
+        uint32_t clipped_x = rect.x;
+        uint32_t clipped_y = rect.y;
+        uint32_t clipped_right = 0;
+        uint32_t clipped_bottom = 0;
+
+        if (rect.width == 0 || rect.height == 0 ||
+            rect.x >= surface.info.width || rect.y >= surface.info.height) {
+            continue;
+        }
+
+        rect_right = static_cast<uint64_t>(rect.x) + rect.width;
+        rect_bottom = static_cast<uint64_t>(rect.y) + rect.height;
+        clipped_right = rect_right > surface.info.width ? surface.info.width : static_cast<uint32_t>(rect_right);
+        clipped_bottom = rect_bottom > surface.info.height ? surface.info.height : static_cast<uint32_t>(rect_bottom);
+        if (clipped_right <= clipped_x || clipped_bottom <= clipped_y) {
+            continue;
+        }
+
+        if (!any) {
+            min_x = clipped_x;
+            min_y = clipped_y;
+            max_x = clipped_right;
+            max_y = clipped_bottom;
+            any = true;
+            continue;
+        }
+
+        if (clipped_x < min_x) {
+            min_x = clipped_x;
+        }
+        if (clipped_y < min_y) {
+            min_y = clipped_y;
+        }
+        if (clipped_right > max_x) {
+            max_x = clipped_right;
+        }
+        if (clipped_bottom > max_y) {
+            max_y = clipped_bottom;
+        }
+    }
+
+    if (!any || max_x <= min_x || max_y <= min_y) {
+        return false;
+    }
+
+    x = min_x;
+    y = min_y;
+    width = max_x - min_x;
+    height = max_y - min_y;
+    return true;
+}
+
 void remember_retired_present(uint64_t sequence, bool failed) {
     if (sequence == 0) {
         return;
@@ -560,6 +691,7 @@ void remember_retired_present(uint64_t sequence, bool failed) {
     if (sequence > g_last_retired_present_sequence) {
         g_last_retired_present_sequence = sequence;
     }
+    signal_driver_event(g_present_retire_event);
 }
 
 bool query_retired_present(uint64_t sequence, bool& failed) {
@@ -2270,6 +2402,7 @@ bool refresh_scanouts(bool explicit_refresh) {
     g_gpu_stats.scanout_refreshes += 1u;
     refresh_cached_scanout_state();
     refresh_gpu_info_flags();
+    signal_driver_event(g_scanout_event);
     return true;
 }
 
@@ -2334,6 +2467,7 @@ bool configure_primary_surface(uint32_t width, uint32_t height) {
         return false;
     }
     console::write_line("virtio-gpu: primary scanout armed");
+    signal_driver_event(g_scanout_event);
 
     return true;
 }
@@ -2537,11 +2671,62 @@ int present_surface_region_ioctl(uint64_t argument) {
     return 0;
 }
 
+int present_surface_batch_ioctl(uint64_t argument) {
+    savanxp_gpu_surface_present_batch batch = {};
+    ImportedSurface* surface = nullptr;
+    uint32_t x = 0;
+    uint32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    if (!process::validate_user_range(argument, sizeof(batch), true) ||
+        !process::copy_from_user(&batch, argument, sizeof(batch))) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if ((batch.flags & ~SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    if (batch.rect_count > SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    surface = imported_surface_at(batch.surface_id);
+    if (surface == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (!normalize_present_batch_bounds(batch, *surface, x, y, width, height)) {
+        return 0;
+    }
+
+    if (!submit_imported_present(*surface, x, y, width, height)) {
+        return negative_error(SAVANXP_EIO);
+    }
+    if (surface->resource_id != g_scanout_resource_id) {
+        if (!wait_for_resource_idle(surface->resource_id)) {
+            return negative_error(SAVANXP_EIO);
+        }
+    } else {
+        service_queue_progress();
+    }
+    return 0;
+}
+
 int get_stats_ioctl(uint64_t argument) {
     if (!process::validate_user_range(argument, sizeof(g_gpu_stats), true)) {
         return negative_error(SAVANXP_EINVAL);
     }
     return process::copy_to_user(argument, &g_gpu_stats, sizeof(g_gpu_stats))
+        ? 0
+        : negative_error(SAVANXP_EINVAL);
+}
+
+int get_connector_properties_ioctl(uint64_t argument) {
+    savanxp_gpu_connector_properties properties = {};
+    if (!process::validate_user_range(argument, sizeof(properties), true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    fill_connector_properties(properties);
+    return process::copy_to_user(argument, &properties, sizeof(properties))
         ? 0
         : negative_error(SAVANXP_EINVAL);
 }
@@ -2728,24 +2913,26 @@ int gpu_ioctl(uint64_t request, uint64_t argument) {
             virtio_gpu::wait_for_idle();
             return 0;
         case GPU_IOC_GET_STATS:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
             return get_stats_ioctl(argument);
         case GPU_IOC_GET_PRESENT_TIMELINE:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
             return get_present_timeline_ioctl(argument);
         case GPU_IOC_WAIT_PRESENT:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
             return wait_present_ioctl(argument);
+        case GPU_IOC_GET_CONNECTOR_PROPERTIES:
+            return get_connector_properties_ioctl(argument);
         case GPU_IOC_GET_SCANOUTS:
             return get_scanouts_ioctl(argument);
         case GPU_IOC_REFRESH_SCANOUTS:
             return refresh_scanouts_ioctl();
+        case GPU_IOC_PRESENT_SURFACE_BATCH:
+            if (!ui::owns_graphics_session(process::current_pid())) {
+                return negative_error(SAVANXP_EBUSY);
+            }
+            return present_surface_batch_ioctl(argument);
+        case GPU_IOC_CREATE_PRESENT_EVENT:
+            return export_driver_event_handle(g_present_retire_event);
+        case GPU_IOC_CREATE_SCANOUT_EVENT:
+            return export_driver_event_handle(g_scanout_event);
         case GPU_IOC_SET_CURSOR:
             if (!ui::owns_graphics_session(process::current_pid())) {
                 return negative_error(SAVANXP_EBUSY);
@@ -3223,6 +3410,249 @@ bool present_region_from_kernel(const void* pixels, uint32_t source_pitch, uint3
         copy_region_to_surface(surface_index, pixels, source_pitch, x, y, width, height) &&
         submit_present_surface(surface_index, 0, 0, g_framebuffer_info.width, g_framebuffer_info.height) &&
         acquire_present_surface(surface_index);
+}
+
+bool get_info(savanxp_gpu_info& info) {
+    if (!g_ready) {
+        return false;
+    }
+    info = g_gpu_info;
+    return true;
+}
+
+bool set_mode(savanxp_gpu_mode& mode) {
+    DriverBusyGuard guard;
+    const uint32_t requested_width = mode.width != 0 ? mode.width : g_framebuffer_info.width;
+    const uint32_t requested_height = mode.height != 0 ? mode.height : g_framebuffer_info.height;
+
+    if (!g_ready || requested_width == 0 || requested_height == 0) {
+        return false;
+    }
+    if (mode.bpp != 0 && mode.bpp != 32u) {
+        return false;
+    }
+    if (any_imported_surface_in_use()) {
+        return false;
+    }
+
+    if ((requested_width != g_framebuffer_info.width || requested_height != g_framebuffer_info.height) &&
+        !configure_primary_surface(requested_width, requested_height)) {
+        return false;
+    }
+
+    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
+    fill_mode_info(mode);
+    return true;
+}
+
+bool import_surface(savanxp_gpu_surface_import& request) {
+    DriverBusyGuard guard;
+    process::Process* current = process::current();
+    savanxp_fb_info info = {};
+    ImportedSurface* imported = nullptr;
+
+    if (!g_ready || current == nullptr || request.section_handle < 0) {
+        return false;
+    }
+    if (static_cast<uint64_t>(request.section_handle) >= process::kMaxFileHandles) {
+        return false;
+    }
+
+    process::HandleEntry& entry = current->handles[request.section_handle];
+    if (entry.object == nullptr || (entry.granted_access & object::access_query) == 0) {
+        return false;
+    }
+    object::SectionObject* section_object = object::as_section(entry.object);
+    if (section_object == nullptr || !normalize_import_info(request, info)) {
+        return false;
+    }
+
+    const uint64_t page_count = page_count_for_bytes(info.buffer_size);
+    if (section_object->size_bytes < info.buffer_size ||
+        section_object->physical_pages == nullptr ||
+        section_object->page_count < page_count) {
+        return false;
+    }
+
+    imported = allocate_imported_surface_slot();
+    if (imported == nullptr) {
+        return false;
+    }
+
+    imported->flags = request.flags;
+    imported->page_count = page_count;
+    imported->info = info;
+    imported->section = section_object;
+    object::retain(&section_object->header);
+
+    if (!vm::map_kernel_pages(section_object->physical_pages, page_count, vm::kPageWrite, &imported->virtual_address)) {
+        release_imported_surface(*imported);
+        return false;
+    }
+
+    if (!create_resource(imported->resource_id, imported->info) ||
+        !attach_resource_backing(imported->resource_id, section_object->physical_pages, page_count)) {
+        release_imported_surface(*imported);
+        return false;
+    }
+
+    request.surface_id = static_cast<int32_t>(imported->surface_id);
+    request.width = imported->info.width;
+    request.height = imported->info.height;
+    request.pitch = imported->info.pitch;
+    request.bpp = imported->info.bpp;
+    request.buffer_size = imported->info.buffer_size;
+    return true;
+}
+
+bool release_surface(uint32_t surface_id) {
+    DriverBusyGuard guard;
+    ImportedSurface* surface = imported_surface_at(surface_id);
+    if (surface == nullptr) {
+        return false;
+    }
+    release_imported_surface(*surface);
+    return true;
+}
+
+bool present_surface_region(const savanxp_gpu_surface_present& request) {
+    DriverBusyGuard guard;
+    ImportedSurface* surface = imported_surface_at(request.surface_id);
+    if (surface == nullptr) {
+        return false;
+    }
+    if (request.width == 0 || request.height == 0 ||
+        request.x >= surface->info.width || request.y >= surface->info.height ||
+        request.width > (surface->info.width - request.x) ||
+        request.height > (surface->info.height - request.y)) {
+        return false;
+    }
+
+    if (!submit_imported_present(*surface, request.x, request.y, request.width, request.height)) {
+        return false;
+    }
+    if (surface->resource_id != g_scanout_resource_id) {
+        return wait_for_resource_idle(surface->resource_id);
+    }
+    service_queue_progress();
+    return true;
+}
+
+bool get_stats(savanxp_gpu_stats& stats) {
+    if (!g_ready) {
+        return false;
+    }
+    stats = g_gpu_stats;
+    return true;
+}
+
+bool get_scanouts(savanxp_gpu_scanout_state& state) {
+    DriverBusyGuard guard;
+    if (!g_ready) {
+        return false;
+    }
+    refresh_cached_scanout_state();
+    state = g_scanout_state;
+    return true;
+}
+
+bool refresh_scanouts_now() {
+    DriverBusyGuard guard;
+    return refresh_scanouts(true);
+}
+
+bool get_connector_properties(savanxp_gpu_connector_properties& properties) {
+    DriverBusyGuard guard;
+    if (!g_ready) {
+        return false;
+    }
+    fill_connector_properties(properties);
+    return true;
+}
+
+bool set_cursor(const savanxp_gpu_cursor_image& image) {
+    DriverBusyGuard guard;
+    if (!g_ready || !g_cursor_queue.enabled) {
+        return false;
+    }
+    return configure_cursor_plane(image);
+}
+
+bool move_cursor(const savanxp_gpu_cursor_position& position) {
+    DriverBusyGuard guard;
+    savanxp_gpu_cursor_position clamped = position;
+
+    if (!g_ready || !g_cursor_queue.enabled) {
+        return false;
+    }
+    if (clamped.x >= g_framebuffer_info.width) {
+        clamped.x = g_framebuffer_info.width != 0 ? g_framebuffer_info.width - 1u : 0u;
+    }
+    if (clamped.y >= g_framebuffer_info.height) {
+        clamped.y = g_framebuffer_info.height != 0 ? g_framebuffer_info.height - 1u : 0u;
+    }
+    return move_cursor_plane(clamped);
+}
+
+bool get_present_timeline(savanxp_gpu_present_timeline& timeline) {
+    DriverBusyGuard guard;
+    if (!g_ready) {
+        return false;
+    }
+    fill_present_timeline(timeline);
+    return true;
+}
+
+bool wait_present(savanxp_gpu_present_wait& request) {
+    DriverBusyGuard guard;
+    bool target_failed = false;
+
+    if (!g_ready) {
+        return false;
+    }
+    if (request.target_sequence != 0 &&
+        request.target_sequence > g_last_submitted_present_sequence) {
+        return false;
+    }
+    if (request.target_sequence != 0 &&
+        !wait_for_present_sequence_internal(request.target_sequence, target_failed)) {
+        return false;
+    }
+
+    request.retired_sequence = g_last_retired_present_sequence;
+    request.pending_count = g_pending_present_count;
+    request.flags = current_present_timeline_flags();
+    if (target_failed) {
+        request.flags |= SAVANXP_GPU_PRESENT_TIMELINE_FLAG_TARGET_FAILED;
+    }
+    return true;
+}
+
+bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
+    DriverBusyGuard guard;
+    ImportedSurface* surface = imported_surface_at(request.surface_id);
+    uint32_t x = 0;
+    uint32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    if (surface == nullptr ||
+        (request.flags & ~SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0 ||
+        request.rect_count > SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
+        return false;
+    }
+    if (!normalize_present_batch_bounds(request, *surface, x, y, width, height)) {
+        return true;
+    }
+
+    if (!submit_imported_present(*surface, x, y, width, height)) {
+        return false;
+    }
+    if (surface->resource_id != g_scanout_resource_id) {
+        return wait_for_resource_idle(surface->resource_id);
+    }
+    service_queue_progress();
+    return true;
 }
 
 } // namespace virtio_gpu

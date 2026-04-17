@@ -296,6 +296,10 @@ enum savanxp_gpu_ioctl {
     GPU_IOC_MOVE_CURSOR = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 15),
     GPU_IOC_GET_PRESENT_TIMELINE = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 16),
     GPU_IOC_WAIT_PRESENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 17),
+    GPU_IOC_GET_CONNECTOR_PROPERTIES = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 18),
+    GPU_IOC_CREATE_PRESENT_EVENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 19),
+    GPU_IOC_CREATE_SCANOUT_EVENT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 20),
+    GPU_IOC_PRESENT_SURFACE_BATCH = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_GPU, 21),
 };
 
 enum savanxp_audio_ioctl {
@@ -343,6 +347,13 @@ enum savanxp_gpu_info_flags {
     SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE = 1u << 1,
     SAVANXP_GPU_INFO_FLAG_SCANOUT_ENUMERATION = 1u << 2,
     SAVANXP_GPU_INFO_FLAG_HOTPLUG_REFRESH = 1u << 3,
+    SAVANXP_GPU_INFO_FLAG_ASYNC_PRESENT_EVENTS = 1u << 4,
+};
+
+enum savanxp_gpu_surface_format {
+    SAVANXP_GPU_SURFACE_FORMAT_INVALID = 0,
+    SAVANXP_GPU_SURFACE_FORMAT_BGRX8888 = 1,
+    SAVANXP_GPU_SURFACE_FORMAT_BGRA8888 = 2,
 };
 
 struct savanxp_gpu_info {
@@ -394,6 +405,48 @@ struct savanxp_gpu_surface_present {
     uint32_t y;
     uint32_t width;
     uint32_t height;
+};
+
+enum savanxp_gpu_connector_flags {
+    SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING = 1u << 0,
+    SAVANXP_GPU_CONNECTOR_FLAG_PARTIAL_PRESENT = 1u << 1,
+    SAVANXP_GPU_CONNECTOR_FLAG_CURSOR_PLANE = 1u << 2,
+    SAVANXP_GPU_CONNECTOR_FLAG_SCANOUT_ENUMERATION = 1u << 3,
+    SAVANXP_GPU_CONNECTOR_FLAG_HOTPLUG_REFRESH = 1u << 4,
+    SAVANXP_GPU_CONNECTOR_FLAG_ASYNC_PRESENT_EVENTS = 1u << 5,
+    SAVANXP_GPU_CONNECTOR_FLAG_SAFE_MODE = 1u << 6,
+};
+
+struct savanxp_gpu_connector_properties {
+    uint32_t flags;
+    uint32_t active_scanout_id;
+    uint32_t preferred_width;
+    uint32_t preferred_height;
+    uint32_t batch_capacity;
+    uint32_t max_dirty_rects;
+};
+
+struct savanxp_gpu_dirty_rect {
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+};
+
+enum savanxp_gpu_surface_present_batch_flags {
+    SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_NONE = 0,
+    SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE = 1u << 0,
+};
+
+#define SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS 32u
+
+struct savanxp_gpu_surface_present_batch {
+    uint32_t surface_id;
+    uint32_t rect_count;
+    uint32_t flags;
+    uint32_t reserved0;
+    uint64_t present_cookie;
+    struct savanxp_gpu_dirty_rect rects[SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS];
 };
 
 enum savanxp_gpu_scanout_flags {
@@ -499,18 +552,33 @@ struct savanxp_gpu_stats {
 };
 
 #define SAVANXP_GPU_CLIENT_SURFACE_MAGIC 0x53584746u
+#define SAVANXP_GPU_CLIENT_SURFACE_VERSION_1 1u
+#define SAVANXP_GPU_CLIENT_SURFACE_VERSION_2 2u
+#define SAVANXP_GPU_CLIENT_SURFACE_VERSION_3 3u
+#define SAVANXP_GPU_CLIENT_BATCH_CAPACITY 8u
+#define SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS 32u
+
+struct savanxp_gpu_dirty_rect_batch {
+    uint64_t submit_sequence;
+    uint32_t rect_count;
+    uint32_t flags;
+    struct savanxp_gpu_dirty_rect rects[SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS];
+};
 
 struct savanxp_gpu_client_surface_header {
     uint32_t magic;
     uint32_t pixels_offset;
     struct savanxp_fb_info info;
-};
-
-struct savanxp_gpu_client_present_packet {
-    uint32_t x;
-    uint32_t y;
-    uint32_t width;
-    uint32_t height;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t pixel_format;
+    uint32_t reserved0;
+    uint32_t command_offset;
+    uint32_t batch_capacity;
+    uint32_t rect_capacity;
+    uint32_t reserved1;
+    uint64_t submit_sequence;
+    uint64_t retired_sequence;
 };
 
 enum savanxp_audio_backend {

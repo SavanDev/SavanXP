@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/display.hpp"
 #include "kernel/string.hpp"
-#include "kernel/virtio_gpu.hpp"
 
 namespace {
 
@@ -138,23 +138,23 @@ bool g_cursor_drawn = false;
 bool g_batch_redraw = false;
 
 bool using_gpu_backend() {
-    return virtio_gpu::ready() &&
+    return display::ready() &&
         g_framebuffer.address != nullptr &&
-        g_framebuffer.address == virtio_gpu::framebuffer_address();
+        g_framebuffer.address == display::framebuffer_address();
 }
 
 void flush_region(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     if (!g_console_visible || !using_gpu_backend() || g_batch_redraw) {
         return;
     }
-    (void)virtio_gpu::flush_rect(x, y, width, height);
+    (void)display::flush_rect(x, y, width, height);
 }
 
 void flush_full() {
     if (!g_console_visible || !using_gpu_backend()) {
         return;
     }
-    (void)virtio_gpu::flush();
+    (void)display::flush();
 }
 
 inline void out8(uint16_t port, uint8_t value) {

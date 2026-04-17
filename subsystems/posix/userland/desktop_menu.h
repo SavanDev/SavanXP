@@ -1,12 +1,14 @@
 #pragma once
 
 #include "libc.h"
+#include "desktop_icons.h"
 
 struct desktop_menu_item
 {
     const char *label;
     const char *path;
     const char *subtitle;
+    enum desktop_icon_id icon_id;
     uint32_t accent;
 };
 

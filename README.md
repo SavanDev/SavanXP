@@ -24,6 +24,7 @@ Estado actual del sistema:
 - Desktop inicial con taskbar, menu Inicio y apps cliente.
 - Volumen persistente `SVFS2` montado en `/disk`.
 - Base POSIX y SDK v1 para compilar aplicaciones externas.
+- Capa grafica 2D `sxgfx` para superficies, painter y conjuntos de rects.
 - Soporte inicial de red, audio, input, GPU y almacenamiento.
 
 ## Requisitos

@@ -2473,6 +2473,17 @@ bool validate_user_range(uint64_t user_address, size_t count, bool require_write
     return vm::is_user_range_accessible(g_current->address_space, user_address, count, require_write);
 }
 
+int export_handle(object::Header* handle_object, uint32_t access, uint32_t flags) {
+    if (g_current == nullptr || handle_object == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    return allocate_fd(*g_current, handle_object, access, flags);
+}
+
+void notify_object_signal(object::Header* handle_object) {
+    wake_waiters_for_object(handle_object);
+}
+
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid) {
     return create_process_internal(path, argc, argv, find(parent_pid), -1, -1);
 }

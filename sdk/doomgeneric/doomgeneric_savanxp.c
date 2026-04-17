@@ -10,7 +10,13 @@
 #include "i_system.h"
 #include "savanxp_compat.h"
 
-static struct savanxp_gfx_context g_gfx = {-1, -1, {0, 0, 0, 0, 0}, -1, 0, 0, 0, 0};
+static struct savanxp_gfx_context g_gfx = {
+    .fb_fd = -1,
+    .input_fd = -1,
+    .submit_event_fd = -1,
+    .retire_event_fd = -1,
+    .shutdown_event_fd = -1,
+};
 static uint32_t *g_present_buffer = 0;
 static uint32_t *g_previous_frame = 0;
 static uint32_t *g_scaled_row = 0;
@@ -23,7 +29,7 @@ static uint32_t g_scaled_height = 0;
 static int g_previous_frame_valid = 0;
 
 static int sx_uses_client_surface(void) {
-    return g_gfx.mapped_view != 0 && g_gfx.pixels != 0 && g_gfx.present_fd >= 0;
+    return g_gfx.mapped_view != 0 && g_gfx.pixels != 0 && g_gfx.submit_event_fd >= 0;
 }
 
 static void sx_shutdown_video(void) {

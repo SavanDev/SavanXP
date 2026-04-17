@@ -55,6 +55,7 @@ $KernelSources = @(
     "kernel/kernel_main.cpp",
     "kernel/console.cpp",
     "kernel/device.cpp",
+    "kernel/display.cpp",
     "kernel/pci.cpp",
     "kernel/input.cpp",
     "kernel/tty.cpp",
@@ -111,6 +112,7 @@ $UserPrograms = @(
     @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c" },
     @{ Name = "desktop"; Sources = @(
         "subsystems/posix/userland/desktop.c",
+        "subsystems/posix/userland/desktop_icons.c",
         "subsystems/posix/userland/desktop_menu.c",
         "subsystems/posix/userland/desktop_layout.c",
         "subsystems/posix/userland/desktop_render.c"
@@ -471,6 +473,24 @@ function Generate-CursorAsset {
     }
 }
 
+function Generate-DesktopIconAssets {
+    New-Directory $GeneratedRoot
+
+    $sourceArtScript = Join-Path $ToolRoot "GenerateDesktopSourceArt.ps1"
+    $scriptPath = Join-Path $ToolRoot "GenerateDesktopIconAssets.ps1"
+    $outputPath = Join-Path $GeneratedRoot "desktop_icon_assets.h"
+
+    & powershell -ExecutionPolicy Bypass -File $sourceArtScript -ProjectRoot $ProjectRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion del arte fuente del desktop."
+    }
+
+    & powershell -ExecutionPolicy Bypass -File $scriptPath -ProjectRoot $ProjectRoot -OutputPath $outputPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion de los assets bitmap del desktop."
+    }
+}
+
 function Build-Userland([string]$Compiler, [string]$Linker) {
     $userFlags = Get-UserFlags
     $userObjRoot = Join-Path $ObjRoot "user"
@@ -487,7 +507,8 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
         foreach ($source in @(
             "subsystems/posix/sdk/v1/runtime/crt0.S",
             "subsystems/posix/sdk/v1/runtime/libc.c",
-            "subsystems/posix/sdk/v1/runtime/gfx.c"
+            "subsystems/posix/sdk/v1/runtime/gfx.c",
+            "subsystems/posix/sdk/v1/runtime/gfx2d.c"
         ) + $programSources) {
             $sourcePath = Join-Path $ProjectRoot $source
             $objectName = "$($program.Name)_$([IO.Path]::GetFileNameWithoutExtension($source)).o"
@@ -569,6 +590,7 @@ function Build-Kernel([switch]$SmokeMode) {
     }
 
     Generate-CursorAsset
+    Generate-DesktopIconAssets
     Build-Userland -Compiler $clang -Linker $ld
     Install-BusyBox
     if ($SmokeMode) {

@@ -41,6 +41,10 @@ Las apps deberían incluir:
 #include "savanxp/libc.h"
 ```
 
+Tambien pueden usar `savanxp/gfx2d.h`, con primitivas `sx_bitmap`,
+`sx_painter` y `sx_rect_set` para composicion 2D minima sobre buffers de 32
+bits.
+
 El tooling acepta:
 
 - un archivo `.c` individual

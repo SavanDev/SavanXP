@@ -5,10 +5,10 @@
 
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
+#include "kernel/display.hpp"
 #include "kernel/ps2.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
-#include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
 #include "savanxp/syscall.h"
 
@@ -170,8 +170,8 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_owner_pid = 0;
     g_mouse_available = false;
 
-    if (virtio_gpu::ready()) {
-        g_framebuffer_info = virtio_gpu::framebuffer_info();
+    if (display::ready()) {
+        g_framebuffer_info = display::framebuffer_info();
     }
     virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
 
@@ -220,8 +220,8 @@ void release_graphics_session(uint32_t pid) {
     if (g_owner_pid == 0 || g_owner_pid != pid) {
         return;
     }
-    if (virtio_gpu::ready()) {
-        virtio_gpu::wait_for_idle();
+    if (display::ready()) {
+        display::wait_for_idle();
     }
     virtio_input::end_graphics_session();
     ::release_graphics_session();

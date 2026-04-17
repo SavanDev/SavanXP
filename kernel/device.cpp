@@ -1,6 +1,6 @@
 #include "kernel/device.hpp"
 
-#include "kernel/virtio_gpu.hpp"
+#include "kernel/display.hpp"
 #include "kernel/vfs.hpp"
 #include "savanxp/syscall.h"
 
@@ -68,7 +68,7 @@ void close(Device* device) {
 }
 
 void service_background() {
-    virtio_gpu::poll();
+    display::poll();
 }
 
 } // namespace device

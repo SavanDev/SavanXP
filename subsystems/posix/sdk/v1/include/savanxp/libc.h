@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "savanxp/syscall.h"
+#include "savanxp/gfx2d.h"
 
 long read(int fd, void* buffer, size_t count);
 long write(int fd, const void* buffer, size_t count);
@@ -70,10 +71,14 @@ long gpu_wait_idle(int fd);
 long gpu_get_stats(int fd, struct savanxp_gpu_stats* stats);
 long gpu_get_scanouts(int fd, struct savanxp_gpu_scanout_state* state);
 long gpu_refresh_scanouts(int fd);
+long gpu_get_connector_properties(int fd, struct savanxp_gpu_connector_properties* properties);
+long gpu_create_present_event(int fd);
+long gpu_create_scanout_event(int fd);
 long gpu_set_cursor(int fd, const struct savanxp_gpu_cursor_image* image);
 long gpu_move_cursor(int fd, const struct savanxp_gpu_cursor_position* position);
 long gpu_get_present_timeline(int fd, struct savanxp_gpu_present_timeline* timeline);
 long gpu_wait_present(int fd, struct savanxp_gpu_present_wait* wait_request);
+long gpu_present_surface_batch(int fd, const struct savanxp_gpu_surface_present_batch* batch_request);
 long gpu_present(int fd, const uint32_t* pixels);
 long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 long savanxp_getpid(void);
@@ -87,11 +92,17 @@ struct savanxp_gfx_context {
     int fb_fd;
     int input_fd;
     struct savanxp_fb_info info;
-    int present_fd;
+    int submit_event_fd;
+    int retire_event_fd;
+    int shutdown_event_fd;
     int mode;
     void* mapped_view;
     uint32_t* pixels;
     uint32_t pixels_offset;
+    struct savanxp_gpu_client_surface_header* header;
+    struct savanxp_gpu_dirty_rect_batch* command_batches;
+    uint32_t batch_capacity;
+    uint32_t rect_capacity;
 };
 
 long gfx_open(struct savanxp_gfx_context* context);
@@ -100,6 +111,7 @@ long gfx_acquire(struct savanxp_gfx_context* context);
 long gfx_release(struct savanxp_gfx_context* context);
 long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixels);
 long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_t* pixels, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t* pixels, const struct sx_rect* rects, size_t rect_count);
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);

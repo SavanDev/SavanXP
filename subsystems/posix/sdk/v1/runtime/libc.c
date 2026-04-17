@@ -418,6 +418,18 @@ long gpu_refresh_scanouts(int fd) {
     return ioctl(fd, GPU_IOC_REFRESH_SCANOUTS, 0);
 }
 
+long gpu_get_connector_properties(int fd, struct savanxp_gpu_connector_properties* properties) {
+    return ioctl(fd, GPU_IOC_GET_CONNECTOR_PROPERTIES, (unsigned long)properties);
+}
+
+long gpu_create_present_event(int fd) {
+    return ioctl(fd, GPU_IOC_CREATE_PRESENT_EVENT, 0);
+}
+
+long gpu_create_scanout_event(int fd) {
+    return ioctl(fd, GPU_IOC_CREATE_SCANOUT_EVENT, 0);
+}
+
 long gpu_set_cursor(int fd, const struct savanxp_gpu_cursor_image* image) {
     return ioctl(fd, GPU_IOC_SET_CURSOR, (unsigned long)image);
 }
@@ -432,6 +444,10 @@ long gpu_get_present_timeline(int fd, struct savanxp_gpu_present_timeline* timel
 
 long gpu_wait_present(int fd, struct savanxp_gpu_present_wait* wait_request) {
     return ioctl(fd, GPU_IOC_WAIT_PRESENT, (unsigned long)wait_request);
+}
+
+long gpu_present_surface_batch(int fd, const struct savanxp_gpu_surface_present_batch* batch_request) {
+    return ioctl(fd, GPU_IOC_PRESENT_SURFACE_BATCH, (unsigned long)batch_request);
 }
 
 long gpu_present(int fd, const uint32_t* pixels) {

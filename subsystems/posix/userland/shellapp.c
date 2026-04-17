@@ -26,11 +26,8 @@ struct shellapp_state {
     int current_line_open;
     int cursor_visible;
     int needs_redraw;
-    int dirty_valid;
-    int dirty_x;
-    int dirty_y;
-    int dirty_width;
-    int dirty_height;
+    int force_full_present;
+    struct sx_rect_set dirty_rects;
     unsigned long last_present_ms;
     unsigned long next_cursor_toggle_ms;
 };
@@ -136,64 +133,24 @@ static int shellapp_prompt_y(const struct savanxp_fb_info* info) {
 }
 
 static void shellapp_invalidate_rect(int x, int y, int width, int height) {
-    const struct savanxp_fb_info* info = &g_shellapp.gfx.info;
-    int right = 0;
-    int bottom = 0;
+    struct sx_rect rect = sx_rect_make(x, y, width, height);
+    struct sx_rect bounds = sx_rect_make(0, 0, (int)g_shellapp.gfx.info.width, (int)g_shellapp.gfx.info.height);
 
     if (width <= 0 || height <= 0) {
         return;
     }
-    if (x < 0) {
-        width += x;
-        x = 0;
-    }
-    if (y < 0) {
-        height += y;
-        y = 0;
-    }
-    if (width <= 0 || height <= 0 || x >= (int)info->width || y >= (int)info->height) {
-        return;
-    }
-    if (x + width > (int)info->width) {
-        width = (int)info->width - x;
-    }
-    if (y + height > (int)info->height) {
-        height = (int)info->height - y;
-    }
-    if (width <= 0 || height <= 0) {
+
+    rect = sx_rect_intersect(rect, bounds);
+    if (sx_rect_is_empty(rect)) {
         return;
     }
 
-    if (!g_shellapp.dirty_valid) {
-        g_shellapp.dirty_valid = 1;
-        g_shellapp.dirty_x = x;
-        g_shellapp.dirty_y = y;
-        g_shellapp.dirty_width = width;
-        g_shellapp.dirty_height = height;
-        g_shellapp.needs_redraw = 1;
-        return;
-    }
-
-    right = g_shellapp.dirty_x + g_shellapp.dirty_width;
-    bottom = g_shellapp.dirty_y + g_shellapp.dirty_height;
-    if (x < g_shellapp.dirty_x) {
-        g_shellapp.dirty_x = x;
-    }
-    if (y < g_shellapp.dirty_y) {
-        g_shellapp.dirty_y = y;
-    }
-    if (x + width > right) {
-        right = x + width;
-    }
-    if (y + height > bottom) {
-        bottom = y + height;
-    }
-    g_shellapp.dirty_width = right - g_shellapp.dirty_x;
-    g_shellapp.dirty_height = bottom - g_shellapp.dirty_y;
+    (void)sx_rect_set_add(&g_shellapp.dirty_rects, rect);
     g_shellapp.needs_redraw = 1;
 }
 
 static void shellapp_invalidate_full(void) {
+    g_shellapp.force_full_present = 1;
     shellapp_invalidate_rect(0, 0, (int)g_shellapp.gfx.info.width, (int)g_shellapp.gfx.info.height);
 }
 
@@ -202,6 +159,7 @@ static void shellapp_invalidate_header(void) {
 }
 
 static void shellapp_invalidate_content(void) {
+    g_shellapp.force_full_present = 1;
     shellapp_invalidate_rect(
         0,
         SHELLAPP_HEADER_HEIGHT,
@@ -251,32 +209,30 @@ static void shellapp_redraw(void) {
         gfx_rect(g_shellapp.frame, info, cursor_x, prompt_y + gfx_text_height() + 1, 10, 2, gfx_rgb(128, 226, 164));
     }
 
-    if (g_shellapp.dirty_valid) {
+    if (sx_rect_set_valid(&g_shellapp.dirty_rects)) {
         long present_result = 0;
-        if (g_shellapp.dirty_x == 0 &&
-            g_shellapp.dirty_y == 0 &&
-            g_shellapp.dirty_width == (int)info->width &&
-            g_shellapp.dirty_height == (int)info->height) {
+        struct sx_rect bounds = sx_rect_set_bounds(&g_shellapp.dirty_rects);
+        if (g_shellapp.force_full_present ||
+            (g_shellapp.dirty_rects.count == 1 &&
+            bounds.x == 0 &&
+            bounds.y == 0 &&
+            bounds.width == (int)info->width &&
+            bounds.height == (int)info->height)) {
             present_result = gfx_present(&g_shellapp.gfx, g_shellapp.frame);
         } else {
-            present_result = gfx_present_region(
+            present_result = gfx_present_rects(
                 &g_shellapp.gfx,
                 g_shellapp.frame,
-                (uint32_t)g_shellapp.dirty_x,
-                (uint32_t)g_shellapp.dirty_y,
-                (uint32_t)g_shellapp.dirty_width,
-                (uint32_t)g_shellapp.dirty_height);
+                g_shellapp.dirty_rects.rects,
+                g_shellapp.dirty_rects.count);
         }
         if (present_result < 0) {
             exit(1);
         }
     }
     g_shellapp.needs_redraw = 0;
-    g_shellapp.dirty_valid = 0;
-    g_shellapp.dirty_x = 0;
-    g_shellapp.dirty_y = 0;
-    g_shellapp.dirty_width = 0;
-    g_shellapp.dirty_height = 0;
+    g_shellapp.force_full_present = 0;
+    sx_rect_set_clear(&g_shellapp.dirty_rects);
     g_shellapp.last_present_ms = uptime_ms();
 }
 
