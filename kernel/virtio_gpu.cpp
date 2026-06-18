@@ -216,6 +216,11 @@ struct PendingPresent {
     uint32_t y;
     uint32_t width;
     uint32_t height;
+    uint32_t rect_count;
+    uint32_t active_rect_index;
+    savanxp_gpu_dirty_rect rects[SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS];
+    uint64_t first_sequence;
+    uint64_t requested_sequence;
     uint64_t sequence;
     uint64_t enqueue_tick;
 };
@@ -225,7 +230,8 @@ struct RetiredPresentStatus {
     bool failed;
     uint16_t reserved0;
     uint32_t reserved1;
-    uint64_t sequence;
+    uint64_t first_sequence;
+    uint64_t last_sequence;
 };
 
 struct CursorCommandSlot {
@@ -265,17 +271,6 @@ struct CursorPlane {
     savanxp_fb_info info;
 };
 
-device::Device g_gpu_device = {
-    .name = "gpu0",
-    .read = nullptr,
-    .write = nullptr,
-    .ioctl = nullptr,
-    .close = nullptr,
-};
-
-virtio_pci::Device g_device = {};
-virtio_pci::Queue g_control_queue = {};
-virtio_pci::Queue g_cursor_queue = {};
 struct Surface {
     uint32_t resource_id;
     uint32_t reserved0;
@@ -296,16 +291,188 @@ struct ImportedSurface {
     object::SectionObject* section;
     void* virtual_address;
 };
+
+struct TransportState {
+    virtio_pci::Device device;
+    virtio_pci::Queue control_queue;
+    uint8_t irq_line;
+    bool irq_registered;
+    volatile uint32_t irq_work_pending;
+    volatile uint32_t scanout_refresh_pending;
+};
+
+struct CursorState {
+    virtio_pci::Queue queue;
+    CursorCommandSlot command;
+    CursorPlane plane;
+};
+
+struct DisplayState {
+    Surface surfaces[kGpuSurfaceCount];
+    ImportedSurface imported_surfaces[kImportedSurfaceCount];
+    GpuScanoutState scanouts[16];
+    savanxp_fb_info framebuffer_info;
+    savanxp_gpu_info gpu_info;
+    savanxp_gpu_scanout_state scanout_state;
+    uint32_t scanout_id;
+    uint32_t scanout_resource_id;
+    uint32_t scanout_width;
+    uint32_t scanout_height;
+    uint32_t preferred_scanout_width;
+    uint32_t preferred_scanout_height;
+    uint32_t front_surface_index;
+};
+
+struct PresentState {
+    savanxp_gpu_stats stats;
+    uint64_t next_fence_id;
+    uint32_t last_response_type;
+    uint16_t command_slot_capacity;
+    CommandSlot command_slots[kCommandSlotCount];
+    PendingPresent pending_presents[kPendingPresentCapacity];
+    uint32_t pending_present_order[kPendingPresentCapacity];
+    uint32_t pending_present_count;
+    RetiredPresentStatus retired_present_history[kRetiredPresentHistoryCapacity];
+    uint32_t retired_present_history_next;
+    uint64_t next_present_sequence;
+    uint64_t last_submitted_present_sequence;
+    uint64_t last_retired_present_sequence;
+};
+
+struct RuntimeState {
+    bool present;
+    bool ready;
+    bool degraded;
+    volatile uint32_t driver_busy_depth;
+    volatile uint32_t background_service_active;
+    volatile uint32_t control_queue_access_active;
+    volatile uint32_t cursor_queue_access_active;
+    volatile uint32_t recovery_active;
+};
+
+struct DriverEvents {
+    object::EventObject* present_retire_event;
+    object::EventObject* scanout_event;
+};
+
+struct ScanoutRefreshSnapshot {
+    GpuScanoutState scanouts[16];
+    savanxp_gpu_scanout_state scanout_state;
+    uint32_t scanout_id;
+    uint32_t scanout_resource_id;
+    uint32_t scanout_width;
+    uint32_t scanout_height;
+};
+
+struct Adapter {
+    device::Device node;
+    TransportState transport;
+    CursorState cursor;
+    DisplayState display;
+    PresentState presents;
+    RuntimeState runtime;
+    DriverEvents events;
+};
+
+Adapter g_adapter = {};
+
+// Keep stable aliases while the driver is migrated away from namespace globals.
+device::Device& g_gpu_device = g_adapter.node;
+virtio_pci::Device& g_device = g_adapter.transport.device;
+virtio_pci::Queue& g_control_queue = g_adapter.transport.control_queue;
+virtio_pci::Queue& g_cursor_queue = g_adapter.cursor.queue;
+Surface (&g_surfaces)[kGpuSurfaceCount] = g_adapter.display.surfaces;
+ImportedSurface (&g_imported_surfaces)[kImportedSurfaceCount] = g_adapter.display.imported_surfaces;
+GpuScanoutState (&g_scanouts)[16] = g_adapter.display.scanouts;
+CursorPlane& g_cursor_plane = g_adapter.cursor.plane;
+savanxp_fb_info& g_framebuffer_info = g_adapter.display.framebuffer_info;
+savanxp_gpu_info& g_gpu_info = g_adapter.display.gpu_info;
+savanxp_gpu_scanout_state& g_scanout_state = g_adapter.display.scanout_state;
+savanxp_gpu_stats& g_gpu_stats = g_adapter.presents.stats;
+uint32_t& g_scanout_id = g_adapter.display.scanout_id;
+uint32_t& g_scanout_resource_id = g_adapter.display.scanout_resource_id;
+uint32_t& g_scanout_width = g_adapter.display.scanout_width;
+uint32_t& g_scanout_height = g_adapter.display.scanout_height;
+uint32_t& g_preferred_scanout_width = g_adapter.display.preferred_scanout_width;
+uint32_t& g_preferred_scanout_height = g_adapter.display.preferred_scanout_height;
+uint32_t& g_front_surface_index = g_adapter.display.front_surface_index;
+uint64_t& g_next_fence_id = g_adapter.presents.next_fence_id;
+bool& g_present = g_adapter.runtime.present;
+bool& g_ready = g_adapter.runtime.ready;
+bool& g_degraded = g_adapter.runtime.degraded;
+uint32_t& g_last_response_type = g_adapter.presents.last_response_type;
+uint16_t& g_command_slot_capacity = g_adapter.presents.command_slot_capacity;
+CommandSlot (&g_command_slots)[kCommandSlotCount] = g_adapter.presents.command_slots;
+CursorCommandSlot& g_cursor_command = g_adapter.cursor.command;
+PendingPresent (&g_pending_presents)[kPendingPresentCapacity] = g_adapter.presents.pending_presents;
+uint32_t (&g_pending_present_order)[kPendingPresentCapacity] = g_adapter.presents.pending_present_order;
+uint32_t& g_pending_present_count = g_adapter.presents.pending_present_count;
+RetiredPresentStatus (&g_retired_present_history)[kRetiredPresentHistoryCapacity] = g_adapter.presents.retired_present_history;
+uint32_t& g_retired_present_history_next = g_adapter.presents.retired_present_history_next;
+uint64_t& g_next_present_sequence = g_adapter.presents.next_present_sequence;
+uint64_t& g_last_submitted_present_sequence = g_adapter.presents.last_submitted_present_sequence;
+uint64_t& g_last_retired_present_sequence = g_adapter.presents.last_retired_present_sequence;
+uint8_t& g_irq_line = g_adapter.transport.irq_line;
+bool& g_irq_registered = g_adapter.transport.irq_registered;
+volatile uint32_t& g_irq_work_pending = g_adapter.transport.irq_work_pending;
+volatile uint32_t& g_scanout_refresh_pending = g_adapter.transport.scanout_refresh_pending;
+volatile uint32_t& g_driver_busy_depth = g_adapter.runtime.driver_busy_depth;
+volatile uint32_t& g_background_service_active = g_adapter.runtime.background_service_active;
+volatile uint32_t& g_control_queue_access_active = g_adapter.runtime.control_queue_access_active;
+volatile uint32_t& g_cursor_queue_access_active = g_adapter.runtime.cursor_queue_access_active;
+volatile uint32_t& g_recovery_active = g_adapter.runtime.recovery_active;
+object::EventObject*& g_present_retire_event = g_adapter.events.present_retire_event;
+object::EventObject*& g_scanout_event = g_adapter.events.scanout_event;
+
+void initialize_device_node() {
+    g_gpu_device.name = "gpu0";
+    g_gpu_device.read = nullptr;
+    g_gpu_device.write = nullptr;
+    g_gpu_device.ioctl = nullptr;
+    g_gpu_device.close = nullptr;
+    g_gpu_device.can_read = nullptr;
+}
+
+void reset_adapter_state() {
+    memset(&g_adapter.transport, 0, sizeof(g_adapter.transport));
+    memset(&g_adapter.cursor, 0, sizeof(g_adapter.cursor));
+    memset(&g_adapter.display, 0, sizeof(g_adapter.display));
+    memset(&g_adapter.presents, 0, sizeof(g_adapter.presents));
+    memset(&g_adapter.runtime, 0, sizeof(g_adapter.runtime));
+    memset(&g_adapter.events, 0, sizeof(g_adapter.events));
+    initialize_device_node();
+    g_next_fence_id = 1;
+    g_next_present_sequence = 1;
+    g_irq_line = 0xffu;
+}
+
 Surface* surface_at(uint32_t surface_index);
 Surface* front_surface();
 ImportedSurface* imported_surface_at(uint32_t surface_id);
+bool imported_surface_is_critical(const ImportedSurface& surface);
+void abandon_imported_surface(ImportedSurface& surface, const char* reason);
 void release_imported_surface(ImportedSurface& surface);
 void release_all_imported_surfaces();
 bool any_imported_surface_in_use();
 void release_surface_allocation(uint32_t surface_index);
 bool set_scanout_surface(uint32_t surface_index);
+bool resource_present_in_progress(uint32_t resource_id, uint32_t exclude_index);
+bool current_present_rect(const PendingPresent& present, savanxp_gpu_dirty_rect& rect);
+void reset_pending_present_rects(PendingPresent& present);
+bool append_pending_present_rect(PendingPresent& present, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+void collapse_pending_present_to_bounds(PendingPresent& present);
+void initialize_pending_present_batch_rects(PendingPresent& present, const ImportedSurface& surface, const savanxp_gpu_surface_present_batch& batch);
+void merge_pending_present_payload(PendingPresent& destination, const PendingPresent& source);
 void poll_command_completions();
 void poll_cursor_completions();
+void finalize_completed_presents();
+uint64_t reserve_present_sequence(uint64_t requested_sequence);
+void drain_present_pipeline();
+void drain_transport_queues();
+bool queue_progress_pending();
+uint32_t consume_device_config_events();
+void process_device_config_events(uint32_t events);
+bool service_background_pass();
 SubmitPresentResult submit_next_present_stage(uint32_t pending_index);
 void log_command_failure(const char* stage);
 void submit_ready_deferred_presents();
@@ -317,49 +484,10 @@ void refresh_gpu_info_flags();
 bool configure_primary_surface(uint32_t width, uint32_t height);
 bool submit_cursor_plane_command(uint32_t type);
 bool recover_device(const char* reason);
-void enter_degraded_mode(const char* reason);
+bool enter_degraded_mode(const char* reason);
 void fail_device(const char* reason);
 void gpu_irq();
-
-Surface g_surfaces[kGpuSurfaceCount] = {};
-ImportedSurface g_imported_surfaces[kImportedSurfaceCount] = {};
-GpuScanoutState g_scanouts[16] = {};
-CursorPlane g_cursor_plane = {};
-savanxp_fb_info g_framebuffer_info = {};
-savanxp_gpu_info g_gpu_info = {};
-savanxp_gpu_scanout_state g_scanout_state = {};
-savanxp_gpu_stats g_gpu_stats = {};
-uint32_t g_scanout_id = 0;
-uint32_t g_scanout_resource_id = 0;
-uint32_t g_scanout_width = 0;
-uint32_t g_scanout_height = 0;
-uint32_t g_preferred_scanout_width = 0;
-uint32_t g_preferred_scanout_height = 0;
-uint32_t g_front_surface_index = 0;
-uint64_t g_next_fence_id = 1;
-bool g_present = false;
-bool g_ready = false;
-bool g_degraded = false;
-uint32_t g_last_response_type = 0;
-uint16_t g_command_slot_capacity = 0;
-CommandSlot g_command_slots[kCommandSlotCount] = {};
-CursorCommandSlot g_cursor_command = {};
-PendingPresent g_pending_presents[kPendingPresentCapacity] = {};
-uint32_t g_pending_present_order[kPendingPresentCapacity] = {};
-uint32_t g_pending_present_count = 0;
-RetiredPresentStatus g_retired_present_history[kRetiredPresentHistoryCapacity] = {};
-uint32_t g_retired_present_history_next = 0;
-uint64_t g_next_present_sequence = 1;
-uint64_t g_last_submitted_present_sequence = 0;
-uint64_t g_last_retired_present_sequence = 0;
-uint8_t g_irq_line = 0xffu;
-bool g_irq_registered = false;
-bool g_irq_work_pending = false;
-bool g_scanout_refresh_pending = false;
-uint32_t g_driver_busy_depth = 0;
-bool g_background_service_active = false;
-object::EventObject* g_present_retire_event = nullptr;
-object::EventObject* g_scanout_event = nullptr;
+void pause_briefly();
 
 int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
@@ -368,6 +496,75 @@ int negative_error(savanxp_error_code code) {
 uint64_t page_count_for_bytes(uint32_t byte_count) {
     return (static_cast<uint64_t>(byte_count) + memory::kPageSize - 1u) / memory::kPageSize;
 }
+
+uint32_t atomic_load_u32(const volatile uint32_t& value) {
+    return __atomic_load_n(&value, __ATOMIC_ACQUIRE);
+}
+
+void atomic_store_u32(volatile uint32_t& value, uint32_t next) {
+    __atomic_store_n(&value, next, __ATOMIC_RELEASE);
+}
+
+uint32_t atomic_exchange_u32(volatile uint32_t& value, uint32_t next) {
+    return __atomic_exchange_n(&value, next, __ATOMIC_ACQ_REL);
+}
+
+bool atomic_compare_exchange_u32(volatile uint32_t& value, uint32_t& expected, uint32_t desired) {
+    return __atomic_compare_exchange_n(&value, &expected, desired, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+uint32_t atomic_increment_u32(volatile uint32_t& value) {
+    return __atomic_add_fetch(&value, 1u, __ATOMIC_ACQ_REL);
+}
+
+uint32_t atomic_decrement_u32(volatile uint32_t& value) {
+    return __atomic_sub_fetch(&value, 1u, __ATOMIC_ACQ_REL);
+}
+
+bool atomic_try_lock_u32(volatile uint32_t& value) {
+    uint32_t expected = 0;
+    return atomic_compare_exchange_u32(value, expected, 1u);
+}
+
+bool atomic_wait_lock_u32(volatile uint32_t& value, uint32_t spin_limit) {
+    if (atomic_try_lock_u32(value)) {
+        return true;
+    }
+
+    for (uint32_t spin = 0; spin < spin_limit; ++spin) {
+        pause_briefly();
+        if (atomic_try_lock_u32(value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void atomic_unlock_u32(volatile uint32_t& value) {
+    atomic_store_u32(value, 0u);
+}
+
+void atomic_set_flag(volatile uint32_t& value, bool enabled) {
+    atomic_store_u32(value, enabled ? 1u : 0u);
+}
+
+struct AtomicSectionGuard {
+    volatile uint32_t* flag;
+    bool entered;
+
+    AtomicSectionGuard(volatile uint32_t& target, bool wait, uint32_t spin_limit)
+        : flag(&target)
+        , entered(wait ? atomic_wait_lock_u32(target, spin_limit) : atomic_try_lock_u32(target)) {
+    }
+
+    ~AtomicSectionGuard() {
+        if (entered && flag != nullptr) {
+            atomic_unlock_u32(*flag);
+        }
+    }
+
+    bool locked() const { return entered; }
+};
 
 bool ensure_driver_event(object::EventObject*& event_object) {
     if (event_object != nullptr) {
@@ -395,12 +592,12 @@ int export_driver_event_handle(object::EventObject*& event_object) {
 
 struct DriverBusyGuard {
     DriverBusyGuard() {
-        g_driver_busy_depth += 1u;
+        atomic_increment_u32(g_driver_busy_depth);
     }
 
     ~DriverBusyGuard() {
-        if (g_driver_busy_depth != 0) {
-            g_driver_busy_depth -= 1u;
+        if (atomic_load_u32(g_driver_busy_depth) != 0) {
+            (void)atomic_decrement_u32(g_driver_busy_depth);
         }
     }
 };
@@ -673,8 +870,19 @@ bool normalize_present_batch_bounds(
     return true;
 }
 
-void remember_retired_present(uint64_t sequence, bool failed) {
-    if (sequence == 0) {
+uint64_t reserve_present_sequence(uint64_t requested_sequence) {
+    const uint64_t sequence =
+        requested_sequence != 0 && requested_sequence == g_next_present_sequence
+            ? requested_sequence
+            : g_next_present_sequence;
+    g_next_present_sequence = sequence + 1u;
+    g_last_submitted_present_sequence = sequence;
+    g_gpu_stats.present_enqueued += 1u;
+    return sequence;
+}
+
+void remember_retired_present(uint64_t first_sequence, uint64_t last_sequence, bool failed) {
+    if (first_sequence == 0 || last_sequence == 0 || last_sequence < first_sequence) {
         return;
     }
 
@@ -684,12 +892,13 @@ void remember_retired_present(uint64_t sequence, bool failed) {
         .failed = failed,
         .reserved0 = 0,
         .reserved1 = 0,
-        .sequence = sequence,
+        .first_sequence = first_sequence,
+        .last_sequence = last_sequence,
     };
     g_retired_present_history_next =
         static_cast<uint32_t>((g_retired_present_history_next + 1u) % kRetiredPresentHistoryCapacity);
-    if (sequence > g_last_retired_present_sequence) {
-        g_last_retired_present_sequence = sequence;
+    if (last_sequence > g_last_retired_present_sequence) {
+        g_last_retired_present_sequence = last_sequence;
     }
     signal_driver_event(g_present_retire_event);
 }
@@ -702,7 +911,7 @@ bool query_retired_present(uint64_t sequence, bool& failed) {
 
     for (uint32_t index = 0; index < kRetiredPresentHistoryCapacity; ++index) {
         const RetiredPresentStatus& entry = g_retired_present_history[index];
-        if (entry.valid && entry.sequence == sequence) {
+        if (entry.valid && sequence >= entry.first_sequence && sequence <= entry.last_sequence) {
             failed = entry.failed;
             return true;
         }
@@ -721,7 +930,10 @@ void retire_pending_presents_as_failed() {
         if (!present.in_use || present.sequence == 0) {
             continue;
         }
-        remember_retired_present(present.sequence, true);
+        remember_retired_present(
+            present.first_sequence != 0 ? present.first_sequence : present.sequence,
+            present.sequence,
+            true);
     }
 }
 
@@ -832,7 +1044,99 @@ bool wait_for_pending_present_slot(uint32_t& pending_index) {
 
     g_gpu_stats.pending_slot_timeouts += 1u;
     console::write_line("virtio-gpu: wait timeout pending present slot");
+    enter_degraded_mode("wait timeout pending slot");
+    (void)recover_device("wait timeout pending slot");
     return false;
+}
+
+bool front_surface_ready_for_partial_present() {
+    Surface* surface = front_surface();
+    return surface != nullptr &&
+        surface->resource_id != 0 &&
+        surface->virtual_address != nullptr &&
+        !resource_present_in_progress(surface->resource_id, kPendingPresentCapacity);
+}
+
+bool current_present_rect(const PendingPresent& present, savanxp_gpu_dirty_rect& rect) {
+    if (present.rect_count != 0 && present.active_rect_index < present.rect_count) {
+        rect = present.rects[present.active_rect_index];
+        return rect.width != 0 && rect.height != 0;
+    }
+
+    rect = {
+        .x = present.x,
+        .y = present.y,
+        .width = present.width,
+        .height = present.height,
+    };
+    return rect.width != 0 && rect.height != 0;
+}
+
+void reset_pending_present_rects(PendingPresent& present) {
+    present.rect_count = 0;
+    present.active_rect_index = 0;
+    memset(present.rects, 0, sizeof(present.rects));
+}
+
+bool append_pending_present_rect(PendingPresent& present, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0) {
+        return true;
+    }
+
+    if (present.rect_count >= SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
+        collapse_pending_present_to_bounds(present);
+        return false;
+    }
+
+    present.rects[present.rect_count++] = {
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+    };
+    return true;
+}
+
+void collapse_pending_present_to_bounds(PendingPresent& present) {
+    reset_pending_present_rects(present);
+    append_pending_present_rect(present, present.x, present.y, present.width, present.height);
+}
+
+void initialize_pending_present_batch_rects(PendingPresent& present, const ImportedSurface& surface, const savanxp_gpu_surface_present_batch& batch) {
+    reset_pending_present_rects(present);
+    if ((batch.flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0) {
+        collapse_pending_present_to_bounds(present);
+        return;
+    }
+
+    for (uint32_t rect_index = 0; rect_index < batch.rect_count; ++rect_index) {
+        const savanxp_gpu_dirty_rect& rect = batch.rects[rect_index];
+        uint64_t rect_right = 0;
+        uint64_t rect_bottom = 0;
+        uint32_t clipped_right = 0;
+        uint32_t clipped_bottom = 0;
+
+        if (rect.width == 0 || rect.height == 0 ||
+            rect.x >= surface.info.width || rect.y >= surface.info.height) {
+            continue;
+        }
+
+        rect_right = static_cast<uint64_t>(rect.x) + rect.width;
+        rect_bottom = static_cast<uint64_t>(rect.y) + rect.height;
+        clipped_right = rect_right > surface.info.width ? surface.info.width : static_cast<uint32_t>(rect_right);
+        clipped_bottom = rect_bottom > surface.info.height ? surface.info.height : static_cast<uint32_t>(rect_bottom);
+        if (clipped_right <= rect.x || clipped_bottom <= rect.y) {
+            continue;
+        }
+
+        if (!append_pending_present_rect(present, rect.x, rect.y, clipped_right - rect.x, clipped_bottom - rect.y)) {
+            return;
+        }
+    }
+
+    if (present.rect_count == 0) {
+        collapse_pending_present_to_bounds(present);
+    }
 }
 
 void merge_pending_present_rect(PendingPresent& present, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -849,6 +1153,49 @@ void merge_pending_present_rect(PendingPresent& present, uint32_t x, uint32_t y,
     }
     present.width = (new_right > right ? new_right : right) - present.x;
     present.height = (new_bottom > bottom ? new_bottom : bottom) - present.y;
+}
+
+void merge_pending_present_payload(PendingPresent& destination, const PendingPresent& source) {
+    merge_pending_present_rect(destination, source.x, source.y, source.width, source.height);
+
+    if (source.rect_count == 0) {
+        if (destination.rect_count == 0) {
+            collapse_pending_present_to_bounds(destination);
+            return;
+        }
+        if (destination.rect_count < SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
+            if (!append_pending_present_rect(destination, source.x, source.y, source.width, source.height)) {
+                return;
+            }
+        } else {
+            collapse_pending_present_to_bounds(destination);
+        }
+        return;
+    }
+
+    if (destination.rect_count == 0) {
+        reset_pending_present_rects(destination);
+    }
+
+    for (uint32_t rect_index = 0; rect_index < source.rect_count; ++rect_index) {
+        const savanxp_gpu_dirty_rect& rect = source.rects[rect_index];
+        if (destination.rect_count >= SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
+            collapse_pending_present_to_bounds(destination);
+            return;
+        }
+        if (!append_pending_present_rect(destination, rect.x, rect.y, rect.width, rect.height)) {
+            return;
+        }
+    }
+}
+
+void note_merged_present_submission(PendingPresent& present, uint64_t requested_sequence) {
+    const uint64_t merged_sequence = reserve_present_sequence(requested_sequence);
+    if (present.first_sequence == 0) {
+        present.first_sequence = present.sequence != 0 ? present.sequence : merged_sequence;
+    }
+    present.sequence = merged_sequence;
+    present.enqueue_tick = timer::ticks();
 }
 
 bool resource_present_in_progress(uint32_t resource_id, uint32_t exclude_index) {
@@ -891,12 +1238,15 @@ bool enqueue_pending_present(const PendingPresent& pending, uint32_t& pending_in
     }
 
     g_pending_presents[pending_index] = pending;
+    if (g_pending_presents[pending_index].rect_count == 0) {
+        collapse_pending_present_to_bounds(g_pending_presents[pending_index]);
+    }
+    g_pending_presents[pending_index].active_rect_index = 0;
     g_pending_presents[pending_index].in_use = true;
-    g_pending_presents[pending_index].sequence = g_next_present_sequence++;
+    g_pending_presents[pending_index].sequence = reserve_present_sequence(g_pending_presents[pending_index].requested_sequence);
+    g_pending_presents[pending_index].first_sequence = g_pending_presents[pending_index].sequence;
     g_pending_presents[pending_index].enqueue_tick = timer::ticks();
     g_pending_present_order[g_pending_present_count++] = pending_index;
-    g_last_submitted_present_sequence = g_pending_presents[pending_index].sequence;
-    g_gpu_stats.present_enqueued += 1u;
     if (g_pending_present_count > g_gpu_stats.pending_depth_max) {
         g_gpu_stats.pending_depth_max = g_pending_present_count;
     }
@@ -914,9 +1264,10 @@ void release_pending_head() {
 }
 
 bool submit_command_slot(uint16_t slot_index, const void* request, size_t request_bytes, size_t response_bytes) {
+    AtomicSectionGuard queue_guard(g_control_queue_access_active, true, kCommandActivePollIterations);
     if (!g_ready || !g_control_queue.enabled || slot_index >= g_command_slot_capacity || request == nullptr ||
         request_bytes == 0 || response_bytes == 0 ||
-        request_bytes > kRequestBufferBytes || response_bytes > kResponseBufferBytes) {
+        request_bytes > kRequestBufferBytes || response_bytes > kResponseBufferBytes || !queue_guard.locked()) {
         return false;
     }
 
@@ -965,9 +1316,10 @@ bool submit_command_slot(uint16_t slot_index, const void* request, size_t reques
 }
 
 bool submit_cursor_command(const void* request, size_t request_bytes, size_t response_bytes) {
+    AtomicSectionGuard queue_guard(g_cursor_queue_access_active, true, kCommandActivePollIterations);
     if (!g_ready || !g_cursor_queue.enabled || request == nullptr || request_bytes == 0 || response_bytes == 0 ||
         request_bytes > kCursorRequestBufferBytes || response_bytes > kCursorResponseBufferBytes ||
-        g_cursor_command.in_use) {
+        g_cursor_command.in_use || !queue_guard.locked()) {
         return false;
     }
 
@@ -1009,7 +1361,11 @@ bool submit_cursor_command(const void* request, size_t request_bytes, size_t res
 }
 
 void poll_cursor_completions() {
+    AtomicSectionGuard queue_guard(g_cursor_queue_access_active, false, 0);
     if (!g_ready || !g_cursor_queue.enabled || !g_cursor_command.in_use) {
+        return;
+    }
+    if (!queue_guard.locked()) {
         return;
     }
 
@@ -1032,9 +1388,20 @@ void poll_cursor_completions() {
     }
 }
 
-void service_queue_progress() {
+void drain_present_pipeline() {
+    finalize_completed_presents();
+    submit_ready_deferred_presents();
+    finalize_completed_presents();
+}
+
+void drain_transport_queues() {
     poll_command_completions();
     poll_cursor_completions();
+}
+
+void service_queue_progress() {
+    drain_transport_queues();
+    drain_present_pipeline();
 }
 
 bool wait_for_cursor_command() {
@@ -1082,7 +1449,10 @@ void finalize_completed_presents() {
             break;
         }
 
-        remember_retired_present(present.sequence, present.failed);
+        remember_retired_present(
+            present.first_sequence != 0 ? present.first_sequence : present.sequence,
+            present.sequence,
+            present.failed);
         if (!present.failed) {
             const uint64_t completion_tick = timer::ticks();
             const uint64_t elapsed_ticks =
@@ -1107,11 +1477,15 @@ void finalize_completed_presents() {
     }
 }
 
-CommandStage next_present_stage(const PendingPresent& present, CommandStage completed_stage) {
+CommandStage next_present_stage(PendingPresent& present, CommandStage completed_stage) {
     switch (completed_stage) {
         case kCommandStagePresentTransfer:
             return kCommandStagePresentFlush;
         case kCommandStagePresentFlush:
+            if (present.active_rect_index + 1u < present.rect_count) {
+                present.active_rect_index += 1u;
+                return kCommandStagePresentTransfer;
+            }
             return present.resource_id != 0 && present.resource_id != g_scanout_resource_id
                 ? kCommandStagePresentScanout
                 : kCommandStageNone;
@@ -1143,7 +1517,11 @@ void submit_ready_deferred_presents() {
 }
 
 void poll_command_completions() {
+    AtomicSectionGuard queue_guard(g_control_queue_access_active, false, 0);
     if (!g_ready || !g_control_queue.enabled) {
+        return;
+    }
+    if (!queue_guard.locked()) {
         return;
     }
 
@@ -1211,18 +1589,50 @@ void poll_command_completions() {
                     present.next_stage = next_present_stage(present, completed_stage);
                     if (present.next_stage == kCommandStageNone) {
                         present.completed = true;
-                    } else if (submit_next_present_stage(pending_present_index) == kSubmitPresentFailed) {
-                        present.failed = true;
-                        present.completed = true;
                     }
                 }
             }
         }
     }
 
-    finalize_completed_presents();
-    submit_ready_deferred_presents();
-    finalize_completed_presents();
+}
+
+bool queue_progress_pending() {
+    return command_slots_in_flight() || g_pending_present_count != 0;
+}
+
+uint32_t consume_device_config_events() {
+    const uint32_t events = device_cfg()->events_read;
+    if (events != 0) {
+        device_cfg()->events_clear = events;
+    }
+    return events;
+}
+
+void process_device_config_events(uint32_t events) {
+    if ((events & kVirtioGpuEventDisplay) != 0) {
+        if (!refresh_scanouts(false)) {
+            if (!enter_degraded_mode("scanout refresh failed")) {
+                (void)recover_device("scanout refresh failed");
+            } else {
+                signal_driver_event(g_scanout_event);
+            }
+        }
+    }
+}
+
+bool service_background_pass() {
+    const bool irq_work_pending = atomic_exchange_u32(g_irq_work_pending, 0u) != 0;
+    const bool scanout_refresh_pending = atomic_exchange_u32(g_scanout_refresh_pending, 0u) != 0;
+    if (!irq_work_pending && !queue_progress_pending() && !scanout_refresh_pending) {
+        return false;
+    }
+
+    service_queue_progress();
+    if (scanout_refresh_pending) {
+        process_device_config_events(consume_device_config_events());
+    }
+    return true;
 }
 
 bool wait_for_command_slot(uint16_t slot_index) {
@@ -1325,6 +1735,37 @@ ImportedSurface* imported_surface_at(uint32_t surface_id) {
         }
     }
     return nullptr;
+}
+
+bool imported_surface_is_critical(const ImportedSurface& surface) {
+    return (surface.flags & SAVANXP_GPU_SURFACE_FLAG_SCANOUT) != 0 ||
+        surface.resource_id == g_scanout_resource_id;
+}
+
+void abandon_imported_surface(ImportedSurface& surface, const char* reason) {
+    if (!surface.in_use) {
+        return;
+    }
+
+    const bool restore_front_surface = imported_surface_is_critical(surface);
+    if (reason != nullptr) {
+        console::printf(
+            "virtio-gpu: drop imported surface=%u %s\n",
+            static_cast<unsigned>(surface.surface_id),
+            reason);
+    }
+    if (restore_front_surface) {
+        g_scanout_resource_id = 0;
+        (void)ensure_primary_scanout_restored();
+    }
+    if (surface.virtual_address != nullptr && surface.page_count != 0) {
+        (void)vm::unmap_kernel_pages(surface.virtual_address, surface.page_count);
+    }
+    if (surface.section != nullptr) {
+        object::Header* header = &surface.section->header;
+        object::release(header);
+    }
+    memset(&surface, 0, sizeof(surface));
 }
 
 bool create_resource_with_format(uint32_t resource_id, const savanxp_fb_info& info, uint32_t format) {
@@ -1619,6 +2060,9 @@ bool wait_for_available_surface(uint32_t& surface_index) {
         g_gpu_stats.wait_surface_ticks += 1u;
     }
     g_gpu_stats.surface_timeouts += 1u;
+    console::write_line("virtio-gpu: wait timeout present surface");
+    enter_degraded_mode("wait timeout surface");
+    (void)recover_device("wait timeout surface");
     return false;
 }
 
@@ -2028,7 +2472,9 @@ bool build_transfer_request(uint32_t surface_index, uint32_t x, uint32_t y, uint
 }
 
 bool build_transfer_request_for_present(const PendingPresent& present, VirtioGpuTransferToHost2d& request) {
-    return build_transfer_request_for_resource(present.resource_id, present.info, present.x, present.y, present.width, present.height, request);
+    savanxp_gpu_dirty_rect rect = {};
+    return current_present_rect(present, rect) &&
+        build_transfer_request_for_resource(present.resource_id, present.info, rect.x, rect.y, rect.width, rect.height, request);
 }
 
 bool transfer_rect(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -2046,7 +2492,9 @@ bool build_flush_request(uint32_t surface_index, uint32_t x, uint32_t y, uint32_
 }
 
 bool build_flush_request_for_present(const PendingPresent& present, VirtioGpuResourceFlush& request) {
-    return build_flush_request_for_resource(present.resource_id, present.x, present.y, present.width, present.height, request);
+    savanxp_gpu_dirty_rect rect = {};
+    return current_present_rect(present, rect) &&
+        build_flush_request_for_resource(present.resource_id, rect.x, rect.y, rect.width, rect.height, request);
 }
 
 bool flush_rect_internal(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -2181,7 +2629,8 @@ bool submit_pending_present(const PendingPresent& pending) {
         !existing->stage_in_flight &&
         !existing->completed &&
         !existing->failed) {
-        merge_pending_present_rect(*existing, pending.x, pending.y, pending.width, pending.height);
+        merge_pending_present_payload(*existing, pending);
+        note_merged_present_submission(*existing, pending.requested_sequence);
         g_gpu_stats.present_coalesced += 1u;
         submit_ready_deferred_presents();
         finalize_completed_presents();
@@ -2201,11 +2650,13 @@ bool submit_pending_present(const PendingPresent& pending) {
 
 bool submit_present_surface(uint32_t surface_index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     Surface* surface = surface_at(surface_index);
+    PendingPresent pending = {};
+
     if (surface == nullptr) {
         return false;
     }
 
-    return submit_pending_present({
+    pending = {
         .in_use = false,
         .completed = false,
         .failed = false,
@@ -2222,13 +2673,27 @@ bool submit_present_surface(uint32_t surface_index, uint32_t x, uint32_t y, uint
         .y = y,
         .width = width,
         .height = height,
+        .rect_count = 0,
+        .active_rect_index = 0,
+        .rects = {},
+        .first_sequence = 0,
+        .requested_sequence = 0,
         .sequence = 0,
         .enqueue_tick = 0,
-    });
+    };
+    append_pending_present_rect(pending, x, y, width, height);
+    return submit_pending_present(pending);
 }
 
-bool submit_imported_present(const ImportedSurface& surface, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
-    return submit_pending_present({
+bool submit_imported_present(
+    const ImportedSurface& surface,
+    uint32_t x,
+    uint32_t y,
+    uint32_t width,
+    uint32_t height,
+    uint64_t requested_sequence,
+    const savanxp_gpu_surface_present_batch* batch) {
+    PendingPresent pending = {
         .in_use = false,
         .completed = false,
         .failed = false,
@@ -2245,9 +2710,21 @@ bool submit_imported_present(const ImportedSurface& surface, uint32_t x, uint32_
         .y = y,
         .width = width,
         .height = height,
+        .rect_count = 0,
+        .active_rect_index = 0,
+        .rects = {},
+        .first_sequence = 0,
+        .requested_sequence = requested_sequence,
         .sequence = 0,
         .enqueue_tick = 0,
-    });
+    };
+
+    if (batch != nullptr) {
+        initialize_pending_present_batch_rects(pending, surface, *batch);
+    } else {
+        append_pending_present_rect(pending, x, y, width, height);
+    }
+    return submit_pending_present(pending);
 }
 
 bool choose_scanout(const VirtioGpuRespDisplayInfo& display_info, const boot::FramebufferInfo& boot_framebuffer) {
@@ -2351,10 +2828,31 @@ bool ensure_primary_scanout_restored() {
     return true;
 }
 
+void snapshot_scanout_refresh_state(ScanoutRefreshSnapshot& snapshot) {
+    memcpy(snapshot.scanouts, g_scanouts, sizeof(g_scanouts));
+    snapshot.scanout_state = g_scanout_state;
+    snapshot.scanout_id = g_scanout_id;
+    snapshot.scanout_resource_id = g_scanout_resource_id;
+    snapshot.scanout_width = g_scanout_width;
+    snapshot.scanout_height = g_scanout_height;
+}
+
+void restore_scanout_refresh_state(const ScanoutRefreshSnapshot& snapshot) {
+    memcpy(g_scanouts, snapshot.scanouts, sizeof(g_scanouts));
+    g_scanout_state = snapshot.scanout_state;
+    g_scanout_id = snapshot.scanout_id;
+    g_scanout_resource_id = snapshot.scanout_resource_id;
+    g_scanout_width = snapshot.scanout_width;
+    g_scanout_height = snapshot.scanout_height;
+}
+
 bool refresh_scanouts(bool explicit_refresh) {
+    ScanoutRefreshSnapshot snapshot = {};
     VirtioGpuRespDisplayInfo display_info = {};
     uint32_t candidate_scanout_id = g_scanout_id;
     bool have_candidate = false;
+
+    snapshot_scanout_refresh_state(snapshot);
 
     if (!get_display_info(display_info)) {
         if (explicit_refresh) {
@@ -2386,6 +2884,7 @@ bool refresh_scanouts(bool explicit_refresh) {
     }
 
     if (!have_candidate) {
+        restore_scanout_refresh_state(snapshot);
         return false;
     }
     if (!g_scanouts[g_scanout_id].valid) {
@@ -2396,6 +2895,7 @@ bool refresh_scanouts(bool explicit_refresh) {
     g_scanout_height = g_scanouts[g_scanout_id].native_height;
     update_active_scanout_mode(g_framebuffer_info.width, g_framebuffer_info.height);
     if (!ensure_primary_scanout_restored()) {
+        restore_scanout_refresh_state(snapshot);
         return false;
     }
 
@@ -2658,7 +3158,7 @@ int present_surface_region_ioctl(uint64_t argument) {
         return negative_error(SAVANXP_EINVAL);
     }
 
-    if (!submit_imported_present(*surface, present.x, present.y, present.width, present.height)) {
+    if (!submit_imported_present(*surface, present.x, present.y, present.width, present.height, 0, nullptr)) {
         return negative_error(SAVANXP_EIO);
     }
     if (surface->resource_id != g_scanout_resource_id) {
@@ -2698,7 +3198,7 @@ int present_surface_batch_ioctl(uint64_t argument) {
         return 0;
     }
 
-    if (!submit_imported_present(*surface, x, y, width, height)) {
+    if (!submit_imported_present(*surface, x, y, width, height, batch.present_cookie, &batch)) {
         return negative_error(SAVANXP_EIO);
     }
     if (surface->resource_id != g_scanout_resource_id) {
@@ -3008,7 +3508,10 @@ bool rearm_imported_resources() {
         }
         if (!create_resource(surface.resource_id, surface.info) ||
             !attach_resource_backing(surface.resource_id, surface.section->physical_pages, surface.page_count)) {
-            return false;
+            if (imported_surface_is_critical(surface)) {
+                return false;
+            }
+            abandon_imported_surface(surface, "optional rearm failed");
         }
     }
     return true;
@@ -3018,28 +3521,46 @@ bool rearm_cursor_resource() {
     if (!g_cursor_plane.image_loaded || g_cursor_plane.resource_id == 0 || g_cursor_plane.page_count == 0 || !g_cursor_queue.enabled) {
         return true;
     }
-    return create_resource_with_format(g_cursor_plane.resource_id, g_cursor_plane.info, kVirtioGpuFormatB8G8R8A8Unorm) &&
+    if (create_resource_with_format(g_cursor_plane.resource_id, g_cursor_plane.info, kVirtioGpuFormatB8G8R8A8Unorm) &&
         attach_resource_backing(g_cursor_plane.resource_id, g_cursor_plane.physical_pages, g_cursor_plane.page_count) &&
         transfer_rect_resource(g_cursor_plane.resource_id, g_cursor_plane.info, 0, 0, g_cursor_plane.info.width, g_cursor_plane.info.height) &&
         flush_rect_resource(g_cursor_plane.resource_id, 0, 0, g_cursor_plane.info.width, g_cursor_plane.info.height) &&
-        submit_cursor_plane_command(kVirtioGpuCmdUpdateCursor);
+        submit_cursor_plane_command(kVirtioGpuCmdUpdateCursor)) {
+        return true;
+    }
+
+    console::write_line("virtio-gpu: cursor recovery failed, disabling cursor plane");
+    release_queue(g_cursor_queue);
+    release_cursor_plane();
+    return true;
 }
 
-void enter_degraded_mode(const char* reason) {
+bool enter_degraded_mode(const char* reason) {
     if (g_degraded) {
-        return;
+        Surface* primary = front_surface();
+        return primary != nullptr && primary->resource_id != 0 && primary->resource_id == g_scanout_resource_id;
     }
     g_degraded = true;
     g_gpu_stats.degraded_entries += 1u;
     if (reason != nullptr) {
         console::printf("virtio-gpu: degraded %s\n", reason);
     }
-    (void)ensure_primary_scanout_restored();
+    return ensure_primary_scanout_restored();
 }
 
 bool recover_device(const char* reason) {
+    AtomicSectionGuard recovery_guard(g_recovery_active, false, 0);
     if (!g_present) {
         return false;
+    }
+    if (!recovery_guard.locked()) {
+        const uint64_t deadline_tick = wait_deadline(kIdleWaitTicks);
+        while (atomic_load_u32(g_recovery_active) != 0) {
+            if (!wait_for_gpu_tick(deadline_tick)) {
+                break;
+            }
+        }
+        return g_ready && !g_degraded;
     }
 
     g_gpu_stats.recovery_attempts += 1u;
@@ -3061,8 +3582,10 @@ bool recover_device(const char* reason) {
 
     virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
     g_ready = true;
-    g_irq_work_pending = false;
-    g_scanout_refresh_pending = false;
+    atomic_set_flag(g_irq_work_pending, false);
+    atomic_set_flag(g_scanout_refresh_pending, false);
+    atomic_store_u32(g_control_queue_access_active, 0u);
+    atomic_store_u32(g_cursor_queue_access_active, 0u);
 
     if (!rearm_primary_resources() || !rearm_imported_resources() || !rearm_cursor_resource()) {
         fail_device("recovery failed to rearm resources");
@@ -3076,29 +3599,26 @@ bool recover_device(const char* reason) {
 }
 
 void service_background_work() {
-    if (!g_ready || g_driver_busy_depth != 0 || g_background_service_active) {
+    if (!g_ready || atomic_load_u32(g_driver_busy_depth) != 0) {
         return;
     }
-    if (!g_irq_work_pending &&
-        !command_slots_in_flight() &&
-        g_pending_present_count == 0 &&
-        !g_scanout_refresh_pending) {
+
+    uint32_t expected_active = 0;
+    if (!atomic_compare_exchange_u32(g_background_service_active, expected_active, 1u)) {
         return;
     }
-    g_background_service_active = true;
-    service_queue_progress();
-    if (g_scanout_refresh_pending) {
-        const uint32_t events = device_cfg()->events_read;
-        if (events != 0) {
-            device_cfg()->events_clear = events;
+
+    for (;;) {
+        if (!g_ready || atomic_load_u32(g_driver_busy_depth) != 0) {
+            break;
         }
-        g_scanout_refresh_pending = false;
-        if ((events & kVirtioGpuEventDisplay) != 0) {
-            (void)refresh_scanouts(false);
+
+        if (!service_background_pass()) {
+            break;
         }
     }
-    g_irq_work_pending = false;
-    g_background_service_active = false;
+
+    atomic_store_u32(g_background_service_active, 0u);
 }
 
 void gpu_irq() {
@@ -3109,14 +3629,19 @@ void gpu_irq() {
 
     g_gpu_stats.irq_notifications += 1u;
     if ((status & 0x2u) != 0) {
-        g_scanout_refresh_pending = true;
+        atomic_set_flag(g_scanout_refresh_pending, true);
         g_gpu_stats.irq_config_events += 1u;
     }
-    g_irq_work_pending = true;
+    atomic_set_flag(g_irq_work_pending, true);
 }
 
 void fail_device(const char* reason) {
     g_ready = false;
+    atomic_set_flag(g_irq_work_pending, false);
+    atomic_set_flag(g_scanout_refresh_pending, false);
+    atomic_store_u32(g_background_service_active, 0u);
+    atomic_store_u32(g_control_queue_access_active, 0u);
+    atomic_store_u32(g_cursor_queue_access_active, 0u);
     release_all_imported_surfaces();
     release_cursor_plane();
     virtio_pci::fail_device(g_device);
@@ -3155,41 +3680,7 @@ namespace virtio_gpu {
 void initialize(const boot::FramebufferInfo& framebuffer) {
     DriverBusyGuard guard;
     log_init_stage("probe");
-    memset(&g_device, 0, sizeof(g_device));
-    memset(&g_control_queue, 0, sizeof(g_control_queue));
-    memset(&g_cursor_queue, 0, sizeof(g_cursor_queue));
-    memset(g_surfaces, 0, sizeof(g_surfaces));
-    memset(g_imported_surfaces, 0, sizeof(g_imported_surfaces));
-    memset(g_scanouts, 0, sizeof(g_scanouts));
-    memset(&g_cursor_plane, 0, sizeof(g_cursor_plane));
-    memset(&g_framebuffer_info, 0, sizeof(g_framebuffer_info));
-    memset(&g_gpu_info, 0, sizeof(g_gpu_info));
-    memset(&g_scanout_state, 0, sizeof(g_scanout_state));
-    memset(&g_gpu_stats, 0, sizeof(g_gpu_stats));
-    memset(g_command_slots, 0, sizeof(g_command_slots));
-    memset(g_pending_presents, 0, sizeof(g_pending_presents));
-    memset(g_pending_present_order, 0, sizeof(g_pending_present_order));
-    memset(g_retired_present_history, 0, sizeof(g_retired_present_history));
-    g_front_surface_index = 0;
-    g_present = false;
-    g_ready = false;
-    g_degraded = false;
-    g_scanout_resource_id = 0;
-    g_preferred_scanout_width = 0;
-    g_preferred_scanout_height = 0;
-    g_next_fence_id = 1;
-    g_next_present_sequence = 1;
-    g_last_submitted_present_sequence = 0;
-    g_last_retired_present_sequence = 0;
-    g_last_response_type = 0;
-    g_command_slot_capacity = 0;
-    g_cursor_command = {};
-    g_retired_present_history_next = 0;
-    g_irq_line = 0xffu;
-    g_irq_registered = false;
-    g_irq_work_pending = false;
-    g_scanout_refresh_pending = false;
-    g_pending_present_count = 0;
+    reset_adapter_state();
     reset_present_tracking();
 
     pci::DeviceInfo pci_device = {};
@@ -3402,6 +3893,14 @@ bool present_region_from_kernel(const void* pixels, uint32_t source_pitch, uint3
         return false;
     }
 
+    // When the current scanout resource is idle, update it in place and transfer
+    // only the dirty region. Falling back to a cloned surface is only needed
+    // while the front resource already has host work in flight.
+    if (front_surface_ready_for_partial_present()) {
+        return copy_region_to_surface(g_front_surface_index, pixels, source_pitch, x, y, width, height) &&
+            submit_present_surface(g_front_surface_index, x, y, width, height);
+    }
+
     uint32_t surface_index = 0;
     if (!acquire_present_surface(surface_index)) {
         return false;
@@ -3528,7 +4027,7 @@ bool present_surface_region(const savanxp_gpu_surface_present& request) {
         return false;
     }
 
-    if (!submit_imported_present(*surface, request.x, request.y, request.width, request.height)) {
+    if (!submit_imported_present(*surface, request.x, request.y, request.width, request.height, 0, nullptr)) {
         return false;
     }
     if (surface->resource_id != g_scanout_resource_id) {
@@ -3645,7 +4144,7 @@ bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
         return true;
     }
 
-    if (!submit_imported_present(*surface, x, y, width, height)) {
+    if (!submit_imported_present(*surface, x, y, width, height, request.present_cookie, &request)) {
         return false;
     }
     if (surface->resource_id != g_scanout_resource_id) {

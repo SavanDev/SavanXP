@@ -1,6 +1,9 @@
 param(
-    [ValidateSet("build", "run", "debug", "smoke", "clean")]
-    [string]$Command = "build"
+    [ValidateSet("build", "run", "debug", "smoke", "desktop-smoke", "gpu-soak", "clean")]
+    [string]$Command = "build",
+
+    [ValidateRange(1, 4096)]
+    [int]$GpuSoakIterations = 96
 )
 
 $ErrorActionPreference = "Stop"
@@ -116,6 +119,14 @@ $UserPrograms = @(
         "subsystems/posix/userland/desktop_menu.c",
         "subsystems/posix/userland/desktop_layout.c",
         "subsystems/posix/userland/desktop_render.c"
+    ) },
+    @{ Name = "aboutapp"; Sources = @(
+        "subsystems/posix/userland/aboutapp.c",
+        "subsystems/posix/sdk/v1/runtime/posix.c"
+    ) },
+    @{ Name = "filesapp"; Sources = @(
+        "subsystems/posix/userland/filesapp.c",
+        "subsystems/posix/sdk/v1/runtime/posix.c"
     ) },
     @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c" },
     @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c" },
@@ -555,7 +566,7 @@ function Install-BusyBox {
     }
 }
 
-function Build-Kernel([switch]$SmokeMode) {
+function Build-Kernel([string]$AutomationCommand = "") {
     $clang = Require-Executable "clang++" @(
         "clang++",
         "C:\\Program Files\\LLVM\\bin\\clang++.exe"
@@ -593,8 +604,8 @@ function Build-Kernel([switch]$SmokeMode) {
     Generate-DesktopIconAssets
     Build-Userland -Compiler $clang -Linker $ld
     Install-BusyBox
-    if ($SmokeMode) {
-        Set-Content -Path (Join-Path $RootfsBuild "SMOKE") -Value "smoke" -NoNewline
+    if ($AutomationCommand) {
+        Set-Content -Path (Join-Path $RootfsBuild "SMOKE") -Value $AutomationCommand -NoNewline
     }
     New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
@@ -682,12 +693,12 @@ function Run-Qemu([switch]$WaitForDebugger) {
     & $qemu @args
 }
 
-function Run-SmokeQemu {
+function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2) {
     $qemu = Require-Executable "qemu-system-x86_64" @(
         "qemu-system-x86_64",
         "C:\\Program Files\\qemu\\qemu-system-x86_64.exe"
     )
-    Build-Kernel -SmokeMode
+    Build-Kernel -AutomationCommand $AutomationCommand
 
     $ovmf = Resolve-OvmfPair
     Copy-Item $ovmf.Vars $VarsTemplate -Force
@@ -731,7 +742,7 @@ function Run-SmokeQemu {
 
     $process = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -RedirectStandardOutput $SmokeStdoutLog -RedirectStandardError $SmokeStderrLog
     try {
-        $deadline = (Get-Date).AddMinutes(2)
+        $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
         while ((Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 1000
             if (-not (Test-Path $SmokeSerialLog)) {
@@ -742,15 +753,15 @@ function Run-SmokeQemu {
             }
 
             $content = Get-Content $SmokeSerialLog -Raw
-            if ($content -match "SMOKE PASS") {
+            if ($content -match [regex]::Escape($SuccessToken)) {
                 Start-Sleep -Milliseconds 2000
                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-                Write-Host "Smoke PASS"
+                Write-Host $SuccessToken
                 return
             }
-            if ($content -match "SMOKE FAIL") {
+            if ($content -match [regex]::Escape($FailureToken)) {
                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-                throw "Smoke FAIL. Revisar $SmokeSerialLog"
+                throw "$FailureToken. Revisar $SmokeSerialLog"
             }
             if ($process.HasExited) {
                 break
@@ -763,9 +774,22 @@ function Run-SmokeQemu {
     }
 
     if ($process.HasExited) {
-        throw "Smoke aborted. Revisar $SmokeSerialLog y $SmokeStderrLog"
+        throw "$FailureToken aborted. Revisar $SmokeSerialLog y $SmokeStderrLog"
     }
-    throw "Smoke timeout. Revisar $SmokeSerialLog y $SmokeStderrLog"
+    throw "$FailureToken timeout. Revisar $SmokeSerialLog y $SmokeStderrLog"
+}
+
+function Run-SmokeQemu {
+    Run-AutomationQemu -AutomationCommand "smoke" -SuccessToken "SMOKE PASS" -FailureToken "SMOKE FAIL" -TimeoutMinutes 2
+}
+
+function Run-DesktopSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "desktop-selftest" -SuccessToken "DESKTOP SMOKE PASS" -FailureToken "DESKTOP SMOKE FAIL" -TimeoutMinutes 3
+}
+
+function Run-GpuSoakQemu([int]$Iterations) {
+    $timeoutMinutes = [Math]::Max(6, [int][Math]::Ceiling($Iterations / 16.0))
+    Run-AutomationQemu -AutomationCommand "gputest --soak $Iterations" -SuccessToken "SOAK PASS" -FailureToken "SOAK FAIL" -TimeoutMinutes $timeoutMinutes
 }
 
 switch ($Command) {
@@ -780,6 +804,12 @@ switch ($Command) {
     }
     "smoke" {
         Run-SmokeQemu
+    }
+    "desktop-smoke" {
+        Run-DesktopSmokeQemu
+    }
+    "gpu-soak" {
+        Run-GpuSoakQemu -Iterations $GpuSoakIterations
     }
     "clean" {
         if (Test-Path $BuildRoot) {

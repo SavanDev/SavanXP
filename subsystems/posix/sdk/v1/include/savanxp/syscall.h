@@ -579,6 +579,7 @@ struct savanxp_gpu_client_surface_header {
     uint32_t reserved1;
     uint64_t submit_sequence;
     uint64_t retired_sequence;
+    uint64_t composed_sequence;
 };
 
 enum savanxp_audio_backend {
@@ -600,6 +601,14 @@ struct savanxp_audio_info {
 enum savanxp_input_event_type {
     SAVANXP_INPUT_EVENT_KEY_DOWN = 1,
     SAVANXP_INPUT_EVENT_KEY_UP = 2,
+    SAVANXP_INPUT_EVENT_RESIZED = 3,
+};
+
+#define SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY 192u
+
+struct savanxp_desktop_launch_request {
+    uint32_t reserved0;
+    char path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY];
 };
 
 enum savanxp_mouse_button {

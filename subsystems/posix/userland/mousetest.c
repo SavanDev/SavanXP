@@ -156,6 +156,17 @@ int main(void) {
 
     for (;;) {
         while (gfx_poll_event(&gfx, &key_event) > 0) {
+            if (key_event.type == SAVANXP_INPUT_EVENT_RESIZED) {
+                (void)gfx_apply_resize_event(&gfx, &key_event);
+                if (cursor_x >= (int)gfx.info.width) {
+                    cursor_x = (int)gfx.info.width - 1;
+                }
+                if (cursor_y >= (int)gfx.info.height) {
+                    cursor_y = (int)gfx.info.height - 1;
+                }
+                needs_redraw = 1;
+                continue;
+            }
             if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_ESC) {
                 gfx_release(&gfx);
                 close((int)mouse_fd);

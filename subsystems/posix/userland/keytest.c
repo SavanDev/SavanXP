@@ -242,6 +242,17 @@ int main(void) {
 
     for (;;) {
         while (gfx_poll_event(&gfx, &event) > 0) {
+            if (event.type == SAVANXP_INPUT_EVENT_RESIZED) {
+                (void)gfx_apply_resize_event(&gfx, &event);
+                draw_scene(&gfx);
+                if (gfx_present(&gfx, g_backbuffer) < 0) {
+                    gfx_release(&gfx);
+                    gfx_close(&gfx);
+                    puts_fd(2, "keytest: present failed\n");
+                    return 1;
+                }
+                continue;
+            }
             if (event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && event.key == SAVANXP_KEY_ESC) {
                 gfx_release(&gfx);
                 gfx_close(&gfx);

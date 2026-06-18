@@ -178,6 +178,7 @@ device::Device g_device = {
     .write = nullptr,
     .ioctl = nullptr,
     .close = nullptr,
+    .can_read = nullptr,
 };
 
 pci::DeviceInfo g_pci_device = {};

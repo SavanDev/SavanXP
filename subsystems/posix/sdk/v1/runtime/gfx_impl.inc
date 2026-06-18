@@ -194,6 +194,20 @@ static struct savanxp_gpu_dirty_rect_batch* gfx_batch_slot(const struct savanxp_
     return &context->command_batches[(sequence - 1u) % context->batch_capacity];
 }
 
+static int gfx_header_dimensions_changed(const struct savanxp_gfx_context* context) {
+    return context != 0 &&
+        context->header != 0 &&
+        (context->header->info.width != context->notified_width || context->header->info.height != context->notified_height);
+}
+
+static void gfx_refresh_notified_dimensions(struct savanxp_gfx_context* context) {
+    if (context == 0 || context->header == 0) {
+        return;
+    }
+    context->notified_width = context->header->info.width;
+    context->notified_height = context->header->info.height;
+}
+
 static void gfx_copy_present_region(
     const struct savanxp_gfx_context* context,
     const uint32_t* pixels,
@@ -206,12 +220,12 @@ static void gfx_copy_present_region(
     size_t row_bytes = 0;
     uint32_t row = 0;
 
-    if (context == 0 || context->pixels == 0 || pixels == 0 || pixels == context->pixels || width == 0 || height == 0) {
+    if (context == 0 || context->shared_pixels == 0 || pixels == 0 || pixels == context->shared_pixels || width == 0 || height == 0) {
         return;
     }
 
     source = (const unsigned char*)pixels;
-    destination = (unsigned char*)context->pixels;
+    destination = (unsigned char*)context->shared_pixels;
     row_bytes = (size_t)width * sizeof(uint32_t);
     for (row = 0; row < height; ++row) {
         memcpy(
@@ -221,12 +235,12 @@ static void gfx_copy_present_region(
     }
 }
 
-static long gfx_wait_for_client_slot(const struct savanxp_gfx_context* context) {
-    if (context == 0 || context->header == 0 || context->batch_capacity == 0) {
+static long gfx_wait_for_client_idle(const struct savanxp_gfx_context* context) {
+    if (context == 0 || context->header == 0) {
         return -SAVANXP_EINVAL;
     }
 
-    while ((context->header->submit_sequence - context->header->retired_sequence) >= context->batch_capacity) {
+    while (context->header->composed_sequence < context->header->submit_sequence) {
         if (context->shutdown_event_fd >= 0 && wait_one(context->shutdown_event_fd, 0) >= 0) {
             return -SAVANXP_EPIPE;
         }
@@ -236,7 +250,50 @@ static long gfx_wait_for_client_slot(const struct savanxp_gfx_context* context) 
         }
 
         (void)event_reset(context->retire_event_fd);
-        if ((context->header->submit_sequence - context->header->retired_sequence) < context->batch_capacity) {
+        if (context->header->composed_sequence >= context->header->submit_sequence) {
+            break;
+        }
+
+        if (context->shutdown_event_fd >= 0) {
+            int handles[2];
+            long wait_result = 0;
+
+            handles[0] = context->shutdown_event_fd;
+            handles[1] = context->retire_event_fd;
+            wait_result = wait_many(handles, 2, SAVANXP_WAIT_FLAG_ANY, -1);
+            if (wait_result < 0) {
+                return wait_result;
+            }
+            if (wait_result == 0) {
+                return -SAVANXP_EPIPE;
+            }
+        } else {
+            long wait_result = wait_one(context->retire_event_fd, -1);
+            if (wait_result < 0) {
+                return wait_result;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static long gfx_wait_for_client_slot(const struct savanxp_gfx_context* context) {
+    if (context == 0 || context->header == 0 || context->batch_capacity == 0) {
+        return -SAVANXP_EINVAL;
+    }
+
+    while ((context->header->submit_sequence - context->header->composed_sequence) >= context->batch_capacity) {
+        if (context->shutdown_event_fd >= 0 && wait_one(context->shutdown_event_fd, 0) >= 0) {
+            return -SAVANXP_EPIPE;
+        }
+        if (context->retire_event_fd < 0) {
+            sleep_ms(1);
+            continue;
+        }
+
+        (void)event_reset(context->retire_event_fd);
+        if ((context->header->submit_sequence - context->header->composed_sequence) < context->batch_capacity) {
             break;
         }
 
@@ -292,7 +349,6 @@ static long gfx_submit_client_batch(
         return -SAVANXP_EINVAL;
     }
 
-    batch->submit_sequence = sequence;
     batch->rect_count = rect_count;
     batch->flags = flags;
     for (rect_index = 0; rect_index < rect_count; ++rect_index) {
@@ -305,6 +361,8 @@ static long gfx_submit_client_batch(
         batch->rects[rect_index].height = 0;
     }
 
+    batch->submit_sequence = sequence;
+    asm volatile("" ::: "memory");
     context->header->submit_sequence = sequence;
     return event_set(context->submit_event_fd);
 }
@@ -312,11 +370,15 @@ static long gfx_submit_client_batch(
 static long gfx_open_client(struct savanxp_gfx_context* context) {
     struct savanxp_gpu_client_surface_header* header;
     void* mapped = map_view(3, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    long private_section_fd = -1;
+    void* private_pixels = 0;
+    uint32_t* shared_pixels = 0;
     long section_fd = -1;
     long input_fd = -1;
     long submit_event_fd = -1;
     long retire_event_fd = -1;
     long shutdown_event_fd = -1;
+    long launch_fd = -1;
 
     if (result_is_error((long)mapped)) {
         return -SAVANXP_ENODEV;
@@ -341,11 +403,27 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
         return -SAVANXP_EINVAL;
     }
 
+    shared_pixels = (uint32_t*)((unsigned char*)mapped + header->pixels_offset);
+    private_section_fd = section_create(header->info.buffer_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (private_section_fd < 0) {
+        (void)unmap_view(mapped);
+        return private_section_fd;
+    }
+
+    private_pixels = map_view((int)private_section_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    (void)close((int)private_section_fd);
+    if (result_is_error((long)private_pixels)) {
+        (void)unmap_view(mapped);
+        return (long)private_pixels;
+    }
+    memcpy(private_pixels, shared_pixels, header->info.buffer_size);
+
     section_fd = dup(3);
     input_fd = dup(4);
     submit_event_fd = dup(6);
     retire_event_fd = dup(7);
     shutdown_event_fd = dup(8);
+    launch_fd = dup(9);
     if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || retire_event_fd < 0 || shutdown_event_fd < 0) {
         if (section_fd >= 0) {
             (void)close((int)section_fd);
@@ -362,6 +440,10 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
         if (shutdown_event_fd >= 0) {
             (void)close((int)shutdown_event_fd);
         }
+        if (launch_fd >= 0) {
+            (void)close((int)launch_fd);
+        }
+        (void)unmap_view(private_pixels);
         (void)unmap_view(mapped);
         return -SAVANXP_EBADF;
     }
@@ -371,15 +453,19 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     context->submit_event_fd = (int)submit_event_fd;
     context->retire_event_fd = (int)retire_event_fd;
     context->shutdown_event_fd = (int)shutdown_event_fd;
+    context->launch_fd = (int)launch_fd;
     context->mode = kGfxModeClient;
     context->mapped_view = mapped;
     context->header = header;
     context->command_batches = (struct savanxp_gpu_dirty_rect_batch*)((unsigned char*)mapped + header->command_offset);
     context->pixels_offset = header->pixels_offset;
-    context->pixels = (uint32_t*)((unsigned char*)mapped + header->pixels_offset);
+    context->pixels = (uint32_t*)private_pixels;
+    context->shared_pixels = shared_pixels;
     context->info = header->info;
     context->batch_capacity = header->batch_capacity;
     context->rect_capacity = header->rect_capacity;
+    context->notified_width = header->info.width;
+    context->notified_height = header->info.height;
     return 0;
 }
 
@@ -394,6 +480,7 @@ long gfx_open(struct savanxp_gfx_context* context) {
     context->submit_event_fd = -1;
     context->retire_event_fd = -1;
     context->shutdown_event_fd = -1;
+    context->launch_fd = -1;
 
     return gfx_open_client(context);
 }
@@ -405,9 +492,13 @@ long gfx_close(struct savanxp_gfx_context* context) {
     }
 
     if (context->mode == kGfxModeClient && context->mapped_view != 0) {
+        if (context->pixels != 0 && context->pixels != context->shared_pixels) {
+            (void)unmap_view(context->pixels);
+        }
         (void)unmap_view(context->mapped_view);
         context->mapped_view = 0;
         context->pixels = 0;
+        context->shared_pixels = 0;
         context->pixels_offset = 0;
         context->header = 0;
         context->command_batches = 0;
@@ -435,6 +526,10 @@ long gfx_close(struct savanxp_gfx_context* context) {
         (void)close(context->shutdown_event_fd);
         context->shutdown_event_fd = -1;
     }
+    if (context->launch_fd >= 0) {
+        (void)close(context->launch_fd);
+        context->launch_fd = -1;
+    }
     context->mode = 0;
     return result;
 }
@@ -455,14 +550,19 @@ long gfx_release(struct savanxp_gfx_context* context) {
 
 long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixels) {
     struct savanxp_gpu_dirty_rect rect;
+    long result = 0;
     if (context == 0 || context->fb_fd < 0 || pixels == 0) {
         return -SAVANXP_EINVAL;
     }
-    if (context->mode != kGfxModeClient || context->pixels == 0 || context->submit_event_fd < 0) {
+    if (context->mode != kGfxModeClient || context->shared_pixels == 0 || context->submit_event_fd < 0) {
         return -SAVANXP_EINVAL;
     }
-    if (pixels != context->pixels) {
-        memcpy(context->pixels, pixels, context->info.buffer_size);
+    result = gfx_wait_for_client_idle(context);
+    if (result < 0) {
+        return result;
+    }
+    if (pixels != context->shared_pixels) {
+        memcpy(context->shared_pixels, pixels, context->info.buffer_size);
     }
     rect.x = 0;
     rect.y = 0;
@@ -480,7 +580,7 @@ long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_
     if (context->mode != kGfxModeClient) {
         return -SAVANXP_EINVAL;
     }
-    if (context->pixels == 0 || context->submit_event_fd < 0) {
+    if (context->shared_pixels == 0 || context->submit_event_fd < 0) {
         return -SAVANXP_EINVAL;
     }
     if (x >= context->info.width || y >= context->info.height ||
@@ -488,6 +588,12 @@ long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_
         return -SAVANXP_EINVAL;
     }
 
+    {
+        long result = gfx_wait_for_client_idle(context);
+        if (result < 0) {
+            return result;
+        }
+    }
     gfx_copy_present_region(context, pixels, x, y, width, height);
     rect.x = x;
     rect.y = y;
@@ -505,8 +611,13 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
     if (context == 0 || pixels == 0 || rects == 0 || rect_count == 0) {
         return -SAVANXP_EINVAL;
     }
-    if (context->mode != kGfxModeClient || context->pixels == 0 || context->submit_event_fd < 0) {
+    if (context->mode != kGfxModeClient || context->shared_pixels == 0 || context->submit_event_fd < 0) {
         return -SAVANXP_EINVAL;
+    }
+
+    result = gfx_wait_for_client_idle(context);
+    if (result < 0) {
+        return result;
     }
 
     for (index = 0; index < rect_count; ++index) {
@@ -548,6 +659,15 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
         return -SAVANXP_EINVAL;
     }
 
+    if (gfx_header_dimensions_changed(context)) {
+        struct savanxp_gfx_context* mutable_context = (struct savanxp_gfx_context*)context;
+        gfx_refresh_notified_dimensions(mutable_context);
+        event->type = SAVANXP_INPUT_EVENT_RESIZED;
+        event->key = mutable_context->notified_width;
+        event->ascii = (int32_t)mutable_context->notified_height;
+        return 1;
+    }
+
     pollfd.fd = context->input_fd;
     pollfd.events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
     pollfd.revents = 0;
@@ -565,6 +685,48 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
         }
     }
     return 1;
+}
+
+long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event) {
+    uint32_t max_width = 0;
+    uint32_t max_height = 0;
+
+    if (context == 0 || event == 0 || event->type != SAVANXP_INPUT_EVENT_RESIZED) {
+        return -SAVANXP_EINVAL;
+    }
+    if (context->info.pitch == 0) {
+        return -SAVANXP_EINVAL;
+    }
+
+    max_width = context->info.pitch / (uint32_t)sizeof(uint32_t);
+    max_height = context->info.buffer_size / context->info.pitch;
+    if (event->key == 0 || event->ascii <= 0 || event->key > max_width || (uint32_t)event->ascii > max_height) {
+        return -SAVANXP_EINVAL;
+    }
+
+    context->info.width = event->key;
+    context->info.height = (uint32_t)event->ascii;
+    return 0;
+}
+
+long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* path) {
+    struct savanxp_desktop_launch_request request;
+    size_t length = 0;
+
+    if (context == 0 || context->launch_fd < 0 || path == 0 || path[0] != '/') {
+        return -SAVANXP_EINVAL;
+    }
+
+    length = strlen(path);
+    if (length == 0 || length >= SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY) {
+        return -SAVANXP_EINVAL;
+    }
+
+    memset(&request, 0, sizeof(request));
+    memcpy(request.path, path, length + 1u);
+    return write(context->launch_fd, &request, sizeof(request)) == (long)sizeof(request)
+        ? 0
+        : -SAVANXP_EIO;
 }
 
 void gfx_clear(uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t colour) {

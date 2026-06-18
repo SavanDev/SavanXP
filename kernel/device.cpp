@@ -67,6 +67,16 @@ void close(Device* device) {
     }
 }
 
+bool can_read(Device* device) {
+    if (device == nullptr || device->read == nullptr) {
+        return false;
+    }
+    if (device->can_read != nullptr) {
+        return device->can_read();
+    }
+    return true;
+}
+
 void service_background() {
     display::poll();
 }

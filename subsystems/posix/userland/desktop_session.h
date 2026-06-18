@@ -2,7 +2,7 @@
 
 #include "libc.h"
 
-#define DESKTOP_MAX_OVERLAY_CLIENTS 4
+#define DESKTOP_MAX_OVERLAY_CLIENTS 12
 
 enum desktop_client_kind
 {
@@ -20,6 +20,7 @@ struct desktop_client
     int submit_event_fd;
     int retire_event_fd;
     int shutdown_event_fd;
+    int launch_read_fd;
     void *mapped_view;
     struct savanxp_gpu_client_surface_header *header;
     struct savanxp_gpu_dirty_rect_batch *command_batches;
@@ -31,7 +32,13 @@ struct desktop_client
     int window_y;
     int window_width;
     int window_height;
+    int restore_window_x;
+    int restore_window_y;
+    int restore_window_width;
+    int restore_window_height;
     int frame_visible;
+    int minimized;
+    int maximized;
     int active;
 };
 
@@ -40,6 +47,7 @@ struct desktop_session
     struct savanxp_gfx_context gfx;
     struct savanxp_gpu_info gpu_info;
     int gpu_fd;
+    int gpu_present_event_fd;
     int input_fd;
     int mouse_fd;
     int display_section_fd;

@@ -15,7 +15,7 @@ constexpr uint64_t kUserBase = 0x0000000000400000ULL;
 constexpr uint64_t kUserStackTop = 0x0000007000000000ULL;
 constexpr uint64_t kUserStackPages = 32;
 constexpr uint64_t kSectionViewBase = 0x0000001000000000ULL;
-constexpr size_t kMaxSectionViews = 16;
+constexpr size_t kMaxSectionViews = 32;
 
 enum PageFlags : uint64_t {
     kPagePresent = 1ULL << 0,

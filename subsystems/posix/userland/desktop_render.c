@@ -10,6 +10,8 @@
 
 static uint32_t *g_backbuffer = 0;
 
+static const char *window_title_for_client(const struct desktop_client *client);
+
 static void fill_embedded_bitmap_info(const struct desktop_embedded_bitmap *source, struct savanxp_fb_info *info)
 {
     if (source == 0 || info == 0)
@@ -142,6 +144,17 @@ void desktop_dirty_rect_add_menu(struct desktop_dirty_rect *dirty, const struct 
     desktop_dirty_rect_add(dirty, info, x, y, width, height);
 }
 
+void desktop_dirty_rect_add_shortcut(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int shortcut_index)
+{
+    struct sx_rect rect = desktop_shortcut_rect(info, shortcut_index);
+
+    if (dirty == 0 || info == 0 || sx_rect_is_empty(rect))
+    {
+        return;
+    }
+    desktop_dirty_rect_add(dirty, info, rect.x, rect.y, rect.width, rect.height);
+}
+
 void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y)
 {
     int x = 0;
@@ -211,72 +224,6 @@ unsigned long desktop_current_clock_stamp(char *buffer)
         format_clock_text(buffer, hours, minutes);
         return total_minutes % (24UL * 60UL);
     }
-}
-
-static const struct desktop_client *desktop_active_client(const struct desktop_session *session)
-{
-    int slot = -1;
-
-    if (session == 0)
-    {
-        return 0;
-    }
-    if (session->active_client_kind == DESKTOP_CLIENT_SHELL && session->shell_client.pid > 0)
-    {
-        return &session->shell_client;
-    }
-    slot = session->active_overlay_slot;
-    if (session->active_client_kind == DESKTOP_CLIENT_APP &&
-        slot >= 0 &&
-        slot < DESKTOP_MAX_OVERLAY_CLIENTS &&
-        session->overlay_clients[slot].pid > 0)
-    {
-        return &session->overlay_clients[slot];
-    }
-    if (session->overlay_count > 0)
-    {
-        int top_slot = session->overlay_order[session->overlay_count - 1];
-        if (top_slot >= 0 &&
-            top_slot < DESKTOP_MAX_OVERLAY_CLIENTS &&
-            session->overlay_clients[top_slot].pid > 0)
-        {
-            return &session->overlay_clients[top_slot];
-        }
-    }
-    if (session->shell_client.pid > 0)
-    {
-        return &session->shell_client;
-    }
-    return 0;
-}
-
-static const char *active_client_label(const struct desktop_session *session)
-{
-    const struct desktop_client *client = desktop_active_client(session);
-    const struct desktop_menu_item *item = client != 0 ? desktop_find_menu_item_by_path(client->path) : 0;
-    if (item != 0)
-    {
-        return item->label;
-    }
-    if (client != 0 && client->path != 0 && strcmp(client->path, "/bin/shellapp") == 0)
-    {
-        return "Shell";
-    }
-    return "Desktop";
-}
-
-static uint32_t active_client_accent(const struct desktop_session *session)
-{
-    const struct desktop_client *client = desktop_active_client(session);
-    const struct desktop_menu_item *item = client != 0 ? desktop_find_menu_item_by_path(client->path) : 0;
-    return item != 0 ? item->accent : DESKTOP_RGB_LITERAL(40, 108, 182);
-}
-
-static const struct desktop_embedded_bitmap *active_client_icon(const struct desktop_session *session)
-{
-    const struct desktop_client *client = desktop_active_client(session);
-    const struct desktop_menu_item *item = client != 0 ? desktop_find_menu_item_by_path(client->path) : 0;
-    return item != 0 ? desktop_icon_small(item->icon_id) : desktop_icon_small(DESKTOP_ICON_DESKTOP);
 }
 
 static const char *window_title_for_client(const struct desktop_client *client)
@@ -379,7 +326,94 @@ static void draw_close_button(struct sx_painter *painter, const struct desktop_c
     }
 }
 
-static void draw_background(struct sx_painter *painter, const struct savanxp_fb_info *display_info)
+static void draw_minimize_button(struct sx_painter *painter, const struct desktop_client *client)
+{
+    struct sx_rect rect;
+
+    if (painter == 0 || client == 0 || client->pid <= 0 || !client->frame_visible)
+    {
+        return;
+    }
+
+    rect = desktop_client_minimize_button_rect(client);
+    if (rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+
+    draw_button(painter, rect, gfx_rgb(196, 199, 203), 0);
+    sx_painter_fill_rect(
+        painter,
+        sx_rect_make(rect.x + 4, rect.y + rect.height - 6, rect.width - 8, 2),
+        gfx_rgb(32, 32, 32));
+}
+
+static void draw_maximize_button(struct sx_painter *painter, const struct desktop_client *client)
+{
+    struct sx_rect rect;
+
+    if (painter == 0 || client == 0 || client->pid <= 0 || !client->frame_visible)
+    {
+        return;
+    }
+
+    rect = desktop_client_maximize_button_rect(client);
+    if (rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+
+    draw_button(painter, rect, gfx_rgb(196, 199, 203), 0);
+    sx_painter_draw_frame(
+        painter,
+        sx_rect_make(rect.x + 4, rect.y + 4, rect.width - 8, rect.height - 8),
+        gfx_rgb(32, 32, 32));
+    if (client->maximized)
+    {
+        sx_painter_draw_frame(
+            painter,
+            sx_rect_make(rect.x + 6, rect.y + 6, rect.width - 8, rect.height - 8),
+            gfx_rgb(32, 32, 32));
+    }
+}
+
+static void draw_desktop_shortcuts(
+    struct sx_painter *painter,
+    const struct savanxp_fb_info *display_info,
+    int selected_shortcut)
+{
+    int index;
+
+    for (index = 0; index < desktop_shortcut_count(); ++index)
+    {
+        const struct desktop_menu_item *item = desktop_shortcut_at(index);
+        const struct desktop_embedded_bitmap *icon = item != 0 ? desktop_icon_large(item->icon_id) : 0;
+        struct sx_rect rect = desktop_shortcut_rect(display_info, index);
+        int label_x = rect.x + ((rect.width - gfx_text_width(item != 0 ? item->label : "")) / 2);
+
+        if (item == 0 || sx_rect_is_empty(rect))
+        {
+            continue;
+        }
+        if (index == selected_shortcut)
+        {
+            sx_painter_fill_rect(painter, rect, gfx_rgb(0, 96, 144));
+            sx_painter_draw_frame(painter, rect, gfx_rgb(210, 244, 255));
+        }
+        draw_embedded_bitmap_scaled(painter, icon, rect.x + 29, rect.y + 6, 32, 32);
+        sx_painter_draw_text(
+            painter,
+            label_x,
+            rect.y + 48,
+            item->label,
+            index == selected_shortcut ? gfx_rgb(255, 255, 255) : gfx_rgb(245, 255, 255));
+    }
+}
+
+static void draw_background(
+    struct sx_painter *painter,
+    const struct savanxp_fb_info *display_info,
+    int selected_shortcut)
 {
     const char *watermark = SAVANXP_DISPLAY_NAME;
     const int text_width = gfx_text_width(watermark);
@@ -388,6 +422,7 @@ static void draw_background(struct sx_painter *painter, const struct savanxp_fb_
     const int text_y = (int)display_info->height - DESKTOP_TASKBAR_HEIGHT - text_height - 14;
 
     sx_painter_fill(painter, gfx_rgb(0, 128, 128));
+    draw_desktop_shortcuts(painter, display_info, selected_shortcut);
     sx_painter_draw_text(painter, text_x + 1, text_y + 1, watermark, gfx_rgb(0, 64, 64));
     sx_painter_draw_text(painter, text_x, text_y, watermark, gfx_rgb(210, 244, 244));
 }
@@ -397,17 +432,13 @@ static void draw_taskbar(struct sx_painter *painter, struct desktop_session *ses
     const int taskbar_y = (int)session->gfx.info.height - DESKTOP_TASKBAR_HEIGHT;
     const int panel_y = taskbar_y + 6;
     const int panel_height = DESKTOP_TASKBAR_HEIGHT - 12;
-    const char *client_label = active_client_label(session);
     const char *version_text = SAVANXP_VERSION_STRING;
-    const uint32_t accent = active_client_accent(session);
     const int clock_x = (int)session->gfx.info.width - DESKTOP_CLOCK_BOX_WIDTH - DESKTOP_TASKBAR_GAP;
     const int version_width = gfx_text_width(version_text) + 22;
     const int version_x = clock_x - version_width - DESKTOP_TASKBAR_GAP;
-    const int status_x = DESKTOP_START_BUTTON_WIDTH + 12;
-    const int status_width = version_x - status_x - DESKTOP_TASKBAR_GAP;
     const struct desktop_embedded_bitmap *start_icon = desktop_icon_small(DESKTOP_ICON_DESKTOP);
-    const struct desktop_embedded_bitmap *client_icon = active_client_icon(session);
     char clock_text[6];
+    int index;
 
     sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y, (int)session->gfx.info.width, DESKTOP_TASKBAR_HEIGHT), gfx_rgb(190, 194, 200));
     sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y, (int)session->gfx.info.width, 1), gfx_rgb(255, 255, 255));
@@ -419,10 +450,45 @@ static void draw_taskbar(struct sx_painter *painter, struct desktop_session *ses
     draw_embedded_bitmap(painter, start_icon, 15 + (menu_open ? 1 : 0), panel_y + 6 + (menu_open ? 1 : 0));
     draw_embossed_text(painter, 40 + (menu_open ? 1 : 0), taskbar_y + 12 + (menu_open ? 1 : 0), "Start", gfx_rgb(255, 255, 255), gfx_rgb(0, 0, 0));
 
-    draw_inset_box(painter, sx_rect_make(status_x, panel_y, status_width, panel_height), gfx_rgb(210, 214, 220));
-    sx_painter_fill_rect(painter, sx_rect_make(status_x + 8, panel_y + 5, 4, panel_height - 10), accent);
-    draw_embedded_bitmap(painter, client_icon, status_x + 18, panel_y + 6);
-    sx_painter_draw_text(painter, status_x + 42, taskbar_y + 12, client_label, gfx_rgb(0, 0, 0));
+    for (index = 0; index < desktop_taskbar_button_count(session); ++index)
+    {
+        const struct desktop_client *client = 0;
+        const struct desktop_menu_item *item = 0;
+        const struct desktop_embedded_bitmap *icon = 0;
+        struct sx_rect rect = desktop_taskbar_button_rect(session, index);
+        int is_shell = 0;
+        int slot = -1;
+        uint32_t face = gfx_rgb(210, 214, 220);
+        uint32_t accent = gfx_rgb(40, 108, 182);
+        const char *label = "Desktop";
+
+        client = desktop_taskbar_button_client(session, index, &is_shell, &slot);
+        if (client == 0 || sx_rect_is_empty(rect))
+        {
+            continue;
+        }
+        item = desktop_find_menu_item_by_path(client->path);
+        icon = item != 0 ? desktop_icon_small(item->icon_id) : desktop_icon_small(DESKTOP_ICON_DESKTOP);
+        label = item != 0 ? item->label : window_title_for_client(client);
+        if (item != 0)
+        {
+            accent = item->accent;
+        }
+        if (client->active && !client->minimized)
+        {
+            face = gfx_rgb(229, 232, 236);
+        }
+        if (client->minimized)
+        {
+            face = gfx_rgb(188, 193, 198);
+            accent = gfx_rgb(102, 108, 118);
+        }
+
+        draw_button(painter, rect, face, client->active && !client->minimized);
+        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 6, rect.y + 4, 4, rect.height - 8), accent);
+        draw_embedded_bitmap(painter, icon, rect.x + 16, rect.y + 6);
+        sx_painter_draw_text(painter, rect.x + 38, taskbar_y + 12, label, gfx_rgb(12, 16, 20));
+    }
 
     draw_inset_box(painter, sx_rect_make(version_x, panel_y, version_width, panel_height), gfx_rgb(210, 214, 220));
     sx_painter_draw_text(painter, version_x + 12, taskbar_y + 12, version_text, gfx_rgb(46, 50, 56));
@@ -509,7 +575,7 @@ static void draw_client(struct sx_painter *painter, const struct desktop_client 
         ? gfx_rgb(208, 212, 219)
         : gfx_rgb(188, 192, 198);
 
-    if (client == 0 || client->pid <= 0 || client->pixels == 0)
+    if (client == 0 || client->pid <= 0 || client->pixels == 0 || client->minimized)
     {
         return;
     }
@@ -523,6 +589,8 @@ static void draw_client(struct sx_painter *painter, const struct desktop_client 
         sx_painter_fill_rect(painter, sx_rect_make(frame_rect.x + 2, frame_rect.y + 2, frame_rect.width - 4, DESKTOP_WINDOW_TITLEBAR_HEIGHT - 4), title_colour);
         draw_embedded_bitmap(painter, icon, frame_rect.x + 8, frame_rect.y + 6);
         sx_painter_draw_text(painter, frame_rect.x + 30, frame_rect.y + 8, window_title_for_client(client), gfx_rgb(255, 255, 255));
+        draw_minimize_button(painter, client);
+        draw_maximize_button(painter, client);
         draw_close_button(painter, client);
     }
 
@@ -536,6 +604,7 @@ void desktop_draw_desktop(
     int cursor_y,
     int menu_open,
     int selected_index,
+    int selected_shortcut,
     const struct desktop_dirty_rect *dirty)
 {
     struct sx_bitmap backbuffer_bitmap;
@@ -570,7 +639,7 @@ void desktop_draw_desktop(
             }
         }
 
-        draw_background(&painter, &session->gfx.info);
+        draw_background(&painter, &session->gfx.info, selected_shortcut);
         draw_client(&painter, &session->shell_client);
         for (order_index = 0; order_index < session->overlay_count; ++order_index)
         {

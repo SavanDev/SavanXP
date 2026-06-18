@@ -28,6 +28,34 @@ static uint32_t g_scaled_width = 0;
 static uint32_t g_scaled_height = 0;
 static int g_previous_frame_valid = 0;
 
+static void sx_configure_output_layout(void) {
+    if (g_scaled_row != 0) {
+        free(g_scaled_row);
+        g_scaled_row = 0;
+    }
+
+    g_scale = g_gfx.info.width / DOOMGENERIC_RESX;
+    if (g_gfx.info.height / DOOMGENERIC_RESY < g_scale) {
+        g_scale = g_gfx.info.height / DOOMGENERIC_RESY;
+    }
+    if (g_scale == 0) {
+        sx_fail("doomgeneric: framebuffer too small");
+    }
+
+    g_scaled_width = (uint32_t)(DOOMGENERIC_RESX * g_scale);
+    g_scaled_height = (uint32_t)(DOOMGENERIC_RESY * g_scale);
+    g_offset_x = (int)(g_gfx.info.width - g_scaled_width) / 2;
+    g_offset_y = (int)(g_gfx.info.height - g_scaled_height) / 2;
+
+    g_scaled_row = (uint32_t *)malloc((size_t)g_scaled_width * sizeof(uint32_t));
+    if (g_scaled_row == 0) {
+        sx_fail("doomgeneric: unable to allocate scale cache");
+    }
+
+    gfx_clear(g_present_buffer, &g_gfx.info, gfx_rgb(0, 0, 0));
+    g_previous_frame_valid = 0;
+}
+
 static int sx_uses_client_surface(void) {
     return g_gfx.mapped_view != 0 && g_gfx.pixels != 0 && g_gfx.submit_event_fd >= 0;
 }
@@ -207,30 +235,12 @@ void DG_Init(void) {
         }
     }
 
-    g_scale = g_gfx.info.width / DOOMGENERIC_RESX;
-    if (g_gfx.info.height / DOOMGENERIC_RESY < g_scale) {
-        g_scale = g_gfx.info.height / DOOMGENERIC_RESY;
-    }
-    if (g_scale == 0) {
-        sx_fail("doomgeneric: framebuffer too small");
-    }
-
-    g_scaled_width = (uint32_t)(DOOMGENERIC_RESX * g_scale);
-    g_scaled_height = (uint32_t)(DOOMGENERIC_RESY * g_scale);
-    g_offset_x = (int)(g_gfx.info.width - g_scaled_width) / 2;
-    g_offset_y = (int)(g_gfx.info.height - g_scaled_height) / 2;
-
-    g_scaled_row = (uint32_t *)malloc((size_t)g_scaled_width * sizeof(uint32_t));
-    if (g_scaled_row == 0) {
-        sx_fail("doomgeneric: unable to allocate scale cache");
-    }
-
     g_previous_frame = (uint32_t *)malloc((size_t)DOOMGENERIC_RESX * (size_t)DOOMGENERIC_RESY * sizeof(uint32_t));
     if (g_previous_frame == 0) {
         sx_fail("doomgeneric: unable to allocate previous frame buffer");
     }
 
-    gfx_clear(g_present_buffer, &g_gfx.info, gfx_rgb(0, 0, 0));
+    sx_configure_output_layout();
 }
 
 void DG_DrawFrame(void) {
@@ -265,13 +275,17 @@ void DG_DrawFrame(void) {
     }
 
     sx_blit_rows(dirty_start, dirty_end);
-    if (gfx_present_region(&g_gfx,
-                           g_present_buffer,
-                           (uint32_t)g_offset_x,
-                           (uint32_t)(g_offset_y + (dirty_start * (int)g_scale)),
-                           g_scaled_width,
-                           (uint32_t)((dirty_end - dirty_start + 1) * (int)g_scale)) < 0) {
-        sx_fail("doomgeneric: gfx_present failed");
+    {
+        long present_result = gfx_present_region(&g_gfx,
+                                                 g_present_buffer,
+                                                 (uint32_t)g_offset_x,
+                                                 (uint32_t)(g_offset_y + (dirty_start * (int)g_scale)),
+                                                 g_scaled_width,
+                                                 (uint32_t)((dirty_end - dirty_start + 1) * (int)g_scale));
+        if (present_result < 0) {
+            eprintf("doomgeneric: gfx_present failed (%s)\n", result_error_string(present_result));
+            sx_shutdown_exit(1);
+        }
     }
 }
 
@@ -296,6 +310,11 @@ int DG_GetKey(int *pressed, unsigned char *doom_key) {
     }
 
     while (gfx_poll_event(&g_gfx, &event) > 0) {
+        if (event.type == SAVANXP_INPUT_EVENT_RESIZED) {
+            (void)gfx_apply_resize_event(&g_gfx, &event);
+            sx_configure_output_layout();
+            continue;
+        }
         unsigned char mapped = sx_map_keycode(event.key, event.ascii);
         if (mapped == 0) {
             continue;

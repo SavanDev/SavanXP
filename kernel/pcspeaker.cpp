@@ -21,6 +21,7 @@ device::Device g_device = {
     .write = nullptr,
     .ioctl = nullptr,
     .close = nullptr,
+    .can_read = nullptr,
 };
 
 bool g_ready = false;

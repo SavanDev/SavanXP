@@ -29,12 +29,12 @@ constexpr uint16_t kUserCodeSelector = 0x23;
 constexpr uint64_t kKernelStackPages = 4;
 constexpr uint64_t kIdleCodeAddress = 0x0000000000800000ULL;
 constexpr uint32_t kDefaultTimeSlice = 4;
-constexpr size_t kMaxPipeCount = 32;
+constexpr size_t kMaxPipeCount = 64;
 constexpr size_t kPipeCapacity = 8192;
 constexpr size_t kPipeChunkSize = 256;
 constexpr uint32_t kWaitAnyPid = 0xffffffffu;
 constexpr int kBlockedResult = -0x70000000;
-constexpr size_t kMaxPollDescriptors = 64;
+constexpr size_t kMaxPollDescriptors = 128;
 constexpr bool kLogProc = false;
 constexpr uint8_t kIdleCode[] = {
     0xb8, static_cast<uint8_t>(SAVANXP_SYS_YIELD), 0x00, 0x00, 0x00,
@@ -1291,7 +1291,7 @@ bool open_file_can_read(const object::IoObject& file) {
         case process::HandleKind::pipe:
             return file.pipe != nullptr && (file.pipe->size != 0 || file.pipe->writer_refs == 0);
         case process::HandleKind::device:
-            return true;
+            return device::can_read(file.device);
         case process::HandleKind::socket:
             return net::socket_can_read(file.socket);
         default:
@@ -1361,6 +1361,11 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
     const uint64_t start_ms = current_uptime_ms();
     while (true) {
         int ready = 0;
+
+        device::service_background();
+        input::poll();
+        net::poll();
+
         for (size_t index = 0; index < count; ++index) {
             local[index].revents = 0;
             if (local[index].fd < 0) {
@@ -1389,9 +1394,6 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
             return 0;
         }
 
-        device::service_background();
-        input::poll();
-        net::poll();
         arch::x86_64::enable_interrupts();
         arch::x86_64::halt_once();
         arch::x86_64::disable_interrupts();

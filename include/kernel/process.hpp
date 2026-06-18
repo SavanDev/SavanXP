@@ -18,9 +18,9 @@ struct Socket;
 
 namespace process {
 
-constexpr size_t kMaxProcesses = 32;
-constexpr size_t kMaxFileHandles = 32;
-constexpr size_t kMaxWaitHandles = 8;
+constexpr size_t kMaxProcesses = 64;
+constexpr size_t kMaxFileHandles = 64;
+constexpr size_t kMaxWaitHandles = 16;
 constexpr size_t kProcessNameLength = 32;
 constexpr size_t kProcessPathLength = 256;
 

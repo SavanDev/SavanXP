@@ -390,6 +390,16 @@ int main(void) {
             : 0UL);
         long ready = 0;
 
+        if (g_shellapp.gfx.header != 0 &&
+            (g_shellapp.gfx.header->info.width != g_shellapp.gfx.info.width ||
+             g_shellapp.gfx.header->info.height != g_shellapp.gfx.info.height)) {
+            g_shellapp.gfx.info.width = g_shellapp.gfx.header->info.width;
+            g_shellapp.gfx.info.height = g_shellapp.gfx.header->info.height;
+            g_shellapp.gfx.notified_width = g_shellapp.gfx.header->info.width;
+            g_shellapp.gfx.notified_height = g_shellapp.gfx.header->info.height;
+            shellapp_invalidate_full();
+        }
+
         if (g_shellapp.needs_redraw) {
             shellapp_redraw();
         }
@@ -416,6 +426,14 @@ int main(void) {
 
         if (gfx_poll_event(&g_shellapp.gfx, &event) <= 0) {
             break;
+        }
+
+        if (event.type == SAVANXP_INPUT_EVENT_RESIZED) {
+            (void)gfx_apply_resize_event(&g_shellapp.gfx, &event);
+            g_shellapp.cursor_visible = 1;
+            g_shellapp.next_cursor_toggle_ms = uptime_ms() + SHELLAPP_CURSOR_PERIOD_MS;
+            shellapp_invalidate_full();
+            continue;
         }
 
         g_shellapp.cursor_visible = 1;

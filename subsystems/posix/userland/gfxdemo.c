@@ -100,6 +100,30 @@ int main(void) {
     for (;;) {
         int moved = 0;
         while (gfx_poll_event(&gfx, &event) > 0) {
+            if (event.type == SAVANXP_INPUT_EVENT_RESIZED) {
+                (void)gfx_apply_resize_event(&gfx, &event);
+                draw_static_scene(&gfx, g_background);
+                memcpy(g_backbuffer, g_background, gfx_buffer_bytes(&gfx.info));
+                if (box_x + BOX_SIZE > (int)gfx.info.width) {
+                    box_x = (int)gfx.info.width - BOX_SIZE;
+                }
+                if (box_y + BOX_SIZE > (int)gfx.info.height) {
+                    box_y = (int)gfx.info.height - BOX_SIZE;
+                }
+                if (box_x < 0) {
+                    box_x = 0;
+                }
+                if (box_y < 40) {
+                    box_y = 40;
+                }
+                draw_box(&gfx, g_backbuffer, box_x, box_y);
+                if (gfx_present(&gfx, g_backbuffer) < 0) {
+                    break;
+                }
+                previous_box_x = box_x;
+                previous_box_y = box_y;
+                continue;
+            }
             if (event.type != SAVANXP_INPUT_EVENT_KEY_DOWN) {
                 continue;
             }

@@ -24,10 +24,10 @@ struct Pipe;
 
 namespace object {
 
-constexpr size_t kMaxIoObjects = 128;
-constexpr size_t kMaxEventObjects = 64;
-constexpr size_t kMaxTimerObjects = 64;
-constexpr size_t kMaxSectionObjects = 32;
+constexpr size_t kMaxIoObjects = 256;
+constexpr size_t kMaxEventObjects = 128;
+constexpr size_t kMaxTimerObjects = 128;
+constexpr size_t kMaxSectionObjects = 64;
 
 enum class Type : uint8_t {
     none = 0,

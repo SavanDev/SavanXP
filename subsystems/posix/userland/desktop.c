@@ -5,7 +5,17 @@
 #include "desktop_layout.h"
 #include "desktop_render.h"
 
+#define DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME 16
+
 static const char *k_shellapp_path = "/bin/shellapp";
+
+static int launch_overlay_client(struct desktop_session *session, const char *path);
+static void resize_overlay_client_surface(
+    struct desktop_session *session,
+    struct desktop_dirty_rect *dirty,
+    int slot,
+    int surface_width,
+    int surface_height);
 
 static void close_fd_if_needed(int *fd)
 {
@@ -39,6 +49,7 @@ static void reset_client(struct desktop_client *client)
     client->submit_event_fd = -1;
     client->retire_event_fd = -1;
     client->shutdown_event_fd = -1;
+    client->launch_read_fd = -1;
 }
 
 static int overlay_slot_valid(int slot)
@@ -141,9 +152,35 @@ static void append_overlay_to_order(struct desktop_session *session, int slot)
     session->overlay_order[session->overlay_count++] = slot;
 }
 
+static int overlay_client_visible(const struct desktop_client *client)
+{
+    return client != 0 && client->pid > 0 && !client->minimized;
+}
+
+static int top_visible_overlay_slot(const struct desktop_session *session)
+{
+    int order_index;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    for (order_index = session->overlay_count - 1; order_index >= 0; --order_index)
+    {
+        int slot = session->overlay_order[order_index];
+        if (slot >= 0 && slot < DESKTOP_MAX_OVERLAY_CLIENTS && overlay_client_visible(&session->overlay_clients[slot]))
+        {
+            return slot;
+        }
+    }
+    return -1;
+}
+
 static void refresh_active_state(struct desktop_session *session)
 {
     int slot;
+    int visible_overlay_slot = -1;
 
     if (session == 0)
     {
@@ -151,25 +188,27 @@ static void refresh_active_state(struct desktop_session *session)
     }
 
     if (!overlay_slot_valid(session->active_overlay_slot) ||
-        session->overlay_clients[session->active_overlay_slot].pid <= 0)
+        !overlay_client_visible(&session->overlay_clients[session->active_overlay_slot]))
     {
         session->active_overlay_slot = -1;
     }
+
+    visible_overlay_slot = top_visible_overlay_slot(session);
 
     if (session->active_client_kind == DESKTOP_CLIENT_APP && session->active_overlay_slot < 0)
     {
         session->active_client_kind = DESKTOP_CLIENT_SHELL;
     }
 
-    if (session->active_client_kind == DESKTOP_CLIENT_SHELL && session->overlay_count > 0 && session->shell_client.pid <= 0)
+    if (session->active_client_kind == DESKTOP_CLIENT_SHELL && visible_overlay_slot >= 0 && session->shell_client.pid <= 0)
     {
         session->active_client_kind = DESKTOP_CLIENT_APP;
-        session->active_overlay_slot = session->overlay_order[session->overlay_count - 1];
+        session->active_overlay_slot = visible_overlay_slot;
     }
 
-    if (session->active_client_kind == DESKTOP_CLIENT_APP && session->active_overlay_slot < 0 && session->overlay_count > 0)
+    if (session->active_client_kind == DESKTOP_CLIENT_APP && session->active_overlay_slot < 0 && visible_overlay_slot >= 0)
     {
-        session->active_overlay_slot = session->overlay_order[session->overlay_count - 1];
+        session->active_overlay_slot = visible_overlay_slot;
     }
 
     if (session->active_client_kind == DESKTOP_CLIENT_SHELL)
@@ -181,7 +220,7 @@ static void refresh_active_state(struct desktop_session *session)
     for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
     {
         session->overlay_clients[slot].active =
-            session->overlay_clients[slot].pid > 0 &&
+            overlay_client_visible(&session->overlay_clients[slot]) &&
             session->active_client_kind == DESKTOP_CLIENT_APP &&
             slot == session->active_overlay_slot;
     }
@@ -207,6 +246,7 @@ static void raise_overlay(struct desktop_session *session, int slot)
         return;
     }
 
+    session->overlay_clients[slot].minimized = 0;
     append_overlay_to_order(session, slot);
     session->active_client_kind = DESKTOP_CLIENT_APP;
     session->active_overlay_slot = slot;
@@ -228,7 +268,208 @@ static struct desktop_client *active_client(struct desktop_session *session)
 
 static int drag_overlay_slot_active(const struct desktop_session *session, int slot)
 {
-    return session != 0 && overlay_slot_valid(slot) && session->overlay_clients[slot].pid > 0;
+    return session != 0 && overlay_slot_valid(slot) && overlay_client_visible(&session->overlay_clients[slot]);
+}
+
+static void minimize_overlay_client(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+{
+    struct desktop_client *client = overlay_client_at(session, slot);
+    struct sx_rect frame_rect;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->minimized)
+    {
+        return;
+    }
+
+    frame_rect = desktop_client_frame_rect(client);
+    desktop_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
+    client->minimized = 1;
+    refresh_active_state(session);
+}
+
+static void restore_overlay_client(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+{
+    struct desktop_client *client = overlay_client_at(session, slot);
+    struct sx_rect frame_rect;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
+    {
+        return;
+    }
+
+    client->minimized = 0;
+    frame_rect = desktop_client_frame_rect(client);
+    desktop_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
+    raise_overlay(session, slot);
+}
+
+static void toggle_overlay_client_maximized(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+{
+    struct desktop_client *client = overlay_client_at(session, slot);
+    int area_x = 0;
+    int area_y = 0;
+    int area_width = 0;
+    int area_height = 0;
+    int target_surface_width = 0;
+    int target_surface_height = 0;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
+    {
+        return;
+    }
+
+    if (!client->maximized)
+    {
+        client->restore_window_x = client->window_x;
+        client->restore_window_y = client->window_y;
+        client->restore_window_width = client->window_width;
+        client->restore_window_height = client->window_height;
+        desktop_work_area_bounds(&session->gfx.info, &area_x, &area_y, &area_width, &area_height);
+        client->window_x = area_x;
+        client->window_y = area_y;
+        client->window_width = area_width;
+        client->window_height = area_height;
+        target_surface_width = area_width - (DESKTOP_WINDOW_BORDER * 2);
+        target_surface_height = area_height - DESKTOP_WINDOW_TITLEBAR_HEIGHT - DESKTOP_WINDOW_BORDER;
+        client->maximized = 1;
+    }
+    else
+    {
+        if (client->restore_window_width > 0 && client->restore_window_height > 0)
+        {
+            client->window_x = client->restore_window_x;
+            client->window_y = client->restore_window_y;
+            client->window_width = client->restore_window_width;
+            client->window_height = client->restore_window_height;
+            target_surface_width = client->window_width - (DESKTOP_WINDOW_BORDER * 2);
+            target_surface_height = client->window_height - DESKTOP_WINDOW_TITLEBAR_HEIGHT - DESKTOP_WINDOW_BORDER;
+        }
+        client->maximized = 0;
+    }
+
+    resize_overlay_client_surface(session, dirty, slot, target_surface_width, target_surface_height);
+    raise_overlay(session, slot);
+}
+
+static int launch_desktop_shortcut(struct desktop_session *session, int shortcut_index)
+{
+    const struct desktop_menu_item *item = desktop_shortcut_at(shortcut_index);
+
+    if (item == 0)
+    {
+        return 0;
+    }
+    return launch_overlay_client(session, item->path) < 0 ? -1 : 0;
+}
+
+static void activate_taskbar_button(struct desktop_session *session, struct desktop_dirty_rect *dirty, int button_index)
+{
+    const struct desktop_client *client = 0;
+    int is_shell = 0;
+    int slot = -1;
+
+    if (session == 0 || dirty == 0)
+    {
+        return;
+    }
+
+    client = desktop_taskbar_button_client(session, button_index, &is_shell, &slot);
+    if (client == 0)
+    {
+        return;
+    }
+
+    if (is_shell)
+    {
+        activate_shell(session);
+        return;
+    }
+    if (!overlay_slot_valid(slot))
+    {
+        return;
+    }
+    if (client->active && !client->minimized)
+    {
+        minimize_overlay_client(session, dirty, slot);
+        return;
+    }
+    restore_overlay_client(session, dirty, slot);
+}
+
+static uint32_t client_surface_capacity_width(const struct desktop_client *client)
+{
+    return client != 0 ? client->surface_info.pitch / (uint32_t)sizeof(uint32_t) : 0;
+}
+
+static uint32_t client_surface_capacity_height(const struct desktop_client *client)
+{
+    if (client == 0 || client->surface_info.pitch == 0)
+    {
+        return 0;
+    }
+    return client->surface_info.buffer_size / client->surface_info.pitch;
+}
+
+static void resize_overlay_client_surface(
+    struct desktop_session *session,
+    struct desktop_dirty_rect *dirty,
+    int slot,
+    int surface_width,
+    int surface_height)
+{
+    struct desktop_client *client = overlay_client_at(session, slot);
+    struct sx_rect previous_frame;
+    struct sx_rect current_frame;
+    uint32_t max_width = 0;
+    uint32_t max_height = 0;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
+    {
+        return;
+    }
+
+    max_width = client_surface_capacity_width(client);
+    max_height = client_surface_capacity_height(client);
+    if (max_width == 0 || max_height == 0)
+    {
+        return;
+    }
+
+    surface_width = desktop_clamp_int(surface_width, 1, (int)max_width);
+    surface_height = desktop_clamp_int(surface_height, 1, (int)max_height);
+    if ((int)client->surface_info.width == surface_width && (int)client->surface_info.height == surface_height)
+    {
+        return;
+    }
+
+    previous_frame = desktop_client_frame_rect(client);
+    client->surface_info.width = (uint32_t)surface_width;
+    client->surface_info.height = (uint32_t)surface_height;
+    if (client->header != 0)
+    {
+        client->header->info.width = client->surface_info.width;
+        client->header->info.height = client->surface_info.height;
+    }
+    if (client->frame_visible)
+    {
+        client->window_width = surface_width + (DESKTOP_WINDOW_BORDER * 2);
+        client->window_height = surface_height + DESKTOP_WINDOW_TITLEBAR_HEIGHT + DESKTOP_WINDOW_BORDER;
+        if (!client->maximized)
+        {
+            client->restore_window_width = client->window_width;
+            client->restore_window_height = client->window_height;
+        }
+        desktop_clamp_overlay_frame_position(
+            &session->gfx.info,
+            client->window_width,
+            client->window_height,
+            &client->window_x,
+            &client->window_y);
+    }
+    current_frame = desktop_client_frame_rect(client);
+    memset(client->pixels, 0, client->surface_info.buffer_size);
+    desktop_dirty_rect_add(dirty, &session->gfx.info, previous_frame.x, previous_frame.y, previous_frame.width, previous_frame.height);
+    desktop_dirty_rect_add(dirty, &session->gfx.info, current_frame.x, current_frame.y, current_frame.width, current_frame.height);
 }
 
 static void move_overlay_client_window(
@@ -291,7 +532,7 @@ static const struct desktop_client *top_overlay_client_at_point(const struct des
     {
         int slot = session->overlay_order[order_index];
         const struct desktop_client *client = overlay_client_at_const(session, slot);
-        if (client != 0 && client->pid > 0 && desktop_point_in_frame(client, x, y))
+        if (overlay_client_visible(client) && desktop_point_in_frame(client, x, y))
         {
             return client;
         }
@@ -394,6 +635,52 @@ static int route_packet(int fd, const void *packet, size_t size)
     return fd >= 0 && write(fd, packet, size) == (long)size;
 }
 
+static size_t coalesce_mouse_events(
+    const struct savanxp_mouse_event *events,
+    size_t event_count,
+    struct savanxp_mouse_event *coalesced,
+    size_t coalesced_capacity,
+    uint32_t initial_buttons)
+{
+    uint32_t current_buttons = initial_buttons;
+    size_t index = 0;
+    size_t coalesced_count = 0;
+    int last_was_button_transition = 0;
+
+    if (events == 0 || coalesced == 0 || coalesced_capacity == 0)
+    {
+        return 0;
+    }
+
+    for (index = 0; index < event_count; ++index)
+    {
+        const struct savanxp_mouse_event *event = &events[index];
+        int button_transition = event->buttons != current_buttons;
+
+        if (button_transition ||
+            coalesced_count == 0 ||
+            coalesced[coalesced_count - 1u].buttons != event->buttons ||
+            last_was_button_transition)
+        {
+            if (coalesced_count >= coalesced_capacity)
+            {
+                break;
+            }
+            coalesced[coalesced_count++] = *event;
+        }
+        else
+        {
+            coalesced[coalesced_count - 1u].delta_x += event->delta_x;
+            coalesced[coalesced_count - 1u].delta_y += event->delta_y;
+        }
+
+        current_buttons = event->buttons;
+        last_was_button_transition = button_transition;
+    }
+
+    return coalesced_count;
+}
+
 static int desktop_process_alive(long pid)
 {
     struct savanxp_process_info info;
@@ -462,6 +749,42 @@ static void signal_client_retire(struct desktop_client *client, uint64_t retired
     }
 }
 
+static void signal_client_composed(struct desktop_client *client, uint64_t composed_sequence)
+{
+    int advanced = 0;
+
+    if (client == 0 || client->header == 0 || composed_sequence == 0)
+    {
+        return;
+    }
+
+    if (client->header->composed_sequence < composed_sequence)
+    {
+        client->header->composed_sequence = composed_sequence;
+        advanced = 1;
+    }
+    if (advanced && client->retire_event_fd >= 0)
+    {
+        (void)event_set(client->retire_event_fd);
+    }
+}
+
+static void signal_composed_batches(struct desktop_session *session)
+{
+    int slot;
+
+    if (session == 0)
+    {
+        return;
+    }
+
+    signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
+    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        signal_client_composed(&session->overlay_clients[slot], session->overlay_clients[slot].consumed_submit_sequence);
+    }
+}
+
 static void retire_presented_batches(struct desktop_session *session)
 {
     int slot;
@@ -508,6 +831,7 @@ static int consume_client_present_batches(
 
         if (client->header->batch_capacity == 0)
         {
+            eprintf("desktop: invalid client batch capacity for %s\n", client->path != 0 ? client->path : "?");
             return -1;
         }
 
@@ -516,6 +840,12 @@ static int consume_client_present_batches(
             batch->rect_count > client->header->rect_capacity ||
             batch->rect_count > SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS)
         {
+            eprintf(
+                "desktop: invalid client batch for %s seq=%u batch_seq=%u rects=%u\n",
+                client->path != 0 ? client->path : "?",
+                (unsigned int)next_sequence,
+                (unsigned int)batch->submit_sequence,
+                (unsigned int)batch->rect_count);
             return -1;
         }
 
@@ -532,16 +862,28 @@ static int consume_client_present_batches(
         }
         else
         {
+            const uint32_t surface_capacity_width = client_surface_capacity_width(client);
+            const uint32_t surface_capacity_height = client_surface_capacity_height(client);
             for (rect_index = 0; rect_index < batch->rect_count; ++rect_index)
             {
                 const struct savanxp_gpu_dirty_rect *rect = &batch->rects[rect_index];
 
                 if (rect->width == 0 || rect->height == 0 ||
-                    rect->x >= client->surface_info.width ||
-                    rect->y >= client->surface_info.height ||
-                    rect->width > (client->surface_info.width - rect->x) ||
-                    rect->height > (client->surface_info.height - rect->y))
+                    rect->x >= surface_capacity_width ||
+                    rect->y >= surface_capacity_height ||
+                    rect->width > (surface_capacity_width - rect->x) ||
+                    rect->height > (surface_capacity_height - rect->y))
                 {
+                    eprintf(
+                        "desktop: invalid client rect for %s seq=%u rect=%u,%u %ux%u surface=%ux%u\n",
+                        client->path != 0 ? client->path : "?",
+                        (unsigned int)next_sequence,
+                        rect->x,
+                        rect->y,
+                        rect->width,
+                        rect->height,
+                        surface_capacity_width,
+                        surface_capacity_height);
                     return -1;
                 }
                 add_client_present_damage(session, dirty, client, rect);
@@ -594,6 +936,19 @@ static int sync_pending_present(struct desktop_session *session, int wait_for_ta
 
     if (!wait_for_target)
     {
+        if (session->gpu_present_event_fd >= 0)
+        {
+            result = wait_one(session->gpu_present_event_fd, 0);
+            if (result_is_error(result) && result_error_code(result) == SAVANXP_ETIMEDOUT)
+            {
+                if (ready != 0)
+                {
+                    *ready = 0;
+                }
+                return 0;
+            }
+        }
+
         result = gpu_get_present_timeline(session->gpu_fd, &timeline);
         if (result < 0)
         {
@@ -620,6 +975,10 @@ static int sync_pending_present(struct desktop_session *session, int wait_for_ta
     {
         return desktop_stage_failed("GPU wait target failed", -SAVANXP_EIO);
     }
+    if (session->gpu_present_event_fd >= 0)
+    {
+        (void)event_reset(session->gpu_present_event_fd);
+    }
     retire_presented_batches(session);
     return 0;
 }
@@ -627,8 +986,9 @@ static int sync_pending_present(struct desktop_session *session, int wait_for_ta
 static int present_frame(struct desktop_session *session, const struct desktop_dirty_rect *dirty)
 {
     struct savanxp_gpu_surface_present_batch batch;
-    struct savanxp_gpu_present_timeline timeline = {0};
+    struct savanxp_gpu_present_timeline timeline;
     size_t index = 0;
+    uint64_t submitted_cookie = 0;
     long result;
 
     if (session == 0 || dirty == 0 || !desktop_dirty_rect_valid(dirty))
@@ -637,9 +997,15 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
     }
 
     snapshot_pending_retire_sequences(session);
+    memset(&timeline, 0, sizeof(timeline));
+    result = gpu_get_present_timeline(session->gpu_fd, &timeline);
+    if (result < 0)
+    {
+        return desktop_stage_failed("GPU_IOC_GET_PRESENT_TIMELINE", result);
+    }
     memset(&batch, 0, sizeof(batch));
     batch.surface_id = session->display_surface_id;
-    batch.present_cookie = session->pending_present_sequence + 1u;
+    batch.present_cookie = timeline.submitted_sequence + 1u;
 
     for (index = 0; index < desktop_dirty_rect_count(dirty); ++index)
     {
@@ -658,6 +1024,7 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
 
         if (batch.rect_count >= SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS)
         {
+            submitted_cookie = batch.present_cookie;
             result = gpu_present_surface_batch(session->gpu_fd, &batch);
             if (result < 0)
             {
@@ -670,6 +1037,7 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
 
     if (batch.rect_count != 0)
     {
+        submitted_cookie = batch.present_cookie;
         result = gpu_present_surface_batch(session->gpu_fd, &batch);
         if (result < 0)
         {
@@ -678,15 +1046,14 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
     }
     else
     {
+        if (submitted_cookie != 0)
+        {
+            session->pending_present_sequence = submitted_cookie;
+        }
         return 0;
     }
 
-    result = gpu_get_present_timeline(session->gpu_fd, &timeline);
-    if (result < 0)
-    {
-        return desktop_stage_failed("GPU_IOC_GET_PRESENT_TIMELINE", result);
-    }
-    session->pending_present_sequence = timeline.submitted_sequence;
+    session->pending_present_sequence = submitted_cookie;
     return 0;
 }
 
@@ -731,7 +1098,13 @@ static void position_client_window(
             &client->window_y,
             &client->window_width,
             &client->window_height);
+        client->restore_window_x = client->window_x;
+        client->restore_window_y = client->window_y;
+        client->restore_window_width = client->window_width;
+        client->restore_window_height = client->window_height;
         client->frame_visible = 1;
+        client->minimized = 0;
+        client->maximized = 0;
     }
     else
     {
@@ -739,7 +1112,13 @@ static void position_client_window(
         client->window_y = 0;
         client->window_width = (int)client->surface_info.width;
         client->window_height = (int)client->surface_info.height;
+        client->restore_window_x = client->window_x;
+        client->restore_window_y = client->window_y;
+        client->restore_window_width = client->window_width;
+        client->restore_window_height = client->window_height;
         client->frame_visible = 0;
+        client->minimized = 0;
+        client->maximized = 0;
     }
 }
 
@@ -769,6 +1148,7 @@ static void destroy_client_instance(struct desktop_client *client, int terminate
     close_fd_if_needed(&client->submit_event_fd);
     close_fd_if_needed(&client->retire_event_fd);
     close_fd_if_needed(&client->shutdown_event_fd);
+    close_fd_if_needed(&client->launch_read_fd);
     if (client->mapped_view != 0 && !result_is_error((long)client->mapped_view))
     {
         (void)unmap_view(client->mapped_view);
@@ -784,6 +1164,7 @@ static int start_client_process(struct desktop_client *client, const char *path)
     unsigned long section_size = 0;
     int input_pipe[2] = {-1, -1};
     int mouse_pipe[2] = {-1, -1};
+    int launch_pipe[2] = {-1, -1};
     int submit_event = -1;
     int retire_event = -1;
     int shutdown_event = -1;
@@ -824,6 +1205,7 @@ static int start_client_process(struct desktop_client *client, const char *path)
     header->reserved1 = 0;
     header->submit_sequence = 0;
     header->retired_sequence = 0;
+    header->composed_sequence = 0;
     client->header = header;
     client->command_batches = (struct savanxp_gpu_dirty_rect_batch *)((unsigned char *)client->mapped_view + header->command_offset);
     client->pixels = (uint32_t *)((unsigned char *)client->mapped_view + header->pixels_offset);
@@ -833,7 +1215,11 @@ static int start_client_process(struct desktop_client *client, const char *path)
     submit_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    if (pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || submit_event < 0 || retire_event < 0 || shutdown_event < 0)
+    if (pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(launch_pipe) < 0 || submit_event < 0 || retire_event < 0 || shutdown_event < 0)
+    {
+        goto fail;
+    }
+    if (fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
     {
         goto fail;
     }
@@ -850,7 +1236,8 @@ static int start_client_process(struct desktop_client *client, const char *path)
             dup2(mouse_pipe[0], 5) < 0 ||
             dup2(submit_event, 6) < 0 ||
             dup2(retire_event, 7) < 0 ||
-            dup2(shutdown_event, 8) < 0)
+            dup2(shutdown_event, 8) < 0 ||
+            dup2(launch_pipe[1], 9) < 0)
         {
             exit(1);
         }
@@ -862,6 +1249,8 @@ static int start_client_process(struct desktop_client *client, const char *path)
         close_fd_unless_target(&submit_event, 6);
         close_fd_unless_target(&retire_event, 7);
         close_fd_unless_target(&shutdown_event, 8);
+        close_fd_if_needed(&launch_pipe[0]);
+        close_fd_unless_target(&launch_pipe[1], 9);
         close_fd_unless_target(&client->section_fd, 3);
         if (exec(path, argv, 1) < 0)
         {
@@ -877,9 +1266,11 @@ static int start_client_process(struct desktop_client *client, const char *path)
     client->submit_event_fd = submit_event;
     client->retire_event_fd = retire_event;
     client->shutdown_event_fd = shutdown_event;
+    client->launch_read_fd = launch_pipe[0];
 
     close_fd_if_needed(&input_pipe[0]);
     close_fd_if_needed(&mouse_pipe[0]);
+    close_fd_if_needed(&launch_pipe[1]);
     return 0;
 
 fail:
@@ -887,6 +1278,8 @@ fail:
     close_fd_if_needed(&input_pipe[1]);
     close_fd_if_needed(&mouse_pipe[0]);
     close_fd_if_needed(&mouse_pipe[1]);
+    close_fd_if_needed(&launch_pipe[0]);
+    close_fd_if_needed(&launch_pipe[1]);
     close_fd_if_needed(&submit_event);
     close_fd_if_needed(&retire_event);
     close_fd_if_needed(&shutdown_event);
@@ -985,6 +1378,7 @@ static int open_compositor_session(struct desktop_session *session)
 
     memset(session, 0, sizeof(*session));
     session->gpu_fd = -1;
+    session->gpu_present_event_fd = -1;
     session->input_fd = -1;
     session->mouse_fd = -1;
     session->display_section_fd = -1;
@@ -1019,6 +1413,13 @@ static int open_compositor_session(struct desktop_session *session)
     if (result < 0)
     {
         return desktop_stage_failed("GPU_IOC_SET_MODE", result);
+    }
+    session->gpu_present_event_fd = (int)gpu_create_present_event(session->gpu_fd);
+    if (session->gpu_present_event_fd < 0)
+    {
+        eprintf("desktop: GPU_IOC_CREATE_PRESENT_EVENT unavailable (%s), using timeline polling\n",
+            result_error_string(session->gpu_present_event_fd));
+        session->gpu_present_event_fd = -1;
     }
 
     session->gfx.info.width = mode.width;
@@ -1105,6 +1506,7 @@ static void close_compositor_session(struct desktop_session *session)
         (void)gpu_release(session->gpu_fd);
         close_fd_if_needed(&session->gpu_fd);
     }
+    close_fd_if_needed(&session->gpu_present_event_fd);
     desktop_set_backbuffer(0);
 }
 
@@ -1188,7 +1590,226 @@ static int reap_dead_clients(struct desktop_session *session, struct desktop_dir
     return 0;
 }
 
-int main(void)
+static int service_client_launch_requests(struct desktop_session *session, struct desktop_dirty_rect *dirty, struct desktop_client *client)
+{
+    struct savanxp_desktop_launch_request request;
+    long read_result = 0;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->launch_read_fd < 0)
+    {
+        return 0;
+    }
+
+    for (;;)
+    {
+        memset(&request, 0, sizeof(request));
+        read_result = read(client->launch_read_fd, &request, sizeof(request));
+        if (read_result == 0)
+        {
+            return 0;
+        }
+        if (read_result < 0)
+        {
+            if (result_error_code(read_result) == SAVANXP_EAGAIN)
+            {
+                return 0;
+            }
+            eprintf("desktop: launch request read failed for %s (%s)\n",
+                client->path != 0 ? client->path : "?",
+                result_error_string(read_result));
+            return 0;
+        }
+        if (read_result != (long)sizeof(request) || request.path[0] != '/')
+        {
+            eprintf("desktop: invalid launch request from %s\n", client->path != 0 ? client->path : "?");
+            return 0;
+        }
+        request.path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY - 1u] = '\0';
+        if (launch_overlay_client(session, request.path) < 0)
+        {
+            eprintf("desktop: failed to launch requested app %s\n", request.path);
+            return 0;
+        }
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+}
+
+/*
+ * Headless compositor self-test driven by init under /SMOKE.
+ *
+ * It reuses the exact compose/present building blocks of the main loop, but
+ * runs a bounded, scripted sequence instead of polling real input: it launches
+ * a self-animating client (gfxdemo), exercises the window-management paths
+ * (maximize/restore/move/minimize/restore) and validates that client present
+ * batches flow all the way to GPU retire on the v3 timeline. Prints the token
+ * the build runner watches for and returns non-zero on any failure.
+ */
+static int desktop_selftest(void)
+{
+    struct desktop_session session;
+    struct desktop_dirty_rect dirty = {0};
+    struct savanxp_gpu_present_timeline timeline = {0};
+    const int kSlot = 0;
+    const int kMaxIterations = 4000;
+    const int kTargetFrames = 60;
+    const int kCursorX = 40;
+    const int kCursorY = 40;
+    int frames_presented = 0;
+    int iteration = 0;
+    int failed = 0;
+    uint64_t baseline_retired = 0;
+    uint64_t consumed_submit = 0;
+
+    if (open_compositor_session(&session) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL compositor startup\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+
+    if (launch_overlay_client(&session, "/bin/gfxdemo") < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL launch gfxdemo\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+
+    if (gpu_get_present_timeline(session.gpu_fd, &timeline) == 0)
+    {
+        baseline_retired = timeline.retired_sequence;
+    }
+
+    for (iteration = 0; iteration < kMaxIterations; ++iteration)
+    {
+        struct desktop_client *client = &session.overlay_clients[kSlot];
+
+        if (client->pid <= 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL client exited early\n");
+            failed = 1;
+            break;
+        }
+
+        if (service_client_batches(&session, &dirty, client) < 0 ||
+            service_client_launch_requests(&session, &dirty, client) < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL servicing client batches\n");
+            failed = 1;
+            break;
+        }
+
+        /*
+         * Exercise the window-management paths once up front (maximize/restore,
+         * then a minimize/restore round trip), then drive sustained, fully
+         * deterministic compositor load by oscillating the window position every
+         * frame. Each move dirties the overlay frame so the compositor composites
+         * the imported client surface and presents a real frame, instead of
+         * depending on the client's own (input-driven) redraw cadence.
+         */
+        switch (iteration)
+        {
+        case 10:
+            toggle_overlay_client_maximized(&session, &dirty, kSlot);
+            break;
+        case 20:
+            toggle_overlay_client_maximized(&session, &dirty, kSlot);
+            break;
+        case 30:
+            minimize_overlay_client(&session, &dirty, kSlot);
+            break;
+        case 40:
+            restore_overlay_client(&session, &dirty, kSlot);
+            break;
+        default:
+            if (iteration > 40)
+            {
+                int target_x = ((iteration & 1) != 0) ? (kCursorX + 40) : (kCursorX + 80);
+                int target_y = ((iteration & 1) != 0) ? (kCursorY + 40) : (kCursorY + 80);
+                move_overlay_client_window(&session, &dirty, kSlot, target_x, target_y);
+            }
+            break;
+        }
+
+        /* Keep composed_sequence advancing so the client never stalls waiting
+           for a free batch slot. */
+        signal_composed_batches(&session);
+        if (session.overlay_clients[kSlot].consumed_submit_sequence > consumed_submit)
+        {
+            consumed_submit = session.overlay_clients[kSlot].consumed_submit_sequence;
+        }
+
+        if (!desktop_dirty_rect_valid(&dirty))
+        {
+            sleep_ms(4);
+            continue;
+        }
+
+        desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, &dirty);
+        signal_composed_batches(&session);
+        if (present_frame(&session, &dirty) < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL present\n");
+            failed = 1;
+            break;
+        }
+        desktop_dirty_rect_reset(&dirty);
+
+        /* Drain synchronously: block until this present retires, which fires the
+           client retire event and frees its batch slots for the next frame. */
+        if (sync_pending_present(&session, 1, 0) < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL drain present\n");
+            failed = 1;
+            break;
+        }
+        ++frames_presented;
+
+        if (frames_presented >= kTargetFrames)
+        {
+            break;
+        }
+    }
+
+    (void)sync_pending_present(&session, 1, 0);
+
+    if (!failed && frames_presented < kTargetFrames)
+    {
+        printf("DESKTOP SMOKE FAIL insufficient presented frames=%d iters=%d batches=%u\n",
+            frames_presented, iteration, (unsigned)consumed_submit);
+        failed = 1;
+    }
+    if (!failed && consumed_submit < 1)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL client surface never composited\n");
+        failed = 1;
+    }
+    if (!failed)
+    {
+        if (gpu_get_present_timeline(session.gpu_fd, &timeline) != 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL read present timeline\n");
+            failed = 1;
+        }
+        else if (timeline.retired_sequence <= baseline_retired)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL present timeline did not advance\n");
+            failed = 1;
+        }
+    }
+
+    close_compositor_session(&session);
+
+    if (failed)
+    {
+        return 1;
+    }
+    printf("DESKTOP SMOKE PASS frames=%d batches=%u\n",
+        frames_presented, (unsigned)consumed_submit);
+    return 0;
+}
+
+int main(int argc, char **argv)
 {
     struct desktop_session session;
     struct savanxp_input_event key_event = {0};
@@ -1198,11 +1819,19 @@ int main(void)
     int cursor_y = 24;
     int menu_open = 0;
     int selected_index = 0;
+    int selected_shortcut = -1;
     uint32_t last_buttons = 0;
     unsigned long last_clock_stamp = 0;
+    unsigned long last_shortcut_click_ms = 0;
     int drag_overlay_slot = -1;
     int drag_offset_x = 0;
     int drag_offset_y = 0;
+    int last_shortcut_click = -1;
+
+    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
+    {
+        return desktop_selftest();
+    }
 
     if (open_compositor_session(&session) < 0)
     {
@@ -1298,6 +1927,31 @@ int main(void)
                         desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                     }
                 }
+                else if (!menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && selected_shortcut >= 0)
+                {
+                    if (key_event.key == SAVANXP_KEY_ESC)
+                    {
+                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, selected_shortcut);
+                        selected_shortcut = -1;
+                    }
+                    else if (key_event.key == SAVANXP_KEY_ENTER)
+                    {
+                        if (launch_desktop_shortcut(&session, selected_shortcut) < 0)
+                        {
+                            puts_fd(2, "desktop: failed to launch desktop shortcut\n");
+                        }
+                        desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                        last_buttons = 0;
+                    }
+                    else
+                    {
+                        struct desktop_client *client = active_client(&session);
+                        if (client != 0 && client->input_write_fd >= 0)
+                        {
+                            (void)route_packet(client->input_write_fd, &key_event, sizeof(key_event));
+                        }
+                    }
+                }
                 else
                 {
                     struct desktop_client *client = active_client(&session);
@@ -1311,7 +1965,25 @@ int main(void)
 
         if (mouse_poll_index >= 0 && (poll_fds[mouse_poll_index].revents & SAVANXP_POLLIN) != 0)
         {
-            while ((count = read(session.mouse_fd, &mouse_event, sizeof(mouse_event))) == (long)sizeof(mouse_event))
+            struct savanxp_mouse_event raw_mouse_events[DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME];
+            struct savanxp_mouse_event coalesced_mouse_events[DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME];
+            size_t raw_mouse_count = 0;
+            size_t coalesced_mouse_count = 0;
+            size_t mouse_event_index = 0;
+
+            count = read(session.mouse_fd, raw_mouse_events, sizeof(raw_mouse_events));
+            if (count > 0)
+            {
+                raw_mouse_count = (size_t)count / sizeof(raw_mouse_events[0]);
+                coalesced_mouse_count = coalesce_mouse_events(
+                    raw_mouse_events,
+                    raw_mouse_count,
+                    coalesced_mouse_events,
+                    DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME,
+                    last_buttons);
+            }
+
+            for (mouse_event_index = 0; mouse_event_index < coalesced_mouse_count; ++mouse_event_index)
             {
                 const struct desktop_client *previous_hover_client = 0;
                 const struct desktop_client *current_hover_client = 0;
@@ -1323,6 +1995,7 @@ int main(void)
                 int previous_cursor_y = cursor_y;
                 int previous_menu_open = menu_open;
                 int previous_selected_index = selected_index;
+                int previous_selected_shortcut = selected_shortcut;
                 int previous_active_kind = session.active_client_kind;
                 int previous_active_overlay_slot = session.active_overlay_slot;
                 int drag_was_active = 0;
@@ -1330,6 +2003,11 @@ int main(void)
                 int launch_requested = 0;
                 int mouse_routed = 0;
                 int taskbar_y = (int)session.gfx.info.height - DESKTOP_TASKBAR_HEIGHT;
+
+                mouse_event = coalesced_mouse_events[mouse_event_index];
+                pressed_buttons = mouse_event.buttons;
+                left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
+                right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
 
                 if (!drag_overlay_slot_active(&session, drag_overlay_slot))
                 {
@@ -1353,6 +2031,8 @@ int main(void)
                 if (left_pressed != 0 && left_was_pressed == 0)
                 {
                     int hovered = menu_open ? desktop_selected_item_from_cursor(&session.gfx, cursor_x, cursor_y) : -1;
+                    int taskbar_index = menu_open ? -1 : desktop_taskbar_button_from_point(&session, cursor_x, cursor_y);
+                    int shortcut_index = menu_open ? -1 : desktop_shortcut_from_point(&session.gfx.info, cursor_x, cursor_y);
 
                     if (desktop_point_in_rect(cursor_x, cursor_y, 6, taskbar_y + 6, DESKTOP_START_BUTTON_WIDTH, DESKTOP_TASKBAR_HEIGHT - 12))
                     {
@@ -1376,8 +2056,34 @@ int main(void)
                     {
                         menu_open = 0;
                     }
+                    else if (taskbar_index >= 0)
+                    {
+                        activate_taskbar_button(&session, &dirty, taskbar_index);
+                    }
+                    else if (shortcut_index >= 0)
+                    {
+                        unsigned long now_ms = uptime_ms();
+                        if (selected_shortcut != shortcut_index)
+                        {
+                            selected_shortcut = shortcut_index;
+                        }
+                        else if (last_shortcut_click == shortcut_index && now_ms - last_shortcut_click_ms <= 450UL)
+                        {
+                            if (launch_desktop_shortcut(&session, shortcut_index) < 0)
+                            {
+                                puts_fd(2, "desktop: failed to launch desktop shortcut\n");
+                            }
+                            launch_requested = 1;
+                        }
+                        last_shortcut_click = shortcut_index;
+                        last_shortcut_click_ms = now_ms;
+                    }
                     else if (current_hover_client != 0)
                     {
+                        if (selected_shortcut >= 0)
+                        {
+                            selected_shortcut = -1;
+                        }
                         if (current_hover_client == &session.shell_client)
                         {
                             activate_shell(&session);
@@ -1390,6 +2096,28 @@ int main(void)
                         }
                         if (current_hover_client != 0 &&
                             current_hover_client != &session.shell_client &&
+                            desktop_point_in_minimize_button(current_hover_client, cursor_x, cursor_y))
+                        {
+                            int target_slot = overlay_slot_for_client_ptr(&session, current_hover_client);
+                            if (overlay_slot_valid(target_slot))
+                            {
+                                minimize_overlay_client(&session, &dirty, target_slot);
+                                current_hover_client = 0;
+                                drag_overlay_slot = -1;
+                            }
+                        }
+                        else if (current_hover_client != 0 &&
+                                 current_hover_client != &session.shell_client &&
+                                 desktop_point_in_maximize_button(current_hover_client, cursor_x, cursor_y))
+                        {
+                            int target_slot = overlay_slot_for_client_ptr(&session, current_hover_client);
+                            if (overlay_slot_valid(target_slot))
+                            {
+                                toggle_overlay_client_maximized(&session, &dirty, target_slot);
+                            }
+                        }
+                        else if (current_hover_client != 0 &&
+                                 current_hover_client != &session.shell_client &&
                             desktop_point_in_close_button(current_hover_client, cursor_x, cursor_y))
                         {
                             int target_slot = overlay_slot_for_client_ptr(&session, current_hover_client);
@@ -1411,6 +2139,7 @@ int main(void)
                         }
                         else if (current_hover_client != 0 &&
                                  current_hover_client != &session.shell_client &&
+                                 !current_hover_client->maximized &&
                                  desktop_point_in_titlebar(current_hover_client, cursor_x, cursor_y))
                         {
                             int target_slot = overlay_slot_for_client_ptr(&session, current_hover_client);
@@ -1426,6 +2155,10 @@ int main(void)
                             (void)route_packet(current_hover_client->mouse_write_fd, &mouse_event, sizeof(mouse_event));
                             mouse_routed = 1;
                         }
+                    }
+                    else if (selected_shortcut >= 0)
+                    {
+                        selected_shortcut = -1;
                     }
                 }
                 drag_active_now = drag_overlay_slot_active(&session, drag_overlay_slot);
@@ -1502,6 +2235,17 @@ int main(void)
                     desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
                     desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
                 }
+                if (previous_selected_shortcut != selected_shortcut)
+                {
+                    if (previous_selected_shortcut >= 0)
+                    {
+                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, previous_selected_shortcut);
+                    }
+                    if (selected_shortcut >= 0)
+                    {
+                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, selected_shortcut);
+                    }
+                }
                 if (previous_active_kind != session.active_client_kind || previous_active_overlay_slot != session.active_overlay_slot)
                 {
                     desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
@@ -1530,9 +2274,17 @@ int main(void)
         {
             break;
         }
+        if (service_client_launch_requests(&session, &dirty, &session.shell_client) < 0)
+        {
+            break;
+        }
         for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
         {
             if (service_client_batches(&session, &dirty, &session.overlay_clients[slot]) < 0)
+            {
+                break;
+            }
+            if (service_client_launch_requests(&session, &dirty, &session.overlay_clients[slot]) < 0)
             {
                 break;
             }
@@ -1559,13 +2311,19 @@ int main(void)
             {
                 break;
             }
-            if (!desktop_dirty_rect_valid(&dirty) || !frame_ready)
+            if (!desktop_dirty_rect_valid(&dirty))
+            {
+                signal_composed_batches(&session);
+                continue;
+            }
+            if (!frame_ready)
             {
                 continue;
             }
         }
 
-        desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, &dirty);
+        desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, &dirty);
+        signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
             puts_fd(2, "desktop: present failed\n");

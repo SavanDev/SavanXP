@@ -14,8 +14,8 @@
 
 namespace {
 
-constexpr size_t kInputQueueCapacity = 128;
-constexpr size_t kMouseQueueCapacity = 128;
+constexpr size_t kInputQueueCapacity = 512;
+constexpr size_t kMouseQueueCapacity = 512;
 
 device::Device g_input_device = {
     .name = "input0",
@@ -23,6 +23,7 @@ device::Device g_input_device = {
     .write = nullptr,
     .ioctl = nullptr,
     .close = nullptr,
+    .can_read = nullptr,
 };
 
 device::Device g_mouse_device = {
@@ -31,6 +32,7 @@ device::Device g_mouse_device = {
     .write = nullptr,
     .ioctl = nullptr,
     .close = nullptr,
+    .can_read = nullptr,
 };
 
 boot::FramebufferInfo g_framebuffer = {};
@@ -93,6 +95,14 @@ void enqueue_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
     };
     g_mouse_write_index = (g_mouse_write_index + 1) % kMouseQueueCapacity;
     g_mouse_count += 1;
+}
+
+bool input_device_can_read() {
+    return g_input_count != 0;
+}
+
+bool mouse_device_can_read() {
+    return g_mouse_count != 0;
 }
 
 void release_graphics_session() {
@@ -176,8 +186,10 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
 
     g_input_device.read = read_input_device;
+    g_input_device.can_read = input_device_can_read;
     g_input_device.close = nullptr;
     g_mouse_device.read = read_mouse_device;
+    g_mouse_device.can_read = mouse_device_can_read;
     g_mouse_device.close = nullptr;
     if (!device::register_node("/dev/input0", &g_input_device, false)) {
         return;

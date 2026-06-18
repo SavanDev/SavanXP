@@ -95,14 +95,18 @@ struct savanxp_gfx_context {
     int submit_event_fd;
     int retire_event_fd;
     int shutdown_event_fd;
+    int launch_fd;
     int mode;
     void* mapped_view;
     uint32_t* pixels;
+    uint32_t* shared_pixels;
     uint32_t pixels_offset;
     struct savanxp_gpu_client_surface_header* header;
     struct savanxp_gpu_dirty_rect_batch* command_batches;
     uint32_t batch_capacity;
     uint32_t rect_capacity;
+    uint32_t notified_width;
+    uint32_t notified_height;
 };
 
 long gfx_open(struct savanxp_gfx_context* context);
@@ -113,6 +117,8 @@ long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixe
 long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_t* pixels, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t* pixels, const struct sx_rect* rects, size_t rect_count);
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
+long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event);
+long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* path);
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);
 size_t gfx_buffer_pixels(const struct savanxp_fb_info* info);

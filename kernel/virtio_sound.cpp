@@ -116,6 +116,7 @@ device::Device g_audio_device = {
     .write = nullptr,
     .ioctl = nullptr,
     .close = nullptr,
+    .can_read = nullptr,
 };
 
 virtio_pci::Device g_device = {};

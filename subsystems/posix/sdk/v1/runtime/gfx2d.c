@@ -416,6 +416,30 @@ static void sx_rect_set_compact(struct sx_rect_set* set)
     }
 }
 
+static int sx_ranges_overlap(int a_start, int a_end, int b_start, int b_end)
+{
+    return a_start < b_end && b_start < a_end;
+}
+
+static int sx_rects_should_merge(struct sx_rect left, struct sx_rect right)
+{
+    if (!sx_rect_is_empty(sx_rect_intersect(left, right)))
+    {
+        return 1;
+    }
+    if ((sx_rect_right(left) == right.x || sx_rect_right(right) == left.x) &&
+        sx_ranges_overlap(left.y, sx_rect_bottom(left), right.y, sx_rect_bottom(right)))
+    {
+        return 1;
+    }
+    if ((sx_rect_bottom(left) == right.y || sx_rect_bottom(right) == left.y) &&
+        sx_ranges_overlap(left.x, sx_rect_right(left), right.x, sx_rect_right(right)))
+    {
+        return 1;
+    }
+    return 0;
+}
+
 int sx_rect_set_add(struct sx_rect_set* set, struct sx_rect rect)
 {
     size_t index = 0;
@@ -433,11 +457,7 @@ int sx_rect_set_add(struct sx_rect_set* set, struct sx_rect rect)
             continue;
         }
 
-        if (!sx_rect_is_empty(sx_rect_intersect(existing, rect)) ||
-            sx_rect_right(existing) == rect.x ||
-            sx_rect_right(rect) == existing.x ||
-            sx_rect_bottom(existing) == rect.y ||
-            sx_rect_bottom(rect) == existing.y)
+        if (sx_rects_should_merge(existing, rect))
         {
             set->rects[index] = sx_rect_union(existing, rect);
             sx_rect_set_compact(set);
