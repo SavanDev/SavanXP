@@ -28,6 +28,8 @@ static uint32_t g_scaled_width = 0;
 static uint32_t g_scaled_height = 0;
 static int g_previous_frame_valid = 0;
 
+static void sx_fail(const char *message);
+
 static void sx_configure_output_layout(void) {
     if (g_scaled_row != 0) {
         free(g_scaled_row);

@@ -26,13 +26,27 @@ static void close_fd_if_needed(int *fd)
     }
 }
 
-static void close_fd_unless_target(int *fd, int target_fd)
+/*
+ * The child remaps inherited handles onto the reserved descriptors 3..9 with
+ * dup2 before exec. An original source descriptor can itself land inside that
+ * reserved window (e.g. the surface section opened at fd 8 while the shutdown
+ * event is dup2'd onto fd 8), so closing it by its old number would destroy the
+ * freshly mapped target. Only release sources that sit above the reserved
+ * window; descriptors 0..9 are either stdio or live dup2 targets.
+ */
+#define DESKTOP_CLIENT_RESERVED_FD_MAX 9
+
+static void close_client_setup_fd(int *fd)
 {
-    if (fd != 0 && *fd >= 0 && *fd != target_fd)
+    if (fd == 0)
+    {
+        return;
+    }
+    if (*fd > DESKTOP_CLIENT_RESERVED_FD_MAX)
     {
         close(*fd);
-        *fd = -1;
     }
+    *fd = -1;
 }
 
 static void reset_client(struct desktop_client *client)
@@ -1242,16 +1256,16 @@ static int start_client_process(struct desktop_client *client, const char *path)
             exit(1);
         }
 
-        close_fd_unless_target(&input_pipe[0], 4);
-        close_fd_if_needed(&input_pipe[1]);
-        close_fd_unless_target(&mouse_pipe[0], 5);
-        close_fd_if_needed(&mouse_pipe[1]);
-        close_fd_unless_target(&submit_event, 6);
-        close_fd_unless_target(&retire_event, 7);
-        close_fd_unless_target(&shutdown_event, 8);
-        close_fd_if_needed(&launch_pipe[0]);
-        close_fd_unless_target(&launch_pipe[1], 9);
-        close_fd_unless_target(&client->section_fd, 3);
+        close_client_setup_fd(&input_pipe[0]);
+        close_client_setup_fd(&input_pipe[1]);
+        close_client_setup_fd(&mouse_pipe[0]);
+        close_client_setup_fd(&mouse_pipe[1]);
+        close_client_setup_fd(&submit_event);
+        close_client_setup_fd(&retire_event);
+        close_client_setup_fd(&shutdown_event);
+        close_client_setup_fd(&launch_pipe[0]);
+        close_client_setup_fd(&launch_pipe[1]);
+        close_client_setup_fd(&client->section_fd);
         if (exec(path, argv, 1) < 0)
         {
             eprintf("desktop: exec failed for %s\n", path);
