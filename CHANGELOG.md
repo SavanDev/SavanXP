@@ -8,10 +8,20 @@ Notas de corte:
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
 
-## [Unreleased]
+## [0.3.0] - 2026-06-18
 
 ### Agregado
 
+- Smoke grafico headless automatizado para el compositor: `desktop --selftest`
+  arranca el compositor, importa el scanout, lanza un cliente real y valida de
+  forma determinista la composicion multi-window y el avance de la timeline de
+  presents del GPU (submit/retire), ejercitando ademas las rutas de
+  maximizar/restaurar/minimizar/mover ventana. Expuesto como
+  `.\build.ps1 desktop-smoke` (token `DESKTOP SMOKE PASS/FAIL`) y enrutado desde
+  `init` via el spec `/SMOKE` `desktop-selftest`, cerrando el hueco de validacion
+  del camino grafico que antes solo se probaba a mano.
+- Apps cliente nuevas del desktop: `filesapp` (navegacion de `/disk` con preview)
+  y `aboutapp` (resumen del sistema), cableadas en el menu Inicio.
 - Politica y trazabilidad explicita para adopcion de componentes inspirados en
   SerenityOS, con documentacion nueva en `docs/THIRD_PARTY_ADOPTION.md` y
   `docs/THIRD_PARTY_PROVENANCE.md`.
@@ -38,6 +48,8 @@ Notas de corte:
 
 ### Cambiado
 
+- El sistema pasa a reportarse como `v0.3.0` en kernel, shell, `uname`,
+  `sysinfo`, `aboutapp` y demas componentes que consumen la version compartida.
 - El progreso en background de `virtio-gpu` deja de depender del subsistema de
   input y pasa a bombearse desde un servicio de dispositivos del kernel
   invocado en timer y waits bloqueantes.
@@ -65,6 +77,77 @@ Notas de corte:
   explicito del driver, no solo stats/stages internos.
 - El flujo de `build/disk.img` persistente se vuelve a validar despues de cada
   tanda grande de cambios con `doomgeneric` como prueba real de no regresion.
+- `virtio-gpu` reorganiza su estado interno alrededor de un `Adapter` con
+  subestados separados para transporte, display, cursor, presents y runtime,
+  dejando mejor preparada la base para locking fino y recovery mas predecible.
+- El trabajo en background de `virtio-gpu` queda separado en fases explicitas
+  de drain de colas, avance del pipeline y procesamiento de eventos de config,
+  con serializacion atomica corta para submit/drain de virtqueues.
+- La timeline de presents pasa a reconocer `present_cookie` como correlacion
+  real tambien cuando hay coalescing, retiro por rangos y batching de damage.
+- El camino parcial de presentacion ya puede actualizar el front buffer activo
+  sin clone completo cuando el recurso esta idle, y los batches importados
+  conservan rects reales para `TRANSFER_TO_HOST_2D` y `RESOURCE_FLUSH` antes
+  de caer a bounding rect solo si se agota la capacidad interna.
+- El `desktop` empieza a usar el evento waitable de present exportado por
+  `/dev/gpu0` como hint de readiness para reducir polling innecesario de la
+  timeline, manteniendo `WAIT_PRESENT` como sincronizacion fuerte.
+- Los eventos de display/scanout de `virtio-gpu` endurecen su handling:
+  un refresh fallido ya dispara degradado y recovery deliberado en lugar de
+  quedar como fallo silencioso del camino de hotplug/config.
+- `gputest --smoke` sube la cobertura del driver validando handles waitables de
+  present y scanout, junto con un soak liviano de presents parciales y refreshes
+  repetidos para detectar regresiones de pacing y recovery mas temprano.
+- Los timeouts de reserva de superficie y de slot pending en `virtio-gpu`
+  pasan a tratarse como sintomas de atasco real del pipeline, entrando en modo
+  degradado e intentando recovery igual que los otros waits criticos.
+- El recovery de `virtio-gpu` evita reentradas simultaneas y `gputest --smoke`
+  endurece la cobertura de eventos comprobando tambien que los handles vuelvan
+  a quedar sin senal despues de `event_reset`, con un soak algo mas agresivo.
+- `gputest` agrega un modo dedicado `--soak` para ejercer durante mas tiempo el
+  backend `/dev/gpu0` con mezcla determinista de full presents, partial presents,
+  waits por evento y refreshes de scanout, sin volver mas lenta la smoke normal.
+- `build.ps1` agrega el comando `gpu-soak`, reutilizando `/SMOKE` como selector
+  de runner para que `init` pueda lanzar `gputest --soak` en QEMU y reportar
+  tokens `SOAK PASS/FAIL` aptos para validacion automatizada.
+- El recovery de `virtio-gpu` deja de ser tan global en dominios no criticos:
+  un fallo al rearmar el cursor ahora degrada a software cursor y las imported
+  surfaces no criticas pueden descartarse localmente durante recovery en lugar
+  de voltear toda la rearmada del dispositivo.
+- Los refreshes de scanout de `virtio-gpu` pasan a ser transaccionales sobre el
+  cache de conectores: si el host entrega un evento incompleto o falla el rearm
+  del primary, el driver restaura el estado anterior y solo escala a recovery
+  global cuando ni siquiera puede mantener el scanout primario.
+- `gputest --soak` ahora acepta cantidad de iteraciones y cubre tambien imported
+  surfaces mediante `GPU_IOC_IMPORT_SECTION` y `GPU_IOC_PRESENT_SURFACE_BATCH`,
+  con `build.ps1 gpu-soak -GpuSoakIterations N` para repetir tandas mas largas
+  sin tocar la smoke normal.
+- El compositor `desktop` corrige el pacing de sus presents importados usando la
+  timeline real para generar `present_cookie`, evitando retirar frames antes de
+  que el GPU termine y reduciendo el tearing visible en apps pesadas.
+- El runtime `gfx` del SDK deja de exponer como backbuffer directo el mismo
+  buffer compartido que lee el compositor: cada cliente dibuja en un backbuffer
+  privado y el runtime copia al surface compartido solo cuando el frame anterior
+  ya fue compuesto, eliminando backlog de frames sin esperar el retiro final del
+  GPU.
+- El protocolo de surfaces cliente agrega `composed_sequence` para separar
+  composicion del desktop y retiro del GPU; el compositor senala progreso apenas
+  copia el frame al backbuffer visible y conserva `retired_sequence` para el
+  retiro real del present.
+- El `desktop` limita el drenaje de eventos de mouse por frame para que arrastrar
+  ventanas no acumule un backlog grande antes de volver a componer.
+- `poll()` deja de tratar todos los devices como siempre legibles: `/dev/input0`
+  y `/dev/mouse0` exponen readiness real de cola, reduciendo el busy-loop del
+  compositor cuando no hay eventos pendientes.
+- El manejo de mouse del `desktop` pasa a leer bloques por frame y coalescer
+  movimientos consecutivos con el mismo estado de botones, siguiendo el patron
+  de WindowServer de SerenityOS para no componer un frame por cada paquete crudo.
+- `sx_rect_set` corrige el merge de rectangulos adyacentes para no unir areas
+  separadas que solo coinciden en una coordenada de borde, evitando dirty rects
+  artificialmente enormes al mover ventanas.
+- `doomgeneric` y el compositor imprimen ahora el error concreto de present o
+  batch invalido cuando una surface cliente falla, facilitando diagnostico de
+  regresiones visuales.
 
 ## [0.2.2] - 2026-04-01
 

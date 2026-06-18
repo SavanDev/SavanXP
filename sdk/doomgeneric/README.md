@@ -3,7 +3,7 @@
 Estado actual del port:
 
 - jugable como app grafica externa sobre el stack `gfx_*` actual
-- pensado para el modelo `desktop-first` de `SavanXP v0.2.2`
+- pensado para el modelo `desktop-first` de `SavanXP v0.3.0`
 - render interno restaurado a `320x200`, con escalado entero y centrado
   dentro del `work area` del desktop
 - control exclusivamente por teclado
@@ -12,7 +12,7 @@ Estado actual del port:
 - config y saves persistentes bajo `/disk/games/doom`
 - validacion del port solo por pruebas manuales
 
-## Estado tecnico en `v0.2.2`
+## Estado tecnico en `v0.3.0`
 
 El port sigue compilando desde `sdk/doomgeneric`, pero la SDK canonica del
 sistema ahora vive bajo `subsystems/posix/sdk/v1`. El build del port ya usa
