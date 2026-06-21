@@ -1,5 +1,14 @@
 # AGENTS
 
+## Toolchain
+
+- Las herramientas de build (clang, ld.lld, qemu, OVMF) se hornean con
+  `tools/bootstrap.ps1` en `toolchain/` (ignorado por git). La resolucion vive
+  centralizada en `tools/Toolchain.ps1` (env var > toolchain horneado > PATH).
+- No volver a meter rutas absolutas de una maquina concreta en `build.ps1` ni en
+  el tooling: si hace falta una herramienta nueva, agregarla a
+  `tools/toolchain.lock.json` y al mapa de `tools/Toolchain.ps1`.
+
 ## Reglas del repo
 
 - No romper la persistencia de apps externas instaladas en `build/disk.img`.

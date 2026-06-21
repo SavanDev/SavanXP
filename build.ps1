@@ -38,6 +38,7 @@ $SmokeStdoutLog = Join-Path $BuildRoot "smoke-qemu-stdout.log"
 $SmokeStderrLog = Join-Path $BuildRoot "smoke-qemu-stderr.log"
 
 . (Join-Path $ToolRoot "UserAppCommon.ps1")
+. (Join-Path $ToolRoot "Toolchain.ps1")
 
 $SvfsSectorSize = 512
 $SvfsDirectorySectors = 8
@@ -216,29 +217,7 @@ function Ensure-Limine {
     }
 }
 
-function Resolve-OvmfPair {
-    $envCode = $env:OVMF_CODE
-    $envVars = $env:OVMF_VARS
-    if ($envCode -and $envVars -and (Test-Path $envCode) -and (Test-Path $envVars)) {
-        return @{ Code = $envCode; Vars = $envVars }
-    }
-
-    $pairs = @(
-        @{ Code = "C:\\Program Files\\qemu\\share\\edk2-x86_64-code.fd"; Vars = "C:\\Program Files\\qemu\\share\\edk2-x86_64-vars.fd" },
-        @{ Code = "C:\\Program Files\\qemu\\share\\edk2-x86_64-code.fd"; Vars = "C:\\Program Files\\qemu\\share\\edk2-i386-vars.fd" },
-        @{ Code = "C:\\Program Files\\qemu\\share\\OVMF_CODE.fd"; Vars = "C:\\Program Files\\qemu\\share\\OVMF_VARS.fd" },
-        @{ Code = "C:\\msys64\\mingw64\\share\\edk2-x86_64-code.fd"; Vars = "C:\\msys64\\mingw64\\share\\edk2-x86_64-vars.fd" },
-        @{ Code = "C:\\msys64\\usr\\share\\edk2-ovmf\\x64\\OVMF_CODE.fd"; Vars = "C:\\msys64\\usr\\share\\edk2-ovmf\\x64\\OVMF_VARS.fd" }
-    )
-
-    foreach ($pair in $pairs) {
-        if ((Test-Path $pair.Code) -and (Test-Path $pair.Vars)) {
-            return $pair
-        }
-    }
-
-    throw "No se encontro OVMF. Defini OVMF_CODE y OVMF_VARS o instala QEMU/OVMF en una ruta conocida."
-}
+# Resolve-OvmfPair vive ahora en tools/Toolchain.ps1.
 
 function Get-CommonFlags {
     return @(
@@ -573,14 +552,8 @@ function Install-BusyBox {
 }
 
 function Build-Kernel([string]$AutomationCommand = "") {
-    $clang = Require-Executable "clang++" @(
-        "clang++",
-        "C:\\Program Files\\LLVM\\bin\\clang++.exe"
-    )
-    $ld = Require-Executable "ld.lld" @(
-        "ld.lld",
-        "C:\\Program Files\\LLVM\\bin\\ld.lld.exe"
-    )
+    $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
+    $ld = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $git = Require-Executable "git" @("git")
 
     Ensure-Limine
@@ -654,10 +627,7 @@ function Build-Kernel([string]$AutomationCommand = "") {
 }
 
 function Run-Qemu([switch]$WaitForDebugger) {
-    $qemu = Require-Executable "qemu-system-x86_64" @(
-        "qemu-system-x86_64",
-        "C:\\Program Files\\qemu\\qemu-system-x86_64.exe"
-    )
+    $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel
 
     $ovmf = Resolve-OvmfPair
@@ -700,10 +670,7 @@ function Run-Qemu([switch]$WaitForDebugger) {
 }
 
 function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2) {
-    $qemu = Require-Executable "qemu-system-x86_64" @(
-        "qemu-system-x86_64",
-        "C:\\Program Files\\qemu\\qemu-system-x86_64.exe"
-    )
+    $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel -AutomationCommand $AutomationCommand
 
     $ovmf = Resolve-OvmfPair

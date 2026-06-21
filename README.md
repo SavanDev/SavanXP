@@ -29,18 +29,31 @@ Estado actual del sistema:
 
 ## Requisitos
 
-Herramientas necesarias en el host:
+La via recomendada es hornear un toolchain local autocontenido:
 
-- `git`
-- `clang++`
-- `ld.lld` o `clang++` con soporte `-fuse-ld=lld`
-- `qemu-system-x86_64`
-- Firmware OVMF accesible por una de estas vias:
-  - variables de entorno `OVMF_CODE` y `OVMF_VARS`
-  - o una instalacion de QEMU/MSYS2 en una ruta conocida
+```powershell
+.\tools\bootstrap.ps1
+```
 
-`build.ps1` descarga automaticamente la rama binaria `v10.x-binary` de
-Limine si no existe en `tools/limine`.
+Eso descarga versiones fijadas (LLVM/Clang con `ld.lld`, QEMU y el firmware
+OVMF que viene con QEMU) a `toolchain/` (ignorado por git) y escribe el
+manifiesto `toolchain/toolchain.json` que `build.ps1` consume. Las versiones
+estan fijadas en `tools/toolchain.lock.json`; actualizar una herramienta es
+editar ese archivo.
+
+`build.ps1` no contiene rutas de ninguna maquina concreta: resuelve cada
+herramienta en este orden y se queda con la primera que exista:
+
+1. override explicito por variable de entorno
+   (`SAVANXP_CLANG`, `SAVANXP_CLANGXX`, `SAVANXP_LD`, `SAVANXP_QEMU`,
+   `OVMF_CODE` / `OVMF_VARS`)
+2. el toolchain horneado en `toolchain/`
+3. el `PATH` del sistema
+
+Por eso `bootstrap.ps1` es opcional: si ya tenes `clang++`, `ld.lld` y
+`qemu-system-x86_64` en el `PATH`, el build funciona igual. Tambien hace falta
+`git` en el `PATH`. `build.ps1` descarga automaticamente la rama binaria
+`v10.x-binary` de Limine si no existe en `tools/limine`.
 
 ## Compilacion
 

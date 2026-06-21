@@ -1,0 +1,17 @@
+{
+  "_note": "Versiones fijadas del toolchain horneado. tools/bootstrap.ps1 lee de aqui. Para actualizar una herramienta: cambia version/url y deja sha256 vacio; el bootstrap descarga, calcula el hash y te lo imprime para que lo pegues. Con sha256 presente la verificacion es estricta.",
+  "llvm": {
+    "version": "19.1.7",
+    "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/clang+llvm-19.1.7-x86_64-pc-windows-msvc.tar.xz",
+    "sha256": "b4557b4f012161f56a2f5d9e877ab9635cafd7a08f7affe14829bd60c9d357f0",
+    "archive": "tar.xz",
+    "bin": "bin"
+  },
+  "qemu": {
+    "version": "20260501",
+    "url": "https://qemu.weilnetz.de/w64/2026/qemu-w64-setup-20260501.exe",
+    "sha256": "a8b29572afb4c6ad024b7de129c81033e9fd191b9e054e3a52ea0bed24ac19ef",
+    "installer": "nsis",
+    "index": "https://qemu.weilnetz.de/w64/"
+  }
+}

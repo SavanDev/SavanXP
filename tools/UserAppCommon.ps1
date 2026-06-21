@@ -9,6 +9,8 @@ $Script:DiskImage = Join-Path $Script:BuildRoot "disk.img"
 $Script:SvfsSectorSize = 512
 $Script:SvfsEntrySize = 64
 
+. (Join-Path $PSScriptRoot "Toolchain.ps1")
+
 function Resolve-Executable([string[]]$Candidates) {
     foreach ($candidate in $Candidates) {
         if (-not $candidate) {
@@ -157,8 +159,8 @@ function Set-AsciiField([byte[]]$Buffer, [int]$Offset, [string]$Text, [int]$Capa
 }
 
 function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath) {
-    $compiler = Require-Executable "clang" @("clang", "C:\\Program Files\\LLVM\\bin\\clang.exe")
-    $linker = Require-Executable "ld.lld" @("ld.lld", "C:\\Program Files\\LLVM\\bin\\ld.lld.exe")
+    $compiler = Require-Executable "clang" (Get-ToolchainCandidates "clang")
+    $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
     $compileFlags = Get-ExternalCompileFlags $sourceSpec.IncludeDirs
     $outputFull = [System.IO.Path]::GetFullPath($OutputPath)

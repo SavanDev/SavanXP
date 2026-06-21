@@ -1,9 +1,13 @@
 build/
+toolchain/
 tools/*
 !tools/build-user.ps1
 !tools/new-user-app.ps1
 !tools/run-user.ps1
 !tools/UserAppCommon.ps1
+!tools/Toolchain.ps1
+!tools/bootstrap.ps1
+!tools/toolchain.lock.json
 !tools/GenerateCursorAsset.ps1
 !tools/GenerateDesktopSourceArt.ps1
 !tools/GenerateDesktopIconAssets.ps1
