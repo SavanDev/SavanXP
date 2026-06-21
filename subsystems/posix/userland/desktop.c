@@ -2065,7 +2065,11 @@ int main(int argc, char **argv)
                 {
                     int hovered = menu_open ? desktop_selected_item_from_cursor(&session.gfx, cursor_x, cursor_y) : -1;
                     int taskbar_index = menu_open ? -1 : desktop_taskbar_button_from_point(&session, cursor_x, cursor_y);
-                    int shortcut_index = menu_open ? -1 : desktop_shortcut_from_point(&session.gfx.info, cursor_x, cursor_y);
+                    /* Desktop icons live behind overlay windows, so a click that
+                     * lands on a window must never fall through to a shortcut. */
+                    int shortcut_index = (menu_open || current_hover_client != 0)
+                        ? -1
+                        : desktop_shortcut_from_point(&session.gfx.info, cursor_x, cursor_y);
 
                     if (desktop_point_in_rect(cursor_x, cursor_y, 6, taskbar_y + 6, DESKTOP_START_BUTTON_WIDTH, DESKTOP_TASKBAR_HEIGHT - 12))
                     {
