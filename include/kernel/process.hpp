@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/object.hpp"
+#include "kernel/subsystem.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 #include "savanxp/syscall.h"
@@ -109,6 +110,7 @@ struct Process {
     uint32_t parent_pid;
     State state;
     bool idle;
+    subsystem::Id subsystem_id;  // posix(0) por defecto via memset en allocate_process_slot
     int exit_code;
     WaitReason wait_reason;
     uint8_t wait_handle_count;

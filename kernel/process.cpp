@@ -830,6 +830,7 @@ process::Process* create_process_internal(
     }
 
     proc->parent_pid = parent != nullptr ? parent->pid : 0;
+    proc->subsystem_id = parent != nullptr ? parent->subsystem_id : subsystem::Id::posix;
     set_process_name(*proc, path);
     if (parent != nullptr && parent->cwd[0] != '\0') {
         strcpy(proc->cwd, parent->cwd);
@@ -1429,6 +1430,7 @@ process::Process* fork_process(process::Process& parent, const process::SavedCon
     }
 
     child->parent_pid = parent.pid;
+    child->subsystem_id = parent.subsystem_id;
     memcpy(child->name, parent.name, sizeof(child->name));
     memcpy(child->cwd, parent.cwd, sizeof(child->cwd));
 
@@ -2369,6 +2371,9 @@ uint64_t milliseconds_to_ticks(uint64_t milliseconds) {
 
 namespace process {
 
+SavedContext* dispatch_posix_syscall(SavedContext* context);
+SavedContext* dispatch_native_syscall(SavedContext* context);
+
 void initialize() {
     memset(g_processes, 0, sizeof(g_processes));
     memset(g_pipes, 0, sizeof(g_pipes));
@@ -2380,6 +2385,11 @@ void initialize() {
     g_next_pid = 1;
     g_schedule_cursor = 0;
     g_boot_system_info_ready = false;
+
+    subsystem::reset();
+    subsystem::register_dispatcher(subsystem::Id::posix, &dispatch_posix_syscall);
+    subsystem::register_dispatcher(subsystem::Id::native, &dispatch_native_syscall);
+
     g_ready = true;
 }
 
@@ -2528,9 +2538,12 @@ void terminate_current_from_exception(uint8_t vector) {
 }
 
 #include "../subsystems/posix/kernel/syscall_dispatch.inc"
+#include "../subsystems/native/kernel/syscall_dispatch.inc"
 
 SavedContext* handle_syscall(SavedContext* context) {
-    return dispatch_posix_syscall(context);
+    const subsystem::Id id =
+        g_current != nullptr ? g_current->subsystem_id : subsystem::Id::posix;
+    return subsystem::dispatch(id, context);
 }
 
 SavedContext* handle_timer_tick(SavedContext* context) {

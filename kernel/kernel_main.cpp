@@ -16,6 +16,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ps2.hpp"
+#include "kernel/subsystem.hpp"
 #include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
@@ -126,6 +127,13 @@ namespace
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();
     process::initialize();
+    if (subsystem::dispatcher_for(subsystem::Id::posix) == nullptr ||
+        subsystem::dispatcher_for(subsystem::Id::native) == nullptr ||
+        subsystem::dispatcher_for(subsystem::Id::posix) ==
+            subsystem::dispatcher_for(subsystem::Id::native))
+    {
+        panic("subsystem: registro de dispatch incompleto");
+    }
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
     virtio_gpu::initialize(boot_info.framebuffer);

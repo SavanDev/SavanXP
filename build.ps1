@@ -80,6 +80,7 @@ $KernelSources = @(
     "kernel/svfs.cpp",
     "kernel/elf.cpp",
     "kernel/process.cpp",
+    "kernel/subsystem.cpp",
     "kernel/panic.cpp",
     "kernel/runtime.cpp"
 ) + $PosixKernelSources
