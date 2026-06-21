@@ -400,11 +400,11 @@ static void draw_desktop_shortcuts(
             sx_painter_fill_rect(painter, rect, gfx_rgb(0, 96, 144));
             sx_painter_draw_frame(painter, rect, gfx_rgb(210, 244, 255));
         }
-        draw_embedded_bitmap_scaled(painter, icon, rect.x + 29, rect.y + 6, 32, 32);
+        draw_embedded_bitmap_scaled(painter, icon, rect.x + ((rect.width - 32) / 2), rect.y + 6, 32, 32);
         sx_painter_draw_text(
             painter,
             label_x,
-            rect.y + 48,
+            rect.y + 42,
             item->label,
             index == selected_shortcut ? gfx_rgb(255, 255, 255) : gfx_rgb(245, 255, 255));
     }
@@ -430,11 +430,13 @@ static void draw_background(
 static void draw_taskbar(struct sx_painter *painter, struct desktop_session *session, int menu_open)
 {
     const int taskbar_y = (int)session->gfx.info.height - DESKTOP_TASKBAR_HEIGHT;
-    const int panel_y = taskbar_y + 6;
-    const int panel_height = DESKTOP_TASKBAR_HEIGHT - 12;
+    const int panel_y = taskbar_y + 5;
+    const int panel_height = DESKTOP_TASKBAR_HEIGHT - 9;
+    const int text_y = taskbar_y + (DESKTOP_TASKBAR_HEIGHT - gfx_text_height()) / 2;
+    const int icon_y = taskbar_y + (DESKTOP_TASKBAR_HEIGHT - 16) / 2;
     const char *version_text = SAVANXP_VERSION_STRING;
     const int clock_x = (int)session->gfx.info.width - DESKTOP_CLOCK_BOX_WIDTH - DESKTOP_TASKBAR_GAP;
-    const int version_width = gfx_text_width(version_text) + 22;
+    const int version_width = gfx_text_width(version_text) + 16;
     const int version_x = clock_x - version_width - DESKTOP_TASKBAR_GAP;
     const struct desktop_embedded_bitmap *start_icon = desktop_icon_small(DESKTOP_ICON_DESKTOP);
     char clock_text[6];
@@ -447,8 +449,8 @@ static void draw_taskbar(struct sx_painter *painter, struct desktop_session *ses
     sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y + DESKTOP_TASKBAR_HEIGHT - 1, (int)session->gfx.info.width, 1), gfx_rgb(79, 83, 89));
 
     draw_button(painter, sx_rect_make(6, panel_y, DESKTOP_START_BUTTON_WIDTH, panel_height), gfx_rgb(196, 199, 203), menu_open);
-    draw_embedded_bitmap(painter, start_icon, 15 + (menu_open ? 1 : 0), panel_y + 6 + (menu_open ? 1 : 0));
-    draw_embossed_text(painter, 40 + (menu_open ? 1 : 0), taskbar_y + 12 + (menu_open ? 1 : 0), "Start", gfx_rgb(255, 255, 255), gfx_rgb(0, 0, 0));
+    draw_embedded_bitmap(painter, start_icon, 12 + (menu_open ? 1 : 0), icon_y + (menu_open ? 1 : 0));
+    draw_embossed_text(painter, 32 + (menu_open ? 1 : 0), text_y + (menu_open ? 1 : 0), "Start", gfx_rgb(255, 255, 255), gfx_rgb(0, 0, 0));
 
     for (index = 0; index < desktop_taskbar_button_count(session); ++index)
     {
@@ -485,20 +487,20 @@ static void draw_taskbar(struct sx_painter *painter, struct desktop_session *ses
         }
 
         draw_button(painter, rect, face, client->active && !client->minimized);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 6, rect.y + 4, 4, rect.height - 8), accent);
-        draw_embedded_bitmap(painter, icon, rect.x + 16, rect.y + 6);
-        sx_painter_draw_text(painter, rect.x + 38, taskbar_y + 12, label, gfx_rgb(12, 16, 20));
+        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 5, rect.y + 3, 3, rect.height - 6), accent);
+        draw_embedded_bitmap(painter, icon, rect.x + 12, icon_y);
+        sx_painter_draw_text(painter, rect.x + 32, text_y, label, gfx_rgb(12, 16, 20));
     }
 
     draw_inset_box(painter, sx_rect_make(version_x, panel_y, version_width, panel_height), gfx_rgb(210, 214, 220));
-    sx_painter_draw_text(painter, version_x + 12, taskbar_y + 12, version_text, gfx_rgb(46, 50, 56));
+    sx_painter_draw_text(painter, version_x + 8, text_y, version_text, gfx_rgb(46, 50, 56));
 
     desktop_current_clock_stamp(clock_text);
     draw_inset_box(painter, sx_rect_make(clock_x, panel_y, DESKTOP_CLOCK_BOX_WIDTH, panel_height), gfx_rgb(210, 214, 220));
     sx_painter_draw_text(
         painter,
         clock_x + ((DESKTOP_CLOCK_BOX_WIDTH - gfx_text_width(clock_text)) / 2),
-        taskbar_y + 12,
+        text_y,
         clock_text,
         gfx_rgb(46, 50, 56));
 }
@@ -524,9 +526,9 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
     sx_painter_draw_frame(painter, sx_rect_make(menu_x, menu_y, menu_width, menu_height), gfx_rgb(46, 50, 56));
     sx_painter_fill_rect(painter, sx_rect_make(menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12), gfx_rgb(0, 106, 72));
     draw_embedded_bitmap_scaled(painter, sidebar_art, menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12);
-    sx_painter_draw_text(painter, content_x, menu_y + 18, "Applications", gfx_rgb(24, 28, 34));
-    sx_painter_draw_text(painter, content_x, menu_y + 38, "Open an app in its own", gfx_rgb(82, 88, 96));
-    sx_painter_draw_text(painter, content_x, menu_y + 54, "movable window", gfx_rgb(82, 88, 96));
+    sx_painter_draw_text(painter, content_x, menu_y + 8, "Applications", gfx_rgb(24, 28, 34));
+    sx_painter_draw_text(painter, content_x, menu_y + 22, "Open an app in its own", gfx_rgb(82, 88, 96));
+    sx_painter_draw_text(painter, content_x, menu_y + 34, "movable window", gfx_rgb(82, 88, 96));
 
     for (index = 0; index < desktop_menu_item_count(); ++index)
     {
@@ -536,15 +538,15 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
         const uint32_t face = index == selected_index ? gfx_rgb(222, 234, 255) : gfx_rgb(236, 238, 241);
 
         sx_painter_fill_rect(painter, sx_rect_make(content_x - 2, item_y, desktop_start_menu_content_width() - 4, DESKTOP_MENU_ITEM_HEIGHT - 2), face);
-        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 7, 28, 28), gfx_rgb(245, 247, 250));
-        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 35, 28, 2), item->accent);
-        draw_embedded_bitmap_scaled(painter, icon, content_x + 6, item_y + 9, 24, 24);
-        sx_painter_draw_text(painter, content_x + 40, item_y + 8, item->label, gfx_rgb(24, 28, 34));
-        sx_painter_draw_text(painter, content_x + 40, item_y + 24, item->subtitle, gfx_rgb(92, 98, 108));
+        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 6, 22, 22), gfx_rgb(245, 247, 250));
+        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 29, 22, 2), item->accent);
+        draw_embedded_bitmap_scaled(painter, icon, content_x + 5, item_y + 7, 20, 20);
+        sx_painter_draw_text(painter, content_x + 32, item_y + 5, item->label, gfx_rgb(24, 28, 34));
+        sx_painter_draw_text(painter, content_x + 32, item_y + 18, item->subtitle, gfx_rgb(92, 98, 108));
     }
 
     sx_painter_fill_rect(painter, sx_rect_make(content_x - 2, footer_y, desktop_start_menu_content_width() - 4, 1), gfx_rgb(146, 150, 156));
-    sx_painter_draw_text(painter, content_x, footer_y + 12, "Apps open in movable windows", gfx_rgb(82, 88, 96));
+    sx_painter_draw_text(painter, content_x, footer_y + 8, "Apps open in movable windows", gfx_rgb(82, 88, 96));
 }
 
 static void draw_cursor(struct sx_painter *painter, int x, int y)
@@ -587,8 +589,8 @@ static void draw_client(struct sx_painter *painter, const struct desktop_client 
     {
         draw_button(painter, frame_rect, frame_face, 0);
         sx_painter_fill_rect(painter, sx_rect_make(frame_rect.x + 2, frame_rect.y + 2, frame_rect.width - 4, DESKTOP_WINDOW_TITLEBAR_HEIGHT - 4), title_colour);
-        draw_embedded_bitmap(painter, icon, frame_rect.x + 8, frame_rect.y + 6);
-        sx_painter_draw_text(painter, frame_rect.x + 30, frame_rect.y + 8, window_title_for_client(client), gfx_rgb(255, 255, 255));
+        draw_embedded_bitmap(painter, icon, frame_rect.x + 6, frame_rect.y + (DESKTOP_WINDOW_TITLEBAR_HEIGHT - 16) / 2);
+        sx_painter_draw_text(painter, frame_rect.x + 26, frame_rect.y + (DESKTOP_WINDOW_TITLEBAR_HEIGHT - gfx_text_height()) / 2, window_title_for_client(client), gfx_rgb(255, 255, 255));
         draw_minimize_button(painter, client);
         draw_maximize_button(painter, client);
         draw_close_button(painter, client);

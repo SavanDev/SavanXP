@@ -2071,7 +2071,7 @@ int main(int argc, char **argv)
                         ? -1
                         : desktop_shortcut_from_point(&session.gfx.info, cursor_x, cursor_y);
 
-                    if (desktop_point_in_rect(cursor_x, cursor_y, 6, taskbar_y + 6, DESKTOP_START_BUTTON_WIDTH, DESKTOP_TASKBAR_HEIGHT - 12))
+                    if (desktop_point_in_rect(cursor_x, cursor_y, 6, taskbar_y + 5, DESKTOP_START_BUTTON_WIDTH, DESKTOP_TASKBAR_HEIGHT - 9))
                     {
                         menu_open = !menu_open;
                         if (menu_open)

@@ -429,10 +429,10 @@ const struct desktop_client *desktop_taskbar_button_client(const struct desktop_
 struct sx_rect desktop_taskbar_button_rect(const struct desktop_session *session, int index)
 {
     const int taskbar_y = session != 0 ? (int)session->gfx.info.height - DESKTOP_TASKBAR_HEIGHT : 0;
-    const int panel_y = taskbar_y + 6;
-    const int panel_height = DESKTOP_TASKBAR_HEIGHT - 12;
+    const int panel_y = taskbar_y + 5;
+    const int panel_height = DESKTOP_TASKBAR_HEIGHT - 9;
     const int clock_x = session != 0 ? (int)session->gfx.info.width - DESKTOP_CLOCK_BOX_WIDTH - DESKTOP_TASKBAR_GAP : 0;
-    const int version_width = gfx_text_width(SAVANXP_VERSION_STRING) + 22;
+    const int version_width = gfx_text_width(SAVANXP_VERSION_STRING) + 16;
     const int version_x = clock_x - version_width - DESKTOP_TASKBAR_GAP;
     const int buttons_x = DESKTOP_START_BUTTON_WIDTH + 12;
     const int buttons_width = version_x - buttons_x - DESKTOP_TASKBAR_GAP;
