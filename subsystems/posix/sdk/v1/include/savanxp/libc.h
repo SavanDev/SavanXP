@@ -134,6 +134,11 @@ void gfx_frame(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int 
 int gfx_text_width(const char* text);
 int gfx_text_height(void);
 void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour);
+/* Monospace UniFont path (fixed 8x16 cell), used for terminal-style output. */
+int gfx_cell_width(void);
+int gfx_cell_height(void);
+int gfx_text_width_mono(const char* text);
+void gfx_blit_text_mono(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour);
 
 int result_is_error(long result);
 int result_error_code(long result);

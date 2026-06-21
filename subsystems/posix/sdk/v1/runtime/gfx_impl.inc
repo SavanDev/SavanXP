@@ -1,42 +1,16 @@
-#include "gfx_font8x8.inc"
+/* Text rendering uses two offline-baked fonts (tools/font/genfont.py):
+ *   - Noto Sans, proportional and antialiased, for desktop/UI text.
+ *   - UniFont, fixed 8x16 1-bit, for the monospace terminal path.
+ */
+#include "gfx_font_noto.inc"
+#include "console_font_unifont.inc"
 
-
-static const unsigned char* gfx_glyph_for(char character) {
-    unsigned char index = (unsigned char)character;
-    if (index < 32 || index > 126) {
-        return kGfxGlyphs[0];
+/* Map a byte to its Noto glyph, falling back to '?' for anything unprintable. */
+static const struct sx_noto_glyph* gfx_noto_glyph(unsigned char c) {
+    if (c < SX_NOTO_FIRST || c > SX_NOTO_LAST) {
+        c = (unsigned char)'?';
     }
-    return kGfxGlyphs[index - 32];
-}
-
-/* Glyphs are authored on an 8x8 grid (bit 7 = leftmost column) and rendered 1:1.
- * gfx_glyph_extent returns the number of populated columns (0 for blank), so
- * text can be laid out proportionally instead of as fixed-width cells. */
-static int gfx_glyph_extent(const unsigned char* glyph) {
-    int max_col = -1;
-    int row;
-    int col;
-    if (glyph == 0) {
-        return 0;
-    }
-    for (row = 0; row < 8; ++row) {
-        for (col = 0; col < 8; ++col) {
-            if ((glyph[row] & (1u << (7 - col))) != 0 && col > max_col) {
-                max_col = col;
-            }
-        }
-    }
-    return max_col + 1;
-}
-
-/* Horizontal advance in pixels for one glyph. Blank glyphs (space) get a fixed
- * advance; populated glyphs get their drawn width plus a 1px inter-glyph gap. */
-static int gfx_glyph_advance_px(const unsigned char* glyph) {
-    int extent = gfx_glyph_extent(glyph);
-    if (extent <= 0) {
-        return 4;
-    }
-    return extent + 1;
+    return &kNotoGlyphs[c - SX_NOTO_FIRST];
 }
 
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue) {
@@ -688,6 +662,33 @@ void gfx_pixel(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int 
     pixels[(uint32_t)y * pitch_pixels + (uint32_t)x] = colour;
 }
 
+/* Alpha-composite a colour over the destination pixel. colour is 0x00RRGGBB
+ * (as produced by gfx_rgb); alpha 0 = transparent, 255 = opaque. */
+static void gfx_pixel_blend(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, uint32_t colour, unsigned int alpha) {
+    uint32_t pitch_pixels;
+    uint32_t dst;
+    unsigned int sr, sg, sb, dr, dg, db, inv;
+    if (pixels == 0 || info == 0 || x < 0 || y < 0 || x >= (int)info->width || y >= (int)info->height || info->pitch == 0) {
+        return;
+    }
+    if (alpha == 0) {
+        return;
+    }
+    pitch_pixels = info->pitch / 4;
+    if (alpha >= 255) {
+        pixels[(uint32_t)y * pitch_pixels + (uint32_t)x] = colour;
+        return;
+    }
+    dst = pixels[(uint32_t)y * pitch_pixels + (uint32_t)x];
+    sr = (colour >> 16) & 0xFF; sg = (colour >> 8) & 0xFF; sb = colour & 0xFF;
+    dr = (dst >> 16) & 0xFF; dg = (dst >> 8) & 0xFF; db = dst & 0xFF;
+    inv = 255 - alpha;
+    pixels[(uint32_t)y * pitch_pixels + (uint32_t)x] =
+        (((sr * alpha + dr * inv) / 255) << 16) |
+        (((sg * alpha + dg * inv) / 255) << 8) |
+        ((sb * alpha + db * inv) / 255);
+}
+
 void gfx_hline(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, int width, uint32_t colour) {
     uint32_t pitch_pixels;
     uint32_t* row;
@@ -745,36 +746,81 @@ void gfx_frame(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int 
     }
 }
 
+/* --- Proportional Noto Sans (default desktop/UI text) ------------------- */
+
 int gfx_text_width(const char* text) {
     int width = 0;
     if (text == 0) {
         return 0;
     }
     while (*text != '\0') {
-        width += gfx_glyph_advance_px(gfx_glyph_for(*text));
+        width += gfx_noto_glyph((unsigned char)*text)->advance;
         ++text;
     }
     return width;
 }
 
 int gfx_text_height(void) {
-    return 10;
+    return SX_NOTO_LINE_HEIGHT;
 }
 
+/* y is the top of the text box; glyphs sit on a baseline SX_NOTO_ASCENT below. */
 void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
-    int cursor_x = x;
+    int pen_x = x;
+    int baseline = y + SX_NOTO_ASCENT;
     while (text != 0 && *text != '\0') {
-        const unsigned char* glyph = gfx_glyph_for(*text);
+        const struct sx_noto_glyph* g = gfx_noto_glyph((unsigned char)*text);
         int row;
         int column;
-        for (row = 0; row < 8; ++row) {
-            for (column = 0; column < 8; ++column) {
-                if ((glyph[row] & (1u << (7 - column))) != 0) {
-                    gfx_pixel(pixels, info, cursor_x + column, y + row, colour);
+        for (row = 0; row < g->rows; ++row) {
+            for (column = 0; column < g->width; ++column) {
+                unsigned int alpha = kNotoCoverage[g->offset + (unsigned int)row * g->width + column];
+                if (alpha != 0) {
+                    gfx_pixel_blend(pixels, info, pen_x + g->left + column, baseline - g->top + row, colour, alpha);
                 }
             }
         }
-        cursor_x += gfx_glyph_advance_px(glyph);
+        pen_x += g->advance;
+        ++text;
+    }
+}
+
+/* --- Fixed 8x16 UniFont (monospace terminal text) ----------------------- */
+
+int gfx_cell_width(void) {
+    return SX_CONSOLE_GLYPH_W;
+}
+
+int gfx_cell_height(void) {
+    return SX_CONSOLE_GLYPH_H;
+}
+
+int gfx_text_width_mono(const char* text) {
+    int count = 0;
+    if (text == 0) {
+        return 0;
+    }
+    while (*text != '\0') {
+        ++count;
+        ++text;
+    }
+    return count * SX_CONSOLE_GLYPH_W;
+}
+
+void gfx_blit_text_mono(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+    int pen_x = x;
+    while (text != 0 && *text != '\0') {
+        const unsigned char* glyph = sx_console_glyph((unsigned char)*text);
+        int row;
+        int column;
+        for (row = 0; row < SX_CONSOLE_GLYPH_H; ++row) {
+            for (column = 0; column < SX_CONSOLE_GLYPH_W; ++column) {
+                if ((glyph[row] & (0x80u >> column)) != 0) {
+                    gfx_pixel(pixels, info, pen_x + column, y + row, colour);
+                }
+            }
+        }
+        pen_x += SX_CONSOLE_GLYPH_W;
         ++text;
     }
 }

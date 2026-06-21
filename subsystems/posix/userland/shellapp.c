@@ -129,7 +129,7 @@ static void shellapp_clear_history(void) {
 }
 
 static int shellapp_prompt_y(const struct savanxp_fb_info* info) {
-    return (int)info->height - SHELLAPP_MARGIN_Y - gfx_text_height();
+    return (int)info->height - SHELLAPP_MARGIN_Y - gfx_cell_height();
 }
 
 static void shellapp_invalidate_rect(int x, int y, int width, int height) {
@@ -193,20 +193,20 @@ static void shellapp_redraw(void) {
 
     for (line_index = first_line; line_index < g_shellapp.line_count; ++line_index) {
         uint32_t colour = g_lines[line_index].stream == 2 ? gfx_rgb(255, 170, 170) : gfx_rgb(220, 233, 245);
-        gfx_blit_text(g_shellapp.frame, info, SHELLAPP_MARGIN_X, y, g_lines[line_index].text, colour);
+        gfx_blit_text_mono(g_shellapp.frame, info, SHELLAPP_MARGIN_X, y, g_lines[line_index].text, colour);
         y += SHELLAPP_LINE_HEIGHT;
-        if (y + gfx_text_height() > prompt_y) {
+        if (y + gfx_cell_height() > prompt_y) {
             break;
         }
     }
 
     gfx_hline(g_shellapp.frame, info, 0, prompt_y - 8, (int)info->width, gfx_rgb(41, 58, 78));
-    gfx_blit_text(g_shellapp.frame, info, SHELLAPP_MARGIN_X, prompt_y, "> ", gfx_rgb(128, 226, 164));
-    gfx_blit_text(g_shellapp.frame, info, SHELLAPP_MARGIN_X + gfx_text_width("> "), prompt_y, g_shellapp.input, gfx_rgb(246, 248, 252));
+    gfx_blit_text_mono(g_shellapp.frame, info, SHELLAPP_MARGIN_X, prompt_y, "> ", gfx_rgb(128, 226, 164));
+    gfx_blit_text_mono(g_shellapp.frame, info, SHELLAPP_MARGIN_X + gfx_text_width_mono("> "), prompt_y, g_shellapp.input, gfx_rgb(246, 248, 252));
 
     if (g_shellapp.cursor_visible) {
-        cursor_x = SHELLAPP_MARGIN_X + gfx_text_width("> ") + gfx_text_width(g_shellapp.input);
-        gfx_rect(g_shellapp.frame, info, cursor_x, prompt_y + gfx_text_height() + 1, 10, 2, gfx_rgb(128, 226, 164));
+        cursor_x = SHELLAPP_MARGIN_X + gfx_text_width_mono("> ") + gfx_text_width_mono(g_shellapp.input);
+        gfx_rect(g_shellapp.frame, info, cursor_x, prompt_y + gfx_cell_height() + 1, gfx_cell_width(), 2, gfx_rgb(128, 226, 164));
     }
 
     if (sx_rect_set_valid(&g_shellapp.dirty_rects)) {

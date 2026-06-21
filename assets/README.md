@@ -52,3 +52,30 @@ El arte para la banda vertical izquierda vive en
 `assets/desktop/menu_strip_savanxp.png`. Tambien se convierte automaticamente
 a `build/generated/desktop_icon_assets.h` durante `.\build.ps1 build` y se
 regenera junto con los iconos del desktop.
+
+## Tipografias
+
+Las fuentes fuente viven en `assets/desktop/fonts/`:
+
+```
+fonts/
+  unifont.hex              GNU UniFont 17.0.04 (bitmap, consola/terminal)
+  NotoSans-Regular.ttf     Noto Sans Regular v1.06 (proporcional, escritorio)
+  LICENSE-OFL-1.1.txt      SIL Open Font License 1.1 (ambas)
+```
+
+A diferencia de los PNG, las fuentes **no** se convierten durante `build.ps1`: se
+hornean a mano con `tools/font/genfont.py` (requiere `pip install freetype-py`) y
+las tablas `.inc` resultantes se commitean. UniFont sale del `.hex` canonico
+(bitmaps 8x16 nitidos); Noto Sans se rasteriza del TTF como atlas de cobertura
+antialiased. Procedencia y licencias en `docs/THIRD_PARTY_PROVENANCE.md`.
+
+Para regenerar (desde la raiz del repo):
+
+```
+python tools/font/genfont.py unifont --hex assets/desktop/fonts/unifont.hex \
+    --out include/kernel/console_font_unifont.inc \
+    --out subsystems/posix/sdk/v1/runtime/console_font_unifont.inc
+python tools/font/genfont.py noto --ttf assets/desktop/fonts/NotoSans-Regular.ttf \
+    --out subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc
+```

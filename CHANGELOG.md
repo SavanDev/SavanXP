@@ -8,6 +8,34 @@ Notas de corte:
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
 
+## [Unreleased]
+
+### Agregado
+
+- Tipografias reales horneadas offline a tablas C con `tools/font/genfont.py`
+  (via `freetype-py`): **GNU UniFont 8x16** para la consola del kernel y el render
+  monospace del terminal, y **Noto Sans** proporcional antialiased para el chrome
+  del escritorio y los widgets. El SO sigue sin parsear TrueType en runtime.
+- Camino de texto monospace en `sxgfx` (`gfx_blit_text_mono`, `gfx_cell_width/height`)
+  y alpha-blending por pixel (`gfx_pixel_blend`) para el texto antialiased de Noto.
+
+### Cambiado
+
+- La consola del kernel pasa de la fuente bitmap 5x7 autorada a UniFont 8x16, con
+  cobertura ASCII + Latin-1 + dibujo de cajas/bloques via una tabla dispersa
+  (`include/kernel/console_font_unifont.inc`).
+- `gfx_blit_text` ahora rasteriza Noto Sans desde un atlas de cobertura 8-bit; el
+  terminal `shellapp` usa el camino monospace UniFont. Se reajustaron las metricas
+  de chrome del desktop (`desktop_layout.h`, menu Inicio, accesos directos) para la
+  altura de linea mayor.
+- UniFont se hornea desde `unifont.hex` (bitmaps nitidos en grilla), no desde el
+  outline TTF, que rasterizaba fuera de grilla con artefactos.
+
+### Eliminado
+
+- Sistema de fuente 8x8 generado a mano (`tools/font/genfont.ps1`, `font8x8.txt`,
+  `gfx_font8x8.inc`), reemplazado por el toolchain de `genfont.py`.
+
 ## [0.3.0] - 2026-06-18
 
 ### Agregado

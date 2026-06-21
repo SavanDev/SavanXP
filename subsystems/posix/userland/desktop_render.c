@@ -527,8 +527,8 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
     sx_painter_fill_rect(painter, sx_rect_make(menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12), gfx_rgb(0, 106, 72));
     draw_embedded_bitmap_scaled(painter, sidebar_art, menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12);
     sx_painter_draw_text(painter, content_x, menu_y + 8, "Applications", gfx_rgb(24, 28, 34));
-    sx_painter_draw_text(painter, content_x, menu_y + 22, "Open an app in its own", gfx_rgb(82, 88, 96));
-    sx_painter_draw_text(painter, content_x, menu_y + 34, "movable window", gfx_rgb(82, 88, 96));
+    sx_painter_draw_text(painter, content_x, menu_y + 28, "Open an app in its own", gfx_rgb(82, 88, 96));
+    sx_painter_draw_text(painter, content_x, menu_y + 46, "movable window", gfx_rgb(82, 88, 96));
 
     for (index = 0; index < desktop_menu_item_count(); ++index)
     {
@@ -538,11 +538,11 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
         const uint32_t face = index == selected_index ? gfx_rgb(222, 234, 255) : gfx_rgb(236, 238, 241);
 
         sx_painter_fill_rect(painter, sx_rect_make(content_x - 2, item_y, desktop_start_menu_content_width() - 4, DESKTOP_MENU_ITEM_HEIGHT - 2), face);
-        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 6, 22, 22), gfx_rgb(245, 247, 250));
-        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 29, 22, 2), item->accent);
-        draw_embedded_bitmap_scaled(painter, icon, content_x + 5, item_y + 7, 20, 20);
-        sx_painter_draw_text(painter, content_x + 32, item_y + 5, item->label, gfx_rgb(24, 28, 34));
-        sx_painter_draw_text(painter, content_x + 32, item_y + 18, item->subtitle, gfx_rgb(92, 98, 108));
+        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 8, 22, 22), gfx_rgb(245, 247, 250));
+        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 33, 22, 2), item->accent);
+        draw_embedded_bitmap_scaled(painter, icon, content_x + 5, item_y + 9, 20, 20);
+        sx_painter_draw_text(painter, content_x + 32, item_y + 4, item->label, gfx_rgb(24, 28, 34));
+        sx_painter_draw_text(painter, content_x + 32, item_y + 22, item->subtitle, gfx_rgb(92, 98, 108));
     }
 
     sx_painter_fill_rect(painter, sx_rect_make(content_x - 2, footer_y, desktop_start_menu_content_width() - 4, 1), gfx_rgb(146, 150, 156));
