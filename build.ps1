@@ -128,6 +128,11 @@ $UserPrograms = @(
         "subsystems/posix/userland/filesapp.c",
         "subsystems/posix/sdk/v1/runtime/posix.c"
     ) },
+    @{ Name = "widgetsdemo"; Sources = @(
+        "subsystems/posix/userland/widgetsdemo.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui.c",
+        "subsystems/posix/sdk/v1/runtime/posix.c"
+    ) },
     @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c" },
     @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c" },
     @{ Name = "keytest"; Source = "subsystems/posix/userland/keytest.c" },
