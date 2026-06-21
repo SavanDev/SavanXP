@@ -649,6 +649,25 @@ static int route_packet(int fd, const void *packet, size_t size)
     return fd >= 0 && write(fd, packet, size) == (long)size;
 }
 
+/* Deliver the pointer to a client in its own surface-local coordinates, so the
+ * app hit-tests in local space and stays aligned with the system cursor the
+ * compositor draws. */
+static int route_pointer(const struct desktop_client *client, int cursor_x, int cursor_y, uint32_t buttons)
+{
+    struct sx_rect surface_rect;
+    struct savanxp_gui_pointer_event event;
+
+    if (client == 0 || client->mouse_write_fd < 0)
+    {
+        return 0;
+    }
+    surface_rect = desktop_client_surface_rect(client);
+    event.x = cursor_x - surface_rect.x;
+    event.y = cursor_y - surface_rect.y;
+    event.buttons = buttons;
+    return route_packet(client->mouse_write_fd, &event, sizeof(event));
+}
+
 static size_t coalesce_mouse_events(
     const struct savanxp_mouse_event *events,
     size_t event_count,
@@ -2166,7 +2185,7 @@ int main(int argc, char **argv)
                         }
                         else if (current_hover_client != 0 && current_hover_client->mouse_write_fd >= 0)
                         {
-                            (void)route_packet(current_hover_client->mouse_write_fd, &mouse_event, sizeof(mouse_event));
+                            (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
                             mouse_routed = 1;
                         }
                     }
@@ -2199,7 +2218,7 @@ int main(int argc, char **argv)
                     current_hover_client->mouse_write_fd >= 0 &&
                     !(left_pressed != 0 && left_was_pressed == 0))
                 {
-                    (void)route_packet(current_hover_client->mouse_write_fd, &mouse_event, sizeof(mouse_event));
+                    (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
                 }
                 else if (!mouse_routed &&
                          !menu_open &&
@@ -2210,7 +2229,7 @@ int main(int argc, char **argv)
                          previous_hover_client->mouse_write_fd >= 0 &&
                          !(left_pressed != 0 && left_was_pressed == 0))
                 {
-                    (void)route_packet(previous_hover_client->mouse_write_fd, &mouse_event, sizeof(mouse_event));
+                    (void)route_pointer(previous_hover_client, cursor_x, cursor_y, pressed_buttons);
                 }
 
                 if (right_pressed != 0 && menu_open)

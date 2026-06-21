@@ -670,6 +670,17 @@ struct savanxp_mouse_event {
     uint32_t buttons;
 };
 
+/* Pointer event delivered by the compositor to a windowed client over its
+ * routed mouse channel (client fd 5). x,y are relative to the top-left of the
+ * client's own surface (already accounting for window frame and position), so
+ * apps can hit-test in their local coordinate space and stay aligned with the
+ * system cursor the compositor draws. Same wire size as savanxp_mouse_event. */
+struct savanxp_gui_pointer_event {
+    int32_t x;
+    int32_t y;
+    uint32_t buttons;
+};
+
 struct savanxp_net_info {
     uint8_t present;
     uint8_t up;

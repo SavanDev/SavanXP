@@ -362,6 +362,36 @@ int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
     return 1;
 }
 
+/* Compositor-routed pointer channel for windowed clients (fd 5). Returns -1 for
+ * processes that were not launched as a compositor client (no fd 5). */
+long gfx_pointer_open(void) {
+    return dup(5);
+}
+
+int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
+    struct savanxp_pollfd pollfd = {
+        .fd = fd,
+        .events = SAVANXP_POLLIN | SAVANXP_POLLHUP,
+        .revents = 0,
+    };
+    if (fd < 0 || event == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    if (poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
+        return 0;
+    }
+    {
+        const long result = read(fd, event, sizeof(*event));
+        if (result < 0) {
+            return (int)result;
+        }
+        if (result != (long)sizeof(*event)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 long audio_open(void) {
     return open_mode("/dev/audio0", SAVANXP_OPEN_WRITE);
 }

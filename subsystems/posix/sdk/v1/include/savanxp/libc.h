@@ -57,6 +57,8 @@ long realtime(struct savanxp_realtime* value);
 long sync(void);
 long mouse_open(void);
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event);
+long gfx_pointer_open(void);
+int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event);
 long audio_open(void);
 long audio_get_info(int fd, struct savanxp_audio_info* info);
 long gpu_open(void);

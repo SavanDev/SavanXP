@@ -448,7 +448,7 @@ int main(void)
 {
     struct savanxp_gfx_context gfx;
     struct savanxp_input_event key_event;
-    struct savanxp_mouse_event mouse_event;
+    struct savanxp_gui_pointer_event pointer_event;
     long mouse_fd = -1;
     int needs_redraw = 1;
     uint32_t last_buttons = 0;
@@ -471,7 +471,7 @@ int main(void)
         return 1;
     }
 
-    mouse_fd = mouse_open();
+    mouse_fd = gfx_pointer_open();
     if (filesapp_load_directory("/") < 0)
     {
         gfx_release(&gfx);
@@ -576,10 +576,10 @@ int main(void)
             }
         }
 
-        while (mouse_fd >= 0 && mouse_poll_event((int)mouse_fd, &mouse_event) > 0)
+        while (mouse_fd >= 0 && gfx_poll_pointer((int)mouse_fd, &pointer_event) > 0)
         {
-            g_cursor_x += mouse_event.delta_x;
-            g_cursor_y += mouse_event.delta_y;
+            g_cursor_x = pointer_event.x;
+            g_cursor_y = pointer_event.y;
             if (g_cursor_x < 0)
             {
                 g_cursor_x = 0;
@@ -597,7 +597,7 @@ int main(void)
                 g_cursor_y = (int)gfx.info.height - 1;
             }
 
-            if ((mouse_event.buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0 && (last_buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
+            if ((pointer_event.buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0 && (last_buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
             {
                 int clicked_index = filesapp_list_index_from_point(&gfx, g_cursor_x, g_cursor_y);
                 if (clicked_index >= 0 && clicked_index < g_entry_count)
@@ -620,7 +620,7 @@ int main(void)
                     g_last_click_ms = now_ms;
                 }
             }
-            last_buttons = mouse_event.buttons;
+            last_buttons = pointer_event.buttons;
         }
 
         if (!needs_redraw)

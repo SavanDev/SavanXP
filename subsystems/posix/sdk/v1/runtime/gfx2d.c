@@ -187,6 +187,7 @@ void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap)
     painter->target = bitmap;
     painter->clip_rect = sx_rect_make(0, 0, 0, 0);
     painter->has_clip = 0;
+    painter->clip_depth = 0;
 }
 
 void sx_painter_clear_clip(struct sx_painter* painter)
@@ -210,6 +211,43 @@ void sx_painter_add_clip_rect(struct sx_painter* painter, struct sx_rect rect)
         return;
     }
     painter->clip_rect = sx_rect_intersect(painter->clip_rect, rect);
+}
+
+/* Save the current clip and narrow it to the intersection with rect. Returns 0
+ * if the stack is full (clip unchanged). Pair every successful push with a pop;
+ * widget trees use this to confine each node's drawing to its parent. */
+int sx_painter_push_clip(struct sx_painter* painter, struct sx_rect rect)
+{
+    if (painter == 0 || painter->clip_depth >= SX_PAINTER_CLIP_STACK_DEPTH)
+    {
+        return 0;
+    }
+
+    painter->saved_clip[painter->clip_depth] = painter->clip_rect;
+    painter->saved_has_clip[painter->clip_depth] = painter->has_clip;
+    painter->clip_depth += 1;
+
+    if (painter->has_clip)
+    {
+        painter->clip_rect = sx_rect_intersect(painter->clip_rect, rect);
+    }
+    else
+    {
+        painter->clip_rect = rect;
+    }
+    painter->has_clip = 1;
+    return 1;
+}
+
+void sx_painter_pop_clip(struct sx_painter* painter)
+{
+    if (painter == 0 || painter->clip_depth <= 0)
+    {
+        return;
+    }
+    painter->clip_depth -= 1;
+    painter->clip_rect = painter->saved_clip[painter->clip_depth];
+    painter->has_clip = painter->saved_has_clip[painter->clip_depth];
 }
 
 void sx_painter_fill(struct sx_painter* painter, uint32_t colour)

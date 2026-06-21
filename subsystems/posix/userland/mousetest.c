@@ -119,7 +119,7 @@ static void draw_scene(struct savanxp_gfx_context* gfx, int cursor_x, int cursor
 int main(void) {
     struct savanxp_gfx_context gfx;
     struct savanxp_input_event key_event;
-    struct savanxp_mouse_event mouse_event;
+    struct savanxp_gui_pointer_event pointer_event;
     long mouse_fd;
     int cursor_x;
     int cursor_y;
@@ -138,9 +138,9 @@ int main(void) {
         return 1;
     }
 
-    mouse_fd = mouse_open();
+    mouse_fd = gfx_pointer_open();
     if (mouse_fd < 0) {
-        puts_fd(2, "mousetest: /dev/mouse0 not available\n");
+        puts_fd(2, "mousetest: pointer channel not available\n");
         gfx_close(&gfx);
         return 1;
     }
@@ -175,12 +175,12 @@ int main(void) {
             }
         }
 
-        while (mouse_poll_event((int)mouse_fd, &mouse_event) > 0) {
-            cursor_x += mouse_event.delta_x;
-            cursor_y += mouse_event.delta_y;
-            delta_x = mouse_event.delta_x;
-            delta_y = mouse_event.delta_y;
-            buttons = mouse_event.buttons;
+        while (gfx_poll_pointer((int)mouse_fd, &pointer_event) > 0) {
+            delta_x = pointer_event.x - cursor_x;
+            delta_y = pointer_event.y - cursor_y;
+            cursor_x = pointer_event.x;
+            cursor_y = pointer_event.y;
+            buttons = pointer_event.buttons;
 
             if (cursor_x < 0) {
                 cursor_x = 0;

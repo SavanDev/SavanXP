@@ -40,10 +40,15 @@ struct sx_bitmap {
     uint32_t format;
 };
 
+#define SX_PAINTER_CLIP_STACK_DEPTH 16
+
 struct sx_painter {
     struct sx_bitmap* target;
     struct sx_rect clip_rect;
     int has_clip;
+    struct sx_rect saved_clip[SX_PAINTER_CLIP_STACK_DEPTH];
+    int saved_has_clip[SX_PAINTER_CLIP_STACK_DEPTH];
+    int clip_depth;
 };
 
 struct sx_rect_set {
@@ -65,6 +70,8 @@ void sx_bitmap_wrap(struct sx_bitmap* bitmap, uint32_t* pixels, const struct sav
 void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap);
 void sx_painter_clear_clip(struct sx_painter* painter);
 void sx_painter_add_clip_rect(struct sx_painter* painter, struct sx_rect rect);
+int sx_painter_push_clip(struct sx_painter* painter, struct sx_rect rect);
+void sx_painter_pop_clip(struct sx_painter* painter);
 void sx_painter_fill(struct sx_painter* painter, uint32_t colour);
 void sx_painter_fill_rect(struct sx_painter* painter, struct sx_rect rect, uint32_t colour);
 void sx_painter_draw_frame(struct sx_painter* painter, struct sx_rect rect, uint32_t colour);

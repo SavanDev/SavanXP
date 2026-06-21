@@ -104,6 +104,37 @@ static const unsigned char* gfx_glyph_for(char character) {
     return kGfxGlyphs[index - 32];
 }
 
+/* Glyphs are authored on a 5-wide x 7-tall grid (bit 4 = leftmost column).
+ * gfx_glyph_extent returns the number of populated columns (0 for blank), so
+ * text can be laid out proportionally instead of as fixed-width cells. */
+static int gfx_glyph_extent(const unsigned char* glyph) {
+    int max_col = -1;
+    int row;
+    int col;
+    if (glyph == 0) {
+        return 0;
+    }
+    for (row = 0; row < 7; ++row) {
+        for (col = 0; col < 5; ++col) {
+            if ((glyph[row] & (1u << (4 - col))) != 0 && col > max_col) {
+                max_col = col;
+            }
+        }
+    }
+    return max_col + 1;
+}
+
+/* Horizontal advance in pixels for one glyph, at the 2x render scale. Blank
+ * glyphs (space) get a fixed advance; populated glyphs get their drawn width
+ * plus a 1px (x2) inter-glyph gap. */
+static int gfx_glyph_advance_px(const unsigned char* glyph) {
+    int extent = gfx_glyph_extent(glyph);
+    if (extent <= 0) {
+        return 6;
+    }
+    return extent * 2 + 2;
+}
+
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue) {
     return ((uint32_t)red << 16) | ((uint32_t)green << 8) | (uint32_t)blue;
 }
@@ -816,7 +847,7 @@ int gfx_text_width(const char* text) {
         return 0;
     }
     while (*text != '\0') {
-        width += 12;
+        width += gfx_glyph_advance_px(gfx_glyph_for(*text));
         ++text;
     }
     return width;
@@ -839,7 +870,7 @@ void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, 
                 }
             }
         }
-        cursor_x += 12;
+        cursor_x += gfx_glyph_advance_px(glyph);
         ++text;
     }
 }
