@@ -1,12 +1,12 @@
 build/
 tools/*
 !tools/build-user.ps1
-!tools/doom-smoke.ps1
 !tools/new-user-app.ps1
 !tools/run-user.ps1
 !tools/UserAppCommon.ps1
-!tools/vscode-extension/
-!tools/vscode-extension/**
+!tools/GenerateCursorAsset.ps1
+!tools/GenerateDesktopSourceArt.ps1
+!tools/GenerateDesktopIconAssets.ps1
 !tools/font/
 !tools/font/**
 *.log

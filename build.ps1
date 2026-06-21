@@ -481,7 +481,7 @@ function Generate-CursorAsset {
     New-Directory $GeneratedRoot
 
     $scriptPath = Join-Path $ToolRoot "GenerateCursorAsset.ps1"
-    $sourcePath = Join-Path $ProjectRoot "assets\\cursor.png"
+    $sourcePath = Join-Path $ProjectRoot "assets\\desktop\\cursor.png"
     $outputPath = Join-Path $GeneratedRoot "cursor_asset.h"
 
     & powershell -ExecutionPolicy Bypass -File $scriptPath -SourcePath $sourcePath -OutputPath $outputPath
