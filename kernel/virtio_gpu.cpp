@@ -55,12 +55,18 @@ constexpr size_t kCursorResponseBufferBytes = 64;
 constexpr size_t kCursorCommandSlotBytes = kCursorRequestBufferBytes + kCursorResponseBufferBytes;
 constexpr size_t kCursorQueueExtraBytes = kCursorCommandSlotBytes;
 constexpr size_t kCursorResponseBufferOffset = kCursorRequestBufferBytes;
-constexpr uint64_t kCommandWaitTicks = 20u;
-constexpr uint64_t kSurfaceWaitTicks = 20u;
-constexpr uint64_t kIdleWaitTicks = 40u;
-constexpr uint32_t kCommandActivePollIterations = 50000u;
-constexpr uint32_t kSurfaceActivePollIterations = 50000u;
-constexpr uint32_t kIdleActivePollIterations = 50000u;
+// Backstop timeouts, expressed in wall-clock milliseconds and converted to
+// ticks via the live timer frequency so they stay constant regardless of the
+// kernel tick rate.
+constexpr uint64_t kCommandWaitMs = 100u;
+constexpr uint64_t kSurfaceWaitMs = 100u;
+constexpr uint64_t kIdleWaitMs = 200u;
+// Brief active spin to catch sub-millisecond completions before falling back to
+// a halting tick-wait that the MSI-X completion interrupt wakes. Kept short so
+// the CPU is yielded to other work instead of busy-polling the whole present.
+constexpr uint32_t kCommandActivePollIterations = 2000u;
+constexpr uint32_t kSurfaceActivePollIterations = 2000u;
+constexpr uint32_t kIdleActivePollIterations = 2000u;
 constexpr uint32_t kCursorMaxDimension = 64u;
 constexpr uint32_t kCursorResourceId = kFirstGpuResourceId + kGpuSurfaceCount + kImportedSurfaceCount;
 
@@ -376,6 +382,13 @@ struct Adapter {
 
 Adapter g_adapter = {};
 
+// True once MSI-X is delivering completions; the IRQ then no longer gates on the
+// ISR status register (which MSI-X does not update). Set once during init.
+bool g_gpu_msix_enabled = false;
+
+// Local-APIC interrupt vector for the GPU MSI-X message (timer uses 48).
+constexpr uint8_t kGpuMsixVector = 49u;
+
 // Keep stable aliases while the driver is migrated away from namespace globals.
 device::Device& g_gpu_device = g_adapter.node;
 virtio_pci::Device& g_device = g_adapter.transport.device;
@@ -440,6 +453,7 @@ void reset_adapter_state() {
     memset(&g_adapter.presents, 0, sizeof(g_adapter.presents));
     memset(&g_adapter.runtime, 0, sizeof(g_adapter.runtime));
     memset(&g_adapter.events, 0, sizeof(g_adapter.events));
+    g_gpu_msix_enabled = false;
     initialize_device_node();
     g_next_fence_id = 1;
     g_next_present_sequence = 1;
@@ -682,9 +696,14 @@ uint64_t cursor_response_physical() {
     return cursor_request_physical() + kCursorResponseBufferOffset;
 }
 
-uint64_t wait_deadline(uint64_t wait_ticks) {
+uint64_t wait_deadline(uint64_t wait_ms) {
     const uint64_t now = timer::ticks();
-    return now + (wait_ticks != 0 ? wait_ticks : 1u);
+    const uint32_t hz = timer::frequency_hz() != 0 ? timer::frequency_hz() : 1u;
+    uint64_t wait_ticks = (wait_ms * hz + 999u) / 1000u;
+    if (wait_ticks == 0) {
+        wait_ticks = 1u;
+    }
+    return now + wait_ticks;
 }
 
 bool wait_for_gpu_tick(uint64_t deadline_tick) {
@@ -972,7 +991,7 @@ bool wait_for_command_slot_reservation(uint16_t& slot_index) {
         pause_briefly();
     }
 
-    const uint64_t deadline_tick = wait_deadline(kCommandWaitTicks);
+    const uint64_t deadline_tick = wait_deadline(kCommandWaitMs);
     for (;;) {
         service_queue_progress();
         if (reserve_command_slot(slot_index)) {
@@ -1030,7 +1049,7 @@ bool wait_for_pending_present_slot(uint32_t& pending_index) {
         pause_briefly();
     }
 
-    const uint64_t deadline_tick = wait_deadline(kSurfaceWaitTicks);
+    const uint64_t deadline_tick = wait_deadline(kSurfaceWaitMs);
     for (;;) {
         service_queue_progress();
         if (reserve_pending_present_slot(pending_index)) {
@@ -1414,7 +1433,7 @@ bool wait_for_cursor_command() {
     }
 
     if (g_cursor_command.in_use && !g_cursor_command.completed) {
-        const uint64_t deadline_tick = wait_deadline(kCommandWaitTicks);
+        const uint64_t deadline_tick = wait_deadline(kCommandWaitMs);
         for (;;) {
             poll_cursor_completions();
             if (!g_cursor_command.in_use || g_cursor_command.completed) {
@@ -1629,7 +1648,9 @@ bool service_background_pass() {
     }
 
     service_queue_progress();
-    if (scanout_refresh_pending) {
+    if (scanout_refresh_pending || irq_work_pending) {
+        // A shared MSI-X vector cannot distinguish a config-change from a queue
+        // completion, so check the device config events on any interrupt work.
         process_device_config_events(consume_device_config_events());
     }
     return true;
@@ -1649,7 +1670,7 @@ bool wait_for_command_slot(uint16_t slot_index) {
         pause_briefly();
     }
 
-    const uint64_t deadline_tick = wait_deadline(kCommandWaitTicks);
+    const uint64_t deadline_tick = wait_deadline(kCommandWaitMs);
     for (;;) {
         service_queue_progress();
         if (g_command_slots[slot_index].completed) {
@@ -2048,7 +2069,7 @@ bool wait_for_available_surface(uint32_t& surface_index) {
         pause_briefly();
     }
 
-    const uint64_t deadline_tick = wait_deadline(kSurfaceWaitTicks);
+    const uint64_t deadline_tick = wait_deadline(kSurfaceWaitMs);
     for (;;) {
         service_queue_progress();
         if (find_available_surface(surface_index)) {
@@ -2089,7 +2110,7 @@ void wait_for_idle_internal() {
         if (progressed) {
             continue;
         }
-        const uint64_t deadline_tick = wait_deadline(kIdleWaitTicks);
+        const uint64_t deadline_tick = wait_deadline(kIdleWaitMs);
         for (;;) {
             const uint32_t before = g_pending_present_count;
             service_queue_progress();
@@ -2127,7 +2148,7 @@ bool wait_for_resource_idle(uint32_t resource_id) {
         pause_briefly();
     }
 
-    const uint64_t deadline_tick = wait_deadline(kIdleWaitTicks);
+    const uint64_t deadline_tick = wait_deadline(kIdleWaitMs);
     for (;;) {
         service_queue_progress();
         if (!resource_pending(resource_id)) {
@@ -2162,7 +2183,7 @@ bool wait_for_present_sequence_internal(uint64_t target_sequence, bool& target_f
         pause_briefly();
     }
 
-    const uint64_t deadline_tick = wait_deadline(kIdleWaitTicks);
+    const uint64_t deadline_tick = wait_deadline(kIdleWaitMs);
     for (;;) {
         service_queue_progress();
         if (query_retired_present(target_sequence, target_failed)) {
@@ -3554,7 +3575,7 @@ bool recover_device(const char* reason) {
         return false;
     }
     if (!recovery_guard.locked()) {
-        const uint64_t deadline_tick = wait_deadline(kIdleWaitTicks);
+        const uint64_t deadline_tick = wait_deadline(kIdleWaitMs);
         while (atomic_load_u32(g_recovery_active) != 0) {
             if (!wait_for_gpu_tick(deadline_tick)) {
                 break;
@@ -3622,6 +3643,15 @@ void service_background_work() {
 }
 
 void gpu_irq() {
+    if (g_gpu_msix_enabled) {
+        // MSI-X does not update the ISR status register; the message itself is
+        // the signal. Keep the ISR minimal and defer all draining (including
+        // config-change handling) to the background service acting as the DPC.
+        g_gpu_stats.irq_notifications += 1u;
+        atomic_set_flag(g_irq_work_pending, true);
+        return;
+    }
+
     const uint8_t status = virtio_pci::read_isr_status(g_device);
     if (status == 0) {
         return;
@@ -3705,6 +3735,19 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         return;
     }
     log_init_stage("features negotiated");
+
+    // Prefer MSI-X: it delivers completions straight to a local-APIC vector. The
+    // legacy INTx path below is a fallback this kernel cannot actually route on
+    // q35 (no IOAPIC), so without MSI-X the driver falls back to polling. This
+    // must happen before queue setup so the queues bind to the MSI-X vector.
+    if (arch::x86_64::register_interrupt_handler(kGpuMsixVector, gpu_irq, arch::x86_64::InterruptEoi::local_apic) &&
+        virtio_pci::enable_msix(g_device, kGpuMsixVector)) {
+        g_gpu_msix_enabled = true;
+        g_irq_registered = true;
+        g_irq_line = kGpuMsixVector;
+        console::printf("virtio-gpu: msi-x vector %u armed\n", static_cast<unsigned>(kGpuMsixVector));
+    }
+
     if (!setup_control_queue()) {
         fail_device("failed to setup control queue");
         return;
@@ -3719,7 +3762,9 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
 
     virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
     g_ready = true;
-    if (g_device.isr_view.valid &&
+    if (g_gpu_msix_enabled) {
+        // MSI-X already armed above; nothing else to wire up.
+    } else if (g_device.isr_view.valid &&
         pci_device.irq_line != 0 &&
         pci_device.irq_line != 0xff &&
         pci_device.irq_line < 16 &&

@@ -12,6 +12,18 @@ constexpr uint16_t kPciVendorVirtio = 0x1af4u;
 constexpr uint16_t kPciCommandOffset = 0x04;
 constexpr uint16_t kPciCommandMemory = 1u << 1;
 constexpr uint16_t kPciCommandBusMaster = 1u << 2;
+constexpr uint16_t kPciCommandInterruptDisable = 1u << 10;
+// Written to msix_config / queue_msix_vector to select legacy INTx (ISR status)
+// delivery when MSI-X is not in use.
+constexpr uint16_t kVirtioMsiNoVector = 0xffffu;
+
+constexpr uint8_t kPciCapabilityMsix = 0x11;
+constexpr uint16_t kMsixControlEnable = 1u << 15;
+constexpr uint16_t kMsixControlFunctionMask = 1u << 14;
+constexpr uint32_t kMsixTableBirMask = 0x7u;
+constexpr uint32_t kMsixTableEntryBytes = 16u;
+// MSI message address routed to the boot CPU (APIC 0), fixed delivery, physical mode.
+constexpr uint32_t kMsixMessageAddressBase = 0xfee00000u;
 
 constexpr uint8_t kCapabilityCommonCfg = 1;
 constexpr uint8_t kCapabilityNotifyCfg = 2;
@@ -94,6 +106,9 @@ struct Device {
     CapabilityView isr_view;
     CapabilityView device_view;
     bool ready;
+    // MSI-X table index assigned to the queues / config vector, or
+    // kVirtioMsiNoVector when MSI-X is not in use (legacy INTx / polling).
+    uint16_t msix_vector;
 };
 
 struct QueueLayout {
@@ -122,6 +137,11 @@ size_t align_up(size_t value, size_t alignment);
 bool looks_like_modern_device(const pci::DeviceInfo& info, uint16_t modern_device_id, uint16_t subsystem_device_id);
 bool find_modern_device(uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info);
 bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cfg, Device& device);
+// Enable MSI-X on the device and route table entry 0 to the given local-APIC
+// vector (delivered to the boot CPU). On success device.msix_vector becomes 0 so
+// subsequent setup_queue() calls bind the queues to that vector. Returns false
+// (leaving device.msix_vector at kVirtioMsiNoVector) if MSI-X is unavailable.
+bool enable_msix(Device& device, uint8_t apic_vector);
 volatile CommonCfg* common_cfg(Device& device);
 const volatile CommonCfg* common_cfg(const Device& device);
 uint8_t* device_cfg_base(Device& device);

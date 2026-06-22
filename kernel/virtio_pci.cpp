@@ -1,5 +1,6 @@
 #include "kernel/virtio_pci.hpp"
 
+#include "kernel/console.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
 
@@ -95,6 +96,7 @@ static bool resolve_capability(Device& device, uint8_t cfg_type, bool required, 
 bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cfg, Device& device) {
     memset(&device, 0, sizeof(device));
     device.pci_device = pci_device;
+    device.msix_vector = kVirtioMsiNoVector;
 
     if (!resolve_capability(device, kCapabilityCommonCfg, true, device.common_view) ||
         !resolve_capability(device, kCapabilityNotifyCfg, true, device.notify_view) ||
@@ -106,8 +108,55 @@ bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cf
 
     uint16_t command = pci::read_config_u16(device.pci_device.bus, device.pci_device.slot, device.pci_device.function, kPciCommandOffset);
     command = static_cast<uint16_t>(command | kPciCommandMemory | kPciCommandBusMaster);
+    // Clear the Interrupt Disable bit so the device can assert legacy INTx; we
+    // drive completions by interrupt, falling back to polling if none arrive.
+    command = static_cast<uint16_t>(command & ~kPciCommandInterruptDisable);
     pci::write_config_u16(device.pci_device.bus, device.pci_device.slot, device.pci_device.function, kPciCommandOffset, command);
     device.ready = true;
+    return true;
+}
+
+bool enable_msix(Device& device, uint8_t apic_vector) {
+    uint8_t cap = 0;
+    if (!pci::find_capability(device.pci_device, kPciCapabilityMsix, cap)) {
+        console::write_line("virtio-pci: msi-x capability absent");
+        return false;
+    }
+
+    const uint8_t bus = device.pci_device.bus;
+    const uint8_t slot = device.pci_device.slot;
+    const uint8_t function = device.pci_device.function;
+
+    const uint16_t control = pci::read_config_u16(bus, slot, function, static_cast<uint8_t>(cap + 2));
+    const uint32_t table = pci::read_config_u32(bus, slot, function, static_cast<uint8_t>(cap + 4));
+    const uint8_t bir = static_cast<uint8_t>(table & kMsixTableBirMask);
+    const uint32_t table_offset = table & ~kMsixTableBirMask;
+
+    MappedBar* mapped_bar = nullptr;
+    if (!map_bar(device, bir, mapped_bar) || mapped_bar == nullptr) {
+        console::printf("virtio-pci: msi-x bar %u map failed\n", static_cast<unsigned>(bir));
+        return false;
+    }
+    if (static_cast<uint64_t>(table_offset) + kMsixTableEntryBytes > mapped_bar->info.size) {
+        console::printf("virtio-pci: msi-x table offset 0x%x beyond bar size 0x%llx\n",
+            static_cast<unsigned>(table_offset),
+            static_cast<unsigned long long>(mapped_bar->info.size));
+        return false;
+    }
+
+    // Program table entry 0: route to apic_vector on the boot CPU, then unmask.
+    volatile uint32_t* entry = reinterpret_cast<volatile uint32_t*>(mapped_bar->base + table_offset);
+    entry[0] = kMsixMessageAddressBase;
+    entry[1] = 0u;
+    entry[2] = apic_vector;
+    memory_barrier();
+    entry[3] = 0u;
+    memory_barrier();
+
+    const uint16_t enabled = static_cast<uint16_t>((control | kMsixControlEnable) & ~kMsixControlFunctionMask);
+    pci::write_config_u16(bus, slot, function, static_cast<uint8_t>(cap + 2), enabled);
+
+    device.msix_vector = 0u;
     return true;
 }
 
@@ -208,6 +257,12 @@ bool setup_queue(Device& device, uint16_t queue_index, uint16_t queue_limit, siz
 
     volatile CommonCfg* cfg = common_cfg(device);
     cfg->queue_select = queue_index;
+    memory_barrier();
+
+    // Bind this queue and the device config-change vector to the device's MSI-X
+    // table entry, or to kVirtioMsiNoVector (legacy INTx) when MSI-X is not set up.
+    cfg->queue_msix_vector = device.msix_vector;
+    cfg->msix_config = device.msix_vector;
     memory_barrier();
 
     const uint16_t chosen_size = choose_queue_size(cfg->queue_size, queue_limit);

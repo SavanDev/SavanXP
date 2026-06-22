@@ -401,6 +401,8 @@ DEFINE_EXTERNAL_ISR(44)
 DEFINE_EXTERNAL_ISR(45)
 DEFINE_EXTERNAL_ISR(46)
 DEFINE_EXTERNAL_ISR(47)
+// Vector 48 is the local-APIC timer (dedicated entry); 49 carries device MSI-X.
+DEFINE_EXTERNAL_ISR(49)
 #undef DEFINE_ISR_NOERR
 #undef DEFINE_ISR_ERR
 #undef DEFINE_EXTERNAL_ISR
@@ -455,6 +457,7 @@ void initialize_idt() {
     set_idt_gate(46, reinterpret_cast<InterruptHandler>(vector_46), kInterruptGate);
     set_idt_gate(47, reinterpret_cast<InterruptHandler>(vector_47), kInterruptGate);
     set_idt_gate(48, reinterpret_cast<InterruptHandler>(x86_64_timer_entry), kInterruptGate);
+    set_idt_gate(49, reinterpret_cast<InterruptHandler>(vector_49), kInterruptGate);
     set_idt_gate(kSyscallVector, reinterpret_cast<InterruptHandler>(x86_64_syscall_entry), kUserInterruptGate);
     load_idt();
 }
