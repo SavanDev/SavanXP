@@ -53,17 +53,18 @@ uint64_t decode_bar_base(uint32_t low, uint32_t high) {
     return base;
 }
 
-uint64_t decode_bar_size(uint32_t low, uint32_t high) {
-    if ((low & 0x1u) != 0) {
-        const uint32_t mask = low & ~0x3u;
-        return mask != 0 ? static_cast<uint64_t>(~mask + 1u) : 0;
+uint64_t decode_bar_size(uint32_t sized_low, uint32_t sized_high, bool io_space, bool is_64bit) {
+    const uint32_t low_mask = io_space ? (sized_low & ~0x3u) : (sized_low & ~0x0fu);
+    if (low_mask != 0) {
+        // Region fits within 4 GiB: complement the low mask in 32-bit width so
+        // the unused upper bits stay clear (a 64-bit complement would set them).
+        return static_cast<uint64_t>(static_cast<uint32_t>(~low_mask) + 1u);
     }
-
-    uint64_t mask = static_cast<uint64_t>(low & ~0x0fu);
-    if ((low & 0x6u) == 0x4u) {
-        mask |= static_cast<uint64_t>(high) << 32;
+    if (is_64bit && sized_high != 0) {
+        // Region spans >= 4 GiB: the size is determined by the high dword.
+        return ~(static_cast<uint64_t>(sized_high) << 32) + 1ULL;
     }
-    return mask != 0 ? (~mask + 1ULL) : 0;
+    return 0;
 }
 
 void append_device(uint8_t bus, uint8_t slot, uint8_t function) {
@@ -220,7 +221,7 @@ bool bar_info(const DeviceInfo& device, uint8_t bar_index, BarInfo& info) {
     info.is_64bit = is_64bit;
     info.prefetchable = !io_space && (original_low & 0x8u) != 0;
     info.base = decode_bar_base(original_low, original_high);
-    info.size = decode_bar_size(sized_low, sized_high);
+    info.size = decode_bar_size(sized_low, sized_high, io_space, is_64bit);
     return info.base != 0 && info.size != 0;
 }
 
@@ -261,6 +262,40 @@ bool find_vendor_capability(const DeviceInfo& device, uint8_t wanted_cfg_type, V
                     : 0u;
                 return info.bar_index < 6;
             }
+        }
+        if (next == pointer) {
+            break;
+        }
+        pointer = next;
+    }
+
+    return false;
+}
+
+bool find_capability(const DeviceInfo& device, uint8_t cap_id, uint8_t& cap_offset) {
+    cap_offset = 0;
+    if (!device.present) {
+        return false;
+    }
+
+    const uint16_t status = read_config_u16(device.bus, device.slot, device.function, kPciStatusOffset);
+    if ((status & kPciStatusCapabilities) == 0) {
+        return false;
+    }
+
+    uint8_t pointer = static_cast<uint8_t>(read_config_u8(
+        device.bus,
+        device.slot,
+        device.function,
+        kPciCapabilitiesPointerOffset
+    ) & 0xfcu);
+
+    for (size_t visited = 0; pointer >= 0x40u && visited < 64; ++visited) {
+        const uint8_t id = read_config_u8(device.bus, device.slot, device.function, pointer + 0);
+        const uint8_t next = static_cast<uint8_t>(read_config_u8(device.bus, device.slot, device.function, pointer + 1) & 0xfcu);
+        if (id == cap_id) {
+            cap_offset = pointer;
+            return true;
         }
         if (next == pointer) {
             break;

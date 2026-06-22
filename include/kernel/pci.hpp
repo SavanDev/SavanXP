@@ -50,6 +50,8 @@ bool device_info(size_t index, DeviceInfo& info);
 bool find_device(uint16_t vendor_id, uint16_t device_id, DeviceInfo& info);
 bool bar_info(const DeviceInfo& device, uint8_t bar_index, BarInfo& info);
 bool find_vendor_capability(const DeviceInfo& device, uint8_t cfg_type, VendorCapabilityInfo& info);
+// Locate a standard PCI capability by id (e.g. 0x11 MSI-X); returns its config-space offset.
+bool find_capability(const DeviceInfo& device, uint8_t cap_id, uint8_t& cap_offset);
 uint8_t read_config_u8(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset);
 uint16_t read_config_u16(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset);
 uint32_t read_config_u32(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset);
