@@ -18,6 +18,20 @@ Notas de corte:
   del escritorio y los widgets. El SO sigue sin parsear TrueType en runtime.
 - Camino de texto monospace en `sxgfx` (`gfx_blit_text_mono`, `gfx_cell_width/height`)
   y alpha-blending por pixel (`gfx_pixel_blend`) para el texto antialiased de Noto.
+- Interrupciones reales por **MSI-X** en `virtio-gpu`: el driver recibe las
+  completions por interrupcion (vector del local-APIC) con un patron ISR/DPC
+  (la ISR solo marca trabajo y el servicio en background lo drena), en lugar del
+  polling puro. El kernel no tiene IOAPIC y q35 en modo APIC no entrega el INTx
+  legacy, por lo que MSI-X es el unico camino. Incluye `pci::find_capability`,
+  `virtio_pci::enable_msix` y un vector/gate de IDT dedicado (49).
+- `poll()` reporta readiness para objetos waitables del kernel (eventos, timers),
+  de modo que el compositor puede esperar los eventos de submit de sus clientes
+  en el mismo poll set.
+- Overlay en pantalla de FPS y latencia de present (promedio/pico de ms
+  bloqueado en `gfx_present_region`) en el backend de Doom, estampado directo en
+  el framebuffer; y volcado de las stats por etapa del driver (end-to-end,
+  transfer/flush/scanout, esperas, timeouts, notificaciones de IRQ) en
+  `gputest --soak`.
 
 ### Cambiado
 
@@ -30,11 +44,32 @@ Notas de corte:
   altura de linea mayor.
 - UniFont se hornea desde `unifont.hex` (bitmaps nitidos en grilla), no desde el
   outline TTF, que rasterizaba fuera de grilla con artefactos.
+- Timer del kernel de 200 Hz a **1000 Hz**, con el quantum del scheduler
+  reescalado para mantener ~20 ms de reloj de pared. Senalizar un evento ahora
+  cede la CPU al thread despertado en el retorno del syscall (wakeup preemptivo)
+  en vez de esperar el proximo tick, recortando la latencia del handshake
+  compositor<->cliente.
+- El compositor despierta ante el submit de frame de un cliente (sus eventos de
+  submit entran al `poll` set) en lugar de agotar el timeout de 16 ms, que queda
+  como respaldo.
+- El driver `virtio-gpu` pasa a ser interrupt-driven: el spin activo de los
+  waiters de present se recorta (50000 a 2000 iteraciones) antes de halt-ear
+  (despertado por la IRQ de MSI-X), liberando la CPU; los timeouts de respaldo
+  del driver se expresan en milisegundos de reloj de pared (convertidos con la
+  frecuencia viva del timer) para sobrevivir al cambio de tick rate.
 
 ### Eliminado
 
 - Sistema de fuente 8x8 generado a mano (`tools/font/genfont.ps1`, `font8x8.txt`,
   `gfx_font8x8.inc`), reemplazado por el toolchain de `genfont.py`.
+
+### Corregido
+
+- `decode_bar_size` calculaba el complemento de tamano (`~mask + 1`) en 64 bits
+  sobre una mascara con solo los 32 bits bajos, devolviendo tamanos basura
+  (`0xffffffff00001000` en vez de `0x1000`) para cualquier BAR de memoria de
+  64 bits menor a 4 GiB e impidiendo mapearlos (entre ellos la tabla MSI-X).
+  Ahora complementa en 32 bits cuando el tamano entra en 4 GiB.
 
 ## [0.3.0] - 2026-06-18
 
