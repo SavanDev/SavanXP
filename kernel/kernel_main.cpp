@@ -122,7 +122,7 @@ namespace
 
     tty::initialize();
     input::initialize();
-    timer::initialize(200);
+    timer::initialize(1000);
     pci::initialize();
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();

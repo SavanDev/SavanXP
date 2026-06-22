@@ -28,7 +28,10 @@ constexpr uint16_t kUserDataSelector = 0x1b;
 constexpr uint16_t kUserCodeSelector = 0x23;
 constexpr uint64_t kKernelStackPages = 4;
 constexpr uint64_t kIdleCodeAddress = 0x0000000000800000ULL;
-constexpr uint32_t kDefaultTimeSlice = 4;
+// Round-robin quantum in timer ticks. Sized to ~20 ms of wall clock at the
+// 1000 Hz tick rate so raising the tick frequency does not multiply the
+// preemptive context-switch rate for CPU-bound threads.
+constexpr uint32_t kDefaultTimeSlice = 20;
 constexpr size_t kMaxPipeCount = 64;
 constexpr size_t kPipeCapacity = 8192;
 constexpr size_t kPipeChunkSize = 256;
@@ -52,6 +55,10 @@ uint8_t g_pipe_storage[kMaxPipeCount][kPipeCapacity] = {};
 object::IoObject g_io_objects[object::kMaxIoObjects] = {};
 uint32_t g_next_pid = 1;
 size_t g_schedule_cursor = 0;
+// Set when a syscall wakes a waiter other than the caller, so the syscall
+// return path can hand the CPU to the woken thread immediately instead of
+// letting it wait for the next timer tick (preemptive event wakeup).
+bool g_resched_pending = false;
 bool g_ready = false;
 savanxp_system_info g_boot_system_info = {};
 bool g_boot_system_info_ready = false;
@@ -1033,6 +1040,9 @@ int complete_blocked_wait(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
+    if (&proc != g_current) {
+        g_resched_pending = true;
+    }
     return result;
 }
 
@@ -1374,7 +1384,17 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
             }
 
             object::IoObject* file = fd_to_io_object(proc, static_cast<uint64_t>(local[index].fd), object::access_synchronize);
-            local[index].revents = poll_open_file(file, local[index].events);
+            if (file != nullptr) {
+                local[index].revents = poll_open_file(file, local[index].events);
+            } else if ((local[index].events & SAVANXP_POLLIN) != 0) {
+                // Waitable kernel objects (events, timers) are not IoObjects but
+                // can still be polled: report POLLIN when the object is signaled.
+                object::Header* waitable =
+                    lookup_handle(proc, static_cast<uint64_t>(local[index].fd), object::access_synchronize);
+                if (waitable != nullptr && object::can_satisfy_wait(waitable)) {
+                    local[index].revents = static_cast<short>(SAVANXP_POLLIN);
+                }
+            }
             if (local[index].revents != 0) {
                 ++ready;
             }
@@ -2384,6 +2404,7 @@ void initialize() {
     g_idle = nullptr;
     g_next_pid = 1;
     g_schedule_cursor = 0;
+    g_resched_pending = false;
     g_boot_system_info_ready = false;
 
     subsystem::reset();
@@ -2543,7 +2564,21 @@ void terminate_current_from_exception(uint8_t vector) {
 SavedContext* handle_syscall(SavedContext* context) {
     const subsystem::Id id =
         g_current != nullptr ? g_current->subsystem_id : subsystem::Id::posix;
-    return subsystem::dispatch(id, context);
+    SavedContext* result = subsystem::dispatch(id, context);
+
+    // Preemptive event wakeup: if this syscall made another process runnable
+    // and we are still the running caller (i.e. the syscall did not itself
+    // block), hand the CPU over now so the woken waiter runs without waiting
+    // for the next timer tick. Mirrors the SYS_YIELD path.
+    if (g_resched_pending) {
+        g_resched_pending = false;
+        if (g_current != nullptr && g_current->state == State::running) {
+            g_current->context = result;
+            g_current->state = State::ready;
+            return choose_next_context(result);
+        }
+    }
+    return result;
 }
 
 SavedContext* handle_timer_tick(SavedContext* context) {
@@ -2556,6 +2591,9 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     object::poll_timers(current_tick, wake_waiters_for_object);
     wake_sleepers(current_tick);
     wake_wait_timeouts(current_tick);
+    // The tick makes its own reschedule decision below, so any wakeups above
+    // must not leak a preemptive-resched request into the next syscall return.
+    g_resched_pending = false;
 
     if (g_current->state != State::running) {
         return choose_next_context(context);
