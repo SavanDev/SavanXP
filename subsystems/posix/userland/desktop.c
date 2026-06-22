@@ -1842,6 +1842,27 @@ static int desktop_selftest(void)
     return 0;
 }
 
+/* Append a live client's submit event to the poll set so a client frame
+ * submission wakes the compositor immediately instead of waiting out the poll
+ * timeout. Returns the new descriptor count. poll_clients[] maps each poll slot
+ * back to its client so the level-triggered event can be reset afterwards. */
+static int add_client_submit_pollfd(
+    struct savanxp_pollfd *poll_fds,
+    struct desktop_client **poll_clients,
+    int poll_count,
+    struct desktop_client *client)
+{
+    if (client == 0 || client->pid <= 0 || client->submit_event_fd < 0)
+    {
+        return poll_count;
+    }
+    poll_fds[poll_count].fd = client->submit_event_fd;
+    poll_fds[poll_count].events = SAVANXP_POLLIN;
+    poll_fds[poll_count].revents = 0;
+    poll_clients[poll_count] = client;
+    return poll_count + 1;
+}
+
 int main(int argc, char **argv)
 {
     struct desktop_session session;
@@ -1882,10 +1903,13 @@ int main(int argc, char **argv)
 
     for (;;)
     {
-        struct savanxp_pollfd poll_fds[2];
+        struct savanxp_pollfd poll_fds[3 + DESKTOP_MAX_OVERLAY_CLIENTS];
+        struct desktop_client *poll_clients[3 + DESKTOP_MAX_OVERLAY_CLIENTS];
         int input_poll_index = -1;
         int mouse_poll_index = -1;
         int poll_count = 0;
+        int client_poll_start = 0;
+        int poll_idx;
         int slot;
         long count = 0;
 
@@ -1893,6 +1917,7 @@ int main(int argc, char **argv)
         poll_fds[poll_count].fd = session.input_fd;
         poll_fds[poll_count].events = SAVANXP_POLLIN;
         poll_fds[poll_count].revents = 0;
+        poll_clients[poll_count] = 0;
         ++poll_count;
 
         if (session.mouse_fd >= 0)
@@ -1901,12 +1926,35 @@ int main(int argc, char **argv)
             poll_fds[poll_count].fd = session.mouse_fd;
             poll_fds[poll_count].events = SAVANXP_POLLIN;
             poll_fds[poll_count].revents = 0;
+            poll_clients[poll_count] = 0;
             ++poll_count;
+        }
+
+        /* Wake on client frame submissions, not just the 16 ms timeout (kept as
+         * a backstop). The timeout still bounds latency if a wakeup is missed. */
+        client_poll_start = poll_count;
+        poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.shell_client);
+        for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+        {
+            poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.overlay_clients[slot]);
         }
 
         if (poll(poll_fds, (unsigned long)poll_count, 16) < 0)
         {
             break;
+        }
+
+        /* Clear the level-triggered submit events we observed; a fresh submit
+         * re-arms the event and wakes the next poll. Draining of the actual
+         * frame content happens below via the shared submit_sequence. */
+        for (poll_idx = client_poll_start; poll_idx < poll_count; ++poll_idx)
+        {
+            if ((poll_fds[poll_idx].revents & SAVANXP_POLLIN) != 0 &&
+                poll_clients[poll_idx] != 0 &&
+                poll_clients[poll_idx]->submit_event_fd >= 0)
+            {
+                (void)event_reset(poll_clients[poll_idx]->submit_event_fd);
+            }
         }
 
         if (input_poll_index >= 0 && (poll_fds[input_poll_index].revents & SAVANXP_POLLIN) != 0)
