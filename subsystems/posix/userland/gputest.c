@@ -373,6 +373,57 @@ static int present_imported_test_surface(
     return wait_present_event_and_retire(gpu_fd, present_event_fd, "present event soak imported");
 }
 
+static unsigned int avg_ticks(uint64_t ticks, uint64_t samples) {
+    return samples != 0 ? (unsigned int)(ticks / samples) : 0u;
+}
+
+/* Dump the per-stage present cost recorded by the VirtIO GPU driver across the
+ * soak window.  The kernel timer runs at 200 Hz, so 1 tick = 5 ms; stage totals
+ * are printed in ms so a sub-tick-per-op cost still accumulates visibly over the
+ * sampled presents.  This is the authoritative breakdown of where a present
+ * spends its time inside the driver (transfer vs flush vs scanout).
+ * The kernel timer runs at 1000 Hz, so 1 tick = 1 ms. */
+static void dump_soak_stats(const struct savanxp_gpu_stats* a, const struct savanxp_gpu_stats* b) {
+    const unsigned int tick_ms = 1u;
+    uint64_t e2e_ticks = b->present_end_to_end_ticks - a->present_end_to_end_ticks;
+    uint64_t e2e_samples = b->present_end_to_end_samples - a->present_end_to_end_samples;
+    uint64_t xfer_t = b->transfer_stage_ticks - a->transfer_stage_ticks;
+    uint64_t xfer_n = b->transfer_stage_submitted - a->transfer_stage_submitted;
+    uint64_t flush_t = b->flush_stage_ticks - a->flush_stage_ticks;
+    uint64_t flush_n = b->flush_stage_submitted - a->flush_stage_submitted;
+    uint64_t scan_t = b->scanout_stage_ticks - a->scanout_stage_ticks;
+    uint64_t scan_n = b->scanout_stage_submitted - a->scanout_stage_submitted;
+    uint64_t sync_t = b->sync_command_ticks - a->sync_command_ticks;
+    uint64_t sync_n = b->sync_command_submitted - a->sync_command_submitted;
+
+    printf("SOAK STATS presents=%u coalesced=%u pending_max=%u\n",
+        (unsigned)(b->present_completed - a->present_completed),
+        (unsigned)(b->present_coalesced - a->present_coalesced),
+        (unsigned)b->pending_depth_max);
+    printf("SOAK STATS e2e total=%u ms over %u samples (avg=%u ms, max=%u ms)\n",
+        (unsigned)e2e_ticks * tick_ms, (unsigned)e2e_samples,
+        avg_ticks(e2e_ticks, e2e_samples) * tick_ms,
+        (unsigned)b->present_end_to_end_max_ticks * tick_ms);
+    printf("SOAK STATS stage_ms transfer=%u(n=%u) flush=%u(n=%u) scanout=%u(n=%u) sync=%u(n=%u)\n",
+        (unsigned)xfer_t * tick_ms, (unsigned)xfer_n,
+        (unsigned)flush_t * tick_ms, (unsigned)flush_n,
+        (unsigned)scan_t * tick_ms, (unsigned)scan_n,
+        (unsigned)sync_t * tick_ms, (unsigned)sync_n);
+    printf("SOAK STATS waits cmd=%u surf=%u idle=%u present=%u  timeouts cmd=%u surf=%u idle=%u present=%u\n",
+        (unsigned)(b->wait_command_polls - a->wait_command_polls),
+        (unsigned)(b->wait_surface_polls - a->wait_surface_polls),
+        (unsigned)(b->wait_idle_polls - a->wait_idle_polls),
+        (unsigned)(b->wait_present_polls - a->wait_present_polls),
+        (unsigned)(b->command_timeouts - a->command_timeouts),
+        (unsigned)(b->surface_timeouts - a->surface_timeouts),
+        (unsigned)(b->idle_timeouts - a->idle_timeouts),
+        (unsigned)(b->present_wait_timeouts - a->present_wait_timeouts));
+    printf("SOAK STATS irq notifications=%u config_events=%u completions=%u\n",
+        (unsigned)(b->irq_notifications - a->irq_notifications),
+        (unsigned)(b->irq_config_events - a->irq_config_events),
+        (unsigned)(b->command_completions - a->command_completions));
+}
+
 static int run_soak_mode(size_t iteration_count) {
     struct savanxp_gpu_info gpu_info = {0};
     struct savanxp_gpu_stats stats_before = {0};
@@ -494,6 +545,7 @@ static int run_soak_mode(size_t iteration_count) {
         return 1;
     }
 
+    dump_soak_stats(&stats_before, &stats_after);
     cleanup_soak_session(&gpu_fd, &present_event_fd, &scanout_event_fd, &imported);
     puts("SOAK PASS\n");
     return 0;

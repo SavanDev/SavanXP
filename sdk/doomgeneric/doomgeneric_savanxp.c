@@ -214,11 +214,136 @@ static void sx_blit_rows(int start_row, int end_row) {
     }
 }
 
+/* --- FPS / present-latency debug overlay --------------------------------- */
+/* Doom runs as a desktop-compositor client: every gfx_present_region() blocks
+ * in gfx_wait_for_client_idle() until the previous frame has been composed.
+ * We cannot read the VirtIO GPU driver stats from here (the compositor owns
+ * /dev/gpu0), so the overlay reports the client-visible signal instead: the
+ * presented frame rate plus how long Doom stays blocked inside the present call
+ * (average and peak ms over the sampling window).  That stall is precisely what
+ * starves the audio mixer and caps the frame rate, so it is the number to
+ * watch while tuning the GPU path. The text is stamped straight into
+ * DG_ScreenBuffer so it rides the existing dirty-row / scale / present pipeline
+ * with no changes to the present logic. */
+
+#define SX_FPS_WINDOW_MS 500u
+
+static struct savanxp_fb_info g_fps_info;
+static int g_fps_enabled = 1;
+static unsigned long g_fps_window_start = 0;
+static unsigned int g_fps_frames = 0;
+static unsigned long g_fps_block_accum_ms = 0;
+static unsigned long g_fps_block_peak_ms = 0;
+static char g_fps_text[64] = "FPS --";
+
+static char *sx_append_str(char *out, char *end, const char *text) {
+    while (*text != '\0' && out < end - 1) {
+        *out++ = *text++;
+    }
+    *out = '\0';
+    return out;
+}
+
+static char *sx_append_uint(char *out, char *end, unsigned long value) {
+    char digits[20];
+    int count = 0;
+    do {
+        digits[count++] = (char)('0' + (int)(value % 10u));
+        value /= 10u;
+    } while (value != 0 && count < (int)sizeof(digits));
+    while (count > 0 && out < end - 1) {
+        *out++ = digits[--count];
+    }
+    *out = '\0';
+    return out;
+}
+
+static void sx_fps_init(void) {
+    memset(&g_fps_info, 0, sizeof(g_fps_info));
+    g_fps_info.width = DOOMGENERIC_RESX;
+    g_fps_info.height = DOOMGENERIC_RESY;
+    g_fps_info.pitch = DOOMGENERIC_RESX * (uint32_t)sizeof(uint32_t);
+    g_fps_info.bpp = 32;
+    g_fps_info.buffer_size = (size_t)DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(uint32_t);
+    g_fps_window_start = uptime_ms();
+    g_fps_frames = 0;
+    g_fps_block_accum_ms = 0;
+    g_fps_block_peak_ms = 0;
+}
+
+/* Rebuild the overlay string and emit a log line once per sampling window.
+ * block_ms is the wall time Doom spent blocked inside the present call. */
+static void sx_fps_sample(unsigned long block_ms) {
+    unsigned long now;
+    unsigned long elapsed;
+
+    if (!g_fps_enabled) {
+        return;
+    }
+
+    g_fps_frames += 1;
+    g_fps_block_accum_ms += block_ms;
+    if (block_ms > g_fps_block_peak_ms) {
+        g_fps_block_peak_ms = block_ms;
+    }
+
+    now = uptime_ms();
+    elapsed = now - g_fps_window_start;
+    if (elapsed < SX_FPS_WINDOW_MS || g_fps_frames == 0) {
+        return;
+    }
+
+    {
+        unsigned int fps = (unsigned int)(((unsigned long)g_fps_frames * 1000u) / elapsed);
+        unsigned long avg_tenths = (g_fps_block_accum_ms * 10u) / g_fps_frames;
+        char *p = g_fps_text;
+        char *end = g_fps_text + sizeof(g_fps_text);
+
+        p = sx_append_str(p, end, "FPS ");
+        p = sx_append_uint(p, end, fps);
+        p = sx_append_str(p, end, "  blk ");
+        p = sx_append_uint(p, end, avg_tenths / 10u);
+        p = sx_append_str(p, end, ".");
+        p = sx_append_uint(p, end, avg_tenths % 10u);
+        p = sx_append_str(p, end, "/");
+        p = sx_append_uint(p, end, g_fps_block_peak_ms);
+        p = sx_append_str(p, end, "ms");
+
+        eprintf("doomgeneric: %s (%u presents / %u ms)\n",
+                g_fps_text, g_fps_frames, (unsigned int)elapsed);
+    }
+
+    g_fps_frames = 0;
+    g_fps_block_accum_ms = 0;
+    g_fps_block_peak_ms = 0;
+    g_fps_window_start = now;
+}
+
+/* Stamp the cached overlay text into DG_ScreenBuffer (doom 320x200 space) so it
+ * is scaled and presented by the normal frame path. */
+static void sx_fps_stamp(void) {
+    int cell_h;
+    int box_w;
+
+    if (!g_fps_enabled || DG_ScreenBuffer == 0 || g_fps_info.width == 0) {
+        return;
+    }
+
+    cell_h = gfx_cell_height();
+    box_w = gfx_text_width_mono(g_fps_text) + 4;
+    gfx_rect(DG_ScreenBuffer, &g_fps_info, 1, 1, box_w, cell_h + 2, gfx_rgb(0, 0, 0));
+    gfx_blit_text_mono(DG_ScreenBuffer, &g_fps_info, 3, 2, g_fps_text, gfx_rgb(255, 240, 64));
+}
+
 void DG_Init(void) {
     sx_prepare_data_dirs();
 
-    if (gfx_open(&g_gfx) < 0) {
-        sx_fail("doomgeneric: gfx_open failed");
+    {
+        long open_result = gfx_open(&g_gfx);
+        if (open_result < 0) {
+            eprintf("doomgeneric: gfx_open failed (%s)\n", result_error_string(open_result));
+            sx_shutdown_exit(1);
+        }
     }
     if (gfx_acquire(&g_gfx) < 0) {
         sx_fail("doomgeneric: gfx_acquire failed");
@@ -243,12 +368,15 @@ void DG_Init(void) {
     }
 
     sx_configure_output_layout();
+    sx_fps_init();
 }
 
 void DG_DrawFrame(void) {
     int dirty_start = DOOMGENERIC_RESY;
     int dirty_end = -1;
     int source_y = 0;
+
+    sx_fps_stamp();
 
     if (!g_previous_frame_valid) {
         dirty_start = 0;
@@ -278,6 +406,7 @@ void DG_DrawFrame(void) {
 
     sx_blit_rows(dirty_start, dirty_end);
     {
+        unsigned long present_start = uptime_ms();
         long present_result = gfx_present_region(&g_gfx,
                                                  g_present_buffer,
                                                  (uint32_t)g_offset_x,
@@ -288,6 +417,7 @@ void DG_DrawFrame(void) {
             eprintf("doomgeneric: gfx_present failed (%s)\n", result_error_string(present_result));
             sx_shutdown_exit(1);
         }
+        sx_fps_sample(uptime_ms() - present_start);
     }
 }
 
