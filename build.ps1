@@ -642,7 +642,7 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-cpu", "max",
         "-audiodev", "sdl,id=audio0",
         "-audiodev", "sdl,id=audio1",
-        "-display", "gtk,grab-on-hover=on,show-cursor=off,window-close=on",
+        "-display", "gtk,grab-on-hover=on,show-cursor=off,window-close=on,zoom-to-fit=on",
         "-rtc", "base=localtime",
         "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
         "-drive", "if=pflash,format=raw,file=$VarsTemplate",

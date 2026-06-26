@@ -519,6 +519,82 @@ int sx_rect_set_add(struct sx_rect_set* set, struct sx_rect rect)
     return 1;
 }
 
+/* Append without merging adjacent rects. Subtraction relies on the resulting
+ * sub-rects staying distinct (merging them back would re-cover the hole). On
+ * overflow the rect is unioned into slot 0: that only ever grows coverage
+ * (superset), which is safe for the visible region because the compositor
+ * paints back-to-front and any over-painted area is re-covered by the layer in
+ * front. It never under-paints. */
+static void sx_rect_set_push_raw(struct sx_rect_set* set, struct sx_rect rect)
+{
+    if (set == 0 || sx_rect_is_empty(rect))
+    {
+        return;
+    }
+    if (set->count < SX_RECT_SET_CAPACITY)
+    {
+        set->rects[set->count++] = rect;
+        return;
+    }
+    set->rects[0] = sx_rect_union(set->rects[0], rect);
+}
+
+int sx_rect_set_subtract_rect(struct sx_rect_set* set, struct sx_rect hole)
+{
+    struct sx_rect_set result;
+    size_t index;
+
+    if (set == 0)
+    {
+        return 0;
+    }
+    if (sx_rect_is_empty(hole))
+    {
+        return 1;
+    }
+
+    sx_rect_set_clear(&result);
+    for (index = 0; index < set->count; ++index)
+    {
+        struct sx_rect r = set->rects[index];
+        struct sx_rect overlap;
+
+        if (sx_rect_is_empty(r))
+        {
+            continue;
+        }
+
+        overlap = sx_rect_intersect(r, hole);
+        if (sx_rect_is_empty(overlap))
+        {
+            sx_rect_set_push_raw(&result, r);
+            continue;
+        }
+
+        /* Up to four strips of r that fall outside the hole: above, below, and
+         * the left/right slivers within the hole's vertical band. */
+        if (overlap.y > r.y)
+        {
+            sx_rect_set_push_raw(&result, sx_rect_make(r.x, r.y, r.width, overlap.y - r.y));
+        }
+        if (sx_rect_bottom(overlap) < sx_rect_bottom(r))
+        {
+            sx_rect_set_push_raw(&result, sx_rect_make(r.x, sx_rect_bottom(overlap), r.width, sx_rect_bottom(r) - sx_rect_bottom(overlap)));
+        }
+        if (overlap.x > r.x)
+        {
+            sx_rect_set_push_raw(&result, sx_rect_make(r.x, overlap.y, overlap.x - r.x, overlap.height));
+        }
+        if (sx_rect_right(overlap) < sx_rect_right(r))
+        {
+            sx_rect_set_push_raw(&result, sx_rect_make(sx_rect_right(overlap), overlap.y, sx_rect_right(r) - sx_rect_right(overlap), overlap.height));
+        }
+    }
+
+    *set = result;
+    return 1;
+}
+
 int sx_rect_set_add_translated(struct sx_rect_set* set, struct sx_rect rect, int dx, int dy)
 {
     return sx_rect_set_add(set, sx_rect_translate(rect, dx, dy));

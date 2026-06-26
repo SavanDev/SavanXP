@@ -600,6 +600,226 @@ static void draw_client(struct sx_painter *painter, const struct desktop_client 
     sx_painter_blit_bitmap(painter, &bitmap, surface_rect.x, surface_rect.y);
 }
 
+static long rect_set_total_area(const struct sx_rect_set *set)
+{
+    long area = 0;
+    size_t index;
+
+    for (index = 0; index < set->count; ++index)
+    {
+        if (!sx_rect_is_empty(set->rects[index]))
+        {
+            area += (long)set->rects[index].width * (long)set->rects[index].height;
+        }
+    }
+    return area;
+}
+
+static int rect_set_intersects(const struct sx_rect_set *set, struct sx_rect hole)
+{
+    size_t index;
+
+    for (index = 0; index < set->count; ++index)
+    {
+        if (!sx_rect_is_empty(sx_rect_intersect(set->rects[index], hole)))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int desktop_region_selftest(void)
+{
+    struct sx_rect_set set;
+    struct sx_rect base = sx_rect_make(0, 0, 100, 100);
+    struct sx_rect hole;
+    const long base_area = 100 * 100;
+
+    /* Disjoint hole leaves the region untouched. */
+    sx_rect_set_clear(&set);
+    (void)sx_rect_set_add(&set, base);
+    (void)sx_rect_set_subtract_rect(&set, sx_rect_make(200, 200, 50, 50));
+    if (rect_set_total_area(&set) != base_area)
+    {
+        return 1;
+    }
+
+    /* A hole that fully contains the rect leaves the region empty. */
+    sx_rect_set_clear(&set);
+    (void)sx_rect_set_add(&set, sx_rect_make(10, 10, 20, 20));
+    (void)sx_rect_set_subtract_rect(&set, sx_rect_make(0, 0, 100, 100));
+    if (sx_rect_set_valid(&set) || rect_set_total_area(&set) != 0)
+    {
+        return 1;
+    }
+
+    /* Corner overlap: area shrinks by exactly the overlap, nothing left over
+     * intersects the hole. */
+    sx_rect_set_clear(&set);
+    (void)sx_rect_set_add(&set, base);
+    hole = sx_rect_make(50, 50, 100, 100); /* 50x50 = 2500 inside base */
+    (void)sx_rect_set_subtract_rect(&set, hole);
+    if (rect_set_total_area(&set) != base_area - 2500 || rect_set_intersects(&set, hole))
+    {
+        return 1;
+    }
+
+    /* Centre hole splits the rect into a four-strip ring. */
+    sx_rect_set_clear(&set);
+    (void)sx_rect_set_add(&set, base);
+    hole = sx_rect_make(40, 40, 20, 20); /* 400 in the middle */
+    (void)sx_rect_set_subtract_rect(&set, hole);
+    if (rect_set_total_area(&set) != base_area - 400 || rect_set_intersects(&set, hole))
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+/* Compositor layers, back-to-front. Each layer carries its screen-space bounds
+ * and whether it is fully opaque (a valid occluder for layers behind it). The
+ * compose pass paints every layer exactly once over its visible region only:
+ * visible = damage ∩ bounds − (union of opaque bounds in front). */
+enum desktop_layer_kind
+{
+    DESKTOP_LAYER_BACKGROUND = 0,
+    DESKTOP_LAYER_CLIENT,
+    DESKTOP_LAYER_TASKBAR,
+    DESKTOP_LAYER_MENU,
+    DESKTOP_LAYER_CURSOR,
+};
+
+struct desktop_layer
+{
+    int kind;
+    int opaque;
+    struct sx_rect bounds;
+    const struct desktop_client *client;
+};
+
+#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 5)
+
+static int client_is_drawable(const struct desktop_client *client)
+{
+    return client != 0 && client->pid > 0 && client->pixels != 0 && !client->minimized;
+}
+
+static struct sx_rect client_occluder_rect(const struct desktop_client *client)
+{
+    return client->frame_visible ? desktop_client_frame_rect(client) : desktop_client_surface_rect(client);
+}
+
+static void paint_layer(
+    struct sx_painter *painter,
+    struct desktop_session *session,
+    const struct desktop_layer *layer,
+    int menu_open,
+    int selected_index,
+    int selected_shortcut,
+    int cursor_x,
+    int cursor_y)
+{
+    switch (layer->kind)
+    {
+    case DESKTOP_LAYER_BACKGROUND:
+        draw_background(painter, &session->gfx.info, selected_shortcut);
+        break;
+    case DESKTOP_LAYER_CLIENT:
+        draw_client(painter, layer->client);
+        break;
+    case DESKTOP_LAYER_TASKBAR:
+        draw_taskbar(painter, session, menu_open);
+        break;
+    case DESKTOP_LAYER_MENU:
+        draw_start_menu(painter, &session->gfx, selected_index);
+        break;
+    case DESKTOP_LAYER_CURSOR:
+        draw_cursor(painter, cursor_x, cursor_y);
+        break;
+    default:
+        break;
+    }
+}
+
+/* Back-to-front layer list for the current frame. */
+static int build_layers(struct desktop_session *session, int menu_open, int cursor_x, int cursor_y, struct desktop_layer *layers)
+{
+    const struct savanxp_fb_info *info = &session->gfx.info;
+    int count = 0;
+    int order_index;
+    int menu_x = 0;
+    int menu_y = 0;
+    int menu_w = 0;
+    int menu_h = 0;
+    int cur_x = 0;
+    int cur_y = 0;
+    int cur_w = 0;
+    int cur_h = 0;
+
+    layers[count].kind = DESKTOP_LAYER_BACKGROUND;
+    layers[count].opaque = 1;
+    layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
+    layers[count].client = 0;
+    ++count;
+
+    if (client_is_drawable(&session->shell_client))
+    {
+        layers[count].kind = DESKTOP_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->shell_client);
+        layers[count].client = &session->shell_client;
+        ++count;
+    }
+
+    for (order_index = 0; order_index < session->overlay_count; ++order_index)
+    {
+        int slot = session->overlay_order[order_index];
+        if (slot < 0 || slot >= DESKTOP_MAX_OVERLAY_CLIENTS)
+        {
+            continue;
+        }
+        if (!client_is_drawable(&session->overlay_clients[slot]))
+        {
+            continue;
+        }
+        layers[count].kind = DESKTOP_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->overlay_clients[slot]);
+        layers[count].client = &session->overlay_clients[slot];
+        ++count;
+    }
+
+    layers[count].kind = DESKTOP_LAYER_TASKBAR;
+    layers[count].opaque = 1;
+    layers[count].bounds = sx_rect_make(0, (int)info->height - DESKTOP_TASKBAR_HEIGHT, (int)info->width, DESKTOP_TASKBAR_HEIGHT);
+    layers[count].client = 0;
+    ++count;
+
+    if (menu_open)
+    {
+        desktop_start_menu_bounds(info, &menu_x, &menu_y, &menu_w, &menu_h);
+        layers[count].kind = DESKTOP_LAYER_MENU;
+        layers[count].opaque = 1;
+        layers[count].bounds = sx_rect_make(menu_x, menu_y, menu_w, menu_h);
+        layers[count].client = 0;
+        ++count;
+    }
+
+    if (!session->hw_cursor_enabled)
+    {
+        desktop_cursor_bounds(cursor_x, cursor_y, &cur_x, &cur_y, &cur_w, &cur_h);
+        layers[count].kind = DESKTOP_LAYER_CURSOR;
+        layers[count].opaque = 0; /* BGRA cursor blends; never an occluder. */
+        layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);
+        layers[count].client = 0;
+        ++count;
+    }
+
+    return count;
+}
+
 void desktop_draw_desktop(
     struct desktop_session *session,
     int cursor_x,
@@ -609,10 +829,14 @@ void desktop_draw_desktop(
     int selected_shortcut,
     const struct desktop_dirty_rect *dirty)
 {
+    /* Single-threaded compositor: keep the working sets off the stack. */
+    static struct desktop_layer layers[DESKTOP_MAX_COMPOSE_LAYERS];
+    static struct sx_rect_set damage;
+    static struct sx_rect_set visible;
     struct sx_bitmap backbuffer_bitmap;
     struct sx_painter painter;
-    size_t dirty_index = 0;
-    size_t dirty_count = 0;
+    int layer_count = 0;
+    int layer_index;
 
     if (session == 0 || g_backbuffer == 0)
     {
@@ -621,45 +845,62 @@ void desktop_draw_desktop(
 
     sx_bitmap_wrap(&backbuffer_bitmap, g_backbuffer, &session->gfx.info, SX_PIXEL_FORMAT_BGRX8888);
     sx_painter_init(&painter, &backbuffer_bitmap);
-    dirty_count = dirty != 0 && desktop_dirty_rect_valid(dirty) ? desktop_dirty_rect_count(dirty) : 0;
-    if (dirty_count == 0)
+
+    /* Damage region for this frame; an empty/invalid dirty set forces a full
+     * repaint (still occlusion-aware: each layer painted once). */
+    sx_rect_set_clear(&damage);
+    if (dirty != 0 && desktop_dirty_rect_valid(dirty))
     {
-        dirty_count = 1;
+        size_t i;
+        for (i = 0; i < dirty->rects.count; ++i)
+        {
+            (void)sx_rect_set_add(&damage, dirty->rects.rects[i]);
+        }
+    }
+    if (!sx_rect_set_valid(&damage))
+    {
+        (void)sx_rect_set_add(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
     }
 
-    for (dirty_index = 0; dirty_index < dirty_count; ++dirty_index)
-    {
-        int order_index;
+    layer_count = build_layers(session, menu_open, cursor_x, cursor_y, layers);
 
-        sx_painter_clear_clip(&painter);
-        if (dirty != 0 && desktop_dirty_rect_valid(dirty))
+    /* Paint back-to-front; each layer only over the area not covered by an
+     * opaque layer in front of it. */
+    for (layer_index = 0; layer_index < layer_count; ++layer_index)
+    {
+        const struct desktop_layer *layer = &layers[layer_index];
+        size_t damage_index;
+        size_t visible_index;
+        int front;
+
+        sx_rect_set_clear(&visible);
+        for (damage_index = 0; damage_index < damage.count; ++damage_index)
         {
-            const struct sx_rect *clip = desktop_dirty_rect_at(dirty, dirty_index);
-            if (clip != 0)
+            struct sx_rect clipped = sx_rect_intersect(damage.rects[damage_index], layer->bounds);
+            if (!sx_rect_is_empty(clipped))
             {
-                sx_painter_add_clip_rect(&painter, *clip);
+                (void)sx_rect_set_add(&visible, clipped);
             }
         }
 
-        draw_background(&painter, &session->gfx.info, selected_shortcut);
-        draw_client(&painter, &session->shell_client);
-        for (order_index = 0; order_index < session->overlay_count; ++order_index)
+        for (front = layer_index + 1; front < layer_count && sx_rect_set_valid(&visible); ++front)
         {
-            int slot = session->overlay_order[order_index];
-            if (slot < 0 || slot >= DESKTOP_MAX_OVERLAY_CLIENTS)
+            if (layers[front].opaque)
+            {
+                (void)sx_rect_set_subtract_rect(&visible, layers[front].bounds);
+            }
+        }
+
+        for (visible_index = 0; visible_index < visible.count; ++visible_index)
+        {
+            struct sx_rect sub = visible.rects[visible_index];
+            if (sx_rect_is_empty(sub))
             {
                 continue;
             }
-            draw_client(&painter, &session->overlay_clients[slot]);
-        }
-        draw_taskbar(&painter, session, menu_open);
-        if (menu_open)
-        {
-            draw_start_menu(&painter, &session->gfx, selected_index);
-        }
-        if (!session->hw_cursor_enabled)
-        {
-            draw_cursor(&painter, cursor_x, cursor_y);
+            sx_painter_clear_clip(&painter);
+            sx_painter_add_clip_rect(&painter, sub);
+            paint_layer(&painter, session, layer, menu_open, selected_index, selected_shortcut, cursor_x, cursor_y);
         }
     }
 }

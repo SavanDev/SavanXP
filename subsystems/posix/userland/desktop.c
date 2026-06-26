@@ -6,6 +6,12 @@
 #include "desktop_render.h"
 
 #define DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME 16
+#define DESKTOP_SURFACE_PAGE_SIZE 4096u
+/* Low video mode used for fullscreen-exclusive apps: the client renders here at
+ * a small integer scale (Doom 2x) and the host (QEMU zoom-to-fit) scales it up
+ * to fill the window, instead of the app upscaling on the CPU. */
+#define DESKTOP_FULLSCREEN_MODE_WIDTH 640
+#define DESKTOP_FULLSCREEN_MODE_HEIGHT 400
 
 static const char *k_shellapp_path = "/bin/shellapp";
 
@@ -484,6 +490,169 @@ static void resize_overlay_client_surface(
     memset(client->pixels, 0, client->surface_info.buffer_size);
     desktop_dirty_rect_add(dirty, &session->gfx.info, previous_frame.x, previous_frame.y, previous_frame.width, previous_frame.height);
     desktop_dirty_rect_add(dirty, &session->gfx.info, current_frame.x, current_frame.y, current_frame.width, current_frame.height);
+}
+
+/* Restore the native video mode and re-import the compositor display surface as
+ * the scanout. Used on fullscreen exit and on enter-failure rollback. Assumes no
+ * client scanout import is in use (caller releases it first), so set_mode is not
+ * EBUSY. */
+static int restore_display_scanout(struct desktop_session *session)
+{
+    struct savanxp_gpu_surface_import import_request;
+    struct savanxp_gpu_mode mode;
+    long result;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    memset(&mode, 0, sizeof(mode));
+    mode.width = session->gfx.info.width;
+    mode.height = session->gfx.info.height;
+    result = gpu_set_mode(session->gpu_fd, &mode);
+    if (result < 0)
+    {
+        puts_fd(2, "desktop: restore set_mode failed\n");
+        return -1;
+    }
+
+    if (session->display_surface_id != 0)
+    {
+        return 0;
+    }
+
+    memset(&import_request, 0, sizeof(import_request));
+    import_request.section_handle = session->display_section_fd;
+    import_request.width = session->gfx.info.width;
+    import_request.height = session->gfx.info.height;
+    import_request.pitch = session->gfx.info.pitch;
+    import_request.bpp = session->gfx.info.bpp;
+    import_request.buffer_size = session->gfx.info.buffer_size;
+    import_request.flags = SAVANXP_GPU_SURFACE_FLAG_SCANOUT;
+    import_request.pixels_offset = 0;
+    result = gpu_import_section(session->gpu_fd, &import_request);
+    if (result < 0)
+    {
+        puts_fd(2, "desktop: restore display import failed\n");
+        return -1;
+    }
+    session->display_surface_id = (uint32_t)import_request.surface_id;
+    return 0;
+}
+
+/* Enter fullscreen-exclusive: drop the video mode to the low fullscreen mode and
+ * import the client's (tightly packed, same-size) surface as the scanout, so the
+ * client flips directly to scanout and the host scales it up to the window. The
+ * client surface is already the fullscreen mode size; only chrome/geometry and
+ * the video mode change. */
+static int enter_overlay_fullscreen(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+{
+    struct desktop_client *client = overlay_client_at(session, slot);
+    struct savanxp_gpu_surface_import import_request;
+    struct savanxp_gpu_mode mode;
+    long result;
+    const int fs_width = DESKTOP_FULLSCREEN_MODE_WIDTH;
+    const int fs_height = DESKTOP_FULLSCREEN_MODE_HEIGHT;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
+    {
+        return -1;
+    }
+    if (!client->fullscreen_capable || client->fullscreen || client->minimized || session->fullscreen_slot >= 0)
+    {
+        return -1;
+    }
+
+    client->fs_restore_window_x = client->window_x;
+    client->fs_restore_window_y = client->window_y;
+    client->fs_restore_frame_visible = client->frame_visible;
+    client->fs_restore_maximized = client->maximized;
+
+    /* Release the compositor display surface so set_mode is not EBUSY. */
+    if (session->display_surface_id != 0)
+    {
+        (void)gpu_release_surface(session->gpu_fd, session->display_surface_id);
+        session->display_surface_id = 0;
+    }
+
+    memset(&mode, 0, sizeof(mode));
+    mode.width = (uint32_t)fs_width;
+    mode.height = (uint32_t)fs_height;
+    result = gpu_set_mode(session->gpu_fd, &mode);
+    if (result < 0)
+    {
+        puts_fd(2, "desktop: fullscreen set_mode failed\n");
+        (void)restore_display_scanout(session);
+        return -1;
+    }
+
+    memset(&import_request, 0, sizeof(import_request));
+    import_request.section_handle = client->section_fd;
+    import_request.width = (uint32_t)fs_width;
+    import_request.height = (uint32_t)fs_height;
+    import_request.pitch = client->surface_info.pitch;
+    import_request.bpp = 32;
+    import_request.buffer_size = client->surface_info.buffer_size;
+    import_request.flags = SAVANXP_GPU_SURFACE_FLAG_SCANOUT;
+    import_request.pixels_offset = client->header != 0 ? client->header->pixels_offset : 0;
+    result = gpu_import_section(session->gpu_fd, &import_request);
+    if (result < 0)
+    {
+        puts_fd(2, "desktop: fullscreen import failed\n");
+        (void)restore_display_scanout(session);
+        return -1;
+    }
+
+    client->scanout_surface_id = (uint32_t)import_request.surface_id;
+    client->fullscreen = 1;
+    client->frame_visible = 0;
+    client->maximized = 0;
+    client->window_x = 0;
+    client->window_y = 0;
+    client->window_width = fs_width;
+    client->window_height = fs_height;
+    session->fullscreen_slot = slot;
+    raise_overlay(session, slot);
+    /* Present the current client frame at the new scanout size (client coords). */
+    desktop_dirty_rect_add(dirty, &session->gfx.info, 0, 0, fs_width, fs_height);
+    return 0;
+}
+
+/* Leave fullscreen-exclusive: release the client scanout, restore the native
+ * video mode + display surface, and restore the windowed chrome/geometry. The
+ * client surface keeps its (fullscreen-mode) size. */
+static void exit_overlay_fullscreen(struct desktop_session *session, struct desktop_dirty_rect *dirty)
+{
+    int slot = session != 0 ? session->fullscreen_slot : -1;
+    struct desktop_client *client = overlay_client_at(session, slot);
+
+    if (session == 0 || dirty == 0 || client == 0)
+    {
+        if (session != 0)
+        {
+            session->fullscreen_slot = -1;
+        }
+        return;
+    }
+
+    session->fullscreen_slot = -1;
+    client->fullscreen = 0;
+
+    if (client->scanout_surface_id != 0)
+    {
+        (void)gpu_release_surface(session->gpu_fd, client->scanout_surface_id);
+        client->scanout_surface_id = 0;
+    }
+    (void)restore_display_scanout(session);
+
+    client->frame_visible = client->fs_restore_frame_visible;
+    client->maximized = client->fs_restore_maximized;
+    client->window_x = client->fs_restore_window_x;
+    client->window_y = client->fs_restore_window_y;
+    client->window_width = (int)client->surface_info.width + (client->frame_visible ? (DESKTOP_WINDOW_BORDER * 2) : 0);
+    client->window_height = (int)client->surface_info.height + (client->frame_visible ? (DESKTOP_WINDOW_TITLEBAR_HEIGHT + DESKTOP_WINDOW_BORDER) : 0);
+    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
 static void move_overlay_client_window(
@@ -1016,7 +1185,7 @@ static int sync_pending_present(struct desktop_session *session, int wait_for_ta
     return 0;
 }
 
-static int present_frame(struct desktop_session *session, const struct desktop_dirty_rect *dirty)
+static int present_surface(struct desktop_session *session, uint32_t surface_id, const struct desktop_dirty_rect *dirty)
 {
     struct savanxp_gpu_surface_present_batch batch;
     struct savanxp_gpu_present_timeline timeline;
@@ -1024,7 +1193,7 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
     uint64_t submitted_cookie = 0;
     long result;
 
-    if (session == 0 || dirty == 0 || !desktop_dirty_rect_valid(dirty))
+    if (session == 0 || dirty == 0 || surface_id == 0 || !desktop_dirty_rect_valid(dirty))
     {
         return 0;
     }
@@ -1037,7 +1206,7 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
         return desktop_stage_failed("GPU_IOC_GET_PRESENT_TIMELINE", result);
     }
     memset(&batch, 0, sizeof(batch));
-    batch.surface_id = session->display_surface_id;
+    batch.surface_id = surface_id;
     batch.present_cookie = timeline.submitted_sequence + 1u;
 
     for (index = 0; index < desktop_dirty_rect_count(dirty); ++index)
@@ -1088,6 +1257,15 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
 
     session->pending_present_sequence = submitted_cookie;
     return 0;
+}
+
+static int present_frame(struct desktop_session *session, const struct desktop_dirty_rect *dirty)
+{
+    if (session == 0)
+    {
+        return 0;
+    }
+    return present_surface(session, session->display_surface_id, dirty);
 }
 
 static void fill_client_surface_info(
@@ -1194,6 +1372,7 @@ static int start_client_process(struct desktop_client *client, const char *path)
 {
     struct savanxp_gpu_client_surface_header *header;
     unsigned long command_bytes = 0;
+    unsigned long pixels_offset = 0;
     unsigned long section_size = 0;
     int input_pipe[2] = {-1, -1};
     int mouse_pipe[2] = {-1, -1};
@@ -1211,7 +1390,11 @@ static int start_client_process(struct desktop_client *client, const char *path)
     }
 
     command_bytes = (unsigned long)(SAVANXP_GPU_CLIENT_BATCH_CAPACITY * sizeof(struct savanxp_gpu_dirty_rect_batch));
-    section_size = (unsigned long)sizeof(*header) + command_bytes + client->surface_info.buffer_size;
+    /* Page-align the pixel region so it can be imported as a scanout resource
+     * backing (the kernel attaches backing on page boundaries). Harmless for
+     * non-fullscreen clients beyond a few KB of padding. */
+    pixels_offset = ((unsigned long)sizeof(*header) + command_bytes + (DESKTOP_SURFACE_PAGE_SIZE - 1u)) & ~(unsigned long)(DESKTOP_SURFACE_PAGE_SIZE - 1u);
+    section_size = pixels_offset + client->surface_info.buffer_size;
     client->section_fd = (int)section_create(section_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     if (client->section_fd < 0)
     {
@@ -1227,7 +1410,7 @@ static int start_client_process(struct desktop_client *client, const char *path)
     header = (struct savanxp_gpu_client_surface_header *)client->mapped_view;
     header->magic = SAVANXP_GPU_CLIENT_SURFACE_MAGIC;
     header->command_offset = (uint32_t)sizeof(*header);
-    header->pixels_offset = (uint32_t)(sizeof(*header) + command_bytes);
+    header->pixels_offset = (uint32_t)pixels_offset;
     header->info = client->surface_info;
     header->version = SAVANXP_GPU_CLIENT_SURFACE_VERSION_3;
     header->flags = 0;
@@ -1340,6 +1523,20 @@ static void destroy_overlay_client(struct desktop_session *session, int slot, in
         return;
     }
 
+    if (session->fullscreen_slot == slot)
+    {
+        /* The fullscreen client is going away: drop its scanout import, restore
+         * the native video mode + display surface, and clear the fullscreen
+         * state so the compositor resumes normal compositing. */
+        if (client->scanout_surface_id != 0)
+        {
+            (void)gpu_release_surface(session->gpu_fd, client->scanout_surface_id);
+            client->scanout_surface_id = 0;
+        }
+        session->fullscreen_slot = -1;
+        (void)restore_display_scanout(session);
+    }
+
     destroy_client_instance(client, terminate_client);
     remove_overlay_from_order(session, slot);
     refresh_active_state(session);
@@ -1387,6 +1584,21 @@ static int launch_overlay_client(struct desktop_session *session, const char *pa
     client = &session->overlay_clients[slot];
     reset_client(client);
     fill_client_surface_info(session, DESKTOP_CLIENT_APP, &client->surface_info);
+    {
+        const struct desktop_menu_item *item = desktop_find_menu_item_by_path(path);
+        if (item != 0 && (item->flags & DESKTOP_MENU_ITEM_FLAG_FULLSCREEN) != 0)
+        {
+            /* Allocate the surface at the low fullscreen mode, tightly packed, so
+             * it can be imported directly as a 640x400 scanout resource. The same
+             * buffer is used windowed and fullscreen (no resize); fullscreen only
+             * lowers the video mode so the host scales it up. */
+            client->fullscreen_capable = 1;
+            client->surface_info.width = DESKTOP_FULLSCREEN_MODE_WIDTH;
+            client->surface_info.height = DESKTOP_FULLSCREEN_MODE_HEIGHT;
+            client->surface_info.pitch = DESKTOP_FULLSCREEN_MODE_WIDTH * (uint32_t)sizeof(uint32_t);
+            client->surface_info.buffer_size = client->surface_info.pitch * DESKTOP_FULLSCREEN_MODE_HEIGHT;
+        }
+    }
     position_client_window(session, client, DESKTOP_CLIENT_APP, session->overlay_count);
     if (start_client_process(client, path) < 0)
     {
@@ -1419,6 +1631,7 @@ static int open_compositor_session(struct desktop_session *session)
     session->pending_present_sequence = 0;
     session->active_client_kind = DESKTOP_CLIENT_SHELL;
     session->active_overlay_slot = -1;
+    session->fullscreen_slot = -1;
     session->overlay_count = 0;
     reset_client(&session->shell_client);
     for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
@@ -1688,10 +1901,17 @@ static int desktop_selftest(void)
     const int kCursorX = 40;
     const int kCursorY = 40;
     int frames_presented = 0;
+    int fullscreen_frames = 0;
     int iteration = 0;
     int failed = 0;
     uint64_t baseline_retired = 0;
     uint64_t consumed_submit = 0;
+
+    if (desktop_region_selftest() != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL region subtract primitive\n");
+        return 1;
+    }
 
     if (open_compositor_session(&session) < 0)
     {
@@ -1740,6 +1960,22 @@ static int desktop_selftest(void)
          * the imported client surface and presents a real frame, instead of
          * depending on the client's own (input-driven) redraw cadence.
          */
+        /* Exercise the fullscreen-exclusive direct-scanout flip mid-run: enter,
+         * present a few frames straight from the client surface, then exit. */
+        if (iteration == 45)
+        {
+            if (enter_overlay_fullscreen(&session, &dirty, kSlot) != 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL enter fullscreen\n");
+                failed = 1;
+                break;
+            }
+        }
+        else if (iteration == 52)
+        {
+            exit_overlay_fullscreen(&session, &dirty);
+        }
+
         switch (iteration)
         {
         case 10:
@@ -1755,7 +1991,7 @@ static int desktop_selftest(void)
             restore_overlay_client(&session, &dirty, kSlot);
             break;
         default:
-            if (iteration > 40)
+            if (iteration > 40 && session.fullscreen_slot < 0)
             {
                 int target_x = ((iteration & 1) != 0) ? (kCursorX + 40) : (kCursorX + 80);
                 int target_y = ((iteration & 1) != 0) ? (kCursorY + 40) : (kCursorY + 80);
@@ -1778,13 +2014,30 @@ static int desktop_selftest(void)
             continue;
         }
 
-        desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, &dirty);
-        signal_composed_batches(&session);
-        if (present_frame(&session, &dirty) < 0)
+        if (session.fullscreen_slot >= 0)
         {
-            puts_fd(2, "DESKTOP SMOKE FAIL present\n");
-            failed = 1;
-            break;
+            struct desktop_client *fs_client = overlay_client_at(&session, session.fullscreen_slot);
+            uint32_t fs_surface = fs_client != 0 ? fs_client->scanout_surface_id : 0;
+
+            signal_composed_batches(&session);
+            if (present_surface(&session, fs_surface, &dirty) < 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL fullscreen present\n");
+                failed = 1;
+                break;
+            }
+            ++fullscreen_frames;
+        }
+        else
+        {
+            desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, &dirty);
+            signal_composed_batches(&session);
+            if (present_frame(&session, &dirty) < 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL present\n");
+                failed = 1;
+                break;
+            }
         }
         desktop_dirty_rect_reset(&dirty);
 
@@ -1815,6 +2068,11 @@ static int desktop_selftest(void)
     if (!failed && consumed_submit < 1)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL client surface never composited\n");
+        failed = 1;
+    }
+    if (!failed && fullscreen_frames < 1)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL fullscreen flip never presented\n");
         failed = 1;
     }
     if (!failed)
@@ -1961,7 +2219,24 @@ int main(int argc, char **argv)
         {
             while ((count = read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
-                if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_SUPER)
+                if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_F11)
+                {
+                    /* Toggle fullscreen-exclusive for the active app. Intercepted
+                     * even while fullscreen so it can always be exited. */
+                    if (session.fullscreen_slot >= 0)
+                    {
+                        exit_overlay_fullscreen(&session, &dirty);
+                    }
+                    else if (session.active_client_kind == DESKTOP_CLIENT_APP &&
+                        overlay_slot_valid(session.active_overlay_slot))
+                    {
+                        if (enter_overlay_fullscreen(&session, &dirty, session.active_overlay_slot) == 0)
+                        {
+                            menu_open = 0;
+                        }
+                    }
+                }
+                else if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_SUPER)
                 {
                     menu_open = !menu_open;
                     if (menu_open)
@@ -2407,12 +2682,30 @@ int main(int argc, char **argv)
             }
         }
 
-        desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, &dirty);
-        signal_composed_batches(&session);
-        if (present_frame(&session, &dirty) < 0)
+        if (session.fullscreen_slot >= 0)
         {
-            puts_fd(2, "desktop: present failed\n");
-            break;
+            /* Direct scanout flip: present the fullscreen client's own surface
+             * (no compose, no CPU blit). Its dirty rects are already in
+             * screen-space coordinates since the surface covers the screen. */
+            struct desktop_client *fs_client = overlay_client_at(&session, session.fullscreen_slot);
+            uint32_t fs_surface = fs_client != 0 ? fs_client->scanout_surface_id : 0;
+
+            signal_composed_batches(&session);
+            if (present_surface(&session, fs_surface, &dirty) < 0)
+            {
+                puts_fd(2, "desktop: fullscreen present failed\n");
+                break;
+            }
+        }
+        else
+        {
+            desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, &dirty);
+            signal_composed_batches(&session);
+            if (present_frame(&session, &dirty) < 0)
+            {
+                puts_fd(2, "desktop: present failed\n");
+                break;
+            }
         }
         desktop_dirty_rect_reset(&dirty);
     }

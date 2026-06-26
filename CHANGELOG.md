@@ -12,6 +12,28 @@ Notas de corte:
 
 ### Agregado
 
+- **Fullscreen-exclusive para apps (tecla F11).** Una app marcada como
+  fullscreen-capable (Doom, Gfx Demo) pasa a pantalla completa sin chrome: el
+  compositor baja el modo de video del scanout a 640x400 e importa la propia
+  superficie del cliente como recurso de scanout, presentandola directo (flip)
+  sin componer ni copiar en CPU. El host (QEMU `zoom-to-fit`) escala los 640x400
+  a la ventana, de modo que el upscale lo hace el host y no la CPU de la app:
+  Doom fullscreen pasa de ~4 a ~17 FPS. Las apps fullscreen-capable se asignan a
+  un buffer 640x400 tight (la misma superficie en ventana y fullscreen, solo
+  cambia el modo de video). Incluye soporte de `pixels_offset` page-aligned en
+  `GPU_IOC_IMPORT_SECTION` para importar la region de pixeles de una seccion de
+  cliente (con cabecera) como recurso de scanout.
+- **Subsistema nativo (Haxe) — puntapie de Fase 0.** Cadena probada end-to-end
+  al nivel de compile/link: `Main.hx` -> `reflaxe.CPP` -> C++17 -> clang++
+  freestanding -> ELF nativo de SavanXP. Nuevo `subsystems/native/` con un SDK
+  semilla (`savanxp_native.h`, envoltura de syscalls `sx_native.c`, entrada
+  propia `sx_entry.cpp` que reemplaza el `_main_.cpp` de reflaxe.CPP para evitar
+  `<memory>` de libstdc++), un programa Haxe de validacion y un `build.ps1`
+  aparte (patron `sdk/doomgeneric`) que clona reflaxe/reflaxe.CPP pineados bajo
+  `toolchain/haxe-libs/`, genera el C++ y lo linkea contra el `crt0.S`/`linker.ld`
+  del SDK posix. `haxe`/`haxelib` se resuelven via `tools/Toolchain.ps1`. El
+  binario usa por ahora las syscalls posix (WRITE/EXIT); el ABI nativo propio y
+  el marcado de procesos nativos quedan para Fase 1+.
 - Tipografias reales horneadas offline a tablas C con `tools/font/genfont.py`
   (via `freetype-py`): **GNU UniFont 8x16** para la consola del kernel y el render
   monospace del terminal, y **Noto Sans** proporcional antialiased para el chrome
@@ -35,6 +57,13 @@ Notas de corte:
 
 ### Cambiado
 
+- El compositor del escritorio compone por **regiones con culling por oclusion**:
+  en vez de repintar todas las capas (fondo, clientes, taskbar, menu, cursor) por
+  cada rectangulo sucio, arma la lista de capas en z-order y pinta cada una una
+  sola vez sobre su region visible (`damage` interseccion `bounds` menos los
+  oclusores opacos delante), eliminando el overdraw bajo ventanas opacas. Nuevo
+  primitivo de resta de rectangulos `sx_rect_set_subtract_rect` en `sxgfx`; la
+  capacidad de `sx_rect_set` sube de 32 a 64.
 - La consola del kernel pasa de la fuente bitmap 5x7 autorada a UniFont 8x16, con
   cobertura ASCII + Latin-1 + dibujo de cajas/bloques via una tabla dispersa
   (`include/kernel/console_font_unifont.inc`).
@@ -65,6 +94,11 @@ Notas de corte:
 
 ### Corregido
 
+- `release_surface_allocation` (`virtio-gpu`) liberaba el backing de la superficie
+  primary sin hacer RESOURCE_UNREF del recurso host, por lo que re-ejecutar
+  `configure_primary_surface` en runtime (el primer cambio de modo real via
+  `GPU_IOC_SET_MODE`, antes nunca ejercitado) fallaba con `RESOURCE_CREATE_2D` ->
+  INVALID_RESOURCE_ID. Ahora destruye el recurso host antes de liberar el backing.
 - `decode_bar_size` calculaba el complemento de tamano (`~mask + 1`) en 64 bits
   sobre una mascara con solo los 32 bits bajos, devolviendo tamanos basura
   (`0xffffffff00001000` en vez de `0x1000`) para cualquier BAR de memoria de

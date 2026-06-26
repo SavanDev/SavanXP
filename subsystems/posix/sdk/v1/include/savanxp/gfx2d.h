@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define SX_RECT_SET_CAPACITY 32
+#define SX_RECT_SET_CAPACITY 64
 
 enum sx_pixel_format {
     SX_PIXEL_FORMAT_INVALID = 0,
@@ -85,6 +85,7 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
 
 void sx_rect_set_clear(struct sx_rect_set* set);
 int sx_rect_set_add(struct sx_rect_set* set, struct sx_rect rect);
+int sx_rect_set_subtract_rect(struct sx_rect_set* set, struct sx_rect hole);
 int sx_rect_set_add_translated(struct sx_rect_set* set, struct sx_rect rect, int dx, int dy);
 struct sx_rect sx_rect_set_bounds(const struct sx_rect_set* set);
 int sx_rect_set_valid(const struct sx_rect_set* set);

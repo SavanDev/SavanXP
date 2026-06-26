@@ -21,6 +21,9 @@ size_t desktop_dirty_rect_count(const struct desktop_dirty_rect *dirty);
 const struct sx_rect *desktop_dirty_rect_at(const struct desktop_dirty_rect *dirty, size_t index);
 
 unsigned long desktop_current_clock_stamp(char *buffer);
+/* Validates the sx_rect_set_subtract_rect region primitive the compositor
+ * relies on for occlusion culling. Returns 0 on success, non-zero on failure. */
+int desktop_region_selftest(void);
 void desktop_draw_desktop(
     struct desktop_session *session,
     int cursor_x,

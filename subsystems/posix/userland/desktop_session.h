@@ -40,6 +40,20 @@ struct desktop_client
     int minimized;
     int maximized;
     int active;
+    /* Fullscreen-exclusive (direct scanout flip). fullscreen_capable is set at
+     * launch for apps whose surface is allocated at full-scanout capacity;
+     * fullscreen tracks the active state; scanout_surface_id is the client
+     * section imported as a scanout resource while fullscreen. fs_restore_*
+     * snapshot the windowed geometry to restore on exit. */
+    int fullscreen_capable;
+    int fullscreen;
+    uint32_t scanout_surface_id;
+    int fs_restore_window_x;
+    int fs_restore_window_y;
+    int fs_restore_surface_width;
+    int fs_restore_surface_height;
+    int fs_restore_frame_visible;
+    int fs_restore_maximized;
 };
 
 struct desktop_session
@@ -58,6 +72,7 @@ struct desktop_session
     int hw_cursor_enabled;
     int active_client_kind;
     int active_overlay_slot;
+    int fullscreen_slot;
     int overlay_count;
     int overlay_order[DESKTOP_MAX_OVERLAY_CLIENTS];
     struct desktop_client shell_client;

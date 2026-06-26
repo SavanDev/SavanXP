@@ -397,6 +397,11 @@ struct savanxp_gpu_surface_import {
     uint32_t bpp;
     uint32_t buffer_size;
     uint32_t flags;
+    /* Page-aligned byte offset of the pixel region within the section. 0 means
+     * the section is pixels-only (the display surface). Non-zero lets a client
+     * surface whose pixels follow a header be imported as a scanout resource. */
+    uint32_t pixels_offset;
+    uint32_t reserved0;
 };
 
 struct savanxp_gpu_surface_present {

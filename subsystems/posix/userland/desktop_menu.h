@@ -4,6 +4,10 @@
 #include "desktop_icons.h"
 
 #define DESKTOP_MENU_ITEM_FLAG_SHORTCUT 0x00000001u
+/* App can take over the whole screen via fullscreen-exclusive (F11): its client
+ * surface is allocated at full-scanout capacity so it can be flipped directly to
+ * scanout, bypassing the compositor's compose. */
+#define DESKTOP_MENU_ITEM_FLAG_FULLSCREEN 0x00000002u
 
 struct desktop_menu_item
 {

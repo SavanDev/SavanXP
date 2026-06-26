@@ -511,6 +511,29 @@ uint64_t page_count_for_bytes(uint32_t byte_count) {
     return (static_cast<uint64_t>(byte_count) + memory::kPageSize - 1u) / memory::kPageSize;
 }
 
+/* Resolve the physical page run backing an imported surface's pixels, honoring a
+ * page-aligned byte offset into the section. pixels_offset == 0 maps the whole
+ * section (the display surface); a non-zero offset skips a client surface's
+ * header/command region so its pixels can back a scanout resource. Returns
+ * nullptr (reject) on misalignment or out-of-bounds. */
+uint64_t* resolve_import_pages(object::SectionObject* section_object,
+                               const savanxp_fb_info& info,
+                               uint32_t pixels_offset,
+                               uint64_t page_count) {
+    if (section_object == nullptr || section_object->physical_pages == nullptr) {
+        return nullptr;
+    }
+    if ((pixels_offset % memory::kPageSize) != 0) {
+        return nullptr;
+    }
+    const uint64_t page_offset = static_cast<uint64_t>(pixels_offset) / memory::kPageSize;
+    if (static_cast<uint64_t>(pixels_offset) + info.buffer_size > section_object->size_bytes ||
+        page_offset + page_count > section_object->page_count) {
+        return nullptr;
+    }
+    return section_object->physical_pages + page_offset;
+}
+
 uint32_t atomic_load_u32(const volatile uint32_t& value) {
     return __atomic_load_n(&value, __ATOMIC_ACQUIRE);
 }
@@ -2311,6 +2334,12 @@ void release_surface_allocation(uint32_t surface_index) {
         return;
     }
 
+    /* Unref the host resource before freeing its backing, otherwise re-running
+     * configure_primary_surface (e.g. a runtime mode change via set_mode) tries
+     * to RESOURCE_CREATE_2D an id that still exists and fails. */
+    if (surface->resource_id != 0) {
+        (void)destroy_resource(surface->resource_id);
+    }
     release_page_backing(surface->physical_pages, surface->page_count, surface->virtual_address);
 }
 
@@ -3111,9 +3140,8 @@ int import_surface_ioctl(uint64_t argument) {
         return negative_error(SAVANXP_EINVAL);
     }
     const uint64_t page_count = page_count_for_bytes(info.buffer_size);
-    if (section_object->size_bytes < info.buffer_size ||
-        section_object->physical_pages == nullptr ||
-        section_object->page_count < page_count) {
+    uint64_t* backing_pages = resolve_import_pages(section_object, info, request.pixels_offset, page_count);
+    if (backing_pages == nullptr) {
         return negative_error(SAVANXP_EINVAL);
     }
 
@@ -3128,13 +3156,13 @@ int import_surface_ioctl(uint64_t argument) {
     imported->section = section_object;
     object::retain(&section_object->header);
 
-    if (!vm::map_kernel_pages(section_object->physical_pages, page_count, vm::kPageWrite, &imported->virtual_address)) {
+    if (!vm::map_kernel_pages(backing_pages, page_count, vm::kPageWrite, &imported->virtual_address)) {
         release_imported_surface(*imported);
         return negative_error(SAVANXP_EIO);
     }
 
     if (!create_resource(imported->resource_id, imported->info) ||
-        !attach_resource_backing(imported->resource_id, section_object->physical_pages, page_count)) {
+        !attach_resource_backing(imported->resource_id, backing_pages, page_count)) {
         release_imported_surface(*imported);
         return negative_error(SAVANXP_EIO);
     }
@@ -4012,9 +4040,8 @@ bool import_surface(savanxp_gpu_surface_import& request) {
     }
 
     const uint64_t page_count = page_count_for_bytes(info.buffer_size);
-    if (section_object->size_bytes < info.buffer_size ||
-        section_object->physical_pages == nullptr ||
-        section_object->page_count < page_count) {
+    uint64_t* backing_pages = resolve_import_pages(section_object, info, request.pixels_offset, page_count);
+    if (backing_pages == nullptr) {
         return false;
     }
 
@@ -4029,13 +4056,13 @@ bool import_surface(savanxp_gpu_surface_import& request) {
     imported->section = section_object;
     object::retain(&section_object->header);
 
-    if (!vm::map_kernel_pages(section_object->physical_pages, page_count, vm::kPageWrite, &imported->virtual_address)) {
+    if (!vm::map_kernel_pages(backing_pages, page_count, vm::kPageWrite, &imported->virtual_address)) {
         release_imported_surface(*imported);
         return false;
     }
 
     if (!create_resource(imported->resource_id, imported->info) ||
-        !attach_resource_backing(imported->resource_id, section_object->physical_pages, page_count)) {
+        !attach_resource_backing(imported->resource_id, backing_pages, page_count)) {
         release_imported_surface(*imported);
         return false;
     }
