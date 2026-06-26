@@ -21,6 +21,8 @@ $Script:ToolchainTools = @{
     "clang++"            = @{ Env = "SAVANXP_CLANGXX"; Manifest = "clangxx" }
     "ld.lld"             = @{ Env = "SAVANXP_LD";      Manifest = "lld" }
     "qemu-system-x86_64" = @{ Env = "SAVANXP_QEMU";    Manifest = "qemu" }
+    "haxe"               = @{ Env = "SAVANXP_HAXE";    Manifest = "haxe" }
+    "haxelib"            = @{ Env = "SAVANXP_HAXELIB"; Manifest = "haxelib" }
 }
 
 function Get-ToolchainManifest {

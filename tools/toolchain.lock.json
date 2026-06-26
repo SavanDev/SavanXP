@@ -13,5 +13,16 @@
     "sha256": "a8b29572afb4c6ad024b7de129c81033e9fd191b9e054e3a52ea0bed24ac19ef",
     "installer": "nsis",
     "index": "https://qemu.weilnetz.de/w64/"
+  },
+  "_haxelibs_note": "Targets Haxe->C++ del subsistema nativo. subsystems/native/build.ps1 los clona pineados a estos commits bajo toolchain/haxe-libs/ (ignorado por git). Haxe (el compilador) se resuelve via tools/Toolchain.ps1: env SAVANXP_HAXE > toolchain horneado > PATH.",
+  "haxelibs": {
+    "reflaxe": {
+      "url": "https://github.com/SomeRanDev/reflaxe",
+      "commit": "73a983112e039daad46b37912ab238df6bf0cf53"
+    },
+    "reflaxe.cpp": {
+      "url": "https://github.com/SomeRanDev/reflaxe.CPP",
+      "commit": "e07ab05a32ab9d2e2717ad9bc7d1c4e18f88927b"
+    }
   }
 }
