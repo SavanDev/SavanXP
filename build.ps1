@@ -66,6 +66,8 @@ $KernelSources = @(
     "kernel/ui.cpp",
     "kernel/virtio_pci.cpp",
     "kernel/virtio_gpu.cpp",
+    "kernel/fb_gpu.cpp",
+    "kernel/gpu_device.cpp",
     "kernel/virtio_input.cpp",
     "kernel/virtio_sound.cpp",
     "kernel/ps2.cpp",

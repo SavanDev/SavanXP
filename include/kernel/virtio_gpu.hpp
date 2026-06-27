@@ -3,11 +3,13 @@
 #include <stddef.h>
 
 #include "boot/boot_info.hpp"
+#include "kernel/display.hpp"
 #include "savanxp/syscall.h"
 
 namespace virtio_gpu {
 
 void initialize(const boot::FramebufferInfo& framebuffer);
+const display::Backend& backend();
 bool ready();
 bool present();
 void poll();
@@ -32,5 +34,8 @@ bool move_cursor(const savanxp_gpu_cursor_position& position);
 bool get_present_timeline(savanxp_gpu_present_timeline& timeline);
 bool wait_present(savanxp_gpu_present_wait& request);
 bool present_surface_batch(const savanxp_gpu_surface_present_batch& request);
+void release_session_resources();
+int create_present_event();
+int create_scanout_event();
 
 } // namespace virtio_gpu

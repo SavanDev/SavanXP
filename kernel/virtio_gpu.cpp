@@ -390,7 +390,6 @@ bool g_gpu_msix_enabled = false;
 constexpr uint8_t kGpuMsixVector = 49u;
 
 // Keep stable aliases while the driver is migrated away from namespace globals.
-device::Device& g_gpu_device = g_adapter.node;
 virtio_pci::Device& g_device = g_adapter.transport.device;
 virtio_pci::Queue& g_control_queue = g_adapter.transport.control_queue;
 virtio_pci::Queue& g_cursor_queue = g_adapter.cursor.queue;
@@ -437,15 +436,6 @@ volatile uint32_t& g_recovery_active = g_adapter.runtime.recovery_active;
 object::EventObject*& g_present_retire_event = g_adapter.events.present_retire_event;
 object::EventObject*& g_scanout_event = g_adapter.events.scanout_event;
 
-void initialize_device_node() {
-    g_gpu_device.name = "gpu0";
-    g_gpu_device.read = nullptr;
-    g_gpu_device.write = nullptr;
-    g_gpu_device.ioctl = nullptr;
-    g_gpu_device.close = nullptr;
-    g_gpu_device.can_read = nullptr;
-}
-
 void reset_adapter_state() {
     memset(&g_adapter.transport, 0, sizeof(g_adapter.transport));
     memset(&g_adapter.cursor, 0, sizeof(g_adapter.cursor));
@@ -454,7 +444,6 @@ void reset_adapter_state() {
     memset(&g_adapter.runtime, 0, sizeof(g_adapter.runtime));
     memset(&g_adapter.events, 0, sizeof(g_adapter.events));
     g_gpu_msix_enabled = false;
-    initialize_device_node();
     g_next_fence_id = 1;
     g_next_present_sequence = 1;
     g_irq_line = 0xffu;
@@ -3074,438 +3063,6 @@ ImportedSurface* allocate_imported_surface_slot() {
     return nullptr;
 }
 
-int set_mode_ioctl(uint64_t argument) {
-    if (!process::validate_user_range(argument, sizeof(savanxp_gpu_mode), true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    savanxp_gpu_mode mode = {};
-    if (!process::copy_from_user(&mode, argument, sizeof(mode))) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    const uint32_t requested_width = mode.width != 0 ? mode.width : g_framebuffer_info.width;
-    const uint32_t requested_height = mode.height != 0 ? mode.height : g_framebuffer_info.height;
-    if (requested_width == 0 || requested_height == 0) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if (mode.bpp != 0 && mode.bpp != 32u) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if (any_imported_surface_in_use()) {
-        return negative_error(SAVANXP_EBUSY);
-    }
-
-    if ((requested_width != g_framebuffer_info.width || requested_height != g_framebuffer_info.height) &&
-        !configure_primary_surface(requested_width, requested_height)) {
-        return negative_error(SAVANXP_EIO);
-    }
-
-    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
-    fill_mode_info(mode);
-    return process::copy_to_user(argument, &mode, sizeof(mode)) ? 0 : negative_error(SAVANXP_EINVAL);
-}
-
-int import_surface_ioctl(uint64_t argument) {
-    if (!process::validate_user_range(argument, sizeof(savanxp_gpu_surface_import), true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    savanxp_gpu_surface_import request = {};
-    if (!process::copy_from_user(&request, argument, sizeof(request))) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if (request.section_handle < 0) {
-        return negative_error(SAVANXP_EBADF);
-    }
-    process::Process* current = process::current();
-    if (current == nullptr) {
-        return negative_error(SAVANXP_EBADF);
-    }
-
-    if (static_cast<uint64_t>(request.section_handle) >= process::kMaxFileHandles) {
-        return negative_error(SAVANXP_EBADF);
-    }
-    process::HandleEntry& entry = current->handles[request.section_handle];
-    if (entry.object == nullptr || (entry.granted_access & object::access_query) == 0) {
-        return negative_error(SAVANXP_EBADF);
-    }
-    object::SectionObject* section_object = object::as_section(entry.object);
-    if (section_object == nullptr) {
-        return negative_error(SAVANXP_EBADF);
-    }
-
-    savanxp_fb_info info = {};
-    if (!normalize_import_info(request, info)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    const uint64_t page_count = page_count_for_bytes(info.buffer_size);
-    uint64_t* backing_pages = resolve_import_pages(section_object, info, request.pixels_offset, page_count);
-    if (backing_pages == nullptr) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    ImportedSurface* imported = allocate_imported_surface_slot();
-    if (imported == nullptr) {
-        return negative_error(SAVANXP_ENOMEM);
-    }
-
-    imported->flags = request.flags;
-    imported->page_count = page_count;
-    imported->info = info;
-    imported->section = section_object;
-    object::retain(&section_object->header);
-
-    if (!vm::map_kernel_pages(backing_pages, page_count, vm::kPageWrite, &imported->virtual_address)) {
-        release_imported_surface(*imported);
-        return negative_error(SAVANXP_EIO);
-    }
-
-    if (!create_resource(imported->resource_id, imported->info) ||
-        !attach_resource_backing(imported->resource_id, backing_pages, page_count)) {
-        release_imported_surface(*imported);
-        return negative_error(SAVANXP_EIO);
-    }
-
-    request.surface_id = static_cast<int32_t>(imported->surface_id);
-    request.width = imported->info.width;
-    request.height = imported->info.height;
-    request.pitch = imported->info.pitch;
-    request.bpp = imported->info.bpp;
-    request.buffer_size = imported->info.buffer_size;
-    return process::copy_to_user(argument, &request, sizeof(request)) ? 0 : negative_error(SAVANXP_EINVAL);
-}
-
-int release_surface_ioctl(uint64_t argument) {
-    const uint32_t surface_id = static_cast<uint32_t>(argument);
-    ImportedSurface* surface = imported_surface_at(surface_id);
-    if (surface == nullptr) {
-        return negative_error(SAVANXP_EBADF);
-    }
-    release_imported_surface(*surface);
-    return 0;
-}
-
-int present_surface_region_ioctl(uint64_t argument) {
-    if (!process::validate_user_range(argument, sizeof(savanxp_gpu_surface_present), true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    savanxp_gpu_surface_present present = {};
-    if (!process::copy_from_user(&present, argument, sizeof(present))) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    ImportedSurface* surface = imported_surface_at(present.surface_id);
-    if (surface == nullptr) {
-        return negative_error(SAVANXP_EBADF);
-    }
-    if (present.width == 0 || present.height == 0 ||
-        present.x >= surface->info.width || present.y >= surface->info.height ||
-        present.width > (surface->info.width - present.x) ||
-        present.height > (surface->info.height - present.y)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    if (!submit_imported_present(*surface, present.x, present.y, present.width, present.height, 0, nullptr)) {
-        return negative_error(SAVANXP_EIO);
-    }
-    if (surface->resource_id != g_scanout_resource_id) {
-        if (!wait_for_resource_idle(surface->resource_id)) {
-            return negative_error(SAVANXP_EIO);
-        }
-    } else {
-        service_queue_progress();
-    }
-    return 0;
-}
-
-int present_surface_batch_ioctl(uint64_t argument) {
-    savanxp_gpu_surface_present_batch batch = {};
-    ImportedSurface* surface = nullptr;
-    uint32_t x = 0;
-    uint32_t y = 0;
-    uint32_t width = 0;
-    uint32_t height = 0;
-
-    if (!process::validate_user_range(argument, sizeof(batch), true) ||
-        !process::copy_from_user(&batch, argument, sizeof(batch))) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if ((batch.flags & ~SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if (batch.rect_count > SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    surface = imported_surface_at(batch.surface_id);
-    if (surface == nullptr) {
-        return negative_error(SAVANXP_EBADF);
-    }
-    if (!normalize_present_batch_bounds(batch, *surface, x, y, width, height)) {
-        return 0;
-    }
-
-    if (!submit_imported_present(*surface, x, y, width, height, batch.present_cookie, &batch)) {
-        return negative_error(SAVANXP_EIO);
-    }
-    if (surface->resource_id != g_scanout_resource_id) {
-        if (!wait_for_resource_idle(surface->resource_id)) {
-            return negative_error(SAVANXP_EIO);
-        }
-    } else {
-        service_queue_progress();
-    }
-    return 0;
-}
-
-int get_stats_ioctl(uint64_t argument) {
-    if (!process::validate_user_range(argument, sizeof(g_gpu_stats), true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    return process::copy_to_user(argument, &g_gpu_stats, sizeof(g_gpu_stats))
-        ? 0
-        : negative_error(SAVANXP_EINVAL);
-}
-
-int get_connector_properties_ioctl(uint64_t argument) {
-    savanxp_gpu_connector_properties properties = {};
-    if (!process::validate_user_range(argument, sizeof(properties), true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    fill_connector_properties(properties);
-    return process::copy_to_user(argument, &properties, sizeof(properties))
-        ? 0
-        : negative_error(SAVANXP_EINVAL);
-}
-
-int get_present_timeline_ioctl(uint64_t argument) {
-    savanxp_gpu_present_timeline timeline = {};
-    if (!process::validate_user_range(argument, sizeof(timeline), true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    fill_present_timeline(timeline);
-    return process::copy_to_user(argument, &timeline, sizeof(timeline))
-        ? 0
-        : negative_error(SAVANXP_EINVAL);
-}
-
-int wait_present_ioctl(uint64_t argument) {
-    savanxp_gpu_present_wait request = {};
-    bool target_failed = false;
-
-    if (!process::validate_user_range(argument, sizeof(request), true) ||
-        !process::copy_from_user(&request, argument, sizeof(request))) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if (request.target_sequence != 0 &&
-        request.target_sequence > g_last_submitted_present_sequence) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if (request.target_sequence != 0 &&
-        !wait_for_present_sequence_internal(request.target_sequence, target_failed)) {
-        return negative_error(SAVANXP_ETIMEDOUT);
-    }
-
-    request.retired_sequence = g_last_retired_present_sequence;
-    request.pending_count = g_pending_present_count;
-    request.flags = current_present_timeline_flags();
-    if (target_failed) {
-        request.flags |= SAVANXP_GPU_PRESENT_TIMELINE_FLAG_TARGET_FAILED;
-    }
-    return process::copy_to_user(argument, &request, sizeof(request))
-        ? 0
-        : negative_error(SAVANXP_EINVAL);
-}
-
-int get_scanouts_ioctl(uint64_t argument) {
-    if (!process::validate_user_range(argument, sizeof(g_scanout_state), true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    refresh_cached_scanout_state();
-    return process::copy_to_user(argument, &g_scanout_state, sizeof(g_scanout_state))
-        ? 0
-        : negative_error(SAVANXP_EINVAL);
-}
-
-int refresh_scanouts_ioctl() {
-    return refresh_scanouts(true) ? 0 : negative_error(SAVANXP_EIO);
-}
-
-int set_cursor_ioctl(uint64_t argument) {
-    savanxp_gpu_cursor_image image = {};
-
-    if (!g_cursor_queue.enabled) {
-        return negative_error(SAVANXP_ENODEV);
-    }
-    if (!process::validate_user_range(argument, sizeof(image), true) ||
-        !process::copy_from_user(&image, argument, sizeof(image))) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    return configure_cursor_plane(image) ? 0 : negative_error(SAVANXP_EIO);
-}
-
-int move_cursor_ioctl(uint64_t argument) {
-    savanxp_gpu_cursor_position position = {};
-
-    if (!g_cursor_queue.enabled) {
-        return negative_error(SAVANXP_ENODEV);
-    }
-    if (!process::validate_user_range(argument, sizeof(position), true) ||
-        !process::copy_from_user(&position, argument, sizeof(position))) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
-    if (position.x >= g_framebuffer_info.width) {
-        position.x = g_framebuffer_info.width != 0 ? g_framebuffer_info.width - 1u : 0u;
-    }
-    if (position.y >= g_framebuffer_info.height) {
-        position.y = g_framebuffer_info.height != 0 ? g_framebuffer_info.height - 1u : 0u;
-    }
-    return move_cursor_plane(position) ? 0 : negative_error(SAVANXP_EIO);
-}
-
-int gpu_ioctl(uint64_t request, uint64_t argument) {
-    DriverBusyGuard guard;
-    switch (request) {
-        case GPU_IOC_GET_INFO: {
-            if (!process::validate_user_range(argument, sizeof(g_gpu_info), true)) {
-                return negative_error(SAVANXP_EINVAL);
-            }
-            return process::copy_to_user(argument, &g_gpu_info, sizeof(g_gpu_info)) ? 0 : negative_error(SAVANXP_EINVAL);
-        }
-        case GPU_IOC_ACQUIRE: {
-            const uint32_t pid = process::current_pid();
-            if (pid == 0) {
-                return negative_error(SAVANXP_EBADF);
-            }
-            return ui::acquire_graphics_session(pid) ? 0 : negative_error(SAVANXP_EBUSY);
-        }
-        case GPU_IOC_RELEASE:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            release_all_imported_surfaces();
-            release_cursor_plane();
-            ui::release_graphics_session(process::current_pid());
-            return 0;
-        case GPU_IOC_PRESENT: {
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            if (!process::validate_user_range(argument, g_framebuffer_info.buffer_size, false)) {
-                return negative_error(SAVANXP_EINVAL);
-            }
-            return virtio_gpu::present_from_kernel(reinterpret_cast<const void*>(argument), g_framebuffer_info.buffer_size)
-                ? 0
-                : negative_error(SAVANXP_EIO);
-        }
-        case GPU_IOC_PRESENT_REGION: {
-            savanxp_gpu_present_region region = {};
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            if (!process::validate_user_range(argument, sizeof(region), true) ||
-                !process::copy_from_user(&region, argument, sizeof(region))) {
-                return negative_error(SAVANXP_EINVAL);
-            }
-            if (region.pixels == 0 || region.source_pitch == 0 || region.width == 0 || region.height == 0 ||
-                region.x >= g_framebuffer_info.width || region.y >= g_framebuffer_info.height ||
-                region.width > (g_framebuffer_info.width - region.x) ||
-                region.height > (g_framebuffer_info.height - region.y)) {
-                return negative_error(SAVANXP_EINVAL);
-            }
-
-            const uint64_t row_bytes = static_cast<uint64_t>(region.width) * sizeof(uint32_t);
-            const uint64_t last_row = static_cast<uint64_t>(region.y + region.height - 1);
-            const uint64_t touched_bytes = (last_row * region.source_pitch) +
-                (static_cast<uint64_t>(region.x) * sizeof(uint32_t)) + row_bytes;
-            if (!process::validate_user_range(region.pixels, touched_bytes, false)) {
-                return negative_error(SAVANXP_EINVAL);
-            }
-
-            return virtio_gpu::present_region_from_kernel(
-                reinterpret_cast<const void*>(region.pixels),
-                region.source_pitch,
-                region.x,
-                region.y,
-                region.width,
-                region.height
-            ) ? 0 : negative_error(SAVANXP_EIO);
-        }
-        case GPU_IOC_SET_MODE:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            return set_mode_ioctl(argument);
-        case GPU_IOC_IMPORT_SECTION:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            return import_surface_ioctl(argument);
-        case GPU_IOC_RELEASE_SURFACE:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            return release_surface_ioctl(argument);
-        case GPU_IOC_PRESENT_SURFACE_REGION:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            return present_surface_region_ioctl(argument);
-        case GPU_IOC_WAIT_IDLE:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            virtio_gpu::wait_for_idle();
-            return 0;
-        case GPU_IOC_GET_STATS:
-            return get_stats_ioctl(argument);
-        case GPU_IOC_GET_PRESENT_TIMELINE:
-            return get_present_timeline_ioctl(argument);
-        case GPU_IOC_WAIT_PRESENT:
-            return wait_present_ioctl(argument);
-        case GPU_IOC_GET_CONNECTOR_PROPERTIES:
-            return get_connector_properties_ioctl(argument);
-        case GPU_IOC_GET_SCANOUTS:
-            return get_scanouts_ioctl(argument);
-        case GPU_IOC_REFRESH_SCANOUTS:
-            return refresh_scanouts_ioctl();
-        case GPU_IOC_PRESENT_SURFACE_BATCH:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            return present_surface_batch_ioctl(argument);
-        case GPU_IOC_CREATE_PRESENT_EVENT:
-            return export_driver_event_handle(g_present_retire_event);
-        case GPU_IOC_CREATE_SCANOUT_EVENT:
-            return export_driver_event_handle(g_scanout_event);
-        case GPU_IOC_SET_CURSOR:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            return set_cursor_ioctl(argument);
-        case GPU_IOC_MOVE_CURSOR:
-            if (!ui::owns_graphics_session(process::current_pid())) {
-                return negative_error(SAVANXP_EBUSY);
-            }
-            return move_cursor_ioctl(argument);
-        default:
-            return negative_error(SAVANXP_ENOSYS);
-    }
-}
-
-void gpu_close() {
-    DriverBusyGuard guard;
-    if (ui::owns_graphics_session(process::current_pid())) {
-        release_all_imported_surfaces();
-        release_cursor_plane();
-        ui::release_graphics_session(process::current_pid());
-    }
-}
-
 void release_queue(virtio_pci::Queue& queue) {
     if (queue.allocation.page_count != 0) {
         (void)memory::free_allocation(queue.allocation);
@@ -3870,13 +3427,8 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         return;
     }
 
-    g_gpu_device.ioctl = gpu_ioctl;
-    g_gpu_device.close = gpu_close;
-    if (!device::register_node("/dev/gpu0", &g_gpu_device, true)) {
-        fail_device("failed to register /dev/gpu0");
-        return;
-    }
-
+    // El nodo /dev/gpu0 lo registra gpu_device.cpp (dispatcher agnostico de
+    // backend); aca solo dejamos la consola apuntando a la superficie scanout.
     console::set_external_framebuffer(front_surface()->virtual_address, g_framebuffer_info);
     console::printf(
         "virtio-gpu: ready pci=%x:%x.%u scanout=%u mode=%ux%u\n",
@@ -4225,5 +3777,52 @@ bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
     service_queue_progress();
     return true;
 }
+
+void release_session_resources() {
+    DriverBusyGuard guard;
+    release_all_imported_surfaces();
+    release_cursor_plane();
+}
+
+int create_present_event() {
+    return export_driver_event_handle(g_present_retire_event);
+}
+
+int create_scanout_event() {
+    return export_driver_event_handle(g_scanout_event);
+}
+
+namespace {
+const display::Backend kBackend = {
+    ready,
+    poll,
+    framebuffer_info,
+    framebuffer_address,
+    wait_for_idle,
+    flush,
+    flush_rect,
+    present_from_kernel,
+    present_region_from_kernel,
+    get_info,
+    get_connector_properties,
+    set_mode,
+    import_surface,
+    release_surface,
+    present_surface_region,
+    present_surface_batch,
+    get_stats,
+    get_scanouts,
+    refresh_scanouts_now,
+    set_cursor,
+    move_cursor,
+    get_present_timeline,
+    wait_present,
+    release_session_resources,
+    create_present_event,
+    create_scanout_event,
+};
+} // namespace
+
+const display::Backend& backend() { return kBackend; }
 
 } // namespace virtio_gpu

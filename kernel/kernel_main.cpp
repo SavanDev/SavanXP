@@ -8,6 +8,9 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
+#include "kernel/display.hpp"
+#include "kernel/fb_gpu.hpp"
+#include "kernel/gpu_device.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
 #include "kernel/net.hpp"
@@ -141,6 +144,19 @@ namespace
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
     virtio_gpu::initialize(boot_info.framebuffer);
+    // Elegir el backend de display: virtio-gpu si el probe PCI lo encontro, si no
+    // el framebuffer plano sobre el scanout lineal de Limine (caso VirtualBox/VGA).
+    // El nodo /dev/gpu0 lo registra gpu_device sobre el backend elegido.
+    if (virtio_gpu::ready())
+    {
+        display::set_backend(virtio_gpu::backend());
+    }
+    else
+    {
+        fb_gpu::initialize(boot_info.framebuffer);
+        display::set_backend(fb_gpu::backend());
+    }
+    gpu_device::initialize();
     ui::initialize(boot_info.framebuffer);
     pcspeaker::initialize();
     power::initialize();
