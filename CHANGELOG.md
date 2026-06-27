@@ -12,6 +12,21 @@ Notas de corte:
 
 ### Agregado
 
+- **GPU HAL: backend de display intercambiable.** `namespace display` pasa de ser
+  un passthrough fijo a `virtio_gpu` a una indireccion real via `display::Backend`
+  (vtable). El registro de `/dev/gpu0` y todo `gpu_ioctl` se movieron a un
+  dispatcher agnostico del backend (`kernel/gpu_device.cpp`) que se registra
+  siempre y delega la operacion de hardware al backend activo. Nuevo backend
+  `kernel/fb_gpu.cpp`: compositor por software directo al framebuffer lineal de
+  Limine, sin dispositivo PCI, para correr cuando no hay virtio-gpu (VirtualBox /
+  QEMU `-vga std`). `kernel_main` autodetecta: virtio si el probe lo encuentra, si
+  no el framebuffer plano. El driver `virtio_gpu` no cambia su logica interna.
+  **Pendiente / limitacion conocida:** el fullscreen-exclusive F11 (cambio de modo
+  + flip de scanout zero-copy) es virtio-only; sobre el backend plano falla
+  (`fullscreen set_mode failed`) y el escritorio normal igual funciona. Falta
+  hacer que `enter_overlay_fullscreen` (`subsystems/posix/userland/desktop.c`)
+  degrade a fullscreen compositado por software en backends sin scanout — es lo
+  que falta para Doom a pantalla completa en VirtualBox.
 - **Fullscreen-exclusive para apps (tecla F11).** Una app marcada como
   fullscreen-capable (Doom, Gfx Demo) pasa a pantalla completa sin chrome: el
   compositor baja el modo de video del scanout a 640x400 e importa la propia
