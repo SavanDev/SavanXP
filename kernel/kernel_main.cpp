@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/acpi.hpp"
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
@@ -14,6 +15,7 @@
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/power.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ps2.hpp"
 #include "kernel/subsystem.hpp"
@@ -120,6 +122,8 @@ namespace
         panic("vmm: bootstrap failed");
     }
 
+    acpi::initialize(boot_info);
+
     tty::initialize();
     input::initialize();
     timer::initialize(1000);
@@ -139,6 +143,7 @@ namespace
     virtio_gpu::initialize(boot_info.framebuffer);
     ui::initialize(boot_info.framebuffer);
     pcspeaker::initialize();
+    power::initialize();
     virtio_sound::initialize();
     net::initialize();
     block::initialize();

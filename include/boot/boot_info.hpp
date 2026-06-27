@@ -46,6 +46,7 @@ struct BootInfo {
     const char* bootloader_version;
     FirmwareType firmware_type;
     uint64_t hhdm_offset;
+    uint64_t acpi_rsdp_address;
     FramebufferInfo framebuffer;
     const void* initramfs_address;
     uint64_t initramfs_size;

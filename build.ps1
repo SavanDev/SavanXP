@@ -70,6 +70,8 @@ $KernelSources = @(
     "kernel/virtio_sound.cpp",
     "kernel/ps2.cpp",
     "kernel/pcspeaker.cpp",
+    "kernel/power.cpp",
+    "kernel/acpi.cpp",
     "kernel/rtc.cpp",
     "kernel/heap.cpp",
     "kernel/net.cpp",

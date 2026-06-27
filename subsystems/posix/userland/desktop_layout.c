@@ -512,6 +512,97 @@ void desktop_start_menu_bounds(const struct savanxp_fb_info *info, int *x, int *
     *y = (int)info->height - DESKTOP_TASKBAR_HEIGHT - *height;
 }
 
+struct sx_rect desktop_power_button_rect(const struct savanxp_fb_info *info, int index)
+{
+    int menu_x = 0;
+    int menu_y = 0;
+    int menu_width = 0;
+    int menu_height = 0;
+    int content_x = 0;
+    int content_width = 0;
+    int footer_y = 0;
+    int gap = 8;
+    int button_width = 0;
+    int button_height = 0;
+
+    if (info == 0 || index < 0 || index >= desktop_power_item_count())
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+
+    desktop_start_menu_bounds(info, &menu_x, &menu_y, &menu_width, &menu_height);
+    content_x = desktop_start_menu_content_x(menu_x);
+    content_width = desktop_start_menu_content_width();
+    footer_y = desktop_start_menu_footer_y(menu_y, menu_height);
+    button_height = DESKTOP_MENU_FOOTER_HEIGHT - 6;
+    button_width = (content_width - 4 - gap) / 2;
+
+    return sx_rect_make(
+        content_x - 2 + (index * (button_width + gap)),
+        footer_y + 6,
+        button_width,
+        button_height);
+}
+
+int desktop_power_button_from_point(const struct savanxp_fb_info *info, int x, int y)
+{
+    int index;
+
+    for (index = 0; index < desktop_power_item_count(); ++index)
+    {
+        struct sx_rect rect = desktop_power_button_rect(info, index);
+        if (sx_rect_contains_point(rect, x, y))
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+struct sx_rect desktop_confirm_dialog_rect(const struct savanxp_fb_info *info)
+{
+    const int width = 300;
+    const int height = 132;
+
+    if (info == 0)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_make(
+        ((int)info->width - width) / 2,
+        ((int)info->height - height) / 2,
+        width,
+        height);
+}
+
+struct sx_rect desktop_confirm_no_rect(const struct savanxp_fb_info *info)
+{
+    struct sx_rect dialog = desktop_confirm_dialog_rect(info);
+    const int button_width = 92;
+    const int button_height = 28;
+
+    if (sx_rect_is_empty(dialog))
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_make(
+        dialog.x + dialog.width - button_width - 16,
+        dialog.y + dialog.height - button_height - 16,
+        button_width,
+        button_height);
+}
+
+struct sx_rect desktop_confirm_yes_rect(const struct savanxp_fb_info *info)
+{
+    struct sx_rect no_rect = desktop_confirm_no_rect(info);
+
+    if (sx_rect_is_empty(no_rect))
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_make(no_rect.x - no_rect.width - 12, no_rect.y, no_rect.width, no_rect.height);
+}
+
 struct sx_rect desktop_shortcut_rect(const struct savanxp_fb_info *info, int index)
 {
     int area_x = 0;

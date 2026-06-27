@@ -2030,7 +2030,7 @@ static int desktop_selftest(void)
         }
         else
         {
-            desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, &dirty);
+            desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, DESKTOP_CONFIRM_NONE, &dirty);
             signal_composed_batches(&session);
             if (present_frame(&session, &dirty) < 0)
             {
@@ -2132,6 +2132,7 @@ int main(int argc, char **argv)
     int menu_open = 0;
     int selected_index = 0;
     int selected_shortcut = -1;
+    int confirm_action = DESKTOP_CONFIRM_NONE;
     uint32_t last_buttons = 0;
     unsigned long last_clock_stamp = 0;
     unsigned long last_shortcut_click_ms = 0;
@@ -2375,6 +2376,45 @@ int main(int argc, char **argv)
                 cursor_y = desktop_clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session.gfx.info.height - 1);
                 current_hover_client = top_client_at_point(&session, cursor_x, cursor_y);
 
+                /* Dialogo de confirmacion de energia: modal, consume el evento de
+                 * click pero sigue redibujando el cursor para que no parezca
+                 * congelado mientras el dialogo esta abierto. */
+                if (confirm_action != DESKTOP_CONFIRM_NONE)
+                {
+                    if (left_pressed != 0 && left_was_pressed == 0)
+                    {
+                        if (sx_rect_contains_point(desktop_confirm_yes_rect(&session.gfx.info), cursor_x, cursor_y))
+                        {
+                            /* Estas llamadas no retornan si tienen exito. */
+                            if (confirm_action == DESKTOP_CONFIRM_REBOOT)
+                            {
+                                (void)power_reboot();
+                            }
+                            else
+                            {
+                                (void)power_shutdown();
+                            }
+                            puts_fd(2, "desktop: power action failed\n");
+                        }
+                        confirm_action = DESKTOP_CONFIRM_NONE;
+                        desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                    }
+                    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y)
+                    {
+                        if (session.hw_cursor_enabled)
+                        {
+                            (void)set_hw_cursor_position(&session, cursor_x, cursor_y, 1);
+                        }
+                        else
+                        {
+                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y);
+                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y);
+                        }
+                    }
+                    last_buttons = pressed_buttons;
+                    continue;
+                }
+
                 if (menu_open)
                 {
                     int hovered = desktop_selected_item_from_cursor(&session.gfx, cursor_x, cursor_y);
@@ -2394,12 +2434,24 @@ int main(int argc, char **argv)
                         ? -1
                         : desktop_shortcut_from_point(&session.gfx.info, cursor_x, cursor_y);
 
+                    int power_index = menu_open ? desktop_power_button_from_point(&session.gfx.info, cursor_x, cursor_y) : -1;
+
                     if (desktop_point_in_rect(cursor_x, cursor_y, 6, taskbar_y + 5, DESKTOP_START_BUTTON_WIDTH, DESKTOP_TASKBAR_HEIGHT - 9))
                     {
                         menu_open = !menu_open;
                         if (menu_open)
                         {
                             selected_index = 0;
+                        }
+                    }
+                    else if (menu_open && power_index >= 0)
+                    {
+                        const struct desktop_power_item *power = desktop_power_item_at(power_index);
+                        if (power != 0)
+                        {
+                            confirm_action = power->confirm;
+                            menu_open = 0;
+                            desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                         }
                     }
                     else if (menu_open && hovered >= 0)
@@ -2699,7 +2751,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, &dirty);
+            desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, confirm_action, &dirty);
             signal_composed_batches(&session);
             if (present_frame(&session, &dirty) < 0)
             {

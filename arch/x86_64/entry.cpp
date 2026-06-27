@@ -40,6 +40,13 @@ volatile limine_hhdm_request g_hhdm_request = {
 };
 
 [[gnu::used, gnu::section(".limine_requests")]]
+volatile limine_rsdp_request g_rsdp_request = {
+    .id = LIMINE_RSDP_REQUEST_ID,
+    .revision = 0,
+    .response = nullptr,
+};
+
+[[gnu::used, gnu::section(".limine_requests")]]
 volatile limine_framebuffer_request g_framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST_ID,
     .revision = 0,
@@ -125,6 +132,10 @@ boot::BootInfo build_boot_info() {
 
     if (g_hhdm_request.response != nullptr) {
         info.hhdm_offset = g_hhdm_request.response->offset;
+    }
+
+    if (g_rsdp_request.response != nullptr) {
+        info.acpi_rsdp_address = g_rsdp_request.response->address;
     }
 
     if (g_framebuffer_request.response != nullptr &&

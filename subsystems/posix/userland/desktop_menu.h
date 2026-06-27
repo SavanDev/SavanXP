@@ -19,8 +19,22 @@ struct desktop_menu_item
     uint32_t flags;
 };
 
+/* Accion de energia pendiente de confirmacion. */
+#define DESKTOP_CONFIRM_NONE 0
+#define DESKTOP_CONFIRM_SHUTDOWN 1
+#define DESKTOP_CONFIRM_REBOOT 2
+
+struct desktop_power_item
+{
+    const char *label;
+    int confirm; /* DESKTOP_CONFIRM_* */
+};
+
 int desktop_menu_item_count(void);
 const struct desktop_menu_item *desktop_menu_item_at(int index);
 const struct desktop_menu_item *desktop_find_menu_item_by_path(const char *path);
 int desktop_shortcut_count(void);
 const struct desktop_menu_item *desktop_shortcut_at(int index);
+
+int desktop_power_item_count(void);
+const struct desktop_power_item *desktop_power_item_at(int index);

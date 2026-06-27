@@ -546,7 +546,65 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
     }
 
     sx_painter_fill_rect(painter, sx_rect_make(content_x - 2, footer_y, desktop_start_menu_content_width() - 4, 1), gfx_rgb(146, 150, 156));
-    sx_painter_draw_text(painter, content_x, footer_y + 8, "Apps open in movable windows", gfx_rgb(82, 88, 96));
+
+    for (index = 0; index < desktop_power_item_count(); ++index)
+    {
+        const struct desktop_power_item *power = desktop_power_item_at(index);
+        struct sx_rect rect = desktop_power_button_rect(&gfx->info, index);
+        uint32_t accent = power != 0 && power->confirm == DESKTOP_CONFIRM_SHUTDOWN
+            ? gfx_rgb(176, 64, 52)
+            : gfx_rgb(58, 104, 190);
+        int text_x;
+
+        if (power == 0 || sx_rect_is_empty(rect))
+        {
+            continue;
+        }
+
+        draw_button(painter, rect, gfx_rgb(214, 217, 222), 0);
+        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 4, rect.y + 4, 3, rect.height - 8), accent);
+        text_x = rect.x + ((rect.width - gfx_text_width(power->label)) / 2);
+        sx_painter_draw_text(painter, text_x, rect.y + ((rect.height - 12) / 2), power->label, gfx_rgb(24, 28, 34));
+    }
+}
+
+static void draw_confirm_dialog(struct sx_painter *painter, const struct savanxp_fb_info *info, int confirm_action)
+{
+    struct sx_rect dialog = desktop_confirm_dialog_rect(info);
+    struct sx_rect yes_rect = desktop_confirm_yes_rect(info);
+    struct sx_rect no_rect = desktop_confirm_no_rect(info);
+    const char *title = confirm_action == DESKTOP_CONFIRM_REBOOT
+        ? "Reiniciar el sistema?"
+        : "Apagar el sistema?";
+    const char *detail = "Se cerraran las aplicaciones abiertas.";
+
+    if (sx_rect_is_empty(dialog))
+    {
+        return;
+    }
+
+    sx_painter_fill_rect(painter, dialog, gfx_rgb(206, 209, 214));
+    sx_painter_draw_frame(painter, dialog, gfx_rgb(46, 50, 56));
+    sx_painter_fill_rect(painter, sx_rect_make(dialog.x + 2, dialog.y + 2, dialog.width - 4, 22), gfx_rgb(58, 104, 190));
+    sx_painter_draw_text(painter, dialog.x + 10, dialog.y + 7, "Energia", gfx_rgb(255, 255, 255));
+    sx_painter_draw_text(painter, dialog.x + 14, dialog.y + 40, title, gfx_rgb(24, 28, 34));
+    sx_painter_draw_text(painter, dialog.x + 14, dialog.y + 62, detail, gfx_rgb(82, 88, 96));
+
+    draw_button(painter, yes_rect, gfx_rgb(214, 217, 222), 0);
+    sx_painter_draw_text(
+        painter,
+        yes_rect.x + ((yes_rect.width - gfx_text_width("Si")) / 2),
+        yes_rect.y + ((yes_rect.height - 12) / 2),
+        "Si",
+        gfx_rgb(24, 28, 34));
+
+    draw_button(painter, no_rect, gfx_rgb(214, 217, 222), 0);
+    sx_painter_draw_text(
+        painter,
+        no_rect.x + ((no_rect.width - gfx_text_width("No")) / 2),
+        no_rect.y + ((no_rect.height - 12) / 2),
+        "No",
+        gfx_rgb(24, 28, 34));
 }
 
 static void draw_cursor(struct sx_painter *painter, int x, int y)
@@ -688,6 +746,7 @@ enum desktop_layer_kind
     DESKTOP_LAYER_CLIENT,
     DESKTOP_LAYER_TASKBAR,
     DESKTOP_LAYER_MENU,
+    DESKTOP_LAYER_CONFIRM,
     DESKTOP_LAYER_CURSOR,
 };
 
@@ -699,7 +758,7 @@ struct desktop_layer
     const struct desktop_client *client;
 };
 
-#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 5)
+#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 6)
 
 static int client_is_drawable(const struct desktop_client *client)
 {
@@ -718,6 +777,7 @@ static void paint_layer(
     int menu_open,
     int selected_index,
     int selected_shortcut,
+    int confirm_action,
     int cursor_x,
     int cursor_y)
 {
@@ -735,6 +795,9 @@ static void paint_layer(
     case DESKTOP_LAYER_MENU:
         draw_start_menu(painter, &session->gfx, selected_index);
         break;
+    case DESKTOP_LAYER_CONFIRM:
+        draw_confirm_dialog(painter, &session->gfx.info, confirm_action);
+        break;
     case DESKTOP_LAYER_CURSOR:
         draw_cursor(painter, cursor_x, cursor_y);
         break;
@@ -744,7 +807,7 @@ static void paint_layer(
 }
 
 /* Back-to-front layer list for the current frame. */
-static int build_layers(struct desktop_session *session, int menu_open, int cursor_x, int cursor_y, struct desktop_layer *layers)
+static int build_layers(struct desktop_session *session, int menu_open, int confirm_action, int cursor_x, int cursor_y, struct desktop_layer *layers)
 {
     const struct savanxp_fb_info *info = &session->gfx.info;
     int count = 0;
@@ -807,6 +870,15 @@ static int build_layers(struct desktop_session *session, int menu_open, int curs
         ++count;
     }
 
+    if (confirm_action != DESKTOP_CONFIRM_NONE)
+    {
+        layers[count].kind = DESKTOP_LAYER_CONFIRM;
+        layers[count].opaque = 1;
+        layers[count].bounds = desktop_confirm_dialog_rect(info);
+        layers[count].client = 0;
+        ++count;
+    }
+
     if (!session->hw_cursor_enabled)
     {
         desktop_cursor_bounds(cursor_x, cursor_y, &cur_x, &cur_y, &cur_w, &cur_h);
@@ -827,6 +899,7 @@ void desktop_draw_desktop(
     int menu_open,
     int selected_index,
     int selected_shortcut,
+    int confirm_action,
     const struct desktop_dirty_rect *dirty)
 {
     /* Single-threaded compositor: keep the working sets off the stack. */
@@ -862,7 +935,7 @@ void desktop_draw_desktop(
         (void)sx_rect_set_add(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
     }
 
-    layer_count = build_layers(session, menu_open, cursor_x, cursor_y, layers);
+    layer_count = build_layers(session, menu_open, confirm_action, cursor_x, cursor_y, layers);
 
     /* Paint back-to-front; each layer only over the area not covered by an
      * opaque layer in front of it. */
@@ -900,7 +973,7 @@ void desktop_draw_desktop(
             }
             sx_painter_clear_clip(&painter);
             sx_painter_add_clip_rect(&painter, sub);
-            paint_layer(&painter, session, layer, menu_open, selected_index, selected_shortcut, cursor_x, cursor_y);
+            paint_layer(&painter, session, layer, menu_open, selected_index, selected_shortcut, confirm_action, cursor_x, cursor_y);
         }
     }
 }

@@ -97,6 +97,19 @@ struct limine_hhdm_request {
     LIMINE_PTR(struct limine_hhdm_response *) response;
 };
 
+#define LIMINE_RSDP_REQUEST_ID { LIMINE_COMMON_MAGIC, 0xc5e77b6b397e7b43, 0x27637845accdcf3c }
+
+struct limine_rsdp_response {
+    uint64_t revision;
+    uint64_t address;
+};
+
+struct limine_rsdp_request {
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_rsdp_response *) response;
+};
+
 #define LIMINE_FRAMEBUFFER_REQUEST_ID { LIMINE_COMMON_MAGIC, 0x9d5827dcd881dd75, 0xa3148604f6fab11b }
 
 struct limine_framebuffer {

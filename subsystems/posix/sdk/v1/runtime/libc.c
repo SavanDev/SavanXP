@@ -400,6 +400,26 @@ long audio_get_info(int fd, struct savanxp_audio_info* info) {
     return ioctl(fd, AUDIO_IOC_GET_INFO, (unsigned long)info);
 }
 
+int power_shutdown(void) {
+    long fd = open_mode("/dev/power", SAVANXP_OPEN_WRITE);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    long result = ioctl((int)fd, POWER_IOC_SHUTDOWN, 0);
+    close((int)fd);
+    return (int)result;
+}
+
+int power_reboot(void) {
+    long fd = open_mode("/dev/power", SAVANXP_OPEN_WRITE);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    long result = ioctl((int)fd, POWER_IOC_REBOOT, 0);
+    close((int)fd);
+    return (int)result;
+}
+
 long gpu_open(void) {
     return open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
 }

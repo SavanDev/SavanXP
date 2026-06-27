@@ -111,6 +111,9 @@ struct savanxp_gfx_context {
     uint32_t notified_height;
 };
 
+int power_shutdown(void);
+int power_reboot(void);
+
 long gfx_open(struct savanxp_gfx_context* context);
 long gfx_close(struct savanxp_gfx_context* context);
 long gfx_acquire(struct savanxp_gfx_context* context);

@@ -244,6 +244,7 @@ enum savanxp_ioctl_group {
     SAVANXP_IOCTL_GROUP_PCSPK = 0x1003,
     SAVANXP_IOCTL_GROUP_GPU = 0x1004,
     SAVANXP_IOCTL_GROUP_AUDIO = 0x1005,
+    SAVANXP_IOCTL_GROUP_POWER = 0x1006,
 };
 
 enum savanxp_net_ioctl {
@@ -304,6 +305,11 @@ enum savanxp_gpu_ioctl {
 
 enum savanxp_audio_ioctl {
     AUDIO_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 1),
+};
+
+enum savanxp_power_ioctl {
+    POWER_IOC_SHUTDOWN = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 1),
+    POWER_IOC_REBOOT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 2),
 };
 
 enum savanxp_socket_domain {

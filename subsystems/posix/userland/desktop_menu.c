@@ -14,9 +14,28 @@ static const struct desktop_menu_item k_menu_items[] = {
     {"Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_MOUSE_TEST, DESKTOP_RGB_LITERAL(156, 104, 38), 0},
 };
 
+static const struct desktop_power_item k_power_items[] = {
+    {"Apagar", DESKTOP_CONFIRM_SHUTDOWN},
+    {"Reiniciar", DESKTOP_CONFIRM_REBOOT},
+};
+
 int desktop_menu_item_count(void)
 {
     return (int)(sizeof(k_menu_items) / sizeof(k_menu_items[0]));
+}
+
+int desktop_power_item_count(void)
+{
+    return (int)(sizeof(k_power_items) / sizeof(k_power_items[0]));
+}
+
+const struct desktop_power_item *desktop_power_item_at(int index)
+{
+    if (index < 0 || index >= desktop_power_item_count())
+    {
+        return 0;
+    }
+    return &k_power_items[index];
 }
 
 const struct desktop_menu_item *desktop_menu_item_at(int index)

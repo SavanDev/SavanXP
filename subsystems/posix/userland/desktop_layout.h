@@ -10,7 +10,7 @@
 #define DESKTOP_MENU_PADDING 12
 #define DESKTOP_MENU_HEADER_HEIGHT 64
 #define DESKTOP_MENU_STRIP_WIDTH 44
-#define DESKTOP_MENU_FOOTER_HEIGHT 26
+#define DESKTOP_MENU_FOOTER_HEIGHT 34
 #define DESKTOP_TASKBAR_GAP 6
 #define DESKTOP_TASKBAR_BUTTON_MIN_WIDTH 58
 #define DESKTOP_TASKBAR_BUTTON_MAX_WIDTH 160
@@ -58,6 +58,11 @@ int desktop_start_menu_content_width(void);
 int desktop_start_menu_items_y(int menu_y);
 int desktop_start_menu_footer_y(int menu_y, int menu_height);
 void desktop_start_menu_bounds(const struct savanxp_fb_info *info, int *x, int *y, int *width, int *height);
+struct sx_rect desktop_power_button_rect(const struct savanxp_fb_info *info, int index);
+int desktop_power_button_from_point(const struct savanxp_fb_info *info, int x, int y);
+struct sx_rect desktop_confirm_dialog_rect(const struct savanxp_fb_info *info);
+struct sx_rect desktop_confirm_yes_rect(const struct savanxp_fb_info *info);
+struct sx_rect desktop_confirm_no_rect(const struct savanxp_fb_info *info);
 struct sx_rect desktop_shortcut_rect(const struct savanxp_fb_info *info, int index);
 int desktop_shortcut_from_point(const struct savanxp_fb_info *info, int x, int y);
 void desktop_cursor_bounds(int cursor_x, int cursor_y, int *x, int *y, int *width, int *height);
