@@ -669,6 +669,36 @@ function Run-Qemu([switch]$WaitForDebugger) {
     & $qemu @args
 }
 
+function Stop-AutomationQemu($Process, [int]$MonitorPort) {
+    if ($null -eq $Process -or $Process.HasExited) {
+        return
+    }
+    # Apagado ordenado: pedirle a QEMU que cierre por el monitor para que vacie
+    # sus backends de bloque y cierre el archivo de disco limpiamente, en vez de
+    # un TerminateProcess que puede dejar metadata SVFS2 a medio escribir (journal
+    # en vuelo). Si el monitor no responde, caemos al kill forzado de siempre.
+    if ($MonitorPort -gt 0) {
+        try {
+            $client = [System.Net.Sockets.TcpClient]::new()
+            $connect = $client.BeginConnect("127.0.0.1", $MonitorPort, $null, $null)
+            if ($connect.AsyncWaitHandle.WaitOne(2000) -and $client.Connected) {
+                $client.EndConnect($connect)
+                $stream = $client.GetStream()
+                $payload = [System.Text.Encoding]::ASCII.GetBytes("quit`n")
+                $stream.Write($payload, 0, $payload.Length)
+                $stream.Flush()
+            }
+            $client.Close()
+        } catch {
+            # Best-effort: ignoramos y dejamos que actue el fallback.
+        }
+        if ($Process.WaitForExit(3000)) {
+            return
+        }
+    }
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+}
+
 function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel -AutomationCommand $AutomationCommand
@@ -687,6 +717,14 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
     if (Test-Path $SmokeStderrLog) {
         Remove-Item $SmokeStderrLog -Force
     }
+
+    # Puerto libre para el monitor HMP, usado por Stop-AutomationQemu para un
+    # apagado ordenado (vacia el disco y cierra el archivo antes de salir).
+    $monitorListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $monitorListener.Start()
+    $monitorPort = ([System.Net.IPEndPoint]$monitorListener.LocalEndpoint).Port
+    $monitorListener.Stop()
+
     $args = @(
         "-machine", "q35,pcspk-audiodev=audio0",
         "-m", "256M",
@@ -709,6 +747,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-serial", "file:$SmokeSerialLog",
         "-debugcon", "file:$DebugConLog",
         "-global", "isa-debugcon.iobase=0xe9",
+        "-monitor", "tcp:127.0.0.1:$monitorPort,server,nowait",
         "-no-reboot",
         "-no-shutdown"
     )
@@ -728,12 +767,12 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
             $content = Get-Content $SmokeSerialLog -Raw
             if ($content -match [regex]::Escape($SuccessToken)) {
                 Start-Sleep -Milliseconds 2000
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                Stop-AutomationQemu $process $monitorPort
                 Write-Host $SuccessToken
                 return
             }
             if ($content -match [regex]::Escape($FailureToken)) {
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                Stop-AutomationQemu $process $monitorPort
                 throw "$FailureToken. Revisar $SmokeSerialLog"
             }
             if ($process.HasExited) {
@@ -742,7 +781,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         }
     } finally {
         if (-not $process.HasExited) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Stop-AutomationQemu $process $monitorPort
         }
     }
 

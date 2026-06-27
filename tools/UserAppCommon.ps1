@@ -341,13 +341,19 @@ function Set-Svfs2Superblock([byte[]]$Buffer, [int]$Offset, [uint32]$Sequence, [
 }
 
 function Get-Svfs2BitmapBit([byte[]]$Buffer, [uint32]$Bit) {
-    $byteIndex = [int]($Bit / 8)
+    # OJO: usar division entera (shift), no [int]($Bit / 8): el operador / de
+    # PowerShell devuelve double y [int] redondea (banker's rounding), con lo
+    # que bit%8>=5 cae en el byte equivocado y desincroniza con el indexado
+    # floor del kernel (kernel/svfs.cpp bitmap_test/bitmap_set).
+    $byteIndex = [int]($Bit -shr 3)
     $shift = [int]($Bit % 8)
     return ($Buffer[$byteIndex] -band (1 -shl $shift)) -ne 0
 }
 
 function Set-Svfs2BitmapBit([byte[]]$Buffer, [uint32]$Bit, [bool]$Value) {
-    $byteIndex = [int]($Bit / 8)
+    # Misma division entera que Get-Svfs2BitmapBit; ver nota alli sobre el
+    # redondeo de [int]($Bit / 8).
+    $byteIndex = [int]($Bit -shr 3)
     $shift = [int]($Bit % 8)
     $mask = [byte](1 -shl $shift)
     if ($Value) {

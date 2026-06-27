@@ -104,6 +104,20 @@ Notas de corte:
   (`0xffffffff00001000` en vez de `0x1000`) para cualquier BAR de memoria de
   64 bits menor a 4 GiB e impidiendo mapearlos (entre ellos la tabla MSI-X).
   Ahora complementa en 32 bits cuando el tamano entra en 4 GiB.
+- `Get-Svfs2BitmapBit`/`Set-Svfs2BitmapBit` (instalador host-side de SVFS2 en
+  `tools/UserAppCommon.ps1`) calculaban el indice de byte con `[int]($Bit / 8)`,
+  que en PowerShell devuelve un `double` y `[int]` redondea (banker's rounding)
+  en vez de truncar: para cualquier bit con `bit % 8 >= 5` (y algunos `= 4`) el
+  bit caia en el byte equivocado, desincronizando el inode/block bitmap con el
+  indexado floor del kernel (`kernel/svfs.cpp`). El kernel veia esos inodos como
+  libres y los reasignaba durante la operacion (p. ej. archivos temporales del
+  smoke), zerando el inodo del archivo original y dejando la entrada de
+  directorio colgante (sintoma: "inode esperado N pero se leyo 0" tras un ciclo
+  de boot). Ahora usan division entera (`-shr 3`).
+- Apagado ordenado de QEMU en `Run-AutomationQemu` (smoke/selftest/soak): en vez
+  de `Stop-Process -Force`, se pide `quit` por el monitor HMP para que QEMU
+  vacie sus backends de bloque y cierre el archivo de disco limpiamente, con
+  fallback al kill forzado si el monitor no responde.
 
 ## [0.3.0] - 2026-06-18
 
