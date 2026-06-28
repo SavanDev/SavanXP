@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "run", "debug", "smoke", "desktop-smoke", "gpu-soak", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "desktop-smoke", "gpu-soak", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -22,6 +22,7 @@ $DiskRoot = Join-Path $ProjectRoot "diskfs"
 $BusyBoxPortRoot = Join-Path $ProjectRoot "vendor\\busybox-port"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
 $DiskImage = Join-Path $BuildRoot "disk.img"
+$IsoImage = Join-Path $BuildRoot "SavanXP.iso"
 $ToolRoot = Join-Path $ProjectRoot "tools"
 $SubsystemRoot = Join-Path $ProjectRoot "subsystems"
 $PosixRoot = Join-Path $SubsystemRoot "posix"
@@ -57,6 +58,7 @@ $KernelSources = @(
     "arch/x86_64/cpu_init.cpp",
     "arch/x86_64/timer.cpp",
     "kernel/kernel_main.cpp",
+    "kernel/boot_screen.cpp",
     "kernel/console.cpp",
     "kernel/device.cpp",
     "kernel/display.cpp",
@@ -555,6 +557,31 @@ function Install-BusyBox {
     }
 }
 
+function ConvertTo-CygwinPath([string]$WindowsPath) {
+    $full = [System.IO.Path]::GetFullPath($WindowsPath)
+    if ($full -notmatch '^([A-Za-z]):[\\/](.*)$') {
+        throw "No se pudo convertir '$WindowsPath' a una ruta de Cygwin."
+    }
+    $drive = $Matches[1].ToLowerInvariant()
+    $rest = $Matches[2] -replace '\\', '/'
+    return "/cygdrive/$drive/$rest"
+}
+
+function Install-LimineImageFiles {
+    New-Directory (Join-Path $BootRoot "limine")
+    New-Directory $EfiBootRoot
+
+    Copy-Item (Join-Path $LimineRoot "BOOTX64.EFI") (Join-Path $EfiBootRoot "BOOTX64.EFI") -Force
+
+    foreach ($file in @("limine-bios-cd.bin", "limine-bios.sys", "limine-uefi-cd.bin")) {
+        $source = Join-Path $LimineRoot $file
+        if (-not (Test-Path $source)) {
+            throw "No se encontro $file en tools/limine. Vuelve a ejecutar el build para regenerar Limine."
+        }
+        Copy-Item $source (Join-Path $BootRoot "limine\\$file") -Force
+    }
+}
+
 function Build-Kernel([string]$AutomationCommand = "") {
     $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
     $ld = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
@@ -622,12 +649,68 @@ function Build-Kernel([string]$AutomationCommand = "") {
     }
 
     Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $ImageRoot "limine.conf") -Force
-    New-Directory (Join-Path $BootRoot "limine")
     Copy-Item $KernelElf (Join-Path $BootRoot "kernel.elf") -Force
     Copy-Item $InitramfsPath (Join-Path $BootRoot "initramfs.cpio") -Force
+    Install-LimineImageFiles
     Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $BootRoot "limine\\limine.conf") -Force
-    Copy-Item (Join-Path $LimineRoot "BOOTX64.EFI") (Join-Path $EfiBootRoot "BOOTX64.EFI") -Force
     Set-Content -Path (Join-Path $ImageRoot "startup.nsh") -Value "fs0:\EFI\BOOT\BOOTX64.EFI" -NoNewline
+}
+
+function Build-Iso {
+    $xorriso = Require-Executable "xorriso" (Get-ToolchainCandidates "xorriso")
+    Build-Kernel
+
+    if (Test-Path $IsoImage) {
+        Remove-Item $IsoImage -Force
+    }
+
+    # El xorriso horneado es un build de Cygwin: no traduce rutas Windows
+    # (ni "C:\..." ni "C:/...") como absolutas, las trata como relativas al
+    # cwd. Hay que pasarle la forma /cygdrive/<unidad>/... que reconoce.
+    $isoImageCygwin = ConvertTo-CygwinPath $IsoImage
+    $imageRootCygwin = ConvertTo-CygwinPath $ImageRoot
+
+    # -eltorito-alt-boot es obligatorio entre el "-b" (BIOS) y el "-e" (EFI):
+    # sin el, la segunda entrada de boot reemplaza a la primera en el catalogo
+    # El Torito en vez de coexistir, y el firmware BIOS se queda sin entrada
+    # que arrancar ("could not read from CDROM").
+    $xorrisoArgs = @(
+        "-as", "mkisofs",
+        "-b", "boot/limine/limine-bios-cd.bin",
+        "-no-emul-boot",
+        "-boot-load-size", "4",
+        "-boot-info-table",
+        "-eltorito-alt-boot",
+        "-e", "boot/limine/limine-uefi-cd.bin",
+        "-no-emul-boot",
+        "-efi-boot-part",
+        "--efi-boot-image",
+        "--protective-msdos-label",
+        "-iso-level", "3",
+        "-V", "SAVANXP",
+        "-o", $isoImageCygwin,
+        $imageRootCygwin
+    )
+
+    & $xorriso @xorrisoArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion de la ISO con xorriso."
+    }
+
+    $limineInstaller = Join-Path $LimineRoot "limine.exe"
+    if (-not (Test-Path $limineInstaller)) {
+        $limineInstaller = Join-Path $LimineRoot "limine"
+    }
+    if (-not (Test-Path $limineInstaller)) {
+        throw "No se encontro el instalador de Limine para completar el arranque BIOS de la ISO."
+    }
+
+    & $limineInstaller bios-install $IsoImage
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo limine bios-install sobre $IsoImage."
+    }
+
+    Write-Host "ISO generada: $IsoImage"
 }
 
 function Run-Qemu([switch]$WaitForDebugger) {
@@ -811,6 +894,9 @@ function Run-GpuSoakQemu([int]$Iterations) {
 switch ($Command) {
     "build" {
         Build-Kernel
+    }
+    "iso" {
+        Build-Iso
     }
     "run" {
         Run-Qemu

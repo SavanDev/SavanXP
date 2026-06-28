@@ -346,6 +346,7 @@ struct savanxp_fb_present_region {
 enum savanxp_gpu_backend {
     SAVANXP_GPU_BACKEND_NONE = 0,
     SAVANXP_GPU_BACKEND_VIRTIO = 1,
+    SAVANXP_GPU_BACKEND_FRAMEBUFFER = 2,
 };
 
 enum savanxp_gpu_info_flags {

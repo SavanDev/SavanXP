@@ -464,7 +464,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         .pitch = g_fb_info.pitch,
         .bpp = g_fb_info.bpp,
         .buffer_size = g_fb_info.buffer_size,
-        .backend = SAVANXP_GPU_BACKEND_NONE,
+        .backend = SAVANXP_GPU_BACKEND_FRAMEBUFFER,
         .flags = 0,
     };
 }

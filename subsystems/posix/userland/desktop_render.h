@@ -32,4 +32,5 @@ void desktop_draw_desktop(
     int selected_index,
     int selected_shortcut,
     int confirm_action,
+    int welcome_visible,
     const struct desktop_dirty_rect *dirty);

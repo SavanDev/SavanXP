@@ -14,6 +14,13 @@
     "installer": "nsis",
     "index": "https://qemu.weilnetz.de/w64/"
   },
+  "_xorriso_note": "Herramienta opcional para '.\\build.ps1 iso'. Se resuelve con SAVANXP_XORRISO > toolchain/toolchain.json:xorriso > PATH. Build prebuildeado de cygwin (xorriso.exe + cygwin1.dll + cygiconv-2.dll); pineado por commit en un fork propio (SavanDev/xorriso-exe-for-windows) para que no cambie con el tiempo.",
+  "xorriso": {
+    "version": "9236798071b26ab7032cd82b4a5635fcf7c1409c",
+    "url": "https://github.com/SavanDev/xorriso-exe-for-windows/archive/9236798071b26ab7032cd82b4a5635fcf7c1409c.zip",
+    "sha256": "fff12dd784155542d57018b208391928c9a3f3e4e856c1f1d01341042d1d129f",
+    "archive": "zip"
+  },
   "_haxelibs_note": "Targets Haxe->C++ del subsistema nativo. subsystems/native/build.ps1 los clona pineados a estos commits bajo toolchain/haxe-libs/ (ignorado por git). Haxe (el compilador) se resuelve via tools/Toolchain.ps1: env SAVANXP_HAXE > toolchain horneado > PATH.",
   "haxelibs": {
     "reflaxe": {

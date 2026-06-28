@@ -85,6 +85,7 @@ Ioctl groups:
 Tipos compartidos:
 
 - `struct savanxp_fb_info`
+- `enum savanxp_gpu_backend` (`NONE`, `VIRTIO`, `FRAMEBUFFER`)
 - `struct savanxp_gpu_stats`
 - `struct savanxp_gpu_scanout_state`
 - `struct savanxp_gpu_cursor_image`

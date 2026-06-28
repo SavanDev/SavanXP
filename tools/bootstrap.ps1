@@ -2,9 +2,10 @@
 param(
     # Re-descarga y re-extrae aunque ya exista el toolchain.
     [switch]$Force,
-    # Omite LLVM/QEMU si ya los tenes resueltos por otra via.
+    # Omite LLVM/QEMU/xorriso si ya los tenes resueltos por otra via.
     [switch]$SkipLlvm,
-    [switch]$SkipQemu
+    [switch]$SkipQemu,
+    [switch]$SkipXorriso
 )
 
 Set-StrictMode -Version Latest
@@ -65,6 +66,11 @@ function Expand-TarArchive([string]$Archive, [string]$Destination) {
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo al extraer '$Archive' con tar."
     }
+}
+
+function Expand-ZipArchive([string]$Archive, [string]$Destination) {
+    Ensure-Directory $Destination
+    Expand-Archive -Path $Archive -DestinationPath $Destination -Force
 }
 
 function Install-Llvm($Spec) {
@@ -171,6 +177,46 @@ function Install-Qemu($Spec) {
     return $target
 }
 
+function Install-Xorriso($Spec) {
+    $target = Join-Path $ToolchainRoot "xorriso"
+    $xorrisoExe = Join-Path $target "xorriso.exe"
+    if ((Test-Path $xorrisoExe) -and -not $Force) {
+        Write-Step "xorriso ya presente en $target (usa -Force para re-instalar)"
+        return $target
+    }
+
+    if (Test-Path $target) {
+        Remove-Item -Recurse -Force $target
+    }
+
+    Ensure-Directory $CacheRoot
+    $archive = Join-Path $CacheRoot ("xorriso-" + $Spec.version + "." + $Spec.archive)
+    if ($Force -or -not (Test-Path $archive)) {
+        Get-RemoteFile $Spec.url $archive
+    }
+    Confirm-FileHash $archive $Spec.sha256 "xorriso $($Spec.version)"
+
+    Write-Step "Extrayendo xorriso..."
+    $staging = Join-Path $CacheRoot "xorriso-staging"
+    if (Test-Path $staging) {
+        Remove-Item -Recurse -Force $staging
+    }
+    Expand-ZipArchive $archive $staging
+
+    # El zip de GitHub expande a una carpeta <repo>-<commit>/ ; la normalizamos a toolchain/xorriso.
+    $inner = Get-ChildItem -Path $staging -Directory | Select-Object -First 1
+    if (-not $inner) {
+        throw "El archivo de xorriso no contenia la carpeta esperada."
+    }
+    Move-Item -Path $inner.FullName -Destination $target
+    Remove-Item -Recurse -Force $staging
+
+    if (-not (Test-Path $xorrisoExe)) {
+        throw "Tras instalar xorriso no se encontro $xorrisoExe"
+    }
+    return $target
+}
+
 function Resolve-OvmfFromQemu([string]$QemuRoot) {
     $share = Join-Path $QemuRoot "share"
     $candidates = @(
@@ -218,8 +264,13 @@ if (-not $SkipQemu) {
     }
 }
 
+if (-not $SkipXorriso) {
+    $xorrisoRoot = Install-Xorriso $lock.xorriso
+    $manifest["xorriso"] = Join-Path $xorrisoRoot "xorriso.exe"
+}
+
 # Fusiona con el manifiesto previo para no perder claves de un run parcial.
-if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu)) {
+if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu -or $SkipXorriso)) {
     $existing = Get-Content -Raw -Path $ManifestPath | ConvertFrom-Json
     foreach ($prop in $existing.PSObject.Properties) {
         if (-not $manifest.Contains($prop.Name)) {

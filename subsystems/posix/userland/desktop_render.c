@@ -607,6 +607,90 @@ static void draw_confirm_dialog(struct sx_painter *painter, const struct savanxp
         gfx_rgb(24, 28, 34));
 }
 
+static struct sx_rect welcome_rect(const struct savanxp_fb_info *info)
+{
+    int width = 520;
+    int height = 152;
+
+    if (info == 0 || info->width == 0 || info->height == 0)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    if ((int)info->width < width + 48)
+    {
+        width = (int)info->width - 48;
+    }
+    if (width < 280)
+    {
+        width = (int)info->width - 16;
+    }
+    if ((int)info->height < height + DESKTOP_TASKBAR_HEIGHT + 32)
+    {
+        height = 128;
+    }
+    return sx_rect_make(
+        ((int)info->width - width) / 2,
+        ((int)info->height - DESKTOP_TASKBAR_HEIGHT - height) / 2,
+        width,
+        height);
+}
+
+static const char *gpu_backend_label(uint32_t backend)
+{
+    switch (backend)
+    {
+    case SAVANXP_GPU_BACKEND_VIRTIO:
+        return "VirtIO GPU";
+    case SAVANXP_GPU_BACKEND_FRAMEBUFFER:
+        return "Framebuffer UEFI";
+    default:
+        return "GPU basica";
+    }
+}
+
+static void draw_welcome(struct sx_painter *painter, const struct desktop_session *session)
+{
+    struct sx_rect rect;
+    int title_x;
+    int version_x;
+    const char *title = "Bienvenido a " SAVANXP_SYSTEM_NAME;
+    const char *detail = "Sesion grafica iniciada";
+    const char *backend = session != 0 ? gpu_backend_label(session->gpu_info.backend) : "GPU basica";
+
+    if (painter == 0 || session == 0)
+    {
+        return;
+    }
+
+    rect = welcome_rect(&session->gfx.info);
+    if (sx_rect_is_empty(rect))
+    {
+        return;
+    }
+
+    sx_painter_fill_rect(painter, rect, gfx_rgb(214, 218, 224));
+    sx_painter_draw_frame(painter, rect, gfx_rgb(42, 48, 58));
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x + 2, rect.y + 2, rect.width - 4, 28), gfx_rgb(34, 112, 148));
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x + 2, rect.y + 30, rect.width - 4, 2), gfx_rgb(18, 80, 106));
+
+    title_x = rect.x + ((rect.width - gfx_text_width(title)) / 2);
+    version_x = rect.x + ((rect.width - gfx_text_width(SAVANXP_DISPLAY_NAME)) / 2);
+    sx_painter_draw_text(painter, title_x, rect.y + 10, title, gfx_rgb(255, 255, 255));
+    sx_painter_draw_text(painter, version_x, rect.y + 50, SAVANXP_DISPLAY_NAME, gfx_rgb(24, 28, 34));
+    sx_painter_draw_text(
+        painter,
+        rect.x + ((rect.width - gfx_text_width(detail)) / 2),
+        rect.y + 78,
+        detail,
+        gfx_rgb(70, 78, 88));
+    sx_painter_draw_text(
+        painter,
+        rect.x + ((rect.width - gfx_text_width(backend)) / 2),
+        rect.y + 104,
+        backend,
+        gfx_rgb(36, 96, 126));
+}
+
 static void draw_cursor(struct sx_painter *painter, int x, int y)
 {
     struct sx_bitmap cursor_bitmap;
@@ -745,6 +829,7 @@ enum desktop_layer_kind
     DESKTOP_LAYER_BACKGROUND = 0,
     DESKTOP_LAYER_CLIENT,
     DESKTOP_LAYER_TASKBAR,
+    DESKTOP_LAYER_WELCOME,
     DESKTOP_LAYER_MENU,
     DESKTOP_LAYER_CONFIRM,
     DESKTOP_LAYER_CURSOR,
@@ -792,6 +877,9 @@ static void paint_layer(
     case DESKTOP_LAYER_TASKBAR:
         draw_taskbar(painter, session, menu_open);
         break;
+    case DESKTOP_LAYER_WELCOME:
+        draw_welcome(painter, session);
+        break;
     case DESKTOP_LAYER_MENU:
         draw_start_menu(painter, &session->gfx, selected_index);
         break;
@@ -807,7 +895,14 @@ static void paint_layer(
 }
 
 /* Back-to-front layer list for the current frame. */
-static int build_layers(struct desktop_session *session, int menu_open, int confirm_action, int cursor_x, int cursor_y, struct desktop_layer *layers)
+static int build_layers(
+    struct desktop_session *session,
+    int menu_open,
+    int confirm_action,
+    int welcome_visible,
+    int cursor_x,
+    int cursor_y,
+    struct desktop_layer *layers)
 {
     const struct savanxp_fb_info *info = &session->gfx.info;
     int count = 0;
@@ -860,6 +955,15 @@ static int build_layers(struct desktop_session *session, int menu_open, int conf
     layers[count].client = 0;
     ++count;
 
+    if (welcome_visible)
+    {
+        layers[count].kind = DESKTOP_LAYER_WELCOME;
+        layers[count].opaque = 1;
+        layers[count].bounds = welcome_rect(info);
+        layers[count].client = 0;
+        ++count;
+    }
+
     if (menu_open)
     {
         desktop_start_menu_bounds(info, &menu_x, &menu_y, &menu_w, &menu_h);
@@ -900,6 +1004,7 @@ void desktop_draw_desktop(
     int selected_index,
     int selected_shortcut,
     int confirm_action,
+    int welcome_visible,
     const struct desktop_dirty_rect *dirty)
 {
     /* Single-threaded compositor: keep the working sets off the stack. */
@@ -935,7 +1040,7 @@ void desktop_draw_desktop(
         (void)sx_rect_set_add(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
     }
 
-    layer_count = build_layers(session, menu_open, confirm_action, cursor_x, cursor_y, layers);
+    layer_count = build_layers(session, menu_open, confirm_action, welcome_visible, cursor_x, cursor_y, layers);
 
     /* Paint back-to-front; each layer only over the area not covered by an
      * opaque layer in front of it. */

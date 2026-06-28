@@ -5,6 +5,7 @@
 
 #include "kernel/acpi.hpp"
 #include "kernel/block.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
@@ -105,32 +106,44 @@ namespace
 {
     arch::x86_64::initialize_cpu();
 
+    boot_screen::initialize(boot_info.framebuffer);
+    if (boot_screen::ready())
+    {
+        console::set_framebuffer_console_enabled(false);
+        boot_screen::show(4, "Preparando CPU");
+    }
+
     console::printf("%s booting...\n", SAVANXP_DISPLAY_NAME);
 
+    boot_screen::show(12, "Inicializando memoria fisica");
     memory::initialize(boot_info);
     if (!memory::ready())
     {
         panic("pmm: no usable memory");
     }
 
+    boot_screen::show(20, "Inicializando heap");
     heap::initialize();
     if (!heap::ready())
     {
         panic("heap: bootstrap failed");
     }
 
+    boot_screen::show(28, "Activando memoria virtual");
     vm::initialize(boot_info);
     if (!vm::ready())
     {
         panic("vmm: bootstrap failed");
     }
 
+    boot_screen::show(36, "Detectando firmware");
     acpi::initialize(boot_info);
 
     tty::initialize();
     input::initialize();
     timer::initialize(1000);
     pci::initialize();
+    boot_screen::show(46, "Inicializando entrada");
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();
     process::initialize();
@@ -141,8 +154,10 @@ namespace
     {
         panic("subsystem: registro de dispatch incompleto");
     }
+    boot_screen::show(56, "Cargando userland");
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
+    boot_screen::show(68, "Preparando display");
     virtio_gpu::initialize(boot_info.framebuffer);
     // Elegir el backend de display: virtio-gpu si el probe PCI lo encontro, si no
     // el framebuffer plano sobre el scanout lineal de Limine (caso VirtualBox/VGA).
@@ -158,11 +173,13 @@ namespace
     }
     gpu_device::initialize();
     ui::initialize(boot_info.framebuffer);
+    boot_screen::show(80, "Inicializando dispositivos");
     pcspeaker::initialize();
     power::initialize();
     virtio_sound::initialize();
     net::initialize();
     block::initialize();
+    boot_screen::show(90, "Montando almacenamiento");
     svfs::initialize();
 
     if (!vfs::ready())
@@ -211,5 +228,6 @@ namespace
         disk_mounted ? "mounted" : "offline");
     console::write_line("");
 
+    boot_screen::show(100, "Iniciando bienvenida");
     process::start_init("/bin/init");
 }

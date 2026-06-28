@@ -2030,7 +2030,7 @@ static int desktop_selftest(void)
         }
         else
         {
-            desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, DESKTOP_CONFIRM_NONE, &dirty);
+            desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, DESKTOP_CONFIRM_NONE, 0, &dirty);
             signal_composed_batches(&session);
             if (present_frame(&session, &dirty) < 0)
             {
@@ -2140,6 +2140,8 @@ int main(int argc, char **argv)
     int drag_offset_x = 0;
     int drag_offset_y = 0;
     int last_shortcut_click = -1;
+    int welcome_visible = 1;
+    unsigned long welcome_until_ms = 0;
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
@@ -2153,6 +2155,7 @@ int main(int argc, char **argv)
         return 1;
     }
     (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
+    welcome_until_ms = uptime_ms() + 3500UL;
 
     {
         char clock_text[6];
@@ -2220,6 +2223,11 @@ int main(int argc, char **argv)
         {
             while ((count = read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
+                if (welcome_visible && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+                {
+                    welcome_visible = 0;
+                    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                }
                 if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_F11)
                 {
                     /* Toggle fullscreen-exclusive for the active app. Intercepted
@@ -2365,6 +2373,14 @@ int main(int argc, char **argv)
                 pressed_buttons = mouse_event.buttons;
                 left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
                 right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
+
+                if (welcome_visible &&
+                    ((left_pressed != 0 && left_was_pressed == 0) ||
+                     (right_pressed != 0 && (last_buttons & SAVANXP_MOUSE_BUTTON_RIGHT) == 0)))
+                {
+                    welcome_visible = 0;
+                    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                }
 
                 if (!drag_overlay_slot_active(&session, drag_overlay_slot))
                 {
@@ -2716,6 +2732,12 @@ int main(int argc, char **argv)
             }
         }
 
+        if (welcome_visible && uptime_ms() >= welcome_until_ms)
+        {
+            welcome_visible = 0;
+            desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+        }
+
         {
             int frame_ready = 1;
 
@@ -2751,7 +2773,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, confirm_action, &dirty);
+            desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, confirm_action, welcome_visible, &dirty);
             signal_composed_batches(&session);
             if (present_frame(&session, &dirty) < 0)
             {

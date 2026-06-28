@@ -35,18 +35,19 @@ La via recomendada es hornear un toolchain local autocontenido:
 .\tools\bootstrap.ps1
 ```
 
-Eso descarga versiones fijadas (LLVM/Clang con `ld.lld`, QEMU y el firmware
-OVMF que viene con QEMU) a `toolchain/` (ignorado por git) y escribe el
-manifiesto `toolchain/toolchain.json` que `build.ps1` consume. Las versiones
-estan fijadas en `tools/toolchain.lock.json`; actualizar una herramienta es
-editar ese archivo.
+Eso descarga versiones fijadas (LLVM/Clang con `ld.lld`, QEMU con el firmware
+OVMF que trae, y `xorriso` para generar ISOs) a `toolchain/` (ignorado por
+git) y escribe el manifiesto `toolchain/toolchain.json` que `build.ps1`
+consume. Las versiones estan fijadas en `tools/toolchain.lock.json`;
+actualizar una herramienta es editar ese archivo. `xorriso` se puede omitir
+con `-SkipXorriso` si ya lo tenes resuelto por otra via.
 
 `build.ps1` no contiene rutas de ninguna maquina concreta: resuelve cada
 herramienta en este orden y se queda con la primera que exista:
 
 1. override explicito por variable de entorno
    (`SAVANXP_CLANG`, `SAVANXP_CLANGXX`, `SAVANXP_LD`, `SAVANXP_QEMU`,
-   `OVMF_CODE` / `OVMF_VARS`)
+   `SAVANXP_XORRISO`, `OVMF_CODE` / `OVMF_VARS`)
 2. el toolchain horneado en `toolchain/`
 3. el `PATH` del sistema
 
@@ -75,6 +76,18 @@ Importante: el build normal no debe recrear `build/disk.img` de forma
 incondicional. La imagen persistente se conserva entre builds salvo corrupcion
 real o incompatibilidad de formato.
 
+Generar una ISO booteable:
+
+```powershell
+.\build.ps1 iso
+```
+
+La ISO queda en `build/SavanXP.iso`. Ese comando requiere `xorriso`, resuelto
+por `SAVANXP_XORRISO`, por `toolchain/toolchain.json` o por el `PATH`, y usa el
+arbol EFI ya preparado por el build. Si queres conservar datos de `/disk` al
+arrancar en VirtualBox u otro hipervisor, adjunta tambien `build/disk.img` como
+disco adicional.
+
 ## Ejecucion
 
 Arrancar el sistema:
@@ -88,6 +101,8 @@ Otras variantes disponibles:
 ```powershell
 .\build.ps1 debug
 .\build.ps1 smoke
+.\build.ps1 desktop-smoke
+.\build.ps1 gpu-soak
 .\build.ps1 clean
 ```
 
@@ -96,6 +111,8 @@ Notas practicas:
 - `run` inicia QEMU con sesion grafica y salida serie en la terminal.
 - `debug` conserva el flujo de arranque orientado a depuracion.
 - `smoke` ejecuta una prueba automatizada headless y deja logs en `build/`.
+- `desktop-smoke` ejercita el compositor grafico.
+- `gpu-soak` estresa el camino de presentacion de GPU.
 - `clean` elimina artefactos de compilacion y puede forzar la recreacion del
   entorno en el siguiente build.
 
