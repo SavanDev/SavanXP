@@ -167,7 +167,7 @@ Contrato actual:
   existiendo `/dev/input0` y `/dev/mouse0`.
 - bajo QEMU, el kernel puede respaldar `/dev/mouse0` con un backend absoluto
   `virtio-tablet-pci`, traducido a deltas para preservar la ABI 1.1
-- `/dev/gpu0` queda reservado como ABI de bajo nivel para `desktop`,
+- `/dev/gpu0` queda reservado como ABI de bajo nivel para `compositord`,
   `gputest` y tooling diagnostico (`GPU_IOC_PRESENT*` incluidos).
 - hay `mmap` / `munmap` anónimo básico; no hay `mmap` file-backed, ventanas
   arbitrarias ni rueda en v1

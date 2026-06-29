@@ -51,8 +51,8 @@ Notas graficas:
 - `gfx_*` es el camino grafico soportado para apps normales.
 - `gfx_open` espera la superficie cliente entregada por `desktop`; si la app
   no fue lanzada como cliente del compositor, falla.
-- `/dev/gpu0` queda como interfaz de bajo nivel para compositor, tooling y
-  diagnostico directo.
+- `/dev/gpu0` queda como interfaz de bajo nivel para `compositord`, tooling y
+  diagnostico directo; apps graficas normales usan `gfx_*`.
 
 Ioctl groups visibles:
 

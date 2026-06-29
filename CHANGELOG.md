@@ -12,6 +12,14 @@ Notas de corte:
 
 ### Agregado
 
+- **Compositor grafico separado (`/bin/compositord`).** El acceso directo a
+  `/dev/gpu0`, import de la superficie de display, presents batched, timeline de
+  present y cursor hardware se movieron a un daemon userland propio. `desktop`
+  arranca el daemon con pipes y una seccion de framebuffer heredada, y habla un
+  protocolo binario versionado definido en
+  `subsystems/posix/sdk/v1/include/savanxp/compositor_protocol.h`. El shell de
+  escritorio conserva politica de ventanas, menu/taskbar y routing de input, pero
+  ya no abre `/dev/gpu0` ni ejecuta ioctls GPU directamente.
 - **GPU HAL: backend de display intercambiable.** `namespace display` pasa de ser
   un passthrough fijo a `virtio_gpu` a una indireccion real via `display::Backend`
   (vtable). El registro de `/dev/gpu0` y todo `gpu_ioctl` se movieron a un
@@ -20,24 +28,17 @@ Notas de corte:
   `kernel/fb_gpu.cpp`: compositor por software directo al framebuffer lineal de
   Limine, sin dispositivo PCI, para correr cuando no hay virtio-gpu (VirtualBox /
   QEMU `-vga std`). `kernel_main` autodetecta: virtio si el probe lo encuentra, si
-  no el framebuffer plano. El driver `virtio_gpu` no cambia su logica interna.
-  **Pendiente / limitacion conocida:** el fullscreen-exclusive F11 (cambio de modo
-  + flip de scanout zero-copy) es virtio-only; sobre el backend plano falla
-  (`fullscreen set_mode failed`) y el escritorio normal igual funciona. Falta
-  hacer que `enter_overlay_fullscreen` (`subsystems/posix/userland/desktop.c`)
-  degrade a fullscreen compositado por software en backends sin scanout — es lo
-  que falta para Doom a pantalla completa en VirtualBox.
-- **Fullscreen-exclusive para apps (tecla F11).** Una app marcada como
+  no el framebuffer plano. El driver `virtio_gpu` no cambia su logica interna. El
+  pendiente historico de F11 sobre framebuffer plano queda resuelto por
+  fullscreen compositado por software en el shell.
+- **Fullscreen compositado para apps (tecla F11).** Una app marcada como
   fullscreen-capable (Doom, Gfx Demo) pasa a pantalla completa sin chrome: el
-  compositor baja el modo de video del scanout a 640x400 e importa la propia
-  superficie del cliente como recurso de scanout, presentandola directo (flip)
-  sin componer ni copiar en CPU. El host (QEMU `zoom-to-fit`) escala los 640x400
-  a la ventana, de modo que el upscale lo hace el host y no la CPU de la app:
-  Doom fullscreen pasa de ~4 a ~17 FPS. Las apps fullscreen-capable se asignan a
-  un buffer 640x400 tight (la misma superficie en ventana y fullscreen, solo
-  cambia el modo de video). Incluye soporte de `pixels_offset` page-aligned en
-  `GPU_IOC_IMPORT_SECTION` para importar la region de pixeles de una seccion de
-  cliente (con cabecera) como recurso de scanout.
+  shell escala el buffer 640x400 de la app al framebuffer compartido y presenta el
+  resultado via `compositord`, sin cambio de modo ni flip directo de scanout de
+  cliente. Esto funciona tanto sobre virtio-gpu como sobre el backend framebuffer
+  plano. Las apps fullscreen-capable mantienen un buffer 640x400 tight (la misma
+  superficie en ventana y fullscreen). Se conserva el layout v3 con
+  `pixels_offset` page-aligned por compatibilidad ABI.
 - **Subsistema nativo (Haxe) — puntapie de Fase 0.** Cadena probada end-to-end
   al nivel de compile/link: `Main.hx` -> `reflaxe.CPP` -> C++17 -> clang++
   freestanding -> ELF nativo de SavanXP. Nuevo `subsystems/native/` con un SDK
