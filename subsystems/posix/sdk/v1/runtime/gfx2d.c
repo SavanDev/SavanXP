@@ -411,6 +411,10 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
         {
             return;
         }
+        gfx_blit_text_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
+                            painter->clip_rect.x, painter->clip_rect.y,
+                            sx_rect_right(painter->clip_rect), sx_rect_bottom(painter->clip_rect));
+        return;
     }
     gfx_blit_text(painter->target->pixels, &painter->target->info, x, y, text, colour);
 }

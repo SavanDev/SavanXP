@@ -2232,6 +2232,7 @@ int main(int argc, char **argv)
                         {
                             confirm_action = power->confirm;
                             menu_open = 0;
+                            selected_shortcut = -1;
                             desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                         }
                     }

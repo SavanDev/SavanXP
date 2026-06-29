@@ -764,8 +764,13 @@ int gfx_text_height(void) {
     return SX_NOTO_LINE_HEIGHT;
 }
 
-/* y is the top of the text box; glyphs sit on a baseline SX_NOTO_ASCENT below. */
-void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+/* y is the top of the text box; glyphs sit on a baseline SX_NOTO_ASCENT below.
+ * has_clip restricts blended pixels to [clip_x0, clip_x1) x [clip_y0, clip_y1)
+ * so a glyph that only partially overlaps the caller's clip rect does not get
+ * fully re-blended outside it (matters when a layer is repainted once per
+ * occlusion fragment, which would otherwise double-blend the same glyph). */
+static void gfx_blit_text_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                                int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
     int pen_x = x;
     int baseline = y + SX_NOTO_ASCENT;
     while (text != 0 && *text != '\0') {
@@ -773,16 +778,33 @@ void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, 
         int row;
         int column;
         for (row = 0; row < g->rows; ++row) {
+            int py = baseline - g->top + row;
+            if (has_clip && (py < clip_y0 || py >= clip_y1)) {
+                continue;
+            }
             for (column = 0; column < g->width; ++column) {
+                int px = pen_x + g->left + column;
+                if (has_clip && (px < clip_x0 || px >= clip_x1)) {
+                    continue;
+                }
                 unsigned int alpha = kNotoCoverage[g->offset + (unsigned int)row * g->width + column];
                 if (alpha != 0) {
-                    gfx_pixel_blend(pixels, info, pen_x + g->left + column, baseline - g->top + row, colour, alpha);
+                    gfx_pixel_blend(pixels, info, px, py, colour, alpha);
                 }
             }
         }
         pen_x += g->advance;
         ++text;
     }
+}
+
+void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+    gfx_blit_text_impl(pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
+}
+
+void gfx_blit_text_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                         int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    gfx_blit_text_impl(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
 }
 
 /* --- Fixed 8x16 UniFont (monospace terminal text) ----------------------- */
