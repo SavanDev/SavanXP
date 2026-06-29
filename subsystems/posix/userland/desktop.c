@@ -679,6 +679,33 @@ static int desktop_stage_failed(const char *stage, long result)
     return -1;
 }
 
+/* Cap on consecutive reconnects without a clean frame in between, so a daemon
+   that dies on every spawn surfaces as a hard failure instead of a spin loop. */
+#define DESKTOP_MAX_COMPOSITOR_RECOVERIES 8
+
+/* Respawn compositord after it died mid-session. The display section and the
+   shell's backbuffer outlive the daemon, so a successful reconnect re-displays
+   the current frame and restores the cursor without a re-render. Returns 0 on
+   success; the caller forces a full repaint so subsequent damage stays correct. */
+static int recover_compositor(struct desktop_session *session)
+{
+    int result;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    result = desktop_compositor_reconnect(&session->compositor);
+    if (result < 0)
+    {
+        return desktop_stage_failed("reconnect compositord", result);
+    }
+
+    eprintf("desktop: compositord reconnected after fault\n");
+    return 0;
+}
+
 static int route_packet(int fd, const void *packet, size_t size)
 {
     return fd >= 0 && write(fd, packet, size) == (long)size;
@@ -1615,10 +1642,13 @@ static int desktop_selftest(void)
     const int kTargetFrames = 60;
     const int kCursorX = 40;
     const int kCursorY = 40;
+    const int kKillDaemonAtFrame = 20;
     int frames_presented = 0;
     int fullscreen_frames = 0;
     int iteration = 0;
     int failed = 0;
+    int recovery_armed = 1;
+    int recovery_validated = 0;
     uint64_t baseline_retired = 0;
     uint64_t consumed_submit = 0;
 
@@ -1733,6 +1763,15 @@ static int desktop_selftest(void)
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
+            /* A present that fails because the daemon link dropped (here, our own
+               injected kill below) must recover transparently and keep going. */
+            if (!desktop_compositor_connected(&session.compositor) &&
+                recover_compositor(&session) == 0)
+            {
+                recovery_validated = 1;
+                desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                continue;
+            }
             puts_fd(2, "DESKTOP SMOKE FAIL present\n");
             failed = 1;
             break;
@@ -1747,11 +1786,29 @@ static int desktop_selftest(void)
            client retire event and frees its batch slots for the next frame. */
         if (sync_pending_present(&session, 1, 0) < 0)
         {
+            if (!desktop_compositor_connected(&session.compositor) &&
+                recover_compositor(&session) == 0)
+            {
+                recovery_validated = 1;
+                desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                continue;
+            }
             puts_fd(2, "DESKTOP SMOKE FAIL drain present\n");
             failed = 1;
             break;
         }
         ++frames_presented;
+
+        /* Simulate a mid-session compositord crash once, then require the run to
+           still reach its frame target so recovery is proven, not just compiled. */
+        if (recovery_armed && frames_presented == kKillDaemonAtFrame)
+        {
+            recovery_armed = 0;
+            if (session.compositor.pid > 0)
+            {
+                (void)kill((int)session.compositor.pid, SAVANXP_SIGKILL);
+            }
+        }
 
         if (frames_presented >= kTargetFrames)
         {
@@ -1775,6 +1832,11 @@ static int desktop_selftest(void)
     if (!failed && fullscreen_frames < 1)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL fullscreen frame never presented\n");
+        failed = 1;
+    }
+    if (!failed && !recovery_validated)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL compositor reconnect not exercised\n");
         failed = 1;
     }
     if (!failed)
@@ -1844,6 +1906,7 @@ int main(int argc, char **argv)
     int last_shortcut_click = -1;
     int welcome_visible = 1;
     unsigned long welcome_until_ms = 0;
+    int compositor_recoveries = 0;
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
@@ -2445,7 +2508,18 @@ int main(int argc, char **argv)
 
             if (sync_pending_present(&session, 0, &frame_ready) < 0)
             {
-                break;
+                if (!desktop_compositor_connected(&session.compositor) &&
+                    compositor_recoveries < DESKTOP_MAX_COMPOSITOR_RECOVERIES &&
+                    recover_compositor(&session) == 0)
+                {
+                    ++compositor_recoveries;
+                    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                    frame_ready = 1;
+                }
+                else
+                {
+                    break;
+                }
             }
             if (!desktop_dirty_rect_valid(&dirty))
             {
@@ -2462,9 +2536,18 @@ int main(int argc, char **argv)
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
+            if (!desktop_compositor_connected(&session.compositor) &&
+                compositor_recoveries < DESKTOP_MAX_COMPOSITOR_RECOVERIES &&
+                recover_compositor(&session) == 0)
+            {
+                ++compositor_recoveries;
+                desktop_dirty_rect_reset(&dirty);
+                continue;
+            }
             puts_fd(2, "desktop: present failed\n");
             break;
         }
+        compositor_recoveries = 0;
         desktop_dirty_rect_reset(&dirty);
     }
 
