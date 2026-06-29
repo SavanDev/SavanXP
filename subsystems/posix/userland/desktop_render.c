@@ -655,7 +655,7 @@ static void draw_welcome(struct sx_painter *painter, const struct desktop_sessio
     int version_x;
     const char *title = "Bienvenido a " SAVANXP_SYSTEM_NAME;
     const char *detail = "Sesion grafica iniciada";
-    const char *backend = session != 0 ? gpu_backend_label(session->gpu_info.backend) : "GPU basica";
+    const char *backend = session != 0 ? gpu_backend_label(session->compositor.gpu_info.backend) : "GPU basica";
 
     if (painter == 0 || session == 0)
     {
@@ -739,7 +739,19 @@ static void draw_client(struct sx_painter *painter, const struct desktop_client 
     }
 
     sx_bitmap_wrap(&bitmap, client->pixels, &client->surface_info, SX_PIXEL_FORMAT_BGRX8888);
-    sx_painter_blit_bitmap(painter, &bitmap, surface_rect.x, surface_rect.y);
+    if (surface_rect.width != (int)client->surface_info.width ||
+        surface_rect.height != (int)client->surface_info.height)
+    {
+        sx_painter_draw_scaled_bitmap_nearest(
+            painter,
+            &bitmap,
+            surface_rect,
+            sx_rect_make(0, 0, (int)client->surface_info.width, (int)client->surface_info.height));
+    }
+    else
+    {
+        sx_painter_blit_bitmap(painter, &bitmap, surface_rect.x, surface_rect.y);
+    }
 }
 
 static long rect_set_total_area(const struct sx_rect_set *set)
@@ -921,6 +933,29 @@ static int build_layers(
     layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
     layers[count].client = 0;
     ++count;
+
+    if (session->fullscreen_slot >= 0 && session->fullscreen_slot < DESKTOP_MAX_OVERLAY_CLIENTS)
+    {
+        const struct desktop_client *fullscreen_client = &session->overlay_clients[session->fullscreen_slot];
+        if (client_is_drawable(fullscreen_client))
+        {
+            layers[count].kind = DESKTOP_LAYER_CLIENT;
+            layers[count].opaque = 1;
+            layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
+            layers[count].client = fullscreen_client;
+            ++count;
+        }
+        if (!session->hw_cursor_enabled)
+        {
+            desktop_cursor_bounds(cursor_x, cursor_y, &cur_x, &cur_y, &cur_w, &cur_h);
+            layers[count].kind = DESKTOP_LAYER_CURSOR;
+            layers[count].opaque = 0;
+            layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);
+            layers[count].client = 0;
+            ++count;
+        }
+        return count;
+    }
 
     if (client_is_drawable(&session->shell_client))
     {

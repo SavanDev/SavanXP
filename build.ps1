@@ -121,8 +121,10 @@ $UserPrograms = @(
     @{ Name = "tcpget"; Source = "subsystems/posix/userland/tcpget.c" },
     @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
     @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c" },
+    @{ Name = "compositord"; Source = "subsystems/posix/userland/compositord.c" },
     @{ Name = "desktop"; Sources = @(
         "subsystems/posix/userland/desktop.c",
+        "subsystems/posix/userland/desktop_compositor_client.c",
         "subsystems/posix/userland/desktop_icons.c",
         "subsystems/posix/userland/desktop_menu.c",
         "subsystems/posix/userland/desktop_layout.c",

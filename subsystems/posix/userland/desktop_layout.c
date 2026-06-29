@@ -185,7 +185,9 @@ struct sx_rect desktop_client_surface_rect(const struct desktop_client *client)
     }
     if (!client->frame_visible)
     {
-        return sx_rect_make(client->window_x, client->window_y, (int)client->surface_info.width, (int)client->surface_info.height);
+        int width = client->window_width > 0 ? client->window_width : (int)client->surface_info.width;
+        int height = client->window_height > 0 ? client->window_height : (int)client->surface_info.height;
+        return sx_rect_make(client->window_x, client->window_y, width, height);
     }
     return sx_rect_make(
         client->window_x + DESKTOP_WINDOW_BORDER,

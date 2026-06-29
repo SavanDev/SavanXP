@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libc.h"
+#include "desktop_compositor_client.h"
 
 #define DESKTOP_MAX_OVERLAY_CLIENTS 12
 
@@ -40,14 +41,11 @@ struct desktop_client
     int minimized;
     int maximized;
     int active;
-    /* Fullscreen-exclusive (direct scanout flip). fullscreen_capable is set at
-     * launch for apps whose surface is allocated at full-scanout capacity;
-     * fullscreen tracks the active state; scanout_surface_id is the client
-     * section imported as a scanout resource while fullscreen. fs_restore_*
-     * snapshot the windowed geometry to restore on exit. */
+    /* Fullscreen is composited by software. fullscreen_capable is set at launch
+     * for apps whose surface is sized for a low fullscreen mode; fullscreen
+     * tracks the active state and fs_restore_* snapshots windowed geometry. */
     int fullscreen_capable;
     int fullscreen;
-    uint32_t scanout_surface_id;
     int fs_restore_window_x;
     int fs_restore_window_y;
     int fs_restore_surface_width;
@@ -59,16 +57,9 @@ struct desktop_client
 struct desktop_session
 {
     struct savanxp_gfx_context gfx;
-    struct savanxp_gpu_info gpu_info;
-    int gpu_fd;
-    int gpu_present_event_fd;
+    struct desktop_compositor_connection compositor;
     int input_fd;
     int mouse_fd;
-    int display_section_fd;
-    uint32_t display_surface_id;
-    uint64_t pending_present_sequence;
-    void *display_view;
-    uint32_t *display_pixels;
     int hw_cursor_enabled;
     int active_client_kind;
     int active_overlay_slot;
