@@ -7,6 +7,7 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
+#include "kernel/display.hpp"
 #include "kernel/elf.hpp"
 #include "kernel/input.hpp"
 #include "kernel/net.hpp"
@@ -1512,6 +1513,11 @@ void terminate_process(process::Process& proc, int exit_code) {
     proc.exit_code = exit_code;
     note_parent_sigchld(proc);
     release_all_handles(proc);
+    /* A clean exit releases the GPU via the device close handler in the owner's
+       own context; a kill runs that handler in the killer's context, where the
+       owner check fails. Reclaim the session here by pid so a crashed compositor
+       does not leave the GPU acquired forever. */
+    display::release_session_for(exiting_pid);
     proc.state = process::State::zombie;
     wake_waiting_parent(proc);
     reparent_orphaned_children(exiting_pid);

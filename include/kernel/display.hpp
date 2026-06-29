@@ -55,6 +55,11 @@ void* framebuffer_address();
 bool acquire_session(uint32_t pid);
 void release_session(uint32_t pid);
 bool owns_session(uint32_t pid);
+/* Release the graphics session and its backend resources, but only if `pid`
+   currently owns the session. Safe to call for any exiting process: it is a
+   no-op unless that pid held the session, so it reclaims the GPU when a client
+   (e.g. the compositor daemon) is killed instead of closing its fd cleanly. */
+void release_session_for(uint32_t pid);
 
 bool wait_for_idle();
 bool flush();

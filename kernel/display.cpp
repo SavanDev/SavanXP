@@ -20,6 +20,16 @@ bool acquire_session(uint32_t pid) { return ui::acquire_graphics_session(pid); }
 void release_session(uint32_t pid) { ui::release_graphics_session(pid); }
 bool owns_session(uint32_t pid) { return ui::owns_graphics_session(pid); }
 
+void release_session_for(uint32_t pid) {
+    if (!ui::owns_graphics_session(pid)) {
+        return;
+    }
+    if (g_backend != nullptr) {
+        g_backend->release_session_resources();
+    }
+    ui::release_graphics_session(pid);
+}
+
 bool wait_for_idle() { if (g_backend != nullptr) { g_backend->wait_for_idle(); } return true; }
 bool flush() { return g_backend != nullptr && g_backend->flush(); }
 bool flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) { return g_backend != nullptr && g_backend->flush_rect(x, y, width, height); }
