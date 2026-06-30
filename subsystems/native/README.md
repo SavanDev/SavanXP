@@ -14,9 +14,9 @@ plazo de una VM en el SO al estilo Java/ART en Android. Se construye en
 El ABI nativo se diseña **una sola vez**; AOT y HashLink apuntan al mismo
 contrato, así que migrar el runtime no debería tocar el código Haxe.
 
-## Estado: Fase 0 (puntapié) — LISTO
+## Estado: Fases 0 y 1 — LISTAS (verificadas en QEMU)
 
-Cadena probada end-to-end al nivel de compile/link:
+Cadena probada end-to-end, ejecutándose dentro de SavanXP real:
 
 ```
 Main.hx  ──haxe──►  reflaxe.CPP  ──►  C++17  ──clang++ freestanding──►  ELF nativo
@@ -25,6 +25,13 @@ Main.hx  ──haxe──►  reflaxe.CPP  ──►  C++17  ──clang++ frees
 `build.ps1` produce `build/native/nativehello.elf`, un ELF estático de SavanXP
 nacido del [Main.hx](haxe/Main.hx) de validación, que escribe "hola desde Haxe"
 por stdout vía syscall.
+
+- **Fase 0** — generación + compile/link freestanding del ELF.
+- **Fase 1** — el binario corre **como proceso nativo de verdad**: el build
+  estampa `e_ident[EI_OSABI]=0x53`, el kernel lo reconoce al cargar la imagen y
+  le asigna `subsystem::Id::native`, de modo que sus syscalls entran por
+  `dispatch_native_syscall` y no por el de posix. Verificado en el serial log:
+  `process: pid=N marcado nativo` + `native: dispatcher activo`.
 
 ## Cómo construir
 
@@ -55,23 +62,35 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   Haxe. Reemplaza el `_main_.cpp` de reflaxe.CPP (que incluye `<memory>` de
   libstdc++, incompatible con freestanding).
 - `haxe/Main.hx` — programa Haxe de validación.
-- `kernel/syscall_dispatch.inc` — dispatcher nativo en el kernel (hoy: ENOSYS).
+- `kernel/syscall_dispatch.inc` — dispatcher nativo en el kernel. Vivo: delega el
+  baseline en posix (el ABI nativo comparte convención por ahora) y es el punto
+  de divergencia donde aparecerán las syscalls propias.
 
-## Hallazgos de la Fase 0 (importantes para las siguientes)
+## Cómo se marca y enruta un binario nativo (Fase 1)
+
+1. El build estampa `e_ident[EI_OSABI] = 0x53` ('S') en el ELF
+   (`elf::kOsAbiNative` / `SXN_ELF_OSABI_NATIVE`). Los binarios posix usan 0.
+2. `elf::load_user_image` expone ese byte en `LoadResult.os_abi`.
+3. Al cargar la imagen (spawn y exec), el kernel fija `subsystem_id` según el
+   ABI del binario — **no** por herencia del padre.
+4. `handle_syscall` enruta por `subsystem_id`, así que un proceso nativo entra
+   por `dispatch_native_syscall`.
+
+## Hallazgos (importantes para las siguientes fases)
 
 - **El C++ que genera reflaxe.CPP es mínimo**: las clases no arrastran runtime.
   Un programa que evita `trace()` y usa primitivos nativos genera C++ **sin
   ningún include de libstdc++**, lo que permite compilar freestanding.
 - **Único acople a libstdc++**: el `_main_.cpp` autogenerado incluye `<memory>`.
   Lo excluimos del build y proveemos `sx_entry.cpp`.
-- **Las syscalls son, por ahora, las de posix** (WRITE=1, EXIT=7). Un binario
-  nativo lanzado por un padre posix corre con identidad posix, así que funciona.
-  El dispatcher nativo todavía responde ENOSYS.
+- **El ABI nativo todavía comparte la convención de posix** (mismos números de
+  syscall, mismo `int $0x80`). El dispatcher nativo delega en posix; la
+  divergencia es trabajo de la Fase 2.
 - **reflaxe.CPP es pre-release (v0.1.0)** y finolis de arrancar. Se maneja 100%
   por `-cp` (sin mutar el estado global de `haxelib`), con **dos** macros de
   init (`reflaxe.ReflectCompiler.Start()` + `cxxcompiler.CompilerInit.Start()`).
 
-### Limitaciones conocidas / deuda para Fase 1+
+### Limitaciones conocidas / deuda
 
 - **No se usa el override `std/cxx/_std`** de reflaxe.CPP (Array/String/Map/Math
   versión cxx). Vía `-cp` plano choca con el std de Haxe (overload ambiguo en
@@ -83,9 +102,10 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ## Próximos pasos
 
-1. Correr el ELF dentro de SavanXP (QEMU) y confirmar la salida "hola desde Haxe".
-2. **Fase 1** — marcar procesos como nativos en el loader (hoy todo hereda
-   posix) y hacer que el dispatcher nativo atienda al menos una syscall real.
-3. **Fase 2** — diseñar el ABI nativo (el contrato que heredará HashLink) y el
-   shim de runtime que mapea las necesidades de Haxe sobre esas syscalls.
-4. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas).
+1. **Fase 2** — diseñar el ABI nativo propio (el contrato que heredará
+   HashLink): decidir números de syscall propios vs. reusar la tabla posix, y el
+   shim de runtime que mapea las necesidades de Haxe (alloc, I/O, gfx) sobre esas
+   syscalls. Empezar a divergir en `dispatch_native_syscall`.
+2. Resolver el override `std/cxx/_std` (vía `-lib` con repo haxelib local) para
+   habilitar `Array`/`String`/`Map` cxx — prerequisito del port del escritorio.
+3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas).

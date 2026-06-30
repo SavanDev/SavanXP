@@ -733,6 +733,10 @@ bool prepare_exec_image(process::Process& proc, const char* path, int argc, cons
     vm::VmSpace old_space = proc.address_space;
     proc.address_space = new_space;
     vm::destroy_address_space(old_space);
+    // El exec reemplaza la imagen: el subsistema pasa a ser el del binario nuevo.
+    proc.subsystem_id = load_result.os_abi == elf::kOsAbiNative
+        ? subsystem::Id::native
+        : subsystem::Id::posix;
     set_process_name(proc, path);
     proc.blocked_io_fd = 0;
     proc.blocked_read_buffer = 0;
@@ -901,6 +905,15 @@ process::Process* create_process_internal(
     }
     if (image_backing.physical_address != 0) {
         (void)memory::free_allocation(image_backing);
+    }
+
+    // El subsistema lo define el ABI del binario (e_ident[EI_OSABI]), no la
+    // herencia: el valor de allocate_process_slot/parent era solo el default.
+    proc->subsystem_id = load_result.os_abi == elf::kOsAbiNative
+        ? subsystem::Id::native
+        : subsystem::Id::posix;
+    if (proc->subsystem_id == subsystem::Id::native) {
+        console::printf("process: pid=%u marcado nativo\n", static_cast<unsigned>(proc->pid));
     }
 
     fabricate_initial_context(*proc, load_result.entry_point, load_result.stack_pointer, argc, load_result.stack_pointer);

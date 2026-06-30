@@ -215,6 +215,7 @@ bool load_user_image(
     }
 
     result.entry_point = header.entry;
+    result.os_abi = header.os_abi;
     return true;
 }
 

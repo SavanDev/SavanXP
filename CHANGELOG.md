@@ -47,9 +47,16 @@ Notas de corte:
   `<memory>` de libstdc++), un programa Haxe de validacion y un `build.ps1`
   aparte (patron `sdk/doomgeneric`) que clona reflaxe/reflaxe.CPP pineados bajo
   `toolchain/haxe-libs/`, genera el C++ y lo linkea contra el `crt0.S`/`linker.ld`
-  del SDK posix. `haxe`/`haxelib` se resuelven via `tools/Toolchain.ps1`. El
-  binario usa por ahora las syscalls posix (WRITE/EXIT); el ABI nativo propio y
-  el marcado de procesos nativos quedan para Fase 1+.
+  del SDK posix. `haxe`/`haxelib` se resuelven via `tools/Toolchain.ps1`.
+- **Subsistema nativo — Fase 1: procesos nativos reales.** Un binario nativo se
+  marca con `e_ident[EI_OSABI]=0x53` (estampado por el build), el loader lo
+  reconoce al cargar la imagen (`elf::LoadResult.os_abi`) y le asigna
+  `subsystem::Id::native` segun el ABI del binario, no por herencia del padre
+  (aplica a spawn y exec). Sus syscalls entran por `dispatch_native_syscall`, que
+  pasa de ENOSYS a estar vivo: delega el baseline en posix (el ABI nativo todavia
+  comparte convencion) y queda como punto de divergencia. Verificado en QEMU: el
+  ELF Haxe corre con identidad nativa (`process: pid=N marcado nativo` +
+  `native: dispatcher activo`) e imprime su salida sin romper el smoke test.
 - Tipografias reales horneadas offline a tablas C con `tools/font/genfont.py`
   (via `freetype-py`): **GNU UniFont 8x16** para la consola del kernel y el render
   monospace del terminal, y **Noto Sans** proporcional antialiased para el chrome

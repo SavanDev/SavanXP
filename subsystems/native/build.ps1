@@ -149,7 +149,15 @@ $elfPath = Join-Path $outRoot "$Name.elf"
 Write-Step "Linkeando $Name.elf"
 & $lld -nostdlib -static -T (Join-Path $posixSdk "linker.ld") -o $elfPath @objects
 if ($LASTEXITCODE -ne 0) { throw "Fallo el link de $Name." }
-Write-Host "ELF generado: $elfPath"
+
+# Estampar e_ident[EI_OSABI] (byte 7) para que el kernel corra este binario con
+# identidad de subsistema nativo. Debe coincidir con elf::kOsAbiNative y con
+# SXN_ELF_OSABI_NATIVE (sdk/include/savanxp_native.h).
+$elfOsAbiNative = 0x53
+$bytes = [System.IO.File]::ReadAllBytes($elfPath)
+$bytes[7] = $elfOsAbiNative
+[System.IO.File]::WriteAllBytes($elfPath, $bytes)
+Write-Host "ELF generado: $elfPath (EI_OSABI=0x$('{0:x}' -f $elfOsAbiNative), nativo)"
 
 # --- 5. Instalar (opcional) --------------------------------------------------
 if ($Install) {
