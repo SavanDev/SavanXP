@@ -86,6 +86,8 @@ uint32_t exported_timer_backend(timer::Backend backend) {
     switch (backend) {
         case timer::Backend::local_apic:
             return SAVANXP_TIMER_LOCAL_APIC;
+        case timer::Backend::pit:
+            return SAVANXP_TIMER_PIT;
         case timer::Backend::none:
         default:
             return SAVANXP_TIMER_NONE;

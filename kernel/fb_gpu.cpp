@@ -31,6 +31,9 @@ void* g_fb_base = nullptr;
 savanxp_fb_info g_fb_info = {};
 savanxp_gpu_info g_gpu_info = {};
 ImportedSurface g_imported[kImportedSurfaceCount] = {};
+uint64_t g_next_present_sequence = 1;
+uint64_t g_last_submitted_present_sequence = 0;
+uint64_t g_last_retired_present_sequence = 0;
 
 bool ready() {
     return g_fb_base != nullptr && g_fb_info.bpp == 32u && g_fb_info.buffer_size != 0;
@@ -47,6 +50,16 @@ void* framebuffer_address() {
 }
 
 void wait_for_idle() {}
+
+void retire_synchronous_present(uint64_t requested_sequence) {
+    const uint64_t sequence =
+        requested_sequence != 0 && requested_sequence == g_next_present_sequence
+            ? requested_sequence
+            : g_next_present_sequence;
+    g_next_present_sequence = sequence + 1u;
+    g_last_submitted_present_sequence = sequence;
+    g_last_retired_present_sequence = sequence;
+}
 
 // Copia un rectangulo (en coordenadas del scanout) desde una superficie origen
 // al framebuffer. source == nullptr usa el propio framebuffer como origen (no-op
@@ -92,14 +105,22 @@ bool present(const void* pixels, size_t byte_count) {
     if (!ready() || pixels == nullptr || byte_count != g_fb_info.buffer_size) {
         return false;
     }
-    return blit_rect(pixels, g_fb_info.pitch, 0, 0, g_fb_info.width, g_fb_info.height);
+    if (!blit_rect(pixels, g_fb_info.pitch, 0, 0, g_fb_info.width, g_fb_info.height)) {
+        return false;
+    }
+    retire_synchronous_present(0);
+    return true;
 }
 
 bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     if (pixels == nullptr || source_pitch == 0) {
         return false;
     }
-    return blit_rect(pixels, source_pitch, x, y, width, height);
+    if (!blit_rect(pixels, source_pitch, x, y, width, height)) {
+        return false;
+    }
+    retire_synchronous_present(0);
+    return true;
 }
 
 bool get_info(savanxp_gpu_info& info) {
@@ -305,7 +326,11 @@ bool present_surface_region(const savanxp_gpu_surface_present& request) {
         request.height > (surface->info.height - request.y)) {
         return false;
     }
-    return present_surface_rect(*surface, request.x, request.y, request.width, request.height);
+    if (!present_surface_rect(*surface, request.x, request.y, request.width, request.height)) {
+        return false;
+    }
+    retire_synchronous_present(0);
+    return true;
 }
 
 bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
@@ -319,7 +344,11 @@ bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
     }
 
     if ((request.flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0 || request.rect_count == 0) {
-        return present_surface_rect(*surface, 0, 0, surface->info.width, surface->info.height);
+        if (!present_surface_rect(*surface, 0, 0, surface->info.width, surface->info.height)) {
+            return false;
+        }
+        retire_synchronous_present(request.present_cookie);
+        return true;
     }
 
     for (uint32_t index = 0; index < request.rect_count; ++index) {
@@ -334,6 +363,7 @@ bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
             return false;
         }
     }
+    retire_synchronous_present(request.present_cookie);
     return true;
 }
 
@@ -385,8 +415,8 @@ bool get_present_timeline(savanxp_gpu_present_timeline& timeline) {
     }
     // Todo es sincrono: lo enviado ya esta retirado, nada pendiente.
     timeline = {
-        .submitted_sequence = 0,
-        .retired_sequence = 0,
+        .submitted_sequence = g_last_submitted_present_sequence,
+        .retired_sequence = g_last_retired_present_sequence,
         .pending_count = 0,
         .flags = 0,
     };
@@ -397,8 +427,12 @@ bool wait_present(savanxp_gpu_present_wait& request) {
     if (!ready()) {
         return false;
     }
+    if (request.target_sequence != 0 &&
+        request.target_sequence > g_last_submitted_present_sequence) {
+        return false;
+    }
     // Presentacion sincrona: cualquier secuencia pedida ya esta retirada.
-    request.retired_sequence = request.target_sequence;
+    request.retired_sequence = g_last_retired_present_sequence;
     request.pending_count = 0;
     request.flags = 0;
     return true;
@@ -467,6 +501,9 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         .backend = SAVANXP_GPU_BACKEND_FRAMEBUFFER,
         .flags = 0,
     };
+    g_next_present_sequence = 1;
+    g_last_submitted_present_sequence = 0;
+    g_last_retired_present_sequence = 0;
 }
 
 const display::Backend& backend() {

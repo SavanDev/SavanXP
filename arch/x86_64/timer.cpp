@@ -11,13 +11,22 @@ namespace
 {
 
     constexpr uint8_t kTimerVector = 48;
+    constexpr uint8_t kPitIrq = 0;
     constexpr uint8_t kApicDivideBy16 = 0x3;
     constexpr uint32_t kCalibrationOneShotCount = 0xffffffffu;
     constexpr uint32_t kFallbackPeriodicInitialCount = 50000u;
+    constexpr uint32_t kPitBaseFrequencyHz = 1193182u;
+    constexpr uint16_t kPitChannel0Data = 0x40;
+    constexpr uint16_t kPitCommand = 0x43;
 
     volatile uint64_t g_ticks = 0;
     uint32_t g_frequency_hz = 0;
     timer::Backend g_backend = timer::Backend::none;
+
+    void out8(uint16_t port, uint8_t value)
+    {
+        asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+    }
 
     bool same_second(const savanxp_realtime &left, const savanxp_realtime &right)
     {
@@ -88,6 +97,35 @@ namespace
         return initial_count != 0;
     }
 
+    bool start_pit_timer(uint32_t frequency_hz)
+    {
+        if (frequency_hz == 0)
+        {
+            return false;
+        }
+
+        uint32_t divisor = (kPitBaseFrequencyHz + (frequency_hz / 2u)) / frequency_hz;
+        if (divisor == 0)
+        {
+            divisor = 1;
+        }
+        if (divisor > 0xffffu)
+        {
+            divisor = 0xffffu;
+        }
+
+        out8(kPitCommand, 0x34); // channel 0, lobyte/hibyte, rate generator
+        out8(kPitChannel0Data, static_cast<uint8_t>(divisor & 0xffu));
+        out8(kPitChannel0Data, static_cast<uint8_t>((divisor >> 8) & 0xffu));
+
+        arch::x86_64::enable_irq(kPitIrq);
+        console::printf(
+            "timer: PIT divisor=%u target_hz=%u\n",
+            static_cast<unsigned>(divisor),
+            static_cast<unsigned>(frequency_hz));
+        return true;
+    }
+
 } // namespace
 
 namespace timer
@@ -106,6 +144,10 @@ namespace timer
 
         if (!arch::x86_64::initialize_local_apic())
         {
+            if (start_pit_timer(frequency_hz))
+            {
+                g_backend = Backend::pit;
+            }
             return;
         }
 
@@ -131,6 +173,10 @@ namespace timer
                 periodic_initial_count,
                 kApicDivideBy16))
         {
+            if (start_pit_timer(frequency_hz))
+            {
+                g_backend = Backend::pit;
+            }
             return;
         }
 
@@ -166,7 +212,14 @@ namespace timer
         g_ticks = g_ticks + 1;
         device::service_background();
         input::poll();
-        arch::x86_64::acknowledge_local_apic_interrupt();
+        if (g_backend == Backend::local_apic)
+        {
+            arch::x86_64::acknowledge_local_apic_interrupt();
+        }
+        else if (g_backend == Backend::pit)
+        {
+            arch::x86_64::acknowledge_pic_irq(kPitIrq);
+        }
         return process::handle_timer_tick(context);
     }
 

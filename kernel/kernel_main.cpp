@@ -199,8 +199,19 @@ namespace
     system_info.speaker_ready = pcspeaker::ready() ? 1u : 0u;
     system_info.block_ready = block::ready() ? 1u : 0u;
     system_info.svfs_mounted = disk_mounted ? 1u : 0u;
-    system_info.timer_backend =
-        timer::backend() == timer::Backend::local_apic ? SAVANXP_TIMER_LOCAL_APIC : SAVANXP_TIMER_NONE;
+    switch (timer::backend())
+    {
+    case timer::Backend::local_apic:
+        system_info.timer_backend = SAVANXP_TIMER_LOCAL_APIC;
+        break;
+    case timer::Backend::pit:
+        system_info.timer_backend = SAVANXP_TIMER_PIT;
+        break;
+    case timer::Backend::none:
+    default:
+        system_info.timer_backend = SAVANXP_TIMER_NONE;
+        break;
+    }
     system_info.timer_frequency_hz = timer::frequency_hz();
     system_info.framebuffer_width = ui::framebuffer_info().width;
     system_info.framebuffer_height = ui::framebuffer_info().height;

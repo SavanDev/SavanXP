@@ -39,6 +39,8 @@ static const char* timer_backend_string(uint32_t backend) {
     switch (backend) {
         case SAVANXP_TIMER_LOCAL_APIC:
             return "local apic";
+        case SAVANXP_TIMER_PIT:
+            return "pit";
         case SAVANXP_TIMER_NONE:
         default:
             return "none";

@@ -267,6 +267,11 @@ bool reserve_kernel_mmio_window() {
 
     for (uint64_t index = 510; index >= kKernelPml4Start; --index) {
         if (pml4[index] == 0) {
+            uint64_t pdpt_physical = 0;
+            if (allocate_table_page(pdpt_physical) == nullptr) {
+                return false;
+            }
+            pml4[index] = pdpt_physical | vm::kPagePresent | vm::kPageWrite;
             g_kernel_mmio_base = pml4_base(index);
             g_kernel_mmio_next = g_kernel_mmio_base;
             g_kernel_mmio_limit = g_kernel_mmio_base + kKernelPml4WindowBytes;

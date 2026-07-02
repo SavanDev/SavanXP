@@ -9,6 +9,7 @@ namespace timer {
 enum class Backend : uint8_t {
     none = 0,
     local_apic = 1,
+    pit = 2,
 };
 
 void initialize(uint32_t frequency_hz);

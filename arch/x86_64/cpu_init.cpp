@@ -401,7 +401,8 @@ DEFINE_EXTERNAL_ISR(44)
 DEFINE_EXTERNAL_ISR(45)
 DEFINE_EXTERNAL_ISR(46)
 DEFINE_EXTERNAL_ISR(47)
-// Vector 48 is the local-APIC timer (dedicated entry); 49 carries device MSI-X.
+// Vector 32 is PIC IRQ0 (PIT), vector 48 is the local-APIC timer, and both use
+// the context-saving timer entry. Vector 49 carries device MSI-X.
 DEFINE_EXTERNAL_ISR(49)
 #undef DEFINE_ISR_NOERR
 #undef DEFINE_ISR_ERR
@@ -440,7 +441,7 @@ void initialize_idt() {
     set_idt_gate(29, reinterpret_cast<InterruptHandler>(isr_29), kInterruptGate);
     set_idt_gate(30, reinterpret_cast<InterruptHandler>(isr_30), kInterruptGate);
     set_idt_gate(31, reinterpret_cast<InterruptHandler>(isr_31), kInterruptGate);
-    set_idt_gate(32, reinterpret_cast<InterruptHandler>(vector_32), kInterruptGate);
+    set_idt_gate(32, reinterpret_cast<InterruptHandler>(x86_64_timer_entry), kInterruptGate);
     set_idt_gate(33, reinterpret_cast<InterruptHandler>(vector_33), kInterruptGate);
     set_idt_gate(34, reinterpret_cast<InterruptHandler>(vector_34), kInterruptGate);
     set_idt_gate(35, reinterpret_cast<InterruptHandler>(vector_35), kInterruptGate);
@@ -560,6 +561,12 @@ void initialize_syscall_gate() {
 
 void acknowledge_local_apic_interrupt() {
     local_apic_eoi();
+}
+
+void acknowledge_pic_irq(uint8_t irq) {
+    if (irq < kIrqCount) {
+        send_pic_eoi(irq);
+    }
 }
 
 void set_kernel_stack(uint64_t stack_top) {

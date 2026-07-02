@@ -10,6 +10,8 @@ Notas de corte:
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-02
+
 ### Agregado
 
 - **Compositor grafico separado (`/bin/compositord`).** El acceso directo a
@@ -77,6 +79,13 @@ Notas de corte:
   el framebuffer; y volcado de las stats por etapa del driver (end-to-end,
   transfer/flush/scanout, esperas, timeouts, notificaciones de IRQ) en
   `gputest --soak`.
+- Backend de timer `PIT` (8254, IRQ0) como fallback cuando el APIC local no
+  soporta x2APIC o falla la calibracion: antes, sin timer activo, el scheduler
+  nunca arrancaba en hipervisores que no exponen x2APIC. El vector 32 (IRQ0)
+  pasa a compartir el entry point de contexto completo del timer del APIC local
+  en vez del dispatcher generico. `savanxp_system_info` expone el backend activo
+  (`SAVANXP_TIMER_LOCAL_APIC` / `SAVANXP_TIMER_PIT` / `SAVANXP_TIMER_NONE`) via
+  `/dev/sysinfo` y `sysinfo`.
 
 ### Cambiado
 
@@ -141,6 +150,43 @@ Notas de corte:
   de `Stop-Process -Force`, se pide `quit` por el monitor HMP para que QEMU
   vacie sus backends de bloque y cierre el archivo de disco limpiamente, con
   fallback al kill forzado si el monitor no responde.
+- El SO quedaba colgado indefinidamente justo despues de "Iniciando bienvenida"
+  en hipervisores sin x2APIC (confirmado en VirtualBox con backend `VBoxVGA`):
+  `initialize_local_apic` fallaba en silencio y el scheduler nunca arrancaba, a
+  pesar de que el kernel seguia vivo. Resuelto por el fallback a `PIT` agregado
+  arriba.
+- El framing de paquetes PS/2 del mouse se corrompia en modo streaming:
+  `process_mouse_byte` descartaba cualquier byte igual a `0xFA`/`0xFE`
+  asumiendo que eran ACK/RESEND de un comando, pero en streaming esos mismos
+  valores tambien codifican deltas de movimiento legitimos (`-6` y `-2`
+  respectivamente). Al perderse ese byte a mitad de paquete, el framing de 3
+  bytes se desincronizaba y el status byte del paquete siguiente terminaba
+  interpretado como delta, produciendo saltos erraticos del cursor. El bug era
+  direccional: solo se manifestaba moviendo el mouse hacia izquierda/abajo
+  (deltas negativos), nunca hacia derecha/arriba (deltas positivos, que nunca
+  coinciden con `0xFA`/`0xFE`). Los ACK/RESEND de comandos reales se consumen
+  de forma sincronica durante la inicializacion y nunca pasan por este camino.
+  Se agrega ademas un clamp defensivo (`+-150` por eje) como red de seguridad
+  ante paquetes corruptos futuros: recorta en vez de descartar el paquete
+  entero, para no perder tracking en un swipe rapido legitimo.
+- `reserve_kernel_mmio_window` reservaba una entrada de PML4 para MMIO del
+  kernel sin instalar la tabla PDPT correspondiente, dejando la entrada en `0`
+  pese a declararse "reservada"; cualquier `map_kernel_mmio` posterior sobre
+  esa ventana fallaba o corrompia memoria. Ahora aloja e instala la PDPT al
+  reservar.
+- La timeline de present de `fb_gpu` (backend framebuffer plano) devolvia
+  siempre `submitted_sequence = 0, retired_sequence = 0`, por lo que
+  `wait_present` con un `target_sequence` valido dependia de una coincidencia
+  casual en vez de un contador real. Ahora lleva contadores propios de
+  secuencia submit/retire por presentacion.
+- **Compatibilidad experimental con VirtualBox (backend `VBoxVGA`).** Con los
+  fixes de esta version, el sistema arranca de forma estable hasta sesion
+  grafica (ya no se cuelga tras el boot) y el mouse PS/2 responde de forma
+  correcta en las cuatro direcciones. Pendiente y sin diagnosticar: los
+  binarios que viven en `/disk` (`doomgeneric`, `smoke`, `gputest`) no arrancan
+  todavia bajo VirtualBox aun adjuntando el volumen SVFS2 (probado convirtiendo
+  `build/disk.img` a `.vdi` con `VBoxManage convertfromraw` y adjuntandolo a un
+  slot IDE libre); queda para una sesion futura con mas instrumentacion.
 
 ## [0.3.0] - 2026-06-18
 

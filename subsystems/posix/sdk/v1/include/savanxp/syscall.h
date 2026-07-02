@@ -196,6 +196,7 @@ enum savanxp_view_flags {
 enum savanxp_timer_backend {
     SAVANXP_TIMER_NONE = 0,
     SAVANXP_TIMER_LOCAL_APIC = 1,
+    SAVANXP_TIMER_PIT = 2,
 };
 
 struct savanxp_system_info {

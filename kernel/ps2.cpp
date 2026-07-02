@@ -796,6 +796,16 @@ int32_t decode_mouse_delta(uint8_t value, bool negative) {
     return delta;
 }
 
+int32_t clamp_mouse_delta(int32_t value, int32_t limit) {
+    if (value > limit) {
+        return limit;
+    }
+    if (value < -limit) {
+        return -limit;
+    }
+    return value;
+}
+
 void process_mouse_packet() {
     const uint8_t first = g_mouse_packet[0];
     const uint8_t second = g_mouse_packet[1];
@@ -819,16 +829,28 @@ void process_mouse_packet() {
         buttons |= SAVANXP_MOUSE_BUTTON_MIDDLE;
     }
 
-    const int32_t delta_x = decode_mouse_delta(second, (first & 0x10u) != 0);
-    const int32_t raw_delta_y = decode_mouse_delta(third, (first & 0x20u) != 0);
+    int32_t delta_x = decode_mouse_delta(second, (first & 0x10u) != 0);
+    int32_t raw_delta_y = decode_mouse_delta(third, (first & 0x20u) != 0);
+
+    // Safety net: a desynced packet (dropped byte, glitched controller state)
+    // can still decode to near the full +-256 range, which no real relative
+    // motion reaches in a single packet. Clamp instead of dropping the packet
+    // outright, so corruption gets capped instead of teleporting the cursor,
+    // while legitimate fast motion keeps tracking instead of stalling.
+    constexpr int32_t kMaxPlausibleDelta = 150;
+    delta_x = clamp_mouse_delta(delta_x, kMaxPlausibleDelta);
+    raw_delta_y = clamp_mouse_delta(raw_delta_y, kMaxPlausibleDelta);
+
     emit_mouse_event(delta_x, -raw_delta_y, buttons);
 }
 
 void process_mouse_byte(uint8_t byte) {
-    if (byte == kMouseResponseAck || byte == kMouseResponseResend) {
-        return;
-    }
-
+    // Do NOT filter 0xFA/0xFE here: in streaming mode every aux byte is packet
+    // data, and a delta of -6 encodes as 0xFA while -2 encodes as 0xFE. Dropping
+    // those mid-packet desyncs the 3-byte framing, which is why left/down motion
+    // (negative deltas) corrupted the stream while right/up (positive) did not.
+    // Command ACK/RESEND bytes never reach here; init consumes them synchronously
+    // via mouse_wait_for_ack() straight off the controller port.
     if (g_mouse_packet_index == 0 && (byte & 0x08u) == 0) {
         return;
     }

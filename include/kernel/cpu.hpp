@@ -25,6 +25,7 @@ bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uin
 uint32_t local_apic_current_timer_count();
 void initialize_syscall_gate();
 void acknowledge_local_apic_interrupt();
+void acknowledge_pic_irq(uint8_t irq);
 void set_kernel_stack(uint64_t stack_top);
 [[noreturn]] void resume_context(process::SavedContext* context, uint64_t cr3);
 void enable_irq(uint8_t irq);
