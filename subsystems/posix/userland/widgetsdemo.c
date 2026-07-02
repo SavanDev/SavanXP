@@ -88,7 +88,19 @@ static void on_theme(struct sxgui_widget *widget, void *user)
     snprintf(g_status, sizeof(g_status), "Theme: %s", widget->items[widget->value]);
 }
 
+#define WIDGETSDEMO_MENU_ABOUT 8
 #define WIDGETSDEMO_MENU_EXIT 9
+
+static struct sxgui_dialog g_about_dialog;
+static struct sxgui_widget g_about_widgets[3];
+
+static void on_dialog_ok(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    snprintf(g_status, sizeof(g_status), "About closed with OK");
+}
 
 static void on_menu_command(int id, void *user)
 {
@@ -96,6 +108,11 @@ static void on_menu_command(int id, void *user)
     if (id == WIDGETSDEMO_MENU_EXIT)
     {
         sxgui_app_quit(&g_app, 0);
+        return;
+    }
+    if (id == WIDGETSDEMO_MENU_ABOUT)
+    {
+        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, 260, 96);
         return;
     }
     snprintf(g_status, sizeof(g_status), "Menu command %d", id);
@@ -115,7 +132,7 @@ static const struct sxgui_menu_item k_edit_items[] = {
 };
 
 static const struct sxgui_menu_item k_help_items[] = {
-    {"About widgets", 8, 0},
+    {"About widgets", WIDGETSDEMO_MENU_ABOUT, 0},
 };
 
 static const struct sxgui_menu k_menus[] = {
@@ -162,6 +179,13 @@ int main(void)
         (int)(sizeof(g_theme_items) / sizeof(g_theme_items[0])),
         0);
     widgets[12].on_action = on_theme;
+
+    g_about_widgets[0] = sxgui_label(sx_rect_make(10, 8, 240, 16), "sxgui widget gallery");
+    g_about_widgets[1] = sxgui_label(sx_rect_make(10, 28, 240, 16), "Win9x-flavoured toolkit for SavanXP");
+    g_about_widgets[2] = sxgui_button(sx_rect_make(80, 56, 100, 26), "OK", on_dialog_ok, 0);
+    g_about_dialog.title = "About";
+    g_about_dialog.widgets = g_about_widgets;
+    g_about_dialog.widget_count = 3;
 
     if (sxgui_app_init(&g_app, "widgetsdemo", widgets, 13) < 0)
     {

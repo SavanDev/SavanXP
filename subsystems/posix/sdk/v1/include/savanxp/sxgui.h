@@ -130,6 +130,23 @@ struct sxgui_menubar {
     void *user;
 };
 
+/* ---- modal dialogs ---------------------------------------------------------
+ *
+ * A second caller-owned widget array painted as a centred overlay. While a
+ * dialog is active it captures all input; Tab cycles inside it and ESC ends
+ * it with result 0. Widget rects are RELATIVE to the dialog client area.
+ * Comboboxes inside dialogs are not supported.
+ */
+
+struct sxgui_dialog {
+    struct sx_rect rect;            /* absolute; computed by sxgui_dialog_begin */
+    const char *title;
+    struct sxgui_widget *widgets;   /* rects relative to the client area */
+    int widget_count;
+    int saved_focus;                /* owned by the toolkit */
+    int result;
+};
+
 struct sxgui_context {
     struct sx_bitmap target;
     struct sx_painter painter;
@@ -159,6 +176,11 @@ struct sxgui_context {
 
     /* optional menu bar (NULL = none) */
     struct sxgui_menubar *menubar;
+
+    /* active modal dialog (NULL = none); modal_route flags re-entrant
+     * dispatch against the dialog's widget array */
+    struct sxgui_dialog *modal;
+    int modal_route;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */
@@ -175,6 +197,13 @@ void sxgui_context_retarget(struct sxgui_context *ctx, uint32_t *pixels, const s
 /* Attach (or detach with NULL) a menu bar; resets its open/hot state. */
 void sxgui_set_menubar(struct sxgui_context *ctx, struct sxgui_menubar *bar);
 int sxgui_menubar_height(void);
+
+/* Open a modal dialog centred on the surface; width/height size the client
+ * area. End it (typically from a dialog button callback) with a result code;
+ * read it afterwards from dialog->result. */
+void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, int width, int height);
+void sxgui_dialog_end(struct sxgui_context *ctx, int result);
+int sxgui_dialog_active(const struct sxgui_context *ctx);
 
 /* Feed compositor-routed input. Each returns non-zero when the UI changed and
  * a repaint is needed. */

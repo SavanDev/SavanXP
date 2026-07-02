@@ -1103,6 +1103,99 @@ static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui
     sx_painter_pop_clip(painter);
 }
 
+static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widget *widget, int combobox_open)
+{
+    switch (widget->kind)
+    {
+    case SXGUI_LABEL:
+        sxgui_paint_label(painter, widget);
+        break;
+    case SXGUI_BUTTON:
+        sxgui_paint_button(painter, widget);
+        break;
+    case SXGUI_CHECKBOX:
+        sxgui_paint_checkbox(painter, widget);
+        break;
+    case SXGUI_LISTBOX:
+        sxgui_paint_listbox(painter, widget);
+        break;
+    case SXGUI_TEXTFIELD:
+        sxgui_paint_textfield(painter, widget);
+        break;
+    case SXGUI_SCROLLBAR:
+        sxgui_paint_scrollbar(painter, widget);
+        break;
+    case SXGUI_GROUPBOX:
+        sxgui_paint_groupbox(painter, widget);
+        break;
+    case SXGUI_PROGRESS:
+        sxgui_paint_progress(painter, widget);
+        break;
+    case SXGUI_RADIO:
+        sxgui_paint_radio(painter, widget);
+        break;
+    case SXGUI_COMBOBOX:
+        sxgui_paint_combobox(painter, widget, combobox_open);
+        break;
+    default:
+        break;
+    }
+}
+
+#define SXGUI_DIALOG_BORDER 3
+
+static int sxgui_dialog_title_height(void)
+{
+    return gfx_text_height() + 6;
+}
+
+static struct sx_point sxgui_dialog_client_origin(const struct sxgui_dialog *dialog)
+{
+    struct sx_point origin;
+    origin.x = dialog->rect.x + SXGUI_DIALOG_BORDER;
+    origin.y = dialog->rect.y + SXGUI_DIALOG_BORDER + sxgui_dialog_title_height();
+    return origin;
+}
+
+static void sxgui_paint_dialog(struct sxgui_context *ctx)
+{
+    struct sxgui_dialog *dialog = ctx->modal;
+    struct sx_painter *painter = &ctx->painter;
+    int title_height = sxgui_dialog_title_height();
+    struct sx_rect title = sx_rect_make(
+        dialog->rect.x + SXGUI_DIALOG_BORDER,
+        dialog->rect.y + SXGUI_DIALOG_BORDER,
+        dialog->rect.width - SXGUI_DIALOG_BORDER * 2,
+        title_height);
+    struct sx_point origin = sxgui_dialog_client_origin(dialog);
+    int index;
+
+    sx_painter_fill_rect(painter, dialog->rect, SXGUI_COLOR_FACE);
+    sxgui_draw_raised(painter, dialog->rect);
+    sx_painter_fill_rect(painter, title, SXGUI_COLOR_SELECT);
+    if (dialog->title != 0)
+    {
+        sx_painter_draw_text(
+            painter,
+            title.x + 4,
+            title.y + (title_height - gfx_text_height()) / 2,
+            dialog->title,
+            SXGUI_COLOR_SELECT_TEXT);
+    }
+
+    for (index = 0; index < dialog->widget_count; ++index)
+    {
+        struct sxgui_widget shifted = dialog->widgets[index];
+
+        if (!sxgui_widget_visible(&shifted))
+        {
+            continue;
+        }
+        shifted.rect = sx_rect_translate(shifted.rect, origin.x, origin.y);
+        sxgui_paint_one(painter, &shifted, 0);
+    }
+}
+
 void sxgui_paint(struct sxgui_context *ctx)
 {
     int index;
@@ -1121,41 +1214,7 @@ void sxgui_paint(struct sxgui_context *ctx)
         {
             continue;
         }
-        switch (widget->kind)
-        {
-        case SXGUI_LABEL:
-            sxgui_paint_label(&ctx->painter, widget);
-            break;
-        case SXGUI_BUTTON:
-            sxgui_paint_button(&ctx->painter, widget);
-            break;
-        case SXGUI_CHECKBOX:
-            sxgui_paint_checkbox(&ctx->painter, widget);
-            break;
-        case SXGUI_LISTBOX:
-            sxgui_paint_listbox(&ctx->painter, widget);
-            break;
-        case SXGUI_TEXTFIELD:
-            sxgui_paint_textfield(&ctx->painter, widget);
-            break;
-        case SXGUI_SCROLLBAR:
-            sxgui_paint_scrollbar(&ctx->painter, widget);
-            break;
-        case SXGUI_GROUPBOX:
-            sxgui_paint_groupbox(&ctx->painter, widget);
-            break;
-        case SXGUI_PROGRESS:
-            sxgui_paint_progress(&ctx->painter, widget);
-            break;
-        case SXGUI_RADIO:
-            sxgui_paint_radio(&ctx->painter, widget);
-            break;
-        case SXGUI_COMBOBOX:
-            sxgui_paint_combobox(&ctx->painter, widget, ctx->popup_owner == index);
-            break;
-        default:
-            break;
-        }
+        sxgui_paint_one(&ctx->painter, widget, ctx->popup_owner == index);
     }
 
     /* overlay pass: chrome and popups paint above every widget */
@@ -1172,6 +1231,71 @@ void sxgui_paint(struct sxgui_context *ctx)
     {
         sxgui_paint_menu_popup(ctx);
     }
+    if (ctx->modal != 0)
+    {
+        sxgui_paint_dialog(ctx);
+    }
+}
+
+void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, int width, int height)
+{
+    int total_width;
+    int total_height;
+    int x;
+    int y;
+
+    if (ctx == 0 || dialog == 0)
+    {
+        return;
+    }
+    total_width = width + SXGUI_DIALOG_BORDER * 2;
+    total_height = height + SXGUI_DIALOG_BORDER * 2 + sxgui_dialog_title_height();
+    x = ((int)ctx->target.info.width - total_width) / 2;
+    y = ((int)ctx->target.info.height - total_height) / 2;
+    if (x < 0)
+    {
+        x = 0;
+    }
+    if (y < 0)
+    {
+        y = 0;
+    }
+    dialog->rect = sx_rect_make(x, y, total_width, total_height);
+    dialog->result = 0;
+    dialog->saved_focus = ctx->focus_index;
+    ctx->modal = dialog;
+    ctx->focus_index = -1;
+    ctx->capture_index = -1;
+    sxgui_popup_close(ctx);
+    if (ctx->menubar != 0)
+    {
+        ctx->menubar->open_menu = -1;
+    }
+}
+
+void sxgui_dialog_end(struct sxgui_context *ctx, int result)
+{
+    struct sxgui_dialog *dialog;
+    int index;
+
+    if (ctx == 0 || ctx->modal == 0)
+    {
+        return;
+    }
+    dialog = ctx->modal;
+    dialog->result = result;
+    for (index = 0; index < dialog->widget_count; ++index)
+    {
+        dialog->widgets[index].focused = 0;
+    }
+    ctx->modal = 0;
+    ctx->capture_index = -1;
+    ctx->focus_index = dialog->saved_focus;
+}
+
+int sxgui_dialog_active(const struct sxgui_context *ctx)
+{
+    return ctx != 0 && ctx->modal != 0;
 }
 
 /* ---- input dispatch ----------------------------------------------------- */
@@ -1297,9 +1421,43 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     left_now = (event->buttons & left) != 0;
     left_before = (ctx->last_buttons & left) != 0;
 
+    /* an active dialog captures the pointer: translate to its client area and
+     * re-dispatch against the dialog's widget array */
+    if (ctx->modal != 0 && !ctx->modal_route)
+    {
+        struct sxgui_dialog *dialog = ctx->modal;
+        struct sx_point origin = sxgui_dialog_client_origin(dialog);
+        struct savanxp_gui_pointer_event local = *event;
+        struct sxgui_widget *saved_widgets = ctx->widgets;
+        int saved_count = ctx->widget_count;
+
+        local.x -= origin.x;
+        local.y -= origin.y;
+        ctx->widgets = dialog->widgets;
+        ctx->widget_count = dialog->widget_count;
+        ctx->modal_route = 1;
+        changed = sxgui_handle_pointer(ctx, &local);
+        ctx->modal_route = 0;
+        ctx->widgets = saved_widgets;
+        ctx->widget_count = saved_count;
+        if (ctx->modal == 0)
+        {
+            /* a dialog callback ended it mid-dispatch: undo any focus the
+             * dispatch left on dialog widgets */
+            for (saved_count = 0; saved_count < dialog->widget_count; ++saved_count)
+            {
+                dialog->widgets[saved_count].focused = 0;
+            }
+            ctx->focus_index = dialog->saved_focus;
+            ctx->capture_index = -1;
+            changed = 1;
+        }
+        return changed;
+    }
+
     /* an open menu owns the pointer: hovering the bar switches menus, click
      * on an item fires it, click anywhere else closes and is consumed */
-    if (ctx->menubar != 0 && ctx->menubar->open_menu >= 0 &&
+    if (ctx->modal == 0 && ctx->menubar != 0 && ctx->menubar->open_menu >= 0 &&
         ctx->menubar->open_menu < ctx->menubar->menu_count)
     {
         struct sxgui_menubar *bar = ctx->menubar;
@@ -1347,7 +1505,7 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     }
 
     /* closed menu bar: presses on the strip open menus and stay in the bar */
-    if (ctx->menubar != 0 && event->y < sxgui_menubar_height())
+    if (ctx->modal == 0 && ctx->menubar != 0 && event->y < sxgui_menubar_height())
     {
         if (left_now && !left_before)
         {
@@ -1673,9 +1831,45 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         ctx->shift_down = 1;
         return 0;
     }
+    /* an active dialog swallows the keyboard; ESC ends it with result 0 */
+    if (ctx->modal != 0 && !ctx->modal_route)
+    {
+        struct sxgui_dialog *dialog = ctx->modal;
+        struct sxgui_widget *saved_widgets;
+        int saved_count;
+        int changed;
+
+        if (event->key == SAVANXP_KEY_ESC)
+        {
+            sxgui_dialog_end(ctx, 0);
+            return 1;
+        }
+        saved_widgets = ctx->widgets;
+        saved_count = ctx->widget_count;
+        ctx->widgets = dialog->widgets;
+        ctx->widget_count = dialog->widget_count;
+        ctx->modal_route = 1;
+        changed = sxgui_handle_key(ctx, event);
+        ctx->modal_route = 0;
+        ctx->widgets = saved_widgets;
+        ctx->widget_count = saved_count;
+        if (ctx->modal == 0)
+        {
+            int index;
+            for (index = 0; index < dialog->widget_count; ++index)
+            {
+                dialog->widgets[index].focused = 0;
+            }
+            ctx->focus_index = dialog->saved_focus;
+            ctx->capture_index = -1;
+        }
+        (void)changed;
+        return 1;
+    }
+
     /* an open menu swallows the keyboard; ESC closes it (consumed so the app
      * frame does not treat it as quit) */
-    if (ctx->menubar != 0 && ctx->menubar->open_menu >= 0 &&
+    if (ctx->modal == 0 && ctx->menubar != 0 && ctx->menubar->open_menu >= 0 &&
         ctx->menubar->open_menu < ctx->menubar->menu_count)
     {
         struct sxgui_menubar *bar = ctx->menubar;
