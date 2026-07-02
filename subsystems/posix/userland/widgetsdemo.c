@@ -61,9 +61,15 @@ static void on_scroll(struct sxgui_widget *widget, void *user)
     snprintf(g_scroll_status, sizeof(g_scroll_status), "Scroll: %d", widget->value);
 }
 
+static void on_radio(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    snprintf(g_status, sizeof(g_status), "Radio: %s", widget->text != 0 ? widget->text : "?");
+}
+
 int main(void)
 {
-    struct sxgui_widget widgets[9];
+    struct sxgui_widget widgets[12];
     struct sxgui_app app;
     int item_count = (int)(sizeof(g_list_items) / sizeof(g_list_items[0]));
 
@@ -78,8 +84,14 @@ int main(void)
     widgets[6].on_action = on_scroll;
     widgets[7] = sxgui_label(sx_rect_make(280, 148, 100, 16), g_scroll_status);
     widgets[8] = sxgui_label(sx_rect_make(16, 270, 320, 16), g_status);
+    widgets[9] = sxgui_radio(sx_rect_make(252, 78, 120, 16), "Small", 1, 1);
+    widgets[9].on_action = on_radio;
+    widgets[10] = sxgui_radio(sx_rect_make(252, 98, 120, 16), "Medium", 1, 0);
+    widgets[10].on_action = on_radio;
+    widgets[11] = sxgui_radio(sx_rect_make(252, 118, 120, 16), "Large", 1, 0);
+    widgets[11].on_action = on_radio;
 
-    if (sxgui_app_init(&app, "widgetsdemo", widgets, 9) < 0)
+    if (sxgui_app_init(&app, "widgetsdemo", widgets, 12) < 0)
     {
         return 1;
     }

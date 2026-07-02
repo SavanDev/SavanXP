@@ -312,7 +312,7 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
     }
     return widget->kind == SXGUI_BUTTON || widget->kind == SXGUI_CHECKBOX ||
            widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
-           widget->kind == SXGUI_SCROLLBAR;
+           widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -529,6 +529,58 @@ static void sxgui_listbox_ensure_visible(struct sxgui_widget *widget)
     sxgui_listbox_clamp_scroll(widget);
 }
 
+/* 12x12 circle stamped from per-row half widths; shadow on the upper arc,
+ * light on the lower arc. */
+static void sxgui_paint_radio(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    static const int half[12] = {2, 4, 5, 5, 6, 6, 6, 6, 5, 5, 4, 2};
+    int box_size = 12;
+    struct sx_rect box = sx_rect_make(
+        widget->rect.x,
+        widget->rect.y + (widget->rect.height - box_size) / 2,
+        box_size,
+        box_size);
+    uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+    int text_y = widget->rect.y + (widget->rect.height - gfx_text_height()) / 2;
+    int row;
+
+    for (row = 0; row < box_size; ++row)
+    {
+        int row_half = half[row];
+        int x0 = box.x + box_size / 2 - row_half;
+        int width = row_half * 2;
+        uint32_t edge = row < box_size / 2 ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
+
+        sx_painter_fill_rect(painter, sx_rect_make(x0, box.y + row, width, 1), SXGUI_COLOR_FIELD);
+        if (row == 0 || row == box_size - 1)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x0, box.y + row, width, 1), edge);
+        }
+        else
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x0, box.y + row, 1, 1), edge);
+            sx_painter_fill_rect(painter, sx_rect_make(x0 + width - 1, box.y + row, 1, 1), edge);
+        }
+    }
+    if (widget->value)
+    {
+        sx_painter_fill_rect(painter, sx_rect_make(box.x + 4, box.y + 4, 4, 4), SXGUI_COLOR_DARK);
+    }
+    if (widget->text != 0)
+    {
+        sx_painter_draw_text(painter, box.x + box_size + 6, text_y, widget->text, colour);
+    }
+    if (widget->focused && widget->text != 0)
+    {
+        struct sx_rect focus = sx_rect_make(
+            box.x + box_size + 4,
+            text_y - 1,
+            gfx_text_width(widget->text) + 4,
+            gfx_text_height() + 2);
+        sx_painter_draw_frame(painter, focus, SXGUI_COLOR_SHADOW);
+    }
+}
+
 static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_listbox_inner(widget);
@@ -719,6 +771,9 @@ void sxgui_paint(struct sxgui_context *ctx)
         case SXGUI_PROGRESS:
             sxgui_paint_progress(&ctx->painter, widget);
             break;
+        case SXGUI_RADIO:
+            sxgui_paint_radio(&ctx->painter, widget);
+            break;
         default:
             break;
         }
@@ -753,6 +808,29 @@ static void sxgui_fire(struct sxgui_widget *widget, int action)
     {
         widget->on_action(widget, widget->user);
     }
+}
+
+/* Check one radio and clear the rest of its group. Fires only on change. */
+static int sxgui_radio_select(struct sxgui_context *ctx, int index)
+{
+    struct sxgui_widget *widget = &ctx->widgets[index];
+    int other;
+
+    if (widget->value)
+    {
+        return 0;
+    }
+    for (other = 0; other < ctx->widget_count; ++other)
+    {
+        if (other != index && ctx->widgets[other].kind == SXGUI_RADIO &&
+            ctx->widgets[other].group == widget->group)
+        {
+            ctx->widgets[other].value = 0;
+        }
+    }
+    widget->value = 1;
+    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+    return 1;
 }
 
 /* Pointer moves routed to the captured widget while the button is held. */
@@ -895,6 +973,12 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 widget->value = widget->value ? 0 : 1;
                 sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                 changed = 1;
+                break;
+            case SXGUI_RADIO:
+                if (sxgui_radio_select(ctx, index))
+                {
+                    changed = 1;
+                }
                 break;
             case SXGUI_LISTBOX:
             {
@@ -1107,6 +1191,15 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
                 sxgui_fire(widget, SXGUI_ACTION_CLICK);
             }
             return 1;
+        }
+        return 0;
+    }
+
+    if (widget->kind == SXGUI_RADIO)
+    {
+        if (event->key == SAVANXP_KEY_ENTER || event->ascii == ' ')
+        {
+            return sxgui_radio_select(ctx, ctx->focus_index);
         }
         return 0;
     }
@@ -1378,6 +1471,14 @@ struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int rang
 struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text)
 {
     return sxgui_make(SXGUI_GROUPBOX, rect, text);
+}
+
+struct sxgui_widget sxgui_radio(struct sx_rect rect, const char *text, int group, int checked)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_RADIO, rect, text);
+    widget.group = group;
+    widget.value = checked ? 1 : 0;
+    return widget;
 }
 
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value)

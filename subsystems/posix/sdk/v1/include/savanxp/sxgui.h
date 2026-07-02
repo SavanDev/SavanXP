@@ -38,7 +38,8 @@ enum sxgui_kind {
     SXGUI_TEXTFIELD,
     SXGUI_SCROLLBAR,
     SXGUI_GROUPBOX,
-    SXGUI_PROGRESS
+    SXGUI_PROGRESS,
+    SXGUI_RADIO
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -86,6 +87,9 @@ struct sxgui_widget {
     int range_min;
     int range_max;
     int page;
+
+    /* radio: widgets sharing a group id are mutually exclusive */
+    int group;
 
     /* set by the toolkit right before on_action runs (enum sxgui_action) */
     int action;
@@ -142,6 +146,7 @@ struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items,
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity);
 struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);
 struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text);
+struct sxgui_widget sxgui_radio(struct sx_rect rect, const char *text, int group, int checked);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 
 /* ---- application frame (sxgui_app.c) -------------------------------------
