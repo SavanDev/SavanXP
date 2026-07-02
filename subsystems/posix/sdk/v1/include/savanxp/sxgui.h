@@ -40,7 +40,8 @@ enum sxgui_kind {
     SXGUI_GROUPBOX,
     SXGUI_PROGRESS,
     SXGUI_RADIO,
-    SXGUI_COMBOBOX
+    SXGUI_COMBOBOX,
+    SXGUI_TEXTVIEW
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -223,6 +224,9 @@ struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int rang
 struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text);
 struct sxgui_widget sxgui_radio(struct sx_rect rect, const char *text, int group, int checked);
 struct sxgui_widget sxgui_combobox(struct sx_rect rect, const char *const *items, int item_count, int selected);
+/* Read-only multi-line text panel; reuses items/item_count as lines and
+ * scrolls like a listbox (embedded scrollbar, keyboard paging). */
+struct sxgui_widget sxgui_textview(struct sx_rect rect, const char *const *lines, int line_count);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 
 /* ---- application frame (sxgui_app.c) -------------------------------------

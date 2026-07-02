@@ -313,7 +313,7 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
     return widget->kind == SXGUI_BUTTON || widget->kind == SXGUI_CHECKBOX ||
            widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
            widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
-           widget->kind == SXGUI_COMBOBOX;
+           widget->kind == SXGUI_COMBOBOX || widget->kind == SXGUI_TEXTVIEW;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -756,6 +756,40 @@ static void sxgui_listbox_ensure_visible(struct sxgui_widget *widget)
     sxgui_listbox_clamp_scroll(widget);
 }
 
+/* Shared by listbox and textview: handle a press on the embedded scrollbar
+ * column. Returns non-zero when the press landed on the scrollbar. */
+static int sxgui_listbox_scrollbar_press(
+    struct sxgui_context *ctx,
+    int index,
+    struct sxgui_widget *widget,
+    const struct savanxp_gui_pointer_event *event,
+    int *changed)
+{
+    struct sxgui_scroll_metrics metrics;
+    int grab_offset = 0;
+    int part;
+
+    if (!sxgui_listbox_has_scrollbar(widget) ||
+        !sx_rect_contains_point(sxgui_listbox_scrollbar_rect(widget), event->x, event->y))
+    {
+        return 0;
+    }
+    sxgui_listbox_metrics(widget, &metrics);
+    part = sxgui_scroll_hit_part(&metrics, event->x, event->y, &grab_offset);
+    if (part == SXGUI_SCROLL_THUMB)
+    {
+        ctx->capture_index = index;
+        ctx->capture_part = part;
+        ctx->capture_offset = grab_offset;
+    }
+    else if (part != SXGUI_SCROLL_NONE)
+    {
+        widget->scroll = sxgui_scroll_step_value(&metrics, part);
+        *changed = 1;
+    }
+    return 1;
+}
+
 /* 12x12 circle stamped from per-row half widths; shadow on the upper arc,
  * light on the lower arc. */
 static void sxgui_paint_radio(struct sx_painter *painter, const struct sxgui_widget *widget)
@@ -839,6 +873,43 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
         if (label != 0)
         {
             sx_painter_draw_text(painter, inner.x + 3, row_y + 2, label, text_colour);
+        }
+    }
+    sx_painter_pop_clip(painter);
+
+    if (sxgui_listbox_has_scrollbar(widget))
+    {
+        struct sxgui_scroll_metrics metrics;
+        sxgui_listbox_metrics(widget, &metrics);
+        sxgui_paint_scroll_metrics(painter, &metrics, sxgui_widget_enabled(widget));
+    }
+}
+
+static void sxgui_paint_textview(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_listbox_inner(widget);
+    int row_height = sxgui_row_height();
+    int index;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
+    sxgui_draw_sunken(painter, widget->rect);
+
+    if (!sx_painter_push_clip(painter, inner))
+    {
+        return;
+    }
+    for (index = widget->scroll; index < widget->item_count; ++index)
+    {
+        int row_y = inner.y + (index - widget->scroll) * row_height;
+        const char *line = widget->items != 0 ? widget->items[index] : 0;
+
+        if (row_y >= inner.y + inner.height)
+        {
+            break;
+        }
+        if (line != 0)
+        {
+            sx_painter_draw_text(painter, inner.x + 3, row_y + 2, line, SXGUI_COLOR_TEXT);
         }
     }
     sx_painter_pop_clip(painter);
@@ -1137,6 +1208,9 @@ static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widge
     case SXGUI_COMBOBOX:
         sxgui_paint_combobox(painter, widget, combobox_open);
         break;
+    case SXGUI_TEXTVIEW:
+        sxgui_paint_textview(painter, widget);
+        break;
     default:
         break;
     }
@@ -1386,7 +1460,8 @@ static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *
         }
         return 0;
     }
-    if (widget->kind == SXGUI_LISTBOX && ctx->capture_part == SXGUI_SCROLL_THUMB)
+    if ((widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTVIEW) &&
+        ctx->capture_part == SXGUI_SCROLL_THUMB)
     {
         struct sxgui_scroll_metrics metrics;
         int value;
@@ -1647,26 +1722,8 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 break;
             case SXGUI_LISTBOX:
             {
-                if (sxgui_listbox_has_scrollbar(widget) &&
-                    sx_rect_contains_point(sxgui_listbox_scrollbar_rect(widget), event->x, event->y))
+                if (sxgui_listbox_scrollbar_press(ctx, index, widget, event, &changed))
                 {
-                    struct sxgui_scroll_metrics metrics;
-                    int grab_offset = 0;
-                    int part;
-
-                    sxgui_listbox_metrics(widget, &metrics);
-                    part = sxgui_scroll_hit_part(&metrics, event->x, event->y, &grab_offset);
-                    if (part == SXGUI_SCROLL_THUMB)
-                    {
-                        ctx->capture_index = index;
-                        ctx->capture_part = part;
-                        ctx->capture_offset = grab_offset;
-                    }
-                    else if (part != SXGUI_SCROLL_NONE)
-                    {
-                        widget->scroll = sxgui_scroll_step_value(&metrics, part);
-                        changed = 1;
-                    }
                     break;
                 }
                 {
@@ -1693,6 +1750,9 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 }
                 break;
             }
+            case SXGUI_TEXTVIEW:
+                (void)sxgui_listbox_scrollbar_press(ctx, index, widget, event, &changed);
+                break;
             case SXGUI_SCROLLBAR:
             {
                 struct sxgui_scroll_metrics metrics;
@@ -2046,6 +2106,43 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         return 1;
     }
 
+    if (widget->kind == SXGUI_TEXTVIEW)
+    {
+        int visible_rows = sxgui_listbox_visible_rows(widget);
+        int new_scroll = widget->scroll;
+
+        switch (event->key)
+        {
+        case SAVANXP_KEY_UP:
+            new_scroll -= 1;
+            break;
+        case SAVANXP_KEY_DOWN:
+            new_scroll += 1;
+            break;
+        case SAVANXP_KEY_PAGE_UP:
+            new_scroll -= visible_rows;
+            break;
+        case SAVANXP_KEY_PAGE_DOWN:
+            new_scroll += visible_rows;
+            break;
+        case SAVANXP_KEY_HOME:
+            new_scroll = 0;
+            break;
+        case SAVANXP_KEY_END:
+            new_scroll = sxgui_listbox_max_scroll(widget);
+            break;
+        default:
+            return 0;
+        }
+        new_scroll = sxgui_clamp_int(new_scroll, 0, sxgui_listbox_max_scroll(widget));
+        if (new_scroll == widget->scroll)
+        {
+            return 0;
+        }
+        widget->scroll = new_scroll;
+        return 1;
+    }
+
     if (widget->kind == SXGUI_SCROLLBAR)
     {
         int new_value = widget->value;
@@ -2282,6 +2379,14 @@ struct sxgui_widget sxgui_combobox(struct sx_rect rect, const char *const *items
     widget.items = items;
     widget.item_count = item_count;
     widget.value = sxgui_clamp_int(selected, 0, item_count > 0 ? item_count - 1 : 0);
+    return widget;
+}
+
+struct sxgui_widget sxgui_textview(struct sx_rect rect, const char *const *lines, int line_count)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_TEXTVIEW, rect, 0);
+    widget.items = lines;
+    widget.item_count = line_count;
     return widget;
 }
 
