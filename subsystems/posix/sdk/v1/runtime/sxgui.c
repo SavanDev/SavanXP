@@ -206,11 +206,70 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
     sx_painter_pop_clip(painter);
 }
 
+/* Pixel width of the first `caret` characters. The buffer is caller-owned and
+ * mutable, so a temporary NUL keeps the measurement allocation-free. */
+static int sxgui_text_prefix_width(char *buffer, int caret)
+{
+    char saved;
+    int width;
+
+    if (buffer == 0 || caret <= 0)
+    {
+        return 0;
+    }
+    saved = buffer[caret];
+    buffer[caret] = '\0';
+    width = gfx_text_width(buffer);
+    buffer[caret] = saved;
+    return width;
+}
+
+static int sxgui_textfield_inner_width(const struct sxgui_widget *widget)
+{
+    return widget->rect.width - 2 * 2 - 3 * 2;
+}
+
+static void sxgui_textfield_clamp_caret(struct sxgui_widget *widget)
+{
+    int length = widget->edit_buffer != 0 ? (int)strlen(widget->edit_buffer) : 0;
+    if (widget->caret < 0)
+    {
+        widget->caret = 0;
+    }
+    if (widget->caret > length)
+    {
+        widget->caret = length;
+    }
+}
+
+static void sxgui_textfield_scroll_to_caret(struct sxgui_widget *widget)
+{
+    int inner_width = sxgui_textfield_inner_width(widget);
+    int caret_x = sxgui_text_prefix_width(widget->edit_buffer, widget->caret);
+
+    if (inner_width < 1)
+    {
+        inner_width = 1;
+    }
+    if (caret_x - widget->scroll > inner_width - 1)
+    {
+        widget->scroll = caret_x - (inner_width - 1);
+    }
+    if (caret_x - widget->scroll < 0)
+    {
+        widget->scroll = caret_x;
+    }
+    if (widget->scroll < 0)
+    {
+        widget->scroll = 0;
+    }
+}
+
 static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, 2);
     int text_y = inner.y + (inner.height - gfx_text_height()) / 2;
-    int text_x = inner.x + 3;
+    int text_x = inner.x + 3 - widget->scroll;
 
     sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
     sxgui_draw_sunken(painter, widget->rect);
@@ -225,11 +284,7 @@ static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui
     }
     if (widget->focused)
     {
-        int caret_x = text_x;
-        if (widget->edit_buffer != 0)
-        {
-            caret_x += gfx_text_width(widget->edit_buffer);
-        }
+        int caret_x = text_x + sxgui_text_prefix_width(widget->edit_buffer, widget->caret);
         sxgui_vline(painter, caret_x, text_y, gfx_text_height(), SXGUI_COLOR_TEXT);
     }
     sx_painter_pop_clip(painter);
@@ -378,6 +433,29 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 }
                 break;
             }
+            case SXGUI_TEXTFIELD:
+            {
+                if (widget->edit_buffer != 0)
+                {
+                    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+                    int local_x = event->x - (inner.x + 3) + widget->scroll;
+                    int text_length = (int)strlen(widget->edit_buffer);
+                    int position;
+
+                    widget->caret = text_length;
+                    for (position = 0; position <= text_length; ++position)
+                    {
+                        if (sxgui_text_prefix_width(widget->edit_buffer, position) >= local_x)
+                        {
+                            widget->caret = position;
+                            break;
+                        }
+                    }
+                    sxgui_textfield_scroll_to_caret(widget);
+                    changed = 1;
+                }
+                break;
+            }
             default:
                 break;
             }
@@ -504,22 +582,76 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
 
     if (widget->kind == SXGUI_TEXTFIELD && widget->edit_buffer != 0 && widget->edit_capacity > 0)
     {
+        sxgui_textfield_clamp_caret(widget);
         length = (int)strlen(widget->edit_buffer);
+        if (event->key == SAVANXP_KEY_LEFT)
+        {
+            if (widget->caret > 0)
+            {
+                widget->caret -= 1;
+                sxgui_textfield_scroll_to_caret(widget);
+                return 1;
+            }
+            return 0;
+        }
+        if (event->key == SAVANXP_KEY_RIGHT)
+        {
+            if (widget->caret < length)
+            {
+                widget->caret += 1;
+                sxgui_textfield_scroll_to_caret(widget);
+                return 1;
+            }
+            return 0;
+        }
+        if (event->key == SAVANXP_KEY_HOME)
+        {
+            widget->caret = 0;
+            sxgui_textfield_scroll_to_caret(widget);
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_END)
+        {
+            widget->caret = length;
+            sxgui_textfield_scroll_to_caret(widget);
+            return 1;
+        }
         if (event->key == SAVANXP_KEY_BACKSPACE)
         {
-            if (length > 0)
+            if (widget->caret > 0)
             {
-                widget->edit_buffer[length - 1] = '\0';
-                widget->caret = length - 1;
+                memmove(
+                    widget->edit_buffer + widget->caret - 1,
+                    widget->edit_buffer + widget->caret,
+                    (size_t)(length - widget->caret + 1));
+                widget->caret -= 1;
+                sxgui_textfield_scroll_to_caret(widget);
+                return 1;
+            }
+            return 0;
+        }
+        if (event->key == SAVANXP_KEY_DELETE)
+        {
+            if (widget->caret < length)
+            {
+                memmove(
+                    widget->edit_buffer + widget->caret,
+                    widget->edit_buffer + widget->caret + 1,
+                    (size_t)(length - widget->caret));
+                sxgui_textfield_scroll_to_caret(widget);
                 return 1;
             }
             return 0;
         }
         if (event->ascii >= 32 && event->ascii < 127 && length < widget->edit_capacity - 1)
         {
-            widget->edit_buffer[length] = (char)event->ascii;
-            widget->edit_buffer[length + 1] = '\0';
-            widget->caret = length + 1;
+            memmove(
+                widget->edit_buffer + widget->caret + 1,
+                widget->edit_buffer + widget->caret,
+                (size_t)(length - widget->caret + 1));
+            widget->edit_buffer[widget->caret] = (char)event->ascii;
+            widget->caret += 1;
+            sxgui_textfield_scroll_to_caret(widget);
             return 1;
         }
         return 0;

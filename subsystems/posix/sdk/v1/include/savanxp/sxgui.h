@@ -63,6 +63,9 @@ struct sxgui_widget {
     int edit_capacity;
     int caret;
 
+    /* textfield: horizontal scroll in pixels to keep the caret visible */
+    int scroll;
+
     void (*on_action)(struct sxgui_widget *widget, void *user);
     void *user;
 };
