@@ -35,11 +35,13 @@ enum sxgui_kind {
     SXGUI_BUTTON,
     SXGUI_CHECKBOX,
     SXGUI_LISTBOX,
-    SXGUI_TEXTFIELD
+    SXGUI_TEXTFIELD,
+    SXGUI_SCROLLBAR
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
 #define SXGUI_FLAG_DISABLED (1u << 1)
+#define SXGUI_FLAG_HSCROLL  (1u << 2)  /* scrollbar: horizontal orientation */
 
 struct sxgui_widget {
     int kind;
@@ -63,8 +65,15 @@ struct sxgui_widget {
     int edit_capacity;
     int caret;
 
-    /* textfield: horizontal scroll in pixels to keep the caret visible */
+    /* textfield: horizontal scroll in pixels to keep the caret visible;
+     * listbox: first visible row */
     int scroll;
+
+    /* scrollbar: value ranges over [range_min, range_max]; page sizes the
+     * thumb and is the track-click step */
+    int range_min;
+    int range_max;
+    int page;
 
     void (*on_action)(struct sxgui_widget *widget, void *user);
     void *user;
@@ -80,6 +89,11 @@ struct sxgui_context {
     int pointer_x;
     int pointer_y;
     int shift_down;
+
+    /* pointer capture while the left button is held (thumb drags, presses) */
+    int capture_index;
+    int capture_part;
+    int capture_offset;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */
@@ -104,6 +118,7 @@ struct sxgui_widget sxgui_button(struct sx_rect rect, const char *text, void (*o
 struct sxgui_widget sxgui_checkbox(struct sx_rect rect, const char *text, int checked);
 struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items, int item_count);
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity);
+struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);
 
 #ifdef __cplusplus
 }

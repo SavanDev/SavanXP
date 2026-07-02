@@ -59,6 +59,241 @@ static int sxgui_row_height(void)
     return gfx_text_height() + 4;
 }
 
+/* ---- scrollbar machinery (shared by the widget and the listbox) --------- */
+
+#define SXGUI_SCROLLBAR_THICKNESS 16
+#define SXGUI_SCROLLBAR_MIN_THUMB 8
+
+enum sxgui_scroll_part {
+    SXGUI_SCROLL_NONE = 0,
+    SXGUI_SCROLL_LINE_BACK,
+    SXGUI_SCROLL_LINE_FORWARD,
+    SXGUI_SCROLL_PAGE_BACK,
+    SXGUI_SCROLL_PAGE_FORWARD,
+    SXGUI_SCROLL_THUMB
+};
+
+struct sxgui_scroll_metrics {
+    struct sx_rect button_back;
+    struct sx_rect button_forward;
+    struct sx_rect track;
+    struct sx_rect thumb;
+    int horizontal;
+    int range_min;
+    int range_max;
+    int page;
+    int value;
+};
+
+static int sxgui_clamp_int(int value, int low, int high)
+{
+    if (value < low)
+    {
+        return low;
+    }
+    if (value > high)
+    {
+        return high;
+    }
+    return value;
+}
+
+static void sxgui_scroll_metrics_init(
+    struct sxgui_scroll_metrics *metrics,
+    struct sx_rect rect,
+    int horizontal,
+    int range_min,
+    int range_max,
+    int page,
+    int value)
+{
+    int length = horizontal ? rect.width : rect.height;
+    int button = SXGUI_SCROLLBAR_THICKNESS;
+    int track_length;
+    int span;
+    int thumb_length;
+    int offset_range;
+    int thumb_offset;
+
+    if (button * 2 > length)
+    {
+        button = length / 2;
+    }
+    if (range_max < range_min)
+    {
+        range_max = range_min;
+    }
+    if (page < 1)
+    {
+        page = 1;
+    }
+    value = sxgui_clamp_int(value, range_min, range_max);
+
+    metrics->horizontal = horizontal;
+    metrics->range_min = range_min;
+    metrics->range_max = range_max;
+    metrics->page = page;
+    metrics->value = value;
+
+    if (horizontal)
+    {
+        metrics->button_back = sx_rect_make(rect.x, rect.y, button, rect.height);
+        metrics->button_forward = sx_rect_make(rect.x + rect.width - button, rect.y, button, rect.height);
+        metrics->track = sx_rect_make(rect.x + button, rect.y, rect.width - button * 2, rect.height);
+    }
+    else
+    {
+        metrics->button_back = sx_rect_make(rect.x, rect.y, rect.width, button);
+        metrics->button_forward = sx_rect_make(rect.x, rect.y + rect.height - button, rect.width, button);
+        metrics->track = sx_rect_make(rect.x, rect.y + button, rect.width, rect.height - button * 2);
+    }
+
+    track_length = horizontal ? metrics->track.width : metrics->track.height;
+    span = range_max - range_min;
+    thumb_length = span > 0 ? track_length * page / (span + page) : track_length;
+    thumb_length = sxgui_clamp_int(thumb_length, SXGUI_SCROLLBAR_MIN_THUMB, track_length);
+    offset_range = track_length - thumb_length;
+    thumb_offset = (span > 0 && offset_range > 0) ? (int)((long)(value - range_min) * offset_range / span) : 0;
+
+    if (horizontal)
+    {
+        metrics->thumb = sx_rect_make(metrics->track.x + thumb_offset, metrics->track.y, thumb_length, metrics->track.height);
+    }
+    else
+    {
+        metrics->thumb = sx_rect_make(metrics->track.x, metrics->track.y + thumb_offset, metrics->track.width, thumb_length);
+    }
+}
+
+/* direction: 0 = up, 1 = down, 2 = left, 3 = right */
+static void sxgui_paint_arrow(struct sx_painter *painter, struct sx_rect box, int direction, uint32_t colour)
+{
+    int rows = 4;
+    int row;
+
+    for (row = 0; row < rows; ++row)
+    {
+        int width = row * 2 + 1;
+        switch (direction)
+        {
+        case 0:
+            sxgui_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + row, width, colour);
+            break;
+        case 1:
+            sxgui_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + rows - 1 - row, width, colour);
+            break;
+        case 2:
+            sxgui_vline(painter, box.x + (box.width - rows) / 2 + row, box.y + (box.height - width) / 2, width, colour);
+            break;
+        default:
+            sxgui_vline(painter, box.x + (box.width - rows) / 2 + rows - 1 - row, box.y + (box.height - width) / 2, width, colour);
+            break;
+        }
+    }
+}
+
+static void sxgui_paint_scroll_metrics(struct sx_painter *painter, const struct sxgui_scroll_metrics *metrics, int enabled)
+{
+    uint32_t track_colour = SXGUI_RGB(222, 222, 222);
+    uint32_t arrow_colour = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+
+    sx_painter_fill_rect(painter, metrics->track, track_colour);
+
+    sx_painter_fill_rect(painter, metrics->button_back, SXGUI_COLOR_FACE);
+    sxgui_draw_raised(painter, metrics->button_back);
+    sx_painter_fill_rect(painter, metrics->button_forward, SXGUI_COLOR_FACE);
+    sxgui_draw_raised(painter, metrics->button_forward);
+    if (metrics->horizontal)
+    {
+        sxgui_paint_arrow(painter, metrics->button_back, 2, arrow_colour);
+        sxgui_paint_arrow(painter, metrics->button_forward, 3, arrow_colour);
+    }
+    else
+    {
+        sxgui_paint_arrow(painter, metrics->button_back, 0, arrow_colour);
+        sxgui_paint_arrow(painter, metrics->button_forward, 1, arrow_colour);
+    }
+
+    if (metrics->range_max > metrics->range_min)
+    {
+        sx_painter_fill_rect(painter, metrics->thumb, SXGUI_COLOR_FACE);
+        sxgui_draw_raised(painter, metrics->thumb);
+    }
+}
+
+static int sxgui_scroll_hit_part(const struct sxgui_scroll_metrics *metrics, int x, int y, int *grab_offset)
+{
+    if (sx_rect_contains_point(metrics->button_back, x, y))
+    {
+        return SXGUI_SCROLL_LINE_BACK;
+    }
+    if (sx_rect_contains_point(metrics->button_forward, x, y))
+    {
+        return SXGUI_SCROLL_LINE_FORWARD;
+    }
+    if (metrics->range_max <= metrics->range_min)
+    {
+        return SXGUI_SCROLL_NONE;
+    }
+    if (sx_rect_contains_point(metrics->thumb, x, y))
+    {
+        if (grab_offset != 0)
+        {
+            *grab_offset = metrics->horizontal ? x - metrics->thumb.x : y - metrics->thumb.y;
+        }
+        return SXGUI_SCROLL_THUMB;
+    }
+    if (sx_rect_contains_point(metrics->track, x, y))
+    {
+        int before = metrics->horizontal ? x < metrics->thumb.x : y < metrics->thumb.y;
+        return before ? SXGUI_SCROLL_PAGE_BACK : SXGUI_SCROLL_PAGE_FORWARD;
+    }
+    return SXGUI_SCROLL_NONE;
+}
+
+static int sxgui_scroll_step_value(const struct sxgui_scroll_metrics *metrics, int part)
+{
+    int value = metrics->value;
+
+    switch (part)
+    {
+    case SXGUI_SCROLL_LINE_BACK:
+        value -= 1;
+        break;
+    case SXGUI_SCROLL_LINE_FORWARD:
+        value += 1;
+        break;
+    case SXGUI_SCROLL_PAGE_BACK:
+        value -= metrics->page;
+        break;
+    case SXGUI_SCROLL_PAGE_FORWARD:
+        value += metrics->page;
+        break;
+    default:
+        break;
+    }
+    return sxgui_clamp_int(value, metrics->range_min, metrics->range_max);
+}
+
+static int sxgui_scroll_value_from_drag(const struct sxgui_scroll_metrics *metrics, int x, int y, int grab_offset)
+{
+    int track_length = metrics->horizontal ? metrics->track.width : metrics->track.height;
+    int thumb_length = metrics->horizontal ? metrics->thumb.width : metrics->thumb.height;
+    int offset_range = track_length - thumb_length;
+    int span = metrics->range_max - metrics->range_min;
+    int pointer = metrics->horizontal ? x - metrics->track.x : y - metrics->track.y;
+    int offset = pointer - grab_offset;
+    long scaled;
+
+    if (offset_range <= 0 || span <= 0)
+    {
+        return metrics->value;
+    }
+    offset = sxgui_clamp_int(offset, 0, offset_range);
+    scaled = ((long)offset * span + offset_range / 2) / offset_range;
+    return sxgui_clamp_int(metrics->range_min + (int)scaled, metrics->range_min, metrics->range_max);
+}
+
 static int sxgui_widget_enabled(const struct sxgui_widget *widget)
 {
     return (widget->flags & SXGUI_FLAG_DISABLED) == 0;
@@ -76,7 +311,8 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
         return 0;
     }
     return widget->kind == SXGUI_BUTTON || widget->kind == SXGUI_CHECKBOX ||
-           widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD;
+           widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
+           widget->kind == SXGUI_SCROLLBAR;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -170,9 +406,81 @@ static void sxgui_paint_checkbox(struct sx_painter *painter, const struct sxgui_
     }
 }
 
-static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_widget *widget)
+/* ---- listbox scrolling helpers ------------------------------------------ */
+
+static int sxgui_listbox_visible_rows(const struct sxgui_widget *widget)
+{
+    int rows = (widget->rect.height - 4) / sxgui_row_height();
+    return rows > 0 ? rows : 1;
+}
+
+static int sxgui_listbox_has_scrollbar(const struct sxgui_widget *widget)
+{
+    return widget->item_count > sxgui_listbox_visible_rows(widget);
+}
+
+static int sxgui_listbox_max_scroll(const struct sxgui_widget *widget)
+{
+    int max_scroll = widget->item_count - sxgui_listbox_visible_rows(widget);
+    return max_scroll > 0 ? max_scroll : 0;
+}
+
+/* text area inside the sunken border, minus the embedded scrollbar column */
+static struct sx_rect sxgui_listbox_inner(const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    if (sxgui_listbox_has_scrollbar(widget))
+    {
+        inner.width -= SXGUI_SCROLLBAR_THICKNESS;
+    }
+    return inner;
+}
+
+static struct sx_rect sxgui_listbox_scrollbar_rect(const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    return sx_rect_make(
+        inner.x + inner.width - SXGUI_SCROLLBAR_THICKNESS,
+        inner.y,
+        SXGUI_SCROLLBAR_THICKNESS,
+        inner.height);
+}
+
+static void sxgui_listbox_metrics(const struct sxgui_widget *widget, struct sxgui_scroll_metrics *metrics)
+{
+    sxgui_scroll_metrics_init(
+        metrics,
+        sxgui_listbox_scrollbar_rect(widget),
+        0,
+        0,
+        sxgui_listbox_max_scroll(widget),
+        sxgui_listbox_visible_rows(widget),
+        widget->scroll);
+}
+
+static void sxgui_listbox_clamp_scroll(struct sxgui_widget *widget)
+{
+    widget->scroll = sxgui_clamp_int(widget->scroll, 0, sxgui_listbox_max_scroll(widget));
+}
+
+static void sxgui_listbox_ensure_visible(struct sxgui_widget *widget)
+{
+    int visible_rows = sxgui_listbox_visible_rows(widget);
+
+    if (widget->value < widget->scroll)
+    {
+        widget->scroll = widget->value;
+    }
+    if (widget->value >= widget->scroll + visible_rows)
+    {
+        widget->scroll = widget->value - visible_rows + 1;
+    }
+    sxgui_listbox_clamp_scroll(widget);
+}
+
+static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_listbox_inner(widget);
     int row_height = sxgui_row_height();
     int index;
 
@@ -183,9 +491,9 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
     {
         return;
     }
-    for (index = 0; index < widget->item_count; ++index)
+    for (index = widget->scroll; index < widget->item_count; ++index)
     {
-        int row_y = inner.y + index * row_height;
+        int row_y = inner.y + (index - widget->scroll) * row_height;
         const char *label = widget->items != 0 ? widget->items[index] : 0;
         uint32_t text_colour = SXGUI_COLOR_TEXT;
 
@@ -204,6 +512,32 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
         }
     }
     sx_painter_pop_clip(painter);
+
+    if (sxgui_listbox_has_scrollbar(widget))
+    {
+        struct sxgui_scroll_metrics metrics;
+        sxgui_listbox_metrics(widget, &metrics);
+        sxgui_paint_scroll_metrics(painter, &metrics, sxgui_widget_enabled(widget));
+    }
+}
+
+static void sxgui_paint_scrollbar(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sxgui_scroll_metrics metrics;
+
+    sxgui_scroll_metrics_init(
+        &metrics,
+        widget->rect,
+        (widget->flags & SXGUI_FLAG_HSCROLL) != 0,
+        widget->range_min,
+        widget->range_max,
+        widget->page,
+        widget->value);
+    sxgui_paint_scroll_metrics(painter, &metrics, sxgui_widget_enabled(widget));
+    if (widget->focused)
+    {
+        sx_painter_draw_frame(painter, widget->rect, SXGUI_COLOR_SHADOW);
+    }
 }
 
 /* Pixel width of the first `caret` characters. The buffer is caller-owned and
@@ -325,6 +659,9 @@ void sxgui_paint(struct sxgui_context *ctx)
         case SXGUI_TEXTFIELD:
             sxgui_paint_textfield(&ctx->painter, widget);
             break;
+        case SXGUI_SCROLLBAR:
+            sxgui_paint_scrollbar(&ctx->painter, widget);
+            break;
         default:
             break;
         }
@@ -360,6 +697,58 @@ static void sxgui_fire(struct sxgui_widget *widget)
     }
 }
 
+/* Pointer moves routed to the captured widget while the button is held. */
+static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *widget, const struct savanxp_gui_pointer_event *event)
+{
+    if (widget->kind == SXGUI_BUTTON)
+    {
+        int over = sxgui_hit(widget, event->x, event->y);
+        if (over != widget->hover)
+        {
+            widget->hover = over;
+            return 1;
+        }
+        return 0;
+    }
+    if (widget->kind == SXGUI_SCROLLBAR && ctx->capture_part == SXGUI_SCROLL_THUMB)
+    {
+        struct sxgui_scroll_metrics metrics;
+        int value;
+
+        sxgui_scroll_metrics_init(
+            &metrics,
+            widget->rect,
+            (widget->flags & SXGUI_FLAG_HSCROLL) != 0,
+            widget->range_min,
+            widget->range_max,
+            widget->page,
+            widget->value);
+        value = sxgui_scroll_value_from_drag(&metrics, event->x, event->y, ctx->capture_offset);
+        if (value != widget->value)
+        {
+            widget->value = value;
+            sxgui_fire(widget);
+            return 1;
+        }
+        return 0;
+    }
+    if (widget->kind == SXGUI_LISTBOX && ctx->capture_part == SXGUI_SCROLL_THUMB)
+    {
+        struct sxgui_scroll_metrics metrics;
+        int value;
+
+        sxgui_listbox_metrics(widget, &metrics);
+        value = sxgui_scroll_value_from_drag(&metrics, event->x, event->y, ctx->capture_offset);
+        if (value != widget->scroll)
+        {
+            widget->scroll = value;
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event)
 {
     int changed = 0;
@@ -377,6 +766,32 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     ctx->pointer_y = event->y;
     left_now = (event->buttons & left) != 0;
     left_before = (ctx->last_buttons & left) != 0;
+
+    if (ctx->capture_index >= 0 && ctx->capture_index < ctx->widget_count)
+    {
+        struct sxgui_widget *captured = &ctx->widgets[ctx->capture_index];
+
+        if (left_now)
+        {
+            changed = sxgui_capture_motion(ctx, captured, event);
+        }
+        else
+        {
+            if (captured->kind == SXGUI_BUTTON && captured->pressed)
+            {
+                if (captured->hover)
+                {
+                    sxgui_fire(captured);
+                }
+                captured->pressed = 0;
+            }
+            ctx->capture_index = -1;
+            ctx->capture_part = SXGUI_SCROLL_NONE;
+            changed = 1;
+        }
+        ctx->last_buttons = event->buttons;
+        return changed;
+    }
 
     for (index = 0; index < ctx->widget_count; ++index)
     {
@@ -414,6 +829,8 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             {
             case SXGUI_BUTTON:
                 widget->pressed = 1;
+                ctx->capture_index = index;
+                ctx->capture_part = SXGUI_SCROLL_NONE;
                 changed = 1;
                 break;
             case SXGUI_CHECKBOX:
@@ -423,12 +840,70 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 break;
             case SXGUI_LISTBOX:
             {
-                struct sx_rect inner = sxgui_inset(widget->rect, 2);
-                int row = (event->y - inner.y) / sxgui_row_height();
-                if (row >= 0 && row < widget->item_count && row != widget->value)
+                if (sxgui_listbox_has_scrollbar(widget) &&
+                    sx_rect_contains_point(sxgui_listbox_scrollbar_rect(widget), event->x, event->y))
                 {
-                    widget->value = row;
-                    sxgui_fire(widget);
+                    struct sxgui_scroll_metrics metrics;
+                    int grab_offset = 0;
+                    int part;
+
+                    sxgui_listbox_metrics(widget, &metrics);
+                    part = sxgui_scroll_hit_part(&metrics, event->x, event->y, &grab_offset);
+                    if (part == SXGUI_SCROLL_THUMB)
+                    {
+                        ctx->capture_index = index;
+                        ctx->capture_part = part;
+                        ctx->capture_offset = grab_offset;
+                    }
+                    else if (part != SXGUI_SCROLL_NONE)
+                    {
+                        widget->scroll = sxgui_scroll_step_value(&metrics, part);
+                        changed = 1;
+                    }
+                    break;
+                }
+                {
+                    struct sx_rect inner = sxgui_listbox_inner(widget);
+                    int row = widget->scroll + (event->y - inner.y) / sxgui_row_height();
+                    if (event->y >= inner.y && row >= 0 && row < widget->item_count && row != widget->value)
+                    {
+                        widget->value = row;
+                        sxgui_listbox_ensure_visible(widget);
+                        sxgui_fire(widget);
+                        changed = 1;
+                    }
+                }
+                break;
+            }
+            case SXGUI_SCROLLBAR:
+            {
+                struct sxgui_scroll_metrics metrics;
+                int grab_offset = 0;
+                int part;
+
+                sxgui_scroll_metrics_init(
+                    &metrics,
+                    widget->rect,
+                    (widget->flags & SXGUI_FLAG_HSCROLL) != 0,
+                    widget->range_min,
+                    widget->range_max,
+                    widget->page,
+                    widget->value);
+                part = sxgui_scroll_hit_part(&metrics, event->x, event->y, &grab_offset);
+                if (part == SXGUI_SCROLL_THUMB)
+                {
+                    ctx->capture_index = index;
+                    ctx->capture_part = part;
+                    ctx->capture_offset = grab_offset;
+                }
+                else if (part != SXGUI_SCROLL_NONE)
+                {
+                    int value = sxgui_scroll_step_value(&metrics, part);
+                    if (value != widget->value)
+                    {
+                        widget->value = value;
+                        sxgui_fire(widget);
+                    }
                     changed = 1;
                 }
                 break;
@@ -565,19 +1040,84 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
 
     if (widget->kind == SXGUI_LISTBOX)
     {
-        if (event->key == SAVANXP_KEY_UP && widget->value > 0)
+        int visible_rows = sxgui_listbox_visible_rows(widget);
+        int new_value = widget->value;
+
+        if (widget->item_count <= 0)
         {
-            widget->value -= 1;
-            sxgui_fire(widget);
-            return 1;
+            return 0;
         }
-        if (event->key == SAVANXP_KEY_DOWN && widget->value + 1 < widget->item_count)
+        switch (event->key)
         {
-            widget->value += 1;
-            sxgui_fire(widget);
-            return 1;
+        case SAVANXP_KEY_UP:
+            new_value -= 1;
+            break;
+        case SAVANXP_KEY_DOWN:
+            new_value += 1;
+            break;
+        case SAVANXP_KEY_PAGE_UP:
+            new_value -= visible_rows;
+            break;
+        case SAVANXP_KEY_PAGE_DOWN:
+            new_value += visible_rows;
+            break;
+        case SAVANXP_KEY_HOME:
+            new_value = 0;
+            break;
+        case SAVANXP_KEY_END:
+            new_value = widget->item_count - 1;
+            break;
+        default:
+            return 0;
         }
-        return 0;
+        new_value = sxgui_clamp_int(new_value, 0, widget->item_count - 1);
+        if (new_value == widget->value)
+        {
+            return 0;
+        }
+        widget->value = new_value;
+        sxgui_listbox_ensure_visible(widget);
+        sxgui_fire(widget);
+        return 1;
+    }
+
+    if (widget->kind == SXGUI_SCROLLBAR)
+    {
+        int new_value = widget->value;
+
+        switch (event->key)
+        {
+        case SAVANXP_KEY_UP:
+        case SAVANXP_KEY_LEFT:
+            new_value -= 1;
+            break;
+        case SAVANXP_KEY_DOWN:
+        case SAVANXP_KEY_RIGHT:
+            new_value += 1;
+            break;
+        case SAVANXP_KEY_PAGE_UP:
+            new_value -= widget->page;
+            break;
+        case SAVANXP_KEY_PAGE_DOWN:
+            new_value += widget->page;
+            break;
+        case SAVANXP_KEY_HOME:
+            new_value = widget->range_min;
+            break;
+        case SAVANXP_KEY_END:
+            new_value = widget->range_max;
+            break;
+        default:
+            return 0;
+        }
+        new_value = sxgui_clamp_int(new_value, widget->range_min, widget->range_max);
+        if (new_value == widget->value)
+        {
+            return 0;
+        }
+        widget->value = new_value;
+        sxgui_fire(widget);
+        return 1;
     }
 
     if (widget->kind == SXGUI_TEXTFIELD && widget->edit_buffer != 0 && widget->edit_capacity > 0)
@@ -679,6 +1219,7 @@ void sxgui_context_init(
     ctx->widgets = widgets;
     ctx->widget_count = widget_count;
     ctx->focus_index = -1;
+    ctx->capture_index = -1;
 }
 
 static struct sxgui_widget sxgui_make(int kind, struct sx_rect rect, const char *text)
@@ -729,5 +1270,15 @@ struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int 
     {
         widget.caret = (int)strlen(edit_buffer);
     }
+    return widget;
+}
+
+struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_SCROLLBAR, rect, 0);
+    widget.range_min = range_min;
+    widget.range_max = range_max >= range_min ? range_max : range_min;
+    widget.page = page > 0 ? page : 1;
+    widget.value = sxgui_clamp_int(value, widget.range_min, widget.range_max);
     return widget;
 }
