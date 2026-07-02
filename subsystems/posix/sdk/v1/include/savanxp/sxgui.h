@@ -76,6 +76,7 @@ struct sxgui_context {
     uint32_t last_buttons;
     int pointer_x;
     int pointer_y;
+    int shift_down;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */

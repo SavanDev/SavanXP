@@ -406,6 +406,34 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     return changed;
 }
 
+/* Move focus to the next/previous focusable widget, wrapping around. */
+static int sxgui_focus_step(struct sxgui_context *ctx, int direction)
+{
+    int start = ctx->focus_index;
+    int index;
+    int step;
+
+    if (start < 0 || start >= ctx->widget_count)
+    {
+        start = direction > 0 ? ctx->widget_count - 1 : 0;
+    }
+    for (step = 1; step <= ctx->widget_count; ++step)
+    {
+        index = start + direction * step;
+        while (index < 0)
+        {
+            index += ctx->widget_count;
+        }
+        index %= ctx->widget_count;
+        if (sxgui_focusable(&ctx->widgets[index]))
+        {
+            sxgui_set_focus(ctx, index);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event *event)
 {
     struct sxgui_widget *widget;
@@ -415,9 +443,26 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
     {
         return 0;
     }
+    if (event->type == SAVANXP_INPUT_EVENT_KEY_UP)
+    {
+        if (event->key == SAVANXP_KEY_SHIFT)
+        {
+            ctx->shift_down = 0;
+        }
+        return 0;
+    }
     if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
     {
         return 0;
+    }
+    if (event->key == SAVANXP_KEY_SHIFT)
+    {
+        ctx->shift_down = 1;
+        return 0;
+    }
+    if (event->key == SAVANXP_KEY_TAB)
+    {
+        return sxgui_focus_step(ctx, ctx->shift_down ? -1 : 1);
     }
     if (ctx->focus_index < 0 || ctx->focus_index >= ctx->widget_count)
     {
