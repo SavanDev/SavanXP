@@ -1247,6 +1247,16 @@ void sxgui_context_init(
     ctx->last_click_index = -1;
 }
 
+void sxgui_context_retarget(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info)
+{
+    if (ctx == 0)
+    {
+        return;
+    }
+    sx_bitmap_wrap(&ctx->target, pixels, info, SX_PIXEL_FORMAT_BGRX8888);
+    sx_painter_init(&ctx->painter, &ctx->target);
+}
+
 static struct sxgui_widget sxgui_make(int kind, struct sx_rect rect, const char *text)
 {
     struct sxgui_widget widget;

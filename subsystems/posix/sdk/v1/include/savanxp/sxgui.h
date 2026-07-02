@@ -120,6 +120,9 @@ void sxgui_context_init(
     struct sxgui_widget *widgets,
     int widget_count);
 
+/* Re-bind the painting target after a window resize. */
+void sxgui_context_retarget(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info);
+
 /* Feed compositor-routed input. Each returns non-zero when the UI changed and
  * a repaint is needed. */
 int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event);
@@ -135,6 +138,36 @@ struct sxgui_widget sxgui_checkbox(struct sx_rect rect, const char *text, int ch
 struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items, int item_count);
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity);
 struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);
+
+/* ---- application frame (sxgui_app.c) -------------------------------------
+ *
+ * Owns the gfx session and the main loop every widget app repeats: poll
+ * keyboard/pointer, apply window resizes, repaint when something changed,
+ * present, throttle. ESC quits unless a hook consumes it first.
+ */
+
+struct sxgui_app {
+    struct savanxp_gfx_context gfx;   /* exposed: e.g. gfx_desktop_launch(&app->gfx, ...) */
+    struct sxgui_context ui;
+    long pointer_fd;
+    int running;
+    int exit_code;
+    int needs_repaint;
+
+    /* optional hooks; leave NULL to skip */
+    int (*on_key)(struct sxgui_app *app, const struct savanxp_input_event *event); /* pre-toolkit; non-zero = consumed */
+    void (*on_paint)(struct sxgui_app *app);  /* extra painting after sxgui_paint */
+    void (*on_resize)(struct sxgui_app *app); /* widget relayout after RESIZED */
+    void *user;
+};
+
+/* Open the gfx session and bind the widget array. On failure writes
+ * "<name>: ..." to fd 2, leaves everything closed and returns < 0. */
+int sxgui_app_init(struct sxgui_app *app, const char *name, struct sxgui_widget *widgets, int widget_count);
+void sxgui_app_request_repaint(struct sxgui_app *app);
+void sxgui_app_quit(struct sxgui_app *app, int exit_code);
+/* Blocks until the app quits; releases the gfx session and returns exit_code. */
+int sxgui_app_run(struct sxgui_app *app);
 
 #ifdef __cplusplus
 }
