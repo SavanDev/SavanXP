@@ -312,7 +312,8 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
     }
     return widget->kind == SXGUI_BUTTON || widget->kind == SXGUI_CHECKBOX ||
            widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
-           widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO;
+           widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
+           widget->kind == SXGUI_COMBOBOX;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -455,6 +456,74 @@ static void sxgui_paint_checkbox(struct sx_painter *painter, const struct sxgui_
             gfx_text_height() + 2);
         sx_painter_draw_frame(painter, focus, SXGUI_COLOR_SHADOW);
     }
+}
+
+/* ---- combobox popup helpers ---------------------------------------------- */
+
+#define SXGUI_COMBOBOX_MAX_ROWS 8
+
+static int sxgui_popup_visible_rows(const struct sxgui_widget *widget)
+{
+    int rows = widget->item_count < SXGUI_COMBOBOX_MAX_ROWS ? widget->item_count : SXGUI_COMBOBOX_MAX_ROWS;
+    return rows > 0 ? rows : 1;
+}
+
+static void sxgui_popup_close(struct sxgui_context *ctx)
+{
+    ctx->popup_owner = -1;
+}
+
+static void sxgui_popup_ensure_hot_visible(struct sxgui_context *ctx, const struct sxgui_widget *widget)
+{
+    int rows = sxgui_popup_visible_rows(widget);
+    int max_scroll = widget->item_count - rows;
+
+    if (ctx->popup_hot < ctx->popup_scroll)
+    {
+        ctx->popup_scroll = ctx->popup_hot;
+    }
+    if (ctx->popup_hot >= ctx->popup_scroll + rows)
+    {
+        ctx->popup_scroll = ctx->popup_hot - rows + 1;
+    }
+    ctx->popup_scroll = sxgui_clamp_int(ctx->popup_scroll, 0, max_scroll > 0 ? max_scroll : 0);
+}
+
+/* Place the dropdown under the widget, clamped to the surface; open upwards
+ * when it does not fit below. */
+static void sxgui_popup_open(struct sxgui_context *ctx, int index)
+{
+    struct sxgui_widget *widget = &ctx->widgets[index];
+    int rows = sxgui_popup_visible_rows(widget);
+    int height = rows * sxgui_row_height() + 2;
+    int width = widget->rect.width;
+    int x = widget->rect.x;
+    int y = widget->rect.y + widget->rect.height;
+    int surface_width = (int)ctx->target.info.width;
+    int surface_height = (int)ctx->target.info.height;
+
+    if (y + height > surface_height)
+    {
+        y = widget->rect.y - height;
+        if (y < 0)
+        {
+            y = 0;
+        }
+    }
+    if (x + width > surface_width)
+    {
+        x = surface_width - width;
+    }
+    if (x < 0)
+    {
+        x = 0;
+    }
+
+    ctx->popup_owner = index;
+    ctx->popup_rect = sx_rect_make(x, y, width, height);
+    ctx->popup_hot = sxgui_clamp_int(widget->value, 0, widget->item_count > 0 ? widget->item_count - 1 : 0);
+    ctx->popup_scroll = 0;
+    sxgui_popup_ensure_hot_visible(ctx, widget);
 }
 
 /* ---- listbox scrolling helpers ------------------------------------------ */
@@ -624,6 +693,86 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
     }
 }
 
+static void sxgui_paint_combobox(struct sx_painter *painter, const struct sxgui_widget *widget, int open)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect button = sx_rect_make(
+        widget->rect.x + widget->rect.width - 2 - SXGUI_SCROLLBAR_THICKNESS,
+        inner.y,
+        SXGUI_SCROLLBAR_THICKNESS,
+        inner.height);
+    struct sx_rect text_area = sx_rect_make(inner.x, inner.y, inner.width - button.width, inner.height);
+    int text_y = inner.y + (inner.height - gfx_text_height()) / 2;
+    uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+    const char *label = 0;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
+    sxgui_draw_sunken(painter, widget->rect);
+
+    if (widget->items != 0 && widget->value >= 0 && widget->value < widget->item_count)
+    {
+        label = widget->items[widget->value];
+    }
+    if (label != 0 && sx_painter_push_clip(painter, text_area))
+    {
+        sx_painter_draw_text(painter, text_area.x + 3, text_y, label, colour);
+        sx_painter_pop_clip(painter);
+    }
+    if (widget->focused)
+    {
+        sx_painter_draw_frame(painter, sxgui_inset(text_area, 1), SXGUI_COLOR_SHADOW);
+    }
+
+    sx_painter_fill_rect(painter, button, SXGUI_COLOR_FACE);
+    if (open)
+    {
+        sxgui_draw_pressed(painter, button);
+    }
+    else
+    {
+        sxgui_draw_raised(painter, button);
+    }
+    sxgui_paint_arrow(painter, button, 1, colour);
+}
+
+/* Dropdown overlay; painted after every widget so it stays on top. */
+static void sxgui_paint_combobox_popup(struct sxgui_context *ctx)
+{
+    struct sxgui_widget *widget = &ctx->widgets[ctx->popup_owner];
+    struct sx_painter *painter = &ctx->painter;
+    struct sx_rect inner = sxgui_inset(ctx->popup_rect, 1);
+    int row_height = sxgui_row_height();
+    int rows = sxgui_popup_visible_rows(widget);
+    int index;
+
+    sx_painter_fill_rect(painter, ctx->popup_rect, SXGUI_COLOR_FIELD);
+    sx_painter_draw_frame(painter, ctx->popup_rect, SXGUI_COLOR_DARK);
+
+    if (!sx_painter_push_clip(painter, inner))
+    {
+        return;
+    }
+    for (index = ctx->popup_scroll;
+         index < widget->item_count && index < ctx->popup_scroll + rows;
+         ++index)
+    {
+        int row_y = inner.y + (index - ctx->popup_scroll) * row_height;
+        const char *label = widget->items != 0 ? widget->items[index] : 0;
+        uint32_t text_colour = SXGUI_COLOR_TEXT;
+
+        if (index == ctx->popup_hot)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(inner.x, row_y, inner.width, row_height), SXGUI_COLOR_SELECT);
+            text_colour = SXGUI_COLOR_SELECT_TEXT;
+        }
+        if (label != 0)
+        {
+            sx_painter_draw_text(painter, inner.x + 3, row_y + 2, label, text_colour);
+        }
+    }
+    sx_painter_pop_clip(painter);
+}
+
 static void sxgui_paint_scrollbar(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
     struct sxgui_scroll_metrics metrics;
@@ -774,9 +923,18 @@ void sxgui_paint(struct sxgui_context *ctx)
         case SXGUI_RADIO:
             sxgui_paint_radio(&ctx->painter, widget);
             break;
+        case SXGUI_COMBOBOX:
+            sxgui_paint_combobox(&ctx->painter, widget, ctx->popup_owner == index);
+            break;
         default:
             break;
         }
+    }
+
+    /* overlay pass: popups paint above every widget */
+    if (ctx->popup_owner >= 0 && ctx->popup_owner < ctx->widget_count)
+    {
+        sxgui_paint_combobox_popup(ctx);
     }
 }
 
@@ -903,6 +1061,44 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     left_now = (event->buttons & left) != 0;
     left_before = (ctx->last_buttons & left) != 0;
 
+    /* an open dropdown owns the pointer: click outside closes and is consumed */
+    if (ctx->popup_owner >= 0 && ctx->popup_owner < ctx->widget_count)
+    {
+        struct sxgui_widget *owner = &ctx->widgets[ctx->popup_owner];
+        struct sx_rect inner = sxgui_inset(ctx->popup_rect, 1);
+
+        if (sx_rect_contains_point(ctx->popup_rect, event->x, event->y))
+        {
+            int row = ctx->popup_scroll + (event->y - inner.y) / sxgui_row_height();
+
+            if (event->y >= inner.y && row >= 0 && row < owner->item_count)
+            {
+                if (row != ctx->popup_hot)
+                {
+                    ctx->popup_hot = row;
+                    changed = 1;
+                }
+                if (left_now && !left_before)
+                {
+                    if (owner->value != row)
+                    {
+                        owner->value = row;
+                        sxgui_fire(owner, SXGUI_ACTION_CHANGE);
+                    }
+                    sxgui_popup_close(ctx);
+                    changed = 1;
+                }
+            }
+        }
+        else if (left_now && !left_before)
+        {
+            sxgui_popup_close(ctx);
+            changed = 1;
+        }
+        ctx->last_buttons = event->buttons;
+        return changed;
+    }
+
     if (ctx->capture_index >= 0 && ctx->capture_index < ctx->widget_count)
     {
         struct sxgui_widget *captured = &ctx->widgets[ctx->capture_index];
@@ -977,6 +1173,13 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             case SXGUI_RADIO:
                 if (sxgui_radio_select(ctx, index))
                 {
+                    changed = 1;
+                }
+                break;
+            case SXGUI_COMBOBOX:
+                if (widget->item_count > 0)
+                {
+                    sxgui_popup_open(ctx, index);
                     changed = 1;
                 }
                 break;
@@ -1166,6 +1369,41 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         ctx->shift_down = 1;
         return 0;
     }
+    /* an open dropdown swallows the keyboard; ESC closes it (and is consumed
+     * here so the app frame does not treat it as quit) */
+    if (ctx->popup_owner >= 0 && ctx->popup_owner < ctx->widget_count)
+    {
+        struct sxgui_widget *owner = &ctx->widgets[ctx->popup_owner];
+
+        if (event->key == SAVANXP_KEY_ESC)
+        {
+            sxgui_popup_close(ctx);
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_UP && ctx->popup_hot > 0)
+        {
+            ctx->popup_hot -= 1;
+            sxgui_popup_ensure_hot_visible(ctx, owner);
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_DOWN && ctx->popup_hot + 1 < owner->item_count)
+        {
+            ctx->popup_hot += 1;
+            sxgui_popup_ensure_hot_visible(ctx, owner);
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_ENTER)
+        {
+            if (owner->value != ctx->popup_hot)
+            {
+                owner->value = ctx->popup_hot;
+                sxgui_fire(owner, SXGUI_ACTION_CHANGE);
+            }
+            sxgui_popup_close(ctx);
+            return 1;
+        }
+        return 1;
+    }
     if (event->key == SAVANXP_KEY_TAB)
     {
         return sxgui_focus_step(ctx, ctx->shift_down ? -1 : 1);
@@ -1200,6 +1438,32 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         if (event->key == SAVANXP_KEY_ENTER || event->ascii == ' ')
         {
             return sxgui_radio_select(ctx, ctx->focus_index);
+        }
+        return 0;
+    }
+
+    if (widget->kind == SXGUI_COMBOBOX)
+    {
+        if (event->key == SAVANXP_KEY_ENTER || event->ascii == ' ')
+        {
+            if (widget->item_count > 0)
+            {
+                sxgui_popup_open(ctx, ctx->focus_index);
+                return 1;
+            }
+            return 0;
+        }
+        if (event->key == SAVANXP_KEY_UP && widget->value > 0)
+        {
+            widget->value -= 1;
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_DOWN && widget->value + 1 < widget->item_count)
+        {
+            widget->value += 1;
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            return 1;
         }
         return 0;
     }
@@ -1395,6 +1659,7 @@ void sxgui_context_init(
     ctx->focus_index = -1;
     ctx->capture_index = -1;
     ctx->last_click_index = -1;
+    ctx->popup_owner = -1;
 }
 
 void sxgui_context_retarget(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info)
@@ -1478,6 +1743,15 @@ struct sxgui_widget sxgui_radio(struct sx_rect rect, const char *text, int group
     struct sxgui_widget widget = sxgui_make(SXGUI_RADIO, rect, text);
     widget.group = group;
     widget.value = checked ? 1 : 0;
+    return widget;
+}
+
+struct sxgui_widget sxgui_combobox(struct sx_rect rect, const char *const *items, int item_count, int selected)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_COMBOBOX, rect, 0);
+    widget.items = items;
+    widget.item_count = item_count;
+    widget.value = sxgui_clamp_int(selected, 0, item_count > 0 ? item_count - 1 : 0);
     return widget;
 }
 

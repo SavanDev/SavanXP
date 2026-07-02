@@ -39,7 +39,8 @@ enum sxgui_kind {
     SXGUI_SCROLLBAR,
     SXGUI_GROUPBOX,
     SXGUI_PROGRESS,
-    SXGUI_RADIO
+    SXGUI_RADIO,
+    SXGUI_COMBOBOX
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -117,6 +118,13 @@ struct sxgui_context {
     /* double-click tracking */
     unsigned long last_click_ms;
     int last_click_index;
+
+    /* combobox dropdown state; the popup paints as an overlay inside the
+     * window backbuffer, there are no child windows */
+    int popup_owner;
+    struct sx_rect popup_rect;
+    int popup_hot;
+    int popup_scroll;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */
@@ -147,6 +155,7 @@ struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int 
 struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);
 struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text);
 struct sxgui_widget sxgui_radio(struct sx_rect rect, const char *text, int group, int checked);
+struct sxgui_widget sxgui_combobox(struct sx_rect rect, const char *const *items, int item_count, int selected);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 
 /* ---- application frame (sxgui_app.c) -------------------------------------

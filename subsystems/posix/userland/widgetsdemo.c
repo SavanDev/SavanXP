@@ -67,9 +67,28 @@ static void on_radio(struct sxgui_widget *widget, void *user)
     snprintf(g_status, sizeof(g_status), "Radio: %s", widget->text != 0 ? widget->text : "?");
 }
 
+static const char *const g_theme_items[] = {
+    "Classic",
+    "Teal",
+    "Plum",
+    "Desert",
+    "High Contrast",
+    "Rainy Day",
+    "Slate",
+    "Rose",
+    "Maple",
+    "Wheat"
+};
+
+static void on_theme(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    snprintf(g_status, sizeof(g_status), "Theme: %s", widget->items[widget->value]);
+}
+
 int main(void)
 {
-    struct sxgui_widget widgets[12];
+    struct sxgui_widget widgets[13];
     struct sxgui_app app;
     int item_count = (int)(sizeof(g_list_items) / sizeof(g_list_items[0]));
 
@@ -90,8 +109,14 @@ int main(void)
     widgets[10].on_action = on_radio;
     widgets[11] = sxgui_radio(sx_rect_make(252, 118, 120, 16), "Large", 1, 0);
     widgets[11].on_action = on_radio;
+    widgets[12] = sxgui_combobox(
+        sx_rect_make(252, 42, 130, 22),
+        g_theme_items,
+        (int)(sizeof(g_theme_items) / sizeof(g_theme_items[0])),
+        0);
+    widgets[12].on_action = on_theme;
 
-    if (sxgui_app_init(&app, "widgetsdemo", widgets, 12) < 0)
+    if (sxgui_app_init(&app, "widgetsdemo", widgets, 13) < 0)
     {
         return 1;
     }
