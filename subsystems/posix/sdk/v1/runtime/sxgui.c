@@ -689,8 +689,9 @@ static void sxgui_set_focus(struct sxgui_context *ctx, int new_index)
     ctx->focus_index = new_index;
 }
 
-static void sxgui_fire(struct sxgui_widget *widget)
+static void sxgui_fire(struct sxgui_widget *widget, int action)
 {
+    widget->action = action;
     if (widget->on_action != 0)
     {
         widget->on_action(widget, widget->user);
@@ -727,7 +728,7 @@ static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *
         if (value != widget->value)
         {
             widget->value = value;
-            sxgui_fire(widget);
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
             return 1;
         }
         return 0;
@@ -781,7 +782,7 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             {
                 if (captured->hover)
                 {
-                    sxgui_fire(captured);
+                    sxgui_fire(captured, SXGUI_ACTION_CLICK);
                 }
                 captured->pressed = 0;
             }
@@ -835,7 +836,7 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 break;
             case SXGUI_CHECKBOX:
                 widget->value = widget->value ? 0 : 1;
-                sxgui_fire(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                 changed = 1;
                 break;
             case SXGUI_LISTBOX:
@@ -865,11 +866,22 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                 {
                     struct sx_rect inner = sxgui_listbox_inner(widget);
                     int row = widget->scroll + (event->y - inner.y) / sxgui_row_height();
-                    if (event->y >= inner.y && row >= 0 && row < widget->item_count && row != widget->value)
+                    if (event->y >= inner.y && row >= 0 && row < widget->item_count)
                     {
-                        widget->value = row;
-                        sxgui_listbox_ensure_visible(widget);
-                        sxgui_fire(widget);
+                        unsigned long now_ms = uptime_ms();
+                        if (row != widget->value)
+                        {
+                            widget->value = row;
+                            sxgui_listbox_ensure_visible(widget);
+                            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                        }
+                        else if (ctx->last_click_index == index &&
+                                 now_ms - ctx->last_click_ms <= SXGUI_DOUBLE_CLICK_MS)
+                        {
+                            sxgui_fire(widget, SXGUI_ACTION_ACTIVATE);
+                        }
+                        ctx->last_click_index = index;
+                        ctx->last_click_ms = now_ms;
                         changed = 1;
                     }
                 }
@@ -902,7 +914,7 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                     if (value != widget->value)
                     {
                         widget->value = value;
-                        sxgui_fire(widget);
+                        sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                     }
                     changed = 1;
                 }
@@ -947,7 +959,7 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             {
                 if (widget->hover)
                 {
-                    sxgui_fire(widget);
+                    sxgui_fire(widget, SXGUI_ACTION_CLICK);
                 }
                 widget->pressed = 0;
                 changed = 1;
@@ -1031,8 +1043,12 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             if (widget->kind == SXGUI_CHECKBOX)
             {
                 widget->value = widget->value ? 0 : 1;
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
             }
-            sxgui_fire(widget);
+            else
+            {
+                sxgui_fire(widget, SXGUI_ACTION_CLICK);
+            }
             return 1;
         }
         return 0;
@@ -1046,6 +1062,11 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         if (widget->item_count <= 0)
         {
             return 0;
+        }
+        if (event->key == SAVANXP_KEY_ENTER)
+        {
+            sxgui_fire(widget, SXGUI_ACTION_ACTIVATE);
+            return 1;
         }
         switch (event->key)
         {
@@ -1077,7 +1098,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         }
         widget->value = new_value;
         sxgui_listbox_ensure_visible(widget);
-        sxgui_fire(widget);
+        sxgui_fire(widget, SXGUI_ACTION_CHANGE);
         return 1;
     }
 
@@ -1116,7 +1137,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             return 0;
         }
         widget->value = new_value;
-        sxgui_fire(widget);
+        sxgui_fire(widget, SXGUI_ACTION_CHANGE);
         return 1;
     }
 
@@ -1166,6 +1187,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
                     (size_t)(length - widget->caret + 1));
                 widget->caret -= 1;
                 sxgui_textfield_scroll_to_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                 return 1;
             }
             return 0;
@@ -1179,6 +1201,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
                     widget->edit_buffer + widget->caret + 1,
                     (size_t)(length - widget->caret));
                 sxgui_textfield_scroll_to_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
                 return 1;
             }
             return 0;
@@ -1192,6 +1215,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             widget->edit_buffer[widget->caret] = (char)event->ascii;
             widget->caret += 1;
             sxgui_textfield_scroll_to_caret(widget);
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
             return 1;
         }
         return 0;
@@ -1220,6 +1244,7 @@ void sxgui_context_init(
     ctx->widget_count = widget_count;
     ctx->focus_index = -1;
     ctx->capture_index = -1;
+    ctx->last_click_index = -1;
 }
 
 static struct sxgui_widget sxgui_make(int kind, struct sx_rect rect, const char *text)

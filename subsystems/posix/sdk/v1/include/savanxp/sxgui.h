@@ -43,6 +43,15 @@ enum sxgui_kind {
 #define SXGUI_FLAG_DISABLED (1u << 1)
 #define SXGUI_FLAG_HSCROLL  (1u << 2)  /* scrollbar: horizontal orientation */
 
+#define SXGUI_DOUBLE_CLICK_MS 450UL
+
+/* Why on_action fired; read widget->action inside the callback. */
+enum sxgui_action {
+    SXGUI_ACTION_CLICK = 0,   /* button press released on the widget */
+    SXGUI_ACTION_CHANGE,      /* value/selection/text changed */
+    SXGUI_ACTION_ACTIVATE     /* listbox: double click or Enter on a row */
+};
+
 struct sxgui_widget {
     int kind;
     struct sx_rect rect;
@@ -75,6 +84,9 @@ struct sxgui_widget {
     int range_max;
     int page;
 
+    /* set by the toolkit right before on_action runs (enum sxgui_action) */
+    int action;
+
     void (*on_action)(struct sxgui_widget *widget, void *user);
     void *user;
 };
@@ -94,6 +106,10 @@ struct sxgui_context {
     int capture_index;
     int capture_part;
     int capture_offset;
+
+    /* double-click tracking */
+    unsigned long last_click_ms;
+    int last_click_index;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */
