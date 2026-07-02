@@ -321,9 +321,60 @@ static void sxgui_paint_label(struct sx_painter *painter, const struct sxgui_wid
 {
     uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
     int text_y = widget->rect.y + (widget->rect.height - gfx_text_height()) / 2;
+    int text_x = widget->rect.x;
+
+    if ((widget->flags & SXGUI_FLAG_SUNKEN) != 0)
+    {
+        sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FACE);
+        sxgui_draw_sunken(painter, widget->rect);
+        text_x += 5;
+    }
     if (widget->text != 0)
     {
-        sx_painter_draw_text(painter, widget->rect.x, text_y, widget->text, colour);
+        sx_painter_draw_text(painter, text_x, text_y, widget->text, colour);
+    }
+}
+
+/* Etched frame with the caption punched into the top edge. */
+static void sxgui_paint_groupbox(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+    struct sx_rect frame = widget->rect;
+
+    frame.y += gfx_text_height() / 2;
+    frame.height -= gfx_text_height() / 2;
+    sx_painter_draw_frame(painter, sx_rect_make(frame.x + 1, frame.y + 1, frame.width - 1, frame.height - 1), SXGUI_COLOR_LIGHT);
+    sx_painter_draw_frame(painter, sx_rect_make(frame.x, frame.y, frame.width - 1, frame.height - 1), SXGUI_COLOR_SHADOW);
+
+    if (widget->text != 0)
+    {
+        int text_x = widget->rect.x + 8;
+        struct sx_rect caption = sx_rect_make(text_x - 3, widget->rect.y, gfx_text_width(widget->text) + 6, gfx_text_height());
+        sx_painter_fill_rect(painter, caption, SXGUI_COLOR_WINDOW);
+        sx_painter_draw_text(painter, text_x, widget->rect.y, widget->text, colour);
+    }
+}
+
+static void sxgui_paint_progress(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 1);
+    int span = widget->range_max - widget->range_min;
+    int filled = 0;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
+    sxgui_draw_sunken(painter, widget->rect);
+    if (span > 0)
+    {
+        filled = (int)((long)(widget->value - widget->range_min) * inner.width / span);
+    }
+    else if (widget->value >= widget->range_max)
+    {
+        filled = inner.width;
+    }
+    filled = sxgui_clamp_int(filled, 0, inner.width);
+    if (filled > 0)
+    {
+        sx_painter_fill_rect(painter, sx_rect_make(inner.x, inner.y, filled, inner.height), SXGUI_COLOR_SELECT);
     }
 }
 
@@ -661,6 +712,12 @@ void sxgui_paint(struct sxgui_context *ctx)
             break;
         case SXGUI_SCROLLBAR:
             sxgui_paint_scrollbar(&ctx->painter, widget);
+            break;
+        case SXGUI_GROUPBOX:
+            sxgui_paint_groupbox(&ctx->painter, widget);
+            break;
+        case SXGUI_PROGRESS:
+            sxgui_paint_progress(&ctx->painter, widget);
             break;
         default:
             break;
@@ -1314,6 +1371,20 @@ struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int rang
     widget.range_min = range_min;
     widget.range_max = range_max >= range_min ? range_max : range_min;
     widget.page = page > 0 ? page : 1;
+    widget.value = sxgui_clamp_int(value, widget.range_min, widget.range_max);
+    return widget;
+}
+
+struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text)
+{
+    return sxgui_make(SXGUI_GROUPBOX, rect, text);
+}
+
+struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_PROGRESS, rect, 0);
+    widget.range_min = range_min;
+    widget.range_max = range_max >= range_min ? range_max : range_min;
     widget.value = sxgui_clamp_int(value, widget.range_min, widget.range_max);
     return widget;
 }

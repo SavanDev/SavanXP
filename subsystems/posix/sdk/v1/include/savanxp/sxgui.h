@@ -36,12 +36,15 @@ enum sxgui_kind {
     SXGUI_CHECKBOX,
     SXGUI_LISTBOX,
     SXGUI_TEXTFIELD,
-    SXGUI_SCROLLBAR
+    SXGUI_SCROLLBAR,
+    SXGUI_GROUPBOX,
+    SXGUI_PROGRESS
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
 #define SXGUI_FLAG_DISABLED (1u << 1)
 #define SXGUI_FLAG_HSCROLL  (1u << 2)  /* scrollbar: horizontal orientation */
+#define SXGUI_FLAG_SUNKEN   (1u << 3)  /* label: sunken status-bar panel */
 
 #define SXGUI_DOUBLE_CLICK_MS 450UL
 
@@ -138,6 +141,8 @@ struct sxgui_widget sxgui_checkbox(struct sx_rect rect, const char *text, int ch
 struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items, int item_count);
 struct sxgui_widget sxgui_textfield(struct sx_rect rect, char *edit_buffer, int edit_capacity);
 struct sxgui_widget sxgui_scrollbar(struct sx_rect rect, int range_min, int range_max, int page, int value);
+struct sxgui_widget sxgui_groupbox(struct sx_rect rect, const char *text);
+struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 
 /* ---- application frame (sxgui_app.c) -------------------------------------
  *
