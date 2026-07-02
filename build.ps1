@@ -138,6 +138,8 @@ $UserPrograms = @(
     ) },
     @{ Name = "filesapp"; Sources = @(
         "subsystems/posix/userland/filesapp.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
         "subsystems/posix/sdk/v1/runtime/posix.c"
     ) },
     @{ Name = "widgetsdemo"; Sources = @(

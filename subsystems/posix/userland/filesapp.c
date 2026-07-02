@@ -1,16 +1,22 @@
 #include "libc.h"
+#include "savanxp/sxgui.h"
 
 #include <dirent.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
-#define FILESAPP_MAX_WIDTH 1920
-#define FILESAPP_MAX_HEIGHT 1080
+#include "shared/version.h"
+
 #define FILESAPP_PATH_CAPACITY 256
 #define FILESAPP_MAX_ENTRIES 128
+#define FILESAPP_LABEL_LENGTH 80
 #define FILESAPP_PREVIEW_LINES 20
 #define FILESAPP_PREVIEW_COLUMNS 76
-#define FILESAPP_ROW_HEIGHT 18
+
+#define FILESAPP_MENU_REFRESH 1
+#define FILESAPP_MENU_GO_UP 2
+#define FILESAPP_MENU_ABOUT 8
+#define FILESAPP_MENU_EXIT 9
 
 struct filesapp_entry
 {
@@ -19,58 +25,39 @@ struct filesapp_entry
     int is_dir;
 };
 
-static uint32_t g_backbuffer[FILESAPP_MAX_WIDTH * FILESAPP_MAX_HEIGHT];
+static struct sxgui_app g_app;
+static struct sxgui_widget g_widgets[6];
+
 static struct filesapp_entry g_entries[FILESAPP_MAX_ENTRIES];
-static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
+static char g_item_labels[FILESAPP_MAX_ENTRIES][FILESAPP_LABEL_LENGTH];
+static const char *g_item_ptrs[FILESAPP_MAX_ENTRIES];
 static char g_preview[FILESAPP_PREVIEW_LINES][FILESAPP_PREVIEW_COLUMNS + 1];
-static char g_status_line[128];
+static const char *g_preview_ptrs[FILESAPP_PREVIEW_LINES];
+static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
+static char g_status_line[128] = "Ready";
 static int g_entry_count = 0;
-static int g_selected_index = 0;
-static int g_scroll_index = 0;
-static int g_cursor_x = 0;
-static int g_cursor_y = 0;
-static unsigned long g_last_click_ms = 0;
-static int g_last_click_index = -1;
+
+static struct sxgui_dialog g_about_dialog;
+static struct sxgui_widget g_about_widgets[3];
+
+#define FILESAPP_LIST (&g_widgets[3])
+#define FILESAPP_PREVIEW (&g_widgets[4])
 
 static int filesapp_path_is_launchable(const char *path);
-
-static int filesapp_min_int(int left, int right)
-{
-    return left < right ? left : right;
-}
-
-static int filesapp_max_int(int left, int right)
-{
-    return left > right ? left : right;
-}
-
-static int filesapp_point_in_rect(int x, int y, int rect_x, int rect_y, int rect_w, int rect_h)
-{
-    return x >= rect_x && y >= rect_y && x < rect_x + rect_w && y < rect_y + rect_h;
-}
 
 static int filesapp_printable_char(int value)
 {
     return value >= 32 && value <= 126;
 }
 
-static void filesapp_clear_preview(void)
+static void filesapp_set_status(const char *text)
 {
-    int index;
-    for (index = 0; index < FILESAPP_PREVIEW_LINES; ++index)
-    {
-        memset(g_preview[index], 0, sizeof(g_preview[index]));
-    }
+    snprintf(g_status_line, sizeof(g_status_line), "%s", text != 0 ? text : "");
 }
 
 static int filesapp_is_root_path(const char *path)
 {
     return path != 0 && path[0] == '/' && path[1] == '\0';
-}
-
-static void filesapp_set_status(const char *text)
-{
-    snprintf(g_status_line, sizeof(g_status_line), "%s", text != 0 ? text : "");
 }
 
 static int filesapp_join_path(const char *base, const char *name, char *buffer, size_t capacity)
@@ -173,34 +160,45 @@ static void filesapp_sort_entries(int start_index)
     }
 }
 
+static void filesapp_clear_preview(void)
+{
+    int index;
+    for (index = 0; index < FILESAPP_PREVIEW_LINES; ++index)
+    {
+        memset(g_preview[index], 0, sizeof(g_preview[index]));
+    }
+    FILESAPP_PREVIEW->scroll = 0;
+}
+
 static void filesapp_update_preview(void)
 {
     char full_path[FILESAPP_PATH_CAPACITY];
     struct stat info = {0};
     FILE *stream = 0;
     int line_index = 0;
+    int selected = FILESAPP_LIST->value;
 
     filesapp_clear_preview();
-    if (g_entry_count <= 0 || g_selected_index < 0 || g_selected_index >= g_entry_count)
+    if (g_entry_count <= 0 || selected < 0 || selected >= g_entry_count)
     {
         snprintf(g_preview[0], sizeof(g_preview[0]), "No entries.");
         return;
     }
 
-    if (strcmp(g_entries[g_selected_index].name, "..") == 0)
+    if (strcmp(g_entries[selected].name, "..") == 0)
     {
         snprintf(g_preview[0], sizeof(g_preview[0]), "Go to parent directory");
         return;
     }
 
-    if (!filesapp_join_path(g_current_path, g_entries[g_selected_index].name, full_path, sizeof(full_path)))
+    if (!filesapp_join_path(g_current_path, g_entries[selected].name, full_path, sizeof(full_path)))
     {
         snprintf(g_preview[0], sizeof(g_preview[0]), "Path too long.");
         return;
     }
     if (stat(full_path, &info) < 0)
     {
-        snprintf(g_preview[0], sizeof(g_preview[0]), "stat failed for %s", g_entries[g_selected_index].name);
+        snprintf(g_preview[0], sizeof(g_preview[0]), "stat failed for %s", g_entries[selected].name);
         return;
     }
 
@@ -237,6 +235,27 @@ static void filesapp_update_preview(void)
         snprintf(g_preview[5], sizeof(g_preview[5]), "(empty or binary-looking file)");
     }
     fclose(stream);
+}
+
+/* Rebuild the "[DIR] name" labels the listbox points at. */
+static void filesapp_rebuild_labels(void)
+{
+    int index;
+
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        snprintf(
+            g_item_labels[index],
+            sizeof(g_item_labels[index]),
+            "%s %s",
+            g_entries[index].is_dir ? "[DIR]" : "[FILE]",
+            g_entries[index].name);
+        g_item_ptrs[index] = g_item_labels[index];
+    }
+    FILESAPP_LIST->items = g_item_ptrs;
+    FILESAPP_LIST->item_count = g_entry_count;
+    FILESAPP_LIST->value = 0;
+    FILESAPP_LIST->scroll = 0;
 }
 
 static int filesapp_load_directory(const char *path)
@@ -289,53 +308,10 @@ static int filesapp_load_directory(const char *path)
 
     snprintf(g_current_path, sizeof(g_current_path), "%s", path);
     filesapp_sort_entries(insert_parent ? 1 : 0);
-    g_selected_index = 0;
-    g_scroll_index = 0;
+    filesapp_rebuild_labels();
     filesapp_update_preview();
     snprintf(g_status_line, sizeof(g_status_line), "%d item(s)", g_entry_count);
     return 0;
-}
-
-static void filesapp_ensure_selection_visible(int visible_rows)
-{
-    if (g_selected_index < g_scroll_index)
-    {
-        g_scroll_index = g_selected_index;
-    }
-    if (g_selected_index >= g_scroll_index + visible_rows)
-    {
-        g_scroll_index = g_selected_index - visible_rows + 1;
-    }
-    if (g_scroll_index < 0)
-    {
-        g_scroll_index = 0;
-    }
-}
-
-static int filesapp_list_index_from_point(const struct savanxp_gfx_context *gfx, int x, int y)
-{
-    const int list_x = 24;
-    const int list_y = 78;
-    const int list_width = ((int)gfx->info.width / 2) - 36;
-    const int list_height = (int)gfx->info.height - 156;
-    const int row_origin_y = list_y + 10;
-    const int visible_rows = filesapp_max_int(1, (list_height - 20) / FILESAPP_ROW_HEIGHT);
-    int row = 0;
-
-    if (!filesapp_point_in_rect(x, y, list_x, list_y, list_width, list_height))
-    {
-        return -1;
-    }
-    if (y < row_origin_y)
-    {
-        return -1;
-    }
-    row = (y - row_origin_y) / FILESAPP_ROW_HEIGHT;
-    if (row < 0 || row >= visible_rows)
-    {
-        return -1;
-    }
-    return g_scroll_index + row < g_entry_count ? g_scroll_index + row : -1;
 }
 
 static int filesapp_path_is_launchable(const char *path)
@@ -344,305 +320,220 @@ static int filesapp_path_is_launchable(const char *path)
         (strncmp(path, "/bin/", 5) == 0 || strncmp(path, "/disk/bin/", 10) == 0);
 }
 
-static int filesapp_activate_selected(struct savanxp_gfx_context *gfx)
+static void filesapp_go_up(void)
 {
-    char full_path[FILESAPP_PATH_CAPACITY];
     char parent_path[FILESAPP_PATH_CAPACITY];
 
-    if (g_entry_count <= 0 || g_selected_index < 0 || g_selected_index >= g_entry_count)
+    filesapp_parent_path(g_current_path, parent_path, sizeof(parent_path));
+    (void)filesapp_load_directory(parent_path);
+}
+
+static void filesapp_activate_selected(void)
+{
+    char full_path[FILESAPP_PATH_CAPACITY];
+    int selected = FILESAPP_LIST->value;
+
+    if (g_entry_count <= 0 || selected < 0 || selected >= g_entry_count)
     {
-        return 0;
+        return;
     }
-    if (strcmp(g_entries[g_selected_index].name, "..") == 0)
+    if (strcmp(g_entries[selected].name, "..") == 0)
     {
-        filesapp_parent_path(g_current_path, parent_path, sizeof(parent_path));
-        return filesapp_load_directory(parent_path);
+        filesapp_go_up();
+        return;
     }
-    if (!filesapp_join_path(g_current_path, g_entries[g_selected_index].name, full_path, sizeof(full_path)))
+    if (!filesapp_join_path(g_current_path, g_entries[selected].name, full_path, sizeof(full_path)))
     {
         filesapp_set_status("Path too long.");
-        return -1;
+        return;
     }
-    if (!g_entries[g_selected_index].is_dir)
+    if (!g_entries[selected].is_dir)
     {
-        if (gfx != 0 && filesapp_path_is_launchable(full_path))
+        if (filesapp_path_is_launchable(full_path))
         {
-            if (gfx_desktop_launch(gfx, full_path) < 0)
+            if (gfx_desktop_launch(&g_app.gfx, full_path) < 0)
             {
                 filesapp_set_status("Launch failed.");
-                return -1;
+                return;
             }
             filesapp_set_status("Launch requested.");
-            return 0;
+            return;
         }
         filesapp_update_preview();
         filesapp_set_status("Preview refreshed.");
+        return;
+    }
+    (void)filesapp_load_directory(full_path);
+}
+
+/* ---- widget callbacks ---------------------------------------------------- */
+
+static void on_list(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    if (widget->action == SXGUI_ACTION_ACTIVATE)
+    {
+        filesapp_activate_selected();
+    }
+    else
+    {
+        filesapp_update_preview();
+    }
+}
+
+static void on_dialog_ok(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+}
+
+static void on_menu_command(int id, void *user)
+{
+    (void)user;
+    switch (id)
+    {
+    case FILESAPP_MENU_REFRESH:
+        (void)filesapp_load_directory(g_current_path);
+        break;
+    case FILESAPP_MENU_GO_UP:
+        filesapp_go_up();
+        break;
+    case FILESAPP_MENU_ABOUT:
+        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, 280, 96);
+        break;
+    case FILESAPP_MENU_EXIT:
+        sxgui_app_quit(&g_app, 0);
+        break;
+    default:
+        break;
+    }
+}
+
+static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
+{
+    (void)app;
+    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+    {
         return 0;
     }
-    return filesapp_load_directory(full_path);
+    if (event->key == SAVANXP_KEY_BACKSPACE)
+    {
+        filesapp_go_up();
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_F5)
+    {
+        (void)filesapp_load_directory(g_current_path);
+        return 1;
+    }
+    return 0;
 }
 
-static void filesapp_draw_scene(struct savanxp_gfx_context *gfx)
+/* ---- layout --------------------------------------------------------------- */
+
+static void filesapp_layout(struct sxgui_app *app)
 {
-    const int list_x = 24;
-    const int list_y = 78;
-    const int list_width = ((int)gfx->info.width / 2) - 36;
-    const int list_height = (int)gfx->info.height - 156;
-    const int preview_x = list_x + list_width + 24;
-    const int preview_width = (int)gfx->info.width - preview_x - 24;
-    const int visible_rows = filesapp_max_int(1, (list_height - 20) / FILESAPP_ROW_HEIGHT);
-    int index;
-    int row_y = list_y + 10;
+    int width = (int)app->gfx.info.width;
+    int height = (int)app->gfx.info.height;
+    int top = sxgui_menubar_height() + 6;
+    int panel_y = top + 42;
+    int panel_height = height - panel_y - 40;
+    int list_x = 12;
+    int list_width = width / 2 - 18;
+    int preview_x = list_x + list_width + 12;
+    int preview_width = width - preview_x - 12;
 
-    filesapp_ensure_selection_visible(visible_rows);
-
-    gfx_clear(g_backbuffer, &gfx->info, gfx_rgb(0, 128, 128));
-    gfx_rect(g_backbuffer, &gfx->info, 0, 0, (int)gfx->info.width, 36, gfx_rgb(0, 90, 90));
-    gfx_hline(g_backbuffer, &gfx->info, 0, 36, (int)gfx->info.width, gfx_rgb(220, 255, 255));
-    gfx_blit_text(g_backbuffer, &gfx->info, 20, 10, "SavanXP Files", gfx_rgb(255, 255, 255));
-    gfx_blit_text(g_backbuffer, &gfx->info, 220, 10, g_current_path, gfx_rgb(226, 244, 244));
-
-    gfx_rect(g_backbuffer, &gfx->info, list_x, list_y, list_width, list_height, gfx_rgb(216, 220, 224));
-    gfx_frame(g_backbuffer, &gfx->info, list_x, list_y, list_width, list_height, gfx_rgb(46, 50, 56));
-    gfx_rect(g_backbuffer, &gfx->info, preview_x, list_y, preview_width, list_height, gfx_rgb(232, 235, 239));
-    gfx_frame(g_backbuffer, &gfx->info, preview_x, list_y, preview_width, list_height, gfx_rgb(46, 50, 56));
-
-    gfx_blit_text(g_backbuffer, &gfx->info, list_x + 12, list_y - 18, "Directory", gfx_rgb(255, 255, 255));
-    gfx_blit_text(g_backbuffer, &gfx->info, preview_x + 12, list_y - 18, "Preview", gfx_rgb(255, 255, 255));
-
-    for (index = g_scroll_index; index < g_entry_count && index < g_scroll_index + visible_rows; ++index)
+    if (panel_height < 60)
     {
-        const int row_index = index - g_scroll_index;
-        const int item_y = row_y + (row_index * FILESAPP_ROW_HEIGHT);
-        char line[120];
-
-        if (index == g_selected_index)
-        {
-            gfx_rect(g_backbuffer, &gfx->info, list_x + 8, item_y - 2, list_width - 16, FILESAPP_ROW_HEIGHT, gfx_rgb(176, 201, 233));
-        }
-        snprintf(
-            line,
-            sizeof(line),
-            "%s %s",
-            g_entries[index].is_dir ? "[DIR]" : "[FILE]",
-            g_entries[index].name);
-        gfx_blit_text(g_backbuffer, &gfx->info, list_x + 14, item_y, line, gfx_rgb(18, 22, 26));
+        panel_height = 60;
+    }
+    if (list_width < 80)
+    {
+        list_width = 80;
+    }
+    if (preview_width < 80)
+    {
+        preview_width = 80;
     }
 
-    for (index = 0; index < FILESAPP_PREVIEW_LINES; ++index)
-    {
-        if (g_preview[index][0] == '\0')
-        {
-            continue;
-        }
-        gfx_blit_text(g_backbuffer, &gfx->info, preview_x + 14, row_y + (index * FILESAPP_ROW_HEIGHT), g_preview[index], gfx_rgb(24, 28, 34));
-    }
-
-    gfx_rect(g_backbuffer, &gfx->info, 24, (int)gfx->info.height - 62, (int)gfx->info.width - 48, 32, gfx_rgb(192, 196, 201));
-    gfx_frame(g_backbuffer, &gfx->info, 24, (int)gfx->info.height - 62, (int)gfx->info.width - 48, 32, gfx_rgb(74, 79, 86));
-    gfx_blit_text(g_backbuffer, &gfx->info, 36, (int)gfx->info.height - 50, "ESC exit  Enter open dir  Backspace up  F5 refresh", gfx_rgb(18, 22, 26));
-    gfx_blit_text(g_backbuffer, &gfx->info, 520, (int)gfx->info.height - 50, g_status_line, gfx_rgb(18, 22, 26));
+    g_widgets[0].rect = sx_rect_make(12, top, width - 24, 16);                      /* path */
+    g_widgets[1].rect = sx_rect_make(list_x, panel_y - 20, 160, 16);                /* "Directory" */
+    g_widgets[2].rect = sx_rect_make(preview_x, panel_y - 20, 160, 16);             /* "Preview" */
+    g_widgets[3].rect = sx_rect_make(list_x, panel_y, list_width, panel_height);    /* listbox */
+    g_widgets[4].rect = sx_rect_make(preview_x, panel_y, preview_width, panel_height); /* textview */
+    g_widgets[5].rect = sx_rect_make(12, height - 32, width - 24, 22);              /* status */
 }
+
+static void on_resize(struct sxgui_app *app)
+{
+    filesapp_layout(app);
+}
+
+/* ---- menu tables ----------------------------------------------------------- */
+
+static const struct sxgui_menu_item k_file_items[] = {
+    {"Refresh", FILESAPP_MENU_REFRESH, 0},
+    {"Go up", FILESAPP_MENU_GO_UP, 0},
+    {0, 0, 0},
+    {"Exit", FILESAPP_MENU_EXIT, 0},
+};
+
+static const struct sxgui_menu_item k_help_items[] = {
+    {"About Files", FILESAPP_MENU_ABOUT, 0},
+};
+
+static const struct sxgui_menu k_menus[] = {
+    {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
+    {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
+};
+
+static struct sxgui_menubar g_menubar = {
+    k_menus,
+    (int)(sizeof(k_menus) / sizeof(k_menus[0])),
+    -1,
+    -1,
+    on_menu_command,
+    0
+};
 
 int main(void)
 {
-    struct savanxp_gfx_context gfx;
-    struct savanxp_input_event key_event;
-    struct savanxp_gui_pointer_event pointer_event;
-    long mouse_fd = -1;
-    int needs_redraw = 1;
-    uint32_t last_buttons = 0;
+    int index;
 
-    if (gfx_open(&gfx) < 0)
+    for (index = 0; index < FILESAPP_PREVIEW_LINES; ++index)
     {
-        puts_fd(2, "filesapp: gfx_open failed\n");
-        return 1;
-    }
-    if (gfx.info.width > FILESAPP_MAX_WIDTH || gfx.info.height > FILESAPP_MAX_HEIGHT || (gfx.info.pitch / 4u) > FILESAPP_MAX_WIDTH)
-    {
-        puts_fd(2, "filesapp: framebuffer too large\n");
-        gfx_close(&gfx);
-        return 1;
-    }
-    if (gfx_acquire(&gfx) < 0)
-    {
-        puts_fd(2, "filesapp: gfx_acquire failed\n");
-        gfx_close(&gfx);
-        return 1;
+        g_preview_ptrs[index] = g_preview[index];
     }
 
-    mouse_fd = gfx_pointer_open();
+    g_widgets[0] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_current_path);
+    g_widgets[1] = sxgui_label(sx_rect_make(0, 0, 0, 0), "Directory");
+    g_widgets[2] = sxgui_label(sx_rect_make(0, 0, 0, 0), "Preview");
+    g_widgets[3] = sxgui_listbox(sx_rect_make(0, 0, 0, 0), g_item_ptrs, 0);
+    g_widgets[3].on_action = on_list;
+    g_widgets[4] = sxgui_textview(sx_rect_make(0, 0, 0, 0), g_preview_ptrs, FILESAPP_PREVIEW_LINES);
+    g_widgets[5] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_line);
+    g_widgets[5].flags |= SXGUI_FLAG_SUNKEN;
+
+    g_about_widgets[0] = sxgui_label(sx_rect_make(10, 8, 260, 16), "SavanXP Files");
+    g_about_widgets[1] = sxgui_label(sx_rect_make(10, 28, 260, 16), "Browse directories and preview files");
+    g_about_widgets[2] = sxgui_button(sx_rect_make(90, 56, 100, 26), "OK", on_dialog_ok, 0);
+    g_about_dialog.title = "About";
+    g_about_dialog.widgets = g_about_widgets;
+    g_about_dialog.widget_count = 3;
+
+    if (sxgui_app_init(&g_app, "filesapp", g_widgets, 6) < 0)
+    {
+        return 1;
+    }
+    g_app.on_key = on_key;
+    g_app.on_resize = on_resize;
+    sxgui_set_menubar(&g_app.ui, &g_menubar);
+    filesapp_layout(&g_app);
+
     if (filesapp_load_directory("/") < 0)
     {
-        gfx_release(&gfx);
-        if (mouse_fd >= 0)
-        {
-            close((int)mouse_fd);
-        }
-        gfx_close(&gfx);
-        return 1;
+        sxgui_app_quit(&g_app, 1);
     }
-
-    for (;;)
-    {
-        while (gfx_poll_event(&gfx, &key_event) > 0)
-        {
-            if (key_event.type == SAVANXP_INPUT_EVENT_RESIZED)
-            {
-                (void)gfx_apply_resize_event(&gfx, &key_event);
-                if (g_cursor_x >= (int)gfx.info.width)
-                {
-                    g_cursor_x = (int)gfx.info.width - 1;
-                }
-                if (g_cursor_y >= (int)gfx.info.height)
-                {
-                    g_cursor_y = (int)gfx.info.height - 1;
-                }
-                needs_redraw = 1;
-                continue;
-            }
-            if (key_event.type != SAVANXP_INPUT_EVENT_KEY_DOWN)
-            {
-                continue;
-            }
-            if (key_event.key == SAVANXP_KEY_ESC)
-            {
-                gfx_release(&gfx);
-                if (mouse_fd >= 0)
-                {
-                    close((int)mouse_fd);
-                }
-                gfx_close(&gfx);
-                return 0;
-            }
-            if (key_event.key == SAVANXP_KEY_UP && g_selected_index > 0)
-            {
-                g_selected_index -= 1;
-                filesapp_update_preview();
-                needs_redraw = 1;
-            }
-            else if (key_event.key == SAVANXP_KEY_DOWN && g_selected_index + 1 < g_entry_count)
-            {
-                g_selected_index += 1;
-                filesapp_update_preview();
-                needs_redraw = 1;
-            }
-            else if (key_event.key == SAVANXP_KEY_HOME)
-            {
-                g_selected_index = 0;
-                filesapp_update_preview();
-                needs_redraw = 1;
-            }
-            else if (key_event.key == SAVANXP_KEY_END && g_entry_count > 0)
-            {
-                g_selected_index = g_entry_count - 1;
-                filesapp_update_preview();
-                needs_redraw = 1;
-            }
-            else if (key_event.key == SAVANXP_KEY_PAGE_UP)
-            {
-                g_selected_index = filesapp_max_int(0, g_selected_index - 10);
-                filesapp_update_preview();
-                needs_redraw = 1;
-            }
-            else if (key_event.key == SAVANXP_KEY_PAGE_DOWN && g_entry_count > 0)
-            {
-                g_selected_index = filesapp_min_int(g_entry_count - 1, g_selected_index + 10);
-                filesapp_update_preview();
-                needs_redraw = 1;
-            }
-            else if (key_event.key == SAVANXP_KEY_BACKSPACE)
-            {
-                char parent_path[FILESAPP_PATH_CAPACITY];
-                filesapp_parent_path(g_current_path, parent_path, sizeof(parent_path));
-                if (filesapp_load_directory(parent_path) == 0)
-                {
-                    needs_redraw = 1;
-                }
-            }
-            else if (key_event.key == SAVANXP_KEY_ENTER)
-            {
-                if (filesapp_activate_selected(&gfx) == 0)
-                {
-                    needs_redraw = 1;
-                }
-            }
-            else if (key_event.key == SAVANXP_KEY_F5)
-            {
-                if (filesapp_load_directory(g_current_path) == 0)
-                {
-                    needs_redraw = 1;
-                }
-            }
-        }
-
-        while (mouse_fd >= 0 && gfx_poll_pointer((int)mouse_fd, &pointer_event) > 0)
-        {
-            g_cursor_x = pointer_event.x;
-            g_cursor_y = pointer_event.y;
-            if (g_cursor_x < 0)
-            {
-                g_cursor_x = 0;
-            }
-            if (g_cursor_y < 0)
-            {
-                g_cursor_y = 0;
-            }
-            if (g_cursor_x >= (int)gfx.info.width)
-            {
-                g_cursor_x = (int)gfx.info.width - 1;
-            }
-            if (g_cursor_y >= (int)gfx.info.height)
-            {
-                g_cursor_y = (int)gfx.info.height - 1;
-            }
-
-            if ((pointer_event.buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0 && (last_buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
-            {
-                int clicked_index = filesapp_list_index_from_point(&gfx, g_cursor_x, g_cursor_y);
-                if (clicked_index >= 0 && clicked_index < g_entry_count)
-                {
-                    unsigned long now_ms = uptime_ms();
-                    if (g_selected_index != clicked_index)
-                    {
-                        g_selected_index = clicked_index;
-                        filesapp_update_preview();
-                        needs_redraw = 1;
-                    }
-                    else if (g_last_click_index == clicked_index && now_ms - g_last_click_ms <= 450UL)
-                    {
-                        if (filesapp_activate_selected(&gfx) == 0)
-                        {
-                            needs_redraw = 1;
-                        }
-                    }
-                    g_last_click_index = clicked_index;
-                    g_last_click_ms = now_ms;
-                }
-            }
-            last_buttons = pointer_event.buttons;
-        }
-
-        if (!needs_redraw)
-        {
-            sleep_ms(16);
-            continue;
-        }
-
-        filesapp_draw_scene(&gfx);
-        if (gfx_present(&gfx, g_backbuffer) < 0)
-        {
-            break;
-        }
-        needs_redraw = 0;
-    }
-
-    gfx_release(&gfx);
-    if (mouse_fd >= 0)
-    {
-        close((int)mouse_fd);
-    }
-    gfx_close(&gfx);
-    puts_fd(2, "filesapp: present failed\n");
-    return 1;
+    return sxgui_app_run(&g_app);
 }
