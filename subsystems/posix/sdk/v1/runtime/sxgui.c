@@ -526,6 +526,164 @@ static void sxgui_popup_open(struct sxgui_context *ctx, int index)
     sxgui_popup_ensure_hot_visible(ctx, widget);
 }
 
+/* ---- menu bar helpers ----------------------------------------------------- */
+
+#define SXGUI_MENU_TITLE_PAD 8
+#define SXGUI_MENU_SEPARATOR_HEIGHT 6
+#define SXGUI_MENU_GUTTER 20
+
+int sxgui_menubar_height(void)
+{
+    return gfx_text_height() + 8;
+}
+
+void sxgui_set_menubar(struct sxgui_context *ctx, struct sxgui_menubar *bar)
+{
+    if (ctx == 0)
+    {
+        return;
+    }
+    ctx->menubar = bar;
+    if (bar != 0)
+    {
+        bar->open_menu = -1;
+        bar->hot_item = -1;
+    }
+}
+
+static struct sx_rect sxgui_menubar_title_rect(const struct sxgui_menubar *bar, int index)
+{
+    int x = 2;
+    int i;
+
+    for (i = 0; i < index; ++i)
+    {
+        x += gfx_text_width(bar->menus[i].title) + SXGUI_MENU_TITLE_PAD * 2;
+    }
+    return sx_rect_make(
+        x,
+        0,
+        gfx_text_width(bar->menus[index].title) + SXGUI_MENU_TITLE_PAD * 2,
+        sxgui_menubar_height());
+}
+
+static int sxgui_menubar_title_at(const struct sxgui_menubar *bar, int x, int y)
+{
+    int index;
+
+    for (index = 0; index < bar->menu_count; ++index)
+    {
+        if (sx_rect_contains_point(sxgui_menubar_title_rect(bar, index), x, y))
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+static int sxgui_menu_item_height(const struct sxgui_menu_item *item)
+{
+    return item->text != 0 ? sxgui_row_height() : SXGUI_MENU_SEPARATOR_HEIGHT;
+}
+
+static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, const struct sxgui_menubar *bar, int menu_index)
+{
+    const struct sxgui_menu *menu = &bar->menus[menu_index];
+    struct sx_rect title = sxgui_menubar_title_rect(bar, menu_index);
+    int surface_width = (int)ctx->target.info.width;
+    int width = 0;
+    int height = 2;
+    int x = title.x;
+    int index;
+
+    for (index = 0; index < menu->item_count; ++index)
+    {
+        if (menu->items[index].text != 0)
+        {
+            int text_width = gfx_text_width(menu->items[index].text);
+            if (text_width > width)
+            {
+                width = text_width;
+            }
+        }
+        height += sxgui_menu_item_height(&menu->items[index]);
+    }
+    width += SXGUI_MENU_GUTTER + 12;
+    if (x + width > surface_width)
+    {
+        x = surface_width - width;
+    }
+    if (x < 0)
+    {
+        x = 0;
+    }
+    return sx_rect_make(x, sxgui_menubar_height(), width, height);
+}
+
+/* Row index under y, or -1 over separators and outside the popup. */
+static int sxgui_menu_item_at(struct sx_rect popup, const struct sxgui_menu *menu, int y)
+{
+    int row_y = popup.y + 1;
+    int index;
+
+    for (index = 0; index < menu->item_count; ++index)
+    {
+        int height = sxgui_menu_item_height(&menu->items[index]);
+        if (y >= row_y && y < row_y + height)
+        {
+            return menu->items[index].text != 0 ? index : -1;
+        }
+        row_y += height;
+    }
+    return -1;
+}
+
+static int sxgui_menu_item_selectable(const struct sxgui_menu *menu, int index)
+{
+    return index >= 0 && index < menu->item_count &&
+           menu->items[index].text != 0 &&
+           (menu->items[index].flags & SXGUI_MENU_DISABLED) == 0;
+}
+
+/* Move hot_item up/down skipping separators, wrapping around. */
+static int sxgui_menu_step_hot(const struct sxgui_menu *menu, int hot, int direction)
+{
+    int step;
+
+    if (menu->item_count <= 0)
+    {
+        return -1;
+    }
+    if (hot < 0)
+    {
+        hot = direction > 0 ? -1 : 0;
+    }
+    for (step = 1; step <= menu->item_count; ++step)
+    {
+        int index = hot + direction * step;
+        while (index < 0)
+        {
+            index += menu->item_count;
+        }
+        index %= menu->item_count;
+        if (menu->items[index].text != 0)
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+static void sxgui_menu_fire(struct sxgui_menubar *bar, const struct sxgui_menu *menu, int index)
+{
+    bar->open_menu = -1;
+    bar->hot_item = -1;
+    if (bar->on_command != 0)
+    {
+        bar->on_command(menu->items[index].id, bar->user);
+    }
+}
+
 /* ---- listbox scrolling helpers ------------------------------------------ */
 
 static int sxgui_listbox_visible_rows(const struct sxgui_widget *widget)
@@ -773,6 +931,75 @@ static void sxgui_paint_combobox_popup(struct sxgui_context *ctx)
     sx_painter_pop_clip(painter);
 }
 
+static void sxgui_paint_menubar(struct sxgui_context *ctx)
+{
+    struct sxgui_menubar *bar = ctx->menubar;
+    struct sx_painter *painter = &ctx->painter;
+    int height = sxgui_menubar_height();
+    int width = (int)ctx->target.info.width;
+    int text_y = (height - gfx_text_height()) / 2;
+    int index;
+
+    sx_painter_fill_rect(painter, sx_rect_make(0, 0, width, height), SXGUI_COLOR_FACE);
+    sxgui_hline(painter, 0, height - 1, width, SXGUI_COLOR_SHADOW);
+
+    for (index = 0; index < bar->menu_count; ++index)
+    {
+        struct sx_rect title = sxgui_menubar_title_rect(bar, index);
+        uint32_t colour = SXGUI_COLOR_TEXT;
+
+        if (index == bar->open_menu)
+        {
+            sx_painter_fill_rect(painter, title, SXGUI_COLOR_SELECT);
+            colour = SXGUI_COLOR_SELECT_TEXT;
+        }
+        sx_painter_draw_text(painter, title.x + SXGUI_MENU_TITLE_PAD, text_y, bar->menus[index].title, colour);
+    }
+}
+
+static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
+{
+    struct sxgui_menubar *bar = ctx->menubar;
+    const struct sxgui_menu *menu = &bar->menus[bar->open_menu];
+    struct sx_painter *painter = &ctx->painter;
+    struct sx_rect popup = sxgui_menu_popup_rect(ctx, bar, bar->open_menu);
+    int row_y = popup.y + 1;
+    int index;
+
+    sx_painter_fill_rect(painter, popup, SXGUI_COLOR_FACE);
+    sxgui_draw_raised(painter, popup);
+
+    for (index = 0; index < menu->item_count; ++index)
+    {
+        const struct sxgui_menu_item *item = &menu->items[index];
+        int height = sxgui_menu_item_height(item);
+
+        if (item->text == 0)
+        {
+            int line_y = row_y + height / 2 - 1;
+            sxgui_hline(painter, popup.x + 2, line_y, popup.width - 4, SXGUI_COLOR_SHADOW);
+            sxgui_hline(painter, popup.x + 2, line_y + 1, popup.width - 4, SXGUI_COLOR_LIGHT);
+        }
+        else
+        {
+            int enabled = (item->flags & SXGUI_MENU_DISABLED) == 0;
+            uint32_t colour = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+
+            if (index == bar->hot_item && enabled)
+            {
+                sx_painter_fill_rect(painter, sx_rect_make(popup.x + 1, row_y, popup.width - 2, height), SXGUI_COLOR_SELECT);
+                colour = SXGUI_COLOR_SELECT_TEXT;
+            }
+            if ((item->flags & SXGUI_MENU_CHECKED) != 0)
+            {
+                sxgui_paint_check_glyph(painter, sx_rect_make(popup.x + 3, row_y + (height - 13) / 2, 13, 13));
+            }
+            sx_painter_draw_text(painter, popup.x + SXGUI_MENU_GUTTER, row_y + 2, item->text, colour);
+        }
+        row_y += height;
+    }
+}
+
 static void sxgui_paint_scrollbar(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
     struct sxgui_scroll_metrics metrics;
@@ -931,10 +1158,19 @@ void sxgui_paint(struct sxgui_context *ctx)
         }
     }
 
-    /* overlay pass: popups paint above every widget */
+    /* overlay pass: chrome and popups paint above every widget */
+    if (ctx->menubar != 0)
+    {
+        sxgui_paint_menubar(ctx);
+    }
     if (ctx->popup_owner >= 0 && ctx->popup_owner < ctx->widget_count)
     {
         sxgui_paint_combobox_popup(ctx);
+    }
+    if (ctx->menubar != 0 && ctx->menubar->open_menu >= 0 &&
+        ctx->menubar->open_menu < ctx->menubar->menu_count)
+    {
+        sxgui_paint_menu_popup(ctx);
     }
 }
 
@@ -1060,6 +1296,74 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
     ctx->pointer_y = event->y;
     left_now = (event->buttons & left) != 0;
     left_before = (ctx->last_buttons & left) != 0;
+
+    /* an open menu owns the pointer: hovering the bar switches menus, click
+     * on an item fires it, click anywhere else closes and is consumed */
+    if (ctx->menubar != 0 && ctx->menubar->open_menu >= 0 &&
+        ctx->menubar->open_menu < ctx->menubar->menu_count)
+    {
+        struct sxgui_menubar *bar = ctx->menubar;
+        const struct sxgui_menu *menu = &bar->menus[bar->open_menu];
+        struct sx_rect popup = sxgui_menu_popup_rect(ctx, bar, bar->open_menu);
+
+        if (event->y < sxgui_menubar_height())
+        {
+            int title_index = sxgui_menubar_title_at(bar, event->x, event->y);
+
+            if (title_index >= 0 && title_index != bar->open_menu)
+            {
+                bar->open_menu = title_index;
+                bar->hot_item = -1;
+                changed = 1;
+            }
+            else if (left_now && !left_before && title_index == bar->open_menu)
+            {
+                bar->open_menu = -1;
+                changed = 1;
+            }
+        }
+        else if (sx_rect_contains_point(popup, event->x, event->y))
+        {
+            int item_index = sxgui_menu_item_at(popup, menu, event->y);
+
+            if (item_index != bar->hot_item)
+            {
+                bar->hot_item = item_index;
+                changed = 1;
+            }
+            if (left_now && !left_before && sxgui_menu_item_selectable(menu, item_index))
+            {
+                sxgui_menu_fire(bar, menu, item_index);
+                changed = 1;
+            }
+        }
+        else if (left_now && !left_before)
+        {
+            bar->open_menu = -1;
+            changed = 1;
+        }
+        ctx->last_buttons = event->buttons;
+        return changed;
+    }
+
+    /* closed menu bar: presses on the strip open menus and stay in the bar */
+    if (ctx->menubar != 0 && event->y < sxgui_menubar_height())
+    {
+        if (left_now && !left_before)
+        {
+            int title_index = sxgui_menubar_title_at(ctx->menubar, event->x, event->y);
+
+            if (title_index >= 0)
+            {
+                sxgui_popup_close(ctx);
+                ctx->menubar->open_menu = title_index;
+                ctx->menubar->hot_item = -1;
+                changed = 1;
+            }
+        }
+        ctx->last_buttons = event->buttons;
+        return changed;
+    }
 
     /* an open dropdown owns the pointer: click outside closes and is consumed */
     if (ctx->popup_owner >= 0 && ctx->popup_owner < ctx->widget_count)
@@ -1368,6 +1672,38 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
     {
         ctx->shift_down = 1;
         return 0;
+    }
+    /* an open menu swallows the keyboard; ESC closes it (consumed so the app
+     * frame does not treat it as quit) */
+    if (ctx->menubar != 0 && ctx->menubar->open_menu >= 0 &&
+        ctx->menubar->open_menu < ctx->menubar->menu_count)
+    {
+        struct sxgui_menubar *bar = ctx->menubar;
+        const struct sxgui_menu *menu = &bar->menus[bar->open_menu];
+
+        if (event->key == SAVANXP_KEY_ESC)
+        {
+            bar->open_menu = -1;
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_LEFT || event->key == SAVANXP_KEY_RIGHT)
+        {
+            int direction = event->key == SAVANXP_KEY_RIGHT ? 1 : -1;
+            bar->open_menu = (bar->open_menu + direction + bar->menu_count) % bar->menu_count;
+            bar->hot_item = -1;
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_UP || event->key == SAVANXP_KEY_DOWN)
+        {
+            bar->hot_item = sxgui_menu_step_hot(menu, bar->hot_item, event->key == SAVANXP_KEY_DOWN ? 1 : -1);
+            return 1;
+        }
+        if (event->key == SAVANXP_KEY_ENTER && sxgui_menu_item_selectable(menu, bar->hot_item))
+        {
+            sxgui_menu_fire(bar, menu, bar->hot_item);
+            return 1;
+        }
+        return 1;
     }
     /* an open dropdown swallows the keyboard; ESC closes it (and is consumed
      * here so the app frame does not treat it as quit) */

@@ -99,6 +99,37 @@ struct sxgui_widget {
     void *user;
 };
 
+/* ---- menu bar -------------------------------------------------------------
+ *
+ * Caller-owned tables; the toolkit paints the bar as a strip at the top of
+ * the surface and the open drop-down as an overlay. Widgets should be laid
+ * out below sxgui_menubar_height().
+ */
+
+#define SXGUI_MENU_DISABLED (1u << 0)
+#define SXGUI_MENU_CHECKED  (1u << 1)
+
+struct sxgui_menu_item {
+    const char *text;   /* NULL = separator */
+    int id;
+    uint32_t flags;
+};
+
+struct sxgui_menu {
+    const char *title;
+    const struct sxgui_menu_item *items;
+    int item_count;
+};
+
+struct sxgui_menubar {
+    const struct sxgui_menu *menus;
+    int menu_count;
+    int open_menu;   /* -1 = closed; owned by the toolkit */
+    int hot_item;    /* highlighted row of the open menu; owned by the toolkit */
+    void (*on_command)(int id, void *user);
+    void *user;
+};
+
 struct sxgui_context {
     struct sx_bitmap target;
     struct sx_painter painter;
@@ -125,6 +156,9 @@ struct sxgui_context {
     struct sx_rect popup_rect;
     int popup_hot;
     int popup_scroll;
+
+    /* optional menu bar (NULL = none) */
+    struct sxgui_menubar *menubar;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */
@@ -137,6 +171,10 @@ void sxgui_context_init(
 
 /* Re-bind the painting target after a window resize. */
 void sxgui_context_retarget(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info);
+
+/* Attach (or detach with NULL) a menu bar; resets its open/hot state. */
+void sxgui_set_menubar(struct sxgui_context *ctx, struct sxgui_menubar *bar);
+int sxgui_menubar_height(void);
 
 /* Feed compositor-routed input. Each returns non-zero when the UI changed and
  * a repaint is needed. */
