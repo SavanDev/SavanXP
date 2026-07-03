@@ -10,6 +10,91 @@ Notas de corte:
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-03
+
+### Agregado
+
+- **sxgui completo: toolkit de widgets estilo Win9x.** La libreria del SDK pasa
+  de 5 controles basicos a un toolkit completo, manteniendo el modelo
+  retained-mode allocation-free (la app posee el array plano de widgets, los
+  buffers de texto y las tablas de items; el toolkit solo pinta y despacha
+  input):
+  - Recorrido de foco con **Tab/Shift+Tab** (el estado de Shift se trackea via
+    KEY_DOWN/KEY_UP; antes `sxgui_handle_key` descartaba todo KEY_UP).
+  - **Textfield con caret real**: navegacion con flechas/Home/End, insercion y
+    borrado (Backspace/Delete) en la posicion del caret, click posiciona el
+    caret midiendo prefijos, y scroll horizontal para mantenerlo visible.
+  - **Scrollbar** como widget (flechas, track paginable, thumb proporcional
+    dragueable; horizontal via `SXGUI_FLAG_HSCROLL`) y **scroll en el listbox**
+    con columna embebida que reutiliza la misma maquinaria, seleccion
+    consciente del scroll y teclas Home/End/PageUp/PageDown con
+    ensure-visible. La captura de puntero vive en el contexto: los drags van
+    solo al widget que recibio el press.
+  - **Double-click y motivo de accion**: `widget->action` distingue
+    CLICK/CHANGE/ACTIVATE en los callbacks; el listbox dispara ACTIVATE por
+    doble click (umbral 450 ms) o Enter.
+  - **Radio buttons** mutuamente excluyentes por group id (marcar uno limpia el
+    resto del grupo en el array, sin allocations).
+  - **Combobox** con dropdown overlay dentro del backbuffer propio (sin
+    ventanas hijas), clampado a la superficie y abriendo hacia arriba si no
+    entra; mientras esta abierto posee puntero y teclado, y ESC/click afuera lo
+    cierran consumiendo el evento.
+  - **Barra de menu y menus desplegables** con tablas caller-owned
+    (separadores, items disabled/checked), hover que cambia de menu abierto,
+    navegacion por teclado y `on_command(id)`.
+  - **Dialogos modales**: segundo array de widgets con rects relativos pintado
+    como overlay centrado; captura todo el input re-enrutando el dispatch con
+    coordenadas trasladadas, Tab cicla adentro, ESC cierra con result 0. Sin
+    loop anidado: es una maquina de estados dentro del mismo main loop.
+  - **Groupbox** (frame etched con caption), **progress bar**, labels con
+    panel hundido (`SXGUI_FLAG_SUNKEN`) y **textview** multilinea read-only
+    con el scroll del listbox.
+- **App frame `sxgui_app`** (`runtime/sxgui_app.c`): encapsula la sesion gfx y
+  el main loop que toda app de widgets repetia (poll de teclado/puntero,
+  RESIZED con `sxgui_context_retarget`, repaint gateado, present y throttle de
+  16 ms), con hooks opcionales `on_key`/`on_paint`/`on_resize`. ESC cierra la
+  app salvo que el toolkit lo consuma antes (menu/popup/dialogo abierto).
+- `widgetsdemo` crece como galeria de referencia de todo el toolkit (lista
+  larga con scroll, radios, combobox, menubar File/Edit/Help con Exit
+  funcional, dialogo About modal).
+
+### Cambiado
+
+- **`aboutapp` y `filesapp` portadas a sxgui.** aboutapp queda declarativa
+  (groupboxes + labels + botones Refresh/Close, F5 via hook). filesapp
+  conserva toda la logica de filesystem (opendir/stat/sort/preview/launch)
+  pero delega en el toolkit la lista con scroll, el doble click, el preview
+  (textview), la barra de menu (File: Refresh/Go up/Exit; Help: About modal)
+  y el statusbar. Ambas pierden su backbuffer estatico de 8 MiB y el loop de
+  eventos manual.
+- **La arena de malloc del SDK baja de 48 MiB a 8 MiB por defecto.** El
+  `g_heap` estatico de `posix.c` vive en la BSS y el kernel mapea la BSS
+  entera al exec, asi que cada app del sistema costaba ~50 MiB residentes
+  (con 3 abiertas se agotaba la memoria fisica). El default es ahora 8 MiB
+  (`#ifndef SX_HEAP_SIZE`); el build externo del SDK (`UserAppCommon.ps1`)
+  conserva los 48 MiB via `-DSX_HEAP_SIZE` para apps pesadas como Doom.
+
+### Corregido
+
+- **Fuga de memoria fisica en el fork por paginas de section views**
+  (`vm::clone_address_space`): se alocaba y copiaba una pagina por cada pagina
+  de usuario presente, y recien despues se descartaban con `continue` las que
+  pertenecian a section views (que se re-mapean compartidas o clonadas por
+  otro camino), sin liberar la copia. Como el desktop mapea las vistas de
+  todas las superficies cliente, cada launch (fork del desktop) perdia ~4 MiB
+  por vista mapeada; tras unos pocos launches se agotaban las paginas fisicas
+  y ningun `exec` volvia a funcionar hasta reiniciar (sintoma reportado:
+  lanzar una app desde `filesapp` fallaba y ya no arrancaba ninguna app
+  grafica). Reproducido y validado headless (QEMU + monitor HMP): antes
+  fallaba el tercer launch consecutivo; con el fix cinco launches pasan y el
+  fork ya no pierde paginas.
+- `desktop_client.path` guardaba el puntero recibido al lanzar: para launches
+  pedidos por clientes via `gfx_desktop_launch` (filesapp) apuntaba al buffer
+  de stack del request, que muere al volver de
+  `service_client_launch_requests`; el titulo de ventana/taskbar y los logs
+  leian memoria colgante. Ahora el cliente guarda una copia propia. De paso,
+  el hijo del fork loguea el codigo de error real cuando `exec` falla.
+
 ## [0.3.1] - 2026-07-02
 
 ### Agregado
