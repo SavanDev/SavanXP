@@ -195,7 +195,9 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion del runtime libc."
     }
 
-    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime\\posix.c") -o $posixObject @compileFlags
+    # Las apps externas del SDK (Doom, etc.) conservan la arena grande de malloc;
+    # el default del runtime es chico porque la BSS se mapea entera al exec.
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime\\posix.c") -o $posixObject "-DSX_HEAP_SIZE=(48u*1024u*1024u)" @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime posix."
     }

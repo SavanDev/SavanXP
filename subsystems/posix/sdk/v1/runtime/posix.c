@@ -34,7 +34,12 @@
 #define DT_DIR 4
 #define DT_REG 8
 #define DT_SOCK 12
-#define SX_HEAP_SIZE (48u * 1024u * 1024u)
+/* Static malloc arena. The kernel maps the whole BSS eagerly at exec, so this
+ * is resident cost per process: keep the default small and let heavyweight
+ * apps (e.g. Doom via the external SDK build) override it with -DSX_HEAP_SIZE. */
+#ifndef SX_HEAP_SIZE
+#define SX_HEAP_SIZE (8u * 1024u * 1024u)
+#endif
 #define SX_ALLOC_ALIGNMENT ((size_t)sizeof(uintptr_t))
 #define SX_ALLOC_MIN_SPLIT_SIZE (SX_ALLOC_ALIGNMENT * 2u)
 #define SX_ALLOC_MAGIC 0x53584148u
