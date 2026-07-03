@@ -551,6 +551,14 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
                         continue;
                     }
 
+                    // Las paginas de section views se re-mapean compartidas o
+                    // clonadas mas abajo; copiarlas aca solo perderia la copia.
+                    const uint64_t virtual_address =
+                        sign_extend_48((pml4_slot << 39) | (pdpt_slot << 30) | (pd_slot << 21) | (pt_slot << 12));
+                    if (section_view_for_address(source, virtual_address) != nullptr) {
+                        continue;
+                    }
+
                     memory::PageAllocation page = {};
                     if (!memory::allocate_page(page)) {
                         destroy_address_space(clone);
@@ -565,11 +573,6 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
 
                     memcpy(page.virtual_address, physical_to_virtual(source_physical), memory::kPageSize);
 
-                    const uint64_t virtual_address =
-                        sign_extend_48((pml4_slot << 39) | (pdpt_slot << 30) | (pd_slot << 21) | (pt_slot << 12));
-                    if (section_view_for_address(source, virtual_address) != nullptr) {
-                        continue;
-                    }
                     if (!map_page(clone, virtual_address, page.physical_address, flags)) {
                         (void)memory::free_allocation(page);
                         destroy_address_space(clone);
