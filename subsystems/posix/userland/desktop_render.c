@@ -233,7 +233,7 @@ static const char *window_title_for_client(const struct desktop_client *client)
     {
         return item->label;
     }
-    return client != 0 && client->path != 0 ? client->path : "App";
+    return client != 0 && client->path[0] != '\0' ? client->path : "App";
 }
 
 static void draw_button(struct sx_painter *painter, struct sx_rect rect, uint32_t face, int pressed)

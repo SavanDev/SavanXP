@@ -937,7 +937,7 @@ static int consume_client_present_batches(
 
         if (client->header->batch_capacity == 0)
         {
-            eprintf("desktop: invalid client batch capacity for %s\n", client->path != 0 ? client->path : "?");
+            eprintf("desktop: invalid client batch capacity for %s\n", client->path[0] != '\0' ? client->path : "?");
             return -1;
         }
 
@@ -948,7 +948,7 @@ static int consume_client_present_batches(
         {
             eprintf(
                 "desktop: invalid client batch for %s seq=%u batch_seq=%u rects=%u\n",
-                client->path != 0 ? client->path : "?",
+                client->path[0] != '\0' ? client->path : "?",
                 (unsigned int)next_sequence,
                 (unsigned int)batch->submit_sequence,
                 (unsigned int)batch->rect_count);
@@ -982,7 +982,7 @@ static int consume_client_present_batches(
                 {
                     eprintf(
                         "desktop: invalid client rect for %s seq=%u rect=%u,%u %ux%u surface=%ux%u\n",
-                        client->path != 0 ? client->path : "?",
+                        client->path[0] != '\0' ? client->path : "?",
                         (unsigned int)next_sequence,
                         rect->x,
                         rect->y,
@@ -1292,14 +1292,25 @@ static int start_client_process(struct desktop_client *client, const char *path)
         close_client_setup_fd(&launch_pipe[0]);
         close_client_setup_fd(&launch_pipe[1]);
         close_client_setup_fd(&client->section_fd);
-        if (exec(path, argv, 1) < 0)
         {
-            eprintf("desktop: exec failed for %s\n", path);
+            long exec_result = exec(path, argv, 1);
+            if (exec_result < 0)
+            {
+                eprintf("desktop: exec failed for %s (%s)\n", path, result_error_string(exec_result));
+            }
         }
         exit(1);
     }
 
-    client->path = path;
+    {
+        size_t path_length = strlen(path);
+        if (path_length >= sizeof(client->path))
+        {
+            path_length = sizeof(client->path) - 1;
+        }
+        memcpy(client->path, path, path_length);
+        client->path[path_length] = '\0';
+    }
     client->pid = pid;
     client->input_write_fd = input_pipe[1];
     client->mouse_write_fd = mouse_pipe[1];
@@ -1603,13 +1614,13 @@ static int service_client_launch_requests(struct desktop_session *session, struc
                 return 0;
             }
             eprintf("desktop: launch request read failed for %s (%s)\n",
-                client->path != 0 ? client->path : "?",
+                client->path[0] != '\0' ? client->path : "?",
                 result_error_string(read_result));
             return 0;
         }
         if (read_result != (long)sizeof(request) || request.path[0] != '/')
         {
-            eprintf("desktop: invalid launch request from %s\n", client->path != 0 ? client->path : "?");
+            eprintf("desktop: invalid launch request from %s\n", client->path[0] != '\0' ? client->path : "?");
             return 0;
         }
         request.path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY - 1u] = '\0';

@@ -11,9 +11,13 @@ enum desktop_client_kind
     DESKTOP_CLIENT_APP = 1,
 };
 
+#define DESKTOP_CLIENT_PATH_CAPACITY 192
+
 struct desktop_client
 {
-    const char *path;
+    /* Owned copy: launch requests arrive in stack buffers that die with the
+     * request, so pointing at the caller's string would dangle. */
+    char path[DESKTOP_CLIENT_PATH_CAPACITY];
     long pid;
     int section_fd;
     int input_write_fd;
