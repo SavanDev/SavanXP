@@ -158,6 +158,22 @@ Notas de corte:
   cual las clases Haxe con semantica por defecto y `@:valueType` ya compilan y
   corren sin libstdc++. Verificado en QEMU: handshake `abi verificado, version=1`
   y clases Haxe sobre el heap nativo con resultados correctos.
+- **Subsistema nativo — override `_std`: String y Array reales de Haxe.** El
+  `_std` de reflaxe.CPP se expone como overrides `*.cross.hx` (generados por el
+  build en `build/native/std-cross/`), el mecanismo oficial de Haxe para
+  overrides por plataforma: aplican solo al target de generacion y no
+  envenenan el contexto macro/eval (que como `.hx` planos explotaba con errores
+  cripticos). El mini std C++ freestanding del SDK crece con `<string>`
+  (std::string + literales "..."s + to_string), `<deque>` (respaldo del
+  Array<T>), `<initializer_list>`, `<algorithm>`, `<cctype>`, `<new>` y un
+  nucleo compartido `__sxn_core`. Dos fixes al codegen sin parchear las libs
+  pineadas: `haxe-std-fixes/Math.hx` (shadow con el overload isFinite ambiguo
+  en Haxe 4 colapsado a uno) y el preprocesador custom `UniqueLocalNames`
+  (registrado por `SxnCompilerInit` via `ExpressionPreprocessor.Custom`), que
+  hace unicos los locals por funcion porque el codegen aplana bloques hermanos
+  y los contadores `_g` de dos for-in colisionaban en el mismo scope de C++.
+  Verificado en QEMU: concat + toUpperCase (`HAXE NATIVO EN SAVANXP`), array
+  con push e iteracion (`suma del array=100`) y SMOKE PASS sin regresiones.
 - Tipografias reales horneadas offline a tablas C con `tools/font/genfont.py`
   (via `freetype-py`): **GNU UniFont 8x16** para la consola del kernel y el render
   monospace del terminal, y **Noto Sans** proporcional antialiased para el chrome

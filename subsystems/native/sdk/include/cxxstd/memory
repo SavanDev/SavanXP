@@ -15,39 +15,9 @@
  */
 #pragma once
 
-#include "savanxp_native.h"
-
-using __sxn_size_t = decltype(sizeof(0));
-
-/* Placement new (normalmente en <new>). */
-inline void* operator new(__sxn_size_t, void* place) noexcept { return place; }
-inline void operator delete(void*, void*) noexcept {}
+#include "__sxn_core"
 
 namespace std {
-
-using nullptr_t = decltype(nullptr);
-using size_t = __sxn_size_t;
-
-/* --- move / forward minimos -------------------------------------------------- */
-
-template <class T> struct remove_reference { using type = T; };
-template <class T> struct remove_reference<T&> { using type = T; };
-template <class T> struct remove_reference<T&&> { using type = T; };
-
-template <class T>
-constexpr typename remove_reference<T>::type&& move(T&& value) noexcept {
-    return static_cast<typename remove_reference<T>::type&&>(value);
-}
-
-template <class T>
-constexpr T&& forward(typename remove_reference<T>::type& value) noexcept {
-    return static_cast<T&&>(value);
-}
-
-template <class T>
-constexpr T&& forward(typename remove_reference<T>::type&& value) noexcept {
-    return static_cast<T&&>(value);
-}
 
 /* --- shared_ptr ---------------------------------------------------------------
  * Bloque de control + objeto en UNA asignacion (make_shared). El destructor es

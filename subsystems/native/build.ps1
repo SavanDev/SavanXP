@@ -72,7 +72,26 @@ function Ensure-HaxeLib([string]$Dir, [string]$Url, [string]$Commit) {
 $reflaxe = Ensure-HaxeLib "reflaxe" $lock.haxelibs.reflaxe.url $lock.haxelibs.reflaxe.commit
 $reflaxeCpp = Ensure-HaxeLib "reflaxe.CPP" $lock.haxelibs.'reflaxe.cpp'.url $lock.haxelibs.'reflaxe.cpp'.commit
 
-# --- 3. Generar C++ desde Haxe -----------------------------------------------
+# --- 3a. Exponer el _std de reflaxe.CPP como overrides .cross.hx ---------------
+# El _std (String/Array/Map...) como .hx plano envenena el contexto macro/eval
+# de Haxe (los shadows con untyped __cpp__ se tipan dentro del compilador).
+# El mecanismo correcto es el que usa `haxelib run reflaxe build`: renombrarlos
+# a *.cross.hx, que Haxe solo aplica al target de generacion ("cross") y no al
+# contexto macro. Ver subsystems/native/README.md.
+$stdCrossDir = Join-Path $outRoot "std-cross"
+if (Test-Path $stdCrossDir) { Remove-Item -Recurse -Force $stdCrossDir }
+$stdSourceDir = Join-Path $reflaxeCpp "std\cxx\_std"
+Get-ChildItem $stdSourceDir -Recurse -Filter *.hx | ForEach-Object {
+    $relative = $_.FullName.Substring($stdSourceDir.Length + 1)
+    $target = Join-Path $stdCrossDir ($relative -replace '\.hx$', '.cross.hx')
+    Ensure-Directory (Split-Path -Parent $target)
+    Copy-Item $_.FullName $target
+}
+# Shadow local: Math con el fix del overload isFinite ambiguo en Haxe 4
+# (ver subsystems/native/haxe-std-fixes/Math.hx).
+Copy-Item (Join-Path $scriptDir "haxe-std-fixes\Math.hx") (Join-Path $stdCrossDir "Math.cross.hx") -Force
+
+# --- 3b. Generar C++ desde Haxe -----------------------------------------------
 if (Test-Path $genDir) { Remove-Item -Recurse -Force $genDir }
 Ensure-Directory $genDir
 # Escribimos un .hxml y dejamos que haxe lo parsee. Pasar args con comillas
@@ -80,9 +99,11 @@ Ensure-Directory $genDir
 $hxmlPath = Join-Path $outRoot "generated.hxml"
 $hxmlLines = @(
     "-cp $haxeSrc",
+    "-cp $(Join-Path $scriptDir 'haxe-support')",
     "-cp $(Join-Path $reflaxe 'src')",
     "-cp $(Join-Path $reflaxeCpp 'src')",
     "-cp $(Join-Path $reflaxeCpp 'std')",
+    "-cp $stdCrossDir",
     "-D cxx",
     "-D reflaxe.cpp",
     "-D retain-untyped-meta",
@@ -90,7 +111,7 @@ $hxmlLines = @(
     '--macro nullSafety("reflaxe")',
     "--macro reflaxe.ReflectCompiler.Start()",
     '--macro nullSafety("cxxcompiler")',
-    "--macro cxxcompiler.CompilerInit.Start()",
+    "--macro SxnCompilerInit.Start()",
     "-main Main"
 )
 Set-Content -Path $hxmlPath -Value $hxmlLines -Encoding ASCII

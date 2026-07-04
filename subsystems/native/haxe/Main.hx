@@ -60,4 +60,27 @@ function main() {
   }
 
   untyped __cpp__('sxn_log("main: clases Haxe sobre heap nativo OK")');
+
+  // _std habilitado: String y Array reales de Haxe (std::string / std::deque
+  // sobre los mini headers freestanding del SDK).
+  var partes = ["haxe", "nativo", "en"];
+  partes.push("savanxp");
+
+  var frase = "";
+  for (parte in partes) {
+    frase += parte + " ";
+  }
+  var mayusculas = frase.toUpperCase();
+
+  var numeros = [10, 20, 30, 40];
+  var total = 0;
+  for (n in numeros) {
+    total += n;
+  }
+
+  untyped __cpp__('sxn_log({0}.c_str())', mayusculas);
+  untyped __cpp__('sxn_log_num("main: partes del array", {0})', partes.length);
+  untyped __cpp__('sxn_log_num("main: suma del array", {0})', total);
+  untyped __cpp__('sxn_log_num("main: largo de la frase", {0})', frase.length);
+  untyped __cpp__('sxn_log("main: String/Array de Haxe OK")');
 }

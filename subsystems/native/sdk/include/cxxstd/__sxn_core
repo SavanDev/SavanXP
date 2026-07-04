@@ -1,0 +1,41 @@
+/*
+ * SavanXP - nucleo compartido del mini std C++ freestanding del subsistema
+ * nativo. Define lo que <memory>, <string> y <deque> necesitan en comun
+ * (size_t, nullptr_t, move/forward, placement new) exactamente UNA vez, para
+ * evitar redefiniciones cuando un TU incluye varios de esos headers.
+ */
+#pragma once
+
+#include "savanxp_native.h"
+
+using __sxn_size_t = decltype(sizeof(0));
+
+/* Placement new (normalmente en <new>). */
+inline void* operator new(__sxn_size_t, void* place) noexcept { return place; }
+inline void operator delete(void*, void*) noexcept {}
+
+namespace std {
+
+using nullptr_t = decltype(nullptr);
+using size_t = __sxn_size_t;
+
+template <class T> struct remove_reference { using type = T; };
+template <class T> struct remove_reference<T&> { using type = T; };
+template <class T> struct remove_reference<T&&> { using type = T; };
+
+template <class T>
+constexpr typename remove_reference<T>::type&& move(T&& value) noexcept {
+    return static_cast<typename remove_reference<T>::type&&>(value);
+}
+
+template <class T>
+constexpr T&& forward(typename remove_reference<T>::type& value) noexcept {
+    return static_cast<T&&>(value);
+}
+
+template <class T>
+constexpr T&& forward(typename remove_reference<T>::type&& value) noexcept {
+    return static_cast<T&&>(value);
+}
+
+} // namespace std

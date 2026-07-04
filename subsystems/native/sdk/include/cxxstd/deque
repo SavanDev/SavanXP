@@ -1,0 +1,244 @@
+/*
+ * SavanXP - mini <deque> freestanding del subsistema nativo.
+ *
+ * reflaxe.CPP mapea el Array<T> de Haxe a std::deque<T>. Esta implementacion
+ * usa un buffer contiguo (semantica de vector: push_front/pop_front son O(n)),
+ * suficiente y simple para el uso del codegen; los iteradores son punteros
+ * planos. Respaldada por el heap del runtime (sxn_alloc).
+ */
+#pragma once
+
+#include "__sxn_core"
+#include "initializer_list"
+
+namespace std {
+
+template <class T>
+class deque {
+    T* __data = nullptr;
+    size_t __size = 0;
+    size_t __capacity = 0;
+
+    void __grow(size_t required) {
+        if (required <= __capacity) {
+            return;
+        }
+        size_t next = __capacity == 0 ? 8 : __capacity * 2;
+        if (next < required) {
+            next = required;
+        }
+        T* replacement = static_cast<T*>(sxn_alloc(next * sizeof(T)));
+        if (replacement == nullptr) {
+            sxn_log("cxx: std::deque sin memoria");
+            sxn_exit(133);
+        }
+        for (size_t index = 0; index < __size; ++index) {
+            new (static_cast<void*>(replacement + index)) T(move(__data[index]));
+            __data[index].~T();
+        }
+        if (__data != nullptr) {
+            sxn_free(__data);
+        }
+        __data = replacement;
+        __capacity = next;
+    }
+
+    void __destroy_all() {
+        for (size_t index = 0; index < __size; ++index) {
+            __data[index].~T();
+        }
+        __size = 0;
+    }
+
+public:
+    using value_type = T;
+    using iterator = T*;
+    using const_iterator = const T*;
+    using size_type = size_t;
+
+    deque() {}
+
+    deque(initializer_list<T> values) {
+        __grow(values.size());
+        for (const T& value : values) {
+            new (static_cast<void*>(__data + __size)) T(value);
+            __size += 1;
+        }
+    }
+
+    deque(const deque& other) {
+        __grow(other.__size);
+        for (size_t index = 0; index < other.__size; ++index) {
+            new (static_cast<void*>(__data + index)) T(other.__data[index]);
+        }
+        __size = other.__size;
+    }
+
+    deque(deque&& other) noexcept
+        : __data(other.__data), __size(other.__size), __capacity(other.__capacity) {
+        other.__data = nullptr;
+        other.__size = 0;
+        other.__capacity = 0;
+    }
+
+    ~deque() {
+        __destroy_all();
+        if (__data != nullptr) {
+            sxn_free(__data);
+        }
+    }
+
+    deque& operator=(const deque& other) {
+        if (this != &other) {
+            __destroy_all();
+            __grow(other.__size);
+            for (size_t index = 0; index < other.__size; ++index) {
+                new (static_cast<void*>(__data + index)) T(other.__data[index]);
+            }
+            __size = other.__size;
+        }
+        return *this;
+    }
+
+    deque& operator=(deque&& other) noexcept {
+        if (this != &other) {
+            __destroy_all();
+            if (__data != nullptr) {
+                sxn_free(__data);
+            }
+            __data = other.__data;
+            __size = other.__size;
+            __capacity = other.__capacity;
+            other.__data = nullptr;
+            other.__size = 0;
+            other.__capacity = 0;
+        }
+        return *this;
+    }
+
+    size_t size() const { return __size; }
+    bool empty() const { return __size == 0; }
+    void clear() { __destroy_all(); }
+    void reserve(size_t capacity) { __grow(capacity); }
+
+    T& operator[](size_t index) { return __data[index]; }
+    const T& operator[](size_t index) const { return __data[index]; }
+    T& at(size_t index) { return __data[index]; }
+    const T& at(size_t index) const { return __data[index]; }
+    T& front() { return __data[0]; }
+    const T& front() const { return __data[0]; }
+    T& back() { return __data[__size - 1]; }
+    const T& back() const { return __data[__size - 1]; }
+
+    iterator begin() { return __data; }
+    iterator end() { return __data + __size; }
+    const_iterator begin() const { return __data; }
+    const_iterator end() const { return __data + __size; }
+    const_iterator cbegin() const { return __data; }
+    const_iterator cend() const { return __data + __size; }
+
+    void push_back(const T& value) {
+        __grow(__size + 1);
+        new (static_cast<void*>(__data + __size)) T(value);
+        __size += 1;
+    }
+
+    void push_back(T&& value) {
+        __grow(__size + 1);
+        new (static_cast<void*>(__data + __size)) T(move(value));
+        __size += 1;
+    }
+
+    void pop_back() {
+        if (__size != 0) {
+            __size -= 1;
+            __data[__size].~T();
+        }
+    }
+
+    void push_front(const T& value) { insert(begin(), value); }
+
+    void pop_front() {
+        if (__size != 0) {
+            erase(begin());
+        }
+    }
+
+    iterator insert(iterator position, const T& value) {
+        const size_t offset = static_cast<size_t>(position - __data);
+        if (offset >= __size) {
+            push_back(value);
+            return __data + offset;
+        }
+        __grow(__size + 1);
+        /* Correr los elementos [offset, size) un lugar hacia el final. */
+        new (static_cast<void*>(__data + __size)) T(move(__data[__size - 1]));
+        for (size_t index = __size - 1; index > offset; --index) {
+            __data[index] = move(__data[index - 1]);
+        }
+        __data[offset] = value;
+        __size += 1;
+        return __data + offset;
+    }
+
+    iterator erase(iterator position) {
+        const size_t offset = static_cast<size_t>(position - __data);
+        for (size_t index = offset; index + 1 < __size; ++index) {
+            __data[index] = move(__data[index + 1]);
+        }
+        __size -= 1;
+        __data[__size].~T();
+        return __data + offset;
+    }
+
+    iterator erase(iterator first, iterator last) {
+        const size_t start = static_cast<size_t>(first - __data);
+        const size_t count = static_cast<size_t>(last - first);
+        if (count == 0) {
+            return first;
+        }
+        for (size_t index = start; index + count < __size; ++index) {
+            __data[index] = move(__data[index + count]);
+        }
+        for (size_t index = __size - count; index < __size; ++index) {
+            __data[index].~T();
+        }
+        __size -= count;
+        return __data + start;
+    }
+
+    void resize(size_t count) {
+        if (count < __size) {
+            for (size_t index = count; index < __size; ++index) {
+                __data[index].~T();
+            }
+            __size = count;
+        } else if (count > __size) {
+            __grow(count);
+            for (size_t index = __size; index < count; ++index) {
+                new (static_cast<void*>(__data + index)) T();
+            }
+            __size = count;
+        }
+    }
+};
+
+template <class T>
+bool operator==(const deque<T>& left, const deque<T>& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (typename deque<T>::size_type index = 0; index < left.size(); ++index) {
+        if (!(left[index] == right[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+template <class T>
+bool operator!=(const deque<T>& left, const deque<T>& right) {
+    return !(left == right);
+}
+
+} // namespace std

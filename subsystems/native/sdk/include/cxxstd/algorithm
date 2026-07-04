@@ -1,0 +1,32 @@
+/*
+ * SavanXP - mini <algorithm> freestanding. Solo lo que el codigo generado por
+ * reflaxe.CPP usa hoy (std::transform en HxString). Crecer bajo demanda: un
+ * error de compilacion aca es la senal para agregar el algoritmo que falte.
+ */
+#pragma once
+
+#include "__sxn_core"
+
+namespace std {
+
+template <class InputIt, class OutputIt, class UnaryOp>
+OutputIt transform(InputIt first, InputIt last, OutputIt out, UnaryOp op) {
+    while (first != last) {
+        *out = op(*first);
+        ++first;
+        ++out;
+    }
+    return out;
+}
+
+template <class T>
+constexpr const T& min(const T& a, const T& b) {
+    return b < a ? b : a;
+}
+
+template <class T>
+constexpr const T& max(const T& a, const T& b) {
+    return a < b ? b : a;
+}
+
+} // namespace std

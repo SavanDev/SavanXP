@@ -1,0 +1,7 @@
+/*
+ * SavanXP - mini <new> freestanding. El placement new real vive en
+ * __sxn_core (compartido con el resto del mini std).
+ */
+#pragma once
+
+#include "__sxn_core"

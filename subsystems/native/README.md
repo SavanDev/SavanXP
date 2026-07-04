@@ -14,7 +14,7 @@ plazo de una VM en el SO al estilo Java/ART en Android. Se construye en
 El ABI nativo se diseña **una sola vez**; AOT y HashLink apuntan al mismo
 contrato, así que migrar el runtime no debería tocar el código Haxe.
 
-## Estado: Fases 0, 1 y 2 — LISTAS (verificadas en QEMU)
+## Estado: Fases 0, 1 y 2 + _std — LISTAS (verificadas en QEMU)
 
 Cadena probada end-to-end, ejecutándose dentro de SavanXP real:
 
@@ -35,9 +35,12 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   ABI al arrancar el runtime, heap propio (`sxn_alloc`) con `operator new/delete`
   y un mini `<memory>` freestanding — con lo cual **las clases Haxe con
   semántica por defecto (shared) y `@:valueType` ya funcionan** sin libstdc++.
-  Verificado en serial:
-  `native[4]: runtime: abi verificado, version=1` +
-  `main: contador (clase heap)=3` + `main: punto.suma (valueType)=7`.
+- **Override `_std`** — **`String` y `Array` reales de Haxe funcionan**: el
+  `_std` de reflaxe.CPP se expone como overrides `*.cross.hx` (aislados del
+  contexto macro), y el mini std C++ del SDK crece con `<string>`, `<deque>`,
+  `<initializer_list>`, `<algorithm>` y `<cctype>` freestanding. Verificado en
+  serial: `HAXE NATIVO EN SAVANXP` (concat + toUpperCase), `suma del array=100`,
+  `largo de la frase=23`.
 
 ## El contrato ABI (v1)
 
@@ -70,8 +73,10 @@ El script:
    (env > toolchain horneado > PATH).
 2. Clona `reflaxe` y `reflaxe.CPP` pineados (ver `tools/toolchain.lock.json`)
    bajo `toolchain/haxe-libs/` (ignorado por git).
-3. Genera C++ con reflaxe.CPP en `build/native/gen/`.
-4. Compila + linkea freestanding contra el runtime nativo de `sdk/` y reusa el
+3. Expone el `_std` de reflaxe.CPP como overrides `*.cross.hx` en
+   `build/native/std-cross/` (más el `Math.hx` arreglado de `haxe-std-fixes/`).
+4. Genera C++ con reflaxe.CPP en `build/native/gen/`.
+5. Compila + linkea freestanding contra el runtime nativo de `sdk/` y reusa el
    `crt0.S` + `linker.ld` del SDK posix.
 
 Es un build **aparte** (patrón `sdk/doomgeneric`): el build principal no lo
@@ -84,10 +89,14 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   kernel y el runtime.
 - `sdk/include/savanxp_native.h` — API `sxn_*` del runtime que usa el C++
   generado (identidad/log, I/O baseline, heap, builtins de memoria).
-- `sdk/include/cxxstd/memory` — mini `<memory>` freestanding: `shared_ptr` /
-  `make_shared` (refcount no-atómico, una asignación por objeto) sobre
-  `sxn_alloc`. Sin `weak_ptr` ni `dynamic_pointer_cast` (-fno-rtti); ampliar
-  cuando el codegen lo pida.
+- `sdk/include/cxxstd/` — **mini std C++ freestanding** sobre `sxn_alloc`:
+  `__sxn_core` (move/forward, placement new, compartido), `memory`
+  (`shared_ptr`/`make_shared`, refcount no-atómico, una asignación por objeto),
+  `string` (`std::string` + literales `"..."s` + `to_string`), `deque` (respaldo
+  del `Array<T>` de Haxe; buffer contiguo, iteradores planos),
+  `initializer_list`, `algorithm` (`transform`/`min`/`max`), `cctype` (ASCII) y
+  `new`. Sin `weak_ptr` ni `dynamic_pointer_cast` (-fno-rtti); crecer bajo
+  demanda — el error de compilación es la señal.
 - `sdk/runtime/sx_native.c` — syscalls (`int $0x80`), heap free-list (arena BSS
   de 4 MiB, first-fit con split y coalescing) y memcpy/memset/memmove/memcmp.
 - `sdk/runtime/sx_cxx.cpp` — `operator new/delete` sobre el heap (OOM = exit
@@ -95,7 +104,12 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 - `sdk/runtime/sx_entry.cpp` — entrada propia: handshake de ABI + llamada a la
   `main` generada por Haxe. Reemplaza el `_main_.cpp` de reflaxe.CPP.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
-  syscalls nativas).
+  String/Array + syscalls nativas).
+- `haxe-support/` — tooling macro del build: `SxnCompilerInit.hx` (envuelve el
+  init de reflaxe.CPP y registra nuestro preprocesador) y `UniqueLocalNames.hx`
+  (hace únicos los locals por función; ver Hallazgos).
+- `haxe-std-fixes/Math.hx` — shadow del `Math` de `_std` con el fix del
+  overload `isFinite` ambiguo en Haxe 4 (se copia como `Math.cross.hx`).
 - `kernel/syscall_dispatch.inc` — dispatcher nativo en el kernel: switch propio
   para el rango `0x1000+` y baseline `< 0x1000` delegado en posix.
 
@@ -123,25 +137,47 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   `sx_entry.cpp`), no en el código Haxe de prueba.
 - **reflaxe.CPP es pre-release (v0.1.0)** y finolis de arrancar. Se maneja 100%
   por `-cp` (sin mutar el estado global de `haxelib`), con **dos** macros de
-  init (`reflaxe.ReflectCompiler.Start()` + `cxxcompiler.CompilerInit.Start()`).
+  init (`reflaxe.ReflectCompiler.Start()` + nuestro `SxnCompilerInit.Start()`,
+  que envuelve al de cxxcompiler).
+- **El `_std` va como `*.cross.hx`, nunca como `.hx` plano.** Los shadows de
+  `_std` (String/Sys/Math…) usan `untyped __cpp__` y guards de plataforma; como
+  `.hx` planos en `-cp` también los tipa el **contexto macro/eval** (que compila
+  el propio framework reflaxe, el cual usa `haxe.Json`, `Sys`, etc.) y explota
+  con errores crípticos (`Ambiguous overload` en Math, `getEnv` inexistente,
+  `__cpp__` desconocido). La extensión `.cross.hx` es el mecanismo oficial de
+  Haxe para overrides por plataforma: aplica solo al target de generación
+  ("cross") y deja el eval limpio. Es lo que hace `haxelib run reflaxe build`
+  al empaquetar; el build lo replica copiando/renombrando a
+  `build/native/std-cross/`.
+- **Los locals de scopes hermanos colisionan al aplanar bloques.** Haxe permite
+  reusar nombres en scopes hermanos (cada `for-in` declara su contador `_g`) y
+  el codegen de reflaxe.CPP aplana los bloques al emitir → dos `int _g` en el
+  mismo scope de C++. El `PreventRepeatVariables` del framework solo mira la
+  cadena de scopes anidados. Nuestro preprocesador `UniqueLocalNames` (via
+  `ExpressionPreprocessor.Custom`) renombra function-wide. Ojo: **hay que
+  reconstruir el árbol con copias del TVar** (mapa por id, como hace el propio
+  framework) — mutar `tvar.name` por reflection renombra la declaración pero NO
+  los usos (cada acceso macro materializa un objeto distinto) y produce **código
+  incorrecto que compila** (el bug se manifestó como `suma del array=0`).
 
 ### Limitaciones conocidas / deuda
 
-- **No se usa el override `std/cxx/_std`** de reflaxe.CPP (Array/String/Map/Math
-  versión cxx). Vía `-cp` plano choca con el std de Haxe (overload ambiguo en
-  `Math`/`JsonPrinter`). Para programas que usen esos tipos (p. ej. el
-  escritorio) hay que registrarlo con semántica de reemplazo (`-lib` apuntando a
-  un repo haxelib local bajo `toolchain/`), no con `-cp`.
+- **`Map` de Haxe todavía sin probar** (los `.cross.hx` de `haxe/ds/*Map` están
+  expuestos, pero el mini std no tiene aún lo que pidan — probablemente
+  `<optional>` y `<functional>`). Probar con un consumidor real y crecer
+  `cxxstd/` a demanda. Lo mismo con `Null<T>` (→ `std::optional`) y `Dynamic`
+  (mejor evitarlo en código del sistema).
+- **`trace()` sin cablear**: `haxe.Log` de `_std` probablemente arrastre I/O que
+  no tenemos; hoy se loguea con `sxn_log`/`sxn_log_num`. Cablear `trace` →
+  `SXN_SYS_LOG` cuando se necesite.
 - **`crt0.S`/`linker.ld` son los del SDK posix.** Cuando el ABI nativo diverja,
   el subsistema nativo debería forkear los suyos.
 
 ## Próximos pasos
 
-1. Resolver el override `std/cxx/_std` (vía `-lib` con repo haxelib local) para
-   habilitar `Array`/`String`/`Map` cxx — prerequisito del port del escritorio.
-   Implica también proveer los headers/funciones que ese std pida (probablemente
-   `<string>`, `<optional>`, `<deque>` mínimos en `cxxstd/`).
-2. Crecer el ABI nativo por necesidad real: gfx (surface/present sobre el ABI
+1. Crecer el ABI nativo por necesidad real: gfx (surface/present sobre el ABI
    gfx existente), input, tiempo — cada syscall nueva con un consumidor en el
    programa de validación.
+2. Probar `Map`/`Null<T>` y ampliar el mini std (`<optional>`, `<functional>`)
+   según pida el codegen.
 3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas).
