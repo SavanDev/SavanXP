@@ -1,18 +1,15 @@
 /*
- * SavanXP - SDK del subsistema nativo (Haxe), v0 / Fase 0.
+ * SavanXP - SDK del subsistema nativo (Haxe), runtime v1 / Fase 2.
  *
- * Este header es la semilla del ABI nativo. Hoy expone solo el minimo para el
- * "puntapie": una envoltura de syscalls sobre `int $0x80` y el primitivo
- * sx_hello() que usa el programa Haxe de validacion.
- *
- * IMPORTANTE: por ahora estas syscalls usan la MISMA convencion que el
- * subsistema posix (numero en rax, args en rdi/rsi/rdx/r10/r8, resultado en
- * rax). Un binario nativo lanzado por un padre posix corre con identidad posix,
- * asi que WRITE/EXIT funcionan tal cual. El dispatcher nativo
- * (subsystems/native/kernel/syscall_dispatch.inc) todavia responde ENOSYS: el
- * ABI propiamente nativo se disena en la Fase 2.
+ * API que consume el C++ generado por reflaxe.CPP y el glue del runtime. Esta
+ * es la capa "userland" del contrato: la capa kernel (numeros de syscall
+ * propios, structs compartidos) vive en savanxp_native_abi.h. Cuando llegue la
+ * etapa HashLink, la VM implementara estas mismas primitivas sobre el mismo
+ * ABI: el codigo Haxe no cambia.
  */
 #pragma once
+
+#include "savanxp_native_abi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,21 +21,53 @@ extern "C" {
  * en elf.cpp y lo compara contra elf::kOsAbiNative (deben coincidir). */
 #define SXN_ELF_OSABI_NATIVE 0x53 /* 'S' de SavanXP */
 
-/* Numeros de syscall compartidos con posix mientras el ABI nativo no exista.
- * Espejo de subsystems/posix/sdk/v1/include/savanxp/syscall.h. */
+/* Numeros de syscall del baseline transitorio compartido con posix
+ * (< SXN_SYS_BASE). Espejo de subsystems/posix/sdk/v1/include/savanxp/syscall.h. */
 #define SXN_SYS_WRITE 1
 #define SXN_SYS_EXIT  7
 
 /* Envolturas crudas de syscall (int $0x80). */
+long sxn_syscall1(long number, long a);
 long sxn_syscall3(long number, long a, long b, long c);
 
-/* Primitivos del runtime nativo usados por el codigo Haxe generado. */
+/* --- Identidad y log (syscalls propias del ABI nativo) --------------------- */
+
+/* Llena `out` con la identidad del proceso y la version del ABI del kernel.
+ * Devuelve 0 o -errno. El runtime debe verificar out->abi_version contra
+ * SXN_ABI_VERSION al arrancar. */
+long sxn_info(struct sxn_native_info *out);
+
+/* Emite `message` en el log del kernel (prefijado con el pid). */
+long sxn_log(const char *message);
+
+/* Como sxn_log, con un valor numerico: "label=valor". */
+long sxn_log_num(const char *label, long value);
+
+/* --- I/O y proceso (baseline transitorio sobre la tabla posix) ------------- */
+
 long sxn_write(int fd, const char *buf, int len);
 void sxn_exit(int code) __attribute__((noreturn));
 
 /* Demo de la Fase 0: escribe un saludo por stdout. El string vive aca (en C)
  * para que el C++ generado por reflaxe.CPP no arrastre <string>/<iostream>. */
 void sxn_hello(void);
+
+/* --- Heap del runtime ------------------------------------------------------- */
+
+/* Asignador del runtime nativo: arena BSS propia con free-list (first-fit,
+ * split y coalescing). Es el respaldo de operator new/delete del C++ generado
+ * y del mini <memory> freestanding. En la etapa HashLink, el GC de la VM
+ * reemplaza esta capa sin tocar el ABI. */
+void *sxn_alloc(unsigned long size);
+void *sxn_realloc(void *ptr, unsigned long size);
+void sxn_free(void *ptr);
+
+/* --- Builtins de memoria (requeridos en freestanding) ----------------------- */
+
+void *memcpy(void *destination, const void *source, unsigned long count);
+void *memmove(void *destination, const void *source, unsigned long count);
+void *memset(void *destination, int value, unsigned long count);
+int memcmp(const void *left, const void *right, unsigned long count);
 
 #ifdef __cplusplus
 }

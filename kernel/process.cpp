@@ -23,6 +23,11 @@
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
 
+// Contrato ABI del subsistema nativo (numeros de syscall propios y structs),
+// consumido por subsystems/native/kernel/syscall_dispatch.inc. Se incluye aca
+// afuera de los namespaces, igual que el resto de headers de contrato.
+#include "../subsystems/native/sdk/include/savanxp_native_abi.h"
+
 namespace {
 
 constexpr uint16_t kUserDataSelector = 0x1b;

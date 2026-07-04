@@ -144,6 +144,20 @@ Notas de corte:
   comparte convencion) y queda como punto de divergencia. Verificado en QEMU: el
   ELF Haxe corre con identidad nativa (`process: pid=N marcado nativo` +
   `native: dispatcher activo`) e imprime su salida sin romper el smoke test.
+- **Subsistema nativo — Fase 2: ABI nativo v1 + runtime real.** El contrato
+  kernel<->userland vive en `subsystems/native/sdk/include/savanxp_native_abi.h`
+  (unica fuente, incluida por ambos lados): espacio de syscalls particionado
+  (`< 0x1000` baseline transitorio delegado en posix, `>= 0x1000` syscalls
+  propias que para un proceso posix no existen), version de ABI y primeras dos
+  syscalls nativas: `SXN_SYS_INFO` (identidad + version, con handshake
+  obligatorio del runtime al arrancar; si no coincide aborta con exit 132) y
+  `SXN_SYS_LOG` (log al kernel con prefijo `native[pid]:`). El runtime de
+  userland suma heap propio (`sxn_alloc/realloc/free`, free-list sobre arena BSS
+  de 4 MiB), builtins de memoria, `operator new/delete` y un mini `<memory>`
+  freestanding (shared_ptr/make_shared no-atomico en una asignacion), con lo
+  cual las clases Haxe con semantica por defecto y `@:valueType` ya compilan y
+  corren sin libstdc++. Verificado en QEMU: handshake `abi verificado, version=1`
+  y clases Haxe sobre el heap nativo con resultados correctos.
 - Tipografias reales horneadas offline a tablas C con `tools/font/genfont.py`
   (via `freetype-py`): **GNU UniFont 8x16** para la consola del kernel y el render
   monospace del terminal, y **Noto Sans** proporcional antialiased para el chrome

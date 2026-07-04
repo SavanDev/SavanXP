@@ -117,6 +117,8 @@ $cFlags = @(
 $cxxFlags = $cFlags + @(
     "-std=c++17", "-fno-exceptions", "-fno-rtti",
     "-fno-threadsafe-statics", "-fno-use-cxa-atexit", "-nostdinc++",
+    # Mini std C++ freestanding del SDK nativo (<memory> sobre sxn_alloc).
+    "-isystem", (Join-Path $nativeSdk "include\cxxstd"),
     "-include", $nativeHeader
 )
 
@@ -127,12 +129,14 @@ function Invoke-Compile([string]$Tool, [string[]]$Pre, [string]$Src, [string]$Ob
 
 $crt0Obj = Join-Path $objDir "crt0.o"
 $shimObj = Join-Path $objDir "sx_native.o"
+$cxxGlueObj = Join-Path $objDir "sx_cxx.o"
 $entryObj = Join-Path $objDir "sx_entry.o"
-$objects = @($crt0Obj, $shimObj, $entryObj)
+$objects = @($crt0Obj, $shimObj, $cxxGlueObj, $entryObj)
 
 Write-Step "Compilando runtime nativo"
 Invoke-Compile $clang @() (Join-Path $posixSdk "runtime\crt0.S") $crt0Obj $cFlags
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_native.c") $shimObj $cFlags
+Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_cxx.cpp") $cxxGlueObj $cxxFlags
 Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_entry.cpp") $entryObj $cxxFlags
 
 # Compilar todo el C++ generado salvo el _main_.cpp de reflaxe (incluye <memory>;

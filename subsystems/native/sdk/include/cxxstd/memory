@@ -1,0 +1,219 @@
+/*
+ * SavanXP - mini <memory> freestanding del subsistema nativo, Fase 2.
+ *
+ * El C++ que genera reflaxe.CPP usa std::shared_ptr/std::make_shared para las
+ * clases Haxe con semantica por defecto. En freestanding no hay libstdc++, asi
+ * que este header provee una implementacion minima sobre el heap del runtime
+ * (sxn_alloc/sxn_free). Notas de alcance:
+ *
+ *  - Refcount NO atomico: los procesos de SavanXP son single-thread hoy.
+ *  - Sin weak_ptr, sin deleters custom, sin dynamic_pointer_cast (se compila
+ *    con -fno-rtti); si el codegen los pide, el error de compilacion es la
+ *    senal para ampliar este header.
+ *  - En la etapa HashLink este header desaparece: el GC de la VM gobierna la
+ *    memoria y el codigo Haxe no cambia.
+ */
+#pragma once
+
+#include "savanxp_native.h"
+
+using __sxn_size_t = decltype(sizeof(0));
+
+/* Placement new (normalmente en <new>). */
+inline void* operator new(__sxn_size_t, void* place) noexcept { return place; }
+inline void operator delete(void*, void*) noexcept {}
+
+namespace std {
+
+using nullptr_t = decltype(nullptr);
+using size_t = __sxn_size_t;
+
+/* --- move / forward minimos -------------------------------------------------- */
+
+template <class T> struct remove_reference { using type = T; };
+template <class T> struct remove_reference<T&> { using type = T; };
+template <class T> struct remove_reference<T&&> { using type = T; };
+
+template <class T>
+constexpr typename remove_reference<T>::type&& move(T&& value) noexcept {
+    return static_cast<typename remove_reference<T>::type&&>(value);
+}
+
+template <class T>
+constexpr T&& forward(typename remove_reference<T>::type& value) noexcept {
+    return static_cast<T&&>(value);
+}
+
+template <class T>
+constexpr T&& forward(typename remove_reference<T>::type&& value) noexcept {
+    return static_cast<T&&>(value);
+}
+
+/* --- shared_ptr ---------------------------------------------------------------
+ * Bloque de control + objeto en UNA asignacion (make_shared). El destructor es
+ * type-erased via puntero a funcion para que shared_ptr<Base> pueda destruir
+ * un Derived creado por make_shared<Derived>. */
+
+struct __sxn_ctrl {
+    long refs;
+    void (*destroy)(__sxn_ctrl* self);
+};
+
+template <class T>
+class shared_ptr;
+
+template <class T, class U>
+shared_ptr<T> static_pointer_cast(const shared_ptr<U>& other) noexcept;
+
+template <class T>
+class shared_ptr {
+    template <class U> friend class shared_ptr;
+    template <class V, class W>
+    friend shared_ptr<V> static_pointer_cast(const shared_ptr<W>& other) noexcept;
+
+    T* __ptr = nullptr;
+    __sxn_ctrl* __ctrl = nullptr;
+
+    void __retain() noexcept {
+        if (__ctrl != nullptr) {
+            __ctrl->refs += 1;
+        }
+    }
+
+    void __release() noexcept {
+        if (__ctrl != nullptr && --__ctrl->refs == 0) {
+            __ctrl->destroy(__ctrl);
+        }
+        __ctrl = nullptr;
+        __ptr = nullptr;
+    }
+
+public:
+    constexpr shared_ptr() noexcept {}
+    constexpr shared_ptr(nullptr_t) noexcept {}
+
+    /* Uso interno de make_shared / static_pointer_cast. */
+    shared_ptr(T* pointer, __sxn_ctrl* control) noexcept : __ptr(pointer), __ctrl(control) {}
+
+    shared_ptr(const shared_ptr& other) noexcept : __ptr(other.__ptr), __ctrl(other.__ctrl) {
+        __retain();
+    }
+
+    /* Conversion (upcast Derived -> Base de clases Haxe). */
+    template <class U>
+    shared_ptr(const shared_ptr<U>& other) noexcept : __ptr(other.__ptr), __ctrl(other.__ctrl) {
+        __retain();
+    }
+
+    shared_ptr(shared_ptr&& other) noexcept : __ptr(other.__ptr), __ctrl(other.__ctrl) {
+        other.__ptr = nullptr;
+        other.__ctrl = nullptr;
+    }
+
+    template <class U>
+    shared_ptr(shared_ptr<U>&& other) noexcept : __ptr(other.__ptr), __ctrl(other.__ctrl) {
+        other.__ptr = nullptr;
+        other.__ctrl = nullptr;
+    }
+
+    ~shared_ptr() { __release(); }
+
+    shared_ptr& operator=(const shared_ptr& other) noexcept {
+        if (this != &other) {
+            __release();
+            __ptr = other.__ptr;
+            __ctrl = other.__ctrl;
+            __retain();
+        }
+        return *this;
+    }
+
+    template <class U>
+    shared_ptr& operator=(const shared_ptr<U>& other) noexcept {
+        __release();
+        __ptr = other.__ptr;
+        __ctrl = other.__ctrl;
+        __retain();
+        return *this;
+    }
+
+    shared_ptr& operator=(shared_ptr&& other) noexcept {
+        if (this != &other) {
+            __release();
+            __ptr = other.__ptr;
+            __ctrl = other.__ctrl;
+            other.__ptr = nullptr;
+            other.__ctrl = nullptr;
+        }
+        return *this;
+    }
+
+    shared_ptr& operator=(nullptr_t) noexcept {
+        __release();
+        return *this;
+    }
+
+    void reset() noexcept { __release(); }
+
+    T* get() const noexcept { return __ptr; }
+    T& operator*() const noexcept { return *__ptr; }
+    T* operator->() const noexcept { return __ptr; }
+    explicit operator bool() const noexcept { return __ptr != nullptr; }
+    long use_count() const noexcept { return __ctrl != nullptr ? __ctrl->refs : 0; }
+
+    bool operator==(nullptr_t) const noexcept { return __ptr == nullptr; }
+    bool operator!=(nullptr_t) const noexcept { return __ptr != nullptr; }
+
+    template <class U>
+    bool operator==(const shared_ptr<U>& other) const noexcept {
+        return static_cast<const void*>(__ptr) == static_cast<const void*>(other.__ptr);
+    }
+
+    template <class U>
+    bool operator!=(const shared_ptr<U>& other) const noexcept {
+        return !(*this == other);
+    }
+};
+
+template <class T>
+bool operator==(nullptr_t, const shared_ptr<T>& pointer) noexcept {
+    return pointer.get() == nullptr;
+}
+
+template <class T>
+bool operator!=(nullptr_t, const shared_ptr<T>& pointer) noexcept {
+    return pointer.get() != nullptr;
+}
+
+template <class T, class... Args>
+shared_ptr<T> make_shared(Args&&... args) {
+    struct __combo {
+        __sxn_ctrl ctrl;
+        alignas(T) unsigned char storage[sizeof(T)];
+    };
+
+    __combo* combo = static_cast<__combo*>(sxn_alloc(sizeof(__combo)));
+    if (combo == nullptr) {
+        sxn_log("cxx: make_shared sin memoria (heap nativo agotado)");
+        sxn_exit(133);
+    }
+
+    T* object = new (static_cast<void*>(combo->storage)) T(forward<Args>(args)...);
+    combo->ctrl.refs = 1;
+    combo->ctrl.destroy = [](__sxn_ctrl* self) {
+        __combo* full = reinterpret_cast<__combo*>(self);
+        reinterpret_cast<T*>(full->storage)->~T();
+        sxn_free(full);
+    };
+    return shared_ptr<T>(object, &combo->ctrl);
+}
+
+/* Cast estatico compartiendo el mismo bloque de control (retiene la ref). */
+template <class T, class U>
+shared_ptr<T> static_pointer_cast(const shared_ptr<U>& other) noexcept {
+    shared_ptr<T> result(static_cast<T*>(other.__ptr), other.__ctrl);
+    result.__retain();
+    return result;
+}
+
+} // namespace std
