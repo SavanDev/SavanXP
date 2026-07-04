@@ -98,6 +98,10 @@ Ensure-Directory $genDir
 # embebidas (nullSafety("reflaxe")) directo al exe se rompe en PowerShell 5.1.
 $hxmlPath = Join-Path $outRoot "generated.hxml"
 $hxmlLines = @(
+    # Sin el analizador de Haxe: const-foldea condiciones que dependen de
+    # untyped __cpp__ (las trata como constantes) y elimina los if. Es el
+    # mismo motivo por el que el CI de reflaxe.CPP compila con --no-opt.
+    "--no-opt",
     "-cp $haxeSrc",
     "-cp $(Join-Path $scriptDir 'haxe-support')",
     "-cp $(Join-Path $reflaxe 'src')",

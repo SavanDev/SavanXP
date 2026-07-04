@@ -26,6 +26,21 @@ class SxnCompilerInit {
 
 		final compiler = compilers[compilers.length - 1];
 		final preprocessors = @:privateAccess compiler.expressionPreprocessors;
+
+		// Lista propia = defaults del framework MENOS RemovePureExpressions,
+		// que elimina los `if` cuyos cuerpos son solo inyecciones untyped
+		// __cpp__ (los considera puros y descarta la rama: codigo incorrecto
+		// que compila). El DCE fino ya lo hace clang sobre el C++ generado.
+		// Al final va nuestro UniqueLocalNames (ver ese archivo).
+		preprocessors.resize(0);
+		preprocessors.push(SanitizeEverythingIsExpression({}));
+		preprocessors.push(PreventRepeatVariables({}));
+		preprocessors.push(RemoveSingleExpressionBlocks);
+		preprocessors.push(RemoveConstantBoolIfs);
+		preprocessors.push(RemoveUnnecessaryBlocks);
+		preprocessors.push(RemoveReassignedVariableDeclarations);
+		preprocessors.push(RemoveLocalVariableAliases);
+		preprocessors.push(MarkUnusedVariables);
 		preprocessors.push(Custom(new UniqueLocalNames()));
 	}
 }

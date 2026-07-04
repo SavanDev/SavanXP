@@ -174,6 +174,22 @@ Notas de corte:
   y los contadores `_g` de dos for-in colisionaban en el mismo scope de C++.
   Verificado en QEMU: concat + toUpperCase (`HAXE NATIVO EN SAVANXP`), array
   con push e iteracion (`suma del array=100`) y SMOKE PASS sin regresiones.
+- **Subsistema nativo — ABI gfx + hello GUI en Haxe.** Nuevo bloque de
+  syscalls de graficos en el ABI nativo (`0x1010`): SXN_SYS_GFX_INFO /
+  GFX_ACQUIRE / GFX_RELEASE / GFX_PRESENT. El display es parte del ABI de
+  primera clase (sin `/dev/gpu0` ni ioctls); kernel-side comparte los internals
+  `display::*` y la sesion exclusiva por pid con los ioctls GPU de posix
+  (incluida la liberacion automatica al morir el proceso). El runtime suma los
+  wrappers `sxn_gfx_*` y Main.hx un hello GUI real: la clase `Lienzo` dibuja un
+  degrade con rectangulo sobre un `Array<Int>` de Haxe (contiguo por garantia
+  del mini `<deque>`) y lo presenta. De paso, dos fixes de codegen importantes:
+  se excluye el pase `RemovePureExpressions` de reflaxe (eliminaba los `if`
+  cuyos cuerpos son solo inyecciones `__cpp__` — codigo incorrecto que
+  compilaba) y se compila con `--no-opt` (el analizador de Haxe const-foldea
+  condiciones dependientes de inyecciones). Documentado: Float de Haxe todavia
+  no funciona en freestanding (sin soft-float intrinsics). Verificado en QEMU:
+  `gfx: present=0`, `gfx: release=0` y `gputest --smoke` adquiriendo la sesion
+  despues sin fugas; SMOKE PASS.
 - Tipografias reales horneadas offline a tablas C con `tools/font/genfont.py`
   (via `freetype-py`): **GNU UniFont 8x16** para la consola del kernel y el render
   monospace del terminal, y **Noto Sans** proporcional antialiased para el chrome

@@ -66,6 +66,34 @@ long sxn_log_num(const char *label, long value) {
     return sxn_log(buffer);
 }
 
+/* --- Graficos (ABI nativo propio) --------------------------------------------- */
+
+long sxn_gfx_info(struct sxn_gfx_info *out) {
+    return sxn_syscall1(SXN_SYS_GFX_INFO, (long)out);
+}
+
+long sxn_gfx_acquire(void) {
+    return sxn_syscall1(SXN_SYS_GFX_ACQUIRE, 0);
+}
+
+long sxn_gfx_release(void) {
+    return sxn_syscall1(SXN_SYS_GFX_RELEASE, 0);
+}
+
+long sxn_gfx_present(const void *frame, unsigned int pitch,
+                     unsigned int x, unsigned int y,
+                     unsigned int width, unsigned int height) {
+    struct sxn_gfx_present region;
+    region.pixels = (unsigned long)frame;
+    region.source_pitch = pitch;
+    region.x = x;
+    region.y = y;
+    region.width = width;
+    region.height = height;
+    region.reserved0 = 0;
+    return sxn_syscall1(SXN_SYS_GFX_PRESENT, (long)&region);
+}
+
 /* --- I/O y proceso (baseline transitorio) ------------------------------------ */
 
 long sxn_write(int fd, const char *buf, int len) {

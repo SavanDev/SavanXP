@@ -40,6 +40,89 @@ class Punto {
   }
 }
 
+// Lienzo de pixeles XRGB de 32 bits presentable via el ABI gfx nativo. El
+// Array<Int> de Haxe mapea a nuestro std::deque freestanding, que ES contiguo
+// (garantia de sdk/include/cxxstd/deque), asi que &(*pixeles)[0] es un frame
+// valido para SXN_SYS_GFX_PRESENT.
+class Lienzo {
+  public var ancho:Int;
+  public var alto:Int;
+  public var pixeles:Array<Int>;
+
+  public function new(ancho:Int, alto:Int) {
+    this.ancho = ancho;
+    this.alto = alto;
+    this.pixeles = [];
+    untyped __cpp__("{0}->resize((std::size_t)({1}))", pixeles, ancho * alto);
+  }
+
+  public function rectangulo(x0:Int, y0:Int, w:Int, h:Int, color:Int) {
+    for (fila in y0...(y0 + h)) {
+      for (columna in x0...(x0 + w)) {
+        pixeles[fila * ancho + columna] = color;
+      }
+    }
+  }
+
+  public function degrade() {
+    for (fila in 0...alto) {
+      for (columna in 0...ancho) {
+        // Division entera via C++: la division de Haxe es Float, y el runtime
+        // nativo aun no soporta floats (freestanding con -mgeneral-regs-only y
+        // sin compiler-rt: los intrinsics soft-float no existen). Deuda.
+        var rojo:Int = untyped __cpp__("(({0} * 255) / {1})", columna, ancho);
+        var azul:Int = untyped __cpp__("(({0} * 255) / {1})", fila, alto);
+        pixeles[fila * ancho + columna] = (rojo << 16) | azul;
+      }
+    }
+  }
+
+  public function presentar():Int {
+    return untyped __cpp__(
+      "(int)sxn_gfx_present(&(*{0})[0], (unsigned)({1} * 4), 0, 0, (unsigned){1}, (unsigned){2})",
+      pixeles, ancho, alto);
+  }
+}
+
+// Demo grafica: toma la sesion de display, dibuja un degrade con un rectangulo
+// verde centrado y lo presenta. Si el display esta ocupado (compositor activo)
+// la demo se omite sin fallar: la sesion exclusiva es de a un proceso por vez.
+function demoGrafica() {
+  untyped __cpp__("struct sxn_gfx_info __gfx; long __gfx_result = sxn_gfx_info(&__gfx)");
+  if (untyped __cpp__("__gfx_result != 0")) {
+    untyped __cpp__('sxn_log("gfx: sin display (ENODEV), demo omitida")');
+    return;
+  }
+  var pantallaAncho:Int = untyped __cpp__("(int)__gfx.width");
+  var pantallaAlto:Int = untyped __cpp__("(int)__gfx.height");
+  untyped __cpp__('sxn_log_num("gfx: pantalla ancho", {0})', pantallaAncho);
+  untyped __cpp__('sxn_log_num("gfx: pantalla alto", {0})', pantallaAlto);
+
+  var acquire:Int = untyped __cpp__("(int)sxn_gfx_acquire()");
+  if (acquire != 0) {
+    untyped __cpp__('sxn_log("gfx: display ocupado (EBUSY), demo omitida")');
+    return;
+  }
+
+  // Un cuadrante de la pantalla alcanza para la demo (y entra comodo en la
+  // arena de 4 MiB del heap nativo).
+  var lienzo = new Lienzo(640, 400);
+  lienzo.degrade();
+  lienzo.rectangulo(220, 140, 200, 120, 0x00CC44);
+
+  var present = lienzo.presentar();
+  untyped __cpp__('sxn_log_num("gfx: present", {0})', present);
+
+  var release:Int = untyped __cpp__("(int)sxn_gfx_release()");
+  untyped __cpp__('sxn_log_num("gfx: release", {0})', release);
+
+  if (present != 0 || release != 0) {
+    untyped __cpp__('sxn_log("gfx: fallo la demo grafica")');
+    untyped __cpp__("sxn_exit(1)");
+  }
+  untyped __cpp__('sxn_log("gfx: demo grafica OK")');
+}
+
 function main() {
   untyped __cpp__("sxn_hello()");
 
@@ -83,4 +166,6 @@ function main() {
   untyped __cpp__('sxn_log_num("main: suma del array", {0})', total);
   untyped __cpp__('sxn_log_num("main: largo de la frase", {0})', frase.length);
   untyped __cpp__('sxn_log("main: String/Array de Haxe OK")');
+
+  demoGrafica();
 }

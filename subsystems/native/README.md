@@ -41,6 +41,15 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   `<initializer_list>`, `<algorithm>` y `<cctype>` freestanding. Verificado en
   serial: `HAXE NATIVO EN SAVANXP` (concat + toUpperCase), `suma del array=100`,
   `largo de la frase=23`.
+- **ABI gfx + hello GUI** — **un programa Haxe pone píxeles en pantalla**:
+  syscalls de gráficos primera-clase (`SXN_SYS_GFX_INFO/ACQUIRE/RELEASE/PRESENT`
+  en el bloque `0x1010`, sin `/dev/gpu0` ni ioctls) que comparten los internals
+  `display::*` y la sesión exclusiva por pid con el mundo posix. La clase
+  `Lienzo` de [Main.hx](haxe/Main.hx) dibuja un degradé con un rectángulo sobre
+  un `Array<Int>` (contiguo por garantía de nuestro `<deque>`) y lo presenta.
+  Verificado en serial: `gfx: pantalla ancho=1280` + `gfx: present=0` +
+  `gfx: release=0`, y `gputest --smoke` adquiere la sesión después (el release
+  no filtra).
 
 ## El contrato ABI (v1)
 
@@ -51,7 +60,11 @@ El contrato tiene **dos capas**, y es el que heredará HashLink en la etapa VM:
    números está particionado: `[0, 0x0fff]` es el baseline transitorio delegado
    en la tabla posix; `[0x1000, …)` son las syscalls propias del subsistema
    (un proceso posix que las invoque recibe ENOSYS). Syscalls nativas de rango
-   propio no implementadas devuelven ENOSYS **sin** pasar por posix.
+   propio no implementadas devuelven ENOSYS **sin** pasar por posix. Bloques:
+   `0x1000` identidad/log, `0x1010` gráficos (info/acquire/release/present, el
+   display como parte del ABI — sin `/dev/gpu0` ni ioctls; misma sesión
+   exclusiva por pid que los ioctls GPU de posix, liberada sola al morir el
+   proceso).
 2. **Capa runtime** — [sdk/include/savanxp_native.h](sdk/include/savanxp_native.h):
    la API `sxn_*` que consume el C++ generado por reflaxe.CPP (identidad, log,
    I/O, heap). Cuando llegue HashLink, la VM implementará estas mismas
@@ -159,6 +172,21 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   framework) — mutar `tvar.name` por reflection renombra la declaración pero NO
   los usos (cada acceso macro materializa un objeto distinto) y produce **código
   incorrecto que compila** (el bug se manifestó como `suma del array=0`).
+- **`RemovePureExpressions` (pase default de reflaxe) elimina los `if` cuyos
+  cuerpos son solo inyecciones `untyped __cpp__`** — los considera puros y
+  descarta la rama: otra vez código incorrecto que compila (se manifestó como
+  branches de error desaparecidos en la demo gfx, y explica también el chequeo
+  devorado de la Fase 2). `SxnCompilerInit` arma la lista de preprocesadores
+  SIN ese pase (el DCE fino ya lo hace clang). Aislado por bisección de pases.
+- **Float de Haxe no funciona todavía en el runtime nativo**: la división `/`
+  de Haxe es Float, y en freestanding con `-mgeneral-regs-only` y sin
+  compiler-rt no existen los intrinsics soft-float (`__floatsidf`...). Para
+  aritmética de enteros con división usar `untyped __cpp__("({0} / {1})", …)`.
+  Deuda: linkear los builtins de compiler-rt o habilitar x87 como hace el SDK
+  posix.
+- **`--no-opt` en el hxml**: el analizador de Haxe también const-foldea
+  condiciones que dependen de `untyped __cpp__`; se compila sin analizador
+  (igual que el CI de reflaxe.CPP) y la optimización queda del lado de clang.
 
 ### Limitaciones conocidas / deuda
 
@@ -175,9 +203,10 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ## Próximos pasos
 
-1. Crecer el ABI nativo por necesidad real: gfx (surface/present sobre el ABI
-   gfx existente), input, tiempo — cada syscall nueva con un consumidor en el
-   programa de validación.
+1. Crecer el ABI nativo por necesidad real: input y tiempo (el bloque gfx ya
+   existe) — cada syscall nueva con un consumidor en el programa de validación.
 2. Probar `Map`/`Null<T>` y ampliar el mini std (`<optional>`, `<functional>`)
-   según pida el codegen.
-3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas).
+   según pida el codegen; resolver Float (compiler-rt o x87).
+3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Para
+   apps **ventaneadas** bajo el compositor hará falta el protocolo cliente
+   (secciones compartidas + eventos), no este camino fullscreen-exclusivo.

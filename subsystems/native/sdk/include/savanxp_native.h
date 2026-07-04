@@ -43,6 +43,22 @@ long sxn_log(const char *message);
 /* Como sxn_log, con un valor numerico: "label=valor". */
 long sxn_log_num(const char *label, long value);
 
+/* --- Graficos (syscalls propias del ABI nativo, bloque 0x1010) -------------- */
+
+/* Geometria del display. Devuelve 0 o -errno. */
+long sxn_gfx_info(struct sxn_gfx_info *out);
+
+/* Sesion exclusiva de display (un dueno por vez; se libera sola si el proceso
+ * muere). Devuelven 0 o -errno (-EBUSY si esta tomada / no somos duenos). */
+long sxn_gfx_acquire(void);
+long sxn_gfx_release(void);
+
+/* Presenta el rectangulo (x,y,w,h) de `frame`, un buffer con el mismo layout
+ * que la pantalla (filas de `pitch` bytes, pixeles de 32 bits XRGB). */
+long sxn_gfx_present(const void *frame, unsigned int pitch,
+                     unsigned int x, unsigned int y,
+                     unsigned int width, unsigned int height);
+
 /* --- I/O y proceso (baseline transitorio sobre la tabla posix) ------------- */
 
 long sxn_write(int fd, const char *buf, int len);
