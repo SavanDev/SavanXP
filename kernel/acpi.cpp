@@ -5,6 +5,7 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/ioapic.hpp"
 #include "kernel/string.hpp"
 
 namespace {
@@ -23,6 +24,12 @@ inline uint8_t in8(uint16_t port) {
 
 inline void out16(uint16_t port, uint16_t value) {
     asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
+inline uint16_t in16(uint16_t port) {
+    uint16_t value = 0;
+    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
 }
 
 void io_wait() {
@@ -139,6 +146,23 @@ bool g_reset_supported = false;
 GenericAddress g_reset_reg = {};
 uint8_t g_reset_value = 0;
 
+// SCI + bloques de evento PM1 + GPE (para atender eventos fijos: boton de power).
+uint16_t g_sci_int = 0;
+uint16_t g_pm1a_evt_port = 0;
+uint16_t g_pm1b_evt_port = 0;
+uint8_t g_pm1_evt_len = 0;
+uint16_t g_smi_cmd = 0;
+uint8_t g_acpi_enable = 0;
+uint16_t g_gpe0_port = 0;
+uint8_t g_gpe0_len = 0;
+uint16_t g_gpe1_port = 0;
+uint8_t g_gpe1_len = 0;
+bool g_sci_active = false;
+
+// Bits de PM1 (status/enable comparten posiciones) y de PM1_CNT.
+constexpr uint16_t kPm1PwrBtnBit = 1u << 8; // PWRBTN_STS / PWRBTN_EN
+constexpr uint16_t kPm1CntSciEn = 1u << 0;  // SCI_EN en PM1a_CNT
+
 // Limine entrega el RSDP como puntero HHDM ya virtual, mientras que las tablas
 // ACPI guardan direcciones fisicas. Normalizamos: si la direccion ya cae en el
 // half alto la usamos tal cual, si no le sumamos el offset HHDM.
@@ -233,6 +257,56 @@ void parse_s5(const SdtHeader* dsdt) {
     }
 }
 
+// Enmascara todas las GPE. Sin interprete AML no podemos atenderlas, y la SCI es
+// level-triggered: una GPE habilitada sin handler mantendria la linea asertada y
+// causaria una tormenta de interrupciones. Layout de cada bloque GPE:
+// [GPE_STS (len/2)][GPE_EN (len/2)]. Escribimos 0xFF al STS (write-1-to-clear) y
+// 0 al EN.
+void mask_all_gpes() {
+    const uint16_t bases[2] = {g_gpe0_port, g_gpe1_port};
+    const uint8_t lens[2] = {g_gpe0_len, g_gpe1_len};
+    for (int b = 0; b < 2; ++b) {
+        if (bases[b] == 0 || lens[b] == 0) {
+            continue;
+        }
+        const uint8_t half = static_cast<uint8_t>(lens[b] / 2);
+        for (uint8_t i = 0; i < half; ++i) {
+            out8(static_cast<uint16_t>(bases[b] + i), 0xFF);        // STS
+            out8(static_cast<uint16_t>(bases[b] + half + i), 0x00); // EN
+        }
+    }
+}
+
+// Handler de la SCI. Solo atendemos eventos fijos de PM1 (hoy: boton de power);
+// las GPE estan enmascaradas. Es imprescindible limpiar el estado (write-1-to-
+// clear) para que la SCI level-triggered no vuelva a dispararse.
+void sci_interrupt() {
+    uint16_t status = 0;
+    if (g_pm1a_evt_port != 0) {
+        status = static_cast<uint16_t>(status | in16(g_pm1a_evt_port));
+    }
+    if (g_pm1b_evt_port != 0) {
+        status = static_cast<uint16_t>(status | in16(g_pm1b_evt_port));
+    }
+
+    if ((status & kPm1PwrBtnBit) != 0) {
+        // Ack del boton y apagado ordenado por S5 (mismo camino que /dev/power).
+        out16(g_pm1a_evt_port, kPm1PwrBtnBit);
+        if (g_pm1b_evt_port != 0) {
+            out16(g_pm1b_evt_port, kPm1PwrBtnBit);
+        }
+        acpi::shutdown(); // no retorna
+    }
+
+    // Otros bits fijos: limpiarlos para no re-disparar la SCI.
+    if (status != 0) {
+        out16(g_pm1a_evt_port, status);
+        if (g_pm1b_evt_port != 0) {
+            out16(g_pm1b_evt_port, status);
+        }
+    }
+}
+
 } // namespace
 
 namespace acpi {
@@ -279,6 +353,23 @@ void initialize(const boot::BootInfo& boot_info) {
         g_reset_value = fadt->reset_value;
     }
 
+    // SCI + bloques de evento PM1 + GPE (para start_sci / boton de power).
+    g_sci_int = fadt->sci_int;
+    g_smi_cmd = static_cast<uint16_t>(fadt->smi_cmd);
+    g_acpi_enable = fadt->acpi_enable;
+    g_pm1_evt_len = fadt->pm1_evt_len;
+    if (has_extended && fadt->x_pm1a_evt_blk.address != 0) {
+        g_pm1a_evt_port = static_cast<uint16_t>(fadt->x_pm1a_evt_blk.address);
+        g_pm1b_evt_port = static_cast<uint16_t>(fadt->x_pm1b_evt_blk.address);
+    } else {
+        g_pm1a_evt_port = static_cast<uint16_t>(fadt->pm1a_evt_blk);
+        g_pm1b_evt_port = static_cast<uint16_t>(fadt->pm1b_evt_blk);
+    }
+    g_gpe0_port = static_cast<uint16_t>(fadt->gpe0_blk);
+    g_gpe0_len = fadt->gpe0_blk_len;
+    g_gpe1_port = static_cast<uint16_t>(fadt->gpe1_blk);
+    g_gpe1_len = fadt->gpe1_blk_len;
+
     // DSDT -> _S5_ (SLP_TYPa/b).
     uint64_t dsdt_phys = fadt->dsdt;
     if (has_extended && fadt->x_dsdt != 0) {
@@ -302,6 +393,54 @@ void initialize(const boot::BootInfo& boot_info) {
 
 bool ready() {
     return g_ready;
+}
+
+bool start_sci() {
+    if (!g_ready || g_pm1a_evt_port == 0) {
+        // Sin bloque de evento PM1 no hay forma de atender la SCI.
+        return false;
+    }
+
+    // 1) Habilitar el modo ACPI (SCI_EN) si aun no esta, via SMI_CMD. En modo
+    //    legacy la firmware maneja los eventos por SMM; al habilitar ACPI el SO
+    //    pasa a recibir la SCI.
+    if (g_pm1a_cnt_port != 0 && (in16(g_pm1a_cnt_port) & kPm1CntSciEn) == 0 &&
+        g_smi_cmd != 0 && g_acpi_enable != 0) {
+        out8(g_smi_cmd, g_acpi_enable);
+        for (int i = 0; i < 100000 && (in16(g_pm1a_cnt_port) & kPm1CntSciEn) == 0; ++i) {
+            io_wait();
+        }
+    }
+
+    // 2) Enmascarar las GPE antes de desenmascarar la SCI (evita tormentas).
+    mask_all_gpes();
+
+    // 3) Limpiar estado PM1 pendiente y habilitar solo el boton de encendido.
+    const uint16_t en_offset = static_cast<uint16_t>(g_pm1_evt_len / 2);
+    out16(g_pm1a_evt_port, 0xFFFF); // clear-all (write-1-to-clear)
+    out16(static_cast<uint16_t>(g_pm1a_evt_port + en_offset), kPm1PwrBtnBit);
+    if (g_pm1b_evt_port != 0) {
+        out16(g_pm1b_evt_port, 0xFFFF);
+        out16(static_cast<uint16_t>(g_pm1b_evt_port + en_offset), kPm1PwrBtnBit);
+    }
+
+    // 4) Rutear la SCI. Por spec ACPI es level-triggered, active-low. Preferir el
+    //    IOAPIC; si no hay, caer al PIC legacy cuando la GSI entra en 0..15.
+    if (ioapic::ready()) {
+        g_sci_active = ioapic::route_gsi(g_sci_int, ioapic::Polarity::active_low,
+                                         ioapic::Trigger::level, sci_interrupt) != 0;
+    } else if (g_sci_int < 16) {
+        g_sci_active = arch::x86_64::register_irq_handler(
+            static_cast<uint8_t>(g_sci_int), sci_interrupt);
+        if (g_sci_active) {
+            arch::x86_64::enable_irq(static_cast<uint8_t>(g_sci_int));
+        }
+    }
+
+    console::printf("acpi: SCI %s en GSI %u (PWRBTN habilitado)\n",
+                    g_sci_active ? "ruteado" : "no ruteado",
+                    static_cast<unsigned>(g_sci_int));
+    return g_sci_active;
 }
 
 [[noreturn]] void shutdown() {

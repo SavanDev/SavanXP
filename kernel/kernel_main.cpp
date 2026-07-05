@@ -147,6 +147,8 @@ namespace
     // parsea la MADT y deja el ruteo de GSIs listo para SCI e INTx (_PRT). Si no
     // hay MADT/IOAPIC cae en silencio y el sistema sigue con el PIC legacy.
     ioapic::initialize(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
+    // Con el IOAPIC listo, habilitar el modo ACPI y rutear la SCI (boton de power).
+    acpi::start_sci();
     pci::initialize();
     boot_screen::show(46, "Inicializando entrada");
     virtio_input::initialize(boot_info.framebuffer);
