@@ -5,7 +5,8 @@ param(
     # Omite LLVM/QEMU/xorriso si ya los tenes resueltos por otra via.
     [switch]$SkipLlvm,
     [switch]$SkipQemu,
-    [switch]$SkipXorriso
+    [switch]$SkipXorriso,
+    [switch]$SkipNinja
 )
 
 Set-StrictMode -Version Latest
@@ -217,6 +218,36 @@ function Install-Xorriso($Spec) {
     return $target
 }
 
+function Install-Ninja($Spec) {
+    $target = Join-Path $ToolchainRoot "ninja"
+    $ninjaExe = Join-Path $target "ninja.exe"
+    if ((Test-Path $ninjaExe) -and -not $Force) {
+        Write-Step "Ninja ya presente en $target (usa -Force para re-instalar)"
+        return $target
+    }
+
+    if (Test-Path $target) {
+        Remove-Item -Recurse -Force $target
+    }
+
+    Ensure-Directory $CacheRoot
+    $archive = Join-Path $CacheRoot ("ninja-" + $Spec.version + "." + $Spec.archive)
+    if ($Force -or -not (Test-Path $archive)) {
+        Get-RemoteFile $Spec.url $archive
+    }
+    Confirm-FileHash $archive $Spec.sha256 "Ninja $($Spec.version)"
+
+    Write-Step "Extrayendo Ninja..."
+    # A diferencia de LLVM/xorriso, el zip de ninja-win trae ninja.exe suelto
+    # en la raiz (sin carpeta contenedora), asi que se extrae directo al target.
+    Expand-ZipArchive $archive $target
+
+    if (-not (Test-Path $ninjaExe)) {
+        throw "Tras instalar Ninja no se encontro $ninjaExe"
+    }
+    return $target
+}
+
 function Resolve-OvmfFromQemu([string]$QemuRoot) {
     $share = Join-Path $QemuRoot "share"
     $candidates = @(
@@ -269,8 +300,13 @@ if (-not $SkipXorriso) {
     $manifest["xorriso"] = Join-Path $xorrisoRoot "xorriso.exe"
 }
 
+if (-not $SkipNinja) {
+    $ninjaRoot = Install-Ninja $lock.ninja
+    $manifest["ninja"] = Join-Path $ninjaRoot "ninja.exe"
+}
+
 # Fusiona con el manifiesto previo para no perder claves de un run parcial.
-if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu -or $SkipXorriso)) {
+if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu -or $SkipXorriso -or $SkipNinja)) {
     $existing = Get-Content -Raw -Path $ManifestPath | ConvertFrom-Json
     foreach ($prop in $existing.PSObject.Properties) {
         if (-not $manifest.Contains($prop.Name)) {

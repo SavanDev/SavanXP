@@ -24,6 +24,7 @@ $Script:ToolchainTools = @{
     "xorriso"            = @{ Env = "SAVANXP_XORRISO"; Manifest = "xorriso" }
     "haxe"               = @{ Env = "SAVANXP_HAXE";    Manifest = "haxe" }
     "haxelib"            = @{ Env = "SAVANXP_HAXELIB"; Manifest = "haxelib" }
+    "ninja"              = @{ Env = "SAVANXP_NINJA";   Manifest = "ninja" }
 }
 
 function Get-ToolchainManifest {

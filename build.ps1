@@ -40,6 +40,7 @@ $SmokeStderrLog = Join-Path $BuildRoot "smoke-qemu-stderr.log"
 
 . (Join-Path $ToolRoot "UserAppCommon.ps1")
 . (Join-Path $ToolRoot "Toolchain.ps1")
+. (Join-Path $ToolRoot "Ninja.ps1")
 
 $SvfsSectorSize = 512
 $SvfsDirectorySectors = 8
@@ -282,25 +283,6 @@ function Get-UserFlags {
     )
 }
 
-function Compile-Object([string]$Compiler, [string]$SourcePath, [string]$ObjectPath, [string[]]$Flags, [string]$Language = "") {
-    $languageArgs = @()
-    if ($Language) {
-        $languageArgs = @("-x", $Language)
-    }
-
-    $compileArgs = @(
-        "-c"
-    ) + $languageArgs + @(
-        $SourcePath,
-        "-o", $ObjectPath
-    ) + $Flags
-
-    & $Compiler @compileArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Fallo la compilacion de $SourcePath."
-    }
-}
-
 function Write-CpioEntry([System.IO.BinaryWriter]$Writer, [string]$RelativePath, [byte[]]$Data, [uint32]$Mode) {
     $pathBytes = [System.Text.Encoding]::ASCII.GetBytes($RelativePath)
     $nameSize = $pathBytes.Length + 1
@@ -500,15 +482,31 @@ function Generate-DesktopIconAssets {
     }
 }
 
-function Build-Userland([string]$Compiler, [string]$Linker) {
-    $userFlags = Get-UserFlags
-    $userObjRoot = Join-Path $ObjRoot "user"
-    $binRoot = Join-Path $RootfsBuild "bin"
-    New-Directory $userObjRoot
-    New-Directory $RootfsBuild
-    New-Directory $binRoot
+function Get-KernelCompileEdges([string[]]$Sources) {
+    $edges = @()
+    $objectFiles = @()
 
-    Copy-Item (Join-Path $ProjectRoot "rootfs\\README") (Join-Path $RootfsBuild "README") -Force
+    foreach ($source in $Sources) {
+        $sourcePath = Join-Path $ProjectRoot $source
+        $objectPath = Join-Path $ObjRoot (([IO.Path]::GetFileNameWithoutExtension($source)) + ".o")
+        $objectFiles += $objectPath
+        $edges += [pscustomobject]@{
+            SourcePath = $sourcePath
+            ObjectPath = $objectPath
+            FlagsVar = "kernelflags"
+            LangFlag = ""
+        }
+    }
+
+    return [pscustomobject]@{ Edges = $edges; ObjectFiles = $objectFiles }
+}
+
+function Get-UserlandCompileEdges {
+    $userObjRoot = Join-Path $ObjRoot "user"
+    New-Directory $userObjRoot
+
+    $edges = @()
+    $programs = @()
 
     foreach ($program in $UserPrograms) {
         $objectFiles = @()
@@ -523,15 +521,36 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
             $objectName = "$($program.Name)_$([IO.Path]::GetFileNameWithoutExtension($source)).o"
             $objectPath = Join-Path $userObjRoot $objectName
             $objectFiles += $objectPath
-            $language = ""
+
+            $langFlag = ""
             if ($source.EndsWith(".c")) {
-                $language = "c"
+                $langFlag = "-x c"
             } elseif ($source.EndsWith(".S")) {
-                $language = "assembler-with-cpp"
+                $langFlag = "-x assembler-with-cpp"
             }
-            Compile-Object -Compiler $Compiler -SourcePath $sourcePath -ObjectPath $objectPath -Flags $userFlags -Language $language
+
+            $edges += [pscustomobject]@{
+                SourcePath = $sourcePath
+                ObjectPath = $objectPath
+                FlagsVar = "userflags"
+                LangFlag = $langFlag
+            }
         }
 
+        $programs += [pscustomobject]@{ Name = $program.Name; ObjectFiles = $objectFiles }
+    }
+
+    return [pscustomobject]@{ Edges = $edges; Programs = $programs }
+}
+
+function Build-Userland([string]$Linker, [object[]]$Programs) {
+    $binRoot = Join-Path $RootfsBuild "bin"
+    New-Directory $RootfsBuild
+    New-Directory $binRoot
+
+    Copy-Item (Join-Path $ProjectRoot "rootfs\\README") (Join-Path $RootfsBuild "README") -Force
+
+    foreach ($program in $Programs) {
         $outputPath = Join-Path $binRoot $program.Name
         $linkArgs = @(
             "-m", "elf_x86_64",
@@ -539,7 +558,7 @@ function Build-Userland([string]$Compiler, [string]$Linker) {
             "-z", "max-page-size=0x1000",
             "--build-id=none",
             "-o", $outputPath
-        ) + $objectFiles
+        ) + $program.ObjectFiles
 
         & $Linker @linkArgs
         if ($LASTEXITCODE -ne 0) {
@@ -608,18 +627,18 @@ function Build-Kernel([string]$AutomationCommand = "") {
     New-Directory $GeneratedRoot
 
     $commonFlags = Get-CommonFlags
-    $objectFiles = @()
-
-    foreach ($source in $KernelSources) {
-        $sourcePath = Join-Path $ProjectRoot $source
-        $objectPath = Join-Path $ObjRoot (([IO.Path]::GetFileNameWithoutExtension($source)) + ".o")
-        $objectFiles += $objectPath
-        Compile-Object -Compiler $clang -SourcePath $sourcePath -ObjectPath $objectPath -Flags $commonFlags
-    }
+    $userFlags = Get-UserFlags
 
     Generate-CursorAsset
     Generate-DesktopIconAssets
-    Build-Userland -Compiler $clang -Linker $ld
+
+    $kernelPlan = Get-KernelCompileEdges $KernelSources
+    $userlandPlan = Get-UserlandCompileEdges
+    $objectFiles = $kernelPlan.ObjectFiles
+
+    Invoke-NinjaCompile -BuildRoot $BuildRoot -Clangxx $clang -KernelFlags $commonFlags -UserFlags $userFlags -Edges ($kernelPlan.Edges + $userlandPlan.Edges)
+
+    Build-Userland -Linker $ld -Programs $userlandPlan.Programs
     Install-BusyBox
     if ($AutomationCommand) {
         Set-Content -Path (Join-Path $RootfsBuild "SMOKE") -Value $AutomationCommand -NoNewline

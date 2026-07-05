@@ -21,6 +21,13 @@
     "sha256": "fff12dd784155542d57018b208391928c9a3f3e4e856c1f1d01341042d1d129f",
     "archive": "zip"
   },
+  "_ninja_note": "Orquesta solo la fase de compilar objetos (kernel + userland); el resto del pipeline (link, imagen, ISO, QEMU) lo sigue manejando build.ps1. Release oficial de ninja-build/ninja; el zip trae ninja.exe suelto en la raiz, sin carpeta interna.",
+  "ninja": {
+    "version": "1.13.2",
+    "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
+    "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+    "archive": "zip"
+  },
   "_haxelibs_note": "Targets Haxe->C++ del subsistema nativo. subsystems/native/build.ps1 los clona pineados a estos commits bajo toolchain/haxe-libs/ (ignorado por git). Haxe (el compilador) se resuelve via tools/Toolchain.ps1: env SAVANXP_HAXE > toolchain horneado > PATH.",
   "haxelibs": {
     "reflaxe": {
