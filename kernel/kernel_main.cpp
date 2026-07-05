@@ -153,6 +153,7 @@ namespace
     // Traer uACPI hasta cargar/inicializar el namespace (interpreta el AML de la
     // DSDT). Todavia no toma los eventos: convive con acpi::start_sci.
     uacpi_glue::bringup(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
+    uacpi_glue::dump_pci_routing();
     pci::initialize();
     boot_screen::show(46, "Inicializando entrada");
     virtio_input::initialize(boot_info.framebuffer);

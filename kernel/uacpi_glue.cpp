@@ -11,6 +11,7 @@
 extern "C" {
 #include "uacpi/kernel_api.h"
 #include "uacpi/namespace.h"
+#include "uacpi/resources.h"
 #include "uacpi/status.h"
 #include "uacpi/uacpi.h"
 #include "uacpi/utilities.h"
@@ -142,6 +143,105 @@ bool bringup(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset) {
     console::printf("uacpi: namespace cargado (%s), AML interpretado ok\n",
                     uacpi_status_to_string(st));
     return true;
+}
+
+// IRQ resuelta desde el _CRS de un PCI link device.
+struct LinkIrq {
+    uint32_t gsi;
+    uint8_t triggering; // UACPI_TRIGGERING_*
+    uint8_t polarity;   // UACPI_POLARITY_*
+    bool found;
+};
+
+// Callback de _CRS: captura la primera IRQ (descriptor IRQ o Extended IRQ).
+uacpi_iteration_decision link_crs_cb(void* user, uacpi_resource* res) {
+    LinkIrq* out = static_cast<LinkIrq*>(user);
+    if (res->type == UACPI_RESOURCE_TYPE_IRQ && res->irq.num_irqs > 0) {
+        out->gsi = res->irq.irqs[0];
+        out->triggering = res->irq.triggering;
+        out->polarity = res->irq.polarity;
+        out->found = true;
+        return UACPI_ITERATION_DECISION_BREAK;
+    }
+    if (res->type == UACPI_RESOURCE_TYPE_EXTENDED_IRQ && res->extended_irq.num_irqs > 0) {
+        out->gsi = res->extended_irq.irqs[0];
+        out->triggering = res->extended_irq.triggering;
+        out->polarity = res->extended_irq.polarity;
+        out->found = true;
+        return UACPI_ITERATION_DECISION_BREAK;
+    }
+    return UACPI_ITERATION_DECISION_CONTINUE;
+}
+
+// Evalua el _CRS de un link device y extrae la GSI a la que esta ruteado ahora.
+bool resolve_link_gsi(uacpi_namespace_node* link, LinkIrq& out) {
+    uacpi_resources* res = nullptr;
+    if (uacpi_unlikely_error(uacpi_get_current_resources(link, &res))) {
+        return false;
+    }
+    out.found = false;
+    uacpi_for_each_resource(res, link_crs_cb, &out);
+    uacpi_free_resources(res);
+    return out.found;
+}
+
+struct PrtDumpCtx {
+    uacpi_namespace_node* seen[16];
+    int seen_count;
+};
+
+// Callback por cada PCI root bridge: recorre su _PRT y resuelve cada link device
+// unico a su GSI real (via _CRS). En q35 todas las entradas usan links (LNKx);
+// las GSI directas (source==NULL) se saltean aca.
+uacpi_iteration_decision prt_dump_cb(void* user, uacpi_namespace_node* node, uacpi_u32) {
+    PrtDumpCtx* ctx = static_cast<PrtDumpCtx*>(user);
+    uacpi_pci_routing_table* prt = nullptr;
+    if (uacpi_unlikely_error(uacpi_get_pci_routing_table(node, &prt))) {
+        return UACPI_ITERATION_DECISION_CONTINUE;
+    }
+
+    console::printf("uacpi: _PRT con %u entradas, links:\n",
+                    static_cast<unsigned>(prt->num_entries));
+    for (uacpi_size i = 0; i < prt->num_entries; ++i) {
+        const uacpi_pci_routing_table_entry& e = prt->entries[i];
+        if (e.source == nullptr) {
+            continue; // GSI directa (no ocurre en q35)
+        }
+        bool seen = false;
+        for (int k = 0; k < ctx->seen_count; ++k) {
+            if (ctx->seen[k] == e.source) { seen = true; break; }
+        }
+        if (seen) {
+            continue;
+        }
+        if (ctx->seen_count < 16) {
+            ctx->seen[ctx->seen_count++] = e.source;
+        }
+
+        char name[5] = {};
+        const uacpi_object_name n = uacpi_namespace_node_name(e.source);
+        for (int k = 0; k < 4; ++k) name[k] = n.text[k];
+
+        LinkIrq irq = {};
+        if (resolve_link_gsi(e.source, irq)) {
+            console::printf("  %s -> GSI %u (%s, active-%s)\n", name,
+                            static_cast<unsigned>(irq.gsi),
+                            irq.triggering == UACPI_TRIGGERING_LEVEL ? "level" : "edge",
+                            irq.polarity == UACPI_POLARITY_ACTIVE_LOW ? "low" : "high");
+        } else {
+            console::printf("  %s -> (sin IRQ en _CRS)\n", name);
+        }
+    }
+
+    uacpi_free_pci_routing_table(prt);
+    return UACPI_ITERATION_DECISION_CONTINUE;
+}
+
+// Recorre los root bridges PCI/PCIe y resuelve los link devices del _PRT a GSIs.
+void dump_pci_routing() {
+    PrtDumpCtx ctx = {};
+    uacpi_find_devices("PNP0A03", prt_dump_cb, &ctx); // PCI root bridge
+    uacpi_find_devices("PNP0A08", prt_dump_cb, &ctx); // PCIe root bridge
 }
 } // namespace uacpi_glue
 

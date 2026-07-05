@@ -11,4 +11,8 @@ namespace uacpi_glue {
 // true si todo el bringup fue exitoso.
 bool bringup(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset);
 
+// Vuelca el _PRT (ruteo de INTx) de los root bridges PCI/PCIe al log. Requiere el
+// namespace cargado (bringup). Investigacion previa al routing real de INTx.
+void dump_pci_routing();
+
 } // namespace uacpi_glue
