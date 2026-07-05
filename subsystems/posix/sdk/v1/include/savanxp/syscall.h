@@ -102,7 +102,7 @@ enum savanxp_error_code {
     SAVANXP_ETIMEDOUT = 110,
 };
 
-enum savanxp_mode_bits : uint32_t {
+enum savanxp_mode_bits {
     SAVANXP_S_IFMT = 0170000u,
     SAVANXP_S_IFREG = 0100000u,
     SAVANXP_S_IFDIR = 0040000u,
