@@ -31,6 +31,7 @@ void* g_fb_base = nullptr;
 savanxp_fb_info g_fb_info = {};
 savanxp_gpu_info g_gpu_info = {};
 ImportedSurface g_imported[kImportedSurfaceCount] = {};
+savanxp_gpu_stats g_gpu_stats = {};
 uint64_t g_next_present_sequence = 1;
 uint64_t g_last_submitted_present_sequence = 0;
 uint64_t g_last_retired_present_sequence = 0;
@@ -59,6 +60,8 @@ void retire_synchronous_present(uint64_t requested_sequence) {
     g_next_present_sequence = sequence + 1u;
     g_last_submitted_present_sequence = sequence;
     g_last_retired_present_sequence = sequence;
+    g_gpu_stats.present_enqueued += 1u;
+    g_gpu_stats.present_completed += 1u;
 }
 
 // Copia un rectangulo (en coordenadas del scanout) desde una superficie origen
@@ -116,7 +119,12 @@ bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint3
     if (pixels == nullptr || source_pitch == 0) {
         return false;
     }
-    if (!blit_rect(pixels, source_pitch, x, y, width, height)) {
+    // Contrato del ioctl (mismo que virtio y console): pixels apunta a la base
+    // de una superficie completa y el rect se lee en su offset (x,y), no en la
+    // fila 0.
+    const auto* origin = static_cast<const uint8_t*>(pixels) +
+        (static_cast<uint64_t>(y) * source_pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
+    if (!blit_rect(origin, source_pitch, x, y, width, height)) {
         return false;
     }
     retire_synchronous_present(0);
@@ -371,7 +379,7 @@ bool get_stats(savanxp_gpu_stats& stats) {
     if (!ready()) {
         return false;
     }
-    memset(&stats, 0, sizeof(stats));
+    stats = g_gpu_stats;
     return true;
 }
 
@@ -501,6 +509,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         .backend = SAVANXP_GPU_BACKEND_FRAMEBUFFER,
         .flags = 0,
     };
+    memset(&g_gpu_stats, 0, sizeof(g_gpu_stats));
     g_next_present_sequence = 1;
     g_last_submitted_present_sequence = 0;
     g_last_retired_present_sequence = 0;

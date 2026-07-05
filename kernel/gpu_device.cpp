@@ -205,6 +205,11 @@ int gpu_ioctl(uint64_t request, uint64_t argument) {
             return process::copy_to_user(argument, &state, sizeof(state)) ? 0 : negative_error(SAVANXP_EINVAL);
         }
         case GPU_IOC_REFRESH_SCANOUTS:
+            // Re-arma el scanout activo (muta estado del dispositivo), asi que
+            // exige la sesion grafica igual que el resto de ioctls mutantes.
+            if (!owns_session()) {
+                return negative_error(SAVANXP_EBUSY);
+            }
             return display::refresh_scanouts() ? 0 : negative_error(SAVANXP_EIO);
         case GPU_IOC_PRESENT_SURFACE_BATCH: {
             savanxp_gpu_surface_present_batch batch = {};

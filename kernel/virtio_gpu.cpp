@@ -1400,7 +1400,7 @@ void poll_cursor_completions() {
         return;
     }
 
-    const virtio_pci::UsedHeader* used = virtio_pci::queue_used_header(g_cursor_queue);
+    const volatile virtio_pci::UsedHeader* used = virtio_pci::queue_used_header(g_cursor_queue);
     const virtio_pci::UsedElement* ring = virtio_pci::queue_used_ring(g_cursor_queue);
 
     while (g_cursor_queue.last_used_index != used->idx) {
@@ -2867,6 +2867,34 @@ bool ensure_primary_scanout_restored() {
     return true;
 }
 
+ImportedSurface* imported_scanout_surface() {
+    if (g_scanout_resource_id == 0) {
+        return nullptr;
+    }
+    for (ImportedSurface& surface : g_imported_surfaces) {
+        if (surface.in_use && surface.resource_id == g_scanout_resource_id) {
+            return &surface;
+        }
+    }
+    return nullptr;
+}
+
+/* Re-arma el scanout tras un refresh sin pisar un flip fullscreen: si el
+ * scanout actual es una superficie importada viva se re-emite SET_SCANOUT
+ * para ella (el scanout_id pudo cambiar con el hotplug); si no hay flip o el
+ * host lo rechaza, vuelve a la superficie primaria. */
+bool ensure_active_scanout_restored() {
+    ImportedSurface* imported = imported_scanout_surface();
+    if (imported != nullptr) {
+        VirtioGpuSetScanout request = {};
+        if (build_scanout_request_for_resource(imported->resource_id, imported->info, request) &&
+            send_ok_nodata_command(&request, sizeof(request))) {
+            return true;
+        }
+    }
+    return ensure_primary_scanout_restored();
+}
+
 void snapshot_scanout_refresh_state(ScanoutRefreshSnapshot& snapshot) {
     memcpy(snapshot.scanouts, g_scanouts, sizeof(g_scanouts));
     snapshot.scanout_state = g_scanout_state;
@@ -2933,7 +2961,7 @@ bool refresh_scanouts(bool explicit_refresh) {
     g_scanout_width = g_scanouts[g_scanout_id].native_width;
     g_scanout_height = g_scanouts[g_scanout_id].native_height;
     update_active_scanout_mode(g_framebuffer_info.width, g_framebuffer_info.height);
-    if (!ensure_primary_scanout_restored()) {
+    if (!ensure_active_scanout_restored()) {
         restore_scanout_refresh_state(snapshot);
         return false;
     }

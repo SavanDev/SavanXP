@@ -424,6 +424,70 @@ static void dump_soak_stats(const struct savanxp_gpu_stats* a, const struct sava
         (unsigned)(b->command_completions - a->command_completions));
 }
 
+/* Ejercita el cambio de modo en runtime: SET_MODE destruye y recrea los
+ * recursos primarios del scanout (cubre el camino RESOURCE_UNREF del driver).
+ * Baja a 640x400 como el modo fullscreen del desktop, presenta un frame
+ * completo, y vuelve al modo nativo presentando de nuevo. Requiere que no haya
+ * superficies importadas vivas. */
+static int exercise_runtime_mode_change(
+    int gpu_fd,
+    int present_event_fd,
+    const struct savanxp_gpu_info* gpu_info,
+    const struct savanxp_fb_info* fb_info) {
+    struct savanxp_gpu_connector_properties properties = {0};
+    struct savanxp_gpu_mode low_mode = {0};
+    struct savanxp_gpu_mode native_mode = {0};
+    struct savanxp_fb_info low_info = {0};
+
+    if (gpu_get_connector_properties(gpu_fd, &properties) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_GET_CONNECTOR_PROPERTIES failed\n");
+        return 0;
+    }
+    if ((properties.flags & SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING) == 0) {
+        return 1;
+    }
+
+    low_mode.width = 640;
+    low_mode.height = 400;
+    low_mode.bpp = 32;
+    if (gpu_set_mode(gpu_fd, &low_mode) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_SET_MODE 640x400 failed\n");
+        return 0;
+    }
+    low_info.width = low_mode.width;
+    low_info.height = low_mode.height;
+    low_info.pitch = low_mode.pitch;
+    low_info.bpp = low_mode.bpp;
+    low_info.buffer_size = low_mode.buffer_size;
+
+    draw_static_scene(&low_info);
+    memcpy(g_pixels, g_background, low_mode.buffer_size);
+    draw_box(&low_info, 64, 96);
+    if (gpu_present(gpu_fd, g_pixels) < 0 ||
+        !wait_present_event_and_retire(gpu_fd, present_event_fd, "present event mode low")) {
+        puts_fd(2, "gputest: present after SET_MODE 640x400 failed\n");
+        return 0;
+    }
+
+    native_mode.width = gpu_info->width;
+    native_mode.height = gpu_info->height;
+    native_mode.bpp = 32;
+    if (gpu_set_mode(gpu_fd, &native_mode) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_SET_MODE restore failed\n");
+        return 0;
+    }
+
+    draw_static_scene(fb_info);
+    memcpy(g_pixels, g_background, gpu_info->buffer_size);
+    draw_box(fb_info, 96, 144);
+    if (gpu_present(gpu_fd, g_pixels) < 0 ||
+        !wait_present_event_and_retire(gpu_fd, present_event_fd, "present event mode native")) {
+        puts_fd(2, "gputest: present after SET_MODE restore failed\n");
+        return 0;
+    }
+    return 1;
+}
+
 static int run_soak_mode(size_t iteration_count) {
     struct savanxp_gpu_info gpu_info = {0};
     struct savanxp_gpu_stats stats_before = {0};
@@ -533,6 +597,14 @@ static int run_soak_mode(size_t iteration_count) {
 
         previous_box_x = box_x;
         previous_box_y = box_y;
+    }
+
+    /* SET_MODE exige que no haya superficies importadas vivas: liberar la del
+     * soak antes de ejercitar el cambio de modo en runtime. */
+    cleanup_imported_test_surface((int)gpu_fd, &imported);
+    if (!exercise_runtime_mode_change((int)gpu_fd, (int)present_event_fd, &gpu_info, &fb_info)) {
+        cleanup_soak_session(&gpu_fd, &present_event_fd, &scanout_event_fd, &imported);
+        return 1;
     }
 
     if (gpu_wait_idle((int)gpu_fd) < 0 || gpu_get_stats((int)gpu_fd, &stats_after) < 0) {

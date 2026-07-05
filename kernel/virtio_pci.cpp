@@ -340,7 +340,9 @@ uint64_t queue_extra_physical(const Queue& queue, size_t offset) {
 }
 
 void notify_queue(Device& device, const Queue& queue) {
-    if (!device.notify_view.valid || device.notify_view.bar == nullptr || device.notify_view.extra == 0) {
+    // notify_off_multiplier == 0 es valido (todas las colas comparten la misma
+    // direccion de notify), asi que no se exige extra != 0.
+    if (!device.notify_view.valid || device.notify_view.bar == nullptr) {
         return;
     }
 
