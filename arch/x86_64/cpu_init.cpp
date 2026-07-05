@@ -404,6 +404,23 @@ DEFINE_EXTERNAL_ISR(47)
 // Vector 32 is PIC IRQ0 (PIT), vector 48 is the local-APIC timer, and both use
 // the context-saving timer entry. Vector 49 carries device MSI-X.
 DEFINE_EXTERNAL_ISR(49)
+// Vectors 50-63 are the IOAPIC GSI routing pool (see kernel/ioapic.cpp). Each is
+// a plain external ISR that dispatches to its registered handler and EOIs the
+// local APIC. Keep this range in sync with ioapic::g_next_vector/kVectorPoolEnd.
+DEFINE_EXTERNAL_ISR(50)
+DEFINE_EXTERNAL_ISR(51)
+DEFINE_EXTERNAL_ISR(52)
+DEFINE_EXTERNAL_ISR(53)
+DEFINE_EXTERNAL_ISR(54)
+DEFINE_EXTERNAL_ISR(55)
+DEFINE_EXTERNAL_ISR(56)
+DEFINE_EXTERNAL_ISR(57)
+DEFINE_EXTERNAL_ISR(58)
+DEFINE_EXTERNAL_ISR(59)
+DEFINE_EXTERNAL_ISR(60)
+DEFINE_EXTERNAL_ISR(61)
+DEFINE_EXTERNAL_ISR(62)
+DEFINE_EXTERNAL_ISR(63)
 #undef DEFINE_ISR_NOERR
 #undef DEFINE_ISR_ERR
 #undef DEFINE_EXTERNAL_ISR
@@ -459,6 +476,20 @@ void initialize_idt() {
     set_idt_gate(47, reinterpret_cast<InterruptHandler>(vector_47), kInterruptGate);
     set_idt_gate(48, reinterpret_cast<InterruptHandler>(x86_64_timer_entry), kInterruptGate);
     set_idt_gate(49, reinterpret_cast<InterruptHandler>(vector_49), kInterruptGate);
+    set_idt_gate(50, reinterpret_cast<InterruptHandler>(vector_50), kInterruptGate);
+    set_idt_gate(51, reinterpret_cast<InterruptHandler>(vector_51), kInterruptGate);
+    set_idt_gate(52, reinterpret_cast<InterruptHandler>(vector_52), kInterruptGate);
+    set_idt_gate(53, reinterpret_cast<InterruptHandler>(vector_53), kInterruptGate);
+    set_idt_gate(54, reinterpret_cast<InterruptHandler>(vector_54), kInterruptGate);
+    set_idt_gate(55, reinterpret_cast<InterruptHandler>(vector_55), kInterruptGate);
+    set_idt_gate(56, reinterpret_cast<InterruptHandler>(vector_56), kInterruptGate);
+    set_idt_gate(57, reinterpret_cast<InterruptHandler>(vector_57), kInterruptGate);
+    set_idt_gate(58, reinterpret_cast<InterruptHandler>(vector_58), kInterruptGate);
+    set_idt_gate(59, reinterpret_cast<InterruptHandler>(vector_59), kInterruptGate);
+    set_idt_gate(60, reinterpret_cast<InterruptHandler>(vector_60), kInterruptGate);
+    set_idt_gate(61, reinterpret_cast<InterruptHandler>(vector_61), kInterruptGate);
+    set_idt_gate(62, reinterpret_cast<InterruptHandler>(vector_62), kInterruptGate);
+    set_idt_gate(63, reinterpret_cast<InterruptHandler>(vector_63), kInterruptGate);
     set_idt_gate(kSyscallVector, reinterpret_cast<InterruptHandler>(x86_64_syscall_entry), kUserInterruptGate);
     load_idt();
 }

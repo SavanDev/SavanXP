@@ -14,6 +14,7 @@
 #include "kernel/gpu_device.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
+#include "kernel/ioapic.hpp"
 #include "kernel/net.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/pci.hpp"
@@ -142,6 +143,10 @@ namespace
     tty::initialize();
     input::initialize();
     timer::initialize(1000);
+    // IOAPIC despues del Local APIC (lo levanta timer::initialize) y de la ACPI:
+    // parsea la MADT y deja el ruteo de GSIs listo para SCI e INTx (_PRT). Si no
+    // hay MADT/IOAPIC cae en silencio y el sistema sigue con el PIC legacy.
+    ioapic::initialize(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
     pci::initialize();
     boot_screen::show(46, "Inicializando entrada");
     virtio_input::initialize(boot_info.framebuffer);

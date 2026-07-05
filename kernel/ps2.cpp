@@ -6,6 +6,7 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/input.hpp"
+#include "kernel/ioapic.hpp"
 #include "kernel/virtio_input.hpp"
 #include "savanxp/syscall.h"
 
@@ -1055,18 +1056,36 @@ void initialize() {
         return;
     }
 
-    if (!arch::x86_64::register_irq_handler(1, keyboard_irq)) {
-        console::write_line("ps2: failed to register irq1");
+    // Preferir el IOAPIC (rutea via GSI aplicando los overrides de la MADT y
+    // entrega por el Local APIC). Si no hay IOAPIC (p.ej. config sin MADT), caer
+    // al PIC legacy para no romper el arranque.
+    const bool use_ioapic = ioapic::ready();
+
+    const bool keyboard_routed = use_ioapic
+        ? ioapic::route_legacy_irq(1, keyboard_irq) != 0
+        : arch::x86_64::register_irq_handler(1, keyboard_irq);
+    if (!keyboard_routed) {
+        console::write_line("ps2: failed to route irq1");
         return;
     }
-    if (g_mouse_ready && !arch::x86_64::register_irq_handler(12, mouse_irq)) {
-        console::write_line("ps2: failed to register irq12");
-        g_mouse_ready = false;
+
+    if (g_mouse_ready) {
+        const bool mouse_routed = use_ioapic
+            ? ioapic::route_legacy_irq(12, mouse_irq) != 0
+            : arch::x86_64::register_irq_handler(12, mouse_irq);
+        if (!mouse_routed) {
+            console::write_line("ps2: failed to route irq12");
+            g_mouse_ready = false;
+        }
     }
 
-    arch::x86_64::enable_irq(1);
-    if (g_mouse_ready) {
-        arch::x86_64::enable_irq(12);
+    // route_legacy_irq deja la entrada del IOAPIC ya desenmascarada; el PIC en
+    // cambio arranca todo enmascarado y hay que habilitar la linea a mano.
+    if (!use_ioapic) {
+        arch::x86_64::enable_irq(1);
+        if (g_mouse_ready) {
+            arch::x86_64::enable_irq(12);
+        }
     }
     g_ready = true;
 }

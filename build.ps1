@@ -77,6 +77,7 @@ $KernelSources = @(
     "kernel/pcspeaker.cpp",
     "kernel/power.cpp",
     "kernel/acpi.cpp",
+    "kernel/ioapic.cpp",
     "kernel/rtc.cpp",
     "kernel/heap.cpp",
     "kernel/net.cpp",
