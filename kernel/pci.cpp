@@ -321,6 +321,15 @@ uint32_t read_config_u32(uint8_t bus, uint8_t slot, uint8_t function, uint8_t of
     return in32(kConfigDataPort);
 }
 
+void write_config_u8(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset, uint8_t value) {
+    const uint8_t aligned = static_cast<uint8_t>(offset & 0xfcu);
+    uint32_t current = read_config_u32(bus, slot, function, aligned);
+    const uint32_t shift = (offset & 3u) * 8u;
+    current &= ~(0xffu << shift);
+    current |= static_cast<uint32_t>(value) << shift;
+    write_config_u32(bus, slot, function, aligned, current);
+}
+
 void write_config_u16(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset, uint16_t value) {
     const uint8_t aligned = static_cast<uint8_t>(offset & 0xfcu);
     uint32_t current = read_config_u32(bus, slot, function, aligned);

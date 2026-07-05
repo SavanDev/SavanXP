@@ -78,6 +78,7 @@ $KernelSources = @(
     "kernel/power.cpp",
     "kernel/acpi.cpp",
     "kernel/ioapic.cpp",
+    "kernel/uacpi_glue.cpp",
     "kernel/rtc.cpp",
     "kernel/heap.cpp",
     "kernel/net.cpp",
@@ -255,8 +256,54 @@ function Get-CommonFlags {
         "-Wpedantic",
         "-I", (Join-Path $ProjectRoot "include"),
         "-I", (Join-Path $PosixSdkRoot "include"),
-        "-I", (Join-Path $ProjectRoot "vendor")
+        "-I", (Join-Path $ProjectRoot "vendor"),
+        "-I", (Join-Path $ProjectRoot "vendor/uacpi/include")
     )
+}
+
+# Flags para compilar uACPI (vendorizado, C11). Misma ABI freestanding que el
+# kernel (mismo code model / sin SSE / red-zone) para que linkee, pero como C y
+# con warnings relajados (codigo de terceros). UACPI_USE_BUILTIN_STRING hace que
+# uACPI use __builtin_mem* en vez de depender de simbolos libc extra.
+function Get-UacpiFlags {
+    return @(
+        "-std=gnu11",
+        "-target", "x86_64-unknown-none-elf",
+        "-ffreestanding",
+        "-fno-stack-protector",
+        "-fno-pic",
+        "-fno-pie",
+        "-mno-red-zone",
+        "-mcmodel=kernel",
+        "-mno-mmx",
+        "-mno-sse",
+        "-mno-sse2",
+        "-mgeneral-regs-only",
+        "-Wall",
+        "-DUACPI_USE_BUILTIN_STRING",
+        "-I", (Join-Path $ProjectRoot "vendor/uacpi/include")
+    )
+}
+
+function Get-UacpiCompileEdges {
+    $uacpiObjRoot = Join-Path $ObjRoot "uacpi"
+    New-Directory $uacpiObjRoot
+
+    $edges = @()
+    $objectFiles = @()
+    $sources = Get-ChildItem -Path (Join-Path $ProjectRoot "vendor/uacpi/source") -Filter "*.c" -File | Sort-Object Name
+    foreach ($source in $sources) {
+        $objectPath = Join-Path $uacpiObjRoot ($source.BaseName + ".o")
+        $objectFiles += $objectPath
+        $edges += [pscustomobject]@{
+            SourcePath = $source.FullName
+            ObjectPath = $objectPath
+            FlagsVar = "uacpiflags"
+            LangFlag = "-x c"
+        }
+    }
+
+    return [pscustomobject]@{ Edges = $edges; ObjectFiles = $objectFiles }
 }
 
 function Get-UserFlags {
@@ -629,15 +676,17 @@ function Build-Kernel([string]$AutomationCommand = "") {
 
     $commonFlags = Get-CommonFlags
     $userFlags = Get-UserFlags
+    $uacpiFlags = Get-UacpiFlags
 
     Generate-CursorAsset
     Generate-DesktopIconAssets
 
     $kernelPlan = Get-KernelCompileEdges $KernelSources
+    $uacpiPlan = Get-UacpiCompileEdges
     $userlandPlan = Get-UserlandCompileEdges
-    $objectFiles = $kernelPlan.ObjectFiles
+    $objectFiles = $kernelPlan.ObjectFiles + $uacpiPlan.ObjectFiles
 
-    Invoke-NinjaCompile -BuildRoot $BuildRoot -Clangxx $clang -KernelFlags $commonFlags -UserFlags $userFlags -Edges ($kernelPlan.Edges + $userlandPlan.Edges)
+    Invoke-NinjaCompile -BuildRoot $BuildRoot -Clangxx $clang -KernelFlags $commonFlags -UserFlags $userFlags -UacpiFlags $uacpiFlags -Edges ($kernelPlan.Edges + $uacpiPlan.Edges + $userlandPlan.Edges)
 
     Build-Userland -Linker $ld -Programs $userlandPlan.Programs
     Install-BusyBox

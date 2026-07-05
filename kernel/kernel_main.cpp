@@ -27,6 +27,7 @@
 #include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
+#include "kernel/uacpi_glue.hpp"
 #include "kernel/ui.hpp"
 #include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
@@ -149,6 +150,9 @@ namespace
     ioapic::initialize(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
     // Con el IOAPIC listo, habilitar el modo ACPI y rutear la SCI (boton de power).
     acpi::start_sci();
+    // Traer uACPI hasta cargar/inicializar el namespace (interpreta el AML de la
+    // DSDT). Todavia no toma los eventos: convive con acpi::start_sci.
+    uacpi_glue::bringup(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
     pci::initialize();
     boot_screen::show(46, "Inicializando entrada");
     virtio_input::initialize(boot_info.framebuffer);

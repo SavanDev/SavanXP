@@ -55,6 +55,7 @@ bool find_capability(const DeviceInfo& device, uint8_t cap_id, uint8_t& cap_offs
 uint8_t read_config_u8(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset);
 uint16_t read_config_u16(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset);
 uint32_t read_config_u32(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset);
+void write_config_u8(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset, uint8_t value);
 void write_config_u16(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset, uint16_t value);
 void write_config_u32(uint8_t bus, uint8_t slot, uint8_t function, uint8_t offset, uint32_t value);
 

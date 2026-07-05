@@ -33,17 +33,20 @@ function Write-NinjaCompileFile {
         [string]$Clangxx,
         [string[]]$KernelFlags,
         [string[]]$UserFlags,
+        [string[]]$UacpiFlags,
         [object[]]$Edges
     )
 
     $kernelFlagsValue = ($KernelFlags | ForEach-Object { Format-NinjaVarValue $_ }) -join ' '
     $userFlagsValue = ($UserFlags | ForEach-Object { Format-NinjaVarValue $_ }) -join ' '
+    $uacpiFlagsValue = ($UacpiFlags | ForEach-Object { Format-NinjaVarValue $_ }) -join ' '
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("ninja_required_version = 1.10")
     [void]$sb.AppendLine("clangxx = " + (Format-NinjaVarValue $Clangxx))
     [void]$sb.AppendLine("kernelflags = " + $kernelFlagsValue)
     [void]$sb.AppendLine("userflags = " + $userFlagsValue)
+    [void]$sb.AppendLine("uacpiflags = " + $uacpiFlagsValue)
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine('rule compile')
     [void]$sb.AppendLine('  command = $clangxx -MMD -MF $out.d $langflag -c $in -o $out $flags')
@@ -58,6 +61,8 @@ function Write-NinjaCompileFile {
         [void]$sb.AppendLine("build ${obj}: compile ${src}")
         if ($edge.FlagsVar -eq "kernelflags") {
             [void]$sb.AppendLine('  flags = $kernelflags')
+        } elseif ($edge.FlagsVar -eq "uacpiflags") {
+            [void]$sb.AppendLine('  flags = $uacpiflags')
         } else {
             [void]$sb.AppendLine('  flags = $userflags')
         }
@@ -80,6 +85,7 @@ function Invoke-NinjaCompile {
         [string]$Clangxx,
         [string[]]$KernelFlags,
         [string[]]$UserFlags,
+        [string[]]$UacpiFlags,
         [object[]]$Edges
     )
 
@@ -89,7 +95,7 @@ function Invoke-NinjaCompile {
 
     $ninja = Require-Executable "ninja" (Get-ToolchainCandidates "ninja")
     $ninjaPath = Join-Path $BuildRoot "compile.ninja"
-    Write-NinjaCompileFile -NinjaPath $ninjaPath -Clangxx $Clangxx -KernelFlags $KernelFlags -UserFlags $UserFlags -Edges $Edges
+    Write-NinjaCompileFile -NinjaPath $ninjaPath -Clangxx $Clangxx -KernelFlags $KernelFlags -UserFlags $UserFlags -UacpiFlags $UacpiFlags -Edges $Edges
 
     & $ninja -C $BuildRoot -f "compile.ninja"
     if ($LASTEXITCODE -ne 0) {
