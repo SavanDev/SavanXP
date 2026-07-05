@@ -243,6 +243,72 @@ void dump_pci_routing() {
     uacpi_find_devices("PNP0A03", prt_dump_cb, &ctx); // PCI root bridge
     uacpi_find_devices("PNP0A08", prt_dump_cb, &ctx); // PCIe root bridge
 }
+
+// Busca en el _PRT de un root la entrada (device, pin) y resuelve su GSI.
+struct RouteCtx {
+    uint32_t target_dev;
+    uint8_t target_pin; // 0-based (0=INTA)
+    LinkIrq result;
+    bool found;
+};
+
+uacpi_iteration_decision route_find_cb(void* user, uacpi_namespace_node* node, uacpi_u32) {
+    RouteCtx* ctx = static_cast<RouteCtx*>(user);
+    uacpi_pci_routing_table* prt = nullptr;
+    if (uacpi_unlikely_error(uacpi_get_pci_routing_table(node, &prt))) {
+        return UACPI_ITERATION_DECISION_CONTINUE;
+    }
+    for (uacpi_size i = 0; i < prt->num_entries; ++i) {
+        const uacpi_pci_routing_table_entry& e = prt->entries[i];
+        if ((e.address >> 16) != ctx->target_dev || e.pin != ctx->target_pin) {
+            continue;
+        }
+        if (e.source == nullptr) {
+            // GSI directa: PCI INTx es level/active-low por electrica.
+            ctx->result.gsi = e.index;
+            ctx->result.triggering = UACPI_TRIGGERING_LEVEL;
+            ctx->result.polarity = UACPI_POLARITY_ACTIVE_LOW;
+            ctx->found = ctx->result.found = true;
+        } else if (resolve_link_gsi(e.source, ctx->result)) {
+            ctx->found = true;
+        }
+        break;
+    }
+    uacpi_free_pci_routing_table(prt);
+    return ctx->found ? UACPI_ITERATION_DECISION_BREAK : UACPI_ITERATION_DECISION_CONTINUE;
+}
+
+uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
+                       arch::x86_64::IrqHandler handler) {
+    const uint8_t pin = pci::read_config_u8(bus, dev, func, 0x3D); // Interrupt Pin
+    if (pin < 1 || pin > 4) {
+        return 0; // el dispositivo no usa INTx
+    }
+    RouteCtx ctx = {};
+    ctx.target_dev = dev;
+    ctx.target_pin = static_cast<uint8_t>(pin - 1);
+    uacpi_find_devices("PNP0A03", route_find_cb, &ctx);
+    if (!ctx.found) {
+        uacpi_find_devices("PNP0A08", route_find_cb, &ctx);
+    }
+    if (!ctx.found) {
+        console::printf("uacpi: INTx dev %u sin entrada _PRT\n", static_cast<unsigned>(dev));
+        return 0;
+    }
+    // Programar el IOAPIC con la polaridad/trigger que declara el firmware (_CRS).
+    const ioapic::Polarity pol = ctx.result.polarity == UACPI_POLARITY_ACTIVE_LOW
+                                     ? ioapic::Polarity::active_low
+                                     : ioapic::Polarity::active_high;
+    const ioapic::Trigger trg = ctx.result.triggering == UACPI_TRIGGERING_LEVEL
+                                    ? ioapic::Trigger::level
+                                    : ioapic::Trigger::edge;
+    const uint8_t vec = ioapic::route_gsi(ctx.result.gsi, pol, trg, handler);
+    console::printf("uacpi: INTx dev %u INT%c -> GSI %u %s (vector %u)\n",
+                    static_cast<unsigned>(dev), static_cast<char>('A' + ctx.target_pin),
+                    static_cast<unsigned>(ctx.result.gsi), vec ? "ruteado" : "FALLO",
+                    static_cast<unsigned>(vec));
+    return vec;
+}
 } // namespace uacpi_glue
 
 extern "C" {

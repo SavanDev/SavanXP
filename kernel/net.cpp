@@ -12,6 +12,7 @@
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
+#include "kernel/uacpi_glue.hpp"
 #include "savanxp/syscall.h"
 
 namespace net {
@@ -1003,11 +1004,29 @@ void process_frame(const uint8_t* frame, size_t length) {
     }
 }
 
+// Estado del camino interrupt-driven (INTx via _PRT/IOAPIC).
+volatile uint32_t g_irq_count = 0;
+bool g_irq_routed = false;
+
+// Salva/deshabilita y restaura IF localmente. poll_receive corre tanto desde el
+// handler de INTx (contexto de IRQ) como desde el main (polling/service). Envolver
+// su seccion critica con esto la vuelve atomica en monocore: mientras el main
+// drena el ring, el IRQ del NIC no puede preemptarlo (evita corromper g_cur_rx).
+inline uint64_t irq_save() {
+    uint64_t f;
+    asm volatile("pushfq; pop %0; cli" : "=r"(f)::"memory");
+    return f;
+}
+inline void irq_restore(uint64_t f) {
+    asm volatile("push %0; popfq" ::"r"(f) : "memory", "cc");
+}
+
 void poll_receive() {
     if (!g_up) {
         return;
     }
 
+    const uint64_t flags = irq_save();
     clear_interrupt_status();
     auto* rx = static_cast<uint8_t*>(g_rx_allocation.virtual_address);
     while ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandRxBufferEmpty) == 0) {
@@ -1040,6 +1059,18 @@ void poll_receive() {
             static_cast<uint16_t>(g_cur_rx == 0 ? 0xfff0u : (g_cur_rx - 16u))
         );
     }
+    irq_restore(flags);
+}
+
+// Handler de la INTx del rtl8139 (ruteada por _PRT -> IOAPIC). Sirve el device
+// (drena RX + limpia el ISR, desasertando la linea level-triggered) para no
+// generar tormenta. Corre en contexto de IRQ.
+void net_irq_handler() {
+    g_irq_count = g_irq_count + 1;
+    if (g_irq_count == 1) {
+        console::write("net: primer INTx recibido via IOAPIC (interrupt-driven ok)\n");
+    }
+    poll_receive();
 }
 
 bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms) {
@@ -1141,6 +1172,14 @@ bool bring_up() {
     g_arp_ip = 0;
     memset(g_arp_mac, 0, sizeof(g_arp_mac));
     g_up = true;
+
+    // Si la INTx quedo ruteada (en initialize), habilitar las interrupciones del
+    // rtl8139 (ROK|TOK|RER|TER) => interrupt-driven. Si no, IMR=0 y seguimos en
+    // polling (fallback). El IMR ya se puso en 0 arriba (linea kRegImr).
+    if (g_irq_routed) {
+        out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x000F);
+    }
+
     set_status(SAVANXP_NET_STATUS_READY);
     net_log(
         "net: up io=%x irq=%u mac=%x:%x:%x:%x:%x:%x\n",
@@ -1581,6 +1620,12 @@ void initialize() {
     g_present = pci::find_device(kVendorRealtek, kDeviceRtl8139, g_pci_device);
     if (g_present) {
         g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
+        // Rutear la INTx del NIC via _PRT/IOAPIC (una vez, al detectarlo). El
+        // handler queda registrado; el device recien asertara INTx cuando bring_up
+        // habilite el IMR. Si falla, g_irq_routed=false y se usa polling.
+        const uint8_t vec = uacpi_glue::route_pci_intx(
+            g_pci_device.bus, g_pci_device.slot, g_pci_device.function, net_irq_handler);
+        g_irq_routed = (vec != 0);
         set_status(SAVANXP_NET_STATUS_IDLE);
     } else {
         set_status(SAVANXP_NET_STATUS_NO_DEVICE);
