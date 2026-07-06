@@ -12,6 +12,7 @@ namespace {
 EventObject g_event_objects[kMaxEventObjects] = {};
 TimerObject g_timer_objects[kMaxTimerObjects] = {};
 SectionObject g_section_objects[kMaxSectionObjects] = {};
+SemaphoreObject g_semaphore_objects[kMaxSemaphoreObjects] = {};
 
 uint64_t align_up(uint64_t value, uint64_t alignment) {
     const uint64_t mask = alignment - 1;
@@ -50,6 +51,14 @@ void destroy_section(Header* header) {
     }
 
     memset(section_object, 0, sizeof(*section_object));
+}
+
+void destroy_semaphore(Header* header) {
+    SemaphoreObject* semaphore_object = as_semaphore(header);
+    if (semaphore_object == nullptr) {
+        return;
+    }
+    memset(semaphore_object, 0, sizeof(*semaphore_object));
 }
 
 } // namespace
@@ -131,6 +140,20 @@ const SectionObject* as_section(const Header* object) {
     return reinterpret_cast<const SectionObject*>(object);
 }
 
+SemaphoreObject* as_semaphore(Header* object) {
+    if (object == nullptr || object->type != Type::semaphore) {
+        return nullptr;
+    }
+    return reinterpret_cast<SemaphoreObject*>(object);
+}
+
+const SemaphoreObject* as_semaphore(const Header* object) {
+    if (object == nullptr || object->type != Type::semaphore) {
+        return nullptr;
+    }
+    return reinterpret_cast<const SemaphoreObject*>(object);
+}
+
 EventObject* create_event(bool manual_reset, bool initial_state) {
     for (EventObject& event_object : g_event_objects) {
         if (event_object.in_use) {
@@ -139,9 +162,10 @@ EventObject* create_event(bool manual_reset, bool initial_state) {
         memset(&event_object, 0, sizeof(event_object));
         event_object.header.type = Type::event;
         event_object.header.destroy = destroy_event;
+        event_object.header.waitable = true;
+        event_object.header.manual_reset = manual_reset;
+        event_object.header.signal_count = initial_state ? 1 : 0;
         event_object.in_use = true;
-        event_object.manual_reset = manual_reset;
-        event_object.signaled = initial_state;
         return &event_object;
     }
     return nullptr;
@@ -155,8 +179,9 @@ TimerObject* create_timer(bool manual_reset) {
         memset(&timer_object, 0, sizeof(timer_object));
         timer_object.header.type = Type::timer;
         timer_object.header.destroy = destroy_timer;
+        timer_object.header.waitable = true;
+        timer_object.header.manual_reset = manual_reset;
         timer_object.in_use = true;
-        timer_object.manual_reset = manual_reset;
         return &timer_object;
     }
     return nullptr;
@@ -245,15 +270,54 @@ SectionObject* clone_section(const SectionObject& source) {
     return section_object;
 }
 
+SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count) {
+    if (max_count <= 0 || initial_count < 0 || initial_count > max_count) {
+        return nullptr;
+    }
+
+    for (SemaphoreObject& semaphore_object : g_semaphore_objects) {
+        if (semaphore_object.in_use) {
+            continue;
+        }
+        memset(&semaphore_object, 0, sizeof(semaphore_object));
+        semaphore_object.header.type = Type::semaphore;
+        semaphore_object.header.destroy = destroy_semaphore;
+        semaphore_object.header.waitable = true;
+        semaphore_object.header.manual_reset = false;
+        semaphore_object.header.signal_count = initial_count;
+        semaphore_object.in_use = true;
+        semaphore_object.max_count = max_count;
+        return &semaphore_object;
+    }
+    return nullptr;
+}
+
+bool release_semaphore(SemaphoreObject* semaphore_object, int32_t release_count, int32_t* previous_count) {
+    if (semaphore_object == nullptr || !semaphore_object->in_use || release_count <= 0) {
+        return false;
+    }
+
+    const int32_t previous = semaphore_object->header.signal_count;
+    if (release_count > semaphore_object->max_count - previous) {
+        return false;
+    }
+
+    if (previous_count != nullptr) {
+        *previous_count = previous;
+    }
+    semaphore_object->header.signal_count = previous + release_count;
+    return true;
+}
+
 void set_event(EventObject* event_object) {
     if (event_object != nullptr && event_object->in_use) {
-        event_object->signaled = true;
+        event_object->header.signal_count = 1;
     }
 }
 
 void reset_event(EventObject* event_object) {
     if (event_object != nullptr && event_object->in_use) {
-        event_object->signaled = false;
+        event_object->header.signal_count = 0;
     }
 }
 
@@ -262,7 +326,7 @@ void set_timer(TimerObject* timer_object, uint64_t due_tick, uint64_t period_tic
         return;
     }
     timer_object->armed = true;
-    timer_object->signaled = false;
+    timer_object->header.signal_count = 0;
     timer_object->due_tick = due_tick;
     timer_object->period_ticks = period_ticks;
 }
@@ -272,7 +336,7 @@ void cancel_timer(TimerObject* timer_object) {
         return;
     }
     timer_object->armed = false;
-    timer_object->signaled = false;
+    timer_object->header.signal_count = 0;
     timer_object->due_tick = 0;
     timer_object->period_ticks = 0;
 }
@@ -283,7 +347,7 @@ void poll_timers(uint64_t current_tick, void (*on_signal)(Header* object)) {
             continue;
         }
 
-        timer_object.signaled = true;
+        timer_object.header.signal_count = 1;
         if (timer_object.period_ticks != 0) {
             do {
                 timer_object.due_tick += timer_object.period_ticks;
@@ -300,33 +364,15 @@ void poll_timers(uint64_t current_tick, void (*on_signal)(Header* object)) {
 }
 
 bool can_satisfy_wait(const Header* object) {
-    const EventObject* event_object = as_event(object);
-    if (event_object != nullptr) {
-        return event_object->in_use && event_object->signaled;
-    }
-
-    const TimerObject* timer_object = as_timer(object);
-    return timer_object != nullptr && timer_object->in_use && timer_object->signaled;
+    return object != nullptr && object->waitable && object->signal_count > 0;
 }
 
 bool try_acquire_wait(Header* object) {
-    EventObject* event_object = as_event(object);
-    if (event_object != nullptr) {
-        if (!can_satisfy_wait(object)) {
-            return false;
-        }
-        if (!event_object->manual_reset) {
-            event_object->signaled = false;
-        }
-        return true;
-    }
-
-    TimerObject* timer_object = as_timer(object);
-    if (timer_object == nullptr || !can_satisfy_wait(object)) {
+    if (!can_satisfy_wait(object)) {
         return false;
     }
-    if (!timer_object->manual_reset) {
-        timer_object->signaled = false;
+    if (!object->manual_reset) {
+        object->signal_count -= 1;
     }
     return true;
 }

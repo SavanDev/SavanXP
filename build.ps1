@@ -162,6 +162,7 @@ $UserPrograms = @(
     @{ Name = "eventtest"; Source = "subsystems/posix/userland/eventtest.c" },
     @{ Name = "timertest"; Source = "subsystems/posix/userland/timertest.c" },
     @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c" },
+    @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c" },
     @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c" },
     @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c" }
 )

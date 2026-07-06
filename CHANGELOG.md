@@ -131,6 +131,32 @@ Notas de corte:
   no funciona en freestanding (sin soft-float intrinsics). Verificado en QEMU:
   `gfx: present=0`, `gfx: release=0` y `gputest --smoke` adquiriendo la sesion
   despues sin fugas; SMOKE PASS.
+- **Header esperable generico en el Object Manager (`object::Header`).**
+  `Header` gana `waitable`/`manual_reset`/`signal_count`, migrando el estado
+  de senializacion que antes vivia duplicado por tipo (`EventObject::signaled`,
+  `TimerObject::signaled`) a la base comun. `can_satisfy_wait`/
+  `try_acquire_wait` pasan de un `if (event) ... else if (timer) ...` a logica
+  generica sobre `Header`, y `object_is_waitable` (`process.cpp`) pasa de una
+  lista cerrada de tipos (`event || timer`) a un solo campo booleano: un tipo
+  esperable nuevo no requiere tocar el despachador de esperas. Cambio
+  contenido — ningun caller fuera de `object.cpp` tocaba `.signaled`/
+  `.manual_reset`/`.armed` directamente, todo pasaba por la API publica
+  (`create_event`, `set_event`, `poll_timers`, etc.), incluido `virtio_gpu.cpp`.
+  Verificado: kernel compila limpio y `desktop-smoke` sigue en PASS (el
+  compositor usa `EventObject` via `virtio_gpu.cpp`).
+- **Semaforo real (`SAVANXP_SYS_SEMAPHORE_CREATE`/`_RELEASE`).** Primer uso
+  del header esperable generico: `object::SemaphoreObject` (pool de 64) con
+  `create_semaphore(initial, max)` y `release_semaphore` (satura en
+  `max_count`, rechaza sin modificar nada el release que lo excederia). El
+  despertar de esperas (`wake_waiters_for_object`) ya soportaba semantica de
+  contador sin cambios porque opera sobre `Header::signal_count` de forma
+  generica. Syscalls 53/54 con handlers en `process.cpp` (mismo patron que
+  event/timer: `allocate_fd` + `access_query|modify|synchronize`), wrappers
+  `semaphore_create`/`semaphore_release` en el SDK, y `semaphoretest`
+  (creacion invalida, conteo hasta el tope, despertar cruzado entre procesos
+  via `fork`) enganchado en la suite `smoke`. `Type::semaphore` existia en el
+  enum desde antes sin implementacion (dead code). Verificado:
+  `build.ps1 smoke` -> SMOKE PASS con el nuevo test incluido.
 
 ### Cambiado
 

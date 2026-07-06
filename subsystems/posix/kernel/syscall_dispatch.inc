@@ -378,6 +378,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_UNMAP_VIEW:
             context->rax = static_cast<uint64_t>(unmap_view_address(*g_current, context->rdi));
             return context;
+        case SAVANXP_SYS_SEMAPHORE_CREATE:
+            context->rax = static_cast<uint64_t>(create_semaphore_handle(
+                *g_current,
+                static_cast<int32_t>(context->rdi),
+                static_cast<int32_t>(context->rsi)));
+            return context;
+        case SAVANXP_SYS_SEMAPHORE_RELEASE:
+            context->rax = static_cast<uint64_t>(release_semaphore_handle(
+                *g_current,
+                context->rdi,
+                static_cast<uint32_t>(context->rsi)));
+            return context;
         default:
             context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOSYS));
             return context;

@@ -69,6 +69,8 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_SECTION_CREATE = 50,
     SAVANXP_SYS_MAP_VIEW = 51,
     SAVANXP_SYS_UNMAP_VIEW = 52,
+    SAVANXP_SYS_SEMAPHORE_CREATE = 53,
+    SAVANXP_SYS_SEMAPHORE_RELEASE = 54,
 };
 
 enum savanxp_open_flags {

@@ -241,6 +241,14 @@ long unmap_view(void* base) {
     return syscall1(SAVANXP_SYS_UNMAP_VIEW, (unsigned long)base);
 }
 
+long semaphore_create(long initial_count, long max_count) {
+    return syscall2(SAVANXP_SYS_SEMAPHORE_CREATE, (unsigned long)initial_count, (unsigned long)max_count);
+}
+
+long semaphore_release(int handle, unsigned long release_count) {
+    return syscall2(SAVANXP_SYS_SEMAPHORE_RELEASE, (unsigned long)handle, release_count);
+}
+
 long yield(void) {
     return syscall0(SAVANXP_SYS_YIELD);
 }

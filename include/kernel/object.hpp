@@ -28,6 +28,7 @@ constexpr size_t kMaxIoObjects = 256;
 constexpr size_t kMaxEventObjects = 128;
 constexpr size_t kMaxTimerObjects = 128;
 constexpr size_t kMaxSectionObjects = 64;
+constexpr size_t kMaxSemaphoreObjects = 64;
 
 enum class Type : uint8_t {
     none = 0,
@@ -61,6 +62,14 @@ struct Header {
     uint16_t attributes;
     uint32_t refcount;
     void (*destroy)(Header* self);
+
+    // Estado de espera genérico: cualquier objeto con waitable=true puede
+    // pasarse a can_satisfy_wait()/try_acquire_wait() sin que estas funciones
+    // conozcan el tipo concreto. signal_count > 0 == satisfecho; manual_reset
+    // controla si try_acquire_wait lo consume (auto-reset) o lo deja intacto.
+    bool waitable;
+    bool manual_reset;
+    int32_t signal_count;
 };
 
 struct IoObject {
@@ -79,15 +88,11 @@ struct IoObject {
 struct EventObject {
     Header header;
     bool in_use;
-    bool manual_reset;
-    bool signaled;
 };
 
 struct TimerObject {
     Header header;
     bool in_use;
-    bool manual_reset;
-    bool signaled;
     bool armed;
     uint64_t due_tick;
     uint64_t period_ticks;
@@ -105,6 +110,12 @@ struct SectionObject {
     uint64_t* physical_pages;
 };
 
+struct SemaphoreObject {
+    Header header;
+    bool in_use;
+    int32_t max_count;
+};
+
 void retain(Header* object);
 void release(Header*& object);
 IoObject* as_io(Header* object);
@@ -115,15 +126,21 @@ TimerObject* as_timer(Header* object);
 const TimerObject* as_timer(const Header* object);
 SectionObject* as_section(Header* object);
 const SectionObject* as_section(const Header* object);
+SemaphoreObject* as_semaphore(Header* object);
+const SemaphoreObject* as_semaphore(const Header* object);
 EventObject* create_event(bool manual_reset, bool initial_state);
 TimerObject* create_timer(bool manual_reset);
 SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask);
 SectionObject* clone_section(const SectionObject& source);
+SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count);
 void set_event(EventObject* event_object);
 void reset_event(EventObject* event_object);
 void set_timer(TimerObject* timer_object, uint64_t due_tick, uint64_t period_ticks);
 void cancel_timer(TimerObject* timer_object);
 void poll_timers(uint64_t current_tick, void (*on_signal)(Header* object));
+// Suma release_count (>0) al contador del semáforo, sin superar max_count.
+// Devuelve false (sin modificar nada) si el resultado excedería max_count.
+bool release_semaphore(SemaphoreObject* semaphore_object, int32_t release_count, int32_t* previous_count);
 bool can_satisfy_wait(const Header* object);
 bool try_acquire_wait(Header* object);
 

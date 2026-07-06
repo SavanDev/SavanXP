@@ -211,8 +211,7 @@ void clear_wait_state(process::Process& proc) {
 }
 
 bool object_is_waitable(const object::Header* handle_object) {
-    return handle_object != nullptr &&
-        (handle_object->type == object::Type::event || handle_object->type == object::Type::timer);
+    return handle_object != nullptr && handle_object->waitable;
 }
 
 bool can_complete_object_wait(const process::Process& proc) {
@@ -2234,6 +2233,44 @@ int cancel_timer_handle(process::Process& proc, uint64_t fd) {
 
     object::cancel_timer(timer_object);
     return 0;
+}
+
+int create_semaphore_handle(process::Process& proc, int32_t initial_count, int32_t max_count) {
+    if (max_count <= 0 || initial_count < 0 || initial_count > max_count) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    object::SemaphoreObject* semaphore_object = object::create_semaphore(initial_count, max_count);
+    if (semaphore_object == nullptr) {
+        return negative_error(SAVANXP_ENOMEM);
+    }
+
+    const uint32_t access = object::access_query | object::access_modify | object::access_synchronize;
+    const int handle = allocate_fd(proc, &semaphore_object->header, access, object::handle_none);
+    if (handle < 0) {
+        object::Header* header = &semaphore_object->header;
+        object::release(header);
+        return handle;
+    }
+    return handle;
+}
+
+int release_semaphore_handle(process::Process& proc, uint64_t fd, uint32_t release_count) {
+    object::Header* handle_object = lookup_handle(proc, fd, object::access_modify);
+    object::SemaphoreObject* semaphore_object = object::as_semaphore(handle_object);
+    if (semaphore_object == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (release_count == 0 || release_count > 0x7fffffffu) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    int32_t previous_count = 0;
+    if (!object::release_semaphore(semaphore_object, static_cast<int32_t>(release_count), &previous_count)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    wake_waiters_for_object(handle_object);
+    return previous_count;
 }
 
 int create_section_handle(process::Process& proc, uint64_t size, uint32_t flags) {

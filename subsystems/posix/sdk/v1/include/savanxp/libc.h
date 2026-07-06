@@ -47,6 +47,8 @@ long timer_cancel(int handle);
 long section_create(unsigned long size, unsigned long flags);
 void* map_view(int handle, unsigned long flags);
 long unmap_view(void* base);
+long semaphore_create(long initial_count, long max_count);
+long semaphore_release(int handle, unsigned long release_count);
 long yield(void);
 long sleep_ms(unsigned long milliseconds);
 unsigned long uptime_ms(void);
