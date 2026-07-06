@@ -1643,6 +1643,170 @@ static int service_client_launch_requests(struct desktop_session *session, struc
  * batches flow all the way to GPU retire on the v3 timeline. Prints the token
  * the build runner watches for and returns non-zero on any failure.
  */
+/* Instrumented reproduction of the "cursor leaves rectangular residue over
+ * static compositor-drawn content" report. Drives the exact failing scenario
+ * headlessly: a static power-confirm dialog, cursor moves ONTO a probe point,
+ * then OFF it with only cursor-sized damage, and we read the backbuffer at the
+ * old position back. If the compose restores it, backbuffer == clean baseline;
+ * any residue means the old cursor footprint was not repainted. */
+static int desktop_cursor_repro(void)
+{
+    struct desktop_session session;
+    struct desktop_dirty_rect dirty = {0};
+    const struct savanxp_fb_info *info;
+    uint32_t *fb;
+    uint32_t stride;
+    struct sx_rect dlg;
+    int qx;
+    int qy;
+    int rx;
+    int ry;
+    int fx;
+    int fy;
+    int fw;
+    int fh;
+    int row;
+    int col;
+    int diff_after = 0;
+    int diff_oncursor = 0;
+    /* Cursor footprint is small (24x24-ish); cap the capture generously. */
+    static uint32_t baseline_block[64 * 64];
+    static uint32_t oncursor_block[64 * 64];
+
+    if (open_compositor_session(&session) < 0)
+    {
+        puts_fd(2, "CURSOR REPRO FAIL compositor startup\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+
+    info = &session.gfx.info;
+    fb = session.compositor.framebuffer;
+    stride = info->pitch / 4u;
+
+    /* Probe point Q: centre of the power dialog. R: far enough that its cursor
+     * damage does not overlap Q's footprint. */
+    dlg = desktop_confirm_dialog_rect(info);
+    qx = dlg.x + (dlg.width / 2);
+    qy = dlg.y + (dlg.height / 2);
+
+    /* Footprint of the cursor when its hotspot is at Q. */
+    desktop_cursor_bounds(qx, qy, &fx, &fy, &fw, &fh);
+    if (fw > 64)
+    {
+        fw = 64;
+    }
+    if (fh > 64)
+    {
+        fh = 64;
+    }
+    rx = qx + fw + 12;
+    ry = qy;
+
+    /* Frame A: dialog visible, cursor parked far away (top-left corner, off the
+     * dialog). Full repaint so the backbuffer holds the clean image. */
+    desktop_dirty_rect_add_fullscreen(&dirty, info);
+    desktop_draw_desktop(&session, 4, 4, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
+    (void)present_frame(&session, &dirty);
+    (void)sync_pending_present(&session, 1, 0);
+    desktop_dirty_rect_reset(&dirty);
+    for (row = 0; row < fh; ++row)
+    {
+        for (col = 0; col < fw; ++col)
+        {
+            baseline_block[(row * fw) + col] = fb[((size_t)(fy + row) * stride) + (size_t)(fx + col)];
+        }
+    }
+
+    /* Frame B: move cursor ONTO Q. Only cursor-sized damage (old corner + Q). */
+    desktop_dirty_rect_add_cursor(&dirty, info, 4, 4);
+    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy);
+    desktop_draw_desktop(&session, qx, qy, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
+    (void)present_frame(&session, &dirty);
+    (void)sync_pending_present(&session, 1, 0);
+    desktop_dirty_rect_reset(&dirty);
+    for (row = 0; row < fh; ++row)
+    {
+        for (col = 0; col < fw; ++col)
+        {
+            uint32_t px = fb[((size_t)(fy + row) * stride) + (size_t)(fx + col)];
+            oncursor_block[(row * fw) + col] = px;
+            if (px != baseline_block[(row * fw) + col])
+            {
+                ++diff_oncursor;
+            }
+        }
+    }
+
+    /* Frame C: move cursor OFF Q to R. Only cursor damage (old Q + new R). The
+     * backbuffer at Q must return to the clean baseline. */
+    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy);
+    desktop_dirty_rect_add_cursor(&dirty, info, rx, ry);
+    desktop_draw_desktop(&session, rx, ry, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
+    (void)present_frame(&session, &dirty);
+    (void)sync_pending_present(&session, 1, 0);
+    desktop_dirty_rect_reset(&dirty);
+    {
+        int min_col = fw;
+        int min_row = fh;
+        int max_col = -1;
+        int max_row = -1;
+        int sample_col = -1;
+        int sample_row = -1;
+        uint32_t sample_res = 0;
+        uint32_t sample_base = 0;
+        uint32_t sample_cursor = 0;
+        for (row = 0; row < fh; ++row)
+        {
+            for (col = 0; col < fw; ++col)
+            {
+                uint32_t px = fb[((size_t)(fy + row) * stride) + (size_t)(fx + col)];
+                if (px != baseline_block[(row * fw) + col])
+                {
+                    ++diff_after;
+                    if (col < min_col) min_col = col;
+                    if (col > max_col) max_col = col;
+                    if (row < min_row) min_row = row;
+                    if (row > max_row) max_row = row;
+                    if (sample_col < 0)
+                    {
+                        sample_col = col;
+                        sample_row = row;
+                        sample_res = px;
+                        sample_base = baseline_block[(row * fw) + col];
+                        sample_cursor = oncursor_block[(row * fw) + col];
+                    }
+                }
+            }
+        }
+        if (diff_after != 0)
+        {
+            printf("CURSOR REPRO residue bbox col[%d..%d] row[%d..%d] at(%d,%d)\n",
+                min_col, max_col, min_row, max_row, sample_col, sample_row);
+            printf("CURSOR REPRO sample base=%u oncursor=%u after=%u\n",
+                sample_base, sample_cursor, sample_res);
+        }
+    }
+
+    printf("CURSOR REPRO dlg=(%d,%d %dx%d) Q=(%d,%d) foot=(%d,%d %dx%d)\n",
+        dlg.x, dlg.y, dlg.width, dlg.height, qx, qy, fx, fy, fw, fh);
+    printf("CURSOR REPRO diff_oncursor=%d diff_after=%d\n", diff_oncursor, diff_after);
+    close_compositor_session(&session);
+
+    if (diff_oncursor == 0)
+    {
+        printf("CURSOR REPRO FAIL inconclusive: cursor never drew opaque pixels over Q\n");
+        return 1;
+    }
+    if (diff_after != 0)
+    {
+        printf("CURSOR REPRO FAIL residue: %d px of old cursor footprint not repainted\n", diff_after);
+        return 1;
+    }
+    printf("CURSOR REPRO PASS backbuffer restored, no residue\n");
+    return 0;
+}
+
 static int desktop_selftest(void)
 {
     struct desktop_session session;
@@ -1922,6 +2086,11 @@ int main(int argc, char **argv)
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
         return desktop_selftest();
+    }
+
+    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--cursor-repro") == 0)
+    {
+        return desktop_cursor_repro();
     }
 
     if (open_compositor_session(&session) < 0)

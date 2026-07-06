@@ -158,6 +158,28 @@ Notas de corte:
   enum desde antes sin implementacion (dead code). Verificado:
   `build.ps1 smoke` -> SMOKE PASS con el nuevo test incluido.
 
+### Corregido
+
+- **Residuos visuales del cursor sobre elementos del compositor.**
+  `sx_painter_draw_frame` (SDK `gfx2d.c`) intersectaba el rect con el clip del
+  painter y luego dibujaba el marco del rect *intersectado*. Cuando el
+  compositor repinta un elemento en fragmentos (los sub-rects sucios del
+  cursor por software), cada fragmento recibia su propio borde trazado alrededor
+  del contorno del fragmento, dejando lineas del color del marco (p. ej.
+  `rgb(46,50,56)`) dentro del elemento: el clasico "rastro" con forma de la
+  huella del cursor sobre el rectangulo de seleccion de iconos, los botones de
+  ventana, la pantalla de bienvenida y el dialogo de energia. Una invalidacion
+  de pantalla completa (abrir el menu inicio) lo limpiaba porque el elemento se
+  repintaba en un solo rect. El fix dibuja el marco del rect *original* como
+  cuatro tiras de borde, cada una recortada por `sx_painter_fill_rect` (que si
+  recorta correctamente), pintando solo los pixeles de borde que existen de
+  verdad. Las superficies de apps (sxgui) eran inmunes porque se blitean
+  completas cada frame, sin `draw_frame` fragmentado. Nuevo test de regresion
+  headless `build.ps1 cursor-repro` (`desktop --cursor-repro`): mueve el cursor
+  sobre un dialogo estatico con solo damage del cursor y verifica que el
+  backbuffer en la posicion vieja vuelve al baseline (0 px de residuo).
+  Verificado: cursor-repro PASS, desktop-smoke PASS, smoke PASS.
+
 ### Cambiado
 
 - **Compilacion de kernel+userland via Ninja.** `build.ps1` compilaba

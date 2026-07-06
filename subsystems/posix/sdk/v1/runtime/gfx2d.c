@@ -280,18 +280,29 @@ void sx_painter_fill_rect(struct sx_painter* painter, struct sx_rect rect, uint3
 
 void sx_painter_draw_frame(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
 {
-    if (painter == 0 || painter->target == 0)
+    if (painter == 0 || painter->target == 0 || rect.width <= 0 || rect.height <= 0)
     {
         return;
     }
 
-    rect = sx_apply_painter_clip(painter, rect);
-    if (!sx_clip_rect_to_bitmap(painter->target, &rect))
+    /* Draw the border of the ORIGINAL rect as four edge strips, each clipped by
+     * sx_painter_fill_rect. Clipping the rect first and framing the result would
+     * trace a spurious border around every partial-repaint fragment (e.g. the
+     * cursor's damage footprint over a dialog), which is exactly the residue
+     * bug. Filling the true edges only paints border pixels that actually exist. */
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), colour);
+    if (rect.height > 1)
     {
-        return;
+        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), colour);
     }
-
-    gfx_frame(painter->target->pixels, &painter->target->info, rect.x, rect.y, rect.width, rect.height, colour);
+    if (rect.height > 2)
+    {
+        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + 1, 1, rect.height - 2), colour);
+        if (rect.width > 1)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y + 1, 1, rect.height - 2), colour);
+        }
+    }
 }
 
 void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* source, int dst_x, int dst_y)

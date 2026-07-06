@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "desktop-smoke", "gpu-soak", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -961,6 +961,10 @@ function Run-DesktopSmokeQemu {
     Run-AutomationQemu -AutomationCommand "desktop-selftest" -SuccessToken "DESKTOP SMOKE PASS" -FailureToken "DESKTOP SMOKE FAIL" -TimeoutMinutes 3
 }
 
+function Run-CursorReproQemu {
+    Run-AutomationQemu -AutomationCommand "desktop-cursor-repro" -SuccessToken "CURSOR REPRO PASS" -FailureToken "CURSOR REPRO FAIL" -TimeoutMinutes 3
+}
+
 function Run-GpuSoakQemu([int]$Iterations) {
     $timeoutMinutes = [Math]::Max(6, [int][Math]::Ceiling($Iterations / 16.0))
     Run-AutomationQemu -AutomationCommand "gputest --soak $Iterations" -SuccessToken "SOAK PASS" -FailureToken "SOAK FAIL" -TimeoutMinutes $timeoutMinutes
@@ -984,6 +988,9 @@ switch ($Command) {
     }
     "desktop-smoke" {
         Run-DesktopSmokeQemu
+    }
+    "cursor-repro" {
+        Run-CursorReproQemu
     }
     "gpu-soak" {
         Run-GpuSoakQemu -Iterations $GpuSoakIterations

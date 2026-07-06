@@ -50,6 +50,7 @@ static int run_automation_spec(const char* spec) {
     const char* smoke_argv[] = {"/disk/bin/smoke", 0};
     const char* soak_argv[] = {"/disk/bin/gputest", "--soak", 0, 0};
     const char* desktop_argv[] = {"/bin/desktop", "--selftest", 0};
+    const char* cursor_repro_argv[] = {"/bin/desktop", "--cursor-repro", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -60,6 +61,10 @@ static int run_automation_spec(const char* spec) {
         if (strcmp(spec, "desktop-selftest") == 0 || strcmp(spec, "desktop") == 0) {
             path = "/bin/desktop";
             argv = desktop_argv;
+            argc = 2;
+        } else if (strcmp(spec, "desktop-cursor-repro") == 0) {
+            path = "/bin/desktop";
+            argv = cursor_repro_argv;
             argc = 2;
         } else if (strcmp(spec, "soak") == 0 || strcmp(spec, "gputest --soak") == 0) {
             path = "/disk/bin/gputest";
