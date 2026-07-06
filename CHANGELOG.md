@@ -10,6 +10,163 @@ Notas de corte:
 
 ## [Unreleased]
 
+### Agregado
+
+- **Capa IOAPIC/MADT y ruteo de IRQs por GSI.** Nuevo subsistema que parsea la
+  MADT (descubre IOAPICs y sus Interrupt Source Overrides), programa las
+  redirection entries y rutea GSIs hacia vectores de la IDT con entrega por el
+  Local APIC (`ioapic::route_gsi` / `route_legacy_irq`), inicializado en
+  `kernel_main` tras el Local APIC y la ACPI. Reserva el pool de vectores
+  50-63 en `cpu_init` (trampolines `vector_NN` + gates IDT) para las GSIs
+  ruteadas. PS/2 (IRQ1/IRQ12) migra a este ruteo cuando el IOAPIC esta
+  disponible, con fallback al PIC legacy si no hay MADT/IOAPIC (protege el
+  arranque de VirtualBox). Verificado en vivo en QEMU q35: MADT con 1 IOAPIC,
+  5 overrides y 24 GSIs; teclado responde tecleando de verdad y el serial
+  queda limpio tras el handoff (sin overflow de cola ni interrupciones
+  espurias). Es el prerrequisito para rutear la SCI de ACPI y el INTx legacy
+  resuelto por `_PRT`.
+- **ACPI: SCI ruteada por IOAPIC + boton de power.** `acpi::start_sci()`
+  habilita el modo ACPI (`SCI_EN` via `SMI_CMD`), enmascara todas las GPE (sin
+  interprete AML, evita tormentas en la SCI level-triggered), habilita el
+  evento fijo PWRBTN y rutea la SCI con `ioapic::route_gsi(sci_int,
+  active_low, level, ...)`, con fallback al PIC cuando la GSI entra en 0..15 y
+  no hay IOAPIC. El handler `sci_interrupt` lee PM1a/b_STS: ante PWRBTN hace
+  ack (write-1-to-clear) y dispara `acpi::shutdown()` (S5, mismo camino que
+  `/dev/power`); limpia cualquier otro bit fijo para no re-disparar la SCI.
+  Parsea de la FADT los bloques de evento PM1, los bloques GPE, SMI_CMD y
+  sci_int. Verificado en vivo en QEMU q35: SCI ruteada en GSI 9 sin regresion
+  ni tormenta de interrupciones; Machine -> Power Down apaga la VM por S5 via
+  el handler. El apagado es inmediato (sin cierre graceful de userland);
+  senializar a init queda como mejora futura.
+- **uACPI vendorizado e integrado: interprete de AML real.** Copia horneada de
+  uACPI v6.0.0 (github.com/uACPI/uACPI, commit upstream `9c9b26d`) bajo
+  `vendor/uacpi/`, sin submodulo (misma convencion que busybox), para
+  reemplazar progresivamente el ACPI hand-rolled (que solo escaneaba `_S5_`
+  sin interpretar AML). Se compila como C11 (no C++, usa conversion implicita
+  `void*`->`T*`): `tools/Ninja.ps1` gana una 3a variable de flags
+  `uacpiflags`; `build.ps1` aporta `Get-UacpiFlags`
+  (`-std=gnu11 -DUACPI_USE_BUILTIN_STRING`, misma ABI freestanding/
+  `-mcmodel=kernel` que el kernel) y `Get-UacpiCompileEdges`. Glue en
+  `kernel/uacpi_glue.cpp`: capa `uacpi_kernel_*` mapeada a
+  heap/vmm/pci/timer/ioapic (mutex/spinlock/event triviales, monocore);
+  fuente de tiempo = TSC calibrado contra el PIT canal 2 por polling, sin IRQ
+  (`timer::ticks()` no sirve porque en el bringup las interrupciones estan
+  apagadas); el SCI del glue rutea por `ioapic::route_gsi`. Se agrega
+  `pci::write_config_u8` (antes solo habia u16/u32). `uacpi_glue::bringup()`
+  corre `uacpi_initialize` + `uacpi_namespace_load` desde `kernel_main` (tras
+  `acpi::start_sci`), conviviendo con la ACPI hand-rolled;
+  `uacpi_namespace_initialize()` (corre `_INI`/`_STA`) queda diferida a la
+  etapa de eventos porque requiere el ACPI Global Lock con el subsistema
+  GPE/SCI de uACPI activo e interrupciones habilitadas — el namespace ya
+  cargado alcanza para `_CRS`/`_PRT`. Verificado en vivo (desktop-smoke
+  PASS): uACPI inicializa, encuentra las tablas e interpreta el DSDT
+  ("successfully loaded 1 AML blob, 1707 ops").
+- **Ruteo de INTx via `_PRT` de uACPI, cerrado de punta a punta.**
+  `uacpi_glue::dump_pci_routing()` recorre los root bridges PCI/PCIe
+  (`PNP0A03`/`PNP0A08`), obtiene el `_PRT` de cada uno y resuelve cada PCI
+  link device a su GSI real evaluando el `_CRS` del link
+  (`uacpi_get_current_resources` + `uacpi_for_each_resource`, primer
+  descriptor IRQ/Extended IRQ). En q35 todas las entradas del `_PRT` usan
+  link devices (nunca GSI directa); verificado en vivo: `LNKA/B/E/F` ->
+  GSI 10, `LNKC/D/G/H` -> GSI 11 (level). `uacpi_glue::route_pci_intx(bus,
+  dev, func, handler)` cierra el camino real: lee el Interrupt Pin de la
+  config PCI (`0x3D`), busca la entrada `_PRT` del root (device+pin), resuelve
+  el link a GSI via `_CRS` y programa el IOAPIC con la polaridad/trigger que
+  declara el firmware. El `rtl8139` pasa de polling a interrupt-driven sobre
+  este camino: `net::initialize` rutea su INTx una vez (registra
+  `net_irq_handler`); `bring_up` habilita el IMR (`ROK|TOK|RER|TER`) solo si
+  el ruteo tuvo exito, si no `IMR=0` y sigue el polling como fallback;
+  `net_irq_handler` sirve el device (`poll_receive` drena RX y limpia el ISR,
+  desasertando la linea level-triggered, sin storm); `poll_receive` se
+  envuelve en un `cli` local (`irq_save`/`restore`) porque corre tanto desde
+  el handler de IRQ como desde el main (timer/service), serializando el
+  acceso al ring de RX en monocore. Verificado en vivo en QEMU q35: "INTx dev
+  1 INTA -> GSI 10 ruteado (vector 53)" y "net: primer INTx recibido via
+  IOAPIC" al arranque, una sola vez (sin storm), escritorio sano. INTx legacy
+  ahora llega en q35+APIC, que era el bottleneck que habia forzado usar
+  MSI-X para virtio-gpu.
+- **Subsistema nativo — Fase 2: ABI nativo v1 + runtime real.** El contrato
+  kernel<->userland vive en `subsystems/native/sdk/include/savanxp_native_abi.h`
+  (unica fuente, incluida por ambos lados): espacio de syscalls particionado
+  (`< 0x1000` baseline transitorio delegado en posix, `>= 0x1000` syscalls
+  propias que para un proceso posix no existen), version de ABI y primeras dos
+  syscalls nativas: `SXN_SYS_INFO` (identidad + version, con handshake
+  obligatorio del runtime al arrancar; si no coincide aborta con exit 132) y
+  `SXN_SYS_LOG` (log al kernel con prefijo `native[pid]:`). El runtime de
+  userland suma heap propio (`sxn_alloc/realloc/free`, free-list sobre arena BSS
+  de 4 MiB), builtins de memoria, `operator new/delete` y un mini `<memory>`
+  freestanding (shared_ptr/make_shared no-atomico en una asignacion), con lo
+  cual las clases Haxe con semantica por defecto y `@:valueType` ya compilan y
+  corren sin libstdc++. Verificado en QEMU: handshake `abi verificado, version=1`
+  y clases Haxe sobre el heap nativo con resultados correctos.
+- **Subsistema nativo — override `_std`: String y Array reales de Haxe.** El
+  `_std` de reflaxe.CPP se expone como overrides `*.cross.hx` (generados por el
+  build en `build/native/std-cross/`), el mecanismo oficial de Haxe para
+  overrides por plataforma: aplican solo al target de generacion y no
+  envenenan el contexto macro/eval (que como `.hx` planos explotaba con errores
+  cripticos). El mini std C++ freestanding del SDK crece con `<string>`
+  (std::string + literales "..."s + to_string), `<deque>` (respaldo del
+  Array<T>), `<initializer_list>`, `<algorithm>`, `<cctype>`, `<new>` y un
+  nucleo compartido `__sxn_core`. Dos fixes al codegen sin parchear las libs
+  pineadas: `haxe-std-fixes/Math.hx` (shadow con el overload isFinite ambiguo
+  en Haxe 4 colapsado a uno) y el preprocesador custom `UniqueLocalNames`
+  (registrado por `SxnCompilerInit` via `ExpressionPreprocessor.Custom`), que
+  hace unicos los locals por funcion porque el codegen aplana bloques hermanos
+  y los contadores `_g` de dos for-in colisionaban en el mismo scope de C++.
+  Verificado en QEMU: concat + toUpperCase (`HAXE NATIVO EN SAVANXP`), array
+  con push e iteracion (`suma del array=100`) y SMOKE PASS sin regresiones.
+- **Subsistema nativo — ABI gfx + hello GUI en Haxe.** Nuevo bloque de
+  syscalls de graficos en el ABI nativo (`0x1010`): SXN_SYS_GFX_INFO /
+  GFX_ACQUIRE / GFX_RELEASE / GFX_PRESENT. El display es parte del ABI de
+  primera clase (sin `/dev/gpu0` ni ioctls); kernel-side comparte los internals
+  `display::*` y la sesion exclusiva por pid con los ioctls GPU de posix
+  (incluida la liberacion automatica al morir el proceso). El runtime suma los
+  wrappers `sxn_gfx_*` y Main.hx un hello GUI real: la clase `Lienzo` dibuja un
+  degrade con rectangulo sobre un `Array<Int>` de Haxe (contiguo por garantia
+  del mini `<deque>`) y lo presenta. De paso, dos fixes de codegen importantes:
+  se excluye el pase `RemovePureExpressions` de reflaxe (eliminaba los `if`
+  cuyos cuerpos son solo inyecciones `__cpp__` — codigo incorrecto que
+  compilaba) y se compila con `--no-opt` (el analizador de Haxe const-foldea
+  condiciones dependientes de inyecciones). Documentado: Float de Haxe todavia
+  no funciona en freestanding (sin soft-float intrinsics). Verificado en QEMU:
+  `gfx: present=0`, `gfx: release=0` y `gputest --smoke` adquiriendo la sesion
+  despues sin fugas; SMOKE PASS.
+
+### Cambiado
+
+- **Compilacion de kernel+userland via Ninja.** `build.ps1` compilaba
+  ~250-300 fuentes de forma secuencial y sin incremental (`Compile-Object`
+  invocaba `clang++` archivo por archivo). Se reemplaza esa fase por Ninja
+  (paralelo + tracking de dependencias de headers via `-MMD`), pineado en el
+  toolchain igual que LLVM/QEMU/xorriso. El link, la imagen SVFS2, la ISO y
+  QEMU siguen manejados por `build.ps1` sin cambios.
+
+### Corregido
+
+- **Pulido de `fb_gpu` y `virtio-gpu` para madurar la base visual.**
+  `present_region` de `fb_gpu` leia el origen desde la fila 0 en vez del
+  offset (x,y) de la superficie completa (contrato del ioctl, igual que
+  virtio y console); en VirtualBox pintaba pixeles equivocados en presents
+  parciales. `GPU_IOC_GET_STATS` de `fb_gpu` ahora reporta
+  `present_enqueued`/`completed` reales en vez de un struct en cero.
+  `refresh_scanouts` de `virtio-gpu` ya no pisa un flip fullscreen (superficie
+  importada como scanout) al llegar un evento de display: re-emite
+  `SET_SCANOUT` para el scanout activo y solo cae a la primaria como
+  fallback. El header `used` de la cola de cursor se lee volatile, como el de
+  la cola de control. `notify_off_multiplier == 0` (valido segun la spec:
+  todas las colas comparten la direccion de notify) ya no hace que se salte
+  el notify. `GPU_IOC_REFRESH_SCANOUTS` exige la sesion grafica como el resto
+  de los ioctls que mutan estado del dispositivo. El soak de `gputest` suma
+  un subtest que ejercita `SET_MODE` en runtime (640x400 y vuelta al nativo),
+  cubriendo el camino `RESOURCE_UNREF` de recreacion de recursos primarios.
+  Validado: desktop-smoke (virtio) PASS, gpu-soak PASS con el subtest de modo
+  (0 timeouts, sin degraded/recovery), y desktop-selftest PASS sobre VGA
+  estandar (backend fb_gpu, incluye reconexion de compositord).
+- `savanxp_mode_bits` (SDK) pierde el tipo subyacente fijo del enum: evitaba
+  el warning `-Wfixed-enum-extension` (extension no estandar de Clang en C)
+  repetido en cada TU que incluye `syscall.h`. Los valores caben en un int
+  normal y el tipo no se usaba en ninguna firma; sin cambio funcional.
+
 ## [0.3.2] - 2026-07-03
 
 ### Agregado
@@ -144,52 +301,6 @@ Notas de corte:
   comparte convencion) y queda como punto de divergencia. Verificado en QEMU: el
   ELF Haxe corre con identidad nativa (`process: pid=N marcado nativo` +
   `native: dispatcher activo`) e imprime su salida sin romper el smoke test.
-- **Subsistema nativo — Fase 2: ABI nativo v1 + runtime real.** El contrato
-  kernel<->userland vive en `subsystems/native/sdk/include/savanxp_native_abi.h`
-  (unica fuente, incluida por ambos lados): espacio de syscalls particionado
-  (`< 0x1000` baseline transitorio delegado en posix, `>= 0x1000` syscalls
-  propias que para un proceso posix no existen), version de ABI y primeras dos
-  syscalls nativas: `SXN_SYS_INFO` (identidad + version, con handshake
-  obligatorio del runtime al arrancar; si no coincide aborta con exit 132) y
-  `SXN_SYS_LOG` (log al kernel con prefijo `native[pid]:`). El runtime de
-  userland suma heap propio (`sxn_alloc/realloc/free`, free-list sobre arena BSS
-  de 4 MiB), builtins de memoria, `operator new/delete` y un mini `<memory>`
-  freestanding (shared_ptr/make_shared no-atomico en una asignacion), con lo
-  cual las clases Haxe con semantica por defecto y `@:valueType` ya compilan y
-  corren sin libstdc++. Verificado en QEMU: handshake `abi verificado, version=1`
-  y clases Haxe sobre el heap nativo con resultados correctos.
-- **Subsistema nativo — override `_std`: String y Array reales de Haxe.** El
-  `_std` de reflaxe.CPP se expone como overrides `*.cross.hx` (generados por el
-  build en `build/native/std-cross/`), el mecanismo oficial de Haxe para
-  overrides por plataforma: aplican solo al target de generacion y no
-  envenenan el contexto macro/eval (que como `.hx` planos explotaba con errores
-  cripticos). El mini std C++ freestanding del SDK crece con `<string>`
-  (std::string + literales "..."s + to_string), `<deque>` (respaldo del
-  Array<T>), `<initializer_list>`, `<algorithm>`, `<cctype>`, `<new>` y un
-  nucleo compartido `__sxn_core`. Dos fixes al codegen sin parchear las libs
-  pineadas: `haxe-std-fixes/Math.hx` (shadow con el overload isFinite ambiguo
-  en Haxe 4 colapsado a uno) y el preprocesador custom `UniqueLocalNames`
-  (registrado por `SxnCompilerInit` via `ExpressionPreprocessor.Custom`), que
-  hace unicos los locals por funcion porque el codegen aplana bloques hermanos
-  y los contadores `_g` de dos for-in colisionaban en el mismo scope de C++.
-  Verificado en QEMU: concat + toUpperCase (`HAXE NATIVO EN SAVANXP`), array
-  con push e iteracion (`suma del array=100`) y SMOKE PASS sin regresiones.
-- **Subsistema nativo — ABI gfx + hello GUI en Haxe.** Nuevo bloque de
-  syscalls de graficos en el ABI nativo (`0x1010`): SXN_SYS_GFX_INFO /
-  GFX_ACQUIRE / GFX_RELEASE / GFX_PRESENT. El display es parte del ABI de
-  primera clase (sin `/dev/gpu0` ni ioctls); kernel-side comparte los internals
-  `display::*` y la sesion exclusiva por pid con los ioctls GPU de posix
-  (incluida la liberacion automatica al morir el proceso). El runtime suma los
-  wrappers `sxn_gfx_*` y Main.hx un hello GUI real: la clase `Lienzo` dibuja un
-  degrade con rectangulo sobre un `Array<Int>` de Haxe (contiguo por garantia
-  del mini `<deque>`) y lo presenta. De paso, dos fixes de codegen importantes:
-  se excluye el pase `RemovePureExpressions` de reflaxe (eliminaba los `if`
-  cuyos cuerpos son solo inyecciones `__cpp__` — codigo incorrecto que
-  compilaba) y se compila con `--no-opt` (el analizador de Haxe const-foldea
-  condiciones dependientes de inyecciones). Documentado: Float de Haxe todavia
-  no funciona en freestanding (sin soft-float intrinsics). Verificado en QEMU:
-  `gfx: present=0`, `gfx: release=0` y `gputest --smoke` adquiriendo la sesion
-  despues sin fugas; SMOKE PASS.
 - Tipografias reales horneadas offline a tablas C con `tools/font/genfont.py`
   (via `freetype-py`): **GNU UniFont 8x16** para la consola del kernel y el render
   monospace del terminal, y **Noto Sans** proporcional antialiased para el chrome

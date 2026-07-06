@@ -9,6 +9,18 @@
   el tooling: si hace falta una herramienta nueva, agregarla a
   `tools/toolchain.lock.json` y al mapa de `tools/Toolchain.ps1`.
 
+## Changelog
+
+- Todo cambio de comportamiento (feature, fix, cambio de build/tooling,
+  eliminacion) se documenta en `CHANGELOG.md` bajo `[Unreleased]`, en la
+  subseccion que corresponda (`Agregado`/`Cambiado`/`Eliminado`/`Corregido`),
+  como parte del mismo commit que lo introduce.
+- No agregar la entrada a una seccion de version ya cerrada (con fecha): eso
+  reescribe historia ya publicada. Si `[Unreleased]` no existe al tope del
+  archivo, crearla.
+- El release (`release(vX.Y.Z): ...`) es el unico commit que renombra
+  `[Unreleased]` a la version nueva con fecha.
+
 ## Reglas del repo
 
 - No romper la persistencia de apps externas instaladas en `build/disk.img`.
