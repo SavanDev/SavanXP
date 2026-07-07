@@ -191,6 +191,26 @@ namespace
     virtio_sound::initialize();
     net::initialize();
     block::initialize();
+    // LiveCD: si Limine cargo la imagen de disco como modulo, exponerla como un
+    // block device en RAM. Se registra despues de los ATA, asi que un disco IDE
+    // persistente (dev) tiene prioridad; en la ISO pura montamos este ramdisk.
+    // svfs::initialize monta el primer SVFS2 valido que encuentre.
+    //
+    // Escribible-efimero: las apps que crean directorios/archivos en /disk
+    // (p.ej. doom prepara /disk/games/doom/savegames) necesitan un FS de
+    // lectura-escritura. Escribimos in-place sobre la memoria del modulo, que es
+    // RAM normal mapeada RW por el HHDM de Limine (el kernel reutiliza su CR3);
+    // los cambios viven solo durante la sesion y se pierden al reiniciar, que es
+    // la semantica correcta de un LiveCD. La persistencia real llega con la
+    // instalacion a disco.
+    if (boot_info.disk_image_address != nullptr && boot_info.disk_image_size != 0)
+    {
+        block::register_ramdisk(
+            const_cast<void *>(boot_info.disk_image_address),
+            boot_info.disk_image_size,
+            /*writable=*/true,
+            "livecd");
+    }
     boot_screen::show(90, "Montando almacenamiento");
     svfs::initialize();
 

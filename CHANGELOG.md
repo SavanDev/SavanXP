@@ -12,6 +12,36 @@ Notas de corte:
 
 ### Agregado
 
+- **LiveCD: `/disk` autocontenido en la ISO via ramdisk escribible.** La imagen
+  de disco (`disk.img`, SVFS2) ahora viaja *dentro* de la ISO como un segundo
+  modulo de Limine (`boot/limine.conf`), en vez de depender de un disco IDE
+  adjuntado solo en el `run` de QEMU. El kernel la expone como un block device
+  respaldado en memoria: `block::register_ramdisk` agrega un `Device` de tipo
+  `Kind::memory` (read/write ruteados a `memcpy`) despues de sondear los ATA,
+  asi que un disco IDE persistente (dev) mantiene prioridad y la ISO pura monta
+  el ramdisk. `kernel_main` lo registra entre `block::initialize()` y
+  `svfs::initialize()` (que no cambia: ya monta el primer SVFS2 valido). El
+  handoff del boot pasa `disk_image_address/size` en `BootInfo`, y
+  `arch/x86_64/entry.cpp` clasifica los modulos por sufijo de ruta
+  (`initramfs.cpio` vs `disk.img`) en lugar de asumir `modules[0]`. El ramdisk
+  es **escribible-efimero, in-place** sobre la RAM del modulo (mapeada RW por el
+  HHDM de Limine, cuyo CR3 reutiliza el kernel): las apps que crean
+  directorios/archivos en `/disk` funcionan y los cambios se pierden al
+  reiniciar, la semantica correcta de un LiveCD. `build.ps1` stagea `disk.img`
+  en la ISO junto a `kernel.elf`/`initramfs.cpio`. Resultado: la ISO arranca por
+  si sola con `/disk` montado en VirtualBox y hardware real, resolviendo que las
+  apps de `/disk` (Doom, etc.) no aparecieran al bootear la ISO sin el disco de
+  dev. Verificado en vivo: boot UEFI sin disco IDE -> `/disk mounted`; el `smoke`
+  (mkdir/write/cp/mv/rm en `/disk`) corrido sin IDE pasa todas las escrituras
+  contra el ramdisk; y confirmado en VirtualBox arrancando desde la ISO. La
+  instalacion persistente a disco queda como fase futura.
+- **Doom con Freedoom (IWAD libre) en el LiveCD.** `sdk/doomgeneric/build.ps1`
+  hornea `freedoom1.wad` (IWAD 100% libre que el motor ya reconoce en
+  `d_iwad.c`) por defecto en `/disk/games/doom/`, en vez del `doom1.wad`
+  shareware, para que la ISO distribuible lleve Doom jugable sin contenido
+  propietario. El motor igual detecta `doom1.wad`/`doom.wad` si el usuario los
+  aporta. El WAD (~28.8 MB) vive dentro de la `disk.img` de tamano fijo, sin
+  costo de RAM extra sobre el modulo.
 - **Capa IOAPIC/MADT y ruteo de IRQs por GSI.** Nuevo subsistema que parsea la
   MADT (descubre IOAPICs y sus Interrupt Source Overrides), programa las
   redirection entries y rutea GSIs hacia vectores de la IDT con entrega por el

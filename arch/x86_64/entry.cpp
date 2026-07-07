@@ -12,6 +12,32 @@ namespace {
 
 constexpr size_t kMaxMemoryMapEntries = 512;
 
+// Los modulos de Limine se identifican por el sufijo de su ruta (module_path
+// en limine.conf), no por el orden en que aparecen en la respuesta.
+bool path_ends_with(const char* path, const char* suffix) {
+    if (path == nullptr || suffix == nullptr) {
+        return false;
+    }
+    size_t path_length = 0;
+    while (path[path_length] != '\0') {
+        ++path_length;
+    }
+    size_t suffix_length = 0;
+    while (suffix[suffix_length] != '\0') {
+        ++suffix_length;
+    }
+    if (suffix_length > path_length) {
+        return false;
+    }
+    const char* tail = path + (path_length - suffix_length);
+    for (size_t index = 0; index < suffix_length; ++index) {
+        if (tail[index] != suffix[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[gnu::used, gnu::section(".limine_requests")]]
 volatile uint64_t g_limine_base_revision[] = LIMINE_BASE_REVISION(5);
 
@@ -149,10 +175,21 @@ boot::BootInfo build_boot_info() {
         info.framebuffer.available = true;
     }
 
-    if (g_module_request.response != nullptr && g_module_request.response->module_count != 0) {
-        limine_file* module = g_module_request.response->modules[0];
-        info.initramfs_address = module->address;
-        info.initramfs_size = module->size;
+    if (g_module_request.response != nullptr) {
+        const uint64_t module_count = g_module_request.response->module_count;
+        for (uint64_t index = 0; index < module_count; ++index) {
+            limine_file* module = g_module_request.response->modules[index];
+            if (module == nullptr) {
+                continue;
+            }
+            if (path_ends_with(module->path, "initramfs.cpio")) {
+                info.initramfs_address = module->address;
+                info.initramfs_size = module->size;
+            } else if (path_ends_with(module->path, "disk.img")) {
+                info.disk_image_address = module->address;
+                info.disk_image_size = module->size;
+            }
+        }
     }
 
     if (g_memmap_request.response != nullptr) {

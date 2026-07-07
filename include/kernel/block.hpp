@@ -15,6 +15,11 @@ struct DeviceInfo {
 };
 
 void initialize();
+// Registra un block device respaldado por una region de memoria (p.ej. un
+// modulo de Limine). Permite montar SVFS2 en el LiveCD sin depender del
+// controlador IDE emulado. Se registra despues de los ATA, asi que un disco
+// IDE presente (dev) tiene prioridad sobre el ramdisk (ISO pura).
+void register_ramdisk(void* base, uint64_t size_bytes, bool writable, const char* name);
 bool ready();
 size_t device_count();
 bool device_info(size_t index, DeviceInfo& info);

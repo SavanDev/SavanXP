@@ -50,6 +50,8 @@ struct BootInfo {
     FramebufferInfo framebuffer;
     const void* initramfs_address;
     uint64_t initramfs_size;
+    const void* disk_image_address;
+    uint64_t disk_image_size;
     const MemoryRegion* memory_map;
     size_t memory_map_entries;
 };

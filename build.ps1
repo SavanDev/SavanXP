@@ -704,7 +704,7 @@ function Build-Kernel([string]$AutomationCommand = "") {
     Assert-Svfs2Consistency $diskImage $DiskImage
     $persistentSnapshot = Get-SvfsPersistenceSnapshot $diskImage @(
         "/disk/bin/doomgeneric",
-        "/disk/games/doom/doom1.wad"
+        "/disk/games/doom/freedoom1.wad"
     )
     Sync-SvfsDiskTree -Image $diskImage -SourceRoot $DiskBuildRoot
     Repair-SvfsReachableMetadataAndReport $diskImage "post-sync"
@@ -728,6 +728,12 @@ function Build-Kernel([string]$AutomationCommand = "") {
     Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $ImageRoot "limine.conf") -Force
     Copy-Item $KernelElf (Join-Path $BootRoot "kernel.elf") -Force
     Copy-Item $InitramfsPath (Join-Path $BootRoot "initramfs.cpio") -Force
+    # LiveCD: la imagen de disco viaja dentro de la ISO como segundo modulo de
+    # Limine (ver boot/limine.conf). El kernel la monta como ramdisk read-only
+    # cuando no hay disco IDE, haciendo la ISO autocontenida.
+    # (Se usa $script:DiskImage porque mas arriba una asignacion local shadowea
+    # $DiskImage con el objeto de imagen -- PowerShell es case-insensitive.)
+    Copy-Item $script:DiskImage (Join-Path $BootRoot "disk.img") -Force
     Install-LimineImageFiles
     Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $BootRoot "limine\\limine.conf") -Force
     Set-Content -Path (Join-Path $ImageRoot "startup.nsh") -Value "fs0:\EFI\BOOT\BOOTX64.EFI" -NoNewline

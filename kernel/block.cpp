@@ -11,6 +11,8 @@ constexpr uint16_t kPrimaryControlBase = 0x3f6;
 constexpr uint16_t kSecondaryIoBase = 0x170;
 constexpr uint16_t kSecondaryControlBase = 0x376;
 constexpr size_t kMaxDevices = 4;
+// Los 4 slots ATA sondeados + 1 para el ramdisk del LiveCD.
+constexpr size_t kMaxBlockDevices = kMaxDevices + 1;
 
 constexpr uint8_t kStatusErr = 0x01;
 constexpr uint8_t kStatusDrq = 0x08;
@@ -22,6 +24,11 @@ constexpr uint8_t kCommandReadSectors = 0x20;
 constexpr uint8_t kCommandWriteSectors = 0x30;
 constexpr uint8_t kCommandCacheFlush = 0xe7;
 
+enum class Kind {
+    ata,
+    memory,
+};
+
 struct Device {
     bool present;
     uint16_t io_base;
@@ -30,9 +37,11 @@ struct Device {
     uint32_t sector_count;
     bool writable;
     const char* name;
+    Kind kind;
+    uint8_t* memory_base;
 };
 
-Device g_devices[kMaxDevices] = {};
+Device g_devices[kMaxBlockDevices] = {};
 size_t g_device_count = 0;
 bool g_ready = false;
 
@@ -207,6 +216,33 @@ bool rw_sectors(Device& device, uint32_t lba, uint32_t sector_count, void* buffe
     return true;
 }
 
+bool rw_memory(Device& device, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
+    if (!device.present || device.memory_base == nullptr || buffer == nullptr || sector_count == 0) {
+        return false;
+    }
+    if (lba >= device.sector_count || sector_count > (device.sector_count - lba)) {
+        return false;
+    }
+    if (write && !device.writable) {
+        return false;
+    }
+
+    const size_t offset = static_cast<size_t>(lba) * block::kSectorSize;
+    const size_t length = static_cast<size_t>(sector_count) * block::kSectorSize;
+    if (write) {
+        memcpy(device.memory_base + offset, buffer, length);
+    } else {
+        memcpy(buffer, device.memory_base + offset, length);
+    }
+    return true;
+}
+
+bool rw_device(Device& device, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
+    return device.kind == Kind::memory
+        ? rw_memory(device, lba, sector_count, buffer, write)
+        : rw_sectors(device, lba, sector_count, buffer, write);
+}
+
 } // namespace
 
 namespace block {
@@ -217,10 +253,10 @@ void initialize() {
     g_ready = false;
 
     Device detected[kMaxDevices] = {
-        {false, kPrimaryIoBase, kPrimaryControlBase, 0x00, 0, false, "ata0"},
-        {false, kPrimaryIoBase, kPrimaryControlBase, 0x10, 0, false, "ata1"},
-        {false, kSecondaryIoBase, kSecondaryControlBase, 0x00, 0, false, "ata2"},
-        {false, kSecondaryIoBase, kSecondaryControlBase, 0x10, 0, false, "ata3"},
+        {false, kPrimaryIoBase, kPrimaryControlBase, 0x00, 0, false, "ata0", Kind::ata, nullptr},
+        {false, kPrimaryIoBase, kPrimaryControlBase, 0x10, 0, false, "ata1", Kind::ata, nullptr},
+        {false, kSecondaryIoBase, kSecondaryControlBase, 0x00, 0, false, "ata2", Kind::ata, nullptr},
+        {false, kSecondaryIoBase, kSecondaryControlBase, 0x10, 0, false, "ata3", Kind::ata, nullptr},
     };
 
     for (size_t index = 0; index < kMaxDevices; ++index) {
@@ -259,7 +295,7 @@ bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
     if (!device_for_index(index, device)) {
         return false;
     }
-    return rw_sectors(*device, lba, sector_count, buffer, false);
+    return rw_device(*device, lba, sector_count, buffer, false);
 }
 
 bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
@@ -267,7 +303,27 @@ bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer
     if (!device_for_index(index, device) || !device->writable) {
         return false;
     }
-    return rw_sectors(*device, lba, sector_count, const_cast<void*>(buffer), true);
+    return rw_device(*device, lba, sector_count, const_cast<void*>(buffer), true);
+}
+
+void register_ramdisk(void* base, uint64_t size_bytes, bool writable, const char* name) {
+    if (base == nullptr || size_bytes < block::kSectorSize) {
+        return;
+    }
+    if (g_device_count >= kMaxBlockDevices) {
+        return;
+    }
+
+    Device device = {};
+    device.present = true;
+    device.kind = Kind::memory;
+    device.memory_base = static_cast<uint8_t*>(base);
+    device.sector_count = static_cast<uint32_t>(size_bytes / block::kSectorSize);
+    device.writable = writable;
+    device.name = name;
+
+    g_devices[g_device_count++] = device;
+    g_ready = true;
 }
 
 } // namespace block
