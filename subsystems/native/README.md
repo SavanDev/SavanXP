@@ -50,6 +50,16 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   Verificado en serial: `gfx: pantalla ancho=1280` + `gfx: present=0` +
   `gfx: release=0`, y `gputest --smoke` adquiere la sesión después (el release
   no filtra).
+- **Protocolo cliente del compositor** — **apps ventaneadas nativas**: la capa
+  `sxn_gui_*` del runtime ([sx_gui.c](sdk/runtime/sx_gui.c)) habla el contrato
+  de superficie v3 del compositor sobre los fds 3..9 que el shell instala antes
+  del exec (sección compartida + eventos submit/retire/shutdown + input por
+  pipe), todo en syscalls del baseline — sin kernel nuevo. La app
+  [haxe-gui/Main.hx](haxe-gui/Main.hx) (`nativegui`) abre la sesión, dibuja y
+  anima con dirty rects, y procesa input. Verificado headless con el harness
+  [test/guihost.c](test/guihost.c), que interpreta el rol del compositor:
+  `frames compuestos=4`, tecla recibida, `NATIVEGUI HOST PASS`. Bonus: primer
+  test del cambio de subsistema vía **exec** (fork posix → exec ELF nativo).
 
 ## El contrato ABI (v1)
 
@@ -78,7 +88,12 @@ Al arrancar, el runtime hace el handshake `sxn_info()` y aborta (exit 132) si
 ```powershell
 .\subsystems\native\build.ps1            # genera build/native/nativehello.elf
 .\subsystems\native\build.ps1 -Install   # además lo instala en /disk/bin/nativehello
+# la app ventaneada:
+.\subsystems\native\build.ps1 -Name nativegui -Source haxe-gui -Install
 ```
+
+`nativegui` instalada aparece en `/disk/bin` y puede lanzarse desde el
+escritorio (app de archivos): corre como ventana normal bajo el compositor.
 
 El script:
 
@@ -116,8 +131,17 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   ruidoso) y `__cxa_pure_virtual`.
 - `sdk/runtime/sx_entry.cpp` — entrada propia: handshake de ABI + llamada a la
   `main` generada por Haxe. Reemplaza el `_main_.cpp` de reflaxe.CPP.
+- `sdk/include/savanxp_native_gui.h` + `sdk/runtime/sx_gui.c` — cliente del
+  compositor: espejos del contrato de superficie v3 (fuente de verdad en el SDK
+  posix y desktop.c) y la API `sxn_gui_*` (open/present/present_region/
+  poll_event/should_close) sobre los fds 3..9 heredados del shell.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
-  String/Array + syscalls nativas).
+  String/Array + syscalls nativas). `haxe-gui/Main.hx` — `nativegui`, la app
+  ventaneada de ejemplo (cliente del compositor).
+- `test/guihost.c` — harness POSIX headless que interpreta el rol del
+  compositor (sección + eventos + input) y valida al cliente nativo de punta a
+  punta. Build: `tools\build-user.ps1 -Source subsystems\native\test\guihost.c
+  -Name nativeguihost`.
 - `haxe-support/` — tooling macro del build: `SxnCompilerInit.hx` (envuelve el
   init de reflaxe.CPP y registra nuestro preprocesador) y `UniqueLocalNames.hx`
   (hace únicos los locals por función; ver Hallazgos).
@@ -203,10 +227,10 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ## Próximos pasos
 
-1. Crecer el ABI nativo por necesidad real: input y tiempo (el bloque gfx ya
-   existe) — cada syscall nueva con un consumidor en el programa de validación.
-2. Probar `Map`/`Null<T>` y ampliar el mini std (`<optional>`, `<functional>`)
+1. Probar `Map`/`Null<T>` y ampliar el mini std (`<optional>`, `<functional>`)
    según pida el codegen; resolver Float (compiler-rt o x87).
-3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Para
-   apps **ventaneadas** bajo el compositor hará falta el protocolo cliente
-   (secciones compartidas + eventos), no este camino fullscreen-exclusivo.
+2. Canal de mouse (fd 5, `savanxp_gui_pointer_event`) en `sxn_gui_*` — el
+   protocolo ya lo prevé; falta el wrapper y un consumidor.
+3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
+   prerequisitos técnicos ya están: clases + String/Array + cliente del
+   compositor. Empezar por una app sxgui-style en Haxe.

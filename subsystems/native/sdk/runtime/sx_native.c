@@ -27,6 +27,17 @@ long sxn_syscall3(long number, long a, long b, long c) {
     return result;
 }
 
+long sxn_syscall5(long number, long a, long b, long c, long d, long e) {
+    register long r10 __asm__("r10") = d;
+    register long r8 __asm__("r8") = e;
+    long result;
+    __asm__ volatile("int $0x80"
+                     : "=a"(result)
+                     : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
+                     : "memory");
+    return result;
+}
+
 /* --- Identidad y log (ABI nativo propio) ------------------------------------ */
 
 long sxn_info(struct sxn_native_info *out) {

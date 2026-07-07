@@ -11,6 +11,9 @@
 # por tools/Toolchain.ps1 (env SAVANXP_HAXE > toolchain horneado > PATH).
 param(
     [string]$Name = "nativehello",
+    # Directorio (relativo a subsystems/native/) con el codigo Haxe de la app.
+    # Cada app define su propia clase Main.
+    [string]$Source = "haxe",
     [switch]$Install
 )
 
@@ -26,9 +29,11 @@ $haxeLibsRoot = Join-Path $toolchainRoot "haxe-libs"
 $lockPath = Join-Path $repoRoot "tools\toolchain.lock.json"
 $posixSdk = Join-Path $repoRoot "subsystems\posix\sdk\v1"
 $nativeSdk = Join-Path $scriptDir "sdk"
-$haxeSrc = Join-Path $scriptDir "haxe"
+$haxeSrc = Join-Path $scriptDir $Source
+if (-not (Test-Path $haxeSrc)) { throw "No existe el directorio de fuentes Haxe '$Source'." }
 $outRoot = Join-Path $repoRoot "build\native"
-$genDir = Join-Path $outRoot "gen"
+# gen/obj por app para poder construir varias sin pisarse.
+$genDir = Join-Path $outRoot "gen-$Name"
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" }
 
@@ -96,7 +101,7 @@ if (Test-Path $genDir) { Remove-Item -Recurse -Force $genDir }
 Ensure-Directory $genDir
 # Escribimos un .hxml y dejamos que haxe lo parsee. Pasar args con comillas
 # embebidas (nullSafety("reflaxe")) directo al exe se rompe en PowerShell 5.1.
-$hxmlPath = Join-Path $outRoot "generated.hxml"
+$hxmlPath = Join-Path $outRoot "generated-$Name.hxml"
 $hxmlLines = @(
     # Sin el analizador de Haxe: const-foldea condiciones que dependen de
     # untyped __cpp__ (las trata como constantes) y elimina los if. Es el
@@ -126,7 +131,7 @@ $mainCpp = Join-Path $genDir "src\Main.cpp"
 if (-not (Test-Path $mainCpp)) { throw "reflaxe.CPP no genero Main.cpp en $genDir." }
 
 # --- 4. Compilar y linkear freestanding --------------------------------------
-$objDir = Join-Path $outRoot "obj"
+$objDir = Join-Path $outRoot "obj-$Name"
 if (Test-Path $objDir) { Remove-Item -Recurse -Force $objDir }
 Ensure-Directory $objDir
 $nativeHeader = Join-Path $nativeSdk "include\savanxp_native.h"
@@ -154,13 +159,15 @@ function Invoke-Compile([string]$Tool, [string[]]$Pre, [string]$Src, [string]$Ob
 
 $crt0Obj = Join-Path $objDir "crt0.o"
 $shimObj = Join-Path $objDir "sx_native.o"
+$guiObj = Join-Path $objDir "sx_gui.o"
 $cxxGlueObj = Join-Path $objDir "sx_cxx.o"
 $entryObj = Join-Path $objDir "sx_entry.o"
-$objects = @($crt0Obj, $shimObj, $cxxGlueObj, $entryObj)
+$objects = @($crt0Obj, $shimObj, $guiObj, $cxxGlueObj, $entryObj)
 
 Write-Step "Compilando runtime nativo"
 Invoke-Compile $clang @() (Join-Path $posixSdk "runtime\crt0.S") $crt0Obj $cFlags
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_native.c") $shimObj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_gui.c") $guiObj $cFlags
 Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_cxx.cpp") $cxxGlueObj $cxxFlags
 Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_entry.cpp") $entryObj $cxxFlags
 

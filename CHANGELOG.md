@@ -131,6 +131,22 @@ Notas de corte:
   no funciona en freestanding (sin soft-float intrinsics). Verificado en QEMU:
   `gfx: present=0`, `gfx: release=0` y `gputest --smoke` adquiriendo la sesion
   despues sin fugas; SMOKE PASS.
+- **Subsistema nativo — protocolo cliente del compositor (apps ventaneadas).**
+  Nueva capa `sxn_gui_*` en el runtime nativo (`sdk/runtime/sx_gui.c` +
+  `savanxp_native_gui.h`): habla el contrato de superficie v3 del compositor
+  sobre los fds 3..9 que el shell instala antes del exec (mapeo de la seccion
+  compartida con validacion del header SXGF, submit de batches de dirty rects
+  con secuencias submit/composed y eventos de retire/shutdown, input por pipe
+  con resize sintetizado) — todo sobre syscalls del baseline, sin kernel nuevo.
+  Primera app ventaneada nativa: `nativegui` (subsystems/native/haxe-gui,
+  `build.ps1 -Name nativegui -Source haxe-gui`), que dibuja, anima con regiones
+  sucias y procesa teclado. Verificacion headless con `test/guihost.c`, un
+  harness POSIX que interpreta el rol del compositor (seccion + eventos +
+  composicion + tecla) y valida secuencias, rects y pixeles; de paso es el
+  primer test del cambio de subsistema via exec (fork posix -> exec ELF
+  nativo). En QEMU: `gui: frames compuestos=4`, tecla ENTER recibida,
+  `NATIVEGUI HOST PASS` y SMOKE PASS sin regresiones. Lanzada desde el
+  escritorio real, `nativegui` corre como ventana normal.
 - **Header esperable generico en el Object Manager (`object::Header`).**
   `Header` gana `waitable`/`manual_reset`/`signal_count`, migrando el estado
   de senializacion que antes vivia duplicado por tipo (`EventObject::signaled`,

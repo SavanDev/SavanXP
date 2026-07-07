@@ -1,0 +1,125 @@
+/*
+ * SavanXP - cliente del compositor para el subsistema nativo (runtime v1).
+ *
+ * Protocolo de app VENTANEADA bajo el escritorio: el shell hace fork + dup2 de
+ * los canales de la sesion a los fds 3..9 + exec del binario (nuestro exec ya
+ * marca nativo por EI_OSABI, y los fds se heredan). Todo el protocolo corre
+ * sobre syscalls del baseline posix (< SXN_SYS_BASE): mapear la seccion
+ * compartida, poll/read de input y eventos de submit/retire/shutdown.
+ *
+ * Los structs de abajo son ESPEJOS del contrato de superficie v3 del
+ * compositor (fuente de verdad: savanxp_gpu_client_surface_header y amigos en
+ * subsystems/posix/sdk/v1/include/savanxp/syscall.h, y el armado de la seccion
+ * en subsystems/posix/userland/desktop.c). Mismos campos, mismo orden: el
+ * layout es el contrato de wire con el compositor.
+ */
+#pragma once
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* --- Contrato de superficie v3 (espejo) ------------------------------------- */
+
+#define SXN_GUI_SURFACE_MAGIC 0x53584746u /* "SXGF" */
+#define SXN_GUI_SURFACE_VERSION_3 3u
+#define SXN_GUI_BATCH_CAPACITY 8u
+#define SXN_GUI_BATCH_MAX_RECTS 32u
+
+struct sxn_gui_fb_info {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t bpp;
+    uint32_t buffer_size;
+};
+
+struct sxn_gui_dirty_rect {
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+};
+
+struct sxn_gui_batch {
+    uint64_t submit_sequence;
+    uint32_t rect_count;
+    uint32_t flags;
+    struct sxn_gui_dirty_rect rects[SXN_GUI_BATCH_MAX_RECTS];
+};
+
+struct sxn_gui_surface_header {
+    uint32_t magic;
+    uint32_t pixels_offset;
+    struct sxn_gui_fb_info info;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t pixel_format;
+    uint32_t reserved0;
+    uint32_t command_offset;
+    uint32_t batch_capacity;
+    uint32_t rect_capacity;
+    uint32_t reserved1;
+    uint64_t submit_sequence;
+    uint64_t retired_sequence;
+    uint64_t composed_sequence;
+};
+
+/* Evento de input crudo que el shell rutea por el fd 4. */
+struct sxn_gui_input_event {
+    uint32_t type; /* 1 = key down, 2 = key up, 3 = resized */
+    uint32_t key;
+    int32_t ascii;
+};
+
+#define SXN_GUI_EVENT_KEY_DOWN 1u
+#define SXN_GUI_EVENT_KEY_UP 2u
+#define SXN_GUI_EVENT_RESIZED 3u
+
+/* Fds fijos que el shell instala antes del exec del cliente. */
+#define SXN_GUI_FD_SECTION 3
+#define SXN_GUI_FD_INPUT 4
+#define SXN_GUI_FD_MOUSE 5
+#define SXN_GUI_FD_SUBMIT_EVENT 6
+#define SXN_GUI_FD_RETIRE_EVENT 7
+#define SXN_GUI_FD_SHUTDOWN_EVENT 8
+#define SXN_GUI_FD_LAUNCH 9
+
+/* --- API del runtime ---------------------------------------------------------
+ * Una sesion de ventana por proceso (estado global en sx_gui.c): suficiente
+ * para el modelo de una-superficie-por-cliente del compositor actual. */
+
+/* Conecta con la sesion heredada del shell. Devuelve 0, -ENODEV si no hay
+ * seccion en el fd 3 (no nos lanzo el escritorio) o -EINVAL si el header de
+ * superficie no valida. */
+long sxn_gui_open(void);
+void sxn_gui_close(void);
+
+/* Geometria de la ventana (validas tras sxn_gui_open). El frame del cliente
+ * debe usar stride_pixels pixeles por fila (pitch de la superficie). */
+unsigned int sxn_gui_width(void);
+unsigned int sxn_gui_height(void);
+unsigned int sxn_gui_stride_pixels(void);
+
+/* Secuencia de frames ya compuestos por el compositor (del header). */
+unsigned long sxn_gui_composed_sequence(void);
+
+/* 1 si el compositor pidio cerrar (evento de shutdown senalado). */
+int sxn_gui_should_close(void);
+
+/* Presentan copiando del frame del cliente a la superficie compartida y
+ * sometiendo el batch (con espera de slot/idle y corte por shutdown).
+ * `frame` usa el layout de la superficie (filas de pitch bytes). */
+long sxn_gui_present(const void *frame);
+long sxn_gui_present_region(const void *frame, unsigned int x, unsigned int y,
+                            unsigned int width, unsigned int height);
+
+/* Devuelve 1 con un evento (teclado o resize sintetizado), 0 sin eventos,
+ * negativo en error. */
+int sxn_gui_poll_event(struct sxn_gui_input_event *event);
+
+#ifdef __cplusplus
+}
+#endif

@@ -23,12 +23,28 @@ extern "C" {
 
 /* Numeros de syscall del baseline transitorio compartido con posix
  * (< SXN_SYS_BASE). Espejo de subsystems/posix/sdk/v1/include/savanxp/syscall.h. */
+#define SXN_SYS_READ 0
 #define SXN_SYS_WRITE 1
-#define SXN_SYS_EXIT  7
+#define SXN_SYS_EXIT 7
+#define SXN_SYS_SLEEP_MS 11
+#define SXN_SYS_POLL 39
+#define SXN_SYS_EVENT_SET 43
+#define SXN_SYS_EVENT_RESET 44
+#define SXN_SYS_WAIT_ONE 45
+#define SXN_SYS_WAIT_MANY 46
+#define SXN_SYS_MAP_VIEW 51
+#define SXN_SYS_UNMAP_VIEW 52
+
+#define SXN_SECTION_READ 1u
+#define SXN_SECTION_WRITE 2u
+#define SXN_WAIT_FLAG_ANY 0u
+#define SXN_POLLIN 0x0001
+#define SXN_POLLHUP 0x0010
 
 /* Envolturas crudas de syscall (int $0x80). */
 long sxn_syscall1(long number, long a);
 long sxn_syscall3(long number, long a, long b, long c);
+long sxn_syscall5(long number, long a, long b, long c, long d, long e);
 
 /* --- Identidad y log (syscalls propias del ABI nativo) --------------------- */
 
@@ -63,6 +79,7 @@ long sxn_gfx_present(const void *frame, unsigned int pitch,
 
 long sxn_write(int fd, const char *buf, int len);
 void sxn_exit(int code) __attribute__((noreturn));
+void sxn_sleep_ms(long milliseconds);
 
 /* Demo de la Fase 0: escribe un saludo por stdout. El string vive aca (en C)
  * para que el C++ generado por reflaxe.CPP no arrastre <string>/<iostream>. */
@@ -88,3 +105,6 @@ int memcmp(const void *left, const void *right, unsigned long count);
 #ifdef __cplusplus
 }
 #endif
+
+/* Cliente del compositor (apps ventaneadas bajo el escritorio). */
+#include "savanxp_native_gui.h"
