@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/audio.hpp"
 #include "kernel/console.hpp"
-#include "kernel/device.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
@@ -110,15 +110,6 @@ struct [[gnu::packed]] VirtioSndPcmStatus {
     uint32_t latency_bytes;
 };
 
-device::Device g_audio_device = {
-    .name = "audio0",
-    .read = nullptr,
-    .write = nullptr,
-    .ioctl = nullptr,
-    .close = nullptr,
-    .can_read = nullptr,
-};
-
 virtio_pci::Device g_device = {};
 virtio_pci::Queue g_control_queue = {};
 virtio_pci::Queue g_event_queue = {};
@@ -126,7 +117,6 @@ virtio_pci::Queue g_tx_queue = {};
 virtio_pci::Queue g_rx_queue = {};
 savanxp_audio_info g_audio_info = {};
 uint32_t g_selected_stream_id = 0;
-uint32_t g_owner_pid = 0;
 uint32_t g_last_status_code = 0;
 bool g_ready = false;
 bool g_stream_selected = false;
@@ -134,10 +124,6 @@ bool g_stream_params_set = false;
 bool g_stream_prepared = false;
 bool g_stream_started = false;
 bool g_event_buffer_armed = false;
-
-int negative_error(savanxp_error_code code) {
-    return -static_cast<int>(code);
-}
 
 volatile VirtioSndConfig* device_cfg() {
     return reinterpret_cast<volatile VirtioSndConfig*>(virtio_pci::device_cfg_base(g_device));
@@ -433,83 +419,51 @@ bool submit_tx_chunk(uint64_t user_buffer, uint32_t byte_count) {
     return status->status == kVirtioSndSOk;
 }
 
-int audio_write(uint64_t user_buffer, size_t count) {
+// --- Implementacion del backend audio::Backend ------------------------------
+// La logica comun (owner-pid, validacion de usuario, troceado en periodos y el
+// registro de /dev/audio0) vive en audio_device.cpp; aca solo quedan las
+// operaciones dependientes de virtio.
+
+bool vs_ready() {
+    return g_ready && g_stream_selected;
+}
+
+bool vs_get_info(savanxp_audio_info& info) {
     if (!g_ready || !g_stream_selected) {
-        return negative_error(SAVANXP_ENODEV);
+        return false;
     }
-    if (count == 0) {
-        return 0;
-    }
-    if ((count % g_audio_info.frame_bytes) != 0) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-    if (!process::validate_user_range(user_buffer, count, false)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
+    info = g_audio_info;
+    return true;
+}
 
-    const uint32_t pid = process::current_pid();
-    if (pid == 0) {
-        return negative_error(SAVANXP_EBADF);
+bool vs_configure() {
+    if (!g_ready || !g_stream_selected) {
+        return false;
     }
-    if (g_owner_pid != 0 && g_owner_pid != pid) {
-        return negative_error(SAVANXP_EBUSY);
-    }
-
-    const bool acquired_owner = g_owner_pid == 0;
-    if (acquired_owner) {
-        g_owner_pid = pid;
-    }
-
     drain_event_queue();
-    if (!ensure_stream_ready()) {
-        if (acquired_owner) {
-            g_owner_pid = 0;
-        }
-        stop_and_release_stream();
-        return negative_error(SAVANXP_EIO);
-    }
-
-    size_t transferred = 0;
-    while (transferred < count) {
-        const size_t remaining = count - transferred;
-        const uint32_t chunk = static_cast<uint32_t>(remaining > g_audio_info.period_bytes ? g_audio_info.period_bytes : remaining);
-        if (!submit_tx_chunk(user_buffer + transferred, chunk)) {
-            return negative_error(SAVANXP_EIO);
-        }
-        transferred += chunk;
-        drain_event_queue();
-    }
-
-    return static_cast<int>(count);
+    return ensure_stream_ready();
 }
 
-int audio_ioctl(uint64_t request, uint64_t argument) {
-    switch (request) {
-        case AUDIO_IOC_GET_INFO:
-            if (!g_ready || !g_stream_selected) {
-                return negative_error(SAVANXP_ENODEV);
-            }
-            if (!process::validate_user_range(argument, sizeof(g_audio_info), true)) {
-                return negative_error(SAVANXP_EINVAL);
-            }
-            return process::copy_to_user(argument, &g_audio_info, sizeof(g_audio_info))
-                ? 0
-                : negative_error(SAVANXP_EINVAL);
-        default:
-            return negative_error(SAVANXP_ENOSYS);
+int vs_submit_period(uint64_t user_buffer, uint32_t byte_count) {
+    if (!submit_tx_chunk(user_buffer, byte_count)) {
+        return -static_cast<int>(SAVANXP_EIO);
     }
+    drain_event_queue();
+    return 0;
 }
 
-void audio_close() {
-    const uint32_t pid = process::current_pid();
-    if (g_owner_pid == 0 || g_owner_pid != pid) {
-        return;
-    }
-
+void vs_stop() {
     drain_event_queue();
     stop_and_release_stream();
-    g_owner_pid = 0;
 }
+
+const audio::Backend g_backend = {
+    .ready = vs_ready,
+    .get_info = vs_get_info,
+    .configure = vs_configure,
+    .submit_period = vs_submit_period,
+    .stop = vs_stop,
+};
 
 void fail_device(const char* reason) {
     virtio_pci::fail_device(g_device);
@@ -531,7 +485,6 @@ void initialize() {
     memset(&g_rx_queue, 0, sizeof(g_rx_queue));
     memset(&g_audio_info, 0, sizeof(g_audio_info));
     g_selected_stream_id = 0;
-    g_owner_pid = 0;
     g_last_status_code = 0;
     g_ready = false;
     g_stream_selected = false;
@@ -576,19 +529,14 @@ void initialize() {
         return;
     }
     if (!g_stream_selected) {
-        g_ready = false;
+        // El dispositivo responde pero ningun stream de salida ofrece el formato
+        // fijo del ABI (S16 / 48 kHz / estereo). Antes esto quedaba mudo sin
+        // traza; ahora se registra para no confundirlo con "no hay hardware".
+        fail_device("no compatible output stream (S16/48kHz/stereo)");
         return;
     }
     if (!queue_event_buffer()) {
         fail_device("failed to arm event queue");
-        return;
-    }
-
-    g_audio_device.write = audio_write;
-    g_audio_device.ioctl = audio_ioctl;
-    g_audio_device.close = audio_close;
-    if (!device::register_node("/dev/audio0", &g_audio_device, true)) {
-        fail_device("failed to register /dev/audio0");
         return;
     }
 
@@ -606,6 +554,10 @@ void initialize() {
 
 bool ready() {
     return g_ready && g_stream_selected;
+}
+
+const audio::Backend& backend() {
+    return g_backend;
 }
 
 } // namespace virtio_sound

@@ -12,6 +12,37 @@ Notas de corte:
 
 ### Agregado
 
+- **Audio en VirtualBox: driver AC'97 + HAL de audio con backends.** El audio
+  solo funcionaba con `virtio-sound-pci` (QEMU); VirtualBox no emula ese chip,
+  asi que `/dev/audio0` no se registraba y todo quedaba mudo (Doom incluido). Se
+  refactorizo el subsistema a un HAL espejo del de display (`display::Backend`):
+  un dispatcher `audio::` con vtable `Backend` (`ready`/`get_info`/`configure`/
+  `submit_period`/`stop`), un `audio_device.cpp` agnostico que registra
+  `/dev/audio0` y concentra la logica comun (owner-pid de un solo escritor,
+  validacion de usuario, troceado en periodos, ioctl `GET_INFO`), y dos backends:
+  `virtio_sound` (refactorizado, sin cambios de comportamiento) y el nuevo
+  `ac97`. El driver **AC'97** (`kernel/ac97.cpp`) maneja el controlador Intel
+  ICH (clase PCI `0x04`/subclase `0x01`, el chip que VirtualBox y QEMU emulan por
+  defecto): saca al codec del cold-reset, desmutea el mixer, y reproduce por
+  bus-master DMA con un Buffer Descriptor List de 32 entradas en memoria
+  fisicamente contigua (`memory::allocate_contiguous_pages`). Es **polling puro
+  sondeando CIV** (sin IRQ), lo que esquiva el problema conocido de INTx legacy
+  que no llega en VirtualBox. El formato fijo del ABI (S16 estereo 48 kHz) es el
+  rate nativo del DAC de AC'97, asi que no hay VRA ni resampling. `kernel_main`
+  elige backend igual que en display: virtio-sound si el probe PCI lo encontro,
+  si no AC'97 (fallback de VirtualBox). ABI: `savanxp_audio_backend` suma
+  `SAVANXP_AUDIO_BACKEND_AC97`. Nuevo target `.\build.ps1 ac97-smoke` que corre
+  el smoke de `/dev/audio0` forzando `-device AC97` sin virtio-sound, para
+  ejercitar el camino de fallback headless. Verificado: el smoke normal (virtio)
+  sigue en verde sin regresion; el `ac97-smoke` detecta el controlador
+  (`ac97: ready ... nam=0x6000 nabm=0x6400`), registra `/dev/audio0` y pasa; y
+  bajando `kMaxInFlight` a 2 se confirmo que `submit_period` bloquea hasta que el
+  hardware consume (CIV avanza), probando que el motor DMA reproduce de verdad y
+  no solo acepta el enqueue. Falta la validacion auditiva final en VirtualBox.
+- **`virtio-sound`: fin del enmudecimiento silencioso.** Si el dispositivo
+  responde pero ningun stream de salida ofrece el formato fijo del ABI, antes
+  `/dev/audio0` no se registraba sin dejar traza (indistinguible de "no hay
+  hardware"); ahora se registra el fallo por consola.
 - **LiveCD: `/disk` autocontenido en la ISO via ramdisk escribible.** La imagen
   de disco (`disk.img`, SVFS2) ahora viaja *dentro* de la ISO como un segundo
   modulo de Limine (`boot/limine.conf`), en vez de depender de un disco IDE

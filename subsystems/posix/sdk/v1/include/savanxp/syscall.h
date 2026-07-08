@@ -600,6 +600,7 @@ struct savanxp_gpu_client_surface_header {
 enum savanxp_audio_backend {
     SAVANXP_AUDIO_BACKEND_NONE = 0,
     SAVANXP_AUDIO_BACKEND_VIRTIO = 1,
+    SAVANXP_AUDIO_BACKEND_AC97 = 2,
 };
 
 struct savanxp_audio_info {

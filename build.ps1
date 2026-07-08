@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -73,6 +73,9 @@ $KernelSources = @(
     "kernel/gpu_device.cpp",
     "kernel/virtio_input.cpp",
     "kernel/virtio_sound.cpp",
+    "kernel/ac97.cpp",
+    "kernel/audio.cpp",
+    "kernel/audio_device.cpp",
     "kernel/ps2.cpp",
     "kernel/pcspeaker.cpp",
     "kernel/power.cpp",
@@ -808,6 +811,7 @@ function Run-Qemu([switch]$WaitForDebugger) {
 
     $args = @(
         "-machine", "q35,pcspk-audiodev=audio0",
+        "-accel", "tcg",
         "-m", "256M",
         "-cpu", "max",
         "-audiodev", "sdl,id=audio0",
@@ -867,7 +871,7 @@ function Stop-AutomationQemu($Process, [int]$MonitorPort) {
     Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
 }
 
-function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2) {
+function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [switch]$UseAc97) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel -AutomationCommand $AutomationCommand
 
@@ -895,6 +899,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
 
     $args = @(
         "-machine", "q35,pcspk-audiodev=audio0",
+        "-accel", "tcg",
         "-m", "256M",
         "-cpu", "max",
         "-audiodev", "none,id=audio0",
@@ -907,7 +912,6 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
         "-device", "virtio-vga,xres=1280,yres=800",
-        "-device", "virtio-sound-pci,audiodev=audio1,streams=1",
         "-device", "virtio-tablet-pci",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$DiskImage""",
@@ -919,6 +923,16 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-no-reboot",
         "-no-shutdown"
     )
+
+    # Dispositivo de audio: por defecto virtio-sound-pci (el driver preferido). Con
+    # -UseAc97 usamos el AC'97 de QEMU (el mismo chip que emula VirtualBox) y NO
+    # agregamos virtio-sound, de modo que el kernel caiga al backend AC97 y este
+    # smoke ejercite ese camino headless.
+    if ($UseAc97) {
+        $args += @("-device", "AC97,audiodev=audio1")
+    } else {
+        $args += @("-device", "virtio-sound-pci,audiodev=audio1,streams=1")
+    }
 
     $process = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -RedirectStandardOutput $SmokeStdoutLog -RedirectStandardError $SmokeStderrLog
     try {
@@ -963,6 +977,12 @@ function Run-SmokeQemu {
     Run-AutomationQemu -AutomationCommand "smoke" -SuccessToken "SMOKE PASS" -FailureToken "SMOKE FAIL" -TimeoutMinutes 2
 }
 
+function Run-Ac97SmokeQemu {
+    # Mismo smoke que valida /dev/audio0, pero forzando el hardware AC'97 (sin
+    # virtio-sound) para ejercitar el backend de fallback usado en VirtualBox.
+    Run-AutomationQemu -AutomationCommand "smoke" -SuccessToken "SMOKE PASS" -FailureToken "SMOKE FAIL" -TimeoutMinutes 2 -UseAc97
+}
+
 function Run-DesktopSmokeQemu {
     Run-AutomationQemu -AutomationCommand "desktop-selftest" -SuccessToken "DESKTOP SMOKE PASS" -FailureToken "DESKTOP SMOKE FAIL" -TimeoutMinutes 3
 }
@@ -991,6 +1011,9 @@ switch ($Command) {
     }
     "smoke" {
         Run-SmokeQemu
+    }
+    "ac97-smoke" {
+        Run-Ac97SmokeQemu
     }
     "desktop-smoke" {
         Run-DesktopSmokeQemu

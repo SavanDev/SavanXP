@@ -3,7 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/ac97.hpp"
 #include "kernel/acpi.hpp"
+#include "kernel/audio.hpp"
+#include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
@@ -188,7 +191,24 @@ namespace
     boot_screen::show(80, "Inicializando dispositivos");
     pcspeaker::initialize();
     power::initialize();
+    // Backend de audio: virtio-sound si el probe PCI lo encontro. El fallback a
+    // AC97 (VirtualBox) se engancha aca cuando exista, espejando el patron de
+    // display (virtio-gpu / fb_gpu). audio_device registra /dev/audio0 sobre el
+    // backend elegido, o no lo registra si no hay hardware de sonido.
     virtio_sound::initialize();
+    if (virtio_sound::ready())
+    {
+        audio::set_backend(virtio_sound::backend());
+    }
+    else
+    {
+        ac97::initialize();
+        if (ac97::ready())
+        {
+            audio::set_backend(ac97::backend());
+        }
+    }
+    audio_device::initialize();
     net::initialize();
     block::initialize();
     // LiveCD: si Limine cargo la imagen de disco como modulo, exponerla como un
