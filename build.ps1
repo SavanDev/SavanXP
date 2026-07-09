@@ -518,10 +518,7 @@ function Generate-CursorAsset {
     $sourcePath = Join-Path $ProjectRoot "assets\\desktop\\cursor.png"
     $outputPath = Join-Path $GeneratedRoot "cursor_asset.h"
 
-    & powershell -ExecutionPolicy Bypass -File $scriptPath -SourcePath $sourcePath -OutputPath $outputPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Fallo la generacion del asset del cursor."
-    }
+    & $scriptPath -SourcePath $sourcePath -OutputPath $outputPath
 }
 
 function Generate-DesktopIconAssets {
@@ -531,15 +528,8 @@ function Generate-DesktopIconAssets {
     $scriptPath = Join-Path $ToolRoot "GenerateDesktopIconAssets.ps1"
     $outputPath = Join-Path $GeneratedRoot "desktop_icon_assets.h"
 
-    & powershell -ExecutionPolicy Bypass -File $sourceArtScript -ProjectRoot $ProjectRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "Fallo la generacion del arte fuente del desktop."
-    }
-
-    & powershell -ExecutionPolicy Bypass -File $scriptPath -ProjectRoot $ProjectRoot -OutputPath $outputPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Fallo la generacion de los assets bitmap del desktop."
-    }
+    & $sourceArtScript -ProjectRoot $ProjectRoot
+    & $scriptPath -ProjectRoot $ProjectRoot -OutputPath $outputPath
 }
 
 function Get-KernelCompileEdges([string[]]$Sources) {
