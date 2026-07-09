@@ -237,6 +237,27 @@ Notas de corte:
 
 ### Corregido
 
+- **AC'97: modelo de reproduccion sin bloqueo + colchon + sin IOC.** Tres
+  correcciones al camino de reproduccion, sobre el fix de subalimentacion de
+  Doom (abajo), apuntando al audio entrecortado en VirtualBox:
+  - *No bloqueante:* `submit_period` ya no hace spin esperando una ranura libre
+    cuando el ring esta lleno; descarta el periodo y sigue. Ese spin corria con
+    interrupciones deshabilitadas (los syscalls corren con IRQ off), congelando
+    el timer y con el el reloj del guest; como Doom se guia por ese reloj para
+    dosificar el audio *y* para su logica, congelarlo lo desincronizaba.
+  - *Sin IOC:* las entradas del BDL ya no llevan el bit interrupt-on-completion.
+    El driver reproduce por polling de CIV y no registra IRQ de AC'97, asi que
+    con IOC la reproduccion continua disparaba una interrupcion por periodo que
+    nadie atendia.
+  - *Colchon:* al preparar el stream se precargan `kPrimePeriods` periodos de
+    silencio y se reinyectan si el ring se vacia, para absorber el jitter del
+    productor sin quedar al borde del underrun.
+  - Verificacion headless nueva: `audiotest --stream` reproduce el patron de
+    alimentacion por-tic de Doom; `.\build.ps1 ac97-count` lo corre con
+    `audiodev none` y reporta el contador de underruns del driver (0 con
+    colchon). `.\build.ps1 ac97-stream` graba a WAV (`tools/audio/wavgaps.py`
+    detecta gaps), util solo con aceleracion por hardware: bajo TCG el backend
+    wav marca el ritmo a tiempo-real del host y el guest no lo alcanza.
 - **Audio "robotizado"/trabado en Doom (subalimentacion del device).**
   `DG_Sound_Update` (glue de audio de doomgeneric) mezclaba `frames_to_mix`
   frames avanzando la posicion de todos los canales, pero escribia solo ese

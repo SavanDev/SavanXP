@@ -8,6 +8,70 @@ static int is_smoke_mode(int argc, char** argv) {
     return argc > 1 && strcmp(argv[1], "--smoke") == 0;
 }
 
+static int is_stream_mode(int argc, char** argv) {
+    return argc > 1 && strcmp(argv[1], "--stream") == 0;
+}
+
+/* Reproduce el patron de alimentacion de Doom para exponer underruns: cada
+ * iteracion escribe "lo que paso en tiempo real" (elapsed-worth) de un tono
+ * cuadrado continuo y luego duerme un poco, imitando el trabajo de un frame.
+ * La salida deberia ser un tono continuo; los underruns aparecen como silencios
+ * periodicos en la captura WAV. */
+static int run_stream(int fd, const struct savanxp_audio_info* info) {
+    const uint32_t rate = info->sample_rate_hz;
+    const uint32_t channels = info->channels;
+    const uint32_t max_frames = (uint32_t)(sizeof(g_samples) / (channels * sizeof(int16_t)));
+    uint32_t full_period = rate / 440u;
+    unsigned long start_ms = uptime_ms();
+    unsigned long last_ms = start_ms;
+    uint32_t phase = 0;
+
+    if (full_period == 0u) {
+        full_period = 1u;
+    }
+
+    while (uptime_ms() - start_ms < 2500UL) {
+        unsigned long now_ms;
+        uint32_t delta_ms;
+        uint32_t frames;
+        uint32_t frame;
+        long want;
+
+        sleep_ms(15);
+        now_ms = uptime_ms();
+        delta_ms = (uint32_t)(now_ms - last_ms);
+        last_ms = now_ms;
+        if (delta_ms == 0u) {
+            continue;
+        }
+
+        frames = delta_ms * rate / 1000u;
+        if (frames > max_frames) {
+            frames = max_frames;
+        }
+
+        for (frame = 0; frame < frames; ++frame) {
+            const int16_t sample = (phase < (full_period / 2u)) ? 12000 : -12000;
+            uint32_t channel;
+            for (channel = 0; channel < channels; ++channel) {
+                g_samples[frame * channels + channel] = sample;
+            }
+            if (++phase >= full_period) {
+                phase = 0;
+            }
+        }
+
+        want = (long)(frames * info->frame_bytes);
+        if (write(fd, g_samples, (unsigned long)want) != want) {
+            puts_fd(2, "audiotest: stream write failed\n");
+            return 1;
+        }
+    }
+
+    printf("AUDIO STREAM PASS\n");
+    return 0;
+}
+
 static void fill_square_wave(const struct savanxp_audio_info* info, uint32_t frequency_hz) {
     const uint32_t frame_count = info->buffer_bytes / info->frame_bytes;
     uint32_t half_period = info->sample_rate_hz / (frequency_hz * 2u);
@@ -29,8 +93,7 @@ int main(int argc, char** argv) {
     long fd = audio_open();
     long result;
     const int smoke_mode = is_smoke_mode(argc, argv);
-
-    (void)argv;
+    const int stream_mode = is_stream_mode(argc, argv);
 
     if (fd < 0) {
         puts_fd(2, "audiotest: /dev/audio0 not available\n");
@@ -52,6 +115,12 @@ int main(int argc, char** argv) {
         puts_fd(2, "audiotest: unexpected audio format\n");
         close((int)fd);
         return 1;
+    }
+
+    if (stream_mode) {
+        const int rc = run_stream((int)fd, &info);
+        close((int)fd);
+        return rc;
     }
 
     fill_square_wave(&info, smoke_mode ? 440u : 660u);

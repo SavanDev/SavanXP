@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -871,7 +871,7 @@ function Stop-AutomationQemu($Process, [int]$MonitorPort) {
     Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
 }
 
-function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [switch]$UseAc97) {
+function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [switch]$UseAc97, [string]$WavPath) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel -AutomationCommand $AutomationCommand
 
@@ -903,7 +903,6 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-m", "256M",
         "-cpu", "max",
         "-audiodev", "none,id=audio0",
-        "-audiodev", "none,id=audio1",
         "-display", "none",
         "-rtc", "base=localtime",
         "-drive", "if=pflash,format=raw,readonly=on,file=""$($ovmf.Code)""",
@@ -923,6 +922,15 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-no-reboot",
         "-no-shutdown"
     )
+
+    # audiodev de audio1 (el que consume el dispositivo de sonido): por defecto
+    # "none" (headless, sin captura). Con -WavPath se graba lo que reproduce el
+    # device a un WAV, para medir underruns/glitches sin depender del oido.
+    if ($WavPath) {
+        $args += @("-audiodev", "wav,id=audio1,path=$WavPath")
+    } else {
+        $args += @("-audiodev", "none,id=audio1")
+    }
 
     # Dispositivo de audio: por defecto virtio-sound-pci (el driver preferido). Con
     # -UseAc97 usamos el AC'97 de QEMU (el mismo chip que emula VirtualBox) y NO
@@ -983,6 +991,28 @@ function Run-Ac97SmokeQemu {
     Run-AutomationQemu -AutomationCommand "smoke" -SuccessToken "SMOKE PASS" -FailureToken "SMOKE FAIL" -TimeoutMinutes 2 -UseAc97
 }
 
+function Run-Ac97StreamQemu {
+    # Corre audiotest --stream (patron de alimentacion tipo-Doom) sobre AC'97 y
+    # graba la salida a un WAV para medir underruns/glitches. Analizar el WAV con
+    # tools/audio/wavgaps.py. OJO: bajo TCG el backend wav marca el ritmo a
+    # tiempo-real del host y el guest no lo alcanza -> la captura no es fiel para
+    # audio continuo. Para medir el driver usar ac97-count (audiodev none).
+    $wav = Join-Path $BuildRoot "ac97-stream.wav"
+    if (Test-Path $wav) { Remove-Item $wav -Force }
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -UseAc97 -WavPath $wav
+    Write-Host "WAV capturado: $wav"
+}
+
+function Run-Ac97CountQemu {
+    # Corre audiotest --stream sobre AC'97 con audiodev none (sin pacing de wav):
+    # QEMU avanza el CIV en tiempo virtual igual que el guest alimenta, asi el
+    # contador de underruns del driver (ac97: stop underruns=N en el serial)
+    # refleja si el colchon evita que el ring se vacie.
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -UseAc97
+    $line = Select-String -Path $SmokeSerialLog -Pattern "ac97: stop underruns" | Select-Object -Last 1
+    if ($line) { Write-Host ("UNDERRUNS -> " + $line.Line.Trim()) } else { Write-Host "no se encontro linea de underruns en $SmokeSerialLog" }
+}
+
 function Run-DesktopSmokeQemu {
     Run-AutomationQemu -AutomationCommand "desktop-selftest" -SuccessToken "DESKTOP SMOKE PASS" -FailureToken "DESKTOP SMOKE FAIL" -TimeoutMinutes 3
 }
@@ -1014,6 +1044,12 @@ switch ($Command) {
     }
     "ac97-smoke" {
         Run-Ac97SmokeQemu
+    }
+    "ac97-stream" {
+        Run-Ac97StreamQemu
+    }
+    "ac97-count" {
+        Run-Ac97CountQemu
     }
     "desktop-smoke" {
         Run-DesktopSmokeQemu

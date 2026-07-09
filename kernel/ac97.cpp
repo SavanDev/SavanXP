@@ -28,6 +28,11 @@ constexpr uint32_t kPeriodBytes = 4096u;  // ~21 ms por periodo
 // en vuelo (kMaxInFlight) para acotar la latencia a ~170 ms en vez de ~680 ms.
 constexpr uint32_t kRingSlots = 32u;
 constexpr uint32_t kMaxInFlight = 8u;
+// Colchon inicial de periodos de silencio encolados al preparar el stream. El
+// productor (Doom) alimenta "lo que paso en tiempo real" por frame; sin colchon
+// el ring se vacia entre rafagas y el DMA hace underrun (audio robotico). Como
+// en regimen alimentacion == consumo, este offset persiste y absorbe el jitter.
+constexpr uint32_t kPrimePeriods = 4u;
 constexpr uint32_t kRingBytes = kRingSlots * kPeriodBytes;
 // buffer_bytes del ABI es un hint de "cuanto bufferear por delante", no el ring
 // fisico. Publicamos 4 periodos (igual que virtio) para que los consumidores que
@@ -55,10 +60,13 @@ constexpr uint8_t kCrReset = 0x02u;      // RR: reset de registros del stream
 constexpr uint16_t kSrStatusClear = 0x1Cu;  // bits RWC de status (LVBCI/BCIS/FIFOE)
 constexpr uint32_t kGlobCntColdReset = 1u << 1;
 constexpr uint32_t kGlobStaPrimaryReady = 1u << 8;
-constexpr uint16_t kBdlControlIoc = 0x8000u;  // interrupt-on-completion (avanza CIV)
+// Este driver reproduce por polling de CIV y NO registra un IRQ de AC'97. Por eso
+// las entradas del BDL NO llevan el bit IOC (interrupt-on-completion): con IOC, la
+// reproduccion continua dispararia una interrupcion por periodo que nadie atiende
+// (tormenta de IRQ -> ~15x mas lento). CIV avanza igual sin IOC.
+constexpr uint16_t kBdlControlNone = 0x0000u;
 
 constexpr uint32_t kResetSpins = 50000000u;
-constexpr uint32_t kDrainSpins = 200000000u;
 
 struct [[gnu::packed]] BdlEntry {
     uint32_t address;    // direccion fisica del buffer (alineada a 2 bytes)
@@ -79,6 +87,7 @@ savanxp_audio_info g_info = {};
 uint32_t g_head = 0;       // proxima ranura del BDL a llenar
 uint32_t g_tail = 0;       // ranura mas vieja aun no consumida por el hardware
 uint32_t g_in_flight = 0;  // periodos entregados al hardware sin consumir
+uint32_t g_underruns = 0;  // veces que el ring se vacio durante la reproduccion
 bool g_ready = false;
 bool g_prepared = false;   // motor DMA preparado para la sesion de escritura actual
 bool g_running = false;    // RPBM activo
@@ -199,17 +208,47 @@ void reclaim_consumed() {
     }
 }
 
-bool bdl_entry(uint32_t user_buffer, uint32_t byte_count) {
+void set_bdl_descriptor(uint32_t index, uint32_t byte_count) {
+    volatile BdlEntry& entry = g_bdl[index];
+    entry.address = static_cast<uint32_t>(g_buffers_phys + static_cast<uint64_t>(index) * kPeriodBytes);
+    entry.samples = static_cast<uint16_t>(byte_count / sizeof(int16_t));
+    entry.control = kBdlControlNone;
+}
+
+bool copy_period(uint32_t user_buffer, uint32_t byte_count) {
     uint8_t* destination = g_buffers + static_cast<size_t>(g_head) * kPeriodBytes;
     if (!process::copy_from_user(destination, user_buffer, byte_count)) {
         return false;
     }
-
-    volatile BdlEntry& entry = g_bdl[g_head];
-    entry.address = static_cast<uint32_t>(g_buffers_phys + static_cast<uint64_t>(g_head) * kPeriodBytes);
-    entry.samples = static_cast<uint16_t>(byte_count / sizeof(int16_t));
-    entry.control = kBdlControlIoc;
+    set_bdl_descriptor(g_head, byte_count);
     return true;
+}
+
+// Publica `lvi` como ultima ranura valida y (re)arranca el motor: limpia el
+// status RWC y asegura RPBM. Si el DMA se habia detenido por underrun, fijar
+// LVI+RPBM lo reanuda.
+void publish(uint8_t lvi) {
+    compiler_barrier();
+    out8(static_cast<uint16_t>(g_nabm_base + kPoLvi), lvi);
+    out16(static_cast<uint16_t>(g_nabm_base + kPoSr), kSrStatusClear);
+    const uint8_t control = in8(static_cast<uint16_t>(g_nabm_base + kPoCr));
+    if ((control & kCrRunPause) == 0) {
+        out8(static_cast<uint16_t>(g_nabm_base + kPoCr), static_cast<uint8_t>(control | kCrRunPause));
+    }
+    g_running = true;
+}
+
+// Encola kPrimePeriods de silencio para arrancar con un colchon de audio.
+void prime_silence() {
+    uint8_t last = 0;
+    for (uint32_t i = 0; i < kPrimePeriods; ++i) {
+        memset(g_buffers + static_cast<size_t>(g_head) * kPeriodBytes, 0, kPeriodBytes);
+        set_bdl_descriptor(g_head, kPeriodBytes);
+        last = static_cast<uint8_t>(g_head);
+        g_head = (g_head + 1u) & (kRingSlots - 1u);
+        ++g_in_flight;
+    }
+    publish(last);
 }
 
 // --- Backend audio::Backend --------------------------------------------------
@@ -240,7 +279,9 @@ bool ac97_configure() {
     g_head = 0;
     g_tail = 0;
     g_in_flight = 0;
+    g_underruns = 0;
     g_running = false;
+    prime_silence();
     g_prepared = true;
     return true;
 }
@@ -253,20 +294,28 @@ int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
         return -static_cast<int>(SAVANXP_EINVAL);
     }
 
-    // Esperar una ranura libre. Esto bloquea en tiempo real cuando el productor
-    // se adelanta mas de kMaxInFlight periodos, dandole al write() la misma
-    // semantica bloqueante que el camino virtio.
-    uint32_t spins = 0;
     reclaim_consumed();
-    while (g_in_flight >= kMaxInFlight) {
-        if (++spins >= kDrainSpins) {
-            return -static_cast<int>(SAVANXP_EIO);
-        }
-        compiler_barrier();
-        reclaim_consumed();
+
+    // No bloqueante: si el ring esta lleno, descartar este periodo en vez de
+    // esperar. Bloquear aca seria un spin con interrupciones deshabilitadas (los
+    // syscalls corren con IRQ off) que congelaria el timer y, con el, el reloj
+    // del guest; el productor se guia por ese reloj para dosificar, asi que
+    // colapsaria a casi-cero (underfeed catastrofico). Con el colchon y la
+    // alimentacion en tiempo real, "lleno" casi nunca ocurre; un descarte
+    // ocasional es un glitch inaudible, mejor que congelar el reloj.
+    if (g_in_flight >= kMaxInFlight) {
+        return 0;
     }
 
-    if (!bdl_entry(static_cast<uint32_t>(user_buffer), byte_count)) {
+    // Si el ring quedo vacio (underrun por un hipo del productor), reinyectar el
+    // colchon de silencio antes del dato real para no reproducir al borde y
+    // volver a hacer underrun al siguiente hipo.
+    if (g_in_flight == 0) {
+        ++g_underruns;
+        prime_silence();
+    }
+
+    if (!copy_period(static_cast<uint32_t>(user_buffer), byte_count)) {
         return -static_cast<int>(SAVANXP_EINVAL);
     }
 
@@ -274,17 +323,7 @@ int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
     g_head = (g_head + 1u) & (kRingSlots - 1u);
     ++g_in_flight;
 
-    compiler_barrier();
-    out8(static_cast<uint16_t>(g_nabm_base + kPoLvi), new_lvi);
-
-    // Arrancar o re-arrancar el motor: limpiar status RWC y asegurar RPBM. Si el
-    // DMA se habia detenido por underrun, volver a fijar LVI+RPBM lo reanuda.
-    out16(static_cast<uint16_t>(g_nabm_base + kPoSr), kSrStatusClear);
-    const uint8_t control = in8(static_cast<uint16_t>(g_nabm_base + kPoCr));
-    if ((control & kCrRunPause) == 0) {
-        out8(static_cast<uint16_t>(g_nabm_base + kPoCr), static_cast<uint8_t>(control | kCrRunPause));
-    }
-    g_running = true;
+    publish(new_lvi);
     return 0;
 }
 
@@ -293,6 +332,9 @@ void ac97_stop() {
         return;
     }
     halt_engine();
+    if (g_underruns != 0) {
+        console::printf("ac97: stop con %u underruns\n", static_cast<unsigned>(g_underruns));
+    }
     g_head = 0;
     g_tail = 0;
     g_in_flight = 0;

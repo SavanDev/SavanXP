@@ -43,6 +43,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "desktop")) {
         return "DESKTOP SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "audiostream")) {
+        return "AUDIO STREAM";
+    }
     return "SMOKE";
 }
 
@@ -51,6 +54,7 @@ static int run_automation_spec(const char* spec) {
     const char* soak_argv[] = {"/disk/bin/gputest", "--soak", 0, 0};
     const char* desktop_argv[] = {"/bin/desktop", "--selftest", 0};
     const char* cursor_repro_argv[] = {"/bin/desktop", "--cursor-repro", 0};
+    const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -69,6 +73,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "soak") == 0 || strcmp(spec, "gputest --soak") == 0) {
             path = "/disk/bin/gputest";
             argv = soak_argv;
+            argc = 2;
+        } else if (strcmp(spec, "audiostream") == 0) {
+            path = "/disk/bin/audiotest";
+            argv = audiostream_argv;
             argc = 2;
         } else if (text_starts_with(spec, "gputest --soak ")) {
             const char* iterations = skip_spaces(spec + strlen("gputest --soak"));
