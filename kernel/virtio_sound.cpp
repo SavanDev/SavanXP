@@ -19,8 +19,16 @@ constexpr uint16_t kVirtioSoundTxQueue = 2;
 constexpr uint16_t kVirtioSoundRxQueue = 3;
 constexpr uint16_t kControlQueueDescriptors = 2;
 constexpr uint16_t kEventQueueDescriptors = 1;
-constexpr uint16_t kTxQueueDescriptors = 4;
 constexpr uint16_t kRxQueueDescriptors = 1;
+// Reproduccion multi-buffer: kTxSlots periodos en vuelo, cada uno con su cadena
+// de 3 descriptores (header + data + status). choose_queue_size redondea el
+// limite a la potencia de 2 mas cercana hacia abajo, asi que pedimos 32 para
+// alojar 8*3=24 descriptores. Sin espera bloqueante: el device consume los
+// buffers mientras el productor sigue alimentando.
+constexpr uint16_t kTxSlots = 8;
+constexpr uint16_t kTxPrimeSlots = 4;
+constexpr uint16_t kTxDescriptorsPerSlot = 3;
+constexpr uint16_t kTxQueueLimit = 32;
 constexpr uint32_t kVirtioSndRPcmInfo = 0x0100u;
 constexpr uint32_t kVirtioSndRPcmSetParams = 0x0101u;
 constexpr uint32_t kVirtioSndRPcmPrepare = 0x0102u;
@@ -42,10 +50,12 @@ constexpr uint32_t kAudioBitsPerSample = 16u;
 constexpr uint32_t kAudioFrameBytes = 4u;
 constexpr uint32_t kAudioPeriodBytes = 4096u;
 constexpr uint32_t kAudioBufferBytes = 16384u;
-constexpr size_t kTxHeaderOffset = 0;
-constexpr size_t kTxDataOffset = sizeof(uint32_t);
-constexpr size_t kTxStatusOffset = kTxDataOffset + kAudioPeriodBytes;
-constexpr size_t kTxQueueExtraBytes = kTxStatusOffset + sizeof(uint32_t) * 2u;
+// Layout por slot en la memoria extra de la cola TX: header (stream_id) + data
+// (un periodo) + status. Los slots van consecutivos; slot i en i*kTxSlotStride.
+constexpr size_t kTxSlotHeaderBytes = sizeof(uint32_t);
+constexpr size_t kTxSlotStatusBytes = sizeof(uint32_t) * 2u;
+constexpr size_t kTxSlotStride = kTxSlotHeaderBytes + kAudioPeriodBytes + kTxSlotStatusBytes;
+constexpr size_t kTxQueueExtraBytes = kTxSlotStride * kTxSlots;
 constexpr uint32_t kCommandTimeoutSpins = 10000000u;
 
 struct [[gnu::packed]] VirtioSndHdr {
@@ -124,6 +134,11 @@ bool g_stream_params_set = false;
 bool g_stream_prepared = false;
 bool g_stream_started = false;
 bool g_event_buffer_armed = false;
+bool g_tx_slot_busy[kTxSlots] = {};   // slot ocupado por un periodo en vuelo
+uint16_t g_tx_in_flight = 0;          // periodos encolados sin consumir
+uint16_t g_tx_usable_slots = 0;       // min(kTxSlots, size_de_la_cola/3)
+bool g_tx_primed = false;             // colchon de silencio ya cargado
+uint32_t g_tx_drops = 0;              // periodos descartados por ring lleno
 
 volatile VirtioSndConfig* device_cfg() {
     return reinterpret_cast<volatile VirtioSndConfig*>(virtio_pci::device_cfg_base(g_device));
@@ -371,52 +386,103 @@ void stop_and_release_stream() {
     reset_stream_state();
 }
 
-bool submit_tx_chunk(uint64_t user_buffer, uint32_t byte_count) {
-    if (byte_count == 0 || byte_count > kAudioPeriodBytes) {
-        return false;
-    }
+size_t tx_slot_header_offset(uint16_t slot) { return static_cast<size_t>(slot) * kTxSlotStride; }
+size_t tx_slot_data_offset(uint16_t slot) { return tx_slot_header_offset(slot) + kTxSlotHeaderBytes; }
+size_t tx_slot_status_offset(uint16_t slot) { return tx_slot_data_offset(slot) + kAudioPeriodBytes; }
 
-    auto* header = reinterpret_cast<VirtioSndPcmXfer*>(virtio_pci::queue_extra(g_tx_queue, kTxHeaderOffset));
-    void* payload = virtio_pci::queue_extra(g_tx_queue, kTxDataOffset);
-    auto* status = reinterpret_cast<VirtioSndPcmStatus*>(virtio_pci::queue_extra(g_tx_queue, kTxStatusOffset));
+// Reclama los periodos que el device ya consumio, liberando sus slots. El id del
+// elemento usado es el indice del descriptor cabeza de la cadena = slot * 3.
+void reclaim_tx() {
+    const volatile virtio_pci::UsedHeader* used = virtio_pci::queue_used_header(g_tx_queue);
+    const virtio_pci::UsedElement* ring = virtio_pci::queue_used_ring(g_tx_queue);
+    while (g_tx_queue.last_used_index != used->idx) {
+        virtio_pci::memory_barrier();
+        const virtio_pci::UsedElement element = ring[g_tx_queue.last_used_index % g_tx_queue.size];
+        g_tx_queue.last_used_index = static_cast<uint16_t>(g_tx_queue.last_used_index + 1);
+        const uint16_t slot = static_cast<uint16_t>(element.id / kTxDescriptorsPerSlot);
+        if (slot < kTxSlots && g_tx_slot_busy[slot]) {
+            g_tx_slot_busy[slot] = false;
+            if (g_tx_in_flight > 0) {
+                --g_tx_in_flight;
+            }
+        }
+    }
+}
+
+int find_free_tx_slot() {
+    for (uint16_t slot = 0; slot < g_tx_usable_slots; ++slot) {
+        if (!g_tx_slot_busy[slot]) {
+            return static_cast<int>(slot);
+        }
+    }
+    return -1;
+}
+
+// Encola un periodo en el slot dado sin esperar a que el device lo consuma. Con
+// silence=true rellena con ceros (colchon); si no, copia desde memoria de usuario.
+bool submit_tx_slot(uint16_t slot, uint64_t user_buffer, uint32_t byte_count, bool silence) {
+    auto* header = reinterpret_cast<VirtioSndPcmXfer*>(virtio_pci::queue_extra(g_tx_queue, tx_slot_header_offset(slot)));
+    void* payload = virtio_pci::queue_extra(g_tx_queue, tx_slot_data_offset(slot));
+    auto* status = reinterpret_cast<VirtioSndPcmStatus*>(virtio_pci::queue_extra(g_tx_queue, tx_slot_status_offset(slot)));
 
     header->stream_id = g_selected_stream_id;
-    if (!process::copy_from_user(payload, user_buffer, byte_count)) {
+    if (silence) {
+        memset(payload, 0, byte_count);
+    } else if (!process::copy_from_user(payload, user_buffer, byte_count)) {
         return false;
     }
     memset(status, 0, sizeof(*status));
 
+    const uint16_t base = static_cast<uint16_t>(slot * kTxDescriptorsPerSlot);
     virtio_pci::Descriptor* descriptors = virtio_pci::queue_descriptors(g_tx_queue);
-    descriptors[0] = {
-        .addr = virtio_pci::queue_extra_physical(g_tx_queue, kTxHeaderOffset),
+    descriptors[base] = {
+        .addr = virtio_pci::queue_extra_physical(g_tx_queue, tx_slot_header_offset(slot)),
         .len = static_cast<uint32_t>(sizeof(*header)),
         .flags = virtio_pci::kDescriptorFlagNext,
-        .next = 1,
+        .next = static_cast<uint16_t>(base + 1),
     };
-    descriptors[1] = {
-        .addr = virtio_pci::queue_extra_physical(g_tx_queue, kTxDataOffset),
+    descriptors[base + 1] = {
+        .addr = virtio_pci::queue_extra_physical(g_tx_queue, tx_slot_data_offset(slot)),
         .len = byte_count,
         .flags = virtio_pci::kDescriptorFlagNext,
-        .next = 2,
+        .next = static_cast<uint16_t>(base + 2),
     };
-    descriptors[2] = {
-        .addr = virtio_pci::queue_extra_physical(g_tx_queue, kTxStatusOffset),
+    descriptors[base + 2] = {
+        .addr = virtio_pci::queue_extra_physical(g_tx_queue, tx_slot_status_offset(slot)),
         .len = static_cast<uint32_t>(sizeof(*status)),
         .flags = virtio_pci::kDescriptorFlagWrite,
         .next = 0,
     };
 
-    if (!virtio_pci::submit_descriptor_head(g_tx_queue, 0)) {
+    if (!virtio_pci::submit_descriptor_head(g_tx_queue, base)) {
         return false;
     }
     virtio_pci::memory_barrier();
     virtio_pci::notify_queue(g_device, g_tx_queue);
+    g_tx_slot_busy[slot] = true;
+    ++g_tx_in_flight;
+    return true;
+}
 
-    virtio_pci::UsedElement element = {};
-    if (!wait_for_used_element(g_tx_queue, element) || element.id != 0) {
-        return false;
+// Precarga kTxPrimeSlots periodos de silencio como colchon para absorber el
+// jitter del productor sin quedar al borde del underrun.
+void prime_tx_silence() {
+    for (uint16_t i = 0; i < kTxPrimeSlots; ++i) {
+        const int slot = find_free_tx_slot();
+        if (slot < 0) {
+            break;
+        }
+        (void)submit_tx_slot(static_cast<uint16_t>(slot), 0, kAudioPeriodBytes, true);
     }
-    return status->status == kVirtioSndSOk;
+}
+
+void reset_tx_ring() {
+    for (uint16_t i = 0; i < kTxSlots; ++i) {
+        g_tx_slot_busy[i] = false;
+    }
+    g_tx_in_flight = 0;
+    g_tx_primed = false;
+    g_tx_drops = 0;
 }
 
 // --- Implementacion del backend audio::Backend ------------------------------
@@ -440,12 +506,40 @@ bool vs_configure() {
     if (!g_ready || !g_stream_selected) {
         return false;
     }
+    reclaim_tx();
     drain_event_queue();
-    return ensure_stream_ready();
+    if (!ensure_stream_ready()) {
+        return false;
+    }
+    if (!g_tx_primed) {
+        prime_tx_silence();
+        g_tx_primed = true;
+    }
+    return true;
 }
 
 int vs_submit_period(uint64_t user_buffer, uint32_t byte_count) {
-    if (!submit_tx_chunk(user_buffer, byte_count)) {
+    if (byte_count == 0 || byte_count > kAudioPeriodBytes) {
+        return -static_cast<int>(SAVANXP_EINVAL);
+    }
+
+    reclaim_tx();
+
+    // Nota: a diferencia de AC97 (que drena a ritmo de reproduccion), QEMU
+    // completa cada TX de virtio-sound al instante y bufferea del lado del host,
+    // asi que g_tx_in_flight vuelve a 0 enseguida y eso NO es un underrun real
+    // ni hay que reinyectar silencio (inundaria el stream). El colchon inicial
+    // queda como seguro por si un device real drenara a ritmo de reproduccion.
+    const int slot = find_free_tx_slot();
+    if (slot < 0) {
+        // Ring lleno: descartar en vez de bloquear. Un spin esperando aca (con
+        // interrupciones off, como corren los syscalls) congelaria el timer y el
+        // reloj del guest; el productor, que se guia por ese reloj para dosificar,
+        // colapsaria. Ese era el motivo del audio entrecortado por virtio.
+        ++g_tx_drops;
+        return 0;
+    }
+    if (!submit_tx_slot(static_cast<uint16_t>(slot), user_buffer, byte_count, false)) {
         return -static_cast<int>(SAVANXP_EIO);
     }
     drain_event_queue();
@@ -453,8 +547,14 @@ int vs_submit_period(uint64_t user_buffer, uint32_t byte_count) {
 }
 
 void vs_stop() {
+    reclaim_tx();
     drain_event_queue();
     stop_and_release_stream();
+    reclaim_tx();  // el device devuelve los buffers en vuelo tras STOP/RELEASE
+    if (g_tx_drops != 0) {
+        console::printf("virtio-sound: stop con %u periodos descartados\n", static_cast<unsigned>(g_tx_drops));
+    }
+    reset_tx_ring();
 }
 
 const audio::Backend g_backend = {
@@ -489,6 +589,8 @@ void initialize() {
     g_ready = false;
     g_stream_selected = false;
     g_event_buffer_armed = false;
+    g_tx_usable_slots = 0;
+    reset_tx_ring();
     reset_stream_state();
 
     pci::DeviceInfo pci_device = {};
@@ -511,10 +613,17 @@ void initialize() {
     }
     if (!virtio_pci::setup_queue(g_device, kVirtioSoundControlQueue, kControlQueueDescriptors, kControlQueueExtraBytes, 16, g_control_queue) ||
         !virtio_pci::setup_queue(g_device, kVirtioSoundEventQueue, kEventQueueDescriptors, kEventQueueExtraBytes, 16, g_event_queue) ||
-        !virtio_pci::setup_queue(g_device, kVirtioSoundTxQueue, kTxQueueDescriptors, kTxQueueExtraBytes, 16, g_tx_queue) ||
+        !virtio_pci::setup_queue(g_device, kVirtioSoundTxQueue, kTxQueueLimit, kTxQueueExtraBytes, 16, g_tx_queue) ||
         !virtio_pci::setup_queue(g_device, kVirtioSoundRxQueue, kRxQueueDescriptors, 0, 16, g_rx_queue)) {
         fail_device("failed to setup queues");
         return;
+    }
+
+    // Cuantos slots de reproduccion caben en la cola que negocio el device (cada
+    // uno usa 3 descriptores). En QEMU la TX suele ser grande y quedan los 8.
+    g_tx_usable_slots = kTxSlots;
+    if (g_tx_queue.size / kTxDescriptorsPerSlot < g_tx_usable_slots) {
+        g_tx_usable_slots = static_cast<uint16_t>(g_tx_queue.size / kTxDescriptorsPerSlot);
     }
 
     virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1003,6 +1003,22 @@ function Run-Ac97StreamQemu {
     Write-Host "WAV capturado: $wav"
 }
 
+function Run-VirtioCountQemu {
+    # audiotest --stream sobre virtio-sound (el default) con audiodev none, para
+    # medir el contador de underruns del nuevo camino TX multi-buffer.
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2
+    $line = Select-String -Path $SmokeSerialLog -Pattern "virtio-sound: stop con" | Select-Object -Last 1
+    if ($line) { Write-Host ("DESCARTES -> " + $line.Line.Trim()) } else { Write-Host "DESCARTES -> 0 (sin linea de descartes)" }
+}
+
+function Run-VirtioStreamQemu {
+    # audiotest --stream sobre virtio-sound grabando a WAV para analizar gaps.
+    $wav = Join-Path $BuildRoot "virtio-stream.wav"
+    if (Test-Path $wav) { Remove-Item $wav -Force }
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -WavPath $wav
+    Write-Host "WAV capturado: $wav"
+}
+
 function Run-Ac97CountQemu {
     # Corre audiotest --stream sobre AC'97 con audiodev none (sin pacing de wav):
     # QEMU avanza el CIV en tiempo virtual igual que el guest alimenta, asi el
@@ -1050,6 +1066,12 @@ switch ($Command) {
     }
     "ac97-count" {
         Run-Ac97CountQemu
+    }
+    "virtio-count" {
+        Run-VirtioCountQemu
+    }
+    "virtio-stream" {
+        Run-VirtioStreamQemu
     }
     "desktop-smoke" {
         Run-DesktopSmokeQemu

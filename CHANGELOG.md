@@ -237,6 +237,23 @@ Notas de corte:
 
 ### Corregido
 
+- **virtio-sound: reproduccion TX async multi-buffer (sin espera bloqueante).**
+  El camino TX enviaba UN periodo y hacia spin esperando que el device lo
+  consumiera (`wait_for_used_element`) antes de aceptar el siguiente, con un solo
+  buffer compartido. Ese spin corre con interrupciones deshabilitadas (los
+  syscalls corren asi), con el mismo riesgo de congelar el reloj del guest que se
+  corrigio en AC'97. Ahora la cola TX usa un anillo de `kTxSlots` periodos, cada
+  uno con su cadena de 3 descriptores (header/data/status): `submit_period`
+  encola sin esperar y reclama los completados por el used ring; si el anillo
+  esta lleno descarta en vez de bloquear. Se agrego un colchon inicial de
+  silencio (como AC'97) como seguro, aunque en QEMU virtio-sound completa cada TX
+  al instante y bufferea del lado del host, asi que el colchon/underrun del
+  modelo de AC'97 no aplica aca (reinyectar silencio en ese caso inundaria el
+  stream — por eso no se hace). Verificado headless con `.\build.ps1
+  virtio-stream` (captura WAV del patron de feed tipo-Doom): tono continuo, 0
+  gaps; `virtio-count` reporta 0 periodos descartados; `smoke` sin regresion. A
+  diferencia de AC'97, la captura WAV de virtio bajo TCG SI es fiel (no hay
+  emulacion de DMA continua que ralentice el guest).
 - **AC'97: modelo de reproduccion sin bloqueo + colchon + sin IOC.** Tres
   correcciones al camino de reproduccion, sobre el fix de subalimentacion de
   Doom (abajo), apuntando al audio entrecortado en VirtualBox:
