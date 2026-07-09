@@ -464,7 +464,6 @@ static int DG_Sound_GetSfxLumpNum(sfxinfo_t *sfxinfo) {
 
 static void DG_Sound_Update(void) {
     size_t frames_to_mix;
-    size_t period_frames;
     size_t frames_to_write;
     unsigned long total_bytes;
 
@@ -481,20 +480,20 @@ static void DG_Sound_Update(void) {
         return;
     }
 
-    period_frames = sx_audio_period_frames();
     frames_to_mix = sx_audio_mix_frames(g_mix_buffer, frames_to_mix);
     if (frames_to_mix == 0) {
         return;
     }
 
-    if (period_frames != 0u) {
-        frames_to_write = frames_to_mix - (frames_to_mix % period_frames);
-        if (frames_to_write == 0u) {
-            frames_to_write = frames_to_mix;
-        }
-    } else {
-        frames_to_write = frames_to_mix;
-    }
+    /* Escribir TODOS los frames mezclados. Antes se redondeaba hacia abajo al
+     * periodo y se descartaba el resto, pero sx_audio_mix_frames ya avanzo la
+     * posicion de los canales por todos esos frames: el resto no escrito se
+     * perdia. A ~35 Hz (un tic de Doom ~28.5 ms > un periodo de 21.3 ms) eso
+     * alimentaba el device a ~0.75x del ritmo de reproduccion (underrun
+     * constante => audio "robotizado"/trabado) y ademas adelantaba los efectos.
+     * El kernel ya trocea en periodos internamente, asi que un tamano no
+     * alineado al periodo es correcto. */
+    frames_to_write = frames_to_mix;
 
     total_bytes = (unsigned long)(frames_to_write * g_audio_info.frame_bytes);
     if (write(g_audio_fd, g_mix_buffer, total_bytes) != (long)total_bytes) {

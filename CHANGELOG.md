@@ -38,7 +38,7 @@ Notas de corte:
   (`ac97: ready ... nam=0x6000 nabm=0x6400`), registra `/dev/audio0` y pasa; y
   bajando `kMaxInFlight` a 2 se confirmo que `submit_period` bloquea hasta que el
   hardware consume (CIV avanza), probando que el motor DMA reproduce de verdad y
-  no solo acepta el enqueue. Falta la validacion auditiva final en VirtualBox.
+  no solo acepta el enqueue. Confirmado con sonido en VirtualBox real y en QEMU.
 - **`virtio-sound`: fin del enmudecimiento silencioso.** Si el dispositivo
   responde pero ningun stream de salida ofrece el formato fijo del ABI, antes
   `/dev/audio0` no se registraba sin dejar traza (indistinguible de "no hay
@@ -237,6 +237,16 @@ Notas de corte:
 
 ### Corregido
 
+- **Audio "robotizado"/trabado en Doom (subalimentacion del device).**
+  `DG_Sound_Update` (glue de audio de doomgeneric) mezclaba `frames_to_mix`
+  frames avanzando la posicion de todos los canales, pero escribia solo ese
+  total redondeado *hacia abajo* al periodo, descartando el resto. A ~35 Hz (un
+  tic de Doom ~28.5 ms > un periodo de 21.3 ms) eso alimentaba el device a
+  ~0.75x del ritmo de reproduccion (underrun constante => cortes) y ademas
+  adelantaba los efectos ~1.34x (los frames descartados ya habian avanzado los
+  canales). Estaba en la capa comun del glue, por eso sonaba igual en virtio y
+  AC97; el tono de `audiotest` (una sola escritura) no se afectaba. Fix: escribir
+  todos los frames mezclados (el kernel ya trocea en periodos internamente).
 - **Residuos visuales del cursor sobre elementos del compositor.**
   `sx_painter_draw_frame` (SDK `gfx2d.c`) intersectaba el rect con el clip del
   painter y luego dibujaba el marco del rect *intersectado*. Cuando el
