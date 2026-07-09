@@ -3,7 +3,15 @@ param(
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
-    [int]$GpuSoakIterations = 96
+    [int]$GpuSoakIterations = 96,
+
+    # whpx usa el Windows Hypervisor Platform (Hyper-V) en vez de TCG. Con
+    # "-cpu max"/"-cpu host" bajo whpx, OVMF crashea con #GP en PlatformPei
+    # apenas arranca: WHPX no puede respaldar features de CPU muy nuevas
+    # (APX y afines) que esos modelos exponen al guest. "qemu64" evita el
+    # problema y ya viene confirmado bootenado end-to-end bajo whpx.
+    [ValidateSet("tcg", "whpx")]
+    [string]$Accel = "tcg"
 )
 
 $ErrorActionPreference = "Stop"
@@ -799,6 +807,13 @@ function Build-Iso {
     Write-Host "ISO generada: $IsoImage"
 }
 
+function Get-AccelCpu([string]$AccelName) {
+    if ($AccelName -eq "whpx") {
+        return @{ Accel = "whpx"; Cpu = "qemu64" }
+    }
+    return @{ Accel = "tcg"; Cpu = "max" }
+}
+
 function Run-Qemu([switch]$WaitForDebugger) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel
@@ -809,11 +824,12 @@ function Run-Qemu([switch]$WaitForDebugger) {
         Remove-Item $DebugConLog -Force
     }
 
+    $accelCpu = Get-AccelCpu $Accel
     $args = @(
         "-machine", "q35,pcspk-audiodev=audio0",
-        "-accel", "tcg",
+        "-accel", $accelCpu.Accel,
         "-m", "256M",
-        "-cpu", "max",
+        "-cpu", $accelCpu.Cpu,
         "-audiodev", "sdl,id=audio0",
         "-audiodev", "sdl,id=audio1",
         "-display", "gtk,grab-on-hover=on,show-cursor=off,window-close=on,zoom-to-fit=off",

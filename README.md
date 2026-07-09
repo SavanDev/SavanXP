@@ -96,6 +96,18 @@ Arrancar el sistema:
 .\build.ps1 run
 ```
 
+Por defecto usa TCG (emulacion por software). Si tenes Hyper-V activo en
+Windows, `-Accel whpx` acelera el boot usando el Windows Hypervisor Platform:
+
+```powershell
+.\build.ps1 run -Accel whpx
+```
+
+Nota: con whpx, `-cpu max`/`-cpu host` hacen crashear a OVMF con un #GP en
+PlatformPei apenas arranca (WHPX no puede respaldar features de CPU muy
+nuevas que esos modelos exponen al guest). Por eso `-Accel whpx` fuerza
+`-cpu qemu64`, que arranca sin problemas.
+
 Otras variantes disponibles:
 
 ```powershell
