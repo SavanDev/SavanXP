@@ -708,22 +708,23 @@ uint64_t cursor_response_physical() {
     return cursor_request_physical() + kCursorResponseBufferOffset;
 }
 
+// Deadline por TSC (timer::monotonic_ns), no por timer::ticks(). Este wait se
+// alcanza tambien durante el boot temprano, con interrupciones globalmente
+// deshabilitadas (IF=0): ahi timer::ticks() nunca avanza (depende del IRQ del
+// timer) y un timer::wait_ticks()/hlt jamas se despierta bajo un hipervisor
+// fiel al hardware (confirmado bajo WHPX: HLT con IF=0 solo despierta con
+// NMI). El TSC es monotono independientemente de IF, asi que esta espera hace
+// busy-spin en vez de halt.
 uint64_t wait_deadline(uint64_t wait_ms) {
-    const uint64_t now = timer::ticks();
-    const uint32_t hz = timer::frequency_hz() != 0 ? timer::frequency_hz() : 1u;
-    uint64_t wait_ticks = (wait_ms * hz + 999u) / 1000u;
-    if (wait_ticks == 0) {
-        wait_ticks = 1u;
-    }
-    return now + wait_ticks;
+    return timer::monotonic_ns() + wait_ms * 1000000ULL;
 }
 
-bool wait_for_gpu_tick(uint64_t deadline_tick) {
-    if (timer::ticks() >= deadline_tick) {
+bool wait_for_gpu_tick(uint64_t deadline_ns) {
+    if (timer::monotonic_ns() >= deadline_ns) {
         return false;
     }
-    timer::wait_ticks(1);
-    return timer::ticks() < deadline_tick;
+    pause_briefly();
+    return timer::monotonic_ns() < deadline_ns;
 }
 
 void pause_briefly() {

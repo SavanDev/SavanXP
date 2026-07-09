@@ -529,3 +529,9 @@ uacpi_status uacpi_kernel_wait_for_work_completion(void) {
 }
 
 } // extern "C"
+
+namespace timer {
+uint64_t monotonic_ns() {
+    return uacpi_kernel_get_nanoseconds_since_boot();
+}
+} // namespace timer
