@@ -22,12 +22,12 @@ $BuildRoot = Join-Path $ProjectRoot "build"
 $ObjRoot = Join-Path $BuildRoot "obj"
 $ImageRoot = Join-Path $BuildRoot "image"
 $BootRoot = Join-Path $ImageRoot "boot"
-$EfiBootRoot = Join-Path $ImageRoot "EFI\\BOOT"
+$EfiBootRoot = Join-Path $ImageRoot "EFI/BOOT"
 $RootfsBuild = Join-Path $BuildRoot "rootfs"
 $DiskBuildRoot = Join-Path $BuildRoot "diskfs"
 $GeneratedRoot = Join-Path $BuildRoot "generated"
 $DiskRoot = Join-Path $ProjectRoot "diskfs"
-$BusyBoxPortRoot = Join-Path $ProjectRoot "vendor\\busybox-port"
+$BusyBoxPortRoot = Join-Path $ProjectRoot "vendor/busybox-port"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
 $DiskImage = Join-Path $BuildRoot "disk.img"
 $IsoImage = Join-Path $BuildRoot "SavanXP.iso"
@@ -35,7 +35,7 @@ $ToolRoot = Join-Path $ProjectRoot "tools"
 $SubsystemRoot = Join-Path $ProjectRoot "subsystems"
 $PosixRoot = Join-Path $SubsystemRoot "posix"
 $PosixKernelRoot = Join-Path $PosixRoot "kernel"
-$PosixSdkRoot = Join-Path $PosixRoot "sdk\\v1"
+$PosixSdkRoot = Join-Path $PosixRoot "sdk/v1"
 $PosixUserlandRoot = Join-Path $PosixRoot "userland"
 $LimineRoot = Join-Path $ToolRoot "limine"
 $LimineBranch = "v10.x-binary"
@@ -515,7 +515,7 @@ function Generate-CursorAsset {
     New-Directory $GeneratedRoot
 
     $scriptPath = Join-Path $ToolRoot "GenerateCursorAsset.ps1"
-    $sourcePath = Join-Path $ProjectRoot "assets\\desktop\\cursor.png"
+    $sourcePath = Join-Path $ProjectRoot "assets/desktop/cursor.png"
     $outputPath = Join-Path $GeneratedRoot "cursor_asset.h"
 
     & $scriptPath -SourcePath $sourcePath -OutputPath $outputPath
@@ -598,7 +598,7 @@ function Build-Userland([string]$Linker, [object[]]$Programs) {
     New-Directory $RootfsBuild
     New-Directory $binRoot
 
-    Copy-Item (Join-Path $ProjectRoot "rootfs\\README") (Join-Path $RootfsBuild "README") -Force
+    Copy-Item (Join-Path $ProjectRoot "rootfs/README") (Join-Path $RootfsBuild "README") -Force
 
     foreach ($program in $Programs) {
         $outputPath = Join-Path $binRoot $program.Name
@@ -623,13 +623,13 @@ function Install-BusyBox {
     New-Directory $RootfsBuild
     New-Directory (Join-Path $RootfsBuild "bin")
 
-    $busyboxOutput = Join-Path $RootfsBuild "bin\\busybox"
+    $busyboxOutput = Join-Path $RootfsBuild "bin/busybox"
     $builtBusyBox = Build-ExternalUserProgram -SourcePath $BusyBoxPortRoot -ProgramName "busybox" -OutputPath $busyboxOutput
     foreach ($applet in $BusyBoxApplets) {
         if ($applet -eq "busybox") {
             continue
         }
-        Copy-Item $builtBusyBox (Join-Path $RootfsBuild "bin\\$applet") -Force
+        Copy-Item $builtBusyBox (Join-Path $RootfsBuild "bin/$applet") -Force
     }
 }
 
@@ -654,7 +654,7 @@ function Install-LimineImageFiles {
         if (-not (Test-Path $source)) {
             throw "No se encontro $file en tools/limine. Vuelve a ejecutar el build para regenerar Limine."
         }
-        Copy-Item $source (Join-Path $BootRoot "limine\\$file") -Force
+        Copy-Item $source (Join-Path $BootRoot "limine/$file") -Force
     }
 }
 
@@ -698,7 +698,7 @@ function Build-Kernel([string]$AutomationCommand = "") {
     New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
-    Copy-Item (Join-Path $RootfsBuild "bin\\*") (Join-Path $DiskBuildRoot "bin") -Force
+    Copy-Item (Join-Path $RootfsBuild "bin/*") (Join-Path $DiskBuildRoot "bin") -Force
     Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
     $diskImage = Open-SvfsImage $DiskImage
     Repair-SvfsReachableMetadataAndReport $diskImage "pre-sync"
@@ -726,7 +726,7 @@ function Build-Kernel([string]$AutomationCommand = "") {
         throw "Fallo el link del kernel."
     }
 
-    Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $ImageRoot "limine.conf") -Force
+    Copy-Item (Join-Path $ProjectRoot "boot/limine.conf") (Join-Path $ImageRoot "limine.conf") -Force
     Copy-Item $KernelElf (Join-Path $BootRoot "kernel.elf") -Force
     Copy-Item $InitramfsPath (Join-Path $BootRoot "initramfs.cpio") -Force
     # LiveCD: la imagen de disco viaja dentro de la ISO como segundo modulo de
@@ -736,7 +736,7 @@ function Build-Kernel([string]$AutomationCommand = "") {
     # $DiskImage con el objeto de imagen -- PowerShell es case-insensitive.)
     Copy-Item $script:DiskImage (Join-Path $BootRoot "disk.img") -Force
     Install-LimineImageFiles
-    Copy-Item (Join-Path $ProjectRoot "boot\\limine.conf") (Join-Path $BootRoot "limine\\limine.conf") -Force
+    Copy-Item (Join-Path $ProjectRoot "boot/limine.conf") (Join-Path $BootRoot "limine/limine.conf") -Force
     Set-Content -Path (Join-Path $ImageRoot "startup.nsh") -Value "fs0:\EFI\BOOT\BOOTX64.EFI" -NoNewline
 }
 

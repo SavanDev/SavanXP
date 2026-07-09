@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 $Script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Script:BuildRoot = Join-Path $Script:ProjectRoot "build"
 $Script:SdkBuildRoot = Join-Path $Script:BuildRoot "sdk"
-$Script:SdkRoot = Join-Path $Script:ProjectRoot "subsystems\\posix\\sdk\\v1"
+$Script:SdkRoot = Join-Path $Script:ProjectRoot "subsystems/posix/sdk/v1"
 $Script:DiskImage = Join-Path $Script:BuildRoot "disk.img"
 $Script:SvfsSectorSize = 512
 $Script:SvfsEntrySize = 64
@@ -190,34 +190,34 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         $appObjects += $objectPath
     }
 
-    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime\\libc.c") -o $libcObject @compileFlags
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/libc.c") -o $libcObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime libc."
     }
 
     # Las apps externas del SDK (Doom, etc.) conservan la arena grande de malloc;
     # el default del runtime es chico porque la BSS se mapea entera al exec.
-    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime\\posix.c") -o $posixObject "-DSX_HEAP_SIZE=(48u*1024u*1024u)" @compileFlags
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/posix.c") -o $posixObject "-DSX_HEAP_SIZE=(48u*1024u*1024u)" @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime posix."
     }
 
-    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime\\gfx.c") -o $gfxObject @compileFlags
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/gfx.c") -o $gfxObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime gfx."
     }
 
-    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime\\gfx2d.c") -o $gfx2dObject @compileFlags
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/gfx2d.c") -o $gfx2dObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime gfx2d."
     }
 
-    & $compiler -c (Join-Path $Script:SdkRoot "runtime\\setjmp.S") -o $setjmpObject @compileFlags
+    & $compiler -c (Join-Path $Script:SdkRoot "runtime/setjmp.S") -o $setjmpObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime setjmp."
     }
 
-    & $compiler -c (Join-Path $Script:SdkRoot "runtime\\crt0.S") -o $crtObject @compileFlags
+    & $compiler -c (Join-Path $Script:SdkRoot "runtime/crt0.S") -o $crtObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion de crt0."
     }
