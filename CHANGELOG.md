@@ -304,6 +304,37 @@ Notas de corte:
   sobre un dialogo estatico con solo damage del cursor y verifica que el
   backbuffer en la posicion vieja vuelve al baseline (0 px de residuo).
   Verificado: cursor-repro PASS, desktop-smoke PASS, smoke PASS.
+- **`build.ps1` bifurcaba silenciosamente a PowerShell 5.1 para generar
+  assets.** `Generate-CursorAsset`/`Generate-DesktopIconAssets` invocaban
+  `& powershell -ExecutionPolicy Bypass -File ...` (3 puntos) para correr
+  `GenerateCursorAsset.ps1`/`GenerateDesktopIconAssets.ps1`/
+  `GenerateDesktopSourceArt.ps1`, que usan `System.Drawing`. `powershell` sin
+  extension resuelve siempre a Windows PowerShell 5.1 sin importar el motor
+  que arranco `build.ps1` de afuera: correr el build entero con `pwsh` (7) daba
+  una falsa sensacion de portabilidad, porque el tramo que usa GDI+ nunca se
+  ejecutaba realmente bajo pwsh 7, solo el script raiz. Se cambio a invocar los
+  scripts directamente (`& $scriptPath ...`, in-process, sin subproceso ni
+  `$LASTEXITCODE`; cada script ya propaga sus propios errores via
+  `$ErrorActionPreference = "Stop"`). Es el primer paso de evaluar portar el
+  build a WSL2/Ubuntu: valida antes que nada que el pipeline corra de verdad
+  bajo pwsh 7 en el mismo Windows, sin mezclar el salto de version de
+  PowerShell con el salto de sistema operativo. Verificado: `build`/`iso`/`run`
+  desde cero bajo `pwsh` generan los mismos assets y el kernel arranca igual
+  hasta el handoff.
+- **Rutas de `Join-Path` con `\` embebido, incompatibles fuera de Windows.**
+  Varias llamadas pasaban un segundo componente con `\\` literal dentro del
+  string (p. ej. `"EFI\\BOOT"`, `"runtime\\libc.c"`). En Windows funcionaba
+  por casualidad: .NET colapsa `\\`, `\` y `/` como el mismo separador de
+  directorio al tocar el filesystem real. En Linux `\` no tiene significado de
+  separador y queda como caracter literal del nombre de archivo, rompiendo la
+  jerarquia esperada (`EFI\BOOT` en vez de `EFI/BOOT`). Normalizado a `/` en
+  `build.ps1` y `tools/UserAppCommon.ps1` (~18 ocurrencias), que es separador
+  valido en ambos sistemas. Fuera de alcance a proposito: `ConvertTo-CygwinPath`
+  (traduccion especifica de rutas `C:\...` para el xorriso de Cygwin horneado)
+  y el contenido de `startup.nsh` (ruta de shell UEFI que interpreta el
+  firmware, no el host). Verificado: build/iso/run desde cero bajo `pwsh`,
+  mismos artefactos (`EFI/BOOT/BOOTX64.EFI`, `boot/limine/*`,
+  `rootfs/bin/busybox`) y mismo arranque en QEMU.
 
 ### Cambiado
 
