@@ -371,6 +371,49 @@ Notas de corte:
   repetido en cada TU que incluye `syscall.h`. Los valores caben en un int
   normal y el tipo no se usaba en ninguna firma; sin cambio funcional.
 
+### Agregado
+
+- **`build.ps1 run`/`debug`: soporte `-Accel whpx` para acelerar QEMU con
+  Hyper-V.** Por defecto se sigue usando TCG (emulacion por software); en
+  maquinas con Hyper-V activo, `-Accel whpx` cambia a Windows Hypervisor
+  Platform. `-cpu max`/`-cpu host` bajo whpx hacen crashear a OVMF con un
+  `#GP` en `PlatformPei` apenas arranca (fase PEI, antes de DXE): WHPX no
+  puede respaldar para el guest ciertas features de CPU muy nuevas (conflicto
+  APX/MPX en CPUID leaf 7) que esos modelos exponen, y la deteccion temprana
+  de features de OVMF lo hace fallar. `-Accel whpx` fuerza `-cpu qemu64` en
+  su lugar, que evita el problema; el kernel/userland de SavanXP no dependen
+  de AVX/RDRAND/XSAVE directamente asi que no pierde nada util. `smoke`/
+  `desktop-smoke`/soak (`Run-AutomationQemu`) se dejan a proposito
+  hardcodeados en TCG, para no meterle no-determinismo a los tests
+  automatizados. Verificado: boot end-to-end hasta `handoff: starting
+  /bin/init`, con el AML de uACPI cargando ~10x mas rapido que bajo TCG.
+
+### Corregido
+
+- **`virtio-gpu`: `SET_SCANOUT` colgado para siempre bajo WHPX (HLT con
+  interrupciones deshabilitadas).** Con `-Accel whpx` el boot llegaba hasta
+  `virtio-gpu: primary backing attached` y se quedaba trabado ahi (pantalla
+  de "Preparando display" sin avanzar nunca). Causa: durante el boot
+  temprano el kernel corre con interrupciones globalmente deshabilitadas
+  (`IF=0`); cuando `SET_SCANOUT` tardaba mas que el busy-spin inicial de
+  `wait_for_command_slot`, el segundo tier de espera caia a
+  `timer::wait_ticks()` -> `halt_once()` (un `HLT` desnudo, sin `sti`
+  previo) esperando la interrupcion del timer. Un `HLT` con `IF=0` en
+  hardware real (y en WHPX, que es fiel al hardware) solo se puede despertar
+  con NMI, nunca con una IRQ enmascarable como la del timer -> cuelgue
+  permanente. TCG es mas laxo con ese caso puntual y despierta el guest
+  igual, por eso el bug nunca se habia manifestado antes de probar whpx.
+  Confirmado con el monitor HMP de QEMU: dos lecturas de `info registers`
+  con varios segundos de diferencia devolvieron el estado del vCPU identico
+  bit a bit (`HLT=1`, `RFLAGS=0x97` sin el bit IF). Fix: nueva
+  `timer::monotonic_ns()` (reloj por TSC, reutiliza la calibracion que
+  uACPI ya hacia para su propio `stall`/`sleep` con `IF=0`) reemplaza a
+  `timer::ticks()` en el wait de `virtio-gpu`, con busy-spin acotado en vez
+  de `HLT`; el TSC avanza sin importar el estado de interrupciones. Aplica
+  siempre (no solo bajo whpx) sin romper nada: `smoke` y `desktop-smoke`
+  siguen en verde bajo TCG. Confirmado en la maquina real del usuario:
+  `.\build.ps1 run -Accel whpx` arranca completo de punta a punta.
+
 ## [0.3.2] - 2026-07-03
 
 ### Agregado
