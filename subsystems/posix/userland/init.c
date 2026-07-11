@@ -46,6 +46,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "audiostream")) {
         return "AUDIO STREAM";
     }
+    if (spec != 0 && text_contains(spec, "guihost")) {
+        return "NATIVEGUI HOST";
+    }
     return "SMOKE";
 }
 
@@ -55,6 +58,7 @@ static int run_automation_spec(const char* spec) {
     const char* desktop_argv[] = {"/bin/desktop", "--selftest", 0};
     const char* cursor_repro_argv[] = {"/bin/desktop", "--cursor-repro", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
+    const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -78,6 +82,10 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/audiotest";
             argv = audiostream_argv;
             argc = 2;
+        } else if (strcmp(spec, "guihost") == 0 || strcmp(spec, "native-guihost") == 0) {
+            path = "/disk/bin/nativeguihost";
+            argv = guihost_argv;
+            argc = 1;
         } else if (text_starts_with(spec, "gputest --soak ")) {
             const char* iterations = skip_spaces(spec + strlen("gputest --soak"));
             if (iterations[0] == '\0') {

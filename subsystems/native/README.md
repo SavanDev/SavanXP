@@ -56,10 +56,20 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   del exec (sección compartida + eventos submit/retire/shutdown + input por
   pipe), todo en syscalls del baseline — sin kernel nuevo. La app
   [haxe-gui/Main.hx](haxe-gui/Main.hx) (`nativegui`) abre la sesión, dibuja y
-  anima con dirty rects, y procesa input. Verificado headless con el harness
-  [test/guihost.c](test/guihost.c), que interpreta el rol del compositor:
-  `frames compuestos=4`, tecla recibida, `NATIVEGUI HOST PASS`. Bonus: primer
+  anima con dirty rects, procesa teclado (fd 4) y **puntero (fd 5)**. Verificado
+  headless con el harness [test/guihost.c](test/guihost.c), que interpreta el
+  rol del compositor: `frames compuestos=5`, tecla recibida, evento de mouse
+  ruteado y marcador dibujado donde apunta, `NATIVEGUI HOST PASS`. Bonus: primer
   test del cambio de subsistema vía **exec** (fork posix → exec ELF nativo).
+  Repetible con `.\build.ps1 native-guihost`.
+
+- **Canal de mouse (fd 5)** — **el puntero llega a las apps nativas**: la capa
+  `sxn_gui_*` gana `sxn_gui_poll_pointer` (espejo de `gfx_poll_pointer` del SDK
+  posix) sobre el fd 5 que el shell instala junto a la sección; entrega
+  `sxn_gui_pointer_event {x, y, buttons}` en coordenadas locales a la superficie
+  (el shell resta el origen de la ventana en `route_pointer`). Verificado
+  end-to-end: el harness envía `(100,80)` con botón izquierdo, el cliente lo
+  recibe y pinta un marcador ahí.
 
 ## El contrato ABI (v1)
 
@@ -134,7 +144,7 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 - `sdk/include/savanxp_native_gui.h` + `sdk/runtime/sx_gui.c` — cliente del
   compositor: espejos del contrato de superficie v3 (fuente de verdad en el SDK
   posix y desktop.c) y la API `sxn_gui_*` (open/present/present_region/
-  poll_event/should_close) sobre los fds 3..9 heredados del shell.
+  poll_event/poll_pointer/should_close) sobre los fds 3..9 heredados del shell.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
   String/Array + syscalls nativas). `haxe-gui/Main.hx` — `nativegui`, la app
   ventaneada de ejemplo (cliente del compositor).
@@ -229,8 +239,6 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 1. Probar `Map`/`Null<T>` y ampliar el mini std (`<optional>`, `<functional>`)
    según pida el codegen; resolver Float (compiler-rt o x87).
-2. Canal de mouse (fd 5, `savanxp_gui_pointer_event`) en `sxn_gui_*` — el
-   protocolo ya lo prevé; falta el wrapper y un consumidor.
-3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
+2. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
    prerequisitos técnicos ya están: clases + String/Array + cliente del
-   compositor. Empezar por una app sxgui-style en Haxe.
+   compositor + teclado + puntero. Empezar por una app sxgui-style en Haxe.

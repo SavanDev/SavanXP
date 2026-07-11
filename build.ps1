@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -877,9 +877,17 @@ function Stop-AutomationQemu($Process, [int]$MonitorPort) {
     Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
 }
 
-function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [switch]$UseAc97, [string]$WavPath) {
+function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [switch]$UseAc97, [string]$WavPath, [scriptblock]$PreLaunch) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel -AutomationCommand $AutomationCommand
+
+    # Gancho post-build: Build-Kernel regenera build/disk.img desde el arbol
+    # fuente disk/, asi que cualquier binario que viva solo como artefacto (p.
+    # ej. las apps nativas instaladas con -Install) debe reinstalarse aca, entre
+    # el rebuild y el lanzamiento de QEMU.
+    if ($PreLaunch) {
+        & $PreLaunch
+    }
 
     $ovmf = Resolve-OvmfPair
     Copy-Item $ovmf.Vars $VarsTemplate -Force
@@ -991,6 +999,24 @@ function Run-SmokeQemu {
     Run-AutomationQemu -AutomationCommand "smoke" -SuccessToken "SMOKE PASS" -FailureToken "SMOKE FAIL" -TimeoutMinutes 2
 }
 
+# Harness headless del protocolo cliente del compositor (subsystems/native):
+# construye e instala la app ventaneada nativa (nativegui) y el host que
+# interpreta el rol del compositor (nativeguihost), luego arranca init con el
+# spec "guihost". Valida secuencias/rects/pixeles, el input de teclado y el
+# canal de mouse (fd 5) de punta a punta. Ver subsystems/native/test/guihost.c.
+function Run-NativeGuihostQemu {
+    $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
+    $userBuild = Join-Path $ToolRoot "build-user.ps1"
+    $guihostSource = Join-Path $ProjectRoot "subsystems/native/test/guihost.c"
+
+    Run-AutomationQemu -AutomationCommand "guihost" -SuccessToken "NATIVEGUI HOST PASS" -FailureToken "NATIVEGUI HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
+        & $nativeBuild -Name nativegui -Source haxe-gui -Install
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de nativegui." }
+        & $userBuild -Source $guihostSource -Name nativeguihost
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de nativeguihost." }
+    }.GetNewClosure()
+}
+
 function Run-Ac97SmokeQemu {
     # Mismo smoke que valida /dev/audio0, pero forzando el hardware AC'97 (sin
     # virtio-sound) para ejercitar el backend de fallback usado en VirtualBox.
@@ -1087,6 +1113,9 @@ switch ($Command) {
     }
     "gpu-soak" {
         Run-GpuSoakQemu -Iterations $GpuSoakIterations
+    }
+    "native-guihost" {
+        Run-NativeGuihostQemu
     }
     "clean" {
         if (Test-Path $BuildRoot) {

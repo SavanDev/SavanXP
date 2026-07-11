@@ -78,6 +78,19 @@ struct sxn_gui_input_event {
 #define SXN_GUI_EVENT_KEY_UP 2u
 #define SXN_GUI_EVENT_RESIZED 3u
 
+/* Evento de puntero que el shell rutea por el fd 5, en coordenadas locales a la
+ * superficie del cliente (route_pointer resta el origen de la ventana). Espejo
+ * de savanxp_gui_pointer_event del SDK posix. */
+struct sxn_gui_pointer_event {
+    int32_t x;
+    int32_t y;
+    uint32_t buttons; /* mascara de bits SXN_GUI_MOUSE_BUTTON_* */
+};
+
+#define SXN_GUI_MOUSE_BUTTON_LEFT (1u << 0)
+#define SXN_GUI_MOUSE_BUTTON_RIGHT (1u << 1)
+#define SXN_GUI_MOUSE_BUTTON_MIDDLE (1u << 2)
+
 /* Fds fijos que el shell instala antes del exec del cliente. */
 #define SXN_GUI_FD_SECTION 3
 #define SXN_GUI_FD_INPUT 4
@@ -119,6 +132,12 @@ long sxn_gui_present_region(const void *frame, unsigned int x, unsigned int y,
 /* Devuelve 1 con un evento (teclado o resize sintetizado), 0 sin eventos,
  * negativo en error. */
 int sxn_gui_poll_event(struct sxn_gui_input_event *event);
+
+/* Devuelve 1 con un evento de puntero del fd 5 (coordenadas locales a la
+ * superficie), 0 si no hay ninguno encolado, negativo en error (-EINVAL sin
+ * sesion). Igual que el canal de teclado pero sin sintesis: el shell entrega
+ * movimiento y botones crudos. */
+int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event);
 
 #ifdef __cplusplus
 }

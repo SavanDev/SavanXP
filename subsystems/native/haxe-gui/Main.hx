@@ -98,6 +98,42 @@ function main() {
     frames += 1;
   }
 
+  // Puntero: el shell (o el harness) rutea el mouse por el fd 5 en coordenadas
+  // locales a la superficie. Lo drenamos, dibujamos un marcador donde apunta y
+  // presentamos esa region -- prueba end-to-end del canal. El poll es no
+  // bloqueante; el harness ya encolo el evento durante la animacion, pero unos
+  // reintentos con sleep cubren cualquier carrera (y bajo el escritorio real,
+  // sin evento, simplemente no dibuja marcador).
+  untyped __cpp__("struct sxn_gui_pointer_event __pt; int __pt_result = 0");
+  var intentos = 0;
+  while (intentos < 200) {
+    untyped __cpp__("__pt_result = sxn_gui_poll_pointer(&__pt)");
+    if (untyped __cpp__("__pt_result != 0")) {
+      break;
+    }
+    untyped __cpp__("sxn_sleep_ms(2)");
+    intentos += 1;
+  }
+  if (untyped __cpp__("__pt_result == 1")) {
+    var px:Int = untyped __cpp__("(int)__pt.x");
+    var py:Int = untyped __cpp__("(int)__pt.y");
+    var botones:Int = untyped __cpp__("(int)__pt.buttons");
+    untyped __cpp__('sxn_log_num("gui: puntero x", {0})', px);
+    untyped __cpp__('sxn_log_num("gui: puntero y", {0})', py);
+    untyped __cpp__('sxn_log_num("gui: puntero botones", {0})', botones);
+    // Recortar el centro para que el marcador de 10x10 quede en la superficie.
+    if (px < 5) px = 5;
+    if (px > ancho - 6) px = ancho - 6;
+    if (py < 5) py = 5;
+    if (py > alto - 6) py = alto - 6;
+    ventana.rectangulo(px - 5, py - 5, 10, 10, 0xE01050);
+    var marca = ventana.presentarRegion(px - 5, py - 5, 10, 10);
+    if (marca != 0) {
+      untyped __cpp__('sxn_log_num("gui: fallo present del marcador", {0})', marca);
+      untyped __cpp__("sxn_exit(1)");
+    }
+  }
+
   // Drenar input: el harness manda una tecla; bajo el escritorio puede no
   // haber nada encolado y esta bien.
   untyped __cpp__("struct sxn_gui_input_event __ev; int __ev_result = sxn_gui_poll_event(&__ev)");

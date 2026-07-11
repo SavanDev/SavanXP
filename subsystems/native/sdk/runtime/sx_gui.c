@@ -291,6 +291,31 @@ int sxn_gui_poll_event(struct sxn_gui_input_event *event) {
     return result == (long)sizeof(*event) ? 1 : 0;
 }
 
+int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event) {
+    struct sxn_gui_pollfd pollfd;
+    long result;
+
+    if (!g_gui.open || event == 0) {
+        return -SXN_GUI_EINVAL;
+    }
+
+    /* El shell entrega el puntero en coordenadas locales a la superficie (ver
+     * route_pointer en desktop.c); no hay sintesis como en el canal de teclado.
+     * Mismo patron que el cliente posix (gfx_poll_pointer en libc.c). */
+    pollfd.fd = SXN_GUI_FD_MOUSE;
+    pollfd.events = SXN_POLLIN | SXN_POLLHUP;
+    pollfd.revents = 0;
+    if (sxn_gui_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SXN_POLLIN) == 0) {
+        return 0;
+    }
+
+    result = sxn_gui_read(SXN_GUI_FD_MOUSE, event, sizeof(*event));
+    if (result < 0) {
+        return (int)result;
+    }
+    return result == (long)sizeof(*event) ? 1 : 0;
+}
+
 /* Utilidad para demos: dormir sin quemar CPU. */
 void sxn_sleep_ms(long milliseconds) {
     sxn_gui_sleep_ms(milliseconds);

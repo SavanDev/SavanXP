@@ -21,7 +21,10 @@
 #define GUIHOST_PAGE 4096u
 #define GUIHOST_CLIENT_PATH "/disk/bin/nativegui"
 #define GUIHOST_DEADLINE_MS 8000ul
-#define GUIHOST_EXPECTED_FRAMES 4ul /* 1 present completo + 3 regiones */
+#define GUIHOST_EXPECTED_FRAMES 5ul /* 1 present completo + 3 regiones + marcador de puntero */
+#define GUIHOST_POINTER_X 100
+#define GUIHOST_POINTER_Y 80
+#define GUIHOST_MARKER_COLOR 0xE01050u /* debe coincidir con el marcador de haxe-gui/Main.hx */
 
 static int fail(const char *reason) {
     printf("guihost: %s\n", reason);
@@ -160,11 +163,20 @@ int main(void) {
             (void)event_set(retire_event);
         }
 
-        /* Con el primer frame compuesto, verificar pixeles y mandar la tecla. */
+        /* Con el primer frame compuesto, verificar pixeles y mandar el puntero
+         * (fd 5) + la tecla (fd 4). El cliente drena el puntero tras la
+         * animacion y dibuja un marcador donde apunta. */
         if (!sent_key && header->composed_sequence >= 1) {
             struct savanxp_input_event event;
+            struct savanxp_gui_pointer_event pointer;
             if (pixels[25 * GUIHOST_WIDTH + 30] == 0) {
                 return fail("la superficie quedo vacia tras el primer frame");
+            }
+            pointer.x = GUIHOST_POINTER_X;
+            pointer.y = GUIHOST_POINTER_Y;
+            pointer.buttons = SAVANXP_MOUSE_BUTTON_LEFT;
+            if (write(mouse_pipe[1], &pointer, sizeof(pointer)) != (long)sizeof(pointer)) {
+                return fail("no se pudo mandar el evento de puntero");
             }
             event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
             event.key = SAVANXP_KEY_ENTER;
@@ -189,7 +201,15 @@ int main(void) {
         return 1;
     }
 
+    /* El marcador del puntero: el cliente lo pinto en (GUIHOST_POINTER_X,
+     * GUIHOST_POINTER_Y) al recibir el evento por el fd 5. Confirma el canal de
+     * mouse de punta a punta. */
+    if (pixels[GUIHOST_POINTER_Y * GUIHOST_WIDTH + GUIHOST_POINTER_X] != GUIHOST_MARKER_COLOR) {
+        return fail("el cliente no dibujo el marcador del puntero (fd 5 no llego)");
+    }
+
     printf("guihost: frames compuestos=%d\n", (int)header->composed_sequence);
+    printf("guihost: marcador de puntero en (%d,%d) OK\n", GUIHOST_POINTER_X, GUIHOST_POINTER_Y);
     puts("NATIVEGUI HOST PASS\n");
     return 0;
 }
