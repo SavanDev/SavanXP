@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1017,6 +1017,19 @@ function Run-NativeGuihostQemu {
     }.GetNewClosure()
 }
 
+# Programa de validacion del runtime nativo (subsystems/native/haxe/Main.hx):
+# clases heap/@:valueType, String/Array, Null<T> (std::optional) y demo gfx.
+# Corre headless via el spec "nativehello" y confirma "NATIVE HELLO PASS". Mismo
+# gancho -PreLaunch que native-guihost porque Build-Kernel regenera disk.img.
+function Run-NativeHelloQemu {
+    $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
+
+    Run-AutomationQemu -AutomationCommand "nativehello" -SuccessToken "NATIVE HELLO PASS" -FailureToken "NATIVE HELLO FAIL" -TimeoutMinutes 3 -PreLaunch {
+        & $nativeBuild -Name nativehello -Source haxe -Install
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de nativehello." }
+    }.GetNewClosure()
+}
+
 function Run-Ac97SmokeQemu {
     # Mismo smoke que valida /dev/audio0, pero forzando el hardware AC'97 (sin
     # virtio-sound) para ejercitar el backend de fallback usado en VirtualBox.
@@ -1116,6 +1129,9 @@ switch ($Command) {
     }
     "native-guihost" {
         Run-NativeGuihostQemu
+    }
+    "native-hello" {
+        Run-NativeHelloQemu
     }
     "clean" {
         if (Test-Path $BuildRoot) {

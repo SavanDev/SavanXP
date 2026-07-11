@@ -1,0 +1,142 @@
+/*
+ * SavanXP - mini <optional> freestanding del subsistema nativo.
+ *
+ * El C++ que genera reflaxe.CPP mapea Null<T> de Haxe a std::optional<T>
+ * (construccion desde T o desde std::nullopt, has_value()/value()). En
+ * freestanding no hay libstdc++, asi que este header provee una implementacion
+ * minima de valor: buffer alineado + flag de "engaged", sin excepciones (el
+ * build usa -fno-exceptions; value() sobre un optional vacio aborta ruidoso en
+ * vez de lanzar bad_optional_access -- el codegen siempre lo protege con
+ * has_value()).
+ *
+ * Alcance intencional: lo que pide el codegen de Null<T>. Crece a demanda; el
+ * error de compilacion es la senal.
+ */
+#pragma once
+
+#include "__sxn_core"
+
+namespace std {
+
+struct nullopt_t {
+    explicit constexpr nullopt_t(int) {}
+};
+inline constexpr nullopt_t nullopt{0};
+
+template <class T>
+class optional {
+    bool __engaged = false;
+    alignas(T) unsigned char __storage[sizeof(T)];
+
+    T* __ptr() noexcept { return reinterpret_cast<T*>(__storage); }
+    const T* __ptr() const noexcept { return reinterpret_cast<const T*>(__storage); }
+
+    void __destroy() noexcept {
+        if (__engaged) {
+            __ptr()->~T();
+            __engaged = false;
+        }
+    }
+
+public:
+    constexpr optional() noexcept {}
+    constexpr optional(nullopt_t) noexcept {}
+
+    /* Implicitos a proposito: el codegen hace `return 10;` con retorno
+     * std::optional<int>. */
+    optional(const T& value) {
+        new (static_cast<void*>(__storage)) T(value);
+        __engaged = true;
+    }
+    optional(T&& value) {
+        new (static_cast<void*>(__storage)) T(static_cast<T&&>(value));
+        __engaged = true;
+    }
+
+    optional(const optional& other) {
+        if (other.__engaged) {
+            new (static_cast<void*>(__storage)) T(*other.__ptr());
+            __engaged = true;
+        }
+    }
+    optional(optional&& other) {
+        if (other.__engaged) {
+            new (static_cast<void*>(__storage)) T(static_cast<T&&>(*other.__ptr()));
+            __engaged = true;
+        }
+    }
+
+    ~optional() { __destroy(); }
+
+    optional& operator=(nullopt_t) noexcept {
+        __destroy();
+        return *this;
+    }
+    optional& operator=(const optional& other) {
+        if (this != &other) {
+            __destroy();
+            if (other.__engaged) {
+                new (static_cast<void*>(__storage)) T(*other.__ptr());
+                __engaged = true;
+            }
+        }
+        return *this;
+    }
+    optional& operator=(optional&& other) {
+        if (this != &other) {
+            __destroy();
+            if (other.__engaged) {
+                new (static_cast<void*>(__storage)) T(static_cast<T&&>(*other.__ptr()));
+                __engaged = true;
+            }
+        }
+        return *this;
+    }
+    optional& operator=(const T& value) {
+        __destroy();
+        new (static_cast<void*>(__storage)) T(value);
+        __engaged = true;
+        return *this;
+    }
+    optional& operator=(T&& value) {
+        __destroy();
+        new (static_cast<void*>(__storage)) T(static_cast<T&&>(value));
+        __engaged = true;
+        return *this;
+    }
+
+    bool has_value() const noexcept { return __engaged; }
+    explicit operator bool() const noexcept { return __engaged; }
+
+    T& value() {
+        if (!__engaged) {
+            sxn_log("cxx: optional::value() sobre optional vacio");
+            sxn_exit(134);
+        }
+        return *__ptr();
+    }
+    const T& value() const {
+        if (!__engaged) {
+            sxn_log("cxx: optional::value() sobre optional vacio");
+            sxn_exit(134);
+        }
+        return *__ptr();
+    }
+
+    T& operator*() noexcept { return *__ptr(); }
+    const T& operator*() const noexcept { return *__ptr(); }
+    T* operator->() noexcept { return __ptr(); }
+    const T* operator->() const noexcept { return __ptr(); }
+
+    void reset() noexcept { __destroy(); }
+
+    bool operator==(nullopt_t) const noexcept { return !__engaged; }
+    bool operator!=(nullopt_t) const noexcept { return __engaged; }
+};
+
+template <class T>
+bool operator==(nullopt_t, const optional<T>& opt) noexcept { return !opt.has_value(); }
+template <class T>
+bool operator!=(nullopt_t, const optional<T>& opt) noexcept { return opt.has_value(); }
+
+} // namespace std

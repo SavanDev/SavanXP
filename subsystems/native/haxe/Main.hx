@@ -84,6 +84,15 @@ class Lienzo {
   }
 }
 
+// Null<T> real de Haxe: reflaxe.CPP lo mapea a std::optional<T>, resuelto por
+// el mini <optional> freestanding del SDK. Sin division (Float sigue sin
+// soporte): tabla chica a mano.
+function buscarValor(clave:Int):Null<Int> {
+  if (clave == 1) return 100;
+  if (clave == 2) return 200;
+  return null;
+}
+
 // Demo grafica: toma la sesion de display, dibuja un degrade con un rectangulo
 // verde centrado y lo presenta. Si el display esta ocupado (compositor activo)
 // la demo se omite sin fallar: la sesion exclusiva es de a un proceso por vez.
@@ -167,5 +176,28 @@ function main() {
   untyped __cpp__('sxn_log_num("main: largo de la frase", {0})', frase.length);
   untyped __cpp__('sxn_log("main: String/Array de Haxe OK")');
 
+  // Null<T> (std::optional): buscar valores, sumar los presentes y contar los
+  // nulos. Claves 1 y 2 devuelven 100 y 200; 0 y 3 devuelven null.
+  var sumaOpt = 0;
+  var nulos = 0;
+  for (clave in 0...4) {
+    var valor:Null<Int> = buscarValor(clave);
+    if (valor != null) {
+      var v:Int = valor; // null-safety promueve Null<Int> -> Int
+      sumaOpt += v;
+    } else {
+      nulos += 1;
+    }
+  }
+  untyped __cpp__('sxn_log_num("main: suma Null<Int> (esperado 300)", {0})', sumaOpt);
+  untyped __cpp__('sxn_log_num("main: nulos (esperado 2)", {0})', nulos);
+  if (sumaOpt != 300 || nulos != 2) {
+    untyped __cpp__('sxn_log("main: Null<T> incorrecto")');
+    untyped __cpp__("sxn_exit(1)");
+  }
+  untyped __cpp__('sxn_log("main: Null<T> de Haxe OK")');
+
   demoGrafica();
+
+  untyped __cpp__('sxn_log("NATIVE HELLO PASS")');
 }

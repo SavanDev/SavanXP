@@ -105,6 +105,14 @@ Al arrancar, el runtime hace el handshake `sxn_info()` y aborta (exit 132) si
 `nativegui` instalada aparece en `/disk/bin` y puede lanzarse desde el
 escritorio (app de archivos): corre como ventana normal bajo el compositor.
 
+Verificación headless repetible desde la raíz del repo (construyen e instalan
+las apps nativas post-rebuild y las corren en QEMU):
+
+```powershell
+.\build.ps1 native-hello      # valida el runtime: clases, String/Array, Null<T>, gfx
+.\build.ps1 native-guihost    # valida el cliente del compositor: teclado + puntero (fd 5)
+```
+
 El script:
 
 1. Resuelve `haxe`/`clang`/`clang++`/`ld.lld` por `tools/Toolchain.ps1`
@@ -130,8 +138,10 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 - `sdk/include/cxxstd/` — **mini std C++ freestanding** sobre `sxn_alloc`:
   `__sxn_core` (move/forward, placement new, compartido), `memory`
   (`shared_ptr`/`make_shared`, refcount no-atómico, una asignación por objeto),
-  `string` (`std::string` + literales `"..."s` + `to_string`), `deque` (respaldo
-  del `Array<T>` de Haxe; buffer contiguo, iteradores planos),
+  `optional` (`std::optional`/`std::nullopt` para `Null<T>` de Haxe; valor plano
+  con flag engaged, `value()` sobre vacío aborta ruidoso porque no hay
+  excepciones), `string` (`std::string` + literales `"..."s` + `to_string`),
+  `deque` (respaldo del `Array<T>` de Haxe; buffer contiguo, iteradores planos),
   `initializer_list`, `algorithm` (`transform`/`min`/`max`), `cctype` (ASCII) y
   `new`. Sin `weak_ptr` ni `dynamic_pointer_cast` (-fno-rtti); crecer bajo
   demanda — el error de compilación es la señal.
@@ -237,8 +247,20 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ## Próximos pasos
 
-1. Probar `Map`/`Null<T>` y ampliar el mini std (`<optional>`, `<functional>`)
-   según pida el codegen; resolver Float (compiler-rt o x87).
-2. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
-   prerequisitos técnicos ya están: clases + String/Array + cliente del
-   compositor + teclado + puntero. Empezar por una app sxgui-style en Haxe.
+1. **`Map<K,V>`** — más grande de lo que parecía: el codegen de `StringMap`
+   arrastra `<map>`, `<utility>`, `<functional>` (type-erasure de `std::function`
+   en los `Iterator`), `enable_shared_from_this` + algo tipo `weak_ptr`
+   (`weak_from_this().expired()`), `<sstream>`/`<type_traits>` (vía
+   `Std`/`DynamicToString`) y un **shadow de `Std.hx`** para esquivar el
+   `try/catch` (rompe con `-fno-exceptions`) y `std::stof` (reintroduce Float).
+   Crecer `cxxstd/` a demanda; el error de compilación es la señal.
+2. **Float** — bloqueado por partida doble: el toolchain **no** trae compiler-rt
+   (ni la lib ni las fuentes de los builtins soft-float), y el kernel **no**
+   inicializa ni guarda/restaura el estado de la FPU en los cambios de contexto,
+   así que usar hardware FP (x87/SSE) sería corrupción latente bajo preempción.
+   Caminos: vendorizar los builtins de `double` (soft-float, sin tocar el
+   kernel) **o** agregar gestión de estado FPU al kernel y habilitar x87/SSE
+   para el código nativo. Por ahora, división entera vía `untyped __cpp__`.
+3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
+   prerequisitos técnicos ya están: clases + String/Array + `Null<T>` + cliente
+   del compositor + teclado + puntero. Empezar por una app sxgui-style en Haxe.
