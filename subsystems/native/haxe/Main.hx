@@ -197,6 +197,35 @@ function main() {
   }
   untyped __cpp__('sxn_log("main: Null<T> de Haxe OK")');
 
+  // Map<String,Int> real de Haxe (std::map sobre el mini <map> del SDK). set,
+  // exists, get (Null<T>), remove e iteracion por claves.
+  var mapa = new Map<String, Int>();
+  mapa.set("uno", 1);
+  mapa.set("dos", 2);
+  mapa.set("tres", 3);
+  var existeDos = mapa.exists("dos") ? 1 : 0;
+  mapa.remove("uno");
+  var existeUno = mapa.exists("uno") ? 1 : 0;
+  var sumaMapa = 0;
+  var claves = 0;
+  for (k in mapa.keys()) {
+    var mv:Null<Int> = mapa.get(k);
+    if (mv != null) {
+      var m2:Int = mv;
+      sumaMapa += m2;
+    }
+    claves += 1;
+  }
+  untyped __cpp__('sxn_log_num("main: map existe dos (esperado 1)", {0})', existeDos);
+  untyped __cpp__('sxn_log_num("main: map existe uno tras remove (esperado 0)", {0})', existeUno);
+  untyped __cpp__('sxn_log_num("main: map suma tras remove (esperado 5)", {0})', sumaMapa);
+  untyped __cpp__('sxn_log_num("main: map claves (esperado 2)", {0})', claves);
+  if (existeDos != 1 || existeUno != 0 || sumaMapa != 5 || claves != 2) {
+    untyped __cpp__('sxn_log("main: Map incorrecto")');
+    untyped __cpp__("sxn_exit(1)");
+  }
+  untyped __cpp__('sxn_log("main: Map<String,Int> de Haxe OK")');
+
   demoGrafica();
 
   untyped __cpp__('sxn_log("NATIVE HELLO PASS")');

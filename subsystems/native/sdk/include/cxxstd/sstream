@@ -1,0 +1,56 @@
+/*
+ * SavanXP - mini <sstream> freestanding del subsistema nativo.
+ *
+ * std::stringstream minimo. El codegen de reflaxe.CPP solo lo usa en el ultimo
+ * recurso de cxx_DynamicToString.h (formatear la direccion de un valor cuando
+ * ningun otro `if constexpr` aplica). Cubrimos operator<< para lo que ese
+ * camino necesita (puntero, string, C-string, char, enteros) y str(). Sin
+ * parsing (>>), sin flags de formato.
+ *
+ * Alcance intencional: lo que pide el codegen. Crece a demanda.
+ */
+#pragma once
+
+#include "__sxn_core"
+#include "string"
+
+namespace std {
+
+class stringstream {
+    string __buf;
+
+    static string __ptr_to_hex(const void* pointer) {
+        unsigned long value = reinterpret_cast<unsigned long>(pointer);
+        string result = "0x";
+        bool started = false;
+        /* Nibbles de mas significativo a menos; sin ceros a la izquierda. */
+        for (int shift = (int)(sizeof(unsigned long) * 8) - 4; shift >= 0; shift -= 4) {
+            unsigned digit = (unsigned)((value >> shift) & 0xful);
+            if (digit != 0u || started || shift == 0) {
+                result.push_back((char)(digit < 10u ? '0' + digit : 'a' + (digit - 10u)));
+                started = true;
+            }
+        }
+        return result;
+    }
+
+public:
+    stringstream() {}
+
+    string str() const { return __buf; }
+    void str(const string& value) { __buf = value; }
+
+    stringstream& operator<<(const string& value) { __buf += value; return *this; }
+    stringstream& operator<<(const char* value) { __buf += value; return *this; }
+    stringstream& operator<<(char value) { __buf += value; return *this; }
+    stringstream& operator<<(const void* value) { __buf += __ptr_to_hex(value); return *this; }
+    stringstream& operator<<(int value) { __buf += to_string(value); return *this; }
+    stringstream& operator<<(long value) { __buf += to_string(value); return *this; }
+    stringstream& operator<<(long long value) { __buf += to_string(value); return *this; }
+    stringstream& operator<<(unsigned value) { __buf += to_string(value); return *this; }
+    stringstream& operator<<(unsigned long value) { __buf += to_string(value); return *this; }
+};
+
+using ostringstream = stringstream;
+
+} // namespace std

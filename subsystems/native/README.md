@@ -137,14 +137,22 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   generado (identidad/log, I/O baseline, heap, builtins de memoria).
 - `sdk/include/cxxstd/` — **mini std C++ freestanding** sobre `sxn_alloc`:
   `__sxn_core` (move/forward, placement new, compartido), `memory`
-  (`shared_ptr`/`make_shared`, refcount no-atómico, una asignación por objeto),
-  `optional` (`std::optional`/`std::nullopt` para `Null<T>` de Haxe; valor plano
-  con flag engaged, `value()` sobre vacío aborta ruidoso porque no hay
-  excepciones), `string` (`std::string` + literales `"..."s` + `to_string`),
-  `deque` (respaldo del `Array<T>` de Haxe; buffer contiguo, iteradores planos),
+  (`shared_ptr`/`make_shared`/`unique_ptr`/`make_unique`/`weak_ptr`/
+  `enable_shared_from_this`/`static_pointer_cast`/`addressof`, refcount
+  no-atómico, una asignación por objeto), `optional` (`std::optional`/
+  `std::nullopt` para `Null<T>`; valor plano con flag engaged, `value()` sobre
+  vacío aborta ruidoso porque no hay excepciones), `map` (`std::map` para
+  `haxe.ds.StringMap`; respaldado por `deque`, búsqueda lineal, NO es un árbol
+  ordenado — basta para mapas chicos), `functional` (`std::function` con
+  type-erasure sobre el heap), `utility` (`std::pair`), `type_traits` (los
+  rasgos que pide `DynamicToString`; los triviales delegan en builtins `__is_`
+  de clang), `limits` (`std::numeric_limits`), `sstream` (`std::stringstream`
+  mínimo, solo el fallback de formateo de punteros), `string` (`std::string` +
+  literales `"..."s` + `to_string` + `stoi`; sin `stof` — Float sin soporte),
+  `deque` (respaldo del `Array<T>`; buffer contiguo, iteradores planos),
   `initializer_list`, `algorithm` (`transform`/`min`/`max`), `cctype` (ASCII) y
-  `new`. Sin `weak_ptr` ni `dynamic_pointer_cast` (-fno-rtti); crecer bajo
-  demanda — el error de compilación es la señal.
+  `new`. Sin `dynamic_pointer_cast` (-fno-rtti); crecer bajo demanda — el error
+  de compilación es la señal.
 - `sdk/runtime/sx_native.c` — syscalls (`int $0x80`), heap free-list (arena BSS
   de 4 MiB, first-fit con split y coalescing) y memcpy/memset/memmove/memcmp.
 - `sdk/runtime/sx_cxx.cpp` — `operator new/delete` sobre el heap (OOM = exit
@@ -165,8 +173,11 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 - `haxe-support/` — tooling macro del build: `SxnCompilerInit.hx` (envuelve el
   init de reflaxe.CPP y registra nuestro preprocesador) y `UniqueLocalNames.hx`
   (hace únicos los locals por función; ver Hallazgos).
-- `haxe-std-fixes/Math.hx` — shadow del `Math` de `_std` con el fix del
-  overload `isFinite` ambiguo en Haxe 4 (se copia como `Math.cross.hx`).
+- `haxe-std-fixes/` — shadows del `_std` (se copian como `*.cross.hx` encima de
+  los de la lib): `Math.hx` (fix del overload `isFinite` ambiguo en Haxe 4) y
+  `Std.hx` (`parseInt` con `std::stoi` propio sin `try/catch`, `parseFloat`
+  stubbeado a NaN sin `std::stof` — el original rompe con `-fno-exceptions` y
+  reintroduce Float).
 - `kernel/syscall_dispatch.inc` — dispatcher nativo en el kernel: switch propio
   para el rango `0x1000+` y baseline `< 0x1000` delegado en posix.
 
@@ -234,11 +245,12 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ### Limitaciones conocidas / deuda
 
-- **`Map` de Haxe todavía sin probar** (los `.cross.hx` de `haxe/ds/*Map` están
-  expuestos, pero el mini std no tiene aún lo que pidan — probablemente
-  `<optional>` y `<functional>`). Probar con un consumidor real y crecer
-  `cxxstd/` a demanda. Lo mismo con `Null<T>` (→ `std::optional`) y `Dynamic`
-  (mejor evitarlo en código del sistema).
+- **`Map<String,Int>` y `Null<T>` verificados** (mini `<map>`/`<optional>` +
+  toda la maquinaria que arrastra `StringMap`). Los otros `*Map` (`IntMap`,
+  `ObjectMap`) comparten backing pero no se ejercitaron aún; probablemente
+  anden, crecer `cxxstd/` si el codegen pide algo nuevo. `Dynamic` sigue mejor
+  evitarlo en código del sistema. `Std.parseFloat` es un stub (devuelve NaN)
+  hasta que llegue Float.
 - **`trace()` sin cablear**: `haxe.Log` de `_std` probablemente arrastre I/O que
   no tenemos; hoy se loguea con `sxn_log`/`sxn_log_num`. Cablear `trace` →
   `SXN_SYS_LOG` cuando se necesite.
@@ -247,20 +259,14 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ## Próximos pasos
 
-1. **`Map<K,V>`** — más grande de lo que parecía: el codegen de `StringMap`
-   arrastra `<map>`, `<utility>`, `<functional>` (type-erasure de `std::function`
-   en los `Iterator`), `enable_shared_from_this` + algo tipo `weak_ptr`
-   (`weak_from_this().expired()`), `<sstream>`/`<type_traits>` (vía
-   `Std`/`DynamicToString`) y un **shadow de `Std.hx`** para esquivar el
-   `try/catch` (rompe con `-fno-exceptions`) y `std::stof` (reintroduce Float).
-   Crecer `cxxstd/` a demanda; el error de compilación es la señal.
-2. **Float** — bloqueado por partida doble: el toolchain **no** trae compiler-rt
+1. **Float** — bloqueado por partida doble: el toolchain **no** trae compiler-rt
    (ni la lib ni las fuentes de los builtins soft-float), y el kernel **no**
    inicializa ni guarda/restaura el estado de la FPU en los cambios de contexto,
    así que usar hardware FP (x87/SSE) sería corrupción latente bajo preempción.
    Caminos: vendorizar los builtins de `double` (soft-float, sin tocar el
    kernel) **o** agregar gestión de estado FPU al kernel y habilitar x87/SSE
    para el código nativo. Por ahora, división entera vía `untyped __cpp__`.
-3. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
-   prerequisitos técnicos ya están: clases + String/Array + `Null<T>` + cliente
-   del compositor + teclado + puntero. Empezar por una app sxgui-style en Haxe.
+2. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
+   prerequisitos técnicos ya están: clases + String/Array + `Null<T>` + `Map` +
+   cliente del compositor + teclado + puntero. Empezar por una app sxgui-style
+   en Haxe.

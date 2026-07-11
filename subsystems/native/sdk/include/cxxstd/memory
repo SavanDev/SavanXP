@@ -16,6 +16,7 @@
 #pragma once
 
 #include "__sxn_core"
+#include "type_traits"  /* is_base_of para enlazar enable_shared_from_this */
 
 namespace std {
 
@@ -31,6 +32,12 @@ struct __sxn_ctrl {
 
 template <class T>
 class shared_ptr;
+
+template <class T>
+class weak_ptr;
+
+template <class T>
+class enable_shared_from_this;
 
 template <class T, class U>
 shared_ptr<T> static_pointer_cast(const shared_ptr<U>& other) noexcept;
@@ -155,6 +162,64 @@ bool operator!=(nullptr_t, const shared_ptr<T>& pointer) noexcept {
     return pointer.get() != nullptr;
 }
 
+/* --- weak_ptr (minimo) --------------------------------------------------------
+ * No participa del refcount (no hay contador debil separado): solo observa el
+ * bloque de control. `expired()` mira si el fuerte llego a 0. Suficiente para
+ * enable_shared_from_this, que es el unico consumidor que genera reflaxe.CPP
+ * (`weak_from_this().expired()`). Sin control-block debil => si el objeto ya se
+ * destruyo, __ctrl es basura; en la practica weak_from_this se usa mientras hay
+ * un shared_ptr vivo, asi que el bloque existe. */
+template <class T>
+class weak_ptr {
+    T* __ptr = nullptr;
+    __sxn_ctrl* __ctrl = nullptr;
+
+public:
+    constexpr weak_ptr() noexcept {}
+    weak_ptr(T* pointer, __sxn_ctrl* control) noexcept : __ptr(pointer), __ctrl(control) {}
+
+    bool expired() const noexcept { return __ctrl == nullptr || __ctrl->refs == 0; }
+
+    shared_ptr<T> lock() const noexcept {
+        if (expired()) {
+            return shared_ptr<T>();
+        }
+        __ctrl->refs += 1;
+        return shared_ptr<T>(__ptr, __ctrl);
+    }
+};
+
+/* --- enable_shared_from_this --------------------------------------------------
+ * make_shared detecta (via is_base_of) que T hereda esta base y le graba el
+ * bloque de control + el puntero al objeto, para que shared_from_this() pueda
+ * reconstruir un shared_ptr que comparte el mismo control. La copia NO arrastra
+ * el enlace: un objeto copiado obtiene el suyo cuando make_shared lo publica. */
+template <class T>
+class enable_shared_from_this {
+    __sxn_ctrl* __wctrl = nullptr;
+    T* __wptr = nullptr;
+
+    template <class U, class... Args>
+    friend shared_ptr<U> make_shared(Args&&... args);
+
+protected:
+    constexpr enable_shared_from_this() noexcept {}
+    enable_shared_from_this(const enable_shared_from_this&) noexcept {}
+    enable_shared_from_this& operator=(const enable_shared_from_this&) noexcept { return *this; }
+    ~enable_shared_from_this() {}
+
+public:
+    shared_ptr<T> shared_from_this() {
+        if (__wctrl != nullptr) {
+            __wctrl->refs += 1;
+        }
+        return shared_ptr<T>(__wptr, __wctrl);
+    }
+    weak_ptr<T> weak_from_this() const noexcept {
+        return weak_ptr<T>(__wptr, __wctrl);
+    }
+};
+
 template <class T, class... Args>
 shared_ptr<T> make_shared(Args&&... args) {
     struct __combo {
@@ -175,6 +240,14 @@ shared_ptr<T> make_shared(Args&&... args) {
         reinterpret_cast<T*>(full->storage)->~T();
         sxn_free(full);
     };
+
+    /* Enlazar enable_shared_from_this si T lo hereda (para shared_from_this). */
+    if constexpr (is_base_of_v<enable_shared_from_this<T>, T>) {
+        enable_shared_from_this<T>* base = object;
+        base->__wctrl = &combo->ctrl;
+        base->__wptr = object;
+    }
+
     return shared_ptr<T>(object, &combo->ctrl);
 }
 
@@ -184,6 +257,82 @@ shared_ptr<T> static_pointer_cast(const shared_ptr<U>& other) noexcept {
     shared_ptr<T> result(static_cast<T*>(other.__ptr), other.__ctrl);
     result.__retain();
     return result;
+}
+
+/* --- unique_ptr ---------------------------------------------------------------
+ * Poseedor exclusivo (move-only) sobre el heap nativo. El codegen lo usa en los
+ * helpers de anon structs (_AnonUtils.h: unique_anon/make_unique). Sin deleter
+ * custom; destruye con ~T() + sxn_free (espejo de como make_unique asigna). */
+template <class T>
+class unique_ptr {
+    T* __ptr = nullptr;
+
+    void __destroy() noexcept {
+        if (__ptr != nullptr) {
+            __ptr->~T();
+            sxn_free(__ptr);
+            __ptr = nullptr;
+        }
+    }
+
+public:
+    constexpr unique_ptr() noexcept {}
+    constexpr unique_ptr(nullptr_t) noexcept {}
+    explicit unique_ptr(T* pointer) noexcept : __ptr(pointer) {}
+
+    unique_ptr(const unique_ptr&) = delete;
+    unique_ptr& operator=(const unique_ptr&) = delete;
+
+    unique_ptr(unique_ptr&& other) noexcept : __ptr(other.__ptr) { other.__ptr = nullptr; }
+    template <class U>
+    unique_ptr(unique_ptr<U>&& other) noexcept : __ptr(other.release()) {}
+
+    unique_ptr& operator=(unique_ptr&& other) noexcept {
+        if (this != &other) {
+            __destroy();
+            __ptr = other.__ptr;
+            other.__ptr = nullptr;
+        }
+        return *this;
+    }
+    unique_ptr& operator=(nullptr_t) noexcept {
+        __destroy();
+        return *this;
+    }
+
+    ~unique_ptr() { __destroy(); }
+
+    T* get() const noexcept { return __ptr; }
+    T& operator*() const noexcept { return *__ptr; }
+    T* operator->() const noexcept { return __ptr; }
+    explicit operator bool() const noexcept { return __ptr != nullptr; }
+
+    T* release() noexcept {
+        T* released = __ptr;
+        __ptr = nullptr;
+        return released;
+    }
+    void reset() noexcept { __destroy(); }
+
+    bool operator==(nullptr_t) const noexcept { return __ptr == nullptr; }
+    bool operator!=(nullptr_t) const noexcept { return __ptr != nullptr; }
+};
+
+template <class T, class... Args>
+unique_ptr<T> make_unique(Args&&... args) {
+    void* place = sxn_alloc(sizeof(T));
+    if (place == nullptr) {
+        sxn_log("cxx: make_unique sin memoria (heap nativo agotado)");
+        sxn_exit(133);
+    }
+    return unique_ptr<T>(new (place) T(forward<Args>(args)...));
+}
+
+/* --- addressof ---------------------------------------------------------------
+ * Direccion real del objeto aunque sobrecargue operator&. */
+template <class T>
+T* addressof(T& value) noexcept {
+    return __builtin_addressof(value);
 }
 
 } // namespace std

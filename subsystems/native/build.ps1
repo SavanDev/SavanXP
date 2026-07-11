@@ -92,9 +92,15 @@ Get-ChildItem $stdSourceDir -Recurse -Filter *.hx | ForEach-Object {
     Ensure-Directory (Split-Path -Parent $target)
     Copy-Item $_.FullName $target
 }
-# Shadow local: Math con el fix del overload isFinite ambiguo en Haxe 4
-# (ver subsystems/native/haxe-std-fixes/Math.hx).
-Copy-Item (Join-Path $scriptDir "haxe-std-fixes\Math.hx") (Join-Path $stdCrossDir "Math.cross.hx") -Force
+# Shadows locales del _std: se copian como *.cross.hx encima de los de la lib.
+# Cada uno arregla un choque con el runtime nativo freestanding:
+#  - Math.hx: overload isFinite ambiguo en Haxe 4.
+#  - Std.hx: try/catch (rompe con -fno-exceptions) y std::stof en parseFloat
+#    (reintroduce Float). Ver subsystems/native/haxe-std-fixes/.
+Get-ChildItem (Join-Path $scriptDir "haxe-std-fixes") -Filter *.hx | ForEach-Object {
+    $crossName = ($_.Name -replace '\.hx$', '.cross.hx')
+    Copy-Item $_.FullName (Join-Path $stdCrossDir $crossName) -Force
+}
 
 # --- 3b. Generar C++ desde Haxe -----------------------------------------------
 if (Test-Path $genDir) { Remove-Item -Recurse -Force $genDir }

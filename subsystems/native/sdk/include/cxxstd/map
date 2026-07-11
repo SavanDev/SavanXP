@@ -1,0 +1,115 @@
+/*
+ * SavanXP - mini <map> freestanding del subsistema nativo.
+ *
+ * std::map<Key, T> minimo, respaldo del haxe.ds.StringMap generado por
+ * reflaxe.CPP. NO es un arbol ordenado: se apoya en <deque> (buffer contiguo)
+ * con busqueda lineal por operator==. Basta porque los mapas de Haxe en el
+ * sistema son chicos y el orden de iteracion de Map es "no especificado". Si
+ * algun consumidor necesitara claves ordenadas o mapas grandes, esta es la
+ * senal para cambiar el backing por un arbol balanceado.
+ *
+ * Interfaz cubierta (lo que pide el codegen): insert(pair) sin sobrescribir,
+ * at, count, erase(key), begin/end (iteradores = punteros al buffer), clear,
+ * size, empty, operator[]. Crece a demanda.
+ */
+#pragma once
+
+#include "__sxn_core"
+#include "utility"
+#include "deque"
+
+namespace std {
+
+template <class Key, class T>
+class map {
+public:
+    using key_type = Key;
+    using mapped_type = T;
+    using value_type = pair<Key, T>;
+    using size_type = size_t;
+    using iterator = value_type*;
+    using const_iterator = const value_type*;
+
+private:
+    deque<value_type> __items;
+
+    value_type* __find(const Key& key) {
+        for (size_type i = 0; i < __items.size(); ++i) {
+            if (__items[i].first == key) {
+                return &__items[i];
+            }
+        }
+        return nullptr;
+    }
+    const value_type* __find(const Key& key) const {
+        for (size_type i = 0; i < __items.size(); ++i) {
+            if (__items[i].first == key) {
+                return &__items[i];
+            }
+        }
+        return nullptr;
+    }
+
+public:
+    map() {}
+
+    iterator begin() noexcept { return __items.begin(); }
+    iterator end() noexcept { return __items.end(); }
+    const_iterator begin() const noexcept { return __items.begin(); }
+    const_iterator end() const noexcept { return __items.end(); }
+
+    size_type size() const noexcept { return __items.size(); }
+    bool empty() const noexcept { return __items.empty(); }
+    void clear() noexcept { __items.clear(); }
+
+    size_type count(const Key& key) const { return __find(key) != nullptr ? 1u : 0u; }
+
+    T& at(const Key& key) {
+        value_type* found = __find(key);
+        if (found == nullptr) {
+            sxn_log("cxx: map::at con clave inexistente");
+            sxn_exit(136);
+        }
+        return found->second;
+    }
+    const T& at(const Key& key) const {
+        const value_type* found = __find(key);
+        if (found == nullptr) {
+            sxn_log("cxx: map::at con clave inexistente");
+            sxn_exit(136);
+        }
+        return found->second;
+    }
+
+    /* Semantica de std::map: NO sobrescribe una clave existente. */
+    pair<iterator, bool> insert(const value_type& value) {
+        value_type* found = __find(value.first);
+        if (found != nullptr) {
+            return pair<iterator, bool>(found, false);
+        }
+        __items.push_back(value);
+        return pair<iterator, bool>(&__items[__items.size() - 1u], true);
+    }
+
+    size_type erase(const Key& key) {
+        for (iterator it = __items.begin(); it != __items.end(); ++it) {
+            if (it->first == key) {
+                __items.erase(it);
+                return 1u;
+            }
+        }
+        return 0u;
+    }
+
+    /* operator[]: inserta un valor por defecto si la clave no existe. */
+    T& operator[](const Key& key) {
+        value_type* found = __find(key);
+        if (found != nullptr) {
+            return found->second;
+        }
+        __items.push_back(value_type(key, T()));
+        return __items[__items.size() - 1u].second;
+    }
+};
+
+} // namespace std

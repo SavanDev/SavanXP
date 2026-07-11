@@ -360,6 +360,29 @@ inline string to_string(long long value) { return __sxn_int_to_string(value); }
 inline string to_string(unsigned value) { return __sxn_int_to_string(static_cast<long long>(value)); }
 inline string to_string(unsigned long value) { return __sxn_int_to_string(static_cast<long long>(value)); }
 
+/* --- stoi --------------------------------------------------------------------
+ * Parser entero puro (sin float, sin excepciones). El std::stoi real lanza ante
+ * entrada invalida; este devuelve lo parseado hasta el primer no-digito (0 si
+ * no hay ninguno). Suficiente para Std.parseInt del subsistema nativo (ver el
+ * shadow haxe-std-fixes/Std.hx). No hay stof: Float sigue sin soporte. */
+inline int stoi(const string& text) {
+    const char* cursor = text.c_str();
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\n' || *cursor == '\r') {
+        ++cursor;
+    }
+    bool negative = false;
+    if (*cursor == '+' || *cursor == '-') {
+        negative = (*cursor == '-');
+        ++cursor;
+    }
+    long value = 0;
+    while (*cursor >= '0' && *cursor <= '9') {
+        value = value * 10 + (*cursor - '0');
+        ++cursor;
+    }
+    return static_cast<int>(negative ? -value : value);
+}
+
 inline string to_string(double value) {
     /* Formato simple: parte entera + hasta 6 decimales sin ceros finales. */
     string result;

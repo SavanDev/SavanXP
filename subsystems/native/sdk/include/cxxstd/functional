@@ -1,0 +1,111 @@
+/*
+ * SavanXP - mini <functional> freestanding del subsistema nativo.
+ *
+ * std::function<R(Args...)> con type-erasure. El codegen de reflaxe.CPP lo usa
+ * en los Iterator de StdTypes.h (`std::function<bool()> hasNext`, etc.), que a
+ * su vez sostienen lambdas con capturas. En freestanding no hay libstdc++, asi
+ * que el callable erasado vive en el heap nativo (sxn_alloc) detras de una
+ * base virtual con invoke/clone/dtor -- mismo espiritu que el bloque de control
+ * de <memory>. Refcount N/A: cada function posee su propio callable (clone en
+ * copia).
+ *
+ * Alcance intencional: lo que pide el codegen (sin allocator, sin target(),
+ * sin small-buffer optimization). Crece a demanda.
+ */
+#pragma once
+
+#include "__sxn_core"
+#include "type_traits"
+
+namespace std {
+
+template <class>
+class function;
+
+template <class R, class... Args>
+class function<R(Args...)> {
+    struct __base {
+        virtual R __invoke(Args... args) = 0;
+        virtual __base* __clone() const = 0;
+        virtual ~__base() {}
+    };
+
+    template <class F>
+    struct __impl : __base {
+        F __fn;
+        explicit __impl(const F& fn) : __fn(fn) {}
+        R __invoke(Args... args) override { return __fn(static_cast<Args&&>(args)...); }
+        __base* __clone() const override {
+            void* place = sxn_alloc(sizeof(__impl));
+            if (place == nullptr) {
+                sxn_log("cxx: function::clone sin memoria");
+                sxn_exit(135);
+            }
+            return new (place) __impl(__fn);
+        }
+    };
+
+    __base* __ptr = nullptr;
+
+    void __destroy() noexcept {
+        if (__ptr != nullptr) {
+            __ptr->~__base();
+            sxn_free(__ptr);
+            __ptr = nullptr;
+        }
+    }
+
+public:
+    function() noexcept {}
+    function(nullptr_t) noexcept {}
+
+    /* Desde cualquier callable (lambda/functor); excluye copiar una function. */
+    template <class F, class = enable_if_t<!is_same_v<remove_cvref_t<F>, function>>>
+    function(F fn) {
+        void* place = sxn_alloc(sizeof(__impl<F>));
+        if (place == nullptr) {
+            sxn_log("cxx: function ctor sin memoria");
+            sxn_exit(135);
+        }
+        __ptr = new (place) __impl<F>(fn);
+    }
+
+    function(const function& other) {
+        if (other.__ptr != nullptr) {
+            __ptr = other.__ptr->__clone();
+        }
+    }
+    function(function&& other) noexcept : __ptr(other.__ptr) { other.__ptr = nullptr; }
+
+    ~function() { __destroy(); }
+
+    function& operator=(const function& other) {
+        if (this != &other) {
+            __destroy();
+            if (other.__ptr != nullptr) {
+                __ptr = other.__ptr->__clone();
+            }
+        }
+        return *this;
+    }
+    function& operator=(function&& other) noexcept {
+        if (this != &other) {
+            __destroy();
+            __ptr = other.__ptr;
+            other.__ptr = nullptr;
+        }
+        return *this;
+    }
+    function& operator=(nullptr_t) noexcept {
+        __destroy();
+        return *this;
+    }
+
+    R operator()(Args... args) const {
+        return __ptr->__invoke(static_cast<Args&&>(args)...);
+    }
+
+    explicit operator bool() const noexcept { return __ptr != nullptr; }
+};
+
+} // namespace std

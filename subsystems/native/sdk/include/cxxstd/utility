@@ -1,0 +1,55 @@
+/*
+ * SavanXP - mini <utility> freestanding del subsistema nativo.
+ *
+ * Provee std::pair (que el StringMap generado por reflaxe.CPP usa como
+ * elemento de std::map) y re-expone move/forward/declval. Sin libstdc++.
+ *
+ * Alcance intencional: lo que pide el codegen. Crece a demanda.
+ */
+#pragma once
+
+#include "__sxn_core"   /* move / forward */
+#include "type_traits"  /* declval, remove_reference */
+
+namespace std {
+
+/* --- pair -------------------------------------------------------------------- */
+template <class T1, class T2>
+struct pair {
+    using first_type = T1;
+    using second_type = T2;
+
+    T1 first;
+    T2 second;
+
+    constexpr pair() : first(), second() {}
+    constexpr pair(const T1& a, const T2& b) : first(a), second(b) {}
+
+    template <class U1, class U2>
+    constexpr pair(U1&& a, U2&& b)
+        : first(static_cast<U1&&>(a)), second(static_cast<U2&&>(b)) {}
+
+    pair(const pair&) = default;
+    pair(pair&&) = default;
+
+    template <class U1, class U2>
+    constexpr pair(const pair<U1, U2>& other)
+        : first(other.first), second(other.second) {}
+
+    pair& operator=(const pair&) = default;
+    pair& operator=(pair&&) = default;
+};
+
+template <class T1, class T2>
+constexpr pair<remove_reference_t<T1>, remove_reference_t<T2>>
+make_pair(T1&& a, T2&& b) {
+    return pair<remove_reference_t<T1>, remove_reference_t<T2>>(
+        static_cast<T1&&>(a), static_cast<T2&&>(b));
+}
+
+template <class T1, class T2>
+constexpr bool operator==(const pair<T1, T2>& a, const pair<T1, T2>& b) {
+    return a.first == b.first && a.second == b.second;
+}
+
+} // namespace std
