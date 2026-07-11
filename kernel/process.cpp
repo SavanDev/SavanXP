@@ -263,6 +263,17 @@ void switch_to_process(process::Process* target) {
         return;
     }
 
+    // Cambio real de proceso: guardar el estado FPU/SSE del saliente y restaurar
+    // el del entrante. Si target == g_current el proceso sigue corriendo y su
+    // FPU ya esta viva en registros -- un FXRSTOR aqui la pisaria con una copia
+    // vieja, asi que se omite. El kernel es -mno-sse, no toca la FPU entremedio.
+    if (g_current != target) {
+        if (g_current != nullptr) {
+            arch::x86_64::fpu_save(g_current->fpu_state);
+        }
+        arch::x86_64::fpu_restore(target->fpu_state);
+    }
+
     g_current = target;
     target->state = process::State::running;
     arch::x86_64::set_kernel_stack(target->kernel_stack_base + target->kernel_stack_size);
@@ -348,6 +359,7 @@ process::Process* allocate_process_slot(bool idle) {
             slot.state = process::State::ready;
             slot.idle = idle;
             reset_time_slice(slot);
+            arch::x86_64::fpu_init_area(slot.fpu_state);
             return &slot;
         }
     }

@@ -70,6 +70,20 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   (el shell resta el origen de la ventana en `route_pointer`). Verificado
   end-to-end: el harness envía `(100,80)` con botón izquierdo, el cliente lo
   recibe y pinta un marcador ahí.
+- **`Null<T>` y `Map<K,V>`** — **`std::optional` y `std::map` reales**: el mini
+  std C++ del SDK creció con `optional`, `map`, `functional`, `type_traits`,
+  `utility`, `limits`, `sstream` y extensiones a `memory`/`string`, más un
+  shadow de `Std.hx`. Verificado: `Map<String,Int>` con set/get/exists/remove/
+  iteración.
+- **Float por hardware (SSE)** — **la aritmética de punto flotante de Haxe
+  anda**: el kernel ahora gestiona el estado FPU/SSE **por proceso** (habilita
+  SSE en el boot y hace FXSAVE/FXRSTOR en el context switch; el kernel es
+  `-mno-sse`, no toca la FPU), y el build nativo compila **con** SSE2. Así el
+  `/`, la aritmética y las conversiones `Int↔Float` de Haxe usan instrucciones
+  SSE reales, sin soft-float. Bonus: vuelve seguro el x87 que ya usaba posix
+  (fabr/sin/...), que antes se corrompía bajo preempción. Verificado:
+  `100/4=25`, `(0.1+0.2)*1000=300` (IEEE-754 real), `1.5*1.5*100=225`, sin
+  regresión en `smoke`/`desktop-smoke`.
 
 ## El contrato ABI (v1)
 
@@ -148,7 +162,8 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   rasgos que pide `DynamicToString`; los triviales delegan en builtins `__is_`
   de clang), `limits` (`std::numeric_limits`), `sstream` (`std::stringstream`
   mínimo, solo el fallback de formateo de punteros), `string` (`std::string` +
-  literales `"..."s` + `to_string` + `stoi`; sin `stof` — Float sin soporte),
+  literales `"..."s` + `to_string` + `stoi`; sin `stof` — `Std.parseFloat`
+  quedó stubbeado aunque el Float ya ande, es parsing aparte),
   `deque` (respaldo del `Array<T>`; buffer contiguo, iteradores planos),
   `initializer_list`, `algorithm` (`transform`/`min`/`max`), `cctype` (ASCII) y
   `new`. Sin `dynamic_pointer_cast` (-fno-rtti); crecer bajo demanda — el error
@@ -233,12 +248,17 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   branches de error desaparecidos en la demo gfx, y explica también el chequeo
   devorado de la Fase 2). `SxnCompilerInit` arma la lista de preprocesadores
   SIN ese pase (el DCE fino ya lo hace clang). Aislado por bisección de pases.
-- **Float de Haxe no funciona todavía en el runtime nativo**: la división `/`
-  de Haxe es Float, y en freestanding con `-mgeneral-regs-only` y sin
-  compiler-rt no existen los intrinsics soft-float (`__floatsidf`...). Para
-  aritmética de enteros con división usar `untyped __cpp__("({0} / {1})", …)`.
-  Deuda: linkear los builtins de compiler-rt o habilitar x87 como hace el SDK
-  posix.
+- **Float de Haxe anda por hardware (SSE)**: en vez de soft-float (el toolchain
+  no trae compiler-rt) se optó por FPU real. El kernel habilita SSE en el boot y
+  gestiona el estado FPU/SSE **por proceso** (`arch::x86_64::enable_fpu` +
+  `fpu_save`/`fpu_restore` con FXSAVE64/FXRSTOR64 en `switch_to_process`, área
+  de 512 B alineada a 16 en `process::Process`, sembrada con un estado limpio en
+  `allocate_process_slot`). Como el kernel es `-mno-sse` nunca toca la FPU entre
+  medio, así que el save/restore solo hace falta en el cambio real de proceso.
+  El build nativo pasó a compilar **con** SSE2 (sacó `-mno-sse`/`-mgeneral-regs-
+  only`) y el `crt0` alinea el stack a 16. Nota: `fork` sin `exec` arranca al
+  hijo con FPU limpia (no hereda la del padre) — desviación menor de POSIX,
+  inocua porque fork va seguido de exec.
 - **`--no-opt` en el hxml**: el analizador de Haxe también const-foldea
   condiciones que dependen de `untyped __cpp__`; se compila sin analizador
   (igual que el CI de reflaxe.CPP) y la optimización queda del lado de clang.
@@ -259,14 +279,7 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ## Próximos pasos
 
-1. **Float** — bloqueado por partida doble: el toolchain **no** trae compiler-rt
-   (ni la lib ni las fuentes de los builtins soft-float), y el kernel **no**
-   inicializa ni guarda/restaura el estado de la FPU en los cambios de contexto,
-   así que usar hardware FP (x87/SSE) sería corrupción latente bajo preempción.
-   Caminos: vendorizar los builtins de `double` (soft-float, sin tocar el
-   kernel) **o** agregar gestión de estado FPU al kernel y habilitar x87/SSE
-   para el código nativo. Por ahora, división entera vía `untyped __cpp__`.
-2. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
+1. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
    prerequisitos técnicos ya están: clases + String/Array + `Null<T>` + `Map` +
    cliente del compositor + teclado + puntero. Empezar por una app sxgui-style
    en Haxe.

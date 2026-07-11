@@ -142,11 +142,15 @@ if (Test-Path $objDir) { Remove-Item -Recurse -Force $objDir }
 Ensure-Directory $objDir
 $nativeHeader = Join-Path $nativeSdk "include\savanxp_native.h"
 
+# SSE2 HABILITADO (a diferencia del kernel, que va -mno-sse): el kernel gestiona
+# el estado FPU/SSE por proceso (FXSAVE/FXRSTOR en el context switch), asi que el
+# codigo nativo puede usar float/double por hardware. Esto es lo que hace andar
+# el Float de Haxe (division, Math, etc.) sin soft-float. El stack lo alinea a 16
+# el crt0. -mno-red-zone se mantiene por consistencia con el resto del userland.
 $cFlags = @(
     "-target", "x86_64-unknown-none-elf",
     "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-pie",
-    "-mno-red-zone", "-mcmodel=small", "-mno-mmx", "-mno-sse", "-mno-sse2",
-    "-mgeneral-regs-only",
+    "-mno-red-zone", "-mcmodel=small",
     "-I", (Join-Path $nativeSdk "include"),
     "-I", (Join-Path $genDir "include")
 )

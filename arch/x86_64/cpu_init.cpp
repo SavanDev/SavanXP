@@ -498,12 +498,55 @@ void initialize_idt() {
 
 namespace arch::x86_64 {
 
+/* Estado FPU/SSE limpio capturado en el boot; se copia a cada proceso nuevo
+ * para que arranque con la FPU en un estado valido (MXCSR con excepciones
+ * enmascaradas), en vez de un FXRSTOR sobre bytes en cero. */
+alignas(16) static uint8_t g_default_fpu_state[kFpuStateSize];
+
+void enable_fpu() {
+    uint64_t cr0 = 0;
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~(1ull << 2); // EM=0: sin emulacion de coprocesador (FPU real)
+    cr0 |= (1ull << 1);  // MP=1: monitor coprocessor
+    asm volatile("mov %0, %%cr0" ::"r"(cr0) : "memory");
+
+    uint64_t cr4 = 0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1ull << 9);  // OSFXSR: habilita FXSAVE/FXRSTOR y SSE
+    cr4 |= (1ull << 10); // OSXMMEXCPT: excepciones SSE via #XM
+    asm volatile("mov %0, %%cr4" ::"r"(cr4) : "memory");
+
+    asm volatile("fninit");
+    const uint32_t mxcsr = 0x1f80u; // todas las excepciones enmascaradas, round-to-nearest
+    asm volatile("ldmxcsr %0" ::"m"(mxcsr));
+
+    // Capturar el estado limpio como plantilla para los procesos nuevos.
+    asm volatile("fxsave64 (%0)" ::"r"(g_default_fpu_state) : "memory");
+}
+
+void fpu_save(void* area) {
+    asm volatile("fxsave64 (%0)" ::"r"(area) : "memory");
+}
+
+void fpu_restore(const void* area) {
+    asm volatile("fxrstor64 (%0)" ::"r"(area) : "memory");
+}
+
+void fpu_init_area(void* area) {
+    auto* destination = static_cast<uint64_t*>(area);
+    const auto* source = reinterpret_cast<const uint64_t*>(g_default_fpu_state);
+    for (uint64_t index = 0; index < kFpuStateSize / sizeof(uint64_t); ++index) {
+        destination[index] = source[index];
+    }
+}
+
 void initialize_cpu() {
     disable_interrupts();
     install_tss_descriptor();
     load_gdt();
     remap_pic();
     initialize_idt();
+    enable_fpu();
     run_breakpoint_probe();
 }
 

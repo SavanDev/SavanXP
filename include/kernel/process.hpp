@@ -137,6 +137,10 @@ struct Process {
     uint64_t kernel_stack_size;
     SavedContext* context;
     HandleEntry handles[kMaxFileHandles];
+    // Estado FPU/SSE (formato FXSAVE, 512 bytes alineados a 16). El scheduler lo
+    // guarda/restaura al cambiar de proceso; se siembra con un estado limpio en
+    // allocate_process_slot. alignas(16) fuerza la alineacion del struct entero.
+    alignas(16) uint8_t fpu_state[512];
 };
 
 void initialize();

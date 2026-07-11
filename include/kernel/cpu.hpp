@@ -28,6 +28,18 @@ void acknowledge_local_apic_interrupt();
 void acknowledge_pic_irq(uint8_t irq);
 void set_kernel_stack(uint64_t stack_top);
 [[noreturn]] void resume_context(process::SavedContext* context, uint64_t cr3);
+
+/* --- FPU/SSE (estado por proceso) --------------------------------------------
+ * El kernel se compila -mno-sse, asi que nunca toca la FPU: el estado x87/SSE
+ * pertenece siempre al userland en ejecucion. enable_fpu() habilita SSE en el
+ * boot y captura un estado limpio; el scheduler hace fpu_save/fpu_restore al
+ * cambiar de proceso, y fpu_init_area() siembra el estado limpio en un proceso
+ * nuevo. Areas de 512 bytes alineadas a 16 (formato FXSAVE). */
+constexpr uint64_t kFpuStateSize = 512;
+void enable_fpu();
+void fpu_save(void* area);
+void fpu_restore(const void* area);
+void fpu_init_area(void* area);
 void enable_irq(uint8_t irq);
 void disable_irq(uint8_t irq);
 void enable_interrupts();

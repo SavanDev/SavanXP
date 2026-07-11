@@ -67,9 +67,10 @@ class Lienzo {
   public function degrade() {
     for (fila in 0...alto) {
       for (columna in 0...ancho) {
-        // Division entera via C++: la division de Haxe es Float, y el runtime
-        // nativo aun no soporta floats (freestanding con -mgeneral-regs-only y
-        // sin compiler-rt: los intrinsics soft-float no existen). Deuda.
+        // Division entera via C++: aunque el Float de Haxe ya anda por hardware
+        // (SSE + estado FPU por proceso en el kernel), en este loop por-pixel
+        // (256k iteraciones) la division entera evita una conversion int->double
+        // ->int por componente. La demo Float "de verdad" esta en main().
         var rojo:Int = untyped __cpp__("(({0} * 255) / {1})", columna, ancho);
         var azul:Int = untyped __cpp__("(({0} * 255) / {1})", fila, alto);
         pixeles[fila * ancho + columna] = (rojo << 16) | azul;
@@ -225,6 +226,25 @@ function main() {
     untyped __cpp__("sxn_exit(1)");
   }
   untyped __cpp__('sxn_log("main: Map<String,Int> de Haxe OK")');
+
+  // Float por hardware (SSE): el kernel guarda/restaura el estado FPU por
+  // proceso, asi que la division y aritmetica de punto flotante de Haxe andan
+  // sin soft-float. Se usa `total` (=100, runtime) para que no se const-foldee.
+  var t:Float = total;
+  var mitad:Float = t / 4.0;             // 25.0
+  var frac:Float = 0.1 + 0.2;            // ~0.30000000000000004
+  var prod:Float = 1.5 * 1.5;            // 2.25
+  var mitadX:Int = Std.int(mitad);       // 25
+  var fracX:Int = Std.int(frac * 1000.0); // 300
+  var prodX:Int = Std.int(prod * 100.0);  // 225
+  untyped __cpp__('sxn_log_num("main: float 100/4 (esperado 25)", {0})', mitadX);
+  untyped __cpp__('sxn_log_num("main: float (0.1+0.2)*1000 (esperado 300)", {0})', fracX);
+  untyped __cpp__('sxn_log_num("main: float 1.5*1.5*100 (esperado 225)", {0})', prodX);
+  if (mitadX != 25 || fracX != 300 || prodX != 225) {
+    untyped __cpp__('sxn_log("main: Float incorrecto")');
+    untyped __cpp__("sxn_exit(1)");
+  }
+  untyped __cpp__('sxn_log("main: Float de Haxe (SSE) OK")');
 
   demoGrafica();
 
