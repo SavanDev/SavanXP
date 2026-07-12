@@ -75,6 +75,22 @@ long sxn_gfx_present(const void *frame, unsigned int pitch,
                      unsigned int x, unsigned int y,
                      unsigned int width, unsigned int height);
 
+/* --- Info del sistema (sx_sysinfo.c; syscalls del baseline via posix) -------
+ * Toma un snapshot con sxn_sys_refresh() y los getters leen del cache. Lo usa
+ * el port de aboutapp. */
+void sxn_sys_refresh(void);
+const char *sxn_sys_version(void);
+int sxn_sys_uptime_ms(void);
+int sxn_sys_process_count(void);
+int sxn_sys_memory_usable_mib(void);
+int sxn_sys_memory_reclaimable_mib(void);
+int sxn_sys_disk_used_mib(void);
+int sxn_sys_disk_total_mib(void);
+int sxn_sys_clock_valid(void);
+int sxn_sys_clock_hour(void);
+int sxn_sys_clock_minute(void);
+int sxn_sys_clock_second(void);
+
 /* --- I/O y proceso (baseline transitorio sobre la tabla posix) ------------- */
 
 long sxn_write(int fd, const char *buf, int len);

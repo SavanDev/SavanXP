@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1045,6 +1045,22 @@ function Run-NativeSxguiQemu {
     }.GetNewClosure()
 }
 
+# aboutapp portada a Haxe (Fase 3): construye e instala aboutapp (haxe-about) +
+# el harness abouthost, y los corre headless. Valida labels/group boxes, la info
+# del sistema (sx_sysinfo) y las acciones Refrescar/Cerrar bajo el compositor.
+function Run-NativeAboutQemu {
+    $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
+    $userBuild = Join-Path $ToolRoot "build-user.ps1"
+    $abouthostSource = Join-Path $ProjectRoot "subsystems/native/test/abouthost.c"
+
+    Run-AutomationQemu -AutomationCommand "abouthost" -SuccessToken "ABOUT HOST PASS" -FailureToken "ABOUT HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
+        & $nativeBuild -Name aboutapp -Source haxe-about -Install
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de aboutapp." }
+        & $userBuild -Source $abouthostSource -Name abouthost
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de abouthost." }
+    }.GetNewClosure()
+}
+
 function Run-Ac97SmokeQemu {
     # Mismo smoke que valida /dev/audio0, pero forzando el hardware AC'97 (sin
     # virtio-sound) para ejercitar el backend de fallback usado en VirtualBox.
@@ -1150,6 +1166,9 @@ switch ($Command) {
     }
     "native-sxgui" {
         Run-NativeSxguiQemu
+    }
+    "native-about" {
+        Run-NativeAboutQemu
     }
     "clean" {
         if (Test-Path $BuildRoot) {

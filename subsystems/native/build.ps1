@@ -114,6 +114,8 @@ $hxmlLines = @(
     # mismo motivo por el que el CI de reflaxe.CPP compila con --no-opt.
     "--no-opt",
     "-cp $haxeSrc",
+    # Toolkit sxgui compartido entre las apps GUI nativas (Painter, Boton, ...).
+    "-cp $(Join-Path $scriptDir 'haxe-toolkit')",
     "-cp $(Join-Path $scriptDir 'haxe-support')",
     "-cp $(Join-Path $reflaxe 'src')",
     "-cp $(Join-Path $reflaxeCpp 'src')",
@@ -152,7 +154,11 @@ $cFlags = @(
     "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-pie",
     "-mno-red-zone", "-mcmodel=small",
     "-I", (Join-Path $nativeSdk "include"),
-    "-I", (Join-Path $genDir "include")
+    "-I", (Join-Path $genDir "include"),
+    # ABI del baseline compartido con posix (savanxp/syscall.h para sx_sysinfo.c)
+    # y headers del repo (shared/version.h).
+    "-I", (Join-Path $posixSdk "include"),
+    "-I", (Join-Path $repoRoot "include")
 )
 $cxxFlags = $cFlags + @(
     "-std=c++17", "-fno-exceptions", "-fno-rtti",
@@ -171,15 +177,17 @@ $crt0Obj = Join-Path $objDir "crt0.o"
 $shimObj = Join-Path $objDir "sx_native.o"
 $guiObj = Join-Path $objDir "sx_gui.o"
 $textObj = Join-Path $objDir "sx_text.o"
+$sysinfoObj = Join-Path $objDir "sx_sysinfo.o"
 $cxxGlueObj = Join-Path $objDir "sx_cxx.o"
 $entryObj = Join-Path $objDir "sx_entry.o"
-$objects = @($crt0Obj, $shimObj, $guiObj, $textObj, $cxxGlueObj, $entryObj)
+$objects = @($crt0Obj, $shimObj, $guiObj, $textObj, $sysinfoObj, $cxxGlueObj, $entryObj)
 
 Write-Step "Compilando runtime nativo"
 Invoke-Compile $clang @() (Join-Path $posixSdk "runtime\crt0.S") $crt0Obj $cFlags
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_native.c") $shimObj $cFlags
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_gui.c") $guiObj $cFlags
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_text.c") $textObj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_sysinfo.c") $sysinfoObj $cFlags
 Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_cxx.cpp") $cxxGlueObj $cxxFlags
 Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_entry.cpp") $entryObj $cxxFlags
 
