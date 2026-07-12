@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1030,6 +1030,22 @@ function Run-NativeHelloQemu {
     }.GetNewClosure()
 }
 
+# Primera app sxgui-style nativa (Fase 3): construye e instala sxguiapp
+# (haxe-sxgui) + el harness sxguihost, y los corre headless. Valida el render
+# del toolkit (fondo FACE + bisel levantado + texto Noto) bajo el compositor.
+function Run-NativeSxguiQemu {
+    $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
+    $userBuild = Join-Path $ToolRoot "build-user.ps1"
+    $sxguihostSource = Join-Path $ProjectRoot "subsystems/native/test/sxguihost.c"
+
+    Run-AutomationQemu -AutomationCommand "sxguihost" -SuccessToken "SXGUI HOST PASS" -FailureToken "SXGUI HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
+        & $nativeBuild -Name sxguiapp -Source haxe-sxgui -Install
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de sxguiapp." }
+        & $userBuild -Source $sxguihostSource -Name sxguihost
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de sxguihost." }
+    }.GetNewClosure()
+}
+
 function Run-Ac97SmokeQemu {
     # Mismo smoke que valida /dev/audio0, pero forzando el hardware AC'97 (sin
     # virtio-sound) para ejercitar el backend de fallback usado en VirtualBox.
@@ -1132,6 +1148,9 @@ switch ($Command) {
     }
     "native-hello" {
         Run-NativeHelloQemu
+    }
+    "native-sxgui" {
+        Run-NativeSxguiQemu
     }
     "clean" {
         if (Test-Path $BuildRoot) {

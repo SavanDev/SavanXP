@@ -139,6 +139,15 @@ int sxn_gui_poll_event(struct sxn_gui_input_event *event);
  * movimiento y botones crudos. */
 int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event);
 
+/* --- Texto (fuente Noto horneada, compartida con posix) ----------------------
+ * Render de texto para el toolkit del escritorio (Fase 3). Dibujan sobre un
+ * buffer XRGB contiguo (`pixels`, `stride` pixeles por fila, recortado a
+ * width x height); (x, y) es la esquina superior-izquierda de la caja. */
+int sxn_text_width(const char *text);
+int sxn_text_height(void);
+void sxn_text_draw(unsigned int *pixels, int stride, int width, int height,
+                   int x, int y, const char *text, unsigned int color);
+
 #ifdef __cplusplus
 }
 #endif

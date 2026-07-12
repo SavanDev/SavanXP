@@ -84,6 +84,15 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   (fabr/sin/...), que antes se corrompía bajo preempción. Verificado:
   `100/4=25`, `(0.1+0.2)*1000=300` (IEEE-754 real), `1.5*1.5*100=225`, sin
   regresión en `smoke`/`desktop-smoke`.
+- **Fase 3 arrancada — primera app sxgui-style en Haxe**: `sxguiapp`
+  ([haxe-sxgui/Main.hx](haxe-sxgui/Main.hx)) dibuja el área cliente de una
+  ventana Win9x con un mini-toolkit `Painter` (paleta sxgui + biseles 3D
+  `raised`/`sunken`) y **texto real** por la fuente Noto horneada, compartida
+  con posix vía [sx_text.c](sdk/runtime/sx_text.c) (`sxn_text_*`). Corre como
+  cliente del compositor (mismo protocolo que `nativegui`). Verificado headless
+  con [test/sxguihost.c](test/sxguihost.c) (`.\build.ps1 native-sxgui`): mide
+  el ancho de texto en runtime, compone 3 frames y valida los píxeles firma
+  (fondo FACE + bisel levantado). Base para portar el escritorio (hoy en C).
 
 ## El contrato ABI (v1)
 
@@ -123,8 +132,9 @@ Verificación headless repetible desde la raíz del repo (construyen e instalan
 las apps nativas post-rebuild y las corren en QEMU):
 
 ```powershell
-.\build.ps1 native-hello      # valida el runtime: clases, String/Array, Null<T>, gfx
+.\build.ps1 native-hello      # valida el runtime: clases, String/Array, Null<T>, Map, Float, gfx
 .\build.ps1 native-guihost    # valida el cliente del compositor: teclado + puntero (fd 5)
+.\build.ps1 native-sxgui      # valida la app sxgui-style (Fase 3): toolkit + texto Noto
 ```
 
 El script:
@@ -178,13 +188,20 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   compositor: espejos del contrato de superficie v3 (fuente de verdad en el SDK
   posix y desktop.c) y la API `sxn_gui_*` (open/present/present_region/
   poll_event/poll_pointer/should_close) sobre los fds 3..9 heredados del shell.
+- `sdk/runtime/sx_text.c` — render de texto (`sxn_text_width`/`sxn_text_height`/
+  `sxn_text_draw`) reusando la fuente Noto horneada del SDK posix (include
+  relativo de `gfx_font_noto.inc`, fuente de verdad `tools/font/genfont.py`).
+  Blit de glifos antialiased a un buffer XRGB. Base del texto del escritorio.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
-  String/Array + syscalls nativas). `haxe-gui/Main.hx` — `nativegui`, la app
-  ventaneada de ejemplo (cliente del compositor).
+  String/Array + Null<T> + Map + Float + syscalls nativas). `haxe-gui/Main.hx` —
+  `nativegui`, la app ventaneada de ejemplo (cliente del compositor).
+  `haxe-sxgui/Main.hx` — `sxguiapp`, la primera app sxgui-style de la Fase 3
+  (toolkit `Painter` con biseles + texto Noto).
 - `test/guihost.c` — harness POSIX headless que interpreta el rol del
   compositor (sección + eventos + input) y valida al cliente nativo de punta a
   punta. Build: `tools\build-user.ps1 -Source subsystems\native\test\guihost.c
-  -Name nativeguihost`.
+  -Name nativeguihost`. `test/sxguihost.c` — variante enfocada para `sxguiapp`
+  (sin canal de puntero; valida los píxeles firma del render sxgui).
 - `haxe-support/` — tooling macro del build: `SxnCompilerInit.hx` (envuelve el
   init de reflaxe.CPP y registra nuestro preprocesador) y `UniqueLocalNames.hx`
   (hace únicos los locals por función; ver Hallazgos).
