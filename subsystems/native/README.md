@@ -84,15 +84,19 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   (fabr/sin/...), que antes se corrompía bajo preempción. Verificado:
   `100/4=25`, `(0.1+0.2)*1000=300` (IEEE-754 real), `1.5*1.5*100=225`, sin
   regresión en `smoke`/`desktop-smoke`.
-- **Fase 3 arrancada — primera app sxgui-style en Haxe**: `sxguiapp`
+- **Fase 3 arrancada — app sxgui-style INTERACTIVA en Haxe**: `sxguiapp`
   ([haxe-sxgui/Main.hx](haxe-sxgui/Main.hx)) dibuja el área cliente de una
   ventana Win9x con un mini-toolkit `Painter` (paleta sxgui + biseles 3D
   `raised`/`sunken`) y **texto real** por la fuente Noto horneada, compartida
-  con posix vía [sx_text.c](sdk/runtime/sx_text.c) (`sxn_text_*`). Corre como
-  cliente del compositor (mismo protocolo que `nativegui`). Verificado headless
-  con [test/sxguihost.c](test/sxguihost.c) (`.\build.ps1 native-sxgui`): mide
-  el ancho de texto en runtime, compone 3 frames y valida los píxeles firma
-  (fondo FACE + bisel levantado). Base para portar el escritorio (hoy en C).
+  con posix vía [sx_text.c](sdk/runtime/sx_text.c) (`sxn_text_*`). Tiene modelo
+  de widgets (`Boton` con estado), **hit-test del puntero** (canal fd 5) y un
+  **event loop** que maneja press/release/click con feedback visual (el botón
+  se hunde al presionarlo; al soltarlo dispara la acción y enciende una
+  "lámpara"). Cliente del compositor como `nativegui`. Verificado headless con
+  [test/sxguihost.c](test/sxguihost.c) (`.\build.ps1 native-sxgui`), que
+  **maneja** la app: valida el render inicial, envía un press (comprueba que el
+  botón se hunde), un release (comprueba lámpara verde + botón levantado) y
+  cierre limpio. Base para portar el escritorio (hoy en C).
 
 ## El contrato ABI (v1)
 

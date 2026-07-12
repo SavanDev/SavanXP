@@ -1,13 +1,15 @@
-// SavanXP - sxguiapp: primera app estilo sxgui (Win9x) del subsistema nativo,
-// escrita en Haxe. Arranque de la Fase 3 (port del escritorio a Haxe).
+// SavanXP - sxguiapp: app sxgui-style INTERACTIVA del subsistema nativo (Haxe).
+// Fase 3 del port del escritorio.
 //
-// Cliente del compositor (protocolo de superficie v3 por los fds 3..9, misma
-// base que nativegui). Dibuja el AREA CLIENTE de una ventana: el escritorio
-// pone el marco/barra de titulo alrededor. Usa un mini-toolkit Painter con la
-// paleta y los biseles 3D de sxgui (raised/sunken) y texto real por la fuente
-// Noto horneada (sxn_text_* del runtime nativo). Bajo el harness headless
-// (test/sxguihost.c) presenta unos frames y sale; bajo el escritorio real corre
-// como ventana normal.
+// Evoluciona la primera version estatica a una GUI de verdad: modelo de
+// widgets (Boton con estado), hit-test del puntero (canal fd 5), estados
+// pressed/click con feedback visual (bisel levantado -> hundido) y un event
+// loop que repinta solo cuando algo cambia. Cliente del compositor igual que
+// nativegui; el escritorio pone la barra de titulo. Bajo el harness headless
+// (test/sxguihost.c) se lo maneja con eventos de puntero y se cierra por el
+// evento de shutdown; bajo el escritorio real corre como ventana normal.
+//
+// Sin closures anidados (el codegen de reflaxe.CPP prefiere metodos de clase).
 
 class Painter {
   public var ancho:Int;
@@ -44,7 +46,6 @@ class Painter {
   public function hline(x:Int, y:Int, w:Int, color:Int) { rect(x, y, w, 1, color); }
   public function vline(x:Int, y:Int, h:Int, color:Int) { rect(x, y, 1, h, color); }
 
-  // Borde 3D levantado (botones, cara de ventana).
   public function raised(x:Int, y:Int, w:Int, h:Int) {
     hline(x, y, w, LIGHT);
     vline(x, y, h, LIGHT);
@@ -54,7 +55,6 @@ class Painter {
     vline(x + w - 2, y + 1, h - 2, SHADOW);
   }
 
-  // Borde 3D hundido (campos, areas de texto).
   public function sunken(x:Int, y:Int, w:Int, h:Int) {
     hline(x, y, w, SHADOW);
     vline(x, y, h, SHADOW);
@@ -76,37 +76,131 @@ class Painter {
     return untyped __cpp__("sxn_text_height()");
   }
 
-  // Boton sxgui: cara FACE + bisel levantado + label centrado.
-  public function boton(x:Int, y:Int, w:Int, h:Int, label:String) {
-    rect(x, y, w, h, FACE);
-    raised(x, y, w, h);
-    var tw = anchoTexto(label);
-    var th = altoTexto();
-    var tx = x + Std.int((w - tw) / 2);   // centrado (Float real de Haxe)
-    var ty = y + Std.int((h - th) / 2);
-    texto(tx, ty, label, TEXT);
-  }
-
   public function present():Int {
     return untyped __cpp__("(int)sxn_gui_present(&(*{0})[0])", pixeles);
   }
 }
 
-// Dibuja el area cliente de la ventana sxgui.
-function dibujar(p:Painter) {
-  p.rect(0, 0, p.ancho, p.alto, Painter.FACE);
+class Boton {
+  public var x:Int;
+  public var y:Int;
+  public var w:Int;
+  public var h:Int;
+  public var label:String;
+  public var pressed:Bool;
 
-  // Encabezado.
-  p.texto(12, 8, "Panel nativo (Haxe)", Painter.TEXT);
+  public function new(x:Int, y:Int, w:Int, h:Int, label:String) {
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+    this.label = label;
+    this.pressed = false;
+  }
 
-  // Campo hundido con texto.
-  p.rect(12, 34, p.ancho - 24, 26, Painter.FIELD);
-  p.sunken(12, 34, p.ancho - 24, 26);
-  p.texto(17, 38, "sxgui-style desde el subsistema nativo", Painter.TEXT);
+  public function contiene(px:Int, py:Int):Bool {
+    return px >= x && px < x + w && py >= y && py < y + h;
+  }
 
-  // Dos botones con bisel levantado.
-  p.boton(16, 96, 96, 26, "Aceptar");
-  p.boton(124, 96, 96, 26, "Cancelar");
+  public function dibujar(p:Painter) {
+    p.rect(x, y, w, h, Painter.FACE);
+    if (pressed) {
+      p.sunken(x, y, w, h);
+    } else {
+      p.raised(x, y, w, h);
+    }
+    var desplazamiento = pressed ? 1 : 0; // el label baja/derecha cuando esta hundido
+    var tw = p.anchoTexto(label);
+    var th = p.altoTexto();
+    var tx = x + Std.int((w - tw) / 2) + desplazamiento;
+    var ty = y + Std.int((h - th) / 2) + desplazamiento;
+    p.texto(tx, ty, label, Painter.TEXT);
+  }
+}
+
+// Estado + logica de la ventana sxgui (sin closures: todo en metodos).
+class Escritorio {
+  var p:Painter;
+  var aceptar:Boton;
+  var cancelar:Boton;
+  var mensaje:String;
+  var lampColor:Int;
+  var capturado:Boton;
+  var clicks:Int;
+
+  public static inline var LAMP_X:Int = 228;
+  public static inline var LAMP_Y:Int = 36;
+  public static inline var LAMP_W:Int = 20;
+  public static inline var LAMP_H:Int = 20;
+  public static inline var VERDE:Int = 0x008000;
+  public static inline var ROJO:Int = 0x800000;
+
+  public function new(p:Painter) {
+    this.p = p;
+    this.aceptar = new Boton(16, 96, 96, 26, "Aceptar");
+    this.cancelar = new Boton(124, 96, 96, 26, "Cancelar");
+    this.mensaje = "sxgui-style desde el subsistema nativo";
+    this.lampColor = Painter.FACE; // apagada
+    this.capturado = null;
+    this.clicks = 0;
+  }
+
+  public function repintar() {
+    p.rect(0, 0, p.ancho, p.alto, Painter.FACE);
+    p.texto(12, 8, "Panel nativo (Haxe)", Painter.TEXT);
+
+    // Campo hundido con el mensaje.
+    p.rect(12, 34, p.ancho - 24, 26, Painter.FIELD);
+    p.sunken(12, 34, p.ancho - 24, 26);
+    p.texto(17, 38, mensaje, Painter.TEXT);
+
+    // "Lampara" de estado (se enciende al hacer click).
+    p.rect(LAMP_X, LAMP_Y, LAMP_W, LAMP_H, lampColor);
+    p.sunken(LAMP_X, LAMP_Y, LAMP_W, LAMP_H);
+
+    aceptar.dibujar(p);
+    cancelar.dibujar(p);
+  }
+
+  function accionar(b:Boton) {
+    if (b == aceptar) {
+      clicks += 1;
+      mensaje = "Aceptado";
+      lampColor = VERDE;
+    } else {
+      mensaje = "Cancelado";
+      lampColor = ROJO;
+    }
+  }
+
+  // Procesa un evento de puntero (coordenadas locales + mascara de botones).
+  // Devuelve true si cambio algo que amerite repintar.
+  public function puntero(mx:Int, my:Int, izq:Bool, izqPrev:Bool):Bool {
+    if (izq && !izqPrev) {
+      // Press: capturar el boton bajo el cursor y hundirlo.
+      if (aceptar.contiene(mx, my)) {
+        aceptar.pressed = true;
+        capturado = aceptar;
+        return true;
+      } else if (cancelar.contiene(mx, my)) {
+        cancelar.pressed = true;
+        capturado = cancelar;
+        return true;
+      }
+    } else if (!izq && izqPrev) {
+      // Release: si se suelta sobre el mismo boton capturado, es un click.
+      if (capturado != null) {
+        var b = capturado;
+        b.pressed = false;
+        capturado = null;
+        if (b.contiene(mx, my)) {
+          accionar(b);
+        }
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 function main() {
@@ -123,34 +217,57 @@ function main() {
   untyped __cpp__('sxn_log_num("sxgui: ventana alto", {0})', alto);
 
   var p = new Painter(ancho, alto, stride);
-  dibujar(p);
+  var esc = new Escritorio(p);
+  esc.repintar();
+  if (p.present() != 0) {
+    untyped __cpp__('sxn_log("sxgui: fallo el primer present")');
+    untyped __cpp__("sxn_exit(1)");
+  }
 
-  // Prueba en vivo del render de texto: log del ancho de un string.
-  untyped __cpp__('sxn_log_num("sxgui: ancho de Aceptar (px)", {0})', p.anchoTexto("Aceptar"));
-
-  // Presentar unos frames (el harness espera 3); cortar si el compositor pide
-  // cerrar. La ventana es estatica, cada present repite el mismo contenido.
-  var frames = 0;
-  while (frames < 3) {
+  // Event loop: procesa puntero/teclado y repinta on-change hasta el shutdown.
+  var prevBtn = 0;
+  while (true) {
     if (untyped __cpp__("sxn_gui_should_close()")) {
-      untyped __cpp__('sxn_log("sxgui: shutdown pedido por el compositor")');
       break;
     }
-    var r = p.present();
-    if (r != 0) {
-      untyped __cpp__('sxn_log_num("sxgui: fallo present", {0})', r);
-      untyped __cpp__("sxn_exit(1)");
+
+    var cambio = false;
+
+    // Drenar todos los eventos de puntero encolados.
+    untyped __cpp__("struct sxn_gui_pointer_event __pt; int __pr");
+    while (true) {
+      untyped __cpp__("__pr = sxn_gui_poll_pointer(&__pt)");
+      if (untyped __cpp__("__pr != 1")) {
+        break;
+      }
+      var mx:Int = untyped __cpp__("(int)__pt.x");
+      var my:Int = untyped __cpp__("(int)__pt.y");
+      var btn:Int = untyped __cpp__("(int)__pt.buttons");
+      var izq = (btn & 1) != 0;
+      var izqPrev = (prevBtn & 1) != 0;
+      if (esc.puntero(mx, my, izq, izqPrev)) {
+        cambio = true;
+      }
+      prevBtn = btn;
     }
-    frames += 1;
+
+    // Teclado: ESC cierra.
+    untyped __cpp__("struct sxn_gui_input_event __ev; int __er = sxn_gui_poll_event(&__ev)");
+    if (untyped __cpp__("__er == 1 && __ev.type == SXN_GUI_EVENT_KEY_DOWN && (int)__ev.key == 27")) {
+      break;
+    }
+
+    if (cambio) {
+      esc.repintar();
+      if (p.present() != 0) {
+        untyped __cpp__('sxn_log("sxgui: fallo present en el loop")');
+        untyped __cpp__("sxn_exit(1)");
+      }
+    }
+
+    untyped __cpp__("sxn_sleep_ms(8)");
   }
 
-  // Drenar teclado (el harness manda una tecla; bajo el escritorio puede no
-  // haber nada).
-  untyped __cpp__("struct sxn_gui_input_event __ev; int __ev_result = sxn_gui_poll_event(&__ev)");
-  if (untyped __cpp__("__ev_result == 1")) {
-    untyped __cpp__('sxn_log_num("sxgui: tecla", (int)__ev.key)');
-  }
-
-  untyped __cpp__('sxn_log("sxgui: app sxgui-style OK")');
+  untyped __cpp__('sxn_log("sxgui: app interactiva OK")');
   untyped __cpp__("sxn_gui_close()");
 }
