@@ -155,14 +155,14 @@ void desktop_dirty_rect_add_shortcut(struct desktop_dirty_rect *dirty, const str
     desktop_dirty_rect_add(dirty, info, rect.x, rect.y, rect.width, rect.height);
 }
 
-void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y)
+void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape)
 {
     int x = 0;
     int y = 0;
     int width = 0;
     int height = 0;
 
-    desktop_cursor_bounds(cursor_x, cursor_y, &x, &y, &width, &height);
+    desktop_cursor_bounds(cursor_x, cursor_y, shape, &x, &y, &width, &height);
     desktop_dirty_rect_add(dirty, info, x, y, width, height);
 }
 
@@ -691,18 +691,26 @@ static void draw_welcome(struct sx_painter *painter, const struct desktop_sessio
         gfx_rgb(36, 96, 126));
 }
 
-static void draw_cursor(struct sx_painter *painter, int x, int y)
+static void draw_cursor(struct sx_painter *painter, int shape, int x, int y)
 {
+    const struct desktop_cursor_asset *asset;
     struct sx_bitmap cursor_bitmap;
-    struct savanxp_fb_info info = {
-        .width = DESKTOP_CURSOR_WIDTH,
-        .height = DESKTOP_CURSOR_HEIGHT,
-        .pitch = DESKTOP_CURSOR_WIDTH * sizeof(uint32_t),
-        .bpp = 32u,
-        .buffer_size = DESKTOP_CURSOR_WIDTH * DESKTOP_CURSOR_HEIGHT * sizeof(uint32_t),
-    };
-    sx_bitmap_wrap(&cursor_bitmap, (uint32_t *)k_desktop_cursor_pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
-    sx_painter_blit_bitmap(painter, &cursor_bitmap, x - DESKTOP_CURSOR_HOTSPOT_X, y - DESKTOP_CURSOR_HOTSPOT_Y);
+    struct savanxp_fb_info info;
+
+    if (shape < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT)
+    {
+        shape = SAVANXP_CURSOR_ARROW;
+    }
+    asset = &k_desktop_cursor_assets[shape];
+
+    info.width = (uint32_t)asset->width;
+    info.height = (uint32_t)asset->height;
+    info.pitch = (uint32_t)asset->width * sizeof(uint32_t);
+    info.bpp = 32u;
+    info.buffer_size = (uint32_t)(asset->width * asset->height) * sizeof(uint32_t);
+
+    sx_bitmap_wrap(&cursor_bitmap, (uint32_t *)asset->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+    sx_painter_blit_bitmap(painter, &cursor_bitmap, x - asset->hotspot_x, y - asset->hotspot_y);
 }
 
 static void draw_client(struct sx_painter *painter, const struct desktop_client *client)
@@ -899,7 +907,7 @@ static void paint_layer(
         draw_confirm_dialog(painter, &session->gfx.info, confirm_action);
         break;
     case DESKTOP_LAYER_CURSOR:
-        draw_cursor(painter, cursor_x, cursor_y);
+        draw_cursor(painter, session->current_cursor_shape, cursor_x, cursor_y);
         break;
     default:
         break;
@@ -947,7 +955,7 @@ static int build_layers(
         }
         if (!session->hw_cursor_enabled)
         {
-            desktop_cursor_bounds(cursor_x, cursor_y, &cur_x, &cur_y, &cur_w, &cur_h);
+            desktop_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
             layers[count].kind = DESKTOP_LAYER_CURSOR;
             layers[count].opaque = 0;
             layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);
@@ -1020,7 +1028,7 @@ static int build_layers(
 
     if (!session->hw_cursor_enabled)
     {
-        desktop_cursor_bounds(cursor_x, cursor_y, &cur_x, &cur_y, &cur_w, &cur_h);
+        desktop_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
         layers[count].kind = DESKTOP_LAYER_CURSOR;
         layers[count].opaque = 0; /* BGRA cursor blends; never an occluder. */
         layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);

@@ -651,16 +651,23 @@ int desktop_shortcut_from_point(const struct savanxp_fb_info *info, int x, int y
     return -1;
 }
 
-void desktop_cursor_bounds(int cursor_x, int cursor_y, int *x, int *y, int *width, int *height)
+void desktop_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height)
 {
+    const struct desktop_cursor_asset *asset;
+
     if (x == 0 || y == 0 || width == 0 || height == 0)
     {
         return;
     }
-    *x = cursor_x - DESKTOP_CURSOR_HOTSPOT_X;
-    *y = cursor_y - DESKTOP_CURSOR_HOTSPOT_Y;
-    *width = DESKTOP_CURSOR_WIDTH;
-    *height = DESKTOP_CURSOR_HEIGHT;
+    if (shape < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT)
+    {
+        shape = SAVANXP_CURSOR_ARROW;
+    }
+    asset = &k_desktop_cursor_assets[shape];
+    *x = cursor_x - asset->hotspot_x;
+    *y = cursor_y - asset->hotspot_y;
+    *width = asset->width;
+    *height = asset->height;
 }
 
 int desktop_selected_item_from_cursor(const struct savanxp_gfx_context *gfx, int cursor_x, int cursor_y)

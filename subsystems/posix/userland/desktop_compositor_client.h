@@ -21,6 +21,7 @@ struct desktop_compositor_connection
     int cursor_x;
     int cursor_y;
     int cursor_visible;
+    int cursor_shape;
 };
 
 void desktop_compositor_connection_init(struct desktop_compositor_connection *connection);
@@ -53,3 +54,6 @@ int desktop_compositor_move_cursor(
     int cursor_x,
     int cursor_y,
     int visible);
+int desktop_compositor_set_cursor_shape(
+    struct desktop_compositor_connection *connection,
+    int shape);

@@ -113,6 +113,14 @@ int sxgui_app_run(struct sxgui_app *app)
             {
                 app->needs_repaint = 1;
             }
+            {
+                int shape = sxgui_cursor_shape(&app->ui);
+                if (shape != app->last_sent_cursor_shape &&
+                    gfx_desktop_set_cursor_shape(&app->gfx, (uint32_t)shape) == 0)
+                {
+                    app->last_sent_cursor_shape = shape;
+                }
+            }
         }
 
         if (!app->running)

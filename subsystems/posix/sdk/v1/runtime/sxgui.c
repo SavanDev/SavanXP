@@ -1478,6 +1478,11 @@ static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *
     return 0;
 }
 
+int sxgui_cursor_shape(const struct sxgui_context *ctx)
+{
+    return ctx != 0 ? ctx->cursor_shape : SAVANXP_CURSOR_ARROW;
+}
+
 int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event)
 {
     int changed = 0;
@@ -1662,20 +1667,34 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
         return changed;
     }
 
+    ctx->cursor_shape = SAVANXP_CURSOR_ARROW;
     for (index = 0; index < ctx->widget_count; ++index)
     {
         struct sxgui_widget *widget = &ctx->widgets[index];
         int over;
+        int hit;
 
         if (!sxgui_widget_visible(widget))
         {
             continue;
         }
-        over = sxgui_widget_enabled(widget) && sxgui_hit(widget, event->x, event->y);
+        hit = sxgui_hit(widget, event->x, event->y);
+        over = sxgui_widget_enabled(widget) && hit;
         if (over != widget->hover)
         {
             widget->hover = over;
             changed = 1;
+        }
+        if (hit)
+        {
+            if (!sxgui_widget_enabled(widget))
+            {
+                ctx->cursor_shape = SAVANXP_CURSOR_UNAVAILABLE;
+            }
+            else if (widget->kind == SXGUI_TEXTFIELD)
+            {
+                ctx->cursor_shape = SAVANXP_CURSOR_TEXT;
+            }
         }
     }
 

@@ -100,6 +100,7 @@ struct savanxp_gfx_context {
     int retire_event_fd;
     int shutdown_event_fd;
     int launch_fd;
+    int cursor_hint_fd;
     int mode;
     void* mapped_view;
     uint32_t* pixels;
@@ -126,6 +127,7 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
 long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event);
 long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* path);
+long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape);
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);
 size_t gfx_buffer_pixels(const struct savanxp_fb_info* info);

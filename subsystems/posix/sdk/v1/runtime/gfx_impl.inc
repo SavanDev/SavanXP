@@ -288,6 +288,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     long retire_event_fd = -1;
     long shutdown_event_fd = -1;
     long launch_fd = -1;
+    long cursor_hint_fd = -1;
 
     if (result_is_error((long)mapped)) {
         return -SAVANXP_ENODEV;
@@ -333,6 +334,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     retire_event_fd = dup(7);
     shutdown_event_fd = dup(8);
     launch_fd = dup(9);
+    cursor_hint_fd = dup(10);
     if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || retire_event_fd < 0 || shutdown_event_fd < 0) {
         if (section_fd >= 0) {
             (void)close((int)section_fd);
@@ -352,6 +354,9 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
         if (launch_fd >= 0) {
             (void)close((int)launch_fd);
         }
+        if (cursor_hint_fd >= 0) {
+            (void)close((int)cursor_hint_fd);
+        }
         (void)unmap_view(private_pixels);
         (void)unmap_view(mapped);
         return -SAVANXP_EBADF;
@@ -363,6 +368,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     context->retire_event_fd = (int)retire_event_fd;
     context->shutdown_event_fd = (int)shutdown_event_fd;
     context->launch_fd = (int)launch_fd;
+    context->cursor_hint_fd = (int)cursor_hint_fd;
     context->mode = kGfxModeClient;
     context->mapped_view = mapped;
     context->header = header;
@@ -390,6 +396,7 @@ long gfx_open(struct savanxp_gfx_context* context) {
     context->retire_event_fd = -1;
     context->shutdown_event_fd = -1;
     context->launch_fd = -1;
+    context->cursor_hint_fd = -1;
 
     return gfx_open_client(context);
 }
@@ -438,6 +445,10 @@ long gfx_close(struct savanxp_gfx_context* context) {
     if (context->launch_fd >= 0) {
         (void)close(context->launch_fd);
         context->launch_fd = -1;
+    }
+    if (context->cursor_hint_fd >= 0) {
+        (void)close(context->cursor_hint_fd);
+        context->cursor_hint_fd = -1;
     }
     context->mode = 0;
     return result;
@@ -634,6 +645,19 @@ long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* p
     memset(&request, 0, sizeof(request));
     memcpy(request.path, path, length + 1u);
     return write(context->launch_fd, &request, sizeof(request)) == (long)sizeof(request)
+        ? 0
+        : -SAVANXP_EIO;
+}
+
+long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape) {
+    struct savanxp_desktop_cursor_hint hint;
+
+    if (context == 0 || context->cursor_hint_fd < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT) {
+        return -SAVANXP_EINVAL;
+    }
+
+    hint.shape = shape;
+    return write(context->cursor_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
         ? 0
         : -SAVANXP_EIO;
 }

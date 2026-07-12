@@ -68,6 +68,7 @@ static void reset_client(struct desktop_client *client)
     client->retire_event_fd = -1;
     client->shutdown_event_fd = -1;
     client->launch_read_fd = -1;
+    client->cursor_hint_read_fd = -1;
 }
 
 static int overlay_slot_valid(int slot)
@@ -636,6 +637,65 @@ static const struct desktop_client *top_client_at_point(const struct desktop_ses
     return 0;
 }
 
+/* An overlay client forked but that hasn't submitted its first frame yet is
+ * still starting up -- surfaced to the user as the WAIT cursor. */
+static int any_overlay_client_starting(const struct desktop_session *session)
+{
+    int slot;
+
+    if (session == 0)
+    {
+        return 0;
+    }
+    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        const struct desktop_client *client = &session->overlay_clients[slot];
+        if (client->pid > 0 && client->consumed_submit_sequence == 0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Priority: dragging a window > an app starting up > a clickable desktop/menu
+ * item > a hint reported by the hovered app's own widgets > the plain arrow. */
+static int resolve_cursor_shape(
+    const struct desktop_session *session,
+    const struct desktop_client *current_hover_client,
+    int cursor_x,
+    int cursor_y,
+    int menu_open,
+    int drag_active)
+{
+    if (drag_active)
+    {
+        return SAVANXP_CURSOR_MOVE;
+    }
+    if (any_overlay_client_starting(session))
+    {
+        return SAVANXP_CURSOR_WAIT;
+    }
+    if (menu_open)
+    {
+        if (desktop_selected_item_from_cursor(&session->gfx, cursor_x, cursor_y) >= 0)
+        {
+            return SAVANXP_CURSOR_LINK;
+        }
+    }
+    else if (current_hover_client == 0 && desktop_shortcut_from_point(&session->gfx.info, cursor_x, cursor_y) >= 0)
+    {
+        return SAVANXP_CURSOR_LINK;
+    }
+    if (current_hover_client != 0 &&
+        current_hover_client != &session->shell_client &&
+        desktop_point_in_client(current_hover_client, cursor_x, cursor_y))
+    {
+        return current_hover_client->last_cursor_hint_shape;
+    }
+    return SAVANXP_CURSOR_ARROW;
+}
+
 static int set_hw_cursor_position(struct desktop_session *session, int cursor_x, int cursor_y, int visible)
 {
     if (session == 0 || !session->hw_cursor_enabled)
@@ -1185,6 +1245,7 @@ static void destroy_client_instance(struct desktop_client *client, int terminate
     close_fd_if_needed(&client->retire_event_fd);
     close_fd_if_needed(&client->shutdown_event_fd);
     close_fd_if_needed(&client->launch_read_fd);
+    close_fd_if_needed(&client->cursor_hint_read_fd);
     if (client->mapped_view != 0 && !result_is_error((long)client->mapped_view))
     {
         (void)unmap_view(client->mapped_view);
@@ -1202,6 +1263,7 @@ static int start_client_process(struct desktop_client *client, const char *path)
     int input_pipe[2] = {-1, -1};
     int mouse_pipe[2] = {-1, -1};
     int launch_pipe[2] = {-1, -1};
+    int cursor_hint_pipe[2] = {-1, -1};
     int submit_event = -1;
     int retire_event = -1;
     int shutdown_event = -1;
@@ -1255,11 +1317,13 @@ static int start_client_process(struct desktop_client *client, const char *path)
     submit_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    if (pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(launch_pipe) < 0 || submit_event < 0 || retire_event < 0 || shutdown_event < 0)
+    if (pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(launch_pipe) < 0 || pipe(cursor_hint_pipe) < 0 ||
+        submit_event < 0 || retire_event < 0 || shutdown_event < 0)
     {
         goto fail;
     }
-    if (fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
+    if (fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        fcntl(cursor_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
     {
         goto fail;
     }
@@ -1277,7 +1341,8 @@ static int start_client_process(struct desktop_client *client, const char *path)
             dup2(submit_event, 6) < 0 ||
             dup2(retire_event, 7) < 0 ||
             dup2(shutdown_event, 8) < 0 ||
-            dup2(launch_pipe[1], 9) < 0)
+            dup2(launch_pipe[1], 9) < 0 ||
+            dup2(cursor_hint_pipe[1], 10) < 0)
         {
             exit(1);
         }
@@ -1291,6 +1356,8 @@ static int start_client_process(struct desktop_client *client, const char *path)
         close_client_setup_fd(&shutdown_event);
         close_client_setup_fd(&launch_pipe[0]);
         close_client_setup_fd(&launch_pipe[1]);
+        close_client_setup_fd(&cursor_hint_pipe[0]);
+        close_client_setup_fd(&cursor_hint_pipe[1]);
         close_client_setup_fd(&client->section_fd);
         {
             long exec_result = exec(path, argv, 1);
@@ -1318,10 +1385,12 @@ static int start_client_process(struct desktop_client *client, const char *path)
     client->retire_event_fd = retire_event;
     client->shutdown_event_fd = shutdown_event;
     client->launch_read_fd = launch_pipe[0];
+    client->cursor_hint_read_fd = cursor_hint_pipe[0];
 
     close_fd_if_needed(&input_pipe[0]);
     close_fd_if_needed(&mouse_pipe[0]);
     close_fd_if_needed(&launch_pipe[1]);
+    close_fd_if_needed(&cursor_hint_pipe[1]);
     return 0;
 
 fail:
@@ -1331,6 +1400,8 @@ fail:
     close_fd_if_needed(&mouse_pipe[1]);
     close_fd_if_needed(&launch_pipe[0]);
     close_fd_if_needed(&launch_pipe[1]);
+    close_fd_if_needed(&cursor_hint_pipe[0]);
+    close_fd_if_needed(&cursor_hint_pipe[1]);
     close_fd_if_needed(&submit_event);
     close_fd_if_needed(&retire_event);
     close_fd_if_needed(&shutdown_event);
@@ -1633,6 +1704,47 @@ static int service_client_launch_requests(struct desktop_session *session, struc
     }
 }
 
+/* Drains cursor-shape hints an app reports about its own widgets (e.g. the
+ * pointer entering a textfield). Just caches the latest value on the client;
+ * resolve_cursor_shape() decides whether it is actually shown, and only
+ * while this exact client is the one under the pointer. No repaint here --
+ * the shape-resolution pass on the next mouse event picks it up. */
+static void service_client_cursor_hints(struct desktop_client *client)
+{
+    struct savanxp_desktop_cursor_hint hint;
+    long read_result = 0;
+
+    if (client == 0 || client->pid <= 0 || client->cursor_hint_read_fd < 0)
+    {
+        return;
+    }
+
+    for (;;)
+    {
+        read_result = read(client->cursor_hint_read_fd, &hint, sizeof(hint));
+        if (read_result == 0)
+        {
+            return;
+        }
+        if (read_result < 0)
+        {
+            if (result_error_code(read_result) != SAVANXP_EAGAIN)
+            {
+                eprintf("desktop: cursor hint read failed for %s (%s)\n",
+                    client->path[0] != '\0' ? client->path : "?",
+                    result_error_string(read_result));
+            }
+            return;
+        }
+        if (read_result != (long)sizeof(hint) || hint.shape >= (uint32_t)SAVANXP_CURSOR_SHAPE_COUNT)
+        {
+            eprintf("desktop: invalid cursor hint from %s\n", client->path[0] != '\0' ? client->path : "?");
+            return;
+        }
+        client->last_cursor_hint_shape = (int)hint.shape;
+    }
+}
+
 /*
  * Headless compositor self-test driven by init under /SMOKE.
  *
@@ -1691,7 +1803,7 @@ static int desktop_cursor_repro(void)
     qy = dlg.y + (dlg.height / 2);
 
     /* Footprint of the cursor when its hotspot is at Q. */
-    desktop_cursor_bounds(qx, qy, &fx, &fy, &fw, &fh);
+    desktop_cursor_bounds(qx, qy, SAVANXP_CURSOR_ARROW, &fx, &fy, &fw, &fh);
     if (fw > 64)
     {
         fw = 64;
@@ -1719,8 +1831,8 @@ static int desktop_cursor_repro(void)
     }
 
     /* Frame B: move cursor ONTO Q. Only cursor-sized damage (old corner + Q). */
-    desktop_dirty_rect_add_cursor(&dirty, info, 4, 4);
-    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy);
+    desktop_dirty_rect_add_cursor(&dirty, info, 4, 4, SAVANXP_CURSOR_ARROW);
+    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
     desktop_draw_desktop(&session, qx, qy, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
@@ -1740,8 +1852,8 @@ static int desktop_cursor_repro(void)
 
     /* Frame C: move cursor OFF Q to R. Only cursor damage (old Q + new R). The
      * backbuffer at Q must return to the clean baseline. */
-    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy);
-    desktop_dirty_rect_add_cursor(&dirty, info, rx, ry);
+    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
+    desktop_dirty_rect_add_cursor(&dirty, info, rx, ry, SAVANXP_CURSOR_ARROW);
     desktop_draw_desktop(&session, rx, ry, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
@@ -1864,6 +1976,7 @@ static int desktop_selftest(void)
             break;
         }
 
+        service_client_cursor_hints(client);
         if (service_client_batches(&session, &dirty, client) < 0 ||
             service_client_launch_requests(&session, &dirty, client) < 0)
         {
@@ -2337,6 +2450,14 @@ int main(int argc, char **argv)
                 cursor_y = desktop_clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session.gfx.info.height - 1);
                 current_hover_client = top_client_at_point(&session, cursor_x, cursor_y);
 
+                session.previous_cursor_shape = session.current_cursor_shape;
+                session.current_cursor_shape = resolve_cursor_shape(
+                    &session, current_hover_client, cursor_x, cursor_y, menu_open, drag_was_active);
+                if (session.current_cursor_shape != session.previous_cursor_shape && session.hw_cursor_enabled)
+                {
+                    (void)desktop_compositor_set_cursor_shape(&session.compositor, session.current_cursor_shape);
+                }
+
                 /* Dialogo de confirmacion de energia: modal, consume el evento de
                  * click pero sigue redibujando el cursor para que no parezca
                  * congelado mientras el dialogo esta abierto. */
@@ -2360,7 +2481,8 @@ int main(int argc, char **argv)
                         confirm_action = DESKTOP_CONFIRM_NONE;
                         desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                     }
-                    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y)
+                    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
+                        session.current_cursor_shape != session.previous_cursor_shape)
                     {
                         if (session.hw_cursor_enabled)
                         {
@@ -2368,8 +2490,8 @@ int main(int argc, char **argv)
                         }
                         else
                         {
-                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y);
-                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y);
+                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y, session.previous_cursor_shape);
+                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y, session.current_cursor_shape);
                         }
                     }
                     last_buttons = pressed_buttons;
@@ -2578,7 +2700,8 @@ int main(int argc, char **argv)
                     menu_open = 0;
                 }
 
-                if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y)
+                if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
+                    session.current_cursor_shape != session.previous_cursor_shape)
                 {
                     if (session.hw_cursor_enabled)
                     {
@@ -2586,8 +2709,8 @@ int main(int argc, char **argv)
                     }
                     else
                     {
-                        desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y);
-                        desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y);
+                        desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y, session.previous_cursor_shape);
+                        desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y, session.current_cursor_shape);
                     }
                     if (menu_open)
                     {
@@ -2652,6 +2775,7 @@ int main(int argc, char **argv)
         {
             break;
         }
+        service_client_cursor_hints(&session.shell_client);
         for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
         {
             if (service_client_batches(&session, &dirty, &session.overlay_clients[slot]) < 0)
@@ -2662,6 +2786,7 @@ int main(int argc, char **argv)
             {
                 break;
             }
+            service_client_cursor_hints(&session.overlay_clients[slot]);
         }
         if (slot < DESKTOP_MAX_OVERLAY_CLIENTS)
         {

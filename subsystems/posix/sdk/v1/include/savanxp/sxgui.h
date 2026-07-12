@@ -182,6 +182,10 @@ struct sxgui_context {
      * dispatch against the dialog's widget array */
     struct sxgui_dialog *modal;
     int modal_route;
+
+    /* cursor shape the pointer should show given the widget currently under
+     * it (enum savanxp_cursor_shape); updated by sxgui_handle_pointer */
+    int cursor_shape;
 };
 
 /* Bind the toolkit to a window backbuffer and a widget array. */
@@ -210,6 +214,10 @@ int sxgui_dialog_active(const struct sxgui_context *ctx);
  * a repaint is needed. */
 int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event);
 int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event *event);
+
+/* Cursor shape (enum savanxp_cursor_shape) the widget under the pointer
+ * wants shown, as of the last sxgui_handle_pointer call. */
+int sxgui_cursor_shape(const struct sxgui_context *ctx);
 
 /* Paint every visible widget into the backbuffer. */
 void sxgui_paint(struct sxgui_context *ctx);
@@ -243,6 +251,7 @@ struct sxgui_app {
     int running;
     int exit_code;
     int needs_repaint;
+    int last_sent_cursor_shape;
 
     /* optional hooks; leave NULL to skip */
     int (*on_key)(struct sxgui_app *app, const struct savanxp_input_event *event); /* pre-toolkit; non-zero = consumed */

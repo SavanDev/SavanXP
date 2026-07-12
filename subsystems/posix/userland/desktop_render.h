@@ -14,7 +14,7 @@ void desktop_dirty_rect_add_fullscreen(struct desktop_dirty_rect *dirty, const s
 void desktop_dirty_rect_add_taskbar(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info);
 void desktop_dirty_rect_add_menu(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info);
 void desktop_dirty_rect_add_shortcut(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int shortcut_index);
-void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y);
+void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape);
 void desktop_dirty_rect_add_client(struct desktop_dirty_rect *dirty, const struct desktop_client *client);
 int desktop_dirty_rect_valid(const struct desktop_dirty_rect *dirty);
 size_t desktop_dirty_rect_count(const struct desktop_dirty_rect *dirty);

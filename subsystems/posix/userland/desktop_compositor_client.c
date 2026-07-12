@@ -459,10 +459,16 @@ int desktop_compositor_reconnect(struct desktop_compositor_connection *connectio
        effort: a missing cursor plane must not fail the reconnect. */
     if (connection->cursor_enabled)
     {
+        int restore_shape = connection->cursor_shape;
+
         connection->cursor_enabled = 0;
         (void)desktop_compositor_enable_cursor(connection, connection->cursor_x, connection->cursor_y);
         (void)desktop_compositor_move_cursor(
             connection, connection->cursor_x, connection->cursor_y, connection->cursor_visible);
+        if (restore_shape != SAVANXP_CURSOR_ARROW)
+        {
+            (void)desktop_compositor_set_cursor_shape(connection, restore_shape);
+        }
     }
 
     return present_full_surface(connection);
@@ -644,6 +650,7 @@ int desktop_compositor_enable_cursor(
         connection->cursor_x = cursor_x;
         connection->cursor_y = cursor_y;
         connection->cursor_visible = 1;
+        connection->cursor_shape = SAVANXP_CURSOR_ARROW;
     }
     return result;
 }
@@ -669,6 +676,25 @@ int desktop_compositor_move_cursor(
         connection->cursor_x = cursor_x;
         connection->cursor_y = cursor_y;
         connection->cursor_visible = visible ? 1 : 0;
+    }
+    return result;
+}
+
+int desktop_compositor_set_cursor_shape(
+    struct desktop_compositor_connection *connection,
+    int shape)
+{
+    struct savanxp_compositor_request request;
+    struct savanxp_compositor_reply reply;
+    int result;
+
+    memset(&request, 0, sizeof(request));
+    request.type = SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE;
+    request.cursor_position.shape = (uint32_t)shape;
+    result = compositor_rpc(connection, &request, &reply);
+    if (result == 0 && connection != 0)
+    {
+        connection->cursor_shape = shape;
     }
     return result;
 }

@@ -497,11 +497,23 @@ struct savanxp_gpu_cursor_image {
     uint32_t hotspot_y;
 };
 
+enum savanxp_cursor_shape {
+    SAVANXP_CURSOR_ARROW = 0,
+    SAVANXP_CURSOR_WAIT,
+    SAVANXP_CURSOR_TEXT,
+    SAVANXP_CURSOR_MOVE,
+    SAVANXP_CURSOR_RESIZE_H,
+    SAVANXP_CURSOR_RESIZE_V,
+    SAVANXP_CURSOR_UNAVAILABLE,
+    SAVANXP_CURSOR_LINK,
+    SAVANXP_CURSOR_SHAPE_COUNT,
+};
+
 struct savanxp_gpu_cursor_position {
     uint32_t x;
     uint32_t y;
     uint32_t visible;
-    uint32_t reserved0;
+    uint32_t shape; /* enum savanxp_cursor_shape */
 };
 
 enum savanxp_gpu_present_timeline_flags {
@@ -625,6 +637,10 @@ enum savanxp_input_event_type {
 struct savanxp_desktop_launch_request {
     uint32_t reserved0;
     char path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY];
+};
+
+struct savanxp_desktop_cursor_hint {
+    uint32_t shape; /* enum savanxp_cursor_shape */
 };
 
 enum savanxp_mouse_button {

@@ -311,31 +311,30 @@ static int compositor_get_timeline(
     return result < 0 ? (int)result : 0;
 }
 
-static int compositor_enable_cursor(
-    struct compositor_state *state,
-    const struct savanxp_compositor_request *request)
+static int upload_cursor_shape(struct compositor_state *state, uint32_t shape)
 {
     static uint32_t cursor_pixels[64 * 64];
     struct savanxp_gpu_cursor_image image;
+    const struct desktop_cursor_asset *asset;
     int row;
     int column;
 
-    if (state == 0 || request == 0 || !state->initialized)
-    {
-        return -SAVANXP_ENODEV;
-    }
-    if ((state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) == 0)
+    if (state == 0 || (state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) == 0)
     {
         return -SAVANXP_ENOSYS;
     }
+    if (shape >= (uint32_t)SAVANXP_CURSOR_SHAPE_COUNT)
+    {
+        shape = SAVANXP_CURSOR_ARROW;
+    }
+    asset = &k_desktop_cursor_assets[shape];
 
     memset(cursor_pixels, 0, sizeof(cursor_pixels));
-    for (row = 0; row < DESKTOP_CURSOR_HEIGHT; ++row)
+    for (row = 0; row < asset->height && row < 64; ++row)
     {
-        for (column = 0; column < DESKTOP_CURSOR_WIDTH; ++column)
+        for (column = 0; column < asset->width && column < 64; ++column)
         {
-            cursor_pixels[(row * 64) + column] =
-                k_desktop_cursor_pixels[(row * DESKTOP_CURSOR_WIDTH) + column];
+            cursor_pixels[(row * 64) + column] = asset->pixels[(row * asset->width) + column];
         }
     }
 
@@ -343,11 +342,26 @@ static int compositor_enable_cursor(
     image.width = 64;
     image.height = 64;
     image.pitch = 64u * sizeof(uint32_t);
-    image.hotspot_x = DESKTOP_CURSOR_HOTSPOT_X;
-    image.hotspot_y = DESKTOP_CURSOR_HOTSPOT_Y;
-    if (gpu_set_cursor(state->gpu_fd, &image) < 0)
+    image.hotspot_x = (uint32_t)asset->hotspot_x;
+    image.hotspot_y = (uint32_t)asset->hotspot_y;
+    return gpu_set_cursor(state->gpu_fd, &image) < 0 ? -SAVANXP_EIO : 0;
+}
+
+static int compositor_enable_cursor(
+    struct compositor_state *state,
+    const struct savanxp_compositor_request *request)
+{
+    int result;
+
+    if (state == 0 || request == 0 || !state->initialized)
     {
-        return -SAVANXP_EIO;
+        return -SAVANXP_ENODEV;
+    }
+
+    result = upload_cursor_shape(state, request->cursor_position.shape);
+    if (result < 0)
+    {
+        return result;
     }
 
     state->cursor_enabled = 1;
@@ -363,6 +377,19 @@ static int compositor_move_cursor(
         return -SAVANXP_ENODEV;
     }
     return gpu_move_cursor(state->gpu_fd, &request->cursor_position) < 0 ? -SAVANXP_EIO : 0;
+}
+
+static int compositor_set_cursor_shape(
+    struct compositor_state *state,
+    const struct savanxp_compositor_request *request)
+{
+    if (state == 0 || request == 0 || !state->initialized || !state->cursor_enabled)
+    {
+        return -SAVANXP_ENODEV;
+    }
+    /* Shape swap only -- must not touch position/visibility, or every shape
+     * change would snap the hardware cursor to (0,0) and hide it. */
+    return upload_cursor_shape(state, request->cursor_position.shape);
 }
 
 static int handle_request(
@@ -390,6 +417,8 @@ static int handle_request(
         return compositor_enable_cursor(state, request);
     case SAVANXP_COMPOSITOR_MSG_MOVE_CURSOR:
         return compositor_move_cursor(state, request);
+    case SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE:
+        return compositor_set_cursor_shape(state, request);
     case SAVANXP_COMPOSITOR_MSG_SHUTDOWN:
         return 0;
     default:

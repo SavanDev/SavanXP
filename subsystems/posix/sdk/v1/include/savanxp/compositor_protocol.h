@@ -32,6 +32,7 @@ enum savanxp_compositor_message_type
     SAVANXP_COMPOSITOR_MSG_ENABLE_CURSOR = 5,
     SAVANXP_COMPOSITOR_MSG_MOVE_CURSOR = 6,
     SAVANXP_COMPOSITOR_MSG_SHUTDOWN = 7,
+    SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE = 8,
 };
 
 enum savanxp_compositor_surface_id

@@ -26,6 +26,8 @@ struct desktop_client
     int retire_event_fd;
     int shutdown_event_fd;
     int launch_read_fd;
+    int cursor_hint_read_fd;
+    int last_cursor_hint_shape;
     void *mapped_view;
     struct savanxp_gpu_client_surface_header *header;
     struct savanxp_gpu_dirty_rect_batch *command_batches;
@@ -65,6 +67,8 @@ struct desktop_session
     int input_fd;
     int mouse_fd;
     int hw_cursor_enabled;
+    int current_cursor_shape;
+    int previous_cursor_shape;
     int active_client_kind;
     int active_overlay_slot;
     int fullscreen_slot;

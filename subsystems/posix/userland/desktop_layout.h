@@ -65,5 +65,5 @@ struct sx_rect desktop_confirm_yes_rect(const struct savanxp_fb_info *info);
 struct sx_rect desktop_confirm_no_rect(const struct savanxp_fb_info *info);
 struct sx_rect desktop_shortcut_rect(const struct savanxp_fb_info *info, int index);
 int desktop_shortcut_from_point(const struct savanxp_fb_info *info, int x, int y);
-void desktop_cursor_bounds(int cursor_x, int cursor_y, int *x, int *y, int *width, int *height);
+void desktop_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height);
 int desktop_selected_item_from_cursor(const struct savanxp_gfx_context *gfx, int cursor_x, int cursor_y);
