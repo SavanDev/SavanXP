@@ -91,6 +91,16 @@ int sxn_sys_clock_hour(void);
 int sxn_sys_clock_minute(void);
 int sxn_sys_clock_second(void);
 
+/* --- Listado de directorios (sx_fs.c; open/readdir/stat via posix) ----------
+ * Carga un directorio al cache (con ".." y ordenado) y expone las entradas por
+ * indice. Lo usa el port de filesapp. */
+int sxn_fs_load(const char *path); /* devuelve cantidad de entradas o -1 */
+int sxn_fs_count(void);
+const char *sxn_fs_name(int index);
+int sxn_fs_is_dir(int index);
+const char *sxn_fs_join(const char *base, const char *name);
+const char *sxn_fs_parent(const char *path);
+
 /* --- I/O y proceso (baseline transitorio sobre la tabla posix) ------------- */
 
 long sxn_write(int fd, const char *buf, int len);

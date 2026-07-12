@@ -178,9 +178,10 @@ $shimObj = Join-Path $objDir "sx_native.o"
 $guiObj = Join-Path $objDir "sx_gui.o"
 $textObj = Join-Path $objDir "sx_text.o"
 $sysinfoObj = Join-Path $objDir "sx_sysinfo.o"
+$fsObj = Join-Path $objDir "sx_fs.o"
 $cxxGlueObj = Join-Path $objDir "sx_cxx.o"
 $entryObj = Join-Path $objDir "sx_entry.o"
-$objects = @($crt0Obj, $shimObj, $guiObj, $textObj, $sysinfoObj, $cxxGlueObj, $entryObj)
+$objects = @($crt0Obj, $shimObj, $guiObj, $textObj, $sysinfoObj, $fsObj, $cxxGlueObj, $entryObj)
 
 Write-Step "Compilando runtime nativo"
 Invoke-Compile $clang @() (Join-Path $posixSdk "runtime\crt0.S") $crt0Obj $cFlags
@@ -188,6 +189,7 @@ Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_native.c") 
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_gui.c") $guiObj $cFlags
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_text.c") $textObj $cFlags
 Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_sysinfo.c") $sysinfoObj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_fs.c") $fsObj $cFlags
 Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_cxx.cpp") $cxxGlueObj $cxxFlags
 Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_entry.cpp") $entryObj $cxxFlags
 

@@ -107,8 +107,17 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   compartido) y ahora lo usan sxguiapp y aboutapp. Verificado con
   [test/abouthost.c](test/abouthost.c) (`.\build.ps1 native-about`): render +
   info real leída (procesos=4, mem=133 MiB) + Refrescar (hunde/levanta) +
-  Cerrar (la app se cierra sola). Base para seguir reemplazando `desktop.c`
-  app por app.
+  Cerrar (la app se cierra sola).
+- **`filesapp` portada a Haxe (v1: navegador de directorios)** —
+  [haxe-files/Main.hx](haxe-files/Main.hx): un widget **`Listbox`**
+  (scrollable/seleccionable, en [haxe-toolkit/](haxe-toolkit/)) lista el
+  contenido de un directorio (con `..`), y se navega de verdad — click/Enter
+  entra a un subdirectorio, `..`/Backspace sube, ↑↓ mueven la selección. La
+  lectura del filesystem va por [sx_fs.c](sdk/runtime/sx_fs.c) (open/readdir/
+  stat del baseline, con orden dirs-primero). Verificado con
+  [test/fileshost.c](test/fileshost.c) (`.\build.ps1 native-files`): render +
+  selección por teclado + **navegación real** (`/` con 5 entradas → `/bin` con
+  60 → `/`). Preview de archivos, menubar y dialog quedan como follow-ups.
 
 ## El contrato ABI (v1)
 
@@ -152,6 +161,7 @@ las apps nativas post-rebuild y las corren en QEMU):
 .\build.ps1 native-guihost    # valida el cliente del compositor: teclado + puntero (fd 5)
 .\build.ps1 native-sxgui      # valida la app sxgui-style (Fase 3): toolkit + texto Noto
 .\build.ps1 native-about      # valida aboutapp portada: group boxes + info del sistema
+.\build.ps1 native-files      # valida filesapp portada: Listbox + navegación de directorios
 ```
 
 El script:
@@ -213,20 +223,26 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   versión/uptime/procesos/memoria/disco/reloj) envolviendo las syscalls del
   baseline (system_info/proc_info/realtime) que el nativo delega en posix. Lo
   usa el port de aboutapp.
+- `sdk/runtime/sx_fs.c` — listado de directorios (`sxn_fs_load`/`sxn_fs_count`/
+  `sxn_fs_name`/`sxn_fs_is_dir` + `sxn_fs_join`/`sxn_fs_parent`) envolviendo
+  open/readdir/stat del baseline; carga un dir al cache (con `..`, ordenado).
+  Lo usa el port de filesapp.
 - `haxe-toolkit/` — **toolkit sxgui compartido** entre las apps GUI nativas
-  (`Painter` con biseles/label/groupbox/texto, `Boton` con estado + hit-test),
-  agregado al `-cp` del build.
+  (`Painter` con biseles/label/groupbox/texto, `Boton` con estado + hit-test,
+  `Listbox` scrollable/seleccionable), agregado al `-cp` del build.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
   String/Array + Null<T> + Map + Float + syscalls nativas). `haxe-gui/Main.hx` —
   `nativegui`, la app ventaneada de ejemplo (cliente del compositor).
   `haxe-sxgui/Main.hx` — `sxguiapp`, la app sxgui-style interactiva de la Fase 3.
   `haxe-about/Main.hx` — `aboutapp` portada a Haxe (labels + group boxes + info
-  del sistema). Ambas usan el toolkit compartido de `haxe-toolkit/`.
+  del sistema). `haxe-files/Main.hx` — `filesapp` portada (Listbox + navegación
+  de directorios). Todas usan el toolkit compartido de `haxe-toolkit/`.
 - `test/guihost.c` — harness POSIX headless que interpreta el rol del
   compositor (sección + eventos + input) y valida al cliente nativo de punta a
   punta. Build: `tools\build-user.ps1 -Source subsystems\native\test\guihost.c
   -Name nativeguihost`. `test/sxguihost.c` — maneja `sxguiapp` (press/release/
   click). `test/abouthost.c` — maneja `aboutapp` (render + Refrescar + Cerrar).
+  `test/fileshost.c` — maneja `filesapp` (listbox + selección + navegación real).
 - `haxe-support/` — tooling macro del build: `SxnCompilerInit.hx` (envuelve el
   init de reflaxe.CPP y registra nuestro preprocesador) y `UniqueLocalNames.hx`
   (hace únicos los locals por función; ver Hallazgos).

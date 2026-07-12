@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1061,6 +1061,23 @@ function Run-NativeAboutQemu {
     }.GetNewClosure()
 }
 
+# filesapp portada a Haxe (Fase 3): navegador de directorios. Construye e
+# instala filesapp (haxe-files) + el harness fileshost y los corre headless.
+# Valida el widget Listbox, la seleccion por teclado y la navegacion real de
+# directorios (sx_fs: open/readdir/stat) bajo el compositor.
+function Run-NativeFilesQemu {
+    $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
+    $userBuild = Join-Path $ToolRoot "build-user.ps1"
+    $fileshostSource = Join-Path $ProjectRoot "subsystems/native/test/fileshost.c"
+
+    Run-AutomationQemu -AutomationCommand "fileshost" -SuccessToken "FILES HOST PASS" -FailureToken "FILES HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
+        & $nativeBuild -Name filesapp -Source haxe-files -Install
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de filesapp." }
+        & $userBuild -Source $fileshostSource -Name fileshost
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de fileshost." }
+    }.GetNewClosure()
+}
+
 function Run-Ac97SmokeQemu {
     # Mismo smoke que valida /dev/audio0, pero forzando el hardware AC'97 (sin
     # virtio-sound) para ejercitar el backend de fallback usado en VirtualBox.
@@ -1169,6 +1186,9 @@ switch ($Command) {
     }
     "native-about" {
         Run-NativeAboutQemu
+    }
+    "native-files" {
+        Run-NativeFilesQemu
     }
     "clean" {
         if (Test-Path $BuildRoot) {
