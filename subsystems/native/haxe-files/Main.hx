@@ -1,22 +1,36 @@
 // SavanXP - filesapp portada a Haxe (Fase 3).
 //
-// Port (v1: navegador de directorios) de subsystems/posix/userland/filesapp.c.
-// Lista el contenido de un directorio en un Listbox (con ".." para subir),
-// permite navegar (click/Enter en un directorio entra; ".." o Backspace sube) y
-// muestra una barra de estado. La lectura del filesystem va por sx_fs.c (open/
-// readdir/stat del baseline). Preview de archivos, menubar y dialog quedan para
-// follow-ups. Usa el toolkit compartido (Painter, Boton, Listbox).
+// Port de subsystems/posix/userland/filesapp.c: navegador de directorios con
+// panel de preview. Lista el contenido de un directorio en un Listbox (con
+// ".." para subir) y muestra en un Textview la ruta / tipo / tamano y las
+// primeras lineas del archivo seleccionado. Navegacion: click/Enter entra a un
+// directorio, ".."/Backspace sube, flechas mueven la seleccion, F5 refresca,
+// ESC cierra. El filesystem se lee por sx_fs.c (open/readdir/stat/read del
+// baseline). Menubar y dialog About quedan como follow-ups.
+//
+// Usa el toolkit compartido (Painter, Listbox, Textview).
 
 class Explorador {
   var p:Painter;
   var lista:Listbox;
+  var preview:Textview;
   public var rutaActual:String;
   var estado:String;
   public var salir:Bool;
 
+  var previewX:Int;
+  var panelY:Int;
+
   public function new(p:Painter) {
     this.p = p;
-    this.lista = new Listbox(12, 30, p.ancho - 24, p.alto - 70);
+    this.panelY = 50;
+    var listW = Std.int(p.ancho / 2) - 18;
+    var panelH = p.alto - panelY - 40;
+    this.previewX = 12 + listW + 12;
+    var previewW = p.ancho - previewX - 12;
+
+    this.lista = new Listbox(12, panelY, listW, panelH);
+    this.preview = new Textview(previewX, panelY, previewW, panelH);
     this.rutaActual = "/";
     this.estado = "";
     this.salir = false;
@@ -46,9 +60,58 @@ class Explorador {
     lista.seleccion = 0;
     lista.scroll = 0;
     estado = istr(n) + " elemento(s)";
-    // Log para el harness/serial: confirma la navegacion.
     untyped __cpp__('sxn_log({0}.c_str())', rutaActual);
     untyped __cpp__('sxn_log_num("files: entradas", {0})', n);
+    actualizarPreview();
+  }
+
+  // Reconstruye el panel de preview segun la entrada seleccionada (equivalente
+  // a filesapp_update_preview).
+  function actualizarPreview() {
+    preview.lines = [];
+    var total = lista.items.length;
+    var sel = lista.seleccion;
+    if (total <= 0 || sel < 0 || sel >= total) {
+      preview.lines.push("Sin entradas.");
+      return;
+    }
+
+    var nombre:String = untyped __cpp__("std::string(sxn_fs_name({0}))", sel);
+    if (nombre == "..") {
+      preview.lines.push("Ir al directorio padre");
+      return;
+    }
+
+    var full:String = untyped __cpp__(
+      "std::string(sxn_fs_join({0}.c_str(), {1}.c_str()))", rutaActual, nombre);
+    var traza = "preview: " + full;
+    untyped __cpp__('sxn_log({0}.c_str())', traza);
+
+    preview.lines.push(full);
+    preview.lines.push("");
+
+    if (untyped __cpp__("sxn_fs_path_is_dir({0}.c_str()) != 0", full)) {
+      preview.lines.push("Directorio");
+      preview.lines.push("Abrir: Enter o segundo click");
+      return;
+    }
+
+    var tam:Int = untyped __cpp__("sxn_fs_size({0}.c_str())", full);
+    preview.lines.push("Tamano: " + istr(tam) + " bytes");
+    preview.lines.push("");
+
+    var lineas:Int = untyped __cpp__("sxn_fs_preview_load({0}.c_str())", full);
+    untyped __cpp__('sxn_log_num("files: lineas de preview", {0})', lineas);
+    if (lineas <= 0) {
+      preview.lines.push("(vacio o sin preview)");
+      return;
+    }
+    var i = 0;
+    while (i < lineas) {
+      var linea:String = untyped __cpp__("std::string(sxn_fs_preview_line({0}))", i);
+      preview.lines.push(linea);
+      i += 1;
+    }
   }
 
   function subir() {
@@ -71,15 +134,26 @@ class Explorador {
         "std::string(sxn_fs_join({0}.c_str(), {1}.c_str()))", rutaActual, nombre);
       cargar(nuevo);
     } else {
-      estado = "Archivo: " + nombre;
+      actualizarPreview();
+      estado = "Preview actualizado";
     }
+  }
+
+  function seleccionar(idx:Int) {
+    lista.seleccion = idx;
+    lista.asegurarVisible(p);
+    actualizarPreview();
   }
 
   public function repintar() {
     p.rect(0, 0, p.ancho, p.alto, Painter.FACE);
     p.label(12, 8, "Ruta: " + rutaActual);
+    p.label(12, 30, "Directorio");
+    p.label(previewX, 30, "Preview");
+
     lista.dibujar(p);
-    // Barra de estado hundida.
+    preview.dibujar(p);
+
     var sy = p.alto - 30;
     p.rect(12, sy, p.ancho - 24, 20, Painter.FACE);
     p.sunken(12, sy, p.ancho - 24, 20);
@@ -87,14 +161,14 @@ class Explorador {
   }
 
   public function puntero(mx:Int, my:Int, izq:Bool, izqPrev:Bool):Bool {
-    // Click (transicion a soltar) selecciona; si ya estaba seleccionado, activa.
+    // Click (al soltar) selecciona; si ya estaba seleccionado, activa.
     if (!izq && izqPrev) {
       var idx = lista.indiceEn(mx, my, p);
       if (idx >= 0) {
         if (idx == lista.seleccion) {
           activar(idx);
         } else {
-          lista.seleccion = idx;
+          seleccionar(idx);
         }
         return true;
       }
@@ -109,16 +183,14 @@ class Explorador {
     }
     if (key == 256) { // arriba
       if (lista.seleccion > 0) {
-        lista.seleccion -= 1;
-        lista.asegurarVisible(p);
+        seleccionar(lista.seleccion - 1);
         return true;
       }
       return false;
     }
     if (key == 257) { // abajo
       if (lista.seleccion < lista.items.length - 1) {
-        lista.seleccion += 1;
-        lista.asegurarVisible(p);
+        seleccionar(lista.seleccion + 1);
         return true;
       }
       return false;

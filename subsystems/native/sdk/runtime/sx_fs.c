@@ -15,10 +15,16 @@
 #define FS_MAX_ENTRIES 128
 #define FS_NAME_CAP 256
 #define FS_PATH_CAP 512
+#define FS_PREVIEW_LINES 15
+#define FS_PREVIEW_COLS 76
+#define FS_PREVIEW_BYTES 2048
 
 static char g_names[FS_MAX_ENTRIES][FS_NAME_CAP];
 static unsigned char g_is_dir[FS_MAX_ENTRIES];
 static int g_count;
+
+static char g_preview[FS_PREVIEW_LINES][FS_PREVIEW_COLS + 1];
+static int g_preview_count;
 
 /* --- helpers de string (self-contained, sin depender de libc) --------------- */
 
@@ -178,6 +184,85 @@ static char g_parent_buf[FS_PATH_CAP];
 const char *sxn_fs_join(const char *base, const char *name) {
     fs_join(base, name, g_join_buf, sizeof(g_join_buf));
     return g_join_buf;
+}
+
+/* --- stat / preview de archivos ---------------------------------------------- */
+
+static long fs_read(int fd, char *buffer, unsigned long cap) {
+    return sxn_syscall3(SAVANXP_SYS_READ, fd, (long)buffer, (long)cap);
+}
+
+static int fs_printable(char c) {
+    return c >= 32 && c <= 126;
+}
+
+/* 1 si `path` es un directorio. */
+int sxn_fs_path_is_dir(const char *path) {
+    return fs_path_is_dir(path);
+}
+
+/* Tamano en bytes de `path`, o -1 si stat falla. */
+int sxn_fs_size(const char *path) {
+    struct savanxp_stat info;
+    info.st_mode = 0;
+    info.st_size = 0;
+    if (sxn_syscall3(SAVANXP_SYS_STAT, (long)path, (long)&info, 0) != 0) {
+        return -1;
+    }
+    return (int)info.st_size;
+}
+
+/* Lee el comienzo de `path` y lo parte en lineas para el preview: corta en '\n',
+ * ignora '\r' y reemplaza los no imprimibles por '.' (igual que
+ * filesapp_sanitize_line de filesapp.c). Devuelve la cantidad de lineas o -1. */
+int sxn_fs_preview_load(const char *path) {
+    char buffer[FS_PREVIEW_BYTES];
+    long fd;
+    long got;
+    long index;
+    int line = 0;
+    int col = 0;
+
+    g_preview_count = 0;
+    fd = fs_open(path);
+    if (fd < 0) {
+        return -1;
+    }
+    got = fs_read((int)fd, buffer, sizeof(buffer));
+    (void)fs_close((int)fd);
+    if (got < 0) {
+        return -1;
+    }
+
+    for (index = 0; index < got && line < FS_PREVIEW_LINES; ++index) {
+        char c = buffer[index];
+        if (c == '\n') {
+            g_preview[line][col] = '\0';
+            line += 1;
+            col = 0;
+            continue;
+        }
+        if (c == '\r') {
+            continue;
+        }
+        if (col < FS_PREVIEW_COLS) {
+            g_preview[line][col] = fs_printable(c) ? c : '.';
+            col += 1;
+        }
+    }
+    if (col > 0 && line < FS_PREVIEW_LINES) {
+        g_preview[line][col] = '\0';
+        line += 1;
+    }
+
+    g_preview_count = line;
+    return line;
+}
+
+int sxn_fs_preview_count(void) { return g_preview_count; }
+
+const char *sxn_fs_preview_line(int index) {
+    return (index >= 0 && index < g_preview_count) ? g_preview[index] : "";
 }
 
 const char *sxn_fs_parent(const char *path) {

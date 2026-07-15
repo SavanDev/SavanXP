@@ -108,16 +108,20 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   [test/abouthost.c](test/abouthost.c) (`.\build.ps1 native-about`): render +
   info real leída (procesos=4, mem=133 MiB) + Refrescar (hunde/levanta) +
   Cerrar (la app se cierra sola).
-- **`filesapp` portada a Haxe (v1: navegador de directorios)** —
-  [haxe-files/Main.hx](haxe-files/Main.hx): un widget **`Listbox`**
-  (scrollable/seleccionable, en [haxe-toolkit/](haxe-toolkit/)) lista el
-  contenido de un directorio (con `..`), y se navega de verdad — click/Enter
-  entra a un subdirectorio, `..`/Backspace sube, ↑↓ mueven la selección. La
-  lectura del filesystem va por [sx_fs.c](sdk/runtime/sx_fs.c) (open/readdir/
-  stat del baseline, con orden dirs-primero). Verificado con
-  [test/fileshost.c](test/fileshost.c) (`.\build.ps1 native-files`): render +
-  selección por teclado + **navegación real** (`/` con 5 entradas → `/bin` con
-  60 → `/`). Preview de archivos, menubar y dialog quedan como follow-ups.
+- **`filesapp` portada a Haxe (navegador + preview)** —
+  [haxe-files/Main.hx](haxe-files/Main.hx): layout de dos paneles como
+  [filesapp.c](../posix/userland/filesapp.c). A la izquierda un widget
+  **`Listbox`** (scrollable/seleccionable) lista el directorio (con `..`) y se
+  navega de verdad — click/Enter entra a un subdirectorio, `..`/Backspace sube,
+  ↑↓ mueven la selección. A la derecha un **`Textview`** muestra el **preview**
+  de lo seleccionado: ruta, tipo/tamaño y las primeras líneas del archivo
+  (saneadas: corta en `\n`, no imprimibles → `.`). Todo el filesystem va por
+  [sx_fs.c](sdk/runtime/sx_fs.c) (open/readdir/stat/read del baseline, orden
+  dirs-primero). Verificado con [test/fileshost.c](test/fileshost.c)
+  (`.\build.ps1 native-files`): render de ambos paneles + selección por teclado
+  + **navegación real** (`/` 5 entradas → `/bin` 60 → `/`) + el preview
+  siguiendo la selección y **leyendo un archivo real** (`/bin/aboutapp`).
+  Menubar y dialog About quedan como follow-ups.
 
 ## El contrato ABI (v1)
 
@@ -223,13 +227,16 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   versión/uptime/procesos/memoria/disco/reloj) envolviendo las syscalls del
   baseline (system_info/proc_info/realtime) que el nativo delega en posix. Lo
   usa el port de aboutapp.
-- `sdk/runtime/sx_fs.c` — listado de directorios (`sxn_fs_load`/`sxn_fs_count`/
-  `sxn_fs_name`/`sxn_fs_is_dir` + `sxn_fs_join`/`sxn_fs_parent`) envolviendo
-  open/readdir/stat del baseline; carga un dir al cache (con `..`, ordenado).
-  Lo usa el port de filesapp.
+- `sdk/runtime/sx_fs.c` — filesystem: listado de directorios (`sxn_fs_load` +
+  `count`/`name`/`is_dir`, con `..` y ordenado), helpers de path (`join`/
+  `parent`) y **preview de archivos** (`sxn_fs_size`, `sxn_fs_preview_load` +
+  `preview_count`/`preview_line`, que lee el comienzo y lo parte en líneas
+  saneadas). Envuelve open/close/readdir/stat/read del baseline. Lo usa
+  filesapp.
 - `haxe-toolkit/` — **toolkit sxgui compartido** entre las apps GUI nativas
   (`Painter` con biseles/label/groupbox/texto, `Boton` con estado + hit-test,
-  `Listbox` scrollable/seleccionable), agregado al `-cp` del build.
+  `Listbox` scrollable/seleccionable, `Textview` de solo lectura), agregado al
+  `-cp` del build.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
   String/Array + Null<T> + Map + Float + syscalls nativas). `haxe-gui/Main.hx` —
   `nativegui`, la app ventaneada de ejemplo (cliente del compositor).

@@ -19,13 +19,20 @@
 #define FILES_DEADLINE_MS 8000ul
 
 #define FILES_NAVY 0x00000080u  /* item seleccionado */
-#define FILES_FIELD 0x00FFFFFFu /* fondo del listbox */
-/* Puntos a la derecha (mas alla del texto) de la fila 0 y la fila 1 del
- * listbox: y+2 + fila*altoTexto(18). Fila 0 -> y=40, fila 1 -> y=58. */
-#define FILES_ROW0_X 440u
-#define FILES_ROW0_Y 40u
-#define FILES_ROW1_X 440u
-#define FILES_ROW1_Y 58u
+#define FILES_FIELD 0x00FFFFFFu /* fondo de listbox/preview */
+#define FILES_SHADOW 0x00808080u
+/* Layout de haxe-files/Main.hx con 460x360: listbox (12,50,212,270) y preview
+ * (236,50,212,270). Filas del listbox en y+2 + fila*altoTexto(18): fila 0 ->
+ * 52..69, fila 1 -> 70..87. Los puntos elegidos caen a la derecha del texto. */
+#define FILES_ROW0_X 215u
+#define FILES_ROW0_Y 60u
+#define FILES_ROW1_X 215u
+#define FILES_ROW1_Y 78u
+/* Panel de preview: borde hundido superior y un punto interior vacio. */
+#define FILES_PREVIEW_BORDER_X 300u
+#define FILES_PREVIEW_BORDER_Y 50u
+#define FILES_PREVIEW_FIELD_X 440u
+#define FILES_PREVIEW_FIELD_Y 300u
 
 static int fail(const char *reason) {
     printf("fileshost: %s\n", reason);
@@ -163,8 +170,9 @@ int main(void) {
         (void)close(guard_fds[guard_index]);
     }
 
-    /* 1) Frame inicial: el listbox rinde con el item 0 seleccionado (navy) y la
-     *    fila 1 con fondo FIELD. */
+    /* 1) Frame inicial: el listbox rinde con el item 0 seleccionado (navy), la
+     *    fila 1 con fondo FIELD, y el panel de preview rinde a la derecha
+     *    (borde hundido + interior FIELD). */
     if (compose_next_frame() != 0) {
         return fail("no llego el frame inicial");
     }
@@ -173,6 +181,12 @@ int main(void) {
     }
     if (pixel_at(FILES_ROW1_X, FILES_ROW1_Y) != FILES_FIELD) {
         return fail("fila 1 no tiene fondo FIELD (listbox no rinde)");
+    }
+    if (pixel_at(FILES_PREVIEW_BORDER_X, FILES_PREVIEW_BORDER_Y) != FILES_SHADOW) {
+        return fail("el panel de preview no rinde (borde hundido ausente)");
+    }
+    if (pixel_at(FILES_PREVIEW_FIELD_X, FILES_PREVIEW_FIELD_Y) != FILES_FIELD) {
+        return fail("el panel de preview no rinde (interior FIELD ausente)");
     }
 
     /* 2) Flecha abajo: el resaltado baja a la fila 1. */
@@ -206,6 +220,19 @@ int main(void) {
     }
     if (compose_next_frame() != 0) {
         return fail("no llego el frame tras entrar al directorio");
+    }
+
+    /* 4b) Dentro del directorio el item 0 es ".."; bajar selecciona una entrada
+     *     real, lo que hace que el preview lea el archivo (ver el serial:
+     *     "files: lineas de preview"). El item 0 vuelve a quedar sin resaltar. */
+    if (send_key(input_pipe[1], SAVANXP_KEY_DOWN) != 0) {
+        return fail("no se pudo enviar flecha abajo dentro del directorio");
+    }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame tras seleccionar una entrada del directorio");
+    }
+    if (pixel_at(FILES_ROW1_X, FILES_ROW1_Y) != FILES_NAVY) {
+        return fail("la seleccion no bajo dentro del directorio");
     }
 
     /* 5) Backspace: sube al directorio padre. */
