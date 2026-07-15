@@ -18,6 +18,8 @@ class Painter {
   public static inline var LIGHT:Int = 0xFFFFFF;
   public static inline var TEXT:Int = 0x000000;
   public static inline var FIELD:Int = 0xFFFFFF;
+  public static inline var SELECT:Int = 0x000080;      // navy (seleccion/resaltado)
+  public static inline var SELECT_TEXT:Int = 0xFFFFFF;
 
   public function new(ancho:Int, alto:Int, stride:Int) {
     this.ancho = ancho;

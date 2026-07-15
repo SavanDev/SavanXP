@@ -14,9 +14,6 @@ class Listbox {
   public var seleccion:Int;
   public var scroll:Int;
 
-  public static inline var SELECT:Int = 0x000080;      // navy
-  public static inline var SELECT_TEXT:Int = 0xFFFFFF;
-
   public function new(x:Int, y:Int, w:Int, h:Int) {
     this.x = x;
     this.y = y;
@@ -73,8 +70,8 @@ class Listbox {
       var idx = scroll + i;
       var ry = y + 2 + i * rh;
       if (idx == seleccion) {
-        p.rect(x + 2, ry, w - 4, rh, SELECT);
-        p.texto(x + 4, ry, items[idx], SELECT_TEXT);
+        p.rect(x + 2, ry, w - 4, rh, Painter.SELECT);
+        p.texto(x + 4, ry, items[idx], Painter.SELECT_TEXT);
       } else {
         p.texto(x + 4, ry, items[idx], Painter.TEXT);
       }

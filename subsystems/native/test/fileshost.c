@@ -18,21 +18,38 @@
 #define FILES_CLIENT_PATH "/disk/bin/filesapp"
 #define FILES_DEADLINE_MS 8000ul
 
-#define FILES_NAVY 0x00000080u  /* item seleccionado */
+#define FILES_NAVY 0x00000080u  /* item seleccionado / menu resaltado */
 #define FILES_FIELD 0x00FFFFFFu /* fondo de listbox/preview */
 #define FILES_SHADOW 0x00808080u
-/* Layout de haxe-files/Main.hx con 460x360: listbox (12,50,212,270) y preview
- * (236,50,212,270). Filas del listbox en y+2 + fila*altoTexto(18): fila 0 ->
- * 52..69, fila 1 -> 70..87. Los puntos elegidos caen a la derecha del texto. */
+#define FILES_FACE 0x00C0C0C0u
+#define FILES_LIGHT 0x00FFFFFFu
+/* Layout de haxe-files/Main.hx con 460x360: menubar alto 26 (altoTexto+8),
+ * topY=32, panelY=74; listbox (12,74,212,246) y preview (236,74,212,246).
+ * Filas del listbox en y+2 + fila*altoTexto(18): fila 0 -> 76..93, fila 1 ->
+ * 94..111. Los puntos elegidos caen a la derecha del texto. */
 #define FILES_ROW0_X 215u
-#define FILES_ROW0_Y 60u
+#define FILES_ROW0_Y 84u
 #define FILES_ROW1_X 215u
-#define FILES_ROW1_Y 78u
+#define FILES_ROW1_Y 102u
 /* Panel de preview: borde hundido superior y un punto interior vacio. */
 #define FILES_PREVIEW_BORDER_X 300u
-#define FILES_PREVIEW_BORDER_Y 50u
+#define FILES_PREVIEW_BORDER_Y 74u
 #define FILES_PREVIEW_FIELD_X 440u
 #define FILES_PREVIEW_FIELD_Y 300u
+/* Menubar: linea SHADOW inferior en y=25. El popup de "Archivo" arranca en
+ * y=26 con borde levantado LIGHT; ese pixel vale FACE con el menu cerrado. */
+#define FILES_MENUBAR_LINE_X 400u
+#define FILES_MENUBAR_LINE_Y 25u
+#define FILES_POPUP_EDGE_X 20u
+#define FILES_POPUP_EDGE_Y 26u
+/* Centros de click: titulo "Archivo", item "Refrescar" (y 27..48) e item
+ * "Salir" (y 77..98, tras el separador). */
+#define FILES_TITLE_CX 33
+#define FILES_TITLE_CY 12
+#define FILES_ITEM_REFRESH_CX 30
+#define FILES_ITEM_REFRESH_CY 38
+#define FILES_ITEM_EXIT_CX 30
+#define FILES_ITEM_EXIT_CY 87
 
 static int fail(const char *reason) {
     printf("fileshost: %s\n", reason);
@@ -69,6 +86,25 @@ static int compose_next_frame(void) {
     return -2;
 }
 
+/* Compone todo lo pendiente hasta que la app deja de presentar por un rato: mas
+ * robusto que contar frames exactos (una interaccion puede generar 1 o 2). */
+static void settle(void) {
+    unsigned long quiet_until = uptime_ms() + 400ul;
+    while (uptime_ms() < quiet_until) {
+        if (g_header->submit_sequence > g_header->composed_sequence) {
+            while (g_header->composed_sequence < g_header->submit_sequence) {
+                uint64_t sequence = g_header->composed_sequence + 1u;
+                g_header->retired_sequence = sequence;
+                g_header->composed_sequence = sequence;
+                (void)event_set(g_retire_event);
+            }
+            quiet_until = uptime_ms() + 400ul;
+        }
+        (void)wait_one(g_submit_event, 50);
+        (void)event_reset(g_submit_event);
+    }
+}
+
 static uint32_t pixel_at(unsigned int x, unsigned int y) {
     return g_pixels[y * FILES_WIDTH + x];
 }
@@ -79,6 +115,22 @@ static int send_key(int fd, uint32_t key) {
     event.key = key;
     event.ascii = 0;
     return write(fd, &event, sizeof(event)) == (long)sizeof(event) ? 0 : -1;
+}
+
+static int send_pointer(int fd, int x, int y, uint32_t buttons) {
+    struct savanxp_gui_pointer_event event;
+    event.x = x;
+    event.y = y;
+    event.buttons = buttons;
+    return write(fd, &event, sizeof(event)) == (long)sizeof(event) ? 0 : -1;
+}
+
+/* Click completo (press + release) sobre un punto. */
+static int click_at(int fd, int x, int y) {
+    if (send_pointer(fd, x, y, SAVANXP_MOUSE_BUTTON_LEFT) != 0) {
+        return -1;
+    }
+    return send_pointer(fd, x, y, 0u);
 }
 
 int main(void) {
@@ -188,6 +240,12 @@ int main(void) {
     if (pixel_at(FILES_PREVIEW_FIELD_X, FILES_PREVIEW_FIELD_Y) != FILES_FIELD) {
         return fail("el panel de preview no rinde (interior FIELD ausente)");
     }
+    if (pixel_at(FILES_MENUBAR_LINE_X, FILES_MENUBAR_LINE_Y) != FILES_SHADOW) {
+        return fail("la barra de menu no rinde (linea inferior ausente)");
+    }
+    if (pixel_at(FILES_POPUP_EDGE_X, FILES_POPUP_EDGE_Y) != FILES_FACE) {
+        return fail("hay un popup abierto al arrancar (deberia estar cerrado)");
+    }
 
     /* 2) Flecha abajo: el resaltado baja a la fila 1. */
     if (send_key(input_pipe[1], SAVANXP_KEY_DOWN) != 0) {
@@ -243,10 +301,50 @@ int main(void) {
         return fail("no llego el frame tras subir");
     }
 
-    /* 6) ESC: la app se cierra sola (exit 0). */
-    if (send_key(input_pipe[1], SAVANXP_KEY_ESC) != 0) {
-        return fail("no se pudo enviar ESC");
+    /* 6) Menubar: click en el titulo "Archivo" despliega el menu (aparece el
+     *    borde levantado del popup donde antes habia FACE). */
+    if (click_at(mouse_pipe[1], FILES_TITLE_CX, FILES_TITLE_CY) != 0) {
+        return fail("no se pudo clickear el titulo Archivo");
     }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame tras abrir el menu");
+    }
+    settle();
+    if (pixel_at(FILES_POPUP_EDGE_X, FILES_POPUP_EDGE_Y) != FILES_LIGHT) {
+        return fail("el menu Archivo no se desplego");
+    }
+
+    /* 7) Click en "Refrescar": dispara el comando y cierra el menu. */
+    if (click_at(mouse_pipe[1], FILES_ITEM_REFRESH_CX, FILES_ITEM_REFRESH_CY) != 0) {
+        return fail("no se pudo clickear Refrescar");
+    }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame tras Refrescar");
+    }
+    settle();
+    if (pixel_at(FILES_POPUP_EDGE_X, FILES_POPUP_EDGE_Y) != FILES_FACE) {
+        return fail("el menu no se cerro tras elegir Refrescar");
+    }
+    if (pixel_at(FILES_ROW0_X, FILES_ROW0_Y) != FILES_NAVY) {
+        return fail("el listbox no rinde tras Refrescar");
+    }
+
+    /* 8) Reabrir "Archivo" y elegir "Salir": la app se cierra sola (exit 0),
+     *    verificando el despacho de comandos del menu. */
+    if (click_at(mouse_pipe[1], FILES_TITLE_CX, FILES_TITLE_CY) != 0) {
+        return fail("no se pudo reabrir el menu Archivo");
+    }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame al reabrir el menu");
+    }
+    settle();
+    if (pixel_at(FILES_POPUP_EDGE_X, FILES_POPUP_EDGE_Y) != FILES_LIGHT) {
+        return fail("el menu Archivo no se reabrio");
+    }
+    if (click_at(mouse_pipe[1], FILES_ITEM_EXIT_CX, FILES_ITEM_EXIT_CY) != 0) {
+        return fail("no se pudo clickear Salir");
+    }
+
     if (waitpid((int)pid, &status) != pid) {
         return fail("waitpid fallo");
     }

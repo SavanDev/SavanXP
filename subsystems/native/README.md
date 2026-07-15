@@ -121,7 +121,11 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   (`.\build.ps1 native-files`): render de ambos paneles + selección por teclado
   + **navegación real** (`/` 5 entradas → `/bin` 60 → `/`) + el preview
   siguiendo la selección y **leyendo un archivo real** (`/bin/aboutapp`).
-  Menubar y dialog About quedan como follow-ups.
+  Tiene además una **barra de menú** (`Menubar` en el toolkit) con Archivo
+  (Refrescar/Subir/separador/Salir) y Ayuda, con dropdowns, separadores etched
+  y despacho de comandos **por id** (como las tablas de menú de sxgui en C, para
+  no depender de closures). El dialog modal de "Acerca de" queda como follow-up
+  (por ahora escribe en la barra de estado).
 
 ## El contrato ABI (v1)
 
@@ -234,8 +238,9 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   saneadas). Envuelve open/close/readdir/stat/read del baseline. Lo usa
   filesapp.
 - `haxe-toolkit/` — **toolkit sxgui compartido** entre las apps GUI nativas
-  (`Painter` con biseles/label/groupbox/texto, `Boton` con estado + hit-test,
-  `Listbox` scrollable/seleccionable, `Textview` de solo lectura), agregado al
+  (`Painter` con paleta/biseles/label/groupbox/texto, `Boton` con estado +
+  hit-test, `Listbox` scrollable/seleccionable, `Textview` de solo lectura, y
+  `Menubar`/`Menu`/`MenuItem` con dropdowns y comandos por id), agregado al
   `-cp` del build.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
   String/Array + Null<T> + Map + Float + syscalls nativas). `haxe-gui/Main.hx` —
@@ -324,6 +329,11 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   only`) y el `crt0` alinea el stack a 16. Nota: `fork` sin `exec` arranca al
   hijo con FPU limpia (no hereda la del padre) — desviación menor de POSIX,
   inocua porque fork va seguido de exec.
+- **Un método estático que devuelve su propia clase no compila**: reflaxe.CPP
+  emite `static std::shared_ptr<Foo> bar();` en `Foo.h` pero **no agrega el
+  `#include <memory>`** en ese caso (sí lo hace cuando `shared_ptr` aparece en
+  un campo). Se manifestó al hacer `MenuItem.separador()`; la salida es
+  construir con `new` desde el llamador (ver `haxe-toolkit/MenuItem.hx`).
 - **`--no-opt` en el hxml**: el analizador de Haxe también const-foldea
   condiciones que dependen de `untyped __cpp__`; se compila sin analizador
   (igual que el CI de reflaxe.CPP) y la optimización queda del lado de clang.

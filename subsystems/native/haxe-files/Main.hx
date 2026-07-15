@@ -12,6 +12,7 @@
 
 class Explorador {
   var p:Painter;
+  var menubar:Menubar;
   var lista:Listbox;
   var preview:Textview;
   public var rutaActual:String;
@@ -20,12 +21,34 @@ class Explorador {
 
   var previewX:Int;
   var panelY:Int;
+  var topY:Int;
+
+  // Ids de comando del menu (mismos que filesapp.c).
+  public static inline var CMD_REFRESCAR:Int = 1;
+  public static inline var CMD_SUBIR:Int = 2;
+  public static inline var CMD_ACERCA:Int = 8;
+  public static inline var CMD_SALIR:Int = 9;
 
   public function new(p:Painter) {
     this.p = p;
-    this.panelY = 50;
-    var listW = Std.int(p.ancho / 2) - 18;
+
+    this.menubar = new Menubar();
+    var archivo = new Menu("Archivo");
+    archivo.agregar("Refrescar", CMD_REFRESCAR);
+    archivo.agregar("Subir", CMD_SUBIR);
+    archivo.agregarSeparador();
+    archivo.agregar("Salir", CMD_SALIR);
+    var ayuda = new Menu("Ayuda");
+    ayuda.agregar("Acerca de Files", CMD_ACERCA);
+    menubar.agregar(archivo);
+    menubar.agregar(ayuda);
+
+    // Layout como filesapp_layout de filesapp.c: la barra arriba y los paneles
+    // debajo.
+    this.topY = menubar.altura(p) + 6;
+    this.panelY = topY + 42;
     var panelH = p.alto - panelY - 40;
+    var listW = Std.int(p.ancho / 2) - 18;
     this.previewX = 12 + listW + 12;
     var previewW = p.ancho - previewX - 12;
 
@@ -35,6 +58,20 @@ class Explorador {
     this.estado = "";
     this.salir = false;
     cargar("/");
+  }
+
+  // Despacho de comandos del menu por id.
+  function comando(id:Int) {
+    if (id == CMD_REFRESCAR) {
+      cargar(rutaActual);
+    } else if (id == CMD_SUBIR) {
+      subir();
+    } else if (id == CMD_ACERCA) {
+      // El dialog modal queda como follow-up; por ahora va a la barra de estado.
+      estado = "SavanXP Files (Haxe): navega directorios y previsualiza archivos";
+    } else if (id == CMD_SALIR) {
+      salir = true;
+    }
   }
 
   inline function istr(n:Int):String {
@@ -147,22 +184,68 @@ class Explorador {
 
   public function repintar() {
     p.rect(0, 0, p.ancho, p.alto, Painter.FACE);
-    p.label(12, 8, "Ruta: " + rutaActual);
-    p.label(12, 30, "Directorio");
-    p.label(previewX, 30, "Preview");
+    p.label(12, topY, "Ruta: " + rutaActual);
+    p.label(12, panelY - 20, "Directorio");
+    p.label(previewX, panelY - 20, "Preview");
 
     lista.dibujar(p);
     preview.dibujar(p);
 
-    var sy = p.alto - 30;
-    p.rect(12, sy, p.ancho - 24, 20, Painter.FACE);
-    p.sunken(12, sy, p.ancho - 24, 20);
+    var sy = p.alto - 32;
+    p.rect(12, sy, p.ancho - 24, 22, Painter.FACE);
+    p.sunken(12, sy, p.ancho - 24, 22);
     p.label(16, sy + 2, estado);
+
+    // La barra va al final: su popup tiene que quedar por encima de todo.
+    menubar.dibujar(p);
   }
 
   public function puntero(mx:Int, my:Int, izq:Bool, izqPrev:Bool):Bool {
-    // Click (al soltar) selecciona; si ya estaba seleccionado, activa.
+    var cambio = false;
+
+    // Resaltado del item bajo el cursor mientras hay un menu desplegado.
+    if (menubar.abierto >= 0) {
+      var sobre = menubar.itemEn(p, mx, my);
+      if (sobre != menubar.resaltado) {
+        menubar.resaltado = sobre;
+        cambio = true;
+      }
+    }
+
+    if (izq && !izqPrev) {
+      // Press: sobre un titulo abre/cierra; fuera del popup cierra.
+      var titulo = menubar.tituloEn(p, mx, my);
+      if (titulo >= 0) {
+        if (menubar.abierto == titulo) {
+          menubar.cerrar();
+        } else {
+          menubar.abierto = titulo;
+          menubar.resaltado = -1;
+        }
+        return true;
+      }
+      if (menubar.abierto >= 0 && !menubar.enPopup(p, mx, my)) {
+        menubar.cerrar();
+        return true;
+      }
+      return cambio;
+    }
+
     if (!izq && izqPrev) {
+      // Release con un menu desplegado: sobre un item dispara el comando; sobre
+      // el titulo no hace nada (es el release del click que lo abrio).
+      if (menubar.abierto >= 0) {
+        if (menubar.tituloEn(p, mx, my) >= 0) {
+          return cambio;
+        }
+        var id = menubar.idEn(p, mx, my);
+        menubar.cerrar();
+        if (id >= 0) {
+          comando(id);
+        }
+        return true;
+      }
+      // Click en la lista: selecciona; si ya estaba seleccionado, activa.
       var idx = lista.indiceEn(mx, my, p);
       if (idx >= 0) {
         if (idx == lista.seleccion) {
@@ -173,7 +256,7 @@ class Explorador {
         return true;
       }
     }
-    return false;
+    return cambio;
   }
 
   public function tecla(key:Int):Bool {
