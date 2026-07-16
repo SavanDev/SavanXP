@@ -316,6 +316,35 @@ int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event) {
     return result == (long)sizeof(*event) ? 1 : 0;
 }
 
+long sxn_gui_launch(const char *path) {
+    struct sxn_gui_launch_request request;
+    unsigned long length = 0;
+    unsigned long index;
+    long written;
+
+    /* El shell exige un path absoluto que entre en el buffer del pedido. */
+    if (path == 0 || path[0] != '/') {
+        return -SXN_GUI_EINVAL;
+    }
+    while (path[length] != '\0') {
+        length += 1;
+    }
+    if (length == 0 || length >= SXN_GUI_LAUNCH_PATH_CAPACITY) {
+        return -SXN_GUI_EINVAL;
+    }
+
+    request.reserved0 = 0;
+    for (index = 0; index < SXN_GUI_LAUNCH_PATH_CAPACITY; ++index) {
+        request.path[index] = 0;
+    }
+    for (index = 0; index <= length; ++index) {
+        request.path[index] = path[index];
+    }
+
+    written = sxn_write(SXN_GUI_FD_LAUNCH, (const char *)&request, (int)sizeof(request));
+    return written == (long)sizeof(request) ? 0 : -SXN_GUI_EPIPE;
+}
+
 /* Utilidad para demos: dormir sin quemar CPU. */
 void sxn_sleep_ms(long milliseconds) {
     sxn_gui_sleep_ms(milliseconds);

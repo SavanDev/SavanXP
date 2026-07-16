@@ -50,6 +50,22 @@
 #define FILES_ITEM_REFRESH_CY 38
 #define FILES_ITEM_EXIT_CX 30
 #define FILES_ITEM_EXIT_CY 87
+/* Menu "Ayuda" (x ~66..119) y su unico item "Acerca de Files" (y 27..48). */
+#define FILES_HELP_CX 92
+#define FILES_HELP_CY 12
+#define FILES_ITEM_ABOUT_CX 100
+#define FILES_ITEM_ABOUT_CY 38
+/* Dialog "Acerca de": cliente 280x96 + borde 3 + titulo 24 => 286x126, centrado
+ * en 460x360 => (87,117). Barra de titulo navy en (90,120,280,24): el punto
+ * elegido cae dentro de ella con el dialog abierto, y sobre el fondo FIELD del
+ * listbox (fila 3, a la derecha del texto) con el dialog cerrado. */
+#define FILES_DIALOG_TITLE_X 215u
+#define FILES_DIALOG_TITLE_Y 130u
+/* Boton OK del dialog: rel (90,56,100,26) => abs (180,200)-(279,225). */
+#define FILES_DIALOG_OK_CX 230
+#define FILES_DIALOG_OK_CY 213
+/* Ejecutable que se espera lanzar: item 1 de /bin (item 0 es ".."). */
+#define FILES_EXPECTED_LAUNCH "/bin/aboutapp"
 
 static int fail(const char *reason) {
     printf("fileshost: %s\n", reason);
@@ -131,6 +147,22 @@ static int click_at(int fd, int x, int y) {
         return -1;
     }
     return send_pointer(fd, x, y, 0u);
+}
+
+/* Lee un pedido de lanzamiento del canal fd 9 (el harness tiene el extremo de
+ * lectura) y devuelve el path pedido. */
+static int read_launch(int fd, char *out, unsigned long cap) {
+    struct savanxp_desktop_launch_request request;
+    unsigned long index = 0;
+    if (read(fd, &request, sizeof(request)) != (long)sizeof(request)) {
+        return -1;
+    }
+    while (index + 1u < cap && request.path[index] != '\0') {
+        out[index] = request.path[index];
+        index += 1;
+    }
+    out[index] = '\0';
+    return 0;
 }
 
 int main(void) {
@@ -293,6 +325,29 @@ int main(void) {
         return fail("la seleccion no bajo dentro del directorio");
     }
 
+    /* 4c) Enter sobre ese archivo (vive en /bin) => la app le pide al escritorio
+     *     que lo lance por el fd 9. El harness tiene el extremo de lectura del
+     *     pipe, asi que verifica el pedido de verdad. */
+    if (send_key(input_pipe[1], SAVANXP_KEY_ENTER) != 0) {
+        return fail("no se pudo enviar Enter para lanzar");
+    }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame tras el lanzamiento");
+    }
+    settle();
+    {
+        char launched[256];
+        if (read_launch(launch_pipe[0], launched, sizeof(launched)) != 0) {
+            return fail("no llego el pedido de lanzamiento por el fd 9");
+        }
+        if (strcmp(launched, FILES_EXPECTED_LAUNCH) != 0) {
+            printf("fileshost: se lanzo '%s', se esperaba '%s'\n", launched, FILES_EXPECTED_LAUNCH);
+            puts("FILES HOST FAIL\n");
+            return 1;
+        }
+        printf("fileshost: pedido de lanzamiento OK: %s\n", launched);
+    }
+
     /* 5) Backspace: sube al directorio padre. */
     if (send_key(input_pipe[1], SAVANXP_KEY_BACKSPACE) != 0) {
         return fail("no se pudo enviar Backspace");
@@ -300,6 +355,7 @@ int main(void) {
     if (compose_next_frame() != 0) {
         return fail("no llego el frame tras subir");
     }
+    settle();
 
     /* 6) Menubar: click en el titulo "Archivo" despliega el menu (aparece el
      *    borde levantado del popup donde antes habia FACE). */
@@ -327,6 +383,38 @@ int main(void) {
     }
     if (pixel_at(FILES_ROW0_X, FILES_ROW0_Y) != FILES_NAVY) {
         return fail("el listbox no rinde tras Refrescar");
+    }
+
+    /* 7b) Menu "Ayuda" -> "Acerca de": abre el dialog modal (barra de titulo
+     *     navy donde antes se veia el fondo FIELD del listbox). */
+    if (click_at(mouse_pipe[1], FILES_HELP_CX, FILES_HELP_CY) != 0) {
+        return fail("no se pudo abrir el menu Ayuda");
+    }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame al abrir Ayuda");
+    }
+    settle();
+    if (click_at(mouse_pipe[1], FILES_ITEM_ABOUT_CX, FILES_ITEM_ABOUT_CY) != 0) {
+        return fail("no se pudo clickear Acerca de");
+    }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame tras abrir el dialog");
+    }
+    settle();
+    if (pixel_at(FILES_DIALOG_TITLE_X, FILES_DIALOG_TITLE_Y) != FILES_NAVY) {
+        return fail("el dialog Acerca de no se abrio");
+    }
+
+    /* 7c) Click en OK: el dialog se cierra y vuelve a verse el listbox. */
+    if (click_at(mouse_pipe[1], FILES_DIALOG_OK_CX, FILES_DIALOG_OK_CY) != 0) {
+        return fail("no se pudo clickear OK del dialog");
+    }
+    if (compose_next_frame() != 0) {
+        return fail("no llego el frame tras cerrar el dialog");
+    }
+    settle();
+    if (pixel_at(FILES_DIALOG_TITLE_X, FILES_DIALOG_TITLE_Y) != FILES_FIELD) {
+        return fail("el dialog no se cerro con OK");
     }
 
     /* 8) Reabrir "Archivo" y elegir "Salir": la app se cierra sola (exit 0),

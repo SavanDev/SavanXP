@@ -47,6 +47,17 @@ static int fs_strcmp(const char *a, const char *b) {
     return (int)(unsigned char)*a - (int)(unsigned char)*b;
 }
 
+static int fs_starts_with(const char *text, const char *prefix) {
+    while (*prefix != '\0') {
+        if (*text != *prefix) {
+            return 0;
+        }
+        ++text;
+        ++prefix;
+    }
+    return 1;
+}
+
 static void fs_strcpy(char *dst, const char *src, unsigned long cap) {
     unsigned long i = 0;
     if (cap == 0) {
@@ -199,6 +210,15 @@ static int fs_printable(char c) {
 /* 1 si `path` es un directorio. */
 int sxn_fs_path_is_dir(const char *path) {
     return fs_path_is_dir(path);
+}
+
+/* 1 si `path` es un ejecutable lanzable por el escritorio. Mismo criterio que
+ * filesapp_path_is_launchable de filesapp.c. */
+int sxn_fs_is_launchable(const char *path) {
+    if (path == 0) {
+        return 0;
+    }
+    return (fs_starts_with(path, "/bin/") || fs_starts_with(path, "/disk/bin/")) ? 1 : 0;
 }
 
 /* Tamano en bytes de `path`, o -1 si stat falla. */

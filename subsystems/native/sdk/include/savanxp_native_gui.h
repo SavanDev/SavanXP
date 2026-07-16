@@ -91,6 +91,15 @@ struct sxn_gui_pointer_event {
 #define SXN_GUI_MOUSE_BUTTON_RIGHT (1u << 1)
 #define SXN_GUI_MOUSE_BUTTON_MIDDLE (1u << 2)
 
+/* Pedido de lanzamiento que el cliente escribe por el fd 9 para que el shell
+ * abra otra app. Espejo de savanxp_desktop_launch_request del SDK posix. */
+#define SXN_GUI_LAUNCH_PATH_CAPACITY 192u
+
+struct sxn_gui_launch_request {
+    uint32_t reserved0;
+    char path[SXN_GUI_LAUNCH_PATH_CAPACITY];
+};
+
 /* Fds fijos que el shell instala antes del exec del cliente. */
 #define SXN_GUI_FD_SECTION 3
 #define SXN_GUI_FD_INPUT 4
@@ -138,6 +147,11 @@ int sxn_gui_poll_event(struct sxn_gui_input_event *event);
  * sesion). Igual que el canal de teclado pero sin sintesis: el shell entrega
  * movimiento y botones crudos. */
 int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event);
+
+/* Le pide al escritorio que lance `path` (debe ser absoluto) en otra ventana,
+ * escribiendo el pedido por el fd 9. Devuelve 0, o negativo si el path no
+ * sirve / falla la escritura. Espejo de gfx_desktop_launch del SDK posix. */
+long sxn_gui_launch(const char *path);
 
 /* --- Texto (fuente Noto horneada, compartida con posix) ----------------------
  * Render de texto para el toolkit del escritorio (Fase 3). Dibujan sobre un

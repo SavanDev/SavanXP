@@ -101,6 +101,7 @@ int sxn_fs_is_dir(int index);
 const char *sxn_fs_join(const char *base, const char *name);
 const char *sxn_fs_parent(const char *path);
 int sxn_fs_path_is_dir(const char *path);
+int sxn_fs_is_launchable(const char *path); /* /bin/ o /disk/bin/ */
 int sxn_fs_size(const char *path); /* bytes, o -1 */
 /* Preview: lee el comienzo del archivo y lo parte en lineas saneadas. */
 int sxn_fs_preview_load(const char *path); /* devuelve lineas o -1 */

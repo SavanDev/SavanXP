@@ -5,16 +5,18 @@
 // ".." para subir) y muestra en un Textview la ruta / tipo / tamano y las
 // primeras lineas del archivo seleccionado. Navegacion: click/Enter entra a un
 // directorio, ".."/Backspace sube, flechas mueven la seleccion, F5 refresca,
-// ESC cierra. El filesystem se lee por sx_fs.c (open/readdir/stat/read del
-// baseline). Menubar y dialog About quedan como follow-ups.
+// ESC cierra. Tiene barra de menu (Archivo/Ayuda), dialog modal "Acerca de" y
+// lanza ejecutables de /bin y /disk/bin pidiendoselo al escritorio (fd 9). El
+// filesystem se lee por sx_fs.c (open/readdir/stat/read del baseline).
 //
-// Usa el toolkit compartido (Painter, Listbox, Textview).
+// Usa el toolkit compartido (Painter, Listbox, Textview, Menubar, Dialog).
 
 class Explorador {
   var p:Painter;
   var menubar:Menubar;
   var lista:Listbox;
   var preview:Textview;
+  var dialog:Dialog;
   public var rutaActual:String;
   var estado:String;
   public var salir:Bool;
@@ -54,6 +56,13 @@ class Explorador {
 
     this.lista = new Listbox(12, panelY, listW, panelH);
     this.preview = new Textview(previewX, panelY, previewW, panelH);
+
+    // Dialog "Acerca de" (mismas medidas que el de filesapp.c: cliente 280x96,
+    // boton OK en (90,56)).
+    this.dialog = new Dialog("Acerca de", 280, 96, 90, 56);
+    dialog.lineas.push("SavanXP Files (Haxe)");
+    dialog.lineas.push("Navega directorios y previsualiza archivos");
+
     this.rutaActual = "/";
     this.estado = "";
     this.salir = false;
@@ -67,8 +76,7 @@ class Explorador {
     } else if (id == CMD_SUBIR) {
       subir();
     } else if (id == CMD_ACERCA) {
-      // El dialog modal queda como follow-up; por ahora va a la barra de estado.
-      estado = "SavanXP Files (Haxe): navega directorios y previsualiza archivos";
+      dialog.abrir(p);
     } else if (id == CMD_SALIR) {
       salir = true;
     }
@@ -166,14 +174,31 @@ class Explorador {
       subir();
       return;
     }
+
+    var full:String = untyped __cpp__(
+      "std::string(sxn_fs_join({0}.c_str(), {1}.c_str()))", rutaActual, nombre);
+
     if (esdir) {
-      var nuevo:String = untyped __cpp__(
-        "std::string(sxn_fs_join({0}.c_str(), {1}.c_str()))", rutaActual, nombre);
-      cargar(nuevo);
-    } else {
-      actualizarPreview();
-      estado = "Preview actualizado";
+      cargar(full);
+      return;
     }
+
+    // Archivo: si vive en /bin o /disk/bin, se le pide al escritorio que lo
+    // lance en otra ventana (canal fd 9); si no, solo refresca el preview.
+    if (untyped __cpp__("sxn_fs_is_launchable({0}.c_str()) != 0", full)) {
+      var r:Int = untyped __cpp__("(int)sxn_gui_launch({0}.c_str())", full);
+      if (r != 0) {
+        estado = "Fallo el lanzamiento";
+        untyped __cpp__('sxn_log_num("files: launch fallo", {0})', r);
+      } else {
+        estado = "Lanzamiento pedido: " + nombre;
+        var traza = "files: launch " + full;
+        untyped __cpp__('sxn_log({0}.c_str())', traza);
+      }
+      return;
+    }
+    actualizarPreview();
+    estado = "Preview actualizado";
   }
 
   function seleccionar(idx:Int) {
@@ -198,9 +223,31 @@ class Explorador {
 
     // La barra va al final: su popup tiene que quedar por encima de todo.
     menubar.dibujar(p);
+    // ...y el dialog modal por encima incluso de la barra.
+    dialog.dibujar(p);
   }
 
   public function puntero(mx:Int, my:Int, izq:Bool, izqPrev:Bool):Bool {
+    // Modal: con el dialog abierto, solo el dialog recibe input.
+    if (dialog.activo) {
+      dialog.sincronizar(p);
+      if (izq && !izqPrev) {
+        if (dialog.ok.contiene(mx, my)) {
+          dialog.ok.pressed = true;
+          return true;
+        }
+      } else if (!izq && izqPrev) {
+        if (dialog.ok.pressed) {
+          dialog.ok.pressed = false;
+          if (dialog.ok.contiene(mx, my)) {
+            dialog.cerrar();
+          }
+          return true;
+        }
+      }
+      return false;
+    }
+
     var cambio = false;
 
     // Resaltado del item bajo el cursor mientras hay un menu desplegado.
@@ -260,6 +307,14 @@ class Explorador {
   }
 
   public function tecla(key:Int):Bool {
+    // Modal: con el dialog abierto, ESC/Enter lo cierran y nada mas pasa.
+    if (dialog.activo) {
+      if (key == 27 || key == 13) {
+        dialog.cerrar();
+        return true;
+      }
+      return false;
+    }
     if (key == 27) { // ESC
       salir = true;
       return false;
