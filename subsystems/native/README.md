@@ -162,7 +162,19 @@ Al arrancar, el runtime hace el handshake `sxn_info()` y aborta (exit 132) si
 .\subsystems\native\build.ps1 -Install   # además lo instala en /disk/bin/nativehello
 # la app ventaneada:
 .\subsystems\native\build.ps1 -Name nativegui -Source haxe-gui -Install
+# los ports del escritorio (sufijo -hx para NO pisar los binarios de C):
+.\subsystems\native\build.ps1 -Name aboutapp-hx -Source haxe-about -Install
+.\subsystems\native\build.ps1 -Name filesapp-hx -Source haxe-files -Install
 ```
+
+Los ports se instalan como `aboutapp-hx`/`filesapp-hx` a propósito: el build
+principal copia `rootfs/bin/*` a `/disk/bin`, así que instalarlos como
+`aboutapp`/`filesapp` los pisaría en cada `build.ps1 build`. Con nombre propio
+sobreviven (`Sync-SvfsDiskTree` solo agrega, nunca borra — el mismo mecanismo
+por el que sobrevive `doomgeneric`). El **menú inicio** tiene entradas
+**"Files (Haxe)"** y **"About (Haxe)"** apuntando a ellos, conviviendo con los
+de C para poder compararlos; como el build nativo es aparte (patrón doom), esas
+entradas no lanzan nada si no los construiste.
 
 `nativegui` instalada aparece en `/disk/bin` y puede lanzarse desde el
 escritorio (app de archivos): corre como ventana normal bajo el compositor.

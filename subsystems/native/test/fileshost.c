@@ -15,7 +15,7 @@
 #define FILES_WIDTH 460u
 #define FILES_HEIGHT 360u
 #define FILES_PAGE 4096u
-#define FILES_CLIENT_PATH "/disk/bin/filesapp"
+#define FILES_CLIENT_PATH "/disk/bin/filesapp-hx"
 #define FILES_DEADLINE_MS 8000ul
 
 #define FILES_NAVY 0x00000080u  /* item seleccionado / menu resaltado */

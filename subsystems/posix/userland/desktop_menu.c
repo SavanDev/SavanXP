@@ -7,6 +7,12 @@ static const struct desktop_menu_item k_menu_items[] = {
     {"Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_SHELL, DESKTOP_RGB_LITERAL(0, 124, 96), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
     {"Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(186, 128, 36), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
     {"About", "/bin/aboutapp", "System overview and help", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(58, 104, 190), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
+    /* Ports nativos en Haxe (subsystems/native). Conviven con los de C de
+     * arriba para poder compararlos. Se construyen con el build APARTE del
+     * subsistema nativo (patron doom), asi que si no se instalaron, estas
+     * entradas no lanzan nada. Sin flag de shortcut: solo menu, sin icono. */
+    {"Files (Haxe)", "/disk/bin/filesapp-hx", "Native Haxe port of the file browser", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(150, 92, 168), 0},
+    {"About (Haxe)", "/disk/bin/aboutapp-hx", "Native Haxe port of About", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(118, 82, 180), 0},
     {"Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(96, 110, 140), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
     {"Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DOOM, DESKTOP_RGB_LITERAL(181, 81, 55), DESKTOP_MENU_ITEM_FLAG_SHORTCUT | DESKTOP_MENU_ITEM_FLAG_FULLSCREEN},
     {"Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_GFX_DEMO, DESKTOP_RGB_LITERAL(34, 142, 96), DESKTOP_MENU_ITEM_FLAG_SHORTCUT | DESKTOP_MENU_ITEM_FLAG_FULLSCREEN},

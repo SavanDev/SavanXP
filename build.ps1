@@ -1054,8 +1054,8 @@ function Run-NativeAboutQemu {
     $abouthostSource = Join-Path $ProjectRoot "subsystems/native/test/abouthost.c"
 
     Run-AutomationQemu -AutomationCommand "abouthost" -SuccessToken "ABOUT HOST PASS" -FailureToken "ABOUT HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
-        & $nativeBuild -Name aboutapp -Source haxe-about -Install
-        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de aboutapp." }
+        & $nativeBuild -Name aboutapp-hx -Source haxe-about -Install
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de aboutapp-hx." }
         & $userBuild -Source $abouthostSource -Name abouthost
         if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de abouthost." }
     }.GetNewClosure()
@@ -1071,8 +1071,8 @@ function Run-NativeFilesQemu {
     $fileshostSource = Join-Path $ProjectRoot "subsystems/native/test/fileshost.c"
 
     Run-AutomationQemu -AutomationCommand "fileshost" -SuccessToken "FILES HOST PASS" -FailureToken "FILES HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
-        & $nativeBuild -Name filesapp -Source haxe-files -Install
-        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de filesapp." }
+        & $nativeBuild -Name filesapp-hx -Source haxe-files -Install
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de filesapp-hx." }
         & $userBuild -Source $fileshostSource -Name fileshost
         if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de fileshost." }
     }.GetNewClosure()

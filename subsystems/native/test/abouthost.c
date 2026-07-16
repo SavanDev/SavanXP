@@ -14,7 +14,7 @@
 #define ABOUT_WIDTH 456u
 #define ABOUT_HEIGHT 430u
 #define ABOUT_PAGE 4096u
-#define ABOUT_CLIENT_PATH "/disk/bin/aboutapp"
+#define ABOUT_CLIENT_PATH "/disk/bin/aboutapp-hx"
 #define ABOUT_DEADLINE_MS 8000ul
 
 #define ABOUT_FACE 0x00C0C0C0u
