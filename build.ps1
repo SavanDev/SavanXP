@@ -11,7 +11,14 @@ param(
     # (APX y afines) que esos modelos exponen al guest. "qemu64" evita el
     # problema y ya viene confirmado bootenado end-to-end bajo whpx.
     [ValidateSet("tcg", "whpx")]
-    [string]$Accel = "tcg"
+    [string]$Accel = "tcg",
+
+    # Excluye del build las apps de testeo/diagnostico (marcadas Test en
+    # $UserPrograms): no se compilan, no entran al rootfs y el menu del
+    # escritorio se compila sin sus entradas. Los comandos de automatizacion
+    # (smoke, desktop-smoke, etc.) las fuerzan siempre porque sus harnesses
+    # dependen de ellas.
+    [switch]$NoTestApps
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,29 +119,29 @@ $UserPrograms = @(
     @{ Name = "shellapp"; Sources = @("subsystems/posix/userland/shellapp.c", "subsystems/posix/userland/shell_core.c") },
     @{ Name = "uname"; Source = "subsystems/posix/userland/uname.c" },
     @{ Name = "df"; Source = "subsystems/posix/userland/df.c" },
-    @{ Name = "ticker"; Source = "subsystems/posix/userland/ticker.c" },
-    @{ Name = "demo"; Source = "subsystems/posix/userland/demo.c" },
+    @{ Name = "ticker"; Source = "subsystems/posix/userland/ticker.c"; Test = $true },
+    @{ Name = "demo"; Source = "subsystems/posix/userland/demo.c"; Test = $true },
     @{ Name = "ps_legacy"; Source = "subsystems/posix/userland/ps.c" },
-    @{ Name = "fdtest"; Source = "subsystems/posix/userland/fdtest.c" },
-    @{ Name = "waittest"; Source = "subsystems/posix/userland/waittest.c" },
-    @{ Name = "pipestress"; Source = "subsystems/posix/userland/pipestress.c" },
-    @{ Name = "spawnloop"; Source = "subsystems/posix/userland/spawnloop.c" },
-    @{ Name = "badptr"; Source = "subsystems/posix/userland/badptr.c" },
+    @{ Name = "fdtest"; Source = "subsystems/posix/userland/fdtest.c"; Test = $true },
+    @{ Name = "waittest"; Source = "subsystems/posix/userland/waittest.c"; Test = $true },
+    @{ Name = "pipestress"; Source = "subsystems/posix/userland/pipestress.c"; Test = $true },
+    @{ Name = "spawnloop"; Source = "subsystems/posix/userland/spawnloop.c"; Test = $true },
+    @{ Name = "badptr"; Source = "subsystems/posix/userland/badptr.c"; Test = $true },
     @{ Name = "rmdir"; Source = "subsystems/posix/userland/rmdir.c" },
     @{ Name = "truncate"; Source = "subsystems/posix/userland/truncate.c" },
     @{ Name = "sync"; Source = "subsystems/posix/userland/sync.c" },
-    @{ Name = "seektest"; Source = "subsystems/posix/userland/seektest.c" },
-    @{ Name = "renametest"; Source = "subsystems/posix/userland/renametest.c" },
-    @{ Name = "truncatetest"; Source = "subsystems/posix/userland/truncatetest.c" },
-    @{ Name = "errtest"; Source = "subsystems/posix/userland/errtest.c" },
+    @{ Name = "seektest"; Source = "subsystems/posix/userland/seektest.c"; Test = $true },
+    @{ Name = "renametest"; Source = "subsystems/posix/userland/renametest.c"; Test = $true },
+    @{ Name = "truncatetest"; Source = "subsystems/posix/userland/truncatetest.c"; Test = $true },
+    @{ Name = "errtest"; Source = "subsystems/posix/userland/errtest.c"; Test = $true },
     @{ Name = "netinfo"; Source = "subsystems/posix/userland/netinfo.c" },
     @{ Name = "ping"; Source = "subsystems/posix/userland/ping.c" },
     @{ Name = "udpsend"; Source = "subsystems/posix/userland/udpsend.c" },
     @{ Name = "udprecv"; Source = "subsystems/posix/userland/udprecv.c" },
-    @{ Name = "udptest"; Source = "subsystems/posix/userland/udptest.c" },
+    @{ Name = "udptest"; Source = "subsystems/posix/userland/udptest.c"; Test = $true },
     @{ Name = "tcpget"; Source = "subsystems/posix/userland/tcpget.c" },
     @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
-    @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c" },
+    @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c"; Test = $true },
     @{ Name = "compositord"; Source = "subsystems/posix/userland/compositord.c" },
     @{ Name = "desktop"; Sources = @(
         "subsystems/posix/userland/desktop.c",
@@ -163,21 +170,21 @@ $UserPrograms = @(
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
         "subsystems/posix/sdk/v1/runtime/posix.c"
-    ) },
-    @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c" },
-    @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c" },
-    @{ Name = "keytest"; Source = "subsystems/posix/userland/keytest.c" },
-    @{ Name = "mousetest"; Source = "subsystems/posix/userland/mousetest.c" },
+    ); Test = $true },
+    @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c"; Test = $true },
+    @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c"; Test = $true },
+    @{ Name = "keytest"; Source = "subsystems/posix/userland/keytest.c"; Test = $true },
+    @{ Name = "mousetest"; Source = "subsystems/posix/userland/mousetest.c"; Test = $true },
     @{ Name = "sysinfo"; Source = "subsystems/posix/userland/sysinfo.c" },
-    @{ Name = "forktest"; Source = "subsystems/posix/userland/forktest.c" },
-    @{ Name = "polltest"; Source = "subsystems/posix/userland/polltest.c" },
-    @{ Name = "sigtest"; Source = "subsystems/posix/userland/sigtest.c" },
-    @{ Name = "eventtest"; Source = "subsystems/posix/userland/eventtest.c" },
-    @{ Name = "timertest"; Source = "subsystems/posix/userland/timertest.c" },
-    @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c" },
-    @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c" },
-    @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c" },
-    @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c" }
+    @{ Name = "forktest"; Source = "subsystems/posix/userland/forktest.c"; Test = $true },
+    @{ Name = "polltest"; Source = "subsystems/posix/userland/polltest.c"; Test = $true },
+    @{ Name = "sigtest"; Source = "subsystems/posix/userland/sigtest.c"; Test = $true },
+    @{ Name = "eventtest"; Source = "subsystems/posix/userland/eventtest.c"; Test = $true },
+    @{ Name = "timertest"; Source = "subsystems/posix/userland/timertest.c"; Test = $true },
+    @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c"; Test = $true },
+    @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c"; Test = $true },
+    @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c"; Test = $true },
+    @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c"; Test = $true }
 )
 
 $BusyBoxApplets = @(
@@ -320,8 +327,9 @@ function Get-UacpiCompileEdges {
     return [pscustomobject]@{ Edges = $edges; ObjectFiles = $objectFiles }
 }
 
-function Get-UserFlags {
+function Get-UserFlags([bool]$IncludeTestApps = $true) {
     return @(
+        "-DDESKTOP_INCLUDE_TEST_APPS=$(if ($IncludeTestApps) { 1 } else { 0 })",
         "-target", "x86_64-unknown-none-elf",
         "-ffreestanding",
         "-fno-stack-protector",
@@ -552,7 +560,7 @@ function Get-KernelCompileEdges([string[]]$Sources) {
     return [pscustomobject]@{ Edges = $edges; ObjectFiles = $objectFiles }
 }
 
-function Get-UserlandCompileEdges {
+function Get-UserlandCompileEdges([bool]$IncludeTestApps = $true) {
     $userObjRoot = Join-Path $ObjRoot "user"
     New-Directory $userObjRoot
 
@@ -560,6 +568,9 @@ function Get-UserlandCompileEdges {
     $programs = @()
 
     foreach ($program in $UserPrograms) {
+        if (-not $IncludeTestApps -and $program.ContainsKey("Test") -and $program.Test) {
+            continue
+        }
         $objectFiles = @()
         $programSources = if ($program.ContainsKey("Sources")) { $program.Sources } else { @($program.Source) }
         foreach ($source in @(
@@ -659,7 +670,7 @@ function Install-LimineImageFiles {
     }
 }
 
-function Build-Kernel([string]$AutomationCommand = "") {
+function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = (-not $NoTestApps)) {
     $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
     $ld = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $git = Require-Executable "git" @("git")
@@ -678,7 +689,7 @@ function Build-Kernel([string]$AutomationCommand = "") {
     New-Directory $GeneratedRoot
 
     $commonFlags = Get-CommonFlags
-    $userFlags = Get-UserFlags
+    $userFlags = Get-UserFlags -IncludeTestApps $IncludeTestApps
     $uacpiFlags = Get-UacpiFlags
 
     Generate-CursorAsset
@@ -686,7 +697,7 @@ function Build-Kernel([string]$AutomationCommand = "") {
 
     $kernelPlan = Get-KernelCompileEdges $KernelSources
     $uacpiPlan = Get-UacpiCompileEdges
-    $userlandPlan = Get-UserlandCompileEdges
+    $userlandPlan = Get-UserlandCompileEdges -IncludeTestApps $IncludeTestApps
     $objectFiles = $kernelPlan.ObjectFiles + $uacpiPlan.ObjectFiles
 
     Invoke-NinjaCompile -BuildRoot $BuildRoot -Clangxx $clang -KernelFlags $commonFlags -UserFlags $userFlags -UacpiFlags $uacpiFlags -Edges ($kernelPlan.Edges + $uacpiPlan.Edges + $userlandPlan.Edges)
@@ -880,7 +891,10 @@ function Stop-AutomationQemu($Process, [int]$MonitorPort) {
 
 function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [switch]$UseAc97, [string]$WavPath, [scriptblock]$PreLaunch) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
-    Build-Kernel -AutomationCommand $AutomationCommand
+    if ($NoTestApps) {
+        Write-Host "Nota: los harnesses de automatizacion requieren las apps de testeo; se ignora -NoTestApps."
+    }
+    Build-Kernel -AutomationCommand $AutomationCommand -IncludeTestApps $true
 
     # Gancho post-build: Build-Kernel regenera build/disk.img desde el arbol
     # fuente disk/, asi que cualquier binario que viva solo como artefacto (p.

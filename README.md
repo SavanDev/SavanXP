@@ -76,6 +76,16 @@ Importante: el build normal no debe recrear `build/disk.img` de forma
 incondicional. La imagen persistente se conserva entre builds salvo corrupcion
 real o incompatibilidad de formato.
 
+Para compilar sin las apps de testeo y diagnostico (keytest, gfxdemo, smoke,
+etc.), usa `-NoTestApps`: esos binarios no entran al rootfs y el menu del
+escritorio se compila sin sus entradas. Los comandos de automatizacion
+(`smoke`, `desktop-smoke`, ...) las incluyen siempre porque sus harnesses
+dependen de ellas.
+
+```powershell
+.\build.ps1 build -NoTestApps
+```
+
 Generar una ISO booteable:
 
 ```powershell
