@@ -4,7 +4,13 @@
 
 #define DESKTOP_TASKBAR_HEIGHT 28
 #define DESKTOP_START_BUTTON_WIDTH 64
-#define DESKTOP_CLOCK_BOX_WIDTH 58
+#define DESKTOP_TRAY_ICON_SIZE 16
+#define DESKTOP_TRAY_ICON_GAP 4
+#define DESKTOP_TRAY_PADDING 8
+#define DESKTOP_CONTEXT_MENU_WIDTH 168
+#define DESKTOP_CONTEXT_ITEM_HEIGHT 22
+#define DESKTOP_CONTEXT_SEPARATOR_HEIGHT 8
+#define DESKTOP_CONTEXT_PADDING 3
 #define DESKTOP_MENU_WIDTH 360
 #define DESKTOP_MENU_ITEM_HEIGHT 42
 #define DESKTOP_MENU_PADDING 12
@@ -51,6 +57,20 @@ int desktop_taskbar_button_count(const struct desktop_session *session);
 const struct desktop_client *desktop_taskbar_button_client(const struct desktop_session *session, int index, int *is_shell, int *slot);
 struct sx_rect desktop_taskbar_button_rect(const struct desktop_session *session, int index);
 int desktop_taskbar_button_from_point(const struct desktop_session *session, int x, int y);
+
+/* Area de notificaciones: caja hundida a la derecha de la taskbar que agrupa
+ * los iconos de tray registrados y el reloj. */
+struct sx_rect desktop_tray_rect(const struct savanxp_fb_info *info);
+struct sx_rect desktop_tray_icon_rect(const struct savanxp_fb_info *info, int index);
+struct sx_rect desktop_tray_clock_rect(const struct savanxp_fb_info *info);
+
+/* Menu contextual del escritorio. Los rects parten del origen ya clampeado
+ * que guarda desktop_context_menu_state. */
+int desktop_context_menu_height(void);
+void desktop_context_menu_place(const struct savanxp_fb_info *info, int *x, int *y);
+struct sx_rect desktop_context_menu_rect(int menu_x, int menu_y);
+struct sx_rect desktop_context_menu_item_rect(int menu_x, int menu_y, int index);
+int desktop_context_menu_item_from_point(int menu_x, int menu_y, int x, int y);
 
 int desktop_start_menu_height(void);
 int desktop_start_menu_content_x(int menu_x);

@@ -1,6 +1,7 @@
 #include "libc.h"
 #include "desktop_session.h"
 #include "desktop_menu.h"
+#include "desktop_wallpaper.h"
 #include "desktop_layout.h"
 #include "desktop_render.h"
 
@@ -666,6 +667,7 @@ static int resolve_cursor_shape(
     int cursor_x,
     int cursor_y,
     int menu_open,
+    const struct desktop_context_menu_state *context_menu,
     int drag_active)
 {
     if (drag_active)
@@ -675,6 +677,12 @@ static int resolve_cursor_shape(
     if (any_overlay_client_starting(session))
     {
         return SAVANXP_CURSOR_WAIT;
+    }
+    if (context_menu != 0 && context_menu->open)
+    {
+        return desktop_context_menu_item_from_point(context_menu->x, context_menu->y, cursor_x, cursor_y) >= 0
+            ? SAVANXP_CURSOR_LINK
+            : SAVANXP_CURSOR_ARROW;
     }
     if (menu_open)
     {
@@ -1591,6 +1599,34 @@ static int launch_selected_item(struct desktop_session *session, int index)
     return launch_overlay_client(session, item->path) < 0 ? -1 : 0;
 }
 
+static void execute_context_action(struct desktop_session *session, struct desktop_dirty_rect *dirty, int action)
+{
+    if (session == 0 || dirty == 0)
+    {
+        return;
+    }
+
+    switch (action)
+    {
+    case DESKTOP_CONTEXT_ACTION_REFRESH:
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        break;
+    case DESKTOP_CONTEXT_ACTION_NEXT_WALLPAPER:
+        (void)desktop_wallpaper_cycle();
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        break;
+    case DESKTOP_CONTEXT_ACTION_ABOUT:
+        if (launch_overlay_client(session, "/bin/aboutapp") < 0)
+        {
+            puts_fd(2, "desktop: failed to launch aboutapp\n");
+        }
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        break;
+    default:
+        break;
+    }
+}
+
 static int service_client_batches(
     struct desktop_session *session,
     struct desktop_dirty_rect *dirty,
@@ -1818,7 +1854,7 @@ static int desktop_cursor_repro(void)
     /* Frame A: dialog visible, cursor parked far away (top-left corner, off the
      * dialog). Full repaint so the backbuffer holds the clean image. */
     desktop_dirty_rect_add_fullscreen(&dirty, info);
-    desktop_draw_desktop(&session, 4, 4, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
+    desktop_draw_desktop(&session, 4, 4, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, 0, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -1833,7 +1869,7 @@ static int desktop_cursor_repro(void)
     /* Frame B: move cursor ONTO Q. Only cursor-sized damage (old corner + Q). */
     desktop_dirty_rect_add_cursor(&dirty, info, 4, 4, SAVANXP_CURSOR_ARROW);
     desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, qx, qy, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
+    desktop_draw_desktop(&session, qx, qy, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, 0, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -1854,7 +1890,7 @@ static int desktop_cursor_repro(void)
      * backbuffer at Q must return to the clean baseline. */
     desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
     desktop_dirty_rect_add_cursor(&dirty, info, rx, ry, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, rx, ry, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, &dirty);
+    desktop_draw_desktop(&session, rx, ry, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, 0, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -2047,7 +2083,7 @@ static int desktop_selftest(void)
             continue;
         }
 
-        desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, DESKTOP_CONFIRM_NONE, 0, &dirty);
+        desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, DESKTOP_CONFIRM_NONE, 0, 0, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
@@ -2185,6 +2221,7 @@ int main(int argc, char **argv)
     int selected_index = 0;
     int selected_shortcut = -1;
     int confirm_action = DESKTOP_CONFIRM_NONE;
+    struct desktop_context_menu_state context_menu = {0, 0, 0, -1};
     uint32_t last_buttons = 0;
     unsigned long last_clock_stamp = 0;
     unsigned long last_shortcut_click_ms = 0;
@@ -2213,6 +2250,7 @@ int main(int argc, char **argv)
         return 1;
     }
     (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
+    desktop_wallpaper_init();
     welcome_until_ms = uptime_ms() + 3500UL;
 
     {
@@ -2300,6 +2338,7 @@ int main(int argc, char **argv)
                         if (enter_overlay_fullscreen(&session, &dirty, session.active_overlay_slot) == 0)
                         {
                             menu_open = 0;
+                            context_menu.open = 0;
                         }
                     }
                 }
@@ -2310,8 +2349,23 @@ int main(int argc, char **argv)
                     {
                         selected_index = 0;
                     }
+                    if (context_menu.open)
+                    {
+                        context_menu.open = 0;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                    }
                     desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
                     desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
+                }
+                else if (context_menu.open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+                {
+                    /* El menu contextual captura el teclado mientras esta
+                     * abierto; solo ESC hace algo (cerrarlo). */
+                    if (key_event.key == SAVANXP_KEY_ESC)
+                    {
+                        context_menu.open = 0;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                    }
                 }
                 else if (menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
                 {
@@ -2414,6 +2468,8 @@ int main(int argc, char **argv)
                 uint32_t left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
                 uint32_t right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
                 uint32_t left_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
+                uint32_t right_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
+                int welcome_consumed_click = 0;
                 int previous_cursor_x = cursor_x;
                 int previous_cursor_y = cursor_y;
                 int previous_menu_open = menu_open;
@@ -2434,9 +2490,10 @@ int main(int argc, char **argv)
 
                 if (welcome_visible &&
                     ((left_pressed != 0 && left_was_pressed == 0) ||
-                     (right_pressed != 0 && (last_buttons & SAVANXP_MOUSE_BUTTON_RIGHT) == 0)))
+                     (right_pressed != 0 && right_was_pressed == 0)))
                 {
                     welcome_visible = 0;
+                    welcome_consumed_click = 1;
                     desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                 }
 
@@ -2452,7 +2509,7 @@ int main(int argc, char **argv)
 
                 session.previous_cursor_shape = session.current_cursor_shape;
                 session.current_cursor_shape = resolve_cursor_shape(
-                    &session, current_hover_client, cursor_x, cursor_y, menu_open, drag_was_active);
+                    &session, current_hover_client, cursor_x, cursor_y, menu_open, &context_menu, drag_was_active);
                 if (session.current_cursor_shape != session.previous_cursor_shape && session.hw_cursor_enabled)
                 {
                     (void)desktop_compositor_set_cursor_shape(&session.compositor, session.current_cursor_shape);
@@ -2480,6 +2537,62 @@ int main(int argc, char **argv)
                         }
                         confirm_action = DESKTOP_CONFIRM_NONE;
                         desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                    }
+                    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
+                        session.current_cursor_shape != session.previous_cursor_shape)
+                    {
+                        if (session.hw_cursor_enabled)
+                        {
+                            (void)set_hw_cursor_position(&session, cursor_x, cursor_y, 1);
+                        }
+                        else
+                        {
+                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y, session.previous_cursor_shape);
+                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y, session.current_cursor_shape);
+                        }
+                    }
+                    last_buttons = pressed_buttons;
+                    continue;
+                }
+
+                /* Menu contextual del escritorio: consume el input mientras
+                 * esta abierto. Un click ejecuta el item o lo cierra; un click
+                 * derecho lo reubica si vuelve a caer sobre el fondo. */
+                if (context_menu.open)
+                {
+                    int hovered = desktop_context_menu_item_from_point(context_menu.x, context_menu.y, cursor_x, cursor_y);
+
+                    if (hovered != context_menu.selected)
+                    {
+                        context_menu.selected = hovered;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                    }
+                    if (left_pressed != 0 && left_was_pressed == 0)
+                    {
+                        context_menu.open = 0;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        if (hovered >= 0)
+                        {
+                            const struct desktop_context_item *item = desktop_context_item_at(hovered);
+                            if (item != 0)
+                            {
+                                execute_context_action(&session, &dirty, item->action);
+                            }
+                        }
+                    }
+                    else if (right_pressed != 0 && right_was_pressed == 0)
+                    {
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        context_menu.open = 0;
+                        if (current_hover_client == 0 && cursor_y < taskbar_y)
+                        {
+                            context_menu.x = cursor_x;
+                            context_menu.y = cursor_y;
+                            desktop_context_menu_place(&session.gfx.info, &context_menu.x, &context_menu.y);
+                            context_menu.selected = -1;
+                            context_menu.open = 1;
+                            desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        }
                     }
                     if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
                         session.current_cursor_shape != session.previous_cursor_shape)
@@ -2695,9 +2808,30 @@ int main(int argc, char **argv)
                     (void)route_pointer(previous_hover_client, cursor_x, cursor_y, pressed_buttons);
                 }
 
-                if (right_pressed != 0 && menu_open)
+                if (right_pressed != 0 && right_was_pressed == 0)
                 {
-                    menu_open = 0;
+                    if (menu_open)
+                    {
+                        menu_open = 0;
+                    }
+                    else if (!welcome_consumed_click &&
+                             session.fullscreen_slot < 0 &&
+                             !drag_active_now &&
+                             current_hover_client == 0 &&
+                             cursor_y < taskbar_y)
+                    {
+                        /* Click derecho sobre el fondo del escritorio: abre el
+                         * menu contextual en el cursor. */
+                        context_menu.x = cursor_x;
+                        context_menu.y = cursor_y;
+                        desktop_context_menu_place(&session.gfx.info, &context_menu.x, &context_menu.y);
+                        context_menu.selected = -1;
+                        context_menu.open = 1;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        /* El bloque generico de abajo repinta el shortcut que
+                         * pierde la seleccion. */
+                        selected_shortcut = -1;
+                    }
                 }
 
                 if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
@@ -2838,7 +2972,7 @@ int main(int argc, char **argv)
             }
         }
 
-        desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, confirm_action, welcome_visible, &dirty);
+        desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, confirm_action, welcome_visible, &context_menu, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {

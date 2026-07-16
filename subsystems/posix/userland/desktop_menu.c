@@ -3,6 +3,12 @@
 
 #define DESKTOP_RGB_LITERAL(red, green, blue) (((uint32_t)(red) << 16) | ((uint32_t)(green) << 8) | (uint32_t)(blue))
 
+/* Las apps de diagnostico se compilan solo si el build las pide (build.ps1
+ * -NoTestApps las excluye del rootfs y de este menu a la vez). */
+#ifndef DESKTOP_INCLUDE_TEST_APPS
+#define DESKTOP_INCLUDE_TEST_APPS 1
+#endif
+
 static const struct desktop_menu_item k_menu_items[] = {
     {"Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_SHELL, DESKTOP_RGB_LITERAL(0, 124, 96), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
     {"Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(186, 128, 36), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
@@ -13,16 +19,26 @@ static const struct desktop_menu_item k_menu_items[] = {
      * entradas no lanzan nada. Sin flag de shortcut: solo menu, sin icono. */
     {"Files (Haxe)", "/disk/bin/filesapp-hx", "Native Haxe port of the file browser", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(150, 92, 168), 0},
     {"About (Haxe)", "/disk/bin/aboutapp-hx", "Native Haxe port of About", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(118, 82, 180), 0},
+#if DESKTOP_INCLUDE_TEST_APPS
     {"Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(96, 110, 140), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
+#endif
     {"Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DOOM, DESKTOP_RGB_LITERAL(181, 81, 55), DESKTOP_MENU_ITEM_FLAG_SHORTCUT | DESKTOP_MENU_ITEM_FLAG_FULLSCREEN},
+#if DESKTOP_INCLUDE_TEST_APPS
     {"Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_GFX_DEMO, DESKTOP_RGB_LITERAL(34, 142, 96), DESKTOP_MENU_ITEM_FLAG_SHORTCUT | DESKTOP_MENU_ITEM_FLAG_FULLSCREEN},
     {"Key Test", "/bin/keytest", "Keyboard diagnostics", DESKTOP_ICON_KEY_TEST, DESKTOP_RGB_LITERAL(41, 111, 188), 0},
     {"Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_MOUSE_TEST, DESKTOP_RGB_LITERAL(156, 104, 38), 0},
+#endif
 };
 
 static const struct desktop_power_item k_power_items[] = {
     {"Apagar", DESKTOP_CONFIRM_SHUTDOWN},
     {"Reiniciar", DESKTOP_CONFIRM_REBOOT},
+};
+
+static const struct desktop_context_item k_context_items[] = {
+    {"Actualizar", DESKTOP_CONTEXT_ACTION_REFRESH, 0},
+    {"Cambiar fondo", DESKTOP_CONTEXT_ACTION_NEXT_WALLPAPER, 0},
+    {"Acerca de SavanXP...", DESKTOP_CONTEXT_ACTION_ABOUT, 1},
 };
 
 int desktop_menu_item_count(void)
@@ -42,6 +58,20 @@ const struct desktop_power_item *desktop_power_item_at(int index)
         return 0;
     }
     return &k_power_items[index];
+}
+
+int desktop_context_item_count(void)
+{
+    return (int)(sizeof(k_context_items) / sizeof(k_context_items[0]));
+}
+
+const struct desktop_context_item *desktop_context_item_at(int index)
+{
+    if (index < 0 || index >= desktop_context_item_count())
+    {
+        return 0;
+    }
+    return &k_context_items[index];
 }
 
 const struct desktop_menu_item *desktop_menu_item_at(int index)

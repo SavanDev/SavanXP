@@ -1,5 +1,6 @@
 #include "libc.h"
 #include "desktop_menu.h"
+#include "desktop_tray.h"
 #include "desktop_layout.h"
 #include "cursor_asset.h"
 #include "shared/version.h"
@@ -433,9 +434,9 @@ struct sx_rect desktop_taskbar_button_rect(const struct desktop_session *session
     const int taskbar_y = session != 0 ? (int)session->gfx.info.height - DESKTOP_TASKBAR_HEIGHT : 0;
     const int panel_y = taskbar_y + 5;
     const int panel_height = DESKTOP_TASKBAR_HEIGHT - 9;
-    const int clock_x = session != 0 ? (int)session->gfx.info.width - DESKTOP_CLOCK_BOX_WIDTH - DESKTOP_TASKBAR_GAP : 0;
+    const int tray_x = session != 0 ? desktop_tray_rect(&session->gfx.info).x : 0;
     const int version_width = gfx_text_width(SAVANXP_VERSION_STRING) + 16;
-    const int version_x = clock_x - version_width - DESKTOP_TASKBAR_GAP;
+    const int version_x = tray_x - version_width - DESKTOP_TASKBAR_GAP;
     const int buttons_x = DESKTOP_START_BUTTON_WIDTH + 12;
     const int buttons_width = version_x - buttons_x - DESKTOP_TASKBAR_GAP;
     const int count = desktop_taskbar_button_count(session);
@@ -465,6 +466,157 @@ int desktop_taskbar_button_from_point(const struct desktop_session *session, int
     for (index = 0; index < count; ++index)
     {
         struct sx_rect rect = desktop_taskbar_button_rect(session, index);
+        if (sx_rect_contains_point(rect, x, y))
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+struct sx_rect desktop_tray_rect(const struct savanxp_fb_info *info)
+{
+    const int icon_count = desktop_tray_icon_count();
+    const int icons_width = icon_count > 0 ? icon_count * (DESKTOP_TRAY_ICON_SIZE + DESKTOP_TRAY_ICON_GAP) : 0;
+    const int width = DESKTOP_TRAY_PADDING + icons_width + gfx_text_width("88:88") + DESKTOP_TRAY_PADDING;
+    int taskbar_y;
+
+    if (info == 0)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    taskbar_y = (int)info->height - DESKTOP_TASKBAR_HEIGHT;
+    return sx_rect_make(
+        (int)info->width - width - DESKTOP_TASKBAR_GAP,
+        taskbar_y + 5,
+        width,
+        DESKTOP_TASKBAR_HEIGHT - 9);
+}
+
+struct sx_rect desktop_tray_icon_rect(const struct savanxp_fb_info *info, int index)
+{
+    struct sx_rect tray = desktop_tray_rect(info);
+
+    if (sx_rect_is_empty(tray) || index < 0 || index >= desktop_tray_icon_count())
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_make(
+        tray.x + DESKTOP_TRAY_PADDING + (index * (DESKTOP_TRAY_ICON_SIZE + DESKTOP_TRAY_ICON_GAP)),
+        tray.y + ((tray.height - DESKTOP_TRAY_ICON_SIZE) / 2),
+        DESKTOP_TRAY_ICON_SIZE,
+        DESKTOP_TRAY_ICON_SIZE);
+}
+
+struct sx_rect desktop_tray_clock_rect(const struct savanxp_fb_info *info)
+{
+    struct sx_rect tray = desktop_tray_rect(info);
+    const int clock_width = gfx_text_width("88:88");
+
+    if (sx_rect_is_empty(tray))
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_make(
+        tray.x + tray.width - DESKTOP_TRAY_PADDING - clock_width,
+        tray.y,
+        clock_width,
+        tray.height);
+}
+
+int desktop_context_menu_height(void)
+{
+    int height = DESKTOP_CONTEXT_PADDING * 2;
+    int index;
+
+    for (index = 0; index < desktop_context_item_count(); ++index)
+    {
+        const struct desktop_context_item *item = desktop_context_item_at(index);
+        if (item != 0 && item->separator_before)
+        {
+            height += DESKTOP_CONTEXT_SEPARATOR_HEIGHT;
+        }
+        height += DESKTOP_CONTEXT_ITEM_HEIGHT;
+    }
+    return height;
+}
+
+/* Clampea la esquina del menu al area de trabajo para que nunca quede debajo
+ * de la taskbar ni fuera de la pantalla. */
+void desktop_context_menu_place(const struct savanxp_fb_info *info, int *x, int *y)
+{
+    int area_x = 0;
+    int area_y = 0;
+    int area_width = 0;
+    int area_height = 0;
+    const int height = desktop_context_menu_height();
+
+    if (info == 0 || x == 0 || y == 0)
+    {
+        return;
+    }
+
+    desktop_work_area_bounds(info, &area_x, &area_y, &area_width, &area_height);
+    if (*x + DESKTOP_CONTEXT_MENU_WIDTH > area_x + area_width)
+    {
+        *x = area_x + area_width - DESKTOP_CONTEXT_MENU_WIDTH;
+    }
+    if (*y + height > area_y + area_height)
+    {
+        *y = area_y + area_height - height;
+    }
+    if (*x < area_x)
+    {
+        *x = area_x;
+    }
+    if (*y < area_y)
+    {
+        *y = area_y;
+    }
+}
+
+struct sx_rect desktop_context_menu_rect(int menu_x, int menu_y)
+{
+    return sx_rect_make(menu_x, menu_y, DESKTOP_CONTEXT_MENU_WIDTH, desktop_context_menu_height());
+}
+
+struct sx_rect desktop_context_menu_item_rect(int menu_x, int menu_y, int index)
+{
+    int item_y = menu_y + DESKTOP_CONTEXT_PADDING;
+    int walk;
+
+    if (index < 0 || index >= desktop_context_item_count())
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+
+    for (walk = 0; walk <= index; ++walk)
+    {
+        const struct desktop_context_item *item = desktop_context_item_at(walk);
+        if (item != 0 && item->separator_before)
+        {
+            item_y += DESKTOP_CONTEXT_SEPARATOR_HEIGHT;
+        }
+        if (walk == index)
+        {
+            break;
+        }
+        item_y += DESKTOP_CONTEXT_ITEM_HEIGHT;
+    }
+    return sx_rect_make(
+        menu_x + DESKTOP_CONTEXT_PADDING,
+        item_y,
+        DESKTOP_CONTEXT_MENU_WIDTH - (DESKTOP_CONTEXT_PADDING * 2),
+        DESKTOP_CONTEXT_ITEM_HEIGHT);
+}
+
+int desktop_context_menu_item_from_point(int menu_x, int menu_y, int x, int y)
+{
+    int index;
+
+    for (index = 0; index < desktop_context_item_count(); ++index)
+    {
+        struct sx_rect rect = desktop_context_menu_item_rect(menu_x, menu_y, index);
         if (sx_rect_contains_point(rect, x, y))
         {
             return index;

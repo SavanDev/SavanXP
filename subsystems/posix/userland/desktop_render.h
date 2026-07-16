@@ -1,6 +1,7 @@
 #pragma once
 
 #include "desktop_session.h"
+#include "desktop_menu.h"
 
 struct desktop_dirty_rect
 {
@@ -14,6 +15,7 @@ void desktop_dirty_rect_add_fullscreen(struct desktop_dirty_rect *dirty, const s
 void desktop_dirty_rect_add_taskbar(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info);
 void desktop_dirty_rect_add_menu(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info);
 void desktop_dirty_rect_add_shortcut(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int shortcut_index);
+void desktop_dirty_rect_add_context_menu(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int menu_x, int menu_y);
 void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape);
 void desktop_dirty_rect_add_client(struct desktop_dirty_rect *dirty, const struct desktop_client *client);
 int desktop_dirty_rect_valid(const struct desktop_dirty_rect *dirty);
@@ -24,6 +26,8 @@ unsigned long desktop_current_clock_stamp(char *buffer);
 /* Validates the sx_rect_set_subtract_rect region primitive the compositor
  * relies on for occlusion culling. Returns 0 on success, non-zero on failure. */
 int desktop_region_selftest(void);
+/* context_menu puede ser NULL (o venir con open == 0) cuando no hay menu
+ * contextual; los harnesses headless pasan NULL. */
 void desktop_draw_desktop(
     struct desktop_session *session,
     int cursor_x,
@@ -33,4 +37,5 @@ void desktop_draw_desktop(
     int selected_shortcut,
     int confirm_action,
     int welcome_visible,
+    const struct desktop_context_menu_state *context_menu,
     const struct desktop_dirty_rect *dirty);

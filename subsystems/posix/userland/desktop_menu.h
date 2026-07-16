@@ -23,6 +23,32 @@ struct desktop_menu_item
 #define DESKTOP_CONFIRM_SHUTDOWN 1
 #define DESKTOP_CONFIRM_REBOOT 2
 
+/* Menu contextual del escritorio (click derecho sobre el fondo). */
+enum desktop_context_action
+{
+    DESKTOP_CONTEXT_ACTION_REFRESH = 0,
+    DESKTOP_CONTEXT_ACTION_NEXT_WALLPAPER,
+    DESKTOP_CONTEXT_ACTION_ABOUT,
+};
+
+struct desktop_context_item
+{
+    const char *label;
+    int action; /* DESKTOP_CONTEXT_ACTION_* */
+    int separator_before;
+};
+
+/* Estado del menu contextual que main() arrastra entre frames. x/y ya vienen
+ * clampeados por desktop_context_menu_place() al abrirlo, asi layout, render
+ * e hit-test parten de la misma esquina. */
+struct desktop_context_menu_state
+{
+    int open;
+    int x;
+    int y;
+    int selected;
+};
+
 struct desktop_power_item
 {
     const char *label;
@@ -37,3 +63,6 @@ const struct desktop_menu_item *desktop_shortcut_at(int index);
 
 int desktop_power_item_count(void);
 const struct desktop_power_item *desktop_power_item_at(int index);
+
+int desktop_context_item_count(void);
+const struct desktop_context_item *desktop_context_item_at(int index);
