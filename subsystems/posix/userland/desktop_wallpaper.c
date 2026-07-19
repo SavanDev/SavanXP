@@ -154,6 +154,12 @@ static void load_config(void)
 
     if (fd < 0)
     {
+        /* Sin config previa (instalacion fresca): si el build trae el
+         * wallpaper default en /disk, arrancar mostrandolo. */
+        if (g_image_pixels != 0)
+        {
+            g_mode = DESKTOP_WALLPAPER_IMAGE;
+        }
         return;
     }
     if (read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
