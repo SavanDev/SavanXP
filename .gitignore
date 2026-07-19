@@ -12,6 +12,7 @@ tools/*
 !tools/GenerateCursorAsset.ps1
 !tools/GenerateDesktopSourceArt.ps1
 !tools/GenerateDesktopIconAssets.ps1
+!tools/GenerateDefaultWallpaper.py
 !tools/font/
 !tools/font/**
 *.log
