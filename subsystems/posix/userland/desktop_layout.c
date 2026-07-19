@@ -3,7 +3,6 @@
 #include "desktop_tray.h"
 #include "desktop_layout.h"
 #include "cursor_asset.h"
-#include "shared/version.h"
 
 int desktop_clamp_int(int value, int minimum, int maximum)
 {
@@ -435,10 +434,8 @@ struct sx_rect desktop_taskbar_button_rect(const struct desktop_session *session
     const int panel_y = taskbar_y + 5;
     const int panel_height = DESKTOP_TASKBAR_HEIGHT - 9;
     const int tray_x = session != 0 ? desktop_tray_rect(&session->gfx.info).x : 0;
-    const int version_width = gfx_text_width(SAVANXP_VERSION_STRING) + 16;
-    const int version_x = tray_x - version_width - DESKTOP_TASKBAR_GAP;
     const int buttons_x = DESKTOP_START_BUTTON_WIDTH + 12;
-    const int buttons_width = version_x - buttons_x - DESKTOP_TASKBAR_GAP;
+    const int buttons_width = tray_x - buttons_x - DESKTOP_TASKBAR_GAP;
     const int count = desktop_taskbar_button_count(session);
     int button_width = 0;
     int clamped_width = 0;

@@ -427,8 +427,8 @@ static void draw_background(
     const char *watermark = SAVANXP_DISPLAY_NAME;
     const int text_width = gfx_text_width(watermark);
     const int text_height = gfx_text_height();
-    const int text_x = (int)display_info->width - text_width - 14;
-    const int text_y = (int)display_info->height - DESKTOP_TASKBAR_HEIGHT - text_height - 14;
+    const int text_x = (int)display_info->width - text_width - 6;
+    const int text_y = (int)display_info->height - DESKTOP_TASKBAR_HEIGHT - text_height - 5;
 
     desktop_wallpaper_draw(painter, display_info);
     draw_desktop_shortcuts(painter, display_info, selected_shortcut);
@@ -443,11 +443,8 @@ static void draw_taskbar(struct sx_painter *painter, struct desktop_session *ses
     const int panel_height = DESKTOP_TASKBAR_HEIGHT - 9;
     const int text_y = taskbar_y + (DESKTOP_TASKBAR_HEIGHT - gfx_text_height()) / 2;
     const int icon_y = taskbar_y + (DESKTOP_TASKBAR_HEIGHT - 16) / 2;
-    const char *version_text = SAVANXP_VERSION_STRING;
     const struct sx_rect tray_rect = desktop_tray_rect(&session->gfx.info);
     const struct sx_rect clock_rect = desktop_tray_clock_rect(&session->gfx.info);
-    const int version_width = gfx_text_width(version_text) + 16;
-    const int version_x = tray_rect.x - version_width - DESKTOP_TASKBAR_GAP;
     const struct desktop_embedded_bitmap *start_icon = desktop_icon_small(DESKTOP_ICON_DESKTOP);
     char clock_text[6];
     int index;
@@ -502,9 +499,6 @@ static void draw_taskbar(struct sx_painter *painter, struct desktop_session *ses
         sx_painter_draw_text(painter, rect.x + 32, text_y, label, gfx_rgb(12, 16, 20));
     }
 
-    draw_inset_box(painter, sx_rect_make(version_x, panel_y, version_width, panel_height), gfx_rgb(210, 214, 220));
-    sx_painter_draw_text(painter, version_x + 8, text_y, version_text, gfx_rgb(46, 50, 56));
-
     /* Area de notificaciones: iconos de tray registrados + reloj en una sola
      * caja hundida, como el tray de Win9x. */
     draw_inset_box(painter, tray_rect, gfx_rgb(210, 214, 220));
@@ -523,6 +517,31 @@ static void draw_taskbar(struct sx_painter *painter, struct desktop_session *ses
     sx_painter_draw_text(painter, clock_rect.x, text_y, clock_text, gfx_rgb(46, 50, 56));
 }
 
+/* Franja lateral del menu inicio: gradiente vertical simple en bandas, como el
+ * banner de Win9x. Se pinta por bandas para no iterar linea a linea. */
+static void draw_menu_strip_gradient(struct sx_painter *painter, int x, int y, int width, int height)
+{
+    const int band_height = 4;
+    int offset;
+
+    if (width <= 0 || height <= 0)
+    {
+        return;
+    }
+
+    for (offset = 0; offset < height; offset += band_height)
+    {
+        const int band = offset + band_height > height ? height - offset : band_height;
+        const int t = (offset * 255) / (height > 1 ? height - 1 : 1);
+        const uint32_t colour = gfx_rgb(
+            0,
+            (uint8_t)(132 - ((132 - 48) * t) / 255),
+            (uint8_t)(96 - ((96 - 34) * t) / 255));
+
+        sx_painter_fill_rect(painter, sx_rect_make(x, y + offset, width, band), colour);
+    }
+}
+
 static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_context *gfx, int selected_index)
 {
     int menu_x = 0;
@@ -532,7 +551,6 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
     int content_x = 0;
     int items_y = 0;
     int footer_y = 0;
-    const struct desktop_embedded_bitmap *sidebar_art = desktop_menu_strip_art();
     int index;
 
     desktop_start_menu_bounds(&gfx->info, &menu_x, &menu_y, &menu_width, &menu_height);
@@ -542,8 +560,7 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
 
     sx_painter_fill_rect(painter, sx_rect_make(menu_x, menu_y, menu_width, menu_height), gfx_rgb(198, 201, 206));
     sx_painter_draw_frame(painter, sx_rect_make(menu_x, menu_y, menu_width, menu_height), gfx_rgb(46, 50, 56));
-    sx_painter_fill_rect(painter, sx_rect_make(menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12), gfx_rgb(0, 106, 72));
-    draw_embedded_bitmap_scaled(painter, sidebar_art, menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12);
+    draw_menu_strip_gradient(painter, menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12);
     sx_painter_draw_text(painter, content_x, menu_y + 8, "Applications", gfx_rgb(24, 28, 34));
     sx_painter_draw_text(painter, content_x, menu_y + 28, "Open an app in its own", gfx_rgb(82, 88, 96));
     sx_painter_draw_text(painter, content_x, menu_y + 46, "movable window", gfx_rgb(82, 88, 96));
@@ -582,7 +599,7 @@ static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_conte
         draw_button(painter, rect, gfx_rgb(214, 217, 222), 0);
         sx_painter_fill_rect(painter, sx_rect_make(rect.x + 4, rect.y + 4, 3, rect.height - 8), accent);
         text_x = rect.x + ((rect.width - gfx_text_width(power->label)) / 2);
-        sx_painter_draw_text(painter, text_x, rect.y + ((rect.height - 12) / 2), power->label, gfx_rgb(24, 28, 34));
+        sx_painter_draw_text(painter, text_x, rect.y + ((rect.height - gfx_text_height()) / 2), power->label, gfx_rgb(24, 28, 34));
     }
 }
 
@@ -612,7 +629,7 @@ static void draw_confirm_dialog(struct sx_painter *painter, const struct savanxp
     sx_painter_draw_text(
         painter,
         yes_rect.x + ((yes_rect.width - gfx_text_width("Si")) / 2),
-        yes_rect.y + ((yes_rect.height - 12) / 2),
+        yes_rect.y + ((yes_rect.height - gfx_text_height()) / 2),
         "Si",
         gfx_rgb(24, 28, 34));
 
@@ -620,7 +637,7 @@ static void draw_confirm_dialog(struct sx_painter *painter, const struct savanxp
     sx_painter_draw_text(
         painter,
         no_rect.x + ((no_rect.width - gfx_text_width("No")) / 2),
-        no_rect.y + ((no_rect.height - 12) / 2),
+        no_rect.y + ((no_rect.height - gfx_text_height()) / 2),
         "No",
         gfx_rgb(24, 28, 34));
 }
