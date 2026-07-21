@@ -521,24 +521,41 @@ function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
     }
 }
 
+function Get-PythonExecutable {
+    # "python" primero: en Windows, "python3" suele resolver al alias-stub de
+    # la Microsoft Store (existe para Get-Command pero falla al ejecutarlo).
+    return Require-Executable "python" @("python", "python3")
+}
+
 function Generate-CursorAsset {
     New-Directory $GeneratedRoot
 
-    $scriptPath = Join-Path $ToolRoot "GenerateCursorAsset.ps1"
+    $python = Get-PythonExecutable
+    $scriptPath = Join-Path $ToolRoot "gen_cursor_asset.py"
     $outputPath = Join-Path $GeneratedRoot "cursor_asset.h"
 
-    & $scriptPath -ProjectRoot $ProjectRoot -OutputPath $outputPath
+    & $python $scriptPath --project-root $ProjectRoot --output $outputPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion de cursor_asset.h."
+    }
 }
 
 function Generate-DesktopIconAssets {
     New-Directory $GeneratedRoot
 
-    $sourceArtScript = Join-Path $ToolRoot "GenerateDesktopSourceArt.ps1"
-    $scriptPath = Join-Path $ToolRoot "GenerateDesktopIconAssets.ps1"
+    $python = Get-PythonExecutable
+    $sourceArtScript = Join-Path $ToolRoot "gen_desktop_source_art.py"
+    $scriptPath = Join-Path $ToolRoot "gen_desktop_icon_assets.py"
     $outputPath = Join-Path $GeneratedRoot "desktop_icon_assets.h"
 
-    & $sourceArtScript -ProjectRoot $ProjectRoot
-    & $scriptPath -ProjectRoot $ProjectRoot -OutputPath $outputPath
+    & $python $sourceArtScript --project-root $ProjectRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion del arte fuente del desktop."
+    }
+    & $python $scriptPath --project-root $ProjectRoot --output $outputPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion de desktop_icon_assets.h."
+    }
 }
 
 function Get-KernelCompileEdges([string[]]$Sources) {
@@ -655,6 +672,15 @@ function ConvertTo-CygwinPath([string]$WindowsPath) {
     return "/cygdrive/$drive/$rest"
 }
 
+# $IsWindows no existe en Windows PowerShell 5.1 (solo en pwsh 6+): ahi,
+# como esa build solo corre en Windows, asumimos $true directamente.
+function Test-IsWindowsHost {
+    if (Test-Path Variable:IsWindows) {
+        return $IsWindows
+    }
+    return $true
+}
+
 function Install-LimineImageFiles {
     New-Directory (Join-Path $BootRoot "limine")
     New-Directory $EfiBootRoot
@@ -760,11 +786,19 @@ function Build-Iso {
         Remove-Item $IsoImage -Force
     }
 
-    # El xorriso horneado es un build de Cygwin: no traduce rutas Windows
-    # (ni "C:\..." ni "C:/...") como absolutas, las trata como relativas al
-    # cwd. Hay que pasarle la forma /cygdrive/<unidad>/... que reconoce.
-    $isoImageCygwin = ConvertTo-CygwinPath $IsoImage
-    $imageRootCygwin = ConvertTo-CygwinPath $ImageRoot
+    if (Test-IsWindowsHost) {
+        # El xorriso horneado en Windows es un build de Cygwin: no traduce
+        # rutas Windows (ni "C:\..." ni "C:/...") como absolutas, las trata
+        # como relativas al cwd. Hay que pasarle la forma /cygdrive/<unidad>/...
+        # que reconoce.
+        $isoImageArg = ConvertTo-CygwinPath $IsoImage
+        $imageRootArg = ConvertTo-CygwinPath $ImageRoot
+    } else {
+        # xorriso nativo (Linux/macOS, de paquete del sistema): rutas
+        # absolutas normales, sin traduccion cygdrive.
+        $isoImageArg = $IsoImage
+        $imageRootArg = $ImageRoot
+    }
 
     # -eltorito-alt-boot es obligatorio entre el "-b" (BIOS) y el "-e" (EFI):
     # sin el, la segunda entrada de boot reemplaza a la primera en el catalogo
@@ -784,8 +818,8 @@ function Build-Iso {
         "--protective-msdos-label",
         "-iso-level", "3",
         "-V", "SAVANXP",
-        "-o", $isoImageCygwin,
-        $imageRootCygwin
+        "-o", $isoImageArg,
+        $imageRootArg
     )
 
     & $xorriso @xorrisoArgs
@@ -798,7 +832,25 @@ function Build-Iso {
         $limineInstaller = Join-Path $LimineRoot "limine"
     }
     if (-not (Test-Path $limineInstaller)) {
-        throw "No se encontro el instalador de Limine para completar el arranque BIOS de la ISO."
+        if (Test-IsWindowsHost) {
+            throw "No se encontro el instalador de Limine para completar el arranque BIOS de la ISO."
+        }
+
+        # La rama v10.x-binary solo trae "limine.exe" prebuildeado (Windows).
+        # Fuera de Windows el deployer "limine" hay que compilarlo a mano
+        # desde limine.c: el Makefile del repo lo arma con `cc -std=c99
+        # limine.c -o limine` (target "all", por defecto).
+        Write-Host "Compilando el deployer 'limine' (make)..."
+        $make = Require-Executable "make" @("make")
+        & $make -C $LimineRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fallo 'make' al compilar el deployer 'limine' en $LimineRoot."
+        }
+
+        $limineInstaller = Join-Path $LimineRoot "limine"
+        if (-not (Test-Path $limineInstaller)) {
+            throw "make no genero el binario 'limine' en $LimineRoot."
+        }
     }
 
     & $limineInstaller bios-install $IsoImage

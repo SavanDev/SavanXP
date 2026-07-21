@@ -56,6 +56,19 @@ Por eso `bootstrap.ps1` es opcional: si ya tenes `clang++`, `ld.lld` y
 `git` en el `PATH`. `build.ps1` descarga automaticamente la rama binaria
 `v10.x-binary` de Limine si no existe en `tools/limine`.
 
+Ademas hace falta `python3` (o `python`) en el `PATH` con `Pillow` instalado
+(`pip install Pillow`): `build.ps1` lo usa en cada build para generar el arte
+del desktop y convertir los PNG de cursor/iconos a headers C
+(`tools/gen_desktop_source_art.py`, `tools/gen_cursor_asset.py`,
+`tools/gen_desktop_icon_assets.py`). No forma parte del toolchain horneado por
+`bootstrap.ps1`.
+
+Fuera de Windows, `.\build.ps1 iso` tambien necesita `make` y un compilador
+`cc` en el `PATH`: la rama `v10.x-binary` de Limine solo trae `limine.exe`
+prebuildeado para Windows, asi que ahi el deployer `limine` (para el arranque
+BIOS de la ISO) se compila una vez desde `limine.c` con el `Makefile` del
+propio repo de Limine.
+
 ## Compilacion
 
 Compilar el sistema:

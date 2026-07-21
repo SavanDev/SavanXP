@@ -22,16 +22,16 @@ Set-StrictMode -Version Latest
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
-. (Join-Path $repoRoot "tools\UserAppCommon.ps1")
+. (Join-Path $repoRoot "tools/UserAppCommon.ps1")
 
 $toolchainRoot = Join-Path $repoRoot "toolchain"
 $haxeLibsRoot = Join-Path $toolchainRoot "haxe-libs"
-$lockPath = Join-Path $repoRoot "tools\toolchain.lock.json"
-$posixSdk = Join-Path $repoRoot "subsystems\posix\sdk\v1"
+$lockPath = Join-Path $repoRoot "tools/toolchain.lock.json"
+$posixSdk = Join-Path $repoRoot "subsystems/posix/sdk/v1"
 $nativeSdk = Join-Path $scriptDir "sdk"
 $haxeSrc = Join-Path $scriptDir $Source
 if (-not (Test-Path $haxeSrc)) { throw "No existe el directorio de fuentes Haxe '$Source'." }
-$outRoot = Join-Path $repoRoot "build\native"
+$outRoot = Join-Path $repoRoot "build/native"
 # gen/obj por app para poder construir varias sin pisarse.
 $genDir = Join-Path $outRoot "gen-$Name"
 
@@ -85,7 +85,7 @@ $reflaxeCpp = Ensure-HaxeLib "reflaxe.CPP" $lock.haxelibs.'reflaxe.cpp'.url $loc
 # contexto macro. Ver subsystems/native/README.md.
 $stdCrossDir = Join-Path $outRoot "std-cross"
 if (Test-Path $stdCrossDir) { Remove-Item -Recurse -Force $stdCrossDir }
-$stdSourceDir = Join-Path $reflaxeCpp "std\cxx\_std"
+$stdSourceDir = Join-Path $reflaxeCpp "std/cxx/_std"
 Get-ChildItem $stdSourceDir -Recurse -Filter *.hx | ForEach-Object {
     $relative = $_.FullName.Substring($stdSourceDir.Length + 1)
     $target = Join-Path $stdCrossDir ($relative -replace '\.hx$', '.cross.hx')
@@ -135,14 +135,14 @@ Set-Content -Path $hxmlPath -Value $hxmlLines -Encoding ASCII
 Write-Step "Generando C++ con reflaxe.CPP"
 & $haxe $hxmlPath
 if ($LASTEXITCODE -ne 0) { throw "Fallo la generacion de Haxe." }
-$mainCpp = Join-Path $genDir "src\Main.cpp"
+$mainCpp = Join-Path $genDir "src/Main.cpp"
 if (-not (Test-Path $mainCpp)) { throw "reflaxe.CPP no genero Main.cpp en $genDir." }
 
 # --- 4. Compilar y linkear freestanding --------------------------------------
 $objDir = Join-Path $outRoot "obj-$Name"
 if (Test-Path $objDir) { Remove-Item -Recurse -Force $objDir }
 Ensure-Directory $objDir
-$nativeHeader = Join-Path $nativeSdk "include\savanxp_native.h"
+$nativeHeader = Join-Path $nativeSdk "include/savanxp_native.h"
 
 # SSE2 HABILITADO (a diferencia del kernel, que va -mno-sse): el kernel gestiona
 # el estado FPU/SSE por proceso (FXSAVE/FXRSTOR en el context switch), asi que el
@@ -164,7 +164,7 @@ $cxxFlags = $cFlags + @(
     "-std=c++17", "-fno-exceptions", "-fno-rtti",
     "-fno-threadsafe-statics", "-fno-use-cxa-atexit", "-nostdinc++",
     # Mini std C++ freestanding del SDK nativo (<memory> sobre sxn_alloc).
-    "-isystem", (Join-Path $nativeSdk "include\cxxstd"),
+    "-isystem", (Join-Path $nativeSdk "include/cxxstd"),
     "-include", $nativeHeader
 )
 
@@ -184,14 +184,14 @@ $entryObj = Join-Path $objDir "sx_entry.o"
 $objects = @($crt0Obj, $shimObj, $guiObj, $textObj, $sysinfoObj, $fsObj, $cxxGlueObj, $entryObj)
 
 Write-Step "Compilando runtime nativo"
-Invoke-Compile $clang @() (Join-Path $posixSdk "runtime\crt0.S") $crt0Obj $cFlags
-Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_native.c") $shimObj $cFlags
-Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_gui.c") $guiObj $cFlags
-Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_text.c") $textObj $cFlags
-Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_sysinfo.c") $sysinfoObj $cFlags
-Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime\sx_fs.c") $fsObj $cFlags
-Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_cxx.cpp") $cxxGlueObj $cxxFlags
-Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime\sx_entry.cpp") $entryObj $cxxFlags
+Invoke-Compile $clang @() (Join-Path $posixSdk "runtime/crt0.S") $crt0Obj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime/sx_native.c") $shimObj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime/sx_gui.c") $guiObj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime/sx_text.c") $textObj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime/sx_sysinfo.c") $sysinfoObj $cFlags
+Invoke-Compile $clang @("-x", "c") (Join-Path $nativeSdk "runtime/sx_fs.c") $fsObj $cFlags
+Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime/sx_cxx.cpp") $cxxGlueObj $cxxFlags
+Invoke-Compile $clangxx @() (Join-Path $nativeSdk "runtime/sx_entry.cpp") $entryObj $cxxFlags
 
 # Compilar todo el C++ generado salvo el _main_.cpp de reflaxe (incluye <memory>;
 # proveemos nuestra propia entrada en sx_entry.cpp).

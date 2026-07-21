@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$templateRoot = Join-Path $projectRoot "sdk\\template"
+$templateRoot = Join-Path $projectRoot "sdk/template"
 $destinationBase = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $DestinationRoot))
 $destinationRoot = Join-Path $destinationBase $Name
 

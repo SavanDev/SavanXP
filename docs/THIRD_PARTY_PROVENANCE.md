@@ -47,7 +47,7 @@ externos.
 
 ### Iconos del desktop
 
-- Origen: arte propio de SavanXP generado por `tools/GenerateDesktopSourceArt.ps1`
+- Origen: arte propio de SavanXP generado por `tools/gen_desktop_source_art.py`
 - Licencia revisada: propio del repo
 - Decision: fuera del registro de terceros desde su reemplazo
 - Motivo: el desktop ya no depende de iconos copiados o derivados de SerenityOS

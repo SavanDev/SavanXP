@@ -8,14 +8,14 @@ Set-StrictMode -Version Latest
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
-$buildUser = Join-Path $repoRoot "tools\build-user.ps1"
-$commonTools = Join-Path $repoRoot "tools\UserAppCommon.ps1"
+$buildUser = Join-Path $repoRoot "tools/build-user.ps1"
+$commonTools = Join-Path $repoRoot "tools/UserAppCommon.ps1"
 
 if (-not $WadPath) {
     # Freedoom (IWAD libre) es el contenido por defecto del LiveCD: jugable sin
     # depender de WADs propietarios/shareware de id. El motor lo reconoce en su
     # tabla de IWADs (d_iwad.c) y lo busca en FILES_DIR="/disk/games/doom".
-    $WadPath = Join-Path $scriptDir "wad\freedoom1.wad"
+    $WadPath = Join-Path $scriptDir "wad/freedoom1.wad"
 }
 
 & $buildUser -Source $scriptDir -Name doomgeneric -NoInstall:$NoInstall

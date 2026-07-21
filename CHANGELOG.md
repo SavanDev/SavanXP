@@ -8,6 +8,57 @@ Notas de corte:
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
 
+## [Unreleased]
+
+### Cambiado
+
+- **Generacion de assets del desktop: de System.Drawing (GDI+) a Pillow.**
+  Primer paso de la migracion del build a Linux: `tools/GenerateCursorAsset.ps1`,
+  `tools/GenerateDesktopIconAssets.ps1` y `tools/GenerateDesktopSourceArt.ps1`
+  dependian de `System.Drawing`, que en .NET moderno tira
+  `PlatformNotSupportedException` fuera de Windows, y se ejecutaban en cada
+  build (`Generate-CursorAsset`/`Generate-DesktopIconAssets` en `build.ps1`).
+  Se reemplazaron por tres scripts Python + Pillow
+  (`tools/gen_cursor_asset.py`, `tools/gen_desktop_icon_assets.py`,
+  `tools/gen_desktop_source_art.py`), mismo formato de header C generado
+  (`cursor_asset.h`, `desktop_icon_assets.h`) sin cambios de ABI. `build.ps1`
+  ahora resuelve `python3`/`python` del `PATH` para invocarlos. Nuevo
+  requisito de build en cualquier plataforma: `python3` + `pip install
+  Pillow` (no forma parte del toolchain horneado por `bootstrap.ps1`).
+
+- **Rutas con `\` literal portadas a `/` en los builds "aparte".**
+  Segundo paso de la migracion a Linux: `Join-Path` no separa por `\` fuera de
+  Windows (ahi es un caracter de nombre de archivo valido), asi que las rutas
+  con `\` embebido a mano resolvian mal en `pwsh` sobre Linux. Se corrigieron
+  las 16 ocurrencias en `subsystems/native/build.ps1`, 3 en
+  `sdk/doomgeneric/build.ps1` y 1 cada una en `tools/new-user-app.ps1` y
+  `tools/bootstrap.ps1`, al mismo patron de `/` que ya usaba `build.ps1`. Sin
+  cambio de comportamiento en Windows (verificado corriendo los tres builds
+  afectados de punta a punta).
+
+- **`Build-Iso` ya no fuerza rutas cygdrive fuera de Windows.**
+  Tercer paso de la migracion a Linux: `ConvertTo-CygwinPath` traducia
+  siempre `C:\...` a `/cygdrive/c/...` para el `xorriso.exe` horneado
+  (build de Cygwin), pero esa traduccion no tiene sentido con el `xorriso`
+  nativo de Linux/macOS y ademas revienta (`No se pudo convertir`) porque el
+  regex de unidad nunca matchea una ruta Linux. `Build-Iso` ahora chequea el
+  host con la nueva `Test-IsWindowsHost` ($IsWindows, con fallback a `$true`
+  para Windows PowerShell 5.1 donde esa variable no existe): en Windows sigue
+  yendo por `ConvertTo-CygwinPath` igual que antes, fuera de Windows le pasa a
+  `xorriso` la ruta absoluta tal cual. Verificado corriendo `.\build.ps1 iso`
+  en Windows sin regresion.
+
+- **`Build-Iso` compila el deployer `limine` con `make` fuera de Windows.**
+  Cuarto y ultimo paso (por ahora) de la migracion a Linux: la rama
+  `v10.x-binary` de Limine solo trae `limine.exe` prebuildeado para Windows;
+  para el arranque BIOS de la ISO en Linux/macOS hace falta compilar el
+  deployer `limine` a mano desde `limine.c` (el `Makefile` del propio repo de
+  Limine lo arma con `cc -std=c99 limine.c -o limine`). `Build-Iso` ahora, si
+  no encuentra `limine.exe` ni `limine` y `Test-IsWindowsHost` da `$false`,
+  corre `make -C tools/limine` antes de tirar el error. Nuevo requisito de
+  build en Linux/macOS (no en Windows): `make` + un compilador `cc` en el
+  `PATH`.
+
 ## [0.3.3] - 2026-07-09
 
 ### Agregado

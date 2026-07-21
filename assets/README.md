@@ -13,7 +13,7 @@ assets/
 ```
 
 Todo este arte es propio del repo: se genera localmente con
-`tools/GenerateDesktopSourceArt.ps1` y no depende de iconos externos ni de
+`tools/gen_desktop_source_art.py` y no depende de iconos externos ni de
 assets temporales de terceros.
 
 ## Cursor
@@ -43,7 +43,7 @@ Los iconos PNG del desktop viven en `assets/desktop/icons/16x16` y
 
 Durante `.\build.ps1 build`, esos PNG se convierten automaticamente a
 `build/generated/desktop_icon_assets.h` y quedan embebidos en el binario del
-desktop. El arte fuente se regenera con `tools/GenerateDesktopSourceArt.ps1`,
+desktop. El arte fuente se regenera con `tools/gen_desktop_source_art.py`,
 que produce un set propio con los mismos nombres y tamanos base.
 
 ## Banda lateral del menu Start

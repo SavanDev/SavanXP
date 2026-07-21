@@ -9,9 +9,9 @@ tools/*
 !tools/Ninja.ps1
 !tools/bootstrap.ps1
 !tools/toolchain.lock.json
-!tools/GenerateCursorAsset.ps1
-!tools/GenerateDesktopSourceArt.ps1
-!tools/GenerateDesktopIconAssets.ps1
+!tools/gen_cursor_asset.py
+!tools/gen_desktop_source_art.py
+!tools/gen_desktop_icon_assets.py
 !tools/GenerateDefaultWallpaper.py
 !tools/font/
 !tools/font/**

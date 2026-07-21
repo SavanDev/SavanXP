@@ -76,7 +76,7 @@ function Expand-ZipArchive([string]$Archive, [string]$Destination) {
 
 function Install-Llvm($Spec) {
     $target = Join-Path $ToolchainRoot "llvm"
-    $clangxx = Join-Path $target "$($Spec.bin)\clang++.exe"
+    $clangxx = Join-Path $target "$($Spec.bin)/clang++.exe"
     if ((Test-Path $clangxx) -and -not $Force) {
         Write-Step "LLVM ya presente en $target (usa -Force para re-instalar)"
         return $target
