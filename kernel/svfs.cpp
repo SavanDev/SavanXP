@@ -5,91 +5,50 @@
 #include "kernel/block.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vfs.hpp"
+#include "svfs/svfs_format.h"
 
 namespace {
 
-constexpr char kSuperblockMagic[8] = {'S', 'V', 'F', 'S', '2', '\0', '\0', '\0'};
-constexpr char kJournalMagic[8] = {'S', 'V', 'J', 'N', 'L', '2', '\0', '\0'};
-constexpr uint32_t kVersion = 2;
-constexpr uint32_t kFlagClean = 1u;
-constexpr uint16_t kInodeTypeUnused = 0;
-constexpr uint16_t kInodeTypeFile = 1;
-constexpr uint16_t kInodeTypeDirectory = 2;
-constexpr uint32_t kPrimarySuperblockLba = 0;
-constexpr uint32_t kSecondarySuperblockLba = 1;
-constexpr uint32_t kJournalLba = 2;
-constexpr uint32_t kBlockBitmapSectors = 32;
-constexpr uint32_t kInodeBitmapSectors = 1;
-constexpr uint32_t kInodeTableSectors = 64;
-constexpr uint32_t kJournalMetadataSectors = kBlockBitmapSectors + kInodeBitmapSectors + kInodeTableSectors;
-constexpr uint32_t kJournalSectors = 1 + kJournalMetadataSectors;
-constexpr uint32_t kBlockBitmapLba = kJournalLba + kJournalSectors;
-constexpr uint32_t kInodeBitmapLba = kBlockBitmapLba + kBlockBitmapSectors;
-constexpr uint32_t kInodeTableLba = kInodeBitmapLba + kInodeBitmapSectors;
-constexpr uint32_t kDataLba = kInodeTableLba + kInodeTableSectors;
-constexpr uint32_t kMaxInodes = 256;
-constexpr uint32_t kMaxRecords = kMaxInodes - 1;
-constexpr uint32_t kRootInodeId = 1;
-constexpr uint32_t kMaxExtents = 8;
-constexpr uint32_t kMinimumGrowthSectors = 64;
+// El formato on-disk (constantes de layout, structs, checksum y bit-math) vive
+// en include/svfs/svfs_format.h como fuente de verdad unica, compartido con el
+// tool de host. Aca solo se le ponen los nombres internos historicos para no
+// reescribir los cientos de usos, mas la politica y los limites que son propios
+// del driver del kernel (no on-disk).
+// (Las constantes de layout que ya solo usa la validacion viven en el header;
+// aca quedan las que el resto del driver referencia por su nombre historico.)
+constexpr uint32_t kFlagClean = SVFS_FLAG_CLEAN;
+constexpr uint16_t kInodeTypeUnused = SVFS_INODE_UNUSED;
+constexpr uint16_t kInodeTypeFile = SVFS_INODE_FILE;
+constexpr uint16_t kInodeTypeDirectory = SVFS_INODE_DIRECTORY;
+constexpr uint32_t kPrimarySuperblockLba = SVFS_PRIMARY_SB_LBA;
+constexpr uint32_t kSecondarySuperblockLba = SVFS_SECONDARY_SB_LBA;
+constexpr uint32_t kBlockBitmapSectors = SVFS_BLOCK_BITMAP_SECTORS;
+constexpr uint32_t kInodeBitmapSectors = SVFS_INODE_BITMAP_SECTORS;
+constexpr uint32_t kJournalMetadataSectors = SVFS_JOURNAL_METADATA_SECTORS;
+constexpr uint32_t kDataLba = SVFS_DATA_LBA;
+constexpr uint32_t kMaxInodes = SVFS_MAX_INODES;
+constexpr uint32_t kMaxRecords = SVFS_MAX_RECORDS;
+constexpr uint32_t kRootInodeId = SVFS_ROOT_INODE;
+constexpr uint32_t kMaxExtents = SVFS_MAX_EXTENTS;
+constexpr uint32_t kMinimumGrowthSectors = 64; // politica de crecimiento, no on-disk
 constexpr size_t kBlockBitmapBytes = static_cast<size_t>(kBlockBitmapSectors) * block::kSectorSize;
 constexpr size_t kInodeBitmapBytes = static_cast<size_t>(kInodeBitmapSectors) * block::kSectorSize;
 constexpr size_t kMaxRelativePath = 255;
 constexpr size_t kMaxDirNameLength = 63;
 
-struct Extent {
-    uint32_t start_lba;
-    uint32_t sector_count;
-};
+// Bridge: el kernel indexa bitmaps/tabla en unidades de block::kSectorSize,
+// mientras que el formato compartido define SVFS_SECTOR_SIZE. Ambos deben ser
+// el mismo tamano de sector o el layout on-disk no cuadra.
+static_assert(block::kSectorSize == SVFS_SECTOR_SIZE);
 
-struct Inode {
-    uint32_t inode_id;
-    uint16_t type;
-    uint16_t reserved0;
-    uint32_t size;
-    uint32_t link_count;
-    uint32_t extent_count;
-    Extent extents[kMaxExtents];
-    uint8_t reserved[44];
-};
+using Extent = svfs_extent;
+using Inode = svfs_inode;
+using Superblock = svfs_superblock;
+using JournalHeader = svfs_journal_header;
+using DirEntry = svfs_dir_entry;
 
-struct Superblock {
-    char magic[8];
-    uint32_t version;
-    uint32_t checksum;
-    uint32_t sequence;
-    uint32_t flags;
-    uint32_t total_sectors;
-    uint32_t journal_lba;
-    uint32_t journal_sectors;
-    uint32_t block_bitmap_lba;
-    uint32_t block_bitmap_sectors;
-    uint32_t inode_bitmap_lba;
-    uint32_t inode_bitmap_sectors;
-    uint32_t inode_table_lba;
-    uint32_t inode_table_sectors;
-    uint32_t data_lba;
-    uint32_t max_inodes;
-    uint32_t root_inode;
-    uint8_t reserved[440];
-};
-
-struct JournalHeader {
-    char magic[8];
-    uint32_t checksum;
-    uint32_t sequence;
-    uint32_t pending;
-    uint32_t metadata_sectors;
-    uint32_t reserved[122];
-};
-
-struct DirEntry {
-    uint32_t inode_id;
-    uint16_t type;
-    uint16_t name_length;
-    char name[64];
-    uint8_t reserved[8];
-};
+// Magias del formato compartido, con los nombres internos historicos.
+constexpr const char* kJournalMagic = svfs_journal_magic;
 
 struct MetadataSnapshot {
     Superblock superblock;
@@ -97,11 +56,6 @@ struct MetadataSnapshot {
     uint8_t inode_bitmap[kInodeBitmapBytes];
     Inode inodes[kMaxInodes];
 };
-
-static_assert(sizeof(Inode) == 128);
-static_assert(sizeof(Superblock) == block::kSectorSize);
-static_assert(sizeof(JournalHeader) == block::kSectorSize);
-static_assert(sizeof(DirEntry) == 80);
 
 Superblock g_superblock = {};
 uint8_t g_block_bitmap[kBlockBitmapBytes] = {};
@@ -120,50 +74,23 @@ enum class RecoveryState : uint8_t {
     read_only = 2,
 };
 
-uint32_t checksum_bytes(const void* data, size_t count) {
-    const auto* bytes = static_cast<const uint8_t*>(data);
-    uint32_t value = 2166136261u;
-    for (size_t index = 0; index < count; ++index) {
-        value ^= bytes[index];
-        value *= 16777619u;
-    }
-    return value;
-}
-
+// Validacion y checksum de metadata: la logica vive en el formato compartido
+// (svfs_format.h) para no divergir del builder de host. Aca solo wrappers con
+// las firmas por-referencia que usa el resto del driver.
 uint32_t superblock_checksum(const Superblock& superblock) {
-    Superblock copy = superblock;
-    copy.checksum = 0;
-    return checksum_bytes(&copy, sizeof(copy));
+    return svfs_superblock_checksum(&superblock);
 }
 
 uint32_t journal_checksum(const JournalHeader& header) {
-    JournalHeader copy = header;
-    copy.checksum = 0;
-    return checksum_bytes(&copy, sizeof(copy));
+    return svfs_journal_checksum(&header);
 }
 
 bool valid_superblock(const Superblock& superblock) {
-    return memcmp(superblock.magic, kSuperblockMagic, sizeof(kSuperblockMagic)) == 0 &&
-        superblock.version == kVersion &&
-        superblock.checksum == superblock_checksum(superblock) &&
-        superblock.journal_lba == kJournalLba &&
-        superblock.journal_sectors == kJournalSectors &&
-        superblock.block_bitmap_lba == kBlockBitmapLba &&
-        superblock.block_bitmap_sectors == kBlockBitmapSectors &&
-        superblock.inode_bitmap_lba == kInodeBitmapLba &&
-        superblock.inode_bitmap_sectors == kInodeBitmapSectors &&
-        superblock.inode_table_lba == kInodeTableLba &&
-        superblock.inode_table_sectors == kInodeTableSectors &&
-        superblock.data_lba == kDataLba &&
-        superblock.max_inodes == kMaxInodes &&
-        superblock.root_inode == kRootInodeId &&
-        superblock.total_sectors > kDataLba;
+    return svfs_superblock_valid(&superblock);
 }
 
 bool valid_journal(const JournalHeader& header) {
-    return memcmp(header.magic, kJournalMagic, sizeof(kJournalMagic)) == 0 &&
-        header.checksum == journal_checksum(header) &&
-        header.metadata_sectors == kJournalMetadataSectors;
+    return svfs_journal_valid(&header);
 }
 
 class MutationGuard {
@@ -191,20 +118,11 @@ Inode* inode_for_id(uint32_t inode_id) {
 }
 
 bool bitmap_test(const uint8_t* bitmap, uint32_t bit) {
-    const uint32_t byte = bit / 8u;
-    const uint32_t shift = bit % 8u;
-    return (bitmap[byte] & static_cast<uint8_t>(1u << shift)) != 0;
+    return svfs_bitmap_test(bitmap, bit) != 0;
 }
 
 void bitmap_set(uint8_t* bitmap, uint32_t bit, bool value) {
-    const uint32_t byte = bit / 8u;
-    const uint32_t shift = bit % 8u;
-    const uint8_t mask = static_cast<uint8_t>(1u << shift);
-    if (value) {
-        bitmap[byte] |= mask;
-    } else {
-        bitmap[byte] &= static_cast<uint8_t>(~mask);
-    }
+    svfs_bitmap_set(bitmap, bit, value ? 1 : 0);
 }
 
 void snapshot_metadata() {
@@ -310,11 +228,7 @@ bool commit_metadata() {
 }
 
 uint32_t inode_capacity_sectors(const Inode& inode) {
-    uint32_t sectors = 0;
-    for (uint32_t index = 0; index < inode.extent_count; ++index) {
-        sectors += inode.extents[index].sector_count;
-    }
-    return sectors;
+    return svfs_inode_capacity_sectors(&inode);
 }
 
 size_t inode_capacity_bytes(const Inode& inode) {
@@ -532,22 +446,8 @@ void release_inode_id(uint32_t inode_id) {
 }
 
 uint32_t find_free_run(uint32_t minimum_sectors) {
-    uint32_t run_start = 0;
-    uint32_t run_length = 0;
-    for (uint32_t sector = g_superblock.data_lba; sector < g_superblock.total_sectors; ++sector) {
-        if (!bitmap_test(g_block_bitmap, sector)) {
-            if (run_length == 0) {
-                run_start = sector;
-            }
-            ++run_length;
-            if (run_length >= minimum_sectors) {
-                return run_start;
-            }
-        } else {
-            run_length = 0;
-        }
-    }
-    return 0;
+    return svfs_find_free_run(g_block_bitmap, g_superblock.data_lba,
+                              g_superblock.total_sectors, minimum_sectors);
 }
 
 bool append_extent(Inode& inode, uint32_t start_lba, uint32_t sector_count) {

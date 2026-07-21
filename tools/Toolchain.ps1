@@ -80,6 +80,13 @@ function Get-ToolchainCandidates([string]$Name) {
     return $candidates
 }
 
+function Test-IsWindowsHost {
+    if (Test-Path Variable:IsWindows) {
+        return $IsWindows
+    }
+    return $true
+}
+
 function Resolve-OvmfPair {
     $envCode = $env:OVMF_CODE
     $envVars = $env:OVMF_VARS

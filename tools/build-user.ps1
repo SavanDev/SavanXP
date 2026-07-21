@@ -33,11 +33,11 @@ $elfOutputPath = if ($OutputPath) { [System.IO.Path]::GetFullPath($OutputPath) }
 $elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath
 
 if (-not $NoInstall) {
-    $image = Open-SvfsImage $DiskImage
-    Ensure-SvfsDirectory $image "bin"
-    Ensure-SvfsDirectory $image "tmp"
-    Install-SvfsFile -Image $image -DestinationPath $Destination -Data ([System.IO.File]::ReadAllBytes($elfPath))
-    Save-SvfsImage $image
+    Install-SvfsFilesWithTool $DiskImage @(
+        @{ Dir = "bin" }
+        @{ Dir = "tmp" }
+        @{ File = $Destination; Source = $elfPath }
+    )
     Write-Host "Instalado en: $Destination"
 }
 

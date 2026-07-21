@@ -412,8 +412,56 @@ function Set-UInt32Le([byte[]]$Buffer, [int]$Offset, [uint32]$Value) {
     [Array]::Copy($bytes, 0, $Buffer, $Offset, 4)
 }
 
-function Ensure-SvfsDisk([string]$SourceRoot, [string]$OutputPath) {
-    Initialize-Svfs2DiskImage -SourceRoot $SourceRoot -OutputPath $OutputPath
+# Rutas persistentes que una rebuild NO debe recrear ni modificar: viven en el
+# disco, no en el arbol de build. Se snapshotean antes del sync y se verifican
+# despues.
+$Script:SvfsPersistentPaths = @(
+    "/disk/bin/doomgeneric",
+    "/disk/games/doom/freedoom1.wad"
+)
+
+# Construye/actualiza build/disk.img desde el arbol $SourceRoot con el tool
+# nativo libsvfs (svfs-cli): el tool hace TODAS las escrituras (create +
+# sync/populate + flush). PowerShell queda como pura validacion: snapshot de
+# persistencia antes del sync y, tras el sync, chequeo de consistencia y de que
+# lo persistente sobrevivio. No hay byte-poking PS en el camino de escritura.
+function Build-SvfsDiskImage([string]$SourceRoot, [string]$OutputPath) {
+    $exe = Build-SvfsCli
+
+    # Crea la imagen si falta o si la existente no es un SVFS2 valido. Una imagen
+    # valida se preserva (persistencia); el sync de abajo reconcilia el arbol.
+    if (Test-Path $OutputPath) {
+        try {
+            Open-SvfsImage $OutputPath | Out-Null
+        } catch {
+            Remove-Item $OutputPath -Force
+        }
+    }
+    if (-not (Test-Path $OutputPath)) {
+        New-Directory (Split-Path -Parent $OutputPath)
+        & $exe create $OutputPath $Script:Svfs2TotalSectors
+        if ($LASTEXITCODE -ne 0) {
+            throw "svfs-cli create fallo para '$OutputPath'."
+        }
+    }
+
+    # Snapshot de persistencia ANTES del sync (imagen tal cual quedo de la build
+    # anterior, o recien creada vacia).
+    $before = Open-SvfsImage $OutputPath
+    $snapshot = Get-SvfsPersistenceSnapshot $before $Script:SvfsPersistentPaths
+
+    # Sync: mkdir + install de todo el arbol en una sola pasada del tool. Es
+    # aditivo (no borra): reconcilia el arbol preservando lo persistente.
+    $manifest = New-SvfsManifest -SourceRoot $SourceRoot
+    & $exe apply $OutputPath $manifest
+    if ($LASTEXITCODE -ne 0) {
+        throw "svfs-cli apply fallo para '$OutputPath'."
+    }
+
+    # Validacion de solo lectura: el tool ya persistio, PS no reescribe.
+    $after = Open-SvfsImage $OutputPath
+    Assert-Svfs2Consistency $after $OutputPath
+    Assert-SvfsPersistenceRetained $after $snapshot
 }
 
 function Get-ByteArraySha256([byte[]]$Bytes) {
@@ -462,36 +510,6 @@ function Assert-SvfsPersistenceRetained($Image, $BeforeSnapshot) {
             if ($afterHash -ne $before.Hash) {
                 throw "La build modifico el contenido persistente de '$path'."
             }
-        }
-    }
-}
-
-function Repair-SvfsReachableMetadataAndReport($Image, [string]$Phase) {
-    $repair = Repair-Svfs2ReachableMetadata $Image
-    if ($repair.InodeBitsFixed -eq 0 -and $repair.BlockBitsFixed -eq 0) {
-        return
-    }
-
-    Write-Host ("SVFS2: metadata repaired before {0} (inode bits={1}, block bits={2}, reachable inodes={3})" -f `
-        $Phase, $repair.InodeBitsFixed, $repair.BlockBitsFixed, $repair.ReachableInodes)
-}
-
-function Sync-SvfsDiskTree($Image, [string]$SourceRoot, [string]$DestinationRoot = "/disk") {
-    if (-not (Test-Path $SourceRoot)) {
-        return
-    }
-
-    $items = Get-ChildItem -Path $SourceRoot -Recurse | Sort-Object FullName
-    foreach ($item in $items) {
-        $relative = $item.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
-        if ([string]::IsNullOrWhiteSpace($relative)) {
-            continue
-        }
-
-        if ($item.PSIsContainer) {
-            Ensure-SvfsDirectory $Image $relative
-        } else {
-            Install-SvfsFile -Image $Image -DestinationPath ("$DestinationRoot/$relative") -Data ([System.IO.File]::ReadAllBytes($item.FullName))
         }
     }
 }
@@ -674,13 +692,6 @@ function ConvertTo-CygwinPath([string]$WindowsPath) {
 
 # $IsWindows no existe en Windows PowerShell 5.1 (solo en pwsh 6+): ahi,
 # como esa build solo corre en Windows, asumimos $true directamente.
-function Test-IsWindowsHost {
-    if (Test-Path Variable:IsWindows) {
-        return $IsWindows
-    }
-    return $true
-}
-
 function Install-LimineImageFiles {
     New-Directory (Join-Path $BootRoot "limine")
     New-Directory $EfiBootRoot
@@ -737,19 +748,7 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
     Copy-Item (Join-Path $RootfsBuild "bin/*") (Join-Path $DiskBuildRoot "bin") -Force
-    Ensure-SvfsDisk -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
-    $diskImage = Open-SvfsImage $DiskImage
-    Repair-SvfsReachableMetadataAndReport $diskImage "pre-sync"
-    Assert-Svfs2Consistency $diskImage $DiskImage
-    $persistentSnapshot = Get-SvfsPersistenceSnapshot $diskImage @(
-        "/disk/bin/doomgeneric",
-        "/disk/games/doom/freedoom1.wad"
-    )
-    Sync-SvfsDiskTree -Image $diskImage -SourceRoot $DiskBuildRoot
-    Repair-SvfsReachableMetadataAndReport $diskImage "post-sync"
-    Assert-Svfs2Consistency $diskImage $DiskImage
-    Assert-SvfsPersistenceRetained $diskImage $persistentSnapshot
-    Save-SvfsImage $diskImage
+    Build-SvfsDiskImage -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
 
     $linkArgs = @(
         "-m", "elf_x86_64",

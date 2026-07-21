@@ -26,19 +26,20 @@ if ($NoInstall) {
 
 . $commonTools
 
-$image = Open-SvfsImage $DiskImage
-Ensure-SvfsDirectory $image "games"
-Ensure-SvfsDirectory $image "games/doom"
+$ops = @(
+    @{ Dir = "games" }
+    @{ Dir = "games/doom" }
+)
 
 if (Test-Path -LiteralPath $WadPath) {
-    $wadBytes = [System.IO.File]::ReadAllBytes((Resolve-Path $WadPath).Path)
+    $wadResolved = (Resolve-Path $WadPath).Path
     $wadName = Split-Path -Leaf $WadPath
     $wadDest = "/disk/games/doom/$wadName"
-    Install-SvfsFile -Image $image -DestinationPath $wadDest -Data $wadBytes
+    $ops += @{ File = $wadDest; Source = $wadResolved }
+    Install-SvfsFilesWithTool $DiskImage $ops
     Write-Host "WAD instalado en: $wadDest"
 } else {
+    Install-SvfsFilesWithTool $DiskImage $ops
     Write-Host "WAD no encontrado. Copialo en: $WadPath"
     Write-Host "Freedoom (libre): https://freedoom.github.io/download.html"
 }
-
-Save-SvfsImage $image
