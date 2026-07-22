@@ -7,12 +7,40 @@ plazo de una VM en el SO al estilo Java/ART en Android. Se construye en
 1. **Etapa actual — AOT a C++** vía [reflaxe.CPP](https://github.com/SomeRanDev/reflaxe.CPP):
    Haxe compila a C++17 mínimo (sin GC, sin dependencias), que linkeamos
    freestanding como un ELF nativo normal. Sirve para validar la cadena,
-   diseñar el ABI nativo y portar el escritorio sin construir una VM.
+   diseñar el ABI nativo y prototipar apps de usuario sin construir todavía la
+   VM.
 2. **Etapa futura — HashLink** en el SO: una vez que el ABI nativo esté estable,
    portar el runtime/GC de HL y correr el mismo código Haxe sobre la VM.
 
 El ABI nativo se diseña **una sola vez**; AOT y HashLink apuntan al mismo
 contrato, así que migrar el runtime no debería tocar el código Haxe.
+
+## Alcance: qué se escribe en Haxe (y qué NO)
+
+> Decisión de layering (2026-07-21). Fuente de verdad del modelo de capas:
+> [../../docs/SYSTEM_LAYERING.md](../../docs/SYSTEM_LAYERING.md).
+
+El subsistema Haxe es la **capa de apps de usuario**, con la **VM (HashLink)**
+como destino. **NO** reemplaza el núcleo nativo ni los *system apps*, que se
+quedan en **C**:
+
+- **Núcleo bajo nivel (C):** kernel, drivers, `compositord`, `windowd`, SXGFX y
+  el toolkit **SXGUI-C**.
+- **System apps (C):** la **shell** (`../posix/userland/desktop*.c`), el **file
+  manager** (`../posix/userland/filesapp.c`) y el **administrador de tareas**
+  (nuevo). Puede sumarse algún programa del sistema más en C si hace falta.
+- **Apps de usuario (Haxe, vía VM):** todo lo demás, en lo posible.
+
+Corolarios que cambian el framing de este documento:
+
+- **SXGUI-C es el toolkit canónico y permanente** (lo usan los system apps en C
+  para siempre). La capa Haxe lo **bindea** por la FFI de la VM (modelo
+  WinForms/JNI), **no** lo reimplementa. El `haxe-toolkit/` de hoy (Painter,
+  Boton, Listbox, …) es una **reimplementación de bootstrap** para validar la
+  cadena, no el estado final.
+- Las apps Haxe existentes (`sxguiapp`, `aboutapp-hx`, `filesapp-hx`) son
+  **demos de validación** del ABI y la cadena AOT — **no** reemplazos de sus
+  contrapartes en C, que son las oficiales.
 
 ## Estado: Fases 0, 1 y 2 + _std — LISTAS (verificadas en QEMU)
 
@@ -84,7 +112,7 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   (fabr/sin/...), que antes se corrompía bajo preempción. Verificado:
   `100/4=25`, `(0.1+0.2)*1000=300` (IEEE-754 real), `1.5*1.5*100=225`, sin
   regresión en `smoke`/`desktop-smoke`.
-- **Fase 3 arrancada — app sxgui-style INTERACTIVA en Haxe**: `sxguiapp`
+- **app sxgui-style INTERACTIVA en Haxe (demo de validación)**: `sxguiapp`
   ([haxe-sxgui/Main.hx](haxe-sxgui/Main.hx)) dibuja el área cliente de una
   ventana Win9x con un mini-toolkit `Painter` (paleta sxgui + biseles 3D
   `raised`/`sunken`) y **texto real** por la fuente Noto horneada, compartida
@@ -97,9 +125,11 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   **maneja** la app: valida el render inicial, envía un press (comprueba que el
   botón se hunde), un release (comprueba lámpara verde + botón levantado) y
   cierre limpio.
-- **`aboutapp` portada a Haxe** — **primer reemplazo real de una app en C**:
+- **`aboutapp` reproducida en Haxe (demo de validación)** — **una app C
+  completa replicada en Haxe**:
   [haxe-about/Main.hx](haxe-about/Main.hx) reproduce
-  [aboutapp.c](../posix/userland/aboutapp.c): labels, **group boxes** con marco
+  [aboutapp.c](../posix/userland/aboutapp.c) (que sigue siendo la app oficial en
+  C): labels, **group boxes** con marco
   etched, **info del sistema** (versión/uptime/procesos/memoria/disco/reloj vía
   [sx_sysinfo.c](sdk/runtime/sx_sysinfo.c), que envuelve las syscalls del
   baseline), y botones **Refrescar**/**Cerrar** (+ F5/ESC). El toolkit
@@ -128,8 +158,10 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   con barra de título navy y botón OK, que captura todo el input mientras está
   abierto); y **lanza ejecutables** de `/bin`/`/disk/bin` pidiéndoselo al
   escritorio por el canal fd 9 (`sxn_gui_launch`, espejo de
-  `gfx_desktop_launch`). Con esto tiene **paridad funcional** con
-  [filesapp.c](../posix/userland/filesapp.c). El harness verifica el launch de
+  `gfx_desktop_launch`). Con esto alcanza **paridad funcional** con
+  [filesapp.c](../posix/userland/filesapp.c) —que se queda como el file manager
+  oficial en C—, demostrando que la cadena Haxe llega a una app real. El harness
+  verifica el launch de
   verdad: tiene el extremo de lectura del fd 9 y comprueba que llegue el pedido
   de `/bin/aboutapp`.
 
@@ -173,8 +205,9 @@ principal copia `rootfs/bin/*` a `/disk/bin`, así que instalarlos como
 sobreviven (`Sync-SvfsDiskTree` solo agrega, nunca borra — el mismo mecanismo
 por el que sobrevive `doomgeneric`). El **menú inicio** tiene entradas
 **"Files (Haxe)"** y **"About (Haxe)"** apuntando a ellos, conviviendo con los
-de C para poder compararlos; como el build nativo es aparte (patrón doom), esas
-entradas no lanzan nada si no los construiste.
+de C como demos de la cadena Haxe (los de C son los oficiales); como el build
+nativo es aparte (patrón doom), esas entradas no lanzan nada si no los
+construiste.
 
 `nativegui` instalada aparece en `/disk/bin` y puede lanzarse desde el
 escritorio (app de archivos): corre como ventana normal bajo el compositor.
@@ -185,9 +218,9 @@ las apps nativas post-rebuild y las corren en QEMU):
 ```powershell
 .\build.ps1 native-hello      # valida el runtime: clases, String/Array, Null<T>, Map, Float, gfx
 .\build.ps1 native-guihost    # valida el cliente del compositor: teclado + puntero (fd 5)
-.\build.ps1 native-sxgui      # valida la app sxgui-style (Fase 3): toolkit + texto Noto
-.\build.ps1 native-about      # valida aboutapp portada: group boxes + info del sistema
-.\build.ps1 native-files      # valida filesapp portada: Listbox + navegación de directorios
+.\build.ps1 native-sxgui      # valida la app sxgui-style (demo): toolkit + texto Noto
+.\build.ps1 native-about      # valida la demo aboutapp: group boxes + info del sistema
+.\build.ps1 native-files      # valida la demo filesapp: Listbox + navegación de directorios
 ```
 
 El script:
@@ -374,7 +407,18 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 
 ## Próximos pasos
 
-1. **Fase 3** — port incremental del escritorio (hoy en C, ~4.000 líneas). Los
-   prerequisitos técnicos ya están: clases + String/Array + `Null<T>` + `Map` +
-   cliente del compositor + teclado + puntero. Empezar por una app sxgui-style
-   en Haxe.
+El escritorio y los *system apps* (shell, file manager, task manager) **se
+quedan en C** — no se portan a Haxe (ver [Alcance](#alcance-qué-se-escribe-en-haxe-y-qué-no)
+y [../../docs/SYSTEM_LAYERING.md](../../docs/SYSTEM_LAYERING.md)). La cadena AOT
+ya está validada de punta a punta (clases + String/Array + `Null<T>` + `Map` +
+Float + cliente del compositor + teclado + puntero + toolkit + texto + fs), así
+que lo que sigue **no** es más ports, sino el salto de etapa:
+
+1. **VM (HashLink) en el SO** — portar el runtime/GC de HL sobre el ABI nativo
+   ya diseñado, para correr las apps de usuario Haxe sobre la VM en vez de AOT.
+   El contrato `sxn_*` y el ABI no cambian; es lo que la VM implementará por
+   debajo.
+2. **Binding de SXGUI-C a Haxe** — exponer el toolkit C (fuente de verdad) a la
+   capa Haxe por la FFI de la VM (modelo WinForms/JNI), en lugar de
+   reimplementarlo como en las demos de `haxe-toolkit/`. El marshalling de
+   callbacks Haxe↔C (closures ↔ punteros a función) es la pieza de diseño nueva.
