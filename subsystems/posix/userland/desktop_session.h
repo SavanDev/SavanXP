@@ -74,6 +74,10 @@ struct desktop_session
     int fullscreen_slot;
     int overlay_count;
     int overlay_order[DESKTOP_MAX_OVERLAY_CLIENTS];
+    /* Cliente de fondo (shellui): superficie full-screen al fondo del z-order
+     * que dibuja el wallpaper (A2, ver docs/WM_SUBSYSTEM.md). Pasivo: no recibe
+     * foco ni input en A2.2. Distinto del shell_client (terminal on-demand). */
+    struct desktop_client background_client;
     struct desktop_client shell_client;
     struct desktop_client overlay_clients[DESKTOP_MAX_OVERLAY_CLIENTS];
 };

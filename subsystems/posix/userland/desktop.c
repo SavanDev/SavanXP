@@ -14,6 +14,7 @@
 #define DESKTOP_FULLSCREEN_MODE_HEIGHT 400
 
 static const char *k_shellapp_path = "/bin/shellapp";
+static const char *k_background_client_path = "/bin/shellui";
 
 static int launch_overlay_client(struct desktop_session *session, const char *path);
 static void resize_overlay_client_surface(
@@ -953,6 +954,7 @@ static void signal_composed_batches(struct desktop_session *session)
         return;
     }
 
+    signal_client_composed(&session->background_client, session->background_client.consumed_submit_sequence);
     signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
     for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -967,6 +969,12 @@ static void retire_presented_batches(struct desktop_session *session)
     if (session == 0)
     {
         return;
+    }
+
+    if (session->background_client.pending_retire_sequence != 0)
+    {
+        signal_client_retire(&session->background_client, session->background_client.pending_retire_sequence);
+        session->background_client.pending_retire_sequence = 0;
     }
 
     if (session->shell_client.pending_retire_sequence != 0)
@@ -1087,6 +1095,7 @@ static void snapshot_pending_retire_sequences(struct desktop_session *session)
         return;
     }
 
+    session->background_client.pending_retire_sequence = session->background_client.consumed_submit_sequence;
     session->shell_client.pending_retire_sequence = session->shell_client.consumed_submit_sequence;
     for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -1429,6 +1438,36 @@ static void destroy_shell_client(struct desktop_session *session, int terminate_
     activate_shell(session);
 }
 
+static void destroy_background_client(struct desktop_session *session, int terminate_client)
+{
+    if (session == 0)
+    {
+        return;
+    }
+
+    /* Pasivo: no toca foco ni active_client_kind (a diferencia del terminal). */
+    destroy_client_instance(&session->background_client, terminate_client);
+}
+
+/* Lanza shellui como cliente de fondo: superficie frameless full-screen al
+ * origen (kind SHELL) compuesta al fondo del z-order. No activa foco. */
+static int launch_background_client(struct desktop_session *session)
+{
+    struct desktop_client *client = 0;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    destroy_background_client(session, 1);
+    client = &session->background_client;
+    reset_client(client);
+    fill_client_surface_info(session, DESKTOP_CLIENT_SHELL, &client->surface_info);
+    position_client_window(session, client, DESKTOP_CLIENT_SHELL, 0);
+    return start_client_process(client, k_background_client_path);
+}
+
 static void destroy_overlay_client(struct desktop_session *session, int slot, int terminate_client)
 {
     struct desktop_client *client = overlay_client_at(session, slot);
@@ -1535,6 +1574,7 @@ static int open_compositor_session(struct desktop_session *session)
     session->active_overlay_slot = -1;
     session->fullscreen_slot = -1;
     session->overlay_count = 0;
+    reset_client(&session->background_client);
     reset_client(&session->shell_client);
     for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -1582,6 +1622,7 @@ static void close_compositor_session(struct desktop_session *session)
         destroy_overlay_client(session, slot, 1);
     }
     destroy_shell_client(session, 1);
+    destroy_background_client(session, 1);
     close_fd_if_needed(&session->input_fd);
     close_fd_if_needed(&session->mouse_fd);
     (void)sync_pending_present(session, 1, 0);
@@ -1671,6 +1712,15 @@ static int reap_dead_clients(struct desktop_session *session, struct desktop_dir
     if (session == 0 || dirty == 0)
     {
         return 0;
+    }
+
+    if (session->background_client.pid > 0 && !desktop_process_alive(session->background_client.pid))
+    {
+        /* Sin relaunch en A2.2: al morir el cliente de fondo caemos al wallpaper
+         * dibujado por windowd (fallback), para no arriesgar un spin-loop si
+         * shellui crashea al arrancar. */
+        destroy_background_client(session, 0);
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 
     if (session->shell_client.pid > 0 && !desktop_process_alive(session->shell_client.pid))
@@ -1997,6 +2047,17 @@ static int desktop_selftest(void)
         return 1;
     }
 
+    /* A2.2: ejercitar el cliente de fondo (shellui) en el mismo soak. Lo
+     * lanzamos aca, lo servimos en el loop, y al final asertamos que compuso al
+     * menos un frame -> prueba end-to-end de que shellui conecta, renderiza el
+     * wallpaper, y windowd lo compone como capa de fondo. */
+    if (launch_background_client(&session) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL launch background client\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+
     if (desktop_compositor_get_timeline(&session.compositor, &timeline) == 0)
     {
         baseline_retired = timeline.retired_sequence;
@@ -2018,6 +2079,14 @@ static int desktop_selftest(void)
             service_client_launch_requests(&session, &dirty, client) < 0)
         {
             puts_fd(2, "DESKTOP SMOKE FAIL servicing client batches\n");
+            failed = 1;
+            break;
+        }
+        /* Consumir los frames del cliente de fondo para que se vuelva drawable
+         * y windowd lo componga como capa de fondo. */
+        if (service_client_batches(&session, &dirty, &session.background_client) < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL servicing background client\n");
             failed = 1;
             break;
         }
@@ -2162,6 +2231,11 @@ static int desktop_selftest(void)
     if (!failed && !recovery_validated)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL compositor reconnect not exercised\n");
+        failed = 1;
+    }
+    if (!failed && session.background_client.consumed_submit_sequence < 1)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL background client never composited\n");
         failed = 1;
     }
     if (!failed)
@@ -2939,7 +3013,14 @@ int main(int argc, char **argv)
         return 1;
     }
     (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
+    /* windowd conserva su propio wallpaper_init para el fallback (si el cliente
+     * de fondo no esta listo aun o murio, windowd dibuja el wallpaper). */
     desktop_wallpaper_init();
+    /* Cliente de fondo (shellui): no-fatal si falla; se usa el fallback. */
+    if (launch_background_client(&session) < 0)
+    {
+        puts_fd(2, "desktop: cliente de fondo (shellui) no arranco; uso fallback\n");
+    }
     shell_state_init(&shell);
     shell.welcome_until_ms = uptime_ms() + 3500UL;
 
@@ -2951,8 +3032,9 @@ int main(int argc, char **argv)
 
     for (;;)
     {
-        struct savanxp_pollfd poll_fds[3 + DESKTOP_MAX_OVERLAY_CLIENTS];
-        struct desktop_client *poll_clients[3 + DESKTOP_MAX_OVERLAY_CLIENTS];
+        /* input + mouse + background_client + shell_client + overlays. */
+        struct savanxp_pollfd poll_fds[4 + DESKTOP_MAX_OVERLAY_CLIENTS];
+        struct desktop_client *poll_clients[4 + DESKTOP_MAX_OVERLAY_CLIENTS];
         int input_poll_index = -1;
         int mouse_poll_index = -1;
         int poll_count = 0;
@@ -2981,6 +3063,7 @@ int main(int argc, char **argv)
         /* Wake on client frame submissions, not just the 16 ms timeout (kept as
          * a backstop). The timeout still bounds latency if a wakeup is missed. */
         client_poll_start = poll_count;
+        poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.background_client);
         poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.shell_client);
         for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
         {
@@ -3059,6 +3142,17 @@ int main(int argc, char **argv)
         {
             break;
         }
+        /* Cliente de fondo (pasivo): consumimos sus frames y (a futuro, A2.3) sus
+         * launch requests desde los iconos del escritorio. */
+        if (service_client_batches(&session, &dirty, &session.background_client) < 0)
+        {
+            break;
+        }
+        if (service_client_launch_requests(&session, &dirty, &session.background_client) < 0)
+        {
+            break;
+        }
+        service_client_cursor_hints(&session.background_client);
         if (service_client_batches(&session, &dirty, &session.shell_client) < 0)
         {
             break;

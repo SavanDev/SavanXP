@@ -419,10 +419,14 @@ static void draw_desktop_shortcuts(
     }
 }
 
+/* include_wallpaper=0 cuando el cliente de fondo (shellui) ya provee el
+ * wallpaper como capa opaca debajo: windowd solo pinta iconos + watermark
+ * (capa no-opaca) para no tapar la superficie del cliente. */
 static void draw_background(
     struct sx_painter *painter,
     const struct savanxp_fb_info *display_info,
-    int selected_shortcut)
+    int selected_shortcut,
+    int include_wallpaper)
 {
     const char *watermark = SAVANXP_DISPLAY_NAME;
     const int text_width = gfx_text_width(watermark);
@@ -430,7 +434,10 @@ static void draw_background(
     const int text_x = (int)display_info->width - text_width - 6;
     const int text_y = (int)display_info->height - DESKTOP_TASKBAR_HEIGHT - text_height - 5;
 
-    desktop_wallpaper_draw(painter, display_info);
+    if (include_wallpaper)
+    {
+        desktop_wallpaper_draw(painter, display_info);
+    }
     draw_desktop_shortcuts(painter, display_info, selected_shortcut);
     sx_painter_draw_text(painter, text_x + 1, text_y + 1, watermark, gfx_rgb(0, 64, 64));
     sx_painter_draw_text(painter, text_x, text_y, watermark, gfx_rgb(210, 244, 244));
@@ -941,7 +948,9 @@ struct desktop_layer
     const struct desktop_client *client;
 };
 
-#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 7)
+/* +8 no-overlay: background client + background(iconos) + shell_client +
+ * taskbar + cursor, mas hasta 3 de {welcome, menu, confirm, context}. */
+#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 8)
 
 static int client_is_drawable(const struct desktop_client *client)
 {
@@ -988,7 +997,9 @@ static void shell_paint_layer(
     switch (layer->kind)
     {
     case DESKTOP_LAYER_BACKGROUND:
-        draw_background(painter, &session->gfx.info, shell->selected_shortcut);
+        /* Capa opaca => windowd dibuja el wallpaper (fallback); no-opaca => el
+         * cliente de fondo ya lo provee y aca solo van iconos + watermark. */
+        draw_background(painter, &session->gfx.info, shell->selected_shortcut, layer->opaque);
         break;
     case DESKTOP_LAYER_TASKBAR:
         draw_taskbar(painter, session, shell->menu_open);
@@ -1052,11 +1063,36 @@ static int build_layers(
     int cur_w = 0;
     int cur_h = 0;
 
-    layers[count].kind = DESKTOP_LAYER_BACKGROUND;
-    layers[count].opaque = 1;
-    layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
-    layers[count].client = 0;
-    ++count;
+    /* Fondo del z-order. Si el cliente de fondo (shellui) ya compuso un frame,
+     * su superficie es la capa opaca de wallpaper (cubre el work area) y windowd
+     * solo pinta iconos + watermark encima (capa BACKGROUND no-opaca). Si no esta
+     * listo (boot antes del primer frame, o murio), windowd dibuja el wallpaper
+     * completo el mismo (BACKGROUND opaca, fallback). La franja del taskbar la
+     * cubre siempre la capa TASKBAR (opaca), asi que el work area + taskbar dan
+     * cobertura total en ambos modos. */
+    if (client_is_drawable(&session->background_client) &&
+        session->background_client.consumed_submit_sequence > 0)
+    {
+        layers[count].kind = DESKTOP_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->background_client);
+        layers[count].client = &session->background_client;
+        ++count;
+
+        layers[count].kind = DESKTOP_LAYER_BACKGROUND;
+        layers[count].opaque = 0;
+        layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
+        layers[count].client = 0;
+        ++count;
+    }
+    else
+    {
+        layers[count].kind = DESKTOP_LAYER_BACKGROUND;
+        layers[count].opaque = 1;
+        layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
+        layers[count].client = 0;
+        ++count;
+    }
 
     if (session->fullscreen_slot >= 0 && session->fullscreen_slot < DESKTOP_MAX_OVERLAY_CLIENTS)
     {
