@@ -214,6 +214,13 @@ fielmente con protocolo multi-superficie es trabajo que Fase B tira.
   de protocolo acotada (un cliente `ROLE_SHELL` con dos surfaces a z-roles
   fijos) + window-list updates para el taskbar. Fiel al chrome actual; parte del
   trabajo lo tira Fase B.
+**Decidido: opción B.** Progreso: **A2.1 HECHO** (shellui dibuja el wallpaper
+como cliente) y **A2.2 HECHO** (windowd lanza shellui al boot como
+`background_client` y compone su superficie como capa de fondo; fallback a
+wallpaper dibujado por windowd si el cliente no está listo; verificado
+end-to-end en el soak de `desktop-smoke`). Siguen A2.3 (iconos + input al
+shell), A2.4 (retirar chrome Win95, launcher proto-Progman), A2.5 (limpieza).
+
 - **B) Fondo + arrancar el pivot NT 3.5 (recomendada).** El shell posee solo la
   superficie de **background** (wallpaper + iconos, fondo). El launcher deja de
   ser taskbar/start-menu y pasa a ser una **ventana normal** (proto-Progman),
