@@ -1855,7 +1855,7 @@ static int desktop_cursor_repro(void)
     /* Frame A: dialog visible, cursor parked far away (top-left corner, off the
      * dialog). Full repaint so the backbuffer holds the clean image. */
     desktop_dirty_rect_add_fullscreen(&dirty, info);
-    desktop_draw_desktop(&session, 4, 4, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, 0, &dirty);
+    desktop_draw_desktop(&session, 4, 4, &(struct shell_state){ .selected_shortcut = -1, .confirm_action = DESKTOP_CONFIRM_SHUTDOWN }, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -1870,7 +1870,7 @@ static int desktop_cursor_repro(void)
     /* Frame B: move cursor ONTO Q. Only cursor-sized damage (old corner + Q). */
     desktop_dirty_rect_add_cursor(&dirty, info, 4, 4, SAVANXP_CURSOR_ARROW);
     desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, qx, qy, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, 0, &dirty);
+    desktop_draw_desktop(&session, qx, qy, &(struct shell_state){ .selected_shortcut = -1, .confirm_action = DESKTOP_CONFIRM_SHUTDOWN }, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -1891,7 +1891,7 @@ static int desktop_cursor_repro(void)
      * backbuffer at Q must return to the clean baseline. */
     desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
     desktop_dirty_rect_add_cursor(&dirty, info, rx, ry, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, rx, ry, 0, 0, -1, DESKTOP_CONFIRM_SHUTDOWN, 0, 0, &dirty);
+    desktop_draw_desktop(&session, rx, ry, &(struct shell_state){ .selected_shortcut = -1, .confirm_action = DESKTOP_CONFIRM_SHUTDOWN }, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -2084,7 +2084,7 @@ static int desktop_selftest(void)
             continue;
         }
 
-        desktop_draw_desktop(&session, kCursorX, kCursorY, 0, 0, -1, DESKTOP_CONFIRM_NONE, 0, 0, &dirty);
+        desktop_draw_desktop(&session, kCursorX, kCursorY, &(struct shell_state){ .selected_shortcut = -1 }, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
@@ -3130,7 +3130,7 @@ int main(int argc, char **argv)
             }
         }
 
-        desktop_draw_desktop(&session, cursor_x, cursor_y, shell.menu_open, shell.selected_index, shell.selected_shortcut, shell.confirm_action, shell.welcome_visible, &shell.context_menu, &dirty);
+        desktop_draw_desktop(&session, cursor_x, cursor_y, &shell, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {

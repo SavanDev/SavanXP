@@ -2,6 +2,7 @@
 
 #include "desktop_session.h"
 #include "desktop_menu.h"
+#include "desktop_shell.h"
 
 struct desktop_dirty_rect
 {
@@ -26,16 +27,13 @@ unsigned long desktop_current_clock_stamp(char *buffer);
 /* Validates the sx_rect_set_subtract_rect region primitive the compositor
  * relies on for occlusion culling. Returns 0 on success, non-zero on failure. */
 int desktop_region_selftest(void);
-/* context_menu puede ser NULL (o venir con open == 0) cuando no hay menu
- * contextual; los harnesses headless pasan NULL. */
+/* El estado de chrome a dibujar (menu, seleccion, confirm, welcome, menu
+ * contextual) viaja en shell_state, igual que en el path de input. shell no
+ * debe ser NULL; el menu contextual se dibuja solo si shell->context_menu.open.
+ * Los harnesses headless pasan un shell_state armado ad hoc. */
 void desktop_draw_desktop(
     struct desktop_session *session,
     int cursor_x,
     int cursor_y,
-    int menu_open,
-    int selected_index,
-    int selected_shortcut,
-    int confirm_action,
-    int welcome_visible,
-    const struct desktop_context_menu_state *context_menu,
+    const struct shell_state *shell,
     const struct desktop_dirty_rect *dirty);

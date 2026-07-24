@@ -953,40 +953,19 @@ static struct sx_rect client_occluder_rect(const struct desktop_client *client)
     return client->frame_visible ? desktop_client_frame_rect(client) : desktop_client_surface_rect(client);
 }
 
-static void paint_layer(
+/* Capas del WM: superficies de clientes y el cursor. Las compone el compositor
+ * del WM y se quedan aca cuando el shell pase a ser un cliente aparte (A2). */
+static void wm_paint_layer(
     struct sx_painter *painter,
     struct desktop_session *session,
     const struct desktop_layer *layer,
-    int menu_open,
-    int selected_index,
-    int selected_shortcut,
-    int confirm_action,
-    const struct desktop_context_menu_state *context_menu,
     int cursor_x,
     int cursor_y)
 {
     switch (layer->kind)
     {
-    case DESKTOP_LAYER_BACKGROUND:
-        draw_background(painter, &session->gfx.info, selected_shortcut);
-        break;
     case DESKTOP_LAYER_CLIENT:
         draw_client(painter, layer->client);
-        break;
-    case DESKTOP_LAYER_TASKBAR:
-        draw_taskbar(painter, session, menu_open);
-        break;
-    case DESKTOP_LAYER_WELCOME:
-        draw_welcome(painter, session);
-        break;
-    case DESKTOP_LAYER_MENU:
-        draw_start_menu(painter, &session->gfx, selected_index);
-        break;
-    case DESKTOP_LAYER_CONFIRM:
-        draw_confirm_dialog(painter, &session->gfx.info, confirm_action);
-        break;
-    case DESKTOP_LAYER_CONTEXT_MENU:
-        draw_context_menu(painter, context_menu);
         break;
     case DESKTOP_LAYER_CURSOR:
         draw_cursor(painter, session->current_cursor_shape, cursor_x, cursor_y);
@@ -996,13 +975,67 @@ static void paint_layer(
     }
 }
 
+/* Capas de chrome del shell: wallpaper+iconos, taskbar, welcome, start menu,
+ * confirm dialog y menu contextual. Operan sobre shell_state (ver
+ * docs/WM_SUBSYSTEM.md). En A2 este dibujo se muda al shell-client, que las
+ * pinta en su propia superficie. */
+static void shell_paint_layer(
+    struct sx_painter *painter,
+    struct desktop_session *session,
+    const struct desktop_layer *layer,
+    const struct shell_state *shell)
+{
+    switch (layer->kind)
+    {
+    case DESKTOP_LAYER_BACKGROUND:
+        draw_background(painter, &session->gfx.info, shell->selected_shortcut);
+        break;
+    case DESKTOP_LAYER_TASKBAR:
+        draw_taskbar(painter, session, shell->menu_open);
+        break;
+    case DESKTOP_LAYER_WELCOME:
+        draw_welcome(painter, session);
+        break;
+    case DESKTOP_LAYER_MENU:
+        draw_start_menu(painter, &session->gfx, shell->selected_index);
+        break;
+    case DESKTOP_LAYER_CONFIRM:
+        draw_confirm_dialog(painter, &session->gfx.info, shell->confirm_action);
+        break;
+    case DESKTOP_LAYER_CONTEXT_MENU:
+        draw_context_menu(painter, &shell->context_menu);
+        break;
+    default:
+        break;
+    }
+}
+
+/* Despacha cada capa a su dueno: WM (cliente/cursor) o shell (chrome). Esa
+ * particion es la frontera que A2 convierte en limite de proceso. */
+static void paint_layer(
+    struct sx_painter *painter,
+    struct desktop_session *session,
+    const struct desktop_layer *layer,
+    const struct shell_state *shell,
+    int cursor_x,
+    int cursor_y)
+{
+    switch (layer->kind)
+    {
+    case DESKTOP_LAYER_CLIENT:
+    case DESKTOP_LAYER_CURSOR:
+        wm_paint_layer(painter, session, layer, cursor_x, cursor_y);
+        break;
+    default:
+        shell_paint_layer(painter, session, layer, shell);
+        break;
+    }
+}
+
 /* Back-to-front layer list for the current frame. */
 static int build_layers(
     struct desktop_session *session,
-    int menu_open,
-    int confirm_action,
-    int welcome_visible,
-    const struct desktop_context_menu_state *context_menu,
+    const struct shell_state *shell,
     int cursor_x,
     int cursor_y,
     struct desktop_layer *layers)
@@ -1081,7 +1114,7 @@ static int build_layers(
     layers[count].client = 0;
     ++count;
 
-    if (welcome_visible)
+    if (shell->welcome_visible)
     {
         layers[count].kind = DESKTOP_LAYER_WELCOME;
         layers[count].opaque = 1;
@@ -1090,7 +1123,7 @@ static int build_layers(
         ++count;
     }
 
-    if (menu_open)
+    if (shell->menu_open)
     {
         desktop_start_menu_bounds(info, &menu_x, &menu_y, &menu_w, &menu_h);
         layers[count].kind = DESKTOP_LAYER_MENU;
@@ -1100,7 +1133,7 @@ static int build_layers(
         ++count;
     }
 
-    if (confirm_action != DESKTOP_CONFIRM_NONE)
+    if (shell->confirm_action != DESKTOP_CONFIRM_NONE)
     {
         layers[count].kind = DESKTOP_LAYER_CONFIRM;
         layers[count].opaque = 1;
@@ -1109,11 +1142,11 @@ static int build_layers(
         ++count;
     }
 
-    if (context_menu != 0 && context_menu->open)
+    if (shell->context_menu.open)
     {
         layers[count].kind = DESKTOP_LAYER_CONTEXT_MENU;
         layers[count].opaque = 1;
-        layers[count].bounds = desktop_context_menu_rect(context_menu->x, context_menu->y);
+        layers[count].bounds = desktop_context_menu_rect(shell->context_menu.x, shell->context_menu.y);
         layers[count].client = 0;
         ++count;
     }
@@ -1135,12 +1168,7 @@ void desktop_draw_desktop(
     struct desktop_session *session,
     int cursor_x,
     int cursor_y,
-    int menu_open,
-    int selected_index,
-    int selected_shortcut,
-    int confirm_action,
-    int welcome_visible,
-    const struct desktop_context_menu_state *context_menu,
+    const struct shell_state *shell,
     const struct desktop_dirty_rect *dirty)
 {
     /* Single-threaded compositor: keep the working sets off the stack. */
@@ -1152,7 +1180,7 @@ void desktop_draw_desktop(
     int layer_count = 0;
     int layer_index;
 
-    if (session == 0 || g_backbuffer == 0)
+    if (session == 0 || shell == 0 || g_backbuffer == 0)
     {
         return;
     }
@@ -1176,7 +1204,7 @@ void desktop_draw_desktop(
         (void)sx_rect_set_add(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
     }
 
-    layer_count = build_layers(session, menu_open, confirm_action, welcome_visible, context_menu, cursor_x, cursor_y, layers);
+    layer_count = build_layers(session, shell, cursor_x, cursor_y, layers);
 
     /* Paint back-to-front; each layer only over the area not covered by an
      * opaque layer in front of it. */
@@ -1214,7 +1242,7 @@ void desktop_draw_desktop(
             }
             sx_painter_clear_clip(&painter);
             sx_painter_add_clip_rect(&painter, sub);
-            paint_layer(&painter, session, layer, menu_open, selected_index, selected_shortcut, confirm_action, context_menu, cursor_x, cursor_y);
+            paint_layer(&painter, session, layer, shell, cursor_x, cursor_y);
         }
     }
 }
