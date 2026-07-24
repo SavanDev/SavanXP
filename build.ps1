@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "progman-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -157,6 +157,10 @@ $UserPrograms = @(
     @{ Name = "shellui"; Sources = @(
         "subsystems/posix/userland/shellui.c",
         "subsystems/posix/userland/desktop_wallpaper.c"
+    ) },
+    @{ Name = "progman"; Sources = @(
+        "subsystems/posix/userland/progman.c",
+        "subsystems/posix/userland/progman_registry.c"
     ) },
     @{ Name = "aboutapp"; Sources = @(
         "subsystems/posix/userland/aboutapp.c",
@@ -1198,6 +1202,10 @@ function Run-DesktopSmokeQemu {
     Run-AutomationQemu -AutomationCommand "desktop-selftest" -SuccessToken "DESKTOP SMOKE PASS" -FailureToken "DESKTOP SMOKE FAIL" -TimeoutMinutes 3
 }
 
+function Run-ProgmanSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "progman-selftest" -SuccessToken "PROGMAN SMOKE PASS" -FailureToken "PROGMAN SMOKE FAIL" -TimeoutMinutes 3
+}
+
 function Run-CursorReproQemu {
     Run-AutomationQemu -AutomationCommand "desktop-cursor-repro" -SuccessToken "CURSOR REPRO PASS" -FailureToken "CURSOR REPRO FAIL" -TimeoutMinutes 3
 }
@@ -1240,6 +1248,9 @@ switch ($Command) {
     }
     "desktop-smoke" {
         Run-DesktopSmokeQemu
+    }
+    "progman-smoke" {
+        Run-ProgmanSmokeQemu
     }
     "cursor-repro" {
         Run-CursorReproQemu

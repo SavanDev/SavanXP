@@ -37,6 +37,9 @@ static void trim_automation_spec(char* spec) {
 }
 
 static const char* automation_label_for_spec(const char* spec) {
+    if (spec != 0 && text_contains(spec, "progman")) {
+        return "PROGMAN SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "soak")) {
         return "SOAK";
     }
@@ -69,6 +72,7 @@ static int run_automation_spec(const char* spec) {
     const char* soak_argv[] = {"/disk/bin/gputest", "--soak", 0, 0};
     const char* desktop_argv[] = {"/bin/desktop", "--selftest", 0};
     const char* cursor_repro_argv[] = {"/bin/desktop", "--cursor-repro", 0};
+    const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
     const char* nativehello_argv[] = {"/disk/bin/nativehello", 0};
@@ -85,6 +89,10 @@ static int run_automation_spec(const char* spec) {
         if (strcmp(spec, "desktop-selftest") == 0 || strcmp(spec, "desktop") == 0) {
             path = "/bin/desktop";
             argv = desktop_argv;
+            argc = 2;
+        } else if (strcmp(spec, "progman-selftest") == 0 || strcmp(spec, "progman") == 0) {
+            path = "/bin/progman";
+            argv = progman_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "desktop-cursor-repro") == 0) {
             path = "/bin/desktop";
