@@ -2210,6 +2210,175 @@ static int add_client_submit_pollfd(
     return poll_count + 1;
 }
 
+/*
+ * Arbitracion de teclado (Fase A del boundary WM<->shell, ver
+ * docs/WM_SUBSYSTEM.md). El reparto es: shell_notify_key (side-effect global
+ * sin consumir) -> wm_handle_key (hotkeys del WM) -> shell_handle_key (chrome).
+ * Lo que ninguno consume, main() lo rutea al cliente activo. Esa precedencia
+ * WM->shell es la futura frontera de proceso de A2.
+ */
+
+/* Side-effect que corre en cada tecla sin consumirla: cierra el welcome banner
+ * en el primer keydown. Precede al reparto para preservar el orden historico
+ * (el banner se cerraba antes de procesar F11). */
+static void shell_notify_key(
+    struct shell_state *shell,
+    struct desktop_session *session,
+    const struct savanxp_input_event *key_event,
+    struct desktop_dirty_rect *dirty)
+{
+    if (shell->welcome_visible && key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+    {
+        shell->welcome_visible = 0;
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+}
+
+/* Primer turno: el WM consume el unico hotkey global, F11 (toggle de fullscreen
+ * composited del cliente activo). Devuelve 1 si consumio la tecla. Toca el
+ * estado del chrome (cierra menu/contextual al entrar a fullscreen), por eso
+ * recibe shell. */
+static int wm_handle_key(
+    struct desktop_session *session,
+    struct shell_state *shell,
+    const struct savanxp_input_event *key_event,
+    struct desktop_dirty_rect *dirty)
+{
+    if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || key_event->key != SAVANXP_KEY_F11)
+    {
+        return 0;
+    }
+
+    /* Toggle composited fullscreen for the active app. Intercepted even while
+     * fullscreen so it can always be exited. */
+    if (session->fullscreen_slot >= 0)
+    {
+        exit_overlay_fullscreen(session, dirty);
+    }
+    else if (session->active_client_kind == DESKTOP_CLIENT_APP &&
+        overlay_slot_valid(session->active_overlay_slot))
+    {
+        if (enter_overlay_fullscreen(session, dirty, session->active_overlay_slot) == 0)
+        {
+            shell->menu_open = 0;
+            shell->context_menu.open = 0;
+        }
+    }
+    return 1;
+}
+
+/* Segundo turno, solo si el WM no consumio: chrome del shell. Menu de inicio
+ * (SUPER), menu contextual (captura todo keydown mientras esta abierto),
+ * navegacion del menu y shortcuts del escritorio. Devuelve 1 si consumio la
+ * tecla; 0 si debe rutearse al cliente activo (p.ej. una tecla cualquiera con
+ * un shortcut seleccionado). last_buttons se resetea tras un launch para que un
+ * estado de boton viejo no dispare un click espurio en la ventana nueva. */
+static int shell_handle_key(
+    struct shell_state *shell,
+    struct desktop_session *session,
+    const struct savanxp_input_event *key_event,
+    struct desktop_dirty_rect *dirty,
+    uint32_t *last_buttons)
+{
+    if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+    {
+        return 0;
+    }
+
+    if (key_event->key == SAVANXP_KEY_SUPER)
+    {
+        shell->menu_open = !shell->menu_open;
+        if (shell->menu_open)
+        {
+            shell->selected_index = 0;
+        }
+        if (shell->context_menu.open)
+        {
+            shell->context_menu.open = 0;
+            desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
+        }
+        desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
+        desktop_dirty_rect_add_taskbar(dirty, &session->gfx.info);
+        return 1;
+    }
+
+    if (shell->context_menu.open)
+    {
+        /* El menu contextual captura el teclado mientras esta abierto; solo
+         * ESC hace algo (cerrarlo). */
+        if (key_event->key == SAVANXP_KEY_ESC)
+        {
+            shell->context_menu.open = 0;
+            desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
+        }
+        return 1;
+    }
+
+    if (shell->menu_open)
+    {
+        int launch_requested = 0;
+
+        desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
+        if (key_event->key == SAVANXP_KEY_ESC)
+        {
+            shell->menu_open = 0;
+        }
+        else if (key_event->key == SAVANXP_KEY_UP)
+        {
+            shell->selected_index = (shell->selected_index + desktop_menu_item_count() - 1) % desktop_menu_item_count();
+        }
+        else if (key_event->key == SAVANXP_KEY_DOWN)
+        {
+            shell->selected_index = (shell->selected_index + 1) % desktop_menu_item_count();
+        }
+        else if (key_event->key == SAVANXP_KEY_ENTER)
+        {
+            if (launch_selected_item(session, shell->selected_index) < 0)
+            {
+                puts_fd(2, "desktop: failed to launch selected client\n");
+            }
+            launch_requested = 1;
+            shell->menu_open = 0;
+            *last_buttons = 0;
+        }
+        desktop_dirty_rect_add_taskbar(dirty, &session->gfx.info);
+        if (shell->menu_open)
+        {
+            desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
+        }
+        if (launch_requested)
+        {
+            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        }
+        return 1;
+    }
+
+    if (shell->selected_shortcut >= 0)
+    {
+        if (key_event->key == SAVANXP_KEY_ESC)
+        {
+            desktop_dirty_rect_add_shortcut(dirty, &session->gfx.info, shell->selected_shortcut);
+            shell->selected_shortcut = -1;
+            return 1;
+        }
+        if (key_event->key == SAVANXP_KEY_ENTER)
+        {
+            if (launch_desktop_shortcut(session, shell->selected_shortcut) < 0)
+            {
+                puts_fd(2, "desktop: failed to launch desktop shortcut\n");
+            }
+            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            *last_buttons = 0;
+            return 1;
+        }
+        /* Otras teclas con un shortcut seleccionado se rutean al cliente activo
+         * (comportamiento historico); no las consume el shell. */
+        return 0;
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     struct desktop_session session;
@@ -2315,117 +2484,15 @@ int main(int argc, char **argv)
         {
             while ((count = read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
-                if (shell.welcome_visible && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+                shell_notify_key(&shell, &session, &key_event, &dirty);
+                if (wm_handle_key(&session, &shell, &key_event, &dirty))
                 {
-                    shell.welcome_visible = 0;
-                    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                    continue;
                 }
-                if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_F11)
+                if (shell_handle_key(&shell, &session, &key_event, &dirty, &last_buttons))
                 {
-                    /* Toggle composited fullscreen for the active app. Intercepted
-                     * even while fullscreen so it can always be exited. */
-                    if (session.fullscreen_slot >= 0)
-                    {
-                        exit_overlay_fullscreen(&session, &dirty);
-                    }
-                    else if (session.active_client_kind == DESKTOP_CLIENT_APP &&
-                        overlay_slot_valid(session.active_overlay_slot))
-                    {
-                        if (enter_overlay_fullscreen(&session, &dirty, session.active_overlay_slot) == 0)
-                        {
-                            shell.menu_open = 0;
-                            shell.context_menu.open = 0;
-                        }
-                    }
+                    continue;
                 }
-                else if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_SUPER)
-                {
-                    shell.menu_open = !shell.menu_open;
-                    if (shell.menu_open)
-                    {
-                        shell.selected_index = 0;
-                    }
-                    if (shell.context_menu.open)
-                    {
-                        shell.context_menu.open = 0;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
-                    }
-                    desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
-                    desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
-                }
-                else if (shell.context_menu.open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
-                {
-                    /* El menu contextual captura el teclado mientras esta
-                     * abierto; solo ESC hace algo (cerrarlo). */
-                    if (key_event.key == SAVANXP_KEY_ESC)
-                    {
-                        shell.context_menu.open = 0;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
-                    }
-                }
-                else if (shell.menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
-                {
-                    int launch_requested = 0;
-
-                    desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
-                    if (key_event.key == SAVANXP_KEY_ESC)
-                    {
-                        shell.menu_open = 0;
-                    }
-                    else if (key_event.key == SAVANXP_KEY_UP)
-                    {
-                        shell.selected_index = (shell.selected_index + desktop_menu_item_count() - 1) % desktop_menu_item_count();
-                    }
-                    else if (key_event.key == SAVANXP_KEY_DOWN)
-                    {
-                        shell.selected_index = (shell.selected_index + 1) % desktop_menu_item_count();
-                    }
-                    else if (key_event.key == SAVANXP_KEY_ENTER)
-                    {
-                        if (launch_selected_item(&session, shell.selected_index) < 0)
-                        {
-                            puts_fd(2, "desktop: failed to launch selected client\n");
-                        }
-                        launch_requested = 1;
-                        shell.menu_open = 0;
-                        last_buttons = 0;
-                    }
-                    desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
-                    if (shell.menu_open)
-                    {
-                        desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
-                    }
-                    if (launch_requested)
-                    {
-                        desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-                    }
-                }
-                else if (!shell.menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && shell.selected_shortcut >= 0)
-                {
-                    if (key_event.key == SAVANXP_KEY_ESC)
-                    {
-                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, shell.selected_shortcut);
-                        shell.selected_shortcut = -1;
-                    }
-                    else if (key_event.key == SAVANXP_KEY_ENTER)
-                    {
-                        if (launch_desktop_shortcut(&session, shell.selected_shortcut) < 0)
-                        {
-                            puts_fd(2, "desktop: failed to launch desktop shortcut\n");
-                        }
-                        desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-                        last_buttons = 0;
-                    }
-                    else
-                    {
-                        struct desktop_client *client = active_client(&session);
-                        if (client != 0 && client->input_write_fd >= 0)
-                        {
-                            (void)route_packet(client->input_write_fd, &key_event, sizeof(key_event));
-                        }
-                    }
-                }
-                else
                 {
                     struct desktop_client *client = active_client(&session);
                     if (client != 0 && client->input_write_fd >= 0)
