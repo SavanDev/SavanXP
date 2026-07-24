@@ -16,7 +16,7 @@
 static const char *k_shellapp_path = "/bin/shellapp";
 static const char *k_background_client_path = "/bin/shellui";
 
-static int launch_overlay_client(struct desktop_session *session, const char *path);
+static int launch_overlay_client(struct desktop_session *session, const char *path, uint32_t launch_flags);
 static void resize_overlay_client_surface(
     struct desktop_session *session,
     struct desktop_dirty_rect *dirty,
@@ -373,6 +373,18 @@ static void toggle_overlay_client_maximized(struct desktop_session *session, str
     raise_overlay(session, slot);
 }
 
+/* Traduce la metadata del catalogo a flags del protocolo de launch. Cuando el
+ * catalogo se retire (A2.4) el unico origen de estos flags sera el cliente que
+ * pide el launch (progman). */
+static uint32_t launch_flags_for_menu_item(const struct desktop_menu_item *item)
+{
+    if (item != 0 && (item->flags & DESKTOP_MENU_ITEM_FLAG_FULLSCREEN) != 0)
+    {
+        return SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN;
+    }
+    return SAVANXP_DESKTOP_LAUNCH_FLAG_NONE;
+}
+
 static int launch_desktop_shortcut(struct desktop_session *session, int shortcut_index)
 {
     const struct desktop_menu_item *item = desktop_shortcut_at(shortcut_index);
@@ -381,7 +393,7 @@ static int launch_desktop_shortcut(struct desktop_session *session, int shortcut
     {
         return 0;
     }
-    return launch_overlay_client(session, item->path) < 0 ? -1 : 0;
+    return launch_overlay_client(session, item->path, launch_flags_for_menu_item(item)) < 0 ? -1 : 0;
 }
 
 static void activate_taskbar_button(struct desktop_session *session, struct desktop_dirty_rect *dirty, int button_index)
@@ -1511,7 +1523,13 @@ static int launch_shell_client(struct desktop_session *session, const char *path
     return 0;
 }
 
-static int launch_overlay_client(struct desktop_session *session, const char *path)
+/* launch_flags: SAVANXP_DESKTOP_LAUNCH_FLAG_*, declarados por quien pide el
+ * launch (A2.3). Cuando vienen en cero se consulta el catalogo por path como
+ * fallback transitorio: es lo que mantiene el comportamiento de los lanzadores
+ * que todavia no pasan flags (filesapp). Ese fallback -- y con el, la ultima
+ * dependencia del WM sobre el catalogo de apps -- se retira en A2.4, junto con
+ * la tabla de desktop_menu. */
+static int launch_overlay_client(struct desktop_session *session, const char *path, uint32_t launch_flags)
 {
     struct desktop_client *client = 0;
     int slot = -1;
@@ -1531,19 +1549,24 @@ static int launch_overlay_client(struct desktop_session *session, const char *pa
     client = &session->overlay_clients[slot];
     reset_client(client);
     fill_client_surface_info(session, DESKTOP_CLIENT_APP, &client->surface_info);
+    if (launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_NONE)
     {
         const struct desktop_menu_item *item = desktop_find_menu_item_by_path(path);
         if (item != 0 && (item->flags & DESKTOP_MENU_ITEM_FLAG_FULLSCREEN) != 0)
         {
-            /* Allocate the surface at the low fullscreen render size. The same
-             * buffer is used windowed and fullscreen; fullscreen scales it in
-             * the shell composition pass. */
-            client->fullscreen_capable = 1;
-            client->surface_info.width = DESKTOP_FULLSCREEN_MODE_WIDTH;
-            client->surface_info.height = DESKTOP_FULLSCREEN_MODE_HEIGHT;
-            client->surface_info.pitch = DESKTOP_FULLSCREEN_MODE_WIDTH * (uint32_t)sizeof(uint32_t);
-            client->surface_info.buffer_size = client->surface_info.pitch * DESKTOP_FULLSCREEN_MODE_HEIGHT;
+            launch_flags |= SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN;
         }
+    }
+    if ((launch_flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0)
+    {
+        /* Allocate the surface at the low fullscreen render size. The same
+         * buffer is used windowed and fullscreen; fullscreen scales it in
+         * the shell composition pass. */
+        client->fullscreen_capable = 1;
+        client->surface_info.width = DESKTOP_FULLSCREEN_MODE_WIDTH;
+        client->surface_info.height = DESKTOP_FULLSCREEN_MODE_HEIGHT;
+        client->surface_info.pitch = DESKTOP_FULLSCREEN_MODE_WIDTH * (uint32_t)sizeof(uint32_t);
+        client->surface_info.buffer_size = client->surface_info.pitch * DESKTOP_FULLSCREEN_MODE_HEIGHT;
     }
     position_client_window(session, client, DESKTOP_CLIENT_APP, session->overlay_count);
     if (start_client_process(client, path) < 0)
@@ -1638,7 +1661,7 @@ static int launch_selected_item(struct desktop_session *session, int index)
     {
         return 0;
     }
-    return launch_overlay_client(session, item->path) < 0 ? -1 : 0;
+    return launch_overlay_client(session, item->path, launch_flags_for_menu_item(item)) < 0 ? -1 : 0;
 }
 
 static void execute_context_action(struct desktop_session *session, struct desktop_dirty_rect *dirty, int action)
@@ -1658,7 +1681,7 @@ static void execute_context_action(struct desktop_session *session, struct deskt
         desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
         break;
     case DESKTOP_CONTEXT_ACTION_ABOUT:
-        if (launch_overlay_client(session, "/bin/aboutapp") < 0)
+        if (launch_overlay_client(session, "/bin/aboutapp", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
         {
             puts_fd(2, "desktop: failed to launch aboutapp\n");
         }
@@ -1782,7 +1805,12 @@ static int service_client_launch_requests(struct desktop_session *session, struc
             return 0;
         }
         request.path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY - 1u] = '\0';
-        if (launch_overlay_client(session, request.path) < 0)
+        /* Se ignoran los bits desconocidos: un cliente viejo o mal formado no
+         * debe poder pedir modos que el WM no entiende. */
+        if (launch_overlay_client(
+                session,
+                request.path,
+                request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) < 0)
         {
             eprintf("desktop: failed to launch requested app %s\n", request.path);
             return 0;
@@ -2040,7 +2068,9 @@ static int desktop_selftest(void)
     }
     desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 
-    if (launch_overlay_client(&session, "/bin/gfxdemo") < 0)
+    /* Flag explicito (no el fallback por catalogo): asi el subtest de
+     * fullscreen valida el mecanismo nuevo y no depende de desktop_menu. */
+    if (launch_overlay_client(&session, "/bin/gfxdemo", SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL launch gfxdemo\n");
         close_compositor_session(&session);

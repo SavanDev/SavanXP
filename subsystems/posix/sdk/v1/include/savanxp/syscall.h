@@ -634,8 +634,16 @@ enum savanxp_input_event_type {
 
 #define SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY 192u
 
+/* Flags de lanzamiento: quien pide el launch declara las necesidades del
+ * programa, para que el WM no tenga que conocer un catalogo de aplicaciones
+ * (ver docs/WM_SUBSYSTEM.md, A2.3). */
+#define SAVANXP_DESKTOP_LAUNCH_FLAG_NONE 0x00000000u
+/* El programa renderiza a resolucion baja y usa fullscreen composited (F11):
+ * el WM le asigna la superficie a ese tamano al lanzarlo. */
+#define SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN 0x00000001u
+
 struct savanxp_desktop_launch_request {
-    uint32_t reserved0;
+    uint32_t flags; /* SAVANXP_DESKTOP_LAUNCH_FLAG_* */
     char path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY];
 };
 

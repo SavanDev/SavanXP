@@ -127,6 +127,10 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
 long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event);
 long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* path);
+/* Variante con flags SAVANXP_DESKTOP_LAUNCH_FLAG_*: el lanzador declara las
+ * necesidades del programa (p.ej. fullscreen composited). gfx_desktop_launch
+ * equivale a pasar SAVANXP_DESKTOP_LAUNCH_FLAG_NONE. */
+long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags);
 long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape);
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);
