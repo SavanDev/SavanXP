@@ -1,6 +1,7 @@
 #include "libc.h"
 #include "desktop_session.h"
 #include "desktop_menu.h"
+#include "desktop_shell.h"
 #include "desktop_wallpaper.h"
 #include "desktop_layout.h"
 #include "desktop_render.h"
@@ -2217,21 +2218,15 @@ int main(int argc, char **argv)
     struct desktop_dirty_rect dirty = {0};
     int cursor_x = 24;
     int cursor_y = 24;
-    int menu_open = 0;
-    int selected_index = 0;
-    int selected_shortcut = -1;
-    int confirm_action = DESKTOP_CONFIRM_NONE;
-    struct desktop_context_menu_state context_menu = {0, 0, 0, -1};
     uint32_t last_buttons = 0;
-    unsigned long last_clock_stamp = 0;
-    unsigned long last_shortcut_click_ms = 0;
     int drag_overlay_slot = -1;
     int drag_offset_x = 0;
     int drag_offset_y = 0;
-    int last_shortcut_click = -1;
-    int welcome_visible = 1;
-    unsigned long welcome_until_ms = 0;
     int compositor_recoveries = 0;
+    /* Estado de chrome del shell agrupado (ver docs/WM_SUBSYSTEM.md, Fase A):
+     * menu de inicio, menu contextual, shortcuts, welcome, confirmacion de
+     * energia y el stamp del reloj de la taskbar. */
+    struct shell_state shell;
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
@@ -2251,11 +2246,12 @@ int main(int argc, char **argv)
     }
     (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
     desktop_wallpaper_init();
-    welcome_until_ms = uptime_ms() + 3500UL;
+    shell_state_init(&shell);
+    shell.welcome_until_ms = uptime_ms() + 3500UL;
 
     {
         char clock_text[6];
-        last_clock_stamp = desktop_current_clock_stamp(clock_text);
+        shell.last_clock_stamp = desktop_current_clock_stamp(clock_text);
     }
     desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 
@@ -2319,9 +2315,9 @@ int main(int argc, char **argv)
         {
             while ((count = read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
-                if (welcome_visible && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+                if (shell.welcome_visible && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
                 {
-                    welcome_visible = 0;
+                    shell.welcome_visible = 0;
                     desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                 }
                 if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_F11)
@@ -2337,65 +2333,65 @@ int main(int argc, char **argv)
                     {
                         if (enter_overlay_fullscreen(&session, &dirty, session.active_overlay_slot) == 0)
                         {
-                            menu_open = 0;
-                            context_menu.open = 0;
+                            shell.menu_open = 0;
+                            shell.context_menu.open = 0;
                         }
                     }
                 }
                 else if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_SUPER)
                 {
-                    menu_open = !menu_open;
-                    if (menu_open)
+                    shell.menu_open = !shell.menu_open;
+                    if (shell.menu_open)
                     {
-                        selected_index = 0;
+                        shell.selected_index = 0;
                     }
-                    if (context_menu.open)
+                    if (shell.context_menu.open)
                     {
-                        context_menu.open = 0;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        shell.context_menu.open = 0;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
                     }
                     desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
                     desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
                 }
-                else if (context_menu.open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+                else if (shell.context_menu.open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
                 {
                     /* El menu contextual captura el teclado mientras esta
                      * abierto; solo ESC hace algo (cerrarlo). */
                     if (key_event.key == SAVANXP_KEY_ESC)
                     {
-                        context_menu.open = 0;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        shell.context_menu.open = 0;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
                     }
                 }
-                else if (menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+                else if (shell.menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
                 {
                     int launch_requested = 0;
 
                     desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
                     if (key_event.key == SAVANXP_KEY_ESC)
                     {
-                        menu_open = 0;
+                        shell.menu_open = 0;
                     }
                     else if (key_event.key == SAVANXP_KEY_UP)
                     {
-                        selected_index = (selected_index + desktop_menu_item_count() - 1) % desktop_menu_item_count();
+                        shell.selected_index = (shell.selected_index + desktop_menu_item_count() - 1) % desktop_menu_item_count();
                     }
                     else if (key_event.key == SAVANXP_KEY_DOWN)
                     {
-                        selected_index = (selected_index + 1) % desktop_menu_item_count();
+                        shell.selected_index = (shell.selected_index + 1) % desktop_menu_item_count();
                     }
                     else if (key_event.key == SAVANXP_KEY_ENTER)
                     {
-                        if (launch_selected_item(&session, selected_index) < 0)
+                        if (launch_selected_item(&session, shell.selected_index) < 0)
                         {
                             puts_fd(2, "desktop: failed to launch selected client\n");
                         }
                         launch_requested = 1;
-                        menu_open = 0;
+                        shell.menu_open = 0;
                         last_buttons = 0;
                     }
                     desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
-                    if (menu_open)
+                    if (shell.menu_open)
                     {
                         desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
                     }
@@ -2404,16 +2400,16 @@ int main(int argc, char **argv)
                         desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                     }
                 }
-                else if (!menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && selected_shortcut >= 0)
+                else if (!shell.menu_open && key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && shell.selected_shortcut >= 0)
                 {
                     if (key_event.key == SAVANXP_KEY_ESC)
                     {
-                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, selected_shortcut);
-                        selected_shortcut = -1;
+                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, shell.selected_shortcut);
+                        shell.selected_shortcut = -1;
                     }
                     else if (key_event.key == SAVANXP_KEY_ENTER)
                     {
-                        if (launch_desktop_shortcut(&session, selected_shortcut) < 0)
+                        if (launch_desktop_shortcut(&session, shell.selected_shortcut) < 0)
                         {
                             puts_fd(2, "desktop: failed to launch desktop shortcut\n");
                         }
@@ -2472,9 +2468,9 @@ int main(int argc, char **argv)
                 int welcome_consumed_click = 0;
                 int previous_cursor_x = cursor_x;
                 int previous_cursor_y = cursor_y;
-                int previous_menu_open = menu_open;
-                int previous_selected_index = selected_index;
-                int previous_selected_shortcut = selected_shortcut;
+                int previous_menu_open = shell.menu_open;
+                int previous_selected_index = shell.selected_index;
+                int previous_selected_shortcut = shell.selected_shortcut;
                 int previous_active_kind = session.active_client_kind;
                 int previous_active_overlay_slot = session.active_overlay_slot;
                 int drag_was_active = 0;
@@ -2488,11 +2484,11 @@ int main(int argc, char **argv)
                 left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
                 right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
 
-                if (welcome_visible &&
+                if (shell.welcome_visible &&
                     ((left_pressed != 0 && left_was_pressed == 0) ||
                      (right_pressed != 0 && right_was_pressed == 0)))
                 {
-                    welcome_visible = 0;
+                    shell.welcome_visible = 0;
                     welcome_consumed_click = 1;
                     desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                 }
@@ -2509,7 +2505,7 @@ int main(int argc, char **argv)
 
                 session.previous_cursor_shape = session.current_cursor_shape;
                 session.current_cursor_shape = resolve_cursor_shape(
-                    &session, current_hover_client, cursor_x, cursor_y, menu_open, &context_menu, drag_was_active);
+                    &session, current_hover_client, cursor_x, cursor_y, shell.menu_open, &shell.context_menu, drag_was_active);
                 if (session.current_cursor_shape != session.previous_cursor_shape && session.hw_cursor_enabled)
                 {
                     (void)desktop_compositor_set_cursor_shape(&session.compositor, session.current_cursor_shape);
@@ -2518,14 +2514,14 @@ int main(int argc, char **argv)
                 /* Dialogo de confirmacion de energia: modal, consume el evento de
                  * click pero sigue redibujando el cursor para que no parezca
                  * congelado mientras el dialogo esta abierto. */
-                if (confirm_action != DESKTOP_CONFIRM_NONE)
+                if (shell.confirm_action != DESKTOP_CONFIRM_NONE)
                 {
                     if (left_pressed != 0 && left_was_pressed == 0)
                     {
                         if (sx_rect_contains_point(desktop_confirm_yes_rect(&session.gfx.info), cursor_x, cursor_y))
                         {
                             /* Estas llamadas no retornan si tienen exito. */
-                            if (confirm_action == DESKTOP_CONFIRM_REBOOT)
+                            if (shell.confirm_action == DESKTOP_CONFIRM_REBOOT)
                             {
                                 (void)power_reboot();
                             }
@@ -2535,7 +2531,7 @@ int main(int argc, char **argv)
                             }
                             puts_fd(2, "desktop: power action failed\n");
                         }
-                        confirm_action = DESKTOP_CONFIRM_NONE;
+                        shell.confirm_action = DESKTOP_CONFIRM_NONE;
                         desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                     }
                     if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
@@ -2558,19 +2554,19 @@ int main(int argc, char **argv)
                 /* Menu contextual del escritorio: consume el input mientras
                  * esta abierto. Un click ejecuta el item o lo cierra; un click
                  * derecho lo reubica si vuelve a caer sobre el fondo. */
-                if (context_menu.open)
+                if (shell.context_menu.open)
                 {
-                    int hovered = desktop_context_menu_item_from_point(context_menu.x, context_menu.y, cursor_x, cursor_y);
+                    int hovered = desktop_context_menu_item_from_point(shell.context_menu.x, shell.context_menu.y, cursor_x, cursor_y);
 
-                    if (hovered != context_menu.selected)
+                    if (hovered != shell.context_menu.selected)
                     {
-                        context_menu.selected = hovered;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        shell.context_menu.selected = hovered;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
                     }
                     if (left_pressed != 0 && left_was_pressed == 0)
                     {
-                        context_menu.open = 0;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        shell.context_menu.open = 0;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
                         if (hovered >= 0)
                         {
                             const struct desktop_context_item *item = desktop_context_item_at(hovered);
@@ -2582,16 +2578,16 @@ int main(int argc, char **argv)
                     }
                     else if (right_pressed != 0 && right_was_pressed == 0)
                     {
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
-                        context_menu.open = 0;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
+                        shell.context_menu.open = 0;
                         if (current_hover_client == 0 && cursor_y < taskbar_y)
                         {
-                            context_menu.x = cursor_x;
-                            context_menu.y = cursor_y;
-                            desktop_context_menu_place(&session.gfx.info, &context_menu.x, &context_menu.y);
-                            context_menu.selected = -1;
-                            context_menu.open = 1;
-                            desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                            shell.context_menu.x = cursor_x;
+                            shell.context_menu.y = cursor_y;
+                            desktop_context_menu_place(&session.gfx.info, &shell.context_menu.x, &shell.context_menu.y);
+                            shell.context_menu.selected = -1;
+                            shell.context_menu.open = 1;
+                            desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
                         }
                     }
                     if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
@@ -2611,59 +2607,59 @@ int main(int argc, char **argv)
                     continue;
                 }
 
-                if (menu_open)
+                if (shell.menu_open)
                 {
                     int hovered = desktop_selected_item_from_cursor(&session.gfx, cursor_x, cursor_y);
                     if (hovered >= 0)
                     {
-                        selected_index = hovered;
+                        shell.selected_index = hovered;
                     }
                 }
 
                 if (left_pressed != 0 && left_was_pressed == 0)
                 {
-                    int hovered = menu_open ? desktop_selected_item_from_cursor(&session.gfx, cursor_x, cursor_y) : -1;
-                    int taskbar_index = menu_open ? -1 : desktop_taskbar_button_from_point(&session, cursor_x, cursor_y);
+                    int hovered = shell.menu_open ? desktop_selected_item_from_cursor(&session.gfx, cursor_x, cursor_y) : -1;
+                    int taskbar_index = shell.menu_open ? -1 : desktop_taskbar_button_from_point(&session, cursor_x, cursor_y);
                     /* Desktop icons live behind overlay windows, so a click that
                      * lands on a window must never fall through to a shortcut. */
-                    int shortcut_index = (menu_open || current_hover_client != 0)
+                    int shortcut_index = (shell.menu_open || current_hover_client != 0)
                         ? -1
                         : desktop_shortcut_from_point(&session.gfx.info, cursor_x, cursor_y);
 
-                    int power_index = menu_open ? desktop_power_button_from_point(&session.gfx.info, cursor_x, cursor_y) : -1;
+                    int power_index = shell.menu_open ? desktop_power_button_from_point(&session.gfx.info, cursor_x, cursor_y) : -1;
 
                     if (desktop_point_in_rect(cursor_x, cursor_y, 6, taskbar_y + 5, DESKTOP_START_BUTTON_WIDTH, DESKTOP_TASKBAR_HEIGHT - 9))
                     {
-                        menu_open = !menu_open;
-                        if (menu_open)
+                        shell.menu_open = !shell.menu_open;
+                        if (shell.menu_open)
                         {
-                            selected_index = 0;
+                            shell.selected_index = 0;
                         }
                     }
-                    else if (menu_open && power_index >= 0)
+                    else if (shell.menu_open && power_index >= 0)
                     {
                         const struct desktop_power_item *power = desktop_power_item_at(power_index);
                         if (power != 0)
                         {
-                            confirm_action = power->confirm;
-                            menu_open = 0;
-                            selected_shortcut = -1;
+                            shell.confirm_action = power->confirm;
+                            shell.menu_open = 0;
+                            shell.selected_shortcut = -1;
                             desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                         }
                     }
-                    else if (menu_open && hovered >= 0)
+                    else if (shell.menu_open && hovered >= 0)
                     {
                         if (launch_selected_item(&session, hovered) < 0)
                         {
                             puts_fd(2, "desktop: failed to launch selected client\n");
                         }
                         launch_requested = 1;
-                        menu_open = 0;
+                        shell.menu_open = 0;
                         pressed_buttons = 0;
                     }
-                    else if (menu_open)
+                    else if (shell.menu_open)
                     {
-                        menu_open = 0;
+                        shell.menu_open = 0;
                     }
                     else if (taskbar_index >= 0)
                     {
@@ -2672,11 +2668,11 @@ int main(int argc, char **argv)
                     else if (shortcut_index >= 0)
                     {
                         unsigned long now_ms = uptime_ms();
-                        if (selected_shortcut != shortcut_index)
+                        if (shell.selected_shortcut != shortcut_index)
                         {
-                            selected_shortcut = shortcut_index;
+                            shell.selected_shortcut = shortcut_index;
                         }
-                        else if (last_shortcut_click == shortcut_index && now_ms - last_shortcut_click_ms <= 450UL)
+                        else if (shell.last_shortcut_click == shortcut_index && now_ms - shell.last_shortcut_click_ms <= 450UL)
                         {
                             if (launch_desktop_shortcut(&session, shortcut_index) < 0)
                             {
@@ -2684,14 +2680,14 @@ int main(int argc, char **argv)
                             }
                             launch_requested = 1;
                         }
-                        last_shortcut_click = shortcut_index;
-                        last_shortcut_click_ms = now_ms;
+                        shell.last_shortcut_click = shortcut_index;
+                        shell.last_shortcut_click_ms = now_ms;
                     }
                     else if (current_hover_client != 0)
                     {
-                        if (selected_shortcut >= 0)
+                        if (shell.selected_shortcut >= 0)
                         {
-                            selected_shortcut = -1;
+                            shell.selected_shortcut = -1;
                         }
                         if (current_hover_client == &session.shell_client)
                         {
@@ -2765,9 +2761,9 @@ int main(int argc, char **argv)
                             mouse_routed = 1;
                         }
                     }
-                    else if (selected_shortcut >= 0)
+                    else if (shell.selected_shortcut >= 0)
                     {
-                        selected_shortcut = -1;
+                        shell.selected_shortcut = -1;
                     }
                 }
                 drag_active_now = drag_overlay_slot_active(&session, drag_overlay_slot);
@@ -2787,7 +2783,7 @@ int main(int argc, char **argv)
                 }
 
                 if (!mouse_routed &&
-                    !menu_open &&
+                    !shell.menu_open &&
                     !drag_was_active &&
                     !drag_active_now &&
                     current_hover_client != 0 &&
@@ -2797,7 +2793,7 @@ int main(int argc, char **argv)
                     (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
                 }
                 else if (!mouse_routed &&
-                         !menu_open &&
+                         !shell.menu_open &&
                          !drag_was_active &&
                          !drag_active_now &&
                          current_hover_client == 0 &&
@@ -2810,9 +2806,9 @@ int main(int argc, char **argv)
 
                 if (right_pressed != 0 && right_was_pressed == 0)
                 {
-                    if (menu_open)
+                    if (shell.menu_open)
                     {
-                        menu_open = 0;
+                        shell.menu_open = 0;
                     }
                     else if (!welcome_consumed_click &&
                              session.fullscreen_slot < 0 &&
@@ -2822,15 +2818,15 @@ int main(int argc, char **argv)
                     {
                         /* Click derecho sobre el fondo del escritorio: abre el
                          * menu contextual en el cursor. */
-                        context_menu.x = cursor_x;
-                        context_menu.y = cursor_y;
-                        desktop_context_menu_place(&session.gfx.info, &context_menu.x, &context_menu.y);
-                        context_menu.selected = -1;
-                        context_menu.open = 1;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, context_menu.x, context_menu.y);
+                        shell.context_menu.x = cursor_x;
+                        shell.context_menu.y = cursor_y;
+                        desktop_context_menu_place(&session.gfx.info, &shell.context_menu.x, &shell.context_menu.y);
+                        shell.context_menu.selected = -1;
+                        shell.context_menu.open = 1;
+                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
                         /* El bloque generico de abajo repinta el shortcut que
                          * pierde la seleccion. */
-                        selected_shortcut = -1;
+                        shell.selected_shortcut = -1;
                     }
                 }
 
@@ -2846,7 +2842,7 @@ int main(int argc, char **argv)
                         desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y, session.previous_cursor_shape);
                         desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y, session.current_cursor_shape);
                     }
-                    if (menu_open)
+                    if (shell.menu_open)
                     {
                         int menu_x = 0;
                         int menu_y = 0;
@@ -2861,20 +2857,20 @@ int main(int argc, char **argv)
                         }
                     }
                 }
-                if (previous_menu_open != menu_open || previous_selected_index != selected_index)
+                if (previous_menu_open != shell.menu_open || previous_selected_index != shell.selected_index)
                 {
                     desktop_dirty_rect_add_menu(&dirty, &session.gfx.info);
                     desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
                 }
-                if (previous_selected_shortcut != selected_shortcut)
+                if (previous_selected_shortcut != shell.selected_shortcut)
                 {
                     if (previous_selected_shortcut >= 0)
                     {
                         desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, previous_selected_shortcut);
                     }
-                    if (selected_shortcut >= 0)
+                    if (shell.selected_shortcut >= 0)
                     {
-                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, selected_shortcut);
+                        desktop_dirty_rect_add_shortcut(&dirty, &session.gfx.info, shell.selected_shortcut);
                     }
                 }
                 if (previous_active_kind != session.active_client_kind || previous_active_overlay_slot != session.active_overlay_slot)
@@ -2930,16 +2926,16 @@ int main(int argc, char **argv)
         {
             char clock_text[6];
             unsigned long clock_stamp = desktop_current_clock_stamp(clock_text);
-            if (clock_stamp != last_clock_stamp)
+            if (clock_stamp != shell.last_clock_stamp)
             {
-                last_clock_stamp = clock_stamp;
+                shell.last_clock_stamp = clock_stamp;
                 desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
             }
         }
 
-        if (welcome_visible && uptime_ms() >= welcome_until_ms)
+        if (shell.welcome_visible && uptime_ms() >= shell.welcome_until_ms)
         {
-            welcome_visible = 0;
+            shell.welcome_visible = 0;
             desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
         }
 
@@ -2972,7 +2968,7 @@ int main(int argc, char **argv)
             }
         }
 
-        desktop_draw_desktop(&session, cursor_x, cursor_y, menu_open, selected_index, selected_shortcut, confirm_action, welcome_visible, &context_menu, &dirty);
+        desktop_draw_desktop(&session, cursor_x, cursor_y, shell.menu_open, shell.selected_index, shell.selected_shortcut, shell.confirm_action, shell.welcome_visible, &shell.context_menu, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {

@@ -148,6 +148,7 @@ $UserPrograms = @(
         "subsystems/posix/userland/desktop_compositor_client.c",
         "subsystems/posix/userland/desktop_icons.c",
         "subsystems/posix/userland/desktop_menu.c",
+        "subsystems/posix/userland/desktop_shell.c",
         "subsystems/posix/userland/desktop_tray.c",
         "subsystems/posix/userland/desktop_wallpaper.c",
         "subsystems/posix/userland/desktop_layout.c",
