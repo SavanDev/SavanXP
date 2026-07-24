@@ -1,7 +1,10 @@
 # Extracción del Window Manager a subsistema (modelo NT 3.5)
 
-> Estado: **propuesta / Fase A en curso.** Este documento fija el boundary
-> WM↔shell antes de tocar código.
+> Estado: **Fase A, paso A1 (boundary en-proceso) COMPLETO.** Input y render
+> operan sobre `shell_state` con separación `wm_`/`shell_` en-proceso,
+> behavior-preserving (verificado con `desktop-smoke` en cada corte). Siguen los
+> pasos A2 (elevar el shell a proceso separado) y A3 (rename a `windowd` +
+> header público del protocolo). Este documento fija el boundary WM↔shell.
 >
 > **Decisión-crux resuelta:** el **shell dibuja el fondo** (NT puro). El
 > shell-client posee una superficie full-screen de background (wallpaper +
@@ -161,6 +164,16 @@ Enfoque de dos saltos, para des-riesgar el corte de un proceso boot-crítico:
    `welcome_visible`/`welcome_until_ms`, `last_shortcut_click(_ms)`. **Queda en
    el WM:** `drag_overlay_slot`/offsets, `cursor_x/y`, `last_buttons`, todo
    `session`.
+
+   **✅ Resultado (A1 HECHO):** módulo `desktop_shell.h/.c` con `struct
+   shell_state` + `shell_state_init()`; teclado como arbitración
+   `shell_notify_key`→`wm_handle_key`→`shell_handle_key`; modales de puntero en
+   `shell_pointer_handle_confirm`/`_context_menu`; cuerpo per-evento de puntero
+   en `handle_pointer_event()`; render con `shell_state` +
+   `paint_layer`→`wm_paint_layer`(cliente/cursor)/`shell_paint_layer`(chrome).
+   `main()` quedó en ~247 líneas (601 antes). Cada corte verificado con
+   `desktop-smoke` (`DESKTOP SMOKE PASS`). El chain mixto de click izquierdo y
+   `shell_paint_layer` son las piezas que A2 mueve al shell-client.
 2. **A2 — Lift del shell a proceso.** Convertir la capa `shell_*` en un
    cliente separado (`shell-client`) que habla con `windowd` por el protocolo
    WM↔cliente + la extensión `ROLE_SHELL`. El wallpaper pasa a ser el
