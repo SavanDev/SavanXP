@@ -2040,6 +2040,8 @@ static int desktop_selftest(void)
     struct desktop_dirty_rect dirty = {0};
     struct savanxp_gpu_present_timeline timeline = {0};
     const int kSlot = 0;
+    /* progman se lanza despues de gfxdemo, asi que cae en el slot siguiente. */
+    const int kProgmanSlot = 1;
     const int kMaxIterations = 4000;
     const int kTargetFrames = 60;
     const int kCursorX = 40;
@@ -2088,6 +2090,16 @@ static int desktop_selftest(void)
         return 1;
     }
 
+    /* A2.3: progman como cliente top-level normal. Asertar que compone un frame
+     * prueba end-to-end que abre su sesion gfx, pinta el grid de programas y el
+     * WM lo compone como una ventana mas. */
+    if (launch_overlay_client(&session, "/bin/progman", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL launch progman\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+
     if (desktop_compositor_get_timeline(&session.compositor, &timeline) == 0)
     {
         baseline_retired = timeline.retired_sequence;
@@ -2117,6 +2129,12 @@ static int desktop_selftest(void)
         if (service_client_batches(&session, &dirty, &session.background_client) < 0)
         {
             puts_fd(2, "DESKTOP SMOKE FAIL servicing background client\n");
+            failed = 1;
+            break;
+        }
+        if (service_client_batches(&session, &dirty, &session.overlay_clients[kProgmanSlot]) < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL servicing progman\n");
             failed = 1;
             break;
         }
@@ -2266,6 +2284,11 @@ static int desktop_selftest(void)
     if (!failed && session.background_client.consumed_submit_sequence < 1)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL background client never composited\n");
+        failed = 1;
+    }
+    if (!failed && session.overlay_clients[kProgmanSlot].consumed_submit_sequence < 1)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL progman never composited\n");
         failed = 1;
     }
     if (!failed)

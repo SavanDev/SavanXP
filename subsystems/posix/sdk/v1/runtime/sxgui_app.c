@@ -109,6 +109,11 @@ int sxgui_app_run(struct sxgui_app *app)
 
         while (app->pointer_fd >= 0 && gfx_poll_pointer((int)app->pointer_fd, &pointer_event) > 0)
         {
+            if (app->on_pointer != 0 && app->on_pointer(app, &pointer_event))
+            {
+                app->needs_repaint = 1;
+                continue;
+            }
             if (sxgui_handle_pointer(&app->ui, &pointer_event))
             {
                 app->needs_repaint = 1;

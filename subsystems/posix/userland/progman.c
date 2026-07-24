@@ -1,15 +1,411 @@
 #include "libc.h"
+#include "savanxp/sxgui.h"
+
 #include "progman_registry.h"
+
+#include <stdio.h>
 
 /*
  * Program Manager (A2.3, ver docs/WM_SUBSYSTEM.md).
  *
- * En este paso (A2.3b) progman es solo el duenio del registro de programas y su
- * harness de verificacion: --selftest ejercita el parser, los defaults, el mapeo
- * de iconos/flags, el truncado y los limites de capacidad. La ventana real
- * (grupo con grid de iconos, doble click -> gfx_desktop_launch_ex) llega en
- * A2.3c; recien ahi progman se conecta como cliente del WM.
+ * Cliente top-level normal del WM: no tiene z-rol especial ni extension de
+ * protocolo -- recibe input por el mismo camino que cualquier app. Muestra los
+ * grupos del registro (progman_registry) como pestanias y los programas del
+ * grupo activo como grid de iconos; doble click o Enter lanzan via
+ * gfx_desktop_launch_ex, pasando los launch flags que declara el registro.
+ *
+ * Version "proto": un grupo a la vez con pestanias. Los grupos como ventanas
+ * hijas MDI con su propia barra de titulo, minimizables a icono -- el Progman
+ * real -- necesitan una primitiva de child window que sxgui todavia no tiene:
+ * es trabajo de Fase B.
  */
+
+#define PROGMAN_TAB_HEIGHT 26
+#define PROGMAN_STATUS_HEIGHT 22
+#define PROGMAN_CELL_WIDTH 96
+#define PROGMAN_CELL_HEIGHT 76
+#define PROGMAN_ICON_SIZE 32
+#define PROGMAN_GRID_MARGIN 8
+#define PROGMAN_DOUBLE_CLICK_MS 450UL
+
+static struct sxgui_app g_app;
+/* El toolkit exige un array no nulo aunque no usemos widgets: progman pinta
+ * todo su contenido en on_paint y hace su propio hit-testing. */
+static struct sxgui_widget g_widgets[1];
+
+static int g_group = 0;
+static int g_item = 0;
+static int g_last_click_item = -1;
+static unsigned long g_last_click_ms = 0;
+static uint32_t g_last_buttons = 0;
+static char g_status[192];
+
+static int group_item_count(int group_index)
+{
+    const struct progman_group *group = progman_group_at(group_index);
+    return group != 0 ? group->item_count : 0;
+}
+
+static int grid_columns(void)
+{
+    int usable = (int)g_app.gfx.info.width - (2 * PROGMAN_GRID_MARGIN);
+    int columns = usable / PROGMAN_CELL_WIDTH;
+
+    return columns > 0 ? columns : 1;
+}
+
+static struct sx_rect cell_rect(int item_index)
+{
+    int columns = grid_columns();
+    int column = item_index % columns;
+    int row = item_index / columns;
+
+    return sx_rect_make(
+        PROGMAN_GRID_MARGIN + (column * PROGMAN_CELL_WIDTH),
+        PROGMAN_TAB_HEIGHT + PROGMAN_GRID_MARGIN + (row * PROGMAN_CELL_HEIGHT),
+        PROGMAN_CELL_WIDTH,
+        PROGMAN_CELL_HEIGHT);
+}
+
+static struct sx_rect group_tab_rect(int group_index)
+{
+    int x = 4;
+    int index;
+
+    for (index = 0; index < progman_group_count(); ++index)
+    {
+        const struct progman_group *group = progman_group_at(index);
+        int width = gfx_text_width(group != 0 ? group->name : "") + 20;
+
+        if (index == group_index)
+        {
+            return sx_rect_make(x, 3, width, PROGMAN_TAB_HEIGHT - 6);
+        }
+        x += width + 2;
+    }
+    return sx_rect_make(0, 0, 0, 0);
+}
+
+static void set_status_for_selection(void)
+{
+    const struct progman_item *item = progman_group_item_at(g_group, g_item);
+
+    if (item == 0)
+    {
+        snprintf(g_status, sizeof(g_status), "Grupo vacio");
+        return;
+    }
+    if (item->description[0] != '\0')
+    {
+        snprintf(g_status, sizeof(g_status), "%s  -  %s", item->description, item->path);
+    }
+    else
+    {
+        snprintf(g_status, sizeof(g_status), "%s", item->path);
+    }
+}
+
+static void select_group(int group_index)
+{
+    if (group_index < 0 || group_index >= progman_group_count())
+    {
+        return;
+    }
+    g_group = group_index;
+    g_item = 0;
+    g_last_click_item = -1;
+    set_status_for_selection();
+}
+
+static void launch_selected(void)
+{
+    const struct progman_item *item = progman_group_item_at(g_group, g_item);
+
+    if (item == 0)
+    {
+        return;
+    }
+    /* Los launch flags salen del registro: el WM no conoce el catalogo (A2.3a). */
+    if (gfx_desktop_launch_ex(&g_app.gfx, item->path, item->launch_flags) < 0)
+    {
+        snprintf(g_status, sizeof(g_status), "No se pudo lanzar %s", item->path);
+    }
+    else
+    {
+        snprintf(g_status, sizeof(g_status), "Lanzando %s...", item->name);
+    }
+}
+
+/* --- pintado ------------------------------------------------------------- */
+
+static void fill_embedded_bitmap_info(const struct desktop_embedded_bitmap *source, struct savanxp_fb_info *info)
+{
+    memset(info, 0, sizeof(*info));
+    info->width = source->width;
+    info->height = source->height;
+    info->pitch = source->width * (uint32_t)sizeof(uint32_t);
+    info->bpp = 32u;
+    info->buffer_size = info->pitch * info->height;
+}
+
+static void draw_icon_scaled(struct sx_painter *painter, const struct desktop_embedded_bitmap *source, int x, int y, int size)
+{
+    struct sx_bitmap bitmap;
+    struct savanxp_fb_info info;
+
+    if (source == 0 || source->pixels == 0 || source->width == 0 || source->height == 0)
+    {
+        return;
+    }
+    fill_embedded_bitmap_info(source, &info);
+    sx_bitmap_wrap(&bitmap, (uint32_t *)source->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
+    sx_painter_draw_scaled_bitmap_nearest(
+        painter,
+        &bitmap,
+        sx_rect_make(x, y, size, size),
+        sx_rect_make(0, 0, (int)source->width, (int)source->height));
+}
+
+/* Bisel 3D estilo sistema: claro arriba/izquierda, oscuro abajo/derecha. */
+static void draw_bevel(struct sx_painter *painter, struct sx_rect rect, int pressed)
+{
+    uint32_t top_left = pressed ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
+    uint32_t bottom_right = pressed ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_SHADOW;
+
+    if (rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), top_left);
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), top_left);
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), bottom_right);
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
+}
+
+static void paint_tabs(struct sx_painter *painter)
+{
+    int index;
+
+    sx_painter_fill_rect(painter, sx_rect_make(0, 0, (int)g_app.gfx.info.width, PROGMAN_TAB_HEIGHT), SXGUI_COLOR_FACE);
+    for (index = 0; index < progman_group_count(); ++index)
+    {
+        const struct progman_group *group = progman_group_at(index);
+        struct sx_rect rect = group_tab_rect(index);
+        int active = (index == g_group);
+
+        if (group == 0 || rect.width <= 0)
+        {
+            continue;
+        }
+        sx_painter_fill_rect(painter, rect, active ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_FACE);
+        draw_bevel(painter, rect, active);
+        sx_painter_draw_text(painter, rect.x + 10, rect.y + ((rect.height - gfx_text_height()) / 2), group->name, SXGUI_COLOR_TEXT);
+    }
+    /* Linea de separacion bajo las pestanias. */
+    sx_painter_fill_rect(painter, sx_rect_make(0, PROGMAN_TAB_HEIGHT - 1, (int)g_app.gfx.info.width, 1), SXGUI_COLOR_SHADOW);
+}
+
+static void paint_items(struct sx_painter *painter)
+{
+    int count = group_item_count(g_group);
+    int index;
+
+    for (index = 0; index < count; ++index)
+    {
+        const struct progman_item *item = progman_group_item_at(g_group, index);
+        struct sx_rect rect = cell_rect(index);
+        int selected = (index == g_item);
+        int label_width;
+        int label_x;
+
+        if (item == 0)
+        {
+            continue;
+        }
+        /* No dibujar celdas que caen fuera del area util. */
+        if (rect.y + rect.height > (int)g_app.gfx.info.height - PROGMAN_STATUS_HEIGHT)
+        {
+            break;
+        }
+
+        if (selected)
+        {
+            sx_painter_fill_rect(painter, rect, SXGUI_COLOR_SELECT);
+        }
+        draw_icon_scaled(
+            painter,
+            desktop_icon_large((enum desktop_icon_id)item->icon_id),
+            rect.x + ((rect.width - PROGMAN_ICON_SIZE) / 2),
+            rect.y + 8,
+            PROGMAN_ICON_SIZE);
+
+        /* El nombre se recorta a la celda para que un label largo no invada la
+         * de al lado. */
+        label_width = gfx_text_width(item->name);
+        label_x = rect.x + ((rect.width - label_width) / 2);
+        if (sx_painter_push_clip(painter, rect))
+        {
+            sx_painter_draw_text(
+                painter,
+                label_x,
+                rect.y + 8 + PROGMAN_ICON_SIZE + 6,
+                item->name,
+                selected ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT);
+            sx_painter_pop_clip(painter);
+        }
+    }
+}
+
+static void paint_status(struct sx_painter *painter)
+{
+    int y = (int)g_app.gfx.info.height - PROGMAN_STATUS_HEIGHT;
+    struct sx_rect rect = sx_rect_make(0, y, (int)g_app.gfx.info.width, PROGMAN_STATUS_HEIGHT);
+
+    sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
+    sx_painter_fill_rect(painter, sx_rect_make(0, y, rect.width, 1), SXGUI_COLOR_SHADOW);
+    if (sx_painter_push_clip(painter, rect))
+    {
+        sx_painter_draw_text(painter, 6, y + ((PROGMAN_STATUS_HEIGHT - gfx_text_height()) / 2), g_status, SXGUI_COLOR_TEXT);
+        sx_painter_pop_clip(painter);
+    }
+}
+
+static void on_paint(struct sxgui_app *app)
+{
+    struct sx_painter *painter = &app->ui.painter;
+
+    paint_tabs(painter);
+    paint_items(painter);
+    paint_status(painter);
+}
+
+/* --- input --------------------------------------------------------------- */
+
+static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
+{
+    int count = group_item_count(g_group);
+    int columns = grid_columns();
+
+    (void)app;
+    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+    {
+        return 0;
+    }
+
+    if (event->key == SAVANXP_KEY_TAB)
+    {
+        select_group((g_group + 1) % (progman_group_count() > 0 ? progman_group_count() : 1));
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_ENTER)
+    {
+        launch_selected();
+        return 1;
+    }
+    if (count == 0)
+    {
+        return 0;
+    }
+    if (event->key == SAVANXP_KEY_LEFT)
+    {
+        g_item = (g_item + count - 1) % count;
+        set_status_for_selection();
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_RIGHT)
+    {
+        g_item = (g_item + 1) % count;
+        set_status_for_selection();
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_UP)
+    {
+        if (g_item - columns >= 0)
+        {
+            g_item -= columns;
+            set_status_for_selection();
+        }
+        return 1;
+    }
+    if (event->key == SAVANXP_KEY_DOWN)
+    {
+        if (g_item + columns < count)
+        {
+            g_item += columns;
+            set_status_for_selection();
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event)
+{
+    uint32_t left = event->buttons & SAVANXP_MOUSE_BUTTON_LEFT;
+    uint32_t left_was = g_last_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
+    int changed = 0;
+
+    (void)app;
+    /* Solo la transicion suelto->apretado cuenta como click. */
+    if (left != 0 && left_was == 0)
+    {
+        int index;
+
+        for (index = 0; index < progman_group_count(); ++index)
+        {
+            if (sx_rect_contains_point(group_tab_rect(index), event->x, event->y))
+            {
+                if (index != g_group)
+                {
+                    select_group(index);
+                    changed = 1;
+                }
+                g_last_buttons = event->buttons;
+                return changed;
+            }
+        }
+
+        for (index = 0; index < group_item_count(g_group); ++index)
+        {
+            if (!sx_rect_contains_point(cell_rect(index), event->x, event->y))
+            {
+                continue;
+            }
+            {
+                unsigned long now = uptime_ms();
+                int double_click = (g_last_click_item == index) &&
+                    (now - g_last_click_ms <= PROGMAN_DOUBLE_CLICK_MS);
+
+                g_item = index;
+                set_status_for_selection();
+                if (double_click)
+                {
+                    launch_selected();
+                    /* Evita que un tercer click encadene otro lanzamiento. */
+                    g_last_click_item = -1;
+                }
+                else
+                {
+                    g_last_click_item = index;
+                    g_last_click_ms = now;
+                }
+                changed = 1;
+            }
+            break;
+        }
+    }
+
+    g_last_buttons = event->buttons;
+    return changed;
+}
+
+static void on_resize(struct sxgui_app *app)
+{
+    (void)app;
+    /* El grid se recalcula solo desde gfx.info; nada que reubicar. */
+}
+
+/* --- selftest ------------------------------------------------------------ */
 
 static int progman_selftest(void)
 {
@@ -28,39 +424,6 @@ static int progman_selftest(void)
     return 0;
 }
 
-static void progman_dump_registry(void)
-{
-    int group_index;
-
-    progman_registry_load();
-    printf("progman: registro desde %s\n",
-        progman_registry_source() == PROGMAN_REGISTRY_SOURCE_FILE ? PROGMAN_REGISTRY_PATH : "defaults horneados");
-
-    for (group_index = 0; group_index < progman_group_count(); ++group_index)
-    {
-        const struct progman_group *group = progman_group_at(group_index);
-        int item_index;
-
-        if (group == 0)
-        {
-            continue;
-        }
-        printf("[%s]\n", group->name);
-        for (item_index = 0; item_index < group->item_count; ++item_index)
-        {
-            const struct progman_item *item = progman_group_item_at(group_index, item_index);
-            if (item == 0)
-            {
-                continue;
-            }
-            printf("  %s -> %s%s\n",
-                item->name,
-                item->path,
-                (item->launch_flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0 ? " [fullscreen]" : "");
-        }
-    }
-}
-
 int main(int argc, char **argv)
 {
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
@@ -68,8 +431,16 @@ int main(int argc, char **argv)
         return progman_selftest();
     }
 
-    /* Sin ventana todavia (A2.3c): listar el registro deja el binario util para
-     * inspeccionar que catalogo esta viendo el sistema. */
-    progman_dump_registry();
-    return 0;
+    progman_registry_load();
+    select_group(0);
+
+    if (sxgui_app_init(&g_app, "progman", g_widgets, 0) < 0)
+    {
+        return 1;
+    }
+    g_app.on_key = on_key;
+    g_app.on_pointer = on_pointer;
+    g_app.on_paint = on_paint;
+    g_app.on_resize = on_resize;
+    return sxgui_app_run(&g_app);
 }

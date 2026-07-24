@@ -255,6 +255,9 @@ struct sxgui_app {
 
     /* optional hooks; leave NULL to skip */
     int (*on_key)(struct sxgui_app *app, const struct savanxp_input_event *event); /* pre-toolkit; non-zero = consumed */
+    /* pre-toolkit pointer hook, simetrico a on_key; non-zero = consumed. Para
+     * apps que hacen su propio hit-testing (grids, lienzos) en vez de widgets. */
+    int (*on_pointer)(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event);
     void (*on_paint)(struct sxgui_app *app);  /* extra painting after sxgui_paint */
     void (*on_resize)(struct sxgui_app *app); /* widget relayout after RESIZED */
     void *user;
