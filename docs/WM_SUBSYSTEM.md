@@ -182,6 +182,50 @@ Enfoque de dos saltos, para des-riesgar el corte de un proceso boot-crítico:
 3. **A3 — Rename/estructura.** `desktop.c` → `windowd.c` (o subsistema propio),
    documentar el protocolo WM↔cliente como header público explícito.
 
+## A2 — diseño detallado (el nudo del z-order)
+
+**Restricción del protocolo actual:** cada cliente recibe UNA superficie (fd 3,
+tamaño fijo al launch, `gfx_open_client` en `gfx_impl.inc`), colocada por el WM
+en `window_x/y/width/height`. Input por fds 4/5, launch por fd 9, cursor hint
+por fd 10.
+
+**El nudo:** el chrome del shell vive en dos niveles de z-order incompatibles
+con una sola superficie:
+- **wallpaper + iconos del escritorio** → *debajo* de todas las ventanas.
+- **taskbar + start menu + menú contextual + confirm** → *encima* de todas las
+  ventanas (hoy son capas `TASKBAR`/`MENU`/… por sobre `CLIENT` en
+  `build_layers`).
+
+Un cliente de una sola superficie no puede ser fondo y frente a la vez.
+
+**Acoplamiento extra:** `draw_taskbar` lee la lista de ventanas del WM
+(`desktop_taskbar_button_client` → `overlay_clients`, active/minimized). En A2
+el WM tendría que enviarle esa lista al shell (protocolo WM→shell: window-list
+updates) para que dibuje los botones.
+
+**Ángulo estratégico:** el chrome Win95 (taskbar + start menu) es temporal —
+Fase B lo reemplaza por Program Manager (NT 3.5, sin taskbar). Levantarlo
+fielmente con protocolo multi-superficie es trabajo que Fase B tira.
+
+### Opciones de modelo de superficie
+
+- **A) Multi-superficie fiel al Win95.** El shell crea 2 superficies con z-rol:
+  background (full-screen, fondo) + overlay (full-screen, tope, alpha). Extensión
+  de protocolo acotada (un cliente `ROLE_SHELL` con dos surfaces a z-roles
+  fijos) + window-list updates para el taskbar. Fiel al chrome actual; parte del
+  trabajo lo tira Fase B.
+- **B) Fondo + arrancar el pivot NT 3.5 (recomendada).** El shell posee solo la
+  superficie de **background** (wallpaper + iconos, fondo). El launcher deja de
+  ser taskbar/start-menu y pasa a ser una **ventana normal** (proto-Progman),
+  que es un top-level como cualquier app — sin z-rol especial, sin
+  multi-superficie. Adelanta una pieza mínima de Fase B, evita el protocolo
+  multi-superficie, y mueve hacia el objetivo. Pendiente menor: el menú
+  contextual del escritorio (flotante sobre ventanas) se difiere o se maneja como
+  top-level transitorio.
+- **C) Solo diseño de protocolo.** Escribir el spec completo del protocolo
+  WM↔shell (ROLE_SHELL, surfaces/z-roles, window-list, ruteo de input) y decidir
+  el modelo antes de tocar código.
+
 ## Fases siguientes (fuera de Fase A)
 
 - **Fase B** — `progman`: shell-client alternativo estilo Program Manager
