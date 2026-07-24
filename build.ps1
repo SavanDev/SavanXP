@@ -154,6 +154,10 @@ $UserPrograms = @(
         "subsystems/posix/userland/desktop_layout.c",
         "subsystems/posix/userland/desktop_render.c"
     ) },
+    @{ Name = "shellui"; Sources = @(
+        "subsystems/posix/userland/shellui.c",
+        "subsystems/posix/userland/desktop_wallpaper.c"
+    ) },
     @{ Name = "aboutapp"; Sources = @(
         "subsystems/posix/userland/aboutapp.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
