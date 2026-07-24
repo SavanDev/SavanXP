@@ -134,7 +134,26 @@ Enfoque de dos saltos, para des-riesgar el corte de un proceso boot-crítico:
 
    Esa precedencia WM→shell *es* la frontera de proceso de A2 (el WM decide:
    ¿pega en ventana? ¿hotkey global? si no → al shell). Se mantiene en un solo
-   proceso. Verificar con `desktop --selftest` / `build.ps1 desktop-smoke`
+   proceso.
+
+   **Hallazgo al implementar (teclado vs. mouse):** el teclado bisecta limpio
+   (`shell_notify_key` → `wm_handle_key` → `shell_handle_key`) porque cada
+   tecla la consume exactamente un dueño. El **mouse no**: dentro de un mismo
+   evento el update de cursor/hover (WM) corre primero porque todo depende de
+   él, los modales del shell (confirm dialog, menú contextual) consumen con
+   `continue`, y el dispatch de click izquierdo es un if/else-chain único que
+   mezcla chrome (start/power/menú/taskbar/shortcut) con hit-de-ventana (WM),
+   con precedencia por orden. Forzar un split de dos vías ahí reordena y
+   arriesga el comportamiento. Descomposición efectiva del mouse en A1:
+   - **Extraíble limpio ahora:** los dos bloques modales →
+     `shell_pointer_handle_confirm` / `shell_pointer_handle_context_menu`. Son
+     los casos "el shell agarró el input", que A2 reenvía enteros al
+     shell-client.
+     Devuelven consumido; `main()` hace `last_buttons`+`continue`.
+   - **Se bisecta en A2, no en A1:** el chain mixto de click izquierdo (chrome
+     vs. hit-de-ventana) queda inline. La frontera de proceso de A2 lo fuerza
+     de forma natural (el WM decide reenviar-al-shell vs. manejar-la-ventana) y
+     ahí es testeable con el shell ya como cliente separado. Verificar con `desktop --selftest` / `build.ps1 desktop-smoke`
    (compositor headless) + QMP mouse-driving. Cero cambio de comportamiento.
 
    **Estado de chrome que migra a `struct shell_state`:** `menu_open`,

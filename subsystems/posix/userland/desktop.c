@@ -2379,6 +2379,138 @@ static int shell_handle_key(
     return 0;
 }
 
+/*
+ * Modales de puntero del shell (Fase A). Cuando el confirm dialog o el menu
+ * contextual estan abiertos, el shell "agarro" el input: consumen el evento
+ * entero (main hace last_buttons + continue). Son los casos que A2 reenvia
+ * enteros al shell-client. El cursor se sigue repintando para que no parezca
+ * congelado mientras el modal esta abierto. Devuelven 1 si consumieron.
+ *
+ * El puntero pasa el cursor ya actualizado y su shape ya resuelto (concerns del
+ * WM que corren antes de estos modales); por eso reciben valores, no punteros.
+ */
+static int shell_pointer_handle_confirm(
+    struct shell_state *shell,
+    struct desktop_session *session,
+    struct desktop_dirty_rect *dirty,
+    int cursor_x,
+    int cursor_y,
+    int previous_cursor_x,
+    int previous_cursor_y,
+    uint32_t left_pressed,
+    uint32_t left_was_pressed)
+{
+    if (shell->confirm_action == DESKTOP_CONFIRM_NONE)
+    {
+        return 0;
+    }
+
+    if (left_pressed != 0 && left_was_pressed == 0)
+    {
+        if (sx_rect_contains_point(desktop_confirm_yes_rect(&session->gfx.info), cursor_x, cursor_y))
+        {
+            /* Estas llamadas no retornan si tienen exito. */
+            if (shell->confirm_action == DESKTOP_CONFIRM_REBOOT)
+            {
+                (void)power_reboot();
+            }
+            else
+            {
+                (void)power_shutdown();
+            }
+            puts_fd(2, "desktop: power action failed\n");
+        }
+        shell->confirm_action = DESKTOP_CONFIRM_NONE;
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
+        session->current_cursor_shape != session->previous_cursor_shape)
+    {
+        if (session->hw_cursor_enabled)
+        {
+            (void)set_hw_cursor_position(session, cursor_x, cursor_y, 1);
+        }
+        else
+        {
+            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
+            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
+        }
+    }
+    return 1;
+}
+
+static int shell_pointer_handle_context_menu(
+    struct shell_state *shell,
+    struct desktop_session *session,
+    struct desktop_dirty_rect *dirty,
+    int cursor_x,
+    int cursor_y,
+    int previous_cursor_x,
+    int previous_cursor_y,
+    uint32_t left_pressed,
+    uint32_t left_was_pressed,
+    uint32_t right_pressed,
+    uint32_t right_was_pressed,
+    const struct desktop_client *current_hover_client,
+    int taskbar_y)
+{
+    int hovered;
+
+    if (!shell->context_menu.open)
+    {
+        return 0;
+    }
+
+    hovered = desktop_context_menu_item_from_point(shell->context_menu.x, shell->context_menu.y, cursor_x, cursor_y);
+
+    if (hovered != shell->context_menu.selected)
+    {
+        shell->context_menu.selected = hovered;
+        desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
+    }
+    if (left_pressed != 0 && left_was_pressed == 0)
+    {
+        shell->context_menu.open = 0;
+        desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
+        if (hovered >= 0)
+        {
+            const struct desktop_context_item *item = desktop_context_item_at(hovered);
+            if (item != 0)
+            {
+                execute_context_action(session, dirty, item->action);
+            }
+        }
+    }
+    else if (right_pressed != 0 && right_was_pressed == 0)
+    {
+        desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
+        shell->context_menu.open = 0;
+        if (current_hover_client == 0 && cursor_y < taskbar_y)
+        {
+            shell->context_menu.x = cursor_x;
+            shell->context_menu.y = cursor_y;
+            desktop_context_menu_place(&session->gfx.info, &shell->context_menu.x, &shell->context_menu.y);
+            shell->context_menu.selected = -1;
+            shell->context_menu.open = 1;
+            desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
+        }
+    }
+    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
+        session->current_cursor_shape != session->previous_cursor_shape)
+    {
+        if (session->hw_cursor_enabled)
+        {
+            (void)set_hw_cursor_position(session, cursor_x, cursor_y, 1);
+        }
+        else
+        {
+            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
+            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
+        }
+    }
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     struct desktop_session session;
@@ -2578,98 +2710,21 @@ int main(int argc, char **argv)
                     (void)desktop_compositor_set_cursor_shape(&session.compositor, session.current_cursor_shape);
                 }
 
-                /* Dialogo de confirmacion de energia: modal, consume el evento de
-                 * click pero sigue redibujando el cursor para que no parezca
-                 * congelado mientras el dialogo esta abierto. */
-                if (shell.confirm_action != DESKTOP_CONFIRM_NONE)
+                /* Dialogo de confirmacion de energia (modal del shell): consume
+                 * el evento entero. */
+                if (shell_pointer_handle_confirm(&shell, &session, &dirty, cursor_x, cursor_y,
+                        previous_cursor_x, previous_cursor_y, left_pressed, left_was_pressed))
                 {
-                    if (left_pressed != 0 && left_was_pressed == 0)
-                    {
-                        if (sx_rect_contains_point(desktop_confirm_yes_rect(&session.gfx.info), cursor_x, cursor_y))
-                        {
-                            /* Estas llamadas no retornan si tienen exito. */
-                            if (shell.confirm_action == DESKTOP_CONFIRM_REBOOT)
-                            {
-                                (void)power_reboot();
-                            }
-                            else
-                            {
-                                (void)power_shutdown();
-                            }
-                            puts_fd(2, "desktop: power action failed\n");
-                        }
-                        shell.confirm_action = DESKTOP_CONFIRM_NONE;
-                        desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-                    }
-                    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
-                        session.current_cursor_shape != session.previous_cursor_shape)
-                    {
-                        if (session.hw_cursor_enabled)
-                        {
-                            (void)set_hw_cursor_position(&session, cursor_x, cursor_y, 1);
-                        }
-                        else
-                        {
-                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y, session.previous_cursor_shape);
-                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y, session.current_cursor_shape);
-                        }
-                    }
                     last_buttons = pressed_buttons;
                     continue;
                 }
 
-                /* Menu contextual del escritorio: consume el input mientras
-                 * esta abierto. Un click ejecuta el item o lo cierra; un click
-                 * derecho lo reubica si vuelve a caer sobre el fondo. */
-                if (shell.context_menu.open)
+                /* Menu contextual del escritorio (modal del shell): consume el
+                 * evento entero. */
+                if (shell_pointer_handle_context_menu(&shell, &session, &dirty, cursor_x, cursor_y,
+                        previous_cursor_x, previous_cursor_y, left_pressed, left_was_pressed,
+                        right_pressed, right_was_pressed, current_hover_client, taskbar_y))
                 {
-                    int hovered = desktop_context_menu_item_from_point(shell.context_menu.x, shell.context_menu.y, cursor_x, cursor_y);
-
-                    if (hovered != shell.context_menu.selected)
-                    {
-                        shell.context_menu.selected = hovered;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
-                    }
-                    if (left_pressed != 0 && left_was_pressed == 0)
-                    {
-                        shell.context_menu.open = 0;
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
-                        if (hovered >= 0)
-                        {
-                            const struct desktop_context_item *item = desktop_context_item_at(hovered);
-                            if (item != 0)
-                            {
-                                execute_context_action(&session, &dirty, item->action);
-                            }
-                        }
-                    }
-                    else if (right_pressed != 0 && right_was_pressed == 0)
-                    {
-                        desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
-                        shell.context_menu.open = 0;
-                        if (current_hover_client == 0 && cursor_y < taskbar_y)
-                        {
-                            shell.context_menu.x = cursor_x;
-                            shell.context_menu.y = cursor_y;
-                            desktop_context_menu_place(&session.gfx.info, &shell.context_menu.x, &shell.context_menu.y);
-                            shell.context_menu.selected = -1;
-                            shell.context_menu.open = 1;
-                            desktop_dirty_rect_add_context_menu(&dirty, &session.gfx.info, shell.context_menu.x, shell.context_menu.y);
-                        }
-                    }
-                    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
-                        session.current_cursor_shape != session.previous_cursor_shape)
-                    {
-                        if (session.hw_cursor_enabled)
-                        {
-                            (void)set_hw_cursor_position(&session, cursor_x, cursor_y, 1);
-                        }
-                        else
-                        {
-                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, previous_cursor_x, previous_cursor_y, session.previous_cursor_shape);
-                            desktop_dirty_rect_add_cursor(&dirty, &session.gfx.info, cursor_x, cursor_y, session.current_cursor_shape);
-                        }
-                    }
                     last_buttons = pressed_buttons;
                     continue;
                 }
