@@ -15,6 +15,7 @@
 
 static const char *k_shellapp_path = "/bin/shellapp";
 static const char *k_background_client_path = "/bin/shellui";
+static const char *k_progman_path = "/bin/progman";
 
 static int launch_overlay_client(struct desktop_session *session, const char *path, uint32_t launch_flags);
 static void resize_overlay_client_surface(
@@ -3073,6 +3074,13 @@ int main(int argc, char **argv)
     if (launch_background_client(&session) < 0)
     {
         puts_fd(2, "desktop: cliente de fondo (shellui) no arranco; uso fallback\n");
+    }
+    /* Program Manager: el launcher de la sesion (A2.4a). Por ahora convive con
+     * el chrome Win95, que se retira en A2.4c. Ventana normal, sin trato
+     * especial: si no arranca, el menu de inicio sigue estando. */
+    if (launch_overlay_client(&session, k_progman_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    {
+        puts_fd(2, "desktop: Program Manager no arranco\n");
     }
     shell_state_init(&shell);
     shell.welcome_until_ms = uptime_ms() + 3500UL;
