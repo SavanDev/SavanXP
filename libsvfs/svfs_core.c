@@ -12,12 +12,6 @@
 
 #include <string.h>
 
-/* Buffer de preservacion para grow de inodos con datos previos. En el flujo de
- * build solo los directorios crecen con contenido existente (los archivos se
- * escriben una sola vez desde vacio), y un directorio nunca supera
- * SVFS_MAX_RECORDS entradas, asi que este tope alcanza sin heap. */
-#define SVFS_PRESERVE_CAPACITY (SVFS_MAX_RECORDS * SVFS_DIR_ENTRY_SIZE)
-
 static uint32_t sectors_for(uint32_t bytes) {
     return (bytes + (SVFS_SECTOR_SIZE - 1u)) / SVFS_SECTOR_SIZE;
 }
@@ -122,6 +116,36 @@ static void set_extent_bits(struct svfs_ctx* ctx, uint32_t start_lba,
     }
 }
 
+/* Marca (value=1) o libera (value=0) los bits de todos los extents del inodo. */
+static void set_inode_extent_bits(struct svfs_ctx* ctx, const struct svfs_inode* inode, int value) {
+    for (uint32_t e = 0; e < inode->extent_count && e < SVFS_MAX_EXTENTS; ++e) {
+        set_extent_bits(ctx, inode->extents[e].start_lba, inode->extents[e].sector_count, value);
+    }
+}
+
+/* Copia los primeros `sectors` sectores logicos del inodo a la corrida que
+ * empieza en dst_lba, de a un sector (sin buffer del tamano del archivo: mover
+ * un extent no debe tener tope de tamano). El caller garantiza que la corrida
+ * destino es disjunta de los extents viejos o empieza en/antes del primero, asi
+ * que copiar hacia adelante nunca pisa un sector fuente sin leer. */
+static int copy_inode_sectors(struct svfs_ctx* ctx, const struct svfs_inode* inode,
+                              uint32_t dst_lba, uint32_t sectors) {
+    uint32_t copied = 0;
+    for (uint32_t e = 0; e < inode->extent_count && e < SVFS_MAX_EXTENTS && copied < sectors; ++e) {
+        const struct svfs_extent* extent = &inode->extents[e];
+        for (uint32_t s = 0; s < extent->sector_count && copied < sectors; ++s, ++copied) {
+            uint8_t sector[SVFS_SECTOR_SIZE];
+            if (ctx->read(ctx->cookie, extent->start_lba + s, 1, sector) != 0) {
+                return SVFS_ERR_IO;
+            }
+            if (ctx->write(ctx->cookie, dst_lba + copied, 1, sector) != 0) {
+                return SVFS_ERR_IO;
+            }
+        }
+    }
+    return SVFS_OK;
+}
+
 /* Asegura que el inodo tenga capacidad para `required_size` bytes. Si hace
  * falta crecer, reubica el contenido existente a una unica corrida contigua
  * nueva (modelo de extent unico), preservando los bytes previos. */
@@ -134,25 +158,42 @@ static int ensure_capacity(struct svfs_ctx* ctx, uint32_t inode_id, uint32_t req
         return SVFS_OK;
     }
 
-    uint32_t required_sectors = sectors_for(required_size);
+    const uint32_t required_sectors = sectors_for(required_size);
+    const uint32_t old_sectors = svfs_inode_capacity_sectors(inode);
 
-    uint8_t preserve[SVFS_PRESERVE_CAPACITY];
-    if (inode->size > sizeof(preserve)) {
+    /* Con un solo extent (lo unico que este core produce) los bloques propios se
+     * liberan ANTES de buscar, para que un archivo que crece pueda reusar su
+     * propia corrida --extendiendola, o absorbiendo el hueco que la precede-- en
+     * vez de mudarse siempre a sectores virgenes dejando el suyo como agujero.
+     * Sin esto cada rebuild que agranda binarios fragmenta la imagen preservada
+     * entre builds hasta que no queda corrida contigua con espacio libre de
+     * sobra. Con mas de un extent (imagen ajena) se busca primero: eso garantiza
+     * que la corrida nueva no solape ninguna vieja. */
+    const int reuse_own_blocks = (inode->extent_count <= 1);
+    if (reuse_own_blocks) {
+        set_inode_extent_bits(ctx, inode, 0);
+    }
+
+    const uint32_t start = find_free_run(ctx, required_sectors);
+    if (start == 0) {
+        if (reuse_own_blocks) {
+            set_inode_extent_bits(ctx, inode, 1); /* deja el bitmap como estaba */
+        }
         return SVFS_ERR_NO_SPACE;
     }
-    uint32_t preserved = 0;
-    int rc = read_inode_bytes(ctx, inode, preserve, sizeof(preserve), &preserved);
+
+    /* find_free_run devuelve la primera corrida libre suficientemente larga: o es
+     * disjunta del extent viejo, o lo contiene empezando en/antes de su inicio
+     * (los sectores previos al inicio de la corrida estan ocupados, y el extent
+     * viejo entero quedo libre). Nunca empieza adentro del extent viejo, asi que
+     * la copia hacia adelante es segura incluso solapando. */
+    int rc = copy_inode_sectors(ctx, inode, start, old_sectors);
     if (rc != SVFS_OK) {
         return rc;
     }
 
-    uint32_t start = find_free_run(ctx, required_sectors);
-    if (start == 0) {
-        return SVFS_ERR_NO_SPACE;
-    }
-
-    for (uint32_t e = 0; e < inode->extent_count && e < SVFS_MAX_EXTENTS; ++e) {
-        set_extent_bits(ctx, inode->extents[e].start_lba, inode->extents[e].sector_count, 0);
+    if (!reuse_own_blocks) {
+        set_inode_extent_bits(ctx, inode, 0);
     }
     set_extent_bits(ctx, start, required_sectors, 1);
 
@@ -164,9 +205,10 @@ static int ensure_capacity(struct svfs_ctx* ctx, uint32_t inode_id, uint32_t req
         inode->extents[e].sector_count = 0;
     }
 
-    /* size se mantiene en el valor previo; write_inode_bytes lo re-fija al
-     * preservado, y el caller lo actualiza al escribir el contenido nuevo. */
-    return write_inode_bytes(ctx, inode_id, preserve, preserved);
+    /* size se mantiene en el valor previo (el contenido copiado); el caller lo
+     * actualiza al escribir el contenido nuevo con write_inode_bytes, que zero-
+     * rellena los sectores restantes de la corrida nueva. */
+    return SVFS_OK;
 }
 
 /* --- Directorios y resolucion de rutas ----------------------------------- */

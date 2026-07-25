@@ -16,6 +16,9 @@
  *           mkdir <ruta_relativa>
  *           file  <ruta_relativa>\t<archivo_host>
  *       Las rutas son relativas a la raiz de SVFS (sin prefijo /disk).
+ *
+ * Codigos de salida: 0 ok, 1 error, 2 uso incorrecto, 3 el allocator se quedo
+ * sin corrida contigua (ver SVFS_CLI_EXIT_NO_SPACE).
  */
 #define _FILE_OFFSET_BITS 64
 #define _CRT_SECURE_NO_WARNINGS 1 /* fopen/strtol: UCRT los marca "inseguros" */
@@ -25,6 +28,12 @@
 #include <string.h>
 
 #include "svfs_core.h"
+
+/* Codigo de salida propio para SVFS_ERR_NO_SPACE: el volumen tiene espacio libre
+ * pero no una corrida contigua del tamano pedido. Se distingue del error
+ * generico (1) para que el build pueda compactar la imagen y reintentar en vez
+ * de abortar; ver Invoke-SvfsApply en tools/UserAppCommon.ps1. */
+#define SVFS_CLI_EXIT_NO_SPACE 3
 
 /* --- Backend de bloque sobre un FILE* ------------------------------------ */
 
@@ -68,6 +77,11 @@ static const char* svfs_strerror(int rc) {
         case SVFS_ERR_TOO_LONG: return "nombre/ruta demasiado largo";
         default: return "error desconocido";
     }
+}
+
+/* Traduce un codigo del core al codigo de salida del proceso. */
+static int exit_code_for(int rc) {
+    return rc == SVFS_ERR_NO_SPACE ? SVFS_CLI_EXIT_NO_SPACE : 1;
 }
 
 /* Crea (o trunca) una imagen de total_sectors * 512 bytes rellena de ceros. */
@@ -204,7 +218,7 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
             rc = svfs_mkdir_p(&ctx, rest);
             if (rc != SVFS_OK) {
                 fprintf(stderr, "svfs-cli: mkdir '%s' fallo: %s.\n", rest, svfs_strerror(rc));
-                status = 1;
+                status = exit_code_for(rc);
                 break;
             }
         } else if (strcmp(op, "file") == 0) {
@@ -228,7 +242,7 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
             free(data);
             if (rc != SVFS_OK) {
                 fprintf(stderr, "svfs-cli: file '%s' fallo: %s.\n", relpath, svfs_strerror(rc));
-                status = 1;
+                status = exit_code_for(rc);
                 break;
             }
         } else {
@@ -246,7 +260,7 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
         rc = svfs_flush(&ctx);
         if (rc != SVFS_OK) {
             fprintf(stderr, "svfs-cli: fallo al persistir: %s.\n", svfs_strerror(rc));
-            status = 1;
+            status = exit_code_for(rc);
         }
     }
     fclose(image);

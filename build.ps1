@@ -451,12 +451,13 @@ function Build-SvfsDiskImage([string]$SourceRoot, [string]$OutputPath) {
     $snapshot = Get-SvfsPersistenceSnapshot $before $Script:SvfsPersistentPaths
 
     # Sync: mkdir + install de todo el arbol en una sola pasada del tool. Es
-    # aditivo (no borra): reconcilia el arbol preservando lo persistente.
+    # aditivo (no borra): reconcilia el arbol preservando lo persistente. Si la
+    # imagen preservada se fragmento hasta no tener corrida contigua libre,
+    # Invoke-SvfsApply la compacta (preservando lo que no produce esta build) y
+    # reintenta, avisando en el output.
     $manifest = New-SvfsManifest -SourceRoot $SourceRoot
-    & $exe apply $OutputPath $manifest
-    if ($LASTEXITCODE -ne 0) {
-        throw "svfs-cli apply fallo para '$OutputPath'."
-    }
+    Invoke-SvfsApply -Exe $exe -ImagePath $OutputPath -ManifestPath $manifest `
+        -FailureMessage "svfs-cli apply fallo para '$OutputPath'."
 
     # Validacion de solo lectura: el tool ya persistio, PS no reescribe.
     $after = Open-SvfsImage $OutputPath
