@@ -792,9 +792,18 @@ static int recover_compositor(struct desktop_session *session)
     return 0;
 }
 
+/* Devuelve 1 si el evento se entrego. Con el pipe lleno el write no bloquea
+ * (extremo no-bloqueante) y el evento se DESCARTA: preferimos perder input de un
+ * cliente que no drena antes que congelar la sesion. Es seguro para el puntero,
+ * que lleva posicion absoluta -- el proximo evento corrige --, y aceptable para
+ * el teclado, que se recupera solo en cuanto el cliente vuelve a leer. */
 static int route_packet(int fd, const void *packet, size_t size)
 {
-    return fd >= 0 && write(fd, packet, size) == (long)size;
+    if (fd < 0)
+    {
+        return 0;
+    }
+    return write(fd, packet, size) == (long)size;
 }
 
 /* Deliver the pointer to a client in its own surface-local coordinates, so the
@@ -1356,8 +1365,16 @@ static int start_client_process(struct desktop_client *client, const char *path)
     {
         goto fail;
     }
+    /* Los extremos de ESCRITURA de teclado y mouse tambien van en no-bloqueante:
+     * el WM no puede quedar bloqueado por un cliente que no drena su input. Pasa
+     * de verdad al lanzar una app -- raise_overlay la hace activa al instante,
+     * pero tarda en empezar a leer (carga de disco, gfx_open copiando la
+     * superficie), y mientras tanto cada movimiento del mouse va a su pipe. Con
+     * writes bloqueantes, el pipe se llena y se congela la sesion entera. */
     if (fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        fcntl(cursor_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
+        fcntl(cursor_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        fcntl(input_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        fcntl(mouse_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
     {
         goto fail;
     }
@@ -2106,6 +2123,16 @@ static int desktop_selftest(void)
         return 1;
     }
 
+    /* Segunda instancia: progman ya arranca con la sesion (A2.4a), asi que
+     * abrirlo de nuevo desde el launcher es un caso real. Cubrirlo aca porque
+     * una sola instancia no ejercita el camino de dos clientes iguales. */
+    if (launch_overlay_client(&session, "/bin/progman", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL launch segunda instancia de progman\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+
     if (desktop_compositor_get_timeline(&session.compositor, &timeline) == 0)
     {
         baseline_retired = timeline.retired_sequence;
@@ -2138,11 +2165,31 @@ static int desktop_selftest(void)
             failed = 1;
             break;
         }
-        if (service_client_batches(&session, &dirty, &session.overlay_clients[kProgmanSlot]) < 0)
+        /* Servir TODOS los overlays, como hace el windowd real: con un solo
+         * cliente atendido, cualquier otro se quedaria esperando su composicion
+         * y el escenario de dos instancias no se ejercitaria de verdad. */
         {
-            puts_fd(2, "DESKTOP SMOKE FAIL servicing progman\n");
-            failed = 1;
-            break;
+            int overlay_slot;
+            int overlay_failed = 0;
+
+            for (overlay_slot = 0; overlay_slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++overlay_slot)
+            {
+                if (overlay_slot == kSlot)
+                {
+                    continue; /* ya servido arriba */
+                }
+                if (service_client_batches(&session, &dirty, &session.overlay_clients[overlay_slot]) < 0)
+                {
+                    overlay_failed = 1;
+                    break;
+                }
+            }
+            if (overlay_failed)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL servicing overlay clients\n");
+                failed = 1;
+                break;
+            }
         }
 
         /*
@@ -2266,6 +2313,33 @@ static int desktop_selftest(void)
 
     (void)sync_pending_present(&session, 1, 0);
 
+    /* Subtest de contrapresion de input: el WM no debe bloquearse nunca por un
+     * cliente que no drena. shellui sirve de cliente "sordo" -- nunca abre su
+     * pipe de puntero --, asi que le bombardeamos eventos hasta llenar el pipe y
+     * verificamos que el write FALLA en vez de bloquear. Sin los extremos de
+     * escritura en no-bloqueante esto congelaba windowd, y con el toda la
+     * sesion: es la regresion que colgaba el escritorio al lanzar una app
+     * mientras se movia el mouse. */
+    if (!failed)
+    {
+        int dropped = 0;
+        int index;
+
+        for (index = 0; index < 65536; ++index)
+        {
+            if (!route_pointer(&session.background_client, 10 + (index & 31), 10, 0))
+            {
+                dropped = 1;
+                break;
+            }
+        }
+        if (!dropped)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL contrapresion: el pipe de input nunca se lleno\n");
+            failed = 1;
+        }
+    }
+
     /* Subtest Task List (A2.4b): sin taskbar, es la unica via de vuelta para una
      * ventana minimizada. Minimizamos, verificamos que sigue enumerada, pintamos
      * un frame con el dialogo abierto (ejercita la capa TASKLIST del compositor)
@@ -2353,6 +2427,11 @@ static int desktop_selftest(void)
     if (!failed && session.overlay_clients[kProgmanSlot].consumed_submit_sequence < 1)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL progman never composited\n");
+        failed = 1;
+    }
+    if (!failed && session.overlay_clients[kProgmanSlot + 1].consumed_submit_sequence < 1)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL segunda instancia de progman never composited\n");
         failed = 1;
     }
     if (!failed)

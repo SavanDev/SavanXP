@@ -2058,8 +2058,18 @@ int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
             return static_cast<int>(written);
         }
         case process::HandleKind::pipe: {
+            const bool nonblocking = (file->open_flags & process::open_nonblock) != 0;
+            /* No-bloqueante y el registro no entra entero: EAGAIN sin escribir
+             * nada. Escribir la parte que cabe desincronizaria al lector, que
+             * lee registros de tamano fijo, asi que para lo que entra en el pipe
+             * la escritura es atomica (semantica POSIX hasta PIPE_BUF). */
+            if (nonblocking && file->pipe != nullptr && count <= kPipeCapacity &&
+                file->pipe->reader_refs != 0 &&
+                (kPipeCapacity - file->pipe->size) < count) {
+                return negative_error(SAVANXP_EAGAIN);
+            }
             const int step = pipe_write_chunk(proc, *file->pipe, user_buffer, count, 0);
-            if (step == kBlockedResult && (file->open_flags & process::open_nonblock) != 0) {
+            if (step == kBlockedResult && nonblocking) {
                 return negative_error(SAVANXP_EAGAIN);
             }
             if (step == kBlockedResult) {
@@ -2075,6 +2085,12 @@ int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
             }
 
             if (static_cast<size_t>(step) == count) {
+                return step;
+            }
+            /* Un fd no-bloqueante nunca debe quedar en blocked_write: se informa
+             * lo escrito y el llamador decide. (Con el chequeo atomico de arriba
+             * esto solo alcanza a writes mas grandes que el pipe entero.) */
+            if (nonblocking) {
                 return step;
             }
 
