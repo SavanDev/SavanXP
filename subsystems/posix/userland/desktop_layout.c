@@ -710,6 +710,149 @@ int desktop_power_button_from_point(const struct savanxp_fb_info *info, int x, i
     return -1;
 }
 
+int desktop_tasklist_visible_count(int task_count)
+{
+    if (task_count <= 0)
+    {
+        return 0;
+    }
+    return task_count < DESKTOP_TASKLIST_MAX_VISIBLE ? task_count : DESKTOP_TASKLIST_MAX_VISIBLE;
+}
+
+int desktop_tasklist_first_visible(int task_count, int selected)
+{
+    int visible = desktop_tasklist_visible_count(task_count);
+    int first;
+
+    if (visible <= 0 || task_count <= visible)
+    {
+        return 0;
+    }
+    /* Ventana deslizante minima que mantiene visible al seleccionado. */
+    first = selected - visible + 1;
+    if (first < 0)
+    {
+        first = 0;
+    }
+    if (first > task_count - visible)
+    {
+        first = task_count - visible;
+    }
+    return first;
+}
+
+static int tasklist_list_height(int task_count)
+{
+    int visible = desktop_tasklist_visible_count(task_count);
+
+    /* Con la lista vacia se reserva una fila para el texto de "sin ventanas". */
+    return (visible > 0 ? visible : 1) * DESKTOP_TASKLIST_ITEM_HEIGHT;
+}
+
+struct sx_rect desktop_tasklist_rect(const struct savanxp_fb_info *info, int task_count)
+{
+    const int width = DESKTOP_TASKLIST_WIDTH;
+    int height;
+
+    if (info == 0)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    height = DESKTOP_TASKLIST_TITLE_HEIGHT +
+        DESKTOP_TASKLIST_PADDING +
+        tasklist_list_height(task_count) +
+        DESKTOP_TASKLIST_PADDING +
+        DESKTOP_TASKLIST_BUTTON_HEIGHT +
+        DESKTOP_TASKLIST_PADDING;
+
+    return sx_rect_make(
+        ((int)info->width - width) / 2,
+        ((int)info->height - height) / 2,
+        width,
+        height);
+}
+
+struct sx_rect desktop_tasklist_list_rect(const struct savanxp_fb_info *info, int task_count)
+{
+    struct sx_rect dialog = desktop_tasklist_rect(info, task_count);
+
+    if (dialog.width <= 0)
+    {
+        return dialog;
+    }
+    return sx_rect_make(
+        dialog.x + DESKTOP_TASKLIST_PADDING,
+        dialog.y + DESKTOP_TASKLIST_TITLE_HEIGHT + DESKTOP_TASKLIST_PADDING,
+        dialog.width - (2 * DESKTOP_TASKLIST_PADDING),
+        tasklist_list_height(task_count));
+}
+
+struct sx_rect desktop_tasklist_item_rect(const struct savanxp_fb_info *info, int task_count, int visible_index)
+{
+    struct sx_rect list = desktop_tasklist_list_rect(info, task_count);
+
+    if (list.width <= 0 || visible_index < 0 || visible_index >= desktop_tasklist_visible_count(task_count))
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_make(
+        list.x,
+        list.y + (visible_index * DESKTOP_TASKLIST_ITEM_HEIGHT),
+        list.width,
+        DESKTOP_TASKLIST_ITEM_HEIGHT);
+}
+
+int desktop_tasklist_item_from_point(const struct savanxp_fb_info *info, int task_count, int selected, int x, int y)
+{
+    int first = desktop_tasklist_first_visible(task_count, selected);
+    int visible = desktop_tasklist_visible_count(task_count);
+    int index;
+
+    for (index = 0; index < visible; ++index)
+    {
+        if (sx_rect_contains_point(desktop_tasklist_item_rect(info, task_count, index), x, y))
+        {
+            return first + index;
+        }
+    }
+    return -1;
+}
+
+struct sx_rect desktop_tasklist_button_rect(const struct savanxp_fb_info *info, int task_count, int button_index)
+{
+    struct sx_rect dialog = desktop_tasklist_rect(info, task_count);
+    int total;
+    int start_x;
+
+    if (dialog.width <= 0 || button_index < 0 || button_index >= DESKTOP_TASKLIST_BUTTON_COUNT)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    total = (DESKTOP_TASKLIST_BUTTON_COUNT * DESKTOP_TASKLIST_BUTTON_WIDTH) +
+        ((DESKTOP_TASKLIST_BUTTON_COUNT - 1) * DESKTOP_TASKLIST_BUTTON_GAP);
+    start_x = dialog.x + ((dialog.width - total) / 2);
+
+    return sx_rect_make(
+        start_x + (button_index * (DESKTOP_TASKLIST_BUTTON_WIDTH + DESKTOP_TASKLIST_BUTTON_GAP)),
+        dialog.y + dialog.height - DESKTOP_TASKLIST_PADDING - DESKTOP_TASKLIST_BUTTON_HEIGHT,
+        DESKTOP_TASKLIST_BUTTON_WIDTH,
+        DESKTOP_TASKLIST_BUTTON_HEIGHT);
+}
+
+int desktop_tasklist_button_from_point(const struct savanxp_fb_info *info, int task_count, int x, int y)
+{
+    int index;
+
+    for (index = 0; index < DESKTOP_TASKLIST_BUTTON_COUNT; ++index)
+    {
+        if (sx_rect_contains_point(desktop_tasklist_button_rect(info, task_count, index), x, y))
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
 struct sx_rect desktop_confirm_dialog_rect(const struct savanxp_fb_info *info)
 {
     const int width = 300;

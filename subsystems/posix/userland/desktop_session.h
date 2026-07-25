@@ -69,6 +69,14 @@ struct desktop_session
     int hw_cursor_enabled;
     int current_cursor_shape;
     int previous_cursor_shape;
+    /* Task List (Ctrl+Esc): estado de UI del WM, no del chrome del shell. El
+     * evento de teclado no trae modificadores, asi que windowd sigue el estado
+     * de Ctrl con los KEY_DOWN/KEY_UP de SAVANXP_KEY_CTRL. */
+    int tasklist_open;
+    int tasklist_selected;
+    int tasklist_last_click_index;
+    unsigned long tasklist_last_click_ms;
+    int ctrl_down;
     int active_client_kind;
     int active_overlay_slot;
     int fullscreen_slot;

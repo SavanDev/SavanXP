@@ -937,6 +937,9 @@ enum desktop_layer_kind
     DESKTOP_LAYER_MENU,
     DESKTOP_LAYER_CONFIRM,
     DESKTOP_LAYER_CONTEXT_MENU,
+    /* UI del WM (Ctrl+Esc), por encima del chrome del shell: es un conmutador
+     * de ventanas, tiene que quedar sobre todo salvo el cursor. */
+    DESKTOP_LAYER_TASKLIST,
     DESKTOP_LAYER_CURSOR,
 };
 
@@ -948,9 +951,10 @@ struct desktop_layer
     const struct desktop_client *client;
 };
 
-/* +8 no-overlay: background client + background(iconos) + shell_client +
- * taskbar + cursor, mas hasta 3 de {welcome, menu, confirm, context}. */
-#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 8)
+/* Tope de capas no-overlay simultaneas: background client, background(iconos),
+ * shell_client, taskbar, welcome, menu, confirm, context menu, tasklist y
+ * cursor = 10; +11 deja margen. */
+#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 11)
 
 static int client_is_drawable(const struct desktop_client *client)
 {
@@ -960,6 +964,99 @@ static int client_is_drawable(const struct desktop_client *client)
 static struct sx_rect client_occluder_rect(const struct desktop_client *client)
 {
     return client->frame_visible ? desktop_client_frame_rect(client) : desktop_client_surface_rect(client);
+}
+
+/* Task List (Ctrl+Esc): lista las ventanas abiertas -- incluidas las
+ * minimizadas, que sin taskbar no tendrian otra via de vuelta -- con Switch To
+ * / End Task, como el Task List de NT 3.5. */
+static void draw_tasklist(struct sx_painter *painter, struct desktop_session *session)
+{
+    static const char *k_button_labels[DESKTOP_TASKLIST_BUTTON_COUNT] = {"Switch To", "End Task", "Cancel"};
+    const struct savanxp_fb_info *info = &session->gfx.info;
+    int task_count = desktop_taskbar_button_count(session);
+    struct sx_rect dialog = desktop_tasklist_rect(info, task_count);
+    struct sx_rect list = desktop_tasklist_list_rect(info, task_count);
+    int first = desktop_tasklist_first_visible(task_count, session->tasklist_selected);
+    int visible = desktop_tasklist_visible_count(task_count);
+    int index;
+
+    sx_painter_fill_rect(painter, dialog, gfx_rgb(198, 202, 208));
+    draw_button(painter, dialog, gfx_rgb(198, 202, 208), 0);
+
+    sx_painter_fill_rect(
+        painter,
+        sx_rect_make(dialog.x + 3, dialog.y + 3, dialog.width - 6, DESKTOP_TASKLIST_TITLE_HEIGHT - 4),
+        gfx_rgb(40, 76, 140));
+    sx_painter_draw_text(
+        painter,
+        dialog.x + 9,
+        dialog.y + 3 + ((DESKTOP_TASKLIST_TITLE_HEIGHT - 4 - gfx_text_height()) / 2),
+        "Task List",
+        gfx_rgb(255, 255, 255));
+
+    draw_inset_box(painter, list, gfx_rgb(255, 255, 255));
+    if (task_count == 0)
+    {
+        sx_painter_draw_text(painter, list.x + 6, list.y + 3, "(sin ventanas abiertas)", gfx_rgb(112, 116, 122));
+    }
+
+    for (index = 0; index < visible; ++index)
+    {
+        int task_index = first + index;
+        int is_shell = 0;
+        int slot = -1;
+        const struct desktop_client *client = desktop_taskbar_button_client(session, task_index, &is_shell, &slot);
+        struct sx_rect row = desktop_tasklist_item_rect(info, task_count, index);
+        const struct desktop_menu_item *item = 0;
+        const char *label = "Ventana";
+        int selected = (task_index == session->tasklist_selected);
+
+        if (client == 0 || sx_rect_is_empty(row))
+        {
+            continue;
+        }
+        item = desktop_find_menu_item_by_path(client->path);
+        label = item != 0 ? item->label : window_title_for_client(client);
+
+        if (selected)
+        {
+            sx_painter_fill_rect(painter, row, gfx_rgb(0, 0, 128));
+        }
+        if (sx_painter_push_clip(painter, row))
+        {
+            sx_painter_draw_text(
+                painter,
+                row.x + 5,
+                row.y + ((row.height - gfx_text_height()) / 2),
+                label,
+                selected ? gfx_rgb(255, 255, 255) : gfx_rgb(16, 20, 24));
+            /* Marca las minimizadas: son las que sin taskbar quedarian perdidas. */
+            if (client->minimized)
+            {
+                sx_painter_draw_text(
+                    painter,
+                    row.x + row.width - gfx_text_width("(minimizada)") - 6,
+                    row.y + ((row.height - gfx_text_height()) / 2),
+                    "(minimizada)",
+                    selected ? gfx_rgb(198, 208, 226) : gfx_rgb(112, 116, 122));
+            }
+            sx_painter_pop_clip(painter);
+        }
+    }
+
+    for (index = 0; index < DESKTOP_TASKLIST_BUTTON_COUNT; ++index)
+    {
+        struct sx_rect rect = desktop_tasklist_button_rect(info, task_count, index);
+        int label_width = gfx_text_width(k_button_labels[index]);
+
+        draw_button(painter, rect, gfx_rgb(198, 202, 208), 0);
+        sx_painter_draw_text(
+            painter,
+            rect.x + ((rect.width - label_width) / 2),
+            rect.y + ((rect.height - gfx_text_height()) / 2),
+            k_button_labels[index],
+            gfx_rgb(16, 20, 24));
+    }
 }
 
 /* Capas del WM: superficies de clientes y el cursor. Las compone el compositor
@@ -975,6 +1072,9 @@ static void wm_paint_layer(
     {
     case DESKTOP_LAYER_CLIENT:
         draw_client(painter, layer->client);
+        break;
+    case DESKTOP_LAYER_TASKLIST:
+        draw_tasklist(painter, session);
         break;
     case DESKTOP_LAYER_CURSOR:
         draw_cursor(painter, session->current_cursor_shape, cursor_x, cursor_y);
@@ -1035,6 +1135,7 @@ static void paint_layer(
     {
     case DESKTOP_LAYER_CLIENT:
     case DESKTOP_LAYER_CURSOR:
+    case DESKTOP_LAYER_TASKLIST:
         wm_paint_layer(painter, session, layer, cursor_x, cursor_y);
         break;
     default:
@@ -1103,6 +1204,16 @@ static int build_layers(
             layers[count].opaque = 1;
             layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
             layers[count].client = fullscreen_client;
+            ++count;
+        }
+        /* Tambien en fullscreen: si no, Ctrl+Esc abriria un Task List invisible
+         * y no habria forma de salir de una app a pantalla completa. */
+        if (session->tasklist_open)
+        {
+            layers[count].kind = DESKTOP_LAYER_TASKLIST;
+            layers[count].opaque = 1;
+            layers[count].bounds = desktop_tasklist_rect(info, desktop_taskbar_button_count(session));
+            layers[count].client = 0;
             ++count;
         }
         if (!session->hw_cursor_enabled)
@@ -1183,6 +1294,16 @@ static int build_layers(
         layers[count].kind = DESKTOP_LAYER_CONTEXT_MENU;
         layers[count].opaque = 1;
         layers[count].bounds = desktop_context_menu_rect(shell->context_menu.x, shell->context_menu.y);
+        layers[count].client = 0;
+        ++count;
+    }
+
+    /* El Task List va sobre todo el chrome: es el conmutador de ventanas. */
+    if (session->tasklist_open)
+    {
+        layers[count].kind = DESKTOP_LAYER_TASKLIST;
+        layers[count].opaque = 1;
+        layers[count].bounds = desktop_tasklist_rect(info, desktop_taskbar_button_count(session));
         layers[count].client = 0;
         ++count;
     }

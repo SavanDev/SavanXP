@@ -18,6 +18,9 @@ static const char *k_background_client_path = "/bin/shellui";
 static const char *k_progman_path = "/bin/progman";
 
 static int launch_overlay_client(struct desktop_session *session, const char *path, uint32_t launch_flags);
+/* Definidas junto al resto del Task List, mas abajo; el selftest las usa antes. */
+static void tasklist_open(struct desktop_session *session, struct desktop_dirty_rect *dirty);
+static void tasklist_switch_to(struct desktop_session *session, struct desktop_dirty_rect *dirty, int task_index);
 static void resize_overlay_client_surface(
     struct desktop_session *session,
     struct desktop_dirty_rect *dirty,
@@ -1598,6 +1601,8 @@ static int open_compositor_session(struct desktop_session *session)
     session->active_overlay_slot = -1;
     session->fullscreen_slot = -1;
     session->overlay_count = 0;
+    /* -1 y no 0: con 0 el primer click sobre la fila 0 pareceria doble click. */
+    session->tasklist_last_click_index = -1;
     reset_client(&session->background_client);
     reset_client(&session->shell_client);
     for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
@@ -2261,6 +2266,64 @@ static int desktop_selftest(void)
 
     (void)sync_pending_present(&session, 1, 0);
 
+    /* Subtest Task List (A2.4b): sin taskbar, es la unica via de vuelta para una
+     * ventana minimizada. Minimizamos, verificamos que sigue enumerada, pintamos
+     * un frame con el dialogo abierto (ejercita la capa TASKLIST del compositor)
+     * y comprobamos que Switch To la restaura y cierra el dialogo. */
+    if (!failed)
+    {
+        struct desktop_client *client = &session.overlay_clients[kSlot];
+        int task_index = -1;
+        int index;
+
+        minimize_overlay_client(&session, &dirty, kSlot);
+        if (!client->minimized)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL tasklist: minimize no aplico\n");
+            failed = 1;
+        }
+
+        if (!failed)
+        {
+            tasklist_open(&session, &dirty);
+            for (index = 0; index < desktop_taskbar_button_count(&session); ++index)
+            {
+                int is_shell = 0;
+                int slot = -1;
+
+                if (desktop_taskbar_button_client(&session, index, &is_shell, &slot) != 0 && slot == kSlot)
+                {
+                    task_index = index;
+                    break;
+                }
+            }
+            if (task_index < 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL tasklist: ventana minimizada ausente de la lista\n");
+                failed = 1;
+            }
+        }
+
+        if (!failed)
+        {
+            session.tasklist_selected = task_index;
+            desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+            desktop_draw_desktop(&session, kCursorX, kCursorY, &(struct shell_state){ .selected_shortcut = -1 }, &dirty);
+
+            tasklist_switch_to(&session, &dirty, task_index);
+            if (client->minimized)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL tasklist: Switch To no restauro la ventana\n");
+                failed = 1;
+            }
+            else if (session.tasklist_open)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL tasklist: el dialogo quedo abierto tras Switch To\n");
+                failed = 1;
+            }
+        }
+    }
+
     if (!failed && frames_presented < kTargetFrames)
     {
         printf("DESKTOP SMOKE FAIL insufficient presented frames=%d iters=%d batches=%u\n",
@@ -2338,6 +2401,90 @@ static int add_client_submit_pollfd(
     return poll_count + 1;
 }
 
+/* --- Task List (Ctrl+Esc) ------------------------------------------------
+ *
+ * Conmutador de ventanas del WM, estilo NT 3.5. Reemplaza las dos funciones que
+ * daba el taskbar: restaurar una ventana minimizada y cambiar entre ventanas.
+ * Enumera la misma lista que el taskbar (shell + overlays en z-order, incluidas
+ * las minimizadas) via desktop_taskbar_button_*.
+ */
+
+static void tasklist_close(struct desktop_session *session, struct desktop_dirty_rect *dirty)
+{
+    if (!session->tasklist_open)
+    {
+        return;
+    }
+    session->tasklist_open = 0;
+    /* El dialogo desaparece: hay que repintar lo que tapaba. */
+    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+}
+
+static void tasklist_open(struct desktop_session *session, struct desktop_dirty_rect *dirty)
+{
+    int count = desktop_taskbar_button_count(session);
+
+    session->tasklist_open = 1;
+    if (session->tasklist_selected < 0 || session->tasklist_selected >= count)
+    {
+        session->tasklist_selected = 0;
+    }
+    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+}
+
+/* Trae al frente la tarea seleccionada, restaurandola si estaba minimizada. */
+static void tasklist_switch_to(struct desktop_session *session, struct desktop_dirty_rect *dirty, int task_index)
+{
+    int is_shell = 0;
+    int slot = -1;
+    const struct desktop_client *client = desktop_taskbar_button_client(session, task_index, &is_shell, &slot);
+
+    if (client == 0)
+    {
+        return;
+    }
+    tasklist_close(session, dirty);
+    if (is_shell)
+    {
+        activate_shell(session);
+        return;
+    }
+    if (!overlay_slot_valid(slot))
+    {
+        return;
+    }
+    if (session->overlay_clients[slot].minimized)
+    {
+        restore_overlay_client(session, dirty, slot);
+    }
+    raise_overlay(session, slot);
+    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+}
+
+/* End Task solo aplica a overlays: el shell_client se relanza solo, asi que
+ * "terminarlo" desde aca no tendria efecto observable. */
+static void tasklist_end_task(struct desktop_session *session, struct desktop_dirty_rect *dirty, int task_index)
+{
+    int is_shell = 0;
+    int slot = -1;
+    const struct desktop_client *client = desktop_taskbar_button_client(session, task_index, &is_shell, &slot);
+
+    if (client == 0 || is_shell || !overlay_slot_valid(slot))
+    {
+        return;
+    }
+    destroy_overlay_client(session, slot, 1);
+    if (session->tasklist_selected >= desktop_taskbar_button_count(session))
+    {
+        session->tasklist_selected = desktop_taskbar_button_count(session) - 1;
+    }
+    if (session->tasklist_selected < 0)
+    {
+        session->tasklist_selected = 0;
+    }
+    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+}
+
 /*
  * Arbitracion de teclado (Fase A del boundary WM<->shell, ver
  * docs/WM_SUBSYSTEM.md). El reparto es: shell_notify_key (side-effect global
@@ -2372,6 +2519,62 @@ static int wm_handle_key(
     const struct savanxp_input_event *key_event,
     struct desktop_dirty_rect *dirty)
 {
+    /* El evento no trae modificadores: seguimos Ctrl por sus KEY_DOWN/KEY_UP. */
+    if (key_event->key == SAVANXP_KEY_CTRL)
+    {
+        session->ctrl_down = (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN);
+        return 0;
+    }
+
+    if (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN &&
+        key_event->key == SAVANXP_KEY_ESC &&
+        session->ctrl_down)
+    {
+        if (session->tasklist_open)
+        {
+            tasklist_close(session, dirty);
+        }
+        else
+        {
+            tasklist_open(session, dirty);
+        }
+        return 1;
+    }
+
+    /* Mientras esta abierto, el Task List captura el teclado: es modal. */
+    if (session->tasklist_open)
+    {
+        int count = desktop_taskbar_button_count(session);
+
+        if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+        {
+            return 1;
+        }
+        if (key_event->key == SAVANXP_KEY_ESC)
+        {
+            tasklist_close(session, dirty);
+        }
+        else if (count > 0 && key_event->key == SAVANXP_KEY_UP)
+        {
+            session->tasklist_selected = (session->tasklist_selected + count - 1) % count;
+            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        }
+        else if (count > 0 && key_event->key == SAVANXP_KEY_DOWN)
+        {
+            session->tasklist_selected = (session->tasklist_selected + 1) % count;
+            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        }
+        else if (count > 0 && key_event->key == SAVANXP_KEY_ENTER)
+        {
+            tasklist_switch_to(session, dirty, session->tasklist_selected);
+        }
+        else if (count > 0 && key_event->key == SAVANXP_KEY_DELETE)
+        {
+            tasklist_end_task(session, dirty, session->tasklist_selected);
+        }
+        return 1;
+    }
+
     if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || key_event->key != SAVANXP_KEY_F11)
     {
         return 0;
@@ -2505,6 +2708,80 @@ static int shell_handle_key(
     }
 
     return 0;
+}
+
+/* Modal de puntero del WM: el Task List consume el evento entero mientras esta
+ * abierto, y tiene precedencia sobre los modales del shell (es UI del WM).
+ * Doble click sobre una fila equivale a Switch To. */
+static int wm_pointer_handle_tasklist(
+    struct desktop_session *session,
+    struct desktop_dirty_rect *dirty,
+    int cursor_x,
+    int cursor_y,
+    uint32_t left_pressed,
+    uint32_t left_was_pressed)
+{
+    int count;
+    int task_index;
+    int button_index;
+
+    if (!session->tasklist_open)
+    {
+        return 0;
+    }
+    if (left_pressed == 0 || left_was_pressed != 0)
+    {
+        return 1; /* Consumido igual: el dialogo es modal. */
+    }
+
+    count = desktop_taskbar_button_count(session);
+    button_index = desktop_tasklist_button_from_point(&session->gfx.info, count, cursor_x, cursor_y);
+    if (button_index >= 0)
+    {
+        if (button_index == 0)
+        {
+            tasklist_switch_to(session, dirty, session->tasklist_selected);
+        }
+        else if (button_index == 1)
+        {
+            tasklist_end_task(session, dirty, session->tasklist_selected);
+        }
+        else
+        {
+            tasklist_close(session, dirty);
+        }
+        return 1;
+    }
+
+    task_index = desktop_tasklist_item_from_point(
+        &session->gfx.info, count, session->tasklist_selected, cursor_x, cursor_y);
+    if (task_index >= 0)
+    {
+        unsigned long now = uptime_ms();
+        int double_click = (session->tasklist_last_click_index == task_index) &&
+            (now - session->tasklist_last_click_ms <= 450UL);
+
+        session->tasklist_selected = task_index;
+        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        if (double_click)
+        {
+            tasklist_switch_to(session, dirty, task_index);
+            session->tasklist_last_click_index = -1;
+        }
+        else
+        {
+            session->tasklist_last_click_index = task_index;
+            session->tasklist_last_click_ms = now;
+        }
+        return 1;
+    }
+
+    /* Click fuera del dialogo: cerrar, como cualquier modal. */
+    if (!sx_rect_contains_point(desktop_tasklist_rect(&session->gfx.info, count), cursor_x, cursor_y))
+    {
+        tasklist_close(session, dirty);
+    }
+    return 1;
 }
 
 /*
@@ -2719,6 +2996,13 @@ static void handle_pointer_event(
     if (session->current_cursor_shape != session->previous_cursor_shape && session->hw_cursor_enabled)
     {
         (void)desktop_compositor_set_cursor_shape(&session->compositor, session->current_cursor_shape);
+    }
+
+    /* Task List (modal del WM): precede a los modales del shell. */
+    if (wm_pointer_handle_tasklist(session, dirty, cursor_x, cursor_y, left_pressed, left_was_pressed))
+    {
+        last_buttons = pressed_buttons;
+        goto done;
     }
 
     /* Dialogo de confirmacion de energia (modal del shell): consume

@@ -80,6 +80,34 @@ int desktop_start_menu_footer_y(int menu_y, int menu_height);
 void desktop_start_menu_bounds(const struct savanxp_fb_info *info, int *x, int *y, int *width, int *height);
 struct sx_rect desktop_power_button_rect(const struct savanxp_fb_info *info, int index);
 int desktop_power_button_from_point(const struct savanxp_fb_info *info, int x, int y);
+/* Task List (Ctrl+Esc): dialogo del WM con las ventanas abiertas, estilo NT 3.5.
+ * Es UI del WM -- no chrome del shell --, igual que los marcos y botones de
+ * ventana: windowd es quien tiene la lista de clientes y el z-order. Reemplaza
+ * las dos funciones del taskbar (restaurar minimizadas y cambiar de ventana).
+ * Botones: 0 = Switch To, 1 = End Task, 2 = Cancel. */
+#define DESKTOP_TASKLIST_WIDTH 320
+#define DESKTOP_TASKLIST_ITEM_HEIGHT 20
+#define DESKTOP_TASKLIST_MAX_VISIBLE 8
+#define DESKTOP_TASKLIST_TITLE_HEIGHT 22
+#define DESKTOP_TASKLIST_BUTTON_HEIGHT 24
+#define DESKTOP_TASKLIST_BUTTON_WIDTH 92
+#define DESKTOP_TASKLIST_BUTTON_GAP 8
+#define DESKTOP_TASKLIST_PADDING 10
+#define DESKTOP_TASKLIST_BUTTON_COUNT 3
+
+/* Cuantos items entran a la vez, y desde cual arranca la ventana visible para
+ * que el seleccionado siempre quede a la vista. */
+int desktop_tasklist_visible_count(int task_count);
+int desktop_tasklist_first_visible(int task_count, int selected);
+struct sx_rect desktop_tasklist_rect(const struct savanxp_fb_info *info, int task_count);
+struct sx_rect desktop_tasklist_list_rect(const struct savanxp_fb_info *info, int task_count);
+/* visible_index es relativo a desktop_tasklist_first_visible(), no absoluto. */
+struct sx_rect desktop_tasklist_item_rect(const struct savanxp_fb_info *info, int task_count, int visible_index);
+/* Devuelve el indice ABSOLUTO de tarea bajo el punto, o -1. */
+int desktop_tasklist_item_from_point(const struct savanxp_fb_info *info, int task_count, int selected, int x, int y);
+struct sx_rect desktop_tasklist_button_rect(const struct savanxp_fb_info *info, int task_count, int button_index);
+int desktop_tasklist_button_from_point(const struct savanxp_fb_info *info, int task_count, int x, int y);
+
 struct sx_rect desktop_confirm_dialog_rect(const struct savanxp_fb_info *info);
 struct sx_rect desktop_confirm_yes_rect(const struct savanxp_fb_info *info);
 struct sx_rect desktop_confirm_no_rect(const struct savanxp_fb_info *info);
