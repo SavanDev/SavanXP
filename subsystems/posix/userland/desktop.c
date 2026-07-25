@@ -692,6 +692,12 @@ static int resolve_cursor_shape(
     {
         return SAVANXP_CURSOR_MOVE;
     }
+    /* Sobre el Task List siempre flecha: es un dialogo del WM, no debe heredar
+     * el cursor que pida la ventana que quedo debajo. */
+    if (session != 0 && session->tasklist_open)
+    {
+        return SAVANXP_CURSOR_ARROW;
+    }
     if (any_overlay_client_starting(session))
     {
         return SAVANXP_CURSOR_WAIT;
@@ -2789,6 +2795,34 @@ static int shell_handle_key(
     return 0;
 }
 
+/* Repinta el cursor tras mover el puntero. Todo modal que consuma el evento
+ * DEBE llamarlo: si no, el cursor se queda clavado en pantalla mientras el
+ * dialogo esta abierto y parece que el mouse no responde. */
+static void refresh_cursor_after_move(
+    struct desktop_session *session,
+    struct desktop_dirty_rect *dirty,
+    int cursor_x,
+    int cursor_y,
+    int previous_cursor_x,
+    int previous_cursor_y)
+{
+    if (previous_cursor_x == cursor_x && previous_cursor_y == cursor_y &&
+        session->current_cursor_shape == session->previous_cursor_shape)
+    {
+        return;
+    }
+
+    if (session->hw_cursor_enabled)
+    {
+        (void)set_hw_cursor_position(session, cursor_x, cursor_y, 1);
+    }
+    else
+    {
+        desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
+        desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
+    }
+}
+
 /* Modal de puntero del WM: el Task List consume el evento entero mientras esta
  * abierto, y tiene precedencia sobre los modales del shell (es UI del WM).
  * Doble click sobre una fila equivale a Switch To. */
@@ -2797,6 +2831,8 @@ static int wm_pointer_handle_tasklist(
     struct desktop_dirty_rect *dirty,
     int cursor_x,
     int cursor_y,
+    int previous_cursor_x,
+    int previous_cursor_y,
     uint32_t left_pressed,
     uint32_t left_was_pressed)
 {
@@ -2808,6 +2844,9 @@ static int wm_pointer_handle_tasklist(
     {
         return 0;
     }
+    /* Antes de cualquier salida: el dialogo consume todos los eventos, asi que
+     * si no repintamos aca el cursor se congela. */
+    refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
     if (left_pressed == 0 || left_was_pressed != 0)
     {
         return 1; /* Consumido igual: el dialogo es modal. */
@@ -2907,19 +2946,7 @@ static int shell_pointer_handle_confirm(
         shell->confirm_action = DESKTOP_CONFIRM_NONE;
         desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
-    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
-        session->current_cursor_shape != session->previous_cursor_shape)
-    {
-        if (session->hw_cursor_enabled)
-        {
-            (void)set_hw_cursor_position(session, cursor_x, cursor_y, 1);
-        }
-        else
-        {
-            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
-            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
-        }
-    }
+    refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
     return 1;
 }
 
@@ -2979,19 +3006,7 @@ static int shell_pointer_handle_context_menu(
             desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
         }
     }
-    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
-        session->current_cursor_shape != session->previous_cursor_shape)
-    {
-        if (session->hw_cursor_enabled)
-        {
-            (void)set_hw_cursor_position(session, cursor_x, cursor_y, 1);
-        }
-        else
-        {
-            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
-            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
-        }
-    }
+    refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
     return 1;
 }
 
@@ -3078,7 +3093,8 @@ static void handle_pointer_event(
     }
 
     /* Task List (modal del WM): precede a los modales del shell. */
-    if (wm_pointer_handle_tasklist(session, dirty, cursor_x, cursor_y, left_pressed, left_was_pressed))
+    if (wm_pointer_handle_tasklist(session, dirty, cursor_x, cursor_y,
+            previous_cursor_x, previous_cursor_y, left_pressed, left_was_pressed))
     {
         last_buttons = pressed_buttons;
         goto done;
