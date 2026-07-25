@@ -33,6 +33,45 @@ static struct sxgui_app g_app;
  * todo su contenido en on_paint y hace su propio hit-testing. */
 static struct sxgui_widget g_widgets[1];
 
+/* --- barra de menu -------------------------------------------------------
+ *
+ * El Program Manager real tenia las acciones de sesion en su menu File: en
+ * NT 3.5 apagar el sistema se hacia desde ahi, no desde una barra de tareas.
+ * Con el chrome Win95 retirado (A2.4c) este es el unico camino a esas acciones.
+ */
+
+enum progman_command
+{
+    PROGMAN_CMD_SHUTDOWN = 1,
+    PROGMAN_CMD_REBOOT,
+    PROGMAN_CMD_EXIT,
+    PROGMAN_CMD_ABOUT,
+};
+
+static const struct sxgui_menu_item k_file_items[] = {
+    {"Apagar...", PROGMAN_CMD_SHUTDOWN, 0},
+    {"Reiniciar...", PROGMAN_CMD_REBOOT, 0},
+    {0, 0, 0},
+    {"Salir", PROGMAN_CMD_EXIT, 0},
+};
+
+static const struct sxgui_menu_item k_help_items[] = {
+    {"Acerca de SavanXP...", PROGMAN_CMD_ABOUT, 0},
+};
+
+static const struct sxgui_menu k_menus[] = {
+    {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
+    {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
+};
+
+static struct sxgui_menubar g_menubar;
+
+/* Confirmacion modal de las acciones de energia: apagar por accidente desde un
+ * menu seria facil, asi que se pregunta igual que hacia el escritorio. */
+static struct sxgui_widget g_dialog_widgets[3];
+static struct sxgui_dialog g_dialog;
+static int g_pending_power = 0;
+
 static int g_group = 0;
 static int g_item = 0;
 static int g_last_click_item = -1;
@@ -44,6 +83,12 @@ static int group_item_count(int group_index)
 {
     const struct progman_group *group = progman_group_at(group_index);
     return group != 0 ? group->item_count : 0;
+}
+
+/* Todo el contenido propio arranca debajo de la barra de menu. */
+static int content_top(void)
+{
+    return sxgui_menubar_height();
 }
 
 static int grid_columns(void)
@@ -62,7 +107,7 @@ static struct sx_rect cell_rect(int item_index)
 
     return sx_rect_make(
         PROGMAN_GRID_MARGIN + (column * PROGMAN_CELL_WIDTH),
-        PROGMAN_TAB_HEIGHT + PROGMAN_GRID_MARGIN + (row * PROGMAN_CELL_HEIGHT),
+        content_top() + PROGMAN_TAB_HEIGHT + PROGMAN_GRID_MARGIN + (row * PROGMAN_CELL_HEIGHT),
         PROGMAN_CELL_WIDTH,
         PROGMAN_CELL_HEIGHT);
 }
@@ -79,7 +124,7 @@ static struct sx_rect group_tab_rect(int group_index)
 
         if (index == group_index)
         {
-            return sx_rect_make(x, 3, width, PROGMAN_TAB_HEIGHT - 6);
+            return sx_rect_make(x, content_top() + 3, width, PROGMAN_TAB_HEIGHT - 6);
         }
         x += width + 2;
     }
@@ -186,7 +231,7 @@ static void paint_tabs(struct sx_painter *painter)
 {
     int index;
 
-    sx_painter_fill_rect(painter, sx_rect_make(0, 0, (int)g_app.gfx.info.width, PROGMAN_TAB_HEIGHT), SXGUI_COLOR_FACE);
+    sx_painter_fill_rect(painter, sx_rect_make(0, content_top(), (int)g_app.gfx.info.width, PROGMAN_TAB_HEIGHT), SXGUI_COLOR_FACE);
     for (index = 0; index < progman_group_count(); ++index)
     {
         const struct progman_group *group = progman_group_at(index);
@@ -202,7 +247,7 @@ static void paint_tabs(struct sx_painter *painter)
         sx_painter_draw_text(painter, rect.x + 10, rect.y + ((rect.height - gfx_text_height()) / 2), group->name, SXGUI_COLOR_TEXT);
     }
     /* Linea de separacion bajo las pestanias. */
-    sx_painter_fill_rect(painter, sx_rect_make(0, PROGMAN_TAB_HEIGHT - 1, (int)g_app.gfx.info.width, 1), SXGUI_COLOR_SHADOW);
+    sx_painter_fill_rect(painter, sx_rect_make(0, content_top() + PROGMAN_TAB_HEIGHT - 1, (int)g_app.gfx.info.width, 1), SXGUI_COLOR_SHADOW);
 }
 
 static void paint_items(struct sx_painter *painter)
@@ -279,6 +324,80 @@ static void on_paint(struct sxgui_app *app)
     paint_status(painter);
 }
 
+/* --- menu ---------------------------------------------------------------- */
+
+static void on_power_confirm(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    /* Estas llamadas no retornan si tienen exito. */
+    if (g_pending_power == PROGMAN_CMD_SHUTDOWN)
+    {
+        (void)power_shutdown();
+    }
+    else if (g_pending_power == PROGMAN_CMD_REBOOT)
+    {
+        (void)power_reboot();
+    }
+    snprintf(g_status, sizeof(g_status), "La accion de energia fallo");
+}
+
+static void on_power_cancel(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 0);
+}
+
+static void ask_power_confirmation(int command)
+{
+    const char *question = (command == PROGMAN_CMD_REBOOT)
+        ? "Reiniciar SavanXP?"
+        : "Apagar SavanXP?";
+
+    g_pending_power = command;
+    g_dialog_widgets[0] = sxgui_label(sx_rect_make(16, 14, 220, 16), question);
+    g_dialog_widgets[1] = sxgui_button(sx_rect_make(30, 48, 80, 26), "Si", on_power_confirm, 0);
+    g_dialog_widgets[2] = sxgui_button(sx_rect_make(126, 48, 80, 26), "No", on_power_cancel, 0);
+
+    memset(&g_dialog, 0, sizeof(g_dialog));
+    g_dialog.title = (command == PROGMAN_CMD_REBOOT) ? "Reiniciar" : "Apagar";
+    g_dialog.widgets = g_dialog_widgets;
+    g_dialog.widget_count = 3;
+    sxgui_dialog_begin(&g_app.ui, &g_dialog, 240, 92);
+}
+
+static void on_menu_command(int id, void *user)
+{
+    (void)user;
+    switch (id)
+    {
+    case PROGMAN_CMD_SHUTDOWN:
+    case PROGMAN_CMD_REBOOT:
+        ask_power_confirmation(id);
+        break;
+    case PROGMAN_CMD_EXIT:
+        sxgui_app_quit(&g_app, 0);
+        break;
+    case PROGMAN_CMD_ABOUT:
+        if (gfx_desktop_launch_ex(&g_app.gfx, "/bin/aboutapp", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+        {
+            snprintf(g_status, sizeof(g_status), "No se pudo lanzar /bin/aboutapp");
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* El chrome del toolkit (barra de menu, menu desplegado, dialogo modal) tiene
+ * prioridad sobre el hit-testing propio: si es suyo, no consumimos el evento. */
+static int toolkit_owns_input(void)
+{
+    return sxgui_dialog_active(&g_app.ui) || g_menubar.open_menu >= 0;
+}
+
 /* --- input --------------------------------------------------------------- */
 
 static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event)
@@ -287,7 +406,7 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
     int columns = grid_columns();
 
     (void)app;
-    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || toolkit_owns_input())
     {
         return 0;
     }
@@ -346,6 +465,12 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
     int changed = 0;
 
     (void)app;
+    /* Ceder a la barra de menu / menu abierto / dialogo modal. */
+    if (toolkit_owns_input() || event->y < content_top())
+    {
+        g_last_buttons = event->buttons;
+        return 0;
+    }
     /* Solo la transicion suelto->apretado cuenta como click. */
     if (left != 0 && left_was == 0)
     {
@@ -438,6 +563,12 @@ int main(int argc, char **argv)
     {
         return 1;
     }
+    g_menubar.menus = k_menus;
+    g_menubar.menu_count = (int)(sizeof(k_menus) / sizeof(k_menus[0]));
+    g_menubar.on_command = on_menu_command;
+    g_menubar.user = 0;
+    sxgui_set_menubar(&g_app.ui, &g_menubar);
+
     g_app.on_key = on_key;
     g_app.on_pointer = on_pointer;
     g_app.on_paint = on_paint;

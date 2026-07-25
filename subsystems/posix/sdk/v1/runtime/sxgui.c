@@ -1270,7 +1270,7 @@ static void sxgui_paint_dialog(struct sxgui_context *ctx)
     }
 }
 
-void sxgui_paint(struct sxgui_context *ctx)
+void sxgui_paint_content(struct sxgui_context *ctx)
 {
     int index;
 
@@ -1289,6 +1289,14 @@ void sxgui_paint(struct sxgui_context *ctx)
             continue;
         }
         sxgui_paint_one(&ctx->painter, widget, ctx->popup_owner == index);
+    }
+}
+
+void sxgui_paint_overlay(struct sxgui_context *ctx)
+{
+    if (ctx == 0 || ctx->widgets == 0)
+    {
+        return;
     }
 
     /* overlay pass: chrome and popups paint above every widget */
@@ -1309,6 +1317,12 @@ void sxgui_paint(struct sxgui_context *ctx)
     {
         sxgui_paint_dialog(ctx);
     }
+}
+
+void sxgui_paint(struct sxgui_context *ctx)
+{
+    sxgui_paint_content(ctx);
+    sxgui_paint_overlay(ctx);
 }
 
 void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, int width, int height)

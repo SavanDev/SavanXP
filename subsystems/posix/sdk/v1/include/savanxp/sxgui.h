@@ -221,6 +221,12 @@ int sxgui_cursor_shape(const struct sxgui_context *ctx);
 
 /* Paint every visible widget into the backbuffer. */
 void sxgui_paint(struct sxgui_context *ctx);
+/* Las dos mitades de sxgui_paint, para apps que pintan contenido propio: el
+ * chrome (menu bar, popups, dialogo modal) va SIEMPRE por encima, asi que el
+ * dibujo propio se intercala entre ambas. sxgui_app lo hace por vos:
+ * content -> on_paint -> overlay. */
+void sxgui_paint_content(struct sxgui_context *ctx);
+void sxgui_paint_overlay(struct sxgui_context *ctx);
 
 /* Convenience widget constructors (fill an entry in the caller's array). */
 struct sxgui_widget sxgui_label(struct sx_rect rect, const char *text);

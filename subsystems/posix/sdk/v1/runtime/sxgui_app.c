@@ -135,11 +135,15 @@ int sxgui_app_run(struct sxgui_app *app)
 
         if (app->needs_repaint)
         {
-            sxgui_paint(&app->ui);
+            /* El chrome del toolkit (menu bar, popups, dialogo modal) se pinta
+             * DESPUES del dibujo propio de la app: si no, un menu desplegado
+             * quedaria tapado por el contenido. */
+            sxgui_paint_content(&app->ui);
             if (app->on_paint != 0)
             {
                 app->on_paint(app);
             }
+            sxgui_paint_overlay(&app->ui);
             if (gfx_present(&app->gfx, app->gfx.pixels) < 0)
             {
                 sxgui_app_report(0, "present failed");
