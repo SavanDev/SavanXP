@@ -10,6 +10,9 @@
 #endif
 
 static const struct desktop_menu_item k_menu_items[] = {
+    /* Transitorio: hace alcanzable a progman mientras el chrome Win95 sigue
+     * vivo. En A2.4 progman arranca con la sesion y esta tabla se retira. */
+    {"Program Manager", "/bin/progman", "NT 3.5 style program groups", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(66, 92, 150), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
     {"Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_SHELL, DESKTOP_RGB_LITERAL(0, 124, 96), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
     {"Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(186, 128, 36), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
     {"About", "/bin/aboutapp", "System overview and help", DESKTOP_ICON_DESKTOP, DESKTOP_RGB_LITERAL(58, 104, 190), DESKTOP_MENU_ITEM_FLAG_SHORTCUT},
