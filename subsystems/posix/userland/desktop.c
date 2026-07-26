@@ -377,63 +377,6 @@ static void toggle_overlay_client_maximized(struct desktop_session *session, str
     raise_overlay(session, slot);
 }
 
-/* Traduce la metadata del catalogo a flags del protocolo de launch. Cuando el
- * catalogo se retire (A2.4) el unico origen de estos flags sera el cliente que
- * pide el launch (progman). */
-static uint32_t launch_flags_for_menu_item(const struct desktop_menu_item *item)
-{
-    if (item != 0 && (item->flags & DESKTOP_MENU_ITEM_FLAG_FULLSCREEN) != 0)
-    {
-        return SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN;
-    }
-    return SAVANXP_DESKTOP_LAUNCH_FLAG_NONE;
-}
-
-static int launch_desktop_shortcut(struct desktop_session *session, int shortcut_index)
-{
-    const struct desktop_menu_item *item = desktop_shortcut_at(shortcut_index);
-
-    if (item == 0)
-    {
-        return 0;
-    }
-    return launch_overlay_client(session, item->path, launch_flags_for_menu_item(item)) < 0 ? -1 : 0;
-}
-
-static void activate_taskbar_button(struct desktop_session *session, struct desktop_dirty_rect *dirty, int button_index)
-{
-    const struct desktop_client *client = 0;
-    int is_shell = 0;
-    int slot = -1;
-
-    if (session == 0 || dirty == 0)
-    {
-        return;
-    }
-
-    client = desktop_taskbar_button_client(session, button_index, &is_shell, &slot);
-    if (client == 0)
-    {
-        return;
-    }
-
-    if (is_shell)
-    {
-        activate_shell(session);
-        return;
-    }
-    if (!overlay_slot_valid(slot))
-    {
-        return;
-    }
-    if (client->active && !client->minimized)
-    {
-        minimize_overlay_client(session, dirty, slot);
-        return;
-    }
-    restore_overlay_client(session, dirty, slot);
-}
-
 static uint32_t client_surface_capacity_width(const struct desktop_client *client)
 {
     return client != 0 ? client->surface_info.pitch / (uint32_t)sizeof(uint32_t) : 0;
@@ -684,10 +627,10 @@ static int resolve_cursor_shape(
     const struct desktop_client *current_hover_client,
     int cursor_x,
     int cursor_y,
-    int menu_open,
-    const struct desktop_context_menu_state *context_menu,
     int drag_active)
 {
+    (void)cursor_x;
+    (void)cursor_y;
     if (drag_active)
     {
         return SAVANXP_CURSOR_MOVE;
@@ -701,23 +644,6 @@ static int resolve_cursor_shape(
     if (any_overlay_client_starting(session))
     {
         return SAVANXP_CURSOR_WAIT;
-    }
-    if (context_menu != 0 && context_menu->open)
-    {
-        return desktop_context_menu_item_from_point(context_menu->x, context_menu->y, cursor_x, cursor_y) >= 0
-            ? SAVANXP_CURSOR_LINK
-            : SAVANXP_CURSOR_ARROW;
-    }
-    if (menu_open)
-    {
-        if (desktop_selected_item_from_cursor(&session->gfx, cursor_x, cursor_y) >= 0)
-        {
-            return SAVANXP_CURSOR_LINK;
-        }
-    }
-    else if (current_hover_client == 0 && desktop_shortcut_from_point(&session->gfx.info, cursor_x, cursor_y) >= 0)
-    {
-        return SAVANXP_CURSOR_LINK;
     }
     if (current_hover_client != 0 &&
         current_hover_client != &session->shell_client &&
@@ -1682,44 +1608,6 @@ static void close_compositor_session(struct desktop_session *session)
     desktop_set_backbuffer(0);
 }
 
-static int launch_selected_item(struct desktop_session *session, int index)
-{
-    const struct desktop_menu_item *item = desktop_menu_item_at(index);
-
-    if (item == 0)
-    {
-        return 0;
-    }
-    return launch_overlay_client(session, item->path, launch_flags_for_menu_item(item)) < 0 ? -1 : 0;
-}
-
-static void execute_context_action(struct desktop_session *session, struct desktop_dirty_rect *dirty, int action)
-{
-    if (session == 0 || dirty == 0)
-    {
-        return;
-    }
-
-    switch (action)
-    {
-    case DESKTOP_CONTEXT_ACTION_REFRESH:
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        break;
-    case DESKTOP_CONTEXT_ACTION_NEXT_WALLPAPER:
-        (void)desktop_wallpaper_cycle();
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        break;
-    case DESKTOP_CONTEXT_ACTION_ABOUT:
-        if (launch_overlay_client(session, "/bin/aboutapp", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
-        {
-            puts_fd(2, "desktop: failed to launch aboutapp\n");
-        }
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        break;
-    default:
-        break;
-    }
-}
 
 static int service_client_batches(
     struct desktop_session *session,
@@ -1962,7 +1850,7 @@ static int desktop_cursor_repro(void)
     /* Frame A: dialog visible, cursor parked far away (top-left corner, off the
      * dialog). Full repaint so the backbuffer holds the clean image. */
     desktop_dirty_rect_add_fullscreen(&dirty, info);
-    desktop_draw_desktop(&session, 4, 4, &(struct shell_state){ .selected_shortcut = -1, .confirm_action = DESKTOP_CONFIRM_SHUTDOWN }, &dirty);
+    desktop_draw_desktop(&session, 4, 4, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -1977,7 +1865,7 @@ static int desktop_cursor_repro(void)
     /* Frame B: move cursor ONTO Q. Only cursor-sized damage (old corner + Q). */
     desktop_dirty_rect_add_cursor(&dirty, info, 4, 4, SAVANXP_CURSOR_ARROW);
     desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, qx, qy, &(struct shell_state){ .selected_shortcut = -1, .confirm_action = DESKTOP_CONFIRM_SHUTDOWN }, &dirty);
+    desktop_draw_desktop(&session, qx, qy, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -1998,7 +1886,7 @@ static int desktop_cursor_repro(void)
      * backbuffer at Q must return to the clean baseline. */
     desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
     desktop_dirty_rect_add_cursor(&dirty, info, rx, ry, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, rx, ry, &(struct shell_state){ .selected_shortcut = -1, .confirm_action = DESKTOP_CONFIRM_SHUTDOWN }, &dirty);
+    desktop_draw_desktop(&session, rx, ry, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
     desktop_dirty_rect_reset(&dirty);
@@ -2260,7 +2148,7 @@ static int desktop_selftest(void)
             continue;
         }
 
-        desktop_draw_desktop(&session, kCursorX, kCursorY, &(struct shell_state){ .selected_shortcut = -1 }, &dirty);
+        desktop_draw_desktop(&session, kCursorX, kCursorY, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
@@ -2388,7 +2276,7 @@ static int desktop_selftest(void)
         {
             session.tasklist_selected = task_index;
             desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-            desktop_draw_desktop(&session, kCursorX, kCursorY, &(struct shell_state){ .selected_shortcut = -1 }, &dirty);
+            desktop_draw_desktop(&session, kCursorX, kCursorY, &dirty);
 
             tasklist_switch_to(&session, &dirty, task_index);
             if (client->minimized)
@@ -2571,36 +2459,12 @@ static void tasklist_end_task(struct desktop_session *session, struct desktop_di
 }
 
 /*
- * Arbitracion de teclado (Fase A del boundary WM<->shell, ver
- * docs/WM_SUBSYSTEM.md). El reparto es: shell_notify_key (side-effect global
- * sin consumir) -> wm_handle_key (hotkeys del WM) -> shell_handle_key (chrome).
- * Lo que ninguno consume, main() lo rutea al cliente activo. Esa precedencia
- * WM->shell es la futura frontera de proceso de A2.
+ * Teclado: el WM consume sus hotkeys globales (Ctrl+Esc, F11) y lo demas se
+ * rutea al cliente activo. Retirado el chrome (A2.4c) ya no hay un segundo
+ * turno: el shell es un proceso cliente y recibe input como cualquier app.
  */
-
-/* Side-effect que corre en cada tecla sin consumirla: cierra el welcome banner
- * en el primer keydown. Precede al reparto para preservar el orden historico
- * (el banner se cerraba antes de procesar F11). */
-static void shell_notify_key(
-    struct shell_state *shell,
-    struct desktop_session *session,
-    const struct savanxp_input_event *key_event,
-    struct desktop_dirty_rect *dirty)
-{
-    if (shell->welcome_visible && key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN)
-    {
-        shell->welcome_visible = 0;
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-}
-
-/* Primer turno: el WM consume el unico hotkey global, F11 (toggle de fullscreen
- * composited del cliente activo). Devuelve 1 si consumio la tecla. Toca el
- * estado del chrome (cierra menu/contextual al entrar a fullscreen), por eso
- * recibe shell. */
 static int wm_handle_key(
     struct desktop_session *session,
-    struct shell_state *shell,
     const struct savanxp_input_event *key_event,
     struct desktop_dirty_rect *dirty)
 {
@@ -2674,125 +2538,9 @@ static int wm_handle_key(
     else if (session->active_client_kind == DESKTOP_CLIENT_APP &&
         overlay_slot_valid(session->active_overlay_slot))
     {
-        if (enter_overlay_fullscreen(session, dirty, session->active_overlay_slot) == 0)
-        {
-            shell->menu_open = 0;
-            shell->context_menu.open = 0;
-        }
+        (void)enter_overlay_fullscreen(session, dirty, session->active_overlay_slot);
     }
     return 1;
-}
-
-/* Segundo turno, solo si el WM no consumio: chrome del shell. Menu de inicio
- * (SUPER), menu contextual (captura todo keydown mientras esta abierto),
- * navegacion del menu y shortcuts del escritorio. Devuelve 1 si consumio la
- * tecla; 0 si debe rutearse al cliente activo (p.ej. una tecla cualquiera con
- * un shortcut seleccionado). last_buttons se resetea tras un launch para que un
- * estado de boton viejo no dispare un click espurio en la ventana nueva. */
-static int shell_handle_key(
-    struct shell_state *shell,
-    struct desktop_session *session,
-    const struct savanxp_input_event *key_event,
-    struct desktop_dirty_rect *dirty,
-    uint32_t *last_buttons)
-{
-    if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
-    {
-        return 0;
-    }
-
-    if (key_event->key == SAVANXP_KEY_SUPER)
-    {
-        shell->menu_open = !shell->menu_open;
-        if (shell->menu_open)
-        {
-            shell->selected_index = 0;
-        }
-        if (shell->context_menu.open)
-        {
-            shell->context_menu.open = 0;
-            desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
-        }
-        desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
-        desktop_dirty_rect_add_taskbar(dirty, &session->gfx.info);
-        return 1;
-    }
-
-    if (shell->context_menu.open)
-    {
-        /* El menu contextual captura el teclado mientras esta abierto; solo
-         * ESC hace algo (cerrarlo). */
-        if (key_event->key == SAVANXP_KEY_ESC)
-        {
-            shell->context_menu.open = 0;
-            desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
-        }
-        return 1;
-    }
-
-    if (shell->menu_open)
-    {
-        int launch_requested = 0;
-
-        desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
-        if (key_event->key == SAVANXP_KEY_ESC)
-        {
-            shell->menu_open = 0;
-        }
-        else if (key_event->key == SAVANXP_KEY_UP)
-        {
-            shell->selected_index = (shell->selected_index + desktop_menu_item_count() - 1) % desktop_menu_item_count();
-        }
-        else if (key_event->key == SAVANXP_KEY_DOWN)
-        {
-            shell->selected_index = (shell->selected_index + 1) % desktop_menu_item_count();
-        }
-        else if (key_event->key == SAVANXP_KEY_ENTER)
-        {
-            if (launch_selected_item(session, shell->selected_index) < 0)
-            {
-                puts_fd(2, "desktop: failed to launch selected client\n");
-            }
-            launch_requested = 1;
-            shell->menu_open = 0;
-            *last_buttons = 0;
-        }
-        desktop_dirty_rect_add_taskbar(dirty, &session->gfx.info);
-        if (shell->menu_open)
-        {
-            desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
-        }
-        if (launch_requested)
-        {
-            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        }
-        return 1;
-    }
-
-    if (shell->selected_shortcut >= 0)
-    {
-        if (key_event->key == SAVANXP_KEY_ESC)
-        {
-            desktop_dirty_rect_add_shortcut(dirty, &session->gfx.info, shell->selected_shortcut);
-            shell->selected_shortcut = -1;
-            return 1;
-        }
-        if (key_event->key == SAVANXP_KEY_ENTER)
-        {
-            if (launch_desktop_shortcut(session, shell->selected_shortcut) < 0)
-            {
-                puts_fd(2, "desktop: failed to launch desktop shortcut\n");
-            }
-            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-            *last_buttons = 0;
-            return 1;
-        }
-        /* Otras teclas con un shortcut seleccionado se rutean al cliente activo
-         * (comportamiento historico); no las consume el shell. */
-        return 0;
-    }
-
-    return 0;
 }
 
 /* Repinta el cursor tras mover el puntero. Todo modal que consuma el evento
@@ -2903,114 +2651,6 @@ static int wm_pointer_handle_tasklist(
 }
 
 /*
- * Modales de puntero del shell (Fase A). Cuando el confirm dialog o el menu
- * contextual estan abiertos, el shell "agarro" el input: consumen el evento
- * entero (main hace last_buttons + continue). Son los casos que A2 reenvia
- * enteros al shell-client. El cursor se sigue repintando para que no parezca
- * congelado mientras el modal esta abierto. Devuelven 1 si consumieron.
- *
- * El puntero pasa el cursor ya actualizado y su shape ya resuelto (concerns del
- * WM que corren antes de estos modales); por eso reciben valores, no punteros.
- */
-static int shell_pointer_handle_confirm(
-    struct shell_state *shell,
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
-    int cursor_x,
-    int cursor_y,
-    int previous_cursor_x,
-    int previous_cursor_y,
-    uint32_t left_pressed,
-    uint32_t left_was_pressed)
-{
-    if (shell->confirm_action == DESKTOP_CONFIRM_NONE)
-    {
-        return 0;
-    }
-
-    if (left_pressed != 0 && left_was_pressed == 0)
-    {
-        if (sx_rect_contains_point(desktop_confirm_yes_rect(&session->gfx.info), cursor_x, cursor_y))
-        {
-            /* Estas llamadas no retornan si tienen exito. */
-            if (shell->confirm_action == DESKTOP_CONFIRM_REBOOT)
-            {
-                (void)power_reboot();
-            }
-            else
-            {
-                (void)power_shutdown();
-            }
-            puts_fd(2, "desktop: power action failed\n");
-        }
-        shell->confirm_action = DESKTOP_CONFIRM_NONE;
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-    refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
-    return 1;
-}
-
-static int shell_pointer_handle_context_menu(
-    struct shell_state *shell,
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
-    int cursor_x,
-    int cursor_y,
-    int previous_cursor_x,
-    int previous_cursor_y,
-    uint32_t left_pressed,
-    uint32_t left_was_pressed,
-    uint32_t right_pressed,
-    uint32_t right_was_pressed,
-    const struct desktop_client *current_hover_client,
-    int taskbar_y)
-{
-    int hovered;
-
-    if (!shell->context_menu.open)
-    {
-        return 0;
-    }
-
-    hovered = desktop_context_menu_item_from_point(shell->context_menu.x, shell->context_menu.y, cursor_x, cursor_y);
-
-    if (hovered != shell->context_menu.selected)
-    {
-        shell->context_menu.selected = hovered;
-        desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
-    }
-    if (left_pressed != 0 && left_was_pressed == 0)
-    {
-        shell->context_menu.open = 0;
-        desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
-        if (hovered >= 0)
-        {
-            const struct desktop_context_item *item = desktop_context_item_at(hovered);
-            if (item != 0)
-            {
-                execute_context_action(session, dirty, item->action);
-            }
-        }
-    }
-    else if (right_pressed != 0 && right_was_pressed == 0)
-    {
-        desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
-        shell->context_menu.open = 0;
-        if (current_hover_client == 0 && cursor_y < taskbar_y)
-        {
-            shell->context_menu.x = cursor_x;
-            shell->context_menu.y = cursor_y;
-            desktop_context_menu_place(&session->gfx.info, &shell->context_menu.x, &shell->context_menu.y);
-            shell->context_menu.selected = -1;
-            shell->context_menu.open = 1;
-            desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
-        }
-    }
-    refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
-    return 1;
-}
-
-/*
  * Manejo de un evento de puntero coalescido (Fase A, ver docs/WM_SUBSYSTEM.md).
  * Saca el cuerpo per-evento del for(;;) de main() a una unidad nombrada con
  * contrato de estado explicito. Adentro, el update de cursor/hover es del WM,
@@ -3021,7 +2661,6 @@ static int shell_pointer_handle_context_menu(
  */
 static void handle_pointer_event(
     struct desktop_session *session,
-    struct shell_state *shell,
     const struct savanxp_mouse_event *event,
     struct desktop_dirty_rect *dirty,
     int *io_cursor_x,
@@ -3046,33 +2685,20 @@ static void handle_pointer_event(
     uint32_t right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
     uint32_t left_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
     uint32_t right_was_pressed = last_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
-    int welcome_consumed_click = 0;
     int previous_cursor_x = cursor_x;
     int previous_cursor_y = cursor_y;
-    int previous_menu_open = shell->menu_open;
-    int previous_selected_index = shell->selected_index;
-    int previous_selected_shortcut = shell->selected_shortcut;
     int previous_active_kind = session->active_client_kind;
     int previous_active_overlay_slot = session->active_overlay_slot;
     int drag_was_active = 0;
     int drag_active_now = 0;
-    int launch_requested = 0;
     int mouse_routed = 0;
-    int taskbar_y = (int)session->gfx.info.height - DESKTOP_TASKBAR_HEIGHT;
 
     mouse_event = *event;
     pressed_buttons = mouse_event.buttons;
     left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
     right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
-
-    if (shell->welcome_visible &&
-        ((left_pressed != 0 && left_was_pressed == 0) ||
-         (right_pressed != 0 && right_was_pressed == 0)))
-    {
-        shell->welcome_visible = 0;
-        welcome_consumed_click = 1;
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
+    (void)right_pressed;
+    (void)right_was_pressed;
 
     if (!drag_overlay_slot_active(session, drag_overlay_slot))
     {
@@ -3086,13 +2712,13 @@ static void handle_pointer_event(
 
     session->previous_cursor_shape = session->current_cursor_shape;
     session->current_cursor_shape = resolve_cursor_shape(
-        session, current_hover_client, cursor_x, cursor_y, shell->menu_open, &shell->context_menu, drag_was_active);
+        session, current_hover_client, cursor_x, cursor_y, drag_was_active);
     if (session->current_cursor_shape != session->previous_cursor_shape && session->hw_cursor_enabled)
     {
         (void)desktop_compositor_set_cursor_shape(&session->compositor, session->current_cursor_shape);
     }
 
-    /* Task List (modal del WM): precede a los modales del shell. */
+    /* Unico modal que queda: el Task List (UI del WM). */
     if (wm_pointer_handle_tasklist(session, dirty, cursor_x, cursor_y,
             previous_cursor_x, previous_cursor_y, left_pressed, left_was_pressed))
     {
@@ -3100,107 +2726,12 @@ static void handle_pointer_event(
         goto done;
     }
 
-    /* Dialogo de confirmacion de energia (modal del shell): consume
-     * el evento entero. */
-    if (shell_pointer_handle_confirm(shell, session, dirty, cursor_x, cursor_y,
-            previous_cursor_x, previous_cursor_y, left_pressed, left_was_pressed))
-    {
-        last_buttons = pressed_buttons;
-        goto done;
-    }
-
-    /* Menu contextual del escritorio (modal del shell): consume el
-     * evento entero. */
-    if (shell_pointer_handle_context_menu(shell, session, dirty, cursor_x, cursor_y,
-            previous_cursor_x, previous_cursor_y, left_pressed, left_was_pressed,
-            right_pressed, right_was_pressed, current_hover_client, taskbar_y))
-    {
-        last_buttons = pressed_buttons;
-        goto done;
-    }
-
-    if (shell->menu_open)
-    {
-        int hovered = desktop_selected_item_from_cursor(&session->gfx, cursor_x, cursor_y);
-        if (hovered >= 0)
-        {
-            shell->selected_index = hovered;
-        }
-    }
-
     if (left_pressed != 0 && left_was_pressed == 0)
     {
-        int hovered = shell->menu_open ? desktop_selected_item_from_cursor(&session->gfx, cursor_x, cursor_y) : -1;
-        int taskbar_index = shell->menu_open ? -1 : desktop_taskbar_button_from_point(session, cursor_x, cursor_y);
-        /* Desktop icons live behind overlay windows, so a click that
-         * lands on a window must never fall through to a shortcut. */
-        int shortcut_index = (shell->menu_open || current_hover_client != 0)
-            ? -1
-            : desktop_shortcut_from_point(&session->gfx.info, cursor_x, cursor_y);
-
-        int power_index = shell->menu_open ? desktop_power_button_from_point(&session->gfx.info, cursor_x, cursor_y) : -1;
-
-        if (desktop_point_in_rect(cursor_x, cursor_y, 6, taskbar_y + 5, DESKTOP_START_BUTTON_WIDTH, DESKTOP_TASKBAR_HEIGHT - 9))
+        /* Sin chrome: un click solo puede caer sobre una ventana o sobre el
+         * fondo, y el fondo (shellui) no recibe input. */
+        if (current_hover_client != 0)
         {
-            shell->menu_open = !shell->menu_open;
-            if (shell->menu_open)
-            {
-                shell->selected_index = 0;
-            }
-        }
-        else if (shell->menu_open && power_index >= 0)
-        {
-            const struct desktop_power_item *power = desktop_power_item_at(power_index);
-            if (power != 0)
-            {
-                shell->confirm_action = power->confirm;
-                shell->menu_open = 0;
-                shell->selected_shortcut = -1;
-                desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-            }
-        }
-        else if (shell->menu_open && hovered >= 0)
-        {
-            if (launch_selected_item(session, hovered) < 0)
-            {
-                puts_fd(2, "desktop: failed to launch selected client\n");
-            }
-            launch_requested = 1;
-            shell->menu_open = 0;
-            pressed_buttons = 0;
-        }
-        else if (shell->menu_open)
-        {
-            shell->menu_open = 0;
-        }
-        else if (taskbar_index >= 0)
-        {
-            activate_taskbar_button(session, dirty, taskbar_index);
-        }
-        else if (shortcut_index >= 0)
-        {
-            unsigned long now_ms = uptime_ms();
-            if (shell->selected_shortcut != shortcut_index)
-            {
-                shell->selected_shortcut = shortcut_index;
-            }
-            else if (shell->last_shortcut_click == shortcut_index && now_ms - shell->last_shortcut_click_ms <= 450UL)
-            {
-                if (launch_desktop_shortcut(session, shortcut_index) < 0)
-                {
-                    puts_fd(2, "desktop: failed to launch desktop shortcut\n");
-                }
-                launch_requested = 1;
-            }
-            shell->last_shortcut_click = shortcut_index;
-            shell->last_shortcut_click_ms = now_ms;
-        }
-        else if (current_hover_client != 0)
-        {
-            if (shell->selected_shortcut >= 0)
-            {
-                shell->selected_shortcut = -1;
-            }
             if (current_hover_client == &session->shell_client)
             {
                 activate_shell(session);
@@ -3273,10 +2804,6 @@ static void handle_pointer_event(
                 mouse_routed = 1;
             }
         }
-        else if (shell->selected_shortcut >= 0)
-        {
-            shell->selected_shortcut = -1;
-        }
     }
     drag_active_now = drag_overlay_slot_active(session, drag_overlay_slot);
     if (drag_active_now && left_pressed != 0)
@@ -3295,7 +2822,6 @@ static void handle_pointer_event(
     }
 
     if (!mouse_routed &&
-        !shell->menu_open &&
         !drag_was_active &&
         !drag_active_now &&
         current_hover_client != 0 &&
@@ -3305,7 +2831,6 @@ static void handle_pointer_event(
         (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
     }
     else if (!mouse_routed &&
-             !shell->menu_open &&
              !drag_was_active &&
              !drag_active_now &&
              current_hover_client == 0 &&
@@ -3316,78 +2841,10 @@ static void handle_pointer_event(
         (void)route_pointer(previous_hover_client, cursor_x, cursor_y, pressed_buttons);
     }
 
-    if (right_pressed != 0 && right_was_pressed == 0)
-    {
-        if (shell->menu_open)
-        {
-            shell->menu_open = 0;
-        }
-        else if (!welcome_consumed_click &&
-                 session->fullscreen_slot < 0 &&
-                 !drag_active_now &&
-                 current_hover_client == 0 &&
-                 cursor_y < taskbar_y)
-        {
-            /* Click derecho sobre el fondo del escritorio: abre el
-             * menu contextual en el cursor. */
-            shell->context_menu.x = cursor_x;
-            shell->context_menu.y = cursor_y;
-            desktop_context_menu_place(&session->gfx.info, &shell->context_menu.x, &shell->context_menu.y);
-            shell->context_menu.selected = -1;
-            shell->context_menu.open = 1;
-            desktop_dirty_rect_add_context_menu(dirty, &session->gfx.info, shell->context_menu.x, shell->context_menu.y);
-            /* El bloque generico de abajo repinta el shortcut que
-             * pierde la seleccion. */
-            shell->selected_shortcut = -1;
-        }
-    }
+    refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
 
-    if (previous_cursor_x != cursor_x || previous_cursor_y != cursor_y ||
-        session->current_cursor_shape != session->previous_cursor_shape)
-    {
-        if (session->hw_cursor_enabled)
-        {
-            (void)set_hw_cursor_position(session, cursor_x, cursor_y, 1);
-        }
-        else
-        {
-            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
-            desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
-        }
-        if (shell->menu_open)
-        {
-            int menu_x = 0;
-            int menu_y = 0;
-            int menu_width = 0;
-            int menu_height = 0;
-
-            desktop_start_menu_bounds(&session->gfx.info, &menu_x, &menu_y, &menu_width, &menu_height);
-            if (desktop_point_in_rect(previous_cursor_x, previous_cursor_y, menu_x, menu_y, menu_width, menu_height) ||
-                desktop_point_in_rect(cursor_x, cursor_y, menu_x, menu_y, menu_width, menu_height))
-            {
-                desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
-            }
-        }
-    }
-    if (previous_menu_open != shell->menu_open || previous_selected_index != shell->selected_index)
-    {
-        desktop_dirty_rect_add_menu(dirty, &session->gfx.info);
-        desktop_dirty_rect_add_taskbar(dirty, &session->gfx.info);
-    }
-    if (previous_selected_shortcut != shell->selected_shortcut)
-    {
-        if (previous_selected_shortcut >= 0)
-        {
-            desktop_dirty_rect_add_shortcut(dirty, &session->gfx.info, previous_selected_shortcut);
-        }
-        if (shell->selected_shortcut >= 0)
-        {
-            desktop_dirty_rect_add_shortcut(dirty, &session->gfx.info, shell->selected_shortcut);
-        }
-    }
     if (previous_active_kind != session->active_client_kind || previous_active_overlay_slot != session->active_overlay_slot)
     {
-        desktop_dirty_rect_add_taskbar(dirty, &session->gfx.info);
         if (overlay_slot_valid(previous_active_overlay_slot))
         {
             desktop_dirty_rect_add_client(dirty, overlay_client_at_const(session, previous_active_overlay_slot));
@@ -3396,10 +2853,6 @@ static void handle_pointer_event(
         {
             desktop_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
         }
-    }
-    if (launch_requested)
-    {
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
     last_buttons = pressed_buttons;
 
@@ -3424,10 +2877,6 @@ int main(int argc, char **argv)
     int drag_offset_x = 0;
     int drag_offset_y = 0;
     int compositor_recoveries = 0;
-    /* Estado de chrome del shell agrupado (ver docs/WM_SUBSYSTEM.md, Fase A):
-     * menu de inicio, menu contextual, shortcuts, welcome, confirmacion de
-     * energia y el stamp del reloj de la taskbar. */
-    struct shell_state shell;
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
@@ -3454,19 +2903,13 @@ int main(int argc, char **argv)
     {
         puts_fd(2, "desktop: cliente de fondo (shellui) no arranco; uso fallback\n");
     }
-    /* Program Manager: el launcher de la sesion (A2.4a). Por ahora convive con
-     * el chrome Win95, que se retira en A2.4c. Ventana normal, sin trato
-     * especial: si no arranca, el menu de inicio sigue estando. */
+    /* Program Manager: el launcher de la sesion. Es una ventana normal, sin
+     * trato especial -- pero ahora es el UNICO camino para lanzar programas, asi
+     * que si no arranca la sesion queda sin launcher (queda el Task List para
+     * manejar lo que ya este abierto). */
     if (launch_overlay_client(&session, k_progman_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
     {
-        puts_fd(2, "desktop: Program Manager no arranco\n");
-    }
-    shell_state_init(&shell);
-    shell.welcome_until_ms = uptime_ms() + 3500UL;
-
-    {
-        char clock_text[6];
-        shell.last_clock_stamp = desktop_current_clock_stamp(clock_text);
+        puts_fd(2, "desktop: Program Manager no arranco; sesion sin launcher\n");
     }
     desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 
@@ -3532,12 +2975,9 @@ int main(int argc, char **argv)
         {
             while ((count = read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
-                shell_notify_key(&shell, &session, &key_event, &dirty);
-                if (wm_handle_key(&session, &shell, &key_event, &dirty))
-                {
-                    continue;
-                }
-                if (shell_handle_key(&shell, &session, &key_event, &dirty, &last_buttons))
+                /* Sin chrome, la arbitracion se reduce a: hotkeys del WM y, si
+                 * no consume, ruteo al cliente activo. */
+                if (wm_handle_key(&session, &key_event, &dirty))
                 {
                     continue;
                 }
@@ -3573,7 +3013,7 @@ int main(int argc, char **argv)
 
             for (mouse_event_index = 0; mouse_event_index < coalesced_mouse_count; ++mouse_event_index)
             {
-                handle_pointer_event(&session, &shell, &coalesced_mouse_events[mouse_event_index], &dirty,
+                handle_pointer_event(&session, &coalesced_mouse_events[mouse_event_index], &dirty,
                     &cursor_x, &cursor_y, &last_buttons, &drag_overlay_slot, &drag_offset_x, &drag_offset_y);
             }
         }
@@ -3619,21 +3059,6 @@ int main(int argc, char **argv)
             break;
         }
 
-        {
-            char clock_text[6];
-            unsigned long clock_stamp = desktop_current_clock_stamp(clock_text);
-            if (clock_stamp != shell.last_clock_stamp)
-            {
-                shell.last_clock_stamp = clock_stamp;
-                desktop_dirty_rect_add_taskbar(&dirty, &session.gfx.info);
-            }
-        }
-
-        if (shell.welcome_visible && uptime_ms() >= shell.welcome_until_ms)
-        {
-            shell.welcome_visible = 0;
-            desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-        }
 
         {
             int frame_ready = 1;
@@ -3664,7 +3089,7 @@ int main(int argc, char **argv)
             }
         }
 
-        desktop_draw_desktop(&session, cursor_x, cursor_y, &shell, &dirty);
+        desktop_draw_desktop(&session, cursor_x, cursor_y, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {

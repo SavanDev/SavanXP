@@ -27,13 +27,11 @@ unsigned long desktop_current_clock_stamp(char *buffer);
 /* Validates the sx_rect_set_subtract_rect region primitive the compositor
  * relies on for occlusion culling. Returns 0 on success, non-zero on failure. */
 int desktop_region_selftest(void);
-/* El estado de chrome a dibujar (menu, seleccion, confirm, welcome, menu
- * contextual) viaja en shell_state, igual que en el path de input. shell no
- * debe ser NULL; el menu contextual se dibuja solo si shell->context_menu.open.
- * Los harnesses headless pasan un shell_state armado ad hoc. */
+/* Compone el frame: fondo (del cliente shellui, o dibujado aca como fallback),
+ * superficies de clientes, Task List y cursor. Sin estado de chrome: con el
+ * chrome Win95 retirado (A2.4c) todo lo que compone windowd es del WM. */
 void desktop_draw_desktop(
     struct desktop_session *session,
     int cursor_x,
     int cursor_y,
-    const struct shell_state *shell,
     const struct desktop_dirty_rect *dirty);

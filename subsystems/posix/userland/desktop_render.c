@@ -44,25 +44,6 @@ static void draw_embedded_bitmap(struct sx_painter *painter, const struct deskto
     sx_painter_blit_bitmap(painter, &bitmap, x, y);
 }
 
-static void draw_embedded_bitmap_scaled(struct sx_painter *painter, const struct desktop_embedded_bitmap *source, int x, int y, int width, int height)
-{
-    struct sx_bitmap bitmap;
-    struct savanxp_fb_info info;
-
-    if (painter == 0 || source == 0 || source->pixels == 0 || source->width == 0 || source->height == 0 || width <= 0 || height <= 0)
-    {
-        return;
-    }
-
-    fill_embedded_bitmap_info(source, &info);
-    sx_bitmap_wrap(&bitmap, (uint32_t *)source->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
-    sx_painter_draw_scaled_bitmap_nearest(
-        painter,
-        &bitmap,
-        sx_rect_make(x, y, width, height),
-        sx_rect_make(0, 0, (int)source->width, (int)source->height));
-}
-
 static int clip_rect_to_framebuffer(const struct savanxp_fb_info *info, struct sx_rect *rect)
 {
     if (info == 0 || rect == 0 || rect->width <= 0 || rect->height <= 0)
@@ -294,13 +275,6 @@ static void draw_inset_box(struct sx_painter *painter, struct sx_rect rect, uint
     sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + rect.height - 2, rect.width - 2, 1), highlight);
     sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 2, rect.y + 1, 1, rect.height - 2), highlight);
 }
-
-static void draw_embossed_text(struct sx_painter *painter, int x, int y, const char *text, uint32_t light, uint32_t dark)
-{
-    sx_painter_draw_text(painter, x + 1, y + 1, text, light);
-    sx_painter_draw_text(painter, x, y, text, dark);
-}
-
 static void draw_close_button(struct sx_painter *painter, const struct desktop_client *client)
 {
     struct sx_rect rect;
@@ -386,394 +360,6 @@ static void draw_maximize_button(struct sx_painter *painter, const struct deskto
     }
 }
 
-static void draw_desktop_shortcuts(
-    struct sx_painter *painter,
-    const struct savanxp_fb_info *display_info,
-    int selected_shortcut)
-{
-    int index;
-
-    for (index = 0; index < desktop_shortcut_count(); ++index)
-    {
-        const struct desktop_menu_item *item = desktop_shortcut_at(index);
-        const struct desktop_embedded_bitmap *icon = item != 0 ? desktop_icon_large(item->icon_id) : 0;
-        struct sx_rect rect = desktop_shortcut_rect(display_info, index);
-        int label_x = rect.x + ((rect.width - gfx_text_width(item != 0 ? item->label : "")) / 2);
-
-        if (item == 0 || sx_rect_is_empty(rect))
-        {
-            continue;
-        }
-        if (index == selected_shortcut)
-        {
-            sx_painter_fill_rect(painter, rect, gfx_rgb(0, 96, 144));
-            sx_painter_draw_frame(painter, rect, gfx_rgb(210, 244, 255));
-        }
-        draw_embedded_bitmap_scaled(painter, icon, rect.x + ((rect.width - 32) / 2), rect.y + 6, 32, 32);
-        sx_painter_draw_text(
-            painter,
-            label_x,
-            rect.y + 42,
-            item->label,
-            index == selected_shortcut ? gfx_rgb(255, 255, 255) : gfx_rgb(245, 255, 255));
-    }
-}
-
-/* include_wallpaper=0 cuando el cliente de fondo (shellui) ya provee el
- * wallpaper como capa opaca debajo: windowd solo pinta iconos + watermark
- * (capa no-opaca) para no tapar la superficie del cliente. */
-static void draw_background(
-    struct sx_painter *painter,
-    const struct savanxp_fb_info *display_info,
-    int selected_shortcut,
-    int include_wallpaper)
-{
-    const char *watermark = SAVANXP_DISPLAY_NAME;
-    const int text_width = gfx_text_width(watermark);
-    const int text_height = gfx_text_height();
-    const int text_x = (int)display_info->width - text_width - 6;
-    const int text_y = (int)display_info->height - DESKTOP_TASKBAR_HEIGHT - text_height - 5;
-
-    if (include_wallpaper)
-    {
-        desktop_wallpaper_draw(painter, display_info);
-    }
-    draw_desktop_shortcuts(painter, display_info, selected_shortcut);
-    sx_painter_draw_text(painter, text_x + 1, text_y + 1, watermark, gfx_rgb(0, 64, 64));
-    sx_painter_draw_text(painter, text_x, text_y, watermark, gfx_rgb(210, 244, 244));
-}
-
-static void draw_taskbar(struct sx_painter *painter, struct desktop_session *session, int menu_open)
-{
-    const int taskbar_y = (int)session->gfx.info.height - DESKTOP_TASKBAR_HEIGHT;
-    const int panel_y = taskbar_y + 5;
-    const int panel_height = DESKTOP_TASKBAR_HEIGHT - 9;
-    const int text_y = taskbar_y + (DESKTOP_TASKBAR_HEIGHT - gfx_text_height()) / 2;
-    const int icon_y = taskbar_y + (DESKTOP_TASKBAR_HEIGHT - 16) / 2;
-    const struct sx_rect tray_rect = desktop_tray_rect(&session->gfx.info);
-    const struct sx_rect clock_rect = desktop_tray_clock_rect(&session->gfx.info);
-    const struct desktop_embedded_bitmap *start_icon = desktop_icon_small(DESKTOP_ICON_DESKTOP);
-    char clock_text[6];
-    int index;
-
-    sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y, (int)session->gfx.info.width, DESKTOP_TASKBAR_HEIGHT), gfx_rgb(190, 194, 200));
-    sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y, (int)session->gfx.info.width, 1), gfx_rgb(255, 255, 255));
-    sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y + 1, (int)session->gfx.info.width, 1), gfx_rgb(232, 235, 239));
-    sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y + 2, (int)session->gfx.info.width, 1), gfx_rgb(166, 170, 176));
-    sx_painter_fill_rect(painter, sx_rect_make(0, taskbar_y + DESKTOP_TASKBAR_HEIGHT - 1, (int)session->gfx.info.width, 1), gfx_rgb(79, 83, 89));
-
-    draw_button(painter, sx_rect_make(6, panel_y, DESKTOP_START_BUTTON_WIDTH, panel_height), gfx_rgb(196, 199, 203), menu_open);
-    draw_embedded_bitmap(painter, start_icon, 12 + (menu_open ? 1 : 0), icon_y + (menu_open ? 1 : 0));
-    draw_embossed_text(painter, 32 + (menu_open ? 1 : 0), text_y + (menu_open ? 1 : 0), "Start", gfx_rgb(255, 255, 255), gfx_rgb(0, 0, 0));
-
-    for (index = 0; index < desktop_taskbar_button_count(session); ++index)
-    {
-        const struct desktop_client *client = 0;
-        const struct desktop_menu_item *item = 0;
-        const struct desktop_embedded_bitmap *icon = 0;
-        struct sx_rect rect = desktop_taskbar_button_rect(session, index);
-        int is_shell = 0;
-        int slot = -1;
-        uint32_t face = gfx_rgb(210, 214, 220);
-        uint32_t accent = gfx_rgb(40, 108, 182);
-        const char *label = "Desktop";
-
-        client = desktop_taskbar_button_client(session, index, &is_shell, &slot);
-        if (client == 0 || sx_rect_is_empty(rect))
-        {
-            continue;
-        }
-        item = desktop_find_menu_item_by_path(client->path);
-        icon = item != 0 ? desktop_icon_small(item->icon_id) : desktop_icon_small(DESKTOP_ICON_DESKTOP);
-        label = item != 0 ? item->label : window_title_for_client(client);
-        if (item != 0)
-        {
-            accent = item->accent;
-        }
-        if (client->active && !client->minimized)
-        {
-            face = gfx_rgb(229, 232, 236);
-        }
-        if (client->minimized)
-        {
-            face = gfx_rgb(188, 193, 198);
-            accent = gfx_rgb(102, 108, 118);
-        }
-
-        draw_button(painter, rect, face, client->active && !client->minimized);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 5, rect.y + 3, 3, rect.height - 6), accent);
-        draw_embedded_bitmap(painter, icon, rect.x + 12, icon_y);
-        sx_painter_draw_text(painter, rect.x + 32, text_y, label, gfx_rgb(12, 16, 20));
-    }
-
-    /* Area de notificaciones: iconos de tray registrados + reloj en una sola
-     * caja hundida, como el tray de Win9x. */
-    draw_inset_box(painter, tray_rect, gfx_rgb(210, 214, 220));
-    for (index = 0; index < desktop_tray_icon_count(); ++index)
-    {
-        const struct desktop_tray_icon *tray_icon = desktop_tray_icon_at(index);
-        struct sx_rect icon_rect = desktop_tray_icon_rect(&session->gfx.info, index);
-
-        if (tray_icon == 0 || sx_rect_is_empty(icon_rect))
-        {
-            continue;
-        }
-        draw_embedded_bitmap(painter, desktop_icon_small(tray_icon->icon_id), icon_rect.x, icon_rect.y);
-    }
-    desktop_current_clock_stamp(clock_text);
-    sx_painter_draw_text(painter, clock_rect.x, text_y, clock_text, gfx_rgb(46, 50, 56));
-}
-
-/* Franja lateral del menu inicio: gradiente vertical simple en bandas, como el
- * banner de Win9x. Se pinta por bandas para no iterar linea a linea. */
-static void draw_menu_strip_gradient(struct sx_painter *painter, int x, int y, int width, int height)
-{
-    const int band_height = 4;
-    int offset;
-
-    if (width <= 0 || height <= 0)
-    {
-        return;
-    }
-
-    for (offset = 0; offset < height; offset += band_height)
-    {
-        const int band = offset + band_height > height ? height - offset : band_height;
-        const int t = (offset * 255) / (height > 1 ? height - 1 : 1);
-        const uint32_t colour = gfx_rgb(
-            0,
-            (uint8_t)(132 - ((132 - 48) * t) / 255),
-            (uint8_t)(96 - ((96 - 34) * t) / 255));
-
-        sx_painter_fill_rect(painter, sx_rect_make(x, y + offset, width, band), colour);
-    }
-}
-
-static void draw_start_menu(struct sx_painter *painter, struct savanxp_gfx_context *gfx, int selected_index)
-{
-    int menu_x = 0;
-    int menu_y = 0;
-    int menu_width = 0;
-    int menu_height = 0;
-    int content_x = 0;
-    int items_y = 0;
-    int footer_y = 0;
-    int index;
-
-    desktop_start_menu_bounds(&gfx->info, &menu_x, &menu_y, &menu_width, &menu_height);
-    content_x = desktop_start_menu_content_x(menu_x);
-    items_y = desktop_start_menu_items_y(menu_y);
-    footer_y = desktop_start_menu_footer_y(menu_y, menu_height);
-
-    sx_painter_fill_rect(painter, sx_rect_make(menu_x, menu_y, menu_width, menu_height), gfx_rgb(198, 201, 206));
-    sx_painter_draw_frame(painter, sx_rect_make(menu_x, menu_y, menu_width, menu_height), gfx_rgb(46, 50, 56));
-    draw_menu_strip_gradient(painter, menu_x + 6, menu_y + 6, DESKTOP_MENU_STRIP_WIDTH, menu_height - 12);
-    sx_painter_draw_text(painter, content_x, menu_y + 8, "Applications", gfx_rgb(24, 28, 34));
-    sx_painter_draw_text(painter, content_x, menu_y + 28, "Open an app in its own", gfx_rgb(82, 88, 96));
-    sx_painter_draw_text(painter, content_x, menu_y + 46, "movable window", gfx_rgb(82, 88, 96));
-
-    for (index = 0; index < desktop_menu_item_count(); ++index)
-    {
-        const struct desktop_menu_item *item = desktop_menu_item_at(index);
-        const struct desktop_embedded_bitmap *icon = item != 0 ? desktop_icon_large(item->icon_id) : 0;
-        const int item_y = items_y + (index * DESKTOP_MENU_ITEM_HEIGHT);
-        const uint32_t face = index == selected_index ? gfx_rgb(222, 234, 255) : gfx_rgb(236, 238, 241);
-
-        sx_painter_fill_rect(painter, sx_rect_make(content_x - 2, item_y, desktop_start_menu_content_width() - 4, DESKTOP_MENU_ITEM_HEIGHT - 2), face);
-        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 8, 22, 22), gfx_rgb(245, 247, 250));
-        sx_painter_fill_rect(painter, sx_rect_make(content_x + 4, item_y + 33, 22, 2), item->accent);
-        draw_embedded_bitmap_scaled(painter, icon, content_x + 5, item_y + 9, 20, 20);
-        sx_painter_draw_text(painter, content_x + 32, item_y + 4, item->label, gfx_rgb(24, 28, 34));
-        sx_painter_draw_text(painter, content_x + 32, item_y + 22, item->subtitle, gfx_rgb(92, 98, 108));
-    }
-
-    sx_painter_fill_rect(painter, sx_rect_make(content_x - 2, footer_y, desktop_start_menu_content_width() - 4, 1), gfx_rgb(146, 150, 156));
-
-    for (index = 0; index < desktop_power_item_count(); ++index)
-    {
-        const struct desktop_power_item *power = desktop_power_item_at(index);
-        struct sx_rect rect = desktop_power_button_rect(&gfx->info, index);
-        uint32_t accent = power != 0 && power->confirm == DESKTOP_CONFIRM_SHUTDOWN
-            ? gfx_rgb(176, 64, 52)
-            : gfx_rgb(58, 104, 190);
-        int text_x;
-
-        if (power == 0 || sx_rect_is_empty(rect))
-        {
-            continue;
-        }
-
-        draw_button(painter, rect, gfx_rgb(214, 217, 222), 0);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 4, rect.y + 4, 3, rect.height - 8), accent);
-        text_x = rect.x + ((rect.width - gfx_text_width(power->label)) / 2);
-        sx_painter_draw_text(painter, text_x, rect.y + ((rect.height - gfx_text_height()) / 2), power->label, gfx_rgb(24, 28, 34));
-    }
-}
-
-static void draw_confirm_dialog(struct sx_painter *painter, const struct savanxp_fb_info *info, int confirm_action)
-{
-    struct sx_rect dialog = desktop_confirm_dialog_rect(info);
-    struct sx_rect yes_rect = desktop_confirm_yes_rect(info);
-    struct sx_rect no_rect = desktop_confirm_no_rect(info);
-    const char *title = confirm_action == DESKTOP_CONFIRM_REBOOT
-        ? "Reiniciar el sistema?"
-        : "Apagar el sistema?";
-    const char *detail = "Se cerraran las aplicaciones abiertas.";
-
-    if (sx_rect_is_empty(dialog))
-    {
-        return;
-    }
-
-    sx_painter_fill_rect(painter, dialog, gfx_rgb(206, 209, 214));
-    sx_painter_draw_frame(painter, dialog, gfx_rgb(46, 50, 56));
-    sx_painter_fill_rect(painter, sx_rect_make(dialog.x + 2, dialog.y + 2, dialog.width - 4, 22), gfx_rgb(58, 104, 190));
-    sx_painter_draw_text(painter, dialog.x + 10, dialog.y + 7, "Energia", gfx_rgb(255, 255, 255));
-    sx_painter_draw_text(painter, dialog.x + 14, dialog.y + 40, title, gfx_rgb(24, 28, 34));
-    sx_painter_draw_text(painter, dialog.x + 14, dialog.y + 62, detail, gfx_rgb(82, 88, 96));
-
-    draw_button(painter, yes_rect, gfx_rgb(214, 217, 222), 0);
-    sx_painter_draw_text(
-        painter,
-        yes_rect.x + ((yes_rect.width - gfx_text_width("Si")) / 2),
-        yes_rect.y + ((yes_rect.height - gfx_text_height()) / 2),
-        "Si",
-        gfx_rgb(24, 28, 34));
-
-    draw_button(painter, no_rect, gfx_rgb(214, 217, 222), 0);
-    sx_painter_draw_text(
-        painter,
-        no_rect.x + ((no_rect.width - gfx_text_width("No")) / 2),
-        no_rect.y + ((no_rect.height - gfx_text_height()) / 2),
-        "No",
-        gfx_rgb(24, 28, 34));
-}
-
-static void draw_context_menu(struct sx_painter *painter, const struct desktop_context_menu_state *state)
-{
-    struct sx_rect rect;
-    int index;
-
-    if (painter == 0 || state == 0 || !state->open)
-    {
-        return;
-    }
-
-    rect = desktop_context_menu_rect(state->x, state->y);
-    draw_button(painter, rect, gfx_rgb(198, 201, 206), 0);
-
-    for (index = 0; index < desktop_context_item_count(); ++index)
-    {
-        const struct desktop_context_item *item = desktop_context_item_at(index);
-        struct sx_rect item_rect = desktop_context_menu_item_rect(state->x, state->y, index);
-        int selected = index == state->selected;
-
-        if (item == 0 || sx_rect_is_empty(item_rect))
-        {
-            continue;
-        }
-        if (item->separator_before)
-        {
-            const int separator_y = item_rect.y - (DESKTOP_CONTEXT_SEPARATOR_HEIGHT / 2) - 1;
-            sx_painter_fill_rect(painter, sx_rect_make(item_rect.x + 2, separator_y, item_rect.width - 4, 1), gfx_rgb(128, 132, 138));
-            sx_painter_fill_rect(painter, sx_rect_make(item_rect.x + 2, separator_y + 1, item_rect.width - 4, 1), gfx_rgb(255, 255, 255));
-        }
-        if (selected)
-        {
-            sx_painter_fill_rect(painter, item_rect, gfx_rgb(10, 36, 106));
-        }
-        sx_painter_draw_text(
-            painter,
-            item_rect.x + 8,
-            item_rect.y + ((item_rect.height - gfx_text_height()) / 2),
-            item->label,
-            selected ? gfx_rgb(255, 255, 255) : gfx_rgb(24, 28, 34));
-    }
-}
-
-static struct sx_rect welcome_rect(const struct savanxp_fb_info *info)
-{
-    int width = 520;
-    int height = 152;
-
-    if (info == 0 || info->width == 0 || info->height == 0)
-    {
-        return sx_rect_make(0, 0, 0, 0);
-    }
-    if ((int)info->width < width + 48)
-    {
-        width = (int)info->width - 48;
-    }
-    if (width < 280)
-    {
-        width = (int)info->width - 16;
-    }
-    if ((int)info->height < height + DESKTOP_TASKBAR_HEIGHT + 32)
-    {
-        height = 128;
-    }
-    return sx_rect_make(
-        ((int)info->width - width) / 2,
-        ((int)info->height - DESKTOP_TASKBAR_HEIGHT - height) / 2,
-        width,
-        height);
-}
-
-static const char *gpu_backend_label(uint32_t backend)
-{
-    switch (backend)
-    {
-    case SAVANXP_GPU_BACKEND_VIRTIO:
-        return "VirtIO GPU";
-    case SAVANXP_GPU_BACKEND_FRAMEBUFFER:
-        return "Framebuffer UEFI";
-    default:
-        return "GPU basica";
-    }
-}
-
-static void draw_welcome(struct sx_painter *painter, const struct desktop_session *session)
-{
-    struct sx_rect rect;
-    int title_x;
-    int version_x;
-    const char *title = "Bienvenido a " SAVANXP_SYSTEM_NAME;
-    const char *detail = "Sesion grafica iniciada";
-    const char *backend = session != 0 ? gpu_backend_label(session->compositor.gpu_info.backend) : "GPU basica";
-
-    if (painter == 0 || session == 0)
-    {
-        return;
-    }
-
-    rect = welcome_rect(&session->gfx.info);
-    if (sx_rect_is_empty(rect))
-    {
-        return;
-    }
-
-    sx_painter_fill_rect(painter, rect, gfx_rgb(214, 218, 224));
-    sx_painter_draw_frame(painter, rect, gfx_rgb(42, 48, 58));
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + 2, rect.y + 2, rect.width - 4, 28), gfx_rgb(34, 112, 148));
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + 2, rect.y + 30, rect.width - 4, 2), gfx_rgb(18, 80, 106));
-
-    title_x = rect.x + ((rect.width - gfx_text_width(title)) / 2);
-    version_x = rect.x + ((rect.width - gfx_text_width(SAVANXP_DISPLAY_NAME)) / 2);
-    sx_painter_draw_text(painter, title_x, rect.y + 10, title, gfx_rgb(255, 255, 255));
-    sx_painter_draw_text(painter, version_x, rect.y + 50, SAVANXP_DISPLAY_NAME, gfx_rgb(24, 28, 34));
-    sx_painter_draw_text(
-        painter,
-        rect.x + ((rect.width - gfx_text_width(detail)) / 2),
-        rect.y + 78,
-        detail,
-        gfx_rgb(70, 78, 88));
-    sx_painter_draw_text(
-        painter,
-        rect.x + ((rect.width - gfx_text_width(backend)) / 2),
-        rect.y + 104,
-        backend,
-        gfx_rgb(36, 96, 126));
-}
 
 static void draw_cursor(struct sx_painter *painter, int shape, int x, int y)
 {
@@ -930,15 +516,10 @@ int desktop_region_selftest(void)
  * visible = damage ∩ bounds − (union of opaque bounds in front). */
 enum desktop_layer_kind
 {
+    /* Solo el fallback: normalmente el fondo lo provee el cliente shellui. */
     DESKTOP_LAYER_BACKGROUND = 0,
     DESKTOP_LAYER_CLIENT,
-    DESKTOP_LAYER_TASKBAR,
-    DESKTOP_LAYER_WELCOME,
-    DESKTOP_LAYER_MENU,
-    DESKTOP_LAYER_CONFIRM,
-    DESKTOP_LAYER_CONTEXT_MENU,
-    /* UI del WM (Ctrl+Esc), por encima del chrome del shell: es un conmutador
-     * de ventanas, tiene que quedar sobre todo salvo el cursor. */
+    /* UI del WM (Ctrl+Esc): conmutador de ventanas, sobre todo salvo el cursor. */
     DESKTOP_LAYER_TASKLIST,
     DESKTOP_LAYER_CURSOR,
 };
@@ -1070,6 +651,13 @@ static void wm_paint_layer(
 {
     switch (layer->kind)
     {
+    case DESKTOP_LAYER_BACKGROUND:
+        /* Fallback: el fondo normalmente lo provee shellui. Releemos el modo
+         * persistido para respetar el fondo que haya elegido progman, que es
+         * otro proceso y no puede tocar nuestro estado en memoria. */
+        (void)desktop_wallpaper_reload();
+        desktop_wallpaper_draw(painter, &session->gfx.info);
+        break;
     case DESKTOP_LAYER_CLIENT:
         draw_client(painter, layer->client);
         break;
@@ -1084,70 +672,13 @@ static void wm_paint_layer(
     }
 }
 
-/* Capas de chrome del shell: wallpaper+iconos, taskbar, welcome, start menu,
- * confirm dialog y menu contextual. Operan sobre shell_state (ver
- * docs/WM_SUBSYSTEM.md). En A2 este dibujo se muda al shell-client, que las
- * pinta en su propia superficie. */
-static void shell_paint_layer(
-    struct sx_painter *painter,
-    struct desktop_session *session,
-    const struct desktop_layer *layer,
-    const struct shell_state *shell)
-{
-    switch (layer->kind)
-    {
-    case DESKTOP_LAYER_BACKGROUND:
-        /* Capa opaca => windowd dibuja el wallpaper (fallback); no-opaca => el
-         * cliente de fondo ya lo provee y aca solo van iconos + watermark. */
-        draw_background(painter, &session->gfx.info, shell->selected_shortcut, layer->opaque);
-        break;
-    case DESKTOP_LAYER_TASKBAR:
-        draw_taskbar(painter, session, shell->menu_open);
-        break;
-    case DESKTOP_LAYER_WELCOME:
-        draw_welcome(painter, session);
-        break;
-    case DESKTOP_LAYER_MENU:
-        draw_start_menu(painter, &session->gfx, shell->selected_index);
-        break;
-    case DESKTOP_LAYER_CONFIRM:
-        draw_confirm_dialog(painter, &session->gfx.info, shell->confirm_action);
-        break;
-    case DESKTOP_LAYER_CONTEXT_MENU:
-        draw_context_menu(painter, &shell->context_menu);
-        break;
-    default:
-        break;
-    }
-}
-
-/* Despacha cada capa a su dueno: WM (cliente/cursor) o shell (chrome). Esa
- * particion es la frontera que A2 convierte en limite de proceso. */
-static void paint_layer(
-    struct sx_painter *painter,
-    struct desktop_session *session,
-    const struct desktop_layer *layer,
-    const struct shell_state *shell,
-    int cursor_x,
-    int cursor_y)
-{
-    switch (layer->kind)
-    {
-    case DESKTOP_LAYER_CLIENT:
-    case DESKTOP_LAYER_CURSOR:
-    case DESKTOP_LAYER_TASKLIST:
-        wm_paint_layer(painter, session, layer, cursor_x, cursor_y);
-        break;
-    default:
-        shell_paint_layer(painter, session, layer, shell);
-        break;
-    }
-}
-
+/* Ya no hay capas de shell: retirado el chrome Win95 (A2.4c), todo lo que
+ * compone windowd es suyo -- fondo de fallback, superficies de clientes, Task
+ * List y cursor. El chrome vive en procesos cliente: el fondo en shellui y el
+ * launcher en progman. */
 /* Back-to-front layer list for the current frame. */
 static int build_layers(
     struct desktop_session *session,
-    const struct shell_state *shell,
     int cursor_x,
     int cursor_y,
     struct desktop_layer *layers)
@@ -1155,22 +686,16 @@ static int build_layers(
     const struct savanxp_fb_info *info = &session->gfx.info;
     int count = 0;
     int order_index;
-    int menu_x = 0;
-    int menu_y = 0;
-    int menu_w = 0;
-    int menu_h = 0;
     int cur_x = 0;
     int cur_y = 0;
     int cur_w = 0;
     int cur_h = 0;
 
-    /* Fondo del z-order. Si el cliente de fondo (shellui) ya compuso un frame,
-     * su superficie es la capa opaca de wallpaper (cubre el work area) y windowd
-     * solo pinta iconos + watermark encima (capa BACKGROUND no-opaca). Si no esta
-     * listo (boot antes del primer frame, o murio), windowd dibuja el wallpaper
-     * completo el mismo (BACKGROUND opaca, fallback). La franja del taskbar la
-     * cubre siempre la capa TASKBAR (opaca), asi que el work area + taskbar dan
-     * cobertura total en ambos modos. */
+    /* Fondo del z-order. Con el chrome retirado (A2.4c) el escritorio es solo
+     * wallpaper, y lo dibuja el cliente shellui: su superficie es la capa opaca
+     * de mas atras. Si no esta listo (boot antes del primer frame, o murio),
+     * windowd lo dibuja el mismo como fallback para no dejar el fondo sin
+     * pintar. Ya no hay capa de iconos ni taskbar encima. */
     if (client_is_drawable(&session->background_client) &&
         session->background_client.consumed_submit_sequence > 0)
     {
@@ -1178,12 +703,6 @@ static int build_layers(
         layers[count].opaque = 1;
         layers[count].bounds = client_occluder_rect(&session->background_client);
         layers[count].client = &session->background_client;
-        ++count;
-
-        layers[count].kind = DESKTOP_LAYER_BACKGROUND;
-        layers[count].opaque = 0;
-        layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
-        layers[count].client = 0;
         ++count;
     }
     else
@@ -1255,50 +774,7 @@ static int build_layers(
         ++count;
     }
 
-    layers[count].kind = DESKTOP_LAYER_TASKBAR;
-    layers[count].opaque = 1;
-    layers[count].bounds = sx_rect_make(0, (int)info->height - DESKTOP_TASKBAR_HEIGHT, (int)info->width, DESKTOP_TASKBAR_HEIGHT);
-    layers[count].client = 0;
-    ++count;
-
-    if (shell->welcome_visible)
-    {
-        layers[count].kind = DESKTOP_LAYER_WELCOME;
-        layers[count].opaque = 1;
-        layers[count].bounds = welcome_rect(info);
-        layers[count].client = 0;
-        ++count;
-    }
-
-    if (shell->menu_open)
-    {
-        desktop_start_menu_bounds(info, &menu_x, &menu_y, &menu_w, &menu_h);
-        layers[count].kind = DESKTOP_LAYER_MENU;
-        layers[count].opaque = 1;
-        layers[count].bounds = sx_rect_make(menu_x, menu_y, menu_w, menu_h);
-        layers[count].client = 0;
-        ++count;
-    }
-
-    if (shell->confirm_action != DESKTOP_CONFIRM_NONE)
-    {
-        layers[count].kind = DESKTOP_LAYER_CONFIRM;
-        layers[count].opaque = 1;
-        layers[count].bounds = desktop_confirm_dialog_rect(info);
-        layers[count].client = 0;
-        ++count;
-    }
-
-    if (shell->context_menu.open)
-    {
-        layers[count].kind = DESKTOP_LAYER_CONTEXT_MENU;
-        layers[count].opaque = 1;
-        layers[count].bounds = desktop_context_menu_rect(shell->context_menu.x, shell->context_menu.y);
-        layers[count].client = 0;
-        ++count;
-    }
-
-    /* El Task List va sobre todo el chrome: es el conmutador de ventanas. */
+    /* El Task List va sobre todo: es el conmutador de ventanas. */
     if (session->tasklist_open)
     {
         layers[count].kind = DESKTOP_LAYER_TASKLIST;
@@ -1325,7 +801,6 @@ void desktop_draw_desktop(
     struct desktop_session *session,
     int cursor_x,
     int cursor_y,
-    const struct shell_state *shell,
     const struct desktop_dirty_rect *dirty)
 {
     /* Single-threaded compositor: keep the working sets off the stack. */
@@ -1337,7 +812,7 @@ void desktop_draw_desktop(
     int layer_count = 0;
     int layer_index;
 
-    if (session == 0 || shell == 0 || g_backbuffer == 0)
+    if (session == 0 || g_backbuffer == 0)
     {
         return;
     }
@@ -1361,7 +836,7 @@ void desktop_draw_desktop(
         (void)sx_rect_set_add(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
     }
 
-    layer_count = build_layers(session, shell, cursor_x, cursor_y, layers);
+    layer_count = build_layers(session, cursor_x, cursor_y, layers);
 
     /* Paint back-to-front; each layer only over the area not covered by an
      * opaque layer in front of it. */
@@ -1399,7 +874,7 @@ void desktop_draw_desktop(
             }
             sx_painter_clear_clip(&painter);
             sx_painter_add_clip_rect(&painter, sub);
-            paint_layer(&painter, session, layer, shell, cursor_x, cursor_y);
+            wm_paint_layer(&painter, session, layer, cursor_x, cursor_y);
         }
     }
 }

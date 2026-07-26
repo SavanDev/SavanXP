@@ -34,10 +34,13 @@ void desktop_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y
     {
         return;
     }
+    /* Sin taskbar (A2.4c) el area util es la pantalla entera: nada reserva una
+     * franja. Esto define el tamano de las superficies de clientes, incluida la
+     * de fondo, asi que el wallpaper cubre todo el display. */
     *x = 0;
     *y = 0;
     *width = (int)info->width;
-    *height = (int)info->height > DESKTOP_TASKBAR_HEIGHT ? (int)info->height - DESKTOP_TASKBAR_HEIGHT : (int)info->height;
+    *height = (int)info->height;
 }
 
 void desktop_fill_shell_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)
