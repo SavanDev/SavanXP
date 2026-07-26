@@ -838,6 +838,160 @@ function New-SvfsManifest([string]$SourceRoot) {
     return $manifestPath
 }
 
+# Codigo de salida con el que svfs-cli reporta SVFS_ERR_NO_SPACE (el volumen
+# tiene espacio libre pero no una corrida contigua del tamano pedido). Espeja
+# SVFS_CLI_EXIT_NO_SPACE en libsvfs/svfs_cli.c; si se desincroniza, el unico
+# efecto es perder el reintento automatico y volver a fallar el build duro.
+$Script:SvfsCliExitNoSpace = 3
+
+# Enumera el arbol de una imagen SVFS2 (solo lectura, con los helpers Get-*).
+# Devuelve Dirs (rutas relativas a la raiz) y Files (ruta + inodo), en orden de
+# recorrido por niveles: padres antes que hijos, listo para volcar a un
+# manifiesto de svfs-cli.
+function Get-Svfs2Inventory($Image) {
+    $dirs = New-Object System.Collections.Generic.List[string]
+    $files = New-Object System.Collections.Generic.List[object]
+    $visited = @{}
+
+    $pending = New-Object System.Collections.Generic.Queue[object]
+    $pending.Enqueue([pscustomobject]@{ InodeId = [uint32]$Script:Svfs2RootInode; Prefix = "" })
+    while ($pending.Count -gt 0) {
+        $current = $pending.Dequeue()
+        if ($visited.ContainsKey($current.InodeId)) {
+            continue # imagen con inodos aliaseados: no reentrar
+        }
+        $visited[$current.InodeId] = $true
+
+        foreach ($entry in Get-Svfs2DirEntries $Image ([uint32]$current.InodeId)) {
+            if ($entry.InodeId -eq 0 -or [string]::IsNullOrWhiteSpace($entry.Name)) {
+                continue
+            }
+            $relative = if ($current.Prefix) { "$($current.Prefix)/$($entry.Name)" } else { $entry.Name }
+            if ($entry.Type -eq 2) {
+                $dirs.Add($relative)
+                $pending.Enqueue([pscustomobject]@{ InodeId = [uint32]$entry.InodeId; Prefix = $relative })
+            } else {
+                $files.Add([pscustomobject]@{ RelativePath = $relative; InodeId = [uint32]$entry.InodeId })
+            }
+        }
+    }
+
+    return [pscustomobject]@{ Dirs = $dirs.ToArray(); Files = $files.ToArray() }
+}
+
+# Rutas relativas de los archivos que un manifiesto de svfs-cli escribe.
+function Get-SvfsManifestFilePaths([string]$ManifestPath) {
+    $paths = @{}
+    foreach ($line in [System.IO.File]::ReadAllLines($ManifestPath)) {
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) {
+            continue
+        }
+        $fields = $line.Split("`t")
+        if ($fields.Count -ge 3 -and $fields[0] -eq "file") {
+            $paths[$fields[1]] = $true
+        }
+    }
+    return $paths
+}
+
+# Desfragmenta una imagen reconstruyendola desde cero: extrae lo que el
+# manifiesto NO produce, formatea una imagen nueva y lo reinstala con el tool.
+#
+# Lo que el manifiesto no produce es exactamente lo que hay que preservar: son
+# los datos que viven en el disco y no en el arbol de build (/disk/bin/doomgeneric,
+# los WAD, lo que el usuario haya guardado). Los archivos del manifiesto no se
+# copian porque el apply que sigue los reinstala desde el host, y son ademas los
+# unicos cuyos sectores pudo haber pisado un apply fallido: svfs-cli solo flushea
+# metadata si termina bien, y el allocator nunca elige sectores de un archivo
+# ajeno al manifiesto porque el bitmap que carga del disco los tiene marcados.
+#
+# La imagen nueva se arma aparte y se mueve al final: si algo falla, la original
+# queda intacta y no se pierden datos por un intento de compactacion. La copia
+# extraida queda en build/svfs-carryover como red de seguridad (la sobrescribe la
+# proxima compactacion, y 'build.ps1 clean' la borra).
+function Invoke-SvfsCompaction([string]$Exe, [string]$ImagePath, [string]$ManifestPath) {
+    $image = Open-SvfsImage $ImagePath
+    $inventory = Get-Svfs2Inventory $image
+    $produced = Get-SvfsManifestFilePaths $ManifestPath
+
+    $carryRoot = Join-Path $Script:BuildRoot "svfs-carryover"
+    if (Test-Path $carryRoot) {
+        Remove-Item -Recurse -Force $carryRoot
+    }
+    Ensure-Directory $carryRoot
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($dir in $inventory.Dirs) {
+        $lines.Add("mkdir`t$dir")
+    }
+
+    $preservedBytes = 0
+    $preservedCount = 0
+    foreach ($file in $inventory.Files) {
+        if ($produced.ContainsKey($file.RelativePath)) {
+            continue
+        }
+        $hostPath = Join-Path $carryRoot ($file.RelativePath -replace '/', '\')
+        Ensure-Directory (Split-Path -Parent $hostPath)
+        $bytes = Read-Svfs2InodeBytes $image (Get-Svfs2Inode $image $file.InodeId)
+        [System.IO.File]::WriteAllBytes($hostPath, $bytes)
+        $lines.Add("file`t$($file.RelativePath)`t$hostPath")
+        $preservedCount += 1
+        $preservedBytes += $bytes.Length
+        Write-Host ("  se preserva /disk/{0} ({1:N0} bytes)" -f $file.RelativePath, $bytes.Length)
+    }
+    if ($preservedCount -eq 0) {
+        Write-Host "  la imagen no tiene archivos ajenos a esta build que preservar."
+    }
+
+    $carryManifest = Join-Path $Script:BuildRoot "svfs-carryover-manifest.txt"
+    [System.IO.File]::WriteAllText($carryManifest, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+
+    $staging = "$ImagePath.compact"
+    if (Test-Path $staging) {
+        Remove-Item $staging -Force
+    }
+    & $Exe create $staging $image.TotalSectors
+    if ($LASTEXITCODE -ne 0) {
+        throw "svfs-cli create fallo compactando '$ImagePath'."
+    }
+    & $Exe apply $staging $carryManifest
+    if ($LASTEXITCODE -ne 0) {
+        throw "svfs-cli apply fallo reinstalando los datos preservados al compactar '$ImagePath'. La imagen original quedo intacta."
+    }
+    Move-Item $staging $ImagePath -Force
+
+    Write-Host ("Imagen compactada: {0} archivo(s) preservado(s), {1:N0} bytes." -f $preservedCount, $preservedBytes)
+}
+
+# Aplica un manifiesto con svfs-cli. Si el allocator se queda sin corrida
+# contigua, compacta la imagen y reintenta una vez en vez de abortar el build.
+#
+# La imagen se preserva entre builds para no perder los datos del usuario, y cada
+# binario que crece mas de lo que da su extent se reubica, asi que el espacio
+# libre se va fragmentando: eventualmente no hay corrida contigua aunque sobre
+# espacio. El workaround era borrar build/disk.img a mano; esto lo hace solo y sin
+# perder datos, porque la compactacion reinstala todo lo que el manifiesto no
+# produce. La garantia de persistencia sigue verificandose despues del reintento
+# (ver Get-SvfsPersistenceSnapshot / Assert-SvfsPersistenceRetained en build.ps1).
+function Invoke-SvfsApply([string]$Exe, [string]$ImagePath, [string]$ManifestPath, [string]$FailureMessage) {
+    & $Exe apply $ImagePath $ManifestPath
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+    if ($LASTEXITCODE -ne $Script:SvfsCliExitNoSpace) {
+        throw $FailureMessage
+    }
+
+    Write-Host "La imagen SVFS2 '$ImagePath' no tiene corrida contigua libre; compactandola y reintentando..."
+    Invoke-SvfsCompaction -Exe $Exe -ImagePath $ImagePath -ManifestPath $ManifestPath
+
+    & $Exe apply $ImagePath $ManifestPath
+    if ($LASTEXITCODE -ne 0) {
+        throw ($FailureMessage + " La imagen ya estaba compactada, asi que no es fragmentacion: al disco le falta espacio real.")
+    }
+}
+
 # Instala archivos/directorios sueltos en una imagen SVFS2 existente via el tool
 # (svfs-cli apply). $Operations es una lista de hashtables:
 #   @{ Dir = "bin" }                                 -> mkdir bin
@@ -859,9 +1013,7 @@ function Install-SvfsFilesWithTool([string]$DiskImagePath, [object[]]$Operations
     }
     $manifest = Join-Path $Script:BuildRoot "svfs-install-manifest.txt"
     [System.IO.File]::WriteAllText($manifest, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
-    & $exe apply $DiskImagePath $manifest
-    if ($LASTEXITCODE -ne 0) {
-        throw "svfs-cli apply fallo instalando en '$DiskImagePath'."
-    }
+    Invoke-SvfsApply -Exe $exe -ImagePath $DiskImagePath -ManifestPath $manifest `
+        -FailureMessage "svfs-cli apply fallo instalando en '$DiskImagePath'."
 }
 
