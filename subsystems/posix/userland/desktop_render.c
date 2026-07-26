@@ -3,7 +3,6 @@
 #include "cursor_asset.h"
 #include "desktop_icons.h"
 #include "desktop_menu.h"
-#include "desktop_tray.h"
 #include "desktop_wallpaper.h"
 #include "desktop_layout.h"
 #include "desktop_render.h"
@@ -106,43 +105,6 @@ void desktop_dirty_rect_add_fullscreen(struct desktop_dirty_rect *dirty, const s
     {
         desktop_dirty_rect_add(dirty, info, 0, 0, (int)info->width, (int)info->height);
     }
-}
-
-void desktop_dirty_rect_add_taskbar(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info)
-{
-    if (info != 0)
-    {
-        desktop_dirty_rect_add(dirty, info, 0, (int)info->height - DESKTOP_TASKBAR_HEIGHT, (int)info->width, DESKTOP_TASKBAR_HEIGHT);
-    }
-}
-
-void desktop_dirty_rect_add_menu(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info)
-{
-    int x = 0;
-    int y = 0;
-    int width = 0;
-    int height = 0;
-
-    desktop_start_menu_bounds(info, &x, &y, &width, &height);
-    desktop_dirty_rect_add(dirty, info, x, y, width, height);
-}
-
-void desktop_dirty_rect_add_shortcut(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int shortcut_index)
-{
-    struct sx_rect rect = desktop_shortcut_rect(info, shortcut_index);
-
-    if (dirty == 0 || info == 0 || sx_rect_is_empty(rect))
-    {
-        return;
-    }
-    desktop_dirty_rect_add(dirty, info, rect.x, rect.y, rect.width, rect.height);
-}
-
-void desktop_dirty_rect_add_context_menu(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int menu_x, int menu_y)
-{
-    struct sx_rect rect = desktop_context_menu_rect(menu_x, menu_y);
-
-    desktop_dirty_rect_add(dirty, info, rect.x, rect.y, rect.width, rect.height);
 }
 
 void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape)
@@ -554,7 +516,7 @@ static void draw_tasklist(struct sx_painter *painter, struct desktop_session *se
 {
     static const char *k_button_labels[DESKTOP_TASKLIST_BUTTON_COUNT] = {"Switch To", "End Task", "Cancel"};
     const struct savanxp_fb_info *info = &session->gfx.info;
-    int task_count = desktop_taskbar_button_count(session);
+    int task_count = desktop_task_count(session);
     struct sx_rect dialog = desktop_tasklist_rect(info, task_count);
     struct sx_rect list = desktop_tasklist_list_rect(info, task_count);
     int first = desktop_tasklist_first_visible(task_count, session->tasklist_selected);
@@ -586,7 +548,7 @@ static void draw_tasklist(struct sx_painter *painter, struct desktop_session *se
         int task_index = first + index;
         int is_shell = 0;
         int slot = -1;
-        const struct desktop_client *client = desktop_taskbar_button_client(session, task_index, &is_shell, &slot);
+        const struct desktop_client *client = desktop_task_client(session, task_index, &is_shell, &slot);
         struct sx_rect row = desktop_tasklist_item_rect(info, task_count, index);
         const struct desktop_menu_item *item = 0;
         const char *label = "Ventana";
@@ -731,7 +693,7 @@ static int build_layers(
         {
             layers[count].kind = DESKTOP_LAYER_TASKLIST;
             layers[count].opaque = 1;
-            layers[count].bounds = desktop_tasklist_rect(info, desktop_taskbar_button_count(session));
+            layers[count].bounds = desktop_tasklist_rect(info, desktop_task_count(session));
             layers[count].client = 0;
             ++count;
         }
@@ -779,7 +741,7 @@ static int build_layers(
     {
         layers[count].kind = DESKTOP_LAYER_TASKLIST;
         layers[count].opaque = 1;
-        layers[count].bounds = desktop_tasklist_rect(info, desktop_taskbar_button_count(session));
+        layers[count].bounds = desktop_tasklist_rect(info, desktop_task_count(session));
         layers[count].client = 0;
         ++count;
     }

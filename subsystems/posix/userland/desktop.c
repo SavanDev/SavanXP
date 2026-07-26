@@ -1,7 +1,6 @@
 #include "libc.h"
 #include "desktop_session.h"
 #include "desktop_menu.h"
-#include "desktop_shell.h"
 #include "desktop_wallpaper.h"
 #include "desktop_layout.h"
 #include "desktop_render.h"
@@ -1477,11 +1476,12 @@ static int launch_shell_client(struct desktop_session *session, const char *path
 }
 
 /* launch_flags: SAVANXP_DESKTOP_LAUNCH_FLAG_*, declarados por quien pide el
- * launch (A2.3). Cuando vienen en cero se consulta el catalogo por path como
- * fallback transitorio: es lo que mantiene el comportamiento de los lanzadores
- * que todavia no pasan flags (filesapp). Ese fallback -- y con el, la ultima
- * dependencia del WM sobre el catalogo de apps -- se retira en A2.4, junto con
- * la tabla de desktop_menu. */
+ * launch. El WM ya no consulta ningun catalogo de aplicaciones para decidir
+ * como dimensionar la superficie: si nadie declara el flag, la app arranca en
+ * ventana. Consecuencia conocida: un lanzador que no pase flags (filesapp)
+ * abre Doom sin pre-sizing y por lo tanto sin F11. El arreglo de fondo es que
+ * el programa pida fullscreen en runtime -- el mode-setting ya funciona --, no
+ * que el WM vuelva a conocer un catalogo. */
 static int launch_overlay_client(struct desktop_session *session, const char *path, uint32_t launch_flags)
 {
     struct desktop_client *client = 0;
@@ -1502,14 +1502,6 @@ static int launch_overlay_client(struct desktop_session *session, const char *pa
     client = &session->overlay_clients[slot];
     reset_client(client);
     fill_client_surface_info(session, DESKTOP_CLIENT_APP, &client->surface_info);
-    if (launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_NONE)
-    {
-        const struct desktop_menu_item *item = desktop_find_menu_item_by_path(path);
-        if (item != 0 && (item->flags & DESKTOP_MENU_ITEM_FLAG_FULLSCREEN) != 0)
-        {
-            launch_flags |= SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN;
-        }
-    }
     if ((launch_flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0)
     {
         /* Allocate the surface at the low fullscreen render size. The same
@@ -1828,9 +1820,15 @@ static int desktop_cursor_repro(void)
     fb = session.compositor.framebuffer;
     stride = info->pitch / 4u;
 
-    /* Probe point Q: centre of the power dialog. R: far enough that its cursor
-     * damage does not overlap Q's footprint. */
-    dlg = desktop_confirm_dialog_rect(info);
+    /* Probe point Q: centro de la pantalla (antes era el centro del dialogo de
+     * energia, que se retiro con el chrome; lo unico que importa es sondear un
+     * punto interior estable). R: lo bastante lejos como para que su rastro de
+     * cursor no se solape con la huella de Q. */
+    dlg = sx_rect_make(
+        ((int)info->width - 300) / 2,
+        ((int)info->height - 132) / 2,
+        300,
+        132);
     qx = dlg.x + (dlg.width / 2);
     qy = dlg.y + (dlg.height / 2);
 
@@ -2254,12 +2252,12 @@ static int desktop_selftest(void)
         if (!failed)
         {
             tasklist_open(&session, &dirty);
-            for (index = 0; index < desktop_taskbar_button_count(&session); ++index)
+            for (index = 0; index < desktop_task_count(&session); ++index)
             {
                 int is_shell = 0;
                 int slot = -1;
 
-                if (desktop_taskbar_button_client(&session, index, &is_shell, &slot) != 0 && slot == kSlot)
+                if (desktop_task_client(&session, index, &is_shell, &slot) != 0 && slot == kSlot)
                 {
                     task_index = index;
                     break;
@@ -2395,7 +2393,7 @@ static void tasklist_close(struct desktop_session *session, struct desktop_dirty
 
 static void tasklist_open(struct desktop_session *session, struct desktop_dirty_rect *dirty)
 {
-    int count = desktop_taskbar_button_count(session);
+    int count = desktop_task_count(session);
 
     session->tasklist_open = 1;
     if (session->tasklist_selected < 0 || session->tasklist_selected >= count)
@@ -2410,7 +2408,7 @@ static void tasklist_switch_to(struct desktop_session *session, struct desktop_d
 {
     int is_shell = 0;
     int slot = -1;
-    const struct desktop_client *client = desktop_taskbar_button_client(session, task_index, &is_shell, &slot);
+    const struct desktop_client *client = desktop_task_client(session, task_index, &is_shell, &slot);
 
     if (client == 0)
     {
@@ -2440,16 +2438,16 @@ static void tasklist_end_task(struct desktop_session *session, struct desktop_di
 {
     int is_shell = 0;
     int slot = -1;
-    const struct desktop_client *client = desktop_taskbar_button_client(session, task_index, &is_shell, &slot);
+    const struct desktop_client *client = desktop_task_client(session, task_index, &is_shell, &slot);
 
     if (client == 0 || is_shell || !overlay_slot_valid(slot))
     {
         return;
     }
     destroy_overlay_client(session, slot, 1);
-    if (session->tasklist_selected >= desktop_taskbar_button_count(session))
+    if (session->tasklist_selected >= desktop_task_count(session))
     {
-        session->tasklist_selected = desktop_taskbar_button_count(session) - 1;
+        session->tasklist_selected = desktop_task_count(session) - 1;
     }
     if (session->tasklist_selected < 0)
     {
@@ -2493,7 +2491,7 @@ static int wm_handle_key(
     /* Mientras esta abierto, el Task List captura el teclado: es modal. */
     if (session->tasklist_open)
     {
-        int count = desktop_taskbar_button_count(session);
+        int count = desktop_task_count(session);
 
         if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
         {
@@ -2600,7 +2598,7 @@ static int wm_pointer_handle_tasklist(
         return 1; /* Consumido igual: el dialogo es modal. */
     }
 
-    count = desktop_taskbar_button_count(session);
+    count = desktop_task_count(session);
     button_index = desktop_tasklist_button_from_point(&session->gfx.info, count, cursor_x, cursor_y);
     if (button_index >= 0)
     {

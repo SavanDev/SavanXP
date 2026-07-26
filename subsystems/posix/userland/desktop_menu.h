@@ -3,66 +3,28 @@
 #include "libc.h"
 #include "desktop_icons.h"
 
-#define DESKTOP_MENU_ITEM_FLAG_SHORTCUT 0x00000001u
-/* App can take over the whole screen via composited fullscreen (F11): its
- * client surface is allocated at a low render size and scaled by the shell. */
-#define DESKTOP_MENU_ITEM_FLAG_FULLSCREEN 0x00000002u
+/*
+ * Tabla de presentacion de ventanas.
+ *
+ * Lo que queda del viejo catalogo del escritorio: el WM ya NO la usa para
+ * decidir como lanzar nada -- eso lo declara quien pide el launch, via los
+ * flags del protocolo (A2.3a) --, y el catalogo de programas vive en el
+ * registro de progman (/disk/progman.ini). Esta tabla solo traduce un path a
+ * un nombre lindo, un icono y un color de barra de titulo, para las ventanas y
+ * el Task List.
+ *
+ * El arreglo de fondo es que cada cliente informe su propio titulo/icono por
+ * protocolo; hasta entonces el WM adivina por path y cae a defaults genericos
+ * para lo que no conoce.
+ */
 
 struct desktop_menu_item
 {
     const char *label;
     const char *path;
-    const char *subtitle;
     enum desktop_icon_id icon_id;
     uint32_t accent;
-    uint32_t flags;
 };
 
-/* Accion de energia pendiente de confirmacion. */
-#define DESKTOP_CONFIRM_NONE 0
-#define DESKTOP_CONFIRM_SHUTDOWN 1
-#define DESKTOP_CONFIRM_REBOOT 2
-
-/* Menu contextual del escritorio (click derecho sobre el fondo). */
-enum desktop_context_action
-{
-    DESKTOP_CONTEXT_ACTION_REFRESH = 0,
-    DESKTOP_CONTEXT_ACTION_NEXT_WALLPAPER,
-    DESKTOP_CONTEXT_ACTION_ABOUT,
-};
-
-struct desktop_context_item
-{
-    const char *label;
-    int action; /* DESKTOP_CONTEXT_ACTION_* */
-    int separator_before;
-};
-
-/* Estado del menu contextual que main() arrastra entre frames. x/y ya vienen
- * clampeados por desktop_context_menu_place() al abrirlo, asi layout, render
- * e hit-test parten de la misma esquina. */
-struct desktop_context_menu_state
-{
-    int open;
-    int x;
-    int y;
-    int selected;
-};
-
-struct desktop_power_item
-{
-    const char *label;
-    int confirm; /* DESKTOP_CONFIRM_* */
-};
-
-int desktop_menu_item_count(void);
-const struct desktop_menu_item *desktop_menu_item_at(int index);
+/* Devuelve 0 si el path no esta en la tabla: el llamador usa defaults. */
 const struct desktop_menu_item *desktop_find_menu_item_by_path(const char *path);
-int desktop_shortcut_count(void);
-const struct desktop_menu_item *desktop_shortcut_at(int index);
-
-int desktop_power_item_count(void);
-const struct desktop_power_item *desktop_power_item_at(int index);
-
-int desktop_context_item_count(void);
-const struct desktop_context_item *desktop_context_item_at(int index);
