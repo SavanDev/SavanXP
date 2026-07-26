@@ -29,6 +29,11 @@ int main(void)
     struct savanxp_gfx_context gfx;
     struct savanxp_input_event event;
     int needs_repaint = 1;
+    /* El fondo lo cambia progman (menu Options) escribiendo la config; nosotros
+     * la releemos cada tanto y repintamos si cambio. Espaciado -- no en cada
+     * frame -- porque es un cambio manual y raro: no vale un open+read por
+     * iteracion del loop. */
+    unsigned long next_config_check_ms = 0;
 
     if (gfx_open(&gfx) < 0)
     {
@@ -55,6 +60,18 @@ int main(void)
             {
                 (void)gfx_apply_resize_event(&gfx, &event);
                 needs_repaint = 1;
+            }
+        }
+
+        {
+            unsigned long now = uptime_ms();
+            if (now >= next_config_check_ms)
+            {
+                next_config_check_ms = now + 500UL;
+                if (desktop_wallpaper_reload())
+                {
+                    needs_repaint = 1;
+                }
             }
         }
 

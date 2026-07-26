@@ -162,6 +162,7 @@ $UserPrograms = @(
         "subsystems/posix/userland/progman.c",
         "subsystems/posix/userland/progman_registry.c",
         "subsystems/posix/userland/desktop_icons.c",
+        "subsystems/posix/userland/desktop_wallpaper.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
         "subsystems/posix/sdk/v1/runtime/posix.c"

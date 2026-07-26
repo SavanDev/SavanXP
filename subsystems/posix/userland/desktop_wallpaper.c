@@ -174,9 +174,9 @@ static void load_config(void)
     }
 }
 
-static void save_config(void)
+static void save_mode(int mode)
 {
-    char digit = (char)('0' + g_mode);
+    char digit = (char)('0' + mode);
     int fd = (int)open_mode(
         DESKTOP_WALLPAPER_CONFIG_PATH,
         SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
@@ -187,6 +187,44 @@ static void save_config(void)
     }
     (void)write(fd, &digit, 1);
     close(fd);
+}
+
+static void save_config(void)
+{
+    save_mode(g_mode);
+}
+
+/* Presencia del BMP sin decodificarlo: alcanza para saber si el modo IMAGE es
+ * elegible. */
+static int image_file_present(void)
+{
+    int fd = (int)open_mode(DESKTOP_WALLPAPER_IMAGE_PATH, SAVANXP_OPEN_READ);
+
+    if (fd < 0)
+    {
+        return 0;
+    }
+    close(fd);
+    return 1;
+}
+
+/* Lee el modo persistido. Devuelve -1 si no hay config legible. */
+static int read_persisted_mode(void)
+{
+    char digit = 0;
+    int mode = -1;
+    int fd = (int)open_mode(DESKTOP_WALLPAPER_CONFIG_PATH, SAVANXP_OPEN_READ);
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+    if (read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
+    {
+        mode = digit - '0';
+    }
+    close(fd);
+    return mode;
 }
 
 void desktop_wallpaper_init(void)
@@ -212,6 +250,46 @@ int desktop_wallpaper_cycle(void)
     g_mode = next;
     save_config();
     return g_mode;
+}
+
+int desktop_wallpaper_cycle_config(void)
+{
+    const int has_image = image_file_present();
+    int mode = read_persisted_mode();
+    int next;
+
+    if (mode < 0)
+    {
+        /* Sin config previa: mismo criterio que load_config(). */
+        mode = has_image ? DESKTOP_WALLPAPER_IMAGE : DESKTOP_WALLPAPER_TEAL;
+    }
+
+    next = mode;
+    do
+    {
+        next = (next + 1) % DESKTOP_WALLPAPER_MODE_COUNT;
+    } while (next == DESKTOP_WALLPAPER_IMAGE && !has_image);
+
+    /* Solo persiste: no toca g_mode, porque quien cambia el fondo puede no ser
+     * quien lo dibuja. El que dibuja se entera por desktop_wallpaper_reload(). */
+    save_mode(next);
+    return next;
+}
+
+int desktop_wallpaper_reload(void)
+{
+    int mode = read_persisted_mode();
+
+    if (mode < 0 || mode == g_mode)
+    {
+        return 0;
+    }
+    if (mode == DESKTOP_WALLPAPER_IMAGE && g_image_pixels == 0)
+    {
+        return 0;
+    }
+    g_mode = mode;
+    return 1;
 }
 
 static void draw_gradient(struct sx_painter *painter, const struct savanxp_fb_info *info)

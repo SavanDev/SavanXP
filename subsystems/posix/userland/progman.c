@@ -2,6 +2,7 @@
 #include "savanxp/sxgui.h"
 
 #include "progman_registry.h"
+#include "desktop_wallpaper.h"
 
 #include <stdio.h>
 
@@ -45,6 +46,7 @@ enum progman_command
     PROGMAN_CMD_SHUTDOWN = 1,
     PROGMAN_CMD_REBOOT,
     PROGMAN_CMD_EXIT,
+    PROGMAN_CMD_WALLPAPER,
     PROGMAN_CMD_ABOUT,
 };
 
@@ -55,12 +57,19 @@ static const struct sxgui_menu_item k_file_items[] = {
     {"Salir", PROGMAN_CMD_EXIT, 0},
 };
 
+/* El Progman real no cambiaba el fondo (eso era el Control Panel), pero no
+ * tenemos uno: Options es el hogar razonable mientras tanto. */
+static const struct sxgui_menu_item k_options_items[] = {
+    {"Cambiar fondo", PROGMAN_CMD_WALLPAPER, 0},
+};
+
 static const struct sxgui_menu_item k_help_items[] = {
     {"Acerca de SavanXP...", PROGMAN_CMD_ABOUT, 0},
 };
 
 static const struct sxgui_menu k_menus[] = {
     {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
+    {"Options", k_options_items, (int)(sizeof(k_options_items) / sizeof(k_options_items[0]))},
     {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
 };
 
@@ -380,6 +389,21 @@ static void on_menu_command(int id, void *user)
     case PROGMAN_CMD_EXIT:
         sxgui_app_quit(&g_app, 0);
         break;
+    case PROGMAN_CMD_WALLPAPER:
+    {
+        /* Solo persistimos el modo: el fondo lo dibuja shellui, que relee la
+         * config y repinta por su cuenta. */
+        static const char *k_mode_names[DESKTOP_WALLPAPER_MODE_COUNT] = {
+            "teal", "degrade", "patron", "imagen"
+        };
+        int mode = desktop_wallpaper_cycle_config();
+
+        if (mode >= 0 && mode < DESKTOP_WALLPAPER_MODE_COUNT)
+        {
+            snprintf(g_status, sizeof(g_status), "Fondo: %s", k_mode_names[mode]);
+        }
+        break;
+    }
     case PROGMAN_CMD_ABOUT:
         if (gfx_desktop_launch_ex(&g_app.gfx, "/bin/aboutapp", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
         {
