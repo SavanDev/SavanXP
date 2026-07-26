@@ -370,10 +370,10 @@ int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
     return 1;
 }
 
-/* Compositor-routed pointer channel for windowed clients (fd 5). Returns -1 for
- * processes that were not launched as a compositor client (no fd 5). */
+/* Canal de puntero ruteado por el WM (SAVANXP_WM_FD_MOUSE). Devuelve -1 en
+ * procesos que no se lanzaron como cliente del WM y por lo tanto no lo tienen. */
 long gfx_pointer_open(void) {
-    return dup(5);
+    return dup(SAVANXP_WM_FD_MOUSE);
 }
 
 int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {

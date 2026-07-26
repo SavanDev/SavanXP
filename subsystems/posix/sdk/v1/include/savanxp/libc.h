@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "savanxp/syscall.h"
+#include "savanxp/wm_protocol.h"
 #include "savanxp/gfx2d.h"
 
 long read(int fd, void* buffer, size_t count);

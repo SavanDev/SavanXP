@@ -37,14 +37,19 @@ static void close_fd_if_needed(int *fd)
 }
 
 /*
- * The child remaps inherited handles onto the reserved descriptors 3..9 with
- * dup2 before exec. An original source descriptor can itself land inside that
- * reserved window (e.g. the surface section opened at fd 8 while the shutdown
- * event is dup2'd onto fd 8), so closing it by its old number would destroy the
- * freshly mapped target. Only release sources that sit above the reserved
- * window; descriptors 0..9 are either stdio or live dup2 targets.
+ * El hijo remapea con dup2 los handles heredados sobre los descriptores
+ * reservados del protocolo (savanxp/wm_protocol.h) antes del exec. Un
+ * descriptor de ORIGEN puede caer el mismo dentro de esa ventana reservada
+ * (p.ej. la seccion abierta en el fd 8 mientras el evento de shutdown se
+ * dup2'ea sobre el 8), asi que cerrarlo por su numero viejo destruiria el
+ * destino recien mapeado. Solo se liberan los origenes por encima de la
+ * ventana; 0..2 son stdio y el resto son destinos vivos.
+ *
+ * El tope sale del protocolo, no de una constante propia: estaba clavado en 9
+ * y se quedo corto cuando el cursor hint sumo el fd 10, dejando ese destino
+ * expuesto a que lo cerraran por numero.
  */
-#define DESKTOP_CLIENT_RESERVED_FD_MAX 9
+#define DESKTOP_CLIENT_RESERVED_FD_MAX SAVANXP_WM_FD_LAST
 
 static void close_client_setup_fd(int *fd)
 {
@@ -1317,14 +1322,16 @@ static int start_client_process(struct desktop_client *client, const char *path)
     }
     if (pid == 0)
     {
-        if (dup2(client->section_fd, 3) < 0 ||
-            dup2(input_pipe[0], 4) < 0 ||
-            dup2(mouse_pipe[0], 5) < 0 ||
-            dup2(submit_event, 6) < 0 ||
-            dup2(retire_event, 7) < 0 ||
-            dup2(shutdown_event, 8) < 0 ||
-            dup2(launch_pipe[1], 9) < 0 ||
-            dup2(cursor_hint_pipe[1], 10) < 0)
+        /* Establece el contrato de fds del protocolo WM<->cliente
+         * (savanxp/wm_protocol.h) antes del exec. */
+        if (dup2(client->section_fd, SAVANXP_WM_FD_SECTION) < 0 ||
+            dup2(input_pipe[0], SAVANXP_WM_FD_INPUT) < 0 ||
+            dup2(mouse_pipe[0], SAVANXP_WM_FD_MOUSE) < 0 ||
+            dup2(submit_event, SAVANXP_WM_FD_SUBMIT_EVENT) < 0 ||
+            dup2(retire_event, SAVANXP_WM_FD_RETIRE_EVENT) < 0 ||
+            dup2(shutdown_event, SAVANXP_WM_FD_SHUTDOWN_EVENT) < 0 ||
+            dup2(launch_pipe[1], SAVANXP_WM_FD_LAUNCH) < 0 ||
+            dup2(cursor_hint_pipe[1], SAVANXP_WM_FD_CURSOR_HINT) < 0)
         {
             exit(1);
         }

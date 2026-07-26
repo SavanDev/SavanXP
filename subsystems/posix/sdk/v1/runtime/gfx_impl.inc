@@ -278,7 +278,7 @@ static long gfx_submit_client_batch(
 
 static long gfx_open_client(struct savanxp_gfx_context* context) {
     struct savanxp_gpu_client_surface_header* header;
-    void* mapped = map_view(3, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    void* mapped = map_view(SAVANXP_WM_FD_SECTION, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     long private_section_fd = -1;
     void* private_pixels = 0;
     uint32_t* shared_pixels = 0;
@@ -328,13 +328,13 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     }
     memcpy(private_pixels, shared_pixels, header->info.buffer_size);
 
-    section_fd = dup(3);
-    input_fd = dup(4);
-    submit_event_fd = dup(6);
-    retire_event_fd = dup(7);
-    shutdown_event_fd = dup(8);
-    launch_fd = dup(9);
-    cursor_hint_fd = dup(10);
+    section_fd = dup(SAVANXP_WM_FD_SECTION);
+    input_fd = dup(SAVANXP_WM_FD_INPUT);
+    submit_event_fd = dup(SAVANXP_WM_FD_SUBMIT_EVENT);
+    retire_event_fd = dup(SAVANXP_WM_FD_RETIRE_EVENT);
+    shutdown_event_fd = dup(SAVANXP_WM_FD_SHUTDOWN_EVENT);
+    launch_fd = dup(SAVANXP_WM_FD_LAUNCH);
+    cursor_hint_fd = dup(SAVANXP_WM_FD_CURSOR_HINT);
     if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || retire_event_fd < 0 || shutdown_event_fd < 0) {
         if (section_fd >= 0) {
             (void)close((int)section_fd);
