@@ -1,23 +1,23 @@
 #pragma once
 
 #include "libc.h"
-#include "desktop_compositor_client.h"
+#include "windowd_compositor_client.h"
 
-#define DESKTOP_MAX_OVERLAY_CLIENTS 12
+#define WINDOWD_MAX_OVERLAY_CLIENTS 12
 
-enum desktop_client_kind
+enum windowd_client_kind
 {
-    DESKTOP_CLIENT_SHELL = 0,
-    DESKTOP_CLIENT_APP = 1,
+    WINDOWD_CLIENT_SHELL = 0,
+    WINDOWD_CLIENT_APP = 1,
 };
 
-#define DESKTOP_CLIENT_PATH_CAPACITY 192
+#define WINDOWD_CLIENT_PATH_CAPACITY 192
 
-struct desktop_client
+struct windowd_client
 {
     /* Owned copy: launch requests arrive in stack buffers that die with the
      * request, so pointing at the caller's string would dangle. */
-    char path[DESKTOP_CLIENT_PATH_CAPACITY];
+    char path[WINDOWD_CLIENT_PATH_CAPACITY];
     long pid;
     int section_fd;
     int input_write_fd;
@@ -60,10 +60,10 @@ struct desktop_client
     int fs_restore_maximized;
 };
 
-struct desktop_session
+struct windowd_session
 {
     struct savanxp_gfx_context gfx;
-    struct desktop_compositor_connection compositor;
+    struct windowd_compositor_connection compositor;
     int input_fd;
     int mouse_fd;
     int hw_cursor_enabled;
@@ -81,11 +81,11 @@ struct desktop_session
     int active_overlay_slot;
     int fullscreen_slot;
     int overlay_count;
-    int overlay_order[DESKTOP_MAX_OVERLAY_CLIENTS];
+    int overlay_order[WINDOWD_MAX_OVERLAY_CLIENTS];
     /* Cliente de fondo (shellui): superficie full-screen al fondo del z-order
      * que dibuja el wallpaper (A2, ver docs/WM_SUBSYSTEM.md). Pasivo: no recibe
      * foco ni input en A2.2. Distinto del shell_client (terminal on-demand). */
-    struct desktop_client background_client;
-    struct desktop_client shell_client;
-    struct desktop_client overlay_clients[DESKTOP_MAX_OVERLAY_CLIENTS];
+    struct windowd_client background_client;
+    struct windowd_client shell_client;
+    struct windowd_client overlay_clients[WINDOWD_MAX_OVERLAY_CLIENTS];
 };

@@ -44,7 +44,3 @@ const struct desktop_embedded_bitmap *desktop_icon_large(enum desktop_icon_id id
     return &k_large_icons[id];
 }
 
-const struct desktop_embedded_bitmap *desktop_menu_strip_art(void)
-{
-    return &k_menu_strip_art;
-}

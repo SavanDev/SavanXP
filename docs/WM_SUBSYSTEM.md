@@ -1,15 +1,30 @@
 # Extracción del Window Manager a subsistema (modelo NT 3.5)
 
-> Estado: **Fase A, paso A1 (boundary en-proceso) COMPLETO.** Input y render
-> operan sobre `shell_state` con separación `wm_`/`shell_` en-proceso,
-> behavior-preserving (verificado con `desktop-smoke` en cada corte). Siguen los
-> pasos A2 (elevar el shell a proceso separado) y A3 (rename a `windowd` +
-> header público del protocolo). Este documento fija el boundary WM↔shell.
+> **Estado: Fase A COMPLETA (A1 + A2 + A3), en master.**
+>
+> Lo que quedó construido:
+>
+> - El WM es `windowd.c` + módulos `windowd_*` (`_session`, `_render`,
+>   `_layout`, `_compositor_client`, `_appinfo`). Binario `/bin/windowd`.
+> - El shell son procesos cliente: `shellui` dibuja el fondo, `progman` es el
+>   launcher, con su registro en `/disk/progman.ini`.
+> - El contrato WM↔cliente es `savanxp/wm_protocol.h` (fds 3..10).
+> - El taskbar lo reemplaza el Task List (Ctrl+Esc), UI del WM.
+> - Módulos compartidos con clientes (`desktop_icons`, `desktop_wallpaper`)
+>   conservan su nombre a propósito: no son del WM.
+>
+> Siguen **Fase B** (primitiva MDI en sxgui para los grupos de Progman) y
+> **Fase C** (la maduración que motivó todo: resize por bordes,
+> foco/activación, Alt-Tab, corrección de repintado).
+>
+> **De acá para abajo, el documento es el registro del plan original** — con
+> las decisiones y los hallazgos tal como se tomaron. Está en tiempo futuro y
+> nombra archivos con sus nombres viejos (`desktop.c`, `desktop_*`); se
+> conserva así porque el valor es el razonamiento, no el estado.
 >
 > **Decisión-crux resuelta:** el **shell dibuja el fondo** (NT puro). El
-> shell-client posee una superficie full-screen de background (wallpaper +
-> iconos); `windowd` solo la compone al fondo del z-order y no sabe nada de
-> wallpaper. Ver "Opción recomendada" abajo.
+> shell-client posee una superficie full-screen de background; `windowd` solo la
+> compone al fondo del z-order y no sabe nada de wallpaper.
 
 ## Motivación
 

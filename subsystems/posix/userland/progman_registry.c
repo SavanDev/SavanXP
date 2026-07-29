@@ -1,7 +1,7 @@
 #include "progman_registry.h"
 
 /* Las apps de diagnostico se compilan solo si el build las pide, igual que en
- * desktop_menu.c: -NoTestApps las saca del rootfs y de los defaults a la vez. */
+ * windowd_menu.c: -NoTestApps las saca del rootfs y de los defaults a la vez. */
 #ifndef DESKTOP_INCLUDE_TEST_APPS
 #define DESKTOP_INCLUDE_TEST_APPS 1
 #endif
@@ -33,7 +33,7 @@ struct progman_default_item
 /*
  * Defaults horneados: siembran una instalacion fresca y son la red de seguridad
  * si /disk/progman.ini falta o esta corrupto. Duplican transitoriamente el
- * contenido de k_menu_items (desktop_menu.c); esa tabla se retira en A2.4 y este
+ * contenido de k_menu_items (windowd_menu.c); esa tabla se retira en A2.4 y este
  * pasa a ser el unico catalogo.
  */
 static const struct progman_default_item k_default_items[] = {

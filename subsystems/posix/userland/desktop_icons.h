@@ -22,4 +22,3 @@ struct desktop_embedded_bitmap
 
 const struct desktop_embedded_bitmap *desktop_icon_small(enum desktop_icon_id id);
 const struct desktop_embedded_bitmap *desktop_icon_large(enum desktop_icon_id id);
-const struct desktop_embedded_bitmap *desktop_menu_strip_art(void);

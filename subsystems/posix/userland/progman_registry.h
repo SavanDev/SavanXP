@@ -6,7 +6,7 @@
 /*
  * Registro de programas del Program Manager (A2.3, ver docs/WM_SUBSYSTEM.md).
  *
- * Reemplaza la tabla hardcodeada k_menu_items de desktop_menu.c: los grupos y
+ * Reemplaza la tabla hardcodeada k_menu_items de windowd_menu.c: los grupos y
  * items viven en un archivo de texto en /disk, editable sin recompilar el SO.
  * El formato sigue la idea del PROGMAN.INI original: secciones [group]/[item]
  * con pares clave=valor.

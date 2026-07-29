@@ -18,7 +18,7 @@
  * para lo que no conoce.
  */
 
-struct desktop_menu_item
+struct windowd_appinfo
 {
     const char *label;
     const char *path;
@@ -27,4 +27,4 @@ struct desktop_menu_item
 };
 
 /* Devuelve 0 si el path no esta en la tabla: el llamador usa defaults. */
-const struct desktop_menu_item *desktop_find_menu_item_by_path(const char *path);
+const struct windowd_appinfo *windowd_appinfo_for_path(const char *path);

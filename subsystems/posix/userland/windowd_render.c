@@ -2,16 +2,16 @@
 #include "shared/version.h"
 #include "cursor_asset.h"
 #include "desktop_icons.h"
-#include "desktop_menu.h"
+#include "windowd_appinfo.h"
 #include "desktop_wallpaper.h"
-#include "desktop_layout.h"
-#include "desktop_render.h"
+#include "windowd_layout.h"
+#include "windowd_render.h"
 
-#define DESKTOP_RGB_LITERAL(red, green, blue) (((uint32_t)(red) << 16) | ((uint32_t)(green) << 8) | (uint32_t)(blue))
+#define WINDOWD_RGB_LITERAL(red, green, blue) (((uint32_t)(red) << 16) | ((uint32_t)(green) << 8) | (uint32_t)(blue))
 
 static uint32_t *g_backbuffer = 0;
 
-static const char *window_title_for_client(const struct desktop_client *client);
+static const char *window_title_for_client(const struct windowd_client *client);
 
 static void fill_embedded_bitmap_info(const struct desktop_embedded_bitmap *source, struct savanxp_fb_info *info)
 {
@@ -75,12 +75,12 @@ static int clip_rect_to_framebuffer(const struct savanxp_fb_info *info, struct s
     return rect->width > 0 && rect->height > 0;
 }
 
-void desktop_set_backbuffer(uint32_t *pixels)
+void windowd_set_backbuffer(uint32_t *pixels)
 {
     g_backbuffer = pixels;
 }
 
-void desktop_dirty_rect_reset(struct desktop_dirty_rect *dirty)
+void windowd_dirty_rect_reset(struct windowd_dirty_rect *dirty)
 {
     if (dirty != 0)
     {
@@ -88,7 +88,7 @@ void desktop_dirty_rect_reset(struct desktop_dirty_rect *dirty)
     }
 }
 
-void desktop_dirty_rect_add(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int x, int y, int width, int height)
+void windowd_dirty_rect_add(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info, int x, int y, int width, int height)
 {
     struct sx_rect rect = sx_rect_make(x, y, width, height);
 
@@ -99,26 +99,26 @@ void desktop_dirty_rect_add(struct desktop_dirty_rect *dirty, const struct savan
     (void)sx_rect_set_add(&dirty->rects, rect);
 }
 
-void desktop_dirty_rect_add_fullscreen(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info)
+void windowd_dirty_rect_add_fullscreen(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info)
 {
     if (info != 0)
     {
-        desktop_dirty_rect_add(dirty, info, 0, 0, (int)info->width, (int)info->height);
+        windowd_dirty_rect_add(dirty, info, 0, 0, (int)info->width, (int)info->height);
     }
 }
 
-void desktop_dirty_rect_add_cursor(struct desktop_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape)
+void windowd_dirty_rect_add_cursor(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info, int cursor_x, int cursor_y, int shape)
 {
     int x = 0;
     int y = 0;
     int width = 0;
     int height = 0;
 
-    desktop_cursor_bounds(cursor_x, cursor_y, shape, &x, &y, &width, &height);
-    desktop_dirty_rect_add(dirty, info, x, y, width, height);
+    windowd_cursor_bounds(cursor_x, cursor_y, shape, &x, &y, &width, &height);
+    windowd_dirty_rect_add(dirty, info, x, y, width, height);
 }
 
-void desktop_dirty_rect_add_client(struct desktop_dirty_rect *dirty, const struct desktop_client *client)
+void windowd_dirty_rect_add_client(struct windowd_dirty_rect *dirty, const struct windowd_client *client)
 {
     struct sx_rect rect;
 
@@ -126,21 +126,21 @@ void desktop_dirty_rect_add_client(struct desktop_dirty_rect *dirty, const struc
     {
         return;
     }
-    rect = client->frame_visible ? desktop_client_frame_rect(client) : desktop_client_surface_rect(client);
+    rect = client->frame_visible ? windowd_client_frame_rect(client) : windowd_client_surface_rect(client);
     (void)sx_rect_set_add(&dirty->rects, rect);
 }
 
-int desktop_dirty_rect_valid(const struct desktop_dirty_rect *dirty)
+int windowd_dirty_rect_valid(const struct windowd_dirty_rect *dirty)
 {
     return dirty != 0 && sx_rect_set_valid(&dirty->rects);
 }
 
-size_t desktop_dirty_rect_count(const struct desktop_dirty_rect *dirty)
+size_t windowd_dirty_rect_count(const struct windowd_dirty_rect *dirty)
 {
     return dirty != 0 ? dirty->rects.count : 0;
 }
 
-const struct sx_rect *desktop_dirty_rect_at(const struct desktop_dirty_rect *dirty, size_t index)
+const struct sx_rect *windowd_dirty_rect_at(const struct windowd_dirty_rect *dirty, size_t index)
 {
     if (dirty == 0 || index >= dirty->rects.count)
     {
@@ -159,7 +159,7 @@ static void format_clock_text(char *buffer, unsigned int hours, unsigned int min
     buffer[5] = '\0';
 }
 
-unsigned long desktop_current_clock_stamp(char *buffer)
+unsigned long windowd_current_clock_stamp(char *buffer)
 {
     struct savanxp_realtime now = {0};
 
@@ -178,9 +178,9 @@ unsigned long desktop_current_clock_stamp(char *buffer)
     }
 }
 
-static const char *window_title_for_client(const struct desktop_client *client)
+static const char *window_title_for_client(const struct windowd_client *client)
 {
-    const struct desktop_menu_item *item = client != 0 ? desktop_find_menu_item_by_path(client->path) : 0;
+    const struct windowd_appinfo *item = client != 0 ? windowd_appinfo_for_path(client->path) : 0;
     if (item != 0)
     {
         return item->label;
@@ -237,7 +237,7 @@ static void draw_inset_box(struct sx_painter *painter, struct sx_rect rect, uint
     sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + rect.height - 2, rect.width - 2, 1), highlight);
     sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 2, rect.y + 1, 1, rect.height - 2), highlight);
 }
-static void draw_close_button(struct sx_painter *painter, const struct desktop_client *client)
+static void draw_close_button(struct sx_painter *painter, const struct windowd_client *client)
 {
     struct sx_rect rect;
     int inset = 0;
@@ -249,7 +249,7 @@ static void draw_close_button(struct sx_painter *painter, const struct desktop_c
         return;
     }
 
-    rect = desktop_client_close_button_rect(client);
+    rect = windowd_client_close_button_rect(client);
     if (rect.width <= 0 || rect.height <= 0)
     {
         return;
@@ -271,7 +271,7 @@ static void draw_close_button(struct sx_painter *painter, const struct desktop_c
     }
 }
 
-static void draw_minimize_button(struct sx_painter *painter, const struct desktop_client *client)
+static void draw_minimize_button(struct sx_painter *painter, const struct windowd_client *client)
 {
     struct sx_rect rect;
 
@@ -280,7 +280,7 @@ static void draw_minimize_button(struct sx_painter *painter, const struct deskto
         return;
     }
 
-    rect = desktop_client_minimize_button_rect(client);
+    rect = windowd_client_minimize_button_rect(client);
     if (rect.width <= 0 || rect.height <= 0)
     {
         return;
@@ -293,7 +293,7 @@ static void draw_minimize_button(struct sx_painter *painter, const struct deskto
         gfx_rgb(32, 32, 32));
 }
 
-static void draw_maximize_button(struct sx_painter *painter, const struct desktop_client *client)
+static void draw_maximize_button(struct sx_painter *painter, const struct windowd_client *client)
 {
     struct sx_rect rect;
 
@@ -302,7 +302,7 @@ static void draw_maximize_button(struct sx_painter *painter, const struct deskto
         return;
     }
 
-    rect = desktop_client_maximize_button_rect(client);
+    rect = windowd_client_maximize_button_rect(client);
     if (rect.width <= 0 || rect.height <= 0)
     {
         return;
@@ -345,12 +345,12 @@ static void draw_cursor(struct sx_painter *painter, int shape, int x, int y)
     sx_painter_blit_bitmap(painter, &cursor_bitmap, x - asset->hotspot_x, y - asset->hotspot_y);
 }
 
-static void draw_client(struct sx_painter *painter, const struct desktop_client *client)
+static void draw_client(struct sx_painter *painter, const struct windowd_client *client)
 {
     struct sx_bitmap bitmap;
     struct sx_rect surface_rect;
     struct sx_rect frame_rect;
-    const struct desktop_menu_item *item = desktop_find_menu_item_by_path(client->path);
+    const struct windowd_appinfo *item = windowd_appinfo_for_path(client->path);
     const struct desktop_embedded_bitmap *icon = item != 0 ? desktop_icon_small(item->icon_id) : desktop_icon_small(DESKTOP_ICON_DESKTOP);
     uint32_t title_colour = client != 0 && client->active
         ? (item != 0 ? item->accent : gfx_rgb(59, 95, 156))
@@ -364,15 +364,15 @@ static void draw_client(struct sx_painter *painter, const struct desktop_client 
         return;
     }
 
-    surface_rect = desktop_client_surface_rect(client);
-    frame_rect = desktop_client_frame_rect(client);
+    surface_rect = windowd_client_surface_rect(client);
+    frame_rect = windowd_client_frame_rect(client);
 
     if (client->frame_visible)
     {
         draw_button(painter, frame_rect, frame_face, 0);
-        sx_painter_fill_rect(painter, sx_rect_make(frame_rect.x + 2, frame_rect.y + 2, frame_rect.width - 4, DESKTOP_WINDOW_TITLEBAR_HEIGHT - 4), title_colour);
-        draw_embedded_bitmap(painter, icon, frame_rect.x + 6, frame_rect.y + (DESKTOP_WINDOW_TITLEBAR_HEIGHT - 16) / 2);
-        sx_painter_draw_text(painter, frame_rect.x + 26, frame_rect.y + (DESKTOP_WINDOW_TITLEBAR_HEIGHT - gfx_text_height()) / 2, window_title_for_client(client), gfx_rgb(255, 255, 255));
+        sx_painter_fill_rect(painter, sx_rect_make(frame_rect.x + 2, frame_rect.y + 2, frame_rect.width - 4, WINDOWD_WINDOW_TITLEBAR_HEIGHT - 4), title_colour);
+        draw_embedded_bitmap(painter, icon, frame_rect.x + 6, frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - 16) / 2);
+        sx_painter_draw_text(painter, frame_rect.x + 26, frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - gfx_text_height()) / 2, window_title_for_client(client), gfx_rgb(255, 255, 255));
         draw_minimize_button(painter, client);
         draw_maximize_button(painter, client);
         draw_close_button(painter, client);
@@ -423,7 +423,7 @@ static int rect_set_intersects(const struct sx_rect_set *set, struct sx_rect hol
     return 0;
 }
 
-int desktop_region_selftest(void)
+int windowd_region_selftest(void)
 {
     struct sx_rect_set set;
     struct sx_rect base = sx_rect_make(0, 0, 100, 100);
@@ -476,51 +476,51 @@ int desktop_region_selftest(void)
  * and whether it is fully opaque (a valid occluder for layers behind it). The
  * compose pass paints every layer exactly once over its visible region only:
  * visible = damage ∩ bounds − (union of opaque bounds in front). */
-enum desktop_layer_kind
+enum windowd_layer_kind
 {
     /* Solo el fallback: normalmente el fondo lo provee el cliente shellui. */
-    DESKTOP_LAYER_BACKGROUND = 0,
-    DESKTOP_LAYER_CLIENT,
+    WINDOWD_LAYER_BACKGROUND = 0,
+    WINDOWD_LAYER_CLIENT,
     /* UI del WM (Ctrl+Esc): conmutador de ventanas, sobre todo salvo el cursor. */
-    DESKTOP_LAYER_TASKLIST,
-    DESKTOP_LAYER_CURSOR,
+    WINDOWD_LAYER_TASKLIST,
+    WINDOWD_LAYER_CURSOR,
 };
 
-struct desktop_layer
+struct windowd_layer
 {
     int kind;
     int opaque;
     struct sx_rect bounds;
-    const struct desktop_client *client;
+    const struct windowd_client *client;
 };
 
 /* Tope de capas no-overlay simultaneas: background client, background(iconos),
  * shell_client, taskbar, welcome, menu, confirm, context menu, tasklist y
  * cursor = 10; +11 deja margen. */
-#define DESKTOP_MAX_COMPOSE_LAYERS (DESKTOP_MAX_OVERLAY_CLIENTS + 11)
+#define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + 11)
 
-static int client_is_drawable(const struct desktop_client *client)
+static int client_is_drawable(const struct windowd_client *client)
 {
     return client != 0 && client->pid > 0 && client->pixels != 0 && !client->minimized;
 }
 
-static struct sx_rect client_occluder_rect(const struct desktop_client *client)
+static struct sx_rect client_occluder_rect(const struct windowd_client *client)
 {
-    return client->frame_visible ? desktop_client_frame_rect(client) : desktop_client_surface_rect(client);
+    return client->frame_visible ? windowd_client_frame_rect(client) : windowd_client_surface_rect(client);
 }
 
 /* Task List (Ctrl+Esc): lista las ventanas abiertas -- incluidas las
  * minimizadas, que sin taskbar no tendrian otra via de vuelta -- con Switch To
  * / End Task, como el Task List de NT 3.5. */
-static void draw_tasklist(struct sx_painter *painter, struct desktop_session *session)
+static void draw_tasklist(struct sx_painter *painter, struct windowd_session *session)
 {
-    static const char *k_button_labels[DESKTOP_TASKLIST_BUTTON_COUNT] = {"Switch To", "End Task", "Cancel"};
+    static const char *k_button_labels[WINDOWD_TASKLIST_BUTTON_COUNT] = {"Switch To", "End Task", "Cancel"};
     const struct savanxp_fb_info *info = &session->gfx.info;
-    int task_count = desktop_task_count(session);
-    struct sx_rect dialog = desktop_tasklist_rect(info, task_count);
-    struct sx_rect list = desktop_tasklist_list_rect(info, task_count);
-    int first = desktop_tasklist_first_visible(task_count, session->tasklist_selected);
-    int visible = desktop_tasklist_visible_count(task_count);
+    int task_count = windowd_task_count(session);
+    struct sx_rect dialog = windowd_tasklist_rect(info, task_count);
+    struct sx_rect list = windowd_tasklist_list_rect(info, task_count);
+    int first = windowd_tasklist_first_visible(task_count, session->tasklist_selected);
+    int visible = windowd_tasklist_visible_count(task_count);
     int index;
 
     sx_painter_fill_rect(painter, dialog, gfx_rgb(198, 202, 208));
@@ -528,12 +528,12 @@ static void draw_tasklist(struct sx_painter *painter, struct desktop_session *se
 
     sx_painter_fill_rect(
         painter,
-        sx_rect_make(dialog.x + 3, dialog.y + 3, dialog.width - 6, DESKTOP_TASKLIST_TITLE_HEIGHT - 4),
+        sx_rect_make(dialog.x + 3, dialog.y + 3, dialog.width - 6, WINDOWD_TASKLIST_TITLE_HEIGHT - 4),
         gfx_rgb(40, 76, 140));
     sx_painter_draw_text(
         painter,
         dialog.x + 9,
-        dialog.y + 3 + ((DESKTOP_TASKLIST_TITLE_HEIGHT - 4 - gfx_text_height()) / 2),
+        dialog.y + 3 + ((WINDOWD_TASKLIST_TITLE_HEIGHT - 4 - gfx_text_height()) / 2),
         "Task List",
         gfx_rgb(255, 255, 255));
 
@@ -548,9 +548,9 @@ static void draw_tasklist(struct sx_painter *painter, struct desktop_session *se
         int task_index = first + index;
         int is_shell = 0;
         int slot = -1;
-        const struct desktop_client *client = desktop_task_client(session, task_index, &is_shell, &slot);
-        struct sx_rect row = desktop_tasklist_item_rect(info, task_count, index);
-        const struct desktop_menu_item *item = 0;
+        const struct windowd_client *client = windowd_task_client(session, task_index, &is_shell, &slot);
+        struct sx_rect row = windowd_tasklist_item_rect(info, task_count, index);
+        const struct windowd_appinfo *item = 0;
         const char *label = "Ventana";
         int selected = (task_index == session->tasklist_selected);
 
@@ -558,7 +558,7 @@ static void draw_tasklist(struct sx_painter *painter, struct desktop_session *se
         {
             continue;
         }
-        item = desktop_find_menu_item_by_path(client->path);
+        item = windowd_appinfo_for_path(client->path);
         label = item != 0 ? item->label : window_title_for_client(client);
 
         if (selected)
@@ -587,9 +587,9 @@ static void draw_tasklist(struct sx_painter *painter, struct desktop_session *se
         }
     }
 
-    for (index = 0; index < DESKTOP_TASKLIST_BUTTON_COUNT; ++index)
+    for (index = 0; index < WINDOWD_TASKLIST_BUTTON_COUNT; ++index)
     {
-        struct sx_rect rect = desktop_tasklist_button_rect(info, task_count, index);
+        struct sx_rect rect = windowd_tasklist_button_rect(info, task_count, index);
         int label_width = gfx_text_width(k_button_labels[index]);
 
         draw_button(painter, rect, gfx_rgb(198, 202, 208), 0);
@@ -606,27 +606,27 @@ static void draw_tasklist(struct sx_painter *painter, struct desktop_session *se
  * del WM y se quedan aca cuando el shell pase a ser un cliente aparte (A2). */
 static void wm_paint_layer(
     struct sx_painter *painter,
-    struct desktop_session *session,
-    const struct desktop_layer *layer,
+    struct windowd_session *session,
+    const struct windowd_layer *layer,
     int cursor_x,
     int cursor_y)
 {
     switch (layer->kind)
     {
-    case DESKTOP_LAYER_BACKGROUND:
+    case WINDOWD_LAYER_BACKGROUND:
         /* Fallback: el fondo normalmente lo provee shellui. Releemos el modo
          * persistido para respetar el fondo que haya elegido progman, que es
          * otro proceso y no puede tocar nuestro estado en memoria. */
         (void)desktop_wallpaper_reload();
         desktop_wallpaper_draw(painter, &session->gfx.info);
         break;
-    case DESKTOP_LAYER_CLIENT:
+    case WINDOWD_LAYER_CLIENT:
         draw_client(painter, layer->client);
         break;
-    case DESKTOP_LAYER_TASKLIST:
+    case WINDOWD_LAYER_TASKLIST:
         draw_tasklist(painter, session);
         break;
-    case DESKTOP_LAYER_CURSOR:
+    case WINDOWD_LAYER_CURSOR:
         draw_cursor(painter, session->current_cursor_shape, cursor_x, cursor_y);
         break;
     default:
@@ -640,10 +640,10 @@ static void wm_paint_layer(
  * launcher en progman. */
 /* Back-to-front layer list for the current frame. */
 static int build_layers(
-    struct desktop_session *session,
+    struct windowd_session *session,
     int cursor_x,
     int cursor_y,
-    struct desktop_layer *layers)
+    struct windowd_layer *layers)
 {
     const struct savanxp_fb_info *info = &session->gfx.info;
     int count = 0;
@@ -661,7 +661,7 @@ static int build_layers(
     if (client_is_drawable(&session->background_client) &&
         session->background_client.consumed_submit_sequence > 0)
     {
-        layers[count].kind = DESKTOP_LAYER_CLIENT;
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
         layers[count].opaque = 1;
         layers[count].bounds = client_occluder_rect(&session->background_client);
         layers[count].client = &session->background_client;
@@ -669,19 +669,19 @@ static int build_layers(
     }
     else
     {
-        layers[count].kind = DESKTOP_LAYER_BACKGROUND;
+        layers[count].kind = WINDOWD_LAYER_BACKGROUND;
         layers[count].opaque = 1;
         layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
         layers[count].client = 0;
         ++count;
     }
 
-    if (session->fullscreen_slot >= 0 && session->fullscreen_slot < DESKTOP_MAX_OVERLAY_CLIENTS)
+    if (session->fullscreen_slot >= 0 && session->fullscreen_slot < WINDOWD_MAX_OVERLAY_CLIENTS)
     {
-        const struct desktop_client *fullscreen_client = &session->overlay_clients[session->fullscreen_slot];
+        const struct windowd_client *fullscreen_client = &session->overlay_clients[session->fullscreen_slot];
         if (client_is_drawable(fullscreen_client))
         {
-            layers[count].kind = DESKTOP_LAYER_CLIENT;
+            layers[count].kind = WINDOWD_LAYER_CLIENT;
             layers[count].opaque = 1;
             layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
             layers[count].client = fullscreen_client;
@@ -691,16 +691,16 @@ static int build_layers(
          * y no habria forma de salir de una app a pantalla completa. */
         if (session->tasklist_open)
         {
-            layers[count].kind = DESKTOP_LAYER_TASKLIST;
+            layers[count].kind = WINDOWD_LAYER_TASKLIST;
             layers[count].opaque = 1;
-            layers[count].bounds = desktop_tasklist_rect(info, desktop_task_count(session));
+            layers[count].bounds = windowd_tasklist_rect(info, windowd_task_count(session));
             layers[count].client = 0;
             ++count;
         }
         if (!session->hw_cursor_enabled)
         {
-            desktop_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
-            layers[count].kind = DESKTOP_LAYER_CURSOR;
+            windowd_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
+            layers[count].kind = WINDOWD_LAYER_CURSOR;
             layers[count].opaque = 0;
             layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);
             layers[count].client = 0;
@@ -711,7 +711,7 @@ static int build_layers(
 
     if (client_is_drawable(&session->shell_client))
     {
-        layers[count].kind = DESKTOP_LAYER_CLIENT;
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
         layers[count].opaque = 1;
         layers[count].bounds = client_occluder_rect(&session->shell_client);
         layers[count].client = &session->shell_client;
@@ -721,7 +721,7 @@ static int build_layers(
     for (order_index = 0; order_index < session->overlay_count; ++order_index)
     {
         int slot = session->overlay_order[order_index];
-        if (slot < 0 || slot >= DESKTOP_MAX_OVERLAY_CLIENTS)
+        if (slot < 0 || slot >= WINDOWD_MAX_OVERLAY_CLIENTS)
         {
             continue;
         }
@@ -729,7 +729,7 @@ static int build_layers(
         {
             continue;
         }
-        layers[count].kind = DESKTOP_LAYER_CLIENT;
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
         layers[count].opaque = 1;
         layers[count].bounds = client_occluder_rect(&session->overlay_clients[slot]);
         layers[count].client = &session->overlay_clients[slot];
@@ -739,17 +739,17 @@ static int build_layers(
     /* El Task List va sobre todo: es el conmutador de ventanas. */
     if (session->tasklist_open)
     {
-        layers[count].kind = DESKTOP_LAYER_TASKLIST;
+        layers[count].kind = WINDOWD_LAYER_TASKLIST;
         layers[count].opaque = 1;
-        layers[count].bounds = desktop_tasklist_rect(info, desktop_task_count(session));
+        layers[count].bounds = windowd_tasklist_rect(info, windowd_task_count(session));
         layers[count].client = 0;
         ++count;
     }
 
     if (!session->hw_cursor_enabled)
     {
-        desktop_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
-        layers[count].kind = DESKTOP_LAYER_CURSOR;
+        windowd_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
+        layers[count].kind = WINDOWD_LAYER_CURSOR;
         layers[count].opaque = 0; /* BGRA cursor blends; never an occluder. */
         layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);
         layers[count].client = 0;
@@ -759,14 +759,14 @@ static int build_layers(
     return count;
 }
 
-void desktop_draw_desktop(
-    struct desktop_session *session,
+void windowd_draw_desktop(
+    struct windowd_session *session,
     int cursor_x,
     int cursor_y,
-    const struct desktop_dirty_rect *dirty)
+    const struct windowd_dirty_rect *dirty)
 {
     /* Single-threaded compositor: keep the working sets off the stack. */
-    static struct desktop_layer layers[DESKTOP_MAX_COMPOSE_LAYERS];
+    static struct windowd_layer layers[WINDOWD_MAX_COMPOSE_LAYERS];
     static struct sx_rect_set damage;
     static struct sx_rect_set visible;
     struct sx_bitmap backbuffer_bitmap;
@@ -785,7 +785,7 @@ void desktop_draw_desktop(
     /* Damage region for this frame; an empty/invalid dirty set forces a full
      * repaint (still occlusion-aware: each layer painted once). */
     sx_rect_set_clear(&damage);
-    if (dirty != 0 && desktop_dirty_rect_valid(dirty))
+    if (dirty != 0 && windowd_dirty_rect_valid(dirty))
     {
         size_t i;
         for (i = 0; i < dirty->rects.count; ++i)
@@ -804,7 +804,7 @@ void desktop_draw_desktop(
      * opaque layer in front of it. */
     for (layer_index = 0; layer_index < layer_count; ++layer_index)
     {
-        const struct desktop_layer *layer = &layers[layer_index];
+        const struct windowd_layer *layer = &layers[layer_index];
         size_t damage_index;
         size_t visible_index;
         int front;

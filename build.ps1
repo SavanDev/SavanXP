@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "desktop-smoke", "progman-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -16,7 +16,7 @@ param(
     # Excluye del build las apps de testeo/diagnostico (marcadas Test en
     # $UserPrograms): no se compilan, no entran al rootfs y el menu del
     # escritorio se compila sin sus entradas. Los comandos de automatizacion
-    # (smoke, desktop-smoke, etc.) las fuerzan siempre porque sus harnesses
+    # (smoke, windowd-smoke, etc.) las fuerzan siempre porque sus harnesses
     # dependen de ellas.
     [switch]$NoTestApps
 )
@@ -143,14 +143,14 @@ $UserPrograms = @(
     @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
     @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c"; Test = $true },
     @{ Name = "compositord"; Source = "subsystems/posix/userland/compositord.c" },
-    @{ Name = "desktop"; Sources = @(
-        "subsystems/posix/userland/desktop.c",
-        "subsystems/posix/userland/desktop_compositor_client.c",
+    @{ Name = "windowd"; Sources = @(
+        "subsystems/posix/userland/windowd.c",
+        "subsystems/posix/userland/windowd_compositor_client.c",
         "subsystems/posix/userland/desktop_icons.c",
-        "subsystems/posix/userland/desktop_menu.c",
+        "subsystems/posix/userland/windowd_appinfo.c",
         "subsystems/posix/userland/desktop_wallpaper.c",
-        "subsystems/posix/userland/desktop_layout.c",
-        "subsystems/posix/userland/desktop_render.c"
+        "subsystems/posix/userland/windowd_layout.c",
+        "subsystems/posix/userland/windowd_render.c"
     ) },
     @{ Name = "shellui"; Sources = @(
         "subsystems/posix/userland/shellui.c",
@@ -1202,8 +1202,8 @@ function Run-Ac97CountQemu {
     if ($line) { Write-Host ("UNDERRUNS -> " + $line.Line.Trim()) } else { Write-Host "no se encontro linea de underruns en $SmokeSerialLog" }
 }
 
-function Run-DesktopSmokeQemu {
-    Run-AutomationQemu -AutomationCommand "desktop-selftest" -SuccessToken "DESKTOP SMOKE PASS" -FailureToken "DESKTOP SMOKE FAIL" -TimeoutMinutes 3
+function Run-WindowdSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "windowd-selftest" -SuccessToken "WINDOWD SMOKE PASS" -FailureToken "WINDOWD SMOKE FAIL" -TimeoutMinutes 3
 }
 
 function Run-ProgmanSmokeQemu {
@@ -1211,7 +1211,7 @@ function Run-ProgmanSmokeQemu {
 }
 
 function Run-CursorReproQemu {
-    Run-AutomationQemu -AutomationCommand "desktop-cursor-repro" -SuccessToken "CURSOR REPRO PASS" -FailureToken "CURSOR REPRO FAIL" -TimeoutMinutes 3
+    Run-AutomationQemu -AutomationCommand "windowd-cursor-repro" -SuccessToken "CURSOR REPRO PASS" -FailureToken "CURSOR REPRO FAIL" -TimeoutMinutes 3
 }
 
 function Run-GpuSoakQemu([int]$Iterations) {
@@ -1250,8 +1250,8 @@ switch ($Command) {
     "virtio-stream" {
         Run-VirtioStreamQemu
     }
-    "desktop-smoke" {
-        Run-DesktopSmokeQemu
+    "windowd-smoke" {
+        Run-WindowdSmokeQemu
     }
     "progman-smoke" {
         Run-ProgmanSmokeQemu

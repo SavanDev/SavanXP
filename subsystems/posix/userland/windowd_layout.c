@@ -1,9 +1,9 @@
 #include "libc.h"
-#include "desktop_menu.h"
-#include "desktop_layout.h"
+#include "windowd_appinfo.h"
+#include "windowd_layout.h"
 #include "cursor_asset.h"
 
-int desktop_clamp_int(int value, int minimum, int maximum)
+int windowd_clamp_int(int value, int minimum, int maximum)
 {
     if (value < minimum)
     {
@@ -16,18 +16,18 @@ int desktop_clamp_int(int value, int minimum, int maximum)
     return value;
 }
 
-int desktop_point_in_rect(int x, int y, int rect_x, int rect_y, int rect_w, int rect_h)
+int windowd_point_in_rect(int x, int y, int rect_x, int rect_y, int rect_w, int rect_h)
 {
     return x >= rect_x && y >= rect_y && x < rect_x + rect_w && y < rect_y + rect_h;
 }
 
-int desktop_rects_intersect(int left_x, int left_y, int left_w, int left_h, int right_x, int right_y, int right_w, int right_h)
+int windowd_rects_intersect(int left_x, int left_y, int left_w, int left_h, int right_x, int right_y, int right_w, int right_h)
 {
     return left_x < right_x + right_w && right_x < left_x + left_w &&
            left_y < right_y + right_h && right_y < left_y + left_h;
 }
 
-void desktop_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y, int *width, int *height)
+void windowd_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y, int *width, int *height)
 {
     if (info == 0 || x == 0 || y == 0 || width == 0 || height == 0)
     {
@@ -42,7 +42,7 @@ void desktop_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y
     *height = (int)info->height;
 }
 
-void desktop_fill_shell_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)
+void windowd_fill_shell_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)
 {
     int area_x = 0;
     int area_y = 0;
@@ -54,7 +54,7 @@ void desktop_fill_shell_surface_info(const struct savanxp_fb_info *display_info,
         return;
     }
 
-    desktop_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
+    windowd_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
     *client_info = *display_info;
     client_info->width = (uint32_t)area_width;
     client_info->height = (uint32_t)area_height;
@@ -62,7 +62,7 @@ void desktop_fill_shell_surface_info(const struct savanxp_fb_info *display_info,
     client_info->buffer_size = client_info->pitch * client_info->height;
 }
 
-void desktop_fill_overlay_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)
+void windowd_fill_overlay_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)
 {
     int area_x = 0;
     int area_y = 0;
@@ -76,7 +76,7 @@ void desktop_fill_overlay_surface_info(const struct savanxp_fb_info *display_inf
         return;
     }
 
-    desktop_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
+    windowd_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
     target_width = area_width - 160;
     target_height = area_height - 140;
     if (target_width > 1280)
@@ -104,7 +104,7 @@ void desktop_fill_overlay_surface_info(const struct savanxp_fb_info *display_inf
     client_info->buffer_size = client_info->pitch * (uint32_t)area_height;
 }
 
-void desktop_center_overlay_window(const struct savanxp_fb_info *display_info, const struct savanxp_fb_info *surface_info, int *x, int *y, int *width, int *height)
+void windowd_center_overlay_window(const struct savanxp_fb_info *display_info, const struct savanxp_fb_info *surface_info, int *x, int *y, int *width, int *height)
 {
     int area_x = 0;
     int area_y = 0;
@@ -118,9 +118,9 @@ void desktop_center_overlay_window(const struct savanxp_fb_info *display_info, c
         return;
     }
 
-    desktop_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
-    frame_width = (int)surface_info->width + (DESKTOP_WINDOW_BORDER * 2);
-    frame_height = (int)surface_info->height + DESKTOP_WINDOW_TITLEBAR_HEIGHT + DESKTOP_WINDOW_BORDER;
+    windowd_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
+    frame_width = (int)surface_info->width + (WINDOWD_WINDOW_BORDER * 2);
+    frame_height = (int)surface_info->height + WINDOWD_WINDOW_TITLEBAR_HEIGHT + WINDOWD_WINDOW_BORDER;
     *x = area_x + ((area_width - frame_width) / 2);
     *y = area_y + ((area_height - frame_height) / 2);
     if (*x < area_x + 24)
@@ -135,7 +135,7 @@ void desktop_center_overlay_window(const struct savanxp_fb_info *display_info, c
     *height = frame_height;
 }
 
-void desktop_place_overlay_window(const struct savanxp_fb_info *display_info, const struct savanxp_fb_info *surface_info, int cascade_index, int *x, int *y, int *width, int *height)
+void windowd_place_overlay_window(const struct savanxp_fb_info *display_info, const struct savanxp_fb_info *surface_info, int cascade_index, int *x, int *y, int *width, int *height)
 {
     int area_x = 0;
     int area_y = 0;
@@ -144,20 +144,20 @@ void desktop_place_overlay_window(const struct savanxp_fb_info *display_info, co
     int offset_x = 0;
     int offset_y = 0;
 
-    desktop_center_overlay_window(display_info, surface_info, x, y, width, height);
+    windowd_center_overlay_window(display_info, surface_info, x, y, width, height);
     if (display_info == 0 || surface_info == 0 || x == 0 || y == 0 || width == 0 || height == 0)
     {
         return;
     }
 
-    desktop_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
+    windowd_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
     if (cascade_index < 0)
     {
         cascade_index = 0;
     }
 
-    offset_x = (cascade_index % DESKTOP_MAX_OVERLAY_CLIENTS) * 28;
-    offset_y = (cascade_index % DESKTOP_MAX_OVERLAY_CLIENTS) * 24;
+    offset_x = (cascade_index % WINDOWD_MAX_OVERLAY_CLIENTS) * 28;
+    offset_y = (cascade_index % WINDOWD_MAX_OVERLAY_CLIENTS) * 24;
     *x += offset_x;
     *y += offset_y;
 
@@ -179,7 +179,7 @@ void desktop_place_overlay_window(const struct savanxp_fb_info *display_info, co
     }
 }
 
-struct sx_rect desktop_client_surface_rect(const struct desktop_client *client)
+struct sx_rect windowd_client_surface_rect(const struct windowd_client *client)
 {
     if (client == 0 || client->pid <= 0)
     {
@@ -192,13 +192,13 @@ struct sx_rect desktop_client_surface_rect(const struct desktop_client *client)
         return sx_rect_make(client->window_x, client->window_y, width, height);
     }
     return sx_rect_make(
-        client->window_x + DESKTOP_WINDOW_BORDER,
-        client->window_y + DESKTOP_WINDOW_TITLEBAR_HEIGHT,
+        client->window_x + WINDOWD_WINDOW_BORDER,
+        client->window_y + WINDOWD_WINDOW_TITLEBAR_HEIGHT,
         (int)client->surface_info.width,
         (int)client->surface_info.height);
 }
 
-struct sx_rect desktop_client_frame_rect(const struct desktop_client *client)
+struct sx_rect windowd_client_frame_rect(const struct windowd_client *client)
 {
     if (client == 0 || client->pid <= 0)
     {
@@ -206,12 +206,12 @@ struct sx_rect desktop_client_frame_rect(const struct desktop_client *client)
     }
     if (!client->frame_visible)
     {
-        return desktop_client_surface_rect(client);
+        return windowd_client_surface_rect(client);
     }
     return sx_rect_make(client->window_x, client->window_y, client->window_width, client->window_height);
 }
 
-struct sx_rect desktop_client_titlebar_rect(const struct desktop_client *client)
+struct sx_rect windowd_client_titlebar_rect(const struct windowd_client *client)
 {
     struct sx_rect frame_rect;
 
@@ -220,15 +220,15 @@ struct sx_rect desktop_client_titlebar_rect(const struct desktop_client *client)
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    frame_rect = desktop_client_frame_rect(client);
+    frame_rect = windowd_client_frame_rect(client);
     return sx_rect_make(
         frame_rect.x + 2,
         frame_rect.y + 2,
         frame_rect.width - 4,
-        DESKTOP_WINDOW_TITLEBAR_HEIGHT - 4);
+        WINDOWD_WINDOW_TITLEBAR_HEIGHT - 4);
 }
 
-struct sx_rect desktop_client_minimize_button_rect(const struct desktop_client *client)
+struct sx_rect windowd_client_minimize_button_rect(const struct windowd_client *client)
 {
     struct sx_rect titlebar_rect;
     int button_x;
@@ -239,34 +239,34 @@ struct sx_rect desktop_client_minimize_button_rect(const struct desktop_client *
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    titlebar_rect = desktop_client_titlebar_rect(client);
-    if (titlebar_rect.width < (DESKTOP_WINDOW_BUTTON_SIZE * 3) + (DESKTOP_WINDOW_BUTTON_GAP * 2) + 8 ||
-        titlebar_rect.height < DESKTOP_WINDOW_BUTTON_SIZE)
+    titlebar_rect = windowd_client_titlebar_rect(client);
+    if (titlebar_rect.width < (WINDOWD_WINDOW_BUTTON_SIZE * 3) + (WINDOWD_WINDOW_BUTTON_GAP * 2) + 8 ||
+        titlebar_rect.height < WINDOWD_WINDOW_BUTTON_SIZE)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    button_x = titlebar_rect.x + titlebar_rect.width - (DESKTOP_WINDOW_BUTTON_SIZE * 3) - (DESKTOP_WINDOW_BUTTON_GAP * 2) - 5;
-    button_y = titlebar_rect.y + ((titlebar_rect.height - DESKTOP_WINDOW_BUTTON_SIZE) / 2);
-    return sx_rect_make(button_x, button_y, DESKTOP_WINDOW_BUTTON_SIZE, DESKTOP_WINDOW_BUTTON_SIZE);
+    button_x = titlebar_rect.x + titlebar_rect.width - (WINDOWD_WINDOW_BUTTON_SIZE * 3) - (WINDOWD_WINDOW_BUTTON_GAP * 2) - 5;
+    button_y = titlebar_rect.y + ((titlebar_rect.height - WINDOWD_WINDOW_BUTTON_SIZE) / 2);
+    return sx_rect_make(button_x, button_y, WINDOWD_WINDOW_BUTTON_SIZE, WINDOWD_WINDOW_BUTTON_SIZE);
 }
 
-struct sx_rect desktop_client_maximize_button_rect(const struct desktop_client *client)
+struct sx_rect windowd_client_maximize_button_rect(const struct windowd_client *client)
 {
-    struct sx_rect minimize_rect = desktop_client_minimize_button_rect(client);
+    struct sx_rect minimize_rect = windowd_client_minimize_button_rect(client);
 
     if (sx_rect_is_empty(minimize_rect))
     {
         return sx_rect_make(0, 0, 0, 0);
     }
     return sx_rect_make(
-        minimize_rect.x + DESKTOP_WINDOW_BUTTON_SIZE + DESKTOP_WINDOW_BUTTON_GAP,
+        minimize_rect.x + WINDOWD_WINDOW_BUTTON_SIZE + WINDOWD_WINDOW_BUTTON_GAP,
         minimize_rect.y,
-        DESKTOP_WINDOW_BUTTON_SIZE,
-        DESKTOP_WINDOW_BUTTON_SIZE);
+        WINDOWD_WINDOW_BUTTON_SIZE,
+        WINDOWD_WINDOW_BUTTON_SIZE);
 }
 
-struct sx_rect desktop_client_close_button_rect(const struct desktop_client *client)
+struct sx_rect windowd_client_close_button_rect(const struct windowd_client *client)
 {
     struct sx_rect titlebar_rect;
     int button_x;
@@ -277,54 +277,54 @@ struct sx_rect desktop_client_close_button_rect(const struct desktop_client *cli
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    titlebar_rect = desktop_client_titlebar_rect(client);
-    if (titlebar_rect.width < DESKTOP_WINDOW_BUTTON_SIZE || titlebar_rect.height < DESKTOP_WINDOW_BUTTON_SIZE)
+    titlebar_rect = windowd_client_titlebar_rect(client);
+    if (titlebar_rect.width < WINDOWD_WINDOW_BUTTON_SIZE || titlebar_rect.height < WINDOWD_WINDOW_BUTTON_SIZE)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    button_x = titlebar_rect.x + titlebar_rect.width - DESKTOP_WINDOW_BUTTON_SIZE - 5;
-    button_y = titlebar_rect.y + ((titlebar_rect.height - DESKTOP_WINDOW_BUTTON_SIZE) / 2);
-    return sx_rect_make(button_x, button_y, DESKTOP_WINDOW_BUTTON_SIZE, DESKTOP_WINDOW_BUTTON_SIZE);
+    button_x = titlebar_rect.x + titlebar_rect.width - WINDOWD_WINDOW_BUTTON_SIZE - 5;
+    button_y = titlebar_rect.y + ((titlebar_rect.height - WINDOWD_WINDOW_BUTTON_SIZE) / 2);
+    return sx_rect_make(button_x, button_y, WINDOWD_WINDOW_BUTTON_SIZE, WINDOWD_WINDOW_BUTTON_SIZE);
 }
 
-int desktop_point_in_client(const struct desktop_client *client, int x, int y)
+int windowd_point_in_client(const struct windowd_client *client, int x, int y)
 {
-    struct sx_rect rect = desktop_client_surface_rect(client);
+    struct sx_rect rect = windowd_client_surface_rect(client);
     return sx_rect_contains_point(rect, x, y);
 }
 
-int desktop_point_in_frame(const struct desktop_client *client, int x, int y)
+int windowd_point_in_frame(const struct windowd_client *client, int x, int y)
 {
-    struct sx_rect rect = desktop_client_frame_rect(client);
+    struct sx_rect rect = windowd_client_frame_rect(client);
     return sx_rect_contains_point(rect, x, y);
 }
 
-int desktop_point_in_titlebar(const struct desktop_client *client, int x, int y)
+int windowd_point_in_titlebar(const struct windowd_client *client, int x, int y)
 {
-    struct sx_rect rect = desktop_client_titlebar_rect(client);
+    struct sx_rect rect = windowd_client_titlebar_rect(client);
     return sx_rect_contains_point(rect, x, y);
 }
 
-int desktop_point_in_minimize_button(const struct desktop_client *client, int x, int y)
+int windowd_point_in_minimize_button(const struct windowd_client *client, int x, int y)
 {
-    struct sx_rect rect = desktop_client_minimize_button_rect(client);
+    struct sx_rect rect = windowd_client_minimize_button_rect(client);
     return sx_rect_contains_point(rect, x, y);
 }
 
-int desktop_point_in_maximize_button(const struct desktop_client *client, int x, int y)
+int windowd_point_in_maximize_button(const struct windowd_client *client, int x, int y)
 {
-    struct sx_rect rect = desktop_client_maximize_button_rect(client);
+    struct sx_rect rect = windowd_client_maximize_button_rect(client);
     return sx_rect_contains_point(rect, x, y);
 }
 
-int desktop_point_in_close_button(const struct desktop_client *client, int x, int y)
+int windowd_point_in_close_button(const struct windowd_client *client, int x, int y)
 {
-    struct sx_rect rect = desktop_client_close_button_rect(client);
+    struct sx_rect rect = windowd_client_close_button_rect(client);
     return sx_rect_contains_point(rect, x, y);
 }
 
-void desktop_clamp_overlay_frame_position(const struct savanxp_fb_info *display_info, int frame_width, int frame_height, int *x, int *y)
+void windowd_clamp_overlay_frame_position(const struct savanxp_fb_info *display_info, int frame_width, int frame_height, int *x, int *y)
 {
     int area_x = 0;
     int area_y = 0;
@@ -338,7 +338,7 @@ void desktop_clamp_overlay_frame_position(const struct savanxp_fb_info *display_
         return;
     }
 
-    desktop_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
+    windowd_work_area_bounds(display_info, &area_x, &area_y, &area_width, &area_height);
     max_x = area_x + area_width - frame_width;
     max_y = area_y + area_height - frame_height;
     if (max_x < area_x)
@@ -350,11 +350,11 @@ void desktop_clamp_overlay_frame_position(const struct savanxp_fb_info *display_
         max_y = area_y;
     }
 
-    *x = desktop_clamp_int(*x, area_x, max_x);
-    *y = desktop_clamp_int(*y, area_y, max_y);
+    *x = windowd_clamp_int(*x, area_x, max_x);
+    *y = windowd_clamp_int(*y, area_y, max_y);
 }
 
-int desktop_task_count(const struct desktop_session *session)
+int windowd_task_count(const struct windowd_session *session)
 {
     int count = 0;
     int index;
@@ -370,7 +370,7 @@ int desktop_task_count(const struct desktop_session *session)
     for (index = 0; index < session->overlay_count; ++index)
     {
         int slot = session->overlay_order[index];
-        if (slot >= 0 && slot < DESKTOP_MAX_OVERLAY_CLIENTS && session->overlay_clients[slot].pid > 0)
+        if (slot >= 0 && slot < WINDOWD_MAX_OVERLAY_CLIENTS && session->overlay_clients[slot].pid > 0)
         {
             count += 1;
         }
@@ -378,7 +378,7 @@ int desktop_task_count(const struct desktop_session *session)
     return count;
 }
 
-const struct desktop_client *desktop_task_client(const struct desktop_session *session, int index, int *is_shell, int *slot)
+const struct windowd_client *windowd_task_client(const struct windowd_session *session, int index, int *is_shell, int *slot)
 {
     int taskbar_index = 0;
     int order_index;
@@ -412,7 +412,7 @@ const struct desktop_client *desktop_task_client(const struct desktop_session *s
     for (order_index = 0; order_index < session->overlay_count; ++order_index)
     {
         int overlay_slot = session->overlay_order[order_index];
-        if (overlay_slot < 0 || overlay_slot >= DESKTOP_MAX_OVERLAY_CLIENTS || session->overlay_clients[overlay_slot].pid <= 0)
+        if (overlay_slot < 0 || overlay_slot >= WINDOWD_MAX_OVERLAY_CLIENTS || session->overlay_clients[overlay_slot].pid <= 0)
         {
             continue;
         }
@@ -430,18 +430,18 @@ const struct desktop_client *desktop_task_client(const struct desktop_session *s
     return 0;
 }
 
-int desktop_tasklist_visible_count(int task_count)
+int windowd_tasklist_visible_count(int task_count)
 {
     if (task_count <= 0)
     {
         return 0;
     }
-    return task_count < DESKTOP_TASKLIST_MAX_VISIBLE ? task_count : DESKTOP_TASKLIST_MAX_VISIBLE;
+    return task_count < WINDOWD_TASKLIST_MAX_VISIBLE ? task_count : WINDOWD_TASKLIST_MAX_VISIBLE;
 }
 
-int desktop_tasklist_first_visible(int task_count, int selected)
+int windowd_tasklist_first_visible(int task_count, int selected)
 {
-    int visible = desktop_tasklist_visible_count(task_count);
+    int visible = windowd_tasklist_visible_count(task_count);
     int first;
 
     if (visible <= 0 || task_count <= visible)
@@ -463,27 +463,27 @@ int desktop_tasklist_first_visible(int task_count, int selected)
 
 static int tasklist_list_height(int task_count)
 {
-    int visible = desktop_tasklist_visible_count(task_count);
+    int visible = windowd_tasklist_visible_count(task_count);
 
     /* Con la lista vacia se reserva una fila para el texto de "sin ventanas". */
-    return (visible > 0 ? visible : 1) * DESKTOP_TASKLIST_ITEM_HEIGHT;
+    return (visible > 0 ? visible : 1) * WINDOWD_TASKLIST_ITEM_HEIGHT;
 }
 
-struct sx_rect desktop_tasklist_rect(const struct savanxp_fb_info *info, int task_count)
+struct sx_rect windowd_tasklist_rect(const struct savanxp_fb_info *info, int task_count)
 {
-    const int width = DESKTOP_TASKLIST_WIDTH;
+    const int width = WINDOWD_TASKLIST_WIDTH;
     int height;
 
     if (info == 0)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
-    height = DESKTOP_TASKLIST_TITLE_HEIGHT +
-        DESKTOP_TASKLIST_PADDING +
+    height = WINDOWD_TASKLIST_TITLE_HEIGHT +
+        WINDOWD_TASKLIST_PADDING +
         tasklist_list_height(task_count) +
-        DESKTOP_TASKLIST_PADDING +
-        DESKTOP_TASKLIST_BUTTON_HEIGHT +
-        DESKTOP_TASKLIST_PADDING;
+        WINDOWD_TASKLIST_PADDING +
+        WINDOWD_TASKLIST_BUTTON_HEIGHT +
+        WINDOWD_TASKLIST_PADDING;
 
     return sx_rect_make(
         ((int)info->width - width) / 2,
@@ -492,45 +492,45 @@ struct sx_rect desktop_tasklist_rect(const struct savanxp_fb_info *info, int tas
         height);
 }
 
-struct sx_rect desktop_tasklist_list_rect(const struct savanxp_fb_info *info, int task_count)
+struct sx_rect windowd_tasklist_list_rect(const struct savanxp_fb_info *info, int task_count)
 {
-    struct sx_rect dialog = desktop_tasklist_rect(info, task_count);
+    struct sx_rect dialog = windowd_tasklist_rect(info, task_count);
 
     if (dialog.width <= 0)
     {
         return dialog;
     }
     return sx_rect_make(
-        dialog.x + DESKTOP_TASKLIST_PADDING,
-        dialog.y + DESKTOP_TASKLIST_TITLE_HEIGHT + DESKTOP_TASKLIST_PADDING,
-        dialog.width - (2 * DESKTOP_TASKLIST_PADDING),
+        dialog.x + WINDOWD_TASKLIST_PADDING,
+        dialog.y + WINDOWD_TASKLIST_TITLE_HEIGHT + WINDOWD_TASKLIST_PADDING,
+        dialog.width - (2 * WINDOWD_TASKLIST_PADDING),
         tasklist_list_height(task_count));
 }
 
-struct sx_rect desktop_tasklist_item_rect(const struct savanxp_fb_info *info, int task_count, int visible_index)
+struct sx_rect windowd_tasklist_item_rect(const struct savanxp_fb_info *info, int task_count, int visible_index)
 {
-    struct sx_rect list = desktop_tasklist_list_rect(info, task_count);
+    struct sx_rect list = windowd_tasklist_list_rect(info, task_count);
 
-    if (list.width <= 0 || visible_index < 0 || visible_index >= desktop_tasklist_visible_count(task_count))
+    if (list.width <= 0 || visible_index < 0 || visible_index >= windowd_tasklist_visible_count(task_count))
     {
         return sx_rect_make(0, 0, 0, 0);
     }
     return sx_rect_make(
         list.x,
-        list.y + (visible_index * DESKTOP_TASKLIST_ITEM_HEIGHT),
+        list.y + (visible_index * WINDOWD_TASKLIST_ITEM_HEIGHT),
         list.width,
-        DESKTOP_TASKLIST_ITEM_HEIGHT);
+        WINDOWD_TASKLIST_ITEM_HEIGHT);
 }
 
-int desktop_tasklist_item_from_point(const struct savanxp_fb_info *info, int task_count, int selected, int x, int y)
+int windowd_tasklist_item_from_point(const struct savanxp_fb_info *info, int task_count, int selected, int x, int y)
 {
-    int first = desktop_tasklist_first_visible(task_count, selected);
-    int visible = desktop_tasklist_visible_count(task_count);
+    int first = windowd_tasklist_first_visible(task_count, selected);
+    int visible = windowd_tasklist_visible_count(task_count);
     int index;
 
     for (index = 0; index < visible; ++index)
     {
-        if (sx_rect_contains_point(desktop_tasklist_item_rect(info, task_count, index), x, y))
+        if (sx_rect_contains_point(windowd_tasklist_item_rect(info, task_count, index), x, y))
         {
             return first + index;
         }
@@ -538,34 +538,34 @@ int desktop_tasklist_item_from_point(const struct savanxp_fb_info *info, int tas
     return -1;
 }
 
-struct sx_rect desktop_tasklist_button_rect(const struct savanxp_fb_info *info, int task_count, int button_index)
+struct sx_rect windowd_tasklist_button_rect(const struct savanxp_fb_info *info, int task_count, int button_index)
 {
-    struct sx_rect dialog = desktop_tasklist_rect(info, task_count);
+    struct sx_rect dialog = windowd_tasklist_rect(info, task_count);
     int total;
     int start_x;
 
-    if (dialog.width <= 0 || button_index < 0 || button_index >= DESKTOP_TASKLIST_BUTTON_COUNT)
+    if (dialog.width <= 0 || button_index < 0 || button_index >= WINDOWD_TASKLIST_BUTTON_COUNT)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
-    total = (DESKTOP_TASKLIST_BUTTON_COUNT * DESKTOP_TASKLIST_BUTTON_WIDTH) +
-        ((DESKTOP_TASKLIST_BUTTON_COUNT - 1) * DESKTOP_TASKLIST_BUTTON_GAP);
+    total = (WINDOWD_TASKLIST_BUTTON_COUNT * WINDOWD_TASKLIST_BUTTON_WIDTH) +
+        ((WINDOWD_TASKLIST_BUTTON_COUNT - 1) * WINDOWD_TASKLIST_BUTTON_GAP);
     start_x = dialog.x + ((dialog.width - total) / 2);
 
     return sx_rect_make(
-        start_x + (button_index * (DESKTOP_TASKLIST_BUTTON_WIDTH + DESKTOP_TASKLIST_BUTTON_GAP)),
-        dialog.y + dialog.height - DESKTOP_TASKLIST_PADDING - DESKTOP_TASKLIST_BUTTON_HEIGHT,
-        DESKTOP_TASKLIST_BUTTON_WIDTH,
-        DESKTOP_TASKLIST_BUTTON_HEIGHT);
+        start_x + (button_index * (WINDOWD_TASKLIST_BUTTON_WIDTH + WINDOWD_TASKLIST_BUTTON_GAP)),
+        dialog.y + dialog.height - WINDOWD_TASKLIST_PADDING - WINDOWD_TASKLIST_BUTTON_HEIGHT,
+        WINDOWD_TASKLIST_BUTTON_WIDTH,
+        WINDOWD_TASKLIST_BUTTON_HEIGHT);
 }
 
-int desktop_tasklist_button_from_point(const struct savanxp_fb_info *info, int task_count, int x, int y)
+int windowd_tasklist_button_from_point(const struct savanxp_fb_info *info, int task_count, int x, int y)
 {
     int index;
 
-    for (index = 0; index < DESKTOP_TASKLIST_BUTTON_COUNT; ++index)
+    for (index = 0; index < WINDOWD_TASKLIST_BUTTON_COUNT; ++index)
     {
-        if (sx_rect_contains_point(desktop_tasklist_button_rect(info, task_count, index), x, y))
+        if (sx_rect_contains_point(windowd_tasklist_button_rect(info, task_count, index), x, y))
         {
             return index;
         }
@@ -573,7 +573,7 @@ int desktop_tasklist_button_from_point(const struct savanxp_fb_info *info, int t
     return -1;
 }
 
-void desktop_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height)
+void windowd_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height)
 {
     const struct desktop_cursor_asset *asset;
 

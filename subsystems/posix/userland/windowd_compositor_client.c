@@ -1,4 +1,4 @@
-#include "desktop_compositor_client.h"
+#include "windowd_compositor_client.h"
 
 static const char *k_compositord_path = "/bin/compositord";
 
@@ -178,7 +178,7 @@ static void fill_default_display_info(struct savanxp_fb_info *info)
 }
 
 static int compositor_rpc(
-    struct desktop_compositor_connection *connection,
+    struct windowd_compositor_connection *connection,
     struct savanxp_compositor_request *request,
     struct savanxp_compositor_reply *reply)
 {
@@ -220,7 +220,7 @@ static int compositor_rpc(
     return reply->status < 0 ? reply->status : 0;
 }
 
-void desktop_compositor_connection_init(struct desktop_compositor_connection *connection)
+void windowd_compositor_connection_init(struct windowd_compositor_connection *connection)
 {
     if (connection == 0)
     {
@@ -242,7 +242,7 @@ void desktop_compositor_connection_init(struct desktop_compositor_connection *co
  * into. On failure the daemon endpoints are reset but the section is left intact
  * for the caller to keep or tear down.
  */
-static int spawn_compositor_daemon(struct desktop_compositor_connection *connection)
+static int spawn_compositor_daemon(struct windowd_compositor_connection *connection)
 {
     struct savanxp_compositor_request request;
     struct savanxp_compositor_reply reply;
@@ -338,7 +338,7 @@ fail:
 
 /* Push the entire current framebuffer to the daemon's scanout. Used after a
    reconnect to re-display the content the shell already has in memory. */
-static int present_full_surface(struct desktop_compositor_connection *connection)
+static int present_full_surface(struct windowd_compositor_connection *connection)
 {
     struct savanxp_compositor_request request;
     struct savanxp_compositor_reply reply;
@@ -368,7 +368,7 @@ static int present_full_surface(struct desktop_compositor_connection *connection
 
 /* Tear down a dead or wedged daemon while keeping the display section mapped.
    A wedged-but-alive daemon is killed so waitpid does not block. */
-static void reap_daemon(struct desktop_compositor_connection *connection)
+static void reap_daemon(struct windowd_compositor_connection *connection)
 {
     if (connection == 0)
     {
@@ -389,7 +389,7 @@ static void reap_daemon(struct desktop_compositor_connection *connection)
     connection->pending_present_sequence = 0;
 }
 
-int desktop_compositor_open(struct desktop_compositor_connection *connection)
+int windowd_compositor_open(struct windowd_compositor_connection *connection)
 {
     int result;
 
@@ -398,7 +398,7 @@ int desktop_compositor_open(struct desktop_compositor_connection *connection)
         return -SAVANXP_EINVAL;
     }
 
-    desktop_compositor_connection_init(connection);
+    windowd_compositor_connection_init(connection);
     fill_default_display_info(&connection->requested_info);
 
     connection->display_section_fd = (int)section_create(
@@ -407,7 +407,7 @@ int desktop_compositor_open(struct desktop_compositor_connection *connection)
     if (connection->display_section_fd < 0)
     {
         result = connection->display_section_fd;
-        desktop_compositor_close(connection);
+        windowd_compositor_close(connection);
         return result;
     }
 
@@ -418,7 +418,7 @@ int desktop_compositor_open(struct desktop_compositor_connection *connection)
     {
         result = (int)(long)connection->display_view;
         connection->display_view = 0;
-        desktop_compositor_close(connection);
+        windowd_compositor_close(connection);
         return result;
     }
     connection->framebuffer = (uint32_t *)connection->display_view;
@@ -427,18 +427,18 @@ int desktop_compositor_open(struct desktop_compositor_connection *connection)
     result = spawn_compositor_daemon(connection);
     if (result < 0)
     {
-        desktop_compositor_close(connection);
+        windowd_compositor_close(connection);
         return result;
     }
     return 0;
 }
 
-int desktop_compositor_connected(const struct desktop_compositor_connection *connection)
+int windowd_compositor_connected(const struct windowd_compositor_connection *connection)
 {
     return connection != 0 && connection->connected;
 }
 
-int desktop_compositor_reconnect(struct desktop_compositor_connection *connection)
+int windowd_compositor_reconnect(struct windowd_compositor_connection *connection)
 {
     int result;
 
@@ -462,19 +462,19 @@ int desktop_compositor_reconnect(struct desktop_compositor_connection *connectio
         int restore_shape = connection->cursor_shape;
 
         connection->cursor_enabled = 0;
-        (void)desktop_compositor_enable_cursor(connection, connection->cursor_x, connection->cursor_y);
-        (void)desktop_compositor_move_cursor(
+        (void)windowd_compositor_enable_cursor(connection, connection->cursor_x, connection->cursor_y);
+        (void)windowd_compositor_move_cursor(
             connection, connection->cursor_x, connection->cursor_y, connection->cursor_visible);
         if (restore_shape != SAVANXP_CURSOR_ARROW)
         {
-            (void)desktop_compositor_set_cursor_shape(connection, restore_shape);
+            (void)windowd_compositor_set_cursor_shape(connection, restore_shape);
         }
     }
 
     return present_full_surface(connection);
 }
 
-void desktop_compositor_close(struct desktop_compositor_connection *connection)
+void windowd_compositor_close(struct windowd_compositor_connection *connection)
 {
     if (connection == 0)
     {
@@ -504,11 +504,11 @@ void desktop_compositor_close(struct desktop_compositor_connection *connection)
         (void)unmap_view(connection->display_view);
     }
     close_fd_if_needed(&connection->display_section_fd);
-    desktop_compositor_connection_init(connection);
+    windowd_compositor_connection_init(connection);
 }
 
-int desktop_compositor_present(
-    struct desktop_compositor_connection *connection,
+int windowd_compositor_present(
+    struct windowd_compositor_connection *connection,
     const struct sx_rect *rects,
     size_t rect_count)
 {
@@ -564,8 +564,8 @@ int desktop_compositor_present(
     return 0;
 }
 
-int desktop_compositor_sync_present(
-    struct desktop_compositor_connection *connection,
+int windowd_compositor_sync_present(
+    struct windowd_compositor_connection *connection,
     int wait_for_target,
     int *ready)
 {
@@ -604,8 +604,8 @@ int desktop_compositor_sync_present(
     return 0;
 }
 
-int desktop_compositor_get_timeline(
-    struct desktop_compositor_connection *connection,
+int windowd_compositor_get_timeline(
+    struct windowd_compositor_connection *connection,
     struct savanxp_gpu_present_timeline *timeline)
 {
     struct savanxp_compositor_request request;
@@ -629,8 +629,8 @@ int desktop_compositor_get_timeline(
     return 0;
 }
 
-int desktop_compositor_enable_cursor(
-    struct desktop_compositor_connection *connection,
+int windowd_compositor_enable_cursor(
+    struct windowd_compositor_connection *connection,
     int cursor_x,
     int cursor_y)
 {
@@ -655,8 +655,8 @@ int desktop_compositor_enable_cursor(
     return result;
 }
 
-int desktop_compositor_move_cursor(
-    struct desktop_compositor_connection *connection,
+int windowd_compositor_move_cursor(
+    struct windowd_compositor_connection *connection,
     int cursor_x,
     int cursor_y,
     int visible)
@@ -680,8 +680,8 @@ int desktop_compositor_move_cursor(
     return result;
 }
 
-int desktop_compositor_set_cursor_shape(
-    struct desktop_compositor_connection *connection,
+int windowd_compositor_set_cursor_shape(
+    struct windowd_compositor_connection *connection,
     int shape)
 {
     struct savanxp_compositor_request request;

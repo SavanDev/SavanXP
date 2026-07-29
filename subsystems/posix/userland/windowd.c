@@ -1,28 +1,28 @@
 #include "libc.h"
-#include "desktop_session.h"
-#include "desktop_menu.h"
+#include "windowd_session.h"
+#include "windowd_appinfo.h"
 #include "desktop_wallpaper.h"
-#include "desktop_layout.h"
-#include "desktop_render.h"
+#include "windowd_layout.h"
+#include "windowd_render.h"
 
-#define DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME 16
-#define DESKTOP_SURFACE_PAGE_SIZE 4096u
+#define WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME 16
+#define WINDOWD_SURFACE_PAGE_SIZE 4096u
 /* Low render size used for composited fullscreen apps: the client renders here
  * and the shell scales it to the display when F11 fullscreen is active. */
-#define DESKTOP_FULLSCREEN_MODE_WIDTH 640
-#define DESKTOP_FULLSCREEN_MODE_HEIGHT 400
+#define WINDOWD_FULLSCREEN_MODE_WIDTH 640
+#define WINDOWD_FULLSCREEN_MODE_HEIGHT 400
 
 static const char *k_shellapp_path = "/bin/shellapp";
 static const char *k_background_client_path = "/bin/shellui";
 static const char *k_progman_path = "/bin/progman";
 
-static int launch_overlay_client(struct desktop_session *session, const char *path, uint32_t launch_flags);
+static int launch_overlay_client(struct windowd_session *session, const char *path, uint32_t launch_flags);
 /* Definidas junto al resto del Task List, mas abajo; el selftest las usa antes. */
-static void tasklist_open(struct desktop_session *session, struct desktop_dirty_rect *dirty);
-static void tasklist_switch_to(struct desktop_session *session, struct desktop_dirty_rect *dirty, int task_index);
+static void tasklist_open(struct windowd_session *session, struct windowd_dirty_rect *dirty);
+static void tasklist_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index);
 static void resize_overlay_client_surface(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
     int slot,
     int surface_width,
     int surface_height);
@@ -49,7 +49,7 @@ static void close_fd_if_needed(int *fd)
  * y se quedo corto cuando el cursor hint sumo el fd 10, dejando ese destino
  * expuesto a que lo cerraran por numero.
  */
-#define DESKTOP_CLIENT_RESERVED_FD_MAX SAVANXP_WM_FD_LAST
+#define WINDOWD_CLIENT_RESERVED_FD_MAX SAVANXP_WM_FD_LAST
 
 static void close_client_setup_fd(int *fd)
 {
@@ -57,14 +57,14 @@ static void close_client_setup_fd(int *fd)
     {
         return;
     }
-    if (*fd > DESKTOP_CLIENT_RESERVED_FD_MAX)
+    if (*fd > WINDOWD_CLIENT_RESERVED_FD_MAX)
     {
         close(*fd);
     }
     *fd = -1;
 }
 
-static void reset_client(struct desktop_client *client)
+static void reset_client(struct windowd_client *client)
 {
     if (client == 0)
     {
@@ -84,10 +84,10 @@ static void reset_client(struct desktop_client *client)
 
 static int overlay_slot_valid(int slot)
 {
-    return slot >= 0 && slot < DESKTOP_MAX_OVERLAY_CLIENTS;
+    return slot >= 0 && slot < WINDOWD_MAX_OVERLAY_CLIENTS;
 }
 
-static struct desktop_client *overlay_client_at(struct desktop_session *session, int slot)
+static struct windowd_client *overlay_client_at(struct windowd_session *session, int slot)
 {
     if (session == 0 || !overlay_slot_valid(slot))
     {
@@ -96,7 +96,7 @@ static struct desktop_client *overlay_client_at(struct desktop_session *session,
     return &session->overlay_clients[slot];
 }
 
-static const struct desktop_client *overlay_client_at_const(const struct desktop_session *session, int slot)
+static const struct windowd_client *overlay_client_at_const(const struct windowd_session *session, int slot)
 {
     if (session == 0 || !overlay_slot_valid(slot))
     {
@@ -105,7 +105,7 @@ static const struct desktop_client *overlay_client_at_const(const struct desktop
     return &session->overlay_clients[slot];
 }
 
-static int overlay_slot_for_client_ptr(const struct desktop_session *session, const struct desktop_client *client)
+static int overlay_slot_for_client_ptr(const struct windowd_session *session, const struct windowd_client *client)
 {
     int slot;
 
@@ -114,7 +114,7 @@ static int overlay_slot_for_client_ptr(const struct desktop_session *session, co
         return -1;
     }
 
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         if (client == &session->overlay_clients[slot])
         {
@@ -124,7 +124,7 @@ static int overlay_slot_for_client_ptr(const struct desktop_session *session, co
     return -1;
 }
 
-static int find_free_overlay_slot(const struct desktop_session *session)
+static int find_free_overlay_slot(const struct windowd_session *session)
 {
     int slot;
 
@@ -133,7 +133,7 @@ static int find_free_overlay_slot(const struct desktop_session *session)
         return -1;
     }
 
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         if (session->overlay_clients[slot].pid <= 0)
         {
@@ -143,7 +143,7 @@ static int find_free_overlay_slot(const struct desktop_session *session)
     return -1;
 }
 
-static void remove_overlay_from_order(struct desktop_session *session, int slot)
+static void remove_overlay_from_order(struct windowd_session *session, int slot)
 {
     int index;
 
@@ -167,7 +167,7 @@ static void remove_overlay_from_order(struct desktop_session *session, int slot)
     }
 }
 
-static void append_overlay_to_order(struct desktop_session *session, int slot)
+static void append_overlay_to_order(struct windowd_session *session, int slot)
 {
     if (session == 0 || !overlay_slot_valid(slot))
     {
@@ -175,19 +175,19 @@ static void append_overlay_to_order(struct desktop_session *session, int slot)
     }
 
     remove_overlay_from_order(session, slot);
-    if (session->overlay_count >= DESKTOP_MAX_OVERLAY_CLIENTS)
+    if (session->overlay_count >= WINDOWD_MAX_OVERLAY_CLIENTS)
     {
         return;
     }
     session->overlay_order[session->overlay_count++] = slot;
 }
 
-static int overlay_client_visible(const struct desktop_client *client)
+static int overlay_client_visible(const struct windowd_client *client)
 {
     return client != 0 && client->pid > 0 && !client->minimized;
 }
 
-static int top_visible_overlay_slot(const struct desktop_session *session)
+static int top_visible_overlay_slot(const struct windowd_session *session)
 {
     int order_index;
 
@@ -199,7 +199,7 @@ static int top_visible_overlay_slot(const struct desktop_session *session)
     for (order_index = session->overlay_count - 1; order_index >= 0; --order_index)
     {
         int slot = session->overlay_order[order_index];
-        if (slot >= 0 && slot < DESKTOP_MAX_OVERLAY_CLIENTS && overlay_client_visible(&session->overlay_clients[slot]))
+        if (slot >= 0 && slot < WINDOWD_MAX_OVERLAY_CLIENTS && overlay_client_visible(&session->overlay_clients[slot]))
         {
             return slot;
         }
@@ -207,7 +207,7 @@ static int top_visible_overlay_slot(const struct desktop_session *session)
     return -1;
 }
 
-static void refresh_active_state(struct desktop_session *session)
+static void refresh_active_state(struct windowd_session *session)
 {
     int slot;
     int visible_overlay_slot = -1;
@@ -225,50 +225,50 @@ static void refresh_active_state(struct desktop_session *session)
 
     visible_overlay_slot = top_visible_overlay_slot(session);
 
-    if (session->active_client_kind == DESKTOP_CLIENT_APP && session->active_overlay_slot < 0)
+    if (session->active_client_kind == WINDOWD_CLIENT_APP && session->active_overlay_slot < 0)
     {
-        session->active_client_kind = DESKTOP_CLIENT_SHELL;
+        session->active_client_kind = WINDOWD_CLIENT_SHELL;
     }
 
-    if (session->active_client_kind == DESKTOP_CLIENT_SHELL && visible_overlay_slot >= 0 && session->shell_client.pid <= 0)
+    if (session->active_client_kind == WINDOWD_CLIENT_SHELL && visible_overlay_slot >= 0 && session->shell_client.pid <= 0)
     {
-        session->active_client_kind = DESKTOP_CLIENT_APP;
+        session->active_client_kind = WINDOWD_CLIENT_APP;
         session->active_overlay_slot = visible_overlay_slot;
     }
 
-    if (session->active_client_kind == DESKTOP_CLIENT_APP && session->active_overlay_slot < 0 && visible_overlay_slot >= 0)
+    if (session->active_client_kind == WINDOWD_CLIENT_APP && session->active_overlay_slot < 0 && visible_overlay_slot >= 0)
     {
         session->active_overlay_slot = visible_overlay_slot;
     }
 
-    if (session->active_client_kind == DESKTOP_CLIENT_SHELL)
+    if (session->active_client_kind == WINDOWD_CLIENT_SHELL)
     {
         session->active_overlay_slot = -1;
     }
 
-    session->shell_client.active = session->shell_client.pid > 0 && session->active_client_kind == DESKTOP_CLIENT_SHELL;
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    session->shell_client.active = session->shell_client.pid > 0 && session->active_client_kind == WINDOWD_CLIENT_SHELL;
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         session->overlay_clients[slot].active =
             overlay_client_visible(&session->overlay_clients[slot]) &&
-            session->active_client_kind == DESKTOP_CLIENT_APP &&
+            session->active_client_kind == WINDOWD_CLIENT_APP &&
             slot == session->active_overlay_slot;
     }
 }
 
-static void activate_shell(struct desktop_session *session)
+static void activate_shell(struct windowd_session *session)
 {
     if (session == 0)
     {
         return;
     }
 
-    session->active_client_kind = DESKTOP_CLIENT_SHELL;
+    session->active_client_kind = WINDOWD_CLIENT_SHELL;
     session->active_overlay_slot = -1;
     refresh_active_state(session);
 }
 
-static void raise_overlay(struct desktop_session *session, int slot)
+static void raise_overlay(struct windowd_session *session, int slot)
 {
     if (session == 0 || !overlay_slot_valid(slot) || session->overlay_clients[slot].pid <= 0)
     {
@@ -278,32 +278,32 @@ static void raise_overlay(struct desktop_session *session, int slot)
 
     session->overlay_clients[slot].minimized = 0;
     append_overlay_to_order(session, slot);
-    session->active_client_kind = DESKTOP_CLIENT_APP;
+    session->active_client_kind = WINDOWD_CLIENT_APP;
     session->active_overlay_slot = slot;
     refresh_active_state(session);
 }
 
-static struct desktop_client *active_client(struct desktop_session *session)
+static struct windowd_client *active_client(struct windowd_session *session)
 {
     if (session == 0)
     {
         return 0;
     }
-    if (session->active_client_kind == DESKTOP_CLIENT_APP && overlay_slot_valid(session->active_overlay_slot))
+    if (session->active_client_kind == WINDOWD_CLIENT_APP && overlay_slot_valid(session->active_overlay_slot))
     {
         return &session->overlay_clients[session->active_overlay_slot];
     }
     return session->shell_client.pid > 0 ? &session->shell_client : 0;
 }
 
-static int drag_overlay_slot_active(const struct desktop_session *session, int slot)
+static int drag_overlay_slot_active(const struct windowd_session *session, int slot)
 {
     return session != 0 && overlay_slot_valid(slot) && overlay_client_visible(&session->overlay_clients[slot]);
 }
 
-static void minimize_overlay_client(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+static void minimize_overlay_client(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
 {
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
     struct sx_rect frame_rect;
 
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->minimized)
@@ -311,15 +311,15 @@ static void minimize_overlay_client(struct desktop_session *session, struct desk
         return;
     }
 
-    frame_rect = desktop_client_frame_rect(client);
-    desktop_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
+    frame_rect = windowd_client_frame_rect(client);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
     client->minimized = 1;
     refresh_active_state(session);
 }
 
-static void restore_overlay_client(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+static void restore_overlay_client(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
 {
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
     struct sx_rect frame_rect;
 
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
@@ -328,14 +328,14 @@ static void restore_overlay_client(struct desktop_session *session, struct deskt
     }
 
     client->minimized = 0;
-    frame_rect = desktop_client_frame_rect(client);
-    desktop_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
+    frame_rect = windowd_client_frame_rect(client);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
     raise_overlay(session, slot);
 }
 
-static void toggle_overlay_client_maximized(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+static void toggle_overlay_client_maximized(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
 {
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
     int area_x = 0;
     int area_y = 0;
     int area_width = 0;
@@ -354,13 +354,13 @@ static void toggle_overlay_client_maximized(struct desktop_session *session, str
         client->restore_window_y = client->window_y;
         client->restore_window_width = client->window_width;
         client->restore_window_height = client->window_height;
-        desktop_work_area_bounds(&session->gfx.info, &area_x, &area_y, &area_width, &area_height);
+        windowd_work_area_bounds(&session->gfx.info, &area_x, &area_y, &area_width, &area_height);
         client->window_x = area_x;
         client->window_y = area_y;
         client->window_width = area_width;
         client->window_height = area_height;
-        target_surface_width = area_width - (DESKTOP_WINDOW_BORDER * 2);
-        target_surface_height = area_height - DESKTOP_WINDOW_TITLEBAR_HEIGHT - DESKTOP_WINDOW_BORDER;
+        target_surface_width = area_width - (WINDOWD_WINDOW_BORDER * 2);
+        target_surface_height = area_height - WINDOWD_WINDOW_TITLEBAR_HEIGHT - WINDOWD_WINDOW_BORDER;
         client->maximized = 1;
     }
     else
@@ -371,8 +371,8 @@ static void toggle_overlay_client_maximized(struct desktop_session *session, str
             client->window_y = client->restore_window_y;
             client->window_width = client->restore_window_width;
             client->window_height = client->restore_window_height;
-            target_surface_width = client->window_width - (DESKTOP_WINDOW_BORDER * 2);
-            target_surface_height = client->window_height - DESKTOP_WINDOW_TITLEBAR_HEIGHT - DESKTOP_WINDOW_BORDER;
+            target_surface_width = client->window_width - (WINDOWD_WINDOW_BORDER * 2);
+            target_surface_height = client->window_height - WINDOWD_WINDOW_TITLEBAR_HEIGHT - WINDOWD_WINDOW_BORDER;
         }
         client->maximized = 0;
     }
@@ -381,12 +381,12 @@ static void toggle_overlay_client_maximized(struct desktop_session *session, str
     raise_overlay(session, slot);
 }
 
-static uint32_t client_surface_capacity_width(const struct desktop_client *client)
+static uint32_t client_surface_capacity_width(const struct windowd_client *client)
 {
     return client != 0 ? client->surface_info.pitch / (uint32_t)sizeof(uint32_t) : 0;
 }
 
-static uint32_t client_surface_capacity_height(const struct desktop_client *client)
+static uint32_t client_surface_capacity_height(const struct windowd_client *client)
 {
     if (client == 0 || client->surface_info.pitch == 0)
     {
@@ -396,13 +396,13 @@ static uint32_t client_surface_capacity_height(const struct desktop_client *clie
 }
 
 static void resize_overlay_client_surface(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
     int slot,
     int surface_width,
     int surface_height)
 {
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
     struct sx_rect previous_frame;
     struct sx_rect current_frame;
     uint32_t max_width = 0;
@@ -420,14 +420,14 @@ static void resize_overlay_client_surface(
         return;
     }
 
-    surface_width = desktop_clamp_int(surface_width, 1, (int)max_width);
-    surface_height = desktop_clamp_int(surface_height, 1, (int)max_height);
+    surface_width = windowd_clamp_int(surface_width, 1, (int)max_width);
+    surface_height = windowd_clamp_int(surface_height, 1, (int)max_height);
     if ((int)client->surface_info.width == surface_width && (int)client->surface_info.height == surface_height)
     {
         return;
     }
 
-    previous_frame = desktop_client_frame_rect(client);
+    previous_frame = windowd_client_frame_rect(client);
     client->surface_info.width = (uint32_t)surface_width;
     client->surface_info.height = (uint32_t)surface_height;
     if (client->header != 0)
@@ -437,24 +437,24 @@ static void resize_overlay_client_surface(
     }
     if (client->frame_visible)
     {
-        client->window_width = surface_width + (DESKTOP_WINDOW_BORDER * 2);
-        client->window_height = surface_height + DESKTOP_WINDOW_TITLEBAR_HEIGHT + DESKTOP_WINDOW_BORDER;
+        client->window_width = surface_width + (WINDOWD_WINDOW_BORDER * 2);
+        client->window_height = surface_height + WINDOWD_WINDOW_TITLEBAR_HEIGHT + WINDOWD_WINDOW_BORDER;
         if (!client->maximized)
         {
             client->restore_window_width = client->window_width;
             client->restore_window_height = client->window_height;
         }
-        desktop_clamp_overlay_frame_position(
+        windowd_clamp_overlay_frame_position(
             &session->gfx.info,
             client->window_width,
             client->window_height,
             &client->window_x,
             &client->window_y);
     }
-    current_frame = desktop_client_frame_rect(client);
+    current_frame = windowd_client_frame_rect(client);
     memset(client->pixels, 0, client->surface_info.buffer_size);
-    desktop_dirty_rect_add(dirty, &session->gfx.info, previous_frame.x, previous_frame.y, previous_frame.width, previous_frame.height);
-    desktop_dirty_rect_add(dirty, &session->gfx.info, current_frame.x, current_frame.y, current_frame.width, current_frame.height);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, previous_frame.x, previous_frame.y, previous_frame.width, previous_frame.height);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, current_frame.x, current_frame.y, current_frame.width, current_frame.height);
 }
 
 /* Enter fullscreen as a composited shell policy. The daemon keeps owning the GPU
@@ -462,9 +462,9 @@ static void resize_overlay_client_surface(
  * display. This path works on both VirtIO and the flat framebuffer backend,
  * avoiding direct client-scanout imports until the kernel grows handle passing
  * or another connectable surface-export mechanism. */
-static int enter_overlay_fullscreen(struct desktop_session *session, struct desktop_dirty_rect *dirty, int slot)
+static int enter_overlay_fullscreen(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
 {
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
 
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
     {
@@ -489,15 +489,15 @@ static int enter_overlay_fullscreen(struct desktop_session *session, struct desk
     client->window_height = (int)session->gfx.info.height;
     session->fullscreen_slot = slot;
     raise_overlay(session, slot);
-    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     return 0;
 }
 
 /* Leave composited fullscreen and restore the windowed chrome/geometry. */
-static void exit_overlay_fullscreen(struct desktop_session *session, struct desktop_dirty_rect *dirty)
+static void exit_overlay_fullscreen(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     int slot = session != 0 ? session->fullscreen_slot : -1;
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
 
     if (session == 0 || dirty == 0 || client == 0)
     {
@@ -515,19 +515,19 @@ static void exit_overlay_fullscreen(struct desktop_session *session, struct desk
     client->maximized = client->fs_restore_maximized;
     client->window_x = client->fs_restore_window_x;
     client->window_y = client->fs_restore_window_y;
-    client->window_width = (int)client->surface_info.width + (client->frame_visible ? (DESKTOP_WINDOW_BORDER * 2) : 0);
-    client->window_height = (int)client->surface_info.height + (client->frame_visible ? (DESKTOP_WINDOW_TITLEBAR_HEIGHT + DESKTOP_WINDOW_BORDER) : 0);
-    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    client->window_width = (int)client->surface_info.width + (client->frame_visible ? (WINDOWD_WINDOW_BORDER * 2) : 0);
+    client->window_height = (int)client->surface_info.height + (client->frame_visible ? (WINDOWD_WINDOW_TITLEBAR_HEIGHT + WINDOWD_WINDOW_BORDER) : 0);
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
 static void move_overlay_client_window(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
     int slot,
     int window_x,
     int window_y)
 {
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
     struct sx_rect previous_frame;
     struct sx_rect current_frame;
 
@@ -536,8 +536,8 @@ static void move_overlay_client_window(
         return;
     }
 
-    previous_frame = desktop_client_frame_rect(client);
-    desktop_clamp_overlay_frame_position(
+    previous_frame = windowd_client_frame_rect(client);
+    windowd_clamp_overlay_frame_position(
         &session->gfx.info,
         previous_frame.width,
         previous_frame.height,
@@ -550,15 +550,15 @@ static void move_overlay_client_window(
 
     client->window_x = window_x;
     client->window_y = window_y;
-    current_frame = desktop_client_frame_rect(client);
-    desktop_dirty_rect_add(
+    current_frame = windowd_client_frame_rect(client);
+    windowd_dirty_rect_add(
         dirty,
         &session->gfx.info,
         previous_frame.x,
         previous_frame.y,
         previous_frame.width,
         previous_frame.height);
-    desktop_dirty_rect_add(
+    windowd_dirty_rect_add(
         dirty,
         &session->gfx.info,
         current_frame.x,
@@ -567,7 +567,7 @@ static void move_overlay_client_window(
         current_frame.height);
 }
 
-static const struct desktop_client *top_overlay_client_at_point(const struct desktop_session *session, int x, int y)
+static const struct windowd_client *top_overlay_client_at_point(const struct windowd_session *session, int x, int y)
 {
     int order_index;
 
@@ -579,8 +579,8 @@ static const struct desktop_client *top_overlay_client_at_point(const struct des
     for (order_index = session->overlay_count - 1; order_index >= 0; --order_index)
     {
         int slot = session->overlay_order[order_index];
-        const struct desktop_client *client = overlay_client_at_const(session, slot);
-        if (overlay_client_visible(client) && desktop_point_in_frame(client, x, y))
+        const struct windowd_client *client = overlay_client_at_const(session, slot);
+        if (overlay_client_visible(client) && windowd_point_in_frame(client, x, y))
         {
             return client;
         }
@@ -588,15 +588,15 @@ static const struct desktop_client *top_overlay_client_at_point(const struct des
     return 0;
 }
 
-static const struct desktop_client *top_client_at_point(const struct desktop_session *session, int x, int y)
+static const struct windowd_client *top_client_at_point(const struct windowd_session *session, int x, int y)
 {
-    const struct desktop_client *overlay = top_overlay_client_at_point(session, x, y);
+    const struct windowd_client *overlay = top_overlay_client_at_point(session, x, y);
 
     if (overlay != 0)
     {
         return overlay;
     }
-    if (session != 0 && session->shell_client.pid > 0 && desktop_point_in_client(&session->shell_client, x, y))
+    if (session != 0 && session->shell_client.pid > 0 && windowd_point_in_client(&session->shell_client, x, y))
     {
         return &session->shell_client;
     }
@@ -605,7 +605,7 @@ static const struct desktop_client *top_client_at_point(const struct desktop_ses
 
 /* An overlay client forked but that hasn't submitted its first frame yet is
  * still starting up -- surfaced to the user as the WAIT cursor. */
-static int any_overlay_client_starting(const struct desktop_session *session)
+static int any_overlay_client_starting(const struct windowd_session *session)
 {
     int slot;
 
@@ -613,9 +613,9 @@ static int any_overlay_client_starting(const struct desktop_session *session)
     {
         return 0;
     }
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
-        const struct desktop_client *client = &session->overlay_clients[slot];
+        const struct windowd_client *client = &session->overlay_clients[slot];
         if (client->pid > 0 && client->consumed_submit_sequence == 0)
         {
             return 1;
@@ -627,8 +627,8 @@ static int any_overlay_client_starting(const struct desktop_session *session)
 /* Priority: dragging a window > an app starting up > a clickable desktop/menu
  * item > a hint reported by the hovered app's own widgets > the plain arrow. */
 static int resolve_cursor_shape(
-    const struct desktop_session *session,
-    const struct desktop_client *current_hover_client,
+    const struct windowd_session *session,
+    const struct windowd_client *current_hover_client,
     int cursor_x,
     int cursor_y,
     int drag_active)
@@ -651,24 +651,24 @@ static int resolve_cursor_shape(
     }
     if (current_hover_client != 0 &&
         current_hover_client != &session->shell_client &&
-        desktop_point_in_client(current_hover_client, cursor_x, cursor_y))
+        windowd_point_in_client(current_hover_client, cursor_x, cursor_y))
     {
         return current_hover_client->last_cursor_hint_shape;
     }
     return SAVANXP_CURSOR_ARROW;
 }
 
-static int set_hw_cursor_position(struct desktop_session *session, int cursor_x, int cursor_y, int visible)
+static int set_hw_cursor_position(struct windowd_session *session, int cursor_x, int cursor_y, int visible)
 {
     if (session == 0 || !session->hw_cursor_enabled)
     {
         return -1;
     }
 
-    return desktop_compositor_move_cursor(&session->compositor, cursor_x, cursor_y, visible) < 0 ? -1 : 0;
+    return windowd_compositor_move_cursor(&session->compositor, cursor_x, cursor_y, visible) < 0 ? -1 : 0;
 }
 
-static int try_enable_hw_cursor(struct desktop_session *session, int cursor_x, int cursor_y)
+static int try_enable_hw_cursor(struct windowd_session *session, int cursor_x, int cursor_y)
 {
     if (session == 0)
     {
@@ -679,7 +679,7 @@ static int try_enable_hw_cursor(struct desktop_session *session, int cursor_x, i
         return 0;
     }
 
-    if (desktop_compositor_enable_cursor(&session->compositor, cursor_x, cursor_y) < 0)
+    if (windowd_compositor_enable_cursor(&session->compositor, cursor_x, cursor_y) < 0)
     {
         return 0;
     }
@@ -688,7 +688,7 @@ static int try_enable_hw_cursor(struct desktop_session *session, int cursor_x, i
     return 1;
 }
 
-static int desktop_stage_failed(const char *stage, long result)
+static int windowd_stage_failed(const char *stage, long result)
 {
     if (result < 0)
     {
@@ -703,13 +703,13 @@ static int desktop_stage_failed(const char *stage, long result)
 
 /* Cap on consecutive reconnects without a clean frame in between, so a daemon
    that dies on every spawn surfaces as a hard failure instead of a spin loop. */
-#define DESKTOP_MAX_COMPOSITOR_RECOVERIES 8
+#define WINDOWD_MAX_COMPOSITOR_RECOVERIES 8
 
 /* Respawn compositord after it died mid-session. The display section and the
    shell's backbuffer outlive the daemon, so a successful reconnect re-displays
    the current frame and restores the cursor without a re-render. Returns 0 on
    success; the caller forces a full repaint so subsequent damage stays correct. */
-static int recover_compositor(struct desktop_session *session)
+static int recover_compositor(struct windowd_session *session)
 {
     int result;
 
@@ -718,10 +718,10 @@ static int recover_compositor(struct desktop_session *session)
         return -1;
     }
 
-    result = desktop_compositor_reconnect(&session->compositor);
+    result = windowd_compositor_reconnect(&session->compositor);
     if (result < 0)
     {
-        return desktop_stage_failed("reconnect compositord", result);
+        return windowd_stage_failed("reconnect compositord", result);
     }
 
     eprintf("desktop: compositord reconnected after fault\n");
@@ -745,7 +745,7 @@ static int route_packet(int fd, const void *packet, size_t size)
 /* Deliver the pointer to a client in its own surface-local coordinates, so the
  * app hit-tests in local space and stays aligned with the system cursor the
  * compositor draws. */
-static int route_pointer(const struct desktop_client *client, int cursor_x, int cursor_y, uint32_t buttons)
+static int route_pointer(const struct windowd_client *client, int cursor_x, int cursor_y, uint32_t buttons)
 {
     struct sx_rect surface_rect;
     struct savanxp_gui_pointer_event event;
@@ -754,7 +754,7 @@ static int route_pointer(const struct desktop_client *client, int cursor_x, int 
     {
         return 0;
     }
-    surface_rect = desktop_client_surface_rect(client);
+    surface_rect = windowd_client_surface_rect(client);
     event.x = cursor_x - surface_rect.x;
     event.y = cursor_y - surface_rect.y;
     event.buttons = buttons;
@@ -807,7 +807,7 @@ static size_t coalesce_mouse_events(
     return coalesced_count;
 }
 
-static int desktop_process_alive(long pid)
+static int windowd_process_alive(long pid)
 {
     struct savanxp_process_info info;
     unsigned long index = 0;
@@ -833,9 +833,9 @@ static int desktop_process_alive(long pid)
 }
 
 static void add_client_present_damage(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
-    const struct desktop_client *client,
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    const struct windowd_client *client,
     const struct savanxp_gpu_dirty_rect *rect)
 {
     struct sx_rect surface_rect;
@@ -845,10 +845,10 @@ static void add_client_present_damage(
         return;
     }
 
-    surface_rect = desktop_client_surface_rect(client);
+    surface_rect = windowd_client_surface_rect(client);
     if (client->fullscreen)
     {
-        desktop_dirty_rect_add(
+        windowd_dirty_rect_add(
             dirty,
             &session->gfx.info,
             surface_rect.x,
@@ -857,7 +857,7 @@ static void add_client_present_damage(
             surface_rect.height);
         return;
     }
-    desktop_dirty_rect_add(
+    windowd_dirty_rect_add(
         dirty,
         &session->gfx.info,
         surface_rect.x + (int)rect->x,
@@ -866,7 +866,7 @@ static void add_client_present_damage(
         (int)rect->height);
 }
 
-static void signal_client_retire(struct desktop_client *client, uint64_t retired_sequence)
+static void signal_client_retire(struct windowd_client *client, uint64_t retired_sequence)
 {
     int advanced = 0;
 
@@ -886,7 +886,7 @@ static void signal_client_retire(struct desktop_client *client, uint64_t retired
     }
 }
 
-static void signal_client_composed(struct desktop_client *client, uint64_t composed_sequence)
+static void signal_client_composed(struct windowd_client *client, uint64_t composed_sequence)
 {
     int advanced = 0;
 
@@ -906,7 +906,7 @@ static void signal_client_composed(struct desktop_client *client, uint64_t compo
     }
 }
 
-static void signal_composed_batches(struct desktop_session *session)
+static void signal_composed_batches(struct windowd_session *session)
 {
     int slot;
 
@@ -917,13 +917,13 @@ static void signal_composed_batches(struct desktop_session *session)
 
     signal_client_composed(&session->background_client, session->background_client.consumed_submit_sequence);
     signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         signal_client_composed(&session->overlay_clients[slot], session->overlay_clients[slot].consumed_submit_sequence);
     }
 }
 
-static void retire_presented_batches(struct desktop_session *session)
+static void retire_presented_batches(struct windowd_session *session)
 {
     int slot;
 
@@ -944,9 +944,9 @@ static void retire_presented_batches(struct desktop_session *session)
         session->shell_client.pending_retire_sequence = 0;
     }
 
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
-        struct desktop_client *client = &session->overlay_clients[slot];
+        struct windowd_client *client = &session->overlay_clients[slot];
         if (client->pending_retire_sequence != 0)
         {
             signal_client_retire(client, client->pending_retire_sequence);
@@ -956,9 +956,9 @@ static void retire_presented_batches(struct desktop_session *session)
 }
 
 static int consume_client_present_batches(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
-    struct desktop_client *client)
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    struct windowd_client *client)
 {
     uint64_t next_sequence = 0;
 
@@ -995,8 +995,8 @@ static int consume_client_present_batches(
 
         if ((batch->flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0)
         {
-            struct sx_rect surface_rect = desktop_client_surface_rect(client);
-            desktop_dirty_rect_add(
+            struct sx_rect surface_rect = windowd_client_surface_rect(client);
+            windowd_dirty_rect_add(
                 dirty,
                 &session->gfx.info,
                 surface_rect.x,
@@ -1047,7 +1047,7 @@ static int consume_client_present_batches(
     return 0;
 }
 
-static void snapshot_pending_retire_sequences(struct desktop_session *session)
+static void snapshot_pending_retire_sequences(struct windowd_session *session)
 {
     int slot;
 
@@ -1058,13 +1058,13 @@ static void snapshot_pending_retire_sequences(struct desktop_session *session)
 
     session->background_client.pending_retire_sequence = session->background_client.consumed_submit_sequence;
     session->shell_client.pending_retire_sequence = session->shell_client.consumed_submit_sequence;
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         session->overlay_clients[slot].pending_retire_sequence = session->overlay_clients[slot].consumed_submit_sequence;
     }
 }
 
-static int sync_pending_present(struct desktop_session *session, int wait_for_target, int *ready)
+static int sync_pending_present(struct windowd_session *session, int wait_for_target, int *ready)
 {
     int result;
 
@@ -1077,10 +1077,10 @@ static int sync_pending_present(struct desktop_session *session, int wait_for_ta
         return 0;
     }
 
-    result = desktop_compositor_sync_present(&session->compositor, wait_for_target, ready);
+    result = windowd_compositor_sync_present(&session->compositor, wait_for_target, ready);
     if (result < 0)
     {
-        return desktop_stage_failed("compositord sync present", result);
+        return windowd_stage_failed("compositord sync present", result);
     }
     if (ready == 0 || *ready)
     {
@@ -1089,22 +1089,22 @@ static int sync_pending_present(struct desktop_session *session, int wait_for_ta
     return 0;
 }
 
-static int present_frame(struct desktop_session *session, const struct desktop_dirty_rect *dirty)
+static int present_frame(struct windowd_session *session, const struct windowd_dirty_rect *dirty)
 {
     struct sx_rect rects[SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS];
     size_t rect_count = 0;
     size_t index;
     int result;
 
-    if (session == 0 || dirty == 0 || !desktop_dirty_rect_valid(dirty))
+    if (session == 0 || dirty == 0 || !windowd_dirty_rect_valid(dirty))
     {
         return 0;
     }
 
     snapshot_pending_retire_sequences(session);
-    for (index = 0; index < desktop_dirty_rect_count(dirty); ++index)
+    for (index = 0; index < windowd_dirty_rect_count(dirty); ++index)
     {
-        const struct sx_rect *rect = desktop_dirty_rect_at(dirty, index);
+        const struct sx_rect *rect = windowd_dirty_rect_at(dirty, index);
         if (rect == 0 || rect->width <= 0 || rect->height <= 0)
         {
             continue;
@@ -1112,10 +1112,10 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
         rects[rect_count++] = *rect;
         if (rect_count >= SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS)
         {
-            result = desktop_compositor_present(&session->compositor, rects, rect_count);
+            result = windowd_compositor_present(&session->compositor, rects, rect_count);
             if (result < 0)
             {
-                return desktop_stage_failed("compositord present", result);
+                return windowd_stage_failed("compositord present", result);
             }
             rect_count = 0;
         }
@@ -1123,18 +1123,18 @@ static int present_frame(struct desktop_session *session, const struct desktop_d
 
     if (rect_count != 0)
     {
-        result = desktop_compositor_present(&session->compositor, rects, rect_count);
+        result = windowd_compositor_present(&session->compositor, rects, rect_count);
         if (result < 0)
         {
-            return desktop_stage_failed("compositord present", result);
+            return windowd_stage_failed("compositord present", result);
         }
     }
     return 0;
 }
 
 static void fill_client_surface_info(
-    const struct desktop_session *session,
-    enum desktop_client_kind kind,
+    const struct windowd_session *session,
+    enum windowd_client_kind kind,
     struct savanxp_fb_info *client_info)
 {
     if (session == 0 || client_info == 0)
@@ -1142,20 +1142,20 @@ static void fill_client_surface_info(
         return;
     }
 
-    if (kind == DESKTOP_CLIENT_APP)
+    if (kind == WINDOWD_CLIENT_APP)
     {
-        desktop_fill_overlay_surface_info(&session->gfx.info, client_info);
+        windowd_fill_overlay_surface_info(&session->gfx.info, client_info);
     }
     else
     {
-        desktop_fill_shell_surface_info(&session->gfx.info, client_info);
+        windowd_fill_shell_surface_info(&session->gfx.info, client_info);
     }
 }
 
 static void position_client_window(
-    const struct desktop_session *session,
-    struct desktop_client *client,
-    enum desktop_client_kind kind,
+    const struct windowd_session *session,
+    struct windowd_client *client,
+    enum windowd_client_kind kind,
     int cascade_index)
 {
     if (session == 0 || client == 0)
@@ -1163,9 +1163,9 @@ static void position_client_window(
         return;
     }
 
-    if (kind == DESKTOP_CLIENT_APP)
+    if (kind == WINDOWD_CLIENT_APP)
     {
-        desktop_place_overlay_window(
+        windowd_place_overlay_window(
             &session->gfx.info,
             &client->surface_info,
             cascade_index,
@@ -1197,7 +1197,7 @@ static void position_client_window(
     }
 }
 
-static void destroy_client_instance(struct desktop_client *client, int terminate_client)
+static void destroy_client_instance(struct windowd_client *client, int terminate_client)
 {
     int status = 0;
 
@@ -1233,7 +1233,7 @@ static void destroy_client_instance(struct desktop_client *client, int terminate
     reset_client(client);
 }
 
-static int start_client_process(struct desktop_client *client, const char *path)
+static int start_client_process(struct windowd_client *client, const char *path)
 {
     struct savanxp_gpu_client_surface_header *header;
     unsigned long command_bytes = 0;
@@ -1258,7 +1258,7 @@ static int start_client_process(struct desktop_client *client, const char *path)
     command_bytes = (unsigned long)(SAVANXP_GPU_CLIENT_BATCH_CAPACITY * sizeof(struct savanxp_gpu_dirty_rect_batch));
     /* Page-align the pixel region. Older fullscreen-exclusive scanout used this
      * directly; keeping the alignment preserves the v3 client ABI. */
-    pixels_offset = ((unsigned long)sizeof(*header) + command_bytes + (DESKTOP_SURFACE_PAGE_SIZE - 1u)) & ~(unsigned long)(DESKTOP_SURFACE_PAGE_SIZE - 1u);
+    pixels_offset = ((unsigned long)sizeof(*header) + command_bytes + (WINDOWD_SURFACE_PAGE_SIZE - 1u)) & ~(unsigned long)(WINDOWD_SURFACE_PAGE_SIZE - 1u);
     section_size = pixels_offset + client->surface_info.buffer_size;
     client->section_fd = (int)section_create(section_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     if (client->section_fd < 0)
@@ -1398,7 +1398,7 @@ fail:
     return -1;
 }
 
-static void destroy_shell_client(struct desktop_session *session, int terminate_client)
+static void destroy_shell_client(struct windowd_session *session, int terminate_client)
 {
     if (session == 0)
     {
@@ -1409,7 +1409,7 @@ static void destroy_shell_client(struct desktop_session *session, int terminate_
     activate_shell(session);
 }
 
-static void destroy_background_client(struct desktop_session *session, int terminate_client)
+static void destroy_background_client(struct windowd_session *session, int terminate_client)
 {
     if (session == 0)
     {
@@ -1422,9 +1422,9 @@ static void destroy_background_client(struct desktop_session *session, int termi
 
 /* Lanza shellui como cliente de fondo: superficie frameless full-screen al
  * origen (kind SHELL) compuesta al fondo del z-order. No activa foco. */
-static int launch_background_client(struct desktop_session *session)
+static int launch_background_client(struct windowd_session *session)
 {
-    struct desktop_client *client = 0;
+    struct windowd_client *client = 0;
 
     if (session == 0)
     {
@@ -1434,14 +1434,14 @@ static int launch_background_client(struct desktop_session *session)
     destroy_background_client(session, 1);
     client = &session->background_client;
     reset_client(client);
-    fill_client_surface_info(session, DESKTOP_CLIENT_SHELL, &client->surface_info);
-    position_client_window(session, client, DESKTOP_CLIENT_SHELL, 0);
+    fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
+    position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
     return start_client_process(client, k_background_client_path);
 }
 
-static void destroy_overlay_client(struct desktop_session *session, int slot, int terminate_client)
+static void destroy_overlay_client(struct windowd_session *session, int slot, int terminate_client)
 {
-    struct desktop_client *client = overlay_client_at(session, slot);
+    struct windowd_client *client = overlay_client_at(session, slot);
 
     if (client == 0)
     {
@@ -1460,9 +1460,9 @@ static void destroy_overlay_client(struct desktop_session *session, int slot, in
     refresh_active_state(session);
 }
 
-static int launch_shell_client(struct desktop_session *session, const char *path)
+static int launch_shell_client(struct windowd_session *session, const char *path)
 {
-    struct desktop_client *client = 0;
+    struct windowd_client *client = 0;
 
     if (session == 0 || path == 0)
     {
@@ -1472,8 +1472,8 @@ static int launch_shell_client(struct desktop_session *session, const char *path
     destroy_shell_client(session, 1);
     client = &session->shell_client;
     reset_client(client);
-    fill_client_surface_info(session, DESKTOP_CLIENT_SHELL, &client->surface_info);
-    position_client_window(session, client, DESKTOP_CLIENT_SHELL, 0);
+    fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
+    position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
     if (start_client_process(client, path) < 0)
     {
         return -1;
@@ -1489,9 +1489,9 @@ static int launch_shell_client(struct desktop_session *session, const char *path
  * abre Doom sin pre-sizing y por lo tanto sin F11. El arreglo de fondo es que
  * el programa pida fullscreen en runtime -- el mode-setting ya funciona --, no
  * que el WM vuelva a conocer un catalogo. */
-static int launch_overlay_client(struct desktop_session *session, const char *path, uint32_t launch_flags)
+static int launch_overlay_client(struct windowd_session *session, const char *path, uint32_t launch_flags)
 {
-    struct desktop_client *client = 0;
+    struct windowd_client *client = 0;
     int slot = -1;
 
     if (session == 0 || path == 0)
@@ -1508,19 +1508,19 @@ static int launch_overlay_client(struct desktop_session *session, const char *pa
 
     client = &session->overlay_clients[slot];
     reset_client(client);
-    fill_client_surface_info(session, DESKTOP_CLIENT_APP, &client->surface_info);
+    fill_client_surface_info(session, WINDOWD_CLIENT_APP, &client->surface_info);
     if ((launch_flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0)
     {
         /* Allocate the surface at the low fullscreen render size. The same
          * buffer is used windowed and fullscreen; fullscreen scales it in
          * the shell composition pass. */
         client->fullscreen_capable = 1;
-        client->surface_info.width = DESKTOP_FULLSCREEN_MODE_WIDTH;
-        client->surface_info.height = DESKTOP_FULLSCREEN_MODE_HEIGHT;
-        client->surface_info.pitch = DESKTOP_FULLSCREEN_MODE_WIDTH * (uint32_t)sizeof(uint32_t);
-        client->surface_info.buffer_size = client->surface_info.pitch * DESKTOP_FULLSCREEN_MODE_HEIGHT;
+        client->surface_info.width = WINDOWD_FULLSCREEN_MODE_WIDTH;
+        client->surface_info.height = WINDOWD_FULLSCREEN_MODE_HEIGHT;
+        client->surface_info.pitch = WINDOWD_FULLSCREEN_MODE_WIDTH * (uint32_t)sizeof(uint32_t);
+        client->surface_info.buffer_size = client->surface_info.pitch * WINDOWD_FULLSCREEN_MODE_HEIGHT;
     }
-    position_client_window(session, client, DESKTOP_CLIENT_APP, session->overlay_count);
+    position_client_window(session, client, WINDOWD_CLIENT_APP, session->overlay_count);
     if (start_client_process(client, path) < 0)
     {
         return -1;
@@ -1530,22 +1530,22 @@ static int launch_overlay_client(struct desktop_session *session, const char *pa
     return 0;
 }
 
-static int relaunch_shell_client(struct desktop_session *session)
+static int relaunch_shell_client(struct windowd_session *session)
 {
     return launch_shell_client(session, k_shellapp_path);
 }
 
-static int open_compositor_session(struct desktop_session *session)
+static int open_compositor_session(struct windowd_session *session)
 {
     int result = 0;
     int slot;
 
     memset(session, 0, sizeof(*session));
-    desktop_compositor_connection_init(&session->compositor);
+    windowd_compositor_connection_init(&session->compositor);
     session->input_fd = -1;
     session->mouse_fd = -1;
     session->hw_cursor_enabled = 0;
-    session->active_client_kind = DESKTOP_CLIENT_SHELL;
+    session->active_client_kind = WINDOWD_CLIENT_SHELL;
     session->active_overlay_slot = -1;
     session->fullscreen_slot = -1;
     session->overlay_count = 0;
@@ -1553,23 +1553,23 @@ static int open_compositor_session(struct desktop_session *session)
     session->tasklist_last_click_index = -1;
     reset_client(&session->background_client);
     reset_client(&session->shell_client);
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         reset_client(&session->overlay_clients[slot]);
         session->overlay_order[slot] = -1;
     }
 
-    result = desktop_compositor_open(&session->compositor);
+    result = windowd_compositor_open(&session->compositor);
     if (result < 0)
     {
-        return desktop_stage_failed("open compositord", result);
+        return windowd_stage_failed("open compositord", result);
     }
 
     session->gfx.info = session->compositor.display_info;
     session->input_fd = (int)open_mode("/dev/input0", SAVANXP_OPEN_READ);
     if (session->input_fd < 0)
     {
-        return desktop_stage_failed("open /dev/input0", session->input_fd);
+        return windowd_stage_failed("open /dev/input0", session->input_fd);
     }
 
     session->mouse_fd = (int)open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
@@ -1580,12 +1580,12 @@ static int open_compositor_session(struct desktop_session *session)
     }
 
     memset(session->compositor.framebuffer, 0, session->gfx.info.buffer_size);
-    desktop_set_backbuffer(session->compositor.framebuffer);
+    windowd_set_backbuffer(session->compositor.framebuffer);
     refresh_active_state(session);
     return 0;
 }
 
-static void close_compositor_session(struct desktop_session *session)
+static void close_compositor_session(struct windowd_session *session)
 {
     int slot;
 
@@ -1594,7 +1594,7 @@ static void close_compositor_session(struct desktop_session *session)
         return;
     }
 
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         destroy_overlay_client(session, slot, 1);
     }
@@ -1603,15 +1603,15 @@ static void close_compositor_session(struct desktop_session *session)
     close_fd_if_needed(&session->input_fd);
     close_fd_if_needed(&session->mouse_fd);
     (void)sync_pending_present(session, 1, 0);
-    desktop_compositor_close(&session->compositor);
-    desktop_set_backbuffer(0);
+    windowd_compositor_close(&session->compositor);
+    windowd_set_backbuffer(0);
 }
 
 
 static int service_client_batches(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
-    struct desktop_client *client)
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    struct windowd_client *client)
 {
     int slot = -1;
     int is_shell = 0;
@@ -1638,13 +1638,13 @@ static int service_client_batches(
         {
             destroy_overlay_client(session, slot, 1);
         }
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 
     return 0;
 }
 
-static int reap_dead_clients(struct desktop_session *session, struct desktop_dirty_rect *dirty)
+static int reap_dead_clients(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     int slot;
 
@@ -1653,16 +1653,16 @@ static int reap_dead_clients(struct desktop_session *session, struct desktop_dir
         return 0;
     }
 
-    if (session->background_client.pid > 0 && !desktop_process_alive(session->background_client.pid))
+    if (session->background_client.pid > 0 && !windowd_process_alive(session->background_client.pid))
     {
         /* Sin relaunch en A2.2: al morir el cliente de fondo caemos al wallpaper
          * dibujado por windowd (fallback), para no arriesgar un spin-loop si
          * shellui crashea al arrancar. */
         destroy_background_client(session, 0);
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 
-    if (session->shell_client.pid > 0 && !desktop_process_alive(session->shell_client.pid))
+    if (session->shell_client.pid > 0 && !windowd_process_alive(session->shell_client.pid))
     {
         destroy_shell_client(session, 0);
         if (relaunch_shell_client(session) < 0)
@@ -1670,23 +1670,23 @@ static int reap_dead_clients(struct desktop_session *session, struct desktop_dir
             puts_fd(2, "desktop: failed to relaunch shellapp\n");
             return -1;
         }
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 
-    for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
-        struct desktop_client *client = &session->overlay_clients[slot];
-        if (client->pid > 0 && !desktop_process_alive(client->pid))
+        struct windowd_client *client = &session->overlay_clients[slot];
+        if (client->pid > 0 && !windowd_process_alive(client->pid))
         {
             destroy_overlay_client(session, slot, 0);
-            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
         }
     }
 
     return 0;
 }
 
-static int service_client_launch_requests(struct desktop_session *session, struct desktop_dirty_rect *dirty, struct desktop_client *client)
+static int service_client_launch_requests(struct windowd_session *session, struct windowd_dirty_rect *dirty, struct windowd_client *client)
 {
     struct savanxp_desktop_launch_request request;
     long read_result = 0;
@@ -1731,7 +1731,7 @@ static int service_client_launch_requests(struct desktop_session *session, struc
             eprintf("desktop: failed to launch requested app %s\n", request.path);
             return 0;
         }
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 }
 
@@ -1740,7 +1740,7 @@ static int service_client_launch_requests(struct desktop_session *session, struc
  * resolve_cursor_shape() decides whether it is actually shown, and only
  * while this exact client is the one under the pointer. No repaint here --
  * the shape-resolution pass on the next mouse event picks it up. */
-static void service_client_cursor_hints(struct desktop_client *client)
+static void service_client_cursor_hints(struct windowd_client *client)
 {
     struct savanxp_desktop_cursor_hint hint;
     long read_result = 0;
@@ -1792,10 +1792,10 @@ static void service_client_cursor_hints(struct desktop_client *client)
  * then OFF it with only cursor-sized damage, and we read the backbuffer at the
  * old position back. If the compose restores it, backbuffer == clean baseline;
  * any residue means the old cursor footprint was not repainted. */
-static int desktop_cursor_repro(void)
+static int windowd_cursor_repro(void)
 {
-    struct desktop_session session;
-    struct desktop_dirty_rect dirty = {0};
+    struct windowd_session session;
+    struct windowd_dirty_rect dirty = {0};
     const struct savanxp_fb_info *info;
     uint32_t *fb;
     uint32_t stride;
@@ -1840,7 +1840,7 @@ static int desktop_cursor_repro(void)
     qy = dlg.y + (dlg.height / 2);
 
     /* Footprint of the cursor when its hotspot is at Q. */
-    desktop_cursor_bounds(qx, qy, SAVANXP_CURSOR_ARROW, &fx, &fy, &fw, &fh);
+    windowd_cursor_bounds(qx, qy, SAVANXP_CURSOR_ARROW, &fx, &fy, &fw, &fh);
     if (fw > 64)
     {
         fw = 64;
@@ -1854,11 +1854,11 @@ static int desktop_cursor_repro(void)
 
     /* Frame A: dialog visible, cursor parked far away (top-left corner, off the
      * dialog). Full repaint so the backbuffer holds the clean image. */
-    desktop_dirty_rect_add_fullscreen(&dirty, info);
-    desktop_draw_desktop(&session, 4, 4, &dirty);
+    windowd_dirty_rect_add_fullscreen(&dirty, info);
+    windowd_draw_desktop(&session, 4, 4, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
-    desktop_dirty_rect_reset(&dirty);
+    windowd_dirty_rect_reset(&dirty);
     for (row = 0; row < fh; ++row)
     {
         for (col = 0; col < fw; ++col)
@@ -1868,12 +1868,12 @@ static int desktop_cursor_repro(void)
     }
 
     /* Frame B: move cursor ONTO Q. Only cursor-sized damage (old corner + Q). */
-    desktop_dirty_rect_add_cursor(&dirty, info, 4, 4, SAVANXP_CURSOR_ARROW);
-    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, qx, qy, &dirty);
+    windowd_dirty_rect_add_cursor(&dirty, info, 4, 4, SAVANXP_CURSOR_ARROW);
+    windowd_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
+    windowd_draw_desktop(&session, qx, qy, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
-    desktop_dirty_rect_reset(&dirty);
+    windowd_dirty_rect_reset(&dirty);
     for (row = 0; row < fh; ++row)
     {
         for (col = 0; col < fw; ++col)
@@ -1889,12 +1889,12 @@ static int desktop_cursor_repro(void)
 
     /* Frame C: move cursor OFF Q to R. Only cursor damage (old Q + new R). The
      * backbuffer at Q must return to the clean baseline. */
-    desktop_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
-    desktop_dirty_rect_add_cursor(&dirty, info, rx, ry, SAVANXP_CURSOR_ARROW);
-    desktop_draw_desktop(&session, rx, ry, &dirty);
+    windowd_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
+    windowd_dirty_rect_add_cursor(&dirty, info, rx, ry, SAVANXP_CURSOR_ARROW);
+    windowd_draw_desktop(&session, rx, ry, &dirty);
     (void)present_frame(&session, &dirty);
     (void)sync_pending_present(&session, 1, 0);
-    desktop_dirty_rect_reset(&dirty);
+    windowd_dirty_rect_reset(&dirty);
     {
         int min_col = fw;
         int min_row = fh;
@@ -1956,10 +1956,10 @@ static int desktop_cursor_repro(void)
     return 0;
 }
 
-static int desktop_selftest(void)
+static int windowd_selftest(void)
 {
-    struct desktop_session session;
-    struct desktop_dirty_rect dirty = {0};
+    struct windowd_session session;
+    struct windowd_dirty_rect dirty = {0};
     struct savanxp_gpu_present_timeline timeline = {0};
     const int kSlot = 0;
     /* progman se lanza despues de gfxdemo, asi que cae en el slot siguiente. */
@@ -1978,7 +1978,7 @@ static int desktop_selftest(void)
     uint64_t baseline_retired = 0;
     uint64_t consumed_submit = 0;
 
-    if (desktop_region_selftest() != 0)
+    if (windowd_region_selftest() != 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL region subtract primitive\n");
         return 1;
@@ -1990,10 +1990,10 @@ static int desktop_selftest(void)
         close_compositor_session(&session);
         return 1;
     }
-    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+    windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 
     /* Flag explicito (no el fallback por catalogo): asi el subtest de
-     * fullscreen valida el mecanismo nuevo y no depende de desktop_menu. */
+     * fullscreen valida el mecanismo nuevo y no depende de windowd_menu. */
     if (launch_overlay_client(&session, "/bin/gfxdemo", SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL launch gfxdemo\n");
@@ -2032,14 +2032,14 @@ static int desktop_selftest(void)
         return 1;
     }
 
-    if (desktop_compositor_get_timeline(&session.compositor, &timeline) == 0)
+    if (windowd_compositor_get_timeline(&session.compositor, &timeline) == 0)
     {
         baseline_retired = timeline.retired_sequence;
     }
 
     for (iteration = 0; iteration < kMaxIterations; ++iteration)
     {
-        struct desktop_client *client = &session.overlay_clients[kSlot];
+        struct windowd_client *client = &session.overlay_clients[kSlot];
 
         if (client->pid <= 0)
         {
@@ -2071,7 +2071,7 @@ static int desktop_selftest(void)
             int overlay_slot;
             int overlay_failed = 0;
 
-            for (overlay_slot = 0; overlay_slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++overlay_slot)
+            for (overlay_slot = 0; overlay_slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++overlay_slot)
             {
                 if (overlay_slot == kSlot)
                 {
@@ -2147,23 +2147,23 @@ static int desktop_selftest(void)
             consumed_submit = session.overlay_clients[kSlot].consumed_submit_sequence;
         }
 
-        if (!desktop_dirty_rect_valid(&dirty))
+        if (!windowd_dirty_rect_valid(&dirty))
         {
             sleep_ms(4);
             continue;
         }
 
-        desktop_draw_desktop(&session, kCursorX, kCursorY, &dirty);
+        windowd_draw_desktop(&session, kCursorX, kCursorY, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
             /* A present that fails because the daemon link dropped (here, our own
                injected kill below) must recover transparently and keep going. */
-            if (!desktop_compositor_connected(&session.compositor) &&
+            if (!windowd_compositor_connected(&session.compositor) &&
                 recover_compositor(&session) == 0)
             {
                 recovery_validated = 1;
-                desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                 continue;
             }
             puts_fd(2, "DESKTOP SMOKE FAIL present\n");
@@ -2174,17 +2174,17 @@ static int desktop_selftest(void)
         {
             ++fullscreen_frames;
         }
-        desktop_dirty_rect_reset(&dirty);
+        windowd_dirty_rect_reset(&dirty);
 
         /* Drain synchronously: block until this present retires, which fires the
            client retire event and frees its batch slots for the next frame. */
         if (sync_pending_present(&session, 1, 0) < 0)
         {
-            if (!desktop_compositor_connected(&session.compositor) &&
+            if (!windowd_compositor_connected(&session.compositor) &&
                 recover_compositor(&session) == 0)
             {
                 recovery_validated = 1;
-                desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                 continue;
             }
             puts_fd(2, "DESKTOP SMOKE FAIL drain present\n");
@@ -2245,7 +2245,7 @@ static int desktop_selftest(void)
      * y comprobamos que Switch To la restaura y cierra el dialogo. */
     if (!failed)
     {
-        struct desktop_client *client = &session.overlay_clients[kSlot];
+        struct windowd_client *client = &session.overlay_clients[kSlot];
         int task_index = -1;
         int index;
 
@@ -2259,12 +2259,12 @@ static int desktop_selftest(void)
         if (!failed)
         {
             tasklist_open(&session, &dirty);
-            for (index = 0; index < desktop_task_count(&session); ++index)
+            for (index = 0; index < windowd_task_count(&session); ++index)
             {
                 int is_shell = 0;
                 int slot = -1;
 
-                if (desktop_task_client(&session, index, &is_shell, &slot) != 0 && slot == kSlot)
+                if (windowd_task_client(&session, index, &is_shell, &slot) != 0 && slot == kSlot)
                 {
                     task_index = index;
                     break;
@@ -2280,8 +2280,8 @@ static int desktop_selftest(void)
         if (!failed)
         {
             session.tasklist_selected = task_index;
-            desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-            desktop_draw_desktop(&session, kCursorX, kCursorY, &dirty);
+            windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+            windowd_draw_desktop(&session, kCursorX, kCursorY, &dirty);
 
             tasklist_switch_to(&session, &dirty, task_index);
             if (client->minimized)
@@ -2335,7 +2335,7 @@ static int desktop_selftest(void)
     }
     if (!failed)
     {
-        if (desktop_compositor_get_timeline(&session.compositor, &timeline) != 0)
+        if (windowd_compositor_get_timeline(&session.compositor, &timeline) != 0)
         {
             puts_fd(2, "DESKTOP SMOKE FAIL read present timeline\n");
             failed = 1;
@@ -2364,9 +2364,9 @@ static int desktop_selftest(void)
  * back to its client so the level-triggered event can be reset afterwards. */
 static int add_client_submit_pollfd(
     struct savanxp_pollfd *poll_fds,
-    struct desktop_client **poll_clients,
+    struct windowd_client **poll_clients,
     int poll_count,
-    struct desktop_client *client)
+    struct windowd_client *client)
 {
     if (client == 0 || client->pid <= 0 || client->submit_event_fd < 0)
     {
@@ -2384,10 +2384,10 @@ static int add_client_submit_pollfd(
  * Conmutador de ventanas del WM, estilo NT 3.5. Reemplaza las dos funciones que
  * daba el taskbar: restaurar una ventana minimizada y cambiar entre ventanas.
  * Enumera la misma lista que el taskbar (shell + overlays en z-order, incluidas
- * las minimizadas) via desktop_taskbar_button_*.
+ * las minimizadas) via windowd_taskbar_button_*.
  */
 
-static void tasklist_close(struct desktop_session *session, struct desktop_dirty_rect *dirty)
+static void tasklist_close(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     if (!session->tasklist_open)
     {
@@ -2395,27 +2395,27 @@ static void tasklist_close(struct desktop_session *session, struct desktop_dirty
     }
     session->tasklist_open = 0;
     /* El dialogo desaparece: hay que repintar lo que tapaba. */
-    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
-static void tasklist_open(struct desktop_session *session, struct desktop_dirty_rect *dirty)
+static void tasklist_open(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
-    int count = desktop_task_count(session);
+    int count = windowd_task_count(session);
 
     session->tasklist_open = 1;
     if (session->tasklist_selected < 0 || session->tasklist_selected >= count)
     {
         session->tasklist_selected = 0;
     }
-    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
 /* Trae al frente la tarea seleccionada, restaurandola si estaba minimizada. */
-static void tasklist_switch_to(struct desktop_session *session, struct desktop_dirty_rect *dirty, int task_index)
+static void tasklist_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index)
 {
     int is_shell = 0;
     int slot = -1;
-    const struct desktop_client *client = desktop_task_client(session, task_index, &is_shell, &slot);
+    const struct windowd_client *client = windowd_task_client(session, task_index, &is_shell, &slot);
 
     if (client == 0)
     {
@@ -2436,31 +2436,31 @@ static void tasklist_switch_to(struct desktop_session *session, struct desktop_d
         restore_overlay_client(session, dirty, slot);
     }
     raise_overlay(session, slot);
-    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
 /* End Task solo aplica a overlays: el shell_client se relanza solo, asi que
  * "terminarlo" desde aca no tendria efecto observable. */
-static void tasklist_end_task(struct desktop_session *session, struct desktop_dirty_rect *dirty, int task_index)
+static void tasklist_end_task(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index)
 {
     int is_shell = 0;
     int slot = -1;
-    const struct desktop_client *client = desktop_task_client(session, task_index, &is_shell, &slot);
+    const struct windowd_client *client = windowd_task_client(session, task_index, &is_shell, &slot);
 
     if (client == 0 || is_shell || !overlay_slot_valid(slot))
     {
         return;
     }
     destroy_overlay_client(session, slot, 1);
-    if (session->tasklist_selected >= desktop_task_count(session))
+    if (session->tasklist_selected >= windowd_task_count(session))
     {
-        session->tasklist_selected = desktop_task_count(session) - 1;
+        session->tasklist_selected = windowd_task_count(session) - 1;
     }
     if (session->tasklist_selected < 0)
     {
         session->tasklist_selected = 0;
     }
-    desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
 /*
@@ -2469,9 +2469,9 @@ static void tasklist_end_task(struct desktop_session *session, struct desktop_di
  * turno: el shell es un proceso cliente y recibe input como cualquier app.
  */
 static int wm_handle_key(
-    struct desktop_session *session,
+    struct windowd_session *session,
     const struct savanxp_input_event *key_event,
-    struct desktop_dirty_rect *dirty)
+    struct windowd_dirty_rect *dirty)
 {
     /* El evento no trae modificadores: seguimos Ctrl por sus KEY_DOWN/KEY_UP. */
     if (key_event->key == SAVANXP_KEY_CTRL)
@@ -2498,7 +2498,7 @@ static int wm_handle_key(
     /* Mientras esta abierto, el Task List captura el teclado: es modal. */
     if (session->tasklist_open)
     {
-        int count = desktop_task_count(session);
+        int count = windowd_task_count(session);
 
         if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
         {
@@ -2511,12 +2511,12 @@ static int wm_handle_key(
         else if (count > 0 && key_event->key == SAVANXP_KEY_UP)
         {
             session->tasklist_selected = (session->tasklist_selected + count - 1) % count;
-            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
         }
         else if (count > 0 && key_event->key == SAVANXP_KEY_DOWN)
         {
             session->tasklist_selected = (session->tasklist_selected + 1) % count;
-            desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
         }
         else if (count > 0 && key_event->key == SAVANXP_KEY_ENTER)
         {
@@ -2540,7 +2540,7 @@ static int wm_handle_key(
     {
         exit_overlay_fullscreen(session, dirty);
     }
-    else if (session->active_client_kind == DESKTOP_CLIENT_APP &&
+    else if (session->active_client_kind == WINDOWD_CLIENT_APP &&
         overlay_slot_valid(session->active_overlay_slot))
     {
         (void)enter_overlay_fullscreen(session, dirty, session->active_overlay_slot);
@@ -2552,8 +2552,8 @@ static int wm_handle_key(
  * DEBE llamarlo: si no, el cursor se queda clavado en pantalla mientras el
  * dialogo esta abierto y parece que el mouse no responde. */
 static void refresh_cursor_after_move(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
     int cursor_x,
     int cursor_y,
     int previous_cursor_x,
@@ -2571,8 +2571,8 @@ static void refresh_cursor_after_move(
     }
     else
     {
-        desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
-        desktop_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
+        windowd_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
+        windowd_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
     }
 }
 
@@ -2580,8 +2580,8 @@ static void refresh_cursor_after_move(
  * abierto, y tiene precedencia sobre los modales del shell (es UI del WM).
  * Doble click sobre una fila equivale a Switch To. */
 static int wm_pointer_handle_tasklist(
-    struct desktop_session *session,
-    struct desktop_dirty_rect *dirty,
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
     int cursor_x,
     int cursor_y,
     int previous_cursor_x,
@@ -2605,8 +2605,8 @@ static int wm_pointer_handle_tasklist(
         return 1; /* Consumido igual: el dialogo es modal. */
     }
 
-    count = desktop_task_count(session);
-    button_index = desktop_tasklist_button_from_point(&session->gfx.info, count, cursor_x, cursor_y);
+    count = windowd_task_count(session);
+    button_index = windowd_tasklist_button_from_point(&session->gfx.info, count, cursor_x, cursor_y);
     if (button_index >= 0)
     {
         if (button_index == 0)
@@ -2624,7 +2624,7 @@ static int wm_pointer_handle_tasklist(
         return 1;
     }
 
-    task_index = desktop_tasklist_item_from_point(
+    task_index = windowd_tasklist_item_from_point(
         &session->gfx.info, count, session->tasklist_selected, cursor_x, cursor_y);
     if (task_index >= 0)
     {
@@ -2633,7 +2633,7 @@ static int wm_pointer_handle_tasklist(
             (now - session->tasklist_last_click_ms <= 450UL);
 
         session->tasklist_selected = task_index;
-        desktop_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
         if (double_click)
         {
             tasklist_switch_to(session, dirty, task_index);
@@ -2648,7 +2648,7 @@ static int wm_pointer_handle_tasklist(
     }
 
     /* Click fuera del dialogo: cerrar, como cualquier modal. */
-    if (!sx_rect_contains_point(desktop_tasklist_rect(&session->gfx.info, count), cursor_x, cursor_y))
+    if (!sx_rect_contains_point(windowd_tasklist_rect(&session->gfx.info, count), cursor_x, cursor_y))
     {
         tasklist_close(session, dirty);
     }
@@ -2665,9 +2665,9 @@ static int wm_pointer_handle_tasklist(
  * puntero; se copia a locales y se escribe de vuelta en 'done'.
  */
 static void handle_pointer_event(
-    struct desktop_session *session,
+    struct windowd_session *session,
     const struct savanxp_mouse_event *event,
-    struct desktop_dirty_rect *dirty,
+    struct windowd_dirty_rect *dirty,
     int *io_cursor_x,
     int *io_cursor_y,
     uint32_t *io_last_buttons,
@@ -2683,8 +2683,8 @@ static void handle_pointer_event(
     int drag_offset_y = *io_drag_offset_y;
     struct savanxp_mouse_event mouse_event = *event;
 
-    const struct desktop_client *previous_hover_client = 0;
-    const struct desktop_client *current_hover_client = 0;
+    const struct windowd_client *previous_hover_client = 0;
+    const struct windowd_client *current_hover_client = 0;
     uint32_t pressed_buttons = mouse_event.buttons;
     uint32_t left_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_LEFT;
     uint32_t right_pressed = pressed_buttons & SAVANXP_MOUSE_BUTTON_RIGHT;
@@ -2711,8 +2711,8 @@ static void handle_pointer_event(
     }
     drag_was_active = drag_overlay_slot_active(session, drag_overlay_slot);
     previous_hover_client = top_client_at_point(session, cursor_x, cursor_y);
-    cursor_x = desktop_clamp_int(cursor_x + mouse_event.delta_x, 0, (int)session->gfx.info.width - 1);
-    cursor_y = desktop_clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session->gfx.info.height - 1);
+    cursor_x = windowd_clamp_int(cursor_x + mouse_event.delta_x, 0, (int)session->gfx.info.width - 1);
+    cursor_y = windowd_clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session->gfx.info.height - 1);
     current_hover_client = top_client_at_point(session, cursor_x, cursor_y);
 
     session->previous_cursor_shape = session->current_cursor_shape;
@@ -2720,7 +2720,7 @@ static void handle_pointer_event(
         session, current_hover_client, cursor_x, cursor_y, drag_was_active);
     if (session->current_cursor_shape != session->previous_cursor_shape && session->hw_cursor_enabled)
     {
-        (void)desktop_compositor_set_cursor_shape(&session->compositor, session->current_cursor_shape);
+        (void)windowd_compositor_set_cursor_shape(&session->compositor, session->current_cursor_shape);
     }
 
     /* Unico modal que queda: el Task List (UI del WM). */
@@ -2749,7 +2749,7 @@ static void handle_pointer_event(
             }
             if (current_hover_client != 0 &&
                 current_hover_client != &session->shell_client &&
-                desktop_point_in_minimize_button(current_hover_client, cursor_x, cursor_y))
+                windowd_point_in_minimize_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
                 if (overlay_slot_valid(target_slot))
@@ -2761,7 +2761,7 @@ static void handle_pointer_event(
             }
             else if (current_hover_client != 0 &&
                      current_hover_client != &session->shell_client &&
-                     desktop_point_in_maximize_button(current_hover_client, cursor_x, cursor_y))
+                     windowd_point_in_maximize_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
                 if (overlay_slot_valid(target_slot))
@@ -2771,15 +2771,15 @@ static void handle_pointer_event(
             }
             else if (current_hover_client != 0 &&
                      current_hover_client != &session->shell_client &&
-                desktop_point_in_close_button(current_hover_client, cursor_x, cursor_y))
+                windowd_point_in_close_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
-                struct sx_rect closed_frame = desktop_client_frame_rect(current_hover_client);
+                struct sx_rect closed_frame = windowd_client_frame_rect(current_hover_client);
 
                 if (overlay_slot_valid(target_slot))
                 {
                     destroy_overlay_client(session, target_slot, 1);
-                    desktop_dirty_rect_add(
+                    windowd_dirty_rect_add(
                         dirty,
                         &session->gfx.info,
                         closed_frame.x,
@@ -2793,7 +2793,7 @@ static void handle_pointer_event(
             else if (current_hover_client != 0 &&
                      current_hover_client != &session->shell_client &&
                      !current_hover_client->maximized &&
-                     desktop_point_in_titlebar(current_hover_client, cursor_x, cursor_y))
+                     windowd_point_in_titlebar(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
                 if (drag_overlay_slot_active(session, target_slot))
@@ -2852,11 +2852,11 @@ static void handle_pointer_event(
     {
         if (overlay_slot_valid(previous_active_overlay_slot))
         {
-            desktop_dirty_rect_add_client(dirty, overlay_client_at_const(session, previous_active_overlay_slot));
+            windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, previous_active_overlay_slot));
         }
         if (overlay_slot_valid(session->active_overlay_slot))
         {
-            desktop_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
+            windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
         }
     }
     last_buttons = pressed_buttons;
@@ -2872,9 +2872,9 @@ done:
 
 int main(int argc, char **argv)
 {
-    struct desktop_session session;
+    struct windowd_session session;
     struct savanxp_input_event key_event = {0};
-    struct desktop_dirty_rect dirty = {0};
+    struct windowd_dirty_rect dirty = {0};
     int cursor_x = 24;
     int cursor_y = 24;
     uint32_t last_buttons = 0;
@@ -2885,12 +2885,12 @@ int main(int argc, char **argv)
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
-        return desktop_selftest();
+        return windowd_selftest();
     }
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--cursor-repro") == 0)
     {
-        return desktop_cursor_repro();
+        return windowd_cursor_repro();
     }
 
     if (open_compositor_session(&session) < 0)
@@ -2916,13 +2916,13 @@ int main(int argc, char **argv)
     {
         puts_fd(2, "desktop: Program Manager no arranco; sesion sin launcher\n");
     }
-    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+    windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 
     for (;;)
     {
         /* input + mouse + background_client + shell_client + overlays. */
-        struct savanxp_pollfd poll_fds[4 + DESKTOP_MAX_OVERLAY_CLIENTS];
-        struct desktop_client *poll_clients[4 + DESKTOP_MAX_OVERLAY_CLIENTS];
+        struct savanxp_pollfd poll_fds[4 + WINDOWD_MAX_OVERLAY_CLIENTS];
+        struct windowd_client *poll_clients[4 + WINDOWD_MAX_OVERLAY_CLIENTS];
         int input_poll_index = -1;
         int mouse_poll_index = -1;
         int poll_count = 0;
@@ -2953,7 +2953,7 @@ int main(int argc, char **argv)
         client_poll_start = poll_count;
         poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.background_client);
         poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.shell_client);
-        for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+        for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
         {
             poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.overlay_clients[slot]);
         }
@@ -2987,7 +2987,7 @@ int main(int argc, char **argv)
                     continue;
                 }
                 {
-                    struct desktop_client *client = active_client(&session);
+                    struct windowd_client *client = active_client(&session);
                     if (client != 0 && client->input_write_fd >= 0)
                     {
                         (void)route_packet(client->input_write_fd, &key_event, sizeof(key_event));
@@ -2998,8 +2998,8 @@ int main(int argc, char **argv)
 
         if (mouse_poll_index >= 0 && (poll_fds[mouse_poll_index].revents & SAVANXP_POLLIN) != 0)
         {
-            struct savanxp_mouse_event raw_mouse_events[DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME];
-            struct savanxp_mouse_event coalesced_mouse_events[DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME];
+            struct savanxp_mouse_event raw_mouse_events[WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME];
+            struct savanxp_mouse_event coalesced_mouse_events[WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME];
             size_t raw_mouse_count = 0;
             size_t coalesced_mouse_count = 0;
             size_t mouse_event_index = 0;
@@ -3012,7 +3012,7 @@ int main(int argc, char **argv)
                     raw_mouse_events,
                     raw_mouse_count,
                     coalesced_mouse_events,
-                    DESKTOP_MAX_MOUSE_EVENTS_PER_FRAME,
+                    WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME,
                     last_buttons);
             }
 
@@ -3047,7 +3047,7 @@ int main(int argc, char **argv)
             break;
         }
         service_client_cursor_hints(&session.shell_client);
-        for (slot = 0; slot < DESKTOP_MAX_OVERLAY_CLIENTS; ++slot)
+        for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
         {
             if (service_client_batches(&session, &dirty, &session.overlay_clients[slot]) < 0)
             {
@@ -3059,7 +3059,7 @@ int main(int argc, char **argv)
             }
             service_client_cursor_hints(&session.overlay_clients[slot]);
         }
-        if (slot < DESKTOP_MAX_OVERLAY_CLIENTS)
+        if (slot < WINDOWD_MAX_OVERLAY_CLIENTS)
         {
             break;
         }
@@ -3070,12 +3070,12 @@ int main(int argc, char **argv)
 
             if (sync_pending_present(&session, 0, &frame_ready) < 0)
             {
-                if (!desktop_compositor_connected(&session.compositor) &&
-                    compositor_recoveries < DESKTOP_MAX_COMPOSITOR_RECOVERIES &&
+                if (!windowd_compositor_connected(&session.compositor) &&
+                    compositor_recoveries < WINDOWD_MAX_COMPOSITOR_RECOVERIES &&
                     recover_compositor(&session) == 0)
                 {
                     ++compositor_recoveries;
-                    desktop_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
+                    windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
                     frame_ready = 1;
                 }
                 else
@@ -3083,7 +3083,7 @@ int main(int argc, char **argv)
                     break;
                 }
             }
-            if (!desktop_dirty_rect_valid(&dirty))
+            if (!windowd_dirty_rect_valid(&dirty))
             {
                 signal_composed_batches(&session);
                 continue;
@@ -3094,23 +3094,23 @@ int main(int argc, char **argv)
             }
         }
 
-        desktop_draw_desktop(&session, cursor_x, cursor_y, &dirty);
+        windowd_draw_desktop(&session, cursor_x, cursor_y, &dirty);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
-            if (!desktop_compositor_connected(&session.compositor) &&
-                compositor_recoveries < DESKTOP_MAX_COMPOSITOR_RECOVERIES &&
+            if (!windowd_compositor_connected(&session.compositor) &&
+                compositor_recoveries < WINDOWD_MAX_COMPOSITOR_RECOVERIES &&
                 recover_compositor(&session) == 0)
             {
                 ++compositor_recoveries;
-                desktop_dirty_rect_reset(&dirty);
+                windowd_dirty_rect_reset(&dirty);
                 continue;
             }
             puts_fd(2, "desktop: present failed\n");
             break;
         }
         compositor_recoveries = 0;
-        desktop_dirty_rect_reset(&dirty);
+        windowd_dirty_rect_reset(&dirty);
     }
 
     close_compositor_session(&session);

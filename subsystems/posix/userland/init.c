@@ -43,8 +43,8 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "soak")) {
         return "SOAK";
     }
-    if (spec != 0 && text_contains(spec, "desktop")) {
-        return "DESKTOP SMOKE";
+    if (spec != 0 && text_contains(spec, "windowd")) {
+        return "WINDOWD SMOKE";
     }
     if (spec != 0 && text_contains(spec, "audiostream")) {
         return "AUDIO STREAM";
@@ -70,8 +70,8 @@ static const char* automation_label_for_spec(const char* spec) {
 static int run_automation_spec(const char* spec) {
     const char* smoke_argv[] = {"/disk/bin/smoke", 0};
     const char* soak_argv[] = {"/disk/bin/gputest", "--soak", 0, 0};
-    const char* desktop_argv[] = {"/bin/desktop", "--selftest", 0};
-    const char* cursor_repro_argv[] = {"/bin/desktop", "--cursor-repro", 0};
+    const char* windowd_argv[] = {"/bin/windowd", "--selftest", 0};
+    const char* cursor_repro_argv[] = {"/bin/windowd", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
@@ -86,16 +86,16 @@ static int run_automation_spec(const char* spec) {
     int status = 0;
 
     if (spec != 0 && strcmp(spec, "smoke") != 0 && spec[0] != '\0') {
-        if (strcmp(spec, "desktop-selftest") == 0 || strcmp(spec, "desktop") == 0) {
-            path = "/bin/desktop";
-            argv = desktop_argv;
+        if (strcmp(spec, "windowd-selftest") == 0 || strcmp(spec, "windowd") == 0) {
+            path = "/bin/windowd";
+            argv = windowd_argv;
             argc = 2;
         } else if (strcmp(spec, "progman-selftest") == 0 || strcmp(spec, "progman") == 0) {
             path = "/bin/progman";
             argv = progman_selftest_argv;
             argc = 2;
-        } else if (strcmp(spec, "desktop-cursor-repro") == 0) {
-            path = "/bin/desktop";
+        } else if (strcmp(spec, "windowd-cursor-repro") == 0) {
+            path = "/bin/windowd";
             argv = cursor_repro_argv;
             argc = 2;
         } else if (strcmp(spec, "soak") == 0 || strcmp(spec, "gputest --soak") == 0) {
@@ -166,9 +166,9 @@ static int run_automation_spec(const char* spec) {
 }
 
 int main(void) {
-    const char* desktop_argv[] = {"/bin/desktop", 0};
+    const char* windowd_argv[] = {"/bin/windowd", 0};
     const char* shell_argv[] = {"/bin/sh", 0};
-    unsigned long last_desktop_start_ms = 0;
+    unsigned long last_windowd_start_ms = 0;
     int rapid_failures = 0;
 
     long smoke_trigger = open("/SMOKE");
@@ -192,17 +192,17 @@ int main(void) {
     for (;;) {
         int status = 0;
         unsigned long runtime_ms = 0;
-        long pid = spawn("/bin/desktop", desktop_argv, 1);
+        long pid = spawn("/bin/windowd", windowd_argv, 1);
         if (pid < 0) {
-            printf("init: failed to spawn desktop (%s)\n", result_error_string(pid));
+            printf("init: failed to spawn windowd (%s)\n", result_error_string(pid));
             sleep_ms(1000);
             continue;
         }
 
-        last_desktop_start_ms = uptime_ms();
+        last_windowd_start_ms = uptime_ms();
         waitpid((int)pid, &status);
-        runtime_ms = uptime_ms() - last_desktop_start_ms;
-        printf("init: desktop exited with %d, restarting\n", status);
+        runtime_ms = uptime_ms() - last_windowd_start_ms;
+        printf("init: windowd exited with %d, restarting\n", status);
 
         if (status != 0 && runtime_ms < 2000UL) {
             rapid_failures += 1;
@@ -211,14 +211,14 @@ int main(void) {
         }
 
         if (rapid_failures >= 3) {
-            printf("init: desktop unstable, falling back to /bin/sh\n");
+            printf("init: windowd unstable, falling back to /bin/sh\n");
             pid = spawn("/bin/sh", shell_argv, 1);
             if (pid < 0) {
                 printf("init: failed to spawn fallback shell (%s)\n", result_error_string(pid));
                 sleep_ms(1000);
             } else {
                 waitpid((int)pid, &status);
-                printf("init: fallback shell exited with %d, retrying desktop\n", status);
+                printf("init: fallback shell exited with %d, retrying windowd\n", status);
             }
             rapid_failures = 0;
         }
