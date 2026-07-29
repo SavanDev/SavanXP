@@ -18,7 +18,12 @@ if (-not $WadPath) {
     $WadPath = Join-Path $scriptDir "wad/freedoom1.wad"
 }
 
-& $buildUser -Source $scriptDir -Name doomgeneric -NoInstall:$NoInstall
+# La arena de malloc es BSS, y el kernel mapea la BSS entera al exec: son MiB
+# de RAM fisica residentes por instancia. Doom pide 6 MiB de zone (DEFAULT_RAM
+# en i_system.c) mas los buffers de present/frame previo/audio, que no llegan a
+# 6 MiB mas; 24 MiB deja margen de sobra. Con los 48 MiB genericos, una segunda
+# instancia no entraba en RAM y el exec fallaba por falta de memoria.
+& $buildUser -Source $scriptDir -Name doomgeneric -HeapMiB 24 -NoInstall:$NoInstall
 
 if ($NoInstall) {
     return

@@ -158,7 +158,7 @@ function Set-AsciiField([byte[]]$Buffer, [int]$Offset, [string]$Text, [int]$Capa
     [Array]::Copy($bytes, 0, $Buffer, $Offset, $count)
 }
 
-function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath) {
+function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 48) {
     $compiler = Require-Executable "clang" (Get-ToolchainCandidates "clang")
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
@@ -195,9 +195,13 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion del runtime libc."
     }
 
-    # Las apps externas del SDK (Doom, etc.) conservan la arena grande de malloc;
-    # el default del runtime es chico porque la BSS se mapea entera al exec.
-    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/posix.c") -o $posixObject "-DSX_HEAP_SIZE=(48u*1024u*1024u)" @compileFlags
+    # La arena de malloc vive en la BSS y el kernel mapea la BSS entera al exec,
+    # asi que cada MiB de arena es RAM fisica residente por proceso aunque la app
+    # no lo toque. Las apps externas arrancan de 48 MiB por compatibilidad, pero
+    # cada una puede pedir lo que realmente usa con -HeapMiB (ver build-user.ps1):
+    # sobredimensionar la arena es lo que hace que un exec falle por falta de
+    # memoria cuando ya hay otra instancia corriendo.
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/posix.c") -o $posixObject "-DSX_HEAP_SIZE=(${HeapMiB}u*1024u*1024u)" @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime posix."
     }

@@ -4,6 +4,7 @@ param(
     [string]$Name,
     [string]$Destination,
     [string]$OutputPath,
+    [int]$HeapMiB = 48,
     [switch]$NoInstall
 )
 
@@ -30,7 +31,7 @@ $outputRoot = Join-Path $BuildRoot "external"
 Ensure-Directory $outputRoot
 $elfOutputPath = if ($OutputPath) { [System.IO.Path]::GetFullPath($OutputPath) } else { Join-Path $outputRoot ("{0}.elf" -f $Name) }
 
-$elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath
+$elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath -HeapMiB $HeapMiB
 
 if (-not $NoInstall) {
     Install-SvfsFilesWithTool $DiskImage @(
