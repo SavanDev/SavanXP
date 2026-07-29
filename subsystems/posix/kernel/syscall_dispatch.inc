@@ -60,8 +60,11 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 stdout_fd = static_cast<int>(context->r8);
             }
 
-            Process* child = create_process_internal(resolved, argc, argv_local, g_current, stdin_fd, stdout_fd);
-            context->rax = static_cast<uint64_t>(child != nullptr ? static_cast<int>(child->pid) : negative_error(SAVANXP_ENOENT));
+            ImageFailure failure = ImageFailure::none;
+            Process* child = create_process_internal(resolved, argc, argv_local, g_current, stdin_fd, stdout_fd, failure);
+            context->rax = static_cast<uint64_t>(child != nullptr
+                ? static_cast<int>(child->pid)
+                : negative_error(image_failure_errno(failure)));
             return context;
         }
         case SAVANXP_SYS_EXEC: {
@@ -76,8 +79,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 return context;
             }
 
-            if (!prepare_exec_image(*g_current, resolved, argc, argv_local)) {
-                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOENT));
+            ImageFailure failure = ImageFailure::none;
+            if (!prepare_exec_image(*g_current, resolved, argc, argv_local, failure)) {
+                context->rax = static_cast<uint64_t>(negative_error(image_failure_errno(failure)));
                 return context;
             }
 

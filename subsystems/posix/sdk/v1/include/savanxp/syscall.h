@@ -84,6 +84,7 @@ enum savanxp_open_flags {
 
 enum savanxp_error_code {
     SAVANXP_EIO = 5,
+    SAVANXP_ENOEXEC = 8,
     SAVANXP_EACCES = 13,
     SAVANXP_EAGAIN = 11,
     SAVANXP_EINVAL = 22,

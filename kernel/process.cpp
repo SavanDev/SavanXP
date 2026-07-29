@@ -51,6 +51,22 @@ constexpr uint8_t kIdleCode[] = {
     0xeb, 0xf7,
 };
 
+// Por que no se pudo poner en marcha una imagen. Cada paso de exec/spawn puede
+// fallar por un motivo distinto y el llamador necesita distinguirlos: antes
+// todos colapsaban en un bool y el syscall los reportaba como ENOENT.
+enum class ImageFailure : uint8_t {
+    none = 0,
+    not_found,
+    not_a_file,
+    read_failed,
+    bad_image,
+    no_staging_memory,
+    no_address_space,
+    no_load_memory,
+    no_process_slot,
+    no_handles,
+};
+
 uint64_t milliseconds_to_ticks(uint64_t milliseconds);
 
 process::Process g_processes[process::kMaxProcesses] = {};
@@ -682,12 +698,20 @@ process::SavedContext* fabricate_initial_context(
     return context;
 }
 
-bool load_image_bytes(const vfs::Vnode& image, const void*& data, size_t& size, memory::PageAllocation& backing) {
+bool load_image_bytes(
+    const vfs::Vnode& image,
+    const void*& data,
+    size_t& size,
+    memory::PageAllocation& backing,
+    ImageFailure& failure
+) {
     data = nullptr;
     size = 0;
     memset(&backing, 0, sizeof(backing));
+    failure = ImageFailure::none;
 
     if (image.type != vfs::NodeType::file || image.size == 0) {
+        failure = ImageFailure::not_a_file;
         return false;
     }
 
@@ -699,6 +723,7 @@ bool load_image_bytes(const vfs::Vnode& image, const void*& data, size_t& size, 
 
     const uint64_t page_count = (image.size + memory::kPageSize - 1) / memory::kPageSize;
     if (!memory::allocate_contiguous_pages(page_count, backing)) {
+        failure = ImageFailure::no_staging_memory;
         return false;
     }
 
@@ -707,6 +732,7 @@ bool load_image_bytes(const vfs::Vnode& image, const void*& data, size_t& size, 
     if (copied != image.size) {
         (void)memory::free_allocation(backing);
         memset(&backing, 0, sizeof(backing));
+        failure = ImageFailure::read_failed;
         return false;
     }
 
@@ -715,16 +741,97 @@ bool load_image_bytes(const vfs::Vnode& image, const void*& data, size_t& size, 
     return true;
 }
 
-bool prepare_exec_image(process::Process& proc, const char* path, int argc, const char* const* argv) {
+// Traduce el motivo de fallo a un errno con sentido. Sin esto, exec/spawn
+// devolvian ENOENT ("no such file or directory") para cualquier fallo, lo que
+// hacia indistinguible un binario ausente de uno que no entra en memoria.
+savanxp_error_code image_failure_errno(ImageFailure failure) {
+    switch (failure) {
+        case ImageFailure::none:
+            return SAVANXP_EIO;
+        case ImageFailure::not_found:
+            return SAVANXP_ENOENT;
+        case ImageFailure::not_a_file:
+            return SAVANXP_EACCES;
+        case ImageFailure::read_failed:
+            return SAVANXP_EIO;
+        case ImageFailure::bad_image:
+            return SAVANXP_ENOEXEC;
+        case ImageFailure::no_staging_memory:
+        case ImageFailure::no_address_space:
+        case ImageFailure::no_load_memory:
+        case ImageFailure::no_process_slot:
+            return SAVANXP_ENOMEM;
+        case ImageFailure::no_handles:
+            return SAVANXP_EBADF;
+    }
+    return SAVANXP_EIO;
+}
+
+const char* image_failure_string(ImageFailure failure) {
+    switch (failure) {
+        case ImageFailure::none:
+            return "ok";
+        case ImageFailure::not_found:
+            return "path not found";
+        case ImageFailure::not_a_file:
+            return "not a regular file";
+        case ImageFailure::read_failed:
+            return "image read failed";
+        case ImageFailure::bad_image:
+            return "bad elf image";
+        case ImageFailure::no_staging_memory:
+            return "no contiguous memory to stage the image";
+        case ImageFailure::no_address_space:
+            return "no memory for the address space";
+        case ImageFailure::no_load_memory:
+            return "no memory to map the image";
+        case ImageFailure::no_process_slot:
+            return "no free process slot";
+        case ImageFailure::no_handles:
+            return "handle setup failed";
+    }
+    return "unknown";
+}
+
+// Un fallo de carga se loguea siempre: es la unica traza de por que un binario
+// que existe no arranca (el errno llega al proceso, pero el detalle no).
+void report_image_failure(const char* what, const char* path, ImageFailure failure, size_t image_size) {
+    console::printf(
+        "process: %s de '%s' fallo: %s (imagen %u bytes, %u paginas libres)\n",
+        what,
+        path,
+        image_failure_string(failure),
+        static_cast<unsigned>(image_size),
+        static_cast<unsigned>(memory::free_page_count()));
+}
+
+bool prepare_exec_image(
+    process::Process& proc,
+    const char* path,
+    int argc,
+    const char* const* argv,
+    ImageFailure& failure
+) {
+    failure = ImageFailure::none;
+
     const vfs::Vnode* image = vfs::resolve(path);
-    if (image == nullptr || image->type != vfs::NodeType::file) {
+    if (image == nullptr) {
+        failure = ImageFailure::not_found;
+        report_image_failure("exec", path, failure, 0);
+        return false;
+    }
+    if (image->type != vfs::NodeType::file) {
+        failure = ImageFailure::not_a_file;
+        report_image_failure("exec", path, failure, image->size);
         return false;
     }
 
+    const size_t reported_size = image->size;
     const void* image_bytes = nullptr;
     size_t image_size = 0;
     memory::PageAllocation image_backing = {};
-    if (!load_image_bytes(*image, image_bytes, image_size, image_backing)) {
+    if (!load_image_bytes(*image, image_bytes, image_size, image_backing, failure)) {
+        report_image_failure("exec", path, failure, reported_size);
         return false;
     }
 
@@ -733,15 +840,23 @@ bool prepare_exec_image(process::Process& proc, const char* path, int argc, cons
         if (image_backing.physical_address != 0) {
             (void)memory::free_allocation(image_backing);
         }
+        failure = ImageFailure::no_address_space;
+        report_image_failure("exec", path, failure, reported_size);
         return false;
     }
 
     elf::LoadResult load_result = {};
-    if (!elf::load_user_image(image_bytes, image_size, new_space, argc, argv, load_result)) {
+    elf::LoadFailure load_failure = elf::LoadFailure::none;
+    if (!elf::load_user_image(image_bytes, image_size, new_space, argc, argv, load_result, load_failure)) {
         vm::destroy_address_space(new_space);
         if (image_backing.physical_address != 0) {
             (void)memory::free_allocation(image_backing);
         }
+        failure = load_failure == elf::LoadFailure::out_of_memory
+            ? ImageFailure::no_load_memory
+            : ImageFailure::bad_image;
+        console::printf("process: elf de '%s': %s\n", path, elf::load_failure_string(load_failure));
+        report_image_failure("exec", path, failure, reported_size);
         return false;
     }
     if (image_backing.physical_address != 0) {
@@ -837,17 +952,29 @@ process::Process* create_process_internal(
     const char* const* argv,
     process::Process* parent,
     int stdin_fd,
-    int stdout_fd
+    int stdout_fd,
+    ImageFailure& failure
 ) {
+    failure = ImageFailure::none;
+
     const vfs::Vnode* image = vfs::resolve(path);
-    if (image == nullptr || image->type != vfs::NodeType::file) {
+    if (image == nullptr) {
+        failure = ImageFailure::not_found;
+        report_image_failure("spawn", path, failure, 0);
+        return nullptr;
+    }
+    if (image->type != vfs::NodeType::file) {
+        failure = ImageFailure::not_a_file;
+        report_image_failure("spawn", path, failure, image->size);
         return nullptr;
     }
 
+    const size_t reported_size = image->size;
     const void* image_bytes = nullptr;
     size_t image_size = 0;
     memory::PageAllocation image_backing = {};
-    if (!load_image_bytes(*image, image_bytes, image_size, image_backing)) {
+    if (!load_image_bytes(*image, image_bytes, image_size, image_backing, failure)) {
+        report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
 
@@ -856,6 +983,8 @@ process::Process* create_process_internal(
         if (image_backing.physical_address != 0) {
             (void)memory::free_allocation(image_backing);
         }
+        failure = ImageFailure::no_process_slot;
+        report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
 
@@ -872,6 +1001,8 @@ process::Process* create_process_internal(
             (void)memory::free_allocation(image_backing);
         }
         reset_process_slot(*proc);
+        failure = ImageFailure::no_address_space;
+        report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
 
@@ -882,6 +1013,8 @@ process::Process* create_process_internal(
         }
         release_address_space(*proc);
         reset_process_slot(*proc);
+        failure = ImageFailure::no_address_space;
+        report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
 
@@ -895,6 +1028,8 @@ process::Process* create_process_internal(
             }
             release_process_resources(*proc);
             reset_process_slot(*proc);
+            failure = ImageFailure::no_handles;
+            report_image_failure("spawn", path, failure, reported_size);
             return nullptr;
         }
     } else {
@@ -907,18 +1042,26 @@ process::Process* create_process_internal(
             }
             release_process_resources(*proc);
             reset_process_slot(*proc);
+            failure = ImageFailure::no_handles;
+            report_image_failure("spawn", path, failure, reported_size);
             return nullptr;
         }
     }
 
     elf::LoadResult load_result = {};
-    if (!elf::load_user_image(image_bytes, image_size, proc->address_space, argc, argv, load_result)) {
+    elf::LoadFailure load_failure = elf::LoadFailure::none;
+    if (!elf::load_user_image(image_bytes, image_size, proc->address_space, argc, argv, load_result, load_failure)) {
         release_all_handles(*proc);
         if (image_backing.physical_address != 0) {
             (void)memory::free_allocation(image_backing);
         }
         release_process_resources(*proc);
         reset_process_slot(*proc);
+        failure = load_failure == elf::LoadFailure::out_of_memory
+            ? ImageFailure::no_load_memory
+            : ImageFailure::bad_image;
+        console::printf("process: elf de '%s': %s\n", path, elf::load_failure_string(load_failure));
+        report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
     if (image_backing.physical_address != 0) {
@@ -2609,7 +2752,8 @@ void notify_object_signal(object::Header* handle_object) {
 }
 
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid) {
-    return create_process_internal(path, argc, argv, find(parent_pid), -1, -1);
+    ImageFailure failure = ImageFailure::none;
+    return create_process_internal(path, argc, argv, find(parent_pid), -1, -1, failure);
 }
 
 [[noreturn]] void start_init(const char* path) {
@@ -2619,7 +2763,8 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
     }
 
     const char* argv[] = {path, nullptr};
-    Process* init = create_process_internal(path, 1, argv, nullptr, -1, -1);
+    ImageFailure init_failure = ImageFailure::none;
+    Process* init = create_process_internal(path, 1, argv, nullptr, -1, -1, init_failure);
     if (init == nullptr) {
         panic("process: unable to start init");
     }

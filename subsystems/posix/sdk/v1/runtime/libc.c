@@ -565,6 +565,8 @@ const char* error_string(int error_code) {
             return "ok";
         case SAVANXP_EIO:
             return "io error";
+        case SAVANXP_ENOEXEC:
+            return "not an executable image";
         case SAVANXP_EACCES:
             return "permission denied";
         case SAVANXP_EAGAIN:

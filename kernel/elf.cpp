@@ -75,6 +75,9 @@ bool map_segment_pages(vm::VmSpace& space, uint64_t start, uint64_t end, uint64_
 
         memset(page_allocation.virtual_address, 0, memory::kPageSize);
         if (!vm::map_page(space, page, page_allocation.physical_address, flags)) {
+            // Sin mapear, destroy_address_space no la ve: hay que devolverla aca
+            // o cada carga fallida se lleva una pagina puesta.
+            (void)memory::free_allocation(page_allocation);
             return false;
         }
     }
@@ -156,20 +159,39 @@ bool build_initial_stack(
 
 namespace elf {
 
+const char* load_failure_string(LoadFailure failure) {
+    switch (failure) {
+        case LoadFailure::none:
+            return "ok";
+        case LoadFailure::bad_header:
+            return "bad elf header";
+        case LoadFailure::truncated:
+            return "truncated segment";
+        case LoadFailure::out_of_memory:
+            return "out of memory";
+    }
+    return "unknown";
+}
+
 bool load_user_image(
     const void* image,
     size_t size,
     vm::VmSpace& address_space,
     int argc,
     const char* const* argv,
-    LoadResult& result
+    LoadResult& result,
+    LoadFailure& failure
 ) {
+    failure = LoadFailure::none;
+
     if (image == nullptr || size < sizeof(ElfHeader)) {
+        failure = LoadFailure::bad_header;
         return false;
     }
 
     const auto& header = *static_cast<const ElfHeader*>(image);
     if (!validate_header(header, size)) {
+        failure = LoadFailure::bad_header;
         return false;
     }
 
@@ -184,6 +206,7 @@ bool load_user_image(
         }
 
         if ((program.offset + program.file_size) > size) {
+            failure = LoadFailure::truncated;
             return false;
         }
 
@@ -192,6 +215,7 @@ bool load_user_image(
         const uint64_t flags = vm::kPageUser | ((program.flags & kProgramWritable) != 0 ? vm::kPageWrite : 0);
 
         if (!map_segment_pages(address_space, mapped_start, mapped_end, flags)) {
+            failure = LoadFailure::out_of_memory;
             return false;
         }
 
@@ -211,6 +235,7 @@ bool load_user_image(
     }
 
     if (!build_initial_stack(address_space, argc, argv, result.stack_pointer)) {
+        failure = LoadFailure::out_of_memory;
         return false;
     }
 

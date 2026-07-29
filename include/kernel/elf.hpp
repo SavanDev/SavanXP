@@ -19,13 +19,26 @@ struct LoadResult {
     uint8_t os_abi; // e_ident[EI_OSABI] de la imagen cargada
 };
 
+// Motivo de fallo de la carga. Existe para que el llamador pueda distinguir
+// "el ELF esta mal" de "no habia memoria": colapsar ambos en un bool hacia el
+// syscall convertia un ENOMEM en un ENOENT enganoso.
+enum class LoadFailure : uint8_t {
+    none = 0,
+    bad_header,   // magia/clase/tipo/maquina invalidos, o phdrs fuera de la imagen
+    truncated,    // un PT_LOAD apunta mas alla del final de la imagen
+    out_of_memory // no se pudo reservar/mapear una pagina del segmento o del stack
+};
+
+const char* load_failure_string(LoadFailure failure);
+
 bool load_user_image(
     const void* image,
     size_t size,
     vm::VmSpace& address_space,
     int argc,
     const char* const* argv,
-    LoadResult& result
+    LoadResult& result,
+    LoadFailure& failure
 );
 
 } // namespace elf
