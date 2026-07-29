@@ -7,6 +7,29 @@
 #define WINDOWD_WINDOW_BUTTON_SIZE 16
 #define WINDOWD_WINDOW_BUTTON_GAP 3
 
+/* Redimensionado por bordes.
+ *
+ * La zona sensible es una franja hacia ADENTRO del marco. Se mantiene fina y se
+ * consulta ANTES que el arrastre de la barra de titulo, para que la franja
+ * superior redimensione en vez de mover; el resto de la barra sigue moviendo.
+ *
+ * El minimo tiene que dejar utilizable la barra de titulo: por debajo de eso los
+ * botones de minimizar/maximizar/cerrar se pisan entre si. */
+#define WINDOWD_RESIZE_BORDER 4
+#define WINDOWD_WINDOW_MIN_WIDTH 200
+#define WINDOWD_WINDOW_MIN_HEIGHT 140
+
+#define WINDOWD_RESIZE_EDGE_NONE 0u
+#define WINDOWD_RESIZE_EDGE_LEFT 1u
+#define WINDOWD_RESIZE_EDGE_RIGHT 2u
+#define WINDOWD_RESIZE_EDGE_TOP 4u
+#define WINDOWD_RESIZE_EDGE_BOTTOM 8u
+
+/* Mascara de bordes bajo el punto, o WINDOWD_RESIZE_EDGE_NONE. Las esquinas
+ * devuelven dos bits. Devuelve NONE para ventanas sin marco, maximizadas o en
+ * fullscreen: ahi el tamano no lo decide el usuario. */
+uint32_t windowd_resize_edge_from_point(const struct windowd_client *client, int x, int y);
+
 int windowd_clamp_int(int value, int minimum, int maximum);
 int windowd_point_in_rect(int x, int y, int rect_x, int rect_y, int rect_w, int rect_h);
 int windowd_rects_intersect(int left_x, int left_y, int left_w, int left_h, int right_x, int right_y, int right_w, int right_h);

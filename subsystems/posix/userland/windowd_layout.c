@@ -306,6 +306,44 @@ int windowd_point_in_titlebar(const struct windowd_client *client, int x, int y)
     return sx_rect_contains_point(rect, x, y);
 }
 
+uint32_t windowd_resize_edge_from_point(const struct windowd_client *client, int x, int y)
+{
+    struct sx_rect frame;
+    uint32_t edges = WINDOWD_RESIZE_EDGE_NONE;
+
+    if (client == 0 || client->pid <= 0 || !client->frame_visible ||
+        client->maximized || client->fullscreen || client->minimized)
+    {
+        return WINDOWD_RESIZE_EDGE_NONE;
+    }
+
+    frame = windowd_client_frame_rect(client);
+    if (!sx_rect_contains_point(frame, x, y))
+    {
+        return WINDOWD_RESIZE_EDGE_NONE;
+    }
+
+    if (x < frame.x + WINDOWD_RESIZE_BORDER)
+    {
+        edges |= WINDOWD_RESIZE_EDGE_LEFT;
+    }
+    else if (x >= sx_rect_right(frame) - WINDOWD_RESIZE_BORDER)
+    {
+        edges |= WINDOWD_RESIZE_EDGE_RIGHT;
+    }
+
+    if (y < frame.y + WINDOWD_RESIZE_BORDER)
+    {
+        edges |= WINDOWD_RESIZE_EDGE_TOP;
+    }
+    else if (y >= sx_rect_bottom(frame) - WINDOWD_RESIZE_BORDER)
+    {
+        edges |= WINDOWD_RESIZE_EDGE_BOTTOM;
+    }
+
+    return edges;
+}
+
 int windowd_point_in_minimize_button(const struct windowd_client *client, int x, int y)
 {
     struct sx_rect rect = windowd_client_minimize_button_rect(client);

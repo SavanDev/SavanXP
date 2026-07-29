@@ -457,6 +457,93 @@ static void resize_overlay_client_surface(
     windowd_dirty_rect_add(dirty, &session->gfx.info, current_frame.x, current_frame.y, current_frame.width, current_frame.height);
 }
 
+/* Aplica un marco nuevo (posicion Y tamano) a una ventana. resize_overlay_
+ * client_surface ajusta el tamano pero NO mueve el origen, y al arrastrar los
+ * bordes izquierdo o superior el borde opuesto tiene que quedar anclado, o sea
+ * que la ventana se mueve mientras cambia de tamano. Se daña el marco viejo
+ * aparte porque la funcion de resize calcula su "marco previo" con el origen ya
+ * actualizado, y sin esto quedaria basura donde estaba la ventana. */
+static void apply_overlay_client_frame(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    int slot,
+    struct sx_rect frame)
+{
+    struct windowd_client *client = overlay_client_at(session, slot);
+    struct sx_rect previous_frame;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || !client->frame_visible)
+    {
+        return;
+    }
+
+    previous_frame = windowd_client_frame_rect(client);
+    client->window_x = frame.x;
+    client->window_y = frame.y;
+    client->restore_window_x = frame.x;
+    client->restore_window_y = frame.y;
+    resize_overlay_client_surface(
+        session,
+        dirty,
+        slot,
+        frame.width - (WINDOWD_WINDOW_BORDER * 2),
+        frame.height - WINDOWD_WINDOW_TITLEBAR_HEIGHT - WINDOWD_WINDOW_BORDER);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, previous_frame.x, previous_frame.y, previous_frame.width, previous_frame.height);
+}
+
+/* Marco resultante de arrastrar los bordes 'edges' desde el marco de origen.
+ * El borde opuesto al que se arrastra queda anclado, y el minimo se aplica
+ * recortando contra ese ancla (no moviendola), que es lo que hace que la
+ * ventana "tope" en vez de empezar a desplazarse. */
+static struct sx_rect resize_frame_for_drag(
+    struct sx_rect origin,
+    uint32_t edges,
+    int delta_x,
+    int delta_y)
+{
+    struct sx_rect frame = origin;
+
+    if ((edges & WINDOWD_RESIZE_EDGE_LEFT) != 0)
+    {
+        int right = sx_rect_right(origin);
+        frame.x = origin.x + delta_x;
+        if (frame.x > right - WINDOWD_WINDOW_MIN_WIDTH)
+        {
+            frame.x = right - WINDOWD_WINDOW_MIN_WIDTH;
+        }
+        frame.width = right - frame.x;
+    }
+    else if ((edges & WINDOWD_RESIZE_EDGE_RIGHT) != 0)
+    {
+        frame.width = origin.width + delta_x;
+        if (frame.width < WINDOWD_WINDOW_MIN_WIDTH)
+        {
+            frame.width = WINDOWD_WINDOW_MIN_WIDTH;
+        }
+    }
+
+    if ((edges & WINDOWD_RESIZE_EDGE_TOP) != 0)
+    {
+        int bottom = sx_rect_bottom(origin);
+        frame.y = origin.y + delta_y;
+        if (frame.y > bottom - WINDOWD_WINDOW_MIN_HEIGHT)
+        {
+            frame.y = bottom - WINDOWD_WINDOW_MIN_HEIGHT;
+        }
+        frame.height = bottom - frame.y;
+    }
+    else if ((edges & WINDOWD_RESIZE_EDGE_BOTTOM) != 0)
+    {
+        frame.height = origin.height + delta_y;
+        if (frame.height < WINDOWD_WINDOW_MIN_HEIGHT)
+        {
+            frame.height = WINDOWD_WINDOW_MIN_HEIGHT;
+        }
+    }
+
+    return frame;
+}
+
 /* Enter fullscreen as a composited shell policy. The daemon keeps owning the GPU
  * scanout while the shell hides chrome and scales the client surface to fill the
  * display. This path works on both VirtIO and the flat framebuffer backend,
@@ -648,6 +735,17 @@ static int resolve_cursor_shape(
     if (any_overlay_client_starting(session))
     {
         return SAVANXP_CURSOR_WAIT;
+    }
+    /* Sobre un borde redimensionable, el cursor lo anticipa. No hay glifos
+     * diagonales, asi que las esquinas caen en el eje horizontal. */
+    {
+        uint32_t edges = windowd_resize_edge_from_point(current_hover_client, cursor_x, cursor_y);
+        if (edges != WINDOWD_RESIZE_EDGE_NONE)
+        {
+            return ((edges & (WINDOWD_RESIZE_EDGE_LEFT | WINDOWD_RESIZE_EDGE_RIGHT)) != 0)
+                ? SAVANXP_CURSOR_RESIZE_H
+                : SAVANXP_CURSOR_RESIZE_V;
+        }
     }
     if (current_hover_client != 0 &&
         current_hover_client != &session->shell_client &&
@@ -1551,6 +1649,9 @@ static int open_compositor_session(struct windowd_session *session)
     session->overlay_count = 0;
     /* -1 y no 0: con 0 el primer click sobre la fila 0 pareceria doble click. */
     session->tasklist_last_click_index = -1;
+    /* Idem: memset dejaria el slot 0 como "redimensionando". */
+    session->resize_slot = -1;
+    session->resize_edges = WINDOWD_RESIZE_EDGE_NONE;
     reset_client(&session->background_client);
     reset_client(&session->shell_client);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
@@ -2297,6 +2398,71 @@ static int windowd_selftest(void)
         }
     }
 
+    /* Subtest de redimensionado por bordes (Fase C). La geometria se prueba
+     * directa porque el soak no inyecta puntero; lo que importa es que el borde
+     * OPUESTO al que se arrastra quede anclado y que el minimo recorte contra
+     * ese ancla en vez de desplazar la ventana. */
+    if (!failed)
+    {
+        const struct sx_rect origin = sx_rect_make(100, 80, 400, 300);
+        struct sx_rect r;
+
+        /* Borde derecho: crece a la derecha, el origen no se mueve. */
+        r = resize_frame_for_drag(origin, WINDOWD_RESIZE_EDGE_RIGHT, 40, 0);
+        if (r.x != origin.x || r.y != origin.y || r.width != origin.width + 40 || r.height != origin.height)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize: borde derecho movio el origen\n");
+            failed = 1;
+        }
+
+        /* Borde izquierdo: se mueve el origen y el borde derecho queda fijo. */
+        r = resize_frame_for_drag(origin, WINDOWD_RESIZE_EDGE_LEFT, 30, 0);
+        if (!failed && (r.x != origin.x + 30 || sx_rect_right(r) != sx_rect_right(origin)))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize: borde izquierdo no anclo el derecho\n");
+            failed = 1;
+        }
+
+        /* Encoger de mas desde la izquierda: topa en el minimo SIN despegar el
+         * borde derecho (el bug clasico es que la ventana empiece a moverse). */
+        r = resize_frame_for_drag(origin, WINDOWD_RESIZE_EDGE_LEFT, 10000, 0);
+        if (!failed && (r.width != WINDOWD_WINDOW_MIN_WIDTH || sx_rect_right(r) != sx_rect_right(origin)))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize: el minimo despego el borde anclado\n");
+            failed = 1;
+        }
+
+        /* Esquina: los dos ejes a la vez. */
+        r = resize_frame_for_drag(origin, WINDOWD_RESIZE_EDGE_RIGHT | WINDOWD_RESIZE_EDGE_BOTTOM, 25, 35);
+        if (!failed && (r.width != origin.width + 25 || r.height != origin.height + 35))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL resize: esquina no aplico ambos ejes\n");
+            failed = 1;
+        }
+
+        /* End-to-end sobre un cliente real: el marco nuevo tiene que llegar a la
+         * superficie, que es lo que ve la app.
+         *
+         * Se usa progman y no gfxdemo: el soak lanza gfxdemo con el flag
+         * FULLSCREEN, asi que su superficie se asigna al modo bajo (640x400) y
+         * ya esta en el tope de capacidad -- crecer ahi clampea y no probaria
+         * nada. Y se ENCOGE, que nunca topa contra la capacidad. */
+        if (!failed)
+        {
+            struct windowd_client *client = &session.overlay_clients[kProgmanSlot];
+            struct sx_rect frame = windowd_client_frame_rect(client);
+            uint32_t before = client->surface_info.width;
+
+            apply_overlay_client_frame(&session, &dirty, kProgmanSlot,
+                resize_frame_for_drag(frame, WINDOWD_RESIZE_EDGE_RIGHT, -60, 0));
+            if (client->surface_info.width != before - 60)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL resize: la superficie no siguio al marco\n");
+                failed = 1;
+            }
+        }
+    }
+
     if (!failed && frames_presented < kTargetFrames)
     {
         printf("DESKTOP SMOKE FAIL insufficient presented frames=%d iters=%d batches=%u\n",
@@ -2790,6 +2956,22 @@ static void handle_pointer_event(
                     drag_overlay_slot = -1;
                 }
             }
+            /* Antes que el arrastre de la barra de titulo: la franja superior
+             * del marco redimensiona, el resto de la barra mueve. */
+            else if (current_hover_client != 0 &&
+                     current_hover_client != &session->shell_client &&
+                     windowd_resize_edge_from_point(current_hover_client, cursor_x, cursor_y) != WINDOWD_RESIZE_EDGE_NONE)
+            {
+                int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
+                if (overlay_slot_valid(target_slot))
+                {
+                    session->resize_slot = target_slot;
+                    session->resize_edges = windowd_resize_edge_from_point(current_hover_client, cursor_x, cursor_y);
+                    session->resize_origin_frame = windowd_client_frame_rect(current_hover_client);
+                    session->resize_grab_x = cursor_x;
+                    session->resize_grab_y = cursor_y;
+                }
+            }
             else if (current_hover_client != 0 &&
                      current_hover_client != &session->shell_client &&
                      !current_hover_client->maximized &&
@@ -2810,6 +2992,35 @@ static void handle_pointer_event(
             }
         }
     }
+    /* Redimensionado en curso: recalcula el marco desde el origen guardado. */
+    if (session->resize_slot >= 0)
+    {
+        struct windowd_client *resizing = overlay_client_at(session, session->resize_slot);
+
+        if (left_pressed == 0 || resizing == 0 || resizing->pid <= 0 || !resizing->frame_visible)
+        {
+            session->resize_slot = -1;
+            session->resize_edges = WINDOWD_RESIZE_EDGE_NONE;
+        }
+        else
+        {
+            apply_overlay_client_frame(
+                session,
+                dirty,
+                session->resize_slot,
+                resize_frame_for_drag(
+                    session->resize_origin_frame,
+                    session->resize_edges,
+                    cursor_x - session->resize_grab_x,
+                    cursor_y - session->resize_grab_y));
+            /* Como cualquier camino que consume el evento: repintar el cursor,
+             * o queda clavado mientras se arrastra. */
+            refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
+            last_buttons = pressed_buttons;
+            goto done;
+        }
+    }
+
     drag_active_now = drag_overlay_slot_active(session, drag_overlay_slot);
     if (drag_active_now && left_pressed != 0)
     {
