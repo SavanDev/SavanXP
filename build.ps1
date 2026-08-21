@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -12,6 +12,13 @@ param(
     # problema y ya viene confirmado bootenado end-to-end bajo whpx.
     [ValidateSet("tcg", "whpx")]
     [string]$Accel = "tcg",
+
+    # Levanta QEMU con hardware paravirtualizado (virtio-vga + virtio-tablet +
+    # virtio-sound). Por defecto NO se usa: la maquina se arma con el hardware
+    # "base" (VGA estandar, mouse PS/2, AC'97), que es el mismo que emula
+    # VirtualBox, para que el kernel ejercite los backends de fallback
+    # (fb_gpu / ps2 / ac97) sin salir de QEMU.
+    [switch]$Virtio,
 
     # Excluye del build las apps de testeo/diagnostico (marcadas Test en
     # $UserPrograms): no se compilan, no entran al rootfs y el menu del
@@ -880,6 +887,31 @@ function Get-AccelCpu([string]$AccelName) {
     return @{ Accel = "tcg"; Cpu = "max" }
 }
 
+# Dispositivos de video y de entrada de la maquina QEMU. Sin -Virtio se arma el
+# hardware base: VGA estandar (Limine entrega un framebuffer lineal y el kernel
+# elige fb_gpu) y mouse PS/2 via i8042, igual que en VirtualBox. edid=on hace que
+# OVMF publique 1280x800 como modo preferido; sin EDID el GOP de QemuVideoDxe
+# solo ofrece los modos VESA clasicos y Limine cae a 1024x768.
+function Get-QemuVideoInputDevices {
+    if ($Virtio) {
+        return @(
+            "-device", "virtio-vga,xres=1280,yres=800",
+            "-device", "virtio-tablet-pci"
+        )
+    }
+    return @("-device", "VGA,edid=on,xres=1280,yres=800")
+}
+
+# Dispositivo de sonido. "auto" sigue a -Virtio (virtio-sound con virtio, AC'97
+# sin el); "virtio"/"ac97" lo fuerzan para los harnesses que miden un driver
+# concreto (virtio-count, ac97-count, ...).
+function Get-QemuAudioDevice([string]$Audio) {
+    if ($Audio -eq "virtio" -or ($Audio -eq "auto" -and $Virtio)) {
+        return @("-device", "virtio-sound-pci,audiodev=audio1,streams=1")
+    }
+    return @("-device", "AC97,audiodev=audio1")
+}
+
 function Run-Qemu([switch]$WaitForDebugger) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel
@@ -905,9 +937,6 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
-        "-device", "virtio-vga,xres=1280,yres=800",
-        "-device", "virtio-sound-pci,audiodev=audio1,streams=1",
-        "-device", "virtio-tablet-pci",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage",
         "-device", "ide-hd,drive=svdisk,bus=svide.0",
@@ -915,6 +944,8 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-debugcon", "file:$DebugConLog",
         "-global", "isa-debugcon.iobase=0xe9"
     )
+    $args += Get-QemuVideoInputDevices
+    $args += Get-QemuAudioDevice "auto"
 
     if ($WaitForDebugger) {
         $args += @("-s", "-S")
@@ -953,7 +984,7 @@ function Stop-AutomationQemu($Process, [int]$MonitorPort) {
     Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
 }
 
-function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [switch]$UseAc97, [string]$WavPath, [scriptblock]$PreLaunch) {
+function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [ValidateSet("auto", "ac97", "virtio")][string]$Audio = "auto", [string]$WavPath, [scriptblock]$PreLaunch) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     if ($NoTestApps) {
         Write-Host "Nota: los harnesses de automatizacion requieren las apps de testeo; se ignora -NoTestApps."
@@ -1003,8 +1034,6 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
-        "-device", "virtio-vga,xres=1280,yres=800",
-        "-device", "virtio-tablet-pci",
         "-device", "isa-ide,id=svide",
         "-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$DiskImage""",
         "-device", "ide-hd,drive=svdisk,bus=svide.0",
@@ -1015,6 +1044,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-no-reboot",
         "-no-shutdown"
     )
+    $args += Get-QemuVideoInputDevices
 
     # audiodev de audio1 (el que consume el dispositivo de sonido): por defecto
     # "none" (headless, sin captura). Con -WavPath se graba lo que reproduce el
@@ -1025,15 +1055,10 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         $args += @("-audiodev", "none,id=audio1")
     }
 
-    # Dispositivo de audio: por defecto virtio-sound-pci (el driver preferido). Con
-    # -UseAc97 usamos el AC'97 de QEMU (el mismo chip que emula VirtualBox) y NO
-    # agregamos virtio-sound, de modo que el kernel caiga al backend AC97 y este
-    # smoke ejercite ese camino headless.
-    if ($UseAc97) {
-        $args += @("-device", "AC97,audiodev=audio1")
-    } else {
-        $args += @("-device", "virtio-sound-pci,audiodev=audio1,streams=1")
-    }
+    # Dispositivo de audio: sigue a -Virtio salvo que el harness pida uno
+    # concreto (-Audio ac97 / -Audio virtio). Sin virtio queda el AC'97 de QEMU
+    # (el mismo chip que emula VirtualBox) y el kernel cae al backend ac97.
+    $args += Get-QemuAudioDevice $Audio
 
     $process = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -RedirectStandardOutput $SmokeStdoutLog -RedirectStandardError $SmokeStderrLog
     try {
@@ -1075,6 +1100,9 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
 }
 
 function Run-SmokeQemu {
+    # Sigue al hardware de la maquina: sin -Virtio ya valida /dev/audio0 sobre el
+    # AC'97 (el viejo target ac97-smoke, retirado por redundante) y /dev/gpu0
+    # sobre fb_gpu; con -Virtio, sobre virtio-sound y virtio-gpu.
     Run-AutomationQemu -AutomationCommand "smoke" -SuccessToken "SMOKE PASS" -FailureToken "SMOKE FAIL" -TimeoutMinutes 2
 }
 
@@ -1158,12 +1186,6 @@ function Run-NativeFilesQemu {
     }.GetNewClosure()
 }
 
-function Run-Ac97SmokeQemu {
-    # Mismo smoke que valida /dev/audio0, pero forzando el hardware AC'97 (sin
-    # virtio-sound) para ejercitar el backend de fallback usado en VirtualBox.
-    Run-AutomationQemu -AutomationCommand "smoke" -SuccessToken "SMOKE PASS" -FailureToken "SMOKE FAIL" -TimeoutMinutes 2 -UseAc97
-}
-
 function Run-Ac97StreamQemu {
     # Corre audiotest --stream (patron de alimentacion tipo-Doom) sobre AC'97 y
     # graba la salida a un WAV para medir underruns/glitches. Analizar el WAV con
@@ -1172,14 +1194,15 @@ function Run-Ac97StreamQemu {
     # audio continuo. Para medir el driver usar ac97-count (audiodev none).
     $wav = Join-Path $BuildRoot "ac97-stream.wav"
     if (Test-Path $wav) { Remove-Item $wav -Force }
-    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -UseAc97 -WavPath $wav
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -Audio ac97 -WavPath $wav
     Write-Host "WAV capturado: $wav"
 }
 
 function Run-VirtioCountQemu {
-    # audiotest --stream sobre virtio-sound (el default) con audiodev none, para
-    # medir el contador de underruns del nuevo camino TX multi-buffer.
-    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2
+    # audiotest --stream sobre virtio-sound con audiodev none, para medir el
+    # contador de underruns del camino TX multi-buffer. Fuerza virtio-sound
+    # aunque la maquina corra sin virtio: es el driver que este harness mide.
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -Audio virtio
     $line = Select-String -Path $SmokeSerialLog -Pattern "virtio-sound: stop con" | Select-Object -Last 1
     if ($line) { Write-Host ("DESCARTES -> " + $line.Line.Trim()) } else { Write-Host "DESCARTES -> 0 (sin linea de descartes)" }
 }
@@ -1188,7 +1211,7 @@ function Run-VirtioStreamQemu {
     # audiotest --stream sobre virtio-sound grabando a WAV para analizar gaps.
     $wav = Join-Path $BuildRoot "virtio-stream.wav"
     if (Test-Path $wav) { Remove-Item $wav -Force }
-    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -WavPath $wav
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -Audio virtio -WavPath $wav
     Write-Host "WAV capturado: $wav"
 }
 
@@ -1197,7 +1220,7 @@ function Run-Ac97CountQemu {
     # QEMU avanza el CIV en tiempo virtual igual que el guest alimenta, asi el
     # contador de underruns del driver (ac97: stop underruns=N en el serial)
     # refleja si el colchon evita que el ring se vacie.
-    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -UseAc97
+    Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -Audio ac97
     $line = Select-String -Path $SmokeSerialLog -Pattern "ac97: stop underruns" | Select-Object -Last 1
     if ($line) { Write-Host ("UNDERRUNS -> " + $line.Line.Trim()) } else { Write-Host "no se encontro linea de underruns en $SmokeSerialLog" }
 }
@@ -1234,9 +1257,6 @@ switch ($Command) {
     }
     "smoke" {
         Run-SmokeQemu
-    }
-    "ac97-smoke" {
-        Run-Ac97SmokeQemu
     }
     "ac97-stream" {
         Run-Ac97StreamQemu

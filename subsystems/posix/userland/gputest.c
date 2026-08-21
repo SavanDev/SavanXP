@@ -132,12 +132,23 @@ static int setup_gpu(struct savanxp_gpu_info* gpu_info, struct savanxp_fb_info* 
     return 1;
 }
 
-static int validate_stats_progress(const struct savanxp_gpu_stats* before, const struct savanxp_gpu_stats* after) {
+/* `pipeline_stats` distingue los backends que presentan por una cola de
+ * comandos (virtio-gpu) de los sincronos (framebuffer plano). El contador de
+ * presentaciones tiene que avanzar en cualquiera de los dos; las etapas
+ * (transferencia/flush/scanout), las completions y las muestras de latencia
+ * solo existen si hay pipeline: en el blit sincrono no hay etapa que medir. */
+static int validate_stats_progress(const struct savanxp_gpu_stats* before, const struct savanxp_gpu_stats* after, int pipeline_stats) {
     const uint64_t scanout_delta = after->scanout_stage_submitted - before->scanout_stage_submitted;
 
     if (after->present_enqueued <= before->present_enqueued ||
-        after->present_completed <= before->present_completed ||
-        after->transfer_stage_submitted <= before->transfer_stage_submitted ||
+        after->present_completed <= before->present_completed) {
+        puts_fd(2, "gputest: GPU stats did not advance as expected\n");
+        return 0;
+    }
+    if (!pipeline_stats) {
+        return 1;
+    }
+    if (after->transfer_stage_submitted <= before->transfer_stage_submitted ||
         after->flush_stage_submitted <= before->flush_stage_submitted ||
         after->command_completions <= before->command_completions ||
         after->present_end_to_end_samples <= before->present_end_to_end_samples ||
@@ -292,7 +303,24 @@ static int setup_imported_test_surface(
     return imported->surface_id != 0;
 }
 
+/* Los eventos de present/scanout son asincronos y solo existen si el conector
+ * los advierte (virtio-gpu). Sobre el framebuffer plano la presentacion es
+ * sincrona: los fds quedan en -1 y los waits caen al camino por timeline, igual
+ * que hace el compositor cuando GPU_IOC_CREATE_PRESENT_EVENT devuelve ENOSYS. */
 static int open_gpu_test_events(int gpu_fd, long* present_event_fd, long* scanout_event_fd) {
+    struct savanxp_gpu_connector_properties properties = {0};
+
+    *present_event_fd = -1;
+    *scanout_event_fd = -1;
+    if (gpu_get_connector_properties(gpu_fd, &properties) < 0) {
+        puts_fd(2, "gputest: GPU_IOC_GET_CONNECTOR_PROPERTIES failed\n");
+        return 0;
+    }
+    if ((properties.flags & SAVANXP_GPU_CONNECTOR_FLAG_ASYNC_PRESENT_EVENTS) == 0) {
+        puts("gputest: backend sincrono, se omiten los eventos de present/scanout\n");
+        return 1;
+    }
+
     *present_event_fd = gpu_create_present_event(gpu_fd);
     if (*present_event_fd < 0) {
         puts_fd(2, "gputest: GPU_IOC_CREATE_PRESENT_EVENT failed\n");
@@ -314,20 +342,28 @@ static int refresh_scanouts_and_wait(int gpu_fd, int scanout_event_fd, const cha
         puts_fd(2, "gputest: GPU_IOC_REFRESH_SCANOUTS failed\n");
         return 0;
     }
+    if (scanout_event_fd < 0) {
+        /* Backend sincrono: el refresh ya termino cuando volvio el ioctl. */
+        return 1;
+    }
     return wait_for_handle_signal(scanout_event_fd, label) &&
         reset_handle_signal(scanout_event_fd, label) &&
         expect_handle_unsignaled(scanout_event_fd, label);
 }
 
 static int wait_present_event_and_retire(int gpu_fd, int present_event_fd, const char* label) {
-    if (!wait_for_handle_signal(present_event_fd, label)) {
-        return 0;
-    }
-    if (!reset_handle_signal(present_event_fd, label)) {
-        return 0;
-    }
-    if (!expect_handle_unsignaled(present_event_fd, label)) {
-        return 0;
+    /* Sin evento (backend sincrono) queda solo la verificacion por timeline:
+     * lo enviado tiene que estar retirado apenas vuelve el ioctl. */
+    if (present_event_fd >= 0) {
+        if (!wait_for_handle_signal(present_event_fd, label)) {
+            return 0;
+        }
+        if (!reset_handle_signal(present_event_fd, label)) {
+            return 0;
+        }
+        if (!expect_handle_unsignaled(present_event_fd, label)) {
+            return 0;
+        }
     }
     if (!wait_for_latest_present(gpu_fd)) {
         eprintf("gputest: %s retire wait failed\n", label);
@@ -612,7 +648,7 @@ static int run_soak_mode(size_t iteration_count) {
         cleanup_soak_session(&gpu_fd, &present_event_fd, &scanout_event_fd, &imported);
         return 1;
     }
-    if (!validate_stats_progress(&stats_before, &stats_after)) {
+    if (!validate_stats_progress(&stats_before, &stats_after, gpu_info.backend == SAVANXP_GPU_BACKEND_VIRTIO)) {
         cleanup_soak_session(&gpu_fd, &present_event_fd, &scanout_event_fd, &imported);
         return 1;
     }
@@ -751,7 +787,7 @@ static int run_smoke_mode(void) {
         cleanup_gpu_test_session(&gpu_fd, &present_event_fd, &scanout_event_fd);
         return 1;
     }
-    if (!validate_stats_progress(&stats_before, &stats_after)) {
+    if (!validate_stats_progress(&stats_before, &stats_after, gpu_info.backend == SAVANXP_GPU_BACKEND_VIRTIO)) {
         cleanup_gpu_test_session(&gpu_fd, &present_event_fd, &scanout_event_fd);
         return 1;
     }

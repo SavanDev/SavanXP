@@ -92,7 +92,7 @@ real o incompatibilidad de formato.
 Para compilar sin las apps de testeo y diagnostico (keytest, gfxdemo, smoke,
 etc.), usa `-NoTestApps`: esos binarios no entran al rootfs y el menu del
 escritorio se compila sin sus entradas. Los comandos de automatizacion
-(`smoke`, `desktop-smoke`, ...) las incluyen siempre porque sus harnesses
+(`smoke`, `windowd-smoke`, ...) las incluyen siempre porque sus harnesses
 dependen de ellas.
 
 ```powershell
@@ -131,12 +131,26 @@ PlatformPei apenas arranca (WHPX no puede respaldar features de CPU muy
 nuevas que esos modelos exponen al guest). Por eso `-Accel whpx` fuerza
 `-cpu qemu64`, que arranca sin problemas.
 
+La maquina QEMU se arma por defecto con hardware "base": VGA estandar, mouse
+PS/2 y audio AC'97, el mismo que emula VirtualBox. Asi el kernel ejercita los
+backends de fallback (`fb_gpu`, `ps2`, `ac97`) sin salir de QEMU. Para levantar
+la maquina con dispositivos paravirtualizados (virtio-vga, virtio-tablet,
+virtio-sound) hay que pedirlo explicitamente:
+
+```powershell
+.\build.ps1 run -Virtio
+```
+
+El switch vale para todos los comandos que lanzan QEMU (`run`, `debug`, los
+smokes y `gpu-soak`). Los harnesses de audio que miden un driver concreto
+(`ac97-count`, `virtio-count`, ...) fuerzan su dispositivo y no dependen de el.
+
 Otras variantes disponibles:
 
 ```powershell
 .\build.ps1 debug
 .\build.ps1 smoke
-.\build.ps1 desktop-smoke
+.\build.ps1 windowd-smoke
 .\build.ps1 gpu-soak
 .\build.ps1 clean
 ```
@@ -146,7 +160,7 @@ Notas practicas:
 - `run` inicia QEMU con sesion grafica y salida serie en la terminal.
 - `debug` conserva el flujo de arranque orientado a depuracion.
 - `smoke` ejecuta una prueba automatizada headless y deja logs en `build/`.
-- `desktop-smoke` ejercita el compositor grafico.
+- `windowd-smoke` ejercita el compositor grafico.
 - `gpu-soak` estresa el camino de presentacion de GPU.
 - `clean` elimina artefactos de compilacion y puede forzar la recreacion del
   entorno en el siguiente build.
