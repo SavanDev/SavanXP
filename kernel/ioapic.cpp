@@ -177,6 +177,16 @@ bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
     g_hhdm = hhdm_offset;
     if (!rsdp_addr || !hhdm_offset) return false;
 
+    // El IOAPIC entrega a traves del Local APIC y cada handler ruteado por aca
+    // hace EOI contra el. Sin Local APIC operativo la entrega quedaria a medias:
+    // el handler corre pero el bit del ISR nunca se limpia y el APIC se traba
+    // para siempre a partir de la primera interrupcion. Preferimos no programar
+    // el IOAPIC y dejar que los consumidores caigan al PIC legacy.
+    if (!arch::x86_64::local_apic_ready()) {
+        console::printf("ioapic: sin Local APIC operativo, se mantiene el PIC legacy\n");
+        return false;
+    }
+
     const Rsdp* rsdp = map<Rsdp>(rsdp_addr);
     if (memcmp(rsdp->signature, "RSD PTR ", 8) != 0 || !checksum_ok(rsdp, 20)) {
         console::printf("ioapic: RSDP invalido\n"); return false;
@@ -211,11 +221,12 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
         return 0;
     }
 
-    // Destino: BSP. En monocore el APIC id del BSP es 0. Con SMP habria que
-    // leer el id real y considerar dest logico si x2APIC id > 255.
+    // Destino: el BSP, en modo fisico. Con SMP habria que elegir CPU y considerar
+    // destino logico cuando el id de x2APIC no entra en 8 bits.
     write_redirection(*io, gsi, vector,
                       pol == Polarity::active_low, trg == Trigger::level,
-                      /*masked=*/false, /*dest_apic=*/0);
+                      /*masked=*/false,
+                      /*dest_apic=*/static_cast<uint8_t>(arch::x86_64::local_apic_id()));
     return vector;
 }
 

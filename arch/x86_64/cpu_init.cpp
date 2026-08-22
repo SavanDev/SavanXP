@@ -3,6 +3,7 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/process.hpp"
+#include "kernel/vmm.hpp"
 
 namespace {
 
@@ -24,14 +25,19 @@ constexpr uint32_t kApicBaseMsr = 0x1b;
 constexpr uint32_t kApicBaseEnable = 1u << 11;
 constexpr uint32_t kApicBaseX2ApicEnable = 1u << 10;
 constexpr uint32_t kX2ApicMsrBase = 0x800;
+constexpr uint64_t kApicBaseAddressMask = 0x000ffffffffff000ULL;
+constexpr uint64_t kApicMmioSize = 0x1000;
+constexpr uint32_t kApicId = 0x020;
 constexpr uint32_t kApicEoi = 0x0b0;
 constexpr uint32_t kApicSpuriousVector = 0x0f0;
 constexpr uint32_t kApicLvtTimer = 0x320;
+constexpr uint32_t kApicLvtLint0 = 0x350;
 constexpr uint32_t kApicInitialCount = 0x380;
 constexpr uint32_t kApicCurrentCount = 0x390;
 constexpr uint32_t kApicDivideConfiguration = 0x3e0;
 constexpr uint32_t kApicSoftwareEnable = 1u << 8;
 constexpr uint32_t kApicTimerPeriodic = 1u << 17;
+constexpr uint32_t kApicLvtExtInt = 0x7u << 8;
 
 extern "C" void x86_64_syscall_entry();
 extern "C" void x86_64_timer_entry();
@@ -118,6 +124,9 @@ volatile bool g_breakpoint_probe_active = false;
 ExternalHandlerSlot g_external_handlers[kIdtEntryCount] = {};
 bool g_local_apic_ready = false;
 bool g_local_apic_x2apic = false;
+// Ventana MMIO del APIC local en modo xAPIC (por defecto 0xfee00000, una pagina
+// uncacheable). Nula mientras no se mapee o si el CPU expone x2APIC.
+volatile uint32_t* g_local_apic_mmio = nullptr;
 
 inline void out8(uint16_t port, uint8_t value) {
     asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -154,12 +163,28 @@ uint32_t x2apic_msr(uint32_t reg) {
     return kX2ApicMsrBase + (reg >> 4);
 }
 
+// Los dos modos del APIC local hablan los mismos registros por caminos
+// distintos: x2APIC via MSR (0x800 + reg/16) y xAPIC via MMIO, donde cada
+// registro es un dword alineado a 16 bytes dentro de la pagina base. El resto
+// del kernel solo usa registros de 32 bits (EOI, SVR, LVT, timer), asi que este
+// par de helpers alcanza; el ICR de 64 bits del x2APIC no tiene consumidores
+// mientras no haya SMP.
 void write_local_apic(uint32_t reg, uint32_t value) {
-    write_msr(x2apic_msr(reg), value);
+    if (g_local_apic_x2apic) {
+        write_msr(x2apic_msr(reg), value);
+    } else if (g_local_apic_mmio != nullptr) {
+        g_local_apic_mmio[reg / sizeof(uint32_t)] = value;
+    }
 }
 
 uint32_t read_local_apic(uint32_t reg) {
-    return static_cast<uint32_t>(read_msr(x2apic_msr(reg)));
+    if (g_local_apic_x2apic) {
+        return static_cast<uint32_t>(read_msr(x2apic_msr(reg)));
+    }
+    if (g_local_apic_mmio != nullptr) {
+        return g_local_apic_mmio[reg / sizeof(uint32_t)];
+    }
+    return 0;
 }
 
 void local_apic_eoi() {
@@ -574,7 +599,7 @@ bool initialize_local_apic() {
 
     const bool apic_supported = (edx & (1u << 9)) != 0;
     const bool x2apic_supported = (ecx & (1u << 21)) != 0;
-    if (!apic_supported || !x2apic_supported) {
+    if (!apic_supported) {
         g_local_apic_ready = false;
         g_local_apic_x2apic = false;
         return false;
@@ -582,12 +607,49 @@ bool initialize_local_apic() {
 
     uint64_t apic_base = read_msr(kApicBaseMsr);
     apic_base |= kApicBaseEnable;
-    apic_base |= kApicBaseX2ApicEnable;
-    write_msr(kApicBaseMsr, apic_base);
+
+    if (x2apic_supported) {
+        apic_base |= kApicBaseX2ApicEnable;
+        write_msr(kApicBaseMsr, apic_base);
+        g_local_apic_x2apic = true;
+    } else {
+        // Sin x2APIC (VirtualBox) el APIC local sigue existiendo: se habla por
+        // MMIO. Mapear la pagina que apunta el IA32_APIC_BASE MSR una sola vez;
+        // vm::map_kernel_mmio ya fuerza cache-disable, que es obligatorio aca.
+        if (g_local_apic_mmio == nullptr) {
+            void* virtual_base = nullptr;
+            if (!vm::map_kernel_mmio(
+                    apic_base & kApicBaseAddressMask,
+                    kApicMmioSize,
+                    vm::kPagePresent | vm::kPageWrite | vm::kPageCacheDisable,
+                    &virtual_base)) {
+                console::printf("cpu: no se pudo mapear el APIC local (xAPIC)\n");
+                g_local_apic_ready = false;
+                g_local_apic_x2apic = false;
+                return false;
+            }
+            g_local_apic_mmio = static_cast<volatile uint32_t*>(virtual_base);
+        }
+        write_msr(kApicBaseMsr, apic_base & ~static_cast<uint64_t>(kApicBaseX2ApicEnable));
+        g_local_apic_x2apic = false;
+    }
 
     write_local_apic(kApicSpuriousVector, kApicSoftwareEnable | 0xff);
+
+    // Virtual wire. Al software-enablear el APIC el bit de mascara de LINT0 pasa
+    // a tener efecto, y hay firmware que lo deja enmascarado (VirtualBox lo hace
+    // cuando el I/O APIC esta activo): eso corta el cable del 8259 al CPU y mata
+    // todo el camino PIC legacy, incluido el fallback del PIT. Reponer LINT0 como
+    // ExtINT desenmascarado deja al 8259 entregando de nuevo. Es seguro aunque no
+    // se use: si el PIC esta enmascarado nunca asierta INTR, y monocore cumple la
+    // regla de un solo ExtINT por sistema.
+    write_local_apic(kApicLvtLint0, kApicLvtExtInt);
+
     g_local_apic_ready = true;
-    g_local_apic_x2apic = true;
+    console::printf(
+        "cpu: APIC local en modo %s (id %u)\n",
+        g_local_apic_x2apic ? "x2APIC" : "xAPIC",
+        static_cast<unsigned>(local_apic_id()));
     return true;
 }
 
@@ -599,8 +661,18 @@ bool local_apic_x2apic_mode() {
     return g_local_apic_x2apic;
 }
 
+uint32_t local_apic_id() {
+    if (!g_local_apic_ready) {
+        return 0;
+    }
+    // En xAPIC el id vive en los bits [31:24] del registro; en x2APIC es el
+    // registro entero.
+    const uint32_t raw = read_local_apic(kApicId);
+    return g_local_apic_x2apic ? raw : (raw >> 24);
+}
+
 bool local_apic_start_oneshot_timer(uint8_t vector, uint32_t initial_count, uint8_t divide_value) {
-    if (!g_local_apic_ready || !g_local_apic_x2apic || vector >= kIdtEntryCount || initial_count == 0) {
+    if (!g_local_apic_ready || vector >= kIdtEntryCount || initial_count == 0) {
         return false;
     }
 
@@ -611,7 +683,7 @@ bool local_apic_start_oneshot_timer(uint8_t vector, uint32_t initial_count, uint
 }
 
 bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uint8_t divide_value) {
-    if (!g_local_apic_ready || !g_local_apic_x2apic || vector >= kIdtEntryCount) {
+    if (!g_local_apic_ready || vector >= kIdtEntryCount) {
         return false;
     }
 
@@ -622,7 +694,7 @@ bool local_apic_start_periodic_timer(uint8_t vector, uint32_t initial_count, uin
 }
 
 uint32_t local_apic_current_timer_count() {
-    if (!g_local_apic_ready || !g_local_apic_x2apic) {
+    if (!g_local_apic_ready) {
         return 0;
     }
     return read_local_apic(kApicCurrentCount);

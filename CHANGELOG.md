@@ -288,6 +288,35 @@ Notas de corte:
 
 ### Corregido
 
+- **VirtualBox con I/O APIC activado no terminaba de arrancar: soporte xAPIC
+  MMIO en el APIC local.** `initialize_local_apic` solo sabia hablar x2APIC (por
+  MSR) y VirtualBox nunca expone x2APIC, asi que el APIC local quedaba
+  descartado. Con el I/O APIC activo eso era fatal: el firmware de VBox pone la
+  maquina en modo APIC (software-enablea el APIC local y **enmascara LINT0**),
+  lo que corta el cable del 8259 al CPU; el fallback del PIT desenmascaraba IRQ0
+  en el PIC y la interrupcion se quedaba para siempre en el IRR del 8259
+  (`IMR:fe ISR:00 IRR:01`, y la RTE 2 del IOAPIC — el override IRQ0->GSI2 de la
+  MADT — enmascarada con `irr=1`). Sin ticks el scheduler nunca preemptaba y el
+  boot se congelaba en el splash al 100%, con el CPU en `halt_once()`. En el
+  mismo escenario, todo lo ruteado por el IOAPIC (PS/2, SCI) hacia EOI contra un
+  APIC que el kernel creia inexistente — `local_apic_eoi()` era un no-op — asi
+  que el primer scancode dejaba el vector 52 clavado en el ISR (`PPR=0x30`) y
+  mataba todos los vectores 48-63. Ahora `initialize_local_apic` mapea la ventana
+  MMIO que apunta `IA32_APIC_BASE` (una pagina uncacheable via
+  `vm::map_kernel_mmio`) cuando no hay x2APIC, y `read_local_apic`/
+  `write_local_apic` despachan entre MSR y MMIO; los helpers del timer del APIC
+  dejan de exigir x2APIC. Ademas se repone LINT0 como ExtINT desenmascarado al
+  software-enablear el APIC (virtual wire), que es lo que mantiene vivo el camino
+  PIC legacy — necesario en VirtualBox **sin** I/O APIC, donde no hay MADT y PS/2
+  sigue yendo por el 8259. `ioapic::initialize` ahora se niega a correr si no hay
+  APIC local operativo (en vez de programar entregas que nadie puede EOI-ear), y
+  `route_gsi` usa el APIC id real como destino en vez de 0 fijo. Nuevo log de
+  boot: `cpu: APIC local en modo xAPIC|x2APIC (id N)`. Verificado en vivo en
+  VirtualBox 7.2 en las dos configuraciones (I/O APIC on y off): escritorio
+  completo, timer del APIC local periodico en el vector 48, Ctrl+Esc abre el Task
+  List, ISR/IRR limpios y `PPR=0`. QEMU sigue por el camino x2APIC sin cambios
+  (`build.ps1 smoke` -> SMOKE PASS).
+
 - **virtio-sound: reproduccion TX async multi-buffer (sin espera bloqueante).**
   El camino TX enviaba UN periodo y hacia spin esperando que el device lo
   consumiera (`wait_for_used_element`) antes de aceptar el siguiente, con un solo

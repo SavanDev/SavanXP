@@ -13,8 +13,9 @@
 //   * Rutear INTx legacy resuelto por _PRT (tu bloqueo documentado en q35+APIC).
 //   * Migrar PS/2 (IRQ1/IRQ12) del PIC legacy al IOAPIC.
 //
-// Depende de: Local APIC en modo x2APIC (ya existe), vm::map_kernel_mmio (ya
-// existe) y el dispatcher de vectores de cpu_init.cpp (ya existe).
+// Depende de: Local APIC operativo (x2APIC o xAPIC), vm::map_kernel_mmio y el
+// dispatcher de vectores de cpu_init.cpp. Sin Local APIC no se inicializa: la
+// entrega por IOAPIC necesita EOI contra el.
 
 namespace ioapic {
 
