@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -148,6 +148,7 @@ $UserPrograms = @(
     @{ Name = "udpsend"; Source = "subsystems/posix/userland/udpsend.c" },
     @{ Name = "udprecv"; Source = "subsystems/posix/userland/udprecv.c" },
     @{ Name = "udptest"; Source = "subsystems/posix/userland/udptest.c"; Test = $true },
+    @{ Name = "nettest"; Source = "subsystems/posix/userland/nettest.c"; Test = $true },
     @{ Name = "tcpget"; Source = "subsystems/posix/userland/tcpget.c" },
     @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
     @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c"; Test = $true },
@@ -1235,6 +1236,16 @@ function Run-ProgmanSmokeQemu {
     Run-AutomationQemu -AutomationCommand "progman-selftest" -SuccessToken "PROGMAN SMOKE PASS" -FailureToken "PROGMAN SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Harness headless del camino de red (subsystems/posix/userland/nettest.c):
+# valida el driver del NIC de punta a punta -- presencia por PCI, MAC propia,
+# ARP, tx y rx -- haciendo ICMP echo contra el gateway del user-net de QEMU
+# (10.0.2.2), el unico destino que slirp contesta de forma deterministica. Los
+# contadores tx_frames/rx_frames del driver son la prueba de que el hardware
+# movio trafico y no contesto el stack solo.
+function Run-NetSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "netsmoke" -SuccessToken "NET SMOKE PASS" -FailureToken "NET SMOKE FAIL" -TimeoutMinutes 3
+}
+
 function Run-CursorReproQemu {
     Run-AutomationQemu -AutomationCommand "windowd-cursor-repro" -SuccessToken "CURSOR REPRO PASS" -FailureToken "CURSOR REPRO FAIL" -TimeoutMinutes 3
 }
@@ -1277,6 +1288,9 @@ switch ($Command) {
     }
     "progman-smoke" {
         Run-ProgmanSmokeQemu
+    }
+    "net-smoke" {
+        Run-NetSmokeQemu
     }
     "cursor-repro" {
         Run-CursorReproQemu
