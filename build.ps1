@@ -85,6 +85,8 @@ $KernelSources = @(
     "kernel/console.cpp",
     "kernel/device.cpp",
     "kernel/display.cpp",
+    "kernel/ata.cpp",
+    "kernel/ramdisk.cpp",
     "kernel/pci.cpp",
     "kernel/input.cpp",
     "kernel/tty.cpp",

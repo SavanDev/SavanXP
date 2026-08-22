@@ -6,6 +6,7 @@
 #include "kernel/ac97.hpp"
 #include "kernel/acpi.hpp"
 #include "kernel/audio.hpp"
+#include "kernel/ata.hpp"
 #include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/boot_screen.hpp"
@@ -26,6 +27,7 @@
 #include "kernel/power.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ps2.hpp"
+#include "kernel/ramdisk.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
@@ -210,11 +212,16 @@ namespace
     }
     audio_device::initialize();
     net::initialize();
-    block::initialize();
-    // LiveCD: si Limine cargo la imagen de disco como modulo, exponerla como un
-    // block device en RAM. Se registra despues de los ATA, asi que un disco IDE
-    // persistente (dev) tiene prioridad; en la ISO pura montamos este ramdisk.
+    // Almacenamiento: mismo registro de drivers que display y audio, pero aca
+    // los devices de todos COEXISTEN, asi que probe_all corre todos los
+    // enumerate en vez de cortar en el primero. La prioridad define el orden de
+    // los indices: los ATA enumeran antes que el ramdisk, asi un disco IDE
+    // persistente (dev) tiene prioridad y en la ISO pura montamos el ramdisk.
     // svfs::initialize monta el primer SVFS2 valido que encuentre.
+    block::register_driver(ata::driver());
+    block::register_driver(ramdisk::driver());
+    // LiveCD: si Limine cargo la imagen de disco como modulo, ofrecersela al
+    // driver de ramdisk antes de enumerar.
     //
     // Escribible-efimero: las apps que crean directorios/archivos en /disk
     // (p.ej. doom prepara /disk/games/doom/savegames) necesitan un FS de
@@ -225,12 +232,24 @@ namespace
     // instalacion a disco.
     if (boot_info.disk_image_address != nullptr && boot_info.disk_image_size != 0)
     {
-        block::register_ramdisk(
+        ramdisk::attach_image(
             const_cast<void *>(boot_info.disk_image_address),
             boot_info.disk_image_size,
             /*writable=*/true,
             "livecd");
     }
+    const size_t block_devices = block::probe_all();
+    console::printf("block: %u device(s)", static_cast<unsigned>(block_devices));
+    for (size_t index = 0; index < block_devices; ++index)
+    {
+        block::DeviceInfo device_info = {};
+        if (block::device_info(index, device_info))
+        {
+            console::printf(
+                " %s(%s)", device_info.name, device_info.writable ? "rw" : "ro");
+        }
+    }
+    console::write("\n");
     boot_screen::show(90, "Montando almacenamiento");
     svfs::initialize();
 

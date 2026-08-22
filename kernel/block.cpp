@@ -6,155 +6,25 @@
 
 namespace {
 
-constexpr uint16_t kPrimaryIoBase = 0x1f0;
-constexpr uint16_t kPrimaryControlBase = 0x3f6;
-constexpr uint16_t kSecondaryIoBase = 0x170;
-constexpr uint16_t kSecondaryControlBase = 0x376;
-constexpr size_t kMaxDevices = 4;
-// Los 4 slots ATA sondeados + 1 para el ramdisk del LiveCD.
-constexpr size_t kMaxBlockDevices = kMaxDevices + 1;
-
-constexpr uint8_t kStatusErr = 0x01;
-constexpr uint8_t kStatusDrq = 0x08;
-constexpr uint8_t kStatusDfq = 0x20;
-constexpr uint8_t kStatusBsy = 0x80;
-
-constexpr uint8_t kCommandIdentify = 0xec;
-constexpr uint8_t kCommandReadSectors = 0x20;
-constexpr uint8_t kCommandWriteSectors = 0x30;
-constexpr uint8_t kCommandCacheFlush = 0xe7;
-
-enum class Kind {
-    ata,
-    memory,
-};
+// Los 4 slots ATA + el ramdisk del LiveCD, con lugar de sobra para lo que sumen
+// drivers nuevos sin volver a tocar el core.
+constexpr size_t kMaxBlockDevices = 8;
 
 struct Device {
     bool present;
-    uint16_t io_base;
-    uint16_t control_base;
-    uint8_t drive_select;
+    const block::DeviceOps* ops;
+    void* context;
     uint32_t sector_count;
     bool writable;
     const char* name;
-    Kind kind;
-    uint8_t* memory_base;
 };
 
 Device g_devices[kMaxBlockDevices] = {};
 size_t g_device_count = 0;
 bool g_ready = false;
 
-void outb(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-uint8_t inb(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-uint16_t inw(uint16_t port) {
-    uint16_t value = 0;
-    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-void outw(uint16_t port, uint16_t value) {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-
-void io_wait() {
-    outb(0x80, 0);
-}
-
-void wait_400ns(const Device& device) {
-    (void)inb(device.control_base);
-    (void)inb(device.control_base);
-    (void)inb(device.control_base);
-    (void)inb(device.control_base);
-}
-
-void select_drive(const Device& device, uint32_t lba) {
-    outb(
-        static_cast<uint16_t>(device.io_base + 6),
-        static_cast<uint8_t>(0xe0u | device.drive_select | ((lba >> 24) & 0x0f))
-    );
-    wait_400ns(device);
-}
-
-bool poll_status(const Device& device, bool require_drq) {
-    uint8_t status = 0;
-    uint32_t spins = 1000000;
-    do {
-        status = inb(static_cast<uint16_t>(device.io_base + 7));
-    } while ((status & kStatusBsy) != 0 && --spins != 0);
-    if (spins == 0) {
-        return false;
-    }
-
-    if ((status & (kStatusErr | kStatusDfq)) != 0) {
-        return false;
-    }
-
-    if (require_drq) {
-        spins = 1000000;
-        while ((status & kStatusDrq) == 0 && --spins != 0) {
-            status = inb(static_cast<uint16_t>(device.io_base + 7));
-            if ((status & (kStatusErr | kStatusDfq)) != 0) {
-                return false;
-            }
-        }
-        if ((status & kStatusDrq) == 0) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool identify_device(Device& device) {
-    select_drive(device, 0);
-    outb(static_cast<uint16_t>(device.control_base), 0);
-    outb(static_cast<uint16_t>(device.io_base + 2), 0);
-    outb(static_cast<uint16_t>(device.io_base + 3), 0);
-    outb(static_cast<uint16_t>(device.io_base + 4), 0);
-    outb(static_cast<uint16_t>(device.io_base + 5), 0);
-    outb(static_cast<uint16_t>(device.io_base + 7), kCommandIdentify);
-
-    const uint8_t initial_status = inb(static_cast<uint16_t>(device.io_base + 7));
-    if (initial_status == 0) {
-        return false;
-    }
-
-    uint8_t lba_mid = inb(static_cast<uint16_t>(device.io_base + 4));
-    uint8_t lba_high = inb(static_cast<uint16_t>(device.io_base + 5));
-    if (lba_mid != 0 || lba_high != 0) {
-        return false;
-    }
-
-    if (!poll_status(device, true)) {
-        return false;
-    }
-
-    uint16_t identify[256] = {};
-    for (size_t index = 0; index < 256; ++index) {
-        identify[index] = inw(device.io_base);
-    }
-
-    const uint32_t sector_count =
-        static_cast<uint32_t>(identify[60]) |
-        (static_cast<uint32_t>(identify[61]) << 16);
-    if (sector_count == 0) {
-        return false;
-    }
-
-    device.present = true;
-    device.sector_count = sector_count;
-    device.writable = true;
-    return true;
-}
+const block::Driver* g_drivers[block::kMaxDrivers] = {};
+size_t g_driver_count = 0;
 
 bool device_for_index(size_t index, Device*& device) {
     if (index >= g_device_count) {
@@ -165,108 +35,80 @@ bool device_for_index(size_t index, Device*& device) {
     return device->present;
 }
 
-bool rw_sectors(Device& device, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
-    if (!device.present || buffer == nullptr || sector_count == 0 || sector_count > 255) {
+// Validacion comun a cualquier medio. La hace el core una sola vez y los
+// drivers se quedan solo con lo suyo: el tope de 255 sectores por comando, por
+// ejemplo, es del protocolo ATA y no del contrato de block::.
+bool request_in_range(const Device& device, uint32_t lba, uint32_t sector_count, const void* buffer) {
+    if (!device.present || device.ops == nullptr || buffer == nullptr || sector_count == 0) {
         return false;
     }
-    if (lba >= device.sector_count || sector_count > (device.sector_count - lba)) {
-        return false;
-    }
-
-    auto* bytes = static_cast<uint8_t*>(buffer);
-
-    select_drive(device, lba);
-    outb(static_cast<uint16_t>(device.io_base + 1), 0);
-    outb(static_cast<uint16_t>(device.io_base + 2), static_cast<uint8_t>(sector_count));
-    outb(static_cast<uint16_t>(device.io_base + 3), static_cast<uint8_t>(lba & 0xff));
-    outb(static_cast<uint16_t>(device.io_base + 4), static_cast<uint8_t>((lba >> 8) & 0xff));
-    outb(static_cast<uint16_t>(device.io_base + 5), static_cast<uint8_t>((lba >> 16) & 0xff));
-    outb(static_cast<uint16_t>(device.io_base + 7), write ? kCommandWriteSectors : kCommandReadSectors);
-
-    for (uint32_t sector = 0; sector < sector_count; ++sector) {
-        if (!poll_status(device, true)) {
-            return false;
-        }
-
-        if (write) {
-            for (size_t word = 0; word < (block::kSectorSize / sizeof(uint16_t)); ++word) {
-                const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + word * sizeof(uint16_t);
-                const uint16_t value =
-                    static_cast<uint16_t>(bytes[byte_index]) |
-                    (static_cast<uint16_t>(bytes[byte_index + 1]) << 8);
-                outw(device.io_base, value);
-            }
-        } else {
-            for (size_t word = 0; word < (block::kSectorSize / sizeof(uint16_t)); ++word) {
-                const uint16_t value = inw(device.io_base);
-                const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + word * sizeof(uint16_t);
-                bytes[byte_index] = static_cast<uint8_t>(value & 0xff);
-                bytes[byte_index + 1] = static_cast<uint8_t>((value >> 8) & 0xff);
-            }
-        }
-    }
-
-    if (write) {
-        outb(static_cast<uint16_t>(device.io_base + 7), kCommandCacheFlush);
-        if (!poll_status(device, false)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool rw_memory(Device& device, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
-    if (!device.present || device.memory_base == nullptr || buffer == nullptr || sector_count == 0) {
-        return false;
-    }
-    if (lba >= device.sector_count || sector_count > (device.sector_count - lba)) {
-        return false;
-    }
-    if (write && !device.writable) {
-        return false;
-    }
-
-    const size_t offset = static_cast<size_t>(lba) * block::kSectorSize;
-    const size_t length = static_cast<size_t>(sector_count) * block::kSectorSize;
-    if (write) {
-        memcpy(device.memory_base + offset, buffer, length);
-    } else {
-        memcpy(buffer, device.memory_base + offset, length);
-    }
-    return true;
-}
-
-bool rw_device(Device& device, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
-    return device.kind == Kind::memory
-        ? rw_memory(device, lba, sector_count, buffer, write)
-        : rw_sectors(device, lba, sector_count, buffer, write);
+    return lba < device.sector_count && sector_count <= (device.sector_count - lba);
 }
 
 } // namespace
 
 namespace block {
 
-void initialize() {
+bool register_driver(const Driver& driver) {
+    if (g_driver_count >= kMaxDrivers || driver.enumerate == nullptr) {
+        return false;
+    }
+    g_drivers[g_driver_count] = &driver;
+    ++g_driver_count;
+    return true;
+}
+
+bool register_device(
+    const DeviceOps& ops,
+    void* context,
+    uint32_t sector_count,
+    bool writable,
+    const char* name)
+{
+    if (ops.read == nullptr || sector_count == 0 || g_device_count >= kMaxBlockDevices) {
+        return false;
+    }
+
+    Device& device = g_devices[g_device_count];
+    device.present = true;
+    device.ops = &ops;
+    device.context = context;
+    device.sector_count = sector_count;
+    // Un driver sin write op queda solo-lectura aunque lo pida escribible.
+    device.writable = writable && ops.write != nullptr;
+    device.name = name;
+    ++g_device_count;
+    g_ready = true;
+    return true;
+}
+
+size_t probe_all() {
     memset(g_devices, 0, sizeof(g_devices));
     g_device_count = 0;
     g_ready = false;
 
-    Device detected[kMaxDevices] = {
-        {false, kPrimaryIoBase, kPrimaryControlBase, 0x00, 0, false, "ata0", Kind::ata, nullptr},
-        {false, kPrimaryIoBase, kPrimaryControlBase, 0x10, 0, false, "ata1", Kind::ata, nullptr},
-        {false, kSecondaryIoBase, kSecondaryControlBase, 0x00, 0, false, "ata2", Kind::ata, nullptr},
-        {false, kSecondaryIoBase, kSecondaryControlBase, 0x10, 0, false, "ata3", Kind::ata, nullptr},
-    };
-
-    for (size_t index = 0; index < kMaxDevices; ++index) {
-        if (identify_device(detected[index])) {
-            g_devices[g_device_count++] = detected[index];
+    // Seleccion directa sobre el array en vez de ordenarlo, igual que
+    // display::bind_best. La diferencia es que aca no se corta en el primero:
+    // enumeran todos los drivers y sus devices conviven.
+    bool enumerated[kMaxDrivers] = {};
+    for (size_t attempt = 0; attempt < g_driver_count; ++attempt) {
+        size_t best = kMaxDrivers;
+        for (size_t i = 0; i < g_driver_count; ++i) {
+            if (enumerated[i]) {
+                continue;
+            }
+            if (best == kMaxDrivers || g_drivers[i]->priority > g_drivers[best]->priority) {
+                best = i;
+            }
         }
-        io_wait();
-    }
+        if (best == kMaxDrivers) {
+            break;
+        }
 
-    g_ready = g_device_count != 0;
+        enumerated[best] = true;
+        g_drivers[best]->enumerate();
+    }
+    return g_device_count;
 }
 
 bool ready() {
@@ -292,38 +134,20 @@ bool device_info(size_t index, DeviceInfo& info) {
 
 bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
     Device* device = nullptr;
-    if (!device_for_index(index, device)) {
+    if (!device_for_index(index, device) ||
+        !request_in_range(*device, lba, sector_count, buffer)) {
         return false;
     }
-    return rw_device(*device, lba, sector_count, buffer, false);
+    return device->ops->read(device->context, lba, sector_count, buffer);
 }
 
 bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
     Device* device = nullptr;
-    if (!device_for_index(index, device) || !device->writable) {
+    if (!device_for_index(index, device) || !device->writable ||
+        !request_in_range(*device, lba, sector_count, buffer)) {
         return false;
     }
-    return rw_device(*device, lba, sector_count, const_cast<void*>(buffer), true);
-}
-
-void register_ramdisk(void* base, uint64_t size_bytes, bool writable, const char* name) {
-    if (base == nullptr || size_bytes < block::kSectorSize) {
-        return;
-    }
-    if (g_device_count >= kMaxBlockDevices) {
-        return;
-    }
-
-    Device device = {};
-    device.present = true;
-    device.kind = Kind::memory;
-    device.memory_base = static_cast<uint8_t*>(base);
-    device.sector_count = static_cast<uint32_t>(size_bytes / block::kSectorSize);
-    device.writable = writable;
-    device.name = name;
-
-    g_devices[g_device_count++] = device;
-    g_ready = true;
+    return device->ops->write(device->context, lba, sector_count, buffer);
 }
 
 } // namespace block

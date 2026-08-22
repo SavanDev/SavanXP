@@ -85,6 +85,36 @@ Notas de corte:
   `ac97`, y `-Virtio` elige `virtio-gpu` + `virtio-sound` sin inicializar ac97;
   `build.ps1 smoke` (base y `-Virtio`) y `build.ps1 windowd-smoke` en PASS.
 
+- **Los block devices tambien se registran por driver; ATA y ramdisk salen a su
+  propia unidad de traduccion.** Mismo patron que display y audio, con una
+  diferencia de fondo: aca los devices de todos los drivers **coexisten** (los
+  ATA y el ramdisk del LiveCD a la vez), asi que no hay un `bind_best` que elija
+  uno solo — `probe_all()` corre todos los `enumerate` por prioridad y cada
+  driver registra lo que encuentra. Lo que faltaba en `block` era la otra mitad:
+  ya tenia registro dinamico de devices (`register_ramdisk`), pero el despacho
+  de I/O era un `switch` sobre un `enum Kind{ata, memory}` y los dos drivers
+  vivian dentro de `block.cpp`, junto al core. Ahora `block::DeviceOps` es una
+  vtable `read`/`write` por device con un context opaco que cada driver usa para
+  lo suyo (el slot ATA, la base del ramdisk); `block::Driver` lleva nombre,
+  prioridad y `enumerate`; y `kernel/ata.cpp` + `kernel/ramdisk.cpp` son
+  unidades separadas, como `virtio_gpu.cpp`/`fb_gpu.cpp` para display. La
+  prioridad define el orden de los indices de device (ata 100 antes que ramdisk
+  10), que es lo que hace que un disco IDE persistente le gane a la imagen del
+  LiveCD cuando `svfs` monta el primer SVFS2 valido. La validacion comun
+  (indice, buffer, rango de LBA, permiso de escritura) subio al core y se hace
+  una sola vez; los drivers se quedan solo con lo de su protocolo (el tope de
+  255 sectores por comando del PIO de ATA). Cambios de API: `block::initialize`
+  pasa a `block::probe_all` y `block::register_ramdisk` a
+  `ramdisk::attach_image` (hay que llamarla antes de enumerar); el resto
+  (`ready`/`device_count`/`device_info`/`read`/`write`/`kSectorSize`) no cambia,
+  asi que `svfs` y los callers de `system_info` quedan intactos. Nuevo log de
+  boot con la enumeracion: `block: N device(s) ata0(rw) livecd(rw)`. Verificado
+  en las dos rutas de almacenamiento: con disco IDE enumera `ata0` + `livecd` en
+  ese orden y `svfs` monta `ata0` (ejercita el PIO), con `build.ps1 smoke` y
+  `build.ps1 windowd-smoke` en PASS; sin disco IDE (solo el modulo de Limine, el
+  caso LiveCD) enumera `livecd`, `svfs` lo monta y la suite corre entera desde
+  ahi — incluido leer `/disk/bin/gputest` y `/disk/bin/audiotest` — en PASS.
+
 ### Corregido
 
 - **SCI ruteada dos veces: el boton de power no apagaba la maquina.**
