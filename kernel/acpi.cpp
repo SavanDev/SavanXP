@@ -395,6 +395,23 @@ bool ready() {
     return g_ready;
 }
 
+bool enable_power_button() {
+    if (!g_ready || g_pm1a_evt_port == 0) {
+        return false;
+    }
+
+    const uint16_t en_offset = static_cast<uint16_t>(g_pm1_evt_len / 2);
+    const uint16_t pm1a_en = static_cast<uint16_t>(g_pm1a_evt_port + en_offset);
+    out16(g_pm1a_evt_port, kPm1PwrBtnBit); // W1C de un evento pendiente viejo
+    out16(pm1a_en, static_cast<uint16_t>(in16(pm1a_en) | kPm1PwrBtnBit));
+    if (g_pm1b_evt_port != 0) {
+        const uint16_t pm1b_en = static_cast<uint16_t>(g_pm1b_evt_port + en_offset);
+        out16(g_pm1b_evt_port, kPm1PwrBtnBit);
+        out16(pm1b_en, static_cast<uint16_t>(in16(pm1b_en) | kPm1PwrBtnBit));
+    }
+    return true;
+}
+
 bool start_sci() {
     if (!g_ready || g_pm1a_evt_port == 0) {
         // Sin bloque de evento PM1 no hay forma de atender la SCI.
@@ -415,14 +432,16 @@ bool start_sci() {
     // 2) Enmascarar las GPE antes de desenmascarar la SCI (evita tormentas).
     mask_all_gpes();
 
-    // 3) Limpiar estado PM1 pendiente y habilitar solo el boton de encendido.
+    // 3) Limpiar estado PM1 pendiente, dejar todos los eventos fijos apagados y
+    //    habilitar solo el boton de encendido.
     const uint16_t en_offset = static_cast<uint16_t>(g_pm1_evt_len / 2);
     out16(g_pm1a_evt_port, 0xFFFF); // clear-all (write-1-to-clear)
-    out16(static_cast<uint16_t>(g_pm1a_evt_port + en_offset), kPm1PwrBtnBit);
+    out16(static_cast<uint16_t>(g_pm1a_evt_port + en_offset), 0);
     if (g_pm1b_evt_port != 0) {
         out16(g_pm1b_evt_port, 0xFFFF);
-        out16(static_cast<uint16_t>(g_pm1b_evt_port + en_offset), kPm1PwrBtnBit);
+        out16(static_cast<uint16_t>(g_pm1b_evt_port + en_offset), 0);
     }
+    enable_power_button();
 
     // 4) Rutear la SCI. Por spec ACPI es level-triggered, active-low. Preferir el
     //    IOAPIC; si no hay, caer al PIC legacy cuando la GSI entra en 0..15.

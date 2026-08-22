@@ -17,6 +17,11 @@ bool ready();
 // ioapic::initialize. Devuelve true si la SCI quedo ruteada.
 bool start_sci();
 
+// Habilita PWRBTN_EN (y limpia un PWRBTN_STS pendiente) sin tocar el resto de
+// los eventos fijos. Idempotente. La usa start_sci y hay que volver a llamarla
+// despues del bringup de uACPI, que apaga TODOS los eventos fijos en su init.
+bool enable_power_button();
+
 // Apaga la maquina (estado S5 via PM1a/PM1b_CNT). Si no hay _S5_ o no apaga,
 // intenta los puertos de apagado conocidos de los hipervisores y, como ultimo
 // recurso, detiene la CPU para siempre. No retorna.

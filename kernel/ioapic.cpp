@@ -60,11 +60,15 @@ constexpr uint8_t kMadtIso    = 2;
 // ---- Estado descubierto ----
 struct IoApic { uint32_t id, gsi_base, gsi_count; volatile uint32_t* regs; };
 struct Iso    { uint8_t source; uint32_t gsi; uint16_t flags; };
+// Una GSI ya ruteada: se recuerda para compartirla en vez de reprogramarla.
+struct Routed { uint32_t gsi; uint8_t vector; bool active_low; bool level; };
 
 constexpr size_t kMaxIoApics = 4;
 constexpr size_t kMaxIsos    = 16;
+constexpr size_t kMaxRouted  = 16;
 IoApic g_ioapics[kMaxIoApics]; size_t g_ioapic_count = 0;
 Iso    g_isos[kMaxIsos];       size_t g_iso_count = 0;
+Routed g_routed[kMaxRouted];   size_t g_routed_count = 0;
 bool   g_ready = false;
 
 // Pool de vectores para GSIs. Arranca despues del MSI-X (49) y del rango PIC.
@@ -82,6 +86,13 @@ uint32_t ioapic_read(IoApic& io, uint32_t reg) {
 void ioapic_write(IoApic& io, uint32_t reg, uint32_t value) {
     io.regs[0] = reg;
     io.regs[4] = value;
+}
+
+Routed* find_routed(uint32_t gsi) {
+    for (size_t i = 0; i < g_routed_count; ++i) {
+        if (g_routed[i].gsi == gsi) return &g_routed[i];
+    }
+    return nullptr;
 }
 
 IoApic* owner_of_gsi(uint32_t gsi) {
@@ -211,6 +222,33 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
     IoApic* io = owner_of_gsi(gsi);
     if (!io) return 0;
 
+    const bool active_low = pol == Polarity::active_low;
+    const bool level = trg == Trigger::level;
+
+    // GSI ya ruteada: es una linea compartida, no una linea nueva. El SCI cae
+    // siempre aca (lo piden acpi::start_sci y el glue de uACPI) y con INTx pasa
+    // lo mismo cuando dos links PCI resuelven a la misma GSI. Reusar el vector y
+    // encadenar el handler; reprogramar la entrada de redireccion con un vector
+    // nuevo dejaria huerfano al handler anterior.
+    if (Routed* existing = find_routed(gsi)) {
+        if (existing->active_low != active_low || existing->level != level) {
+            console::printf(
+                "ioapic: GSI %u compartida con otra polaridad/trigger, se conserva la original\n",
+                unsigned(gsi));
+        }
+        if (!arch::x86_64::register_interrupt_handler(
+                existing->vector, handler, arch::x86_64::InterruptEoi::local_apic)) {
+            console::printf("ioapic: no se pudo encadenar handler en GSI %u\n", unsigned(gsi));
+            return 0;
+        }
+        return existing->vector;
+    }
+
+    if (g_routed_count >= kMaxRouted) {
+        console::printf("ioapic: tabla de GSIs ruteadas llena\n");
+        return 0;
+    }
+
     const uint8_t vector = alloc_vector();
     if (!vector) { console::printf("ioapic: pool de vectores agotado\n"); return 0; }
 
@@ -223,10 +261,10 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
 
     // Destino: el BSP, en modo fisico. Con SMP habria que elegir CPU y considerar
     // destino logico cuando el id de x2APIC no entra en 8 bits.
-    write_redirection(*io, gsi, vector,
-                      pol == Polarity::active_low, trg == Trigger::level,
+    write_redirection(*io, gsi, vector, active_low, level,
                       /*masked=*/false,
                       /*dest_apic=*/static_cast<uint8_t>(arch::x86_64::local_apic_id()));
+    g_routed[g_routed_count++] = Routed{gsi, vector, active_low, level};
     return vector;
 }
 

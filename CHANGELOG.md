@@ -87,6 +87,27 @@ Notas de corte:
 
 ### Corregido
 
+- **SCI ruteada dos veces: el boton de power no apagaba la maquina.**
+  `acpi::start_sci()` ruteaba la GSI del SCI y despues el glue de uACPI ruteaba la
+  MISMA GSI, pisando la entrada de redireccion con un vector nuevo y dejando
+  huerfano a `acpi::sci_interrupt` (el handler que hace el shutdown S5). El mismo
+  choque pasaba en el camino PIC, donde los dos llamaban `register_irq_handler(9)`
+  y el segundo sobreescribia al primero. Ahora una linea de interrupcion admite
+  varios dueños: `register_interrupt_handler` **encadena** handlers sobre el vector
+  (hasta 4, idempotente por puntero, exigiendo el mismo modo de EOI) en vez de
+  reemplazar, y `ioapic::route_gsi` reconoce una GSI ya ruteada como linea
+  compartida — reusa su vector y encadena el handler sin reprogramar la RTE, en vez
+  de quemar un vector nuevo. Esto tambien cubre el caso, ya anticipado, de dos links
+  PCI que resuelven a la misma GSI para INTx. Segundo bloqueo en la misma funcion:
+  `uacpi_initialize` apaga **todos** los eventos fijos (`initialize_fixed_events`),
+  incluido el `PWRBTN_EN` que `start_sci` acababa de habilitar, asi que el boton no
+  generaba SCI aunque el ruteo estuviera bien; se agrego
+  `acpi::enable_power_button()` (idempotente, no toca el resto de los eventos) y el
+  bringup de uACPI la vuelve a llamar al terminar. Verificado en vivo en VirtualBox
+  7.2: `VBoxManage controlvm acpipowerbutton` apaga la VM tanto con I/O APIC on (SCI
+  por IOAPIC, RTE 9 estable en el vector 50) como off (SCI por PIC). QEMU:
+  `build.ps1 smoke` -> SMOKE PASS, con un vector menos consumido en el pool de GSIs.
+
 - **VirtualBox con I/O APIC activado no terminaba de arrancar: soporte xAPIC
   MMIO en el APIC local.** `initialize_local_apic` solo sabia hablar x2APIC (por
   MSR) y VirtualBox nunca expone x2APIC, asi que el APIC local quedaba

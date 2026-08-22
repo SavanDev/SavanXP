@@ -33,6 +33,10 @@ enum class Trigger  : uint8_t { edge, level };
 // Rutea una GSI cruda hacia un handler. Elige un vector libre, programa la
 // entrada de redireccion del IOAPIC dueño de esa GSI y registra el handler con
 // EOI al Local APIC. `polarity`/`trigger` vienen de _PRT o del SCI de la FADT.
+// Si la GSI ya estaba ruteada la trata como linea compartida: reusa el vector y
+// encadena el handler (el SCI lo piden acpi::start_sci y uACPI; con INTx pasa lo
+// mismo cuando dos links PCI resuelven a la misma GSI). Cada handler encadenado
+// debe chequear si el evento es suyo antes de actuar.
 // Devuelve el vector asignado, o 0 si fallo.
 uint8_t route_gsi(uint32_t gsi, Polarity polarity, Trigger trigger,
                   arch::x86_64::IrqHandler handler);

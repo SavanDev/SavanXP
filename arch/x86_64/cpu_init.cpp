@@ -92,8 +92,15 @@ using InterruptHandler = void (*)();
 using arch::x86_64::InterruptEoi;
 using arch::x86_64::IrqHandler;
 
+// Una linea de interrupcion puede tener mas de un dueño legitimo: el SCI lo
+// piden la ACPI hand-rolled y uACPI, y varios links PCI pueden caer en la misma
+// GSI. El vector acumula handlers en orden de registro y todos corren antes del
+// unico EOI.
+constexpr uint8_t kMaxSharedHandlers = 4;
+
 struct ExternalHandlerSlot {
-    IrqHandler handler;
+    IrqHandler handlers[kMaxSharedHandlers];
+    uint8_t count;
     InterruptEoi eoi;
 };
 
@@ -256,8 +263,10 @@ void dispatch_external_vector(uint8_t vector) {
     }
 
     const ExternalHandlerSlot& slot = g_external_handlers[vector];
-    if (slot.handler != nullptr) {
-        slot.handler();
+    for (uint8_t index = 0; index < slot.count; ++index) {
+        if (slot.handlers[index] != nullptr) {
+            slot.handlers[index]();
+        }
     }
 
     switch (slot.eoi) {
@@ -583,10 +592,32 @@ bool register_irq_handler(uint8_t irq, IrqHandler handler) {
 }
 
 bool register_interrupt_handler(uint8_t vector, IrqHandler handler, InterruptEoi eoi) {
-    if (vector >= kIdtEntryCount || vector < kPicVectorBase) {
+    if (vector >= kIdtEntryCount || vector < kPicVectorBase || handler == nullptr) {
         return false;
     }
-    g_external_handlers[vector] = {.handler = handler, .eoi = eoi};
+
+    ExternalHandlerSlot& slot = g_external_handlers[vector];
+    // Un vector compartido tiene que acordar como se acusa recibo: mezclar EOI
+    // al PIC y al APIC local sobre la misma linea no significa nada.
+    if (slot.count != 0 && slot.eoi != eoi) {
+        return false;
+    }
+    for (uint8_t index = 0; index < slot.count; ++index) {
+        if (slot.handlers[index] == handler) {
+            return true; // idempotente: re-registrar el mismo handler no duplica
+        }
+    }
+    if (slot.count >= kMaxSharedHandlers) {
+        return false;
+    }
+
+    slot.eoi = eoi;
+    slot.handlers[slot.count] = handler;
+    // Publicar el handler antes que el contador: si la linea dispara en el medio,
+    // el dispatcher ve la cadena vieja completa o la nueva completa, nunca una
+    // entrada a medio escribir.
+    asm volatile("" ::: "memory");
+    slot.count = static_cast<uint8_t>(slot.count + 1);
     return true;
 }
 

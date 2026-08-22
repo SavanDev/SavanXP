@@ -21,6 +21,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/acpi.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/heap.hpp"
@@ -142,6 +143,15 @@ bool bringup(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset) {
     // (enumeracion, _CRS, _PRT). Ver [[uacpi-ioapic-work]].
     console::printf("uacpi: namespace cargado (%s), AML interpretado ok\n",
                     uacpi_status_to_string(st));
+
+    // uacpi_initialize apaga TODOS los eventos fijos (initialize_fixed_events en
+    // event.c), incluido el PWRBTN_EN que acpi::start_sci acababa de habilitar:
+    // sin esto el boton de power no genera SCI y la maquina no se apaga. Mientras
+    // la ACPI hand-rolled siga siendo la dueña del boton (uACPI todavia no toma
+    // los eventos, ver la nota de arriba), el rearme va aca, pegado a la causa.
+    // Cuando uACPI tome los eventos esto se invierte: el handler de PWRBTN pasa a
+    // instalarse con uacpi_install_fixed_event_handler y esta llamada se va.
+    acpi::enable_power_button();
     return true;
 }
 
