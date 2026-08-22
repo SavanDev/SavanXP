@@ -140,6 +140,32 @@ Notas de corte:
   `mac=52:54:0:12:34:56`, tres replies con `ttl=255` y `frames tx 0->4 rx 0->4`
   — mas `build.ps1 smoke` y `build.ps1 windowd-smoke` en PASS.
 
+- **El Program Manager ya no lista programas que no estan instalados.** Los
+  ports en Haxe (grupo "Native") y Doom se construyen con **builds aparte**, asi
+  que en una imagen donde no se instalaron sus entradas se mostraban igual y no
+  lanzaban nada — un grupo muerto en el launcher y en el escritorio. Nuevo
+  `progman_registry_prune_missing(exists)`: descarta los items cuyo path no se
+  puede abrir, y con ellos los grupos que quedan vacios, reapuntando a los
+  indices nuevos los items que sobreviven. Se aplica **igual a los defaults
+  horneados y a lo que venga de `/disk/progman.ini`**: una entrada que no se
+  puede lanzar es ruido venga de donde venga. Es una etapa **aparte del
+  parseo** a proposito — parsear sigue siendo una funcion pura del texto, que es
+  como lo ejercita el selftest, y el pruning es la politica que toca el disco —
+  con el predicado de existencia inyectable justamente para poder testearlo sin
+  disco. A diferencia de `progman_registry_load()`, esto si puede dejar el
+  registro vacio: si de verdad no hay nada lanzable, mostrar nada es lo honesto.
+  Nota de alcance: `windowd_appinfo.c` **no** se toca, porque no es un catalogo
+  de accesos directos sino la traduccion path -> nombre/icono/color de ventanas
+  ya abiertas y del Task List; filtrarla le sacaria el titulo lindo a una app
+  que esta corriendo. Verificado con `build.ps1 progman-smoke`: 12 aserciones
+  nuevas sobre la logica de pruning con un predicado falso (descarte, borrado
+  del grupo vacio, remapeo de indices, `group_item_at` coherente, predicado
+  nulo, idempotencia) mas dos contra el filesystem real que confirman que
+  `open()` distingue un binario instalado de uno ausente. El selftest ademas
+  ahora reporta que hace el pruning contra el disco real de la imagen
+  (`prune dropped=N` y los grupos que sobreviven), que es la parte que ningun
+  predicado falso puede cubrir.
+
 ### Corregido
 
 - **SCI ruteada dos veces: el boton de power no apagaba la maquina.**

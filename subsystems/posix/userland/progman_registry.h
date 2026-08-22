@@ -77,6 +77,27 @@ void progman_registry_load_defaults(void);
  * punto de entrada que usa el selftest para ejercitar el parser sin disco. */
 int progman_registry_parse(const char *text, size_t length);
 
+/*
+ * Predicado de existencia, inyectable para poder testear el pruning sin disco:
+ * progman pasa el que abre el path, el selftest uno falso.
+ */
+typedef int (*progman_path_exists_fn)(const char *path);
+
+/*
+ * Descarta los items cuyo path no existe y, con ellos, los grupos que quedan
+ * vacios; los items que sobreviven quedan reapuntados a los indices nuevos.
+ * Devuelve cuantos items se descartaron.
+ *
+ * Es una etapa APARTE del parseo a proposito: parsear es una funcion pura del
+ * texto (y asi la ejercita el selftest), y esto es la politica que toca el
+ * disco. Aplica igual a los defaults horneados y a lo que venga del .ini: una
+ * entrada que no se puede lanzar es ruido venga de donde venga.
+ *
+ * A diferencia de progman_registry_load(), esto SI puede dejar el registro
+ * vacio -- si de verdad no hay nada lanzable, mostrar nada es lo honesto.
+ */
+int progman_registry_prune_missing(progman_path_exists_fn exists);
+
 int progman_registry_source(void);
 int progman_group_count(void);
 const struct progman_group *progman_group_at(int index);

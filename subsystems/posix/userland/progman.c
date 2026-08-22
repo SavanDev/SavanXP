@@ -554,11 +554,32 @@ static void on_resize(struct sxgui_app *app)
     /* El grid se recalcula solo desde gfx.info; nada que reubicar. */
 }
 
+/* Existencia real: si el path no se puede abrir, no se puede lanzar. */
+static int path_is_launchable(const char *path)
+{
+    long fd;
+
+    if (path == 0 || path[0] == '\0')
+    {
+        return 0;
+    }
+
+    fd = open(path);
+    if (fd < 0)
+    {
+        return 0;
+    }
+    (void)close((int)fd);
+    return 1;
+}
+
 /* --- selftest ------------------------------------------------------------ */
 
 static int progman_selftest(void)
 {
     int failures = progman_registry_selftest();
+    int dropped;
+    int index;
 
     if (failures != 0)
     {
@@ -566,7 +587,40 @@ static int progman_selftest(void)
         return 1;
     }
 
+    /* Lo unico que el predicado falso del registro no puede cubrir: que open()
+     * distinga de verdad un binario instalado de uno ausente. Sin esto el
+     * pruning podria estar bien y aun asi no descartar nada nunca. */
+    if (!path_is_launchable("/bin/progman"))
+    {
+        printf("PROGMAN SMOKE FAIL path_is_launchable con binario instalado\n");
+        return 1;
+    }
+    if (path_is_launchable("/disk/bin/__no_instalado__"))
+    {
+        printf("PROGMAN SMOKE FAIL path_is_launchable con binario ausente\n");
+        return 1;
+    }
+
     progman_registry_load_defaults();
+    printf("PROGMAN SMOKE defaults groups=%d items=%d\n",
+        progman_group_count(),
+        progman_item_count());
+
+    /* Lo unico que el selftest del registro no puede fingir: que hace el
+     * pruning contra el disco REAL de esta imagen. Es lo que decide si el grupo
+     * Native (ports en Haxe) y Doom se muestran o no, porque se construyen con
+     * builds aparte y en un arbol limpio no estan instalados. */
+    dropped = progman_registry_prune_missing(path_is_launchable);
+    printf("PROGMAN SMOKE prune dropped=%d\n", dropped);
+    for (index = 0; index < progman_group_count(); ++index)
+    {
+        const struct progman_group *group = progman_group_at(index);
+        if (group != 0)
+        {
+            printf("PROGMAN SMOKE group %s items=%d\n", group->name, group->item_count);
+        }
+    }
+
     printf("PROGMAN SMOKE PASS groups=%d items=%d\n",
         progman_group_count(),
         progman_item_count());
@@ -581,6 +635,10 @@ int main(int argc, char **argv)
     }
 
     progman_registry_load();
+    /* Sacar del catalogo lo que no esta instalado: los ports en Haxe y Doom se
+     * construyen con builds APARTE, asi que en un arbol limpio sus entradas
+     * existen pero no lanzan nada. Aplica igual a los defaults y al .ini. */
+    (void)progman_registry_prune_missing(path_is_launchable);
     select_group(0);
 
     if (sxgui_app_init(&g_app, "progman", g_widgets, 0) < 0)

@@ -427,6 +427,69 @@ void progman_registry_load(void)
     progman_registry_load_defaults();
 }
 
+int progman_registry_prune_missing(progman_path_exists_fn exists)
+{
+    int group_remap[PROGMAN_MAX_GROUPS];
+    int read_index;
+    int write_index = 0;
+    int group_index;
+    int surviving_groups = 0;
+    int dropped = 0;
+
+    if (exists == 0)
+    {
+        return 0;
+    }
+
+    /* 1) Compactar los items que sobreviven, recontando por grupo. */
+    for (group_index = 0; group_index < g_group_count; ++group_index)
+    {
+        g_groups[group_index].item_count = 0;
+    }
+
+    for (read_index = 0; read_index < g_item_count; ++read_index)
+    {
+        if (!exists(g_items[read_index].path))
+        {
+            dropped += 1;
+            continue;
+        }
+
+        g_items[write_index] = g_items[read_index];
+        g_groups[g_items[write_index].group_index].item_count += 1;
+        write_index += 1;
+    }
+    g_item_count = write_index;
+
+    /* 2) Compactar los grupos que quedaron vacios, anotando el remapeo. */
+    for (group_index = 0; group_index < g_group_count; ++group_index)
+    {
+        if (g_groups[group_index].item_count == 0)
+        {
+            group_remap[group_index] = PROGMAN_GROUP_NONE;
+            continue;
+        }
+
+        group_remap[group_index] = surviving_groups;
+        if (surviving_groups != group_index)
+        {
+            g_groups[surviving_groups] = g_groups[group_index];
+        }
+        surviving_groups += 1;
+    }
+    g_group_count = surviving_groups;
+
+    /* 3) Reapuntar los items a los indices nuevos. Ningun item sobreviviente
+     * puede apuntar a un grupo descartado: un grupo se descarta justamente
+     * porque se quedo sin items. */
+    for (read_index = 0; read_index < g_item_count; ++read_index)
+    {
+        g_items[read_index].group_index = group_remap[g_items[read_index].group_index];
+    }
+
+    return dropped;
+}
+
 int progman_registry_source(void)
 {
     return g_source;
@@ -709,11 +772,83 @@ static void selftest_empty(void)
     expect(progman_item_count() > 0, "defaults repueblan");
 }
 
+/* Predicado falso: solo "existen" los paths de esta lista, asi el pruning se
+ * ejercita sin depender de que haya en el disco al correr el selftest. */
+static int fake_exists(const char *path)
+{
+    static const char *const kInstalled[] = {"/bin/a2", "/bin/c1"};
+    int index;
+
+    for (index = 0; index < (int)(sizeof(kInstalled) / sizeof(kInstalled[0])); ++index)
+    {
+        if (strcmp(path, kInstalled[index]) == 0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void selftest_prune(void)
+{
+    static const char kText[] =
+        "[group]\n"
+        "name=Alpha\n"
+        "[item]\n"
+        "name=A1\n"
+        "path=/bin/a1\n"
+        "[item]\n"
+        "name=A2\n"
+        "path=/bin/a2\n"
+        "[group]\n"
+        "name=Beta\n"
+        "[item]\n"
+        "name=B1\n"
+        "path=/bin/b1\n"
+        "[group]\n"
+        "name=Gamma\n"
+        "[item]\n"
+        "name=C1\n"
+        "path=/bin/c1\n";
+    const struct progman_item *item;
+    const struct progman_group *group;
+
+    expect(progman_registry_parse(kText, sizeof(kText) - 1) == 4, "prune fixture 4 items");
+    expect(progman_group_count() == 3, "prune fixture 3 grupos");
+
+    /* Se caen /bin/a1 y /bin/b1: Alpha se queda con un item y Beta, que pierde
+     * el unico que tenia, desaparece entero. */
+    expect(progman_registry_prune_missing(fake_exists) == 2, "prune descarta 2");
+    expect(progman_item_count() == 2, "prune deja 2 items");
+    expect(progman_group_count() == 2, "prune descarta el grupo vacio");
+
+    /* Gamma tiene que haber bajado del indice 2 al 1, y su item seguirlo. */
+    group = progman_group_at(0);
+    expect(group != 0 && strcmp(group->name, "Alpha") == 0, "prune conserva Alpha en 0");
+    group = progman_group_at(1);
+    expect(group != 0 && strcmp(group->name, "Gamma") == 0, "prune corre Gamma a 1");
+
+    item = progman_item_at(0);
+    expect(item != 0 && strcmp(item->path, "/bin/a2") == 0 && item->group_index == 0, "prune reapunta A2");
+    item = progman_item_at(1);
+    expect(item != 0 && strcmp(item->path, "/bin/c1") == 0 && item->group_index == 1, "prune reapunta C1");
+
+    /* group_item_at tiene que seguir coherente con los indices nuevos. */
+    item = progman_group_item_at(1, 0);
+    expect(item != 0 && strcmp(item->path, "/bin/c1") == 0, "prune group_item_at tras remapeo");
+
+    /* Un predicado nulo no toca nada; correrlo dos veces es idempotente. */
+    expect(progman_registry_prune_missing(0) == 0, "prune con predicado nulo");
+    expect(progman_registry_prune_missing(fake_exists) == 0, "prune idempotente");
+    expect(progman_item_count() == 2 && progman_group_count() == 2, "prune idempotente conserva");
+}
+
 int progman_registry_selftest(void)
 {
     g_selftest_failures = 0;
 
     selftest_defaults();
+    selftest_prune();
     selftest_well_formed();
     selftest_crlf_and_unknown();
     selftest_invalid_items();
