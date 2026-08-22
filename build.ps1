@@ -87,6 +87,8 @@ $KernelSources = @(
     "kernel/display.cpp",
     "kernel/ata.cpp",
     "kernel/ramdisk.cpp",
+    "kernel/nic.cpp",
+    "kernel/rtl8139.cpp",
     "kernel/pci.cpp",
     "kernel/input.cpp",
     "kernel/tty.cpp",

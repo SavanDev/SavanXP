@@ -7,12 +7,10 @@
 #include "kernel/cpu.hpp"
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
-#include "kernel/physical_memory.hpp"
-#include "kernel/pci.hpp"
+#include "kernel/nic.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
-#include "kernel/uacpi_glue.hpp"
 #include "savanxp/syscall.h"
 
 namespace net {
@@ -59,42 +57,6 @@ struct Socket {
 } // namespace net
 
 namespace {
-
-constexpr uint16_t kVendorRealtek = 0x10ecu;
-constexpr uint16_t kDeviceRtl8139 = 0x8139u;
-constexpr uint16_t kPciCommandOffset = 0x04;
-constexpr uint16_t kPciCommandIo = 1u << 0;
-constexpr uint16_t kPciCommandBusMaster = 1u << 2;
-
-constexpr uint16_t kRegMac0 = 0x00;
-constexpr uint16_t kRegTxStatus0 = 0x10;
-constexpr uint16_t kRegTxAddress0 = 0x20;
-constexpr uint16_t kRegRxBuffer = 0x30;
-constexpr uint16_t kRegCommand = 0x37;
-constexpr uint16_t kRegCapr = 0x38;
-constexpr uint16_t kRegCbr = 0x3a;
-constexpr uint16_t kRegIsr = 0x3e;
-constexpr uint16_t kRegImr = 0x3c;
-constexpr uint16_t kRegTcr = 0x40;
-constexpr uint16_t kRegRcr = 0x44;
-constexpr uint16_t kRegConfig1 = 0x52;
-
-constexpr uint8_t kCommandReset = 0x10;
-constexpr uint8_t kCommandRxEnable = 0x08;
-constexpr uint8_t kCommandTxEnable = 0x04;
-constexpr uint8_t kCommandRxBufferEmpty = 0x01;
-
-constexpr uint32_t kRxBufferSize = 8192;
-constexpr uint32_t kRxBufferBytes = kRxBufferSize + 16 + 1500;
-constexpr uint32_t kTxBufferBytes = 2048;
-constexpr uint16_t kRxOk = 0x0001;
-constexpr uint32_t kTxOk = 1u << 15;
-constexpr uint32_t kTxErr = 1u << 29;
-constexpr uint32_t kRcrWrap = 1u << 7;
-constexpr uint32_t kRcrAcceptAllPhysical = 1u << 0;
-constexpr uint32_t kRcrAcceptPhysical = 1u << 1;
-constexpr uint32_t kRcrAcceptMulticast = 1u << 2;
-constexpr uint32_t kRcrAcceptBroadcast = 1u << 3;
 
 constexpr uint16_t kEtherTypeArp = 0x0806;
 constexpr uint16_t kEtherTypeIpv4 = 0x0800;
@@ -182,28 +144,16 @@ device::Device g_device = {
     .can_read = nullptr,
 };
 
-pci::DeviceInfo g_pci_device = {};
-memory::PageAllocation g_rx_allocation = {};
-memory::PageAllocation g_tx_allocation[4] = {};
-uint16_t g_io_base = 0;
-uint16_t g_cur_rx = 0;
-uint8_t g_tx_index = 0;
-uint8_t g_mac[6] = {};
 uint8_t g_arp_mac[6] = {};
 uint32_t g_arp_ip = 0;
 uint32_t g_pending_ping_ip = 0;
 uint16_t g_pending_ping_sequence = 0;
 savanxp_net_ping_result g_pending_ping_result = {};
 uint32_t g_last_status = SAVANXP_NET_STATUS_UNKNOWN;
-uint32_t g_tx_frames = 0;
-uint32_t g_rx_frames = 0;
-uint32_t g_tx_errors = 0;
-uint32_t g_rx_errors = 0;
 uint32_t g_arp_requests = 0;
 uint32_t g_arp_timeouts = 0;
 uint32_t g_ping_requests = 0;
 uint32_t g_ping_timeouts = 0;
-bool g_present = false;
 bool g_up = false;
 bool g_ping_complete = false;
 bool g_ready = false;
@@ -215,35 +165,6 @@ constexpr uint32_t kConfiguredIpv4 = (10u << 24) | (0u << 16) | (2u << 8) | 15u;
 constexpr uint32_t kConfiguredMask = (255u << 24) | (255u << 16) | (255u << 8) | 0u;
 constexpr uint32_t kConfiguredGateway = (10u << 24) | (0u << 16) | (2u << 8) | 2u;
 
-inline void out8(uint16_t port, uint8_t value) {
-    asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline void out16(uint16_t port, uint16_t value) {
-    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline void out32(uint16_t port, uint32_t value) {
-    asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
-}
-
-inline uint8_t in8(uint16_t port) {
-    uint8_t value = 0;
-    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-inline uint16_t in16(uint16_t port) {
-    uint16_t value = 0;
-    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-inline uint32_t in32(uint16_t port) {
-    uint32_t value = 0;
-    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
 
 int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
@@ -358,58 +279,6 @@ void wait_for_tick() {
     arch::x86_64::disable_interrupts();
 }
 
-bool wait_for_clear_reset() {
-    for (uint32_t spin = 0; spin < 100000; ++spin) {
-        if ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandReset) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void clear_interrupt_status() {
-    const uint16_t status = in16(static_cast<uint16_t>(g_io_base + kRegIsr));
-    if (status != 0) {
-        out16(static_cast<uint16_t>(g_io_base + kRegIsr), status);
-    }
-}
-
-bool transmit_frame(const void* frame, size_t length) {
-    if (!g_up || frame == nullptr || length == 0 || length > kTxBufferBytes) {
-        ++g_tx_errors;
-        set_status(SAVANXP_NET_STATUS_TX_FAILED);
-        return false;
-    }
-
-    const size_t tx_slot = g_tx_index % 4;
-    auto* tx_buffer = static_cast<uint8_t*>(g_tx_allocation[tx_slot].virtual_address);
-    const size_t wire_length = length < 60 ? 60 : length;
-    memset(tx_buffer, 0, wire_length);
-    memcpy(tx_buffer, frame, length);
-
-    out32(static_cast<uint16_t>(g_io_base + kRegTxAddress0 + tx_slot * 4), static_cast<uint32_t>(g_tx_allocation[tx_slot].physical_address));
-    out32(static_cast<uint16_t>(g_io_base + kRegTxStatus0 + tx_slot * 4), static_cast<uint32_t>(wire_length));
-
-    for (uint32_t spin = 0; spin < 200000; ++spin) {
-        const uint32_t status = in32(static_cast<uint16_t>(g_io_base + kRegTxStatus0 + tx_slot * 4));
-        if ((status & kTxOk) != 0) {
-            net_log("net: tx ok slot=%u len=%u status=%x\n", (unsigned)tx_slot, (unsigned)wire_length, (unsigned)status);
-            ++g_tx_frames;
-            g_tx_index = static_cast<uint8_t>((g_tx_index + 1) % 4);
-            return true;
-        }
-        if ((status & kTxErr) != 0) {
-            net_log("net: tx err slot=%u status=%x\n", (unsigned)tx_slot, (unsigned)status);
-            ++g_tx_errors;
-            set_status(SAVANXP_NET_STATUS_TX_FAILED);
-            return false;
-        }
-    }
-    net_log("net: tx timeout slot=%u\n", (unsigned)tx_slot);
-    ++g_tx_errors;
-    set_status(SAVANXP_NET_STATUS_TX_TIMEOUT);
-    return false;
-}
 
 bool send_arp(uint16_t operation, const uint8_t* target_mac, uint32_t sender_ip, uint32_t target_ip) {
     uint8_t frame[64] = {};
@@ -424,7 +293,7 @@ bool send_arp(uint16_t operation, const uint8_t* target_mac, uint32_t sender_ip,
         memset(arp->target_mac, 0x00, 6);
     }
 
-    memcpy(ethernet->source, g_mac, 6);
+    memcpy(ethernet->source, nic::mac_address(), 6);
     ethernet->type = host_to_be16(kEtherTypeArp);
 
     arp->hardware_type = host_to_be16(kArpHardwareEthernet);
@@ -432,7 +301,7 @@ bool send_arp(uint16_t operation, const uint8_t* target_mac, uint32_t sender_ip,
     arp->hardware_size = 6;
     arp->protocol_size = 4;
     arp->operation = host_to_be16(operation);
-    memcpy(arp->sender_mac, g_mac, 6);
+    memcpy(arp->sender_mac, nic::mac_address(), 6);
     arp->sender_ip = host_to_be32(sender_ip);
     arp->target_ip = host_to_be32(target_ip);
 
@@ -441,7 +310,7 @@ bool send_arp(uint16_t operation, const uint8_t* target_mac, uint32_t sender_ip,
         set_status(SAVANXP_NET_STATUS_ARP_RESOLVING);
     }
 
-    return transmit_frame(frame, sizeof(EthernetHeader) + sizeof(ArpPacket));
+    return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(ArpPacket));
 }
 
 bool send_icmp_echo(uint32_t destination_ip, const uint8_t* destination_mac, uint16_t sequence, uint16_t payload_size) {
@@ -456,7 +325,7 @@ bool send_icmp_echo(uint32_t destination_ip, const uint8_t* destination_mac, uin
     uint8_t* payload = frame + sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(IcmpEchoHeader);
 
     memcpy(ethernet->destination, destination_mac, 6);
-    memcpy(ethernet->source, g_mac, 6);
+    memcpy(ethernet->source, nic::mac_address(), 6);
     ethernet->type = host_to_be16(kEtherTypeIpv4);
 
     ipv4->version_ihl = 0x45;
@@ -484,7 +353,7 @@ bool send_icmp_echo(uint32_t destination_ip, const uint8_t* destination_mac, uin
     ipv4->checksum = host_to_be16(compute_checksum(ipv4, sizeof(Ipv4Header)));
     set_status(SAVANXP_NET_STATUS_ICMP_SENT);
 
-    return transmit_frame(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(IcmpEchoHeader) + payload_size);
+    return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(IcmpEchoHeader) + payload_size);
 }
 
 bool send_icmp_reply(
@@ -505,7 +374,7 @@ bool send_icmp_reply(
     uint8_t* out_payload = frame + sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(IcmpEchoHeader);
 
     memcpy(out_eth->destination, ethernet.source, 6);
-    memcpy(out_eth->source, g_mac, 6);
+    memcpy(out_eth->source, nic::mac_address(), 6);
     out_eth->type = host_to_be16(kEtherTypeIpv4);
 
     *out_ipv4 = ipv4;
@@ -522,7 +391,7 @@ bool send_icmp_reply(
     out_icmp->checksum = host_to_be16(compute_checksum(out_icmp, sizeof(IcmpEchoHeader) + payload_size));
     out_ipv4->checksum = host_to_be16(compute_checksum(out_ipv4, sizeof(Ipv4Header)));
 
-    return transmit_frame(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(IcmpEchoHeader) + payload_size);
+    return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(IcmpEchoHeader) + payload_size);
 }
 
 void remember_arp(uint32_t ip, const uint8_t* mac) {
@@ -720,7 +589,7 @@ bool send_tcp_segment(
     uint8_t* out_payload = frame + sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader);
 
     memcpy(ethernet->destination, g_arp_mac, 6);
-    memcpy(ethernet->source, g_mac, 6);
+    memcpy(ethernet->source, nic::mac_address(), 6);
     ethernet->type = host_to_be16(kEtherTypeIpv4);
 
     ipv4->version_ihl = 0x45;
@@ -750,7 +619,7 @@ bool send_tcp_segment(
 
     tcp->checksum = host_to_be16(compute_transport_checksum(kConfiguredIpv4, destination_ip, kIpProtocolTcp, tcp, sizeof(TcpHeader) + payload_length));
     ipv4->checksum = host_to_be16(compute_checksum(ipv4, sizeof(Ipv4Header)));
-    return transmit_frame(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader) + payload_length);
+    return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader) + payload_length);
 }
 
 bool send_udp_datagram(
@@ -772,7 +641,7 @@ bool send_udp_datagram(
     uint8_t* out_payload = frame + sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader);
 
     memcpy(ethernet->destination, destination_mac, 6);
-    memcpy(ethernet->source, g_mac, 6);
+    memcpy(ethernet->source, nic::mac_address(), 6);
     ethernet->type = host_to_be16(kEtherTypeIpv4);
 
     ipv4->version_ihl = 0x45;
@@ -793,7 +662,7 @@ bool send_udp_datagram(
 
     memcpy(out_payload, payload, payload_length);
     ipv4->checksum = host_to_be16(compute_checksum(ipv4, sizeof(Ipv4Header)));
-    return transmit_frame(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader) + payload_length);
+    return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader) + payload_length);
 }
 
 void handle_arp(const EthernetHeader&, const uint8_t* payload, size_t length) {
@@ -1004,74 +873,18 @@ void process_frame(const uint8_t* frame, size_t length) {
     }
 }
 
-// Estado del camino interrupt-driven (INTx via _PRT/IOAPIC).
-volatile uint32_t g_irq_count = 0;
-bool g_irq_routed = false;
-
-// Salva/deshabilita y restaura IF localmente. poll_receive corre tanto desde el
-// handler de INTx (contexto de IRQ) como desde el main (polling/service). Envolver
-// su seccion critica con esto la vuelve atomica en monocore: mientras el main
-// drena el ring, el IRQ del NIC no puede preemptarlo (evita corromper g_cur_rx).
-inline uint64_t irq_save() {
-    uint64_t f;
-    asm volatile("pushfq; pop %0; cli" : "=r"(f)::"memory");
-    return f;
-}
-inline void irq_restore(uint64_t f) {
-    asm volatile("push %0; popfq" ::"r"(f) : "memory", "cc");
+// Callbacks con los que el driver del NIC habla hacia arriba: un frame
+// Ethernet crudo entra por aca, y los estados que solo el driver puede
+// diagnosticar (TX_FAILED, RX_INVALID, ...) llegan por set_status.
+void on_frame(const uint8_t* data, size_t length) {
+    process_frame(data, length);
 }
 
-void poll_receive() {
-    if (!g_up) {
-        return;
-    }
+const nic::Events kNicEvents = {
+    &on_frame,
+    &set_status,
+};
 
-    const uint64_t flags = irq_save();
-    clear_interrupt_status();
-    auto* rx = static_cast<uint8_t*>(g_rx_allocation.virtual_address);
-    while ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandRxBufferEmpty) == 0) {
-        uint8_t* packet = rx + g_cur_rx;
-        const uint16_t status = *reinterpret_cast<uint16_t*>(packet + 0);
-        const uint16_t length = *reinterpret_cast<uint16_t*>(packet + 2);
-        net_log(
-            "net: rx status=%x len=%u cur=%u cbr=%u cmd=%x\n",
-            (unsigned)status,
-            (unsigned)length,
-            (unsigned)g_cur_rx,
-            (unsigned)in16(static_cast<uint16_t>(g_io_base + kRegCbr)),
-            (unsigned)in8(static_cast<uint16_t>(g_io_base + kRegCommand))
-        );
-        if ((status & kRxOk) == 0 || length < 4) {
-            net_log("net: rx invalid status=%x len=%u\n", (unsigned)status, (unsigned)length);
-            ++g_rx_errors;
-            set_status(SAVANXP_NET_STATUS_RX_INVALID);
-            break;
-        }
-
-        const size_t frame_length = static_cast<size_t>(length - 4);
-        ++g_rx_frames;
-        process_frame(packet + 4, frame_length);
-
-        g_cur_rx = static_cast<uint16_t>((g_cur_rx + length + 4 + 3) & ~3u);
-        g_cur_rx %= kRxBufferSize;
-        out16(
-            static_cast<uint16_t>(g_io_base + kRegCapr),
-            static_cast<uint16_t>(g_cur_rx == 0 ? 0xfff0u : (g_cur_rx - 16u))
-        );
-    }
-    irq_restore(flags);
-}
-
-// Handler de la INTx del rtl8139 (ruteada por _PRT -> IOAPIC). Sirve el device
-// (drena RX + limpia el ISR, desasertando la linea level-triggered) para no
-// generar tormenta. Corre en contexto de IRQ.
-void net_irq_handler() {
-    g_irq_count = g_irq_count + 1;
-    if (g_irq_count == 1) {
-        console::write("net: primer INTx recibido via IOAPIC (interrupt-driven ok)\n");
-    }
-    poll_receive();
-}
 
 bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms) {
     if (g_arp_ip == target_ip) {
@@ -1094,7 +907,7 @@ bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms) {
 
     const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (true) {
-        poll_receive();
+        nic::poll_receive();
         if (g_arp_ip == target_ip) {
             return true;
         }
@@ -1110,8 +923,11 @@ bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms) {
     }
 }
 
+// Sube la interfaz. El driver hace lo suyo (reset, buffers, RX/TX enable)
+// y aca queda solo el estado de red: cache ARP limpia y el status que ve
+// userland.
 bool bring_up() {
-    if (!g_present) {
+    if (!nic::present()) {
         set_status(SAVANXP_NET_STATUS_NO_DEVICE);
         return false;
     }
@@ -1120,80 +936,18 @@ bool bring_up() {
         return true;
     }
 
-    if (g_io_base == 0) {
-        g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
-    }
-    if (g_io_base == 0) {
-        set_status(SAVANXP_NET_STATUS_BRING_UP_FAILED);
+    if (!nic::bring_up()) {
+        // El driver ya reporto el motivo puntual por Events::status.
         return false;
     }
 
-    uint16_t command = pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset);
-    command = static_cast<uint16_t>(command | kPciCommandIo | kPciCommandBusMaster);
-    pci::write_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset, command);
-
-    if (g_rx_allocation.physical_address == 0 && !memory::allocate_contiguous_pages((kRxBufferBytes + memory::kPageSize - 1) / memory::kPageSize, g_rx_allocation)) {
-        set_status(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-        return false;
-    }
-    memset(g_rx_allocation.virtual_address, 0, g_rx_allocation.page_count * memory::kPageSize);
-
-    for (size_t index = 0; index < 4; ++index) {
-        if (g_tx_allocation[index].physical_address == 0 && !memory::allocate_page(g_tx_allocation[index])) {
-            set_status(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-            return false;
-        }
-        memset(g_tx_allocation[index].virtual_address, 0, memory::kPageSize);
-    }
-
-    out8(static_cast<uint16_t>(g_io_base + kRegConfig1), 0x00);
-    out8(static_cast<uint16_t>(g_io_base + kRegCommand), kCommandReset);
-    if (!wait_for_clear_reset()) {
-        set_status(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-        return false;
-    }
-
-    for (uint8_t index = 0; index < 6; ++index) {
-        g_mac[index] = in8(static_cast<uint16_t>(g_io_base + kRegMac0 + index));
-    }
-
-    out32(static_cast<uint16_t>(g_io_base + kRegRxBuffer), static_cast<uint32_t>(g_rx_allocation.physical_address));
-    out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x0000);
-    out16(static_cast<uint16_t>(g_io_base + kRegIsr), 0xffff);
-    out32(static_cast<uint16_t>(g_io_base + kRegTcr), 0x03000700u);
-    out32(
-        static_cast<uint16_t>(g_io_base + kRegRcr),
-        kRcrWrap | kRcrAcceptAllPhysical | kRcrAcceptPhysical | kRcrAcceptMulticast | kRcrAcceptBroadcast
-    );
-    out16(static_cast<uint16_t>(g_io_base + kRegCapr), 0xfff0);
-    out8(static_cast<uint16_t>(g_io_base + kRegCommand), static_cast<uint8_t>(kCommandRxEnable | kCommandTxEnable));
-
-    g_cur_rx = 0;
     g_arp_ip = 0;
     memset(g_arp_mac, 0, sizeof(g_arp_mac));
     g_up = true;
-
-    // Si la INTx quedo ruteada (en initialize), habilitar las interrupciones del
-    // rtl8139 (ROK|TOK|RER|TER) => interrupt-driven. Si no, IMR=0 y seguimos en
-    // polling (fallback). El IMR ya se puso en 0 arriba (linea kRegImr).
-    if (g_irq_routed) {
-        out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x000F);
-    }
-
     set_status(SAVANXP_NET_STATUS_READY);
-    net_log(
-        "net: up io=%x irq=%u mac=%x:%x:%x:%x:%x:%x\n",
-        (unsigned)g_io_base,
-        (unsigned)g_pci_device.irq_line,
-        (unsigned)g_mac[0],
-        (unsigned)g_mac[1],
-        (unsigned)g_mac[2],
-        (unsigned)g_mac[3],
-        (unsigned)g_mac[4],
-        (unsigned)g_mac[5]
-    );
     return true;
 }
+
 
 int net_ioctl(uint64_t request, uint64_t argument) {
     switch (request) {
@@ -1202,19 +956,21 @@ int net_ioctl(uint64_t request, uint64_t argument) {
                 return negative_error(SAVANXP_EINVAL);
             }
 
+            nic::Stats stats = {};
+            nic::get_stats(stats);
             savanxp_net_info info = {};
-            info.present = g_present ? 1u : 0u;
+            info.present = nic::present() ? 1u : 0u;
             info.up = g_up ? 1u : 0u;
-            info.link = (g_present && g_up) ? 1u : 0u;
-            memcpy(info.mac, g_mac, sizeof(g_mac));
+            info.link = (nic::present() && g_up) ? 1u : 0u;
+            memcpy(info.mac, nic::mac_address(), sizeof(info.mac));
             info.ipv4 = kConfiguredIpv4;
             info.netmask = kConfiguredMask;
             info.gateway = kConfiguredGateway;
             info.last_status = g_last_status;
-            info.tx_frames = g_tx_frames;
-            info.rx_frames = g_rx_frames;
-            info.tx_errors = g_tx_errors;
-            info.rx_errors = g_rx_errors;
+            info.tx_frames = stats.tx_frames;
+            info.rx_frames = stats.rx_frames;
+            info.tx_errors = stats.tx_errors;
+            info.rx_errors = stats.rx_errors;
             info.arp_requests = g_arp_requests;
             info.arp_timeouts = g_arp_timeouts;
             info.ping_requests = g_ping_requests;
@@ -1222,7 +978,7 @@ int net_ioctl(uint64_t request, uint64_t argument) {
             return process::copy_to_user(argument, &info, sizeof(info)) ? 0 : negative_error(SAVANXP_EINVAL);
         }
         case NET_IOC_UP:
-            return bring_up() ? 0 : negative_error(g_present ? SAVANXP_EIO : SAVANXP_ENODEV);
+            return bring_up() ? 0 : negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
         case NET_IOC_PING: {
             if (!process::validate_user_range(argument, sizeof(savanxp_net_ping_request), false)) {
                 return negative_error(SAVANXP_EINVAL);
@@ -1236,7 +992,7 @@ int net_ioctl(uint64_t request, uint64_t argument) {
                 return negative_error(SAVANXP_EINVAL);
             }
             if (!bring_up()) {
-                return negative_error(g_present ? SAVANXP_EIO : SAVANXP_ENODEV);
+                return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
             }
 
             const uint32_t next_hop = same_subnet(kConfiguredIpv4, request_data.ipv4) ? request_data.ipv4 : kConfiguredGateway;
@@ -1257,7 +1013,7 @@ int net_ioctl(uint64_t request, uint64_t argument) {
             const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
             const uint32_t timeout_ms = request_data.timeout_ms != 0 ? request_data.timeout_ms : 1000u;
             while (true) {
-                poll_receive();
+                nic::poll_receive();
                 if (g_ping_complete) {
                     const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
                     g_pending_ping_result.elapsed_ms = static_cast<uint32_t>(now_ms - start_ms);
@@ -1351,7 +1107,7 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
         return negative_error(SAVANXP_EINVAL);
     }
     if (!bring_up()) {
-        return negative_error(g_present ? SAVANXP_EIO : SAVANXP_ENODEV);
+        return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
     }
 
     savanxp_sockaddr_in address = {};
@@ -1391,7 +1147,7 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     const uint32_t effective_timeout = timeout_ms != 0 ? timeout_ms : 3000u;
     const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (!socket->connected) {
-        poll_receive();
+        nic::poll_receive();
         if (socket->tcp_state == net::TcpState::closed && socket->fin_received) {
             return negative_error(SAVANXP_EIO);
         }
@@ -1416,7 +1172,7 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
         return negative_error(SAVANXP_EINVAL);
     }
     if (!bring_up()) {
-        return negative_error(g_present ? SAVANXP_EIO : SAVANXP_ENODEV);
+        return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
     }
 
     savanxp_sockaddr_in address = {};
@@ -1459,7 +1215,7 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
         return negative_error(SAVANXP_EINVAL);
     }
     if (!bring_up()) {
-        return negative_error(g_present ? SAVANXP_EIO : SAVANXP_ENODEV);
+        return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
     }
 
     const int bind_result = ensure_socket_bound(socket);
@@ -1469,7 +1225,7 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
 
     const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (true) {
-        poll_receive();
+        nic::poll_receive();
 
         UdpPacket packet = {};
         if (dequeue_udp_packet(*socket, packet)) {
@@ -1512,7 +1268,7 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonbloc
 
     uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (socket->rx_size == 0) {
-        poll_receive();
+        nic::poll_receive();
         if (socket->rx_size != 0) {
             break;
         }
@@ -1566,7 +1322,7 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
 
     const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (socket->send_unacked < socket->send_next) {
-        poll_receive();
+        nic::poll_receive();
         if (socket->send_unacked >= socket->send_next) {
             break;
         }
@@ -1617,19 +1373,11 @@ void initialize() {
     g_device.ioctl = net_ioctl;
     g_ready = device::register_node("/dev/net0", &g_device, true);
 
-    g_present = pci::find_device(kVendorRealtek, kDeviceRtl8139, g_pci_device);
-    if (g_present) {
-        g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
-        // Rutear la INTx del NIC via _PRT/IOAPIC (una vez, al detectarlo). El
-        // handler queda registrado; el device recien asertara INTx cuando bring_up
-        // habilite el IMR. Si falla, g_irq_routed=false y se usa polling.
-        const uint8_t vec = uacpi_glue::route_pci_intx(
-            g_pci_device.bus, g_pci_device.slot, g_pci_device.function, net_irq_handler);
-        g_irq_routed = (vec != 0);
-        set_status(SAVANXP_NET_STATUS_IDLE);
-    } else {
-        set_status(SAVANXP_NET_STATUS_NO_DEVICE);
-    }
+    // El NIC ya lo ato nic::bind_best() desde kernel_main; aca solo se
+    // enganchan los callbacks por los que el driver entrega frames y reporta
+    // sus propias fallas.
+    nic::attach(kNicEvents);
+    set_status(nic::present() ? SAVANXP_NET_STATUS_IDLE : SAVANXP_NET_STATUS_NO_DEVICE);
 }
 
 bool ready() {
@@ -1637,11 +1385,11 @@ bool ready() {
 }
 
 bool present() {
-    return g_present;
+    return nic::present();
 }
 
 void poll() {
-    poll_receive();
+    nic::poll_receive();
 }
 
 } // namespace net

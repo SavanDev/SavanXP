@@ -20,6 +20,7 @@
 #include "kernel/input.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/net.hpp"
+#include "kernel/nic.hpp"
 #include "kernel/panic.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
@@ -28,6 +29,7 @@
 #include "kernel/process.hpp"
 #include "kernel/ps2.hpp"
 #include "kernel/ramdisk.hpp"
+#include "kernel/rtl8139.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/svfs.hpp"
 #include "kernel/timer.hpp"
@@ -211,6 +213,18 @@ namespace
         console::printf("audio: ningun driver reclamo hardware de sonido\n");
     }
     audio_device::initialize();
+    // NIC: mismo registro por prioridad que display y audio. El probe deja el
+    // device reconocido y le rutea la INTx, pero no lo levanta: la subida real
+    // la pide net:: cuando alguien hace NET_IOC_UP sobre /dev/net0.
+    nic::register_driver(rtl8139::driver());
+    if (const nic::Driver* bound = nic::bind_best())
+    {
+        console::printf("nic: driver '%s'\n", bound->name);
+    }
+    else
+    {
+        console::write("nic: ningun driver reclamo el hardware\n");
+    }
     net::initialize();
     // Almacenamiento: mismo registro de drivers que display y audio, pero aca
     // los devices de todos COEXISTEN, asi que probe_all corre todos los

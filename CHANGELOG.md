@@ -115,6 +115,31 @@ Notas de corte:
   caso LiveCD) enumera `livecd`, `svfs` lo monta y la suite corre entera desde
   ahi — incluido leer `/disk/bin/gputest` y `/disk/bin/audiotest` — en PASS.
 
+- **El driver del NIC sale del stack de red: `nic::Nic` + `kernel/rtl8139.cpp`.**
+  Cierra el patron de registro de drivers en la ultima familia que faltaba, pero
+  aca el registro era el ultimo paso y no el primero: `net.cpp` no tenia ninguna
+  de las dos mitades. El rtl8139 estaba **fusionado** con el stack —
+  `transmit_frame` se llamaba directo desde los caminos de ARP, ICMP, TCP y UDP,
+  y el estado del chip (`g_io_base`, los buffers de TX, el `pci::DeviceInfo`)
+  vivia en el mismo namespace anonimo que las tablas de sockets TCP. Ahora
+  `nic::Nic` es una vtable (`attach`/`bring_up`/`is_up`/`mac_address`/
+  `transmit`/`poll_receive`/`get_stats`) que es **todo** lo que el stack sabe del
+  hardware: del otro lado no se filtran registros, puertos de I/O ni el layout
+  del ring de recepcion. El driver habla hacia arriba por `nic::Events`, con un
+  callback de frame recibido y otro de estado para los diagnosticos que solo el
+  puede hacer (`TX_FAILED`, `TX_TIMEOUT`, `RX_INVALID`, `BRING_UP_FAILED`); el
+  resto de los estados — ARP, ping, READY/IDLE — se los queda el stack.
+  `kernel/rtl8139.cpp` se lleva el chip completo (PCI, reset, ring, los 4 slots
+  de TX, el handler de INTx ruteada por _PRT/IOAPIC y su fallback a polling) y
+  `kernel/nic.cpp` es el dispatcher con el mismo `register_driver`/`bind_best`
+  por prioridad que display y audio. `net.cpp` baja de 1647 a 1395 lineas y
+  queda como stack L3/L4 puro, sin una sola referencia a `pci::`, `memory::` ni
+  a un registro del chip. Nuevo log de boot: `nic: driver 'rtl8139'`. La API
+  publica de `net::` no cambia. Verificado con el `net-smoke` que se escribio
+  justo antes para esto: mismos resultados que antes de mover una linea —
+  `mac=52:54:0:12:34:56`, tres replies con `ttl=255` y `frames tx 0->4 rx 0->4`
+  — mas `build.ps1 smoke` y `build.ps1 windowd-smoke` en PASS.
+
 ### Corregido
 
 - **SCI ruteada dos veces: el boton de power no apagaba la maquina.**
