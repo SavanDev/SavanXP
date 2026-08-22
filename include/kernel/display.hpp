@@ -5,6 +5,12 @@
 
 #include "savanxp/syscall.h"
 
+// Solo se pasa por referencia a los probes: los consumidores de display.hpp no
+// necesitan arrastrar la definicion completa de boot_info.
+namespace boot {
+struct FramebufferInfo;
+}
+
 namespace display {
 
 // Vtable de operaciones dependientes de hardware. Cada backend (virtio-gpu, framebuffer
@@ -44,6 +50,36 @@ struct Backend {
     int (*create_scanout_event)();
 };
 
+// Un driver de display candidato. El core no conoce a ninguno por nombre: cada
+// driver se registra y bind_best() corre los probes en orden de prioridad,
+// quedandose con el primero que reclame el hardware. Agregar un backend nuevo
+// pasa a ser una linea de register_driver() en vez de una rama en kernel_main.
+struct Driver {
+    const char* name;
+    // Mayor gana. El orden de registro no importa.
+    int priority;
+    // Inicializa el driver y responde si reclama el hardware. bind_best() corta
+    // en el primer true, asi que un driver descartado por prioridad nunca llega
+    // a inicializarse: es exactamente lo que hoy hace a mano el else de
+    // kernel_main al no tocar fb_gpu cuando virtio-gpu esta presente.
+    bool (*probe)(const boot::FramebufferInfo& framebuffer);
+    // Solo valido despues de un probe() que devolvio true.
+    const Backend& (*backend)();
+};
+
+constexpr size_t kMaxDrivers = 8;
+
+// false si la tabla esta llena o el driver viene incompleto.
+bool register_driver(const Driver& driver);
+// Corre los probes por prioridad descendente y ata el backend del primero que
+// reclama el hardware. Devuelve el driver elegido, o nullptr si ninguno lo hizo
+// (en cuyo caso no queda backend atado y display::ready() sigue en false).
+const Driver* bind_best(const boot::FramebufferInfo& framebuffer);
+// El driver que ato bind_best(), o nullptr.
+const Driver* bound_driver();
+
+// Mecanismo de bajo nivel detras de bind_best(). Queda expuesto para los
+// caminos que atan un backend a mano (arranques headless, pruebas).
 void set_backend(const Backend& backend);
 
 bool ready();

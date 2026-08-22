@@ -59,6 +59,32 @@ Notas de corte:
   build en Linux/macOS (no en Windows): `make` + un compilador `cc` en el
   `PATH`.
 
+- **Los backends de display y audio se eligen por registro de drivers, no por
+  ramas en `kernel_main`.** Los dos HAL ya tenian la mitad polimorfica (las
+  vtables `display::Backend` / `audio::Backend`), pero la seleccion vivia como
+  un `if/else` en `kernel_main` que conocia a los cuatro drivers por nombre:
+  sumar un backend obligaba a tocar el flujo de arranque. Ahora cada HAL tiene
+  un registro (`register_driver` / `bind_best`) y cada driver se auto-describe
+  con un `driver()` al lado de su `backend()`: un `Driver` con nombre,
+  prioridad, `probe` (que hace su propio `initialize` y responde si reclama el
+  hardware) y el getter del backend. `bind_best` corre los probes por prioridad
+  descendente y corta en el primero que reclama, asi que un driver descartado
+  por prioridad nunca llega a inicializarse — que es exactamente lo que hacia a
+  mano el `else` al no tocar `fb_gpu` cuando virtio-gpu estaba presente.
+  Prioridades: virtio-gpu 100 / framebuffer 10, virtio-sound 100 / ac97 50.
+  `set_backend` sigue expuesto como mecanismo de bajo nivel para los caminos
+  que atan un backend a mano (arranques headless, pruebas). Nuevos logs de
+  boot: `display: backend '<nombre>'` y `audio: backend '<nombre>'`. Unico
+  cambio de comportamiento: el probe de `fb_gpu` devuelve su `ready()` (que
+  exige scanout lineal de 32bpp de tamano no nulo) en vez de reclamar el
+  hardware siempre, asi que en una maquina sin framebuffer usable no queda
+  ningun backend atado en lugar de quedar atado uno muerto — equivalente para
+  los consumidores, que ya pasaban todos por `display::ready()`, y `gpu_device`
+  registra `/dev/gpu0` igual en los dos casos. Verificado en las dos
+  configuraciones de hardware: la base (VGA std + AC97) elige `framebuffer` +
+  `ac97`, y `-Virtio` elige `virtio-gpu` + `virtio-sound` sin inicializar ac97;
+  `build.ps1 smoke` (base y `-Virtio`) y `build.ps1 windowd-smoke` en PASS.
+
 ### Corregido
 
 - **VirtualBox con I/O APIC activado no terminaba de arrancar: soporte xAPIC

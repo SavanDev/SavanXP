@@ -669,4 +669,23 @@ const audio::Backend& backend() {
     return g_backend;
 }
 
+namespace {
+// Prioridad alta: espejo de virtio-gpu frente al framebuffer plano.
+constexpr int kDriverPriority = 100;
+
+bool driver_probe() {
+    initialize();
+    return ready();
+}
+
+const audio::Driver kDriver = {
+    "virtio-sound",
+    kDriverPriority,
+    &driver_probe,
+    &backend,
+};
+} // namespace
+
+const audio::Driver& driver() { return kDriver; }
+
 } // namespace virtio_sound

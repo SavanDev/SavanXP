@@ -173,40 +173,40 @@ namespace
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
     boot_screen::show(68, "Preparando display");
-    virtio_gpu::initialize(boot_info.framebuffer);
-    // Elegir el backend de display: virtio-gpu si el probe PCI lo encontro, si no
-    // el framebuffer plano sobre el scanout lineal de Limine (caso VirtualBox/VGA).
-    // El nodo /dev/gpu0 lo registra gpu_device sobre el backend elegido.
-    if (virtio_gpu::ready())
+    // Elegir el backend de display: cada driver se registra y bind_best corre
+    // sus probes por prioridad, quedandose con el primero que reclame el
+    // hardware (virtio-gpu si el probe PCI lo encontro, si no el framebuffer
+    // plano sobre el scanout lineal de Limine, caso VirtualBox/VGA). Sumar un
+    // backend nuevo es una linea mas aca y no una rama nueva. El nodo /dev/gpu0
+    // lo registra gpu_device sobre el backend elegido.
+    display::register_driver(virtio_gpu::driver());
+    display::register_driver(fb_gpu::driver());
+    if (const display::Driver* bound = display::bind_best(boot_info.framebuffer))
     {
-        display::set_backend(virtio_gpu::backend());
+        console::printf("display: backend '%s'\n", bound->name);
     }
     else
     {
-        fb_gpu::initialize(boot_info.framebuffer);
-        display::set_backend(fb_gpu::backend());
+        console::printf("display: ningun driver reclamo el hardware\n");
     }
     gpu_device::initialize();
     ui::initialize(boot_info.framebuffer);
     boot_screen::show(80, "Inicializando dispositivos");
     pcspeaker::initialize();
     power::initialize();
-    // Backend de audio: virtio-sound si el probe PCI lo encontro. El fallback a
-    // AC97 (VirtualBox) se engancha aca cuando exista, espejando el patron de
-    // display (virtio-gpu / fb_gpu). audio_device registra /dev/audio0 sobre el
-    // backend elegido, o no lo registra si no hay hardware de sonido.
-    virtio_sound::initialize();
-    if (virtio_sound::ready())
+    // Backend de audio: mismo registro por prioridad que display. virtio-sound
+    // gana si el probe PCI lo encontro; si no, AC97 (el caso VirtualBox).
+    // audio_device registra /dev/audio0 sobre el backend elegido, o no lo
+    // registra si ningun driver reclamo hardware de sonido.
+    audio::register_driver(virtio_sound::driver());
+    audio::register_driver(ac97::driver());
+    if (const audio::Driver* bound = audio::bind_best())
     {
-        audio::set_backend(virtio_sound::backend());
+        console::printf("audio: backend '%s'\n", bound->name);
     }
     else
     {
-        ac97::initialize();
-        if (ac97::ready())
-        {
-            audio::set_backend(ac97::backend());
-        }
+        console::printf("audio: ningun driver reclamo hardware de sonido\n");
     }
     audio_device::initialize();
     net::initialize();

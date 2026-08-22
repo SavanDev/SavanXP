@@ -10,6 +10,8 @@ namespace virtio_gpu {
 
 void initialize(const boot::FramebufferInfo& framebuffer);
 const display::Backend& backend();
+// Descriptor para el registro de display::. Su probe hace el initialize.
+const display::Driver& driver();
 bool ready();
 bool present();
 void poll();

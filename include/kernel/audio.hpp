@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "savanxp/syscall.h"
@@ -24,6 +25,31 @@ struct Backend {
     void (*stop)();
 };
 
+// Driver de audio candidato, espejo de display::Driver. Los probes corren por
+// prioridad y el primero que reclama el hardware se lleva el backend; si
+// ninguno lo hace no queda backend atado y audio_device no registra /dev/audio0.
+struct Driver {
+    const char* name;
+    // Mayor gana. El orden de registro no importa.
+    int priority;
+    // Inicializa el driver y responde si reclama el hardware. bind_best() corta
+    // en el primer true: un driver descartado por prioridad no se inicializa.
+    bool (*probe)();
+    // Solo valido despues de un probe() que devolvio true.
+    const Backend& (*backend)();
+};
+
+constexpr size_t kMaxDrivers = 8;
+
+// false si la tabla esta llena o el driver viene incompleto.
+bool register_driver(const Driver& driver);
+// Corre los probes por prioridad descendente y ata el backend del primero que
+// reclama el hardware. Devuelve el driver elegido, o nullptr si no hay sonido.
+const Driver* bind_best();
+// El driver que ato bind_best(), o nullptr.
+const Driver* bound_driver();
+
+// Mecanismo de bajo nivel detras de bind_best().
 void set_backend(const Backend& backend);
 
 bool ready();

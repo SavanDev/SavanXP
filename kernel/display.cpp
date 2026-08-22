@@ -7,9 +7,54 @@ namespace display {
 namespace {
 const Backend* g_backend = nullptr;
 savanxp_fb_info g_empty_fb_info = {};
+
+const Driver* g_drivers[kMaxDrivers] = {};
+size_t g_driver_count = 0;
+const Driver* g_bound_driver = nullptr;
 } // namespace
 
 void set_backend(const Backend& backend) { g_backend = &backend; }
+
+bool register_driver(const Driver& driver) {
+    if (g_driver_count >= kMaxDrivers || driver.probe == nullptr || driver.backend == nullptr) {
+        return false;
+    }
+    g_drivers[g_driver_count] = &driver;
+    ++g_driver_count;
+    return true;
+}
+
+const Driver* bind_best(const boot::FramebufferInfo& framebuffer) {
+    // Seleccion directa sobre el array en vez de ordenarlo: son un punado de
+    // drivers y asi la tabla registrada queda intacta. Cada vuelta toma el de
+    // mayor prioridad que todavia no se probo.
+    bool probed[kMaxDrivers] = {};
+    for (size_t attempt = 0; attempt < g_driver_count; ++attempt) {
+        size_t best = kMaxDrivers;
+        for (size_t i = 0; i < g_driver_count; ++i) {
+            if (probed[i]) {
+                continue;
+            }
+            if (best == kMaxDrivers || g_drivers[i]->priority > g_drivers[best]->priority) {
+                best = i;
+            }
+        }
+        if (best == kMaxDrivers) {
+            break;
+        }
+
+        probed[best] = true;
+        const Driver* candidate = g_drivers[best];
+        if (candidate->probe(framebuffer)) {
+            set_backend(candidate->backend());
+            g_bound_driver = candidate;
+            return candidate;
+        }
+    }
+    return nullptr;
+}
+
+const Driver* bound_driver() { return g_bound_driver; }
 
 bool ready() { return g_backend != nullptr && g_backend->ready(); }
 void poll() { if (g_backend != nullptr) { g_backend->poll(); } }

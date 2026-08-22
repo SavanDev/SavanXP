@@ -12,5 +12,7 @@ namespace ac97 {
 void initialize();
 bool ready();
 const audio::Backend& backend();
+// Descriptor para el registro de audio::. Su probe hace el initialize.
+const audio::Driver& driver();
 
 } // namespace ac97

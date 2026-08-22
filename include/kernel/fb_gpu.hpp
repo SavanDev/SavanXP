@@ -12,5 +12,8 @@ namespace fb_gpu {
 // el compositor usa su cursor por software y la resolucion nativa fija.
 void initialize(const boot::FramebufferInfo& framebuffer);
 const display::Backend& backend();
+// Descriptor para el registro de display::. Su probe hace el initialize y solo
+// reclama el hardware si el firmware dejo un scanout lineal usable.
+const display::Driver& driver();
 
 } // namespace fb_gpu

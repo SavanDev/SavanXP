@@ -427,4 +427,23 @@ const audio::Backend& backend() {
     return g_backend;
 }
 
+namespace {
+// Prioridad media: fallback de audio cuando no hay virtio-sound (VirtualBox).
+constexpr int kDriverPriority = 50;
+
+bool driver_probe() {
+    initialize();
+    return ready();
+}
+
+const audio::Driver kDriver = {
+    "ac97",
+    kDriverPriority,
+    &driver_probe,
+    &backend,
+};
+} // namespace
+
+const audio::Driver& driver() { return kDriver; }
+
 } // namespace ac97

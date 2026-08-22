@@ -3854,4 +3854,23 @@ const display::Backend kBackend = {
 
 const display::Backend& backend() { return kBackend; }
 
+namespace {
+// Prioridad alta: si el device paravirtual esta, es el camino que queremos.
+constexpr int kDriverPriority = 100;
+
+bool driver_probe(const boot::FramebufferInfo& framebuffer) {
+    initialize(framebuffer);
+    return ready();
+}
+
+const display::Driver kDriver = {
+    "virtio-gpu",
+    kDriverPriority,
+    &driver_probe,
+    &backend,
+};
+} // namespace
+
+const display::Driver& driver() { return kDriver; }
+
 } // namespace virtio_gpu

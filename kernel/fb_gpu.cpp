@@ -519,4 +519,26 @@ const display::Backend& backend() {
     return kBackend;
 }
 
+namespace {
+// Prioridad baja: es el fallback, solo gana si no hubo nada paravirtual.
+constexpr int kDriverPriority = 10;
+
+bool driver_probe(const boot::FramebufferInfo& framebuffer) {
+    initialize(framebuffer);
+    // ready() ya exige scanout lineal de 32bpp con tamano no nulo, asi que en
+    // una maquina sin framebuffer utilizable este driver declina en vez de
+    // atarse igual y dejar un backend muerto.
+    return ready();
+}
+
+const display::Driver kDriver = {
+    "framebuffer",
+    kDriverPriority,
+    &driver_probe,
+    &backend,
+};
+} // namespace
+
+const display::Driver& driver() { return kDriver; }
+
 } // namespace fb_gpu
