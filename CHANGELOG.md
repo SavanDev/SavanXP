@@ -166,6 +166,33 @@ Notas de corte:
   (`prune dropped=N` y los grupos que sobreviven), que es la parte que ningun
   predicado falso puede cubrir.
 
+### Agregado
+
+- **`svfs-cli rm`: por fin se puede sacar algo de una imagen SVFS2.** El sync del
+  build es **aditivo y nunca borra**, y el tool solo tenia `create` y `apply`, asi
+  que lo que se instalaba una vez quedaba en `build/disk.img` para siempre: la
+  unica forma de sacar un binario era recrear la imagen entera, lo que se lleva
+  puesto tambien `/disk/bin/doomgeneric` y el WAD de Freedoom (las rutas que el
+  build protege como persistentes). Nuevo `svfs_remove()` en el core compartido:
+  libera los extents y el inodo, y saca la entrada del directorio padre
+  compactando el array de entradas. Solo archivos y **directorios vacios** — el
+  borrado recursivo es politica del llamador, no del core — y la raiz no se
+  borra. A diferencia de `svfs_write_file`, **no** crea los padres que falten:
+  borrar bajo un directorio inexistente es `NOT_FOUND`, no una invitacion a
+  `mkdir`. El orden importa y es deliberado: primero se reescribe el directorio
+  padre y **recien despues** se liberan inodo y bloques, asi un fallo a mitad de
+  camino deja el inodo todavia referenciado en vez de una entrada apuntando a un
+  inodo liberado. En el CLI, `svfs-cli rm <imagen> <ruta> [<ruta>...]` con la
+  misma convencion de rutas que el manifiesto (relativas a la raiz de SVFS, sin
+  el prefijo `/disk` del guest) tolerando una `/` inicial. Verificado sobre
+  copias de una imagen real: casos de error (ruta inexistente, directorio no
+  vacio, raiz, uso incorrecto) con su codigo de salida, borrado por ambas formas
+  de ruta, idempotencia (reborrar da `NOT_FOUND`), el resto de la imagen intacto
+  (`doomgeneric` y `smoke` sin tocar), la imagen sigue pasando
+  `Assert-Svfs2Consistency`, y el bitmap de bloques libera **exactamente** los
+  350 sectores de los dos archivos borrados — o sea que los extents se liberan y
+  no se filtran.
+
 ### Corregido
 
 - **SCI ruteada dos veces: el boton de power no apagaba la maquina.**

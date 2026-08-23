@@ -508,6 +508,120 @@ int svfs_mkdir_p(struct svfs_ctx* ctx, const char* relpath) {
     return SVFS_OK;
 }
 
+/* Un directorio esta vacio si no le queda ninguna entrada viva. */
+static int dir_is_empty(struct svfs_ctx* ctx, uint32_t dir_id, int* out_empty) {
+    struct svfs_dir_entry entries[SVFS_MAX_RECORDS];
+    uint32_t count = 0;
+    int rc = read_dir_entries(ctx, dir_id, entries, &count);
+    if (rc != SVFS_OK) {
+        return rc;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        if (entries[i].inode_id != 0) {
+            *out_empty = 0;
+            return SVFS_OK;
+        }
+    }
+    *out_empty = 1;
+    return SVFS_OK;
+}
+
+int svfs_remove(struct svfs_ctx* ctx, const char* relpath) {
+    if (relpath == NULL || *relpath == '\0') {
+        /* La raiz no se borra. */
+        return SVFS_ERR_INVALID;
+    }
+
+    /* Separa parent/leaf en la ultima '/', igual que svfs_write_file. */
+    const char* leaf = relpath;
+    for (const char* c = relpath; *c != '\0'; ++c) {
+        if (*c == '/') {
+            leaf = c + 1;
+        }
+    }
+    size_t leaf_len = strlen(leaf);
+    if (leaf_len == 0) {
+        return SVFS_ERR_INVALID;
+    }
+
+    uint32_t parent = SVFS_ROOT_INODE;
+    if (leaf != relpath) {
+        size_t parent_len = (size_t)(leaf - relpath - 1);
+        char parent_path[256];
+        if (parent_len >= sizeof(parent_path)) {
+            return SVFS_ERR_TOO_LONG;
+        }
+        memcpy(parent_path, relpath, parent_len);
+        parent_path[parent_len] = '\0';
+
+        uint16_t ptype = 0;
+        int prc = resolve_path(ctx, parent_path, &parent, &ptype);
+        if (prc != SVFS_OK) {
+            return prc;
+        }
+        if (ptype != SVFS_INODE_DIRECTORY) {
+            return SVFS_ERR_NOT_FOUND;
+        }
+    }
+
+    struct svfs_dir_entry entries[SVFS_MAX_RECORDS];
+    uint32_t count = 0;
+    int rc = read_dir_entries(ctx, parent, entries, &count);
+    if (rc != SVFS_OK) {
+        return rc;
+    }
+
+    uint32_t slot = count;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (name_matches(&entries[i], leaf, leaf_len)) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == count) {
+        return SVFS_ERR_NOT_FOUND;
+    }
+
+    const uint32_t victim_id = entries[slot].inode_id;
+    struct svfs_inode* victim = inode_at(ctx, victim_id);
+    if (victim == NULL) {
+        return SVFS_ERR_INVALID;
+    }
+
+    if (victim->type == SVFS_INODE_DIRECTORY) {
+        int empty = 0;
+        rc = dir_is_empty(ctx, victim_id, &empty);
+        if (rc != SVFS_OK) {
+            return rc;
+        }
+        if (!empty) {
+            return SVFS_ERR_EXISTS;
+        }
+    }
+
+    /* Saca la entrada compactando el array y reescribe el directorio con un
+     * registro menos. write_inode_bytes cerea el resto de los sectores del
+     * extent, asi que la entrada sobrante no queda de fantasma. La capacidad
+     * del directorio no se achica: igual que en el resto del core, los extents
+     * solo crecen. */
+    for (uint32_t i = slot + 1; i < count; ++i) {
+        entries[i - 1] = entries[i];
+    }
+    count -= 1;
+    rc = write_inode_bytes(ctx, parent, (const uint8_t*)entries, count * SVFS_DIR_ENTRY_SIZE);
+    if (rc != SVFS_OK) {
+        return rc;
+    }
+
+    /* Recien con el padre ya reescrito se liberan los recursos: si el rewrite
+     * hubiera fallado, el inodo seguiria referenciado y no habria ni fuga de
+     * bloques ni una entrada apuntando a un inodo liberado. */
+    set_inode_extent_bits(ctx, victim, 0);
+    svfs_bitmap_set(ctx->inode_bitmap, victim_id - 1, 0);
+    memset(victim, 0, sizeof(*victim));
+    return SVFS_OK;
+}
+
 int svfs_write_file(struct svfs_ctx* ctx, const char* relpath, const void* data, uint32_t size) {
     if (relpath == NULL || *relpath == '\0') {
         return SVFS_ERR_INVALID;

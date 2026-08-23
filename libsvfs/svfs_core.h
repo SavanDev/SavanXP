@@ -87,6 +87,17 @@ int svfs_mkdir_p(struct svfs_ctx* ctx, const char* relpath);
  * los directorios padre que falten. */
 int svfs_write_file(struct svfs_ctx* ctx, const char* relpath, const void* data, uint32_t size);
 
+/* Borra `relpath` (relativo a la raiz): libera los extents y el inodo, y saca
+ * la entrada del directorio padre. Llamar svfs_flush para persistir.
+ *
+ * Solo archivos y directorios VACIOS. Un directorio con contenido devuelve
+ * SVFS_ERR_EXISTS: el borrado recursivo es politica del llamador, no del core.
+ * La raiz no se puede borrar (SVFS_ERR_INVALID).
+ *
+ * A diferencia de svfs_write_file, NO crea los padres que falten: borrar algo
+ * bajo un directorio inexistente es SVFS_ERR_NOT_FOUND. */
+int svfs_remove(struct svfs_ctx* ctx, const char* relpath);
+
 #ifdef __cplusplus
 }
 #endif

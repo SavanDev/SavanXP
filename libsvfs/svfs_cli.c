@@ -16,6 +16,11 @@
  *           mkdir <ruta_relativa>
  *           file  <ruta_relativa>\t<archivo_host>
  *       Las rutas son relativas a la raiz de SVFS (sin prefijo /disk).
+ *   svfs-cli rm     <imagen> <ruta> [<ruta>...]
+ *       Borra archivos o directorios vacios. Es la contraparte de apply, que
+ *       es aditivo y nunca borra: sin esto la unica forma de sacar algo de una
+ *       imagen es recrearla desde cero. Misma convencion de rutas, tolerando
+ *       una '/' inicial.
  *
  * Codigos de salida: 0 ok, 1 error, 2 uso incorrecto, 3 el allocator se quedo
  * sin corrida contigua (ver SVFS_CLI_EXIT_NO_SPACE).
@@ -267,11 +272,64 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
     return status;
 }
 
+/* Borra una o mas rutas de la imagen. Las rutas siguen la convencion del
+ * manifiesto -- relativas a la raiz de SVFS, sin el prefijo /disk del guest --
+ * y se tolera una '/' inicial por comodidad: "bin/x" y "/bin/x" son lo mismo,
+ * y ambos son el "/disk/bin/x" que ve el SO. */
+static int cmd_rm(const char* image_path, char** paths, int path_count) {
+    FILE* image = fopen(image_path, "rb+");
+    if (image == NULL) {
+        fprintf(stderr, "svfs-cli: no existe la imagen '%s'.\n", image_path);
+        return 1;
+    }
+
+    struct svfs_ctx ctx;
+    svfs_ctx_init(&ctx, image, file_read, file_write);
+    int rc = svfs_open(&ctx);
+    if (rc != SVFS_OK) {
+        fprintf(stderr, "svfs-cli: '%s' no es una imagen SVFS2 valida: %s.\n",
+                image_path, svfs_strerror(rc));
+        fclose(image);
+        return 1;
+    }
+
+    int status = 0;
+    int removed = 0;
+    for (int i = 0; i < path_count; ++i) {
+        const char* relpath = paths[i];
+        while (*relpath == '/') {
+            ++relpath;
+        }
+
+        rc = svfs_remove(&ctx, relpath);
+        if (rc != SVFS_OK) {
+            fprintf(stderr, "svfs-cli: rm '%s': %s.\n", paths[i], svfs_strerror(rc));
+            status = exit_code_for(rc);
+            continue;
+        }
+        removed += 1;
+    }
+
+    /* Se persiste lo que si se pudo borrar aunque alguna ruta haya fallado: el
+     * core ya dejo la metadata en memoria consistente para esas. */
+    if (removed > 0) {
+        rc = svfs_flush(&ctx);
+        if (rc != SVFS_OK) {
+            fprintf(stderr, "svfs-cli: fallo el flush: %s.\n", svfs_strerror(rc));
+            status = exit_code_for(rc);
+        }
+    }
+
+    fclose(image);
+    return status;
+}
+
 static void usage(void) {
     fprintf(stderr,
         "Uso:\n"
         "  svfs-cli create <imagen> <total_sectores>\n"
-        "  svfs-cli apply  <imagen> <manifiesto>\n");
+        "  svfs-cli apply  <imagen> <manifiesto>\n"
+        "  svfs-cli rm     <imagen> <ruta> [<ruta>...]\n");
 }
 
 int main(int argc, char** argv) {
@@ -297,6 +355,13 @@ int main(int argc, char** argv) {
             return 2;
         }
         return cmd_apply(argv[2], argv[3]);
+    }
+    if (strcmp(argv[1], "rm") == 0) {
+        if (argc < 4) {
+            usage();
+            return 2;
+        }
+        return cmd_rm(argv[2], &argv[3], argc - 3);
     }
     usage();
     return 2;
