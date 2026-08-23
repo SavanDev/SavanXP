@@ -21,7 +21,7 @@
  * Las estructuras que viajan por estos canales (savanxp_gpu_client_surface_
  * header, savanxp_gpu_dirty_rect_batch, savanxp_input_event,
  * savanxp_gui_pointer_event, savanxp_desktop_launch_request,
- * savanxp_desktop_cursor_hint) estan en syscall.h.
+ * savanxp_desktop_cursor_hint, savanxp_desktop_size_hint) estan en syscall.h.
  *
  * NOTA sobre el subsistema nativo: por diseno no comparte los headers del SDK
  * posix (ver docs/SYSTEM_LAYERING.md), asi que mantiene su espejo en
@@ -31,7 +31,8 @@
 
 /* Seccion compartida de la superficie: header + anillo de dirty-rect batches +
  * pixeles. El cliente la mapea RW. El WM la crea y la dimensiona; el cliente
- * NO elige su tamano (se entera por el header, y por eventos RESIZED). */
+ * NO elige su tamano (se entera por el header, y por eventos RESIZED); puede
+ * sugerirlo al arrancar por SAVANXP_WM_FD_SIZE_HINT, pero decide el WM. */
 #define SAVANXP_WM_FD_SECTION 3
 
 /* Teclado: el WM escribe savanxp_input_event al cliente con foco. Tambien
@@ -67,8 +68,15 @@
  * forma de cursor sobre su ventana. El WM decide si la muestra. */
 #define SAVANXP_WM_FD_CURSOR_HINT 10
 
-/* Rango reservado: descriptores 0..2 son stdio y 3..10 este protocolo. Al
+/* Size hint: el cliente escribe savanxp_desktop_size_hint para pedir el tamano
+ * de area util que necesita su contenido. El WM sigue siendo el que dimensiona
+ * la superficie -- recorta el pedido y lo ignora si la ventana ya salio de su
+ * geometria de lanzamiento --, pero el tamano natural de una ventana lo sabe
+ * el programa, que es quien conoce su layout. */
+#define SAVANXP_WM_FD_SIZE_HINT 11
+
+/* Rango reservado: descriptores 0..2 son stdio y 3..11 este protocolo. Al
  * preparar el hijo, el WM no debe cerrar por numero un fd de origen que caiga
  * dentro del rango -- puede ser el destino recien mapeado de otro dup2. */
 #define SAVANXP_WM_FD_FIRST SAVANXP_WM_FD_SECTION
-#define SAVANXP_WM_FD_LAST SAVANXP_WM_FD_CURSOR_HINT
+#define SAVANXP_WM_FD_LAST SAVANXP_WM_FD_SIZE_HINT

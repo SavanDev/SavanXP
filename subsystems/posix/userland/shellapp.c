@@ -10,6 +10,10 @@
 #define SHELLAPP_MARGIN_Y 14
 #define SHELLAPP_HEADER_HEIGHT 30
 #define SHELLAPP_LINE_HEIGHT 18
+/* La terminal se mide en celdas, no en pixeles: 80x24 es el tamano clasico y
+ * el que asumen casi todos los programas de consola al formatear su salida. */
+#define SHELLAPP_CONTENT_COLUMNS 80
+#define SHELLAPP_CONTENT_ROWS 24
 #define SHELLAPP_CURSOR_PERIOD_MS 500UL
 #define SHELLAPP_PRESENT_INTERVAL_MS 16UL
 
@@ -374,6 +378,18 @@ int main(void) {
         puts_fd(2, "shellapp: gfx_acquire failed\n");
         gfx_close(&g_shellapp.gfx);
         return 1;
+    }
+
+    /* Pedir la ventana que necesita la grilla de texto. El WM puede recortar
+     * el pedido, asi que el tamano real se lee despues de que lo aplique -- el
+     * loop principal ya sincroniza gfx.info con el header en cada vuelta. */
+    if (gfx_request_content_size(
+            &g_shellapp.gfx,
+            (uint32_t)((2 * SHELLAPP_MARGIN_X) + (SHELLAPP_CONTENT_COLUMNS * gfx_cell_width())),
+            (uint32_t)(SHELLAPP_HEADER_HEIGHT + (2 * SHELLAPP_MARGIN_Y) +
+                ((SHELLAPP_CONTENT_ROWS + 1) * SHELLAPP_LINE_HEIGHT))) == 0)
+    {
+        (void)gfx_wait_content_size(&g_shellapp.gfx, 250UL);
     }
 
     g_shellapp.frame = g_shellapp.gfx.pixels != 0 ? g_shellapp.gfx.pixels : g_backbuffer;

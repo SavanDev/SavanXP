@@ -652,6 +652,17 @@ struct savanxp_desktop_cursor_hint {
     uint32_t shape; /* enum savanxp_cursor_shape */
 };
 
+/* Tamano de area util (el "contenido") que el programa pide para su ventana.
+ * Es una SUGERENCIA: el WM la recorta a la capacidad de la superficie y la
+ * ignora una vez que la ventana dejo de estar en la geometria de lanzamiento
+ * (maximizada, fullscreen o redimensionada a mano), porque a partir de ahi
+ * manda el usuario. Existe porque el tamano natural de una ventana lo sabe el
+ * programa -- es su layout --, no el WM. */
+struct savanxp_desktop_size_hint {
+    uint32_t width;
+    uint32_t height;
+};
+
 enum savanxp_mouse_button {
     SAVANXP_MOUSE_BUTTON_LEFT = 1u << 0,
     SAVANXP_MOUSE_BUTTON_RIGHT = 1u << 1,

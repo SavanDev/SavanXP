@@ -114,6 +114,8 @@ int main(void)
     {
         return 1;
     }
+    /* Layout fijo: la ventana es exactamente lo que ocupan los widgets. */
+    (void)sxgui_app_autosize(&g_app);
     g_app.on_key = on_key;
     return sxgui_app_run(&g_app);
 }

@@ -146,6 +146,12 @@ function main() {
     untyped __cpp__("sxn_exit(2)");
   }
 
+  // La ventana la pide la app: su layout es fijo (456x434) y el WM, que no lo
+  // conoce, le daria la superficie generica del escritorio.
+  if (untyped __cpp__("(int)sxn_gui_request_content_size(456u, 434u)") == 0) {
+    untyped __cpp__("sxn_gui_wait_content_size(250)");
+  }
+
   var ancho:Int = untyped __cpp__("(int)sxn_gui_width()");
   var alto:Int = untyped __cpp__("(int)sxn_gui_height()");
   var stride:Int = untyped __cpp__("(int)sxn_gui_stride_pixels()");

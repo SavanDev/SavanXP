@@ -191,6 +191,8 @@ int main(void)
     {
         return 1;
     }
+    /* Layout fijo: la ventana es exactamente lo que ocupa la galeria. */
+    (void)sxgui_app_autosize(&g_app);
     sxgui_set_menubar(&g_app.ui, &g_menubar);
     return sxgui_app_run(&g_app);
 }

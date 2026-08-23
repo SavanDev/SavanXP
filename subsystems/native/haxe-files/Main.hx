@@ -356,6 +356,12 @@ function main() {
     untyped __cpp__("sxn_exit(2)");
   }
 
+  // Mismo tamano que la version en C: dos paneles (lista + preview) sin
+  // comerse la pantalla. El layout se arma abajo con lo que conceda el WM.
+  if (untyped __cpp__("(int)sxn_gui_request_content_size(640u, 420u)") == 0) {
+    untyped __cpp__("sxn_gui_wait_content_size(250)");
+  }
+
   var ancho:Int = untyped __cpp__("(int)sxn_gui_width()");
   var alto:Int = untyped __cpp__("(int)sxn_gui_height()");
   var stride:Int = untyped __cpp__("(int)sxn_gui_stride_pixels()");

@@ -269,9 +269,37 @@ struct sxgui_app {
     void *user;
 };
 
+/* Margen que sxgui_app_autosize deja alrededor del bounding box de los widgets
+ * al pedirle su tamano a la ventana. */
+#define SXGUI_CONTENT_MARGIN 16
+
+/* Bounding box de los widgets: el borde derecho e inferior mas lejano. Es el
+ * tamano que ocupa el contenido de una app de layout fijo. Devuelve 0 en
+ * ambos si no hay ningun rect util (apps que calculan su layout a partir del
+ * tamano de la ventana arrancan con todos los rects en cero). */
+void sxgui_content_bounds(const struct sxgui_widget *widgets, int widget_count, int *width, int *height);
+
 /* Open the gfx session and bind the widget array. On failure writes
- * "<name>: ..." to fd 2, leaves everything closed and returns < 0. */
+ * "<name>: ..." to fd 2, leaves everything closed and returns < 0.
+ *
+ * No toca el tamano de la ventana: el WM la abre con su superficie generica y
+ * es la app la que pide el suyo -- el tamano natural de una ventana lo sabe la
+ * app, que conoce su layout, no el WM. Elegir UNA de las dos:
+ *
+ *   sxgui_app_autosize()          layout fijo: el bounding box de los widgets
+ *   sxgui_app_set_content_size()  cualquier otro tamano que la app decida
+ *
+ * La segunda existe justamente porque el bounding box no siempre es la
+ * respuesta: progman es un launcher y quiere lugar para crecer, filesapp
+ * estira sus paneles con la ventana y arranca con los rects en cero. */
 int sxgui_app_init(struct sxgui_app *app, const char *name, struct sxgui_widget *widgets, int widget_count);
+/* Pide un area util de width x height y espera brevemente a que el WM la
+ * aplique, para no mostrar un primer frame con el tamano viejo. Devuelve 1 si
+ * el WM ya la aplico, 0 si no llego a tiempo (llega despues como RESIZED). */
+int sxgui_app_set_content_size(struct sxgui_app *app, int width, int height);
+/* Pide el bounding box de los widgets + SXGUI_CONTENT_MARGIN. No hace nada si
+ * los widgets todavia no tienen layout (todos los rects en cero). */
+int sxgui_app_autosize(struct sxgui_app *app);
 void sxgui_app_request_repaint(struct sxgui_app *app);
 void sxgui_app_quit(struct sxgui_app *app, int exit_code);
 /* Blocks until the app quits; releases the gfx session and returns exit_code. */

@@ -27,7 +27,14 @@ struct windowd_client
     int shutdown_event_fd;
     int launch_read_fd;
     int cursor_hint_read_fd;
+    int size_hint_read_fd;
     int last_cursor_hint_shape;
+    /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
+     * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
+     * el indice de cascada del launch para poder recolocarla despues de
+     * cambiarle el tamano: centrarla con el tamano viejo la dejaria corrida. */
+    int size_hint_applied;
+    int cascade_index;
     void *mapped_view;
     struct savanxp_gpu_client_surface_header *header;
     struct savanxp_gpu_dirty_rect_batch *command_batches;

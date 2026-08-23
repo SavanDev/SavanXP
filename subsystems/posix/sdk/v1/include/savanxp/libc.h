@@ -102,6 +102,7 @@ struct savanxp_gfx_context {
     int shutdown_event_fd;
     int launch_fd;
     int cursor_hint_fd;
+    int size_hint_fd;
     int mode;
     void* mapped_view;
     uint32_t* pixels;
@@ -133,6 +134,17 @@ long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* p
  * equivale a pasar SAVANXP_DESKTOP_LAUNCH_FLAG_NONE. */
 long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags);
 long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape);
+/* Pide el tamano de area util que necesita el contenido de la ventana. Es una
+ * sugerencia: el WM la recorta y solo la atiende mientras la ventana siga en
+ * la geometria con la que se lanzo (ver savanxp/wm_protocol.h). El cambio
+ * llega despues, como cualquier resize, por gfx_poll_event/RESIZED. */
+long gfx_request_content_size(const struct savanxp_gfx_context* context, uint32_t width, uint32_t height);
+/* Espera hasta timeout_ms a que el WM aplique un cambio de tamano y lo vuelca
+ * en context->info. Devuelve 1 si llego, 0 si vencio el plazo. Sirve para que
+ * una app no muestre un primer frame con el tamano viejo despues de pedir el
+ * suyo; el evento RESIZED igual queda consumido, asi que no hace falta
+ * volver a aplicarlo. */
+long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long timeout_ms);
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);
 size_t gfx_buffer_pixels(const struct savanxp_fb_info* info);

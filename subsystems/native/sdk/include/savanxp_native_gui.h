@@ -100,6 +100,13 @@ struct sxn_gui_launch_request {
     char path[SXN_GUI_LAUNCH_PATH_CAPACITY];
 };
 
+/* Tamano de area util que el cliente pide por el fd 11 para su contenido.
+ * Espejo de savanxp_desktop_size_hint del SDK posix. */
+struct sxn_gui_size_hint {
+    uint32_t width;
+    uint32_t height;
+};
+
 /* Fds fijos que el shell instala antes del exec del cliente. */
 #define SXN_GUI_FD_SECTION 3
 #define SXN_GUI_FD_INPUT 4
@@ -108,6 +115,8 @@ struct sxn_gui_launch_request {
 #define SXN_GUI_FD_RETIRE_EVENT 7
 #define SXN_GUI_FD_SHUTDOWN_EVENT 8
 #define SXN_GUI_FD_LAUNCH 9
+#define SXN_GUI_FD_CURSOR_HINT 10
+#define SXN_GUI_FD_SIZE_HINT 11
 
 /* --- API del runtime ---------------------------------------------------------
  * Una sesion de ventana por proceso (estado global en sx_gui.c): suficiente
@@ -152,6 +161,16 @@ int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event);
  * escribiendo el pedido por el fd 9. Devuelve 0, o negativo si el path no
  * sirve / falla la escritura. Espejo de gfx_desktop_launch del SDK posix. */
 long sxn_gui_launch(const char *path);
+
+/* Pide el area util que necesita el contenido de la ventana. Es una
+ * sugerencia: el WM la recorta y solo la atiende mientras la ventana siga en
+ * la geometria del launch (ver savanxp/wm_protocol.h en el SDK posix, que es
+ * la fuente canonica del protocolo). */
+long sxn_gui_request_content_size(unsigned int width, unsigned int height);
+/* Espera hasta timeout_ms a que el WM aplique un cambio de tamano. Devuelve 1
+ * si llego, 0 si vencio el plazo. Despues, sxn_gui_width/height ya devuelven
+ * el tamano nuevo. */
+long sxn_gui_wait_content_size(long timeout_ms);
 
 /* --- Texto (fuente Noto horneada, compartida con posix) ----------------------
  * Render de texto para el toolkit del escritorio (Fase 3). Dibujan sobre un

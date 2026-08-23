@@ -345,6 +345,43 @@ long sxn_gui_launch(const char *path) {
     return written == (long)sizeof(request) ? 0 : -SXN_GUI_EPIPE;
 }
 
+long sxn_gui_request_content_size(unsigned int width, unsigned int height) {
+    struct sxn_gui_size_hint hint;
+    long written;
+
+    if (!g_gui.open || width == 0 || height == 0) {
+        return -SXN_GUI_EINVAL;
+    }
+
+    hint.width = width;
+    hint.height = height;
+    written = sxn_write(SXN_GUI_FD_SIZE_HINT, (const char *)&hint, (int)sizeof(hint));
+    return written == (long)sizeof(hint) ? 0 : -SXN_GUI_EPIPE;
+}
+
+long sxn_gui_wait_content_size(long timeout_ms) {
+    long waited = 0;
+
+    if (!g_gui.open) {
+        return -SXN_GUI_EINVAL;
+    }
+
+    while (waited < timeout_ms) {
+        if (g_gui.header->info.width != g_gui.notified_width ||
+            g_gui.header->info.height != g_gui.notified_height) {
+            /* El WM escribe ancho y alto por separado: una pausa corta evita
+             * quedarse con la mitad del par. */
+            sxn_gui_sleep_ms(2);
+            g_gui.notified_width = g_gui.header->info.width;
+            g_gui.notified_height = g_gui.header->info.height;
+            return 1;
+        }
+        sxn_gui_sleep_ms(2);
+        waited += 2;
+    }
+    return 0;
+}
+
 /* Utilidad para demos: dormir sin quemar CPU. */
 void sxn_sleep_ms(long milliseconds) {
     sxn_gui_sleep_ms(milliseconds);

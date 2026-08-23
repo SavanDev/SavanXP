@@ -92,6 +92,26 @@ static void draw_crosshair(struct savanxp_gfx_context* gfx, int x, int y) {
     gfx_rect(g_backbuffer, &gfx->info, x - 2, y - 2, 5, 5, gfx_rgb(14, 88, 161));
 }
 
+/* El panel de lecturas fija el ancho; abajo queda una zona libre para mover el
+ * puntero, que es de lo que se trata la prueba. Alto del panel = las cuatro
+ * lineas completas; estaba en 98 y le cortaba la ultima por dos pixeles. */
+#define MOUSETEST_PANEL_TOP 54
+#define MOUSETEST_PANEL_HEIGHT 104
+#define MOUSETEST_PLAYGROUND_HEIGHT 200
+
+static void request_content_size(struct savanxp_gfx_context* gfx) {
+    int text_width = gfx_text_width("Move the mouse, click buttons, ESC exits");
+    uint32_t width = (uint32_t)(40 + text_width + 40);
+    uint32_t height = (uint32_t)(MOUSETEST_PANEL_TOP + MOUSETEST_PANEL_HEIGHT + MOUSETEST_PLAYGROUND_HEIGHT);
+
+    if (width < 420u) {
+        width = 420u;
+    }
+    if (gfx_request_content_size(gfx, width, height) == 0) {
+        (void)gfx_wait_content_size(gfx, 250UL);
+    }
+}
+
 static void draw_scene(struct savanxp_gfx_context* gfx, int cursor_x, int cursor_y, int delta_x, int delta_y, uint32_t buttons) {
     char line0[64];
     char line1[64];
@@ -106,8 +126,8 @@ static void draw_scene(struct savanxp_gfx_context* gfx, int cursor_x, int cursor
     gfx_hline(g_backbuffer, &gfx->info, 0, 34, (int)gfx->info.width, gfx_rgb(145, 201, 236));
     gfx_blit_text(g_backbuffer, &gfx->info, 36, 10, "SavanXP mouse test", gfx_rgb(255, 255, 255));
 
-    gfx_rect(g_backbuffer, &gfx->info, 24, 54, (int)gfx->info.width - 48, 98, gfx_rgb(225, 232, 238));
-    gfx_frame(g_backbuffer, &gfx->info, 24, 54, (int)gfx->info.width - 48, 98, gfx_rgb(60, 90, 120));
+    gfx_rect(g_backbuffer, &gfx->info, 24, MOUSETEST_PANEL_TOP, (int)gfx->info.width - 48, MOUSETEST_PANEL_HEIGHT, gfx_rgb(225, 232, 238));
+    gfx_frame(g_backbuffer, &gfx->info, 24, MOUSETEST_PANEL_TOP, (int)gfx->info.width - 48, MOUSETEST_PANEL_HEIGHT, gfx_rgb(60, 90, 120));
     gfx_blit_text(g_backbuffer, &gfx->info, 40, 70, "Move the mouse, click buttons, ESC exits", gfx_rgb(0, 0, 0));
     gfx_blit_text(g_backbuffer, &gfx->info, 40, 92, line0, gfx_rgb(0, 0, 0));
     gfx_blit_text(g_backbuffer, &gfx->info, 40, 114, line1, gfx_rgb(0, 0, 0));
@@ -150,6 +170,7 @@ int main(void) {
         gfx_close(&gfx);
         return 1;
     }
+    request_content_size(&gfx);
 
     cursor_x = 0;
     cursor_y = 0;

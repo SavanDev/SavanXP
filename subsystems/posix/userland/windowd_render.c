@@ -499,9 +499,16 @@ struct windowd_layer
  * cursor = 10; +11 deja margen. */
 #define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + 11)
 
+/* Un cliente se compone recien cuando publico su PRIMER frame. Antes de eso su
+ * superficie esta en blanco y su geometria todavia puede cambiar -- una app
+ * pide el tamano de su contenido durante el arranque (size hint, fd 11) --, asi
+ * que dibujarla antes muestra por unos milisegundos una ventana vacia del
+ * tamano generico que enseguida encoge. Mientras tanto el usuario igual tiene
+ * feedback: any_overlay_client_starting() pone el cursor en WAIT. */
 static int client_is_drawable(const struct windowd_client *client)
 {
-    return client != 0 && client->pid > 0 && client->pixels != 0 && !client->minimized;
+    return client != 0 && client->pid > 0 && client->pixels != 0 &&
+        !client->minimized && client->consumed_submit_sequence > 0;
 }
 
 static struct sx_rect client_occluder_rect(const struct windowd_client *client)
@@ -658,8 +665,7 @@ static int build_layers(
      * de mas atras. Si no esta listo (boot antes del primer frame, o murio),
      * windowd lo dibuja el mismo como fallback para no dejar el fondo sin
      * pintar. Ya no hay capa de iconos ni taskbar encima. */
-    if (client_is_drawable(&session->background_client) &&
-        session->background_client.consumed_submit_sequence > 0)
+    if (client_is_drawable(&session->background_client))
     {
         layers[count].kind = WINDOWD_LAYER_CLIENT;
         layers[count].opaque = 1;

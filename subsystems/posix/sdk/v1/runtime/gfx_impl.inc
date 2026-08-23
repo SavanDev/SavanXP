@@ -289,6 +289,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     long shutdown_event_fd = -1;
     long launch_fd = -1;
     long cursor_hint_fd = -1;
+    long size_hint_fd = -1;
 
     if (result_is_error((long)mapped)) {
         return -SAVANXP_ENODEV;
@@ -335,6 +336,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     shutdown_event_fd = dup(SAVANXP_WM_FD_SHUTDOWN_EVENT);
     launch_fd = dup(SAVANXP_WM_FD_LAUNCH);
     cursor_hint_fd = dup(SAVANXP_WM_FD_CURSOR_HINT);
+    size_hint_fd = dup(SAVANXP_WM_FD_SIZE_HINT);
     if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || retire_event_fd < 0 || shutdown_event_fd < 0) {
         if (section_fd >= 0) {
             (void)close((int)section_fd);
@@ -357,6 +359,9 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
         if (cursor_hint_fd >= 0) {
             (void)close((int)cursor_hint_fd);
         }
+        if (size_hint_fd >= 0) {
+            (void)close((int)size_hint_fd);
+        }
         (void)unmap_view(private_pixels);
         (void)unmap_view(mapped);
         return -SAVANXP_EBADF;
@@ -369,6 +374,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     context->shutdown_event_fd = (int)shutdown_event_fd;
     context->launch_fd = (int)launch_fd;
     context->cursor_hint_fd = (int)cursor_hint_fd;
+    context->size_hint_fd = (int)size_hint_fd;
     context->mode = kGfxModeClient;
     context->mapped_view = mapped;
     context->header = header;
@@ -397,6 +403,7 @@ long gfx_open(struct savanxp_gfx_context* context) {
     context->shutdown_event_fd = -1;
     context->launch_fd = -1;
     context->cursor_hint_fd = -1;
+    context->size_hint_fd = -1;
 
     return gfx_open_client(context);
 }
@@ -449,6 +456,10 @@ long gfx_close(struct savanxp_gfx_context* context) {
     if (context->cursor_hint_fd >= 0) {
         (void)close(context->cursor_hint_fd);
         context->cursor_hint_fd = -1;
+    }
+    if (context->size_hint_fd >= 0) {
+        (void)close(context->size_hint_fd);
+        context->size_hint_fd = -1;
     }
     context->mode = 0;
     return result;
@@ -665,6 +676,50 @@ long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uin
     return write(context->cursor_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
         ? 0
         : -SAVANXP_EIO;
+}
+
+long gfx_request_content_size(const struct savanxp_gfx_context* context, uint32_t width, uint32_t height) {
+    struct savanxp_desktop_size_hint hint;
+
+    if (context == 0 || context->size_hint_fd < 0 || width == 0 || height == 0) {
+        return -SAVANXP_EINVAL;
+    }
+
+    hint.width = width;
+    hint.height = height;
+    return write(context->size_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
+        ? 0
+        : -SAVANXP_EIO;
+}
+
+long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long timeout_ms) {
+    unsigned long deadline = 0;
+
+    if (context == 0 || context->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+
+    deadline = uptime_ms() + timeout_ms;
+    for (;;) {
+        struct savanxp_input_event event;
+
+        if (gfx_header_dimensions_changed(context)) {
+            /* El WM escribe ancho y alto por separado: una pausa corta evita
+             * quedarse con la mitad del par y aplicar una geometria que la
+             * superficie no tiene. */
+            sleep_ms(2);
+            /* Consumimos el RESIZED nosotros: gfx_poll_event lo sintetiza del
+             * header, asi que dejarlo pendiente solo duplicaria el relayout. */
+            if (gfx_poll_event(context, &event) > 0 && event.type == SAVANXP_INPUT_EVENT_RESIZED) {
+                (void)gfx_apply_resize_event(context, &event);
+            }
+            return 1;
+        }
+        if (uptime_ms() >= deadline) {
+            return 0;
+        }
+        sleep_ms(2);
+    }
 }
 
 void gfx_clear(uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t colour) {

@@ -3,6 +3,15 @@
 #define GFX_MAX_WIDTH 1920
 #define GFX_MAX_HEIGHT 1080
 #define KEYTEST_EVENT_LINES 20
+/* Ritmo vertical del panel: cabecera, marco, las dos lineas de ayuda y recien
+ * despues el historial. Estaba clavado en offsets sueltos que se pisaban -- la
+ * segunda linea de ayuda caia encima del primer evento. */
+#define KEYTEST_HEADER_HEIGHT 34
+#define KEYTEST_PANEL_TOP 48
+#define KEYTEST_LINE_HEIGHT 18
+#define KEYTEST_HINT_TOP 56
+#define KEYTEST_EVENTS_TOP (KEYTEST_HINT_TOP + (2 * KEYTEST_LINE_HEIGHT) + 12)
+#define KEYTEST_PANEL_BOTTOM_MARGIN 24
 #define KEYTEST_LINE_LENGTH 96
 
 static uint32_t g_backbuffer[GFX_MAX_WIDTH * GFX_MAX_HEIGHT];
@@ -189,20 +198,37 @@ static void push_event_line(const struct savanxp_input_event* event) {
     strcpy(g_lines[KEYTEST_EVENT_LINES - 1].text, line);
 }
 
+/* La ventana la define el contenido: la linea de ayuda mas larga fija el ancho
+ * y el historial completo de eventos la altura, medidos con la fuente real en
+ * vez de un numero de pixeles adivinado. */
+static const char* const kKeytestWidestLine =
+    "On some hosts/QEMU setups, ImpPnt reaches the guest as Alt+ImpPnt";
+
+static void request_content_size(struct savanxp_gfx_context* gfx) {
+    uint32_t width = (uint32_t)(40 + gfx_text_width(kKeytestWidestLine) + 40);
+    uint32_t height = (uint32_t)(KEYTEST_EVENTS_TOP +
+        (KEYTEST_EVENT_LINES * KEYTEST_LINE_HEIGHT) + KEYTEST_PANEL_BOTTOM_MARGIN);
+
+    if (gfx_request_content_size(gfx, width, height) == 0) {
+        (void)gfx_wait_content_size(gfx, 250UL);
+    }
+}
+
 static void draw_scene(struct savanxp_gfx_context* gfx) {
     int title_x = ((int)gfx->info.width - gfx_text_width("SavanXP keyboard test")) / 2;
+    int panel_height = (int)gfx->info.height - KEYTEST_PANEL_TOP - KEYTEST_PANEL_BOTTOM_MARGIN;
     unsigned int index;
-    int y = 62;
+    int y = KEYTEST_EVENTS_TOP;
 
     gfx_clear(g_backbuffer, &gfx->info, gfx_rgb(12, 18, 28));
-    gfx_rect(g_backbuffer, &gfx->info, 0, 0, (int)gfx->info.width, 34, gfx_rgb(26, 49, 71));
-    gfx_hline(g_backbuffer, &gfx->info, 0, 34, (int)gfx->info.width, gfx_rgb(99, 166, 214));
+    gfx_rect(g_backbuffer, &gfx->info, 0, 0, (int)gfx->info.width, KEYTEST_HEADER_HEIGHT, gfx_rgb(26, 49, 71));
+    gfx_hline(g_backbuffer, &gfx->info, 0, KEYTEST_HEADER_HEIGHT, (int)gfx->info.width, gfx_rgb(99, 166, 214));
     gfx_blit_text(g_backbuffer, &gfx->info, title_x, 8, "SavanXP keyboard test", gfx_rgb(234, 244, 255));
 
-    gfx_rect(g_backbuffer, &gfx->info, 24, 48, (int)gfx->info.width - 48, (int)gfx->info.height - 72, gfx_rgb(19, 29, 42));
-    gfx_frame(g_backbuffer, &gfx->info, 24, 48, (int)gfx->info.width - 48, (int)gfx->info.height - 72, gfx_rgb(74, 122, 163));
-    gfx_blit_text(g_backbuffer, &gfx->info, 40, 62 - 22, "ESC exits  C clears  Try AltGr, locks, keypad, Pause", gfx_rgb(186, 211, 235));
-    gfx_blit_text(g_backbuffer, &gfx->info, 40, 62 - 4, "On some hosts/QEMU setups, ImpPnt reaches the guest as Alt+ImpPnt", gfx_rgb(186, 211, 235));
+    gfx_rect(g_backbuffer, &gfx->info, 24, KEYTEST_PANEL_TOP, (int)gfx->info.width - 48, panel_height, gfx_rgb(19, 29, 42));
+    gfx_frame(g_backbuffer, &gfx->info, 24, KEYTEST_PANEL_TOP, (int)gfx->info.width - 48, panel_height, gfx_rgb(74, 122, 163));
+    gfx_blit_text(g_backbuffer, &gfx->info, 40, KEYTEST_HINT_TOP, "ESC exits  C clears  Try AltGr, locks, keypad, Pause", gfx_rgb(186, 211, 235));
+    gfx_blit_text(g_backbuffer, &gfx->info, 40, KEYTEST_HINT_TOP + KEYTEST_LINE_HEIGHT, kKeytestWidestLine, gfx_rgb(186, 211, 235));
 
     if (g_line_count == 0) {
         gfx_blit_text(g_backbuffer, &gfx->info, 48, y, "Waiting for keyboard events...", gfx_rgb(208, 226, 241));
@@ -211,8 +237,8 @@ static void draw_scene(struct savanxp_gfx_context* gfx) {
 
     for (index = 0; index < g_line_count; ++index) {
         gfx_blit_text(g_backbuffer, &gfx->info, 48, y, g_lines[index].text, gfx_rgb(208, 226, 241));
-        y += 18;
-        if (y + gfx_text_height() > (int)gfx->info.height - 24) {
+        y += KEYTEST_LINE_HEIGHT;
+        if (y + gfx_text_height() > (int)gfx->info.height - KEYTEST_PANEL_BOTTOM_MARGIN) {
             break;
         }
     }
@@ -239,6 +265,7 @@ int main(void) {
         gfx_close(&gfx);
         return 1;
     }
+    request_content_size(&gfx);
 
     for (;;) {
         while (gfx_poll_event(&gfx, &event) > 0) {

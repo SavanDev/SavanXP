@@ -168,6 +168,36 @@ Notas de corte:
 
 ### Agregado
 
+- **Size hint: cada ventana arranca del tamano de su contenido.** El WM le daba
+  a TODA app la misma superficie generica (area util menos 160x140, hasta
+  1280x900), asi que About abria a ~1100x650 con el contenido ocupando la
+  esquina superior izquierda, y lo mismo el resto. El tamano natural de una
+  ventana lo sabe el programa -- es su layout --, no el WM, que por diseno ya no
+  conoce ningun catalogo de apps. Canal nuevo cliente->WM en el protocolo
+  (`SAVANXP_WM_FD_SIZE_HINT`, fd 11, `savanxp_desktop_size_hint`): el cliente
+  pide el area util que necesita y el WM la aplica **una sola vez**, al arrancar
+  la app, recortada a la capacidad de la superficie -- despues manda el usuario,
+  y una app no puede pelearle un resize. Al aplicarla la ventana se vuelve a
+  colocar con el criterio del launch (centrada + cascada); si no, encoger la
+  dejaba descentrada. En el SDK posix, `gfx_request_content_size()` /
+  `gfx_wait_content_size()`; espejado en el SDK nativo
+  (`sxn_gui_request_content_size` / `sxn_gui_wait_content_size`).
+
+  En sxgui el ajuste al contenido es **opcional y explicito**: `sxgui_app_init`
+  no toca el tamano, y cada app elige una de dos -- `sxgui_app_autosize()`
+  (bounding box de los widgets + `SXGUI_CONTENT_MARGIN`, para layouts fijos) o
+  `sxgui_app_set_content_size()` (cualquier otro tamano). La segunda existe
+  porque el bounding box no siempre es la respuesta: progman es un launcher y
+  quiere lugar para crecer, y filesapp estira sus paneles con la ventana.
+
+  Tamanos resultantes: About 456x434 y Widgets 398x330 (autosize), Program
+  Manager 592x388 (grilla base de 6x4 celdas, crece en filas con el registro),
+  Files 640x420, Shell 672x492 (80x24 celdas), Key Test 510x488, Mouse Test
+  420x358. Doom y Gfx Demo no cambian: ya se lanzan con el flag FULLSCREEN, que
+  los dimensiona aparte. Subtest nuevo en `windowd-smoke`: exige que progman
+  pida su tamano, que la superficie quede mas chica que la generica y que la
+  ventana siga entera dentro del area util.
+
 - **`svfs-cli rm`: por fin se puede sacar algo de una imagen SVFS2.** El sync del
   build es **aditivo y nunca borra**, y el tool solo tenia `create` y `apply`, asi
   que lo que se instalaba una vez quedaba en `build/disk.img` para siempre: la
@@ -194,6 +224,43 @@ Notas de corte:
   no se filtran.
 
 ### Corregido
+
+- **Al abrir una app se veia por un instante la ventana vacia del tamano
+  generico.** El WM componia una ventana desde que el proceso hacia fork, sin
+  esperar su primer frame: durante los ~200 ms que tarda una app en arrancar
+  (exec, cargar el ELF, abrir la sesion gfx) se veia un rectangulo gris del
+  tamano generico, que despues encogia al tamano pedido. Ahora
+  `client_is_drawable()` exige `consumed_submit_sequence > 0`, o sea que la
+  ventana aparece ya pintada y del tamano definitivo; mientras tanto el
+  feedback sigue siendo el cursor WAIT que ya ponia
+  `any_overlay_client_starting()`. En el primer frame hay que ensuciar el
+  marco entero, no solo la superficie: la barra de titulo y el borde los dibuja
+  el WM y nadie mas los ensuciaria. Medido con rafagas de `screendump` sobre el
+  lanzamiento de About: antes, dos frames con la ventana a 1126x661 antes de
+  quedar en 462x460; ahora aparece directamente en 462x460.
+
+- **Resize: la ventana quedaba medio negra al cambiarle el tamano.**
+  `resize_overlay_client_surface` publicaba el tamano nuevo en el header de la
+  superficie y **despues** limpiaba los pixeles. El header es el unico aviso que
+  tiene el cliente: apenas lo ve cambiado repinta y copia su frame al buffer
+  compartido, asi que el memset del WM le borraba la parte de abajo del frame
+  recien copiado, y el cliente no repinta hasta el proximo input. Se limpia
+  antes de publicar. Aparecio con el size hint (una app que se redimensiona sola
+  al arrancar y despues se queda quieta), pero el bug estaba en el camino de
+  resize por bordes desde siempre. Ademas, del lado del cliente,
+  `gfx_wait_content_size` espera un instante antes de leer el par ancho/alto:
+  el WM los escribe por separado y quedarse con la mitad daba una geometria que
+  la superficie no tenia.
+
+- **Key Test: la segunda linea de ayuda se pisaba con el primer evento.** Los
+  offsets verticales estaban clavados sueltos (`62 - 22`, `62 - 4`, eventos
+  desde 62): la primera linea de ayuda caia ARRIBA del marco del panel y la
+  segunda encima del primer evento. Ahora el ritmo sale de constantes
+  (`KEYTEST_PANEL_TOP`, `KEYTEST_HINT_TOP`, `KEYTEST_EVENTS_TOP`), que son
+  tambien las que definen el alto que la app pide para su ventana.
+
+- **Mouse Test: el panel de lecturas cortaba la ultima linea.** Alto fijo de 98
+  px para cuatro lineas que terminan en 154; ahora 104.
 
 - **SCI ruteada dos veces: el boton de power no apagaba la maquina.**
   `acpi::start_sci()` ruteaba la GSI del SCI y despues el glue de uACPI ruteaba la

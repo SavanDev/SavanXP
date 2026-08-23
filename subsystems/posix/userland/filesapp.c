@@ -432,6 +432,13 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
 
 /* ---- layout --------------------------------------------------------------- */
 
+/* El layout se estira con la ventana, asi que no hay un bounding box del que
+ * deducir el tamano: estos son los dos paneles (lista + preview) con ancho
+ * suficiente para nombres y lineas de preview tipicos, sin comerse la
+ * pantalla. */
+#define FILESAPP_CONTENT_WIDTH 640
+#define FILESAPP_CONTENT_HEIGHT 420
+
 static void filesapp_layout(struct sxgui_app *app)
 {
     int width = (int)app->gfx.info.width;
@@ -529,6 +536,7 @@ int main(void)
     g_app.on_key = on_key;
     g_app.on_resize = on_resize;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
+    (void)sxgui_app_set_content_size(&g_app, FILESAPP_CONTENT_WIDTH, FILESAPP_CONTENT_HEIGHT);
     filesapp_layout(&g_app);
 
     if (filesapp_load_directory("/") < 0)

@@ -80,6 +80,7 @@ static void reset_client(struct windowd_client *client)
     client->shutdown_event_fd = -1;
     client->launch_read_fd = -1;
     client->cursor_hint_read_fd = -1;
+    client->size_hint_read_fd = -1;
 }
 
 static int overlay_slot_valid(int slot)
@@ -428,6 +429,13 @@ static void resize_overlay_client_surface(
     }
 
     previous_frame = windowd_client_frame_rect(client);
+    /* Limpiar ANTES de publicar el tamano nuevo en el header. El header es el
+     * unico aviso que tiene el cliente: apenas lo ve cambiado repinta y copia
+     * su frame a la superficie compartida, y si el memset corre despues le
+     * borra parte de ese frame -- el cliente ya no repinta hasta el proximo
+     * input, asi que la ventana queda medio negra. Con este orden, cuando el
+     * cliente se entera la superficie ya esta limpia. */
+    memset(client->pixels, 0, client->surface_info.buffer_size);
     client->surface_info.width = (uint32_t)surface_width;
     client->surface_info.height = (uint32_t)surface_height;
     if (client->header != 0)
@@ -452,7 +460,6 @@ static void resize_overlay_client_surface(
             &client->window_y);
     }
     current_frame = windowd_client_frame_rect(client);
-    memset(client->pixels, 0, client->surface_info.buffer_size);
     windowd_dirty_rect_add(dirty, &session->gfx.info, previous_frame.x, previous_frame.y, previous_frame.width, previous_frame.height);
     windowd_dirty_rect_add(dirty, &session->gfx.info, current_frame.x, current_frame.y, current_frame.width, current_frame.height);
 }
@@ -1059,12 +1066,14 @@ static int consume_client_present_batches(
     struct windowd_client *client)
 {
     uint64_t next_sequence = 0;
+    int first_frame = 0;
 
     if (session == 0 || dirty == 0 || client == 0 || client->header == 0 || client->command_batches == 0)
     {
         return 0;
     }
 
+    first_frame = (client->consumed_submit_sequence == 0);
     next_sequence = client->consumed_submit_sequence + 1u;
     while (next_sequence <= client->header->submit_sequence)
     {
@@ -1134,6 +1143,16 @@ static int consume_client_present_batches(
 
         client->consumed_submit_sequence = next_sequence;
         next_sequence += 1u;
+    }
+
+    /* Primer frame: la ventana pasa de no componerse a componerse, asi que hay
+     * que repintar el MARCO entero. El damage de un batch cubre solo la
+     * superficie del cliente; la barra de titulo y el borde los dibuja el WM y
+     * nadie mas los ensuciaria. */
+    if (first_frame && client->consumed_submit_sequence > 0)
+    {
+        struct sx_rect frame = windowd_client_frame_rect(client);
+        windowd_dirty_rect_add(dirty, &session->gfx.info, frame.x, frame.y, frame.width, frame.height);
     }
 
     if (client->submit_event_fd >= 0 &&
@@ -1323,6 +1342,7 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     close_fd_if_needed(&client->shutdown_event_fd);
     close_fd_if_needed(&client->launch_read_fd);
     close_fd_if_needed(&client->cursor_hint_read_fd);
+    close_fd_if_needed(&client->size_hint_read_fd);
     if (client->mapped_view != 0 && !result_is_error((long)client->mapped_view))
     {
         (void)unmap_view(client->mapped_view);
@@ -1341,6 +1361,7 @@ static int start_client_process(struct windowd_client *client, const char *path)
     int mouse_pipe[2] = {-1, -1};
     int launch_pipe[2] = {-1, -1};
     int cursor_hint_pipe[2] = {-1, -1};
+    int size_hint_pipe[2] = {-1, -1};
     int submit_event = -1;
     int retire_event = -1;
     int shutdown_event = -1;
@@ -1395,7 +1416,7 @@ static int start_client_process(struct windowd_client *client, const char *path)
     retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     if (pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(launch_pipe) < 0 || pipe(cursor_hint_pipe) < 0 ||
-        submit_event < 0 || retire_event < 0 || shutdown_event < 0)
+        pipe(size_hint_pipe) < 0 || submit_event < 0 || retire_event < 0 || shutdown_event < 0)
     {
         goto fail;
     }
@@ -1407,6 +1428,7 @@ static int start_client_process(struct windowd_client *client, const char *path)
      * writes bloqueantes, el pipe se llena y se congela la sesion entera. */
     if (fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
         fcntl(cursor_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        fcntl(size_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
         fcntl(input_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
         fcntl(mouse_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
     {
@@ -1429,7 +1451,8 @@ static int start_client_process(struct windowd_client *client, const char *path)
             dup2(retire_event, SAVANXP_WM_FD_RETIRE_EVENT) < 0 ||
             dup2(shutdown_event, SAVANXP_WM_FD_SHUTDOWN_EVENT) < 0 ||
             dup2(launch_pipe[1], SAVANXP_WM_FD_LAUNCH) < 0 ||
-            dup2(cursor_hint_pipe[1], SAVANXP_WM_FD_CURSOR_HINT) < 0)
+            dup2(cursor_hint_pipe[1], SAVANXP_WM_FD_CURSOR_HINT) < 0 ||
+            dup2(size_hint_pipe[1], SAVANXP_WM_FD_SIZE_HINT) < 0)
         {
             exit(1);
         }
@@ -1445,6 +1468,8 @@ static int start_client_process(struct windowd_client *client, const char *path)
         close_client_setup_fd(&launch_pipe[1]);
         close_client_setup_fd(&cursor_hint_pipe[0]);
         close_client_setup_fd(&cursor_hint_pipe[1]);
+        close_client_setup_fd(&size_hint_pipe[0]);
+        close_client_setup_fd(&size_hint_pipe[1]);
         close_client_setup_fd(&client->section_fd);
         {
             long exec_result = exec(path, argv, 1);
@@ -1473,11 +1498,13 @@ static int start_client_process(struct windowd_client *client, const char *path)
     client->shutdown_event_fd = shutdown_event;
     client->launch_read_fd = launch_pipe[0];
     client->cursor_hint_read_fd = cursor_hint_pipe[0];
+    client->size_hint_read_fd = size_hint_pipe[0];
 
     close_fd_if_needed(&input_pipe[0]);
     close_fd_if_needed(&mouse_pipe[0]);
     close_fd_if_needed(&launch_pipe[1]);
     close_fd_if_needed(&cursor_hint_pipe[1]);
+    close_fd_if_needed(&size_hint_pipe[1]);
     return 0;
 
 fail:
@@ -1489,6 +1516,8 @@ fail:
     close_fd_if_needed(&launch_pipe[1]);
     close_fd_if_needed(&cursor_hint_pipe[0]);
     close_fd_if_needed(&cursor_hint_pipe[1]);
+    close_fd_if_needed(&size_hint_pipe[0]);
+    close_fd_if_needed(&size_hint_pipe[1]);
     close_fd_if_needed(&submit_event);
     close_fd_if_needed(&retire_event);
     close_fd_if_needed(&shutdown_event);
@@ -1618,7 +1647,8 @@ static int launch_overlay_client(struct windowd_session *session, const char *pa
         client->surface_info.pitch = WINDOWD_FULLSCREEN_MODE_WIDTH * (uint32_t)sizeof(uint32_t);
         client->surface_info.buffer_size = client->surface_info.pitch * WINDOWD_FULLSCREEN_MODE_HEIGHT;
     }
-    position_client_window(session, client, WINDOWD_CLIENT_APP, session->overlay_count);
+    client->cascade_index = session->overlay_count;
+    position_client_window(session, client, WINDOWD_CLIENT_APP, client->cascade_index);
     if (start_client_process(client, path) < 0)
     {
         return -1;
@@ -1877,6 +1907,97 @@ static void service_client_cursor_hints(struct windowd_client *client)
     }
 }
 
+/* Recoloca la ventana con el mismo criterio del launch (centrada + cascada)
+ * despues de cambiarle el tamano: resize_overlay_client_surface ancla el
+ * origen, asi que una ventana que encoge queda descentrada. */
+static void reposition_overlay_client_window(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    struct windowd_client *client)
+{
+    struct sx_rect previous;
+    struct sx_rect current;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+
+    if (session == 0 || dirty == 0 || client == 0 || !client->frame_visible)
+    {
+        return;
+    }
+
+    windowd_place_overlay_window(&session->gfx.info, &client->surface_info, client->cascade_index, &x, &y, &width, &height);
+    if (x == client->window_x && y == client->window_y)
+    {
+        return;
+    }
+
+    previous = windowd_client_frame_rect(client);
+    client->window_x = x;
+    client->window_y = y;
+    current = windowd_client_frame_rect(client);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, previous.x, previous.y, previous.width, previous.height);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, current.x, current.y, current.width, current.height);
+}
+
+/* Drena los size hints: el tamano que el programa dice necesitar para su
+ * contenido (savanxp/wm_protocol.h). El WM lo obedece UNA vez, apenas arranca
+ * la app, y solo si la ventana sigue en la geometria del launch -- despues
+ * manda el usuario, y una app que insistiera no podria pelearle el resize.
+ * resize_overlay_client_surface ya recorta a la capacidad de la superficie.
+ *
+ * slot < 0 = drenar y descartar. El contrato de fds es uno solo, asi que el
+ * canal existe tambien para el shell y el cliente de fondo, que son
+ * full-screen por definicion; si nadie lo leyera, un cliente que escribiera
+ * ahi terminaria bloqueado con el pipe lleno. */
+static void service_client_size_hints(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    struct windowd_client *client,
+    int slot)
+{
+    struct savanxp_desktop_size_hint hint;
+    long read_result = 0;
+
+    if (client == 0 || client->pid <= 0 || client->size_hint_read_fd < 0)
+    {
+        return;
+    }
+
+    for (;;)
+    {
+        read_result = read(client->size_hint_read_fd, &hint, sizeof(hint));
+        if (read_result == 0)
+        {
+            return;
+        }
+        if (read_result < 0)
+        {
+            if (result_error_code(read_result) != SAVANXP_EAGAIN)
+            {
+                eprintf("desktop: size hint read failed for %s (%s)\n",
+                    client->path[0] != '\0' ? client->path : "?",
+                    result_error_string(read_result));
+            }
+            return;
+        }
+        if (read_result != (long)sizeof(hint) || hint.width == 0 || hint.height == 0)
+        {
+            eprintf("desktop: invalid size hint from %s\n", client->path[0] != '\0' ? client->path : "?");
+            return;
+        }
+        if (session == 0 || dirty == 0 || !overlay_slot_valid(slot) ||
+            client->size_hint_applied || client->maximized || client->fullscreen || !client->frame_visible)
+        {
+            continue;
+        }
+        client->size_hint_applied = 1;
+        resize_overlay_client_surface(session, dirty, slot, (int)hint.width, (int)hint.height);
+        reposition_overlay_client_window(session, dirty, client);
+    }
+}
+
 /*
  * Headless compositor self-test driven by init under /SMOKE.
  *
@@ -2078,6 +2199,10 @@ static int windowd_selftest(void)
     int recovery_validated = 0;
     uint64_t baseline_retired = 0;
     uint64_t consumed_submit = 0;
+    /* Tamano generico que el WM le asigna a un overlay al lanzarlo: la
+     * referencia contra la que se mide el size hint de progman. */
+    uint32_t generic_surface_width = 0;
+    uint32_t generic_surface_height = 0;
 
     if (windowd_region_selftest() != 0)
     {
@@ -2133,6 +2258,9 @@ static int windowd_selftest(void)
         return 1;
     }
 
+    generic_surface_width = session.overlay_clients[kProgmanSlot].surface_info.width;
+    generic_surface_height = session.overlay_clients[kProgmanSlot].surface_info.height;
+
     if (windowd_compositor_get_timeline(&session.compositor, &timeline) == 0)
     {
         baseline_retired = timeline.retired_sequence;
@@ -2149,6 +2277,7 @@ static int windowd_selftest(void)
             break;
         }
 
+        service_client_size_hints(&session, &dirty, client, kSlot);
         service_client_cursor_hints(client);
         if (service_client_batches(&session, &dirty, client) < 0 ||
             service_client_launch_requests(&session, &dirty, client) < 0)
@@ -2178,6 +2307,7 @@ static int windowd_selftest(void)
                 {
                     continue; /* ya servido arriba */
                 }
+                service_client_size_hints(&session, &dirty, &session.overlay_clients[overlay_slot], overlay_slot);
                 if (service_client_batches(&session, &dirty, &session.overlay_clients[overlay_slot]) < 0)
                 {
                     overlay_failed = 1;
@@ -2395,6 +2525,48 @@ static int windowd_selftest(void)
                 puts_fd(2, "DESKTOP SMOKE FAIL tasklist: el dialogo quedo abierto tras Switch To\n");
                 failed = 1;
             }
+        }
+    }
+
+    /* Subtest de size hint: la app pide el tamano que necesita su contenido y
+     * el WM se lo da. Se mide sobre progman, que calcula el suyo desde el
+     * registro de programas; alcanza con exigir que quede MAS CHICO que la
+     * superficie generica del launch -- el numero exacto lo decide la app, y
+     * clavarlo aca ataria el smoke a su layout. Tambien se exige que la
+     * ventana entre entera en el area util: al encoger hay que recolocarla, y
+     * el bug natural es dejarla anclada donde la puso el centrado viejo. */
+    if (!failed)
+    {
+        const struct windowd_client *client = &session.overlay_clients[kProgmanSlot];
+        struct sx_rect frame = windowd_client_frame_rect(client);
+        int area_x = 0;
+        int area_y = 0;
+        int area_width = 0;
+        int area_height = 0;
+
+        windowd_work_area_bounds(&session.gfx.info, &area_x, &area_y, &area_width, &area_height);
+
+        if (!client->size_hint_applied)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL size hint: progman nunca pidio su tamano\n");
+            failed = 1;
+        }
+        else if (client->surface_info.width >= generic_surface_width ||
+                 client->surface_info.height >= generic_surface_height)
+        {
+            printf("DESKTOP SMOKE FAIL size hint: superficie %ux%u no encogio desde %ux%u\n",
+                (unsigned)client->surface_info.width,
+                (unsigned)client->surface_info.height,
+                (unsigned)generic_surface_width,
+                (unsigned)generic_surface_height);
+            failed = 1;
+        }
+        else if (frame.x < area_x || frame.y < area_y ||
+                 sx_rect_right(frame) > area_x + area_width ||
+                 sx_rect_bottom(frame) > area_y + area_height)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL size hint: la ventana quedo fuera del area util\n");
+            failed = 1;
         }
     }
 
@@ -3249,6 +3421,7 @@ int main(int argc, char **argv)
             break;
         }
         service_client_cursor_hints(&session.background_client);
+        service_client_size_hints(&session, &dirty, &session.background_client, -1);
         if (service_client_batches(&session, &dirty, &session.shell_client) < 0)
         {
             break;
@@ -3258,8 +3431,10 @@ int main(int argc, char **argv)
             break;
         }
         service_client_cursor_hints(&session.shell_client);
+        service_client_size_hints(&session, &dirty, &session.shell_client, -1);
         for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
         {
+            service_client_size_hints(&session, &dirty, &session.overlay_clients[slot], slot);
             if (service_client_batches(&session, &dirty, &session.overlay_clients[slot]) < 0)
             {
                 break;

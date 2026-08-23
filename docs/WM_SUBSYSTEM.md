@@ -200,9 +200,11 @@ Enfoque de dos saltos, para des-riesgar el corte de un proceso boot-crítico:
 ## A2 — diseño detallado (el nudo del z-order)
 
 **Restricción del protocolo actual:** cada cliente recibe UNA superficie (fd 3,
-tamaño fijo al launch, `gfx_open_client` en `gfx_impl.inc`), colocada por el WM
-en `window_x/y/width/height`. Input por fds 4/5, launch por fd 9, cursor hint
-por fd 10.
+`gfx_open_client` en `gfx_impl.inc`), colocada por el WM en
+`window_x/y/width/height`. El WM la dimensiona; el cliente puede *sugerir* el
+tamaño de su contenido al arrancar por el fd 11 (size hint), que el WM aplica
+una sola vez y recorta. Input por fds 4/5, launch por fd 9, cursor hint por
+fd 10.
 
 **El nudo:** el chrome del shell vive en dos niveles de z-order incompatibles
 con una sola superficie:

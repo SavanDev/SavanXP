@@ -27,6 +27,13 @@
 #define PROGMAN_CELL_HEIGHT 76
 #define PROGMAN_ICON_SIZE 32
 #define PROGMAN_GRID_MARGIN 8
+/* La ventana reserva una grilla de este tamano aunque haya menos programas: es
+ * el launcher de la sesion, no un dialogo -- ajustarla a los tres iconos que
+ * hay hoy la dejaria ridicula y obligaria a redimensionarla a mano en cuanto
+ * se agregue algo al registro. Si un grupo pasa de COLUMNS x MIN_ROWS items,
+ * crece en filas. */
+#define PROGMAN_GRID_COLUMNS 6
+#define PROGMAN_MIN_GRID_ROWS 4
 #define PROGMAN_DOUBLE_CLICK_MS 450UL
 
 static struct sxgui_app g_app;
@@ -554,6 +561,46 @@ static void on_resize(struct sxgui_app *app)
     /* El grid se recalcula solo desde gfx.info; nada que reubicar. */
 }
 
+/* Tamano de la ventana: la grilla base (PROGMAN_GRID_COLUMNS x
+ * PROGMAN_MIN_GRID_ROWS), estirada en filas si el grupo mas cargado no entra,
+ * mas la barra de pestanias -- que tiene que entrar entera o las ultimas
+ * quedan fuera de la ventana -- y la de estado. Se calcula aca y no en el WM
+ * porque depende del registro, que solo conoce progman. */
+static void preferred_content_size(int *width, int *height)
+{
+    int max_items = 0;
+    int tabs_width = 4;
+    int rows;
+    int index;
+
+    for (index = 0; index < progman_group_count(); ++index)
+    {
+        const struct progman_group *group = progman_group_at(index);
+        int count = group_item_count(index);
+
+        if (count > max_items)
+        {
+            max_items = count;
+        }
+        /* Mismo ancho que reparte group_tab_rect. */
+        tabs_width += gfx_text_width(group != 0 ? group->name : "") + 20 + 2;
+    }
+
+    rows = (max_items + PROGMAN_GRID_COLUMNS - 1) / PROGMAN_GRID_COLUMNS;
+    if (rows < PROGMAN_MIN_GRID_ROWS)
+    {
+        rows = PROGMAN_MIN_GRID_ROWS;
+    }
+
+    *width = (2 * PROGMAN_GRID_MARGIN) + (PROGMAN_GRID_COLUMNS * PROGMAN_CELL_WIDTH);
+    if (tabs_width > *width)
+    {
+        *width = tabs_width;
+    }
+    *height = content_top() + PROGMAN_TAB_HEIGHT + (2 * PROGMAN_GRID_MARGIN) +
+        (rows * PROGMAN_CELL_HEIGHT) + PROGMAN_STATUS_HEIGHT;
+}
+
 /* Existencia real: si el path no se puede abrir, no se puede lanzar. */
 static int path_is_launchable(const char *path)
 {
@@ -655,5 +702,14 @@ int main(int argc, char **argv)
     g_app.on_pointer = on_pointer;
     g_app.on_paint = on_paint;
     g_app.on_resize = on_resize;
+
+    {
+        int content_width = 0;
+        int content_height = 0;
+
+        /* Ya con el registro cargado: el tamano sale de los grupos y sus items. */
+        preferred_content_size(&content_width, &content_height);
+        (void)sxgui_app_set_content_size(&g_app, content_width, content_height);
+    }
     return sxgui_app_run(&g_app);
 }
