@@ -58,16 +58,13 @@ int bb_ps_main(int argc, char** argv) {
         if (result == 0) {
             break;
         }
-        printf("%u %u %-13s %s\n",
+        // Los nombres de estado salen de process_state_string() (runtime del
+        // SDK) para no duplicar la tabla; el mas largo es "blocked_write",
+        // de ahi el ancho 13 de la columna STATE.
+        printf("%-4u %-4u %-13s %s\n",
             (unsigned)info.pid,
             (unsigned)info.parent_pid,
-            info.state == SAVANXP_PROC_READY ? "ready" :
-            info.state == SAVANXP_PROC_RUNNING ? "running" :
-            info.state == SAVANXP_PROC_BLOCKED_READ ? "blocked-read" :
-            info.state == SAVANXP_PROC_BLOCKED_WRITE ? "blocked-write" :
-            info.state == SAVANXP_PROC_BLOCKED_WAIT ? "blocked-wait" :
-            info.state == SAVANXP_PROC_SLEEPING ? "sleeping" :
-            info.state == SAVANXP_PROC_ZOMBIE ? "zombie" : "unused",
+            process_state_string(info.state),
             info.name);
     }
     return 0;

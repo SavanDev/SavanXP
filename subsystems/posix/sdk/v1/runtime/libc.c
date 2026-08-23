@@ -752,59 +752,115 @@ void puts(const char* text) {
     puts_fd(SAVANXP_STDOUT_FILENO, text);
 }
 
-static void write_unsigned_fd(int fd, unsigned long value, unsigned long base) {
-    char buffer[32];
-    size_t index = 0;
+// Los conversores rinden a un buffer (en vez de escribir directo al fd) para
+// que el padding pueda ir adelante o atras segun el flag '-'.
+static size_t format_unsigned(char* buffer, unsigned long value, unsigned long base) {
+    char digits[32];
+    size_t count = 0;
+    size_t length = 0;
 
     if (value == 0) {
-        putchar(fd, '0');
-        return;
+        digits[count++] = '0';
     }
-
     while (value != 0) {
         unsigned long digit = value % base;
-        buffer[index++] = (char)(digit < 10 ? ('0' + digit) : ('a' + (digit - 10)));
+        digits[count++] = (char)(digit < 10 ? ('0' + digit) : ('a' + (digit - 10)));
         value /= base;
     }
-
-    while (index > 0) {
-        putchar(fd, buffer[--index]);
+    while (count > 0) {
+        buffer[length++] = digits[--count];
     }
+    return length;
 }
 
-static void write_signed_fd(int fd, long value) {
+static size_t format_signed(char* buffer, long value) {
     if (value < 0) {
-        putchar(fd, '-');
-        write_unsigned_fd(fd, (unsigned long)(-value), 10);
-        return;
+        buffer[0] = '-';
+        return 1 + format_unsigned(buffer + 1, (unsigned long)(-value), 10);
     }
-    write_unsigned_fd(fd, (unsigned long)value, 10);
+    return format_unsigned(buffer, (unsigned long)value, 10);
+}
+
+static void write_padded_fd(int fd, const char* text, size_t length, int width, char pad, int left_align) {
+    size_t padding = 0;
+
+    if (width > 0 && length < (size_t)width) {
+        padding = (size_t)width - length;
+    }
+
+    // El flag '-' desactiva el relleno con ceros y manda el padding al final.
+    if (left_align) {
+        pad = ' ';
+    } else {
+        for (size_t index = 0; index < padding; ++index) {
+            putchar(fd, pad);
+        }
+    }
+
+    write(fd, text, length);
+
+    if (left_align) {
+        for (size_t index = 0; index < padding; ++index) {
+            putchar(fd, pad);
+        }
+    }
 }
 
 static void vprintf_fd(int fd, const char* format, va_list args) {
     for (const char* cursor = format; *cursor != '\0'; ++cursor) {
+        char buffer[48];
+        char pad = ' ';
+        int left_align = 0;
+        int width = 0;
+        size_t length = 0;
+
         if (*cursor != '%') {
             putchar(fd, *cursor);
             continue;
         }
 
         ++cursor;
+
+        for (;;) {
+            if (*cursor == '-') {
+                left_align = 1;
+            } else if (*cursor == '0') {
+                pad = '0';
+            } else {
+                break;
+            }
+            ++cursor;
+        }
+
+        while (*cursor >= '0' && *cursor <= '9') {
+            width = (width * 10) + (*cursor - '0');
+            ++cursor;
+        }
+
         switch (*cursor) {
             case '%':
                 putchar(fd, '%');
                 break;
-            case 's':
-                puts_fd(fd, va_arg(args, const char*));
+            case 's': {
+                const char* text = va_arg(args, const char*);
+                if (text == 0) {
+                    text = "(null)";
+                }
+                write_padded_fd(fd, text, strlen(text), width, pad, left_align);
                 break;
+            }
             case 'd':
             case 'i':
-                write_signed_fd(fd, va_arg(args, int));
+                length = format_signed(buffer, va_arg(args, int));
+                write_padded_fd(fd, buffer, length, width, pad, left_align);
                 break;
             case 'u':
-                write_unsigned_fd(fd, va_arg(args, unsigned int), 10);
+                length = format_unsigned(buffer, va_arg(args, unsigned int), 10);
+                write_padded_fd(fd, buffer, length, width, pad, left_align);
                 break;
             case 'x':
-                write_unsigned_fd(fd, va_arg(args, unsigned int), 16);
+                length = format_unsigned(buffer, va_arg(args, unsigned int), 16);
+                write_padded_fd(fd, buffer, length, width, pad, left_align);
                 break;
             default:
                 puts_fd(fd, "%?");

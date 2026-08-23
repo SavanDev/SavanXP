@@ -1667,21 +1667,42 @@ static size_t sx_direct_write(FILE* stream, const unsigned char* buffer, size_t 
     return consumed;
 }
 
-static int sx_write_padded(int (*emit)(char, void*), void* context, const char* text, size_t text_length, int width, char pad) {
+static int sx_write_padded(int (*emit)(char, void*), void* context, const char* text, size_t text_length, int width, char pad, int left_align) {
     int count = 0;
-    while ((int)text_length < width) {
-        if (!emit(pad, context)) {
-            return count;
-        }
-        ++count;
-        --width;
+    size_t padding = 0;
+
+    if (width > 0 && text_length < (size_t)width) {
+        padding = (size_t)width - text_length;
     }
+
+    // El flag '-' desactiva el relleno con ceros y manda el padding al final.
+    if (left_align) {
+        pad = ' ';
+    } else {
+        for (size_t index = 0; index < padding; ++index) {
+            if (!emit(pad, context)) {
+                return count;
+            }
+            ++count;
+        }
+    }
+
     for (size_t index = 0; index < text_length; ++index) {
         if (!emit(text[index], context)) {
             return count;
         }
         ++count;
     }
+
+    if (left_align) {
+        for (size_t index = 0; index < padding; ++index) {
+            if (!emit(pad, context)) {
+                return count;
+            }
+            ++count;
+        }
+    }
+
     return count;
 }
 
@@ -1774,6 +1795,7 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
 
         {
             char pad = ' ';
+            int left_align = 0;
             int width = 0;
             int precision = -1;
             int long_count = 0;
@@ -1781,22 +1803,43 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
             char buffer[128];
             size_t length = 0;
 
-            if (*cursor == '0') {
-                pad = '0';
+            for (;;) {
+                if (*cursor == '-') {
+                    left_align = 1;
+                } else if (*cursor == '0') {
+                    pad = '0';
+                } else {
+                    break;
+                }
                 ++cursor;
             }
 
-            while (*cursor >= '0' && *cursor <= '9') {
-                width = (width * 10) + (*cursor - '0');
+            if (*cursor == '*') {
+                width = va_arg(args, int);
+                // printf(3): un ancho negativo equivale al flag '-'.
+                if (width < 0) {
+                    left_align = 1;
+                    width = -width;
+                }
                 ++cursor;
+            } else {
+                while (*cursor >= '0' && *cursor <= '9') {
+                    width = (width * 10) + (*cursor - '0');
+                    ++cursor;
+                }
             }
 
             if (*cursor == '.') {
                 precision = 0;
                 ++cursor;
-                while (*cursor >= '0' && *cursor <= '9') {
-                    precision = (precision * 10) + (*cursor - '0');
+                if (*cursor == '*') {
+                    precision = va_arg(args, int);
                     ++cursor;
+                } else {
+                    while (*cursor >= '0' && *cursor <= '9') {
+                        precision = (precision * 10) + (*cursor - '0');
+                        ++cursor;
+                    }
                 }
             }
 
@@ -1819,7 +1862,7 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                 case 'c':
                     buffer[0] = (char)va_arg(args, int);
                     buffer[1] = '\0';
-                    written += sx_write_padded(emit, context, buffer, 1, width, pad);
+                    written += sx_write_padded(emit, context, buffer, 1, width, pad, left_align);
                     break;
                 case 's': {
                     const char* text = va_arg(args, const char*);
@@ -1834,7 +1877,7 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                         text_length = (size_t)precision;
                     }
 
-                    written += sx_write_padded(emit, context, text, text_length, width, pad);
+                    written += sx_write_padded(emit, context, text, text_length, width, pad, left_align);
                     break;
                 }
                 case 'd':
@@ -1845,7 +1888,7 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                         length = sx_signed_to_string((long long)va_arg(args, int), buffer);
                     }
                     length = sx_apply_numeric_precision(buffer, length, precision);
-                    written += sx_write_padded(emit, context, buffer, length, width, pad);
+                    written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
                     break;
                 case 'u':
                     if (use_size_t || long_count > 0) {
@@ -1854,7 +1897,7 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                         length = sx_unsigned_to_string((unsigned long long)va_arg(args, unsigned int), 10u, 0, buffer);
                     }
                     length = sx_apply_numeric_precision(buffer, length, precision);
-                    written += sx_write_padded(emit, context, buffer, length, width, pad);
+                    written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
                     break;
                 case 'x':
                 case 'X':
@@ -1864,14 +1907,14 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                         length = sx_unsigned_to_string((unsigned long long)va_arg(args, unsigned int), 16u, *cursor == 'X', buffer);
                     }
                     length = sx_apply_numeric_precision(buffer, length, precision);
-                    written += sx_write_padded(emit, context, buffer, length, width, pad);
+                    written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
                     break;
                 case 'p': {
                     uintptr_t value = (uintptr_t)va_arg(args, void*);
                     buffer[0] = '0';
                     buffer[1] = 'x';
                     length = 2 + sx_unsigned_to_string((unsigned long long)value, 16u, 0, buffer + 2);
-                    written += sx_write_padded(emit, context, buffer, length, width, pad);
+                    written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
                     break;
                 }
                 case 'f':
@@ -1879,7 +1922,7 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                     buffer[0] = '0';
                     buffer[1] = '\0';
                     length = 1;
-                    written += sx_write_padded(emit, context, buffer, length, width, pad);
+                    written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
                     break;
                 default:
                     if (!emit('%', context) || !emit(*cursor, context)) {

@@ -132,7 +132,6 @@ $UserPrograms = @(
     @{ Name = "df"; Source = "subsystems/posix/userland/df.c" },
     @{ Name = "ticker"; Source = "subsystems/posix/userland/ticker.c"; Test = $true },
     @{ Name = "demo"; Source = "subsystems/posix/userland/demo.c"; Test = $true },
-    @{ Name = "ps_legacy"; Source = "subsystems/posix/userland/ps.c" },
     @{ Name = "fdtest"; Source = "subsystems/posix/userland/fdtest.c"; Test = $true },
     @{ Name = "waittest"; Source = "subsystems/posix/userland/waittest.c"; Test = $true },
     @{ Name = "pipestress"; Source = "subsystems/posix/userland/pipestress.c"; Test = $true },
