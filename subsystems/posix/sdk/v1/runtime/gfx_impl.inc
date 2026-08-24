@@ -640,7 +640,11 @@ long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct sa
     return 0;
 }
 
-long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags) {
+long gfx_desktop_launch_arg(
+        const struct savanxp_gfx_context* context,
+        const char* path,
+        const char* argument,
+        uint32_t flags) {
     struct savanxp_desktop_launch_request request;
     size_t length = 0;
 
@@ -656,9 +660,21 @@ long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char
     memset(&request, 0, sizeof(request));
     request.flags = flags;
     memcpy(request.path, path, length + 1u);
+
+    if (argument != 0 && argument[0] != '\0') {
+        size_t argument_length = strlen(argument);
+        if (argument_length >= SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY) {
+            return -SAVANXP_EINVAL;
+        }
+        memcpy(request.argument, argument, argument_length + 1u);
+    }
     return write(context->launch_fd, &request, sizeof(request)) == (long)sizeof(request)
         ? 0
         : -SAVANXP_EIO;
+}
+
+long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags) {
+    return gfx_desktop_launch_arg(context, path, 0, flags);
 }
 
 long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* path) {

@@ -12,6 +12,28 @@ Notas de corte:
 
 ### Agregado
 
+- **Bloc de notas (`/bin/notepad`).** Editor de texto con la forma del de la
+  era Win95: menu File/Edit/Search/Help, area de texto completa y barra de
+  estado. Abre y guarda archivos (New, Open..., Save, Save As...; F2 guarda,
+  F3 abre), con el nombre del documento y un asterisco si tiene cambios sin
+  guardar. Es la primera app del SO que escribe archivos. Limite de 32 KB por
+  documento, avisado en la barra de estado al abrir algo mas grande.
+
+- **Editor multilinea en sxgui (`sxgui_textedit`).** Widget nuevo con caret,
+  insercion y borrado, Enter que parte la linea, flechas que conservan la
+  columna, Home/End/PageUp/PageDown, click para posicionar el caret y scroll
+  vertical con scrollbar. Sin word wrap: las lineas largas siguen al caret con
+  scroll horizontal.
+
+- **Un launch puede llevar un argumento.** `savanxp_desktop_launch_request`
+  suma un campo `argument` que el WM pasa como `argv[1]` del programa lanzado,
+  expuesto en el SDK como `gfx_desktop_launch_arg()`. Es lo que permite "abri
+  este archivo": Files lanza el notepad con la ruta.
+
+- **Los dialogos pueden arrancar con el foco en un widget** (`initial_focus` en
+  `struct sxgui_dialog`). Sin esto un dialogo de entrada de texto abria sin
+  foco y el teclado no llegaba a ningun lado.
+
 - **Listbox con columnas en sxgui (vista de detalles).** Poniendo `columns` en
   el widget, el listbox dibuja una cabecera fija arriba y parte cada item por
   TAB, una celda por columna, con alineacion a la derecha opcional
@@ -33,6 +55,10 @@ Notas de corte:
   binario era recrear la imagen entera.
 
 ### Cambiado
+
+- **Files abre los archivos en el bloc de notas.** Activar algo que no es un
+  programa ya no responde "No application is associated with this file": lanza
+  `/bin/notepad` con la ruta. El preview que Files tenia adentro tiene casa.
 
 - **Files toma la forma del explorador de archivos de la era Win95.** Barra de
   direccion con "Up One Level" (apagado en la raiz), lista de detalles con

@@ -313,7 +313,8 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
     return widget->kind == SXGUI_BUTTON || widget->kind == SXGUI_CHECKBOX ||
            widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
            widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
-           widget->kind == SXGUI_COMBOBOX || widget->kind == SXGUI_TEXTVIEW;
+           widget->kind == SXGUI_COMBOBOX || widget->kind == SXGUI_TEXTVIEW ||
+           widget->kind == SXGUI_TEXTEDIT;
 }
 
 /* ---- painting ----------------------------------------------------------- */
@@ -1329,6 +1330,226 @@ static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui
     sx_painter_pop_clip(painter);
 }
 
+/* ---- textedit (editor multilinea) ----------------------------------------
+ *
+ * El documento es el buffer del llamador, con lineas separadas por '\n'. No hay
+ * indice de lineas: se recorre el buffer cada vez. Para los tamanos que maneja
+ * un bloc de notas alcanza de sobra y evita mantener estructura duplicada que
+ * se pueda desincronizar del texto.
+ */
+
+static int sxgui_textedit_line_count(const char *text)
+{
+    int count = 1;
+
+    if (text == 0)
+    {
+        return 1;
+    }
+    while (*text != 0)
+    {
+        if (*text == '\n')
+        {
+            count += 1;
+        }
+        text += 1;
+    }
+    return count;
+}
+
+/* Indice del primer caracter de `line`; si la linea no existe, el final. */
+static int sxgui_textedit_line_start(const char *text, int line)
+{
+    int index = 0;
+    int current = 0;
+
+    if (text == 0)
+    {
+        return 0;
+    }
+    while (text[index] != 0 && current < line)
+    {
+        if (text[index] == '\n')
+        {
+            current += 1;
+        }
+        index += 1;
+    }
+    return index;
+}
+
+static int sxgui_textedit_line_length(const char *text, int start)
+{
+    int length = 0;
+
+    if (text == 0)
+    {
+        return 0;
+    }
+    while (text[start + length] != 0 && text[start + length] != '\n')
+    {
+        length += 1;
+    }
+    return length;
+}
+
+static int sxgui_textedit_caret_line(const char *text, int caret)
+{
+    int index = 0;
+    int line = 0;
+
+    if (text == 0)
+    {
+        return 0;
+    }
+    while (index < caret && text[index] != 0)
+    {
+        if (text[index] == '\n')
+        {
+            line += 1;
+        }
+        index += 1;
+    }
+    return line;
+}
+
+static int sxgui_textedit_visible_rows(const struct sxgui_widget *widget)
+{
+    int rows = (widget->rect.height - 4) / sxgui_row_height();
+    return rows > 0 ? rows : 1;
+}
+
+static int sxgui_textedit_has_scrollbar(const struct sxgui_widget *widget)
+{
+    return sxgui_textedit_line_count(widget->edit_buffer) > sxgui_textedit_visible_rows(widget);
+}
+
+static struct sx_rect sxgui_textedit_inner(const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    if (sxgui_textedit_has_scrollbar(widget))
+    {
+        inner.width -= SXGUI_SCROLLBAR_THICKNESS;
+    }
+    return inner;
+}
+
+static void sxgui_textedit_metrics(const struct sxgui_widget *widget, struct sxgui_scroll_metrics *metrics)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    int visible = sxgui_textedit_visible_rows(widget);
+    int max_scroll = sxgui_textedit_line_count(widget->edit_buffer) - visible;
+
+    sxgui_scroll_metrics_init(
+        metrics,
+        sx_rect_make(
+            inner.x + inner.width - SXGUI_SCROLLBAR_THICKNESS,
+            inner.y,
+            SXGUI_SCROLLBAR_THICKNESS,
+            inner.height),
+        0,
+        0,
+        max_scroll > 0 ? max_scroll : 0,
+        visible,
+        widget->value);
+}
+
+/* `value` es la primera linea visible y `scroll` el desplazamiento horizontal
+ * en pixeles -- el mismo reparto que usa el textfield para su scroll. */
+static void sxgui_textedit_reveal_caret(struct sxgui_widget *widget)
+{
+    int line = sxgui_textedit_caret_line(widget->edit_buffer, widget->caret);
+    int visible = sxgui_textedit_visible_rows(widget);
+    int start = sxgui_textedit_line_start(widget->edit_buffer, line);
+    int inner_width = sxgui_textedit_inner(widget).width - 6;
+    int caret_x;
+
+    if (line < widget->value)
+    {
+        widget->value = line;
+    }
+    if (line > widget->value + visible - 1)
+    {
+        widget->value = line - visible + 1;
+    }
+    if (widget->value < 0)
+    {
+        widget->value = 0;
+    }
+
+    if (inner_width < 1)
+    {
+        inner_width = 1;
+    }
+    caret_x = sxgui_text_prefix_width(widget->edit_buffer + start, widget->caret - start);
+    if (caret_x - widget->scroll > inner_width - 1)
+    {
+        widget->scroll = caret_x - (inner_width - 1);
+    }
+    if (caret_x - widget->scroll < 0)
+    {
+        widget->scroll = caret_x;
+    }
+    if (widget->scroll < 0)
+    {
+        widget->scroll = 0;
+    }
+}
+
+static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_textedit_inner(widget);
+    int row_height = sxgui_row_height();
+    int line_count = sxgui_textedit_line_count(widget->edit_buffer);
+    int caret_line = sxgui_textedit_caret_line(widget->edit_buffer, widget->caret);
+    int line;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
+    sxgui_draw_sunken(painter, widget->rect);
+
+    if (!sx_painter_push_clip(painter, inner))
+    {
+        return;
+    }
+    for (line = widget->value; line < line_count; ++line)
+    {
+        int row_y = inner.y + (line - widget->value) * row_height;
+        int start;
+        int length;
+        char text[256];
+        int copy;
+
+        if (row_y >= inner.y + inner.height)
+        {
+            break;
+        }
+        start = sxgui_textedit_line_start(widget->edit_buffer, line);
+        length = sxgui_textedit_line_length(widget->edit_buffer, start);
+        copy = length < (int)sizeof(text) - 1 ? length : (int)sizeof(text) - 1;
+        memcpy(text, widget->edit_buffer + start, (size_t)copy);
+        text[copy] = 0;
+
+        if (copy > 0)
+        {
+            sx_painter_draw_text(painter, inner.x + 3 - widget->scroll, row_y + 2, text, SXGUI_COLOR_TEXT);
+        }
+        if (widget->focused && line == caret_line)
+        {
+            int caret_x = inner.x + 3 - widget->scroll +
+                sxgui_text_prefix_width(text, widget->caret - start <= copy ? widget->caret - start : copy);
+            sxgui_vline(painter, caret_x, row_y + 2, gfx_text_height(), SXGUI_COLOR_TEXT);
+        }
+    }
+    sx_painter_pop_clip(painter);
+
+    if (sxgui_textedit_has_scrollbar(widget))
+    {
+        struct sxgui_scroll_metrics metrics;
+        sxgui_textedit_metrics(widget, &metrics);
+        sxgui_paint_scroll_metrics(painter, &metrics, sxgui_widget_enabled(widget));
+    }
+}
+
 static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widget *widget, int combobox_open)
 {
     switch (widget->kind)
@@ -1365,6 +1586,9 @@ static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widge
         break;
     case SXGUI_TEXTVIEW:
         sxgui_paint_textview(painter, widget);
+        break;
+    case SXGUI_TEXTEDIT:
+        sxgui_paint_textedit(painter, widget);
         break;
     default:
         break;
@@ -1507,7 +1731,18 @@ void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, 
     dialog->result = 0;
     dialog->saved_focus = ctx->focus_index;
     ctx->modal = dialog;
+    /* Mientras hay modal, focus_index indexa el array del dialogo: el despacho
+     * de teclado intercambia ctx->widgets por dialog->widgets. */
     ctx->focus_index = -1;
+    if (dialog->initial_focus > 0 && dialog->initial_focus < dialog->widget_count)
+    {
+        int focus;
+        for (focus = 0; focus < dialog->widget_count; ++focus)
+        {
+            dialog->widgets[focus].focused = (focus == dialog->initial_focus) ? 1 : 0;
+        }
+        ctx->focus_index = dialog->initial_focus;
+    }
     ctx->capture_index = -1;
     sxgui_popup_close(ctx);
     if (ctx->menubar != 0)
@@ -1860,7 +2095,7 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             {
                 ctx->cursor_shape = SAVANXP_CURSOR_UNAVAILABLE;
             }
-            else if (widget->kind == SXGUI_TEXTFIELD)
+            else if (widget->kind == SXGUI_TEXTFIELD || widget->kind == SXGUI_TEXTEDIT)
             {
                 ctx->cursor_shape = SAVANXP_CURSOR_TEXT;
             }
@@ -1993,6 +2228,43 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
                         }
                     }
                     sxgui_textfield_scroll_to_caret(widget);
+                    changed = 1;
+                }
+                break;
+            }
+            case SXGUI_TEXTEDIT:
+            {
+                if (widget->edit_buffer != 0)
+                {
+                    struct sx_rect inner = sxgui_textedit_inner(widget);
+                    int row = widget->value + (event->y - inner.y) / sxgui_row_height();
+                    int line_count = sxgui_textedit_line_count(widget->edit_buffer);
+                    int local_x = event->x - (inner.x + 3) + widget->scroll;
+                    int start;
+                    int length;
+                    int position;
+
+                    if (row < 0)
+                    {
+                        row = 0;
+                    }
+                    if (row > line_count - 1)
+                    {
+                        row = line_count - 1;
+                    }
+                    start = sxgui_textedit_line_start(widget->edit_buffer, row);
+                    length = sxgui_textedit_line_length(widget->edit_buffer, start);
+
+                    widget->caret = start + length;
+                    for (position = 0; position <= length; ++position)
+                    {
+                        if (sxgui_text_prefix_width(widget->edit_buffer + start, position) >= local_x)
+                        {
+                            widget->caret = start + position;
+                            break;
+                        }
+                    }
+                    sxgui_textedit_reveal_caret(widget);
                     changed = 1;
                 }
                 break;
@@ -2450,6 +2722,160 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         return 0;
     }
 
+    if (widget->kind == SXGUI_TEXTEDIT && widget->edit_buffer != 0 && widget->edit_capacity > 0)
+    {
+        int line;
+        int start;
+        int line_length;
+        int column;
+
+        length = (int)strlen(widget->edit_buffer);
+        if (widget->caret < 0)
+        {
+            widget->caret = 0;
+        }
+        if (widget->caret > length)
+        {
+            widget->caret = length;
+        }
+        line = sxgui_textedit_caret_line(widget->edit_buffer, widget->caret);
+        start = sxgui_textedit_line_start(widget->edit_buffer, line);
+        line_length = sxgui_textedit_line_length(widget->edit_buffer, start);
+        column = widget->caret - start;
+
+        switch (event->key)
+        {
+        case SAVANXP_KEY_LEFT:
+            if (widget->caret > 0)
+            {
+                widget->caret -= 1;
+                sxgui_textedit_reveal_caret(widget);
+                return 1;
+            }
+            return 0;
+        case SAVANXP_KEY_RIGHT:
+            if (widget->caret < length)
+            {
+                widget->caret += 1;
+                sxgui_textedit_reveal_caret(widget);
+                return 1;
+            }
+            return 0;
+        case SAVANXP_KEY_UP:
+        case SAVANXP_KEY_DOWN:
+        {
+            /* Subir y bajar conservan la columna hasta donde llegue la linea
+             * destino, que es lo que hace cualquier editor. */
+            int target = event->key == SAVANXP_KEY_UP ? line - 1 : line + 1;
+            int target_start;
+            int target_length;
+
+            if (target < 0 || target > sxgui_textedit_line_count(widget->edit_buffer) - 1)
+            {
+                return 0;
+            }
+            target_start = sxgui_textedit_line_start(widget->edit_buffer, target);
+            target_length = sxgui_textedit_line_length(widget->edit_buffer, target_start);
+            widget->caret = target_start + (column < target_length ? column : target_length);
+            sxgui_textedit_reveal_caret(widget);
+            return 1;
+        }
+        case SAVANXP_KEY_HOME:
+            widget->caret = start;
+            sxgui_textedit_reveal_caret(widget);
+            return 1;
+        case SAVANXP_KEY_END:
+            widget->caret = start + line_length;
+            sxgui_textedit_reveal_caret(widget);
+            return 1;
+        case SAVANXP_KEY_PAGE_UP:
+        case SAVANXP_KEY_PAGE_DOWN:
+        {
+            int step = sxgui_textedit_visible_rows(widget);
+            int target = event->key == SAVANXP_KEY_PAGE_UP ? line - step : line + step;
+            int target_start;
+            int target_length;
+
+            if (target < 0)
+            {
+                target = 0;
+            }
+            if (target > sxgui_textedit_line_count(widget->edit_buffer) - 1)
+            {
+                target = sxgui_textedit_line_count(widget->edit_buffer) - 1;
+            }
+            target_start = sxgui_textedit_line_start(widget->edit_buffer, target);
+            target_length = sxgui_textedit_line_length(widget->edit_buffer, target_start);
+            widget->caret = target_start + (column < target_length ? column : target_length);
+            sxgui_textedit_reveal_caret(widget);
+            return 1;
+        }
+        case SAVANXP_KEY_BACKSPACE:
+            if (widget->caret > 0)
+            {
+                memmove(
+                    widget->edit_buffer + widget->caret - 1,
+                    widget->edit_buffer + widget->caret,
+                    (size_t)(length - widget->caret + 1));
+                widget->caret -= 1;
+                widget->modified = 1;
+                sxgui_textedit_reveal_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                return 1;
+            }
+            return 0;
+        case SAVANXP_KEY_DELETE:
+            if (widget->caret < length)
+            {
+                memmove(
+                    widget->edit_buffer + widget->caret,
+                    widget->edit_buffer + widget->caret + 1,
+                    (size_t)(length - widget->caret));
+                widget->modified = 1;
+                sxgui_textedit_reveal_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                return 1;
+            }
+            return 0;
+        default:
+            break;
+        }
+
+        /* Enter parte la linea; el resto de los imprimibles se insertan. Ambos
+         * son la misma operacion sobre el buffer. */
+        {
+            int inserted = 0;
+            if (event->key == SAVANXP_KEY_ENTER)
+            {
+                inserted = '\n';
+            }
+            else if (event->ascii >= 32 && event->ascii < 127)
+            {
+                inserted = event->ascii;
+            }
+            if (inserted != 0 && length < widget->edit_capacity - 1)
+            {
+                memmove(
+                    widget->edit_buffer + widget->caret + 1,
+                    widget->edit_buffer + widget->caret,
+                    (size_t)(length - widget->caret + 1));
+                widget->edit_buffer[widget->caret] = (char)inserted;
+                widget->caret += 1;
+                widget->modified = 1;
+                sxgui_textedit_reveal_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                return 1;
+            }
+            if (inserted != 0)
+            {
+                /* Buffer lleno: se consume igual, para no dejar que la tecla
+                 * caiga al manejador global de la app (ESC-como-cerrar y demas). */
+                return 1;
+            }
+        }
+        return 0;
+    }
+
     return 0;
 }
 
@@ -2575,6 +3001,23 @@ struct sxgui_widget sxgui_textview(struct sx_rect rect, const char *const *lines
     struct sxgui_widget widget = sxgui_make(SXGUI_TEXTVIEW, rect, 0);
     widget.items = lines;
     widget.item_count = line_count;
+    return widget;
+}
+
+void sxgui_focus(struct sxgui_context *ctx, int index)
+{
+    if (ctx == 0 || index < -1 || index >= ctx->widget_count)
+    {
+        return;
+    }
+    sxgui_set_focus(ctx, index);
+}
+
+struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capacity)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_TEXTEDIT, rect, 0);
+    widget.edit_buffer = buffer;
+    widget.edit_capacity = capacity;
     return widget;
 }
 

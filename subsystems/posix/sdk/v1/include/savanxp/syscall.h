@@ -643,9 +643,16 @@ enum savanxp_input_event_type {
  * el WM le asigna la superficie a ese tamano al lanzarlo. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN 0x00000001u
 
+/* Un unico argumento opcional para el programa lanzado, que llega como
+ * argv[1]. Alcanza para el caso que lo motivo -- "abri este archivo" -- y deja
+ * afuera la cola de argumentos entera, que el WM no tiene por que interpretar.
+ * Vacio = se lanza sin argumentos. */
+#define SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY 192u
+
 struct savanxp_desktop_launch_request {
     uint32_t flags; /* SAVANXP_DESKTOP_LAUNCH_FLAG_* */
     char path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY];
+    char argument[SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY];
 };
 
 struct savanxp_desktop_cursor_hint {

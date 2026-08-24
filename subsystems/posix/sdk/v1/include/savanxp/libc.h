@@ -133,6 +133,13 @@ long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* p
  * necesidades del programa (p.ej. fullscreen composited). gfx_desktop_launch
  * equivale a pasar SAVANXP_DESKTOP_LAUNCH_FLAG_NONE. */
 long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags);
+/* Como gfx_desktop_launch_ex pero pasandole un argumento al programa, que lo
+ * recibe como argv[1] (p.ej. el archivo que tiene que abrir). */
+long gfx_desktop_launch_arg(
+    const struct savanxp_gfx_context* context,
+    const char* path,
+    const char* argument,
+    uint32_t flags);
 long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape);
 /* Pide el tamano de area util que necesita el contenido de la ventana. Es una
  * sugerencia: el WM la recorta y solo la atiende mientras la ventana siga en

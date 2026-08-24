@@ -16,7 +16,11 @@ static const char *k_shellapp_path = "/bin/shellapp";
 static const char *k_background_client_path = "/bin/shellui";
 static const char *k_progman_path = "/bin/progman";
 
-static int launch_overlay_client(struct windowd_session *session, const char *path, uint32_t launch_flags);
+static int launch_overlay_client(
+    struct windowd_session *session,
+    const char *path,
+    const char *argument,
+    uint32_t launch_flags);
 /* Definidas junto al resto del Task List, mas abajo; el selftest las usa antes. */
 static void tasklist_open(struct windowd_session *session, struct windowd_dirty_rect *dirty);
 static void tasklist_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index);
@@ -1351,7 +1355,7 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     reset_client(client);
 }
 
-static int start_client_process(struct windowd_client *client, const char *path)
+static int start_client_process(struct windowd_client *client, const char *path, const char *argument)
 {
     struct savanxp_gpu_client_surface_header *header;
     unsigned long command_bytes = 0;
@@ -1365,7 +1369,8 @@ static int start_client_process(struct windowd_client *client, const char *path)
     int submit_event = -1;
     int retire_event = -1;
     int shutdown_event = -1;
-    const char *argv[2] = {path, 0};
+    const char *argv[3] = {path, argument, 0};
+    int argc = (argument != 0 && argument[0] != '\0') ? 2 : 1;
     long pid;
 
     if (client == 0 || path == 0 ||
@@ -1472,7 +1477,7 @@ static int start_client_process(struct windowd_client *client, const char *path)
         close_client_setup_fd(&size_hint_pipe[1]);
         close_client_setup_fd(&client->section_fd);
         {
-            long exec_result = exec(path, argv, 1);
+            long exec_result = exec(path, argv, argc);
             if (exec_result < 0)
             {
                 eprintf("desktop: exec failed for %s (%s)\n", path, result_error_string(exec_result));
@@ -1563,7 +1568,7 @@ static int launch_background_client(struct windowd_session *session)
     reset_client(client);
     fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
     position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    return start_client_process(client, k_background_client_path);
+    return start_client_process(client, k_background_client_path, 0);
 }
 
 static void destroy_overlay_client(struct windowd_session *session, int slot, int terminate_client)
@@ -1601,7 +1606,7 @@ static int launch_shell_client(struct windowd_session *session, const char *path
     reset_client(client);
     fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
     position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    if (start_client_process(client, path) < 0)
+    if (start_client_process(client, path, 0) < 0)
     {
         return -1;
     }
@@ -1616,7 +1621,11 @@ static int launch_shell_client(struct windowd_session *session, const char *path
  * abre Doom sin pre-sizing y por lo tanto sin F11. El arreglo de fondo es que
  * el programa pida fullscreen en runtime -- el mode-setting ya funciona --, no
  * que el WM vuelva a conocer un catalogo. */
-static int launch_overlay_client(struct windowd_session *session, const char *path, uint32_t launch_flags)
+static int launch_overlay_client(
+    struct windowd_session *session,
+    const char *path,
+    const char *argument,
+    uint32_t launch_flags)
 {
     struct windowd_client *client = 0;
     int slot = -1;
@@ -1649,7 +1658,7 @@ static int launch_overlay_client(struct windowd_session *session, const char *pa
     }
     client->cascade_index = session->overlay_count;
     position_client_window(session, client, WINDOWD_CLIENT_APP, client->cascade_index);
-    if (start_client_process(client, path) < 0)
+    if (start_client_process(client, path, argument) < 0)
     {
         return -1;
     }
@@ -1852,11 +1861,13 @@ static int service_client_launch_requests(struct windowd_session *session, struc
             return 0;
         }
         request.path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY - 1u] = '\0';
+        request.argument[SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY - 1u] = '\0';
         /* Se ignoran los bits desconocidos: un cliente viejo o mal formado no
          * debe poder pedir modos que el WM no entiende. */
         if (launch_overlay_client(
                 session,
                 request.path,
+                request.argument,
                 request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) < 0)
         {
             eprintf("desktop: failed to launch requested app %s\n", request.path);
@@ -2220,7 +2231,7 @@ static int windowd_selftest(void)
 
     /* Flag explicito (no el fallback por catalogo): asi el subtest de
      * fullscreen valida el mecanismo nuevo y no depende de windowd_menu. */
-    if (launch_overlay_client(&session, "/bin/gfxdemo", SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) < 0)
+    if (launch_overlay_client(&session, "/bin/gfxdemo", 0, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL launch gfxdemo\n");
         close_compositor_session(&session);
@@ -2241,7 +2252,7 @@ static int windowd_selftest(void)
     /* A2.3: progman como cliente top-level normal. Asertar que compone un frame
      * prueba end-to-end que abre su sesion gfx, pinta el grid de programas y el
      * WM lo compone como una ventana mas. */
-    if (launch_overlay_client(&session, "/bin/progman", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    if (launch_overlay_client(&session, "/bin/progman", 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL launch progman\n");
         close_compositor_session(&session);
@@ -2251,7 +2262,7 @@ static int windowd_selftest(void)
     /* Segunda instancia: progman ya arranca con la sesion (A2.4a), asi que
      * abrirlo de nuevo desde el launcher es un caso real. Cubrirlo aca porque
      * una sola instancia no ejercita el camino de dos clientes iguales. */
-    if (launch_overlay_client(&session, "/bin/progman", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    if (launch_overlay_client(&session, "/bin/progman", 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL launch segunda instancia de progman\n");
         close_compositor_session(&session);
@@ -3295,7 +3306,7 @@ int main(int argc, char **argv)
      * trato especial -- pero ahora es el UNICO camino para lanzar programas, asi
      * que si no arranca la sesion queda sin launcher (queda el Task List para
      * manejar lo que ya este abierto). */
-    if (launch_overlay_client(&session, k_progman_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    if (launch_overlay_client(&session, k_progman_path, 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
     {
         puts_fd(2, "desktop: Program Manager no arranco; sesion sin launcher\n");
     }

@@ -41,7 +41,8 @@ enum sxgui_kind {
     SXGUI_PROGRESS,
     SXGUI_RADIO,
     SXGUI_COMBOBOX,
-    SXGUI_TEXTVIEW
+    SXGUI_TEXTVIEW,
+    SXGUI_TEXTEDIT
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -98,10 +99,15 @@ struct sxgui_widget {
     const struct sxgui_column *columns;
     int column_count;
 
-    /* textfield (caller-provided editable storage) */
+    /* textfield y textedit (caller-provided editable storage). En textedit el
+     * buffer es el documento entero, con lineas separadas por '\n'. */
     char *edit_buffer;
     int edit_capacity;
     int caret;
+
+    /* textedit: se pone en 1 cada vez que el contenido cambia. El toolkit
+     * nunca lo baja -- es el llamador el que decide que significa "guardado". */
+    int modified;
 
     /* textfield: horizontal scroll in pixels to keep the caret visible;
      * listbox: first visible row */
@@ -167,6 +173,11 @@ struct sxgui_dialog {
     const char *title;
     struct sxgui_widget *widgets;   /* rects relative to the client area */
     int widget_count;
+    /* Widget que arranca con el foco, en indices de `widgets`. 0 lo deja sin
+     * foco (el default historico), que solo sirve si el dialogo es de botones:
+     * uno cuyo objeto es escribir algo tiene que poner aca su campo, o el
+     * teclado no llega a ningun lado. */
+    int initial_focus;
     int saved_focus;                /* owned by the toolkit */
     int result;
 };
@@ -264,6 +275,15 @@ struct sxgui_widget sxgui_combobox(struct sx_rect rect, const char *const *items
 /* Read-only multi-line text panel; reuses items/item_count as lines and
  * scrolls like a listbox (embedded scrollbar, keyboard paging). */
 struct sxgui_widget sxgui_textview(struct sx_rect rect, const char *const *lines, int line_count);
+/* Editor multilinea: el documento vive en `buffer` (terminado en NUL, lineas
+ * separadas por '\n') y lo posee el llamador. Sin word wrap: las lineas largas
+ * se recortan al ancho y el scroll horizontal sigue al caret. */
+struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capacity);
+
+/* Pone el foco en un widget por indice (-1 = ninguno). Lo normal es que el foco
+ * lo mueva el usuario con Tab o el click, pero una app cuyo contenido ES un
+ * control -- un editor, una lista -- quiere arrancar con el foco ahi. */
+void sxgui_focus(struct sxgui_context *ctx, int index);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 
 /* ---- application frame (sxgui_app.c) -------------------------------------

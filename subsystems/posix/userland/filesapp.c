@@ -12,9 +12,9 @@
  * menu, barra de direccion con "Up One Level", lista de detalles (Name / Size /
  * Type) con cabecera de columnas, y barra de estado de dos paneles.
  *
- * NO muestra el contenido de los archivos: eso es trabajo de un editor, y va a
- * vivir en un notepad propio. Abrir un archivo que no se puede lanzar lo dice
- * en la barra de estado en vez de intentar interpretarlo.
+ * NO muestra el contenido de los archivos: eso es trabajo de un editor. Abrir
+ * un archivo que no es un programa lo manda a /bin/notepad, que es donde vive
+ * ahora el preview que esta app tenia adentro.
  */
 
 #define FILESAPP_PATH_CAPACITY 256
@@ -61,6 +61,8 @@ static struct sxgui_column g_columns[] = {
 };
 
 #define FILESAPP_COLUMN_COUNT ((int)(sizeof(g_columns) / sizeof(g_columns[0])))
+#define FILESAPP_EDITOR_PATH "/bin/notepad"
+
 #define FILESAPP_COLUMN_SIZE_WIDTH 80
 #define FILESAPP_COLUMN_TYPE_WIDTH 130
 
@@ -435,8 +437,14 @@ static void filesapp_activate_selected(void)
         filesapp_set_status("Launch requested.");
         return;
     }
-    /* Sin editor todavia: se dice, no se adivina. */
-    filesapp_set_status("No application is associated with this file.");
+    /* Cualquier archivo que no sea un programa se abre en el bloc de notas: es
+     * donde vive ahora el preview que esta app tenia adentro. */
+    if (gfx_desktop_launch_arg(&g_app.gfx, FILESAPP_EDITOR_PATH, full_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    {
+        filesapp_set_status("Cannot open Notepad.");
+        return;
+    }
+    filesapp_set_status("Opening in Notepad...");
 }
 
 /* ---- callbacks ------------------------------------------------------------ */

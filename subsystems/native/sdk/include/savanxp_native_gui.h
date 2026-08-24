@@ -94,10 +94,12 @@ struct sxn_gui_pointer_event {
 /* Pedido de lanzamiento que el cliente escribe por el fd 9 para que el shell
  * abra otra app. Espejo de savanxp_desktop_launch_request del SDK posix. */
 #define SXN_GUI_LAUNCH_PATH_CAPACITY 192u
+#define SXN_GUI_LAUNCH_ARG_CAPACITY 192u
 
 struct sxn_gui_launch_request {
     uint32_t reserved0;
     char path[SXN_GUI_LAUNCH_PATH_CAPACITY];
+    char argument[SXN_GUI_LAUNCH_ARG_CAPACITY];
 };
 
 /* Tamano de area util que el cliente pide por el fd 11 para su contenido.
