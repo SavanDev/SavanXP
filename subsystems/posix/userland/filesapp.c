@@ -7,16 +7,25 @@
 
 #include "shared/version.h"
 
+/*
+ * Explorador de archivos, con la forma del explorador de la era Win95: barra de
+ * menu, barra de direccion con "Up One Level", lista de detalles (Name / Size /
+ * Type) con cabecera de columnas, y barra de estado de dos paneles.
+ *
+ * NO muestra el contenido de los archivos: eso es trabajo de un editor, y va a
+ * vivir en un notepad propio. Abrir un archivo que no se puede lanzar lo dice
+ * en la barra de estado en vez de intentar interpretarlo.
+ */
+
 #define FILESAPP_PATH_CAPACITY 256
 #define FILESAPP_MAX_ENTRIES 128
-#define FILESAPP_LABEL_LENGTH 80
-#define FILESAPP_PREVIEW_LINES 20
-#define FILESAPP_PREVIEW_COLUMNS 76
+#define FILESAPP_LABEL_LENGTH 96
 
-#define FILESAPP_MENU_REFRESH 1
-#define FILESAPP_MENU_GO_UP 2
+#define FILESAPP_MENU_OPEN 1
+#define FILESAPP_MENU_UP 2
+#define FILESAPP_MENU_REFRESH 3
 #define FILESAPP_MENU_ABOUT 8
-#define FILESAPP_MENU_EXIT 9
+#define FILESAPP_MENU_CLOSE 9
 
 struct filesapp_entry
 {
@@ -26,38 +35,46 @@ struct filesapp_entry
 };
 
 static struct sxgui_app g_app;
-static struct sxgui_widget g_widgets[6];
+static struct sxgui_widget g_widgets[5];
 
 static struct filesapp_entry g_entries[FILESAPP_MAX_ENTRIES];
 static char g_item_labels[FILESAPP_MAX_ENTRIES][FILESAPP_LABEL_LENGTH];
 static const char *g_item_ptrs[FILESAPP_MAX_ENTRIES];
-static char g_preview[FILESAPP_PREVIEW_LINES][FILESAPP_PREVIEW_COLUMNS + 1];
-static const char *g_preview_ptrs[FILESAPP_PREVIEW_LINES];
 static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
-static char g_status_line[128] = "Ready";
+static char g_count_pane[64] = "0 object(s)";
+static char g_size_pane[64] = "";
 static int g_entry_count = 0;
 
 static struct sxgui_dialog g_about_dialog;
-static struct sxgui_widget g_about_widgets[3];
+static struct sxgui_widget g_about_widgets[4];
 
-#define FILESAPP_LIST (&g_widgets[3])
-#define FILESAPP_PREVIEW (&g_widgets[4])
+#define FILESAPP_ADDRESS (&g_widgets[0])
+#define FILESAPP_UP_BUTTON (&g_widgets[1])
+#define FILESAPP_LIST (&g_widgets[2])
 
-static int filesapp_path_is_launchable(const char *path);
+/* Anchos fijos; la columna Name se lleva el resto y se recalcula en el layout,
+ * que es lo que hace que la lista se estire con la ventana. */
+static struct sxgui_column g_columns[] = {
+    {"Name", 240, 0},
+    {"Size", 80, SXGUI_COLUMN_RIGHT},
+    {"Type", 130, 0},
+};
 
-static int filesapp_printable_char(int value)
-{
-    return value >= 32 && value <= 126;
-}
+#define FILESAPP_COLUMN_COUNT ((int)(sizeof(g_columns) / sizeof(g_columns[0])))
+#define FILESAPP_COLUMN_SIZE_WIDTH 80
+#define FILESAPP_COLUMN_TYPE_WIDTH 130
 
-static void filesapp_set_status(const char *text)
-{
-    snprintf(g_status_line, sizeof(g_status_line), "%s", text != 0 ? text : "");
-}
+/* ---- helpers de path ------------------------------------------------------ */
 
 static int filesapp_is_root_path(const char *path)
 {
     return path != 0 && path[0] == '/' && path[1] == '\0';
+}
+
+static int filesapp_path_is_launchable(const char *path)
+{
+    return path != 0 &&
+        (strncmp(path, "/bin/", 5) == 0 || strncmp(path, "/disk/bin/", 10) == 0);
 }
 
 static int filesapp_join_path(const char *base, const char *name, char *buffer, size_t capacity)
@@ -109,27 +126,98 @@ static void filesapp_parent_path(const char *path, char *buffer, size_t capacity
     }
 }
 
-static void filesapp_sanitize_line(char *text)
+/* ---- formato de las celdas ------------------------------------------------ */
+
+static void filesapp_set_status(const char *text)
 {
+    snprintf(g_count_pane, sizeof(g_count_pane), "%s", text != 0 ? text : "");
+}
+
+/* Como el explorador de la epoca: el tamano se muestra en KB redondeados para
+ * arriba, y los directorios no muestran tamano. */
+static void filesapp_format_size(unsigned int bytes, char *buffer, size_t capacity)
+{
+    snprintf(buffer, capacity, "%u KB", (bytes + 1023u) / 1024u);
+}
+
+/* "File Folder" / "Application" / "TXT File" / "File", el vocabulario del
+ * explorador clasico para la columna Type. */
+static void filesapp_format_type(
+    const char *name,
+    int is_dir,
+    int launchable,
+    char *buffer,
+    size_t capacity)
+{
+    const char *dot = 0;
     size_t index;
 
-    if (text == 0)
+    if (is_dir)
     {
+        snprintf(buffer, capacity, "File Folder");
         return;
     }
-    for (index = 0; text[index] != '\0'; ++index)
+    if (launchable)
     {
-        if (text[index] == '\r' || text[index] == '\n')
+        snprintf(buffer, capacity, "Application");
+        return;
+    }
+
+    for (index = 0; name != 0 && name[index] != '\0'; ++index)
+    {
+        if (name[index] == '.' && index > 0 && name[index + 1] != '\0')
         {
-            text[index] = '\0';
-            break;
-        }
-        if (!filesapp_printable_char((unsigned char)text[index]))
-        {
-            text[index] = '.';
+            dot = &name[index + 1];
         }
     }
+    if (dot == 0)
+    {
+        snprintf(buffer, capacity, "File");
+        return;
+    }
+
+    /* La extension va en mayusculas, como la mostraba el explorador. */
+    {
+        char extension[16];
+        size_t length = 0;
+
+        while (dot[length] != '\0' && length + 1 < sizeof(extension))
+        {
+            char value = dot[length];
+            if (value >= 'a' && value <= 'z')
+            {
+                value = (char)(value - 'a' + 'A');
+            }
+            extension[length] = value;
+            length += 1;
+        }
+        extension[length] = '\0';
+        snprintf(buffer, capacity, "%s File", extension);
+    }
 }
+
+static void filesapp_format_total(unsigned int bytes, char *buffer, size_t capacity)
+{
+    if (bytes < 1024u)
+    {
+        snprintf(buffer, capacity, "%u bytes", bytes);
+        return;
+    }
+    if (bytes < 1024u * 1024u)
+    {
+        snprintf(buffer, capacity, "%u KB", bytes / 1024u);
+        return;
+    }
+    /* Un decimal por aritmetica entera: el printf de userland no lleva float. */
+    snprintf(
+        buffer,
+        capacity,
+        "%u.%u MB",
+        bytes / (1024u * 1024u),
+        (bytes % (1024u * 1024u)) * 10u / (1024u * 1024u));
+}
+
+/* ---- listado -------------------------------------------------------------- */
 
 static void filesapp_sort_entries(int start_index)
 {
@@ -160,102 +248,77 @@ static void filesapp_sort_entries(int start_index)
     }
 }
 
-static void filesapp_clear_preview(void)
-{
-    int index;
-    for (index = 0; index < FILESAPP_PREVIEW_LINES; ++index)
-    {
-        memset(g_preview[index], 0, sizeof(g_preview[index]));
-    }
-    FILESAPP_PREVIEW->scroll = 0;
-}
-
-static void filesapp_update_preview(void)
-{
-    char full_path[FILESAPP_PATH_CAPACITY];
-    struct stat info = {0};
-    FILE *stream = 0;
-    int line_index = 0;
-    int selected = FILESAPP_LIST->value;
-
-    filesapp_clear_preview();
-    if (g_entry_count <= 0 || selected < 0 || selected >= g_entry_count)
-    {
-        snprintf(g_preview[0], sizeof(g_preview[0]), "No entries.");
-        return;
-    }
-
-    if (strcmp(g_entries[selected].name, "..") == 0)
-    {
-        snprintf(g_preview[0], sizeof(g_preview[0]), "Go to parent directory");
-        return;
-    }
-
-    if (!filesapp_join_path(g_current_path, g_entries[selected].name, full_path, sizeof(full_path)))
-    {
-        snprintf(g_preview[0], sizeof(g_preview[0]), "Path too long.");
-        return;
-    }
-    if (stat(full_path, &info) < 0)
-    {
-        snprintf(g_preview[0], sizeof(g_preview[0]), "stat failed for %s", g_entries[selected].name);
-        return;
-    }
-
-    snprintf(g_preview[0], sizeof(g_preview[0]), "%s", full_path);
-    if (S_ISDIR(info.st_mode))
-    {
-        snprintf(g_preview[2], sizeof(g_preview[2]), "Directory");
-        snprintf(g_preview[3], sizeof(g_preview[3]), "Open: Enter or double click");
-        return;
-    }
-
-    snprintf(g_preview[2], sizeof(g_preview[2]), "File size: %u bytes", info.st_size);
-    if (filesapp_path_is_launchable(full_path))
-    {
-        snprintf(g_preview[3], sizeof(g_preview[3]), "Launch: Enter or double click");
-    }
-    stream = fopen(full_path, "r");
-    if (stream == 0)
-    {
-        snprintf(g_preview[4], sizeof(g_preview[4]), "Preview unavailable.");
-        return;
-    }
-
-    for (line_index = 0; line_index + 5 < FILESAPP_PREVIEW_LINES; ++line_index)
-    {
-        if (fgets(g_preview[line_index + 5], FILESAPP_PREVIEW_COLUMNS, stream) == 0)
-        {
-            break;
-        }
-        filesapp_sanitize_line(g_preview[line_index + 5]);
-    }
-    if (line_index == 0)
-    {
-        snprintf(g_preview[5], sizeof(g_preview[5]), "(empty or binary-looking file)");
-    }
-    fclose(stream);
-}
-
-/* Rebuild the "[DIR] name" labels the listbox points at. */
+/* Arma las filas "nombre TAB tamano TAB tipo" que parte el listbox. */
 static void filesapp_rebuild_labels(void)
 {
+    char full_path[FILESAPP_PATH_CAPACITY];
+    char size_cell[32];
+    char type_cell[32];
     int index;
 
     for (index = 0; index < g_entry_count; ++index)
     {
+        const struct filesapp_entry *entry = &g_entries[index];
+        int launchable = 0;
+
+        if (!entry->is_dir &&
+            filesapp_join_path(g_current_path, entry->name, full_path, sizeof(full_path)))
+        {
+            launchable = filesapp_path_is_launchable(full_path);
+        }
+
+        size_cell[0] = '\0';
+        if (!entry->is_dir)
+        {
+            filesapp_format_size(entry->size, size_cell, sizeof(size_cell));
+        }
+        if (strcmp(entry->name, "..") == 0)
+        {
+            snprintf(type_cell, sizeof(type_cell), "File Folder");
+        }
+        else
+        {
+            filesapp_format_type(entry->name, entry->is_dir, launchable, type_cell, sizeof(type_cell));
+        }
+
         snprintf(
             g_item_labels[index],
             sizeof(g_item_labels[index]),
-            "%s %s",
-            g_entries[index].is_dir ? "[DIR]" : "[FILE]",
-            g_entries[index].name);
+            "%s%c%s%c%s",
+            entry->name,
+            SXGUI_COLUMN_SEPARATOR,
+            size_cell,
+            SXGUI_COLUMN_SEPARATOR,
+            type_cell);
         g_item_ptrs[index] = g_item_labels[index];
     }
     FILESAPP_LIST->items = g_item_ptrs;
     FILESAPP_LIST->item_count = g_entry_count;
     FILESAPP_LIST->value = 0;
     FILESAPP_LIST->scroll = 0;
+}
+
+static void filesapp_update_status(void)
+{
+    unsigned int total = 0;
+    int index;
+    int objects = 0;
+
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        if (strcmp(g_entries[index].name, "..") == 0)
+        {
+            continue;
+        }
+        objects += 1;
+        if (!g_entries[index].is_dir)
+        {
+            total += g_entries[index].size;
+        }
+    }
+
+    snprintf(g_count_pane, sizeof(g_count_pane), "%d object(s)", objects);
+    filesapp_format_total(total, g_size_pane, sizeof(g_size_pane));
 }
 
 static int filesapp_load_directory(const char *path)
@@ -309,21 +372,31 @@ static int filesapp_load_directory(const char *path)
     snprintf(g_current_path, sizeof(g_current_path), "%s", path);
     filesapp_sort_entries(insert_parent ? 1 : 0);
     filesapp_rebuild_labels();
-    filesapp_update_preview();
-    snprintf(g_status_line, sizeof(g_status_line), "%d item(s)", g_entry_count);
+    filesapp_update_status();
+
+    /* En la raiz no hay a donde subir: el boton se apaga en vez de no hacer
+     * nada al apretarlo. */
+    if (filesapp_is_root_path(g_current_path))
+    {
+        FILESAPP_UP_BUTTON->flags |= SXGUI_FLAG_DISABLED;
+    }
+    else
+    {
+        FILESAPP_UP_BUTTON->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
+    }
     return 0;
 }
 
-static int filesapp_path_is_launchable(const char *path)
-{
-    return path != 0 &&
-        (strncmp(path, "/bin/", 5) == 0 || strncmp(path, "/disk/bin/", 10) == 0);
-}
+/* ---- navegacion ----------------------------------------------------------- */
 
 static void filesapp_go_up(void)
 {
     char parent_path[FILESAPP_PATH_CAPACITY];
 
+    if (filesapp_is_root_path(g_current_path))
+    {
+        return;
+    }
     filesapp_parent_path(g_current_path, parent_path, sizeof(parent_path));
     (void)filesapp_load_directory(parent_path);
 }
@@ -347,26 +420,26 @@ static void filesapp_activate_selected(void)
         filesapp_set_status("Path too long.");
         return;
     }
-    if (!g_entries[selected].is_dir)
+    if (g_entries[selected].is_dir)
     {
-        if (filesapp_path_is_launchable(full_path))
-        {
-            if (gfx_desktop_launch(&g_app.gfx, full_path) < 0)
-            {
-                filesapp_set_status("Launch failed.");
-                return;
-            }
-            filesapp_set_status("Launch requested.");
-            return;
-        }
-        filesapp_update_preview();
-        filesapp_set_status("Preview refreshed.");
+        (void)filesapp_load_directory(full_path);
         return;
     }
-    (void)filesapp_load_directory(full_path);
+    if (filesapp_path_is_launchable(full_path))
+    {
+        if (gfx_desktop_launch(&g_app.gfx, full_path) < 0)
+        {
+            filesapp_set_status("Launch failed.");
+            return;
+        }
+        filesapp_set_status("Launch requested.");
+        return;
+    }
+    /* Sin editor todavia: se dice, no se adivina. */
+    filesapp_set_status("No application is associated with this file.");
 }
 
-/* ---- widget callbacks ---------------------------------------------------- */
+/* ---- callbacks ------------------------------------------------------------ */
 
 static void on_list(struct sxgui_widget *widget, void *user)
 {
@@ -375,10 +448,13 @@ static void on_list(struct sxgui_widget *widget, void *user)
     {
         filesapp_activate_selected();
     }
-    else
-    {
-        filesapp_update_preview();
-    }
+}
+
+static void on_up_clicked(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    filesapp_go_up();
 }
 
 static void on_dialog_ok(struct sxgui_widget *widget, void *user)
@@ -393,16 +469,19 @@ static void on_menu_command(int id, void *user)
     (void)user;
     switch (id)
     {
+    case FILESAPP_MENU_OPEN:
+        filesapp_activate_selected();
+        break;
+    case FILESAPP_MENU_UP:
+        filesapp_go_up();
+        break;
     case FILESAPP_MENU_REFRESH:
         (void)filesapp_load_directory(g_current_path);
         break;
-    case FILESAPP_MENU_GO_UP:
-        filesapp_go_up();
-        break;
     case FILESAPP_MENU_ABOUT:
-        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, 280, 96);
+        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, 300, 116);
         break;
-    case FILESAPP_MENU_EXIT:
+    case FILESAPP_MENU_CLOSE:
         sxgui_app_quit(&g_app, 0);
         break;
     default:
@@ -432,44 +511,64 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
 
 /* ---- layout --------------------------------------------------------------- */
 
-/* El layout se estira con la ventana, asi que no hay un bounding box del que
- * deducir el tamano: estos son los dos paneles (lista + preview) con ancho
- * suficiente para nombres y lineas de preview tipicos, sin comerse la
- * pantalla. */
-#define FILESAPP_CONTENT_WIDTH 640
-#define FILESAPP_CONTENT_HEIGHT 420
+/* La lista se estira con la ventana, asi que no hay bounding box del que
+ * deducir el tamano: este es un explorador comodo sin comerse la pantalla. */
+#define FILESAPP_CONTENT_WIDTH 560
+#define FILESAPP_CONTENT_HEIGHT 400
+
+#define FILESAPP_TOOLBAR_HEIGHT 22
+#define FILESAPP_STATUS_HEIGHT 20
+#define FILESAPP_UP_BUTTON_WIDTH 110
 
 static void filesapp_layout(struct sxgui_app *app)
 {
     int width = (int)app->gfx.info.width;
     int height = (int)app->gfx.info.height;
-    int top = sxgui_menubar_height() + 6;
-    int panel_y = top + 42;
-    int panel_height = height - panel_y - 40;
-    int list_x = 12;
-    int list_width = width / 2 - 18;
-    int preview_x = list_x + list_width + 12;
-    int preview_width = width - preview_x - 12;
+    int toolbar_y = sxgui_menubar_height() + 5;
+    int list_y = toolbar_y + FILESAPP_TOOLBAR_HEIGHT + 5;
+    int status_y = height - FILESAPP_STATUS_HEIGHT - 5;
+    int list_height = status_y - list_y - 5;
+    int address_width = width - 16 - FILESAPP_UP_BUTTON_WIDTH - 6;
+    int list_width = width - 16;
+    int name_width;
+    int count_pane_width;
 
-    if (panel_height < 60)
+    if (list_height < 60)
     {
-        panel_height = 60;
+        list_height = 60;
     }
-    if (list_width < 80)
+    if (address_width < 80)
     {
-        list_width = 80;
+        address_width = 80;
     }
-    if (preview_width < 80)
+    if (list_width < 120)
     {
-        preview_width = 80;
+        list_width = 120;
     }
 
-    g_widgets[0].rect = sx_rect_make(12, top, width - 24, 16);                      /* path */
-    g_widgets[1].rect = sx_rect_make(list_x, panel_y - 20, 160, 16);                /* "Directory" */
-    g_widgets[2].rect = sx_rect_make(preview_x, panel_y - 20, 160, 16);             /* "Preview" */
-    g_widgets[3].rect = sx_rect_make(list_x, panel_y, list_width, panel_height);    /* listbox */
-    g_widgets[4].rect = sx_rect_make(preview_x, panel_y, preview_width, panel_height); /* textview */
-    g_widgets[5].rect = sx_rect_make(12, height - 32, width - 24, 22);              /* status */
+    FILESAPP_ADDRESS->rect = sx_rect_make(8, toolbar_y, address_width, FILESAPP_TOOLBAR_HEIGHT);
+    FILESAPP_UP_BUTTON->rect = sx_rect_make(
+        8 + address_width + 6, toolbar_y, FILESAPP_UP_BUTTON_WIDTH, FILESAPP_TOOLBAR_HEIGHT);
+    FILESAPP_LIST->rect = sx_rect_make(8, list_y, list_width, list_height);
+
+    /* Name se queda con lo que sobra: es la columna que crece al agrandar la
+     * ventana, igual que en el explorador. El -6 deja lugar al borde hundido y
+     * a la columna del scrollbar sin que Type quede cortada. */
+    name_width = list_width - FILESAPP_COLUMN_SIZE_WIDTH - FILESAPP_COLUMN_TYPE_WIDTH - 6;
+    if (name_width < 90)
+    {
+        name_width = 90;
+    }
+    g_columns[0].width = name_width;
+
+    count_pane_width = list_width / 2;
+    if (count_pane_width < 80)
+    {
+        count_pane_width = 80;
+    }
+    g_widgets[3].rect = sx_rect_make(8, status_y, count_pane_width, FILESAPP_STATUS_HEIGHT);
+    g_widgets[4].rect = sx_rect_make(
+        8 + count_pane_width + 4, status_y, list_width - count_pane_width - 4, FILESAPP_STATUS_HEIGHT);
 }
 
 static void on_resize(struct sxgui_app *app)
@@ -477,13 +576,17 @@ static void on_resize(struct sxgui_app *app)
     filesapp_layout(app);
 }
 
-/* ---- menu tables ----------------------------------------------------------- */
+/* ---- menus ----------------------------------------------------------------- */
 
 static const struct sxgui_menu_item k_file_items[] = {
-    {"Refresh", FILESAPP_MENU_REFRESH, 0},
-    {"Go up", FILESAPP_MENU_GO_UP, 0},
+    {"Open", FILESAPP_MENU_OPEN, 0},
+    {"Up One Level", FILESAPP_MENU_UP, 0},
     {0, 0, 0},
-    {"Exit", FILESAPP_MENU_EXIT, 0},
+    {"Close", FILESAPP_MENU_CLOSE, 0},
+};
+
+static const struct sxgui_menu_item k_view_items[] = {
+    {"Refresh", FILESAPP_MENU_REFRESH, 0},
 };
 
 static const struct sxgui_menu_item k_help_items[] = {
@@ -492,6 +595,7 @@ static const struct sxgui_menu_item k_help_items[] = {
 
 static const struct sxgui_menu k_menus[] = {
     {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
+    {"View", k_view_items, (int)(sizeof(k_view_items) / sizeof(k_view_items[0]))},
     {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
 };
 
@@ -506,30 +610,27 @@ static struct sxgui_menubar g_menubar = {
 
 int main(void)
 {
-    int index;
-
-    for (index = 0; index < FILESAPP_PREVIEW_LINES; ++index)
-    {
-        g_preview_ptrs[index] = g_preview[index];
-    }
-
     g_widgets[0] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_current_path);
-    g_widgets[1] = sxgui_label(sx_rect_make(0, 0, 0, 0), "Directory");
-    g_widgets[2] = sxgui_label(sx_rect_make(0, 0, 0, 0), "Preview");
-    g_widgets[3] = sxgui_listbox(sx_rect_make(0, 0, 0, 0), g_item_ptrs, 0);
-    g_widgets[3].on_action = on_list;
-    g_widgets[4] = sxgui_textview(sx_rect_make(0, 0, 0, 0), g_preview_ptrs, FILESAPP_PREVIEW_LINES);
-    g_widgets[5] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status_line);
-    g_widgets[5].flags |= SXGUI_FLAG_SUNKEN;
+    g_widgets[0].flags |= SXGUI_FLAG_SUNKEN;
+    g_widgets[1] = sxgui_button(sx_rect_make(0, 0, 0, 0), "Up One Level", on_up_clicked, 0);
+    g_widgets[2] = sxgui_listbox(sx_rect_make(0, 0, 0, 0), g_item_ptrs, 0);
+    g_widgets[2].columns = g_columns;
+    g_widgets[2].column_count = FILESAPP_COLUMN_COUNT;
+    g_widgets[2].on_action = on_list;
+    g_widgets[3] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_count_pane);
+    g_widgets[3].flags |= SXGUI_FLAG_SUNKEN;
+    g_widgets[4] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_size_pane);
+    g_widgets[4].flags |= SXGUI_FLAG_SUNKEN;
 
-    g_about_widgets[0] = sxgui_label(sx_rect_make(10, 8, 260, 16), "SavanXP Files");
-    g_about_widgets[1] = sxgui_label(sx_rect_make(10, 28, 260, 16), "Browse directories and preview files");
-    g_about_widgets[2] = sxgui_button(sx_rect_make(90, 56, 100, 26), "OK", on_dialog_ok, 0);
-    g_about_dialog.title = "About";
+    g_about_widgets[0] = sxgui_label(sx_rect_make(10, 8, 280, 16), "SavanXP Files");
+    g_about_widgets[1] = sxgui_label(sx_rect_make(10, 28, 280, 16), "Version: " SAVANXP_VERSION_STRING);
+    g_about_widgets[2] = sxgui_label(sx_rect_make(10, 48, 280, 16), "Browse directories and launch programs");
+    g_about_widgets[3] = sxgui_button(sx_rect_make(100, 76, 100, 26), "OK", on_dialog_ok, 0);
+    g_about_dialog.title = "About Files";
     g_about_dialog.widgets = g_about_widgets;
-    g_about_dialog.widget_count = 3;
+    g_about_dialog.widget_count = 4;
 
-    if (sxgui_app_init(&g_app, "filesapp", g_widgets, 6) < 0)
+    if (sxgui_app_init(&g_app, "filesapp", g_widgets, 5) < 0)
     {
         return 1;
     }

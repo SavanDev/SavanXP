@@ -12,6 +12,12 @@ Notas de corte:
 
 ### Agregado
 
+- **Listbox con columnas en sxgui (vista de detalles).** Poniendo `columns` en
+  el widget, el listbox dibuja una cabecera fija arriba y parte cada item por
+  TAB, una celda por columna, con alineacion a la derecha opcional
+  (`SXGUI_COLUMN_RIGHT`) y recorte por celda. Es opt-in: sin `columns` el
+  listbox se comporta igual que siempre.
+
 - **Size hint: cada ventana arranca del tamano de su contenido.** Canal nuevo
   cliente->WM (`SAVANXP_WM_FD_SIZE_HINT`, fd 11): la app pide el area util que
   necesita y el WM la aplica una sola vez al arrancar, recortada a la capacidad
@@ -27,6 +33,18 @@ Notas de corte:
   binario era recrear la imagen entera.
 
 ### Cambiado
+
+- **Files toma la forma del explorador de archivos de la era Win95.** Barra de
+  direccion con "Up One Level" (apagado en la raiz), lista de detalles con
+  cabecera Name/Size/Type -- tamanos en KB, tipos "File Folder"/"Application"/
+  "TXT File" -- y barra de estado de dos paneles con el conteo de objetos y el
+  total. El menu pasa a File/View/Help.
+
+- **Files ya no muestra el contenido de los archivos.** Se fue el panel de
+  preview: leer un archivo es trabajo de un editor y va a vivir en un notepad
+  propio. Abrir algo que no se puede lanzar ahora lo dice en la barra de
+  estado ("No application is associated with this file.") en vez de volcar los
+  primeros bytes.
 
 - **Display, audio, block y NIC eligen driver por registro, no por ramas en
   `kernel_main`.** Cada driver se auto-describe con `register_driver` y el HAL

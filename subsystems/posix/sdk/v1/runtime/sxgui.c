@@ -686,9 +686,21 @@ static void sxgui_menu_fire(struct sxgui_menubar *bar, const struct sxgui_menu *
 
 /* ---- listbox scrolling helpers ------------------------------------------ */
 
+/* Alto de la cabecera de columnas; 0 cuando el listbox no tiene columnas, que
+ * es lo que hace que todo lo de abajo siga valiendo para una lista simple. */
+static int sxgui_listbox_header_height(const struct sxgui_widget *widget)
+{
+    if (widget->kind != SXGUI_LISTBOX || widget->columns == 0 || widget->column_count <= 0)
+    {
+        return 0;
+    }
+    return gfx_text_height() + 5;
+}
+
 static int sxgui_listbox_visible_rows(const struct sxgui_widget *widget)
 {
-    int rows = (widget->rect.height - 4) / sxgui_row_height();
+    int usable = widget->rect.height - 4 - sxgui_listbox_header_height(widget);
+    int rows = usable / sxgui_row_height();
     return rows > 0 ? rows : 1;
 }
 
@@ -703,15 +715,149 @@ static int sxgui_listbox_max_scroll(const struct sxgui_widget *widget)
     return max_scroll > 0 ? max_scroll : 0;
 }
 
-/* text area inside the sunken border, minus the embedded scrollbar column */
+/* text area inside the sunken border, minus the embedded scrollbar column y la
+ * cabecera de columnas. Como el pintado y el hit-test de filas parten los dos
+ * de aca, correr el origen alcanza para que la cabecera no se solape. */
 static struct sx_rect sxgui_listbox_inner(const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    int header = sxgui_listbox_header_height(widget);
+    if (sxgui_listbox_has_scrollbar(widget))
+    {
+        inner.width -= SXGUI_SCROLLBAR_THICKNESS;
+    }
+    inner.y += header;
+    inner.height -= header;
+    if (inner.height < 0)
+    {
+        inner.height = 0;
+    }
+    return inner;
+}
+
+/* La cabecera ocupa el ancho util menos la columna del scrollbar, que corre de
+ * punta a punta al costado -- igual que en la lista de detalles clasica. */
+static struct sx_rect sxgui_listbox_header_rect(const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, 2);
     if (sxgui_listbox_has_scrollbar(widget))
     {
         inner.width -= SXGUI_SCROLLBAR_THICKNESS;
     }
+    inner.height = sxgui_listbox_header_height(widget);
     return inner;
+}
+
+/* Copia la celda `index` de un item separado por SXGUI_COLUMN_SEPARATOR.
+ * Devuelve siempre buffer (cadena vacia si esa columna no existe en el item),
+ * asi el llamador no necesita distinguir el caso. */
+static const char *sxgui_column_cell(const char *text, int index, char *buffer, int capacity)
+{
+    int cell = 0;
+    int length = 0;
+
+    buffer[0] = 0;
+    if (text == 0 || capacity <= 0)
+    {
+        return buffer;
+    }
+    while (*text != 0 && cell < index)
+    {
+        if (*text == SXGUI_COLUMN_SEPARATOR)
+        {
+            cell += 1;
+        }
+        text += 1;
+    }
+    if (cell != index)
+    {
+        return buffer;
+    }
+    while (*text != 0 && *text != SXGUI_COLUMN_SEPARATOR && length < capacity - 1)
+    {
+        buffer[length] = *text;
+        length += 1;
+        text += 1;
+    }
+    buffer[length] = 0;
+    return buffer;
+}
+
+/* Una fila partida en celdas, cada una recortada a su columna para que un
+ * nombre largo no se derrame sobre la de al lado. */
+static void sxgui_paint_columns_row(
+    struct sx_painter *painter,
+    const struct sxgui_widget *widget,
+    struct sx_rect inner,
+    int row_y,
+    int row_height,
+    const char *label,
+    uint32_t text_colour)
+{
+    int column;
+    int cell_x = inner.x;
+
+    for (column = 0; column < widget->column_count; ++column)
+    {
+        const struct sxgui_column *spec = &widget->columns[column];
+        char cell[128];
+        struct sx_rect cell_rect = sx_rect_make(cell_x, row_y, spec->width, row_height);
+        int text_x;
+
+        if (cell_x >= inner.x + inner.width)
+        {
+            break;
+        }
+        (void)sxgui_column_cell(label, column, cell, (int)sizeof(cell));
+        if (cell[0] != 0 && sx_painter_push_clip(painter, cell_rect))
+        {
+            if ((spec->flags & SXGUI_COLUMN_RIGHT) != 0)
+            {
+                text_x = cell_x + spec->width - gfx_text_width(cell) - 6;
+            }
+            else
+            {
+                text_x = cell_x + 3;
+            }
+            sx_painter_draw_text(painter, text_x, row_y + 2, cell, text_colour);
+            sx_painter_pop_clip(painter);
+        }
+        cell_x += spec->width;
+    }
+}
+
+static void sxgui_paint_listbox_header(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect header = sxgui_listbox_header_rect(widget);
+    int column;
+    int cell_x = header.x;
+
+    if (header.height <= 0 || !sx_painter_push_clip(painter, header))
+    {
+        return;
+    }
+    sx_painter_fill_rect(painter, header, SXGUI_COLOR_FACE);
+    for (column = 0; column < widget->column_count; ++column)
+    {
+        const struct sxgui_column *spec = &widget->columns[column];
+        struct sx_rect cell = sx_rect_make(cell_x, header.y, spec->width, header.height);
+
+        sxgui_draw_raised(painter, cell);
+        if (spec->title != 0 && sx_painter_push_clip(painter, cell))
+        {
+            sx_painter_draw_text(painter, cell.x + 3, cell.y + 2, spec->title, SXGUI_COLOR_TEXT);
+            sx_painter_pop_clip(painter);
+        }
+        cell_x += spec->width;
+    }
+    /* Relleno hasta el borde: sin esto lo que sobra a la derecha de la ultima
+     * columna queda del color del campo y se lee como una cabecera rota. */
+    if (cell_x < header.x + header.width)
+    {
+        struct sx_rect rest = sx_rect_make(cell_x, header.y, header.x + header.width - cell_x, header.height);
+        sxgui_draw_raised(painter, rest);
+    }
+    sx_painter_pop_clip(painter);
 }
 
 static struct sx_rect sxgui_listbox_scrollbar_rect(const struct sxgui_widget *widget)
@@ -872,10 +1018,19 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
         }
         if (label != 0)
         {
-            sx_painter_draw_text(painter, inner.x + 3, row_y + 2, label, text_colour);
+            if (sxgui_listbox_header_height(widget) > 0)
+            {
+                sxgui_paint_columns_row(painter, widget, inner, row_y, row_height, label, text_colour);
+            }
+            else
+            {
+                sx_painter_draw_text(painter, inner.x + 3, row_y + 2, label, text_colour);
+            }
         }
     }
     sx_painter_pop_clip(painter);
+
+    sxgui_paint_listbox_header(painter, widget);
 
     if (sxgui_listbox_has_scrollbar(widget))
     {

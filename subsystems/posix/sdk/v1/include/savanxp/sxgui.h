@@ -58,6 +58,25 @@ enum sxgui_action {
     SXGUI_ACTION_ACTIVATE     /* listbox: double click or Enter on a row */
 };
 
+/* ---- listbox columns (vista "detalles") -----------------------------------
+ *
+ * Tabla caller-owned. Con `columns` puesto, el listbox dibuja una cabecera
+ * fija arriba y parte cada item por TAB, una celda por columna: es la lista de
+ * detalles clasica (Nombre | Tamano | Tipo). Sin `columns` se comporta igual
+ * que siempre, asi que es opt-in y no toca a los listbox existentes.
+ */
+
+#define SXGUI_COLUMN_RIGHT (1u << 0)  /* celda alineada a la derecha */
+
+struct sxgui_column {
+    const char *title;
+    int width;        /* ancho en pixeles */
+    uint32_t flags;
+};
+
+/* Separador de celdas dentro de un item con columnas. */
+#define SXGUI_COLUMN_SEPARATOR '	'
+
 struct sxgui_widget {
     int kind;
     struct sx_rect rect;
@@ -74,6 +93,10 @@ struct sxgui_widget {
     /* listbox */
     const char *const *items;
     int item_count;
+
+    /* listbox: cabecera de columnas opcional (NULL = lista simple) */
+    const struct sxgui_column *columns;
+    int column_count;
 
     /* textfield (caller-provided editable storage) */
     char *edit_buffer;
