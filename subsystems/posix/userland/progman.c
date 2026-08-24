@@ -654,9 +654,9 @@ static int progman_selftest(void)
         progman_item_count());
 
     /* Lo unico que el selftest del registro no puede fingir: que hace el
-     * pruning contra el disco REAL de esta imagen. Es lo que decide si el grupo
-     * Native (ports en Haxe) y Doom se muestran o no, porque se construyen con
-     * builds aparte y en un arbol limpio no estan instalados. */
+     * pruning contra el disco REAL de esta imagen. Es lo que decide si Doom se
+     * muestra o no, porque se construye con un build aparte y en un arbol
+     * limpio no esta instalado. */
     dropped = progman_registry_prune_missing(path_is_launchable);
     printf("PROGMAN SMOKE prune dropped=%d\n", dropped);
     for (index = 0; index < progman_group_count(); ++index)

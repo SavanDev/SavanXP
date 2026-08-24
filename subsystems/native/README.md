@@ -38,9 +38,10 @@ Corolarios que cambian el framing de este documento:
   WinForms/JNI), **no** lo reimplementa. El `haxe-toolkit/` de hoy (Painter,
   Boton, Listbox, …) es una **reimplementación de bootstrap** para validar la
   cadena, no el estado final.
-- Las apps Haxe existentes (`sxguiapp`, `aboutapp-hx`, `filesapp-hx`) son
-  **demos de validación** del ABI y la cadena AOT — **no** reemplazos de sus
-  contrapartes en C, que son las oficiales.
+- La app Haxe existente (`sxguiapp`) es una **demo de validación** del ABI y la
+  cadena AOT — **no** un reemplazo de las apps en C, que son las oficiales. Los
+  ports `aboutapp-hx`/`filesapp-hx` se retiraron una vez cumplida su función
+  (ver "Ports retirados" más abajo).
 
 ## Estado: Fases 0, 1 y 2 + _std — LISTAS (verificadas en QEMU)
 
@@ -125,45 +126,21 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   **maneja** la app: valida el render inicial, envía un press (comprueba que el
   botón se hunde), un release (comprueba lámpara verde + botón levantado) y
   cierre limpio.
-- **`aboutapp` reproducida en Haxe (demo de validación)** — **una app C
-  completa replicada en Haxe**:
-  [haxe-about/Main.hx](haxe-about/Main.hx) reproduce
-  [aboutapp.c](../posix/userland/aboutapp.c) (que sigue siendo la app oficial en
-  C): labels, **group boxes** con marco
-  etched, **info del sistema** (versión/uptime/procesos/memoria/disco/reloj vía
-  [sx_sysinfo.c](sdk/runtime/sx_sysinfo.c), que envuelve las syscalls del
-  baseline), y botones **Refrescar**/**Cerrar** (+ F5/ESC). El toolkit
-  (`Painter`, `Boton`) se movió a **[haxe-toolkit/](haxe-toolkit/)** (`-cp`
-  compartido) y ahora lo usan sxguiapp y aboutapp. Verificado con
-  [test/abouthost.c](test/abouthost.c) (`.\build.ps1 native-about`): render +
-  info real leída (procesos=4, mem=133 MiB) + Refrescar (hunde/levanta) +
-  Cerrar (la app se cierra sola).
-- **`filesapp` portada a Haxe (navegador + preview)** —
-  [haxe-files/Main.hx](haxe-files/Main.hx): layout de dos paneles como
-  [filesapp.c](../posix/userland/filesapp.c). A la izquierda un widget
-  **`Listbox`** (scrollable/seleccionable) lista el directorio (con `..`) y se
-  navega de verdad — click/Enter entra a un subdirectorio, `..`/Backspace sube,
-  ↑↓ mueven la selección. A la derecha un **`Textview`** muestra el **preview**
-  de lo seleccionado: ruta, tipo/tamaño y las primeras líneas del archivo
-  (saneadas: corta en `\n`, no imprimibles → `.`). Todo el filesystem va por
-  [sx_fs.c](sdk/runtime/sx_fs.c) (open/readdir/stat/read del baseline, orden
-  dirs-primero). Verificado con [test/fileshost.c](test/fileshost.c)
-  (`.\build.ps1 native-files`): render de ambos paneles + selección por teclado
-  + **navegación real** (`/` 5 entradas → `/bin` 60 → `/`) + el preview
-  siguiendo la selección y **leyendo un archivo real** (`/bin/aboutapp`).
-  Tiene además una **barra de menú** (`Menubar` en el toolkit) con Archivo
-  (Refrescar/Subir/separador/Salir) y Ayuda, con dropdowns, separadores etched
-  y despacho de comandos **por id** (como las tablas de menú de sxgui en C, para
-  no depender de closures); un **dialog modal** "Acerca de" (`Dialog`, centrado,
-  con barra de título navy y botón OK, que captura todo el input mientras está
-  abierto); y **lanza ejecutables** de `/bin`/`/disk/bin` pidiéndoselo al
-  escritorio por el canal fd 9 (`sxn_gui_launch`, espejo de
-  `gfx_desktop_launch`). Con esto alcanza **paridad funcional** con
-  [filesapp.c](../posix/userland/filesapp.c) —que se queda como el file manager
-  oficial en C—, demostrando que la cadena Haxe llega a una app real. El harness
-  verifica el launch de
-  verdad: tiene el extremo de lectura del fd 9 y comprueba que llegue el pedido
-  de `/bin/aboutapp`.
+- **Ports retirados: `aboutapp-hx` y `filesapp-hx`.** La Fase 3 replicó en Haxe
+  dos apps C completas —`aboutapp` (labels, group boxes con marco etched, info
+  del sistema vía [sx_sysinfo.c](sdk/runtime/sx_sysinfo.c), Refrescar/Cerrar) y
+  `filesapp` (dos paneles, `Listbox` navegable, `Textview` de preview, menubar,
+  dialog modal y launch por el fd 9, con **paridad funcional** contra
+  [filesapp.c](../posix/userland/filesapp.c))— y las validó headless con sus
+  harnesses. Eso **ya demostró lo que tenía que demostrar**: que la cadena Haxe
+  llega a una app real. Se borraron junto con esos harnesses
+  (`test/abouthost.c`, `test/fileshost.c`) y los targets `native-about` /
+  `native-files`, porque sostenerlas duplicaba apps de sistema que en el
+  layering fijado son de C (ver
+  [SYSTEM_LAYERING.md](../../docs/SYSTEM_LAYERING.md)). El toolkit compartido de
+  [haxe-toolkit/](haxe-toolkit/) y los runtimes
+  [sx_sysinfo.c](sdk/runtime/sx_sysinfo.c) / [sx_fs.c](sdk/runtime/sx_fs.c) se
+  conservan: son superficie del ABI, no de las apps.
 
 ## El contrato ABI (v1)
 
@@ -194,20 +171,18 @@ Al arrancar, el runtime hace el handshake `sxn_info()` y aborta (exit 132) si
 .\subsystems\native\build.ps1 -Install   # además lo instala en /disk/bin/nativehello
 # la app ventaneada:
 .\subsystems\native\build.ps1 -Name nativegui -Source haxe-gui -Install
-# los ports del escritorio (sufijo -hx para NO pisar los binarios de C):
-.\subsystems\native\build.ps1 -Name aboutapp-hx -Source haxe-about -Install
-.\subsystems\native\build.ps1 -Name filesapp-hx -Source haxe-files -Install
+# la app sxgui-style (demo del toolkit):
+.\subsystems\native\build.ps1 -Name sxguiapp -Source haxe-sxgui -Install
 ```
 
-Los ports se instalan como `aboutapp-hx`/`filesapp-hx` a propósito: el build
-principal copia `rootfs/bin/*` a `/disk/bin`, así que instalarlos como
-`aboutapp`/`filesapp` los pisaría en cada `build.ps1 build`. Con nombre propio
-sobreviven (`Sync-SvfsDiskTree` solo agrega, nunca borra — el mismo mecanismo
-por el que sobrevive `doomgeneric`). El **menú inicio** tiene entradas
-**"Files (Haxe)"** y **"About (Haxe)"** apuntando a ellos, conviviendo con los
-de C como demos de la cadena Haxe (los de C son los oficiales); como el build
-nativo es aparte (patrón doom), esas entradas no lanzan nada si no los
-construiste.
+Las apps nativas se instalan con nombre propio a propósito: el build principal
+copia `rootfs/bin/*` a `/disk/bin`, así que un nombre compartido con una app de
+C la pisaría en cada `build.ps1 build`. Con nombre propio sobreviven
+(`Sync-SvfsDiskTree` solo agrega, nunca borra — el mismo mecanismo por el que
+sobrevive `doomgeneric`). Como el build nativo es aparte (patrón doom), una
+entrada del launcher que apunte a `/disk/bin` no lanza nada si no la
+construiste: `progman` descarta del listado las entradas cuyo binario no está
+instalado.
 
 `nativegui` instalada aparece en `/disk/bin` y puede lanzarse desde el
 escritorio (app de archivos): corre como ventana normal bajo el compositor.
@@ -219,8 +194,7 @@ las apps nativas post-rebuild y las corren en QEMU):
 .\build.ps1 native-hello      # valida el runtime: clases, String/Array, Null<T>, Map, Float, gfx
 .\build.ps1 native-guihost    # valida el cliente del compositor: teclado + puntero (fd 5)
 .\build.ps1 native-sxgui      # valida la app sxgui-style (demo): toolkit + texto Noto
-.\build.ps1 native-about      # valida la demo aboutapp: group boxes + info del sistema
-.\build.ps1 native-files      # valida la demo filesapp: Listbox + navegación de directorios
+
 ```
 
 El script:
@@ -282,14 +256,16 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   Blit de glifos antialiased a un buffer XRGB. Base del texto del escritorio.
 - `sdk/runtime/sx_sysinfo.c` — info del sistema (`sxn_sys_refresh` + getters de
   versión/uptime/procesos/memoria/disco/reloj) envolviendo las syscalls del
-  baseline (system_info/proc_info/realtime) que el nativo delega en posix. Lo
-  usa el port de aboutapp.
+  baseline (system_info/proc_info/realtime) que el nativo delega en posix. Sin
+  consumidor desde que se retiró el port de aboutapp; se conserva como
+  superficie del ABI.
 - `sdk/runtime/sx_fs.c` — filesystem: listado de directorios (`sxn_fs_load` +
   `count`/`name`/`is_dir`, con `..` y ordenado), helpers de path (`join`/
   `parent`) y **preview de archivos** (`sxn_fs_size`, `sxn_fs_preview_load` +
   `preview_count`/`preview_line`, que lee el comienzo y lo parte en líneas
-  saneadas). Envuelve open/close/readdir/stat/read del baseline. Lo usa
-  filesapp.
+  saneadas). Envuelve open/close/readdir/stat/read del baseline. Sin consumidor
+  desde que se retiró el port de filesapp; se conserva como superficie del
+  ABI.
 - `haxe-toolkit/` — **toolkit sxgui compartido** entre las apps GUI nativas
   (`Painter` con paleta/biseles/label/groupbox/texto, `Boton` con estado +
   hit-test, `Listbox` scrollable/seleccionable, `Textview` de solo lectura,
@@ -299,15 +275,12 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   String/Array + Null<T> + Map + Float + syscalls nativas). `haxe-gui/Main.hx` —
   `nativegui`, la app ventaneada de ejemplo (cliente del compositor).
   `haxe-sxgui/Main.hx` — `sxguiapp`, la app sxgui-style interactiva de la Fase 3.
-  `haxe-about/Main.hx` — `aboutapp` portada a Haxe (labels + group boxes + info
-  del sistema). `haxe-files/Main.hx` — `filesapp` portada (Listbox + navegación
-  de directorios). Todas usan el toolkit compartido de `haxe-toolkit/`.
+  Todas usan el toolkit compartido de `haxe-toolkit/`.
 - `test/guihost.c` — harness POSIX headless que interpreta el rol del
   compositor (sección + eventos + input) y valida al cliente nativo de punta a
   punta. Build: `tools\build-user.ps1 -Source subsystems\native\test\guihost.c
   -Name nativeguihost`. `test/sxguihost.c` — maneja `sxguiapp` (press/release/
-  click). `test/abouthost.c` — maneja `aboutapp` (render + Refrescar + Cerrar).
-  `test/fileshost.c` — maneja `filesapp` (listbox + selección + navegación real).
+  click).
 - `haxe-support/` — tooling macro del build: `SxnCompilerInit.hx` (envuelve el
   init de reflaxe.CPP y registra nuestro preprocesador) y `UniqueLocalNames.hx`
   (hace únicos los locals por función; ver Hallazgos).

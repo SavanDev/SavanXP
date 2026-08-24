@@ -16,8 +16,6 @@ static const struct windowd_appinfo k_window_items[] = {
     {"Shell", "/bin/shellapp", DESKTOP_ICON_SHELL, WINDOWD_RGB_LITERAL(0, 124, 96)},
     {"Files", "/bin/filesapp", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(186, 128, 36)},
     {"About", "/bin/aboutapp", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(58, 104, 190)},
-    {"Files (Haxe)", "/disk/bin/filesapp-hx", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(150, 92, 168)},
-    {"About (Haxe)", "/disk/bin/aboutapp-hx", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(118, 82, 180)},
     {"Doom", "/disk/bin/doomgeneric", DESKTOP_ICON_DOOM, WINDOWD_RGB_LITERAL(181, 81, 55)},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Widgets", "/bin/widgetsdemo", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(96, 110, 140)},

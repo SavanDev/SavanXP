@@ -80,11 +80,14 @@ capa Haxe **no reimplementa** la plataforma: la consume.
 
 ### Estado de las apps Haxe existentes
 
-`sxguiapp`, `aboutapp-hx` y `filesapp-hx` (en `subsystems/native/haxe-*`) son
-**demos de validación** del ABI y la cadena AOT — **no** reemplazos de sus
-contrapartes en C, que son las oficiales. Igual, el `haxe-toolkit/`
-(reimplementación de Painter/Boton/… en Haxe) es un **bootstrap** que validó la
-cadena, no el estado final: el estado final es el binding a SXGUI-C.
+`sxguiapp` (en `subsystems/native/haxe-sxgui`) es una **demo de validación** del
+ABI y la cadena AOT — **no** un reemplazo de las apps en C, que son las
+oficiales. Los ports `aboutapp-hx` y `filesapp-hx` se retiraron: habían cumplido
+su función (probar que la cadena Haxe llega a una app real) y sostenerlos
+duplicaba apps de sistema que en este layering son de C. Igual, el
+`haxe-toolkit/` (reimplementación de Painter/Boton/… en Haxe) es un
+**bootstrap** que validó la cadena, no el estado final: el estado final es el
+binding a SXGUI-C.
 
 ## Etapas del runtime (el tier del medio)
 

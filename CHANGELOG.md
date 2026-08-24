@@ -223,6 +223,26 @@ Notas de corte:
   350 sectores de los dos archivos borrados — o sea que los extents se liberan y
   no se filtran.
 
+### Eliminado
+
+- **Retiradas las variantes en Haxe de About y Files (`aboutapp-hx`,
+  `filesapp-hx`).** Eran demos de validacion de la cadena AOT Haxe->C++->ELF, no
+  apps oficiales: la contraparte en C (`aboutapp.c`, `filesapp.c`) siempre fue
+  la que se usa. Ya habian cumplido su funcion —`filesapp-hx` llego a paridad
+  funcional con la de C, que era la prueba de que la cadena Haxe alcanza una app
+  real— y sostenerlas duplicaba apps de sistema que en el layering fijado
+  (`docs/SYSTEM_LAYERING.md`) son de C. Se borraron
+  `subsystems/native/haxe-about/` y `haxe-files/`, sus harnesses headless
+  (`subsystems/native/test/abouthost.c`, `test/fileshost.c`), los targets
+  `build.ps1 native-about` / `native-files` con sus funciones y specs de
+  automatizacion en `init.c`, y las entradas del grupo **Native** del registro
+  de progman y de la tabla de presentacion del WM
+  (`windowd_appinfo.c`). El grupo Native desaparecio del launcher: quedan
+  Main/Games/Diagnostics. Se **conservan** el toolkit `haxe-toolkit/` y los
+  runtimes `sx_sysinfo.c`/`sx_fs.c`: son superficie del ABI nativo, no de las
+  apps borradas. Verificado con `build.ps1 progman-smoke` (3 grupos, 8 items,
+  prune sin sorpresas) y `windowd-smoke`.
+
 ### Corregido
 
 - **Al abrir una app se veia por un instante la ventana vacia del tamano

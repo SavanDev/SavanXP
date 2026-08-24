@@ -41,11 +41,6 @@ static const struct progman_default_item k_default_items[] = {
     {"Main", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "About", "/bin/aboutapp", "System overview and help", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DOOM, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
-    /* Ports nativos en Haxe (subsystems/native): se construyen con el build
-     * APARTE del subsistema nativo, asi que si no se instalaron, estas entradas
-     * no lanzan nada. */
-    {"Native", "Files (Haxe)", "/disk/bin/filesapp-hx", "Native Haxe port of the file browser", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Native", "About (Haxe)", "/disk/bin/aboutapp-hx", "Native Haxe port of About", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Diagnostics", "Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_GFX_DEMO, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},

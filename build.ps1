@@ -1,5 +1,5 @@
-param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "native-about", "native-files", "clean")]
+﻿param(
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1157,39 +1157,6 @@ function Run-NativeSxguiQemu {
     }.GetNewClosure()
 }
 
-# aboutapp portada a Haxe (Fase 3): construye e instala aboutapp (haxe-about) +
-# el harness abouthost, y los corre headless. Valida labels/group boxes, la info
-# del sistema (sx_sysinfo) y las acciones Refrescar/Cerrar bajo el compositor.
-function Run-NativeAboutQemu {
-    $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
-    $userBuild = Join-Path $ToolRoot "build-user.ps1"
-    $abouthostSource = Join-Path $ProjectRoot "subsystems/native/test/abouthost.c"
-
-    Run-AutomationQemu -AutomationCommand "abouthost" -SuccessToken "ABOUT HOST PASS" -FailureToken "ABOUT HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
-        & $nativeBuild -Name aboutapp-hx -Source haxe-about -Install
-        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de aboutapp-hx." }
-        & $userBuild -Source $abouthostSource -Name abouthost
-        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de abouthost." }
-    }.GetNewClosure()
-}
-
-# filesapp portada a Haxe (Fase 3): navegador de directorios. Construye e
-# instala filesapp (haxe-files) + el harness fileshost y los corre headless.
-# Valida el widget Listbox, la seleccion por teclado y la navegacion real de
-# directorios (sx_fs: open/readdir/stat) bajo el compositor.
-function Run-NativeFilesQemu {
-    $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
-    $userBuild = Join-Path $ToolRoot "build-user.ps1"
-    $fileshostSource = Join-Path $ProjectRoot "subsystems/native/test/fileshost.c"
-
-    Run-AutomationQemu -AutomationCommand "fileshost" -SuccessToken "FILES HOST PASS" -FailureToken "FILES HOST FAIL" -TimeoutMinutes 3 -PreLaunch {
-        & $nativeBuild -Name filesapp-hx -Source haxe-files -Install
-        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de filesapp-hx." }
-        & $userBuild -Source $fileshostSource -Name fileshost
-        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de fileshost." }
-    }.GetNewClosure()
-}
-
 function Run-Ac97StreamQemu {
     # Corre audiotest --stream (patron de alimentacion tipo-Doom) sobre AC'97 y
     # graba la salida a un WAV para medir underruns/glitches. Analizar el WAV con
@@ -1307,12 +1274,6 @@ switch ($Command) {
     }
     "native-sxgui" {
         Run-NativeSxguiQemu
-    }
-    "native-about" {
-        Run-NativeAboutQemu
-    }
-    "native-files" {
-        Run-NativeFilesQemu
     }
     "clean" {
         if (Test-Path $BuildRoot) {
