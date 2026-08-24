@@ -379,6 +379,9 @@ static void ask_power_confirmation(int command)
 
     memset(&g_dialog, 0, sizeof(g_dialog));
     g_dialog.title = (command == PROGMAN_CMD_REBOOT) ? "Reiniciar" : "Apagar";
+    /* El default es "No": apagar por Enter de apuro seria justo lo que el
+     * dialogo esta tratando de evitar. */
+    g_dialog.default_button = 2;
     g_dialog.widgets = g_dialog_widgets;
     g_dialog.widget_count = 3;
     sxgui_dialog_begin(&g_app.ui, &g_dialog, 240, 92);

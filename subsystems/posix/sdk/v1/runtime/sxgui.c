@@ -1636,6 +1636,19 @@ static void sxgui_paint_dialog(struct sxgui_context *ctx)
             SXGUI_COLOR_SELECT_TEXT);
     }
 
+    /* El borde doble va DEBAJO del boton: se dibuja el marco alrededor de su
+     * rect y despues el boton encima, que es como se veia el default. */
+    if (dialog->default_button > 0 && dialog->default_button < dialog->widget_count)
+    {
+        const struct sxgui_widget *target = &dialog->widgets[dialog->default_button];
+        struct sx_rect outline = sx_rect_make(
+            origin.x + target->rect.x - 2,
+            origin.y + target->rect.y - 2,
+            target->rect.width + 4,
+            target->rect.height + 4);
+        sx_painter_draw_frame(painter, outline, SXGUI_COLOR_TEXT);
+    }
+
     for (index = 0; index < dialog->widget_count; ++index)
     {
         struct sxgui_widget shifted = dialog->widgets[index];
@@ -2363,6 +2376,25 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         {
             sxgui_dialog_end(ctx, 0);
             return 1;
+        }
+        /* Enter dispara el boton por defecto, salvo que el foco ya este sobre
+         * OTRO boton -- ahi gana el que el usuario eligio con Tab, que es lo
+         * que uno espera despues de haberse movido a proposito. */
+        if (event->key == SAVANXP_KEY_ENTER)
+        {
+            int target = dialog->default_button;
+            if (ctx->focus_index > 0 && ctx->focus_index < dialog->widget_count &&
+                dialog->widgets[ctx->focus_index].kind == SXGUI_BUTTON)
+            {
+                target = ctx->focus_index;
+            }
+            if (target > 0 && target < dialog->widget_count &&
+                dialog->widgets[target].kind == SXGUI_BUTTON &&
+                sxgui_widget_enabled(&dialog->widgets[target]))
+            {
+                sxgui_fire(&dialog->widgets[target], SXGUI_ACTION_CLICK);
+                return 1;
+            }
         }
         saved_widgets = ctx->widgets;
         saved_count = ctx->widget_count;

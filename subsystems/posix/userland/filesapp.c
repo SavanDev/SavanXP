@@ -637,6 +637,7 @@ int main(void)
     g_about_dialog.title = "About Files";
     g_about_dialog.widgets = g_about_widgets;
     g_about_dialog.widget_count = 4;
+    g_about_dialog.default_button = 3;
 
     if (sxgui_app_init(&g_app, "filesapp", g_widgets, 5) < 0)
     {

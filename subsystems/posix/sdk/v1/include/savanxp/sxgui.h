@@ -178,6 +178,10 @@ struct sxgui_dialog {
      * uno cuyo objeto es escribir algo tiene que poner aca su campo, o el
      * teclado no llega a ningun lado. */
     int initial_focus;
+    /* Boton que dispara Enter, en indices de `widgets`. 0 = ninguno. Se dibuja
+     * con el borde doble del boton por defecto, como en los dialogos de la
+     * epoca, asi que se ve cual va a responder antes de apretarlo. */
+    int default_button;
     int saved_focus;                /* owned by the toolkit */
     int result;
 };

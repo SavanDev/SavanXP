@@ -12,11 +12,24 @@ Notas de corte:
 
 ### Agregado
 
+- **Boton por defecto en los dialogos** (`default_button` en
+  `struct sxgui_dialog`). Enter lo dispara y se dibuja con el borde doble de
+  la epoca, asi que se ve cual responde antes de apretarlo; si el foco esta
+  sobre otro boton, gana ese. Declarado en los dialogos del sistema: Save del
+  notepad, OK de los About y **No** en el de apagar, donde el default tiene
+  que ser la opcion que no hace nada.
+
+- **El notepad avisa antes de perder cambios sin guardar.** Exit, New y Open
+  preguntan Save / Discard / Cancel si el documento esta modificado, y retoman
+  la accion despues de guardar. Solo cubre las salidas por la app: cerrar por
+  la X de la ventana sigue matando el proceso sin preguntar, porque el WM
+  manda SIGKILL en vez de pedir el cierre.
+
 - **Bloc de notas (`/bin/notepad`).** Editor de texto con la forma del de la
   era Win95: menu File/Edit/Search/Help, area de texto completa y barra de
-  estado. Abre y guarda archivos (New, Open..., Save, Save As...; F2 guarda,
-  F3 abre), con el nombre del documento y un asterisco si tiene cambios sin
-  guardar. Es la primera app del SO que escribe archivos. Limite de 32 KB por
+  estado, que muestra el archivo abierto y un asterisco si tiene cambios sin
+  guardar (la barra de titulo la pone el WM y la app no puede tocarla). Abre y
+  guarda archivos (New, Open..., Save, Save As...; F2 guarda, F3 abre). Es la primera app del SO que escribe archivos. Limite de 32 KB por
   documento, avisado en la barra de estado al abrir algo mas grande.
 
 - **Editor multilinea en sxgui (`sxgui_textedit`).** Widget nuevo con caret,

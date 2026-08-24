@@ -39,7 +39,6 @@ static struct sxgui_widget g_widgets[2];
 static char g_document[NOTEPAD_DOCUMENT_CAPACITY];
 static char g_path[NOTEPAD_PATH_CAPACITY];
 static char g_status[128] = "Untitled";
-static char g_title[160] = "Untitled";
 
 /* Un solo dialogo de ruta para Open y Save As: un campo de texto, que es el
  * equivalente honesto de un file picker mientras no exista uno. `g_path_mode`
@@ -55,39 +54,34 @@ static int g_path_mode = NOTEPAD_PATH_MODE_OPEN;
 static struct sxgui_dialog g_about_dialog;
 static struct sxgui_widget g_about_widgets[4];
 
+/* Confirmacion de descarte. La accion pendiente se guarda para retomarla si el
+ * usuario dice que si: es el mismo dialogo para Exit, New y Open. */
+#define NOTEPAD_PENDING_NONE 0
+#define NOTEPAD_PENDING_EXIT 1
+#define NOTEPAD_PENDING_NEW 2
+#define NOTEPAD_PENDING_OPEN 3
+
+static struct sxgui_dialog g_confirm_dialog;
+static struct sxgui_widget g_confirm_widgets[4];
+static int g_pending_action = NOTEPAD_PENDING_NONE;
+
 #define NOTEPAD_EDIT (&g_widgets[0])
 #define NOTEPAD_STATUS (&g_widgets[1])
 
 /* ---- estado del documento ------------------------------------------------- */
 
-static const char *notepad_basename(const char *path)
-{
-    const char *last = path;
-    const char *cursor = path;
-
-    if (path == 0 || path[0] == '\0')
-    {
-        return "Untitled";
-    }
-    while (*cursor != '\0')
-    {
-        if (*cursor == '/' && cursor[1] != '\0')
-        {
-            last = cursor + 1;
-        }
-        cursor += 1;
-    }
-    return last;
-}
-
-static void notepad_refresh_title(void)
+/* La barra de titulo la pone el WM desde su tabla path -> nombre, y no hay
+ * manera de que la app la cambie. Asi que el estado del documento --que archivo
+ * es y si tiene cambios sin guardar-- vive en la barra de estado, que si es
+ * nuestra. */
+static void notepad_refresh_status(void)
 {
     snprintf(
-        g_title,
-        sizeof(g_title),
+        g_status,
+        sizeof(g_status),
         "%s%s",
-        NOTEPAD_EDIT->modified ? "*" : "",
-        notepad_basename(g_path));
+        NOTEPAD_EDIT->modified ? "* " : "",
+        g_path[0] != '\0' ? g_path : "Untitled");
 }
 
 static void notepad_set_status(const char *text)
@@ -103,8 +97,7 @@ static void notepad_new_document(void)
     NOTEPAD_EDIT->value = 0;
     NOTEPAD_EDIT->scroll = 0;
     NOTEPAD_EDIT->modified = 0;
-    notepad_refresh_title();
-    notepad_set_status("Untitled");
+    notepad_refresh_status();
 }
 
 /* Los bytes que no son texto se muestran como '.', igual que hacia el preview:
@@ -176,14 +169,10 @@ static int notepad_load(const char *path)
     NOTEPAD_EDIT->value = 0;
     NOTEPAD_EDIT->scroll = 0;
     NOTEPAD_EDIT->modified = 0;
-    notepad_refresh_title();
+    notepad_refresh_status();
     if (truncated)
     {
         notepad_set_status("File too large: only the first 32 KB were loaded.");
-    }
-    else
-    {
-        snprintf(g_status, sizeof(g_status), "%s", path);
     }
     return 0;
 }
@@ -227,7 +216,6 @@ static int notepad_save(void)
         return -1;
     }
     NOTEPAD_EDIT->modified = 0;
-    notepad_refresh_title();
     snprintf(g_status, sizeof(g_status), "Saved %s", g_path);
     return 0;
 }
@@ -238,7 +226,7 @@ static void on_edit_changed(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    notepad_refresh_title();
+    notepad_refresh_status();
 }
 
 static void on_open_accept(struct sxgui_widget *widget, void *user)
@@ -253,7 +241,7 @@ static void on_open_accept(struct sxgui_widget *widget, void *user)
     if (g_path_mode == NOTEPAD_PATH_MODE_SAVE)
     {
         snprintf(g_path, sizeof(g_path), "%s", g_open_path);
-        notepad_refresh_title();
+        notepad_refresh_status();
         (void)notepad_save();
         return;
     }
@@ -264,6 +252,73 @@ static void on_open_cancel(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
+    sxgui_dialog_end(&g_app.ui, 0);
+}
+
+/* Corre la accion que la confirmacion tenia en pausa. */
+static void notepad_run_pending(void)
+{
+    int pending = g_pending_action;
+
+    g_pending_action = NOTEPAD_PENDING_NONE;
+    switch (pending)
+    {
+    case NOTEPAD_PENDING_EXIT:
+        sxgui_app_quit(&g_app, 0);
+        break;
+    case NOTEPAD_PENDING_NEW:
+        notepad_new_document();
+        break;
+    case NOTEPAD_PENDING_OPEN:
+        notepad_path_dialog(NOTEPAD_PATH_MODE_OPEN);
+        break;
+    default:
+        break;
+    }
+}
+
+/* Puerta unica de las acciones que pierden el documento. Devuelve 1 si pregunto
+ * (y hay que esperar la respuesta), 0 si se puede seguir de largo. */
+static int notepad_confirm_discard(int action)
+{
+    if (!NOTEPAD_EDIT->modified)
+    {
+        return 0;
+    }
+    g_pending_action = action;
+    sxgui_dialog_begin(&g_app.ui, &g_confirm_dialog, 330, 112);
+    return 1;
+}
+
+static void on_confirm_save(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    /* Si guardar falla -- sin nombre, o el disco lo rechaza -- no se descarta
+     * nada: notepad_save ya abrio el dialogo de Save As o dejo el error en la
+     * barra de estado, y la accion pendiente se cancela. */
+    if (notepad_save() < 0)
+    {
+        g_pending_action = NOTEPAD_PENDING_NONE;
+        return;
+    }
+    notepad_run_pending();
+}
+
+static void on_confirm_discard(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sxgui_dialog_end(&g_app.ui, 1);
+    notepad_run_pending();
+}
+
+static void on_confirm_cancel(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    g_pending_action = NOTEPAD_PENDING_NONE;
     sxgui_dialog_end(&g_app.ui, 0);
 }
 
@@ -280,10 +335,16 @@ static void on_menu_command(int id, void *user)
     switch (id)
     {
     case NOTEPAD_MENU_NEW:
-        notepad_new_document();
+        if (!notepad_confirm_discard(NOTEPAD_PENDING_NEW))
+        {
+            notepad_new_document();
+        }
         break;
     case NOTEPAD_MENU_OPEN:
-        notepad_path_dialog(NOTEPAD_PATH_MODE_OPEN);
+        if (!notepad_confirm_discard(NOTEPAD_PENDING_OPEN))
+        {
+            notepad_path_dialog(NOTEPAD_PATH_MODE_OPEN);
+        }
         break;
     case NOTEPAD_MENU_SAVE:
         (void)notepad_save();
@@ -292,7 +353,10 @@ static void on_menu_command(int id, void *user)
         notepad_path_dialog(NOTEPAD_PATH_MODE_SAVE);
         break;
     case NOTEPAD_MENU_EXIT:
-        sxgui_app_quit(&g_app, 0);
+        if (!notepad_confirm_discard(NOTEPAD_PENDING_EXIT))
+        {
+            sxgui_app_quit(&g_app, 0);
+        }
         break;
     case NOTEPAD_MENU_SELECT_ALL:
         /* Sin seleccion todavia: lo mas util que puede hacer es llevar el caret
@@ -332,7 +396,10 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
     }
     if (event->key == SAVANXP_KEY_F3)
     {
-        notepad_path_dialog(NOTEPAD_PATH_MODE_OPEN);
+        if (!notepad_confirm_discard(NOTEPAD_PENDING_OPEN))
+        {
+            notepad_path_dialog(NOTEPAD_PATH_MODE_OPEN);
+        }
         return 1;
     }
     return 0;
@@ -420,6 +487,17 @@ int main(int argc, char **argv)
     g_open_dialog.widgets = g_open_widgets;
     g_open_dialog.widget_count = 4;
     g_open_dialog.initial_focus = 1; /* el campo de la ruta */
+    g_open_dialog.default_button = 2;
+
+    g_confirm_widgets[0] = sxgui_label(sx_rect_make(12, 10, 300, 16), "The document has unsaved changes.");
+    g_confirm_widgets[1] = sxgui_button(sx_rect_make(12, 40, 96, 26), "Save", on_confirm_save, 0);
+    g_confirm_widgets[2] = sxgui_button(sx_rect_make(116, 40, 96, 26), "Discard", on_confirm_discard, 0);
+    g_confirm_widgets[3] = sxgui_button(sx_rect_make(220, 40, 96, 26), "Cancel", on_confirm_cancel, 0);
+    g_confirm_dialog.title = "Notepad";
+    g_confirm_dialog.widgets = g_confirm_widgets;
+    g_confirm_dialog.widget_count = 4;
+    g_confirm_dialog.initial_focus = 1;
+    g_confirm_dialog.default_button = 1; /* Save: la opcion que no pierde nada */
 
     g_about_widgets[0] = sxgui_label(sx_rect_make(10, 8, 280, 16), "SavanXP Notepad");
     g_about_widgets[1] = sxgui_label(sx_rect_make(10, 28, 280, 16), "Version: " SAVANXP_VERSION_STRING);
@@ -428,6 +506,7 @@ int main(int argc, char **argv)
     g_about_dialog.title = "About Notepad";
     g_about_dialog.widgets = g_about_widgets;
     g_about_dialog.widget_count = 4;
+    g_about_dialog.default_button = 3;
 
     if (sxgui_app_init(&g_app, "notepad", g_widgets, 2) < 0)
     {
