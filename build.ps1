@@ -765,8 +765,16 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
 
     Build-Userland -Linker $ld -Programs $userlandPlan.Programs
     Install-BusyBox
+    $automationSpec = Join-Path $RootfsBuild "SMOKE"
     if ($AutomationCommand) {
-        Set-Content -Path (Join-Path $RootfsBuild "SMOKE") -Value $AutomationCommand -NoNewline
+        Set-Content -Path $automationSpec -Value $AutomationCommand -NoNewline
+    }
+    elseif (Test-Path $automationSpec) {
+        # Sin spec el arranque normal es el escritorio. El SMOKE de una corrida
+        # anterior sobrevive en el rootfs y se volveria a hornear en el
+        # initramfs, con lo cual init arrancaria ese runner en vez del
+        # escritorio -- en silencio y hasta el proximo clean.
+        Remove-Item -Path $automationSpec -Force
     }
     New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force

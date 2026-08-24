@@ -70,6 +70,12 @@ Notas de corte:
 
 ### Corregido
 
+- **Un smoke dejaba el spec de automatizacion pegado para siempre.** El build
+  escribia `SMOKE` en el rootfs al correr un target automatizado pero nunca lo
+  borraba, asi que se volvia a hornear en el initramfs en cada build posterior
+  e `init` arrancaba ese runner en vez del escritorio -- en silencio y hasta el
+  proximo `clean`. Ahora un build sin spec lo borra.
+
 - **Al abrir una app se veia por un instante la ventana vacia del tamano
   generico.** El WM componia la ventana desde el fork, sin esperar el primer
   frame. Ahora no la compone hasta que el cliente pinta; mientras arranca, el
