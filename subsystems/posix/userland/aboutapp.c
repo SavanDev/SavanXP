@@ -98,13 +98,13 @@ int main(void)
     widgets[7] = sxgui_label(sx_rect_make(28, 156, 400, 16), g_disk_line);
     widgets[8] = sxgui_label(sx_rect_make(28, 176, 400, 16), g_time_line);
 
-    widgets[9] = sxgui_groupbox(sx_rect_make(16, 214, 424, 88), "Desktop");
-    widgets[10] = sxgui_label(sx_rect_make(28, 234, 400, 16), "Start menu launches GUI apps in overlay windows");
-    widgets[11] = sxgui_label(sx_rect_make(28, 254, 400, 16), "Taskbar buttons restore or minimize windows");
+    widgets[9] = sxgui_groupbox(sx_rect_make(16, 214, 424, 88), "Shell");
+    widgets[10] = sxgui_label(sx_rect_make(28, 234, 400, 16), "Program Manager launches apps from its groups");
+    widgets[11] = sxgui_label(sx_rect_make(28, 254, 400, 16), "Task List switches between or ends running tasks");
     widgets[12] = sxgui_label(sx_rect_make(28, 274, 400, 16), "Window controls: minimize, maximize, close");
 
     widgets[13] = sxgui_groupbox(sx_rect_make(16, 312, 424, 68), "Keyboard");
-    widgets[14] = sxgui_label(sx_rect_make(28, 332, 400, 16), "SUPER toggles Start   ESC closes this window");
+    widgets[14] = sxgui_label(sx_rect_make(28, 332, 400, 16), "CTRL+ESC opens the Task List   ESC closes this window");
     widgets[15] = sxgui_label(sx_rect_make(28, 352, 400, 16), "F5 or the Refresh button updates the values");
 
     widgets[16] = sxgui_button(sx_rect_make(16, 392, 100, 26), "Refresh", on_refresh, &g_app);
