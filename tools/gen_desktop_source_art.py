@@ -169,6 +169,32 @@ def new_mouse_icon_16():
     return bmp
 
 
+def new_notepad_icon_16():
+    paper = (247, 244, 232, 255)
+    shadow = (211, 205, 186, 255)
+    outline = (94, 84, 58, 255)
+    rule = (168, 186, 214, 255)
+    margin = (214, 108, 96, 255)
+    pencil_wood = (232, 189, 78, 255)
+    pencil_tip = (120, 100, 60, 255)
+    pencil_lead = (58, 48, 34, 255)
+    bmp = new_canvas(16, 16)
+    draw = ImageDraw.Draw(bmp)
+
+    fill_rect(draw, 2, 1, 9, 13, shadow)
+    fill_rect(draw, 2, 1, 8, 13, paper)
+    stroke_rect(draw, 2, 1, 8, 13, outline)
+    fill_rect(draw, 4, 1, 1, 13, margin)
+    for y in (4, 6, 8, 10, 12):
+        draw.line([(5, y), (9, y)], fill=rule)
+
+    draw.line([(10, 13), (14, 3)], fill=pencil_wood, width=2)
+    draw.line([(13, 4), (14, 3), (14, 5)], fill=pencil_tip)
+    set_pixel_safe(bmp, 10, 13, pencil_lead)
+
+    return bmp
+
+
 def new_menu_strip_art():
     width, height = 64, 360
 
@@ -240,6 +266,7 @@ def main():
     write_icon_set(asset_root, "app-libgfx-demo.png", new_gfx_demo_icon_16)
     write_icon_set(asset_root, "app-keyboard-settings.png", new_keyboard_icon_16)
     write_icon_set(asset_root, "app-mouse.png", new_mouse_icon_16)
+    write_icon_set(asset_root, "app-notepad.png", new_notepad_icon_16)
 
     save_png(new_menu_strip_art(), os.path.join(project_root, "assets", "desktop", "menu_strip_savanxp.png"))
 

@@ -21,12 +21,14 @@ MANIFEST = [
     {"symbol": "k_desktop_icon_gfx_demo_16", "relative_path": "16x16/app-libgfx-demo.png"},
     {"symbol": "k_desktop_icon_key_test_16", "relative_path": "16x16/app-keyboard-settings.png"},
     {"symbol": "k_desktop_icon_mouse_test_16", "relative_path": "16x16/app-mouse.png"},
+    {"symbol": "k_desktop_icon_notepad_16", "relative_path": "16x16/app-notepad.png"},
     {"symbol": "k_desktop_icon_desktop_32", "relative_path": "32x32/desktop.png"},
     {"symbol": "k_desktop_icon_shell_32", "relative_path": "32x32/app-terminal.png"},
     {"symbol": "k_desktop_icon_doom_32", "relative_path": "32x32/app-spider.png"},
     {"symbol": "k_desktop_icon_gfx_demo_32", "relative_path": "32x32/app-libgfx-demo.png"},
     {"symbol": "k_desktop_icon_key_test_32", "relative_path": "32x32/app-keyboard-settings.png"},
     {"symbol": "k_desktop_icon_mouse_test_32", "relative_path": "32x32/app-mouse.png"},
+    {"symbol": "k_desktop_icon_notepad_32", "relative_path": "32x32/app-notepad.png"},
     {"symbol": "k_desktop_menu_strip_placeholder", "relative_path": "../menu_strip_savanxp.png"},
 ]
 

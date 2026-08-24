@@ -9,6 +9,7 @@ static const struct desktop_embedded_bitmap k_small_icons[DESKTOP_ICON_COUNT] = 
     {k_desktop_icon_gfx_demo_16.width, k_desktop_icon_gfx_demo_16.height, k_desktop_icon_gfx_demo_16.pixels},
     {k_desktop_icon_key_test_16.width, k_desktop_icon_key_test_16.height, k_desktop_icon_key_test_16.pixels},
     {k_desktop_icon_mouse_test_16.width, k_desktop_icon_mouse_test_16.height, k_desktop_icon_mouse_test_16.pixels},
+    {k_desktop_icon_notepad_16.width, k_desktop_icon_notepad_16.height, k_desktop_icon_notepad_16.pixels},
 };
 
 static const struct desktop_embedded_bitmap k_large_icons[DESKTOP_ICON_COUNT] = {
@@ -18,6 +19,7 @@ static const struct desktop_embedded_bitmap k_large_icons[DESKTOP_ICON_COUNT] = 
     {k_desktop_icon_gfx_demo_32.width, k_desktop_icon_gfx_demo_32.height, k_desktop_icon_gfx_demo_32.pixels},
     {k_desktop_icon_key_test_32.width, k_desktop_icon_key_test_32.height, k_desktop_icon_key_test_32.pixels},
     {k_desktop_icon_mouse_test_32.width, k_desktop_icon_mouse_test_32.height, k_desktop_icon_mouse_test_32.pixels},
+    {k_desktop_icon_notepad_32.width, k_desktop_icon_notepad_32.height, k_desktop_icon_notepad_32.pixels},
 };
 
 static const struct desktop_embedded_bitmap k_menu_strip_art = {
