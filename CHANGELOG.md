@@ -62,9 +62,11 @@ Notas de corte:
   `filesapp-hx`).** Eran demos de validacion de la cadena AOT, no apps
   oficiales: las de C siempre fueron las que se usan. Se van con sus harnesses
   headless, los targets `native-about`/`native-files` y las entradas del grupo
-  **Native**, que desaparece del launcher. Se conservan el toolkit
-  `haxe-toolkit/` y los runtimes `sx_sysinfo.c`/`sx_fs.c`: son superficie del
-  ABI nativo, no de las apps borradas.
+  **Native**, que desaparece del launcher. Con ellas se van los widgets de
+  `haxe-toolkit/` que solo ellas usaban (`Listbox`, `Textview`,
+  `Menubar`/`Menu`/`MenuItem`, `Dialog`); quedan `Painter` y `Boton`, que usa
+  `sxguiapp`. Se conservan los runtimes `sx_sysinfo.c`/`sx_fs.c`: a diferencia
+  del toolkit, que es bootstrap, son superficie declarada del ABI nativo.
 
 ### Corregido
 

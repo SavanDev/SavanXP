@@ -137,10 +137,15 @@ nacido del [Main.hx](haxe/Main.hx) de validación.
   (`test/abouthost.c`, `test/fileshost.c`) y los targets `native-about` /
   `native-files`, porque sostenerlas duplicaba apps de sistema que en el
   layering fijado son de C (ver
-  [SYSTEM_LAYERING.md](../../docs/SYSTEM_LAYERING.md)). El toolkit compartido de
-  [haxe-toolkit/](haxe-toolkit/) y los runtimes
-  [sx_sysinfo.c](sdk/runtime/sx_sysinfo.c) / [sx_fs.c](sdk/runtime/sx_fs.c) se
-  conservan: son superficie del ABI, no de las apps.
+  [SYSTEM_LAYERING.md](../../docs/SYSTEM_LAYERING.md)). Se conservan los runtimes
+  [sx_sysinfo.c](sdk/runtime/sx_sysinfo.c) / [sx_fs.c](sdk/runtime/sx_fs.c),
+  que son superficie declarada del ABI (ver `savanxp_native.h`) aunque hoy no
+  los llame nadie. De [haxe-toolkit/](haxe-toolkit/), en cambio, solo quedan
+  `Painter` y `Boton`, los que usa `sxguiapp`: el resto (`Listbox`, `Textview`,
+  `Menubar`/`Menu`/`MenuItem`, `Dialog`) se borro con las apps que lo usaban.
+  El toolkit no es ABI sino bootstrap, y su reemplazo por el binding a SXGUI-C
+  ya esta decidido, asi que no habia razon para sostener widgets sin
+  consumidor.
 
 ## El contrato ABI (v1)
 
@@ -267,10 +272,10 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   desde que se retiró el port de filesapp; se conserva como superficie del
   ABI.
 - `haxe-toolkit/` — **toolkit sxgui compartido** entre las apps GUI nativas
-  (`Painter` con paleta/biseles/label/groupbox/texto, `Boton` con estado +
-  hit-test, `Listbox` scrollable/seleccionable, `Textview` de solo lectura,
-  `Menubar`/`Menu`/`MenuItem` con dropdowns y comandos por id, y `Dialog`
-  modal con barra de título y botón OK), agregado al `-cp` del build.
+  (`Painter` con paleta/biseles/label/groupbox/texto y `Boton` con estado +
+  hit-test), agregado al `-cp` del build. Es un **bootstrap** para validar la
+  cadena, no el toolkit final: el estado final es bindear SXGUI-C. Los widgets
+  que solo usaban los ports retirados se borraron con ellos.
 - `haxe/Main.hx` — programa Haxe de validación (clase heap + `@:valueType` +
   String/Array + Null<T> + Map + Float + syscalls nativas). `haxe-gui/Main.hx` —
   `nativegui`, la app ventaneada de ejemplo (cliente del compositor).
