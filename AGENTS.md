@@ -21,6 +21,25 @@
 - El release (`release(vX.Y.Z): ...`) es el unico commit que renombra
   `[Unreleased]` a la version nueva con fecha.
 
+### Como se escribe una entrada
+
+- Una entrada registra **que cambio visto desde afuera**, no como se
+  implemento. El porque, el analisis de causa raiz, el recorrido por los
+  archivos tocados y el detalle de la verificacion van en el mensaje del
+  commit, que es donde alguien los va a buscar. El changelog se lee entero y de
+  corrido; un commit se lee de a uno.
+- Formato: un cambio por entrada, arrancando con una frase en negrita que diga
+  el cambio. Un cambio normal entra en **2 a 6 lineas**; uno estructural grande
+  puede llegar a ~12, nunca mas. Conservar los nombres que alguien va a
+  necesitar para buscar (comandos, targets, flags, funciones de la API, logs de
+  boot, requisitos de build nuevos) y, si el cambio no se entiende solo, una
+  linea de contexto de que pasaba antes. Omitir el inventario de archivos, el
+  paso a paso de la implementacion y el "Verificado con ...".
+- Si varias entradas son partes de un mismo cambio, van juntas en una sola.
+- Cada version lleva **una** subseccion de cada tipo como mucho, en el orden
+  `Agregado`/`Cambiado`/`Eliminado`/`Corregido`. No repetir encabezados.
+- La version `0.3.0` sirve de referencia de largo y tono.
+
 ## Reglas del repo
 
 - No romper la persistencia de apps externas instaladas en `build/disk.img`.

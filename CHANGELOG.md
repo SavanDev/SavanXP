@@ -10,733 +10,254 @@ Notas de corte:
 
 ## [Unreleased]
 
-### Cambiado
-
-- **Generacion de assets del desktop: de System.Drawing (GDI+) a Pillow.**
-  Primer paso de la migracion del build a Linux: `tools/GenerateCursorAsset.ps1`,
-  `tools/GenerateDesktopIconAssets.ps1` y `tools/GenerateDesktopSourceArt.ps1`
-  dependian de `System.Drawing`, que en .NET moderno tira
-  `PlatformNotSupportedException` fuera de Windows, y se ejecutaban en cada
-  build (`Generate-CursorAsset`/`Generate-DesktopIconAssets` en `build.ps1`).
-  Se reemplazaron por tres scripts Python + Pillow
-  (`tools/gen_cursor_asset.py`, `tools/gen_desktop_icon_assets.py`,
-  `tools/gen_desktop_source_art.py`), mismo formato de header C generado
-  (`cursor_asset.h`, `desktop_icon_assets.h`) sin cambios de ABI. `build.ps1`
-  ahora resuelve `python3`/`python` del `PATH` para invocarlos. Nuevo
-  requisito de build en cualquier plataforma: `python3` + `pip install
-  Pillow` (no forma parte del toolchain horneado por `bootstrap.ps1`).
-
-- **Rutas con `\` literal portadas a `/` en los builds "aparte".**
-  Segundo paso de la migracion a Linux: `Join-Path` no separa por `\` fuera de
-  Windows (ahi es un caracter de nombre de archivo valido), asi que las rutas
-  con `\` embebido a mano resolvian mal en `pwsh` sobre Linux. Se corrigieron
-  las 16 ocurrencias en `subsystems/native/build.ps1`, 3 en
-  `sdk/doomgeneric/build.ps1` y 1 cada una en `tools/new-user-app.ps1` y
-  `tools/bootstrap.ps1`, al mismo patron de `/` que ya usaba `build.ps1`. Sin
-  cambio de comportamiento en Windows (verificado corriendo los tres builds
-  afectados de punta a punta).
-
-- **`Build-Iso` ya no fuerza rutas cygdrive fuera de Windows.**
-  Tercer paso de la migracion a Linux: `ConvertTo-CygwinPath` traducia
-  siempre `C:\...` a `/cygdrive/c/...` para el `xorriso.exe` horneado
-  (build de Cygwin), pero esa traduccion no tiene sentido con el `xorriso`
-  nativo de Linux/macOS y ademas revienta (`No se pudo convertir`) porque el
-  regex de unidad nunca matchea una ruta Linux. `Build-Iso` ahora chequea el
-  host con la nueva `Test-IsWindowsHost` ($IsWindows, con fallback a `$true`
-  para Windows PowerShell 5.1 donde esa variable no existe): en Windows sigue
-  yendo por `ConvertTo-CygwinPath` igual que antes, fuera de Windows le pasa a
-  `xorriso` la ruta absoluta tal cual. Verificado corriendo `.\build.ps1 iso`
-  en Windows sin regresion.
-
-- **`Build-Iso` compila el deployer `limine` con `make` fuera de Windows.**
-  Cuarto y ultimo paso (por ahora) de la migracion a Linux: la rama
-  `v10.x-binary` de Limine solo trae `limine.exe` prebuildeado para Windows;
-  para el arranque BIOS de la ISO en Linux/macOS hace falta compilar el
-  deployer `limine` a mano desde `limine.c` (el `Makefile` del propio repo de
-  Limine lo arma con `cc -std=c99 limine.c -o limine`). `Build-Iso` ahora, si
-  no encuentra `limine.exe` ni `limine` y `Test-IsWindowsHost` da `$false`,
-  corre `make -C tools/limine` antes de tirar el error. Nuevo requisito de
-  build en Linux/macOS (no en Windows): `make` + un compilador `cc` en el
-  `PATH`.
-
-- **Los backends de display y audio se eligen por registro de drivers, no por
-  ramas en `kernel_main`.** Los dos HAL ya tenian la mitad polimorfica (las
-  vtables `display::Backend` / `audio::Backend`), pero la seleccion vivia como
-  un `if/else` en `kernel_main` que conocia a los cuatro drivers por nombre:
-  sumar un backend obligaba a tocar el flujo de arranque. Ahora cada HAL tiene
-  un registro (`register_driver` / `bind_best`) y cada driver se auto-describe
-  con un `driver()` al lado de su `backend()`: un `Driver` con nombre,
-  prioridad, `probe` (que hace su propio `initialize` y responde si reclama el
-  hardware) y el getter del backend. `bind_best` corre los probes por prioridad
-  descendente y corta en el primero que reclama, asi que un driver descartado
-  por prioridad nunca llega a inicializarse — que es exactamente lo que hacia a
-  mano el `else` al no tocar `fb_gpu` cuando virtio-gpu estaba presente.
-  Prioridades: virtio-gpu 100 / framebuffer 10, virtio-sound 100 / ac97 50.
-  `set_backend` sigue expuesto como mecanismo de bajo nivel para los caminos
-  que atan un backend a mano (arranques headless, pruebas). Nuevos logs de
-  boot: `display: backend '<nombre>'` y `audio: backend '<nombre>'`. Unico
-  cambio de comportamiento: el probe de `fb_gpu` devuelve su `ready()` (que
-  exige scanout lineal de 32bpp de tamano no nulo) en vez de reclamar el
-  hardware siempre, asi que en una maquina sin framebuffer usable no queda
-  ningun backend atado en lugar de quedar atado uno muerto — equivalente para
-  los consumidores, que ya pasaban todos por `display::ready()`, y `gpu_device`
-  registra `/dev/gpu0` igual en los dos casos. Verificado en las dos
-  configuraciones de hardware: la base (VGA std + AC97) elige `framebuffer` +
-  `ac97`, y `-Virtio` elige `virtio-gpu` + `virtio-sound` sin inicializar ac97;
-  `build.ps1 smoke` (base y `-Virtio`) y `build.ps1 windowd-smoke` en PASS.
-
-- **Los block devices tambien se registran por driver; ATA y ramdisk salen a su
-  propia unidad de traduccion.** Mismo patron que display y audio, con una
-  diferencia de fondo: aca los devices de todos los drivers **coexisten** (los
-  ATA y el ramdisk del LiveCD a la vez), asi que no hay un `bind_best` que elija
-  uno solo — `probe_all()` corre todos los `enumerate` por prioridad y cada
-  driver registra lo que encuentra. Lo que faltaba en `block` era la otra mitad:
-  ya tenia registro dinamico de devices (`register_ramdisk`), pero el despacho
-  de I/O era un `switch` sobre un `enum Kind{ata, memory}` y los dos drivers
-  vivian dentro de `block.cpp`, junto al core. Ahora `block::DeviceOps` es una
-  vtable `read`/`write` por device con un context opaco que cada driver usa para
-  lo suyo (el slot ATA, la base del ramdisk); `block::Driver` lleva nombre,
-  prioridad y `enumerate`; y `kernel/ata.cpp` + `kernel/ramdisk.cpp` son
-  unidades separadas, como `virtio_gpu.cpp`/`fb_gpu.cpp` para display. La
-  prioridad define el orden de los indices de device (ata 100 antes que ramdisk
-  10), que es lo que hace que un disco IDE persistente le gane a la imagen del
-  LiveCD cuando `svfs` monta el primer SVFS2 valido. La validacion comun
-  (indice, buffer, rango de LBA, permiso de escritura) subio al core y se hace
-  una sola vez; los drivers se quedan solo con lo de su protocolo (el tope de
-  255 sectores por comando del PIO de ATA). Cambios de API: `block::initialize`
-  pasa a `block::probe_all` y `block::register_ramdisk` a
-  `ramdisk::attach_image` (hay que llamarla antes de enumerar); el resto
-  (`ready`/`device_count`/`device_info`/`read`/`write`/`kSectorSize`) no cambia,
-  asi que `svfs` y los callers de `system_info` quedan intactos. Nuevo log de
-  boot con la enumeracion: `block: N device(s) ata0(rw) livecd(rw)`. Verificado
-  en las dos rutas de almacenamiento: con disco IDE enumera `ata0` + `livecd` en
-  ese orden y `svfs` monta `ata0` (ejercita el PIO), con `build.ps1 smoke` y
-  `build.ps1 windowd-smoke` en PASS; sin disco IDE (solo el modulo de Limine, el
-  caso LiveCD) enumera `livecd`, `svfs` lo monta y la suite corre entera desde
-  ahi — incluido leer `/disk/bin/gputest` y `/disk/bin/audiotest` — en PASS.
-
-- **El driver del NIC sale del stack de red: `nic::Nic` + `kernel/rtl8139.cpp`.**
-  Cierra el patron de registro de drivers en la ultima familia que faltaba, pero
-  aca el registro era el ultimo paso y no el primero: `net.cpp` no tenia ninguna
-  de las dos mitades. El rtl8139 estaba **fusionado** con el stack —
-  `transmit_frame` se llamaba directo desde los caminos de ARP, ICMP, TCP y UDP,
-  y el estado del chip (`g_io_base`, los buffers de TX, el `pci::DeviceInfo`)
-  vivia en el mismo namespace anonimo que las tablas de sockets TCP. Ahora
-  `nic::Nic` es una vtable (`attach`/`bring_up`/`is_up`/`mac_address`/
-  `transmit`/`poll_receive`/`get_stats`) que es **todo** lo que el stack sabe del
-  hardware: del otro lado no se filtran registros, puertos de I/O ni el layout
-  del ring de recepcion. El driver habla hacia arriba por `nic::Events`, con un
-  callback de frame recibido y otro de estado para los diagnosticos que solo el
-  puede hacer (`TX_FAILED`, `TX_TIMEOUT`, `RX_INVALID`, `BRING_UP_FAILED`); el
-  resto de los estados — ARP, ping, READY/IDLE — se los queda el stack.
-  `kernel/rtl8139.cpp` se lleva el chip completo (PCI, reset, ring, los 4 slots
-  de TX, el handler de INTx ruteada por _PRT/IOAPIC y su fallback a polling) y
-  `kernel/nic.cpp` es el dispatcher con el mismo `register_driver`/`bind_best`
-  por prioridad que display y audio. `net.cpp` baja de 1647 a 1395 lineas y
-  queda como stack L3/L4 puro, sin una sola referencia a `pci::`, `memory::` ni
-  a un registro del chip. Nuevo log de boot: `nic: driver 'rtl8139'`. La API
-  publica de `net::` no cambia. Verificado con el `net-smoke` que se escribio
-  justo antes para esto: mismos resultados que antes de mover una linea —
-  `mac=52:54:0:12:34:56`, tres replies con `ttl=255` y `frames tx 0->4 rx 0->4`
-  — mas `build.ps1 smoke` y `build.ps1 windowd-smoke` en PASS.
-
-- **El Program Manager ya no lista programas que no estan instalados.** Los
-  ports en Haxe (grupo "Native") y Doom se construyen con **builds aparte**, asi
-  que en una imagen donde no se instalaron sus entradas se mostraban igual y no
-  lanzaban nada — un grupo muerto en el launcher y en el escritorio. Nuevo
-  `progman_registry_prune_missing(exists)`: descarta los items cuyo path no se
-  puede abrir, y con ellos los grupos que quedan vacios, reapuntando a los
-  indices nuevos los items que sobreviven. Se aplica **igual a los defaults
-  horneados y a lo que venga de `/disk/progman.ini`**: una entrada que no se
-  puede lanzar es ruido venga de donde venga. Es una etapa **aparte del
-  parseo** a proposito — parsear sigue siendo una funcion pura del texto, que es
-  como lo ejercita el selftest, y el pruning es la politica que toca el disco —
-  con el predicado de existencia inyectable justamente para poder testearlo sin
-  disco. A diferencia de `progman_registry_load()`, esto si puede dejar el
-  registro vacio: si de verdad no hay nada lanzable, mostrar nada es lo honesto.
-  Nota de alcance: `windowd_appinfo.c` **no** se toca, porque no es un catalogo
-  de accesos directos sino la traduccion path -> nombre/icono/color de ventanas
-  ya abiertas y del Task List; filtrarla le sacaria el titulo lindo a una app
-  que esta corriendo. Verificado con `build.ps1 progman-smoke`: 12 aserciones
-  nuevas sobre la logica de pruning con un predicado falso (descarte, borrado
-  del grupo vacio, remapeo de indices, `group_item_at` coherente, predicado
-  nulo, idempotencia) mas dos contra el filesystem real que confirman que
-  `open()` distingue un binario instalado de uno ausente. El selftest ademas
-  ahora reporta que hace el pruning contra el disco real de la imagen
-  (`prune dropped=N` y los grupos que sobreviven), que es la parte que ningun
-  predicado falso puede cubrir.
-
 ### Agregado
 
-- **Size hint: cada ventana arranca del tamano de su contenido.** El WM le daba
-  a TODA app la misma superficie generica (area util menos 160x140, hasta
-  1280x900), asi que About abria a ~1100x650 con el contenido ocupando la
-  esquina superior izquierda, y lo mismo el resto. El tamano natural de una
-  ventana lo sabe el programa -- es su layout --, no el WM, que por diseno ya no
-  conoce ningun catalogo de apps. Canal nuevo cliente->WM en el protocolo
-  (`SAVANXP_WM_FD_SIZE_HINT`, fd 11, `savanxp_desktop_size_hint`): el cliente
-  pide el area util que necesita y el WM la aplica **una sola vez**, al arrancar
-  la app, recortada a la capacidad de la superficie -- despues manda el usuario,
-  y una app no puede pelearle un resize. Al aplicarla la ventana se vuelve a
-  colocar con el criterio del launch (centrada + cascada); si no, encoger la
-  dejaba descentrada. En el SDK posix, `gfx_request_content_size()` /
-  `gfx_wait_content_size()`; espejado en el SDK nativo
-  (`sxn_gui_request_content_size` / `sxn_gui_wait_content_size`).
+- **Size hint: cada ventana arranca del tamano de su contenido.** Canal nuevo
+  cliente->WM (`SAVANXP_WM_FD_SIZE_HINT`, fd 11): la app pide el area util que
+  necesita y el WM la aplica una sola vez al arrancar, recortada a la capacidad
+  de la superficie y recolocando la ventana; despues manda el usuario. SDK
+  posix: `gfx_request_content_size()` / `gfx_wait_content_size()`, espejado en
+  el SDK nativo. En sxgui el ajuste es opt-in: `sxgui_app_autosize()` (bounding
+  box de los widgets) o `sxgui_app_set_content_size()`. Antes toda app recibia
+  la misma superficie generica y abria con el contenido en una esquina.
+- **`svfs-cli rm`: se puede sacar algo de una imagen SVFS2.**
+  `svfs-cli rm <imagen> <ruta>...`, con la convencion de rutas del manifiesto.
+  Solo archivos y directorios vacios; no crea los padres que falten y no borra
+  la raiz. Antes el sync era puramente aditivo y la unica forma de sacar un
+  binario era recrear la imagen entera.
 
-  En sxgui el ajuste al contenido es **opcional y explicito**: `sxgui_app_init`
-  no toca el tamano, y cada app elige una de dos -- `sxgui_app_autosize()`
-  (bounding box de los widgets + `SXGUI_CONTENT_MARGIN`, para layouts fijos) o
-  `sxgui_app_set_content_size()` (cualquier otro tamano). La segunda existe
-  porque el bounding box no siempre es la respuesta: progman es un launcher y
-  quiere lugar para crecer, y filesapp estira sus paneles con la ventana.
+### Cambiado
 
-  Tamanos resultantes: About 456x434 y Widgets 398x330 (autosize), Program
-  Manager 592x388 (grilla base de 6x4 celdas, crece en filas con el registro),
-  Files 640x420, Shell 672x492 (80x24 celdas), Key Test 510x488, Mouse Test
-  420x358. Doom y Gfx Demo no cambian: ya se lanzan con el flag FULLSCREEN, que
-  los dimensiona aparte. Subtest nuevo en `windowd-smoke`: exige que progman
-  pida su tamano, que la superficie quede mas chica que la generica y que la
-  ventana siga entera dentro del area util.
-
-- **`svfs-cli rm`: por fin se puede sacar algo de una imagen SVFS2.** El sync del
-  build es **aditivo y nunca borra**, y el tool solo tenia `create` y `apply`, asi
-  que lo que se instalaba una vez quedaba en `build/disk.img` para siempre: la
-  unica forma de sacar un binario era recrear la imagen entera, lo que se lleva
-  puesto tambien `/disk/bin/doomgeneric` y el WAD de Freedoom (las rutas que el
-  build protege como persistentes). Nuevo `svfs_remove()` en el core compartido:
-  libera los extents y el inodo, y saca la entrada del directorio padre
-  compactando el array de entradas. Solo archivos y **directorios vacios** — el
-  borrado recursivo es politica del llamador, no del core — y la raiz no se
-  borra. A diferencia de `svfs_write_file`, **no** crea los padres que falten:
-  borrar bajo un directorio inexistente es `NOT_FOUND`, no una invitacion a
-  `mkdir`. El orden importa y es deliberado: primero se reescribe el directorio
-  padre y **recien despues** se liberan inodo y bloques, asi un fallo a mitad de
-  camino deja el inodo todavia referenciado en vez de una entrada apuntando a un
-  inodo liberado. En el CLI, `svfs-cli rm <imagen> <ruta> [<ruta>...]` con la
-  misma convencion de rutas que el manifiesto (relativas a la raiz de SVFS, sin
-  el prefijo `/disk` del guest) tolerando una `/` inicial. Verificado sobre
-  copias de una imagen real: casos de error (ruta inexistente, directorio no
-  vacio, raiz, uso incorrecto) con su codigo de salida, borrado por ambas formas
-  de ruta, idempotencia (reborrar da `NOT_FOUND`), el resto de la imagen intacto
-  (`doomgeneric` y `smoke` sin tocar), la imagen sigue pasando
-  `Assert-Svfs2Consistency`, y el bitmap de bloques libera **exactamente** los
-  350 sectores de los dos archivos borrados — o sea que los extents se liberan y
-  no se filtran.
+- **Display, audio, block y NIC eligen driver por registro, no por ramas en
+  `kernel_main`.** Cada driver se auto-describe con `register_driver` y el HAL
+  lo ata por prioridad: `bind_best` para display (virtio-gpu 100 / framebuffer
+  10), audio (virtio-sound 100 / ac97 50) y NIC; `probe_all` para block, cuyos
+  devices coexisten (ata 100 antes que ramdisk 10, que es lo que hace que un
+  disco IDE le gane a la imagen del LiveCD). Sumar un backend ya no toca el
+  flujo de arranque. `kernel/ata.cpp`, `ramdisk.cpp` y `rtl8139.cpp` salen a
+  unidades propias y `net.cpp` queda como stack L3/L4 puro detras de la vtable
+  `nic::Nic`. Cambios de API: `block::initialize` -> `block::probe_all`,
+  `block::register_ramdisk` -> `ramdisk::attach_image`. Nuevos logs de boot:
+  `display: backend`, `audio: backend`, `nic: driver`, `block: N device(s)`.
+- **Assets del escritorio: de System.Drawing (GDI+) a Pillow.** Los tres
+  generadores pasan a Python + Pillow (`tools/gen_cursor_asset.py`,
+  `gen_desktop_icon_assets.py`, `gen_desktop_source_art.py`), con el mismo
+  header C generado y sin cambios de ABI. Nuevo requisito de build en cualquier
+  plataforma: `python3` + Pillow, fuera del toolchain horneado.
+- **Migracion del build a Linux: rutas y herramientas del host.** Los builds
+  "aparte" usan `/` en vez de `\` literal (`Join-Path` no separa por `\` fuera
+  de Windows); `Build-Iso` deja de forzar rutas cygdrive segun `Test-IsWindowsHost`
+  y compila el deployer `limine` con `make` cuando no hay binario prebuildeado.
+  Nuevo requisito en Linux/macOS: `make` + `cc`. Sin cambios en Windows.
+- **El Program Manager ya no lista programas que no estan instalados.** Nuevo
+  `progman_registry_prune_missing(exists)`: descarta los items cuyo path no se
+  puede abrir y los grupos que quedan vacios, igual para los defaults horneados
+  que para `/disk/progman.ini`. Puede dejar el registro vacio: si no hay nada
+  lanzable, mostrar nada es lo honesto. `windowd_appinfo.c` no se filtra, porque
+  traduce path -> nombre/icono de ventanas ya abiertas, no de accesos directos.
 
 ### Eliminado
 
 - **Retiradas las variantes en Haxe de About y Files (`aboutapp-hx`,
-  `filesapp-hx`).** Eran demos de validacion de la cadena AOT Haxe->C++->ELF, no
-  apps oficiales: la contraparte en C (`aboutapp.c`, `filesapp.c`) siempre fue
-  la que se usa. Ya habian cumplido su funcion —`filesapp-hx` llego a paridad
-  funcional con la de C, que era la prueba de que la cadena Haxe alcanza una app
-  real— y sostenerlas duplicaba apps de sistema que en el layering fijado
-  (`docs/SYSTEM_LAYERING.md`) son de C. Se borraron
-  `subsystems/native/haxe-about/` y `haxe-files/`, sus harnesses headless
-  (`subsystems/native/test/abouthost.c`, `test/fileshost.c`), los targets
-  `build.ps1 native-about` / `native-files` con sus funciones y specs de
-  automatizacion en `init.c`, y las entradas del grupo **Native** del registro
-  de progman y de la tabla de presentacion del WM
-  (`windowd_appinfo.c`). El grupo Native desaparecio del launcher: quedan
-  Main/Games/Diagnostics. Se **conservan** el toolkit `haxe-toolkit/` y los
-  runtimes `sx_sysinfo.c`/`sx_fs.c`: son superficie del ABI nativo, no de las
-  apps borradas. Verificado con `build.ps1 progman-smoke` (3 grupos, 8 items,
-  prune sin sorpresas) y `windowd-smoke`.
+  `filesapp-hx`).** Eran demos de validacion de la cadena AOT, no apps
+  oficiales: las de C siempre fueron las que se usan. Se van con sus harnesses
+  headless, los targets `native-about`/`native-files` y las entradas del grupo
+  **Native**, que desaparece del launcher. Se conservan el toolkit
+  `haxe-toolkit/` y los runtimes `sx_sysinfo.c`/`sx_fs.c`: son superficie del
+  ABI nativo, no de las apps borradas.
 
 ### Corregido
 
 - **Al abrir una app se veia por un instante la ventana vacia del tamano
-  generico.** El WM componia una ventana desde que el proceso hacia fork, sin
-  esperar su primer frame: durante los ~200 ms que tarda una app en arrancar
-  (exec, cargar el ELF, abrir la sesion gfx) se veia un rectangulo gris del
-  tamano generico, que despues encogia al tamano pedido. Ahora
-  `client_is_drawable()` exige `consumed_submit_sequence > 0`, o sea que la
-  ventana aparece ya pintada y del tamano definitivo; mientras tanto el
-  feedback sigue siendo el cursor WAIT que ya ponia
-  `any_overlay_client_starting()`. En el primer frame hay que ensuciar el
-  marco entero, no solo la superficie: la barra de titulo y el borde los dibuja
-  el WM y nadie mas los ensuciaria. Medido con rafagas de `screendump` sobre el
-  lanzamiento de About: antes, dos frames con la ventana a 1126x661 antes de
-  quedar en 462x460; ahora aparece directamente en 462x460.
-
-- **Resize: la ventana quedaba medio negra al cambiarle el tamano.**
-  `resize_overlay_client_surface` publicaba el tamano nuevo en el header de la
-  superficie y **despues** limpiaba los pixeles. El header es el unico aviso que
-  tiene el cliente: apenas lo ve cambiado repinta y copia su frame al buffer
-  compartido, asi que el memset del WM le borraba la parte de abajo del frame
-  recien copiado, y el cliente no repinta hasta el proximo input. Se limpia
-  antes de publicar. Aparecio con el size hint (una app que se redimensiona sola
-  al arrancar y despues se queda quieta), pero el bug estaba en el camino de
-  resize por bordes desde siempre. Ademas, del lado del cliente,
-  `gfx_wait_content_size` espera un instante antes de leer el par ancho/alto:
-  el WM los escribe por separado y quedarse con la mitad daba una geometria que
-  la superficie no tenia.
-
-- **Key Test: la segunda linea de ayuda se pisaba con el primer evento.** Los
-  offsets verticales estaban clavados sueltos (`62 - 22`, `62 - 4`, eventos
-  desde 62): la primera linea de ayuda caia ARRIBA del marco del panel y la
-  segunda encima del primer evento. Ahora el ritmo sale de constantes
-  (`KEYTEST_PANEL_TOP`, `KEYTEST_HINT_TOP`, `KEYTEST_EVENTS_TOP`), que son
-  tambien las que definen el alto que la app pide para su ventana.
-
-- **Mouse Test: el panel de lecturas cortaba la ultima linea.** Alto fijo de 98
-  px para cuatro lineas que terminan en 154; ahora 104.
-
-- **SCI ruteada dos veces: el boton de power no apagaba la maquina.**
-  `acpi::start_sci()` ruteaba la GSI del SCI y despues el glue de uACPI ruteaba la
-  MISMA GSI, pisando la entrada de redireccion con un vector nuevo y dejando
-  huerfano a `acpi::sci_interrupt` (el handler que hace el shutdown S5). El mismo
-  choque pasaba en el camino PIC, donde los dos llamaban `register_irq_handler(9)`
-  y el segundo sobreescribia al primero. Ahora una linea de interrupcion admite
-  varios dueños: `register_interrupt_handler` **encadena** handlers sobre el vector
-  (hasta 4, idempotente por puntero, exigiendo el mismo modo de EOI) en vez de
-  reemplazar, y `ioapic::route_gsi` reconoce una GSI ya ruteada como linea
-  compartida — reusa su vector y encadena el handler sin reprogramar la RTE, en vez
-  de quemar un vector nuevo. Esto tambien cubre el caso, ya anticipado, de dos links
-  PCI que resuelven a la misma GSI para INTx. Segundo bloqueo en la misma funcion:
-  `uacpi_initialize` apaga **todos** los eventos fijos (`initialize_fixed_events`),
-  incluido el `PWRBTN_EN` que `start_sci` acababa de habilitar, asi que el boton no
-  generaba SCI aunque el ruteo estuviera bien; se agrego
-  `acpi::enable_power_button()` (idempotente, no toca el resto de los eventos) y el
-  bringup de uACPI la vuelve a llamar al terminar. Verificado en vivo en VirtualBox
-  7.2: `VBoxManage controlvm acpipowerbutton` apaga la VM tanto con I/O APIC on (SCI
-  por IOAPIC, RTE 9 estable en el vector 50) como off (SCI por PIC). QEMU:
-  `build.ps1 smoke` -> SMOKE PASS, con un vector menos consumido en el pool de GSIs.
-
+  generico.** El WM componia la ventana desde el fork, sin esperar el primer
+  frame. Ahora no la compone hasta que el cliente pinta; mientras arranca, el
+  feedback es el cursor WAIT.
+- **Resize: la ventana quedaba medio negra.** `resize_overlay_client_surface`
+  limpiaba la superficie **despues** de publicar las dimensiones nuevas en el
+  header, borrandole al cliente el frame que acababa de copiar. Aparecio con el
+  size hint, pero el bug estaba en el resize por bordes desde siempre.
+- **El boton de power no apagaba la maquina: la SCI se ruteaba dos veces.**
+  `acpi::start_sci()` y el glue de uACPI ruteaban la misma GSI, pisandose. Ahora
+  una linea de interrupcion admite varios dueños: `register_interrupt_handler`
+  encadena en vez de reemplazar y `ioapic::route_gsi` reconoce una GSI ya
+  ruteada como compartida — lo que ademas cubre dos links PCI que resuelven a la
+  misma GSI. Nueva `acpi::enable_power_button()`, que el bringup de uACPI vuelve
+  a llamar porque `uacpi_initialize` apaga todos los eventos fijos.
 - **VirtualBox con I/O APIC activado no terminaba de arrancar: soporte xAPIC
-  MMIO en el APIC local.** `initialize_local_apic` solo sabia hablar x2APIC (por
-  MSR) y VirtualBox nunca expone x2APIC, asi que el APIC local quedaba
-  descartado. Con el I/O APIC activo eso era fatal: el firmware de VBox pone la
-  maquina en modo APIC (software-enablea el APIC local y **enmascara LINT0**),
-  lo que corta el cable del 8259 al CPU; el fallback del PIT desenmascaraba IRQ0
-  en el PIC y la interrupcion se quedaba para siempre en el IRR del 8259
-  (`IMR:fe ISR:00 IRR:01`, y la RTE 2 del IOAPIC — el override IRQ0->GSI2 de la
-  MADT — enmascarada con `irr=1`). Sin ticks el scheduler nunca preemptaba y el
-  boot se congelaba en el splash al 100%, con el CPU en `halt_once()`. En el
-  mismo escenario, todo lo ruteado por el IOAPIC (PS/2, SCI) hacia EOI contra un
-  APIC que el kernel creia inexistente — `local_apic_eoi()` era un no-op — asi
-  que el primer scancode dejaba el vector 52 clavado en el ISR (`PPR=0x30`) y
-  mataba todos los vectores 48-63. Ahora `initialize_local_apic` mapea la ventana
-  MMIO que apunta `IA32_APIC_BASE` (una pagina uncacheable via
-  `vm::map_kernel_mmio`) cuando no hay x2APIC, y `read_local_apic`/
-  `write_local_apic` despachan entre MSR y MMIO; los helpers del timer del APIC
-  dejan de exigir x2APIC. Ademas se repone LINT0 como ExtINT desenmascarado al
-  software-enablear el APIC (virtual wire), que es lo que mantiene vivo el camino
-  PIC legacy — necesario en VirtualBox **sin** I/O APIC, donde no hay MADT y PS/2
-  sigue yendo por el 8259. `ioapic::initialize` ahora se niega a correr si no hay
-  APIC local operativo (en vez de programar entregas que nadie puede EOI-ear), y
-  `route_gsi` usa el APIC id real como destino en vez de 0 fijo. Nuevo log de
-  boot: `cpu: APIC local en modo xAPIC|x2APIC (id N)`. Verificado en vivo en
-  VirtualBox 7.2 en las dos configuraciones (I/O APIC on y off): escritorio
-  completo, timer del APIC local periodico en el vector 48, Ctrl+Esc abre el Task
-  List, ISR/IRR limpios y `PPR=0`. QEMU sigue por el camino x2APIC sin cambios
-  (`build.ps1 smoke` -> SMOKE PASS).
+  MMIO en el APIC local.** `initialize_local_apic` solo sabia hablar x2APIC por
+  MSR y VBox nunca lo expone, asi que el APIC local quedaba descartado; con el
+  I/O APIC activo el firmware enmascara LINT0, el fallback del PIT moria y sin
+  ticks el boot se congelaba en el splash. Ahora mapea la ventana MMIO que
+  apunta `IA32_APIC_BASE` cuando no hay x2APIC, y repone LINT0 como ExtINT
+  (virtual wire) para el camino PIC legacy. `ioapic::initialize` se niega a
+  correr sin APIC local operativo. Nuevo log: `cpu: APIC local en modo
+  xAPIC|x2APIC (id N)`.
+- **Key Test** pisaba la segunda linea de ayuda con el primer evento, y **Mouse
+  Test** cortaba la ultima linea de su panel.
 
 ## [0.3.3] - 2026-07-09
 
 ### Agregado
 
 - **Audio en VirtualBox: driver AC'97 + HAL de audio con backends.** El audio
-  solo funcionaba con `virtio-sound-pci` (QEMU); VirtualBox no emula ese chip,
-  asi que `/dev/audio0` no se registraba y todo quedaba mudo (Doom incluido). Se
-  refactorizo el subsistema a un HAL espejo del de display (`display::Backend`):
-  un dispatcher `audio::` con vtable `Backend` (`ready`/`get_info`/`configure`/
-  `submit_period`/`stop`), un `audio_device.cpp` agnostico que registra
-  `/dev/audio0` y concentra la logica comun (owner-pid de un solo escritor,
-  validacion de usuario, troceado en periodos, ioctl `GET_INFO`), y dos backends:
-  `virtio_sound` (refactorizado, sin cambios de comportamiento) y el nuevo
-  `ac97`. El driver **AC'97** (`kernel/ac97.cpp`) maneja el controlador Intel
-  ICH (clase PCI `0x04`/subclase `0x01`, el chip que VirtualBox y QEMU emulan por
-  defecto): saca al codec del cold-reset, desmutea el mixer, y reproduce por
-  bus-master DMA con un Buffer Descriptor List de 32 entradas en memoria
-  fisicamente contigua (`memory::allocate_contiguous_pages`). Es **polling puro
-  sondeando CIV** (sin IRQ), lo que esquiva el problema conocido de INTx legacy
-  que no llega en VirtualBox. El formato fijo del ABI (S16 estereo 48 kHz) es el
-  rate nativo del DAC de AC'97, asi que no hay VRA ni resampling. `kernel_main`
-  elige backend igual que en display: virtio-sound si el probe PCI lo encontro,
-  si no AC'97 (fallback de VirtualBox). ABI: `savanxp_audio_backend` suma
-  `SAVANXP_AUDIO_BACKEND_AC97`. Nuevo target `.\build.ps1 ac97-smoke` que corre
-  el smoke de `/dev/audio0` forzando `-device AC97` sin virtio-sound, para
-  ejercitar el camino de fallback headless. Verificado: el smoke normal (virtio)
-  sigue en verde sin regresion; el `ac97-smoke` detecta el controlador
-  (`ac97: ready ... nam=0x6000 nabm=0x6400`), registra `/dev/audio0` y pasa; y
-  bajando `kMaxInFlight` a 2 se confirmo que `submit_period` bloquea hasta que el
-  hardware consume (CIV avanza), probando que el motor DMA reproduce de verdad y
-  no solo acepta el enqueue. Confirmado con sonido en VirtualBox real y en QEMU.
-- **`virtio-sound`: fin del enmudecimiento silencioso.** Si el dispositivo
-  responde pero ningun stream de salida ofrece el formato fijo del ABI, antes
-  `/dev/audio0` no se registraba sin dejar traza (indistinguible de "no hay
-  hardware"); ahora se registra el fallo por consola.
-- **LiveCD: `/disk` autocontenido en la ISO via ramdisk escribible.** La imagen
-  de disco (`disk.img`, SVFS2) ahora viaja *dentro* de la ISO como un segundo
-  modulo de Limine (`boot/limine.conf`), en vez de depender de un disco IDE
-  adjuntado solo en el `run` de QEMU. El kernel la expone como un block device
-  respaldado en memoria: `block::register_ramdisk` agrega un `Device` de tipo
-  `Kind::memory` (read/write ruteados a `memcpy`) despues de sondear los ATA,
-  asi que un disco IDE persistente (dev) mantiene prioridad y la ISO pura monta
-  el ramdisk. `kernel_main` lo registra entre `block::initialize()` y
-  `svfs::initialize()` (que no cambia: ya monta el primer SVFS2 valido). El
-  handoff del boot pasa `disk_image_address/size` en `BootInfo`, y
-  `arch/x86_64/entry.cpp` clasifica los modulos por sufijo de ruta
-  (`initramfs.cpio` vs `disk.img`) en lugar de asumir `modules[0]`. El ramdisk
-  es **escribible-efimero, in-place** sobre la RAM del modulo (mapeada RW por el
-  HHDM de Limine, cuyo CR3 reutiliza el kernel): las apps que crean
-  directorios/archivos en `/disk` funcionan y los cambios se pierden al
-  reiniciar, la semantica correcta de un LiveCD. `build.ps1` stagea `disk.img`
-  en la ISO junto a `kernel.elf`/`initramfs.cpio`. Resultado: la ISO arranca por
-  si sola con `/disk` montado en VirtualBox y hardware real, resolviendo que las
-  apps de `/disk` (Doom, etc.) no aparecieran al bootear la ISO sin el disco de
-  dev. Verificado en vivo: boot UEFI sin disco IDE -> `/disk mounted`; el `smoke`
-  (mkdir/write/cp/mv/rm en `/disk`) corrido sin IDE pasa todas las escrituras
-  contra el ramdisk; y confirmado en VirtualBox arrancando desde la ISO. La
-  instalacion persistente a disco queda como fase futura.
+  solo funcionaba con `virtio-sound-pci` (QEMU); VirtualBox no emula ese chip y
+  todo quedaba mudo, Doom incluido. El subsistema pasa a un HAL espejo del de
+  display: dispatcher `audio::` con vtable `Backend`, un `audio_device.cpp`
+  agnostico que registra `/dev/audio0` y concentra la logica comun, y dos
+  backends — `virtio_sound` y el nuevo `ac97` (`kernel/ac97.cpp`), que maneja el
+  controlador Intel ICH por bus-master DMA con **polling puro de CIV**, sin IRQ,
+  esquivando el INTx legacy que no llega en VBox. El formato fijo del ABI (S16
+  estereo 48 kHz) es el rate nativo del DAC, asi que no hay resampling.
+  `savanxp_audio_backend` suma `SAVANXP_AUDIO_BACKEND_AC97`. Confirmado con
+  sonido en VirtualBox real y en QEMU.
+- **LiveCD: `/disk` autocontenido en la ISO via ramdisk escribible.** `disk.img`
+  viaja dentro de la ISO como un segundo modulo de Limine y el kernel la expone
+  como block device en memoria, asi que la ISO arranca sola con `/disk` montado
+  — antes las apps de `/disk` (Doom, etc.) no aparecian al bootear sin el disco
+  de dev. Es escribible-efimero in-place: los cambios se pierden al reiniciar,
+  la semantica correcta de un LiveCD. Un disco IDE persistente mantiene
+  prioridad. La instalacion persistente a disco queda como fase futura.
 - **Doom con Freedoom (IWAD libre) en el LiveCD.** `sdk/doomgeneric/build.ps1`
-  hornea `freedoom1.wad` (IWAD 100% libre que el motor ya reconoce en
-  `d_iwad.c`) por defecto en `/disk/games/doom/`, en vez del `doom1.wad`
-  shareware, para que la ISO distribuible lleve Doom jugable sin contenido
-  propietario. El motor igual detecta `doom1.wad`/`doom.wad` si el usuario los
-  aporta. El WAD (~28.8 MB) vive dentro de la `disk.img` de tamano fijo, sin
-  costo de RAM extra sobre el modulo.
-- **Capa IOAPIC/MADT y ruteo de IRQs por GSI.** Nuevo subsistema que parsea la
-  MADT (descubre IOAPICs y sus Interrupt Source Overrides), programa las
-  redirection entries y rutea GSIs hacia vectores de la IDT con entrega por el
-  Local APIC (`ioapic::route_gsi` / `route_legacy_irq`), inicializado en
-  `kernel_main` tras el Local APIC y la ACPI. Reserva el pool de vectores
-  50-63 en `cpu_init` (trampolines `vector_NN` + gates IDT) para las GSIs
-  ruteadas. PS/2 (IRQ1/IRQ12) migra a este ruteo cuando el IOAPIC esta
-  disponible, con fallback al PIC legacy si no hay MADT/IOAPIC (protege el
-  arranque de VirtualBox). Verificado en vivo en QEMU q35: MADT con 1 IOAPIC,
-  5 overrides y 24 GSIs; teclado responde tecleando de verdad y el serial
-  queda limpio tras el handoff (sin overflow de cola ni interrupciones
-  espurias). Es el prerrequisito para rutear la SCI de ACPI y el INTx legacy
-  resuelto por `_PRT`.
-- **ACPI: SCI ruteada por IOAPIC + boton de power.** `acpi::start_sci()`
-  habilita el modo ACPI (`SCI_EN` via `SMI_CMD`), enmascara todas las GPE (sin
-  interprete AML, evita tormentas en la SCI level-triggered), habilita el
-  evento fijo PWRBTN y rutea la SCI con `ioapic::route_gsi(sci_int,
-  active_low, level, ...)`, con fallback al PIC cuando la GSI entra en 0..15 y
-  no hay IOAPIC. El handler `sci_interrupt` lee PM1a/b_STS: ante PWRBTN hace
-  ack (write-1-to-clear) y dispara `acpi::shutdown()` (S5, mismo camino que
-  `/dev/power`); limpia cualquier otro bit fijo para no re-disparar la SCI.
-  Parsea de la FADT los bloques de evento PM1, los bloques GPE, SMI_CMD y
-  sci_int. Verificado en vivo en QEMU q35: SCI ruteada en GSI 9 sin regresion
-  ni tormenta de interrupciones; Machine -> Power Down apaga la VM por S5 via
-  el handler. El apagado es inmediato (sin cierre graceful de userland);
-  senializar a init queda como mejora futura.
+  hornea `freedoom1.wad` por defecto en `/disk/games/doom/`, para que la ISO
+  distribuible lleve Doom jugable sin contenido propietario. El motor igual
+  detecta `doom1.wad`/`doom.wad` si el usuario los aporta.
+- **Capa IOAPIC/MADT y ruteo de IRQs por GSI.** Parsea la MADT (IOAPICs e
+  Interrupt Source Overrides), programa las redirection entries y rutea GSIs a
+  vectores de la IDT con entrega por el Local APIC (`ioapic::route_gsi` /
+  `route_legacy_irq`), con un pool de vectores 50-63 reservado en `cpu_init`.
+  PS/2 migra a este ruteo cuando hay IOAPIC, con fallback al PIC legacy si no
+  hay MADT. Es el prerrequisito para la SCI de ACPI y el INTx resuelto por `_PRT`.
+- **ACPI: SCI ruteada por IOAPIC + boton de power.** `acpi::start_sci()` habilita
+  el modo ACPI, enmascara todas las GPE (sin interprete AML, para evitar
+  tormentas en la SCI level-triggered), habilita el evento fijo PWRBTN y rutea la
+  SCI, con fallback al PIC. El handler dispara `acpi::shutdown()` (S5, el mismo
+  camino que `/dev/power`). El apagado es inmediato, sin cierre graceful de
+  userland.
 - **uACPI vendorizado e integrado: interprete de AML real.** Copia horneada de
-  uACPI v6.0.0 (github.com/uACPI/uACPI, commit upstream `9c9b26d`) bajo
-  `vendor/uacpi/`, sin submodulo (misma convencion que busybox), para
-  reemplazar progresivamente el ACPI hand-rolled (que solo escaneaba `_S5_`
-  sin interpretar AML). Se compila como C11 (no C++, usa conversion implicita
-  `void*`->`T*`): `tools/Ninja.ps1` gana una 3a variable de flags
-  `uacpiflags`; `build.ps1` aporta `Get-UacpiFlags`
-  (`-std=gnu11 -DUACPI_USE_BUILTIN_STRING`, misma ABI freestanding/
-  `-mcmodel=kernel` que el kernel) y `Get-UacpiCompileEdges`. Glue en
-  `kernel/uacpi_glue.cpp`: capa `uacpi_kernel_*` mapeada a
-  heap/vmm/pci/timer/ioapic (mutex/spinlock/event triviales, monocore);
-  fuente de tiempo = TSC calibrado contra el PIT canal 2 por polling, sin IRQ
-  (`timer::ticks()` no sirve porque en el bringup las interrupciones estan
-  apagadas); el SCI del glue rutea por `ioapic::route_gsi`. Se agrega
-  `pci::write_config_u8` (antes solo habia u16/u32). `uacpi_glue::bringup()`
-  corre `uacpi_initialize` + `uacpi_namespace_load` desde `kernel_main` (tras
-  `acpi::start_sci`), conviviendo con la ACPI hand-rolled;
-  `uacpi_namespace_initialize()` (corre `_INI`/`_STA`) queda diferida a la
-  etapa de eventos porque requiere el ACPI Global Lock con el subsistema
-  GPE/SCI de uACPI activo e interrupciones habilitadas — el namespace ya
-  cargado alcanza para `_CRS`/`_PRT`. Verificado en vivo (desktop-smoke
-  PASS): uACPI inicializa, encuentra las tablas e interpreta el DSDT
-  ("successfully loaded 1 AML blob, 1707 ops").
+  uACPI v6.0.0 bajo `vendor/uacpi/`, sin submodulo (misma convencion que
+  busybox), para reemplazar progresivamente la ACPI hand-rolled. Se compila como
+  C11 con su propia variable de flags en Ninja. Glue en `kernel/uacpi_glue.cpp`:
+  capa `uacpi_kernel_*` sobre heap/vmm/pci/timer/ioapic, con el tiempo tomado del
+  TSC calibrado contra el PIT porque en el bringup las interrupciones estan
+  apagadas. `bringup()` corre `uacpi_initialize` + `uacpi_namespace_load`
+  conviviendo con la ACPI hand-rolled; `uacpi_namespace_initialize()` queda
+  diferida a la etapa de eventos.
 - **Ruteo de INTx via `_PRT` de uACPI, cerrado de punta a punta.**
-  `uacpi_glue::dump_pci_routing()` recorre los root bridges PCI/PCIe
-  (`PNP0A03`/`PNP0A08`), obtiene el `_PRT` de cada uno y resuelve cada PCI
-  link device a su GSI real evaluando el `_CRS` del link
-  (`uacpi_get_current_resources` + `uacpi_for_each_resource`, primer
-  descriptor IRQ/Extended IRQ). En q35 todas las entradas del `_PRT` usan
-  link devices (nunca GSI directa); verificado en vivo: `LNKA/B/E/F` ->
-  GSI 10, `LNKC/D/G/H` -> GSI 11 (level). `uacpi_glue::route_pci_intx(bus,
-  dev, func, handler)` cierra el camino real: lee el Interrupt Pin de la
-  config PCI (`0x3D`), busca la entrada `_PRT` del root (device+pin), resuelve
-  el link a GSI via `_CRS` y programa el IOAPIC con la polaridad/trigger que
-  declara el firmware. El `rtl8139` pasa de polling a interrupt-driven sobre
-  este camino: `net::initialize` rutea su INTx una vez (registra
-  `net_irq_handler`); `bring_up` habilita el IMR (`ROK|TOK|RER|TER`) solo si
-  el ruteo tuvo exito, si no `IMR=0` y sigue el polling como fallback;
-  `net_irq_handler` sirve el device (`poll_receive` drena RX y limpia el ISR,
-  desasertando la linea level-triggered, sin storm); `poll_receive` se
-  envuelve en un `cli` local (`irq_save`/`restore`) porque corre tanto desde
-  el handler de IRQ como desde el main (timer/service), serializando el
-  acceso al ring de RX en monocore. Verificado en vivo en QEMU q35: "INTx dev
-  1 INTA -> GSI 10 ruteado (vector 53)" y "net: primer INTx recibido via
-  IOAPIC" al arranque, una sola vez (sin storm), escritorio sano. INTx legacy
-  ahora llega en q35+APIC, que era el bottleneck que habia forzado usar
-  MSI-X para virtio-gpu.
+  `route_pci_intx(bus, dev, func, handler)` lee el Interrupt Pin de la config
+  PCI, busca la entrada `_PRT` del root bridge, resuelve el link device a su GSI
+  real evaluando el `_CRS` y programa el IOAPIC con la polaridad y el trigger que
+  declara el firmware. El `rtl8139` pasa de polling a interrupt-driven sobre este
+  camino, con fallback a polling si el ruteo falla. INTx legacy ahora llega en
+  q35+APIC, que era el bottleneck que habia forzado usar MSI-X para virtio-gpu.
 - **Subsistema nativo — Fase 2: ABI nativo v1 + runtime real.** El contrato
-  kernel<->userland vive en `subsystems/native/sdk/include/savanxp_native_abi.h`
-  (unica fuente, incluida por ambos lados): espacio de syscalls particionado
-  (`< 0x1000` baseline transitorio delegado en posix, `>= 0x1000` syscalls
-  propias que para un proceso posix no existen), version de ABI y primeras dos
-  syscalls nativas: `SXN_SYS_INFO` (identidad + version, con handshake
-  obligatorio del runtime al arrancar; si no coincide aborta con exit 132) y
-  `SXN_SYS_LOG` (log al kernel con prefijo `native[pid]:`). El runtime de
-  userland suma heap propio (`sxn_alloc/realloc/free`, free-list sobre arena BSS
-  de 4 MiB), builtins de memoria, `operator new/delete` y un mini `<memory>`
-  freestanding (shared_ptr/make_shared no-atomico en una asignacion), con lo
-  cual las clases Haxe con semantica por defecto y `@:valueType` ya compilan y
-  corren sin libstdc++. Verificado en QEMU: handshake `abi verificado, version=1`
-  y clases Haxe sobre el heap nativo con resultados correctos.
+  kernel<->userland vive en `savanxp_native_abi.h` como unica fuente: espacio de
+  syscalls particionado (`< 0x1000` baseline delegado en posix, `>= 0x1000`
+  propias, que para un proceso posix no existen), version de ABI con handshake
+  obligatorio al arrancar (aborta con exit 132 si no coincide) y las dos primeras
+  syscalls nativas (`SXN_SYS_INFO`, `SXN_SYS_LOG`). El runtime suma heap propio,
+  builtins de memoria, `operator new/delete` y un mini `<memory>` freestanding,
+  con lo cual las clases Haxe ya compilan y corren sin libstdc++.
 - **Subsistema nativo — override `_std`: String y Array reales de Haxe.** El
-  `_std` de reflaxe.CPP se expone como overrides `*.cross.hx` (generados por el
-  build en `build/native/std-cross/`), el mecanismo oficial de Haxe para
-  overrides por plataforma: aplican solo al target de generacion y no
-  envenenan el contexto macro/eval (que como `.hx` planos explotaba con errores
-  cripticos). El mini std C++ freestanding del SDK crece con `<string>`
-  (std::string + literales "..."s + to_string), `<deque>` (respaldo del
-  Array<T>), `<initializer_list>`, `<algorithm>`, `<cctype>`, `<new>` y un
-  nucleo compartido `__sxn_core`. Dos fixes al codegen sin parchear las libs
-  pineadas: `haxe-std-fixes/Math.hx` (shadow con el overload isFinite ambiguo
-  en Haxe 4 colapsado a uno) y el preprocesador custom `UniqueLocalNames`
-  (registrado por `SxnCompilerInit` via `ExpressionPreprocessor.Custom`), que
-  hace unicos los locals por funcion porque el codegen aplana bloques hermanos
-  y los contadores `_g` de dos for-in colisionaban en el mismo scope de C++.
-  Verificado en QEMU: concat + toUpperCase (`HAXE NATIVO EN SAVANXP`), array
-  con push e iteracion (`suma del array=100`) y SMOKE PASS sin regresiones.
-- **Subsistema nativo — ABI gfx + hello GUI en Haxe.** Nuevo bloque de
-  syscalls de graficos en el ABI nativo (`0x1010`): SXN_SYS_GFX_INFO /
-  GFX_ACQUIRE / GFX_RELEASE / GFX_PRESENT. El display es parte del ABI de
-  primera clase (sin `/dev/gpu0` ni ioctls); kernel-side comparte los internals
-  `display::*` y la sesion exclusiva por pid con los ioctls GPU de posix
-  (incluida la liberacion automatica al morir el proceso). El runtime suma los
-  wrappers `sxn_gfx_*` y Main.hx un hello GUI real: la clase `Lienzo` dibuja un
-  degrade con rectangulo sobre un `Array<Int>` de Haxe (contiguo por garantia
-  del mini `<deque>`) y lo presenta. De paso, dos fixes de codegen importantes:
-  se excluye el pase `RemovePureExpressions` de reflaxe (eliminaba los `if`
-  cuyos cuerpos son solo inyecciones `__cpp__` — codigo incorrecto que
-  compilaba) y se compila con `--no-opt` (el analizador de Haxe const-foldea
-  condiciones dependientes de inyecciones). Documentado: Float de Haxe todavia
-  no funciona en freestanding (sin soft-float intrinsics). Verificado en QEMU:
-  `gfx: present=0`, `gfx: release=0` y `gputest --smoke` adquiriendo la sesion
-  despues sin fugas; SMOKE PASS.
+  `_std` de reflaxe.CPP se expone como overrides `*.cross.hx` generados por el
+  build, que es el mecanismo oficial de Haxe para overrides por plataforma y no
+  envenena el contexto macro. El mini std C++ freestanding crece con `<string>`,
+  `<deque>`, `<initializer_list>`, `<algorithm>`, `<cctype>` y `<new>`. Dos fixes
+  al codegen sin parchear las libs pineadas: un shadow de `Math.hx` y el
+  preprocesador `UniqueLocalNames`, porque el codegen aplana bloques hermanos y
+  los contadores de dos for-in colisionaban en el mismo scope de C++.
+- **Subsistema nativo — ABI gfx + hello GUI en Haxe.** Bloque de syscalls de
+  graficos (`0x1010`: GFX_INFO / ACQUIRE / RELEASE / PRESENT). El display es
+  parte del ABI de primera clase, sin `/dev/gpu0` ni ioctls, compartiendo los
+  internals de `display::` y la sesion exclusiva por pid con los ioctls de posix.
+  Documentado: Float de Haxe todavia no funciona en freestanding.
 - **Subsistema nativo — protocolo cliente del compositor (apps ventaneadas).**
-  Nueva capa `sxn_gui_*` en el runtime nativo (`sdk/runtime/sx_gui.c` +
-  `savanxp_native_gui.h`): habla el contrato de superficie v3 del compositor
-  sobre los fds 3..9 que el shell instala antes del exec (mapeo de la seccion
-  compartida con validacion del header SXGF, submit de batches de dirty rects
-  con secuencias submit/composed y eventos de retire/shutdown, input por pipe
-  con resize sintetizado) — todo sobre syscalls del baseline, sin kernel nuevo.
-  Primera app ventaneada nativa: `nativegui` (subsystems/native/haxe-gui,
-  `build.ps1 -Name nativegui -Source haxe-gui`), que dibuja, anima con regiones
-  sucias y procesa teclado. Verificacion headless con `test/guihost.c`, un
-  harness POSIX que interpreta el rol del compositor (seccion + eventos +
-  composicion + tecla) y valida secuencias, rects y pixeles; de paso es el
-  primer test del cambio de subsistema via exec (fork posix -> exec ELF
-  nativo). En QEMU: `gui: frames compuestos=4`, tecla ENTER recibida,
-  `NATIVEGUI HOST PASS` y SMOKE PASS sin regresiones. Lanzada desde el
-  escritorio real, `nativegui` corre como ventana normal.
-- **Header esperable generico en el Object Manager (`object::Header`).**
-  `Header` gana `waitable`/`manual_reset`/`signal_count`, migrando el estado
-  de senializacion que antes vivia duplicado por tipo (`EventObject::signaled`,
-  `TimerObject::signaled`) a la base comun. `can_satisfy_wait`/
-  `try_acquire_wait` pasan de un `if (event) ... else if (timer) ...` a logica
-  generica sobre `Header`, y `object_is_waitable` (`process.cpp`) pasa de una
-  lista cerrada de tipos (`event || timer`) a un solo campo booleano: un tipo
-  esperable nuevo no requiere tocar el despachador de esperas. Cambio
-  contenido — ningun caller fuera de `object.cpp` tocaba `.signaled`/
-  `.manual_reset`/`.armed` directamente, todo pasaba por la API publica
-  (`create_event`, `set_event`, `poll_timers`, etc.), incluido `virtio_gpu.cpp`.
-  Verificado: kernel compila limpio y `desktop-smoke` sigue en PASS (el
-  compositor usa `EventObject` via `virtio_gpu.cpp`).
-- **Semaforo real (`SAVANXP_SYS_SEMAPHORE_CREATE`/`_RELEASE`).** Primer uso
-  del header esperable generico: `object::SemaphoreObject` (pool de 64) con
-  `create_semaphore(initial, max)` y `release_semaphore` (satura en
-  `max_count`, rechaza sin modificar nada el release que lo excederia). El
-  despertar de esperas (`wake_waiters_for_object`) ya soportaba semantica de
-  contador sin cambios porque opera sobre `Header::signal_count` de forma
-  generica. Syscalls 53/54 con handlers en `process.cpp` (mismo patron que
-  event/timer: `allocate_fd` + `access_query|modify|synchronize`), wrappers
-  `semaphore_create`/`semaphore_release` en el SDK, y `semaphoretest`
-  (creacion invalida, conteo hasta el tope, despertar cruzado entre procesos
-  via `fork`) enganchado en la suite `smoke`. `Type::semaphore` existia en el
-  enum desde antes sin implementacion (dead code). Verificado:
-  `build.ps1 smoke` -> SMOKE PASS con el nuevo test incluido.
-
-### Corregido
-
-- **virtio-sound: reproduccion TX async multi-buffer (sin espera bloqueante).**
-  El camino TX enviaba UN periodo y hacia spin esperando que el device lo
-  consumiera (`wait_for_used_element`) antes de aceptar el siguiente, con un solo
-  buffer compartido. Ese spin corre con interrupciones deshabilitadas (los
-  syscalls corren asi), con el mismo riesgo de congelar el reloj del guest que se
-  corrigio en AC'97. Ahora la cola TX usa un anillo de `kTxSlots` periodos, cada
-  uno con su cadena de 3 descriptores (header/data/status): `submit_period`
-  encola sin esperar y reclama los completados por el used ring; si el anillo
-  esta lleno descarta en vez de bloquear. Se agrego un colchon inicial de
-  silencio (como AC'97) como seguro, aunque en QEMU virtio-sound completa cada TX
-  al instante y bufferea del lado del host, asi que el colchon/underrun del
-  modelo de AC'97 no aplica aca (reinyectar silencio en ese caso inundaria el
-  stream — por eso no se hace). Verificado headless con `.\build.ps1
-  virtio-stream` (captura WAV del patron de feed tipo-Doom): tono continuo, 0
-  gaps; `virtio-count` reporta 0 periodos descartados; `smoke` sin regresion. A
-  diferencia de AC'97, la captura WAV de virtio bajo TCG SI es fiel (no hay
-  emulacion de DMA continua que ralentice el guest).
-- **AC'97: modelo de reproduccion sin bloqueo + colchon + sin IOC.** Tres
-  correcciones al camino de reproduccion, sobre el fix de subalimentacion de
-  Doom (abajo), apuntando al audio entrecortado en VirtualBox:
-  - *No bloqueante:* `submit_period` ya no hace spin esperando una ranura libre
-    cuando el ring esta lleno; descarta el periodo y sigue. Ese spin corria con
-    interrupciones deshabilitadas (los syscalls corren con IRQ off), congelando
-    el timer y con el el reloj del guest; como Doom se guia por ese reloj para
-    dosificar el audio *y* para su logica, congelarlo lo desincronizaba.
-  - *Sin IOC:* las entradas del BDL ya no llevan el bit interrupt-on-completion.
-    El driver reproduce por polling de CIV y no registra IRQ de AC'97, asi que
-    con IOC la reproduccion continua disparaba una interrupcion por periodo que
-    nadie atendia.
-  - *Colchon:* al preparar el stream se precargan `kPrimePeriods` periodos de
-    silencio y se reinyectan si el ring se vacia, para absorber el jitter del
-    productor sin quedar al borde del underrun.
-  - Verificacion headless nueva: `audiotest --stream` reproduce el patron de
-    alimentacion por-tic de Doom; `.\build.ps1 ac97-count` lo corre con
-    `audiodev none` y reporta el contador de underruns del driver (0 con
-    colchon). `.\build.ps1 ac97-stream` graba a WAV (`tools/audio/wavgaps.py`
-    detecta gaps), util solo con aceleracion por hardware: bajo TCG el backend
-    wav marca el ritmo a tiempo-real del host y el guest no lo alcanza.
-- **Audio "robotizado"/trabado en Doom (subalimentacion del device).**
-  `DG_Sound_Update` (glue de audio de doomgeneric) mezclaba `frames_to_mix`
-  frames avanzando la posicion de todos los canales, pero escribia solo ese
-  total redondeado *hacia abajo* al periodo, descartando el resto. A ~35 Hz (un
-  tic de Doom ~28.5 ms > un periodo de 21.3 ms) eso alimentaba el device a
-  ~0.75x del ritmo de reproduccion (underrun constante => cortes) y ademas
-  adelantaba los efectos ~1.34x (los frames descartados ya habian avanzado los
-  canales). Estaba en la capa comun del glue, por eso sonaba igual en virtio y
-  AC97; el tono de `audiotest` (una sola escritura) no se afectaba. Fix: escribir
-  todos los frames mezclados (el kernel ya trocea en periodos internamente).
-- **Residuos visuales del cursor sobre elementos del compositor.**
-  `sx_painter_draw_frame` (SDK `gfx2d.c`) intersectaba el rect con el clip del
-  painter y luego dibujaba el marco del rect *intersectado*. Cuando el
-  compositor repinta un elemento en fragmentos (los sub-rects sucios del
-  cursor por software), cada fragmento recibia su propio borde trazado alrededor
-  del contorno del fragmento, dejando lineas del color del marco (p. ej.
-  `rgb(46,50,56)`) dentro del elemento: el clasico "rastro" con forma de la
-  huella del cursor sobre el rectangulo de seleccion de iconos, los botones de
-  ventana, la pantalla de bienvenida y el dialogo de energia. Una invalidacion
-  de pantalla completa (abrir el menu inicio) lo limpiaba porque el elemento se
-  repintaba en un solo rect. El fix dibuja el marco del rect *original* como
-  cuatro tiras de borde, cada una recortada por `sx_painter_fill_rect` (que si
-  recorta correctamente), pintando solo los pixeles de borde que existen de
-  verdad. Las superficies de apps (sxgui) eran inmunes porque se blitean
-  completas cada frame, sin `draw_frame` fragmentado. Nuevo test de regresion
-  headless `build.ps1 cursor-repro` (`desktop --cursor-repro`): mueve el cursor
-  sobre un dialogo estatico con solo damage del cursor y verifica que el
-  backbuffer en la posicion vieja vuelve al baseline (0 px de residuo).
-  Verificado: cursor-repro PASS, desktop-smoke PASS, smoke PASS.
-- **`build.ps1` bifurcaba silenciosamente a PowerShell 5.1 para generar
-  assets.** `Generate-CursorAsset`/`Generate-DesktopIconAssets` invocaban
-  `& powershell -ExecutionPolicy Bypass -File ...` (3 puntos) para correr
-  `GenerateCursorAsset.ps1`/`GenerateDesktopIconAssets.ps1`/
-  `GenerateDesktopSourceArt.ps1`, que usan `System.Drawing`. `powershell` sin
-  extension resuelve siempre a Windows PowerShell 5.1 sin importar el motor
-  que arranco `build.ps1` de afuera: correr el build entero con `pwsh` (7) daba
-  una falsa sensacion de portabilidad, porque el tramo que usa GDI+ nunca se
-  ejecutaba realmente bajo pwsh 7, solo el script raiz. Se cambio a invocar los
-  scripts directamente (`& $scriptPath ...`, in-process, sin subproceso ni
-  `$LASTEXITCODE`; cada script ya propaga sus propios errores via
-  `$ErrorActionPreference = "Stop"`). Es el primer paso de evaluar portar el
-  build a WSL2/Ubuntu: valida antes que nada que el pipeline corra de verdad
-  bajo pwsh 7 en el mismo Windows, sin mezclar el salto de version de
-  PowerShell con el salto de sistema operativo. Verificado: `build`/`iso`/`run`
-  desde cero bajo `pwsh` generan los mismos assets y el kernel arranca igual
-  hasta el handoff.
-- **Rutas de `Join-Path` con `\` embebido, incompatibles fuera de Windows.**
-  Varias llamadas pasaban un segundo componente con `\\` literal dentro del
-  string (p. ej. `"EFI\\BOOT"`, `"runtime\\libc.c"`). En Windows funcionaba
-  por casualidad: .NET colapsa `\\`, `\` y `/` como el mismo separador de
-  directorio al tocar el filesystem real. En Linux `\` no tiene significado de
-  separador y queda como caracter literal del nombre de archivo, rompiendo la
-  jerarquia esperada (`EFI\BOOT` en vez de `EFI/BOOT`). Normalizado a `/` en
-  `build.ps1` y `tools/UserAppCommon.ps1` (~18 ocurrencias), que es separador
-  valido en ambos sistemas. Fuera de alcance a proposito: `ConvertTo-CygwinPath`
-  (traduccion especifica de rutas `C:\...` para el xorriso de Cygwin horneado)
-  y el contenido de `startup.nsh` (ruta de shell UEFI que interpreta el
-  firmware, no el host). Verificado: build/iso/run desde cero bajo `pwsh`,
-  mismos artefactos (`EFI/BOOT/BOOTX64.EFI`, `boot/limine/*`,
-  `rootfs/bin/busybox`) y mismo arranque en QEMU.
+  Capa `sxn_gui_*` que habla el contrato de superficie v3 sobre los fds 3..9,
+  todo sobre syscalls del baseline y sin kernel nuevo. Primera app ventaneada
+  nativa: `nativegui`. Verificacion headless con `test/guihost.c`, que de paso es
+  el primer test del cambio de subsistema via exec (fork posix -> exec ELF
+  nativo).
+- **Header esperable generico en el Object Manager (`object::Header`).** El
+  estado de senializacion que vivia duplicado por tipo sube a la base comun
+  (`waitable`/`manual_reset`/`signal_count`), asi que un tipo esperable nuevo ya
+  no obliga a tocar el despachador de esperas.
+- **Semaforo real (`SAVANXP_SYS_SEMAPHORE_CREATE`/`_RELEASE`).** Primer uso del
+  header generico: `create_semaphore(initial, max)` y `release_semaphore`
+  (satura en `max_count` y rechaza sin tocar nada el release que lo excederia),
+  con wrappers en el SDK y `semaphoretest` enganchado en la suite `smoke`.
+- **`build.ps1 run`/`debug`: soporte `-Accel whpx`.** Acelera QEMU con Windows
+  Hypervisor Platform; por defecto se sigue usando TCG. Fuerza `-cpu qemu64`
+  porque `-cpu max`/`host` bajo whpx hacen crashear a OVMF con un `#GP` en
+  `PlatformPei`. Los targets automatizados quedan hardcodeados en TCG a
+  proposito, para no meterle no-determinismo a los tests.
+- **`virtio-sound`: fin del enmudecimiento silencioso.** Si el dispositivo
+  responde pero ningun stream de salida ofrece el formato fijo del ABI, el fallo
+  ahora se registra por consola en vez de no registrar `/dev/audio0` sin dejar
+  traza.
 
 ### Cambiado
 
-- **Compilacion de kernel+userland via Ninja.** `build.ps1` compilaba
-  ~250-300 fuentes de forma secuencial y sin incremental (`Compile-Object`
-  invocaba `clang++` archivo por archivo). Se reemplaza esa fase por Ninja
-  (paralelo + tracking de dependencias de headers via `-MMD`), pineado en el
-  toolchain igual que LLVM/QEMU/xorriso. El link, la imagen SVFS2, la ISO y
-  QEMU siguen manejados por `build.ps1` sin cambios.
+- **Compilacion de kernel+userland via Ninja.** Reemplaza la fase secuencial y
+  sin incremental de `build.ps1` (~250-300 fuentes, archivo por archivo) por
+  Ninja: paralelo y con tracking de dependencias de headers via `-MMD`, pineado
+  en el toolchain igual que LLVM/QEMU/xorriso. El link, la imagen SVFS2, la ISO
+  y QEMU siguen manejados por `build.ps1` sin cambios.
+- `savanxp_mode_bits` (SDK) pierde el tipo subyacente fijo del enum, que
+  disparaba `-Wfixed-enum-extension` en cada TU que incluye `syscall.h`. Sin
+  cambio funcional.
 
 ### Corregido
 
-- **Pulido de `fb_gpu` y `virtio-gpu` para madurar la base visual.**
-  `present_region` de `fb_gpu` leia el origen desde la fila 0 en vez del
-  offset (x,y) de la superficie completa (contrato del ioctl, igual que
-  virtio y console); en VirtualBox pintaba pixeles equivocados en presents
-  parciales. `GPU_IOC_GET_STATS` de `fb_gpu` ahora reporta
-  `present_enqueued`/`completed` reales en vez de un struct en cero.
-  `refresh_scanouts` de `virtio-gpu` ya no pisa un flip fullscreen (superficie
-  importada como scanout) al llegar un evento de display: re-emite
-  `SET_SCANOUT` para el scanout activo y solo cae a la primaria como
-  fallback. El header `used` de la cola de cursor se lee volatile, como el de
-  la cola de control. `notify_off_multiplier == 0` (valido segun la spec:
-  todas las colas comparten la direccion de notify) ya no hace que se salte
-  el notify. `GPU_IOC_REFRESH_SCANOUTS` exige la sesion grafica como el resto
-  de los ioctls que mutan estado del dispositivo. El soak de `gputest` suma
-  un subtest que ejercita `SET_MODE` en runtime (640x400 y vuelta al nativo),
-  cubriendo el camino `RESOURCE_UNREF` de recreacion de recursos primarios.
-  Validado: desktop-smoke (virtio) PASS, gpu-soak PASS con el subtest de modo
-  (0 timeouts, sin degraded/recovery), y desktop-selftest PASS sobre VGA
-  estandar (backend fb_gpu, incluye reconexion de compositord).
-- `savanxp_mode_bits` (SDK) pierde el tipo subyacente fijo del enum: evitaba
-  el warning `-Wfixed-enum-extension` (extension no estandar de Clang en C)
-  repetido en cada TU que incluye `syscall.h`. Los valores caben en un int
-  normal y el tipo no se usaba en ninguna firma; sin cambio funcional.
-
-### Agregado
-
-- **`build.ps1 run`/`debug`: soporte `-Accel whpx` para acelerar QEMU con
-  Hyper-V.** Por defecto se sigue usando TCG (emulacion por software); en
-  maquinas con Hyper-V activo, `-Accel whpx` cambia a Windows Hypervisor
-  Platform. `-cpu max`/`-cpu host` bajo whpx hacen crashear a OVMF con un
-  `#GP` en `PlatformPei` apenas arranca (fase PEI, antes de DXE): WHPX no
-  puede respaldar para el guest ciertas features de CPU muy nuevas (conflicto
-  APX/MPX en CPUID leaf 7) que esos modelos exponen, y la deteccion temprana
-  de features de OVMF lo hace fallar. `-Accel whpx` fuerza `-cpu qemu64` en
-  su lugar, que evita el problema; el kernel/userland de SavanXP no dependen
-  de AVX/RDRAND/XSAVE directamente asi que no pierde nada util. `smoke`/
-  `desktop-smoke`/soak (`Run-AutomationQemu`) se dejan a proposito
-  hardcodeados en TCG, para no meterle no-determinismo a los tests
-  automatizados. Verificado: boot end-to-end hasta `handoff: starting
-  /bin/init`, con el AML de uACPI cargando ~10x mas rapido que bajo TCG.
-
-### Corregido
-
-- **`virtio-gpu`: `SET_SCANOUT` colgado para siempre bajo WHPX (HLT con
-  interrupciones deshabilitadas).** Con `-Accel whpx` el boot llegaba hasta
-  `virtio-gpu: primary backing attached` y se quedaba trabado ahi (pantalla
-  de "Preparando display" sin avanzar nunca). Causa: durante el boot
-  temprano el kernel corre con interrupciones globalmente deshabilitadas
-  (`IF=0`); cuando `SET_SCANOUT` tardaba mas que el busy-spin inicial de
-  `wait_for_command_slot`, el segundo tier de espera caia a
-  `timer::wait_ticks()` -> `halt_once()` (un `HLT` desnudo, sin `sti`
-  previo) esperando la interrupcion del timer. Un `HLT` con `IF=0` en
-  hardware real (y en WHPX, que es fiel al hardware) solo se puede despertar
-  con NMI, nunca con una IRQ enmascarable como la del timer -> cuelgue
-  permanente. TCG es mas laxo con ese caso puntual y despierta el guest
-  igual, por eso el bug nunca se habia manifestado antes de probar whpx.
-  Confirmado con el monitor HMP de QEMU: dos lecturas de `info registers`
-  con varios segundos de diferencia devolvieron el estado del vCPU identico
-  bit a bit (`HLT=1`, `RFLAGS=0x97` sin el bit IF). Fix: nueva
-  `timer::monotonic_ns()` (reloj por TSC, reutiliza la calibracion que
-  uACPI ya hacia para su propio `stall`/`sleep` con `IF=0`) reemplaza a
-  `timer::ticks()` en el wait de `virtio-gpu`, con busy-spin acotado en vez
-  de `HLT`; el TSC avanza sin importar el estado de interrupciones. Aplica
-  siempre (no solo bajo whpx) sin romper nada: `smoke` y `desktop-smoke`
-  siguen en verde bajo TCG. Confirmado en la maquina real del usuario:
-  `.\build.ps1 run -Accel whpx` arranca completo de punta a punta.
+- **`virtio-gpu`: `SET_SCANOUT` colgado para siempre bajo WHPX.** El boot se
+  trababa en "Preparando display". El segundo tier de espera caia a `HLT`, y
+  durante el boot temprano el kernel corre con `IF=0`: un `HLT` con
+  interrupciones deshabilitadas solo despierta con NMI, nunca con la IRQ del
+  timer. TCG es mas laxo en ese caso puntual, por eso el bug nunca se habia
+  manifestado. Ahora el wait usa `timer::monotonic_ns()` (reloj por TSC, que
+  avanza sin importar el estado de interrupciones) con busy-spin acotado.
+- **virtio-sound: reproduccion TX async multi-buffer.** El camino TX enviaba un
+  periodo y hacia spin esperando que el device lo consumiera — con interrupciones
+  deshabilitadas, el mismo riesgo de congelar el reloj del guest que se corrigio
+  en AC'97. Ahora la cola usa un anillo de `kTxSlots` periodos y `submit_period`
+  encola sin esperar; si el anillo esta lleno descarta en vez de bloquear.
+- **AC'97: reproduccion sin bloqueo, colchon de silencio y sin IOC.** Tres
+  correcciones al audio entrecortado en VirtualBox: `submit_period` deja de
+  hacer spin con IRQ off (congelaba el timer y con el el reloj del guest, que es
+  el que Doom usa para dosificar el audio *y* para su logica); las entradas del
+  BDL pierden el bit interrupt-on-completion, que disparaba una interrupcion por
+  periodo que nadie atendia; y al preparar el stream se precargan periodos de
+  silencio, reinyectados si el ring se vacia, para absorber el jitter del
+  productor. Nuevos targets `ac97-count` (contador de underruns del driver) y
+  `ac97-stream` (captura a WAV, util solo con aceleracion por hardware).
+- **Audio "robotizado"/trabado en Doom (subalimentacion del device).**
+  `DG_Sound_Update` mezclaba N frames avanzando la posicion de todos los canales
+  pero escribia solo ese total redondeado *hacia abajo* al periodo: a ~35 Hz eso
+  alimentaba el device a ~0.75x del ritmo de reproduccion y ademas adelantaba los
+  efectos ~1.34x. Ahora escribe todos los frames mezclados. Estaba en la capa
+  comun del glue, por eso sonaba igual en virtio y en AC'97.
+- **Residuos visuales del cursor sobre elementos del compositor.**
+  `sx_painter_draw_frame` dibujaba el marco del rect ya intersectado con el clip,
+  asi que al repintar un elemento en fragmentos cada fragmento recibia su propio
+  borde y quedaban lineas dentro del elemento. Ahora traza el marco del rect
+  original como cuatro tiras recortadas por `fill_rect`. Nuevo test de regresion
+  headless `build.ps1 cursor-repro`.
+- **Pulido de `fb_gpu` y `virtio-gpu`.** `present_region` de `fb_gpu` leia el
+  origen desde la fila 0 en vez del offset (x,y) de la superficie, pintando mal
+  los presents parciales en VirtualBox, y `GET_STATS` devolvia un struct en cero;
+  `refresh_scanouts` de virtio-gpu ya no pisa un flip fullscreen al llegar un
+  evento de display; el header `used` de la cola de cursor se lee volatile;
+  `notify_off_multiplier == 0` deja de hacer que se saltee el notify; y
+  `REFRESH_SCANOUTS` exige la sesion grafica como el resto de los ioctls que
+  mutan estado. El soak de `gputest` suma un subtest de `SET_MODE` en runtime.
+- **`build.ps1` bifurcaba silenciosamente a PowerShell 5.1 para generar assets.**
+  `& powershell` resuelve siempre a Windows PowerShell sin importar el motor que
+  arranco el build, asi que correr todo con `pwsh` 7 daba una falsa sensacion de
+  portabilidad: el tramo que usa GDI+ nunca se ejecutaba bajo pwsh. Ahora los
+  scripts se invocan in-process.
+- **Rutas de `Join-Path` con `\` embebido, incompatibles fuera de Windows.** En
+  Windows funcionaba por casualidad (.NET colapsa `\\`, `\` y `/`); en Linux `\`
+  queda como caracter literal del nombre. ~18 ocurrencias normalizadas a `/`.
+  Fuera de alcance a proposito: `ConvertTo-CygwinPath` y el contenido de
+  `startup.nsh`.
 
 ## [0.3.2] - 2026-07-03
 
@@ -746,82 +267,43 @@ Notas de corte:
   de 5 controles basicos a un toolkit completo, manteniendo el modelo
   retained-mode allocation-free (la app posee el array plano de widgets, los
   buffers de texto y las tablas de items; el toolkit solo pinta y despacha
-  input):
-  - Recorrido de foco con **Tab/Shift+Tab** (el estado de Shift se trackea via
-    KEY_DOWN/KEY_UP; antes `sxgui_handle_key` descartaba todo KEY_UP).
-  - **Textfield con caret real**: navegacion con flechas/Home/End, insercion y
-    borrado (Backspace/Delete) en la posicion del caret, click posiciona el
-    caret midiendo prefijos, y scroll horizontal para mantenerlo visible.
-  - **Scrollbar** como widget (flechas, track paginable, thumb proporcional
-    dragueable; horizontal via `SXGUI_FLAG_HSCROLL`) y **scroll en el listbox**
-    con columna embebida que reutiliza la misma maquinaria, seleccion
-    consciente del scroll y teclas Home/End/PageUp/PageDown con
-    ensure-visible. La captura de puntero vive en el contexto: los drags van
-    solo al widget que recibio el press.
-  - **Double-click y motivo de accion**: `widget->action` distingue
-    CLICK/CHANGE/ACTIVATE en los callbacks; el listbox dispara ACTIVATE por
-    doble click (umbral 450 ms) o Enter.
-  - **Radio buttons** mutuamente excluyentes por group id (marcar uno limpia el
-    resto del grupo en el array, sin allocations).
-  - **Combobox** con dropdown overlay dentro del backbuffer propio (sin
-    ventanas hijas), clampado a la superficie y abriendo hacia arriba si no
-    entra; mientras esta abierto posee puntero y teclado, y ESC/click afuera lo
-    cierran consumiendo el evento.
-  - **Barra de menu y menus desplegables** con tablas caller-owned
-    (separadores, items disabled/checked), hover que cambia de menu abierto,
-    navegacion por teclado y `on_command(id)`.
-  - **Dialogos modales**: segundo array de widgets con rects relativos pintado
-    como overlay centrado; captura todo el input re-enrutando el dispatch con
-    coordenadas trasladadas, Tab cicla adentro, ESC cierra con result 0. Sin
-    loop anidado: es una maquina de estados dentro del mismo main loop.
-  - **Groupbox** (frame etched con caption), **progress bar**, labels con
-    panel hundido (`SXGUI_FLAG_SUNKEN`) y **textview** multilinea read-only
-    con el scroll del listbox.
-- **App frame `sxgui_app`** (`runtime/sxgui_app.c`): encapsula la sesion gfx y
-  el main loop que toda app de widgets repetia (poll de teclado/puntero,
-  RESIZED con `sxgui_context_retarget`, repaint gateado, present y throttle de
-  16 ms), con hooks opcionales `on_key`/`on_paint`/`on_resize`. ESC cierra la
-  app salvo que el toolkit lo consuma antes (menu/popup/dialogo abierto).
-- `widgetsdemo` crece como galeria de referencia de todo el toolkit (lista
-  larga con scroll, radios, combobox, menubar File/Edit/Help con Exit
-  funcional, dialogo About modal).
+  input): recorrido de foco con Tab/Shift+Tab, textfield con caret real,
+  scrollbar como widget y listbox con scroll, double-click con motivo de accion
+  (`CLICK`/`CHANGE`/`ACTIVATE`), radio buttons por group id, combobox con
+  dropdown dentro del backbuffer propio (sin ventanas hijas), barra de menu con
+  desplegables y `on_command(id)`, dialogos modales (sin loop anidado: una
+  maquina de estados dentro del mismo main loop), groupbox, progress bar y
+  textview multilinea.
+- **App frame `sxgui_app`.** Encapsula la sesion gfx y el main loop que toda app
+  de widgets repetia (poll de teclado/puntero, RESIZED, repaint gateado, present
+  y throttle de 16 ms), con hooks opcionales `on_key`/`on_paint`/`on_resize`.
+  ESC cierra la app salvo que el toolkit lo consuma antes.
+- `widgetsdemo` crece como galeria de referencia de todo el toolkit.
 
 ### Cambiado
 
-- **`aboutapp` y `filesapp` portadas a sxgui.** aboutapp queda declarativa
-  (groupboxes + labels + botones Refresh/Close, F5 via hook). filesapp
-  conserva toda la logica de filesystem (opendir/stat/sort/preview/launch)
-  pero delega en el toolkit la lista con scroll, el doble click, el preview
-  (textview), la barra de menu (File: Refresh/Go up/Exit; Help: About modal)
-  y el statusbar. Ambas pierden su backbuffer estatico de 8 MiB y el loop de
-  eventos manual.
-- **La arena de malloc del SDK baja de 48 MiB a 8 MiB por defecto.** El
-  `g_heap` estatico de `posix.c` vive en la BSS y el kernel mapea la BSS
-  entera al exec, asi que cada app del sistema costaba ~50 MiB residentes
-  (con 3 abiertas se agotaba la memoria fisica). El default es ahora 8 MiB
-  (`#ifndef SX_HEAP_SIZE`); el build externo del SDK (`UserAppCommon.ps1`)
-  conserva los 48 MiB via `-DSX_HEAP_SIZE` para apps pesadas como Doom.
+- **`aboutapp` y `filesapp` portadas a sxgui.** aboutapp queda declarativa;
+  filesapp conserva toda su logica de filesystem pero delega en el toolkit la
+  lista con scroll, el preview, la barra de menu y el statusbar. Ambas pierden
+  su backbuffer estatico de 8 MiB y el loop de eventos manual.
+- **La arena de malloc del SDK baja de 48 MiB a 8 MiB por defecto.** El heap
+  estatico vive en la BSS y el kernel mapea la BSS entera al exec, asi que cada
+  app del sistema costaba ~50 MiB residentes y con tres abiertas se agotaba la
+  memoria fisica. El build externo del SDK conserva los 48 MiB via
+  `-DSX_HEAP_SIZE` para apps pesadas como Doom.
 
 ### Corregido
 
-- **Fuga de memoria fisica en el fork por paginas de section views**
-  (`vm::clone_address_space`): se alocaba y copiaba una pagina por cada pagina
-  de usuario presente, y recien despues se descartaban con `continue` las que
-  pertenecian a section views (que se re-mapean compartidas o clonadas por
-  otro camino), sin liberar la copia. Como el desktop mapea las vistas de
-  todas las superficies cliente, cada launch (fork del desktop) perdia ~4 MiB
-  por vista mapeada; tras unos pocos launches se agotaban las paginas fisicas
-  y ningun `exec` volvia a funcionar hasta reiniciar (sintoma reportado:
-  lanzar una app desde `filesapp` fallaba y ya no arrancaba ninguna app
-  grafica). Reproducido y validado headless (QEMU + monitor HMP): antes
-  fallaba el tercer launch consecutivo; con el fix cinco launches pasan y el
-  fork ya no pierde paginas.
-- `desktop_client.path` guardaba el puntero recibido al lanzar: para launches
-  pedidos por clientes via `gfx_desktop_launch` (filesapp) apuntaba al buffer
-  de stack del request, que muere al volver de
-  `service_client_launch_requests`; el titulo de ventana/taskbar y los logs
-  leian memoria colgante. Ahora el cliente guarda una copia propia. De paso,
-  el hijo del fork loguea el codigo de error real cuando `exec` falla.
+- **Fuga de memoria fisica en el fork por paginas de section views.**
+  `vm::clone_address_space` alocaba y copiaba una pagina por cada pagina de
+  usuario presente y recien despues descartaba las de section views, sin liberar
+  la copia. Como el desktop mapea las vistas de todas las superficies cliente,
+  cada launch perdia ~4 MiB por vista y tras unos pocos ningun `exec` volvia a
+  funcionar hasta reiniciar.
+- `desktop_client.path` guardaba el puntero recibido al lanzar, que para los
+  launches pedidos por clientes apuntaba al buffer de stack del request: el
+  titulo de ventana y los logs leian memoria colgante. Ahora el cliente guarda
+  una copia propia.
 
 ## [0.3.1] - 2026-07-02
 
@@ -949,16 +431,13 @@ Notas de corte:
   (`0xffffffff00001000` en vez de `0x1000`) para cualquier BAR de memoria de
   64 bits menor a 4 GiB e impidiendo mapearlos (entre ellos la tabla MSI-X).
   Ahora complementa en 32 bits cuando el tamano entra en 4 GiB.
-- `Get-Svfs2BitmapBit`/`Set-Svfs2BitmapBit` (instalador host-side de SVFS2 en
+- **Corrupcion de inodos por redondeo en el bitmap de SVFS2.**
+  `Get-Svfs2BitmapBit`/`Set-Svfs2BitmapBit` (instalador host-side en
   `tools/UserAppCommon.ps1`) calculaban el indice de byte con `[int]($Bit / 8)`,
-  que en PowerShell devuelve un `double` y `[int]` redondea (banker's rounding)
-  en vez de truncar: para cualquier bit con `bit % 8 >= 5` (y algunos `= 4`) el
-  bit caia en el byte equivocado, desincronizando el inode/block bitmap con el
-  indexado floor del kernel (`kernel/svfs.cpp`). El kernel veia esos inodos como
-  libres y los reasignaba durante la operacion (p. ej. archivos temporales del
-  smoke), zerando el inodo del archivo original y dejando la entrada de
-  directorio colgante (sintoma: "inode esperado N pero se leyo 0" tras un ciclo
-  de boot). Ahora usan division entera (`-shr 3`).
+  que en PowerShell redondea en vez de truncar: el bit caia en el byte
+  equivocado y el bitmap del host quedaba desincronizado con el indexado floor
+  del kernel, que reasignaba inodos vivos (sintoma: "inode esperado N pero se
+  leyo 0" tras un ciclo de boot). Ahora usan division entera (`-shr 3`).
 - Apagado ordenado de QEMU en `Run-AutomationQemu` (smoke/selftest/soak): en vez
   de `Stop-Process -Force`, se pide `quit` por el monitor HMP para que QEMU
   vacie sus backends de bloque y cierre el archivo de disco limpiamente, con
@@ -968,20 +447,14 @@ Notas de corte:
   `initialize_local_apic` fallaba en silencio y el scheduler nunca arrancaba, a
   pesar de que el kernel seguia vivo. Resuelto por el fallback a `PIT` agregado
   arriba.
-- El framing de paquetes PS/2 del mouse se corrompia en modo streaming:
-  `process_mouse_byte` descartaba cualquier byte igual a `0xFA`/`0xFE`
-  asumiendo que eran ACK/RESEND de un comando, pero en streaming esos mismos
-  valores tambien codifican deltas de movimiento legitimos (`-6` y `-2`
-  respectivamente). Al perderse ese byte a mitad de paquete, el framing de 3
-  bytes se desincronizaba y el status byte del paquete siguiente terminaba
-  interpretado como delta, produciendo saltos erraticos del cursor. El bug era
-  direccional: solo se manifestaba moviendo el mouse hacia izquierda/abajo
-  (deltas negativos), nunca hacia derecha/arriba (deltas positivos, que nunca
-  coinciden con `0xFA`/`0xFE`). Los ACK/RESEND de comandos reales se consumen
-  de forma sincronica durante la inicializacion y nunca pasan por este camino.
-  Se agrega ademas un clamp defensivo (`+-150` por eje) como red de seguridad
-  ante paquetes corruptos futuros: recorta en vez de descartar el paquete
-  entero, para no perder tracking en un swipe rapido legitimo.
+- **Cursor erratico: framing de paquetes PS/2 corrompido en streaming.**
+  `process_mouse_byte` descartaba todo byte `0xFA`/`0xFE` asumiendo que eran
+  ACK/RESEND, pero en streaming esos valores tambien son deltas legitimos (`-6`
+  y `-2`): perder ese byte desincronizaba el framing de 3 bytes. El bug era
+  direccional — solo hacia izquierda/abajo, porque los deltas positivos nunca
+  coinciden con esos valores. Los ACK/RESEND reales se consumen de forma
+  sincronica en la inicializacion y no pasan por este camino. Se suma un clamp
+  defensivo de +-150 por eje, que recorta en vez de descartar el paquete.
 - `reserve_kernel_mmio_window` reservaba una entrada de PML4 para MMIO del
   kernel sin instalar la tabla PDPT correspondiente, dejando la entrada en `0`
   pese a declararse "reservada"; cualquier `map_kernel_mmio` posterior sobre
@@ -993,13 +466,10 @@ Notas de corte:
   casual en vez de un contador real. Ahora lleva contadores propios de
   secuencia submit/retire por presentacion.
 - **Compatibilidad experimental con VirtualBox (backend `VBoxVGA`).** Con los
-  fixes de esta version, el sistema arranca de forma estable hasta sesion
-  grafica (ya no se cuelga tras el boot) y el mouse PS/2 responde de forma
-  correcta en las cuatro direcciones. Pendiente y sin diagnosticar: los
-  binarios que viven en `/disk` (`doomgeneric`, `smoke`, `gputest`) no arrancan
-  todavia bajo VirtualBox aun adjuntando el volumen SVFS2 (probado convirtiendo
-  `build/disk.img` a `.vdi` con `VBoxManage convertfromraw` y adjuntandolo a un
-  slot IDE libre); queda para una sesion futura con mas instrumentacion.
+  fixes de esta version el sistema arranca estable hasta sesion grafica y el
+  mouse PS/2 responde en las cuatro direcciones. Pendiente y sin diagnosticar:
+  los binarios de `/disk` (`doomgeneric`, `smoke`, `gputest`) todavia no
+  arrancan bajo VirtualBox aun adjuntando el volumen SVFS2.
 
 ## [0.3.0] - 2026-06-18
 
