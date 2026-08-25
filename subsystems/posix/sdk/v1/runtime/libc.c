@@ -719,20 +719,37 @@ char* strcpy(char* destination, const char* source) {
     return destination;
 }
 
+// Userland tambien se compila con -mgeneral-regs-only (sin SSE), asi que la
+// unidad mas ancha son 8 bytes. Las instrucciones de string mueven esos 8 bytes
+// por iteracion sin overhead de lazo; un lazo en C sin optimizar cuesta media
+// docena de instrucciones por byte. Importa mas de lo que parece: el blit por
+// filas del compositor (sx_painter_blit en gfx2d.c) llama aca una vez por fila
+// de cada rectangulo sucio de cada frame.
+//
+// Requisito: DF=0, que garantiza el crt0 con su cld al arrancar el proceso.
 void* memcpy(void* destination, const void* source, size_t count) {
-    unsigned char* dst = (unsigned char*)destination;
-    const unsigned char* src = (const unsigned char*)source;
-    for (size_t index = 0; index < count; ++index) {
-        dst[index] = src[index];
-    }
+    void* cursor = destination;
+    const void* origin = source;
+    size_t words = count >> 3;
+    size_t tail = count & 7u;
+
+    __asm__ volatile("rep movsq" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
+    __asm__ volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
+
     return destination;
 }
 
 void* memset(void* destination, int value, size_t count) {
-    unsigned char* dst = (unsigned char*)destination;
-    for (size_t index = 0; index < count; ++index) {
-        dst[index] = (unsigned char)value;
-    }
+    unsigned char byte = (unsigned char)value;
+    /* Replica el byte en las 8 posiciones para que stosq escriba el mismo patron. */
+    unsigned long long pattern = (unsigned long long)byte * 0x0101010101010101ULL;
+    void* cursor = destination;
+    size_t words = count >> 3;
+    size_t tail = count & 7u;
+
+    __asm__ volatile("rep stosq" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
+    __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
+
     return destination;
 }
 

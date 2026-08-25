@@ -5,6 +5,7 @@
 .global _ZN4arch6x86_6414resume_contextEPN7process12SavedContextEm
 
 x86_64_syscall_entry:
+    cld
     pushq %rax
     pushq %rbx
     pushq %rcx
@@ -42,6 +43,7 @@ x86_64_syscall_entry:
     iretq
 
 x86_64_timer_entry:
+    cld
     pushq %rax
     pushq %rbx
     pushq %rcx

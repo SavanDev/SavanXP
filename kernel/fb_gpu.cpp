@@ -86,11 +86,24 @@ bool blit_rect(const void* source, uint32_t source_pitch, uint32_t x, uint32_t y
     auto* destination = static_cast<uint8_t*>(g_fb_base);
     const auto* origin = static_cast<const uint8_t*>(source);
     const uint64_t row_bytes = static_cast<uint64_t>(width) * sizeof(uint32_t);
+    uint8_t* destination_origin = destination + (static_cast<uint64_t>(y) * g_fb_info.pitch) +
+        (static_cast<uint64_t>(x) * sizeof(uint32_t));
+
+    // Si las filas quedan pegadas de los dos lados -- el rect ocupa el ancho
+    // completo y ningun pitch trae padding -- el rectangulo entero es un solo
+    // tramo lineal y se copia de una. Es el caso de present() a pantalla
+    // completa y del batch con FULL_SURFACE, que si no pagan una llamada por
+    // fila para mover memoria que ya venia contigua.
+    if (row_bytes == source_pitch && row_bytes == g_fb_info.pitch) {
+        memcpy(destination_origin, origin, row_bytes * height);
+        return true;
+    }
+
     for (uint32_t row = 0; row < height; ++row) {
-        uint8_t* destination_row = destination + (static_cast<uint64_t>(y + row) * g_fb_info.pitch) +
-            (static_cast<uint64_t>(x) * sizeof(uint32_t));
-        const uint8_t* source_row = origin + (static_cast<uint64_t>(row) * source_pitch);
-        memcpy(destination_row, source_row, row_bytes);
+        memcpy(
+            destination_origin + (static_cast<uint64_t>(row) * g_fb_info.pitch),
+            origin + (static_cast<uint64_t>(row) * source_pitch),
+            row_bytes);
     }
     return true;
 }

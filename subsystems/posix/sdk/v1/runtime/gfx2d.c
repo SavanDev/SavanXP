@@ -351,6 +351,21 @@ void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* 
     }
 
     row_bytes = (size_t)dst_rect.width * sizeof(uint32_t);
+
+    /* Filas pegadas de los dos lados (el blit cubre el ancho completo de origen
+     * y destino): el rectangulo es un solo tramo lineal y va en una sola copia
+     * en vez de una llamada por fila. Pega en el blit de una superficie entera
+     * -- fondo, cliente a pantalla completa -- no en los rects sucios chicos. */
+    if (dst_rect.x == 0 && src_rect.x == 0 &&
+        (uint32_t)dst_rect.width == dst_stride && (uint32_t)dst_rect.width == src_stride)
+    {
+        memcpy(
+            painter->target->pixels + ((size_t)dst_rect.y * dst_stride),
+            source->pixels + ((size_t)src_rect.y * src_stride),
+            row_bytes * (size_t)dst_rect.height);
+        return;
+    }
+
     for (row = 0; row < dst_rect.height; ++row)
     {
         memcpy(

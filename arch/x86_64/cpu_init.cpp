@@ -370,19 +370,30 @@ void run_breakpoint_probe() {
     }
 }
 
+// DF es parte del RFLAGS del proceso interrumpido, asi que un programa de
+// usuario puede entrar al kernel con la bandera de direccion prendida. Las
+// rutinas de memoria del kernel usan instrucciones de string (rep movs/stos),
+// que con DF=1 caminan hacia atras y pisan memoria ajena. El atributo interrupt
+// no emite el cld por su cuenta, asi que lo ponemos en cada punto de entrada,
+// igual que los stubs de syscall y timer en context.S.
+#define CLEAR_DIRECTION_FLAG() asm volatile("cld")
+
 #define DEFINE_ISR_NOERR(VECTOR) \
     __attribute__((interrupt)) void isr_##VECTOR(InterruptFrame* frame) { \
+        CLEAR_DIRECTION_FLAG(); \
         handle_exception(VECTOR, frame, 0, false); \
     }
 
 #define DEFINE_ISR_ERR(VECTOR) \
     __attribute__((interrupt)) void isr_##VECTOR(InterruptFrame* frame, uint64_t error_code) { \
+        CLEAR_DIRECTION_FLAG(); \
         handle_exception(VECTOR, frame, error_code, true); \
     }
 
 #define DEFINE_EXTERNAL_ISR(VECTOR) \
     __attribute__((interrupt)) void vector_##VECTOR(InterruptFrame* frame) { \
         (void)frame; \
+        CLEAR_DIRECTION_FLAG(); \
         dispatch_external_vector(VECTOR); \
     }
 

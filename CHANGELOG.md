@@ -69,6 +69,35 @@ Notas de corte:
 
 ### Cambiado
 
+- **`memcpy`/`memset` dejan de mover la memoria de a un byte.** Las tres
+  implementaciones del arbol -- kernel (`kernel/runtime.cpp`), SDK posix
+  (`libc.c`) y SDK nativo (`sx_native.c`) -- eran lazos en C de un byte por
+  iteracion, y como el arbol se compila sin `-O` eso costaba media docena de
+  instrucciones por byte. Ahora usan instrucciones de string (`rep movsq` /
+  `rep stosq` mas la cola en bytes), que mueven 8 bytes por iteracion sin
+  overhead de lazo; 8 es el maximo disponible porque todo se compila con
+  `-mgeneral-regs-only`. Pega en todo el camino de pixeles: el blit por filas
+  del compositor (`sx_painter_blit_bitmap`) y el volcado al scanout de
+  `fb_gpu`, que con VGA estandar -- el hardware por defecto -- arrastra los
+  4 MiB de un frame de 1280x800 en cada present completo. `windowd-smoke`, que
+  corre una cantidad fija de frames, baja de ~37 s a ~30 s de punta a punta
+  (con el boot y el armado de imagen adentro, que no cambian).
+- **`cld` en cada entrada al kernel y en el arranque de cada proceso.** DF es
+  parte del RFLAGS del proceso, asi que un programa podia entrar al kernel con
+  la bandera de direccion prendida y hacer que las instrucciones de string
+  caminaran hacia atras. Se limpia en los stubs de `context.S`, en las macros
+  `DEFINE_ISR_*` de `cpu_init.cpp` (el atributo `interrupt` no lo emite solo) y
+  en el `crt0`. Es la precondicion de las rutinas de memoria nuevas, y tambien
+  lo que hace seguro prender `-O2` mas adelante: con optimizacion clang emite
+  `rep movsb` por su cuenta para copias de structs.
+- **Los blits de rectangulo completo se copian de una sola pasada.**
+  `fb_gpu::blit_rect` y `sx_painter_blit_bitmap` emitian una llamada a `memcpy`
+  por fila aunque el rectangulo cubriera el ancho completo y ningun pitch
+  tuviera padding, o sea aunque las filas ya vinieran contiguas en origen y
+  destino. Cuando se da ese caso -- `present()` a pantalla completa, el batch
+  con `FULL_SURFACE`, el blit de una superficie entera -- ahora va una sola
+  copia lineal. Los rects sucios chicos siguen por el camino de a filas.
+
 - **Files abre los archivos en el bloc de notas.** Activar algo que no es un
   programa ya no responde "No application is associated with this file": lanza
   `/bin/notepad` con la ruta. El preview que Files tenia adentro tiene casa.

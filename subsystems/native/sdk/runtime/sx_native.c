@@ -270,35 +270,61 @@ void *sxn_realloc(void *ptr, unsigned long size) {
 
 /* --- Builtins de memoria ------------------------------------------------------ */
 
+/* Acceso de 64 bits sin promesa de alineacion ni de aliasing exclusivo. */
+typedef unsigned long long sxn_word __attribute__((may_alias, aligned(1)));
+
+/* Instrucciones de string en vez de un lazo byte a byte: 8 bytes por iteracion
+ * y sin overhead de lazo, que sin optimizacion cuesta media docena de
+ * instrucciones por byte. Requisito: DF=0, garantizado por el cld del crt0. */
 void *memcpy(void *destination, const void *source, unsigned long count) {
-    unsigned char *out = (unsigned char *)destination;
-    const unsigned char *in = (const unsigned char *)source;
-    for (unsigned long index = 0; index < count; ++index) {
-        out[index] = in[index];
-    }
+    void *cursor = destination;
+    const void *origin = source;
+    unsigned long words = count >> 3;
+    unsigned long tail = count & 7u;
+
+    __asm__ volatile("rep movsq" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
+    __asm__ volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
+
     return destination;
 }
 
 void *memmove(void *destination, const void *source, unsigned long count) {
     unsigned char *out = (unsigned char *)destination;
     const unsigned char *in = (const unsigned char *)source;
+    unsigned long remaining;
+
+    if (out == in || count == 0) {
+        return destination;
+    }
+    /* Sin solape hacia adelante: el movsq ascendente de memcpy es correcto. */
     if (out < in) {
-        for (unsigned long index = 0; index < count; ++index) {
-            out[index] = in[index];
-        }
-    } else if (out > in) {
-        for (unsigned long index = count; index != 0; --index) {
-            out[index - 1] = in[index - 1];
-        }
+        return memcpy(destination, source, count);
+    }
+
+    /* Solape hacia atras: descendente a mano, para no prender DF. */
+    remaining = count;
+    while (remaining >= sizeof(unsigned long long)) {
+        remaining -= sizeof(unsigned long long);
+        *(sxn_word *)(out + remaining) = *(const sxn_word *)(in + remaining);
+    }
+    while (remaining > 0) {
+        --remaining;
+        out[remaining] = in[remaining];
     }
     return destination;
 }
 
 void *memset(void *destination, int value, unsigned long count) {
-    unsigned char *out = (unsigned char *)destination;
-    for (unsigned long index = 0; index < count; ++index) {
-        out[index] = (unsigned char)value;
-    }
+    unsigned char byte = (unsigned char)value;
+    /* Replica el byte en las 8 posiciones para que stosq escriba el mismo patron. */
+    unsigned long long pattern = (unsigned long long)byte * 0x0101010101010101ULL;
+    void *cursor = destination;
+    unsigned long words = count >> 3;
+    unsigned long tail = count & 7u;
+
+    __asm__ volatile("rep stosq" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
+    __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
+
     return destination;
 }
 
