@@ -555,6 +555,35 @@ static struct sx_rect resize_frame_for_drag(
     return frame;
 }
 
+/* Reprograma el modo de video del scanout y adopta la geometria nueva. El
+ * puntero al backbuffer no se mueve -- la seccion de display esta dimensionada
+ * para el modo mas grande -- pero si cambia el stride, y con el toda la
+ * composicion: windowd_render envuelve el backbuffer con gfx.info en cada
+ * frame, asi que actualizar gfx.info alcanza para que el shell entero componga
+ * en la resolucion nueva. Devuelve 0 si el modo quedo aplicado. */
+static int apply_display_mode(struct windowd_session *session, uint32_t width, uint32_t height)
+{
+    if (session == 0 || width == 0 || height == 0)
+    {
+        return -1;
+    }
+    if (session->gfx.info.width == width && session->gfx.info.height == height)
+    {
+        return 0;
+    }
+    if (windowd_compositor_set_mode(&session->compositor, width, height) != 0)
+    {
+        return -1;
+    }
+
+    session->gfx.info = session->compositor.display_info;
+    /* La superficie compartida todavia tiene los pixeles del modo anterior, que
+     * con el stride nuevo se leen torcidos. Limpiarla evita mostrar un frame
+     * corrupto en la ventana entre el cambio de modo y el primer repintado. */
+    memset(session->compositor.framebuffer, 0, session->gfx.info.buffer_size);
+    return 0;
+}
+
 /* Enter fullscreen as a composited shell policy. The daemon keeps owning the GPU
  * scanout while the shell hides chrome and scales the client surface to fill the
  * display. This path works on both VirtIO and the flat framebuffer backend,
@@ -577,6 +606,13 @@ static int enter_overlay_fullscreen(struct windowd_session *session, struct wind
     client->fs_restore_window_y = client->window_y;
     client->fs_restore_frame_visible = client->frame_visible;
     client->fs_restore_maximized = client->maximized;
+
+    /* Modo de video bajo: si el adaptador sabe cambiarlo, el scanout pasa a la
+     * resolucion de la superficie del cliente y sus pixeles van 1:1 al
+     * framebuffer, sin la pasada de escalado por software. Va antes de fijar la
+     * geometria de abajo, que se calcula desde gfx.info. Si el cambio no se
+     * puede, se sigue componiendo escalado: es degradacion, no error. */
+    (void)apply_display_mode(session, client->surface_info.width, client->surface_info.height);
 
     client->fullscreen = 1;
     client->frame_visible = 0;
@@ -608,6 +644,14 @@ static void exit_overlay_fullscreen(struct windowd_session *session, struct wind
 
     session->fullscreen_slot = -1;
     client->fullscreen = 0;
+
+    /* Volver al modo nativo antes de restaurar y repintar: las posiciones
+     * guardadas de las ventanas estan en coordenadas nativas, y el dirty rect
+     * del final tiene que cubrir la pantalla entera, no la chica. */
+    (void)apply_display_mode(
+        session,
+        session->compositor.requested_info.width,
+        session->compositor.requested_info.height);
 
     client->frame_visible = client->fs_restore_frame_visible;
     client->maximized = client->fs_restore_maximized;
@@ -834,6 +878,21 @@ static int recover_compositor(struct windowd_session *session)
     }
 
     eprintf("desktop: compositord reconnected after fault\n");
+
+    /* El daemon vuelve siempre en el modo nativo, porque su INIT pide
+     * requested_info. Si el shell estaba en el modo bajo de fullscreen hay que
+     * volver a pedirlo: componer con una geometria que el scanout ya no tiene
+     * manda rects que no existen. Se pida o no con exito, la que vale es la que
+     * quedo del lado del daemon, que es contra la que esta importada la
+     * superficie. */
+    if (session->gfx.info.width != session->compositor.display_info.width ||
+        session->gfx.info.height != session->compositor.display_info.height)
+    {
+        (void)windowd_compositor_set_mode(
+            &session->compositor, session->gfx.info.width, session->gfx.info.height);
+        session->gfx.info = session->compositor.display_info;
+        memset(session->compositor.framebuffer, 0, session->gfx.info.buffer_size);
+    }
     return 0;
 }
 
@@ -1585,6 +1644,13 @@ static void destroy_overlay_client(struct windowd_session *session, int slot, in
         /* The fullscreen client is going away: clear shell policy state so the
          * next composed frame restores normal desktop chrome. */
         session->fullscreen_slot = -1;
+        /* Y devolver el modo de video, que es del scanout y no del cliente: si
+         * no, matar una app a pantalla completa (End Task, o que se caiga sola)
+         * dejaria el escritorio en la resolucion baja para siempre. */
+        (void)apply_display_mode(
+            session,
+            session->compositor.requested_info.width,
+            session->compositor.requested_info.height);
     }
 
     destroy_client_instance(client, terminate_client);
@@ -2208,6 +2274,7 @@ static int windowd_selftest(void)
     int failed = 0;
     int recovery_armed = 1;
     int recovery_validated = 0;
+    int fullscreen_recovery_armed = 1;
     uint64_t baseline_retired = 0;
     uint64_t consumed_submit = 0;
     /* Tamano generico que el WM le asigna a un overlay al lanzarlo: la
@@ -2351,10 +2418,41 @@ static int windowd_selftest(void)
                 failed = 1;
                 break;
             }
+            /* Fullscreen tiene que haber bajado el scanout a la resolucion de
+             * la superficie del cliente: es lo que saca la pasada de escalado
+             * por software. La asercion es incondicional porque los dos
+             * backends que corre el smoke -- virtio-gpu y el framebuffer plano
+             * con dispi -- saben cambiar de modo. En uno que no supiera, el
+             * shell compone escalado (degradacion valida) y esto fallaria; el
+             * dia que exista, hay que anunciar la capacidad hasta el shell. */
+            if (session.gfx.info.width != WINDOWD_FULLSCREEN_MODE_WIDTH ||
+                session.gfx.info.height != WINDOWD_FULLSCREEN_MODE_HEIGHT)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL fullscreen mode\n");
+                failed = 1;
+                break;
+            }
         }
         else if (iteration == 52)
         {
+            /* El modo bajo tiene que seguir puesto aun despues de la caida
+               inyectada del daemon en el medio del fullscreen. */
+            if (session.gfx.info.width != WINDOWD_FULLSCREEN_MODE_WIDTH ||
+                session.gfx.info.height != WINDOWD_FULLSCREEN_MODE_HEIGHT)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL fullscreen mode after recovery\n");
+                failed = 1;
+                break;
+            }
             exit_overlay_fullscreen(&session, &dirty);
+            /* Y al salir tiene que volver al nativo, pase lo que pase. */
+            if (session.gfx.info.width != session.compositor.requested_info.width ||
+                session.gfx.info.height != session.compositor.requested_info.height)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL restore mode\n");
+                failed = 1;
+                break;
+            }
         }
 
         switch (iteration)
@@ -2377,6 +2475,15 @@ static int windowd_selftest(void)
                 int target_x = ((iteration & 1) != 0) ? (kCursorX + 40) : (kCursorX + 80);
                 int target_y = ((iteration & 1) != 0) ? (kCursorY + 40) : (kCursorY + 80);
                 move_overlay_client_window(&session, &dirty, kSlot, target_x, target_y);
+            }
+            else if (session.fullscreen_slot >= 0)
+            {
+                /* En fullscreen no hay movimiento de ventanas que genere dano, y
+                   sin dano el shell no presenta. Sin presentar tampoco se entera
+                   de que el daemon murio, porque la deteccion es por fallo de
+                   present: forzar dano por iteracion mantiene el pipeline vivo,
+                   que es lo que hace observable la recuperacion en modo bajo. */
+                windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
             }
             break;
         }
@@ -2440,6 +2547,19 @@ static int windowd_selftest(void)
         if (recovery_armed && frames_presented == kKillDaemonAtFrame)
         {
             recovery_armed = 0;
+            if (session.compositor.pid > 0)
+            {
+                (void)kill((int)session.compositor.pid, SAVANXP_SIGKILL);
+            }
+        }
+
+        /* Segunda caida inyectada, esta vez con el scanout en el modo bajo de
+           fullscreen. El daemon respawnea siempre en el nativo, asi que el
+           shell tiene que volver a pedir su modo; si no, compondria contra una
+           geometria que el scanout ya no tiene. */
+        if (fullscreen_recovery_armed && session.fullscreen_slot >= 0)
+        {
+            fullscreen_recovery_armed = 0;
             if (session.compositor.pid > 0)
             {
                 (void)kill((int)session.compositor.pid, SAVANXP_SIGKILL);
@@ -2665,6 +2785,13 @@ static int windowd_selftest(void)
     if (!failed && !recovery_validated)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL compositor reconnect not exercised\n");
+        failed = 1;
+    }
+    /* Si la caida en modo bajo nunca se disparo, la asercion de arriba paso
+       sin probar nada: la reconciliacion de modo quedaria sin cubrir. */
+    if (!failed && fullscreen_recovery_armed)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL fullscreen reconnect not exercised\n");
         failed = 1;
     }
     if (!failed && session.background_client.consumed_submit_sequence < 1)
@@ -3388,6 +3515,17 @@ int main(int argc, char **argv)
                     }
                 }
             }
+        }
+
+        /* F11 puede haber achicado el scanout debajo del puntero. Reencuadrarlo
+         * aca evita que quede fuera de la pantalla nueva -- invisible y sin
+         * poder hacer hit-test -- hasta que el usuario mueva el mouse, que es
+         * cuando el clamp del handler lo volveria a meter en rango. */
+        if (cursor_x >= (int)session.gfx.info.width || cursor_y >= (int)session.gfx.info.height)
+        {
+            cursor_x = windowd_clamp_int(cursor_x, 0, (int)session.gfx.info.width - 1);
+            cursor_y = windowd_clamp_int(cursor_y, 0, (int)session.gfx.info.height - 1);
+            (void)set_hw_cursor_position(&session, cursor_x, cursor_y, 1);
         }
 
         if (mouse_poll_index >= 0 && (poll_fds[mouse_poll_index].revents & SAVANXP_POLLIN) != 0)

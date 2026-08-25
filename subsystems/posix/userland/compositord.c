@@ -93,13 +93,125 @@ static void compositor_state_close(struct compositor_state *state)
     state->cursor_enabled = 0;
 }
 
+/* (Re)importa la seccion de display compartida como superficie de scanout con
+ * la geometria que hay en state->display_info. La seccion es siempre la misma
+ * -- la heredada por fd -- y esta dimensionada para el modo mas grande, asi que
+ * un modo menor entra sin reasignar nada. */
+static int compositor_import_display(struct compositor_state *state)
+{
+    struct savanxp_gpu_surface_import import_request;
+    long result;
+
+    memset(&import_request, 0, sizeof(import_request));
+    import_request.section_handle = SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD;
+    import_request.width = state->display_info.width;
+    import_request.height = state->display_info.height;
+    import_request.pitch = state->display_info.pitch;
+    import_request.bpp = state->display_info.bpp;
+    import_request.buffer_size = state->display_info.buffer_size;
+    import_request.flags = SAVANXP_GPU_SURFACE_FLAG_SCANOUT;
+    import_request.pixels_offset = 0;
+    result = gpu_import_section(state->gpu_fd, &import_request);
+    if (result < 0)
+    {
+        return (int)result;
+    }
+
+    state->display_surface_id = (uint32_t)import_request.surface_id;
+    return 0;
+}
+
+/* Programa un modo y deja la seccion de display importada contra el. Todo o
+ * nada: si falla no queda superficie importada, y el que llama decide si
+ * repone el modo anterior. Exige que no haya una superficie viva (SET_MODE
+ * rehace el scanout). */
+static int compositor_apply_mode(struct compositor_state *state, uint32_t width, uint32_t height)
+{
+    struct savanxp_gpu_mode mode;
+    long result;
+
+    memset(&mode, 0, sizeof(mode));
+    mode.width = width;
+    mode.height = height;
+    mode.bpp = 32u;
+    result = gpu_set_mode(state->gpu_fd, &mode);
+    if (result < 0)
+    {
+        return (int)result;
+    }
+
+    state->display_info.width = mode.width;
+    state->display_info.height = mode.height;
+    state->display_info.pitch = mode.pitch;
+    state->display_info.bpp = mode.bpp;
+    state->display_info.buffer_size = mode.buffer_size;
+    state->gpu_info.width = mode.width;
+    state->gpu_info.height = mode.height;
+    state->gpu_info.pitch = mode.pitch;
+    state->gpu_info.bpp = mode.bpp;
+    state->gpu_info.buffer_size = mode.buffer_size;
+
+    return compositor_import_display(state);
+}
+
+/* Cambio de modo en caliente: suelta la superficie importada (apunta al modo
+ * viejo), reprograma y reimporta. Si algo falla repone el modo anterior, para
+ * no dejar al shell sin scanout donde presentar. */
+static int compositor_set_mode(
+    struct compositor_state *state,
+    const struct savanxp_fb_info *requested_info,
+    struct savanxp_compositor_reply *reply)
+{
+    struct savanxp_fb_info previous_info;
+    int result;
+
+    if (state == 0 || requested_info == 0 || reply == 0 || !state->initialized)
+    {
+        return -SAVANXP_ENODEV;
+    }
+    if (requested_info->width == 0 || requested_info->height == 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if (requested_info->width == state->display_info.width &&
+        requested_info->height == state->display_info.height)
+    {
+        reply->fb_info = state->display_info;
+        reply->gpu_info = state->gpu_info;
+        return 0;
+    }
+
+    previous_info = state->display_info;
+    if (state->display_surface_id != 0)
+    {
+        (void)gpu_release_surface(state->gpu_fd, state->display_surface_id);
+        state->display_surface_id = 0;
+    }
+
+    result = compositor_apply_mode(state, requested_info->width, requested_info->height);
+    if (result < 0)
+    {
+        if (state->display_surface_id != 0)
+        {
+            (void)gpu_release_surface(state->gpu_fd, state->display_surface_id);
+            state->display_surface_id = 0;
+        }
+        state->display_info = previous_info;
+        (void)compositor_apply_mode(state, previous_info.width, previous_info.height);
+        return result;
+    }
+
+    reply->fb_info = state->display_info;
+    reply->gpu_info = state->gpu_info;
+    return 0;
+}
+
 static int compositor_init(
     struct compositor_state *state,
     const struct savanxp_fb_info *requested_info,
     struct savanxp_compositor_reply *reply)
 {
     struct savanxp_gpu_mode mode;
-    struct savanxp_gpu_surface_import import_request;
     long result;
 
     if (state == 0 || requested_info == 0 || requested_info->width == 0 || requested_info->height == 0)
@@ -160,22 +272,12 @@ static int compositor_init(
         state->present_event_fd = -1;
     }
 
-    memset(&import_request, 0, sizeof(import_request));
-    import_request.section_handle = SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD;
-    import_request.width = state->display_info.width;
-    import_request.height = state->display_info.height;
-    import_request.pitch = state->display_info.pitch;
-    import_request.bpp = state->display_info.bpp;
-    import_request.buffer_size = state->display_info.buffer_size;
-    import_request.flags = SAVANXP_GPU_SURFACE_FLAG_SCANOUT;
-    import_request.pixels_offset = 0;
-    result = gpu_import_section(state->gpu_fd, &import_request);
+    result = compositor_import_display(state);
     if (result < 0)
     {
         return (int)result;
     }
 
-    state->display_surface_id = (uint32_t)import_request.surface_id;
     state->initialized = 1;
     reply->fb_info = state->display_info;
     reply->gpu_info = state->gpu_info;
@@ -419,6 +521,8 @@ static int handle_request(
         return compositor_move_cursor(state, request);
     case SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE:
         return compositor_set_cursor_shape(state, request);
+    case SAVANXP_COMPOSITOR_MSG_SET_MODE:
+        return compositor_set_mode(state, &request->fb_info, reply);
     case SAVANXP_COMPOSITOR_MSG_SHUTDOWN:
         return 0;
     default:

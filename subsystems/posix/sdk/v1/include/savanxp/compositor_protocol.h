@@ -33,6 +33,13 @@ enum savanxp_compositor_message_type
     SAVANXP_COMPOSITOR_MSG_MOVE_CURSOR = 6,
     SAVANXP_COMPOSITOR_MSG_SHUTDOWN = 7,
     SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE = 8,
+    /* Reprograma el modo de video y reimporta la seccion de display con la
+     * geometria nueva. fb_info de la request lleva el modo pedido; el de la
+     * reply, el que quedo -- que puede diferir, porque el pitch lo decide el
+     * dispositivo. La seccion no se reasigna: se dimensiona para el modo mas
+     * grande (el nativo), asi que un modo menor entra sin tocar el mapeo y el
+     * puntero al backbuffer del shell sigue siendo valido. */
+    SAVANXP_COMPOSITOR_MSG_SET_MODE = 9,
 };
 
 enum savanxp_compositor_surface_id

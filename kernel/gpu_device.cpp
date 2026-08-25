@@ -6,6 +6,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/process.hpp"
+#include "kernel/ui.hpp"
 #include "savanxp/syscall.h"
 
 namespace {
@@ -113,6 +114,9 @@ int gpu_ioctl(uint64_t request, uint64_t argument) {
             if (!display::set_mode(mode)) {
                 return negative_error(SAVANXP_EIO);
             }
+            // Unico punto por donde userland muta el modo: aca se repone la
+            // geometria que otros subsistemas tienen cacheada.
+            ui::sync_framebuffer_geometry();
             return process::copy_to_user(argument, &mode, sizeof(mode)) ? 0 : negative_error(SAVANXP_EINVAL);
         }
         case GPU_IOC_IMPORT_SECTION: {

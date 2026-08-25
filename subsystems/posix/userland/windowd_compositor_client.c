@@ -629,6 +629,60 @@ int windowd_compositor_get_timeline(
     return 0;
 }
 
+static int compositor_request_mode(
+    struct windowd_compositor_connection *connection,
+    uint32_t width,
+    uint32_t height,
+    struct savanxp_compositor_reply *reply)
+{
+    struct savanxp_compositor_request request;
+
+    memset(&request, 0, sizeof(request));
+    request.type = SAVANXP_COMPOSITOR_MSG_SET_MODE;
+    request.fb_info.width = width;
+    request.fb_info.height = height;
+    request.fb_info.bpp = 32u;
+    return compositor_rpc(connection, &request, reply);
+}
+
+int windowd_compositor_set_mode(
+    struct windowd_compositor_connection *connection,
+    uint32_t width,
+    uint32_t height)
+{
+    struct savanxp_compositor_reply reply;
+    struct savanxp_fb_info previous_info;
+    int result;
+
+    if (connection == 0 || width == 0 || height == 0)
+    {
+        return -1;
+    }
+
+    previous_info = connection->display_info;
+    result = compositor_request_mode(connection, width, height, &reply);
+    if (result != 0)
+    {
+        return result;
+    }
+
+    /* La geometria que vale es la de la reply, no la pedida: el pitch lo decide
+     * el dispositivo y puede venir redondeado. Si por eso el modo no entra en
+     * la seccion de display, componer contra el escribiria fuera del mapeo.
+     * Se rechaza igual que en el INIT, pero volviendo primero al modo anterior:
+     * si el daemon quedara en uno y el shell creyera otro, cada present iria
+     * con rects de una geometria que no existe. */
+    if (reply.fb_info.buffer_size > connection->requested_info.buffer_size)
+    {
+        (void)compositor_request_mode(connection, previous_info.width, previous_info.height, &reply);
+        return -SAVANXP_EIO;
+    }
+
+    connection->display_info = reply.fb_info;
+    connection->gpu_info = reply.gpu_info;
+    return 0;
+}
+
 int windowd_compositor_enable_cursor(
     struct windowd_compositor_connection *connection,
     int cursor_x,

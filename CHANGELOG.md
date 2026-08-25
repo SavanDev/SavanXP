@@ -98,6 +98,48 @@ Notas de corte:
 
 ### Cambiado
 
+- **F11 baja la resolucion del scanout en vez de escalar por software.** Una
+  app fullscreen-capable rinde a 640x400 y hasta ahora el shell estiraba ese
+  buffer hasta el framebuffer en cada frame, con un escalador que hace dos
+  divisiones enteras por pixel de salida: mas de un millon de divisiones por
+  frame a 1280x800. Ahora, al entrar en fullscreen, el shell le pide al
+  compositor el modo de la superficie del cliente; con el scanout en 640x400
+  los pixeles van 1:1 y el escalado desaparece. Es lo que estaba esperando el
+  mode-setting del backend plano, y sobre virtio-gpu funciona igual. Si el
+  adaptador no sabe cambiar de modo se compone escalado como antes: es
+  degradacion, no error.
+
+  Mecanica: mensaje nuevo `SAVANXP_COMPOSITOR_MSG_SET_MODE` en el protocolo del
+  compositor. El daemon suelta la superficie importada (apunta al modo viejo),
+  reprograma y reimporta la misma seccion contra la geometria nueva -- la
+  seccion esta dimensionada para el modo mas grande, asi que un modo menor
+  entra sin reasignar nada y el puntero al backbuffer del shell no se mueve. Si
+  algo falla repone el modo anterior, para no dejar al shell sin scanout. Del
+  lado del shell alcanza con actualizar `gfx.info`: `windowd_render` envuelve
+  el backbuffer con esa geometria en cada frame.
+
+  Tres caminos de vuelta, porque el modo es del scanout y no del cliente:
+  salir de fullscreen, que la app fullscreen se muera (End Task o sola), y que
+  se muera el compositor -- que respawnea siempre en el nativo, asi que el
+  shell le vuelve a pedir su modo o compondria contra una geometria que el
+  scanout ya no tiene. El cursor se reencuadra si el modo nuevo lo dejo fuera
+  de pantalla.
+
+  El smoke ahora **verifica** el cambio: entrar en fullscreen tiene que dejar
+  `gfx.info` en 640x400 y salir tiene que devolverlo al nativo. Suma una
+  segunda caida inyectada del daemon, esta vez con el scanout en modo bajo, y
+  exige que se haya disparado. Para que sea observable hubo que generar dano
+  por iteracion durante el fullscreen: sin dano el shell no presenta, y sin
+  presentar nunca se entera de que el daemon murio, porque la deteccion es por
+  fallo de present.
+
+- **La geometria cacheada del kernel se repone en cada cambio de modo.**
+  `GPU_IOC_SET_MODE` es el unico punto por donde userland muta el modo, asi que
+  ahi se llama a `ui::sync_framebuffer_geometry()`, que relee del backend y
+  reprograma la extension del puntero absoluto (tablet virtio). Con la
+  extension vieja el cursor apuntaria a otro lado despues de un cambio de modo;
+  era latente desde siempre y con F11 cambiando de modo pasa a ser rutina.
+
 - **`memcpy`/`memset` dejan de mover la memoria de a un byte.** Las tres
   implementaciones del arbol -- kernel (`kernel/runtime.cpp`), SDK posix
   (`libc.c`) y SDK nativo (`sx_native.c`) -- eran lazos en C de un byte por

@@ -261,6 +261,17 @@ void handle_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
     enqueue_mouse_event(delta_x, delta_y, buttons);
 }
 
+void sync_framebuffer_geometry() {
+    if (!display::ready()) {
+        return;
+    }
+    g_framebuffer_info = display::framebuffer_info();
+    // El puntero absoluto (tablet virtio) mapea su rango contra el tamano de
+    // pantalla: con la extension vieja, despues de un cambio de modo el cursor
+    // apuntaria a otro lado.
+    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
+}
+
 bool framebuffer_available() {
     return g_framebuffer_info.width != 0 && g_framebuffer_info.height != 0 && g_framebuffer_info.pitch != 0;
 }

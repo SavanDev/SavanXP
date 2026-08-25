@@ -45,6 +45,14 @@ int windowd_compositor_sync_present(
 int windowd_compositor_get_timeline(
     struct windowd_compositor_connection *connection,
     struct savanxp_gpu_present_timeline *timeline);
+/* Reprograma el modo de video y reimporta la seccion de display contra el.
+   El backbuffer del shell no se mueve: la seccion se dimensiona para el modo
+   mas grande. Al volver con 0, connection->display_info trae la geometria que
+   quedo -- puede no ser la pedida. */
+int windowd_compositor_set_mode(
+    struct windowd_compositor_connection *connection,
+    uint32_t width,
+    uint32_t height);
 int windowd_compositor_enable_cursor(
     struct windowd_compositor_connection *connection,
     int cursor_x,
