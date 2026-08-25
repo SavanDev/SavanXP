@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/console.hpp"
 #include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
@@ -35,6 +36,64 @@ savanxp_gpu_stats g_gpu_stats = {};
 uint64_t g_next_present_sequence = 1;
 uint64_t g_last_submitted_present_sequence = 0;
 uint64_t g_last_retired_present_sequence = 0;
+
+// Modo que dejo el firmware. Es el techo de lo que podemos pedir -- ver
+// mode_fits_mapping() -- y el modo al que se vuelve.
+savanxp_fb_info g_native_info = {};
+// El adaptador expone la interfaz VBE de Bochs y podemos cambiar de modo.
+bool g_dispi_available = false;
+
+// --- VBE de Bochs (dispi) ---------------------------------------------------
+// Par de puertos indice/dato del "Bochs Graphics Adaptor", que implementan
+// tanto la VGA estandar de QEMU (-device VGA) como VBoxVGA. Es la unica palanca
+// de mode-setting cuando no hay virtio-gpu: el scanout que entrega el firmware
+// es lineal pero de resolucion fija.
+constexpr uint16_t kDispiIndexPort = 0x01CE;
+constexpr uint16_t kDispiDataPort = 0x01CF;
+
+constexpr uint16_t kDispiRegisterId = 0x0;
+constexpr uint16_t kDispiRegisterXres = 0x1;
+constexpr uint16_t kDispiRegisterYres = 0x2;
+constexpr uint16_t kDispiRegisterBpp = 0x3;
+constexpr uint16_t kDispiRegisterEnable = 0x4;
+constexpr uint16_t kDispiRegisterVirtWidth = 0x6;
+constexpr uint16_t kDispiRegisterVirtHeight = 0x7;
+constexpr uint16_t kDispiRegisterXOffset = 0x8;
+constexpr uint16_t kDispiRegisterYOffset = 0x9;
+
+// Los ID validos van de ID0 a ID5; VirtualBox reporta uno de los bajos y QEMU
+// el mas alto, asi que se acepta el rango entero.
+constexpr uint16_t kDispiIdMin = 0xB0C0;
+constexpr uint16_t kDispiIdMax = 0xB0C5;
+
+constexpr uint16_t kDispiDisabled = 0x00;
+constexpr uint16_t kDispiEnabled = 0x01;
+constexpr uint16_t kDispiLfbEnabled = 0x40;
+
+inline void out16(uint16_t port, uint16_t value) {
+    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
+inline uint16_t in16(uint16_t port) {
+    uint16_t value = 0;
+    asm volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+void dispi_write(uint16_t index, uint16_t value) {
+    out16(kDispiIndexPort, index);
+    out16(kDispiDataPort, value);
+}
+
+uint16_t dispi_read(uint16_t index) {
+    out16(kDispiIndexPort, index);
+    return in16(kDispiDataPort);
+}
+
+bool detect_dispi() {
+    const uint16_t id = dispi_read(kDispiRegisterId);
+    return id >= kDispiIdMin && id <= kDispiIdMax;
+}
 
 bool ready() {
     return g_fb_base != nullptr && g_fb_info.bpp == 32u && g_fb_info.buffer_size != 0;
@@ -156,18 +215,96 @@ bool get_connector_properties(savanxp_gpu_connector_properties& properties) {
     if (!ready()) {
         return false;
     }
-    // Sin cambio de modo (resolucion fija) ni plano de cursor: el compositor cae
-    // a su cursor por software. Si advertimos PARTIAL_PRESENT para que use
-    // present_surface_batch con rects sucios.
+    // Sin plano de cursor de hardware: el compositor cae a su cursor por
+    // software. Anunciamos PARTIAL_PRESENT para que use present_surface_batch
+    // con rects sucios, y MUTABLE_MODE_SETTING solo si el adaptador expone
+    // dispi -- con el framebuffer pelado la resolucion sigue siendo fija.
     properties = {
-        .flags = SAVANXP_GPU_CONNECTOR_FLAG_PARTIAL_PRESENT | SAVANXP_GPU_CONNECTOR_FLAG_SAFE_MODE,
+        .flags = SAVANXP_GPU_CONNECTOR_FLAG_PARTIAL_PRESENT | SAVANXP_GPU_CONNECTOR_FLAG_SAFE_MODE |
+            (g_dispi_available ? SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING : 0u),
         .active_scanout_id = 0,
-        .preferred_width = g_fb_info.width,
-        .preferred_height = g_fb_info.height,
+        // El modo preferido es el nativo, no el que este puesto ahora.
+        .preferred_width = g_native_info.width,
+        .preferred_height = g_native_info.height,
         .batch_capacity = kImportedSurfaceCount,
         .max_dirty_rects = SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS,
     };
     return true;
+}
+
+bool has_live_imports() {
+    for (const ImportedSurface& surface : g_imported) {
+        if (surface.in_use) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// El unico mapeo de scanout que tenemos es el que armo el firmware, del tamano
+// del modo nativo. Un modo que necesite mas bytes que ese escribiria fuera del
+// mapeo, asi que el techo es el nativo. Alcanza para lo que interesa (bajar a
+// una resolucion mas chica); subir de ahi -- o el doble buffer por panning --
+// pide primero mapear la apertura de VRAM entera.
+bool mode_fits_mapping(uint32_t pitch, uint32_t height) {
+    if (pitch == 0 || height == 0) {
+        return false;
+    }
+    const uint64_t bytes = static_cast<uint64_t>(pitch) * height;
+    return bytes != 0 && bytes <= g_native_info.buffer_size;
+}
+
+// Programa el modo por dispi y devuelve en `result` la geometria que quedo de
+// verdad. Se relee del dispositivo en vez de confiar en lo pedido: la
+// implementacion puede redondear el ancho virtual (o sea el pitch) o rechazar
+// la resolucion sin avisar.
+bool apply_dispi_mode(uint32_t width, uint32_t height, savanxp_fb_info& result) {
+    dispi_write(kDispiRegisterEnable, kDispiDisabled);
+    dispi_write(kDispiRegisterXres, static_cast<uint16_t>(width));
+    dispi_write(kDispiRegisterYres, static_cast<uint16_t>(height));
+    dispi_write(kDispiRegisterBpp, 32u);
+    dispi_write(kDispiRegisterVirtWidth, static_cast<uint16_t>(width));
+    dispi_write(kDispiRegisterVirtHeight, static_cast<uint16_t>(height));
+    dispi_write(kDispiRegisterXOffset, 0);
+    dispi_write(kDispiRegisterYOffset, 0);
+    dispi_write(kDispiRegisterEnable, kDispiEnabled | kDispiLfbEnabled);
+
+    const uint32_t actual_width = dispi_read(kDispiRegisterXres);
+    const uint32_t actual_height = dispi_read(kDispiRegisterYres);
+    const uint32_t actual_bpp = dispi_read(kDispiRegisterBpp);
+    const uint32_t virtual_width = dispi_read(kDispiRegisterVirtWidth);
+
+    if (actual_width != width || actual_height != height || actual_bpp != 32u) {
+        return false;
+    }
+    // El ancho virtual manda sobre el pitch, y nunca puede ser menor al visible.
+    const uint32_t pitch_pixels = virtual_width >= actual_width ? virtual_width : actual_width;
+    const uint32_t pitch = static_cast<uint32_t>(pitch_pixels * sizeof(uint32_t));
+    if (!mode_fits_mapping(pitch, actual_height)) {
+        return false;
+    }
+
+    result = {
+        .width = actual_width,
+        .height = actual_height,
+        .pitch = pitch,
+        .bpp = 32u,
+        .buffer_size = pitch * actual_height,
+    };
+    return true;
+}
+
+void publish_mode(const savanxp_fb_info& info) {
+    g_fb_info = info;
+    g_gpu_info.width = info.width;
+    g_gpu_info.height = info.height;
+    g_gpu_info.pitch = info.pitch;
+    g_gpu_info.bpp = info.bpp;
+    g_gpu_info.buffer_size = info.buffer_size;
+    // Misma juntura que usa virtio-gpu: la consola cachea su propia geometria y
+    // con el pitch viejo dibujaria torcido (importa en un panic despues de un
+    // cambio de modo, que es cuando la consola vuelve a aparecer).
+    console::set_external_framebuffer(g_fb_base, g_fb_info);
 }
 
 bool set_mode(savanxp_gpu_mode& mode) {
@@ -179,11 +316,31 @@ bool set_mode(savanxp_gpu_mode& mode) {
     if (mode.bpp != 0 && mode.bpp != 32u) {
         return false;
     }
-    // Resolucion fija: solo aceptamos la nativa. Cualquier otra falla (el
-    // compositor consulta el modo nativo via get_info y pide ese mismo).
+
     if (requested_width != g_fb_info.width || requested_height != g_fb_info.height) {
-        return false;
+        // Sin dispi la resolucion es la que dejo el firmware y punto.
+        if (!g_dispi_available) {
+            return false;
+        }
+        // Mismo contrato que virtio: cambiar de modo rehace el scanout, asi que
+        // no puede haber superficies importadas apuntando al anterior.
+        if (has_live_imports()) {
+            return false;
+        }
+
+        savanxp_fb_info applied = {};
+        if (!apply_dispi_mode(requested_width, requested_height, applied)) {
+            // Reponer lo que habia: quedarse en un modo a medio programar deja
+            // la pantalla inutilizable y sin forma de volver.
+            savanxp_fb_info restored = {};
+            if (apply_dispi_mode(g_fb_info.width, g_fb_info.height, restored)) {
+                publish_mode(restored);
+            }
+            return false;
+        }
+        publish_mode(applied);
     }
+
     mode = {
         .width = g_fb_info.width,
         .height = g_fb_info.height,
@@ -407,10 +564,10 @@ bool get_scanouts(savanxp_gpu_scanout_state& state) {
         .scanout_id = 0,
         .flags = SAVANXP_GPU_SCANOUT_FLAG_ENABLED | SAVANXP_GPU_SCANOUT_FLAG_ACTIVE |
             SAVANXP_GPU_SCANOUT_FLAG_PRIMARY | SAVANXP_GPU_SCANOUT_FLAG_PREFERRED,
-        .native_width = g_fb_info.width,
-        .native_height = g_fb_info.height,
-        .preferred_width = g_fb_info.width,
-        .preferred_height = g_fb_info.height,
+        .native_width = g_native_info.width,
+        .native_height = g_native_info.height,
+        .preferred_width = g_native_info.width,
+        .preferred_height = g_native_info.height,
         .active_width = g_fb_info.width,
         .active_height = g_fb_info.height,
     };
@@ -462,6 +619,16 @@ bool wait_present(savanxp_gpu_present_wait& request) {
 void release_session_resources() {
     for (ImportedSurface& surface : g_imported) {
         release_imported_surface(surface);
+    }
+    // El modo es propiedad de la sesion grafica: si el cliente la suelta (o se
+    // muere y el kernel la reclama por el) la pantalla vuelve a la resolucion
+    // del firmware, en vez de quedar en el modo bajo de la app que se fue.
+    if (g_dispi_available && ready() &&
+        (g_fb_info.width != g_native_info.width || g_fb_info.height != g_native_info.height)) {
+        savanxp_fb_info restored = {};
+        if (apply_dispi_mode(g_native_info.width, g_native_info.height, restored)) {
+            publish_mode(restored);
+        }
     }
 }
 
@@ -522,6 +689,15 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         .backend = SAVANXP_GPU_BACKEND_FRAMEBUFFER,
         .flags = 0,
     };
+    // El modo del firmware es el techo y el punto de retorno de cualquier
+    // cambio posterior, asi que se guarda antes de tocar nada.
+    g_native_info = g_fb_info;
+    g_dispi_available = detect_dispi();
+    console::printf("fb_gpu: %ux%u nativo, mode-setting %s\n",
+        g_native_info.width,
+        g_native_info.height,
+        g_dispi_available ? "por VBE dispi" : "no disponible");
+
     memset(&g_gpu_stats, 0, sizeof(g_gpu_stats));
     g_next_present_sequence = 1;
     g_last_submitted_present_sequence = 0;

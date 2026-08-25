@@ -12,6 +12,35 @@ Notas de corte:
 
 ### Agregado
 
+- **El backend de framebuffer plano puede cambiar de modo (VBE de Bochs).**
+  Hasta ahora `fb_gpu` aceptaba unicamente la resolucion que dejaba el
+  firmware: `set_mode` rechazaba cualquier otra cosa y el conector no anunciaba
+  `MUTABLE_MODE_SETTING`. Ahora detecta la interfaz dispi del "Bochs Graphics
+  Adaptor" -- los puertos 0x1CE/0x1CF que implementan tanto la VGA estandar de
+  QEMU como VBoxVGA -- y programa el modo de verdad, releyendo del dispositivo
+  la geometria que quedo en vez de confiar en la pedida (el ancho virtual, o
+  sea el pitch, lo puede redondear la implementacion). Es la palanca que le
+  faltaba al camino sin virtio-gpu, que ademas es el hardware por defecto de
+  `build.ps1`. Nuevo log de boot: `fb_gpu: <W>x<H> nativo, mode-setting ...`.
+
+  Limites y garantias: el techo es el modo nativo, porque el unico mapeo de
+  scanout que existe es el que armo el firmware y uno mas grande escribiria
+  fuera (subir de ahi, y el doble buffer por panning, piden mapear antes la
+  apertura de VRAM entera). Cambiar de modo exige la sesion grafica y que no
+  haya superficies importadas vivas, mismo contrato que virtio-gpu. Si la
+  programacion falla se repone el modo anterior en vez de quedar en uno a
+  medio armar. Al soltarse la sesion grafica se vuelve al nativo, asi que una
+  app que se muere en modo bajo no deja la pantalla ahi. `GET_SCANOUTS` y las
+  propiedades del conector ahora distinguen la resolucion nativa de la activa,
+  que antes eran la misma por construccion.
+
+  Cobertura: el subtest de `SET_MODE` de `gputest` estaba escrito pero se
+  salteaba solo, porque esta condicionado a `MUTABLE_MODE_SETTING`. Con el flag
+  anunciado, `build.ps1 gpu-soak` ejercita el ciclo 640x400 -> nativo con
+  presents en el medio tambien sobre el framebuffer plano, sin harness nuevo.
+  Falta la prueba en VirtualBox real: expone dispi, pero como se lleva con el
+  modo que deja Limine todavia no se verifico.
+
 - **Boton por defecto en los dialogos** (`default_button` en
   `struct sxgui_dialog`). Enter lo dispara y se dibuja con el borde doble de
   la epoca, asi que se ve cual responde antes de apretarlo; si el foco esta
