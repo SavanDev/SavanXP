@@ -1,17 +1,19 @@
 # Formato SXE — ejecutables con recursos propios
 
-> **Estado: fases 1 a 4 COMPLETAS, en master.** El formato canónico vive en
+> **Estado: las cinco fases COMPLETAS, en master.** El formato canónico vive en
 > [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), el lector del SDK en
 > [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
 > [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), el estampado en
 > [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`, y
-> los consumidores son `progman_registry_apply_sxe()` (launcher) y
-> `windowd_presentation_load()` (chrome de ventana y Task List). Validado por
-> `sxe-smoke`, `progman-smoke` y `windowd-smoke`. Sigue la **fase 5**: las
-> asociaciones mime.
+> los consumidores son `progman_registry_apply_sxe()` (launcher),
+> `windowd_presentation_load()` (chrome de ventana y Task List) y `file_assoc`
+> (asociaciones de archivo en filesapp). Validado por `sxe-smoke`,
+> `progman-smoke`, `windowd-smoke` y `filesapp-smoke`.
 >
-> Pendientes arrastrados, anotados en su lugar: **Doom sin estampar** (se
-> construye aparte) y **el angostado de `desktop_icons`**, que espera a Doom.
+> Pendientes conocidos, anotados en su lugar: **Doom sin estampar** (se
+> construye aparte), **el angostado de `desktop_icons`** (espera a Doom), la
+> **resolución por MIME** (necesita una capa de detección de tipo que no
+> existe) y el **costo del escaneo de asociaciones**, ya medido.
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -249,14 +251,33 @@ válido (build viejo, archivo truncado, alguien renombró) y un `.elf` puede
 tenerlo. Si el lector trata la extensión como garantía, ese caso lo rompe. Como
 pista, el fallback es el mismo de arriba: silencioso y ya escrito.
 
-## Sin caché, por ahora
+## Sin caché — y ahora con la medición
 
-progman abre y parsea los `.sxe` en cada arranque. No hay índice persistente.
+No hay índice persistente. La decisión era **medir primero**, porque una caché
+invalidada por mtime es la clase de cosa que agrega bugs difíciles de ver.
 
-Con el atajo de la extensión y ~20 binarios el costo probablemente ni se note,
-y una caché invalidada por mtime es exactamente la clase de cosa que agrega
-bugs de invalidación difíciles de ver. **Primero medir.** Si el escaneo aparece
-en el tiempo de arranque de progman, ahí se diseña el índice.
+Ya hay números, y son de dos órdenes muy distintos:
+
+| consumidor | qué abre | costo |
+|---|---|---|
+| progman | los binarios que lista el catálogo | ~9 archivos, imperceptible |
+| windowd | el binario de cada ventana que crea | 1 por ventana, imperceptible |
+| **`file_assoc`** | **todos los ejecutables instalados** | **131 archivos, ~171 ms** (TCG) |
+
+Los dos primeros están acotados por algo chico y no necesitan nada. El tercero
+sí duele, y por eso filesapp lo hace **perezoso**: una sesión que solo navega
+directorios no paga nada, y el costo se cobra una vez, cuando de verdad hay que
+abrir un archivo.
+
+**El 131 tiene una lectura concreta**: `/disk/bin` es una copia de `/bin`, así
+que cada programa se examina dos veces, y de los 131 solo un puñado trae
+recursos. Es exactamente el caso que resolvería la pista de la extensión —
+saltear sin abrir todo lo que no se llame `.sxe`— pero hoy no puede podar nada
+porque los binarios no están renombrados. Ese es el primer argumento concreto a
+favor del renombre, y es mejor palanca que una caché: no tiene invalidación.
+
+`file_assoc_scan_examined()` y el `ms=` de `filesapp-smoke` existen para poder
+volver a medir esto cuando algo cambie.
 
 ## Quién lee qué
 
@@ -348,6 +369,29 @@ El registro no desaparece: **cambia de rol**, y queda el modelo de Windows.
 Deja de ser un catálogo con iconos hardcodeados y pasa a ser lo que un menú
 inicio realmente es. Y resuelve el mime: el binario **declara capacidad**, el
 registro **resuelve la asociación**.
+
+### Asociaciones de archivo (fase 5)
+
+La asociación no vive en `progman.ini` sino en su propio registro,
+`/disk/assoc.ini`, porque son cosas distintas: una es el arreglo del menú
+inicio y la otra es política de todo el sistema. Formato mínimo, una línea por
+asociación:
+
+```ini
+# /disk/assoc.ini — quién abre cada extensión
+.txt=/bin/notepad
+.log=/bin/shellapp
+```
+
+Precedencia: **política del usuario > primer binario que declare la extensión >
+nada**. El tercer caso no es un error: filesapp cae a su editor por defecto, y
+otro llamador puede decidir otra cosa.
+
+"Primer binario que declare" no es teórico: `/disk/bin` es una copia de `/bin`,
+así que **cada programa aparece dos veces en el escaneo**. Sin la regla de que
+una entrada del escaneo no pisa a otra, la segunda pasada reescribía todas las
+asociaciones a la ruta de `/disk/bin`. El orden estable de directorios es más
+predecible que cualquier heurística de desempate.
 
 ### Precedencia (implementada en la fase 3)
 
@@ -475,9 +519,16 @@ se aplica en uno y no en el otro.
    protocolo**, como estaba decidido. `windowd_appinfo` quedó como escalón de
    fallback y `desktop_icons` sigue entero — ver arriba por qué angostarlo
    todavía no.
-5. **Asociaciones.** `MIME_OPEN`/`EXT_OPEN` + resolución en el registro +
-   filesapp abriendo archivos con el programa asociado, vía el campo `argument`
-   del launch request que ya existe.
+5. ~~**Asociaciones.**~~ **HECHA** para `EXT_OPEN`. `file_assoc` resuelve
+   extensión → programa combinando la política del usuario (`/disk/assoc.ini`)
+   con lo que declaran los binarios instalados, y filesapp abre cada archivo
+   con el programa asociado vía el campo `argument` que ya existía — el
+   `#define FILESAPP_EDITOR_PATH "/bin/notepad"` dejó de ser la única respuesta
+   y quedó como fallback. **`MIME_OPEN` se sigue estampando pero todavía no
+   resuelve**: hacerlo necesita una capa de detección de tipo (extensión → mime
+   o sniffing) que el sistema no tiene, y hornear una tabla de "`.txt` es
+   `text/plain`" reintroduciría exactamente la clase de tabla central que este
+   diseño vino a sacar.
 
 `INTERPRETER` no tiene fase: el campo está desde v1 y se empieza a honrar el
 día que exista la VM.

@@ -43,6 +43,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "sxe")) {
         return "SXE SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "filesapp")) {
+        return "FILESAPP SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "soak")) {
         return "SOAK";
     }
@@ -74,6 +77,7 @@ static int run_automation_spec(const char* spec) {
     const char* cursor_repro_argv[] = {"/bin/windowd", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* sxetest_argv[] = {"/disk/bin/sxetest", 0};
+    const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
@@ -98,6 +102,10 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/sxetest";
             argv = sxetest_argv;
             argc = 1;
+        } else if (strcmp(spec, "filesapp-selftest") == 0 || strcmp(spec, "filesapp") == 0) {
+            path = "/bin/filesapp";
+            argv = filesapp_selftest_argv;
+            argc = 2;
         } else if (strcmp(spec, "netsmoke") == 0) {
             path = "/disk/bin/nettest";
             argv = nettest_argv;

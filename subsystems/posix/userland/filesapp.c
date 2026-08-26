@@ -7,14 +7,17 @@
 
 #include "shared/version.h"
 
+#include "file_assoc.h"
+
 /*
  * Explorador de archivos, con la forma del explorador de la era Win95: barra de
  * menu, barra de direccion con "Up One Level", lista de detalles (Name / Size /
  * Type) con cabecera de columnas, y barra de estado de dos paneles.
  *
  * NO muestra el contenido de los archivos: eso es trabajo de un editor. Abrir
- * un archivo que no es un programa lo manda a /bin/notepad, que es donde vive
- * ahora el preview que esta app tenia adentro.
+ * un archivo que no es un programa lo manda al programa ASOCIADO a su
+ * extension (file_assoc, docs/SXE_FORMAT.md fase 5); sin asociacion cae a
+ * /bin/notepad, que es donde vive ahora el preview que esta app tenia adentro.
  */
 
 #define FILESAPP_PATH_CAPACITY 256
@@ -44,6 +47,8 @@ static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
 static char g_count_pane[64] = "0 object(s)";
 static char g_size_pane[64] = "";
 static int g_entry_count = 0;
+/* Las asociaciones se cargan a demanda; ver filesapp_activate_selected. */
+static int g_assoc_loaded = 0;
 
 static struct sxgui_dialog g_about_dialog;
 static struct sxgui_widget g_about_widgets[4];
@@ -437,14 +442,39 @@ static void filesapp_activate_selected(void)
         filesapp_set_status("Launch requested.");
         return;
     }
-    /* Cualquier archivo que no sea un programa se abre en el bloc de notas: es
-     * donde vive ahora el preview que esta app tenia adentro. */
-    if (gfx_desktop_launch_arg(&g_app.gfx, FILESAPP_EDITOR_PATH, full_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    /*
+     * Un archivo que no es programa lo abre quien este asociado a su extension
+     * (docs/SXE_FORMAT.md, fase 5): el binario declara que puede abrirla y
+     * /disk/assoc.ini decide cual gana. Sin asociacion queda el bloc de notas,
+     * que es donde vive el preview que esta app tenia adentro -- no tener
+     * asociacion no es un error, es el caso comun.
+     */
     {
-        filesapp_set_status("Cannot open Notepad.");
-        return;
+        const char *program = 0;
+        int associated = 0;
+
+        /* Perezoso: el escaneo abre el .sxmeta de cada ejecutable instalado, y
+         * una sesion que solo navega directorios no tiene por que pagarlo. Se
+         * hace una sola vez, en el momento en que de verdad hace falta. */
+        if (!g_assoc_loaded)
+        {
+            (void)file_assoc_load();
+            g_assoc_loaded = 1;
+        }
+        program = file_assoc_program_for_file(full_path);
+        associated = (program != 0);
+
+        if (program == 0)
+        {
+            program = FILESAPP_EDITOR_PATH;
+        }
+        if (gfx_desktop_launch_arg(&g_app.gfx, program, full_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+        {
+            filesapp_set_status(associated ? "Cannot open associated program." : "Cannot open Notepad.");
+            return;
+        }
+        filesapp_set_status(associated ? "Opening with associated program..." : "Opening in Notepad...");
     }
-    filesapp_set_status("Opening in Notepad...");
 }
 
 /* ---- callbacks ------------------------------------------------------------ */
@@ -616,8 +646,77 @@ static struct sxgui_menubar g_menubar = {
     0
 };
 
-int main(void)
+/* ---- selftest ------------------------------------------------------------- */
+
+static int filesapp_selftest(void)
 {
+    int failures = 0;
+    int index;
+
+    /* La tabla se vuelca SIEMPRE, tambien al fallar: un assert que dice "no
+     * resolvio a notepad" sin mostrar a que resolvio no alcanza para
+     * diagnosticar nada. */
+    {
+        /*
+         * El costo del escaneo se MIDE, no se estima: la decision del
+         * documento fue no poner cache hasta saber cuanto duele. Estos dos
+         * numeros -- ejecutables abiertos y milisegundos -- son la evidencia
+         * para revisarla.
+         */
+        unsigned long started_ms = uptime_ms();
+
+        (void)file_assoc_load();
+        printf("FILESAPP SMOKE assoc entries=%d examined=%d ms=%lu\n",
+            file_assoc_count(),
+            file_assoc_scan_examined(),
+            uptime_ms() - started_ms);
+    }
+    for (index = 0; index < file_assoc_count(); ++index)
+    {
+        const struct file_assoc_entry *entry = file_assoc_at(index);
+        if (entry != 0)
+        {
+            printf("FILESAPP SMOKE assoc %s -> %s (%s)\n",
+                entry->extension,
+                entry->program,
+                entry->from_policy ? "politica" : "declarada");
+        }
+    }
+
+    /* El harness corta la corrida en la PRIMERA linea con el token de fallo,
+     * asi que el volcado tiene que salir antes del selftest o no se ve nunca
+     * cuando algo falla. */
+    failures = file_assoc_selftest();
+
+    if (failures != 0)
+    {
+        printf("FILESAPP SMOKE FAIL %d checks\n", failures);
+        return 1;
+    }
+
+    /*
+     * Lo que los fixtures no pueden fingir: la resolucion contra los binarios
+     * REALES de esta imagen, y cuanto cuesta. El numero de ejecutables abiertos
+     * es la magnitud a mirar antes de decidir si hace falta una cache -- la
+     * decision del documento es medir primero.
+     */
+    if (file_assoc_count() <= 0)
+    {
+        printf("FILESAPP SMOKE FAIL ningun binario declara extensiones\n");
+        return 1;
+    }
+
+    printf("FILESAPP SMOKE PASS entries=%d\n", file_assoc_count());
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
+    {
+        return filesapp_selftest();
+    }
+
     g_widgets[0] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_current_path);
     g_widgets[0].flags |= SXGUI_FLAG_SUNKEN;
     g_widgets[1] = sxgui_button(sx_rect_make(0, 0, 0, 0), "Up One Level", on_up_clicked, 0);

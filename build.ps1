@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -188,8 +188,11 @@ $UserPrograms = @(
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
         "subsystems/posix/sdk/v1/runtime/posix.c"
     ) },
+    # filesapp resuelve asociaciones leyendo el .sxmeta de los binarios (fase 5).
     @{ Name = "filesapp"; Sources = @(
         "subsystems/posix/userland/filesapp.c",
+        "subsystems/posix/userland/file_assoc.c",
+        "subsystems/posix/sdk/v1/runtime/sxe.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
         "subsystems/posix/sdk/v1/runtime/posix.c"
@@ -1247,6 +1250,13 @@ function Run-SxeSmokeQemu {
     Run-AutomationQemu -AutomationCommand "sxe-selftest" -SuccessToken "SXE SMOKE PASS" -FailureToken "SXE SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Asociaciones de archivo (docs/SXE_FORMAT.md, fase 5). Ademas de validar el
+# parseo y la precedencia con fixtures, reporta cuantos ejecutables abrio el
+# escaneo real: es la magnitud a mirar antes de decidir si hace falta una cache.
+function Run-FilesappSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "filesapp-selftest" -SuccessToken "FILESAPP SMOKE PASS" -FailureToken "FILESAPP SMOKE FAIL" -TimeoutMinutes 3
+}
+
 # Harness headless del camino de red (subsystems/posix/userland/nettest.c):
 # valida el driver del NIC de punta a punta -- presencia por PCI, MAC propia,
 # ARP, tx y rx -- haciendo ICMP echo contra el gateway del user-net de QEMU
@@ -1302,6 +1312,9 @@ switch ($Command) {
     }
     "sxe-smoke" {
         Run-SxeSmokeQemu
+    }
+    "filesapp-smoke" {
+        Run-FilesappSmokeQemu
     }
     "net-smoke" {
         Run-NetSmokeQemu
