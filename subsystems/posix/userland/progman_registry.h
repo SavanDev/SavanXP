@@ -30,9 +30,25 @@
  *   - Sin malloc (esta libc no tiene): todo entra en arrays de capacidad fija y
  *     los strings se truncan en vez de desbordar.
  *
- * Los iconos se referencian por nombre contra el set horneado en build
- * (desktop_icons.h); un nombre desconocido cae al icono generico. Traer iconos
- * propios por programa necesitaria un formato+loader de iconos: trabajo aparte.
+ * A PARTIR DE LA FASE 3 DE SXE (docs/SXE_FORMAT.md) este archivo cambio de rol:
+ * ya NO es el catalogo de identidad de los programas, es el ARREGLO del
+ * usuario. Que grupos hay, que entra en cada uno, en que orden, y overrides
+ * puntuales. Quien dice como se llama un programa, que hace y que icono tiene
+ * es el propio binario, via su seccion .sxmeta/.sxicon.
+ *
+ * Precedencia de cada campo, de mayor a menor:
+ *
+ *   1. La clave escrita en el .ini      -- lo que el USUARIO decidio
+ *   2. El .sxmeta/.sxicon del binario   -- lo que el PROGRAMA declara de si
+ *   3. El default horneado de abajo     -- red de seguridad
+ *   4. Generico (icono desktop)         -- ultimo recurso
+ *
+ * El paso 2 lo aplica progman_registry_apply_sxe(). Los binarios sin recursos
+ * -- que siguen siendo ejecutables de primera clase -- simplemente se saltean
+ * ese escalon.
+ *
+ * Los iconos del .ini se referencian por nombre contra el set horneado en build
+ * (desktop_icons.h); un nombre desconocido cae al icono generico.
  */
 
 #define PROGMAN_MAX_GROUPS 8
@@ -51,13 +67,29 @@ enum progman_registry_source
     PROGMAN_REGISTRY_SOURCE_FILE = 1,
 };
 
+/*
+ * Campos que el .ini declaro EXPLICITAMENTE. Sin esto no se puede distinguir
+ * "el usuario eligio este nombre" de "quedo el valor por defecto", y el .sxe
+ * pisaria decisiones del usuario o al reves.
+ */
+#define PROGMAN_OVERRIDE_NONE 0x00000000u
+#define PROGMAN_OVERRIDE_NAME 0x00000001u
+#define PROGMAN_OVERRIDE_DESCRIPTION 0x00000002u
+#define PROGMAN_OVERRIDE_ICON 0x00000004u
+#define PROGMAN_OVERRIDE_FLAGS 0x00000008u
+
+/* icon_slot cuando el binario no trajo icono propio: se usa icon_id. */
+#define PROGMAN_ICON_SLOT_NONE (-1)
+
 struct progman_item
 {
     char name[PROGMAN_NAME_CAPACITY];
     char path[PROGMAN_PATH_CAPACITY];
     char description[PROGMAN_DESC_CAPACITY];
-    uint32_t icon_id;      /* enum desktop_icon_id */
+    uint32_t icon_id;      /* enum desktop_icon_id; solo si icon_slot < 0 */
     uint32_t launch_flags; /* SAVANXP_DESKTOP_LAUNCH_FLAG_* */
+    uint32_t overrides;    /* PROGMAN_OVERRIDE_* */
+    int icon_slot;         /* indice en el pool de iconos .sxicon, o NONE */
     int group_index;
 };
 
@@ -97,6 +129,26 @@ typedef int (*progman_path_exists_fn)(const char *path);
  * vacio -- si de verdad no hay nada lanzable, mostrar nada es lo honesto.
  */
 int progman_registry_prune_missing(progman_path_exists_fn exists);
+
+/*
+ * Rellena los items con lo que declara el .sxmeta/.sxicon de su binario, sin
+ * pisar lo que el .ini haya declarado explicitamente. Devuelve cuantos items
+ * tomaron algo del ejecutable.
+ *
+ * Va DESPUES de progman_registry_prune_missing(): no tiene sentido abrir el
+ * binario de un item que se va a descartar, y el pruning reordena los items,
+ * lo que invalidaria los slots de icono ya asignados.
+ *
+ * Que un binario no tenga recursos, no abra, o traiga un blob invalido no es
+ * un error: ese item simplemente se queda con sus valores previos.
+ */
+int progman_registry_apply_sxe(void);
+
+/*
+ * Icono propio del item, traido de su .sxicon. Devuelve 0 si el binario no
+ * trajo uno; ahi el llamador cae a desktop_icon_large(item->icon_id).
+ */
+const struct desktop_embedded_bitmap *progman_item_icon(const struct progman_item *item);
 
 int progman_registry_source(void);
 int progman_group_count(void);

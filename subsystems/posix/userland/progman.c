@@ -274,6 +274,7 @@ static void paint_items(struct sx_painter *painter)
     for (index = 0; index < count; ++index)
     {
         const struct progman_item *item = progman_group_item_at(g_group, index);
+        const struct desktop_embedded_bitmap *icon = 0;
         struct sx_rect rect = cell_rect(index);
         int selected = (index == g_item);
         int label_width;
@@ -293,9 +294,16 @@ static void paint_items(struct sx_painter *painter)
         {
             sx_painter_fill_rect(painter, rect, SXGUI_COLOR_SELECT);
         }
+        /* El icono del propio binario manda; el set horneado es el fallback
+         * para lo que todavia no trae recursos (docs/SXE_FORMAT.md). */
+        icon = progman_item_icon(item);
+        if (icon == 0)
+        {
+            icon = desktop_icon_large((enum desktop_icon_id)item->icon_id);
+        }
         draw_icon_scaled(
             painter,
-            desktop_icon_large((enum desktop_icon_id)item->icon_id),
+            icon,
             rect.x + ((rect.width - PROGMAN_ICON_SIZE) / 2),
             rect.y + 8,
             PROGMAN_ICON_SIZE);
@@ -629,6 +637,7 @@ static int progman_selftest(void)
 {
     int failures = progman_registry_selftest();
     int dropped;
+    int applied;
     int index;
 
     if (failures != 0)
@@ -671,6 +680,28 @@ static int progman_selftest(void)
         }
     }
 
+    /* Igual que el pruning: el selftest del registro ejercita la precedencia
+     * con fixtures, pero solo aca se corre contra el catalogo REAL de esta
+     * imagen. Si ningun item toma recursos, el estampado del build se rompio
+     * y el sistema seguiria andando con los defaults sin decir nada. */
+    applied = progman_registry_apply_sxe();
+    printf("PROGMAN SMOKE sxe applied=%d of %d\n", applied, progman_item_count());
+    if (applied <= 0)
+    {
+        printf("PROGMAN SMOKE FAIL ningun item tomo recursos de su binario\n");
+        return 1;
+    }
+    for (index = 0; index < progman_item_count(); ++index)
+    {
+        const struct progman_item *item = progman_item_at(index);
+        if (item != 0)
+        {
+            printf("PROGMAN SMOKE item %s icono=%s\n",
+                item->name,
+                progman_item_icon(item) != 0 ? "propio" : "horneado");
+        }
+    }
+
     printf("PROGMAN SMOKE PASS groups=%d items=%d\n",
         progman_group_count(),
         progman_item_count());
@@ -689,6 +720,10 @@ int main(int argc, char **argv)
      * construyen con builds APARTE, asi que en un arbol limpio sus entradas
      * existen pero no lanzan nada. Aplica igual a los defaults y al .ini. */
     (void)progman_registry_prune_missing(path_is_launchable);
+    /* Recien aca se leen los recursos de cada binario: despues del pruning,
+     * para no abrir ejecutables que se van a descartar y porque el pruning
+     * reordena los items (docs/SXE_FORMAT.md, fase 3). */
+    (void)progman_registry_apply_sxe();
     select_group(0);
 
     if (sxgui_app_init(&g_app, "progman", g_widgets, 0) < 0)

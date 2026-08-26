@@ -1,13 +1,14 @@
 # Formato SXE — ejecutables con recursos propios
 
-> **Estado: fases 1 y 2 COMPLETAS, en master.** El formato canónico vive en
+> **Estado: fases 1, 2 y 3 COMPLETAS, en master.** El formato canónico vive en
 > [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), el lector del SDK en
 > [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
-> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), y el estampado en
-> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`.
-> Todo validado por `build.ps1 sxe-smoke`, incluido el round trip completo
-> manifiesto → blob → ELF → lector. Siguen las fases 3 a 5 del final del
-> documento: el consumo en progman/windowd/filesapp.
+> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), el estampado en
+> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`, y
+> el primer consumidor es `progman_registry_apply_sxe()`. Validado por
+> `build.ps1 sxe-smoke` y `build.ps1 progman-smoke`, que reportan el round trip
+> completo manifiesto → blob → ELF → lector → launcher. Siguen las fases 4 y 5:
+> windowd y las asociaciones mime.
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -337,6 +338,30 @@ Deja de ser un catálogo con iconos hardcodeados y pasa a ser lo que un menú
 inicio realmente es. Y resuelve el mime: el binario **declara capacidad**, el
 registro **resuelve la asociación**.
 
+### Precedencia (implementada en la fase 3)
+
+De mayor a menor, campo por campo:
+
+1. **La clave escrita en el `.ini`** — lo que el usuario decidió
+2. **El `.sxmeta`/`.sxicon` del binario** — lo que el programa declara de sí
+3. **El default horneado** — red de seguridad para lo que no trae recursos
+4. **Genérico** — basename e icono de escritorio
+
+El escalón 1 necesita distinguir *"el usuario eligió este nombre"* de *"quedó
+el valor por defecto"*, y eso no se puede deducir del valor: por eso
+`struct progman_item` lleva una máscara `overrides` que el parser marca por
+cada clave presente. Sin ella, el `.sxe` pisaría decisiones del usuario o al
+revés, según cómo se ordenaran los pasos.
+
+`progman_registry_apply_sxe()` corre **después** del pruning: no tiene sentido
+abrir el binario de un item que se va a descartar, y el pruning reordena los
+items —lo que invalidaría los slots de icono ya asignados—.
+
+Los iconos leídos se copian a un pool fijo de `PROGMAN_MAX_ITEMS` slots de
+32×32 (**192 KiB de BSS**). Es una elección consciente: sin malloc hay que
+reservar el peor caso, y la alternativa —releer el `.sxicon` al pintar— pondría
+I/O de disco dentro del ciclo de repintado.
+
 ## Integración con el build
 
 ### El manifiesto `.sxres`
@@ -425,8 +450,14 @@ se aplica en uno y no en el otro.
    no-alloc por bit de `sh_flags` — compartido entre el build in-tree y el de
    apps externas. Nueve programas del sistema estampados; todavía nadie los
    lee, así que lo único que cambia es que los binarios engordan ~5 KiB.
-3. **progman consume.** Iconos y nombres salen del `.sxe`; `progman.ini` pasa a
-   ser arreglo. Acá se ve el resultado por primera vez.
+3. ~~**progman consume.**~~ **HECHA.** `progman_registry_apply_sxe()` resuelve
+   nombre, descripción, launch flags e icono desde el binario de cada item,
+   respetando lo que el `.ini` haya declarado explícitamente. En la imagen
+   actual toma recursos de 8 de 9 items — el noveno es Doom, que se construye
+   aparte y no está estampado, así que cae al icono horneado. **Nada cambia
+   visualmente**, y eso es lo correcto: los manifiestos reproducen la
+   presentación que antes vivía en las tablas. Lo que cambió es de dónde
+   salen los datos.
 4. **windowd consume.** El WM lee el `.sxe` al crear la ventana (sin tocar el
    protocolo), `windowd_appinfo` a fallback. `desktop_icons` se angosta a
    iconos de sistema.

@@ -1,5 +1,7 @@
 #include "progman_registry.h"
 
+#include "savanxp/sxe.h"
+
 /* Las apps de diagnostico se compilan solo si el build las pide, igual que en
  * windowd_menu.c: -NoTestApps las saca del rootfs y de los defaults a la vez. */
 #ifndef DESKTOP_INCLUDE_TEST_APPS
@@ -19,6 +21,25 @@ static struct progman_item g_items[PROGMAN_MAX_ITEMS];
 static int g_group_count = 0;
 static int g_item_count = 0;
 static int g_source = PROGMAN_REGISTRY_SOURCE_DEFAULTS;
+
+/*
+ * Pool de iconos traidos de los .sxicon de los binarios.
+ *
+ * Cuesta PROGMAN_MAX_ITEMS * 32 * 32 * 4 = 192 KiB de BSS, y es una eleccion
+ * consciente: sin malloc hay que reservar el peor caso, y 192 KiB al lado de
+ * los 8 MiB de arena que el proceso ya tiene mapeados es ruido. La alternativa
+ * -- releer el .sxicon cuando hay que pintar -- pondria I/O de disco adentro
+ * del ciclo de repintado, que es exactamente donde no va.
+ *
+ * Se llena una sola vez, en progman_registry_apply_sxe(), DESPUES del pruning:
+ * el pruning mueve items de indice y dejaria los slots apuntando al item
+ * equivocado.
+ */
+#define PROGMAN_ICON_MAX_EXTENT 32u
+#define PROGMAN_ICON_SLOT_PIXELS (PROGMAN_ICON_MAX_EXTENT * PROGMAN_ICON_MAX_EXTENT)
+
+static uint32_t g_icon_pixels[PROGMAN_MAX_ITEMS][PROGMAN_ICON_SLOT_PIXELS];
+static struct desktop_embedded_bitmap g_icon_bitmaps[PROGMAN_MAX_ITEMS];
 
 struct progman_default_item
 {
@@ -231,6 +252,8 @@ static void begin_item(struct progman_item *pending, int group_index)
     memset(pending, 0, sizeof(*pending));
     pending->icon_id = DESKTOP_ICON_DESKTOP;
     pending->launch_flags = SAVANXP_DESKTOP_LAUNCH_FLAG_NONE;
+    pending->overrides = PROGMAN_OVERRIDE_NONE;
+    pending->icon_slot = PROGMAN_ICON_SLOT_NONE;
     pending->group_index = group_index;
 }
 
@@ -356,9 +379,15 @@ int progman_registry_parse(const char *text, size_t length)
 
             if (has_pending)
             {
+                /*
+                 * Cada clave presente marca su bit de override: es lo que
+                 * despues le dice a apply_sxe que ese campo lo eligio el
+                 * usuario y no debe pisarse con lo que declare el binario.
+                 */
                 if (strcmp(key, "name") == 0)
                 {
                     copy_field(pending.name, sizeof(pending.name), value);
+                    pending.overrides |= PROGMAN_OVERRIDE_NAME;
                 }
                 else if (strcmp(key, "path") == 0)
                 {
@@ -367,14 +396,17 @@ int progman_registry_parse(const char *text, size_t length)
                 else if (strcmp(key, "desc") == 0)
                 {
                     copy_field(pending.description, sizeof(pending.description), value);
+                    pending.overrides |= PROGMAN_OVERRIDE_DESCRIPTION;
                 }
                 else if (strcmp(key, "icon") == 0)
                 {
                     pending.icon_id = icon_id_from_name(value);
+                    pending.overrides |= PROGMAN_OVERRIDE_ICON;
                 }
                 else if (strcmp(key, "flags") == 0)
                 {
                     pending.launch_flags = launch_flags_from_text(value);
+                    pending.overrides |= PROGMAN_OVERRIDE_FLAGS;
                 }
                 /* Claves desconocidas: ignoradas. */
             }
@@ -488,6 +520,128 @@ int progman_registry_prune_missing(progman_path_exists_fn exists)
     }
 
     return dropped;
+}
+
+/* --- recursos SXE --------------------------------------------------------- */
+
+/*
+ * Copia el mejor icono del blob al slot del item. Solo acepta imagenes
+ * cuadradas que entren en el slot: agrandar el pool para un icono gigante
+ * costaria memoria en TODOS los slots, y la grilla dibuja a 32 igual.
+ */
+static int adopt_icon(struct progman_item *item, int slot, const struct sxe_icons *icons)
+{
+    const struct sxe_icon_entry *entry = sxe_icons_best(icons, PROGMAN_ICON_MAX_EXTENT);
+    const uint32_t *pixels = 0;
+
+    if (entry == 0 || entry->width != entry->height || entry->width > PROGMAN_ICON_MAX_EXTENT)
+    {
+        return 0;
+    }
+    pixels = sxe_icons_pixels(icons, entry);
+    if (pixels == 0)
+    {
+        return 0;
+    }
+
+    memcpy(g_icon_pixels[slot], pixels, (size_t)entry->width * entry->height * sizeof(uint32_t));
+    g_icon_bitmaps[slot].width = entry->width;
+    g_icon_bitmaps[slot].height = entry->height;
+    g_icon_bitmaps[slot].pixels = g_icon_pixels[slot];
+    item->icon_slot = slot;
+    return 1;
+}
+
+static int apply_sxe_to_item(struct progman_item *item, int slot, void *meta_buffer, size_t meta_capacity, void *icon_buffer, size_t icon_capacity)
+{
+    struct sxe_meta meta;
+    struct sxe_icons icons;
+    /* Del tamano del campo mas grande que se copia desde el blob. */
+    char text[PROGMAN_DESC_CAPACITY];
+    uint32_t value = 0;
+    int touched = 0;
+
+    if (sxe_load_meta(item->path, meta_buffer, meta_capacity, &meta) == SXE_OK)
+    {
+        /*
+         * Al buffer temporal y no directo al campo: sxe_meta_string vacia el
+         * destino ANTES de buscar el tag, asi que escribir en item->name
+         * borraria el default cuando el binario no declara nombre.
+         */
+        if ((item->overrides & PROGMAN_OVERRIDE_NAME) == 0 &&
+            sxe_meta_string(&meta, SXE_TAG_NAME, text, sizeof(text)) > 0u)
+        {
+            copy_field(item->name, sizeof(item->name), text);
+            touched = 1;
+        }
+        if ((item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0 &&
+            sxe_meta_string(&meta, SXE_TAG_DESCRIPTION, text, sizeof(text)) > 0u)
+        {
+            copy_field(item->description, sizeof(item->description), text);
+            touched = 1;
+        }
+        if ((item->overrides & PROGMAN_OVERRIDE_FLAGS) == 0 &&
+            sxe_meta_u32(&meta, SXE_TAG_LAUNCH_FLAGS, &value))
+        {
+            item->launch_flags = value;
+            touched = 1;
+        }
+    }
+
+    if ((item->overrides & PROGMAN_OVERRIDE_ICON) == 0 &&
+        sxe_load_icons(item->path, icon_buffer, icon_capacity, &icons) == SXE_OK &&
+        adopt_icon(item, slot, &icons))
+    {
+        touched = 1;
+    }
+
+    return touched;
+}
+
+int progman_registry_apply_sxe(void)
+{
+    /*
+     * Estaticos y no en el stack: son 12 KiB de scratch y esta libc corre con
+     * un stack acotado. Es el mismo criterio que el buffer de parseo de
+     * progman_registry_parse().
+     */
+    _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
+    /*
+     * El scratch de iconos va al TOPE DEL FORMATO y no al tamano que hoy
+     * emiten los manifiestos. Ajustarlo a "16 + 32 y listo" haria que un
+     * binario que ademas trae 48x48 se pase de capacidad y se quede sin icono
+     * -- degradado silencioso, y por un blob perfectamente valido. Son 64 KiB
+     * de scratch compartido por todos los items, una sola vez.
+     */
+    _Alignas(4) static uint8_t icon_buffer[SXE_ICON_MAX_BYTES];
+    int index;
+    int touched = 0;
+
+    for (index = 0; index < g_item_count; ++index)
+    {
+        g_items[index].icon_slot = PROGMAN_ICON_SLOT_NONE;
+    }
+    for (index = 0; index < g_item_count; ++index)
+    {
+        if (apply_sxe_to_item(&g_items[index], index, meta_buffer, sizeof(meta_buffer), icon_buffer, sizeof(icon_buffer)))
+        {
+            touched += 1;
+        }
+    }
+    return touched;
+}
+
+const struct desktop_embedded_bitmap *progman_item_icon(const struct progman_item *item)
+{
+    if (item == 0 || item->icon_slot < 0 || item->icon_slot >= PROGMAN_MAX_ITEMS)
+    {
+        return 0;
+    }
+    if (g_icon_bitmaps[item->icon_slot].pixels == 0)
+    {
+        return 0;
+    }
+    return &g_icon_bitmaps[item->icon_slot];
 }
 
 int progman_registry_source(void)
@@ -843,6 +997,108 @@ static void selftest_prune(void)
     expect(progman_item_count() == 2 && progman_group_count() == 2, "prune idempotente conserva");
 }
 
+/*
+ * Precedencia .ini > .sxe > default (docs/SXE_FORMAT.md, fase 3).
+ *
+ * Corre contra los binarios REALES de la imagen, que es la unica forma de
+ * probar esto: el paso que se valida es justamente el que abre el ejecutable.
+ * notepad esta estampado; init no lo esta y nunca lo va a estar, asi que sirve
+ * de control del camino "sin recursos".
+ */
+static void selftest_sxe(void)
+{
+    static const char kText[] =
+        "[group]\n"
+        "name=Main\n"
+        "[item]\n"
+        "path=/bin/notepad\n"
+        "[item]\n"
+        "name=Mi Bloc\n"
+        "path=/bin/notepad\n"
+        "icon=doom\n"
+        "[item]\n"
+        "name=Arranque\n"
+        "desc=PID 1\n"
+        "path=/bin/init\n";
+    const struct progman_item *item;
+    const struct desktop_embedded_bitmap *icon;
+
+    expect(progman_registry_parse(kText, sizeof(kText) - 1) == 3, "sxe fixture 3 items");
+
+    /* Antes de aplicar, nadie tiene icono propio. */
+    item = progman_item_at(0);
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "sin aplicar no hay icon_slot");
+    expect(progman_item_icon(item) == 0, "sin aplicar no hay bitmap");
+
+    /* Los bits de override tienen que reflejar lo que el .ini declaro. */
+    expect(item != 0 && item->overrides == PROGMAN_OVERRIDE_NONE, "item 0 sin overrides");
+    item = progman_item_at(1);
+    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_NAME) != 0, "item 1 override de nombre");
+    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_ICON) != 0, "item 1 override de icono");
+    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0, "item 1 sin override de desc");
+
+    expect(progman_registry_apply_sxe() == 2, "apply_sxe toca 2 items");
+
+    /* Item 0: sin overrides, todo sale del binario. */
+    item = progman_item_at(0);
+    expect(item != 0 && strcmp(item->name, "Notepad") == 0, "nombre desde el .sxmeta");
+    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "descripcion desde el .sxmeta");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "icono desde el .sxicon");
+    icon = progman_item_icon(item);
+    expect(icon != 0 && icon->pixels != 0, "bitmap del icono disponible");
+    expect(icon != 0 && icon->width == 32u && icon->height == 32u, "icono de 32x32");
+
+    /* Item 1: mismo binario, pero el .ini gano donde hablo. */
+    item = progman_item_at(1);
+    expect(item != 0 && strcmp(item->name, "Mi Bloc") == 0, "el nombre del .ini le gana al .sxmeta");
+    expect(item != 0 && item->icon_id == DESKTOP_ICON_DOOM, "el icono del .ini sobrevive");
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "icono overrideado no toma el .sxicon");
+    expect(progman_item_icon(item) == 0, "icono overrideado cae al set horneado");
+    /* Lo que el .ini NO declaro sigue viniendo del binario. */
+    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc sin override viene del .sxmeta");
+
+    /* Item 2: binario sin recursos, se queda con lo declarado. */
+    item = progman_item_at(2);
+    expect(item != 0 && strcmp(item->name, "Arranque") == 0, "binario sin .sxe conserva el nombre");
+    expect(item != 0 && strcmp(item->description, "PID 1") == 0, "binario sin .sxe conserva la desc");
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "binario sin .sxe no tiene icono propio");
+
+    /* Aplicar dos veces no debe duplicar ni corromper nada. */
+    expect(progman_registry_apply_sxe() == 2, "apply_sxe es idempotente");
+    item = progman_item_at(0);
+    expect(item != 0 && strcmp(item->name, "Notepad") == 0, "idempotente conserva el nombre");
+
+#if DESKTOP_INCLUDE_TEST_APPS
+    {
+        /* gfxdemo declara launch_flags=fullscreen en su manifiesto: un item
+         * que no escribe flags= tiene que heredarlo del binario. */
+        static const char kFlagsText[] =
+            "[item]\n"
+            "path=/bin/gfxdemo\n";
+
+        expect(progman_registry_parse(kFlagsText, sizeof(kFlagsText) - 1) == 1, "fixture de flags");
+        (void)progman_registry_apply_sxe();
+        item = progman_item_at(0);
+        expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN,
+            "launch_flags desde el .sxmeta");
+    }
+#endif
+
+    /* Un path que no existe no debe romper el paso ni dejar basura. */
+    {
+        static const char kMissingText[] =
+            "[item]\n"
+            "name=Fantasma\n"
+            "path=/bin/__no_existe__\n";
+
+        expect(progman_registry_parse(kMissingText, sizeof(kMissingText) - 1) == 1, "fixture inexistente");
+        expect(progman_registry_apply_sxe() == 0, "path inexistente no toca nada");
+        item = progman_item_at(0);
+        expect(item != 0 && strcmp(item->name, "Fantasma") == 0, "path inexistente conserva el nombre");
+        expect(progman_item_icon(item) == 0, "path inexistente sin icono");
+    }
+}
+
 int progman_registry_selftest(void)
 {
     g_selftest_failures = 0;
@@ -856,6 +1112,7 @@ int progman_registry_selftest(void)
     selftest_truncation();
     selftest_capacity();
     selftest_empty();
+    selftest_sxe();
 
     return g_selftest_failures;
 }
