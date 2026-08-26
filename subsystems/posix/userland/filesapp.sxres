@@ -1,0 +1,7 @@
+# Recursos SXE del explorador de archivos. Ver docs/SXE_FORMAT.md.
+name=Files
+description=Browse /disk and preview files
+version=system
+vendor=SavanXP
+accent=ba8024
+icon=desktop

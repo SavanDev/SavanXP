@@ -280,6 +280,9 @@ if (-not $SkipLlvm) {
     $manifest["clang"]   = Join-Path $llvmBin "clang.exe"
     $manifest["clangxx"] = Join-Path $llvmBin "clang++.exe"
     $manifest["lld"]     = Join-Path $llvmBin "ld.lld.exe"
+    # Estampado y verificacion de los recursos SXE (docs/SXE_FORMAT.md).
+    $manifest["objcopy"] = Join-Path $llvmBin "llvm-objcopy.exe"
+    $manifest["readelf"] = Join-Path $llvmBin "llvm-readelf.exe"
 }
 
 if (-not $SkipQemu) {

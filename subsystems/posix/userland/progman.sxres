@@ -1,0 +1,11 @@
+# Recursos SXE del Program Manager. Ver docs/SXE_FORMAT.md.
+#
+# Los valores reproducen la presentacion que hoy vive hardcodeada en
+# windowd_appinfo.c y en los defaults de progman_registry.c: la idea de las
+# fases 3 y 4 es borrar esas tablas y que la salida sea identica.
+name=Program Manager
+description=Launcher de programas
+version=system
+vendor=SavanXP
+accent=425c96
+icon=desktop

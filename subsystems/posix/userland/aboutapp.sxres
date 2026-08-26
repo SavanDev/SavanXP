@@ -1,0 +1,7 @@
+# Recursos SXE de la ventana Acerca de. Ver docs/SXE_FORMAT.md.
+name=About
+description=System overview and help
+version=system
+vendor=SavanXP
+accent=3a68be
+icon=desktop

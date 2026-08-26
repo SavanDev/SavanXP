@@ -1,0 +1,7 @@
+# Recursos SXE del diagnostico de mouse. Ver docs/SXE_FORMAT.md.
+name=Mouse Test
+description=Mouse diagnostics
+version=system
+vendor=SavanXP
+accent=9c6826
+icon=app-mouse

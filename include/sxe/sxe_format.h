@@ -69,6 +69,16 @@
  */
 #define SXE_META_VERSION 1u
 
+/*
+ * Los tamanos on-blob se declaran como numeros ademas de derivarse de los
+ * structs. El generador host-side (tools/gen_sxe_resources.py) los lee de aca
+ * en vez de hardcodearlos, y los SXE_STATIC_ASSERT del final verifican que
+ * sigan coincidiendo con los structs reales: si alguien cambia un campo, rompe
+ * el build en vez de emitir blobs que el lector no entiende.
+ */
+#define SXE_META_HEADER_BYTES 16u
+#define SXE_RECORD_HEADER_BYTES 8u
+
 struct sxe_meta_header {
     uint8_t magic[4];      /* 'S','X','M','E' */
     uint16_t version;      /* SXE_META_VERSION */
@@ -146,6 +156,9 @@ struct sxe_record {
 
 #define SXE_ICON_VERSION 1u
 
+#define SXE_ICON_HEADER_BYTES 16u
+#define SXE_ICON_ENTRY_BYTES 16u
+
 struct sxe_icon_header {
     uint8_t magic[4]; /* 'S','X','I','C' */
     uint16_t version; /* SXE_ICON_VERSION */
@@ -192,9 +205,13 @@ struct sxe_icon_entry {
 
 /* --- Verificacion de layout ---------------------------------------------- */
 
-SXE_STATIC_ASSERT(sizeof(struct sxe_meta_header) == 16, "sxe_meta_header debe medir 16 bytes");
-SXE_STATIC_ASSERT(sizeof(struct sxe_record) == 8, "sxe_record debe medir 8 bytes");
-SXE_STATIC_ASSERT(sizeof(struct sxe_icon_header) == 16, "sxe_icon_header debe medir 16 bytes");
-SXE_STATIC_ASSERT(sizeof(struct sxe_icon_entry) == 16, "sxe_icon_entry debe medir 16 bytes");
+SXE_STATIC_ASSERT(sizeof(struct sxe_meta_header) == SXE_META_HEADER_BYTES,
+    "sxe_meta_header no coincide con SXE_META_HEADER_BYTES");
+SXE_STATIC_ASSERT(sizeof(struct sxe_record) == SXE_RECORD_HEADER_BYTES,
+    "sxe_record no coincide con SXE_RECORD_HEADER_BYTES");
+SXE_STATIC_ASSERT(sizeof(struct sxe_icon_header) == SXE_ICON_HEADER_BYTES,
+    "sxe_icon_header no coincide con SXE_ICON_HEADER_BYTES");
+SXE_STATIC_ASSERT(sizeof(struct sxe_icon_entry) == SXE_ICON_ENTRY_BYTES,
+    "sxe_icon_entry no coincide con SXE_ICON_ENTRY_BYTES");
 
 #endif /* SXE_SXE_FORMAT_H */

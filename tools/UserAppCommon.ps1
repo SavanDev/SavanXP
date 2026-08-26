@@ -63,7 +63,11 @@ function Get-UserCompileFlags {
         "-Wpedantic",
         "-Wno-language-extension-token",
         "-Wno-c23-extensions",
-        "-I", (Join-Path $Script:SdkRoot "include")
+        "-I", (Join-Path $Script:SdkRoot "include"),
+        # Formatos compartidos con el host (sxe/sxe_format.h): build.ps1 ya los
+        # expone a las apps in-tree, y una app externa que traiga recursos
+        # tiene que poder leerlos igual.
+        "-I", (Join-Path $Script:ProjectRoot "include")
     )
 }
 
@@ -158,6 +162,135 @@ function Set-AsciiField([byte[]]$Buffer, [int]$Offset, [string]$Text, [int]$Capa
     [Array]::Copy($bytes, 0, $Buffer, $Offset, $count)
 }
 
+# --- Recursos SXE (docs/SXE_FORMAT.md, fase 2) -------------------------------
+#
+# Viven aca y no en build.ps1 para que los dos caminos de build -- el in-tree
+# (build.ps1) y el de apps externas (build-user.ps1) -- estampen con la MISMA
+# implementacion. Duplicar el paso significaria que la verificacion de no-alloc
+# se aplica en uno y no en el otro, que es exactamente el modo de falla que la
+# verificacion existe para evitar.
+
+function Get-PythonExecutable {
+    # "python" primero: en Windows, "python3" suele resolver al alias-stub de
+    # la Microsoft Store (existe para Get-Command pero falla al ejecutarlo).
+    return Require-Executable "python" @("python", "python3")
+}
+
+# llvm-objcopy y llvm-readelf viven al lado de clang en el bundle de LLVM. El
+# manifiesto del toolchain los lista desde el bootstrap, pero el fallback al
+# directorio de clang va ANTES del nombre pelado para que un arbol
+# bootstrapeado antes de que esas claves existieran igual buildee sin depender
+# del PATH.
+function Get-LlvmToolCandidates([string]$Name) {
+    $candidates = [System.Collections.ArrayList]@(Get-ToolchainCandidates $Name)
+    $clang = Resolve-Executable (Get-ToolchainCandidates "clang")
+    if ($clang) {
+        $sibling = Join-Path (Split-Path -Parent $clang) ($Name + [IO.Path]::GetExtension($clang))
+        [void]$candidates.Insert($candidates.Count - 1, $sibling)
+    }
+    return $candidates.ToArray()
+}
+
+# Convierte los manifiestos .sxres que haya en $ManifestDirs a los blobs
+# .sxmeta/.sxicon de $OutputDir.
+function Invoke-SxeResourceGenerator([string[]]$ManifestDirs, [string]$OutputDir) {
+    $existing = @($ManifestDirs | Where-Object { $_ -and (Test-Path $_) })
+    if ($existing.Count -eq 0) {
+        return
+    }
+    Ensure-Directory $OutputDir
+
+    $python = Get-PythonExecutable
+    $arguments = @(
+        (Join-Path $PSScriptRoot "gen_sxe_resources.py"),
+        "--project-root", $Script:ProjectRoot,
+        "--output-dir", $OutputDir
+    )
+    foreach ($directory in $existing) {
+        $arguments += @("--manifest-dir", $directory)
+    }
+
+    # La salida se CAPTURA en vez de dejarla caer al pipeline: esta funcion se
+    # llama desde Build-ExternalUserProgram, y en PowerShell todo lo que un
+    # comando escribe sin capturar se suma al valor de retorno de la funcion
+    # que lo contiene. Un "sxe: N manifiestos" suelto convertia esa ruta
+    # devuelta en un array de dos elementos.
+    $output = & $python @arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $output | ForEach-Object { Write-Host $_ }
+        throw "Fallo la generacion de los recursos SXE."
+    }
+    $output | ForEach-Object { Write-Host $_ }
+}
+
+# Estampa los recursos de un programa en su binario ya linkeado.
+#
+# Las secciones tienen que quedar SIN SHF_ALLOC: si se mapean, cada icono pasa
+# a ser RAM residente por proceso y el argumento entero de meter recursos en el
+# ejecutable se cae EN SILENCIO -- no hay sintoma visible, solo memoria de mas.
+# Por eso la verificacion con readelf no es opcional.
+function Add-SxeResources([string]$Name, [string]$BinaryPath, [string]$ResourceDir, [string]$Objcopy, [string]$Readelf) {
+    $sections = @()
+    foreach ($pair in @(
+        @{ Section = ".sxmeta"; Path = (Join-Path $ResourceDir "$Name.sxmeta") },
+        @{ Section = ".sxicon"; Path = (Join-Path $ResourceDir "$Name.sxicon") }
+    )) {
+        if (Test-Path $pair.Path) {
+            $sections += $pair
+        }
+    }
+    if ($sections.Count -eq 0) {
+        # Sin manifiesto no se toca el binario. Un ejecutable sin recursos es
+        # un ejecutable de primera clase (docs/SXE_FORMAT.md).
+        return
+    }
+
+    if (-not $Objcopy) { $Objcopy = Require-Executable "llvm-objcopy" (Get-LlvmToolCandidates "llvm-objcopy") }
+    if (-not $Readelf) { $Readelf = Require-Executable "llvm-readelf" (Get-LlvmToolCandidates "llvm-readelf") }
+
+    $objcopyArguments = @()
+    foreach ($pair in $sections) {
+        $objcopyArguments += @("--add-section", "$($pair.Section)=$($pair.Path)")
+    }
+    $stamped = "$BinaryPath.sxe-tmp"
+    # Capturada por el mismo motivo que en Invoke-SxeResourceGenerator: nada de
+    # esta funcion debe llegar al pipeline de quien la llama.
+    $objcopyOutput = & $Objcopy @objcopyArguments $BinaryPath $stamped 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $objcopyOutput | ForEach-Object { Write-Host $_ }
+        throw "Fallo el estampado de recursos SXE en '$Name'."
+    }
+    Move-Item -Path $stamped -Destination $BinaryPath -Force
+
+    # --section-details imprime el valor CRUDO de sh_flags en hexa, asi que la
+    # comprobacion es el bit exacto (SHF_ALLOC = 0x2) y no depende de columnas
+    # ni de los nombres que readelf le ponga a los flags.
+    $details = & $Readelf --section-details $BinaryPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "No se pudieron leer los section headers de '$Name'."
+    }
+    foreach ($pair in $sections) {
+        $found = $false
+        for ($index = 0; $index -lt $details.Count; $index += 1) {
+            if ($details[$index] -notmatch "^\s*\[\s*\d+\]\s+$([regex]::Escape($pair.Section))\s*$") {
+                continue
+            }
+            $found = $true
+            $flagsLine = if ($index + 2 -lt $details.Count) { $details[$index + 2] } else { "" }
+            if ($flagsLine -notmatch '^\s*\[([0-9a-fA-F]{16})\]') {
+                throw "No se pudo leer sh_flags de $($pair.Section) en '$Name'."
+            }
+            if (([Convert]::ToUInt64($Matches[1], 16) -band 0x2) -ne 0) {
+                throw "La seccion $($pair.Section) de '$Name' quedo marcada SHF_ALLOC: se mapearia en cada proceso."
+            }
+            break
+        }
+        if (-not $found) {
+            throw "El binario '$Name' no quedo con la seccion $($pair.Section) tras el estampado."
+        }
+    }
+}
+
 function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 48) {
     $compiler = Require-Executable "clang" (Get-ToolchainCandidates "clang")
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
@@ -230,6 +363,12 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo el link de '$SourcePath'."
     }
+
+    # Una app externa declara sus recursos con un <nombre>.sxres al lado de su
+    # fuente. Sin manifiesto el binario sale igual que siempre.
+    $resourceRoot = Join-Path $objectRoot "sxe"
+    Invoke-SxeResourceGenerator -ManifestDirs @($sourceSpec.Root) -OutputDir $resourceRoot
+    Add-SxeResources -Name $ProgramName -BinaryPath $outputFull -ResourceDir $resourceRoot
 
     return $outputFull
 }

@@ -1,0 +1,13 @@
+# Recursos SXE del Bloc de notas. Ver docs/SXE_FORMAT.md.
+#
+# mime_open/ext_open declaran CAPACIDAD, no asociacion: que el Bloc de notas
+# diga que puede abrir text/plain no lo convierte en el que abre los .txt. Esa
+# es politica del usuario y se resuelve en el registro (fase 5).
+name=Notepad
+description=Edit text files
+version=system
+vendor=SavanXP
+accent=78643c
+icon=app-notepad
+mime_open=text/plain
+ext_open=.txt,.ini,.cfg,.md

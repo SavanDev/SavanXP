@@ -1,11 +1,13 @@
 # Formato SXE — ejecutables con recursos propios
 
-> **Estado: fase 1 COMPLETA, en master.** El formato canónico vive en
-> [include/sxe/sxe_format.h](../include/sxe/sxe_format.h) y el lector del SDK en
+> **Estado: fases 1 y 2 COMPLETAS, en master.** El formato canónico vive en
+> [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), el lector del SDK en
 > [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
-> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), validado por
-> `build.ps1 sxe-smoke`. Siguen las fases 2 a 5 del final del documento:
-> estampado en build, y consumo en progman/windowd/filesapp.
+> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), y el estampado en
+> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`.
+> Todo validado por `build.ps1 sxe-smoke`, incluido el round trip completo
+> manifiesto → blob → ELF → lector. Siguen las fases 3 a 5 del final del
+> documento: el consumo en progman/windowd/filesapp.
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -337,23 +339,77 @@ registro **resuelve la asociación**.
 
 ## Integración con el build
 
-El estampado es un paso más en `tools/UserAppCommon.ps1`, después del link:
+### El manifiesto `.sxres`
 
+Cada programa declara sus recursos en un `<nombre>.sxres` **al lado de su
+fuente**. La convención es todo lo que hay que saber: si el archivo existe se
+estampa, si no existe el binario sale exactamente como antes. Nada que
+registrar en `build.ps1`.
+
+```ini
+# subsystems/posix/userland/notepad.sxres
+name=Notepad
+description=Edit text files
+version=system
+vendor=SavanXP
+accent=78643c
+icon=app-notepad
+mime_open=text/plain
+ext_open=.txt,.ini,.cfg,.md
 ```
-llvm-objcopy --add-section .sxmeta=app.sxmeta \
-             --add-section .sxicon=app.sxicon \
-             app app.sxe
+
+| clave | valor |
+|---|---|
+| `name`, `description`, `vendor`, `copyright`, `build_id`, `version_string`, `interpreter` | texto, tal cual |
+| `version` | `1.2.3`, hasta 4 componentes — o `system`, que lo resuelve contra `include/shared/version.h` |
+| `accent` | `RRGGBB` en hexa (acepta `#` o `0x` adelante) |
+| `launch_flags` | lista por comas; los nombres salen de `SAVANXP_DESKTOP_LAUNCH_FLAG_*` |
+| `subsystem` | `posix` o `native` |
+| `icon` | nombre de asset bajo `assets/desktop/icons/{16x16,32x32}/<icon>.png` — igual que `progman.ini` lo referencia hoy |
+| `mime_open`, `ext_open` | listas por comas |
+
+**`version=system` existe para que los programas del sistema no queden stale.**
+Hardcodear `0.3.3` en nueve manifiestos sería la misma duplicación que este
+diseño evita en todo lo demás.
+
+### El generador
+
+[tools/gen_sxe_resources.py](../tools/gen_sxe_resources.py) convierte los
+manifiestos en blobs. **No duplica ni un número**: magics, tags, versiones,
+tamaños y topes salen de `include/sxe/sxe_format.h`; los flags de lanzamiento
+de `savanxp/syscall.h`; el OSABI nativo de `savanxp_native.h`. Es el criterio
+de `Assert-Svfs2FormatMatchesHeader` — un formato copiado a mano entre lector y
+generador se desincroniza, y la falla es silenciosa.
+
+Al revés que el parser de runtime, que ignora lo que no entiende para poder
+leer binarios más nuevos, **el generador es estricto**: una clave desconocida,
+un icono faltante o un flag inexistente rompen el build. Un typo en un
+manifiesto tiene que fallar, no dejar la app sin icono en silencio.
+
+### El estampado
+
+```bash
+llvm-objcopy --add-section .sxmeta=app.sxmeta --add-section .sxicon=app.sxicon app app
 ```
 
-`--add-section` crea secciones sin `SHF_ALLOC` por defecto, que es justo lo que
-se quiere — pero conviene **verificarlo** con `llvm-readelf -S`, porque si
-alguna vez aparece la flag `A` el costo aparece en RAM y en silencio.
+`--add-section` crea secciones sin `SHF_ALLOC`, que es lo que se quiere — pero
+se **verifica** igual, leyendo el valor crudo de `sh_flags` con
+`llvm-readelf --section-details` y chequeando el bit `0x2`. Si alguna vez
+aparece, el costo se paga en RAM por proceso y **sin ningún síntoma visible**:
+esa es exactamente la clase de regresión que necesita un guard automático.
 
-Lo que falta definir del lado del build: cómo declara cada app sus recursos
-(un `app.sxres` al lado del fuente, parseado por `tools/new-user-app.ps1` y
-`build-user.ps1`), y de dónde salen los PNG. El pipeline de
-`gen_desktop_icon_assets.py` ya sabe convertir PNG → BGRA8888; acá tiene que
-emitir un blob por app en vez de un `.h` con todo el set.
+`Add-SxeResources` e `Invoke-SxeResourceGenerator` viven en
+`tools/UserAppCommon.ps1`, no en `build.ps1`, para que los dos caminos de build
+—el in-tree y el de apps externas (`build-user.ps1`)— estampen con la misma
+implementación. Duplicar el paso significaría que la verificación de no-alloc
+se aplica en uno y no en el otro.
+
+> **Gotcha de PowerShell:** todo lo que un comando escribe sin capturar se suma
+> al valor de retorno de la función que lo contiene. Un `sxe: N manifiestos`
+> suelto convirtió la ruta que devuelve `Build-ExternalUserProgram` en un array
+> de dos elementos, y el build se rompió lejos de ahí (busybox copiando a un
+> "drive" llamado `sxe`). Por eso las invocaciones de python y objcopy capturan
+> su salida y la reemiten con `Write-Host`.
 
 ## Fases sugeridas
 
@@ -364,9 +420,11 @@ emitir un blob por app en vez de un `.h` con todo el set.
    contra blobs fabricados en el stack — bien formados y todos los degradados
    que ningún generador correcto produciría — y el camino de disco contra los
    binarios reales de la imagen.
-2. **Estampado en build.** Blobs por app y el paso de `llvm-objcopy`, con la
-   verificación de no-alloc. Todavía nadie los lee: los binarios simplemente
-   engordan un poco en disco.
+2. ~~**Estampado en build.**~~ **HECHA.** Manifiestos `.sxres` por app,
+   generador host-side header-driven, estampado con `llvm-objcopy` y guard de
+   no-alloc por bit de `sh_flags` — compartido entre el build in-tree y el de
+   apps externas. Nueve programas del sistema estampados; todavía nadie los
+   lee, así que lo único que cambia es que los binarios engordan ~5 KiB.
 3. **progman consume.** Iconos y nombres salen del `.sxe`; `progman.ini` pasa a
    ser arreglo. Acá se ve el resultado por primera vez.
 4. **windowd consume.** El WM lee el `.sxe` al crear la ventana (sin tocar el

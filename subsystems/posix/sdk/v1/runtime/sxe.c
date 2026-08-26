@@ -3,6 +3,8 @@
  * para el diseno.
  */
 
+#include "shared/version.h"
+
 #include "savanxp/libc.h"
 #include "savanxp/sxe.h"
 
@@ -1305,6 +1307,11 @@ static void selftest_extension(void)
  * binario NORMAL, sin recursos, se resuelva limpio como "sin metadata" y no
  * como un error que impida lanzarlo.
  */
+/*
+ * Camino de disco contra binarios SIN recursos. init es el sujeto a proposito:
+ * es PID 1, no tiene ventana, y por lo tanto nunca va a tener un .sxres que
+ * invalide estos checks.
+ */
 static void selftest_disk(void)
 {
     _Alignas(4) uint8_t buffer[SXE_META_MAX_BYTES];
@@ -1312,9 +1319,9 @@ static void selftest_disk(void)
     struct sxe_icons icons;
     size_t length = 1u;
 
-    expect(sxe_load_meta("/bin/progman", buffer, sizeof(buffer), &meta) == SXE_ABSENT,
+    expect(sxe_load_meta("/bin/init", buffer, sizeof(buffer), &meta) == SXE_ABSENT,
         "binario sin .sxmeta");
-    expect(sxe_load_icons("/bin/progman", buffer, sizeof(buffer), &icons) == SXE_ABSENT,
+    expect(sxe_load_icons("/bin/init", buffer, sizeof(buffer), &icons) == SXE_ABSENT,
         "binario sin .sxicon");
     expect(sxe_load_meta("/disk/bin/__no_instalado__", buffer, sizeof(buffer), &meta) == SXE_ABSENT,
         "path inexistente");
@@ -1325,19 +1332,110 @@ static void selftest_disk(void)
      * seccion: sin este check, un matcher que no acierta nunca se veria
      * exactamente igual que "este binario no trae recursos".
      */
-    expect(sxe_read_section("/bin/progman", ".text", buffer, 16u, &length) == SXE_TOO_LARGE,
+    expect(sxe_read_section("/bin/init", ".text", buffer, 16u, &length) == SXE_TOO_LARGE,
         ".text encontrado");
     expect(length == 0u, "TOO_LARGE no reporta largo");
 
     /* Prefijo de un nombre real: el comparador exige el NUL, asi que no matchea. */
-    expect(sxe_read_section("/bin/progman", ".tex", buffer, sizeof(buffer), &length) == SXE_ABSENT,
+    expect(sxe_read_section("/bin/init", ".tex", buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "prefijo de nombre no matchea");
-    expect(sxe_read_section("/bin/progman", ".no_existe", buffer, sizeof(buffer), &length) == SXE_ABSENT,
+    expect(sxe_read_section("/bin/init", ".no_existe", buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "seccion inexistente");
 
     /* Un archivo que no es ELF se resuelve como ausente, no como error. */
     expect(sxe_read_section("/disk/wallpaper.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "archivo que no es ELF");
+}
+
+/*
+ * Round trip completo de la fase 2: manifiesto .sxres -> generador host-side
+ * -> llvm-objcopy -> este lector, contra el binario real de la imagen.
+ *
+ * Es el unico check que prueba las tres piezas JUNTAS. El parseo en memoria
+ * puede estar perfecto y el estampado igual producir basura -- secciones con
+ * el nombre mal, blobs cortados, endianness dada vuelta -- y nada de eso se
+ * veria en los tests de blobs fabricados a mano.
+ *
+ * El sujeto es notepad porque es el manifiesto mas completo: es el unico con
+ * las dos listas separadas por NUL.
+ */
+static void selftest_stamped(void)
+{
+    _Alignas(4) uint8_t buffer[SXE_META_MAX_BYTES];
+    _Alignas(4) uint8_t icon_buffer[8192];
+    struct sxe_meta meta;
+    struct sxe_icons icons;
+    const struct sxe_icon_entry* entry = 0;
+    char text[64];
+    uint16_t version[SXE_VERSION_COMPONENTS];
+    uint32_t value = 0;
+
+    if (sxe_load_meta("/bin/notepad", buffer, sizeof(buffer), &meta) != SXE_OK)
+    {
+        expect(0, "notepad estampado con .sxmeta");
+        return;
+    }
+
+    expect(sxe_meta_string(&meta, SXE_TAG_NAME, text, sizeof(text)) == 7u &&
+        strcmp(text, "Notepad") == 0, "NAME estampado");
+    expect(sxe_meta_string(&meta, SXE_TAG_DESCRIPTION, text, sizeof(text)) == 15u &&
+        strcmp(text, "Edit text files") == 0, "DESCRIPTION estampada");
+    expect(sxe_meta_string(&meta, SXE_TAG_VENDOR, text, sizeof(text)) == 7u &&
+        strcmp(text, "SavanXP") == 0, "VENDOR estampado");
+    expect(sxe_meta_u32(&meta, SXE_TAG_ACCENT, &value) == 1 && value == 0x78643cu,
+        "ACCENT estampado");
+
+    /*
+     * El manifiesto dice 'version=system' y el generador lo resuelve contra
+     * include/shared/version.h. Comparar contra los mismos macros -- y no
+     * contra numeros escritos a mano -- es lo que evita que este check quede
+     * stale en el proximo bump de version.
+     */
+    expect(sxe_meta_version(&meta, version) == 1 &&
+        version[0] == SAVANXP_VERSION_MAJOR &&
+        version[1] == SAVANXP_VERSION_MINOR &&
+        version[2] == SAVANXP_VERSION_PATCH &&
+        version[3] == 0u, "VERSION resuelta desde version.h");
+    expect(sxe_meta_string(&meta, SXE_TAG_VERSION_STRING, text, sizeof(text)) > 0u,
+        "VERSION_STRING derivada");
+
+    /* Las listas separadas por NUL sobreviven al viaje por el ELF. */
+    expect(sxe_meta_list_count(&meta, SXE_TAG_MIME_OPEN) == 1, "cuenta de MIME_OPEN estampada");
+    expect(sxe_meta_list_at(&meta, SXE_TAG_MIME_OPEN, 0, text, sizeof(text)) == 10u &&
+        strcmp(text, "text/plain") == 0, "MIME_OPEN estampado");
+    expect(sxe_meta_list_count(&meta, SXE_TAG_EXT_OPEN) == 4, "cuenta de EXT_OPEN estampada");
+    expect(sxe_meta_list_at(&meta, SXE_TAG_EXT_OPEN, 0, text, sizeof(text)) == 4u &&
+        strcmp(text, ".txt") == 0, "EXT_OPEN[0] estampado");
+    expect(sxe_meta_list_at(&meta, SXE_TAG_EXT_OPEN, 3, text, sizeof(text)) == 3u &&
+        strcmp(text, ".md") == 0, "EXT_OPEN[3] estampado");
+
+    /* Un tag que el manifiesto no declara sigue ausente, no en cero. */
+    expect(sxe_meta_u32(&meta, SXE_TAG_LAUNCH_FLAGS, &value) == 0,
+        "LAUNCH_FLAGS ausente en notepad");
+
+    /* .sxmeta no entra en el buffer chico que alcanza para los iconos y
+     * viceversa: el tope del formato no es el tope del llamador. */
+    expect(sxe_load_icons("/bin/notepad", buffer, sizeof(buffer), &icons) == SXE_TOO_LARGE,
+        ".sxicon no entra en 4 KiB");
+
+    if (sxe_load_icons("/bin/notepad", icon_buffer, sizeof(icon_buffer), &icons) != SXE_OK)
+    {
+        expect(0, "notepad estampado con .sxicon");
+        return;
+    }
+    expect(icons.image_count == 2u, "dos tamanos estampados");
+    entry = sxe_icons_best(&icons, SXE_ICON_SIZE_SMALL);
+    expect(entry != 0 && entry->width == SXE_ICON_SIZE_SMALL && entry->height == SXE_ICON_SIZE_SMALL,
+        "icono chico estampado");
+    entry = sxe_icons_best(&icons, SXE_ICON_SIZE_LARGE);
+    expect(entry != 0 && entry->width == SXE_ICON_SIZE_LARGE && entry->height == SXE_ICON_SIZE_LARGE,
+        "icono grande estampado");
+    expect(entry != 0 && sxe_icons_pixels(&icons, entry) != 0, "pixeles accesibles");
+
+    /* Un binario del sistema sin icono declarado no debe traer .sxicon: el
+     * blob viejo no puede quedar pegado de un build anterior. */
+    expect(sxe_load_icons("/bin/init", icon_buffer, sizeof(icon_buffer), &icons) == SXE_ABSENT,
+        "init sigue sin .sxicon");
 }
 
 int sxe_selftest(void)
@@ -1353,6 +1451,7 @@ int sxe_selftest(void)
     selftest_icons();
     selftest_extension();
     selftest_disk();
+    selftest_stamped();
 
     return g_sxe_selftest_failures;
 }

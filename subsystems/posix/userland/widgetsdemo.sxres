@@ -1,0 +1,7 @@
+# Recursos SXE de la galeria de controles sxgui. Ver docs/SXE_FORMAT.md.
+name=Widgets
+description=sxgui control gallery
+version=system
+vendor=SavanXP
+accent=606e8c
+icon=desktop

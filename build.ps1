@@ -40,6 +40,8 @@ $EfiBootRoot = Join-Path $ImageRoot "EFI/BOOT"
 $RootfsBuild = Join-Path $BuildRoot "rootfs"
 $DiskBuildRoot = Join-Path $BuildRoot "diskfs"
 $GeneratedRoot = Join-Path $BuildRoot "generated"
+# Blobs .sxmeta/.sxicon que se estampan en los binarios (docs/SXE_FORMAT.md).
+$SxeResourceRoot = Join-Path $GeneratedRoot "sxe"
 $DiskRoot = Join-Path $ProjectRoot "diskfs"
 $BusyBoxPortRoot = Join-Path $ProjectRoot "vendor/busybox-port"
 $InitramfsPath = Join-Path $BuildRoot "initramfs.cpio"
@@ -573,12 +575,6 @@ function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
     }
 }
 
-function Get-PythonExecutable {
-    # "python" primero: en Windows, "python3" suele resolver al alias-stub de
-    # la Microsoft Store (existe para Get-Command pero falla al ejecutarlo).
-    return Require-Executable "python" @("python", "python3")
-}
-
 function Generate-CursorAsset {
     New-Directory $GeneratedRoot
 
@@ -608,6 +604,14 @@ function Generate-DesktopIconAssets {
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la generacion de desktop_icon_assets.h."
     }
+}
+
+# Los blobs .sxmeta/.sxicon de todos los programas in-tree, en una sola corrida
+# de python: el costo es el arranque del interprete, no el trabajo. El
+# estampado en si lo hace Add-SxeResources (tools/UserAppCommon.ps1), compartido
+# con el camino de apps externas.
+function Generate-SxeResources {
+    Invoke-SxeResourceGenerator -ManifestDirs @($PosixUserlandRoot) -OutputDir $SxeResourceRoot
 }
 
 function Get-KernelCompileEdges([string[]]$Sources) {
@@ -681,6 +685,11 @@ function Build-Userland([string]$Linker, [object[]]$Programs) {
 
     Copy-Item (Join-Path $ProjectRoot "rootfs/README") (Join-Path $RootfsBuild "README") -Force
 
+    # Se resuelven una sola vez para todo el loop: Resolve-Executable consulta
+    # el disco en cada llamada y aca hay decenas de programas.
+    $objcopy = Require-Executable "llvm-objcopy" (Get-LlvmToolCandidates "llvm-objcopy")
+    $readelf = Require-Executable "llvm-readelf" (Get-LlvmToolCandidates "llvm-readelf")
+
     foreach ($program in $Programs) {
         $outputPath = Join-Path $binRoot $program.Name
         $linkArgs = @(
@@ -695,6 +704,8 @@ function Build-Userland([string]$Linker, [object[]]$Programs) {
         if ($LASTEXITCODE -ne 0) {
             throw "Fallo el link de userland para $($program.Name)."
         }
+
+        Add-SxeResources -Name $program.Name -BinaryPath $outputPath -ResourceDir $SxeResourceRoot -Objcopy $objcopy -Readelf $readelf
     }
 
     New-Initramfs -SourceRoot $RootfsBuild -OutputPath $InitramfsPath
@@ -765,6 +776,7 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
 
     Generate-CursorAsset
     Generate-DesktopIconAssets
+    Generate-SxeResources
 
     $kernelPlan = Get-KernelCompileEdges $KernelSources
     $uacpiPlan = Get-UacpiCompileEdges

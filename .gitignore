@@ -12,6 +12,7 @@ tools/*
 !tools/gen_cursor_asset.py
 !tools/gen_desktop_source_art.py
 !tools/gen_desktop_icon_assets.py
+!tools/gen_sxe_resources.py
 !tools/GenerateDefaultWallpaper.py
 !tools/font/
 !tools/font/**

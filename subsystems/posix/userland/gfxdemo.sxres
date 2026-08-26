@@ -1,0 +1,10 @@
+# Recursos SXE de la demo de rasterizacion 2D. Ver docs/SXE_FORMAT.md.
+#
+# launch_flags es el DEFAULT del programa: quien lanza puede sobrescribirlo.
+name=Gfx Demo
+description=2D rendering test
+version=system
+vendor=SavanXP
+accent=228e60
+icon=app-libgfx-demo
+launch_flags=fullscreen

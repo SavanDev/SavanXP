@@ -1,0 +1,7 @@
+# Recursos SXE del diagnostico de teclado. Ver docs/SXE_FORMAT.md.
+name=Key Test
+description=Keyboard diagnostics
+version=system
+vendor=SavanXP
+accent=296fbc
+icon=app-keyboard-settings
