@@ -10,10 +10,14 @@
 > (asociaciones de archivo en filesapp). Validado por `sxe-smoke`,
 > `progman-smoke`, `windowd-smoke` y `filesapp-smoke`.
 >
-> Pendientes conocidos, anotados en su lugar: **Doom sin estampar** (se
-> construye aparte), **el angostado de `desktop_icons`** (espera a Doom), la
+> **Todos los programas de la imagen están estampados**, Doom incluido: el
+> catálogo de progman reporta `applied=9 of 9`.
+>
+> Pendientes conocidos, anotados en su lugar: **el angostado de
+> `desktop_icons`** (ya no lo bloquea Doom, sí el `icon=` de `progman.ini`), la
 > **resolución por MIME** (necesita una capa de detección de tipo que no
-> existe) y el **costo del escaneo de asociaciones**, ya medido.
+> existe), el **costo del escaneo de asociaciones** —ya medido— y el
+> **renombre a `.sxe`**, que nunca se hizo.
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -311,13 +315,14 @@ de diálogos y chrome del WM no pertenecen a ninguna app y siguen horneados. Lo
 que se va del set son los iconos *de aplicación*, que es lo que nunca debió
 estar ahí.
 
-> **Angostarlo todavía no, y a propósito.** Al cerrar la fase 4 los iconos de
-> aplicación del set siguen siendo la red de seguridad de tres cosas que aún
-> dependen de ellos: Doom (que se construye aparte y no está estampado), el
-> `icon=` de `progman.ini` —que referencia el set por nombre— y la tabla
-> fallback de `windowd_appinfo`. Sacarlos ahora cambiaría un fallback que
-> funciona por unos pocos KiB de imagen. El momento correcto es después de
-> estampar Doom y de rediseñar el `icon=` del `.ini`.
+> **Angostarlo todavía no, y a propósito.** Con Doom ya estampado cayó uno de
+> los tres motivos, pero quedan dos: el `icon=` de `progman.ini` referencia el
+> set **por nombre** (sacar entradas rompería un `icon=doom` escrito a mano), y
+> la tabla fallback de `windowd_appinfo` los usa cuando un binario no trae
+> `.sxicon`. Sacarlos ahora cambiaría un fallback que funciona por unos pocos
+> KiB de imagen. El paso que destraba esto es rediseñar el `icon=` del `.ini`
+> —por ejemplo, que apunte al programa cuyo icono tomar prestado— y recién
+> entonces angostar.
 
 ### Decisión: el WM lee los recursos, no viajan por el protocolo
 

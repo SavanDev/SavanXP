@@ -270,18 +270,22 @@ int windowd_presentation_selftest(void)
         "presentacion: init cae al icono horneado");
 
     /*
-     * En la tabla pero sin estampar: Doom. Da nombre y accent propios, pero el
-     * icono sigue saliendo del set horneado. Es el escalon intermedio de la
-     * precedencia, y el unico caso que lo ejercita hoy.
+     * Escalon de la tabla. Doom ya trae recursos propios, pero se instala con
+     * un build APARTE: en esta imagen puede estar o no, asi que su icono no es
+     * un hecho estable y afirmar algo sobre el seria un test que pasa por
+     * casualidad.
+     *
+     * Lo que SI es estable es fallback_icon_id: ese campo lo llena unicamente
+     * la tabla por path, nunca el blob. Verificarlo prueba que el escalon
+     * corrio, este Doom instalado o no.
      */
     windowd_presentation_load(&presentation, "/disk/bin/doomgeneric");
     expect(strcmp(windowd_presentation_label(&presentation, "/disk/bin/doomgeneric"), "Doom") == 0,
-        "presentacion: nombre de doom desde la tabla");
+        "presentacion: nombre de doom");
     expect(windowd_presentation_accent(&presentation) == WINDOWD_RGB_LITERAL(181, 81, 55),
-        "presentacion: accent de doom desde la tabla");
-    expect(presentation.icon_extent == 0u, "presentacion: doom sin icono propio");
-    expect(windowd_presentation_icon(&presentation, &storage) == desktop_icon_small(DESKTOP_ICON_DOOM),
-        "presentacion: doom cae al icono horneado de la tabla");
+        "presentacion: accent de doom");
+    expect(presentation.fallback_icon_id == (uint32_t)DESKTOP_ICON_DOOM,
+        "presentacion: la tabla aporto el icono de fallback de doom");
 
     /* Path inexistente y path nulo: no deben romper nada. */
     windowd_presentation_load(&presentation, "/bin/__no_existe__");

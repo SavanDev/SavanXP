@@ -1,0 +1,18 @@
+# Recursos SXE del port de DoomGeneric. Ver docs/SXE_FORMAT.md.
+#
+# Los valores reproducen la presentacion que hasta ahora vivia hardcodeada en
+# windowd_appinfo.c y en los defaults de progman_registry.c, que eran el unico
+# lugar donde este programa tenia identidad: se construye con un build APARTE
+# (sdk/doomgeneric/build.ps1), asi que era el ultimo que seguia cayendo al
+# fallback del set horneado.
+#
+# La version es la del motor (PACKAGE_STRING de config.h), NO la del sistema:
+# esto no se envia con SavanXP, es un port de terceros que se instala aparte.
+name=Doom
+description=Classic FPS test port
+version=0.1
+version_string=Doom Generic 0.1
+vendor=doomgeneric
+accent=b55137
+icon=app-spider
+launch_flags=fullscreen

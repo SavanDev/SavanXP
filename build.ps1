@@ -1237,8 +1237,26 @@ function Run-WindowdSmokeQemu {
     Run-AutomationQemu -AutomationCommand "windowd-selftest" -SuccessToken "WINDOWD SMOKE PASS" -FailureToken "WINDOWD SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Doom se construye con un build APARTE (sdk/doomgeneric/build.ps1) y no entra
+# en la imagen que arma este script, asi que cada rebuild lo borra del disco.
+# Esto lo REINSTALA si ya esta compilado -- no lo compila --, para que el
+# harness pueda ejercitarlo. Sin Doom instalado los smokes siguen corriendo
+# igual: el pruning lo descarta, que es justamente el caso que ya validan.
+function Restore-ExternalDoom {
+    $doomElf = Join-Path $BuildRoot "external/doomgeneric.elf"
+    if (-not (Test-Path $doomElf)) {
+        return
+    }
+    Install-SvfsFilesWithTool $DiskImage @(
+        @{ Dir = "bin" }
+        @{ File = "/disk/bin/doomgeneric"; Source = $doomElf }
+    )
+}
+
 function Run-ProgmanSmokeQemu {
-    Run-AutomationQemu -AutomationCommand "progman-selftest" -SuccessToken "PROGMAN SMOKE PASS" -FailureToken "PROGMAN SMOKE FAIL" -TimeoutMinutes 3
+    Run-AutomationQemu -AutomationCommand "progman-selftest" -SuccessToken "PROGMAN SMOKE PASS" -FailureToken "PROGMAN SMOKE FAIL" -TimeoutMinutes 3 -PreLaunch {
+        Restore-ExternalDoom
+    }
 }
 
 # Lector de recursos SXE (docs/SXE_FORMAT.md, fase 1). El grueso del selftest
