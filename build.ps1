@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -213,7 +213,11 @@ $UserPrograms = @(
     @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c"; Test = $true },
     @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c"; Test = $true },
     @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c"; Test = $true },
-    @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c"; Test = $true }
+    @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c"; Test = $true },
+    @{ Name = "sxetest"; Sources = @(
+        "subsystems/posix/userland/sxetest.c",
+        "subsystems/posix/sdk/v1/runtime/sxe.c"
+    ); Test = $true }
 )
 
 $BusyBoxApplets = @(
@@ -1218,6 +1222,15 @@ function Run-ProgmanSmokeQemu {
     Run-AutomationQemu -AutomationCommand "progman-selftest" -SuccessToken "PROGMAN SMOKE PASS" -FailureToken "PROGMAN SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Lector de recursos SXE (docs/SXE_FORMAT.md, fase 1). El grueso del selftest
+# es parseo puro en memoria -- blobs bien formados y todos los degradados que
+# ningun generador correcto produciria --, mas el camino de disco contra los
+# binarios reales de la imagen, que hoy no traen recursos y deben resolverse
+# limpio como "sin metadata".
+function Run-SxeSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "sxe-selftest" -SuccessToken "SXE SMOKE PASS" -FailureToken "SXE SMOKE FAIL" -TimeoutMinutes 3
+}
+
 # Harness headless del camino de red (subsystems/posix/userland/nettest.c):
 # valida el driver del NIC de punta a punta -- presencia por PCI, MAC propia,
 # ARP, tx y rx -- haciendo ICMP echo contra el gateway del user-net de QEMU
@@ -1270,6 +1283,9 @@ switch ($Command) {
     }
     "progman-smoke" {
         Run-ProgmanSmokeQemu
+    }
+    "sxe-smoke" {
+        Run-SxeSmokeQemu
     }
     "net-smoke" {
         Run-NetSmokeQemu

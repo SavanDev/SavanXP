@@ -1,8 +1,13 @@
 # Formato SXE — ejecutables con recursos propios
 
-> **Estado: diseño acordado, sin implementar.** Este documento define el
-> formato; la implementación (lector del SDK, estampado en build, consumo en
-> progman/windowd/filesapp) es trabajo posterior.
+> **Estado: fase 1 COMPLETA, en master.** El formato canónico vive en
+> [include/sxe/sxe_format.h](../include/sxe/sxe_format.h) y el lector del SDK en
+> [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
+> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), validado por
+> `build.ps1 sxe-smoke`. Siguen las fases 2 a 5 del final del documento:
+> estampado en build, y consumo en progman/windowd/filesapp.
+>
+> Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
 > **Decisión-crux:** SXE **no es un contenedor**. Es una convención sobre ELF:
 > el archivo sigue empezando en `7F 45 4C 46`, lo carga el mismo
@@ -177,13 +182,20 @@ struct sxe_icon_entry {
     uint16_t height;
     uint32_t format;    /* SXE_ICON_FORMAT_* */
     uint32_t offset;    /* desde el inicio del blob */
-    uint32_t length;    /* = width * height * 4 en ARGB8888 */
+    uint32_t length;    /* = width * height * 4 en BGRA8888 */
 };
 ```
 
 | formato | valor | descripción |
 |---|---|---|
-| `SXE_ICON_FORMAT_ARGB8888` | `1` | `uint32` por píxel, `0xAARRGGBB`, filas de arriba hacia abajo, sin padding de fila |
+| `SXE_ICON_FORMAT_BGRA8888` | `2` | `uint32` por píxel, `0xAARRGGBB` (en memoria: B,G,R,A), filas de arriba hacia abajo, sin padding de fila |
+
+El **valor 2 no es arbitrario**: coincide a propósito con `SX_PIXEL_FORMAT_BGRA8888`
+de [gfx2d.h:18](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:18), para que
+los píxeles de un `.sxicon` se le pasen a un `struct sx_bitmap` sin traducir
+nada. `sxe.c` tiene un `_Static_assert` que rompe el build si alguien renumera
+los formatos de gfx2d — el modo de falla alternativo serían colores dados
+vuelta en tiempo de ejecución.
 
 Ese es **exactamente** lo que ya produce
 [gen_desktop_icon_assets.py](../tools/gen_desktop_icon_assets.py)
@@ -196,7 +208,7 @@ existente **sin conversión**.
 (48×48) son válidos y opcionales. Regla de selección del lector: exacto, si no
 el menor que sea ≥ al pedido, si no el más grande disponible.
 
-**Tope:** 64 KiB. Con 16+32+48 en ARGB8888 se usan ~16 KiB, así que hay
+**Tope:** 64 KiB. Con 16+32+48 en BGRA8888 se usan ~16 KiB, así que hay
 margen de sobra.
 
 ## Retrocompatibilidad
@@ -280,7 +292,7 @@ al crear la ventana.** No se agranda `savanxp_desktop_launch_request`.
 La alternativa era mandar la presentación inline en el request. Se descartó:
 
 - `savanxp_desktop_launch_request` hoy son 388 bytes (flags + path + argument).
-  Un icono de 16×16 en ARGB8888 son 1 KiB más — el mensaje se agranda ~4× y
+  Un icono de 16×16 en BGRA8888 son 1 KiB más — el mensaje se agranda ~4× y
   entra en territorio de **lecturas parciales de pipe**, una clase de bug que ya
   mordió antes en este sistema y que no vale la pena reabrir por un icono.
 - Habría **dos fuentes** para el mismo dato (lo que progman parseó y lo que dice
@@ -340,13 +352,18 @@ alguna vez aparece la flag `A` el costo aparece en RAM y en silencio.
 Lo que falta definir del lado del build: cómo declara cada app sus recursos
 (un `app.sxres` al lado del fuente, parseado por `tools/new-user-app.ps1` y
 `build-user.ps1`), y de dónde salen los PNG. El pipeline de
-`gen_desktop_icon_assets.py` ya sabe convertir PNG → ARGB8888; acá tiene que
+`gen_desktop_icon_assets.py` ya sabe convertir PNG → BGRA8888; acá tiene que
 emitir un blob por app en vez de un `.h` con todo el set.
 
 ## Fases sugeridas
 
-1. **Formato + lector.** `savanxp/sxe.h` + runtime en el SDK, con un self-test
-   que valide parseo, truncados, tags desconocidos, `REQUIRED` y topes.
+1. ~~**Formato + lector.**~~ **HECHA.** El formato canónico en
+   `include/sxe/sxe_format.h` (freestanding, C/C++, con static asserts de
+   layout), el lector en `savanxp/sxe.h` + `runtime/sxe.c`, y el harness
+   `build.ps1 sxe-smoke` (`/disk/bin/sxetest`). El parseo puro se ejercita
+   contra blobs fabricados en el stack — bien formados y todos los degradados
+   que ningún generador correcto produciría — y el camino de disco contra los
+   binarios reales de la imagen.
 2. **Estampado en build.** Blobs por app y el paso de `llvm-objcopy`, con la
    verificación de no-alloc. Todavía nadie los lee: los binarios simplemente
    engordan un poco en disco.
