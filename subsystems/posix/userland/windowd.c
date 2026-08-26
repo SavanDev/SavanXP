@@ -1554,6 +1554,15 @@ static int start_client_process(struct windowd_client *client, const char *path,
         memcpy(client->path, path, path_length);
         client->path[path_length] = '\0';
     }
+    /*
+     * Unico lugar donde el WM toca disco por cliente: se lee el .sxe del
+     * binario recien lanzado para sacar titulo, icono y accent
+     * (docs/SXE_FORMAT.md, fase 4). El costo esta acotado por la cantidad de
+     * ventanas abiertas, no por el tamano de un directorio, y se paga al crear
+     * la ventana -- que ya es el momento mas caro del ciclo. No puede fallar:
+     * sin recursos se queda con el fallback de la tabla.
+     */
+    windowd_presentation_load(&client->presentation, client->path);
     client->pid = pid;
     client->input_write_fd = input_pipe[1];
     client->mouse_write_fd = mouse_pipe[1];
@@ -2285,6 +2294,14 @@ static int windowd_selftest(void)
     if (windowd_region_selftest() != 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL region subtract primitive\n");
+        return 1;
+    }
+
+    /* Antes de levantar la sesion: la presentacion se resuelve leyendo del
+     * disco y no depende del compositor (docs/SXE_FORMAT.md, fase 4). */
+    if (windowd_presentation_selftest() != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL presentacion desde recursos SXE\n");
         return 1;
     }
 

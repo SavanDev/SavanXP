@@ -1,14 +1,17 @@
 # Formato SXE — ejecutables con recursos propios
 
-> **Estado: fases 1, 2 y 3 COMPLETAS, en master.** El formato canónico vive en
+> **Estado: fases 1 a 4 COMPLETAS, en master.** El formato canónico vive en
 > [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), el lector del SDK en
 > [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
 > [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), el estampado en
 > [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`, y
-> el primer consumidor es `progman_registry_apply_sxe()`. Validado por
-> `build.ps1 sxe-smoke` y `build.ps1 progman-smoke`, que reportan el round trip
-> completo manifiesto → blob → ELF → lector → launcher. Siguen las fases 4 y 5:
-> windowd y las asociaciones mime.
+> los consumidores son `progman_registry_apply_sxe()` (launcher) y
+> `windowd_presentation_load()` (chrome de ventana y Task List). Validado por
+> `sxe-smoke`, `progman-smoke` y `windowd-smoke`. Sigue la **fase 5**: las
+> asociaciones mime.
+>
+> Pendientes arrastrados, anotados en su lugar: **Doom sin estampar** (se
+> construye aparte) y **el angostado de `desktop_icons`**, que espera a Doom.
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -287,6 +290,14 @@ de diálogos y chrome del WM no pertenecen a ninguna app y siguen horneados. Lo
 que se va del set son los iconos *de aplicación*, que es lo que nunca debió
 estar ahí.
 
+> **Angostarlo todavía no, y a propósito.** Al cerrar la fase 4 los iconos de
+> aplicación del set siguen siendo la red de seguridad de tres cosas que aún
+> dependen de ellos: Doom (que se construye aparte y no está estampado), el
+> `icon=` de `progman.ini` —que referencia el set por nombre— y la tabla
+> fallback de `windowd_appinfo`. Sacarlos ahora cambiaría un fallback que
+> funciona por unos pocos KiB de imagen. El momento correcto es después de
+> estampar Doom y de rediseñar el `icon=` del `.ini`.
+
 ### Decisión: el WM lee los recursos, no viajan por el protocolo
 
 **El WM abre el `.sxe` del path que lanzó y lee `.sxmeta` + `.sxicon` una vez,
@@ -458,9 +469,12 @@ se aplica en uno y no en el otro.
    visualmente**, y eso es lo correcto: los manifiestos reproducen la
    presentación que antes vivía en las tablas. Lo que cambió es de dónde
    salen los datos.
-4. **windowd consume.** El WM lee el `.sxe` al crear la ventana (sin tocar el
-   protocolo), `windowd_appinfo` a fallback. `desktop_icons` se angosta a
-   iconos de sistema.
+4. ~~**windowd consume.**~~ **HECHA.** `windowd_presentation_load()` resuelve
+   título, icono de 16×16 y accent leyendo el `.sxe` del binario que acaba de
+   lanzar, una sola vez, en `start_client_process()`. **Cero cambios de
+   protocolo**, como estaba decidido. `windowd_appinfo` quedó como escalón de
+   fallback y `desktop_icons` sigue entero — ver arriba por qué angostarlo
+   todavía no.
 5. **Asociaciones.** `MIME_OPEN`/`EXT_OPEN` + resolución en el registro +
    filesapp abriendo archivos con el programa asociado, vía el campo `argument`
    del launch request que ya existe.

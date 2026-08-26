@@ -180,12 +180,12 @@ unsigned long windowd_current_clock_stamp(char *buffer)
 
 static const char *window_title_for_client(const struct windowd_client *client)
 {
-    const struct windowd_appinfo *item = client != 0 ? windowd_appinfo_for_path(client->path) : 0;
-    if (item != 0)
+    if (client == 0)
     {
-        return item->label;
+        return "App";
     }
-    return client != 0 && client->path[0] != '\0' ? client->path : "App";
+    /* Ya resuelto al crear la ventana: .sxmeta > tabla por path > el path. */
+    return windowd_presentation_label(&client->presentation, client->path);
 }
 
 static void draw_button(struct sx_painter *painter, struct sx_rect rect, uint32_t face, int pressed)
@@ -350,10 +350,10 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
     struct sx_bitmap bitmap;
     struct sx_rect surface_rect;
     struct sx_rect frame_rect;
-    const struct windowd_appinfo *item = windowd_appinfo_for_path(client->path);
-    const struct desktop_embedded_bitmap *icon = item != 0 ? desktop_icon_small(item->icon_id) : desktop_icon_small(DESKTOP_ICON_DESKTOP);
+    struct desktop_embedded_bitmap icon_storage;
+    const struct desktop_embedded_bitmap *icon = windowd_presentation_icon(&client->presentation, &icon_storage);
     uint32_t title_colour = client != 0 && client->active
-        ? (item != 0 ? item->accent : gfx_rgb(59, 95, 156))
+        ? windowd_presentation_accent(&client->presentation)
         : gfx_rgb(126, 132, 142);
     uint32_t frame_face = client != 0 && client->active
         ? gfx_rgb(208, 212, 219)
@@ -557,7 +557,6 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
         int slot = -1;
         const struct windowd_client *client = windowd_task_client(session, task_index, &is_shell, &slot);
         struct sx_rect row = windowd_tasklist_item_rect(info, task_count, index);
-        const struct windowd_appinfo *item = 0;
         const char *label = "Ventana";
         int selected = (task_index == session->tasklist_selected);
 
@@ -565,8 +564,7 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
         {
             continue;
         }
-        item = windowd_appinfo_for_path(client->path);
-        label = item != 0 ? item->label : window_title_for_client(client);
+        label = window_title_for_client(client);
 
         if (selected)
         {

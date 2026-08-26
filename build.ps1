@@ -156,7 +156,9 @@ $UserPrograms = @(
     @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
     @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c"; Test = $true },
     @{ Name = "compositord"; Source = "subsystems/posix/userland/compositord.c" },
+    # windowd lee los recursos SXE del binario que lanza (fase 4).
     @{ Name = "windowd"; Sources = @(
+        "subsystems/posix/sdk/v1/runtime/sxe.c",
         "subsystems/posix/userland/windowd.c",
         "subsystems/posix/userland/windowd_compositor_client.c",
         "subsystems/posix/userland/desktop_icons.c",

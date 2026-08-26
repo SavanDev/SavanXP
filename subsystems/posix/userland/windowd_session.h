@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libc.h"
+#include "windowd_appinfo.h"
 #include "windowd_compositor_client.h"
 
 #define WINDOWD_MAX_OVERLAY_CLIENTS 12
@@ -18,6 +19,9 @@ struct windowd_client
     /* Owned copy: launch requests arrive in stack buffers that die with the
      * request, so pointing at the caller's string would dangle. */
     char path[WINDOWD_CLIENT_PATH_CAPACITY];
+    /* Titulo, icono y accent resueltos desde el .sxe del binario, una sola vez
+     * al crear la ventana (docs/SXE_FORMAT.md, fase 4). */
+    struct windowd_presentation presentation;
     long pid;
     int section_fd;
     int input_write_fd;
