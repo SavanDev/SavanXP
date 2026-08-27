@@ -12,6 +12,35 @@ Notas de corte:
 
 ### Agregado
 
+- **La apertura de VRAM entera se mapea write-combining.** El firmware mapea
+  solo el modo visible (4000 KiB de los 16 MiB que hay), y eso era el techo de
+  todo: sin mas memoria mapeada el doble buffer solo entraba en el modo bajo de
+  fullscreen. Ahora `fb_gpu` pregunta al propio dispi cuanta VRAM hay y mapea la
+  apertura completa, asi que **el doble buffer tambien anda en el escritorio
+  nativo**.
+
+  El tipo de memoria se elige buscando en `IA32_PAT` que indice quedo
+  configurado como write-combining, en vez de asumir el layout: el bootloader
+  ya deja PAT armado y no hace falta tocar el MSR. Si ninguna entrada es WC se
+  copia el tipo que el firmware le puso al scanout. Write-combining es lo que
+  corresponde a un framebuffer -- escrituras en rafaga que nadie relee.
+
+  Antes de confiar en el mapeo nuevo se verifica que sea de verdad la misma
+  memoria: se escribe un patron por una vista y se lee por la otra (con
+  `sfence`, porque con write-combining la escritura puede quedar en un buffer).
+  Si no coinciden, la direccion fisica deducida estaba mal y se descarta el
+  mapeo en vez de escribir en cualquier lado.
+
+  API nueva en `vm::`: `kPagePat`, `map_kernel_device_memory` (como
+  `map_kernel_mmio` pero sin forzar cache-disable, que para un framebuffer lo
+  volveria inutilizablemente lento), `kernel_page_cache_flags` y
+  `write_combining_page_flags`. `map_kernel_mmio` pasa a ser una envoltura.
+
+  **Bug corregido de paso**: leer los bits de cacheo de un mapeo exige
+  distinguir paginas grandes. En una pagina de 2 MiB el bit 7 es PS, no PAT --
+  el bit PAT es el 12 --, y el framebuffer de Limine viene mapeado justamente
+  asi. Interpretar PS como PAT hacia leer un tipo de memoria equivocado.
+
 - **Doble buffer por panning en el framebuffer plano (sin tearing).** Con alto
   virtual del doble que el visible, la VRAM guarda dos frames y el registro
   `Y_OFFSET` de dispi elige cual se muestra. El compositor compone siempre
@@ -19,30 +48,26 @@ Notas de corte:
   escanea un buffer a medio escribir. El flip es una sola escritura de
   registro, o sea atomico para el que escanea.
 
-  Se activa solo si los dos buffers entran en lo que hay **mapeado**, y ahi
-  esta el limite: Limine publica como region de framebuffer exactamente el modo
-  visible (4000 KiB para 1280x800), no la apertura de VRAM -- que existe y son
-  16 MiB, segun el propio dispi. O sea que hoy el doble buffer entra en el modo
-  bajo de fullscreen (640x400 -> 2 MiB) y **no** en el escritorio nativo, que
-  seguiria necesitando mapear la apertura entera con write-combining. Eso pide
-  configurar PAT y un flag de pagina nuevo, y quedo afuera a proposito.
+  Se activa solo si los dos buffers entran en lo que hay **mapeado**. Con la
+  apertura de VRAM entera mapeada (ver arriba) eso incluye el escritorio
+  nativo; sin ella habria quedado limitado al modo bajo de fullscreen.
 
   Antes de confiar en el panning se lo prueba: se escribe `Y_OFFSET` y se
   relee. Un dispositivo que acepte el alto virtual pero ignore el registro
   dejaria el flip sin efecto y la pantalla congelada en un buffer, que es peor
   que el tearing; si el probe falla se queda en un solo buffer.
 
-  Decision de diseno: con dos buffers, el que se va a componer tiene el
-  contenido de hace DOS frames, asi que un present parcial arrastraria pixeles
-  viejos. En vez de llevar la cuenta del dano de frames anteriores para
-  reaplicarlo, **se copia la superficie entera en cada present**. Es
-  deliberado: el modo bajo existe para apps a pantalla completa, que repintan
-  todo y ya mandaban `FULL_SURFACE`, asi que en el caso real no cuesta nada, y
-  evita una maquinaria de bookkeeping que solo se podria verificar mirando la
-  pantalla. Los caminos crudos parciales (consola) siguen escribiendo sobre el
-  buffer visible, y al soltarse la sesion grafica el doble buffer se apaga y
-  `Y_OFFSET` vuelve a 0, porque la consola escribe al inicio del scanout y no
-  sabe nada de paginas alternas.
+  Que camino toma cada frame lo decide **el present, no el modo**. Una
+  superficie completa se compone sobre el buffer oculto y se flipea: es el
+  camino sin tearing, y el que usan las apps a pantalla completa. Un present de
+  dano parcial escribe directo sobre el buffer visible y no flipea, porque el
+  otro buffer esta dos frames atrasado: para poder flipear habria que copiar la
+  superficie ENTERA por cada rect sucio -- 4 MiB para mover el cursor -- y ese
+  precio es mucho peor que el tearing que evita. Asi el escritorio conserva su
+  optimizacion de dano y las apps fullscreen quedan sin tearing, sin necesidad
+  de llevar la cuenta del dano de frames anteriores. Al soltarse la sesion
+  grafica el doble buffer se apaga y `Y_OFFSET` vuelve a 0, porque la consola
+  escribe al inicio del scanout y no sabe nada de paginas alternas.
 
   `boot::FramebufferInfo` gana `mapped_bytes`: los bytes que el mapa de memoria
   dice que hay detras del scanout. Reemplaza al modo nativo como techo para

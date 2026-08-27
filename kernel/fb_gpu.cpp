@@ -86,6 +86,7 @@ constexpr uint16_t kDispiRegisterVirtWidth = 0x6;
 constexpr uint16_t kDispiRegisterVirtHeight = 0x7;
 constexpr uint16_t kDispiRegisterXOffset = 0x8;
 constexpr uint16_t kDispiRegisterYOffset = 0x9;
+constexpr uint16_t kDispiRegisterVideoMemory64K = 0xa;
 
 // Los ID validos van de ID0 a ID5; VirtualBox reporta uno de los bajos y QEMU
 // el mas alto, asi que se acepta el rango entero.
@@ -119,6 +120,77 @@ uint16_t dispi_read(uint16_t index) {
 bool detect_dispi() {
     const uint16_t id = dispi_read(kDispiRegisterId);
     return id >= kDispiIdMin && id <= kDispiIdMax;
+}
+
+// El firmware mapea solo el modo visible, pero detras hay toda la apertura de
+// VRAM: dispi dice cuanta hay. Mapear el resto es lo que habilita el doble
+// buffer en resoluciones grandes, donde dos buffers no entran en lo que dejo
+// Limine.
+//
+// Tipo de memoria: se prefiere write-combining, que es lo que corresponde a un
+// framebuffer -- escrituras en rafaga que nadie relee. El indice de IA32_PAT
+// configurado asi se busca en runtime en vez de asumirlo. Si no hay ninguno se
+// copia el tipo que el firmware le puso al scanout, que es lo seguro.
+//
+// Queda un alias: los primeros bytes de la apertura estan mapeados dos veces,
+// por el firmware y por nosotros, y si elegimos WC los dos tipos difieren.
+// Despues del cambio de vista no se vuelve a tocar la del firmware, y la
+// consola se muda con nosotros, asi que en la practica hay un solo escritor.
+// Quedo la apertura mapeada write-combining (lo deseable) o con el tipo que le
+// puso el firmware al scanout (el repliegue).
+bool g_aperture_write_combining = false;
+
+bool remap_vram_aperture() {
+    const uint64_t vram_blocks = dispi_read(kDispiRegisterVideoMemory64K);
+    const uint64_t aperture_bytes = vram_blocks * 64u * 1024u;
+    if (vram_blocks == 0 || aperture_bytes <= g_mapped_bytes) {
+        return false;
+    }
+
+    void* const firmware_view = g_fb_base;
+    const uint64_t firmware_virtual = reinterpret_cast<uint64_t>(firmware_view);
+    if (firmware_virtual <= vm::hhdm_offset()) {
+        return false;
+    }
+
+    uint64_t cache_flags = 0;
+    const bool write_combining = vm::write_combining_page_flags(cache_flags);
+    if (!write_combining && !vm::kernel_page_cache_flags(firmware_virtual, cache_flags)) {
+        return false;
+    }
+
+    void* aperture = nullptr;
+    if (!vm::map_kernel_device_memory(
+            firmware_virtual - vm::hhdm_offset(), aperture_bytes, cache_flags, &aperture) ||
+        aperture == nullptr) {
+        return false;
+    }
+
+    // Confirmar que la vista nueva es de verdad la misma memoria antes de
+    // confiar en ella: escribir por una y leer por la otra. Si la direccion
+    // fisica que dedujimos no era la del scanout, no coinciden. El sfence esta
+    // porque con write-combining la escritura puede quedar en un buffer y no
+    // verse todavia desde el otro mapeo.
+    auto* firmware_pixels = static_cast<volatile uint32_t*>(firmware_view);
+    auto* aperture_pixels = static_cast<volatile uint32_t*>(aperture);
+    const uint32_t saved = firmware_pixels[0];
+    const uint32_t probe = saved ^ 0xA5A5A5A5u;
+    aperture_pixels[0] = probe;
+    asm volatile("sfence" ::: "memory");
+    const bool aliases_same_memory = firmware_pixels[0] == probe;
+    firmware_pixels[0] = saved;
+    asm volatile("sfence" ::: "memory");
+
+    if (!aliases_same_memory) {
+        (void)vm::unmap_kernel_pages(
+            aperture, (aperture_bytes + memory::kPageSize - 1u) / memory::kPageSize);
+        return false;
+    }
+
+    g_fb_base = aperture;
+    g_mapped_bytes = aperture_bytes;
+    g_aperture_write_combining = write_combining;
+    return true;
 }
 
 bool ready() {
@@ -557,25 +629,38 @@ bool release_surface(uint32_t surface_id) {
     return true;
 }
 
-bool present_surface_rect(const ImportedSurface& surface, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool present_surface_rect(
+    uint64_t destination_offset,
+    const ImportedSurface& surface,
+    uint32_t x,
+    uint32_t y,
+    uint32_t width,
+    uint32_t height) {
     if (surface.virtual_address == nullptr) {
         return false;
     }
     const auto* origin = static_cast<const uint8_t*>(surface.virtual_address) +
         (static_cast<uint64_t>(y) * surface.info.pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
-    return blit_rect(g_back_offset_bytes, origin, surface.info.pitch, x, y, width, height);
+    return blit_rect(destination_offset, origin, surface.info.pitch, x, y, width, height);
 }
 
-// Compone un frame en el buffer de atras y lo muestra. Con doble buffer ignora
-// los rects y copia la superficie entera, porque el destino esta dos frames
-// atrasado (ver el comentario del estado); sin doble buffer respeta el dano que
-// mando el cliente, que es el camino de siempre.
+// Compone un frame y lo muestra. Que camino toma lo decide el present, no el
+// modo:
+//
+// - Superficie completa: se compone sobre el buffer que NO se ve y se flipea.
+//   Es el camino sin tearing, y el que usan las apps a pantalla completa.
+// - Dano parcial: se escribe directo sobre el buffer visible, sin flipear. Con
+//   doble buffer el otro buffer esta dos frames atrasado, asi que para poder
+//   flipear habria que copiar la superficie ENTERA por cada rect sucio -- 4 MiB
+//   para mover el cursor. Ese precio es mucho peor que el tearing que evita, y
+//   lo pagaria el escritorio en cada frame.
 bool present_surface_damage(
     const ImportedSurface& surface,
     const savanxp_gpu_dirty_rect* rects,
     uint32_t rect_count) {
-    if (g_double_buffered || rects == nullptr || rect_count == 0) {
-        if (!present_surface_rect(surface, 0, 0, surface.info.width, surface.info.height)) {
+    if (rects == nullptr || rect_count == 0) {
+        if (!present_surface_rect(
+                g_back_offset_bytes, surface, 0, 0, surface.info.width, surface.info.height)) {
             return false;
         }
         flip_back_buffer();
@@ -590,11 +675,11 @@ bool present_surface_damage(
             rect.height > (surface.info.height - rect.y)) {
             continue;
         }
-        if (!present_surface_rect(surface, rect.x, rect.y, rect.width, rect.height)) {
+        if (!present_surface_rect(
+                g_front_offset_bytes, surface, rect.x, rect.y, rect.width, rect.height)) {
             return false;
         }
     }
-    flip_back_buffer();
     return true;
 }
 
@@ -805,10 +890,18 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         ? framebuffer.mapped_bytes
         : g_fb_info.buffer_size;
     g_dispi_available = detect_dispi();
-    console::printf("fb_gpu: %ux%u nativo, %u KiB mapeados, mode-setting %s\n",
+    if (g_dispi_available && remap_vram_aperture()) {
+        // Solo con dispi tiene sentido: es quien reporta el tamano de la VRAM y
+        // el unico camino que puede usar lo que hay de mas. Si el scanout se
+        // mudo a la vista nueva, la consola tiene que seguirlo o dibujaria en
+        // el mapeo viejo.
+        console::set_external_framebuffer(g_fb_base, g_fb_info);
+    }
+    console::printf("fb_gpu: %ux%u nativo, %u KiB mapeados (%s), mode-setting %s\n",
         g_native_info.width,
         g_native_info.height,
         static_cast<uint32_t>(g_mapped_bytes / 1024u),
+        g_aperture_write_combining ? "write-combining" : "tipo del firmware",
         g_dispi_available ? "por VBE dispi" : "no disponible");
 
     memset(&g_gpu_stats, 0, sizeof(g_gpu_stats));

@@ -23,7 +23,14 @@ enum PageFlags : uint64_t {
     kPageUser = 1ULL << 2,
     kPageWriteThrough = 1ULL << 3,
     kPageCacheDisable = 1ULL << 4,
+    // Bit PAT. SOLO valido en la entrada de ultimo nivel: en un PDE/PDPTE el
+    // mismo bit es PS y crearia una pagina grande. map_kernel_page lo aplica
+    // unicamente a la hoja, que es lo que lo hace seguro de pasar aca.
+    kPagePat = 1ULL << 7,
 };
+
+// Los tres bits que eligen el tipo de memoria (indice en IA32_PAT).
+constexpr uint64_t kPageCacheMask = kPageWriteThrough | kPageCacheDisable | kPagePat;
 
 struct VmSpace {
     struct SectionView {
@@ -54,6 +61,17 @@ bool unmap_section_view(VmSpace& space, uint64_t base_address);
 bool map_kernel_pages(const uint64_t* physical_pages, uint64_t page_count, uint64_t flags, void** virtual_base);
 bool unmap_kernel_pages(void* virtual_base, uint64_t page_count);
 bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base);
+// Como map_kernel_mmio pero sin forzar cache-disable: el que llama elige el
+// tipo de memoria via los bits de kPageCacheMask. Para un framebuffer eso
+// importa -- mapearlo UC lo vuelve inutilizablemente lento.
+bool map_kernel_device_memory(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base);
+// Bits de cacheo (kPageCacheMask) de un mapeo de kernel que ya existe. Sirve
+// para mapear mas de un dispositivo exactamente como lo dejo el firmware, sin
+// tener que interpretar el layout de IA32_PAT que este haya elegido.
+bool kernel_page_cache_flags(uint64_t virtual_address, uint64_t& flags);
+// Bits de pagina que seleccionan write-combining, buscando en IA32_PAT que
+// indice quedo configurado asi. false si ninguno lo esta.
+bool write_combining_page_flags(uint64_t& flags);
 uint64_t current_pml4();
 uint64_t hhdm_offset();
 uint64_t* physical_to_virtual(uint64_t physical_address);

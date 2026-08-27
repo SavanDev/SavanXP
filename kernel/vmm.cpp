@@ -741,7 +741,7 @@ bool unmap_kernel_pages(void* virtual_base, uint64_t page_count) {
     return unmapped_any;
 }
 
-bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base) {
+bool map_kernel_device_memory(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base) {
     if (!g_ready || g_kernel_mmio_base == 0 || virtual_base == nullptr || size == 0) {
         return false;
     }
@@ -762,7 +762,7 @@ bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void**
         if (!map_kernel_page(
                 mapping_base + offset,
                 aligned_physical + offset,
-                (flags | vm::kPageWrite | vm::kPageCacheDisable) & ~vm::kPageUser)) {
+                (flags | vm::kPageWrite) & ~vm::kPageUser)) {
             for (uint64_t rollback = 0; rollback < mapped_bytes; rollback += memory::kPageSize) {
                 (void)unmap_kernel_page(mapping_base + rollback);
             }
@@ -774,6 +774,89 @@ bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void**
     g_kernel_mmio_next = mapping_base + total_bytes;
     *virtual_base = reinterpret_cast<void*>(mapping_base + intra_page_offset);
     return true;
+}
+
+bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base) {
+    // Registros de dispositivo: siempre sin cachear.
+    return map_kernel_device_memory(
+        physical_base, size, flags | vm::kPageCacheDisable, virtual_base);
+}
+
+bool kernel_page_cache_flags(uint64_t virtual_address, uint64_t& flags) {
+    if (!g_ready) {
+        return false;
+    }
+
+    uint64_t* table = vm::physical_to_virtual(g_kernel_pml4_physical);
+    if (table == nullptr) {
+        return false;
+    }
+
+    for (int level = 3; level >= 0; --level) {
+        const uint64_t index = (virtual_address >> (12 + (level * 9))) & 0x1FFull;
+        const uint64_t entry = table[index];
+        if ((entry & vm::kPagePresent) == 0) {
+            return false;
+        }
+
+        // Una entrada intermedia con PS prendido ya ES la hoja: es una pagina
+        // grande. Ahi PWT y PCD estan en el mismo lugar pero el bit PAT es el
+        // 12, no el 7 (que es justamente el PS). Hay que traducirlo al encoding
+        // de una pagina de 4 KiB, que es lo que devuelve esta funcion.
+        // Confundirlos hace leer PS como PAT y elegir el tipo de memoria
+        // equivocado -- el framebuffer de Limine viene mapeado asi.
+        const bool large_page = level > 0 && (entry & (1ull << 7)) != 0;
+        if (large_page || level == 0) {
+            uint64_t cache_bits = entry & (vm::kPageWriteThrough | vm::kPageCacheDisable);
+            const uint64_t pat_bit = large_page ? (1ull << 12) : vm::kPagePat;
+            if ((entry & pat_bit) != 0) {
+                cache_bits |= vm::kPagePat;
+            }
+            flags = cache_bits;
+            return true;
+        }
+
+        table = vm::physical_to_virtual(entry & kPageMask);
+        if (table == nullptr) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool write_combining_page_flags(uint64_t& flags) {
+    if (!g_ready) {
+        return false;
+    }
+
+    // Que indice de IA32_PAT quedo configurado como write-combining lo decide
+    // el firmware, asi que se busca en vez de asumirlo. Limine deja WC en una
+    // entrada propia pero mapea el framebuffer con otra (write-through), que es
+    // segura pero no la mejor para escrituras en rafaga a VRAM.
+    uint32_t pat_low = 0;
+    uint32_t pat_high = 0;
+    asm volatile("rdmsr" : "=a"(pat_low), "=d"(pat_high) : "c"(0x277u));
+    const uint64_t pat = (static_cast<uint64_t>(pat_high) << 32) | pat_low;
+
+    constexpr uint64_t kMemoryTypeWriteCombining = 0x01;
+    for (uint64_t index = 0; index < 8; ++index) {
+        if (((pat >> (index * 8)) & 0xFFull) != kMemoryTypeWriteCombining) {
+            continue;
+        }
+        uint64_t cache_bits = 0;
+        if ((index & 1u) != 0) {
+            cache_bits |= vm::kPageWriteThrough;
+        }
+        if ((index & 2u) != 0) {
+            cache_bits |= vm::kPageCacheDisable;
+        }
+        if ((index & 4u) != 0) {
+            cache_bits |= vm::kPagePat;
+        }
+        flags = cache_bits;
+        return true;
+    }
+    return false;
 }
 
 uint64_t current_pml4() {
