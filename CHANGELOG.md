@@ -12,6 +12,42 @@ Notas de corte:
 
 ### Agregado
 
+- **Doble buffer por panning en el framebuffer plano (sin tearing).** Con alto
+  virtual del doble que el visible, la VRAM guarda dos frames y el registro
+  `Y_OFFSET` de dispi elige cual se muestra. El compositor compone siempre
+  sobre el que NO esta a la vista y despues se flipea, asi el host nunca
+  escanea un buffer a medio escribir. El flip es una sola escritura de
+  registro, o sea atomico para el que escanea.
+
+  Se activa solo si los dos buffers entran en lo que hay **mapeado**, y ahi
+  esta el limite: Limine publica como region de framebuffer exactamente el modo
+  visible (4000 KiB para 1280x800), no la apertura de VRAM -- que existe y son
+  16 MiB, segun el propio dispi. O sea que hoy el doble buffer entra en el modo
+  bajo de fullscreen (640x400 -> 2 MiB) y **no** en el escritorio nativo, que
+  seguiria necesitando mapear la apertura entera con write-combining. Eso pide
+  configurar PAT y un flag de pagina nuevo, y quedo afuera a proposito.
+
+  Antes de confiar en el panning se lo prueba: se escribe `Y_OFFSET` y se
+  relee. Un dispositivo que acepte el alto virtual pero ignore el registro
+  dejaria el flip sin efecto y la pantalla congelada en un buffer, que es peor
+  que el tearing; si el probe falla se queda en un solo buffer.
+
+  Decision de diseno: con dos buffers, el que se va a componer tiene el
+  contenido de hace DOS frames, asi que un present parcial arrastraria pixeles
+  viejos. En vez de llevar la cuenta del dano de frames anteriores para
+  reaplicarlo, **se copia la superficie entera en cada present**. Es
+  deliberado: el modo bajo existe para apps a pantalla completa, que repintan
+  todo y ya mandaban `FULL_SURFACE`, asi que en el caso real no cuesta nada, y
+  evita una maquinaria de bookkeeping que solo se podria verificar mirando la
+  pantalla. Los caminos crudos parciales (consola) siguen escribiendo sobre el
+  buffer visible, y al soltarse la sesion grafica el doble buffer se apaga y
+  `Y_OFFSET` vuelve a 0, porque la consola escribe al inicio del scanout y no
+  sabe nada de paginas alternas.
+
+  `boot::FramebufferInfo` gana `mapped_bytes`: los bytes que el mapa de memoria
+  dice que hay detras del scanout. Reemplaza al modo nativo como techo para
+  cambiar de modo, y es lo que decide si el doble buffer entra.
+
 - **El backend de framebuffer plano puede cambiar de modo (VBE de Bochs).**
   Hasta ahora `fb_gpu` aceptaba unicamente la resolucion que dejaba el
   firmware: `set_mode` rechazaba cualquier otra cosa y el conector no anunciaba

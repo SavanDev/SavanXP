@@ -210,6 +210,32 @@ boot::BootInfo build_boot_info() {
         info.memory_map = g_memory_regions;
         info.memory_map_entries = copied_entries;
 
+        // Cuanto hay mapeado de verdad detras del framebuffer. Limine entrega
+        // una direccion del HHDM y publica la apertura entera como region de
+        // tipo framebuffer, asi que el resto de la VRAM ya esta accesible sin
+        // mapear nada nuevo. Sin region que la contenga se cae al modo que
+        // entrego el firmware, que es lo unico garantizado.
+        if (info.framebuffer.available && info.framebuffer.address != nullptr) {
+            const uint64_t framebuffer_physical =
+                reinterpret_cast<uint64_t>(info.framebuffer.address) - info.hhdm_offset;
+            for (size_t index = 0; index < copied_entries; ++index) {
+                const boot::MemoryRegion& region = g_memory_regions[index];
+                if (region.type != boot::MemoryRegionType::framebuffer ||
+                    framebuffer_physical < region.base ||
+                    framebuffer_physical >= region.base + region.length) {
+                    continue;
+                }
+                info.framebuffer.mapped_bytes =
+                    (region.base + region.length) - framebuffer_physical;
+                break;
+            }
+
+            const uint64_t minimum_bytes = info.framebuffer.pitch * info.framebuffer.height;
+            if (info.framebuffer.mapped_bytes < minimum_bytes) {
+                info.framebuffer.mapped_bytes = minimum_bytes;
+            }
+        }
+
         if (entry_count > copied_entries) {
             console::printf(
                 "warning: memmap truncated from %u to %u entries\n",

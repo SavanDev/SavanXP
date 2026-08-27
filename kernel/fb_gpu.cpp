@@ -37,9 +37,35 @@ uint64_t g_next_present_sequence = 1;
 uint64_t g_last_submitted_present_sequence = 0;
 uint64_t g_last_retired_present_sequence = 0;
 
-// Modo que dejo el firmware. Es el techo de lo que podemos pedir -- ver
-// mode_fits_mapping() -- y el modo al que se vuelve.
+// Modo que dejo el firmware: el modo al que se vuelve.
 savanxp_fb_info g_native_info = {};
+// Bytes mapeados detras del scanout (la apertura de VRAM, no solo el modo
+// nativo). Es el techo real de mode_fits_mapping.
+uint64_t g_mapped_bytes = 0;
+
+// --- Doble buffer por panning -----------------------------------------------
+// Con alto virtual = 2x el visible, la VRAM guarda dos frames y el registro
+// Y_OFFSET de dispi elige cual se muestra. Se compone sobre el que NO esta a la
+// vista y despues se flipea, asi el host nunca escanea un buffer a medio
+// escribir: eso es lo que saca el tearing.
+//
+// Solo se activa si los dos buffers entran en lo que hay MAPEADO. Hoy eso pasa
+// en el modo bajo de fullscreen (640x400 -> 2 MiB de los 4 MiB mapeados) y no
+// en el nativo, que pediria mapear la apertura de VRAM entera.
+//
+// Con dos buffers, el que se va a componer quedo con el contenido de hace DOS
+// frames, asi que un present parcial arrastraria pixeles viejos. En vez de
+// llevar la cuenta del dano de frames anteriores para reaplicarlo, se copia la
+// superficie ENTERA en cada present. Es deliberado: el modo bajo existe para
+// apps a pantalla completa, que repintan todo y ya mandaban FULL_SURFACE, asi
+// que en el caso real no cuesta nada -- y evita toda una maquinaria de
+// bookkeeping que solo se puede verificar mirando la pantalla.
+bool g_double_buffered = false;
+// Offset en bytes del buffer que se esta mostrando.
+uint64_t g_front_offset_bytes = 0;
+// Offset en bytes del buffer sobre el que se compone. Igual al frente cuando no
+// hay doble buffer, que es lo que deja el camino de un solo buffer intacto.
+uint64_t g_back_offset_bytes = 0;
 // El adaptador expone la interfaz VBE de Bochs y podemos cambiar de modo.
 bool g_dispi_available = false;
 
@@ -126,7 +152,7 @@ void retire_synchronous_present(uint64_t requested_sequence) {
 // Copia un rectangulo (en coordenadas del scanout) desde una superficie origen
 // al framebuffer. source == nullptr usa el propio framebuffer como origen (no-op
 // util para los flush, que aca no necesitan transferir nada al hardware).
-bool blit_rect(const void* source, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+bool blit_rect(uint64_t destination_offset, const void* source, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     if (!ready()) {
         return false;
     }
@@ -142,7 +168,7 @@ bool blit_rect(const void* source, uint32_t source_pitch, uint32_t x, uint32_t y
         return false;
     }
 
-    auto* destination = static_cast<uint8_t*>(g_fb_base);
+    auto* destination = static_cast<uint8_t*>(g_fb_base) + destination_offset;
     const auto* origin = static_cast<const uint8_t*>(source);
     const uint64_t row_bytes = static_cast<uint64_t>(width) * sizeof(uint32_t);
     uint8_t* destination_origin = destination + (static_cast<uint64_t>(y) * g_fb_info.pitch) +
@@ -167,22 +193,40 @@ bool blit_rect(const void* source, uint32_t source_pitch, uint32_t x, uint32_t y
     return true;
 }
 
+// Muestra el buffer recien compuesto y pasa a componer sobre el otro. No-op
+// sin doble buffer. El flip es una sola escritura de registro, asi que el
+// cambio de buffer visible es atomico desde el punto de vista del que escanea.
+void flip_back_buffer() {
+    if (!g_double_buffered || g_fb_info.pitch == 0) {
+        return;
+    }
+    const uint32_t back_line = static_cast<uint32_t>(g_back_offset_bytes / g_fb_info.pitch);
+    dispi_write(kDispiRegisterYOffset, static_cast<uint16_t>(back_line));
+
+    const uint64_t shown = g_back_offset_bytes;
+    g_back_offset_bytes = g_front_offset_bytes;
+    g_front_offset_bytes = shown;
+}
+
 bool flush() {
     return ready();
 }
 
 bool flush_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     // Sin dispositivo: escribir el framebuffer ya es "presentar". Solo validamos.
-    return blit_rect(nullptr, 0, x, y, width, height);
+    return blit_rect(g_front_offset_bytes, nullptr, 0, x, y, width, height);
 }
 
 bool present(const void* pixels, size_t byte_count) {
     if (!ready() || pixels == nullptr || byte_count != g_fb_info.buffer_size) {
         return false;
     }
-    if (!blit_rect(pixels, g_fb_info.pitch, 0, 0, g_fb_info.width, g_fb_info.height)) {
+    // Escribe el buffer entero, asi que puede componer sobre el de atras y
+    // flipear como el camino del compositor: queda sin tearing tambien.
+    if (!blit_rect(g_back_offset_bytes, pixels, g_fb_info.pitch, 0, 0, g_fb_info.width, g_fb_info.height)) {
         return false;
     }
+    flip_back_buffer();
     retire_synchronous_present(0);
     return true;
 }
@@ -196,7 +240,7 @@ bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint3
     // fila 0.
     const auto* origin = static_cast<const uint8_t*>(pixels) +
         (static_cast<uint64_t>(y) * source_pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
-    if (!blit_rect(origin, source_pitch, x, y, width, height)) {
+    if (!blit_rect(g_front_offset_bytes, origin, source_pitch, x, y, width, height)) {
         return false;
     }
     retire_synchronous_present(0);
@@ -241,17 +285,14 @@ bool has_live_imports() {
     return false;
 }
 
-// El unico mapeo de scanout que tenemos es el que armo el firmware, del tamano
-// del modo nativo. Un modo que necesite mas bytes que ese escribiria fuera del
-// mapeo, asi que el techo es el nativo. Alcanza para lo que interesa (bajar a
-// una resolucion mas chica); subir de ahi -- o el doble buffer por panning --
-// pide primero mapear la apertura de VRAM entera.
-bool mode_fits_mapping(uint32_t pitch, uint32_t height) {
+// Techo de cualquier modo: los bytes que el mapa de memoria dice que hay
+// mapeados detras del scanout. Escribir mas alla de eso saldria del mapeo.
+bool mode_fits_mapping(uint32_t pitch, uint64_t height) {
     if (pitch == 0 || height == 0) {
         return false;
     }
     const uint64_t bytes = static_cast<uint64_t>(pitch) * height;
-    return bytes != 0 && bytes <= g_native_info.buffer_size;
+    return bytes != 0 && bytes <= g_mapped_bytes;
 }
 
 // Programa el modo por dispi y devuelve en `result` la geometria que quedo de
@@ -259,12 +300,14 @@ bool mode_fits_mapping(uint32_t pitch, uint32_t height) {
 // implementacion puede redondear el ancho virtual (o sea el pitch) o rechazar
 // la resolucion sin avisar.
 bool apply_dispi_mode(uint32_t width, uint32_t height, savanxp_fb_info& result) {
+    // Se pide alto virtual doble de entrada: si la VRAM no da, la propia
+    // implementacion lo recorta y el readback de abajo lo delata.
     dispi_write(kDispiRegisterEnable, kDispiDisabled);
     dispi_write(kDispiRegisterXres, static_cast<uint16_t>(width));
     dispi_write(kDispiRegisterYres, static_cast<uint16_t>(height));
     dispi_write(kDispiRegisterBpp, 32u);
     dispi_write(kDispiRegisterVirtWidth, static_cast<uint16_t>(width));
-    dispi_write(kDispiRegisterVirtHeight, static_cast<uint16_t>(height));
+    dispi_write(kDispiRegisterVirtHeight, static_cast<uint16_t>(height * 2u));
     dispi_write(kDispiRegisterXOffset, 0);
     dispi_write(kDispiRegisterYOffset, 0);
     dispi_write(kDispiRegisterEnable, kDispiEnabled | kDispiLfbEnabled);
@@ -291,10 +334,40 @@ bool apply_dispi_mode(uint32_t width, uint32_t height, savanxp_fb_info& result) 
         .bpp = 32u,
         .buffer_size = pitch * actual_height,
     };
+
+    // Doble buffer: hacen falta las dos condiciones. Que el dispositivo pueda
+    // escanear desde la segunda mitad (alto virtual), y que nosotros podamos
+    // ESCRIBIRLA, o sea que las dos entren en lo mapeado -- que es la que hoy
+    // falla en el modo nativo.
+    const uint32_t virtual_height = dispi_read(kDispiRegisterVirtHeight);
+    g_front_offset_bytes = 0;
+    g_back_offset_bytes = 0;
+    g_double_buffered =
+        virtual_height >= (actual_height * 2u) &&
+        mode_fits_mapping(pitch, static_cast<uint64_t>(actual_height) * 2u);
+
+    if (g_double_buffered) {
+        // Probar el panning de verdad antes de confiar en el. Un dispositivo
+        // que acepte el alto virtual pero ignore Y_OFFSET dejaria el flip sin
+        // efecto y la pantalla congelada en un buffer, que es peor que el
+        // tearing. El parpadeo de mostrar un instante la mitad de abajo cae
+        // dentro del cambio de modo, con la pantalla rearmandose igual.
+        dispi_write(kDispiRegisterYOffset, static_cast<uint16_t>(actual_height));
+        const bool panning_works = dispi_read(kDispiRegisterYOffset) == actual_height;
+        dispi_write(kDispiRegisterYOffset, 0);
+        g_double_buffered = panning_works;
+    }
+
+    if (g_double_buffered) {
+        g_back_offset_bytes = result.buffer_size;
+    }
     return true;
 }
 
 void publish_mode(const savanxp_fb_info& info) {
+    console::printf("fb_gpu: modo %ux%u pitch=%u, doble buffer %s\n",
+        info.width, info.height, info.pitch,
+        g_double_buffered ? "si" : "no (no entra en lo mapeado)");
     g_fb_info = info;
     g_gpu_info.width = info.width;
     g_gpu_info.height = info.height;
@@ -490,7 +563,39 @@ bool present_surface_rect(const ImportedSurface& surface, uint32_t x, uint32_t y
     }
     const auto* origin = static_cast<const uint8_t*>(surface.virtual_address) +
         (static_cast<uint64_t>(y) * surface.info.pitch) + (static_cast<uint64_t>(x) * sizeof(uint32_t));
-    return blit_rect(origin, surface.info.pitch, x, y, width, height);
+    return blit_rect(g_back_offset_bytes, origin, surface.info.pitch, x, y, width, height);
+}
+
+// Compone un frame en el buffer de atras y lo muestra. Con doble buffer ignora
+// los rects y copia la superficie entera, porque el destino esta dos frames
+// atrasado (ver el comentario del estado); sin doble buffer respeta el dano que
+// mando el cliente, que es el camino de siempre.
+bool present_surface_damage(
+    const ImportedSurface& surface,
+    const savanxp_gpu_dirty_rect* rects,
+    uint32_t rect_count) {
+    if (g_double_buffered || rects == nullptr || rect_count == 0) {
+        if (!present_surface_rect(surface, 0, 0, surface.info.width, surface.info.height)) {
+            return false;
+        }
+        flip_back_buffer();
+        return true;
+    }
+
+    for (uint32_t index = 0; index < rect_count; ++index) {
+        const savanxp_gpu_dirty_rect& rect = rects[index];
+        if (rect.width == 0 || rect.height == 0 ||
+            rect.x >= surface.info.width || rect.y >= surface.info.height ||
+            rect.width > (surface.info.width - rect.x) ||
+            rect.height > (surface.info.height - rect.y)) {
+            continue;
+        }
+        if (!present_surface_rect(surface, rect.x, rect.y, rect.width, rect.height)) {
+            return false;
+        }
+    }
+    flip_back_buffer();
+    return true;
 }
 
 bool present_surface_region(const savanxp_gpu_surface_present& request) {
@@ -504,7 +609,13 @@ bool present_surface_region(const savanxp_gpu_surface_present& request) {
         request.height > (surface->info.height - request.y)) {
         return false;
     }
-    if (!present_surface_rect(*surface, request.x, request.y, request.width, request.height)) {
+    const savanxp_gpu_dirty_rect rect = {
+        .x = request.x,
+        .y = request.y,
+        .width = request.width,
+        .height = request.height,
+    };
+    if (!present_surface_damage(*surface, &rect, 1)) {
         return false;
     }
     retire_synchronous_present(0);
@@ -521,25 +632,14 @@ bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
         return false;
     }
 
-    if ((request.flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0 || request.rect_count == 0) {
-        if (!present_surface_rect(*surface, 0, 0, surface->info.width, surface->info.height)) {
-            return false;
-        }
-        retire_synchronous_present(request.present_cookie);
-        return true;
-    }
-
-    for (uint32_t index = 0; index < request.rect_count; ++index) {
-        const savanxp_gpu_dirty_rect& rect = request.rects[index];
-        if (rect.width == 0 || rect.height == 0 ||
-            rect.x >= surface->info.width || rect.y >= surface->info.height ||
-            rect.width > (surface->info.width - rect.x) ||
-            rect.height > (surface->info.height - rect.y)) {
-            continue;
-        }
-        if (!present_surface_rect(*surface, rect.x, rect.y, rect.width, rect.height)) {
-            return false;
-        }
+    const bool full_surface =
+        (request.flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0 ||
+        request.rect_count == 0;
+    if (!present_surface_damage(
+            *surface,
+            full_surface ? nullptr : request.rects,
+            full_surface ? 0u : request.rect_count)) {
+        return false;
     }
     retire_synchronous_present(request.present_cookie);
     return true;
@@ -620,6 +720,15 @@ void release_session_resources() {
     for (ImportedSurface& surface : g_imported) {
         release_imported_surface(surface);
     }
+    // Volver a mostrar el buffer de abajo y apagar el doble buffer: fuera de la
+    // sesion grafica el que dibuja es la consola, que escribe directo al inicio
+    // del scanout y no sabe nada de paginas alternas.
+    if (g_double_buffered) {
+        dispi_write(kDispiRegisterYOffset, 0);
+        g_double_buffered = false;
+        g_front_offset_bytes = 0;
+        g_back_offset_bytes = 0;
+    }
     // El modo es propiedad de la sesion grafica: si el cliente la suelta (o se
     // muere y el kernel la reclama por el) la pantalla vuelve a la resolucion
     // del firmware, en vez de quedar en el modo bajo de la app que se fue.
@@ -692,10 +801,14 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     // El modo del firmware es el techo y el punto de retorno de cualquier
     // cambio posterior, asi que se guarda antes de tocar nada.
     g_native_info = g_fb_info;
+    g_mapped_bytes = framebuffer.mapped_bytes >= g_fb_info.buffer_size
+        ? framebuffer.mapped_bytes
+        : g_fb_info.buffer_size;
     g_dispi_available = detect_dispi();
-    console::printf("fb_gpu: %ux%u nativo, mode-setting %s\n",
+    console::printf("fb_gpu: %ux%u nativo, %u KiB mapeados, mode-setting %s\n",
         g_native_info.width,
         g_native_info.height,
+        static_cast<uint32_t>(g_mapped_bytes / 1024u),
         g_dispi_available ? "por VBE dispi" : "no disponible");
 
     memset(&g_gpu_stats, 0, sizeof(g_gpu_stats));

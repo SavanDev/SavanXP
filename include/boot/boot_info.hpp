@@ -33,6 +33,13 @@ struct FramebufferInfo {
     uint64_t pitch;
     uint16_t bpp;
     bool available;
+    // Bytes utilizables desde `address`: lo que queda de la region de
+    // framebuffer del mapa de memoria a partir de ahi. El firmware entrega un
+    // modo que ocupa pitch*height, pero la apertura de VRAM suele ser mucho
+    // mas grande, y ese resto tambien esta mapeado por el HHDM. Es el techo
+    // real para cambiar de modo, y lo que hace posible el doble buffer, que
+    // necesita mas alto virtual que el modo visible. Nunca menor a pitch*height.
+    uint64_t mapped_bytes;
 };
 
 struct MemoryRegion {
