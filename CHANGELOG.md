@@ -57,17 +57,25 @@ Notas de corte:
   dejaria el flip sin efecto y la pantalla congelada en un buffer, que es peor
   que el tearing; si el probe falla se queda en un solo buffer.
 
-  Que camino toma cada frame lo decide **el present, no el modo**. Una
-  superficie completa se compone sobre el buffer oculto y se flipea: es el
-  camino sin tearing, y el que usan las apps a pantalla completa. Un present de
-  dano parcial escribe directo sobre el buffer visible y no flipea, porque el
-  otro buffer esta dos frames atrasado: para poder flipear habria que copiar la
-  superficie ENTERA por cada rect sucio -- 4 MiB para mover el cursor -- y ese
-  precio es mucho peor que el tearing que evita. Asi el escritorio conserva su
-  optimizacion de dano y las apps fullscreen quedan sin tearing, sin necesidad
-  de llevar la cuenta del dano de frames anteriores. Al soltarse la sesion
-  grafica el doble buffer se apaga y `Y_OFFSET` vuelve a 0, porque la consola
-  escribe al inicio del scanout y no sabe nada de paginas alternas.
+  **Todos** los presents flipean, tambien los de dano parcial: el buffer sobre
+  el que se compone tiene el contenido de hace DOS frames, asi que se le
+  reaplica el dano del frame anterior ademas del actual. La union de los dos
+  alcanza, porque un pixel que difiera entre hace dos frames y ahora tuvo que
+  cambiar en alguno de los dos. Cuesta ~2x el area danada, nada comparado con
+  copiar la superficie entera (4 MiB por mover el cursor), asi que el
+  escritorio conserva su optimizacion de dano y ademas queda sin tearing. Se
+  cae a copia completa solo cuando el destino esta realmente desactualizado:
+  primer frame, present de superficie completa, o cambio de superficie. Los
+  caminos crudos (`present`/`present_region`, que usan la consola y gputest)
+  tocan los buffers por fuera del seguimiento, asi que lo invalidan. Al soltarse
+  la sesion grafica el doble buffer se apaga y `Y_OFFSET` vuelve a 0, porque la
+  consola escribe al inicio del scanout y no sabe de paginas alternas.
+
+  **Pedir el modo que ya esta puesto no es un no-op la primera vez.** El que
+  dejo el firmware no tiene el alto virtual que necesita el doble buffer, y el
+  compositor arranca pidiendo exactamente la resolucion nativa: sin programarlo
+  igual, el escritorio nunca lo activaba y el doble buffer terminaba siendo
+  solo para fullscreen.
 
   `boot::FramebufferInfo` gana `mapped_bytes`: los bytes que el mapa de memoria
   dice que hay detras del scanout. Reemplaza al modo nativo como techo para

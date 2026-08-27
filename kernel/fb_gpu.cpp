@@ -66,6 +66,41 @@ uint64_t g_front_offset_bytes = 0;
 // Offset en bytes del buffer sobre el que se compone. Igual al frente cuando no
 // hay doble buffer, que es lo que deja el camino de un solo buffer intacto.
 uint64_t g_back_offset_bytes = 0;
+
+// Rects sucios del present anterior. El buffer sobre el que se compone quedo
+// con el contenido de hace DOS frames, asi que para dejarlo igual al frame
+// actual hay que reaplicarle tambien lo que cambio en el frame del medio: la
+// union del dano previo con el actual. Cualquier pixel que difiera entre hace
+// dos frames y ahora cambio en uno de los dos, asi que la union alcanza.
+savanxp_gpu_dirty_rect g_previous_damage[SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS] = {};
+uint32_t g_previous_damage_count = 0;
+// El frame anterior toco todo (o no sabemos que toco): el destino esta
+// completamente desactualizado y hay que copiarlo entero.
+bool g_previous_damage_full = true;
+// A que superficie pertenecen esos rects. Si el cliente cambia de superficie,
+// las coordenadas viejas no significan nada y se vuelve a copia completa.
+uint32_t g_previous_damage_surface_id = 0;
+
+
+void forget_previous_damage() {
+    g_previous_damage_count = 0;
+    g_previous_damage_full = true;
+    g_previous_damage_surface_id = 0;
+}
+
+void remember_damage(uint32_t surface_id, const savanxp_gpu_dirty_rect* rects, uint32_t rect_count) {
+    g_previous_damage_surface_id = surface_id;
+    if (rects == nullptr || rect_count == 0 || rect_count > SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS) {
+        g_previous_damage_count = 0;
+        g_previous_damage_full = true;
+        return;
+    }
+    for (uint32_t index = 0; index < rect_count; ++index) {
+        g_previous_damage[index] = rects[index];
+    }
+    g_previous_damage_count = rect_count;
+    g_previous_damage_full = false;
+}
 // El adaptador expone la interfaz VBE de Bochs y podemos cambiar de modo.
 bool g_dispi_available = false;
 
@@ -139,6 +174,9 @@ bool detect_dispi() {
 // Quedo la apertura mapeada write-combining (lo deseable) o con el tipo que le
 // puso el firmware al scanout (el repliegue).
 bool g_aperture_write_combining = false;
+// El modo activo lo programamos nosotros (y por lo tanto tiene el alto virtual
+// del doble buffer), o es el que dejo el firmware y todavia no lo tocamos.
+bool g_mode_configured = false;
 
 bool remap_vram_aperture() {
     const uint64_t vram_blocks = dispi_read(kDispiRegisterVideoMemory64K);
@@ -299,6 +337,11 @@ bool present(const void* pixels, size_t byte_count) {
         return false;
     }
     flip_back_buffer();
+    // Este camino cambio los buffers por fuera del seguimiento de dano: lo que
+    // quedo guardado describe un frame que ya no esta en ninguno de los dos, y
+    // una union calculada contra el dejaria pixeles viejos. Se vuelve a copia
+    // completa en el proximo present de superficie.
+    forget_previous_damage();
     retire_synchronous_present(0);
     return true;
 }
@@ -315,6 +358,9 @@ bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint3
     if (!blit_rect(g_front_offset_bytes, origin, source_pitch, x, y, width, height)) {
         return false;
     }
+    // Idem present(): escribio sobre el buffer visible sin pasar por el
+    // seguimiento, asi que la union guardada deja de ser valida.
+    forget_previous_damage();
     retire_synchronous_present(0);
     return true;
 }
@@ -433,6 +479,10 @@ bool apply_dispi_mode(uint32_t width, uint32_t height, savanxp_fb_info& result) 
     if (g_double_buffered) {
         g_back_offset_bytes = result.buffer_size;
     }
+    // Buffers nuevos: lo que hubiera en el de atras no tiene nada que ver con
+    // el frame actual.
+    forget_previous_damage();
+    g_mode_configured = true;
     return true;
 }
 
@@ -462,7 +512,15 @@ bool set_mode(savanxp_gpu_mode& mode) {
         return false;
     }
 
-    if (requested_width != g_fb_info.width || requested_height != g_fb_info.height) {
+    // Pedir el modo que ya esta puesto no es un no-op la primera vez: el que
+    // dejo el firmware no tiene el alto virtual que necesita el doble buffer.
+    // Sin esto el escritorio nunca lo activaria, porque el compositor arranca
+    // pidiendo exactamente la resolucion nativa.
+    const bool needs_initial_programming =
+        g_dispi_available && !g_mode_configured && !has_live_imports();
+
+    if (requested_width != g_fb_info.width || requested_height != g_fb_info.height ||
+        needs_initial_programming) {
         // Sin dispi la resolucion es la que dejo el firmware y punto.
         if (!g_dispi_available) {
             return false;
@@ -626,6 +684,9 @@ bool release_surface(uint32_t surface_id) {
         return false;
     }
     release_imported_surface(*surface);
+    if (g_previous_damage_surface_id == surface_id) {
+        forget_previous_damage();
+    }
     return true;
 }
 
@@ -654,19 +715,14 @@ bool present_surface_rect(
 //   flipear habria que copiar la superficie ENTERA por cada rect sucio -- 4 MiB
 //   para mover el cursor. Ese precio es mucho peor que el tearing que evita, y
 //   lo pagaria el escritorio en cada frame.
-bool present_surface_damage(
+// Copia una lista de rects de la superficie al destino. Los invalidos se
+// saltean en silencio, igual que antes: un rect fuera de la superficie es ruido
+// del cliente, no motivo para tirar el frame entero.
+bool blit_damage(
+    uint64_t destination_offset,
     const ImportedSurface& surface,
     const savanxp_gpu_dirty_rect* rects,
     uint32_t rect_count) {
-    if (rects == nullptr || rect_count == 0) {
-        if (!present_surface_rect(
-                g_back_offset_bytes, surface, 0, 0, surface.info.width, surface.info.height)) {
-            return false;
-        }
-        flip_back_buffer();
-        return true;
-    }
-
     for (uint32_t index = 0; index < rect_count; ++index) {
         const savanxp_gpu_dirty_rect& rect = rects[index];
         if (rect.width == 0 || rect.height == 0 ||
@@ -676,10 +732,57 @@ bool present_surface_damage(
             continue;
         }
         if (!present_surface_rect(
-                g_front_offset_bytes, surface, rect.x, rect.y, rect.width, rect.height)) {
+                destination_offset, surface, rect.x, rect.y, rect.width, rect.height)) {
             return false;
         }
     }
+    return true;
+}
+
+// Compone un frame y lo muestra.
+//
+// Sin doble buffer se escribe el dano directo sobre el unico buffer, que es lo
+// que se hizo siempre. Con doble buffer se compone sobre el que NO se ve y se
+// flipea, asi el host nunca escanea un buffer a medio escribir -- eso es lo que
+// saca el tearing --, y como ese buffer tiene el contenido de hace dos frames
+// se le reaplica ademas el dano del frame anterior. La union de los dos
+// alcanza: un pixel que difiera entre hace dos frames y ahora tuvo que cambiar
+// en alguno de los dos.
+bool present_surface_damage(
+    uint32_t surface_id,
+    const ImportedSurface& surface,
+    const savanxp_gpu_dirty_rect* rects,
+    uint32_t rect_count) {
+    const bool full_surface = rects == nullptr || rect_count == 0;
+
+    if (!g_double_buffered) {
+        if (full_surface) {
+            return present_surface_rect(
+                g_front_offset_bytes, surface, 0, 0, surface.info.width, surface.info.height);
+        }
+        return blit_damage(g_front_offset_bytes, surface, rects, rect_count);
+    }
+
+    // El destino esta desactualizado del todo si el frame anterior toco todo, si
+    // no sabemos que toco, o si era de otra superficie: ahi no hay union que
+    // valga y se copia entero.
+    const bool destination_is_stale =
+        full_surface || g_previous_damage_full || g_previous_damage_surface_id != surface_id;
+
+    if (destination_is_stale) {
+        if (!present_surface_rect(
+                g_back_offset_bytes, surface, 0, 0, surface.info.width, surface.info.height)) {
+            return false;
+        }
+    } else {
+        if (!blit_damage(g_back_offset_bytes, surface, g_previous_damage, g_previous_damage_count) ||
+            !blit_damage(g_back_offset_bytes, surface, rects, rect_count)) {
+            return false;
+        }
+    }
+
+    flip_back_buffer();
+    remember_damage(surface_id, rects, rect_count);
     return true;
 }
 
@@ -700,7 +803,7 @@ bool present_surface_region(const savanxp_gpu_surface_present& request) {
         .width = request.width,
         .height = request.height,
     };
-    if (!present_surface_damage(*surface, &rect, 1)) {
+    if (!present_surface_damage(request.surface_id, *surface, &rect, 1)) {
         return false;
     }
     retire_synchronous_present(0);
@@ -721,6 +824,7 @@ bool present_surface_batch(const savanxp_gpu_surface_present_batch& request) {
         (request.flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0 ||
         request.rect_count == 0;
     if (!present_surface_damage(
+            request.surface_id,
             *surface,
             full_surface ? nullptr : request.rects,
             full_surface ? 0u : request.rect_count)) {
@@ -814,6 +918,7 @@ void release_session_resources() {
         g_front_offset_bytes = 0;
         g_back_offset_bytes = 0;
     }
+    forget_previous_damage();
     // El modo es propiedad de la sesion grafica: si el cliente la suelta (o se
     // muere y el kernel la reclama por el) la pantalla vuelve a la resolucion
     // del firmware, en vez de quedar en el modo bajo de la app que se fue.
