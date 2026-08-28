@@ -35,26 +35,29 @@ La via recomendada es hornear un toolchain local autocontenido:
 .\tools\bootstrap.ps1
 ```
 
-Eso descarga versiones fijadas (LLVM/Clang con `ld.lld`, QEMU con el firmware
-OVMF que trae, y `xorriso` para generar ISOs) a `toolchain/` (ignorado por
-git) y escribe el manifiesto `toolchain/toolchain.json` que `build.ps1`
-consume. Las versiones estan fijadas en `tools/toolchain.lock.json`;
-actualizar una herramienta es editar ese archivo. `xorriso` se puede omitir
-con `-SkipXorriso` si ya lo tenes resuelto por otra via.
+Eso descarga versiones fijadas (LLVM/Clang con `ld.lld`, `llvm-objcopy` y
+`llvm-readelf`; QEMU con el firmware OVMF que trae; `xorriso` para generar
+ISOs; y `ninja`) a `toolchain/` (ignorado por git) y escribe el manifiesto
+`toolchain/toolchain.json` que `build.ps1` consume. Las versiones estan
+fijadas en `tools/toolchain.lock.json`; actualizar una herramienta es editar
+ese archivo. `xorriso` se puede omitir con `-SkipXorriso`, y `ninja` con
+`-SkipNinja`, si ya los tenes resueltos por otra via.
 
 `build.ps1` no contiene rutas de ninguna maquina concreta: resuelve cada
 herramienta en este orden y se queda con la primera que exista:
 
 1. override explicito por variable de entorno
-   (`SAVANXP_CLANG`, `SAVANXP_CLANGXX`, `SAVANXP_LD`, `SAVANXP_QEMU`,
-   `SAVANXP_XORRISO`, `OVMF_CODE` / `OVMF_VARS`)
+   (`SAVANXP_CLANG`, `SAVANXP_CLANGXX`, `SAVANXP_LD`, `SAVANXP_OBJCOPY`,
+   `SAVANXP_READELF`, `SAVANXP_QEMU`, `SAVANXP_XORRISO`, `SAVANXP_NINJA`,
+   `OVMF_CODE` / `OVMF_VARS`)
 2. el toolchain horneado en `toolchain/`
 3. el `PATH` del sistema
 
-Por eso `bootstrap.ps1` es opcional: si ya tenes `clang++`, `ld.lld` y
-`qemu-system-x86_64` en el `PATH`, el build funciona igual. Tambien hace falta
-`git` en el `PATH`. `build.ps1` descarga automaticamente la rama binaria
-`v10.x-binary` de Limine si no existe en `tools/limine`.
+Por eso `bootstrap.ps1` es opcional: si ya tenes `clang++`, `ld.lld`,
+`llvm-objcopy`, `llvm-readelf`, `ninja` y `qemu-system-x86_64` en el `PATH`,
+el build funciona igual. Tambien hace falta `git` en el `PATH`. `build.ps1`
+descarga automaticamente la rama binaria `v10.x-binary` de Limine si no
+existe en `tools/limine`.
 
 Ademas hace falta `python3` (o `python`) en el `PATH` con `Pillow` instalado
 (`pip install Pillow`): `build.ps1` lo usa en cada build para generar el arte
@@ -68,6 +71,47 @@ Fuera de Windows, `.\build.ps1 iso` tambien necesita `make` y un compilador
 prebuildeado para Windows, asi que ahi el deployer `limine` (para el arranque
 BIOS de la ISO) se compila una vez desde `limine.c` con el `Makefile` del
 propio repo de Limine.
+
+### Linux nativo (sin `bootstrap.ps1`)
+
+`build.ps1` en si mismo es un script de PowerShell: hace falta `pwsh` en el
+`PATH`. Las distros no siempre lo empaquetan (Arch no lo trae en los repos
+oficiales); el tarball `powershell-<version>-linux-x64.tar.gz` de
+[PowerShell/PowerShell](https://github.com/PowerShell/PowerShell/releases) se
+extrae directo, sin instalador.
+
+Resolviendo el resto del toolchain por `PATH` (punto 3 del orden de arriba,
+sin `bootstrap.ps1`), en Arch Linux los paquetes son:
+
+```bash
+pacman -S clang lld llvm qemu-system-x86 edk2-ovmf libisoburn python-pillow ninja
+```
+
+- `clang`/`lld`/`llvm`: compilador, linker (`ld.lld`) y las herramientas
+  (`llvm-objcopy`, `llvm-readelf`) que usa `Add-SxeResources` para estampar
+  recursos `.sxmeta`/`.sxicon`.
+- `libisoburn` es el paquete que trae el binario `xorriso` (el nombre no
+  coincide con el de la herramienta).
+- `ninja` hace falta siempre, este o no horneado el toolchain: no es parte de
+  ningun paquete base.
+- Sin `bootstrap.ps1` no existe `toolchain/toolchain.json` con las rutas de
+  OVMF: hay que definir `OVMF_CODE`/`OVMF_VARS` a mano, por ejemplo
+  `/usr/share/edk2/x64/OVMF_CODE.4m.fd` y `.../OVMF_VARS.4m.fd` (rutas de
+  `edk2-ovmf` en Arch).
+
+Para `.\build.ps1 run`/`debug` (QEMU con ventana grafica), Arch separa los
+backends de QEMU en paquetes aparte de `qemu-system-x86`:
+
+```bash
+pacman -S qemu-ui-gtk qemu-ui-opengl qemu-audio-sdl libpulse
+```
+
+Sin `qemu-ui-gtk` no existe el backend `-display gtk` que usa `Run-Qemu` (con
+`qemu-system-x86` a secas, `-display help` solo lista `none`). Sin
+`qemu-audio-sdl`, pedir `-audiodev sdl,...` (lo que usan `run`/`debug`) hace
+**segfaultear** a QEMU en vez de fallar con un error legible. `libpulse` es lo
+que le da a SDL2 un backend real de audio para hablar con el servidor de audio
+del host (en WSL2, el socket Pulse que expone WSLg).
 
 ## Compilacion
 
@@ -191,7 +235,8 @@ Comandos utiles incluidos en el userland actual:
 - `audiotest`
 
 Ademas, varias utilidades basicas salen del multicall `busybox`, por ejemplo
-`ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp`, `true`, `false` y `sleep`.
+`ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp`, `ps`, `true`, `false` y
+`sleep`.
 
 ## Apps externas
 
@@ -259,6 +304,8 @@ Directorios principales:
 - `arch/`: codigo especifico de arquitectura
 - `kernel/`: kernel y subsistemas base
 - `subsystems/posix/`: capa POSIX, SDK y userland principal
+- `libsvfs/`: nucleo portable del filesystem `SVFS2` y `svfs-cli`, el tool de
+  host que hace toda la escritura de imagenes de disco
 - `rootfs/`: contenido del `initramfs`
 - `diskfs/`: contenido inicial del volumen persistente
 - `sdk/`: ejemplos, tooling y ports externos
