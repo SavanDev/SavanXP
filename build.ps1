@@ -107,6 +107,7 @@ $KernelSources = @(
     "kernel/ps2.cpp",
     "kernel/pcspeaker.cpp",
     "kernel/power.cpp",
+    "kernel/clipboard.cpp",
     "kernel/acpi.cpp",
     "kernel/ioapic.cpp",
     "kernel/uacpi_glue.cpp",
@@ -221,6 +222,7 @@ $UserPrograms = @(
     @{ Name = "timertest"; Source = "subsystems/posix/userland/timertest.c"; Test = $true },
     @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c"; Test = $true },
     @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c"; Test = $true },
+    @{ Name = "cliptest"; Source = "subsystems/posix/userland/cliptest.c"; Test = $true },
     @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c"; Test = $true },
     @{ Name = "heaptest"; Sources = @(
         "subsystems/posix/userland/heaptest.c",

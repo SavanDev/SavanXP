@@ -25,6 +25,7 @@
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/clipboard.hpp"
 #include "kernel/power.hpp"
 #include "kernel/process.hpp"
 #include "kernel/ps2.hpp"
@@ -198,6 +199,7 @@ namespace
     boot_screen::show(80, "Inicializando dispositivos");
     pcspeaker::initialize();
     power::initialize();
+    clipboard::initialize();
     // Backend de audio: mismo registro por prioridad que display. virtio-sound
     // gana si el probe PCI lo encontro; si no, AC97 (el caso VirtualBox).
     // audio_device registra /dev/audio0 sobre el backend elegido, o no lo

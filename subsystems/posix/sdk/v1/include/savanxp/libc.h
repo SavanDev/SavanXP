@@ -119,6 +119,20 @@ struct savanxp_gfx_context {
 int power_shutdown(void);
 int power_reboot(void);
 
+/* Portapapeles del sistema (`/dev/clipboard`, ver savanxp/syscall.h).
+ *
+ * Abren y cierran el device en cada llamada a proposito: copiar y pegar son
+ * gestos aislados y cachear el fd le costaria un descriptor permanente a cada
+ * app por algo que se usa de a ratos.
+ *
+ * `clipboard_get_text` devuelve el largo REAL del portapapeles, no el copiado,
+ * asi que un resultado >= capacity significa que hubo truncamiento. Lo copiado
+ * siempre queda terminado en NUL. */
+int clipboard_set_text(const char *text);
+int clipboard_get_text(char *buffer, int capacity);
+int clipboard_get_info(struct savanxp_clipboard_info *info);
+int clipboard_clear(void);
+
 long gfx_open(struct savanxp_gfx_context* context);
 long gfx_close(struct savanxp_gfx_context* context);
 long gfx_acquire(struct savanxp_gfx_context* context);

@@ -8,6 +8,22 @@ Notas de corte:
 - `v0.1.1` cubre los cambios posteriores a `v0.1.0`, incluyendo el trabajo actual
   ya integrado en el arbol pero todavia no etiquetado en git.
 
+## [Unreleased]
+
+### Agregado
+
+- **Portapapeles del sistema, en `/dev/clipboard`.** Copiar y pegar entre
+  programas, que hasta ahora no existia en ninguna forma. El contenido es un
+  valor y no un stream: un `write` reemplaza todo y un `read` devuelve desde el
+  principio, sin cursor, asi que leer dos veces da lo mismo. Pasarse de
+  `SAVANXP_CLIPBOARD_CAPACITY` (8 KiB) falla con `ENOSPC` en vez de truncar en
+  silencio. `CLIP_IOC_GET_INFO` devuelve largo, formato y una secuencia que
+  sube con cada cambio, para que un menu pueda saber si rehabilitar Pegar sin
+  releer el contenido entero. La SDK lo envuelve en `clipboard_set_text`,
+  `clipboard_get_text`, `clipboard_get_info` y `clipboard_clear`, que abren y
+  cierran el device en cada llamada y no cuestan un descriptor permanente. Lo
+  cubre `cliptest`, dentro de `build.ps1 smoke`.
+
 ## [0.3.4] - 2026-08-28
 
 ### Agregado

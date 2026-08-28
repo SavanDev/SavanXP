@@ -249,6 +249,7 @@ enum savanxp_ioctl_group {
     SAVANXP_IOCTL_GROUP_GPU = 0x1004,
     SAVANXP_IOCTL_GROUP_AUDIO = 0x1005,
     SAVANXP_IOCTL_GROUP_POWER = 0x1006,
+    SAVANXP_IOCTL_GROUP_CLIPBOARD = 0x1007,
 };
 
 enum savanxp_net_ioctl {
@@ -314,6 +315,44 @@ enum savanxp_audio_ioctl {
 enum savanxp_power_ioctl {
     POWER_IOC_SHUTDOWN = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 1),
     POWER_IOC_REBOOT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_POWER, 2),
+};
+
+/* Portapapeles del sistema, expuesto como `/dev/clipboard`.
+ *
+ * Vive en el kernel y no en el window manager por una razon concreta: windowd
+ * guarda NUEVE descriptores por cliente contra un limite de 64 por proceso
+ * (process::kMaxFileHandles), asi que un par de canales mas por cliente le
+ * bajaria el techo de ventanas simultaneas. Como device node el cliente lo
+ * abre cuando copia o pega y lo cierra enseguida, no cuesta un fd permanente,
+ * y ademas lo pueden usar procesos sin ventana.
+ *
+ * Semantica de VALOR, no de stream: cada `write` reemplaza el contenido
+ * entero, y cada `read` lo devuelve desde el principio, sin cursor -- leer dos
+ * veces da lo mismo. Un `write` mas grande que la capacidad se rechaza con
+ * ENOSPC en vez de truncarse: pegar medio texto en silencio es peor que no
+ * pegar nada. */
+#define SAVANXP_CLIPBOARD_CAPACITY 8192u
+
+enum savanxp_clipboard_format {
+    SAVANXP_CLIPBOARD_FORMAT_EMPTY = 0,
+    SAVANXP_CLIPBOARD_FORMAT_TEXT = 1,
+};
+
+enum savanxp_clipboard_ioctl {
+    CLIP_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_CLIPBOARD, 1),
+    CLIP_IOC_CLEAR = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_CLIPBOARD, 2),
+};
+
+struct savanxp_clipboard_info {
+    uint32_t length;
+    uint32_t capacity;
+    uint32_t format; /* enum savanxp_clipboard_format */
+    uint32_t reserved0;
+    /* Arranca en 0 ("nunca se escribio") y sube con cada cambio, incluido el
+     * CLIP_IOC_CLEAR. Un cliente que la cachea sabe si el portapapeles cambio
+     * sin releer el contenido -- por ejemplo para habilitar o deshabilitar
+     * Pegar en un menu sin copiar 8 KiB en cada repintado. */
+    uint64_t sequence;
 };
 
 enum savanxp_socket_domain {

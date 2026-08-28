@@ -428,6 +428,95 @@ int power_reboot(void) {
     return (int)result;
 }
 
+int clipboard_clear(void);
+
+static long clipboard_open(unsigned int mode) {
+    return open_mode("/dev/clipboard", mode);
+}
+
+int clipboard_set_text(const char* text) {
+    if (text == 0) {
+        return -(int)SAVANXP_EINVAL;
+    }
+    int length = 0;
+    while (text[length] != '\0') {
+        length += 1;
+    }
+    /* Copiar la cadena vacia significa vaciar el portapapeles, pero no se puede
+     * expresar con un write: write_handle corta en count == 0 antes de llegar
+     * al device (kernel/process.cpp), asi que el pedido no llegaria nunca. El
+     * ioctl dice lo mismo y ademas lo dice explicito. */
+    if (length == 0) {
+        return clipboard_clear();
+    }
+
+    long fd = clipboard_open(SAVANXP_OPEN_WRITE);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    /* Un write reemplaza el contenido entero, asi que no hace falta limpiar
+     * antes: es un valor, no un append. */
+    long written = write((int)fd, text, (unsigned long)length);
+    close((int)fd);
+    if (written < 0) {
+        return (int)written;
+    }
+    return written == length ? 0 : -(int)SAVANXP_EIO;
+}
+
+int clipboard_get_info(struct savanxp_clipboard_info* info) {
+    if (info == 0) {
+        return -(int)SAVANXP_EINVAL;
+    }
+    long fd = clipboard_open(SAVANXP_OPEN_READ);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    long result = ioctl((int)fd, CLIP_IOC_GET_INFO, (unsigned long)info);
+    close((int)fd);
+    return (int)result;
+}
+
+int clipboard_get_text(char* buffer, int capacity) {
+    if (buffer == 0 || capacity <= 0) {
+        return -(int)SAVANXP_EINVAL;
+    }
+    buffer[0] = '\0';
+
+    long fd = clipboard_open(SAVANXP_OPEN_READ);
+    if (fd < 0) {
+        return (int)fd;
+    }
+
+    /* El largo real se pide antes de leer para poder informar truncamiento: el
+     * read solo devuelve lo que entro en el buffer y no distingue "eso era
+     * todo" de "habia mas". */
+    struct savanxp_clipboard_info info;
+    long result = ioctl((int)fd, CLIP_IOC_GET_INFO, (unsigned long)&info);
+    if (result < 0) {
+        close((int)fd);
+        return (int)result;
+    }
+
+    long copied = read((int)fd, buffer, (unsigned long)(capacity - 1));
+    close((int)fd);
+    if (copied < 0) {
+        return (int)copied;
+    }
+    buffer[copied] = '\0';
+    return (int)info.length;
+}
+
+int clipboard_clear(void) {
+    long fd = clipboard_open(SAVANXP_OPEN_WRITE);
+    if (fd < 0) {
+        return (int)fd;
+    }
+    long result = ioctl((int)fd, CLIP_IOC_CLEAR, 0);
+    close((int)fd);
+    return (int)result;
+}
+
 long gpu_open(void) {
     return open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
 }
