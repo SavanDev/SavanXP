@@ -139,6 +139,19 @@ Notas de corte:
   Falta la prueba en VirtualBox real: expone dispi, pero como se lleva con el
   modo que deja Limine todavia no se verifico.
 
+- **Formato SXE: los ejecutables traen adentro su identidad.** Un manifiesto
+  `<nombre>.sxres` al lado del fuente se estampa en secciones no-alloc del ELF
+  (`.sxmeta`/`.sxicon`), asi que el binario declara solo su titulo, version,
+  iconos de 16x16 y 32x32, color de barra de titulo y las extensiones que sabe
+  abrir. Program Manager toma de ahi nombre e iconos, `windowd` el titulo, el
+  icono y el accent de la ventana, y Files abre cada archivo con el programa
+  asociado en vez de mandar todo al bloc de notas. Las asociaciones combinan
+  `/disk/assoc.ini` (politica del usuario) con lo que declaran los binarios
+  instalados, con la politica arriba. Antes la identidad de cada programa vivia
+  en tablas por path adentro de progman y del WM, que habia que editar y
+  recompilar para agregar una app. Formato en `docs/SXE_FORMAT.md`; targets
+  nuevos `build.ps1 sxe-smoke` y `build.ps1 filesapp-smoke`.
+
 - **Boton por defecto en los dialogos** (`default_button` en
   `struct sxgui_dialog`). Enter lo dispara y se dibuja con el borde doble de
   la epoca, asi que se ve cual responde antes de apretarlo; si el foco esta
@@ -193,6 +206,31 @@ Notas de corte:
   Solo archivos y directorios vacios; no crea los padres que falten y no borra
   la raiz. Antes el sync era puramente aditivo y la unica forma de sacar un
   binario era recrear la imagen entera.
+
+- **Redimensionar ventanas por los bordes.** Los bordes y las esquinas del
+  marco arrastran, y el cursor los anticipa (`RESIZE_H`/`RESIZE_V`). El borde
+  opuesto queda anclado, asi que tirar del izquierdo o del superior mueve la
+  ventana mientras cambia de tamano, y el minimo topa en vez de empezar a
+  desplazarla. No aplica a ventanas sin marco, maximizadas ni en fullscreen.
+- **Cursores multi-forma estilo Win9x.** Ocho formas (`arrow`, `wait`, `text`,
+  `move`, `resize-h`, `resize-v`, `unavailable`, `link`) en vez del arrow unico
+  fijo. Las apps piden la suya por el canal de hint del WM
+  (`savanxp_desktop_cursor_hint`) y el WM la resuelve por prioridad contra lo
+  que este pasando: arrastre de ventana, borde de resize o app ocupada.
+- **Wallpaper de fabrica en `/disk/wallpaper.bmp`.** La imagen va commiteada en
+  `diskfs/` y se genera con `tools/GenerateDefaultWallpaper.py` con seed fija,
+  asi que el build no depende de Python para tenerla. El fondo se cambia desde
+  Options del Program Manager, que reescribe `/disk/desktop.cfg`.
+- **`build.ps1 net-smoke`: cobertura automatizada del NIC.** Valida presencia
+  por PCI, MAC propia distinta de cero, direccion y gateway configurados, y
+  hace ARP + ICMP contra el gateway de slirp exigiendo que los contadores de
+  tx/rx avancen. Antes la red no tenia ningun harness: el unico rastro era el
+  `net online` del handoff, que solo dice que `initialize()` no fallo.
+- **`build.ps1 build -NoTestApps`: imagen sin las apps de diagnostico.** Los
+  programas marcados como de test (keytest, gfxdemo, smoke, audiotest, ...) no
+  entran al rootfs (59 -> 32 binarios) y el launcher se compila sin sus
+  entradas. Los comandos de automatizacion las incluyen siempre, porque sus
+  harnesses dependen de ellas.
 
 ### Cambiado
 
@@ -318,6 +356,32 @@ Notas de corte:
   mtimes contra el script y los PNG fuente, igual criterio que ya usaba
   `Build-SvfsCli`, y solo regeneran si algo cambio de verdad.
 
+- **QEMU se arma con hardware "base" por defecto.** VGA estandar, mouse PS/2 y
+  audio AC'97 -- el mismo hardware que emula VirtualBox --, para ejercitar los
+  backends de fallback (`fb_gpu`, `ps2`, `ac97`) sin salir de QEMU. El switch
+  `-Virtio` vuelve a virtio-vga + virtio-tablet + virtio-sound y vale para
+  `run`, `debug` y todos los harnesses. Antes la maquina era virtio siempre y
+  los caminos de fallback solo se probaban arrancando VirtualBox a mano.
+- **El window manager se separo del shell (modelo NT 3.5).** El proceso que
+  antes era `desktop` hacia dos cosas soldadas: manejaba las ventanas y
+  dibujaba el chrome Win95. Ahora el WM es `windowd` (`/bin/windowd`) y el
+  shell son procesos cliente: `shellui` dibuja el fondo y `progman` es el
+  launcher, con sus grupos e items en `/disk/progman.ini`, editable sin
+  recompilar el SO. Se retiraron taskbar, menu de inicio, iconos del
+  escritorio y menu contextual; su funcion la cubren el **Task List**
+  (Ctrl+Esc), que es UI del WM y lista las ventanas incluidas las minimizadas,
+  y el menu File de progman, donde ahora viven Apagar y Reiniciar. El contrato
+  WM<->cliente quedo en el header `savanxp/wm_protocol.h` (fds 3..11), antes
+  implicito y repartido en numeros crudos. El target `desktop-smoke` pasa a
+  llamarse `windowd-smoke`.
+- **SVFS2 tiene una sola implementacion, compartida kernel<->host.** El formato
+  on-disk vive en `include/svfs/svfs_format.h` -- structs, checksum, bit-math,
+  validacion y asignacion first-fit -- y lo compilan tanto el kernel como el
+  tool de host. `libsvfs/` suma el core portable y `svfs-cli`, el tool nativo
+  que hace **todas** las escrituras de `build/disk.img`; el escritor legacy en
+  PowerShell, que hacia byte-poking del formato en paralelo, se borro. Esa
+  doble implementacion era el origen historico de los bugs de desincronizacion.
+
 ### Eliminado
 
 - **Retiradas las variantes en Haxe de About y Files (`aboutapp-hx`,
@@ -329,6 +393,10 @@ Notas de corte:
   `Menubar`/`Menu`/`MenuItem`, `Dialog`); quedan `Painter` y `Boton`, que usa
   `sxguiapp`. Se conservan los runtimes `sx_sysinfo.c`/`sx_fs.c`: a diferencia
   del toolkit, que es bootstrap, son superficie declarada del ABI nativo.
+
+- **Borrado `subsystems/posix/userland/busybox.c`.** El multicall hecho a mano
+  ya no lo compilaba ningun build: los applets que se instalan salen de
+  `vendor/busybox-port`. Se comparo applet por applet antes de sacarlo.
 
 ### Corregido
 
@@ -394,6 +462,29 @@ Notas de corte:
   separador `\` (`TrimStart('\')`), asi que en Linux (separador `/`) quedaba un
   `/` inicial y `svfs-cli apply` rechazaba el `mkdir` (`argumento/ruta
   invalida`). Ninguno de los dos afecta la rama Windows.
+- **`exec`/`spawn` reportaban ENOENT para cualquier fallo de carga.** Lanzar un
+  binario perfectamente instalado fallaba con `no such file or directory`
+  cuando el problema real era falta de memoria, y mandaba a investigar el
+  filesystem. Ahora cada paso reporta su motivo: `ENOMEM`, `ENOEXEC` para un
+  ELF invalido, `EIO` si falla la lectura y `EACCES` si el path no es un
+  archivo regular. El kernel ademas loguea el paso que fallo y las paginas
+  libres, que es la unica traza de por que un binario que existe no arranca.
+- **El WM se colgaba entero por un cliente que no drenaba su input.** Abrir una
+  segunda instancia de un programa congelaba la sesion completa. El WM escribe
+  el input a sus clientes en no-bloqueante, pero el kernel ignoraba
+  `O_NONBLOCK` en las escrituras **parciales** a pipe: si entraba una parte y
+  el resto no, bloqueaba igual.
+- **El cursor se congelaba con el Task List abierto.** Solo saltaba a la
+  posicion nueva al mover la seleccion con las flechas. El handler del Task
+  List consumia el evento de puntero y se salteaba el repintado del cursor.
+- **El `apply` sobre `build/disk.img` fallaba con "sin espacio contiguo" sin
+  estar fragmentada.** Cualquier binario de userland de mas de 20400 bytes que
+  cruzara un borde de sector al crecer reventaba el build, con espacio libre de
+  sobra: el buffer donde `ensure_capacity` preserva el inodo estaba en el stack
+  y tenia ese tope. Ademas la imagen se auto-compacta y el apply reintenta
+  cuando de verdad no queda una corrida libre.
+- **`ps` imprimia el literal `%-13s` en la columna STATE.** El `printf` del
+  applet de busybox no soportaba el flag `-` de justificacion a la izquierda.
 
 ## [0.3.3] - 2026-07-09
 

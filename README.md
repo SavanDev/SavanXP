@@ -21,7 +21,8 @@ Estado actual del sistema:
 - Consola sobre framebuffer y salida serie temprana.
 - Espacio de usuario con procesos `ELF64`, syscalls y scheduler preemptivo.
 - Shell con `pipes`, redirecciones y builtins basicos.
-- Desktop inicial con taskbar, menu Inicio y apps cliente.
+- Sesion grafica estilo NT 3.5: window manager propio (`windowd`), fondo y
+  Program Manager como clientes, y Task List (Ctrl+Esc).
 - Volumen persistente `SVFS2` montado en `/disk`.
 - Base POSIX y SDK v1 para compilar aplicaciones externas.
 - Capa grafica 2D `sxgfx` para superficies, painter y conjuntos de rects.
@@ -225,7 +226,7 @@ Comandos utiles incluidos en el userland actual:
 - `sh`
 - `sysinfo`
 - `df`
-- `desktop`
+- `windowd`
 - `keytest`
 - `mousetest`
 - `gputest`
