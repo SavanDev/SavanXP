@@ -291,7 +291,7 @@ function Add-SxeResources([string]$Name, [string]$BinaryPath, [string]$ResourceD
     }
 }
 
-function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 48) {
+function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 0) {
     $compiler = Require-Executable "clang" (Get-ToolchainCandidates "clang")
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
@@ -328,13 +328,18 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion del runtime libc."
     }
 
-    # La arena de malloc vive en la BSS y el kernel mapea la BSS entera al exec,
-    # asi que cada MiB de arena es RAM fisica residente por proceso aunque la app
-    # no lo toque. Las apps externas arrancan de 48 MiB por compatibilidad, pero
-    # cada una puede pedir lo que realmente usa con -HeapMiB (ver build-user.ps1):
-    # sobredimensionar la arena es lo que hace que un exec falle por falta de
-    # memoria cuando ya hay otra instancia corriendo.
-    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/posix.c") -o $posixObject "-DSX_HEAP_SIZE=(${HeapMiB}u*1024u*1024u)" @compileFlags
+    # El malloc ya no depende de una arena de BSS sobredimensionada: arranca con
+    # un bootstrap chico y pide arenas al kernel (section_create + map_view) a
+    # medida que las necesita, asi que por default no se fuerza -DSX_HEAP_SIZE.
+    # -HeapMiB sigue disponible para clavar toda la arena adelantada en la BSS,
+    # pero acordarse de que cada MiB de ahi es RAM residente por proceso aunque
+    # la app no lo toque: sobredimensionarla es lo que hacia fallar un exec por
+    # falta de memoria cuando ya habia otra instancia corriendo.
+    $posixFlags = @()
+    if ($HeapMiB -gt 0) {
+        $posixFlags += "-DSX_HEAP_SIZE=(${HeapMiB}u*1024u*1024u)"
+    }
+    & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/posix.c") -o $posixObject @posixFlags @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime posix."
     }

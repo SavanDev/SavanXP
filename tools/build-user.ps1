@@ -4,7 +4,9 @@ param(
     [string]$Name,
     [string]$Destination,
     [string]$OutputPath,
-    [int]$HeapMiB = 48,
+    # 0 = arena de bootstrap por default y crecimiento dinamico con secciones.
+    # Un valor > 0 clava toda la arena en la BSS (RAM residente por proceso).
+    [int]$HeapMiB = 0,
     [switch]$NoInstall
 )
 

@@ -12,6 +12,35 @@ Notas de corte:
 
 ### Agregado
 
+- **El malloc de userland ya no vive en una arena fija de la BSS: crece
+  pidiendole secciones al kernel.** La arena unica que se reservaba en la BSS
+  era RAM fisica residente por proceso desde el exec -- el kernel mapea la BSS
+  entera -- aunque la app no tocara un byte, y cada app tenia que adivinar de
+  antemano cuanto iba a necesitar. Ahora queda un bootstrap chico de 256 KiB en
+  la BSS y, cuando algo no entra, el allocator pide arenas con `section_create`
+  + `map_view` y las devuelve con `unmap_view` en cuanto quedan enteras libres.
+
+  Las vistas se mapean PRIVATE a proposito: asi `clone_address_space` clona la
+  seccion con su contenido en el fork, que es la misma semantica que daba la
+  BSS. Las arenas crecen geometricamente porque son un recurso escaso -- el
+  kernel da 32 section views por address space, compartidos con las superficies
+  de GPU/WM, y 64 section objects en todo el sistema --, y el piso de la proxima
+  se calcula sobre los bytes mapeados **hoy**, no sobre un contador monotono,
+  para que un ciclo alocar/liberar no termine pidiendo el maximo cada vuelta.
+
+  Las apps externas del SDK dejan de forzar `-DSX_HEAP_SIZE`: `-HeapMiB 0` es el
+  nuevo default y significa dinamico. Doom dejo de clavar 24 MiB de arena y su
+  BSS bajo de ~25 MB a 642 KB.
+
+  Lo cubre `heaptest`, dentro de `build.ps1 smoke`: valida el crecimiento, que
+  lo que vive en el bootstrap no se mueva, el reciclado de arenas (falla si se
+  filtran), varias arenas vivas a la vez, el realloc que cruza arenas y que el
+  fork se lleve una copia privada.
+
+  Ojo con la consecuencia: desde este cambio un `malloc` normal puede devolver
+  direcciones arriba de 4 GiB, asi que cualquier driver que trunque un puntero
+  de userland a 32 bits pasa a ser un bug vivo.
+
 - **La apertura de VRAM entera se mapea write-combining.** El firmware mapea
   solo el modo visible (4000 KiB de los 16 MiB que hay), y eso era el techo de
   todo: sin mas memoria mapeada el doble buffer solo entraba en el modo bajo de
@@ -302,6 +331,14 @@ Notas de corte:
   del toolkit, que es bootstrap, son superficie declarada del ABI nativo.
 
 ### Corregido
+
+- **`realloc` podia colgarse al crecer un bloque.** El bucle de crecimiento
+  in-place llamaba a `sx_merge_with_next` sobre un bloque **ocupado**, y ese
+  helper vuelve sin hacer nada si el bloque no esta libre: cuando el siguiente
+  era libre y adyacente, el bucle no avanzaba nunca. No se habia ejercitado
+  porque el unico caso que lo tocaba (`sdk/posixsmoke`) no esta cableado a
+  ningun build. Ahora `sx_absorb_next` avisa si absorbio algo y el bucle puede
+  terminar.
 
 - **El driver AC'97 truncaba a 32 bits la direccion del buffer de userland.**
   `copy_period` la recibia como `uint32_t`. Estuvo latente toda la vida del

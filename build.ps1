@@ -222,6 +222,10 @@ $UserPrograms = @(
     @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c"; Test = $true },
     @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c"; Test = $true },
     @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c"; Test = $true },
+    @{ Name = "heaptest"; Sources = @(
+        "subsystems/posix/userland/heaptest.c",
+        "subsystems/posix/sdk/v1/runtime/posix.c"
+    ); Test = $true },
     @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c"; Test = $true },
     @{ Name = "sxetest"; Sources = @(
         "subsystems/posix/userland/sxetest.c",

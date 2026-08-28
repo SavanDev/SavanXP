@@ -102,6 +102,7 @@ int main(void) {
     const char* sectiontest_argv[] = {"/disk/bin/sectiontest", 0};
     const char* semaphoretest_argv[] = {"/disk/bin/semaphoretest", 0};
     const char* mmaptest_argv[] = {"/disk/bin/mmaptest", 0};
+    const char* heaptest_argv[] = {"/disk/bin/heaptest", 0};
     const char* sh_argv[] = {"/bin/sh", "-c", "echo busybox-shell > /disk/smoke/sh.txt", 0};
     const char* echo_argv[] = {"/bin/echo", "busybox-echo", 0};
     const char* cat_argv[] = {"/bin/cat", "/disk/smoke/sh.txt", 0};
@@ -123,6 +124,7 @@ int main(void) {
         !file_exists("/disk/bin/sectiontest") ||
         !file_exists("/disk/bin/semaphoretest") ||
         !file_exists("/disk/bin/mmaptest") ||
+        !file_exists("/disk/bin/heaptest") ||
         !file_exists("/disk/bin/busybox") ||
         !file_exists("/disk/bin/sh") ||
         !file_exists("/disk/bin/ls") ||
@@ -147,6 +149,7 @@ int main(void) {
         !run_and_expect("/disk/bin/sectiontest", sectiontest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/semaphoretest", semaphoretest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/mmaptest", mmaptest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/heaptest", heaptest_argv, 1, 0) ||
         !prepare_smoke_directory() ||
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
         !validate_file_contains("/disk/smoke/sh.txt", "busybox-shell") ||

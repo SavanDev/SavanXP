@@ -34,12 +34,23 @@
 #define DT_DIR 4
 #define DT_REG 8
 #define DT_SOCK 12
-/* Static malloc arena. The kernel maps the whole BSS eagerly at exec, so this
- * is resident cost per process: keep the default small and let heavyweight
- * apps (e.g. Doom via the external SDK build) override it with -DSX_HEAP_SIZE. */
+/* Arena de bootstrap del malloc. Vive en la BSS y el kernel mapea la BSS entera
+ * al exec, asi que cada byte de aca es RAM residente por proceso aunque la app
+ * no lo toque: se queda chica a proposito. El resto del heap crece con arenas
+ * respaldadas por secciones (section_create + map_view), que solo cuestan RAM
+ * cuando hacen falta y se devuelven al kernel cuando quedan vacias.
+ * -DSX_HEAP_SIZE sigue siendo el knob para pedir mas arena adelantada. */
 #ifndef SX_HEAP_SIZE
-#define SX_HEAP_SIZE (8u * 1024u * 1024u)
+#define SX_HEAP_SIZE (256u * 1024u)
 #endif
+/* Cada arena dinamica consume un section view del address space (el kernel da
+ * 32 por proceso, compartidos con las superficies de GPU/WM) y un section
+ * object del pool global (64 en todo el sistema), asi que crecen
+ * geometricamente para llegar lejos con pocas. */
+#define SX_ARENA_PAGE_SIZE ((size_t)4096u)
+#define SX_ARENA_FIRST_BYTES ((size_t)(1024u * 1024u))
+#define SX_ARENA_MAX_BYTES ((size_t)(32u * 1024u * 1024u))
+#define SX_ARENA_CAPACITY ((size_t)8u)
 #define SX_ALLOC_ALIGNMENT ((size_t)sizeof(uintptr_t))
 #define SX_ALLOC_MIN_SPLIT_SIZE (SX_ALLOC_ALIGNMENT * 2u)
 #define SX_ALLOC_MAGIC 0x53584148u
@@ -164,6 +175,18 @@ typedef struct sx_alloc_header {
     struct sx_alloc_header* prev;
 } sx_alloc_header;
 
+/* El descriptor vive adentro de la propia arena (byte 0), asi no hace falta
+ * asignar memoria para poder asignar memoria. Layout:
+ *   [sx_arena][sx_alloc_header][payload ...]
+ * La lista de bloques es por arena: bloques de arenas distintas nunca son
+ * adyacentes, asi que el split/merge no puede cruzar mapeos. */
+typedef struct sx_arena {
+    struct sx_arena* next;
+    sx_alloc_header* first_block;
+    size_t size;
+    int mapped;
+} sx_arena;
+
 struct sx_socket_state {
     int in_use;
     int fd;
@@ -175,7 +198,9 @@ static union {
     uintptr_t alignment;
     unsigned char bytes[SX_HEAP_SIZE];
 } g_heap = {0};
-static sx_alloc_header* g_heap_head = 0;
+static sx_arena* g_arenas = 0;
+static size_t g_mapped_arena_count = 0;
+static size_t g_mapped_bytes = 0;
 static struct sx_FILE g_file_pool[SX_FILE_POOL_CAPACITY] = {};
 static struct sx_FILE g_stdin_file = {0, 1, 0, 0, 1, 1, 0, 0, {0}};
 static struct sx_FILE g_stdout_file = {1, 1, 0, 0, 1, 0, 1, 0, {0}};
@@ -244,35 +269,169 @@ static size_t sx_align_size(size_t size) {
     return (size + mask) & ~mask;
 }
 
-static void sx_allocator_init(void) {
-    if (g_heap_head != 0 || SX_HEAP_SIZE <= sizeof(sx_alloc_header)) {
-        return;
-    }
-
-    g_heap_head = (sx_alloc_header*)g_heap.bytes;
-    g_heap_head->size = SX_HEAP_SIZE - sizeof(sx_alloc_header);
-    g_heap_head->magic = SX_ALLOC_MAGIC;
-    g_heap_head->free = 1;
-    g_heap_head->next = 0;
-    g_heap_head->prev = 0;
+static size_t sx_arena_header_bytes(void) {
+    const size_t mask = SX_ALLOC_ALIGNMENT - 1u;
+    return (sizeof(sx_arena) + mask) & ~mask;
 }
 
-static int sx_block_is_valid(const sx_alloc_header* block) {
-    const unsigned char* heap_start = g_heap.bytes;
-    const unsigned char* heap_end = g_heap.bytes + SX_HEAP_SIZE;
-    const unsigned char* block_start = 0;
-    const unsigned char* payload = 0;
+static unsigned char* sx_arena_payload(sx_arena* arena) {
+    return (unsigned char*)arena + sx_arena_header_bytes();
+}
 
-    if (block == 0) {
+static size_t sx_arena_overhead(void) {
+    return sx_arena_header_bytes() + sizeof(sx_alloc_header);
+}
+
+static size_t sx_arena_initial_block_size(const sx_arena* arena) {
+    return arena->size - sx_arena_overhead();
+}
+
+/* Convierte un buffer crudo (BSS o vista de seccion) en una arena con un unico
+ * bloque libre, y la publica al frente de la lista. */
+static sx_arena* sx_arena_stamp(void* base, size_t size, int mapped) {
+    sx_arena* arena = 0;
+    sx_alloc_header* block = 0;
+
+    if (base == 0 || size <= sx_arena_overhead() + SX_ALLOC_MIN_SPLIT_SIZE) {
         return 0;
     }
 
-    block_start = (const unsigned char*)block;
-    payload = (const unsigned char*)(block + 1);
+    arena = (sx_arena*)base;
+    arena->size = size;
+    arena->mapped = mapped;
 
-    return block_start >= heap_start
-        && payload <= heap_end
-        && block->magic == SX_ALLOC_MAGIC;
+    block = (sx_alloc_header*)sx_arena_payload(arena);
+    block->size = sx_arena_initial_block_size(arena);
+    block->magic = SX_ALLOC_MAGIC;
+    block->free = 1;
+    block->next = 0;
+    block->prev = 0;
+
+    arena->first_block = block;
+    arena->next = g_arenas;
+    g_arenas = arena;
+    return arena;
+}
+
+static void sx_allocator_init(void) {
+    if (g_arenas != 0) {
+        return;
+    }
+    (void)sx_arena_stamp(g_heap.bytes, SX_HEAP_SIZE, 0);
+}
+
+/* Piso de tamano para la proxima arena: duplicar lo que ya esta mapeado, para
+ * que un heap grande se arme con pocas secciones. Se mide sobre lo mapeado hoy
+ * (no un contador monotono) asi el piso baja cuando las arenas se devuelven y
+ * un ciclo alocar/liberar no termina pidiendo el maximo cada vuelta. */
+static size_t sx_arena_growth_floor(void) {
+    size_t floor_bytes = g_mapped_bytes;
+
+    if (floor_bytes < SX_ARENA_FIRST_BYTES) {
+        floor_bytes = SX_ARENA_FIRST_BYTES;
+    }
+    if (floor_bytes > SX_ARENA_MAX_BYTES) {
+        floor_bytes = SX_ARENA_MAX_BYTES;
+    }
+    return floor_bytes;
+}
+
+/* Pide una arena nueva al kernel. La vista es PRIVATE: en fork el kernel clona
+ * la seccion con su contenido, que es la misma semantica que tenia la arena de
+ * BSS (cada proceso se lleva su copia). */
+static sx_arena* sx_arena_acquire(size_t payload_bytes) {
+    const size_t mask = SX_ARENA_PAGE_SIZE - 1u;
+    size_t wanted = 0;
+    long section = 0;
+    void* mapped = 0;
+    sx_arena* arena = 0;
+
+    if (g_mapped_arena_count >= SX_ARENA_CAPACITY) {
+        return 0;
+    }
+    if (payload_bytes > ((size_t)-1) - sx_arena_overhead() - mask) {
+        return 0;
+    }
+
+    wanted = sx_arena_overhead() + payload_bytes;
+    if (wanted < sx_arena_growth_floor()) {
+        wanted = sx_arena_growth_floor();
+    }
+    wanted = (wanted + mask) & ~mask;
+
+    section = section_create((unsigned long)wanted, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (section < 0) {
+        return 0;
+    }
+
+    mapped = map_view((int)section,
+        SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_VIEW_PRIVATE);
+    (void)close((int)section);
+    if (mapped == 0 || result_is_error((long)mapped)) {
+        return 0;
+    }
+
+    arena = sx_arena_stamp(mapped, wanted, 1);
+    if (arena == 0) {
+        (void)unmap_view(mapped);
+        return 0;
+    }
+
+    ++g_mapped_arena_count;
+    g_mapped_bytes += wanted;
+    return arena;
+}
+
+static sx_arena* sx_arena_for_address(const void* address) {
+    const unsigned char* target = (const unsigned char*)address;
+    sx_arena* arena = 0;
+
+    for (arena = g_arenas; arena != 0; arena = arena->next) {
+        const unsigned char* start = sx_arena_payload(arena);
+        const unsigned char* end = (const unsigned char*)arena + arena->size;
+        if (target >= start && target < end) {
+            return arena;
+        }
+    }
+    return 0;
+}
+
+static int sx_arena_is_empty(const sx_arena* arena) {
+    const sx_alloc_header* block = arena != 0 ? arena->first_block : 0;
+    return block != 0
+        && block->free != 0
+        && block->prev == 0
+        && block->next == 0
+        && (const unsigned char*)block == (const unsigned char*)arena + sx_arena_header_bytes()
+        && block->size == sx_arena_initial_block_size(arena);
+}
+
+/* Devuelve al kernel una arena que quedo entera libre. La de BSS no se toca. */
+static void sx_arena_release(sx_arena* arena) {
+    sx_arena** link = &g_arenas;
+
+    if (arena == 0 || arena->mapped == 0 || !sx_arena_is_empty(arena)) {
+        return;
+    }
+
+    while (*link != 0 && *link != arena) {
+        link = &(*link)->next;
+    }
+    if (*link != arena) {
+        return;
+    }
+
+    *link = arena->next;
+    --g_mapped_arena_count;
+    g_mapped_bytes -= arena->size;
+    (void)unmap_view(arena);
+}
+
+static int sx_block_is_valid(const sx_alloc_header* block) {
+    if (block == 0 || sx_arena_for_address(block) == 0) {
+        return 0;
+    }
+    return block->magic == SX_ALLOC_MAGIC;
 }
 
 static int sx_blocks_are_adjacent(const sx_alloc_header* left, const sx_alloc_header* right) {
@@ -281,20 +440,31 @@ static int sx_blocks_are_adjacent(const sx_alloc_header* left, const sx_alloc_he
         && ((const unsigned char*)(left + 1) + left->size) == (const unsigned char*)right;
 }
 
+/* Se come el bloque libre que sigue si es adyacente. Sirve tanto sobre bloques
+ * libres (coalescing) como sobre uno OCUPADO, que es como realloc crece sin
+ * mover los datos. Devuelve 1 si absorbio algo: quien itera necesita ese aviso
+ * para poder terminar. */
+static int sx_absorb_next(sx_alloc_header* block) {
+    sx_alloc_header* next = block != 0 ? block->next : 0;
+
+    if (next == 0 || !next->free || !sx_blocks_are_adjacent(block, next)) {
+        return 0;
+    }
+
+    block->size += sizeof(sx_alloc_header) + next->size;
+    block->next = next->next;
+    if (block->next != 0) {
+        block->next->prev = block;
+    }
+    return 1;
+}
+
 static void sx_merge_with_next(sx_alloc_header* block) {
-    sx_alloc_header* next = 0;
     if (block == 0 || !block->free) {
         return;
     }
 
-    next = block->next;
-    while (next != 0 && next->free && sx_blocks_are_adjacent(block, next)) {
-        block->size += sizeof(sx_alloc_header) + next->size;
-        block->next = next->next;
-        if (block->next != 0) {
-            block->next->prev = block;
-        }
-        next = block->next;
+    while (sx_absorb_next(block)) {
     }
 }
 
@@ -327,15 +497,26 @@ static void sx_split_block(sx_alloc_header* block, size_t size) {
 }
 
 static sx_alloc_header* sx_find_free_block(size_t size) {
+    sx_arena* arena = 0;
     sx_alloc_header* block = 0;
+
     sx_allocator_init();
 
-    for (block = g_heap_head; block != 0; block = block->next) {
-        if (block->free && block->size >= size) {
-            return block;
+    for (arena = g_arenas; arena != 0; arena = arena->next) {
+        for (block = arena->first_block; block != 0; block = block->next) {
+            if (block->free && block->size >= size) {
+                return block;
+            }
         }
     }
-    return 0;
+
+    arena = sx_arena_acquire(size);
+    if (arena == 0) {
+        return 0;
+    }
+
+    block = arena->first_block;
+    return (block != 0 && block->free && block->size >= size) ? block : 0;
 }
 
 static struct sx_socket_state* sx_find_socket_state(int fd) {
@@ -817,11 +998,7 @@ void* sx_realloc(void* pointer, size_t size) {
         return pointer;
     }
 
-    while (header->next != 0
-        && header->next->free
-        && sx_blocks_are_adjacent(header, header->next)
-        && header->size < aligned) {
-        sx_merge_with_next(header);
+    while (header->size < aligned && sx_absorb_next(header)) {
     }
 
     if (header->size >= aligned) {
@@ -856,6 +1033,7 @@ void sx_free(void* pointer) {
     if (header->prev != 0 && header->prev->free) {
         sx_merge_with_next(header->prev);
     }
+    sx_arena_release(sx_arena_for_address(header));
 }
 
 static unsigned long sx_parse_unsigned(const char* text, char** endptr, int base, int* success) {
