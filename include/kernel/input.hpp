@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "savanxp/syscall.h"
+
 namespace input {
 
 enum class MouseSource : uint8_t {
@@ -9,14 +11,17 @@ enum class MouseSource : uint8_t {
     virtio_tablet = 1,
 };
 
+/* Derivados de savanxp/syscall.h y no redefinidos: estos flags viajan tal cual
+ * a userland en savanxp_input_event.modifiers, asi que dos listas separadas
+ * podrian divergir sin que nada se queje. */
 enum ModifierFlags : uint32_t {
-    modifier_shift = 1u << 0,
-    modifier_ctrl = 1u << 1,
-    modifier_alt = 1u << 2,
-    modifier_alt_gr = 1u << 3,
-    modifier_caps_lock = 1u << 4,
-    modifier_num_lock = 1u << 5,
-    modifier_scroll_lock = 1u << 6,
+    modifier_shift = SAVANXP_KEY_MOD_SHIFT,
+    modifier_ctrl = SAVANXP_KEY_MOD_CTRL,
+    modifier_alt = SAVANXP_KEY_MOD_ALT,
+    modifier_alt_gr = SAVANXP_KEY_MOD_ALT_GR,
+    modifier_caps_lock = SAVANXP_KEY_MOD_CAPS_LOCK,
+    modifier_num_lock = SAVANXP_KEY_MOD_NUM_LOCK,
+    modifier_scroll_lock = SAVANXP_KEY_MOD_SCROLL_LOCK,
 };
 
 struct KeyEvent {

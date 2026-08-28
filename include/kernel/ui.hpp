@@ -11,7 +11,7 @@ bool graphics_active();
 bool acquire_graphics_session(uint32_t pid);
 void release_graphics_session(uint32_t pid);
 bool owns_graphics_session(uint32_t pid);
-void handle_key_event(uint32_t key, bool pressed, char ascii);
+void handle_key_event(uint32_t key, bool pressed, char ascii, uint32_t modifiers);
 void handle_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons);
 // Re-lee la geometria del backend de display y la propaga a quien la tenga
 // cacheada (hoy, el mapeo de coordenadas absolutas del puntero). La llama el

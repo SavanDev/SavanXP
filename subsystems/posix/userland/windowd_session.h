@@ -80,9 +80,6 @@ struct windowd_session
     int hw_cursor_enabled;
     int current_cursor_shape;
     int previous_cursor_shape;
-    /* Task List (Ctrl+Esc): estado de UI del WM, no del chrome del shell. El
-     * evento de teclado no trae modificadores, asi que windowd sigue el estado
-     * de Ctrl con los KEY_DOWN/KEY_UP de SAVANXP_KEY_CTRL. */
     /* Redimensionado por bordes en curso. Se guarda el marco al agarrar y el
      * punto de agarre: el marco nuevo se calcula siempre desde ese origen, no
      * de forma incremental, asi que el error no se acumula al arrastrar. */
@@ -91,11 +88,11 @@ struct windowd_session
     struct sx_rect resize_origin_frame;
     int resize_grab_x;
     int resize_grab_y;
+    /* Task List (Ctrl+Esc): estado de UI del WM, no del chrome del shell. */
     int tasklist_open;
     int tasklist_selected;
     int tasklist_last_click_index;
     unsigned long tasklist_last_click_ms;
-    int ctrl_down;
     int active_client_kind;
     int active_overlay_slot;
     int fullscreen_slot;

@@ -72,7 +72,16 @@ struct sxn_gui_input_event {
     uint32_t type; /* 1 = key down, 2 = key up, 3 = resized */
     uint32_t key;
     int32_t ascii;
+    uint32_t modifiers; /* SXN_GUI_KEY_MOD_*, espejo de savanxp_key_modifier */
 };
+
+#define SXN_GUI_KEY_MOD_SHIFT 0x01u
+#define SXN_GUI_KEY_MOD_CTRL 0x02u
+#define SXN_GUI_KEY_MOD_ALT 0x04u
+#define SXN_GUI_KEY_MOD_ALT_GR 0x08u
+#define SXN_GUI_KEY_MOD_CAPS_LOCK 0x10u
+#define SXN_GUI_KEY_MOD_NUM_LOCK 0x20u
+#define SXN_GUI_KEY_MOD_SCROLL_LOCK 0x40u
 
 #define SXN_GUI_EVENT_KEY_DOWN 1u
 #define SXN_GUI_EVENT_KEY_UP 2u

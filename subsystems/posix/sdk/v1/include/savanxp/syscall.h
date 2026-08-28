@@ -756,10 +756,29 @@ enum savanxp_key_code {
     SAVANXP_KEY_ALT_GR = 288,
 };
 
+/* Estado de los modificadores en el instante del evento. El kernel ya lo
+ * calculaba para su input::KeyEvent y lo perdia al cruzar a userland, asi que
+ * cada consumidor terminaba haciendo lo que hacia el WM: seguir Ctrl a mano
+ * por los KEY_DOWN/KEY_UP de SAVANXP_KEY_CTRL. Ese seguimiento a mano se
+ * desincroniza en cuanto se pierde un KEY_UP -- soltar Ctrl con el foco en
+ * otra ventana deja al modificador trabado --, y el estado real lo tiene el
+ * driver. include/kernel/input.hpp deriva sus ModifierFlags de estos valores,
+ * asi que no pueden divergir. */
+enum savanxp_key_modifier {
+    SAVANXP_KEY_MOD_SHIFT = 1u << 0,
+    SAVANXP_KEY_MOD_CTRL = 1u << 1,
+    SAVANXP_KEY_MOD_ALT = 1u << 2,
+    SAVANXP_KEY_MOD_ALT_GR = 1u << 3,
+    SAVANXP_KEY_MOD_CAPS_LOCK = 1u << 4,
+    SAVANXP_KEY_MOD_NUM_LOCK = 1u << 5,
+    SAVANXP_KEY_MOD_SCROLL_LOCK = 1u << 6,
+};
+
 struct savanxp_input_event {
     uint32_t type;
     uint32_t key;
     int32_t ascii;
+    uint32_t modifiers; /* enum savanxp_key_modifier */
 };
 
 struct savanxp_mouse_event {

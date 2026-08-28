@@ -67,7 +67,7 @@ void reset_mouse_queue() {
     g_mouse_count = 0;
 }
 
-void enqueue_event(uint32_t type, uint32_t key, int32_t ascii) {
+void enqueue_event(uint32_t type, uint32_t key, int32_t ascii, uint32_t modifiers) {
     if (g_input_count == kInputQueueCapacity) {
         g_input_read_index = (g_input_read_index + 1) % kInputQueueCapacity;
         g_input_count -= 1;
@@ -77,6 +77,7 @@ void enqueue_event(uint32_t type, uint32_t key, int32_t ascii) {
         .type = type,
         .key = key,
         .ascii = ascii,
+        .modifiers = modifiers,
     };
     g_input_write_index = (g_input_write_index + 1) % kInputQueueCapacity;
     g_input_count += 1;
@@ -243,14 +244,15 @@ bool owns_graphics_session(uint32_t pid) {
     return g_owner_pid != 0 && g_owner_pid == pid;
 }
 
-void handle_key_event(uint32_t key, bool pressed, char ascii) {
+void handle_key_event(uint32_t key, bool pressed, char ascii, uint32_t modifiers) {
     if (!graphics_active()) {
         return;
     }
     enqueue_event(
         pressed ? SAVANXP_INPUT_EVENT_KEY_DOWN : SAVANXP_INPUT_EVENT_KEY_UP,
         key,
-        ascii
+        ascii,
+        modifiers
     );
 }
 

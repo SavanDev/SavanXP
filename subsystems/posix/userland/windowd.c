@@ -24,6 +24,11 @@ static int launch_overlay_client(
 /* Definidas junto al resto del Task List, mas abajo; el selftest las usa antes. */
 static void tasklist_open(struct windowd_session *session, struct windowd_dirty_rect *dirty);
 static void tasklist_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index);
+static void tasklist_close(struct windowd_session *session, struct windowd_dirty_rect *dirty);
+static int wm_handle_key(
+    struct windowd_session *session,
+    const struct savanxp_input_event *key_event,
+    struct windowd_dirty_rect *dirty);
 static void resize_overlay_client_surface(
     struct windowd_session *session,
     struct windowd_dirty_rect *dirty,
@@ -2676,6 +2681,57 @@ static int windowd_selftest(void)
         }
     }
 
+    /* Subtest del atajo Ctrl+Esc por el camino real de la tecla. El subtest de
+     * arriba llama tasklist_open() directo, asi que no cubre la deteccion del
+     * modificador -- que es justo lo que cambio al pasar de seguir Ctrl a mano
+     * a leerlo de savanxp_input_event.modifiers. Se prueban los dos lados: con
+     * el modificador abre, y sin el la tecla NO abre nada y se rutea al
+     * cliente, que es lo que hace que ESC a secas siga sirviendo para cerrar
+     * una ventana. */
+    if (!failed)
+    {
+        struct savanxp_input_event key_event;
+        int consumed;
+
+        if (session.tasklist_open)
+        {
+            tasklist_close(&session, &dirty);
+        }
+
+        key_event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+        key_event.key = SAVANXP_KEY_ESC;
+        key_event.ascii = 0;
+        key_event.modifiers = 0;
+        consumed = wm_handle_key(&session, &key_event, &dirty);
+        if (consumed || session.tasklist_open)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL ctrl+esc: ESC sin modificador no tendria que abrir el Task List\n");
+            failed = 1;
+        }
+
+        if (!failed)
+        {
+            key_event.modifiers = SAVANXP_KEY_MOD_CTRL;
+            consumed = wm_handle_key(&session, &key_event, &dirty);
+            if (!consumed || !session.tasklist_open)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL ctrl+esc: el modificador no abrio el Task List\n");
+                failed = 1;
+            }
+        }
+
+        if (!failed)
+        {
+            /* Y vuelve a cerrar: el atajo alterna, no solo abre. */
+            consumed = wm_handle_key(&session, &key_event, &dirty);
+            if (!consumed || session.tasklist_open)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL ctrl+esc: el atajo no cerro el Task List\n");
+                failed = 1;
+            }
+        }
+    }
+
     /* Subtest de size hint: la app pide el tamano que necesita su contenido y
      * el WM se lo da. Se mide sobre progman, que calcula el suyo desde el
      * registro de programas; alcanza con exigir que quede MAS CHICO que la
@@ -2966,16 +3022,13 @@ static int wm_handle_key(
     const struct savanxp_input_event *key_event,
     struct windowd_dirty_rect *dirty)
 {
-    /* El evento no trae modificadores: seguimos Ctrl por sus KEY_DOWN/KEY_UP. */
-    if (key_event->key == SAVANXP_KEY_CTRL)
-    {
-        session->ctrl_down = (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN);
-        return 0;
-    }
-
+    /* El estado de Ctrl viene en el evento (savanxp_input_event.modifiers), no
+     * se sigue a mano: el driver es el que lo sabe de verdad, y el seguimiento
+     * por KEY_DOWN/KEY_UP se trababa si se perdia un KEY_UP. La tecla igual se
+     * rutea al cliente, que la necesita para sus propios atajos. */
     if (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN &&
         key_event->key == SAVANXP_KEY_ESC &&
-        session->ctrl_down)
+        (key_event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0)
     {
         if (session->tasklist_open)
         {

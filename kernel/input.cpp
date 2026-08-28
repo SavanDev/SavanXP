@@ -17,7 +17,7 @@ void poll() {
 
 void submit_key_event(const KeyEvent& event) {
     if (ui::graphics_active()) {
-        ui::handle_key_event(event.key, event.pressed, event.pressed ? event.ascii : 0);
+        ui::handle_key_event(event.key, event.pressed, event.pressed ? event.ascii : 0, event.modifiers);
         return;
     }
 

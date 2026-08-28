@@ -24,6 +24,20 @@ Notas de corte:
   cierran el device en cada llamada y no cuestan un descriptor permanente. Lo
   cubre `cliptest`, dentro de `build.ps1 smoke`.
 
+### Cambiado
+
+- **El evento de teclado lleva los modificadores.** `savanxp_input_event` suma
+  el campo `modifiers` con el estado de Shift, Ctrl, Alt, AltGr y los locks en
+  el instante del evento (`SAVANXP_KEY_MOD_*`). El kernel ya lo calculaba para
+  su uso interno -- es lo que mueve el Ctrl+L de la consola -- y lo descartaba
+  al cruzar a userland, asi que el WM tenia que seguir Ctrl a mano por los
+  KEY_DOWN/KEY_UP de la tecla; ese seguimiento quedaba trabado si se perdia un
+  KEY_UP, por ejemplo al soltar Ctrl con el foco ya en otra ventana.
+  `include/kernel/input.hpp` deriva sus flags de los del SDK para que las dos
+  listas no puedan divergir. El evento pasa de 12 a 16 bytes: **las apps
+  externas compiladas contra la SDK anterior necesitan rebuild** -- Doom lee
+  este struct.
+
 ## [0.3.4] - 2026-08-28
 
 ### Agregado
