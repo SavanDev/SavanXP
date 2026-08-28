@@ -9,7 +9,7 @@ userland, un volumen persistente montado en `/disk`, una base POSIX minima,
 apps internas, soporte para apps externas compiladas contra la SDK del repo y
 un camino grafico sobre compositor propio.
 
-Version actual: `v0.3.3`  
+Version actual: `v0.3.4`  
 Historial de cambios: [`CHANGELOG.md`](CHANGELOG.md)  
 Licencia: [`MIT`](LICENSE)
 
