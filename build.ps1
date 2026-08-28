@@ -582,13 +582,35 @@ function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
     }
 }
 
+# Compara mtimes UTC: true si $Output no existe o algun $Dep es mas nuevo.
+# Mismo criterio que usa Build-SvfsCli (tools/UserAppCommon.ps1) para evitar
+# reprocesar cuando nada cambio.
+function Test-NeedsRegen([string]$Output, [string[]]$Deps) {
+    if (-not (Test-Path $Output)) {
+        return $true
+    }
+    $outputTime = (Get-Item $Output).LastWriteTimeUtc
+    foreach ($dep in $Deps) {
+        if ((Get-Item $dep).LastWriteTimeUtc -gt $outputTime) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Generate-CursorAsset {
     New-Directory $GeneratedRoot
 
-    $python = Get-PythonExecutable
     $scriptPath = Join-Path $ToolRoot "gen_cursor_asset.py"
     $outputPath = Join-Path $GeneratedRoot "cursor_asset.h"
+    $cursorSourceDir = Join-Path $ProjectRoot "assets/desktop/cursors"
+    $deps = @($scriptPath) + (Get-ChildItem -Path $cursorSourceDir -Filter "*.png").FullName
 
+    if (-not (Test-NeedsRegen $outputPath $deps)) {
+        return
+    }
+
+    $python = Get-PythonExecutable
     & $python $scriptPath --project-root $ProjectRoot --output $outputPath
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la generacion de cursor_asset.h."
@@ -598,18 +620,32 @@ function Generate-CursorAsset {
 function Generate-DesktopIconAssets {
     New-Directory $GeneratedRoot
 
-    $python = Get-PythonExecutable
     $sourceArtScript = Join-Path $ToolRoot "gen_desktop_source_art.py"
     $scriptPath = Join-Path $ToolRoot "gen_desktop_icon_assets.py"
     $outputPath = Join-Path $GeneratedRoot "desktop_icon_assets.h"
+    $iconsDir = Join-Path $ProjectRoot "assets/desktop/icons"
+    $menuStripPath = Join-Path $ProjectRoot "assets/desktop/menu_strip_savanxp.png"
+    # gen_desktop_source_art.py dibuja el arte por codigo (sin insumos externos
+    # ademas de si mismo); como escribe muchos PNG y no un output unico, se
+    # trackea con un stamp en vez de comparar mtimes contra cada PNG generado.
+    $sourceArtStamp = Join-Path $GeneratedRoot "desktop_source_art.stamp"
 
-    & $python $sourceArtScript --project-root $ProjectRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "Fallo la generacion del arte fuente del desktop."
+    $python = Get-PythonExecutable
+
+    if (Test-NeedsRegen $sourceArtStamp @($sourceArtScript)) {
+        & $python $sourceArtScript --project-root $ProjectRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fallo la generacion del arte fuente del desktop."
+        }
+        [System.IO.File]::WriteAllText($sourceArtStamp, "")
     }
-    & $python $scriptPath --project-root $ProjectRoot --output $outputPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Fallo la generacion de desktop_icon_assets.h."
+
+    $iconDeps = @($scriptPath, $menuStripPath) + (Get-ChildItem -Path $iconsDir -Filter "*.png" -Recurse).FullName
+    if (Test-NeedsRegen $outputPath $iconDeps) {
+        & $python $scriptPath --project-root $ProjectRoot --output $outputPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fallo la generacion de desktop_icon_assets.h."
+        }
     }
 }
 

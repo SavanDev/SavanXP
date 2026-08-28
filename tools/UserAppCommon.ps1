@@ -966,7 +966,7 @@ function New-SvfsManifest([string]$SourceRoot) {
     if (Test-Path $SourceRoot) {
         $items = Get-ChildItem -Path $SourceRoot -Recurse | Sort-Object FullName
         foreach ($item in $items) {
-            $relative = $item.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
+            $relative = $item.FullName.Substring($SourceRoot.Length).TrimStart('\', '/').Replace('\', '/')
             if ([string]::IsNullOrWhiteSpace($relative)) {
                 continue
             }

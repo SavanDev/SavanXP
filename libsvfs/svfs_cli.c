@@ -27,6 +27,9 @@
  */
 #define _FILE_OFFSET_BITS 64
 #define _CRT_SECURE_NO_WARNINGS 1 /* fopen/strtol: UCRT los marca "inseguros" */
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L /* fseeko/off_t: glibc los oculta bajo -std=c11 sin esto */
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -281,6 +281,13 @@ Notas de corte:
   que para `/disk/progman.ini`. Puede dejar el registro vacio: si no hay nada
   lanzable, mostrar nada es lo honesto. `windowd_appinfo.c` no se filtra, porque
   traduce path -> nombre/icono de ventanas ya abiertas, no de accesos directos.
+- **El build ya no regenera el arte del desktop en cada compilacion si nada
+  cambio.** `Generate-CursorAsset`/`Generate-DesktopIconAssets` corrian los tres
+  generadores Pillow sin condicion; con una version de Pillow distinta a la que
+  produjo los PNG commiteados, cada build dejaba diffs binarios espurios en
+  `assets/desktop/` (mismos pixeles, distinta compresion). Ahora comparan
+  mtimes contra el script y los PNG fuente, igual criterio que ya usaba
+  `Build-SvfsCli`, y solo regeneran si algo cambio de verdad.
 
 ### Eliminado
 
@@ -328,6 +335,13 @@ Notas de corte:
   xAPIC|x2APIC (id N)`.
 - **Key Test** pisaba la segunda linea de ayuda con el primer evento, y **Mouse
   Test** cortaba la ultima linea de su panel.
+- **El build no compilaba en Linux nativo.** `svfs-cli` (tool de host de
+  `libsvfs`) no compilaba con `clang -std=c11` sobre glibc: `fseeko`/`off_t`
+  quedan ocultos sin `_POSIX_C_SOURCE` en modo C estricto. Ademas
+  `New-SvfsManifest` armaba las rutas relativas del manifiesto asumiendo
+  separador `\` (`TrimStart('\')`), asi que en Linux (separador `/`) quedaba un
+  `/` inicial y `svfs-cli apply` rechazaba el `mkdir` (`argumento/ruta
+  invalida`). Ninguno de los dos afecta la rama Windows.
 
 ## [0.3.3] - 2026-07-09
 
