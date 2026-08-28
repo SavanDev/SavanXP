@@ -12,6 +12,19 @@ Notas de corte:
 
 ### Agregado
 
+- **Seleccion de texto en el editor multilinea de sxgui, con Cortar, Copiar y
+  Pegar.** El widget tenia caret pero no ancla, asi que no habia de donde
+  copiar. Ahora shift junto con flechas, Inicio, Fin y las de pagina extiende
+  la seleccion; el click ancla y el arrastre la estira; shift+click extiende
+  desde donde estaba, y lo seleccionado se pinta en video inverso. Escribir,
+  Enter, Backspace y Delete sobre una seleccion la reemplazan. Atajos Ctrl+C,
+  Ctrl+X, Ctrl+V y Ctrl+A; el resto de los Ctrl+letra se consumen en vez de
+  escribirse, salvo con AltGr, que en varias distribuciones llega como
+  Ctrl+Alt. Las mismas operaciones se exponen como `sxgui_textedit_copy`,
+  `_cut`, `_paste`, `_select_all` y `_has_selection` para poder colgarlas de un
+  menu, y el bloc de notas estrena su menu Edit. Lo cubre `seltest`, dentro de
+  `build.ps1 smoke`, que maneja el toolkit headless contra un buffer de
+  pixeles.
 - **Portapapeles del sistema, en `/dev/clipboard`.** Copiar y pegar entre
   programas, que hasta ahora no existia en ninguna forma. El contenido es un
   valor y no un stream: un `write` reemplaza todo y un `read` devuelve desde el

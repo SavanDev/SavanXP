@@ -29,6 +29,9 @@
 #define NOTEPAD_MENU_SAVE_AS 4
 #define NOTEPAD_MENU_EXIT 5
 #define NOTEPAD_MENU_SELECT_ALL 10
+#define NOTEPAD_MENU_CUT 11
+#define NOTEPAD_MENU_COPY 12
+#define NOTEPAD_MENU_PASTE 13
 #define NOTEPAD_MENU_GO_TOP 20
 #define NOTEPAD_MENU_GO_BOTTOM 21
 #define NOTEPAD_MENU_ABOUT 30
@@ -359,10 +362,38 @@ static void on_menu_command(int id, void *user)
         }
         break;
     case NOTEPAD_MENU_SELECT_ALL:
-        /* Sin seleccion todavia: lo mas util que puede hacer es llevar el caret
-         * al final, que es lo que se quiere para seguir escribiendo. */
-        NOTEPAD_EDIT->caret = (int)strlen(g_document);
-        notepad_set_status("Caret moved to end of document.");
+        sxgui_textedit_select_all(NOTEPAD_EDIT);
+        notepad_set_status("Selected the whole document.");
+        break;
+    case NOTEPAD_MENU_CUT:
+        if (sxgui_textedit_cut(NOTEPAD_EDIT))
+        {
+            notepad_set_status("Cut to clipboard.");
+        }
+        else
+        {
+            notepad_set_status("Nothing selected.");
+        }
+        break;
+    case NOTEPAD_MENU_COPY:
+        if (sxgui_textedit_copy(NOTEPAD_EDIT))
+        {
+            notepad_set_status("Copied to clipboard.");
+        }
+        else
+        {
+            notepad_set_status("Nothing selected.");
+        }
+        break;
+    case NOTEPAD_MENU_PASTE:
+        if (sxgui_textedit_paste(NOTEPAD_EDIT))
+        {
+            notepad_set_status("Pasted from clipboard.");
+        }
+        else
+        {
+            notepad_set_status("The clipboard is empty.");
+        }
         break;
     case NOTEPAD_MENU_GO_TOP:
         NOTEPAD_EDIT->caret = 0;
@@ -444,7 +475,11 @@ static const struct sxgui_menu_item k_file_items[] = {
 };
 
 static const struct sxgui_menu_item k_edit_items[] = {
-    {"Go to end", NOTEPAD_MENU_SELECT_ALL, 0},
+    {"Cut", NOTEPAD_MENU_CUT, 0},
+    {"Copy", NOTEPAD_MENU_COPY, 0},
+    {"Paste", NOTEPAD_MENU_PASTE, 0},
+    {0, 0, 0},
+    {"Select All", NOTEPAD_MENU_SELECT_ALL, 0},
 };
 
 static const struct sxgui_menu_item k_search_items[] = {

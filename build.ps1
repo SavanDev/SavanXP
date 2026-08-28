@@ -223,6 +223,11 @@ $UserPrograms = @(
     @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c"; Test = $true },
     @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c"; Test = $true },
     @{ Name = "cliptest"; Source = "subsystems/posix/userland/cliptest.c"; Test = $true },
+    @{ Name = "seltest"; Sources = @(
+        "subsystems/posix/userland/seltest.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui.c",
+        "subsystems/posix/sdk/v1/runtime/posix.c"
+    ); Test = $true },
     @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c"; Test = $true },
     @{ Name = "heaptest"; Sources = @(
         "subsystems/posix/userland/heaptest.c",

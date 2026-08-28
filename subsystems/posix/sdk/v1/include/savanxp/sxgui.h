@@ -105,6 +105,12 @@ struct sxgui_widget {
     int edit_capacity;
     int caret;
 
+    /* textedit: ancla de la seleccion, o -1 si no hay nada seleccionado. El
+     * rango es [min(anchor, caret), max(anchor, caret)): el ancla se queda
+     * donde empezo la seleccion y el caret es el extremo movil, que es lo que
+     * hace que shift+flecha crezca y se achique por donde uno espera. */
+    int sel_anchor;
+
     /* textedit: se pone en 1 cada vez que el contenido cambia. El toolkit
      * nunca lo baja -- es el llamador el que decide que significa "guardado". */
     int modified;
@@ -288,6 +294,18 @@ struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capaci
  * lo mueva el usuario con Tab o el click, pero una app cuyo contenido ES un
  * control -- un editor, una lista -- quiere arrancar con el foco ahi. */
 void sxgui_focus(struct sxgui_context *ctx, int index);
+
+/* Portapapeles sobre un textedit, para colgar de un menu Edicion. Son las
+ * mismas operaciones que hacen Ctrl+C/X/V/A, expuestas porque el atajo de
+ * teclado no puede ser la unica via: un menu tiene que poder dispararlas.
+ * Devuelven 1 si cambiaron algo. `cut` y `paste` marcan el widget modificado;
+ * el llamador es el que decide que significa "guardado". */
+int sxgui_textedit_copy(struct sxgui_widget *widget);
+int sxgui_textedit_cut(struct sxgui_widget *widget);
+int sxgui_textedit_paste(struct sxgui_widget *widget);
+void sxgui_textedit_select_all(struct sxgui_widget *widget);
+/* 1 si hay algo seleccionado: sirve para poner en gris Cortar y Copiar. */
+int sxgui_textedit_has_selection(const struct sxgui_widget *widget);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 
 /* ---- application frame (sxgui_app.c) -------------------------------------
