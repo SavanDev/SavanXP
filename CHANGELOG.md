@@ -303,6 +303,21 @@ Notas de corte:
 
 ### Corregido
 
+- **El driver AC'97 truncaba a 32 bits la direccion del buffer de userland.**
+  `copy_period` la recibia como `uint32_t`. Estuvo latente toda la vida del
+  driver porque cualquier buffer de audio venia de la imagen ELF o de la BSS,
+  por debajo de 4 GiB, donde truncar no hace nada; pero una direccion de
+  userland puede estar mucho mas arriba -- una vista de seccion se mapea en
+  `kSectionViewBase`, 64 GiB --, y ahi la direccion truncada queda basura,
+  `copy_from_user` falla y `audio_write` devuelve EINVAL. Un cliente que apague
+  su audio ante el primer error de `write` (Doom lo hace) se queda mudo el
+  resto de la sesion. `virtio-sound` no tenia el bug: pasa el puntero entero.
+
+  Nadie lo veia porque `audiotest` usaba un array de la BSS y ningun harness
+  tocaba una direccion alta. Ahora pide su buffer de reproduccion con
+  `section_create` + `map_view`, asi `smoke` y `ac97-count` ejercitan el camino
+  de 64 bits.
+
 - **Un smoke dejaba el spec de automatizacion pegado para siempre.** El build
   escribia `SMOKE` en el rootfs al correr un target automatizado pero nunca lo
   borraba, asi que se volvia a hornear en el initramfs en cada build posterior

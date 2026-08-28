@@ -215,7 +215,21 @@ void set_bdl_descriptor(uint32_t index, uint32_t byte_count) {
     entry.control = kBdlControlNone;
 }
 
-bool copy_period(uint32_t user_buffer, uint32_t byte_count) {
+// OJO con el tipo de `user_buffer`: es una direccion de userland completa, de
+// 64 bits. Estuvo declarada uint32_t y el truncado no se notaba porque todo
+// buffer de audio venia de la imagen ELF o de la BSS (por debajo de 4 GiB).
+// Desde que el malloc de userland crece con arenas respaldadas por secciones,
+// el buffer puede vivir en una vista mapeada en kSectionViewBase (64 GiB):
+// truncar ahi da una direccion basura, copy_from_user falla, audio_write
+// devuelve EINVAL y el cliente (Doom) apaga su audio para toda la sesion.
+// OJO con el tipo de `user_buffer`: es una direccion de userland completa, de
+// 64 bits. Estuvo declarada uint32_t y el truncado no se notaba porque todo
+// buffer de audio venia de la imagen ELF o de la BSS (por debajo de 4 GiB).
+// Desde que el malloc de userland crece con arenas respaldadas por secciones,
+// el buffer puede vivir en una vista mapeada en kSectionViewBase (64 GiB):
+// truncar ahi da una direccion basura, copy_from_user falla, audio_write
+// devuelve EINVAL y el cliente (Doom) apaga su audio para toda la sesion.
+bool copy_period(uint64_t user_buffer, uint32_t byte_count) {
     uint8_t* destination = g_buffers + static_cast<size_t>(g_head) * kPeriodBytes;
     if (!process::copy_from_user(destination, user_buffer, byte_count)) {
         return false;
@@ -315,7 +329,7 @@ int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
         prime_silence();
     }
 
-    if (!copy_period(static_cast<uint32_t>(user_buffer), byte_count)) {
+    if (!copy_period(user_buffer, byte_count)) {
         return -static_cast<int>(SAVANXP_EINVAL);
     }
 

@@ -1,8 +1,36 @@
 #include "libc.h"
 
-#define AUDIOTEST_MAX_SAMPLES (16384 / (int)sizeof(int16_t))
+#define AUDIOTEST_BUFFER_BYTES 16384
+#define AUDIOTEST_MAX_SAMPLES (AUDIOTEST_BUFFER_BYTES / (int)sizeof(int16_t))
 
-static int16_t g_samples[AUDIOTEST_MAX_SAMPLES];
+static int16_t g_fallback_samples[AUDIOTEST_MAX_SAMPLES];
+static int16_t* g_samples = g_fallback_samples;
+
+/* El buffer de reproduccion se pide como seccion A PROPOSITO: las vistas de
+ * seccion se mapean en kSectionViewBase (64 GiB), asi que esto ejercita el
+ * camino de punteros de userland de 64 bits del driver de audio. El AC'97
+ * truncaba la direccion a 32 bits y no se notaba mientras todos los buffers de
+ * audio vivian en la BSS, por debajo de 4 GiB; desde que el malloc de userland
+ * crece con arenas de secciones, un cliente normal (Doom) cae ahi y el driver
+ * le devolvia EINVAL. Si la seccion no sale, cae a la BSS y el test igual
+ * corre, sin cubrir ese caso. */
+static void use_section_buffer(void) {
+    long section = section_create(AUDIOTEST_BUFFER_BYTES,
+        SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    void* mapped;
+
+    if (section < 0) {
+        return;
+    }
+
+    mapped = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    close((int)section);
+    if (mapped == 0 || result_is_error((long)mapped)) {
+        return;
+    }
+
+    g_samples = (int16_t*)mapped;
+}
 
 static int is_smoke_mode(int argc, char** argv) {
     return argc > 1 && strcmp(argv[1], "--smoke") == 0;
@@ -20,7 +48,7 @@ static int is_stream_mode(int argc, char** argv) {
 static int run_stream(int fd, const struct savanxp_audio_info* info) {
     const uint32_t rate = info->sample_rate_hz;
     const uint32_t channels = info->channels;
-    const uint32_t max_frames = (uint32_t)(sizeof(g_samples) / (channels * sizeof(int16_t)));
+    const uint32_t max_frames = (uint32_t)(AUDIOTEST_BUFFER_BYTES / (channels * sizeof(int16_t)));
     uint32_t full_period = rate / 440u;
     unsigned long start_ms = uptime_ms();
     unsigned long last_ms = start_ms;
@@ -90,7 +118,10 @@ static void fill_square_wave(const struct savanxp_audio_info* info, uint32_t fre
 
 int main(int argc, char** argv) {
     struct savanxp_audio_info info = {0};
-    long fd = audio_open();
+    long fd;
+
+    use_section_buffer();
+    fd = audio_open();
     long result;
     const int smoke_mode = is_smoke_mode(argc, argv);
     const int stream_mode = is_stream_mode(argc, argv);
@@ -111,7 +142,7 @@ int main(int argc, char** argv) {
         info.frame_bytes != 4u ||
         info.period_bytes == 0u ||
         info.buffer_bytes == 0u ||
-        info.buffer_bytes > (uint32_t)sizeof(g_samples)) {
+        info.buffer_bytes > (uint32_t)AUDIOTEST_BUFFER_BYTES) {
         puts_fd(2, "audiotest: unexpected audio format\n");
         close((int)fd);
         return 1;
