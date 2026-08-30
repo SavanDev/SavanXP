@@ -2624,6 +2624,18 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         ctx->shift_down = 1;
         return 0;
     }
+    /* Las teclas modificadoras no llegan a los widgets. Parece obvio y no lo
+     * es: una tecla modificadora produce su propio evento, con ascii 0, y los
+     * editores de texto tratan "cualquier otra tecla" como motivo para soltar
+     * la seleccion. Sin este corte, apretar Ctrl borraba la seleccion ANTES de
+     * que llegara la letra, y Ctrl+C nunca tenia nada que copiar. */
+    if (event->key == SAVANXP_KEY_CTRL || event->key == SAVANXP_KEY_ALT ||
+        event->key == SAVANXP_KEY_ALT_GR || event->key == SAVANXP_KEY_CAPSLOCK ||
+        event->key == SAVANXP_KEY_NUMLOCK || event->key == SAVANXP_KEY_SCROLLLOCK ||
+        event->key == SAVANXP_KEY_SUPER || event->key == SAVANXP_KEY_MENU)
+    {
+        return 0;
+    }
     /* an active dialog swallows the keyboard; ESC ends it with result 0 */
     if (ctx->modal != 0 && !ctx->modal_route)
     {

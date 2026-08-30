@@ -64,6 +64,27 @@ static void expect_clipboard(const char *expected, const char *label)
     }
 }
 
+/* Cuenta pixeles de un color en un tramo horizontal del buffer pintado. El
+ * painter escribe XRGB, asi que se enmascara el byte alto antes de comparar. */
+static int count_colour_in_row(int y, int x_from, int x_to, uint32_t colour)
+{
+    int found = 0;
+    int x;
+
+    if (y < 0 || y >= TEST_HEIGHT)
+    {
+        return 0;
+    }
+    for (x = x_from; x < x_to && x < TEST_WIDTH; ++x)
+    {
+        if ((g_pixels[y * TEST_WIDTH + x] & 0x00ffffffu) == colour)
+        {
+            found += 1;
+        }
+    }
+    return found;
+}
+
 static void key(uint32_t code, int ascii, uint32_t modifiers)
 {
     struct savanxp_input_event event;
@@ -71,6 +92,31 @@ static void key(uint32_t code, int ascii, uint32_t modifiers)
     event.key = code;
     event.ascii = ascii;
     event.modifiers = modifiers;
+    (void)sxgui_handle_key(&g_ctx, &event);
+}
+
+/* Un acorde como lo produce un teclado de verdad: la tecla modificadora manda
+ * su PROPIO evento (ascii 0) antes y despues de la letra. Inyectar solo la
+ * letra con el flag puesto -- que es lo que hacia este test al principio --
+ * saltea justamente el evento que rompio Ctrl+C en vivo: la tecla Ctrl caia en
+ * el "cualquier otra tecla" del editor y soltaba la seleccion antes de que
+ * llegara la 'c'. */
+static void chord(uint32_t modifier_key, uint32_t modifier_flag, int ascii)
+{
+    struct savanxp_input_event event;
+
+    event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+    event.key = modifier_key;
+    event.ascii = 0;
+    event.modifiers = modifier_flag;
+    (void)sxgui_handle_key(&g_ctx, &event);
+
+    key((uint32_t)ascii, ascii, modifier_flag);
+
+    event.type = SAVANXP_INPUT_EVENT_KEY_UP;
+    event.key = modifier_key;
+    event.ascii = 0;
+    event.modifiers = 0;
     (void)sxgui_handle_key(&g_ctx, &event);
 }
 
@@ -226,11 +272,75 @@ int main(void)
         }
     }
 
-    /* Pintar con seleccion viva: ejercita el recorte del tramo resaltado, que
-     * hace aritmetica de indices contra un buffer de linea de tamano fijo. */
+    /* El acorde COMPLETO, con el evento de la tecla modificadora incluido. Es
+     * el caso que fallaba en vivo mientras el test sintetico pasaba. */
+    reset("hola mundo");
+    shift_right(4);
+    chord(SAVANXP_KEY_CTRL, SAVANXP_KEY_MOD_CTRL, 'c');
+    expect_clipboard("hola", "acorde real: ctrl+c copia");
+    expect_text("hola mundo", "acorde real: ctrl+c no toca el buffer");
+
+    reset("AB");
+    (void)clipboard_set_text("--");
+    key(SAVANXP_KEY_END, 0, 0);
+    chord(SAVANXP_KEY_CTRL, SAVANXP_KEY_MOD_CTRL, 'v');
+    expect_text("AB--", "acorde real: ctrl+v pega");
+
+    /* Y que apretar el modificador no se lleve puesta la seleccion. */
+    reset("hola mundo");
+    shift_right(4);
+    {
+        struct savanxp_input_event down;
+        down.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+        down.key = SAVANXP_KEY_CTRL;
+        down.ascii = 0;
+        down.modifiers = SAVANXP_KEY_MOD_CTRL;
+        (void)sxgui_handle_key(&g_ctx, &down);
+    }
+    expect_sel(0, 4, "apretar Ctrl no suelta la seleccion");
+
+    /* Pintar con seleccion viva. Ademas de ejercitar el recorte del tramo
+     * resaltado (aritmetica de indices contra un buffer de linea fijo), se
+     * MIRAN los pixeles: es la unica forma de saber que el resaltado se dibuja
+     * de verdad y no queda tapado por el texto normal, que fue justo el bug de
+     * orden que tuvo esta funcion. */
     reset("una linea larga para pintar con la seleccion puesta");
     key((uint32_t)'a', 'a', SAVANXP_KEY_MOD_CTRL);
     sxgui_paint(&g_ctx);
+    {
+        /* Dentro de la primera fila de texto y a pocos pixeles del borde
+         * izquierdo del area util: ahi hay seleccion si. Abajo del todo, dentro
+         * del mismo widget, no la hay. */
+        int inside = count_colour_in_row(12, 8, 200, SXGUI_COLOR_SELECT);
+        int below = count_colour_in_row(100, 8, 200, SXGUI_COLOR_SELECT);
+        int glyphs = count_colour_in_row(12, 8, 200, SXGUI_COLOR_SELECT_TEXT);
+
+        if (inside == 0)
+        {
+            fail("el resaltado no se pinto");
+        }
+        if (below != 0)
+        {
+            fail("el resaltado se derramo abajo de la linea seleccionada");
+        }
+        /* La que tiene dientes: el bug de orden que tuvo esta funcion dejaba el
+         * fondo azul BIEN y pintaba el texto encima en negro, casi ilegible.
+         * Solo mirando el color del texto se lo detecta. Con toda la linea
+         * seleccionada el fondo de esa franja es azul, asi que cualquier pixel
+         * blanco de ahi es un glifo dibujado en el color invertido. */
+        if (glyphs == 0)
+        {
+            fail("el texto seleccionado no se redibujo invertido");
+        }
+    }
+
+    /* Sin seleccion no tiene que quedar un solo pixel del color de resaltado. */
+    reset("una linea larga sin nada seleccionado");
+    sxgui_paint(&g_ctx);
+    if (count_colour_in_row(12, 8, 200, SXGUI_COLOR_SELECT) != 0)
+    {
+        fail("hay resaltado pintado sin seleccion");
+    }
 
     /* ---- campo de una linea ---------------------------------------------
      *

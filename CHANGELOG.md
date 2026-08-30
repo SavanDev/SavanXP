@@ -69,6 +69,17 @@ Notas de corte:
   en un simbolo que no usaba nadie -- con su warning de variable sin uso en
   cada build.
 
+### Corregido
+
+- **Apretar Ctrl soltaba la seleccion, asi que Ctrl+C no copiaba nada.** Una
+  tecla modificadora produce su propio evento de teclado, con `ascii` en cero, y
+  los widgets de texto tratan "cualquier otra tecla" como motivo para soltar la
+  seleccion: para cuando llegaba la letra del atajo ya no habia nada
+  seleccionado. Ahora las modificadoras (Ctrl, Alt, AltGr y los locks) no
+  llegan a los widgets. Solo se veia en vivo -- el test inyectaba el acorde ya
+  formado, sin el evento de la tecla modificadora que manda un teclado real, y
+  por eso pasaba.
+
 ## [0.3.4] - 2026-08-28
 
 ### Agregado
