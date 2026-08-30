@@ -683,6 +683,19 @@ static int build_layers(
     if (session->fullscreen_slot >= 0 && session->fullscreen_slot < WINDOWD_MAX_OVERLAY_CLIENTS)
     {
         const struct windowd_client *fullscreen_client = &session->overlay_clients[session->fullscreen_slot];
+        /* La barra entra ANTES de la app: a pantalla completa queda DETRAS y la
+         * oclusion la descarta sola. Una app fullscreen no tiene por que saber
+         * que existe una barra de tareas, y el usuario no quiere verla. Se
+         * agrega igual (en vez de omitirla) para que el frame siga siendo
+         * correcto en el instante en que la app todavia no es drawable. */
+        if (client_is_drawable(&session->taskbar_client))
+        {
+            layers[count].kind = WINDOWD_LAYER_CLIENT;
+            layers[count].opaque = 1;
+            layers[count].bounds = client_occluder_rect(&session->taskbar_client);
+            layers[count].client = &session->taskbar_client;
+            ++count;
+        }
         if (client_is_drawable(fullscreen_client))
         {
             layers[count].kind = WINDOWD_LAYER_CLIENT;
@@ -737,6 +750,17 @@ static int build_layers(
         layers[count].opaque = 1;
         layers[count].bounds = client_occluder_rect(&session->overlay_clients[slot]);
         layers[count].client = &session->overlay_clients[slot];
+        ++count;
+    }
+
+    /* La barra de tareas va sobre las ventanas normales: es shell, no una
+     * ventana mas, y no participa del z-order de las apps. */
+    if (client_is_drawable(&session->taskbar_client))
+    {
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->taskbar_client);
+        layers[count].client = &session->taskbar_client;
         ++count;
     }
 

@@ -172,6 +172,10 @@ $UserPrograms = @(
         "subsystems/posix/userland/shellui.c",
         "subsystems/posix/userland/desktop_wallpaper.c"
     ) },
+    @{ Name = "taskbar"; Sources = @(
+        "subsystems/posix/userland/taskbar.c",
+        "subsystems/posix/userland/desktop_icons.c"
+    ) },
     # progman lee los recursos SXE de los binarios que lista (fase 3).
     @{ Name = "progman"; Sources = @(
         "subsystems/posix/sdk/v1/runtime/sxe.c",

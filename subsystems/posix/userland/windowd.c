@@ -14,6 +14,7 @@
 
 static const char *k_shellapp_path = "/bin/shellapp";
 static const char *k_background_client_path = "/bin/shellui";
+static const char *k_taskbar_client_path = "/bin/taskbar";
 static const char *k_progman_path = "/bin/progman";
 
 static int launch_overlay_client(
@@ -59,7 +60,12 @@ static void close_fd_if_needed(int *fd)
  * y se quedo corto cuando el cursor hint sumo el fd 10, dejando ese destino
  * expuesto a que lo cerraran por numero.
  */
-#define WINDOWD_CLIENT_RESERVED_FD_MAX SAVANXP_WM_FD_LAST
+/* Cubre TAMBIEN los fds opcionales del rol de shell: son destinos de dup2 en
+ * el hijo, y cerrar uno por numero libera el hueco para que se lo lleve el
+ * primer open o dup que venga despues -- que fue exactamente lo que paso
+ * cuando la barra de tareas terminaba leyendo la seccion de su superficie
+ * en vez de la lista de ventanas. */
+#define WINDOWD_CLIENT_RESERVED_FD_MAX SAVANXP_WM_SHELL_FD_LAST
 
 static void close_client_setup_fd(int *fd)
 {
@@ -91,6 +97,8 @@ static void reset_client(struct windowd_client *client)
     client->launch_read_fd = -1;
     client->cursor_hint_read_fd = -1;
     client->size_hint_read_fd = -1;
+    client->window_list_section_fd = -1;
+    client->shell_request_read_fd = -1;
 }
 
 static int overlay_slot_valid(int slot)
@@ -365,7 +373,11 @@ static void toggle_overlay_client_maximized(struct windowd_session *session, str
         client->restore_window_y = client->window_y;
         client->restore_window_width = client->window_width;
         client->restore_window_height = client->window_height;
-        windowd_work_area_bounds(&session->gfx.info, &area_x, &area_y, &area_width, &area_height);
+        /* Unico lugar del WM que descuenta la barra de tareas. */
+        windowd_maximize_area_bounds(
+            &session->gfx.info,
+            session->taskbar_client.pid > 0,
+            &area_x, &area_y, &area_width, &area_height);
         client->window_x = area_x;
         client->window_y = area_y;
         client->window_width = area_width;
@@ -738,7 +750,19 @@ static const struct windowd_client *top_overlay_client_at_point(const struct win
 
 static const struct windowd_client *top_client_at_point(const struct windowd_session *session, int x, int y)
 {
-    const struct windowd_client *overlay = top_overlay_client_at_point(session, x, y);
+    const struct windowd_client *overlay;
+
+    /* La barra de tareas se compone por ENCIMA de las ventanas normales, asi
+     * que gana el hit-test contra ellas. Con una app a pantalla completa queda
+     * detras y no recibe nada: coincide con como se arma el z-order. */
+    if (session != 0 && session->fullscreen_slot < 0 &&
+        session->taskbar_client.pid > 0 &&
+        windowd_point_in_client(&session->taskbar_client, x, y))
+    {
+        return &session->taskbar_client;
+    }
+
+    overlay = top_overlay_client_at_point(session, x, y);
 
     if (overlay != 0)
     {
@@ -1090,6 +1114,7 @@ static void signal_composed_batches(struct windowd_session *session)
     }
 
     signal_client_composed(&session->background_client, session->background_client.consumed_submit_sequence);
+    signal_client_composed(&session->taskbar_client, session->taskbar_client.consumed_submit_sequence);
     signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -1110,6 +1135,12 @@ static void retire_presented_batches(struct windowd_session *session)
     {
         signal_client_retire(&session->background_client, session->background_client.pending_retire_sequence);
         session->background_client.pending_retire_sequence = 0;
+    }
+
+    if (session->taskbar_client.pending_retire_sequence != 0)
+    {
+        signal_client_retire(&session->taskbar_client, session->taskbar_client.pending_retire_sequence);
+        session->taskbar_client.pending_retire_sequence = 0;
     }
 
     if (session->shell_client.pending_retire_sequence != 0)
@@ -1243,6 +1274,7 @@ static void snapshot_pending_retire_sequences(struct windowd_session *session)
     }
 
     session->background_client.pending_retire_sequence = session->background_client.consumed_submit_sequence;
+    session->taskbar_client.pending_retire_sequence = session->taskbar_client.consumed_submit_sequence;
     session->shell_client.pending_retire_sequence = session->shell_client.consumed_submit_sequence;
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -1412,20 +1444,36 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     close_fd_if_needed(&client->launch_read_fd);
     close_fd_if_needed(&client->cursor_hint_read_fd);
     close_fd_if_needed(&client->size_hint_read_fd);
+    close_fd_if_needed(&client->shell_request_read_fd);
     if (client->mapped_view != 0 && !result_is_error((long)client->mapped_view))
     {
         (void)unmap_view(client->mapped_view);
     }
+    if (client->window_list != 0)
+    {
+        (void)unmap_view(client->window_list);
+    }
     close_fd_if_needed(&client->section_fd);
+    close_fd_if_needed(&client->window_list_section_fd);
     reset_client(client);
 }
 
-static int start_client_process(struct windowd_client *client, const char *path, const char *argument)
+/* `shell_role` cablea los canales opcionales de savanxp/wm_shell_protocol.h
+ * (lista de ventanas y pedidos). Solo lo pide la barra de tareas: un cliente
+ * normal no los tiene abiertos, asi que son dos fds en todo el sistema y no dos
+ * por ventana -- que importa, porque windowd ya guarda nueve por cliente contra
+ * el limite de 64 por proceso. */
+static int start_client_process(
+    struct windowd_client *client,
+    const char *path,
+    const char *argument,
+    int shell_role)
 {
     struct savanxp_gpu_client_surface_header *header;
     unsigned long command_bytes = 0;
     unsigned long pixels_offset = 0;
     unsigned long section_size = 0;
+    int shell_request_pipe[2] = {-1, -1};
     int input_pipe[2] = {-1, -1};
     int mouse_pipe[2] = {-1, -1};
     int launch_pipe[2] = {-1, -1};
@@ -1505,6 +1553,42 @@ static int start_client_process(struct windowd_client *client, const char *path,
         goto fail;
     }
 
+    if (shell_role)
+    {
+        /* La lista va por SECCION y no por pipe: pesa cerca de un KiB y un pipe
+         * puede aceptarla a medias si el cliente se atrasa, lo que
+         * desincronizaria el stream para siempre. Con una seccion el WM pisa el
+         * contenido y el cliente lee el ultimo estado, que es lo unico que una
+         * barra de tareas necesita. */
+        client->window_list_section_fd = (int)section_create(
+            sizeof(struct savanxp_wm_window_list),
+            SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (client->window_list_section_fd < 0)
+        {
+            goto fail;
+        }
+        client->window_list = (struct savanxp_wm_window_list *)map_view(
+            client->window_list_section_fd,
+            SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (client->window_list == 0)
+        {
+            goto fail;
+        }
+        memset(client->window_list, 0, sizeof(*client->window_list));
+        client->window_list->version = SAVANXP_WM_SHELL_PROTOCOL_VERSION;
+
+        if (pipe(shell_request_pipe) < 0)
+        {
+            goto fail;
+        }
+        /* El WM lee los pedidos sin bloquearse, igual que el resto de sus
+         * canales de entrada. */
+        if (fcntl(shell_request_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
+        {
+            goto fail;
+        }
+    }
+
     pid = fork();
     if (pid < 0)
     {
@@ -1526,6 +1610,12 @@ static int start_client_process(struct windowd_client *client, const char *path,
         {
             exit(1);
         }
+        if (shell_role &&
+            (dup2(client->window_list_section_fd, SAVANXP_WM_FD_WINDOW_LIST) < 0 ||
+             dup2(shell_request_pipe[1], SAVANXP_WM_FD_SHELL_REQUEST) < 0))
+        {
+            exit(1);
+        }
 
         close_client_setup_fd(&input_pipe[0]);
         close_client_setup_fd(&input_pipe[1]);
@@ -1540,7 +1630,10 @@ static int start_client_process(struct windowd_client *client, const char *path,
         close_client_setup_fd(&cursor_hint_pipe[1]);
         close_client_setup_fd(&size_hint_pipe[0]);
         close_client_setup_fd(&size_hint_pipe[1]);
+        close_client_setup_fd(&shell_request_pipe[0]);
+        close_client_setup_fd(&shell_request_pipe[1]);
         close_client_setup_fd(&client->section_fd);
+        close_client_setup_fd(&client->window_list_section_fd);
         {
             long exec_result = exec(path, argv, argc);
             if (exec_result < 0)
@@ -1578,15 +1671,25 @@ static int start_client_process(struct windowd_client *client, const char *path,
     client->launch_read_fd = launch_pipe[0];
     client->cursor_hint_read_fd = cursor_hint_pipe[0];
     client->size_hint_read_fd = size_hint_pipe[0];
+    client->shell_request_read_fd = shell_request_pipe[0];
 
     close_fd_if_needed(&input_pipe[0]);
     close_fd_if_needed(&mouse_pipe[0]);
     close_fd_if_needed(&launch_pipe[1]);
     close_fd_if_needed(&cursor_hint_pipe[1]);
     close_fd_if_needed(&size_hint_pipe[1]);
+    close_fd_if_needed(&shell_request_pipe[1]);
     return 0;
 
 fail:
+    close_fd_if_needed(&shell_request_pipe[0]);
+    close_fd_if_needed(&shell_request_pipe[1]);
+    if (client->window_list != 0)
+    {
+        unmap_view(client->window_list);
+        client->window_list = 0;
+    }
+    close_fd_if_needed(&client->window_list_section_fd);
     close_fd_if_needed(&input_pipe[0]);
     close_fd_if_needed(&input_pipe[1]);
     close_fd_if_needed(&mouse_pipe[0]);
@@ -1642,7 +1745,245 @@ static int launch_background_client(struct windowd_session *session)
     reset_client(client);
     fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
     position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    return start_client_process(client, k_background_client_path, 0);
+    return start_client_process(client, k_background_client_path, 0, 0);
+}
+
+/* La barra de tareas es un cliente con rol de shell: su superficie ocupa la
+ * franja al pie del display y se compone por encima de las ventanas normales,
+ * pero por debajo de una app a pantalla completa. No recibe foco ni entra en la
+ * lista de tareas: no es una ventana, es el shell. */
+static int launch_taskbar_client(struct windowd_session *session)
+{
+    struct windowd_client *client = 0;
+    struct sx_rect strip;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    destroy_client_instance(&session->taskbar_client, 1);
+    client = &session->taskbar_client;
+    reset_client(client);
+
+    strip = windowd_taskbar_rect(&session->gfx.info);
+    client->surface_info = session->gfx.info;
+    client->surface_info.width = (uint32_t)strip.width;
+    client->surface_info.height = (uint32_t)strip.height;
+    client->surface_info.pitch = (uint32_t)strip.width * 4u;
+    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)strip.height;
+    client->window_x = strip.x;
+    client->window_y = strip.y;
+    client->window_width = strip.width;
+    client->window_height = strip.height;
+    client->frame_visible = 0;
+
+    if (start_client_process(client, k_taskbar_client_path, 0, 1) < 0)
+    {
+        return -1;
+    }
+    return 0;
+}
+
+/* Publica el estado de las ventanas en la seccion compartida.
+ *
+ * Seqlock: la secuencia sube a IMPAR antes de tocar las entradas y a PAR al
+ * terminar, asi el cliente sabe si leyo un estado a medio escribir. Hace falta
+ * de verdad -- son dos procesos y al WM lo pueden desalojar en el medio. */
+/* Comparacion byte a byte. Las dos structs se escriben enteras (memset y luego
+ * todos los campos), asi que el padding tambien coincide y no hay falsos
+ * distintos. Va a mano porque este libc no trae memcmp. */
+static int window_lists_equal(
+    const struct savanxp_wm_window_list *left,
+    const struct savanxp_wm_window_list *right)
+{
+    const unsigned char *a = (const unsigned char *)left;
+    const unsigned char *b = (const unsigned char *)right;
+    size_t index;
+
+    for (index = 0; index < sizeof(*left); ++index)
+    {
+        if (a[index] != b[index])
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void publish_window_list(struct windowd_session *session)
+{
+    /* Estatico y no del stack: son mas de mil bytes y este WM ya tiene el
+     * habito de no dejar buffers grandes en el stack. */
+    static struct savanxp_wm_window_list staging;
+    struct savanxp_wm_window_list *list;
+    int count;
+    int index;
+    int written = 0;
+
+    if (session == 0 || session->taskbar_client.window_list == 0)
+    {
+        return;
+    }
+    list = session->taskbar_client.window_list;
+    count = windowd_task_count(session);
+
+    memset(&staging, 0, sizeof(staging));
+
+    for (index = 0; index < count && written < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
+    {
+        int is_shell = 0;
+        int slot = -1;
+        const struct windowd_client *client = windowd_task_client(session, index, &is_shell, &slot);
+        struct savanxp_wm_window_entry *entry;
+        const char *title;
+        size_t length;
+
+        if (client == 0)
+        {
+            continue;
+        }
+        entry = &staging.windows[written];
+        /* El id es el pid: estable mientras la ventana viva, y el WM lo puede
+         * resolver de vuelta sin llevar un contador propio. NO se usa el indice
+         * del arreglo porque se reordena con el z-order, y un click que llegara
+         * con un indice viejo activaria otra ventana. */
+        entry->window_id = (uint32_t)client->pid;
+        entry->flags = SAVANXP_WM_WINDOW_FLAG_NONE;
+        if (is_shell)
+        {
+            if (session->active_client_kind == WINDOWD_CLIENT_SHELL)
+            {
+                entry->flags |= SAVANXP_WM_WINDOW_FLAG_ACTIVE;
+            }
+        }
+        else
+        {
+            if (session->active_client_kind == WINDOWD_CLIENT_APP &&
+                slot == session->active_overlay_slot)
+            {
+                entry->flags |= SAVANXP_WM_WINDOW_FLAG_ACTIVE;
+            }
+            if (client->minimized)
+            {
+                entry->flags |= SAVANXP_WM_WINDOW_FLAG_MINIMIZED;
+            }
+        }
+        /* Va el id del set horneado y no los pixeles propios del .sxe: el icono
+         * de un binario son 16x16x4, y trece de esos serian 13 KiB en la
+         * seccion. La barra dibuja el fallback; que el icono propio llegue
+         * hasta aca es trabajo aparte. */
+        entry->icon_id = client->presentation.fallback_icon_id;
+        entry->reserved0 = 0;
+
+        title = windowd_presentation_label(&client->presentation, client->path);
+        length = title != 0 ? strlen(title) : 0;
+        if (length >= sizeof(entry->title))
+        {
+            length = sizeof(entry->title) - 1;
+        }
+        memcpy(entry->title, title, length);
+        entry->title[length] = '\0';
+        ++written;
+    }
+
+    staging.count = (uint32_t)written;
+    staging.version = SAVANXP_WM_SHELL_PROTOCOL_VERSION;
+
+    /*
+     * Se publica solo si algo cambio de verdad. Comparar es mas barato y mucho
+     * mas confiable que marcar un flag en cada mutador: alcanza con olvidarse
+     * UNO -- abrir, cerrar, activar, minimizar, restaurar, renombrar -- para que
+     * la barra quede mostrando un estado viejo, y ese bug no se ve hasta que
+     * alguien mira la pantalla. La secuencia se excluye de la comparacion
+     * porque es justamente lo que cambia al publicar.
+     */
+    staging.sequence = list->sequence;
+    if (window_lists_equal(&staging, list))
+    {
+        return;
+    }
+
+    /* Seqlock: impar mientras se escribe, par cuando quedo estable. */
+    list->sequence += 1;
+    memcpy(list->windows, staging.windows, sizeof(list->windows));
+    list->count = staging.count;
+    list->version = staging.version;
+    list->sequence += 1;
+}
+
+/* Resuelve un window_id (pid) a un cliente. Devuelve el slot del overlay, o -1
+ * con is_shell en 1 si el id es el del shell. */
+static int resolve_window_id(const struct windowd_session *session, uint32_t window_id, int *is_shell)
+{
+    int slot;
+
+    if (is_shell != 0)
+    {
+        *is_shell = 0;
+    }
+    if (session == 0 || window_id == 0)
+    {
+        return -1;
+    }
+    if (session->shell_client.pid > 0 && (uint32_t)session->shell_client.pid == window_id)
+    {
+        if (is_shell != 0)
+        {
+            *is_shell = 1;
+        }
+        return -1;
+    }
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        if (session->overlay_clients[slot].pid > 0 &&
+            (uint32_t)session->overlay_clients[slot].pid == window_id)
+        {
+            return slot;
+        }
+    }
+    return -1;
+}
+
+static void service_shell_requests(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    struct savanxp_wm_shell_request request;
+
+    if (session == 0 || session->taskbar_client.shell_request_read_fd < 0)
+    {
+        return;
+    }
+
+    while (read(session->taskbar_client.shell_request_read_fd, &request, sizeof(request)) ==
+           (long)sizeof(request))
+    {
+        int is_shell = 0;
+        int slot = resolve_window_id(session, request.window_id, &is_shell);
+
+        if (request.action == SAVANXP_WM_SHELL_ACTIVATE)
+        {
+            if (is_shell)
+            {
+                activate_shell(session);
+            }
+            else if (overlay_slot_valid(slot))
+            {
+                if (session->overlay_clients[slot].minimized)
+                {
+                    restore_overlay_client(session, dirty, slot);
+                }
+                raise_overlay(session, slot);
+                windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            }
+        }
+        else if (request.action == SAVANXP_WM_SHELL_MINIMIZE)
+        {
+            if (!is_shell && overlay_slot_valid(slot) && !session->overlay_clients[slot].minimized)
+            {
+                minimize_overlay_client(session, dirty, slot);
+            }
+        }
+        }
 }
 
 static void destroy_overlay_client(struct windowd_session *session, int slot, int terminate_client)
@@ -1687,7 +2028,7 @@ static int launch_shell_client(struct windowd_session *session, const char *path
     reset_client(client);
     fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
     position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    if (start_client_process(client, path, 0) < 0)
+    if (start_client_process(client, path, 0, 0) < 0)
     {
         return -1;
     }
@@ -1739,7 +2080,7 @@ static int launch_overlay_client(
     }
     client->cascade_index = session->overlay_count;
     position_client_window(session, client, WINDOWD_CLIENT_APP, client->cascade_index);
-    if (start_client_process(client, path, argument) < 0)
+    if (start_client_process(client, path, argument, 0) < 0)
     {
         return -1;
     }
@@ -1773,6 +2114,7 @@ static int open_compositor_session(struct windowd_session *session)
     session->resize_slot = -1;
     session->resize_edges = WINDOWD_RESIZE_EDGE_NONE;
     reset_client(&session->background_client);
+    reset_client(&session->taskbar_client);
     reset_client(&session->shell_client);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -3686,6 +4028,13 @@ int main(int argc, char **argv)
     /* windowd conserva su propio wallpaper_init para el fallback (si el cliente
      * de fondo no esta listo aun o murio, windowd dibuja el wallpaper). */
     desktop_wallpaper_init();
+    /* Barra de tareas: opcional. Si no arranca, la sesion sigue viva y el Task
+     * List (Ctrl+Esc) con Alt+Tab siguen siendo la via para cambiar de ventana;
+     * no es motivo para tirar la sesion abajo. */
+    if (launch_taskbar_client(&session) < 0)
+    {
+        puts_fd(2, "desktop: la barra de tareas no arranco\n");
+    }
     /* Cliente de fondo (shellui): no-fatal si falla; se usa el fallback. */
     if (launch_background_client(&session) < 0)
     {
@@ -3833,6 +4182,14 @@ int main(int argc, char **argv)
         }
         service_client_cursor_hints(&session.background_client);
         service_client_size_hints(&session, &dirty, &session.background_client, -1);
+        /* Barra de tareas: sus frames, sus pedidos, y la lista republicada solo
+         * cuando algo cambio -- no en cada vuelta. */
+        if (service_client_batches(&session, &dirty, &session.taskbar_client) < 0)
+        {
+            break;
+        }
+        service_shell_requests(&session, &dirty);
+        publish_window_list(&session);
         if (service_client_batches(&session, &dirty, &session.shell_client) < 0)
         {
             break;

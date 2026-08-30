@@ -12,6 +12,20 @@ Notas de corte:
 
 ### Agregado
 
+- **Barra de tareas al pie de la pantalla, con las ventanas abiertas.** Es un
+  CLIENTE del WM (`/bin/taskbar`) y no chrome de windowd -- el modelo de
+  explorer.exe, y el mismo layering que separo a shellui y progman del window
+  manager. Solo lista ventanas: sin menu inicio y sin area de notificaciones.
+  Cada boton lleva icono y titulo, el de la ventana activa va hundido, y un
+  click activa o -- si ya estaba activa -- minimiza, como en Win95. Lo que un
+  cliente no puede saber (que ventanas hay, cual esta activa, cual minimizada)
+  se lo cuenta el WM por los canales nuevos de `savanxp/wm_shell_protocol.h`:
+  la lista por una seccion compartida con seqlock, los clicks de vuelta por un
+  pipe. Esos dos descriptores se cablean SOLO al cliente del rol, asi que no
+  mueven el techo de ventanas simultaneas. **Ni el fondo ni una app a pantalla
+  completa saben que existe**: la barra queda detras de una app fullscreen, y
+  lo unico que le reserva lugar es maximizar una ventana.
+
 - **`tools/shoot.ps1`: verificacion visual de la sesion, headless.** Arranca el
   sistema sin ventana, le manda teclas y saca capturas PNG. Existe porque los
   harnesses asertan estado y geometria pero no apariencia -- pasan en verde con

@@ -33,13 +33,56 @@ void windowd_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y
     {
         return;
     }
-    /* Sin taskbar (A2.4c) el area util es la pantalla entera: nada reserva una
-     * franja. Esto define el tamano de las superficies de clientes, incluida la
-     * de fondo, asi que el wallpaper cubre todo el display. */
+    /* El area util es la pantalla ENTERA, taskbar o no. Define el tamano de las
+     * superficies de clientes, incluida la de fondo, y ni el fondo ni una app a
+     * pantalla completa tienen por que enterarse de que existe una barra de
+     * tareas. El unico que reserva la franja es el maximizar, y para eso esta
+     * windowd_maximize_area_bounds(). */
     *x = 0;
     *y = 0;
     *width = (int)info->width;
     *height = (int)info->height;
+}
+
+int windowd_taskbar_height(void)
+{
+    return WINDOWD_TASKBAR_HEIGHT;
+}
+
+struct sx_rect windowd_taskbar_rect(const struct savanxp_fb_info *info)
+{
+    int height = windowd_taskbar_height();
+
+    if (info == 0)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_make(0, (int)info->height - height, (int)info->width, height);
+}
+
+/* Area que ocupa una ventana MAXIMIZADA. Es lo unico en todo el WM que sabe que
+ * la barra de tareas existe: maximizar quiere decir "toda la pantalla que no le
+ * pertenece al shell", mientras que el resto del layout sigue trabajando contra
+ * el display entero. Con `taskbar_present` en 0 devuelve el area util pelada,
+ * asi que una sesion sin barra maximiza como siempre. */
+void windowd_maximize_area_bounds(
+    const struct savanxp_fb_info *info,
+    int taskbar_present,
+    int *x,
+    int *y,
+    int *width,
+    int *height)
+{
+    windowd_work_area_bounds(info, x, y, width, height);
+    if (!taskbar_present || info == 0)
+    {
+        return;
+    }
+    *height -= windowd_taskbar_height();
+    if (*height < 0)
+    {
+        *height = 0;
+    }
 }
 
 void windowd_fill_shell_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info)

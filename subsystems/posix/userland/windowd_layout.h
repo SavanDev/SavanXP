@@ -35,6 +35,20 @@ int windowd_point_in_rect(int x, int y, int rect_x, int rect_y, int rect_w, int 
 int windowd_rects_intersect(int left_x, int left_y, int left_w, int left_h, int right_x, int right_y, int right_w, int right_h);
 
 void windowd_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y, int *width, int *height);
+
+/* Alto de la franja de la barra de tareas, y el rectangulo que ocupa al pie del
+ * display. La barra es un CLIENTE (ver savanxp/wm_shell_protocol.h): el WM le
+ * dimensiona y posiciona la superficie, pero no dibuja su contenido. */
+#define WINDOWD_TASKBAR_HEIGHT 28
+int windowd_taskbar_height(void);
+struct sx_rect windowd_taskbar_rect(const struct savanxp_fb_info *info);
+void windowd_maximize_area_bounds(
+    const struct savanxp_fb_info *info,
+    int taskbar_present,
+    int *x,
+    int *y,
+    int *width,
+    int *height);
 void windowd_fill_shell_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info);
 void windowd_fill_overlay_surface_info(const struct savanxp_fb_info *display_info, struct savanxp_fb_info *client_info);
 void windowd_center_overlay_window(const struct savanxp_fb_info *display_info, const struct savanxp_fb_info *surface_info, int *x, int *y, int *width, int *height);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libc.h"
+#include "savanxp/wm_shell_protocol.h"
 #include "windowd_appinfo.h"
 #include "windowd_compositor_client.h"
 
@@ -32,6 +33,13 @@ struct windowd_client
     int launch_read_fd;
     int cursor_hint_read_fd;
     int size_hint_read_fd;
+    /* Rol de shell (savanxp/wm_shell_protocol.h): solo los tiene el cliente de
+     * la barra de tareas. En cualquier otro cliente quedan en -1, que es el
+     * punto -- los fds del protocolo se pagan por cliente y windowd ya esta
+     * cerca de su techo. */
+    int window_list_section_fd;
+    int shell_request_read_fd;
+    struct savanxp_wm_window_list *window_list;
     int last_cursor_hint_shape;
     /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
      * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
@@ -101,6 +109,11 @@ struct windowd_session
     int fullscreen_slot;
     int overlay_count;
     int overlay_order[WINDOWD_MAX_OVERLAY_CLIENTS];
+    /* Barra de tareas: cliente con rol de shell, superficie al pie del display
+     * y por encima de las ventanas normales -- pero DEBAJO de una app a
+     * pantalla completa, que tapa todo. Ni el fondo ni las apps saben que
+     * existe; el unico que le reserva lugar es el maximizar. */
+    struct windowd_client taskbar_client;
     /* Cliente de fondo (shellui): superficie full-screen al fondo del z-order
      * que dibuja el wallpaper (A2, ver docs/WM_SUBSYSTEM.md). Pasivo: no recibe
      * foco ni input en A2.2. Distinto del shell_client (terminal on-demand). */
