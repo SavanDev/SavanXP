@@ -14,6 +14,8 @@ tools/*
 !tools/gen_desktop_icon_assets.py
 !tools/gen_sxe_resources.py
 !tools/GenerateDefaultWallpaper.py
+!tools/shoot.ps1
+!tools/shoot_session.py
 !tools/font/
 !tools/font/**
 *.log

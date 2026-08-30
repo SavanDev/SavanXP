@@ -12,6 +12,16 @@ Notas de corte:
 
 ### Agregado
 
+- **`tools/shoot.ps1`: verificacion visual de la sesion, headless.** Arranca el
+  sistema sin ventana, le manda teclas y saca capturas PNG. Existe porque los
+  harnesses asertan estado y geometria pero no apariencia -- pasan en verde con
+  la pantalla mal, que es exactamente como se escapo el bug de Ctrl+C. Las
+  teclas van por QMP y no por el `sendkey` del monitor, porque hace falta
+  SOSTENER un modificador: sin eso no se puede capturar el switcher de Alt+Tab
+  abierto ni hacer un Ctrl+C. Trae los escenarios `desktop`, `alttab` y
+  `clipboard`; falla temprano si hay un spec de automatizacion plantado, que
+  haria arrancar el ultimo harness en vez del escritorio. No es parte del
+  build.
 - **Alt+Tab para cambiar de ventana.** Mientras Alt sigue apretado cada Tab
   mueve la seleccion y al soltarlo se confirma, con Alt+Shift+Tab yendo al
   reves. El switcher que se muestra es el Task List, que ya enumeraba lo mismo:
