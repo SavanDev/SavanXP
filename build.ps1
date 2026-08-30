@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "taskbar-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1314,6 +1314,23 @@ function Run-ProgmanSmokeQemu {
 # ningun generador correcto produciria --, mas el camino de disco contra los
 # binarios reales de la imagen, que hoy no traen recursos y deben resolverse
 # limpio como "sin metadata".
+# Barra de tareas: a diferencia del resto, este harness NO usa un spec de
+# automatizacion -- maneja la sesion grafica de verdad por QMP (teclado y mouse)
+# y verifica PIXELES. Existe porque los cuatro bugs que tuvo la barra pasaban
+# todos los smokes headless: dos de descriptores y dos de input, invisibles para
+# cualquier asercion que no mire la pantalla.
+#
+# Build-Kernel se llama SIN AutomationCommand a proposito: con un spec plantado
+# el guest arranca ese runner en vez del escritorio.
+function Run-TaskbarSmoke {
+    Build-Kernel -IncludeTestApps $true
+    & (Join-Path $ToolRoot "shoot.ps1") -Scenario taskbar -OutDir (Join-Path $BuildRoot "shots/taskbar")
+    if ($LASTEXITCODE -ne 0) {
+        throw "TASKBAR SMOKE FAIL."
+    }
+    Write-Host "TASKBAR SMOKE PASS"
+}
+
 function Run-SxeSmokeQemu {
     Run-AutomationQemu -AutomationCommand "sxe-selftest" -SuccessToken "SXE SMOKE PASS" -FailureToken "SXE SMOKE FAIL" -TimeoutMinutes 3
 }
@@ -1383,6 +1400,9 @@ switch ($Command) {
     }
     "filesapp-smoke" {
         Run-FilesappSmokeQemu
+    }
+    "taskbar-smoke" {
+        Run-TaskbarSmoke
     }
     "net-smoke" {
         Run-NetSmokeQemu

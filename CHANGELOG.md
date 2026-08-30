@@ -35,7 +35,9 @@ Notas de corte:
   teclas van por QMP y no por el `sendkey` del monitor, porque hace falta
   SOSTENER un modificador: sin eso no se puede capturar el switcher de Alt+Tab
   abierto ni hacer un Ctrl+C. Trae los escenarios `desktop`, `alttab` y
-  `clipboard` y `taskbar`; falla temprano si hay un spec de automatizacion
+  `clipboard` y `taskbar`; este ultimo no solo captura sino que **verifica
+  pixeles** y esta cableado como `build.ps1 taskbar-smoke`. Falla temprano si
+  hay un spec de automatizacion
   plantado, que haria arrancar el ultimo harness en vez del escritorio. Tambien
   maneja el mouse: el del guest es un PS/2 relativo, asi que el cursor se lleva
   primero contra la esquina -- el clamp del WM lo deja en (0,0), el unico origen

@@ -150,9 +150,11 @@ class Session(object):
         else:
             raise RuntimeError("screendump no produjo " + ppm)
         from PIL import Image
-        Image.open(ppm).save(png)
+        image = Image.open(ppm).convert("RGB")
+        image.save(png)
         os.remove(ppm)
         print("  captura:", os.path.basename(png))
+        return image
 
     def open_notepad(self):
         """Lanza el bloc de notas desde progman SOLO con teclado.
@@ -164,6 +166,65 @@ class Session(object):
         self.qmp.tap("right", pause=0.4)
         self.qmp.tap("ret")
         time.sleep(25)
+
+
+# Paleta de sxgui, para leer los pixeles con el mismo vocabulario con el que se
+# dibujaron (savanxp/sxgui.h).
+FACE = (192, 192, 192)
+LIGHT = (255, 255, 255)
+SHADOW = (128, 128, 128)
+
+# Geometria de la barra, espejo de windowd_layout.h y taskbar.c. Si alguno de
+# los dos cambia, este harness tiene que cambiar con el -- que es justamente la
+# gracia: el numero deja de estar solo en el codigo.
+TASKBAR_HEIGHT = 28
+TASKBAR_MARGIN = 2
+TASKBAR_BUTTON_WIDTH = 160
+TASKBAR_BUTTON_GAP = 2
+
+
+class Failure(Exception):
+    pass
+
+
+def button_rect(image, index):
+    width, height = image.size
+    return (
+        TASKBAR_MARGIN + index * (TASKBAR_BUTTON_WIDTH + TASKBAR_BUTTON_GAP),
+        height - TASKBAR_HEIGHT + TASKBAR_MARGIN,
+        TASKBAR_BUTTON_WIDTH,
+        TASKBAR_HEIGHT - (TASKBAR_MARGIN * 2),
+    )
+
+
+def expect_pixel(image, x, y, colour, label):
+    got = image.getpixel((x, y))
+    if got != colour:
+        raise Failure("%s: pixel (%d,%d) es %s, esperaba %s" % (label, x, y, got, colour))
+
+
+def expect_button(image, index, sunken, label):
+    """Un boton hundido invierte el bisel.
+
+    Es la asercion mas util que se puede hacer sobre esta barra: el relieve
+    codifica DIRECTAMENTE cual es la ventana activa, asi que verificarlo prueba
+    la cadena entera -- click, pedido al WM, cambio de estado, republicacion de
+    la lista y repintado del cliente -- sin leer una sola variable.
+    """
+    x, y, w, h = button_rect(image, index)
+    top_left = SHADOW if sunken else LIGHT
+    bottom_right = LIGHT if sunken else SHADOW
+    estado = "hundido" if sunken else "levantado"
+    expect_pixel(image, x, y, top_left, "%s: boton %d %s (borde sup-izq)" % (label, index, estado))
+    expect_pixel(image, x + w - 1, y + h - 1, bottom_right,
+                 "%s: boton %d %s (borde inf-der)" % (label, index, estado))
+
+
+def expect_taskbar_present(image, label):
+    width, height = image.size
+    # Bien a la derecha de los botones: ahi la franja tiene que ser cara pelada.
+    expect_pixel(image, width - 40, height - (TASKBAR_HEIGHT // 2), FACE,
+                 "%s: la franja de la barra" % label)
 
 
 def scenario_desktop(s):
@@ -202,26 +263,46 @@ def scenario_clipboard(s):
 
 
 def scenario_taskbar(s):
-    """Clicks sobre los botones de la barra de tareas.
+    """Barra de tareas: clicks reales con VERIFICACION de pixeles.
 
-    La franja esta al pie (y = alto - 28) y los botones miden 160 desde x=2, en
-    el orden en que el WM enumera las tareas: Program Manager primero, el bloc
-    de notas despues. Se clickea el PRIMERO, que es la ventana sin foco despues
-    de abrir el bloc.
+    Los botones van en orden estable por slot, asi que el 0 es Program Manager
+    (lanzado con la sesion) y el 1 el bloc de notas. La franja esta al pie y los
+    botones miden 160 desde x=2.
+
+    No alcanza con sacar capturas para que las mire alguien: los cuatro bugs que
+    tuvo esta barra -- dos de fds, dos de input -- pasaban todos los harnesses
+    headless. Lo que se asierta es el BISEL de cada boton, que codifica cual es
+    la ventana activa, asi que cada chequeo prueba la cadena entera: click,
+    pedido al WM, cambio de estado, republicacion de la lista y repintado.
     """
-    s.open_notepad()
-    s.shot("dos-ventanas")
+    image = s.shot("solo-progman")
+    expect_taskbar_present(image, "sesion recien arrancada")
+    expect_button(image, 0, True, "sesion recien arrancada")
 
-    s.qmp.move_to(82, 786)
+    s.open_notepad()
+    image = s.shot("dos-ventanas")
+    expect_taskbar_present(image, "con dos ventanas")
+    # El bloc de notas se acaba de abrir y tiene el foco.
+    expect_button(image, 0, False, "con dos ventanas")
+    expect_button(image, 1, True, "con dos ventanas")
+
+    # Click sobre el boton de Program Manager: lo activa.
+    x, y, w, h = button_rect(image, 0)
+    s.qmp.move_to(x + w // 2, y + h // 2)
     s.shot("cursor-sobre-boton")
     s.qmp.click()
-    time.sleep(1.5)
-    s.shot("activado")
+    time.sleep(2.0)
+    image = s.shot("activado")
+    expect_button(image, 0, True, "despues de activar")
+    expect_button(image, 1, False, "despues de activar")
 
-    # El mismo boton otra vez: ya activa, asi que ahora minimiza.
+    # El mismo boton otra vez -- que sigue en el mismo lugar porque el orden es
+    # estable -- ahora minimiza: la ventana se va y el boton se levanta.
     s.qmp.click()
-    time.sleep(1.5)
-    s.shot("minimizado")
+    time.sleep(2.0)
+    image = s.shot("minimizado")
+    expect_button(image, 0, False, "despues de minimizar")
+    expect_taskbar_present(image, "despues de minimizar")
 
 
 SCENARIOS = {
@@ -260,7 +341,16 @@ def main():
     # El handoff es el arranque de init; la sesion tarda mas en estar pintada.
     time.sleep(opts.boot_wait)
 
-    SCENARIOS[opts.scenario](Session(qmp, opts.out))
+    try:
+        SCENARIOS[opts.scenario](Session(qmp, opts.out))
+    except Failure as failure:
+        # A stdout y no a stderr: PowerShell convierte el stderr de un comando
+        # nativo en registros de error y el `throw` del .ps1 termina tapando el
+        # motivo real, que es lo unico que hace falta leer.
+        print("FALLO: %s" % failure)
+        print("Las capturas quedaron en %s para ver que paso." % opts.out)
+        return 1
+    print("%s: OK" % opts.scenario)
     return 0
 
 
