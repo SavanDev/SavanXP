@@ -12,6 +12,12 @@ Notas de corte:
 
 ### Agregado
 
+- **Alt+Tab para cambiar de ventana.** Mientras Alt sigue apretado cada Tab
+  mueve la seleccion y al soltarlo se confirma, con Alt+Shift+Tab yendo al
+  reves. El switcher que se muestra es el Task List, que ya enumeraba lo mismo:
+  no hay UI nueva. El ciclo arranca en la ventana activa, asi que el primer Tab
+  cae en la ultima usada. Segundo item de la Fase C del WM, despues del resize
+  por bordes.
 - **Seleccion de texto en el editor multilinea de sxgui, con Cortar, Copiar y
   Pegar.** El widget tenia caret pero no ancla, asi que no habia de donde
   copiar. Ahora shift junto con flechas, Inicio, Fin y las de pagina extiende
