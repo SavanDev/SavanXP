@@ -18,15 +18,18 @@ Notas de corte:
   no hay UI nueva. El ciclo arranca en la ventana activa, asi que el primer Tab
   cae en la ultima usada. Segundo item de la Fase C del WM, despues del resize
   por bordes.
-- **Seleccion de texto en el editor multilinea de sxgui, con Cortar, Copiar y
-  Pegar.** El widget tenia caret pero no ancla, asi que no habia de donde
-  copiar. Ahora shift junto con flechas, Inicio, Fin y las de pagina extiende
-  la seleccion; el click ancla y el arrastre la estira; shift+click extiende
-  desde donde estaba, y lo seleccionado se pinta en video inverso. Escribir,
-  Enter, Backspace y Delete sobre una seleccion la reemplazan. Atajos Ctrl+C,
-  Ctrl+X, Ctrl+V y Ctrl+A; el resto de los Ctrl+letra se consumen en vez de
-  escribirse, salvo con AltGr, que en varias distribuciones llega como
-  Ctrl+Alt. Las mismas operaciones se exponen como `sxgui_textedit_copy`,
+- **Seleccion de texto en sxgui, con Cortar, Copiar y Pegar.** Los widgets de
+  texto tenian caret pero no ancla, asi que no habia de donde copiar. Ahora
+  shift junto con flechas, Inicio, Fin y las de pagina extiende la seleccion;
+  el click ancla y el arrastre la estira; shift+click extiende desde donde
+  estaba, y lo seleccionado se pinta en video inverso. Escribir, Enter,
+  Backspace y Delete sobre una seleccion la reemplazan. Atajos Ctrl+C, Ctrl+X,
+  Ctrl+V y Ctrl+A; el resto de los Ctrl+letra se consumen en vez de escribirse,
+  salvo con AltGr, que en varias distribuciones llega como Ctrl+Alt. Vale para
+  el editor multilinea y para el campo de una linea -- que es donde vive el
+  dialogo Abrir/Guardar, o sea el lugar donde mas natural es pegar una ruta --,
+  con la unica diferencia de que ahi un pegado con saltos se queda con la
+  primera linea. Las operaciones se exponen ademas como `sxgui_textedit_copy`,
   `_cut`, `_paste`, `_select_all` y `_has_selection` para poder colgarlas de un
   menu, y el bloc de notas estrena su menu Edit. Lo cubre `seltest`, dentro de
   `build.ps1 smoke`, que maneja el toolkit headless contra un buffer de
@@ -56,6 +59,15 @@ Notas de corte:
   listas no puedan divergir. El evento pasa de 12 a 16 bytes: **las apps
   externas compiladas contra la SDK anterior necesitan rebuild** -- Doom lee
   este struct.
+
+### Eliminado
+
+- **Borrado el arte de la franja del menu inicio.** El menu se retiro con el
+  resto del chrome Win95, pero la cadena que lo dibujaba seguia entera:
+  `gen_desktop_source_art.py` generaba `menu_strip_savanxp.png`,
+  `gen_desktop_icon_assets.py` lo horneaba a C y `desktop_icons.c` lo envolvia
+  en un simbolo que no usaba nadie -- con su warning de variable sin uso en
+  cada build.
 
 ## [0.3.4] - 2026-08-28
 

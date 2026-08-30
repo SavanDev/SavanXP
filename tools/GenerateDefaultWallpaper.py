@@ -4,7 +4,7 @@
 Cielo teal con nubes suaves de value-noise, 640x400 (16:10): el desktop lo
 escala nearest 2x al modo tipico de 1280x800. Seed fija para que el asset sea
 reproducible; el build NO ejecuta este script (el BMP va commiteado, patron
-menu_strip_savanxp.png), asi que PIL solo hace falta para regenerarlo.
+wallpaper.bmp), asi que PIL solo hace falta para regenerarlo.
 
 Uso:  python tools/GenerateDefaultWallpaper.py
 """

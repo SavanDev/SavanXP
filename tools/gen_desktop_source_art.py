@@ -195,53 +195,6 @@ def new_notepad_icon_16():
     return bmp
 
 
-def new_menu_strip_art():
-    width, height = 64, 360
-
-    # El gradiente por fila + Clear() de la version GDI+ original quedaban
-    # totalmente tapados por los dos FillRectangle de abajo (juntos cubren
-    # las 64 columnas x 360 filas enteras), asi que se omiten aca: mismo
-    # resultado visual, sin la pasada muerta.
-    base = new_canvas(width, height)
-    draw = ImageDraw.Draw(base)
-    fill_rect(draw, 0, 0, 8, height, (5, 67, 48, 255))
-    fill_rect(draw, 8, 0, width - 8, height, (13, 104, 77, 255))
-    fill_rect(draw, 8, 286, 48, 4, (229, 192, 90, 255))
-
-    # Acentos semitransparentes: necesitan compositing alpha real (Pillow no
-    # blende automaticamente al dibujar sobre RGBA), asi que van en una capa
-    # aparte que se combina con alpha_composite, como el CompositingMode
-    # SourceOver por defecto de GDI+.
-    accent_layer = new_canvas(width, height)
-    ImageDraw.Draw(accent_layer).polygon(
-        [(6, 34), (56, 86), (56, 108), (18, 78)], fill=(164, 243, 211, 88)
-    )
-    base = Image.alpha_composite(base, accent_layer)
-
-    shine_layer = new_canvas(width, height)
-    ImageDraw.Draw(shine_layer).polygon(
-        [(18, 0), (54, 0), (64, 42), (28, 42)], fill=(230, 249, 237, 55)
-    )
-    base = Image.alpha_composite(base, shine_layer)
-
-    icon_layer = new_canvas(width, height)
-    big_icon = scale_nearest(new_desktop_icon_16(), 2)
-    icon_layer.paste(big_icon, (10, 18), big_icon)
-    base = Image.alpha_composite(base, icon_layer)
-
-    draw = ImageDraw.Draw(base)
-    white = (230, 246, 239, 255)
-    mint = (156, 230, 198, 255)
-    teal = (188, 244, 236, 255)
-    for y in (68, 80, 92, 138, 170, 202, 234, 266, 318, 328, 338):
-        draw.line([(12, y), (38, y)], fill=white)
-    for y in (118, 150, 182, 214, 246):
-        draw.ellipse([12, y, 17, y + 5], fill=teal)
-    draw.line([(12, 118), (52, 118)], fill=mint)
-
-    return base
-
-
 def write_icon_set(base_path, name, factory):
     icon16 = factory()
     icon32 = scale_nearest(icon16, 2)
@@ -267,8 +220,6 @@ def main():
     write_icon_set(asset_root, "app-keyboard-settings.png", new_keyboard_icon_16)
     write_icon_set(asset_root, "app-mouse.png", new_mouse_icon_16)
     write_icon_set(asset_root, "app-notepad.png", new_notepad_icon_16)
-
-    save_png(new_menu_strip_art(), os.path.join(project_root, "assets", "desktop", "menu_strip_savanxp.png"))
 
 
 if __name__ == "__main__":

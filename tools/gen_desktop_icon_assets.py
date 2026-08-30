@@ -29,7 +29,6 @@ MANIFEST = [
     {"symbol": "k_desktop_icon_key_test_32", "relative_path": "32x32/app-keyboard-settings.png"},
     {"symbol": "k_desktop_icon_mouse_test_32", "relative_path": "32x32/app-mouse.png"},
     {"symbol": "k_desktop_icon_notepad_32", "relative_path": "32x32/app-notepad.png"},
-    {"symbol": "k_desktop_menu_strip_placeholder", "relative_path": "../menu_strip_savanxp.png"},
 ]
 
 

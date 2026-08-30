@@ -22,12 +22,6 @@ static const struct desktop_embedded_bitmap k_large_icons[DESKTOP_ICON_COUNT] = 
     {k_desktop_icon_notepad_32.width, k_desktop_icon_notepad_32.height, k_desktop_icon_notepad_32.pixels},
 };
 
-static const struct desktop_embedded_bitmap k_menu_strip_art = {
-    k_desktop_menu_strip_placeholder.width,
-    k_desktop_menu_strip_placeholder.height,
-    k_desktop_menu_strip_placeholder.pixels,
-};
-
 const struct desktop_embedded_bitmap *desktop_icon_small(enum desktop_icon_id id)
 {
     if (id < 0 || id >= DESKTOP_ICON_COUNT)

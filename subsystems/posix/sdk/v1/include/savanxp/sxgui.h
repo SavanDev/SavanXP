@@ -295,16 +295,21 @@ struct sxgui_widget sxgui_textedit(struct sx_rect rect, char *buffer, int capaci
  * control -- un editor, una lista -- quiere arrancar con el foco ahi. */
 void sxgui_focus(struct sxgui_context *ctx, int index);
 
-/* Portapapeles sobre un textedit, para colgar de un menu Edicion. Son las
- * mismas operaciones que hacen Ctrl+C/X/V/A, expuestas porque el atajo de
- * teclado no puede ser la unica via: un menu tiene que poder dispararlas.
- * Devuelven 1 si cambiaron algo. `cut` y `paste` marcan el widget modificado;
- * el llamador es el que decide que significa "guardado". */
+/* Portapapeles sobre un widget de texto -- `SXGUI_TEXTEDIT` o `SXGUI_TEXTFIELD`
+ * --, para colgar de un menu Edicion. Son las mismas operaciones que hacen
+ * Ctrl+C/X/V/A, expuestas porque el atajo de teclado no puede ser la unica via:
+ * un menu tiene que poder dispararlas. Devuelven 1 si cambiaron algo, de modo
+ * que el llamador puede avisar cuando no habia nada seleccionado. `cut` y
+ * `paste` marcan el widget modificado; el llamador decide que significa
+ * "guardado". Conservan el nombre `textedit_` aunque sirvan a los dos widgets,
+ * para no romper a quien ya los llama. */
 int sxgui_textedit_copy(struct sxgui_widget *widget);
 int sxgui_textedit_cut(struct sxgui_widget *widget);
 int sxgui_textedit_paste(struct sxgui_widget *widget);
 void sxgui_textedit_select_all(struct sxgui_widget *widget);
-/* 1 si hay algo seleccionado: sirve para poner en gris Cortar y Copiar. */
+/* 1 si hay algo seleccionado. Para una app que quiera reflejar el estado por
+ * su cuenta -- una barra de estado, por ejemplo. El menu no lo necesita: las
+ * operaciones ya devuelven 0 cuando no hay nada que cortar o copiar. */
 int sxgui_textedit_has_selection(const struct sxgui_widget *widget);
 struct sxgui_widget sxgui_progress(struct sx_rect rect, int range_min, int range_max, int value);
 

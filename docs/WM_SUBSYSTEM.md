@@ -13,9 +13,13 @@
 > - Módulos compartidos con clientes (`desktop_icons`, `desktop_wallpaper`)
 >   conservan su nombre a propósito: no son del WM.
 >
-> Siguen **Fase B** (primitiva MDI en sxgui para los grupos de Progman) y
-> **Fase C** (la maduración que motivó todo: resize por bordes,
-> foco/activación, Alt-Tab, corrección de repintado).
+> Sigue **Fase B** (primitiva MDI en sxgui para los grupos de Progman).
+>
+> De **Fase C** (la maduración que motivó todo) ya están hechos el **resize por
+> bordes** y **Alt-Tab**; este último usa el Task List como switcher, con el
+> ciclo confirmándose al soltar Alt. Quedan **foco/activación** (la mecánica
+> existe —`raise_overlay`, `active_overlay_slot`—, falta que la ventana activa
+> se distinga de las demás) y la **corrección de repintado**.
 >
 > **De acá para abajo, el documento es el registro del plan original** — con
 > las decisiones y los hallazgos tal como se tomaron. Está en tiempo futuro y
@@ -257,5 +261,15 @@ shell), A2.4 (retirar chrome Win95, launcher proto-Progman), A2.5 (limpieza).
   `windowd` no sabe quién es el shell. Requiere una primitiva MDI nueva en
   sxgui (child window con title bar, drag acotado al client area, minimize a
   icono) — hoy no existe.
-- **Fase C** — maduración del WM contra el servidor limpio: resize por bordes,
-  foco/activación entre ventanas, Alt-Tab, corrección de repintado.
+- **Fase C** — maduración del WM contra el servidor limpio. **Hechos**: resize
+  por bordes, y Alt-Tab sobre el Task List (mientras Alt sigue apretado cada Tab
+  mueve la selección; al soltarlo se confirma). **Pendientes**: foco/activación
+  entre ventanas —la mecánica ya está, falta que se vea cuál está activa— y la
+  corrección de repintado.
+
+  Nota de diseño para lo que venga: `windowd` guarda **nueve** descriptores por
+  cliente contra el límite de 64 por proceso, así que no llega a los 12 clientes
+  que declara `WINDOWD_MAX_OVERLAY_CLIENTS` —se queda cerca de seis—. Cualquier
+  canal nuevo del protocolo hay que pensarlo contra ese techo; fue la razón por
+  la que el portapapeles se hizo device node del kernel (`/dev/clipboard`) y no
+  servicio del WM.

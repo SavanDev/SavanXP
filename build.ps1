@@ -635,7 +635,6 @@ function Generate-DesktopIconAssets {
     $scriptPath = Join-Path $ToolRoot "gen_desktop_icon_assets.py"
     $outputPath = Join-Path $GeneratedRoot "desktop_icon_assets.h"
     $iconsDir = Join-Path $ProjectRoot "assets/desktop/icons"
-    $menuStripPath = Join-Path $ProjectRoot "assets/desktop/menu_strip_savanxp.png"
     # gen_desktop_source_art.py dibuja el arte por codigo (sin insumos externos
     # ademas de si mismo); como escribe muchos PNG y no un output unico, se
     # trackea con un stamp en vez de comparar mtimes contra cada PNG generado.
@@ -651,7 +650,7 @@ function Generate-DesktopIconAssets {
         [System.IO.File]::WriteAllText($sourceArtStamp, "")
     }
 
-    $iconDeps = @($scriptPath, $menuStripPath) + (Get-ChildItem -Path $iconsDir -Filter "*.png" -Recurse).FullName
+    $iconDeps = @($scriptPath) + (Get-ChildItem -Path $iconsDir -Filter "*.png" -Recurse).FullName
     if (Test-NeedsRegen $outputPath $iconDeps) {
         & $python $scriptPath --project-root $ProjectRoot --output $outputPath
         if ($LASTEXITCODE -ne 0) {

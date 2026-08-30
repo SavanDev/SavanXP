@@ -1305,32 +1305,10 @@ static void sxgui_textfield_scroll_to_caret(struct sxgui_widget *widget)
     }
 }
 
-static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui_widget *widget)
-{
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
-    int text_y = inner.y + (inner.height - gfx_text_height()) / 2;
-    int text_x = inner.x + 3 - widget->scroll;
-
-    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
-    sxgui_draw_sunken(painter, widget->rect);
-
-    if (!sx_painter_push_clip(painter, inner))
-    {
-        return;
-    }
-    if (widget->edit_buffer != 0)
-    {
-        sx_painter_draw_text(painter, text_x, text_y, widget->edit_buffer, SXGUI_COLOR_TEXT);
-    }
-    if (widget->focused)
-    {
-        int caret_x = text_x + sxgui_text_prefix_width(widget->edit_buffer, widget->caret);
-        sxgui_vline(painter, caret_x, text_y, gfx_text_height(), SXGUI_COLOR_TEXT);
-    }
-    sx_painter_pop_clip(painter);
-}
-
-/* ---- seleccion de texto (textedit) --------------------------------------
+/* ---- seleccion de texto (textfield y textedit) --------------------------------------
+ *
+ * Los comparten los dos widgets de texto: trabajan sobre edit_buffer, caret y
+ * sel_anchor, y no saben de que widget son.
  *
  * El rango vive en dos enteros: sel_anchor (donde empezo) y caret (donde esta
  * ahora). Sin un buffer aparte, asi que no hay nada que mantener sincronizado
@@ -1423,7 +1401,7 @@ static int sxgui_sel_copy(struct sxgui_widget *widget)
  * son 8 KiB; el costo es una vez por proceso, no por pegado. */
 static char g_sxgui_paste[SAVANXP_CLIPBOARD_CAPACITY];
 
-static int sxgui_sel_paste(struct sxgui_widget *widget)
+static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
 {
     int pasted;
     int length;
@@ -1433,6 +1411,20 @@ static int sxgui_sel_paste(struct sxgui_widget *widget)
     if (clipboard_get_text(g_sxgui_paste, (int)sizeof(g_sxgui_paste)) <= 0)
     {
         return 0;
+    }
+    if (single_line)
+    {
+        /* Un campo de una linea se queda con la primera. Meter el salto crudo
+         * dejaria un caracter que el widget no sabe dibujar ni navegar. */
+        int index;
+        for (index = 0; g_sxgui_paste[index] != '\0'; ++index)
+        {
+            if (g_sxgui_paste[index] == '\n' || g_sxgui_paste[index] == '\r')
+            {
+                g_sxgui_paste[index] = '\0';
+                break;
+            }
+        }
     }
     (void)sxgui_sel_delete(widget);
 
@@ -1455,6 +1447,72 @@ static int sxgui_sel_paste(struct sxgui_widget *widget)
     widget->modified = 1;
     sxgui_sel_clear(widget);
     return 1;
+}
+
+/* Espejo de sxgui_textedit_caret_from_point para el campo de una linea. Misma
+ * razon: click y arrastre tienen que calcular identico. */
+static int sxgui_textfield_caret_from_point(const struct sxgui_widget *widget, int x)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    int local_x = x - (inner.x + 3) + widget->scroll;
+    int length = (int)strlen(widget->edit_buffer);
+    int position;
+
+    for (position = 0; position <= length; ++position)
+    {
+        if (sxgui_text_prefix_width(widget->edit_buffer, position) >= local_x)
+        {
+            return position;
+        }
+    }
+    return length;
+}
+
+static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    int text_y = inner.y + (inner.height - gfx_text_height()) / 2;
+    int text_x = inner.x + 3 - widget->scroll;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
+    sxgui_draw_sunken(painter, widget->rect);
+
+    if (!sx_painter_push_clip(painter, inner))
+    {
+        return;
+    }
+    if (widget->edit_buffer != 0)
+    {
+        sx_painter_draw_text(painter, text_x, text_y, widget->edit_buffer, SXGUI_COLOR_TEXT);
+    }
+    /* Igual que en textedit: primero la linea entera y DESPUES el tramo
+     * resaltado, o el texto normal lo taparia. */
+    if (widget->edit_buffer != 0 && sxgui_sel_active(widget))
+    {
+        int from = sxgui_sel_start(widget);
+        int to = sxgui_sel_end(widget);
+        int x_from = text_x + sxgui_text_prefix_width(widget->edit_buffer, from);
+        int x_to = text_x + sxgui_text_prefix_width(widget->edit_buffer, to);
+        char run[256];
+        int run_length = to - from;
+
+        sx_painter_fill_rect(
+            painter,
+            sx_rect_make(x_from, text_y, x_to - x_from, gfx_text_height()),
+            SXGUI_COLOR_SELECT);
+        if (run_length > 0 && run_length < (int)sizeof(run))
+        {
+            memcpy(run, widget->edit_buffer + from, (size_t)run_length);
+            run[run_length] = '\0';
+            sx_painter_draw_text(painter, x_from, text_y, run, SXGUI_COLOR_SELECT_TEXT);
+        }
+    }
+    if (widget->focused)
+    {
+        int caret_x = text_x + sxgui_text_prefix_width(widget->edit_buffer, widget->caret);
+        sxgui_vline(painter, caret_x, text_y, gfx_text_height(), SXGUI_COLOR_TEXT);
+    }
+    sx_painter_pop_clip(painter);
 }
 
 /* ---- textedit (editor multilinea) ----------------------------------------
@@ -2047,6 +2105,17 @@ static int sxgui_radio_select(struct sxgui_context *ctx, int index)
 /* Pointer moves routed to the captured widget while the button is held. */
 static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *widget, const struct savanxp_gui_pointer_event *event)
 {
+    if (widget->kind == SXGUI_TEXTFIELD && widget->edit_buffer != 0)
+    {
+        int caret = sxgui_textfield_caret_from_point(widget, event->x);
+        if (caret == widget->caret)
+        {
+            return 0;
+        }
+        widget->caret = caret;
+        sxgui_textfield_scroll_to_caret(widget);
+        return 1;
+    }
     if (widget->kind == SXGUI_TEXTEDIT && widget->edit_buffer != 0)
     {
         /* Arrastrar mueve el caret y deja el ancla quieta: eso ES extender la
@@ -2441,20 +2510,12 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             {
                 if (widget->edit_buffer != 0)
                 {
-                    struct sx_rect inner = sxgui_inset(widget->rect, 2);
-                    int local_x = event->x - (inner.x + 3) + widget->scroll;
-                    int text_length = (int)strlen(widget->edit_buffer);
-                    int position;
-
-                    widget->caret = text_length;
-                    for (position = 0; position <= text_length; ++position)
+                    if (!ctx->shift_down || widget->sel_anchor < 0)
                     {
-                        if (sxgui_text_prefix_width(widget->edit_buffer, position) >= local_x)
-                        {
-                            widget->caret = position;
-                            break;
-                        }
+                        widget->sel_anchor = sxgui_textfield_caret_from_point(widget, event->x);
                     }
+                    widget->caret = sxgui_textfield_caret_from_point(widget, event->x);
+                    ctx->capture_index = index;
                     sxgui_textfield_scroll_to_caret(widget);
                     changed = 1;
                 }
@@ -2877,6 +2938,87 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
     {
         sxgui_textfield_clamp_caret(widget);
         length = (int)strlen(widget->edit_buffer);
+
+        /* Misma maquinaria que textedit: los helpers de seleccion trabajan
+         * sobre edit_buffer/caret/sel_anchor y no saben de que widget son. */
+        if ((event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0 &&
+            (event->modifiers & SAVANXP_KEY_MOD_ALT_GR) == 0)
+        {
+            int done = 0;
+
+            switch (event->ascii)
+            {
+            case 'c':
+            case 'C':
+                done = sxgui_sel_copy(widget);
+                break;
+            case 'x':
+            case 'X':
+                if (sxgui_sel_copy(widget) && sxgui_sel_delete(widget))
+                {
+                    sxgui_textfield_scroll_to_caret(widget);
+                    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                }
+                done = 1;
+                break;
+            case 'v':
+            case 'V':
+                if (sxgui_sel_paste(widget, 1))
+                {
+                    sxgui_textfield_scroll_to_caret(widget);
+                    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                }
+                done = 1;
+                break;
+            case 'a':
+            case 'A':
+                widget->sel_anchor = 0;
+                widget->caret = length;
+                sxgui_textfield_scroll_to_caret(widget);
+                done = 1;
+                break;
+            default:
+                break;
+            }
+            if (done || (event->ascii >= 32 && event->ascii < 127))
+            {
+                return 1;
+            }
+        }
+
+        if (sxgui_sel_active(widget))
+        {
+            int destructive =
+                event->key == SAVANXP_KEY_BACKSPACE ||
+                event->key == SAVANXP_KEY_DELETE ||
+                (event->ascii >= 32 && event->ascii < 127);
+
+            if (destructive)
+            {
+                sxgui_sel_delete(widget);
+                length = (int)strlen(widget->edit_buffer);
+                sxgui_textfield_scroll_to_caret(widget);
+                sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                if (event->key == SAVANXP_KEY_BACKSPACE || event->key == SAVANXP_KEY_DELETE)
+                {
+                    return 1;
+                }
+            }
+        }
+
+        switch (event->key)
+        {
+        case SAVANXP_KEY_LEFT:
+        case SAVANXP_KEY_RIGHT:
+        case SAVANXP_KEY_HOME:
+        case SAVANXP_KEY_END:
+            sxgui_sel_begin_move(widget, (event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0);
+            break;
+        default:
+            sxgui_sel_clear(widget);
+            break;
+        }
+
         if (event->key == SAVANXP_KEY_LEFT)
         {
             if (widget->caret > 0)
@@ -2994,7 +3136,7 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
                 break;
             case 'v':
             case 'V':
-                if (sxgui_sel_paste(widget))
+                if (sxgui_sel_paste(widget, 0))
                 {
                     sxgui_textedit_reveal_caret(widget);
                     sxgui_fire(widget, SXGUI_ACTION_CHANGE);
@@ -3348,7 +3490,8 @@ void sxgui_focus(struct sxgui_context *ctx, int index)
 
 int sxgui_textedit_has_selection(const struct sxgui_widget *widget)
 {
-    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT || widget->edit_buffer == 0)
+    if (widget == 0 || widget->edit_buffer == 0 ||
+        (widget->kind != SXGUI_TEXTEDIT && widget->kind != SXGUI_TEXTFIELD))
     {
         return 0;
     }
@@ -3379,16 +3522,18 @@ int sxgui_textedit_cut(struct sxgui_widget *widget)
 
 int sxgui_textedit_paste(struct sxgui_widget *widget)
 {
-    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT || widget->edit_buffer == 0)
+    if (widget == 0 || widget->edit_buffer == 0 ||
+        (widget->kind != SXGUI_TEXTEDIT && widget->kind != SXGUI_TEXTFIELD))
     {
         return 0;
     }
-    return sxgui_sel_paste(widget);
+    return sxgui_sel_paste(widget, widget->kind == SXGUI_TEXTFIELD);
 }
 
 void sxgui_textedit_select_all(struct sxgui_widget *widget)
 {
-    if (widget == 0 || widget->kind != SXGUI_TEXTEDIT || widget->edit_buffer == 0)
+    if (widget == 0 || widget->edit_buffer == 0 ||
+        (widget->kind != SXGUI_TEXTEDIT && widget->kind != SXGUI_TEXTFIELD))
     {
         return;
     }

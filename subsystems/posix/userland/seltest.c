@@ -92,16 +92,36 @@ static void pointer(int x, int y, uint32_t buttons)
     (void)sxgui_handle_pointer(&g_ctx, &event);
 }
 
-static void reset(const char *initial)
+static void install(const char *initial, int single_line)
 {
     /* strcpy y no strncpy: esta libc no trae strncpy, y los textos del test son
      * literales cortos contra un buffer de 512. */
     strcpy(g_buffer, initial);
-    g_widgets[0] = sxgui_textedit(sx_rect_make(4, 4, 300, 120), g_buffer, (int)sizeof(g_buffer));
+    if (single_line)
+    {
+        g_widgets[0] = sxgui_textfield(sx_rect_make(4, 4, 300, 22), g_buffer, (int)sizeof(g_buffer));
+    }
+    else
+    {
+        g_widgets[0] = sxgui_textedit(sx_rect_make(4, 4, 300, 120), g_buffer, (int)sizeof(g_buffer));
+    }
     sxgui_context_init(&g_ctx, g_pixels, &g_info, g_widgets, 1);
     sxgui_focus(&g_ctx, 0);
     g_widgets[0].caret = 0;
     g_widgets[0].sel_anchor = -1;
+}
+
+static void reset(const char *initial)
+{
+    install(initial, 0);
+}
+
+/* Campo de una linea: comparte los helpers de seleccion con el multilinea, asi
+ * que lo que se prueba aca es que ESTE widget los tenga cableados -- y lo unico
+ * que se comporta distinto, que es el pegado de un texto con saltos. */
+static void reset_field(const char *initial)
+{
+    install(initial, 1);
 }
 
 int main(void)
@@ -209,6 +229,66 @@ int main(void)
     /* Pintar con seleccion viva: ejercita el recorte del tramo resaltado, que
      * hace aritmetica de indices contra un buffer de linea de tamano fijo. */
     reset("una linea larga para pintar con la seleccion puesta");
+    key((uint32_t)'a', 'a', SAVANXP_KEY_MOD_CTRL);
+    sxgui_paint(&g_ctx);
+
+    /* ---- campo de una linea ---------------------------------------------
+     *
+     * Es donde vive el dialogo Abrir/Guardar del bloc de notas, o sea el lugar
+     * donde mas natural es pegar una ruta. */
+
+    reset_field("hola mundo");
+    shift_right(4);
+    expect_sel(0, 4, "campo: shift+derecha extiende");
+    key((uint32_t)'c', 'c', SAVANXP_KEY_MOD_CTRL);
+    expect_clipboard("hola", "campo: ctrl+c copia la seleccion");
+
+    reset_field("hola mundo");
+    shift_right(5);
+    key((uint32_t)'x', 'x', SAVANXP_KEY_MOD_CTRL);
+    expect_text("mundo", "campo: ctrl+x saca lo seleccionado");
+
+    reset_field("ruta: ");
+    (void)clipboard_set_text("/disk/notas.txt");
+    key(SAVANXP_KEY_END, 0, 0);
+    key((uint32_t)'v', 'v', SAVANXP_KEY_MOD_CTRL);
+    expect_text("ruta: /disk/notas.txt", "campo: ctrl+v pega en el caret");
+
+    reset_field("");
+    key((uint32_t)'a', 'a', SAVANXP_KEY_MOD_CTRL);
+    reset_field("AAA");
+    key((uint32_t)'a', 'a', SAVANXP_KEY_MOD_CTRL);
+    expect_sel(0, 3, "campo: ctrl+a selecciona todo");
+
+    /* Lo unico que el campo hace distinto: un pegado con saltos se queda con la
+     * primera linea, porque el widget no sabe dibujar ni navegar un '\n'. */
+    reset_field("");
+    (void)clipboard_set_text("primera\nsegunda");
+    key((uint32_t)'v', 'v', SAVANXP_KEY_MOD_CTRL);
+    expect_text("primera", "campo: pegar recorta en el primer salto");
+
+    /* Click y arrastre, igual que en el multilinea. */
+    reset_field("hola mundo");
+    pointer(10, 10, SAVANXP_MOUSE_BUTTON_LEFT);
+    {
+        int anchored = g_widgets[0].sel_anchor;
+        if (anchored < 0)
+        {
+            fail("campo: el click tendria que anclar");
+        }
+        pointer(120, 10, SAVANXP_MOUSE_BUTTON_LEFT);
+        if (g_widgets[0].caret <= anchored)
+        {
+            fail("campo: arrastrar no extendio la seleccion");
+        }
+        if (g_widgets[0].sel_anchor != anchored)
+        {
+            fail("campo: arrastrar movio el ancla");
+        }
+    }
+
+    /* Pintar el campo con seleccion viva. */
+    reset_field("una ruta larga para pintar con seleccion");
     key((uint32_t)'a', 'a', SAVANXP_KEY_MOD_CTRL);
     sxgui_paint(&g_ctx);
 
