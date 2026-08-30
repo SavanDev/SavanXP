@@ -17,7 +17,9 @@ Notas de corte:
   explorer.exe, y el mismo layering que separo a shellui y progman del window
   manager. Solo lista ventanas: sin menu inicio y sin area de notificaciones.
   Cada boton lleva icono y titulo, el de la ventana activa va hundido, y un
-  click activa o -- si ya estaba activa -- minimiza, como en Win95. Lo que un
+  click activa o -- si ya estaba activa -- minimiza, como en Win95. Los botones
+  van en orden ESTABLE por slot y no por z-order: si se reordenaran al cambiar
+  de ventana, el click siguiente caeria sobre otra cosa. Lo que un
   cliente no puede saber (que ventanas hay, cual esta activa, cual minimizada)
   se lo cuenta el WM por los canales nuevos de `savanxp/wm_shell_protocol.h`:
   la lista por una seccion compartida con seqlock, los clicks de vuelta por un
@@ -33,8 +35,12 @@ Notas de corte:
   teclas van por QMP y no por el `sendkey` del monitor, porque hace falta
   SOSTENER un modificador: sin eso no se puede capturar el switcher de Alt+Tab
   abierto ni hacer un Ctrl+C. Trae los escenarios `desktop`, `alttab` y
-  `clipboard`; falla temprano si hay un spec de automatizacion plantado, que
-  haria arrancar el ultimo harness en vez del escritorio. No es parte del
+  `clipboard` y `taskbar`; falla temprano si hay un spec de automatizacion
+  plantado, que haria arrancar el ultimo harness en vez del escritorio. Tambien
+  maneja el mouse: el del guest es un PS/2 relativo, asi que el cursor se lleva
+  primero contra la esquina -- el clamp del WM lo deja en (0,0), el unico origen
+  conocido -- y despues se avanza de a 64 px, porque un salto grande se parte en
+  una rafaga de paquetes que el guest no alcanza a drenar. No es parte del
   build.
 - **Alt+Tab para cambiar de ventana.** Mientras Alt sigue apretado cada Tab
   mueve la seleccion y al soltarlo se confirma, con Alt+Shift+Tab yendo al

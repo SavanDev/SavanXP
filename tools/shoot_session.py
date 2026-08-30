@@ -76,6 +76,51 @@ class Qmp(object):
         self.key(modifier, False)
         time.sleep(0.4)
 
+    def _rel_step(self, dx, dy):
+        """Un salto chico. Grande NO sirve: el mouse del guest es un PS/2
+        emulado, sus paquetes llevan deltas de un byte y la cola del controlador
+        es corta, asi que un delta de cientos de pixeles se parte en una rafaga
+        que el guest no alcanza a drenar y se pierde entera."""
+        events = []
+        if dx:
+            events.append({"type": "rel", "data": {"axis": "x", "value": int(dx)}})
+        if dy:
+            events.append({"type": "rel", "data": {"axis": "y", "value": int(dy)}})
+        if events:
+            self.cmd("input-send-event", events=events)
+            time.sleep(0.03)
+
+    def move_to(self, x, y):
+        """Lleva el cursor a (x, y), por pasos.
+
+        El mouse es RELATIVO y no hay forma de leer donde esta el cursor, asi
+        que primero se lo empuja contra la esquina: el WM clampea a [0, ancho-1],
+        o sea que pasarse deja el cursor en (0,0), el unico origen conocido.
+        Despues se avanza hasta el destino. Todo de a pasos de 64 px.
+        """
+        step = 64
+        for _ in range((1280 // step) + 2):
+            self._rel_step(-step, -step)
+        time.sleep(0.2)
+
+        moved_x = 0
+        moved_y = 0
+        while moved_x < x or moved_y < y:
+            dx = min(step, x - moved_x) if moved_x < x else 0
+            dy = min(step, y - moved_y) if moved_y < y else 0
+            self._rel_step(dx, dy)
+            moved_x += dx
+            moved_y += dy
+        time.sleep(0.5)
+
+    def click(self):
+        self.cmd("input-send-event", events=[
+            {"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(0.25)
+        self.cmd("input-send-event", events=[
+            {"type": "btn", "data": {"down": False, "button": "left"}}])
+        time.sleep(0.6)
+
     def type_text(self, text):
         # Los qcodes de QEMU no son los caracteres: la barra espaciadora es
         # "spc". Las letras y digitos si coinciden con su caracter.
@@ -156,10 +201,34 @@ def scenario_clipboard(s):
     s.shot("pegado")
 
 
+def scenario_taskbar(s):
+    """Clicks sobre los botones de la barra de tareas.
+
+    La franja esta al pie (y = alto - 28) y los botones miden 160 desde x=2, en
+    el orden en que el WM enumera las tareas: Program Manager primero, el bloc
+    de notas despues. Se clickea el PRIMERO, que es la ventana sin foco despues
+    de abrir el bloc.
+    """
+    s.open_notepad()
+    s.shot("dos-ventanas")
+
+    s.qmp.move_to(82, 786)
+    s.shot("cursor-sobre-boton")
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("activado")
+
+    # El mismo boton otra vez: ya activa, asi que ahora minimiza.
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("minimizado")
+
+
 SCENARIOS = {
     "desktop": scenario_desktop,
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
+    "taskbar": scenario_taskbar,
 }
 
 

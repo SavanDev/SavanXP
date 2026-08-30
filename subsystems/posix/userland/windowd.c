@@ -1817,7 +1817,6 @@ static void publish_window_list(struct windowd_session *session)
      * habito de no dejar buffers grandes en el stack. */
     static struct savanxp_wm_window_list staging;
     struct savanxp_wm_window_list *list;
-    int count;
     int index;
     int written = 0;
 
@@ -1826,20 +1825,30 @@ static void publish_window_list(struct windowd_session *session)
         return;
     }
     list = session->taskbar_client.window_list;
-    count = windowd_task_count(session);
 
     memset(&staging, 0, sizeof(staging));
 
-    for (index = 0; index < count && written < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
+    /*
+     * Orden ESTABLE por slot, no por z-order.
+     *
+     * windowd_task_client enumera en z-order, que es lo que quieren el Task
+     * List y Alt+Tab -- la ventana anterior primero. Pero una barra de tareas
+     * necesita lo contrario: si los botones se reordenan al cambiar de ventana,
+     * el click siguiente cae sobre otra cosa. Win95 los deja fijos y aca
+     * tambien: el slot de un overlay no cambia mientras la ventana viva.
+     */
+    for (index = -1; index < WINDOWD_MAX_OVERLAY_CLIENTS && written < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
     {
-        int is_shell = 0;
-        int slot = -1;
-        const struct windowd_client *client = windowd_task_client(session, index, &is_shell, &slot);
+        int is_shell = index < 0;
+        int slot = is_shell ? -1 : index;
+        const struct windowd_client *client = is_shell
+            ? &session->shell_client
+            : &session->overlay_clients[index];
         struct savanxp_wm_window_entry *entry;
         const char *title;
         size_t length;
 
-        if (client == 0)
+        if (client->pid <= 0)
         {
             continue;
         }
@@ -3817,7 +3826,19 @@ static void handle_pointer_event(
          * fondo, y el fondo (shellui) no recibe input. */
         if (current_hover_client != 0)
         {
-            if (current_hover_client == &session->shell_client)
+            if (current_hover_client == &session->taskbar_client)
+            {
+                /* La barra de tareas no es una ventana: no se activa, no se
+                 * levanta en el z-order y no tiene botones de marco. Solo recibe
+                 * el click. Sin este corte caia en el camino de ventana, donde
+                 * overlay_slot_for_client_ptr devuelve -1 y el hover se anulaba
+                 * -- y con el se perdian TODAS las ramas siguientes, incluida la
+                 * que rutea el evento al cliente. */
+                (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
+                mouse_routed = 1;
+                current_hover_client = 0;
+            }
+            else if (current_hover_client == &session->shell_client)
             {
                 activate_shell(session);
             }
