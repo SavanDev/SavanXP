@@ -20,3 +20,7 @@ tools/*
 !tools/font/**
 *.log
 sdk/doomgeneric/wad/*.wad
+
+# Banco de pruebas local: ports y apps que no entran al repo.
+ports/*
+!ports/README.md

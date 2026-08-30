@@ -291,7 +291,7 @@ function Add-SxeResources([string]$Name, [string]$BinaryPath, [string]$ResourceD
     }
 }
 
-function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 0) {
+function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 0, [switch]$Gui) {
     $compiler = Require-Executable "clang" (Get-ToolchainCandidates "clang")
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
@@ -354,6 +354,22 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion del runtime gfx2d."
     }
 
+    # -Gui suma el toolkit SXGUI, el mismo par de fuentes que build.ps1 le pone
+    # a las apps ventaneadas in-tree (aboutapp, notepad, filesapp). Es opt-in a
+    # proposito: sin el switch una app de consola no se lleva el toolkit entero
+    # pegado al binario. posix.c ya se linkea siempre por esta via.
+    $guiObjects = @()
+    if ($Gui) {
+        foreach ($guiSource in @("sxgui", "sxgui_app")) {
+            $guiObject = Join-Path $objectRoot ("{0}.o" -f $guiSource)
+            & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/$guiSource.c") -o $guiObject @compileFlags
+            if ($LASTEXITCODE -ne 0) {
+                throw "Fallo la compilacion del runtime $guiSource."
+            }
+            $guiObjects += $guiObject
+        }
+    }
+
     & $compiler -c (Join-Path $Script:SdkRoot "runtime/setjmp.S") -o $setjmpObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime setjmp."
@@ -364,7 +380,7 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion de crt0."
     }
 
-    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $gfx2dObject $setjmpObject @appObjects
+    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $gfx2dObject $setjmpObject @guiObjects @appObjects
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo el link de '$SourcePath'."
     }

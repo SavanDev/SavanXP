@@ -7,6 +7,8 @@ param(
     # 0 = arena de bootstrap por default y crecimiento dinamico con secciones.
     # Un valor > 0 clava toda la arena en la BSS (RAM residente por proceso).
     [int]$HeapMiB = 0,
+    # Linkea el toolkit SXGUI (savanxp/sxgui.h) ademas del runtime base.
+    [switch]$Gui,
     [switch]$NoInstall
 )
 
@@ -33,7 +35,7 @@ $outputRoot = Join-Path $BuildRoot "external"
 Ensure-Directory $outputRoot
 $elfOutputPath = if ($OutputPath) { [System.IO.Path]::GetFullPath($OutputPath) } else { Join-Path $outputRoot ("{0}.elf" -f $Name) }
 
-$elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath -HeapMiB $HeapMiB
+$elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath -HeapMiB $HeapMiB -Gui:$Gui
 
 if (-not $NoInstall) {
     Install-SvfsFilesWithTool $DiskImage @(

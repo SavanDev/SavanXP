@@ -92,6 +92,20 @@ Compilar, instalar y arrancar QEMU en un paso:
 .\tools\run-user.ps1 -Source .\sdk\errdemo -Name errdemo
 ```
 
+Apps con ventana (toolkit SXGUI): el runtime base no incluye `sxgui.c` /
+`sxgui_app.c` porque suman ~48 KB a cada binario. Se piden con `-Gui`:
+
+```powershell
+.\tools\build-user.ps1 -Source .\sdk\miapp -Name miapp -Gui
+```
+
+Banco de pruebas local: `ports/` es una carpeta gitignorada para ports y apps
+que no van al repo. Usa exactamente este mismo tooling; ver `ports/README.md`.
+
+```powershell
+.\tools\new-user-app.ps1 -Name miport -DestinationRoot ports
+```
+
 Referencia canónica del SDK:
 
 ```text

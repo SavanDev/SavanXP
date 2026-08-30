@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Source,
     [string]$Name,
-    [string]$Destination
+    [string]$Destination,
+    [switch]$Gui
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,9 @@ if ($Name) {
 }
 if ($Destination) {
     $args.Destination = $Destination
+}
+if ($Gui) {
+    $args.Gui = $true
 }
 
 & $buildUser @args
