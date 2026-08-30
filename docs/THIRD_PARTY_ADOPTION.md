@@ -49,11 +49,89 @@ Para SerenityOS el enfoque inicial del repo es:
 - assets, iconos y arte visual del desktop actual: propios del repo y
   generados localmente, sin dependencia activa de assets de SerenityOS
 
-## Trazabilidad minima en commits y codigo
+## OpenBSD
 
-- los commits que introduzcan una pieza inspirada en terceros deben mencionar la
-  categoria adoptada
-- cuando exista `Port selectivo`, el archivo debe conservar su header o un
-  comentario equivalente con origen y licencia
-- cuando exista `Referencia`, se prefiere documentar la inspiracion en el
-  registro de procedencia en lugar de repetirla en cada archivo
+Casi todo el arbol de OpenBSD es ISC o BSD-2, compatible con MIT: el unico
+requisito es conservar los avisos originales. Es la fuente externa de menor
+friccion legal para el repo, asi que el default aca es mas permisivo que en
+SerenityOS: piezas chicas y autocontenidas pueden ir directo a `Port
+selectivo`.
+
+`Port selectivo`:
+
+- funciones de string seguras de `lib/libc` (strlcpy, strlcat, strtonum,
+  reallocarray, recallocarray, freezero, explicit_bzero): quedan usos de
+  strcpy, strcat y sprintf en kernel y userland que estas reemplazan sin
+  cambiar la forma del codigo
+- `sys/kern/subr_prf.c`: printf sin dependencia de FILE, con soporte de width
+  y padding. Unifica los dos printf de userland (libc.c y posix.c) y cubre el
+  formato que hoy falta
+- `arc4random` (ChaCha20, `lib/libcrypto/arc4random`): no hay RNG en el repo;
+  lo necesitan los puertos efimeros y los ISN de TCP en kernel/net.cpp, que
+  hoy son predecibles
+- `sys/dev/pci/ac97.c`: solo la secuencia de warm reset con timeouts de
+  codec-ready y la tabla de mixer, que es donde las VMs difieren
+- `pcidevs` mas `devlist2h.awk`: tabla de IDs PCI generada desde texto, para
+  nombrar devices en pci.cpp y en las vistas de sysinfo y netinfo
+- `signify`: firma Ed25519 en ~1000 lineas ISC, para binarios SXE como seccion
+  no-alloc adicional
+
+`Referencia`:
+
+- sndio y la API audio(4): misma forma que el HAL de audio propio (dispatcher
+  mas backends); lo que aporta es la politica de under-run y latencia
+- `amd64/lapic.c`, `ioapic.c`, `acpimadt.c`: xAPIC por MMIO, x2APIC, overrides
+  de MADT y virtual wire mode, en codigo corto y legible
+- wscons, wsdisplay, wskbd y wsmouse: separacion entre device, emulacion de
+  terminal e input; incluye decodificacion PS/2 con reenvios 0xFA y 0xFE
+- `malloc.c` de userland: guard pages, canarios, junk fill, unmap al liberar y
+  flags de depuracion en runtime
+- modelo de pledge y unveil: capacidades declaradas por proceso, con los
+  subsistemas y la metadata SXE como punto de corte natural. La
+  implementacion no se porta: esta acoplada a su tabla de syscalls
+- `src/regress`: organizacion de los tests de regresion
+- `tcp_input.c`: solo lectura, para timers de retransmision, ventana
+  deslizante y estados de cierre. Acoplado a mbuf, no portable
+
+`No adoptar`:
+
+- UVM, FFS y UFS, pf, xenocara y el DRM importado de Linux: acoplamiento alto
+  y sin encaje con SVFS2 ni con el HAL de display propio
+- ksh: ya existe shell_core.c
+- OpenBSD no tiene driver virtio-gpu, asi que del camino grafico principal no
+  hay nada que tomar
+
+Cada pieza que pase a `Port selectivo` entra en el registro de procedencia con
+su header ISC original intacto: son avisos de pocas lineas y perderlos es el
+error facil de cometer.
+
+## Trazabilidad: el registro es la fuente de verdad
+
+La trazabilidad vive en `docs/THIRD_PARTY_PROVENANCE.md`, no en los mensajes de
+commit. La regla anterior pedia que cada commit citara su categoria; se retira
+porque apunta al lugar equivocado: cuando hay que auditar que se distribuye, lo
+que se mira es el arbol actual, no el historial.
+
+Invariante del registro:
+
+- todo directorio de `vendor/` y `sdk/` con codigo de terceros tiene una
+  entrada
+- toda pieza de terceros que termine horneada en la ISO, el initramfs o la
+  imagen de disco tiene una entrada, incluso cuando el repo no la versiona y
+  se descarga o se provee aparte
+- cada entrada declara origen, version o commit fijado, licencia verificada,
+  decision y donde termina el bit distribuido
+
+Se verifica listando `vendor/` y `sdk/` contra el registro. Es una revision
+manual, y el momento de hacerla es el cambio que agrega o actualiza el
+componente, no despues.
+
+Reglas a nivel archivo:
+
+- con `Port selectivo`, el archivo conserva su header original o un comentario
+  equivalente con origen y licencia
+- con `Referencia`, la inspiracion se documenta en el registro y no se repite
+  en cada archivo
+- el codigo propio que envuelve o adapta una pieza de terceros es obra derivada
+  y hereda la licencia de esa pieza, no el MIT del repo: los shims tambien
+  llevan header

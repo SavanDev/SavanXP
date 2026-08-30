@@ -67,16 +67,18 @@ El script:
 
 - compila e instala `/disk/bin/doomgeneric`
 - crea `/disk/games/doom`
-- copia `doom1.wad` desde `.\sdk\doomgeneric\wad\doom1.wad` si existe
+- copia el IWAD a `/disk/games/doom`
 
-Ubicacion esperada del WAD:
+Ningun WAD se versiona en el repo: `.gitignore` excluye `wad/*.wad`. El build
+espera el IWAD en:
 
 ```text
-sdk/doomgeneric/wad/doom1.wad
+sdk/doomgeneric/wad/freedoom1.wad
 ```
 
-Por licencia no se incluye ningun WAD en el repo. Copia tu `doom1.wad` antes
-de correr el build.
+Si falta, el script imprime la URL de descarga y sigue sin instalarlo.
+Freedoom (BSD-3-Clause) es el default para que el LiveCD sea jugable sin WADs
+propietarios ni shareware de id. Para usar otro, pasalo por `-WadPath`.
 
 ## Pruebas manuales recomendadas
 
@@ -94,3 +96,18 @@ de correr el build.
 - mouse ingame
 - multiplayer real
 - ventanas redimensionables o integracion multi-window
+
+## Licencia
+
+El motor es codigo de terceros bajo GPLv2, no MIT como el resto del repo:
+
+- fuentes del motor (`sdk/doomgeneric/*.c`, `*.h`): Doom, Copyright (C)
+  1993-1996 Id Software, Inc. y Copyright (C) 2005-2014 Simon Howard (linea
+  Chocolate Doom), a traves de DoomGeneric. Texto completo de la licencia en
+  `sdk/doomgeneric/COPYING`
+- IWAD: no se versiona en el repo, pero la imagen construida si lo
+  redistribuye en `/disk/games/doom`. Con el default, eso es Freedoom
+  (BSD-3-Clause), un proyecto independiente sin relacion con id Software
+
+Los avisos de copyright por archivo quedan intactos en los headers. La entrada
+del registro esta en `docs/THIRD_PARTY_PROVENANCE.md`.
