@@ -71,6 +71,11 @@ static struct sxgui_column g_columns[] = {
 #define FILESAPP_COLUMN_SIZE_WIDTH 80
 #define FILESAPP_COLUMN_TYPE_WIDTH 130
 
+/* Grilla del Acerca de: la misma que usan los dialogos de notepad. */
+#define FILESAPP_ABOUT_WIDTH 320
+#define FILESAPP_ABOUT_HEIGHT 128
+#define FILESAPP_DLG_ROW (18 + 4)
+
 /* ---- helpers de path ------------------------------------------------------ */
 
 static int filesapp_is_root_path(const char *path)
@@ -517,7 +522,7 @@ static void on_menu_command(int id, void *user)
         (void)filesapp_load_directory(g_current_path);
         break;
     case FILESAPP_MENU_ABOUT:
-        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, 300, 116);
+        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, FILESAPP_ABOUT_WIDTH, FILESAPP_ABOUT_HEIGHT);
         break;
     case FILESAPP_MENU_CLOSE:
         sxgui_app_quit(&g_app, 0);
@@ -554,20 +559,25 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
 #define FILESAPP_CONTENT_WIDTH 560
 #define FILESAPP_CONTENT_HEIGHT 400
 
-#define FILESAPP_TOOLBAR_HEIGHT 22
-#define FILESAPP_STATUS_HEIGHT 20
+/* La banda de la barra de direccion lleva UNA altura para los dos controles que
+ * viven ahi: si el campo y el boton no miden lo mismo, quedan desalineados por
+ * arriba o por abajo y no hay margen que lo tape. */
+#define FILESAPP_TOOLBAR_HEIGHT SXGUI_FIELD_HEIGHT
 #define FILESAPP_UP_BUTTON_WIDTH 110
+/* Separacion entre los dos paneles de la barra de estado. Es menor que el GAP
+ * general a proposito: son dos mitades de la misma barra, no dos controles. */
+#define FILESAPP_STATUS_GAP 2
 
 static void filesapp_layout(struct sxgui_app *app)
 {
     int width = (int)app->gfx.info.width;
     int height = (int)app->gfx.info.height;
-    int toolbar_y = sxgui_menubar_height() + 5;
-    int list_y = toolbar_y + FILESAPP_TOOLBAR_HEIGHT + 5;
-    int status_y = height - FILESAPP_STATUS_HEIGHT - 5;
-    int list_height = status_y - list_y - 5;
-    int address_width = width - 16 - FILESAPP_UP_BUTTON_WIDTH - 6;
-    int list_width = width - 16;
+    int toolbar_y = sxgui_menubar_height() + SXGUI_MARGIN;
+    int list_y = toolbar_y + FILESAPP_TOOLBAR_HEIGHT + SXGUI_GAP;
+    int status_y = height - SXGUI_MARGIN - SXGUI_STATUS_HEIGHT;
+    int list_height = status_y - SXGUI_GAP - list_y;
+    int list_width = width - SXGUI_MARGIN * 2;
+    int address_width = list_width - FILESAPP_UP_BUTTON_WIDTH - SXGUI_GAP;
     int name_width;
     int count_pane_width;
 
@@ -584,29 +594,33 @@ static void filesapp_layout(struct sxgui_app *app)
         list_width = 120;
     }
 
-    FILESAPP_ADDRESS->rect = sx_rect_make(8, toolbar_y, address_width, FILESAPP_TOOLBAR_HEIGHT);
+    FILESAPP_ADDRESS->rect = sx_rect_make(SXGUI_MARGIN, toolbar_y, address_width, FILESAPP_TOOLBAR_HEIGHT);
     FILESAPP_UP_BUTTON->rect = sx_rect_make(
-        8 + address_width + 6, toolbar_y, FILESAPP_UP_BUTTON_WIDTH, FILESAPP_TOOLBAR_HEIGHT);
-    FILESAPP_LIST->rect = sx_rect_make(8, list_y, list_width, list_height);
+        SXGUI_MARGIN + address_width + SXGUI_GAP, toolbar_y, FILESAPP_UP_BUTTON_WIDTH, FILESAPP_TOOLBAR_HEIGHT);
+    FILESAPP_LIST->rect = sx_rect_make(SXGUI_MARGIN, list_y, list_width, list_height);
 
     /* Name se queda con lo que sobra: es la columna que crece al agrandar la
-     * ventana, igual que en el explorador. El -6 deja lugar al borde hundido y
-     * a la columna del scrollbar sin que Type quede cortada. */
-    name_width = list_width - FILESAPP_COLUMN_SIZE_WIDTH - FILESAPP_COLUMN_TYPE_WIDTH - 6;
+     * ventana, igual que en el explorador. Lo que se descuenta es el area util
+     * REAL de la lista -- los dos biseles hundidos y la columna del scrollbar,
+     * que se reserva siempre: si solo se descontara cuando la barra esta, las
+     * columnas saltarian de ancho al agregar un archivo. */
+    name_width = list_width - SXGUI_BORDER_SUNKEN * 2 - SXGUI_SCROLLBAR_THICKNESS -
+        FILESAPP_COLUMN_SIZE_WIDTH - FILESAPP_COLUMN_TYPE_WIDTH;
     if (name_width < 90)
     {
         name_width = 90;
     }
     g_columns[0].width = name_width;
 
-    count_pane_width = list_width / 2;
+    count_pane_width = (list_width - FILESAPP_STATUS_GAP) / 2;
     if (count_pane_width < 80)
     {
         count_pane_width = 80;
     }
-    g_widgets[3].rect = sx_rect_make(8, status_y, count_pane_width, FILESAPP_STATUS_HEIGHT);
+    g_widgets[3].rect = sx_rect_make(SXGUI_MARGIN, status_y, count_pane_width, SXGUI_STATUS_HEIGHT);
     g_widgets[4].rect = sx_rect_make(
-        8 + count_pane_width + 4, status_y, list_width - count_pane_width - 4, FILESAPP_STATUS_HEIGHT);
+        SXGUI_MARGIN + count_pane_width + FILESAPP_STATUS_GAP, status_y,
+        list_width - count_pane_width - FILESAPP_STATUS_GAP, SXGUI_STATUS_HEIGHT);
 }
 
 static void on_resize(struct sxgui_app *app)
@@ -729,10 +743,23 @@ int main(int argc, char **argv)
     g_widgets[4] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_size_pane);
     g_widgets[4].flags |= SXGUI_FLAG_SUNKEN;
 
-    g_about_widgets[0] = sxgui_label(sx_rect_make(10, 8, 280, 16), "SavanXP Files");
-    g_about_widgets[1] = sxgui_label(sx_rect_make(10, 28, 280, 16), "Version: " SAVANXP_VERSION_STRING);
-    g_about_widgets[2] = sxgui_label(sx_rect_make(10, 48, 280, 16), "Browse directories and launch programs");
-    g_about_widgets[3] = sxgui_button(sx_rect_make(100, 76, 100, 26), "OK", on_dialog_ok, 0);
+    g_about_widgets[0] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN,
+                     FILESAPP_ABOUT_WIDTH - SXGUI_DIALOG_MARGIN * 2, 18),
+        "SavanXP Files");
+    g_about_widgets[1] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + FILESAPP_DLG_ROW,
+                     FILESAPP_ABOUT_WIDTH - SXGUI_DIALOG_MARGIN * 2, 18),
+        "Version: " SAVANXP_VERSION_STRING);
+    g_about_widgets[2] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN + FILESAPP_DLG_ROW * 2,
+                     FILESAPP_ABOUT_WIDTH - SXGUI_DIALOG_MARGIN * 2, 18),
+        "Browse directories and launch programs");
+    g_about_widgets[3] = sxgui_button(
+        sx_rect_make((FILESAPP_ABOUT_WIDTH - SXGUI_BUTTON_WIDTH) / 2,
+                     FILESAPP_ABOUT_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_dialog_ok, 0);
     g_about_dialog.title = "About Files";
     g_about_dialog.widgets = g_about_widgets;
     g_about_dialog.widget_count = 4;

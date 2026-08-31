@@ -14,31 +14,68 @@ static void sxgui_vline(struct sx_painter *painter, int x, int y, int height, ui
     sx_painter_fill_rect(painter, sx_rect_make(x, y, 1, height), colour);
 }
 
-/* Raised 3D border (buttons, window face). */
-static void sxgui_draw_raised(struct sx_painter *painter, struct sx_rect rect)
+/* Un borde 3D de la epoca son DOS anillos de un pixel, cada uno con su tono
+ * arriba-izquierda y abajo-derecha: cuatro colores en total. El anillo externo
+ * es el que separa el control del fondo y el interno el que le da el espesor.
+ * Todo el resto del chrome sale de aca cambiando el orden de los cuatro, que es
+ * lo que hace que hundido y levantado sean exactamente el reverso uno del otro
+ * y no dos dibujos parecidos. */
+static void sxgui_draw_edge(
+    struct sx_painter *painter,
+    struct sx_rect rect,
+    uint32_t outer_light,
+    uint32_t outer_dark,
+    uint32_t inner_light,
+    uint32_t inner_dark)
 {
     int right = rect.x + rect.width - 1;
     int bottom = rect.y + rect.height - 1;
 
-    sxgui_hline(painter, rect.x, rect.y, rect.width, SXGUI_COLOR_LIGHT);
-    sxgui_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_LIGHT);
-    sxgui_hline(painter, rect.x, bottom, rect.width, SXGUI_COLOR_DARK);
-    sxgui_vline(painter, right, rect.y, rect.height, SXGUI_COLOR_DARK);
-    sxgui_hline(painter, rect.x + 1, bottom - 1, rect.width - 2, SXGUI_COLOR_SHADOW);
-    sxgui_vline(painter, right - 1, rect.y + 1, rect.height - 2, SXGUI_COLOR_SHADOW);
+    if (rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+
+    /* anillo externo: la L clara arriba-izquierda y la oscura abajo-derecha */
+    sxgui_hline(painter, rect.x, rect.y, rect.width, outer_light);
+    sxgui_vline(painter, rect.x, rect.y, rect.height, outer_light);
+    sxgui_hline(painter, rect.x, bottom, rect.width, outer_dark);
+    sxgui_vline(painter, right, rect.y, rect.height, outer_dark);
+
+    if (rect.width <= 2 || rect.height <= 2)
+    {
+        return;
+    }
+
+    /* anillo interno, corrido un pixel hacia adentro por los cuatro lados */
+    sxgui_hline(painter, rect.x + 1, rect.y + 1, rect.width - 2, inner_light);
+    sxgui_vline(painter, rect.x + 1, rect.y + 1, rect.height - 2, inner_light);
+    sxgui_hline(painter, rect.x + 1, bottom - 1, rect.width - 2, inner_dark);
+    sxgui_vline(painter, right - 1, rect.y + 1, rect.height - 2, inner_dark);
 }
 
-/* Pressed 3D border (button held down). */
+/* Raised 3D border (buttons, window face). */
+static void sxgui_draw_raised(struct sx_painter *painter, struct sx_rect rect)
+{
+    sxgui_draw_edge(painter, rect, SXGUI_COLOR_BEVEL, SXGUI_COLOR_DARK, SXGUI_COLOR_LIGHT, SXGUI_COLOR_SHADOW);
+}
+
+/* Pressed / sunken 3D border: el reverso exacto del levantado. Lo comparten el
+ * boton apretado y los campos, que es lo que hace que un boton hundido y una
+ * caja de texto tengan el mismo espesor. */
+static void sxgui_draw_sunken(struct sx_painter *painter, struct sx_rect rect)
+{
+    sxgui_draw_edge(painter, rect, SXGUI_COLOR_SHADOW, SXGUI_COLOR_LIGHT, SXGUI_COLOR_DARK, SXGUI_COLOR_BEVEL);
+}
+
 static void sxgui_draw_pressed(struct sx_painter *painter, struct sx_rect rect)
 {
-    sxgui_hline(painter, rect.x, rect.y, rect.width, SXGUI_COLOR_DARK);
-    sxgui_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_DARK);
-    sxgui_hline(painter, rect.x + 1, rect.y + 1, rect.width - 2, SXGUI_COLOR_SHADOW);
-    sxgui_vline(painter, rect.x + 1, rect.y + 1, rect.height - 2, SXGUI_COLOR_SHADOW);
+    sxgui_draw_sunken(painter, rect);
 }
 
-/* Sunken 3D border (text fields, list boxes). */
-static void sxgui_draw_sunken(struct sx_painter *painter, struct sx_rect rect)
+/* Bisel de un solo pixel, para lo que no lleva espesor: los paneles de la barra
+ * de estado y las cajas que solo separan del fondo. */
+static void sxgui_draw_inset(struct sx_painter *painter, struct sx_rect rect)
 {
     int right = rect.x + rect.width - 1;
     int bottom = rect.y + rect.height - 1;
@@ -47,6 +84,75 @@ static void sxgui_draw_sunken(struct sx_painter *painter, struct sx_rect rect)
     sxgui_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_SHADOW);
     sxgui_hline(painter, rect.x, bottom, rect.width, SXGUI_COLOR_LIGHT);
     sxgui_vline(painter, right, rect.y, rect.height, SXGUI_COLOR_LIGHT);
+}
+
+/* Linea "grabada": el marco oscuro y el claro corridos un pixel en diagonal.
+ * Es el borde del group box y el de los separadores de menu. */
+static void sxgui_draw_etched(struct sx_painter *painter, struct sx_rect rect)
+{
+    if (rect.width <= 1 || rect.height <= 1)
+    {
+        return;
+    }
+    sx_painter_draw_frame(painter, sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 1, rect.height - 1), SXGUI_COLOR_LIGHT);
+    sx_painter_draw_frame(painter, sx_rect_make(rect.x, rect.y, rect.width - 1, rect.height - 1), SXGUI_COLOR_SHADOW);
+}
+
+/* Rectangulo de foco punteado. El marco lleno que habia antes competia con el
+ * borde del control; el punteado se lee como foco y no como otro bisel. */
+static void sxgui_draw_focus_rect(struct sx_painter *painter, struct sx_rect rect)
+{
+    int right = rect.x + rect.width - 1;
+    int bottom = rect.y + rect.height - 1;
+    int x;
+    int y;
+
+    if (rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+    /* La paridad es de la posicion ABSOLUTA, no del rect: asi los puntos de dos
+     * controles vecinos caen en la misma grilla en vez de bailar segun donde
+     * arranque cada uno. */
+    for (x = rect.x; x <= right; ++x)
+    {
+        if (((x + rect.y) & 1) == 0)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x, rect.y, 1, 1), SXGUI_COLOR_TEXT);
+        }
+        if (((x + bottom) & 1) == 0)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x, bottom, 1, 1), SXGUI_COLOR_TEXT);
+        }
+    }
+    for (y = rect.y + 1; y < bottom; ++y)
+    {
+        if (((rect.x + y) & 1) == 0)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(rect.x, y, 1, 1), SXGUI_COLOR_TEXT);
+        }
+        if (((right + y) & 1) == 0)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(right, y, 1, 1), SXGUI_COLOR_TEXT);
+        }
+    }
+}
+
+/* Trama al 50% de dos colores. Es el fondo del canal de las barras de scroll:
+ * un gris plano se ve como una caja vacia, la trama se ve como un riel. */
+static void sxgui_fill_checker(struct sx_painter *painter, struct sx_rect rect, uint32_t base, uint32_t dots)
+{
+    int x;
+    int y;
+
+    sx_painter_fill_rect(painter, rect, base);
+    for (y = rect.y; y < rect.y + rect.height; ++y)
+    {
+        for (x = rect.x + ((y & 1) ^ (rect.x & 1)); x < rect.x + rect.width; x += 2)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x, y, 1, 1), dots);
+        }
+    }
 }
 
 static struct sx_rect sxgui_inset(struct sx_rect rect, int amount)
@@ -61,7 +167,8 @@ static int sxgui_row_height(void)
 
 /* ---- scrollbar machinery (shared by the widget and the listbox) --------- */
 
-#define SXGUI_SCROLLBAR_THICKNESS 16
+/* SXGUI_SCROLLBAR_THICKNESS vive en el header: una app que reparte el ancho de
+ * un listbox entre columnas necesita descontarlo. */
 #define SXGUI_SCROLLBAR_MIN_THUMB 8
 
 enum sxgui_scroll_part {
@@ -194,10 +301,9 @@ static void sxgui_paint_arrow(struct sx_painter *painter, struct sx_rect box, in
 
 static void sxgui_paint_scroll_metrics(struct sx_painter *painter, const struct sxgui_scroll_metrics *metrics, int enabled)
 {
-    uint32_t track_colour = SXGUI_RGB(222, 222, 222);
     uint32_t arrow_colour = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
 
-    sx_painter_fill_rect(painter, metrics->track, track_colour);
+    sxgui_fill_checker(painter, metrics->track, SXGUI_COLOR_FACE, SXGUI_COLOR_LIGHT);
 
     sx_painter_fill_rect(painter, metrics->button_back, SXGUI_COLOR_FACE);
     sxgui_draw_raised(painter, metrics->button_back);
@@ -314,10 +420,28 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
            widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTFIELD ||
            widget->kind == SXGUI_SCROLLBAR || widget->kind == SXGUI_RADIO ||
            widget->kind == SXGUI_COMBOBOX || widget->kind == SXGUI_TEXTVIEW ||
-           widget->kind == SXGUI_TEXTEDIT;
+           widget->kind == SXGUI_TEXTEDIT || widget->kind == SXGUI_TABS;
 }
 
 /* ---- painting ----------------------------------------------------------- */
+
+/* Rotulo de un control deshabilitado: gris con una copia blanca corrida un pixel
+ * abajo a la derecha. Es el texto "grabado" de la epoca -- se lee apagado sin
+ * desaparecer, que es justo lo que un gris plano sobre gris no logra. */
+static void sxgui_draw_control_text(struct sx_painter *painter, int x, int y, const char *text, int enabled)
+{
+    if (text == 0)
+    {
+        return;
+    }
+    if (enabled)
+    {
+        sx_painter_draw_text(painter, x, y, text, SXGUI_COLOR_TEXT);
+        return;
+    }
+    sx_painter_draw_text(painter, x + 1, y + 1, text, SXGUI_COLOR_LIGHT);
+    sx_painter_draw_text(painter, x, y, text, SXGUI_COLOR_DISABLED_TEXT);
+}
 
 static void sxgui_paint_label(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
@@ -328,8 +452,8 @@ static void sxgui_paint_label(struct sx_painter *painter, const struct sxgui_wid
     if ((widget->flags & SXGUI_FLAG_SUNKEN) != 0)
     {
         sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FACE);
-        sxgui_draw_sunken(painter, widget->rect);
-        text_x += 5;
+        sxgui_draw_inset(painter, widget->rect);
+        text_x += SXGUI_BORDER_INSET + SXGUI_TEXT_PAD;
     }
     if (widget->text != 0)
     {
@@ -345,12 +469,11 @@ static void sxgui_paint_groupbox(struct sx_painter *painter, const struct sxgui_
 
     frame.y += gfx_text_height() / 2;
     frame.height -= gfx_text_height() / 2;
-    sx_painter_draw_frame(painter, sx_rect_make(frame.x + 1, frame.y + 1, frame.width - 1, frame.height - 1), SXGUI_COLOR_LIGHT);
-    sx_painter_draw_frame(painter, sx_rect_make(frame.x, frame.y, frame.width - 1, frame.height - 1), SXGUI_COLOR_SHADOW);
+    sxgui_draw_etched(painter, frame);
 
     if (widget->text != 0)
     {
-        int text_x = widget->rect.x + 8;
+        int text_x = widget->rect.x + SXGUI_MARGIN;
         struct sx_rect caption = sx_rect_make(text_x - 3, widget->rect.y, gfx_text_width(widget->text) + 6, gfx_text_height());
         sx_painter_fill_rect(painter, caption, SXGUI_COLOR_WINDOW);
         sx_painter_draw_text(painter, text_x, widget->rect.y, widget->text, colour);
@@ -359,7 +482,7 @@ static void sxgui_paint_groupbox(struct sx_painter *painter, const struct sxgui_
 
 static void sxgui_paint_progress(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 1);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     int span = widget->range_max - widget->range_min;
     int filled = 0;
 
@@ -387,7 +510,7 @@ static void sxgui_paint_button(struct sx_painter *painter, const struct sxgui_wi
     int text_x;
     int text_y;
     int offset = pressed ? 1 : 0;
-    uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+    int enabled = sxgui_widget_enabled(widget);
 
     sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
     if (pressed)
@@ -403,59 +526,65 @@ static void sxgui_paint_button(struct sx_painter *painter, const struct sxgui_wi
     {
         text_x = rect.x + (rect.width - gfx_text_width(widget->text)) / 2 + offset;
         text_y = rect.y + (rect.height - gfx_text_height()) / 2 + offset;
-        sx_painter_draw_text(painter, text_x, text_y, widget->text, colour);
+        sxgui_draw_control_text(painter, text_x, text_y, widget->text, enabled);
     }
     if (widget->focused)
     {
-        sx_painter_draw_frame(painter, sxgui_inset(rect, 3), SXGUI_COLOR_SHADOW);
+        sxgui_draw_focus_rect(painter, sxgui_inset(rect, SXGUI_BORDER_RAISED + 2));
     }
 }
 
-static void sxgui_paint_check_glyph(struct sx_painter *painter, struct sx_rect box)
+/* El tilde clasico: siete columnas de tres pixeles que bajan y vuelven a subir.
+ * El anterior estampaba cuadrados de 2x2 y salia un borron de 10 pixeles de
+ * ancho que no entraba en la caja de 13. */
+#define SXGUI_CHECK_BOX_SIZE 13
+
+static void sxgui_paint_check_glyph(struct sx_painter *painter, struct sx_rect box, uint32_t colour)
 {
-    /* a small tick stamped from 2x2 squares */
-    static const int points[][2] = {
-        {2, 5}, {3, 6}, {4, 7}, {5, 6}, {6, 4}, {7, 2}, {8, 1}
-    };
-    int index;
-    for (index = 0; index < (int)(sizeof(points) / sizeof(points[0])); ++index)
+    static const int column_top[7] = {5, 6, 7, 6, 5, 4, 3};
+    int column;
+
+    for (column = 0; column < 7; ++column)
     {
         sx_painter_fill_rect(
             painter,
-            sx_rect_make(box.x + points[index][0], box.y + points[index][1], 2, 2),
-            SXGUI_COLOR_DARK);
+            sx_rect_make(box.x + 3 + column, box.y + column_top[column], 1, 3),
+            colour);
     }
 }
 
 static void sxgui_paint_checkbox(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
-    int box_size = 13;
+    int box_size = SXGUI_CHECK_BOX_SIZE;
     struct sx_rect box = sx_rect_make(
         widget->rect.x,
         widget->rect.y + (widget->rect.height - box_size) / 2,
         box_size,
         box_size);
-    uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+    int enabled = sxgui_widget_enabled(widget);
+    uint32_t colour = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
     int text_y = widget->rect.y + (widget->rect.height - gfx_text_height()) / 2;
 
-    sx_painter_fill_rect(painter, box, SXGUI_COLOR_FIELD);
+    /* Deshabilitado la caja se pinta del color de la ventana, no de campo: un
+     * fondo blanco se lee como editable por mas gris que este el texto. */
+    sx_painter_fill_rect(painter, box, enabled ? SXGUI_COLOR_FIELD : SXGUI_COLOR_FACE);
     sxgui_draw_sunken(painter, box);
     if (widget->value)
     {
-        sxgui_paint_check_glyph(painter, box);
+        sxgui_paint_check_glyph(painter, box, colour);
     }
     if (widget->text != 0)
     {
-        sx_painter_draw_text(painter, box.x + box_size + 6, text_y, widget->text, colour);
+        sxgui_draw_control_text(painter, box.x + box_size + SXGUI_GAP, text_y, widget->text, enabled);
     }
     if (widget->focused && widget->text != 0)
     {
         struct sx_rect focus = sx_rect_make(
-            box.x + box_size + 4,
+            box.x + box_size + SXGUI_GAP - 2,
             text_y - 1,
             gfx_text_width(widget->text) + 4,
             gfx_text_height() + 2);
-        sx_painter_draw_frame(painter, focus, SXGUI_COLOR_SHADOW);
+        sxgui_draw_focus_rect(painter, focus);
     }
 }
 
@@ -530,8 +659,12 @@ static void sxgui_popup_open(struct sxgui_context *ctx, int index)
 /* ---- menu bar helpers ----------------------------------------------------- */
 
 #define SXGUI_MENU_TITLE_PAD 8
-#define SXGUI_MENU_SEPARATOR_HEIGHT 6
-#define SXGUI_MENU_GUTTER 20
+#define SXGUI_MENU_SEPARATOR_HEIGHT 8
+#define SXGUI_MENU_GUTTER 22
+/* Aire entre el borde levantado del popup y la primera fila. Lo comparten el
+ * calculo del rect, el hit-test y el pintado: si se separan, el item que se
+ * ilumina deja de ser el que esta abajo del puntero. */
+#define SXGUI_MENU_POPUP_PAD (SXGUI_BORDER_RAISED + 1)
 
 int sxgui_menubar_height(void)
 {
@@ -593,7 +726,7 @@ static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, con
     struct sx_rect title = sxgui_menubar_title_rect(bar, menu_index);
     int surface_width = (int)ctx->target.info.width;
     int width = 0;
-    int height = 2;
+    int height = SXGUI_MENU_POPUP_PAD * 2;
     int x = title.x;
     int index;
 
@@ -609,7 +742,7 @@ static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, con
         }
         height += sxgui_menu_item_height(&menu->items[index]);
     }
-    width += SXGUI_MENU_GUTTER + 12;
+    width += SXGUI_MENU_GUTTER + SXGUI_MENU_POPUP_PAD + 12;
     if (x + width > surface_width)
     {
         x = surface_width - width;
@@ -624,7 +757,7 @@ static struct sx_rect sxgui_menu_popup_rect(const struct sxgui_context *ctx, con
 /* Row index under y, or -1 over separators and outside the popup. */
 static int sxgui_menu_item_at(struct sx_rect popup, const struct sxgui_menu *menu, int y)
 {
-    int row_y = popup.y + 1;
+    int row_y = popup.y + SXGUI_MENU_POPUP_PAD;
     int index;
 
     for (index = 0; index < menu->item_count; ++index)
@@ -695,12 +828,12 @@ static int sxgui_listbox_header_height(const struct sxgui_widget *widget)
     {
         return 0;
     }
-    return gfx_text_height() + 5;
+    return gfx_text_height() + SXGUI_BORDER_RAISED * 2 + 2;
 }
 
 static int sxgui_listbox_visible_rows(const struct sxgui_widget *widget)
 {
-    int usable = widget->rect.height - 4 - sxgui_listbox_header_height(widget);
+    int usable = widget->rect.height - SXGUI_BORDER_SUNKEN * 2 - sxgui_listbox_header_height(widget);
     int rows = usable / sxgui_row_height();
     return rows > 0 ? rows : 1;
 }
@@ -721,7 +854,7 @@ static int sxgui_listbox_max_scroll(const struct sxgui_widget *widget)
  * de aca, correr el origen alcanza para que la cabecera no se solape. */
 static struct sx_rect sxgui_listbox_inner(const struct sxgui_widget *widget)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     int header = sxgui_listbox_header_height(widget);
     if (sxgui_listbox_has_scrollbar(widget))
     {
@@ -740,7 +873,7 @@ static struct sx_rect sxgui_listbox_inner(const struct sxgui_widget *widget)
  * punta a punta al costado -- igual que en la lista de detalles clasica. */
 static struct sx_rect sxgui_listbox_header_rect(const struct sxgui_widget *widget)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     if (sxgui_listbox_has_scrollbar(widget))
     {
         inner.width -= SXGUI_SCROLLBAR_THICKNESS;
@@ -748,6 +881,10 @@ static struct sx_rect sxgui_listbox_header_rect(const struct sxgui_widget *widge
     inner.height = sxgui_listbox_header_height(widget);
     return inner;
 }
+
+/* Sangria del texto de una celda: el bisel de la cabecera mas el aire normal.
+ * La usan la cabecera y las filas, que es lo que las mantiene alineadas. */
+#define SXGUI_CELL_PAD (SXGUI_BORDER_RAISED + SXGUI_TEXT_PAD)
 
 /* Copia la celda `index` de un item separado por SXGUI_COLUMN_SEPARATOR.
  * Devuelve siempre buffer (cadena vacia si esa columna no existe en el item),
@@ -812,13 +949,16 @@ static void sxgui_paint_columns_row(
         (void)sxgui_column_cell(label, column, cell, (int)sizeof(cell));
         if (cell[0] != 0 && sx_painter_push_clip(painter, cell_rect))
         {
+            /* Misma sangria que el titulo de la cabecera: el bisel de la
+             * celda de cabecera come dos pixeles y la fila tiene que quedar a
+             * plomo con el rotulo de arriba, no con el borde de la lista. */
             if ((spec->flags & SXGUI_COLUMN_RIGHT) != 0)
             {
-                text_x = cell_x + spec->width - gfx_text_width(cell) - 6;
+                text_x = cell_x + spec->width - gfx_text_width(cell) - SXGUI_CELL_PAD;
             }
             else
             {
-                text_x = cell_x + 3;
+                text_x = cell_x + SXGUI_CELL_PAD;
             }
             sx_painter_draw_text(painter, text_x, row_y + 2, cell, text_colour);
             sx_painter_pop_clip(painter);
@@ -846,7 +986,12 @@ static void sxgui_paint_listbox_header(struct sx_painter *painter, const struct 
         sxgui_draw_raised(painter, cell);
         if (spec->title != 0 && sx_painter_push_clip(painter, cell))
         {
-            sx_painter_draw_text(painter, cell.x + 3, cell.y + 2, spec->title, SXGUI_COLOR_TEXT);
+            sx_painter_draw_text(
+                painter,
+                cell.x + SXGUI_CELL_PAD,
+                cell.y + (cell.height - gfx_text_height()) / 2,
+                spec->title,
+                SXGUI_COLOR_TEXT);
             sx_painter_pop_clip(painter);
         }
         cell_x += spec->width;
@@ -863,7 +1008,7 @@ static void sxgui_paint_listbox_header(struct sx_painter *painter, const struct 
 
 static struct sx_rect sxgui_listbox_scrollbar_rect(const struct sxgui_widget *widget)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     return sx_rect_make(
         inner.x + inner.width - SXGUI_SCROLLBAR_THICKNESS,
         inner.y,
@@ -937,55 +1082,85 @@ static int sxgui_listbox_scrollbar_press(
     return 1;
 }
 
-/* 12x12 circle stamped from per-row half widths; shadow on the upper arc,
- * light on the lower arc. */
+/* Circulo de 12x12 en tres anillos concentricos, cada uno partido por la
+ * diagonal: arriba-izquierda hunde (SHADOW afuera, DARK adentro) y
+ * abajo-derecha levanta (LIGHT afuera, BEVEL adentro). Es el mismo bisel de
+ * dos pixeles que el resto del chrome, doblado en redondo.
+ *
+ * A este tamano un circulo no se calcula, se dibuja: las tres tablas SON el
+ * glifo. Antes solo se marcaban los extremos de cada fila con un unico tono, y
+ * como abajo ese tono era blanco igual que el relleno, el control se veia como
+ * una mancha blanca sin borde. */
+#define SXGUI_RADIO_BOX_SIZE 12
+
+static void sxgui_paint_radio_glyph(struct sx_painter *painter, struct sx_rect box, int checked, int enabled)
+{
+    static const int outer[SXGUI_RADIO_BOX_SIZE] = {2, 4, 5, 5, 6, 6, 6, 6, 5, 5, 4, 2};
+    static const int inner[SXGUI_RADIO_BOX_SIZE] = {0, 2, 4, 4, 5, 5, 5, 5, 4, 4, 2, 0};
+    static const int field[SXGUI_RADIO_BOX_SIZE] = {0, 0, 3, 3, 4, 4, 4, 4, 3, 3, 0, 0};
+    int centre = SXGUI_RADIO_BOX_SIZE / 2;
+    int row;
+    int column;
+
+    for (row = 0; row < SXGUI_RADIO_BOX_SIZE; ++row)
+    {
+        for (column = 0; column < SXGUI_RADIO_BOX_SIZE; ++column)
+        {
+            /* La luz entra por arriba a la izquierda: la anti-diagonal parte el
+             * anillo en la mitad oscura y la clara. */
+            int lit = (column + row) >= (SXGUI_RADIO_BOX_SIZE - 1);
+            uint32_t colour;
+
+            if (column >= centre - field[row] && column < centre + field[row])
+            {
+                colour = enabled ? SXGUI_COLOR_FIELD : SXGUI_COLOR_FACE;
+            }
+            else if (column >= centre - inner[row] && column < centre + inner[row])
+            {
+                colour = lit ? SXGUI_COLOR_BEVEL : SXGUI_COLOR_DARK;
+            }
+            else if (column >= centre - outer[row] && column < centre + outer[row])
+            {
+                colour = lit ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_SHADOW;
+            }
+            else
+            {
+                continue;
+            }
+            sx_painter_fill_rect(painter, sx_rect_make(box.x + column, box.y + row, 1, 1), colour);
+        }
+    }
+    if (checked)
+    {
+        sx_painter_fill_rect(painter, sx_rect_make(box.x + 4, box.y + 4, 4, 4),
+                             enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT);
+    }
+}
+
 static void sxgui_paint_radio(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
-    static const int half[12] = {2, 4, 5, 5, 6, 6, 6, 6, 5, 5, 4, 2};
-    int box_size = 12;
+    int box_size = SXGUI_RADIO_BOX_SIZE;
     struct sx_rect box = sx_rect_make(
         widget->rect.x,
         widget->rect.y + (widget->rect.height - box_size) / 2,
         box_size,
         box_size);
-    uint32_t colour = sxgui_widget_enabled(widget) ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
+    int enabled = sxgui_widget_enabled(widget);
     int text_y = widget->rect.y + (widget->rect.height - gfx_text_height()) / 2;
-    int row;
 
-    for (row = 0; row < box_size; ++row)
-    {
-        int row_half = half[row];
-        int x0 = box.x + box_size / 2 - row_half;
-        int width = row_half * 2;
-        uint32_t edge = row < box_size / 2 ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
-
-        sx_painter_fill_rect(painter, sx_rect_make(x0, box.y + row, width, 1), SXGUI_COLOR_FIELD);
-        if (row == 0 || row == box_size - 1)
-        {
-            sx_painter_fill_rect(painter, sx_rect_make(x0, box.y + row, width, 1), edge);
-        }
-        else
-        {
-            sx_painter_fill_rect(painter, sx_rect_make(x0, box.y + row, 1, 1), edge);
-            sx_painter_fill_rect(painter, sx_rect_make(x0 + width - 1, box.y + row, 1, 1), edge);
-        }
-    }
-    if (widget->value)
-    {
-        sx_painter_fill_rect(painter, sx_rect_make(box.x + 4, box.y + 4, 4, 4), SXGUI_COLOR_DARK);
-    }
+    sxgui_paint_radio_glyph(painter, box, widget->value, enabled);
     if (widget->text != 0)
     {
-        sx_painter_draw_text(painter, box.x + box_size + 6, text_y, widget->text, colour);
+        sxgui_draw_control_text(painter, box.x + box_size + SXGUI_GAP, text_y, widget->text, enabled);
     }
     if (widget->focused && widget->text != 0)
     {
         struct sx_rect focus = sx_rect_make(
-            box.x + box_size + 4,
+            box.x + box_size + SXGUI_GAP - 2,
             text_y - 1,
             gfx_text_width(widget->text) + 4,
             gfx_text_height() + 2);
-        sx_painter_draw_frame(painter, focus, SXGUI_COLOR_SHADOW);
+        sxgui_draw_focus_rect(painter, focus);
     }
 }
 
@@ -1025,7 +1200,7 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
             }
             else
             {
-                sx_painter_draw_text(painter, inner.x + 3, row_y + 2, label, text_colour);
+                sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD, row_y + 2, label, text_colour);
             }
         }
     }
@@ -1065,7 +1240,7 @@ static void sxgui_paint_textview(struct sx_painter *painter, const struct sxgui_
         }
         if (line != 0)
         {
-            sx_painter_draw_text(painter, inner.x + 3, row_y + 2, line, SXGUI_COLOR_TEXT);
+            sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD, row_y + 2, line, SXGUI_COLOR_TEXT);
         }
     }
     sx_painter_pop_clip(painter);
@@ -1080,7 +1255,7 @@ static void sxgui_paint_textview(struct sx_painter *painter, const struct sxgui_
 
 static void sxgui_paint_combobox(struct sx_painter *painter, const struct sxgui_widget *widget, int open)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     struct sx_rect button = sx_rect_make(
         widget->rect.x + widget->rect.width - 2 - SXGUI_SCROLLBAR_THICKNESS,
         inner.y,
@@ -1100,12 +1275,12 @@ static void sxgui_paint_combobox(struct sx_painter *painter, const struct sxgui_
     }
     if (label != 0 && sx_painter_push_clip(painter, text_area))
     {
-        sx_painter_draw_text(painter, text_area.x + 3, text_y, label, colour);
+        sx_painter_draw_text(painter, text_area.x + SXGUI_TEXT_PAD, text_y, label, colour);
         sx_painter_pop_clip(painter);
     }
     if (widget->focused)
     {
-        sx_painter_draw_frame(painter, sxgui_inset(text_area, 1), SXGUI_COLOR_SHADOW);
+        sxgui_draw_focus_rect(painter, sxgui_inset(text_area, 1));
     }
 
     sx_painter_fill_rect(painter, button, SXGUI_COLOR_FACE);
@@ -1152,7 +1327,7 @@ static void sxgui_paint_combobox_popup(struct sxgui_context *ctx)
         }
         if (label != 0)
         {
-            sx_painter_draw_text(painter, inner.x + 3, row_y + 2, label, text_colour);
+            sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD, row_y + 2, label, text_colour);
         }
     }
     sx_painter_pop_clip(painter);
@@ -1167,8 +1342,10 @@ static void sxgui_paint_menubar(struct sxgui_context *ctx)
     int text_y = (height - gfx_text_height()) / 2;
     int index;
 
+    /* Sin linea separadora: en el original la barra de menu es la misma cara
+     * que el cliente y lo que la despega es el borde hundido del control que
+     * viene abajo, no un subrayado. */
     sx_painter_fill_rect(painter, sx_rect_make(0, 0, width, height), SXGUI_COLOR_FACE);
-    sxgui_hline(painter, 0, height - 1, width, SXGUI_COLOR_SHADOW);
 
     for (index = 0; index < bar->menu_count; ++index)
     {
@@ -1190,7 +1367,9 @@ static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
     const struct sxgui_menu *menu = &bar->menus[bar->open_menu];
     struct sx_painter *painter = &ctx->painter;
     struct sx_rect popup = sxgui_menu_popup_rect(ctx, bar, bar->open_menu);
-    int row_y = popup.y + 1;
+    int row_y = popup.y + SXGUI_MENU_POPUP_PAD;
+    int row_x = popup.x + SXGUI_MENU_POPUP_PAD;
+    int row_width = popup.width - SXGUI_MENU_POPUP_PAD * 2;
     int index;
 
     sx_painter_fill_rect(painter, popup, SXGUI_COLOR_FACE);
@@ -1204,8 +1383,8 @@ static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
         if (item->text == 0)
         {
             int line_y = row_y + height / 2 - 1;
-            sxgui_hline(painter, popup.x + 2, line_y, popup.width - 4, SXGUI_COLOR_SHADOW);
-            sxgui_hline(painter, popup.x + 2, line_y + 1, popup.width - 4, SXGUI_COLOR_LIGHT);
+            sxgui_hline(painter, row_x, line_y, row_width, SXGUI_COLOR_SHADOW);
+            sxgui_hline(painter, row_x, line_y + 1, row_width, SXGUI_COLOR_LIGHT);
         }
         else
         {
@@ -1214,14 +1393,17 @@ static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
 
             if (index == bar->hot_item && enabled)
             {
-                sx_painter_fill_rect(painter, sx_rect_make(popup.x + 1, row_y, popup.width - 2, height), SXGUI_COLOR_SELECT);
+                sx_painter_fill_rect(painter, sx_rect_make(row_x, row_y, row_width, height), SXGUI_COLOR_SELECT);
                 colour = SXGUI_COLOR_SELECT_TEXT;
             }
             if ((item->flags & SXGUI_MENU_CHECKED) != 0)
             {
-                sxgui_paint_check_glyph(painter, sx_rect_make(popup.x + 3, row_y + (height - 13) / 2, 13, 13));
+                sxgui_paint_check_glyph(
+                    painter,
+                    sx_rect_make(row_x, row_y + (height - SXGUI_CHECK_BOX_SIZE) / 2, SXGUI_CHECK_BOX_SIZE, SXGUI_CHECK_BOX_SIZE),
+                    colour);
             }
-            sx_painter_draw_text(painter, popup.x + SXGUI_MENU_GUTTER, row_y + 2, item->text, colour);
+            sx_painter_draw_text(painter, row_x + SXGUI_MENU_GUTTER, row_y + 2, item->text, colour);
         }
         row_y += height;
     }
@@ -1242,7 +1424,7 @@ static void sxgui_paint_scrollbar(struct sx_painter *painter, const struct sxgui
     sxgui_paint_scroll_metrics(painter, &metrics, sxgui_widget_enabled(widget));
     if (widget->focused)
     {
-        sx_painter_draw_frame(painter, widget->rect, SXGUI_COLOR_SHADOW);
+        sxgui_draw_focus_rect(painter, sxgui_inset(widget->rect, 1));
     }
 }
 
@@ -1453,8 +1635,8 @@ static int sxgui_sel_paste(struct sxgui_widget *widget, int single_line)
  * razon: click y arrastre tienen que calcular identico. */
 static int sxgui_textfield_caret_from_point(const struct sxgui_widget *widget, int x)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
-    int local_x = x - (inner.x + 3) + widget->scroll;
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
+    int local_x = x - (inner.x + SXGUI_TEXT_PAD) + widget->scroll;
     int length = (int)strlen(widget->edit_buffer);
     int position;
 
@@ -1470,9 +1652,9 @@ static int sxgui_textfield_caret_from_point(const struct sxgui_widget *widget, i
 
 static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui_widget *widget)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     int text_y = inner.y + (inner.height - gfx_text_height()) / 2;
-    int text_x = inner.x + 3 - widget->scroll;
+    int text_x = inner.x + SXGUI_TEXT_PAD - widget->scroll;
 
     sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
     sxgui_draw_sunken(painter, widget->rect);
@@ -1611,7 +1793,7 @@ static int sxgui_textedit_has_scrollbar(const struct sxgui_widget *widget)
 
 static struct sx_rect sxgui_textedit_inner(const struct sxgui_widget *widget)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     if (sxgui_textedit_has_scrollbar(widget))
     {
         inner.width -= SXGUI_SCROLLBAR_THICKNESS;
@@ -1621,7 +1803,7 @@ static struct sx_rect sxgui_textedit_inner(const struct sxgui_widget *widget)
 
 static void sxgui_textedit_metrics(const struct sxgui_widget *widget, struct sxgui_scroll_metrics *metrics)
 {
-    struct sx_rect inner = sxgui_inset(widget->rect, 2);
+    struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
     int visible = sxgui_textedit_visible_rows(widget);
     int max_scroll = sxgui_textedit_line_count(widget->edit_buffer) - visible;
 
@@ -1689,7 +1871,7 @@ static int sxgui_textedit_caret_from_point(const struct sxgui_widget *widget, in
     struct sx_rect inner = sxgui_textedit_inner(widget);
     int row = widget->value + (y - inner.y) / sxgui_row_height();
     int line_count = sxgui_textedit_line_count(widget->edit_buffer);
-    int local_x = x - (inner.x + 3) + widget->scroll;
+    int local_x = x - (inner.x + SXGUI_TEXT_PAD) + widget->scroll;
     int start;
     int length;
     int position;
@@ -1749,7 +1931,7 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
 
         if (copy > 0)
         {
-            sx_painter_draw_text(painter, inner.x + 3 - widget->scroll, row_y + 2, text, SXGUI_COLOR_TEXT);
+            sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD - widget->scroll, row_y + 2, text, SXGUI_COLOR_TEXT);
         }
         /* Resaltado: la interseccion de la seleccion con esta linea. Se pinta
          * la caja y se REDIBUJA solo ese tramo en el color invertido, en vez de
@@ -1777,8 +1959,8 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
                 {
                     to = copy;
                 }
-                x_from = inner.x + 3 - widget->scroll + sxgui_text_prefix_width(text, from);
-                x_to = inner.x + 3 - widget->scroll + sxgui_text_prefix_width(text, to);
+                x_from = inner.x + SXGUI_TEXT_PAD - widget->scroll + sxgui_text_prefix_width(text, from);
+                x_to = inner.x + SXGUI_TEXT_PAD - widget->scroll + sxgui_text_prefix_width(text, to);
                 sx_painter_fill_rect(
                     painter,
                     sx_rect_make(x_from, row_y + 1, x_to - x_from, row_height - 1),
@@ -1795,7 +1977,7 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
         }
         if (widget->focused && line == caret_line)
         {
-            int caret_x = inner.x + 3 - widget->scroll +
+            int caret_x = inner.x + SXGUI_TEXT_PAD - widget->scroll +
                 sxgui_text_prefix_width(text, widget->caret - start <= copy ? widget->caret - start : copy);
             sxgui_vline(painter, caret_x, row_y + 2, gfx_text_height(), SXGUI_COLOR_TEXT);
         }
@@ -1807,6 +1989,180 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
         struct sxgui_scroll_metrics metrics;
         sxgui_textedit_metrics(widget, &metrics);
         sxgui_paint_scroll_metrics(painter, &metrics, sxgui_widget_enabled(widget));
+    }
+}
+
+/* ---- tabs -----------------------------------------------------------------
+ *
+ * La fila mide como la barra de menu -- una linea de texto con aire arriba y
+ * abajo -- y la activa sobresale SXGUI_TAB_LIFT por los cuatro costados menos
+ * el de abajo, por donde se derrama sobre la pagina.
+ */
+
+#define SXGUI_TAB_PAD 10   /* aire a cada lado del rotulo */
+#define SXGUI_TAB_LIFT 2   /* cuanto sobresale la pestania activa */
+
+int sxgui_tabs_height(void)
+{
+    return gfx_text_height() + 8;
+}
+
+/* Ancho de una pestania: el rotulo mas su aire. Cada una mide lo suyo, como en
+ * el original -- pestanias de ancho fijo obligarian a cortar los nombres. */
+static int sxgui_tab_width(const struct sxgui_widget *widget, int index)
+{
+    const char *label = (widget->items != 0 && index < widget->item_count) ? widget->items[index] : "";
+    return gfx_text_width(label != 0 ? label : "") + SXGUI_TAB_PAD * 2;
+}
+
+/* Rect de una pestania, ya con el crecimiento de la activa aplicado. Las
+ * pestanias se TOCAN: el borde derecho de una es el izquierdo de la siguiente,
+ * que es como se ven en el original -- separarlas las devuelve al aspecto de
+ * fila de botones. */
+static struct sx_rect sxgui_tab_rect(const struct sxgui_widget *widget, int index)
+{
+    int strip = sxgui_tabs_height();
+    int x = widget->rect.x + SXGUI_TAB_LIFT;
+    int i;
+
+    for (i = 0; i < widget->item_count; ++i)
+    {
+        int width = sxgui_tab_width(widget, i);
+
+        if (i == index)
+        {
+            if (i == widget->value)
+            {
+                return sx_rect_make(
+                    x - SXGUI_TAB_LIFT,
+                    widget->rect.y,
+                    width + SXGUI_TAB_LIFT * 2,
+                    strip + SXGUI_TAB_LIFT);
+            }
+            return sx_rect_make(x, widget->rect.y + SXGUI_TAB_LIFT, width, strip - SXGUI_TAB_LIFT);
+        }
+        x += width;
+    }
+    return sx_rect_make(0, 0, 0, 0);
+}
+
+/* Pestania bajo el punto, o -1. */
+static int sxgui_tab_at(const struct sxgui_widget *widget, int x, int y)
+{
+    int index;
+
+    for (index = 0; index < widget->item_count; ++index)
+    {
+        if (sx_rect_contains_point(sxgui_tab_rect(widget, index), x, y))
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+static struct sx_rect sxgui_tabs_page_frame(const struct sxgui_widget *widget)
+{
+    int strip = sxgui_tabs_height();
+
+    return sx_rect_make(
+        widget->rect.x,
+        widget->rect.y + strip,
+        widget->rect.width,
+        widget->rect.height - strip);
+}
+
+int sxgui_tabs_preferred_width(const char *const *labels, int label_count)
+{
+    /* El LIFT de cada punta: la activa sobresale para los dos lados y sin ese
+     * aire la primera y la ultima quedarian pegadas al borde. */
+    int width = SXGUI_TAB_LIFT * 2;
+    int index;
+
+    for (index = 0; index < label_count; ++index)
+    {
+        const char *label = (labels != 0 && labels[index] != 0) ? labels[index] : "";
+        width += gfx_text_width(label) + SXGUI_TAB_PAD * 2;
+    }
+    return width;
+}
+
+struct sx_rect sxgui_tabs_page(const struct sxgui_widget *widget)
+{
+    if (widget == 0 || widget->kind != SXGUI_TABS)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sxgui_inset(sxgui_tabs_page_frame(widget), SXGUI_BORDER_RAISED);
+}
+
+/* Los dos anillos de siempre pero SIN el lado de abajo, y con las esquinas de
+ * arriba comidas un pixel: eso es lo que le da forma de pestania en vez de
+ * caja. La activa se dibuja despues de la pagina justamente para que su relleno
+ * borre el borde de esta y las dos queden abiertas una sobre la otra. */
+static void sxgui_paint_one_tab(struct sx_painter *painter, const struct sxgui_widget *widget, int index)
+{
+    struct sx_rect rect = sxgui_tab_rect(widget, index);
+    const char *label = (widget->items != 0) ? widget->items[index] : 0;
+    int selected = (index == widget->value);
+    int right = rect.x + rect.width - 1;
+    int enabled = sxgui_widget_enabled(widget);
+    int box_height = selected ? sxgui_tabs_height() : rect.height;
+    int text_x;
+    int text_y;
+
+    if (rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+
+    sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
+
+    sxgui_hline(painter, rect.x + 1, rect.y, rect.width - 3, SXGUI_COLOR_BEVEL);
+    sxgui_hline(painter, rect.x + 2, rect.y + 1, rect.width - 5, SXGUI_COLOR_LIGHT);
+    sxgui_vline(painter, rect.x, rect.y + 1, rect.height - 1, SXGUI_COLOR_BEVEL);
+    sxgui_vline(painter, rect.x + 1, rect.y + 2, rect.height - 2, SXGUI_COLOR_LIGHT);
+    sxgui_vline(painter, right - 1, rect.y + 2, rect.height - 2, SXGUI_COLOR_SHADOW);
+    sxgui_vline(painter, right, rect.y + 1, rect.height - 1, SXGUI_COLOR_DARK);
+
+    if (label != 0)
+    {
+        text_x = rect.x + (rect.width - gfx_text_width(label)) / 2;
+        text_y = rect.y + (box_height - gfx_text_height()) / 2;
+        sxgui_draw_control_text(painter, text_x, text_y, label, enabled);
+        if (widget->focused && selected)
+        {
+            sxgui_draw_focus_rect(
+                painter,
+                sx_rect_make(text_x - 3, text_y - 2, gfx_text_width(label) + 6, gfx_text_height() + 4));
+        }
+    }
+}
+
+static void sxgui_paint_tabs(struct sx_painter *painter, const struct sxgui_widget *widget)
+{
+    struct sx_rect page = sxgui_tabs_page_frame(widget);
+    int index;
+
+    sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FACE);
+    if (page.height > 0)
+    {
+        sx_painter_fill_rect(painter, page, SXGUI_COLOR_FACE);
+        sxgui_draw_raised(painter, page);
+    }
+
+    /* Las inactivas primero: la activa va ultima porque se monta sobre el borde
+     * de la pagina y sobre el costado de sus vecinas. */
+    for (index = 0; index < widget->item_count; ++index)
+    {
+        if (index != widget->value)
+        {
+            sxgui_paint_one_tab(painter, widget, index);
+        }
+    }
+    if (widget->value >= 0 && widget->value < widget->item_count)
+    {
+        sxgui_paint_one_tab(painter, widget, widget->value);
     }
 }
 
@@ -1850,6 +2206,9 @@ static void sxgui_paint_one(struct sx_painter *painter, const struct sxgui_widge
     case SXGUI_TEXTEDIT:
         sxgui_paint_textedit(painter, widget);
         break;
+    case SXGUI_TABS:
+        sxgui_paint_tabs(painter, widget);
+        break;
     default:
         break;
     }
@@ -1890,7 +2249,7 @@ static void sxgui_paint_dialog(struct sxgui_context *ctx)
     {
         sx_painter_draw_text(
             painter,
-            title.x + 4,
+            title.x + SXGUI_TEXT_PAD,
             title.y + (title_height - gfx_text_height()) / 2,
             dialog->title,
             SXGUI_COLOR_SELECT_TEXT);
@@ -1902,10 +2261,10 @@ static void sxgui_paint_dialog(struct sxgui_context *ctx)
     {
         const struct sxgui_widget *target = &dialog->widgets[dialog->default_button];
         struct sx_rect outline = sx_rect_make(
-            origin.x + target->rect.x - 2,
-            origin.y + target->rect.y - 2,
-            target->rect.width + 4,
-            target->rect.height + 4);
+            origin.x + target->rect.x - 1,
+            origin.y + target->rect.y - 1,
+            target->rect.width + 2,
+            target->rect.height + 2);
         sx_painter_draw_frame(painter, outline, SXGUI_COLOR_TEXT);
     }
 
@@ -2053,6 +2412,14 @@ int sxgui_dialog_active(const struct sxgui_context *ctx)
 
 static int sxgui_hit(const struct sxgui_widget *widget, int x, int y)
 {
+    if (widget->kind == SXGUI_TABS)
+    {
+        /* El rect incluye la pagina, pero ahi adentro manda el contenido: si el
+         * control se diera por tocado, un click en la pagina le robaria el foco
+         * a lo que la app haya puesto abajo. Solo responde la fila. */
+        return sx_rect_contains_point(
+            sx_rect_make(widget->rect.x, widget->rect.y, widget->rect.width, sxgui_tabs_height()), x, y);
+    }
     return sx_rect_contains_point(widget->rect, x, y);
 }
 
@@ -2473,6 +2840,17 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             case SXGUI_TEXTVIEW:
                 (void)sxgui_listbox_scrollbar_press(ctx, index, widget, event, &changed);
                 break;
+            case SXGUI_TABS:
+            {
+                int tab = sxgui_tab_at(widget, event->x, event->y);
+                if (tab >= 0 && tab != widget->value)
+                {
+                    widget->value = tab;
+                    sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+                    changed = 1;
+                }
+                break;
+            }
             case SXGUI_SCROLLBAR:
             {
                 struct sxgui_scroll_metrics metrics;
@@ -2904,6 +3282,36 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
             return 0;
         }
         widget->scroll = new_scroll;
+        return 1;
+    }
+
+    if (widget->kind == SXGUI_TABS)
+    {
+        int step = 0;
+
+        if (event->key == SAVANXP_KEY_LEFT)
+        {
+            step = -1;
+        }
+        else if (event->key == SAVANXP_KEY_RIGHT)
+        {
+            step = 1;
+        }
+        if (step == 0 || widget->item_count <= 0)
+        {
+            return 0;
+        }
+        /* Sin dar la vuelta: en una fila de pestanias el extremo es el extremo,
+         * y saltar de la ultima a la primera desorienta mas de lo que ayuda. */
+        {
+            int target = sxgui_clamp_int(widget->value + step, 0, widget->item_count - 1);
+            if (target == widget->value)
+            {
+                return 0;
+            }
+            widget->value = target;
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+        }
         return 1;
     }
 
@@ -3480,6 +3888,15 @@ struct sxgui_widget sxgui_combobox(struct sx_rect rect, const char *const *items
     widget.items = items;
     widget.item_count = item_count;
     widget.value = sxgui_clamp_int(selected, 0, item_count > 0 ? item_count - 1 : 0);
+    return widget;
+}
+
+struct sxgui_widget sxgui_tabs(struct sx_rect rect, const char *const *labels, int label_count, int selected)
+{
+    struct sxgui_widget widget = sxgui_make(SXGUI_TABS, rect, 0);
+    widget.items = labels;
+    widget.item_count = label_count;
+    widget.value = sxgui_clamp_int(selected, 0, label_count > 0 ? label_count - 1 : 0);
     return widget;
 }
 

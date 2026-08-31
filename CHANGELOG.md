@@ -12,6 +12,16 @@ Notas de corte:
 
 ### Agregado
 
+- **Control de pestanias en sxgui (`sxgui_tabs`).** La pestania activa se
+  dibuja mas alta y mas ancha que las demas y tapa el borde superior de la
+  pagina, de modo que las dos partes se leen como una sola hoja: eso es lo que
+  distingue una pestania de un boton. El rect del widget cubre la fila Y la
+  pagina; la app pregunta por `sxgui_tabs_page()` donde dibujar su contenido y
+  por `sxgui_tabs_preferred_width()` cuanto mide la fila. Con el foco puesto,
+  las flechas cambian de pestania. El selector de grupos del Program Manager
+  --  que hasta ahora eran cajas con bisel pintadas a mano, y se leian como una
+  fila de botones --  pasa a usarlo.
+
 - **Barra de tareas al pie de la pantalla, con las ventanas abiertas.** Es un
   CLIENTE del WM (`/bin/taskbar`) y no chrome de windowd -- el modelo de
   explorer.exe, y el mismo layering que separo a shellui y progman del window
@@ -80,6 +90,36 @@ Notas de corte:
 
 ### Cambiado
 
+- **El chrome de sxgui pasa al bisel de dos pixeles de Win95.** Un borde 3D de
+  la epoca lleva cuatro tonos -- se agrego `SXGUI_COLOR_BEVEL` (223,223,223),
+  el que faltaba -- repartidos en un anillo externo y uno interno, y el hundido
+  es ahora el reverso exacto del levantado, de modo que un boton apretado y una
+  caja de texto tienen el mismo espesor. Alcanza a botones, campos, listas,
+  editores, cabeceras de columna, popups de menu y dialogos. Ademas:
+  rectangulo de foco punteado en vez de un marco lleno que competia con el
+  borde, canal de las barras de scroll con la trama al 50%, tilde del checkbox
+  redibujado para que entre en su caja de 13, radio button con anillos
+  concentricos partidos por la diagonal -- antes era una mancha blanca sin
+  borde visible --, texto grabado en los controles deshabilitados y barra de
+  menu sin la linea separadora, que el original no tiene.
+
+- **Las apps de sxgui comparten una sola grilla de layout.** Las metricas viven
+  en `savanxp/sxgui.h` (`SXGUI_MARGIN`, `SXGUI_GAP`, `SXGUI_BUTTON_WIDTH`,
+  `SXGUI_FIELD_HEIGHT`, `SXGUI_STATUS_HEIGHT`, `SXGUI_DIALOG_MARGIN`,
+  `SXGUI_BORDER_*`, `SXGUI_SCROLLBAR_THICKNESS`) y las usan notepad, files,
+  progman, aboutapp y widgetsdemo. Antes cada ventana tenia su propio margen
+  -- 8 a los costados y 5 arriba y abajo, con botones de tres anchos
+  distintos -- y se veian bien por separado y desparejas juntas. Las filas de
+  botones de dialogo pasan a ir pegadas a la derecha cuando el dialogo pide un
+  dato y centradas cuando hace una pregunta. En files, la barra de direccion y
+  el boton "Up One Level" ahora miden lo mismo y quedan alineados.
+
+- **`tools/shoot.ps1` suma el escenario `files`.** Abre el explorador y mueve
+  la seleccion: es la ventana con mas controles distintos a la vez -- barra de
+  direccion, boton, lista de detalles con cabecera y barra de estado de dos
+  paneles --, asi que es donde se ve si un margen o una sangria del toolkit se
+  fue.
+
 - **El evento de teclado lleva los modificadores.** `savanxp_input_event` suma
   el campo `modifiers` con el estado de Shift, Ctrl, Alt, AltGr y los locks en
   el instante del evento (`SAVANXP_KEY_MOD_*`). El kernel ya lo calculaba para
@@ -102,6 +142,19 @@ Notas de corte:
   cada build.
 
 ### Corregido
+
+- **La columna Type de files quedaba cortada al aparecer la barra de scroll.**
+  El reparto del ancho entre columnas descontaba 6 pixeles fijos, pero el area
+  util de la lista son los dos biseles hundidos mas los 16 de la barra cuando
+  esta. Ahora la barra se reserva siempre, asi que las columnas tampoco saltan
+  de ancho al agregarse un archivo.
+
+- **El texto de las filas no quedaba a plomo con el rotulo de su columna.** El
+  bisel de la celda de cabecera come dos pixeles que la fila no descontaba.
+
+- **En widgetsdemo la barra de scroll suelta se superponia con la segunda
+  columna.** El origen de la columna se calculaba desde el ancho de la lista
+  sin contar la barra que va entre las dos.
 
 - **Apretar Ctrl soltaba la seleccion, asi que Ctrl+C no copiaba nada.** Una
   tecla modificadora produce su propio evento de teclado, con `ascii` en cero, y

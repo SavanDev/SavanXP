@@ -71,6 +71,29 @@ static int g_pending_action = NOTEPAD_PENDING_NONE;
 #define NOTEPAD_EDIT (&g_widgets[0])
 #define NOTEPAD_STATUS (&g_widgets[1])
 
+/* ---- grilla de los dialogos ------------------------------------------------
+ *
+ * Un dialogo se arma de afuera hacia adentro: margen fijo a los cuatro lados,
+ * una fila de botones abajo y el contenido arriba. Las medidas salen de las
+ * metricas del toolkit para que los tres dialogos de esta app -- y los de las
+ * otras -- caigan en la misma grilla.
+ *
+ * La fila de botones va pegada a la derecha en un dialogo que pide un dato
+ * (Abrir/Guardar como) y centrada en uno que hace una pregunta (los cartelitos
+ * de confirmacion y el Acerca de), que es como se repartian en la epoca. */
+#define NOTEPAD_DLG_MARGIN SXGUI_DIALOG_MARGIN
+#define NOTEPAD_DLG_ROW (18 + 4)              /* alto de una linea de rotulo */
+#define NOTEPAD_DLG_BUTTON_ROW(height) ((height) - NOTEPAD_DLG_MARGIN - SXGUI_BUTTON_HEIGHT)
+#define NOTEPAD_DLG_RIGHT(width, index)     ((width) - NOTEPAD_DLG_MARGIN - ((index) + 1) * SXGUI_BUTTON_WIDTH - (index) * SXGUI_GAP)
+#define NOTEPAD_DLG_CENTRED(width, count, index)     (((width) - (count) * SXGUI_BUTTON_WIDTH - ((count) - 1) * SXGUI_GAP) / 2 +      (index) * (SXGUI_BUTTON_WIDTH + SXGUI_GAP))
+
+#define NOTEPAD_OPEN_WIDTH 340
+#define NOTEPAD_OPEN_HEIGHT 112
+#define NOTEPAD_CONFIRM_WIDTH 330
+#define NOTEPAD_CONFIRM_HEIGHT 88
+#define NOTEPAD_ABOUT_WIDTH 300
+#define NOTEPAD_ABOUT_HEIGHT 128
+
 /* ---- estado del documento ------------------------------------------------- */
 
 /* La barra de titulo la pone el WM desde su tabla path -> nombre, y no hay
@@ -187,7 +210,7 @@ static void notepad_path_dialog(int mode)
     g_open_widgets[1].caret = (int)strlen(g_open_path);
     g_open_dialog.title = mode == NOTEPAD_PATH_MODE_SAVE ? "Save As" : "Open";
     g_open_widgets[2].text = mode == NOTEPAD_PATH_MODE_SAVE ? "Save" : "Open";
-    sxgui_dialog_begin(&g_app.ui, &g_open_dialog, 340, 118);
+    sxgui_dialog_begin(&g_app.ui, &g_open_dialog, NOTEPAD_OPEN_WIDTH, NOTEPAD_OPEN_HEIGHT);
 }
 
 static int notepad_save(void)
@@ -289,7 +312,7 @@ static int notepad_confirm_discard(int action)
         return 0;
     }
     g_pending_action = action;
-    sxgui_dialog_begin(&g_app.ui, &g_confirm_dialog, 330, 112);
+    sxgui_dialog_begin(&g_app.ui, &g_confirm_dialog, NOTEPAD_CONFIRM_WIDTH, NOTEPAD_CONFIRM_HEIGHT);
     return 1;
 }
 
@@ -404,7 +427,7 @@ static void on_menu_command(int id, void *user)
         NOTEPAD_EDIT->caret = (int)strlen(g_document);
         break;
     case NOTEPAD_MENU_ABOUT:
-        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, 300, 116);
+        sxgui_dialog_begin(&g_app.ui, &g_about_dialog, NOTEPAD_ABOUT_WIDTH, NOTEPAD_ABOUT_HEIGHT);
         break;
     default:
         break;
@@ -440,22 +463,29 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
 
 #define NOTEPAD_CONTENT_WIDTH 560
 #define NOTEPAD_CONTENT_HEIGHT 420
-#define NOTEPAD_STATUS_HEIGHT 20
 
+/* Todo el layout sale de las metricas del toolkit: el mismo margen a los cuatro
+ * lados y la misma separacion entre bandas que usa Files. Antes el margen
+ * lateral era 8 y el vertical 5, y la ventana se veia corrida hacia arriba. */
 static void notepad_layout(struct sxgui_app *app)
 {
     int width = (int)app->gfx.info.width;
     int height = (int)app->gfx.info.height;
-    int top = sxgui_menubar_height() + 5;
-    int status_y = height - NOTEPAD_STATUS_HEIGHT - 5;
-    int edit_height = status_y - top - 5;
+    int top = sxgui_menubar_height() + SXGUI_MARGIN;
+    int status_y = height - SXGUI_MARGIN - SXGUI_STATUS_HEIGHT;
+    int edit_height = status_y - SXGUI_GAP - top;
+    int content_width = width - SXGUI_MARGIN * 2;
 
     if (edit_height < 60)
     {
         edit_height = 60;
     }
-    NOTEPAD_EDIT->rect = sx_rect_make(8, top, width - 16, edit_height);
-    NOTEPAD_STATUS->rect = sx_rect_make(8, status_y, width - 16, NOTEPAD_STATUS_HEIGHT);
+    if (content_width < 120)
+    {
+        content_width = 120;
+    }
+    NOTEPAD_EDIT->rect = sx_rect_make(SXGUI_MARGIN, top, content_width, edit_height);
+    NOTEPAD_STATUS->rect = sx_rect_make(SXGUI_MARGIN, status_y, content_width, SXGUI_STATUS_HEIGHT);
 }
 
 static void on_resize(struct sxgui_app *app)
@@ -514,30 +544,63 @@ int main(int argc, char **argv)
     g_widgets[1] = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status);
     g_widgets[1].flags |= SXGUI_FLAG_SUNKEN;
 
-    g_open_widgets[0] = sxgui_label(sx_rect_make(12, 10, 300, 16), "File name:");
-    g_open_widgets[1] = sxgui_textfield(sx_rect_make(12, 30, 312, 22), g_open_path, sizeof(g_open_path));
-    g_open_widgets[2] = sxgui_button(sx_rect_make(120, 62, 96, 26), "Open", on_open_accept, 0);
-    g_open_widgets[3] = sxgui_button(sx_rect_make(228, 62, 96, 26), "Cancel", on_open_cancel, 0);
+    g_open_widgets[0] = sxgui_label(
+        sx_rect_make(NOTEPAD_DLG_MARGIN, NOTEPAD_DLG_MARGIN, NOTEPAD_OPEN_WIDTH - NOTEPAD_DLG_MARGIN * 2, 18),
+        "File name:");
+    g_open_widgets[1] = sxgui_textfield(
+        sx_rect_make(NOTEPAD_DLG_MARGIN, NOTEPAD_DLG_MARGIN + NOTEPAD_DLG_ROW,
+                     NOTEPAD_OPEN_WIDTH - NOTEPAD_DLG_MARGIN * 2, SXGUI_FIELD_HEIGHT),
+        g_open_path, sizeof(g_open_path));
+    g_open_widgets[2] = sxgui_button(
+        sx_rect_make(NOTEPAD_DLG_RIGHT(NOTEPAD_OPEN_WIDTH, 1), NOTEPAD_DLG_BUTTON_ROW(NOTEPAD_OPEN_HEIGHT),
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Open", on_open_accept, 0);
+    g_open_widgets[3] = sxgui_button(
+        sx_rect_make(NOTEPAD_DLG_RIGHT(NOTEPAD_OPEN_WIDTH, 0), NOTEPAD_DLG_BUTTON_ROW(NOTEPAD_OPEN_HEIGHT),
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_open_cancel, 0);
     g_open_dialog.title = "Open";
     g_open_dialog.widgets = g_open_widgets;
     g_open_dialog.widget_count = 4;
     g_open_dialog.initial_focus = 1; /* el campo de la ruta */
     g_open_dialog.default_button = 2;
 
-    g_confirm_widgets[0] = sxgui_label(sx_rect_make(12, 10, 300, 16), "The document has unsaved changes.");
-    g_confirm_widgets[1] = sxgui_button(sx_rect_make(12, 40, 96, 26), "Save", on_confirm_save, 0);
-    g_confirm_widgets[2] = sxgui_button(sx_rect_make(116, 40, 96, 26), "Discard", on_confirm_discard, 0);
-    g_confirm_widgets[3] = sxgui_button(sx_rect_make(220, 40, 96, 26), "Cancel", on_confirm_cancel, 0);
+    g_confirm_widgets[0] = sxgui_label(
+        sx_rect_make(NOTEPAD_DLG_MARGIN, NOTEPAD_DLG_MARGIN, NOTEPAD_CONFIRM_WIDTH - NOTEPAD_DLG_MARGIN * 2, 18),
+        "The document has unsaved changes.");
+    g_confirm_widgets[1] = sxgui_button(
+        sx_rect_make(NOTEPAD_DLG_CENTRED(NOTEPAD_CONFIRM_WIDTH, 3, 0), NOTEPAD_DLG_BUTTON_ROW(NOTEPAD_CONFIRM_HEIGHT),
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Save", on_confirm_save, 0);
+    g_confirm_widgets[2] = sxgui_button(
+        sx_rect_make(NOTEPAD_DLG_CENTRED(NOTEPAD_CONFIRM_WIDTH, 3, 1), NOTEPAD_DLG_BUTTON_ROW(NOTEPAD_CONFIRM_HEIGHT),
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Discard", on_confirm_discard, 0);
+    g_confirm_widgets[3] = sxgui_button(
+        sx_rect_make(NOTEPAD_DLG_CENTRED(NOTEPAD_CONFIRM_WIDTH, 3, 2), NOTEPAD_DLG_BUTTON_ROW(NOTEPAD_CONFIRM_HEIGHT),
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Cancel", on_confirm_cancel, 0);
     g_confirm_dialog.title = "Notepad";
     g_confirm_dialog.widgets = g_confirm_widgets;
     g_confirm_dialog.widget_count = 4;
     g_confirm_dialog.initial_focus = 1;
     g_confirm_dialog.default_button = 1; /* Save: la opcion que no pierde nada */
 
-    g_about_widgets[0] = sxgui_label(sx_rect_make(10, 8, 280, 16), "SavanXP Notepad");
-    g_about_widgets[1] = sxgui_label(sx_rect_make(10, 28, 280, 16), "Version: " SAVANXP_VERSION_STRING);
-    g_about_widgets[2] = sxgui_label(sx_rect_make(10, 48, 280, 16), "F2 saves   F3 opens");
-    g_about_widgets[3] = sxgui_button(sx_rect_make(100, 76, 100, 26), "OK", on_about_ok, 0);
+    g_about_widgets[0] = sxgui_label(
+        sx_rect_make(NOTEPAD_DLG_MARGIN, NOTEPAD_DLG_MARGIN, NOTEPAD_ABOUT_WIDTH - NOTEPAD_DLG_MARGIN * 2, 18),
+        "SavanXP Notepad");
+    g_about_widgets[1] = sxgui_label(
+        sx_rect_make(NOTEPAD_DLG_MARGIN, NOTEPAD_DLG_MARGIN + NOTEPAD_DLG_ROW,
+                     NOTEPAD_ABOUT_WIDTH - NOTEPAD_DLG_MARGIN * 2, 18),
+        "Version: " SAVANXP_VERSION_STRING);
+    g_about_widgets[2] = sxgui_label(
+        sx_rect_make(NOTEPAD_DLG_MARGIN, NOTEPAD_DLG_MARGIN + NOTEPAD_DLG_ROW * 2,
+                     NOTEPAD_ABOUT_WIDTH - NOTEPAD_DLG_MARGIN * 2, 18),
+        "F2 saves   F3 opens");
+    g_about_widgets[3] = sxgui_button(
+        sx_rect_make(NOTEPAD_DLG_CENTRED(NOTEPAD_ABOUT_WIDTH, 1, 0), NOTEPAD_DLG_BUTTON_ROW(NOTEPAD_ABOUT_HEIGHT),
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "OK", on_about_ok, 0);
     g_about_dialog.title = "About Notepad";
     g_about_dialog.widgets = g_about_widgets;
     g_about_dialog.widget_count = 4;

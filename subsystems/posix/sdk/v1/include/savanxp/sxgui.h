@@ -18,17 +18,49 @@ extern "C" {
 
 #define SXGUI_RGB(r, g, b) (((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
 
-/* Classic 3D system palette. */
-#define SXGUI_COLOR_FACE          SXGUI_RGB(192, 192, 192)
-#define SXGUI_COLOR_SHADOW        SXGUI_RGB(128, 128, 128)
-#define SXGUI_COLOR_DARK          SXGUI_RGB(0, 0, 0)
-#define SXGUI_COLOR_LIGHT         SXGUI_RGB(255, 255, 255)
+/* Classic 3D system palette.
+ *
+ * Son los cuatro tonos del esquema "Windows Standard" y en ese orden se leen:
+ * DARK y SHADOW hunden, BEVEL y LIGHT levantan. Un borde 3D de la epoca usa
+ * los CUATRO -- dos pixeles por lado, no uno -- y BEVEL es el que faltaba: sin
+ * el, el bisel queda de un solo pixel y los controles se ven planos. */
+#define SXGUI_COLOR_FACE          SXGUI_RGB(192, 192, 192)  /* 3DFACE */
+#define SXGUI_COLOR_SHADOW        SXGUI_RGB(128, 128, 128)  /* 3DSHADOW */
+#define SXGUI_COLOR_DARK          SXGUI_RGB(0, 0, 0)        /* 3DDKSHADOW */
+#define SXGUI_COLOR_BEVEL         SXGUI_RGB(223, 223, 223)  /* 3DLIGHT */
+#define SXGUI_COLOR_LIGHT         SXGUI_RGB(255, 255, 255)  /* 3DHILIGHT */
 #define SXGUI_COLOR_TEXT          SXGUI_RGB(0, 0, 0)
 #define SXGUI_COLOR_DISABLED_TEXT SXGUI_RGB(128, 128, 128)
 #define SXGUI_COLOR_FIELD         SXGUI_RGB(255, 255, 255)
 #define SXGUI_COLOR_SELECT        SXGUI_RGB(0, 0, 128)
 #define SXGUI_COLOR_SELECT_TEXT   SXGUI_RGB(255, 255, 255)
 #define SXGUI_COLOR_WINDOW        SXGUI_RGB(192, 192, 192)
+
+/* ---- metricas -------------------------------------------------------------
+ *
+ * Las medidas que una app necesita para ubicar sus controles. Estan aca y no
+ * cada una en su .c porque el punto es que dos ventanas distintas caigan en la
+ * MISMA grilla: si files usa 8 de margen y notepad 5, las dos se ven bien por
+ * separado y mal uno al lado del otro.
+ *
+ * El grosor del bisel entra en la cuenta de cualquiera que reparta el ancho de
+ * un listbox entre columnas: el area util es el rect menos SXGUI_BORDER_SUNKEN
+ * de cada lado, y menos SXGUI_SCROLLBAR_THICKNESS si aparece la barra. */
+#define SXGUI_BORDER_RAISED       2   /* botones, cabeceras, popups */
+#define SXGUI_BORDER_SUNKEN       2   /* campos, listas, editores */
+#define SXGUI_BORDER_INSET        1   /* paneles de barra de estado */
+#define SXGUI_SCROLLBAR_THICKNESS 16
+/* Separacion del texto al borde interno de un control. Una etiqueta suelta que
+ * quiera alinear con el texto de un campo se corre BORDER + TEXT_PAD. */
+#define SXGUI_TEXT_PAD            3
+
+#define SXGUI_MARGIN              8   /* del borde del cliente al control */
+#define SXGUI_GAP                 6   /* entre controles vecinos */
+#define SXGUI_BUTTON_WIDTH        84
+#define SXGUI_BUTTON_HEIGHT       26
+#define SXGUI_FIELD_HEIGHT        24
+#define SXGUI_STATUS_HEIGHT       22
+#define SXGUI_DIALOG_MARGIN       12
 
 enum sxgui_kind {
     SXGUI_LABEL = 0,
@@ -42,7 +74,8 @@ enum sxgui_kind {
     SXGUI_RADIO,
     SXGUI_COMBOBOX,
     SXGUI_TEXTVIEW,
-    SXGUI_TEXTEDIT
+    SXGUI_TEXTEDIT,
+    SXGUI_TABS
 };
 
 #define SXGUI_FLAG_VISIBLE  (1u << 0)
@@ -285,6 +318,34 @@ struct sxgui_widget sxgui_combobox(struct sx_rect rect, const char *const *items
 /* Read-only multi-line text panel; reuses items/item_count as lines and
  * scrolls like a listbox (embedded scrollbar, keyboard paging). */
 struct sxgui_widget sxgui_textview(struct sx_rect rect, const char *const *lines, int line_count);
+
+/* ---- tabs -----------------------------------------------------------------
+ *
+ * Control de pestanias clasico: la fila de pestanias arriba y la pagina abajo,
+ * unidas en una sola pieza. La pestania activa se dibuja mas alta y mas ancha
+ * que las demas y TAPA el borde superior de la pagina: por ese hueco las dos
+ * partes se leen como una sola hoja, que es lo que distingue una pestania de
+ * un boton. Las inactivas quedan hundidas contra el borde.
+ *
+ * `rect` cubre las dos partes -- la fila Y la pagina --, no solo la fila. El
+ * contenido de la pagina NO son widgets hijos: sxgui no tiene jerarquia. La
+ * app pregunta por `sxgui_tabs_page()` donde puede dibujar y ubica ahi sus
+ * propios controles, o pinta a mano si su contenido no son widgets.
+ *
+ * Reusa `items`/`item_count` para los rotulos y `value` para la pestania
+ * activa; cambiarla dispara `SXGUI_ACTION_CHANGE`. Con el foco puesto, las
+ * flechas izquierda y derecha se mueven entre pestanias. */
+struct sxgui_widget sxgui_tabs(struct sx_rect rect, const char *const *labels, int label_count, int selected);
+/* Alto de la fila de pestanias sola, para quien necesite reservar el espacio
+ * antes de tener el widget armado. */
+int sxgui_tabs_height(void);
+/* Area util de la pagina: el rect del widget menos la fila y menos el bisel.
+ * Es donde va el contenido de la pestania activa. */
+struct sx_rect sxgui_tabs_page(const struct sxgui_widget *widget);
+/* Ancho que necesita la fila para mostrar todos los rotulos enteros. Una app
+ * que calcula el tamano de su ventana lo necesita ANTES de tener el widget
+ * armado, y adivinarlo con la formula copiada a mano es como se desincroniza. */
+int sxgui_tabs_preferred_width(const char *const *labels, int label_count);
 /* Editor multilinea: el documento vive en `buffer` (terminado en NUL, lineas
  * separadas por '\n') y lo posee el llamador. Sin word wrap: las lineas largas
  * se recortan al ancho y el scroll horizontal sigue al caret. */
@@ -339,9 +400,16 @@ struct sxgui_app {
     void *user;
 };
 
-/* Margen que sxgui_app_autosize deja alrededor del bounding box de los widgets
- * al pedirle su tamano a la ventana. */
-#define SXGUI_CONTENT_MARGIN 16
+/* Margen que sxgui_app_autosize deja a la derecha y abajo del bounding box de
+ * los widgets al pedirle su tamano a la ventana. Para que la ventana quede
+ * simetrica, la app tiene que arrancar sus widgets en este mismo margen.
+ *
+ * Vale SXGUI_DIALOG_MARGIN porque quien autodimensiona es una ventana de
+ * controles sueltos sobre la cara -- un Acerca de, una galeria --, que se lee
+ * como un dialogo grande. Una ventana cuyo contenido es UN control grande
+ * (el editor de notepad, la lista de files) usa SXGUI_MARGIN y calcula su
+ * layout a partir del tamano de la ventana, no al reves. */
+#define SXGUI_CONTENT_MARGIN SXGUI_DIALOG_MARGIN
 
 /* Bounding box de los widgets: el borde derecho e inferior mas lejano. Es el
  * tamano que ocupa el contenido de una app de layout fijo. Devuelve 0 en

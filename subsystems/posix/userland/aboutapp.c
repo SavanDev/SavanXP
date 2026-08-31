@@ -81,34 +81,93 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
     return 0;
 }
 
+/* Grilla de la ventana. El margen es SXGUI_CONTENT_MARGIN porque es el que
+ * sxgui_app_autosize deja del otro lado: usar cualquier otro deja la ventana
+ * despareja sin que se note en el codigo.
+ *
+ * ABOUT_ROW es el paso entre lineas de texto y ABOUT_INDENT la sangria de lo
+ * que va adentro de un group box. El alto de rotulo es el del tipo, no 16: un
+ * rect mas bajo que el texto lo centraba medio pixel arriba. */
+#define ABOUT_MARGIN SXGUI_CONTENT_MARGIN
+#define ABOUT_WIDTH 424
+#define ABOUT_LABEL_HEIGHT 18
+#define ABOUT_ROW (ABOUT_LABEL_HEIGHT + 4)
+#define ABOUT_INDENT 12
+/* Del borde de arriba del group box a su primera linea: la mitad del rotulo
+ * que se monta sobre el marco, mas una fila. */
+#define ABOUT_GROUP_TOP (ABOUT_LABEL_HEIGHT / 2 + ABOUT_ROW / 2 + 4)
+
+/* Alto de un group box de `rows` lineas, cerrando abajo con el mismo aire. */
+#define ABOUT_GROUP_HEIGHT(rows) (ABOUT_GROUP_TOP + (rows) * ABOUT_ROW + ABOUT_INDENT - 4)
+
 int main(void)
 {
     struct sxgui_widget widgets[18];
+    int text_width = ABOUT_WIDTH - ABOUT_INDENT * 2;
+    int y = ABOUT_MARGIN;
+    int group_y;
 
     refresh_info();
 
-    widgets[0] = sxgui_label(sx_rect_make(16, 10, 320, 16), "About SavanXP");
-    widgets[1] = sxgui_label(sx_rect_make(16, 30, 420, 16), "Experimental desktop OS with compositor-first GUI");
+    widgets[0] = sxgui_label(sx_rect_make(ABOUT_MARGIN, y, ABOUT_WIDTH, ABOUT_LABEL_HEIGHT), "About SavanXP");
+    y += ABOUT_ROW;
+    widgets[1] = sxgui_label(
+        sx_rect_make(ABOUT_MARGIN, y, ABOUT_WIDTH, ABOUT_LABEL_HEIGHT),
+        "Experimental desktop OS with compositor-first GUI");
+    y += ABOUT_ROW + SXGUI_GAP;
 
-    widgets[2] = sxgui_groupbox(sx_rect_make(16, 56, 424, 148), "System");
-    widgets[3] = sxgui_label(sx_rect_make(28, 76, 400, 16), g_version_line);
-    widgets[4] = sxgui_label(sx_rect_make(28, 96, 400, 16), g_uptime_line);
-    widgets[5] = sxgui_label(sx_rect_make(28, 116, 400, 16), g_process_line);
-    widgets[6] = sxgui_label(sx_rect_make(28, 136, 400, 16), g_memory_line);
-    widgets[7] = sxgui_label(sx_rect_make(28, 156, 400, 16), g_disk_line);
-    widgets[8] = sxgui_label(sx_rect_make(28, 176, 400, 16), g_time_line);
+    group_y = y;
+    widgets[2] = sxgui_groupbox(
+        sx_rect_make(ABOUT_MARGIN, group_y, ABOUT_WIDTH, ABOUT_GROUP_HEIGHT(6)), "System");
+    y = group_y + ABOUT_GROUP_TOP;
+    widgets[3] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT), g_version_line);
+    y += ABOUT_ROW;
+    widgets[4] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT), g_uptime_line);
+    y += ABOUT_ROW;
+    widgets[5] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT), g_process_line);
+    y += ABOUT_ROW;
+    widgets[6] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT), g_memory_line);
+    y += ABOUT_ROW;
+    widgets[7] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT), g_disk_line);
+    y += ABOUT_ROW;
+    widgets[8] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT), g_time_line);
+    y = group_y + ABOUT_GROUP_HEIGHT(6) + SXGUI_GAP;
 
-    widgets[9] = sxgui_groupbox(sx_rect_make(16, 214, 424, 88), "Shell");
-    widgets[10] = sxgui_label(sx_rect_make(28, 234, 400, 16), "Program Manager launches apps from its groups");
-    widgets[11] = sxgui_label(sx_rect_make(28, 254, 400, 16), "Task List switches between or ends running tasks");
-    widgets[12] = sxgui_label(sx_rect_make(28, 274, 400, 16), "Window controls: minimize, maximize, close");
+    group_y = y;
+    widgets[9] = sxgui_groupbox(
+        sx_rect_make(ABOUT_MARGIN, group_y, ABOUT_WIDTH, ABOUT_GROUP_HEIGHT(3)), "Shell");
+    y = group_y + ABOUT_GROUP_TOP;
+    widgets[10] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT),
+                              "Program Manager launches apps from its groups");
+    y += ABOUT_ROW;
+    widgets[11] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT),
+                              "Task List switches between or ends running tasks");
+    y += ABOUT_ROW;
+    widgets[12] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT),
+                              "Window controls: minimize, maximize, close");
+    y = group_y + ABOUT_GROUP_HEIGHT(3) + SXGUI_GAP;
 
-    widgets[13] = sxgui_groupbox(sx_rect_make(16, 312, 424, 68), "Keyboard");
-    widgets[14] = sxgui_label(sx_rect_make(28, 332, 400, 16), "CTRL+ESC opens the Task List   ESC closes this window");
-    widgets[15] = sxgui_label(sx_rect_make(28, 352, 400, 16), "F5 or the Refresh button updates the values");
+    group_y = y;
+    widgets[13] = sxgui_groupbox(
+        sx_rect_make(ABOUT_MARGIN, group_y, ABOUT_WIDTH, ABOUT_GROUP_HEIGHT(2)), "Keyboard");
+    y = group_y + ABOUT_GROUP_TOP;
+    widgets[14] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT),
+                              "CTRL+ESC opens the Task List   ESC closes this window");
+    y += ABOUT_ROW;
+    widgets[15] = sxgui_label(sx_rect_make(ABOUT_MARGIN + ABOUT_INDENT, y, text_width, ABOUT_LABEL_HEIGHT),
+                              "F5 or the Refresh button updates the values");
+    y = group_y + ABOUT_GROUP_HEIGHT(2) + SXGUI_GAP + SXGUI_GAP;
 
-    widgets[16] = sxgui_button(sx_rect_make(16, 392, 100, 26), "Refresh", on_refresh, &g_app);
-    widgets[17] = sxgui_button(sx_rect_make(128, 392, 100, 26), "Close", on_close, &g_app);
+    /* Los botones se apoyan en el borde derecho del contenido, que es donde
+     * los busca la vista despues de leer los group boxes. */
+    widgets[16] = sxgui_button(
+        sx_rect_make(ABOUT_MARGIN + ABOUT_WIDTH - SXGUI_BUTTON_WIDTH * 2 - SXGUI_GAP, y,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Refresh", on_refresh, &g_app);
+    widgets[17] = sxgui_button(
+        sx_rect_make(ABOUT_MARGIN + ABOUT_WIDTH - SXGUI_BUTTON_WIDTH, y,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Close", on_close, &g_app);
 
     if (sxgui_app_init(&g_app, "aboutapp", widgets, 18) < 0)
     {

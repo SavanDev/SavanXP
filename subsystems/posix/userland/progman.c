@@ -21,7 +21,6 @@
  * es trabajo de Fase B.
  */
 
-#define PROGMAN_TAB_HEIGHT 26
 #define PROGMAN_STATUS_HEIGHT 22
 #define PROGMAN_CELL_WIDTH 96
 #define PROGMAN_CELL_HEIGHT 76
@@ -37,9 +36,16 @@
 #define PROGMAN_DOUBLE_CLICK_MS 450UL
 
 static struct sxgui_app g_app;
-/* El toolkit exige un array no nulo aunque no usemos widgets: progman pinta
- * todo su contenido en on_paint y hace su propio hit-testing. */
+/* Unico widget: el control de pestanias. La grilla de iconos NO son widgets --
+ * progman la pinta en on_paint y hace su propio hit-testing --, pero las
+ * pestanias si lo son: el dibujo y el click de una pestania son iguales en
+ * cualquier app, y tenerlos a mano aca era tener una copia peor. */
 static struct sxgui_widget g_widgets[1];
+#define PROGMAN_TABS (&g_widgets[0])
+
+/* Los rotulos apuntan al nombre que vive en el registro; el widget guarda el
+ * puntero, asi que la tabla se rearma cada vez que el registro cambia. */
+static const char *g_group_labels[PROGMAN_MAX_GROUPS];
 
 /* --- barra de menu -------------------------------------------------------
  *
@@ -109,42 +115,30 @@ static int content_top(void)
 
 static int grid_columns(void)
 {
-    int usable = (int)g_app.gfx.info.width - (2 * PROGMAN_GRID_MARGIN);
+    int usable = (int)g_app.gfx.info.width - (2 * SXGUI_BORDER_RAISED) - (2 * PROGMAN_GRID_MARGIN);
     int columns = usable / PROGMAN_CELL_WIDTH;
 
     return columns > 0 ? columns : 1;
 }
 
+/* Area util de la pestania activa: es donde entra la grilla. */
+static struct sx_rect page_rect(void)
+{
+    return sxgui_tabs_page(PROGMAN_TABS);
+}
+
 static struct sx_rect cell_rect(int item_index)
 {
+    struct sx_rect page = page_rect();
     int columns = grid_columns();
     int column = item_index % columns;
     int row = item_index / columns;
 
     return sx_rect_make(
-        PROGMAN_GRID_MARGIN + (column * PROGMAN_CELL_WIDTH),
-        content_top() + PROGMAN_TAB_HEIGHT + PROGMAN_GRID_MARGIN + (row * PROGMAN_CELL_HEIGHT),
+        page.x + PROGMAN_GRID_MARGIN + (column * PROGMAN_CELL_WIDTH),
+        page.y + PROGMAN_GRID_MARGIN + (row * PROGMAN_CELL_HEIGHT),
         PROGMAN_CELL_WIDTH,
         PROGMAN_CELL_HEIGHT);
-}
-
-static struct sx_rect group_tab_rect(int group_index)
-{
-    int x = 4;
-    int index;
-
-    for (index = 0; index < progman_group_count(); ++index)
-    {
-        const struct progman_group *group = progman_group_at(index);
-        int width = gfx_text_width(group != 0 ? group->name : "") + 20;
-
-        if (index == group_index)
-        {
-            return sx_rect_make(x, content_top() + 3, width, PROGMAN_TAB_HEIGHT - 6);
-        }
-        x += width + 2;
-    }
-    return sx_rect_make(0, 0, 0, 0);
 }
 
 static void set_status_for_selection(void)
@@ -173,9 +167,20 @@ static void select_group(int group_index)
         return;
     }
     g_group = group_index;
+    /* El widget es la fuente de verdad para el DIBUJO, asi que hay que moverlo
+     * tambien cuando el cambio viene por teclado y no por click. Ponerlo aca y
+     * no en el callback cubre los dos caminos con una sola linea. */
+    PROGMAN_TABS->value = group_index;
     g_item = 0;
     g_last_click_item = -1;
     set_status_for_selection();
+}
+
+/* Callback del control: el toolkit ya movio `value` cuando llega aca. */
+static void on_tab_changed(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    select_group(widget->value);
 }
 
 static void launch_selected(void)
@@ -225,45 +230,6 @@ static void draw_icon_scaled(struct sx_painter *painter, const struct desktop_em
         &bitmap,
         sx_rect_make(x, y, size, size),
         sx_rect_make(0, 0, (int)source->width, (int)source->height));
-}
-
-/* Bisel 3D estilo sistema: claro arriba/izquierda, oscuro abajo/derecha. */
-static void draw_bevel(struct sx_painter *painter, struct sx_rect rect, int pressed)
-{
-    uint32_t top_left = pressed ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
-    uint32_t bottom_right = pressed ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_SHADOW;
-
-    if (rect.width <= 0 || rect.height <= 0)
-    {
-        return;
-    }
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), bottom_right);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
-}
-
-static void paint_tabs(struct sx_painter *painter)
-{
-    int index;
-
-    sx_painter_fill_rect(painter, sx_rect_make(0, content_top(), (int)g_app.gfx.info.width, PROGMAN_TAB_HEIGHT), SXGUI_COLOR_FACE);
-    for (index = 0; index < progman_group_count(); ++index)
-    {
-        const struct progman_group *group = progman_group_at(index);
-        struct sx_rect rect = group_tab_rect(index);
-        int active = (index == g_group);
-
-        if (group == 0 || rect.width <= 0)
-        {
-            continue;
-        }
-        sx_painter_fill_rect(painter, rect, active ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_FACE);
-        draw_bevel(painter, rect, active);
-        sx_painter_draw_text(painter, rect.x + 10, rect.y + ((rect.height - gfx_text_height()) / 2), group->name, SXGUI_COLOR_TEXT);
-    }
-    /* Linea de separacion bajo las pestanias. */
-    sx_painter_fill_rect(painter, sx_rect_make(0, content_top() + PROGMAN_TAB_HEIGHT - 1, (int)g_app.gfx.info.width, 1), SXGUI_COLOR_SHADOW);
 }
 
 static void paint_items(struct sx_painter *painter)
@@ -339,11 +305,13 @@ static void paint_status(struct sx_painter *painter)
     }
 }
 
+/* El control de pestanias -- y con el, el fondo de la pagina -- lo pinto el
+ * toolkit antes de llegar aca; on_paint pone encima lo que es propio de esta
+ * app: la grilla de iconos adentro de la pagina, y la barra de estado. */
 static void on_paint(struct sxgui_app *app)
 {
     struct sx_painter *painter = &app->ui.painter;
 
-    paint_tabs(painter);
     paint_items(painter);
     paint_status(painter);
 }
@@ -374,6 +342,13 @@ static void on_power_cancel(struct sxgui_widget *widget, void *user)
     sxgui_dialog_end(&g_app.ui, 0);
 }
 
+/* Cartelito de pregunta: margen parejo a los cuatro lados y la fila de botones
+ * centrada abajo, la misma grilla que usan los dialogos de notepad y files. */
+#define PROGMAN_DIALOG_WIDTH 260
+#define PROGMAN_DIALOG_HEIGHT 96
+#define PROGMAN_DIALOG_BUTTON_ROW (PROGMAN_DIALOG_HEIGHT - SXGUI_DIALOG_MARGIN - SXGUI_BUTTON_HEIGHT)
+#define PROGMAN_DIALOG_BUTTON_X(index)     ((PROGMAN_DIALOG_WIDTH - 2 * SXGUI_BUTTON_WIDTH - SXGUI_GAP) / 2 +      (index) * (SXGUI_BUTTON_WIDTH + SXGUI_GAP))
+
 static void ask_power_confirmation(int command)
 {
     const char *question = (command == PROGMAN_CMD_REBOOT)
@@ -381,9 +356,18 @@ static void ask_power_confirmation(int command)
         : "Apagar SavanXP?";
 
     g_pending_power = command;
-    g_dialog_widgets[0] = sxgui_label(sx_rect_make(16, 14, 220, 16), question);
-    g_dialog_widgets[1] = sxgui_button(sx_rect_make(30, 48, 80, 26), "Si", on_power_confirm, 0);
-    g_dialog_widgets[2] = sxgui_button(sx_rect_make(126, 48, 80, 26), "No", on_power_cancel, 0);
+    g_dialog_widgets[0] = sxgui_label(
+        sx_rect_make(SXGUI_DIALOG_MARGIN, SXGUI_DIALOG_MARGIN,
+                     PROGMAN_DIALOG_WIDTH - SXGUI_DIALOG_MARGIN * 2, 18),
+        question);
+    g_dialog_widgets[1] = sxgui_button(
+        sx_rect_make(PROGMAN_DIALOG_BUTTON_X(0), PROGMAN_DIALOG_BUTTON_ROW,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "Si", on_power_confirm, 0);
+    g_dialog_widgets[2] = sxgui_button(
+        sx_rect_make(PROGMAN_DIALOG_BUTTON_X(1), PROGMAN_DIALOG_BUTTON_ROW,
+                     SXGUI_BUTTON_WIDTH, SXGUI_BUTTON_HEIGHT),
+        "No", on_power_cancel, 0);
 
     memset(&g_dialog, 0, sizeof(g_dialog));
     g_dialog.title = (command == PROGMAN_CMD_REBOOT) ? "Reiniciar" : "Apagar";
@@ -392,7 +376,7 @@ static void ask_power_confirmation(int command)
     g_dialog.default_button = 2;
     g_dialog.widgets = g_dialog_widgets;
     g_dialog.widget_count = 3;
-    sxgui_dialog_begin(&g_app.ui, &g_dialog, 240, 92);
+    sxgui_dialog_begin(&g_app.ui, &g_dialog, PROGMAN_DIALOG_WIDTH, PROGMAN_DIALOG_HEIGHT);
 }
 
 static void on_menu_command(int id, void *user)
@@ -513,24 +497,17 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
         g_last_buttons = event->buttons;
         return 0;
     }
+    /* La fila de pestanias es del widget: dejar pasar el evento para que lo
+     * despache el toolkit y no duplicar el hit-testing aca. */
+    if (event->y < content_top() + sxgui_tabs_height())
+    {
+        g_last_buttons = event->buttons;
+        return 0;
+    }
     /* Solo la transicion suelto->apretado cuenta como click. */
     if (left != 0 && left_was == 0)
     {
         int index;
-
-        for (index = 0; index < progman_group_count(); ++index)
-        {
-            if (sx_rect_contains_point(group_tab_rect(index), event->x, event->y))
-            {
-                if (index != g_group)
-                {
-                    select_group(index);
-                    changed = 1;
-                }
-                g_last_buttons = event->buttons;
-                return changed;
-            }
-        }
 
         for (index = 0; index < group_item_count(g_group); ++index)
         {
@@ -566,10 +543,24 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
     return changed;
 }
 
+/* El control cubre todo lo que hay entre la barra de menu y la de estado: la
+ * fila de pestanias Y la pagina. La grilla se recalcula sola a partir de
+ * page_rect(), asi que esto es lo unico que hay que reubicar al cambiar de
+ * tamano. */
+static void progman_layout(struct sxgui_app *app)
+{
+    int height = (int)app->gfx.info.height - content_top() - PROGMAN_STATUS_HEIGHT;
+
+    if (height < 0)
+    {
+        height = 0;
+    }
+    PROGMAN_TABS->rect = sx_rect_make(0, content_top(), (int)app->gfx.info.width, height);
+}
+
 static void on_resize(struct sxgui_app *app)
 {
-    (void)app;
-    /* El grid se recalcula solo desde gfx.info; nada que reubicar. */
+    progman_layout(app);
 }
 
 /* Tamano de la ventana: la grilla base (PROGMAN_GRID_COLUMNS x
@@ -580,21 +571,18 @@ static void on_resize(struct sxgui_app *app)
 static void preferred_content_size(int *width, int *height)
 {
     int max_items = 0;
-    int tabs_width = 4;
+    int tabs_width = sxgui_tabs_preferred_width(g_group_labels, progman_group_count());
     int rows;
     int index;
 
     for (index = 0; index < progman_group_count(); ++index)
     {
-        const struct progman_group *group = progman_group_at(index);
         int count = group_item_count(index);
 
         if (count > max_items)
         {
             max_items = count;
         }
-        /* Mismo ancho que reparte group_tab_rect. */
-        tabs_width += gfx_text_width(group != 0 ? group->name : "") + 20 + 2;
     }
 
     rows = (max_items + PROGMAN_GRID_COLUMNS - 1) / PROGMAN_GRID_COLUMNS;
@@ -603,13 +591,14 @@ static void preferred_content_size(int *width, int *height)
         rows = PROGMAN_MIN_GRID_ROWS;
     }
 
-    *width = (2 * PROGMAN_GRID_MARGIN) + (PROGMAN_GRID_COLUMNS * PROGMAN_CELL_WIDTH);
+    *width = (2 * SXGUI_BORDER_RAISED) + (2 * PROGMAN_GRID_MARGIN) +
+        (PROGMAN_GRID_COLUMNS * PROGMAN_CELL_WIDTH);
     if (tabs_width > *width)
     {
         *width = tabs_width;
     }
-    *height = content_top() + PROGMAN_TAB_HEIGHT + (2 * PROGMAN_GRID_MARGIN) +
-        (rows * PROGMAN_CELL_HEIGHT) + PROGMAN_STATUS_HEIGHT;
+    *height = content_top() + sxgui_tabs_height() + (2 * SXGUI_BORDER_RAISED) +
+        (2 * PROGMAN_GRID_MARGIN) + (rows * PROGMAN_CELL_HEIGHT) + PROGMAN_STATUS_HEIGHT;
 }
 
 /* Existencia real: si el path no se puede abrir, no se puede lanzar. */
@@ -724,9 +713,28 @@ int main(int argc, char **argv)
      * para no abrir ejecutables que se van a descartar y porque el pruning
      * reordena los items (docs/SXE_FORMAT.md, fase 3). */
     (void)progman_registry_apply_sxe();
+
+    /* La tabla de rotulos se arma DESPUES del pruning: es el momento en que el
+     * registro deja de cambiar, y el widget se queda con estos punteros. */
+    {
+        int index;
+        int count = progman_group_count();
+
+        if (count > PROGMAN_MAX_GROUPS)
+        {
+            count = PROGMAN_MAX_GROUPS;
+        }
+        for (index = 0; index < count; ++index)
+        {
+            const struct progman_group *group = progman_group_at(index);
+            g_group_labels[index] = (group != 0) ? group->name : "";
+        }
+        g_widgets[0] = sxgui_tabs(sx_rect_make(0, 0, 0, 0), g_group_labels, count, 0);
+        g_widgets[0].on_action = on_tab_changed;
+    }
     select_group(0);
 
-    if (sxgui_app_init(&g_app, "progman", g_widgets, 0) < 0)
+    if (sxgui_app_init(&g_app, "progman", g_widgets, 1) < 0)
     {
         return 1;
     }
@@ -749,5 +757,6 @@ int main(int argc, char **argv)
         preferred_content_size(&content_width, &content_height);
         (void)sxgui_app_set_content_size(&g_app, content_width, content_height);
     }
+    progman_layout(&g_app);
     return sxgui_app_run(&g_app);
 }

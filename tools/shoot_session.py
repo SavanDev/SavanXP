@@ -156,16 +156,23 @@ class Session(object):
         print("  captura:", os.path.basename(png))
         return image
 
-    def open_notepad(self):
-        """Lanza el bloc de notas desde progman SOLO con teclado.
+    def launch(self, steps):
+        """Lanza el icono que esta `steps` a la derecha del primero.
 
         La barra de menu de sxgui no tiene acceso por teclado, pero los iconos
-        del launcher si: flechas para moverse y Enter para lanzar.
+        del launcher si: flechas para moverse y Enter para lanzar. El orden es
+        el de k_default_items (progman_registry.c): Shell, Files, Notepad.
         """
-        self.qmp.tap("right", pause=0.4)
-        self.qmp.tap("right", pause=0.4)
+        for _ in range(steps):
+            self.qmp.tap("right", pause=0.4)
         self.qmp.tap("ret")
         time.sleep(25)
+
+    def open_notepad(self):
+        self.launch(2)
+
+    def open_files(self):
+        self.launch(1)
 
 
 # Paleta de sxgui, para leer los pixeles con el mismo vocabulario con el que se
@@ -262,6 +269,21 @@ def scenario_clipboard(s):
     s.shot("pegado")
 
 
+def scenario_files(s):
+    """Explorador: la ventana con mas controles distintos a la vez.
+
+    Barra de direccion, boton, lista de detalles con cabecera de columnas y
+    barra de estado de dos paneles: si un margen o una sangria del toolkit se
+    va, aca se ve. Se mueve la seleccion con el teclado para que quede a la
+    vista tambien la fila resaltada.
+    """
+    s.open_files()
+    s.shot("files-raiz")
+    s.qmp.tap("down", pause=0.6)
+    s.qmp.tap("down", pause=1.2)
+    s.shot("files-seleccion")
+
+
 def scenario_taskbar(s):
     """Barra de tareas: clicks reales con VERIFICACION de pixeles.
 
@@ -309,6 +331,7 @@ SCENARIOS = {
     "desktop": scenario_desktop,
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
+    "files": scenario_files,
     "taskbar": scenario_taskbar,
 }
 
