@@ -1302,27 +1302,18 @@ static void selftest_extension(void)
 }
 
 /*
- * Camino de disco. Todavia no hay ningun .sxe en la imagen (eso es la fase 2),
- * asi que lo que se puede validar de verdad es lo mas importante: que un
- * binario NORMAL, sin recursos, se resuelva limpio como "sin metadata" y no
- * como un error que impida lanzarlo.
- */
-/*
- * Camino de disco contra binarios SIN recursos. init es el sujeto a proposito:
- * es PID 1, no tiene ventana, y por lo tanto nunca va a tener un .sxres que
- * invalide estos checks.
+ * Camino de disco. Con el estampado por default, TODO binario que sale de este
+ * build tiene .sxmeta (ver selftest_default_stamped mas abajo), asi que init
+ * ya no sirve como ejemplo de "sin recursos" -- lo que se puede validar de
+ * verdad con un path real es la lectura de una seccion PARTICULAR que no
+ * existe, y un path que no esta instalado en absoluto.
  */
 static void selftest_disk(void)
 {
     _Alignas(4) uint8_t buffer[SXE_META_MAX_BYTES];
     struct sxe_meta meta;
-    struct sxe_icons icons;
     size_t length = 1u;
 
-    expect(sxe_load_meta("/bin/init", buffer, sizeof(buffer), &meta) == SXE_ABSENT,
-        "binario sin .sxmeta");
-    expect(sxe_load_icons("/bin/init", buffer, sizeof(buffer), &icons) == SXE_ABSENT,
-        "binario sin .sxicon");
     expect(sxe_load_meta("/disk/bin/__no_instalado__", buffer, sizeof(buffer), &meta) == SXE_ABSENT,
         "path inexistente");
 
@@ -1345,6 +1336,72 @@ static void selftest_disk(void)
     /* Un archivo que no es ELF se resuelve como ausente, no como error. */
     expect(sxe_read_section("/disk/wallpaper.bmp", SXE_SECTION_META, buffer, sizeof(buffer), &length) == SXE_ABSENT,
         "archivo que no es ELF");
+}
+
+/*
+ * Estampado por default: TODO programa que este build linkea recibe un
+ * .sxmeta, tenga o no un .sxres al lado del fuente (docs/SXE_FORMAT.md,
+ * "estampado por default"). init es el sujeto porque nunca declaro un
+ * init.sxres -- es PID 1, sin ventana ni presentacion que valga la pena
+ * escribir a mano -- asi que si tiene identidad, es PORQUE EL GENERADOR LA
+ * PUSO SOLA, no porque alguien la haya declarado.
+ */
+static void selftest_default_stamped(void)
+{
+    _Alignas(4) uint8_t buffer[SXE_META_MAX_BYTES];
+    struct sxe_meta meta;
+    struct sxe_icons icons;
+    char text[64];
+    uint16_t version[SXE_VERSION_COMPONENTS];
+    uint8_t subsystem = 0xffu;
+    uint32_t accent = 0u;
+
+    if (sxe_load_meta("/bin/init", buffer, sizeof(buffer), &meta) != SXE_OK)
+    {
+        expect(0, "init con estampado automatico");
+        return;
+    }
+
+    /*
+     * NAME automatico = el nombre del programa. Es a proposito EL MISMO valor
+     * que progman/windowd ya usaban como fallback de basename cuando no habia
+     * ningun .sxmeta: el default no le cambia el nombre a nada, solo deja de
+     * inferirlo cada vez y pasa a declararlo una sola vez, en el build.
+     */
+    expect(sxe_meta_string(&meta, SXE_TAG_NAME, text, sizeof(text)) == 4u &&
+        strcmp(text, "init") == 0, "NAME automatico = nombre del programa");
+
+    /*
+     * La version tiene que salir de los MISMOS macros que build_meta_blob usa
+     * para resolver 'version=system': compararla contra numeros escritos a
+     * mano dejaria el check stale en el proximo bump.
+     */
+    expect(sxe_meta_version(&meta, version) == 1 &&
+        version[0] == SAVANXP_VERSION_MAJOR &&
+        version[1] == SAVANXP_VERSION_MINOR &&
+        version[2] == SAVANXP_VERSION_PATCH &&
+        version[3] == 0u, "VERSION automatica = version del sistema");
+    expect(sxe_meta_string(&meta, SXE_TAG_VERSION_STRING, text, sizeof(text)) > 0u,
+        "VERSION_STRING automatica presente");
+
+    expect(sxe_meta_u8(&meta, SXE_TAG_SUBSYSTEM, &subsystem) == 1 && subsystem == 0u,
+        "SUBSYSTEM automatico = posix");
+
+    /* El commit no se puede predecir en un selftest: solo se valida que este
+     * y que no este vacio. Compararlo contra el HEAD real es trabajo del
+     * build.ps1 que arma la imagen, no de este binario en tiempo de ejecucion. */
+    expect(sxe_meta_string(&meta, SXE_TAG_BUILD_ID, text, sizeof(text)) > 0u,
+        "BUILD_ID automatico presente");
+
+    /*
+     * Lo que el estampado automatico NUNCA inventa: icono, accent, descripcion,
+     * mimes. Son enriquecimiento -- nadie los puede derivar del build -- y
+     * fabricarlos seria peor que dejarlos ausentes.
+     */
+    expect(sxe_load_icons("/bin/init", buffer, sizeof(buffer), &icons) == SXE_ABSENT,
+        "sin .sxres no hay icono automatico");
+    expect(sxe_meta_u32(&meta, SXE_TAG_ACCENT, &accent) == 0,
+        "sin .sxres no hay accent automatico");
 }
 
 /*
@@ -1451,6 +1508,7 @@ int sxe_selftest(void)
     selftest_icons();
     selftest_extension();
     selftest_disk();
+    selftest_default_stamped();
     selftest_stamped();
 
     return g_sxe_selftest_failures;

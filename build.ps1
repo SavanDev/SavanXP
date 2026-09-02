@@ -667,8 +667,21 @@ function Generate-DesktopIconAssets {
 # de python: el costo es el arranque del interprete, no el trabajo. El
 # estampado en si lo hace Add-SxeResources (tools/UserAppCommon.ps1), compartido
 # con el camino de apps externas.
-function Generate-SxeResources {
-    Invoke-SxeResourceGenerator -ManifestDirs @($PosixUserlandRoot) -OutputDir $SxeResourceRoot
+# Mismo filtro de Test=$true que Get-UserlandCompileEdges: el estampado por
+# default (gen_sxe_resources.py) genera un .sxmeta para CADA nombre que se le
+# pase, asi que la lista tiene que ser exactamente la de programas que este
+# build va a linkear de verdad -- ni de mas (perder tiempo estampando algo que
+# -NoTestApps descarta) ni de menos (un programa sin .sxmeta, que es la
+# cobertura que este cambio existe para cerrar).
+function Generate-SxeResources([bool]$IncludeTestApps = $true) {
+    $programNames = @()
+    foreach ($program in $UserPrograms) {
+        if (-not $IncludeTestApps -and $program.ContainsKey("Test") -and $program.Test) {
+            continue
+        }
+        $programNames += $program.Name
+    }
+    Invoke-SxeResourceGenerator -ManifestDirs @($PosixUserlandRoot) -OutputDir $SxeResourceRoot -ProgramNames $programNames
 }
 
 function Get-KernelCompileEdges([string[]]$Sources) {
@@ -833,7 +846,7 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
 
     Generate-CursorAsset
     Generate-DesktopIconAssets
-    Generate-SxeResources
+    Generate-SxeResources -IncludeTestApps $IncludeTestApps
 
     $kernelPlan = Get-KernelCompileEdges $KernelSources
     $uacpiPlan = Get-UacpiCompileEdges

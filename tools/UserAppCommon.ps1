@@ -212,9 +212,35 @@ function Get-LlvmToolCandidates([string]$Name) {
 
 # Convierte los manifiestos .sxres que haya en $ManifestDirs a los blobs
 # .sxmeta/.sxicon de $OutputDir.
-function Invoke-SxeResourceGenerator([string[]]$ManifestDirs, [string]$OutputDir) {
-    $existing = @($ManifestDirs | Where-Object { $_ -and (Test-Path $_) })
-    if ($existing.Count -eq 0) {
+$Script:SxeBuildIdCache = $null
+
+# Commit corto para SXE_TAG_BUILD_ID. Se resuelve una sola vez por proceso de
+# PowerShell (memoizado): tanto build.ps1 como cada invocacion de
+# build-user.ps1 lo piden una vez para todo lo que van a estampar en esa
+# corrida. Si no hay git (arbol exportado sin .git, por ejemplo) el build NO
+# se rompe -- BUILD_ID es identidad de diagnostico, no algo de lo que dependa
+# poder lanzar un programa.
+function Get-SxeBuildId {
+    if ($null -ne $Script:SxeBuildIdCache) {
+        return $Script:SxeBuildIdCache
+    }
+    $Script:SxeBuildIdCache = "unknown"
+    $git = Resolve-Executable @("git")
+    if ($git) {
+        $output = & $git -C $Script:ProjectRoot rev-parse --short HEAD 2>$null
+        if ($LASTEXITCODE -eq 0 -and $output) {
+            $Script:SxeBuildIdCache = ($output | Select-Object -First 1).Trim()
+        }
+    }
+    return $Script:SxeBuildIdCache
+}
+
+# Genera los blobs SXE para $ProgramNames: TODOS reciben un .sxmeta, tengan o
+# no un <nombre>.sxres en $ManifestDirs (el estampado por default vive en
+# gen_sxe_resources.py; ver su docstring). $ManifestDirs solo dice DONDE
+# buscar manifiestos declarados a mano -- ya no decide para quien se genera.
+function Invoke-SxeResourceGenerator([string[]]$ManifestDirs, [string]$OutputDir, [string[]]$ProgramNames) {
+    if (-not $ProgramNames -or $ProgramNames.Count -eq 0) {
         return
     }
     Ensure-Directory $OutputDir
@@ -223,10 +249,14 @@ function Invoke-SxeResourceGenerator([string[]]$ManifestDirs, [string]$OutputDir
     $arguments = @(
         (Join-Path $PSScriptRoot "gen_sxe_resources.py"),
         "--project-root", $Script:ProjectRoot,
-        "--output-dir", $OutputDir
+        "--output-dir", $OutputDir,
+        "--build-id", (Get-SxeBuildId)
     )
-    foreach ($directory in $existing) {
+    foreach ($directory in ($ManifestDirs | Where-Object { $_ -and (Test-Path $_) })) {
         $arguments += @("--manifest-dir", $directory)
+    }
+    foreach ($name in $ProgramNames) {
+        $arguments += @("--program", $name)
     }
 
     # La salida se CAPTURA en vez de dejarla caer al pipeline: esta funcion se
@@ -424,7 +454,7 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
     # Una app externa declara sus recursos con un <nombre>.sxres al lado de su
     # fuente. Sin manifiesto el binario sale igual que siempre.
     $resourceRoot = Join-Path $objectRoot "sxe"
-    Invoke-SxeResourceGenerator -ManifestDirs @($sourceSpec.Root) -OutputDir $resourceRoot
+    Invoke-SxeResourceGenerator -ManifestDirs @($sourceSpec.Root) -OutputDir $resourceRoot -ProgramNames @($ProgramName)
     Add-SxeResources -Name $ProgramName -BinaryPath $outputFull -ResourceDir $resourceRoot
 
     return $outputFull

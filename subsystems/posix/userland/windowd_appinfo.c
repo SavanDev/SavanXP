@@ -255,17 +255,21 @@ int windowd_presentation_selftest(void)
     }
 
     /*
-     * Binario sin recursos y fuera de la tabla: no hay nombre que dar, asi que
-     * el label cae al path y el icono al generico. Es el camino que garantiza
-     * que un ejecutable pelado sigue teniendo ventana.
+     * init nunca declaro un init.sxres, pero el build lo estampa igual con un
+     * .sxmeta minimo (NAME/VERSION/SUBSYSTEM/BUILD_ID). El titulo ya no cae al
+     * path porque el nombre sale del binario -- pero ese nombre resulta ser
+     * "init", que es EL MISMO texto que el fallback de basename mostraba
+     * antes: el default no cambia ninguna ventana existente, solo deja de
+     * inferir lo que ahora esta declarado. Icono y accent siguen sin dueno:
+     * eso es enriquecimiento, y el estampado automatico no lo inventa.
      */
     windowd_presentation_load(&presentation, "/bin/init");
-    expect(presentation.label[0] == '\0', "presentacion: init sin nombre");
-    expect(strcmp(windowd_presentation_label(&presentation, "/bin/init"), "/bin/init") == 0,
-        "presentacion: init cae al path");
-    expect(presentation.icon_extent == 0u, "presentacion: init sin icono propio");
+    expect(strcmp(windowd_presentation_label(&presentation, "/bin/init"), "init") == 0,
+        "presentacion: NAME automatico de init");
+    expect(presentation.icon_extent == 0u,
+        "presentacion: init sin icono (enriquecimiento, no identidad)");
     expect(windowd_presentation_accent(&presentation) == WINDOWD_DEFAULT_ACCENT,
-        "presentacion: init con accent default");
+        "presentacion: init con accent default (sin ACCENT declarado)");
     expect(windowd_presentation_icon(&presentation, &storage) == desktop_icon_small(DESKTOP_ICON_DESKTOP),
         "presentacion: init cae al icono horneado");
 

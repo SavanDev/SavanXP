@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Genera los blobs de recursos SXE (.sxmeta y .sxicon) a partir de los
-manifiestos .sxres de cada programa. Ver docs/SXE_FORMAT.md (fase 2).
+"""Genera los blobs de recursos SXE (.sxmeta y .sxicon) para CADA PROGRAMA que
+el build va a linkear. Ver docs/SXE_FORMAT.md (fases 2 y "estampado por
+default").
 
 build.ps1 lo invoca una sola vez por build, antes de linkear userland; despues
 el paso de llvm-objcopy estampa los blobs en cada binario como secciones
 NO-alloc.
+
+ESTAMPADO POR DEFAULT: todo programa que se pasa por --program recibe un
+.sxmeta, tenga o no un .sxres al lado del fuente. Sin manifiesto, el programa
+igual sale con NAME (su propio nombre), VERSION (la del sistema), SUBSYSTEM y
+BUILD_ID (el commit) -- es el mismo rol que cumple el bloque VERSIONINFO que
+el linker de Windows agrega aunque el programador no haya escrito un .rc. El
+.sxres nunca dejo de existir: es el ENRIQUECIMIENTO (icono, descripcion,
+accent, mimes) que nadie puede inferir del build.
 
 NADA DE NUMEROS DUPLICADOS: los magics, tags, versiones, tamanos y topes se
 leen de include/sxe/sxe_format.h, y los flags de lanzamiento de
@@ -13,9 +22,9 @@ un formato copiado a mano entre el lector y el generador se desincroniza, y la
 falla es silenciosa (blobs que el runtime descarta sin decir por que).
 
 A diferencia del parser de runtime, que ignora lo que no entiende para poder
-leer binarios mas nuevos, este es ESTRICTO: una clave desconocida en un .sxres
-es un error de build. Un typo en un manifiesto tiene que romper, no dejar la
-app sin icono en silencio.
+leer binarios mas nuevos, este es ESTRICTO con lo que SI viene en un .sxres:
+una clave desconocida es un error de build. Un typo en un manifiesto tiene que
+romper, no dejar la app sin icono en silencio.
 
 Uso:  python tools/gen_sxe_resources.py --project-root DIR --manifest-dir DIR
                                         --output-dir DIR
@@ -228,6 +237,30 @@ def split_list(text):
     return [item.strip() for item in text.split(",") if item.strip()]
 
 
+# --- Estampado por default ----------------------------------------------------
+
+
+def apply_automatic_defaults(manifest, program_name, build_id):
+    """Identidad minima que todo binario recibe SIN pedirla, igual que un EXE
+    de Windows linkeado sin .rc igual sale con su bloque VERSIONINFO por
+    default. Una clave presente pero vacia en el .sxres ("name=") cuenta como
+    no declarada: se completa igual, no se respeta el vacio.
+
+    Deliberadamente NO se inventan aca: icono, accent, launch_flags,
+    descripcion, mimes. Esos son enriquecimiento -- nadie los puede derivar
+    del build, y fabricarlos seria peor que no tenerlos."""
+    result = dict(manifest)
+    if not result.get("name"):
+        result["name"] = program_name
+    if not result.get("version"):
+        result["version"] = "system"
+    if not result.get("subsystem"):
+        result["subsystem"] = "posix"
+    if not result.get("build_id"):
+        result["build_id"] = build_id
+    return result
+
+
 # --- Construccion de blobs ---------------------------------------------------
 
 
@@ -428,8 +461,13 @@ def write_if_changed(path, data):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root")
-    parser.add_argument("--manifest-dir", action="append", required=True,
-                        help="Directorio con archivos .sxres. Se puede repetir.")
+    parser.add_argument("--manifest-dir", action="append", default=[],
+                        help="Directorio donde buscar <programa>.sxres. Se puede repetir.")
+    parser.add_argument("--program", action="append", default=[],
+                        help="Nombre de un programa que el build va a linkear. "
+                             "Se puede repetir; recibe .sxmeta aunque no tenga .sxres.")
+    parser.add_argument("--build-id", default="unknown",
+                        help="Commit o id de build a estampar en BUILD_ID cuando el .sxres no lo fija.")
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
 
@@ -439,41 +477,59 @@ def main():
     native_osabi = load_native_osabi(project_root)
     system_version = load_system_version(project_root)
 
-    manifests = []
+    # Primer directorio que trae el .sxres de un programa gana: mismo criterio
+    # de "primero en la lista, primero servido" que el resto del repo (ver
+    # file_assoc_scan_programs). En la practica nunca hay dos con el mismo
+    # nombre, pero el orden queda definido igual.
+    sxres_by_name = {}
     for directory in args.manifest_dir:
         if not os.path.isdir(directory):
             continue
         for entry in sorted(os.listdir(directory)):
             if entry.endswith(".sxres"):
-                manifests.append(os.path.join(directory, entry))
+                sxres_by_name.setdefault(os.path.splitext(entry)[0], os.path.join(directory, entry))
+
+    # dict.fromkeys en vez de set(): de-duplica preservando el orden de
+    # llegada, que es el que decide "primero" si algun dia importara.
+    program_names = list(dict.fromkeys(args.program))
 
     generated = 0
-    for path in manifests:
-        name = os.path.splitext(os.path.basename(path))[0]
-        manifest = parse_manifest(path)
+    for name in program_names:
+        manifest_path = sxres_by_name.get(name)
+        manifest = parse_manifest(manifest_path) if manifest_path else {}
+        label = manifest_path or f"{name} (sin .sxres, estampado automatico)"
+        manifest = apply_automatic_defaults(manifest, name, args.build_id)
 
-        meta = build_meta_blob(fmt, manifest, launch_flags, native_osabi, system_version, path)
+        meta = build_meta_blob(fmt, manifest, launch_flags, native_osabi, system_version, label)
         write_if_changed(os.path.join(args.output_dir, name + ".sxmeta"), meta)
 
         icon_path = os.path.join(args.output_dir, name + ".sxicon")
         if manifest.get("icon") and manifest.get("icon_file"):
             raise SystemExit(
-                f"{path}: declara 'icon' y 'icon_file' a la vez. El icono sale del "
+                f"{label}: declara 'icon' y 'icon_file' a la vez. El icono sale del "
                 "catalogo del sistema o de un PNG propio, no de los dos."
             )
         if manifest.get("icon_file"):
-            images = collect_icons_from_file(fmt, path, manifest["icon_file"], path)
-            write_if_changed(icon_path, build_icon_blob(fmt, images, path))
+            images = collect_icons_from_file(fmt, manifest_path, manifest["icon_file"], label)
+            write_if_changed(icon_path, build_icon_blob(fmt, images, label))
         elif manifest.get("icon"):
-            images = collect_icons(fmt, project_root, manifest["icon"], path)
-            write_if_changed(icon_path, build_icon_blob(fmt, images, path))
+            images = collect_icons(fmt, project_root, manifest["icon"], label)
+            write_if_changed(icon_path, build_icon_blob(fmt, images, label))
         elif os.path.isfile(icon_path):
-            # El manifiesto dejo de declarar icono: sacar el blob viejo para
-            # que el estampado no siga metiendo una seccion fantasma.
+            # El manifiesto dejo de declarar icono (o nunca tuvo uno): sacar el
+            # blob viejo para que el estampado no siga metiendo una seccion
+            # fantasma de un build anterior.
             os.remove(icon_path)
         generated += 1
 
-    print(f"sxe: {generated} manifiesto(s) procesado(s)")
+    # Un .sxres cuyo programa no se paso por --program no es necesariamente un
+    # error (puede ser una app excluida por -NoTestApps), pero silenciarlo del
+    # todo esconde el typo mas comun: renombrar el .c y olvidar el .sxres.
+    orphans = sorted(name for name in sxres_by_name if name not in set(program_names))
+    if orphans:
+        print("sxe: aviso, .sxres sin programa en este build: " + ", ".join(orphans))
+
+    print(f"sxe: {generated} programa(s) estampado(s)")
     return 0
 
 

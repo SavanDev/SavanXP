@@ -10,14 +10,17 @@
 > (asociaciones de archivo en filesapp). Validado por `sxe-smoke`,
 > `progman-smoke`, `windowd-smoke` y `filesapp-smoke`.
 >
-> **Todos los programas de la imagen están estampados**, Doom incluido: el
-> catálogo de progman reporta `applied=9 of 9`.
+> **Estampado por default: todo programa que el build linkea sale con
+> `.sxmeta`, tenga o no un `.sxres`.** No es más opt-in. `sxe-smoke` mide la
+> imagen entera: **67/67 binarios instalados estampados**, in-tree y externos
+> (Doom, busybox) por igual. Ver [más abajo](#estampado-por-default).
 >
 > Pendientes conocidos, anotados en su lugar: **el angostado de
-> `desktop_icons`** (ya no lo bloquea Doom, sí el `icon=` de `progman.ini`), la
-> **resolución por MIME** (necesita una capa de detección de tipo que no
-> existe), el **costo del escaneo de asociaciones** —ya medido— y el
-> **renombre a `.sxe`**, que nunca se hizo.
+> `desktop_icons`** (lo traba el `icon=` de `progman.ini`, que referencia el
+> set por nombre), la **resolución por MIME** (necesita una capa de detección
+> de tipo que no existe), el **costo del escaneo de asociaciones** —ya
+> medido— y el **renombre a `.sxe`**, que nunca se hizo y que con el
+> estampado universal perdió el argumento que tenía a favor (ver esa sección).
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -152,7 +155,7 @@ está definido ahora porque después ya es tarde.
 | `0x0004` | `VERSION_STRING` | utf8 | Lo que se muestra ("1.2.0-rc3"). Separado de `VERSION` por el mismo motivo que Windows separa `FILEVERSION` de `StringFileInfo`: ordenar y mostrar son cosas distintas |
 | `0x0005` | `VENDOR` | utf8 | |
 | `0x0006` | `COPYRIGHT` | utf8 | |
-| `0x0007` | `BUILD_ID` | utf8 | Commit o id de build; opcional, lo estampa el build |
+| `0x0007` | `BUILD_ID` | utf8 | Commit corto de git. **Siempre** lo pone el generador ([estampado por default](#estampado-por-default)); un `.sxres` puede fijar otro valor a mano si hace falta |
 | `0x0101` | `ACCENT` | `uint32` | `0x00RRGGBB`, el formato que ya devuelve `gfx_rgb`. Reemplaza el campo `accent` de `windowd_appinfo` |
 | `0x0102` | `LAUNCH_FLAGS` | `uint32` | `SAVANXP_DESKTOP_LAUNCH_FLAG_*` **por defecto**. Quien lanza puede sobrescribirlos |
 | `0x0201` | `INTERPRETER` | utf8 | Path absoluto del programa que ejecuta esta imagen. **Ausente o vacío = lo ejecuta el kernel directamente** |
@@ -228,9 +231,12 @@ margen de sobra.
 Al estilo del EXE de Windows: **un ejecutable sin recursos es un ejecutable de
 primera clase, para siempre.**
 
-- Un ELF sin `.sxmeta` se lanza igual. Nunca va a haber un `/disk/bin`
-  "solo SXE". El día que un `.elf` pelado no arranque, se perdió la capacidad
-  de debuggear a mano.
+- Un ELF sin `.sxmeta` se lanza igual. Con el [estampado por
+  default](#estampado-por-default) esto ya no describe a ningún binario que
+  salga de *este* build, pero sigue siendo el contrato real: un ejecutable
+  copiado de otra parte, compilado con otro toolchain, o traído por un
+  tercero jamás debe dejar de arrancar por faltarle una sección que el kernel
+  ni siquiera mira. Nunca va a haber un `/disk/bin` "solo SXE".
 - **El kernel no participa de nada de esto.** No lee, no valida, no le importa.
   Todo el mecanismo vive en userland.
 - Un `.sxmeta` corrupto, truncado, de versión futura, o con un `REQUIRED`
@@ -255,6 +261,17 @@ válido (build viejo, archivo truncado, alguien renombró) y un `.elf` puede
 tenerlo. Si el lector trata la extensión como garantía, ese caso lo rompe. Como
 pista, el fallback es el mismo de arriba: silencioso y ya escrito.
 
+**El estampado por default le saca el piso al renombre.** La pista de la
+extensión valía para *podar* un escaneo — saltear sin abrir los archivos que
+casi seguro no tienen recursos. Con `.sxmeta` en el 100% de los binarios, ya
+no hay nada que podar: todo archivo que se abriera tendría recursos, así que
+`.sxe` dejaría de significar "abrí esto" y `.elf` de significar "salteá
+esto" — serían la misma cosa con dos nombres. `sxe_path_has_extension()`
+sigue viva en el lector porque el contrato retrocompatible la pide (un
+tercero puede seguir usándola como convención de archivo), pero ya no es la
+palanca para el costo de `file_assoc`. Esa palanca hay que buscarla en otro
+lado — un índice, o acotar qué directorios se escanean — no en el nombre.
+
 ## Sin caché — y ahora con la medición
 
 No hay índice persistente. La decisión era **medir primero**, porque una caché
@@ -266,19 +283,23 @@ Ya hay números, y son de dos órdenes muy distintos:
 |---|---|---|
 | progman | los binarios que lista el catálogo | ~9 archivos, imperceptible |
 | windowd | el binario de cada ventana que crea | 1 por ventana, imperceptible |
-| **`file_assoc`** | **todos los ejecutables instalados** | **131 archivos, ~171 ms** (TCG) |
+| **`file_assoc`** | **todos los ejecutables instalados** | **141 archivos, ~220 ms** (TCG) |
 
 Los dos primeros están acotados por algo chico y no necesitan nada. El tercero
 sí duele, y por eso filesapp lo hace **perezoso**: una sesión que solo navega
 directorios no paga nada, y el costo se cobra una vez, cuando de verdad hay que
 abrir un archivo.
 
-**El 131 tiene una lectura concreta**: `/disk/bin` es una copia de `/bin`, así
-que cada programa se examina dos veces, y de los 131 solo un puñado trae
-recursos. Es exactamente el caso que resolvería la pista de la extensión —
-saltear sin abrir todo lo que no se llame `.sxe`— pero hoy no puede podar nada
-porque los binarios no están renombrados. Ese es el primer argumento concreto a
-favor del renombre, y es mejor palanca que una caché: no tiene invalidación.
+**El 141 tiene una lectura concreta, y cambió con el estampado por default.**
+`/disk/bin` es una copia de `/bin`, así que cada programa se examina dos
+veces — eso no se movió. Lo que sí se movió es la otra mitad del argumento: con
+el escaneo anterior, "de los 131 solo un puñado trae recursos" hacía pensar que
+la pista de la extensión podría podar casi todo el costo. Ahora **todos** los
+binarios tienen `.sxmeta` — abrirlos ya no es evitable por nombre, porque todos
+"tienen algo" aunque casi ninguno declare `EXT_OPEN`. La pista de la extensión
+dejó de ser una palanca de costo (ver la nota en la sección anterior); si este
+número llega a doler de verdad, la solución pasa por un índice o por acotar qué
+directorios escanea `file_assoc`, no por renombrar binarios.
 
 `file_assoc_scan_examined()` y el `ms=` de `filesapp-smoke` existen para poder
 volver a medir esto cuando algo cambie.
@@ -467,6 +488,46 @@ exactamente para lo que existe este formato.
 Hardcodear `0.3.3` en nueve manifiestos sería la misma duplicación que este
 diseño evita en todo lo demás.
 
+### Estampado por default
+
+Cuando la fase 2 se implementó, un `.sxres` era la **condición** para que un
+binario recibiera secciones: sin manifiesto, `Add-SxeResources` no tocaba el
+archivo. Con 67 programas en el árbol y 9 manifiestos escritos, eso significa
+que "cada programa que se compile ya sea en formato SXE" no era cierto —
+faltaba invertir el default.
+
+Ahora **el generador estampa siempre**. `gen_sxe_resources.py` recibe, además
+de los directorios donde buscar `.sxres`, la lista completa de programas que
+el build va a linkear (`--program`, repetible) — la misma lista, filtrada por
+`-NoTestApps`, que ya usa la fase de compilación. Cada nombre de esa lista
+recibe un `.sxmeta`, tenga o no manifiesto:
+
+| tag | de dónde sale sin `.sxres` |
+|---|---|
+| `NAME` | el nombre del propio programa |
+| `VERSION` / `VERSION_STRING` | la versión del sistema (`include/shared/version.h`) |
+| `SUBSYSTEM` | `posix` — el único subsistema que pasa por este generador hoy |
+| `BUILD_ID` | el commit corto de git, resuelto una vez por build y cacheado |
+
+Es el mismo rol que cumple el bloque `VERSIONINFO` que el *linker* de Windows
+agrega aunque el programador nunca haya escrito un `.rc`: identidad mínima que
+sale del build, no del programador. Y no es un default cosmético — el `NAME`
+automático es **exactamente** el texto que progman y windowd ya mostraban
+como fallback de basename cuando no había `.sxmeta`: para un binario sin
+`.sxres`, el estampado por default no cambia una sola ventana existente, sólo
+dejó de *inferir* algo que ahora está *declarado*.
+
+**Lo que sigue sin inventarse**: icono, accent, descripción, `launch_flags`,
+mimes. Eso es enriquecimiento — nadie lo puede derivar del build — y
+fabricarlo sería peor que dejarlo ausente. El `.sxres` no perdió su lugar:
+pasó a ser exactamente eso, enriquecimiento opcional sobre una identidad que
+ya existe.
+
+Cobertura verificada con `llvm-readelf` sobre la imagen completa: **67/67**
+binarios instalados con `.sxmeta`, in-tree y externos (Doom, busybox) por
+igual — ningún camino de build quedó afuera salvo el subsistema nativo
+(`subsystems/native/build.ps1`), en pausa y fuera de alcance por ahora.
+
 ### El generador
 
 [tools/gen_sxe_resources.py](../tools/gen_sxe_resources.py) convierte los
@@ -477,9 +538,13 @@ de `Assert-Svfs2FormatMatchesHeader` — un formato copiado a mano entre lector 
 generador se desincroniza, y la falla es silenciosa.
 
 Al revés que el parser de runtime, que ignora lo que no entiende para poder
-leer binarios más nuevos, **el generador es estricto**: una clave desconocida,
-un icono faltante o un flag inexistente rompen el build. Un typo en un
-manifiesto tiene que fallar, no dejar la app sin icono en silencio.
+leer binarios más nuevos, **el generador es estricto** con lo que sí viene en
+un `.sxres`: una clave desconocida, un icono faltante o un flag inexistente
+rompen el build. Un typo en un manifiesto tiene que fallar, no dejar la app
+sin icono en silencio. Un `.sxres` cuyo programa no está en la lista `--program`
+no rompe nada — puede ser una app que `-NoTestApps` excluyó — pero se avisa por
+consola, porque el error más probable ahí es un `.c` renombrado sin renombrar
+su manifiesto.
 
 ### El estampado
 
@@ -545,5 +610,23 @@ se aplica en uno y no en el otro.
    `text/plain`" reintroduciría exactamente la clase de tabla central que este
    diseño vino a sacar.
 
+6. ~~**Estampado por default.**~~ **HECHA.** Las fases 1 a 5 dejaban el
+   estampado en *opt-in*: sin `.sxres`, `Add-SxeResources` no tocaba el
+   binario. Con 67 programas en el árbol y 9 manifiestos, eso era la brecha
+   real entre "el formato existe" y *"cada programa que se compile para el SO
+   ya sea en ese formato"*. Ahora `gen_sxe_resources.py` recibe la lista
+   completa de programas del build (`--program`) y estampa un `.sxmeta`
+   mínimo — nombre, versión, subsistema, commit — para todos, tengan o no
+   manifiesto. Ver [Estampado por default](#estampado-por-default). Cobertura
+   medida sobre la imagen completa: **67/67**.
+
 `INTERPRETER` no tiene fase: el campo está desde v1 y se empieza a honrar el
 día que exista la VM.
+
+## Fuera de alcance por ahora: el subsistema nativo
+
+`subsystems/native/build.ps1` linkea con su propio `ld.lld` y nunca pasa por
+`Add-SxeResources`, así que las apps del subsistema nativo (Haxe → C++) salen
+sin recursos **aunque se les escriba un `.sxres`**. Es un hueco de cobertura,
+no una decisión de diseño — pero el subsistema nativo está en pausa, así que
+queda documentado y sin tocar hasta que se retome.

@@ -1002,8 +1002,11 @@ static void selftest_prune(void)
  *
  * Corre contra los binarios REALES de la imagen, que es la unica forma de
  * probar esto: el paso que se valida es justamente el que abre el ejecutable.
- * notepad esta estampado; init no lo esta y nunca lo va a estar, asi que sirve
- * de control del camino "sin recursos".
+ * Con el estampado por default TODO binario tiene .sxmeta -- init incluido,
+ * aunque nunca declaro un init.sxres --, asi que el item de abajo que usa
+ * /bin/init no prueba "sin recursos": prueba que un .ini que declara nombre Y
+ * descripcion le gana en los dos campos al estampado automatico, y que lo que
+ * ese automatico nunca aporta (icono, flags) sigue sin tocarse.
  */
 static void selftest_sxe(void)
 {
@@ -1057,11 +1060,16 @@ static void selftest_sxe(void)
     /* Lo que el .ini NO declaro sigue viniendo del binario. */
     expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc sin override viene del .sxmeta");
 
-    /* Item 2: binario sin recursos, se queda con lo declarado. */
+    /*
+     * Item 2: init, con SOLO el estampado automatico (nombre/version/
+     * subsystem/build_id, nada de icono ni flags) y un .ini que cubre nombre
+     * Y descripcion a mano. Nada del automatico deberia asomar en ninguno de
+     * los dos campos que el .ini ya declaro.
+     */
     item = progman_item_at(2);
-    expect(item != 0 && strcmp(item->name, "Arranque") == 0, "binario sin .sxe conserva el nombre");
-    expect(item != 0 && strcmp(item->description, "PID 1") == 0, "binario sin .sxe conserva la desc");
-    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "binario sin .sxe no tiene icono propio");
+    expect(item != 0 && strcmp(item->name, "Arranque") == 0, "el .ini le gana el nombre al automatico");
+    expect(item != 0 && strcmp(item->description, "PID 1") == 0, "el .ini le gana la desc al automatico");
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "el automatico nunca trae icono propio");
 
     /* Aplicar dos veces no debe duplicar ni corromper nada. */
     expect(progman_registry_apply_sxe() == 2, "apply_sxe es idempotente");
