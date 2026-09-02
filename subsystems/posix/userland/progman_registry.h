@@ -19,7 +19,7 @@
  *     name=Doom
  *     path=/disk/bin/doomgeneric
  *     desc=Classic FPS test port
- *     icon=doom
+ *     icon=/disk/bin/doomgeneric
  *     flags=fullscreen
  *
  * Reglas del parser:
@@ -47,8 +47,15 @@
  * -- que siguen siendo ejecutables de primera clase -- simplemente se saltean
  * ese escalon.
  *
- * Los iconos del .ini se referencian por nombre contra el set horneado en build
- * (desktop_icons.h); un nombre desconocido cae al icono generico.
+ * `icon=` en un [item] YA NO elige de un catalogo horneado por nombre: apunta
+ * a un PROGRAMA cuyo .sxicon tomar prestado (icon=/bin/notepad). El binario
+ * referenciado no tiene que ser el que este item lanza -- pedir el icono de
+ * otro programa es exactamente el caso de uso, p.ej. una segunda entrada del
+ * mismo ejecutable con otro nombre. Nombres cortos previos a este cambio
+ * (shell, notepad, gfxdemo, keytest, mousetest) siguen andando por
+ * compatibilidad: resuelven al PATH del programa que hoy dibuja ese icono, ya
+ * no a un id horneado. "desktop" y cualquier nombre sin alias caen al icono
+ * generico, igual que un path que no se puede leer.
  */
 
 #define PROGMAN_MAX_GROUPS 8
@@ -86,7 +93,12 @@ struct progman_item
     char name[PROGMAN_NAME_CAPACITY];
     char path[PROGMAN_PATH_CAPACITY];
     char description[PROGMAN_DESC_CAPACITY];
-    uint32_t icon_id;      /* enum desktop_icon_id; solo si icon_slot < 0 */
+    /* Vacio salvo que icon= haya resuelto a un programa (propio o de un alias
+     * legado): ahi apply_sxe lee el .sxicon de ESTE path en vez del de
+     * `path`. Vacio con PROGMAN_OVERRIDE_ICON puesto = nombre sin alias
+     * (p.ej. "desktop") -- se queda en icon_id generico, sin leer nada. */
+    char icon_borrow_path[PROGMAN_PATH_CAPACITY];
+    uint32_t icon_id;      /* enum desktop_icon_id; ultimo recurso si nada mas resolvio */
     uint32_t launch_flags; /* SAVANXP_DESKTOP_LAUNCH_FLAG_* */
     uint32_t overrides;    /* PROGMAN_OVERRIDE_* */
     int icon_slot;         /* indice en el pool de iconos .sxicon, o NONE */

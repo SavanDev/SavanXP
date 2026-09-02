@@ -149,37 +149,54 @@ static int text_contains_word(const char *text, const char *word)
     return 0;
 }
 
-static uint32_t icon_id_from_name(const char *name)
+/*
+ * Resuelve el valor de "icon=" a un PATH cuyo .sxicon tomar prestado, o 0 si
+ * no hay ninguno -- ahi el item se queda con el icono generico (icon_id por
+ * defecto), el mismo desenlace que un path que despues no se puede leer.
+ *
+ * Dos formas validas:
+ *   - Un path absoluto ("icon=/bin/notepad"): se usa tal cual, sin validar
+ *     que exista aca -- eso lo hace apply_sxe al intentar leerlo, y fallar
+ *     ahi es indistinguible de cualquier otro binario ilegible.
+ *   - Un alias legado de antes de este cambio: nombres cortos que ANTES
+ *     elegian de un catalogo horneado por id. Ahora resuelven al PROGRAMA que
+ *     hoy dibuja ese icono (su propio .sxicon, estampado en build), no a un
+ *     array de pixeles hardcodeado. "desktop" nunca tuvo alias -- era
+ *     literalmente el generico -- y sigue sin tenerlo.
+ */
+static const char *icon_reference_path(const char *value)
 {
-    if (name != 0)
+    if (value == 0 || value[0] == '\0')
     {
-        if (strcmp(name, "shell") == 0)
-        {
-            return DESKTOP_ICON_SHELL;
-        }
-        /* "doom" ya no mapea a nada: su icono se fue del set horneado
-         * (sdk/doomgeneric/icon.png, via icon_file=). Un progman.ini viejo
-         * con icon=doom cae al generico, igual que cualquier nombre que este
-         * lector no reconoce -- no rompe, solo deja de acertar. */
-        if (strcmp(name, "gfxdemo") == 0)
-        {
-            return DESKTOP_ICON_GFX_DEMO;
-        }
-        if (strcmp(name, "keytest") == 0)
-        {
-            return DESKTOP_ICON_KEY_TEST;
-        }
-        if (strcmp(name, "mousetest") == 0)
-        {
-            return DESKTOP_ICON_MOUSE_TEST;
-        }
-        if (strcmp(name, "notepad") == 0)
-        {
-            return DESKTOP_ICON_NOTEPAD;
-        }
+        return 0;
     }
-    /* Cubre "desktop" y cualquier nombre desconocido. */
-    return DESKTOP_ICON_DESKTOP;
+    if (value[0] == '/')
+    {
+        return value;
+    }
+    if (strcmp(value, "shell") == 0)
+    {
+        return "/bin/shellapp";
+    }
+    if (strcmp(value, "notepad") == 0)
+    {
+        return "/bin/notepad";
+    }
+    if (strcmp(value, "gfxdemo") == 0)
+    {
+        return "/bin/gfxdemo";
+    }
+    if (strcmp(value, "keytest") == 0)
+    {
+        return "/bin/keytest";
+    }
+    if (strcmp(value, "mousetest") == 0)
+    {
+        return "/bin/mousetest";
+    }
+    /* "desktop", "doom" (se fue del set: ver docs/SXE_FORMAT.md), o
+     * cualquier nombre que este lector no reconoce. */
+    return 0;
 }
 
 static uint32_t launch_flags_from_text(const char *text)
@@ -403,7 +420,11 @@ int progman_registry_parse(const char *text, size_t length)
                 }
                 else if (strcmp(key, "icon") == 0)
                 {
-                    pending.icon_id = icon_id_from_name(value);
+                    /* Un path o alias resuelto se guarda para que apply_sxe
+                     * lea el .sxicon prestado; sin ninguno de los dos, el
+                     * campo queda vacio (ya lo dejo asi begin_item) y el item
+                     * se conforma con el icon_id generico. */
+                    copy_field(pending.icon_borrow_path, sizeof(pending.icon_borrow_path), icon_reference_path(value));
                     pending.overrides |= PROGMAN_OVERRIDE_ICON;
                 }
                 else if (strcmp(key, "flags") == 0)
@@ -591,11 +612,24 @@ static int apply_sxe_to_item(struct progman_item *item, int slot, void *meta_buf
         }
     }
 
-    if ((item->overrides & PROGMAN_OVERRIDE_ICON) == 0 &&
-        sxe_load_icons(item->path, icon_buffer, icon_capacity, &icons) == SXE_OK &&
-        adopt_icon(item, slot, &icons))
     {
-        touched = 1;
+        /*
+         * Sin override: el icono sale del propio binario. Con override, solo
+         * hay algo que leer si icon= resolvio a un path (propio o prestado de
+         * otro programa) -- un nombre sin alias deja icon_borrow_path vacio a
+         * proposito, y ahi no hay nada que intentar: el item se queda con el
+         * icon_id generico.
+         */
+        const char *icon_source_path = (item->overrides & PROGMAN_OVERRIDE_ICON) == 0
+            ? item->path
+            : (item->icon_borrow_path[0] != '\0' ? item->icon_borrow_path : 0);
+
+        if (icon_source_path != 0 &&
+            sxe_load_icons(icon_source_path, icon_buffer, icon_capacity, &icons) == SXE_OK &&
+            adopt_icon(item, slot, &icons))
+        {
+            touched = 1;
+        }
     }
 
     return touched;
@@ -803,21 +837,24 @@ static void selftest_well_formed(void)
     expect(group != 0 && strcmp(group->name, "Diagnostics") == 0, "grupo 1 nombre");
     expect(group != 0 && group->item_count == 1, "grupo 1 item_count");
 
+    /* Esta funcion es parseo PURO, no llama a apply_sxe: lo que se puede
+     * verificar de icon= aca es a que PATH resolvio (icon_borrow_path), no
+     * el bitmap final -- eso lo cubre selftest_sxe, contra binarios reales. */
     item = progman_item_at(0);
     expect(item != 0 && strcmp(item->name, "Shell") == 0, "item 0 nombre");
     expect(item != 0 && strcmp(item->path, "/bin/shellapp") == 0, "item 0 path");
     expect(item != 0 && strcmp(item->description, "Terminal") == 0, "item 0 desc");
-    expect(item != 0 && item->icon_id == DESKTOP_ICON_SHELL, "item 0 icono");
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/shellapp") == 0, "item 0 icon= alias legado a path");
     expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_NONE, "item 0 flags");
 
     /* Espacios alrededor de clave y valor recortados. */
     item = progman_item_at(1);
     expect(item != 0 && strcmp(item->name, "Doom") == 0, "item 1 nombre trim");
     expect(item != 0 && strcmp(item->path, "/disk/bin/doomgeneric") == 0, "item 1 path trim");
-    /* "doom" ya no es un nombre de icono reconocido (se fue del set
-     * horneado): un progman.ini viejo con icon=doom tiene que degradar limpio
-     * al generico, no romper el parseo ni caer en cualquier otra cosa. */
-    expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "item 1 icono cae al generico");
+    /* "doom" ya no tiene alias (se fue del set horneado): un progman.ini
+     * viejo con icon=doom tiene que degradar limpio a "sin path prestado",
+     * no romper el parseo ni caer en cualquier otra cosa. */
+    expect(item != 0 && item->icon_borrow_path[0] == '\0', "item 1 icon=doom sin alias, sin path");
     expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN, "item 1 flag fullscreen");
 
     /* Indexado por grupo. */
@@ -844,7 +881,8 @@ static void selftest_crlf_and_unknown(void)
     item = progman_item_at(0);
     expect(item != 0 && strcmp(item->name, "Files") == 0, "crlf nombre");
     expect(item != 0 && strcmp(item->path, "/bin/filesapp") == 0, "crlf path");
-    /* Icono desconocido cae al generico en vez de romper. */
+    /* Nombre sin alias: no hay path que prestar, cae al generico en vez de romper. */
+    expect(item != 0 && item->icon_borrow_path[0] == '\0', "icon= sin alias no guarda path");
     expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "icono desconocido -> generico");
 }
 
@@ -1003,6 +1041,33 @@ static void selftest_prune(void)
     expect(progman_item_count() == 2 && progman_group_count() == 2, "prune idempotente conserva");
 }
 
+/* Compara dos bitmaps por contenido, no por puntero: es lo que hace falta
+ * para probar que un icono PRESTADO es de verdad el del programa referenciado
+ * y no cualquier otra cosa que haya quedado en el slot. */
+static int bitmaps_equal(const struct desktop_embedded_bitmap *a, const struct desktop_embedded_bitmap *b)
+{
+    uint32_t index;
+    uint32_t count;
+
+    if (a == 0 || b == 0 || a->pixels == 0 || b->pixels == 0)
+    {
+        return 0;
+    }
+    if (a->width != b->width || a->height != b->height)
+    {
+        return 0;
+    }
+    count = a->width * a->height;
+    for (index = 0; index < count; ++index)
+    {
+        if (a->pixels[index] != b->pixels[index])
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /*
  * Precedencia .ini > .sxe > default (docs/SXE_FORMAT.md, fase 3).
  *
@@ -1013,6 +1078,11 @@ static void selftest_prune(void)
  * /bin/init no prueba "sin recursos": prueba que un .ini que declara nombre Y
  * descripcion le gana en los dos campos al estampado automatico, y que lo que
  * ese automatico nunca aporta (icono, flags) sigue sin tocarse.
+ *
+ * "icon=" ya no elige de un catalogo horneado: apunta a un PROGRAMA. Este
+ * fixture cubre las tres formas -- path explicito, alias legado, y un nombre
+ * sin alias -- contra binarios reales, porque el paso que se valida es
+ * justamente el que abre el ejecutable prestado.
  */
 static void selftest_sxe(void)
 {
@@ -1024,7 +1094,15 @@ static void selftest_sxe(void)
         "[item]\n"
         "name=Mi Bloc\n"
         "path=/bin/notepad\n"
-        "icon=gfxdemo\n"
+        "icon=/bin/aboutapp\n"
+        "[item]\n"
+        "name=Legado\n"
+        "path=/bin/notepad\n"
+        "icon=shell\n"
+        "[item]\n"
+        "name=Generico\n"
+        "path=/bin/notepad\n"
+        "icon=desktop\n"
         "[item]\n"
         "name=Arranque\n"
         "desc=PID 1\n"
@@ -1032,7 +1110,7 @@ static void selftest_sxe(void)
     const struct progman_item *item;
     const struct desktop_embedded_bitmap *icon;
 
-    expect(progman_registry_parse(kText, sizeof(kText) - 1) == 3, "sxe fixture 3 items");
+    expect(progman_registry_parse(kText, sizeof(kText) - 1) == 5, "sxe fixture 5 items");
 
     /* Antes de aplicar, nadie tiene icono propio. */
     item = progman_item_at(0);
@@ -1045,8 +1123,12 @@ static void selftest_sxe(void)
     expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_NAME) != 0, "item 1 override de nombre");
     expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_ICON) != 0, "item 1 override de icono");
     expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0, "item 1 sin override de desc");
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/aboutapp") == 0, "icon=/path se guarda tal cual");
 
-    expect(progman_registry_apply_sxe() == 2, "apply_sxe toca 2 items");
+    /* item0 (icono propio), item1 y item2 (prestan icono), item3 (desc del
+     * binario aunque el icono quede generico) suman 4; item4 (init, sin icon=
+     * y sin recursos propios que aportar) no toca nada. */
+    expect(progman_registry_apply_sxe() == 4, "apply_sxe toca 4 items");
 
     /* Item 0: sin overrides, todo sale del binario. */
     item = progman_item_at(0);
@@ -1057,28 +1139,65 @@ static void selftest_sxe(void)
     expect(icon != 0 && icon->pixels != 0, "bitmap del icono disponible");
     expect(icon != 0 && icon->width == 32u && icon->height == 32u, "icono de 32x32");
 
-    /* Item 1: mismo binario, pero el .ini gano donde hablo. */
+    /*
+     * Item 1: icon=/bin/aboutapp, un PATH explicito -- la forma nueva y
+     * principal. aboutapp.sxres declara icon=desktop, asi que su .sxicon real
+     * es pixel a pixel el mismo que el generico horneado: comparar contra
+     * desktop_icon_large(DESKTOP_ICON_DESKTOP) prueba que el prestamo trajo
+     * el binario correcto, no cualquier cosa.
+     */
     item = progman_item_at(1);
     expect(item != 0 && strcmp(item->name, "Mi Bloc") == 0, "el nombre del .ini le gana al .sxmeta");
-    expect(item != 0 && item->icon_id == DESKTOP_ICON_GFX_DEMO, "el icono del .ini sobrevive");
-    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "icono overrideado no toma el .sxicon");
-    expect(progman_item_icon(item) == 0, "icono overrideado cae al set horneado");
-    /* Lo que el .ini NO declaro sigue viniendo del binario. */
-    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc sin override viene del .sxmeta");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "icon=/path toma prestado un .sxicon");
+    icon = progman_item_icon(item);
+    expect(bitmaps_equal(icon, desktop_icon_large(DESKTOP_ICON_DESKTOP)),
+        "el icono prestado es el de aboutapp (=generico, aboutapp declara icon=desktop)");
+    /* Lo que el .ini NO declaro sigue viniendo del binario que este item
+     * lanza (notepad), no del que le presta el icono (aboutapp). */
+    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc sin override viene del propio binario");
 
     /*
-     * Item 2: init, con SOLO el estampado automatico (nombre/version/
+     * Item 2: icon=shell, un ALIAS LEGADO de antes de este cambio. Resuelve a
+     * /bin/shellapp y presta SU .sxicon real -- shellapp.sxres declara
+     * icon=app-terminal, asi que el resultado tiene que ser identico a
+     * desktop_icon_large(DESKTOP_ICON_SHELL).
+     */
+    item = progman_item_at(2);
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/shellapp") == 0, "alias legado resuelve al path del programa");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "alias legado tambien presta el .sxicon");
+    icon = progman_item_icon(item);
+    expect(bitmaps_equal(icon, desktop_icon_large(DESKTOP_ICON_SHELL)),
+        "el icono prestado por alias es el de shellapp");
+
+    /*
+     * Item 3: icon=desktop, un nombre SIN alias -- "desktop" nunca lo tuvo,
+     * era literalmente el generico. Se queda en icon_id por defecto y NO
+     * intenta leer nada, ni siquiera el .sxicon propio de notepad: el usuario
+     * pidio explicitamente el generico, y eso tiene que ganarle a lo que el
+     * binario traiga.
+     */
+    item = progman_item_at(3);
+    expect(item != 0 && item->icon_borrow_path[0] == '\0', "nombre sin alias no guarda path");
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "sin alias no se presta ningun .sxicon");
+    expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "sin alias cae al icon_id generico");
+    expect(progman_item_icon(item) == 0, "sin alias no hay bitmap prestado");
+    /* La descripcion si sigue viniendo del binario: el override fue solo del
+     * icono, no del resto de los campos. */
+    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc de un item sin override de desc");
+
+    /*
+     * Item 4: init, con SOLO el estampado automatico (nombre/version/
      * subsystem/build_id, nada de icono ni flags) y un .ini que cubre nombre
      * Y descripcion a mano. Nada del automatico deberia asomar en ninguno de
      * los dos campos que el .ini ya declaro.
      */
-    item = progman_item_at(2);
+    item = progman_item_at(4);
     expect(item != 0 && strcmp(item->name, "Arranque") == 0, "el .ini le gana el nombre al automatico");
     expect(item != 0 && strcmp(item->description, "PID 1") == 0, "el .ini le gana la desc al automatico");
     expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "el automatico nunca trae icono propio");
 
     /* Aplicar dos veces no debe duplicar ni corromper nada. */
-    expect(progman_registry_apply_sxe() == 2, "apply_sxe es idempotente");
+    expect(progman_registry_apply_sxe() == 4, "apply_sxe es idempotente");
     item = progman_item_at(0);
     expect(item != 0 && strcmp(item->name, "Notepad") == 0, "idempotente conserva el nombre");
 

@@ -15,12 +15,19 @@
 > imagen entera: **67/67 binarios instalados estampados**, in-tree y externos
 > (Doom, busybox) por igual. Ver [más abajo](#estampado-por-default).
 >
-> Pendientes conocidos, anotados en su lugar: **el angostado de
-> `desktop_icons`** (lo traba el `icon=` de `progman.ini`, que referencia el
-> set por nombre), la **resolución por MIME** (necesita una capa de detección
-> de tipo que no existe), el **costo del escaneo de asociaciones** —ya
-> medido— y el **renombre a `.sxe`**, que nunca se hizo y que con el
-> estampado universal perdió el argumento que tenía a favor (ver esa sección).
+> **`icon=` de `progman.ini` apunta a un programa, no a un catálogo.** Doom ya
+> salió del set horneado con su propio `icon_file=`; `icon=` ahora resuelve a
+> un *path* (`icon=/bin/aboutapp` presta ese ícono) en vez de a un id
+> horneado, con alias legados para los nombres cortos de antes. Ver "`icon=`
+> ya no elige de un catálogo: apunta a un programa", más abajo.
+>
+> Pendientes conocidos, anotados en su lugar: **angostar del todo
+> `desktop_icons`** (ya no lo bloquea `icon=` — es un cambio del mismo tamaño
+> que el de Doom, repetido cinco veces), la **resolución por MIME** (necesita
+> una capa de detección de tipo que no existe), el **costo del escaneo de
+> asociaciones** —ya medido— y el **renombre a `.sxe`**, que nunca se hizo y
+> que con el estampado universal perdió el argumento que tenía a favor (ver
+> esa sección).
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -347,15 +354,62 @@ horneado de `progman_registry` ahora apuntan a `DESKTOP_ICON_DESKTOP`
 (genérico): sólo entran en juego si el binario de Doom no se puede leer en
 absoluto, que es exactamente lo que un fallback debería cubrir.
 
-> **El resto del set sigue horneado, y a propósito.** Sacar a Doom fue fácil
-> porque nada más lo compartía. Los íconos que quedan (`shell`, `notepad`,
-> `gfxdemo`, `keytest`, `mousetest`, el genérico) los siguen usando programas
-> del propio repo, y el `icon=` de `progman.ini` los referencia **por
-> nombre** — vaciar el set rompería un `icon=notepad` escrito a mano. El paso
-> que destraba angostarlo del todo es rediseñar esa referencia (por ejemplo,
-> que `icon=` apunte al *programa* cuyo icono tomar prestado, no a un nombre
-> del catálogo), y no hay apuro: cada programa que gane su propio `icon_file=`
-> dejará una fila menos que mover cuando llegue ese rediseño.
+### `icon=` ya no elige de un catálogo: apunta a un programa
+
+Era el bloqueo que quedaba anotado arriba, y ya no lo es. `icon=` en un
+`[item]` de `progman.ini` deja de resolver contra un id horneado
+(`icon_id_from_name()`, que ya no existe) y pasa a guardar un **path** —
+`progman_item.icon_borrow_path` — que `progman_registry_apply_sxe()` intenta
+leer con el mismo mecanismo que ya usa para el icono del propio item, sólo que
+apuntado a *otro* binario:
+
+```ini
+[item]
+name=Mi Bloc
+path=/bin/notepad
+icon=/bin/aboutapp
+```
+
+Ese ítem lanza Notepad pero muestra el ícono de `aboutapp` — el caso de uso
+real es una segunda entrada del mismo ejecutable (otro argumento, otro
+nombre) que igual quiere distinguirse visualmente. Tres formas del valor:
+
+| valor | resuelve a |
+|---|---|
+| `/bin/aboutapp` (empieza con `/`) | ese path tal cual — la forma principal |
+| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | alias legado: el path del programa que hoy dibuja ese ícono (`/bin/shellapp`, …) |
+| `desktop`, o cualquier nombre sin alias | nada — `icon_borrow_path` queda vacío, el ítem se queda en el `icon_id` genérico |
+
+**Los alias son puente, no el mecanismo nuevo.** Antes de este cambio,
+`icon=shell` elegía un array de píxeles horneado porque no había otra forma de
+que Shell tuviera ícono. Hoy `/bin/shellapp` ya trae su propio `.sxicon`
+(estampado desde `icon=app-terminal` en `shellapp.sxres`), así que el alias
+resuelve al *mismo* path que el ítem tendría igual sin ningún `icon=` — es
+puramente compatibilidad hacia atrás para un `.ini` escrito antes de este
+rediseño, no algo que un `.ini` nuevo necesite escribir.
+
+**Un override explícito le gana al binario, aunque el binario tenga ícono
+propio.** `icon=desktop` en un ítem que lanza `/bin/notepad` fuerza el genérico
+y **no** intenta leer el `.sxicon` real de Notepad — el usuario pidió
+explícitamente "no", y eso pesa más que lo que declare el ejecutable. Es la
+misma jerarquía de siempre (`.ini` > `.sxmeta` > default > genérico), aplicada
+también dentro del propio campo `icon=`.
+
+`ports/ccleste/progman.ini` tenía un `icon=doom` que este cambio dejaba
+resolviendo en silencio al genérico en vez del ícono real de Doom — se sacó
+esa línea, con el mismo comentario que ya tenía el ítem de Celeste ("sin
+`icon=` a propósito: el binario ya trae el suyo").
+
+> **El resto del set sigue horneado, y a propósito.** `desktop_icons.h`
+> retiene `shell`/`notepad`/`gfxdemo`/`keytest`/`mousetest`/genérico porque
+> los alias legados de arriba todavía los referencian por id, y porque son la
+> red de seguridad del default horneado de `progman_registry` y de la tabla
+> fallback de `windowd_appinfo` para esos cinco programas — el mismo rol que
+> tenía `DESKTOP_ICON_DOOM` antes de que Doom consiguiera su propio ícono.
+> Vaciarlos del todo es un cambio del mismo tamaño y forma que el de Doom,
+> repetido cinco veces (una fila de cada tabla, por programa) — ya no lo
+> bloquea el `icon=` del `.ini`, que era la única razón por la que antes no se
+> podía tocar.
 
 ### Decisión: el WM lee los recursos, no viajan por el protocolo
 
@@ -454,6 +508,10 @@ Los iconos leídos se copian a un pool fijo de `PROGMAN_MAX_ITEMS` slots de
 32×32 (**192 KiB de BSS**). Es una elección consciente: sin malloc hay que
 reservar el peor caso, y la alternativa —releer el `.sxicon` al pintar— pondría
 I/O de disco dentro del ciclo de repintado.
+
+El escalón 1 sobre el campo `icon=` en particular —incluida la forma en que
+puede apuntar al `.sxicon` de *otro* programa— se describe más abajo, en la
+sección "`icon=` ya no elige de un catálogo: apunta a un programa".
 
 ## Integración con el build
 
