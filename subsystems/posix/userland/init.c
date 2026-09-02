@@ -55,6 +55,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "windowd")) {
         return "WINDOWD SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "kbd")) {
+        return "KBD SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "audiostream")) {
         return "AUDIO STREAM";
     }
@@ -87,6 +90,7 @@ static int run_automation_spec(const char* spec) {
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
     const char* nativehello_argv[] = {"/disk/bin/nativehello", 0};
     const char* sxguihost_argv[] = {"/disk/bin/sxguihost", 0};
+    const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -142,6 +146,10 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/sxguihost";
             argv = sxguihost_argv;
             argc = 1;
+        } else if (strcmp(spec, "kbdtest") == 0 || strcmp(spec, "kbd-selftest") == 0) {
+            path = "/disk/bin/kbdtest";
+            argv = kbdtest_argv;
+            argc = 2;
         } else if (text_starts_with(spec, "gputest --soak ")) {
             const char* iterations = skip_spaces(spec + strlen("gputest --soak"));
             if (iterations[0] == '\0') {

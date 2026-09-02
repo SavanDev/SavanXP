@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "taskbar-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -217,6 +217,7 @@ $UserPrograms = @(
     @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c"; Test = $true },
     @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c"; Test = $true },
     @{ Name = "keytest"; Source = "subsystems/posix/userland/keytest.c"; Test = $true },
+    @{ Name = "kbdtest"; Source = "subsystems/posix/userland/kbdtest.c"; Test = $true },
     @{ Name = "mousetest"; Source = "subsystems/posix/userland/mousetest.c"; Test = $true },
     @{ Name = "sysinfo"; Source = "subsystems/posix/userland/sysinfo.c" },
     @{ Name = "forktest"; Source = "subsystems/posix/userland/forktest.c"; Test = $true },
@@ -1088,7 +1089,7 @@ function Stop-AutomationQemu($Process, [int]$MonitorPort) {
     Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
 }
 
-function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [ValidateSet("auto", "ac97", "virtio")][string]$Audio = "auto", [string]$WavPath, [scriptblock]$PreLaunch) {
+function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [string]$FailureToken, [int]$TimeoutMinutes = 2, [ValidateSet("auto", "ac97", "virtio")][string]$Audio = "auto", [string]$WavPath, [scriptblock]$PreLaunch, [string]$ReadyToken, [scriptblock]$OnReady) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     if ($NoTestApps) {
         Write-Host "Nota: los harnesses de automatizacion requieren las apps de testeo; se ignora -NoTestApps."
@@ -1125,6 +1126,18 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
     $monitorPort = ([System.Net.IPEndPoint]$monitorListener.LocalEndpoint).Port
     $monitorListener.Stop()
 
+    # Puerto QMP, solo para harnesses que necesitan mover input real (p. ej.
+    # kbd-smoke): -ReadyToken/-OnReady dejan mandar teclas/mouse por QMP una
+    # vez que el binario de test avisa por serial que ya es el dueno de la
+    # sesion grafica, sin duplicar el armado de QEMU como hace shoot.ps1.
+    $qmpPort = 0
+    if ($ReadyToken) {
+        $qmpListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $qmpListener.Start()
+        $qmpPort = ([System.Net.IPEndPoint]$qmpListener.LocalEndpoint).Port
+        $qmpListener.Stop()
+    }
+
     $args = @(
         "-machine", "q35,pcspk-audiodev=audio0",
         "-accel", "tcg",
@@ -1148,6 +1161,9 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-no-reboot",
         "-no-shutdown"
     )
+    if ($qmpPort -gt 0) {
+        $args += @("-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait")
+    }
     $args += Get-QemuVideoInputDevices
 
     # audiodev de audio1 (el que consume el dispositivo de sonido): por defecto
@@ -1165,6 +1181,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
     $args += Get-QemuAudioDevice $Audio
 
     $process = Start-Process -FilePath $qemu -ArgumentList $args -PassThru -RedirectStandardOutput $SmokeStdoutLog -RedirectStandardError $SmokeStderrLog
+    $readyFired = $false
     try {
         $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
         while ((Get-Date) -lt $deadline) {
@@ -1177,6 +1194,12 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
             }
 
             $content = Get-Content $SmokeSerialLog -Raw
+            if ($ReadyToken -and -not $readyFired -and $content -match [regex]::Escape($ReadyToken)) {
+                $readyFired = $true
+                if ($OnReady) {
+                    & $OnReady $qmpPort
+                }
+            }
             if ($content -match [regex]::Escape($SuccessToken)) {
                 Start-Sleep -Milliseconds 2000
                 Stop-AutomationQemu $process $monitorPort
@@ -1298,6 +1321,24 @@ function Run-Ac97CountQemu {
 
 function Run-WindowdSmokeQemu {
     Run-AutomationQemu -AutomationCommand "windowd-selftest" -SuccessToken "WINDOWD SMOKE PASS" -FailureToken "WINDOWD SMOKE FAIL" -TimeoutMinutes 3
+}
+
+# Harness headless del driver de teclado (subsystems/posix/userland/kbdtest.c):
+# a diferencia de windowd-smoke (evento sintetico inyectado a mano), este
+# cierra el pipeline real PS/2 emulado -> IRQ -> kernel/ps2.cpp -> /dev/input0.
+# kbdtest se planta como spec de automatizacion, se queda esperando en
+# /dev/input0 e imprime "KBD SMOKE READY" por serial en cuanto es el dueno de
+# la sesion grafica; recien ahi el host manda teclas de verdad por QMP
+# (tools/kbd_smoke.py), y el token final lo decide kbdtest comparando lo que
+# recibio contra el guion esperado.
+function Run-KbdSmokeQemu {
+    $python = Get-PythonExecutable
+    $injector = Join-Path $ToolRoot "kbd_smoke.py"
+    Run-AutomationQemu -AutomationCommand "kbdtest" -SuccessToken "KBD SMOKE PASS" -FailureToken "KBD SMOKE FAIL" -TimeoutMinutes 3 -ReadyToken "KBD SMOKE READY" -OnReady {
+        param($QmpPort)
+        & $python $injector --port $QmpPort
+        if ($LASTEXITCODE -ne 0) { throw "Fallo la inyeccion QMP de teclado." }
+    }.GetNewClosure()
 }
 
 # Doom se construye con un build APARTE (sdk/doomgeneric/build.ps1) y no entra
@@ -1437,6 +1478,9 @@ switch ($Command) {
     }
     "net-smoke" {
         Run-NetSmokeQemu
+    }
+    "kbd-smoke" {
+        Run-KbdSmokeQemu
     }
     "float-smoke" {
         Run-FloatSmokeQemu
