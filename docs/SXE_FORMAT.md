@@ -451,7 +451,17 @@ ext_open=.txt,.ini,.cfg,.md
 | `launch_flags` | lista por comas; los nombres salen de `SAVANXP_DESKTOP_LAUNCH_FLAG_*` |
 | `subsystem` | `posix` o `native` |
 | `icon` | nombre de asset bajo `assets/desktop/icons/{16x16,32x32}/<icon>.png` — igual que `progman.ini` lo referencia hoy |
+| `icon_file` | PNG propio del programa, resuelto **relativo al `.sxres`**. Los dos tamaños que exige el runtime se derivan de ese archivo |
 | `mime_open`, `ext_open` | listas por comas |
+
+**`icon` e `icon_file` son excluyentes, y la diferencia importa.** `icon`
+referencia el catálogo del sistema: sirve para los programas que se envían con
+SavanXP y que comparten estética. `icon_file` toma un PNG que vive al lado del
+manifiesto, y es el que corresponde cuando el programa trae su propio arte —
+sobre todo un port de terceros, cuyo icono no tiene por qué entrar a
+`assets/desktop/icons/`, que se versiona y se hornea en la imagen. Con
+`icon_file` el arte termina **únicamente dentro del ejecutable**, que es
+exactamente para lo que existe este formato.
 
 **`version=system` existe para que los programas del sistema no queden stale.**
 Hardcodear `0.3.3` en nueve manifiestos sería la misma duplicación que este

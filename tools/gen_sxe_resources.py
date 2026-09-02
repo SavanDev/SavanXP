@@ -96,7 +96,7 @@ _LIST_KEYS = {
 }
 
 # Claves con tratamiento propio (no son texto directo).
-_SPECIAL_KEYS = ("version", "accent", "launch_flags", "subsystem", "icon")
+_SPECIAL_KEYS = ("version", "accent", "launch_flags", "subsystem", "icon", "icon_file")
 
 _SUBSYSTEM_POSIX = 0
 
@@ -357,6 +357,42 @@ def build_icon_blob(fmt, images, label):
     return bytes(header) + bytes(entries) + bytes(payload)
 
 
+def collect_icons_from_file(fmt, manifest_path, relative_path, label):
+    """Icono propio del programa: un PNG resuelto RELATIVO al .sxres.
+
+    Es lo que hace falta para que el arte no tenga que pasar por
+    assets/desktop/icons/. Ese set es el catalogo del sistema -- se versiona y se
+    hornea en la imagen --, asi que obligar a pasar por ahi para estampar un
+    icono contradice el sentido del formato: en SXE el icono viaja DENTRO del
+    ejecutable, y un port de terceros tiene que poder traer el suyo sin dejar
+    nada en el arbol del sistema.
+
+    De un solo PNG se derivan los dos tamanos que el runtime exige.
+    """
+    path = os.path.normpath(os.path.join(os.path.dirname(manifest_path), relative_path))
+    if not os.path.isfile(path):
+        raise SystemExit(f"{label}: no se encuentra el icono '{path}'.")
+
+    source = Image.open(path).convert("RGBA")
+    images = []
+    for size in (fmt["SXE_ICON_SIZE_SMALL"], fmt["SXE_ICON_SIZE_LARGE"]):
+        if source.size == (size, size):
+            scaled = source
+        else:
+            # Si el original es un multiplo entero del destino, NEAREST conserva
+            # el pixel art tal cual. Si no lo es, quedaria comiendose filas de a
+            # una y se ve peor que un remuestreo suave.
+            exact = source.width % size == 0 and source.height % size == 0
+            scaled = source.resize((size, size), Image.NEAREST if exact else Image.LANCZOS)
+        pixels = bytearray()
+        for y in range(size):
+            for x in range(size):
+                r, g, b, a = scaled.getpixel((x, y))
+                pixels += struct.pack("<I", (a << 24) | (r << 16) | (g << 8) | b)
+        images.append((size, size, bytes(pixels)))
+    return images
+
+
 def collect_icons(fmt, project_root, icon_name, label):
     """El manifiesto referencia el icono por nombre de asset, igual que
     progman.ini lo hace hoy contra el set horneado. Los dos tamanos que el
@@ -420,7 +456,15 @@ def main():
         write_if_changed(os.path.join(args.output_dir, name + ".sxmeta"), meta)
 
         icon_path = os.path.join(args.output_dir, name + ".sxicon")
-        if manifest.get("icon"):
+        if manifest.get("icon") and manifest.get("icon_file"):
+            raise SystemExit(
+                f"{path}: declara 'icon' y 'icon_file' a la vez. El icono sale del "
+                "catalogo del sistema o de un PNG propio, no de los dos."
+            )
+        if manifest.get("icon_file"):
+            images = collect_icons_from_file(fmt, path, manifest["icon_file"], path)
+            write_if_changed(icon_path, build_icon_blob(fmt, images, path))
+        elif manifest.get("icon"):
             images = collect_icons(fmt, project_root, manifest["icon"], path)
             write_if_changed(icon_path, build_icon_blob(fmt, images, path))
         elif os.path.isfile(icon_path):
