@@ -13,23 +13,28 @@
 #define DESKTOP_INCLUDE_TEST_APPS 1
 #endif
 
-/* Presentacion por path: nombre, icono y color de la barra de titulo. Un path
- * ausente no es un error -- la ventana usa defaults genericos. */
+/*
+ * Presentacion por path: nombre, icono y color de la barra de titulo. Un path
+ * ausente no es un error -- la ventana usa defaults genericos.
+ *
+ * Icono generico en TODAS las filas: ya no hay ids horneados por app (el set
+ * quedo reducido a DESKTOP_ICON_DESKTOP, docs/SXE_FORMAT.md). El icono real de
+ * cada programa lo lee windowd_presentation_load() de su propio .sxicon antes
+ * de llegar aca -- esta tabla es el escalon de abajo, solo entra en juego si
+ * esa lectura no trae nada.
+ */
 static const struct windowd_appinfo k_window_items[] = {
     {"Program Manager", "/bin/progman", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(66, 92, 150)},
-    {"Shell", "/bin/shellapp", DESKTOP_ICON_SHELL, WINDOWD_RGB_LITERAL(0, 124, 96)},
+    {"Shell", "/bin/shellapp", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(0, 124, 96)},
     {"Files", "/bin/filesapp", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(186, 128, 36)},
     {"About", "/bin/aboutapp", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(58, 104, 190)},
-    {"Notepad", "/bin/notepad", DESKTOP_ICON_NOTEPAD, WINDOWD_RGB_LITERAL(120, 100, 60)},
-    /* Icono generico: el propio de Doom viaja en su .sxicon
-     * (sdk/doomgeneric/icon.png), no en el set horneado. Esta fila solo cubre
-     * el caso limite de una ventana de Doom sin recursos legibles. */
+    {"Notepad", "/bin/notepad", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(120, 100, 60)},
     {"Doom", "/disk/bin/doomgeneric", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(181, 81, 55)},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Widgets", "/bin/widgetsdemo", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(96, 110, 140)},
-    {"Gfx Demo", "/bin/gfxdemo", DESKTOP_ICON_GFX_DEMO, WINDOWD_RGB_LITERAL(34, 142, 96)},
-    {"Key Test", "/bin/keytest", DESKTOP_ICON_KEY_TEST, WINDOWD_RGB_LITERAL(41, 111, 188)},
-    {"Mouse Test", "/bin/mousetest", DESKTOP_ICON_MOUSE_TEST, WINDOWD_RGB_LITERAL(156, 104, 38)},
+    {"Gfx Demo", "/bin/gfxdemo", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(34, 142, 96)},
+    {"Key Test", "/bin/keytest", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(41, 111, 188)},
+    {"Mouse Test", "/bin/mousetest", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(156, 104, 38)},
 #endif
 };
 
@@ -203,9 +208,18 @@ static void expect(int condition, const char *label)
 int windowd_presentation_selftest(void)
 {
     static struct windowd_presentation presentation;
+    /* Buffer de una lectura INDEPENDIENTE del mismo .sxicon, por la API
+     * publica de sxe.h en vez del camino interno de windowd_presentation_load.
+     * Es lo que reemplaza la comparacion contra el set horneado ahora que
+     * desktop_icons.h ya no tiene un id por app (docs/SXE_FORMAT.md, "icon= ya
+     * no elige de un catalogo"): no queda un SEGUNDO camino independiente que
+     * hornee el mismo PNG para cruzar contra el primero. */
+    _Alignas(4) uint8_t icon_buffer[SXE_ICON_MAX_BYTES];
+    struct sxe_icons icons;
+    const struct sxe_icon_entry *entry = 0;
+    const uint32_t *raw_pixels = 0;
     struct desktop_embedded_bitmap storage;
     const struct desktop_embedded_bitmap *icon = 0;
-    const struct desktop_embedded_bitmap *baked = 0;
 
     g_presentation_failures = 0;
 
@@ -229,32 +243,38 @@ int windowd_presentation_selftest(void)
     expect(icon != 0 && icon->width == 16u && icon->height == 16u, "presentacion: icono de 16x16");
 
     /*
-     * Los pixeles del blob tienen que ser identicos a los del set horneado:
-     * los dos salen del mismo PNG por caminos independientes
-     * (gen_sxe_resources.py y gen_desktop_icon_assets.py). Si las dos
-     * conversiones se desincronizaran -- un canal dado vuelta, un alpha
-     * premultiplicado de un lado --, el sintoma en pantalla seria sutil y
-     * dificil de atribuir.
+     * Los pixeles que windowd_presentation_load copio a icon_pixels tienen
+     * que ser identicos a los que hay REALMENTE en el .sxicon de notepad,
+     * leidos aca de nuevo por un camino aparte (sxe_load_icons directo, no
+     * el de windowd_presentation_load). Sin este cruce, un bug en
+     * adopt_icon() -- un offset mal, una entrada equivocada elegida por
+     * sxe_icons_best -- pasaria sin que ningun otro assert lo note: todos
+     * los de arriba solo verifican que HAYA algo en el slot, no que sea lo
+     * correcto.
      */
-    baked = desktop_icon_small(DESKTOP_ICON_NOTEPAD);
-    if (icon != 0 && baked != 0 && baked->width == 16u && baked->height == 16u)
+    if (sxe_load_icons("/bin/notepad", icon_buffer, sizeof(icon_buffer), &icons) == SXE_OK)
+    {
+        entry = sxe_icons_best(&icons, WINDOWD_PRESENTATION_ICON_EXTENT);
+        raw_pixels = entry != 0 ? sxe_icons_pixels(&icons, entry) : 0;
+    }
+    if (icon != 0 && entry != 0 && raw_pixels != 0 && entry->width == 16u && entry->height == 16u)
     {
         int same = 1;
         uint32_t index = 0;
 
         for (index = 0; index < WINDOWD_PRESENTATION_ICON_PIXELS; ++index)
         {
-            if (icon->pixels[index] != baked->pixels[index])
+            if (icon->pixels[index] != raw_pixels[index])
             {
                 same = 0;
                 break;
             }
         }
-        expect(same, "presentacion: pixeles del .sxicon iguales a los horneados");
+        expect(same, "presentacion: pixeles copiados iguales a una lectura independiente del .sxicon");
     }
     else
     {
-        expect(0, "presentacion: no se pudo comparar contra el set horneado");
+        expect(0, "presentacion: no se pudo releer el .sxicon para comparar");
     }
 
     /*

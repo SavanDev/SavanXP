@@ -15,19 +15,22 @@
 > imagen entera: **67/67 binarios instalados estampados**, in-tree y externos
 > (Doom, busybox) por igual. Ver [más abajo](#estampado-por-default).
 >
-> **`icon=` de `progman.ini` apunta a un programa, no a un catálogo.** Doom ya
-> salió del set horneado con su propio `icon_file=`; `icon=` ahora resuelve a
-> un *path* (`icon=/bin/aboutapp` presta ese ícono) en vez de a un id
-> horneado, con alias legados para los nombres cortos de antes. Ver "`icon=`
+> **`icon=` de `progman.ini` apunta a un programa, no a un catálogo.** `icon=`
+> resuelve a un *path* (`icon=/bin/aboutapp` presta ese ícono) en vez de a un
+> id horneado, con alias legados para los nombres cortos de antes. Ver "`icon=`
 > ya no elige de un catálogo: apunta a un programa", más abajo.
 >
-> Pendientes conocidos, anotados en su lugar: **angostar del todo
-> `desktop_icons`** (ya no lo bloquea `icon=` — es un cambio del mismo tamaño
-> que el de Doom, repetido cinco veces), la **resolución por MIME** (necesita
-> una capa de detección de tipo que no existe), el **costo del escaneo de
-> asociaciones** —ya medido— y el **renombre a `.sxe`**, que nunca se hizo y
-> que con el estampado universal perdió el argumento que tenía a favor (ver
-> esa sección).
+> **`desktop_icons.h` angostado del todo: un solo id horneado.** Doom, Shell,
+> Notepad, Gfx Demo, Key Test y Mouse Test —los seis que llegó a tener el
+> set— salieron uno por uno; sólo queda `DESKTOP_ICON_DESKTOP`, la red de
+> seguridad universal para cuando un binario no se puede leer. Ver el callout
+> en "`icon=` ya no elige de un catálogo", más abajo.
+>
+> Pendientes conocidos, anotados en su lugar: la **resolución por MIME**
+> (necesita una capa de detección de tipo que no existe), el **costo del
+> escaneo de asociaciones** —ya medido— y el **renombre a `.sxe`**, que nunca
+> se hizo y que con el estampado universal perdió el argumento que tenía a
+> favor (ver esa sección).
 >
 > Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
 >
@@ -400,16 +403,32 @@ resolviendo en silencio al genérico en vez del ícono real de Doom — se sacó
 esa línea, con el mismo comentario que ya tenía el ítem de Celeste ("sin
 `icon=` a propósito: el binario ya trae el suyo").
 
-> **El resto del set sigue horneado, y a propósito.** `desktop_icons.h`
-> retiene `shell`/`notepad`/`gfxdemo`/`keytest`/`mousetest`/genérico porque
-> los alias legados de arriba todavía los referencian por id, y porque son la
-> red de seguridad del default horneado de `progman_registry` y de la tabla
-> fallback de `windowd_appinfo` para esos cinco programas — el mismo rol que
-> tenía `DESKTOP_ICON_DOOM` antes de que Doom consiguiera su propio ícono.
-> Vaciarlos del todo es un cambio del mismo tamaño y forma que el de Doom,
-> repetido cinco veces (una fila de cada tabla, por programa) — ya no lo
-> bloquea el `icon=` del `.ini`, que era la única razón por la que antes no se
-> podía tocar.
+> **Angostado terminado.** `desktop_icons.h` quedó reducido a un solo valor:
+> `DESKTOP_ICON_DESKTOP`. Shell, Notepad, Gfx Demo, Key Test y Mouse Test
+> salieron con la misma operación que sacó a Doom, repetida cinco veces — una
+> fila de `progman_registry`'s `k_default_items` y otra de
+> `windowd_appinfo`'s `k_window_items` por programa, las diez apuntando ahora
+> al genérico. El único id horneado que queda es la red de seguridad
+> universal: lo que se muestra cuando un binario no se puede leer en
+> absoluto, no una opción más entre varias.
+>
+> Los alias legados (`shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest`) no
+> se tocaron y **no dependían de esta tabla para empezar** — resuelven a
+> *paths* (`/bin/shellapp`, …), nunca a un id de `desktop_icons.h`. Por eso
+> vaciar el enum no les rompe nada: un `.ini` viejo con `icon=shell` sigue
+> mostrando el ícono real de Shell, ahora leído de su `.sxicon` por el mismo
+> camino que si el `.ini` no dijera nada.
+>
+> Las cinco PNG de origen (`app-terminal.png`, `app-libgfx-demo.png`,
+> `app-keyboard-settings.png`, `app-mouse.png`, `app-notepad.png`) **siguen en
+> `assets/desktop/icons/`** — a diferencia del de Doom, no se movieron a
+> ningún lado. Siguen siendo la fuente que cada `.sxres` referencia con
+> `icon=<nombre>` (`shellapp.sxres` dice `icon=app-terminal`, etc.) y
+> `tools/gen_desktop_source_art.py` las sigue regenerando en cada build. Lo
+> único que se retiró fue el paso que además las horneaba en un segundo
+> array C dentro de `desktop_icons.c` — `tools/gen_desktop_icon_assets.py`
+> ya no las lista. Dos catálogos que compartían PNG por casualidad, no el
+> mismo catálogo con dos nombres.
 
 ### Decisión: el WM lee los recursos, no viajan por el protocolo
 
@@ -667,9 +686,7 @@ se aplica en uno y no en el otro.
    lee, así que lo único que cambia es que los binarios engordan ~5 KiB.
 3. ~~**progman consume.**~~ **HECHA.** `progman_registry_apply_sxe()` resuelve
    nombre, descripción, launch flags e icono desde el binario de cada item,
-   respetando lo que el `.ini` haya declarado explícitamente. En la imagen
-   actual toma recursos de 8 de 9 items — el noveno es Doom, que se construye
-   aparte y no está estampado, así que cae al icono horneado. **Nada cambia
+   respetando lo que el `.ini` haya declarado explícitamente. **Nada cambia
    visualmente**, y eso es lo correcto: los manifiestos reproducen la
    presentación que antes vivía en las tablas. Lo que cambió es de dónde
    salen los datos.
@@ -677,8 +694,7 @@ se aplica en uno y no en el otro.
    título, icono de 16×16 y accent leyendo el `.sxe` del binario que acaba de
    lanzar, una sola vez, en `start_client_process()`. **Cero cambios de
    protocolo**, como estaba decidido. `windowd_appinfo` quedó como escalón de
-   fallback y `desktop_icons` sigue entero — ver arriba por qué angostarlo
-   todavía no.
+   fallback.
 5. ~~**Asociaciones.**~~ **HECHA** para `EXT_OPEN`. `file_assoc` resuelve
    extensión → programa combinando la política del usuario (`/disk/assoc.ini`)
    con lo que declaran los binarios instalados, y filesapp abre cada archivo
@@ -699,6 +715,24 @@ se aplica en uno y no en el otro.
    mínimo — nombre, versión, subsistema, commit — para todos, tengan o no
    manifiesto. Ver [Estampado por default](#estampado-por-default). Cobertura
    medida sobre la imagen completa: **67/67**.
+7. ~~**Doom sale del set horneado.**~~ **HECHA.** `DESKTOP_ICON_DOOM` /
+   `app-spider.png` se retiran; el arte se muda pixel por pixel a
+   `sdk/doomgeneric/icon.png`, declarado con `icon_file=`. Primer programa
+   *versionado en el repo* en usar `icon_file=` (antes sólo `ports/ccleste`,
+   gitignoreado). De paso se corrige un bug real en
+   `collect_icons_from_file()`: no detectaba múltiplo entero al *agrandar*
+   (sólo al achicar), así que un source 16×16 —el caso típico de pixel
+   art— caía a `LANCZOS` en vez de `NEAREST` para el 32×32. Ver "El primero
+   en salir fue Doom", más arriba.
+8. ~~**`icon=` apunta a un programa, y el set se angosta del todo.**~~
+   **HECHA.** `icon_id_from_name()` se borra: `icon=` guarda un *path*
+   (`progman_item.icon_borrow_path`) y `progman_registry_apply_sxe()` lo lee
+   con el mismo mecanismo que usa para el icono propio del item, apuntado a
+   otro binario. Con eso, los cinco ids horneados que quedaban
+   (`shell`/`notepad`/`gfxdemo`/`keytest`/`mousetest`) pierden su único
+   consumidor y se retiran de `desktop_icons.h` igual que Doom —
+   `DESKTOP_ICON_DESKTOP` es hoy el único valor del enum. Ver "`icon=` ya no
+   elige de un catálogo", más arriba.
 
 `INTERPRETER` no tiene fase: el campo está desde v1 y se empieza a honrar el
 día que exista la VM.

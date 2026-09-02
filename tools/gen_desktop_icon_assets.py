@@ -14,19 +14,16 @@ import os
 
 from PIL import Image
 
+# Solo el generico: es el unico desktop_icon_id que sigue existiendo
+# (desktop_icons.h). app-terminal.png, app-libgfx-demo.png,
+# app-keyboard-settings.png, app-mouse.png y app-notepad.png SIGUEN en
+# assets/desktop/icons/ -- gen_desktop_source_art.py los sigue regenerando --
+# pero ya no se hornean aca: son el catalogo del sistema que
+# gen_sxe_resources.py lee para icon=<nombre>, un consumidor DISTINTO de este
+# header (ver docs/SXE_FORMAT.md, "icon= ya no elige de un catalogo").
 MANIFEST = [
     {"symbol": "k_desktop_icon_desktop_16", "relative_path": "16x16/desktop.png"},
-    {"symbol": "k_desktop_icon_shell_16", "relative_path": "16x16/app-terminal.png"},
-    {"symbol": "k_desktop_icon_gfx_demo_16", "relative_path": "16x16/app-libgfx-demo.png"},
-    {"symbol": "k_desktop_icon_key_test_16", "relative_path": "16x16/app-keyboard-settings.png"},
-    {"symbol": "k_desktop_icon_mouse_test_16", "relative_path": "16x16/app-mouse.png"},
-    {"symbol": "k_desktop_icon_notepad_16", "relative_path": "16x16/app-notepad.png"},
     {"symbol": "k_desktop_icon_desktop_32", "relative_path": "32x32/desktop.png"},
-    {"symbol": "k_desktop_icon_shell_32", "relative_path": "32x32/app-terminal.png"},
-    {"symbol": "k_desktop_icon_gfx_demo_32", "relative_path": "32x32/app-libgfx-demo.png"},
-    {"symbol": "k_desktop_icon_key_test_32", "relative_path": "32x32/app-keyboard-settings.png"},
-    {"symbol": "k_desktop_icon_mouse_test_32", "relative_path": "32x32/app-mouse.png"},
-    {"symbol": "k_desktop_icon_notepad_32", "relative_path": "32x32/app-notepad.png"},
 ]
 
 

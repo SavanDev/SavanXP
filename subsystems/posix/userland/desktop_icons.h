@@ -2,17 +2,22 @@
 
 #include "libc.h"
 
+/*
+ * El set horneado quedo reducido al generico. Doom, Shell, Notepad, Gfx Demo,
+ * Key Test y Mouse Test tenian su entrada aca; los seis salieron una vez que
+ * cada uno consiguio su propio .sxicon (icon_file= o icon=<nombre> en su
+ * .sxres, estampado en build) y las tablas que los citaban por id
+ * (progman_registry.c, windowd_appinfo.c) pasaron a apuntar al generico como
+ * fallback -- docs/SXE_FORMAT.md, "icon= ya no elige de un catalogo".
+ *
+ * Lo que queda es la red de seguridad universal: el icono para CUALQUIER
+ * programa cuyo binario no se pueda leer en absoluto. No hay una entrada por
+ * app posible, porque no hay ningun otro id que un binario pueda no llegar a
+ * tener -- el propio genero es el ultimo recurso, no una opcion mas.
+ */
 enum desktop_icon_id
 {
     DESKTOP_ICON_DESKTOP = 0,
-    DESKTOP_ICON_SHELL,
-    /* Doom tenia su entrada aca (DESKTOP_ICON_DOOM / app-spider.png). Se fue
-     * del set: Doom se construye con un build aparte y ahora trae su propio
-     * icono en sdk/doomgeneric/icon.png, via icon_file= en su .sxres. */
-    DESKTOP_ICON_GFX_DEMO,
-    DESKTOP_ICON_KEY_TEST,
-    DESKTOP_ICON_MOUSE_TEST,
-    DESKTOP_ICON_NOTEPAD,
     DESKTOP_ICON_COUNT
 };
 

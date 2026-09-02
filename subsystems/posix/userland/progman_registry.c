@@ -57,20 +57,23 @@ struct progman_default_item
  * contenido de k_menu_items (windowd_menu.c); esa tabla se retira en A2.4 y este
  * pasa a ser el unico catalogo.
  */
+/*
+ * Icono generico en TODAS las filas: ninguna necesita un id horneado propio.
+ * El real de cada programa viaja en su .sxicon (todos estan estampados desde
+ * la fase 2), y esto es la red de seguridad para el caso limite de que
+ * progman.ini falte/este corrupto Y ADEMAS el binario no se pueda leer.
+ */
 static const struct progman_default_item k_default_items[] = {
-    {"Main", "Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_SHELL, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Main", "Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Main", "Notepad", "/bin/notepad", "Edit text files", DESKTOP_ICON_NOTEPAD, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Main", "Notepad", "/bin/notepad", "Edit text files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "About", "/bin/aboutapp", "System overview and help", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    /* Icono generico: el real ya no esta horneado, viaja en el .sxicon de
-     * doomgeneric (sdk/doomgeneric/icon.png). Este solo cubre el caso limite
-     * de que progman.ini falte/este corrupto Y el binario no se pueda leer. */
     {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Diagnostics", "Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_GFX_DEMO, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
-    {"Diagnostics", "Key Test", "/bin/keytest", "Keyboard diagnostics", DESKTOP_ICON_KEY_TEST, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Diagnostics", "Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_MOUSE_TEST, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Diagnostics", "Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
+    {"Diagnostics", "Key Test", "/bin/keytest", "Keyboard diagnostics", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Diagnostics", "Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 #endif
 };
 
@@ -1106,11 +1109,13 @@ static void selftest_sxe(void)
         "[item]\n"
         "name=Arranque\n"
         "desc=PID 1\n"
-        "path=/bin/init\n";
+        "path=/bin/init\n"
+        "[item]\n"
+        "path=/bin/shellapp\n";
     const struct progman_item *item;
     const struct desktop_embedded_bitmap *icon;
 
-    expect(progman_registry_parse(kText, sizeof(kText) - 1) == 5, "sxe fixture 5 items");
+    expect(progman_registry_parse(kText, sizeof(kText) - 1) == 6, "sxe fixture 6 items");
 
     /* Antes de aplicar, nadie tiene icono propio. */
     item = progman_item_at(0);
@@ -1126,9 +1131,10 @@ static void selftest_sxe(void)
     expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/aboutapp") == 0, "icon=/path se guarda tal cual");
 
     /* item0 (icono propio), item1 y item2 (prestan icono), item3 (desc del
-     * binario aunque el icono quede generico) suman 4; item4 (init, sin icon=
-     * y sin recursos propios que aportar) no toca nada. */
-    expect(progman_registry_apply_sxe() == 4, "apply_sxe toca 4 items");
+     * binario aunque el icono quede generico) y item5 (shellapp, icono y
+     * nombre propios) suman 5; item4 (init, sin icon= y sin recursos propios
+     * que aportar) no toca nada. */
+    expect(progman_registry_apply_sxe() == 5, "apply_sxe toca 5 items");
 
     /* Item 0: sin overrides, todo sale del binario. */
     item = progman_item_at(0);
@@ -1158,16 +1164,19 @@ static void selftest_sxe(void)
 
     /*
      * Item 2: icon=shell, un ALIAS LEGADO de antes de este cambio. Resuelve a
-     * /bin/shellapp y presta SU .sxicon real -- shellapp.sxres declara
-     * icon=app-terminal, asi que el resultado tiene que ser identico a
-     * desktop_icon_large(DESKTOP_ICON_SHELL).
+     * /bin/shellapp y presta SU .sxicon real. Ya no hay un DESKTOP_ICON_SHELL
+     * horneado contra el que comparar (docs/SXE_FORMAT.md, "icon= ya no elige
+     * de un catalogo"): el cruce es contra el item 5, que lanza /bin/shellapp
+     * SIN ningun override y por lo tanto adopta su propio .sxicon por el
+     * camino normal -- dos aplicaciones independientes del mismo mecanismo
+     * tienen que llegar al mismo bitmap.
      */
     item = progman_item_at(2);
     expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/shellapp") == 0, "alias legado resuelve al path del programa");
     expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "alias legado tambien presta el .sxicon");
     icon = progman_item_icon(item);
-    expect(bitmaps_equal(icon, desktop_icon_large(DESKTOP_ICON_SHELL)),
-        "el icono prestado por alias es el de shellapp");
+    expect(bitmaps_equal(icon, progman_item_icon(progman_item_at(5))),
+        "el icono prestado por alias es el mismo que shellapp adopta para si mismo");
 
     /*
      * Item 3: icon=desktop, un nombre SIN alias -- "desktop" nunca lo tuvo,
@@ -1196,8 +1205,17 @@ static void selftest_sxe(void)
     expect(item != 0 && strcmp(item->description, "PID 1") == 0, "el .ini le gana la desc al automatico");
     expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "el automatico nunca trae icono propio");
 
+    /* Item 5: /bin/shellapp sin ningun override -- adopta su propio .sxicon
+     * por el camino normal (el mismo que usa el item 0 con notepad). Es el
+     * punto de comparacion del item 2. */
+    item = progman_item_at(5);
+    expect(item != 0 && strcmp(item->name, "Shell") == 0, "item 5 nombre desde el .sxmeta de shellapp");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "item 5 icono propio de shellapp");
+    icon = progman_item_icon(item);
+    expect(icon != 0 && icon->width == 32u && icon->height == 32u, "item 5 icono de 32x32");
+
     /* Aplicar dos veces no debe duplicar ni corromper nada. */
-    expect(progman_registry_apply_sxe() == 4, "apply_sxe es idempotente");
+    expect(progman_registry_apply_sxe() == 5, "apply_sxe es idempotente");
     item = progman_item_at(0);
     expect(item != 0 && strcmp(item->name, "Notepad") == 0, "idempotente conserva el nombre");
 
