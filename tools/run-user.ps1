@@ -3,7 +3,8 @@ param(
     [string]$Source,
     [string]$Name,
     [string]$Destination,
-    [switch]$Gui
+    [switch]$Gui,
+    [switch]$Sse
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +24,9 @@ if ($Destination) {
 }
 if ($Gui) {
     $args.Gui = $true
+}
+if ($Sse) {
+    $args.Sse = $true
 }
 
 & $buildUser @args

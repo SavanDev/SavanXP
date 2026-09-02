@@ -37,6 +37,9 @@ static void trim_automation_spec(char* spec) {
 }
 
 static const char* automation_label_for_spec(const char* spec) {
+    if (spec != 0 && text_contains(spec, "float")) {
+        return "FLOAT SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "progman")) {
         return "PROGMAN SMOKE";
     }
@@ -80,6 +83,7 @@ static int run_automation_spec(const char* spec) {
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
+    const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
     const char* nativehello_argv[] = {"/disk/bin/nativehello", 0};
     const char* sxguihost_argv[] = {"/disk/bin/sxguihost", 0};
@@ -109,6 +113,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "netsmoke") == 0) {
             path = "/disk/bin/nettest";
             argv = nettest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {
+            path = "/disk/bin/floatsmoke";
+            argv = floatsmoke_argv;
             argc = 1;
         } else if (strcmp(spec, "windowd-cursor-repro") == 0) {
             path = "/bin/windowd";

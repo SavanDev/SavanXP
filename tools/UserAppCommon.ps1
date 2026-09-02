@@ -45,7 +45,28 @@ function Ensure-Directory([string]$Path) {
     }
 }
 
-function Get-UserCompileFlags {
+# -Sse no es una optimizacion: cambia el ABI de punto flotante de la app.
+#
+# Sin el switch (el default) el codigo con floats compila pero NO linkea. clang
+# no se niega: pasa los double en registros de proposito general -- una
+# convencion propia, no la de System V -- y resuelve cada operacion con una
+# llamada a los helpers de soft-float de compiler-rt (__adddf3, __mulsf3), que
+# este sistema no tiene. El sintoma es un simbolo indefinido en el link, lejos
+# de la causa.
+#
+# Con -Sse los argumentos viajan en xmm0..7 como manda el ABI, las operaciones
+# son instrucciones nativas y no queda ningun simbolo por resolver. Del lado del
+# SO no falta nada: el kernel ya guarda y restaura el area FPU/SSE por proceso
+# en cada cambio de contexto (fxsave64/fxrstor64) y crt0.S deja rsp alineado a
+# 16 antes del primer call. Es opt-in igual, porque una app que no usa floats no
+# gana nada y prefiere que el compilador no le meta SSE en un memcpy
+# vectorizado.
+function Get-UserCompileFlags([switch]$Sse) {
+    $floatFlags = @("-mno-sse", "-mno-sse2", "-mgeneral-regs-only")
+    if ($Sse) {
+        $floatFlags = @("-msse", "-msse2")
+    }
+
     return @(
         "-target", "x86_64-unknown-none-elf",
         "-ffreestanding",
@@ -54,10 +75,8 @@ function Get-UserCompileFlags {
         "-fno-pie",
         "-mno-red-zone",
         "-mcmodel=small",
-        "-mno-mmx",
-        "-mno-sse",
-        "-mno-sse2",
-        "-mgeneral-regs-only",
+        "-mno-mmx"
+    ) + $floatFlags + @(
         "-Wall",
         "-Wextra",
         "-Wpedantic",
@@ -116,8 +135,8 @@ function Get-ExternalSourceSpec([string]$SourcePath) {
     }
 }
 
-function Get-ExternalCompileFlags([string[]]$IncludeDirs) {
-    $flags = @(Get-UserCompileFlags)
+function Get-ExternalCompileFlags([string[]]$IncludeDirs, [switch]$Sse) {
+    $flags = @(Get-UserCompileFlags -Sse:$Sse)
     foreach ($includeDir in $IncludeDirs) {
         $flags += @("-I", $includeDir)
     }
@@ -291,11 +310,11 @@ function Add-SxeResources([string]$Name, [string]$BinaryPath, [string]$ResourceD
     }
 }
 
-function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 0, [switch]$Gui) {
+function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 0, [switch]$Gui, [switch]$Sse) {
     $compiler = Require-Executable "clang" (Get-ToolchainCandidates "clang")
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
-    $compileFlags = Get-ExternalCompileFlags $sourceSpec.IncludeDirs
+    $compileFlags = Get-ExternalCompileFlags $sourceSpec.IncludeDirs -Sse:$Sse
     $outputFull = [System.IO.Path]::GetFullPath($OutputPath)
     $objectRoot = Join-Path $Script:SdkBuildRoot $ProgramName
     Ensure-Directory $objectRoot
@@ -370,6 +389,23 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         }
     }
 
+    # La biblioteca matematica solo existe en el camino con SSE: math.c arranca
+    # con un #error si lo compilan sin el, justamente para que quede claro de
+    # donde viene el problema. -fno-builtin no hace falta hoy (el objeto sale
+    # con dos calls, sinf->sin y cosf->cos, y nada mas), pero si alguna version
+    # de clang decide reconocer el cuerpo de fabs y reemplazarlo por una llamada
+    # a fabs, el resultado es una recursion infinita en runtime. Cuesta cero
+    # pedirlo y evita ese modo de falla.
+    $mathObjects = @()
+    if ($Sse) {
+        $mathObject = Join-Path $objectRoot "math.o"
+        & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/math.c") -o $mathObject -fno-builtin @compileFlags
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fallo la compilacion del runtime math."
+        }
+        $mathObjects += $mathObject
+    }
+
     & $compiler -c (Join-Path $Script:SdkRoot "runtime/setjmp.S") -o $setjmpObject @compileFlags
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la compilacion del runtime setjmp."
@@ -380,7 +416,7 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion de crt0."
     }
 
-    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $gfx2dObject $setjmpObject @guiObjects @appObjects
+    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $gfx2dObject $setjmpObject @mathObjects @guiObjects @appObjects
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo el link de '$SourcePath'."
     }

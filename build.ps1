@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "taskbar-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "taskbar-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1352,6 +1352,24 @@ function Run-NetSmokeQemu {
     Run-AutomationQemu -AutomationCommand "netsmoke" -SuccessToken "NET SMOKE PASS" -FailureToken "NET SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Harness headless del camino de punto flotante (sdk/floatsmoke). Es el unico
+# consumidor del switch -Sse hasta ahora, y valida las tres capas que ese switch
+# destraba: el ABI de SSE, la libm de runtime/math.c y -- lo que no se puede
+# comprobar compilando -- que el kernel preserve el estado FPU/SSE cuando
+# multiplexa procesos que hacen matematica al mismo tiempo.
+#
+# Se construye en el PreLaunch como app externa, igual que sxguihost: el camino
+# in-tree de build.ps1 sigue siendo -mno-sse para todas sus apps.
+function Run-FloatSmokeQemu {
+    $userBuild = Join-Path $ToolRoot "build-user.ps1"
+    $floatSmokeSource = Join-Path $ProjectRoot "sdk/floatsmoke"
+
+    Run-AutomationQemu -AutomationCommand "floatsmoke" -SuccessToken "FLOAT SMOKE PASS" -FailureToken "FLOAT SMOKE FAIL" -TimeoutMinutes 3 -PreLaunch {
+        & $userBuild -Source $floatSmokeSource -Name floatsmoke -Sse
+        if ($LASTEXITCODE -ne 0) { throw "Fallo el build/install de floatsmoke." }
+    }.GetNewClosure()
+}
+
 function Run-CursorReproQemu {
     Run-AutomationQemu -AutomationCommand "windowd-cursor-repro" -SuccessToken "CURSOR REPRO PASS" -FailureToken "CURSOR REPRO FAIL" -TimeoutMinutes 3
 }
@@ -1406,6 +1424,9 @@ switch ($Command) {
     }
     "net-smoke" {
         Run-NetSmokeQemu
+    }
+    "float-smoke" {
+        Run-FloatSmokeQemu
     }
     "cursor-repro" {
         Run-CursorReproQemu
