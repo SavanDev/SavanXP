@@ -62,7 +62,10 @@ static const struct progman_default_item k_default_items[] = {
     {"Main", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "Notepad", "/bin/notepad", "Edit text files", DESKTOP_ICON_NOTEPAD, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "About", "/bin/aboutapp", "System overview and help", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DOOM, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
+    /* Icono generico: el real ya no esta horneado, viaja en el .sxicon de
+     * doomgeneric (sdk/doomgeneric/icon.png). Este solo cubre el caso limite
+     * de que progman.ini falte/este corrupto Y el binario no se pueda leer. */
+    {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Diagnostics", "Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_GFX_DEMO, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
@@ -154,10 +157,10 @@ static uint32_t icon_id_from_name(const char *name)
         {
             return DESKTOP_ICON_SHELL;
         }
-        if (strcmp(name, "doom") == 0)
-        {
-            return DESKTOP_ICON_DOOM;
-        }
+        /* "doom" ya no mapea a nada: su icono se fue del set horneado
+         * (sdk/doomgeneric/icon.png, via icon_file=). Un progman.ini viejo
+         * con icon=doom cae al generico, igual que cualquier nombre que este
+         * lector no reconoce -- no rompe, solo deja de acertar. */
         if (strcmp(name, "gfxdemo") == 0)
         {
             return DESKTOP_ICON_GFX_DEMO;
@@ -811,7 +814,10 @@ static void selftest_well_formed(void)
     item = progman_item_at(1);
     expect(item != 0 && strcmp(item->name, "Doom") == 0, "item 1 nombre trim");
     expect(item != 0 && strcmp(item->path, "/disk/bin/doomgeneric") == 0, "item 1 path trim");
-    expect(item != 0 && item->icon_id == DESKTOP_ICON_DOOM, "item 1 icono");
+    /* "doom" ya no es un nombre de icono reconocido (se fue del set
+     * horneado): un progman.ini viejo con icon=doom tiene que degradar limpio
+     * al generico, no romper el parseo ni caer en cualquier otra cosa. */
+    expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "item 1 icono cae al generico");
     expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN, "item 1 flag fullscreen");
 
     /* Indexado por grupo. */
@@ -1018,7 +1024,7 @@ static void selftest_sxe(void)
         "[item]\n"
         "name=Mi Bloc\n"
         "path=/bin/notepad\n"
-        "icon=doom\n"
+        "icon=gfxdemo\n"
         "[item]\n"
         "name=Arranque\n"
         "desc=PID 1\n"
@@ -1054,7 +1060,7 @@ static void selftest_sxe(void)
     /* Item 1: mismo binario, pero el .ini gano donde hablo. */
     item = progman_item_at(1);
     expect(item != 0 && strcmp(item->name, "Mi Bloc") == 0, "el nombre del .ini le gana al .sxmeta");
-    expect(item != 0 && item->icon_id == DESKTOP_ICON_DOOM, "el icono del .ini sobrevive");
+    expect(item != 0 && item->icon_id == DESKTOP_ICON_GFX_DEMO, "el icono del .ini sobrevive");
     expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "icono overrideado no toma el .sxicon");
     expect(progman_item_icon(item) == 0, "icono overrideado cae al set horneado");
     /* Lo que el .ini NO declaro sigue viniendo del binario. */

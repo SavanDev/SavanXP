@@ -412,10 +412,19 @@ def collect_icons_from_file(fmt, manifest_path, relative_path, label):
         if source.size == (size, size):
             scaled = source
         else:
-            # Si el original es un multiplo entero del destino, NEAREST conserva
-            # el pixel art tal cual. Si no lo es, quedaria comiendose filas de a
-            # una y se ve peor que un remuestreo suave.
-            exact = source.width % size == 0 and source.height % size == 0
+            # Multiplo entero en CUALQUIER sentido -- el original mas grande
+            # que el destino (baja de tamano) o mas chico (sube, el caso mas
+            # comun para un icono de pixel art dibujado a 16x16 que necesita
+            # el 32x32) -- usa NEAREST para conservar el pixel art tal cual.
+            # source%size cubre bajar; size%source cubre subir. Si no hay
+            # multiplo limpio en ninguna direccion, NEAREST se comeria filas o
+            # dejaria bloques irregulares, asi que ahi conviene un remuestreo
+            # suave.
+            exact = (
+                (source.width % size == 0 and source.height % size == 0) or
+                (source.width != 0 and source.height != 0 and
+                    size % source.width == 0 and size % source.height == 0)
+            )
             scaled = source.resize((size, size), Image.NEAREST if exact else Image.LANCZOS)
         pixels = bytearray()
         for y in range(size):

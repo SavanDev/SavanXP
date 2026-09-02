@@ -336,14 +336,26 @@ de diálogos y chrome del WM no pertenecen a ninguna app y siguen horneados. Lo
 que se va del set son los iconos *de aplicación*, que es lo que nunca debió
 estar ahí.
 
-> **Angostarlo todavía no, y a propósito.** Con Doom ya estampado cayó uno de
-> los tres motivos, pero quedan dos: el `icon=` de `progman.ini` referencia el
-> set **por nombre** (sacar entradas rompería un `icon=doom` escrito a mano), y
-> la tabla fallback de `windowd_appinfo` los usa cuando un binario no trae
-> `.sxicon`. Sacarlos ahora cambiaría un fallback que funciona por unos pocos
-> KiB de imagen. El paso que destraba esto es rediseñar el `icon=` del `.ini`
-> —por ejemplo, que apunte al programa cuyo icono tomar prestado— y recién
-> entonces angostar.
+**El primero en salir fue Doom.** `DESKTOP_ICON_DOOM` / `app-spider.png` ya no
+existen: el arte se movió, pixel por pixel, a
+[sdk/doomgeneric/icon.png](../sdk/doomgeneric/icon.png), y `doomgeneric.sxres`
+lo declara con `icon_file=` en vez de `icon=`. Es la misma lógica que ya regía
+para `ports/ccleste` — el icono viaja *dentro* del ejecutable, no en el árbol
+del sistema — aplicada por primera vez a un programa que **sí** está
+versionado en el repo. La tabla fallback de `windowd_appinfo` y el default
+horneado de `progman_registry` ahora apuntan a `DESKTOP_ICON_DESKTOP`
+(genérico): sólo entran en juego si el binario de Doom no se puede leer en
+absoluto, que es exactamente lo que un fallback debería cubrir.
+
+> **El resto del set sigue horneado, y a propósito.** Sacar a Doom fue fácil
+> porque nada más lo compartía. Los íconos que quedan (`shell`, `notepad`,
+> `gfxdemo`, `keytest`, `mousetest`, el genérico) los siguen usando programas
+> del propio repo, y el `icon=` de `progman.ini` los referencia **por
+> nombre** — vaciar el set rompería un `icon=notepad` escrito a mano. El paso
+> que destraba angostarlo del todo es rediseñar esa referencia (por ejemplo,
+> que `icon=` apunte al *programa* cuyo icono tomar prestado, no a un nombre
+> del catálogo), y no hay apuro: cada programa que gane su propio `icon_file=`
+> dejará una fila menos que mover cuando llegue ese rediseño.
 
 ### Decisión: el WM lee los recursos, no viajan por el protocolo
 
@@ -483,6 +495,16 @@ sobre todo un port de terceros, cuyo icono no tiene por qué entrar a
 `assets/desktop/icons/`, que se versiona y se hornea en la imagen. Con
 `icon_file` el arte termina **únicamente dentro del ejecutable**, que es
 exactamente para lo que existe este formato.
+
+`icon_file` acepta **un solo PNG** de cualquier tamaño y deriva los dos que
+hacen falta. Si es múltiplo entero del destino en cualquier dirección —
+achicando (48→16) o agrandando (16→32, el caso más común: un ícono de pixel
+art se suele dibujar una vez, al tamaño chico) — usa `NEAREST` para no tocar
+un solo píxel del original. Si no hay múltiplo limpio, usa `LANCZOS`. La rama
+de agrandar faltaba hasta que el ícono de Doom la ejercitó por primera vez: un
+PNG de 16×16 llegaba a `LANCZOS` para el 32×32 y salía borroneado en vez de
+nítido — el bug lo encontró comparar el blob estampado, byte a byte, contra
+el original.
 
 **`version=system` existe para que los programas del sistema no queden stale.**
 Hardcodear `0.3.3` en nueve manifiestos sería la misma duplicación que este

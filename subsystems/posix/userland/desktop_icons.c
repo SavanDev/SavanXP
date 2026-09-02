@@ -5,7 +5,6 @@
 static const struct desktop_embedded_bitmap k_small_icons[DESKTOP_ICON_COUNT] = {
     {k_desktop_icon_desktop_16.width, k_desktop_icon_desktop_16.height, k_desktop_icon_desktop_16.pixels},
     {k_desktop_icon_shell_16.width, k_desktop_icon_shell_16.height, k_desktop_icon_shell_16.pixels},
-    {k_desktop_icon_doom_16.width, k_desktop_icon_doom_16.height, k_desktop_icon_doom_16.pixels},
     {k_desktop_icon_gfx_demo_16.width, k_desktop_icon_gfx_demo_16.height, k_desktop_icon_gfx_demo_16.pixels},
     {k_desktop_icon_key_test_16.width, k_desktop_icon_key_test_16.height, k_desktop_icon_key_test_16.pixels},
     {k_desktop_icon_mouse_test_16.width, k_desktop_icon_mouse_test_16.height, k_desktop_icon_mouse_test_16.pixels},
@@ -15,7 +14,6 @@ static const struct desktop_embedded_bitmap k_small_icons[DESKTOP_ICON_COUNT] = 
 static const struct desktop_embedded_bitmap k_large_icons[DESKTOP_ICON_COUNT] = {
     {k_desktop_icon_desktop_32.width, k_desktop_icon_desktop_32.height, k_desktop_icon_desktop_32.pixels},
     {k_desktop_icon_shell_32.width, k_desktop_icon_shell_32.height, k_desktop_icon_shell_32.pixels},
-    {k_desktop_icon_doom_32.width, k_desktop_icon_doom_32.height, k_desktop_icon_doom_32.pixels},
     {k_desktop_icon_gfx_demo_32.width, k_desktop_icon_gfx_demo_32.height, k_desktop_icon_gfx_demo_32.pixels},
     {k_desktop_icon_key_test_32.width, k_desktop_icon_key_test_32.height, k_desktop_icon_key_test_32.pixels},
     {k_desktop_icon_mouse_test_32.width, k_desktop_icon_mouse_test_32.height, k_desktop_icon_mouse_test_32.pixels},

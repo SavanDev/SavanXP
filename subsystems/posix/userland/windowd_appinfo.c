@@ -21,7 +21,10 @@ static const struct windowd_appinfo k_window_items[] = {
     {"Files", "/bin/filesapp", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(186, 128, 36)},
     {"About", "/bin/aboutapp", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(58, 104, 190)},
     {"Notepad", "/bin/notepad", DESKTOP_ICON_NOTEPAD, WINDOWD_RGB_LITERAL(120, 100, 60)},
-    {"Doom", "/disk/bin/doomgeneric", DESKTOP_ICON_DOOM, WINDOWD_RGB_LITERAL(181, 81, 55)},
+    /* Icono generico: el propio de Doom viaja en su .sxicon
+     * (sdk/doomgeneric/icon.png), no en el set horneado. Esta fila solo cubre
+     * el caso limite de una ventana de Doom sin recursos legibles. */
+    {"Doom", "/disk/bin/doomgeneric", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(181, 81, 55)},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Widgets", "/bin/widgetsdemo", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(96, 110, 140)},
     {"Gfx Demo", "/bin/gfxdemo", DESKTOP_ICON_GFX_DEMO, WINDOWD_RGB_LITERAL(34, 142, 96)},
@@ -274,22 +277,20 @@ int windowd_presentation_selftest(void)
         "presentacion: init cae al icono horneado");
 
     /*
-     * Escalon de la tabla. Doom ya trae recursos propios, pero se instala con
-     * un build APARTE: en esta imagen puede estar o no, asi que su icono no es
-     * un hecho estable y afirmar algo sobre el seria un test que pasa por
-     * casualidad.
-     *
-     * Lo que SI es estable es fallback_icon_id: ese campo lo llena unicamente
-     * la tabla por path, nunca el blob. Verificarlo prueba que el escalon
-     * corrio, este Doom instalado o no.
+     * Escalon de la tabla, con nombre y accent -- lo unico que sigue siendo
+     * genuinamente de la tabla. El icono de Doom ya no lo es: se fue del set
+     * horneado (vive en sdk/doomgeneric/icon.png, via icon_file=), asi que
+     * fallback_icon_id vuelve al generico igual que para cualquier programa
+     * sin fila propia. Doom se instala con un build APARTE -- en esta imagen
+     * puede estar o no --, asi que su .sxicon real no es un hecho estable
+     * para afirmar aca; nombre y accent si lo son, porque salen de la tabla
+     * sin importar si el binario esta instalado.
      */
     windowd_presentation_load(&presentation, "/disk/bin/doomgeneric");
     expect(strcmp(windowd_presentation_label(&presentation, "/disk/bin/doomgeneric"), "Doom") == 0,
         "presentacion: nombre de doom");
     expect(windowd_presentation_accent(&presentation) == WINDOWD_RGB_LITERAL(181, 81, 55),
         "presentacion: accent de doom");
-    expect(presentation.fallback_icon_id == (uint32_t)DESKTOP_ICON_DOOM,
-        "presentacion: la tabla aporto el icono de fallback de doom");
 
     /* Path inexistente y path nulo: no deben romper nada. */
     windowd_presentation_load(&presentation, "/bin/__no_existe__");

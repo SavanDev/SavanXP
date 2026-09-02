@@ -85,30 +85,6 @@ def new_terminal_icon_16():
     return bmp
 
 
-def new_doom_icon_16():
-    outline = (68, 28, 26, 255)
-    skin = (188, 58, 52, 255)
-    highlight = (235, 111, 91, 255)
-    horn = (241, 215, 172, 255)
-    eye = (242, 247, 244, 255)
-    mouth = (33, 13, 14, 255)
-    bmp = new_canvas(16, 16)
-    draw = ImageDraw.Draw(bmp)
-
-    fill_rect(draw, 4, 1, 2, 2, horn)
-    fill_rect(draw, 10, 1, 2, 2, horn)
-    fill_rect(draw, 3, 3, 10, 9, skin)
-    stroke_rect(draw, 3, 3, 10, 9, outline)
-    fill_rect(draw, 4, 4, 8, 2, highlight)
-    fill_rect(draw, 5, 6, 2, 2, eye)
-    fill_rect(draw, 9, 6, 2, 2, eye)
-    fill_rect(draw, 6, 9, 4, 1, mouth)
-    set_pixel_safe(bmp, 5, 10, mouth)
-    set_pixel_safe(bmp, 10, 10, mouth)
-    fill_rect(draw, 6, 11, 4, 1, mouth)
-    return bmp
-
-
 def new_gfx_demo_icon_16():
     frame = (48, 58, 74, 255)
     panel = (27, 32, 40, 255)
@@ -215,7 +191,10 @@ def main():
 
     write_icon_set(asset_root, "desktop.png", new_desktop_icon_16)
     write_icon_set(asset_root, "app-terminal.png", new_terminal_icon_16)
-    write_icon_set(asset_root, "app-spider.png", new_doom_icon_16)
+    # El de Doom (antes "app-spider.png") se fue del set del sistema: vive
+    # ahora en sdk/doomgeneric/icon.png y se estampa via icon_file= en
+    # doomgeneric.sxres. Doom se construye con un build aparte, asi que no
+    # tiene sentido que su icono siga horneado en el binario del WM.
     write_icon_set(asset_root, "app-libgfx-demo.png", new_gfx_demo_icon_16)
     write_icon_set(asset_root, "app-keyboard-settings.png", new_keyboard_icon_16)
     write_icon_set(asset_root, "app-mouse.png", new_mouse_icon_16)

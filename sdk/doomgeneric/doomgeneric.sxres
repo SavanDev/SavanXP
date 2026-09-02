@@ -6,6 +6,14 @@
 # (sdk/doomgeneric/build.ps1), asi que era el ultimo que seguia cayendo al
 # fallback del set horneado.
 #
+# El icono se declara con icon_file=, o sea un PNG RELATIVO a este manifiesto
+# (icon.png, al lado de este archivo): es el mismo arte que antes vivia
+# horneado en el set del sistema (DESKTOP_ICON_DOOM / app-spider.png), sacado
+# de ahi para que Doom deje de depender del catalogo general -- el icono viaja
+# DENTRO del ejecutable, que es para lo que existe el formato. La otra forma,
+# icon=<nombre>, resuelve contra assets/desktop/icons/, y ese catalogo ya no
+# tiene entrada para Doom.
+#
 # La version es la del motor (PACKAGE_STRING de config.h), NO la del sistema:
 # esto no se envia con SavanXP, es un port de terceros que se instala aparte.
 name=Doom
@@ -14,5 +22,5 @@ version=0.1
 version_string=Doom Generic 0.1
 vendor=doomgeneric
 accent=b55137
-icon=app-spider
+icon_file=icon.png
 launch_flags=fullscreen
