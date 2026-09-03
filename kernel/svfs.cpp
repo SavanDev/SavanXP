@@ -1024,7 +1024,15 @@ bool attach(VolumeId id) {
     if (!initialize_record_mounts(*volume)) {
         return false;
     }
-    volume->status = MountStatus::mounted;
+    // probe() ya fijo el status segun como salio la recuperacion del journal, y
+    // attach() solo publica vnodes: no puede volver escribible a un volumen que
+    // quedo en read_only porque la recuperacion no se pudo persistir. Promoverlo
+    // partia el driver en dos mitades que no coincidian, porque mount_record()
+    // corre antes y ya habia publicado los vnodes con writable=false mientras
+    // svfs::writable(volume) devolvia true.
+    if (volume->status != MountStatus::read_only) {
+        volume->status = MountStatus::mounted;
+    }
     return true;
 }
 

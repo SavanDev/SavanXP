@@ -256,6 +256,18 @@ Notas de corte:
 
 ### Corregido
 
+- **Un volumen SVFS2 montado en solo-lectura volvia a ser escribible al
+  publicarse.** `svfs::attach()` fijaba el status en `mounted` sin mirar como
+  habia quedado el montaje, asi que un volumen cuyo journal no se pudo recuperar
+  -- `recover_journal()` no logro persistir el replay -- terminaba aceptando
+  escrituras sobre metadata on-disk nunca reconciliada. El driver quedaba
+  partido al medio: los vnodes ya estaban publicados con `writable=false`
+  mientras `svfs::writable()` decia que si. Ahora `attach()` respeta el
+  `read_only` que dejo `probe()`. Se suma `build.ps1 svfs-smoke`, un test de
+  host (`tests/host/`) que linkea el driver real contra block/vfs de mentira y
+  una imagen armada con libsvfs: es la unica forma de montar un volumen roto,
+  porque el kernel no expone `mount` a userland.
+
 - **Dos bugs de windowd que destapo el popup del selector de teclado.** El
   click-down caia en el camino de las ventanas overlay -- el mismo bug ya
   resuelto para la barra de tareas, que no se habia replicado aca -- y el popup

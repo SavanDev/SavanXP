@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "svfs-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1427,6 +1427,44 @@ function Run-FloatSmokeQemu {
     }.GetNewClosure()
 }
 
+# Test de host de la maquina de estados de montaje de SVFS2. No usa QEMU: linkea
+# el driver REAL (kernel/svfs.cpp) contra backends de mentira (tests/host) y una
+# imagen construida con el core compartido (libsvfs), que es la unica forma de
+# montar un volumen cuyo journal no se pudo recuperar -- el kernel no expone
+# mount a userland, asi que un smoke de QEMU no puede armar ese escenario.
+function Run-SvfsSmoke {
+    $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
+    $toolsOut = Join-Path $BuildRoot "tools"
+    New-Directory $toolsOut
+    $exe = Join-Path $toolsOut ("svfs-volume-test" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
+    $testRoot = Join-Path $ProjectRoot "tests/host"
+
+    $sources = @(
+        (Join-Path $ProjectRoot "kernel/svfs.cpp"),
+        (Join-Path $testRoot "svfs_host_stubs.cpp"),
+        (Join-Path $testRoot "svfs_volume_test.cpp"),
+        (Join-Path $ProjectRoot "libsvfs/svfs_core.c")
+    )
+
+    Write-Host "Compilando svfs-volume-test (test de host del driver SVFS2)..."
+    $compileArgs = @(
+        "-std=c++20", "-O1", "-Wall", "-Wextra", "-Wno-deprecated",
+        "-D_CRT_SECURE_NO_WARNINGS",
+        "-I", (Join-Path $ProjectRoot "include"),
+        "-I", (Join-Path $ProjectRoot "libsvfs"),
+        "-I", $testRoot
+    ) + $sources + @("-o", $exe)
+    & $clang @compileArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la compilacion de svfs-volume-test."
+    }
+
+    & $exe
+    if ($LASTEXITCODE -ne 0) {
+        throw "SVFS VOLUME TEST FAIL"
+    }
+}
+
 function Run-CursorReproQemu {
     Run-AutomationQemu -AutomationCommand "windowd-cursor-repro" -SuccessToken "CURSOR REPRO PASS" -FailureToken "CURSOR REPRO FAIL" -TimeoutMinutes 3
 }
@@ -1487,6 +1525,9 @@ switch ($Command) {
     }
     "float-smoke" {
         Run-FloatSmokeQemu
+    }
+    "svfs-smoke" {
+        Run-SvfsSmoke
     }
     "cursor-repro" {
         Run-CursorReproQemu
