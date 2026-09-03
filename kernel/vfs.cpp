@@ -280,10 +280,10 @@ bool split_parent_path(const char* path, char* parent_path, size_t parent_capaci
     return true;
 }
 
+// Se lo pregunta a svfs:: en vez de comparar contra "/disk": desde que hay
+// varios volumenes, el mount point ya no es uno solo ni esta fijo aca.
 bool is_svfs_path(const char* path) {
-    return path != nullptr &&
-        strncmp(path, "/disk", 5) == 0 &&
-        (path[5] == '\0' || path[5] == '/');
+    return svfs::owns_path(path);
 }
 
 bool set_node_name(int index, const char* name) {

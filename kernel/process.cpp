@@ -2706,15 +2706,15 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.net_present = net::present() ? 1u : 0u;
     info.speaker_ready = pcspeaker::ready() ? 1u : 0u;
     info.block_ready = block::ready() ? 1u : 0u;
-    info.svfs_mounted = svfs::mounted() ? 1u : 0u;
+    info.svfs_mounted = svfs::mounted(svfs::root()) ? 1u : 0u;
     info.timer_backend = exported_timer_backend(timer::backend());
     info.timer_frequency_hz = timer::frequency_hz();
     info.pci_device_count = static_cast<uint32_t>(pci::device_count());
-    info.svfs_file_count = static_cast<uint32_t>(svfs::file_count());
+    info.svfs_file_count = static_cast<uint32_t>(svfs::file_count(svfs::root()));
     info.memory_total_pages = memory::total_page_count();
-    info.svfs_total_bytes = svfs::total_bytes();
-    info.svfs_used_bytes = svfs::used_bytes();
-    info.svfs_free_bytes = svfs::free_bytes();
+    info.svfs_total_bytes = svfs::total_bytes(svfs::root());
+    info.svfs_used_bytes = svfs::used_bytes(svfs::root());
+    info.svfs_free_bytes = svfs::free_bytes(svfs::root());
     info.uptime_ms = current_uptime_ms();
     return true;
 }

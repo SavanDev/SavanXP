@@ -15,6 +15,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/fb_gpu.hpp"
+#include "kernel/fs.hpp"
 #include "kernel/gpu_device.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
@@ -234,7 +235,8 @@ namespace
     // enumerate en vez de cortar en el primero. La prioridad define el orden de
     // los indices: los ATA enumeran antes que el ramdisk, asi un disco IDE
     // persistente (dev) tiene prioridad y en la ISO pura montamos el ramdisk.
-    // svfs::initialize monta el primer SVFS2 valido que encuentre.
+    // Cual de estos devices termina siendo la raiz lo decide fs::mount_any mas
+    // abajo, recorriendolos en este mismo orden.
     block::register_driver(ata::driver());
     block::register_driver(ramdisk::driver());
     // Ultimo en la fila (prioridad negativa): rebana en devices propios
@@ -271,13 +273,22 @@ namespace
     }
     console::write("\n");
     boot_screen::show(90, "Montando almacenamiento");
+    // Registro de sistemas de archivos: fs:: decide QUE device se monta y
+    // DONDE, y cada driver solo dice si reconoce el formato. mount_any recorre
+    // los block devices (particiones incluidas) y se queda con el primero que
+    // alguien reclame para la raiz del disco.
+    fs::initialize();
     svfs::initialize();
+    fs::register_driver(svfs::driver());
+    const size_t root_mount = fs::mount_any(svfs::kRootMountPoint);
 
     if (!vfs::ready())
     {
         panic("vfs: initramfs unavailable");
     }
-    const bool disk_mounted = svfs::mount_at_root();
+    // attach va aparte de mount porque la metadata se lee antes de que vfs::
+    // este listo para recibir vnodes.
+    const bool disk_mounted = fs::attach(root_mount);
 
     const MemorySummary memory = summarize_memory(boot_info);
     savanxp_system_info system_info = {};
@@ -308,13 +319,13 @@ namespace
     system_info.framebuffer_height = ui::framebuffer_info().height;
     system_info.framebuffer_bpp = ui::framebuffer_info().bpp;
     system_info.pci_device_count = static_cast<uint32_t>(pci::device_count());
-    system_info.svfs_file_count = static_cast<uint32_t>(svfs::file_count());
+    system_info.svfs_file_count = static_cast<uint32_t>(svfs::file_count(svfs::root()));
     system_info.memory_usable_bytes = memory.usable_bytes;
     system_info.memory_reclaimable_bytes = memory.reclaimable_bytes;
     system_info.memory_total_pages = memory::total_page_count();
-    system_info.svfs_total_bytes = svfs::total_bytes();
-    system_info.svfs_used_bytes = svfs::used_bytes();
-    system_info.svfs_free_bytes = svfs::free_bytes();
+    system_info.svfs_total_bytes = svfs::total_bytes(svfs::root());
+    system_info.svfs_used_bytes = svfs::used_bytes(svfs::root());
+    system_info.svfs_free_bytes = svfs::free_bytes(svfs::root());
     system_info.initramfs_size = boot_info.initramfs_size;
     process::set_boot_system_info(system_info);
 
