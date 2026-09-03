@@ -14,12 +14,8 @@ struct dirent {
 #define DT_REG 8
 #define DT_SOCK 12
 
-#define opendir sx_opendir
-#define readdir sx_readdir
-#define closedir sx_closedir
-#define rewinddir sx_rewinddir
 
-DIR* sx_opendir(const char* path);
-struct dirent* sx_readdir(DIR* directory);
-int sx_closedir(DIR* directory);
-void sx_rewinddir(DIR* directory);
+DIR* opendir(const char* path);
+struct dirent* readdir(DIR* directory);
+int closedir(DIR* directory);
+void rewinddir(DIR* directory);

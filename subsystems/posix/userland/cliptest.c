@@ -160,7 +160,7 @@ int main(void) {
     if (clipboard_set_text("del padre") < 0) {
         return fail("set_text previo al fork fallo");
     }
-    long child = fork();
+    long child = savanxp_fork();
     if (child < 0) {
         return fail("fork fallo");
     }
@@ -171,7 +171,7 @@ int main(void) {
         exit(0);
     }
     int status = -1;
-    if (waitpid((int)child, &status) < 0 || status != 0) {
+    if (savanxp_waitpid((int)child, &status) < 0 || status != 0) {
         return fail("el hijo no pudo copiar");
     }
     if (!expect_text("copiado por el hijo", "cruce de procesos")) {
@@ -182,6 +182,6 @@ int main(void) {
         return fail("clear final fallo");
     }
 
-    puts("cliptest: PASS\n");
+    puts_out("cliptest: PASS\n");
     return 0;
 }

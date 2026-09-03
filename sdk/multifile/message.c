@@ -3,5 +3,5 @@
 #include "message.h"
 
 void print_banner(void) {
-    puts("multifile: local headers and multiple translation units work\n");
+    puts_out("multifile: local headers and multiple translation units work\n");
 }

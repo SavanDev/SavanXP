@@ -13,7 +13,7 @@ static unsigned long parse_number(const char* text) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        puts("sleep: missing milliseconds\n");
+        puts_out("sleep: missing milliseconds\n");
         return 1;
     }
 

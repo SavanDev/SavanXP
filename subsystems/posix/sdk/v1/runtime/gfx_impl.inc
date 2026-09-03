@@ -322,45 +322,45 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     }
 
     private_pixels = map_view((int)private_section_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-    (void)close((int)private_section_fd);
+    (void)savanxp_close((int)private_section_fd);
     if (result_is_error((long)private_pixels)) {
         (void)unmap_view(mapped);
         return (long)private_pixels;
     }
     memcpy(private_pixels, shared_pixels, header->info.buffer_size);
 
-    section_fd = dup(SAVANXP_WM_FD_SECTION);
-    input_fd = dup(SAVANXP_WM_FD_INPUT);
-    submit_event_fd = dup(SAVANXP_WM_FD_SUBMIT_EVENT);
-    retire_event_fd = dup(SAVANXP_WM_FD_RETIRE_EVENT);
-    shutdown_event_fd = dup(SAVANXP_WM_FD_SHUTDOWN_EVENT);
-    launch_fd = dup(SAVANXP_WM_FD_LAUNCH);
-    cursor_hint_fd = dup(SAVANXP_WM_FD_CURSOR_HINT);
-    size_hint_fd = dup(SAVANXP_WM_FD_SIZE_HINT);
+    section_fd = savanxp_dup(SAVANXP_WM_FD_SECTION);
+    input_fd = savanxp_dup(SAVANXP_WM_FD_INPUT);
+    submit_event_fd = savanxp_dup(SAVANXP_WM_FD_SUBMIT_EVENT);
+    retire_event_fd = savanxp_dup(SAVANXP_WM_FD_RETIRE_EVENT);
+    shutdown_event_fd = savanxp_dup(SAVANXP_WM_FD_SHUTDOWN_EVENT);
+    launch_fd = savanxp_dup(SAVANXP_WM_FD_LAUNCH);
+    cursor_hint_fd = savanxp_dup(SAVANXP_WM_FD_CURSOR_HINT);
+    size_hint_fd = savanxp_dup(SAVANXP_WM_FD_SIZE_HINT);
     if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || retire_event_fd < 0 || shutdown_event_fd < 0) {
         if (section_fd >= 0) {
-            (void)close((int)section_fd);
+            (void)savanxp_close((int)section_fd);
         }
         if (input_fd >= 0) {
-            (void)close((int)input_fd);
+            (void)savanxp_close((int)input_fd);
         }
         if (submit_event_fd >= 0) {
-            (void)close((int)submit_event_fd);
+            (void)savanxp_close((int)submit_event_fd);
         }
         if (retire_event_fd >= 0) {
-            (void)close((int)retire_event_fd);
+            (void)savanxp_close((int)retire_event_fd);
         }
         if (shutdown_event_fd >= 0) {
-            (void)close((int)shutdown_event_fd);
+            (void)savanxp_close((int)shutdown_event_fd);
         }
         if (launch_fd >= 0) {
-            (void)close((int)launch_fd);
+            (void)savanxp_close((int)launch_fd);
         }
         if (cursor_hint_fd >= 0) {
-            (void)close((int)cursor_hint_fd);
+            (void)savanxp_close((int)cursor_hint_fd);
         }
         if (size_hint_fd >= 0) {
-            (void)close((int)size_hint_fd);
+            (void)savanxp_close((int)size_hint_fd);
         }
         (void)unmap_view(private_pixels);
         (void)unmap_view(mapped);
@@ -430,35 +430,35 @@ long gfx_close(struct savanxp_gfx_context* context) {
     }
 
     if (context->fb_fd >= 0) {
-        result = close(context->fb_fd);
+        result = savanxp_close(context->fb_fd);
         context->fb_fd = -1;
     }
     if (context->input_fd >= 0) {
-        (void)close(context->input_fd);
+        (void)savanxp_close(context->input_fd);
         context->input_fd = -1;
     }
     if (context->submit_event_fd >= 0) {
-        (void)close(context->submit_event_fd);
+        (void)savanxp_close(context->submit_event_fd);
         context->submit_event_fd = -1;
     }
     if (context->retire_event_fd >= 0) {
-        (void)close(context->retire_event_fd);
+        (void)savanxp_close(context->retire_event_fd);
         context->retire_event_fd = -1;
     }
     if (context->shutdown_event_fd >= 0) {
-        (void)close(context->shutdown_event_fd);
+        (void)savanxp_close(context->shutdown_event_fd);
         context->shutdown_event_fd = -1;
     }
     if (context->launch_fd >= 0) {
-        (void)close(context->launch_fd);
+        (void)savanxp_close(context->launch_fd);
         context->launch_fd = -1;
     }
     if (context->cursor_hint_fd >= 0) {
-        (void)close(context->cursor_hint_fd);
+        (void)savanxp_close(context->cursor_hint_fd);
         context->cursor_hint_fd = -1;
     }
     if (context->size_hint_fd >= 0) {
-        (void)close(context->size_hint_fd);
+        (void)savanxp_close(context->size_hint_fd);
         context->size_hint_fd = -1;
     }
     context->mode = 0;
@@ -602,12 +602,12 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
     pollfd.fd = context->input_fd;
     pollfd.events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
     pollfd.revents = 0;
-    if (poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
+    if (savanxp_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
         return 0;
     }
 
     {
-        long result = read(context->input_fd, event, sizeof(*event));
+        long result = savanxp_read(context->input_fd, event, sizeof(*event));
         if (result < 0) {
             return (int)result;
         }
@@ -668,7 +668,7 @@ long gfx_desktop_launch_arg(
         }
         memcpy(request.argument, argument, argument_length + 1u);
     }
-    return write(context->launch_fd, &request, sizeof(request)) == (long)sizeof(request)
+    return savanxp_write(context->launch_fd, &request, sizeof(request)) == (long)sizeof(request)
         ? 0
         : -SAVANXP_EIO;
 }
@@ -689,7 +689,7 @@ long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uin
     }
 
     hint.shape = shape;
-    return write(context->cursor_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
+    return savanxp_write(context->cursor_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
         ? 0
         : -SAVANXP_EIO;
 }
@@ -703,7 +703,7 @@ long gfx_request_content_size(const struct savanxp_gfx_context* context, uint32_
 
     hint.width = width;
     hint.height = height;
-    return write(context->size_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
+    return savanxp_write(context->size_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
         ? 0
         : -SAVANXP_EIO;
 }

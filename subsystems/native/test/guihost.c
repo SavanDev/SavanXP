@@ -59,7 +59,7 @@ int main(void) {
      * dup2 del hijo y se pisarian entre si (el escritorio real no lo sufre
      * porque ya tiene muchos fds abiertos). */
     for (guard_index = 0; guard_index < 7; ++guard_index) {
-        guard_fds[guard_index] = dup(0);
+        guard_fds[guard_index] = savanxp_dup(0);
         if (guard_fds[guard_index] < 0) {
             return fail("no se pudieron reservar los fds guardia");
         }
@@ -100,23 +100,23 @@ int main(void) {
     retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     if (submit_event < 0 || retire_event < 0 || shutdown_event < 0 ||
-        pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(launch_pipe) < 0) {
+        savanxp_pipe(input_pipe) < 0 || savanxp_pipe(mouse_pipe) < 0 || savanxp_pipe(launch_pipe) < 0) {
         return fail("no se pudieron crear eventos/pipes");
     }
 
-    pid = fork();
+    pid = savanxp_fork();
     if (pid < 0) {
         return fail("fork fallo");
     }
     if (pid == 0) {
         const char *argv[2] = {GUIHOST_CLIENT_PATH, 0};
-        if (dup2((int)section_fd, 3) < 0 ||
-            dup2(input_pipe[0], 4) < 0 ||
-            dup2(mouse_pipe[0], 5) < 0 ||
-            dup2(submit_event, 6) < 0 ||
-            dup2(retire_event, 7) < 0 ||
-            dup2(shutdown_event, 8) < 0 ||
-            dup2(launch_pipe[1], 9) < 0) {
+        if (savanxp_dup2((int)section_fd, 3) < 0 ||
+            savanxp_dup2(input_pipe[0], 4) < 0 ||
+            savanxp_dup2(mouse_pipe[0], 5) < 0 ||
+            savanxp_dup2(submit_event, 6) < 0 ||
+            savanxp_dup2(retire_event, 7) < 0 ||
+            savanxp_dup2(shutdown_event, 8) < 0 ||
+            savanxp_dup2(launch_pipe[1], 9) < 0) {
             exit(1);
         }
         (void)exec(GUIHOST_CLIENT_PATH, argv, 1);
@@ -128,7 +128,7 @@ int main(void) {
     /* Cerrar los guardias del padre: solo existian para correr los fds reales
      * fuera del rango 3..9. En el hijo los dup2 los pisan solos. */
     for (guard_index = 0; guard_index < 7; ++guard_index) {
-        (void)close(guard_fds[guard_index]);
+        (void)savanxp_close(guard_fds[guard_index]);
     }
 
     /* Bucle de composicion: consumir submits, avanzar composed y retirar.
@@ -175,13 +175,13 @@ int main(void) {
             pointer.x = GUIHOST_POINTER_X;
             pointer.y = GUIHOST_POINTER_Y;
             pointer.buttons = SAVANXP_MOUSE_BUTTON_LEFT;
-            if (write(mouse_pipe[1], &pointer, sizeof(pointer)) != (long)sizeof(pointer)) {
+            if (savanxp_write(mouse_pipe[1], &pointer, sizeof(pointer)) != (long)sizeof(pointer)) {
                 return fail("no se pudo mandar el evento de puntero");
             }
             event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
             event.key = SAVANXP_KEY_ENTER;
             event.ascii = 13;
-            if (write(input_pipe[1], &event, sizeof(event)) != (long)sizeof(event)) {
+            if (savanxp_write(input_pipe[1], &event, sizeof(event)) != (long)sizeof(event)) {
                 return fail("no se pudo mandar el evento de tecla");
             }
             sent_key = 1;
@@ -192,7 +192,7 @@ int main(void) {
         return fail("timeout: el cliente no llego a los frames esperados");
     }
 
-    if (waitpid((int)pid, &status) != pid) {
+    if (savanxp_waitpid((int)pid, &status) != pid) {
         return fail("waitpid fallo");
     }
     if (status != 0) {

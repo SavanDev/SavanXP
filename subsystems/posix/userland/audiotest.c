@@ -24,7 +24,7 @@ static void use_section_buffer(void) {
     }
 
     mapped = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-    close((int)section);
+    savanxp_close((int)section);
     if (mapped == 0 || result_is_error((long)mapped)) {
         return;
     }
@@ -90,7 +90,7 @@ static int run_stream(int fd, const struct savanxp_audio_info* info) {
         }
 
         want = (long)(frames * info->frame_bytes);
-        if (write(fd, g_samples, (unsigned long)want) != want) {
+        if (savanxp_write(fd, g_samples, (unsigned long)want) != want) {
             puts_fd(2, "audiotest: stream write failed\n");
             return 1;
         }
@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
 
     if (audio_get_info((int)fd, &info) < 0) {
         puts_fd(2, "audiotest: AUDIO_IOC_GET_INFO failed\n");
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
     if (info.sample_rate_hz != 48000u ||
@@ -144,21 +144,21 @@ int main(int argc, char** argv) {
         info.buffer_bytes == 0u ||
         info.buffer_bytes > (uint32_t)AUDIOTEST_BUFFER_BYTES) {
         puts_fd(2, "audiotest: unexpected audio format\n");
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
     if (stream_mode) {
         const int rc = run_stream((int)fd, &info);
-        close((int)fd);
+        savanxp_close((int)fd);
         return rc;
     }
 
     fill_square_wave(&info, smoke_mode ? 440u : 660u);
-    result = write((int)fd, g_samples, info.buffer_bytes);
+    result = savanxp_write((int)fd, g_samples, info.buffer_bytes);
     if (result != (long)info.buffer_bytes) {
         eprintf("audiotest: write failed (%s)\n", result_error_string(result));
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
@@ -169,6 +169,6 @@ int main(int argc, char** argv) {
             info.channels);
     }
 
-    close((int)fd);
+    savanxp_close((int)fd);
     return 0;
 }

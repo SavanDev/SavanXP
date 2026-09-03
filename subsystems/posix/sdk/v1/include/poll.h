@@ -14,6 +14,5 @@ struct pollfd {
 #define POLLHUP 0x0010
 #define POLLNVAL 0x0020
 
-#define poll sx_poll
 
-int sx_poll(struct pollfd* fds, unsigned long count, int timeout_ms);
+int poll(struct pollfd* fds, unsigned long count, int timeout_ms);

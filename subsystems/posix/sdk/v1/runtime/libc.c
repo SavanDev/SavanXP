@@ -32,27 +32,27 @@ static long syscall0(unsigned long number) {
     return syscall3(number, 0, 0, 0);
 }
 
-long read(int fd, void* buffer, size_t count) {
+long savanxp_read(int fd, void* buffer, size_t count) {
     return syscall3(SAVANXP_SYS_READ, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count);
 }
 
-long write(int fd, const void* buffer, size_t count) {
+long savanxp_write(int fd, const void* buffer, size_t count) {
     return syscall3(SAVANXP_SYS_WRITE, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count);
 }
 
-long open(const char* path) {
-    return open_mode(path, SAVANXP_OPEN_READ);
+long savanxp_open(const char* path) {
+    return savanxp_open_mode(path, SAVANXP_OPEN_READ);
 }
 
-long open_mode(const char* path, unsigned long flags) {
+long savanxp_open_mode(const char* path, unsigned long flags) {
     return syscall2(SAVANXP_SYS_OPEN, (unsigned long)path, flags);
 }
 
-long close(int fd) {
+long savanxp_close(int fd) {
     return syscall1(SAVANXP_SYS_CLOSE, (unsigned long)fd);
 }
 
-long readdir(int fd, char* buffer, size_t count) {
+long savanxp_readdir(int fd, char* buffer, size_t count) {
     return syscall3(SAVANXP_SYS_READDIR, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count);
 }
 
@@ -61,49 +61,49 @@ long spawn(const char* path, const char* const* argv, int argc) {
 }
 
 long spawn_fd(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd) {
-    long saved_stdin = dup(0);
-    long saved_stdout = dup(1);
+    long saved_stdin = savanxp_dup(0);
+    long saved_stdout = savanxp_dup(1);
     long pid = -1;
 
     if (saved_stdin < 0 || saved_stdout < 0) {
         if (saved_stdin >= 0) {
-            close((int)saved_stdin);
+            savanxp_close((int)saved_stdin);
         }
         if (saved_stdout >= 0) {
-            close((int)saved_stdout);
+            savanxp_close((int)saved_stdout);
         }
         return -1;
     }
 
-    if (dup2(stdin_fd, 0) < 0 || dup2(stdout_fd, 1) < 0) {
-        (void)dup2((int)saved_stdin, 0);
-        (void)dup2((int)saved_stdout, 1);
-        close((int)saved_stdin);
-        close((int)saved_stdout);
+    if (savanxp_dup2(stdin_fd, 0) < 0 || savanxp_dup2(stdout_fd, 1) < 0) {
+        (void)savanxp_dup2((int)saved_stdin, 0);
+        (void)savanxp_dup2((int)saved_stdout, 1);
+        savanxp_close((int)saved_stdin);
+        savanxp_close((int)saved_stdout);
         return -1;
     }
 
     pid = spawn(path, argv, argc);
-    (void)dup2((int)saved_stdin, 0);
-    (void)dup2((int)saved_stdout, 1);
-    close((int)saved_stdin);
-    close((int)saved_stdout);
+    (void)savanxp_dup2((int)saved_stdin, 0);
+    (void)savanxp_dup2((int)saved_stdout, 1);
+    savanxp_close((int)saved_stdin);
+    savanxp_close((int)saved_stdout);
     return pid;
 }
 
 long spawn_fds(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd, int stderr_fd) {
-    long saved_stderr = dup(2);
+    long saved_stderr = savanxp_dup(2);
     if (saved_stderr < 0) {
         return saved_stderr;
     }
-    if (dup2(stderr_fd, 2) < 0) {
-        close((int)saved_stderr);
+    if (savanxp_dup2(stderr_fd, 2) < 0) {
+        savanxp_close((int)saved_stderr);
         return -1;
     }
 
     long pid = spawn_fd(path, argv, argc, stdin_fd, stdout_fd);
-    (void)dup2((int)saved_stderr, 2);
-    close((int)saved_stderr);
+    (void)savanxp_dup2((int)saved_stderr, 2);
+    savanxp_close((int)saved_stderr);
     return pid;
 }
 
@@ -111,15 +111,15 @@ long exec(const char* path, const char* const* argv, int argc) {
     return syscall3(SAVANXP_SYS_EXEC, (unsigned long)path, (unsigned long)argv, (unsigned long)argc);
 }
 
-long pipe(int fds[2]) {
+long savanxp_pipe(int fds[2]) {
     return syscall1(SAVANXP_SYS_PIPE, (unsigned long)fds);
 }
 
-long dup(int fd) {
+long savanxp_dup(int fd) {
     return syscall1(SAVANXP_SYS_DUP, (unsigned long)fd);
 }
 
-long dup2(int oldfd, int newfd) {
+long savanxp_dup2(int oldfd, int newfd) {
     return syscall2(SAVANXP_SYS_DUP2, (unsigned long)oldfd, (unsigned long)newfd);
 }
 
@@ -127,67 +127,67 @@ long seek(int fd, long offset, int whence) {
     return syscall3(SAVANXP_SYS_SEEK, (unsigned long)fd, (unsigned long)offset, (unsigned long)whence);
 }
 
-long unlink(const char* path) {
+long savanxp_unlink(const char* path) {
     return syscall1(SAVANXP_SYS_UNLINK, (unsigned long)path);
 }
 
-long mkdir(const char* path) {
+long savanxp_mkdir(const char* path) {
     return syscall1(SAVANXP_SYS_MKDIR, (unsigned long)path);
 }
 
-long rmdir(const char* path) {
+long savanxp_rmdir(const char* path) {
     return syscall1(SAVANXP_SYS_RMDIR, (unsigned long)path);
 }
 
-long truncate(const char* path, unsigned long size) {
+long savanxp_truncate(const char* path, unsigned long size) {
     return syscall2(SAVANXP_SYS_TRUNCATE, (unsigned long)path, size);
 }
 
-long rename(const char* old_path, const char* new_path) {
+long savanxp_rename(const char* old_path, const char* new_path) {
     return syscall2(SAVANXP_SYS_RENAME, (unsigned long)old_path, (unsigned long)new_path);
 }
 
-long fcntl(int fd, unsigned long command, unsigned long value) {
+long savanxp_fcntl(int fd, unsigned long command, unsigned long value) {
     return syscall3(SAVANXP_SYS_FCNTL, (unsigned long)fd, command, value);
 }
 
-long ioctl(int fd, unsigned long request, unsigned long arg) {
+long savanxp_ioctl(int fd, unsigned long request, unsigned long arg) {
     return syscall3(SAVANXP_SYS_IOCTL, (unsigned long)fd, request, arg);
 }
 
-long poll(struct savanxp_pollfd* fds, unsigned long count, long timeout_ms) {
+long savanxp_poll(struct savanxp_pollfd* fds, unsigned long count, long timeout_ms) {
     return syscall3(SAVANXP_SYS_POLL, (unsigned long)fds, count, (unsigned long)timeout_ms);
 }
 
-long socket(unsigned long domain, unsigned long type, unsigned long protocol) {
+long savanxp_socket(unsigned long domain, unsigned long type, unsigned long protocol) {
     return syscall3(SAVANXP_SYS_SOCKET, domain, type, protocol);
 }
 
-long bind(int fd, const struct savanxp_sockaddr_in* address) {
+long savanxp_bind(int fd, const struct savanxp_sockaddr_in* address) {
     return syscall2(SAVANXP_SYS_BIND, (unsigned long)fd, (unsigned long)address);
 }
 
-long sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address) {
+long savanxp_sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address) {
     return syscall5(SAVANXP_SYS_SENDTO, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count, (unsigned long)address, 0);
 }
 
-long recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
+long savanxp_recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
     return syscall5(SAVANXP_SYS_RECVFROM, (unsigned long)fd, (unsigned long)buffer, (unsigned long)count, (unsigned long)address, timeout_ms);
 }
 
-long connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
+long savanxp_connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms) {
     return syscall3(SAVANXP_SYS_CONNECT, (unsigned long)fd, (unsigned long)address, timeout_ms);
 }
 
-long waitpid(int pid, int* status) {
+long savanxp_waitpid(int pid, int* status) {
     return syscall2(SAVANXP_SYS_WAITPID, (unsigned long)pid, (unsigned long)status);
 }
 
-long fork(void) {
+long savanxp_fork(void) {
     return syscall0(SAVANXP_SYS_FORK);
 }
 
-long kill(int pid, int signal_number) {
+long savanxp_kill(int pid, int signal_number) {
     return syscall2(SAVANXP_SYS_KILL, (unsigned long)pid, (unsigned long)signal_number);
 }
 
@@ -269,18 +269,6 @@ long proc_info(unsigned long index, struct savanxp_process_info* info) {
     return syscall2(SAVANXP_SYS_PROC_INFO, index, (unsigned long)info);
 }
 
-long getpid(void) {
-    return syscall0(SAVANXP_SYS_GETPID);
-}
-
-long chdir(const char* path) {
-    return syscall1(SAVANXP_SYS_CHDIR, (unsigned long)path);
-}
-
-long getcwd(char* buffer, size_t count) {
-    return syscall2(SAVANXP_SYS_GETCWD, (unsigned long)buffer, (unsigned long)count);
-}
-
 long system_info(struct savanxp_system_info* info) {
     return syscall1(SAVANXP_SYS_SYSTEM_INFO, (unsigned long)info);
 }
@@ -289,61 +277,16 @@ long realtime(struct savanxp_realtime* value) {
     return syscall1(SAVANXP_SYS_REALTIME, (unsigned long)value);
 }
 
-long sync(void) {
+long savanxp_sync(void) {
     return syscall0(SAVANXP_SYS_SYNC);
 }
 
-void* mmap(void* address, size_t length, int prot, int flags, int fd, long offset) {
-    unsigned long section_flags = 0;
-    unsigned long view_flags = 0;
-    long section = 0;
-    void* mapped = (void*)(intptr_t)-1;
-
-    if (address != 0 || length == 0 || fd != -1 || offset != 0) {
-        return (void*)(intptr_t)-SAVANXP_EINVAL;
-    }
-    if ((flags & 0x20) == 0 || ((flags & 0x01) == 0) == ((flags & 0x02) == 0)) {
-        return (void*)(intptr_t)-SAVANXP_EINVAL;
-    }
-    if ((prot & ~0x3) != 0 || (prot & 0x3) == 0) {
-        return (void*)(intptr_t)-SAVANXP_ENOSYS;
-    }
-
-    if ((prot & 0x1) != 0) {
-        section_flags |= SAVANXP_SECTION_READ;
-    }
-    if ((prot & 0x2) != 0) {
-        section_flags |= SAVANXP_SECTION_WRITE;
-    }
-
-    section = section_create((unsigned long)length, section_flags);
-    if (section < 0) {
-        return (void*)(intptr_t)section;
-    }
-
-    view_flags = section_flags;
-    if ((flags & 0x02) != 0) {
-        view_flags |= SAVANXP_VIEW_PRIVATE;
-    }
-
-    mapped = map_view((int)section, view_flags);
-    close((int)section);
-    return mapped;
-}
-
-int munmap(void* address, size_t length) {
-    if (address == 0 || address == (void*)(intptr_t)-1 || length == 0) {
-        return -SAVANXP_EINVAL;
-    }
-    return (int)unmap_view(address);
-}
-
 long mouse_open(void) {
-    long duplicated = dup(5);
+    long duplicated = savanxp_dup(5);
     if (duplicated >= 0) {
         return duplicated;
     }
-    return open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
+    return savanxp_open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
 }
 
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
@@ -355,11 +298,11 @@ int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
     if (fd < 0 || event == 0) {
         return -SAVANXP_EINVAL;
     }
-    if (poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
+    if (savanxp_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
         return 0;
     }
     {
-        const long result = read(fd, event, sizeof(*event));
+        const long result = savanxp_read(fd, event, sizeof(*event));
         if (result < 0) {
             return (int)result;
         }
@@ -373,7 +316,7 @@ int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
 /* Canal de puntero ruteado por el WM (SAVANXP_WM_FD_MOUSE). Devuelve -1 en
  * procesos que no se lanzaron como cliente del WM y por lo tanto no lo tienen. */
 long gfx_pointer_open(void) {
-    return dup(SAVANXP_WM_FD_MOUSE);
+    return savanxp_dup(SAVANXP_WM_FD_MOUSE);
 }
 
 int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
@@ -385,11 +328,11 @@ int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
     if (fd < 0 || event == 0) {
         return -SAVANXP_EINVAL;
     }
-    if (poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
+    if (savanxp_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
         return 0;
     }
     {
-        const long result = read(fd, event, sizeof(*event));
+        const long result = savanxp_read(fd, event, sizeof(*event));
         if (result < 0) {
             return (int)result;
         }
@@ -401,37 +344,37 @@ int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
 }
 
 long audio_open(void) {
-    return open_mode("/dev/audio0", SAVANXP_OPEN_WRITE);
+    return savanxp_open_mode("/dev/audio0", SAVANXP_OPEN_WRITE);
 }
 
 long audio_get_info(int fd, struct savanxp_audio_info* info) {
-    return ioctl(fd, AUDIO_IOC_GET_INFO, (unsigned long)info);
+    return savanxp_ioctl(fd, AUDIO_IOC_GET_INFO, (unsigned long)info);
 }
 
 int power_shutdown(void) {
-    long fd = open_mode("/dev/power", SAVANXP_OPEN_WRITE);
+    long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_WRITE);
     if (fd < 0) {
         return (int)fd;
     }
-    long result = ioctl((int)fd, POWER_IOC_SHUTDOWN, 0);
-    close((int)fd);
+    long result = savanxp_ioctl((int)fd, POWER_IOC_SHUTDOWN, 0);
+    savanxp_close((int)fd);
     return (int)result;
 }
 
 int power_reboot(void) {
-    long fd = open_mode("/dev/power", SAVANXP_OPEN_WRITE);
+    long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_WRITE);
     if (fd < 0) {
         return (int)fd;
     }
-    long result = ioctl((int)fd, POWER_IOC_REBOOT, 0);
-    close((int)fd);
+    long result = savanxp_ioctl((int)fd, POWER_IOC_REBOOT, 0);
+    savanxp_close((int)fd);
     return (int)result;
 }
 
 int clipboard_clear(void);
 
 static long clipboard_open(unsigned int mode) {
-    return open_mode("/dev/clipboard", mode);
+    return savanxp_open_mode("/dev/clipboard", mode);
 }
 
 int clipboard_set_text(const char* text) {
@@ -456,8 +399,8 @@ int clipboard_set_text(const char* text) {
     }
     /* Un write reemplaza el contenido entero, asi que no hace falta limpiar
      * antes: es un valor, no un append. */
-    long written = write((int)fd, text, (unsigned long)length);
-    close((int)fd);
+    long written = savanxp_write((int)fd, text, (unsigned long)length);
+    savanxp_close((int)fd);
     if (written < 0) {
         return (int)written;
     }
@@ -472,8 +415,8 @@ int clipboard_get_info(struct savanxp_clipboard_info* info) {
     if (fd < 0) {
         return (int)fd;
     }
-    long result = ioctl((int)fd, CLIP_IOC_GET_INFO, (unsigned long)info);
-    close((int)fd);
+    long result = savanxp_ioctl((int)fd, CLIP_IOC_GET_INFO, (unsigned long)info);
+    savanxp_close((int)fd);
     return (int)result;
 }
 
@@ -492,14 +435,14 @@ int clipboard_get_text(char* buffer, int capacity) {
      * read solo devuelve lo que entro en el buffer y no distingue "eso era
      * todo" de "habia mas". */
     struct savanxp_clipboard_info info;
-    long result = ioctl((int)fd, CLIP_IOC_GET_INFO, (unsigned long)&info);
+    long result = savanxp_ioctl((int)fd, CLIP_IOC_GET_INFO, (unsigned long)&info);
     if (result < 0) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return (int)result;
     }
 
-    long copied = read((int)fd, buffer, (unsigned long)(capacity - 1));
-    close((int)fd);
+    long copied = savanxp_read((int)fd, buffer, (unsigned long)(capacity - 1));
+    savanxp_close((int)fd);
     if (copied < 0) {
         return (int)copied;
     }
@@ -512,101 +455,101 @@ int clipboard_clear(void) {
     if (fd < 0) {
         return (int)fd;
     }
-    long result = ioctl((int)fd, CLIP_IOC_CLEAR, 0);
-    close((int)fd);
+    long result = savanxp_ioctl((int)fd, CLIP_IOC_CLEAR, 0);
+    savanxp_close((int)fd);
     return (int)result;
 }
 
 long gpu_open(void) {
-    return open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    return savanxp_open_mode("/dev/gpu0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
 }
 
 long gpu_get_info(int fd, struct savanxp_gpu_info* info) {
-    return ioctl(fd, GPU_IOC_GET_INFO, (unsigned long)info);
+    return savanxp_ioctl(fd, GPU_IOC_GET_INFO, (unsigned long)info);
 }
 
 long gpu_acquire(int fd) {
-    return ioctl(fd, GPU_IOC_ACQUIRE, 0);
+    return savanxp_ioctl(fd, GPU_IOC_ACQUIRE, 0);
 }
 
 long gpu_release(int fd) {
-    return ioctl(fd, GPU_IOC_RELEASE, 0);
+    return savanxp_ioctl(fd, GPU_IOC_RELEASE, 0);
 }
 
 long gpu_set_mode(int fd, struct savanxp_gpu_mode* mode) {
-    return ioctl(fd, GPU_IOC_SET_MODE, (unsigned long)mode);
+    return savanxp_ioctl(fd, GPU_IOC_SET_MODE, (unsigned long)mode);
 }
 
 long input_set_layout(int fd, int layout) {
-    return ioctl(fd, INPUT_IOC_SET_LAYOUT, (unsigned long)layout);
+    return savanxp_ioctl(fd, INPUT_IOC_SET_LAYOUT, (unsigned long)layout);
 }
 
 long input_get_layout(int fd) {
-    return ioctl(fd, INPUT_IOC_GET_LAYOUT, 0);
+    return savanxp_ioctl(fd, INPUT_IOC_GET_LAYOUT, 0);
 }
 
 long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_request) {
-    return ioctl(fd, GPU_IOC_IMPORT_SECTION, (unsigned long)import_request);
+    return savanxp_ioctl(fd, GPU_IOC_IMPORT_SECTION, (unsigned long)import_request);
 }
 
 long gpu_release_surface(int fd, uint32_t surface_id) {
-    return ioctl(fd, GPU_IOC_RELEASE_SURFACE, (unsigned long)surface_id);
+    return savanxp_ioctl(fd, GPU_IOC_RELEASE_SURFACE, (unsigned long)surface_id);
 }
 
 long gpu_present_surface_region(int fd, const struct savanxp_gpu_surface_present* present_request) {
-    return ioctl(fd, GPU_IOC_PRESENT_SURFACE_REGION, (unsigned long)present_request);
+    return savanxp_ioctl(fd, GPU_IOC_PRESENT_SURFACE_REGION, (unsigned long)present_request);
 }
 
 long gpu_wait_idle(int fd) {
-    return ioctl(fd, GPU_IOC_WAIT_IDLE, 0);
+    return savanxp_ioctl(fd, GPU_IOC_WAIT_IDLE, 0);
 }
 
 long gpu_get_stats(int fd, struct savanxp_gpu_stats* stats) {
-    return ioctl(fd, GPU_IOC_GET_STATS, (unsigned long)stats);
+    return savanxp_ioctl(fd, GPU_IOC_GET_STATS, (unsigned long)stats);
 }
 
 long gpu_get_scanouts(int fd, struct savanxp_gpu_scanout_state* state) {
-    return ioctl(fd, GPU_IOC_GET_SCANOUTS, (unsigned long)state);
+    return savanxp_ioctl(fd, GPU_IOC_GET_SCANOUTS, (unsigned long)state);
 }
 
 long gpu_refresh_scanouts(int fd) {
-    return ioctl(fd, GPU_IOC_REFRESH_SCANOUTS, 0);
+    return savanxp_ioctl(fd, GPU_IOC_REFRESH_SCANOUTS, 0);
 }
 
 long gpu_get_connector_properties(int fd, struct savanxp_gpu_connector_properties* properties) {
-    return ioctl(fd, GPU_IOC_GET_CONNECTOR_PROPERTIES, (unsigned long)properties);
+    return savanxp_ioctl(fd, GPU_IOC_GET_CONNECTOR_PROPERTIES, (unsigned long)properties);
 }
 
 long gpu_create_present_event(int fd) {
-    return ioctl(fd, GPU_IOC_CREATE_PRESENT_EVENT, 0);
+    return savanxp_ioctl(fd, GPU_IOC_CREATE_PRESENT_EVENT, 0);
 }
 
 long gpu_create_scanout_event(int fd) {
-    return ioctl(fd, GPU_IOC_CREATE_SCANOUT_EVENT, 0);
+    return savanxp_ioctl(fd, GPU_IOC_CREATE_SCANOUT_EVENT, 0);
 }
 
 long gpu_set_cursor(int fd, const struct savanxp_gpu_cursor_image* image) {
-    return ioctl(fd, GPU_IOC_SET_CURSOR, (unsigned long)image);
+    return savanxp_ioctl(fd, GPU_IOC_SET_CURSOR, (unsigned long)image);
 }
 
 long gpu_move_cursor(int fd, const struct savanxp_gpu_cursor_position* position) {
-    return ioctl(fd, GPU_IOC_MOVE_CURSOR, (unsigned long)position);
+    return savanxp_ioctl(fd, GPU_IOC_MOVE_CURSOR, (unsigned long)position);
 }
 
 long gpu_get_present_timeline(int fd, struct savanxp_gpu_present_timeline* timeline) {
-    return ioctl(fd, GPU_IOC_GET_PRESENT_TIMELINE, (unsigned long)timeline);
+    return savanxp_ioctl(fd, GPU_IOC_GET_PRESENT_TIMELINE, (unsigned long)timeline);
 }
 
 long gpu_wait_present(int fd, struct savanxp_gpu_present_wait* wait_request) {
-    return ioctl(fd, GPU_IOC_WAIT_PRESENT, (unsigned long)wait_request);
+    return savanxp_ioctl(fd, GPU_IOC_WAIT_PRESENT, (unsigned long)wait_request);
 }
 
 long gpu_present_surface_batch(int fd, const struct savanxp_gpu_surface_present_batch* batch_request) {
-    return ioctl(fd, GPU_IOC_PRESENT_SURFACE_BATCH, (unsigned long)batch_request);
+    return savanxp_ioctl(fd, GPU_IOC_PRESENT_SURFACE_BATCH, (unsigned long)batch_request);
 }
 
 long gpu_present(int fd, const uint32_t* pixels) {
-    return ioctl(fd, GPU_IOC_PRESENT, (unsigned long)pixels);
+    return savanxp_ioctl(fd, GPU_IOC_PRESENT, (unsigned long)pixels);
 }
 
 long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -618,7 +561,7 @@ long gpu_present_region(int fd, const uint32_t* pixels, uint32_t source_pitch, u
         .width = width,
         .height = height,
     };
-    return ioctl(fd, GPU_IOC_PRESENT_REGION, (unsigned long)&region);
+    return savanxp_ioctl(fd, GPU_IOC_PRESENT_REGION, (unsigned long)&region);
 }
 
 long savanxp_getpid(void) {
@@ -848,158 +791,4 @@ void* memset(void* destination, int value, size_t count) {
     __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
 
     return destination;
-}
-
-void putchar(int fd, char character) {
-    write(fd, &character, 1);
-}
-
-void puts_fd(int fd, const char* text) {
-    write(fd, text, strlen(text));
-}
-
-void puts_err(const char* text) {
-    puts_fd(SAVANXP_STDERR_FILENO, text);
-}
-
-void puts(const char* text) {
-    puts_fd(SAVANXP_STDOUT_FILENO, text);
-}
-
-// Los conversores rinden a un buffer (en vez de escribir directo al fd) para
-// que el padding pueda ir adelante o atras segun el flag '-'.
-static size_t format_unsigned(char* buffer, unsigned long value, unsigned long base) {
-    char digits[32];
-    size_t count = 0;
-    size_t length = 0;
-
-    if (value == 0) {
-        digits[count++] = '0';
-    }
-    while (value != 0) {
-        unsigned long digit = value % base;
-        digits[count++] = (char)(digit < 10 ? ('0' + digit) : ('a' + (digit - 10)));
-        value /= base;
-    }
-    while (count > 0) {
-        buffer[length++] = digits[--count];
-    }
-    return length;
-}
-
-static size_t format_signed(char* buffer, long value) {
-    if (value < 0) {
-        buffer[0] = '-';
-        return 1 + format_unsigned(buffer + 1, (unsigned long)(-value), 10);
-    }
-    return format_unsigned(buffer, (unsigned long)value, 10);
-}
-
-static void write_padded_fd(int fd, const char* text, size_t length, int width, char pad, int left_align) {
-    size_t padding = 0;
-
-    if (width > 0 && length < (size_t)width) {
-        padding = (size_t)width - length;
-    }
-
-    // El flag '-' desactiva el relleno con ceros y manda el padding al final.
-    if (left_align) {
-        pad = ' ';
-    } else {
-        for (size_t index = 0; index < padding; ++index) {
-            putchar(fd, pad);
-        }
-    }
-
-    write(fd, text, length);
-
-    if (left_align) {
-        for (size_t index = 0; index < padding; ++index) {
-            putchar(fd, pad);
-        }
-    }
-}
-
-static void vprintf_fd(int fd, const char* format, va_list args) {
-    for (const char* cursor = format; *cursor != '\0'; ++cursor) {
-        char buffer[48];
-        char pad = ' ';
-        int left_align = 0;
-        int width = 0;
-        size_t length = 0;
-
-        if (*cursor != '%') {
-            putchar(fd, *cursor);
-            continue;
-        }
-
-        ++cursor;
-
-        for (;;) {
-            if (*cursor == '-') {
-                left_align = 1;
-            } else if (*cursor == '0') {
-                pad = '0';
-            } else {
-                break;
-            }
-            ++cursor;
-        }
-
-        while (*cursor >= '0' && *cursor <= '9') {
-            width = (width * 10) + (*cursor - '0');
-            ++cursor;
-        }
-
-        switch (*cursor) {
-            case '%':
-                putchar(fd, '%');
-                break;
-            case 's': {
-                const char* text = va_arg(args, const char*);
-                if (text == 0) {
-                    text = "(null)";
-                }
-                write_padded_fd(fd, text, strlen(text), width, pad, left_align);
-                break;
-            }
-            case 'd':
-            case 'i':
-                length = format_signed(buffer, va_arg(args, int));
-                write_padded_fd(fd, buffer, length, width, pad, left_align);
-                break;
-            case 'u':
-                length = format_unsigned(buffer, va_arg(args, unsigned int), 10);
-                write_padded_fd(fd, buffer, length, width, pad, left_align);
-                break;
-            case 'x':
-                length = format_unsigned(buffer, va_arg(args, unsigned int), 16);
-                write_padded_fd(fd, buffer, length, width, pad, left_align);
-                break;
-            default:
-                puts_fd(fd, "%?");
-                break;
-        }
-    }
-}
-
-void printf_fd(int fd, const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    vprintf_fd(fd, format, args);
-    va_end(args);
-}
-
-void eprintf(const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    vprintf_fd(SAVANXP_STDERR_FILENO, format, args);
-    va_end(args);
-}
-
-void printf(const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    vprintf_fd(SAVANXP_STDOUT_FILENO, format, args);
-    va_end(args);
 }

@@ -40,7 +40,7 @@ int main(void) {
         return 1;
     }
 
-    long pid = fork();
+    long pid = savanxp_fork();
     if (pid < 0) {
         eprintf("eventtest: fork failed (%s)\n", result_error_string(pid));
         return 1;
@@ -61,7 +61,7 @@ int main(void) {
     }
 
     int status = -1;
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         eprintf("eventtest: waitpid failed\n");
         return 1;
     }
@@ -103,7 +103,7 @@ int main(void) {
         return 1;
     }
 
-    pid = fork();
+    pid = savanxp_fork();
     if (pid < 0) {
         eprintf("eventtest: second fork failed (%s)\n", result_error_string(pid));
         return 1;
@@ -124,7 +124,7 @@ int main(void) {
     }
 
     status = -1;
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         eprintf("eventtest: second waitpid failed\n");
         return 1;
     }
@@ -146,9 +146,9 @@ int main(void) {
         return 1;
     }
 
-    close((int)manual_event_b);
-    close((int)manual_event_a);
-    close((int)auto_event_b);
-    close((int)auto_event_a);
+    savanxp_close((int)manual_event_b);
+    savanxp_close((int)manual_event_a);
+    savanxp_close((int)auto_event_b);
+    savanxp_close((int)auto_event_a);
     return 0;
 }

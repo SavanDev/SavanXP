@@ -14,52 +14,28 @@ extern FILE* stderr;
 #define SEEK_END 2
 #define EOF (-1)
 
-#define fopen sx_fopen
-#define fclose sx_fclose
-#define fread sx_fread
-#define fwrite sx_fwrite
-#define fseek sx_fseek
-#define ftell sx_ftell
-#define fflush sx_fflush
-#define fprintf sx_fprintf
-#define vfprintf sx_vfprintf
-#define printf sx_printf
-#define sprintf sx_sprintf
-#define vprintf sx_vprintf
-#define snprintf sx_snprintf
-#define vsnprintf sx_vsnprintf
-#define fgets sx_fgets
-#define feof sx_feof
-#define ferror sx_ferror
-#define clearerr sx_clearerr
-#define fputs sx_fputs
-#define putc sx_putc
-#define putchar sx_putchar
-#define puts sx_puts
-#define remove sx_remove
-#define rename sx_rename
 
-FILE* sx_fopen(const char* path, const char* mode);
-int sx_fclose(FILE* stream);
-size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream);
-size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream);
-int sx_fseek(FILE* stream, long offset, int whence);
-long sx_ftell(FILE* stream);
-int sx_fflush(FILE* stream);
-int sx_fprintf(FILE* stream, const char* format, ...);
-int sx_vfprintf(FILE* stream, const char* format, va_list args);
-int sx_printf(const char* format, ...);
-int sx_sprintf(char* buffer, const char* format, ...);
-int sx_vprintf(const char* format, va_list args);
-int sx_snprintf(char* buffer, size_t size, const char* format, ...);
-int sx_vsnprintf(char* buffer, size_t size, const char* format, va_list args);
-char* sx_fgets(char* buffer, int size, FILE* stream);
-int sx_feof(FILE* stream);
-int sx_ferror(FILE* stream);
-void sx_clearerr(FILE* stream);
-int sx_fputs(const char* text, FILE* stream);
-int sx_putc(int character, FILE* stream);
-int sx_putchar(int character);
-int sx_puts(const char* text);
-int sx_remove(const char* path);
-int sx_rename(const char* old_path, const char* new_path);
+FILE* fopen(const char* path, const char* mode);
+int fclose(FILE* stream);
+size_t fread(void* buffer, size_t size, size_t count, FILE* stream);
+size_t fwrite(const void* buffer, size_t size, size_t count, FILE* stream);
+int fseek(FILE* stream, long offset, int whence);
+long ftell(FILE* stream);
+int fflush(FILE* stream);
+int fprintf(FILE* stream, const char* format, ...);
+int vfprintf(FILE* stream, const char* format, va_list args);
+int printf(const char* format, ...);
+int sprintf(char* buffer, const char* format, ...);
+int vprintf(const char* format, va_list args);
+int snprintf(char* buffer, size_t size, const char* format, ...);
+int vsnprintf(char* buffer, size_t size, const char* format, va_list args);
+char* fgets(char* buffer, int size, FILE* stream);
+int feof(FILE* stream);
+int ferror(FILE* stream);
+void clearerr(FILE* stream);
+int fputs(const char* text, FILE* stream);
+int putc(int character, FILE* stream);
+int putchar(int character);
+int puts(const char* text);
+int remove(const char* path);
+int rename(const char* old_path, const char* new_path);

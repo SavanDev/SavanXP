@@ -267,7 +267,7 @@ static void check_context_switch(void) {
     /* Referencia tomada antes del fork, con el proceso solo. */
     parent_reference = fp_workload(parent_seed, SX_WORKLOAD_ROUNDS);
 
-    child_pid = fork();
+    child_pid = savanxp_fork();
     if (child_pid < 0) {
         printf("  FALLA fork (%d)\n", (int)child_pid);
         g_failures += 1;
@@ -286,7 +286,7 @@ static void check_context_switch(void) {
         int ok = run_contended_checks(0xA1B20000u, parent_seed, parent_reference);
         int status = 0;
 
-        waitpid((int)child_pid, &status);
+        savanxp_waitpid((int)child_pid, &status);
         report("padre: xmm y workload intactos", ok);
         report("hijo: xmm y workload intactos", status == 0);
     }

@@ -269,7 +269,7 @@ int file_assoc_parse_policy(const char *text, size_t length)
 int file_assoc_load_policy(void)
 {
     static char file_buffer[FILE_ASSOC_POLICY_MAX_BYTES];
-    int fd = (int)open_mode(FILE_ASSOC_POLICY_PATH, SAVANXP_OPEN_READ);
+    int fd = (int)savanxp_open_mode(FILE_ASSOC_POLICY_PATH, SAVANXP_OPEN_READ);
     long total = 0;
 
     g_entry_count = 0;
@@ -280,14 +280,14 @@ int file_assoc_load_policy(void)
     }
     while (total < (long)(sizeof(file_buffer) - 1u))
     {
-        long got = read(fd, file_buffer + total, sizeof(file_buffer) - 1u - (size_t)total);
+        long got = savanxp_read(fd, file_buffer + total, sizeof(file_buffer) - 1u - (size_t)total);
         if (got <= 0)
         {
             break;
         }
         total += got;
     }
-    (void)close(fd);
+    (void)savanxp_close(fd);
     if (total <= 0)
     {
         return 0;
@@ -299,13 +299,13 @@ int file_assoc_load_policy(void)
 
 static int default_path_exists(const char *path)
 {
-    long fd = open_mode(path, SAVANXP_OPEN_READ);
+    long fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
 
     if (fd < 0)
     {
         return 0;
     }
-    (void)close((int)fd);
+    (void)savanxp_close((int)fd);
     return 1;
 }
 

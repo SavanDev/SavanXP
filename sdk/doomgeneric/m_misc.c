@@ -57,7 +57,7 @@
 void M_MakeDirectory(char *path)
 {
 #ifdef _WIN32
-    mkdir(path);
+    savanxp_mkdir(path);
 #else
     sx_make_dirs(path);
 #endif

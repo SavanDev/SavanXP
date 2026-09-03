@@ -9,12 +9,12 @@ int main(void) {
     long first = spawn("/bin/ticker", argv_a, 4);
     long second = spawn("/bin/ticker", argv_b, 4);
     if (first < 0 || second < 0) {
-        puts("demo: spawn failed\n");
+        puts_out("demo: spawn failed\n");
         return 1;
     }
 
-    waitpid((int)first, &status_a);
-    waitpid((int)second, &status_b);
+    savanxp_waitpid((int)first, &status_a);
+    savanxp_waitpid((int)second, &status_b);
     printf("demo done: %d %d\n", status_a, status_b);
     return 0;
 }

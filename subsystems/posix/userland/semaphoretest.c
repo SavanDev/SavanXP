@@ -69,7 +69,7 @@ int main(void) {
         return 1;
     }
 
-    long pid = fork();
+    long pid = savanxp_fork();
     if (pid < 0) {
         eprintf("semaphoretest: fork failed (%s)\n", result_error_string(pid));
         return 1;
@@ -88,7 +88,7 @@ int main(void) {
     }
 
     int status = -1;
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         eprintf("semaphoretest: waitpid failed\n");
         return 1;
     }
@@ -97,6 +97,6 @@ int main(void) {
         return 1;
     }
 
-    close((int)semaphore);
+    savanxp_close((int)semaphore);
     return 0;
 }

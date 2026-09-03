@@ -646,7 +646,7 @@ char* concat_path_file(const char* path, const char* filename) {
 }
 
 static int mkdir_one(const char* path) {
-    if (mkdir(path) == 0 || errno == EEXIST) {
+    if (savanxp_mkdir(path) == 0 || errno == EEXIST) {
         return 0;
     }
     return -1;

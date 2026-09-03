@@ -2,11 +2,11 @@
 
 int main(int argc, char** argv) {
     for (int index = 1; index < argc; ++index) {
-        puts(argv[index]);
+        puts_out(argv[index]);
         if (index + 1 < argc) {
-            putchar(1, ' ');
+            putchar_fd(1, ' ');
         }
     }
-    putchar(1, '\n');
+    putchar_fd(1, '\n');
     return 0;
 }

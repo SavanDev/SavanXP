@@ -80,7 +80,7 @@ int sx_make_dirs(const char *path) {
         }
 
         partial[index] = '\0';
-        result = mkdir(partial);
+        result = savanxp_mkdir(partial);
         partial[index] = '/';
 
         if (result < 0 && errno != EEXIST) {
@@ -88,7 +88,7 @@ int sx_make_dirs(const char *path) {
         }
     }
 
-    if (mkdir(partial) < 0 && errno != EEXIST) {
+    if (savanxp_mkdir(partial) < 0 && errno != EEXIST) {
         return -1;
     }
 

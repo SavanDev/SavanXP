@@ -32,7 +32,7 @@ static int read_exact(int fd, void *buffer, unsigned long count)
 
     while (done < count)
     {
-        long result = read(fd, out + done, count - done);
+        long result = savanxp_read(fd, out + done, count - done);
         if (result <= 0)
         {
             return -1;
@@ -51,7 +51,7 @@ static void unload_image(void)
     }
     if (g_image_section_fd >= 0)
     {
-        close(g_image_section_fd);
+        savanxp_close(g_image_section_fd);
         g_image_section_fd = -1;
     }
     g_image_width = 0;
@@ -79,7 +79,7 @@ static void load_image(void)
 
     unload_image();
 
-    fd = (int)open_mode(DESKTOP_WALLPAPER_IMAGE_PATH, SAVANXP_OPEN_READ);
+    fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_IMAGE_PATH, SAVANXP_OPEN_READ);
     if (fd < 0)
     {
         return;
@@ -137,7 +137,7 @@ static void load_image(void)
         }
     }
 
-    close(fd);
+    savanxp_close(fd);
     if (loaded)
     {
         g_image_width = width;
@@ -150,7 +150,7 @@ static void load_image(void)
 static void load_config(void)
 {
     char digit = 0;
-    int fd = (int)open_mode(DESKTOP_WALLPAPER_CONFIG_PATH, SAVANXP_OPEN_READ);
+    int fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_CONFIG_PATH, SAVANXP_OPEN_READ);
 
     if (fd < 0)
     {
@@ -162,11 +162,11 @@ static void load_config(void)
         }
         return;
     }
-    if (read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
+    if (savanxp_read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
     {
         g_mode = digit - '0';
     }
-    close(fd);
+    savanxp_close(fd);
 
     if (g_mode == DESKTOP_WALLPAPER_IMAGE && g_image_pixels == 0)
     {
@@ -177,7 +177,7 @@ static void load_config(void)
 static void save_mode(int mode)
 {
     char digit = (char)('0' + mode);
-    int fd = (int)open_mode(
+    int fd = (int)savanxp_open_mode(
         DESKTOP_WALLPAPER_CONFIG_PATH,
         SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
 
@@ -185,8 +185,8 @@ static void save_mode(int mode)
     {
         return;
     }
-    (void)write(fd, &digit, 1);
-    close(fd);
+    (void)savanxp_write(fd, &digit, 1);
+    savanxp_close(fd);
 }
 
 static void save_config(void)
@@ -198,13 +198,13 @@ static void save_config(void)
  * elegible. */
 static int image_file_present(void)
 {
-    int fd = (int)open_mode(DESKTOP_WALLPAPER_IMAGE_PATH, SAVANXP_OPEN_READ);
+    int fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_IMAGE_PATH, SAVANXP_OPEN_READ);
 
     if (fd < 0)
     {
         return 0;
     }
-    close(fd);
+    savanxp_close(fd);
     return 1;
 }
 
@@ -213,17 +213,17 @@ static int read_persisted_mode(void)
 {
     char digit = 0;
     int mode = -1;
-    int fd = (int)open_mode(DESKTOP_WALLPAPER_CONFIG_PATH, SAVANXP_OPEN_READ);
+    int fd = (int)savanxp_open_mode(DESKTOP_WALLPAPER_CONFIG_PATH, SAVANXP_OPEN_READ);
 
     if (fd < 0)
     {
         return -1;
     }
-    if (read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
+    if (savanxp_read(fd, &digit, 1) == 1 && digit >= '0' && digit < '0' + DESKTOP_WALLPAPER_MODE_COUNT)
     {
         mode = digit - '0';
     }
-    close(fd);
+    savanxp_close(fd);
     return mode;
 }
 

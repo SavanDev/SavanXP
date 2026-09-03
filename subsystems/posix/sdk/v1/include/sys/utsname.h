@@ -8,6 +8,5 @@ struct utsname {
     char machine[65];
 };
 
-int sx_uname(struct utsname* value);
+int uname(struct utsname* value);
 
-#define uname sx_uname

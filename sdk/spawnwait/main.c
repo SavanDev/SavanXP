@@ -10,7 +10,7 @@ int main(void) {
         return 1;
     }
 
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         puts_err("spawnwait: waitpid failed\n");
         return 1;
     }

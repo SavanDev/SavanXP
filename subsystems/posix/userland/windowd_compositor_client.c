@@ -20,7 +20,7 @@ static int wait_fd(int fd, short events, long timeout_ms)
     poll_fd.events = events;
     poll_fd.revents = 0;
 
-    ready = poll(&poll_fd, 1, timeout_ms);
+    ready = savanxp_poll(&poll_fd, 1, timeout_ms);
     if (ready < 0)
     {
         return -1;
@@ -46,7 +46,7 @@ static void close_fd_if_needed(int *fd)
 {
     if (fd != 0 && *fd >= 0)
     {
-        close(*fd);
+        savanxp_close(*fd);
         *fd = -1;
     }
 }
@@ -66,7 +66,7 @@ static int child_relocate_above_window(int fd)
        the handoff window. */
     while (fd >= 0 && fd <= SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD)
     {
-        long moved = dup(fd);
+        long moved = savanxp_dup(fd);
         if (moved < 0)
         {
             break;
@@ -83,7 +83,7 @@ static void child_close_above_window(void)
     int fd;
     for (fd = SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD + 1; fd < 64; ++fd)
     {
-        close(fd);
+        savanxp_close(fd);
     }
 }
 
@@ -104,7 +104,7 @@ static int read_exact(int fd, void *buffer, size_t size)
         {
             return -SAVANXP_EPIPE;
         }
-        result = read(fd, cursor + offset, size - offset);
+        result = savanxp_read(fd, cursor + offset, size - offset);
         if (result < 0)
         {
             return (int)result;
@@ -135,7 +135,7 @@ static int write_exact(int fd, const void *buffer, size_t size)
         {
             return -SAVANXP_EPIPE;
         }
-        result = write(fd, cursor + offset, size - offset);
+        result = savanxp_write(fd, cursor + offset, size - offset);
         if (result < 0)
         {
             return (int)result;
@@ -257,13 +257,13 @@ static int spawn_compositor_daemon(struct windowd_compositor_connection *connect
         return -SAVANXP_EINVAL;
     }
 
-    if (pipe(request_pipe) < 0 || pipe(reply_pipe) < 0)
+    if (savanxp_pipe(request_pipe) < 0 || savanxp_pipe(reply_pipe) < 0)
     {
         result = -SAVANXP_EIO;
         goto fail;
     }
 
-    pid = fork();
+    pid = savanxp_fork();
     if (pid < 0)
     {
         result = (int)pid;
@@ -275,9 +275,9 @@ static int spawn_compositor_daemon(struct windowd_compositor_connection *connect
         int child_reply = child_relocate_above_window(reply_pipe[1]);
         int child_section = child_relocate_above_window(connection->display_section_fd);
 
-        if (dup2(child_request, SAVANXP_COMPOSITOR_REQUEST_FD) < 0 ||
-            dup2(child_reply, SAVANXP_COMPOSITOR_REPLY_FD) < 0 ||
-            dup2(child_section, SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD) < 0)
+        if (savanxp_dup2(child_request, SAVANXP_COMPOSITOR_REQUEST_FD) < 0 ||
+            savanxp_dup2(child_reply, SAVANXP_COMPOSITOR_REPLY_FD) < 0 ||
+            savanxp_dup2(child_section, SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD) < 0)
         {
             exit(1);
         }
@@ -328,8 +328,8 @@ fail:
     if (connection->pid > 0)
     {
         int status = 0;
-        (void)kill((int)connection->pid, SAVANXP_SIGKILL);
-        (void)waitpid((int)connection->pid, &status);
+        (void)savanxp_kill((int)connection->pid, SAVANXP_SIGKILL);
+        (void)savanxp_waitpid((int)connection->pid, &status);
         connection->pid = -1;
     }
     connection->connected = 0;
@@ -381,8 +381,8 @@ static void reap_daemon(struct windowd_compositor_connection *connection)
     if (connection->pid > 0)
     {
         int status = 0;
-        (void)kill((int)connection->pid, SAVANXP_SIGKILL);
-        (void)waitpid((int)connection->pid, &status);
+        (void)savanxp_kill((int)connection->pid, SAVANXP_SIGKILL);
+        (void)savanxp_waitpid((int)connection->pid, &status);
     }
     connection->pid = -1;
     connection->connected = 0;
@@ -496,7 +496,7 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
     if (connection->pid > 0)
     {
         int status = 0;
-        (void)waitpid((int)connection->pid, &status);
+        (void)savanxp_waitpid((int)connection->pid, &status);
     }
 
     if (connection->display_view != 0 && !result_is_error((long)connection->display_view))

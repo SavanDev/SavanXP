@@ -15,8 +15,6 @@
 #define MAP_ANON MAP_ANONYMOUS
 #define MAP_FAILED ((void*)(off_t)-1)
 
-#define mmap sx_mmap
-#define munmap sx_munmap
 
-void* sx_mmap(void* address, size_t length, int prot, int flags, int fd, off_t offset);
-int sx_munmap(void* address, size_t length);
+void* mmap(void* address, size_t length, int prot, int flags, int fd, off_t offset);
+int munmap(void* address, size_t length);

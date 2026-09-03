@@ -611,12 +611,12 @@ static int path_is_launchable(const char *path)
         return 0;
     }
 
-    fd = open(path);
+    fd = savanxp_open(path);
     if (fd < 0)
     {
         return 0;
     }
-    (void)close((int)fd);
+    (void)savanxp_close((int)fd);
     return 1;
 }
 

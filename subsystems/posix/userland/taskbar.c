@@ -257,7 +257,7 @@ static void taskbar_open_layout_popup(void)
     memset(&request, 0, sizeof(request));
     request.flags = SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP;
     memcpy(request.path, "/bin/kbdlayoutpopup", sizeof("/bin/kbdlayoutpopup"));
-    (void)write(SAVANXP_WM_FD_LAUNCH, &request, sizeof(request));
+    (void)savanxp_write(SAVANXP_WM_FD_LAUNCH, &request, sizeof(request));
 }
 
 static void taskbar_request(uint32_t action, uint32_t window_id)
@@ -266,7 +266,7 @@ static void taskbar_request(uint32_t action, uint32_t window_id)
 
     request.action = action;
     request.window_id = window_id;
-    (void)write(SAVANXP_WM_FD_SHELL_REQUEST, &request, sizeof(request));
+    (void)savanxp_write(SAVANXP_WM_FD_SHELL_REQUEST, &request, sizeof(request));
 }
 
 int main(void)
@@ -301,7 +301,7 @@ int main(void)
     }
 
     /* Solo para el ioctl de layout -- jamas se lee de este fd. */
-    g_input_fd = open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    g_input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
     if (g_input_fd >= 0)
     {
         long layout = input_get_layout((int)g_input_fd);
@@ -403,7 +403,7 @@ int main(void)
 
     if (g_input_fd >= 0)
     {
-        close((int)g_input_fd);
+        savanxp_close((int)g_input_fd);
     }
     gfx_close(&gfx);
     return 0;

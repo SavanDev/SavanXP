@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    fd = socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP);
+    fd = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, SAVANXP_IPPROTO_TCP);
     if (fd < 0) {
         eprintf("sdk tcpget: socket failed (%s)\n", result_error_string(fd));
         return 1;
@@ -92,10 +92,10 @@ int main(int argc, char** argv) {
     memset(&address, 0, sizeof(address));
     address.ipv4 = ipv4;
     address.port = (uint16_t)port;
-    status = connect((int)fd, &address, 4000);
+    status = savanxp_connect((int)fd, &address, 4000);
     if (status < 0) {
         eprintf("sdk tcpget: connect failed (%s)\n", result_error_string(status));
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
@@ -106,33 +106,33 @@ int main(int argc, char** argv) {
         !append_text(request, sizeof(request), &request_length, argv[3]) ||
         !append_text(request, sizeof(request), &request_length, "\r\nConnection: close\r\n\r\n")) {
         puts_err("sdk tcpget: request too large\n");
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
-    status = write((int)fd, request, request_length);
+    status = savanxp_write((int)fd, request, request_length);
     if (status < 0) {
         eprintf("sdk tcpget: write failed (%s)\n", result_error_string(status));
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
     for (;;) {
-        status = read((int)fd, response, sizeof(response));
+        status = savanxp_read((int)fd, response, sizeof(response));
         if (status == 0) {
             break;
         }
         if (status < 0) {
             eprintf("sdk tcpget: read failed (%s)\n", result_error_string(status));
-            close((int)fd);
+            savanxp_close((int)fd);
             return 1;
         }
-        if (write(SAVANXP_STDOUT_FILENO, response, (size_t)status) < 0) {
-            close((int)fd);
+        if (savanxp_write(SAVANXP_STDOUT_FILENO, response, (size_t)status) < 0) {
+            savanxp_close((int)fd);
             return 1;
         }
     }
 
-    close((int)fd);
+    savanxp_close((int)fd);
     return 0;
 }

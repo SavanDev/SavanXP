@@ -8,10 +8,10 @@ int main(int argc, char** argv) {
 
     for (int index = 1; index < argc; ++index) {
         if (index > 1) {
-            putchar(2, ' ');
+            putchar_fd(2, ' ');
         }
         puts_fd(2, argv[index]);
     }
-    putchar(2, '\n');
+    putchar_fd(2, '\n');
     return 0;
 }

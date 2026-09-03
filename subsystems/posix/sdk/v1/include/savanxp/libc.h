@@ -7,36 +7,36 @@
 #include "savanxp/wm_protocol.h"
 #include "savanxp/gfx2d.h"
 
-long read(int fd, void* buffer, size_t count);
-long write(int fd, const void* buffer, size_t count);
-long open(const char* path);
-long open_mode(const char* path, unsigned long flags);
-long close(int fd);
-long readdir(int fd, char* buffer, size_t count);
+long savanxp_read(int fd, void* buffer, size_t count);
+long savanxp_write(int fd, const void* buffer, size_t count);
+long savanxp_open(const char* path);
+long savanxp_open_mode(const char* path, unsigned long flags);
+long savanxp_close(int fd);
+long savanxp_readdir(int fd, char* buffer, size_t count);
 long spawn(const char* path, const char* const* argv, int argc);
 long spawn_fd(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd);
 long spawn_fds(const char* path, const char* const* argv, int argc, int stdin_fd, int stdout_fd, int stderr_fd);
 long exec(const char* path, const char* const* argv, int argc);
-long pipe(int fds[2]);
-long dup(int fd);
-long dup2(int oldfd, int newfd);
+long savanxp_pipe(int fds[2]);
+long savanxp_dup(int fd);
+long savanxp_dup2(int oldfd, int newfd);
 long seek(int fd, long offset, int whence);
-long unlink(const char* path);
-long mkdir(const char* path);
-long rmdir(const char* path);
-long truncate(const char* path, unsigned long size);
-long rename(const char* old_path, const char* new_path);
-long fcntl(int fd, unsigned long command, unsigned long value);
-long ioctl(int fd, unsigned long request, unsigned long arg);
-long poll(struct savanxp_pollfd* fds, unsigned long count, long timeout_ms);
-long socket(unsigned long domain, unsigned long type, unsigned long protocol);
-long bind(int fd, const struct savanxp_sockaddr_in* address);
-long sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address);
-long recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
-long connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
-long waitpid(int pid, int* status);
-long fork(void);
-long kill(int pid, int signal_number);
+long savanxp_unlink(const char* path);
+long savanxp_mkdir(const char* path);
+long savanxp_rmdir(const char* path);
+long savanxp_truncate(const char* path, unsigned long size);
+long savanxp_rename(const char* old_path, const char* new_path);
+long savanxp_fcntl(int fd, unsigned long command, unsigned long value);
+long savanxp_ioctl(int fd, unsigned long request, unsigned long arg);
+long savanxp_poll(struct savanxp_pollfd* fds, unsigned long count, long timeout_ms);
+long savanxp_socket(unsigned long domain, unsigned long type, unsigned long protocol);
+long savanxp_bind(int fd, const struct savanxp_sockaddr_in* address);
+long savanxp_sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address);
+long savanxp_recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
+long savanxp_connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
+long savanxp_waitpid(int pid, int* status);
+long savanxp_fork(void);
+long savanxp_kill(int pid, int signal_number);
 long event_create(unsigned long flags);
 long event_set(int handle);
 long event_reset(int handle);
@@ -57,7 +57,7 @@ long clear_screen(void);
 long proc_info(unsigned long index, struct savanxp_process_info* info);
 long system_info(struct savanxp_system_info* info);
 long realtime(struct savanxp_realtime* value);
-long sync(void);
+long savanxp_sync(void);
 long mouse_open(void);
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event);
 long gfx_pointer_open(void);
@@ -204,10 +204,19 @@ char* strcpy(char* destination, const char* source);
 void* memcpy(void* destination, const void* source, size_t count);
 void* memset(void* destination, int value, size_t count);
 
-void putchar(int fd, char character);
+/* Consola. El formateador es uno solo y vive en el runtime POSIX
+ * (runtime/posix.c); estos helpers son la cara cruda, orientada a fd.
+ *
+ * OJO con puts_out: NO agrega salto de linea. Se llamaba `puts` y por eso no
+ * se podia tener al mismo tiempo el `puts` estandar, que si lo agrega. */
+void putchar_fd(int fd, char character);
 void puts_fd(int fd, const char* text);
 void puts_err(const char* text);
-void puts(const char* text);
+void puts_out(const char* text);
 void printf_fd(int fd, const char* format, ...);
 void eprintf(const char* format, ...);
-void printf(const char* format, ...);
+
+/* Los estandar, con su firma y su semantica de siempre. */
+int printf(const char* format, ...);
+int puts(const char* text);
+int putchar(int character);

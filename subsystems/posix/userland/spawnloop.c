@@ -7,15 +7,15 @@ int main(void) {
         int status = 0;
         long pid = spawn("/bin/true", argv, 1);
         if (pid < 0) {
-            puts("spawnloop: spawn failed\n");
+            puts_out("spawnloop: spawn failed\n");
             return 1;
         }
-        if (waitpid((int)pid, &status) < 0 || status != 0) {
-            puts("spawnloop: wait failed\n");
+        if (savanxp_waitpid((int)pid, &status) < 0 || status != 0) {
+            puts_out("spawnloop: wait failed\n");
             return 1;
         }
     }
 
-    puts("spawnloop: ok\n");
+    puts_out("spawnloop: ok\n");
     return 0;
 }

@@ -12,6 +12,13 @@ Notas de corte:
 
 ### Agregado
 
+- **`build.ps1 smoke` corre `libctest`.** Prueba la superficie de libc que
+  consume un port, incluyendo SOLO headers estandar: nombres estandar usados
+  como campos de struct (`.close`, `.read`, `.write`, `.remove`), string/memoria,
+  `snprintf` con `%s %d %u %x %c %ld` y padding, `qsort`/`bsearch`, archivos,
+  streams, directorios y la convencion POSIX de error (`-1` mas `errno`, no el
+  `-errno` crudo del kernel).
+
 - **Selector de layout de teclado ES/EN, en la barra de tareas.** El unico mapa
   de teclas que existia era el ES horneado en `kernel/ps2.cpp`. Ahora hay dos
   -- se suma el US QWERTY estandar -- y se elige en caliente por un ioctl sobre
@@ -176,6 +183,31 @@ Notas de corte:
 
 ### Cambiado
 
+- **La libc deja de renombrar con `#define`: los nombres estandar ahora son
+  simbolos de verdad.** Los headers del SDK POSIX definian `#define read
+  sx_read`, `#define close sx_close`, `#define free sx_free` y unos 140 mas, asi
+  que el preprocesador reescribia cualquier identificador con ese nombre --
+  incluido un campo de struct `.close` o una variable local `time` -- y de los
+  nombres estandar solo existia el macro: `malloc`, `qsort`, `snprintf` o `stat`
+  no eran simbolos que un objeto de terceros pudiera linkear. Ahora cada header
+  declara el nombre estandar y `runtime/posix.c` exporta alias debiles sobre las
+  implementaciones `sx_*`, que quedan como detalle interno. La capa cruda de
+  syscalls (`savanxp/libc.h`) se prefija `savanxp_*` -- `savanxp_read`,
+  `savanxp_open_mode`, `savanxp_waitpid` -- porque le ganaba el nombre a la
+  POSIX con otra firma y otra convencion de error. `math.h` y `setjmp.h` siguen
+  con macros a proposito.
+
+- **Un solo runtime de userland y un solo `printf`.** `runtime/posix.c` pasa a
+  linkearse en todos los programas del arbol, y `runtime/libc.c` -- que tenia su
+  propio `printf`, `puts`, `strlen` y `memcpy` -- queda reducido a la capa cruda
+  de syscalls mas gfx. Cual de los dos formateadores corria dependia de que
+  headers incluyera cada `.c`, y agregar un especificador habia que hacerlo dos
+  veces; el de libc.c ni siquiera entendia `%ld`/`%lu`, que imprimian `%?` y
+  encima no consumian el argumento. El unico que queda escribe por tandas en vez
+  de un `write()` por caracter. Se suman `sx_dprintf`/`sx_vdprintf`; el `puts`
+  de la capa cruda, que NO agregaba salto de linea, pasa a llamarse `puts_out`
+  para no chocar con el estandar, y `putchar(fd, c)` a `putchar_fd`.
+
 - **`icon=` en `progman.ini` apunta a un programa, no a un catalogo de arte.**
   El valor era un nombre que se resolvia contra un array de pixeles horneado
   (`icon_id_from_name()`, que se borra entera); ahora guarda un PATH y el icono
@@ -255,6 +287,13 @@ Notas de corte:
   cada build.
 
 ### Corregido
+
+- **`waitpid()` era una recursion infinita.** El macro variadico de
+  `<sys/wait.h>` mandaba la llamada de dos argumentos a `sx_waitpid_default`,
+  que llamaba a `sx_waitpid`, cuyo cuerpo hacia `waitpid(pid, status)` y volvia
+  a expandir al mismo macro. Nadie del arbol lo alcanzaba -- solo `posix.c`
+  incluia el header -- pero cualquier port que llamara al `waitpid` POSIX se
+  comia el stack de 128 KiB sin red. El macro se fue junto con los demas.
 
 - **Un volumen SVFS2 montado en solo-lectura volvia a ser escribible al
   publicarse.** `svfs::attach()` fijaba el status en `mounted` sin mirar como

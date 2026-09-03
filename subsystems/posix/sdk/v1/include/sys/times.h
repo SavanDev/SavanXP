@@ -11,6 +11,5 @@ struct tms {
     clock_t tms_cstime;
 };
 
-clock_t sx_times(struct tms* buffer);
+clock_t times(struct tms* buffer);
 
-#define times sx_times

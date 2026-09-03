@@ -1,7 +1,7 @@
 #include "savanxp/libc.h"
 
 int main(void) {
-    const long missing = open("/disk/tmp/does-not-exist.txt");
+    const long missing = savanxp_open("/disk/tmp/does-not-exist.txt");
     if (result_is_error(missing)) {
         eprintf(
             "statusdemo: open failed (%d: %s)\n",

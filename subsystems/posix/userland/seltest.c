@@ -407,6 +407,6 @@ int main(void)
         eprintf("seltest: %d fallo(s)\n", g_failures);
         return 1;
     }
-    puts("seltest: PASS\n");
+    puts_out("seltest: PASS\n");
     return 0;
 }

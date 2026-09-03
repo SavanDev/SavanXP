@@ -17,7 +17,7 @@ static void close_fd_if_needed(int *fd)
 {
     if (fd != 0 && *fd >= 0)
     {
-        close(*fd);
+        savanxp_close(*fd);
         *fd = -1;
     }
 }
@@ -29,7 +29,7 @@ static int read_exact(int fd, void *buffer, size_t size)
 
     while (offset < size)
     {
-        long result = read(fd, cursor + offset, size - offset);
+        long result = savanxp_read(fd, cursor + offset, size - offset);
         if (result < 0)
         {
             return (int)result;
@@ -50,7 +50,7 @@ static int write_exact(int fd, const void *buffer, size_t size)
 
     while (offset < size)
     {
-        long result = write(fd, cursor + offset, size - offset);
+        long result = savanxp_write(fd, cursor + offset, size - offset);
         if (result < 0)
         {
             return (int)result;

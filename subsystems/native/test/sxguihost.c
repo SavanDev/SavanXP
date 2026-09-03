@@ -77,7 +77,7 @@ static int send_pointer(int fd, int x, int y, uint32_t buttons) {
     event.x = x;
     event.y = y;
     event.buttons = buttons;
-    return write(fd, &event, sizeof(event)) == (long)sizeof(event) ? 0 : -1;
+    return savanxp_write(fd, &event, sizeof(event)) == (long)sizeof(event) ? 0 : -1;
 }
 
 int main(void) {
@@ -98,7 +98,7 @@ int main(void) {
     int guard_index;
 
     for (guard_index = 0; guard_index < 7; ++guard_index) {
-        guard_fds[guard_index] = dup(0);
+        guard_fds[guard_index] = savanxp_dup(0);
         if (guard_fds[guard_index] < 0) {
             return fail("no se pudieron reservar los fds guardia");
         }
@@ -139,25 +139,25 @@ int main(void) {
     retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     if (submit_event < 0 || retire_event < 0 || shutdown_event < 0 ||
-        pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(launch_pipe) < 0) {
+        savanxp_pipe(input_pipe) < 0 || savanxp_pipe(mouse_pipe) < 0 || savanxp_pipe(launch_pipe) < 0) {
         return fail("no se pudieron crear eventos/pipes");
     }
     g_submit_event = submit_event;
     g_retire_event = retire_event;
 
-    pid = fork();
+    pid = savanxp_fork();
     if (pid < 0) {
         return fail("fork fallo");
     }
     if (pid == 0) {
         const char *argv[2] = {SXGUI_CLIENT_PATH, 0};
-        if (dup2((int)section_fd, 3) < 0 ||
-            dup2(input_pipe[0], 4) < 0 ||
-            dup2(mouse_pipe[0], 5) < 0 ||
-            dup2(submit_event, 6) < 0 ||
-            dup2(retire_event, 7) < 0 ||
-            dup2(shutdown_event, 8) < 0 ||
-            dup2(launch_pipe[1], 9) < 0) {
+        if (savanxp_dup2((int)section_fd, 3) < 0 ||
+            savanxp_dup2(input_pipe[0], 4) < 0 ||
+            savanxp_dup2(mouse_pipe[0], 5) < 0 ||
+            savanxp_dup2(submit_event, 6) < 0 ||
+            savanxp_dup2(retire_event, 7) < 0 ||
+            savanxp_dup2(shutdown_event, 8) < 0 ||
+            savanxp_dup2(launch_pipe[1], 9) < 0) {
             exit(1);
         }
         (void)exec(SXGUI_CLIENT_PATH, argv, 1);
@@ -166,7 +166,7 @@ int main(void) {
     }
 
     for (guard_index = 0; guard_index < 7; ++guard_index) {
-        (void)close(guard_fds[guard_index]);
+        (void)savanxp_close(guard_fds[guard_index]);
     }
 
     /* 1) Frame inicial: boton levantado (borde superior LIGHT) y lampara apagada
@@ -208,7 +208,7 @@ int main(void) {
 
     /* 4) Shutdown y salida limpia. */
     (void)event_set(shutdown_event);
-    if (waitpid((int)pid, &status) != pid) {
+    if (savanxp_waitpid((int)pid, &status) != pid) {
         return fail("waitpid fallo");
     }
     if (status != 0) {

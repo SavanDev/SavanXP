@@ -456,14 +456,14 @@ int progman_registry_parse(const char *text, size_t length)
 void progman_registry_load(void)
 {
     static char file_buffer[PROGMAN_REGISTRY_MAX_BYTES];
-    int fd = (int)open_mode(PROGMAN_REGISTRY_PATH, SAVANXP_OPEN_READ);
+    int fd = (int)savanxp_open_mode(PROGMAN_REGISTRY_PATH, SAVANXP_OPEN_READ);
     size_t total = 0;
 
     if (fd >= 0)
     {
         for (;;)
         {
-            long result = read(fd, file_buffer + total, sizeof(file_buffer) - total);
+            long result = savanxp_read(fd, file_buffer + total, sizeof(file_buffer) - total);
             if (result <= 0)
             {
                 break;
@@ -474,7 +474,7 @@ void progman_registry_load(void)
                 break;
             }
         }
-        (void)close(fd);
+        (void)savanxp_close(fd);
     }
 
     if (total != 0 && progman_registry_parse(file_buffer, total) > 0)

@@ -423,7 +423,7 @@ int main(void) {
         pollfd.fd = g_shellapp.gfx.input_fd;
         pollfd.events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
         pollfd.revents = 0;
-        ready = poll(&pollfd, 1, timeout_ms);
+        ready = savanxp_poll(&pollfd, 1, timeout_ms);
         if (ready < 0) {
             break;
         }

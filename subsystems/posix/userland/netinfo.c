@@ -12,7 +12,7 @@ static void print_ipv4(uint32_t address) {
 
 int main(void) {
     struct savanxp_net_info info;
-    long fd = open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    long fd = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (fd < 0) {
         eprintf("netinfo: /dev/net0 unavailable (%s)\n", result_error_string(fd));
         return 1;
@@ -20,32 +20,32 @@ int main(void) {
 
     memset(&info, 0, sizeof(info));
     {
-        long status = ioctl((int)fd, NET_IOC_GET_INFO, (unsigned long)&info);
+        long status = savanxp_ioctl((int)fd, NET_IOC_GET_INFO, (unsigned long)&info);
         if (status < 0) {
             eprintf("netinfo: NET_IOC_GET_INFO failed (%s)\n", result_error_string(status));
-            close((int)fd);
+            savanxp_close((int)fd);
             return 1;
         }
     }
 
     if (!info.present) {
-        puts("net0: not present\n");
-        close((int)fd);
+        puts_out("net0: not present\n");
+        savanxp_close((int)fd);
         return 0;
     }
 
     if (!info.up) {
-        long status = ioctl((int)fd, NET_IOC_UP, 0);
+        long status = savanxp_ioctl((int)fd, NET_IOC_UP, 0);
         if (status < 0) {
             eprintf("netinfo: NET_IOC_UP failed (%s)\n", result_error_string(status));
-            close((int)fd);
+            savanxp_close((int)fd);
             return 1;
         }
 
-        status = ioctl((int)fd, NET_IOC_GET_INFO, (unsigned long)&info);
+        status = savanxp_ioctl((int)fd, NET_IOC_GET_INFO, (unsigned long)&info);
         if (status < 0) {
             eprintf("netinfo: NET_IOC_GET_INFO failed after NET_IOC_UP (%s)\n", result_error_string(status));
-            close((int)fd);
+            savanxp_close((int)fd);
             return 1;
         }
     }
@@ -62,15 +62,15 @@ int main(void) {
         (unsigned int)info.mac[4],
         (unsigned int)info.mac[5]
     );
-    puts("ip: ");
+    puts_out("ip: ");
     print_ipv4(info.ipv4);
-    putchar(1, '\n');
-    puts("mask: ");
+    putchar_fd(1, '\n');
+    puts_out("mask: ");
     print_ipv4(info.netmask);
-    putchar(1, '\n');
-    puts("gateway: ");
+    putchar_fd(1, '\n');
+    puts_out("gateway: ");
     print_ipv4(info.gateway);
-    putchar(1, '\n');
+    putchar_fd(1, '\n');
     printf("status: %s\n", net_status_string(info.last_status));
     printf(
         "stats: tx=%u rx=%u txerr=%u rxerr=%u arp=%u arpto=%u ping=%u pingto=%u\n",
@@ -84,6 +84,6 @@ int main(void) {
         (unsigned int)info.ping_timeouts
     );
 
-    close((int)fd);
+    savanxp_close((int)fd);
     return 0;
 }

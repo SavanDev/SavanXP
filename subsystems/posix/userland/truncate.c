@@ -23,7 +23,7 @@ int main(int argc, const char* const* argv) {
         return 1;
     }
 
-    if (truncate(argv[1], size) < 0) {
+    if (savanxp_truncate(argv[1], size) < 0) {
         puts_fd(2, "truncate: failed\n");
         return 1;
     }

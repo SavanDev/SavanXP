@@ -35,7 +35,7 @@ static void print_mac(const uint8_t* mac) {
     int index;
     for (index = 0; index < 6; ++index) {
         if (index != 0) {
-            puts(":");
+            puts_out(":");
         }
         printf("%x", (unsigned int)mac[index]);
     }
@@ -53,7 +53,7 @@ static int mac_is_zero(const uint8_t* mac) {
 
 static long query_info(int fd, struct savanxp_net_info* info) {
     memset(info, 0, sizeof(*info));
-    return ioctl(fd, NET_IOC_GET_INFO, (unsigned long)info);
+    return savanxp_ioctl(fd, NET_IOC_GET_INFO, (unsigned long)info);
 }
 
 int main(void) {
@@ -65,47 +65,47 @@ int main(void) {
     long status;
     int sequence;
 
-    puts("NET SMOKE START\n");
+    puts_out("NET SMOKE START\n");
 
-    fd = open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    fd = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (fd < 0) {
         return fail("/dev/net0 unavailable");
     }
 
-    if (ioctl((int)fd, NET_IOC_UP, 0) < 0) {
-        close((int)fd);
+    if (savanxp_ioctl((int)fd, NET_IOC_UP, 0) < 0) {
+        savanxp_close((int)fd);
         return fail("NET_IOC_UP");
     }
 
     if (query_info((int)fd, &info) < 0) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("NET_IOC_GET_INFO");
     }
 
     if (!info.present) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("no NIC present");
     }
     if (!info.up) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("link not up");
     }
     /* Una MAC en cero significa que el driver nunca leyo su identidad del
      * device: el struct quedo como lo dejo el memset. */
     if (mac_is_zero(info.mac)) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("MAC all zero");
     }
     if (info.ipv4 == 0 || info.gateway == 0) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("no address configured");
     }
 
-    puts("nettest: ip=");
+    puts_out("nettest: ip=");
     print_ipv4(info.ipv4);
-    puts(" gw=");
+    puts_out(" gw=");
     print_ipv4(info.gateway);
-    puts(" mac=");
+    puts_out(" mac=");
     print_mac(info.mac);
     printf(" tx=%u rx=%u\n", (unsigned int)info.tx_frames, (unsigned int)info.rx_frames);
 
@@ -120,18 +120,18 @@ int main(void) {
         request.payload_size = 32;
         request.result_ptr = (uint64_t)(unsigned long)&result;
 
-        status = ioctl((int)fd, NET_IOC_PING, (unsigned long)&request);
+        status = savanxp_ioctl((int)fd, NET_IOC_PING, (unsigned long)&request);
         if (status < 0) {
             struct savanxp_net_info diag;
             if (query_info((int)fd, &diag) >= 0) {
                 printf("nettest: net0 state=%s\n", net_status_string(diag.last_status));
             }
             printf("nettest: ping %d failed (%s)\n", sequence, result_error_string(status));
-            close((int)fd);
+            savanxp_close((int)fd);
             return fail("ICMP echo");
         }
         if (result.reply_ipv4 != info.gateway) {
-            close((int)fd);
+            savanxp_close((int)fd);
             return fail("reply from wrong host");
         }
 
@@ -142,15 +142,15 @@ int main(void) {
     /* Los contadores del driver tienen que haberse movido en los dos sentidos:
      * es lo que distingue "el stack contesto" de "el hardware transmitio". */
     if (query_info((int)fd, &after) < 0) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("NET_IOC_GET_INFO after ping");
     }
     if (after.tx_frames <= info.tx_frames) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("tx_frames did not advance");
     }
     if (after.rx_frames <= info.rx_frames) {
-        close((int)fd);
+        savanxp_close((int)fd);
         return fail("rx_frames did not advance");
     }
 
@@ -187,17 +187,17 @@ int main(void) {
         request.sequence = 4;
         request.payload_size = 32;
         request.result_ptr = (uint64_t)(unsigned long)&result;
-        (void)ioctl((int)fd, NET_IOC_PING, (unsigned long)&request);
+        (void)savanxp_ioctl((int)fd, NET_IOC_PING, (unsigned long)&request);
 
         if (query_info((int)fd, &mid) < 0) {
-            close((int)fd);
+            savanxp_close((int)fd);
             return fail("NET_IOC_GET_INFO after second host");
         }
         if (mid.arp_timeouts != after.arp_timeouts) {
-            puts("nettest: no ARP reply from ");
+            puts_out("nettest: no ARP reply from ");
             print_ipv4(second_host);
-            puts("\n");
-            close((int)fd);
+            puts_out("\n");
+            savanxp_close((int)fd);
             return fail("second host did not resolve");
         }
         if (mid.arp_requests != after.arp_requests + 1u) {
@@ -206,7 +206,7 @@ int main(void) {
                 (unsigned int)after.arp_requests,
                 (unsigned int)mid.arp_requests
             );
-            close((int)fd);
+            savanxp_close((int)fd);
             return fail("unexpected ARP traffic for second host");
         }
 
@@ -217,13 +217,13 @@ int main(void) {
         request.sequence = 5;
         request.payload_size = 32;
         request.result_ptr = (uint64_t)(unsigned long)&result;
-        if (ioctl((int)fd, NET_IOC_PING, (unsigned long)&request) < 0) {
-            close((int)fd);
+        if (savanxp_ioctl((int)fd, NET_IOC_PING, (unsigned long)&request) < 0) {
+            savanxp_close((int)fd);
             return fail("gateway ping after second host");
         }
 
         if (query_info((int)fd, &final) < 0) {
-            close((int)fd);
+            savanxp_close((int)fd);
             return fail("NET_IOC_GET_INFO after cache check");
         }
         if (final.arp_requests != mid.arp_requests) {
@@ -232,7 +232,7 @@ int main(void) {
                 (unsigned int)mid.arp_requests,
                 (unsigned int)final.arp_requests
             );
-            close((int)fd);
+            savanxp_close((int)fd);
             return fail("ARP cache holds a single entry");
         }
 
@@ -242,7 +242,7 @@ int main(void) {
         );
     }
 
-    close((int)fd);
-    puts("NET SMOKE PASS\n");
+    savanxp_close((int)fd);
+    puts_out("NET SMOKE PASS\n");
     return 0;
 }

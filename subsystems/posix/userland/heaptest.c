@@ -214,7 +214,7 @@ static int test_fork_private(void) {
     }
     fill_pattern(block, BIG_BYTES, 0x5Au);
 
-    pid = fork();
+    pid = savanxp_fork();
     if (pid < 0) {
         eprintf("heaptest: fork fallo (%s)\n", result_error_string(pid));
         free(block);
@@ -233,7 +233,7 @@ static int test_fork_private(void) {
         exit(0);
     }
 
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         eprintf("heaptest: waitpid fallo\n");
         free(block);
         return 0;

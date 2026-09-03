@@ -2,13 +2,13 @@
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        puts("rm: missing path\n");
+        puts_out("rm: missing path\n");
         return 1;
     }
 
     int status = 0;
     for (int index = 1; index < argc; ++index) {
-        if (unlink(argv[index]) < 0) {
+        if (savanxp_unlink(argv[index]) < 0) {
             printf("rm: failed %s\n", argv[index]);
             status = 1;
         }

@@ -85,7 +85,7 @@ static void sx_audio_reset_all_channels(void) {
 
 static void sx_audio_close_device(void) {
     if (g_audio_fd >= 0) {
-        (void)close(g_audio_fd);
+        (void)savanxp_close(g_audio_fd);
         g_audio_fd = -1;
     }
     memset(&g_audio_info, 0, sizeof(g_audio_info));
@@ -496,7 +496,7 @@ static void DG_Sound_Update(void) {
     frames_to_write = frames_to_mix;
 
     total_bytes = (unsigned long)(frames_to_write * g_audio_info.frame_bytes);
-    if (write(g_audio_fd, g_mix_buffer, total_bytes) != (long)total_bytes) {
+    if (savanxp_write(g_audio_fd, g_mix_buffer, total_bytes) != (long)total_bytes) {
         sx_audio_disable_runtime();
     }
 }

@@ -108,19 +108,19 @@ static int setup_gpu(struct savanxp_gpu_info* gpu_info, struct savanxp_fb_info* 
     if (gpu_get_info((int)*gpu_fd, gpu_info) < 0)
     {
         puts_fd(2, "gputest: GPU_IOC_GET_INFO failed\n");
-        close((int)*gpu_fd);
+        savanxp_close((int)*gpu_fd);
         return 0;
     }
     if (gpu_info->width > GPUTEST_MAX_WIDTH || gpu_info->height > GPUTEST_MAX_HEIGHT || (gpu_info->pitch / 4u) > GPUTEST_MAX_WIDTH)
     {
         puts_fd(2, "gputest: surface too large for static backbuffer\n");
-        close((int)*gpu_fd);
+        savanxp_close((int)*gpu_fd);
         return 0;
     }
     if (gpu_acquire((int)*gpu_fd) < 0)
     {
         puts_fd(2, "gputest: GPU_IOC_ACQUIRE failed\n");
-        close((int)*gpu_fd);
+        savanxp_close((int)*gpu_fd);
         return 0;
     }
 
@@ -221,16 +221,16 @@ static int expect_handle_unsignaled(int handle, const char* label) {
 
 static void cleanup_gpu_test_session(long* gpu_fd, long* present_event_fd, long* scanout_event_fd) {
     if (scanout_event_fd != 0 && *scanout_event_fd >= 0) {
-        close((int)*scanout_event_fd);
+        savanxp_close((int)*scanout_event_fd);
         *scanout_event_fd = -1;
     }
     if (present_event_fd != 0 && *present_event_fd >= 0) {
-        close((int)*present_event_fd);
+        savanxp_close((int)*present_event_fd);
         *present_event_fd = -1;
     }
     if (gpu_fd != 0 && *gpu_fd >= 0) {
         gpu_release((int)*gpu_fd);
-        close((int)*gpu_fd);
+        savanxp_close((int)*gpu_fd);
         *gpu_fd = -1;
     }
 }
@@ -246,7 +246,7 @@ static void cleanup_imported_test_surface(int gpu_fd, struct gputest_imported_su
         (void)unmap_view(imported->view);
     }
     if (imported->section_fd >= 0) {
-        close((int)imported->section_fd);
+        savanxp_close((int)imported->section_fd);
     }
     imported->section_fd = -1;
     imported->view = 0;
@@ -317,7 +317,7 @@ static int open_gpu_test_events(int gpu_fd, long* present_event_fd, long* scanou
         return 0;
     }
     if ((properties.flags & SAVANXP_GPU_CONNECTOR_FLAG_ASYNC_PRESENT_EVENTS) == 0) {
-        puts("gputest: backend sincrono, se omiten los eventos de present/scanout\n");
+        puts_out("gputest: backend sincrono, se omiten los eventos de present/scanout\n");
         return 1;
     }
 
@@ -330,7 +330,7 @@ static int open_gpu_test_events(int gpu_fd, long* present_event_fd, long* scanou
     *scanout_event_fd = gpu_create_scanout_event(gpu_fd);
     if (*scanout_event_fd < 0) {
         puts_fd(2, "gputest: GPU_IOC_CREATE_SCANOUT_EVENT failed\n");
-        close((int)*present_event_fd);
+        savanxp_close((int)*present_event_fd);
         *present_event_fd = -1;
         return 0;
     }
@@ -538,7 +538,7 @@ static int run_soak_mode(size_t iteration_count) {
     int usable_width = 0;
     int usable_height = 0;
 
-    puts("SOAK START\n");
+    puts_out("SOAK START\n");
 
     if (!setup_gpu(&gpu_info, &fb_info, &gpu_fd)) {
         return 1;
@@ -655,7 +655,7 @@ static int run_soak_mode(size_t iteration_count) {
 
     dump_soak_stats(&stats_before, &stats_after);
     cleanup_soak_session(&gpu_fd, &present_event_fd, &scanout_event_fd, &imported);
-    puts("SOAK PASS\n");
+    puts_out("SOAK PASS\n");
     return 0;
 }
 
@@ -683,7 +683,7 @@ static int run_smoke_mode(void) {
     if (gpu_get_stats((int)gpu_fd, &stats_before) < 0) {
         puts_fd(2, "gputest: GPU_IOC_GET_STATS failed\n");
         gpu_release((int)gpu_fd);
-        close((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
         return 1;
     }
     if (gpu_get_scanouts((int)gpu_fd, &scanouts) < 0 || scanouts.count == 0) {
@@ -825,12 +825,12 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    input_fd = open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
     if (input_fd < 0)
     {
         puts_fd(2, "gputest: /dev/input0 open failed\n");
         gpu_release((int)gpu_fd);
-        close((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
         return 1;
     }
 
@@ -839,9 +839,9 @@ int main(int argc, char** argv)
     draw_box(&fb_info, box_x, box_y);
     if (gpu_present((int)gpu_fd, g_pixels) < 0)
     {
-        close((int)input_fd);
+        savanxp_close((int)input_fd);
         gpu_release((int)gpu_fd);
-        close((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
         puts_fd(2, "gputest: initial GPU_IOC_PRESENT failed\n");
         return 1;
     }
@@ -853,7 +853,7 @@ int main(int argc, char** argv)
     {
         int moved = 0;
 
-        while (read((int)input_fd, &event, sizeof(event)) == (long)sizeof(event))
+        while (savanxp_read((int)input_fd, &event, sizeof(event)) == (long)sizeof(event))
         {
             if (event.type != SAVANXP_INPUT_EVENT_KEY_DOWN)
             {
@@ -861,9 +861,9 @@ int main(int argc, char** argv)
             }
             if (event.key == SAVANXP_KEY_ESC)
             {
-                close((int)input_fd);
+                savanxp_close((int)input_fd);
                 gpu_release((int)gpu_fd);
-                close((int)gpu_fd);
+                savanxp_close((int)gpu_fd);
                 return 0;
             }
             if (event.key == SAVANXP_KEY_LEFT)
@@ -931,9 +931,9 @@ int main(int argc, char** argv)
         previous_box_y = box_y;
     }
 
-    close((int)input_fd);
+    savanxp_close((int)input_fd);
     gpu_release((int)gpu_fd);
-    close((int)gpu_fd);
+    savanxp_close((int)gpu_fd);
     puts_fd(2, "gputest: GPU_IOC_PRESENT_REGION failed\n");
     return 1;
 }

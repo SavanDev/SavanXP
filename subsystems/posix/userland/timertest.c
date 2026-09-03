@@ -78,8 +78,8 @@ int main(void) {
         return 1;
     }
 
-    close((int)manual_timer);
-    close((int)periodic_timer);
-    close((int)auto_timer);
+    savanxp_close((int)manual_timer);
+    savanxp_close((int)periodic_timer);
+    savanxp_close((int)auto_timer);
     return 0;
 }

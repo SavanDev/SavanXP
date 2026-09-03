@@ -121,7 +121,7 @@ int main(void)
 
     /* Solo para el ioctl: jamas hay que leer de este fd -- la cola de
      * /dev/input0 es global y windowd es quien la drena de verdad. */
-    input_fd = open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
     if (input_fd >= 0)
     {
         long layout = input_get_layout((int)input_fd);
@@ -167,18 +167,18 @@ int main(void)
                     }
                     {
                         char digit = (char)('0' + row);
-                        int config_fd = (int)open_mode(
+                        int config_fd = (int)savanxp_open_mode(
                             "/disk/keyboard.cfg",
                             SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
                         if (config_fd >= 0)
                         {
-                            (void)write(config_fd, &digit, 1);
-                            close(config_fd);
+                            (void)savanxp_write(config_fd, &digit, 1);
+                            savanxp_close(config_fd);
                         }
                     }
                     if (input_fd >= 0)
                     {
-                        close((int)input_fd);
+                        savanxp_close((int)input_fd);
                     }
                     gfx_close(&gfx);
                     return 0;
@@ -205,7 +205,7 @@ int main(void)
 
     if (input_fd >= 0)
     {
-        close((int)input_fd);
+        savanxp_close((int)input_fd);
     }
     gfx_close(&gfx);
     return 0;

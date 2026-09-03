@@ -166,12 +166,12 @@ static int run_automation_spec(const char* spec) {
         }
     }
 
-    long runner_fd = open(path);
+    long runner_fd = savanxp_open(path);
     if (runner_fd < 0) {
         printf("%s FAIL missing runner %s (%s)\n", label, path, result_error_string(runner_fd));
         return 1;
     }
-    close((int)runner_fd);
+    savanxp_close((int)runner_fd);
 
     long pid = spawn(path, argv, argc);
     if (pid < 0) {
@@ -179,7 +179,7 @@ static int run_automation_spec(const char* spec) {
         return 1;
     }
 
-    waitpid((int)pid, &status);
+    savanxp_waitpid((int)pid, &status);
     printf("init: %s runner exited with %d\n", label, status);
     if (status == 0) {
         printf("%s PASS\n", label);
@@ -198,27 +198,27 @@ static int run_automation_spec(const char* spec) {
  * arranco para drenarla. */
 static void apply_keyboard_layout_preference(void) {
     char digit = 0;
-    long config_fd = open(KEYBOARD_LAYOUT_CONFIG_PATH);
+    long config_fd = savanxp_open(KEYBOARD_LAYOUT_CONFIG_PATH);
     long input_fd;
 
     if (config_fd < 0) {
         return;
     }
-    if (read((int)config_fd, &digit, 1) != 1) {
-        close((int)config_fd);
+    if (savanxp_read((int)config_fd, &digit, 1) != 1) {
+        savanxp_close((int)config_fd);
         return;
     }
-    close((int)config_fd);
+    savanxp_close((int)config_fd);
     if (digit != '0' + SAVANXP_KEYBOARD_LAYOUT_EN) {
         return;
     }
 
-    input_fd = open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
     if (input_fd < 0) {
         return;
     }
     (void)input_set_layout((int)input_fd, SAVANXP_KEYBOARD_LAYOUT_EN);
-    close((int)input_fd);
+    savanxp_close((int)input_fd);
 }
 
 int main(void) {
@@ -227,11 +227,11 @@ int main(void) {
     unsigned long last_windowd_start_ms = 0;
     int rapid_failures = 0;
 
-    long smoke_trigger = open("/SMOKE");
+    long smoke_trigger = savanxp_open("/SMOKE");
     if (smoke_trigger >= 0) {
         char automation_spec[64] = {};
-        long bytes_read = read((int)smoke_trigger, automation_spec, sizeof(automation_spec) - 1);
-        close((int)smoke_trigger);
+        long bytes_read = savanxp_read((int)smoke_trigger, automation_spec, sizeof(automation_spec) - 1);
+        savanxp_close((int)smoke_trigger);
         if (bytes_read < 0) {
             automation_spec[0] = '\0';
         }
@@ -258,7 +258,7 @@ int main(void) {
         }
 
         last_windowd_start_ms = uptime_ms();
-        waitpid((int)pid, &status);
+        savanxp_waitpid((int)pid, &status);
         runtime_ms = uptime_ms() - last_windowd_start_ms;
         printf("init: windowd exited with %d, restarting\n", status);
 
@@ -275,7 +275,7 @@ int main(void) {
                 printf("init: failed to spawn fallback shell (%s)\n", result_error_string(pid));
                 sleep_ms(1000);
             } else {
-                waitpid((int)pid, &status);
+                savanxp_waitpid((int)pid, &status);
                 printf("init: fallback shell exited with %d, retrying windowd\n", status);
             }
             rapid_failures = 0;

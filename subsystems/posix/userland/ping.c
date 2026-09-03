@@ -103,16 +103,16 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    fd = open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    fd = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (fd < 0) {
         eprintf("ping: /dev/net0 unavailable (%s)\n", result_error_string(fd));
         return 1;
     }
 
-    status = ioctl((int)fd, NET_IOC_UP, 0);
+    status = savanxp_ioctl((int)fd, NET_IOC_UP, 0);
     if (status < 0) {
         eprintf("ping: NET_IOC_UP failed (%s)\n", result_error_string(status));
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
@@ -125,19 +125,19 @@ int main(int argc, char** argv) {
     request.payload_size = 32;
     request.result_ptr = (uint64_t)(unsigned long)&result;
 
-    status = ioctl((int)fd, NET_IOC_PING, (unsigned long)&request);
+    status = savanxp_ioctl((int)fd, NET_IOC_PING, (unsigned long)&request);
     if (status < 0) {
         eprintf("ping: NET_IOC_PING failed (%s)\n", result_error_string(status));
-        if (ioctl((int)fd, NET_IOC_GET_INFO, (unsigned long)&info) >= 0) {
+        if (savanxp_ioctl((int)fd, NET_IOC_GET_INFO, (unsigned long)&info) >= 0) {
             print_net_hint(target, &info);
         }
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
-    puts("reply from ");
+    puts_out("reply from ");
     print_ipv4(result.reply_ipv4);
     printf(": time=%u ms ttl=%u\n", (unsigned int)result.elapsed_ms, (unsigned int)result.ttl);
-    close((int)fd);
+    savanxp_close((int)fd);
     return 0;
 }

@@ -20,10 +20,9 @@ typedef struct fd_set {
 #define FD_SET(fd, set) sx_fd_set((fd), (set))
 #define FD_CLR(fd, set) sx_fd_clr((fd), (set))
 #define FD_ISSET(fd, set) sx_fd_isset((fd), (set))
-#define select sx_select
 
 void sx_fd_zero(fd_set* set);
 void sx_fd_set(int fd, fd_set* set);
 void sx_fd_clr(int fd, fd_set* set);
 int sx_fd_isset(int fd, const fd_set* set);
-int sx_select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout);
+int select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout);

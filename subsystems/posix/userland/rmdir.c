@@ -6,7 +6,7 @@ int main(int argc, const char* const* argv) {
         return 1;
     }
 
-    if (rmdir(argv[1]) < 0) {
+    if (savanxp_rmdir(argv[1]) < 0) {
         puts_fd(2, "rmdir: failed\n");
         return 1;
     }

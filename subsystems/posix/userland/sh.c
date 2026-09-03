@@ -45,11 +45,11 @@ static void sh_copy_path(char* path, size_t capacity, const char* prefix, const 
 }
 
 static int sh_path_exists(const char* path) {
-    long fd = open(path);
+    long fd = savanxp_open(path);
     if (fd < 0) {
         return 0;
     }
-    close((int)fd);
+    savanxp_close((int)fd);
     return 1;
 }
 
@@ -275,7 +275,7 @@ static int sh_wait_for_children(const long* pids, int count) {
     int index = 0;
     int last_status = 0;
     while (index < count) {
-        waitpid((int)pids[index], &last_status);
+        savanxp_waitpid((int)pids[index], &last_status);
         ++index;
     }
     return last_status;
@@ -306,16 +306,16 @@ static int sh_execute_pipeline(char* line) {
         char path[256];
         long pid = -1;
 
-        if (!is_last && pipe(pipe_fds) < 0) {
+        if (!is_last && savanxp_pipe(pipe_fds) < 0) {
             puts_fd(2, "sh: pipe failed\n");
             return 1;
         }
         if (stages[index].input_path != 0) {
             if (previous_read_fd >= 0) {
-                close(previous_read_fd);
+                savanxp_close(previous_read_fd);
                 previous_read_fd = -1;
             }
-            input_fd = (int)open_mode(stages[index].input_path, SAVANXP_OPEN_READ);
+            input_fd = (int)savanxp_open_mode(stages[index].input_path, SAVANXP_OPEN_READ);
             if (input_fd < 0) {
                 puts_fd(2, "sh: input path not found\n");
                 return 1;
@@ -324,7 +324,7 @@ static int sh_execute_pipeline(char* line) {
             input_fd = previous_read_fd;
         }
         if (stages[index].stdout_path != 0) {
-            output_fd = (int)open_mode(stages[index].stdout_path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE |
+            output_fd = (int)savanxp_open_mode(stages[index].stdout_path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE |
                 (stages[index].stdout_append ? SAVANXP_OPEN_APPEND : SAVANXP_OPEN_TRUNCATE));
             if (output_fd < 0) {
                 puts_fd(2, "sh: unable to open output path\n");
@@ -334,7 +334,7 @@ static int sh_execute_pipeline(char* line) {
             output_fd = pipe_fds[1];
         }
         if (stages[index].stderr_path != 0) {
-            error_fd = (int)open_mode(stages[index].stderr_path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE |
+            error_fd = (int)savanxp_open_mode(stages[index].stderr_path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE |
                 (stages[index].stderr_append ? SAVANXP_OPEN_APPEND : SAVANXP_OPEN_TRUNCATE));
             if (error_fd < 0) {
                 puts_fd(2, "sh: unable to open error path\n");
@@ -359,17 +359,17 @@ static int sh_execute_pipeline(char* line) {
 
         pids[pid_count++] = pid;
         if (previous_read_fd >= 0) {
-            close(previous_read_fd);
+            savanxp_close(previous_read_fd);
             previous_read_fd = -1;
         }
         if (input_fd > 2) {
-            close(input_fd);
+            savanxp_close(input_fd);
         }
         if (output_fd > 2) {
-            close(output_fd);
+            savanxp_close(output_fd);
         }
         if (error_fd > 2 && error_fd != output_fd) {
-            close(error_fd);
+            savanxp_close(error_fd);
         }
         if (!is_last) {
             previous_read_fd = pipe_fds[0];
@@ -377,7 +377,7 @@ static int sh_execute_pipeline(char* line) {
     }
 
     if (previous_read_fd >= 0) {
-        close(previous_read_fd);
+        savanxp_close(previous_read_fd);
     }
     return sh_wait_for_children(pids, pid_count);
 }
@@ -407,9 +407,9 @@ static int sh_line_is_builtin(const char* line) {
 static void shell_print_prompt(void) {
     char cwd[256] = {};
     shell_current_directory(cwd, sizeof(cwd));
-    puts("savanxp:");
-    puts(cwd);
-    puts("$ ");
+    puts_out("savanxp:");
+    puts_out(cwd);
+    puts_out("$ ");
 }
 
 int main(int argc, char** argv) {
@@ -432,14 +432,14 @@ int main(int argc, char** argv) {
     }
 
     printf("%s\n", SAVANXP_DISPLAY_NAME);
-    puts("Type 'help' for commands and 'sysinfo' for diagnostics.\n");
+    puts_out("Type 'help' for commands and 'sysinfo' for diagnostics.\n");
 
     for (;;) {
         long count = 0;
 
         shell_print_prompt();
         memset(line, 0, sizeof(line));
-        count = read(0, line, sizeof(line) - 1);
+        count = savanxp_read(0, line, sizeof(line) - 1);
         if (count <= 0) {
             continue;
         }

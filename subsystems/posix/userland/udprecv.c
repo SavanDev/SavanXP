@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    fd = socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP);
+    fd = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP);
     if (fd < 0) {
         eprintf("udprecv: socket failed (%s)\n", result_error_string(fd));
         return 1;
@@ -54,28 +54,28 @@ int main(int argc, char** argv) {
 
     memset(&local_address, 0, sizeof(local_address));
     local_address.port = (uint16_t)port;
-    status = bind((int)fd, &local_address);
+    status = savanxp_bind((int)fd, &local_address);
     if (status < 0) {
         eprintf("udprecv: bind failed (%s)\n", result_error_string(status));
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
     memset(buffer, 0, sizeof(buffer));
     memset(&remote_address, 0, sizeof(remote_address));
-    status = recvfrom((int)fd, buffer, sizeof(buffer) - 1, &remote_address, timeout_ms);
+    status = savanxp_recvfrom((int)fd, buffer, sizeof(buffer) - 1, &remote_address, timeout_ms);
     if (status < 0) {
         eprintf("udprecv: recvfrom failed (%s)\n", result_error_string(status));
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
     buffer[status < (long)(sizeof(buffer) - 1) ? status : (long)(sizeof(buffer) - 1)] = '\0';
-    puts("from ");
+    puts_out("from ");
     print_ipv4(remote_address.ipv4);
     printf(":%u ", (unsigned int)remote_address.port);
-    puts(buffer);
-    putchar(1, '\n');
-    close((int)fd);
+    puts_out(buffer);
+    putchar_fd(1, '\n');
+    savanxp_close((int)fd);
     return 0;
 }

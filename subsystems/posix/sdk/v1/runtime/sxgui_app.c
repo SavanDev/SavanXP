@@ -157,7 +157,7 @@ static void sxgui_app_shutdown(struct sxgui_app *app)
     gfx_release(&app->gfx);
     if (app->pointer_fd >= 0)
     {
-        close((int)app->pointer_fd);
+        savanxp_close((int)app->pointer_fd);
         app->pointer_fd = -1;
     }
     gfx_close(&app->gfx);

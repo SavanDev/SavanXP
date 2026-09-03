@@ -35,7 +35,7 @@ static void shell_emit_bytes(const struct shell_capture_sink* sink, int fd, cons
         return;
     }
 
-    (void)write(fd, bytes, length);
+    (void)savanxp_write(fd, bytes, length);
 }
 
 static void shell_emit_text(const struct shell_capture_sink* sink, int fd, const char* text) {
@@ -81,7 +81,7 @@ void shell_current_directory(char* buffer, size_t capacity) {
         return;
     }
 
-    if (getcwd(buffer, capacity) < 0 || buffer[0] == '\0') {
+    if (savanxp_getcwd(buffer, capacity) < 0 || buffer[0] == '\0') {
         strcpy(buffer, "/");
     }
 }
@@ -121,11 +121,11 @@ static void shell_copy_path(char* path, size_t capacity, const char* prefix, con
 }
 
 static int shell_path_exists(const char* path) {
-    long fd = open(path);
+    long fd = savanxp_open(path);
     if (fd < 0) {
         return 0;
     }
-    close((int)fd);
+    savanxp_close((int)fd);
     return 1;
 }
 
@@ -435,7 +435,7 @@ static int shell_run_builtin(
             shell_emit_text(sink, 2, "sh: mkdir requires a path\n");
             return 1;
         }
-        if (mkdir(stage->argv[1]) < 0) {
+        if (savanxp_mkdir(stage->argv[1]) < 0) {
             shell_emit_text(sink, 2, "sh: mkdir failed\n");
         }
         return 1;
@@ -443,12 +443,12 @@ static int shell_run_builtin(
 
     if (strcmp(stage->argv[0], "cd") == 0) {
         if (stage->argc < 2) {
-            if (chdir("/") < 0) {
+            if (savanxp_chdir("/") < 0) {
                 shell_emit_text(sink, 2, "sh: cd failed\n");
             }
             return 1;
         }
-        if (chdir(stage->argv[1]) < 0) {
+        if (savanxp_chdir(stage->argv[1]) < 0) {
             shell_emit_text(sink, 2, "sh: cd failed\n");
         }
         return 1;
@@ -469,7 +469,7 @@ static int shell_wait_for_children(const long* pids, int count) {
     int index = 0;
     int last_status = 0;
     while (index < count) {
-        waitpid((int)pids[index], &last_status);
+        savanxp_waitpid((int)pids[index], &last_status);
         ++index;
     }
     return last_status;
@@ -495,10 +495,10 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
         char path[256];
         long pid = -1;
 
-        if (!is_last && pipe(pipe_fds) < 0) {
+        if (!is_last && savanxp_pipe(pipe_fds) < 0) {
             puts_fd(2, "sh: pipe failed\n");
             if (previous_read_fd >= 0) {
-                close(previous_read_fd);
+                savanxp_close(previous_read_fd);
             }
             shell_wait_for_children(pids, pid_count);
             return -1;
@@ -506,15 +506,15 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
 
         if (stages[index].input_path != 0) {
             if (previous_read_fd >= 0) {
-                close(previous_read_fd);
+                savanxp_close(previous_read_fd);
                 previous_read_fd = -1;
             }
-            input_fd = (int)open_mode(stages[index].input_path, SAVANXP_OPEN_READ);
+            input_fd = (int)savanxp_open_mode(stages[index].input_path, SAVANXP_OPEN_READ);
             if (input_fd < 0) {
                 puts_fd(2, "sh: input path not found\n");
                 if (pipe_fds[0] >= 0) {
-                    close(pipe_fds[0]);
-                    close(pipe_fds[1]);
+                    savanxp_close(pipe_fds[0]);
+                    savanxp_close(pipe_fds[1]);
                 }
                 shell_wait_for_children(pids, pid_count);
                 return -1;
@@ -524,21 +524,21 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
         }
 
         if (stages[index].stdout_path != 0) {
-            output_fd = (int)open_mode(
+            output_fd = (int)savanxp_open_mode(
                 stages[index].stdout_path,
                 SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE |
                     (stages[index].stdout_append ? SAVANXP_OPEN_APPEND : SAVANXP_OPEN_TRUNCATE));
             if (output_fd < 0) {
                 puts_fd(2, "sh: unable to open output path\n");
                 if (input_fd > 2 && input_fd != previous_read_fd) {
-                    close(input_fd);
+                    savanxp_close(input_fd);
                 }
                 if (pipe_fds[0] >= 0) {
-                    close(pipe_fds[0]);
-                    close(pipe_fds[1]);
+                    savanxp_close(pipe_fds[0]);
+                    savanxp_close(pipe_fds[1]);
                 }
                 if (previous_read_fd >= 0) {
-                    close(previous_read_fd);
+                    savanxp_close(previous_read_fd);
                 }
                 shell_wait_for_children(pids, pid_count);
                 return -1;
@@ -548,24 +548,24 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
         }
 
         if (stages[index].stderr_path != 0) {
-            error_fd = (int)open_mode(
+            error_fd = (int)savanxp_open_mode(
                 stages[index].stderr_path,
                 SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE |
                     (stages[index].stderr_append ? SAVANXP_OPEN_APPEND : SAVANXP_OPEN_TRUNCATE));
             if (error_fd < 0) {
                 puts_fd(2, "sh: unable to open error path\n");
                 if (input_fd > 2 && input_fd != previous_read_fd) {
-                    close(input_fd);
+                    savanxp_close(input_fd);
                 }
                 if (output_fd > 2) {
-                    close(output_fd);
+                    savanxp_close(output_fd);
                 }
                 if (pipe_fds[0] >= 0) {
-                    close(pipe_fds[0]);
-                    close(pipe_fds[1]);
+                    savanxp_close(pipe_fds[0]);
+                    savanxp_close(pipe_fds[1]);
                 }
                 if (previous_read_fd >= 0) {
-                    close(previous_read_fd);
+                    savanxp_close(previous_read_fd);
                 }
                 shell_wait_for_children(pids, pid_count);
                 return -1;
@@ -579,22 +579,22 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
         if (!shell_resolve_command_path(stages[index].argv[0], path, sizeof(path))) {
             puts_fd(2, "sh: command not found\n");
             if (input_fd > 2 && input_fd != previous_read_fd) {
-                close(input_fd);
+                savanxp_close(input_fd);
             }
             if (output_fd > 2) {
-                close(output_fd);
+                savanxp_close(output_fd);
             }
             if (error_fd > 2 && error_fd != output_fd) {
-                close(error_fd);
+                savanxp_close(error_fd);
             }
             if (pipe_fds[0] >= 0) {
-                close(pipe_fds[0]);
+                savanxp_close(pipe_fds[0]);
             }
             if (pipe_fds[1] >= 0) {
-                close(pipe_fds[1]);
+                savanxp_close(pipe_fds[1]);
             }
             if (previous_read_fd >= 0) {
-                close(previous_read_fd);
+                savanxp_close(previous_read_fd);
             }
             shell_wait_for_children(pids, pid_count);
             return -1;
@@ -608,22 +608,22 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
         if (pid < 0) {
             puts_fd(2, "sh: command not found\n");
             if (input_fd > 2 && input_fd != previous_read_fd) {
-                close(input_fd);
+                savanxp_close(input_fd);
             }
             if (output_fd > 2) {
-                close(output_fd);
+                savanxp_close(output_fd);
             }
             if (error_fd > 2 && error_fd != output_fd) {
-                close(error_fd);
+                savanxp_close(error_fd);
             }
             if (pipe_fds[0] >= 0) {
-                close(pipe_fds[0]);
+                savanxp_close(pipe_fds[0]);
             }
             if (pipe_fds[1] >= 0) {
-                close(pipe_fds[1]);
+                savanxp_close(pipe_fds[1]);
             }
             if (previous_read_fd >= 0) {
-                close(previous_read_fd);
+                savanxp_close(previous_read_fd);
             }
             shell_wait_for_children(pids, pid_count);
             return -1;
@@ -632,17 +632,17 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
         pids[pid_count++] = pid;
 
         if (previous_read_fd >= 0) {
-            close(previous_read_fd);
+            savanxp_close(previous_read_fd);
             previous_read_fd = -1;
         }
         if (input_fd > 2) {
-            close(input_fd);
+            savanxp_close(input_fd);
         }
         if (output_fd > 2) {
-            close(output_fd);
+            savanxp_close(output_fd);
         }
         if (error_fd > 2 && error_fd != output_fd) {
-            close(error_fd);
+            savanxp_close(error_fd);
         }
         if (!is_last) {
             previous_read_fd = pipe_fds[0];
@@ -650,7 +650,7 @@ static int shell_execute_pipeline_stdio(struct shell_command_stage* stages, int 
     }
 
     if (previous_read_fd >= 0) {
-        close(previous_read_fd);
+        savanxp_close(previous_read_fd);
     }
 
     return shell_wait_for_children(pids, pid_count);
@@ -661,7 +661,7 @@ static void shell_emit_readable_pipe(int fd, int stream, const struct shell_capt
     long count = 0;
 
     for (;;) {
-        count = read(fd, buffer, sizeof(buffer));
+        count = savanxp_read(fd, buffer, sizeof(buffer));
         if (count <= 0) {
             return;
         }
@@ -682,28 +682,28 @@ static int shell_execute_capture_external(char* line, const struct shell_capture
     int stdout_open = 1;
     int stderr_open = 1;
 
-    if (pipe(stdout_pipe) < 0 || pipe(stderr_pipe) < 0) {
+    if (savanxp_pipe(stdout_pipe) < 0 || savanxp_pipe(stderr_pipe) < 0) {
         if (stdout_pipe[0] >= 0) {
-            close(stdout_pipe[0]);
-            close(stdout_pipe[1]);
+            savanxp_close(stdout_pipe[0]);
+            savanxp_close(stdout_pipe[1]);
         }
         if (stderr_pipe[0] >= 0) {
-            close(stderr_pipe[0]);
-            close(stderr_pipe[1]);
+            savanxp_close(stderr_pipe[0]);
+            savanxp_close(stderr_pipe[1]);
         }
         shell_emit_text(sink, 2, "sh: pipe failed\n");
         return 1;
     }
 
     pid = spawn_fds("/bin/sh", argv, 3, 0, stdout_pipe[1], stderr_pipe[1]);
-    close(stdout_pipe[1]);
-    close(stderr_pipe[1]);
+    savanxp_close(stdout_pipe[1]);
+    savanxp_close(stderr_pipe[1]);
     stdout_pipe[1] = -1;
     stderr_pipe[1] = -1;
 
     if (pid < 0) {
-        close(stdout_pipe[0]);
-        close(stderr_pipe[0]);
+        savanxp_close(stdout_pipe[0]);
+        savanxp_close(stderr_pipe[0]);
         shell_emit_text(sink, 2, "sh: command not found\n");
         return 1;
     }
@@ -716,7 +716,7 @@ static int shell_execute_capture_external(char* line, const struct shell_capture
     poll_fds[1].revents = 0;
 
     while (stdout_open || stderr_open) {
-        long ready = poll(poll_fds, 2, -1);
+        long ready = savanxp_poll(poll_fds, 2, -1);
         if (ready < 0) {
             break;
         }
@@ -724,7 +724,7 @@ static int shell_execute_capture_external(char* line, const struct shell_capture
         if (stdout_open && (poll_fds[0].revents & (SAVANXP_POLLIN | SAVANXP_POLLHUP)) != 0) {
             shell_emit_readable_pipe(stdout_pipe[0], 1, sink);
             if ((poll_fds[0].revents & SAVANXP_POLLHUP) != 0) {
-                close(stdout_pipe[0]);
+                savanxp_close(stdout_pipe[0]);
                 stdout_pipe[0] = -1;
                 stdout_open = 0;
             }
@@ -732,7 +732,7 @@ static int shell_execute_capture_external(char* line, const struct shell_capture
         if (stderr_open && (poll_fds[1].revents & (SAVANXP_POLLIN | SAVANXP_POLLHUP)) != 0) {
             shell_emit_readable_pipe(stderr_pipe[0], 2, sink);
             if ((poll_fds[1].revents & SAVANXP_POLLHUP) != 0) {
-                close(stderr_pipe[0]);
+                savanxp_close(stderr_pipe[0]);
                 stderr_pipe[0] = -1;
                 stderr_open = 0;
             }
@@ -743,12 +743,12 @@ static int shell_execute_capture_external(char* line, const struct shell_capture
     }
 
     if (stdout_pipe[0] >= 0) {
-        close(stdout_pipe[0]);
+        savanxp_close(stdout_pipe[0]);
     }
     if (stderr_pipe[0] >= 0) {
-        close(stderr_pipe[0]);
+        savanxp_close(stderr_pipe[0]);
     }
-    waitpid((int)pid, &status);
+    savanxp_waitpid((int)pid, &status);
     return status;
 }
 

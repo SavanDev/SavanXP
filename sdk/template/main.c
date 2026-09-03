@@ -1,7 +1,7 @@
 #include "savanxp/libc.h"
 
 int main(int argc, char** argv) {
-    puts("template: your app is running\n");
+    puts_out("template: your app is running\n");
     printf("template: argc=%d\n", argc);
 
     for (int index = 0; index < argc; ++index) {

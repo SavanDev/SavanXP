@@ -2,6 +2,6 @@
 
 int main(void)
 {
-    puts("hello from sdk\n");
+    puts_out("hello from sdk\n");
     return 0;
 }

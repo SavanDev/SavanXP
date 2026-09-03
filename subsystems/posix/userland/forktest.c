@@ -1,22 +1,22 @@
 #include "libc.h"
 
 int main(void) {
-    puts("forktest: start\n");
+    puts_out("forktest: start\n");
 
-    long child = fork();
+    long child = savanxp_fork();
     if (child < 0) {
         printf("forktest: fork failed (%s)\n", result_error_string(child));
         return 1;
     }
 
     if (child == 0) {
-        puts("forktest: child\n");
+        puts_out("forktest: child\n");
         exit(42);
     }
 
     int status = -1;
-    if (waitpid((int)child, &status) < 0) {
-        puts("forktest: waitpid failed\n");
+    if (savanxp_waitpid((int)child, &status) < 0) {
+        puts_out("forktest: waitpid failed\n");
         return 1;
     }
     if (status != 42) {

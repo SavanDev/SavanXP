@@ -5,7 +5,7 @@ static void print_u64(uint64_t value) {
     int index = 0;
 
     if (value == 0) {
-        putchar(1, '0');
+        putchar_fd(1, '0');
         return;
     }
 
@@ -15,18 +15,18 @@ static void print_u64(uint64_t value) {
     }
 
     while (index > 0) {
-        putchar(1, buffer[--index]);
+        putchar_fd(1, buffer[--index]);
     }
 }
 
 static void print_padded(const char* text, int width) {
     int length = 0;
     while (text[length] != '\0') {
-        putchar(1, text[length]);
+        putchar_fd(1, text[length]);
         ++length;
     }
     while (length < width) {
-        putchar(1, ' ');
+        putchar_fd(1, ' ');
         ++length;
     }
 }
@@ -44,17 +44,17 @@ int main(void) {
     }
 
     if (!info.svfs_mounted) {
-        puts("df: /disk not mounted\n");
+        puts_out("df: /disk not mounted\n");
         return 1;
     }
 
-    puts("Filesystem  Total(MiB)  Used(MiB)  Free(MiB)  Mount\n");
+    puts_out("Filesystem  Total(MiB)  Used(MiB)  Free(MiB)  Mount\n");
     print_padded("svfs", 12);
     print_u64(mib_from_bytes(info.svfs_total_bytes));
-    puts("          ");
+    puts_out("          ");
     print_u64(mib_from_bytes(info.svfs_used_bytes));
-    puts("         ");
+    puts_out("         ");
     print_u64(mib_from_bytes(info.svfs_free_bytes));
-    puts("         /disk\n");
+    puts_out("         /disk\n");
     return 0;
 }

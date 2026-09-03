@@ -166,7 +166,7 @@ int main(void) {
     }
     if (gfx_acquire(&gfx) < 0) {
         puts_fd(2, "mousetest: acquire failed\n");
-        close((int)mouse_fd);
+        savanxp_close((int)mouse_fd);
         gfx_close(&gfx);
         return 1;
     }
@@ -190,7 +190,7 @@ int main(void) {
             }
             if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event.key == SAVANXP_KEY_ESC) {
                 gfx_release(&gfx);
-                close((int)mouse_fd);
+                savanxp_close((int)mouse_fd);
                 gfx_close(&gfx);
                 return 0;
             }
@@ -232,7 +232,7 @@ int main(void) {
     }
 
     gfx_release(&gfx);
-    close((int)mouse_fd);
+    savanxp_close((int)mouse_fd);
     gfx_close(&gfx);
     puts_fd(2, "mousetest: present failed\n");
     return 1;

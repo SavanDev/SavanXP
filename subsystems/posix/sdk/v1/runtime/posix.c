@@ -366,7 +366,7 @@ static sx_arena* sx_arena_acquire(size_t payload_bytes) {
 
     mapped = map_view((int)section,
         SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_VIEW_PRIVATE);
-    (void)close((int)section);
+    (void)savanxp_close((int)section);
     if (mapped == 0 || result_is_error((long)mapped)) {
         return 0;
     }
@@ -1185,7 +1185,7 @@ double sx_atan(double value) {
 }
 
 ssize_t sx_read(int fd, void* buffer, size_t count) {
-    long result = read(fd, buffer, count);
+    long result = savanxp_read(fd, buffer, count);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1194,7 +1194,7 @@ ssize_t sx_read(int fd, void* buffer, size_t count) {
 }
 
 ssize_t sx_write(int fd, const void* buffer, size_t count) {
-    long result = write(fd, buffer, count);
+    long result = savanxp_write(fd, buffer, count);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1203,7 +1203,7 @@ ssize_t sx_write(int fd, const void* buffer, size_t count) {
 }
 
 int sx_close(int fd) {
-    long result = close(fd);
+    long result = savanxp_close(fd);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1234,7 +1234,7 @@ int sx_open(const char* path, int flags, ...) {
     if ((flags & O_NONBLOCK) != 0) {
         raw_flags |= SAVANXP_OPEN_NONBLOCK;
     }
-    result = open_mode(path, raw_flags);
+    result = savanxp_open_mode(path, raw_flags);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1252,7 +1252,7 @@ off_t sx_lseek(int fd, off_t offset, int whence) {
 }
 
 int sx_unlink(const char* path) {
-    long result = unlink(path);
+    long result = savanxp_unlink(path);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1261,7 +1261,7 @@ int sx_unlink(const char* path) {
 }
 
 int sx_rmdir(const char* path) {
-    long result = rmdir(path);
+    long result = savanxp_rmdir(path);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1270,7 +1270,7 @@ int sx_rmdir(const char* path) {
 }
 
 int sx_dup(int fd) {
-    long result = dup(fd);
+    long result = savanxp_dup(fd);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1279,7 +1279,7 @@ int sx_dup(int fd) {
 }
 
 int sx_dup2(int oldfd, int newfd) {
-    long result = dup2(oldfd, newfd);
+    long result = savanxp_dup2(oldfd, newfd);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1288,7 +1288,7 @@ int sx_dup2(int oldfd, int newfd) {
 }
 
 int sx_pipe(int fds[2]) {
-    long result = pipe(fds);
+    long result = savanxp_pipe(fds);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1352,7 +1352,7 @@ int sx_fcntl(int fd, int command, ...) {
         }
     }
 
-    result = fcntl(fd, (unsigned long)command, raw_value);
+    result = savanxp_fcntl(fd, (unsigned long)command, raw_value);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1398,7 +1398,7 @@ int sx_poll(struct pollfd* fds, unsigned long count, int timeout_ms) {
         raw[index].revents = 0;
     }
 
-    result = poll(raw, count, timeout_ms);
+    result = savanxp_poll(raw, count, timeout_ms);
     if (result < 0) {
         sx_free(raw);
         sx_set_errno_from_result(result);
@@ -1599,7 +1599,7 @@ pid_t sx_setsid(void) {
 }
 
 int sx_sync(void) {
-    long result = sync();
+    long result = savanxp_sync();
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -1675,7 +1675,7 @@ struct dirent* sx_readdir(DIR* directory) {
         g_errno = SAVANXP_EBADF;
         return 0;
     }
-    result = readdir(directory->fd, name, sizeof(name));
+    result = savanxp_readdir(directory->fd, name, sizeof(name));
     if (result < 0) {
         sx_set_errno_from_result(result);
         return 0;
@@ -1735,12 +1735,69 @@ static void sx_release_file(FILE* stream) {
     }
 }
 
-static int sx_emit_file_char(char character, void* context) {
-    FILE* stream = (FILE*)context;
-    if (sx_fwrite(&character, 1, 1, stream) != 1) {
-        stream->error = 1;
+/* Sinks de a tandas para el formateador.
+ *
+ * sx_vformat emite de a un caracter, y stdout/stderr son streams sin buffer
+ * (is_stdio => sx_direct_write), asi que emitir directo costaba un write() por
+ * caracter: una linea de 60 columnas eran 60 syscalls. Los sinks juntan la
+ * salida y la bajan de una; el flush final corre siempre, incluso si el
+ * formato se corto por la mitad. */
+typedef struct sx_stream_sink {
+    FILE* stream;
+    size_t used;
+    char bytes[SX_FILE_BUFFER_CAPACITY];
+} sx_stream_sink;
+
+static int sx_stream_sink_flush(sx_stream_sink* sink) {
+    const size_t pending = sink->used;
+    sink->used = 0;
+    if (pending == 0) {
+        return 1;
+    }
+    if (sx_fwrite(sink->bytes, 1, pending, sink->stream) != pending) {
+        sink->stream->error = 1;
         return 0;
     }
+    return 1;
+}
+
+static int sx_emit_stream_char(char character, void* context) {
+    sx_stream_sink* sink = (sx_stream_sink*)context;
+    if (sink->used == sizeof(sink->bytes) && !sx_stream_sink_flush(sink)) {
+        return 0;
+    }
+    sink->bytes[sink->used++] = character;
+    return 1;
+}
+
+typedef struct sx_fd_sink {
+    int fd;
+    int failed;
+    size_t used;
+    char bytes[SX_FILE_BUFFER_CAPACITY];
+} sx_fd_sink;
+
+static int sx_fd_sink_flush(sx_fd_sink* sink) {
+    const size_t pending = sink->used;
+    size_t consumed = 0;
+    sink->used = 0;
+    while (consumed < pending) {
+        const ssize_t written = sx_write(sink->fd, sink->bytes + consumed, pending - consumed);
+        if (written <= 0) {
+            sink->failed = 1;
+            return 0;
+        }
+        consumed += (size_t)written;
+    }
+    return 1;
+}
+
+static int sx_emit_fd_char(char character, void* context) {
+    sx_fd_sink* sink = (sx_fd_sink*)context;
+    if (sink->used == sizeof(sink->bytes) && !sx_fd_sink_flush(sink)) {
+        return 0;
+    }
+    sink->bytes[sink->used++] = character;
     return 1;
 }
 
@@ -2239,7 +2296,38 @@ int sx_fflush(FILE* stream) {
 }
 
 int sx_vfprintf(FILE* stream, const char* format, va_list args) {
-    return sx_vformat(sx_emit_file_char, stream, format, args);
+    sx_stream_sink sink;
+    int written = 0;
+    if (stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    sink.stream = stream;
+    sink.used = 0;
+    written = sx_vformat(sx_emit_stream_char, &sink, format, args);
+    return sx_stream_sink_flush(&sink) ? written : -1;
+}
+
+int sx_vdprintf(int fd, const char* format, va_list args) {
+    sx_fd_sink sink;
+    int written = 0;
+    sink.fd = fd;
+    sink.failed = 0;
+    sink.used = 0;
+    written = sx_vformat(sx_emit_fd_char, &sink, format, args);
+    if (!sx_fd_sink_flush(&sink) || sink.failed) {
+        return -1;
+    }
+    return written;
+}
+
+int sx_dprintf(int fd, const char* format, ...) {
+    int written = 0;
+    va_list args;
+    va_start(args, format);
+    written = sx_vdprintf(fd, format, args);
+    va_end(args);
+    return written;
 }
 
 int sx_fprintf(FILE* stream, const char* format, ...) {
@@ -2358,12 +2446,68 @@ int sx_puts(const char* text) {
     return sx_printf("%s\n", text);
 }
 
+/* Helpers de consola de SavanXP (declarados en savanxp/libc.h).
+ *
+ * Viven aca y no en runtime/libc.c -- que es la capa cruda de syscalls --
+ * porque comparten el formateador con el resto de stdio: tener dos era la
+ * razon por la que agregar un especificador nuevo habia que hacerlo dos veces,
+ * y por la que %s se comportaba distinto segun que headers incluyera la app.
+ *
+ * puts_out NO agrega salto de linea. Ese es el motivo de que no se llame
+ * `puts`: el `puts` estandar (sx_puts) si lo agrega, y fusionarlos habria
+ * cambiado en silencio toda la salida de consola del arbol. */
+void putchar_fd(int fd, char character) {
+    (void)sx_write(fd, &character, 1);
+}
+
+void puts_fd(int fd, const char* text) {
+    const size_t length = sx_strlen(text);
+    size_t consumed = 0;
+    while (consumed < length) {
+        const ssize_t written = sx_write(fd, text + consumed, length - consumed);
+        if (written <= 0) {
+            return;
+        }
+        consumed += (size_t)written;
+    }
+}
+
+void puts_err(const char* text) {
+    puts_fd(SAVANXP_STDERR_FILENO, text);
+}
+
+void puts_out(const char* text) {
+    puts_fd(SAVANXP_STDOUT_FILENO, text);
+}
+
+void printf_fd(int fd, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    (void)sx_vdprintf(fd, format, args);
+    va_end(args);
+}
+
+void eprintf(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    (void)sx_vdprintf(SAVANXP_STDERR_FILENO, format, args);
+    va_end(args);
+}
+
+/* Nombres estandar como alias debiles de la implementacion sx_*: el simbolo
+ * `printf` tiene que existir de verdad para que compile codigo de terceros que
+ * incluye <stdio.h> sin saber nada de SavanXP. Debiles para que una app que
+ * traiga su propia version gane el link en vez de chocar. */
+__attribute__((weak, alias("sx_printf"))) int printf(const char* format, ...);
+__attribute__((weak, alias("sx_puts"))) int puts(const char* text);
+__attribute__((weak, alias("sx_putchar"))) int putchar(int character);
+
 int sx_remove(const char* path) {
     return sx_unlink(path);
 }
 
 int sx_rename(const char* old_path, const char* new_path) {
-    long result = rename(old_path, new_path);
+    long result = savanxp_rename(old_path, new_path);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2381,7 +2525,7 @@ pid_t sx_waitpid(pid_t pid, int* status, int options) {
         g_errno = SAVANXP_ENOSYS;
         return 0;
     }
-    result = waitpid(pid, status);
+    result = savanxp_waitpid(pid, status);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2390,7 +2534,7 @@ pid_t sx_waitpid(pid_t pid, int* status, int options) {
 }
 
 pid_t sx_fork(void) {
-    long result = fork();
+    long result = savanxp_fork();
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2440,7 +2584,7 @@ void* sx_mmap(void* address, size_t length, int prot, int flags, int fd, off_t o
     }
 
     mapped = map_view((int)section, view_flags);
-    (void)close((int)section);
+    (void)savanxp_close((int)section);
     if (result_is_error((long)mapped)) {
         sx_set_errno_from_result((long)mapped);
         return MAP_FAILED;
@@ -2864,7 +3008,7 @@ const char* sx_inet_ntop(int family, const void* source, char* destination, unsi
 }
 
 int sx_socket(int domain, int type, int protocol) {
-    long result = socket((unsigned long)domain, (unsigned long)type, (unsigned long)protocol);
+    long result = savanxp_socket((unsigned long)domain, (unsigned long)type, (unsigned long)protocol);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2883,7 +3027,7 @@ int sx_bind(int fd, const struct sockaddr* address, socklen_t address_length) {
     }
     raw.ipv4 = (uint32_t)sx_ntohl(in_address->sin_addr.s_addr);
     raw.port = sx_ntohs(in_address->sin_port);
-    result = bind(fd, &raw);
+    result = savanxp_bind(fd, &raw);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2902,7 +3046,7 @@ int sx_connect(int fd, const struct sockaddr* address, socklen_t address_length)
     }
     raw.ipv4 = (uint32_t)sx_ntohl(in_address->sin_addr.s_addr);
     raw.port = sx_ntohs(in_address->sin_port);
-    result = connect(fd, &raw, state != 0 ? state->send_timeout_ms : 5000u);
+    result = savanxp_connect(fd, &raw, state != 0 ? state->send_timeout_ms : 5000u);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2922,9 +3066,9 @@ ssize_t sx_sendto(int fd, const void* buffer, size_t count, int flags, const str
         }
         raw.ipv4 = (uint32_t)sx_ntohl(in_address->sin_addr.s_addr);
         raw.port = sx_ntohs(in_address->sin_port);
-        result = sendto(fd, buffer, count, &raw);
+        result = savanxp_sendto(fd, buffer, count, &raw);
     } else {
-        result = write(fd, buffer, count);
+        result = savanxp_write(fd, buffer, count);
     }
     if (result < 0) {
         sx_set_errno_from_result(result);
@@ -2938,7 +3082,7 @@ ssize_t sx_recvfrom(int fd, void* buffer, size_t count, int flags, struct sockad
     struct sx_socket_state* state = sx_find_socket_state(fd);
     long result = 0;
     (void)flags;
-    result = recvfrom(fd, buffer, count, address != 0 ? &raw : 0, state != 0 ? state->recv_timeout_ms : 0u);
+    result = savanxp_recvfrom(fd, buffer, count, address != 0 ? &raw : 0, state != 0 ? state->recv_timeout_ms : 0u);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -3008,7 +3152,7 @@ int sx_shutdown(int fd, int how) {
 }
 
 int sx_kill(pid_t pid, int signal_number) {
-    long result = (kill)((int)pid, signal_number);
+    long result = savanxp_kill((int)pid, signal_number);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -3191,3 +3335,158 @@ void sx_qsort(void* base, size_t count, size_t size, int (*compar)(const void*, 
 void sx_exit(int code) {
     exit(code);
 }
+
+/* Nombres estandar como alias debiles de la implementacion sx_*.
+ *
+ * Los headers ya no renombran con #define: declaran el nombre estandar, y
+ * el simbolo tiene que existir de verdad para que linkee codigo de terceros
+ * que solo conoce <string.h> y compania. Debiles para que una app que traiga
+ * su propia version gane el link en vez de chocar. */
+__attribute__((weak, alias("sx_isspace"))) int isspace(int character);
+__attribute__((weak, alias("sx_isprint"))) int isprint(int character);
+__attribute__((weak, alias("sx_isdigit"))) int isdigit(int character);
+__attribute__((weak, alias("sx_isalpha"))) int isalpha(int character);
+__attribute__((weak, alias("sx_isalnum"))) int isalnum(int character);
+__attribute__((weak, alias("sx_islower"))) int islower(int character);
+__attribute__((weak, alias("sx_isupper"))) int isupper(int character);
+__attribute__((weak, alias("sx_isxdigit"))) int isxdigit(int character);
+__attribute__((weak, alias("sx_tolower"))) int tolower(int character);
+__attribute__((weak, alias("sx_toupper"))) int toupper(int character);
+__attribute__((weak, alias("sx_opendir"))) DIR* opendir(const char* path);
+__attribute__((weak, alias("sx_readdir"))) struct dirent* readdir(DIR* directory);
+__attribute__((weak, alias("sx_closedir"))) int closedir(DIR* directory);
+__attribute__((weak, alias("sx_rewinddir"))) void rewinddir(DIR* directory);
+__attribute__((weak, alias("sx_open"))) int open(const char* path, int flags, ...);
+__attribute__((weak, alias("sx_fcntl"))) int fcntl(int fd, int command, ...);
+__attribute__((weak, alias("sx_fnmatch"))) int fnmatch(const char* pattern, const char* string, int flags);
+__attribute__((weak, alias("sx_poll"))) int poll(struct pollfd* fds, unsigned long count, int timeout_ms);
+__attribute__((weak, alias("sx_getpwnam"))) struct passwd* getpwnam(const char* name);
+__attribute__((weak, alias("sx_kill"))) int kill(pid_t pid, int signal_number);
+__attribute__((weak, alias("sx_signal"))) sighandler_t signal(int signal_number, sighandler_t handler);
+__attribute__((weak, alias("sx_sigaction"))) int sigaction(int signal_number, const struct sigaction* action, struct sigaction* old_action);
+__attribute__((weak, alias("sx_sigemptyset"))) int sigemptyset(sigset_t* set);
+__attribute__((weak, alias("sx_sigfillset"))) int sigfillset(sigset_t* set);
+__attribute__((weak, alias("sx_sigaddset"))) int sigaddset(sigset_t* set, int signal_number);
+__attribute__((weak, alias("sx_sigdelset"))) int sigdelset(sigset_t* set, int signal_number);
+__attribute__((weak, alias("sx_sigismember"))) int sigismember(const sigset_t* set, int signal_number);
+__attribute__((weak, alias("sx_sigprocmask"))) int sigprocmask(int how, const sigset_t* set, sigset_t* old_set);
+__attribute__((weak, alias("sx_sigsuspend"))) int sigsuspend(const sigset_t* mask);
+__attribute__((weak, alias("sx_raise"))) int raise(int signal_number);
+__attribute__((weak, alias("sx_strsignal"))) char* strsignal(int signal_number);
+__attribute__((weak, alias("sx_fopen"))) FILE* fopen(const char* path, const char* mode);
+__attribute__((weak, alias("sx_fclose"))) int fclose(FILE* stream);
+__attribute__((weak, alias("sx_fread"))) size_t fread(void* buffer, size_t size, size_t count, FILE* stream);
+__attribute__((weak, alias("sx_fwrite"))) size_t fwrite(const void* buffer, size_t size, size_t count, FILE* stream);
+__attribute__((weak, alias("sx_fseek"))) int fseek(FILE* stream, long offset, int whence);
+__attribute__((weak, alias("sx_ftell"))) long ftell(FILE* stream);
+__attribute__((weak, alias("sx_fflush"))) int fflush(FILE* stream);
+__attribute__((weak, alias("sx_fprintf"))) int fprintf(FILE* stream, const char* format, ...);
+__attribute__((weak, alias("sx_vfprintf"))) int vfprintf(FILE* stream, const char* format, va_list args);
+__attribute__((weak, alias("sx_sprintf"))) int sprintf(char* buffer, const char* format, ...);
+__attribute__((weak, alias("sx_vprintf"))) int vprintf(const char* format, va_list args);
+__attribute__((weak, alias("sx_snprintf"))) int snprintf(char* buffer, size_t size, const char* format, ...);
+__attribute__((weak, alias("sx_vsnprintf"))) int vsnprintf(char* buffer, size_t size, const char* format, va_list args);
+__attribute__((weak, alias("sx_fgets"))) char* fgets(char* buffer, int size, FILE* stream);
+__attribute__((weak, alias("sx_feof"))) int feof(FILE* stream);
+__attribute__((weak, alias("sx_ferror"))) int ferror(FILE* stream);
+__attribute__((weak, alias("sx_clearerr"))) void clearerr(FILE* stream);
+__attribute__((weak, alias("sx_fputs"))) int fputs(const char* text, FILE* stream);
+__attribute__((weak, alias("sx_putc"))) int putc(int character, FILE* stream);
+__attribute__((weak, alias("sx_remove"))) int remove(const char* path);
+__attribute__((weak, alias("sx_rename"))) int rename(const char* old_path, const char* new_path);
+__attribute__((weak, alias("sx_malloc"))) void* malloc(size_t size);
+__attribute__((weak, alias("sx_calloc"))) void* calloc(size_t count, size_t size);
+__attribute__((weak, alias("sx_realloc"))) void* realloc(void* pointer, size_t size);
+__attribute__((weak, alias("sx_free"))) void free(void* pointer);
+__attribute__((weak, alias("sx_atoi"))) int atoi(const char* text);
+__attribute__((weak, alias("sx_atof"))) double atof(const char* text);
+__attribute__((weak, alias("sx_abs"))) int abs(int value);
+__attribute__((weak, alias("sx_getenv"))) char* getenv(const char* name);
+__attribute__((weak, alias("sx_system"))) int system(const char* command);
+__attribute__((weak, alias("sx_abort"))) void abort(void);
+__attribute__((weak, alias("sx_strtol"))) long strtol(const char* text, char** endptr, int base);
+__attribute__((weak, alias("sx_strtoul"))) unsigned long strtoul(const char* text, char** endptr, int base);
+__attribute__((weak, alias("sx_bsearch"))) void* bsearch(const void* key, const void* base, size_t count, size_t size, int (*compar)(const void*, const void*));
+__attribute__((weak, alias("sx_qsort"))) void qsort(void* base, size_t count, size_t size, int (*compar)(const void*, const void*));
+__attribute__((weak, alias("sx_memcmp"))) int memcmp(const void* left, const void* right, size_t count);
+__attribute__((weak, alias("sx_memmove"))) void* memmove(void* destination, const void* source, size_t count);
+__attribute__((weak, alias("sx_strncpy"))) char* strncpy(char* destination, const char* source, size_t count);
+__attribute__((weak, alias("sx_strchr"))) char* strchr(const char* text, int character);
+__attribute__((weak, alias("sx_strchrnul"))) char* strchrnul(const char* text, int character);
+__attribute__((weak, alias("sx_strpbrk"))) char* strpbrk(const char* text, const char* accept);
+__attribute__((weak, alias("sx_strrchr"))) char* strrchr(const char* text, int character);
+__attribute__((weak, alias("sx_strstr"))) char* strstr(const char* haystack, const char* needle);
+__attribute__((weak, alias("sx_strcspn"))) size_t strcspn(const char* text, const char* reject);
+__attribute__((weak, alias("sx_strspn"))) size_t strspn(const char* text, const char* accept);
+__attribute__((weak, alias("sx_strerror"))) char* strerror(int error_number);
+__attribute__((weak, alias("sx_strtok_r"))) char* strtok_r(char* text, const char* delimiters, char** save_ptr);
+__attribute__((weak, alias("sx_stpncpy"))) char* stpncpy(char* destination, const char* source, size_t count);
+__attribute__((weak, alias("sx_strdup"))) char* strdup(const char* text);
+__attribute__((weak, alias("sx_mempcpy"))) void* mempcpy(void* destination, const void* source, size_t count);
+__attribute__((weak, alias("sx_strcasecmp"))) int strcasecmp(const char* left, const char* right);
+__attribute__((weak, alias("sx_strncasecmp"))) int strncasecmp(const char* left, const char* right, unsigned long count);
+__attribute__((weak, alias("sx_tcgetattr"))) int tcgetattr(int fd, struct termios* value);
+__attribute__((weak, alias("sx_tcsetattr"))) int tcsetattr(int fd, int optional_actions, const struct termios* value);
+__attribute__((weak, alias("sx_tcgetpgrp"))) pid_t tcgetpgrp(int fd);
+__attribute__((weak, alias("sx_tcsetpgrp"))) int tcsetpgrp(int fd, pid_t pgrp);
+__attribute__((weak, alias("sx_time"))) time_t time(time_t* out_value);
+__attribute__((weak, alias("sx_nanosleep"))) int nanosleep(const struct timespec* request, struct timespec* remaining);
+__attribute__((weak, alias("sx_clock_gettime"))) int clock_gettime(int clock_id, struct timespec* value);
+__attribute__((weak, alias("sx_read"))) ssize_t read(int fd, void* buffer, size_t count);
+__attribute__((weak, alias("sx_write"))) ssize_t write(int fd, const void* buffer, size_t count);
+__attribute__((weak, alias("sx_close"))) int close(int fd);
+__attribute__((weak, alias("sx_lseek"))) off_t lseek(int fd, off_t offset, int whence);
+__attribute__((weak, alias("sx_unlink"))) int unlink(const char* path);
+__attribute__((weak, alias("sx_rmdir"))) int rmdir(const char* path);
+__attribute__((weak, alias("sx_access"))) int access(const char* path, int mode);
+__attribute__((weak, alias("sx_isatty"))) int isatty(int fd);
+__attribute__((weak, alias("sx_chdir"))) int chdir(const char* path);
+__attribute__((weak, alias("sx_getcwd"))) char* getcwd(char* buffer, size_t size);
+__attribute__((weak, alias("sx_getpid"))) pid_t getpid(void);
+__attribute__((weak, alias("sx_getppid"))) pid_t getppid(void);
+__attribute__((weak, alias("sx_getpgrp"))) pid_t getpgrp(void);
+__attribute__((weak, alias("sx_setpgid"))) int setpgid(pid_t pid, pid_t pgrp);
+__attribute__((weak, alias("sx_setsid"))) pid_t setsid(void);
+__attribute__((weak, alias("sx_sync"))) int sync(void);
+__attribute__((weak, alias("sx_dup"))) int dup(int fd);
+__attribute__((weak, alias("sx_dup2"))) int dup2(int oldfd, int newfd);
+__attribute__((weak, alias("sx_pipe"))) int pipe(int fds[2]);
+__attribute__((weak, alias("sx_fork"))) pid_t fork(void);
+__attribute__((weak, alias("sx_vfork"))) pid_t vfork(void);
+__attribute__((weak, alias("sx_execv"))) int execv(const char* path, char* const argv[]);
+__attribute__((weak, alias("sx_execve"))) int execve(const char* path, char* const argv[], char* const envp[]);
+__attribute__((weak, alias("sx_execvp"))) int execvp(const char* file, char* const argv[]);
+__attribute__((weak, alias("sx__exit"))) void _exit(int code) __attribute__((noreturn));
+__attribute__((weak, alias("sx_getuid"))) uid_t getuid(void);
+__attribute__((weak, alias("sx_geteuid"))) uid_t geteuid(void);
+__attribute__((weak, alias("sx_getgid"))) gid_t getgid(void);
+__attribute__((weak, alias("sx_getegid"))) gid_t getegid(void);
+__attribute__((weak, alias("sx_umask"))) mode_t umask(mode_t mask);
+__attribute__((weak, alias("sx_sleep"))) unsigned sleep(unsigned seconds);
+__attribute__((weak, alias("sx_usleep"))) int usleep(unsigned long microseconds);
+__attribute__((weak, alias("sx_htonl"))) unsigned long htonl(unsigned long value);
+__attribute__((weak, alias("sx_htons"))) unsigned short htons(unsigned short value);
+__attribute__((weak, alias("sx_ntohl"))) unsigned long ntohl(unsigned long value);
+__attribute__((weak, alias("sx_ntohs"))) unsigned short ntohs(unsigned short value);
+__attribute__((weak, alias("sx_inet_addr"))) in_addr_t inet_addr(const char* text);
+__attribute__((weak, alias("sx_inet_ntoa"))) char* inet_ntoa(struct in_addr address);
+__attribute__((weak, alias("sx_inet_pton"))) int inet_pton(int family, const char* source, void* destination);
+__attribute__((weak, alias("sx_inet_ntop"))) const char* inet_ntop(int family, const void* source, char* destination, unsigned long size);
+__attribute__((weak, alias("sx_mmap"))) void* mmap(void* address, size_t length, int prot, int flags, int fd, off_t offset);
+__attribute__((weak, alias("sx_munmap"))) int munmap(void* address, size_t length);
+__attribute__((weak, alias("sx_select"))) int select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout);
+__attribute__((weak, alias("sx_socket"))) int socket(int domain, int type, int protocol);
+__attribute__((weak, alias("sx_bind"))) int bind(int fd, const struct sockaddr* address, socklen_t address_length);
+__attribute__((weak, alias("sx_connect"))) int connect(int fd, const struct sockaddr* address, socklen_t address_length);
+__attribute__((weak, alias("sx_sendto"))) ssize_t sendto(int fd, const void* buffer, size_t count, int flags, const struct sockaddr* address, socklen_t address_length);
+__attribute__((weak, alias("sx_recvfrom"))) ssize_t recvfrom(int fd, void* buffer, size_t count, int flags, struct sockaddr* address, socklen_t* address_length);
+__attribute__((weak, alias("sx_setsockopt"))) int setsockopt(int fd, int level, int option_name, const void* option_value, socklen_t option_length);
+__attribute__((weak, alias("sx_getsockopt"))) int getsockopt(int fd, int level, int option_name, void* option_value, socklen_t* option_length);
+__attribute__((weak, alias("sx_shutdown"))) int shutdown(int fd, int how);
+__attribute__((weak, alias("sx_gettimeofday"))) int gettimeofday(struct timeval* value, void* timezone_ptr);
+__attribute__((weak, alias("sx_times"))) clock_t times(struct tms* buffer);
+__attribute__((weak, alias("sx_uname"))) int uname(struct utsname* value);
+__attribute__((weak, alias("sx_waitpid"))) pid_t waitpid(pid_t pid, int* status, int options);
+__attribute__((weak, alias("sx_stat"))) int stat(const char* path, struct stat* info);
+__attribute__((weak, alias("sx_fstat"))) int fstat(int fd, struct stat* info);
+__attribute__((weak, alias("sx_lstat"))) int lstat(const char* path, struct stat* info);

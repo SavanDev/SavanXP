@@ -49,7 +49,7 @@ static void close_fd_if_needed(int *fd)
 {
     if (fd != 0 && *fd >= 0)
     {
-        close(*fd);
+        savanxp_close(*fd);
         *fd = -1;
     }
 }
@@ -82,7 +82,7 @@ static void close_client_setup_fd(int *fd)
     }
     if (*fd > WINDOWD_CLIENT_RESERVED_FD_MAX)
     {
-        close(*fd);
+        savanxp_close(*fd);
     }
     *fd = -1;
 }
@@ -952,7 +952,7 @@ static int route_packet(int fd, const void *packet, size_t size)
     {
         return 0;
     }
-    return write(fd, packet, size) == (long)size;
+    return savanxp_write(fd, packet, size) == (long)size;
 }
 
 /* Deliver the pointer to a client in its own surface-local coordinates, so the
@@ -1455,9 +1455,9 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     {
         if (terminate_client)
         {
-            (void)kill((int)client->pid, SAVANXP_SIGKILL);
+            (void)savanxp_kill((int)client->pid, SAVANXP_SIGKILL);
         }
-        (void)waitpid((int)client->pid, &status);
+        (void)savanxp_waitpid((int)client->pid, &status);
     }
     close_fd_if_needed(&client->input_write_fd);
     close_fd_if_needed(&client->mouse_write_fd);
@@ -1556,8 +1556,8 @@ static int start_client_process(
     submit_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    if (pipe(input_pipe) < 0 || pipe(mouse_pipe) < 0 || pipe(launch_pipe) < 0 || pipe(cursor_hint_pipe) < 0 ||
-        pipe(size_hint_pipe) < 0 || submit_event < 0 || retire_event < 0 || shutdown_event < 0)
+    if (savanxp_pipe(input_pipe) < 0 || savanxp_pipe(mouse_pipe) < 0 || savanxp_pipe(launch_pipe) < 0 || savanxp_pipe(cursor_hint_pipe) < 0 ||
+        savanxp_pipe(size_hint_pipe) < 0 || submit_event < 0 || retire_event < 0 || shutdown_event < 0)
     {
         goto fail;
     }
@@ -1567,11 +1567,11 @@ static int start_client_process(
      * pero tarda en empezar a leer (carga de disco, gfx_open copiando la
      * superficie), y mientras tanto cada movimiento del mouse va a su pipe. Con
      * writes bloqueantes, el pipe se llena y se congela la sesion entera. */
-    if (fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        fcntl(cursor_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        fcntl(size_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        fcntl(input_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        fcntl(mouse_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
+    if (savanxp_fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        savanxp_fcntl(cursor_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        savanxp_fcntl(size_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        savanxp_fcntl(input_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
+        savanxp_fcntl(mouse_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
     {
         goto fail;
     }
@@ -1600,19 +1600,19 @@ static int start_client_process(
         memset(client->window_list, 0, sizeof(*client->window_list));
         client->window_list->version = SAVANXP_WM_SHELL_PROTOCOL_VERSION;
 
-        if (pipe(shell_request_pipe) < 0)
+        if (savanxp_pipe(shell_request_pipe) < 0)
         {
             goto fail;
         }
         /* El WM lee los pedidos sin bloquearse, igual que el resto de sus
          * canales de entrada. */
-        if (fcntl(shell_request_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
+        if (savanxp_fcntl(shell_request_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
         {
             goto fail;
         }
     }
 
-    pid = fork();
+    pid = savanxp_fork();
     if (pid < 0)
     {
         goto fail;
@@ -1621,21 +1621,21 @@ static int start_client_process(
     {
         /* Establece el contrato de fds del protocolo WM<->cliente
          * (savanxp/wm_protocol.h) antes del exec. */
-        if (dup2(client->section_fd, SAVANXP_WM_FD_SECTION) < 0 ||
-            dup2(input_pipe[0], SAVANXP_WM_FD_INPUT) < 0 ||
-            dup2(mouse_pipe[0], SAVANXP_WM_FD_MOUSE) < 0 ||
-            dup2(submit_event, SAVANXP_WM_FD_SUBMIT_EVENT) < 0 ||
-            dup2(retire_event, SAVANXP_WM_FD_RETIRE_EVENT) < 0 ||
-            dup2(shutdown_event, SAVANXP_WM_FD_SHUTDOWN_EVENT) < 0 ||
-            dup2(launch_pipe[1], SAVANXP_WM_FD_LAUNCH) < 0 ||
-            dup2(cursor_hint_pipe[1], SAVANXP_WM_FD_CURSOR_HINT) < 0 ||
-            dup2(size_hint_pipe[1], SAVANXP_WM_FD_SIZE_HINT) < 0)
+        if (savanxp_dup2(client->section_fd, SAVANXP_WM_FD_SECTION) < 0 ||
+            savanxp_dup2(input_pipe[0], SAVANXP_WM_FD_INPUT) < 0 ||
+            savanxp_dup2(mouse_pipe[0], SAVANXP_WM_FD_MOUSE) < 0 ||
+            savanxp_dup2(submit_event, SAVANXP_WM_FD_SUBMIT_EVENT) < 0 ||
+            savanxp_dup2(retire_event, SAVANXP_WM_FD_RETIRE_EVENT) < 0 ||
+            savanxp_dup2(shutdown_event, SAVANXP_WM_FD_SHUTDOWN_EVENT) < 0 ||
+            savanxp_dup2(launch_pipe[1], SAVANXP_WM_FD_LAUNCH) < 0 ||
+            savanxp_dup2(cursor_hint_pipe[1], SAVANXP_WM_FD_CURSOR_HINT) < 0 ||
+            savanxp_dup2(size_hint_pipe[1], SAVANXP_WM_FD_SIZE_HINT) < 0)
         {
             exit(1);
         }
         if (shell_role &&
-            (dup2(client->window_list_section_fd, SAVANXP_WM_FD_WINDOW_LIST) < 0 ||
-             dup2(shell_request_pipe[1], SAVANXP_WM_FD_SHELL_REQUEST) < 0))
+            (savanxp_dup2(client->window_list_section_fd, SAVANXP_WM_FD_WINDOW_LIST) < 0 ||
+             savanxp_dup2(shell_request_pipe[1], SAVANXP_WM_FD_SHELL_REQUEST) < 0))
         {
             exit(1);
         }
@@ -2021,7 +2021,7 @@ static void service_shell_requests(struct windowd_session *session, struct windo
         return;
     }
 
-    while (read(session->taskbar_client.shell_request_read_fd, &request, sizeof(request)) ==
+    while (savanxp_read(session->taskbar_client.shell_request_read_fd, &request, sizeof(request)) ==
            (long)sizeof(request))
     {
         int is_shell = 0;
@@ -2197,13 +2197,13 @@ static int open_compositor_session(struct windowd_session *session)
     }
 
     session->gfx.info = session->compositor.display_info;
-    session->input_fd = (int)open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    session->input_fd = (int)savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
     if (session->input_fd < 0)
     {
         return windowd_stage_failed("open /dev/input0", session->input_fd);
     }
 
-    session->mouse_fd = (int)open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
+    session->mouse_fd = (int)savanxp_open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
     if (session->mouse_fd < 0)
     {
         eprintf("desktop: /dev/mouse0 unavailable (%s), continuing keyboard-only\n", result_error_string(session->mouse_fd));
@@ -2338,7 +2338,7 @@ static int service_client_launch_requests(struct windowd_session *session, struc
     for (;;)
     {
         memset(&request, 0, sizeof(request));
-        read_result = read(client->launch_read_fd, &request, sizeof(request));
+        read_result = savanxp_read(client->launch_read_fd, &request, sizeof(request));
         if (read_result == 0)
         {
             return 0;
@@ -2406,7 +2406,7 @@ static void service_client_cursor_hints(struct windowd_client *client)
 
     for (;;)
     {
-        read_result = read(client->cursor_hint_read_fd, &hint, sizeof(hint));
+        read_result = savanxp_read(client->cursor_hint_read_fd, &hint, sizeof(hint));
         if (read_result == 0)
         {
             return;
@@ -2490,7 +2490,7 @@ static void service_client_size_hints(
 
     for (;;)
     {
-        read_result = read(client->size_hint_read_fd, &hint, sizeof(hint));
+        read_result = savanxp_read(client->size_hint_read_fd, &hint, sizeof(hint));
         if (read_result == 0)
         {
             return;
@@ -3003,7 +3003,7 @@ static int windowd_selftest(void)
             recovery_armed = 0;
             if (session.compositor.pid > 0)
             {
-                (void)kill((int)session.compositor.pid, SAVANXP_SIGKILL);
+                (void)savanxp_kill((int)session.compositor.pid, SAVANXP_SIGKILL);
             }
         }
 
@@ -3016,7 +3016,7 @@ static int windowd_selftest(void)
             fullscreen_recovery_armed = 0;
             if (session.compositor.pid > 0)
             {
-                (void)kill((int)session.compositor.pid, SAVANXP_SIGKILL);
+                (void)savanxp_kill((int)session.compositor.pid, SAVANXP_SIGKILL);
             }
         }
 
@@ -4202,7 +4202,7 @@ int main(int argc, char **argv)
             poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.overlay_clients[slot]);
         }
 
-        if (poll(poll_fds, (unsigned long)poll_count, 16) < 0)
+        if (savanxp_poll(poll_fds, (unsigned long)poll_count, 16) < 0)
         {
             break;
         }
@@ -4222,7 +4222,7 @@ int main(int argc, char **argv)
 
         if (input_poll_index >= 0 && (poll_fds[input_poll_index].revents & SAVANXP_POLLIN) != 0)
         {
-            while ((count = read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
+            while ((count = savanxp_read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
                 /* Sin chrome, la arbitracion se reduce a: hotkeys del WM y, si
                  * no consume, ruteo al cliente activo. */
@@ -4259,7 +4259,7 @@ int main(int argc, char **argv)
             size_t coalesced_mouse_count = 0;
             size_t mouse_event_index = 0;
 
-            count = read(session.mouse_fd, raw_mouse_events, sizeof(raw_mouse_events));
+            count = savanxp_read(session.mouse_fd, raw_mouse_events, sizeof(raw_mouse_events));
             if (count > 0)
             {
                 raw_mouse_count = (size_t)count / sizeof(raw_mouse_events[0]);

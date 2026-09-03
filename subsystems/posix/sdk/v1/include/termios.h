@@ -28,12 +28,8 @@ struct termios {
 
 #define TCSANOW 0
 
-#define tcgetattr sx_tcgetattr
-#define tcsetattr sx_tcsetattr
-#define tcgetpgrp sx_tcgetpgrp
-#define tcsetpgrp sx_tcsetpgrp
 
-int sx_tcgetattr(int fd, struct termios* value);
-int sx_tcsetattr(int fd, int optional_actions, const struct termios* value);
-pid_t sx_tcgetpgrp(int fd);
-int sx_tcsetpgrp(int fd, pid_t pgrp);
+int tcgetattr(int fd, struct termios* value);
+int tcsetattr(int fd, int optional_actions, const struct termios* value);
+pid_t tcgetpgrp(int fd);
+int tcsetpgrp(int fd, pid_t pgrp);

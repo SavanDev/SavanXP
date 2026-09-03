@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
         message_length += part_length;
     }
 
-    fd = socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP);
+    fd = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP);
     if (fd < 0) {
         eprintf("udpsend: socket failed (%s)\n", result_error_string(fd));
         return 1;
@@ -97,14 +97,14 @@ int main(int argc, char** argv) {
     memset(&address, 0, sizeof(address));
     address.ipv4 = ipv4;
     address.port = (uint16_t)port;
-    status = sendto((int)fd, message, message_length, &address);
+    status = savanxp_sendto((int)fd, message, message_length, &address);
     if (status < 0) {
         eprintf("udpsend: sendto failed (%s)\n", result_error_string(status));
-        close((int)fd);
+        savanxp_close((int)fd);
         return 1;
     }
 
     printf("sent %u bytes\n", (unsigned int)message_length);
-    close((int)fd);
+    savanxp_close((int)fd);
     return 0;
 }

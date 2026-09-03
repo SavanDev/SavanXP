@@ -25,8 +25,8 @@ Incluye:
 
 Categorías soportadas:
 
-- syscalls: `read`, `write`, `open`, `close`, `readdir`, `ioctl`, `socket`, `bind`, `sendto`, `recvfrom`, `connect`
-- syscalls POSIX base: `getpid`, `stat`, `fstat`, `chdir`, `getcwd`
+- syscalls crudos (`savanxp/libc.h`): `savanxp_read`, `savanxp_write`, `savanxp_open`, `savanxp_open_mode`, `savanxp_close`, `savanxp_readdir`, `savanxp_ioctl`, `savanxp_socket`, `savanxp_bind`, `savanxp_sendto`, `savanxp_recvfrom`, `savanxp_connect`
+- syscalls crudos POSIX base: `savanxp_getpid`, `savanxp_stat`, `savanxp_fstat`, `savanxp_chdir`, `savanxp_getcwd`
 - introspeccion del sistema: `system_info`
 - procesos: `spawn`, `spawn_fd`, `spawn_fds`, `exec`, `waitpid`, `fork`, `kill`
 - descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
@@ -110,8 +110,8 @@ Helpers públicos del runtime:
 
 Capas públicas:
 
-- `savanxp/*` sigue expuesto como capa baja del ABI y wrappers crudos.
-- los headers estándar en `subsystems/posix/sdk/v1/include` montan una capa POSIX/libc arriba sin romper apps viejas.
+- `savanxp/*` es la capa baja del ABI: syscalls crudos, prefijados `savanxp_*`, que devuelven `-errno` directo.
+- los headers estándar en `subsystems/posix/sdk/v1/include` montan la capa POSIX arriba, con la convención de siempre (`-1` mas `errno`). Declaran el nombre estándar y nada más: no hay `#define nombre sx_nombre`, y el símbolo existe de verdad en el link, asi que compila y linkea código que solo conoce `<stdio.h>` y compañía. Los `sx_*` son la implementación interna del runtime.
 - la libc pública incluye allocator sobre heap fijo del runtime, con `malloc`,
   `free`, `calloc` y `realloc` reciclables dentro de ese espacio.
 

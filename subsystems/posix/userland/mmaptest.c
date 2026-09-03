@@ -30,7 +30,7 @@ int main(void) {
     }
 
     shared[0] = 0x41;
-    long pid = fork();
+    long pid = savanxp_fork();
     if (pid < 0) {
         eprintf("mmaptest: fork shared failed (%s)\n", result_error_string(pid));
         return 1;
@@ -45,7 +45,7 @@ int main(void) {
     }
 
     int status = -1;
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         eprintf("mmaptest: waitpid shared failed\n");
         return 1;
     }
@@ -70,7 +70,7 @@ int main(void) {
     }
 
     private_map[0] = 0x21;
-    pid = fork();
+    pid = savanxp_fork();
     if (pid < 0) {
         eprintf("mmaptest: fork private failed (%s)\n", result_error_string(pid));
         return 1;
@@ -85,7 +85,7 @@ int main(void) {
     }
 
     status = -1;
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         eprintf("mmaptest: waitpid private failed\n");
         return 1;
     }

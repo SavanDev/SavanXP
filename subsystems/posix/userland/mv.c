@@ -6,7 +6,7 @@ int main(int argc, const char* const* argv) {
         return 1;
     }
 
-    if (rename(argv[1], argv[2]) < 0) {
+    if (savanxp_rename(argv[1], argv[2]) < 0) {
         puts_fd(2, "mv: failed\n");
         return 1;
     }

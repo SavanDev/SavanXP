@@ -187,14 +187,12 @@ $UserPrograms = @(
         "subsystems/posix/userland/desktop_icons.c",
         "subsystems/posix/userland/desktop_wallpaper.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
-        "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
-        "subsystems/posix/sdk/v1/runtime/posix.c"
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
     @{ Name = "aboutapp"; Sources = @(
         "subsystems/posix/userland/aboutapp.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
-        "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
-        "subsystems/posix/sdk/v1/runtime/posix.c"
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
     # filesapp resuelve asociaciones leyendo el .sxmeta de los binarios (fase 5).
     @{ Name = "filesapp"; Sources = @(
@@ -202,20 +200,17 @@ $UserPrograms = @(
         "subsystems/posix/userland/file_assoc.c",
         "subsystems/posix/sdk/v1/runtime/sxe.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
-        "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
-        "subsystems/posix/sdk/v1/runtime/posix.c"
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
     @{ Name = "notepad"; Sources = @(
         "subsystems/posix/userland/notepad.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
-        "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
-        "subsystems/posix/sdk/v1/runtime/posix.c"
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
     @{ Name = "widgetsdemo"; Sources = @(
         "subsystems/posix/userland/widgetsdemo.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
-        "subsystems/posix/sdk/v1/runtime/sxgui_app.c",
-        "subsystems/posix/sdk/v1/runtime/posix.c"
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ); Test = $true },
     @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c"; Test = $true },
     @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c"; Test = $true },
@@ -233,13 +228,12 @@ $UserPrograms = @(
     @{ Name = "cliptest"; Source = "subsystems/posix/userland/cliptest.c"; Test = $true },
     @{ Name = "seltest"; Sources = @(
         "subsystems/posix/userland/seltest.c",
-        "subsystems/posix/sdk/v1/runtime/sxgui.c",
-        "subsystems/posix/sdk/v1/runtime/posix.c"
+        "subsystems/posix/sdk/v1/runtime/sxgui.c"
     ); Test = $true },
     @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c"; Test = $true },
+    @{ Name = "libctest"; Source = "subsystems/posix/userland/libctest.c"; Test = $true },
     @{ Name = "heaptest"; Sources = @(
-        "subsystems/posix/userland/heaptest.c",
-        "subsystems/posix/sdk/v1/runtime/posix.c"
+        "subsystems/posix/userland/heaptest.c"
     ); Test = $true },
     @{ Name = "smoke"; Source = "subsystems/posix/userland/smoke.c"; Test = $true },
     @{ Name = "sxetest"; Sources = @(
@@ -723,6 +717,7 @@ function Get-UserlandCompileEdges([bool]$IncludeTestApps = $true) {
         foreach ($source in @(
             "subsystems/posix/sdk/v1/runtime/crt0.S",
             "subsystems/posix/sdk/v1/runtime/libc.c",
+            "subsystems/posix/sdk/v1/runtime/posix.c",
             "subsystems/posix/sdk/v1/runtime/gfx.c",
             "subsystems/posix/sdk/v1/runtime/gfx2d.c"
         ) + $programSources) {

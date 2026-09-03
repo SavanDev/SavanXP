@@ -69,26 +69,26 @@ int main(int argc, char** argv) {
     }
     if (gpu_acquire((int)gpu_fd) < 0) {
         puts_fd(2, "KBD SMOKE FAIL GPU_IOC_ACQUIRE fallo\n");
-        close((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
         return 1;
     }
 
-    input_fd = open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
     if (input_fd < 0) {
         puts_fd(2, "KBD SMOKE FAIL /dev/input0 no disponible\n");
         gpu_release((int)gpu_fd);
-        close((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
         return 1;
     }
 
     /* El harness host espera esta linea en el log serial antes de empezar a
      * inyectar teclas por QMP: sin ella podria mandarlas antes de que este
      * proceso sea el dueno de la sesion grafica y se perderian. */
-    puts("KBD SMOKE READY\n");
+    puts_out("KBD SMOKE READY\n");
 
     deadline_ms = uptime_ms() + KBDTEST_TIMEOUT_MS;
     while (checkpoint_index < checkpoint_count) {
-        while (read((int)input_fd, &event, sizeof(event)) == (long)sizeof(event)) {
+        while (savanxp_read((int)input_fd, &event, sizeof(event)) == (long)sizeof(event)) {
             if (checkpoint_matches(&g_checkpoints[checkpoint_index], &event)) {
                 printf("kbdtest: checkpoint '%s' OK\n", g_checkpoints[checkpoint_index].label);
                 checkpoint_index += 1;
@@ -103,17 +103,17 @@ int main(int argc, char** argv) {
         }
         if (uptime_ms() >= deadline_ms) {
             printf("KBD SMOKE FAIL timeout esperando '%s'\n", g_checkpoints[checkpoint_index].label);
-            close((int)input_fd);
+            savanxp_close((int)input_fd);
             gpu_release((int)gpu_fd);
-            close((int)gpu_fd);
+            savanxp_close((int)gpu_fd);
             return 1;
         }
         sleep_ms(20);
     }
 
-    close((int)input_fd);
+    savanxp_close((int)input_fd);
     gpu_release((int)gpu_fd);
-    close((int)gpu_fd);
-    puts("KBD SMOKE PASS\n");
+    savanxp_close((int)gpu_fd);
+    puts_out("KBD SMOKE PASS\n");
     return 0;
 }

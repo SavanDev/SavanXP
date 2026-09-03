@@ -25,7 +25,7 @@ int main(void) {
 
     void* first_view = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     if (!expect_pointer(first_view, "map first view")) {
-        close((int)section);
+        savanxp_close((int)section);
         return 1;
     }
 
@@ -37,17 +37,17 @@ int main(void) {
     if (!expect_success(child_ready, "create child_ready") ||
         !expect_success(parent_ready, "create parent_ready")) {
         unmap_view(first_view);
-        close((int)section);
+        savanxp_close((int)section);
         return 1;
     }
 
-    long pid = fork();
+    long pid = savanxp_fork();
     if (pid < 0) {
         eprintf("sectiontest: fork failed (%s)\n", result_error_string(pid));
-        close((int)parent_ready);
-        close((int)child_ready);
+        savanxp_close((int)parent_ready);
+        savanxp_close((int)child_ready);
         unmap_view(first_view);
-        close((int)section);
+        savanxp_close((int)section);
         return 1;
     }
 
@@ -71,9 +71,9 @@ int main(void) {
         if (!expect_success(unmap_view((void*)shared), "child unmap view")) {
             return 6;
         }
-        close((int)parent_ready);
-        close((int)child_ready);
-        close((int)section);
+        savanxp_close((int)parent_ready);
+        savanxp_close((int)child_ready);
+        savanxp_close((int)section);
         return 0;
     }
 
@@ -104,7 +104,7 @@ int main(void) {
     }
 
     int status = -1;
-    if (waitpid((int)pid, &status) < 0) {
+    if (savanxp_waitpid((int)pid, &status) < 0) {
         eprintf("sectiontest: waitpid failed\n");
         return 1;
     }
@@ -120,8 +120,8 @@ int main(void) {
         return 1;
     }
 
-    close((int)parent_ready);
-    close((int)child_ready);
-    close((int)section);
+    savanxp_close((int)parent_ready);
+    savanxp_close((int)child_ready);
+    savanxp_close((int)section);
     return 0;
 }

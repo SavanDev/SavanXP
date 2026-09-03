@@ -13,8 +13,6 @@
 #define F_GETFL 1
 #define F_SETFL 2
 
-#define open sx_open
-#define fcntl sx_fcntl
 
-int sx_open(const char* path, int flags, ...);
-int sx_fcntl(int fd, int command, ...);
+int open(const char* path, int flags, ...);
+int fcntl(int fd, int command, ...);

@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    fd = open_mode("/dev/pcspk", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    fd = savanxp_open_mode("/dev/pcspk", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (fd < 0) {
         eprintf("beep: /dev/pcspk unavailable (%s)\n", result_error_string(fd));
         return 1;
@@ -38,14 +38,14 @@ int main(int argc, char** argv) {
     beep.frequency_hz = frequency;
     beep.duration_ms = duration;
     {
-        long status = ioctl((int)fd, PCSPK_IOC_BEEP, (unsigned long)&beep);
+        long status = savanxp_ioctl((int)fd, PCSPK_IOC_BEEP, (unsigned long)&beep);
         if (status < 0) {
             eprintf("beep: PCSPK_IOC_BEEP failed (%s)\n", result_error_string(status));
-            close((int)fd);
+            savanxp_close((int)fd);
             return 1;
         }
     }
 
-    close((int)fd);
+    savanxp_close((int)fd);
     return 0;
 }

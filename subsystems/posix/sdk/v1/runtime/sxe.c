@@ -606,7 +606,7 @@ static int sxe_read_exact(int fd, void* buffer, size_t count)
 
     while (done < count)
     {
-        long got = read(fd, cursor + done, count - done);
+        long got = savanxp_read(fd, cursor + done, count - done);
 
         if (got <= 0)
         {
@@ -677,7 +677,7 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
         return SXE_ABSENT;
     }
 
-    fd = open(path);
+    fd = savanxp_open(path);
     if (fd < 0)
     {
         return SXE_ABSENT;
@@ -685,7 +685,7 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
 
     if (!sxe_read_exact((int)fd, header, sizeof(header)))
     {
-        (void)close((int)fd);
+        (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
     /* Un archivo que no es ELF64 little-endian no tiene secciones que buscar:
@@ -693,7 +693,7 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
     if (header[0] != 0x7fu || header[1] != 'E' || header[2] != 'L' || header[3] != 'F' ||
         header[SXE_ELF_OFF_CLASS] != 2u || header[SXE_ELF_OFF_DATA] != 1u)
     {
-        (void)close((int)fd);
+        (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
 
@@ -704,20 +704,20 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
     if (section_header_offset == 0u || section_count == 0u || section_count > SXE_ELF_MAX_SECTIONS ||
         sxe_load_u16(header + SXE_ELF_OFF_SHENTSIZE) != SXE_ELF_SHDR_BYTES || name_index >= section_count)
     {
-        (void)close((int)fd);
+        (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
 
     if (!sxe_read_at((int)fd, section_header_offset + ((uint64_t)name_index * SXE_ELF_SHDR_BYTES), shdr, sizeof(shdr)))
     {
-        (void)close((int)fd);
+        (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
     strtab_offset = sxe_load_u64(shdr + SXE_SHDR_OFF_OFFSET);
     strtab_size = sxe_load_u64(shdr + SXE_SHDR_OFF_SIZE);
     if (strtab_size == 0u)
     {
-        (void)close((int)fd);
+        (void)savanxp_close((int)fd);
         return SXE_ABSENT;
     }
 
@@ -761,7 +761,7 @@ int sxe_read_section(const char* path, const char* section, void* buffer, size_t
         break;
     }
 
-    (void)close((int)fd);
+    (void)savanxp_close((int)fd);
     return result;
 }
 
