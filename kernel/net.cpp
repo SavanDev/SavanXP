@@ -144,8 +144,25 @@ device::Device g_device = {
     .can_read = nullptr,
 };
 
-uint8_t g_arp_mac[6] = {};
-uint32_t g_arp_ip = 0;
+// Cache ARP. Una sola entrada alcanzaba mientras el unico destino era el
+// gateway de slirp, pero se pisaba con cada frame ARP que pasara por el cable:
+// hablar con dos IPs a la vez obligaba a re-resolver en cada paquete, y peor,
+// un ARP ajeno entre resolve_arp() y el transmit mandaba el frame a la MAC
+// equivocada. Por eso resolve_arp() ahora devuelve la MAC por copia y nadie
+// lee la cache directamente.
+constexpr size_t kArpCacheEntries = 16;
+// Las entradas se re-resuelven pasado este tiempo: si una IP cambia de MAC
+// (reboot del gateway, failover) la cache no puede quedar mintiendo para
+// siempre.
+constexpr uint64_t kArpEntryLifetimeMs = 60u * 1000u;
+
+struct ArpEntry {
+    uint32_t ip;         // 0 = ranura libre; ninguna IP valida es 0.
+    uint8_t mac[6];
+    uint64_t learned_ms; // Sirve para expirar y, si esta todo lleno, para elegir victima.
+};
+
+ArpEntry g_arp_cache[kArpCacheEntries] = {};
 uint32_t g_pending_ping_ip = 0;
 uint16_t g_pending_ping_sequence = 0;
 savanxp_net_ping_result g_pending_ping_result = {};
@@ -174,7 +191,7 @@ void set_status(uint32_t status) {
     g_last_status = status;
 }
 
-bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms);
+bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms, uint8_t out_mac[6]);
 
 void net_log(const char* format, ...) {
     if (!kLogNet) {
@@ -277,6 +294,14 @@ void wait_for_tick() {
     arch::x86_64::enable_interrupts();
     arch::x86_64::halt_once();
     arch::x86_64::disable_interrupts();
+}
+
+// Los loops de espera de este archivo ya calculaban esto a mano; la cache ARP
+// lo necesita tambien, y varios de esos loops tienen una local llamada now_ms,
+// asi que el helper lleva otro nombre para no quedar tapado por ellas.
+uint64_t monotonic_ms() {
+    const uint32_t frequency = timer::frequency_hz();
+    return (timer::ticks() * 1000ULL) / (frequency != 0 ? frequency : 1);
 }
 
 
@@ -394,10 +419,66 @@ bool send_icmp_reply(
     return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(IcmpEchoHeader) + payload_size);
 }
 
+// Copia la MAC de ip si esta cacheada y todavia es fresca. La entrada vencida
+// se libera aca mismo, asi la ranura vuelve al pool sin esperar a un desalojo.
+bool arp_lookup(uint32_t ip, uint8_t out_mac[6]) {
+    if (ip == 0) {
+        return false;
+    }
+
+    const uint64_t now = monotonic_ms();
+    for (auto& entry : g_arp_cache) {
+        if (entry.ip != ip) {
+            continue;
+        }
+        if (now - entry.learned_ms >= kArpEntryLifetimeMs) {
+            entry.ip = 0;
+            return false;
+        }
+        memcpy(out_mac, entry.mac, 6);
+        return true;
+    }
+    return false;
+}
+
+// Aprende una asociacion ip->mac. Refresca la entrada que ya exista; si no,
+// toma una ranura libre o una vencida, y recien en ultima instancia desaloja la
+// mas vieja.
 void remember_arp(uint32_t ip, const uint8_t* mac) {
-    g_arp_ip = ip;
-    memcpy(g_arp_mac, mac, 6);
+    if (ip == 0) {
+        return;
+    }
+
+    const uint64_t now = monotonic_ms();
+    ArpEntry* reusable = nullptr; // Primera ranura libre o vencida.
+    ArpEntry* oldest = nullptr;   // Victima si no hay ninguna reusable.
+
+    for (auto& entry : g_arp_cache) {
+        if (entry.ip == ip) {
+            reusable = &entry;
+            break;
+        }
+        if (reusable == nullptr && (entry.ip == 0 || now - entry.learned_ms >= kArpEntryLifetimeMs)) {
+            reusable = &entry;
+        }
+        if (oldest == nullptr || entry.learned_ms < oldest->learned_ms) {
+            oldest = &entry;
+        }
+    }
+
+    ArpEntry* target = reusable != nullptr ? reusable : oldest;
+    if (target == nullptr) {
+        return;
+    }
+
+    target->ip = ip;
+    memcpy(target->mac, mac, 6);
+    target->learned_ms = now;
     set_status(SAVANXP_NET_STATUS_ARP_RESOLVED);
+}
+
+void flush_arp_cache() {
+    memset(g_arp_cache, 0, sizeof(g_arp_cache));
 }
 
 net::Socket* find_bound_socket(uint16_t port) {
@@ -578,7 +659,8 @@ bool send_tcp_segment(
 
     const uint32_t destination_ip = socket.remote_ip;
     const uint32_t next_hop = same_subnet(kConfiguredIpv4, destination_ip) ? destination_ip : kConfiguredGateway;
-    if (!resolve_arp(next_hop, 1000u)) {
+    uint8_t next_hop_mac[6] = {};
+    if (!resolve_arp(next_hop, 1000u, next_hop_mac)) {
         return false;
     }
 
@@ -588,7 +670,7 @@ bool send_tcp_segment(
     auto* tcp = reinterpret_cast<TcpHeader*>(frame + sizeof(EthernetHeader) + sizeof(Ipv4Header));
     uint8_t* out_payload = frame + sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader);
 
-    memcpy(ethernet->destination, g_arp_mac, 6);
+    memcpy(ethernet->destination, next_hop_mac, 6);
     memcpy(ethernet->source, nic::mac_address(), 6);
     ethernet->type = host_to_be16(kEtherTypeIpv4);
 
@@ -886,8 +968,11 @@ const nic::Events kNicEvents = {
 };
 
 
-bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms) {
-    if (g_arp_ip == target_ip) {
+// Deja en out_mac la MAC de target_ip, resolviendola por ARP si hace falta. La
+// MAC se copia aca y no queda en ningun global: entre este punto y el transmit
+// del llamador puede entrar cualquier frame ARP ajeno y reescribir la cache.
+bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms, uint8_t out_mac[6]) {
+    if (arp_lookup(target_ip, out_mac)) {
         net_log("net: arp cache hit\n");
         set_status(SAVANXP_NET_STATUS_ARP_RESOLVED);
         return true;
@@ -905,14 +990,14 @@ bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms) {
         return false;
     }
 
-    const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+    const uint64_t start_ms = monotonic_ms();
     while (true) {
         nic::poll_receive();
-        if (g_arp_ip == target_ip) {
+        if (arp_lookup(target_ip, out_mac)) {
             return true;
         }
 
-        const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+        const uint64_t now_ms = monotonic_ms();
         if (now_ms - start_ms >= timeout_ms) {
             net_log("net: arp timeout\n");
             ++g_arp_timeouts;
@@ -941,8 +1026,7 @@ bool bring_up() {
         return false;
     }
 
-    g_arp_ip = 0;
-    memset(g_arp_mac, 0, sizeof(g_arp_mac));
+    flush_arp_cache();
     g_up = true;
     set_status(SAVANXP_NET_STATUS_READY);
     return true;
@@ -996,7 +1080,8 @@ int net_ioctl(uint64_t request, uint64_t argument) {
             }
 
             const uint32_t next_hop = same_subnet(kConfiguredIpv4, request_data.ipv4) ? request_data.ipv4 : kConfiguredGateway;
-            if (!resolve_arp(next_hop, request_data.timeout_ms != 0 ? request_data.timeout_ms : 1000u)) {
+            uint8_t next_hop_mac[6] = {};
+            if (!resolve_arp(next_hop, request_data.timeout_ms != 0 ? request_data.timeout_ms : 1000u, next_hop_mac)) {
                 return negative_error(SAVANXP_ETIMEDOUT);
             }
 
@@ -1006,7 +1091,7 @@ int net_ioctl(uint64_t request, uint64_t argument) {
             g_ping_complete = false;
             ++g_ping_requests;
 
-            if (!send_icmp_echo(request_data.ipv4, g_arp_mac, request_data.sequence, request_data.payload_size)) {
+            if (!send_icmp_echo(request_data.ipv4, next_hop_mac, request_data.sequence, request_data.payload_size)) {
                 return negative_error(SAVANXP_EIO);
             }
 
@@ -1198,10 +1283,11 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
     }
 
     const uint32_t next_hop = same_subnet(kConfiguredIpv4, address.ipv4) ? address.ipv4 : kConfiguredGateway;
-    if (!resolve_arp(next_hop, 1000u)) {
+    uint8_t next_hop_mac[6] = {};
+    if (!resolve_arp(next_hop, 1000u, next_hop_mac)) {
         return negative_error(SAVANXP_ETIMEDOUT);
     }
-    if (!send_udp_datagram(address.ipv4, g_arp_mac, socket->local_port, address.port, payload, count)) {
+    if (!send_udp_datagram(address.ipv4, next_hop_mac, socket->local_port, address.port, payload, count)) {
         return negative_error(SAVANXP_EIO);
     }
     return static_cast<int>(count);

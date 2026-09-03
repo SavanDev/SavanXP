@@ -162,6 +162,86 @@ int main(void) {
         (unsigned int)after.rx_frames
     );
 
+    /* Cache ARP con varias entradas. Hablar con un segundo host y volver al
+     * gateway no puede costar una resolucion nueva: con la cache de una sola
+     * entrada que habia antes, el segundo host desalojaba al gateway y este
+     * ultimo ping volvia a salir a preguntar por el cable.
+     *
+     * El contador arp_requests solo cuenta las requests que EMITIMOS -- las
+     * replies que mandamos a pedido de otro no lo mueven -- asi que es una
+     * senial limpia de "hubo o no hubo resolucion".
+     *
+     * El segundo host es el .3 del user-net de QEMU (el DNS de slirp). Del
+     * ping en si no esperamos nada: puede no contestar ICMP y no importa, lo
+     * unico que este paso necesita es que conteste el ARP, que es lo que
+     * mete la segunda entrada en la cache. */
+    {
+        struct savanxp_net_info mid;
+        struct savanxp_net_info final;
+        uint32_t second_host = info.gateway + 1u;
+
+        memset(&request, 0, sizeof(request));
+        memset(&result, 0, sizeof(result));
+        request.ipv4 = second_host;
+        request.timeout_ms = 2000;
+        request.sequence = 4;
+        request.payload_size = 32;
+        request.result_ptr = (uint64_t)(unsigned long)&result;
+        (void)ioctl((int)fd, NET_IOC_PING, (unsigned long)&request);
+
+        if (query_info((int)fd, &mid) < 0) {
+            close((int)fd);
+            return fail("NET_IOC_GET_INFO after second host");
+        }
+        if (mid.arp_timeouts != after.arp_timeouts) {
+            puts("nettest: no ARP reply from ");
+            print_ipv4(second_host);
+            puts("\n");
+            close((int)fd);
+            return fail("second host did not resolve");
+        }
+        if (mid.arp_requests != after.arp_requests + 1u) {
+            printf(
+                "nettest: arp_requests %u->%u (esperaba una sola resolucion)\n",
+                (unsigned int)after.arp_requests,
+                (unsigned int)mid.arp_requests
+            );
+            close((int)fd);
+            return fail("unexpected ARP traffic for second host");
+        }
+
+        memset(&request, 0, sizeof(request));
+        memset(&result, 0, sizeof(result));
+        request.ipv4 = info.gateway;
+        request.timeout_ms = 2000;
+        request.sequence = 5;
+        request.payload_size = 32;
+        request.result_ptr = (uint64_t)(unsigned long)&result;
+        if (ioctl((int)fd, NET_IOC_PING, (unsigned long)&request) < 0) {
+            close((int)fd);
+            return fail("gateway ping after second host");
+        }
+
+        if (query_info((int)fd, &final) < 0) {
+            close((int)fd);
+            return fail("NET_IOC_GET_INFO after cache check");
+        }
+        if (final.arp_requests != mid.arp_requests) {
+            printf(
+                "nettest: arp_requests %u->%u, el gateway se cayo de la cache\n",
+                (unsigned int)mid.arp_requests,
+                (unsigned int)final.arp_requests
+            );
+            close((int)fd);
+            return fail("ARP cache holds a single entry");
+        }
+
+        printf(
+            "nettest: cache arp ok, %u resolucion(es) para dos hosts\n",
+            (unsigned int)(final.arp_requests - after.arp_requests)
+        );
+    }
+
     close((int)fd);
     puts("NET SMOKE PASS\n");
     return 0;
