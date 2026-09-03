@@ -12,6 +12,92 @@ Notas de corte:
 
 ### Agregado
 
+- **Selector de layout de teclado ES/EN, en la barra de tareas.** El unico mapa
+  de teclas que existia era el ES horneado en `kernel/ps2.cpp`. Ahora hay dos
+  -- se suma el US QWERTY estandar -- y se elige en caliente por un ioctl sobre
+  `/dev/input0` (`INPUT_IOC_SET_LAYOUT`/`GET_LAYOUT`, el mismo patron que ya
+  usan la GPU, el portapapeles y el speaker). La eleccion se guarda en
+  `/disk/keyboard.cfg` y se aplica en el boot, antes de windowd, asi que la
+  sesion arranca con el que se dejo puesto. La UI es un indicador ES/EN en la
+  barra que abre un popup anclado arriba de la franja (`kbdlayoutpopup.c`): es
+  un tipo de cliente nuevo de windowd, no una extension del protocolo WM
+  generico. Verificado con capturas reales -- `tools/shoot.ps1 -Scenario
+  kbdlayout`, escena nueva -- y con `kbd-smoke`, `windowd-smoke` y
+  `taskbar-smoke` en verde.
+
+- **`build.ps1 kbd-smoke`: el driver de teclado se prueba solo.** Cierra el
+  camino real PS/2 -> IRQ -> `kernel/ps2.cpp` -> `/dev/input0`, que ni
+  `windowd --selftest` ni guihost cubren porque inyectan el evento ya formado
+  -- es la misma clase de agujero por el que se colo el bug de Ctrl+C.
+  `kbdtest` adquiere la sesion grafica, como gputest, lee `/dev/input0` de
+  verdad y compara contra un guion de checkpoints (letra simple, Shift, Ctrl,
+  extendida, Enter) mientras `tools/kbd_smoke.py` mueve el teclado emulado por
+  QMP, apenas el serial anuncia `KBD SMOKE READY`. `Run-AutomationQemu` suma
+  `-ReadyToken`/`-OnReady` para ese enganche, sin tocar los harnesses que ya
+  existian.
+
+- **El estampado SXE deja de ser opt-in: todo lo que se compila para el sistema
+  ya sale en ese formato.** Cierra la brecha entre "el formato existe" y "cada
+  programa que se compile ya esta en el formato": la cobertura medida sobre la
+  imagen completa es de 68/68 binarios instalados, in-tree y externos (Doom,
+  busybox) por igual. Es el mismo rol que cumple el bloque VERSIONINFO que el
+  linker de Windows agrega aunque el programador nunca haya escrito un `.rc`:
+  identidad minima que sale del build y no del programador. Cada programa
+  recibe un `.sxmeta` tenga o no `.sxres`, con nombre, version del sistema,
+  subsistema y el commit corto como `BUILD_ID`; nunca se inventan icono,
+  accent, descripcion ni mimes -- eso sigue siendo enriquecimiento del
+  `.sxres`. El nombre automatico es a proposito EL MISMO texto que progman y
+  windowd ya mostraban como fallback del basename, asi que para un binario sin
+  manifiesto no cambia una sola ventana: solo deja de inferirse en cada
+  arranque y pasa a estar declarado una vez, en el build. Ademas el generador
+  ya no decide para quien generar mirando que `.sxres` hay en el disco -- eso
+  invertia el control --, sino que recibe la lista de programas de quien sabe
+  la verdad, y avisa si un `.sxres` no le corresponde a ninguno: el error mas
+  probable ahi es un `.c` renombrado sin renombrar su manifiesto.
+
+- **`icon_file=` en el manifiesto: el icono viaja en el binario y no en
+  `assets/`.** El generador solo sabia resolver `icon=` por nombre contra
+  `assets/desktop/icons/`, asi que para estampar un icono propio primero habia
+  que meter el arte en el arbol del sistema -- lo contrario de lo que quiere el
+  formato. Se nota sobre todo con un port de terceros: `assets/` se versiona y
+  se hornea en la imagen, asi que pasar por ahi significa distribuir arte ajeno
+  con el sistema para poder mostrarlo en el launcher. `icon_file=` toma un PNG
+  relativo al `.sxres` y deriva los dos tamanos que exige el runtime: si el
+  original es multiplo entero del destino usa NEAREST y el pixel art sale
+  intacto, y si no lo es, un remuestreo suave, porque NEAREST con una razon no
+  entera se come filas de a una y queda peor. Las dos claves son excluyentes y
+  el generador falla si estan las dos: el icono sale del catalogo del sistema o
+  de un PNG propio, no de los dos.
+
+- **Punto flotante en userland, con `-Sse` y una libm propia.** Hasta ahora el
+  codigo con `float`/`double` compilaba pero NO linkeaba, y el sintoma caia
+  lejos de la causa: con `-mno-sse -mgeneral-regs-only` clang no se niega, pasa
+  los `double` en registros de proposito general -- una convencion propia, no
+  la de System V -- y resuelve cada operacion llamando a los helpers de
+  soft-float de compiler-rt (`__adddf3`, `__mulsf3`), que este sistema no
+  tiene; el resultado era un simbolo indefinido en el link. Del lado del SO no
+  faltaba nada: el kernel ya guardaba y restauraba el area FPU/SSE por proceso
+  en cada cambio de contexto (`fxsave64`/`fxrstor64`) y `crt0.S` ya dejaba
+  `rsp` alineado a 16. El switch es opt-in porque una app que no usa floats no
+  gana nada y prefiere que el compilador no le meta SSE en un memcpy
+  vectorizado -- el camino in-tree de `build.ps1` sigue en `-mno-sse` --, y
+  `math.h` declara la biblioteca bajo `#if defined(__SSE2__)` para que sin el
+  switch el error salga al COMPILAR nombrando la funcion, en vez de un
+  `__adddf3` sin resolver. Dos decisiones del contenido de la libm:
+  `floor`/`ceil`/`trunc` se hacen con bits y no con `roundsd`, que es SSE4.1 y
+  el modelo de CPU con el que arranca QEMU por defecto no expone; y `fmod`,
+  `atan2`, `exp`, `log` y `pow` se apoyan en el x87, que sigue vivo con SSE
+  prendido y da 64 bits de mantisa, fijando la precision del control word a
+  extendida y reponiendola al salir -- `fldl2e` y companiaa cargan la constante
+  ya redondeada a la precision vigente, asi que en un entorno que la dejo en 53
+  bits `exp` arrancaba con un `log2(e)` degradado y el error se amplificaba con
+  |x| (435 ulp en `exp(-678)`; con la precision fijada, 1). Validado de dos
+  formas: contra la libm del host, con todo el conjunto en 1 ulp y
+  `floor`/`ceil`/`trunc`/`round`/`fabs`/`sqrt`/`fmod` exactos bit a bit, y
+  adentro del SO con `build.ps1 float-smoke`, que ademas cubre lo unico que no
+  se puede comprobar compilando: que el estado FPU/SSE sobreviva a un cambio de
+  contexto.
+
 - **Control de pestanias en sxgui (`sxgui_tabs`).** La pestania activa se
   dibuja mas alta y mas ancha que las demas y tapa el borde superior de la
   pagina, de modo que las dos partes se leen como una sola hoja: eso es lo que
@@ -90,6 +176,20 @@ Notas de corte:
 
 ### Cambiado
 
+- **`icon=` en `progman.ini` apunta a un programa, no a un catalogo de arte.**
+  El valor era un nombre que se resolvia contra un array de pixeles horneado
+  (`icon_id_from_name()`, que se borra entera); ahora guarda un PATH y el icono
+  se lee del binario apuntado, con el MISMO mecanismo que el item ya usaba para
+  el suyo -- pedir el icono de OTRO programa es justamente el caso de uso, por
+  ejemplo una segunda entrada del mismo ejecutable con otro nombre. Los nombres
+  viejos (`shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest`) siguen andando
+  como alias, resueltos al path del programa que hoy dibuja ese icono; ya no
+  hace falta escribirlos en un `.ini` nuevo, porque esos programas traen su
+  propio `.sxicon`. Un `icon=` explicito le gana al binario aunque tenga icono
+  propio: `icon=desktop` en un item que lanza el notepad fuerza el generico y
+  ni siquiera intenta leer su `.sxicon` real, porque el usuario dijo "no" a
+  proposito y eso pesa mas que lo que declare el ejecutable.
+
 - **El chrome de sxgui pasa al bisel de dos pixeles de Win95.** Un borde 3D de
   la epoca lleva cuatro tonos -- se agrego `SXGUI_COLOR_BEVEL` (223,223,223),
   el que faltaba -- repartidos en un anillo externo y uno interno, y el hundido
@@ -134,6 +234,19 @@ Notas de corte:
 
 ### Eliminado
 
+- **El set de iconos horneado en `desktop_icons.h` queda en uno solo.** Doom
+  primero, y despues Shell, Notepad, Gfx Demo, Key Test y Mouse Test, salen del
+  enum y de las dos tablas de bitmaps: lo unico que sobrevive es
+  `DESKTOP_ICON_DESKTOP`, que es la red de seguridad para cuando un binario no
+  se puede leer en absoluto y no una opcion mas entre varias. Los mismos
+  pixeles de siempre ahora salen unicamente del `.sxicon` de cada programa --
+  el de Doom vive en `sdk/doomgeneric/icon.png` y su manifiesto lo declara con
+  `icon_file=`. Los PNG de `assets/desktop/icons/` NO se van: siguen siendo el
+  catalogo que cada `.sxres` referencia con `icon=<nombre>`, y
+  `gen_desktop_source_art.py` los sigue regenerando. Eran dos catalogos que
+  compartian arte por casualidad -- uno horneaba a un header C y el otro a un
+  `.sxicon` --, no el mismo catalogo con dos nombres.
+
 - **Borrado el arte de la franja del menu inicio.** El menu se retiro con el
   resto del chrome Win95, pero la cadena que lo dibujaba seguia entera:
   `gen_desktop_source_art.py` generaba `menu_strip_savanxp.png`,
@@ -142,6 +255,23 @@ Notas de corte:
   cada build.
 
 ### Corregido
+
+- **Dos bugs de windowd que destapo el popup del selector de teclado.** El
+  click-down caia en el camino de las ventanas overlay -- el mismo bug ya
+  resuelto para la barra de tareas, que no se habia replicado aca -- y el popup
+  nunca entraba en las listas de senializacion de composed/retire, asi que su
+  segundo `gfx_present()` se colgaba esperando un retire que no iba a llegar
+  nunca.
+
+- **El generador de recursos SXE borroneaba un icono al agrandarlo.**
+  `collect_icons_from_file()` solo detectaba el multiplo entero para ACHICAR
+  (`source % target == 0`), no para agrandar: un original de 16x16 -- el caso
+  mas comun del pixel art, dibujado una vez al tamano chico -- derivaba su
+  32x32 con LANCZOS y salia borroneado en vez de nitido con NEAREST. Nadie lo
+  habia ejercitado, porque el unico manifiesto con arte propio usaba un source
+  de 48x48 que achica limpio. Aparecio al comparar el blob ESTAMPADO byte a
+  byte contra el PNG original, que es justo la clase de bug que un round-trip
+  existe para cazar y que un test de "genero un `.sxicon`" no ve.
 
 - **La columna Type de files quedaba cortada al aparecer la barra de scroll.**
   El reparto del ancho entre columnas descontaba 6 pixeles fijos, pero el area
