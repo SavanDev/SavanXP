@@ -6,9 +6,10 @@
 
 namespace {
 
-// Los 4 slots ATA + el ramdisk del LiveCD, con lugar de sobra para lo que sumen
-// drivers nuevos sin volver a tocar el core.
-constexpr size_t kMaxBlockDevices = 8;
+// Los 4 slots ATA + el ramdisk del LiveCD, mas las particiones que el driver
+// partition:: recorta encima de ellos (hasta 8), con lugar de sobra para lo
+// que sumen drivers nuevos sin volver a tocar el core.
+constexpr size_t kMaxBlockDevices = 16;
 
 struct Device {
     bool present;

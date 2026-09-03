@@ -22,6 +22,7 @@
 #include "kernel/net.hpp"
 #include "kernel/nic.hpp"
 #include "kernel/panic.hpp"
+#include "kernel/partition.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
@@ -236,6 +237,9 @@ namespace
     // svfs::initialize monta el primer SVFS2 valido que encuentre.
     block::register_driver(ata::driver());
     block::register_driver(ramdisk::driver());
+    // Ultimo en la fila (prioridad negativa): rebana en devices propios
+    // las particiones MBR/GPT de los discos que enumeraron los de arriba.
+    block::register_driver(partition::driver());
     // LiveCD: si Limine cargo la imagen de disco como modulo, ofrecersela al
     // driver de ramdisk antes de enumerar.
     //
