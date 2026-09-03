@@ -284,6 +284,35 @@ def scenario_files(s):
     s.shot("files-seleccion")
 
 
+def scenario_kbdlayout(s):
+    """Selector de layout de teclado: click en el indicador de la taskbar
+    abre el popup anclado, click en una fila lo aplica y lo cierra.
+
+    Geometria fija (1280x800, ver build/taskbar.c/windowd.c): el indicador
+    mide 32px en el extremo derecho de la franja de 28px; el popup mide
+    96x44 y queda anclado justo arriba, pegado al mismo borde derecho.
+    """
+    s.shot("desktop")
+
+    s.qmp.move_to(1262, 786)
+    s.qmp.click()
+    time.sleep(1.0)
+    s.shot("popup-abierto")
+
+    # Segunda fila del popup ("English").
+    s.qmp.move_to(1228, 760)
+    s.qmp.click()
+    time.sleep(1.0)
+    s.shot("layout-en")
+
+    # Confirmar que el driver de verdad cambio: notepad + la tecla fisica que
+    # en ES da apostrofe/comilla y en US (recien elegido) da '['.
+    s.open_notepad()
+    s.qmp.tap("bracket_left")
+    time.sleep(0.5)
+    s.shot("notepad-en")
+
+
 def scenario_taskbar(s):
     """Barra de tareas: clicks reales con VERIFICACION de pixeles.
 
@@ -333,6 +362,7 @@ SCENARIOS = {
     "clipboard": scenario_clipboard,
     "files": scenario_files,
     "taskbar": scenario_taskbar,
+    "kbdlayout": scenario_kbdlayout,
 }
 
 

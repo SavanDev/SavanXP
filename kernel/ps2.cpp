@@ -439,36 +439,78 @@ bool is_alpha_character(char value) {
     return value >= 'a' && value <= 'z';
 }
 
-char translate_main_block(uint8_t scancode, bool shift_active, bool caps_lock_active, bool alt_gr_active) {
-    static const char kNormal[] = {
-        0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\'', 0, '\b',
-        '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '\'', '+', '\n', 0,
-        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '{', '|', 0, '}', 'z',
-        'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '-', 0, '*', 0, ' ', 0
-    };
-    static const char kShifted[] = {
-        0, 27, '!', '"', '#', '$', '%', '&', '/', '(', ')', '=', '?', 0, '\b',
-        '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '"', '*', '\n', 0,
-        'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '[', 0, 0, ']', 'Z',
-        'X', 'C', 'V', 'B', 'N', 'M', ';', ':', '_', 0, '*', 0, ' ', 0
-    };
-    static const char kAltGr[] = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '\\', 0, 0,
-        0, '@', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '~', 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '^', 0, 0, '`', 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '*', 0, ' ', 0
-    };
+/* Tablas de traduccion scancode->ascii, una familia por layout (indexadas por
+ * scancode, igual que siempre). kNormalEs/kShiftedEs/kAltGrEs son el layout
+ * original, movidas a nivel de archivo sin tocar una sola entrada -- cero
+ * regresion. kNormalEn/kShiftedEn/kAltGrEn son US QWERTY estandar derivado
+ * del scancode set 1 canonico; el ingles no usa AltGr, asi que esa tabla
+ * queda entera en cero (cae al normal/shifted por el fallback de abajo). */
+const char kNormalEs[] = {
+    0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\'', 0, '\b',
+    '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '\'', '+', '\n', 0,
+    'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '{', '|', 0, '}', 'z',
+    'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '-', 0, '*', 0, ' ', 0
+};
+const char kShiftedEs[] = {
+    0, 27, '!', '"', '#', '$', '%', '&', '/', '(', ')', '=', '?', 0, '\b',
+    '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '"', '*', '\n', 0,
+    'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '[', 0, 0, ']', 'Z',
+    'X', 'C', 'V', 'B', 'N', 'M', ';', ':', '_', 0, '*', 0, ' ', 0
+};
+const char kAltGrEs[] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '\\', 0, 0,
+    0, '@', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '~', 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '^', 0, 0, '`', 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '*', 0, ' ', 0
+};
+const char kNormalEn[] = {
+    0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
+    '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0,
+    'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z',
+    'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' ', 0
+};
+const char kShiftedEn[] = {
+    0, 27, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b',
+    '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0,
+    'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0, '|', 'Z',
+    'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, '*', 0, ' ', 0
+};
+const char kAltGrEn[] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
 
-    if (scancode >= sizeof(kNormal)) {
+struct Ps2LayoutTables {
+    const char* normal;
+    const char* shifted;
+    const char* alt_gr;
+};
+
+const Ps2LayoutTables kLayoutTables[2] = {
+    {kNormalEs, kShiftedEs, kAltGrEs},
+    {kNormalEn, kShiftedEn, kAltGrEn},
+};
+
+/* Preferencia de layout: es estado de usuario, no de tecla -- por eso vive
+ * separado del bloque de g_left_shift_pressed/etc y reset_input_state() no lo
+ * toca (un reset del controlador PS/2 no tiene por que volver a ingles). */
+savanxp_keyboard_layout g_active_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
+
+char translate_main_block(uint8_t scancode, bool shift_active, bool caps_lock_active, bool alt_gr_active) {
+    const Ps2LayoutTables& tables = kLayoutTables[g_active_layout];
+
+    if (scancode >= sizeof(kNormalEs)) {
         return 0;
     }
 
-    if (alt_gr_active && kAltGr[scancode] != 0) {
-        return kAltGr[scancode];
+    if (alt_gr_active && tables.alt_gr[scancode] != 0) {
+        return tables.alt_gr[scancode];
     }
 
-    const char normal = kNormal[scancode];
-    const char shifted = kShifted[scancode];
+    const char normal = tables.normal[scancode];
+    const char shifted = tables.shifted[scancode];
     if (normal == 0) {
         return 0;
     }
@@ -1096,6 +1138,18 @@ bool ready() {
 
 bool mouse_ready() {
     return g_mouse_ready;
+}
+
+bool set_layout(int layout) {
+    if (layout != SAVANXP_KEYBOARD_LAYOUT_ES && layout != SAVANXP_KEYBOARD_LAYOUT_EN) {
+        return false;
+    }
+    g_active_layout = static_cast<savanxp_keyboard_layout>(layout);
+    return true;
+}
+
+int get_layout() {
+    return static_cast<int>(g_active_layout);
 }
 
 void poll() {

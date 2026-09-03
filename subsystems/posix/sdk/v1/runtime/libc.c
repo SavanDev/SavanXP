@@ -537,6 +537,14 @@ long gpu_set_mode(int fd, struct savanxp_gpu_mode* mode) {
     return ioctl(fd, GPU_IOC_SET_MODE, (unsigned long)mode);
 }
 
+long input_set_layout(int fd, int layout) {
+    return ioctl(fd, INPUT_IOC_SET_LAYOUT, (unsigned long)layout);
+}
+
+long input_get_layout(int fd) {
+    return ioctl(fd, INPUT_IOC_GET_LAYOUT, 0);
+}
+
 long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_request) {
     return ioctl(fd, GPU_IOC_IMPORT_SECTION, (unsigned long)import_request);
 }

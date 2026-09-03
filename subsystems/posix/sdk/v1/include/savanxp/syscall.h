@@ -250,6 +250,21 @@ enum savanxp_ioctl_group {
     SAVANXP_IOCTL_GROUP_AUDIO = 0x1005,
     SAVANXP_IOCTL_GROUP_POWER = 0x1006,
     SAVANXP_IOCTL_GROUP_CLIPBOARD = 0x1007,
+    SAVANXP_IOCTL_GROUP_INPUT = 0x1008,
+};
+
+enum savanxp_keyboard_layout {
+    SAVANXP_KEYBOARD_LAYOUT_ES = 0,
+    SAVANXP_KEYBOARD_LAYOUT_EN = 1,
+};
+
+/* SET_LAYOUT manda el valor de savanxp_keyboard_layout directo como argument
+ * (no como puntero: es un escalar de un bit de informacion). GET_LAYOUT
+ * devuelve el layout activo como el propio valor de retorno no-negativo del
+ * ioctl, mismo convenio que usan los fds (negativo = -errno). */
+enum savanxp_input_ioctl {
+    INPUT_IOC_SET_LAYOUT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 1),
+    INPUT_IOC_GET_LAYOUT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_INPUT, 2),
 };
 
 enum savanxp_net_ioctl {
@@ -681,6 +696,10 @@ enum savanxp_input_event_type {
 /* El programa renderiza a resolucion baja y usa fullscreen composited (F11):
  * el WM le asigna la superficie a ese tamano al lanzarlo. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN 0x00000001u
+/* El pedido es del popup de layout de teclado de la taskbar: el WM ignora
+ * path/argument y lo posiciona anclado arriba de la franja, sin bordes, en
+ * vez de como una ventana normal cascada/decorada. */
+#define SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP 0x00000002u
 
 /* Un unico argumento opcional para el programa lanzado, que llega como
  * argv[1]. Alcanza para el caso que lo motivo -- "abri este archivo" -- y deja

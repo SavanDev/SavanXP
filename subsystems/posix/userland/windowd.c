@@ -15,7 +15,14 @@
 static const char *k_shellapp_path = "/bin/shellapp";
 static const char *k_background_client_path = "/bin/shellui";
 static const char *k_taskbar_client_path = "/bin/taskbar";
+static const char *k_keyboard_popup_client_path = "/bin/kbdlayoutpopup";
 static const char *k_progman_path = "/bin/progman";
+
+/* Tamano del popup de layout de teclado (dos filas, ES/EN): fijo, no depende
+ * de contenido -- lo que muestra el binario es un detalle suyo, windowd solo
+ * le reserva el rect anclado arriba de la franja de la taskbar. */
+#define WINDOWD_KEYBOARD_POPUP_WIDTH 96
+#define WINDOWD_KEYBOARD_POPUP_HEIGHT 44
 
 static int launch_overlay_client(
     struct windowd_session *session,
@@ -752,6 +759,14 @@ static const struct windowd_client *top_client_at_point(const struct windowd_ses
 {
     const struct windowd_client *overlay;
 
+    /* El popup de layout gana contra todo, incluso la taskbar: se dibuja
+     * arriba de la franja y es lo primero que hay que poder clickear. */
+    if (session != 0 && session->keyboard_popup_client.pid > 0 &&
+        windowd_point_in_client(&session->keyboard_popup_client, x, y))
+    {
+        return &session->keyboard_popup_client;
+    }
+
     /* La barra de tareas se compone por ENCIMA de las ventanas normales, asi
      * que gana el hit-test contra ellas. Con una app a pantalla completa queda
      * detras y no recibe nada: coincide con como se arma el z-order. */
@@ -1115,6 +1130,7 @@ static void signal_composed_batches(struct windowd_session *session)
 
     signal_client_composed(&session->background_client, session->background_client.consumed_submit_sequence);
     signal_client_composed(&session->taskbar_client, session->taskbar_client.consumed_submit_sequence);
+    signal_client_composed(&session->keyboard_popup_client, session->keyboard_popup_client.consumed_submit_sequence);
     signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -1141,6 +1157,12 @@ static void retire_presented_batches(struct windowd_session *session)
     {
         signal_client_retire(&session->taskbar_client, session->taskbar_client.pending_retire_sequence);
         session->taskbar_client.pending_retire_sequence = 0;
+    }
+
+    if (session->keyboard_popup_client.pending_retire_sequence != 0)
+    {
+        signal_client_retire(&session->keyboard_popup_client, session->keyboard_popup_client.pending_retire_sequence);
+        session->keyboard_popup_client.pending_retire_sequence = 0;
     }
 
     if (session->shell_client.pending_retire_sequence != 0)
@@ -1275,6 +1297,7 @@ static void snapshot_pending_retire_sequences(struct windowd_session *session)
 
     session->background_client.pending_retire_sequence = session->background_client.consumed_submit_sequence;
     session->taskbar_client.pending_retire_sequence = session->taskbar_client.consumed_submit_sequence;
+    session->keyboard_popup_client.pending_retire_sequence = session->keyboard_popup_client.consumed_submit_sequence;
     session->shell_client.pending_retire_sequence = session->shell_client.consumed_submit_sequence;
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -1785,6 +1808,41 @@ static int launch_taskbar_client(struct windowd_session *session)
     return 0;
 }
 
+/* Popup de layout de teclado: mismo molde que la taskbar (rect a mano,
+ * frame_visible=0, sin pasar por fill_client_surface_info/position_client_window
+ * -- esas dos solo distinguen APP cascada-decorada de SHELL fullscreen/franja,
+ * no sirven para un rect chico arbitrario). Anclado en la esquina inferior
+ * derecha, pegado arriba de la franja de la taskbar. Un pedido repetido
+ * reinicia la instancia en vez de duplicarla, igual que la taskbar. */
+static int launch_keyboard_popup_client(struct windowd_session *session)
+{
+    struct windowd_client *client = 0;
+    struct sx_rect strip;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    destroy_client_instance(&session->keyboard_popup_client, 1);
+    client = &session->keyboard_popup_client;
+    reset_client(client);
+
+    strip = windowd_taskbar_rect(&session->gfx.info);
+    client->surface_info = session->gfx.info;
+    client->surface_info.width = (uint32_t)WINDOWD_KEYBOARD_POPUP_WIDTH;
+    client->surface_info.height = (uint32_t)WINDOWD_KEYBOARD_POPUP_HEIGHT;
+    client->surface_info.pitch = (uint32_t)WINDOWD_KEYBOARD_POPUP_WIDTH * 4u;
+    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)WINDOWD_KEYBOARD_POPUP_HEIGHT;
+    client->window_x = strip.x + strip.width - 4 - WINDOWD_KEYBOARD_POPUP_WIDTH;
+    client->window_y = strip.y - WINDOWD_KEYBOARD_POPUP_HEIGHT;
+    client->window_width = WINDOWD_KEYBOARD_POPUP_WIDTH;
+    client->window_height = WINDOWD_KEYBOARD_POPUP_HEIGHT;
+    client->frame_visible = 0;
+
+    return start_client_process(client, k_keyboard_popup_client_path, 0, 0);
+}
+
 /* Publica el estado de las ventanas en la seccion compartida.
  *
  * Seqlock: la secuencia sube a IMPAR antes de tocar las entradas y a PAR al
@@ -2125,6 +2183,7 @@ static int open_compositor_session(struct windowd_session *session)
     reset_client(&session->background_client);
     reset_client(&session->taskbar_client);
     reset_client(&session->shell_client);
+    reset_client(&session->keyboard_popup_client);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         reset_client(&session->overlay_clients[slot]);
@@ -2245,6 +2304,14 @@ static int reap_dead_clients(struct windowd_session *session, struct windowd_dir
         windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 
+    if (session->keyboard_popup_client.pid > 0 && !windowd_process_alive(session->keyboard_popup_client.pid))
+    {
+        /* Se cierra solo tras elegir un layout (exit(0)): esto es el camino
+         * normal de cierre, no una caida -- sin relaunch. */
+        destroy_client_instance(&session->keyboard_popup_client, 0);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         struct windowd_client *client = &session->overlay_clients[slot];
@@ -2294,6 +2361,19 @@ static int service_client_launch_requests(struct windowd_session *session, struc
         }
         request.path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY - 1u] = '\0';
         request.argument[SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY - 1u] = '\0';
+        /* El popup de layout de teclado no es una ventana mas: se ignora
+         * path/argument (el binario es fijo, lo conoce el WM) y se posiciona
+         * anclado, no cascada/decorado. */
+        if ((request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP) != 0)
+        {
+            if (launch_keyboard_popup_client(session) < 0)
+            {
+                eprintf("desktop: failed to launch keyboard layout popup\n");
+                return 0;
+            }
+            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            continue;
+        }
         /* Se ignoran los bits desconocidos: un cliente viejo o mal formado no
          * debe poder pedir modos que el WM no entiende. */
         if (launch_overlay_client(
@@ -3826,7 +3906,18 @@ static void handle_pointer_event(
          * fondo, y el fondo (shellui) no recibe input. */
         if (current_hover_client != 0)
         {
-            if (current_hover_client == &session->taskbar_client)
+            if (current_hover_client == &session->keyboard_popup_client)
+            {
+                /* Mismo corte que la taskbar unas lineas mas abajo, y por la
+                 * misma razon: el popup tampoco es una ventana overlay, y sin
+                 * este caso especial el click caia en el camino generico de
+                 * ventana -- donde overlay_slot_for_client_ptr devuelve -1,
+                 * anula el hover, y se pierde el click entero. */
+                (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
+                mouse_routed = 1;
+                current_hover_client = 0;
+            }
+            else if (current_hover_client == &session->taskbar_client)
             {
                 /* La barra de tareas no es una ventana: no se activa, no se
                  * levanta en el z-order y no tiene botones de marco. Solo recibe
@@ -4209,8 +4300,19 @@ int main(int argc, char **argv)
         {
             break;
         }
+        if (service_client_launch_requests(&session, &dirty, &session.taskbar_client) < 0)
+        {
+            break;
+        }
         service_shell_requests(&session, &dirty);
         publish_window_list(&session);
+        /* Popup de layout de teclado: solo presenta sus frames -- no lanza
+         * nada por su cuenta, no tiene cursor hints ni size hints (rect fijo,
+         * nunca los pide). */
+        if (service_client_batches(&session, &dirty, &session.keyboard_popup_client) < 0)
+        {
+            break;
+        }
         if (service_client_batches(&session, &dirty, &session.shell_client) < 0)
         {
             break;

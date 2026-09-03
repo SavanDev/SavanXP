@@ -102,6 +102,20 @@ bool input_device_can_read() {
     return g_input_count != 0;
 }
 
+int input_ioctl(uint64_t request, uint64_t argument) {
+    switch (request) {
+        case INPUT_IOC_SET_LAYOUT:
+            if (!ps2::set_layout(static_cast<int>(argument))) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            return 0;
+        case INPUT_IOC_GET_LAYOUT:
+            return ps2::get_layout();
+        default:
+            return negative_error(SAVANXP_ENOSYS);
+    }
+}
+
 bool mouse_device_can_read() {
     return g_mouse_count != 0;
 }
@@ -188,6 +202,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
 
     g_input_device.read = read_input_device;
     g_input_device.can_read = input_device_can_read;
+    g_input_device.ioctl = input_ioctl;
     g_input_device.close = nullptr;
     g_mouse_device.read = read_mouse_device;
     g_mouse_device.can_read = mouse_device_can_read;

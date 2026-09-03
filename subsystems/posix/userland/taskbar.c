@@ -23,6 +23,15 @@
 #define TASKBAR_BUTTON_GAP 2
 #define TASKBAR_MARGIN 2
 #define TASKBAR_ICON_SIZE 16
+#define TASKBAR_LAYOUT_WIDTH 32
+#define TASKBAR_HIT_LAYOUT (-2)
+
+/* g_active_layout se refresca por polling (mismo criterio que
+ * desktop_wallpaper_reload): no hay push desde el popup, asi que taskbar
+ * relee el layout activo cada tantos frames sobre un fd de /dev/input0
+ * abierto una sola vez -- nunca se lee de el, solo se usa para el ioctl. */
+#define TASKBAR_LAYOUT_POLL_FRAMES 30
+static const char *k_layout_labels[2] = {"ES", "EN"};
 
 /* Bisel 3D al estilo Win95, con las primitivas publicas del painter: sxgui solo
  * exporta widgets, y sus helpers de bisel son internos. La barra no usa ningun
@@ -43,6 +52,8 @@ static struct savanxp_wm_window_list *g_list;
  * asi que se saca una foto consistente y se dibuja de ahi. */
 static struct savanxp_wm_window_list g_snapshot;
 static int g_pressed_index = -1;
+static int g_active_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
+static long g_input_fd = -1;
 
 /*
  * Lectura con seqlock: si la secuencia es impar el WM esta escribiendo, y si
@@ -86,7 +97,8 @@ static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
     {
         return 0;
     }
-    usable = (int)info->width - (TASKBAR_MARGIN * 2) - (TASKBAR_BUTTON_GAP * (count - 1));
+    usable = (int)info->width - (TASKBAR_MARGIN * 2) - (TASKBAR_BUTTON_GAP * (count - 1))
+        - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP;
     width = usable / count;
     if (width > TASKBAR_BUTTON_MAX_WIDTH)
     {
@@ -104,6 +116,17 @@ static struct sx_rect taskbar_button_rect(const struct savanxp_fb_info *info, in
         TASKBAR_MARGIN + index * (width + TASKBAR_BUTTON_GAP),
         TASKBAR_MARGIN,
         width,
+        height);
+}
+
+static struct sx_rect taskbar_layout_rect(const struct savanxp_fb_info *info)
+{
+    int height = (int)info->height - (TASKBAR_MARGIN * 2);
+
+    return sx_rect_make(
+        (int)info->width - TASKBAR_MARGIN - TASKBAR_LAYOUT_WIDTH,
+        TASKBAR_MARGIN,
+        TASKBAR_LAYOUT_WIDTH,
         height);
 }
 
@@ -183,12 +206,30 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
             }
         }
     }
+
+    {
+        struct sx_rect layout_rect = taskbar_layout_rect(&gfx->info);
+        const char *label = k_layout_labels[g_active_layout];
+        int text_x = layout_rect.x + (layout_rect.width - gfx_text_width(label)) / 2;
+        int text_y = layout_rect.y + (layout_rect.height - gfx_text_height()) / 2;
+
+        sx_painter_fill_rect(&painter, layout_rect, SXGUI_COLOR_FACE);
+        taskbar_bevel(&painter, layout_rect, g_pressed_index == TASKBAR_HIT_LAYOUT);
+        sx_painter_draw_text(&painter, text_x, text_y, label, SXGUI_COLOR_TEXT);
+    }
 }
 
 static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
 {
     int count = (int)g_snapshot.count;
     int index;
+    struct sx_rect layout_rect = taskbar_layout_rect(info);
+
+    if (x >= layout_rect.x && x < layout_rect.x + layout_rect.width &&
+        y >= layout_rect.y && y < layout_rect.y + layout_rect.height)
+    {
+        return TASKBAR_HIT_LAYOUT;
+    }
 
     for (index = 0; index < count && index < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
     {
@@ -204,6 +245,19 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
         }
     }
     return -1;
+}
+
+/* Pide a windowd que abra el popup de layout, anclado arriba de la franja
+ * (SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP). path/argument los ignora windowd
+ * para este pedido -- el binario es fijo -- pero el struct exige llenarlos. */
+static void taskbar_open_layout_popup(void)
+{
+    struct savanxp_desktop_launch_request request;
+
+    memset(&request, 0, sizeof(request));
+    request.flags = SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP;
+    memcpy(request.path, "/bin/kbdlayoutpopup", sizeof("/bin/kbdlayoutpopup"));
+    (void)write(SAVANXP_WM_FD_LAUNCH, &request, sizeof(request));
 }
 
 static void taskbar_request(uint32_t action, uint32_t window_id)
@@ -223,6 +277,7 @@ int main(void)
     uint64_t last_sequence = 0;
     int needs_repaint = 1;
     uint32_t last_buttons = 0;
+    unsigned int layout_poll_countdown = 0;
 
     if (gfx_open(&gfx) < 0)
     {
@@ -243,6 +298,17 @@ int main(void)
         puts_fd(2, "taskbar: no se pudo mapear la lista de ventanas\n");
         gfx_close(&gfx);
         return 1;
+    }
+
+    /* Solo para el ioctl de layout -- jamas se lee de este fd. */
+    g_input_fd = open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    if (g_input_fd >= 0)
+    {
+        long layout = input_get_layout((int)g_input_fd);
+        if (layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN)
+        {
+            g_active_layout = (int)layout;
+        }
     }
 
     for (;;)
@@ -269,7 +335,11 @@ int main(void)
             }
             else if ((up & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
             {
-                if (index >= 0 && index == g_pressed_index &&
+                if (index == TASKBAR_HIT_LAYOUT && index == g_pressed_index)
+                {
+                    taskbar_open_layout_popup();
+                }
+                else if (index >= 0 && index == g_pressed_index &&
                     index < (int)g_snapshot.count)
                 {
                     const struct savanxp_wm_window_entry *entry = &g_snapshot.windows[index];
@@ -293,6 +363,28 @@ int main(void)
             needs_repaint = 1;
         }
 
+        /* El popup aplica el cambio directo en el kernel -- no le avisa a la
+         * taskbar --, asi que el indicador se refresca por polling cada
+         * TASKBAR_LAYOUT_POLL_FRAMES vueltas en vez de por push. */
+        if (g_input_fd >= 0)
+        {
+            if (layout_poll_countdown == 0)
+            {
+                long layout = input_get_layout((int)g_input_fd);
+                if ((layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN) &&
+                    (int)layout != g_active_layout)
+                {
+                    g_active_layout = (int)layout;
+                    needs_repaint = 1;
+                }
+                layout_poll_countdown = TASKBAR_LAYOUT_POLL_FRAMES;
+            }
+            else
+            {
+                layout_poll_countdown -= 1;
+            }
+        }
+
         if (needs_repaint)
         {
             taskbar_paint(&gfx);
@@ -309,6 +401,10 @@ int main(void)
         }
     }
 
+    if (g_input_fd >= 0)
+    {
+        close((int)g_input_fd);
+    }
     gfx_close(&gfx);
     return 0;
 }

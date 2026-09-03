@@ -119,5 +119,10 @@ struct windowd_session
      * foco ni input en A2.2. Distinto del shell_client (terminal on-demand). */
     struct windowd_client background_client;
     struct windowd_client shell_client;
+    /* Popup de layout de teclado (ES/EN): lanzado on-demand por la taskbar via
+     * SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP, no por boot. Mismo patron que
+     * taskbar_client -- rect a mano, sin bordes -- pero anclado arriba de la
+     * franja en vez de ocuparla. Se cierra solo (exit) al elegir un layout. */
+    struct windowd_client keyboard_popup_client;
     struct windowd_client overlay_clients[WINDOWD_MAX_OVERLAY_CLIENTS];
 };

@@ -69,6 +69,8 @@ long gpu_get_info(int fd, struct savanxp_gpu_info* info);
 long gpu_acquire(int fd);
 long gpu_release(int fd);
 long gpu_set_mode(int fd, struct savanxp_gpu_mode* mode);
+long input_set_layout(int fd, int layout);
+long input_get_layout(int fd);
 long gpu_import_section(int fd, struct savanxp_gpu_surface_import* import_request);
 long gpu_release_surface(int fd, uint32_t surface_id);
 long gpu_present_surface_region(int fd, const struct savanxp_gpu_surface_present* present_request);

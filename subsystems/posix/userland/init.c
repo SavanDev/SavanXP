@@ -189,6 +189,38 @@ static int run_automation_spec(const char* spec) {
     return status;
 }
 
+#define KEYBOARD_LAYOUT_CONFIG_PATH "/disk/keyboard.cfg"
+
+/* Layout preferido (mismo patron de 1 digito ASCII que desktop.cfg): se
+ * aplica ANTES de arrancar windowd para que el layout ya este activo cuando
+ * el primer evento de teclado llegue. Abre /dev/input0 solo para el ioctl --
+ * nunca para leer, porque la cola de eventos es global y windowd todavia no
+ * arranco para drenarla. */
+static void apply_keyboard_layout_preference(void) {
+    char digit = 0;
+    long config_fd = open(KEYBOARD_LAYOUT_CONFIG_PATH);
+    long input_fd;
+
+    if (config_fd < 0) {
+        return;
+    }
+    if (read((int)config_fd, &digit, 1) != 1) {
+        close((int)config_fd);
+        return;
+    }
+    close((int)config_fd);
+    if (digit != '0' + SAVANXP_KEYBOARD_LAYOUT_EN) {
+        return;
+    }
+
+    input_fd = open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    if (input_fd < 0) {
+        return;
+    }
+    (void)input_set_layout((int)input_fd, SAVANXP_KEYBOARD_LAYOUT_EN);
+    close((int)input_fd);
+}
+
 int main(void) {
     const char* windowd_argv[] = {"/bin/windowd", 0};
     const char* shell_argv[] = {"/bin/sh", 0};
@@ -212,6 +244,8 @@ int main(void) {
             sleep_ms(1000);
         }
     }
+
+    apply_keyboard_layout_preference();
 
     for (;;) {
         int status = 0;

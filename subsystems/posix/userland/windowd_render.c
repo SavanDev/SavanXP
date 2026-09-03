@@ -764,6 +764,17 @@ static int build_layers(
         ++count;
     }
 
+    /* Popup de layout de teclado: por encima de la taskbar (esta anclado
+     * arriba de ella), por debajo del Task List. */
+    if (client_is_drawable(&session->keyboard_popup_client))
+    {
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->keyboard_popup_client);
+        layers[count].client = &session->keyboard_popup_client;
+        ++count;
+    }
+
     /* El Task List va sobre todo: es el conmutador de ventanas. */
     if (session->tasklist_open)
     {
