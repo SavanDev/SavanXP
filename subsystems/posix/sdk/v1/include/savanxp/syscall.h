@@ -102,6 +102,7 @@ enum savanxp_error_code {
     SAVANXP_ENOSYS = 38,
     SAVANXP_ENOTEMPTY = 39,
     SAVANXP_ECHILD = 10,
+    SAVANXP_E2BIG = 7,
     SAVANXP_ETIMEDOUT = 110,
 };
 

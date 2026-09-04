@@ -44,12 +44,15 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_SPAWN_FD: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            char argv_storage[16][64] = {};
-            const char* argv_local[16] = {};
-            int argc = 0;
-            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), argv_storage, argv_local, argc) ||
+            auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
+            if (arguments == nullptr) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), *arguments) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
-                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                heap::free(arguments);
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_E2BIG));
                 return context;
             }
 
@@ -61,7 +64,8 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             }
 
             ImageFailure failure = ImageFailure::none;
-            Process* child = create_process_internal(resolved, argc, argv_local, g_current, stdin_fd, stdout_fd, failure);
+            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, g_current, stdin_fd, stdout_fd, failure);
+            heap::free(arguments);
             context->rax = static_cast<uint64_t>(child != nullptr
                 ? static_cast<int>(child->pid)
                 : negative_error(image_failure_errno(failure)));
@@ -70,17 +74,22 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_EXEC: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            char argv_storage[16][64] = {};
-            const char* argv_local[16] = {};
-            int argc = 0;
-            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), argv_storage, argv_local, argc) ||
+            auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
+            if (arguments == nullptr) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_ENOMEM));
+                return context;
+            }
+            if (!copy_spawn_arguments(*g_current, *context, path, sizeof(path), *arguments) ||
                 !resolve_process_path(*g_current, path, resolved, sizeof(resolved))) {
-                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                heap::free(arguments);
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_E2BIG));
                 return context;
             }
 
             ImageFailure failure = ImageFailure::none;
-            if (!prepare_exec_image(*g_current, resolved, argc, argv_local, failure)) {
+            const bool prepared = prepare_exec_image(*g_current, resolved, arguments->argc, arguments->argv, failure);
+            heap::free(arguments);
+            if (!prepared) {
                 context->rax = static_cast<uint64_t>(negative_error(image_failure_errno(failure)));
                 return context;
             }

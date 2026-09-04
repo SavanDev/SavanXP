@@ -155,6 +155,11 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 [[noreturn]] void start_init(const char* path);
 void terminate_current(int exit_code);
 void terminate_current_from_exception(uint8_t vector);
+// Atiende un #PF del proceso actual que caiga adentro de la region reservada
+// del stack: mapea la pagina que falta y devuelve true para que se reintente la
+// instruccion. Fuera de la region -- por ejemplo en la pagina de guarda --
+// devuelve false y el fault sigue su camino, que termina matando al proceso.
+bool grow_user_stack(uint64_t fault_address);
 SavedContext* handle_syscall(SavedContext* context);
 SavedContext* handle_timer_tick(SavedContext* context);
 void notify_tty_line_ready();

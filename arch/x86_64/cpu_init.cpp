@@ -242,6 +242,14 @@ void handle_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code
     }
 
     if (frame != nullptr && (frame->cs & 0x3) == 0x3 && process::current() != nullptr) {
+        // #PF de no-presente adentro de la region del stack: se mapea la pagina
+        // que falta y se reintenta la instruccion. El bit 0 del codigo de error
+        // distingue "la pagina no esta" de "esta pero el acceso no se permite";
+        // solo el primero se puede resolver creciendo el stack.
+        const bool not_present = has_error_code && (error_code & 0x1) == 0;
+        if (vector == 14 && not_present && process::grow_user_stack(read_cr2())) {
+            return;
+        }
         (void)error_code;
         (void)has_error_code;
         process::terminate_current_from_exception(vector);

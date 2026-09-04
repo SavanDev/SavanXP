@@ -12,6 +12,11 @@ Notas de corte:
 
 ### Agregado
 
+- **`build.ps1 smoke` corre `stacktest`.** Cubre las cinco cosas del stack que
+  antes no verificaba nadie: recursion de ~400 KiB en el proceso y en un hijo,
+  un desborde que tiene que morir con `#PF` en la pagina de guarda, un `argv` de
+  40 argumentos y un argumento de 125 caracteres.
+
 - **La libc suma lo que un port da por sentado.** Cadenas (`memchr`, `strnlen`,
   `strcat`, `strncat`, `strtok`, `strsep`, `strcasestr`), enteros (`strtoll`,
   `strtoull`, `atol`, `atoll`, `labs`, `llabs`, `div`/`ldiv`/`lldiv`), memoria
@@ -207,6 +212,23 @@ Notas de corte:
 
 ### Cambiado
 
+- **El stack de usuario pasa de 128 KiB fijos a 1 MiB por demanda, con pagina
+  de guarda.** Eran 32 paginas mapeadas de una y contiguas, sin nada debajo: un
+  desborde no fallaba, se comia en silencio lo que hubiera abajo. Ahora la
+  region esta reservada entera pero solo se mapean 8 paginas al arrancar y el
+  resto aparece cuando el programa las toca (`process::grow_user_stack` desde el
+  handler de `#PF`), asi que un proceso que no baja hondo usa MENOS memoria que
+  antes. Debajo queda una pagina que nunca se mapea, y el desborde muere con un
+  fault legible. Las paginas ya no se piden contiguas.
+
+- **`spawn`/`exec` aceptan 128 argumentos y 8 KiB en total, en vez de 15
+  argumentos de 63 caracteres.** El copiado usaba `char[16][64]` sobre el stack
+  del kernel, que son 4 paginas: de ahi salian los dos topes. El de longitud era
+  el peor -- una ruta un poco larga hacia fallar el spawn entero --, y ninguno se
+  podia levantar sin comerse ese stack. Ahora el buffer sale del heap del
+  kernel. Si los argumentos no entran, el syscall falla con `E2BIG` (nuevo) en
+  vez de recortar en silencio.
+
 - **Los streams leen por tandas y `malloc` alinea a 16.** `fgets` bajaba un
   `read()` por caracter, porque `fread` no tenia buffer de lectura; ahora los
   streams de archivo llenan un buffer de 512 bytes (stdin sigue yendo directo,
@@ -321,6 +343,11 @@ Notas de corte:
   cada build.
 
 ### Corregido
+
+- **`argc` podia ser mayor que los argumentos que existian.** El kernel copiaba
+  15 argumentos como maximo pero le pasaba al proceso el `argc` original, asi que
+  un `argv` mas largo hacia que el programa leyera punteros que nunca se
+  escribieron. Ahora recibe el que de verdad quedo armado.
 
 - **`time()` devolvia el uptime, no la epoca Unix.** Teniendo el RTC del kernel
   a mano (`savanxp_realtime`), calculaba `uptime_ms() / 1000`, asi que cualquier

@@ -639,6 +639,8 @@ const char* error_string(int error_code) {
             return "not implemented";
         case SAVANXP_ENOTEMPTY:
             return "directory not empty";
+        case SAVANXP_E2BIG:
+            return "argument list too long";
         case SAVANXP_ECHILD:
             return "no child process";
         case SAVANXP_ETIMEDOUT:

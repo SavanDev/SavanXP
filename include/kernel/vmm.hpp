@@ -13,7 +13,27 @@ namespace vm {
 
 constexpr uint64_t kUserBase = 0x0000000000400000ULL;
 constexpr uint64_t kUserStackTop = 0x0000007000000000ULL;
-constexpr uint64_t kUserStackPages = 32;
+
+/* Region del stack de usuario.
+ *
+ * kUserStackPages es lo RESERVADO, no lo mapeado: al arrancar el proceso solo
+ * existen kUserStackInitialPages y el resto aparece por demanda, cuando el
+ * fault handler ve un acceso adentro de la region (process::grow_user_stack).
+ * Asi un tope de 1 MiB no le cuesta 1 MiB residente a cada proceso, que sobre
+ * ~133 MiB utiles seria el gasto mas grande de todos.
+ *
+ * Debajo de todo queda una pagina de guarda que NUNCA se mapea: sin ella un
+ * desborde de stack no fallaba, se comia lo que hubiera abajo en silencio.
+ * Con ella el acceso cae fuera de la region, no lo atiende grow_user_stack y
+ * el proceso muere con un #PF, que es un sintoma que se puede leer. */
+constexpr uint64_t kPageSizeBytes = 4096;
+constexpr uint64_t kUserStackPages = 256;
+constexpr uint64_t kUserStackInitialPages = 8;
+constexpr uint64_t kUserStackGuardPages = 1;
+constexpr uint64_t kUserStackBottom = kUserStackTop - (kUserStackPages * kPageSizeBytes);
+constexpr uint64_t kUserStackGuardBottom =
+    kUserStackBottom - (kUserStackGuardPages * kPageSizeBytes);
+
 constexpr uint64_t kSectionViewBase = 0x0000001000000000ULL;
 constexpr size_t kMaxSectionViews = 32;
 
@@ -75,6 +95,10 @@ bool write_combining_page_flags(uint64_t& flags);
 uint64_t current_pml4();
 uint64_t hhdm_offset();
 uint64_t* physical_to_virtual(uint64_t physical_address);
+// Materializa la pagina de la region del stack que contiene `address`. Devuelve
+// true si quedo mapeada (o ya lo estaba), false si la direccion cae afuera de la
+// region -- por ejemplo en la pagina de guarda -- o no habia memoria.
+bool ensure_user_stack_page(VmSpace& space, uint64_t address);
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write);
 
 } // namespace vm

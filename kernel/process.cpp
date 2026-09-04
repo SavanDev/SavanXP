@@ -9,6 +9,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/elf.hpp"
+#include "kernel/heap.hpp"
 #include "kernel/input.hpp"
 #include "kernel/net.hpp"
 #include "kernel/panic.hpp"
@@ -879,7 +880,7 @@ bool prepare_exec_image(
     proc.blocked_write_progress = 0;
     clear_wait_state(proc);
     reset_time_slice(proc);
-    fabricate_initial_context(proc, load_result.entry_point, load_result.stack_pointer, argc, load_result.stack_pointer);
+    fabricate_initial_context(proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer);
     return true;
 }
 
@@ -1077,7 +1078,7 @@ process::Process* create_process_internal(
         console::printf("process: pid=%u marcado nativo\n", static_cast<unsigned>(proc->pid));
     }
 
-    fabricate_initial_context(*proc, load_result.entry_point, load_result.stack_pointer, argc, load_result.stack_pointer);
+    fabricate_initial_context(*proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer);
     return proc;
 }
 
@@ -2583,35 +2584,65 @@ int sleep_via_timer(process::Process& proc, uint64_t milliseconds) {
     return begin_object_wait(proc, &handle_object, 1, false, -1);
 }
 
+/* Los argumentos de spawn/exec se copian a un buffer del heap del kernel, no
+ * al stack.
+ *
+ * Antes eran `char argv_storage[16][64]` sobre el stack de kernel, que son 4
+ * paginas en total: de ahi salian los dos topes que habia, 15 argumentos y 63
+ * caracteres por argumento. El segundo era el peor de los dos -- una ruta un
+ * poco larga hacia fallar el spawn entero -- y ninguno se podia levantar sin
+ * comerse el stack. Con el buffer afuera, el limite pasa a ser el total de
+ * bytes, que es lo que de verdad importa, y ya no lo paga cada llamada. */
+constexpr int kMaxSpawnArguments = 128;
+constexpr size_t kSpawnArgumentBytes = 8192;
+
+struct SpawnArguments {
+    const char* argv[kMaxSpawnArguments + 1];
+    char storage[kSpawnArgumentBytes];
+    int argc;
+};
+
 bool copy_spawn_arguments(
     const process::Process& proc,
     const process::SavedContext& context,
     char* path,
     size_t path_capacity,
-    char argv_storage[16][64],
-    const char* argv_local[16],
-    int& argc
+    SpawnArguments& arguments
 ) {
-    argc = static_cast<int>(context.rdx < 15 ? context.rdx : 15);
+    size_t used = 0;
+    const int requested = static_cast<int>(static_cast<int64_t>(context.rdx));
+
+    arguments.argc = 0;
+    arguments.argv[0] = nullptr;
+
+    if (requested < 0 || requested > kMaxSpawnArguments) {
+        return false;
+    }
     if (!copy_user_string(proc, context.rdi, path, path_capacity)) {
         return false;
     }
-
-    if (argc != 0 && !vm::is_user_range_accessible(proc.address_space, context.rsi, static_cast<size_t>(argc) * sizeof(uint64_t), false)) {
+    if (requested != 0 && !vm::is_user_range_accessible(proc.address_space, context.rsi, static_cast<size_t>(requested) * sizeof(uint64_t), false)) {
         return false;
     }
 
-    for (int index = 0; index < argc; ++index) {
+    for (int index = 0; index < requested; ++index) {
         uint64_t arg_address = 0;
         if (!read_user_pointer(proc, context.rsi + static_cast<uint64_t>(index) * sizeof(uint64_t), arg_address)) {
             return false;
         }
-        if (!copy_user_string(proc, arg_address, argv_storage[index], sizeof(argv_storage[index]))) {
+        /* Si no entra se falla, no se trunca: un argumento cortado es una ruta
+         * distinta, y el programa no tiene como enterarse. */
+        if (used >= sizeof(arguments.storage) ||
+            !copy_user_string(proc, arg_address, &arguments.storage[used],
+                              sizeof(arguments.storage) - used)) {
             return false;
         }
-        argv_local[index] = argv_storage[index];
+        arguments.argv[index] = &arguments.storage[used];
+        used += strlen(&arguments.storage[used]) + 1;
     }
-    argv_local[argc] = nullptr;
+
+    arguments.argc = requested;
+    arguments.argv[requested] = nullptr;
     return true;
 }
 
@@ -2783,6 +2814,33 @@ void terminate_current(int exit_code) {
 
     SavedContext* next = choose_next_context(nullptr);
     arch::x86_64::resume_context(next, g_current->address_space.pml4_physical);
+}
+
+/* Crecimiento por demanda del stack.
+ *
+ * La region esta reservada entera (vm::kUserStackBottom..kUserStackTop) pero al
+ * arrancar el proceso solo se mapea la punta. El primer acceso mas abajo llega
+ * aca como #PF de no-presente y se resuelve mapeando esa pagina.
+ *
+ * Lo que NO entra: la pagina de guarda, que queda debajo de kUserStackBottom.
+ * Un desborde de verdad cae ahi, no lo atiende nadie y el proceso muere con un
+ * fault legible en vez de pisar en silencio lo que hubiera abajo.
+ */
+bool grow_user_stack(uint64_t fault_address) {
+    process::Process* proc = g_current;
+    uint64_t page_address = 0;
+
+    if (proc == nullptr || proc->state == process::State::unused) {
+        return false;
+    }
+    if (fault_address < vm::kUserStackBottom || fault_address >= vm::kUserStackTop) {
+        return false;
+    }
+
+    page_address = fault_address & ~(memory::kPageSize - 1);
+    /* map_page ya invalida la TLB cuando el espacio destino es el activo, que
+     * es siempre el caso aca. */
+    return vm::ensure_user_stack_page(proc->address_space, page_address);
 }
 
 void terminate_current_from_exception(uint8_t vector) {

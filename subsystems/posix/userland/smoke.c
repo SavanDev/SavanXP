@@ -114,6 +114,7 @@ int main(void) {
     const char* rm_argv[] = {"/bin/rm", "/disk/smoke/readme.moved", 0};
     const char* ps_argv[] = {"/bin/ps", 0};
     const char* libctest_argv[] = {"/disk/bin/libctest", 0};
+    const char* stacktest_argv[] = {"/bin/stacktest", 0};
     const char* gputest_argv[] = {"/disk/bin/gputest", "--smoke", 0};
     const char* audiotest_argv[] = {"/disk/bin/audiotest", "--smoke", 0};
 
@@ -171,6 +172,7 @@ int main(void) {
         !file_missing("/disk/smoke/readme.moved") ||
         !run_and_expect("/bin/ps", ps_argv, 1, 0) ||
         !run_and_expect("/disk/bin/libctest", libctest_argv, 1, 0) ||
+        !run_and_expect("/bin/stacktest", stacktest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/gputest", gputest_argv, 2, 0) ||
         !run_and_expect("/disk/bin/audiotest", audiotest_argv, 2, 0)) {
         puts_out("SMOKE FAIL\n");

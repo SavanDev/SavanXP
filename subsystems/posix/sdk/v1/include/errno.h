@@ -20,6 +20,7 @@
 #define ENOSPC 28
 #define EPIPE 32
 #define ERANGE 34
+#define E2BIG 7
 #define ENAMETOOLONG 36
 #define ENOSYS 38
 #define ELOOP 40

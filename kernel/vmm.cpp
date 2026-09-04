@@ -4,6 +4,11 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 
+/* vmm.hpp no puede incluir physical_memory.hpp (la dependencia va al reves),
+ * asi que repite el tamano de pagina. Aca se comprueba que no se separen. */
+static_assert(vm::kPageSizeBytes == memory::kPageSize,
+              "vm::kPageSizeBytes quedo desalineado de memory::kPageSize");
+
 namespace {
 
 constexpr uint64_t kPageMask = 0x000ffffffffff000ULL;
@@ -63,10 +68,9 @@ bool canonical_user_range(uint64_t virtual_address, uint64_t size) {
         return false;
     }
 
-    const uint64_t stack_bottom = vm::kUserStackTop - (vm::kUserStackPages * memory::kPageSize);
     return canonical_user_address(virtual_address) &&
         canonical_user_address(last) &&
-        last < stack_bottom;
+        last < vm::kUserStackGuardBottom;
 }
 
 uint64_t* page_table_for(const vm::VmSpace& space, uint64_t virtual_address, bool require_write) {
@@ -166,7 +170,7 @@ bool user_range_is_free(const vm::VmSpace& space, uint64_t virtual_address, uint
 bool choose_section_view_base(vm::VmSpace& space, uint64_t size, uint64_t& base_address) {
     const uint64_t aligned_size = align_up(size, memory::kPageSize);
     const uint64_t start = align_up(space.next_section_base != 0 ? space.next_section_base : vm::kSectionViewBase, memory::kPageSize);
-    const uint64_t stack_bottom = vm::kUserStackTop - (vm::kUserStackPages * memory::kPageSize);
+    const uint64_t stack_bottom = vm::kUserStackGuardBottom;
 
     for (uint64_t candidate = start; candidate < stack_bottom; candidate += memory::kPageSize) {
         if (candidate + aligned_size < candidate || candidate + aligned_size > stack_bottom) {
@@ -871,6 +875,39 @@ uint64_t* physical_to_virtual(uint64_t physical_address) {
     return reinterpret_cast<uint64_t*>(physical_address + g_hhdm_offset);
 }
 
+bool ensure_user_stack_page(VmSpace& space, uint64_t address) {
+    memory::PageAllocation allocation = {};
+    const uint64_t page = address & ~static_cast<uint64_t>(memory::kPageSize - 1);
+
+    if (!g_ready || address < kUserStackBottom || address >= kUserStackTop) {
+        return false;
+    }
+    if (page_table_for(space, page, true) != nullptr) {
+        return true;
+    }
+    if (!memory::allocate_page(allocation)) {
+        return false;
+    }
+    memset(allocation.virtual_address, 0, memory::kPageSize);
+    if (!map_page(space, page, allocation.physical_address, kPageUser | kPageWrite)) {
+        (void)memory::free_allocation(allocation);
+        return false;
+    }
+    return true;
+}
+
+/* OJO: esta consulta TIENE efecto de lado sobre la region del stack.
+ *
+ * El stack de usuario crece por demanda atendiendo el #PF, pero el kernel no
+ * faultea cuando toca memoria de usuario: valida el rango con esta funcion y
+ * despues copia. Si las paginas del stack que todavia no existen se contaran
+ * como inaccesibles, un read() sobre un arreglo grande declarado en el stack
+ * fallaria con EFAULT en vez de hacerlo crecer -- que es lo que le pasaba al
+ * buffer de 64 KiB con el que windowd relee un .sxicon.
+ *
+ * Materializar aca y no en cada llamador es deliberado: hay una veintena de
+ * puntos donde el kernel valida memoria de usuario, y este es el unico por el
+ * que pasan todos. */
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write) {
     if (size == 0) {
         return true;
@@ -885,7 +922,10 @@ bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, si
     const uint64_t last_page = last & ~static_cast<uint64_t>(memory::kPageSize - 1);
     while (page <= last_page) {
         if (page_table_for(space, page, require_write) == nullptr) {
-            return false;
+            if (page < kUserStackBottom || page >= kUserStackTop ||
+                !ensure_user_stack_page(const_cast<VmSpace&>(space), page)) {
+                return false;
+            }
         }
         if (page == last_page) {
             break;

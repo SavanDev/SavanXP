@@ -17,6 +17,10 @@ struct LoadResult {
     uint64_t entry_point;
     uint64_t stack_pointer;
     uint8_t os_abi; // e_ident[EI_OSABI] de la imagen cargada
+    // Argumentos que de verdad entraron en el stack inicial. Puede ser menor
+    // que el argc pedido si el argv no entraba; el proceso tiene que arrancar
+    // con ESTE, no con el original.
+    int accepted_argc;
 };
 
 // Motivo de fallo de la carga. Existe para que el llamador pueda distinguir
