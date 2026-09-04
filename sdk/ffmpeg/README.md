@@ -111,5 +111,5 @@ Lo que probablemente aparezca al hacerlo:
 - Rendimiento: el build va sin asm (`--disable-asm`) y sin hilos
   (`--disable-pthreads`), porque el kernel no tiene primitiva de hilos y el
   toolchain no trae nasm.
-- Tamano: `wavinfo` pesa ~700 KB con un solo codec PCM. La imagen SVFS2 son 64
+- Tamano: `wavinfo` pesa ~700 KB con un solo codec PCM. La imagen SxFS son 64
   MiB y 255 inodos, asi que un set grande hay que medirlo.

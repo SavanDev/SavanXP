@@ -23,7 +23,7 @@ Estado actual del sistema:
 - Shell con `pipes`, redirecciones y builtins basicos.
 - Sesion grafica estilo NT 3.5: window manager propio (`windowd`), fondo y
   Program Manager como clientes, y Task List (Ctrl+Esc).
-- Volumen persistente `SVFS2` montado en `/disk`.
+- Volumen persistente `SxFS` montado en `/disk`.
 - Base POSIX y SDK v1 para compilar aplicaciones externas.
 - Capa grafica 2D `sxgfx` para superficies, painter y conjuntos de rects.
 - Soporte inicial de red, audio, input, GPU y almacenamiento.
@@ -278,7 +278,7 @@ Ejemplos incluidos:
 ## Persistencia
 
 SavanXP usa una imagen de disco persistente en `build/disk.img`, montada como
-`/disk` dentro del sistema mediante `SVFS2`.
+`/disk` dentro del sistema mediante `SxFS`.
 
 Esto permite:
 
@@ -305,7 +305,7 @@ Directorios principales:
 - `arch/`: codigo especifico de arquitectura
 - `kernel/`: kernel y subsistemas base
 - `subsystems/posix/`: capa POSIX, SDK y userland principal
-- `libsvfs/`: nucleo portable del filesystem `SVFS2` y `svfs-cli`, el tool de
+- `libsxfs/`: nucleo portable del filesystem `SxFS` y `sxfs-cli`, el tool de
   host que hace toda la escritura de imagenes de disco
 - `rootfs/`: contenido del `initramfs`
 - `diskfs/`: contenido inicial del volumen persistente

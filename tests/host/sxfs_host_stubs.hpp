@@ -5,11 +5,11 @@
 
 #include "kernel/vfs.hpp"
 
-// Backends de mentira para correr el driver real (kernel/svfs.cpp) en el host,
+// Backends de mentira para correr el driver real (kernel/sxfs.cpp) en el host,
 // sin bootear. El driver solo depende de block::{device_info,read,write} y de
 // vfs::{ensure_directory,install_external_file}, asi que con estos dos stubs
 // alcanza para ejercitar su maquina de estados de montaje contra una imagen
-// SVFS2 en memoria. Mismo espiritu que el preview de sxgui en el host: el
+// SxFS en memoria. Mismo espiritu que el preview de sxgui en el host: el
 // codigo bajo prueba es el del kernel, sin copias.
 namespace hoststub {
 

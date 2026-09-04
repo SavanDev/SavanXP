@@ -45,7 +45,7 @@
 - No romper la persistencia de apps externas instaladas en `build/disk.img`.
 - `.\build.ps1 build` no debe borrar ni recrear incondicionalmente la imagen
   de disco si ya existe y es valida.
-- Los cambios en kernel, build, SDK, `SVFS2` o tooling host no deben hacer que
+- Los cambios en kernel, build, SDK, `SxFS` o tooling host no deben hacer que
   se pierdan binarios externos ya instalados en `/disk/bin` ni assets
   persistentes bajo `/disk/games`.
 

@@ -42,10 +42,10 @@ if (Test-Path -LiteralPath $WadPath) {
     $wadName = Split-Path -Leaf $WadPath
     $wadDest = "/disk/games/doom/$wadName"
     $ops += @{ File = $wadDest; Source = $wadResolved }
-    Install-SvfsFilesWithTool $DiskImage $ops
+    Install-SxfsFilesWithTool $DiskImage $ops
     Write-Host "WAD instalado en: $wadDest"
 } else {
-    Install-SvfsFilesWithTool $DiskImage $ops
+    Install-SxfsFilesWithTool $DiskImage $ops
     Write-Host "WAD no encontrado. Copialo en: $WadPath"
     Write-Host "Freedoom (libre): https://freedoom.github.io/download.html"
 }

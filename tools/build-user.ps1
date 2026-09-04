@@ -42,7 +42,7 @@ $elfOutputPath = if ($OutputPath) { [System.IO.Path]::GetFullPath($OutputPath) }
 $elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath -HeapMiB $HeapMiB -Gui:$Gui -Sse:$Sse
 
 if (-not $NoInstall) {
-    Install-SvfsFilesWithTool $DiskImage @(
+    Install-SxfsFilesWithTool $DiskImage @(
         @{ Dir = "bin" }
         @{ Dir = "tmp" }
         @{ File = $Destination; Source = $elfPath }

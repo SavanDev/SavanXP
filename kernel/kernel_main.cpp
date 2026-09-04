@@ -34,7 +34,7 @@
 #include "kernel/ramdisk.hpp"
 #include "kernel/rtl8139.hpp"
 #include "kernel/subsystem.hpp"
-#include "kernel/svfs.hpp"
+#include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/uacpi_glue.hpp"
@@ -278,9 +278,9 @@ namespace
     // los block devices (particiones incluidas) y se queda con el primero que
     // alguien reclame para la raiz del disco.
     fs::initialize();
-    svfs::initialize();
-    fs::register_driver(svfs::driver());
-    const size_t root_mount = fs::mount_any(svfs::kRootMountPoint);
+    sxfs::initialize();
+    fs::register_driver(sxfs::driver());
+    const size_t root_mount = fs::mount_any(sxfs::kRootMountPoint);
 
     if (!vfs::ready())
     {
@@ -300,7 +300,7 @@ namespace
     system_info.net_present = net::present() ? 1u : 0u;
     system_info.speaker_ready = pcspeaker::ready() ? 1u : 0u;
     system_info.block_ready = block::ready() ? 1u : 0u;
-    system_info.svfs_mounted = disk_mounted ? 1u : 0u;
+    system_info.sxfs_mounted = disk_mounted ? 1u : 0u;
     switch (timer::backend())
     {
     case timer::Backend::local_apic:
@@ -319,13 +319,13 @@ namespace
     system_info.framebuffer_height = ui::framebuffer_info().height;
     system_info.framebuffer_bpp = ui::framebuffer_info().bpp;
     system_info.pci_device_count = static_cast<uint32_t>(pci::device_count());
-    system_info.svfs_file_count = static_cast<uint32_t>(svfs::file_count(svfs::root()));
+    system_info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(sxfs::root()));
     system_info.memory_usable_bytes = memory.usable_bytes;
     system_info.memory_reclaimable_bytes = memory.reclaimable_bytes;
     system_info.memory_total_pages = memory::total_page_count();
-    system_info.svfs_total_bytes = svfs::total_bytes(svfs::root());
-    system_info.svfs_used_bytes = svfs::used_bytes(svfs::root());
-    system_info.svfs_free_bytes = svfs::free_bytes(svfs::root());
+    system_info.sxfs_total_bytes = sxfs::total_bytes(sxfs::root());
+    system_info.sxfs_used_bytes = sxfs::used_bytes(sxfs::root());
+    system_info.sxfs_free_bytes = sxfs::free_bytes(sxfs::root());
     system_info.initramfs_size = boot_info.initramfs_size;
     process::set_boot_system_info(system_info);
 

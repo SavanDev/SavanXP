@@ -6,7 +6,7 @@
 
 /* El kernel solo reporta tipo y tamano (struct savanxp_stat). El resto de los
  * campos existe porque el codigo de terceros los nombra, y sx_stat los deja en
- * cero: SVFS2 todavia no guarda duenio ni marcas de tiempo. Que esten en cero
+ * cero: SxFS todavia no guarda duenio ni marcas de tiempo. Que esten en cero
  * es visible y consistente; no tenerlos rompia la compilacion. */
 struct stat {
     unsigned long st_dev;
@@ -36,7 +36,7 @@ struct stat {
 #define S_ISFIFO(mode) (((mode) & S_IFMT) == S_IFIFO)
 #define S_ISSOCK(mode) (((mode) & S_IFMT) == S_IFSOCK)
 
-/* mode se acepta y se ignora: SVFS2 no tiene permisos. */
+/* mode se acepta y se ignora: SxFS no tiene permisos. */
 int mkdir(const char* path, mode_t mode);
 int stat(const char* path, struct stat* info);
 int fstat(int fd, struct stat* info);

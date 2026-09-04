@@ -219,7 +219,7 @@ Write-Host "ELF generado: $elfPath (EI_OSABI=0x$('{0:x}' -f $elfOsAbiNative), na
 
 # --- 5. Instalar (opcional) --------------------------------------------------
 if ($Install) {
-    Install-SvfsFilesWithTool $DiskImage @(
+    Install-SxfsFilesWithTool $DiskImage @(
         @{ Dir = "bin" }
         @{ File = "/disk/bin/$Name"; Source = $elfPath }
     )

@@ -20,5 +20,5 @@ Atajos utiles:
 
 Notas:
 - `/README` vive en el initramfs
-- `/disk/README` vive en el filesystem persistente SVFS
+- `/disk/README` vive en el filesystem persistente SxFS
 - Los binarios externos instalados en `/disk/bin` se pueden ejecutar desde la shell

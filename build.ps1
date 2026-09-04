@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "svfs-smoke", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -66,10 +66,10 @@ $SmokeStderrLog = Join-Path $BuildRoot "smoke-qemu-stderr.log"
 . (Join-Path $ToolRoot "Toolchain.ps1")
 . (Join-Path $ToolRoot "Ninja.ps1")
 
-$SvfsSectorSize = 512
-$SvfsDirectorySectors = 8
-$SvfsMaxFiles = 64
-$SvfsTotalSectors = 131072
+$SxfsSectorSize = 512
+$SxfsDirectorySectors = 8
+$SxfsMaxFiles = 64
+$SxfsTotalSectors = 131072
 
 $PosixKernelSources = @(
     Get-ChildItem -Path $PosixKernelRoot -Filter "*.cpp" -File |
@@ -121,7 +121,7 @@ $KernelSources = @(
     "kernel/vmm.cpp",
     "kernel/vfs.cpp",
     "kernel/block.cpp",
-    "kernel/svfs.cpp",
+    "kernel/sxfs.cpp",
     "kernel/elf.cpp",
     "kernel/process.cpp",
     "kernel/subsystem.cpp",
@@ -472,54 +472,54 @@ function Set-UInt32Le([byte[]]$Buffer, [int]$Offset, [uint32]$Value) {
 # Rutas persistentes que una rebuild NO debe recrear ni modificar: viven en el
 # disco, no en el arbol de build. Se snapshotean antes del sync y se verifican
 # despues.
-$Script:SvfsPersistentPaths = @(
+$Script:SxfsPersistentPaths = @(
     "/disk/bin/doomgeneric",
     "/disk/games/doom/freedoom1.wad"
 )
 
 # Construye/actualiza build/disk.img desde el arbol $SourceRoot con el tool
-# nativo libsvfs (svfs-cli): el tool hace TODAS las escrituras (create +
+# nativo libsxfs (sxfs-cli): el tool hace TODAS las escrituras (create +
 # sync/populate + flush). PowerShell queda como pura validacion: snapshot de
 # persistencia antes del sync y, tras el sync, chequeo de consistencia y de que
 # lo persistente sobrevivio. No hay byte-poking PS en el camino de escritura.
-function Build-SvfsDiskImage([string]$SourceRoot, [string]$OutputPath) {
-    $exe = Build-SvfsCli
+function Build-SxfsDiskImage([string]$SourceRoot, [string]$OutputPath) {
+    $exe = Build-SxfsCli
 
-    # Crea la imagen si falta o si la existente no es un SVFS2 valido. Una imagen
+    # Crea la imagen si falta o si la existente no es un SxFS valido. Una imagen
     # valida se preserva (persistencia); el sync de abajo reconcilia el arbol.
     if (Test-Path $OutputPath) {
         try {
-            Open-SvfsImage $OutputPath | Out-Null
+            Open-SxfsImage $OutputPath | Out-Null
         } catch {
             Remove-Item $OutputPath -Force
         }
     }
     if (-not (Test-Path $OutputPath)) {
         New-Directory (Split-Path -Parent $OutputPath)
-        & $exe create $OutputPath $Script:Svfs2TotalSectors
+        & $exe create $OutputPath $Script:SxfsTotalSectors
         if ($LASTEXITCODE -ne 0) {
-            throw "svfs-cli create fallo para '$OutputPath'."
+            throw "sxfs-cli create fallo para '$OutputPath'."
         }
     }
 
     # Snapshot de persistencia ANTES del sync (imagen tal cual quedo de la build
     # anterior, o recien creada vacia).
-    $before = Open-SvfsImage $OutputPath
-    $snapshot = Get-SvfsPersistenceSnapshot $before $Script:SvfsPersistentPaths
+    $before = Open-SxfsImage $OutputPath
+    $snapshot = Get-SxfsPersistenceSnapshot $before $Script:SxfsPersistentPaths
 
     # Sync: mkdir + install de todo el arbol en una sola pasada del tool. Es
     # aditivo (no borra): reconcilia el arbol preservando lo persistente. Si la
     # imagen preservada se fragmento hasta no tener corrida contigua libre,
-    # Invoke-SvfsApply la compacta (preservando lo que no produce esta build) y
+    # Invoke-SxfsApply la compacta (preservando lo que no produce esta build) y
     # reintenta, avisando en el output.
-    $manifest = New-SvfsManifest -SourceRoot $SourceRoot
-    Invoke-SvfsApply -Exe $exe -ImagePath $OutputPath -ManifestPath $manifest `
-        -FailureMessage "svfs-cli apply fallo para '$OutputPath'."
+    $manifest = New-SxfsManifest -SourceRoot $SourceRoot
+    Invoke-SxfsApply -Exe $exe -ImagePath $OutputPath -ManifestPath $manifest `
+        -FailureMessage "sxfs-cli apply fallo para '$OutputPath'."
 
     # Validacion de solo lectura: el tool ya persistio, PS no reescribe.
-    $after = Open-SvfsImage $OutputPath
-    Assert-Svfs2Consistency $after $OutputPath
-    Assert-SvfsPersistenceRetained $after $snapshot
+    $after = Open-SxfsImage $OutputPath
+    Assert-SxfsConsistency $after $OutputPath
+    Assert-SxfsPersistenceRetained $after $snapshot
 }
 
 function Get-ByteArraySha256([byte[]]$Bytes) {
@@ -531,10 +531,10 @@ function Get-ByteArraySha256([byte[]]$Bytes) {
     }
 }
 
-function Get-SvfsPersistenceSnapshot($Image, [string[]]$Paths) {
+function Get-SxfsPersistenceSnapshot($Image, [string[]]$Paths) {
     $snapshot = @{}
     foreach ($path in $Paths) {
-        $info = Get-Svfs2PathInfo $Image $path
+        $info = Get-SxfsPathInfo $Image $path
         if (-not $info) {
             continue
         }
@@ -546,17 +546,17 @@ function Get-SvfsPersistenceSnapshot($Image, [string[]]$Paths) {
             Size = [uint32]$info.Inode.Size
         }
         if ($info.Entry.Type -eq 1 -and $info.Inode.Type -eq 1) {
-            $record.Hash = Get-ByteArraySha256 (Read-Svfs2InodeBytes $Image $info.Inode)
+            $record.Hash = Get-ByteArraySha256 (Read-SxfsInodeBytes $Image $info.Inode)
         }
         $snapshot[$path] = [pscustomobject]$record
     }
     return $snapshot
 }
 
-function Assert-SvfsPersistenceRetained($Image, $BeforeSnapshot) {
+function Assert-SxfsPersistenceRetained($Image, $BeforeSnapshot) {
     foreach ($path in $BeforeSnapshot.Keys) {
         $before = $BeforeSnapshot[$path]
-        $after = Get-Svfs2PathInfo $Image $path
+        $after = Get-SxfsPathInfo $Image $path
         if (-not $after) {
             throw "La build perdio el path persistente '$path'."
         }
@@ -564,7 +564,7 @@ function Assert-SvfsPersistenceRetained($Image, $BeforeSnapshot) {
             throw "La build cambio el tipo persistente de '$path' (antes entry=$($before.EntryType)/inode=$($before.InodeType), ahora entry=$($after.Entry.Type)/inode=$($after.Inode.Type))."
         }
         if ($before.PSObject.Properties.Match("Hash").Count -ne 0) {
-            $afterHash = Get-ByteArraySha256 (Read-Svfs2InodeBytes $Image $after.Inode)
+            $afterHash = Get-ByteArraySha256 (Read-SxfsInodeBytes $Image $after.Inode)
             if ($afterHash -ne $before.Hash) {
                 throw "La build modifico el contenido persistente de '$path'."
             }
@@ -598,7 +598,7 @@ function New-Initramfs([string]$SourceRoot, [string]$OutputPath) {
 }
 
 # Compara mtimes UTC: true si $Output no existe o algun $Dep es mas nuevo.
-# Mismo criterio que usa Build-SvfsCli (tools/UserAppCommon.ps1) para evitar
+# Mismo criterio que usa Build-SxfsCli (tools/UserAppCommon.ps1) para evitar
 # reprocesar cuando nada cambio.
 function Test-NeedsRegen([string]$Output, [string[]]$Deps) {
     if (-not (Test-Path $Output)) {
@@ -873,7 +873,7 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
     Copy-Item (Join-Path $RootfsBuild "bin/*") (Join-Path $DiskBuildRoot "bin") -Force
-    Build-SvfsDiskImage -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
+    Build-SxfsDiskImage -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
 
     $linkArgs = @(
         "-m", "elf_x86_64",
@@ -1065,7 +1065,7 @@ function Stop-AutomationQemu($Process, [int]$MonitorPort) {
     }
     # Apagado ordenado: pedirle a QEMU que cierre por el monitor para que vacie
     # sus backends de bloque y cierre el archivo de disco limpiamente, en vez de
-    # un TerminateProcess que puede dejar metadata SVFS2 a medio escribir (journal
+    # un TerminateProcess que puede dejar metadata SxFS a medio escribir (journal
     # en vuelo). Si el monitor no responde, caemos al kill forzado de siempre.
     if ($MonitorPort -gt 0) {
         try {
@@ -1351,7 +1351,7 @@ function Restore-ExternalDoom {
     if (-not (Test-Path $doomElf)) {
         return
     }
-    Install-SvfsFilesWithTool $DiskImage @(
+    Install-SxfsFilesWithTool $DiskImage @(
         @{ Dir = "bin" }
         @{ File = "/disk/bin/doomgeneric"; Source = $doomElf }
     )
@@ -1432,7 +1432,7 @@ function Run-FloatSmokeQemu {
 # Reinstala el demo y su material despues de que Build-Kernel regenere la
 # imagen, igual que Restore-ExternalDoom.
 function Install-FfmpegDemo {
-    Install-SvfsFilesWithTool $DiskImage @(
+    Install-SxfsFilesWithTool $DiskImage @(
         @{ Dir = "bin" }
         @{ Dir = "media" }
         @{ File = "/disk/bin/wavinfo"; Source = (Join-Path $BuildRoot "external/wavinfo.elf") }
@@ -1481,41 +1481,41 @@ function Run-FfmpegSmokeQemu {
         if ($LASTEXITCODE -ne 0) { throw "La captura del player no muestra un cuadro." }
     }.GetNewClosure()
 }
-# Test de host de la maquina de estados de montaje de SVFS2. No usa QEMU: linkea
-# el driver REAL (kernel/svfs.cpp) contra backends de mentira (tests/host) y una
-# imagen construida con el core compartido (libsvfs), que es la unica forma de
+# Test de host de la maquina de estados de montaje de SxFS. No usa QEMU: linkea
+# el driver REAL (kernel/sxfs.cpp) contra backends de mentira (tests/host) y una
+# imagen construida con el core compartido (libsxfs), que es la unica forma de
 # montar un volumen cuyo journal no se pudo recuperar -- el kernel no expone
 # mount a userland, asi que un smoke de QEMU no puede armar ese escenario.
-function Run-SvfsSmoke {
+function Run-SxfsSmoke {
     $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
     $toolsOut = Join-Path $BuildRoot "tools"
     New-Directory $toolsOut
-    $exe = Join-Path $toolsOut ("svfs-volume-test" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
+    $exe = Join-Path $toolsOut ("sxfs-volume-test" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
     $testRoot = Join-Path $ProjectRoot "tests/host"
 
     $sources = @(
-        (Join-Path $ProjectRoot "kernel/svfs.cpp"),
-        (Join-Path $testRoot "svfs_host_stubs.cpp"),
-        (Join-Path $testRoot "svfs_volume_test.cpp"),
-        (Join-Path $ProjectRoot "libsvfs/svfs_core.c")
+        (Join-Path $ProjectRoot "kernel/sxfs.cpp"),
+        (Join-Path $testRoot "sxfs_host_stubs.cpp"),
+        (Join-Path $testRoot "sxfs_volume_test.cpp"),
+        (Join-Path $ProjectRoot "libsxfs/sxfs_core.c")
     )
 
-    Write-Host "Compilando svfs-volume-test (test de host del driver SVFS2)..."
+    Write-Host "Compilando sxfs-volume-test (test de host del driver SxFS)..."
     $compileArgs = @(
         "-std=c++20", "-O1", "-Wall", "-Wextra", "-Wno-deprecated",
         "-D_CRT_SECURE_NO_WARNINGS",
         "-I", (Join-Path $ProjectRoot "include"),
-        "-I", (Join-Path $ProjectRoot "libsvfs"),
+        "-I", (Join-Path $ProjectRoot "libsxfs"),
         "-I", $testRoot
     ) + $sources + @("-o", $exe)
     & $clang @compileArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "Fallo la compilacion de svfs-volume-test."
+        throw "Fallo la compilacion de sxfs-volume-test."
     }
 
     & $exe
     if ($LASTEXITCODE -ne 0) {
-        throw "SVFS VOLUME TEST FAIL"
+        throw "SxFS VOLUME TEST FAIL"
     }
 }
 
@@ -1583,8 +1583,8 @@ switch ($Command) {
     "ffmpeg-smoke" {
         Run-FfmpegSmokeQemu
     }
-    "svfs-smoke" {
-        Run-SvfsSmoke
+    "sxfs-smoke" {
+        Run-SxfsSmoke
     }
     "cursor-repro" {
         Run-CursorReproQemu

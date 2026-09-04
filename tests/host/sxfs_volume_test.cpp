@@ -1,36 +1,36 @@
 /*
- * svfs_volume_test.cpp -- Test de host de la maquina de estados de montaje de
- * SVFS2 (kernel/svfs.cpp), corriendo el driver REAL contra backends de mentira
- * (tests/host/svfs_host_stubs.cpp) y una imagen en memoria construida con el
- * core compartido (libsvfs).
+ * sxfs_volume_test.cpp -- Test de host de la maquina de estados de montaje de
+ * SxFS (kernel/sxfs.cpp), corriendo el driver REAL contra backends de mentira
+ * (tests/host/sxfs_host_stubs.cpp) y una imagen en memoria construida con el
+ * core compartido (libsxfs).
  *
  * El caso que motivo el harness: un volumen cuyo journal quedo pendiente y cuya
  * recuperacion NO se pudo persistir (device de solo lectura) tiene que quedar
  * montado en read_only y rechazar toda escritura. attach() lo promovia a
  * mounted de forma incondicional, asi que las dos mitades del driver no
  * coincidian: mount_record() ya habia publicado los vnodes con writable=false,
- * pero svfs::writable() devolvia true y las mutaciones pasaban el guard.
+ * pero sxfs::writable() devolvia true y las mutaciones pasaban el guard.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "kernel/svfs.hpp"
+#include "kernel/sxfs.hpp"
 #include "kernel/vfs.hpp"
-#include "svfs/svfs_format.h"
-#include "svfs_core.h"
-#include "svfs_host_stubs.hpp"
+#include "sxfs/sxfs_format.h"
+#include "sxfs_core.h"
+#include "sxfs_host_stubs.hpp"
 
 namespace {
 
 constexpr uint32_t kTotalSectors = 1024;
-constexpr size_t kImageBytes = static_cast<size_t>(kTotalSectors) * SVFS_SECTOR_SIZE;
+constexpr size_t kImageBytes = static_cast<size_t>(kTotalSectors) * SXFS_SECTOR_SIZE;
 
 constexpr const char* kFilePath = "/disk/docs/hello.txt";
 constexpr const char* kDirPath = "/disk/docs";
 constexpr const char* kNewPath = "/disk/docs/nuevo.txt";
-constexpr const char* kFileContents = "svfs2 read-only mount test\n";
+constexpr const char* kFileContents = "sxfs read-only mount test\n";
 
 int g_failures = 0;
 int g_checks = 0;
@@ -56,44 +56,44 @@ struct ImageCookie {
 int image_read(void* cookie, uint32_t lba, uint32_t count, void* buffer) {
     ImageCookie* image = static_cast<ImageCookie*>(cookie);
     if (static_cast<uint64_t>(lba) + count > image->sector_count) {
-        return SVFS_ERR_IO;
+        return SXFS_ERR_IO;
     }
-    memcpy(buffer, image->base + static_cast<size_t>(lba) * SVFS_SECTOR_SIZE,
-           static_cast<size_t>(count) * SVFS_SECTOR_SIZE);
-    return SVFS_OK;
+    memcpy(buffer, image->base + static_cast<size_t>(lba) * SXFS_SECTOR_SIZE,
+           static_cast<size_t>(count) * SXFS_SECTOR_SIZE);
+    return SXFS_OK;
 }
 
 int image_write(void* cookie, uint32_t lba, uint32_t count, const void* buffer) {
     ImageCookie* image = static_cast<ImageCookie*>(cookie);
     if (static_cast<uint64_t>(lba) + count > image->sector_count) {
-        return SVFS_ERR_IO;
+        return SXFS_ERR_IO;
     }
-    memcpy(image->base + static_cast<size_t>(lba) * SVFS_SECTOR_SIZE, buffer,
-           static_cast<size_t>(count) * SVFS_SECTOR_SIZE);
-    return SVFS_OK;
+    memcpy(image->base + static_cast<size_t>(lba) * SXFS_SECTOR_SIZE, buffer,
+           static_cast<size_t>(count) * SXFS_SECTOR_SIZE);
+    return SXFS_OK;
 }
 
 uint8_t* sector_at(uint8_t* image, uint32_t lba) {
-    return image + static_cast<size_t>(lba) * SVFS_SECTOR_SIZE;
+    return image + static_cast<size_t>(lba) * SXFS_SECTOR_SIZE;
 }
 
-// Imagen SVFS2 valida con un directorio y un archivo, construida con el core
+// Imagen SxFS valida con un directorio y un archivo, construida con el core
 // compartido (el mismo que arma build/disk.img).
 bool build_clean_image(uint8_t* image) {
     memset(image, 0, kImageBytes);
 
     ImageCookie cookie = {image, kTotalSectors};
-    svfs_ctx* ctx = static_cast<svfs_ctx*>(calloc(1, sizeof(svfs_ctx)));
+    sxfs_ctx* ctx = static_cast<sxfs_ctx*>(calloc(1, sizeof(sxfs_ctx)));
     if (ctx == nullptr) {
         return false;
     }
-    svfs_ctx_init(ctx, &cookie, &image_read, &image_write);
+    sxfs_ctx_init(ctx, &cookie, &image_read, &image_write);
 
-    const bool ok = svfs_format(ctx, kTotalSectors) == SVFS_OK &&
-        svfs_mkdir_p(ctx, "docs") == SVFS_OK &&
-        svfs_write_file(ctx, "docs/hello.txt", kFileContents,
-                        static_cast<uint32_t>(strlen(kFileContents))) == SVFS_OK &&
-        svfs_flush(ctx) == SVFS_OK;
+    const bool ok = sxfs_format(ctx, kTotalSectors) == SXFS_OK &&
+        sxfs_mkdir_p(ctx, "docs") == SXFS_OK &&
+        sxfs_write_file(ctx, "docs/hello.txt", kFileContents,
+                        static_cast<uint32_t>(strlen(kFileContents))) == SXFS_OK &&
+        sxfs_flush(ctx) == SXFS_OK;
 
     free(ctx);
     return ok;
@@ -106,26 +106,26 @@ bool build_clean_image(uint8_t* image) {
 // si el device no lo deja, la recuperacion queda a medias y el volumen cae en
 // read_only.
 void make_journal_pending(uint8_t* image) {
-    svfs_superblock superblock = {};
-    memcpy(&superblock, sector_at(image, SVFS_PRIMARY_SB_LBA), sizeof(superblock));
+    sxfs_superblock superblock = {};
+    memcpy(&superblock, sector_at(image, SXFS_PRIMARY_SB_LBA), sizeof(superblock));
 
     // El payload del journal es una copia de [block bitmap|inode bitmap|tabla
     // de inodos], que en el layout on-disk son sectores contiguos.
-    memcpy(sector_at(image, SVFS_JOURNAL_LBA + 1), sector_at(image, SVFS_BLOCK_BITMAP_LBA),
-           static_cast<size_t>(SVFS_JOURNAL_METADATA_SECTORS) * SVFS_SECTOR_SIZE);
+    memcpy(sector_at(image, SXFS_JOURNAL_LBA + 1), sector_at(image, SXFS_BLOCK_BITMAP_LBA),
+           static_cast<size_t>(SXFS_JOURNAL_METADATA_SECTORS) * SXFS_SECTOR_SIZE);
 
-    svfs_journal_header header = {};
-    memcpy(header.magic, svfs_journal_magic, sizeof(header.magic));
+    sxfs_journal_header header = {};
+    memcpy(header.magic, sxfs_journal_magic, sizeof(header.magic));
     header.sequence = superblock.sequence + 1u;
     header.pending = 1;
-    header.metadata_sectors = SVFS_JOURNAL_METADATA_SECTORS;
-    header.checksum = svfs_journal_checksum(&header);
-    memcpy(sector_at(image, SVFS_JOURNAL_LBA), &header, sizeof(header));
+    header.metadata_sectors = SXFS_JOURNAL_METADATA_SECTORS;
+    header.checksum = sxfs_journal_checksum(&header);
+    memcpy(sector_at(image, SXFS_JOURNAL_LBA), &header, sizeof(header));
 
-    superblock.flags &= ~static_cast<uint32_t>(SVFS_FLAG_CLEAN);
-    superblock.checksum = svfs_superblock_checksum(&superblock);
-    memcpy(sector_at(image, SVFS_PRIMARY_SB_LBA), &superblock, sizeof(superblock));
-    memcpy(sector_at(image, SVFS_SECONDARY_SB_LBA), &superblock, sizeof(superblock));
+    superblock.flags &= ~static_cast<uint32_t>(SXFS_FLAG_CLEAN);
+    superblock.checksum = sxfs_superblock_checksum(&superblock);
+    memcpy(sector_at(image, SXFS_PRIMARY_SB_LBA), &superblock, sizeof(superblock));
+    memcpy(sector_at(image, SXFS_SECONDARY_SB_LBA), &superblock, sizeof(superblock));
 }
 
 // --- Casos ------------------------------------------------------------------
@@ -136,7 +136,7 @@ void make_journal_pending(uint8_t* image) {
 void case_unrecoverable_journal_stays_read_only(uint8_t* image, uint8_t* pristine) {
     printf("caso: journal pendiente sobre device de solo lectura\n");
 
-    if (!check(build_clean_image(image), "imagen SVFS2 construida")) {
+    if (!check(build_clean_image(image), "imagen SxFS construida")) {
         return;
     }
     make_journal_pending(image);
@@ -144,21 +144,21 @@ void case_unrecoverable_journal_stays_read_only(uint8_t* image, uint8_t* pristin
 
     hoststub::reset_vfs();
     hoststub::attach_device(image, kTotalSectors, /*writable=*/false);
-    svfs::initialize();
+    sxfs::initialize();
 
-    const svfs::VolumeId volume = svfs::probe(0, svfs::kRootMountPoint);
-    if (!check(volume != svfs::kInvalidVolume, "probe reconoce el volumen")) {
+    const sxfs::VolumeId volume = sxfs::probe(0, sxfs::kRootMountPoint);
+    if (!check(volume != sxfs::kInvalidVolume, "probe reconoce el volumen")) {
         return;
     }
-    check(svfs::status(volume) == svfs::MountStatus::read_only,
+    check(sxfs::status(volume) == sxfs::MountStatus::read_only,
           "probe deja el volumen en read_only (la recuperacion no se pudo persistir)");
     check(hoststub::rejected_writes() > 0, "el device rechazo las escrituras de la recuperacion");
 
-    check(svfs::attach(volume), "attach publica el arbol");
-    check(svfs::status(volume) == svfs::MountStatus::read_only,
+    check(sxfs::attach(volume), "attach publica el arbol");
+    check(sxfs::status(volume) == sxfs::MountStatus::read_only,
           "attach NO promueve el volumen a mounted");
-    check(!svfs::writable(volume), "svfs::writable() es false");
-    check(svfs::mounted(volume), "el volumen igual cuenta como montado");
+    check(!sxfs::writable(volume), "sxfs::writable() es false");
+    check(sxfs::mounted(volume), "el volumen igual cuenta como montado");
 
     // La otra mitad del driver: los vnodes que publico mount_record().
     vfs::Vnode* node = hoststub::find_node(kFilePath);
@@ -167,34 +167,34 @@ void case_unrecoverable_journal_stays_read_only(uint8_t* image, uint8_t* pristin
     }
     check(!node->writable, "el vnode del archivo quedo con writable=false");
 
-    svfs::FileRecord* record = svfs::file_from_vnode(*node);
+    sxfs::FileRecord* record = sxfs::file_from_vnode(*node);
     if (!check(record != nullptr, "file_from_vnode encuentra el record")) {
         return;
     }
 
     // Leer si tiene que andar: read_only es montado, no inaccesible.
     char buffer[64] = {};
-    check(svfs::read_file(*record, 0, buffer, strlen(kFileContents)) &&
+    check(sxfs::read_file(*record, 0, buffer, strlen(kFileContents)) &&
               memcmp(buffer, kFileContents, strlen(kFileContents)) == 0,
           "read_file sigue funcionando");
 
     // Y ninguna mutacion puede pasar el guard.
     size_t written = 12345;
-    check(!svfs::write_file(*record, 0, "x", 1, false, written) && written == 0,
+    check(!sxfs::write_file(*record, 0, "x", 1, false, written) && written == 0,
           "write_file rechazado");
-    check(!svfs::truncate_file(*record, 0), "truncate_file rechazado");
-    check(!svfs::unlink_file(*record), "unlink_file rechazado");
-    check(svfs::create_file(kNewPath) == nullptr, "create_file rechazado");
-    check(svfs::create_directory("/disk/otro") == nullptr, "create_directory rechazado");
-    check(!svfs::rename_path(kFilePath, "/disk/docs/renombrado.txt"), "rename_path rechazado");
+    check(!sxfs::truncate_file(*record, 0), "truncate_file rechazado");
+    check(!sxfs::unlink_file(*record), "unlink_file rechazado");
+    check(sxfs::create_file(kNewPath) == nullptr, "create_file rechazado");
+    check(sxfs::create_directory("/disk/otro") == nullptr, "create_directory rechazado");
+    check(!sxfs::rename_path(kFilePath, "/disk/docs/renombrado.txt"), "rename_path rechazado");
 
-    svfs::FileRecord* dir_record = nullptr;
+    sxfs::FileRecord* dir_record = nullptr;
     vfs::Vnode* dir_node = hoststub::find_node(kDirPath);
     if (dir_node != nullptr) {
-        dir_record = svfs::file_from_vnode(*dir_node);
+        dir_record = sxfs::file_from_vnode(*dir_node);
     }
     if (dir_record != nullptr) {
-        check(!svfs::remove_directory(*dir_record), "remove_directory rechazado");
+        check(!sxfs::remove_directory(*dir_record), "remove_directory rechazado");
     }
 
     check(memcmp(image, pristine, kImageBytes) == 0, "la imagen quedo intacta byte a byte");
@@ -208,23 +208,23 @@ void case_unrecoverable_journal_stays_read_only(uint8_t* image, uint8_t* pristin
 void case_recovered_journal_is_writable(uint8_t* image) {
     printf("caso: mismo journal pendiente sobre device escribible\n");
 
-    if (!check(build_clean_image(image), "imagen SVFS2 construida")) {
+    if (!check(build_clean_image(image), "imagen SxFS construida")) {
         return;
     }
     make_journal_pending(image);
 
     hoststub::reset_vfs();
     hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
-    svfs::initialize();
+    sxfs::initialize();
 
-    const svfs::VolumeId volume = svfs::probe(0, svfs::kRootMountPoint);
-    if (!check(volume != svfs::kInvalidVolume, "probe reconoce el volumen")) {
+    const sxfs::VolumeId volume = sxfs::probe(0, sxfs::kRootMountPoint);
+    if (!check(volume != sxfs::kInvalidVolume, "probe reconoce el volumen")) {
         return;
     }
-    check(svfs::status(volume) == svfs::MountStatus::mounted,
+    check(sxfs::status(volume) == sxfs::MountStatus::mounted,
           "la recuperacion se persistio: el volumen queda mounted");
-    check(svfs::attach(volume), "attach publica el arbol");
-    check(svfs::writable(volume), "svfs::writable() es true");
+    check(sxfs::attach(volume), "attach publica el arbol");
+    check(sxfs::writable(volume), "sxfs::writable() es true");
 
     vfs::Vnode* node = hoststub::find_node(kFilePath);
     if (!check(node != nullptr, "el archivo quedo publicado en el vfs")) {
@@ -232,14 +232,14 @@ void case_recovered_journal_is_writable(uint8_t* image) {
     }
     check(node->writable, "el vnode del archivo quedo con writable=true");
 
-    svfs::FileRecord* created = svfs::create_file(kNewPath);
+    sxfs::FileRecord* created = sxfs::create_file(kNewPath);
     if (!check(created != nullptr, "create_file aceptado")) {
         return;
     }
     size_t written = 0;
-    check(svfs::write_file(*created, 0, "hola", 4, true, written) && written == 4,
+    check(sxfs::write_file(*created, 0, "hola", 4, true, written) && written == 4,
           "write_file aceptado");
-    check(svfs::unlink_file(*created), "unlink_file aceptado");
+    check(sxfs::unlink_file(*created), "unlink_file aceptado");
 
     hoststub::detach_device();
 }
@@ -253,7 +253,7 @@ void case_recovered_journal_is_writable(uint8_t* image) {
 void case_transient_io_failure_rejects_writes(uint8_t* image, uint8_t* pristine) {
     printf("caso: fallo de I/O transitorio durante la recuperacion\n");
 
-    if (!check(build_clean_image(image), "imagen SVFS2 construida")) {
+    if (!check(build_clean_image(image), "imagen SxFS construida")) {
         return;
     }
     make_journal_pending(image);
@@ -264,30 +264,30 @@ void case_transient_io_failure_rejects_writes(uint8_t* image, uint8_t* pristine)
     // Solo la primera escritura falla: alcanza para cortar el replay del
     // journal, y a partir de ahi el device vuelve a aceptar escrituras.
     hoststub::fail_next_writes(1);
-    svfs::initialize();
+    sxfs::initialize();
 
-    const svfs::VolumeId volume = svfs::probe(0, svfs::kRootMountPoint);
-    if (!check(volume != svfs::kInvalidVolume, "probe reconoce el volumen")) {
+    const sxfs::VolumeId volume = sxfs::probe(0, sxfs::kRootMountPoint);
+    if (!check(volume != sxfs::kInvalidVolume, "probe reconoce el volumen")) {
         return;
     }
-    check(svfs::status(volume) == svfs::MountStatus::read_only,
+    check(sxfs::status(volume) == sxfs::MountStatus::read_only,
           "el replay fallado deja el volumen en read_only");
-    check(svfs::attach(volume), "attach publica el arbol");
-    check(svfs::status(volume) == svfs::MountStatus::read_only,
+    check(sxfs::attach(volume), "attach publica el arbol");
+    check(sxfs::status(volume) == sxfs::MountStatus::read_only,
           "attach NO promueve el volumen a mounted");
-    check(!svfs::writable(volume), "svfs::writable() es false");
+    check(!sxfs::writable(volume), "sxfs::writable() es false");
 
     // El device ya acepta escrituras: si la mutacion pasa el guard, llega al
     // disco. Que no llegue es exactamente lo que tiene que garantizar el status.
-    check(svfs::create_file(kNewPath) == nullptr, "create_file rechazado por politica");
+    check(sxfs::create_file(kNewPath) == nullptr, "create_file rechazado por politica");
 
     vfs::Vnode* node = hoststub::find_node(kFilePath);
     if (check(node != nullptr, "el archivo quedo publicado en el vfs")) {
         check(!node->writable, "el vnode del archivo quedo con writable=false");
-        svfs::FileRecord* record = svfs::file_from_vnode(*node);
+        sxfs::FileRecord* record = sxfs::file_from_vnode(*node);
         if (check(record != nullptr, "file_from_vnode encuentra el record")) {
             size_t written = 12345;
-            check(!svfs::write_file(*record, 0, "x", 1, false, written) && written == 0,
+            check(!sxfs::write_file(*record, 0, "x", 1, false, written) && written == 0,
                   "write_file rechazado por politica");
         }
     }
@@ -301,12 +301,12 @@ void case_transient_io_failure_rejects_writes(uint8_t* image, uint8_t* pristine)
 } // namespace
 
 int main() {
-    printf("SVFS VOLUME TEST START\n");
+    printf("SxFS VOLUME TEST START\n");
 
     uint8_t* image = static_cast<uint8_t*>(malloc(kImageBytes));
     uint8_t* pristine = static_cast<uint8_t*>(malloc(kImageBytes));
     if (image == nullptr || pristine == nullptr) {
-        printf("SVFS VOLUME TEST FAIL: sin memoria para la imagen\n");
+        printf("SxFS VOLUME TEST FAIL: sin memoria para la imagen\n");
         return 1;
     }
 
@@ -318,7 +318,7 @@ int main() {
     free(pristine);
 
     printf("%s (%d checks, %d fallas)\n",
-           g_failures == 0 ? "SVFS VOLUME TEST PASS" : "SVFS VOLUME TEST FAIL",
+           g_failures == 0 ? "SxFS VOLUME TEST PASS" : "SxFS VOLUME TEST FAIL",
            g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

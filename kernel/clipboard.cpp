@@ -71,7 +71,7 @@ int clipboard_write(uint64_t user_buffer, size_t count) {
     // sigue intacto en vez de quedar a medio escribir. El temporal es estatico
     // y NO del stack: el stack de kernel son cuatro paginas (16 KiB, ver
     // kKernelStackPages) y un buffer de 8 KiB ahi se comeria la mitad en un
-    // solo frame -- el mismo error que tenia ensure_capacity en SVFS2.
+    // solo frame -- el mismo error que tenia ensure_capacity en SxFS.
     static uint8_t g_staging[SAVANXP_CLIPBOARD_CAPACITY];
     if (count != 0 && !process::copy_from_user(g_staging, user_buffer, count)) {
         return negative_error(SAVANXP_EINVAL);

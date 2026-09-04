@@ -19,7 +19,7 @@
 #include "kernel/ps2.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/string.hpp"
-#include "kernel/svfs.hpp"
+#include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
@@ -2720,15 +2720,15 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.net_present = net::present() ? 1u : 0u;
     info.speaker_ready = pcspeaker::ready() ? 1u : 0u;
     info.block_ready = block::ready() ? 1u : 0u;
-    info.svfs_mounted = svfs::mounted(svfs::root()) ? 1u : 0u;
+    info.sxfs_mounted = sxfs::mounted(sxfs::root()) ? 1u : 0u;
     info.timer_backend = exported_timer_backend(timer::backend());
     info.timer_frequency_hz = timer::frequency_hz();
     info.pci_device_count = static_cast<uint32_t>(pci::device_count());
-    info.svfs_file_count = static_cast<uint32_t>(svfs::file_count(svfs::root()));
+    info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(sxfs::root()));
     info.memory_total_pages = memory::total_page_count();
-    info.svfs_total_bytes = svfs::total_bytes(svfs::root());
-    info.svfs_used_bytes = svfs::used_bytes(svfs::root());
-    info.svfs_free_bytes = svfs::free_bytes(svfs::root());
+    info.sxfs_total_bytes = sxfs::total_bytes(sxfs::root());
+    info.sxfs_used_bytes = sxfs::used_bytes(sxfs::root());
+    info.sxfs_free_bytes = sxfs::free_bytes(sxfs::root());
     info.uptime_ms = current_uptime_ms();
     return true;
 }

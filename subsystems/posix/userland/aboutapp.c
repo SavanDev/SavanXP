@@ -45,8 +45,8 @@ static void refresh_info(void)
         g_disk_line,
         sizeof(g_disk_line),
         "Persistent disk: %llu / %llu MiB used",
-        (unsigned long long)(info.svfs_used_bytes / (1024ULL * 1024ULL)),
-        (unsigned long long)(info.svfs_total_bytes / (1024ULL * 1024ULL)));
+        (unsigned long long)(info.sxfs_used_bytes / (1024ULL * 1024ULL)),
+        (unsigned long long)(info.sxfs_total_bytes / (1024ULL * 1024ULL)));
     if (realtime(&now) == 0 && now.valid != 0)
     {
         snprintf(g_time_line, sizeof(g_time_line), "Clock: %02u:%02u:%02u", now.hour, now.minute, now.second);

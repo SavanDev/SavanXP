@@ -1,35 +1,35 @@
-#include "kernel/svfs.hpp"
+#include "kernel/sxfs.hpp"
 
 #include <stdint.h>
 
 #include "kernel/block.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vfs.hpp"
-#include "svfs/svfs_format.h"
+#include "sxfs/sxfs_format.h"
 
 namespace {
 
 // El formato on-disk (constantes de layout, structs, checksum y bit-math) vive
-// en include/svfs/svfs_format.h como fuente de verdad unica, compartido con el
+// en include/sxfs/sxfs_format.h como fuente de verdad unica, compartido con el
 // tool de host. Aca solo se le ponen los nombres internos historicos para no
 // reescribir los cientos de usos, mas la politica y los limites que son propios
 // del driver del kernel (no on-disk).
 // (Las constantes de layout que ya solo usa la validacion viven en el header;
 // aca quedan las que el resto del driver referencia por su nombre historico.)
-constexpr uint32_t kFlagClean = SVFS_FLAG_CLEAN;
-constexpr uint16_t kInodeTypeUnused = SVFS_INODE_UNUSED;
-constexpr uint16_t kInodeTypeFile = SVFS_INODE_FILE;
-constexpr uint16_t kInodeTypeDirectory = SVFS_INODE_DIRECTORY;
-constexpr uint32_t kPrimarySuperblockLba = SVFS_PRIMARY_SB_LBA;
-constexpr uint32_t kSecondarySuperblockLba = SVFS_SECONDARY_SB_LBA;
-constexpr uint32_t kBlockBitmapSectors = SVFS_BLOCK_BITMAP_SECTORS;
-constexpr uint32_t kInodeBitmapSectors = SVFS_INODE_BITMAP_SECTORS;
-constexpr uint32_t kJournalMetadataSectors = SVFS_JOURNAL_METADATA_SECTORS;
-constexpr uint32_t kDataLba = SVFS_DATA_LBA;
-constexpr uint32_t kMaxInodes = SVFS_MAX_INODES;
-constexpr uint32_t kMaxRecords = SVFS_MAX_RECORDS;
-constexpr uint32_t kRootInodeId = SVFS_ROOT_INODE;
-constexpr uint32_t kMaxExtents = SVFS_MAX_EXTENTS;
+constexpr uint32_t kFlagClean = SXFS_FLAG_CLEAN;
+constexpr uint16_t kInodeTypeUnused = SXFS_INODE_UNUSED;
+constexpr uint16_t kInodeTypeFile = SXFS_INODE_FILE;
+constexpr uint16_t kInodeTypeDirectory = SXFS_INODE_DIRECTORY;
+constexpr uint32_t kPrimarySuperblockLba = SXFS_PRIMARY_SB_LBA;
+constexpr uint32_t kSecondarySuperblockLba = SXFS_SECONDARY_SB_LBA;
+constexpr uint32_t kBlockBitmapSectors = SXFS_BLOCK_BITMAP_SECTORS;
+constexpr uint32_t kInodeBitmapSectors = SXFS_INODE_BITMAP_SECTORS;
+constexpr uint32_t kJournalMetadataSectors = SXFS_JOURNAL_METADATA_SECTORS;
+constexpr uint32_t kDataLba = SXFS_DATA_LBA;
+constexpr uint32_t kMaxInodes = SXFS_MAX_INODES;
+constexpr uint32_t kMaxRecords = SXFS_MAX_RECORDS;
+constexpr uint32_t kRootInodeId = SXFS_ROOT_INODE;
+constexpr uint32_t kMaxExtents = SXFS_MAX_EXTENTS;
 constexpr uint32_t kMinimumGrowthSectors = 64; // politica de crecimiento, no on-disk
 constexpr size_t kBlockBitmapBytes = static_cast<size_t>(kBlockBitmapSectors) * block::kSectorSize;
 constexpr size_t kInodeBitmapBytes = static_cast<size_t>(kInodeBitmapSectors) * block::kSectorSize;
@@ -37,18 +37,18 @@ constexpr size_t kMaxRelativePath = 255;
 constexpr size_t kMaxDirNameLength = 63;
 
 // Bridge: el kernel indexa bitmaps/tabla en unidades de block::kSectorSize,
-// mientras que el formato compartido define SVFS_SECTOR_SIZE. Ambos deben ser
+// mientras que el formato compartido define SXFS_SECTOR_SIZE. Ambos deben ser
 // el mismo tamano de sector o el layout on-disk no cuadra.
-static_assert(block::kSectorSize == SVFS_SECTOR_SIZE);
+static_assert(block::kSectorSize == SXFS_SECTOR_SIZE);
 
-using Extent = svfs_extent;
-using Inode = svfs_inode;
-using Superblock = svfs_superblock;
-using JournalHeader = svfs_journal_header;
-using DirEntry = svfs_dir_entry;
+using Extent = sxfs_extent;
+using Inode = sxfs_inode;
+using Superblock = sxfs_superblock;
+using JournalHeader = sxfs_journal_header;
+using DirEntry = sxfs_dir_entry;
 
 // Magias del formato compartido, con los nombres internos historicos.
-constexpr const char* kJournalMagic = svfs_journal_magic;
+constexpr const char* kJournalMagic = sxfs_journal_magic;
 
 struct MetadataSnapshot {
     Superblock superblock;
@@ -58,24 +58,24 @@ struct MetadataSnapshot {
 };
 
 // Un volumen montado. Todo lo que antes eran globales de archivo vive aca
-// adentro: el instalador necesita el SVFS2 del LiveCD (origen) y el de la
+// adentro: el instalador necesita el SxFS del LiveCD (origen) y el de la
 // particion destino montados AL MISMO TIEMPO, y con un solo juego de globales
 // eso no se podia. El resto del driver no cambio de forma: cada funcion interna
 // recibe su Volume& como primer parametro.
 struct Volume {
     bool in_use;
     size_t device_index;
-    svfs::MountStatus status;
+    sxfs::MountStatus status;
     bool metadata_ready;
     // Prefijo bajo el que cuelga del vfs ("/disk"). Todas las rutas que entran
     // por la API publica se resuelven contra esto, asi que un segundo volumen
     // en "/mnt/destino" no le pisa las rutas al primero.
-    char mount_point[svfs::kMountPointCapacity];
+    char mount_point[sxfs::kMountPointCapacity];
     Superblock superblock;
     uint8_t block_bitmap[kBlockBitmapBytes];
     uint8_t inode_bitmap[kInodeBitmapBytes];
     Inode inodes[kMaxInodes];
-    svfs::FileRecord records[kMaxRecords];
+    sxfs::FileRecord records[kMaxRecords];
     MetadataSnapshot snapshot;
     // Por volumen y no global: escribir en el destino del instalador no tiene
     // por que serializar contra la raiz.
@@ -91,7 +91,7 @@ size_t volume_index(const Volume& volume) {
     return static_cast<size_t>(&volume - &g_volumes[0]);
 }
 
-Volume* volume_for_id(svfs::VolumeId id) {
+Volume* volume_for_id(sxfs::VolumeId id) {
     if (id >= kMaxVolumes || !g_volumes[id].in_use) {
         return nullptr;
     }
@@ -124,22 +124,22 @@ enum class RecoveryState : uint8_t {
 };
 
 // Validacion y checksum de metadata: la logica vive en el formato compartido
-// (svfs_format.h) para no divergir del builder de host. Aca solo wrappers con
+// (sxfs_format.h) para no divergir del builder de host. Aca solo wrappers con
 // las firmas por-referencia que usa el resto del driver.
 uint32_t superblock_checksum(const Superblock& superblock) {
-    return svfs_superblock_checksum(&superblock);
+    return sxfs_superblock_checksum(&superblock);
 }
 
 uint32_t journal_checksum(const JournalHeader& header) {
-    return svfs_journal_checksum(&header);
+    return sxfs_journal_checksum(&header);
 }
 
 bool valid_superblock(const Superblock& superblock) {
-    return svfs_superblock_valid(&superblock);
+    return sxfs_superblock_valid(&superblock);
 }
 
 bool valid_journal(const JournalHeader& header) {
-    return svfs_journal_valid(&header);
+    return sxfs_journal_valid(&header);
 }
 
 class MutationGuard {
@@ -170,11 +170,11 @@ Inode* inode_for_id(Volume& volume, uint32_t inode_id) {
 }
 
 bool bitmap_test(const uint8_t* bitmap, uint32_t bit) {
-    return svfs_bitmap_test(bitmap, bit) != 0;
+    return sxfs_bitmap_test(bitmap, bit) != 0;
 }
 
 void bitmap_set(uint8_t* bitmap, uint32_t bit, bool value) {
-    svfs_bitmap_set(bitmap, bit, value ? 1 : 0);
+    sxfs_bitmap_set(bitmap, bit, value ? 1 : 0);
 }
 
 void snapshot_metadata(Volume& volume) {
@@ -280,7 +280,7 @@ bool commit_metadata(Volume& volume) {
 }
 
 uint32_t inode_capacity_sectors(const Inode& inode) {
-    return svfs_inode_capacity_sectors(&inode);
+    return sxfs_inode_capacity_sectors(&inode);
 }
 
 size_t inode_capacity_bytes(const Inode& inode) {
@@ -371,8 +371,8 @@ bool join_relative_path(const char* parent, const char* leaf, char* out, size_t 
     return true;
 }
 
-svfs::FileRecord* find_record_by_inode(Volume& volume, uint32_t inode_id) {
-    for (svfs::FileRecord& record : volume.records) {
+sxfs::FileRecord* find_record_by_inode(Volume& volume, uint32_t inode_id) {
+    for (sxfs::FileRecord& record : volume.records) {
         if (record.in_use && record.inode_id == inode_id) {
             return &record;
         }
@@ -380,11 +380,11 @@ svfs::FileRecord* find_record_by_inode(Volume& volume, uint32_t inode_id) {
     return nullptr;
 }
 
-svfs::FileRecord* find_record_by_relative_path(Volume& volume, const char* relative) {
+sxfs::FileRecord* find_record_by_relative_path(Volume& volume, const char* relative) {
     if (relative == nullptr || *relative == '\0') {
         return nullptr;
     }
-    for (svfs::FileRecord& record : volume.records) {
+    for (sxfs::FileRecord& record : volume.records) {
         if (record.in_use && strcmp(record.path, relative) == 0) {
             return &record;
         }
@@ -392,7 +392,7 @@ svfs::FileRecord* find_record_by_relative_path(Volume& volume, const char* relat
     return nullptr;
 }
 
-svfs::FileRecord* find_record_by_path(Volume& volume, const char* path) {
+sxfs::FileRecord* find_record_by_path(Volume& volume, const char* path) {
     char relative[256] = {};
     if (!parse_relative_path(volume, path, relative, sizeof(relative))) {
         return nullptr;
@@ -404,7 +404,7 @@ uint32_t parent_inode_for_relative_path(Volume& volume, const char* relative_par
     if (relative_parent == nullptr || *relative_parent == '\0') {
         return kRootInodeId;
     }
-    svfs::FileRecord* parent = find_record_by_relative_path(volume, relative_parent);
+    sxfs::FileRecord* parent = find_record_by_relative_path(volume, relative_parent);
     return parent != nullptr && parent->directory ? parent->inode_id : 0;
 }
 
@@ -430,8 +430,8 @@ bool make_absolute_path(Volume& volume, const char* relative, char* out, size_t 
     return true;
 }
 
-svfs::FileRecord* allocate_record(Volume& volume) {
-    for (svfs::FileRecord& record : volume.records) {
+sxfs::FileRecord* allocate_record(Volume& volume) {
+    for (sxfs::FileRecord& record : volume.records) {
         if (!record.in_use) {
             memset(&record, 0, sizeof(record));
             record.in_use = true;
@@ -445,7 +445,7 @@ svfs::FileRecord* allocate_record(Volume& volume) {
 }
 
 void remove_record(Volume& volume, uint32_t inode_id) {
-    svfs::FileRecord* record = find_record_by_inode(volume, inode_id);
+    sxfs::FileRecord* record = find_record_by_inode(volume, inode_id);
     if (record != nullptr) {
         memset(record, 0, sizeof(*record));
     }
@@ -454,7 +454,7 @@ void remove_record(Volume& volume, uint32_t inode_id) {
 void update_descendant_paths(Volume& volume, uint32_t directory_inode, const char* old_path, const char* new_path) {
     const size_t old_length = strlen(old_path);
     const size_t new_length = strlen(new_path);
-    for (svfs::FileRecord& record : volume.records) {
+    for (sxfs::FileRecord& record : volume.records) {
         if (!record.in_use || record.inode_id == directory_inode) {
             continue;
         }
@@ -466,7 +466,7 @@ void update_descendant_paths(Volume& volume, uint32_t directory_inode, const cha
                 descendant = true;
                 break;
             }
-            const svfs::FileRecord* parent = find_record_by_inode(volume, current);
+            const sxfs::FileRecord* parent = find_record_by_inode(volume, current);
             current = parent != nullptr ? parent->parent_inode_id : 0;
         }
         if (!descendant) {
@@ -508,7 +508,7 @@ void release_inode_id(Volume& volume, uint32_t inode_id) {
 }
 
 uint32_t find_free_run(Volume& volume, uint32_t minimum_sectors) {
-    return svfs_find_free_run(volume.block_bitmap, volume.superblock.data_lba,
+    return sxfs_find_free_run(volume.block_bitmap, volume.superblock.data_lba,
                               volume.superblock.total_sectors, minimum_sectors);
 }
 
@@ -848,7 +848,7 @@ bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t p
             return false;
         }
 
-        svfs::FileRecord* record = allocate_record(volume);
+        sxfs::FileRecord* record = allocate_record(volume);
         if (record == nullptr) {
             return false;
         }
@@ -879,7 +879,7 @@ bool rebuild_record_cache(Volume& volume) {
 }
 
 void refresh_record_size(Volume& volume, uint32_t inode_id) {
-    svfs::FileRecord* record = find_record_by_inode(volume, inode_id);
+    sxfs::FileRecord* record = find_record_by_inode(volume, inode_id);
     Inode* inode = inode_for_id(volume, inode_id);
     if (record != nullptr && inode != nullptr) {
         record->size = inode->size;
@@ -889,7 +889,7 @@ void refresh_record_size(Volume& volume, uint32_t inode_id) {
     }
 }
 
-void mount_record(Volume& volume, svfs::FileRecord& record) {
+void mount_record(Volume& volume, sxfs::FileRecord& record) {
     char absolute[262] = {};
     if (!make_absolute_path(volume, record.path, absolute, sizeof(absolute))) {
         return;
@@ -900,10 +900,10 @@ void mount_record(Volume& volume, svfs::FileRecord& record) {
     } else {
         record.vnode = vfs::install_external_file(
             absolute,
-            vfs::Backend::svfs,
+            vfs::Backend::sxfs,
             &record,
             record.size,
-            volume.status != svfs::MountStatus::read_only);
+            volume.status != sxfs::MountStatus::read_only);
     }
 }
 
@@ -912,7 +912,7 @@ bool initialize_record_mounts(Volume& volume) {
         return false;
     }
 
-    for (svfs::FileRecord& record : volume.records) {
+    for (sxfs::FileRecord& record : volume.records) {
         if (record.in_use && record.directory) {
             mount_record(volume, record);
             if (record.vnode == nullptr) {
@@ -921,7 +921,7 @@ bool initialize_record_mounts(Volume& volume) {
         }
     }
 
-    for (svfs::FileRecord& record : volume.records) {
+    for (sxfs::FileRecord& record : volume.records) {
         if (record.in_use && !record.directory) {
             mount_record(volume, record);
             if (record.vnode == nullptr) {
@@ -939,7 +939,7 @@ bool record_is_ancestor(Volume& volume, uint32_t ancestor_inode, uint32_t inode_
         if (current == ancestor_inode) {
             return true;
         }
-        const svfs::FileRecord* record = find_record_by_inode(volume, current);
+        const sxfs::FileRecord* record = find_record_by_inode(volume, current);
         current = record != nullptr ? record->parent_inode_id : 0;
     }
     return ancestor_inode == kRootInodeId;
@@ -963,7 +963,7 @@ bool load_filesystem_from_device(Volume& volume, size_t device_index) {
     if (recovery == RecoveryState::failed || !rebuild_record_cache(volume)) {
         return false;
     }
-    volume.status = recovery == RecoveryState::read_only ? svfs::MountStatus::read_only : svfs::MountStatus::mounted;
+    volume.status = recovery == RecoveryState::read_only ? sxfs::MountStatus::read_only : sxfs::MountStatus::mounted;
     volume.metadata_ready = true;
     return true;
 }
@@ -978,7 +978,7 @@ bool prepare_new_inode(Inode& inode, uint32_t inode_id, uint16_t type) {
 
 } // namespace
 
-namespace svfs {
+namespace sxfs {
 
 void initialize() {
     memset(g_volumes, 0, sizeof(g_volumes));
@@ -1006,7 +1006,7 @@ VolumeId probe(size_t device_index, const char* mount_point) {
         memcpy(volume.mount_point, mount_point, length + 1);
         volume.in_use = true;
         if (!load_filesystem_from_device(volume, device_index)) {
-            // No es un SVFS2 (o esta roto): el slot vuelve a quedar libre y
+            // No es un SxFS (o esta roto): el slot vuelve a quedar libre y
             // fs:: sigue probando con el driver siguiente.
             memset(&volume, 0, sizeof(volume));
             return kInvalidVolume;
@@ -1029,7 +1029,7 @@ bool attach(VolumeId id) {
     // quedo en read_only porque la recuperacion no se pudo persistir. Promoverlo
     // partia el driver en dos mitades que no coincidian, porque mount_record()
     // corre antes y ya habia publicado los vnodes con writable=false mientras
-    // svfs::writable(volume) devolvia true.
+    // sxfs::writable(volume) devolvia true.
     if (volume->status != MountStatus::read_only) {
         volume->status = MountStatus::mounted;
     }
@@ -1486,7 +1486,7 @@ namespace {
 // subarbol, asi que soltar el volumen dejaria vnodes apuntando a records
 // liberados. El instalador cierra con sync(), que si alcanza.
 const fs::Driver kDriver = {
-    "svfs2",
+    "sxfs",
     100,
     &probe,
     &attach,
@@ -1497,4 +1497,4 @@ const fs::Driver kDriver = {
 
 const fs::Driver& driver() { return kDriver; }
 
-} // namespace svfs
+} // namespace sxfs

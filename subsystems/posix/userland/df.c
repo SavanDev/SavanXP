@@ -43,18 +43,18 @@ int main(void) {
         return 1;
     }
 
-    if (!info.svfs_mounted) {
+    if (!info.sxfs_mounted) {
         puts_out("df: /disk not mounted\n");
         return 1;
     }
 
     puts_out("Filesystem  Total(MiB)  Used(MiB)  Free(MiB)  Mount\n");
-    print_padded("svfs", 12);
-    print_u64(mib_from_bytes(info.svfs_total_bytes));
+    print_padded("sxfs", 12);
+    print_u64(mib_from_bytes(info.sxfs_total_bytes));
     puts_out("          ");
-    print_u64(mib_from_bytes(info.svfs_used_bytes));
+    print_u64(mib_from_bytes(info.sxfs_used_bytes));
     puts_out("         ");
-    print_u64(mib_from_bytes(info.svfs_free_bytes));
+    print_u64(mib_from_bytes(info.sxfs_free_bytes));
     puts_out("         /disk\n");
     return 0;
 }

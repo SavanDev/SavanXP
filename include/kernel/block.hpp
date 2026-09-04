@@ -33,7 +33,7 @@ struct DeviceOps {
 struct Driver {
     const char* name;
     // Mayor enumera primero. Define el orden de los indices de device y con eso
-    // a quien termina montando svfs: ATA antes que ramdisk hace que un disco
+    // a quien termina montando sxfs: ATA antes que ramdisk hace que un disco
     // IDE persistente (dev) le gane a la imagen del LiveCD.
     int priority;
     // Registra con register_device() cada device que encuentre.

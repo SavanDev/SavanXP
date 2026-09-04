@@ -88,7 +88,7 @@ typedef struct sx_FILE FILE;
 typedef struct sx_DIR DIR;
 
 /* Espejo de <sys/stat.h>. El kernel solo reporta tipo y tamano; el resto queda
- * en cero porque SVFS2 no guarda duenio ni marcas de tiempo. */
+ * en cero porque SxFS no guarda duenio ni marcas de tiempo. */
 struct stat {
     unsigned long st_dev;
     unsigned long st_ino;
@@ -1899,7 +1899,7 @@ int sx_unlink(const char* path) {
 
 int sx_mkdir(const char* path, mode_t mode) {
     long result = 0;
-    (void)mode; /* SVFS2 no tiene permisos */
+    (void)mode; /* SxFS no tiene permisos */
     result = savanxp_mkdir(path);
     if (result < 0) {
         sx_set_errno_from_result(result);

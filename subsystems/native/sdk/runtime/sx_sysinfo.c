@@ -56,8 +56,8 @@ int sxn_sys_uptime_ms(void) { return (int)g_info.uptime_ms; }
 int sxn_sys_process_count(void) { return g_proc_count; }
 int sxn_sys_memory_usable_mib(void) { return (int)(g_info.memory_usable_bytes / (1024u * 1024u)); }
 int sxn_sys_memory_reclaimable_mib(void) { return (int)(g_info.memory_reclaimable_bytes / (1024u * 1024u)); }
-int sxn_sys_disk_used_mib(void) { return (int)(g_info.svfs_used_bytes / (1024u * 1024u)); }
-int sxn_sys_disk_total_mib(void) { return (int)(g_info.svfs_total_bytes / (1024u * 1024u)); }
+int sxn_sys_disk_used_mib(void) { return (int)(g_info.sxfs_used_bytes / (1024u * 1024u)); }
+int sxn_sys_disk_total_mib(void) { return (int)(g_info.sxfs_total_bytes / (1024u * 1024u)); }
 int sxn_sys_clock_valid(void) { return g_rt.valid != 0 ? 1 : 0; }
 int sxn_sys_clock_hour(void) { return g_rt.hour; }
 int sxn_sys_clock_minute(void) { return g_rt.minute; }

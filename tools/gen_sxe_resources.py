@@ -17,7 +17,7 @@ accent, mimes) que nadie puede inferir del build.
 
 NADA DE NUMEROS DUPLICADOS: los magics, tags, versiones, tamanos y topes se
 leen de include/sxe/sxe_format.h, y los flags de lanzamiento de
-savanxp/syscall.h. Es el mismo criterio que Assert-Svfs2FormatMatchesHeader:
+savanxp/syscall.h. Es el mismo criterio que Assert-SxfsFormatMatchesHeader:
 un formato copiado a mano entre el lector y el generador se desincroniza, y la
 falla es silenciosa (blobs que el runtime descarta sin decir por que).
 

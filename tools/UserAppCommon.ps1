@@ -6,8 +6,8 @@ $Script:BuildRoot = Join-Path $Script:ProjectRoot "build"
 $Script:SdkBuildRoot = Join-Path $Script:BuildRoot "sdk"
 $Script:SdkRoot = Join-Path $Script:ProjectRoot "subsystems/posix/sdk/v1"
 $Script:DiskImage = Join-Path $Script:BuildRoot "disk.img"
-$Script:SvfsSectorSize = 512
-$Script:SvfsEntrySize = 64
+$Script:SxfsSectorSize = 512
+$Script:SxfsEntrySize = 64
 
 . (Join-Path $PSScriptRoot "Toolchain.ps1")
 
@@ -460,55 +460,56 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
     return $outputFull
 }
 
-$Script:Svfs2Magic = "SVFS2"
-$Script:Svfs2JournalMagic = "SVJNL2"
-$Script:Svfs2PrimarySuperblockLba = 0
-$Script:Svfs2SecondarySuperblockLba = 1
-$Script:Svfs2JournalLba = 2
-$Script:Svfs2BlockBitmapSectors = 32
-$Script:Svfs2InodeBitmapSectors = 1
-$Script:Svfs2InodeTableSectors = 64
-$Script:Svfs2JournalMetadataSectors = $Script:Svfs2BlockBitmapSectors + $Script:Svfs2InodeBitmapSectors + $Script:Svfs2InodeTableSectors
-$Script:Svfs2JournalSectors = 1 + $Script:Svfs2JournalMetadataSectors
-$Script:Svfs2BlockBitmapLba = $Script:Svfs2JournalLba + $Script:Svfs2JournalSectors
-$Script:Svfs2InodeBitmapLba = $Script:Svfs2BlockBitmapLba + $Script:Svfs2BlockBitmapSectors
-$Script:Svfs2InodeTableLba = $Script:Svfs2InodeBitmapLba + $Script:Svfs2InodeBitmapSectors
-$Script:Svfs2DataLba = $Script:Svfs2InodeTableLba + $Script:Svfs2InodeTableSectors
-$Script:Svfs2MaxInodes = 256
-$Script:Svfs2RootInode = 1
-$Script:Svfs2InodeSize = 128
-$Script:Svfs2DirEntrySize = 80
-$Script:Svfs2MaxExtents = 8
-$Script:Svfs2TotalSectors = 131072
+$Script:SxfsMagic = "SXFS"
+$Script:SxfsVersion = 1
+$Script:SxfsJournalMagic = "SXJNL"
+$Script:SxfsPrimarySuperblockLba = 0
+$Script:SxfsSecondarySuperblockLba = 1
+$Script:SxfsJournalLba = 2
+$Script:SxfsBlockBitmapSectors = 32
+$Script:SxfsInodeBitmapSectors = 1
+$Script:SxfsInodeTableSectors = 64
+$Script:SxfsJournalMetadataSectors = $Script:SxfsBlockBitmapSectors + $Script:SxfsInodeBitmapSectors + $Script:SxfsInodeTableSectors
+$Script:SxfsJournalSectors = 1 + $Script:SxfsJournalMetadataSectors
+$Script:SxfsBlockBitmapLba = $Script:SxfsJournalLba + $Script:SxfsJournalSectors
+$Script:SxfsInodeBitmapLba = $Script:SxfsBlockBitmapLba + $Script:SxfsBlockBitmapSectors
+$Script:SxfsInodeTableLba = $Script:SxfsInodeBitmapLba + $Script:SxfsInodeBitmapSectors
+$Script:SxfsDataLba = $Script:SxfsInodeTableLba + $Script:SxfsInodeTableSectors
+$Script:SxfsMaxInodes = 256
+$Script:SxfsRootInode = 1
+$Script:SxfsInodeSize = 128
+$Script:SxfsDirEntrySize = 80
+$Script:SxfsMaxExtents = 8
+$Script:SxfsTotalSectors = 131072
 
 # Ruta al header canonico del formato (fuente de verdad unica compartida con el
-# kernel). Los $Script:Svfs2* de arriba son un espejo en PowerShell que
-# Assert-Svfs2FormatMatchesHeader valida contra este archivo en cada build.
-$Script:Svfs2FormatHeader = Join-Path $Script:ProjectRoot "include/svfs/svfs_format.h"
+# kernel). Los $Script:Sxfs* de arriba son un espejo en PowerShell que
+# Assert-SxfsFormatMatchesHeader valida contra este archivo en cada build.
+$Script:SxfsFormatHeader = Join-Path $Script:ProjectRoot "include/sxfs/sxfs_format.h"
 
-# Verifica que las constantes de layout de SVFS2 en PowerShell coincidan con
-# include/svfs/svfs_format.h. Historicamente el formato vivia duplicado a mano
+# Verifica que las constantes de layout de SxFS en PowerShell coincidan con
+# include/sxfs/sxfs_format.h. Historicamente el formato vivia duplicado a mano
 # entre el kernel (C++) y el host (PowerShell) y las copias se desincronizaban;
 # esta comprobacion convierte esa divergencia en un error de build inmediato en
 # vez de una corrupcion silenciosa de la imagen. Parsea solo los #define base
 # (literales enteros) y re-deriva los LBAs compuestos con las mismas formulas
 # que el header, cazando tanto drift de constantes como de formulas.
-function Assert-Svfs2FormatMatchesHeader {
-    if (-not (Test-Path $Script:Svfs2FormatHeader)) {
-        throw "No se encuentra el header canonico de formato SVFS2 en '$($Script:Svfs2FormatHeader)'."
+function Assert-SxfsFormatMatchesHeader {
+    if (-not (Test-Path $Script:SxfsFormatHeader)) {
+        throw "No se encuentra el header canonico de formato SxFS en '$($Script:SxfsFormatHeader)'."
     }
-    $text = [System.IO.File]::ReadAllText($Script:Svfs2FormatHeader)
+    $text = [System.IO.File]::ReadAllText($Script:SxfsFormatHeader)
 
     $base = @{}
     foreach ($line in ($text -split "`n")) {
-        if ($line -match '^\s*#define\s+(SVFS_[A-Z0-9_]+)\s+([0-9]+)u?\s*(?:/\*.*)?$') {
+        if ($line -match '^\s*#define\s+(SXFS_[A-Z0-9_]+)\s+([0-9]+)u?\s*(?:/\*.*)?$') {
             $base[$Matches[1]] = [uint32]$Matches[2]
         }
     }
 
     # Magia del superblock: se reconstruye desde el array de chars del header.
     $sbMagic = ""
-    if ($text -match 'svfs_superblock_magic\[8\]\s*=\s*\{([^}]*)\}') {
+    if ($text -match 'sxfs_superblock_magic\[8\]\s*=\s*\{([^}]*)\}') {
         foreach ($m in [regex]::Matches($Matches[1], "'([^']+)'")) {
             $ch = $m.Groups[1].Value
             if ($ch -eq '\0') { break }
@@ -517,42 +518,44 @@ function Assert-Svfs2FormatMatchesHeader {
     }
 
     $required = @(
-        'SVFS_SECTOR_SIZE', 'SVFS_PRIMARY_SB_LBA', 'SVFS_SECONDARY_SB_LBA', 'SVFS_JOURNAL_LBA',
-        'SVFS_BLOCK_BITMAP_SECTORS', 'SVFS_INODE_BITMAP_SECTORS', 'SVFS_INODE_TABLE_SECTORS',
-        'SVFS_MAX_INODES', 'SVFS_ROOT_INODE', 'SVFS_MAX_EXTENTS', 'SVFS_INODE_SIZE', 'SVFS_DIR_ENTRY_SIZE')
+        'SXFS_SECTOR_SIZE', 'SXFS_PRIMARY_SB_LBA', 'SXFS_SECONDARY_SB_LBA', 'SXFS_JOURNAL_LBA',
+        'SXFS_BLOCK_BITMAP_SECTORS', 'SXFS_INODE_BITMAP_SECTORS', 'SXFS_INODE_TABLE_SECTORS',
+        'SXFS_MAX_INODES', 'SXFS_ROOT_INODE', 'SXFS_MAX_EXTENTS', 'SXFS_INODE_SIZE', 'SXFS_DIR_ENTRY_SIZE',
+        'SXFS_VERSION')
     foreach ($key in $required) {
         if (-not $base.ContainsKey($key)) {
-            throw "El header '$($Script:Svfs2FormatHeader)' no define '$key' como literal entero; no se puede validar el formato SVFS2."
+            throw "El header '$($Script:SxfsFormatHeader)' no define '$key' como literal entero; no se puede validar el formato SxFS."
         }
     }
 
     # LBAs compuestos re-derivados con las mismas formulas que el header.
-    $journalMetadata = $base['SVFS_BLOCK_BITMAP_SECTORS'] + $base['SVFS_INODE_BITMAP_SECTORS'] + $base['SVFS_INODE_TABLE_SECTORS']
+    $journalMetadata = $base['SXFS_BLOCK_BITMAP_SECTORS'] + $base['SXFS_INODE_BITMAP_SECTORS'] + $base['SXFS_INODE_TABLE_SECTORS']
     $journalSectors = 1 + $journalMetadata
-    $blockBitmapLba = $base['SVFS_JOURNAL_LBA'] + $journalSectors
-    $inodeBitmapLba = $blockBitmapLba + $base['SVFS_BLOCK_BITMAP_SECTORS']
-    $inodeTableLba = $inodeBitmapLba + $base['SVFS_INODE_BITMAP_SECTORS']
-    $dataLba = $inodeTableLba + $base['SVFS_INODE_TABLE_SECTORS']
+    $blockBitmapLba = $base['SXFS_JOURNAL_LBA'] + $journalSectors
+    $inodeBitmapLba = $blockBitmapLba + $base['SXFS_BLOCK_BITMAP_SECTORS']
+    $inodeTableLba = $inodeBitmapLba + $base['SXFS_INODE_BITMAP_SECTORS']
+    $dataLba = $inodeTableLba + $base['SXFS_INODE_TABLE_SECTORS']
 
     $checks = @(
-        @{ Name = 'SectorSize'; Header = $base['SVFS_SECTOR_SIZE']; Ps = $Script:SvfsSectorSize }
-        @{ Name = 'PrimarySuperblockLba'; Header = $base['SVFS_PRIMARY_SB_LBA']; Ps = $Script:Svfs2PrimarySuperblockLba }
-        @{ Name = 'SecondarySuperblockLba'; Header = $base['SVFS_SECONDARY_SB_LBA']; Ps = $Script:Svfs2SecondarySuperblockLba }
-        @{ Name = 'JournalLba'; Header = $base['SVFS_JOURNAL_LBA']; Ps = $Script:Svfs2JournalLba }
-        @{ Name = 'BlockBitmapSectors'; Header = $base['SVFS_BLOCK_BITMAP_SECTORS']; Ps = $Script:Svfs2BlockBitmapSectors }
-        @{ Name = 'InodeBitmapSectors'; Header = $base['SVFS_INODE_BITMAP_SECTORS']; Ps = $Script:Svfs2InodeBitmapSectors }
-        @{ Name = 'InodeTableSectors'; Header = $base['SVFS_INODE_TABLE_SECTORS']; Ps = $Script:Svfs2InodeTableSectors }
-        @{ Name = 'MaxInodes'; Header = $base['SVFS_MAX_INODES']; Ps = $Script:Svfs2MaxInodes }
-        @{ Name = 'RootInode'; Header = $base['SVFS_ROOT_INODE']; Ps = $Script:Svfs2RootInode }
-        @{ Name = 'MaxExtents'; Header = $base['SVFS_MAX_EXTENTS']; Ps = $Script:Svfs2MaxExtents }
-        @{ Name = 'InodeSize'; Header = $base['SVFS_INODE_SIZE']; Ps = $Script:Svfs2InodeSize }
-        @{ Name = 'DirEntrySize'; Header = $base['SVFS_DIR_ENTRY_SIZE']; Ps = $Script:Svfs2DirEntrySize }
-        @{ Name = 'JournalMetadataSectors'; Header = $journalMetadata; Ps = $Script:Svfs2JournalMetadataSectors }
-        @{ Name = 'JournalSectors'; Header = $journalSectors; Ps = $Script:Svfs2JournalSectors }
-        @{ Name = 'BlockBitmapLba'; Header = $blockBitmapLba; Ps = $Script:Svfs2BlockBitmapLba }
-        @{ Name = 'InodeBitmapLba'; Header = $inodeBitmapLba; Ps = $Script:Svfs2InodeBitmapLba }
-        @{ Name = 'InodeTableLba'; Header = $inodeTableLba; Ps = $Script:Svfs2InodeTableLba }
-        @{ Name = 'DataLba'; Header = $dataLba; Ps = $Script:Svfs2DataLba }
+        @{ Name = 'SectorSize'; Header = $base['SXFS_SECTOR_SIZE']; Ps = $Script:SxfsSectorSize }
+        @{ Name = 'Version'; Header = $base['SXFS_VERSION']; Ps = $Script:SxfsVersion }
+        @{ Name = 'PrimarySuperblockLba'; Header = $base['SXFS_PRIMARY_SB_LBA']; Ps = $Script:SxfsPrimarySuperblockLba }
+        @{ Name = 'SecondarySuperblockLba'; Header = $base['SXFS_SECONDARY_SB_LBA']; Ps = $Script:SxfsSecondarySuperblockLba }
+        @{ Name = 'JournalLba'; Header = $base['SXFS_JOURNAL_LBA']; Ps = $Script:SxfsJournalLba }
+        @{ Name = 'BlockBitmapSectors'; Header = $base['SXFS_BLOCK_BITMAP_SECTORS']; Ps = $Script:SxfsBlockBitmapSectors }
+        @{ Name = 'InodeBitmapSectors'; Header = $base['SXFS_INODE_BITMAP_SECTORS']; Ps = $Script:SxfsInodeBitmapSectors }
+        @{ Name = 'InodeTableSectors'; Header = $base['SXFS_INODE_TABLE_SECTORS']; Ps = $Script:SxfsInodeTableSectors }
+        @{ Name = 'MaxInodes'; Header = $base['SXFS_MAX_INODES']; Ps = $Script:SxfsMaxInodes }
+        @{ Name = 'RootInode'; Header = $base['SXFS_ROOT_INODE']; Ps = $Script:SxfsRootInode }
+        @{ Name = 'MaxExtents'; Header = $base['SXFS_MAX_EXTENTS']; Ps = $Script:SxfsMaxExtents }
+        @{ Name = 'InodeSize'; Header = $base['SXFS_INODE_SIZE']; Ps = $Script:SxfsInodeSize }
+        @{ Name = 'DirEntrySize'; Header = $base['SXFS_DIR_ENTRY_SIZE']; Ps = $Script:SxfsDirEntrySize }
+        @{ Name = 'JournalMetadataSectors'; Header = $journalMetadata; Ps = $Script:SxfsJournalMetadataSectors }
+        @{ Name = 'JournalSectors'; Header = $journalSectors; Ps = $Script:SxfsJournalSectors }
+        @{ Name = 'BlockBitmapLba'; Header = $blockBitmapLba; Ps = $Script:SxfsBlockBitmapLba }
+        @{ Name = 'InodeBitmapLba'; Header = $inodeBitmapLba; Ps = $Script:SxfsInodeBitmapLba }
+        @{ Name = 'InodeTableLba'; Header = $inodeTableLba; Ps = $Script:SxfsInodeTableLba }
+        @{ Name = 'DataLba'; Header = $dataLba; Ps = $Script:SxfsDataLba }
     )
 
     $mismatches = @()
@@ -561,15 +564,15 @@ function Assert-Svfs2FormatMatchesHeader {
             $mismatches += ("  $($check.Name): header=$($check.Header) vs PowerShell=$($check.Ps)")
         }
     }
-    if ($sbMagic -ne $Script:Svfs2Magic) {
-        $mismatches += ("  Magic: header='$sbMagic' vs PowerShell='$($Script:Svfs2Magic)'")
+    if ($sbMagic -ne $Script:SxfsMagic) {
+        $mismatches += ("  Magic: header='$sbMagic' vs PowerShell='$($Script:SxfsMagic)'")
     }
 
     if ($mismatches.Count -gt 0) {
         $message = @(
-            "Las constantes de formato SVFS2 en PowerShell divergen de include/svfs/svfs_format.h:"
+            "Las constantes de formato SxFS en PowerShell divergen de include/sxfs/sxfs_format.h:"
         ) + $mismatches + @(
-            "Actualiza los `$Script:Svfs2* en tools/UserAppCommon.ps1 para que coincidan con el header (fuente de verdad)."
+            "Actualiza los `$Script:Sxfs* en tools/UserAppCommon.ps1 para que coincidan con el header (fuente de verdad)."
         )
         throw ($message -join [Environment]::NewLine)
     }
@@ -584,7 +587,7 @@ function Set-UInt16Le([byte[]]$Buffer, [int]$Offset, [uint16]$Value) {
     [Array]::Copy($bytes, 0, $Buffer, $Offset, 2)
 }
 
-function Get-Svfs2Checksum([byte[]]$Buffer, [int]$Offset, [int]$Length, [int]$ChecksumOffset) {
+function Get-SxfsChecksum([byte[]]$Buffer, [int]$Offset, [int]$Length, [int]$ChecksumOffset) {
     [uint32]$value = 2166136261
     for ($index = 0; $index -lt $Length; $index += 1) {
         $absolute = $Offset + $index
@@ -599,7 +602,7 @@ function Get-Svfs2Checksum([byte[]]$Buffer, [int]$Offset, [int]$Length, [int]$Ch
     return $value
 }
 
-function Get-Svfs2Superblock([byte[]]$Buffer, [int]$Offset) {
+function Get-SxfsSuperblock([byte[]]$Buffer, [int]$Offset) {
     return [pscustomobject]@{
         Magic = Get-AsciiField $Buffer $Offset 8
         Version = Get-UInt32Le $Buffer ($Offset + 8)
@@ -621,46 +624,46 @@ function Get-Svfs2Superblock([byte[]]$Buffer, [int]$Offset) {
     }
 }
 
-function Test-Svfs2Superblock([byte[]]$Buffer, [int]$Offset) {
-    $superblock = Get-Svfs2Superblock $Buffer $Offset
-    if (-not $superblock.Magic.StartsWith($Script:Svfs2Magic)) {
+function Test-SxfsSuperblock([byte[]]$Buffer, [int]$Offset) {
+    $superblock = Get-SxfsSuperblock $Buffer $Offset
+    if (-not $superblock.Magic.StartsWith($Script:SxfsMagic)) {
         return $null
     }
-    if ($superblock.Version -ne 2 -or
-        $superblock.JournalLba -ne $Script:Svfs2JournalLba -or
-        $superblock.BlockBitmapLba -ne $Script:Svfs2BlockBitmapLba -or
-        $superblock.InodeBitmapLba -ne $Script:Svfs2InodeBitmapLba -or
-        $superblock.InodeTableLba -ne $Script:Svfs2InodeTableLba -or
-        $superblock.DataLba -ne $Script:Svfs2DataLba -or
-        $superblock.MaxInodes -ne $Script:Svfs2MaxInodes -or
-        $superblock.RootInode -ne $Script:Svfs2RootInode) {
+    if ($superblock.Version -ne $Script:SxfsVersion -or
+        $superblock.JournalLba -ne $Script:SxfsJournalLba -or
+        $superblock.BlockBitmapLba -ne $Script:SxfsBlockBitmapLba -or
+        $superblock.InodeBitmapLba -ne $Script:SxfsInodeBitmapLba -or
+        $superblock.InodeTableLba -ne $Script:SxfsInodeTableLba -or
+        $superblock.DataLba -ne $Script:SxfsDataLba -or
+        $superblock.MaxInodes -ne $Script:SxfsMaxInodes -or
+        $superblock.RootInode -ne $Script:SxfsRootInode) {
         return $null
     }
-    $checksum = Get-Svfs2Checksum $Buffer $Offset $Script:SvfsSectorSize ($Offset + 12)
+    $checksum = Get-SxfsChecksum $Buffer $Offset $Script:SxfsSectorSize ($Offset + 12)
     if ($checksum -ne $superblock.Checksum) {
         return $null
     }
     return $superblock
 }
 
-function Get-Svfs2BitmapBit([byte[]]$Buffer, [uint32]$Bit) {
+function Get-SxfsBitmapBit([byte[]]$Buffer, [uint32]$Bit) {
     # OJO: usar division entera (shift), no [int]($Bit / 8): el operador / de
     # PowerShell devuelve double y [int] redondea (banker's rounding), con lo
     # que bit%8>=5 cae en el byte equivocado y desincroniza con el indexado
-    # floor del kernel (kernel/svfs.cpp bitmap_test/bitmap_set).
+    # floor del kernel (kernel/sxfs.cpp bitmap_test/bitmap_set).
     $byteIndex = [int]($Bit -shr 3)
     $shift = [int]($Bit % 8)
     return ($Buffer[$byteIndex] -band (1 -shl $shift)) -ne 0
 }
 
-function Get-Svfs2InodeOffset($Image, [uint32]$InodeId) {
-    return ($Script:Svfs2InodeTableLba * $Script:SvfsSectorSize) + (($InodeId - 1) * $Script:Svfs2InodeSize)
+function Get-SxfsInodeOffset($Image, [uint32]$InodeId) {
+    return ($Script:SxfsInodeTableLba * $Script:SxfsSectorSize) + (($InodeId - 1) * $Script:SxfsInodeSize)
 }
 
-function Get-Svfs2Inode($Image, [uint32]$InodeId) {
-    $offset = Get-Svfs2InodeOffset $Image $InodeId
+function Get-SxfsInode($Image, [uint32]$InodeId) {
+    $offset = Get-SxfsInodeOffset $Image $InodeId
     $extents = @()
-    for ($index = 0; $index -lt $Script:Svfs2MaxExtents; $index += 1) {
+    for ($index = 0; $index -lt $Script:SxfsMaxExtents; $index += 1) {
         $extentOffset = $offset + 20 + ($index * 8)
         $extents += [pscustomobject]@{
             StartLba = Get-UInt32Le $Image.Bytes $extentOffset
@@ -677,34 +680,34 @@ function Get-Svfs2Inode($Image, [uint32]$InodeId) {
     }
 }
 
-function Get-Svfs2InodeCapacityBytes($Inode) {
+function Get-SxfsInodeCapacityBytes($Inode) {
     [uint64]$capacity = 0
     foreach ($extent in $Inode.Extents | Select-Object -First $Inode.ExtentCount) {
-        $capacity += [uint64]$extent.SectorCount * [uint64]$Script:SvfsSectorSize
+        $capacity += [uint64]$extent.SectorCount * [uint64]$Script:SxfsSectorSize
     }
     return [uint32]$capacity
 }
 
-function Read-Svfs2InodeBytes($Image, $Inode) {
+function Read-SxfsInodeBytes($Image, $Inode) {
     $result = New-Object byte[] $Inode.Size
     $written = 0
     foreach ($extent in $Inode.Extents | Select-Object -First $Inode.ExtentCount) {
         if ($written -ge $Inode.Size) {
             break
         }
-        $extentOffset = $extent.StartLba * $Script:SvfsSectorSize
-        $extentLength = [Math]::Min($Inode.Size - $written, $extent.SectorCount * $Script:SvfsSectorSize)
+        $extentOffset = $extent.StartLba * $Script:SxfsSectorSize
+        $extentLength = [Math]::Min($Inode.Size - $written, $extent.SectorCount * $Script:SxfsSectorSize)
         [Array]::Copy($Image.Bytes, $extentOffset, $result, $written, $extentLength)
         $written += $extentLength
     }
     return ,$result
 }
 
-function Get-Svfs2DirEntries($Image, [uint32]$InodeId) {
-    $inode = Get-Svfs2Inode $Image $InodeId
-    $bytes = Read-Svfs2InodeBytes $Image $inode
+function Get-SxfsDirEntries($Image, [uint32]$InodeId) {
+    $inode = Get-SxfsInode $Image $InodeId
+    $bytes = Read-SxfsInodeBytes $Image $inode
     $entries = @()
-    for ($offset = 0; $offset + $Script:Svfs2DirEntrySize -le $bytes.Length; $offset += $Script:Svfs2DirEntrySize) {
+    for ($offset = 0; $offset + $Script:SxfsDirEntrySize -le $bytes.Length; $offset += $Script:SxfsDirEntrySize) {
         $inodeRef = Get-UInt32Le $bytes $offset
         $type = Get-UInt16Le $bytes ($offset + 4)
         $nameLength = Get-UInt16Le $bytes ($offset + 6)
@@ -719,16 +722,16 @@ function Get-Svfs2DirEntries($Image, [uint32]$InodeId) {
     return $entries
 }
 
-function Find-Svfs2Path($Image, [string]$RelativePath) {
+function Find-SxfsPath($Image, [string]$RelativePath) {
     if ([string]::IsNullOrWhiteSpace($RelativePath)) {
-        return [pscustomobject]@{ InodeId = $Script:Svfs2RootInode; ParentInodeId = $Script:Svfs2RootInode; Name = ""; Type = 2 }
+        return [pscustomobject]@{ InodeId = $Script:SxfsRootInode; ParentInodeId = $Script:SxfsRootInode; Name = ""; Type = 2 }
     }
 
-    $current = $Script:Svfs2RootInode
-    $parent = $Script:Svfs2RootInode
+    $current = $Script:SxfsRootInode
+    $parent = $Script:SxfsRootInode
     $match = $null
     foreach ($component in $RelativePath.Split('/')) {
-        $entries = Get-Svfs2DirEntries $Image $current
+        $entries = Get-SxfsDirEntries $Image $current
         $match = $entries | Where-Object { $_.InodeId -ne 0 -and $_.Name -eq $component } | Select-Object -First 1
         if (-not $match) {
             return $null
@@ -744,7 +747,7 @@ function Find-Svfs2Path($Image, [string]$RelativePath) {
     }
 }
 
-function Get-Svfs2TypeName([uint16]$Type) {
+function Get-SxfsTypeName([uint16]$Type) {
     switch ($Type) {
         1 { return "file" }
         2 { return "directory" }
@@ -752,19 +755,19 @@ function Get-Svfs2TypeName([uint16]$Type) {
     }
 }
 
-function Get-Svfs2PathInfo($Image, [string]$Path) {
+function Get-SxfsPathInfo($Image, [string]$Path) {
     $relative = if ($Path -eq "/disk" -or $Path -eq "/disk/") {
         ""
     } else {
-        Get-RelativeSvfsPath $Path
+        Get-RelativeSxfsPath $Path
     }
 
-    $entry = Find-Svfs2Path $Image $relative
+    $entry = Find-SxfsPath $Image $relative
     if (-not $entry) {
         return $null
     }
 
-    $inode = Get-Svfs2Inode $Image $entry.InodeId
+    $inode = Get-SxfsInode $Image $entry.InodeId
     return [pscustomobject]@{
         Path = if ($relative) { "/disk/$relative" } else { "/disk" }
         RelativePath = $relative
@@ -773,18 +776,18 @@ function Get-Svfs2PathInfo($Image, [string]$Path) {
     }
 }
 
-function Read-Svfs2FileBytesByPath($Image, [string]$Path) {
-    $info = Get-Svfs2PathInfo $Image $Path
+function Read-SxfsFileBytesByPath($Image, [string]$Path) {
+    $info = Get-SxfsPathInfo $Image $Path
     if (-not $info) {
         return $null
     }
     if ($info.Entry.Type -ne 1 -or $info.Inode.Type -ne 1) {
-        throw "'$Path' no es un archivo regular en SVFS2."
+        throw "'$Path' no es un archivo regular en SxFS."
     }
-    return Read-Svfs2InodeBytes $Image $info.Inode
+    return Read-SxfsInodeBytes $Image $info.Inode
 }
 
-function Test-Svfs2Consistency($Image) {
+function Test-SxfsConsistency($Image) {
     $issues = New-Object System.Collections.Generic.List[string]
     $queue = New-Object System.Collections.Generic.Queue[object]
     $visited = @{}
@@ -795,7 +798,7 @@ function Test-Svfs2Consistency($Image) {
     $queue.Enqueue([pscustomobject]@{
         Path = "/disk"
         RelativePath = ""
-        InodeId = $Script:Svfs2RootInode
+        InodeId = $Script:SxfsRootInode
         ExpectedType = 2
     })
 
@@ -815,13 +818,13 @@ function Test-Svfs2Consistency($Image) {
         $visited[$current.InodeId] = $current.Path
 
         try {
-            $inode = Get-Svfs2Inode $Image ([uint32]$current.InodeId)
+            $inode = Get-SxfsInode $Image ([uint32]$current.InodeId)
         } catch {
             $issues.Add(("$($current.Path): inode $($current.InodeId) no se pudo leer ({0})" -f $_.Exception.Message))
             continue
         }
 
-        if (-not (Get-Svfs2BitmapBit $Image.InodeBitmap ([uint32]($current.InodeId - 1)))) {
+        if (-not (Get-SxfsBitmapBit $Image.InodeBitmap ([uint32]($current.InodeId - 1)))) {
             $issues.Add(("$($current.Path): el inode $($current.InodeId) no esta marcado en el bitmap"))
         }
 
@@ -831,10 +834,10 @@ function Test-Svfs2Consistency($Image) {
         }
 
         if ($inode.Type -ne $current.ExpectedType) {
-            $issues.Add(("$($current.Path): la entrada dice {0} pero el inode $($current.InodeId) es {1}" -f (Get-Svfs2TypeName $current.ExpectedType), (Get-Svfs2TypeName $inode.Type)))
+            $issues.Add(("$($current.Path): la entrada dice {0} pero el inode $($current.InodeId) es {1}" -f (Get-SxfsTypeName $current.ExpectedType), (Get-SxfsTypeName $inode.Type)))
         }
 
-        $capacity = Get-Svfs2InodeCapacityBytes $inode
+        $capacity = Get-SxfsInodeCapacityBytes $inode
         if ($inode.Size -gt $capacity) {
             $issues.Add(("$($current.Path): inode $($current.InodeId) declara size=$($inode.Size) pero su capacidad es $capacity"))
         }
@@ -857,7 +860,7 @@ function Test-Svfs2Consistency($Image) {
 
             for ($sector = 0; $sector -lt $extent.SectorCount; $sector += 1) {
                 $absoluteSector = [uint32]($extent.StartLba + $sector)
-                if (-not (Get-Svfs2BitmapBit $Image.BlockBitmap $absoluteSector)) {
+                if (-not (Get-SxfsBitmapBit $Image.BlockBitmap $absoluteSector)) {
                     $missingBlocks = $true
                 }
 
@@ -889,7 +892,7 @@ function Test-Svfs2Consistency($Image) {
             continue
         }
 
-        foreach ($entry in Get-Svfs2DirEntries $Image ([uint32]$current.InodeId)) {
+        foreach ($entry in Get-SxfsDirEntries $Image ([uint32]$current.InodeId)) {
             if ($entry.InodeId -eq 0) {
                 continue
             }
@@ -907,7 +910,7 @@ function Test-Svfs2Consistency($Image) {
             if ($entry.NameLength -ne $entry.Name.Length) {
                 $issues.Add(("${entryPath}: NameLength=$($entry.NameLength) no coincide con longitud real $($entry.Name.Length)"))
             }
-            if ($entry.InodeId -gt $Script:Svfs2MaxInodes) {
+            if ($entry.InodeId -gt $Script:SxfsMaxInodes) {
                 $issues.Add(("${entryPath}: referencia a inode invalido $($entry.InodeId)"))
                 continue
             }
@@ -924,8 +927,8 @@ function Test-Svfs2Consistency($Image) {
     return $issues.ToArray()
 }
 
-function Assert-Svfs2Consistency($Image, [string]$DiskPath = "") {
-    $issues = @(Test-Svfs2Consistency $Image)
+function Assert-SxfsConsistency($Image, [string]$DiskPath = "") {
+    $issues = @(Test-SxfsConsistency $Image)
     if ($issues.Count -eq 0) {
         return
     }
@@ -938,9 +941,9 @@ function Assert-Svfs2Consistency($Image, [string]$DiskPath = "") {
     }
 
     $prefix = if ([string]::IsNullOrWhiteSpace($resolvedDiskPath)) {
-        "La imagen SVFS2 tiene inconsistencias:"
+        "La imagen SxFS tiene inconsistencias:"
     } else {
-        "La imagen SVFS2 '$resolvedDiskPath' tiene inconsistencias:"
+        "La imagen SxFS '$resolvedDiskPath' tiene inconsistencias:"
     }
 
     $details = ($issues | Select-Object -First 8 | ForEach-Object { "- $_" }) -join [Environment]::NewLine
@@ -953,7 +956,7 @@ function Assert-Svfs2Consistency($Image, [string]$DiskPath = "") {
     throw ($prefix + [Environment]::NewLine + $details + $suffix)
 }
 
-function Get-RelativeSvfsPath([string]$Path) {
+function Get-RelativeSxfsPath([string]$Path) {
     if (-not $Path.StartsWith("/disk")) {
         throw "La ruta destino debe vivir bajo /disk."
     }
@@ -962,57 +965,57 @@ function Get-RelativeSvfsPath([string]$Path) {
         throw "La ruta destino debe apuntar a un archivo o subdirectorio bajo /disk."
     }
     if ($relative.Length -gt 255) {
-        throw "La ruta relativa '$relative' excede el limite de 255 caracteres de SVFS2."
+        throw "La ruta relativa '$relative' excede el limite de 255 caracteres de SxFS."
     }
     return $relative
 }
 
-function Open-SvfsImage([string]$DiskPath) {
+function Open-SxfsImage([string]$DiskPath) {
     if (-not (Test-Path $DiskPath)) {
         throw "No existe '$DiskPath'. Ejecuta primero '.\\build.ps1 build' para crear la imagen base."
     }
 
     $bytes = [System.IO.File]::ReadAllBytes($DiskPath)
-    if ($bytes.Length -lt ($Script:SvfsSectorSize * $Script:Svfs2DataLba)) {
-        throw "La imagen '$DiskPath' no parece un disco SVFS2 valido."
+    if ($bytes.Length -lt ($Script:SxfsSectorSize * $Script:SxfsDataLba)) {
+        throw "La imagen '$DiskPath' no parece un disco SxFS valido."
     }
 
-    $primary = Test-Svfs2Superblock $bytes 0
-    $secondary = Test-Svfs2Superblock $bytes $Script:SvfsSectorSize
+    $primary = Test-SxfsSuperblock $bytes 0
+    $secondary = Test-SxfsSuperblock $bytes $Script:SxfsSectorSize
     $superblock = if ($secondary -and (-not $primary -or $secondary.Sequence -gt $primary.Sequence)) { $secondary } else { $primary }
     if (-not $superblock) {
-        throw "La imagen '$DiskPath' no contiene un superblock SVFS2 valido."
+        throw "La imagen '$DiskPath' no contiene un superblock SxFS valido."
     }
 
     return [pscustomobject]@{
         Bytes = $bytes
         DiskPath = $DiskPath
         TotalSectors = $superblock.TotalSectors
-        BlockBitmap = [byte[]]($bytes[($Script:Svfs2BlockBitmapLba * $Script:SvfsSectorSize)..(($Script:Svfs2BlockBitmapLba * $Script:SvfsSectorSize) + ($Script:Svfs2BlockBitmapSectors * $Script:SvfsSectorSize) - 1)])
-        InodeBitmap = [byte[]]($bytes[($Script:Svfs2InodeBitmapLba * $Script:SvfsSectorSize)..(($Script:Svfs2InodeBitmapLba * $Script:SvfsSectorSize) + ($Script:Svfs2InodeBitmapSectors * $Script:SvfsSectorSize) - 1)])
+        BlockBitmap = [byte[]]($bytes[($Script:SxfsBlockBitmapLba * $Script:SxfsSectorSize)..(($Script:SxfsBlockBitmapLba * $Script:SxfsSectorSize) + ($Script:SxfsBlockBitmapSectors * $Script:SxfsSectorSize) - 1)])
+        InodeBitmap = [byte[]]($bytes[($Script:SxfsInodeBitmapLba * $Script:SxfsSectorSize)..(($Script:SxfsInodeBitmapLba * $Script:SxfsSectorSize) + ($Script:SxfsInodeBitmapSectors * $Script:SxfsSectorSize) - 1)])
     }
 }
 
-# --- Tool nativo libsvfs (svfs-cli) --------------------------------------------
-# Toda la ESCRITURA de imagenes SVFS2 pasa por el tool nativo del core portable
-# (libsvfs), no por PowerShell. Estas funciones lo compilan y lo manejan; las de
+# --- Tool nativo libsxfs (sxfs-cli) --------------------------------------------
+# Toda la ESCRITURA de imagenes SxFS pasa por el tool nativo del core portable
+# (libsxfs), no por PowerShell. Estas funciones lo compilan y lo manejan; las de
 # arriba (Get-*/Read-*/Test-*/Open-*/Assert-*) son solo lectura/validacion.
 
-# Compila el tool de host libsvfs (svfs-cli), con cache por mtime. Devuelve la
+# Compila el tool de host libsxfs (sxfs-cli), con cache por mtime. Devuelve la
 # ruta al ejecutable.
-function Build-SvfsCli {
+function Build-SxfsCli {
     $clang = Require-Executable "clang" (Get-ToolchainCandidates "clang")
     $toolsOut = Join-Path $Script:BuildRoot "tools"
     Ensure-Directory $toolsOut
-    $exe = Join-Path $toolsOut ("svfs-cli" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
+    $exe = Join-Path $toolsOut ("sxfs-cli" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
 
     $sources = @(
-        (Join-Path $Script:ProjectRoot "libsvfs/svfs_core.c"),
-        (Join-Path $Script:ProjectRoot "libsvfs/svfs_cli.c")
+        (Join-Path $Script:ProjectRoot "libsxfs/sxfs_core.c"),
+        (Join-Path $Script:ProjectRoot "libsxfs/sxfs_cli.c")
     )
     $deps = $sources + @(
-        (Join-Path $Script:ProjectRoot "libsvfs/svfs_core.h"),
-        (Join-Path $Script:ProjectRoot "include/svfs/svfs_format.h")
+        (Join-Path $Script:ProjectRoot "libsxfs/sxfs_core.h"),
+        (Join-Path $Script:ProjectRoot "include/sxfs/sxfs_format.h")
     )
 
     $needsBuild = -not (Test-Path $exe)
@@ -1027,25 +1030,25 @@ function Build-SvfsCli {
     }
 
     if ($needsBuild) {
-        Write-Host "Compilando svfs-cli (tool de host libsvfs)..."
+        Write-Host "Compilando sxfs-cli (tool de host libsxfs)..."
         $compileArgs = @(
             "-std=c11", "-O2", "-Wall", "-Wextra", "-D_CRT_SECURE_NO_WARNINGS",
             "-I", (Join-Path $Script:ProjectRoot "include"),
-            "-I", (Join-Path $Script:ProjectRoot "libsvfs")
+            "-I", (Join-Path $Script:ProjectRoot "libsxfs")
         ) + $sources + @("-o", $exe)
         & $clang @compileArgs
         if ($LASTEXITCODE -ne 0) {
-            throw "Fallo la compilacion de svfs-cli."
+            throw "Fallo la compilacion de sxfs-cli."
         }
     }
 
     return $exe
 }
 
-# Genera el manifiesto TAB-separado que consume 'svfs-cli apply' recorriendo el
+# Genera el manifiesto TAB-separado que consume 'sxfs-cli apply' recorriendo el
 # arbol del host (el walk especifico del OS vive aca, no en el tool). bin y tmp
 # primero, luego el arbol ordenado.
-function New-SvfsManifest([string]$SourceRoot) {
+function New-SxfsManifest([string]$SourceRoot) {
     $manifestPath = Join-Path $Script:BuildRoot "diskfs-manifest.txt"
     $builder = [System.Text.StringBuilder]::new()
     [void]$builder.Append("mkdir`tbin`n")
@@ -1068,23 +1071,23 @@ function New-SvfsManifest([string]$SourceRoot) {
     return $manifestPath
 }
 
-# Codigo de salida con el que svfs-cli reporta SVFS_ERR_NO_SPACE (el volumen
+# Codigo de salida con el que sxfs-cli reporta SXFS_ERR_NO_SPACE (el volumen
 # tiene espacio libre pero no una corrida contigua del tamano pedido). Espeja
-# SVFS_CLI_EXIT_NO_SPACE en libsvfs/svfs_cli.c; si se desincroniza, el unico
+# SXFS_CLI_EXIT_NO_SPACE en libsxfs/sxfs_cli.c; si se desincroniza, el unico
 # efecto es perder el reintento automatico y volver a fallar el build duro.
-$Script:SvfsCliExitNoSpace = 3
+$Script:SxfsCliExitNoSpace = 3
 
-# Enumera el arbol de una imagen SVFS2 (solo lectura, con los helpers Get-*).
+# Enumera el arbol de una imagen SxFS (solo lectura, con los helpers Get-*).
 # Devuelve Dirs (rutas relativas a la raiz) y Files (ruta + inodo), en orden de
 # recorrido por niveles: padres antes que hijos, listo para volcar a un
-# manifiesto de svfs-cli.
-function Get-Svfs2Inventory($Image) {
+# manifiesto de sxfs-cli.
+function Get-SxfsInventory($Image) {
     $dirs = New-Object System.Collections.Generic.List[string]
     $files = New-Object System.Collections.Generic.List[object]
     $visited = @{}
 
     $pending = New-Object System.Collections.Generic.Queue[object]
-    $pending.Enqueue([pscustomobject]@{ InodeId = [uint32]$Script:Svfs2RootInode; Prefix = "" })
+    $pending.Enqueue([pscustomobject]@{ InodeId = [uint32]$Script:SxfsRootInode; Prefix = "" })
     while ($pending.Count -gt 0) {
         $current = $pending.Dequeue()
         if ($visited.ContainsKey($current.InodeId)) {
@@ -1092,7 +1095,7 @@ function Get-Svfs2Inventory($Image) {
         }
         $visited[$current.InodeId] = $true
 
-        foreach ($entry in Get-Svfs2DirEntries $Image ([uint32]$current.InodeId)) {
+        foreach ($entry in Get-SxfsDirEntries $Image ([uint32]$current.InodeId)) {
             if ($entry.InodeId -eq 0 -or [string]::IsNullOrWhiteSpace($entry.Name)) {
                 continue
             }
@@ -1109,8 +1112,8 @@ function Get-Svfs2Inventory($Image) {
     return [pscustomobject]@{ Dirs = $dirs.ToArray(); Files = $files.ToArray() }
 }
 
-# Rutas relativas de los archivos que un manifiesto de svfs-cli escribe.
-function Get-SvfsManifestFilePaths([string]$ManifestPath) {
+# Rutas relativas de los archivos que un manifiesto de sxfs-cli escribe.
+function Get-SxfsManifestFilePaths([string]$ManifestPath) {
     $paths = @{}
     foreach ($line in [System.IO.File]::ReadAllLines($ManifestPath)) {
         if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) {
@@ -1131,20 +1134,20 @@ function Get-SvfsManifestFilePaths([string]$ManifestPath) {
 # los datos que viven en el disco y no en el arbol de build (/disk/bin/doomgeneric,
 # los WAD, lo que el usuario haya guardado). Los archivos del manifiesto no se
 # copian porque el apply que sigue los reinstala desde el host, y son ademas los
-# unicos cuyos sectores pudo haber pisado un apply fallido: svfs-cli solo flushea
+# unicos cuyos sectores pudo haber pisado un apply fallido: sxfs-cli solo flushea
 # metadata si termina bien, y el allocator nunca elige sectores de un archivo
 # ajeno al manifiesto porque el bitmap que carga del disco los tiene marcados.
 #
 # La imagen nueva se arma aparte y se mueve al final: si algo falla, la original
 # queda intacta y no se pierden datos por un intento de compactacion. La copia
-# extraida queda en build/svfs-carryover como red de seguridad (la sobrescribe la
+# extraida queda en build/sxfs-carryover como red de seguridad (la sobrescribe la
 # proxima compactacion, y 'build.ps1 clean' la borra).
-function Invoke-SvfsCompaction([string]$Exe, [string]$ImagePath, [string]$ManifestPath) {
-    $image = Open-SvfsImage $ImagePath
-    $inventory = Get-Svfs2Inventory $image
-    $produced = Get-SvfsManifestFilePaths $ManifestPath
+function Invoke-SxfsCompaction([string]$Exe, [string]$ImagePath, [string]$ManifestPath) {
+    $image = Open-SxfsImage $ImagePath
+    $inventory = Get-SxfsInventory $image
+    $produced = Get-SxfsManifestFilePaths $ManifestPath
 
-    $carryRoot = Join-Path $Script:BuildRoot "svfs-carryover"
+    $carryRoot = Join-Path $Script:BuildRoot "sxfs-carryover"
     if (Test-Path $carryRoot) {
         Remove-Item -Recurse -Force $carryRoot
     }
@@ -1163,7 +1166,7 @@ function Invoke-SvfsCompaction([string]$Exe, [string]$ImagePath, [string]$Manife
         }
         $hostPath = Join-Path $carryRoot ($file.RelativePath -replace '/', '\')
         Ensure-Directory (Split-Path -Parent $hostPath)
-        $bytes = Read-Svfs2InodeBytes $image (Get-Svfs2Inode $image $file.InodeId)
+        $bytes = Read-SxfsInodeBytes $image (Get-SxfsInode $image $file.InodeId)
         [System.IO.File]::WriteAllBytes($hostPath, $bytes)
         $lines.Add("file`t$($file.RelativePath)`t$hostPath")
         $preservedCount += 1
@@ -1174,7 +1177,7 @@ function Invoke-SvfsCompaction([string]$Exe, [string]$ImagePath, [string]$Manife
         Write-Host "  la imagen no tiene archivos ajenos a esta build que preservar."
     }
 
-    $carryManifest = Join-Path $Script:BuildRoot "svfs-carryover-manifest.txt"
+    $carryManifest = Join-Path $Script:BuildRoot "sxfs-carryover-manifest.txt"
     [System.IO.File]::WriteAllText($carryManifest, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 
     $staging = "$ImagePath.compact"
@@ -1183,18 +1186,18 @@ function Invoke-SvfsCompaction([string]$Exe, [string]$ImagePath, [string]$Manife
     }
     & $Exe create $staging $image.TotalSectors
     if ($LASTEXITCODE -ne 0) {
-        throw "svfs-cli create fallo compactando '$ImagePath'."
+        throw "sxfs-cli create fallo compactando '$ImagePath'."
     }
     & $Exe apply $staging $carryManifest
     if ($LASTEXITCODE -ne 0) {
-        throw "svfs-cli apply fallo reinstalando los datos preservados al compactar '$ImagePath'. La imagen original quedo intacta."
+        throw "sxfs-cli apply fallo reinstalando los datos preservados al compactar '$ImagePath'. La imagen original quedo intacta."
     }
     Move-Item $staging $ImagePath -Force
 
     Write-Host ("Imagen compactada: {0} archivo(s) preservado(s), {1:N0} bytes." -f $preservedCount, $preservedBytes)
 }
 
-# Aplica un manifiesto con svfs-cli. Si el allocator se queda sin corrida
+# Aplica un manifiesto con sxfs-cli. Si el allocator se queda sin corrida
 # contigua, compacta la imagen y reintenta una vez en vez de abortar el build.
 #
 # La imagen se preserva entre builds para no perder los datos del usuario, y cada
@@ -1203,18 +1206,18 @@ function Invoke-SvfsCompaction([string]$Exe, [string]$ImagePath, [string]$Manife
 # espacio. El workaround era borrar build/disk.img a mano; esto lo hace solo y sin
 # perder datos, porque la compactacion reinstala todo lo que el manifiesto no
 # produce. La garantia de persistencia sigue verificandose despues del reintento
-# (ver Get-SvfsPersistenceSnapshot / Assert-SvfsPersistenceRetained en build.ps1).
-function Invoke-SvfsApply([string]$Exe, [string]$ImagePath, [string]$ManifestPath, [string]$FailureMessage) {
+# (ver Get-SxfsPersistenceSnapshot / Assert-SxfsPersistenceRetained en build.ps1).
+function Invoke-SxfsApply([string]$Exe, [string]$ImagePath, [string]$ManifestPath, [string]$FailureMessage) {
     & $Exe apply $ImagePath $ManifestPath
     if ($LASTEXITCODE -eq 0) {
         return
     }
-    if ($LASTEXITCODE -ne $Script:SvfsCliExitNoSpace) {
+    if ($LASTEXITCODE -ne $Script:SxfsCliExitNoSpace) {
         throw $FailureMessage
     }
 
-    Write-Host "La imagen SVFS2 '$ImagePath' no tiene corrida contigua libre; compactandola y reintentando..."
-    Invoke-SvfsCompaction -Exe $Exe -ImagePath $ImagePath -ManifestPath $ManifestPath
+    Write-Host "La imagen SxFS '$ImagePath' no tiene corrida contigua libre; compactandola y reintentando..."
+    Invoke-SxfsCompaction -Exe $Exe -ImagePath $ImagePath -ManifestPath $ManifestPath
 
     & $Exe apply $ImagePath $ManifestPath
     if ($LASTEXITCODE -ne 0) {
@@ -1222,14 +1225,14 @@ function Invoke-SvfsApply([string]$Exe, [string]$ImagePath, [string]$ManifestPat
     }
 }
 
-# Instala archivos/directorios sueltos en una imagen SVFS2 existente via el tool
-# (svfs-cli apply). $Operations es una lista de hashtables:
+# Instala archivos/directorios sueltos en una imagen SxFS existente via el tool
+# (sxfs-cli apply). $Operations es una lista de hashtables:
 #   @{ Dir = "bin" }                                 -> mkdir bin
 #   @{ File = "/disk/bin/foo"; Source = "C:\ruta" }  -> instala el archivo
 # Las rutas ('Dir'/'File') aceptan prefijo /disk; se normalizan a relativas a la
-# raiz de SVFS. Reemplaza el viejo Open/Ensure-SvfsDirectory/Install-SvfsFile/Save.
-function Install-SvfsFilesWithTool([string]$DiskImagePath, [object[]]$Operations) {
-    $exe = Build-SvfsCli
+# raiz de SxFS. Reemplaza el viejo Open/Ensure-SxfsDirectory/Install-SxfsFile/Save.
+function Install-SxfsFilesWithTool([string]$DiskImagePath, [object[]]$Operations) {
+    $exe = Build-SxfsCli
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($op in $Operations) {
         if ($op.ContainsKey("Dir")) {
@@ -1237,13 +1240,13 @@ function Install-SvfsFilesWithTool([string]$DiskImagePath, [object[]]$Operations
             if ($rel) { $lines.Add("mkdir`t$rel") }
         } elseif ($op.ContainsKey("File")) {
             $rel = ($op.File -replace '^/disk/?', '').Trim('/')
-            if (-not $rel) { throw "Install-SvfsFilesWithTool: ruta de archivo vacia." }
+            if (-not $rel) { throw "Install-SxfsFilesWithTool: ruta de archivo vacia." }
             $lines.Add("file`t$rel`t$($op.Source)")
         }
     }
-    $manifest = Join-Path $Script:BuildRoot "svfs-install-manifest.txt"
+    $manifest = Join-Path $Script:BuildRoot "sxfs-install-manifest.txt"
     [System.IO.File]::WriteAllText($manifest, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
-    Invoke-SvfsApply -Exe $exe -ImagePath $DiskImagePath -ManifestPath $manifest `
-        -FailureMessage "svfs-cli apply fallo instalando en '$DiskImagePath'."
+    Invoke-SxfsApply -Exe $exe -ImagePath $DiskImagePath -ManifestPath $manifest `
+        -FailureMessage "sxfs-cli apply fallo instalando en '$DiskImagePath'."
 }
 

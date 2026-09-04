@@ -26,7 +26,7 @@ constexpr uint8_t kCommandCacheFlush = 0xe7;
 constexpr uint32_t kMaxSectorsPerCommand = 255;
 
 // Prioridad alta: los ATA enumeran antes que el ramdisk, asi un disco IDE
-// persistente (dev) le gana a la imagen del LiveCD cuando svfs elige que montar.
+// persistente (dev) le gana a la imagen del LiveCD cuando sxfs elige que montar.
 constexpr int kDriverPriority = 100;
 
 struct Slot {

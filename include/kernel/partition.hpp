@@ -11,7 +11,7 @@ namespace partition {
 // que ya registraron los demas. Por eso su prioridad es la mas baja de todas y
 // probe_all lo corre ultimo, cuando los discos fisicos y el ramdisk ya estan en
 // la tabla. Cada particion entra como un device mas de block::, con su LBA 0
-// propio, asi que svfs:: (y manana fat::) montan una particion sin enterarse de
+// propio, asi que sxfs:: (y manana fat::) montan una particion sin enterarse de
 // que abajo hay un offset.
 const block::Driver& driver();
 

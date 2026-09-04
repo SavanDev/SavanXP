@@ -248,6 +248,18 @@ Notas de corte:
 
 ### Cambiado
 
+- **El filesystem pasa a llamarse `SxFS`, y el `2` sale del nombre.** Era
+  `SVFS2`, pero las constantes, los simbolos y el namespace nunca llevaron el
+  numero (`SVFS_*`, `svfs::`), asi que el nombre decia una version y el codigo
+  otra. Ahora todo es `SxFS`/`SXFS_*`/`sxfs::`: se renombran
+  `include/sxfs/sxfs_format.h`, `libsxfs/` (con `sxfs-cli`), `kernel/sxfs.cpp`
+  y el espejo host en `tools/UserAppCommon.ps1`. El magic on-disk pasa de
+  `SVFS2` a `SXFS` (y el del journal de `SVJNL2` a `SXJNL`), y `SXFS_VERSION`
+  vuelve a `1` porque `SxFS` no tuvo un `1` previo: el versionado vive en el
+  campo `version` del superblock, no en el nombre. **Toda imagen anterior deja
+  de montar**: `build/disk.img` se regenera solo desde el manifiesto, pero un
+  disco persistente de VirtualBox/QEMU hay que reformatearlo.
+
 - **`assert()` avisa cuando falla.** Era `((void)(expression))`: evaluaba la
   condicion y descartaba el resultado, asi que un assert que no se cumple no se
   notaba. Ahora imprime que fallo y termina el proceso. Con `NDEBUG` sigue

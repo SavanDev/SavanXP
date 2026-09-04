@@ -183,7 +183,7 @@ Al arrancar, el runtime hace el handshake `sxn_info()` y aborta (exit 132) si
 Las apps nativas se instalan con nombre propio a propósito: el build principal
 copia `rootfs/bin/*` a `/disk/bin`, así que un nombre compartido con una app de
 C la pisaría en cada `build.ps1 build`. Con nombre propio sobreviven
-(`Sync-SvfsDiskTree` solo agrega, nunca borra — el mismo mecanismo por el que
+(`Sync-SxfsDiskTree` solo agrega, nunca borra — el mismo mecanismo por el que
 sobrevive `doomgeneric`). Como el build nativo es aparte (patrón doom), una
 entrada del launcher que apunte a `/disk/bin` no lanza nada si no la
 construiste: `progman` descarta del listado las entradas cuyo binario no está

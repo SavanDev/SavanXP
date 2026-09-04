@@ -19,14 +19,14 @@ constexpr VolumeId kInvalidVolume = static_cast<VolumeId>(-1);
 constexpr size_t kInvalidMount = static_cast<size_t>(-1);
 constexpr size_t kMaxDrivers = 4;
 // Raiz + destino del instalador + un medio removible. El tope real de volumenes
-// lo pone cada driver (svfs:: tiene el suyo, y es mas chico).
+// lo pone cada driver (sxfs:: tiene el suyo, y es mas chico).
 constexpr size_t kMaxMounts = 4;
 constexpr size_t kMountPointCapacity = 32;
 
 struct Driver {
     const char* name;
     // Mayor prueba primero. Importa cuando dos formatos pueden confundirse
-    // (una FAT32 con basura donde SVFS2 pone su superblock, por ejemplo).
+    // (una FAT32 con basura donde SxFS pone su superblock, por ejemplo).
     int priority;
     // Reconoce el device y carga su metadata, sin tocar el vfs. Devolver
     // kInvalidVolume no es un error: significa "el formato no es mio" y fs::
@@ -49,7 +49,7 @@ struct MountInfo {
 };
 
 // Vacia la tabla de montajes; los drivers registrados quedan. NO desmonta:
-// es el reset de arranque, hermano de block::probe_all() y svfs::initialize().
+// es el reset de arranque, hermano de block::probe_all() y sxfs::initialize().
 void initialize();
 
 bool register_driver(const Driver& driver);

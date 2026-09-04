@@ -96,7 +96,7 @@ selectivo`.
 `No adoptar`:
 
 - UVM, FFS y UFS, pf, xenocara y el DRM importado de Linux: acoplamiento alto
-  y sin encaje con SVFS2 ni con el HAL de display propio
+  y sin encaje con SxFS ni con el HAL de display propio
 - ksh: ya existe shell_core.c
 - OpenBSD no tiene driver virtio-gpu, asi que del camino grafico principal no
   hay nada que tomar

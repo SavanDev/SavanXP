@@ -9,10 +9,10 @@ namespace vfs {
 struct Vnode;
 }
 
-namespace svfs {
+namespace sxfs {
 
-// Id de un volumen SVFS2 montado. Antes habia uno solo y era implicito; ahora
-// el instalador necesita el origen (el SVFS2 del LiveCD) y el destino (la
+// Id de un volumen SxFS montado. Antes habia uno solo y era implicito; ahora
+// el instalador necesita el origen (el SxFS del LiveCD) y el destino (la
 // particion recien formateada) montados al mismo tiempo.
 using VolumeId = size_t;
 constexpr VolumeId kInvalidVolume = static_cast<VolumeId>(-1);
@@ -49,13 +49,13 @@ void initialize();
 // Driver para el registro fs::. probe/attach salen de aca.
 const fs::Driver& driver();
 
-// Reconoce el SVFS2 del device y carga su metadata, sin publicar vnodes.
+// Reconoce el SxFS del device y carga su metadata, sin publicar vnodes.
 VolumeId probe(size_t device_index, const char* mount_point);
 // Publica el arbol del volumen bajo su mount point.
 bool attach(VolumeId volume);
 // El volumen montado en kRootMountPoint, o kInvalidVolume.
 VolumeId root();
-// true si la ruta cae bajo el mount point de algun volumen SVFS2 montado.
+// true si la ruta cae bajo el mount point de algun volumen SxFS montado.
 bool owns_path(const char* path);
 
 MountStatus status(VolumeId volume);
@@ -79,4 +79,4 @@ bool unlink_file(FileRecord& file);
 FileRecord* file_from_vnode(vfs::Vnode& node);
 void refresh_vnode(vfs::Vnode& node);
 
-} // namespace svfs
+} // namespace sxfs

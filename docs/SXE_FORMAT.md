@@ -264,7 +264,7 @@ primera clase, para siempre.**
 
 `.sxe` señala "acá probablemente hay recursos"; `.elf` señala "no busques". Eso
 le ahorra al lanzador abrir N archivos por escaneo, que es I/O real sobre
-SVFS2.
+SxFS.
 
 Pero **el blob es la fuente de verdad**. Un `.sxe` puede no tener `.sxmeta`
 válido (build viejo, archivo truncado, alguien renombró) y un `.elf` puede
@@ -633,7 +633,7 @@ igual — ningún camino de build quedó afuera salvo el subsistema nativo
 manifiestos en blobs. **No duplica ni un número**: magics, tags, versiones,
 tamaños y topes salen de `include/sxe/sxe_format.h`; los flags de lanzamiento
 de `savanxp/syscall.h`; el OSABI nativo de `savanxp_native.h`. Es el criterio
-de `Assert-Svfs2FormatMatchesHeader` — un formato copiado a mano entre lector y
+de `Assert-SxfsFormatMatchesHeader` — un formato copiado a mano entre lector y
 generador se desincroniza, y la falla es silenciosa.
 
 Al revés que el parser de runtime, que ignora lo que no entiende para poder

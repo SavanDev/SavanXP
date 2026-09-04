@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # Orquesta SOLO la fase de compilar objetos (kernel + userland) via Ninja.
-# El resto del pipeline (link, imagen SVFS2, ISO, QEMU) lo sigue manejando
+# El resto del pipeline (link, imagen SxFS, ISO, QEMU) lo sigue manejando
 # build.ps1 como siempre. Ninja aporta lo que un incremental casero por
 # timestamp no puede garantizar: paralelismo real entre cores y tracking
 # correcto de dependencias de headers via los .d que emite clang (-MMD).

@@ -307,7 +307,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_SYNC:
-            context->rax = static_cast<uint64_t>(svfs::sync(svfs::root()) ? 0 : negative_error(SAVANXP_EIO));
+            context->rax = static_cast<uint64_t>(sxfs::sync(sxfs::root()) ? 0 : negative_error(SAVANXP_EIO));
             return context;
         case SAVANXP_SYS_REALTIME: {
             if (!vm::is_user_range_accessible(g_current->address_space, context->rdi, sizeof(savanxp_realtime), true)) {

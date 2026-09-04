@@ -5,7 +5,7 @@
  * lo que lea o escriba recursos SXE (el lector del SDK en
  * subsystems/posix/sdk/v1/runtime/sxe.c, y el generador de blobs host-side de
  * la fase 2) debe derivar de aca, no reimplementar offsets ni tamanos por su
- * cuenta. Es el mismo criterio que include/svfs/svfs_format.h: cuando el
+ * cuenta. Es el mismo criterio que include/sxfs/sxfs_format.h: cuando el
  * formato vive duplicado a mano, las copias se desincronizan y la corrupcion
  * es silenciosa.
  *

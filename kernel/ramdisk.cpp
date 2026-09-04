@@ -7,7 +7,7 @@
 namespace {
 
 // Prioridad baja: enumera despues de ATA, asi un disco IDE persistente (dev) le
-// gana a la imagen del LiveCD cuando svfs monta el primer SVFS2 que encuentra.
+// gana a la imagen del LiveCD cuando sxfs monta el primer SxFS que encuentra.
 constexpr int kDriverPriority = 10;
 
 struct Image {

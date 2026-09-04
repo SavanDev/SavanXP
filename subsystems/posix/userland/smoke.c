@@ -116,7 +116,7 @@ int main(void) {
     const char* libctest_argv[] = {"/disk/bin/libctest", 0};
     const char* stacktest_argv[] = {"/bin/stacktest", 0};
     /* Los dos backends de imagen tienen lectores distintos en el kernel:
-     * /bin sale del initramfs (en memoria) y /disk/bin del vnode de SVFS,
+     * /bin sale del initramfs (en memoria) y /disk/bin del vnode de SxFS,
      * que es el camino que dejo de copiar la imagen entera. */
     const char* imagetest_argv[] = {"/bin/imagetest", 0};
     const char* imagetest_disk_argv[] = {"/disk/bin/imagetest", 0};

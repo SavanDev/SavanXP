@@ -16,7 +16,7 @@ enum class NodeType : uint8_t {
 
 enum class Backend : uint8_t {
     memory = 0,
-    svfs = 1,
+    sxfs = 1,
     device = 2,
 };
 

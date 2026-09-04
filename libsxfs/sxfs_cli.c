@@ -1,29 +1,29 @@
 /*
- * svfs_cli.c -- Tool de host para crear/poblar imagenes SVFS2.
+ * sxfs_cli.c -- Tool de host para crear/poblar imagenes SxFS.
  *
  * Reemplaza el byte-poking en PowerShell de tools/UserAppCommon.ps1 por el core
- * portable (libsvfs) sobre un backend de archivo. Es agnostico del OS: no
+ * portable (libsxfs) sobre un backend de archivo. Es agnostico del OS: no
  * recorre directorios (eso lo hace el driver, que conoce el filesystem del
  * host); recibe un manifiesto con las operaciones ya resueltas y aplica todo en
  * una sola pasada sobre la imagen.
  *
  * Uso:
- *   svfs-cli create <imagen> <total_sectores>
+ *   sxfs-cli create <imagen> <total_sectores>
  *       Crea una imagen nueva, formateada y vacia (solo la raiz).
- *   svfs-cli apply  <imagen> <manifiesto>
+ *   sxfs-cli apply  <imagen> <manifiesto>
  *       Monta una imagen existente (preserva su contenido) y aplica el
  *       manifiesto. Cada linea, separada por TAB:
  *           mkdir <ruta_relativa>
  *           file  <ruta_relativa>\t<archivo_host>
- *       Las rutas son relativas a la raiz de SVFS (sin prefijo /disk).
- *   svfs-cli rm     <imagen> <ruta> [<ruta>...]
+ *       Las rutas son relativas a la raiz de SxFS (sin prefijo /disk).
+ *   sxfs-cli rm     <imagen> <ruta> [<ruta>...]
  *       Borra archivos o directorios vacios. Es la contraparte de apply, que
  *       es aditivo y nunca borra: sin esto la unica forma de sacar algo de una
  *       imagen es recrearla desde cero. Misma convencion de rutas, tolerando
  *       una '/' inicial.
  *
  * Codigos de salida: 0 ok, 1 error, 2 uso incorrecto, 3 el allocator se quedo
- * sin corrida contigua (ver SVFS_CLI_EXIT_NO_SPACE).
+ * sin corrida contigua (ver SXFS_CLI_EXIT_NO_SPACE).
  */
 #define _FILE_OFFSET_BITS 64
 #define _CRT_SECURE_NO_WARNINGS 1 /* fopen/strtol: UCRT los marca "inseguros" */
@@ -35,21 +35,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "svfs_core.h"
+#include "sxfs_core.h"
 
-/* Codigo de salida propio para SVFS_ERR_NO_SPACE: el volumen tiene espacio libre
+/* Codigo de salida propio para SXFS_ERR_NO_SPACE: el volumen tiene espacio libre
  * pero no una corrida contigua del tamano pedido. Se distingue del error
  * generico (1) para que el build pueda compactar la imagen y reintentar en vez
- * de abortar; ver Invoke-SvfsApply en tools/UserAppCommon.ps1. */
-#define SVFS_CLI_EXIT_NO_SPACE 3
+ * de abortar; ver Invoke-SxfsApply en tools/UserAppCommon.ps1. */
+#define SXFS_CLI_EXIT_NO_SPACE 3
 
 /* --- Backend de bloque sobre un FILE* ------------------------------------ */
 
 static int seek_sector(FILE* file, uint32_t lba) {
 #if defined(_WIN32)
-    return _fseeki64(file, (long long)lba * SVFS_SECTOR_SIZE, SEEK_SET);
+    return _fseeki64(file, (long long)lba * SXFS_SECTOR_SIZE, SEEK_SET);
 #else
-    return fseeko(file, (off_t)lba * SVFS_SECTOR_SIZE, SEEK_SET);
+    return fseeko(file, (off_t)lba * SXFS_SECTOR_SIZE, SEEK_SET);
 #endif
 }
 
@@ -58,7 +58,7 @@ static int file_read(void* cookie, uint32_t lba, uint32_t count, void* buffer) {
     if (seek_sector(file, lba) != 0) {
         return -1;
     }
-    size_t want = (size_t)count * SVFS_SECTOR_SIZE;
+    size_t want = (size_t)count * SXFS_SECTOR_SIZE;
     return fread(buffer, 1, want, file) == want ? 0 : -1;
 }
 
@@ -67,46 +67,46 @@ static int file_write(void* cookie, uint32_t lba, uint32_t count, const void* bu
     if (seek_sector(file, lba) != 0) {
         return -1;
     }
-    size_t want = (size_t)count * SVFS_SECTOR_SIZE;
+    size_t want = (size_t)count * SXFS_SECTOR_SIZE;
     return fwrite(buffer, 1, want, file) == want ? 0 : -1;
 }
 
 /* --- Utilidades ---------------------------------------------------------- */
 
-static const char* svfs_strerror(int rc) {
+static const char* sxfs_strerror(int rc) {
     switch (rc) {
-        case SVFS_OK: return "ok";
-        case SVFS_ERR_IO: return "error de I/O";
-        case SVFS_ERR_NO_SPACE: return "sin espacio contiguo";
-        case SVFS_ERR_NO_INODES: return "sin inodos libres";
-        case SVFS_ERR_INVALID: return "argumento/ruta invalida";
-        case SVFS_ERR_EXISTS: return "colision de tipo (archivo vs directorio)";
-        case SVFS_ERR_NOT_FOUND: return "ruta inexistente";
-        case SVFS_ERR_TOO_LONG: return "nombre/ruta demasiado largo";
+        case SXFS_OK: return "ok";
+        case SXFS_ERR_IO: return "error de I/O";
+        case SXFS_ERR_NO_SPACE: return "sin espacio contiguo";
+        case SXFS_ERR_NO_INODES: return "sin inodos libres";
+        case SXFS_ERR_INVALID: return "argumento/ruta invalida";
+        case SXFS_ERR_EXISTS: return "colision de tipo (archivo vs directorio)";
+        case SXFS_ERR_NOT_FOUND: return "ruta inexistente";
+        case SXFS_ERR_TOO_LONG: return "nombre/ruta demasiado largo";
         default: return "error desconocido";
     }
 }
 
 /* Traduce un codigo del core al codigo de salida del proceso. */
 static int exit_code_for(int rc) {
-    return rc == SVFS_ERR_NO_SPACE ? SVFS_CLI_EXIT_NO_SPACE : 1;
+    return rc == SXFS_ERR_NO_SPACE ? SXFS_CLI_EXIT_NO_SPACE : 1;
 }
 
 /* Crea (o trunca) una imagen de total_sectors * 512 bytes rellena de ceros. */
 static int create_zeroed_image(const char* path, uint32_t total_sectors) {
     FILE* file = fopen(path, "wb");
     if (file == NULL) {
-        fprintf(stderr, "svfs-cli: no se pudo crear '%s'.\n", path);
+        fprintf(stderr, "sxfs-cli: no se pudo crear '%s'.\n", path);
         return 1;
     }
-    static uint8_t zeros[SVFS_SECTOR_SIZE * 64];
+    static uint8_t zeros[SXFS_SECTOR_SIZE * 64];
     memset(zeros, 0, sizeof(zeros));
     uint32_t remaining = total_sectors;
-    const uint32_t chunk_sectors = sizeof(zeros) / SVFS_SECTOR_SIZE;
+    const uint32_t chunk_sectors = sizeof(zeros) / SXFS_SECTOR_SIZE;
     while (remaining > 0) {
         uint32_t n = remaining < chunk_sectors ? remaining : chunk_sectors;
-        if (fwrite(zeros, 1, (size_t)n * SVFS_SECTOR_SIZE, file) != (size_t)n * SVFS_SECTOR_SIZE) {
-            fprintf(stderr, "svfs-cli: fallo al escribir ceros en '%s'.\n", path);
+        if (fwrite(zeros, 1, (size_t)n * SXFS_SECTOR_SIZE, file) != (size_t)n * SXFS_SECTOR_SIZE) {
+            fprintf(stderr, "sxfs-cli: fallo al escribir ceros en '%s'.\n", path);
             fclose(file);
             return 1;
         }
@@ -163,18 +163,18 @@ static int cmd_create(const char* image_path, uint32_t total_sectors) {
     }
     FILE* file = fopen(image_path, "rb+");
     if (file == NULL) {
-        fprintf(stderr, "svfs-cli: no se pudo abrir '%s' para formatear.\n", image_path);
+        fprintf(stderr, "sxfs-cli: no se pudo abrir '%s' para formatear.\n", image_path);
         return 1;
     }
-    struct svfs_ctx ctx;
-    svfs_ctx_init(&ctx, file, file_read, file_write);
-    int rc = svfs_format(&ctx, total_sectors);
-    if (rc == SVFS_OK) {
-        rc = svfs_flush(&ctx);
+    struct sxfs_ctx ctx;
+    sxfs_ctx_init(&ctx, file, file_read, file_write);
+    int rc = sxfs_format(&ctx, total_sectors);
+    if (rc == SXFS_OK) {
+        rc = sxfs_flush(&ctx);
     }
     fclose(file);
-    if (rc != SVFS_OK) {
-        fprintf(stderr, "svfs-cli: fallo al formatear: %s.\n", svfs_strerror(rc));
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: fallo al formatear: %s.\n", sxfs_strerror(rc));
         return 1;
     }
     return 0;
@@ -183,22 +183,22 @@ static int cmd_create(const char* image_path, uint32_t total_sectors) {
 static int cmd_apply(const char* image_path, const char* manifest_path) {
     FILE* image = fopen(image_path, "rb+");
     if (image == NULL) {
-        fprintf(stderr, "svfs-cli: no existe la imagen '%s'.\n", image_path);
+        fprintf(stderr, "sxfs-cli: no existe la imagen '%s'.\n", image_path);
         return 1;
     }
-    struct svfs_ctx ctx;
-    svfs_ctx_init(&ctx, image, file_read, file_write);
-    int rc = svfs_open(&ctx);
-    if (rc != SVFS_OK) {
-        fprintf(stderr, "svfs-cli: '%s' no es una imagen SVFS2 valida: %s.\n",
-                image_path, svfs_strerror(rc));
+    struct sxfs_ctx ctx;
+    sxfs_ctx_init(&ctx, image, file_read, file_write);
+    int rc = sxfs_open(&ctx);
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: '%s' no es una imagen SxFS valida: %s.\n",
+                image_path, sxfs_strerror(rc));
         fclose(image);
         return 1;
     }
 
     FILE* manifest = (strcmp(manifest_path, "-") == 0) ? stdin : fopen(manifest_path, "r");
     if (manifest == NULL) {
-        fprintf(stderr, "svfs-cli: no se pudo abrir el manifiesto '%s'.\n", manifest_path);
+        fprintf(stderr, "sxfs-cli: no se pudo abrir el manifiesto '%s'.\n", manifest_path);
         fclose(image);
         return 1;
     }
@@ -214,7 +214,7 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
         }
         char* tab = strchr(line, '\t');
         if (tab == NULL) {
-            fprintf(stderr, "svfs-cli: linea %lu mal formada (falta TAB): %s\n", lineno, line);
+            fprintf(stderr, "sxfs-cli: linea %lu mal formada (falta TAB): %s\n", lineno, line);
             status = 1;
             break;
         }
@@ -223,16 +223,16 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
         char* rest = tab + 1;
 
         if (strcmp(op, "mkdir") == 0) {
-            rc = svfs_mkdir_p(&ctx, rest);
-            if (rc != SVFS_OK) {
-                fprintf(stderr, "svfs-cli: mkdir '%s' fallo: %s.\n", rest, svfs_strerror(rc));
+            rc = sxfs_mkdir_p(&ctx, rest);
+            if (rc != SXFS_OK) {
+                fprintf(stderr, "sxfs-cli: mkdir '%s' fallo: %s.\n", rest, sxfs_strerror(rc));
                 status = exit_code_for(rc);
                 break;
             }
         } else if (strcmp(op, "file") == 0) {
             char* tab2 = strchr(rest, '\t');
             if (tab2 == NULL) {
-                fprintf(stderr, "svfs-cli: linea %lu 'file' sin archivo host.\n", lineno);
+                fprintf(stderr, "sxfs-cli: linea %lu 'file' sin archivo host.\n", lineno);
                 status = 1;
                 break;
             }
@@ -242,19 +242,19 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
             uint32_t size = 0;
             uint8_t* data = read_host_file(host_path, &size);
             if (data == NULL) {
-                fprintf(stderr, "svfs-cli: no se pudo leer '%s'.\n", host_path);
+                fprintf(stderr, "sxfs-cli: no se pudo leer '%s'.\n", host_path);
                 status = 1;
                 break;
             }
-            rc = svfs_write_file(&ctx, relpath, data, size);
+            rc = sxfs_write_file(&ctx, relpath, data, size);
             free(data);
-            if (rc != SVFS_OK) {
-                fprintf(stderr, "svfs-cli: file '%s' fallo: %s.\n", relpath, svfs_strerror(rc));
+            if (rc != SXFS_OK) {
+                fprintf(stderr, "sxfs-cli: file '%s' fallo: %s.\n", relpath, sxfs_strerror(rc));
                 status = exit_code_for(rc);
                 break;
             }
         } else {
-            fprintf(stderr, "svfs-cli: operacion desconocida '%s' en linea %lu.\n", op, lineno);
+            fprintf(stderr, "sxfs-cli: operacion desconocida '%s' en linea %lu.\n", op, lineno);
             status = 1;
             break;
         }
@@ -265,9 +265,9 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
     }
 
     if (status == 0) {
-        rc = svfs_flush(&ctx);
-        if (rc != SVFS_OK) {
-            fprintf(stderr, "svfs-cli: fallo al persistir: %s.\n", svfs_strerror(rc));
+        rc = sxfs_flush(&ctx);
+        if (rc != SXFS_OK) {
+            fprintf(stderr, "sxfs-cli: fallo al persistir: %s.\n", sxfs_strerror(rc));
             status = exit_code_for(rc);
         }
     }
@@ -276,22 +276,22 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
 }
 
 /* Borra una o mas rutas de la imagen. Las rutas siguen la convencion del
- * manifiesto -- relativas a la raiz de SVFS, sin el prefijo /disk del guest --
+ * manifiesto -- relativas a la raiz de SxFS, sin el prefijo /disk del guest --
  * y se tolera una '/' inicial por comodidad: "bin/x" y "/bin/x" son lo mismo,
  * y ambos son el "/disk/bin/x" que ve el SO. */
 static int cmd_rm(const char* image_path, char** paths, int path_count) {
     FILE* image = fopen(image_path, "rb+");
     if (image == NULL) {
-        fprintf(stderr, "svfs-cli: no existe la imagen '%s'.\n", image_path);
+        fprintf(stderr, "sxfs-cli: no existe la imagen '%s'.\n", image_path);
         return 1;
     }
 
-    struct svfs_ctx ctx;
-    svfs_ctx_init(&ctx, image, file_read, file_write);
-    int rc = svfs_open(&ctx);
-    if (rc != SVFS_OK) {
-        fprintf(stderr, "svfs-cli: '%s' no es una imagen SVFS2 valida: %s.\n",
-                image_path, svfs_strerror(rc));
+    struct sxfs_ctx ctx;
+    sxfs_ctx_init(&ctx, image, file_read, file_write);
+    int rc = sxfs_open(&ctx);
+    if (rc != SXFS_OK) {
+        fprintf(stderr, "sxfs-cli: '%s' no es una imagen SxFS valida: %s.\n",
+                image_path, sxfs_strerror(rc));
         fclose(image);
         return 1;
     }
@@ -304,9 +304,9 @@ static int cmd_rm(const char* image_path, char** paths, int path_count) {
             ++relpath;
         }
 
-        rc = svfs_remove(&ctx, relpath);
-        if (rc != SVFS_OK) {
-            fprintf(stderr, "svfs-cli: rm '%s': %s.\n", paths[i], svfs_strerror(rc));
+        rc = sxfs_remove(&ctx, relpath);
+        if (rc != SXFS_OK) {
+            fprintf(stderr, "sxfs-cli: rm '%s': %s.\n", paths[i], sxfs_strerror(rc));
             status = exit_code_for(rc);
             continue;
         }
@@ -316,9 +316,9 @@ static int cmd_rm(const char* image_path, char** paths, int path_count) {
     /* Se persiste lo que si se pudo borrar aunque alguna ruta haya fallado: el
      * core ya dejo la metadata en memoria consistente para esas. */
     if (removed > 0) {
-        rc = svfs_flush(&ctx);
-        if (rc != SVFS_OK) {
-            fprintf(stderr, "svfs-cli: fallo el flush: %s.\n", svfs_strerror(rc));
+        rc = sxfs_flush(&ctx);
+        if (rc != SXFS_OK) {
+            fprintf(stderr, "sxfs-cli: fallo el flush: %s.\n", sxfs_strerror(rc));
             status = exit_code_for(rc);
         }
     }
@@ -330,9 +330,9 @@ static int cmd_rm(const char* image_path, char** paths, int path_count) {
 static void usage(void) {
     fprintf(stderr,
         "Uso:\n"
-        "  svfs-cli create <imagen> <total_sectores>\n"
-        "  svfs-cli apply  <imagen> <manifiesto>\n"
-        "  svfs-cli rm     <imagen> <ruta> [<ruta>...]\n");
+        "  sxfs-cli create <imagen> <total_sectores>\n"
+        "  sxfs-cli apply  <imagen> <manifiesto>\n"
+        "  sxfs-cli rm     <imagen> <ruta> [<ruta>...]\n");
 }
 
 int main(int argc, char** argv) {
@@ -346,8 +346,8 @@ int main(int argc, char** argv) {
             return 2;
         }
         long sectors = strtol(argv[3], NULL, 10);
-        if (sectors <= (long)SVFS_DATA_LBA) {
-            fprintf(stderr, "svfs-cli: total_sectores debe ser > %u.\n", (unsigned)SVFS_DATA_LBA);
+        if (sectors <= (long)SXFS_DATA_LBA) {
+            fprintf(stderr, "sxfs-cli: total_sectores debe ser > %u.\n", (unsigned)SXFS_DATA_LBA);
             return 2;
         }
         return cmd_create(argv[2], (uint32_t)sectors);

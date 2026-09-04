@@ -212,7 +212,7 @@ struct savanxp_system_info {
     uint8_t net_present;
     uint8_t speaker_ready;
     uint8_t block_ready;
-    uint8_t svfs_mounted;
+    uint8_t sxfs_mounted;
     uint16_t reserved0;
     uint32_t timer_backend;
     uint32_t timer_frequency_hz;
@@ -220,13 +220,13 @@ struct savanxp_system_info {
     uint32_t framebuffer_height;
     uint32_t framebuffer_bpp;
     uint32_t pci_device_count;
-    uint32_t svfs_file_count;
+    uint32_t sxfs_file_count;
     uint64_t memory_usable_bytes;
     uint64_t memory_reclaimable_bytes;
     uint64_t memory_total_pages;
-    uint64_t svfs_total_bytes;
-    uint64_t svfs_used_bytes;
-    uint64_t svfs_free_bytes;
+    uint64_t sxfs_total_bytes;
+    uint64_t sxfs_used_bytes;
+    uint64_t sxfs_free_bytes;
     uint64_t initramfs_size;
     uint64_t uptime_ms;
 };
