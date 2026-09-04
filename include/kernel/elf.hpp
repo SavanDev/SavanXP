@@ -35,8 +35,19 @@ enum class LoadFailure : uint8_t {
 
 const char* load_failure_string(LoadFailure failure);
 
+// Lee `size` bytes de la imagen desde `offset` hacia `destination`. Devuelve
+// false si no se pudo leer todo.
+//
+// El loader consume la imagen por aca y no como un bloque de memoria: asi una
+// imagen en disco se lee DIRECTO sobre las paginas del proceso, sin una copia
+// intermedia del ejecutable entero -- que ademas se pedia en paginas fisicamente
+// contiguas, y eso es lo que hacia fallar un binario grande sobre memoria
+// fragmentada.
+using ImageReader = bool (*)(void* context, uint64_t offset, void* destination, size_t size);
+
 bool load_user_image(
-    const void* image,
+    ImageReader read_image,
+    void* context,
     size_t size,
     vm::VmSpace& address_space,
     int argc,

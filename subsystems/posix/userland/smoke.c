@@ -115,6 +115,11 @@ int main(void) {
     const char* ps_argv[] = {"/bin/ps", 0};
     const char* libctest_argv[] = {"/disk/bin/libctest", 0};
     const char* stacktest_argv[] = {"/bin/stacktest", 0};
+    /* Los dos backends de imagen tienen lectores distintos en el kernel:
+     * /bin sale del initramfs (en memoria) y /disk/bin del vnode de SVFS,
+     * que es el camino que dejo de copiar la imagen entera. */
+    const char* imagetest_argv[] = {"/bin/imagetest", 0};
+    const char* imagetest_disk_argv[] = {"/disk/bin/imagetest", 0};
     const char* gputest_argv[] = {"/disk/bin/gputest", "--smoke", 0};
     const char* audiotest_argv[] = {"/disk/bin/audiotest", "--smoke", 0};
 
@@ -173,6 +178,8 @@ int main(void) {
         !run_and_expect("/bin/ps", ps_argv, 1, 0) ||
         !run_and_expect("/disk/bin/libctest", libctest_argv, 1, 0) ||
         !run_and_expect("/bin/stacktest", stacktest_argv, 1, 0) ||
+        !run_and_expect("/bin/imagetest", imagetest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/imagetest", imagetest_disk_argv, 1, 0) ||
         !run_and_expect("/disk/bin/gputest", gputest_argv, 2, 0) ||
         !run_and_expect("/disk/bin/audiotest", audiotest_argv, 2, 0)) {
         puts_out("SMOKE FAIL\n");

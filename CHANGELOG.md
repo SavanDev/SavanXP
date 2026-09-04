@@ -12,6 +12,12 @@ Notas de corte:
 
 ### Agregado
 
+- **`build.ps1 smoke` corre `imagetest`.** Se mira a si mismo para verificar lo
+  que un cargador que copia por streaming puede romper: 128 KiB de `.rodata`
+  byte a byte, el `.bss` en cero (el corte entre `file_size` y `memory_size`) y
+  el `.data` con sus valores iniciales. Corre desde `/bin` y desde `/disk/bin`,
+  que en el kernel son dos lectores distintos.
+
 - **`build.ps1 smoke` corre `stacktest`.** Cubre las cinco cosas del stack que
   antes no verificaba nadie: recursion de ~400 KiB en el proceso y en un hijo,
   un desborde que tiene que morir con `#PF` en la pagina de guarda, un `argv` de
@@ -211,6 +217,17 @@ Notas de corte:
   cubre `cliptest`, dentro de `build.ps1 smoke`.
 
 ### Cambiado
+
+- **`exec` deja de copiar la imagen entera a paginas fisicamente contiguas.**
+  `load_image_bytes` reservaba `ceil(tamano/4096)` paginas SEGUIDAS, copiaba el
+  ejecutable ahi y despues el loader lo volvia a copiar segmento por segmento a
+  las paginas del proceso: el doble de memoria durante el exec, y una reserva
+  contigua que con la memoria fragmentada falla aunque haya de sobra -- un
+  binario de 5 MB pide 1280 paginas seguidas. Ahora `elf::load_user_image` toma
+  un `elf::ImageReader` y lee el archivo DIRECTO sobre las paginas del proceso,
+  de a una. El camino del initramfs (imagen ya en memoria) sigue sin copiar de
+  mas. Es el ultimo lugar del exec que pedia memoria contigua: lo que queda son
+  el stack de kernel y los buffers de DMA, que la necesitan de verdad.
 
 - **El stack de usuario pasa de 128 KiB fijos a 1 MiB por demanda, con pagina
   de guarda.** Eran 32 paginas mapeadas de una y contiguas, sin nada debajo: un

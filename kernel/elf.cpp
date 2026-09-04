@@ -84,23 +84,31 @@ bool map_segment_pages(vm::VmSpace& space, uint64_t start, uint64_t end, uint64_
     return true;
 }
 
-void copy_segment_page(
-    uint64_t virtual_page,
-    uint64_t page_offset,
-    const uint8_t* source,
-    size_t size,
-    vm::VmSpace& space
-) {
+// Puntero de kernel al respaldo fisico de una pagina ya mapeada del espacio
+// destino. El espacio todavia no es el activo, asi que no se puede escribir por
+// su direccion virtual de usuario.
+uint8_t* segment_page_pointer(vm::VmSpace& space, uint64_t virtual_page) {
     uint64_t* pml4 = space.pml4_virtual;
     const uint64_t pml4e = pml4[(virtual_page >> 39) & 0x1ff];
+    if ((pml4e & vm::kPagePresent) == 0) {
+        return nullptr;
+    }
     uint64_t* pdpt = vm::physical_to_virtual(pml4e & 0x000ffffffffff000ULL);
     const uint64_t pdpte = pdpt[(virtual_page >> 30) & 0x1ff];
+    if ((pdpte & vm::kPagePresent) == 0) {
+        return nullptr;
+    }
     uint64_t* pd = vm::physical_to_virtual(pdpte & 0x000ffffffffff000ULL);
     const uint64_t pde = pd[(virtual_page >> 21) & 0x1ff];
+    if ((pde & vm::kPagePresent) == 0) {
+        return nullptr;
+    }
     uint64_t* pt = vm::physical_to_virtual(pde & 0x000ffffffffff000ULL);
     const uint64_t pte = pt[(virtual_page >> 12) & 0x1ff];
-    auto* target = reinterpret_cast<uint8_t*>(vm::hhdm_offset() + (pte & 0x000ffffffffff000ULL));
-    memcpy(target + page_offset, source, size);
+    if ((pte & vm::kPagePresent) == 0) {
+        return nullptr;
+    }
+    return reinterpret_cast<uint8_t*>(vm::hhdm_offset() + (pte & 0x000ffffffffff000ULL));
 }
 
 // Mapea una pagina nueva, en cero, dentro del espacio destino. No pide memoria
@@ -246,7 +254,8 @@ const char* load_failure_string(LoadFailure failure) {
 }
 
 bool load_user_image(
-    const void* image,
+    ImageReader read_image,
+    void* context,
     size_t size,
     vm::VmSpace& address_space,
     int argc,
@@ -254,29 +263,35 @@ bool load_user_image(
     LoadResult& result,
     LoadFailure& failure
 ) {
+    ElfHeader header = {};
+
     failure = LoadFailure::none;
 
-    if (image == nullptr || size < sizeof(ElfHeader)) {
+    if (read_image == nullptr || size < sizeof(ElfHeader)) {
         failure = LoadFailure::bad_header;
         return false;
     }
-
-    const auto& header = *static_cast<const ElfHeader*>(image);
+    if (!read_image(context, 0, &header, sizeof(header))) {
+        failure = LoadFailure::truncated;
+        return false;
+    }
     if (!validate_header(header, size)) {
         failure = LoadFailure::bad_header;
         return false;
     }
 
-    const auto* program_headers = reinterpret_cast<const ProgramHeader*>(
-        static_cast<const uint8_t*>(image) + header.program_header_offset
-    );
-
     for (uint16_t index = 0; index < header.program_header_count; ++index) {
-        const ProgramHeader& program = program_headers[index];
+        ProgramHeader program = {};
+        const uint64_t header_offset =
+            header.program_header_offset + (static_cast<uint64_t>(index) * sizeof(ProgramHeader));
+
+        if (!read_image(context, header_offset, &program, sizeof(program))) {
+            failure = LoadFailure::truncated;
+            return false;
+        }
         if (program.type != kProgramLoad || program.memory_size == 0) {
             continue;
         }
-
         if ((program.offset + program.file_size) > size) {
             failure = LoadFailure::truncated;
             return false;
@@ -291,18 +306,30 @@ bool load_user_image(
             return false;
         }
 
-        const auto* source = static_cast<const uint8_t*>(image) + program.offset;
+        // El contenido del segmento se lee sobre las paginas del proceso, de a
+        // una: no hay copia intermedia de la imagen. Lo que el segmento pide de
+        // mas que el archivo (el .bss) ya quedo en cero al mapear.
         uint64_t remaining = program.file_size;
-        uint64_t source_offset = 0;
+        uint64_t written = 0;
         while (remaining != 0) {
-            const uint64_t page = align_down(program.virtual_address + source_offset, memory::kPageSize);
-            const uint64_t page_offset = (program.virtual_address + source_offset) & (memory::kPageSize - 1);
-            const uint64_t chunk = (memory::kPageSize - page_offset) < remaining
-                ? (memory::kPageSize - page_offset)
-                : remaining;
-            copy_segment_page(page, page_offset, source + source_offset, static_cast<size_t>(chunk), address_space);
+            const uint64_t address = program.virtual_address + written;
+            const uint64_t page = align_down(address, memory::kPageSize);
+            const uint64_t page_offset = address & (memory::kPageSize - 1);
+            const uint64_t room = memory::kPageSize - page_offset;
+            const uint64_t chunk = room < remaining ? room : remaining;
+            uint8_t* destination = segment_page_pointer(address_space, page);
+
+            if (destination == nullptr) {
+                failure = LoadFailure::out_of_memory;
+                return false;
+            }
+            if (!read_image(context, program.offset + written, destination + page_offset,
+                            static_cast<size_t>(chunk))) {
+                failure = LoadFailure::truncated;
+                return false;
+            }
             remaining -= chunk;
-            source_offset += chunk;
+            written += chunk;
         }
     }
 

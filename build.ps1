@@ -233,6 +233,7 @@ $UserPrograms = @(
     @{ Name = "mmaptest"; Source = "subsystems/posix/userland/mmaptest.c"; Test = $true },
     @{ Name = "libctest"; Source = "subsystems/posix/userland/libctest.c"; Test = $true },
     @{ Name = "stacktest"; Source = "subsystems/posix/userland/stacktest.c"; Test = $true },
+    @{ Name = "imagetest"; Source = "subsystems/posix/userland/imagetest.c"; Test = $true },
     @{ Name = "heaptest"; Sources = @(
         "subsystems/posix/userland/heaptest.c"
     ); Test = $true },

@@ -699,16 +699,45 @@ process::SavedContext* fabricate_initial_context(
     return context;
 }
 
-bool load_image_bytes(
-    const vfs::Vnode& image,
-    const void*& data,
-    size_t& size,
-    memory::PageAllocation& backing,
-    ImageFailure& failure
-) {
-    data = nullptr;
-    size = 0;
-    memset(&backing, 0, sizeof(backing));
+// Origen de la imagen de un ejecutable para elf::load_user_image.
+//
+// Antes la imagen se copiaba ENTERA a un bloque de paginas fisicamente
+// contiguas y de ahi el loader la volvia a copiar segmento por segmento. Eso
+// costaba el doble de memoria durante el exec y, sobre todo, pedia N paginas
+// seguidas: un binario de 5 MB son 1280, y con la memoria fragmentada eso falla
+// aunque haya de sobra. Ahora el loader lee de aca directo sobre las paginas
+// del proceso.
+struct ImageSource {
+    const uint8_t* bytes; // != nullptr si la imagen ya vive en memoria
+    vfs::Vnode* node;     // si no, se lee del vnode
+    size_t size;
+};
+
+bool read_image_from_memory(void* context, uint64_t offset, void* destination, size_t size) {
+    const auto* source = static_cast<const ImageSource*>(context);
+    if (offset > source->size || size > source->size - offset) {
+        return false;
+    }
+    memcpy(destination, source->bytes + offset, size);
+    return true;
+}
+
+bool read_image_from_vnode(void* context, uint64_t offset, void* destination, size_t size) {
+    auto* source = static_cast<ImageSource*>(context);
+    if (offset > source->size || size > source->size - offset) {
+        return false;
+    }
+    if (size == 0) {
+        return true;
+    }
+    return vfs::read(*source->node, offset, destination, size) == size;
+}
+
+// Prepara el origen. No reserva memoria: el camino de disco lee por demanda y
+// el de memoria (initramfs) usa los bytes donde ya estan.
+bool open_image_source(const vfs::Vnode& image, ImageSource& source, elf::ImageReader& reader, ImageFailure& failure) {
+    source = {};
+    reader = nullptr;
     failure = ImageFailure::none;
 
     if (image.type != vfs::NodeType::file || image.size == 0) {
@@ -716,29 +745,15 @@ bool load_image_bytes(
         return false;
     }
 
+    source.size = image.size;
     if (image.backend == vfs::Backend::memory && image.data != nullptr) {
-        data = image.data;
-        size = image.size;
+        source.bytes = static_cast<const uint8_t*>(image.data);
+        reader = read_image_from_memory;
         return true;
     }
 
-    const uint64_t page_count = (image.size + memory::kPageSize - 1) / memory::kPageSize;
-    if (!memory::allocate_contiguous_pages(page_count, backing)) {
-        failure = ImageFailure::no_staging_memory;
-        return false;
-    }
-
-    memset(backing.virtual_address, 0, page_count * memory::kPageSize);
-    const size_t copied = vfs::read(*const_cast<vfs::Vnode*>(&image), 0, backing.virtual_address, image.size);
-    if (copied != image.size) {
-        (void)memory::free_allocation(backing);
-        memset(&backing, 0, sizeof(backing));
-        failure = ImageFailure::read_failed;
-        return false;
-    }
-
-    data = backing.virtual_address;
-    size = image.size;
+    source.node = const_cast<vfs::Vnode*>(&image);
+    reader = read_image_from_vnode;
     return true;
 }
 
@@ -828,19 +843,15 @@ bool prepare_exec_image(
     }
 
     const size_t reported_size = image->size;
-    const void* image_bytes = nullptr;
-    size_t image_size = 0;
-    memory::PageAllocation image_backing = {};
-    if (!load_image_bytes(*image, image_bytes, image_size, image_backing, failure)) {
+    ImageSource image_source = {};
+    elf::ImageReader image_reader = nullptr;
+    if (!open_image_source(*image, image_source, image_reader, failure)) {
         report_image_failure("exec", path, failure, reported_size);
         return false;
     }
 
     vm::VmSpace new_space = {};
     if (!vm::create_address_space(new_space)) {
-        if (image_backing.physical_address != 0) {
-            (void)memory::free_allocation(image_backing);
-        }
         failure = ImageFailure::no_address_space;
         report_image_failure("exec", path, failure, reported_size);
         return false;
@@ -848,20 +859,14 @@ bool prepare_exec_image(
 
     elf::LoadResult load_result = {};
     elf::LoadFailure load_failure = elf::LoadFailure::none;
-    if (!elf::load_user_image(image_bytes, image_size, new_space, argc, argv, load_result, load_failure)) {
+    if (!elf::load_user_image(image_reader, &image_source, image_source.size, new_space, argc, argv, load_result, load_failure)) {
         vm::destroy_address_space(new_space);
-        if (image_backing.physical_address != 0) {
-            (void)memory::free_allocation(image_backing);
-        }
         failure = load_failure == elf::LoadFailure::out_of_memory
             ? ImageFailure::no_load_memory
             : ImageFailure::bad_image;
         console::printf("process: elf de '%s': %s\n", path, elf::load_failure_string(load_failure));
         report_image_failure("exec", path, failure, reported_size);
         return false;
-    }
-    if (image_backing.physical_address != 0) {
-        (void)memory::free_allocation(image_backing);
     }
 
     vm::VmSpace old_space = proc.address_space;
@@ -971,19 +976,15 @@ process::Process* create_process_internal(
     }
 
     const size_t reported_size = image->size;
-    const void* image_bytes = nullptr;
-    size_t image_size = 0;
-    memory::PageAllocation image_backing = {};
-    if (!load_image_bytes(*image, image_bytes, image_size, image_backing, failure)) {
+    ImageSource image_source = {};
+    elf::ImageReader image_reader = nullptr;
+    if (!open_image_source(*image, image_source, image_reader, failure)) {
         report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
 
     process::Process* proc = allocate_process_slot(false);
     if (proc == nullptr) {
-        if (image_backing.physical_address != 0) {
-            (void)memory::free_allocation(image_backing);
-        }
         failure = ImageFailure::no_process_slot;
         report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
@@ -998,9 +999,6 @@ process::Process* create_process_internal(
         set_process_cwd_root(*proc);
     }
     if (!vm::create_address_space(proc->address_space)) {
-        if (image_backing.physical_address != 0) {
-            (void)memory::free_allocation(image_backing);
-        }
         reset_process_slot(*proc);
         failure = ImageFailure::no_address_space;
         report_image_failure("spawn", path, failure, reported_size);
@@ -1009,9 +1007,6 @@ process::Process* create_process_internal(
 
     memory::PageAllocation kernel_stack = {};
     if (!memory::allocate_contiguous_pages(kKernelStackPages, kernel_stack)) {
-        if (image_backing.physical_address != 0) {
-            (void)memory::free_allocation(image_backing);
-        }
         release_address_space(*proc);
         reset_process_slot(*proc);
         failure = ImageFailure::no_address_space;
@@ -1024,9 +1019,6 @@ process::Process* create_process_internal(
 
     if (parent == nullptr) {
         if (!initialize_standard_handles(*proc)) {
-            if (image_backing.physical_address != 0) {
-                (void)memory::free_allocation(image_backing);
-            }
             release_process_resources(*proc);
             reset_process_slot(*proc);
             failure = ImageFailure::no_handles;
@@ -1038,9 +1030,6 @@ process::Process* create_process_internal(
             !inherit_handle(*proc, 1, *parent, stdout_fd >= 0 ? stdout_fd : 1) ||
             !inherit_handle(*proc, 2, *parent, 2)) {
             release_all_handles(*proc);
-            if (image_backing.physical_address != 0) {
-                (void)memory::free_allocation(image_backing);
-            }
             release_process_resources(*proc);
             reset_process_slot(*proc);
             failure = ImageFailure::no_handles;
@@ -1051,11 +1040,8 @@ process::Process* create_process_internal(
 
     elf::LoadResult load_result = {};
     elf::LoadFailure load_failure = elf::LoadFailure::none;
-    if (!elf::load_user_image(image_bytes, image_size, proc->address_space, argc, argv, load_result, load_failure)) {
+    if (!elf::load_user_image(image_reader, &image_source, image_source.size, proc->address_space, argc, argv, load_result, load_failure)) {
         release_all_handles(*proc);
-        if (image_backing.physical_address != 0) {
-            (void)memory::free_allocation(image_backing);
-        }
         release_process_resources(*proc);
         reset_process_slot(*proc);
         failure = load_failure == elf::LoadFailure::out_of_memory
@@ -1064,9 +1050,6 @@ process::Process* create_process_internal(
         console::printf("process: elf de '%s': %s\n", path, elf::load_failure_string(load_failure));
         report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
-    }
-    if (image_backing.physical_address != 0) {
-        (void)memory::free_allocation(image_backing);
     }
 
     // El subsistema lo define el ABI del binario (e_ident[EI_OSABI]), no la
