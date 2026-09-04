@@ -98,6 +98,9 @@ uint64_t* physical_to_virtual(uint64_t physical_address);
 // Materializa la pagina de la region del stack que contiene `address`. Devuelve
 // true si quedo mapeada (o ya lo estaba), false si la direccion cae afuera de la
 // region -- por ejemplo en la pagina de guarda -- o no habia memoria.
+// Suma permisos a una pagina de usuario ya mapeada; false si no lo esta. La
+// usa el cargador de ELF cuando dos PT_LOAD comparten una pagina.
+bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags);
 bool ensure_user_stack_page(VmSpace& space, uint64_t address);
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write);
 

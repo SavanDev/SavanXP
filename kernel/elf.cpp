@@ -69,6 +69,17 @@ bool validate_header(const ElfHeader& header, size_t size) {
 bool map_segment_pages(vm::VmSpace& space, uint64_t start, uint64_t end, uint64_t flags) {
     for (uint64_t page = start; page < end; page += memory::kPageSize) {
         memory::PageAllocation page_allocation = {};
+
+        // Dos PT_LOAD pueden compartir una pagina: pasa cuando un segmento no
+        // termina en un borde y el siguiente empieza en la misma. Es un ELF
+        // valido, y hasta ahora el segundo mapeo fallaba y la carga entera
+        // moria reportando "out of memory" -- que ademas era mentira. La pagina
+        // se queda con la union de los permisos, que es lo unico posible
+        // cuando dos segmentos comparten granularidad.
+        if (vm::add_user_page_flags(space, page, flags)) {
+            continue;
+        }
+
         if (!memory::allocate_page(page_allocation)) {
             return false;
         }

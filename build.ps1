@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "svfs-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "svfs-smoke", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1424,6 +1424,37 @@ function Run-FloatSmokeQemu {
     }.GetNewClosure()
 }
 
+
+# Corre el port de FFmpeg (libav* compiladas contra esta libc). A diferencia del
+# resto de los smokes, el binario NO lo produce este script: las libav* se
+# construyen dentro de WSL con sdk/ffmpeg/*.sh, porque FFmpeg se construye con
+# GNU make y en Windows no hay. Aca se consume el ELF ya linkeado.
+# Reinstala el demo y su material despues de que Build-Kernel regenere la
+# imagen, igual que Restore-ExternalDoom.
+function Install-FfmpegDemo {
+    Install-SvfsFilesWithTool $DiskImage @(
+        @{ Dir = "bin" }
+        @{ Dir = "media" }
+        @{ File = "/disk/bin/wavinfo"; Source = (Join-Path $BuildRoot "external/wavinfo.elf") }
+        @{ File = "/disk/media/tono.wav"; Source = (Join-Path $BuildRoot "media/tono.wav") }
+    )
+}
+
+function Run-FfmpegSmokeQemu {
+    $wavinfo = Join-Path $BuildRoot "external/wavinfo.elf"
+    $tone = Join-Path $BuildRoot "media/tono.wav"
+
+    if (-not (Test-Path $wavinfo)) {
+        throw "Falta $wavinfo. Se construye aparte, con GNU make; ver sdk/ffmpeg/README.md."
+    }
+    if (-not (Test-Path $tone)) {
+        throw "Falta $tone. Lo genera sdk/ffmpeg/make-tone.py."
+    }
+
+    Run-AutomationQemu -AutomationCommand "wavinfo" -SuccessToken "WAVINFO PASS" -FailureToken "WAVINFO FAIL" -TimeoutMinutes 3 -PreLaunch {
+        Install-FfmpegDemo
+    }
+}
 # Test de host de la maquina de estados de montaje de SVFS2. No usa QEMU: linkea
 # el driver REAL (kernel/svfs.cpp) contra backends de mentira (tests/host) y una
 # imagen construida con el core compartido (libsvfs), que es la unica forma de
@@ -1522,6 +1553,9 @@ switch ($Command) {
     }
     "float-smoke" {
         Run-FloatSmokeQemu
+    }
+    "ffmpeg-smoke" {
+        Run-FfmpegSmokeQemu
     }
     "svfs-smoke" {
         Run-SvfsSmoke

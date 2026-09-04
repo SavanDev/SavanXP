@@ -87,11 +87,21 @@ typedef uint16_t in_port_t;
 typedef struct sx_FILE FILE;
 typedef struct sx_DIR DIR;
 
+/* Espejo de <sys/stat.h>. El kernel solo reporta tipo y tamano; el resto queda
+ * en cero porque SVFS2 no guarda duenio ni marcas de tiempo. */
 struct stat {
     unsigned long st_dev;
     unsigned long st_ino;
     unsigned int st_mode;
     unsigned int st_size;
+    unsigned int st_uid;
+    unsigned int st_gid;
+    unsigned long st_nlink;
+    unsigned long st_blksize;
+    unsigned long st_blocks;
+    time_t st_atime;
+    time_t st_mtime;
+    time_t st_ctime;
 };
 
 struct dirent {
@@ -115,6 +125,7 @@ struct tm {
 };
 
 typedef struct { int quot; int rem; } div_t;
+typedef struct { long quot; long rem; } imaxdiv_t;
 typedef struct { long quot; long rem; } ldiv_t;
 typedef struct { long long quot; long long rem; } lldiv_t;
 
@@ -1339,6 +1350,27 @@ long sx_atol(const char* text) {
     return sx_strtol(text, 0, 10);
 }
 
+/* <inttypes.h>: intmax_t es long, asi que son las mismas de arriba con otro
+ * nombre. Existen porque un port las nombra. */
+long sx_imaxabs(long value) {
+    return value < 0 ? -value : value;
+}
+
+imaxdiv_t sx_imaxdiv(long numerator, long denominator) {
+    imaxdiv_t result;
+    result.quot = numerator / denominator;
+    result.rem = numerator % denominator;
+    return result;
+}
+
+long sx_strtoimax(const char* text, char** endptr, int base) {
+    return sx_strtol(text, endptr, base);
+}
+
+unsigned long sx_strtoumax(const char* text, char** endptr, int base) {
+    return sx_strtoul(text, endptr, base);
+}
+
 long long sx_atoll(const char* text) {
     return (long long)sx_strtol(text, 0, 10);
 }
@@ -1865,6 +1897,17 @@ int sx_unlink(const char* path) {
     return 0;
 }
 
+int sx_mkdir(const char* path, mode_t mode) {
+    long result = 0;
+    (void)mode; /* SVFS2 no tiene permisos */
+    result = savanxp_mkdir(path);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    return 0;
+}
+
 int sx_rmdir(const char* path) {
     long result = savanxp_rmdir(path);
     if (result < 0) {
@@ -2099,10 +2142,14 @@ int sx_stat(const char* path, struct stat* info) {
         return -1;
     }
     if (info != 0) {
+        memset(info, 0, sizeof(*info));
         info->st_dev = 1;
         info->st_ino = sx_hash_text(path);
         info->st_mode = raw.st_mode;
         info->st_size = raw.st_size;
+        info->st_nlink = 1;
+        info->st_blksize = 512;
+        info->st_blocks = (raw.st_size + 511u) / 512u;
     }
     return 0;
 }
@@ -2115,10 +2162,14 @@ int sx_fstat(int fd, struct stat* info) {
         return -1;
     }
     if (info != 0) {
+        memset(info, 0, sizeof(*info));
         info->st_dev = 1;
         info->st_ino = (unsigned long)(fd + 1);
         info->st_mode = raw.st_mode;
         info->st_size = raw.st_size;
+        info->st_nlink = 1;
+        info->st_blksize = 512;
+        info->st_blocks = (raw.st_size + 511u) / 512u;
     }
     return 0;
 }
@@ -3616,6 +3667,13 @@ int sx_vsprintf(char* buffer, const char* format, va_list args) {
     return sx_vsnprintf(buffer, (size_t)-1, format, args);
 }
 
+/* Respaldo del macro assert() de <assert.h>. No vuelve. */
+void sx_assert_failed(const char* expression, const char* file, int line) {
+    (void)sx_fprintf(stderr, "assert: %s:%d: %s\n",
+                     file != 0 ? file : "?", line, expression != 0 ? expression : "?");
+    sx_abort();
+}
+
 void sx_perror(const char* prefix) {
     const char* reason = sx_strerror(g_errno);
     if (prefix != 0 && prefix[0] != 0) {
@@ -4946,3 +5004,8 @@ __attribute__((weak, alias("sx_difftime"))) double difftime(time_t later, time_t
 #endif
 __attribute__((weak, alias("sx_sscanf"))) int sscanf(const char* input, const char* format, ...);
 __attribute__((weak, alias("sx_vsscanf"))) int vsscanf(const char* input, const char* format, va_list args);
+__attribute__((weak, alias("sx_imaxabs"))) intmax_t imaxabs(intmax_t value);
+__attribute__((weak, alias("sx_imaxdiv"))) imaxdiv_t imaxdiv(intmax_t numerator, intmax_t denominator);
+__attribute__((weak, alias("sx_strtoimax"))) intmax_t strtoimax(const char* text, char** endptr, int base);
+__attribute__((weak, alias("sx_strtoumax"))) uintmax_t strtoumax(const char* text, char** endptr, int base);
+__attribute__((weak, alias("sx_mkdir"))) int mkdir(const char* path, mode_t mode);

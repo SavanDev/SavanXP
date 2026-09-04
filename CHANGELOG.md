@@ -12,6 +12,26 @@ Notas de corte:
 
 ### Agregado
 
+- **FFmpeg corre adentro de SavanXP.** libavutil, libavcodec, libavformat y
+  libswresample se compilan contra esta libc y decodifican de verdad:
+  `build.ps1 ffmpeg-smoke` abre un WAV desde `/disk`, identifica el formato,
+  elige el decoder y decodifica los 8000 samples. El set de codecs es a
+  proposito minimo (WAV + PCM s16le); lo que se estaba probando es que la cadena
+  entera existe. Va sin asm y sin hilos: el kernel no tiene primitiva de hilos y
+  el toolchain no trae nasm. El port se construye aparte porque FFmpeg usa GNU
+  make, que el resto del pipeline no; `sdk/ffmpeg/README.md` tiene el flujo y
+  las tres trampas del cross-compile, que comparten forma -- ninguna falla
+  ruidosamente, todas producen una configuracion equivocada.
+
+- **`static_assert` en `<assert.h>`, los `PRI*`/`SCN*` en `<inttypes.h>`, y
+  `fpclassify`.** Los tres faltaban y los tres se manifestaban lejos de la
+  causa: sin `static_assert` el configure de FFmpeg decide que el compilador no
+  soporta C11; sin `PRId64`, un `"%" PRId64` queda como una cadena seguida de un
+  identificador suelto y el error que sale es "expected ')'". Se suman ademas
+  los errno que faltaban (`EDOM`, `EILSEQ`, `EPERM`, `ESPIPE` y una docena mas),
+  `mkdir` en `<sys/stat.h>`, `F_SETFD`/`FD_CLOEXEC`, y `imaxabs`/`strtoimax`/
+  `strtoumax`/`imaxdiv`.
+
 - **`build.ps1 smoke` corre `imagetest`.** Se mira a si mismo para verificar lo
   que un cargador que copia por streaming puede romper: 128 KiB de `.rodata`
   byte a byte, el `.bss` en cero (el corte entre `file_size` y `memory_size`) y
@@ -218,6 +238,16 @@ Notas de corte:
 
 ### Cambiado
 
+- **`assert()` avisa cuando falla.** Era `((void)(expression))`: evaluaba la
+  condicion y descartaba el resultado, asi que un assert que no se cumple no se
+  notaba. Ahora imprime que fallo y termina el proceso. Con `NDEBUG` sigue
+  desapareciendo.
+
+- **`struct stat` tiene los campos que el codigo de terceros nombra.** Se suman
+  `st_uid`, `st_gid`, `st_nlink`, `st_blksize`, `st_blocks`, `st_atime`,
+  `st_mtime` y `st_ctime`. El kernel solo reporta tipo y tamano, asi que el
+  resto queda en cero: SVFS2 todavia no guarda duenio ni marcas de tiempo.
+
 - **`exec` deja de copiar la imagen entera a paginas fisicamente contiguas.**
   `load_image_bytes` reservaba `ceil(tamano/4096)` paginas SEGUIDAS, copiaba el
   ejecutable ahi y despues el loader lo volvia a copiar segmento por segmento a
@@ -360,6 +390,13 @@ Notas de corte:
   cada build.
 
 ### Corregido
+
+- **El cargador de ELF fallaba con dos `PT_LOAD` que comparten una pagina.**
+  `map_segment_pages` daba por error que la pagina ya estuviera mapeada, y la
+  carga entera moria reportando "out of memory" -- que ademas era mentira: la
+  memoria estaba. Es un ELF perfectamente valido, y es el que produce el driver
+  de clang cuando el link no es estatico. Ahora la pagina compartida se queda
+  con la union de los permisos.
 
 - **`argc` podia ser mayor que los argumentos que existian.** El kernel copiaba
   15 argumentos como maximo pero le pasaba al proceso el `argc` original, asi que

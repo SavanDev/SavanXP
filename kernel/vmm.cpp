@@ -875,6 +875,24 @@ uint64_t* physical_to_virtual(uint64_t physical_address) {
     return reinterpret_cast<uint64_t*>(physical_address + g_hhdm_offset);
 }
 
+/* Agrega permisos a una pagina de usuario ya mapeada. Devuelve false si no lo
+ * esta. Existe para los ELF donde dos PT_LOAD comparten una pagina: la pagina
+ * tiene que quedar con la union de los permisos de los dos. */
+bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags) {
+    const uint64_t page = address & ~static_cast<uint64_t>(memory::kPageSize - 1);
+    /* page_table_for devuelve la TABLA, no la entrada. */
+    uint64_t* table = page_table_for(space, page, false);
+
+    if (table == nullptr) {
+        return false;
+    }
+    table[pt_index(page)] |= (flags & (kPageWrite | kPageUser));
+    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+        invalidate_page(page);
+    }
+    return true;
+}
+
 bool ensure_user_stack_page(VmSpace& space, uint64_t address) {
     memory::PageAllocation allocation = {};
     const uint64_t page = address & ~static_cast<uint64_t>(memory::kPageSize - 1);
