@@ -1,9 +1,10 @@
 #!/bin/bash
 # Corre el configure de FFmpeg apuntando al target de SavanXP.
 #
-# Primer objetivo, a proposito minimo: WAV con PCM s16le. Alcanza para probar
-# que libavutil/libavcodec/libavformat compilan, linkean y corren; los codecs
-# de verdad se agregan despues, cuando eso este en pie.
+# El set esta acotado a proposito: WAV/PCM s16le para el camino de audio y
+# MJPEG para el de video. MJPEG y no H.264 porque este build va sin asm y sin
+# hilos -- el kernel no tiene primitiva de hilos --, y porque un stream MJPEG
+# crudo son JPEGs concatenados: se genera sin muxear nada, con make-clip.py.
 set -euo pipefail
 
 FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.1}"
@@ -60,7 +61,11 @@ set +e
     --enable-demuxer=wav \
     --enable-muxer=wav \
     --enable-decoder=pcm_s16le \
-    --enable-encoder=pcm_s16le
+    --enable-encoder=pcm_s16le \
+    --enable-demuxer=mjpeg \
+    --enable-decoder=mjpeg \
+    --enable-parser=mjpeg \
+    --enable-swscale
 status=$?
 set -e
 

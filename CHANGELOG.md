@@ -12,6 +12,16 @@ Notas de corte:
 
 ### Agregado
 
+- **Player de video sobre FFmpeg: decodifica MJPEG, convierte YUV->RGB con
+  swscale y lo pone en pantalla.** `build.ps1 ffmpeg-smoke` corre tres cosas: el
+  `wavinfo` de audio, el player en modo `--selftest` (decodifica y convierte los
+  24 cuadros sin pantalla) y el player en modo `--hold`, que presenta por
+  `/dev/gpu0`, deja el ultimo cuadro fijo y avisa por serial para que el harness
+  saque una captura por QMP y compruebe que no sea de un solo color. El clip de
+  prueba (`sdk/ffmpeg/make-clip.py`) esta dibujado para que un error se vea: una
+  barra que avanza un paso por cuadro, franjas de color puro -- si los planos
+  U/V se cruzan cambian de color -- y el numero de cuadro.
+
 - **FFmpeg corre adentro de SavanXP.** libavutil, libavcodec, libavformat y
   libswresample se compilan contra esta libc y decodifican de verdad:
   `build.ps1 ffmpeg-smoke` abre un WAV desde `/disk`, identifica el formato,

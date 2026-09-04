@@ -17,6 +17,7 @@ tools/*
 !tools/shoot.ps1
 !tools/shoot_session.py
 !tools/kbd_smoke.py
+!tools/player_shot.py
 !tools/font/
 !tools/font/**
 *.log

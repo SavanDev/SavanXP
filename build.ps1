@@ -1436,24 +1436,50 @@ function Install-FfmpegDemo {
         @{ Dir = "bin" }
         @{ Dir = "media" }
         @{ File = "/disk/bin/wavinfo"; Source = (Join-Path $BuildRoot "external/wavinfo.elf") }
+        @{ File = "/disk/bin/player"; Source = (Join-Path $BuildRoot "external/player.elf") }
         @{ File = "/disk/media/tono.wav"; Source = (Join-Path $BuildRoot "media/tono.wav") }
+        @{ File = "/disk/media/clip.mjpeg"; Source = (Join-Path $BuildRoot "media/clip.mjpeg") }
     )
 }
 
+# Dos arranques y no uno: el harness hornea UN comando en el kernel, y son dos
+# caminos distintos -- audio (demuxer + decoder) y video (eso mas swscale).
 function Run-FfmpegSmokeQemu {
-    $wavinfo = Join-Path $BuildRoot "external/wavinfo.elf"
-    $tone = Join-Path $BuildRoot "media/tono.wav"
-
-    if (-not (Test-Path $wavinfo)) {
-        throw "Falta $wavinfo. Se construye aparte, con GNU make; ver sdk/ffmpeg/README.md."
+    foreach ($needed in @(
+        "external/wavinfo.elf",
+        "external/player.elf"
+    )) {
+        if (-not (Test-Path (Join-Path $BuildRoot $needed))) {
+            throw "Falta $needed. Se construye aparte, con GNU make; ver sdk/ffmpeg/README.md."
+        }
     }
-    if (-not (Test-Path $tone)) {
-        throw "Falta $tone. Lo genera sdk/ffmpeg/make-tone.py."
+    foreach ($needed in @("media/tono.wav", "media/clip.mjpeg")) {
+        if (-not (Test-Path (Join-Path $BuildRoot $needed))) {
+            throw "Falta $needed. Lo generan sdk/ffmpeg/make-tone.py y make-clip.py."
+        }
     }
 
     Run-AutomationQemu -AutomationCommand "wavinfo" -SuccessToken "WAVINFO PASS" -FailureToken "WAVINFO FAIL" -TimeoutMinutes 3 -PreLaunch {
         Install-FfmpegDemo
     }
+    Run-AutomationQemu -AutomationCommand "player" -SuccessToken "PLAYER PASS" -FailureToken "PLAYER FAIL" -TimeoutMinutes 3 -PreLaunch {
+        Install-FfmpegDemo
+    }
+
+    # Tercer arranque, el visual. El selftest de arriba prueba que decodifica y
+    # convierte; esto prueba que los pixeles LLEGAN a la pantalla, que es lo
+    # unico que ninguna asercion sobre buffers puede cubrir. El player deja el
+    # ultimo cuadro fijo y avisa por serial; ahi se saca la captura por QMP.
+    $python = Get-PythonExecutable
+    $shooter = Join-Path $ToolRoot "player_shot.py"
+    $shotDir = Join-Path $BuildRoot "shots/player"
+    Run-AutomationQemu -AutomationCommand "player-show" -SuccessToken "PLAYER PASS" -FailureToken "PLAYER FAIL" -TimeoutMinutes 4 -ReadyToken "PLAYER DISPLAY READY" -PreLaunch {
+        Install-FfmpegDemo
+    } -OnReady {
+        param($QmpPort)
+        & $python $shooter --port $QmpPort --out-dir $shotDir --name mjpeg
+        if ($LASTEXITCODE -ne 0) { throw "La captura del player no muestra un cuadro." }
+    }.GetNewClosure()
 }
 # Test de host de la maquina de estados de montaje de SVFS2. No usa QEMU: linkea
 # el driver REAL (kernel/svfs.cpp) contra backends de mentira (tests/host) y una

@@ -1,13 +1,19 @@
 # Port de FFmpeg
 
-libavutil / libavcodec / libavformat / libswresample compiladas contra la libc
-de SavanXP, y un consumidor (`wavinfo`) que corre adentro del SO.
+libavutil / libavcodec / libavformat / libswresample / libswscale compiladas
+contra la libc de SavanXP, con dos consumidores que corren adentro del SO.
 
-Estado: **decodifica**. `build.ps1 ffmpeg-smoke` abre un WAV desde `/disk`,
-identifica el formato, elige el decoder, decodifica todos los frames y reporta
-la duracion. El set de codecs habilitado es a proposito minimo (WAV + PCM
-s16le): lo que se estaba probando es que la cadena entera existe, no cuantos
-formatos entran.
+Estado: **reproduce video**. `build.ps1 ffmpeg-smoke` corre tres cosas:
+
+| binario | que hace |
+| --- | --- |
+| `wavinfo` | abre un WAV, informa lo que hay adentro y lo decodifica entero |
+| `player --selftest` | decodifica MJPEG y convierte YUV->RGB con swscale, sin pantalla |
+| `player --hold` | lo mismo pero presentando por `/dev/gpu0`, y deja el ultimo cuadro fijo para que el harness saque una captura |
+
+El set de codecs es a proposito acotado: WAV/PCM s16le y MJPEG. MJPEG y no
+H.264 porque este build va sin asm y sin hilos, y porque un stream MJPEG crudo
+son JPEGs concatenados -- se genera sin muxear nada.
 
 ## Requisitos
 
@@ -42,8 +48,11 @@ de miles de operaciones de archivo. Conviene dejarlo en el filesystem nativo.
 ```
 bash sdk/ffmpeg/all.sh          # en el entorno POSIX
 python sdk/ffmpeg/make-tone.py  # genera build/media/tono.wav
+python sdk/ffmpeg/make-clip.py  # genera build/media/clip.mjpeg
 build.ps1 ffmpeg-smoke          # instala y corre adentro del SO
 ```
+
+La captura del player queda en `build/shots/player/`.
 
 `all.sh` encadena los pasos, que tambien se pueden correr sueltos:
 
@@ -53,7 +62,12 @@ build.ps1 ffmpeg-smoke          # instala y corre adentro del SO
 | `runtime.sh` | compila el runtime de SavanXP como `libsavanxp.a` |
 | `configure.sh` | corre el configure de FFmpeg apuntando al target |
 | `build.sh` | `make -k` y resume que fallo |
-| `link-demo.sh` | compila y linkea `wavinfo.c` contra las libav* |
+| `link-demo.sh` | compila y linkea `wavinfo.c` y `player.c` contra las libav* |
+
+El material de prueba lo generan `make-tone.py` (un WAV de 440 Hz) y
+`make-clip.py` (24 cuadros MJPEG). El clip esta dibujado para que un error se
+VEA: una barra que avanza un paso por cuadro, franjas de color puro -- si los
+planos U/V se cruzan cambian de color -- y el numero de cuadro.
 
 ## Las tres cosas que no son obvias
 
@@ -72,6 +86,20 @@ configuracion equivocada.
 3. **`-static` es obligatorio.** Sin el, el driver marca el ELF como dinamico y
    agrega `.interp`, que empuja al segundo `PT_LOAD` a una direccion sin alinear
    a pagina.
+
+## Como se verifica lo visual
+
+"Se ve bien" no es algo que un harness pueda asertar, asi que esta partido en
+dos. El `--selftest` cubre lo comprobable sin ojos: que todos los cuadros
+decodifiquen, que mantengan el tamano declarado y que la conversion produzca
+pixeles que no sean todos iguales. El `--hold` cubre lo otro -- que los pixeles
+LLEGUEN a la pantalla --: deja el ultimo cuadro fijo, avisa por serial, y ahi el
+harness saca una captura por QMP y comprueba que no sea de un solo color.
+
+El player presenta por `/dev/gpu0` (`gpu_open`/`gpu_acquire`/`gpu_present`) y no
+por `gfx_open`: ese es el camino de un cliente del WM, que mapea un fd heredado
+de windowd. Un proceso lanzado por init -- que es como corre en el harness -- no
+lo tiene. Es el mismo camino que usa `gputest`.
 
 ## Que falta para subir de codecs
 

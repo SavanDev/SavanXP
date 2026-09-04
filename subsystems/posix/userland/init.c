@@ -67,6 +67,12 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "wavinfo")) {
         return "FFMPEG SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "player-show")) {
+        return "PLAYER DISPLAY";
+    }
+    if (spec != 0 && text_contains(spec, "player")) {
+        return "PLAYER SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "guihost")) {
         return "NATIVEGUI HOST";
     }
@@ -95,6 +101,8 @@ static int run_automation_spec(const char* spec) {
     const char* sxguihost_argv[] = {"/disk/bin/sxguihost", 0};
     const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
     const char* wavinfo_argv[] = {"/disk/bin/wavinfo", "/disk/media/tono.wav", 0};
+    const char* player_argv[] = {"/disk/bin/player", "--selftest", "/disk/media/clip.mjpeg", 0};
+    const char* player_show_argv[] = {"/disk/bin/player", "--hold", "8000", "/disk/media/clip.mjpeg", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -126,6 +134,14 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/wavinfo";
             argv = wavinfo_argv;
             argc = 2;
+        } else if (strcmp(spec, "player") == 0) {
+            path = "/disk/bin/player";
+            argv = player_argv;
+            argc = 3;
+        } else if (strcmp(spec, "player-show") == 0) {
+            path = "/disk/bin/player";
+            argv = player_show_argv;
+            argc = 4;
         } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {
             path = "/disk/bin/floatsmoke";
             argv = floatsmoke_argv;
