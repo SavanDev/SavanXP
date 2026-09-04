@@ -12,6 +12,30 @@ Notas de corte:
 
 ### Agregado
 
+- **La libc suma lo que un port da por sentado.** Cadenas (`memchr`, `strnlen`,
+  `strcat`, `strncat`, `strtok`, `strsep`, `strcasestr`), enteros (`strtoll`,
+  `strtoull`, `atol`, `atoll`, `labs`, `llabs`, `div`/`ldiv`/`lldiv`), memoria
+  alineada (`posix_memalign`, `aligned_alloc`, `memalign`), stdio (`fgetc`,
+  `getc`, `getchar`, `fputc`, `ungetc`, `fileno`, `fdopen`, `setvbuf`, `setbuf`,
+  `rewind`, `fseeko`, `ftello`, `vsprintf`, `perror`), `sscanf`/`vsscanf` con
+  scansets y modificadores de largo, y calendario completo (`gmtime`,
+  `gmtime_r`, `localtime`, `mktime`, `timegm`, `strftime`, `clock`). Sin base de
+  datos de zonas horarias: todo es UTC, que es lo que entrega el RTC.
+
+- **`%f`, `%e` y `%g` de verdad, y `strtod`.** El `%f` era un stub que consumia
+  el argumento y escribia `0`. Ahora el formateador resuelve las tres
+  conversiones con sus mayusculas, precision, ancho, acarreo del redondeo y los
+  casos raros (`nan`, `inf`, cero con signo), y del otro lado estan `strtod`,
+  `strtof`, `atof` y `difftime`. Todo esto vive detras de `__SSE2__`, como la
+  libm: sin `-Sse` el target no tiene ABI de punto flotante y el llamador no
+  puede ni pasar el double. `floatsmoke` gana dos secciones que lo cubren.
+
+- **libm: las que faltaban.** `asin`, `acos`, `hypot`, `cbrt`, `rint`,
+  `nearbyint`, `lrint`, `llrint`, `lround`, `llround`, `frexp`, `modf`,
+  `scalbn`, `scalbln`, `nextafter`, `fdim`, `fma`, `log1p`, `expm1`, `sinh`,
+  `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `remainder` y sus variantes
+  `float`.
+
 - **`build.ps1 smoke` corre `libctest`.** Prueba la superficie de libc que
   consume un port, incluyendo SOLO headers estandar: nombres estandar usados
   como campos de struct (`.close`, `.read`, `.write`, `.remove`), string/memoria,
@@ -183,6 +207,16 @@ Notas de corte:
 
 ### Cambiado
 
+- **Los streams leen por tandas y `malloc` alinea a 16.** `fgets` bajaba un
+  `read()` por caracter, porque `fread` no tenia buffer de lectura; ahora los
+  streams de archivo llenan un buffer de 512 bytes (stdin sigue yendo directo,
+  para no robarle al proceso input que todavia no pidio) y `ungetc` tiene su
+  byte de pushback, con `fseek`/`ftell` descontando lo que quedo sin consumir.
+  El pool de FILE baja de 128 a 64, que es el tope de fds por proceso del
+  kernel, asi que el buffer nuevo no cuesta BSS. Aparte `malloc` pasa a alinear
+  a 16 en vez de 8: es el `max_align_t` de x86-64, y con 8 un `movaps` sobre
+  memoria de `malloc` en una app `-Sse` podia faultear.
+
 - **La libc deja de renombrar con `#define`: los nombres estandar ahora son
   simbolos de verdad.** Los headers del SDK POSIX definian `#define read
   sx_read`, `#define close sx_close`, `#define free sx_free` y unos 140 mas, asi
@@ -287,6 +321,15 @@ Notas de corte:
   cada build.
 
 ### Corregido
+
+- **`time()` devolvia el uptime, no la epoca Unix.** Teniendo el RTC del kernel
+  a mano (`savanxp_realtime`), calculaba `uptime_ms() / 1000`, asi que cualquier
+  fecha derivada daba 1970. Ahora convierte la lectura del RTC y solo cae al
+  uptime si el RTC no valida.
+
+- **`strtoul` y compania envolvian en silencio al desbordar.** El parser de
+  enteros multiplicaba y sumaba sin mirar, asi que un numero mas grande que
+  `ULONG_MAX` devolvia basura en vez de saturar. Ahora satura y deja `ERANGE`.
 
 - **`waitpid()` era una recursion infinita.** El macro variadico de
   `<sys/wait.h>` mandaba la llamada de dos argumentos a `sx_waitpid_default`,

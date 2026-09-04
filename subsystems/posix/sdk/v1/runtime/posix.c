@@ -51,14 +51,26 @@
 #define SX_ARENA_FIRST_BYTES ((size_t)(1024u * 1024u))
 #define SX_ARENA_MAX_BYTES ((size_t)(32u * 1024u * 1024u))
 #define SX_ARENA_CAPACITY ((size_t)8u)
-#define SX_ALLOC_ALIGNMENT ((size_t)sizeof(uintptr_t))
+/* 16 y no sizeof(void*): es el max_align_t de x86-64. Con 8, un movaps
+ * sobre un buffer de malloc en una app -Sse podia faultear, porque clang
+ * asume que malloc devuelve memoria apta para cualquier tipo. */
+#define SX_ALLOC_ALIGNMENT ((size_t)16)
 #define SX_ALLOC_MIN_SPLIT_SIZE (SX_ALLOC_ALIGNMENT * 2u)
 #define SX_ALLOC_MAGIC 0x53584148u
-#define SX_FILE_POOL_CAPACITY 128
+/* Marca de una asignacion alineada. Es un valor de 64 bits que no puede ser
+ * un puntero valido a proposito: sx_free lee estos 16 bytes de CUALQUIER
+ * bloque, y en uno normal caen sobre los campos next/prev de su header. */
+#define SX_ALIGNED_MAGIC 0x5341584d454d414cull
+/* El kernel da 64 fds por proceso (process::kMaxFileHandles), asi que un pool
+ * mas grande que eso es BSS que no se puede usar ni queriendo. */
+#define SX_FILE_POOL_CAPACITY 64
 #define SX_DIR_POOL_CAPACITY 64
 #define SX_SOCKET_STATE_CAPACITY 128
 #define SX_PATH_CAPACITY 256
 #define SX_FILE_BUFFER_CAPACITY 512
+#define SX_IOFBF 0
+#define SX_IOLBF 1
+#define SX_IONBF 2
 
 typedef long ssize_t;
 typedef long off_t;
@@ -86,6 +98,25 @@ struct dirent {
     unsigned char d_type;
     char d_name[256];
 };
+
+/* Duplicados de <stdlib.h> a proposito: posix.c declara sus tipos localmente en
+ * vez de incluir los headers estandar, porque ya define struct stat, struct
+ * dirent y FILE por su cuenta y los includes chocarian. */
+struct tm {
+    int tm_sec;
+    int tm_min;
+    int tm_hour;
+    int tm_mday;
+    int tm_mon;
+    int tm_year;
+    int tm_wday;
+    int tm_yday;
+    int tm_isdst;
+};
+
+typedef struct { int quot; int rem; } div_t;
+typedef struct { long quot; long rem; } ldiv_t;
+typedef struct { long long quot; long long rem; } lldiv_t;
 
 struct sockaddr {
     unsigned short sa_family;
@@ -157,7 +188,14 @@ struct sx_FILE {
     int can_read;
     int can_write;
     size_t write_buffer_used;
+    /* Lectura: sin buffer, sx_fgets bajaba un read() por caracter. Se llena solo
+     * en streams de archivo; stdin sigue yendo directo, igual que la escritura,
+     * para no robarle al proceso input que todavia no pidio. */
+    size_t read_buffer_used;
+    size_t read_buffer_pos;
+    int pushback;
     unsigned char write_buffer[SX_FILE_BUFFER_CAPACITY];
+    unsigned char read_buffer[SX_FILE_BUFFER_CAPACITY];
 };
 
 struct sx_DIR {
@@ -174,6 +212,13 @@ typedef struct sx_alloc_header {
     struct sx_alloc_header* next;
     struct sx_alloc_header* prev;
 } sx_alloc_header;
+
+/* Prefijo de una asignacion alineada: se escribe en los 16 bytes justo antes
+ * del puntero que se devuelve, y guarda el puntero real que hay que liberar. */
+typedef struct sx_aligned_tag {
+    uint64_t magic;
+    void* base;
+} sx_aligned_tag;
 
 /* El descriptor vive adentro de la propia arena (byte 0), asi no hace falta
  * asignar memoria para poder asignar memoria. Layout:
@@ -195,16 +240,19 @@ struct sx_socket_state {
 };
 
 static union {
-    uintptr_t alignment;
+    _Alignas(SX_ALLOC_ALIGNMENT) uintptr_t alignment;
     unsigned char bytes[SX_HEAP_SIZE];
 } g_heap = {0};
 static sx_arena* g_arenas = 0;
 static size_t g_mapped_arena_count = 0;
 static size_t g_mapped_bytes = 0;
 static struct sx_FILE g_file_pool[SX_FILE_POOL_CAPACITY] = {};
-static struct sx_FILE g_stdin_file = {0, 1, 0, 0, 1, 1, 0, 0, {0}};
-static struct sx_FILE g_stdout_file = {1, 1, 0, 0, 1, 0, 1, 0, {0}};
-static struct sx_FILE g_stderr_file = {2, 1, 0, 0, 1, 0, 1, 0, {0}};
+static struct sx_FILE g_stdin_file = {
+    .fd = 0, .in_use = 1, .is_stdio = 1, .can_read = 1, .pushback = -1};
+static struct sx_FILE g_stdout_file = {
+    .fd = 1, .in_use = 1, .is_stdio = 1, .can_write = 1, .pushback = -1};
+static struct sx_FILE g_stderr_file = {
+    .fd = 2, .in_use = 1, .is_stdio = 1, .can_write = 1, .pushback = -1};
 static struct sx_DIR g_dir_pool[SX_DIR_POOL_CAPACITY] = {};
 static struct sx_socket_state g_socket_states[SX_SOCKET_STATE_CAPACITY] = {};
 static char g_path_env[] = "/disk/bin:/bin";
@@ -851,6 +899,64 @@ char* sx_strdup(const char* text) {
     return copy;
 }
 
+void* sx_memchr(const void* block, int value, size_t count) {
+    const unsigned char* bytes = (const unsigned char*)block;
+    const unsigned char needle = (unsigned char)value;
+    for (size_t index = 0; index < count; ++index) {
+        if (bytes[index] == needle) {
+            return (void*)(bytes + index);
+        }
+    }
+    return 0;
+}
+
+size_t sx_strnlen(const char* text, size_t limit) {
+    size_t length = 0;
+    while (length < limit && text[length] != 0) {
+        ++length;
+    }
+    return length;
+}
+
+char* sx_strcat(char* destination, const char* source) {
+    sx_strcpy(destination + sx_strlen(destination), source);
+    return destination;
+}
+
+char* sx_strncat(char* destination, const char* source, size_t count) {
+    size_t end = sx_strlen(destination);
+    size_t index = 0;
+    while (index < count && source[index] != 0) {
+        destination[end + index] = source[index];
+        ++index;
+    }
+    destination[end + index] = 0;
+    return destination;
+}
+
+/* El estado de strtok es global por definicion del estandar; strtok_r es el que
+ * hay que usar donde importe. */
+char* sx_strtok(char* text, const char* delimiters) {
+    static char* saved = 0;
+    return sx_strtok_r(text, delimiters, &saved);
+}
+
+char* sx_strsep(char** text, const char* delimiters) {
+    char* start = text != 0 ? *text : 0;
+    char* cursor = 0;
+    if (start == 0) {
+        return 0;
+    }
+    cursor = start + sx_strcspn(start, delimiters);
+    if (*cursor != 0) {
+        *cursor = 0;
+        *text = cursor + 1;
+    } else {
+        *text = 0;
+    }
+    return start;
+}
+
 int sx_isspace(int character) {
     return character == ' ' || character == '\t' || character == '\n'
         || character == '\r' || character == '\f' || character == '\v';
@@ -927,6 +1033,19 @@ int sx_strncasecmp(const char* left, const char* right, unsigned long count) {
         }
         if (left[index] == '\0') {
             return 0;
+        }
+    }
+    return 0;
+}
+
+char* sx_strcasestr(const char* haystack, const char* needle) {
+    const size_t length = sx_strlen(needle);
+    if (length == 0) {
+        return (char*)haystack;
+    }
+    for (; *haystack != 0; ++haystack) {
+        if (sx_strncasecmp(haystack, needle, (unsigned long)length) == 0) {
+            return (char*)haystack;
         }
     }
     return 0;
@@ -1015,6 +1134,80 @@ void* sx_realloc(void* pointer, size_t size) {
     return replacement;
 }
 
+/* alignment tiene que ser potencia de dos. Hasta SX_ALLOC_ALIGNMENT no hace
+ * falta nada: malloc ya cumple. Por encima se sobre-asigna y se corre el
+ * puntero, dejando el tag con el original para que free lo encuentre. */
+static void* sx_allocate_aligned(size_t alignment, size_t size) {
+    unsigned char* base = 0;
+    unsigned char* aligned = 0;
+    sx_aligned_tag* tag = 0;
+    size_t total = 0;
+
+    if (alignment <= SX_ALLOC_ALIGNMENT) {
+        return sx_malloc(size);
+    }
+    total = size + alignment + sizeof(sx_aligned_tag);
+    if (total < size) {
+        return 0;
+    }
+    base = (unsigned char*)sx_malloc(total);
+    if (base == 0) {
+        return 0;
+    }
+
+    aligned = base + sizeof(sx_aligned_tag);
+    aligned += (alignment - ((uintptr_t)aligned & (alignment - 1u))) & (alignment - 1u);
+    tag = ((sx_aligned_tag*)aligned) - 1;
+    tag->magic = SX_ALIGNED_MAGIC;
+    tag->base = base;
+    return aligned;
+}
+
+/* Devuelve el puntero real detras de uno alineado, o el mismo si no lo es. */
+static void* sx_resolve_aligned(void* pointer) {
+    const sx_aligned_tag* tag = ((const sx_aligned_tag*)pointer) - 1;
+    const sx_alloc_header* header = 0;
+
+    if (tag->magic != SX_ALIGNED_MAGIC || tag->base == 0 || tag->base >= pointer) {
+        return pointer;
+    }
+    /* La marca sola no alcanza: se confirma que el puntero guardado sea de
+     * verdad el payload de un bloque vivo. */
+    header = ((const sx_alloc_header*)tag->base) - 1;
+    if (!sx_block_is_valid(header) || header->free) {
+        return pointer;
+    }
+    return tag->base;
+}
+
+int sx_posix_memalign(void** out_pointer, size_t alignment, size_t size) {
+    void* block = 0;
+    if (out_pointer == 0) {
+        return SAVANXP_EINVAL;
+    }
+    if (alignment < sizeof(void*) || (alignment & (alignment - 1u)) != 0) {
+        return SAVANXP_EINVAL;
+    }
+    block = sx_allocate_aligned(alignment, size);
+    if (block == 0) {
+        return SAVANXP_ENOMEM;
+    }
+    *out_pointer = block;
+    return 0;
+}
+
+void* sx_aligned_alloc(size_t alignment, size_t size) {
+    if (alignment == 0 || (alignment & (alignment - 1u)) != 0) {
+        g_errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    return sx_allocate_aligned(alignment, size);
+}
+
+void* sx_memalign(size_t alignment, size_t size) {
+    return sx_aligned_alloc(alignment, size);
+}
+
 void sx_free(void* pointer) {
     sx_alloc_header* header = 0;
 
@@ -1022,6 +1215,7 @@ void sx_free(void* pointer) {
         return;
     }
 
+    pointer = sx_resolve_aligned(pointer);
     header = ((sx_alloc_header*)pointer) - 1;
     if (!sx_block_is_valid(header) || header->free) {
         g_errno = SAVANXP_EINVAL;
@@ -1040,6 +1234,7 @@ static unsigned long sx_parse_unsigned(const char* text, char** endptr, int base
     const char* cursor = text;
     unsigned long value = 0;
     int digits = 0;
+    int overflow = 0;
     *success = 0;
     while (*cursor != '\0' && sx_isspace((unsigned char)*cursor)) {
         ++cursor;
@@ -1071,7 +1266,11 @@ static unsigned long sx_parse_unsigned(const char* text, char** endptr, int base
         if (digit >= base) {
             break;
         }
-        value = (value * (unsigned long)base) + (unsigned long)digit;
+        if (value > (~0ul - (unsigned long)digit) / (unsigned long)base) {
+            overflow = 1;
+        } else {
+            value = (value * (unsigned long)base) + (unsigned long)digit;
+        }
         ++digits;
         ++cursor;
     }
@@ -1079,6 +1278,11 @@ static unsigned long sx_parse_unsigned(const char* text, char** endptr, int base
         *endptr = (char*)(digits == 0 ? text : cursor);
     }
     *success = digits != 0;
+    if (overflow) {
+        /* El estandar pide saturar y avisar por ERANGE, no envolver. */
+        g_errno = ERANGE;
+        return ~0ul;
+    }
     return value;
 }
 
@@ -1120,10 +1324,408 @@ unsigned long sx_strtoul(const char* text, char** endptr, int base) {
     return value;
 }
 
+/* Sobre LP64, long y long long son ambos de 64 bits, asi que estas comparten
+ * parser con strtol/strtoul; existen igual porque un port las nombra. */
+long long sx_strtoll(const char* text, char** endptr, int base) {
+    return (long long)sx_strtol(text, endptr, base);
+}
+
+unsigned long long sx_strtoull(const char* text, char** endptr, int base) {
+    return (unsigned long long)sx_strtoul(text, endptr, base);
+}
+
+long sx_atol(const char* text) {
+    return sx_strtol(text, 0, 10);
+}
+
+long long sx_atoll(const char* text) {
+    return (long long)sx_strtol(text, 0, 10);
+}
+
+long sx_labs(long value) {
+    return value < 0 ? -value : value;
+}
+
+long long sx_llabs(long long value) {
+    return value < 0 ? -value : value;
+}
+
+div_t sx_div(int numerator, int denominator) {
+    div_t result;
+    result.quot = numerator / denominator;
+    result.rem = numerator % denominator;
+    return result;
+}
+
+ldiv_t sx_ldiv(long numerator, long denominator) {
+    ldiv_t result;
+    result.quot = numerator / denominator;
+    result.rem = numerator % denominator;
+    return result;
+}
+
+lldiv_t sx_lldiv(long long numerator, long long denominator) {
+    lldiv_t result;
+    result.quot = numerator / denominator;
+    result.rem = numerator % denominator;
+    return result;
+}
+
 int sx_atoi(const char* text) {
     return (int)sx_strtol(text, 0, 10);
 }
 
+#if defined(__SSE2__)
+
+/* --- Punto flotante -------------------------------------------------------
+ *
+ * Todo este bloque existe solo con SSE2. Sin -Sse el target no tiene un ABI de
+ * punto flotante utilizable (ver runtime/math.c): los double viajan por una
+ * convencion propia de clang y cada operacion pide helpers de soft-float que
+ * este sistema no tiene. Un va_arg(args, double) en una unidad sin SSE ni
+ * siquiera puede leer el valor, porque el llamador lo paso en xmm0..7 y el
+ * area de registros que arma el va_list no los guarda.
+ *
+ * La conversion NO es correctamente redondeada como la de glibc: trabaja en
+ * double, que es lo que alcanza para un log, para formatear una opcion y para
+ * leer un numero de un archivo de texto. Lo que si esta cubierto son los casos
+ * raros: nan, inf, cero con signo y el acarreo del redondeo (0.999 con dos
+ * decimales tiene que dar 1.00, no 0.100).
+ */
+
+#define SX_DOUBLE_INFINITY __builtin_inf()
+#define SX_DOUBLE_NAN __builtin_nan("")
+
+/* Mas alla de 17 decimales un double no tiene informacion que dar; lo que se
+ * pida de mas se rellena con ceros. */
+#define SX_DOUBLE_EXACT_DIGITS 17
+#define SX_DOUBLE_MAX_PRECISION 40
+/* Por encima de esto la parte entera no entra en un unsigned long long y se
+ * pasa a notacion exponencial. */
+#define SX_DOUBLE_PLAIN_LIMIT 1e17
+/* sign + 18 enteros + punto + 40 decimales + exponente, con aire. */
+#define SX_DOUBLE_BUFFER 128
+
+static const double g_power_of_ten[] = {
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
+    1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
+    1e20, 1e21, 1e22};
+
+#define SX_POWER_OF_TEN_COUNT ((int)(sizeof(g_power_of_ten) / sizeof(g_power_of_ten[0])))
+
+static double sx_scale_by_power_of_ten(double value, int exponent) {
+    while (exponent >= SX_POWER_OF_TEN_COUNT) {
+        value *= g_power_of_ten[SX_POWER_OF_TEN_COUNT - 1];
+        exponent -= SX_POWER_OF_TEN_COUNT - 1;
+    }
+    while (exponent <= -SX_POWER_OF_TEN_COUNT) {
+        value /= g_power_of_ten[SX_POWER_OF_TEN_COUNT - 1];
+        exponent += SX_POWER_OF_TEN_COUNT - 1;
+    }
+    if (exponent >= 0) {
+        return value * g_power_of_ten[exponent];
+    }
+    return value / g_power_of_ten[-exponent];
+}
+
+/* Escribe value (positivo, finito) con exactamente `precision` decimales, sin
+ * signo. Devuelve los caracteres escritos. */
+static size_t sx_emit_fixed(char* out, double value, int precision) {
+    const int exact = precision > SX_DOUBLE_EXACT_DIGITS ? SX_DOUBLE_EXACT_DIGITS : precision;
+    unsigned long long whole = (unsigned long long)value;
+    double fraction = value - (double)whole;
+    unsigned long long scaled = 0;
+    unsigned long long limit = 1;
+    char digits[24];
+    size_t digit_count = 0;
+    size_t length = 0;
+    int index = 0;
+
+    for (index = 0; index < exact; ++index) {
+        limit *= 10ull;
+    }
+    if (exact > 0) {
+        scaled = (unsigned long long)(fraction * (double)limit + 0.5);
+        if (scaled >= limit) {
+            /* El redondeo desbordo hacia la parte entera. */
+            scaled = 0;
+            whole += 1;
+        }
+    } else if (fraction >= 0.5) {
+        whole += 1;
+    }
+
+    do {
+        digits[digit_count++] = (char)('0' + (whole % 10ull));
+        whole /= 10ull;
+    } while (whole != 0);
+    while (digit_count > 0) {
+        out[length++] = digits[--digit_count];
+    }
+
+    if (precision > 0) {
+        out[length++] = '.';
+        for (index = exact - 1; index >= 0; --index) {
+            unsigned long long divisor = 1;
+            int step = 0;
+            for (step = 0; step < index; ++step) {
+                divisor *= 10ull;
+            }
+            out[length++] = (char)('0' + ((scaled / divisor) % 10ull));
+        }
+        for (index = exact; index < precision; ++index) {
+            out[length++] = '0';
+        }
+    }
+    return length;
+}
+
+/* Los ceros que se comen son los DECIMALES. Sin el chequeo del punto, un %g de
+ * 100000 (que sale de emit_fixed como "100000", sin parte fraccionaria) se
+ * quedaba en "1". */
+static size_t sx_strip_trailing_zeros(char* out, size_t length) {
+    size_t index = 0;
+    int has_point = 0;
+
+    for (index = 0; index < length; ++index) {
+        if (out[index] == '.') {
+            has_point = 1;
+            break;
+        }
+    }
+    if (!has_point) {
+        return length;
+    }
+    while (length > 0 && out[length - 1] == '0') {
+        --length;
+    }
+    if (length > 0 && out[length - 1] == '.') {
+        --length;
+    }
+    return length;
+}
+
+/* Formatea value segun conversion ('f', 'e' o 'g' y sus mayusculas) en out,
+ * que tiene que tener SX_DOUBLE_BUFFER bytes. Devuelve los escritos. */
+static size_t sx_format_double(char* out, double value, int precision, char conversion) {
+    const int uppercase = conversion >= 'A' && conversion <= 'Z';
+    const char lower = (char)(uppercase ? conversion + ('a' - 'A') : conversion);
+    const char* text = 0;
+    double normalized = 0.0;
+    size_t length = 0;
+    size_t start = 0;
+    int negative = 0;
+    int exponent = 0;
+    int strip_zeros = 0;
+    int use_exponent = 0;
+
+    if (__builtin_isnan(value)) {
+        text = uppercase ? "NAN" : "nan";
+        while (*text != 0) {
+            out[length++] = *text++;
+        }
+        return length;
+    }
+    if (value < 0.0 || (value == 0.0 && __builtin_signbit(value))) {
+        negative = 1;
+        value = -value;
+    }
+    if (__builtin_isinf(value)) {
+        if (negative) {
+            out[length++] = '-';
+        }
+        text = uppercase ? "INF" : "inf";
+        while (*text != 0) {
+            out[length++] = *text++;
+        }
+        return length;
+    }
+
+    if (precision < 0) {
+        precision = 6;
+    }
+    if (precision > SX_DOUBLE_MAX_PRECISION) {
+        precision = SX_DOUBLE_MAX_PRECISION;
+    }
+
+    /* Exponente decimal por escalado sucesivo: no depende de log10, que vive en
+     * math.c y no se linkea siempre. */
+    normalized = value;
+    if (normalized != 0.0) {
+        while (normalized >= 10.0) {
+            normalized /= 10.0;
+            ++exponent;
+        }
+        while (normalized < 1.0) {
+            normalized *= 10.0;
+            --exponent;
+        }
+    }
+
+    if (lower == 'e') {
+        use_exponent = 1;
+    } else if (lower == 'g') {
+        strip_zeros = 1;
+        if (precision == 0) {
+            precision = 1;
+        }
+        if (exponent < -4 || exponent >= precision) {
+            precision -= 1;
+            use_exponent = 1;
+        } else {
+            precision -= exponent + 1;
+        }
+    } else if (value >= SX_DOUBLE_PLAIN_LIMIT) {
+        /* %f de algo que no entra en un unsigned long long. */
+        use_exponent = 1;
+    }
+
+    if (negative) {
+        out[length++] = '-';
+    }
+    start = length;
+
+    if (!use_exponent) {
+        length += sx_emit_fixed(out + length, value, precision);
+        if (strip_zeros) {
+            length = sx_strip_trailing_zeros(out, length);
+        }
+        return length;
+    }
+
+    length += sx_emit_fixed(out + length, normalized, precision);
+    /* El redondeo puede empujar la mantisa a 10.x: se renormaliza a 1.0 con un
+     * exponente mas. Se detecta porque la parte entera quedo con dos digitos. */
+    if (length > start + 1 && out[start + 1] != '.') {
+        ++exponent;
+        length = start + sx_emit_fixed(out + start, 1.0, precision);
+    }
+    if (strip_zeros) {
+        length = sx_strip_trailing_zeros(out, length);
+    }
+    out[length++] = uppercase ? 'E' : 'e';
+    out[length++] = exponent < 0 ? '-' : '+';
+    {
+        const int magnitude = exponent < 0 ? -exponent : exponent;
+        if (magnitude >= 100) {
+            out[length++] = (char)('0' + (magnitude / 100));
+        }
+        out[length++] = (char)('0' + ((magnitude / 10) % 10));
+        out[length++] = (char)('0' + (magnitude % 10));
+    }
+    return length;
+}
+
+double sx_strtod(const char* text, char** endptr) {
+    const char* cursor = text;
+    double mantissa = 0.0;
+    int negative = 0;
+    int exponent = 0;
+    int seen_digit = 0;
+
+    if (endptr != 0) {
+        *endptr = (char*)text;
+    }
+    if (text == 0) {
+        return 0.0;
+    }
+    while (*cursor != 0 && sx_isspace((unsigned char)*cursor)) {
+        ++cursor;
+    }
+    if (*cursor == '-') {
+        negative = 1;
+        ++cursor;
+    } else if (*cursor == '+') {
+        ++cursor;
+    }
+
+    if (sx_strncasecmp(cursor, "inf", 3) == 0) {
+        cursor += 3;
+        if (sx_strncasecmp(cursor, "inity", 5) == 0) {
+            cursor += 5;
+        }
+        if (endptr != 0) {
+            *endptr = (char*)cursor;
+        }
+        return negative ? -SX_DOUBLE_INFINITY : SX_DOUBLE_INFINITY;
+    }
+    if (sx_strncasecmp(cursor, "nan", 3) == 0) {
+        cursor += 3;
+        if (endptr != 0) {
+            *endptr = (char*)cursor;
+        }
+        return SX_DOUBLE_NAN;
+    }
+
+    while (*cursor >= '0' && *cursor <= '9') {
+        mantissa = mantissa * 10.0 + (double)(*cursor - '0');
+        ++cursor;
+        seen_digit = 1;
+    }
+    if (*cursor == '.') {
+        ++cursor;
+        while (*cursor >= '0' && *cursor <= '9') {
+            mantissa = mantissa * 10.0 + (double)(*cursor - '0');
+            --exponent;
+            ++cursor;
+            seen_digit = 1;
+        }
+    }
+    if (!seen_digit) {
+        g_errno = SAVANXP_EINVAL;
+        return 0.0;
+    }
+
+    if (*cursor == 'e' || *cursor == 'E') {
+        const char* mark = cursor;
+        int exponent_sign = 1;
+        int exponent_value = 0;
+        int exponent_digits = 0;
+        ++cursor;
+        if (*cursor == '-') {
+            exponent_sign = -1;
+            ++cursor;
+        } else if (*cursor == '+') {
+            ++cursor;
+        }
+        while (*cursor >= '0' && *cursor <= '9') {
+            if (exponent_value < 100000) {
+                exponent_value = exponent_value * 10 + (*cursor - '0');
+            }
+            ++cursor;
+            ++exponent_digits;
+        }
+        if (exponent_digits == 0) {
+            cursor = mark; /* la 'e' no era parte del numero */
+        } else {
+            exponent += exponent_sign * exponent_value;
+        }
+    }
+
+    if (endptr != 0) {
+        *endptr = (char*)cursor;
+    }
+    mantissa = sx_scale_by_power_of_ten(mantissa, exponent);
+    return negative ? -mantissa : mantissa;
+}
+
+float sx_strtof(const char* text, char** endptr) {
+    return (float)sx_strtod(text, endptr);
+}
+
+double sx_difftime(time_t later, time_t earlier) {
+    return (double)(later - earlier);
+}
+
+double sx_atof(const char* text) {
+    return sx_strtod(text, 0);
+}
+
+#else
+
+/* Sin SSE no hay como leer ni devolver un double: se deja el stub historico
+ * para que el simbolo exista y el link no se caiga. Una app que necesite
+ * punto flotante se construye con -Sse (ver tools/build-user.ps1). */
 double sx_atof(const char* text) {
     union {
         uint64_t bits;
@@ -1132,6 +1734,8 @@ double sx_atof(const char* text) {
     (void)text;
     return result.value;
 }
+
+#endif
 
 int sx_abs(int value) {
     return value < 0 ? -value : value;
@@ -1722,6 +2326,7 @@ static FILE* sx_allocate_file(void) {
             memset(&g_file_pool[index], 0, sizeof(g_file_pool[index]));
             g_file_pool[index].fd = -1;
             g_file_pool[index].in_use = 1;
+            g_file_pool[index].pushback = -1;
             return &g_file_pool[index];
         }
     }
@@ -1732,6 +2337,7 @@ static void sx_release_file(FILE* stream) {
     if (stream != 0 && !stream->is_stdio) {
         memset(stream, 0, sizeof(*stream));
         stream->fd = -1;
+        stream->pushback = -1;
     }
 }
 
@@ -2153,12 +2759,25 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
                     break;
                 }
                 case 'f':
+                case 'F':
+                case 'e':
+                case 'E':
+                case 'g':
+                case 'G': {
+#if defined(__SSE2__)
+                    char number[SX_DOUBLE_BUFFER];
+                    const double value = va_arg(args, double);
+                    length = sx_format_double(number, value, precision, *cursor);
+                    written += sx_write_padded(emit, context, number, length, width, pad, left_align);
+#else
+                    /* Sin SSE el llamador no pudo pasar el double por xmm0..7,
+                     * asi que aca no hay nada que leer. Queda el stub historico:
+                     * una app con punto flotante se construye con -Sse. */
                     (void)va_arg(args, double);
-                    buffer[0] = '0';
-                    buffer[1] = '\0';
-                    length = 1;
-                    written += sx_write_padded(emit, context, buffer, length, width, pad, left_align);
+                    written += sx_write_padded(emit, context, "0", 1, width, pad, left_align);
+#endif
                     break;
+                }
                 default:
                     if (!emit('%', context) || !emit(*cursor, context)) {
                         return written;
@@ -2221,23 +2840,79 @@ int sx_fclose(FILE* stream) {
     return (flush_result == EOF || close_result < 0) ? EOF : 0;
 }
 
-size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
+/* Rellena el buffer de lectura. Devuelve los bytes disponibles, 0 en fin de
+ * archivo o error. Solo para streams de archivo: en un stdio leer de mas le
+ * robaria al proceso input que todavia no pidio. */
+static size_t sx_fill_read_buffer(FILE* stream) {
     ssize_t result = 0;
+    if (stream->read_buffer_pos < stream->read_buffer_used) {
+        return stream->read_buffer_used - stream->read_buffer_pos;
+    }
+    stream->read_buffer_pos = 0;
+    stream->read_buffer_used = 0;
+    result = sx_read(stream->fd, stream->read_buffer, sizeof(stream->read_buffer));
+    if (result < 0) {
+        stream->error = 1;
+        return 0;
+    }
+    if (result == 0) {
+        stream->eof = 1;
+        return 0;
+    }
+    stream->read_buffer_used = (size_t)result;
+    return stream->read_buffer_used;
+}
+
+size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
+    unsigned char* output = (unsigned char*)buffer;
+    size_t wanted = 0;
+    size_t filled = 0;
+
     if (stream == 0 || buffer == 0 || size == 0 || count == 0) {
         return 0;
     }
     if (stream->can_write && stream->write_buffer_used != 0 && sx_flush_stream(stream) == EOF) {
         return 0;
     }
-    result = sx_read(stream->fd, buffer, size * count);
-    if (result < 0) {
-        stream->error = 1;
-        return 0;
+    wanted = size * count;
+
+    if (stream->pushback >= 0 && filled < wanted) {
+        output[filled++] = (unsigned char)stream->pushback;
+        stream->pushback = -1;
     }
-    if ((size_t)result < size * count) {
-        stream->eof = 1;
+
+    while (filled < wanted) {
+        size_t available = stream->read_buffer_used - stream->read_buffer_pos;
+        size_t chunk = 0;
+
+        if (available == 0) {
+            if (stream->is_stdio) {
+                /* Sin buffer: una sola bajada por lo que falte. */
+                const ssize_t direct = sx_read(stream->fd, output + filled, wanted - filled);
+                if (direct < 0) {
+                    stream->error = 1;
+                    break;
+                }
+                if (direct == 0) {
+                    stream->eof = 1;
+                    break;
+                }
+                filled += (size_t)direct;
+                break;
+            }
+            available = sx_fill_read_buffer(stream);
+            if (available == 0) {
+                break;
+            }
+        }
+
+        chunk = (wanted - filled) < available ? (wanted - filled) : available;
+        sx_memcpy(output + filled, stream->read_buffer + stream->read_buffer_pos, chunk);
+        stream->read_buffer_pos += chunk;
+        filled += chunk;
     }
-    return (size_t)result / size;
+
+    return filled / size;
 }
 
 size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream) {
@@ -2266,6 +2941,16 @@ int sx_fseek(FILE* stream, long offset, int whence) {
     if (stream->write_buffer_used != 0 && sx_flush_stream(stream) == EOF) {
         return -1;
     }
+    if (whence == SEEK_CUR) {
+        /* El fd esta adelantado por lo que quedo sin consumir en el buffer. */
+        offset -= (long)(stream->read_buffer_used - stream->read_buffer_pos);
+        if (stream->pushback >= 0) {
+            offset -= 1;
+        }
+    }
+    stream->read_buffer_used = 0;
+    stream->read_buffer_pos = 0;
+    stream->pushback = -1;
     stream->eof = 0;
     return sx_lseek(stream->fd, offset, whence) < 0 ? -1 : 0;
 }
@@ -2283,6 +2968,11 @@ long sx_ftell(FILE* stream) {
     }
     if (stream->can_write && stream->write_buffer_used != 0) {
         position += (long)stream->write_buffer_used;
+    }
+    /* Lo que ya se leyo del fd pero el programa todavia no consumio. */
+    position -= (long)(stream->read_buffer_used - stream->read_buffer_pos);
+    if (stream->pushback >= 0) {
+        position -= 1;
     }
     return position;
 }
@@ -2501,6 +3191,438 @@ void eprintf(const char* format, ...) {
 __attribute__((weak, alias("sx_printf"))) int printf(const char* format, ...);
 __attribute__((weak, alias("sx_puts"))) int puts(const char* text);
 __attribute__((weak, alias("sx_putchar"))) int putchar(int character);
+
+/* --- sscanf ---------------------------------------------------------------
+ *
+ * Cubre lo que usa codigo real: %d %i %u %o %x %c %s %[...] %n %%, los
+ * modificadores de largo (hh h l ll z j t), el ancho maximo y la supresion con
+ * '*'. Los de punto flotante (%f %e %g %a) solo con SSE, por el mismo motivo
+ * que el resto del punto flotante de este archivo.
+ *
+ * No hay fscanf: pedirle a un FILE el lookahead arbitrario que necesita la
+ * vuelta atras de una conversion fallida requiere mas pushback que el byte que
+ * garantiza ungetc.
+ */
+
+enum sx_scan_length {
+    SX_SCAN_INT = 0,
+    SX_SCAN_CHAR,
+    SX_SCAN_SHORT,
+    SX_SCAN_LONG,
+    SX_SCAN_LONG_LONG,
+    SX_SCAN_SIZE
+};
+
+static void sx_store_signed(void* target, enum sx_scan_length length, long long value) {
+    switch (length) {
+        case SX_SCAN_CHAR: *(signed char*)target = (signed char)value; break;
+        case SX_SCAN_SHORT: *(short*)target = (short)value; break;
+        case SX_SCAN_LONG: *(long*)target = (long)value; break;
+        case SX_SCAN_LONG_LONG: *(long long*)target = value; break;
+        case SX_SCAN_SIZE: *(size_t*)target = (size_t)value; break;
+        default: *(int*)target = (int)value; break;
+    }
+}
+
+static void sx_store_unsigned(void* target, enum sx_scan_length length, unsigned long long value) {
+    switch (length) {
+        case SX_SCAN_CHAR: *(unsigned char*)target = (unsigned char)value; break;
+        case SX_SCAN_SHORT: *(unsigned short*)target = (unsigned short)value; break;
+        case SX_SCAN_LONG: *(unsigned long*)target = (unsigned long)value; break;
+        case SX_SCAN_LONG_LONG: *(unsigned long long*)target = value; break;
+        case SX_SCAN_SIZE: *(size_t*)target = (size_t)value; break;
+        default: *(unsigned int*)target = (unsigned int)value; break;
+    }
+}
+
+/* Arma la tabla de un scanset %[...] y devuelve el cursor pasado el ']'. */
+static const char* sx_parse_scanset(const char* format, unsigned char* table, int* negated) {
+    int previous = -1;
+
+    for (previous = 0; previous < 256; ++previous) {
+        table[previous] = 0;
+    }
+    *negated = 0;
+    if (*format == '^') {
+        *negated = 1;
+        ++format;
+    }
+    previous = -1;
+    /* Un ']' como primer caracter es literal, no cierra el conjunto. */
+    if (*format == ']') {
+        table[(unsigned char)']'] = 1;
+        previous = ']';
+        ++format;
+    }
+    while (*format != 0 && *format != ']') {
+        if (*format == '-' && previous >= 0 && format[1] != 0 && format[1] != ']') {
+            int limit = (unsigned char)format[1];
+            int step = 0;
+            for (step = previous; step <= limit; ++step) {
+                table[step] = 1;
+            }
+            previous = -1;
+            format += 2;
+            continue;
+        }
+        table[(unsigned char)*format] = 1;
+        previous = (unsigned char)*format;
+        ++format;
+    }
+    if (*format == ']') {
+        ++format;
+    }
+    return format;
+}
+
+int sx_vsscanf(const char* input, const char* format, va_list args) {
+    const char* cursor = input;
+    int assigned = 0;
+    int matched_anything = 0;
+
+    if (input == 0 || format == 0) {
+        return EOF;
+    }
+
+    while (*format != 0) {
+        if (sx_isspace((unsigned char)*format)) {
+            while (*cursor != 0 && sx_isspace((unsigned char)*cursor)) {
+                ++cursor;
+            }
+            ++format;
+            continue;
+        }
+        if (*format != '%') {
+            if (*cursor != *format) {
+                return matched_anything || *cursor != 0 ? assigned : EOF;
+            }
+            ++cursor;
+            ++format;
+            continue;
+        }
+
+        ++format;
+        {
+            enum sx_scan_length length = SX_SCAN_INT;
+            int suppress = 0;
+            int width = 0;
+            void* target = 0;
+
+            if (*format == '*') {
+                suppress = 1;
+                ++format;
+            }
+            while (*format >= '0' && *format <= '9') {
+                width = width * 10 + (*format - '0');
+                ++format;
+            }
+            if (*format == 'h') {
+                ++format;
+                length = SX_SCAN_SHORT;
+                if (*format == 'h') {
+                    ++format;
+                    length = SX_SCAN_CHAR;
+                }
+            } else if (*format == 'l') {
+                ++format;
+                length = SX_SCAN_LONG;
+                if (*format == 'l') {
+                    ++format;
+                    length = SX_SCAN_LONG_LONG;
+                }
+            } else if (*format == 'z' || *format == 'j' || *format == 't') {
+                ++format;
+                length = SX_SCAN_SIZE;
+            } else if (*format == 'L') {
+                ++format;
+                length = SX_SCAN_LONG_LONG;
+            }
+
+            if (*format == '%') {
+                if (*cursor != '%') {
+                    return assigned;
+                }
+                ++cursor;
+                ++format;
+                continue;
+            }
+            if (*format == 'n') {
+                if (!suppress) {
+                    sx_store_signed(va_arg(args, void*), length, (long long)(cursor - input));
+                }
+                ++format;
+                continue;
+            }
+
+            /* Todas las conversiones menos %c y %[ se saltan el espacio. */
+            if (*format != 'c' && *format != '[') {
+                while (*cursor != 0 && sx_isspace((unsigned char)*cursor)) {
+                    ++cursor;
+                }
+            }
+            if (*cursor == 0) {
+                return assigned != 0 ? assigned : EOF;
+            }
+            if (!suppress) {
+                target = va_arg(args, void*);
+            }
+
+            switch (*format) {
+                case 'd':
+                case 'i':
+                case 'u':
+                case 'o':
+                case 'x':
+                case 'X':
+                case 'p': {
+                    const int base = (*format == 'x' || *format == 'X' || *format == 'p')
+                                         ? 16
+                                         : (*format == 'o' ? 8 : (*format == 'i' ? 0 : 10));
+                    const int is_signed = *format == 'd' || *format == 'i';
+                    char limited[64];
+                    const char* source = cursor;
+                    char* end = 0;
+
+                    if (width > 0 && (size_t)width < sizeof(limited)) {
+                        size_t index = 0;
+                        while (index < (size_t)width && cursor[index] != 0) {
+                            limited[index] = cursor[index];
+                            ++index;
+                        }
+                        limited[index] = 0;
+                        source = limited;
+                    }
+
+                    if (is_signed) {
+                        const long value = sx_strtol(source, &end, base);
+                        if (end == source) {
+                            return assigned;
+                        }
+                        if (!suppress) {
+                            sx_store_signed(target, length, (long long)value);
+                        }
+                    } else {
+                        const unsigned long value = sx_strtoul(source, &end, base);
+                        if (end == source) {
+                            return assigned;
+                        }
+                        if (!suppress) {
+                            sx_store_unsigned(target, length, (unsigned long long)value);
+                        }
+                    }
+                    cursor += (size_t)(end - source);
+                    break;
+                }
+                case 'f':
+                case 'F':
+                case 'e':
+                case 'E':
+                case 'g':
+                case 'G':
+                case 'a':
+                case 'A': {
+#if defined(__SSE2__)
+                    char* end = 0;
+                    const double value = sx_strtod(cursor, &end);
+                    if (end == cursor) {
+                        return assigned;
+                    }
+                    if (!suppress) {
+                        if (length == SX_SCAN_INT) {
+                            *(float*)target = (float)value;
+                        } else {
+                            *(double*)target = value;
+                        }
+                    }
+                    cursor = end;
+                    break;
+#else
+                    /* Sin SSE no hay donde guardar el resultado. */
+                    return assigned;
+#endif
+                }
+                case 'c': {
+                    const int count = width > 0 ? width : 1;
+                    int index = 0;
+                    for (index = 0; index < count; ++index) {
+                        if (cursor[index] == 0) {
+                            return assigned;
+                        }
+                        if (!suppress) {
+                            ((char*)target)[index] = cursor[index];
+                        }
+                    }
+                    cursor += count;
+                    break;
+                }
+                case 's': {
+                    size_t index = 0;
+                    while (cursor[index] != 0 && !sx_isspace((unsigned char)cursor[index]) &&
+                           (width == 0 || index < (size_t)width)) {
+                        if (!suppress) {
+                            ((char*)target)[index] = cursor[index];
+                        }
+                        ++index;
+                    }
+                    if (index == 0) {
+                        return assigned;
+                    }
+                    if (!suppress) {
+                        ((char*)target)[index] = 0;
+                    }
+                    cursor += index;
+                    break;
+                }
+                case '[': {
+                    unsigned char table[256];
+                    int negated = 0;
+                    size_t index = 0;
+                    format = sx_parse_scanset(format + 1, table, &negated) - 1;
+                    while (cursor[index] != 0 && (width == 0 || index < (size_t)width)) {
+                        const int inside = table[(unsigned char)cursor[index]] != 0;
+                        if (inside == negated) {
+                            break;
+                        }
+                        if (!suppress) {
+                            ((char*)target)[index] = cursor[index];
+                        }
+                        ++index;
+                    }
+                    if (index == 0) {
+                        return assigned;
+                    }
+                    if (!suppress) {
+                        ((char*)target)[index] = 0;
+                    }
+                    cursor += index;
+                    break;
+                }
+                default:
+                    /* Conversion desconocida: se corta, como manda el estandar. */
+                    return assigned;
+            }
+
+            matched_anything = 1;
+            if (!suppress) {
+                ++assigned;
+            }
+            ++format;
+        }
+    }
+
+    return assigned;
+}
+
+int sx_sscanf(const char* input, const char* format, ...) {
+    int result = 0;
+    va_list args;
+    va_start(args, format);
+    result = sx_vsscanf(input, format, args);
+    va_end(args);
+    return result;
+}
+
+int sx_fgetc(FILE* stream) {
+    unsigned char value = 0;
+    if (stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return EOF;
+    }
+    return sx_fread(&value, 1, 1, stream) == 1 ? (int)value : EOF;
+}
+
+int sx_getc(FILE* stream) {
+    return sx_fgetc(stream);
+}
+
+int sx_getchar(void) {
+    return sx_fgetc(stdin);
+}
+
+int sx_fputc(int character, FILE* stream) {
+    return sx_putc(character, stream);
+}
+
+/* Un solo byte de pushback, que es lo unico que el estandar garantiza. */
+int sx_ungetc(int character, FILE* stream) {
+    if (stream == 0 || character == EOF || stream->pushback >= 0) {
+        return EOF;
+    }
+    stream->pushback = (int)(unsigned char)character;
+    stream->eof = 0;
+    return (int)(unsigned char)character;
+}
+
+int sx_fileno(FILE* stream) {
+    if (stream == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    return stream->fd;
+}
+
+FILE* sx_fdopen(int fd, const char* mode) {
+    FILE* stream = 0;
+    if (fd < 0 || mode == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    stream = sx_allocate_file();
+    if (stream == 0) {
+        g_errno = SAVANXP_ENOMEM;
+        return 0;
+    }
+    stream->fd = fd;
+    stream->can_write = mode[0] == 'w' || mode[0] == 'a' || sx_strchr(mode, '+') != 0;
+    stream->can_read = mode[0] == 'r' || sx_strchr(mode, '+') != 0;
+    return stream;
+}
+
+/* El buffer es fijo y vive adentro del FILE, asi que no se puede adoptar el que
+ * pasa el programa. Se acepta la llamada -- que es lo que espera un port, que
+ * la usa para pedir "mas rapido", no para cambiar la semantica -- y solo se
+ * rechaza un modo invalido. */
+int sx_setvbuf(FILE* stream, char* buffer, int mode, size_t size) {
+    (void)buffer;
+    (void)size;
+    if (stream == 0 || (mode != SX_IOFBF && mode != SX_IOLBF && mode != SX_IONBF)) {
+        g_errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    return 0;
+}
+
+void sx_setbuf(FILE* stream, char* buffer) {
+    (void)sx_setvbuf(stream, buffer, buffer != 0 ? SX_IOFBF : SX_IONBF, SX_FILE_BUFFER_CAPACITY);
+}
+
+void sx_rewind(FILE* stream) {
+    (void)sx_fseek(stream, 0, SEEK_SET);
+    if (stream != 0) {
+        stream->error = 0;
+    }
+}
+
+off_t sx_ftello(FILE* stream) {
+    return (off_t)sx_ftell(stream);
+}
+
+int sx_fseeko(FILE* stream, off_t offset, int whence) {
+    return sx_fseek(stream, (long)offset, whence);
+}
+
+int sx_vsprintf(char* buffer, const char* format, va_list args) {
+    return sx_vsnprintf(buffer, (size_t)-1, format, args);
+}
+
+void sx_perror(const char* prefix) {
+    const char* reason = sx_strerror(g_errno);
+    if (prefix != 0 && prefix[0] != 0) {
+        (void)sx_fprintf(stderr, "%s: %s\n", prefix, reason);
+    } else {
+        (void)sx_fprintf(stderr, "%s\n", reason);
+    }
+}
 
 int sx_remove(const char* path) {
     return sx_unlink(path);
@@ -2723,13 +3845,298 @@ int sx_usleep(unsigned long microseconds) {
     return 0;
 }
 
+/* --- Calendario -----------------------------------------------------------
+ *
+ * Todo UTC: no hay base de datos de zonas horarias, asi que localtime es
+ * gmtime y mktime es timegm. El RTC del kernel (savanxp_realtime) tambien
+ * entrega UTC, asi que la cadena entera es coherente.
+ *
+ * La conversion usa el algoritmo de dias civiles de Howard Hinnant, que es
+ * aritmetica entera pura: sin tablas de anios bisiestos y valido para
+ * cualquier fecha proleptica gregoriana. Importa que sea entero porque este
+ * archivo tambien se compila sin SSE, donde no hay punto flotante utilizable.
+ */
+
+#define SX_SECONDS_PER_DAY 86400L
+
+static const char* const g_month_names[12] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+static const char* const g_day_names[7] = {
+    "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+/* Dias desde 1970-01-01 para una fecha civil. month va 1-12. */
+static long sx_days_from_civil(long year, long month, long day) {
+    long era = 0;
+    unsigned long year_of_era = 0;
+    unsigned long day_of_year = 0;
+    unsigned long day_of_era = 0;
+
+    year -= month <= 2;
+    era = (year >= 0 ? year : year - 399) / 400;
+    year_of_era = (unsigned long)(year - era * 400);
+    day_of_year = (unsigned long)((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1);
+    day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    return era * 146097 + (long)day_of_era - 719468;
+}
+
+static void sx_civil_from_days(long days, int* year, int* month, int* day) {
+    long era = 0;
+    unsigned long day_of_era = 0;
+    unsigned long year_of_era = 0;
+    unsigned long day_of_year = 0;
+    unsigned long month_prime = 0;
+    long civil_year = 0;
+
+    days += 719468;
+    era = (days >= 0 ? days : days - 146096) / 146097;
+    day_of_era = (unsigned long)(days - era * 146097);
+    year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    civil_year = (long)year_of_era + era * 400;
+    day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    month_prime = (5 * day_of_year + 2) / 153;
+
+    *day = (int)(day_of_year - (153 * month_prime + 2) / 5 + 1);
+    *month = (int)(month_prime + (month_prime < 10 ? 3 : -9));
+    *year = (int)(civil_year + (*month <= 2));
+}
+
+/* Divide redondeando hacia abajo, que es lo que hace falta para fechas
+ * anteriores a 1970: -1 / 86400 tiene que dar -1, no 0. */
+static long sx_floor_div(long numerator, long denominator) {
+    long quotient = numerator / denominator;
+    if ((numerator % denominator) != 0 && ((numerator < 0) != (denominator < 0))) {
+        quotient -= 1;
+    }
+    return quotient;
+}
+
+struct tm* sx_gmtime_r(const time_t* value, struct tm* result) {
+    long seconds = 0;
+    long days = 0;
+    long rest = 0;
+    int year = 0;
+    int month = 0;
+    int day = 0;
+
+    if (value == 0 || result == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return 0;
+    }
+    seconds = (long)*value;
+    days = sx_floor_div(seconds, SX_SECONDS_PER_DAY);
+    rest = seconds - days * SX_SECONDS_PER_DAY;
+
+    sx_civil_from_days(days, &year, &month, &day);
+    result->tm_sec = (int)(rest % 60);
+    result->tm_min = (int)((rest / 60) % 60);
+    result->tm_hour = (int)(rest / 3600);
+    result->tm_mday = day;
+    result->tm_mon = month - 1;
+    result->tm_year = year - 1900;
+    /* 1970-01-01 fue jueves. */
+    result->tm_wday = (int)(((days % 7) + 11) % 7);
+    result->tm_yday = (int)(days - sx_days_from_civil(year, 1, 1));
+    result->tm_isdst = 0;
+    return result;
+}
+
+struct tm* sx_gmtime(const time_t* value) {
+    static struct tm shared;
+    return sx_gmtime_r(value, &shared);
+}
+
+struct tm* sx_localtime_r(const time_t* value, struct tm* result) {
+    return sx_gmtime_r(value, result);
+}
+
+struct tm* sx_localtime(const time_t* value) {
+    return sx_gmtime(value);
+}
+
+time_t sx_timegm(struct tm* value) {
+    long days = 0;
+    long seconds = 0;
+    if (value == 0) {
+        g_errno = SAVANXP_EINVAL;
+        return (time_t)-1;
+    }
+    days = sx_days_from_civil((long)value->tm_year + 1900, (long)value->tm_mon + 1,
+                              (long)value->tm_mday);
+    seconds = days * SX_SECONDS_PER_DAY +
+              (long)value->tm_hour * 3600 + (long)value->tm_min * 60 + (long)value->tm_sec;
+    /* mktime/timegm normalizan los campos de salida ademas de convertir. */
+    {
+        const time_t stamp = (time_t)seconds;
+        (void)sx_gmtime_r(&stamp, value);
+        return stamp;
+    }
+}
+
+time_t sx_mktime(struct tm* value) {
+    return sx_timegm(value);
+}
+
+static size_t sx_append_text(char* buffer, size_t capacity, size_t used, const char* text) {
+    while (*text != 0) {
+        if (used + 1 < capacity) {
+            buffer[used] = *text;
+        }
+        ++used;
+        ++text;
+    }
+    return used;
+}
+
+static size_t sx_append_number(char* buffer, size_t capacity, size_t used, long value,
+                               int width, char pad) {
+    char digits[24];
+    size_t length = 0;
+    int negative = value < 0;
+    unsigned long magnitude = (unsigned long)(negative ? -value : value);
+
+    do {
+        digits[length++] = (char)('0' + (magnitude % 10u));
+        magnitude /= 10u;
+    } while (magnitude != 0);
+    while (length < (size_t)width) {
+        digits[length++] = pad;
+    }
+    if (negative) {
+        digits[length++] = '-';
+    }
+    while (length > 0) {
+        --length;
+        if (used + 1 < capacity) {
+            buffer[used] = digits[length];
+        }
+        ++used;
+    }
+    return used;
+}
+
+size_t sx_strftime(char* buffer, size_t capacity, const char* format, const struct tm* value) {
+    size_t used = 0;
+
+    if (buffer == 0 || capacity == 0 || format == 0 || value == 0) {
+        return 0;
+    }
+
+    for (; *format != 0; ++format) {
+        if (*format != '%') {
+            if (used + 1 < capacity) {
+                buffer[used] = *format;
+            }
+            ++used;
+            continue;
+        }
+        ++format;
+        switch (*format) {
+            case 'Y': used = sx_append_number(buffer, capacity, used, value->tm_year + 1900L, 0, '0'); break;
+            case 'y': used = sx_append_number(buffer, capacity, used, (value->tm_year + 1900L) % 100, 2, '0'); break;
+            case 'm': used = sx_append_number(buffer, capacity, used, value->tm_mon + 1L, 2, '0'); break;
+            case 'd': used = sx_append_number(buffer, capacity, used, value->tm_mday, 2, '0'); break;
+            case 'e': used = sx_append_number(buffer, capacity, used, value->tm_mday, 2, ' '); break;
+            case 'H': used = sx_append_number(buffer, capacity, used, value->tm_hour, 2, '0'); break;
+            case 'M': used = sx_append_number(buffer, capacity, used, value->tm_min, 2, '0'); break;
+            case 'S': used = sx_append_number(buffer, capacity, used, value->tm_sec, 2, '0'); break;
+            case 'j': used = sx_append_number(buffer, capacity, used, value->tm_yday + 1L, 3, '0'); break;
+            case 'a':
+                used = sx_append_text(buffer, capacity, used,
+                                      g_day_names[(unsigned)value->tm_wday % 7u]);
+                break;
+            case 'b':
+            case 'h':
+                used = sx_append_text(buffer, capacity, used,
+                                      g_month_names[(unsigned)value->tm_mon % 12u]);
+                break;
+            case 'p':
+                used = sx_append_text(buffer, capacity, used, value->tm_hour < 12 ? "AM" : "PM");
+                break;
+            case 'Z':
+                used = sx_append_text(buffer, capacity, used, "UTC");
+                break;
+            case 'z':
+                used = sx_append_text(buffer, capacity, used, "+0000");
+                break;
+            case 'n':
+                used = sx_append_text(buffer, capacity, used, "\n");
+                break;
+            case 't':
+                used = sx_append_text(buffer, capacity, used, "\t");
+                break;
+            case 'F':
+                used = sx_append_number(buffer, capacity, used, value->tm_year + 1900L, 0, '0');
+                used = sx_append_text(buffer, capacity, used, "-");
+                used = sx_append_number(buffer, capacity, used, value->tm_mon + 1L, 2, '0');
+                used = sx_append_text(buffer, capacity, used, "-");
+                used = sx_append_number(buffer, capacity, used, value->tm_mday, 2, '0');
+                break;
+            case 'T':
+                used = sx_append_number(buffer, capacity, used, value->tm_hour, 2, '0');
+                used = sx_append_text(buffer, capacity, used, ":");
+                used = sx_append_number(buffer, capacity, used, value->tm_min, 2, '0');
+                used = sx_append_text(buffer, capacity, used, ":");
+                used = sx_append_number(buffer, capacity, used, value->tm_sec, 2, '0');
+                break;
+            case '%':
+                if (used + 1 < capacity) {
+                    buffer[used] = '%';
+                }
+                ++used;
+                break;
+            case 0:
+                --format;
+                break;
+            default:
+                /* Especificador desconocido: se copia crudo, como hace glibc. */
+                if (used + 1 < capacity) {
+                    buffer[used] = '%';
+                }
+                ++used;
+                if (used + 1 < capacity) {
+                    buffer[used] = *format;
+                }
+                ++used;
+                break;
+        }
+    }
+
+    buffer[used < capacity ? used : capacity - 1] = 0;
+    /* strftime devuelve 0 si no entro: el contenido queda indefinido. */
+    return used < capacity ? used : 0;
+}
+
+clock_t sx_clock(void) {
+    return (clock_t)uptime_ms();
+}
+
+/* Devolvia el uptime, no la epoca Unix, teniendo el RTC del kernel a mano:
+ * cualquier fecha calculada por una app daba 1970. Si el RTC no valida se cae
+ * al uptime, que es lo que habia antes. */
 time_t sx_time(time_t* out_value) {
-    time_t value = (time_t)(uptime_ms() / 1000UL);
+    struct savanxp_realtime now = {0};
+    time_t value = 0;
+
+    if (realtime(&now) >= 0 && now.valid != 0) {
+        struct tm fields = {0};
+        fields.tm_year = (int)now.year - 1900;
+        fields.tm_mon = (int)now.month - 1;
+        fields.tm_mday = (int)now.day;
+        fields.tm_hour = (int)now.hour;
+        fields.tm_min = (int)now.minute;
+        fields.tm_sec = (int)now.second;
+        value = sx_timegm(&fields);
+    } else {
+        value = (time_t)(uptime_ms() / 1000UL);
+    }
+
     if (out_value != 0) {
         *out_value = value;
     }
     return value;
 }
+
 
 int sx_clock_gettime(int clock_id, struct timespec* value) {
     unsigned long milliseconds = uptime_ms();
@@ -3490,3 +4897,51 @@ __attribute__((weak, alias("sx_waitpid"))) pid_t waitpid(pid_t pid, int* status,
 __attribute__((weak, alias("sx_stat"))) int stat(const char* path, struct stat* info);
 __attribute__((weak, alias("sx_fstat"))) int fstat(int fd, struct stat* info);
 __attribute__((weak, alias("sx_lstat"))) int lstat(const char* path, struct stat* info);
+__attribute__((weak, alias("sx_memchr"))) void* memchr(const void* block, int value, size_t count);
+__attribute__((weak, alias("sx_strnlen"))) size_t strnlen(const char* text, size_t limit);
+__attribute__((weak, alias("sx_strcat"))) char* strcat(char* destination, const char* source);
+__attribute__((weak, alias("sx_strncat"))) char* strncat(char* destination, const char* source, size_t count);
+__attribute__((weak, alias("sx_strtok"))) char* strtok(char* text, const char* delimiters);
+__attribute__((weak, alias("sx_strsep"))) char* strsep(char** text, const char* delimiters);
+__attribute__((weak, alias("sx_strcasestr"))) char* strcasestr(const char* haystack, const char* needle);
+__attribute__((weak, alias("sx_strtoll"))) long long strtoll(const char* text, char** endptr, int base);
+__attribute__((weak, alias("sx_strtoull"))) unsigned long long strtoull(const char* text, char** endptr, int base);
+__attribute__((weak, alias("sx_atol"))) long atol(const char* text);
+__attribute__((weak, alias("sx_atoll"))) long long atoll(const char* text);
+__attribute__((weak, alias("sx_labs"))) long labs(long value);
+__attribute__((weak, alias("sx_llabs"))) long long llabs(long long value);
+__attribute__((weak, alias("sx_div"))) div_t div(int numerator, int denominator);
+__attribute__((weak, alias("sx_ldiv"))) ldiv_t ldiv(long numerator, long denominator);
+__attribute__((weak, alias("sx_lldiv"))) lldiv_t lldiv(long long numerator, long long denominator);
+__attribute__((weak, alias("sx_posix_memalign"))) int posix_memalign(void** out_pointer, size_t alignment, size_t size);
+__attribute__((weak, alias("sx_aligned_alloc"))) void* aligned_alloc(size_t alignment, size_t size);
+__attribute__((weak, alias("sx_memalign"))) void* memalign(size_t alignment, size_t size);
+__attribute__((weak, alias("sx_fgetc"))) int fgetc(FILE* stream);
+__attribute__((weak, alias("sx_getc"))) int getc(FILE* stream);
+__attribute__((weak, alias("sx_getchar"))) int getchar(void);
+__attribute__((weak, alias("sx_fputc"))) int fputc(int character, FILE* stream);
+__attribute__((weak, alias("sx_ungetc"))) int ungetc(int character, FILE* stream);
+__attribute__((weak, alias("sx_fileno"))) int fileno(FILE* stream);
+__attribute__((weak, alias("sx_fdopen"))) FILE* fdopen(int fd, const char* mode);
+__attribute__((weak, alias("sx_setvbuf"))) int setvbuf(FILE* stream, char* buffer, int mode, size_t size);
+__attribute__((weak, alias("sx_setbuf"))) void setbuf(FILE* stream, char* buffer);
+__attribute__((weak, alias("sx_rewind"))) void rewind(FILE* stream);
+__attribute__((weak, alias("sx_vsprintf"))) int vsprintf(char* buffer, const char* format, va_list args);
+__attribute__((weak, alias("sx_perror"))) void perror(const char* prefix);
+__attribute__((weak, alias("sx_fseeko"))) int fseeko(FILE* stream, off_t offset, int whence);
+__attribute__((weak, alias("sx_ftello"))) off_t ftello(FILE* stream);
+__attribute__((weak, alias("sx_gmtime_r"))) struct tm* gmtime_r(const time_t* value, struct tm* result);
+__attribute__((weak, alias("sx_gmtime"))) struct tm* gmtime(const time_t* value);
+__attribute__((weak, alias("sx_localtime_r"))) struct tm* localtime_r(const time_t* value, struct tm* result);
+__attribute__((weak, alias("sx_localtime"))) struct tm* localtime(const time_t* value);
+__attribute__((weak, alias("sx_timegm"))) time_t timegm(struct tm* value);
+__attribute__((weak, alias("sx_mktime"))) time_t mktime(struct tm* value);
+__attribute__((weak, alias("sx_strftime"))) size_t strftime(char* buffer, size_t capacity, const char* format, const struct tm* value);
+__attribute__((weak, alias("sx_clock"))) clock_t clock(void);
+#if defined(__SSE2__)
+__attribute__((weak, alias("sx_strtod"))) double strtod(const char* text, char** endptr);
+__attribute__((weak, alias("sx_strtof"))) float strtof(const char* text, char** endptr);
+__attribute__((weak, alias("sx_difftime"))) double difftime(time_t later, time_t earlier);
+#endif
+__attribute__((weak, alias("sx_sscanf"))) int sscanf(const char* input, const char* format, ...);
+__attribute__((weak, alias("sx_vsscanf"))) int vsscanf(const char* input, const char* format, va_list args);

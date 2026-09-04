@@ -3,6 +3,8 @@
 #include <stdarg.h>
 #include <stddef.h>
 
+#include "sys/types.h"
+
 typedef struct sx_FILE FILE;
 
 extern FILE* stdin;
@@ -39,3 +41,29 @@ int putchar(int character);
 int puts(const char* text);
 int remove(const char* path);
 int rename(const char* old_path, const char* new_path);
+
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
+#define BUFSIZ 512
+
+int fgetc(FILE* stream);
+int getc(FILE* stream);
+int getchar(void);
+int fputc(int character, FILE* stream);
+int ungetc(int character, FILE* stream);
+int fileno(FILE* stream);
+FILE* fdopen(int fd, const char* mode);
+int setvbuf(FILE* stream, char* buffer, int mode, size_t size);
+void setbuf(FILE* stream, char* buffer);
+void rewind(FILE* stream);
+int vsprintf(char* buffer, const char* format, va_list args);
+void perror(const char* prefix);
+
+/* off_t es de 64 bits, asi que fseeko/ftello no agregan alcance sobre
+ * fseek/ftell; existen porque un port las nombra. El tope real de tamano de
+ * archivo lo pone el st_size de 32 bits del kernel. */
+int fseeko(FILE* stream, off_t offset, int whence);
+off_t ftello(FILE* stream);
+int sscanf(const char* input, const char* format, ...);
+int vsscanf(const char* input, const char* format, va_list args);

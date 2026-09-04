@@ -16,6 +16,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -179,6 +180,250 @@ static void test_directories(void) {
     check(closedir(directory) == 0, "closedir");
 }
 
+static void test_string_extra(void) {
+    char buffer[64];
+    char scratch[64];
+    char* cursor = 0;
+    char* token = 0;
+
+    check(memchr("abcdef", 'c', 6) != 0, "memchr encuentra");
+    check(memchr("abcdef", 'z', 6) == 0, "memchr no encuentra");
+    check(strnlen("abc", 10) == 3, "strnlen corto");
+    check(strnlen("abcdef", 3) == 3, "strnlen topeado");
+
+    strcpy(buffer, "hola");
+    strcat(buffer, " mundo");
+    check(strcmp(buffer, "hola mundo") == 0, "strcat");
+    strcpy(buffer, "hola");
+    strncat(buffer, " mundo", 3);
+    check(strcmp(buffer, "hola mu") == 0, "strncat");
+
+    strcpy(scratch, "uno,dos,tres");
+    token = strtok(scratch, ",");
+    check(token != 0 && strcmp(token, "uno") == 0, "strtok primero");
+    token = strtok(0, ",");
+    check(token != 0 && strcmp(token, "dos") == 0, "strtok segundo");
+    token = strtok(0, ",");
+    check(token != 0 && strcmp(token, "tres") == 0, "strtok tercero");
+    check(strtok(0, ",") == 0, "strtok agotado");
+
+    strcpy(scratch, "a:b::c");
+    cursor = scratch;
+    check(strcmp(strsep(&cursor, ":"), "a") == 0, "strsep primero");
+    check(strcmp(strsep(&cursor, ":"), "b") == 0, "strsep segundo");
+    check(strcmp(strsep(&cursor, ":"), "") == 0, "strsep campo vacio");
+    check(strcmp(strsep(&cursor, ":"), "c") == 0, "strsep ultimo");
+    check(strsep(&cursor, ":") == 0, "strsep agotado");
+
+    check(strcasestr("Hola Mundo", "mundo") != 0, "strcasestr encuentra");
+    check(strcasestr("Hola Mundo", "chau") == 0, "strcasestr no encuentra");
+}
+
+static void test_stdlib_extra(void) {
+    char* end = 0;
+    void* aligned = 0;
+    div_t quotient;
+
+    check(strtoll("-9007199254740993", &end, 10) == -9007199254740993LL, "strtoll 64 bits");
+    check(strtoull("18446744073709551615", &end, 10) == 18446744073709551615ULL,
+          "strtoull maximo");
+    check(strtol("0x1f", &end, 0) == 31, "strtol base automatica hex");
+    check(strtol("017", &end, 0) == 15, "strtol base automatica octal");
+    check(atol("-12345") == -12345L, "atol");
+    check(atoll("-12345678901") == -12345678901LL, "atoll");
+    check(labs(-7L) == 7L, "labs");
+    check(llabs(-7LL) == 7LL, "llabs");
+
+    quotient = div(7, 2);
+    check(quotient.quot == 3 && quotient.rem == 1, "div");
+    check(ldiv(-7L, 2L).quot == -3L, "ldiv");
+
+    /* Desbordar tiene que saturar y avisar por ERANGE, no envolver. */
+    errno = 0;
+    check(strtoul("99999999999999999999999", &end, 10) == (unsigned long)-1,
+          "strtoul satura");
+    check(errno == ERANGE, "strtoul deja ERANGE");
+
+    /* malloc alinea a 16: es el max_align_t de x86-64. */
+    {
+        void* blocks[8];
+        int index = 0;
+        int all_aligned = 1;
+        for (index = 0; index < 8; ++index) {
+            blocks[index] = malloc(index * 7 + 1);
+            if (blocks[index] == 0 || ((unsigned long)blocks[index] & 15u) != 0) {
+                all_aligned = 0;
+            }
+        }
+        check(all_aligned, "malloc alinea a 16");
+        for (index = 0; index < 8; ++index) {
+            free(blocks[index]);
+        }
+    }
+
+    check(posix_memalign(&aligned, 64, 1000) == 0, "posix_memalign");
+    check(aligned != 0 && ((unsigned long)aligned & 63u) == 0, "posix_memalign alinea a 64");
+    if (aligned != 0) {
+        memset(aligned, 0xab, 1000);
+        free(aligned);
+    }
+    check(posix_memalign(&aligned, 3, 16) != 0, "posix_memalign rechaza no potencia de dos");
+
+    aligned = aligned_alloc(256, 512);
+    check(aligned != 0 && ((unsigned long)aligned & 255u) == 0, "aligned_alloc");
+    free(aligned);
+
+    /* Intercalar alineadas y normales: free tiene que distinguirlas. */
+    {
+        void* a = aligned_alloc(128, 64);
+        void* b = malloc(64);
+        void* c = aligned_alloc(32, 64);
+        check(a != 0 && b != 0 && c != 0, "mezcla alineada/normal");
+        free(b);
+        free(a);
+        free(c);
+    }
+}
+
+static void test_stdio_extra(void) {
+    FILE* stream = fopen(LIBCTEST_PATH, "w");
+    char line[64] = {0};
+    int fd = -1;
+
+    check(stream != 0, "fopen para stdio extra");
+    if (stream == 0) {
+        return;
+    }
+    check(fputc('A', stream) == 'A', "fputc");
+    check(fileno(stream) >= 0, "fileno");
+    check(fwrite("BCDEF\n", 1, 6, stream) == 6, "fwrite");
+    check(fclose(stream) == 0, "fclose tras fputc");
+
+    stream = fopen(LIBCTEST_PATH, "r");
+    check(stream != 0, "fopen lectura");
+    if (stream == 0) {
+        return;
+    }
+    check(fgetc(stream) == 'A', "fgetc");
+    check(ungetc('A', stream) == 'A', "ungetc");
+    check(fgetc(stream) == 'A', "fgetc tras ungetc");
+    check(getc(stream) == 'B', "getc");
+    check(ftell(stream) == 2, "ftell cuenta el buffer");
+    rewind(stream);
+    check(ftell(stream) == 0, "rewind");
+    check(fgets(line, sizeof(line), stream) != 0 && strcmp(line, "ABCDEF\n") == 0,
+          "fgets con buffer");
+    check(fseeko(stream, 2, SEEK_SET) == 0 && ftello(stream) == 2, "fseeko/ftello");
+    check(setvbuf(stream, 0, _IONBF, 0) == 0, "setvbuf aceptado");
+    check(fclose(stream) == 0, "fclose lectura");
+
+    fd = open(LIBCTEST_PATH, O_RDONLY);
+    check(fd >= 0, "open para fdopen");
+    if (fd >= 0) {
+        FILE* adopted = fdopen(fd, "r");
+        check(adopted != 0, "fdopen");
+        if (adopted != 0) {
+            check(fgetc(adopted) == 'A', "fgetc sobre fdopen");
+            fclose(adopted);
+        } else {
+            close(fd);
+        }
+    }
+    unlink(LIBCTEST_PATH);
+}
+
+static void test_scan(void) {
+    int a = 0;
+    int b = 0;
+    unsigned int hex = 0;
+    char word[32] = {0};
+    char letter = 0;
+    char set[32] = {0};
+    int consumed = 0;
+
+    check(sscanf("12 34", "%d %d", &a, &b) == 2 && a == 12 && b == 34, "sscanf dos enteros");
+    check(sscanf("ff", "%x", &hex) == 1 && hex == 255u, "sscanf hex");
+    check(sscanf("hola mundo", "%s", word) == 1 && strcmp(word, "hola") == 0, "sscanf cadena");
+    check(sscanf("abc", "%c", &letter) == 1 && letter == 'a', "sscanf caracter");
+    check(sscanf("12345", "%3d", &a) == 1 && a == 123, "sscanf con ancho");
+    check(sscanf("9 8", "%*d %d", &a) == 1 && a == 8, "sscanf con supresion");
+    check(sscanf("clave=valor", "%[^=]", set) == 1 && strcmp(set, "clave") == 0,
+          "sscanf scanset negado");
+    check(sscanf("abc123", "%[a-z]", set) == 1 && strcmp(set, "abc") == 0,
+          "sscanf scanset con rango");
+    check(sscanf("ab 7", "%s %n%d", word, &consumed, &a) == 2 && consumed == 3 && a == 7,
+          "sscanf con %n");
+    check(sscanf("x=5", "x=%d", &a) == 1 && a == 5, "sscanf con literal");
+    check(sscanf("nada", "%d", &a) == 0, "sscanf sin coincidencia");
+
+    {
+        long long big = 0;
+        check(sscanf("-9007199254740993", "%lld", &big) == 1 &&
+                  big == -9007199254740993LL,
+              "sscanf %lld");
+    }
+}
+
+static void test_time(void) {
+    struct tm fields;
+    struct tm roundtrip;
+    char text[64];
+    time_t stamp = 0;
+
+    memset(&fields, 0, sizeof(fields));
+    fields.tm_year = 2026 - 1900;
+    fields.tm_mon = 8;   /* septiembre */
+    fields.tm_mday = 3;
+    fields.tm_hour = 14;
+    fields.tm_min = 30;
+    fields.tm_sec = 15;
+
+    stamp = timegm(&fields);
+    check(stamp == 1788445815L, "timegm contra un valor conocido");
+    check(fields.tm_wday == 4, "timegm normaliza el dia de semana (jueves)");
+
+    check(gmtime_r(&stamp, &roundtrip) != 0, "gmtime_r");
+    check(roundtrip.tm_year == 2026 - 1900 && roundtrip.tm_mon == 8 &&
+              roundtrip.tm_mday == 3 && roundtrip.tm_hour == 14 &&
+              roundtrip.tm_min == 30 && roundtrip.tm_sec == 15,
+          "gmtime_r revierte a timegm");
+    check(roundtrip.tm_yday == 245, "tm_yday");
+
+    check(strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &roundtrip) == 19,
+          "strftime devuelve el largo");
+    check(strcmp(text, "2026-09-03 14:30:15") == 0, "strftime formatea");
+    check(strftime(text, sizeof(text), "%F %T", &roundtrip) == 19, "strftime %F %T");
+    check(strcmp(text, "2026-09-03 14:30:15") == 0, "strftime %F %T contenido");
+    check(strftime(text, sizeof(text), "%a %b", &roundtrip) > 0, "strftime nombres");
+    check(strcmp(text, "Thu Sep") == 0, "strftime nombres contenido");
+    check(strftime(text, 4, "%Y", &roundtrip) == 0, "strftime avisa si no entra");
+
+    /* La epoca misma, y una fecha anterior a 1970 (division hacia abajo). */
+    {
+        time_t epoch = 0;
+        check(gmtime_r(&epoch, &roundtrip) != 0 && roundtrip.tm_year == 70 &&
+                  roundtrip.tm_mon == 0 && roundtrip.tm_mday == 1 &&
+                  roundtrip.tm_wday == 4,
+              "gmtime_r en la epoca");
+    }
+    {
+        time_t before = -86400L;
+        check(gmtime_r(&before, &roundtrip) != 0 && roundtrip.tm_year == 69 &&
+                  roundtrip.tm_mon == 11 && roundtrip.tm_mday == 31 &&
+                  roundtrip.tm_hour == 0,
+              "gmtime_r antes de 1970");
+    }
+
+    /* time() tiene que dar una fecha de verdad, no el uptime. */
+    {
+        const time_t now = time(0);
+        check(now > 1735689600L, "time() devuelve epoca real, no uptime");
+    }
+
+    check(mktime(&fields) == stamp, "mktime coincide con timegm");
+    check(localtime(&stamp) != 0, "localtime");
+}
+
 int main(void) {
     const struct file_ops ops = {
         .close = close,
@@ -188,10 +433,15 @@ int main(void) {
     };
 
     test_string_and_memory();
+    test_string_extra();
     test_format();
     test_sorting();
+    test_stdlib_extra();
     test_files(&ops);
     test_stdio_stream();
+    test_stdio_extra();
+    test_scan();
+    test_time();
     test_error_convention();
     test_directories();
 

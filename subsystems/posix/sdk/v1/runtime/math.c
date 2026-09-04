@@ -682,3 +682,388 @@ float atanf(float x) {
 float atan2f(float y, float x) {
     return (float)atan2((double)y, (double)x);
 }
+
+/* --- redondeo a entero -----------------------------------------------------
+ *
+ * rint/nearbyint redondean al par en los empates, que es el modo por defecto
+ * del x87/SSE, y no como round(), que se aleja del cero. La forma de forzarlo
+ * sin tocar el control word es sumar y restar 2^52: en un double, esa suma
+ * empuja los bits fraccionarios afuera de la mantisa y el hardware aplica su
+ * propio redondeo. Para |x| >= 2^52 el valor ya es entero y se devuelve tal
+ * cual, que ademas evita que el truco desborde.
+ */
+double rint(double x) {
+    const double threshold = 0x1p52;
+    union sx_double_bits bits;
+    double magnitude = fabs(x);
+
+    bits.value = x;
+    if (magnitude >= threshold || magnitude != magnitude) {
+        return x;
+    }
+    if (x >= 0.0) {
+        return (x + threshold) - threshold;
+    }
+    return (x - threshold) + threshold;
+}
+
+double nearbyint(double x) {
+    return rint(x);
+}
+
+long lrint(double x) {
+    return (long)rint(x);
+}
+
+long long llrint(double x) {
+    return (long long)rint(x);
+}
+
+long lround(double x) {
+    return (long)round(x);
+}
+
+long long llround(double x) {
+    return (long long)round(x);
+}
+
+/* --- descomposicion --------------------------------------------------------
+ *
+ * Miran los bits directamente: es la unica forma de separar mantisa y exponente
+ * sin volver a pasar por operaciones que redondeen.
+ */
+double frexp(double x, int* exponent) {
+    union sx_double_bits bits;
+    int raw = 0;
+
+    bits.value = x;
+    raw = (int)((bits.bits >> 52) & 0x7ff);
+
+    if (raw == 0x7ff || x == 0.0) {
+        /* cero, infinito y nan salen con exponente 0 y sin tocar el valor */
+        *exponent = 0;
+        return x;
+    }
+    if (raw == 0) {
+        /* Subnormal: se escala a normal y se descuenta lo prestado. */
+        bits.value = x * 0x1p54;
+        raw = (int)((bits.bits >> 52) & 0x7ff);
+        *exponent = raw - 1022 - 54;
+    } else {
+        *exponent = raw - 1022;
+    }
+    /* Se fuerza el exponente a -1 para dejar la mantisa en [0.5, 1). */
+    bits.bits = (bits.bits & ~(0x7ffull << 52)) | (1022ull << 52);
+    return bits.value;
+}
+
+double modf(double x, double* integral) {
+    const double whole = trunc(x);
+    *integral = whole;
+    if (x != x) {
+        return x;
+    }
+    /* La parte fraccionaria conserva el signo, incluido el cero negativo. */
+    return copysign(x - whole, x);
+}
+
+double scalbn(double x, int n) {
+    return ldexp(x, n);
+}
+
+double scalbln(double x, long n) {
+    if (n > 100000L) {
+        n = 100000L;
+    } else if (n < -100000L) {
+        n = -100000L;
+    }
+    return ldexp(x, (int)n);
+}
+
+double nextafter(double x, double y) {
+    union sx_double_bits bits;
+
+    if (x != x || y != y) {
+        return x + y;
+    }
+    if (x == y) {
+        return y;
+    }
+    if (x == 0.0) {
+        bits.bits = 1;
+        return y > 0.0 ? bits.value : -bits.value;
+    }
+    bits.value = x;
+    /* En la representacion IEEE, sumar 1 al patron de bits de un positivo da
+     * el siguiente representable; para los negativos el orden se invierte. */
+    if ((x > 0.0) == (y > x)) {
+        bits.bits += 1;
+    } else {
+        bits.bits -= 1;
+    }
+    return bits.value;
+}
+
+/* --- combinaciones ---------------------------------------------------------- */
+
+double fdim(double x, double y) {
+    if (x != x || y != y) {
+        return x + y;
+    }
+    return x > y ? x - y : 0.0;
+}
+
+/* Sin instruccion de FMA disponible: el resultado no es el producto exacto
+ * redondeado una sola vez, sino dos redondeos. Alcanza para quien la llama
+ * buscando la expresion, no la garantia de precision. */
+double fma(double x, double y, double z) {
+    return x * y + z;
+}
+
+/* Escala por el mayor de los dos para no desbordar al elevar al cuadrado. */
+double hypot(double x, double y) {
+    double large = fabs(x);
+    double small = fabs(y);
+    double ratio = 0.0;
+
+    if (large != large || small != small) {
+        return large + small;
+    }
+    if (small > large) {
+        const double swap = large;
+        large = small;
+        small = swap;
+    }
+    if (large == 0.0) {
+        return 0.0;
+    }
+    ratio = small / large;
+    return large * sqrt(1.0 + ratio * ratio);
+}
+
+double cbrt(double x) {
+    if (x == 0.0 || x != x) {
+        return x;
+    }
+    return copysign(pow(fabs(x), 1.0 / 3.0), x);
+}
+
+/* --- trigonometricas inversas ----------------------------------------------
+ *
+ * Salen de atan2, que ya esta resuelta con el x87. En los bordes |x| == 1 el
+ * sqrt da 0 y atan2 devuelve exactamente +-pi/2 y 0/pi, que es lo que se
+ * quiere: no hay caso especial que agregar.
+ */
+double asin(double x) {
+    return atan2(x, sqrt((1.0 - x) * (1.0 + x)));
+}
+
+double acos(double x) {
+    return atan2(sqrt((1.0 - x) * (1.0 + x)), x);
+}
+
+/* --- logaritmos y exponenciales cerca de cero ------------------------------
+ *
+ * log(1+x) y exp(x)-1 calculados directo pierden casi todos los digitos cuando
+ * x es chico, porque 1+x ya redondea. El arreglo clasico es corregir con el
+ * valor efectivamente redondeado: da el resultado con error relativo chico en
+ * vez de absoluto.
+ */
+double log1p(double x) {
+    const double sum = 1.0 + x;
+
+    if (sum == 1.0) {
+        return x;
+    }
+    return log(sum) * (x / (sum - 1.0));
+}
+
+double expm1(double x) {
+    const double value = exp(x);
+
+    if (value == 1.0) {
+        return x;
+    }
+    if (value - 1.0 == -1.0) {
+        return -1.0;
+    }
+    return (value - 1.0) * x / log(value);
+}
+
+/* --- hiperbolicas ----------------------------------------------------------- */
+
+double sinh(double x) {
+    const double magnitude = fabs(x);
+    double result = 0.0;
+
+    if (magnitude < 1.0) {
+        /* expm1 evita la cancelacion de (e^x - e^-x)/2 cerca del cero. */
+        const double u = expm1(magnitude);
+        result = 0.5 * (u + u / (u + 1.0));
+    } else {
+        const double u = exp(magnitude);
+        result = 0.5 * (u - 1.0 / u);
+    }
+    return copysign(result, x);
+}
+
+double cosh(double x) {
+    const double u = exp(fabs(x));
+    return 0.5 * (u + 1.0 / u);
+}
+
+double tanh(double x) {
+    const double magnitude = fabs(x);
+    double result = 0.0;
+
+    if (magnitude > 22.0) {
+        /* Mas alla de aca el resultado es 1 hasta el ultimo bit. */
+        result = 1.0;
+    } else {
+        const double u = expm1(-2.0 * magnitude);
+        result = -u / (u + 2.0);
+    }
+    return copysign(result, x);
+}
+
+double asinh(double x) {
+    const double magnitude = fabs(x);
+    return copysign(log1p(magnitude + magnitude * magnitude / (1.0 + sqrt(1.0 + magnitude * magnitude))), x);
+}
+
+double acosh(double x) {
+    if (x < 1.0) {
+        return __builtin_nan("");
+    }
+    return log(x + sqrt((x - 1.0) * (x + 1.0)));
+}
+
+double atanh(double x) {
+    const double magnitude = fabs(x);
+    return copysign(0.5 * log1p(2.0 * magnitude / (1.0 - magnitude)), x);
+}
+
+/* --- resto IEEE ------------------------------------------------------------
+ *
+ * Distinto de fmod: el cociente se redondea al entero MAS CERCANO (al par en
+ * los empates), asi que el resultado cae en [-|y|/2, |y|/2] y puede tener signo
+ * opuesto a x.
+ */
+double remainder(double x, double y) {
+    double result = 0.0;
+
+    if (y == 0.0 || x != x || y != y) {
+        return __builtin_nan("");
+    }
+    result = fmod(x, y);
+    {
+        const double half = fabs(y) * 0.5;
+        const double magnitude = fabs(result);
+        /* En el empate se corrige solo si el cociente TRUNCADO (el que uso
+         * fmod) es impar: redondear al par significa quedarse con el, no
+         * saltar al siguiente. Mirar la paridad del ya redondeado daba
+         * remainder(3, 2) == 1 en vez de -1. */
+        const double truncated = trunc(x / y);
+        if (magnitude > half || (magnitude == half && fmod(truncated, 2.0) != 0.0)) {
+            result -= copysign(fabs(y), result);
+        }
+    }
+    return result;
+}
+
+/* --- variantes float -------------------------------------------------------- */
+
+float rintf(float x) {
+    return (float)rint((double)x);
+}
+
+float nearbyintf(float x) {
+    return (float)rint((double)x);
+}
+
+long lrintf(float x) {
+    return (long)rint((double)x);
+}
+
+long lroundf(float x) {
+    return (long)round((double)x);
+}
+
+float frexpf(float x, int* exponent) {
+    return (float)frexp((double)x, exponent);
+}
+
+float modff(float x, float* integral) {
+    double whole = 0.0;
+    const double fraction = modf((double)x, &whole);
+    *integral = (float)whole;
+    return (float)fraction;
+}
+
+float scalbnf(float x, int n) {
+    return (float)ldexp((double)x, n);
+}
+
+float nextafterf(float x, float y) {
+    return (float)nextafter((double)x, (double)y);
+}
+
+float fdimf(float x, float y) {
+    return (float)fdim((double)x, (double)y);
+}
+
+float fmaf(float x, float y, float z) {
+    return (float)((double)x * (double)y + (double)z);
+}
+
+float hypotf(float x, float y) {
+    return (float)hypot((double)x, (double)y);
+}
+
+float cbrtf(float x) {
+    return (float)cbrt((double)x);
+}
+
+float asinf(float x) {
+    return (float)asin((double)x);
+}
+
+float acosf(float x) {
+    return (float)acos((double)x);
+}
+
+float log1pf(float x) {
+    return (float)log1p((double)x);
+}
+
+float expm1f(float x) {
+    return (float)expm1((double)x);
+}
+
+float sinhf(float x) {
+    return (float)sinh((double)x);
+}
+
+float coshf(float x) {
+    return (float)cosh((double)x);
+}
+
+float tanhf(float x) {
+    return (float)tanh((double)x);
+}
+
+float asinhf(float x) {
+    return (float)asinh((double)x);
+}
+
+float acoshf(float x) {
+    return (float)acosh((double)x);
+}
+
+float atanhf(float x) {
+    return (float)atanh((double)x);
+}
+
+float remainderf(float x, float y) {
+    return (float)remainder((double)x, (double)y);
+}

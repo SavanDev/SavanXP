@@ -79,6 +79,57 @@ float log2f(float x);
 float log10f(float x);
 float powf(float x, float y);
 
+double rint(double x);
+double nearbyint(double x);
+long lrint(double x);
+long long llrint(double x);
+long lround(double x);
+long long llround(double x);
+double frexp(double x, int* exponent);
+double modf(double x, double* integral);
+double scalbn(double x, int n);
+double scalbln(double x, long n);
+double nextafter(double x, double y);
+double fdim(double x, double y);
+double fma(double x, double y, double z);
+double hypot(double x, double y);
+double cbrt(double x);
+double asin(double x);
+double acos(double x);
+double log1p(double x);
+double expm1(double x);
+double sinh(double x);
+double cosh(double x);
+double tanh(double x);
+double asinh(double x);
+double acosh(double x);
+double atanh(double x);
+double remainder(double x, double y);
+
+float rintf(float x);
+float nearbyintf(float x);
+long lrintf(float x);
+long lroundf(float x);
+float frexpf(float x, int* exponent);
+float modff(float x, float* integral);
+float scalbnf(float x, int n);
+float nextafterf(float x, float y);
+float fdimf(float x, float y);
+float fmaf(float x, float y, float z);
+float hypotf(float x, float y);
+float cbrtf(float x);
+float asinf(float x);
+float acosf(float x);
+float log1pf(float x);
+float expm1f(float x);
+float sinhf(float x);
+float coshf(float x);
+float tanhf(float x);
+float asinhf(float x);
+float acoshf(float x);
+float atanhf(float x);
+float remainderf(float x, float y);
+
 
 #else
 

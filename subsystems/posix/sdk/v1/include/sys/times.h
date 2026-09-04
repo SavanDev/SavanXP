@@ -2,8 +2,6 @@
 
 #include "sys/types.h"
 
-typedef long clock_t;
-
 struct tms {
     clock_t tms_utime;
     clock_t tms_stime;

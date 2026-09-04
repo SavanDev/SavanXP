@@ -13,8 +13,11 @@
  *      contexto, que es la precondicion de todo lo anterior y la unica que no
  *      se puede verificar compilando.
  *
- * Nota: no imprime ningun float. El %f de sx_printf es un stub que consume el
- * argumento y escribe "0", asi que los valores se reportan escalados a entero.
+ *   4. el formateo y la lectura de punto flotante de la libc (%f/%e/%g y
+ *      strtod), que viven detras de __SSE2__ por el mismo motivo que la libm.
+ *
+ * Nota: las secciones 1-3 siguen reportando los valores escalados a entero,
+ * para que un %f roto no se lleve puesto el diagnostico del ABI.
  */
 
 #include "savanxp/libc.h"
@@ -22,6 +25,9 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static int g_failures = 0;
 
@@ -292,11 +298,185 @@ static void check_context_switch(void) {
     }
 }
 
+static void check_libm_extra(void) {
+    printf("[5] libm: agregados\n");
+
+    /* Exactos. */
+    report("hypot(3,4) == 5", same_double(hypot(3.0, 4.0), 5.0));
+    report("cbrt(-8) == -2", same_double(cbrt(-8.0), -2.0));
+    report("rint(2.5) == 2 (al par)", same_double(rint(2.5), 2.0));
+    report("rint(3.5) == 4 (al par)", same_double(rint(3.5), 4.0));
+    report("rint(-2.5) == -2 (al par)", same_double(rint(-2.5), -2.0));
+    report("lrint(2.5) == 2", lrint(2.5) == 2);
+    report("lround(2.5) == 3", lround(2.5) == 3);
+    report("lround(-2.5) == -3", lround(-2.5) == -3);
+    report("scalbn(1, 10) == 1024", same_double(scalbn(1.0, 10), 1024.0));
+    report("fdim(5,3) == 2", same_double(fdim(5.0, 3.0), 2.0));
+    report("fdim(3,5) == 0", same_double(fdim(3.0, 5.0), 0.0));
+    report("asin(0) == 0", same_double(asin(0.0), 0.0));
+    report("acos(1) == 0", same_double(acos(1.0), 0.0));
+    report("sinh(0) == 0", same_double(sinh(0.0), 0.0));
+    report("cosh(0) == 1", same_double(cosh(0.0), 1.0));
+    report("tanh(0) == 0", same_double(tanh(0.0), 0.0));
+    report("log1p(0) == 0", same_double(log1p(0.0), 0.0));
+    report("expm1(0) == 0", same_double(expm1(0.0), 0.0));
+    report("acosh(1) == 0", same_double(acosh(1.0), 0.0));
+    report("nextafter(1,2) > 1", nextafter(1.0, 2.0) > 1.0);
+    report("nextafter(1,0) < 1", nextafter(1.0, 0.0) < 1.0);
+
+    /* remainder redondea el cociente al par, a diferencia de fmod. */
+    report("remainder(5,3) == -1", same_double(remainder(5.0, 3.0), -1.0));
+    report("remainder(4,3) == 1", same_double(remainder(4.0, 3.0), 1.0));
+    report("remainder(3,2) == -1", same_double(remainder(3.0, 2.0), -1.0));
+    report("remainder(1,2) == 1", same_double(remainder(1.0, 2.0), 1.0));
+
+    {
+        double integral = 0.0;
+        const double fraction = modf(3.75, &integral);
+        report("modf(3.75) parte entera", same_double(integral, 3.0));
+        report("modf(3.75) fraccion", same_double(fraction, 0.75));
+    }
+    {
+        double integral = 0.0;
+        const double fraction = modf(-3.75, &integral);
+        report("modf(-3.75) parte entera", same_double(integral, -3.0));
+        report("modf(-3.75) fraccion", same_double(fraction, -0.75));
+    }
+    {
+        int exponent = 0;
+        const double mantissa = frexp(8.0, &exponent);
+        report("frexp(8) mantisa", same_double(mantissa, 0.5));
+        report("frexp(8) exponente", exponent == 4);
+    }
+    {
+        int exponent = 99;
+        const double mantissa = frexp(0.0, &exponent);
+        report("frexp(0)", same_double(mantissa, 0.0) && exponent == 0);
+    }
+
+    /* Aproximados, con presupuesto en unidades de 1e-15. */
+    check_close("asin(1)", asin(1.0), M_PI_2, 10);
+    check_close("asin(0.5)", asin(0.5), M_PI / 6.0, 10);
+    check_close("acos(0)", acos(0.0), M_PI_2, 10);
+    check_close("acos(-1)", acos(-1.0), M_PI, 10);
+    check_close("cbrt(27)", cbrt(27.0), 3.0, 1000);
+    check_close("log1p(1)", log1p(1.0), M_LN2, 10);
+    check_close("expm1(1)", expm1(1.0), M_E - 1.0, 100);
+    check_close("sinh(1)", sinh(1.0), 1.1752011936438014, 1000);
+    check_close("cosh(1)", cosh(1.0), 1.5430806348152437, 1000);
+    check_close("tanh(1)", tanh(1.0), 0.7615941559557649, 1000);
+    check_close("tanh(30) == 1", tanh(30.0), 1.0, 1);
+    check_close("asinh(1)", asinh(1.0), 0.8813735870195430, 1000);
+    check_close("acosh(2)", acosh(2.0), 1.3169578969248166, 1000);
+    check_close("atanh(0.5)", atanh(0.5), 0.5493061443340549, 1000);
+    check_close("hypot(1e300,1e300)", hypot(1e300, 1e300) / 1e300, 1.4142135623730951, 10000);
+
+    /* log1p cerca de cero es donde se nota que no es log(1+x) a secas. */
+    check_close("log1p(1e-12) escalado", log1p(1e-12) * 1e12, 1.0, 100000);
+    check_close("expm1(1e-12) escalado", expm1(1e-12) * 1e12, 1.0, 100000);
+
+    /* Variantes float. */
+    report("hypotf(3,4) == 5f", hypotf(3.0f, 4.0f) == 5.0f);
+    report("cbrtf(-8) == -2f", cbrtf(-8.0f) == -2.0f);
+    report("rintf(2.5f) == 2f", rintf(2.5f) == 2.0f);
+    {
+        float integral = 0.0f;
+        const float fraction = modff(3.5f, &integral);
+        report("modff(3.5f)", integral == 3.0f && fraction == 0.5f);
+    }
+}
+
+static void expect_text(const char* name, const char* got, const char* want) {
+    if (strcmp(got, want) == 0) {
+        printf("  ok    %-24s '%s'\n", name, got);
+    } else {
+        printf("  FALLA %-24s '%s' (esperaba '%s')\n", name, got, want);
+        g_failures += 1;
+    }
+}
+
+static void check_formatting(void) {
+    char buffer[128];
+
+    printf("[4] formateo (%%f/%%e/%%g) y strtod\n");
+
+    snprintf(buffer, sizeof(buffer), "%f", 1.5);
+    expect_text("%f", buffer, "1.500000");
+    snprintf(buffer, sizeof(buffer), "%f", -0.5);
+    expect_text("%f negativo", buffer, "-0.500000");
+    snprintf(buffer, sizeof(buffer), "%f", 0.0);
+    expect_text("%f cero", buffer, "0.000000");
+    snprintf(buffer, sizeof(buffer), "%.2f", 3.14159);
+    expect_text("%.2f", buffer, "3.14");
+    snprintf(buffer, sizeof(buffer), "%.2f", 0.999);
+    expect_text("%.2f con acarreo", buffer, "1.00");
+    snprintf(buffer, sizeof(buffer), "%.0f", 2.5);
+    expect_text("%.0f", buffer, "3");
+    snprintf(buffer, sizeof(buffer), "%.3f", 1.0 / 3.0);
+    expect_text("%.3f", buffer, "0.333");
+    snprintf(buffer, sizeof(buffer), "%10.2f|", 3.5);
+    expect_text("%10.2f", buffer, "      3.50|");
+    snprintf(buffer, sizeof(buffer), "%-10.2f|", 3.5);
+    expect_text("%-10.2f", buffer, "3.50      |");
+
+    snprintf(buffer, sizeof(buffer), "%e", 1500.0);
+    expect_text("%e", buffer, "1.500000e+03");
+    snprintf(buffer, sizeof(buffer), "%.2e", 0.000123);
+    expect_text("%.2e", buffer, "1.23e-04");
+    snprintf(buffer, sizeof(buffer), "%E", 1500.0);
+    expect_text("%E", buffer, "1.500000E+03");
+
+    snprintf(buffer, sizeof(buffer), "%g", 100000.0);
+    expect_text("%g plano", buffer, "100000");
+    snprintf(buffer, sizeof(buffer), "%g", 1000000.0);
+    expect_text("%g exponencial", buffer, "1e+06");
+    snprintf(buffer, sizeof(buffer), "%g", 0.0001);
+    expect_text("%g chico plano", buffer, "0.0001");
+    snprintf(buffer, sizeof(buffer), "%g", 0.00001);
+    expect_text("%g chico exponencial", buffer, "1e-05");
+    snprintf(buffer, sizeof(buffer), "%g", 1.5);
+    expect_text("%g sin ceros de cola", buffer, "1.5");
+
+    {
+        const double zero = 0.0;
+        const double one = 1.0;
+        snprintf(buffer, sizeof(buffer), "%f", one / zero);
+        expect_text("%f inf", buffer, "inf");
+        snprintf(buffer, sizeof(buffer), "%f", -one / zero);
+        expect_text("%f -inf", buffer, "-inf");
+        snprintf(buffer, sizeof(buffer), "%f", zero / zero);
+        expect_text("%f nan", buffer, "nan");
+    }
+
+    /* strtod: los valores exactos en binario se comparan bit a bit. */
+    report("strtod 0.5", same_double(strtod("0.5", 0), 0.5));
+    report("strtod -2.5e3", same_double(strtod("-2.5e3", 0), -2500.0));
+    report("strtod con espacios", same_double(strtod("  42", 0), 42.0));
+    check_close("strtod 3.14", strtod("3.14", 0), 3.14, 10);
+    check_close("strtod 1e-3", strtod("1e-3", 0), 0.001, 10);
+
+    {
+        char* end = 0;
+        double value = strtod("12.5rest", &end);
+        report("strtod deja endptr",
+               same_double(value, 12.5) && end != 0 && strcmp(end, "rest") == 0);
+    }
+    {
+        char* end = 0;
+        (void)strtod("abc", &end);
+        report("strtod sin digitos no avanza", end != 0 && strcmp(end, "abc") == 0);
+    }
+    report("strtod inf", strtod("inf", 0) > 1.0e300);
+    report("atof coincide con strtod", same_double(atof("2.25"), 2.25));
+}
+
 int main(void) {
     printf("FLOATSMOKE: arrancando\n");
 
     check_abi();
     check_libm();
+    check_libm_extra();
+    check_formatting();
     check_context_switch();
 
     if (g_failures == 0) {
