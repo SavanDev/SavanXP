@@ -399,6 +399,13 @@ Notas de corte:
   en un simbolo que no usaba nadie -- con su warning de variable sin uso en
   cada build.
 
+- **Borradas las ocho coreutils hechas a mano de `subsystems/posix/userland`.**
+  `cat.c`, `echo.c`, `ls.c`, `mv.c`, `rm.c`, `sleep.c`, `true.c` y `false.c` ya
+  no las compilaba ningun build: los binarios que se instalan en `/bin` salen
+  del multicall de `vendor/busybox-port`. Es el mismo caso que `busybox.c`, que
+  se habia sacado antes por la misma razon; estas quedaron atras. Ninguna
+  definia nada fuera de su propio `main`, asi que no dejan huecos.
+
 ### Corregido
 
 - **El cargador de ELF fallaba con dos `PT_LOAD` que comparten una pagina.**
