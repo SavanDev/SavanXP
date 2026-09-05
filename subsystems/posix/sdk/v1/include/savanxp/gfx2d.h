@@ -76,11 +76,60 @@ struct sx_painter {
     struct sx_point origin;
     struct sx_point saved_origin[SX_PAINTER_ORIGIN_STACK_DEPTH];
     int origin_depth;
+    /* Clip por region (analogo a SelectClipRgn). PRESTADA: el llamador es dueño
+     * y tiene que mantenerla viva mientras este pusheada. Se interpreta en las
+     * coordenadas del painter al momento del push; clip_region_origin guarda el
+     * origen de entonces para poder traducir despues. clip_rect siempre sigue
+     * siendo el bounding box del clip, region incluida, asi que el descarte
+     * rapido no necesita mirar la region. */
+    const struct sx_region* clip_region;
+    struct sx_point clip_region_origin;
+    const struct sx_region* saved_clip_region[SX_PAINTER_CLIP_STACK_DEPTH];
+    struct sx_point saved_clip_region_origin[SX_PAINTER_CLIP_STACK_DEPTH];
 };
 
 struct sx_rect_set {
     size_t count;
     struct sx_rect rects[SX_RECT_SET_CAPACITY];
+};
+
+/* --- Regiones -----------------------------------------------------------
+ *
+ * Una region por BANDAS en Y, el modelo de HRGN de GDI: bandas ordenadas y
+ * disjuntas, cada una con sus tramos en X ordenados, disjuntos y no adyacentes.
+ * A diferencia de sx_rect_set, la forma es canonica y las operaciones son
+ * EXACTAS: unir dos rects en L da la L, no el rectangulo que los contiene.
+ *
+ * Por que existiendo sx_rect_set: sx_rect_set_add fusiona por bounding box ante
+ * cualquier solape, asi que sobre-cubre. Para acumular danio da igual (pintar de
+ * mas no rompe), pero para clipear una capa contra lo que quedo visible, cada
+ * pixel de mas es trabajo de repintado.
+ *
+ * DESBORDE: al pasarse de bandas o tramos la region colapsa a su bounding box y
+ * queda marcada (sx_region_overflowed). Es un SUPERSET -- nunca pierde area --
+ * igual que el desborde de sx_rect_set. Para el compose eso es seguro porque se
+ * pinta de atras para adelante y lo pintado de mas lo tapa la capa de adelante;
+ * para un clip cualquiera significa que se puede pintar de mas, asi que quien
+ * necesite el clip exacto tiene que consultar la marca. */
+#define SX_REGION_MAX_BANDS 32
+#define SX_REGION_MAX_SPANS_PER_BAND 8
+
+struct sx_region_span {
+    int x0;
+    int x1;
+};
+
+struct sx_region_band {
+    int y0;
+    int y1;
+    int span_count;
+    struct sx_region_span spans[SX_REGION_MAX_SPANS_PER_BAND];
+};
+
+struct sx_region {
+    int band_count;
+    int overflowed;
+    struct sx_region_band bands[SX_REGION_MAX_BANDS];
 };
 
 struct sx_rect sx_rect_make(int x, int y, int width, int height);
@@ -102,6 +151,11 @@ void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap);
 void sx_painter_clear_clip(struct sx_painter* painter);
 void sx_painter_add_clip_rect(struct sx_painter* painter, struct sx_rect rect);
 int sx_painter_push_clip(struct sx_painter* painter, struct sx_rect rect);
+/* Igual que push_clip pero contra una region. La region es PRESTADA: tiene que
+ * seguir viva y sin cambios hasta el pop. Comparte pila con push_clip, asi que
+ * se emparejan con el mismo sx_painter_pop_clip. Una region desbordada clipea
+ * por su bounding box (pinta de mas, nunca de menos). */
+int sx_painter_push_clip_region(struct sx_painter* painter, const struct sx_region* region);
 void sx_painter_pop_clip(struct sx_painter* painter);
 
 /* Corre el origen dx/dy relativo al actual. Devuelve 0 si la pila esta llena
@@ -129,6 +183,20 @@ void sx_painter_draw_scaled_bitmap_nearest(
     struct sx_rect destination,
     struct sx_rect source_rect);
 void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* text, uint32_t colour);
+
+void sx_region_clear(struct sx_region* region);
+void sx_region_set_rect(struct sx_region* region, struct sx_rect rect);
+void sx_region_copy(struct sx_region* destination, const struct sx_region* source);
+void sx_region_union_rect(struct sx_region* region, struct sx_rect rect);
+void sx_region_subtract_rect(struct sx_region* region, struct sx_rect rect);
+void sx_region_intersect_rect(struct sx_region* region, struct sx_rect rect);
+int sx_region_is_empty(const struct sx_region* region);
+int sx_region_overflowed(const struct sx_region* region);
+struct sx_rect sx_region_bounds(const struct sx_region* region);
+int sx_region_contains_point(const struct sx_region* region, int x, int y);
+/* Cantidad de rectangulos que hace falta recorrer para cubrir la region. Sirve
+ * para comparar contra el conteo de un sx_rect_set equivalente. */
+size_t sx_region_rect_count(const struct sx_region* region);
 
 void sx_rect_set_clear(struct sx_rect_set* set);
 int sx_rect_set_add(struct sx_rect_set* set, struct sx_rect rect);

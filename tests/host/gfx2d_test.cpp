@@ -26,6 +26,10 @@ extern "C" {
 #include <stdio.h>
 #include <string.h>
 }
+/* El `stdout` del <stdio.h> del SDK no es el del CRT del host, asi que
+ * setvbuf(stdout, ...) ni siquiera linkea. fflush(NULL) vacia todos los streams
+ * sin nombrar ninguno: alcanza para que un crash no se lleve la salida ya
+ * impresa, que es como se ubica el caso que rompio. */
 
 #include "savanxp/gfx2d.h"
 
@@ -42,6 +46,7 @@ bool check(bool ok, const char* what) {
     } else {
         printf("  ok   %s\n", what);
     }
+    fflush(0);
     return ok;
 }
 
@@ -422,6 +427,490 @@ void case_scaled_blit_clamps_source_rect() {
     check(guards_intact, "las guardas quedaron intactas");
 }
 
+/* ---- regiones ----------------------------------------------------------- */
+
+/* Modelo de referencia: la misma secuencia de operaciones sobre una grilla de
+ * booleanos. Es el juez -- si la region y la grilla discrepan en un solo pixel,
+ * la region esta mal. Compararlas es mucho mas fuerte que afirmar conteos de
+ * bandas, que dependen de la representacion. */
+constexpr int kGridW = 40;
+constexpr int kGridH = 30;
+
+struct Grid {
+    bool cell[kGridH][kGridW] = {};
+
+    void op_rect(sx_rect r, int op) { // 0=union 1=subtract 2=intersect
+        for (int y = 0; y < kGridH; ++y) {
+            for (int x = 0; x < kGridW; ++x) {
+                const bool in = x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+                if (op == 0) {
+                    cell[y][x] = cell[y][x] || in;
+                } else if (op == 1) {
+                    cell[y][x] = cell[y][x] && !in;
+                } else {
+                    cell[y][x] = cell[y][x] && in;
+                }
+            }
+        }
+    }
+    int area() const {
+        int n = 0;
+        for (int y = 0; y < kGridH; ++y)
+            for (int x = 0; x < kGridW; ++x)
+                if (cell[y][x]) ++n;
+        return n;
+    }
+};
+
+// Compara la region contra la grilla pixel por pixel. `superset_ok` acepta que
+// la region cubra de mas (es lo que promete el desborde), nunca de menos.
+bool region_matches(const sx_region& r, const Grid& g, bool superset_ok = false) {
+    for (int y = 0; y < kGridH; ++y) {
+        for (int x = 0; x < kGridW; ++x) {
+            const bool in_region = sx_region_contains_point(&r, x, y) != 0;
+            if (in_region == g.cell[y][x]) {
+                continue;
+            }
+            if (superset_ok && in_region && !g.cell[y][x]) {
+                continue;
+            }
+            printf("    discrepancia en (%d,%d): region=%d grilla=%d\n",
+                   x, y, (int)in_region, (int)g.cell[y][x]);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Verifica el invariante canonico: bandas ordenadas y disjuntas, tramos
+// ordenados, disjuntos y no adyacentes, y sin bandas contiguas identicas.
+bool region_is_canonical(const sx_region& r) {
+    for (int b = 0; b < r.band_count; ++b) {
+        const sx_region_band& band = r.bands[b];
+        if (band.y0 >= band.y1 || band.span_count <= 0) {
+            printf("    banda %d vacia o invertida\n", b);
+            return false;
+        }
+        for (int s = 0; s < band.span_count; ++s) {
+            if (band.spans[s].x0 >= band.spans[s].x1) {
+                printf("    tramo %d de la banda %d vacio\n", s, b);
+                return false;
+            }
+            if (s > 0 && band.spans[s].x0 <= band.spans[s - 1].x1) {
+                printf("    tramos %d/%d de la banda %d se tocan o desordenados\n", s - 1, s, b);
+                return false;
+            }
+        }
+        if (b > 0) {
+            if (r.bands[b].y0 < r.bands[b - 1].y1) {
+                printf("    bandas %d/%d solapadas o desordenadas\n", b - 1, b);
+                return false;
+            }
+            if (r.bands[b].y0 == r.bands[b - 1].y1) {
+                bool same = r.bands[b].span_count == r.bands[b - 1].span_count;
+                for (int s = 0; same && s < band.span_count; ++s) {
+                    same = band.spans[s].x0 == r.bands[b - 1].spans[s].x0 &&
+                           band.spans[s].x1 == r.bands[b - 1].spans[s].x1;
+                }
+                if (same) {
+                    printf("    bandas %d/%d contiguas e identicas sin fusionar\n", b - 1, b);
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+void case_region_basics() {
+    printf("caso: region -- rect, bounds, vacio\n");
+    sx_region r;
+    sx_region_clear(&r);
+    check(sx_region_is_empty(&r), "arranca vacia");
+
+    sx_region_set_rect(&r, sx_rect_make(3, 4, 5, 6));
+    check(!sx_region_is_empty(&r), "con un rect deja de estar vacia");
+    sx_rect b = sx_region_bounds(&r);
+    check(b.x == 3 && b.y == 4 && b.width == 5 && b.height == 6, "bounds es el rect");
+    check(sx_region_rect_count(&r) == 1, "un solo rect");
+
+    sx_region_set_rect(&r, sx_rect_make(0, 0, 0, 5));
+    check(sx_region_is_empty(&r), "un rect vacio deja la region vacia");
+}
+
+void case_region_union_keeps_the_L() {
+    printf("caso: region -- la union en L NO es el bounding box\n");
+    // Este es el caso que separa sx_region de sx_rect_set: sx_rect_set_add
+    // fusionaria estos dos en el rect que los contiene.
+    sx_region r;
+    Grid g;
+    sx_region_clear(&r);
+
+    const sx_rect a = sx_rect_make(2, 2, 10, 4);
+    const sx_rect c = sx_rect_make(2, 6, 4, 8);
+    sx_region_union_rect(&r, a);
+    sx_region_union_rect(&r, c);
+    g.op_rect(a, 0);
+    g.op_rect(c, 0);
+
+    check(region_matches(r, g), "la region es exactamente la L");
+    check(region_is_canonical(r), "y esta en forma canonica");
+
+    // La prueba del delito: el bounding box tiene mas area que la L.
+    sx_rect bb = sx_region_bounds(&r);
+    check(bb.width * bb.height > g.area(), "el bounding box cubriria de mas");
+
+    // Y el sx_rect_set equivalente efectivamente colapsa.
+    sx_rect_set set;
+    sx_rect_set_clear(&set);
+    sx_rect_set_add(&set, a);
+    sx_rect_set_add(&set, c);
+    check(set.count == 1, "sx_rect_set fusiona los dos en uno (sobre-cubre)");
+}
+
+void case_region_subtract_hole() {
+    printf("caso: region -- un agujero en el medio\n");
+    sx_region r;
+    Grid g;
+    const sx_rect base = sx_rect_make(4, 4, 20, 16);
+    const sx_rect hole = sx_rect_make(10, 8, 6, 6);
+
+    sx_region_set_rect(&r, base);
+    sx_region_subtract_rect(&r, hole);
+    g.op_rect(base, 0);
+    g.op_rect(hole, 1);
+
+    check(region_matches(r, g), "el agujero queda exacto");
+    check(region_is_canonical(r), "y la forma sigue canonica");
+    check(sx_region_contains_point(&r, 5, 5) != 0, "adentro del marco");
+    check(sx_region_contains_point(&r, 12, 10) == 0, "adentro del agujero");
+}
+
+void case_region_subtract_everything() {
+    printf("caso: region -- restar todo la vacia\n");
+    sx_region r;
+    sx_region_set_rect(&r, sx_rect_make(5, 5, 10, 10));
+    sx_region_subtract_rect(&r, sx_rect_make(0, 0, 40, 40));
+    check(sx_region_is_empty(&r), "no queda nada");
+    check(sx_region_rect_count(&r) == 0, "y no quedan rects que recorrer");
+}
+
+void case_region_intersect() {
+    printf("caso: region -- interseccion\n");
+    sx_region r;
+    Grid g;
+    const sx_rect a = sx_rect_make(2, 2, 20, 6);
+    const sx_rect b = sx_rect_make(2, 10, 6, 10);
+    const sx_rect win = sx_rect_make(4, 4, 10, 10);
+
+    sx_region_clear(&r);
+    sx_region_union_rect(&r, a);
+    sx_region_union_rect(&r, b);
+    sx_region_intersect_rect(&r, win);
+    g.op_rect(a, 0);
+    g.op_rect(b, 0);
+    g.op_rect(win, 2);
+
+    check(region_matches(r, g), "la interseccion es exacta");
+    check(region_is_canonical(r), "y canonica");
+}
+
+void case_region_matches_grid_under_many_ops() {
+    printf("caso: region -- secuencia larga contra el modelo de referencia\n");
+    // Secuencia pseudoaleatoria determinista: es donde aparecen los casos que
+    // uno no se le ocurren a mano (bandas que se parten y se vuelven a fusionar).
+    sx_region r;
+    Grid g;
+    sx_region_clear(&r);
+
+    uint32_t seed = 12345u;
+    auto next = [&seed](int limit) {
+        seed = seed * 1103515245u + 12345u;
+        return (int)((seed >> 16) % (uint32_t)limit);
+    };
+
+    bool ok = true;
+    bool canonical = true;
+    int applied = 0;
+    for (int i = 0; i < 200 && ok; ++i) {
+        sx_rect rect = sx_rect_make(next(kGridW), next(kGridH), 1 + next(12), 1 + next(9));
+        const int op = next(3);
+        sx_region_union_rect(&r, sx_rect_make(0, 0, 0, 0)); // no-op: no debe alterar nada
+        if (op == 0) {
+            sx_region_union_rect(&r, rect);
+        } else if (op == 1) {
+            sx_region_subtract_rect(&r, rect);
+        } else {
+            sx_region_intersect_rect(&r, rect);
+        }
+        g.op_rect(rect, op);
+        ++applied;
+
+        // Una vez desbordada solo se puede exigir superset.
+        const bool superset_ok = sx_region_overflowed(&r) != 0;
+        if (!region_matches(r, g, superset_ok)) {
+            printf("    fallo en la operacion %d (op=%d, desbordada=%d)\n", i, op, (int)superset_ok);
+            ok = false;
+        }
+        if (!region_is_canonical(r)) {
+            printf("    forma no canonica tras la operacion %d\n", i);
+            canonical = false;
+            ok = false;
+        }
+    }
+    check(ok, "coincide con el modelo en las 200 operaciones");
+    check(canonical, "y se mantiene canonica en todas");
+    check(applied == 200, "se aplicaron las 200");
+}
+
+void case_region_overflow_is_a_superset() {
+    printf("caso: region -- el desborde es superset, nunca pierde area\n");
+    sx_region r;
+    Grid g;
+    sx_region_clear(&r);
+
+    // Un peine: muchos tramos finos en la misma banda, garantizado a desbordar
+    // SX_REGION_MAX_SPANS_PER_BAND.
+    for (int i = 0; i < kGridW; i += 2) {
+        sx_rect tooth = sx_rect_make(i, 5, 1, 10);
+        sx_region_union_rect(&r, tooth);
+        g.op_rect(tooth, 0);
+    }
+    check(sx_region_overflowed(&r), "el peine desborda");
+    check(region_matches(r, g, true), "cubre todo lo que debia (superset)");
+    check(region_is_canonical(r), "y aun desbordada la forma es valida");
+}
+
+/* ---- clip por region ---------------------------------------------------- */
+
+void case_painter_clips_to_region() {
+    printf("caso: el painter clipea contra la region\n");
+    Canvas c;
+    sx_region r;
+
+    sx_region_clear(&r);
+    sx_region_union_rect(&r, sx_rect_make(2, 2, 6, 3));
+    sx_region_union_rect(&r, sx_rect_make(12, 8, 4, 4));
+
+    check(sx_painter_push_clip_region(&c.painter, &r) != 0, "acepta el push");
+    sx_painter_fill(&c.painter, kInk);
+    sx_painter_pop_clip(&c.painter);
+
+    check(c.count(kInk) == 6 * 3 + 4 * 4, "pinto exactamente el area de la region");
+    check(c.at(2, 2) == kInk && c.at(13, 9) == kInk, "los dos trozos");
+    check(c.at(9, 3) != kInk, "nada en el hueco entre ellos");
+    check(c.at(8, 2) != kInk, "ni un pixel pasado del borde");
+}
+
+void case_painter_region_clip_with_hole() {
+    printf("caso: clip por region con agujero\n");
+    Canvas c;
+    sx_region r;
+
+    sx_region_set_rect(&r, sx_rect_make(1, 1, 20, 14));
+    sx_region_subtract_rect(&r, sx_rect_make(6, 5, 5, 5));
+
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_fill_rect(&c.painter, sx_rect_make(0, 0, kWidth, kHeight), kInk);
+    sx_painter_pop_clip(&c.painter);
+
+    check(c.count(kInk) == 20 * 14 - 5 * 5, "el agujero queda sin pintar");
+    check(c.at(8, 7) != kInk, "centro del agujero limpio");
+    check(c.at(5, 7) == kInk && c.at(11, 7) == kInk, "y los costados pintados");
+}
+
+void case_painter_region_clip_respects_origin() {
+    printf("caso: el clip por region se interpreta en coordenadas locales\n");
+    Canvas c;
+    sx_region r;
+    sx_region_set_rect(&r, sx_rect_make(0, 0, 3, 3));
+
+    sx_painter_push_origin(&c.painter, 10, 5);
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_fill_rect(&c.painter, sx_rect_make(-50, -50, 200, 200), kInk);
+    sx_painter_pop_clip(&c.painter);
+    sx_painter_pop_origin(&c.painter);
+
+    check(c.count(kInk) == 9, "3x3 pintados");
+    check(c.at(10, 5) == kInk, "la region cayo en el origen activo");
+    check(c.at(0, 0) != kInk, "no en el origen de dispositivo");
+}
+
+void case_painter_empty_region_draws_nothing() {
+    printf("caso: una region vacia no deja pintar nada\n");
+    Canvas c;
+    sx_region r;
+    sx_region_clear(&r);
+
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_fill(&c.painter, kInk);
+    sx_painter_draw_text(&c.painter, 0, 0, "hola", kInk);
+    sx_painter_pop_clip(&c.painter);
+
+    check(c.count(kInk) == 0, "no se pinto un solo pixel");
+}
+
+void case_painter_region_clip_pops_cleanly() {
+    printf("caso: el pop restaura el estado previo al clip por region\n");
+    Canvas c;
+    sx_region r;
+    sx_region_set_rect(&r, sx_rect_make(0, 0, 2, 2));
+
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_pop_clip(&c.painter);
+    sx_painter_fill(&c.painter, kInk);
+
+    check(c.count(kInk) == kWidth * kHeight, "sin clip vuelve a pintar todo");
+}
+
+void case_region_clip_equals_rect_clip_for_a_rect() {
+    printf("caso: region de un rect == clip por rect\n");
+    // Si la region degenera en un rect, el resultado tiene que ser identico al
+    // camino de siempre. Es la red que impide que el camino nuevo derive.
+    Canvas viaRect;
+    sx_painter_push_clip(&viaRect.painter, sx_rect_make(3, 4, 9, 7));
+    sx_painter_fill(&viaRect.painter, kInk);
+    sx_painter_draw_text(&viaRect.painter, 2, 5, "abcdefgh", kBack);
+    sx_painter_pop_clip(&viaRect.painter);
+
+    Canvas viaRegion;
+    sx_region r;
+    sx_region_set_rect(&r, sx_rect_make(3, 4, 9, 7));
+    sx_painter_push_clip_region(&viaRegion.painter, &r);
+    sx_painter_fill(&viaRegion.painter, kInk);
+    sx_painter_draw_text(&viaRegion.painter, 2, 5, "abcdefgh", kBack);
+    sx_painter_pop_clip(&viaRegion.painter);
+
+    check(memcmp(viaRect.pixels, viaRegion.pixels, sizeof(viaRect.pixels)) == 0,
+          "los dos caminos dan el mismo canvas");
+}
+
+void case_region_clip_blit_and_frame() {
+    printf("caso: blit y marco tambien respetan la region\n");
+    static uint32_t src[16 * 16];
+    for (int i = 0; i < 16 * 16; ++i) {
+        src[i] = kInk;
+    }
+    savanxp_fb_info si;
+    memset(&si, 0, sizeof(si));
+    si.width = 16; si.height = 16; si.pitch = 16 * sizeof(uint32_t); si.bpp = 32u;
+    si.buffer_size = si.pitch * si.height;
+    sx_bitmap sb;
+    sx_bitmap_wrap(&sb, src, &si, SX_PIXEL_FORMAT_BGRX8888);
+
+    sx_region r;
+    sx_region_set_rect(&r, sx_rect_make(0, 0, 20, 20));
+    sx_region_subtract_rect(&r, sx_rect_make(4, 4, 4, 4));
+
+    Canvas c;
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_blit_bitmap(&c.painter, &sb, 0, 0);
+    sx_painter_pop_clip(&c.painter);
+    check(c.count(kInk) == 16 * 16 - 4 * 4, "el blit deja el agujero");
+    check(c.at(5, 5) != kInk, "agujero limpio");
+
+    Canvas f;
+    sx_painter_push_clip_region(&f.painter, &r);
+    sx_painter_draw_frame(&f.painter, sx_rect_make(2, 2, 8, 8), kInk);
+    sx_painter_pop_clip(&f.painter);
+    // El marco de 8x8 son 28 celdas; el agujero (4,4)-(8,8) se come las que
+    // caen en el borde: (4,2),(5,2),(6,2),(7,2) no -- esas estan en y=2, fuera.
+    // Las del borde dentro del agujero son (4,9)? no. Verificamos por posicion.
+    check(f.at(2, 2) == kInk, "esquina del marco presente");
+    check(f.at(4, 4) != kInk, "y lo que cae en el agujero, no");
+}
+
+int region_area(const sx_region& r) {
+    int area = 0;
+    for (int b = 0; b < r.band_count; ++b) {
+        for (int s = 0; s < r.bands[b].span_count; ++s) {
+            area += (r.bands[b].spans[s].x1 - r.bands[b].spans[s].x0) * (r.bands[b].y1 - r.bands[b].y0);
+        }
+    }
+    return area;
+}
+
+int rect_set_area(const sx_rect_set& s) {
+    int area = 0;
+    for (size_t i = 0; i < s.count; ++i) {
+        area += s.rects[i].width * s.rects[i].height;
+    }
+    return area;
+}
+
+void case_subtract_alone_does_not_over_cover() {
+    printf("caso: restar sola NO es donde sx_rect_set pierde\n");
+    // Vale dejarlo asentado porque es contraintuitivo: sx_rect_set_subtract_rect
+    // usa push_raw, que NO fusiona, asi que la resta ya era exacta. Con un solo
+    // rect de danio (pantalla entera) la region no gana area, solo exactitud de
+    // representacion. La ganancia esta en el caso de abajo.
+    const sx_rect bounds = sx_rect_make(0, 0, kGridW, kGridH);
+    const sx_rect front_a = sx_rect_make(6, 0, 12, 14);
+    const sx_rect front_b = sx_rect_make(24, 10, 14, 20);
+
+    sx_region region;
+    sx_region_set_rect(&region, bounds);
+    sx_region_subtract_rect(&region, front_a);
+    sx_region_subtract_rect(&region, front_b);
+
+    sx_rect_set set;
+    sx_rect_set_clear(&set);
+    sx_rect_set_add(&set, bounds);
+    sx_rect_set_subtract_rect(&set, front_a);
+    sx_rect_set_subtract_rect(&set, front_b);
+
+    Grid g;
+    g.op_rect(bounds, 0);
+    g.op_rect(front_a, 1);
+    g.op_rect(front_b, 1);
+    const int exact = g.area();
+
+    printf("    exacto=%d  region=%d px  sx_rect_set=%d px\n",
+           exact, region_area(region), rect_set_area(set));
+    check(region_matches(region, g), "la region es exactamente lo visible");
+    check(region_area(region) == exact, "la region no cubre de mas");
+    check(rect_set_area(set) == exact, "y con una sola fuente de danio, el set tampoco");
+}
+
+void case_region_beats_rect_set_on_multi_rect_damage() {
+    printf("caso: region vs sx_rect_set con danio en varios rects\n");
+    // ESTE es el caso donde windowd pierde hoy: cuando el frame trae varios
+    // rects sucios, el compose los mete uno por uno con sx_rect_set_add, que
+    // fusiona por bounding box en cuanto dos se tocan o se solapan.
+    const sx_rect bounds = sx_rect_make(0, 0, kGridW, kGridH);
+    const sx_rect damage[3] = {
+        sx_rect_make(0, 0, 10, 6),    // arriba a la izquierda
+        sx_rect_make(8, 4, 6, 20),    // baja por el medio, TOCA al anterior
+        sx_rect_make(30, 24, 8, 5),   // suelto abajo a la derecha
+    };
+    const sx_rect occluder = sx_rect_make(9, 8, 3, 6);
+
+    sx_region region;
+    sx_rect_set set;
+    Grid g;
+
+    sx_region_clear(&region);
+    sx_rect_set_clear(&set);
+    for (int i = 0; i < 3; ++i) {
+        sx_rect clipped = sx_rect_intersect(damage[i], bounds);
+        sx_region_union_rect(&region, clipped);
+        sx_rect_set_add(&set, clipped);
+        g.op_rect(clipped, 0);
+    }
+    sx_region_subtract_rect(&region, occluder);
+    sx_rect_set_subtract_rect(&set, occluder);
+    g.op_rect(occluder, 1);
+
+    const int exact = g.area();
+    printf("    exacto=%d  region=%d px en %d rects  sx_rect_set=%d px en %d rects\n",
+           exact, region_area(region), (int)sx_region_rect_count(&region),
+           rect_set_area(set), (int)set.count);
+
+    check(region_matches(region, g), "la region es exactamente el area a repintar");
+    check(region_area(region) == exact, "la region no cubre un pixel de mas");
+    check(rect_set_area(set) > exact, "sx_rect_set cubre de mas al fusionar el danio");
+}
+
 } // namespace
 
 /* ---- stubs de las primitivas crudas ------------------------------------- */
@@ -501,6 +990,24 @@ int main() {
     case_brush_frame_is_dotted_border_only();
 
     case_scaled_blit_clamps_source_rect();
+
+    case_region_basics();
+    case_region_union_keeps_the_L();
+    case_region_subtract_hole();
+    case_region_subtract_everything();
+    case_region_intersect();
+    case_region_matches_grid_under_many_ops();
+    case_region_overflow_is_a_superset();
+    case_subtract_alone_does_not_over_cover();
+    case_region_beats_rect_set_on_multi_rect_damage();
+
+    case_painter_clips_to_region();
+    case_painter_region_clip_with_hole();
+    case_painter_region_clip_respects_origin();
+    case_painter_empty_region_draws_nothing();
+    case_painter_region_clip_pops_cleanly();
+    case_region_clip_equals_rect_clip_for_a_rect();
+    case_region_clip_blit_and_frame();
 
     printf("%s (%d checks, %d fallas)\n",
            g_failures == 0 ? "GFX2D TEST PASS" : "GFX2D TEST FAIL",

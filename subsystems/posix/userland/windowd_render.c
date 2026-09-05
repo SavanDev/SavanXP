@@ -807,7 +807,7 @@ void windowd_draw_desktop(
     /* Single-threaded compositor: keep the working sets off the stack. */
     static struct windowd_layer layers[WINDOWD_MAX_COMPOSE_LAYERS];
     static struct sx_rect_set damage;
-    static struct sx_rect_set visible;
+    static struct sx_region visible;
     struct sx_bitmap backbuffer_bitmap;
     struct sx_painter painter;
     int layer_count = 0;
@@ -845,37 +845,44 @@ void windowd_draw_desktop(
     {
         const struct windowd_layer *layer = &layers[layer_index];
         size_t damage_index;
-        size_t visible_index;
         int front;
 
-        sx_rect_set_clear(&visible);
+        /* visible = damage ∩ bounds − (opacas al frente), como region exacta.
+         * Antes esto era un sx_rect_set, que fusiona por bounding box: dos
+         * pedazos en L se volvian el rectangulo que los contiene y la capa se
+         * repintaba sobre area ya tapada. */
+        sx_region_clear(&visible);
         for (damage_index = 0; damage_index < damage.count; ++damage_index)
         {
             struct sx_rect clipped = sx_rect_intersect(damage.rects[damage_index], layer->bounds);
             if (!sx_rect_is_empty(clipped))
             {
-                (void)sx_rect_set_add(&visible, clipped);
+                sx_region_union_rect(&visible, clipped);
             }
         }
 
-        for (front = layer_index + 1; front < layer_count && sx_rect_set_valid(&visible); ++front)
+        for (front = layer_index + 1; front < layer_count && !sx_region_is_empty(&visible); ++front)
         {
             if (layers[front].opaque)
             {
-                (void)sx_rect_set_subtract_rect(&visible, layers[front].bounds);
+                sx_region_subtract_rect(&visible, layers[front].bounds);
             }
         }
 
-        for (visible_index = 0; visible_index < visible.count; ++visible_index)
+        if (sx_region_is_empty(&visible))
         {
-            struct sx_rect sub = visible.rects[visible_index];
-            if (sx_rect_is_empty(sub))
-            {
-                continue;
-            }
-            sx_painter_clear_clip(&painter);
-            sx_painter_add_clip_rect(&painter, sub);
+            continue;
+        }
+
+        /* Una sola pasada por capa: el clip por region se encarga de saltear los
+         * huecos. Antes se llamaba a wm_paint_layer una vez por sub-rect, y cada
+         * repintado parcial era una oportunidad de que una primitiva se dibujara
+         * distinto por fragmento. */
+        sx_painter_clear_clip(&painter);
+        if (sx_painter_push_clip_region(&painter, &visible))
+        {
             wm_paint_layer(&painter, session, layer, cursor_x, cursor_y);
+            sx_painter_pop_clip(&painter);
         }
     }
 }

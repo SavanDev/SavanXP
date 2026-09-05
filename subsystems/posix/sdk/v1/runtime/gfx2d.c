@@ -79,6 +79,89 @@ static struct sx_rect sx_apply_painter_clip(const struct sx_painter* painter, st
     return sx_rect_intersect(rect, painter->clip_rect);
 }
 
+/* Recorre los pedazos de dispositivo que sobreviven al clip: el rect pedido,
+ * intersecado con el clip_rect y con la region si hay, y recortado al bitmap.
+ *
+ * Sin region rinde un solo pedazo, que es el caso de siempre. Con region rinde
+ * uno por tramo, y los tramos son DISJUNTOS -- eso es lo que hace seguro que
+ * cada primitiva se dibuje por pedazos: ningun pixel se toca dos veces, asi que
+ * el texto antialiased no se re-mezcla ni los bordes se duplican. */
+struct sx_clip_iter {
+    const struct sx_painter* painter;
+    struct sx_rect rect;
+    int band;
+    int span;
+    int emitted_plain;
+};
+
+static void sx_clip_iter_init(struct sx_clip_iter* it, const struct sx_painter* painter, struct sx_rect device_rect)
+{
+    it->painter = painter;
+    it->rect = sx_apply_painter_clip(painter, device_rect);
+    it->band = 0;
+    it->span = 0;
+    it->emitted_plain = 0;
+}
+
+static int sx_clip_iter_next(struct sx_clip_iter* it, struct sx_rect* out)
+{
+    const struct sx_painter* painter = it->painter;
+    const struct sx_region* region;
+
+    if (sx_rect_is_empty(it->rect))
+    {
+        return 0;
+    }
+
+    region = painter->clip_region;
+    if (region == 0 || region->band_count <= 0)
+    {
+        if (it->emitted_plain)
+        {
+            return 0;
+        }
+        it->emitted_plain = 1;
+        *out = it->rect;
+        return sx_clip_rect_to_bitmap(painter->target, out);
+    }
+
+    while (it->band < region->band_count)
+    {
+        const struct sx_region_band* band = &region->bands[it->band];
+        const int y0 = band->y0 + painter->clip_region_origin.y;
+        const int y1 = band->y1 + painter->clip_region_origin.y;
+
+        if (it->span >= band->span_count)
+        {
+            it->band += 1;
+            it->span = 0;
+            continue;
+        }
+        {
+            const struct sx_region_span* span = &band->spans[it->span];
+            struct sx_rect piece = sx_rect_make(
+                span->x0 + painter->clip_region_origin.x,
+                y0,
+                span->x1 - span->x0,
+                y1 - y0);
+
+            it->span += 1;
+            piece = sx_rect_intersect(piece, it->rect);
+            if (sx_rect_is_empty(piece))
+            {
+                continue;
+            }
+            *out = piece;
+            if (!sx_clip_rect_to_bitmap(painter->target, out))
+            {
+                continue;
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Coordenadas del llamador -> coordenadas de dispositivo. Toda funcion publica
  * que recibe posiciones pasa por aca una sola vez; de ahi para adentro el
  * codigo trabaja en coordenadas de dispositivo, que es donde viven el clip, el
@@ -253,6 +336,9 @@ void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap)
     painter->origin.x = 0;
     painter->origin.y = 0;
     painter->origin_depth = 0;
+    painter->clip_region = 0;
+    painter->clip_region_origin.x = 0;
+    painter->clip_region_origin.y = 0;
 }
 
 int sx_painter_push_origin(struct sx_painter* painter, int dx, int dy)
@@ -317,6 +403,7 @@ void sx_painter_clear_clip(struct sx_painter* painter)
     if (painter != 0)
     {
         painter->has_clip = 0;
+        painter->clip_region = 0;
     }
 }
 
@@ -348,6 +435,8 @@ int sx_painter_push_clip(struct sx_painter* painter, struct sx_rect rect)
 
     painter->saved_clip[painter->clip_depth] = painter->clip_rect;
     painter->saved_has_clip[painter->clip_depth] = painter->has_clip;
+    painter->saved_clip_region[painter->clip_depth] = painter->clip_region;
+    painter->saved_clip_region_origin[painter->clip_depth] = painter->clip_region_origin;
     painter->clip_depth += 1;
 
     rect = sx_to_device_rect(painter, rect);
@@ -363,6 +452,34 @@ int sx_painter_push_clip(struct sx_painter* painter, struct sx_rect rect)
     return 1;
 }
 
+int sx_painter_push_clip_region(struct sx_painter* painter, const struct sx_region* region)
+{
+    struct sx_rect bounds;
+
+    if (painter == 0 || painter->clip_depth >= SX_PAINTER_CLIP_STACK_DEPTH)
+    {
+        return 0;
+    }
+    if (region == 0 || sx_region_is_empty(region))
+    {
+        /* Region vacia = no se dibuja nada. Un clip degenerado lo expresa sin
+         * necesidad de un flag aparte. */
+        return sx_painter_push_clip(painter, sx_rect_make(0, 0, 0, 0));
+    }
+
+    /* El bounding box va al clip_rect: asi el descarte rapido de cada primitiva
+     * sigue siendo una interseccion de rects y solo se recorren bandas cuando
+     * el rect pedido de verdad cae adentro. */
+    bounds = sx_region_bounds(region);
+    if (!sx_painter_push_clip(painter, bounds))
+    {
+        return 0;
+    }
+    painter->clip_region = region;
+    painter->clip_region_origin = painter->origin;
+    return 1;
+}
+
 void sx_painter_pop_clip(struct sx_painter* painter)
 {
     if (painter == 0 || painter->clip_depth <= 0)
@@ -372,6 +489,8 @@ void sx_painter_pop_clip(struct sx_painter* painter)
     painter->clip_depth -= 1;
     painter->clip_rect = painter->saved_clip[painter->clip_depth];
     painter->has_clip = painter->saved_has_clip[painter->clip_depth];
+    painter->clip_region = painter->saved_clip_region[painter->clip_depth];
+    painter->clip_region_origin = painter->saved_clip_region_origin[painter->clip_depth];
 }
 
 /* Rellena un rect que YA esta en coordenadas de dispositivo. Es el punto por el
@@ -379,22 +498,22 @@ void sx_painter_pop_clip(struct sx_painter* painter)
  * delegan aca, asi el origen se aplica exactamente una vez. */
 static void sx_fill_rect_device(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
 {
-    rect = sx_apply_painter_clip(painter, rect);
-    if (!sx_clip_rect_to_bitmap(painter->target, &rect))
-    {
-        return;
-    }
+    struct sx_clip_iter iter;
+    struct sx_rect piece;
 
-    gfx_rect(painter->target->pixels, &painter->target->info, rect.x, rect.y, rect.width, rect.height, colour);
+    for (sx_clip_iter_init(&iter, painter, rect); sx_clip_iter_next(&iter, &piece); )
+    {
+        gfx_rect(painter->target->pixels, &painter->target->info, piece.x, piece.y, piece.width, piece.height, colour);
+    }
 }
 
 /* Igual que la anterior pero con brush. El recorrido por pixel solo se paga
  * cuando el brush tiene trama; el caso solido cae al relleno de rects de una. */
 static void sx_fill_rect_device_brush(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush)
 {
+    struct sx_clip_iter iter;
+    struct sx_rect piece;
     uint32_t stride;
-    int x;
-    int y;
 
     if (!brush->has_pattern)
     {
@@ -402,25 +521,25 @@ static void sx_fill_rect_device_brush(struct sx_painter* painter, struct sx_rect
         return;
     }
 
-    rect = sx_apply_painter_clip(painter, rect);
-    if (!sx_clip_rect_to_bitmap(painter->target, &rect))
-    {
-        return;
-    }
-
     stride = gfx_stride_pixels(&painter->target->info);
-    for (y = rect.y; y < sx_rect_bottom(rect); ++y)
+    for (sx_clip_iter_init(&iter, painter, rect); sx_clip_iter_next(&iter, &piece); )
     {
-        uint32_t* row = painter->target->pixels + ((size_t)y * stride);
-        for (x = rect.x; x < sx_rect_right(rect); ++x)
+        int x;
+        int y;
+
+        for (y = piece.y; y < sx_rect_bottom(piece); ++y)
         {
-            if (sx_brush_covers(brush, x, y))
+            uint32_t* row = painter->target->pixels + ((size_t)y * stride);
+            for (x = piece.x; x < sx_rect_right(piece); ++x)
             {
-                row[x] = brush->colour;
-            }
-            else if (!brush->transparent)
-            {
-                row[x] = brush->back_colour;
+                if (sx_brush_covers(brush, x, y))
+                {
+                    row[x] = brush->colour;
+                }
+                else if (!brush->transparent)
+                {
+                    row[x] = brush->back_colour;
+                }
             }
         }
     }
@@ -521,37 +640,26 @@ void sx_painter_draw_frame_brush(struct sx_painter* painter, struct sx_rect rect
     sx_draw_frame_device(painter, sx_to_device_rect(painter, rect), brush);
 }
 
-void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* source, int dst_x, int dst_y)
+/* Copia el pedazo `dst_rect` (dispositivo, ya clipeado) tomando del origen la
+ * zona correspondiente. La separacion existe para que el clip por region pueda
+ * llamarla una vez por tramo sin duplicar la logica de copia. */
+static void sx_blit_bitmap_piece(
+    struct sx_painter* painter,
+    const struct sx_bitmap* source,
+    int dst_x,
+    int dst_y,
+    struct sx_rect dst_rect)
 {
     struct sx_rect src_rect;
-    struct sx_rect dst_rect;
     size_t row_bytes;
     uint32_t src_stride;
     uint32_t dst_stride;
     int row;
 
-    if (painter == 0 || painter->target == 0 || source == 0 || source->pixels == 0)
-    {
-        return;
-    }
-
-    dst_x += painter->origin.x;
-    dst_y += painter->origin.y;
-    src_rect = sx_rect_make(0, 0, (int)source->info.width, (int)source->info.height);
-    dst_rect = sx_rect_make(dst_x, dst_y, src_rect.width, src_rect.height);
-    dst_rect = sx_apply_painter_clip(painter, dst_rect);
-    if (!sx_clip_rect_to_bitmap(painter->target, &dst_rect))
-    {
-        return;
-    }
-
-    src_rect.x += dst_rect.x - dst_x;
-    src_rect.y += dst_rect.y - dst_y;
-    src_rect.width = dst_rect.width;
-    src_rect.height = dst_rect.height;
-
+    src_rect = sx_rect_make(dst_rect.x - dst_x, dst_rect.y - dst_y, dst_rect.width, dst_rect.height);
     src_stride = gfx_stride_pixels(&source->info);
     dst_stride = gfx_stride_pixels(&painter->target->info);
+
     if (source->format == SX_PIXEL_FORMAT_BGRA8888)
     {
         for (row = 0; row < dst_rect.height; ++row)
@@ -593,12 +701,34 @@ void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* 
     }
 }
 
+void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* source, int dst_x, int dst_y)
+{
+    struct sx_clip_iter iter;
+    struct sx_rect piece;
+
+    if (painter == 0 || painter->target == 0 || source == 0 || source->pixels == 0)
+    {
+        return;
+    }
+
+    dst_x += painter->origin.x;
+    dst_y += painter->origin.y;
+    sx_clip_iter_init(
+        &iter, painter,
+        sx_rect_make(dst_x, dst_y, (int)source->info.width, (int)source->info.height));
+    while (sx_clip_iter_next(&iter, &piece))
+    {
+        sx_blit_bitmap_piece(painter, source, dst_x, dst_y, piece);
+    }
+}
+
 void sx_painter_draw_scaled_bitmap_nearest(
     struct sx_painter* painter,
     const struct sx_bitmap* source,
     struct sx_rect destination,
     struct sx_rect source_rect)
 {
+    struct sx_clip_iter iter;
     struct sx_rect target_rect;
     uint32_t src_stride;
     uint32_t dst_stride;
@@ -624,31 +754,32 @@ void sx_painter_draw_scaled_bitmap_nearest(
     }
 
     destination = sx_to_device_rect(painter, destination);
-    target_rect = sx_apply_painter_clip(painter, destination);
-    if (!sx_clip_rect_to_bitmap(painter->target, &target_rect))
-    {
-        return;
-    }
-
     src_stride = gfx_stride_pixels(&source->info);
     dst_stride = gfx_stride_pixels(&painter->target->info);
-    for (y = target_rect.y; y < sx_rect_bottom(target_rect); ++y)
+
+    /* El muestreo se calcula siempre contra `destination` entera, no contra el
+     * pedazo: asi cada pixel toma exactamente el mismo texel lo pinte de una o
+     * partido en tramos por la region. */
+    for (sx_clip_iter_init(&iter, painter, destination); sx_clip_iter_next(&iter, &target_rect); )
     {
-        int source_y = source_rect.y +
-            (((y - destination.y) * source_rect.height) / destination.height);
-        for (x = target_rect.x; x < sx_rect_right(target_rect); ++x)
+        for (y = target_rect.y; y < sx_rect_bottom(target_rect); ++y)
         {
-            int source_x = source_rect.x +
-                (((x - destination.x) * source_rect.width) / destination.width);
-            uint32_t source_pixel = source->pixels[((size_t)source_y * src_stride) + (size_t)source_x];
-            if (source->format == SX_PIXEL_FORMAT_BGRA8888)
+            int source_y = source_rect.y +
+                (((y - destination.y) * source_rect.height) / destination.height);
+            for (x = target_rect.x; x < sx_rect_right(target_rect); ++x)
             {
-                uint32_t* target = &painter->target->pixels[((size_t)y * dst_stride) + (size_t)x];
-                *target = sx_blend_bgra8888_over_rgb(*target, source_pixel);
-            }
-            else
-            {
-                painter->target->pixels[((size_t)y * dst_stride) + (size_t)x] = source_pixel;
+                int source_x = source_rect.x +
+                    (((x - destination.x) * source_rect.width) / destination.width);
+                uint32_t source_pixel = source->pixels[((size_t)source_y * src_stride) + (size_t)source_x];
+                if (source->format == SX_PIXEL_FORMAT_BGRA8888)
+                {
+                    uint32_t* target = &painter->target->pixels[((size_t)y * dst_stride) + (size_t)x];
+                    *target = sx_blend_bgra8888_over_rgb(*target, source_pixel);
+                }
+                else
+                {
+                    painter->target->pixels[((size_t)y * dst_stride) + (size_t)x] = source_pixel;
+                }
             }
         }
     }
@@ -662,6 +793,24 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
     }
     x += painter->origin.x;
     y += painter->origin.y;
+
+    if (painter->clip_region != 0)
+    {
+        /* Un blit por tramo. Los tramos son disjuntos, asi que ningun pixel de
+         * glifo se mezcla dos veces -- que es exactamente lo que advierte el
+         * comentario de gfx_blit_text_impl sobre repintar por fragmentos. */
+        struct sx_clip_iter iter;
+        struct sx_rect piece;
+        struct sx_rect text_rect = sx_rect_make(x, y, gfx_text_width(text), gfx_text_height());
+
+        for (sx_clip_iter_init(&iter, painter, text_rect); sx_clip_iter_next(&iter, &piece); )
+        {
+            gfx_blit_text_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
+                                piece.x, piece.y, sx_rect_right(piece), sx_rect_bottom(piece));
+        }
+        return;
+    }
+
     if (painter->has_clip)
     {
         struct sx_rect text_rect = sx_rect_make(x, y, gfx_text_width(text), gfx_text_height());
@@ -676,6 +825,544 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
         return;
     }
     gfx_blit_text(painter->target->pixels, &painter->target->info, x, y, text, colour);
+}
+
+/* ---- Regiones por bandas ------------------------------------------------
+ *
+ * Invariante canonico, mantenido por construccion en cada operacion:
+ *   - bandas ordenadas por y, disjuntas y no vacias;
+ *   - dentro de cada banda, tramos ordenados, disjuntos y NO adyacentes
+ *     (dos tramos que se tocan se fusionan);
+ *   - bandas consecutivas que se tocan y tienen tramos identicos se fusionan.
+ * Sin eso la misma forma tendria varias representaciones y comparar o iterar
+ * dejaria de ser predecible. */
+
+enum sx_region_op {
+    SX_REGION_OP_UNION = 0,
+    SX_REGION_OP_SUBTRACT = 1,
+    SX_REGION_OP_INTERSECT = 2,
+};
+
+void sx_region_clear(struct sx_region* region)
+{
+    if (region == 0)
+    {
+        return;
+    }
+    region->band_count = 0;
+    region->overflowed = 0;
+}
+
+int sx_region_is_empty(const struct sx_region* region)
+{
+    return region == 0 || region->band_count <= 0;
+}
+
+int sx_region_overflowed(const struct sx_region* region)
+{
+    return region != 0 && region->overflowed;
+}
+
+void sx_region_copy(struct sx_region* destination, const struct sx_region* source)
+{
+    if (destination == 0)
+    {
+        return;
+    }
+    if (source == 0)
+    {
+        sx_region_clear(destination);
+        return;
+    }
+    *destination = *source;
+}
+
+struct sx_rect sx_region_bounds(const struct sx_region* region)
+{
+    int x0 = 0;
+    int x1 = 0;
+    int index;
+
+    if (sx_region_is_empty(region))
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+
+    x0 = region->bands[0].spans[0].x0;
+    x1 = region->bands[0].spans[region->bands[0].span_count - 1].x1;
+    for (index = 1; index < region->band_count; ++index)
+    {
+        const struct sx_region_band* band = &region->bands[index];
+        if (band->spans[0].x0 < x0)
+        {
+            x0 = band->spans[0].x0;
+        }
+        if (band->spans[band->span_count - 1].x1 > x1)
+        {
+            x1 = band->spans[band->span_count - 1].x1;
+        }
+    }
+    return sx_rect_make(
+        x0,
+        region->bands[0].y0,
+        x1 - x0,
+        region->bands[region->band_count - 1].y1 - region->bands[0].y0);
+}
+
+size_t sx_region_rect_count(const struct sx_region* region)
+{
+    size_t total = 0;
+    int index;
+
+    if (sx_region_is_empty(region))
+    {
+        return 0;
+    }
+    for (index = 0; index < region->band_count; ++index)
+    {
+        total += (size_t)region->bands[index].span_count;
+    }
+    return total;
+}
+
+int sx_region_contains_point(const struct sx_region* region, int x, int y)
+{
+    int index;
+
+    if (sx_region_is_empty(region))
+    {
+        return 0;
+    }
+    for (index = 0; index < region->band_count; ++index)
+    {
+        const struct sx_region_band* band = &region->bands[index];
+        int span;
+
+        if (y < band->y0)
+        {
+            return 0; /* bandas ordenadas: ya lo pasamos */
+        }
+        if (y >= band->y1)
+        {
+            continue;
+        }
+        for (span = 0; span < band->span_count; ++span)
+        {
+            if (x >= band->spans[span].x0 && x < band->spans[span].x1)
+            {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    return 0;
+}
+
+/* Colapsa a bounding box y marca. Lo llaman los caminos que se quedaron sin
+ * bandas o sin tramos: preferimos un superset marcado antes que perder area en
+ * silencio. */
+static void sx_region_collapse(struct sx_region* region)
+{
+    struct sx_rect bounds = sx_region_bounds(region);
+
+    region->band_count = 0;
+    region->overflowed = 1;
+    if (sx_rect_is_empty(bounds))
+    {
+        return;
+    }
+    region->band_count = 1;
+    region->bands[0].y0 = bounds.y;
+    region->bands[0].y1 = sx_rect_bottom(bounds);
+    region->bands[0].span_count = 1;
+    region->bands[0].spans[0].x0 = bounds.x;
+    region->bands[0].spans[0].x1 = sx_rect_right(bounds);
+}
+
+/* Agrega un tramo a una lista ORDENADA fusionando lo que toque. Devuelve 0 si
+ * no entraba. */
+static int sx_span_list_add(struct sx_region_span* spans, int* count, int x0, int x1)
+{
+    int index = 0;
+    int insert;
+
+    if (x0 >= x1)
+    {
+        return 1;
+    }
+
+    /* Absorbe todo lo que solape o toque, quedandose con la envolvente. */
+    while (index < *count)
+    {
+        if (spans[index].x1 < x0)
+        {
+            ++index;
+            continue;
+        }
+        if (spans[index].x0 > x1)
+        {
+            break;
+        }
+        if (spans[index].x0 < x0)
+        {
+            x0 = spans[index].x0;
+        }
+        if (spans[index].x1 > x1)
+        {
+            x1 = spans[index].x1;
+        }
+        {
+            int shift;
+            for (shift = index; shift + 1 < *count; ++shift)
+            {
+                spans[shift] = spans[shift + 1];
+            }
+        }
+        *count -= 1;
+    }
+
+    if (*count >= SX_REGION_MAX_SPANS_PER_BAND)
+    {
+        return 0;
+    }
+    for (insert = *count; insert > index; --insert)
+    {
+        spans[insert] = spans[insert - 1];
+    }
+    spans[index].x0 = x0;
+    spans[index].x1 = x1;
+    *count += 1;
+    return 1;
+}
+
+/* Aplica la operacion de una fila: los tramos de la banda contra el tramo
+ * [rx0, rx1) del rect. Escribe en `out` y devuelve 0 si no entro. */
+static int sx_span_list_apply(
+    const struct sx_region_span* spans,
+    int count,
+    int rx0,
+    int rx1,
+    int op,
+    int rect_covers_row,
+    struct sx_region_span* out,
+    int* out_count)
+{
+    int index;
+
+    *out_count = 0;
+
+    if (op == SX_REGION_OP_UNION)
+    {
+        for (index = 0; index < count; ++index)
+        {
+            if (!sx_span_list_add(out, out_count, spans[index].x0, spans[index].x1))
+            {
+                return 0;
+            }
+        }
+        if (rect_covers_row && !sx_span_list_add(out, out_count, rx0, rx1))
+        {
+            return 0;
+        }
+        return 1;
+    }
+
+    if (op == SX_REGION_OP_INTERSECT)
+    {
+        if (!rect_covers_row)
+        {
+            return 1; /* fuera del rect no queda nada */
+        }
+        for (index = 0; index < count; ++index)
+        {
+            int x0 = spans[index].x0 > rx0 ? spans[index].x0 : rx0;
+            int x1 = spans[index].x1 < rx1 ? spans[index].x1 : rx1;
+            if (x0 < x1 && !sx_span_list_add(out, out_count, x0, x1))
+            {
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    /* SUBTRACT: cada tramo puede sobrevivir entero, partirse en dos o morir. */
+    for (index = 0; index < count; ++index)
+    {
+        const int x0 = spans[index].x0;
+        const int x1 = spans[index].x1;
+
+        if (!rect_covers_row || rx1 <= x0 || rx0 >= x1)
+        {
+            if (!sx_span_list_add(out, out_count, x0, x1))
+            {
+                return 0;
+            }
+            continue;
+        }
+        if (x0 < rx0 && !sx_span_list_add(out, out_count, x0, rx0))
+        {
+            return 0;
+        }
+        if (rx1 < x1 && !sx_span_list_add(out, out_count, rx1, x1))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int sx_bands_equal(const struct sx_region_band* left, const struct sx_region_band* right)
+{
+    int index;
+
+    if (left->span_count != right->span_count)
+    {
+        return 0;
+    }
+    for (index = 0; index < left->span_count; ++index)
+    {
+        if (left->spans[index].x0 != right->spans[index].x0 ||
+            left->spans[index].x1 != right->spans[index].x1)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Anexa una banda al resultado, fusionandola con la anterior si son contiguas y
+ * tienen los mismos tramos (eso es lo que mantiene canonica la forma). */
+static int sx_region_append_band(
+    struct sx_region* out,
+    int y0,
+    int y1,
+    const struct sx_region_span* spans,
+    int span_count)
+{
+    struct sx_region_band* band;
+
+    if (y0 >= y1 || span_count <= 0)
+    {
+        return 1;
+    }
+
+    if (out->band_count > 0)
+    {
+        struct sx_region_band* previous = &out->bands[out->band_count - 1];
+        struct sx_region_band candidate;
+        int index;
+
+        candidate.span_count = span_count;
+        for (index = 0; index < span_count; ++index)
+        {
+            candidate.spans[index] = spans[index];
+        }
+        if (previous->y1 == y0 && sx_bands_equal(previous, &candidate))
+        {
+            previous->y1 = y1;
+            return 1;
+        }
+    }
+
+    if (out->band_count >= SX_REGION_MAX_BANDS)
+    {
+        return 0;
+    }
+    band = &out->bands[out->band_count];
+    band->y0 = y0;
+    band->y1 = y1;
+    band->span_count = span_count;
+    {
+        int index;
+        for (index = 0; index < span_count; ++index)
+        {
+            band->spans[index] = spans[index];
+        }
+    }
+    out->band_count += 1;
+    return 1;
+}
+
+/* Motor unico de las tres operaciones contra un rect.
+ *
+ * Reconstruye la region cortando en Y por todos los bordes que importan (los de
+ * cada banda y los del rect), y para cada franja resultante aplica la operacion
+ * de tramos. Hacerlo asi -- en vez de una rutina por operacion -- es lo que
+ * mantiene el invariante canonico en un solo lugar. */
+static void sx_region_apply_rect(struct sx_region* region, struct sx_rect rect, int op)
+{
+    /* El resultado se arma aparte y recien al final se copia: las franjas leen
+     * la region original mientras se construye la nueva. */
+    static struct sx_region scratch;
+    const int ry0 = rect.y;
+    const int ry1 = sx_rect_bottom(rect);
+    const int rx0 = rect.x;
+    const int rx1 = sx_rect_right(rect);
+    const int rect_empty = sx_rect_is_empty(rect);
+    int cut = 0;
+    int band_index;
+    int ok = 1;
+
+    if (region == 0)
+    {
+        return;
+    }
+    if (rect_empty)
+    {
+        /* Union y resta con un rect vacio no hacen nada; intersecar, todo. */
+        if (op == SX_REGION_OP_INTERSECT)
+        {
+            sx_region_clear(region);
+        }
+        return;
+    }
+    if (op == SX_REGION_OP_UNION && sx_region_is_empty(region))
+    {
+        sx_region_set_rect(region, rect);
+        return;
+    }
+    if (op != SX_REGION_OP_UNION && sx_region_is_empty(region))
+    {
+        return;
+    }
+
+    scratch.band_count = 0;
+    scratch.overflowed = region->overflowed;
+
+    /* Barrido por Y: en cada vuelta, `cut` es el tope de lo ya emitido y se
+     * calcula el proximo borde relevante. */
+    cut = region->bands[0].y0;
+    if (op == SX_REGION_OP_UNION && ry0 < cut)
+    {
+        cut = ry0;
+    }
+
+    while (ok)
+    {
+        int next = 0;
+        int have_next = 0;
+        const struct sx_region_band* covering = 0;
+        int rect_covers_row;
+        struct sx_region_span out_spans[SX_REGION_MAX_SPANS_PER_BAND];
+        int out_count = 0;
+
+        /* Banda que cubre `cut`, y proximo borde por delante. */
+        for (band_index = 0; band_index < region->band_count; ++band_index)
+        {
+            const struct sx_region_band* band = &region->bands[band_index];
+            if (band->y0 <= cut && cut < band->y1)
+            {
+                covering = band;
+                if (!have_next || band->y1 < next)
+                {
+                    next = band->y1;
+                    have_next = 1;
+                }
+            }
+            else if (band->y0 > cut && (!have_next || band->y0 < next))
+            {
+                next = band->y0;
+                have_next = 1;
+            }
+        }
+        if (op == SX_REGION_OP_UNION)
+        {
+            if (ry0 > cut && (!have_next || ry0 < next))
+            {
+                next = ry0;
+                have_next = 1;
+            }
+            if (ry1 > cut && (!have_next || ry1 < next))
+            {
+                next = ry1;
+                have_next = 1;
+            }
+        }
+        else if (covering != 0)
+        {
+            if (ry0 > cut && ry0 < next)
+            {
+                next = ry0;
+            }
+            if (ry1 > cut && ry1 < next)
+            {
+                next = ry1;
+            }
+        }
+        if (!have_next)
+        {
+            break;
+        }
+
+        rect_covers_row = (cut >= ry0 && cut < ry1);
+        if (covering != 0 || (op == SX_REGION_OP_UNION && rect_covers_row))
+        {
+            ok = sx_span_list_apply(
+                covering != 0 ? covering->spans : 0,
+                covering != 0 ? covering->span_count : 0,
+                rx0, rx1, op, rect_covers_row,
+                out_spans, &out_count);
+            if (ok)
+            {
+                ok = sx_region_append_band(&scratch, cut, next, out_spans, out_count);
+            }
+        }
+        cut = next;
+    }
+
+    if (!ok)
+    {
+        /* No entro: quedarse con el superset. Para union y resta el bounding box
+         * de lo que habia ya cubre; para union hay que incluir tambien el rect. */
+        if (op == SX_REGION_OP_UNION)
+        {
+            struct sx_rect merged = sx_rect_union(sx_region_bounds(region), rect);
+            sx_region_set_rect(region, merged);
+        }
+        else
+        {
+            sx_region_collapse(region);
+        }
+        region->overflowed = 1;
+        return;
+    }
+
+    scratch.overflowed = region->overflowed;
+    *region = scratch;
+}
+
+void sx_region_set_rect(struct sx_region* region, struct sx_rect rect)
+{
+    if (region == 0)
+    {
+        return;
+    }
+    sx_region_clear(region);
+    if (sx_rect_is_empty(rect))
+    {
+        return;
+    }
+    region->band_count = 1;
+    region->bands[0].y0 = rect.y;
+    region->bands[0].y1 = sx_rect_bottom(rect);
+    region->bands[0].span_count = 1;
+    region->bands[0].spans[0].x0 = rect.x;
+    region->bands[0].spans[0].x1 = sx_rect_right(rect);
+}
+
+void sx_region_union_rect(struct sx_region* region, struct sx_rect rect)
+{
+    sx_region_apply_rect(region, rect, SX_REGION_OP_UNION);
+}
+
+void sx_region_subtract_rect(struct sx_region* region, struct sx_rect rect)
+{
+    sx_region_apply_rect(region, rect, SX_REGION_OP_SUBTRACT);
+}
+
+void sx_region_intersect_rect(struct sx_region* region, struct sx_rect rect)
+{
+    sx_region_apply_rect(region, rect, SX_REGION_OP_INTERSECT);
 }
 
 void sx_rect_set_clear(struct sx_rect_set* set)
