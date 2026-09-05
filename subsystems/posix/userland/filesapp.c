@@ -55,7 +55,8 @@ static struct sxgui_widget g_about_widgets[4];
 
 #define FILESAPP_ADDRESS (&g_widgets[0])
 #define FILESAPP_UP_BUTTON (&g_widgets[1])
-#define FILESAPP_LIST (&g_widgets[2])
+#define FILESAPP_LIST_INDEX 2
+#define FILESAPP_LIST (&g_widgets[FILESAPP_LIST_INDEX])
 
 /* Anchos fijos; la columna Name se lleva el resto y se recalcula en el layout,
  * que es lo que hace que la lista se estire con la ventana. */
@@ -779,5 +780,8 @@ int main(int argc, char **argv)
     {
         sxgui_app_quit(&g_app, 1);
     }
+    /* El contenido de Files ES la lista: sin esto el foco arranca en ninguna
+     * parte y las flechas no mueven la seleccion hasta que alguien tabula. */
+    sxgui_focus(&g_app.ui, FILESAPP_LIST_INDEX);
     return sxgui_app_run(&g_app);
 }
