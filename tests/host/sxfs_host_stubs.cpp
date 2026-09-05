@@ -3,10 +3,11 @@
 #include "kernel/block.hpp"
 #include "kernel/string.hpp"
 
-// Este TU implementa a mano las funciones de kernel/string.hpp (que en el
-// kernel viven en runtime.cpp) a proposito, y NO incluye <string.h>: las del
-// header del kernel tienen linkage C++ y chocarian con las declaraciones C de
-// la libc del host. Las mem* si son extern "C" y las pone la libc.
+// Las funciones de kernel/string.hpp que usa este TU las pone
+// kernel_string_stubs.cpp, compartido por todos los tests de host. Aca NO se
+// incluye <string.h> a proposito: las del header del kernel tienen linkage C++
+// y chocarian con las declaraciones C de la libc. Las mem* si son extern "C" y
+// las pone la libc.
 
 namespace {
 
@@ -201,40 +202,3 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
 }
 
 } // namespace vfs
-
-// --- kernel/string.hpp ------------------------------------------------------
-
-size_t strlen(const char* text) {
-    size_t length = 0;
-    while (text[length] != 0) {
-        ++length;
-    }
-    return length;
-}
-
-int strcmp(const char* left, const char* right) {
-    while (*left != 0 && *left == *right) {
-        ++left;
-        ++right;
-    }
-    return static_cast<int>(static_cast<unsigned char>(*left)) -
-        static_cast<int>(static_cast<unsigned char>(*right));
-}
-
-int strncmp(const char* left, const char* right, size_t count) {
-    for (size_t index = 0; index < count; ++index) {
-        const unsigned char a = static_cast<unsigned char>(left[index]);
-        const unsigned char b = static_cast<unsigned char>(right[index]);
-        if (a != b || a == 0) {
-            return static_cast<int>(a) - static_cast<int>(b);
-        }
-    }
-    return 0;
-}
-
-char* strcpy(char* destination, const char* source) {
-    char* cursor = destination;
-    while ((*cursor++ = *source++) != 0) {
-    }
-    return destination;
-}

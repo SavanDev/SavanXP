@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1481,6 +1481,41 @@ function Run-FfmpegSmokeQemu {
         if ($LASTEXITCODE -ne 0) { throw "La captura del player no muestra un cuadro." }
     }.GetNewClosure()
 }
+# Test de host del driver de particiones. Tampoco usa QEMU, y por el mismo
+# motivo que el de SxFS: el kernel no expone las tablas de particiones a
+# userland y build/disk.img es un SxFS crudo sin tabla, asi que un arranque solo
+# puede verificar el caso "no hay nada que rebanar". Las tablas MBR/GPT que
+# importan se arman en memoria.
+function Run-PartitionSmoke {
+    $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
+    $toolsOut = Join-Path $BuildRoot "tools"
+    New-Directory $toolsOut
+    $exe = Join-Path $toolsOut ("partition-test" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
+    $testRoot = Join-Path $ProjectRoot "tests/host"
+
+    $sources = @(
+        (Join-Path $ProjectRoot "kernel/partition.cpp"),
+        (Join-Path $testRoot "kernel_string_stubs.cpp"),
+        (Join-Path $testRoot "partition_test.cpp")
+    )
+
+    Write-Host "Compilando partition-test (test de host del driver de particiones)..."
+    $compileArgs = @(
+        "-std=c++20", "-O1", "-Wall", "-Wextra", "-Wno-deprecated",
+        "-D_CRT_SECURE_NO_WARNINGS",
+        "-I", (Join-Path $ProjectRoot "include"),
+        "-I", $testRoot
+    ) + $sources + @("-o", $exe)
+    & $clang @compileArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la compilacion de partition-test."
+    }
+
+    & $exe
+    if ($LASTEXITCODE -ne 0) {
+        throw "PARTITION TEST FAIL"
+    }
+}
 # Test de host de la maquina de estados de montaje de SxFS. No usa QEMU: linkea
 # el driver REAL (kernel/sxfs.cpp) contra backends de mentira (tests/host) y una
 # imagen construida con el core compartido (libsxfs), que es la unica forma de
@@ -1495,6 +1530,7 @@ function Run-SxfsSmoke {
 
     $sources = @(
         (Join-Path $ProjectRoot "kernel/sxfs.cpp"),
+        (Join-Path $testRoot "kernel_string_stubs.cpp"),
         (Join-Path $testRoot "sxfs_host_stubs.cpp"),
         (Join-Path $testRoot "sxfs_volume_test.cpp"),
         (Join-Path $ProjectRoot "libsxfs/sxfs_core.c")
@@ -1585,6 +1621,9 @@ switch ($Command) {
     }
     "sxfs-smoke" {
         Run-SxfsSmoke
+    }
+    "partition-smoke" {
+        Run-PartitionSmoke
     }
     "cursor-repro" {
         Run-CursorReproQemu
