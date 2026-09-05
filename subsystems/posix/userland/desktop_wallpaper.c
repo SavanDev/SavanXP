@@ -353,11 +353,18 @@ static void draw_image(struct sx_painter *painter, const struct savanxp_fb_info 
         sx_painter_blit_bitmap(painter, &bitmap, 0, 0);
         return;
     }
-    sx_painter_draw_scaled_bitmap_nearest(
+    /* Bilineal y no nearest: el BMP casi nunca mide lo mismo que la pantalla, y
+     * a un factor de escala arbitrario el nearest deja escalones bien visibles
+     * en un fondo que ocupa todo. Se paga una vez por cambio de fondo, no por
+     * frame, asi que el costo de las cuatro muestras no importa aca -- a
+     * diferencia del escalado de superficies de clientes en el compositor, que
+     * si esta en el camino caliente y sigue en nearest. */
+    sx_painter_draw_scaled_bitmap(
         painter,
         &bitmap,
         sx_rect_make(0, 0, (int)info->width, (int)info->height),
-        sx_rect_make(0, 0, g_image_width, g_image_height));
+        sx_rect_make(0, 0, g_image_width, g_image_height),
+        SX_SCALE_BILINEAR);
 }
 
 void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_info *info)

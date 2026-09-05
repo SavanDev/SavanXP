@@ -1,6 +1,6 @@
 # SxGFX — endurecer la capa 2D como GDI32
 
-> **Estado: LOTES 1 y 2 COMPLETOS, en master.** Queda el lote 3. El
+> **Estado: LOS TRES LOTES COMPLETOS, en master.** El
 > documento es el plan: qué le falta a SxGFX medido contra el rol que le asigna
 > [SYSTEM_LAYERING.md](SYSTEM_LAYERING.md) —**GDI32**, la capa de rasterización
 > 2D debajo de SXGUI-C— y en qué orden conviene atacarlo.
@@ -70,8 +70,49 @@
 > en la UI, así que nada se veía mal. Lo que cambia es que ahora *se puede*
 > escribir "Configuración" sin que salga como dos glifos.
 >
-> **Lo que sigue es el lote 3**, por demanda: raster ops, geometría, escalado con
-> calidad, memory DC y paths.
+> Lo que quedó construido en el lote 3:
+>
+> - **Raster ops**: `sx_rop` (COPY/XOR/AND/OR/INVERT) sobre el brush. XOR es el
+>   que vale: aplicado dos veces restaura el destino exacto, que es lo que hace
+>   baratos los marcos de arrastre.
+> - **Geometría**: línea (Bresenham, con atajo para rectas), polilínea, polígono
+>   relleno por scanline, elipse (contorno y relleno) y rect redondeado. Todo se
+>   apoya en `hline`/`vline`/`set_pixel` del painter, así que el clip, la región
+>   y el origen salen gratis y correctos.
+> - **Escalado con calidad**: `sx_painter_draw_scaled_bitmap` con filtro
+>   elegible; bilineal en punto fijo de 8 bits (esta capa la linkean todos los
+>   binarios y no puede depender de `-Sse`).
+> - **Memory DC**: `sx_bitmap_create`/`destroy`, el `CreateCompatibleBitmap` que
+>   faltaba. `destroy` sobre un bitmap de `wrap` es un no-op deliberado.
+> - **`sx_region_from_polygon`**: el `PathToRegion` de GDI. Comparte el scanline
+>   con `fill_polygon`, así que la región y el dibujo describen exactamente la
+>   misma forma — condición para poder clipear contra una figura sin que el
+>   borde parpadee. Cierra el círculo con las ventanas no rectangulares que
+>   motivaban el 2.1.
+>
+> **No landeó un grabador de paths** (`BeginPath`/`EndPath`/Bézier). Sin
+> consumidor y con el polígono ya cubriendo el motor útil, habría sido API
+> especulativa — el mismo criterio que dejó afuera a `sx_pen` en el lote 1.
+>
+> **Un bug real que encontró el test, no la revisión:** el cruce de la scanline
+> se calculaba desde el vértice tal como lo guardaba el llamador, así que una
+> misma diagonal recorrida en un sentido daba una `x` y en el otro daba otra —
+> dos polígonos que comparten una arista se solapaban o dejaban costura. El
+> arreglo es normalizar la arista de arriba hacia abajo. En el camino probé piso
+> y techo para el redondeo: los dos rompen la simetría de espejo. El truncamiento
+> de C es el correcto justamente por ser impar-simétrico, y ahora hay un test que
+> lo fija.
+>
+> **Consumidores conectados, y los que no:** el wallpaper pasó a bilineal (escala
+> a factores arbitrarios y se paga una vez por cambio de fondo). El escalado de
+> superficies de clientes en el compositor sigue en nearest a propósito: está en
+> el camino caliente y cuatro muestras por píxel ahí no se meten a ciegas.
+> `sxgui_paint_arrow` se dejó como está: su triángulo escalonado de cuatro filas
+> es pixel-art deliberado del look Win9x, no una carencia de la capa.
+>
+> Verificación: `gfx2d-test` pasa a **182 checks**, con la geometría además
+> renderizada a imagen y mirada con los ojos. En vivo, la batería completa de
+> smokes.
 
 ## Por qué GDI32 y no DirectX
 
@@ -239,7 +280,8 @@ líneas.
    `sx_rect_set_add` y dejó lista la base para ventanas no rectangulares.
 4. ~~**2.2 (fuentes).**~~ **Hecho**, incluido el cambio en
    `tools/font/genfont.py` para hornear por rangos de codepoint.
-5. **Lote 3, por demanda.** Cada ítem cuando aparezca el consumidor que lo pide.
+5. ~~**Lote 3, por demanda.**~~ **Hecho**, salvo el grabador de paths, que
+   sigue sin consumidor y por eso no entró.
 
 Verificación: todo esto cae bajo el preview headless del toolkit en el host
 —`clang` del toolchain con stubs renderizando a PNG— y bajo `windowd-smoke`. Las

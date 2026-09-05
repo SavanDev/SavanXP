@@ -1093,6 +1093,522 @@ void case_font_survives_clip_and_region() {
     check(sx_painter_font(&c.painter) == SX_FONT_MONO, "y el pop del clip no la toca");
 }
 
+/* ---- lote 3: raster ops ------------------------------------------------- */
+
+void case_rop_xor_is_its_own_inverse() {
+    printf("caso: ROP -- XOR dos veces restaura el destino\n");
+    Canvas c;
+    sx_painter_fill(&c.painter, kBack);
+
+    uint32_t before[kWidth * kHeight];
+    memcpy(before, c.pixels, sizeof(before));
+
+    sx_brush x = sx_brush_with_rop(sx_brush_solid(0x00FFFFFFu), SX_ROP_XOR);
+    const sx_rect box = sx_rect_make(4, 4, 10, 8);
+    sx_painter_fill_rect_brush(&c.painter, box, &x);
+    check(memcmp(before, c.pixels, sizeof(before)) != 0, "el primer XOR cambia algo");
+
+    sx_painter_fill_rect_brush(&c.painter, box, &x);
+    check(memcmp(before, c.pixels, sizeof(before)) == 0,
+          "el segundo XOR deja el destino EXACTAMENTE como estaba");
+}
+
+void case_rop_variants() {
+    printf("caso: ROP -- and, or, invert\n");
+    Canvas c;
+    sx_painter_fill(&c.painter, 0x00F0F0F0u);
+
+    sx_brush a = sx_brush_with_rop(sx_brush_solid(0x000F0F0Fu), SX_ROP_AND);
+    sx_painter_fill_rect_brush(&c.painter, sx_rect_make(0, 0, 2, 1), &a);
+    check(c.at(0, 0) == 0x00000000u, "AND de F0 con 0F da 0");
+
+    sx_brush o = sx_brush_with_rop(sx_brush_solid(0x000F0F0Fu), SX_ROP_OR);
+    sx_painter_fill_rect_brush(&c.painter, sx_rect_make(4, 0, 2, 1), &o);
+    check(c.at(4, 0) == 0x00FFFFFFu, "OR de F0 con 0F da FF");
+
+    sx_brush inv = sx_brush_with_rop(sx_brush_solid(0u), SX_ROP_INVERT);
+    sx_painter_fill_rect_brush(&c.painter, sx_rect_make(8, 0, 2, 1), &inv);
+    check(c.at(8, 0) == 0x000F0F0Fu, "INVERT ignora el color y niega el destino");
+}
+
+void case_rop_respects_clip_and_pattern() {
+    printf("caso: ROP -- con trama y con clip\n");
+    Canvas c;
+    sx_painter_fill(&c.painter, kBack);
+    sx_brush dotted = sx_brush_with_rop(
+        sx_brush_pattern_transparent(sx_pattern_checker_50, 0x00FFFFFFu), SX_ROP_XOR);
+
+    sx_painter_push_clip(&c.painter, sx_rect_make(0, 0, 4, 4));
+    sx_painter_fill_rect_brush(&c.painter, sx_rect_make(0, 0, kWidth, kHeight), &dotted);
+    sx_painter_pop_clip(&c.painter);
+
+    check(c.count(kBack) == kWidth * kHeight - 8, "solo la mitad de 4x4 se invirtio");
+    check(c.at(0, 0) == (kBack ^ 0x00FFFFFFu), "el pixel marcado por la trama");
+    check(c.at(1, 0) == kBack, "y el no marcado quedo intacto");
+}
+
+/* ---- lote 3: memory DC -------------------------------------------------- */
+
+void case_memory_dc_round_trip() {
+    printf("caso: memory DC -- crear, pintar, blitear, destruir\n");
+    sx_bitmap off;
+    check(sx_bitmap_create(&off, 8, 4, SX_PIXEL_FORMAT_BGRX8888) != 0, "se crea");
+    check(off.pixels != nullptr && off.owns_pixels == 1, "tiene pixeles propios");
+    check(off.info.width == 8 && off.info.height == 4, "con las dimensiones pedidas");
+
+    bool cleared = true;
+    for (int i = 0; i < 8 * 4; ++i) {
+        if (off.pixels[i] != 0) { cleared = false; }
+    }
+    check(cleared, "arranca en cero");
+
+    sx_painter p;
+    sx_painter_init(&p, &off);
+    sx_painter_fill(&p, kInk);
+
+    Canvas screen;
+    sx_painter_blit_bitmap(&screen.painter, &off, 2, 1);
+    check(screen.count(kInk) == 8 * 4, "el contenido llega al destino por blit");
+    check(screen.at(2, 1) == kInk && screen.at(9, 4) == kInk, "en la posicion pedida");
+
+    sx_bitmap_destroy(&off);
+    check(off.pixels == nullptr && off.owns_pixels == 0, "destroy lo deja vacio");
+}
+
+void case_memory_dc_rejects_bad_sizes() {
+    printf("caso: memory DC -- rechaza dimensiones imposibles\n");
+    sx_bitmap b;
+    check(sx_bitmap_create(&b, 0, 4, SX_PIXEL_FORMAT_BGRX8888) == 0, "ancho 0");
+    check(sx_bitmap_create(&b, 4, -1, SX_PIXEL_FORMAT_BGRX8888) == 0, "alto negativo");
+    check(sx_bitmap_create(&b, 100000, 100000, SX_PIXEL_FORMAT_BGRX8888) == 0,
+          "un area que desbordaria");
+}
+
+void case_destroy_on_wrapped_bitmap_is_a_noop() {
+    printf("caso: memory DC -- destroy sobre un wrap no libera al llamador\n");
+    // Es lo que permite escribir codigo que no distingue entre una superficie
+    // propia y una prestada. Si destroy liberara esto, seria un free() de
+    // memoria ajena -- el arreglo del bug antes de que exista.
+    static uint32_t borrowed[16];
+    for (int i = 0; i < 16; ++i) { borrowed[i] = kInk; }
+
+    savanxp_fb_info info;
+    memset(&info, 0, sizeof(info));
+    info.width = 4; info.height = 4; info.pitch = 16; info.bpp = 32u;
+    info.buffer_size = 64;
+
+    sx_bitmap b;
+    sx_bitmap_wrap(&b, borrowed, &info, SX_PIXEL_FORMAT_BGRX8888);
+    check(b.owns_pixels == 0, "un wrap no reclama la propiedad");
+    sx_bitmap_destroy(&b);
+
+    bool intact = true;
+    for (int i = 0; i < 16; ++i) {
+        if (borrowed[i] != kInk) { intact = false; }
+    }
+    check(intact, "el buffer del llamador sigue intacto");
+}
+
+/* ---- lote 3: geometria -------------------------------------------------- */
+
+void case_line_endpoints_and_straights() {
+    printf("caso: linea -- extremos y casos rectos\n");
+    Canvas c;
+    sx_painter_draw_line(&c.painter, 2, 2, 9, 9, kInk);
+    check(c.at(2, 2) == kInk && c.at(9, 9) == kInk, "toca los dos extremos");
+    check(c.count(kInk) == 8, "una diagonal de 45 grados son 8 pixeles");
+
+    Canvas h;
+    sx_painter_draw_line(&h.painter, 3, 5, 7, 5, kInk);
+    check(h.count(kInk) == 5, "la horizontal es inclusiva en ambos extremos");
+    check(h.at(3, 5) == kInk && h.at(7, 5) == kInk, "y en las posiciones justas");
+
+    Canvas v;
+    sx_painter_draw_line(&v.painter, 4, 2, 4, 6, kInk);
+    check(v.count(kInk) == 5, "la vertical tambien");
+}
+
+void case_line_is_symmetric() {
+    printf("caso: linea -- dibujarla al reves da lo mismo\n");
+    Canvas a;
+    Canvas b;
+    sx_painter_draw_line(&a.painter, 3, 2, 20, 15, kInk);
+    sx_painter_draw_line(&b.painter, 20, 15, 3, 2, kInk);
+    check(memcmp(a.pixels, b.pixels, sizeof(a.pixels)) == 0,
+          "el trazo no depende del orden de los extremos");
+}
+
+void case_line_respects_clip_and_region() {
+    printf("caso: linea -- clip y region\n");
+    Canvas c;
+    sx_region r;
+    sx_region_set_rect(&r, sx_rect_make(0, 0, kWidth, kHeight));
+    sx_region_subtract_rect(&r, sx_rect_make(6, 0, 4, kHeight));
+
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_draw_line(&c.painter, 0, 5, 20, 5, kInk);
+    sx_painter_pop_clip(&c.painter);
+
+    check(c.at(5, 5) == kInk && c.at(11, 5) == kInk, "pinta a los dos lados del hueco");
+    check(c.at(7, 5) != kInk, "y no dentro del hueco");
+}
+
+void case_polygon_fills_a_triangle() {
+    printf("caso: poligono -- triangulo sin agujeros\n");
+    Canvas c;
+    const sx_point tri[3] = {{4, 2}, {12, 2}, {8, 10}};
+    sx_painter_fill_polygon(&c.painter, tri, 3, kInk);
+
+    check(c.count(kInk) > 0, "dibujo algo");
+    // Cada fila del triangulo tiene que ser un tramo CONTIGUO: si la regla de
+    // aristas semiabiertas estuviera mal, aparecerian huecos en los vertices.
+    bool contiguous = true;
+    for (int y = 2; y < 10; ++y) {
+        int first = -1, last = -1, painted = 0;
+        for (int x = 0; x < kWidth; ++x) {
+            if (c.at(x, y) == kInk) {
+                if (first < 0) { first = x; }
+                last = x;
+                ++painted;
+            }
+        }
+        if (first >= 0 && painted != last - first + 1) {
+            printf("    fila %d tiene huecos (%d pintados en [%d,%d])\n", y, painted, first, last);
+            contiguous = false;
+        }
+    }
+    check(contiguous, "cada fila es un tramo contiguo");
+    check(c.at(8, 3) == kInk, "el interior esta relleno");
+    check(c.at(4, 9) != kInk, "y afuera del triangulo no");
+}
+
+void case_polygon_area_is_exact() {
+    printf("caso: poligono -- el area es exacta (regla de aristas semiabiertas)\n");
+    // Un rect expresado como poligono tiene area CONOCIDA. Es la unica forma de
+    // que el test note si una arista se cuenta de mas: un triangulo con el apice
+    // en un vertice compartido no cambia de aspecto aunque la regla este mal.
+    Canvas c;
+    const sx_point box[4] = {{2, 2}, {10, 2}, {10, 8}, {2, 8}};
+    sx_painter_fill_polygon(&c.painter, box, 4, kInk);
+    check(c.count(kInk) == 8 * 6, "un rect de 8x6 como poligono pinta 48 pixeles");
+    check(c.at(2, 2) == kInk && c.at(9, 7) == kInk, "esquinas incluidas");
+    check(c.at(10, 2) != kInk && c.at(2, 8) != kInk,
+          "y los bordes derecho/inferior quedan afuera (semiabierto)");
+
+    // Dos triangulos que parten ese mismo rect por la diagonal tienen que
+    // teselarlo: ni un pixel de mas (solape) ni de menos (costura).
+    Canvas t;
+    const sx_point lower[3] = {{2, 2}, {10, 2}, {2, 8}};
+    const sx_point upper[3] = {{10, 2}, {10, 8}, {2, 8}};
+    sx_painter_fill_polygon(&t.painter, lower, 3, kInk);
+    const int first = t.count(kInk);
+    sx_painter_fill_polygon(&t.painter, upper, 3, kBack);
+    const int second = t.count(kBack);
+    check(first + second == 8 * 6,
+          "dos triangulos teselan el rect sin solaparse ni dejar costura");
+}
+
+void case_polygon_is_mirror_symmetric() {
+    printf("caso: poligono -- el espejo tiene la misma area\n");
+    // Una arista que baja hacia la izquierda da numerador negativo. Con la
+    // division de C (trunca hacia cero) redondea para el lado contrario que su
+    // espejo, y el triangulo espejado sale con area distinta. Es lo que fija el
+    // uso de division con piso.
+    Canvas a;
+    const sx_point tri[3] = {{2, 2}, {12, 2}, {2, 11}};
+    sx_painter_fill_polygon(&a.painter, tri, 3, kInk);
+
+    Canvas b;
+    const int axis = 28; // x -> axis - x
+    const sx_point mirrored[3] = {{axis - 2, 2}, {axis - 12, 2}, {axis - 2, 11}};
+    sx_painter_fill_polygon(&b.painter, mirrored, 3, kInk);
+
+    printf("    area=%d  espejo=%d\n", a.count(kInk), b.count(kInk));
+    check(a.count(kInk) == b.count(kInk), "el triangulo y su espejo cubren lo mismo");
+    check(a.count(kInk) > 0, "y cubren algo");
+}
+
+void case_region_from_polygon_matches_the_fill() {
+    printf("caso: poligono -> region -- misma forma que el relleno\n");
+    // La region y el dibujo tienen que describir EXACTAMENTE lo mismo. Si no,
+    // clipear contra la region de una forma recortaria distinto de como se
+    // dibuja esa forma, que es el bug que hace que un borde parpadee.
+    const sx_point tri[3] = {{3, 2}, {14, 5}, {6, 12}};
+
+    Canvas painted;
+    sx_painter_fill_polygon(&painted.painter, tri, 3, kInk);
+
+    sx_region r;
+    sx_region_from_polygon(&r, tri, 3);
+    check(!sx_region_is_empty(&r), "la region no queda vacia");
+
+    bool same = true;
+    for (int y = 0; y < kHeight; ++y) {
+        for (int x = 0; x < kWidth; ++x) {
+            const bool drawn = painted.at(x, y) == kInk;
+            const bool inside = sx_region_contains_point(&r, x, y) != 0;
+            if (drawn != inside) {
+                printf("    (%d,%d): dibujado=%d region=%d\n", x, y, (int)drawn, (int)inside);
+                same = false;
+            }
+        }
+    }
+    check(same, "la region coincide pixel a pixel con el relleno");
+
+    // Y clipear contra ella tiene que reproducir la misma figura.
+    Canvas clipped;
+    sx_painter_push_clip_region(&clipped.painter, &r);
+    sx_painter_fill(&clipped.painter, kInk);
+    sx_painter_pop_clip(&clipped.painter);
+    check(memcmp(painted.pixels, clipped.pixels, sizeof(painted.pixels)) == 0,
+          "pintar todo con ese clip da el mismo canvas que dibujar la figura");
+}
+
+void case_region_from_polygon_never_under_covers() {
+    printf("caso: poligono -> region -- nunca cubre de menos\n");
+    // La invariante que importa, desborde o no: todo pixel que el relleno pinta
+    // tiene que caer dentro de la region. Se contrasta contra el relleno REAL y
+    // no contra una formula a mano, que es donde se cuelan los off-by-one.
+    struct { const char* name; int count; sx_point pts[8]; } shapes[] = {
+        {"triangulo", 3, {{2, 1}, {28, 3}, {5, 22}}},
+        {"cuna angosta", 3, {{0, 0}, {31, 0}, {0, 23}}},
+        {"flecha", 7, {{16, 1}, {28, 12}, {22, 12}, {22, 22}, {10, 22}, {10, 12}, {4, 12}}},
+    };
+
+    for (auto& s : shapes) {
+        Canvas painted;
+        sx_painter_fill_polygon(&painted.painter, s.pts, s.count, kInk);
+
+        sx_region r;
+        sx_region_from_polygon(&r, s.pts, s.count);
+
+        int missing = 0;
+        int extra = 0;
+        for (int y = 0; y < kHeight; ++y) {
+            for (int x = 0; x < kWidth; ++x) {
+                const bool drawn = painted.at(x, y) == kInk;
+                const bool inside = sx_region_contains_point(&r, x, y) != 0;
+                if (drawn && !inside) { ++missing; }
+                if (!drawn && inside) { ++extra; }
+            }
+        }
+        printf("    %-14s bandas=%d desbordo=%d faltan=%d sobran=%d\n",
+               s.name, r.band_count, sx_region_overflowed(&r), missing, extra);
+        check(missing == 0, "no le falta ni un pixel del relleno");
+        if (!sx_region_overflowed(&r)) {
+            check(extra == 0, "y sin desborde tampoco le sobra ninguno");
+        }
+    }
+}
+
+void case_polygon_rejects_degenerate_input() {
+    printf("caso: poligono -- entradas degeneradas\n");
+    Canvas c;
+    const sx_point two[2] = {{0, 0}, {5, 5}};
+    sx_painter_fill_polygon(&c.painter, two, 2, kInk);
+    check(c.count(kInk) == 0, "con dos puntos no dibuja nada");
+
+    sx_point many[SX_POLYGON_MAX_POINTS + 1];
+    for (int i = 0; i < SX_POLYGON_MAX_POINTS + 1; ++i) {
+        many[i].x = i % 10;
+        many[i].y = i % 8;
+    }
+    sx_painter_fill_polygon(&c.painter, many, SX_POLYGON_MAX_POINTS + 1, kInk);
+    check(c.count(kInk) == 0, "pasarse del tope descarta el dibujo, no desborda");
+}
+
+void case_ellipse_fill_and_outline() {
+    printf("caso: elipse -- relleno y contorno\n");
+    Canvas c;
+    const sx_rect box = sx_rect_make(4, 2, 15, 15);
+    sx_painter_fill_ellipse(&c.painter, box, kInk);
+
+    check(c.at(11, 9) == kInk, "el centro esta relleno");
+    check(c.at(4, 2) != kInk, "la esquina del rect NO (por eso es elipse)");
+    const int filled = c.count(kInk);
+    // Area de un circulo de d=15 ~ 176; el rect son 225. Entre medio, con holgura.
+    check(filled > 140 && filled < 200, "el area cae donde debe para un circulo");
+
+    Canvas o;
+    sx_painter_draw_ellipse(&o.painter, box, kInk);
+    check(o.at(11, 9) != kInk, "el contorno deja el centro vacio");
+    check(o.count(kInk) < filled, "y pinta menos que el relleno");
+    check(o.count(kInk) > 20, "pero pinta un contorno de verdad");
+}
+
+void case_round_rect() {
+    printf("caso: rect redondeado -- esquinas recortadas\n");
+    Canvas c;
+    const sx_rect box = sx_rect_make(2, 2, 20, 16);
+    sx_painter_fill_round_rect(&c.painter, box, 5, kInk);
+
+    check(c.at(2, 2) != kInk, "la esquina superior izquierda esta recortada");
+    check(c.at(21, 17) != kInk, "y la inferior derecha tambien");
+    check(c.at(12, 10) == kInk, "el centro esta relleno");
+    check(c.at(2, 10) == kInk, "el borde izquierdo, a media altura, si");
+    check(c.count(kInk) < 20 * 16, "cubre menos que el rect completo");
+
+    Canvas z;
+    sx_painter_fill_round_rect(&z.painter, box, 0, kInk);
+    check(z.count(kInk) == 20 * 16, "radio 0 es un rect comun");
+
+    Canvas big;
+    sx_painter_fill_round_rect(&big.painter, box, 999, kInk);
+    check(big.count(kInk) > 0 && big.count(kInk) < 20 * 16,
+          "un radio absurdo se acota en vez de romper");
+}
+
+void case_geometry_uses_the_painter_origin() {
+    printf("caso: geometria -- respeta el origen\n");
+    Canvas c;
+    sx_painter_push_origin(&c.painter, 5, 4);
+    const sx_point tri[3] = {{0, 0}, {6, 0}, {3, 5}};
+    sx_painter_fill_polygon(&c.painter, tri, 3, kInk);
+    sx_painter_pop_origin(&c.painter);
+
+    check(c.at(0, 0) != kInk, "nada en el origen de dispositivo");
+    check(c.count(kInk) > 0, "pero dibujo");
+    // El punto mas alto del triangulo local (3,0) cae en (8,4).
+    check(c.at(8, 4) == kInk, "el vertice superior aterrizo en el origen activo");
+}
+
+/* ---- lote 3: escalado con calidad --------------------------------------- */
+
+void case_bilinear_interpolates() {
+    printf("caso: bilineal -- interpola en vez de saltar\n");
+    // Origen 2x1: negro y blanco. Al estirarlo, el medio tiene que ser gris.
+    static uint32_t src[2];
+    src[0] = 0x00000000u;
+    src[1] = 0x00FFFFFFu;
+    savanxp_fb_info si;
+    memset(&si, 0, sizeof(si));
+    si.width = 2; si.height = 1; si.pitch = 2 * sizeof(uint32_t); si.bpp = 32u;
+    si.buffer_size = si.pitch;
+    sx_bitmap sb;
+    sx_bitmap_wrap(&sb, src, &si, SX_PIXEL_FORMAT_BGRX8888);
+
+    Canvas nearest;
+    sx_painter_draw_scaled_bitmap(&nearest.painter, &sb, sx_rect_make(0, 0, 16, 1),
+                                   sx_rect_make(0, 0, 2, 1), SX_SCALE_NEAREST);
+    Canvas linear;
+    sx_painter_draw_scaled_bitmap(&linear.painter, &sb, sx_rect_make(0, 0, 16, 1),
+                                   sx_rect_make(0, 0, 2, 1), SX_SCALE_BILINEAR);
+
+    // Nearest solo produce los dos colores del origen.
+    int nearest_distinct = 0;
+    for (int x = 0; x < 16; ++x) {
+        const uint32_t v = nearest.at(x, 0);
+        if (v != 0x00000000u && v != 0x00FFFFFFu) { ++nearest_distinct; }
+    }
+    check(nearest_distinct == 0, "nearest solo devuelve texels del origen");
+
+    int linear_mid = 0;
+    for (int x = 0; x < 16; ++x) {
+        const uint32_t v = linear.at(x, 0);
+        if (v != 0x00000000u && v != 0x00FFFFFFu) { ++linear_mid; }
+    }
+    check(linear_mid > 0, "bilineal produce tonos intermedios");
+
+    // Y esos tonos tienen que ser monotonos crecientes de izquierda a derecha.
+    bool monotonic = true;
+    unsigned int last = 0;
+    for (int x = 0; x < 16; ++x) {
+        const unsigned int v = linear.at(x, 0) & 0xffu;
+        if (v < last) { monotonic = false; }
+        last = v;
+    }
+    check(monotonic, "el degrade no retrocede");
+}
+
+void case_bilinear_downscale_averages() {
+    printf("caso: bilineal -- al achicar promedia, nearest descarta\n");
+    // Tablero de 4x4 blanco y negro. Achicado a 1x1: nearest agarra un texel
+    // suelto; bilineal tiene que dar algo intermedio.
+    static uint32_t src[16];
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            src[y * 4 + x] = ((x + y) % 2 == 0) ? 0x00FFFFFFu : 0x00000000u;
+        }
+    }
+    savanxp_fb_info si;
+    memset(&si, 0, sizeof(si));
+    si.width = 4; si.height = 4; si.pitch = 4 * sizeof(uint32_t); si.bpp = 32u;
+    si.buffer_size = si.pitch * 4;
+    sx_bitmap sb;
+    sx_bitmap_wrap(&sb, src, &si, SX_PIXEL_FORMAT_BGRX8888);
+
+    Canvas n;
+    sx_painter_draw_scaled_bitmap(&n.painter, &sb, sx_rect_make(0, 0, 2, 2),
+                                   sx_rect_make(0, 0, 4, 4), SX_SCALE_NEAREST);
+    Canvas l;
+    sx_painter_draw_scaled_bitmap(&l.painter, &sb, sx_rect_make(0, 0, 2, 2),
+                                   sx_rect_make(0, 0, 4, 4), SX_SCALE_BILINEAR);
+
+    bool nearest_extremes = true;
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 2; ++x) {
+            const uint32_t v = n.at(x, y);
+            if (v != 0x00000000u && v != 0x00FFFFFFu) { nearest_extremes = false; }
+        }
+    }
+    check(nearest_extremes, "nearest solo copia texels tal cual");
+    check(memcmp(n.pixels, l.pixels, sizeof(n.pixels)) != 0,
+          "bilineal da un resultado distinto al achicar");
+}
+
+void case_bilinear_stays_inside_the_source_rect() {
+    printf("caso: bilineal -- no muestrea fuera del source_rect\n");
+    // Atlas: mitad izquierda tinta, mitad derecha un color centinela. Se pide
+    // solo la izquierda: ni un pixel del centinela puede aparecer.
+    static uint32_t atlas[8 * 4];
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            atlas[y * 8 + x] = (x < 4) ? 0x00202020u : 0x00FF00FFu;
+        }
+    }
+    savanxp_fb_info si;
+    memset(&si, 0, sizeof(si));
+    si.width = 8; si.height = 4; si.pitch = 8 * sizeof(uint32_t); si.bpp = 32u;
+    si.buffer_size = si.pitch * 4;
+    sx_bitmap sb;
+    sx_bitmap_wrap(&sb, atlas, &si, SX_PIXEL_FORMAT_BGRX8888);
+
+    Canvas c;
+    sx_painter_draw_scaled_bitmap(&c.painter, &sb, sx_rect_make(0, 0, 16, 8),
+                                   sx_rect_make(0, 0, 4, 4), SX_SCALE_BILINEAR);
+
+    bool clean = true;
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            const uint32_t v = c.at(x, y);
+            // El centinela es magenta puro; cualquier rastro sube el canal rojo.
+            if (((v >> 16) & 0xffu) > 0x40u) { clean = false; }
+        }
+    }
+    check(clean, "no se colo nada de la mitad de al lado del atlas");
+}
+
+void case_scaled_nearest_wrapper_is_unchanged() {
+    printf("caso: escalado -- el atajo _nearest sigue dando lo mismo\n");
+    static uint32_t src[16];
+    for (int i = 0; i < 16; ++i) { src[i] = kInk + (uint32_t)i; }
+    savanxp_fb_info si;
+    memset(&si, 0, sizeof(si));
+    si.width = 4; si.height = 4; si.pitch = 4 * sizeof(uint32_t); si.bpp = 32u;
+    si.buffer_size = si.pitch * 4;
+    sx_bitmap sb;
+    sx_bitmap_wrap(&sb, src, &si, SX_PIXEL_FORMAT_BGRX8888);
+
+    Canvas a;
+    sx_painter_draw_scaled_bitmap_nearest(&a.painter, &sb, sx_rect_make(1, 1, 9, 7),
+                                           sx_rect_make(0, 0, 4, 4));
+    Canvas b;
+    sx_painter_draw_scaled_bitmap(&b.painter, &sb, sx_rect_make(1, 1, 9, 7),
+                                  sx_rect_make(0, 0, 4, 4), SX_SCALE_NEAREST);
+    check(memcmp(a.pixels, b.pixels, sizeof(a.pixels)) == 0,
+          "el wrapper y el filtro explicito coinciden");
+}
+
 } // namespace
 
 /* ---- stubs de las primitivas crudas ------------------------------------- */
@@ -1214,6 +1730,29 @@ int main() {
     case_font_selection_round_trips();
     case_font_drives_metrics_and_blit();
     case_font_survives_clip_and_region();
+
+    case_rop_xor_is_its_own_inverse();
+    case_rop_variants();
+    case_rop_respects_clip_and_pattern();
+    case_memory_dc_round_trip();
+    case_memory_dc_rejects_bad_sizes();
+    case_destroy_on_wrapped_bitmap_is_a_noop();
+    case_line_endpoints_and_straights();
+    case_line_is_symmetric();
+    case_line_respects_clip_and_region();
+    case_polygon_fills_a_triangle();
+    case_polygon_area_is_exact();
+    case_polygon_is_mirror_symmetric();
+    case_region_from_polygon_matches_the_fill();
+    case_region_from_polygon_never_under_covers();
+    case_polygon_rejects_degenerate_input();
+    case_ellipse_fill_and_outline();
+    case_round_rect();
+    case_geometry_uses_the_painter_origin();
+    case_bilinear_interpolates();
+    case_bilinear_downscale_averages();
+    case_bilinear_stays_inside_the_source_rect();
+    case_scaled_nearest_wrapper_is_unchanged();
 
     case_painter_clips_to_region();
     case_painter_region_clip_with_hole();

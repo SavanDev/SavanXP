@@ -1,5 +1,8 @@
 #include "savanxp/libc.h"
 
+/* Por sx_bitmap_create/destroy: es lo unico de gfx2d que reserva memoria. */
+#include <stdlib.h>
+
 static uint32_t sx_blend_bgra8888_over_rgb(uint32_t destination, uint32_t source)
 {
     uint32_t alpha = (source >> 24) & 0xffu;
@@ -216,6 +219,35 @@ struct sx_brush sx_brush_pattern_transparent(const uint8_t pattern[8], uint32_t 
     return brush;
 }
 
+struct sx_brush sx_brush_with_rop(struct sx_brush brush, int rop)
+{
+    if (rop >= SX_ROP_COPY && rop <= SX_ROP_INVERT)
+    {
+        brush.rop = rop;
+    }
+    return brush;
+}
+
+/* Combina origen y destino segun la operacion raster. Solo los 24 bits de color
+ * importan: el byte alto del destino no es alpha en BGRX y dejarlo entrar en un
+ * XOR pintaria basura. */
+static uint32_t sx_apply_rop(int rop, uint32_t destination, uint32_t source)
+{
+    switch (rop)
+    {
+    case SX_ROP_XOR:
+        return (destination ^ source) & 0x00ffffffu;
+    case SX_ROP_AND:
+        return (destination & source) & 0x00ffffffu;
+    case SX_ROP_OR:
+        return (destination | source) & 0x00ffffffu;
+    case SX_ROP_INVERT:
+        return (~destination) & 0x00ffffffu;
+    default:
+        return source;
+    }
+}
+
 /* 1 si la trama pinta en esa celda de la grilla de dispositivo. El AND con 7
  * mantiene el anclaje absoluto incluso para coordenadas negativas, porque las
  * posiciones ya vienen clipeadas al bitmap y son no negativas. */
@@ -321,6 +353,60 @@ void sx_bitmap_wrap(struct sx_bitmap* bitmap, uint32_t* pixels, const struct sav
     }
     bitmap->pixels = pixels;
     bitmap->format = format;
+}
+
+int sx_bitmap_create(struct sx_bitmap* bitmap, int width, int height, uint32_t format)
+{
+    struct savanxp_fb_info info;
+    uint32_t* pixels;
+    size_t bytes;
+
+    if (bitmap == 0 || width <= 0 || height <= 0)
+    {
+        return 0;
+    }
+    /* Tope defensivo: el producto tiene que entrar en size_t sin dar la vuelta.
+     * 16384 por lado deja el area muy por debajo de cualquier desborde y no
+     * limita nada real (la pantalla mas grande que soporta el sistema es
+     * ordenes de magnitud menor). */
+    if (width > 16384 || height > 16384)
+    {
+        return 0;
+    }
+
+    bytes = (size_t)width * (size_t)height * sizeof(uint32_t);
+    pixels = (uint32_t*)malloc(bytes);
+    if (pixels == 0)
+    {
+        return 0;
+    }
+    memset(pixels, 0, bytes);
+
+    memset(&info, 0, sizeof(info));
+    info.width = (uint32_t)width;
+    info.height = (uint32_t)height;
+    info.pitch = (uint32_t)width * (uint32_t)sizeof(uint32_t);
+    info.bpp = 32u;
+    info.buffer_size = info.pitch * info.height;
+
+    sx_bitmap_wrap(bitmap, pixels, &info, format);
+    bitmap->owns_pixels = 1;
+    return 1;
+}
+
+void sx_bitmap_destroy(struct sx_bitmap* bitmap)
+{
+    if (bitmap == 0)
+    {
+        return;
+    }
+    /* Sobre un bitmap de wrap esto no hace nada: los pixeles son del llamador.
+     * Poder llamarlo igual es lo que deja escribir codigo que no distingue. */
+    if (bitmap->owns_pixels && bitmap->pixels != 0)
+    {
+        free(bitmap->pixels);
+    }
+    memset(bitmap, 0, sizeof(*bitmap));
 }
 
 void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap)
@@ -516,7 +602,9 @@ static void sx_fill_rect_device_brush(struct sx_painter* painter, struct sx_rect
     struct sx_rect piece;
     uint32_t stride;
 
-    if (!brush->has_pattern)
+    /* Solido y COPY: el camino de siempre, un relleno de rects sin tocar pixel
+     * por pixel. Cualquier otra cosa necesita leer el destino. */
+    if (!brush->has_pattern && brush->rop == SX_ROP_COPY)
     {
         sx_fill_rect_device(painter, rect, brush->colour);
         return;
@@ -533,14 +621,25 @@ static void sx_fill_rect_device_brush(struct sx_painter* painter, struct sx_rect
             uint32_t* row = painter->target->pixels + ((size_t)y * stride);
             for (x = piece.x; x < sx_rect_right(piece); ++x)
             {
-                if (sx_brush_covers(brush, x, y))
+                uint32_t source;
+
+                if (!brush->has_pattern)
                 {
-                    row[x] = brush->colour;
+                    source = brush->colour;
                 }
-                else if (!brush->transparent)
+                else if (sx_brush_covers(brush, x, y))
                 {
-                    row[x] = brush->back_colour;
+                    source = brush->colour;
                 }
+                else if (brush->transparent)
+                {
+                    continue;
+                }
+                else
+                {
+                    source = brush->back_colour;
+                }
+                row[x] = sx_apply_rop(brush->rop, row[x], source);
             }
         }
     }
@@ -723,11 +822,61 @@ void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* 
     }
 }
 
-void sx_painter_draw_scaled_bitmap_nearest(
+/* Muestreo bilineal: los cuatro texels vecinos ponderados por la parte
+ * fraccionaria de la posicion. Se trabaja en punto fijo de 8 bits porque el
+ * userland no tiene punto flotante salvo que la app se compile con -Sse, y esta
+ * capa la linkean TODOS los binarios.
+ *
+ * Los vecinos se acotan al source_rect (no al bitmap): en el borde eso repite el
+ * ultimo texel en vez de sangrar el de al lado, que en un atlas de iconos seria
+ * traer pixeles de otro icono. */
+static uint32_t sx_sample_bilinear(
+    const struct sx_bitmap* source,
+    uint32_t src_stride,
+    struct sx_rect source_rect,
+    int fx,
+    int fy)
+{
+    const int x0 = fx >> 8;
+    const int y0 = fy >> 8;
+    const unsigned int wx = (unsigned int)(fx & 0xff);
+    const unsigned int wy = (unsigned int)(fy & 0xff);
+    const int right = sx_rect_right(source_rect) - 1;
+    const int bottom = sx_rect_bottom(source_rect) - 1;
+    const int x1 = x0 < right ? x0 + 1 : right;
+    const int y1 = y0 < bottom ? y0 + 1 : bottom;
+    const uint32_t* row0 = source->pixels + ((size_t)y0 * src_stride);
+    const uint32_t* row1 = source->pixels + ((size_t)y1 * src_stride);
+    const uint32_t p00 = row0[x0];
+    const uint32_t p10 = row0[x1];
+    const uint32_t p01 = row1[x0];
+    const uint32_t p11 = row1[x1];
+    uint32_t result = 0;
+    int shift;
+
+    /* Canal por canal, incluido el byte alto: en BGRA ese es el alpha y tiene
+     * que interpolar igual que el color, si no los bordes de un icono quedan
+     * con halo. */
+    for (shift = 0; shift <= 24; shift += 8)
+    {
+        const unsigned int c00 = (p00 >> shift) & 0xffu;
+        const unsigned int c10 = (p10 >> shift) & 0xffu;
+        const unsigned int c01 = (p01 >> shift) & 0xffu;
+        const unsigned int c11 = (p11 >> shift) & 0xffu;
+        const unsigned int top = c00 * (256u - wx) + c10 * wx;
+        const unsigned int low = c01 * (256u - wx) + c11 * wx;
+        const unsigned int value = ((top * (256u - wy)) + (low * wy) + 32768u) >> 16;
+        result |= (value > 255u ? 255u : value) << shift;
+    }
+    return result;
+}
+
+void sx_painter_draw_scaled_bitmap(
     struct sx_painter* painter,
     const struct sx_bitmap* source,
     struct sx_rect destination,
-    struct sx_rect source_rect)
+    struct sx_rect source_rect,
+    int filter)
 {
     struct sx_clip_iter iter;
     struct sx_rect target_rect;
@@ -744,8 +893,8 @@ void sx_painter_draw_scaled_bitmap_nearest(
 
     /* El origen del muestreo lo provee el llamador: acotarlo al bitmap fuente es
      * lo unico que impide que un source_rect fuera de rango lea fuera del
-     * buffer, porque source_x/source_y se derivan de el y no se vuelven a
-     * validar en el bucle. */
+     * buffer, porque las coordenadas de muestreo se derivan de el y no se
+     * vuelven a validar en el bucle. */
     source_rect = sx_rect_intersect(
         source_rect,
         sx_rect_make(0, 0, (int)source->info.width, (int)source->info.height));
@@ -765,13 +914,36 @@ void sx_painter_draw_scaled_bitmap_nearest(
     {
         for (y = target_rect.y; y < sx_rect_bottom(target_rect); ++y)
         {
-            int source_y = source_rect.y +
-                (((y - destination.y) * source_rect.height) / destination.height);
             for (x = target_rect.x; x < sx_rect_right(target_rect); ++x)
             {
-                int source_x = source_rect.x +
-                    (((x - destination.x) * source_rect.width) / destination.width);
-                uint32_t source_pixel = source->pixels[((size_t)source_y * src_stride) + (size_t)source_x];
+                uint32_t source_pixel;
+
+                if (filter == SX_SCALE_BILINEAR)
+                {
+                    /* Centro del texel: el medio pixel de correccion es lo que
+                     * evita que la imagen se corra medio pixel al escalar. */
+                    const int fx = (int)((((long)(x - destination.x) * 2 + 1) * source_rect.width * 128)
+                                          / destination.width) + (source_rect.x << 8) - 128;
+                    const int fy = (int)((((long)(y - destination.y) * 2 + 1) * source_rect.height * 128)
+                                          / destination.height) + (source_rect.y << 8) - 128;
+                    const int min_x = source_rect.x << 8;
+                    const int min_y = source_rect.y << 8;
+                    const int max_x = (sx_rect_right(source_rect) - 1) << 8;
+                    const int max_y = (sx_rect_bottom(source_rect) - 1) << 8;
+                    source_pixel = sx_sample_bilinear(
+                        source, src_stride, source_rect,
+                        fx < min_x ? min_x : (fx > max_x ? max_x : fx),
+                        fy < min_y ? min_y : (fy > max_y ? max_y : fy));
+                }
+                else
+                {
+                    const int source_y = source_rect.y +
+                        (((y - destination.y) * source_rect.height) / destination.height);
+                    const int source_x = source_rect.x +
+                        (((x - destination.x) * source_rect.width) / destination.width);
+                    source_pixel = source->pixels[((size_t)source_y * src_stride) + (size_t)source_x];
+                }
+
                 if (source->format == SX_PIXEL_FORMAT_BGRA8888)
                 {
                     uint32_t* target = &painter->target->pixels[((size_t)y * dst_stride) + (size_t)x];
@@ -784,6 +956,15 @@ void sx_painter_draw_scaled_bitmap_nearest(
             }
         }
     }
+}
+
+void sx_painter_draw_scaled_bitmap_nearest(
+    struct sx_painter* painter,
+    const struct sx_bitmap* source,
+    struct sx_rect destination,
+    struct sx_rect source_rect)
+{
+    sx_painter_draw_scaled_bitmap(painter, source, destination, source_rect, SX_SCALE_NEAREST);
 }
 
 int sx_painter_set_font(struct sx_painter* painter, int font)
@@ -839,6 +1020,428 @@ static void sx_blit_text_clipped(
     }
     gfx_blit_text_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
                         clip.x, clip.y, sx_rect_right(clip), sx_rect_bottom(clip));
+}
+
+/* ---- Geometria ----------------------------------------------------------
+ *
+ * Todo se apoya en hline/vline/set_pixel del painter, asi que el clip, la region
+ * y el origen salen gratis y correctos: ninguna de estas funciones toca el
+ * bitmap directamente. */
+
+void sx_painter_draw_line(struct sx_painter* painter, int x0, int y0, int x1, int y1, uint32_t colour)
+{
+    int dx;
+    int dy;
+    int step_x;
+    int step_y;
+    int error;
+
+    if (painter == 0 || painter->target == 0)
+    {
+        return;
+    }
+    /* Los casos rectos valen su atajo: son la mayoria de las lineas de un
+     * toolkit y un relleno de rect gana lejos contra ir pixel por pixel. */
+    if (y0 == y1)
+    {
+        const int left = x0 < x1 ? x0 : x1;
+        sx_painter_hline(painter, left, y0, (x0 < x1 ? x1 - x0 : x0 - x1) + 1, colour);
+        return;
+    }
+    if (x0 == x1)
+    {
+        const int top = y0 < y1 ? y0 : y1;
+        sx_painter_vline(painter, x0, top, (y0 < y1 ? y1 - y0 : y0 - y1) + 1, colour);
+        return;
+    }
+
+    dx = x1 > x0 ? x1 - x0 : x0 - x1;
+    dy = y1 > y0 ? y1 - y0 : y0 - y1;
+    step_x = x0 < x1 ? 1 : -1;
+    step_y = y0 < y1 ? 1 : -1;
+    error = dx - dy;
+
+    for (;;)
+    {
+        int doubled;
+
+        sx_painter_set_pixel(painter, x0, y0, colour);
+        if (x0 == x1 && y0 == y1)
+        {
+            return;
+        }
+        doubled = error * 2;
+        if (doubled > -dy)
+        {
+            error -= dy;
+            x0 += step_x;
+        }
+        if (doubled < dx)
+        {
+            error += dx;
+            y0 += step_y;
+        }
+    }
+}
+
+void sx_painter_draw_polyline(struct sx_painter* painter, const struct sx_point* points, int count, int closed, uint32_t colour)
+{
+    int index;
+
+    if (painter == 0 || points == 0 || count < 2)
+    {
+        return;
+    }
+    for (index = 0; index + 1 < count; ++index)
+    {
+        sx_painter_draw_line(painter, points[index].x, points[index].y,
+                              points[index + 1].x, points[index + 1].y, colour);
+    }
+    if (closed)
+    {
+        sx_painter_draw_line(painter, points[count - 1].x, points[count - 1].y,
+                              points[0].x, points[0].y, colour);
+    }
+}
+
+/* Cruces del poligono con la scanline `y`, ya ordenados. Devuelve cuantos hubo.
+ * Lo comparten fill_polygon y sx_region_from_polygon: es la unica forma de
+ * garantizar que la region y el dibujo describan exactamente la misma forma. */
+static int sx_polygon_crossings(const struct sx_point* points, int count, int y, int* crossings)
+{
+    int found = 0;
+    int index;
+    int sorted;
+
+    for (index = 0; index < count; ++index)
+    {
+        const struct sx_point* a = &points[index];
+        const struct sx_point* b = &points[(index + 1) % count];
+        /* La arista se recorre SIEMPRE de arriba hacia abajo, sin importar como
+         * la guardo el llamador. Si no, la misma diagonal compartida por dos
+         * poligonos da una x distinta segun el sentido y los dos se solapan o
+         * dejan costura -- que es justo lo que pasa al teselar. */
+        const struct sx_point* top_point = a->y < b->y ? a : b;
+        const struct sx_point* bottom_point = a->y < b->y ? b : a;
+
+        /* Arista semiabierta en Y ([top, bottom)) para que un vertice compartido
+         * cuente UNA sola vez: contarlo dos veces abriria y cerraria el span en
+         * el mismo x y dejaria agujeros justo en los vertices. */
+        if (a->y == b->y || y < top_point->y || y >= bottom_point->y)
+        {
+            continue;
+        }
+        /* La division de C trunca hacia cero, y eso es justo lo que hace falta:
+         * el truncamiento es impar-simetrico (trunc(-u) == -trunc(u)), asi que un
+         * poligono y su espejo cubren la misma area. Piso y techo NO lo son --
+         * con cualquiera de los dos el espejo sale con area distinta, porque el
+         * borde izquierdo y el derecho redondean para lados opuestos cuando los
+         * spans son semiabiertos. */
+        crossings[found] = top_point->x +
+            ((y - top_point->y) * (bottom_point->x - top_point->x)) /
+            (bottom_point->y - top_point->y);
+        ++found;
+    }
+
+    /* Insercion: `found` no pasa de la cantidad de vertices, y los poligonos de
+     * un toolkit tienen un punado. */
+    for (sorted = 1; sorted < found; ++sorted)
+    {
+        const int value = crossings[sorted];
+        int slot = sorted - 1;
+        while (slot >= 0 && crossings[slot] > value)
+        {
+            crossings[slot + 1] = crossings[slot];
+            --slot;
+        }
+        crossings[slot + 1] = value;
+    }
+    return found;
+}
+
+/* Extremos verticales del poligono. 0 si la entrada no sirve. */
+static int sx_polygon_y_range(const struct sx_point* points, int count, int* min_y, int* max_y)
+{
+    int index;
+
+    if (points == 0 || count < 3 || count > SX_POLYGON_MAX_POINTS)
+    {
+        return 0;
+    }
+    *min_y = points[0].y;
+    *max_y = points[0].y;
+    for (index = 1; index < count; ++index)
+    {
+        if (points[index].y < *min_y) { *min_y = points[index].y; }
+        if (points[index].y > *max_y) { *max_y = points[index].y; }
+    }
+    return 1;
+}
+
+void sx_painter_fill_polygon(struct sx_painter* painter, const struct sx_point* points, int count, uint32_t colour)
+{
+    int crossings[SX_POLYGON_MAX_POINTS];
+    int min_y;
+    int max_y;
+    int y;
+
+    if (painter == 0 || painter->target == 0 ||
+        !sx_polygon_y_range(points, count, &min_y, &max_y))
+    {
+        return;
+    }
+
+    for (y = min_y; y <= max_y; ++y)
+    {
+        const int found = sx_polygon_crossings(points, count, y, crossings);
+        int index;
+
+        for (index = 0; index + 1 < found; index += 2)
+        {
+            const int left = crossings[index];
+            const int right = crossings[index + 1];
+            if (right > left)
+            {
+                sx_painter_hline(painter, left, y, right - left, colour);
+            }
+        }
+    }
+}
+
+void sx_region_from_polygon(struct sx_region* region, const struct sx_point* points, int count)
+{
+    int crossings[SX_POLYGON_MAX_POINTS];
+    int min_y;
+    int max_y;
+    int y;
+
+    if (region == 0)
+    {
+        return;
+    }
+    sx_region_clear(region);
+    if (!sx_polygon_y_range(points, count, &min_y, &max_y))
+    {
+        return;
+    }
+
+    /* Fila por fila, uniendo cada tramo como un rect de alto 1. Las bandas
+     * contiguas con los mismos tramos las fusiona la propia region, asi que los
+     * lados rectos no cuestan una banda por fila -- solo las partes inclinadas. */
+    for (y = min_y; y <= max_y; ++y)
+    {
+        const int found = sx_polygon_crossings(points, count, y, crossings);
+        int index;
+
+        for (index = 0; index + 1 < found; index += 2)
+        {
+            const int left = crossings[index];
+            const int right = crossings[index + 1];
+            if (right > left)
+            {
+                sx_region_union_rect(region, sx_rect_make(left, y, right - left, 1));
+            }
+        }
+    }
+}
+
+/* Elipse por punto medio, en cuadrantes simetricos. `fill` decide si se traza el
+ * contorno o se rellenan los spans entre los lados espejados. */
+static void sx_ellipse_impl(struct sx_painter* painter, struct sx_rect rect, uint32_t colour, int fill)
+{
+    int a;
+    int b;
+    int cx;
+    int cy;
+    int x;
+    int y;
+    long a2;
+    long b2;
+    long error;
+    int odd_width;
+    int odd_height;
+
+    if (painter == 0 || painter->target == 0 || rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+    if (rect.width <= 2 || rect.height <= 2)
+    {
+        /* Demasiado chica para que la curva se distinga: el rect ES la figura. */
+        sx_painter_fill_rect(painter, rect, colour);
+        return;
+    }
+
+    /* Con lado par el centro cae entre pixeles: se trabaja con el radio hacia
+     * abajo y se corre el lado opuesto un pixel (odd_*). */
+    a = (rect.width - 1) / 2;
+    b = (rect.height - 1) / 2;
+    odd_width = (rect.width - 1) % 2;
+    odd_height = (rect.height - 1) % 2;
+    cx = rect.x + a;
+    cy = rect.y + b;
+    a2 = (long)a * a;
+    b2 = (long)b * b;
+
+    x = 0;
+    y = b;
+    error = b2 - a2 * b + a2 / 4;
+    while (b2 * x <= a2 * y)
+    {
+        if (fill)
+        {
+            sx_painter_hline(painter, cx - x, cy - y, 2 * x + 1 + odd_width, colour);
+            sx_painter_hline(painter, cx - x, cy + y + odd_height, 2 * x + 1 + odd_width, colour);
+        }
+        else
+        {
+            sx_painter_set_pixel(painter, cx - x, cy - y, colour);
+            sx_painter_set_pixel(painter, cx + x + odd_width, cy - y, colour);
+            sx_painter_set_pixel(painter, cx - x, cy + y + odd_height, colour);
+            sx_painter_set_pixel(painter, cx + x + odd_width, cy + y + odd_height, colour);
+        }
+        if (error < 0)
+        {
+            error += b2 * (2 * x + 3);
+        }
+        else
+        {
+            error += b2 * (2 * x + 3) + a2 * (2 - 2 * y);
+            --y;
+        }
+        ++x;
+    }
+
+    x = a;
+    y = 0;
+    error = a2 - b2 * a + b2 / 4;
+    while (a2 * y <= b2 * x)
+    {
+        if (fill)
+        {
+            sx_painter_hline(painter, cx - x, cy - y, 2 * x + 1 + odd_width, colour);
+            sx_painter_hline(painter, cx - x, cy + y + odd_height, 2 * x + 1 + odd_width, colour);
+        }
+        else
+        {
+            sx_painter_set_pixel(painter, cx - x, cy - y, colour);
+            sx_painter_set_pixel(painter, cx + x + odd_width, cy - y, colour);
+            sx_painter_set_pixel(painter, cx - x, cy + y + odd_height, colour);
+            sx_painter_set_pixel(painter, cx + x + odd_width, cy + y + odd_height, colour);
+        }
+        if (error < 0)
+        {
+            error += a2 * (2 * y + 3);
+        }
+        else
+        {
+            error += a2 * (2 * y + 3) + b2 * (2 - 2 * x);
+            --x;
+        }
+        ++y;
+    }
+}
+
+void sx_painter_draw_ellipse(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
+{
+    sx_ellipse_impl(painter, rect, colour, 0);
+}
+
+void sx_painter_fill_ellipse(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
+{
+    sx_ellipse_impl(painter, rect, colour, 1);
+}
+
+/* Acota el radio a lo que el rect puede sostener: mas de la mitad del lado mas
+ * corto haria que dos esquinas se pisen. */
+static int sx_round_rect_radius(struct sx_rect rect, int radius)
+{
+    const int shortest = rect.width < rect.height ? rect.width : rect.height;
+    if (radius > shortest / 2)
+    {
+        radius = shortest / 2;
+    }
+    return radius < 0 ? 0 : radius;
+}
+
+/* Cuanto se mete la esquina en la fila `y` (0 = la de mas arriba del arco). */
+static int sx_round_rect_inset(int radius, int y)
+{
+    const int dy = radius - y;
+    int dx = 0;
+    while ((dx + 1) * (dx + 1) + dy * dy <= radius * radius)
+    {
+        ++dx;
+    }
+    return radius - dx;
+}
+
+void sx_painter_fill_round_rect(struct sx_painter* painter, struct sx_rect rect, int radius, uint32_t colour)
+{
+    int y;
+
+    if (painter == 0 || painter->target == 0 || sx_rect_is_empty(rect))
+    {
+        return;
+    }
+    radius = sx_round_rect_radius(rect, radius);
+    if (radius == 0)
+    {
+        sx_painter_fill_rect(painter, rect, colour);
+        return;
+    }
+
+    /* La franja del medio es un rect; arriba y abajo cada fila se acorta segun el
+     * circulo de la esquina. Se resuelve por fila y no componiendo elipses para
+     * no pintar dos veces el mismo pixel, que con un ROP no seria inocuo. */
+    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + radius, rect.width, rect.height - 2 * radius), colour);
+    for (y = 0; y < radius; ++y)
+    {
+        const int inset = sx_round_rect_inset(radius, y);
+        sx_painter_hline(painter, rect.x + inset, rect.y + y, rect.width - 2 * inset, colour);
+        sx_painter_hline(painter, rect.x + inset, rect.y + rect.height - 1 - y, rect.width - 2 * inset, colour);
+    }
+}
+
+void sx_painter_draw_round_rect(struct sx_painter* painter, struct sx_rect rect, int radius, uint32_t colour)
+{
+    int y;
+    int previous_inset = -1;
+
+    if (painter == 0 || painter->target == 0 || sx_rect_is_empty(rect))
+    {
+        return;
+    }
+    radius = sx_round_rect_radius(rect, radius);
+    if (radius == 0)
+    {
+        sx_painter_draw_frame(painter, rect, colour);
+        return;
+    }
+
+    sx_painter_hline(painter, rect.x + radius, rect.y, rect.width - 2 * radius, colour);
+    sx_painter_hline(painter, rect.x + radius, rect.y + rect.height - 1, rect.width - 2 * radius, colour);
+    sx_painter_vline(painter, rect.x, rect.y + radius, rect.height - 2 * radius, colour);
+    sx_painter_vline(painter, rect.x + rect.width - 1, rect.y + radius, rect.height - 2 * radius, colour);
+
+    /* Esquinas: por fila se pinta el tramo que va del inset de la fila anterior
+     * al de esta. Sin ese tramo el contorno queda cortado donde el circulo
+     * avanza mas de un pixel en x entre dos filas. */
+    for (y = 0; y < radius; ++y)
+    {
+        const int inset = sx_round_rect_inset(radius, y);
+        int span = previous_inset < 0 ? 1 : (previous_inset - inset + 1);
+
+        if (span < 1)
+        {
+            span = 1;
+        }
+        sx_painter_hline(painter, rect.x + inset, rect.y + y, span, colour);
+        sx_painter_hline(painter, rect.x + rect.width - inset - span, rect.y + y, span, colour);
+        sx_painter_hline(painter, rect.x + inset, rect.y + rect.height - 1 - y, span, colour);
+        sx_painter_hline(painter, rect.x + rect.width - inset - span, rect.y + rect.height - 1 - y, span, colour);
+        previous_inset = inset;
+    }
 }
 
 void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* text, uint32_t colour)
