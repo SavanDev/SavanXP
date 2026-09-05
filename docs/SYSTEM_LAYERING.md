@@ -48,7 +48,8 @@ Bajo nivel, siempre C:
   [WM_SUBSYSTEM.md](WM_SUBSYSTEM.md)).
 - **SXGFX** — la capa de rasterización 2D del SDK
   (`subsystems/posix/sdk/v1/.../gfx2d.*`): superficies, painter, blit, clipping,
-  damage. Análogo a GDI.
+  damage. Análogo a GDI; los huecos frente a GDI32 y el orden para
+  cerrarlos están en [SXGFX_ROADMAP.md](SXGFX_ROADMAP.md).
 - **SXGUI-C** — el toolkit de widgets Win9x sobre SXGFX
   (`subsystems/posix/sdk/v1/.../sxgui.*`). Análogo a USER/comctl32.
 
