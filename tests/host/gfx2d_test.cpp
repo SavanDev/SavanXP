@@ -33,6 +33,15 @@ extern "C" {
 
 #include "savanxp/gfx2d.h"
 
+/* El decodificador real, el mismo .inc que compilan el SDK posix y el runtime
+ * nativo. No hay copia en el test: si se rompe aca, se rompio en los dos. */
+#include "../../subsystems/posix/sdk/v1/runtime/gfx_utf8.inc"
+
+/* Y la tabla de glifos horneada, para poder afirmar QUE codepoints existen de
+ * verdad. Es data + una busqueda inline; no arrastra syscalls. El painter que se
+ * prueba mas abajo usa stubs, asi que no hay colision. */
+#include "../../subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc"
+
 namespace {
 
 int g_failures = 0;
@@ -92,6 +101,10 @@ struct Canvas {
 };
 
 const uint32_t kInk = 0x00112233u;
+// Los stubs de blit los incrementan: asi el test ve QUE camino se tomo, no solo
+// que pixeles quedaron.
+int g_mono_blits = 0;
+int g_ui_blits = 0;
 const uint32_t kBack = 0x00445566u;
 
 /* ---- origen ------------------------------------------------------------- */
@@ -911,6 +924,175 @@ void case_region_beats_rect_set_on_multi_rect_damage() {
     check(rect_set_area(set) > exact, "sx_rect_set cubre de mas al fusionar el danio");
 }
 
+/* ---- UTF-8 -------------------------------------------------------------- */
+
+void case_utf8_decodes_codepoints() {
+    printf("caso: UTF-8 -- decodifica los cuatro largos\n");
+    struct { const char* text; unsigned int cp; int consumed; } cases[] = {
+        {"A",                0x41u,    1}, // ASCII
+        {"\xC3\xB3",         0xF3u,    2}, // o con tilde
+        {"\xC3\x91",         0xD1u,    2}, // N con virgulilla
+        {"\xE2\x80\xA6",     0x2026u,  3}, // puntos suspensivos
+        {"\xE2\x82\xAC",     0x20ACu,  3}, // euro
+        {"\xF0\x9F\x99\x82", 0x1F642u, 4}, // fuera de las tablas, pero decodifica
+    };
+    bool ok = true;
+    for (auto& c : cases) {
+        const char* cursor = c.text;
+        const unsigned int got = sx_utf8_next(&cursor);
+        if (got != c.cp || (int)(cursor - c.text) != c.consumed) {
+            printf("    '%s': cp=0x%X (esperado 0x%X), consumio %d (esperado %d)\n",
+                   c.text, got, c.cp, (int)(cursor - c.text), c.consumed);
+            ok = false;
+        }
+    }
+    check(ok, "los seis casos dan codepoint y avance correctos");
+}
+
+void case_utf8_walks_a_whole_string() {
+    printf("caso: UTF-8 -- recorre una cadena entera\n");
+    // "Configuración…" tal como saldria de un .c en UTF-8.
+    const char* text = "Configuraci\xC3\xB3n\xE2\x80\xA6";
+    const char* cursor = text;
+    int glyphs = 0;
+    unsigned int last = 0;
+    while (*cursor != '\0') {
+        last = sx_utf8_next(&cursor);
+        ++glyphs;
+    }
+    check(glyphs == 14, "14 caracteres, no 17 bytes");
+    check(last == 0x2026u, "el ultimo es U+2026");
+}
+
+void case_utf8_invalid_always_advances() {
+    printf("caso: UTF-8 -- lo invalido avanza siempre (nunca cuelga)\n");
+    // Continuador suelto, secuencia truncada y byte prohibido: lo que importa no
+    // es que devuelva algo lindo, es que el cursor SIEMPRE avance.
+    const char* bad[] = { "\x80", "\xC3", "\xFF", "\xE2\x80", "\xC3\x28" };
+    bool advances = true;
+    bool replaces = true;
+    for (auto& b : bad) {
+        const char* cursor = b;
+        const char* before = cursor;
+        const unsigned int cp = sx_utf8_next(&cursor);
+        if (cursor <= before) {
+            advances = false;
+        }
+        if (cp != 0xFFFDu) {
+            replaces = false;
+        }
+    }
+    check(advances, "el cursor avanza en los cinco casos malos");
+    check(replaces, "y todos dan U+FFFD");
+
+    // El caso que importa de verdad: un bucle sobre basura termina.
+    const char* junk = "\xFF\xFE\xC3\x80\x80ok";
+    const char* cursor = junk;
+    int guard = 0;
+    while (*cursor != '\0' && guard < 100) {
+        (void)sx_utf8_next(&cursor);
+        ++guard;
+    }
+    check(guard < 100, "un bucle sobre basura termina");
+}
+
+void case_font_table_has_the_codepoints_that_matter() {
+    printf("caso: la tabla horneada tiene los codepoints que importan\n");
+    // El fallback (slot 0) es el espacio: ancho 0 de bitmap pero con avance.
+    // En C el nombre de la funcion y el del struct conviven; en C++ la funcion
+    // tapa al tag, asi que aca hay que decir struct.
+    const struct sx_noto_glyph* fallback = sx_noto_glyph(0x1F642u); // emoji, fuera de rango
+    check(fallback->rows == 0 && fallback->advance > 0,
+          "un codepoint fuera de rango cae al espacio, con avance");
+
+    // Lo que el lote 2.2 vino a habilitar: acentos y puntuacion tipografica.
+    struct { unsigned int cp; const char* name; } wanted[] = {
+        {0x00F3u, "o con tilde"},
+        {0x00D1u, "N con virgulilla"},
+        {0x00BFu, "signo de apertura de interrogacion"},
+        {0x00AAu, "ordinal femenino"},
+        {0x2014u, "raya"},
+        {0x2026u, "puntos suspensivos"},
+        {0x2022u, "bullet"},
+        {0x20ACu, "euro"},
+    };
+    bool all = true;
+    for (auto& w : wanted) {
+        const struct sx_noto_glyph* g = sx_noto_glyph(w.cp);
+        if (g == fallback || g->rows == 0 || g->advance <= 0) {
+            printf("    falta U+%04X (%s)\n", w.cp, w.name);
+            all = false;
+        }
+    }
+    check(all, "los ocho estan horneados y son dibujables");
+
+    // Y el ancho de una cadena con acento tiene que contar CARACTERES.
+    const char* accented = "Configuraci\xC3\xB3n";
+    const char* plain = "Configuracion";
+    int wa = 0, wp = 0;
+    for (const char* c = accented; *c;) { wa += sx_noto_glyph(sx_utf8_next(&c))->advance; }
+    for (const char* c = plain; *c;) { wp += sx_noto_glyph(sx_utf8_next(&c))->advance; }
+    printf("    ancho con acento=%d  sin acento=%d\n", wa, wp);
+    check(wa > 0 && wa == wp, "'Configuracion' mide igual con y sin tilde (misma cantidad de glifos)");
+}
+
+/* ---- objeto fuente ------------------------------------------------------ */
+
+void case_font_selection_round_trips() {
+    printf("caso: fuente -- seleccionar y restaurar\n");
+    Canvas c;
+    check(sx_painter_font(&c.painter) == SX_FONT_UI, "arranca en la fuente de UI");
+
+    const int previous = sx_painter_set_font(&c.painter, SX_FONT_MONO);
+    check(previous == SX_FONT_UI, "set_font devuelve la anterior");
+    check(sx_painter_font(&c.painter) == SX_FONT_MONO, "y quedo la mono");
+
+    sx_painter_set_font(&c.painter, previous);
+    check(sx_painter_font(&c.painter) == SX_FONT_UI, "restaurar funciona");
+
+    sx_painter_set_font(&c.painter, 99);
+    check(sx_painter_font(&c.painter) == SX_FONT_UI, "un id invalido no cambia nada");
+}
+
+void case_font_drives_metrics_and_blit() {
+    printf("caso: fuente -- manda en metricas y en que blit se usa\n");
+    Canvas c;
+    g_mono_blits = 0;
+    g_ui_blits = 0;
+
+    // Los stubs dan anchos distintos por fuente (1 px/char vs 8 px/char), asi
+    // que las metricas delatan cual se consulto.
+    const int ui_width = sx_painter_text_width(&c.painter, "abcd");
+    sx_painter_set_font(&c.painter, SX_FONT_MONO);
+    const int mono_width = sx_painter_text_width(&c.painter, "abcd");
+    check(ui_width == 4 && mono_width == 32, "text_width sigue a la fuente activa");
+    check(sx_painter_text_height(&c.painter) == 16, "y text_height tambien");
+
+    sx_painter_draw_text(&c.painter, 0, 0, "abcd", kInk);
+    check(g_mono_blits == 1 && g_ui_blits == 0, "con mono activa se usa el blit mono");
+
+    sx_painter_set_font(&c.painter, SX_FONT_UI);
+    sx_painter_draw_text(&c.painter, 0, 0, "abcd", kInk);
+    check(g_ui_blits == 1, "y con la de UI, el de UI");
+}
+
+void case_font_survives_clip_and_region() {
+    printf("caso: fuente -- el clip no la pisa\n");
+    Canvas c;
+    sx_region r;
+    sx_region_set_rect(&r, sx_rect_make(0, 0, 10, 10));
+
+    sx_painter_set_font(&c.painter, SX_FONT_MONO);
+    g_mono_blits = 0;
+    g_ui_blits = 0;
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_draw_text(&c.painter, 0, 0, "ab", kInk);
+    sx_painter_pop_clip(&c.painter);
+
+    check(g_mono_blits >= 1 && g_ui_blits == 0, "el camino por region respeta la fuente");
+    check(sx_painter_font(&c.painter) == SX_FONT_MONO, "y el pop del clip no la toca");
+}
+
 } // namespace
 
 /* ---- stubs de las primitivas crudas ------------------------------------- */
@@ -941,14 +1123,38 @@ int gfx_text_height(void) {
 }
 
 void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+    ++g_ui_blits;
     if (text == nullptr) {
         return;
     }
     gfx_rect(pixels, info, x, y, (int)strlen(text), 1, colour);
 }
 
+/* La fuente mono en el stub mide 8x16 por celda, como la UniFont real: los
+ * anchos distintos son justamente lo que delata cual fuente se consulto. */
+int gfx_text_width_mono(const char* text) {
+    return text == nullptr ? 0 : (int)strlen(text) * 8;
+}
+
+int gfx_cell_height(void) {
+    return 16;
+}
+
+void gfx_blit_text_mono(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+    ++g_mono_blits;
+    (void)pixels; (void)info; (void)x; (void)y; (void)text; (void)colour;
+}
+
+void gfx_blit_text_mono_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                             int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    ++g_mono_blits;
+    (void)pixels; (void)info; (void)x; (void)y; (void)text; (void)colour;
+    (void)clip_x0; (void)clip_y0; (void)clip_x1; (void)clip_y1;
+}
+
 void gfx_blit_text_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                         int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    ++g_ui_blits;
     if (text == nullptr) {
         return;
     }
@@ -1000,6 +1206,14 @@ int main() {
     case_region_overflow_is_a_superset();
     case_subtract_alone_does_not_over_cover();
     case_region_beats_rect_set_on_multi_rect_damage();
+
+    case_utf8_decodes_codepoints();
+    case_utf8_walks_a_whole_string();
+    case_utf8_invalid_always_advances();
+    case_font_table_has_the_codepoints_that_matter();
+    case_font_selection_round_trips();
+    case_font_drives_metrics_and_blit();
+    case_font_survives_clip_and_region();
 
     case_painter_clips_to_region();
     case_painter_region_clip_with_hole();

@@ -336,6 +336,7 @@ void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap)
     painter->origin.x = 0;
     painter->origin.y = 0;
     painter->origin_depth = 0;
+    painter->font = SX_FONT_UI;
     painter->clip_region = 0;
     painter->clip_region_origin.x = 0;
     painter->clip_region_origin.y = 0;
@@ -785,14 +786,72 @@ void sx_painter_draw_scaled_bitmap_nearest(
     }
 }
 
+int sx_painter_set_font(struct sx_painter* painter, int font)
+{
+    int previous;
+
+    if (painter == 0)
+    {
+        return SX_FONT_UI;
+    }
+    previous = painter->font;
+    if (font == SX_FONT_UI || font == SX_FONT_MONO)
+    {
+        painter->font = font;
+    }
+    return previous;
+}
+
+int sx_painter_font(const struct sx_painter* painter)
+{
+    return painter == 0 ? SX_FONT_UI : painter->font;
+}
+
+int sx_painter_text_width(const struct sx_painter* painter, const char* text)
+{
+    if (painter != 0 && painter->font == SX_FONT_MONO)
+    {
+        return gfx_text_width_mono(text);
+    }
+    return gfx_text_width(text);
+}
+
+int sx_painter_text_height(const struct sx_painter* painter)
+{
+    if (painter != 0 && painter->font == SX_FONT_MONO)
+    {
+        return gfx_cell_height();
+    }
+    return gfx_text_height();
+}
+
+/* Un blit de texto con clip explicito, ya en coordenadas de dispositivo. Es el
+ * unico punto donde se elige la fuente: de ahi para arriba, draw_text solo se
+ * ocupa del clip y de los pedazos. */
+static void sx_blit_text_clipped(
+    struct sx_painter* painter, int x, int y, const char* text, uint32_t colour, struct sx_rect clip)
+{
+    if (painter->font == SX_FONT_MONO)
+    {
+        gfx_blit_text_mono_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
+                                 clip.x, clip.y, sx_rect_right(clip), sx_rect_bottom(clip));
+        return;
+    }
+    gfx_blit_text_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
+                        clip.x, clip.y, sx_rect_right(clip), sx_rect_bottom(clip));
+}
+
 void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* text, uint32_t colour)
 {
+    struct sx_rect text_rect;
+
     if (painter == 0 || painter->target == 0 || text == 0)
     {
         return;
     }
     x += painter->origin.x;
     y += painter->origin.y;
+    text_rect = sx_rect_make(x, y, sx_painter_text_width(painter, text), sx_painter_text_height(painter));
 
     if (painter->clip_region != 0)
     {
@@ -801,27 +860,27 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
          * comentario de gfx_blit_text_impl sobre repintar por fragmentos. */
         struct sx_clip_iter iter;
         struct sx_rect piece;
-        struct sx_rect text_rect = sx_rect_make(x, y, gfx_text_width(text), gfx_text_height());
 
         for (sx_clip_iter_init(&iter, painter, text_rect); sx_clip_iter_next(&iter, &piece); )
         {
-            gfx_blit_text_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
-                                piece.x, piece.y, sx_rect_right(piece), sx_rect_bottom(piece));
+            sx_blit_text_clipped(painter, x, y, text, colour, piece);
         }
         return;
     }
 
     if (painter->has_clip)
     {
-        struct sx_rect text_rect = sx_rect_make(x, y, gfx_text_width(text), gfx_text_height());
-        text_rect = sx_rect_intersect(text_rect, painter->clip_rect);
-        if (sx_rect_is_empty(text_rect))
+        if (sx_rect_is_empty(sx_rect_intersect(text_rect, painter->clip_rect)))
         {
             return;
         }
-        gfx_blit_text_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
-                            painter->clip_rect.x, painter->clip_rect.y,
-                            sx_rect_right(painter->clip_rect), sx_rect_bottom(painter->clip_rect));
+        sx_blit_text_clipped(painter, x, y, text, colour, painter->clip_rect);
+        return;
+    }
+
+    if (painter->font == SX_FONT_MONO)
+    {
+        gfx_blit_text_mono(painter->target->pixels, &painter->target->info, x, y, text, colour);
         return;
     }
     gfx_blit_text(painter->target->pixels, &painter->target->info, x, y, text, colour);

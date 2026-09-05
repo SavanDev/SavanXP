@@ -4,14 +4,7 @@
  */
 #include "gfx_font_noto.inc"
 #include "console_font_unifont.inc"
-
-/* Map a byte to its Noto glyph, falling back to '?' for anything unprintable. */
-static const struct sx_noto_glyph* gfx_noto_glyph(unsigned char c) {
-    if (c < SX_NOTO_FIRST || c > SX_NOTO_LAST) {
-        c = (unsigned char)'?';
-    }
-    return &kNotoGlyphs[c - SX_NOTO_FIRST];
-}
+#include "gfx_utf8.inc"
 
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue) {
     return ((uint32_t)red << 16) | ((uint32_t)green << 8) | (uint32_t)blue;
@@ -854,8 +847,7 @@ int gfx_text_width(const char* text) {
         return 0;
     }
     while (*text != '\0') {
-        width += gfx_noto_glyph((unsigned char)*text)->advance;
-        ++text;
+        width += sx_noto_glyph(sx_utf8_next(&text))->advance;
     }
     return width;
 }
@@ -874,7 +866,7 @@ static void gfx_blit_text_impl(uint32_t* pixels, const struct savanxp_fb_info* i
     int pen_x = x;
     int baseline = y + SX_NOTO_ASCENT;
     while (text != 0 && *text != '\0') {
-        const struct sx_noto_glyph* g = gfx_noto_glyph((unsigned char)*text);
+        const struct sx_noto_glyph* g = sx_noto_glyph(sx_utf8_next(&text));
         int row;
         int column;
         for (row = 0; row < g->rows; ++row) {
@@ -894,7 +886,6 @@ static void gfx_blit_text_impl(uint32_t* pixels, const struct savanxp_fb_info* i
             }
         }
         pen_x += g->advance;
-        ++text;
     }
 }
 
@@ -922,27 +913,46 @@ int gfx_text_width_mono(const char* text) {
     if (text == 0) {
         return 0;
     }
+    /* Celdas, no bytes: en UTF-8 un caracter acentuado ocupa dos bytes pero una
+     * sola celda de la grilla monospace. */
     while (*text != '\0') {
+        (void)sx_utf8_next(&text);
         ++count;
-        ++text;
     }
     return count * SX_CONSOLE_GLYPH_W;
 }
 
-void gfx_blit_text_mono(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+static void gfx_blit_text_mono_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                                     int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
     int pen_x = x;
     while (text != 0 && *text != '\0') {
-        const unsigned char* glyph = sx_console_glyph((unsigned char)*text);
+        const unsigned char* glyph = sx_console_glyph(sx_utf8_next(&text));
         int row;
         int column;
         for (row = 0; row < SX_CONSOLE_GLYPH_H; ++row) {
+            int py = y + row;
+            if (has_clip && (py < clip_y0 || py >= clip_y1)) {
+                continue;
+            }
             for (column = 0; column < SX_CONSOLE_GLYPH_W; ++column) {
+                int px = pen_x + column;
+                if (has_clip && (px < clip_x0 || px >= clip_x1)) {
+                    continue;
+                }
                 if ((glyph[row] & (0x80u >> column)) != 0) {
-                    gfx_pixel(pixels, info, pen_x + column, y + row, colour);
+                    gfx_pixel(pixels, info, px, py, colour);
                 }
             }
         }
         pen_x += SX_CONSOLE_GLYPH_W;
-        ++text;
     }
+}
+
+void gfx_blit_text_mono(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+    gfx_blit_text_mono_impl(pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
+}
+
+void gfx_blit_text_mono_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                              int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    gfx_blit_text_mono_impl(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
 }

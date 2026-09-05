@@ -62,6 +62,19 @@ struct sx_brush {
  * del riel de las barras de scroll. */
 extern const uint8_t sx_pattern_checker_50[8];
 
+/* Las dos fuentes horneadas (tools/font/genfont.py). Antes la eleccion estaba
+ * clavada en QUE FUNCION se llamaba -- gfx_blit_text contra gfx_blit_text_mono;
+ * ahora es un valor que el painter selecciona, que es el equivalente de
+ * SelectObject(hFont). Ambas se indexan por codepoint y el texto se decodifica
+ * como UTF-8. */
+enum sx_font_id {
+    /* Noto Sans, proporcional y antialiased. La de la UI. */
+    SX_FONT_UI = 0,
+    /* UniFont 8x16, monoespaciada y de 1 bit. La de la consola; ademas trae
+     * box drawing y bloques. */
+    SX_FONT_MONO = 1,
+};
+
 struct sx_painter {
     struct sx_bitmap* target;
     /* En coordenadas de dispositivo, igual que origin: las funciones publicas
@@ -82,6 +95,8 @@ struct sx_painter {
      * origen de entonces para poder traducir despues. clip_rect siempre sigue
      * siendo el bounding box del clip, region incluida, asi que el descarte
      * rapido no necesita mirar la region. */
+    /* Fuente activa (sx_font_id). Arranca en SX_FONT_UI. */
+    int font;
     const struct sx_region* clip_region;
     struct sx_point clip_region_origin;
     const struct sx_region* saved_clip_region[SX_PAINTER_CLIP_STACK_DEPTH];
@@ -183,6 +198,14 @@ void sx_painter_draw_scaled_bitmap_nearest(
     struct sx_rect destination,
     struct sx_rect source_rect);
 void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* text, uint32_t colour);
+/* Selecciona la fuente y devuelve la anterior, para poder restaurarla. Afecta a
+ * draw_text y a las metricas de sx_painter_text_width/height. */
+int sx_painter_set_font(struct sx_painter* painter, int font);
+int sx_painter_font(const struct sx_painter* painter);
+/* Metricas de la fuente ACTIVA del painter. gfx_text_width/height siguen siendo
+ * las de la UI a secas, para quien no tiene painter a mano. */
+int sx_painter_text_width(const struct sx_painter* painter, const char* text);
+int sx_painter_text_height(const struct sx_painter* painter);
 
 void sx_region_clear(struct sx_region* region);
 void sx_region_set_rect(struct sx_region* region, struct sx_rect rect);

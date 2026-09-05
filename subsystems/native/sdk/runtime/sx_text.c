@@ -11,16 +11,13 @@
  */
 #include "savanxp_native.h"
 
-/* Datos de la fuente: struct sx_noto_glyph, kNotoGlyphs[], kNotoCoverage[] y
- * los #define SX_NOTO_* (FIRST/LAST/ASCENT/LINE_HEIGHT). */
+/* Datos de la fuente: struct sx_noto_glyph, kNotoGlyphs[], kNotoCoverage[], la
+ * busqueda por codepoint sx_noto_glyph() y los #define SX_NOTO_*
+ * (ASCENT/DESCENT/LINE_HEIGHT). */
 #include "../../../posix/sdk/v1/runtime/gfx_font_noto.inc"
-
-static const struct sx_noto_glyph* sxn_glyph(unsigned char c) {
-    if (c < SX_NOTO_FIRST || c > SX_NOTO_LAST) {
-        return &kNotoGlyphs[0]; /* espacio: avance seguro para caracteres fuera de rango */
-    }
-    return &kNotoGlyphs[c - SX_NOTO_FIRST];
-}
+/* El decodificador UTF-8, compartido igual que los datos de la fuente: la
+ * tabla se indexa por codepoint y las cadenas del sistema son UTF-8. */
+#include "../../../posix/sdk/v1/runtime/gfx_utf8.inc"
 
 int sxn_text_width(const char* text) {
     int width = 0;
@@ -28,8 +25,7 @@ int sxn_text_width(const char* text) {
         return 0;
     }
     while (*text != '\0') {
-        width += sxn_glyph((unsigned char)*text)->advance;
-        ++text;
+        width += sx_noto_glyph(sx_utf8_next(&text))->advance;
     }
     return width;
 }
@@ -72,7 +68,7 @@ void sxn_text_draw(unsigned int* pixels, int stride, int width, int height,
         return;
     }
     while (*text != '\0') {
-        const struct sx_noto_glyph* g = sxn_glyph((unsigned char)*text);
+        const struct sx_noto_glyph* g = sx_noto_glyph(sx_utf8_next(&text));
         int row;
         for (row = 0; row < g->rows; ++row) {
             int py = baseline - g->top + row;
@@ -93,6 +89,5 @@ void sxn_text_draw(unsigned int* pixels, int stride, int width, int height,
             }
         }
         pen_x += g->advance;
-        ++text;
     }
 }

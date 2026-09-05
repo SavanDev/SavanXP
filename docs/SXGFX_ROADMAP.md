@@ -1,6 +1,6 @@
 # SxGFX — endurecer la capa 2D como GDI32
 
-> **Estado: LOTE 1 COMPLETO, en master.** Lo demás sigue siendo propuesta. El
+> **Estado: LOTES 1 y 2 COMPLETOS, en master.** Queda el lote 3. El
 > documento es el plan: qué le falta a SxGFX medido contra el rol que le asigna
 > [SYSTEM_LAYERING.md](SYSTEM_LAYERING.md) —**GDI32**, la capa de rasterización
 > 2D debajo de SXGUI-C— y en qué orden conviene atacarlo.
@@ -45,7 +45,33 @@
 > (los `sxgui_hline`/`sxgui_vline`, los bucles de píxel del focus rect). Se
 > conserva así porque el valor es el razonamiento, no el estado.
 >
-> **Lo que sigue es el lote 2**: regiones de clip (2.1) y objeto fuente (2.2).
+> Lo que quedó construido en el lote 2:
+>
+> - **`sx_region`** (2.1): región por bandas en Y en forma canónica, con
+>   unión/resta/intersección **exactas** contra un rect desde un motor único.
+>   `sx_painter_push_clip_region` la usa de clip, compartiendo pila con
+>   `push_clip`. `windowd` compone contra ella: **una** llamada a
+>   `wm_paint_layer` por capa en vez de una por sub-rect.
+> - **Fuentes** (2.2): decodificación UTF-8 (`gfx_utf8.inc`, compartido por el
+>   SDK posix y el runtime nativo igual que los datos de la fuente), tabla de
+>   Noto reindexada **por codepoint** con rangos —Latin-1 más puntuación
+>   tipográfica y el euro— y `sx_painter_set_font` seleccionando entre
+>   `SX_FONT_UI` y `SX_FONT_MONO`, que es el `SelectObject(hFont)` que faltaba.
+>   El camino mono ganó su blit con clip, que no existía.
+>
+> **Medición que corrigió una suposición:** la resta de `sx_rect_set` ya era
+> exacta (usa `push_raw`, que no fusiona), así que con una sola fuente de daño la
+> región no gana área — 752 px por los dos caminos. Lo que sobre-cubre es
+> `sx_rect_set_add`, que fusiona por bounding box en cuanto dos rects sucios se
+> tocan: con daño en tres rects son 198 px exactos contra 358. Los dos casos
+> quedaron como test para que no se vuelva a suponer.
+>
+> **El UTF-8 es habilitante, no un arreglo:** hoy no hay ni un literal no-ASCII
+> en la UI, así que nada se veía mal. Lo que cambia es que ahora *se puede*
+> escribir "Configuración" sin que salga como dos glifos.
+>
+> **Lo que sigue es el lote 3**, por demanda: raster ops, geometría, escalado con
+> calidad, memory DC y paths.
 
 ## Por qué GDI32 y no DirectX
 
@@ -209,10 +235,10 @@ líneas.
 1. ~~**Lote 1 completo** (1.1 + 1.3 + 1.2, en ese orden).~~ **Hecho.** Aditivo,
    sin tocar el kernel, y borró código de SXGUI-C.
 2. ~~**El clamp de `source_rect`.**~~ **Hecho**, junto con el lote 1.
-3. **2.1 (regiones).** Absorbe el problema de sobre-cobertura de
-   `sx_rect_set_add` y destraba ventanas no rectangulares.
-4. **2.2 (fuentes).** El único con una dependencia externa real: el pipeline de
-   horneado en `tools/font/genfont.py` tiene que emitir más que 256 glifos.
+3. ~~**2.1 (regiones).**~~ **Hecho.** Absorbió la sobre-cobertura de
+   `sx_rect_set_add` y dejó lista la base para ventanas no rectangulares.
+4. ~~**2.2 (fuentes).**~~ **Hecho**, incluido el cambio en
+   `tools/font/genfont.py` para hornear por rangos de codepoint.
 5. **Lote 3, por demanda.** Cada ítem cuando aparezca el consumidor que lo pide.
 
 Verificación: todo esto cae bajo el preview headless del toolkit en el host
