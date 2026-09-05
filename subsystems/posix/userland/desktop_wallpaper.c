@@ -312,12 +312,12 @@ static void draw_gradient(struct sx_painter *painter, const struct savanxp_fb_in
 /* Rejilla sutil sobre teal oscuro. Solo recorre las lineas que cruzan el clip
  * activo del painter: el compose repinta por fragmentos y las lineas 1px son
  * demasiadas para iterarlas todas en cada sub-rect. */
-static void draw_pattern(struct sx_painter *painter, const struct savanxp_fb_info *info)
+static void draw_pattern(struct sx_painter *painter)
 {
     const int cell = 24;
     const uint32_t base = gfx_rgb(0, 104, 104);
     const uint32_t line = gfx_rgb(0, 122, 122);
-    struct sx_rect clip = painter->has_clip ? painter->clip_rect : sx_rect_make(0, 0, (int)info->width, (int)info->height);
+    struct sx_rect clip = sx_painter_clip_bounds(painter);
     int start;
     int position;
 
@@ -326,12 +326,12 @@ static void draw_pattern(struct sx_painter *painter, const struct savanxp_fb_inf
     start = (clip.x / cell) * cell;
     for (position = start; position < clip.x + clip.width; position += cell)
     {
-        sx_painter_fill_rect(painter, sx_rect_make(position, clip.y, 1, clip.height), line);
+        sx_painter_vline(painter, position, clip.y, clip.height, line);
     }
     start = (clip.y / cell) * cell;
     for (position = start; position < clip.y + clip.height; position += cell)
     {
-        sx_painter_fill_rect(painter, sx_rect_make(clip.x, position, clip.width, 1), line);
+        sx_painter_hline(painter, clip.x, position, clip.width, line);
     }
 }
 
@@ -373,7 +373,7 @@ void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_
         draw_gradient(painter, info);
         return;
     case DESKTOP_WALLPAPER_PATTERN:
-        draw_pattern(painter, info);
+        draw_pattern(painter);
         return;
     case DESKTOP_WALLPAPER_IMAGE:
         if (g_image_pixels != 0)

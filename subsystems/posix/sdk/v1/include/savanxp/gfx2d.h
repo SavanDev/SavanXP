@@ -41,14 +41,41 @@ struct sx_bitmap {
 };
 
 #define SX_PAINTER_CLIP_STACK_DEPTH 16
+#define SX_PAINTER_ORIGIN_STACK_DEPTH 16
+
+/* Un brush al estilo GDI: color solido, o una trama de 8x8 de 1 bit. La trama
+ * se ancla a coordenadas de DISPOSITIVO (no al rect que se pinta), asi dos
+ * controles vecinos caen en la misma grilla en vez de bailar segun donde
+ * arranque cada uno -- es la regla que los dibujos a mano de sxgui ya seguian.
+ * Bit 7 de cada byte es la columna izquierda; fila i = pattern[i & 7]. */
+struct sx_brush {
+    uint32_t colour;
+    uint32_t back_colour;
+    uint8_t pattern[8];
+    int has_pattern;
+    /* Con trama: los bits en 0 no se pintan (deja pasar el fondo) en vez de
+     * rellenarse con back_colour. */
+    int transparent;
+};
+
+/* Trama al 50%: pinta donde (x + y) es par. Es la del focus rect punteado y la
+ * del riel de las barras de scroll. */
+extern const uint8_t sx_pattern_checker_50[8];
 
 struct sx_painter {
     struct sx_bitmap* target;
+    /* En coordenadas de dispositivo, igual que origin: las funciones publicas
+     * traducen lo que recibe el llamador antes de tocar estos campos. */
     struct sx_rect clip_rect;
     int has_clip;
     struct sx_rect saved_clip[SX_PAINTER_CLIP_STACK_DEPTH];
     int saved_has_clip[SX_PAINTER_CLIP_STACK_DEPTH];
     int clip_depth;
+    /* Desplazamiento sumado a toda coordenada que entra por la API publica
+     * (analogo a SetViewportOrgEx de GDI). Arranca en (0,0). */
+    struct sx_point origin;
+    struct sx_point saved_origin[SX_PAINTER_ORIGIN_STACK_DEPTH];
+    int origin_depth;
 };
 
 struct sx_rect_set {
@@ -67,14 +94,34 @@ int sx_rect_contains_point(struct sx_rect rect, int x, int y);
 
 void sx_bitmap_wrap(struct sx_bitmap* bitmap, uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t format);
 
+struct sx_brush sx_brush_solid(uint32_t colour);
+struct sx_brush sx_brush_pattern(const uint8_t pattern[8], uint32_t colour, uint32_t back_colour);
+struct sx_brush sx_brush_pattern_transparent(const uint8_t pattern[8], uint32_t colour);
+
 void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap);
 void sx_painter_clear_clip(struct sx_painter* painter);
 void sx_painter_add_clip_rect(struct sx_painter* painter, struct sx_rect rect);
 int sx_painter_push_clip(struct sx_painter* painter, struct sx_rect rect);
 void sx_painter_pop_clip(struct sx_painter* painter);
+
+/* Corre el origen dx/dy relativo al actual. Devuelve 0 si la pila esta llena
+ * (origen sin cambios); emparejar cada push exitoso con un pop. */
+int sx_painter_push_origin(struct sx_painter* painter, int dx, int dy);
+void sx_painter_pop_origin(struct sx_painter* painter);
+struct sx_point sx_painter_origin(const struct sx_painter* painter);
+/* El clip activo en coordenadas LOCALES (las mismas que aceptan las funciones
+ * de dibujo). Sin clip devuelve el target entero. Es la forma soportada de
+ * consultarlo: leer painter->clip_rect a mano da coordenadas de dispositivo. */
+struct sx_rect sx_painter_clip_bounds(const struct sx_painter* painter);
+
 void sx_painter_fill(struct sx_painter* painter, uint32_t colour);
 void sx_painter_fill_rect(struct sx_painter* painter, struct sx_rect rect, uint32_t colour);
 void sx_painter_draw_frame(struct sx_painter* painter, struct sx_rect rect, uint32_t colour);
+void sx_painter_set_pixel(struct sx_painter* painter, int x, int y, uint32_t colour);
+void sx_painter_hline(struct sx_painter* painter, int x, int y, int width, uint32_t colour);
+void sx_painter_vline(struct sx_painter* painter, int x, int y, int height, uint32_t colour);
+void sx_painter_fill_rect_brush(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush);
+void sx_painter_draw_frame_brush(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush);
 void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* source, int dst_x, int dst_y);
 void sx_painter_draw_scaled_bitmap_nearest(
     struct sx_painter* painter,

@@ -79,6 +79,68 @@ static struct sx_rect sx_apply_painter_clip(const struct sx_painter* painter, st
     return sx_rect_intersect(rect, painter->clip_rect);
 }
 
+/* Coordenadas del llamador -> coordenadas de dispositivo. Toda funcion publica
+ * que recibe posiciones pasa por aca una sola vez; de ahi para adentro el
+ * codigo trabaja en coordenadas de dispositivo, que es donde viven el clip, el
+ * bitmap y el anclaje de las tramas. */
+static struct sx_rect sx_to_device_rect(const struct sx_painter* painter, struct sx_rect rect)
+{
+    if (painter == 0)
+    {
+        return rect;
+    }
+    return sx_rect_translate(rect, painter->origin.x, painter->origin.y);
+}
+
+const uint8_t sx_pattern_checker_50[8] = {
+    0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u, 0xaau, 0x55u,
+};
+
+struct sx_brush sx_brush_solid(uint32_t colour)
+{
+    struct sx_brush brush;
+    memset(&brush, 0, sizeof(brush));
+    brush.colour = colour;
+    brush.back_colour = colour;
+    return brush;
+}
+
+struct sx_brush sx_brush_pattern(const uint8_t pattern[8], uint32_t colour, uint32_t back_colour)
+{
+    struct sx_brush brush;
+    int index;
+
+    memset(&brush, 0, sizeof(brush));
+    brush.colour = colour;
+    brush.back_colour = back_colour;
+    if (pattern == 0)
+    {
+        brush.back_colour = colour;
+        return brush;
+    }
+    for (index = 0; index < 8; ++index)
+    {
+        brush.pattern[index] = pattern[index];
+    }
+    brush.has_pattern = 1;
+    return brush;
+}
+
+struct sx_brush sx_brush_pattern_transparent(const uint8_t pattern[8], uint32_t colour)
+{
+    struct sx_brush brush = sx_brush_pattern(pattern, colour, colour);
+    brush.transparent = brush.has_pattern;
+    return brush;
+}
+
+/* 1 si la trama pinta en esa celda de la grilla de dispositivo. El AND con 7
+ * mantiene el anclaje absoluto incluso para coordenadas negativas, porque las
+ * posiciones ya vienen clipeadas al bitmap y son no negativas. */
+static int sx_brush_covers(const struct sx_brush* brush, int device_x, int device_y)
+{
+    return (brush->pattern[device_y & 7] >> (7 - (device_x & 7))) & 1u;
+}
+
 struct sx_rect sx_rect_make(int x, int y, int width, int height)
 {
     struct sx_rect rect = {x, y, width, height};
@@ -188,6 +250,66 @@ void sx_painter_init(struct sx_painter* painter, struct sx_bitmap* bitmap)
     painter->clip_rect = sx_rect_make(0, 0, 0, 0);
     painter->has_clip = 0;
     painter->clip_depth = 0;
+    painter->origin.x = 0;
+    painter->origin.y = 0;
+    painter->origin_depth = 0;
+}
+
+int sx_painter_push_origin(struct sx_painter* painter, int dx, int dy)
+{
+    if (painter == 0 || painter->origin_depth >= SX_PAINTER_ORIGIN_STACK_DEPTH)
+    {
+        return 0;
+    }
+
+    painter->saved_origin[painter->origin_depth] = painter->origin;
+    painter->origin_depth += 1;
+    painter->origin.x += dx;
+    painter->origin.y += dy;
+    return 1;
+}
+
+void sx_painter_pop_origin(struct sx_painter* painter)
+{
+    if (painter == 0 || painter->origin_depth <= 0)
+    {
+        return;
+    }
+    painter->origin_depth -= 1;
+    painter->origin = painter->saved_origin[painter->origin_depth];
+}
+
+struct sx_point sx_painter_origin(const struct sx_painter* painter)
+{
+    struct sx_point origin = {0, 0};
+    if (painter != 0)
+    {
+        origin = painter->origin;
+    }
+    return origin;
+}
+
+struct sx_rect sx_painter_clip_bounds(const struct sx_painter* painter)
+{
+    struct sx_rect bounds;
+
+    if (painter == 0)
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    if (painter->has_clip)
+    {
+        bounds = painter->clip_rect;
+    }
+    else if (painter->target != 0)
+    {
+        bounds = sx_rect_make(0, 0, (int)painter->target->info.width, (int)painter->target->info.height);
+    }
+    else
+    {
+        return sx_rect_make(0, 0, 0, 0);
+    }
+    return sx_rect_translate(bounds, -painter->origin.x, -painter->origin.y);
 }
 
 void sx_painter_clear_clip(struct sx_painter* painter)
@@ -204,6 +326,7 @@ void sx_painter_add_clip_rect(struct sx_painter* painter, struct sx_rect rect)
     {
         return;
     }
+    rect = sx_to_device_rect(painter, rect);
     if (!painter->has_clip)
     {
         painter->clip_rect = rect;
@@ -227,6 +350,7 @@ int sx_painter_push_clip(struct sx_painter* painter, struct sx_rect rect)
     painter->saved_has_clip[painter->clip_depth] = painter->has_clip;
     painter->clip_depth += 1;
 
+    rect = sx_to_device_rect(painter, rect);
     if (painter->has_clip)
     {
         painter->clip_rect = sx_rect_intersect(painter->clip_rect, rect);
@@ -250,25 +374,11 @@ void sx_painter_pop_clip(struct sx_painter* painter)
     painter->has_clip = painter->saved_has_clip[painter->clip_depth];
 }
 
-void sx_painter_fill(struct sx_painter* painter, uint32_t colour)
+/* Rellena un rect que YA esta en coordenadas de dispositivo. Es el punto por el
+ * que pasa todo relleno solido: las funciones publicas traducen por el origen y
+ * delegan aca, asi el origen se aplica exactamente una vez. */
+static void sx_fill_rect_device(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
 {
-    struct sx_rect rect;
-
-    if (painter == 0 || painter->target == 0)
-    {
-        return;
-    }
-    rect = sx_rect_make(0, 0, (int)painter->target->info.width, (int)painter->target->info.height);
-    sx_painter_fill_rect(painter, rect, colour);
-}
-
-void sx_painter_fill_rect(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
-{
-    if (painter == 0 || painter->target == 0)
-    {
-        return;
-    }
-
     rect = sx_apply_painter_clip(painter, rect);
     if (!sx_clip_rect_to_bitmap(painter->target, &rect))
     {
@@ -278,31 +388,137 @@ void sx_painter_fill_rect(struct sx_painter* painter, struct sx_rect rect, uint3
     gfx_rect(painter->target->pixels, &painter->target->info, rect.x, rect.y, rect.width, rect.height, colour);
 }
 
-void sx_painter_draw_frame(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
+/* Igual que la anterior pero con brush. El recorrido por pixel solo se paga
+ * cuando el brush tiene trama; el caso solido cae al relleno de rects de una. */
+static void sx_fill_rect_device_brush(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush)
 {
-    if (painter == 0 || painter->target == 0 || rect.width <= 0 || rect.height <= 0)
+    uint32_t stride;
+    int x;
+    int y;
+
+    if (!brush->has_pattern)
+    {
+        sx_fill_rect_device(painter, rect, brush->colour);
+        return;
+    }
+
+    rect = sx_apply_painter_clip(painter, rect);
+    if (!sx_clip_rect_to_bitmap(painter->target, &rect))
     {
         return;
     }
 
-    /* Draw the border of the ORIGINAL rect as four edge strips, each clipped by
-     * sx_painter_fill_rect. Clipping the rect first and framing the result would
-     * trace a spurious border around every partial-repaint fragment (e.g. the
-     * cursor's damage footprint over a dialog), which is exactly the residue
-     * bug. Filling the true edges only paints border pixels that actually exist. */
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), colour);
+    stride = gfx_stride_pixels(&painter->target->info);
+    for (y = rect.y; y < sx_rect_bottom(rect); ++y)
+    {
+        uint32_t* row = painter->target->pixels + ((size_t)y * stride);
+        for (x = rect.x; x < sx_rect_right(rect); ++x)
+        {
+            if (sx_brush_covers(brush, x, y))
+            {
+                row[x] = brush->colour;
+            }
+            else if (!brush->transparent)
+            {
+                row[x] = brush->back_colour;
+            }
+        }
+    }
+}
+
+/* Las cuatro tiras del borde del rect ORIGINAL, cada una clipeada por separado.
+ * Clipear el rect primero y enmarcar el resultado trazaria un borde espurio
+ * alrededor de cada fragmento de repintado parcial (por ejemplo la huella de
+ * daño del cursor sobre un dialogo), que es justo el bug de residuos. Pintar
+ * los bordes verdaderos solo toca pixeles de borde que existen de verdad. */
+static void sx_draw_frame_device(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush)
+{
+    sx_fill_rect_device_brush(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), brush);
     if (rect.height > 1)
     {
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), colour);
+        sx_fill_rect_device_brush(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), brush);
     }
     if (rect.height > 2)
     {
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + 1, 1, rect.height - 2), colour);
+        sx_fill_rect_device_brush(painter, sx_rect_make(rect.x, rect.y + 1, 1, rect.height - 2), brush);
         if (rect.width > 1)
         {
-            sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y + 1, 1, rect.height - 2), colour);
+            sx_fill_rect_device_brush(painter, sx_rect_make(rect.x + rect.width - 1, rect.y + 1, 1, rect.height - 2), brush);
         }
     }
+}
+
+void sx_painter_fill(struct sx_painter* painter, uint32_t colour)
+{
+    if (painter == 0 || painter->target == 0)
+    {
+        return;
+    }
+    /* El target entero, no el area del origen actual: es un clear. */
+    sx_fill_rect_device(
+        painter,
+        sx_rect_make(0, 0, (int)painter->target->info.width, (int)painter->target->info.height),
+        colour);
+}
+
+void sx_painter_fill_rect(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
+{
+    if (painter == 0 || painter->target == 0)
+    {
+        return;
+    }
+    sx_fill_rect_device(painter, sx_to_device_rect(painter, rect), colour);
+}
+
+void sx_painter_fill_rect_brush(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush)
+{
+    if (painter == 0 || painter->target == 0 || brush == 0)
+    {
+        return;
+    }
+    sx_fill_rect_device_brush(painter, sx_to_device_rect(painter, rect), brush);
+}
+
+void sx_painter_set_pixel(struct sx_painter* painter, int x, int y, uint32_t colour)
+{
+    if (painter == 0 || painter->target == 0)
+    {
+        return;
+    }
+    sx_fill_rect_device(painter, sx_rect_make(x + painter->origin.x, y + painter->origin.y, 1, 1), colour);
+}
+
+void sx_painter_hline(struct sx_painter* painter, int x, int y, int width, uint32_t colour)
+{
+    if (painter == 0 || painter->target == 0)
+    {
+        return;
+    }
+    sx_fill_rect_device(painter, sx_rect_make(x + painter->origin.x, y + painter->origin.y, width, 1), colour);
+}
+
+void sx_painter_vline(struct sx_painter* painter, int x, int y, int height, uint32_t colour)
+{
+    if (painter == 0 || painter->target == 0)
+    {
+        return;
+    }
+    sx_fill_rect_device(painter, sx_rect_make(x + painter->origin.x, y + painter->origin.y, 1, height), colour);
+}
+
+void sx_painter_draw_frame(struct sx_painter* painter, struct sx_rect rect, uint32_t colour)
+{
+    struct sx_brush brush = sx_brush_solid(colour);
+    sx_painter_draw_frame_brush(painter, rect, &brush);
+}
+
+void sx_painter_draw_frame_brush(struct sx_painter* painter, struct sx_rect rect, const struct sx_brush* brush)
+{
+    if (painter == 0 || painter->target == 0 || brush == 0 || rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+    sx_draw_frame_device(painter, sx_to_device_rect(painter, rect), brush);
 }
 
 void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* source, int dst_x, int dst_y)
@@ -319,6 +535,8 @@ void sx_painter_blit_bitmap(struct sx_painter* painter, const struct sx_bitmap* 
         return;
     }
 
+    dst_x += painter->origin.x;
+    dst_y += painter->origin.y;
     src_rect = sx_rect_make(0, 0, (int)source->info.width, (int)source->info.height);
     dst_rect = sx_rect_make(dst_x, dst_y, src_rect.width, src_rect.height);
     dst_rect = sx_apply_painter_clip(painter, dst_rect);
@@ -393,6 +611,19 @@ void sx_painter_draw_scaled_bitmap_nearest(
         return;
     }
 
+    /* El origen del muestreo lo provee el llamador: acotarlo al bitmap fuente es
+     * lo unico que impide que un source_rect fuera de rango lea fuera del
+     * buffer, porque source_x/source_y se derivan de el y no se vuelven a
+     * validar en el bucle. */
+    source_rect = sx_rect_intersect(
+        source_rect,
+        sx_rect_make(0, 0, (int)source->info.width, (int)source->info.height));
+    if (sx_rect_is_empty(source_rect))
+    {
+        return;
+    }
+
+    destination = sx_to_device_rect(painter, destination);
     target_rect = sx_apply_painter_clip(painter, destination);
     if (!sx_clip_rect_to_bitmap(painter->target, &target_rect))
     {
@@ -429,6 +660,8 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
     {
         return;
     }
+    x += painter->origin.x;
+    y += painter->origin.y;
     if (painter->has_clip)
     {
         struct sx_rect text_rect = sx_rect_make(x, y, gfx_text_width(text), gfx_text_height());

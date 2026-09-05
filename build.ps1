@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1505,6 +1505,44 @@ function Run-FfmpegSmokeQemu {
 # userland y build/disk.img es un SxFS crudo sin tabla, asi que un arranque solo
 # puede verificar el caso "no hay nada que rebanar". Las tablas MBR/GPT que
 # importan se arman en memoria.
+# Test de host del painter de SxGFX. No usa QEMU: linkea el painter REAL
+# (runtime/gfx2d.c) contra un bitmap en memoria y afirma pixeles concretos.
+# Lo que se verifica -- que el origen se aplique una sola vez, que la trama de
+# los brushes quede anclada al dispositivo, que el marco no deje residuo al
+# pintarse por fragmentos -- son posiciones exactas que un smoke arriba de QEMU
+# no puede mirar: ahi solo se ve que la pantalla no explote.
+function Run-Gfx2dTest {
+    $clang = Require-Executable "clang" (Get-ToolchainCandidates "clang")
+    $clangxx = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
+    $toolsOut = Join-Path $BuildRoot "tools"
+    New-Directory $toolsOut
+    $exe = Join-Path $toolsOut ("gfx2d-test" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
+    $testRoot = Join-Path $ProjectRoot "tests/host"
+    $sdkInclude = Join-Path $ProjectRoot "subsystems/posix/sdk/v1/include"
+    $painterObj = Join-Path $toolsOut "gfx2d-host.o"
+    $testObj = Join-Path $toolsOut "gfx2d-test.o"
+
+    Write-Host "Compilando gfx2d-test (test de host del painter de SxGFX)..."
+    # gfx2d.c es C y el test es C++: se compilan por separado y se linkean.
+    & $clang @("-c", "-std=c11", "-O1", "-Wall", "-Wextra",
+        "-I", $sdkInclude,
+        (Join-Path $ProjectRoot "subsystems/posix/sdk/v1/runtime/gfx2d.c"),
+        "-o", $painterObj)
+    if ($LASTEXITCODE -ne 0) { throw "Fallo la compilacion de gfx2d.c para el host." }
+
+    & $clangxx @("-c", "-std=c++20", "-O1", "-Wall", "-Wextra",
+        "-D_CRT_SECURE_NO_WARNINGS",
+        "-I", $sdkInclude,
+        (Join-Path $testRoot "gfx2d_test.cpp"),
+        "-o", $testObj)
+    if ($LASTEXITCODE -ne 0) { throw "Fallo la compilacion de gfx2d_test.cpp." }
+
+    & $clangxx @($painterObj, $testObj, "-o", $exe)
+    if ($LASTEXITCODE -ne 0) { throw "Fallo el link de gfx2d-test." }
+
+    & $exe
+    if ($LASTEXITCODE -ne 0) { throw "GFX2D TEST FAIL" }
+}
 function Run-PartitionSmoke {
     $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
     $toolsOut = Join-Path $BuildRoot "tools"
@@ -1643,6 +1681,9 @@ switch ($Command) {
     }
     "partition-smoke" {
         Run-PartitionSmoke
+    }
+    "gfx2d-test" {
+        Run-Gfx2dTest
     }
     "cursor-repro" {
         Run-CursorReproQemu

@@ -1,9 +1,36 @@
 # SxGFX — endurecer la capa 2D como GDI32
 
-> **Estado: propuesta. Nada de esto está implementado.** El documento es el
-> plan: qué le falta a SxGFX medido contra el rol que le asigna
+> **Estado: LOTE 1 COMPLETO, en master.** Lo demás sigue siendo propuesta. El
+> documento es el plan: qué le falta a SxGFX medido contra el rol que le asigna
 > [SYSTEM_LAYERING.md](SYSTEM_LAYERING.md) —**GDI32**, la capa de rasterización
 > 2D debajo de SXGUI-C— y en qué orden conviene atacarlo.
+>
+> Lo que quedó construido en el lote 1:
+>
+> - **Primitivas en el painter**: `sx_painter_set_pixel`, `sx_painter_hline`,
+>   `sx_painter_vline`. SXGUI-C ya no define sus propios `hline`/`vline` ni
+>   pinta píxeles sueltos con rects de 1×1.
+> - **Origen de coordenadas**: `sx_painter_push_origin`/`pop_origin` con pila
+>   propia, aplicado exactamente una vez por llamada pública. El clip pasó a
+>   expresarse en coordenadas locales, y `sx_painter_clip_bounds()` es la forma
+>   soportada de consultarlo (leer `painter->clip_rect` a mano da coordenadas de
+>   dispositivo).
+> - **Brushes**: `sx_brush` sólido o con trama 8×8 de 1 bit anclada a
+>   dispositivo, más `sx_painter_fill_rect_brush` y `draw_frame_brush`. El focus
+>   rect punteado y el riel de las barras de scroll salieron de código a mano.
+> - **El clamp de `source_rect`** en `draw_scaled_bitmap_nearest` (era el paso 2
+>   del orden sugerido).
+>
+> **No landeó `sx_pen`**: no hay consumidor. Las líneas de 1px sólidas ya las
+> cubren `hline`/`vline`, y el único trazo con estilo del toolkit es el focus
+> rect, que es un marco con brush. Agregar el objeto sin quien lo use sería API
+> especulativa; entra cuando aparezca el primer trazo con ancho o estilo.
+>
+> Verificación: `build.ps1 gfx2d-test` (43 checks pixel-exactos sobre el painter
+> real, en el host, sin bootear) más `windowd-smoke`, `progman-smoke`,
+> `filesapp-smoke`, `taskbar-smoke` y `cursor-repro`. El escenario `files` de
+> `tools/shoot.ps1` da capturas **pixel-idénticas** antes y después: el lote 1 es
+> un refactor sin cambio de apariencia.
 >
 > El código en cuestión es
 > [savanxp/gfx2d.h](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h) (API
@@ -12,9 +39,13 @@
 > [runtime/gfx_impl.inc](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc) (las
 > primitivas crudas sobre el buffer y el texto).
 >
-> **La conclusión corta:** los tres primeros ítems son puramente aditivos, no
-> tocan el kernel, y cada uno *borra* código de SXGUI-C en vez de agregarlo. Ese
-> es el lote por el que conviene empezar.
+> **De la sección "Lote 1" para abajo, el documento es el registro del plan
+> original** — con el razonamiento y la evidencia tal como se tomaron. Está en
+> tiempo futuro y cita líneas de `sxgui.c` que el propio lote 1 ya borró
+> (los `sxgui_hline`/`sxgui_vline`, los bucles de píxel del focus rect). Se
+> conserva así porque el valor es el razonamiento, no el estado.
+>
+> **Lo que sigue es el lote 2**: regiones de clip (2.1) y objeto fuente (2.2).
 
 ## Por qué GDI32 y no DirectX
 
@@ -175,10 +206,9 @@ líneas.
 
 ## Orden sugerido
 
-1. **Lote 1 completo** (1.1 + 1.3 + 1.2, en ese orden). Aditivo, sin tocar el
-   kernel, y borra código de SXGUI-C.
-2. **El clamp de `source_rect`.** Cuatro líneas, cerrar mientras se está mirando
-   el archivo.
+1. ~~**Lote 1 completo** (1.1 + 1.3 + 1.2, en ese orden).~~ **Hecho.** Aditivo,
+   sin tocar el kernel, y borró código de SXGUI-C.
+2. ~~**El clamp de `source_rect`.**~~ **Hecho**, junto con el lote 1.
 3. **2.1 (regiones).** Absorbe el problema de sobre-cobertura de
    `sx_rect_set_add` y destraba ventanas no rectangulares.
 4. **2.2 (fuentes).** El único con una dependencia externa real: el pipeline de

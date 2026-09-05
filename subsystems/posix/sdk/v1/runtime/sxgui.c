@@ -4,15 +4,8 @@
 
 /* ---- low level chrome helpers ------------------------------------------- */
 
-static void sxgui_hline(struct sx_painter *painter, int x, int y, int width, uint32_t colour)
-{
-    sx_painter_fill_rect(painter, sx_rect_make(x, y, width, 1), colour);
-}
-
-static void sxgui_vline(struct sx_painter *painter, int x, int y, int height, uint32_t colour)
-{
-    sx_painter_fill_rect(painter, sx_rect_make(x, y, 1, height), colour);
-}
+/* Las lineas de 1px las pone el painter (sx_painter_hline/vline): el toolkit ya
+ * no las arma con rects de altura 1. */
 
 /* Un borde 3D de la epoca son DOS anillos de un pixel, cada uno con su tono
  * arriba-izquierda y abajo-derecha: cuatro colores en total. El anillo externo
@@ -37,10 +30,10 @@ static void sxgui_draw_edge(
     }
 
     /* anillo externo: la L clara arriba-izquierda y la oscura abajo-derecha */
-    sxgui_hline(painter, rect.x, rect.y, rect.width, outer_light);
-    sxgui_vline(painter, rect.x, rect.y, rect.height, outer_light);
-    sxgui_hline(painter, rect.x, bottom, rect.width, outer_dark);
-    sxgui_vline(painter, right, rect.y, rect.height, outer_dark);
+    sx_painter_hline(painter, rect.x, rect.y, rect.width, outer_light);
+    sx_painter_vline(painter, rect.x, rect.y, rect.height, outer_light);
+    sx_painter_hline(painter, rect.x, bottom, rect.width, outer_dark);
+    sx_painter_vline(painter, right, rect.y, rect.height, outer_dark);
 
     if (rect.width <= 2 || rect.height <= 2)
     {
@@ -48,10 +41,10 @@ static void sxgui_draw_edge(
     }
 
     /* anillo interno, corrido un pixel hacia adentro por los cuatro lados */
-    sxgui_hline(painter, rect.x + 1, rect.y + 1, rect.width - 2, inner_light);
-    sxgui_vline(painter, rect.x + 1, rect.y + 1, rect.height - 2, inner_light);
-    sxgui_hline(painter, rect.x + 1, bottom - 1, rect.width - 2, inner_dark);
-    sxgui_vline(painter, right - 1, rect.y + 1, rect.height - 2, inner_dark);
+    sx_painter_hline(painter, rect.x + 1, rect.y + 1, rect.width - 2, inner_light);
+    sx_painter_vline(painter, rect.x + 1, rect.y + 1, rect.height - 2, inner_light);
+    sx_painter_hline(painter, rect.x + 1, bottom - 1, rect.width - 2, inner_dark);
+    sx_painter_vline(painter, right - 1, rect.y + 1, rect.height - 2, inner_dark);
 }
 
 /* Raised 3D border (buttons, window face). */
@@ -80,10 +73,10 @@ static void sxgui_draw_inset(struct sx_painter *painter, struct sx_rect rect)
     int right = rect.x + rect.width - 1;
     int bottom = rect.y + rect.height - 1;
 
-    sxgui_hline(painter, rect.x, rect.y, rect.width, SXGUI_COLOR_SHADOW);
-    sxgui_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_SHADOW);
-    sxgui_hline(painter, rect.x, bottom, rect.width, SXGUI_COLOR_LIGHT);
-    sxgui_vline(painter, right, rect.y, rect.height, SXGUI_COLOR_LIGHT);
+    sx_painter_hline(painter, rect.x, rect.y, rect.width, SXGUI_COLOR_SHADOW);
+    sx_painter_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_SHADOW);
+    sx_painter_hline(painter, rect.x, bottom, rect.width, SXGUI_COLOR_LIGHT);
+    sx_painter_vline(painter, right, rect.y, rect.height, SXGUI_COLOR_LIGHT);
 }
 
 /* Linea "grabada": el marco oscuro y el claro corridos un pixel en diagonal.
@@ -102,57 +95,20 @@ static void sxgui_draw_etched(struct sx_painter *painter, struct sx_rect rect)
  * borde del control; el punteado se lee como foco y no como otro bisel. */
 static void sxgui_draw_focus_rect(struct sx_painter *painter, struct sx_rect rect)
 {
-    int right = rect.x + rect.width - 1;
-    int bottom = rect.y + rect.height - 1;
-    int x;
-    int y;
-
-    if (rect.width <= 0 || rect.height <= 0)
-    {
-        return;
-    }
     /* La paridad es de la posicion ABSOLUTA, no del rect: asi los puntos de dos
      * controles vecinos caen en la misma grilla en vez de bailar segun donde
-     * arranque cada uno. */
-    for (x = rect.x; x <= right; ++x)
-    {
-        if (((x + rect.y) & 1) == 0)
-        {
-            sx_painter_fill_rect(painter, sx_rect_make(x, rect.y, 1, 1), SXGUI_COLOR_TEXT);
-        }
-        if (((x + bottom) & 1) == 0)
-        {
-            sx_painter_fill_rect(painter, sx_rect_make(x, bottom, 1, 1), SXGUI_COLOR_TEXT);
-        }
-    }
-    for (y = rect.y + 1; y < bottom; ++y)
-    {
-        if (((rect.x + y) & 1) == 0)
-        {
-            sx_painter_fill_rect(painter, sx_rect_make(rect.x, y, 1, 1), SXGUI_COLOR_TEXT);
-        }
-        if (((right + y) & 1) == 0)
-        {
-            sx_painter_fill_rect(painter, sx_rect_make(right, y, 1, 1), SXGUI_COLOR_TEXT);
-        }
-    }
+     * arranque cada uno. Eso es exactamente el anclaje a dispositivo de la
+     * trama del brush, que ademas deja pasar el fondo entre punto y punto. */
+    struct sx_brush brush = sx_brush_pattern_transparent(sx_pattern_checker_50, SXGUI_COLOR_TEXT);
+    sx_painter_draw_frame_brush(painter, rect, &brush);
 }
 
 /* Trama al 50% de dos colores. Es el fondo del canal de las barras de scroll:
  * un gris plano se ve como una caja vacia, la trama se ve como un riel. */
 static void sxgui_fill_checker(struct sx_painter *painter, struct sx_rect rect, uint32_t base, uint32_t dots)
 {
-    int x;
-    int y;
-
-    sx_painter_fill_rect(painter, rect, base);
-    for (y = rect.y; y < rect.y + rect.height; ++y)
-    {
-        for (x = rect.x + ((y & 1) ^ (rect.x & 1)); x < rect.x + rect.width; x += 2)
-        {
-            sx_painter_fill_rect(painter, sx_rect_make(x, y, 1, 1), dots);
-        }
-    }
+    struct sx_brush brush = sx_brush_pattern(sx_pattern_checker_50, dots, base);
+    sx_painter_fill_rect_brush(painter, rect, &brush);
 }
 
 static struct sx_rect sxgui_inset(struct sx_rect rect, int amount)
@@ -284,16 +240,16 @@ static void sxgui_paint_arrow(struct sx_painter *painter, struct sx_rect box, in
         switch (direction)
         {
         case 0:
-            sxgui_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + row, width, colour);
+            sx_painter_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + row, width, colour);
             break;
         case 1:
-            sxgui_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + rows - 1 - row, width, colour);
+            sx_painter_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + rows - 1 - row, width, colour);
             break;
         case 2:
-            sxgui_vline(painter, box.x + (box.width - rows) / 2 + row, box.y + (box.height - width) / 2, width, colour);
+            sx_painter_vline(painter, box.x + (box.width - rows) / 2 + row, box.y + (box.height - width) / 2, width, colour);
             break;
         default:
-            sxgui_vline(painter, box.x + (box.width - rows) / 2 + rows - 1 - row, box.y + (box.height - width) / 2, width, colour);
+            sx_painter_vline(painter, box.x + (box.width - rows) / 2 + rows - 1 - row, box.y + (box.height - width) / 2, width, colour);
             break;
         }
     }
@@ -1405,8 +1361,8 @@ static void sxgui_paint_menu_popup(struct sxgui_context *ctx)
         if (item->text == 0)
         {
             int line_y = row_y + height / 2 - 1;
-            sxgui_hline(painter, row_x, line_y, row_width, SXGUI_COLOR_SHADOW);
-            sxgui_hline(painter, row_x, line_y + 1, row_width, SXGUI_COLOR_LIGHT);
+            sx_painter_hline(painter, row_x, line_y, row_width, SXGUI_COLOR_SHADOW);
+            sx_painter_hline(painter, row_x, line_y + 1, row_width, SXGUI_COLOR_LIGHT);
         }
         else
         {
@@ -1714,7 +1670,7 @@ static void sxgui_paint_textfield(struct sx_painter *painter, const struct sxgui
     if (widget->focused)
     {
         int caret_x = text_x + sxgui_text_prefix_width(widget->edit_buffer, widget->caret);
-        sxgui_vline(painter, caret_x, text_y, gfx_text_height(), SXGUI_COLOR_TEXT);
+        sx_painter_vline(painter, caret_x, text_y, gfx_text_height(), SXGUI_COLOR_TEXT);
     }
     sx_painter_pop_clip(painter);
 }
@@ -2001,7 +1957,7 @@ static void sxgui_paint_textedit(struct sx_painter *painter, const struct sxgui_
         {
             int caret_x = inner.x + SXGUI_TEXT_PAD - widget->scroll +
                 sxgui_text_prefix_width(text, widget->caret - start <= copy ? widget->caret - start : copy);
-            sxgui_vline(painter, caret_x, row_y + 2, gfx_text_height(), SXGUI_COLOR_TEXT);
+            sx_painter_vline(painter, caret_x, row_y + 2, gfx_text_height(), SXGUI_COLOR_TEXT);
         }
     }
     sx_painter_pop_clip(painter);
@@ -2140,12 +2096,12 @@ static void sxgui_paint_one_tab(struct sx_painter *painter, const struct sxgui_w
 
     sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
 
-    sxgui_hline(painter, rect.x + 1, rect.y, rect.width - 3, SXGUI_COLOR_BEVEL);
-    sxgui_hline(painter, rect.x + 2, rect.y + 1, rect.width - 5, SXGUI_COLOR_LIGHT);
-    sxgui_vline(painter, rect.x, rect.y + 1, rect.height - 1, SXGUI_COLOR_BEVEL);
-    sxgui_vline(painter, rect.x + 1, rect.y + 2, rect.height - 2, SXGUI_COLOR_LIGHT);
-    sxgui_vline(painter, right - 1, rect.y + 2, rect.height - 2, SXGUI_COLOR_SHADOW);
-    sxgui_vline(painter, right, rect.y + 1, rect.height - 1, SXGUI_COLOR_DARK);
+    sx_painter_hline(painter, rect.x + 1, rect.y, rect.width - 3, SXGUI_COLOR_BEVEL);
+    sx_painter_hline(painter, rect.x + 2, rect.y + 1, rect.width - 5, SXGUI_COLOR_LIGHT);
+    sx_painter_vline(painter, rect.x, rect.y + 1, rect.height - 1, SXGUI_COLOR_BEVEL);
+    sx_painter_vline(painter, rect.x + 1, rect.y + 2, rect.height - 2, SXGUI_COLOR_LIGHT);
+    sx_painter_vline(painter, right - 1, rect.y + 2, rect.height - 2, SXGUI_COLOR_SHADOW);
+    sx_painter_vline(painter, right, rect.y + 1, rect.height - 1, SXGUI_COLOR_DARK);
 
     if (label != 0)
     {
