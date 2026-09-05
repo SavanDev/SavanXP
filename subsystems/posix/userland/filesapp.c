@@ -8,6 +8,7 @@
 #include "shared/version.h"
 
 #include "file_assoc.h"
+#include "mime_icon.h"
 
 /*
  * Explorador de archivos, con la forma del explorador de la era Win95: barra de
@@ -43,12 +44,15 @@ static struct sxgui_widget g_widgets[5];
 static struct filesapp_entry g_entries[FILESAPP_MAX_ENTRIES];
 static char g_item_labels[FILESAPP_MAX_ENTRIES][FILESAPP_LABEL_LENGTH];
 static const char *g_item_ptrs[FILESAPP_MAX_ENTRIES];
+/* Paralelo a g_item_ptrs: el icono que le toca a cada fila, o 0. */
+static const struct sx_bitmap *g_item_icons[FILESAPP_MAX_ENTRIES];
 static char g_current_path[FILESAPP_PATH_CAPACITY] = "/";
 static char g_count_pane[64] = "0 object(s)";
 static char g_size_pane[64] = "";
 static int g_entry_count = 0;
 /* Las asociaciones se cargan a demanda; ver filesapp_activate_selected. */
 static int g_assoc_loaded = 0;
+static int g_mime_icons_loaded = 0;
 
 static struct sxgui_dialog g_about_dialog;
 static struct sxgui_widget g_about_widgets[4];
@@ -269,6 +273,15 @@ static void filesapp_rebuild_labels(void)
     char type_cell[32];
     int index;
 
+    /* Una sola lectura de /disk/mimeicon.ini por proceso. Es barata --un
+     * ini chico, sin escanear binarios como file_assoc--, pero repetirla en
+     * cada cambio de directorio no aporta nada. */
+    if (!g_mime_icons_loaded)
+    {
+        (void)mime_icon_load();
+        g_mime_icons_loaded = 1;
+    }
+
     for (index = 0; index < g_entry_count; ++index)
     {
         const struct filesapp_entry *entry = &g_entries[index];
@@ -304,8 +317,10 @@ static void filesapp_rebuild_labels(void)
             SXGUI_COLUMN_SEPARATOR,
             type_cell);
         g_item_ptrs[index] = g_item_labels[index];
+        g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
     }
     FILESAPP_LIST->items = g_item_ptrs;
+    FILESAPP_LIST->item_icons = g_item_icons;
     FILESAPP_LIST->item_count = g_entry_count;
     FILESAPP_LIST->value = 0;
     FILESAPP_LIST->scroll = 0;
@@ -698,10 +713,36 @@ static int filesapp_selftest(void)
         }
     }
 
+    /*
+     * Capa de iconos por tipo. Se reporta la cuenta del mapeo real de la
+     * imagen y si el catalogo de /disk/icons responde: un mapeo cargado con
+     * cero iconos que abren significa que el build no emitio los blobs, y eso
+     * desde afuera se ve igual que "la lista no tiene iconos".
+     */
+    {
+        int mapped = mime_icon_load();
+        int resolved = 0;
+        static const char *const k_probe[] = {"notas.txt", "captura.png", "tema.wav", "doom.sxe"};
+        int probe;
+
+        for (probe = 0; probe < (int)(sizeof(k_probe) / sizeof(k_probe[0])); ++probe)
+        {
+            if (mime_icon_for_file(k_probe[probe], 0, 0) != 0)
+            {
+                resolved += 1;
+            }
+        }
+        printf("FILESAPP SMOKE mimeicon mapped=%d probes=%d resolved=%d\n",
+            mapped,
+            (int)(sizeof(k_probe) / sizeof(k_probe[0])),
+            resolved);
+    }
+
     /* El harness corta la corrida en la PRIMERA linea con el token de fallo,
      * asi que el volcado tiene que salir antes del selftest o no se ve nunca
      * cuando algo falla. */
     failures = file_assoc_selftest();
+    failures += mime_icon_selftest();
 
     if (failures != 0)
     {

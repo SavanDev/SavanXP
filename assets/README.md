@@ -10,11 +10,32 @@ assets/
     icons/
       16x16/                    iconos propios del desktop (16x16)
       32x32/                    iconos propios del desktop (32x32)
+      mime/                     catalogo de tipos de archivo (Tango 0.8.90)
+        16x16/
+        32x32/
 ```
 
-Todo este arte es propio del repo: se genera localmente con
-`tools/gen_desktop_source_art.py` y no depende de iconos externos ni de
-assets temporales de terceros.
+El arte de `icons/16x16` y `icons/32x32` es propio del repo: se genera
+localmente con `tools/gen_desktop_source_art.py` y no depende de iconos
+externos.
+
+`icons/mime/` es la excepcion y por eso vive aparte: son iconos del Tango Icon
+Theme 0.8.90, en **dominio publico**, usados como catalogo de tipos de archivo.
+Procedencia y motivo en [`docs/THIRD_PARTY_PROVENANCE.md`](../docs/THIRD_PARTY_PROVENANCE.md).
+La separacion de directorios es la que hace que "esto es propio" siga siendo
+una afirmacion verificable mirando el arbol.
+
+## Iconos de tipos de archivo
+
+Los PNG de `icons/mime/` NO se hornean en ningun binario. `tools/gen_mime_icons.py`
+los convierte a blobs `.sxicon` sueltos que van a `/disk/icons` en la imagen, y
+`diskfs/mimeicon.ini` mapea extension a nombre de icono. Agregar un tipo es
+copiar dos PNG (16 y 32) y sumar una linea al `.ini`: no hay que tocar codigo
+ni recompilar.
+
+Los nombres siguen la Icon Naming Specification de freedesktop
+(`text-x-generic`, `image-x-generic`, ...), que es lo que permite cambiar de
+origen de arte sin reescribir el mapeo.
 
 ## Cursor
 

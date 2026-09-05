@@ -930,7 +930,8 @@ static void sxgui_paint_columns_row(
     int row_y,
     int row_height,
     const char *label,
-    uint32_t text_colour)
+    uint32_t text_colour,
+    int first_column_indent)
 {
     int column;
     int cell_x = inner.x;
@@ -958,7 +959,9 @@ static void sxgui_paint_columns_row(
             }
             else
             {
-                text_x = cell_x + SXGUI_CELL_PAD;
+                /* La sangria del icono corre SOLO la primera columna: las
+                 * demas siguen a plomo con su rotulo de cabecera. */
+                text_x = cell_x + SXGUI_CELL_PAD + (column == 0 ? first_column_indent : 0);
             }
             sx_painter_draw_text(painter, text_x, row_y + 2, cell, text_colour);
             sx_painter_pop_clip(painter);
@@ -1168,6 +1171,11 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
 {
     struct sx_rect inner = sxgui_listbox_inner(widget);
     int row_height = sxgui_row_height();
+    int icon_indent = widget->item_icons != 0 ? SXGUI_LISTBOX_ICON_SIZE + SXGUI_LISTBOX_ICON_GAP : 0;
+    /* El icono arranca donde arrancaria el texto, y el texto se corre detras.
+     * La sangria base depende de si hay columnas, porque la celda de cabecera
+     * come dos pixeles mas que una lista simple. */
+    int icon_x = inner.x + (sxgui_listbox_header_height(widget) > 0 ? SXGUI_CELL_PAD : SXGUI_TEXT_PAD);
     int index;
 
     sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FIELD);
@@ -1192,15 +1200,29 @@ static void sxgui_paint_listbox(struct sx_painter *painter, const struct sxgui_w
             sx_painter_fill_rect(painter, sx_rect_make(inner.x, row_y, inner.width, row_height), SXGUI_COLOR_SELECT);
             text_colour = SXGUI_COLOR_SELECT_TEXT;
         }
+        if (icon_indent > 0)
+        {
+            const struct sx_bitmap *icon = widget->item_icons[index];
+
+            /* Una fila sin icono conserva igual la sangria: es lo que evita
+             * que los nombres queden en zigzag cuando falta un tipo. */
+            if (icon != 0 && icon->pixels != 0)
+            {
+                sx_painter_blit_bitmap(
+                    painter, icon, icon_x, row_y + (row_height - SXGUI_LISTBOX_ICON_SIZE) / 2);
+            }
+        }
         if (label != 0)
         {
             if (sxgui_listbox_header_height(widget) > 0)
             {
-                sxgui_paint_columns_row(painter, widget, inner, row_y, row_height, label, text_colour);
+                sxgui_paint_columns_row(
+                    painter, widget, inner, row_y, row_height, label, text_colour, icon_indent);
             }
             else
             {
-                sx_painter_draw_text(painter, inner.x + SXGUI_TEXT_PAD, row_y + 2, label, text_colour);
+                sx_painter_draw_text(
+                    painter, inner.x + SXGUI_TEXT_PAD + icon_indent, row_y + 2, label, text_colour);
             }
         }
     }

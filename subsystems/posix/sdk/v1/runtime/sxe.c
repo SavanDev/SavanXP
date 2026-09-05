@@ -797,6 +797,64 @@ int sxe_load_icons(const char* path, void* buffer, size_t capacity, struct sxe_i
     return sxe_icons_open(buffer, length, out);
 }
 
+int sxe_load_icon_file(const char* path, void* buffer, size_t capacity, struct sxe_icons* out)
+{
+    long fd = -1;
+    size_t total = 0;
+
+    if (out != 0)
+    {
+        memset(out, 0, sizeof(*out));
+    }
+    if (path == 0 || buffer == 0 || capacity == 0)
+    {
+        return SXE_ABSENT;
+    }
+
+    fd = savanxp_open(path);
+    if (fd < 0)
+    {
+        return SXE_ABSENT;
+    }
+
+    /* Sin stat: se lee hasta EOF o hasta llenar el buffer. */
+    while (total < capacity)
+    {
+        long got = savanxp_read((int)fd, (uint8_t*)buffer + total, capacity - total);
+
+        if (got < 0)
+        {
+            (void)savanxp_close((int)fd);
+            return SXE_ABSENT;
+        }
+        if (got == 0)
+        {
+            break;
+        }
+        total += (size_t)got;
+    }
+
+    /*
+     * El buffer se lleno: puede que el archivo siga. Un byte de sonda separa
+     * "entro justo" de "no entra", que para el llamador son casos distintos --
+     * sin esto, un blob demasiado grande llegaria truncado a sxe_icons_open y
+     * saldria como SXE_MALFORMED, culpando al archivo en vez al buffer.
+     */
+    if (total == capacity)
+    {
+        uint8_t probe = 0;
+
+        if (savanxp_read((int)fd, &probe, sizeof(probe)) > 0)
+        {
+            (void)savanxp_close((int)fd);
+            return SXE_TOO_LARGE;
+        }
+    }
+
+    (void)savanxp_close((int)fd);
+    return sxe_icons_open(buffer, total, out);
+}
+
 int sxe_path_has_extension(const char* path)
 {
     size_t path_length = 0;

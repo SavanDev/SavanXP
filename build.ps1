@@ -198,6 +198,7 @@ $UserPrograms = @(
     @{ Name = "filesapp"; Sources = @(
         "subsystems/posix/userland/filesapp.c",
         "subsystems/posix/userland/file_assoc.c",
+        "subsystems/posix/userland/mime_icon.c",
         "subsystems/posix/sdk/v1/runtime/sxe.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
@@ -684,6 +685,22 @@ function Generate-SxeResources([bool]$IncludeTestApps = $true) {
     Invoke-SxeResourceGenerator -ManifestDirs @($PosixUserlandRoot) -OutputDir $SxeResourceRoot -ProgramNames $programNames
 }
 
+# Catalogo de iconos por tipo, como blobs .sxicon sueltos en /disk/icons.
+#
+# No van horneados en filesapp a proposito: docs/SXE_FORMAT.md decide que los
+# KiB de iconos no viajan en un segmento cargable. Se emiten al arbol de
+# staging del disco, que se rearma en cada build, asi que no hay estado que
+# invalidar.
+function Generate-MimeIcons([string]$OutputDir) {
+    $python = Get-PythonExecutable
+    $scriptPath = Join-Path $ToolRoot "gen_mime_icons.py"
+
+    & $python $scriptPath --project-root $ProjectRoot --output-dir $OutputDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion de los iconos de tipo (.sxicon)."
+    }
+}
+
 function Get-KernelCompileEdges([string[]]$Sources) {
     $edges = @()
     $objectFiles = @()
@@ -873,6 +890,8 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
     Copy-Item $DiskRoot $DiskBuildRoot -Recurse -Force
     New-Directory (Join-Path $DiskBuildRoot "bin")
     Copy-Item (Join-Path $RootfsBuild "bin/*") (Join-Path $DiskBuildRoot "bin") -Force
+    New-Directory (Join-Path $DiskBuildRoot "icons")
+    Generate-MimeIcons -OutputDir (Join-Path $DiskBuildRoot "icons")
     Build-SxfsDiskImage -SourceRoot $DiskBuildRoot -OutputPath $DiskImage
 
     $linkArgs = @(

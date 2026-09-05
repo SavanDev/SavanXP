@@ -13,6 +13,7 @@ tools/*
 !tools/gen_desktop_source_art.py
 !tools/gen_desktop_icon_assets.py
 !tools/gen_sxe_resources.py
+!tools/gen_mime_icons.py
 !tools/GenerateDefaultWallpaper.py
 !tools/shoot.ps1
 !tools/shoot_session.py

@@ -282,6 +282,12 @@ def scenario_files(s):
     s.qmp.tap("down", pause=0.6)
     s.qmp.tap("down", pause=1.2)
     s.shot("files-seleccion")
+    # Los dos `down` de arriba ya dejaron la seleccion sobre /disk, que mezcla
+    # carpetas con un .ini y un .bmp: es el directorio donde la capa de iconos
+    # por tipo resuelve mas de un tipo a la vez, asi que es el que sirve de
+    # regresion para el catalogo.
+    s.qmp.tap("ret", pause=2.5)
+    s.shot("files-disk")
 
 
 def scenario_kbdlayout(s):

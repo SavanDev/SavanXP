@@ -123,6 +123,37 @@ registro.
 - Decision: fuera del registro de terceros desde su reemplazo
 - Motivo: el desktop ya no depende de iconos copiados ni derivados de otros
   proyectos
+- Alcance: `assets/desktop/icons/16x16` y `32x32`. **No** cubre
+  `assets/desktop/icons/mime/`, que es el catalogo de tipos y tiene la
+  procedencia de abajo
+
+### Tango Icon Theme (catalogo de tipos de archivo)
+
+- Origen: Tango Icon Theme 0.8.90, `tango-icon-theme_0.8.90.orig.tar.gz`
+  (proyecto Tango Desktop, http://tango.freedesktop.org/), `sha256`
+  `6e98d8032d57d818acc907ec47e6a718851ff251ae7c29aafb868743eb65c88e`
+- Versionado: si, 22 PNG (11 iconos x 16x16 y 32x32) en
+  `assets/desktop/icons/mime/`
+- Licencia revisada: **dominio publico**. El `COPYING` del tarball dice
+  textual *"The icons in this repository are herefore released into the Public
+  Domain"*. Las versiones anteriores a 0.8.90 eran CC BY-SA 2.5; el cambio a
+  dominio publico se hizo justamente para sacar la incompatibilidad con la GPL,
+  asi que la version importa: **0.8.90 o posterior**
+- Decision: `Adoptar`
+- Distribuido en: la imagen, como blobs `.sxicon` sueltos en `/disk/icons`
+  emitidos por `tools/gen_mime_icons.py`. **No** se hornea en ningun binario,
+  por la misma razon por la que `.sxicon` es una seccion no-alloc (ver
+  `docs/SXE_FORMAT.md`)
+- Motivo: los iconos por tipo de archivo se dibujan sobre el campo BLANCO de
+  una lista, no sobre el face gris del escritorio. Medido sobre `C0C0C0` el set
+  de Tango pierde contra el arte propio (`input-keyboard` 27.1 contra 52.2 de
+  contraste medio de luminancia), pero sobre blanco casi lo duplica, que es
+  exactamente el fondo de este caso de uso. Ademas trae la cobertura de tipos
+  que el arte propio no tiene y sigue la Icon Naming Specification de
+  freedesktop, que es lo que permite cambiar de origen sin reescribir
+  `diskfs/mimeicon.ini`
+- Nota: los iconos de `devices/` y `places/` de Tango **no** se adoptaron. Sobre
+  el face gris se pierden, y son justo los que el escritorio necesitaria
 
 ## Solo build: no se distribuye
 

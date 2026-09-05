@@ -12,6 +12,22 @@ Notas de corte:
 
 ### Agregado
 
+- **La lista de archivos muestra un icono por tipo.** El catalogo son blobs
+  `.sxicon` sueltos en `/disk/icons` --emitidos en build por
+  `tools/gen_mime_icons.py` desde `assets/desktop/icons/mime/`-- y el mapeo de
+  extension a icono vive en `diskfs/mimeicon.ini`, con el mismo formato y
+  precedencia que `assoc.ini`. Ni los pixeles ni la tabla entran en ningun
+  binario: los KiB de icono se quedan fuera de los segmentos cargables, que es
+  la misma decision que hizo `.sxicon` una seccion no-alloc, y agregar un tipo
+  es copiar dos PNG y sumar una linea al `.ini`. El arte es del Tango Icon
+  Theme 0.8.90, en dominio publico (`docs/THIRD_PARTY_PROVENANCE.md`): se eligio
+  para este caso porque los iconos de tipo se dibujan sobre el campo blanco de
+  una lista, que es donde ese set mide casi el doble de contraste que sobre el
+  face gris del escritorio. Piezas nuevas: `sxe_load_icon_file()` en el SDK
+  (leer un `.sxicon` que no viene dentro de un ELF), el campo `item_icons` del
+  listbox de sxgui, y `mime_icon.c` en userland. **Sigue sin resolver
+  `MIME_OPEN`**: esto es extension a icono, no deteccion de tipo.
+
 - **Player de video sobre FFmpeg: decodifica MJPEG, convierte YUV->RGB con
   swscale y lo pone en pantalla.** `build.ps1 ffmpeg-smoke` corre tres cosas: el
   `wavinfo` de audio, el player en modo `--selftest` (decodifica y convierte los

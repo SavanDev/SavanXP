@@ -706,6 +706,30 @@ se aplica en uno y no en el otro.
    `text/plain`" reintroduciría exactamente la clase de tabla central que este
    diseño vino a sacar.
 
+   > **Lo que sí existe desde entonces: íconos por tipo, y NO es lo mismo.**
+   > `subsystems/posix/userland/mime_icon.c` resuelve *extensión → ícono* y la
+   > lista de filesapp los dibuja. **No resuelve `MIME_OPEN`, no detecta tipos
+   > y no toca las asociaciones**: un archivo sigue sin tener un `text/plain`
+   > asociado, solo tiene un ícono. Los nombres del catálogo son los de la
+   > *Icon Naming Specification* de freedesktop, que es una convención de
+   > nombres de ícono y no una tabla de tipos.
+   >
+   > Cumple la restricción de arriba de dos formas, y las dos importan:
+   >
+   > - **El mapeo no está horneado.** Vive en `diskfs/mimeicon.ini`, un dato de
+   >   la imagen con el mismo formato y precedencia que `assoc.ini`. Agregar un
+   >   tipo es una línea, no un recompilado.
+   > - **Los píxeles tampoco.** El catálogo son blobs `.sxicon` sueltos en
+   >   `/disk/icons`, emitidos por `tools/gen_mime_icons.py` y leídos con
+   >   `sxe_load_icon_file()` — la variante de `sxe_load_icons()` para un
+   >   archivo que *es* el blob, sin ELF alrededor. Ningún KiB de ícono entra
+   >   en un segmento cargable, que es la misma decisión que hizo `.sxicon` una
+   >   sección no-alloc.
+   >
+   > Cuando exista la detección de tipo, esta capa es de donde va a colgarse:
+   > el cambio sería resolver *mime → ícono* en vez de *extensión → ícono*, con
+   > el mismo catálogo y el mismo archivo de mapeo.
+
 6. ~~**Estampado por default.**~~ **HECHA.** Las fases 1 a 5 dejaban el
    estampado en *opt-in*: sin `.sxres`, `Add-SxeResources` no tocaba el
    binario. Con 67 programas en el árbol y 9 manifiestos, eso era la brecha

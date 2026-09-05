@@ -50,6 +50,10 @@ extern "C" {
 #define SXGUI_BORDER_SUNKEN       2   /* campos, listas, editores */
 #define SXGUI_BORDER_INSET        1   /* paneles de barra de estado */
 #define SXGUI_SCROLLBAR_THICKNESS 16
+/* Icono de fila de listbox. El tamano es fijo y no sale del bitmap para que la
+ * sangria del texto sea la misma en todas las filas, tenga icono o no. */
+#define SXGUI_LISTBOX_ICON_SIZE   16
+#define SXGUI_LISTBOX_ICON_GAP    3
 /* Separacion del texto al borde interno de un control. Una etiqueta suelta que
  * quiera alinear con el texto de un campo se corre BORDER + TEXT_PAD. */
 #define SXGUI_TEXT_PAD            3
@@ -127,6 +131,18 @@ struct sxgui_widget {
     /* listbox */
     const char *const *items;
     int item_count;
+
+    /*
+     * listbox: icono opcional por fila, paralelo a `items` (NULL = ninguno, y
+     * una entrada NULL deja esa fila sin icono pero conserva la sangria, para
+     * que los nombres no queden en zigzag).
+     *
+     * El icono va en la PRIMERA columna y corre solo el texto de esa columna:
+     * el rotulo de la cabecera se queda donde esta, como en la vista de
+     * detalles clasica. Se dibuja a SXGUI_LISTBOX_ICON_SIZE sin escalar, asi
+     * que un bitmap de otro tamano se recorta en vez de deformarse.
+     */
+    const struct sx_bitmap *const *item_icons;
 
     /* listbox: cabecera de columnas opcional (NULL = lista simple) */
     const struct sxgui_column *columns;
