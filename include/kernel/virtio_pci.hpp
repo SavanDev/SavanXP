@@ -136,6 +136,11 @@ void memory_barrier();
 size_t align_up(size_t value, size_t alignment);
 bool looks_like_modern_device(const pci::DeviceInfo& info, uint16_t modern_device_id, uint16_t subsystem_device_id);
 bool find_modern_device(uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info);
+// Como find_modern_device, pero arranca la busqueda en start_index y, si
+// encuentra, deja en found_index el indice de pci:: del match para que el
+// caller pueda seguir buscando otro device del mismo tipo desde found_index+1
+// (varios devices virtio-input coexistiendo: tablet + teclado, por ejemplo).
+bool find_modern_device_from(size_t start_index, uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info, size_t& found_index);
 bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cfg, Device& device);
 // Enable MSI-X on the device and route table entry 0 to the given local-APIC
 // vector (delivered to the boot CPU). On success device.msix_vector becomes 0 so

@@ -72,6 +72,11 @@ struct RawByte {
 
 bool g_ready = false;
 bool g_mouse_ready = false;
+// Analogo a g_mouse_ready pero para el puerto principal: falso cuando hay un
+// virtio-keyboard activo y el 8042 se queda callado para no duplicar cada
+// tecla (una por PS/2 real, otra por virtio -- QEMU manda el input del host a
+// los dos backends a la vez, igual que ya pasaba con el mouse/tablet).
+bool g_keyboard_active = false;
 
 RawByte g_raw_queue[kRawQueueCapacity] = {};
 size_t g_raw_read_index = 0;
@@ -1039,9 +1044,13 @@ bool initialize_controller(bool& second_port_present) {
         second_port_present = false;
     }
 
-    if (!initialize_keyboard()) {
+    const bool prefer_virtio_keyboard = virtio_input::keyboard_ready();
+    if (prefer_virtio_keyboard) {
+        console::write_line("ps2: skipping keyboard because virtio-input is active");
+    } else if (!initialize_keyboard()) {
         return false;
     }
+    g_keyboard_active = !prefer_virtio_keyboard;
 
     const bool prefer_virtio_mouse = virtio_input::mouse_ready();
     if (second_port_present && prefer_virtio_mouse) {
@@ -1055,7 +1064,13 @@ bool initialize_controller(bool& second_port_present) {
         return false;
     }
 
-    config |= kConfigIrqFirstPort;
+    if (g_keyboard_active) {
+        config |= kConfigIrqFirstPort;
+        config &= static_cast<uint8_t>(~kConfigDisableFirstPortClock);
+    } else {
+        config &= static_cast<uint8_t>(~kConfigIrqFirstPort);
+        config |= kConfigDisableFirstPortClock;
+    }
     if (g_mouse_ready) {
         config |= kConfigIrqSecondPort;
         config &= static_cast<uint8_t>(~kConfigDisableSecondPortClock);
@@ -1064,7 +1079,6 @@ bool initialize_controller(bool& second_port_present) {
         config |= kConfigDisableSecondPortClock;
         (void)controller_write(kControllerCommandDisableSecondPort);
     }
-    config &= static_cast<uint8_t>(~kConfigDisableFirstPortClock);
     config |= kConfigTranslation;
     if (!controller_write_config(config)) {
         console::write_line("ps2: failed to enable PS/2 IRQs");
@@ -1090,6 +1104,7 @@ namespace ps2 {
 void initialize() {
     g_ready = false;
     g_mouse_ready = false;
+    g_keyboard_active = false;
     clear_raw_queue();
     reset_input_state();
 
@@ -1103,12 +1118,14 @@ void initialize() {
     // al PIC legacy para no romper el arranque.
     const bool use_ioapic = ioapic::ready();
 
-    const bool keyboard_routed = use_ioapic
-        ? ioapic::route_legacy_irq(1, keyboard_irq) != 0
-        : arch::x86_64::register_irq_handler(1, keyboard_irq);
-    if (!keyboard_routed) {
-        console::write_line("ps2: failed to route irq1");
-        return;
+    if (g_keyboard_active) {
+        const bool keyboard_routed = use_ioapic
+            ? ioapic::route_legacy_irq(1, keyboard_irq) != 0
+            : arch::x86_64::register_irq_handler(1, keyboard_irq);
+        if (!keyboard_routed) {
+            console::write_line("ps2: failed to route irq1");
+            return;
+        }
     }
 
     if (g_mouse_ready) {
@@ -1152,6 +1169,14 @@ int get_layout() {
     return static_cast<int>(g_active_layout);
 }
 
+void inject_scancode(uint8_t raw_code, bool extended) {
+    handle_make_break_code(raw_code, extended);
+}
+
+void inject_key_event(uint32_t key, bool pressed) {
+    emit_key_event(key, pressed, 0, 0);
+}
+
 void poll() {
     drain_controller_output_to_queue();
 
@@ -1166,7 +1191,7 @@ void poll() {
             if (g_mouse_ready) {
                 process_mouse_byte(value.value);
             }
-        } else {
+        } else if (g_keyboard_active) {
             process_keyboard_byte(value.value);
         }
     }

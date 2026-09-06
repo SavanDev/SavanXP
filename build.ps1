@@ -1014,14 +1014,15 @@ function Get-AccelCpu([string]$AccelName) {
 
 # Dispositivos de video y de entrada de la maquina QEMU. Sin -Virtio se arma el
 # hardware base: VGA estandar (Limine entrega un framebuffer lineal y el kernel
-# elige fb_gpu) y mouse PS/2 via i8042, igual que en VirtualBox. edid=on hace que
-# OVMF publique 1280x800 como modo preferido; sin EDID el GOP de QemuVideoDxe
-# solo ofrece los modos VESA clasicos y Limine cae a 1024x768.
+# elige fb_gpu), mouse PS/2 y teclado PS/2 via i8042, igual que en VirtualBox.
+# edid=on hace que OVMF publique 1280x800 como modo preferido; sin EDID el GOP
+# de QemuVideoDxe solo ofrece los modos VESA clasicos y Limine cae a 1024x768.
 function Get-QemuVideoInputDevices {
     if ($Virtio) {
         return @(
             "-device", "virtio-vga,xres=1280,yres=800",
-            "-device", "virtio-tablet-pci"
+            "-device", "virtio-tablet-pci",
+            "-device", "virtio-keyboard-pci"
         )
     }
     return @("-device", "VGA,edid=on,xres=1280,yres=800")

@@ -12,6 +12,27 @@ Notas de corte:
 
 ### Agregado
 
+- **Teclado por `virtio-input`.** `-Virtio` sumaba tablet y sonido
+  paravirtualizados pero el teclado seguia siempre por PS/2. `build.ps1
+  run`/`debug`/los smokes con `-Virtio` agregan `virtio-keyboard-pci`
+  (`Get-QemuVideoInputDevices`); `virtio_input::initialize()` ahora recorre
+  todos los devices virtio-input que encuentra (antes se quedaba con el
+  primero) y distingue tablet de teclado por si el device anuncia `EV_ABS`
+  (`VIRTIO_INPUT_CFG_EV_BITS`), ya que QEMU los expone como PCI functions
+  separadas del mismo par device/subsystem. En vez de duplicar las ~700 lineas
+  de layout/mayusculas/modificadores/locks de `ps2::`, los eventos `EV_KEY`
+  del teclado virtio se traducen a scancode set 1 (`ps2::inject_scancode`,
+  nueva) y reusan esa logica entera: del 1 al 0x58 los codigos evdev son
+  numericamente el mismo scancode (asi los definio Linux desde siempre), y una
+  tabla chica cubre las teclas extendidas (flechas, ctrl/alt derechos,
+  home/end, ...). `ps2::` ahora apaga su propio teclado
+  (`g_keyboard_active`) cuando hay un virtio-keyboard activo, mismo mecanismo
+  que ya existia para el mouse: sin esto QEMU manda cada tecla por los dos
+  caminos a la vez y quedaria duplicada. Verificado con `kbd-smoke -Virtio`
+  (5/5 checkpoints: letra simple, shift+a, ctrl+c, flecha derecha, enter, con
+  el log confirmando `ps2: skipping keyboard because virtio-input is active`)
+  y `kbd-smoke`/`windowd-smoke -Virtio` sin regresion.
+
 - **Driver `virtio-blk` para el disco persistente.** Hasta ahora `-Virtio`
   paravirtualizaba GPU, tablet y sonido pero el disco seguia siempre por
   `isa-ide`+`ide-hd` (`ata::`). `build.ps1 run`/`debug`/los smokes con `-Virtio`

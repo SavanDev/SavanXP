@@ -193,11 +193,12 @@ PlatformPei apenas arranca (WHPX no puede respaldar features de CPU muy
 nuevas que esos modelos exponen al guest). Por eso `-Accel whpx` fuerza
 `-cpu qemu64`, que arranca sin problemas.
 
-La maquina QEMU se arma por defecto con hardware "base": VGA estandar, mouse
-PS/2, audio AC'97 y disco IDE, el mismo que emula VirtualBox. Asi el kernel
-ejercita los backends de fallback (`fb_gpu`, `ps2`, `ac97`, `ata`) sin salir de
-QEMU. Para levantar la maquina con dispositivos paravirtualizados (virtio-vga,
-virtio-tablet, virtio-sound, virtio-blk) hay que pedirlo explicitamente:
+La maquina QEMU se arma por defecto con hardware "base": VGA estandar, mouse y
+teclado PS/2, audio AC'97 y disco IDE, el mismo que emula VirtualBox. Asi el
+kernel ejercita los backends de fallback (`fb_gpu`, `ps2`, `ac97`, `ata`) sin
+salir de QEMU. Para levantar la maquina con dispositivos paravirtualizados
+(virtio-vga, virtio-tablet, virtio-keyboard, virtio-sound, virtio-blk) hay que
+pedirlo explicitamente:
 
 ```powershell
 .\build.ps1 run -Virtio

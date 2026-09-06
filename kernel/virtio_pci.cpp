@@ -22,18 +22,24 @@ bool looks_like_modern_device(const pci::DeviceInfo& info, uint16_t modern_devic
     return info.device_id == modern_device_id || info.subsystem_device_id == subsystem_device_id;
 }
 
-bool find_modern_device(uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info) {
-    for (size_t index = 0; index < pci::device_count(); ++index) {
+bool find_modern_device_from(size_t start_index, uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info, size_t& found_index) {
+    for (size_t index = start_index; index < pci::device_count(); ++index) {
         pci::DeviceInfo candidate = {};
         if (!pci::device_info(index, candidate)) {
             continue;
         }
         if (looks_like_modern_device(candidate, modern_device_id, subsystem_device_id)) {
             info = candidate;
+            found_index = index;
             return true;
         }
     }
     return false;
+}
+
+bool find_modern_device(uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info) {
+    size_t found_index = 0;
+    return find_modern_device_from(0, modern_device_id, subsystem_device_id, info, found_index);
 }
 
 static bool map_bar(Device& device, uint8_t bar_index, MappedBar*& mapped) {
