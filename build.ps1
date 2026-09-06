@@ -10,7 +10,12 @@
     # apenas arranca: WHPX no puede respaldar features de CPU muy nuevas
     # (APX y afines) que esos modelos exponen al guest. "qemu64" evita el
     # problema y ya viene confirmado bootenado end-to-end bajo whpx.
-    [ValidateSet("tcg", "whpx")]
+    # kvm es el acelerador nativo en Linux (requiere /dev/kvm, VT-x/AMD-V
+    # habilitado): a diferencia de whpx, "-cpu host" no tiene el problema de
+    # arriba porque KVM virtualiza exactamente las features del CPU real en
+    # vez de exponer un modelo sintetico, asi que no hace falta el fallback a
+    # qemu64.
+    [ValidateSet("tcg", "whpx", "kvm")]
     [string]$Accel = "tcg",
 
     # Levanta QEMU con hardware paravirtualizado (virtio-vga + virtio-tablet +
@@ -1008,6 +1013,9 @@ function Build-Iso {
 function Get-AccelCpu([string]$AccelName) {
     if ($AccelName -eq "whpx") {
         return @{ Accel = "whpx"; Cpu = "qemu64" }
+    }
+    if ($AccelName -eq "kvm") {
+        return @{ Accel = "kvm"; Cpu = "host" }
     }
     return @{ Accel = "tcg"; Cpu = "max" }
 }

@@ -182,16 +182,20 @@ Arrancar el sistema:
 ```
 
 Por defecto usa TCG (emulacion por software). Si tenes Hyper-V activo en
-Windows, `-Accel whpx` acelera el boot usando el Windows Hypervisor Platform:
+Windows, `-Accel whpx` acelera el boot usando el Windows Hypervisor Platform;
+en Linux con VT-x/AMD-V, `-Accel kvm` hace lo mismo contra `/dev/kvm`:
 
 ```powershell
 .\build.ps1 run -Accel whpx
+.\build.ps1 run -Accel kvm
 ```
 
 Nota: con whpx, `-cpu max`/`-cpu host` hacen crashear a OVMF con un #GP en
 PlatformPei apenas arranca (WHPX no puede respaldar features de CPU muy
 nuevas que esos modelos exponen al guest). Por eso `-Accel whpx` fuerza
-`-cpu qemu64`, que arranca sin problemas.
+`-cpu qemu64`, que arranca sin problemas. `-Accel kvm` no tiene ese problema
+(KVM virtualiza las features del CPU real en vez de exponer un modelo
+sintetico) y usa `-cpu host`.
 
 La maquina QEMU se arma por defecto con hardware "base": VGA estandar, mouse y
 teclado PS/2, audio AC'97 y disco IDE, el mismo que emula VirtualBox. Asi el

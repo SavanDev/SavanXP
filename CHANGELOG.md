@@ -12,6 +12,17 @@ Notas de corte:
 
 ### Agregado
 
+- **`-Accel kvm`.** `build.ps1 run`/`debug` solo aceleraban con `whpx`
+  (Hyper-V, Windows); en Linux con VT-x/AMD-V corrian siempre por TCG aunque
+  `/dev/kvm` estuviera disponible. `Get-AccelCpu` suma la rama `kvm` con
+  `-cpu host`: a diferencia de whpx, KVM virtualiza las features del CPU real
+  en vez de exponer un modelo sintetico, asi que no hace falta el fallback a
+  `qemu64` que evita el crash de OVMF bajo whpx. No toca `Run-AutomationQemu`
+  (los smokes siguen fijos a TCG, a proposito, para que sean deterministicos).
+  Verificado con `run -Accel kvm -Virtio`: boot completo con virtio-blk,
+  virtio-input (tablet+teclado) y virtio-sound (con captura) corriendo sobre
+  KVM real, sin regresion en `filesapp-smoke -Virtio` (TCG).
+
 - **Captura de audio (`virtio-sound` RX) y `/dev/audio0` duplex.** El driver
   tenia la cola RX declarada desde el MVP inicial pero nunca cableada
   (playback-only). Ahora `Get-QemuAudioDevice` pide `streams=2` (antes 1) para
