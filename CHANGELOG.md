@@ -12,6 +12,32 @@ Notas de corte:
 
 ### Agregado
 
+- **Captura de audio (`virtio-sound` RX) y `/dev/audio0` duplex.** El driver
+  tenia la cola RX declarada desde el MVP inicial pero nunca cableada
+  (playback-only). Ahora `Get-QemuAudioDevice` pide `streams=2` (antes 1) para
+  que QEMU ofrezca tambien un stream de entrada, `virtio_sound::initialize()`
+  lo busca ademas del de salida (`select_stream`, generico por direccion) y
+  postea un ring de 4 buffers (`kRxSlots`) que se re-postean solos en cada
+  lectura. El ciclo de vida SET_PARAMS/PREPARE/START/STOP/RELEASE, que antes
+  era una sola instancia de estado hardcodeada al stream de playback, pasa a
+  un `StreamState` parametrizable para no duplicarlo entre las dos direcciones.
+  `audio::Backend` suma `capture_ready/capture_configure/capture_read_period/
+  capture_stop` (opcionales: un backend sin captura, como AC97, los deja en
+  `nullptr` y quedan como ENODEV); `audio_device.cpp` expone `read()` sobre
+  `/dev/audio0` con un dueno de sesion propio, independiente del de `write()`
+  -- se puede grabar y reproducir desde procesos distintos a la vez. A
+  diferencia de `submit_period` (fire-and-forget, descarta si el ring esta
+  lleno), `capture_read_period` bloquea con polling acotado hasta que el
+  device complete un periodo: un `read()` tiene que devolver audio real o un
+  error, no puede volver con silencio "aceptable". `audio_open()` pasa a abrir
+  `/dev/audio0` `READ|WRITE` (antes solo `WRITE`, `read()` volvia EBADF antes
+  de llegar al driver). Nuevo modo `audiotest --record` y target
+  `build.ps1 virtio-record`. Verificado con `virtio-record` (8/8 periodos
+  leidos sin error sobre el audiodev `none`, que capturaria silencio real de
+  haber microfono) y sin regresion en `virtio-count`/`virtio-stream`/
+  `ac97-count` (playback) ni en `kbd-smoke`/`filesapp-smoke`/`windowd-smoke`
+  con `-Virtio`.
+
 - **Teclado por `virtio-input`.** `-Virtio` sumaba tablet y sonido
   paravirtualizados pero el teclado seguia siempre por PS/2. `build.ps1
   run`/`debug`/los smokes con `-Virtio` agregan `virtio-keyboard-pci`

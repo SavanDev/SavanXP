@@ -61,6 +61,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "audiostream")) {
         return "AUDIO STREAM";
     }
+    if (spec != 0 && text_contains(spec, "audiorecord")) {
+        return "AUDIO RECORD";
+    }
     if (spec != 0 && text_contains(spec, "netsmoke")) {
         return "NET SMOKE";
     }
@@ -94,6 +97,7 @@ static int run_automation_spec(const char* spec) {
     const char* sxetest_argv[] = {"/disk/bin/sxetest", 0};
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
+    const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
@@ -157,6 +161,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "audiostream") == 0) {
             path = "/disk/bin/audiotest";
             argv = audiostream_argv;
+            argc = 2;
+        } else if (strcmp(spec, "audiorecord") == 0) {
+            path = "/disk/bin/audiotest";
+            argv = audiorecord_argv;
             argc = 2;
         } else if (strcmp(spec, "guihost") == 0 || strcmp(spec, "native-guihost") == 0) {
             path = "/disk/bin/nativeguihost";

@@ -344,7 +344,11 @@ int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
 }
 
 long audio_open(void) {
-    return savanxp_open_mode("/dev/audio0", SAVANXP_OPEN_WRITE);
+    /* READ|WRITE: /dev/audio0 es duplex (playback por write(), captura por
+     * read()), con un dueno de sesion independiente para cada direccion en
+     * audio_device.cpp. Antes solo pedia WRITE y read() volvia EBADF desde la
+     * capa generica de fd, sin llegar siquiera al driver. */
+    return savanxp_open_mode("/dev/audio0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
 }
 
 long audio_get_info(int fd, struct savanxp_audio_info* info) {

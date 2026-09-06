@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1030,10 +1030,14 @@ function Get-QemuVideoInputDevices {
 
 # Dispositivo de sonido. "auto" sigue a -Virtio (virtio-sound con virtio, AC'97
 # sin el); "virtio"/"ac97" lo fuerzan para los harnesses que miden un driver
-# concreto (virtio-count, ac97-count, ...).
+# concreto (virtio-count, ac97-count, ...). streams=2 (en vez de 1) le pide a
+# QEMU un stream de salida y uno de entrada, asi virtio_sound:: tiene un PCM de
+# captura contra el que probar; audiodev=audio1 necesita poder grabar para que
+# ese stream de entrada sirva de algo, no solo existir (ver -Audiodev sdl/wav
+# mas abajo).
 function Get-QemuAudioDevice([string]$Audio) {
     if ($Audio -eq "virtio" -or ($Audio -eq "auto" -and $Virtio)) {
-        return @("-device", "virtio-sound-pci,audiodev=audio1,streams=1")
+        return @("-device", "virtio-sound-pci,audiodev=audio1,streams=2")
     }
     return @("-device", "AC97,audiodev=audio1")
 }
@@ -1338,6 +1342,16 @@ function Run-VirtioStreamQemu {
     if (Test-Path $wav) { Remove-Item $wav -Force }
     Run-AutomationQemu -AutomationCommand "audiostream" -SuccessToken "AUDIO STREAM PASS" -FailureToken "AUDIO STREAM FAIL" -TimeoutMinutes 2 -Audio virtio -WavPath $wav
     Write-Host "WAV capturado: $wav"
+}
+
+function Run-VirtioRecordQemu {
+    # audiotest --record sobre el stream de entrada de virtio-sound (streams=2
+    # en Get-QemuAudioDevice). El host de CI no tiene microfono real -- el
+    # audiodev "none" que usa Run-AutomationQemu sin -WavPath le da al device
+    # una fuente de captura muda (todo ceros) -- asi que esto no valida
+    # contenido, solo que la cola RX (post/reclamo/re-posteo de slots,
+    # copy_to_user) funcione de punta a punta sin trabarse ni fallar.
+    Run-AutomationQemu -AutomationCommand "audiorecord" -SuccessToken "AUDIO RECORD PASS" -FailureToken "AUDIO RECORD FAIL" -TimeoutMinutes 2 -Audio virtio
 }
 
 function Run-Ac97CountQemu {
@@ -1660,6 +1674,9 @@ switch ($Command) {
     }
     "virtio-stream" {
         Run-VirtioStreamQemu
+    }
+    "virtio-record" {
+        Run-VirtioRecordQemu
     }
     "windowd-smoke" {
         Run-WindowdSmokeQemu

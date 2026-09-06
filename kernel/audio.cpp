@@ -63,4 +63,25 @@ int submit_period(uint64_t user_buffer, uint32_t byte_count) {
 
 void stop() { if (g_backend != nullptr) { g_backend->stop(); } }
 
+bool capture_ready() {
+    return g_backend != nullptr && g_backend->capture_ready != nullptr && g_backend->capture_ready();
+}
+
+bool capture_configure() {
+    return g_backend != nullptr && g_backend->capture_configure != nullptr && g_backend->capture_configure();
+}
+
+int capture_read_period(uint64_t user_buffer, uint32_t byte_count) {
+    if (g_backend == nullptr || g_backend->capture_read_period == nullptr) {
+        return -static_cast<int>(SAVANXP_ENODEV);
+    }
+    return g_backend->capture_read_period(user_buffer, byte_count);
+}
+
+void capture_stop() {
+    if (g_backend != nullptr && g_backend->capture_stop != nullptr) {
+        g_backend->capture_stop();
+    }
+}
+
 } // namespace audio

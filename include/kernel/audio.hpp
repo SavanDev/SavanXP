@@ -23,6 +23,18 @@ struct Backend {
     int (*submit_period)(uint64_t user_buffer, uint32_t byte_count);
     // Detiene y libera el stream (fin de la sesion de escritura / close del fd).
     void (*stop)();
+
+    // Direccion de entrada (microfono), simetrica a la de arriba pero opcional:
+    // un backend que no captura (AC97, o virtio-sound sin stream de input) deja
+    // estos cuatro punteros en nullptr via el inicializador designado, y
+    // audio:: los trata como "no soportado" en vez de crashear.
+    bool (*capture_ready)();
+    bool (*capture_configure)();
+    // Llena un periodo de PCM en memoria de usuario leyendo del device. Devuelve
+    // 0 en exito o un -errno negativo. El troceado a period_bytes lo hace el
+    // llamador, igual que con submit_period.
+    int (*capture_read_period)(uint64_t user_buffer, uint32_t byte_count);
+    void (*capture_stop)();
 };
 
 // Driver de audio candidato, espejo de display::Driver. Los probes corren por
@@ -57,5 +69,10 @@ bool get_info(savanxp_audio_info& info);
 bool configure();
 int submit_period(uint64_t user_buffer, uint32_t byte_count);
 void stop();
+
+bool capture_ready();
+bool capture_configure();
+int capture_read_period(uint64_t user_buffer, uint32_t byte_count);
+void capture_stop();
 
 } // namespace audio

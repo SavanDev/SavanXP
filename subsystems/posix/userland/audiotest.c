@@ -40,6 +40,31 @@ static int is_stream_mode(int argc, char** argv) {
     return argc > 1 && strcmp(argv[1], "--stream") == 0;
 }
 
+static int is_record_mode(int argc, char** argv) {
+    return argc > 1 && strcmp(argv[1], "--record") == 0;
+}
+
+/* Lee varios periodos de /dev/audio0 y verifica que cada read() devuelva
+ * exactamente period_bytes sin error. El host de CI no tiene microfono real,
+ * asi que esto no valida contenido -- solo que el camino completo (cola RX,
+ * reclamo/re-posteo de slots, copy_to_user) funcione de punta a punta sin
+ * trabarse ni fallar. */
+static int run_record(int fd, const struct savanxp_audio_info* info) {
+    const int periods = 8;
+    int i;
+
+    for (i = 0; i < periods; ++i) {
+        const long got = savanxp_read(fd, g_samples, info->period_bytes);
+        if (got != (long)info->period_bytes) {
+            eprintf("audiotest: record read failed (%s)\n", result_error_string(got));
+            return 1;
+        }
+    }
+
+    printf("AUDIO RECORD PASS\n");
+    return 0;
+}
+
 /* Reproduce el patron de alimentacion de Doom para exponer underruns: cada
  * iteracion escribe "lo que paso en tiempo real" (elapsed-worth) de un tono
  * cuadrado continuo y luego duerme un poco, imitando el trabajo de un frame.
@@ -125,6 +150,7 @@ int main(int argc, char** argv) {
     long result;
     const int smoke_mode = is_smoke_mode(argc, argv);
     const int stream_mode = is_stream_mode(argc, argv);
+    const int record_mode = is_record_mode(argc, argv);
 
     if (fd < 0) {
         puts_fd(2, "audiotest: /dev/audio0 not available\n");
@@ -150,6 +176,12 @@ int main(int argc, char** argv) {
 
     if (stream_mode) {
         const int rc = run_stream((int)fd, &info);
+        savanxp_close((int)fd);
+        return rc;
+    }
+
+    if (record_mode) {
+        const int rc = run_record((int)fd, &info);
         savanxp_close((int)fd);
         return rc;
     }
