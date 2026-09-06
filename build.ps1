@@ -88,6 +88,7 @@ $KernelSources = @(
     "kernel/device.cpp",
     "kernel/display.cpp",
     "kernel/ata.cpp",
+    "kernel/virtio_blk.cpp",
     "kernel/partition.cpp",
     "kernel/fs.cpp",
     "kernel/ramdisk.cpp",
@@ -1036,6 +1037,20 @@ function Get-QemuAudioDevice([string]$Audio) {
     return @("-device", "AC97,audiodev=audio1")
 }
 
+# Disco persistente. Sin -Virtio queda IDE (isa-ide + ide-hd), el mismo
+# controlador que emula VirtualBox. Con -Virtio pasa a virtio-blk-pci. Nunca
+# los dos frentes a la vez: es el mismo "-drive if=none,id=svdisk,...,file=
+# $DiskImage" backend en ambos casos, asi que exponerlo dos veces expondria el
+# mismo disk.img como dos discos distintos y arriesgaria corromperlo si el
+# kernel llegara a escribirle por los dos caminos.
+function Get-QemuDiskDevices([string]$DiskImagePath) {
+    $drive = @("-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImagePath")
+    if ($Virtio) {
+        return $drive + @("-device", "virtio-blk-pci,drive=svdisk")
+    }
+    return @("-device", "isa-ide,id=svide") + $drive + @("-device", "ide-hd,drive=svdisk,bus=svide.0")
+}
+
 function Run-Qemu([switch]$WaitForDebugger) {
     $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")
     Build-Kernel
@@ -1061,13 +1076,11 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
-        "-device", "isa-ide,id=svide",
-        "-drive", "if=none,id=svdisk,media=disk,format=raw,file=$DiskImage",
-        "-device", "ide-hd,drive=svdisk,bus=svide.0",
         "-serial", "stdio",
         "-debugcon", "file:$DebugConLog",
         "-global", "isa-debugcon.iobase=0xe9"
     )
+    $args += Get-QemuDiskDevices $DiskImage
     $args += Get-QemuVideoInputDevices
     $args += Get-QemuAudioDevice "auto"
 
@@ -1170,9 +1183,6 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
         "-device", "rtl8139,netdev=net0",
-        "-device", "isa-ide,id=svide",
-        "-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$DiskImage""",
-        "-device", "ide-hd,drive=svdisk,bus=svide.0",
         "-serial", "file:$SmokeSerialLog",
         "-debugcon", "file:$DebugConLog",
         "-global", "isa-debugcon.iobase=0xe9",
@@ -1183,6 +1193,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
     if ($qmpPort -gt 0) {
         $args += @("-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait")
     }
+    $args += Get-QemuDiskDevices """$DiskImage"""
     $args += Get-QemuVideoInputDevices
 
     # audiodev de audio1 (el que consume el dispositivo de sonido): por defecto

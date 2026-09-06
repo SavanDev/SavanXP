@@ -39,6 +39,7 @@
 #include "kernel/tty.hpp"
 #include "kernel/uacpi_glue.hpp"
 #include "kernel/ui.hpp"
+#include "kernel/virtio_blk.hpp"
 #include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
 #include "kernel/virtio_sound.hpp"
@@ -233,10 +234,13 @@ namespace
     // Almacenamiento: mismo registro de drivers que display y audio, pero aca
     // los devices de todos COEXISTEN, asi que probe_all corre todos los
     // enumerate en vez de cortar en el primero. La prioridad define el orden de
-    // los indices: los ATA enumeran antes que el ramdisk, asi un disco IDE
-    // persistente (dev) tiene prioridad y en la ISO pura montamos el ramdisk.
-    // Cual de estos devices termina siendo la raiz lo decide fs::mount_any mas
-    // abajo, recorriendolos en este mismo orden.
+    // los indices: virtio-blk y ATA enumeran antes que el ramdisk (uno de los
+    // dos, nunca los dos a la vez: build.ps1 arma la maquina con virtio-blk-pci
+    // O isa-ide+ide-hd sobre el mismo disk.img, segun -Virtio), asi que un disco
+    // persistente tiene prioridad y en la ISO pura montamos el ramdisk. Cual de
+    // estos devices termina siendo la raiz lo decide fs::mount_any mas abajo,
+    // recorriendolos en este mismo orden.
+    block::register_driver(virtio_blk::driver());
     block::register_driver(ata::driver());
     block::register_driver(ramdisk::driver());
     // Ultimo en la fila (prioridad negativa): rebana en devices propios

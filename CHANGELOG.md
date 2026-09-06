@@ -12,6 +12,22 @@ Notas de corte:
 
 ### Agregado
 
+- **Driver `virtio-blk` para el disco persistente.** Hasta ahora `-Virtio`
+  paravirtualizaba GPU, tablet y sonido pero el disco seguia siempre por
+  `isa-ide`+`ide-hd` (`ata::`). `build.ps1 run`/`debug`/los smokes con `-Virtio`
+  arman la maquina con `virtio-blk-pci` en vez de IDE sobre el mismo backend de
+  archivo (`Get-QemuDiskDevices`, nunca los dos frentes juntos), y `block::`
+  suma `virtio_blk::driver()` con prioridad por encima de `ata::`. A diferencia
+  de `ata::rw_sectors` (falla directo por encima de 255 sectores por comando),
+  el driver parte transferencias grandes en varios requests virtio sincronicos
+  de hasta 128 sectores. Negocia `VIRTIO_BLK_F_FLUSH` si el device lo anuncia y
+  manda `VIRTIO_BLK_T_FLUSH` despues de cada escritura, mismo motivo que el
+  `CACHE_FLUSH` de ATA: sin eso una escritura "exitosa" puede quedar solo en la
+  write-cache de QEMU y perderse, corrompiendo el journal de SxFS. El device
+  aparece en `block:` como `vblk0`. Verificado con `filesapp-smoke -Virtio`
+  (PASS montando y operando sobre `vblk0`) y `filesapp-smoke` sin `-Virtio`
+  (PASS sin regresion sobre `ata0`).
+
 - **La lista de archivos muestra un icono por tipo.** El catalogo son blobs
   `.sxicon` sueltos en `/disk/icons` --emitidos en build por
   `tools/gen_mime_icons.py` desde `assets/desktop/icons/mime/`-- y el mapeo de

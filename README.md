@@ -114,6 +114,23 @@ Sin `qemu-ui-gtk` no existe el backend `-display gtk` que usa `Run-Qemu` (con
 que le da a SDL2 un backend real de audio para hablar con el servidor de audio
 del host (en WSL2, el socket Pulse que expone WSLg).
 
+Para `-Virtio`, Arch separa ademas cada dispositivo de display virtio en su
+propio paquete, fuera de `qemu-system-x86`:
+
+```bash
+pacman -S qemu-hw-display-virtio-vga qemu-hw-display-virtio-vga-gl \
+  qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-pci \
+  qemu-hw-display-virtio-gpu-pci-gl
+```
+
+Sin `qemu-hw-display-virtio-vga`, `-device virtio-vga` (lo que arma `-Virtio`)
+no existe y QEMU falla con "is not a valid device model name". El caso mas
+enganoso es faltar solo `qemu-hw-display-virtio-gpu` (sin `-pci`): los demas
+paquetes quedan instalados, `-device virtio-vga,help` lista propiedades como si
+nada, pero al arrancar la maquina de verdad QEMU **segfaultea** en
+`virtio_instance_init_common` — el modulo base con el tipo `virtio-gpu-device`
+del que dependen los frontends PCI no esta cargado.
+
 ## Compilacion
 
 Compilar el sistema:
@@ -177,10 +194,10 @@ nuevas que esos modelos exponen al guest). Por eso `-Accel whpx` fuerza
 `-cpu qemu64`, que arranca sin problemas.
 
 La maquina QEMU se arma por defecto con hardware "base": VGA estandar, mouse
-PS/2 y audio AC'97, el mismo que emula VirtualBox. Asi el kernel ejercita los
-backends de fallback (`fb_gpu`, `ps2`, `ac97`) sin salir de QEMU. Para levantar
-la maquina con dispositivos paravirtualizados (virtio-vga, virtio-tablet,
-virtio-sound) hay que pedirlo explicitamente:
+PS/2, audio AC'97 y disco IDE, el mismo que emula VirtualBox. Asi el kernel
+ejercita los backends de fallback (`fb_gpu`, `ps2`, `ac97`, `ata`) sin salir de
+QEMU. Para levantar la maquina con dispositivos paravirtualizados (virtio-vga,
+virtio-tablet, virtio-sound, virtio-blk) hay que pedirlo explicitamente:
 
 ```powershell
 .\build.ps1 run -Virtio
