@@ -1,289 +1,289 @@
-# SxGFX — endurecer la capa 2D como GDI32
+# SxGFX — hardening the 2D layer into a GDI32
 
-> **Estado: LOS TRES LOTES COMPLETOS, en master.** El
-> documento es el plan: qué le falta a SxGFX medido contra el rol que le asigna
-> [SYSTEM_LAYERING.md](SYSTEM_LAYERING.md) —**GDI32**, la capa de rasterización
-> 2D debajo de SXGUI-C— y en qué orden conviene atacarlo.
+> **Status: ALL THREE BATCHES COMPLETE, on master.** This document is the plan:
+> what SxGFX is missing measured against the role
+> [SYSTEM_LAYERING.md](SYSTEM_LAYERING.md) assigns it — **GDI32**, the 2D
+> rasterization layer underneath SXGUI-C — and in what order to attack it.
 >
-> Lo que quedó construido en el lote 1:
+> What batch 1 built:
 >
-> - **Primitivas en el painter**: `sx_painter_set_pixel`, `sx_painter_hline`,
->   `sx_painter_vline`. SXGUI-C ya no define sus propios `hline`/`vline` ni
->   pinta píxeles sueltos con rects de 1×1.
-> - **Origen de coordenadas**: `sx_painter_push_origin`/`pop_origin` con pila
->   propia, aplicado exactamente una vez por llamada pública. El clip pasó a
->   expresarse en coordenadas locales, y `sx_painter_clip_bounds()` es la forma
->   soportada de consultarlo (leer `painter->clip_rect` a mano da coordenadas de
->   dispositivo).
-> - **Brushes**: `sx_brush` sólido o con trama 8×8 de 1 bit anclada a
->   dispositivo, más `sx_painter_fill_rect_brush` y `draw_frame_brush`. El focus
->   rect punteado y el riel de las barras de scroll salieron de código a mano.
-> - **El clamp de `source_rect`** en `draw_scaled_bitmap_nearest` (era el paso 2
->   del orden sugerido).
+> - **Painter primitives**: `sx_painter_set_pixel`, `sx_painter_hline`,
+>   `sx_painter_vline`. SXGUI-C no longer defines its own `hline`/`vline`, nor
+>   paints single pixels with 1×1 rects.
+> - **Coordinate origin**: `sx_painter_push_origin`/`pop_origin` with their own
+>   stack, applied exactly once per public call. The clip is now expressed in
+>   local coordinates, and `sx_painter_clip_bounds()` is the supported way to
+>   query it (reading `painter->clip_rect` by hand gives device coordinates).
+> - **Brushes**: `sx_brush`, either solid or with a device-anchored 1-bit 8×8
+>   pattern, plus `sx_painter_fill_rect_brush` and `draw_frame_brush`. The
+>   dotted focus rect and the scrollbar trough came out of hand-written code.
+> - **The `source_rect` clamp** in `draw_scaled_bitmap_nearest` (which was step
+>   2 of the suggested order).
 >
-> **No landeó `sx_pen`**: no hay consumidor. Las líneas de 1px sólidas ya las
-> cubren `hline`/`vline`, y el único trazo con estilo del toolkit es el focus
-> rect, que es un marco con brush. Agregar el objeto sin quien lo use sería API
-> especulativa; entra cuando aparezca el primer trazo con ancho o estilo.
+> **`sx_pen` did not land**: there is no consumer. Solid 1px lines are already
+> covered by `hline`/`vline`, and the toolkit's only styled stroke is the focus
+> rect, which is a frame with a brush. Adding the object with nobody to use it
+> would be speculative API; it goes in when the first stroke with a width or a
+> style shows up.
 >
-> Verificación: `build.ps1 gfx2d-test` (43 checks pixel-exactos sobre el painter
-> real, en el host, sin bootear) más `windowd-smoke`, `progman-smoke`,
-> `filesapp-smoke`, `taskbar-smoke` y `cursor-repro`. El escenario `files` de
-> `tools/shoot.ps1` da capturas **pixel-idénticas** antes y después: el lote 1 es
-> un refactor sin cambio de apariencia.
+> Verification: `build.ps1 gfx2d-test` (43 pixel-exact checks against the real
+> painter, on the host, without booting) plus `windowd-smoke`, `progman-smoke`,
+> `filesapp-smoke`, `taskbar-smoke` and `cursor-repro`. The `files` scenario of
+> `tools/shoot.ps1` produces **pixel-identical** captures before and after:
+> batch 1 is a refactor with no change in appearance.
 >
-> El código en cuestión es
-> [savanxp/gfx2d.h](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h) (API
-> pública), [runtime/gfx2d.c](../subsystems/posix/sdk/v1/runtime/gfx2d.c) (el
-> painter y los conjuntos de rects) y
-> [runtime/gfx_impl.inc](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc) (las
-> primitivas crudas sobre el buffer y el texto).
+> The code in question is
+> [savanxp/gfx2d.h](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h) (public
+> API), [runtime/gfx2d.c](../subsystems/posix/sdk/v1/runtime/gfx2d.c) (the
+> painter and the rect sets) and
+> [runtime/gfx_impl.inc](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc) (the
+> raw primitives over the buffer, and text).
 >
-> **De la sección "Lote 1" para abajo, el documento es el registro del plan
-> original** — con el razonamiento y la evidencia tal como se tomaron. Está en
-> tiempo futuro y cita líneas de `sxgui.c` que el propio lote 1 ya borró
-> (los `sxgui_hline`/`sxgui_vline`, los bucles de píxel del focus rect). Se
-> conserva así porque el valor es el razonamiento, no el estado.
+> **From the "Batch 1" section down, this document is the record of the
+> original plan** — with the reasoning and the evidence exactly as they were.
+> It is written in the future tense and cites lines of `sxgui.c` that batch 1
+> itself already deleted (the `sxgui_hline`/`sxgui_vline`, the focus rect's
+> pixel loops). It is kept that way because the value is the reasoning, not the
+> status.
 >
-> Lo que quedó construido en el lote 2:
+> What batch 2 built:
 >
-> - **`sx_region`** (2.1): región por bandas en Y en forma canónica, con
->   unión/resta/intersección **exactas** contra un rect desde un motor único.
->   `sx_painter_push_clip_region` la usa de clip, compartiendo pila con
->   `push_clip`. `windowd` compone contra ella: **una** llamada a
->   `wm_paint_layer` por capa en vez de una por sub-rect.
-> - **Fuentes** (2.2): decodificación UTF-8 (`gfx_utf8.inc`, compartido por el
->   SDK posix y el runtime nativo igual que los datos de la fuente), tabla de
->   Noto reindexada **por codepoint** con rangos —Latin-1 más puntuación
->   tipográfica y el euro— y `sx_painter_set_font` seleccionando entre
->   `SX_FONT_UI` y `SX_FONT_MONO`, que es el `SelectObject(hFont)` que faltaba.
->   El camino mono ganó su blit con clip, que no existía.
+> - **`sx_region`** (2.1): a Y-banded region in canonical form, with **exact**
+>   union/subtraction/intersection against a rect from a single engine.
+>   `sx_painter_push_clip_region` uses it as a clip, sharing the stack with
+>   `push_clip`. `windowd` composes against it: **one** call to
+>   `wm_paint_layer` per layer instead of one per sub-rect.
+> - **Fonts** (2.2): UTF-8 decoding (`gfx_utf8.inc`, shared by the POSIX SDK
+>   and the native runtime the same way the font data is), the Noto table
+>   reindexed **by codepoint** with ranges — Latin-1 plus typographic
+>   punctuation and the euro sign — and `sx_painter_set_font` selecting between
+>   `SX_FONT_UI` and `SX_FONT_MONO`, which is the `SelectObject(hFont)` that was
+>   missing. The mono path gained its clipped blit, which did not exist.
 >
-> **Medición que corrigió una suposición:** la resta de `sx_rect_set` ya era
-> exacta (usa `push_raw`, que no fusiona), así que con una sola fuente de daño la
-> región no gana área — 752 px por los dos caminos. Lo que sobre-cubre es
-> `sx_rect_set_add`, que fusiona por bounding box en cuanto dos rects sucios se
-> tocan: con daño en tres rects son 198 px exactos contra 358. Los dos casos
-> quedaron como test para que no se vuelva a suponer.
+> **A measurement that corrected an assumption:** `sx_rect_set` subtraction was
+> already exact (it uses `push_raw`, which does not merge), so with a single
+> damage source the region gains no area — 752 px either way. What over-covers
+> is `sx_rect_set_add`, which merges by bounding box as soon as two dirty rects
+> touch: with damage in three rects it is 198 px exact against 358. Both cases
+> were kept as tests so nobody assumes it again.
 >
-> **El UTF-8 es habilitante, no un arreglo:** hoy no hay ni un literal no-ASCII
-> en la UI, así que nada se veía mal. Lo que cambia es que ahora *se puede*
-> escribir "Configuración" sin que salga como dos glifos.
+> **UTF-8 is an enabler, not a fix:** today there is not a single non-ASCII
+> literal in the UI, so nothing looked wrong. What changes is that now you *can*
+> write "Configuración" without it coming out as two glyphs.
 >
-> Lo que quedó construido en el lote 3:
+> What batch 3 built:
 >
-> - **Raster ops**: `sx_rop` (COPY/XOR/AND/OR/INVERT) sobre el brush. XOR es el
->   que vale: aplicado dos veces restaura el destino exacto, que es lo que hace
->   baratos los marcos de arrastre.
-> - **Geometría**: línea (Bresenham, con atajo para rectas), polilínea, polígono
->   relleno por scanline, elipse (contorno y relleno) y rect redondeado. Todo se
->   apoya en `hline`/`vline`/`set_pixel` del painter, así que el clip, la región
->   y el origen salen gratis y correctos.
-> - **Escalado con calidad**: `sx_painter_draw_scaled_bitmap` con filtro
->   elegible; bilineal en punto fijo de 8 bits (esta capa la linkean todos los
->   binarios y no puede depender de `-Sse`).
-> - **Memory DC**: `sx_bitmap_create`/`destroy`, el `CreateCompatibleBitmap` que
->   faltaba. `destroy` sobre un bitmap de `wrap` es un no-op deliberado.
-> - **`sx_region_from_polygon`**: el `PathToRegion` de GDI. Comparte el scanline
->   con `fill_polygon`, así que la región y el dibujo describen exactamente la
->   misma forma — condición para poder clipear contra una figura sin que el
->   borde parpadee. Cierra el círculo con las ventanas no rectangulares que
->   motivaban el 2.1.
+> - **Raster ops**: `sx_rop` (COPY/XOR/AND/OR/INVERT) over the brush. XOR is
+>   the one that matters: applied twice it restores the exact destination, which
+>   is what makes drag frames cheap.
+> - **Geometry**: line (Bresenham, with a shortcut for straight ones),
+>   polyline, scanline-filled polygon, ellipse (outline and fill) and rounded
+>   rect. Everything leans on the painter's `hline`/`vline`/`set_pixel`, so the
+>   clip, the region and the origin come out free and correct.
+> - **Quality scaling**: `sx_painter_draw_scaled_bitmap` with a selectable
+>   filter; bilinear in 8-bit fixed point (this layer is linked by every binary
+>   and cannot depend on `-Sse`).
+> - **Memory DC**: `sx_bitmap_create`/`destroy`, the missing
+>   `CreateCompatibleBitmap`. `destroy` on a `wrap` bitmap is a deliberate
+>   no-op.
+> - **`sx_region_from_polygon`**: GDI's `PathToRegion`. It shares the scanline
+>   with `fill_polygon`, so the region and the drawing describe exactly the same
+>   shape — the condition for clipping against a figure without the edge
+>   flickering. It closes the loop with the non-rectangular windows that
+>   motivated 2.1.
 >
-> **No landeó un grabador de paths** (`BeginPath`/`EndPath`/Bézier). Sin
-> consumidor y con el polígono ya cubriendo el motor útil, habría sido API
-> especulativa — el mismo criterio que dejó afuera a `sx_pen` en el lote 1.
+> **A path recorder did not land** (`BeginPath`/`EndPath`/Bézier). With no
+> consumer, and with the polygon already covering the useful engine, it would
+> have been speculative API — the same criterion that left `sx_pen` out of
+> batch 1.
 >
-> **Un bug real que encontró el test, no la revisión:** el cruce de la scanline
-> se calculaba desde el vértice tal como lo guardaba el llamador, así que una
-> misma diagonal recorrida en un sentido daba una `x` y en el otro daba otra —
-> dos polígonos que comparten una arista se solapaban o dejaban costura. El
-> arreglo es normalizar la arista de arriba hacia abajo. En el camino probé piso
-> y techo para el redondeo: los dos rompen la simetría de espejo. El truncamiento
-> de C es el correcto justamente por ser impar-simétrico, y ahora hay un test que
-> lo fija.
+> **A real bug found by the test, not by review:** the scanline crossing was
+> computed from the vertex as the caller stored it, so the same diagonal
+> traversed one way gave one `x` and the other way gave another — two polygons
+> sharing an edge would overlap or leave a seam. The fix is to normalize the
+> edge top to bottom. Along the way I tried floor and ceiling for the rounding:
+> both break mirror symmetry. C's truncation is the correct one precisely
+> because it is odd-symmetric, and there is now a test pinning that.
 >
-> **Consumidores conectados, y los que no:** el wallpaper pasó a bilineal (escala
-> a factores arbitrarios y se paga una vez por cambio de fondo). El escalado de
-> superficies de clientes en el compositor sigue en nearest a propósito: está en
-> el camino caliente y cuatro muestras por píxel ahí no se meten a ciegas.
-> `sxgui_paint_arrow` se dejó como está: su triángulo escalonado de cuatro filas
-> es pixel-art deliberado del look Win9x, no una carencia de la capa.
+> **Consumers wired up, and the ones that were not:** the wallpaper moved to
+> bilinear (it scales by arbitrary factors and is paid once per background
+> change). Client surface scaling in the compositor stays on nearest on
+> purpose: it is on the hot path and four samples per pixel do not go in there
+> blind. `sxgui_paint_arrow` was left as is: its four-row stepped triangle is
+> deliberate Win9x pixel art, not a shortcoming of the layer.
 >
-> Verificación: `gfx2d-test` pasa a **182 checks**, con la geometría además
-> renderizada a imagen y mirada con los ojos. En vivo, la batería completa de
-> smokes.
+> Verification: `gfx2d-test` grows to **182 checks**, with the geometry also
+> rendered to an image and looked at with human eyes. Live, the full smoke
+> battery.
 
-## Por qué GDI32 y no DirectX
+## Why GDI32 and not DirectX
 
-Vale dejarlo escrito porque la pregunta reaparece: SxGFX **no** es el lugar
-donde poner un modelo tipo DirectX (dispositivo, recursos opacos, swapchain,
-estado de pipeline). SXGUI-C está construido encima y lo que necesita es
-`fill_rect`, no `CreateDevice`. Convertir SxGFX en un D3D le rompe el rol que
-tiene asignado.
+Worth writing down because the question keeps coming back: SxGFX is **not** the
+place to put a DirectX-style model (device, opaque resources, swapchain,
+pipeline state). SXGUI-C is built on top of it and what it needs is
+`fill_rect`, not `CreateDevice`. Turning SxGFX into a D3D breaks the role it
+has been assigned.
 
-Curiosamente el kernel ya es más DirectX-like que SxGFX: `GPU_IOC_IMPORT_SECTION`
-→ `surface_id` es creación de recursos, `PRESENT_SURFACE_BATCH` es un command
-list y `savanxp_gpu_present_timeline` (submitted/retired + `WAIT_PRESENT`) es un
-fence. Si algún día se quiere ese modelo, va en una capa nueva al lado —no
-adentro— de SxGFX, hablando directo con `/dev/gpu0`. Este documento es sobre la
-otra dirección: hacer que SxGFX sea un **buen GDI**.
+Curiously the kernel is already more DirectX-like than SxGFX:
+`GPU_IOC_IMPORT_SECTION` → `surface_id` is resource creation,
+`PRESENT_SURFACE_BATCH` is a command list, and `savanxp_gpu_present_timeline`
+(submitted/retired + `WAIT_PRESENT`) is a fence. If that model is ever wanted,
+it goes in a new layer beside — not inside — SxGFX, talking directly to
+`/dev/gpu0`. This document is about the other direction: making SxGFX a **good
+GDI**.
 
-## Lote 1 — lo que ya duele
+## Batch 1 — what already hurts
 
-Estos tres tienen evidencia directa en el código de SXGUI-C: el toolkit está
-emulando a mano cosas que la capa de abajo debería darle.
+These three have direct evidence in SXGUI-C's code: the toolkit is emulating by
+hand things the layer below should be giving it.
 
-### 1.1 El painter no expone primitivas que ya existen
+### 1.1 The painter does not expose primitives that already exist
 
-`gfx_pixel`, `gfx_hline`, `gfx_vline` y `gfx_frame` están implementadas en
+`gfx_pixel`, `gfx_hline`, `gfx_vline` and `gfx_frame` are implemented in
 [gfx_impl.inc:755-833](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:755),
-pero ningún `sx_painter_*` las envuelve. Como SXGUI-C necesita el clipping del
-painter y el painter solo ofrece `fill_rect`, el toolkit termina pintando
-**píxeles sueltos a través de la ruta de relleno de rectángulos**:
+but no `sx_painter_*` wraps them. Since SXGUI-C needs the painter's clipping
+and the painter only offers `fill_rect`, the toolkit ends up painting **single
+pixels through the rectangle fill path**:
 
 ```c
 sx_painter_fill_rect(painter, sx_rect_make(x, y, 1, 1), SXGUI_COLOR_TEXT);
 ```
 
-Aparece en [sxgui.c:121-136](../subsystems/posix/sdk/v1/runtime/sxgui.c:121)
-(el focus rect punteado), [:153](../subsystems/posix/sdk/v1/runtime/sxgui.c:153)
-(el dither del checkbox) y
-[:1133](../subsystems/posix/sdk/v1/runtime/sxgui.c:1133). Cada píxel paga
-intersección de clip, clip contra el bitmap y una llamada. Y el toolkit define
-sus propios `sxgui_hline`/`sxgui_vline` sobre `fill_rect` en
+It shows up in [sxgui.c:121-136](../subsystems/posix/sdk/v1/runtime/sxgui.c:121)
+(the dotted focus rect), [:153](../subsystems/posix/sdk/v1/runtime/sxgui.c:153)
+(the checkbox dither) and
+[:1133](../subsystems/posix/sdk/v1/runtime/sxgui.c:1133). Every pixel pays for
+a clip intersection, a clip against the bitmap and a call. And the toolkit
+defines its own `sxgui_hline`/`sxgui_vline` over `fill_rect` in
 [sxgui.c:7-15](../subsystems/posix/sdk/v1/runtime/sxgui.c:7).
 
-**Qué hacer:** `sx_painter_set_pixel`, `sx_painter_hline`, `sx_painter_vline`,
-delegando a las primitivas crudas después de aplicar el clip. Es el arreglo más
-barato del documento.
+**What to do:** `sx_painter_set_pixel`, `sx_painter_hline`,
+`sx_painter_vline`, delegating to the raw primitives after applying the clip.
+It is the cheapest fix in this document.
 
-**Invariante a respetar:** las primitivas nuevas tienen que ser correctas *por
-fragmento*. El comentario en
-[gfx2d.c:288](../subsystems/posix/sdk/v1/runtime/gfx2d.c:288) documenta el bug
-de residuos del cursor —`draw_frame` trazaba un borde alrededor de cada
-sub-rect sucio— y esa lección aplica a todo lo que se agregue acá.
+**Invariant to respect:** the new primitives have to be correct *per fragment*.
+The comment in [gfx2d.c:288](../subsystems/posix/sdk/v1/runtime/gfx2d.c:288)
+documents the cursor residue bug — `draw_frame` was tracing a border around
+every dirty sub-rect — and that lesson applies to everything added here.
 
-### 1.2 No hay objetos pen ni brush
+### 1.2 There are no pen or brush objects
 
-El color viaja como `uint32_t` suelto en cada llamada. GDI tiene `HPEN` (ancho,
-punteado, rayado) y `HBRUSH` (sólido, hatch, patrón). El focus rect punteado y
-el dither del checkbox de SXGUI-C son, literalmente, brushes de patrón hechos a
-mano píxel por píxel.
+Color travels as a loose `uint32_t` in every call. GDI has `HPEN` (width,
+dotted, dashed) and `HBRUSH` (solid, hatch, pattern). SXGUI-C's dotted focus
+rect and checkbox dither are, literally, pattern brushes made by hand pixel by
+pixel.
 
-**Qué hacer:** un `sx_brush` con color sólido o patrón 8×8 de 1 bit, y un
-`sx_pen` con ancho y estilo. El look Win9x sale de ahí en vez de reimplementarse
-en cada widget.
+**What to do:** an `sx_brush` with a solid color or a 1-bit 8×8 pattern, and an
+`sx_pen` with width and style. The Win9x look comes from there instead of being
+reimplemented in every widget.
 
-### 1.3 No hay origen de coordenadas
+### 1.3 There is no coordinate origin
 
-GDI tiene `SetViewportOrgEx`. Acá todo es absoluto, así que cada widget calcula
-coordenadas absolutas a mano.
+GDI has `SetViewportOrgEx`. Here everything is absolute, so every widget
+computes absolute coordinates by hand.
 
-**Qué hacer:** `sx_painter_push_origin(dx, dy)` / `pop_origin`, reusando el
-mismo patrón de pila que ya tiene el clip (`SX_PAINTER_CLIP_STACK_DEPTH`). Es
-prerrequisito de widgets anidados y de contenedores con scroll que no tengan
-que hacer la aritmética a mano.
+**What to do:** `sx_painter_push_origin(dx, dy)` / `pop_origin`, reusing the
+same stack pattern the clip already has (`SX_PAINTER_CLIP_STACK_DEPTH`). It is
+a prerequisite for nested widgets and for scrolling containers that should not
+have to do the arithmetic by hand.
 
-## Lote 2 — lo que cambia estructura
+## Batch 2 — what changes structure
 
-### 2.1 Clip por región, no por rectángulo
+### 2.1 Clip by region, not by rectangle
 
-`sx_painter` tiene un `clip_rect` único más una pila de 16. Pero `sx_rect_set`
-**ya implementa** conjuntos de rects con `sx_rect_set_subtract_rect`: la
-maquinaria de regiones está escrita y no está conectada al clip del painter.
+`sx_painter` has a single `clip_rect` plus a stack of 16. But `sx_rect_set`
+**already implements** rect sets with `sx_rect_set_subtract_rect`: the region
+machinery is written and is not wired into the painter's clip.
 
-GDI tiene `HRGN` con combinación AND/OR/XOR/DIFF. Sin eso no hay ventanas no
-rectangulares ni clip directo contra la región de daño.
+GDI has `HRGN` with AND/OR/XOR/DIFF combination. Without it there are no
+non-rectangular windows and no direct clip against the damage region.
 
-Ojo con una simplificación existente: `sx_rect_set_add`
-([gfx2d.c:511](../subsystems/posix/sdk/v1/runtime/gfx2d.c:511)) fusiona por
-bounding box ante cualquier solape o adyacencia, así que dos rects en L se
-vuelven el rectángulo que los contiene. Sobre-cubre. Una región por bandas
-—como la de GDI— es exactamente el upgrade que resuelve esto y el clip a la vez.
+Watch out for an existing simplification: `sx_rect_set_add`
+([gfx2d.c:511](../subsystems/posix/sdk/v1/runtime/gfx2d.c:511)) merges by
+bounding box on any overlap or adjacency, so two L-shaped rects become the
+rectangle containing them. It over-covers. A banded region — like GDI's — is
+exactly the upgrade that solves this and the clip at the same time.
 
-### 2.2 Objeto fuente
+### 2.2 Font object
 
-Hay **dos** fuentes horneadas y la elección está clavada en el nombre de la
-función que se llama: `gfx_blit_text` (Noto, proporcional, antialiased) contra
-`gfx_blit_text_mono` + `gfx_cell_width`
+There are **two** baked fonts and the choice is nailed into the name of the
+function being called: `gfx_blit_text` (Noto, proportional, antialiased)
+against `gfx_blit_text_mono` + `gfx_cell_width`
 ([gfx_impl.inc:912](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:912),
-UniFont, la consola). El painter solo expone la primera, vía
+UniFont, the console). The painter only exposes the first, through
 `sx_painter_draw_text`.
 
-Peor: `gfx_noto_glyph(unsigned char c)`
-([gfx_impl.inc:9](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:9)) indexa por
-byte. Tope duro de 256 glifos, **sin Unicode**, sin tamaños, sin bold ni italic.
-No hay equivalente de `SelectObject(hFont)`.
+Worse: `gfx_noto_glyph(unsigned char c)`
+([gfx_impl.inc:9](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:9)) indexes
+by byte. A hard cap of 256 glyphs, **no Unicode**, no sizes, no bold or italic.
+There is no equivalent of `SelectObject(hFont)`.
 
-**Qué hacer, en orden:** (a) decodificar UTF-8 → codepoint en el camino de
-texto; (b) un `sx_font` opaco que el painter seleccione, con las dos fuentes
-actuales como las dos primeras instancias; (c) recién después, variantes y
-tamaños.
+**What to do, in order:** (a) decode UTF-8 → codepoint on the text path; (b) an
+opaque `sx_font` the painter selects, with the two current fonts as the first
+two instances; (c) only then, variants and sizes.
 
-## Lote 3 — huecos de GDI que faltan enteros
+## Batch 3 — GDI gaps that are missing entirely
 
-- **Raster ops.** No hay SRCCOPY/SRCINVERT/PATINVERT: el blend está clavado en
-  SRC_OVER (`sx_blend_bgra8888_over_rgb`,
-  [gfx2d.c:3](../subsystems/posix/sdk/v1/runtime/gfx2d.c:3)). XOR es lo que hace
-  baratos los rubber-bands de arrastre y los focus rects, que hoy se emulan
-  píxel a píxel.
-- **Geometría.** No hay línea diagonal, círculo, elipse, polígono ni rectángulo
-  redondeado. Bresenham más elipse por punto medio son unas 80 líneas.
-- **Escalado con calidad.** `sx_painter_draw_scaled_bitmap_nearest` es la única
-  opción y el filtro está en el nombre. GDI tiene
-  `SetStretchBltMode(HALFTONE)`; bilineal al achicar iconos y wallpapers se nota
-  a simple vista.
-- **Memory DC.** Solo existe `sx_bitmap_wrap`. GDI tiene
-  `CreateCompatibleDC` + `CreateCompatibleBitmap`, que es la receta canónica
-  para pintar sin parpadeo; hoy cada app hace su propio malloc y arma el
-  `savanxp_fb_info` a mano.
-- **Paths.** `BeginPath`/`EndPath` y regiones derivadas de paths. Última
-  prioridad: no es lo que está frenando nada.
+- **Raster ops.** There is no SRCCOPY/SRCINVERT/PATINVERT: the blend is nailed
+  to SRC_OVER (`sx_blend_bgra8888_over_rgb`,
+  [gfx2d.c:3](../subsystems/posix/sdk/v1/runtime/gfx2d.c:3)). XOR is what makes
+  drag rubber-bands and focus rects cheap, and today they are emulated pixel by
+  pixel.
+- **Geometry.** There is no diagonal line, circle, ellipse, polygon or rounded
+  rectangle. Bresenham plus a midpoint ellipse is about 80 lines.
+- **Quality scaling.** `sx_painter_draw_scaled_bitmap_nearest` is the only
+  option and the filter is in the name. GDI has
+  `SetStretchBltMode(HALFTONE)`; bilinear when shrinking icons and wallpapers
+  is visible to the naked eye.
+- **Memory DC.** Only `sx_bitmap_wrap` exists. GDI has `CreateCompatibleDC` +
+  `CreateCompatibleBitmap`, which is the canonical recipe for flicker-free
+  painting; today every app does its own malloc and builds the
+  `savanxp_fb_info` by hand.
+- **Paths.** `BeginPath`/`EndPath` and regions derived from paths. Lowest
+  priority: it is not blocking anything.
 
-## Endurecimiento de lo que ya hay
+## Hardening what is already there
 
-**`draw_scaled_bitmap_nearest` no valida `source_rect` contra el bitmap
-origen.** El destino sí se clipea (`target_rect`), pero `source_x` y `source_y`
-se derivan de un `source_rect` que provee el llamador y del que solo se comprueba
-que no esté vacío
-([gfx2d.c:378](../subsystems/posix/sdk/v1/runtime/gfx2d.c:378)). Un `source_rect`
-que exceda las dimensiones del origen, o con `x`/`y` negativos, lee fuera del
-buffer.
+**`draw_scaled_bitmap_nearest` does not validate `source_rect` against the
+source bitmap.** The destination is clipped (`target_rect`), but `source_x` and
+`source_y` are derived from a `source_rect` supplied by the caller, of which
+only emptiness is checked
+([gfx2d.c:378](../subsystems/posix/sdk/v1/runtime/gfx2d.c:378)). A
+`source_rect` exceeding the source dimensions, or with negative `x`/`y`, reads
+outside the buffer.
 
-Hoy es **latente, no un bug activo**: los tres llamadores in-tree
-(`desktop_wallpaper.c:356`, `progman.c:228`, `windowd_render.c:385`) pasan el
-rect completo del origen. Pero es API pública del SDK y el clamp son cuatro
-líneas.
+Today it is **latent, not an active bug**: the three in-tree callers
+(`desktop_wallpaper.c:356`, `progman.c:228`, `windowd_render.c:385`) pass the
+full source rect. But it is public SDK API and the clamp is four lines.
 
-## Lo que está bien y no hay que romper
+## What is right and must not be broken
 
-- **Texto antialiased** por cobertura por píxel (`kNotoCoverage`). GDI32 tardó
-  años en tener eso; ninguna refactorización debería perderlo.
-- **Clipping correcto por fragmento**, con el razonamiento documentado en
-  [gfx2d.c:288](../subsystems/posix/sdk/v1/runtime/gfx2d.c:288). Es una
-  invariante ganada a pulso contra un bug real de repintado.
-- **El desborde de `sx_rect_set` colapsa a un superset deliberado**
-  ([gfx2d.c:558](../subsystems/posix/sdk/v1/runtime/gfx2d.c:558)): sobre-pinta,
-  nunca sub-pinta, y está documentado. La capacidad fija de 64 y la pila de clip
-  de 16 degradan de forma segura.
-- **El camino rápido de `memcpy`** en `sx_painter_blit_bitmap` cuando origen y
-  destino comparten ancho completo
+- **Antialiased text** through per-pixel coverage (`kNotoCoverage`). GDI32 took
+  years to get that; no refactor should lose it.
+- **Correct per-fragment clipping**, with the reasoning documented in
+  [gfx2d.c:288](../subsystems/posix/sdk/v1/runtime/gfx2d.c:288). It is an
+  invariant won the hard way against a real repaint bug.
+- **`sx_rect_set` overflow collapses to a deliberate superset**
+  ([gfx2d.c:558](../subsystems/posix/sdk/v1/runtime/gfx2d.c:558)): it
+  over-paints, never under-paints, and it is documented. The fixed capacity of
+  64 and the clip stack of 16 degrade safely.
+- **The `memcpy` fast path** in `sx_painter_blit_bitmap` when source and
+  destination share a full width
   ([gfx2d.c:308](../subsystems/posix/sdk/v1/runtime/gfx2d.c:308)).
 
-## Orden sugerido
+## Suggested order
 
-1. ~~**Lote 1 completo** (1.1 + 1.3 + 1.2, en ese orden).~~ **Hecho.** Aditivo,
-   sin tocar el kernel, y borró código de SXGUI-C.
-2. ~~**El clamp de `source_rect`.**~~ **Hecho**, junto con el lote 1.
-3. ~~**2.1 (regiones).**~~ **Hecho.** Absorbió la sobre-cobertura de
-   `sx_rect_set_add` y dejó lista la base para ventanas no rectangulares.
-4. ~~**2.2 (fuentes).**~~ **Hecho**, incluido el cambio en
-   `tools/font/genfont.py` para hornear por rangos de codepoint.
-5. ~~**Lote 3, por demanda.**~~ **Hecho**, salvo el grabador de paths, que
-   sigue sin consumidor y por eso no entró.
+1. ~~**Batch 1 complete** (1.1 + 1.3 + 1.2, in that order).~~ **Done.**
+   Additive, no kernel changes, and it deleted SXGUI-C code.
+2. ~~**The `source_rect` clamp.**~~ **Done**, together with batch 1.
+3. ~~**2.1 (regions).**~~ **Done.** It absorbed `sx_rect_set_add`'s
+   over-coverage and left the base ready for non-rectangular windows.
+4. ~~**2.2 (fonts).**~~ **Done**, including the change in
+   `tools/font/genfont.py` to bake by codepoint ranges.
+5. ~~**Batch 3, on demand.**~~ **Done**, except the path recorder, which still
+   has no consumer and therefore did not go in.
 
-Verificación: todo esto cae bajo el preview headless del toolkit en el host
-—`clang` del toolchain con stubs renderizando a PNG— y bajo `windowd-smoke`. Las
-primitivas nuevas deberían llegar con una comparación de imagen antes de tocar
-SXGUI-C.
+Verification: all of this falls under the headless toolkit preview on the host
+— the toolchain's `clang` with stubs rendering to PNG — and under
+`windowd-smoke`. New primitives should arrive with an image comparison before
+touching SXGUI-C.

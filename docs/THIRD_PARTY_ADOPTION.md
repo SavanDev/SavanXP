@@ -1,137 +1,139 @@
-# Politica de adopcion de codigo y diseno de terceros
+# Policy for adopting third-party code and design
 
-SavanXP puede estudiar, reutilizar o inspirarse en componentes de otros
-proyectos cuando eso acelera el desarrollo sin comprometer la claridad legal ni
-la mantenibilidad del repo.
+SavanXP may study, reuse or take inspiration from components of other projects
+when that speeds up development without compromising legal clarity or the
+maintainability of the repository.
 
-## Categorias obligatorias
+## Mandatory categories
 
-Cada adopcion debe quedar registrada en una de estas categorias:
+Every adoption has to be recorded under one of these categories:
 
-- `Referencia`: se estudia el diseno o comportamiento y se implementa desde
-  cero dentro de SavanXP.
-- `Port selectivo`: se copia codigo pequeno y autocontenido, preservando sus
-  avisos de copyright y licencia.
-- `No adoptar`: el componente queda descartado por acoplamiento alto, licencia
-  dudosa o costo de mantenimiento.
+- `Reference`: the design or behavior is studied and implemented from scratch
+  inside SavanXP.
+- `Selective port`: small, self-contained code is copied, preserving its
+  copyright and license notices.
+- `Do not adopt`: the component is discarded because of tight coupling, an
+  unclear license or maintenance cost.
 
-## Regla operativa por defecto
+## Default operating rule
 
-- compositor, toolkit grafico base, APIs de ventana y flujo desktop:
-  `Referencia`
-- helpers pequenos de geometria, rects, bitmap simple o utilidades similares:
-  `Port selectivo` si la licencia es clara y la dependencia resultante sigue
-  siendo minima
-- assets, iconos, cursores, fuentes o contenido no estrictamente de codigo:
-  `No adoptar` hasta revisar licencia y procedencia caso por caso
-- excepcion acotada: assets de referencia temporales para prototipos visuales
-  pueden incorporarse si quedan aislados bajo `assets/.../reference/...`,
-  documentados en el registro de procedencia y con reemplazo previsto por arte
-  propio del proyecto
+- compositor, base graphics toolkit, window APIs and desktop flow: `Reference`
+- small helpers for geometry, rects, simple bitmaps or similar utilities:
+  `Selective port` if the license is clear and the resulting dependency stays
+  minimal
+- assets, icons, cursors, fonts or content that is not strictly code:
+  `Do not adopt` until license and provenance are reviewed case by case
+- bounded exception: temporary reference assets for visual prototypes may be
+  brought in if they stay isolated under `assets/.../reference/...`, are
+  documented in the provenance registry, and are scheduled for replacement by
+  the project's own art
 
-## Requisitos para cualquier adopcion
+## Requirements for any adoption
 
-- registrar el origen exacto del componente en `docs/THIRD_PARTY_PROVENANCE.md`
-- anotar la licencia verificada
-- justificar la decision tecnica
-- conservar los avisos originales cuando haya `Port selectivo`
-- no relicenciar como MIT puro una pieza copiada de un tercero con otra
-  licencia permisiva
+- record the exact origin of the component in
+  `docs/THIRD_PARTY_PROVENANCE.md`
+- note the verified license
+- justify the technical decision
+- preserve the original notices whenever there is a `Selective port`
+- do not relicense a piece copied from a third party under another permissive
+  license as pure MIT
 
 ## SerenityOS
 
-Para SerenityOS el enfoque inicial del repo es:
+For SerenityOS the repository's initial approach is:
 
-- `WindowServer`, `Compositor` y `LibGUI`: `Referencia`
-- `LibGfx` base, primitivas 2D y estructuras de rects: `Referencia` por
-  defecto, con `Port selectivo` solo para helpers pequenos y autocontenidos
-- backends GPU no VirtIO, assets, iconos y fuentes: `No adoptar` en esta fase
-- assets, iconos y arte visual del desktop actual: propios del repo y
-  generados localmente, sin dependencia activa de assets de SerenityOS
+- `WindowServer`, `Compositor` and `LibGUI`: `Reference`
+- base `LibGfx`, 2D primitives and rect structures: `Reference` by default,
+  with `Selective port` only for small, self-contained helpers
+- non-VirtIO GPU backends, assets, icons and fonts: `Do not adopt` at this
+  stage
+- assets, icons and visual art of the current desktop: the repository's own,
+  generated locally, with no active dependency on SerenityOS assets
 
 ## OpenBSD
 
-Casi todo el arbol de OpenBSD es ISC o BSD-2, compatible con MIT: el unico
-requisito es conservar los avisos originales. Es la fuente externa de menor
-friccion legal para el repo, asi que el default aca es mas permisivo que en
-SerenityOS: piezas chicas y autocontenidas pueden ir directo a `Port
-selectivo`.
+Almost the whole OpenBSD tree is ISC or BSD-2, compatible with MIT: the only
+requirement is preserving the original notices. It is the external source with
+the least legal friction for this repository, so the default here is more
+permissive than for SerenityOS: small, self-contained pieces can go straight to
+`Selective port`.
 
-`Port selectivo`:
+`Selective port`:
 
-- funciones de string seguras de `lib/libc` (strlcpy, strlcat, strtonum,
-  reallocarray, recallocarray, freezero, explicit_bzero): quedan usos de
-  strcpy, strcat y sprintf en kernel y userland que estas reemplazan sin
-  cambiar la forma del codigo
-- `sys/kern/subr_prf.c`: printf sin dependencia de FILE, con soporte de width
-  y padding. Unifica los dos printf de userland (libc.c y posix.c) y cubre el
-  formato que hoy falta
-- `arc4random` (ChaCha20, `lib/libcrypto/arc4random`): no hay RNG en el repo;
-  lo necesitan los puertos efimeros y los ISN de TCP en kernel/net.cpp, que
-  hoy son predecibles
-- `sys/dev/pci/ac97.c`: solo la secuencia de warm reset con timeouts de
-  codec-ready y la tabla de mixer, que es donde las VMs difieren
-- `pcidevs` mas `devlist2h.awk`: tabla de IDs PCI generada desde texto, para
-  nombrar devices en pci.cpp y en las vistas de sysinfo y netinfo
-- `signify`: firma Ed25519 en ~1000 lineas ISC, para binarios SXE como seccion
-  no-alloc adicional
+- safe string functions from `lib/libc` (strlcpy, strlcat, strtonum,
+  reallocarray, recallocarray, freezero, explicit_bzero): there are still uses
+  of strcpy, strcat and sprintf in the kernel and userland that these replace
+  without changing the shape of the code
+- `sys/kern/subr_prf.c`: printf with no FILE dependency, with width and padding
+  support. It unifies the two userland printfs (libc.c and posix.c) and covers
+  the formatting that is missing today
+- `arc4random` (ChaCha20, `lib/libcrypto/arc4random`): there is no RNG in the
+  repository; the ephemeral ports and the TCP ISNs in kernel/net.cpp need one,
+  and today they are predictable
+- `sys/dev/pci/ac97.c`: only the warm reset sequence with codec-ready timeouts
+  and the mixer table, which is where VMs differ
+- `pcidevs` plus `devlist2h.awk`: a PCI ID table generated from text, to name
+  devices in pci.cpp and in the sysinfo and netinfo views
+- `signify`: Ed25519 signing in ~1000 lines of ISC, for SXE binaries as an
+  additional non-alloc section
 
-`Referencia`:
+`Reference`:
 
-- sndio y la API audio(4): misma forma que el HAL de audio propio (dispatcher
-  mas backends); lo que aporta es la politica de under-run y latencia
-- `amd64/lapic.c`, `ioapic.c`, `acpimadt.c`: xAPIC por MMIO, x2APIC, overrides
-  de MADT y virtual wire mode, en codigo corto y legible
-- wscons, wsdisplay, wskbd y wsmouse: separacion entre device, emulacion de
-  terminal e input; incluye decodificacion PS/2 con reenvios 0xFA y 0xFE
-- `malloc.c` de userland: guard pages, canarios, junk fill, unmap al liberar y
-  flags de depuracion en runtime
-- modelo de pledge y unveil: capacidades declaradas por proceso, con los
-  subsistemas y la metadata SXE como punto de corte natural. La
-  implementacion no se porta: esta acoplada a su tabla de syscalls
-- `src/regress`: organizacion de los tests de regresion
-- `tcp_input.c`: solo lectura, para timers de retransmision, ventana
-  deslizante y estados de cierre. Acoplado a mbuf, no portable
+- sndio and the audio(4) API: the same shape as the project's own audio HAL
+  (dispatcher plus backends); what it contributes is the under-run and latency
+  policy
+- `amd64/lapic.c`, `ioapic.c`, `acpimadt.c`: xAPIC over MMIO, x2APIC, MADT
+  overrides and virtual wire mode, in short and readable code
+- wscons, wsdisplay, wskbd and wsmouse: separation between device, terminal
+  emulation and input; includes PS/2 decoding with 0xFA and 0xFE resends
+- userland `malloc.c`: guard pages, canaries, junk fill, unmap on free and
+  runtime debug flags
+- the pledge and unveil model: capabilities declared per process, with the
+  subsystems and the SXE metadata as the natural cut point. The implementation
+  is not ported: it is coupled to their syscall table
+- `src/regress`: how the regression tests are organized
+- `tcp_input.c`: read-only, for retransmission timers, sliding window and close
+  states. Coupled to mbuf, not portable
 
-`No adoptar`:
+`Do not adopt`:
 
-- UVM, FFS y UFS, pf, xenocara y el DRM importado de Linux: acoplamiento alto
-  y sin encaje con SxFS ni con el HAL de display propio
-- ksh: ya existe shell_core.c
-- OpenBSD no tiene driver virtio-gpu, asi que del camino grafico principal no
-  hay nada que tomar
+- UVM, FFS and UFS, pf, xenocara and the DRM imported from Linux: tight
+  coupling and no fit with SxFS or with the project's own display HAL
+- ksh: shell_core.c already exists
+- OpenBSD has no virtio-gpu driver, so there is nothing to take for the main
+  graphics path
 
-Cada pieza que pase a `Port selectivo` entra en el registro de procedencia con
-su header ISC original intacto: son avisos de pocas lineas y perderlos es el
-error facil de cometer.
+Every piece that becomes a `Selective port` goes into the provenance registry
+with its original ISC header intact: those notices are a few lines long, and
+losing them is the easy mistake to make.
 
-## Trazabilidad: el registro es la fuente de verdad
+## Traceability: the registry is the source of truth
 
-La trazabilidad vive en `docs/THIRD_PARTY_PROVENANCE.md`, no en los mensajes de
-commit. La regla anterior pedia que cada commit citara su categoria; se retira
-porque apunta al lugar equivocado: cuando hay que auditar que se distribuye, lo
-que se mira es el arbol actual, no el historial.
+Traceability lives in `docs/THIRD_PARTY_PROVENANCE.md`, not in commit messages.
+The previous rule asked every commit to cite its category; it is retired
+because it points at the wrong place: when you have to audit what is being
+distributed, what you look at is the current tree, not the history.
 
-Invariante del registro:
+Registry invariant:
 
-- todo directorio de `vendor/` y `sdk/` con codigo de terceros tiene una
-  entrada
-- toda pieza de terceros que termine horneada en la ISO, el initramfs o la
-  imagen de disco tiene una entrada, incluso cuando el repo no la versiona y
-  se descarga o se provee aparte
-- cada entrada declara origen, version o commit fijado, licencia verificada,
-  decision y donde termina el bit distribuido
+- every directory under `vendor/` and `sdk/` holding third-party code has an
+  entry
+- every third-party piece that ends up baked into the ISO, the initramfs or the
+  disk image has an entry, even when the repository does not version it and it
+  is downloaded or supplied separately
+- each entry declares origin, pinned version or commit, verified license,
+  decision, and where the distributed bit ends up
 
-Se verifica listando `vendor/` y `sdk/` contra el registro. Es una revision
-manual, y el momento de hacerla es el cambio que agrega o actualiza el
-componente, no despues.
+It is verified by listing `vendor/` and `sdk/` against the registry. That is a
+manual review, and the moment to do it is the change that adds or updates the
+component, not afterwards.
 
-Reglas a nivel archivo:
+File-level rules:
 
-- con `Port selectivo`, el archivo conserva su header original o un comentario
-  equivalente con origen y licencia
-- con `Referencia`, la inspiracion se documenta en el registro y no se repite
-  en cada archivo
-- el codigo propio que envuelve o adapta una pieza de terceros es obra derivada
-  y hereda la licencia de esa pieza, no el MIT del repo: los shims tambien
-  llevan header
+- with `Selective port`, the file keeps its original header or an equivalent
+  comment with origin and license
+- with `Reference`, the inspiration is documented in the registry and not
+  repeated in every file
+- code of our own that wraps or adapts a third-party piece is a derivative work
+  and inherits that piece's license, not the repository's MIT: shims carry a
+  header too

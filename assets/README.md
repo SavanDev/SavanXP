@@ -1,97 +1,105 @@
-# Assets del desktop
+# Desktop assets
 
-Estructura:
+Structure:
 
 ```
 assets/
   desktop/
-    cursor.png                  cursor fuente del compositor
-    menu_strip_savanxp.png      banda vertical izquierda del menu Start
+    cursors/                    source cursors for the compositor
+    fonts/                      source fonts (baked by hand, see below)
     icons/
-      16x16/                    iconos propios del desktop (16x16)
-      32x32/                    iconos propios del desktop (32x32)
-      mime/                     catalogo de tipos de archivo (Tango 0.8.90)
+      16x16/                    the desktop's own icons (16x16)
+      32x32/                    the desktop's own icons (32x32)
+      mime/                     file-type catalog (Tango 0.8.90)
         16x16/
         32x32/
 ```
 
-El arte de `icons/16x16` y `icons/32x32` es propio del repo: se genera
-localmente con `tools/gen_desktop_source_art.py` y no depende de iconos
-externos.
+The art in `icons/16x16` and `icons/32x32` belongs to this repository: it is
+generated locally with `tools/gen_desktop_source_art.py` and depends on no
+external icons.
 
-`icons/mime/` es la excepcion y por eso vive aparte: son iconos del Tango Icon
-Theme 0.8.90, en **dominio publico**, usados como catalogo de tipos de archivo.
-Procedencia y motivo en [`docs/THIRD_PARTY_PROVENANCE.md`](../docs/THIRD_PARTY_PROVENANCE.md).
-La separacion de directorios es la que hace que "esto es propio" siga siendo
-una afirmacion verificable mirando el arbol.
+`icons/mime/` is the exception, which is why it lives apart: those are icons
+from the Tango Icon Theme 0.8.90, in the **public domain**, used as the
+file-type catalog. Provenance and reasoning in
+[`docs/THIRD_PARTY_PROVENANCE.md`](../docs/THIRD_PARTY_PROVENANCE.md). The
+directory split is what keeps "this is ours" a claim you can verify by looking
+at the tree.
 
-## Iconos de tipos de archivo
+## File-type icons
 
-Los PNG de `icons/mime/` NO se hornean en ningun binario. `tools/gen_mime_icons.py`
-los convierte a blobs `.sxicon` sueltos que van a `/disk/icons` en la imagen, y
-`diskfs/mimeicon.ini` mapea extension a nombre de icono. Agregar un tipo es
-copiar dos PNG (16 y 32) y sumar una linea al `.ini`: no hay que tocar codigo
-ni recompilar.
+The PNGs in `icons/mime/` are NOT baked into any binary.
+`tools/gen_mime_icons.py` converts them into standalone `.sxicon` blobs that
+land in `/disk/icons` in the image, and `diskfs/mimeicon.ini` maps an extension
+to an icon name. Adding a type means copying two PNGs (16 and 32) and adding a
+line to the `.ini`: no code changes, no rebuild.
 
-Los nombres siguen la Icon Naming Specification de freedesktop
-(`text-x-generic`, `image-x-generic`, ...), que es lo que permite cambiar de
-origen de arte sin reescribir el mapeo.
+The names follow freedesktop's Icon Naming Specification (`text-x-generic`,
+`image-x-generic`, ...), which is what makes it possible to change art source
+without rewriting the mapping.
 
-## Cursor
+## Cursors
 
-El cursor fuente vive en `assets/desktop/cursor.png`.
+The source cursors live in `assets/desktop/cursors/`, one PNG per shape:
+`arrow`, `wait`, `text`, `move`, `resize_h`, `resize_v`, `unavailable` and
+`link`.
 
-Sugerencias:
-- `16x16` o `32x32`
-- fondo transparente
-- hotspot asumido en `0,0` por ahora, o sea la punta superior izquierda
+Guidelines:
 
-Durante `.\build.ps1 build`, el archivo se convierte automaticamente a
-`build/generated/cursor_asset.h` y queda embebido en el binario de
-`subsystems/posix/userland/desktop.c`.
+- `16x16` or `32x32`
+- transparent background
+- the hotspot is **not** taken from the file: it is declared per shape in
+  `tools/gen_cursor_asset.py` (for example `arrow` is `3,1` and `wait` is
+  `9,9`)
 
-## Iconos del desktop
+During `.\build.ps1 build` the files are automatically converted into
+`build/generated/cursor_asset.h` and embedded in the window manager binary.
 
-Los iconos PNG del desktop viven en `assets/desktop/icons/16x16` y
+## Desktop icons
+
+The desktop's PNG icons live in `assets/desktop/icons/16x16` and
 `assets/desktop/icons/32x32`:
 
 - `desktop.png`
 - `app-terminal.png`
-- `app-spider.png`
 - `app-libgfx-demo.png`
 - `app-keyboard-settings.png`
 - `app-mouse.png`
+- `app-notepad.png`
 
-Durante `.\build.ps1 build`, esos PNG se convierten automaticamente a
-`build/generated/desktop_icon_assets.h` y quedan embebidos en el binario del
-desktop. El arte fuente se regenera con `tools/gen_desktop_source_art.py`,
-que produce un set propio con los mismos nombres y tamanos base.
+They are used for two different things, and it is worth not confusing them:
 
-## Banda lateral del menu Start
+- **As a source for `.sxres` manifests.** A program's `icon=<name>` key points
+  at one of these files, and the icon is stamped into the executable itself as
+  a `.sxicon` section. This is the normal path — see
+  [`docs/SXE_FORMAT.md`](../docs/SXE_FORMAT.md).
+- **As a baked asset.** Only `desktop.png` goes through
+  `tools/gen_desktop_icon_assets.py` into `build/generated/desktop_icon_assets.h`
+  and ends up compiled into the window manager. It is the universal fallback,
+  shown when a binary cannot be read at all.
 
-El arte para la banda vertical izquierda vive en
-`assets/desktop/menu_strip_savanxp.png`. Tambien se convierte automaticamente
-a `build/generated/desktop_icon_assets.h` durante `.\build.ps1 build` y se
-regenera junto con los iconos del desktop.
+The source art is regenerated by `tools/gen_desktop_source_art.py` on every
+build.
 
-## Tipografias
+## Fonts
 
-Las fuentes fuente viven en `assets/desktop/fonts/`:
+The source fonts live in `assets/desktop/fonts/`:
 
 ```
 fonts/
-  unifont.hex              GNU UniFont 17.0.04 (bitmap, consola/terminal)
-  NotoSans-Regular.ttf     Noto Sans Regular v1.06 (proporcional, escritorio)
-  LICENSE-OFL-1.1.txt      SIL Open Font License 1.1 (ambas)
+  unifont.hex              GNU UniFont 17.0.04 (bitmap, console/terminal)
+  NotoSans-Regular.ttf     Noto Sans Regular v1.06 (proportional, desktop)
+  LICENSE-OFL-1.1.txt      SIL Open Font License 1.1 (both)
 ```
 
-A diferencia de los PNG, las fuentes **no** se convierten durante `build.ps1`: se
-hornean a mano con `tools/font/genfont.py` (requiere `pip install freetype-py`) y
-las tablas `.inc` resultantes se commitean. UniFont sale del `.hex` canonico
-(bitmaps 8x16 nitidos); Noto Sans se rasteriza del TTF como atlas de cobertura
-antialiased. Procedencia y licencias en `docs/THIRD_PARTY_PROVENANCE.md`.
+Unlike the PNGs, the fonts are **not** converted during `build.ps1`: they are
+baked by hand with `tools/font/genfont.py` (requires `pip install
+freetype-py`) and the resulting `.inc` tables are committed. UniFont comes from
+the canonical `.hex` (crisp 8x16 bitmaps); Noto Sans is rasterized from the TTF
+as an antialiased coverage atlas. Provenance and licenses in
+`docs/THIRD_PARTY_PROVENANCE.md`.
 
-Para regenerar (desde la raiz del repo):
+To regenerate (from the repository root):
 
 ```
 python tools/font/genfont.py unifont --hex assets/desktop/fonts/unifont.hex \

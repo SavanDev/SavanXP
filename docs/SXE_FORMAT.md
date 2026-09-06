@@ -1,112 +1,113 @@
-# Formato SXE — ejecutables con recursos propios
+# The SXE format — executables carrying their own resources
 
-> **Estado: las cinco fases COMPLETAS, en master.** El formato canónico vive en
-> [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), el lector del SDK en
+> **Status: all five phases COMPLETE, on master.** The canonical format lives in
+> [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), the SDK reader in
 > [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
-> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), el estampado en
-> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`, y
-> los consumidores son `progman_registry_apply_sxe()` (launcher),
-> `windowd_presentation_load()` (chrome de ventana y Task List) y `file_assoc`
-> (asociaciones de archivo en filesapp). Validado por `sxe-smoke`,
-> `progman-smoke`, `windowd-smoke` y `filesapp-smoke`.
+> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), the stamping in
+> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`,
+> and the consumers are `progman_registry_apply_sxe()` (launcher),
+> `windowd_presentation_load()` (window chrome and Task List) and `file_assoc`
+> (file associations in filesapp). Validated by `sxe-smoke`, `progman-smoke`,
+> `windowd-smoke` and `filesapp-smoke`.
 >
-> **Estampado por default: todo programa que el build linkea sale con
-> `.sxmeta`, tenga o no un `.sxres`.** No es más opt-in. `sxe-smoke` mide la
-> imagen entera: **67/67 binarios instalados estampados**, in-tree y externos
-> (Doom, busybox) por igual. Ver [más abajo](#estampado-por-default).
+> **Stamping by default: every program the build links comes out with
+> `.sxmeta`, whether or not it has a `.sxres`.** It is no longer opt-in.
+> `sxe-smoke` measures the whole image: **67/67 installed binaries stamped**,
+> in-tree and external (Doom, busybox) alike. See
+> [below](#default-stamping).
 >
-> **`icon=` de `progman.ini` apunta a un programa, no a un catálogo.** `icon=`
-> resuelve a un *path* (`icon=/bin/aboutapp` presta ese ícono) en vez de a un
-> id horneado, con alias legados para los nombres cortos de antes. Ver "`icon=`
-> ya no elige de un catálogo: apunta a un programa", más abajo.
+> **`icon=` in `progman.ini` points at a program, not at a catalog.** `icon=`
+> resolves to a *path* (`icon=/bin/aboutapp` borrows that icon) instead of a
+> baked id, with legacy aliases for the short names of before. See "`icon=` no
+> longer picks from a catalog: it points at a program", below.
 >
-> **`desktop_icons.h` angostado del todo: un solo id horneado.** Doom, Shell,
-> Notepad, Gfx Demo, Key Test y Mouse Test —los seis que llegó a tener el
-> set— salieron uno por uno; sólo queda `DESKTOP_ICON_DESKTOP`, la red de
-> seguridad universal para cuando un binario no se puede leer. Ver el callout
-> en "`icon=` ya no elige de un catálogo", más abajo.
+> **`desktop_icons.h` narrowed all the way down: a single baked id.** Doom,
+> Shell, Notepad, Gfx Demo, Key Test and Mouse Test — the six the set came to
+> hold — left one by one; only `DESKTOP_ICON_DESKTOP` remains, the universal
+> safety net for when a binary cannot be read. See the callout in "`icon=` no
+> longer picks from a catalog", below.
 >
-> Pendientes conocidos, anotados en su lugar: la **resolución por MIME**
-> (necesita una capa de detección de tipo que no existe), el **costo del
-> escaneo de asociaciones** —ya medido— y el **renombre a `.sxe`**, que nunca
-> se hizo y que con el estampado universal perdió el argumento que tenía a
-> favor (ver esa sección).
+> Known open items, noted in place: **MIME resolution** (it needs a type
+> detection layer that does not exist), the **cost of the association scan** —
+> already measured — and the **rename to `.sxe`**, which was never done and
+> which lost the argument in its favor once stamping became universal (see that
+> section).
 >
-> Donde este documento y `sxe_format.h` no coincidan, **gana el header**.
+> Where this document and `sxe_format.h` disagree, **the header wins**.
 >
-> **Decisión-crux:** SXE **no es un contenedor**. Es una convención sobre ELF:
-> el archivo sigue empezando en `7F 45 4C 46`, lo carga el mismo
-> [kernel/elf.cpp](../kernel/elf.cpp) sin tocar una línea, y `llvm-readelf` lo
-> abre. Lo único que agrega son dos secciones **no-alloc** que el kernel jamás
-> mapea. "SXE" nombra la convención y la extensión, no un formato binario nuevo.
+> **Crux decision:** SXE is **not a container**. It is a convention over ELF:
+> the file still starts with `7F 45 4C 46`, the same
+> [kernel/elf.cpp](../kernel/elf.cpp) loads it without touching a line, and
+> `llvm-readelf` opens it. All it adds is two **non-alloc** sections the kernel
+> never maps. "SXE" names the convention and the extension, not a new binary
+> format.
 
-## Motivación
+## Motivation
 
-Hoy un ejecutable no puede hablar de sí mismo, y por eso existen tres tablas
-que compensan esa falta:
+Today an executable cannot speak about itself, and that is why three tables
+exist to compensate:
 
 1. [progman_registry.h:33](../subsystems/posix/userland/progman_registry.h:33) —
-   los iconos se referencian **por nombre** contra un set horneado en build. El
-   propio comentario dice: *"traer iconos propios por programa necesitaría un
-   formato+loader de iconos: trabajo aparte"*. Este documento es ese trabajo.
+   icons are referenced **by name** against a set baked at build time. Its own
+   comment says: *"per-program icons would need an icon format + loader:
+   separate work"*. This document is that work.
 2. [windowd_appinfo.h:16](../subsystems/posix/userland/windowd_appinfo.h:16) —
-   el WM **adivina** título/icono/accent por path, y admite que *"el arreglo de
-   fondo es que cada cliente informe su propio título/icono"*.
-3. `desktop_icons.h` — iconos de aplicación horneados dentro del binario del WM:
-   agregar un programa al menú exige **recompilar el sistema**.
+   the WM **guesses** title/icon/accent from the path, and admits that *"the
+   real fix is for each client to report its own title/icon"*.
+3. `desktop_icons.h` — application icons baked inside the WM binary: adding a
+   program to the menu requires **recompiling the system**.
 
-Con recursos en el propio ejecutable, las tres tablas se caen y aparece la
-capacidad que hoy no existe: copiar un `.sxe` a `/disk/bin` **es** instalar un
-programa.
+With resources inside the executable itself, all three tables fall away and a
+capability that does not exist today appears: copying a `.sxe` to `/disk/bin`
+**is** installing a program.
 
-## Por qué secciones ELF y no un contenedor propio
+## Why ELF sections and not a container of our own
 
-- **No se duplica el loader del kernel.** `kernel/elf.cpp` es chico y está
-  probado. Un formato nuevo significa un segundo parser en el camino más
-  crítico del sistema, o un des-envolvedor: bugs y superficie de ataque por
-  duplicado a cambio de nada.
-- **Los recursos no pagan RAM.** Al no ser `SHF_ALLOC`, no entran en ningún
-  `PT_LOAD`: el kernel no los ve, no los mapea, y el proceso no paga por ellos.
-  Con el presupuesto de memoria del sistema (~133 MiB usables de 256, arena en
-  BSS mapeada eager) meter decenas de KiB de iconos en un segmento cargable
-  **por proceso** sería un error caro.
-- **Sobrevive el tooling.** `readelf`, `objdump`, `nm`, gdb siguen andando.
-- **El estampado ya es posible con lo horneado**: `toolchain/llvm/bin/llvm-objcopy.exe`
-  está en el toolchain. Cero herramientas nuevas.
+- **The kernel loader is not duplicated.** `kernel/elf.cpp` is small and
+  tested. A new format means a second parser on the most critical path of the
+  system, or an unwrapper: double the bugs and attack surface in exchange for
+  nothing.
+- **Resources cost no RAM.** Not being `SHF_ALLOC`, they enter no `PT_LOAD`:
+  the kernel does not see them, does not map them, and the process does not pay
+  for them. With this system's memory budget (~133 MiB usable out of 256, arena
+  in BSS mapped eagerly), putting tens of KiB of icons into a loadable segment
+  **per process** would be an expensive mistake.
+- **Tooling survives.** `readelf`, `objdump`, `nm` and gdb keep working.
+- **Stamping is already possible with what is baked**:
+  `toolchain/llvm/bin/llvm-objcopy.exe` is in the toolchain. Zero new tools.
 
-Se consideró y descartó usar `SHT_NOTE` estándar (name/desc/type): el TLV
-propio es más simple de parsear sin malloc y no gana nada compartiendo el
-mecanismo de notas.
+Using standard `SHT_NOTE` (name/desc/type) was considered and dropped: our own
+TLV is simpler to parse without malloc and gains nothing from sharing the note
+mechanism.
 
-## Anatomía del archivo
+## Anatomy of the file
 
 ```
 notepad.sxe
-├─ ELF header                        ← intacto; EI_OSABI ya lleva el subsistema
+├─ ELF header                        ← intact; EI_OSABI already carries the subsystem
 ├─ Program headers
-├─ .text / .rodata / .data / .bss    → PT_LOAD: esto se mapea
-├─ .sxmeta   (NO alloc, ≤ 4 KiB)     → identidad: nombre, versión, mimes…
-└─ .sxicon   (NO alloc, ≤ 64 KiB)    → píxeles de los iconos
+├─ .text / .rodata / .data / .bss    → PT_LOAD: this gets mapped
+├─ .sxmeta   (NOT alloc, ≤ 4 KiB)    → identity: name, version, mimes...
+└─ .sxicon   (NOT alloc, ≤ 64 KiB)   → the icon pixels
 ```
 
-**Invariante que hay que verificar en build:** ni `.sxmeta` ni `.sxicon` deben
-tener la flag `A` en `llvm-readelf -S`. Si la tienen, se mapean, y todo el
-argumento de memoria se cae en silencio.
+**Invariant to verify at build time:** neither `.sxmeta` nor `.sxicon` may
+carry the `A` flag in `llvm-readelf -S`. If they do, they get mapped, and the
+whole memory argument collapses silently.
 
-**Dos secciones y no una** porque tienen patrones de lectura distintos:
-`.sxmeta` es de cientos de bytes y se lee entero; `.sxicon` es de KiB y se lee
-solo cuando hay que pintar. Un listado de archivos que solo necesita nombres no
-debería arrastrar píxeles.
+**Two sections and not one** because they have different read patterns:
+`.sxmeta` is hundreds of bytes and is read whole; `.sxicon` is kilobytes and is
+read only when something has to be painted. A file listing that only needs
+names should not drag pixels along.
 
-### Convenciones comunes
+### Common conventions
 
-- Little-endian, x86-64. Sin padding implícito: todos los campos alineados
-  naturalmente.
-- Strings en UTF-8. **El `length` manda**: no se garantiza terminador NUL, y el
-  lector debe tolerar que venga uno.
-- Sin malloc en userland: los lectores copian a buffers fijos y **truncan**.
+- Little-endian, x86-64. No implicit padding: every field naturally aligned.
+- Strings in UTF-8. **`length` rules**: no NUL terminator is guaranteed, and
+  the reader must tolerate one being there.
+- No malloc in userland: readers copy into fixed buffers and **truncate**.
 
-## Sección `.sxmeta`
+## The `.sxmeta` section
 
 ### Header (16 bytes)
 
@@ -114,82 +115,82 @@ debería arrastrar píxeles.
 struct sxe_meta_header {
     uint8_t  magic[4];      /* 'S','X','M','E' */
     uint16_t version;       /* 1 */
-    uint16_t header_bytes;  /* sizeof(header); permite crecer sin romper */
-    uint32_t blob_bytes;    /* total del blob, header incluido */
+    uint16_t header_bytes;  /* sizeof(header); allows growth without breakage */
+    uint32_t blob_bytes;    /* total blob size, header included */
     uint32_t record_count;
 };
 ```
 
-`header_bytes` existe para que una v2 pueda agregar campos al header: un lector
-v1 saltea `header_bytes` en vez de asumir `sizeof`.
+`header_bytes` exists so that a v2 can add fields to the header: a v1 reader
+skips `header_bytes` instead of assuming `sizeof`.
 
-### Registro TLV
+### TLV record
 
 ```c
 struct sxe_record {
-    uint16_t tag;       /* ver tabla */
+    uint16_t tag;       /* see table */
     uint16_t flags;     /* SXE_RECORD_* */
-    uint32_t length;    /* bytes de payload, sin contar el padding */
+    uint32_t length;    /* payload bytes, not counting padding */
     /* uint8_t payload[length]; */
-    /* padding con ceros hasta múltiplo de 4 */
+    /* zero padding up to a multiple of 4 */
 };
 ```
 
-| flag | valor | significado |
+| flag | value | meaning |
 |---|---|---|
-| `SXE_RECORD_REQUIRED` | `0x0001` | Si el lector no conoce el `tag`, **debe descartar el blob entero** y caer a los defaults |
+| `SXE_RECORD_REQUIRED` | `0x0001` | If the reader does not know the `tag`, it **must discard the whole blob** and fall back to the defaults |
 
-La regla general es "tag desconocido se ignora" — así se agregan campos sin
-romper binarios viejos. `REQUIRED` es la válvula de escape para el día que se
-agregue algo que cambie el significado de lo demás. Ningún tag de v1 lo usa;
-está definido ahora porque después ya es tarde.
+The general rule is "unknown tag is ignored" — that is how fields get added
+without breaking old binaries. `REQUIRED` is the escape valve for the day
+something is added that changes the meaning of the rest. No v1 tag uses it; it
+is defined now because afterwards would be too late.
 
-### Espacio de tags
+### Tag space
 
-| rango | uso |
+| range | use |
 |---|---|
-| `0x0001`–`0x00FF` | Identidad |
-| `0x0100`–`0x01FF` | Presentación |
-| `0x0200`–`0x02FF` | Ejecución |
-| `0x0300`–`0x03FF` | Capacidades |
-| `0x0400`–`0x7FFF` | Reservado para el sistema |
-| `0x8000`–`0xFFFF` | Privado / experimental — el sistema nunca los define |
+| `0x0001`–`0x00FF` | Identity |
+| `0x0100`–`0x01FF` | Presentation |
+| `0x0200`–`0x02FF` | Execution |
+| `0x0300`–`0x03FF` | Capabilities |
+| `0x0400`–`0x7FFF` | Reserved for the system |
+| `0x8000`–`0xFFFF` | Private / experimental — the system never defines these |
 
-### Tags de v1
+### v1 tags
 
-| tag | nombre | payload | notas |
+| tag | name | payload | notes |
 |---|---|---|---|
-| `0x0001` | `NAME` | utf8 | Nombre para mostrar. Sin él, el programa no tiene identidad: el lector cae a basename. Recomendado ≤ 31 bytes (`PROGMAN_NAME_CAPACITY`) |
-| `0x0002` | `DESCRIPTION` | utf8 | Recomendado ≤ 63 bytes (`PROGMAN_DESC_CAPACITY`) |
-| `0x0003` | `VERSION` | `uint16[4]` | major, minor, patch, build. Binario y **comparable** |
-| `0x0004` | `VERSION_STRING` | utf8 | Lo que se muestra ("1.2.0-rc3"). Separado de `VERSION` por el mismo motivo que Windows separa `FILEVERSION` de `StringFileInfo`: ordenar y mostrar son cosas distintas |
+| `0x0001` | `NAME` | utf8 | Display name. Without it the program has no identity: the reader falls back to the basename. Recommended ≤ 31 bytes (`PROGMAN_NAME_CAPACITY`) |
+| `0x0002` | `DESCRIPTION` | utf8 | Recommended ≤ 63 bytes (`PROGMAN_DESC_CAPACITY`) |
+| `0x0003` | `VERSION` | `uint16[4]` | major, minor, patch, build. Binary and **comparable** |
+| `0x0004` | `VERSION_STRING` | utf8 | What gets displayed ("1.2.0-rc3"). Separate from `VERSION` for the same reason Windows separates `FILEVERSION` from `StringFileInfo`: sorting and displaying are different things |
 | `0x0005` | `VENDOR` | utf8 | |
 | `0x0006` | `COPYRIGHT` | utf8 | |
-| `0x0007` | `BUILD_ID` | utf8 | Commit corto de git. **Siempre** lo pone el generador ([estampado por default](#estampado-por-default)); un `.sxres` puede fijar otro valor a mano si hace falta |
-| `0x0101` | `ACCENT` | `uint32` | `0x00RRGGBB`, el formato que ya devuelve `gfx_rgb`. Reemplaza el campo `accent` de `windowd_appinfo` |
-| `0x0102` | `LAUNCH_FLAGS` | `uint32` | `SAVANXP_DESKTOP_LAUNCH_FLAG_*` **por defecto**. Quien lanza puede sobrescribirlos |
-| `0x0201` | `INTERPRETER` | utf8 | Path absoluto del programa que ejecuta esta imagen. **Ausente o vacío = lo ejecuta el kernel directamente** |
-| `0x0202` | `SUBSYSTEM` | `uint8` | Espejo **informativo** de `EI_OSABI`. La autoridad sigue siendo el byte del ELF ([elf.hpp:14](../include/kernel/elf.hpp:14)); esto existe para que un lector de userland no tenga que parsear el ELF header |
-| `0x0301` | `MIME_OPEN` | utf8, entradas separadas por NUL | Tipos que el programa **declara poder** abrir |
-| `0x0302` | `EXT_OPEN` | utf8, entradas separadas por NUL | Extensiones, con punto: `.txt` |
+| `0x0007` | `BUILD_ID` | utf8 | Short git commit. **Always** set by the generator ([default stamping](#default-stamping)); a `.sxres` can pin another value by hand if needed |
+| `0x0101` | `ACCENT` | `uint32` | `0x00RRGGBB`, the format `gfx_rgb` already returns. Replaces the `accent` field of `windowd_appinfo` |
+| `0x0102` | `LAUNCH_FLAGS` | `uint32` | `SAVANXP_DESKTOP_LAUNCH_FLAG_*` **by default**. The launcher can override them |
+| `0x0201` | `INTERPRETER` | utf8 | Absolute path of the program that executes this image. **Absent or empty = the kernel executes it directly** |
+| `0x0202` | `SUBSYSTEM` | `uint8` | An **informational** mirror of `EI_OSABI`. The authority is still the ELF byte ([elf.hpp:14](../include/kernel/elf.hpp:14)); this exists so a userland reader does not have to parse the ELF header |
+| `0x0301` | `MIME_OPEN` | utf8, NUL-separated entries | Types the program **declares it can** open |
+| `0x0302` | `EXT_OPEN` | utf8, NUL-separated entries | Extensions, with the dot: `.txt` |
 
-**`INTERPRETER` entra desde v1 aunque todavía no haya VM.** Es el campo que
-resuelve el caso que se viene: cuando una app Haxe sea bytecode HashLink y no
-un ELF x86-64, el lanzador tiene que saber que la imagen no la ejecuta el
-kernel sino `/bin/hlvm`. Es el equivalente a shebang / `binfmt_misc`, y no
-entra en el byte de `EI_OSABI`.
+**`INTERPRETER` is in from v1 even though there is no VM yet.** It is the field
+that resolves the case that is coming: when a Haxe app is HashLink bytecode and
+not an x86-64 ELF, the launcher has to know the image is executed not by the
+kernel but by `/bin/hlvm`. It is the equivalent of a shebang /
+`binfmt_misc`, and it does not fit in the `EI_OSABI` byte.
 
-**`MIME_OPEN` declara capacidad, no asociación.** Que un programa diga que
-puede abrir `text/plain` no lo convierte en el que abre los `.txt`: eso es
-política del usuario y se resuelve en el registro (ver abajo).
+**`MIME_OPEN` declares capability, not association.** A program saying it can
+open `text/plain` does not make it the one that opens `.txt` files: that is
+user policy, and it is resolved in the registry (see below).
 
-### Tope de tamaño
+### Size cap
 
-`.sxmeta` no debe superar **4 KiB**. El lector usa un buffer fijo de ese
-tamaño y **rechaza** el blob si `blob_bytes` lo excede — sin malloc no hay otra
-opción honesta, y 4 KiB sobran para texto.
+`.sxmeta` must not exceed **4 KiB**. The reader uses a fixed buffer of that
+size and **rejects** the blob if `blob_bytes` exceeds it — without malloc there
+is no other honest option, and 4 KiB is plenty for text.
 
-## Sección `.sxicon`
+## The `.sxicon` section
 
 ```c
 struct sxe_icon_header {
@@ -199,347 +200,350 @@ struct sxe_icon_header {
     uint32_t blob_bytes;
     uint32_t image_count;
     /* struct sxe_icon_entry entries[image_count]; */
-    /* píxeles */
+    /* pixels */
 };
 
 struct sxe_icon_entry {
     uint16_t width;
     uint16_t height;
     uint32_t format;    /* SXE_ICON_FORMAT_* */
-    uint32_t offset;    /* desde el inicio del blob */
-    uint32_t length;    /* = width * height * 4 en BGRA8888 */
+    uint32_t offset;    /* from the start of the blob */
+    uint32_t length;    /* = width * height * 4 in BGRA8888 */
 };
 ```
 
-| formato | valor | descripción |
+| format | value | description |
 |---|---|---|
-| `SXE_ICON_FORMAT_BGRA8888` | `2` | `uint32` por píxel, `0xAARRGGBB` (en memoria: B,G,R,A), filas de arriba hacia abajo, sin padding de fila |
+| `SXE_ICON_FORMAT_BGRA8888` | `2` | `uint32` per pixel, `0xAARRGGBB` (in memory: B,G,R,A), rows top to bottom, no row padding |
 
-El **valor 2 no es arbitrario**: coincide a propósito con `SX_PIXEL_FORMAT_BGRA8888`
-de [gfx2d.h:18](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:18), para que
-los píxeles de un `.sxicon` se le pasen a un `struct sx_bitmap` sin traducir
-nada. `sxe.c` tiene un `_Static_assert` que rompe el build si alguien renumera
-los formatos de gfx2d — el modo de falla alternativo serían colores dados
-vuelta en tiempo de ejecución.
+The **value 2 is not arbitrary**: it deliberately matches
+`SX_PIXEL_FORMAT_BGRA8888` from
+[gfx2d.h:18](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:18), so the
+pixels of a `.sxicon` can be handed to a `struct sx_bitmap` without translating
+anything. `sxe.c` has a `_Static_assert` that breaks the build if someone
+renumbers the gfx2d formats — the alternative failure mode would be swapped
+colors at runtime.
 
-Ese es **exactamente** lo que ya produce
-[gen_desktop_icon_assets.py](../tools/gen_desktop_icon_assets.py)
-(`(a << 24) | (r << 16) | (g << 8) | b`) y lo que consume
-`struct desktop_embedded_bitmap`. Los píxeles del blob se le pasan al blitter
-existente **sin conversión**.
+That is **exactly** what
+[gen_desktop_icon_assets.py](../tools/gen_desktop_icon_assets.py) already
+produces (`(a << 24) | (r << 16) | (g << 8) | b`) and what
+`struct desktop_embedded_bitmap` consumes. The blob's pixels are handed to the
+existing blitter **without conversion**.
 
-**Tamaños:** 16×16 y 32×32 son los que el sistema usa hoy (`desktop_icon_small`
-/ `desktop_icon_large`) y todo `.sxe` debería traer los dos. Otros tamaños
-(48×48) son válidos y opcionales. Regla de selección del lector: exacto, si no
-el menor que sea ≥ al pedido, si no el más grande disponible.
+**Sizes:** 16×16 and 32×32 are the ones the system uses today
+(`desktop_icon_small` / `desktop_icon_large`) and every `.sxe` should carry
+both. Other sizes (48×48) are valid and optional. Reader selection rule: exact
+match, otherwise the smallest one ≥ the request, otherwise the largest
+available.
 
-**Tope:** 64 KiB. Con 16+32+48 en BGRA8888 se usan ~16 KiB, así que hay
-margen de sobra.
+**Cap:** 64 KiB. With 16+32+48 in BGRA8888 about 16 KiB is used, so there is
+plenty of headroom.
 
-## Retrocompatibilidad
+## Backward compatibility
 
-Al estilo del EXE de Windows: **un ejecutable sin recursos es un ejecutable de
-primera clase, para siempre.**
+Windows EXE style: **an executable without resources is a first-class
+executable, forever.**
 
-- Un ELF sin `.sxmeta` se lanza igual. Con el [estampado por
-  default](#estampado-por-default) esto ya no describe a ningún binario que
-  salga de *este* build, pero sigue siendo el contrato real: un ejecutable
-  copiado de otra parte, compilado con otro toolchain, o traído por un
-  tercero jamás debe dejar de arrancar por faltarle una sección que el kernel
-  ni siquiera mira. Nunca va a haber un `/disk/bin` "solo SXE".
-- **El kernel no participa de nada de esto.** No lee, no valida, no le importa.
-  Todo el mecanismo vive en userland.
-- Un `.sxmeta` corrupto, truncado, de versión futura, o con un `REQUIRED`
-  desconocido se trata **como ausente**. Jamás impide lanzar.
-- Defaults cuando no hay metadata:
+- An ELF without `.sxmeta` launches all the same. With [default
+  stamping](#default-stamping) that no longer describes any binary coming out
+  of *this* build, but it is still the real contract: an executable copied from
+  elsewhere, built with another toolchain, or brought in by a third party must
+  never fail to start for lacking a section the kernel does not even look at.
+  There will never be a "SXE only" `/disk/bin`.
+- **The kernel takes no part in any of this.** It does not read, does not
+  validate, does not care. The whole mechanism lives in userland.
+- A `.sxmeta` that is corrupt, truncated, from a future version, or carrying an
+  unknown `REQUIRED` is treated **as absent**. It never prevents launching.
+- Defaults when there is no metadata:
 
-  | dato | fallback |
+  | datum | fallback |
   |---|---|
-  | nombre | basename del path |
-  | icono | genérico del set del sistema |
-  | accent | `gfx_rgb(59, 95, 156)` — el que ya usa [windowd_render.c:356](../subsystems/posix/userland/windowd_render.c:356) |
+  | name | basename of the path |
+  | icon | generic from the system set |
+  | accent | `gfx_rgb(59, 95, 156)` — the one [windowd_render.c:356](../subsystems/posix/userland/windowd_render.c:356) already uses |
   | flags | `SAVANXP_DESKTOP_LAUNCH_FLAG_NONE` |
 
-### La extensión es una pista, no la autoridad
+### The extension is a hint, not the authority
 
-`.sxe` señala "acá probablemente hay recursos"; `.elf` señala "no busques". Eso
-le ahorra al lanzador abrir N archivos por escaneo, que es I/O real sobre
-SxFS.
+`.sxe` signals "there are probably resources here"; `.elf` signals "do not
+look". That saves the launcher from opening N files per scan, which is real I/O
+over SxFS.
 
-Pero **el blob es la fuente de verdad**. Un `.sxe` puede no tener `.sxmeta`
-válido (build viejo, archivo truncado, alguien renombró) y un `.elf` puede
-tenerlo. Si el lector trata la extensión como garantía, ese caso lo rompe. Como
-pista, el fallback es el mismo de arriba: silencioso y ya escrito.
+But **the blob is the source of truth**. A `.sxe` may have no valid `.sxmeta`
+(old build, truncated file, someone renamed it) and an `.elf` may have one. If
+the reader treats the extension as a guarantee, that case breaks it. As a hint,
+the fallback is the same one above: silent and already written.
 
-**El estampado por default le saca el piso al renombre.** La pista de la
-extensión valía para *podar* un escaneo — saltear sin abrir los archivos que
-casi seguro no tienen recursos. Con `.sxmeta` en el 100% de los binarios, ya
-no hay nada que podar: todo archivo que se abriera tendría recursos, así que
-`.sxe` dejaría de significar "abrí esto" y `.elf` de significar "salteá
-esto" — serían la misma cosa con dos nombres. `sxe_path_has_extension()`
-sigue viva en el lector porque el contrato retrocompatible la pide (un
-tercero puede seguir usándola como convención de archivo), pero ya no es la
-palanca para el costo de `file_assoc`. Esa palanca hay que buscarla en otro
-lado — un índice, o acotar qué directorios se escanean — no en el nombre.
+**Default stamping pulls the floor out from under the rename.** The extension
+hint was worth something for *pruning* a scan — skipping, without opening, the
+files that almost certainly have no resources. With `.sxmeta` on 100% of the
+binaries there is nothing left to prune: every file you opened would have
+resources, so `.sxe` would stop meaning "open this" and `.elf` would stop
+meaning "skip this" — they would be the same thing under two names.
+`sxe_path_has_extension()` is still alive in the reader because the
+backward-compatible contract requires it (a third party can still use it as a
+file convention), but it is no longer the lever for `file_assoc`'s cost. That
+lever has to be found somewhere else — an index, or bounding which directories
+get scanned — not in the name.
 
-## Sin caché — y ahora con la medición
+## No cache — and now with the measurement
 
-No hay índice persistente. La decisión era **medir primero**, porque una caché
-invalidada por mtime es la clase de cosa que agrega bugs difíciles de ver.
+There is no persistent index. The decision was to **measure first**, because a
+cache invalidated by mtime is the kind of thing that adds hard-to-see bugs.
 
-Ya hay números, y son de dos órdenes muy distintos:
+There are numbers now, and they are of two very different orders:
 
-| consumidor | qué abre | costo |
+| consumer | what it opens | cost |
 |---|---|---|
-| progman | los binarios que lista el catálogo | ~9 archivos, imperceptible |
-| windowd | el binario de cada ventana que crea | 1 por ventana, imperceptible |
-| **`file_assoc`** | **todos los ejecutables instalados** | **141 archivos, ~220 ms** (TCG) |
+| progman | the binaries the catalog lists | ~9 files, imperceptible |
+| windowd | the binary of each window it creates | 1 per window, imperceptible |
+| **`file_assoc`** | **every installed executable** | **141 files, ~220 ms** (TCG) |
 
-Los dos primeros están acotados por algo chico y no necesitan nada. El tercero
-sí duele, y por eso filesapp lo hace **perezoso**: una sesión que solo navega
-directorios no paga nada, y el costo se cobra una vez, cuando de verdad hay que
-abrir un archivo.
+The first two are bounded by something small and need nothing. The third does
+hurt, and that is why filesapp does it **lazily**: a session that only browses
+directories pays nothing, and the cost is charged once, when a file actually
+has to be opened.
 
-**El 141 tiene una lectura concreta, y cambió con el estampado por default.**
-`/disk/bin` es una copia de `/bin`, así que cada programa se examina dos
-veces — eso no se movió. Lo que sí se movió es la otra mitad del argumento: con
-el escaneo anterior, "de los 131 solo un puñado trae recursos" hacía pensar que
-la pista de la extensión podría podar casi todo el costo. Ahora **todos** los
-binarios tienen `.sxmeta` — abrirlos ya no es evitable por nombre, porque todos
-"tienen algo" aunque casi ninguno declare `EXT_OPEN`. La pista de la extensión
-dejó de ser una palanca de costo (ver la nota en la sección anterior); si este
-número llega a doler de verdad, la solución pasa por un índice o por acotar qué
-directorios escanea `file_assoc`, no por renombrar binarios.
+**The 141 has a concrete reading, and it changed with default stamping.**
+`/disk/bin` is a copy of `/bin`, so every program is examined twice — that did
+not move. What did move is the other half of the argument: with the previous
+scan, "of the 131, only a handful carry resources" suggested the extension hint
+could prune away nearly all the cost. Now **every** binary has `.sxmeta` —
+opening them is no longer avoidable by name, because they all "have something"
+even though almost none declares `EXT_OPEN`. The extension hint stopped being a
+cost lever (see the note in the previous section); if this number ever really
+hurts, the way out is an index or bounding which directories `file_assoc`
+scans, not renaming binaries.
 
-`file_assoc_scan_examined()` y el `ms=` de `filesapp-smoke` existen para poder
-volver a medir esto cuando algo cambie.
+`file_assoc_scan_examined()` and the `ms=` of `filesapp-smoke` exist so this
+can be measured again when something changes.
 
-## Quién lee qué
+## Who reads what
 
 ```
-  .sxe en disco
+  .sxe on disk
       │
-      │ lector compartido del SDK (savanxp/sxe.h) — sin malloc, buffers fijos
+      │ shared SDK reader (savanxp/sxe.h) — no malloc, fixed buffers
       ▼
-  progman ──► pinta el launcher (nombre, icono, descripción)
+  progman ──► paints the launcher (name, icon, description)
       │
-      │ fd 9 (SAVANXP_WM_FD_LAUNCH): path + flags, tal cual hoy
+      │ fd 9 (SAVANXP_WM_FD_LAUNCH): path + flags, exactly as today
       ▼
-  windowd ──► relee el .sxe del path al crear la ventana
-              título, icono de ventana, accent, Task List
+  windowd ──► re-reads the .sxe at that path when creating the window
+              title, window icon, accent, Task List
 ```
 
-El WM deja de adivinar por path y pasa a leer; `windowd_appinfo.c` queda como
-fallback para huérfanos, o desaparece.
+The WM stops guessing from the path and starts reading; `windowd_appinfo.c`
+remains as a fallback for orphans, or disappears.
 
-Esto **no contradice** la decisión que el WM ya tomó en
+This does **not** contradict the decision the WM already made in
 [wm_protocol.h:64](../subsystems/posix/sdk/v1/include/savanxp/wm_protocol.h:64)
-(*"el que pide declara los flags de lanzamiento: el WM no conoce ningún catálogo
-de apps"*). Lo que se prohibió ahí fue que el WM tenga un **catálogo**: una
-tabla de apps conocidas que hay que mantener a mano. Leer la autodescripción
-del binario que le acaban de pedir lanzar es exactamente lo contrario de un
-catálogo — no hay tabla, no hay conocimiento previo, y un programa que el WM
-nunca vio se presenta solo.
+(*"the requester declares the launch flags: the WM knows no app catalog"*).
+What was forbidden there is the WM having a **catalog**: a table of known apps
+maintained by hand. Reading the self-description of the binary it was just
+asked to launch is exactly the opposite of a catalog — no table, no prior
+knowledge, and a program the WM has never seen introduces itself.
 
-`desktop_icons.h` **no muere: se angosta.** Carpetas, archivo genérico, iconos
-de diálogos y chrome del WM no pertenecen a ninguna app y siguen horneados. Lo
-que se va del set son los iconos *de aplicación*, que es lo que nunca debió
-estar ahí.
+`desktop_icons.h` **does not die: it narrows.** Folders, the generic file,
+dialog icons and WM chrome belong to no app and stay baked. What leaves the set
+are the *application* icons, which is what should never have been there.
 
-**El primero en salir fue Doom.** `DESKTOP_ICON_DOOM` / `app-spider.png` ya no
-existen: el arte se movió, pixel por pixel, a
-[sdk/doomgeneric/icon.png](../sdk/doomgeneric/icon.png), y `doomgeneric.sxres`
-lo declara con `icon_file=` en vez de `icon=`. Es la misma lógica que ya regía
-para `ports/ccleste` — el icono viaja *dentro* del ejecutable, no en el árbol
-del sistema — aplicada por primera vez a un programa que **sí** está
-versionado en el repo. La tabla fallback de `windowd_appinfo` y el default
-horneado de `progman_registry` ahora apuntan a `DESKTOP_ICON_DESKTOP`
-(genérico): sólo entran en juego si el binario de Doom no se puede leer en
-absoluto, que es exactamente lo que un fallback debería cubrir.
+**The first to go was Doom.** `DESKTOP_ICON_DOOM` / `app-spider.png` no longer
+exist: the art moved, pixel by pixel, to
+[sdk/doomgeneric/icon.png](../sdk/doomgeneric/icon.png), and
+`doomgeneric.sxres` declares it with `icon_file=` instead of `icon=`. It is the
+same logic that already governed `ports/ccleste` — the icon travels *inside*
+the executable, not in the system tree — applied for the first time to a
+program that **is** versioned in the repository. The `windowd_appinfo` fallback
+table and the `progman_registry` baked default now point at
+`DESKTOP_ICON_DESKTOP` (generic): they only come into play if the Doom binary
+cannot be read at all, which is exactly what a fallback should cover.
 
-### `icon=` ya no elige de un catálogo: apunta a un programa
+### `icon=` no longer picks from a catalog: it points at a program
 
-Era el bloqueo que quedaba anotado arriba, y ya no lo es. `icon=` en un
-`[item]` de `progman.ini` deja de resolver contra un id horneado
-(`icon_id_from_name()`, que ya no existe) y pasa a guardar un **path** —
-`progman_item.icon_borrow_path` — que `progman_registry_apply_sxe()` intenta
-leer con el mismo mecanismo que ya usa para el icono del propio item, sólo que
-apuntado a *otro* binario:
+This was the blocker noted above, and it no longer is. `icon=` in an `[item]`
+of `progman.ini` stops resolving against a baked id (`icon_id_from_name()`,
+which no longer exists) and instead stores a **path** —
+`progman_item.icon_borrow_path` — that `progman_registry_apply_sxe()` tries to
+read with the same mechanism it already uses for the item's own icon, only
+pointed at *another* binary:
 
 ```ini
 [item]
-name=Mi Bloc
+name=My Notepad
 path=/bin/notepad
 icon=/bin/aboutapp
 ```
 
-Ese ítem lanza Notepad pero muestra el ícono de `aboutapp` — el caso de uso
-real es una segunda entrada del mismo ejecutable (otro argumento, otro
-nombre) que igual quiere distinguirse visualmente. Tres formas del valor:
+That item launches Notepad but shows `aboutapp`'s icon — the real use case is a
+second entry for the same executable (different argument, different name) that
+still wants to look distinct. Three shapes of the value:
 
-| valor | resuelve a |
+| value | resolves to |
 |---|---|
-| `/bin/aboutapp` (empieza con `/`) | ese path tal cual — la forma principal |
-| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | alias legado: el path del programa que hoy dibuja ese ícono (`/bin/shellapp`, …) |
-| `desktop`, o cualquier nombre sin alias | nada — `icon_borrow_path` queda vacío, el ítem se queda en el `icon_id` genérico |
+| `/bin/aboutapp` (starts with `/`) | that path as-is — the main form |
+| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | legacy alias: the path of the program that draws that icon today (`/bin/shellapp`, ...) |
+| `desktop`, or any name without an alias | nothing — `icon_borrow_path` stays empty and the item keeps the generic `icon_id` |
 
-**Los alias son puente, no el mecanismo nuevo.** Antes de este cambio,
-`icon=shell` elegía un array de píxeles horneado porque no había otra forma de
-que Shell tuviera ícono. Hoy `/bin/shellapp` ya trae su propio `.sxicon`
-(estampado desde `icon=app-terminal` en `shellapp.sxres`), así que el alias
-resuelve al *mismo* path que el ítem tendría igual sin ningún `icon=` — es
-puramente compatibilidad hacia atrás para un `.ini` escrito antes de este
-rediseño, no algo que un `.ini` nuevo necesite escribir.
+**The aliases are a bridge, not the new mechanism.** Before this change,
+`icon=shell` picked a baked pixel array because there was no other way for
+Shell to have an icon. Today `/bin/shellapp` already carries its own `.sxicon`
+(stamped from `icon=app-terminal` in `shellapp.sxres`), so the alias resolves to
+the *same* path the item would get anyway with no `icon=` at all — it is purely
+backward compatibility for a `.ini` written before this redesign, not something
+a new `.ini` needs to write.
 
-**Un override explícito le gana al binario, aunque el binario tenga ícono
-propio.** `icon=desktop` en un ítem que lanza `/bin/notepad` fuerza el genérico
-y **no** intenta leer el `.sxicon` real de Notepad — el usuario pidió
-explícitamente "no", y eso pesa más que lo que declare el ejecutable. Es la
-misma jerarquía de siempre (`.ini` > `.sxmeta` > default > genérico), aplicada
-también dentro del propio campo `icon=`.
+**An explicit override beats the binary, even when the binary has its own
+icon.** `icon=desktop` on an item that launches `/bin/notepad` forces the
+generic one and does **not** try to read Notepad's real `.sxicon` — the user
+explicitly said "no", and that outweighs whatever the executable declares. It
+is the same hierarchy as always (`.ini` > `.sxmeta` > default > generic),
+applied inside the `icon=` field too.
 
-`ports/ccleste/progman.ini` tenía un `icon=doom` que este cambio dejaba
-resolviendo en silencio al genérico en vez del ícono real de Doom — se sacó
-esa línea, con el mismo comentario que ya tenía el ítem de Celeste ("sin
-`icon=` a propósito: el binario ya trae el suyo").
+`ports/ccleste/progman.ini` had an `icon=doom` that this change left silently
+resolving to the generic instead of Doom's real icon — that line was removed,
+with the same comment the Celeste item already carried ("no `icon=` on purpose:
+the binary already brings its own").
 
-> **Angostado terminado.** `desktop_icons.h` quedó reducido a un solo valor:
-> `DESKTOP_ICON_DESKTOP`. Shell, Notepad, Gfx Demo, Key Test y Mouse Test
-> salieron con la misma operación que sacó a Doom, repetida cinco veces — una
-> fila de `progman_registry`'s `k_default_items` y otra de
-> `windowd_appinfo`'s `k_window_items` por programa, las diez apuntando ahora
-> al genérico. El único id horneado que queda es la red de seguridad
-> universal: lo que se muestra cuando un binario no se puede leer en
-> absoluto, no una opción más entre varias.
+> **Narrowing finished.** `desktop_icons.h` is down to a single value:
+> `DESKTOP_ICON_DESKTOP`. Shell, Notepad, Gfx Demo, Key Test and Mouse Test
+> left through the same operation that removed Doom, repeated five times — one
+> row of `progman_registry`'s `k_default_items` and one of `windowd_appinfo`'s
+> `k_window_items` per program, all ten now pointing at the generic. The only
+> baked id left is the universal safety net: what gets shown when a binary
+> cannot be read at all, not one option among several.
 >
-> Los alias legados (`shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest`) no
-> se tocaron y **no dependían de esta tabla para empezar** — resuelven a
-> *paths* (`/bin/shellapp`, …), nunca a un id de `desktop_icons.h`. Por eso
-> vaciar el enum no les rompe nada: un `.ini` viejo con `icon=shell` sigue
-> mostrando el ícono real de Shell, ahora leído de su `.sxicon` por el mismo
-> camino que si el `.ini` no dijera nada.
+> The legacy aliases (`shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest`)
+> were not touched and **did not depend on this table to begin with** — they
+> resolve to *paths* (`/bin/shellapp`, ...), never to a `desktop_icons.h` id.
+> That is why emptying the enum breaks nothing for them: an old `.ini` with
+> `icon=shell` still shows Shell's real icon, now read from its `.sxicon`
+> through the same path as if the `.ini` had said nothing.
 >
-> Las cinco PNG de origen (`app-terminal.png`, `app-libgfx-demo.png`,
-> `app-keyboard-settings.png`, `app-mouse.png`, `app-notepad.png`) **siguen en
-> `assets/desktop/icons/`** — a diferencia del de Doom, no se movieron a
-> ningún lado. Siguen siendo la fuente que cada `.sxres` referencia con
-> `icon=<nombre>` (`shellapp.sxres` dice `icon=app-terminal`, etc.) y
-> `tools/gen_desktop_source_art.py` las sigue regenerando en cada build. Lo
-> único que se retiró fue el paso que además las horneaba en un segundo
-> array C dentro de `desktop_icons.c` — `tools/gen_desktop_icon_assets.py`
-> ya no las lista. Dos catálogos que compartían PNG por casualidad, no el
-> mismo catálogo con dos nombres.
+> The five source PNGs (`app-terminal.png`, `app-libgfx-demo.png`,
+> `app-keyboard-settings.png`, `app-mouse.png`, `app-notepad.png`) **are still
+> in `assets/desktop/icons/`** — unlike Doom's, they did not move anywhere.
+> They remain the source each `.sxres` references with `icon=<name>`
+> (`shellapp.sxres` says `icon=app-terminal`, etc.) and
+> `tools/gen_desktop_source_art.py` still regenerates them on every build. The
+> only thing retired was the step that *also* baked them into a second C array
+> inside `desktop_icons.c` — `tools/gen_desktop_icon_assets.py` no longer lists
+> them. Two catalogs that shared PNGs by coincidence, not one catalog with two
+> names.
 
-### Decisión: el WM lee los recursos, no viajan por el protocolo
+### Decision: the WM reads the resources, they do not travel over the protocol
 
-**El WM abre el `.sxe` del path que lanzó y lee `.sxmeta` + `.sxicon` una vez,
-al crear la ventana.** No se agranda `savanxp_desktop_launch_request`.
+**The WM opens the `.sxe` at the path it launched and reads `.sxmeta` +
+`.sxicon` once, when creating the window.**
+`savanxp_desktop_launch_request` does not grow.
 
-La alternativa era mandar la presentación inline en el request. Se descartó:
+The alternative was sending the presentation inline in the request. It was
+dropped:
 
-- `savanxp_desktop_launch_request` hoy son 388 bytes (flags + path + argument).
-  Un icono de 16×16 en BGRA8888 son 1 KiB más — el mensaje se agranda ~4× y
-  entra en territorio de **lecturas parciales de pipe**, una clase de bug que ya
-  mordió antes en este sistema y que no vale la pena reabrir por un icono.
-- Habría **dos fuentes** para el mismo dato (lo que progman parseó y lo que dice
-  el binario), y por lo tanto una forma de que queden desincronizadas.
+- `savanxp_desktop_launch_request` is 388 bytes today (flags + path +
+  argument). A 16×16 icon in BGRA8888 is another 1 KiB — the message grows ~4×
+  and enters **partial pipe read** territory, a class of bug that has bitten
+  this system before and is not worth reopening over an icon.
+- There would be **two sources** for the same datum (what progman parsed and
+  what the binary says), and therefore a way for them to drift apart.
 
-Leyendo el WM, el costo está **acotado por la cantidad de ventanas abiertas**
-—un puñado— y no por el tamaño de un directorio, que era la única razón de
-peso para no hacer I/O acá. Y como el WM ya tiene el path y ya va a abrir el
-archivo, leer los ~4 KiB de `.sxmeta` en la misma pasada sale prácticamente
-gratis: mismo `open`, mismo inodo. Por eso lee **las dos** secciones y no solo
-el icono.
+With the WM reading, the cost is **bounded by the number of open windows** — a
+handful — and not by the size of a directory, which was the only weighty reason
+not to do I/O here. And since the WM already has the path and is going to open
+the file anyway, reading the ~4 KiB of `.sxmeta` in the same pass is
+essentially free: same `open`, same inode. That is why it reads **both**
+sections and not just the icon.
 
-Consecuencias:
+Consequences:
 
-- **Cero cambios de protocolo.** `savanxp_desktop_launch_request` queda tal
-  cual está.
-- Se lee **una vez** por ventana y se guarda en la estructura de sesión del
-  cliente; el resto de la vida de la ventana no toca disco.
-- Si el archivo no abre, no tiene `.sxmeta`, o el blob es inválido: fallback a
-  los defaults de la tabla de arriba. **Nunca bloquea la creación de la
-  ventana.**
+- **Zero protocol changes.** `savanxp_desktop_launch_request` stays exactly as
+  it is.
+- It is read **once** per window and kept in the client's session structure; the
+  rest of the window's life touches no disk.
+- If the file does not open, has no `.sxmeta`, or the blob is invalid: fall back
+  to the defaults in the table above. **It never blocks window creation.**
 
-La contra honesta que se está aceptando es I/O de disco en el loop del WM, que
-es sensible a latencia. Se paga en el momento de crear una ventana, que ya es
-el más caro del ciclo, así que es el lugar correcto. Si alguna vez se nota, la
-salida es pintar el icono genérico en el primer frame y completar después —
-**no** mover los píxeles al protocolo.
+The honest downside being accepted is disk I/O in the WM loop, which is
+latency-sensitive. It is paid at window creation time, already the most
+expensive moment of the cycle, so it is the right place. If it is ever
+noticeable, the way out is painting the generic icon on the first frame and
+completing later — **not** moving pixels into the protocol.
 
-## División de responsabilidades con `progman.ini`
+## Division of responsibilities with `progman.ini`
 
-El registro no desaparece: **cambia de rol**, y queda el modelo de Windows.
+The registry does not disappear: **it changes role**, and the Windows model
+remains.
 
 | | `.sxmeta` | `progman.ini` |
 |---|---|---|
-| qué es | identidad del programa | arreglo del usuario |
-| qué guarda | nombre, versión, icono, accent, flags default, mimes que declara | qué grupos hay, qué entra, en qué orden, overrides puntuales |
-| quién lo pone | el que compila | el que usa |
+| what it is | the program's identity | the user's arrangement |
+| what it holds | name, version, icon, accent, default flags, declared mimes | which groups exist, what goes in them, in what order, targeted overrides |
+| who sets it | whoever compiles | whoever uses |
 
-Deja de ser un catálogo con iconos hardcodeados y pasa a ser lo que un menú
-inicio realmente es. Y resuelve el mime: el binario **declara capacidad**, el
-registro **resuelve la asociación**.
+It stops being a catalog with hardcoded icons and becomes what a start menu
+really is. And it resolves the mime question: the binary **declares
+capability**, the registry **resolves the association**.
 
-### Asociaciones de archivo (fase 5)
+### File associations (phase 5)
 
-La asociación no vive en `progman.ini` sino en su propio registro,
-`/disk/assoc.ini`, porque son cosas distintas: una es el arreglo del menú
-inicio y la otra es política de todo el sistema. Formato mínimo, una línea por
-asociación:
+The association does not live in `progman.ini` but in its own registry,
+`/disk/assoc.ini`, because they are different things: one is the start menu
+arrangement, the other is system-wide policy. Minimal format, one line per
+association:
 
 ```ini
-# /disk/assoc.ini — quién abre cada extensión
+# /disk/assoc.ini — who opens each extension
 .txt=/bin/notepad
 .log=/bin/shellapp
 ```
 
-Precedencia: **política del usuario > primer binario que declare la extensión >
-nada**. El tercer caso no es un error: filesapp cae a su editor por defecto, y
-otro llamador puede decidir otra cosa.
+Precedence: **user policy > first binary declaring the extension > nothing**.
+The third case is not an error: filesapp falls back to its default editor, and
+another caller can decide otherwise.
 
-"Primer binario que declare" no es teórico: `/disk/bin` es una copia de `/bin`,
-así que **cada programa aparece dos veces en el escaneo**. Sin la regla de que
-una entrada del escaneo no pisa a otra, la segunda pasada reescribía todas las
-asociaciones a la ruta de `/disk/bin`. El orden estable de directorios es más
-predecible que cualquier heurística de desempate.
+"First binary declaring it" is not theoretical: `/disk/bin` is a copy of
+`/bin`, so **every program shows up twice in the scan**. Without the rule that
+one scan entry does not overwrite another, the second pass rewrote every
+association to the `/disk/bin` path. A stable directory order is more
+predictable than any tie-breaking heuristic.
 
-### Precedencia (implementada en la fase 3)
+### Precedence (implemented in phase 3)
 
-De mayor a menor, campo por campo:
+Highest to lowest, field by field:
 
-1. **La clave escrita en el `.ini`** — lo que el usuario decidió
-2. **El `.sxmeta`/`.sxicon` del binario** — lo que el programa declara de sí
-3. **El default horneado** — red de seguridad para lo que no trae recursos
-4. **Genérico** — basename e icono de escritorio
+1. **The key written in the `.ini`** — what the user decided
+2. **The binary's `.sxmeta`/`.sxicon`** — what the program declares about
+   itself
+3. **The baked default** — a safety net for what carries no resources
+4. **Generic** — basename and desktop icon
 
-El escalón 1 necesita distinguir *"el usuario eligió este nombre"* de *"quedó
-el valor por defecto"*, y eso no se puede deducir del valor: por eso
-`struct progman_item` lleva una máscara `overrides` que el parser marca por
-cada clave presente. Sin ella, el `.sxe` pisaría decisiones del usuario o al
-revés, según cómo se ordenaran los pasos.
+Step 1 needs to distinguish *"the user chose this name"* from *"the default
+value stayed"*, and that cannot be deduced from the value: that is why `struct
+progman_item` carries an `overrides` mask that the parser sets for each key
+present. Without it, the `.sxe` would overwrite user decisions or the other way
+round, depending on how the steps were ordered.
 
-`progman_registry_apply_sxe()` corre **después** del pruning: no tiene sentido
-abrir el binario de un item que se va a descartar, y el pruning reordena los
-items —lo que invalidaría los slots de icono ya asignados—.
+`progman_registry_apply_sxe()` runs **after** pruning: there is no point
+opening the binary of an item that is going to be discarded, and pruning
+reorders the items — which would invalidate the icon slots already assigned.
 
-Los iconos leídos se copian a un pool fijo de `PROGMAN_MAX_ITEMS` slots de
-32×32 (**192 KiB de BSS**). Es una elección consciente: sin malloc hay que
-reservar el peor caso, y la alternativa —releer el `.sxicon` al pintar— pondría
-I/O de disco dentro del ciclo de repintado.
+The icons that are read are copied into a fixed pool of `PROGMAN_MAX_ITEMS`
+32×32 slots (**192 KiB of BSS**). It is a conscious choice: without malloc you
+have to reserve the worst case, and the alternative — re-reading the `.sxicon`
+while painting — would put disk I/O inside the repaint cycle.
 
-El escalón 1 sobre el campo `icon=` en particular —incluida la forma en que
-puede apuntar al `.sxicon` de *otro* programa— se describe más abajo, en la
-sección "`icon=` ya no elige de un catálogo: apunta a un programa".
+Step 1 over the `icon=` field in particular — including the way it can point at
+*another* program's `.sxicon` — is described below, in the section "`icon=` no
+longer picks from a catalog: it points at a program".
 
-## Integración con el build
+## Build integration
 
-### El manifiesto `.sxres`
+### The `.sxres` manifest
 
-Cada programa declara sus recursos en un `<nombre>.sxres` **al lado de su
-fuente**. La convención es todo lo que hay que saber: si el archivo existe se
-estampa, si no existe el binario sale exactamente como antes. Nada que
-registrar en `build.ps1`.
+Each program declares its resources in a `<name>.sxres` **next to its source**.
+The convention is all you need to know: if the file exists it gets stamped, and
+if it does not the binary comes out exactly as before. Nothing to register in
+`build.ps1`.
 
 ```ini
 # subsystems/posix/userland/notepad.sxres
@@ -553,218 +557,216 @@ mime_open=text/plain
 ext_open=.txt,.ini,.cfg,.md
 ```
 
-| clave | valor |
+| key | value |
 |---|---|
-| `name`, `description`, `vendor`, `copyright`, `build_id`, `version_string`, `interpreter` | texto, tal cual |
-| `version` | `1.2.3`, hasta 4 componentes — o `system`, que lo resuelve contra `include/shared/version.h` |
-| `accent` | `RRGGBB` en hexa (acepta `#` o `0x` adelante) |
-| `launch_flags` | lista por comas; los nombres salen de `SAVANXP_DESKTOP_LAUNCH_FLAG_*` |
-| `subsystem` | `posix` o `native` |
-| `icon` | nombre de asset bajo `assets/desktop/icons/{16x16,32x32}/<icon>.png` — igual que `progman.ini` lo referencia hoy |
-| `icon_file` | PNG propio del programa, resuelto **relativo al `.sxres`**. Los dos tamaños que exige el runtime se derivan de ese archivo |
-| `mime_open`, `ext_open` | listas por comas |
+| `name`, `description`, `vendor`, `copyright`, `build_id`, `version_string`, `interpreter` | text, as-is |
+| `version` | `1.2.3`, up to 4 components — or `system`, which resolves it against `include/shared/version.h` |
+| `accent` | `RRGGBB` in hex (accepts a leading `#` or `0x`) |
+| `launch_flags` | comma-separated list; the names come from `SAVANXP_DESKTOP_LAUNCH_FLAG_*` |
+| `subsystem` | `posix` or `native` |
+| `icon` | asset name under `assets/desktop/icons/{16x16,32x32}/<icon>.png` — the same way `progman.ini` references it today |
+| `icon_file` | the program's own PNG, resolved **relative to the `.sxres`**. The two sizes the runtime requires are derived from that file |
+| `mime_open`, `ext_open` | comma-separated lists |
 
-**`icon` e `icon_file` son excluyentes, y la diferencia importa.** `icon`
-referencia el catálogo del sistema: sirve para los programas que se envían con
-SavanXP y que comparten estética. `icon_file` toma un PNG que vive al lado del
-manifiesto, y es el que corresponde cuando el programa trae su propio arte —
-sobre todo un port de terceros, cuyo icono no tiene por qué entrar a
-`assets/desktop/icons/`, que se versiona y se hornea en la imagen. Con
-`icon_file` el arte termina **únicamente dentro del ejecutable**, que es
-exactamente para lo que existe este formato.
+**`icon` and `icon_file` are mutually exclusive, and the difference matters.**
+`icon` references the system catalog: it is for the programs shipped with
+SavanXP that share its look. `icon_file` takes a PNG living next to the
+manifest, and it is the right one when the program brings its own art — above
+all a third-party port, whose icon has no business entering
+`assets/desktop/icons/`, which is versioned and baked into the image. With
+`icon_file` the art ends up **only inside the executable**, which is exactly
+what this format exists for.
 
-`icon_file` acepta **un solo PNG** de cualquier tamaño y deriva los dos que
-hacen falta. Si es múltiplo entero del destino en cualquier dirección —
-achicando (48→16) o agrandando (16→32, el caso más común: un ícono de pixel
-art se suele dibujar una vez, al tamaño chico) — usa `NEAREST` para no tocar
-un solo píxel del original. Si no hay múltiplo limpio, usa `LANCZOS`. La rama
-de agrandar faltaba hasta que el ícono de Doom la ejercitó por primera vez: un
-PNG de 16×16 llegaba a `LANCZOS` para el 32×32 y salía borroneado en vez de
-nítido — el bug lo encontró comparar el blob estampado, byte a byte, contra
-el original.
+`icon_file` accepts **a single PNG** of any size and derives the two that are
+needed. If it is an integer multiple of the target in either direction —
+shrinking (48→16) or enlarging (16→32, the most common case: a pixel-art icon
+is usually drawn once, at the small size) — it uses `NEAREST` so as not to
+touch a single pixel of the original. If there is no clean multiple, it uses
+`LANCZOS`. The enlarging branch was missing until Doom's icon exercised it for
+the first time: a 16×16 PNG reached `LANCZOS` for the 32×32 and came out blurry
+instead of crisp — the bug was found by comparing the stamped blob, byte by
+byte, against the original.
 
-**`version=system` existe para que los programas del sistema no queden stale.**
-Hardcodear `0.3.3` en nueve manifiestos sería la misma duplicación que este
-diseño evita en todo lo demás.
+**`version=system` exists so that system programs do not go stale.**
+Hardcoding `0.3.3` in nine manifests would be the same duplication this design
+avoids everywhere else.
 
-### Estampado por default
+### Default stamping
 
-Cuando la fase 2 se implementó, un `.sxres` era la **condición** para que un
-binario recibiera secciones: sin manifiesto, `Add-SxeResources` no tocaba el
-archivo. Con 67 programas en el árbol y 9 manifiestos escritos, eso significa
-que "cada programa que se compile ya sea en formato SXE" no era cierto —
-faltaba invertir el default.
+When phase 2 was implemented, a `.sxres` was the **condition** for a binary to
+receive sections: with no manifest, `Add-SxeResources` did not touch the file.
+With 67 programs in the tree and 9 manifests written, that means "every program
+compiled is already in SXE format" was not true — the default had to be
+inverted.
 
-Ahora **el generador estampa siempre**. `gen_sxe_resources.py` recibe, además
-de los directorios donde buscar `.sxres`, la lista completa de programas que
-el build va a linkear (`--program`, repetible) — la misma lista, filtrada por
-`-NoTestApps`, que ya usa la fase de compilación. Cada nombre de esa lista
-recibe un `.sxmeta`, tenga o no manifiesto:
+Now **the generator always stamps**. Besides the directories to search for
+`.sxres`, `gen_sxe_resources.py` receives the full list of programs the build
+is going to link (`--program`, repeatable) — the same list, filtered by
+`-NoTestApps`, that the compilation phase already uses. Every name on that list
+gets a `.sxmeta`, manifest or not:
 
-| tag | de dónde sale sin `.sxres` |
+| tag | where it comes from without a `.sxres` |
 |---|---|
-| `NAME` | el nombre del propio programa |
-| `VERSION` / `VERSION_STRING` | la versión del sistema (`include/shared/version.h`) |
-| `SUBSYSTEM` | `posix` — el único subsistema que pasa por este generador hoy |
-| `BUILD_ID` | el commit corto de git, resuelto una vez por build y cacheado |
+| `NAME` | the program's own name |
+| `VERSION` / `VERSION_STRING` | the system version (`include/shared/version.h`) |
+| `SUBSYSTEM` | `posix` — the only subsystem going through this generator today |
+| `BUILD_ID` | the short git commit, resolved once per build and cached |
 
-Es el mismo rol que cumple el bloque `VERSIONINFO` que el *linker* de Windows
-agrega aunque el programador nunca haya escrito un `.rc`: identidad mínima que
-sale del build, no del programador. Y no es un default cosmético — el `NAME`
-automático es **exactamente** el texto que progman y windowd ya mostraban
-como fallback de basename cuando no había `.sxmeta`: para un binario sin
-`.sxres`, el estampado por default no cambia una sola ventana existente, sólo
-dejó de *inferir* algo que ahora está *declarado*.
+It is the same role played by the `VERSIONINFO` block the Windows *linker* adds
+even when the programmer never wrote a `.rc`: minimum identity coming from the
+build, not from the programmer. And it is not a cosmetic default — the
+automatic `NAME` is **exactly** the text progman and windowd already showed as
+the basename fallback when there was no `.sxmeta`: for a binary without a
+`.sxres`, default stamping changes not a single existing window, it just
+stopped *inferring* something that is now *declared*.
 
-**Lo que sigue sin inventarse**: icono, accent, descripción, `launch_flags`,
-mimes. Eso es enriquecimiento — nadie lo puede derivar del build — y
-fabricarlo sería peor que dejarlo ausente. El `.sxres` no perdió su lugar:
-pasó a ser exactamente eso, enriquecimiento opcional sobre una identidad que
-ya existe.
+**What is still not invented**: icon, accent, description, `launch_flags`,
+mimes. That is enrichment — nobody can derive it from the build — and
+fabricating it would be worse than leaving it absent. The `.sxres` did not lose
+its place: it became exactly that, optional enrichment over an identity that
+already exists.
 
-Cobertura verificada con `llvm-readelf` sobre la imagen completa: **67/67**
-binarios instalados con `.sxmeta`, in-tree y externos (Doom, busybox) por
-igual — ningún camino de build quedó afuera salvo el subsistema nativo
-(`subsystems/native/build.ps1`), en pausa y fuera de alcance por ahora.
+Coverage verified with `llvm-readelf` over the complete image: **67/67**
+installed binaries with `.sxmeta`, in-tree and external (Doom, busybox) alike —
+no build path was left out except the native subsystem
+(`subsystems/native/build.ps1`), which is paused and out of scope for now.
 
-### El generador
+### The generator
 
-[tools/gen_sxe_resources.py](../tools/gen_sxe_resources.py) convierte los
-manifiestos en blobs. **No duplica ni un número**: magics, tags, versiones,
-tamaños y topes salen de `include/sxe/sxe_format.h`; los flags de lanzamiento
-de `savanxp/syscall.h`; el OSABI nativo de `savanxp_native.h`. Es el criterio
-de `Assert-SxfsFormatMatchesHeader` — un formato copiado a mano entre lector y
-generador se desincroniza, y la falla es silenciosa.
+[tools/gen_sxe_resources.py](../tools/gen_sxe_resources.py) turns the manifests
+into blobs. **It does not duplicate a single number**: magics, tags, versions,
+sizes and caps come from `include/sxe/sxe_format.h`; the launch flags from
+`savanxp/syscall.h`; the native OSABI from `savanxp_native.h`. It is the
+criterion of `Assert-SxfsFormatMatchesHeader` — a format copied by hand between
+reader and generator drifts apart, and the failure is silent.
 
-Al revés que el parser de runtime, que ignora lo que no entiende para poder
-leer binarios más nuevos, **el generador es estricto** con lo que sí viene en
-un `.sxres`: una clave desconocida, un icono faltante o un flag inexistente
-rompen el build. Un typo en un manifiesto tiene que fallar, no dejar la app
-sin icono en silencio. Un `.sxres` cuyo programa no está en la lista `--program`
-no rompe nada — puede ser una app que `-NoTestApps` excluyó — pero se avisa por
-consola, porque el error más probable ahí es un `.c` renombrado sin renombrar
-su manifiesto.
+Unlike the runtime parser, which ignores what it does not understand so it can
+read newer binaries, **the generator is strict** about what does come in a
+`.sxres`: an unknown key, a missing icon or a nonexistent flag breaks the
+build. A typo in a manifest has to fail, not silently leave the app without an
+icon. A `.sxres` whose program is not on the `--program` list breaks nothing —
+it may be an app excluded by `-NoTestApps` — but it is reported on the console,
+because the most likely error there is a `.c` renamed without renaming its
+manifest.
 
-### El estampado
+### The stamping
 
 ```bash
 llvm-objcopy --add-section .sxmeta=app.sxmeta --add-section .sxicon=app.sxicon app app
 ```
 
-`--add-section` crea secciones sin `SHF_ALLOC`, que es lo que se quiere — pero
-se **verifica** igual, leyendo el valor crudo de `sh_flags` con
-`llvm-readelf --section-details` y chequeando el bit `0x2`. Si alguna vez
-aparece, el costo se paga en RAM por proceso y **sin ningún síntoma visible**:
-esa es exactamente la clase de regresión que necesita un guard automático.
+`--add-section` creates sections without `SHF_ALLOC`, which is what we want —
+but it is **verified** anyway, reading the raw `sh_flags` value with
+`llvm-readelf --section-details` and checking the `0x2` bit. If it ever shows
+up, the cost is paid in RAM per process and **with no visible symptom**: that
+is exactly the class of regression that needs an automatic guard.
 
-`Add-SxeResources` e `Invoke-SxeResourceGenerator` viven en
-`tools/UserAppCommon.ps1`, no en `build.ps1`, para que los dos caminos de build
-—el in-tree y el de apps externas (`build-user.ps1`)— estampen con la misma
-implementación. Duplicar el paso significaría que la verificación de no-alloc
-se aplica en uno y no en el otro.
+`Add-SxeResources` and `Invoke-SxeResourceGenerator` live in
+`tools/UserAppCommon.ps1`, not in `build.ps1`, so that both build paths — the
+in-tree one and the external app one (`build-user.ps1`) — stamp with the same
+implementation. Duplicating the step would mean the non-alloc check applies to
+one and not the other.
 
-> **Gotcha de PowerShell:** todo lo que un comando escribe sin capturar se suma
-> al valor de retorno de la función que lo contiene. Un `sxe: N manifiestos`
-> suelto convirtió la ruta que devuelve `Build-ExternalUserProgram` en un array
-> de dos elementos, y el build se rompió lejos de ahí (busybox copiando a un
-> "drive" llamado `sxe`). Por eso las invocaciones de python y objcopy capturan
-> su salida y la reemiten con `Write-Host`.
+> **PowerShell gotcha:** anything a command writes without being captured is
+> added to the return value of the enclosing function. A stray `sxe: N
+> manifests` turned the path returned by `Build-ExternalUserProgram` into a
+> two-element array, and the build broke far away from there (busybox copying
+> to a "drive" called `sxe`). That is why the python and objcopy invocations
+> capture their output and re-emit it with `Write-Host`.
 
-## Fases sugeridas
+## Suggested phases
 
-1. ~~**Formato + lector.**~~ **HECHA.** El formato canónico en
-   `include/sxe/sxe_format.h` (freestanding, C/C++, con static asserts de
-   layout), el lector en `savanxp/sxe.h` + `runtime/sxe.c`, y el harness
-   `build.ps1 sxe-smoke` (`/disk/bin/sxetest`). El parseo puro se ejercita
-   contra blobs fabricados en el stack — bien formados y todos los degradados
-   que ningún generador correcto produciría — y el camino de disco contra los
-   binarios reales de la imagen.
-2. ~~**Estampado en build.**~~ **HECHA.** Manifiestos `.sxres` por app,
-   generador host-side header-driven, estampado con `llvm-objcopy` y guard de
-   no-alloc por bit de `sh_flags` — compartido entre el build in-tree y el de
-   apps externas. Nueve programas del sistema estampados; todavía nadie los
-   lee, así que lo único que cambia es que los binarios engordan ~5 KiB.
-3. ~~**progman consume.**~~ **HECHA.** `progman_registry_apply_sxe()` resuelve
-   nombre, descripción, launch flags e icono desde el binario de cada item,
-   respetando lo que el `.ini` haya declarado explícitamente. **Nada cambia
-   visualmente**, y eso es lo correcto: los manifiestos reproducen la
-   presentación que antes vivía en las tablas. Lo que cambió es de dónde
-   salen los datos.
-4. ~~**windowd consume.**~~ **HECHA.** `windowd_presentation_load()` resuelve
-   título, icono de 16×16 y accent leyendo el `.sxe` del binario que acaba de
-   lanzar, una sola vez, en `start_client_process()`. **Cero cambios de
-   protocolo**, como estaba decidido. `windowd_appinfo` quedó como escalón de
-   fallback.
-5. ~~**Asociaciones.**~~ **HECHA** para `EXT_OPEN`. `file_assoc` resuelve
-   extensión → programa combinando la política del usuario (`/disk/assoc.ini`)
-   con lo que declaran los binarios instalados, y filesapp abre cada archivo
-   con el programa asociado vía el campo `argument` que ya existía — el
-   `#define FILESAPP_EDITOR_PATH "/bin/notepad"` dejó de ser la única respuesta
-   y quedó como fallback. **`MIME_OPEN` se sigue estampando pero todavía no
-   resuelve**: hacerlo necesita una capa de detección de tipo (extensión → mime
-   o sniffing) que el sistema no tiene, y hornear una tabla de "`.txt` es
-   `text/plain`" reintroduciría exactamente la clase de tabla central que este
-   diseño vino a sacar.
+1. ~~**Format + reader.**~~ **DONE.** The canonical format in
+   `include/sxe/sxe_format.h` (freestanding, C/C++, with layout static
+   asserts), the reader in `savanxp/sxe.h` + `runtime/sxe.c`, and the
+   `build.ps1 sxe-smoke` harness (`/disk/bin/sxetest`). Pure parsing is
+   exercised against blobs fabricated on the stack — well formed and every
+   degraded case no correct generator would produce — and the disk path against
+   the image's real binaries.
+2. ~~**Stamping in the build.**~~ **DONE.** Per-app `.sxres` manifests, a
+   header-driven host-side generator, stamping with `llvm-objcopy` and a
+   non-alloc guard by `sh_flags` bit — shared between the in-tree build and the
+   external app build. Nine system programs stamped; nobody reads them yet, so
+   the only change is binaries growing by ~5 KiB.
+3. ~~**progman consumes.**~~ **DONE.** `progman_registry_apply_sxe()` resolves
+   name, description, launch flags and icon from each item's binary, respecting
+   whatever the `.ini` declared explicitly. **Nothing changes visually**, and
+   that is correct: the manifests reproduce the presentation that used to live
+   in the tables. What changed is where the data comes from.
+4. ~~**windowd consumes.**~~ **DONE.** `windowd_presentation_load()` resolves
+   title, 16×16 icon and accent by reading the `.sxe` of the binary it just
+   launched, once, in `start_client_process()`. **Zero protocol changes**, as
+   decided. `windowd_appinfo` remains as a fallback step.
+5. ~~**Associations.**~~ **DONE** for `EXT_OPEN`. `file_assoc` resolves
+   extension → program by combining user policy (`/disk/assoc.ini`) with what
+   the installed binaries declare, and filesapp opens each file with the
+   associated program through the `argument` field that already existed — the
+   `#define FILESAPP_EDITOR_PATH "/bin/notepad"` stopped being the only answer
+   and stayed as a fallback. **`MIME_OPEN` is still stamped but does not
+   resolve yet**: doing so needs a type detection layer (extension → mime, or
+   sniffing) the system does not have, and baking a "`.txt` is `text/plain`"
+   table would reintroduce exactly the kind of central table this design came to
+   remove.
 
-   > **Lo que sí existe desde entonces: íconos por tipo, y NO es lo mismo.**
-   > `subsystems/posix/userland/mime_icon.c` resuelve *extensión → ícono* y la
-   > lista de filesapp los dibuja. **No resuelve `MIME_OPEN`, no detecta tipos
-   > y no toca las asociaciones**: un archivo sigue sin tener un `text/plain`
-   > asociado, solo tiene un ícono. Los nombres del catálogo son los de la
-   > *Icon Naming Specification* de freedesktop, que es una convención de
-   > nombres de ícono y no una tabla de tipos.
+   > **What does exist since then: per-type icons, and it is NOT the same
+   > thing.** `subsystems/posix/userland/mime_icon.c` resolves *extension →
+   > icon* and filesapp's list draws them. **It does not resolve `MIME_OPEN`,
+   > does not detect types and does not touch associations**: a file still has
+   > no `text/plain` associated with it, it just has an icon. The catalog's
+   > names are those of freedesktop's *Icon Naming Specification*, which is an
+   > icon naming convention and not a type table.
    >
-   > Cumple la restricción de arriba de dos formas, y las dos importan:
+   > It meets the constraint above in two ways, and both matter:
    >
-   > - **El mapeo no está horneado.** Vive en `diskfs/mimeicon.ini`, un dato de
-   >   la imagen con el mismo formato y precedencia que `assoc.ini`. Agregar un
-   >   tipo es una línea, no un recompilado.
-   > - **Los píxeles tampoco.** El catálogo son blobs `.sxicon` sueltos en
-   >   `/disk/icons`, emitidos por `tools/gen_mime_icons.py` y leídos con
-   >   `sxe_load_icon_file()` — la variante de `sxe_load_icons()` para un
-   >   archivo que *es* el blob, sin ELF alrededor. Ningún KiB de ícono entra
-   >   en un segmento cargable, que es la misma decisión que hizo `.sxicon` una
-   >   sección no-alloc.
+   > - **The mapping is not baked.** It lives in `diskfs/mimeicon.ini`, image
+   >   data with the same format and precedence as `assoc.ini`. Adding a type is
+   >   one line, not a recompile.
+   > - **Neither are the pixels.** The catalog is a set of standalone `.sxicon`
+   >   blobs in `/disk/icons`, emitted by `tools/gen_mime_icons.py` and read
+   >   with `sxe_load_icon_file()` — the variant of `sxe_load_icons()` for a
+   >   file that *is* the blob, with no ELF around it. Not a single KiB of icon
+   >   enters a loadable segment, which is the same decision that made `.sxicon`
+   >   a non-alloc section.
    >
-   > Cuando exista la detección de tipo, esta capa es de donde va a colgarse:
-   > el cambio sería resolver *mime → ícono* en vez de *extensión → ícono*, con
-   > el mismo catálogo y el mismo archivo de mapeo.
+   > When type detection exists, this is the layer it will hang off: the change
+   > would be resolving *mime → icon* instead of *extension → icon*, with the
+   > same catalog and the same mapping file.
 
-6. ~~**Estampado por default.**~~ **HECHA.** Las fases 1 a 5 dejaban el
-   estampado en *opt-in*: sin `.sxres`, `Add-SxeResources` no tocaba el
-   binario. Con 67 programas en el árbol y 9 manifiestos, eso era la brecha
-   real entre "el formato existe" y *"cada programa que se compile para el SO
-   ya sea en ese formato"*. Ahora `gen_sxe_resources.py` recibe la lista
-   completa de programas del build (`--program`) y estampa un `.sxmeta`
-   mínimo — nombre, versión, subsistema, commit — para todos, tengan o no
-   manifiesto. Ver [Estampado por default](#estampado-por-default). Cobertura
-   medida sobre la imagen completa: **67/67**.
-7. ~~**Doom sale del set horneado.**~~ **HECHA.** `DESKTOP_ICON_DOOM` /
-   `app-spider.png` se retiran; el arte se muda pixel por pixel a
-   `sdk/doomgeneric/icon.png`, declarado con `icon_file=`. Primer programa
-   *versionado en el repo* en usar `icon_file=` (antes sólo `ports/ccleste`,
-   gitignoreado). De paso se corrige un bug real en
-   `collect_icons_from_file()`: no detectaba múltiplo entero al *agrandar*
-   (sólo al achicar), así que un source 16×16 —el caso típico de pixel
-   art— caía a `LANCZOS` en vez de `NEAREST` para el 32×32. Ver "El primero
-   en salir fue Doom", más arriba.
-8. ~~**`icon=` apunta a un programa, y el set se angosta del todo.**~~
-   **HECHA.** `icon_id_from_name()` se borra: `icon=` guarda un *path*
-   (`progman_item.icon_borrow_path`) y `progman_registry_apply_sxe()` lo lee
-   con el mismo mecanismo que usa para el icono propio del item, apuntado a
-   otro binario. Con eso, los cinco ids horneados que quedaban
-   (`shell`/`notepad`/`gfxdemo`/`keytest`/`mousetest`) pierden su único
-   consumidor y se retiran de `desktop_icons.h` igual que Doom —
-   `DESKTOP_ICON_DESKTOP` es hoy el único valor del enum. Ver "`icon=` ya no
-   elige de un catálogo", más arriba.
+6. ~~**Default stamping.**~~ **DONE.** Phases 1 to 5 left stamping *opt-in*:
+   with no `.sxres`, `Add-SxeResources` did not touch the binary. With 67
+   programs in the tree and 9 manifests, that was the real gap between "the
+   format exists" and *"every program compiled for the OS is already in that
+   format"*. Now `gen_sxe_resources.py` receives the build's complete program
+   list (`--program`) and stamps a minimal `.sxmeta` — name, version,
+   subsystem, commit — for all of them, manifest or not. See [Default
+   stamping](#default-stamping). Coverage measured over the complete image:
+   **67/67**.
+7. ~~**Doom leaves the baked set.**~~ **DONE.** `DESKTOP_ICON_DOOM` /
+   `app-spider.png` are retired; the art moves pixel by pixel to
+   `sdk/doomgeneric/icon.png`, declared with `icon_file=`. The first program
+   *versioned in the repository* to use `icon_file=` (previously only
+   `ports/ccleste`, which is gitignored). Along the way a real bug in
+   `collect_icons_from_file()` was fixed: it did not detect an integer multiple
+   when *enlarging* (only when shrinking), so a 16×16 source — the typical
+   pixel-art case — fell to `LANCZOS` instead of `NEAREST` for the 32×32. See
+   "The first to go was Doom", above.
+8. ~~**`icon=` points at a program, and the set narrows all the way.**~~
+   **DONE.** `icon_id_from_name()` is deleted: `icon=` stores a *path*
+   (`progman_item.icon_borrow_path`) and `progman_registry_apply_sxe()` reads it
+   with the same mechanism it uses for the item's own icon, pointed at another
+   binary. With that, the five remaining baked ids
+   (`shell`/`notepad`/`gfxdemo`/`keytest`/`mousetest`) lose their only consumer
+   and are retired from `desktop_icons.h` just like Doom —
+   `DESKTOP_ICON_DESKTOP` is today the enum's only value. See "`icon=` no
+   longer picks from a catalog", above.
 
-`INTERPRETER` no tiene fase: el campo está desde v1 y se empieza a honrar el
-día que exista la VM.
+`INTERPRETER` has no phase: the field has been there since v1 and starts being
+honored the day the VM exists.
 
-## Fuera de alcance por ahora: el subsistema nativo
+## Out of scope for now: the native subsystem
 
-`subsystems/native/build.ps1` linkea con su propio `ld.lld` y nunca pasa por
-`Add-SxeResources`, así que las apps del subsistema nativo (Haxe → C++) salen
-sin recursos **aunque se les escriba un `.sxres`**. Es un hueco de cobertura,
-no una decisión de diseño — pero el subsistema nativo está en pausa, así que
-queda documentado y sin tocar hasta que se retome.
+`subsystems/native/build.ps1` links with its own `ld.lld` and never goes
+through `Add-SxeResources`, so the native subsystem's apps (Haxe → C++) come
+out without resources **even if a `.sxres` is written for them**. It is a
+coverage gap, not a design decision — but the native subsystem is paused, so it
+is documented and left alone until it is picked up again.

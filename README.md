@@ -1,218 +1,168 @@
 # SavanXP
 
-SavanXP es un sistema operativo experimental para `x86_64 + UEFI`, con
-bootloader `Limine`, kernel propio en `C/C++` y un flujo de trabajo pensado
-para desarrollarse y probarse desde Windows nativo con `PowerShell`.
+SavanXP is an experimental operating system for `x86_64 + UEFI`, with the
+`Limine` bootloader, its own kernel in `C/C++`, and a workflow built to be
+developed and tested from native Windows with `PowerShell`.
 
-El proyecto ya arranca a una sesion grafica funcional, dispone de un shell de
-userland, un volumen persistente montado en `/disk`, una base POSIX minima,
-apps internas, soporte para apps externas compiladas contra la SDK del repo y
-un camino grafico sobre compositor propio.
+It boots to a working graphical session with its own window manager, a userland
+shell, a persistent volume mounted at `/disk`, a minimal POSIX base, built-in
+apps, and support for external apps compiled against the SDK in this repo.
 
-Version actual: `v0.3.4`  
-Historial de cambios: [`CHANGELOG.md`](CHANGELOG.md)  
-Licencia: [`MIT`](LICENSE)
+![The SavanXP desktop: Program Manager, the About window and Doom running in
+a window, over the window manager's own compositor](docs/images/desktop.png)
 
-## Resumen
+Current version: `v0.3.4` &middot; [Changelog](CHANGELOG.md) &middot;
+[MIT license](LICENSE)
 
-Estado actual del sistema:
+## Quick start
 
-- Kernel `x86_64` con arranque UEFI via Limine.
-- Consola sobre framebuffer y salida serie temprana.
-- Espacio de usuario con procesos `ELF64`, syscalls y scheduler preemptivo.
-- Shell con `pipes`, redirecciones y builtins basicos.
-- Sesion grafica estilo NT 3.5: window manager propio (`windowd`), fondo y
-  Program Manager como clientes, y Task List (Ctrl+Esc).
-- Volumen persistente `SxFS` montado en `/disk`.
-- Base POSIX y SDK v1 para compilar aplicaciones externas.
-- Capa grafica 2D `sxgfx` para superficies, painter y conjuntos de rects.
-- Soporte inicial de red, audio, input, GPU y almacenamiento.
+On Windows, from a clean checkout:
 
-## Requisitos
+```powershell
+.\tools\bootstrap.ps1   # bake a local toolchain (clang, qemu, xorriso, ninja)
+.\build.ps1 build       # build kernel, userland and the disk image
+.\build.ps1 run         # boot it in QEMU
+```
 
-La via recomendada es hornear un toolchain local autocontenido:
+That is the whole loop. Everything below is detail you only need when you want
+it.
+
+On Linux, skip `bootstrap.ps1` and see [Building on Linux](docs/BUILD_LINUX.md).
+
+## What works today
+
+- `x86_64` kernel booting over UEFI via Limine.
+- Framebuffer console and early serial output.
+- Userland with `ELF64` processes, syscalls and a preemptive scheduler.
+- Shell with `pipes`, redirections and basic builtins.
+- NT 3.5-style graphical session: its own window manager (`windowd`), the
+  wallpaper and Program Manager as clients, and a Task List (Ctrl+Esc).
+- A taskbar listing the open windows, as a WM client of its own, with an ES/EN
+  keyboard layout selector.
+- Persistent `SxFS` volume mounted at `/disk`.
+- POSIX base and SDK v1 for compiling external applications.
+- `sxgfx` 2D graphics layer for surfaces, painter and rect sets.
+- Initial support for network, audio, input, GPU and storage.
+
+## Requirements
+
+The recommended path is to bake a self-contained local toolchain:
 
 ```powershell
 .\tools\bootstrap.ps1
 ```
 
-Eso descarga versiones fijadas (LLVM/Clang con `ld.lld`, `llvm-objcopy` y
-`llvm-readelf`; QEMU con el firmware OVMF que trae; `xorriso` para generar
-ISOs; y `ninja`) a `toolchain/` (ignorado por git) y escribe el manifiesto
-`toolchain/toolchain.json` que `build.ps1` consume. Las versiones estan
-fijadas en `tools/toolchain.lock.json`; actualizar una herramienta es editar
-ese archivo. `xorriso` se puede omitir con `-SkipXorriso`, y `ninja` con
-`-SkipNinja`, si ya los tenes resueltos por otra via.
+That downloads pinned versions (LLVM/Clang with `ld.lld`, `llvm-objcopy` and
+`llvm-readelf`; QEMU with the OVMF firmware it ships; `xorriso` for generating
+ISOs; and `ninja`) into `toolchain/` (git-ignored) and writes the
+`toolchain/toolchain.json` manifest that `build.ps1` consumes. The versions are
+pinned in `tools/toolchain.lock.json`; updating a tool means editing that file.
+`xorriso` can be skipped with `-SkipXorriso`, and `ninja` with `-SkipNinja`, if
+you already have them.
 
-`build.ps1` no contiene rutas de ninguna maquina concreta: resuelve cada
-herramienta en este orden y se queda con la primera que exista:
+`build.ps1` contains no paths from any particular machine: it resolves each
+tool in this order and keeps the first one that exists.
 
-1. override explicito por variable de entorno
+1. explicit environment variable override
    (`SAVANXP_CLANG`, `SAVANXP_CLANGXX`, `SAVANXP_LD`, `SAVANXP_OBJCOPY`,
    `SAVANXP_READELF`, `SAVANXP_QEMU`, `SAVANXP_XORRISO`, `SAVANXP_NINJA`,
    `OVMF_CODE` / `OVMF_VARS`)
-2. el toolchain horneado en `toolchain/`
-3. el `PATH` del sistema
+2. the toolchain baked into `toolchain/`
+3. the system `PATH`
 
-Por eso `bootstrap.ps1` es opcional: si ya tenes `clang++`, `ld.lld`,
-`llvm-objcopy`, `llvm-readelf`, `ninja` y `qemu-system-x86_64` en el `PATH`,
-el build funciona igual. Tambien hace falta `git` en el `PATH`. `build.ps1`
-descarga automaticamente la rama binaria `v10.x-binary` de Limine si no
-existe en `tools/limine`.
+That is why `bootstrap.ps1` is optional: if you already have `clang++`,
+`ld.lld`, `llvm-objcopy`, `llvm-readelf`, `ninja` and `qemu-system-x86_64` on
+the `PATH`, the build works all the same. `git` is also required on the `PATH`.
+`build.ps1` automatically downloads Limine's `v10.x-binary` branch if it is not
+present in `tools/limine`.
 
-Ademas hace falta `python3` (o `python`) en el `PATH` con `Pillow` instalado
-(`pip install Pillow`): `build.ps1` lo usa en cada build para generar el arte
-del desktop y convertir los PNG de cursor/iconos a headers C
+`python3` (or `python`) with `Pillow` installed (`pip install Pillow`) is
+required too: `build.ps1` uses it on every build to generate the desktop art
+and convert the cursor/icon PNGs into C headers
 (`tools/gen_desktop_source_art.py`, `tools/gen_cursor_asset.py`,
-`tools/gen_desktop_icon_assets.py`). No forma parte del toolchain horneado por
+`tools/gen_desktop_icon_assets.py`). It is not part of the toolchain baked by
 `bootstrap.ps1`.
 
-Fuera de Windows, `.\build.ps1 iso` tambien necesita `make` y un compilador
-`cc` en el `PATH`: la rama `v10.x-binary` de Limine solo trae `limine.exe`
-prebuildeado para Windows, asi que ahi el deployer `limine` (para el arranque
-BIOS de la ISO) se compila una vez desde `limine.c` con el `Makefile` del
-propio repo de Limine.
+For anything outside Windows — PowerShell itself, distribution packages, QEMU
+backends, virtio devices — see [Building on Linux](docs/BUILD_LINUX.md).
 
-### Linux nativo (sin `bootstrap.ps1`)
-
-`build.ps1` en si mismo es un script de PowerShell: hace falta `pwsh` en el
-`PATH`. Las distros no siempre lo empaquetan (Arch no lo trae en los repos
-oficiales); el tarball `powershell-<version>-linux-x64.tar.gz` de
-[PowerShell/PowerShell](https://github.com/PowerShell/PowerShell/releases) se
-extrae directo, sin instalador.
-
-Resolviendo el resto del toolchain por `PATH` (punto 3 del orden de arriba,
-sin `bootstrap.ps1`), en Arch Linux los paquetes son:
-
-```bash
-pacman -S clang lld llvm qemu-system-x86 edk2-ovmf libisoburn python-pillow ninja
-```
-
-- `clang`/`lld`/`llvm`: compilador, linker (`ld.lld`) y las herramientas
-  (`llvm-objcopy`, `llvm-readelf`) que usa `Add-SxeResources` para estampar
-  recursos `.sxmeta`/`.sxicon`.
-- `libisoburn` es el paquete que trae el binario `xorriso` (el nombre no
-  coincide con el de la herramienta).
-- `ninja` hace falta siempre, este o no horneado el toolchain: no es parte de
-  ningun paquete base.
-- Sin `bootstrap.ps1` no existe `toolchain/toolchain.json` con las rutas de
-  OVMF: hay que definir `OVMF_CODE`/`OVMF_VARS` a mano, por ejemplo
-  `/usr/share/edk2/x64/OVMF_CODE.4m.fd` y `.../OVMF_VARS.4m.fd` (rutas de
-  `edk2-ovmf` en Arch).
-
-Para `.\build.ps1 run`/`debug` (QEMU con ventana grafica), Arch separa los
-backends de QEMU en paquetes aparte de `qemu-system-x86`:
-
-```bash
-pacman -S qemu-ui-gtk qemu-ui-opengl qemu-audio-sdl libpulse
-```
-
-Sin `qemu-ui-gtk` no existe el backend `-display gtk` que usa `Run-Qemu` (con
-`qemu-system-x86` a secas, `-display help` solo lista `none`). Sin
-`qemu-audio-sdl`, pedir `-audiodev sdl,...` (lo que usan `run`/`debug`) hace
-**segfaultear** a QEMU en vez de fallar con un error legible. `libpulse` es lo
-que le da a SDL2 un backend real de audio para hablar con el servidor de audio
-del host (en WSL2, el socket Pulse que expone WSLg).
-
-Para `-Virtio`, Arch separa ademas cada dispositivo de display virtio en su
-propio paquete, fuera de `qemu-system-x86`:
-
-```bash
-pacman -S qemu-hw-display-virtio-vga qemu-hw-display-virtio-vga-gl \
-  qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-pci \
-  qemu-hw-display-virtio-gpu-pci-gl
-```
-
-Sin `qemu-hw-display-virtio-vga`, `-device virtio-vga` (lo que arma `-Virtio`)
-no existe y QEMU falla con "is not a valid device model name". El caso mas
-enganoso es faltar solo `qemu-hw-display-virtio-gpu` (sin `-pci`): los demas
-paquetes quedan instalados, `-device virtio-vga,help` lista propiedades como si
-nada, pero al arrancar la maquina de verdad QEMU **segfaultea** en
-`virtio_instance_init_common` — el modulo base con el tipo `virtio-gpu-device`
-del que dependen los frontends PCI no esta cargado.
-
-## Compilacion
-
-Compilar el sistema:
+## Building
 
 ```powershell
 .\build.ps1 build
 ```
 
-Ese comando:
+That command:
 
-- compila kernel y userland interno
-- genera el `initramfs`
-- prepara la imagen EFI de arranque
-- crea `build/disk.img` si todavia no existe
-- sincroniza el contenido interno sobre el volumen persistente
+- compiles the kernel and the internal userland
+- generates the `initramfs`
+- prepares the EFI boot image
+- creates `build/disk.img` if it does not exist yet
+- syncs the internal contents onto the persistent volume
 
-Importante: el build normal no debe recrear `build/disk.img` de forma
-incondicional. La imagen persistente se conserva entre builds salvo corrupcion
-real o incompatibilidad de formato.
+Important: a normal build must not recreate `build/disk.img` unconditionally.
+The persistent image is kept across builds except on real corruption or a
+format incompatibility.
 
-Para compilar sin las apps de testeo y diagnostico (keytest, gfxdemo, smoke,
-etc.), usa `-NoTestApps`: esos binarios no entran al rootfs y el menu del
-escritorio se compila sin sus entradas. Los comandos de automatizacion
-(`smoke`, `windowd-smoke`, ...) las incluyen siempre porque sus harnesses
-dependen de ellas.
+To build without the test and diagnostic apps (keytest, gfxdemo, smoke, ...),
+use `-NoTestApps`: those binaries stay out of the rootfs and the desktop menu
+is built without their entries. The automation commands (`smoke`,
+`windowd-smoke`, ...) always include them, because their harnesses depend on
+them.
 
 ```powershell
 .\build.ps1 build -NoTestApps
 ```
 
-Generar una ISO booteable:
+Generating a bootable ISO:
 
 ```powershell
 .\build.ps1 iso
 ```
 
-La ISO queda en `build/SavanXP.iso`. Ese comando requiere `xorriso`, resuelto
-por `SAVANXP_XORRISO`, por `toolchain/toolchain.json` o por el `PATH`, y usa el
-arbol EFI ya preparado por el build. Si queres conservar datos de `/disk` al
-arrancar en VirtualBox u otro hipervisor, adjunta tambien `build/disk.img` como
-disco adicional.
+The ISO lands in `build/SavanXP.iso`. That command requires `xorriso` —
+resolved through `SAVANXP_XORRISO`, `toolchain/toolchain.json` or the `PATH` —
+and uses the EFI tree the build already prepared. To keep `/disk` data when
+booting under VirtualBox or another hypervisor, attach `build/disk.img` as an
+extra disk as well.
 
-## Ejecucion
-
-Arrancar el sistema:
+## Running
 
 ```powershell
 .\build.ps1 run
 ```
 
-Por defecto usa TCG (emulacion por software). Si tenes Hyper-V activo en
-Windows, `-Accel whpx` acelera el boot usando el Windows Hypervisor Platform;
-en Linux con VT-x/AMD-V, `-Accel kvm` hace lo mismo contra `/dev/kvm`:
+By default this uses TCG (software emulation). With Hyper-V enabled on Windows,
+`-Accel whpx` accelerates the boot through the Windows Hypervisor Platform; on
+Linux with VT-x/AMD-V, `-Accel kvm` does the same against `/dev/kvm`:
 
 ```powershell
 .\build.ps1 run -Accel whpx
 .\build.ps1 run -Accel kvm
 ```
 
-Nota: con whpx, `-cpu max`/`-cpu host` hacen crashear a OVMF con un #GP en
-PlatformPei apenas arranca (WHPX no puede respaldar features de CPU muy
-nuevas que esos modelos exponen al guest). Por eso `-Accel whpx` fuerza
-`-cpu qemu64`, que arranca sin problemas. `-Accel kvm` no tiene ese problema
-(KVM virtualiza las features del CPU real en vez de exponer un modelo
-sintetico) y usa `-cpu host`.
+Note: under whpx, `-cpu max` / `-cpu host` crash OVMF with a #GP in PlatformPei
+right at boot (WHPX cannot back the very recent CPU features those models
+expose to the guest). That is why `-Accel whpx` forces `-cpu qemu64`, which
+boots fine. `-Accel kvm` does not have that problem and uses `-cpu host`.
 
-La maquina QEMU se arma por defecto con hardware "base": VGA estandar, mouse y
-teclado PS/2, audio AC'97, disco IDE y NIC rtl8139, el mismo que emula
-VirtualBox. Asi el kernel ejercita los backends de fallback (`fb_gpu`, `ps2`,
-`ac97`, `ata`, `rtl8139`) sin salir de QEMU. Para levantar la maquina con
-dispositivos paravirtualizados (virtio-vga, virtio-tablet, virtio-keyboard,
-virtio-sound, virtio-blk, virtio-net) hay que pedirlo explicitamente:
+The QEMU machine is assembled with "base" hardware by default: standard VGA,
+PS/2 mouse and keyboard, AC'97 audio, IDE disk and an rtl8139 NIC — the same
+set VirtualBox emulates. This way the kernel exercises the fallback backends
+(`fb_gpu`, `ps2`, `ac97`, `ata`, `rtl8139`) without leaving QEMU. Bringing the
+machine up with paravirtualized devices (virtio-vga, virtio-tablet,
+virtio-keyboard, virtio-sound, virtio-blk, virtio-net) has to be asked for
+explicitly:
 
 ```powershell
 .\build.ps1 run -Virtio
 ```
 
-El switch vale para todos los comandos que lanzan QEMU (`run`, `debug`, los
-smokes y `gpu-soak`). Los harnesses de audio que miden un driver concreto
-(`ac97-count`, `virtio-count`, ...) fuerzan su dispositivo y no dependen de el.
+The switch applies to every command that launches QEMU (`run`, `debug`, the
+smokes and `gpu-soak`). The audio harnesses that measure one specific driver
+(`ac97-count`, `virtio-count`, ...) force their device and ignore it.
 
-Otras variantes disponibles:
+Other available targets:
 
 ```powershell
 .\build.ps1 debug
@@ -222,20 +172,18 @@ Otras variantes disponibles:
 .\build.ps1 clean
 ```
 
-Notas practicas:
+- `run` starts QEMU with a graphical session and serial output on the terminal.
+- `debug` keeps the boot flow oriented towards debugging.
+- `smoke` runs an automated headless test and leaves logs in `build/`.
+- `windowd-smoke` exercises the graphical compositor.
+- `gpu-soak` stresses the GPU presentation path.
+- `clean` removes build artifacts and can force the environment to be recreated
+  on the next build.
 
-- `run` inicia QEMU con sesion grafica y salida serie en la terminal.
-- `debug` conserva el flujo de arranque orientado a depuracion.
-- `smoke` ejecuta una prueba automatizada headless y deja logs en `build/`.
-- `windowd-smoke` ejercita el compositor grafico.
-- `gpu-soak` estresa el camino de presentacion de GPU.
-- `clean` elimina artefactos de compilacion y puede forzar la recreacion del
-  entorno en el siguiente build.
+## First boot
 
-## Primer arranque
-
-El sistema entra a `init` y luego a `sh` como shell principal. Para ver el
-estado base del sistema desde el guest:
+The system enters `init` and then `sh` as the main shell. To see the base state
+of the system from inside the guest:
 
 ```text
 sysinfo
@@ -243,7 +191,7 @@ df
 ls /disk
 ```
 
-Comandos utiles incluidos en el userland actual:
+Useful commands in the current userland:
 
 - `sh`
 - `sysinfo`
@@ -257,17 +205,15 @@ Comandos utiles incluidos en el userland actual:
 - `beep`
 - `audiotest`
 
-Ademas, varias utilidades basicas salen del multicall `busybox`, por ejemplo
-`ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp`, `ps`, `true`, `false` y
-`sleep`.
+Several basic utilities also come out of the `busybox` multicall binary, for
+example `ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp`, `ps`, `true`, `false`
+and `sleep`.
 
-## Apps externas
+## External apps
 
-El flujo recomendado para probar programas propios no requiere reconstruir el
-`initramfs`. Las apps externas se compilan contra la SDK y se instalan directo
-en `build/disk.img`, normalmente bajo `/disk/bin`.
-
-Ejemplo:
+The recommended flow for testing your own programs does not require rebuilding
+the `initramfs`. External apps are compiled against the SDK and installed
+straight into `build/disk.img`, normally under `/disk/bin`.
 
 ```powershell
 .\build.ps1 build
@@ -275,21 +221,21 @@ Ejemplo:
 .\build.ps1 run
 ```
 
-Dentro de SavanXP:
+Inside SavanXP:
 
 ```text
 which hello
 hello
 ```
 
-Tambien existe un wrapper para compilar, instalar y arrancar el sistema en un
-paso:
+There is also a wrapper that compiles, installs and boots the system in one
+step:
 
 ```powershell
 .\tools\run-user.ps1 -Source .\sdk\errdemo\main.c -Name errdemo
 ```
 
-Ejemplos incluidos:
+Included examples:
 
 - `sdk/hello`
 - `sdk/errdemo`
@@ -297,54 +243,61 @@ Ejemplos incluidos:
 - `sdk/gfxhello`
 - `sdk/doomgeneric`
 
-## Persistencia
+## Persistence
 
-SavanXP usa una imagen de disco persistente en `build/disk.img`, montada como
-`/disk` dentro del sistema mediante `SxFS`.
+SavanXP uses a persistent disk image at `build/disk.img`, mounted as `/disk`
+inside the system through `SxFS`.
 
-Esto permite:
+This makes it possible to:
 
-- conservar archivos entre reinicios
-- instalar binarios externos en `/disk/bin`
-- guardar assets y datos persistentes bajo `/disk`
+- keep files across reboots
+- install external binaries in `/disk/bin`
+- store assets and persistent data under `/disk`
 
-Ejemplo dentro del guest:
+Inside the guest:
 
 ```text
-echo hola > /disk/notes.txt
+echo hello > /disk/notes.txt
 sync
 cat /disk/notes.txt
 ```
 
-El flujo del repo protege esta persistencia: un `.\build.ps1 build` no debe
-eliminar aplicaciones externas ya instaladas ni assets persistentes como los
-de `doomgeneric`.
+The repo workflow protects this persistence: a `.\build.ps1 build` must not
+delete external applications that are already installed, nor persistent assets
+such as the ones `doomgeneric` uses.
 
-## Estructura del repositorio
+## Repository layout
 
-Directorios principales:
+- `arch/`: architecture-specific code
+- `kernel/`: kernel and base subsystems
+- `subsystems/posix/`: POSIX layer, SDK and main userland
+- `libsxfs/`: portable core of the `SxFS` filesystem and `sxfs-cli`, the host
+  tool that does all disk image writing
+- `rootfs/`: contents of the `initramfs`
+- `diskfs/`: initial contents of the persistent volume
+- `sdk/`: examples, tooling and external ports
+- `tools/`: host-side scripts and development utilities
+- `vendor/`: third-party dependencies
 
-- `arch/`: codigo especifico de arquitectura
-- `kernel/`: kernel y subsistemas base
-- `subsystems/posix/`: capa POSIX, SDK y userland principal
-- `libsxfs/`: nucleo portable del filesystem `SxFS` y `sxfs-cli`, el tool de
-  host que hace toda la escritura de imagenes de disco
-- `rootfs/`: contenido del `initramfs`
-- `diskfs/`: contenido inicial del volumen persistente
-- `sdk/`: ejemplos, tooling y ports externos
-- `tools/`: scripts host-side y utilidades de desarrollo
-- `vendor/`: dependencias de terceros
+## Documentation
 
-## Estado del proyecto
+- [`docs/README.md`](docs/README.md) — index of every design document
+- [`docs/BUILD_LINUX.md`](docs/BUILD_LINUX.md) — building outside Windows
+- [`docs/SYSTEM_LAYERING.md`](docs/SYSTEM_LAYERING.md) — which layer is written
+  in which language, and why
+- [`AGENTS.md`](AGENTS.md) — working rules for this repository (changelog
+  format, persistence guarantees, minimum verification)
 
-SavanXP ya supero la etapa de arranque minimo. Hoy ofrece una base coherente
-para seguir evolucionando:
+## Project status
 
-- kernel y userland propios
-- desktop inicial usable
-- camino grafico bajo compositor
-- persistencia real sobre `/disk`
-- soporte para ports y aplicaciones externas
+SavanXP is well past the minimal-boot stage. Today it offers a coherent base to
+keep building on:
 
-Todavia sigue siendo un sistema experimental, con APIs y subsistemas en
-evolucion, pero ya apunta a ser una base de trabajo consistente y demostrable.
+- its own kernel and userland
+- a usable initial desktop
+- a graphics path under a compositor
+- real persistence over `/disk`
+- support for ports and external applications
+
+It is still an experimental system, with APIs and subsystems in flux, but it is
+already aiming to be a consistent, demonstrable working base.

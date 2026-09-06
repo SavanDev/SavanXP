@@ -1,178 +1,177 @@
-# Registro de procedencia de terceros
+# Third-party provenance registry
 
-Este archivo registra todo componente de terceros que termina dentro de un
-binario o una imagen que SavanXP distribuye. Esa es la regla de entrada: una
-entrada por bit distribuido, no una por proyecto que sirvio de inspiracion. El
-razonamiento sobre que se adopta y bajo que categoria vive en
+This file records every third-party component that ends up inside a binary or
+an image that SavanXP distributes. That is the entry rule: one entry per
+distributed bit, not one per project that served as inspiration. The reasoning
+about what is adopted and under which category lives in
 `docs/THIRD_PARTY_ADOPTION.md`.
 
-Cada entrada declara origen, version fijada, licencia verificada, decision y
-donde termina el bit distribuido. El campo `Versionado` dice si el repo
-contiene la pieza o si se descarga o se provee aparte durante el build: en los
-dos casos la imagen construida la redistribuye, y por eso las dos van al
-registro.
+Each entry declares origin, pinned version, verified license, decision, and
+where the distributed bit ends up. The `Versioned` field says whether the
+repository contains the piece or whether it is downloaded or supplied
+separately during the build: in both cases the built image redistributes it,
+which is why both go into the registry.
 
-## Codigo de terceros compilado en el sistema
+## Third-party code compiled into the system
 
 ### uACPI
 
-- Origen: https://github.com/uACPI/uACPI, v6.0.0
-- Version fijada: commit `9c9b26d6291a1cdd9014cc5bb6b03e596697cbfd`
+- Origin: https://github.com/uACPI/uACPI, v6.0.0
+- Pinned version: commit `9c9b26d6291a1cdd9014cc5bb6b03e596697cbfd`
   (`vendor/uacpi/UACPI_COMMIT.txt`)
-- Versionado: si, `vendor/uacpi/`
-- Licencia revisada: MIT (Copyright 2022-2026 Daniil Tatianin),
+- Versioned: yes, `vendor/uacpi/`
+- License reviewed: MIT (Copyright 2022-2026 Daniil Tatianin),
   `vendor/uacpi/LICENSE`
-- Decision: `Adoptar`
-- Distribuido en: el binario del kernel; se compila con flags propios
-  (`Get-UacpiFlags`) y se integra por `kernel/uacpi_glue.cpp`
+- Decision: `Adopt`
+- Distributed in: the kernel binary; built with its own flags
+  (`Get-UacpiFlags`) and integrated through `kernel/uacpi_glue.cpp`
 
 ### BusyBox
 
-- Origen: https://busybox.net, BusyBox 1.37.0
-- Versionado: si, `vendor/busybox/` (arbol upstream completo)
-- Licencia revisada: GPLv2, `vendor/busybox/LICENSE`
-- Decision: `Adoptar`, con reemplazo previsto
-- Distribuido en: `/bin/busybox` y una copia del binario por cada applet
-  (`Install-BusyBox` en `build.ps1`)
-- Alcance real: solo seis applets se compilan desde upstream (`cat`, `cp`,
-  `echo`, `mkdir`, `mv`, `rm`), via los `#include` de una linea en
-  `vendor/busybox-port/applet_*.c`. Los otros cinco (`ls`, `ps`, `true`,
-  `false`, `sleep`) son codigo propio en `legacy_applets.c`
-- Deuda conocida: `vendor/busybox-port/busybox_compat.c` y `libbb.h` son obra
-  derivada de BusyBox y todavia no llevan header de licencia, con lo cual
-  quedan cubiertos por el MIT del repo de forma incorrecta
+- Origin: https://busybox.net, BusyBox 1.37.0
+- Versioned: yes, `vendor/busybox/` (full upstream tree)
+- License reviewed: GPLv2, `vendor/busybox/LICENSE`
+- Decision: `Adopt`, with replacement planned
+- Distributed in: `/bin/busybox` and one copy of the binary per applet
+  (`Install-BusyBox` in `build.ps1`)
+- Actual scope: only six applets are compiled from upstream (`cat`, `cp`,
+  `echo`, `mkdir`, `mv`, `rm`), through the one-line `#include`s in
+  `vendor/busybox-port/applet_*.c`. The other five (`ls`, `ps`, `true`,
+  `false`, `sleep`) are our own code in `legacy_applets.c`
+- Known debt: `vendor/busybox-port/busybox_compat.c` and `libbb.h` are
+  derivative works of BusyBox and still carry no license header, so they are
+  incorrectly covered by the repository's MIT
 
 ### Doom (DoomGeneric)
 
-- Origen: DoomGeneric, sobre la linea Chocolate Doom
-- Versionado: si, `sdk/doomgeneric/`
-- Licencia revisada: GPLv2. Copyright (C) 1993-1996 Id Software, Inc. y
-  Copyright (C) 2005-2014 Simon Howard. Texto completo en
-  `sdk/doomgeneric/COPYING`; los avisos por archivo quedan en los headers
-- Decision: `Adoptar`
-- Distribuido en: `/disk/bin/doomgeneric`. Se compila aparte con
-  `sdk/doomgeneric/build.ps1`, no con el build principal
+- Origin: DoomGeneric, on the Chocolate Doom line
+- Versioned: yes, `sdk/doomgeneric/`
+- License reviewed: GPLv2. Copyright (C) 1993-1996 Id Software, Inc. and
+  Copyright (C) 2005-2014 Simon Howard. Full text in
+  `sdk/doomgeneric/COPYING`; the per-file notices stay in the headers
+- Decision: `Adopt`
+- Distributed in: `/disk/bin/doomgeneric`. Built separately with
+  `sdk/doomgeneric/build.ps1`, not by the main build
 
 ## Bootloader
 
 ### Limine
 
-- Origen: https://github.com/limine-bootloader/limine, rama `v10.x-binary`
-- Versionado: no. `build.ps1` lo clona a `tools/limine`, que esta en
+- Origin: https://github.com/limine-bootloader/limine, `v10.x-binary` branch
+- Versioned: no. `build.ps1` clones it into `tools/limine`, which is in
   `.gitignore`
-- Licencia revisada: BSD-2-Clause, `tools/limine/LICENSE`
-- Decision: `Adoptar`
-- Distribuido en: la ISO, como `BOOTX64.EFI`, `limine-bios-cd.bin`,
-  `limine-bios.sys` y `limine-uefi-cd.bin`
+- License reviewed: BSD-2-Clause, `tools/limine/LICENSE`
+- Decision: `Adopt`
+- Distributed in: the ISO, as `BOOTX64.EFI`, `limine-bios-cd.bin`,
+  `limine-bios.sys` and `limine-uefi-cd.bin`
 
-### Header del protocolo Limine
+### Limine protocol header
 
-- Origen: derivado de https://github.com/limine-bootloader/limine-protocol
-- Versionado: si, `vendor/limine.h`
-- Licencia revisada: 0BSD, declarada por SPDX en el propio archivo
-- Decision: `Port selectivo`
-- Distribuido en: el binario del kernel. Es una version minima escrita para el
-  repo, no una copia del header upstream
+- Origin: derived from https://github.com/limine-bootloader/limine-protocol
+- Versioned: yes, `vendor/limine.h`
+- License reviewed: 0BSD, declared by SPDX in the file itself
+- Decision: `Selective port`
+- Distributed in: the kernel binary. It is a minimal version written for this
+  repository, not a copy of the upstream header
 
-## Contenido y assets en la imagen
+## Content and assets in the image
 
 ### Freedoom
 
-- Origen: https://freedoom.github.io
-- Versionado: no. `.gitignore` excluye `sdk/doomgeneric/wad/*.wad`; el archivo
-  se descarga aparte y el build imprime la URL si falta
-- Licencia revisada: BSD-3-Clause. Proyecto independiente, sin relacion con id
-  Software
-- Decision: `Adoptar`
-- Distribuido en: `/disk/games/doom/freedoom1.wad` de la imagen construida. Es
-  el IWAD por defecto para que el LiveCD sea jugable sin contenido
-  propietario ni shareware
+- Origin: https://freedoom.github.io
+- Versioned: no. `.gitignore` excludes `sdk/doomgeneric/wad/*.wad`; the file is
+  downloaded separately and the build prints the URL if it is missing
+- License reviewed: BSD-3-Clause. Independent project, unrelated to id Software
+- Decision: `Adopt`
+- Distributed in: `/disk/games/doom/freedoom1.wad` of the built image. It is
+  the default IWAD so that the LiveCD is playable without proprietary or
+  shareware content
 
-### GNU UniFont (consola y terminal)
+### GNU UniFont (console and terminal)
 
-- Origen: GNU Unifont 17.0.04, `unifont-17.0.04.hex`
+- Origin: GNU Unifont 17.0.04, `unifont-17.0.04.hex`
   (https://unifoundry.com/unifont/)
-- Versionado: si, `assets/desktop/fonts/unifont.hex`
-- Licencia revisada: SIL OFL-1.1 y, alternativamente, GNU GPLv2+ con la GNU
-  Font Embedding Exception (doble licencia upstream). Texto en
+- Versioned: yes, `assets/desktop/fonts/unifont.hex`
+- License reviewed: SIL OFL-1.1 and, alternatively, GNU GPLv2+ with the GNU
+  Font Embedding Exception (upstream dual license). Text in
   `assets/desktop/fonts/LICENSE-OFL-1.1.txt`
-- Decision: `Adoptar`
-- Distribuido en: el binario, como tabla C horneada offline por
-  `tools/font/genfont.py`. SavanXP no embebe ni parsea TrueType en runtime: lo
-  que queda compilado es el bitmap derivado
-- Motivo: fuente bitmap nativa 8x16 con cobertura Unicode amplia. Se hornea
-  desde el `.hex` canonico (ASCII, Latin-1, cajas y bloques) porque el outline
-  TTF rasteriza fuera de grilla
+- Decision: `Adopt`
+- Distributed in: the binary, as a C table baked offline by
+  `tools/font/genfont.py`. SavanXP neither embeds nor parses TrueType at
+  runtime: what stays compiled in is the derived bitmap
+- Reason: a native 8x16 bitmap font with broad Unicode coverage. It is baked
+  from the canonical `.hex` (ASCII, Latin-1, box drawing and blocks) because
+  the TTF outline rasterizes off-grid
 
-### Noto Sans (escritorio y UI)
+### Noto Sans (desktop and UI)
 
-- Origen: Noto Sans Regular v1.06 (Copyright 2012 Google Inc.), proyecto Noto
-  (https://fonts.google.com/noto)
-- Versionado: si, `assets/desktop/fonts/NotoSans-Regular.ttf`
-- Licencia revisada: SIL OFL-1.1,
+- Origin: Noto Sans Regular v1.06 (Copyright 2012 Google Inc.), the Noto
+  project (https://fonts.google.com/noto)
+- Versioned: yes, `assets/desktop/fonts/NotoSans-Regular.ttf`
+- License reviewed: SIL OFL-1.1,
   `assets/desktop/fonts/LICENSE-OFL-1.1.txt`
-- Decision: `Adoptar`
-- Distribuido en: el binario, como atlas de cobertura 8-bit antialiased a 13px
-  horneado por `tools/font/genfont.py`
-- Motivo: tipografia proporcional para el chrome del escritorio y los widgets
+- Decision: `Adopt`
+- Distributed in: the binary, as an 8-bit antialiased coverage atlas at 13px
+  baked by `tools/font/genfont.py`
+- Reason: a proportional typeface for the desktop chrome and the widgets
 
-### Iconos y arte del desktop
+### Desktop icons and art
 
-- Origen: arte propio del repo, generado por
+- Origin: the repository's own art, generated by
   `tools/gen_desktop_source_art.py`
-- Decision: fuera del registro de terceros desde su reemplazo
-- Motivo: el desktop ya no depende de iconos copiados ni derivados de otros
-  proyectos
-- Alcance: `assets/desktop/icons/16x16` y `32x32`. **No** cubre
-  `assets/desktop/icons/mime/`, que es el catalogo de tipos y tiene la
-  procedencia de abajo
+- Decision: out of the third-party registry since its replacement
+- Reason: the desktop no longer depends on icons copied from or derived from
+  other projects
+- Scope: `assets/desktop/icons/16x16` and `32x32`. It does **not** cover
+  `assets/desktop/icons/mime/`, which is the file-type catalog and has the
+  provenance below
 
-### Tango Icon Theme (catalogo de tipos de archivo)
+### Tango Icon Theme (file-type catalog)
 
-- Origen: Tango Icon Theme 0.8.90, `tango-icon-theme_0.8.90.orig.tar.gz`
-  (proyecto Tango Desktop, http://tango.freedesktop.org/), `sha256`
+- Origin: Tango Icon Theme 0.8.90, `tango-icon-theme_0.8.90.orig.tar.gz`
+  (Tango Desktop Project, http://tango.freedesktop.org/), `sha256`
   `6e98d8032d57d818acc907ec47e6a718851ff251ae7c29aafb868743eb65c88e`
-- Versionado: si, 22 PNG (11 iconos x 16x16 y 32x32) en
+- Versioned: yes, 22 PNGs (11 icons x 16x16 and 32x32) in
   `assets/desktop/icons/mime/`
-- Licencia revisada: **dominio publico**. El `COPYING` del tarball dice
-  textual *"The icons in this repository are herefore released into the Public
-  Domain"*. Las versiones anteriores a 0.8.90 eran CC BY-SA 2.5; el cambio a
-  dominio publico se hizo justamente para sacar la incompatibilidad con la GPL,
-  asi que la version importa: **0.8.90 o posterior**
-- Decision: `Adoptar`
-- Distribuido en: la imagen, como blobs `.sxicon` sueltos en `/disk/icons`
-  emitidos por `tools/gen_mime_icons.py`. **No** se hornea en ningun binario,
-  por la misma razon por la que `.sxicon` es una seccion no-alloc (ver
+- License reviewed: **public domain**. The tarball's `COPYING` states verbatim
+  *"The icons in this repository are herefore released into the Public
+  Domain"*. Versions before 0.8.90 were CC BY-SA 2.5; the move to the public
+  domain was made precisely to remove the incompatibility with the GPL, so the
+  version matters: **0.8.90 or later**
+- Decision: `Adopt`
+- Distributed in: the image, as standalone `.sxicon` blobs in `/disk/icons`
+  emitted by `tools/gen_mime_icons.py`. They are **not** baked into any binary,
+  for the same reason `.sxicon` is a non-alloc section (see
   `docs/SXE_FORMAT.md`)
-- Motivo: los iconos por tipo de archivo se dibujan sobre el campo BLANCO de
-  una lista, no sobre el face gris del escritorio. Medido sobre `C0C0C0` el set
-  de Tango pierde contra el arte propio (`input-keyboard` 27.1 contra 52.2 de
-  contraste medio de luminancia), pero sobre blanco casi lo duplica, que es
-  exactamente el fondo de este caso de uso. Ademas trae la cobertura de tipos
-  que el arte propio no tiene y sigue la Icon Naming Specification de
-  freedesktop, que es lo que permite cambiar de origen sin reescribir
-  `diskfs/mimeicon.ini`
-- Nota: los iconos de `devices/` y `places/` de Tango **no** se adoptaron. Sobre
-  el face gris se pierden, y son justo los que el escritorio necesitaria
+- Reason: file-type icons are drawn over the WHITE field of a list, not over
+  the gray face of the desktop. Measured against `C0C0C0` the Tango set loses
+  to our own art (`input-keyboard` 27.1 against 52.2 mean luminance contrast),
+  but over white it nearly doubles it, and white is exactly the background of
+  this use case. It also brings the type coverage our own art does not have,
+  and it follows freedesktop's Icon Naming Specification, which is what makes
+  it possible to change source without rewriting `diskfs/mimeicon.ini`
+- Note: Tango's `devices/` and `places/` icons were **not** adopted. Over the
+  gray face they disappear, and those are exactly the ones the desktop would
+  need
 
-## Solo build: no se distribuye
+## Build only: not distributed
 
-Las herramientas del toolchain horneado (LLVM, QEMU, xorriso, Ninja) no entran
-en ninguna imagen: producen los binarios y quedan afuera. Su procedencia,
-version y `sha256` estan fijados en `tools/toolchain.lock.json`, que es el
-registro autoritativo para ellas. No se duplican aca.
+The baked toolchain tools (LLVM, QEMU, xorriso, Ninja) do not enter any image:
+they produce the binaries and stay outside. Their provenance, version and
+`sha256` are pinned in `tools/toolchain.lock.json`, which is the authoritative
+registry for them. They are not duplicated here.
 
-## Referencia: sin bits de terceros en el repo
+## Reference: no third-party bits in the repository
 
-Estas adopciones son de diseno, no de codigo: no hay lineas copiadas y por lo
-tanto no hay nada que licenciar ni redistribuir. La decision y el motivo de
-cada una viven en `docs/THIRD_PARTY_ADOPTION.md`.
+These adoptions are of design, not of code: no lines are copied, so there is
+nothing to license or redistribute. The decision and the reason for each live
+in `docs/THIRD_PARTY_ADOPTION.md`.
 
-- SerenityOS (BSD-2-Clause): `WindowServer` y `Compositor` para la
-  arquitectura del compositor, las regiones sucias y la oclusion; `LibGfx`
-  (`Bitmap`, `Painter`, `DisjointRectSet`) para el toolkit y el manejo de
-  rects; `Kernel/Devices/GPU/DisplayConnector` para la capa `display`. SavanXP
-  implementa su propia variante en C sobre su ABI, sin dependencias de `AK`
-- OpenBSD (ISC y BSD-2): candidatos evaluados y categorizados en el doc de
-  adopcion. Todavia no hay ninguna pieza incorporada, asi que no hay entrada
-  distribuida que registrar
+- SerenityOS (BSD-2-Clause): `WindowServer` and `Compositor` for the
+  compositor architecture, the dirty regions and the occlusion; `LibGfx`
+  (`Bitmap`, `Painter`, `DisjointRectSet`) for the toolkit and rect handling;
+  `Kernel/Devices/GPU/DisplayConnector` for the `display` layer. SavanXP
+  implements its own variant in C over its own ABI, with no dependency on `AK`
+- OpenBSD (ISC and BSD-2): candidates evaluated and categorized in the adoption
+  document. No piece has been incorporated yet, so there is no distributed
+  entry to record

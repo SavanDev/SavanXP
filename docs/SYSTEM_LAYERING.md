@@ -1,129 +1,130 @@
-# Modelo de capas del sistema (C nativo + apps Haxe sobre VM)
+# System layering model (native C + Haxe apps on a VM)
 
-> Estado: **decisión fijada (2026-07-21).** Este documento es la **fuente de
-> verdad** del layering de lenguajes de SavanXP. Si otro doc contradice esto,
-> gana este.
+> Status: **decision fixed (2026-07-21).** This document is the **source of
+> truth** for SavanXP's language layering. If another document contradicts it,
+> this one wins.
 
-## La regla en una línea
+## The rule in one line
 
-**El núcleo de bajo nivel y los programas del sistema se escriben en C. El resto
-de las apps de usuario se escriben en Haxe, en lo posible, corriendo sobre la VM
+**The low-level core and the system programs are written in C. The rest of the
+user apps are written in Haxe wherever possible, running on the VM
 (HashLink).**
 
-Es el modelo **Android/ART**: un núcleo nativo maduro, y una capa de apps
-gestionada encima. No es "reemplazar C con Haxe" — es "C es la plataforma, Haxe
-es la capa de aplicaciones".
+This is the **Android/ART** model: a mature native core, with a managed app
+layer on top. It is not "replace C with Haxe" — it is "C is the platform, Haxe
+is the application layer".
 
-## Las tres capas
+## The three layers
 
 ```
   ┌─────────────────────────────────────────────────────────────┐
-  │  Apps de usuario (Haxe)                                      │
-  │  corren sobre la VM; bindean SXGUI-C por la FFI              │
+  │  User apps (Haxe)                                            │
+  │  run on the VM; bind SXGUI-C through the FFI                 │
   └─────────────────────────────────────────────────────────────┘
                               ▲
-                              │  FFI / interop (sxn_*), ABI nativo estable
+                              │  FFI / interop (sxn_*), stable native ABI
                               ▼
   ┌─────────────────────────────────────────────────────────────┐
-  │  Runtime intermedio (etapa: hoy AOT reflaxe.CPP → luego VM)  │
-  │  el "CLR/ART" de SavanXP: runtime + GC + interop a C         │
+  │  Intermediate runtime (staged: AOT reflaxe.CPP today → VM)   │
+  │  SavanXP's "CLR/ART": runtime + GC + interop to C            │
   └─────────────────────────────────────────────────────────────┘
                               ▲
-                              │  ABI nativo v1 (savanxp_native_abi.h)
+                              │  native ABI v1 (savanxp_native_abi.h)
                               ▼
   ┌─────────────────────────────────────────────────────────────┐
-  │  Plataforma nativa (C)                                       │
+  │  Native platform (C)                                         │
   │  kernel · drivers · compositord · windowd · SXGFX · SXGUI-C  │
-  │  + system apps: shell · file manager · task manager         │
+  │  + system apps: shell · file manager · task manager          │
   └─────────────────────────────────────────────────────────────┘
 ```
 
-## Qué va en C (plataforma + system apps)
+## What goes in C (platform + system apps)
 
-Bajo nivel, siempre C:
+Low level, always C:
 
-- **Kernel, drivers, HAL** (display/audio/GPU/red/almacenamiento).
-- **`compositord`** — dueño de la GPU y del único surface de display.
-- **`windowd`** — el window manager (extraído de `desktop.c`; ver
+- **Kernel, drivers, HAL** (display/audio/GPU/network/storage).
+- **`compositord`** — owner of the GPU and of the single display surface.
+- **`windowd`** — the window manager (extracted from `desktop.c`; see
   [WM_SUBSYSTEM.md](WM_SUBSYSTEM.md)).
-- **SXGFX** — la capa de rasterización 2D del SDK
-  (`subsystems/posix/sdk/v1/.../gfx2d.*`): superficies, painter, blit, clipping,
-  damage. Análogo a GDI; los huecos frente a GDI32 y el orden para
-  cerrarlos están en [SXGFX_ROADMAP.md](SXGFX_ROADMAP.md).
-- **SXGUI-C** — el toolkit de widgets Win9x sobre SXGFX
-  (`subsystems/posix/sdk/v1/.../sxgui.*`). Análogo a USER/comctl32.
+- **SXGFX** — the SDK's 2D rasterization layer
+  (`subsystems/posix/sdk/v1/.../gfx2d.*`): surfaces, painter, blit, clipping,
+  damage. The analogue of GDI; the gaps against GDI32 and the order for closing
+  them are in [SXGFX_ROADMAP.md](SXGFX_ROADMAP.md).
+- **SXGUI-C** — the Win9x widget toolkit on top of SXGFX
+  (`subsystems/posix/sdk/v1/.../sxgui.*`). The analogue of USER/comctl32.
 
-Programas del sistema, en C **en esta etapa inicial**:
+System programs, in C **at this initial stage**:
 
-- **Shell** — el escritorio (`subsystems/posix/userland/desktop*.c`): taskbar,
-  start menu, iconos, wallpaper. Tras la extracción del WM queda como
-  `shell-client`, un cliente de `windowd`, **pero sigue en C**.
+- **Shell** — the desktop (`subsystems/posix/userland/desktop*.c`): taskbar,
+  start menu, icons, wallpaper. After the WM extraction it becomes
+  `shell-client`, a client of `windowd`, **but it stays in C**.
 - **File manager** — `subsystems/posix/userland/filesapp.c`.
-- **Administrador de tareas** — todavía no existe; se escribirá en C (el CLI
-  `ps.c` puede sembrarlo).
+- **Task manager** — does not exist yet; it will be written in C (the `ps.c`
+  CLI can seed it).
 
-> Puede sumarse algún programa del sistema más en C en el futuro si hace falta.
-> La lista de arriba es el mínimo de esta etapa, no un techo.
+> More system programs may be added in C in the future if needed. The list
+> above is this stage's minimum, not a ceiling.
 
-## Qué va en Haxe (apps de usuario, vía VM)
+## What goes in Haxe (user apps, via the VM)
 
-Todo lo demás, **en lo posible**, se escribe en Haxe y corre sobre la VM. La
-capa Haxe **no reimplementa** la plataforma: la consume.
+Everything else, **wherever possible**, is written in Haxe and runs on the VM.
+The Haxe layer **does not reimplement** the platform: it consumes it.
 
-- **SXGUI-C es el toolkit canónico y permanente.** Los system apps en C lo usan
-  directamente; las apps Haxe lo **bindean** por la FFI de la VM. Es el modelo
-  **WinForms/JNI**: una fachada gestionada fina sobre los controles nativos, no
-  un segundo toolkit. Mantener dos toolkits en paralelo sería absurdo cuando el C
-  no se va nunca.
-- La pieza de diseño nueva del binding es el **marshalling de callbacks**
-  (closures de Haxe ↔ punteros a función C de `sxgui_widget.on_action`),
-  típicamente vía un trampolín C con `void* ctx`.
+- **SXGUI-C is the canonical, permanent toolkit.** The C system apps use it
+  directly; the Haxe apps **bind** it through the VM's FFI. This is the
+  **WinForms/JNI** model: a thin managed facade over native controls, not a
+  second toolkit. Maintaining two parallel toolkits would be absurd when the C
+  one is never going away.
+- The new design piece in the binding is **callback marshalling** (Haxe
+  closures ↔ C function pointers in `sxgui_widget.on_action`), typically
+  through a C trampoline with a `void* ctx`.
 
-### Estado de las apps Haxe existentes
+### Status of the existing Haxe apps
 
-`sxguiapp` (en `subsystems/native/haxe-sxgui`) es una **demo de validación** del
-ABI y la cadena AOT — **no** un reemplazo de las apps en C, que son las
-oficiales. Los ports `aboutapp-hx` y `filesapp-hx` se retiraron: habían cumplido
-su función (probar que la cadena Haxe llega a una app real) y sostenerlos
-duplicaba apps de sistema que en este layering son de C. Igual, el
-`haxe-toolkit/` (reimplementación de Painter/Boton/… en Haxe) es un
-**bootstrap** que validó la cadena, no el estado final: el estado final es el
-binding a SXGUI-C.
+`sxguiapp` (in `subsystems/native/haxe-sxgui`) is a **validation demo** for the
+ABI and the AOT chain — **not** a replacement for the C apps, which are the
+official ones. The `aboutapp-hx` and `filesapp-hx` ports were retired: they had
+served their purpose (proving the Haxe chain reaches a real app) and keeping
+them alive duplicated system apps that belong to C in this layering. Likewise,
+`haxe-toolkit/` (a reimplementation of Painter/Button/... in Haxe) is a
+**bootstrap** that validated the chain, not the end state: the end state is the
+binding to SXGUI-C.
 
-## Etapas del runtime (el tier del medio)
+## Runtime stages (the middle tier)
 
-El "CLR/ART" de SavanXP se construye por etapas; el ABI nativo se diseña **una
-sola vez** y ambas etapas apuntan al mismo contrato:
+SavanXP's "CLR/ART" is built in stages; the native ABI is designed **once** and
+both stages target the same contract:
 
-1. **Hoy — AOT** con [reflaxe.CPP](https://github.com/SomeRanDev/reflaxe.CPP):
-   Haxe → C++17 mínimo (sin GC) → ELF freestanding. Sirvió para validar la
-   cadena y diseñar el ABI. Los ELF AOT son **artefactos de validación**, no el
-   producto final.
-2. **Destino — VM (HashLink)** en el SO: se porta el runtime/GC de HL sobre el
-   ABI nativo y las apps Haxe corren sobre la VM. `sxn_*` y el ABI no cambian.
+1. **Today — AOT** with [reflaxe.CPP](https://github.com/SomeRanDev/reflaxe.CPP):
+   Haxe → minimal C++17 (no GC) → freestanding ELF. It served to validate the
+   chain and design the ABI. The AOT ELFs are **validation artifacts**, not the
+   final product.
+2. **Target — VM (HashLink)** in the OS: HL's runtime/GC is ported onto the
+   native ABI and the Haxe apps run on the VM. `sxn_*` and the ABI do not
+   change.
 
-Ver [../subsystems/native/README.md](../subsystems/native/README.md) para el
-detalle de fases y verificaciones.
+See [../subsystems/native/README.md](../subsystems/native/README.md) for the
+phase and verification details.
 
-## Relación con la extracción del WM
+## Relationship with the WM extraction
 
-Esta decisión y [WM_SUBSYSTEM.md](WM_SUBSYSTEM.md) son **compatibles y
-complementarias**:
+This decision and [WM_SUBSYSTEM.md](WM_SUBSYSTEM.md) are **compatible and
+complementary**:
 
-- WM_SUBSYSTEM.md saca `windowd` (WM) de `desktop.c`. Es trabajo de plataforma,
-  **en C**, e independiente del lenguaje de los clientes.
-- Tras la extracción, el `shell-client` (y un eventual `progman`) **se quedan en
-  C** — no se reescriben en Haxe. Esto elimina la preocupación de meter el
-  runtime Haxe en el camino de boot crítico.
+- WM_SUBSYSTEM.md pulls `windowd` (the WM) out of `desktop.c`. That is platform
+  work, **in C**, and independent of the clients' language.
+- After the extraction, `shell-client` (and an eventual `progman`) **stay in
+  C** — they are not rewritten in Haxe. That removes any concern about putting
+  the Haxe runtime in the critical boot path.
 
-## Analogía (para fijar el modelo mental)
+## Analogy (to fix the mental model)
 
-| Rol | SavanXP | Windows | Android |
+| Role | SavanXP | Windows | Android |
 |---|---|---|---|
-| Rasterización 2D | **SXGFX** | GDI32 | Skia / hwui |
-| Toolkit de controles | **SXGUI-C** | USER32 / comctl32 | (nativo) |
+| 2D rasterization | **SXGFX** | GDI32 | Skia / hwui |
+| Control toolkit | **SXGUI-C** | USER32 / comctl32 | (native) |
 | Window manager | **windowd** | win32k / USER | WindowManager / SurfaceFlinger |
 | Display server | **compositord** | DWM | SurfaceFlinger |
 | Shell / launcher | **desktop\*.c** (C) | explorer.exe | SystemUI / Launcher |
-| Runtime gestionado | **reflaxe.CPP → HashLink** | CLR | ART |
-| Apps de usuario | **Haxe / VM** | .NET (WinForms) | Java/Kotlin |
+| Managed runtime | **reflaxe.CPP → HashLink** | CLR | ART |
+| User apps | **Haxe / VM** | .NET (WinForms) | Java/Kotlin |
