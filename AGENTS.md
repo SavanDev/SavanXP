@@ -2,73 +2,89 @@
 
 ## Toolchain
 
-- Las herramientas de build (clang, ld.lld, qemu, OVMF) se hornean con
-  `tools/bootstrap.ps1` en `toolchain/` (ignorado por git). La resolucion vive
-  centralizada en `tools/Toolchain.ps1` (env var > toolchain horneado > PATH).
-- No volver a meter rutas absolutas de una maquina concreta en `build.ps1` ni en
-  el tooling: si hace falta una herramienta nueva, agregarla a
-  `tools/toolchain.lock.json` y al mapa de `tools/Toolchain.ps1`.
+- The build tools (clang, ld.lld, qemu, OVMF) are baked into `toolchain/`
+  (git-ignored) by `tools/bootstrap.ps1`. Resolution is centralized in
+  `tools/Toolchain.ps1` (env var > baked toolchain > PATH).
+- Do not put absolute paths from a specific machine back into `build.ps1` or
+  the tooling: if a new tool is needed, add it to `tools/toolchain.lock.json`
+  and to the map in `tools/Toolchain.ps1`.
 
 ## Changelog
 
-- Todo cambio de comportamiento (feature, fix, cambio de build/tooling,
-  eliminacion) se documenta en `CHANGELOG.md` bajo `[Unreleased]`, en la
-  subseccion que corresponda (`Agregado`/`Cambiado`/`Eliminado`/`Corregido`),
-  como parte del mismo commit que lo introduce.
-- No agregar la entrada a una seccion de version ya cerrada (con fecha): eso
-  reescribe historia ya publicada. Si `[Unreleased]` no existe al tope del
-  archivo, crearla.
-- El release (`release(vX.Y.Z): ...`) es el unico commit que renombra
-  `[Unreleased]` a la version nueva con fecha.
+- Every behavior change (feature, fix, build/tooling change, removal) is
+  documented in `CHANGELOG.md` under `[Unreleased]`, in the matching subsection
+  (`Added`/`Changed`/`Removed`/`Fixed`), as part of the same commit that
+  introduces it.
+- Do not add entries to a version section that is already closed (dated): that
+  rewrites published history. If `[Unreleased]` does not exist at the top of
+  the file, create it.
+- The release commit (`release(vX.Y.Z): ...`) is the only one that renames
+  `[Unreleased]` to the new version with a date.
 
-### Como se escribe una entrada
+### How to write an entry
 
-- Una entrada registra **que cambio visto desde afuera**, no como se
-  implemento. El porque, el analisis de causa raiz, el recorrido por los
-  archivos tocados y el detalle de la verificacion van en el mensaje del
-  commit, que es donde alguien los va a buscar. El changelog se lee entero y de
-  corrido; un commit se lee de a uno.
-- Formato: un cambio por entrada, arrancando con una frase en negrita que diga
-  el cambio. Un cambio normal entra en **2 a 6 lineas**; uno estructural grande
-  puede llegar a ~12, nunca mas. Conservar los nombres que alguien va a
-  necesitar para buscar (comandos, targets, flags, funciones de la API, logs de
-  boot, requisitos de build nuevos) y, si el cambio no se entiende solo, una
-  linea de contexto de que pasaba antes. Omitir el inventario de archivos, el
-  paso a paso de la implementacion y el "Verificado con ...".
-- Si varias entradas son partes de un mismo cambio, van juntas en una sola.
-- Cada version lleva **una** subseccion de cada tipo como mucho, en el orden
-  `Agregado`/`Cambiado`/`Eliminado`/`Corregido`. No repetir encabezados.
-- La version `0.3.0` sirve de referencia de largo y tono.
+- An entry records **what changed as seen from the outside**, not how it was
+  implemented. The why, the root-cause analysis, the tour of the files touched
+  and the verification details belong in the commit message, which is where
+  someone will go looking for them. The changelog is read end to end; a commit
+  is read one at a time.
+- Format: one change per entry, opening with a bold sentence stating the
+  change.
+- **Hard length limit: a normal change is at most 3 lines. A large structural
+  change is at most 6. There is no third tier.** If it does not fit, the entry
+  is carrying implementation detail that belongs somewhere else.
+- Keep the names someone will need in order to search (commands, targets,
+  flags, API functions, boot log lines, new build requirements). Drop the file
+  inventory, the step-by-step implementation and the "Verified with ...".
+- If several entries are parts of one change, they go together as one.
+- Each version carries **one** subsection of each kind at most, in the order
+  `Added`/`Changed`/`Removed`/`Fixed`. Do not repeat headings.
 
-## Reglas del repo
+### What does not go in the changelog
 
-- No romper la persistencia de apps externas instaladas en `build/disk.img`.
-- `.\build.ps1 build` no debe borrar ni recrear incondicionalmente la imagen
-  de disco si ya existe y es valida.
-- Los cambios en kernel, build, SDK, `SxFS` o tooling host no deben hacer que
-  se pierdan binarios externos ya instalados en `/disk/bin` ni assets
-  persistentes bajo `/disk/games`.
+- Anything that has to stay true for the future of the OS — design decisions,
+  architectural rules, layering, formats, roadmaps, gotchas worth remembering —
+  goes into `docs/`, not into a changelog entry.
+- The changelog says *what changed*. `docs/` says *how the system works and why
+  it is that way*. When a change needs more than 6 lines to explain, the
+  explanation goes to `docs/` (new document or an existing one) and the entry
+  links to it.
+- Every document in `docs/` must be listed in `docs/README.md`.
 
-## Regla practica para el build principal
+## Documentation language
 
-- El build principal puede sincronizar userland interno sobre la imagen
-  existente, pero no debe resetearla salvo corrupcion real o incompatibilidad
-  de formato.
-- Si hace falta recrear `build/disk.img`, tiene que ser una decision
-  deliberada y justificada, no el comportamiento normal de `.\build.ps1 build`.
+- All repository documentation (`README.md`, `CHANGELOG.md`, `AGENTS.md`,
+  `docs/`, `assets/README.md`) is written in English, so the project is
+  readable by anyone who finds it.
 
-## Verificacion minima cuando se toca esa zona
+## Repository rules
 
-- Instalar una app externa en la imagen, por ejemplo con:
+- Do not break the persistence of external apps installed in `build/disk.img`.
+- `.\build.ps1 build` must not delete or unconditionally recreate the disk
+  image if one already exists and is valid.
+- Changes to the kernel, the build, the SDK, `SxFS` or the host tooling must
+  not lose external binaries already installed in `/disk/bin`, nor persistent
+  assets under `/disk/games`.
+
+## Practical rule for the main build
+
+- The main build may sync the internal userland onto the existing image, but it
+  must not reset it except on real corruption or a format incompatibility.
+- If `build/disk.img` has to be recreated, that must be a deliberate and
+  justified decision, not the normal behavior of `.\build.ps1 build`.
+
+## Minimum verification when touching that area
+
+- Install an external app into the image, for example with:
   `.\sdk\doomgeneric\build.ps1`
-- Ejecutar despues:
+- Then run:
   `.\build.ps1 build`
-- Confirmar que el ejecutable sigue presente en `/disk/bin`
-- Confirmar que sus assets persistentes, por ejemplo
-  `/disk/games/doom/doom1.wad`, siguen presentes
+- Confirm the executable is still present in `/disk/bin`
+- Confirm its persistent assets, for example
+  `/disk/games/doom/doom1.wad`, are still present
 
-## Caso de referencia actual
+## Current reference case
 
-- `sdk/doomgeneric` se usa como prueba real de regresion para este punto.
-- Si despues de un `build` el sistema no encuentra `doomgeneric`, el cambio
-  debe tratarse como regresion del flujo de imagen persistente.
+- `sdk/doomgeneric` is used as the real regression test for this point.
+- If after a `build` the system cannot find `doomgeneric`, the change must be
+  treated as a regression of the persistent image flow.
