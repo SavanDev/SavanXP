@@ -25,8 +25,8 @@
 /*
  * Lista de ventanas: SECCION compartida, no pipe.
  *
- * La lista pesa cerca de un KiB y un pipe de 8 KiB puede aceptarla a medias si
- * el cliente se atrasa. Una lectura parcial desincroniza el stream para
+ * La lista pesa mas de diez KiB -- cada entrada lleva su icono -- y un pipe de
+ * 8 KiB no la acepta entera. Una lectura parcial desincroniza el stream para
  * siempre, y este WM ya se colgo una vez por escrituras parciales a pipe. Con
  * una seccion no hay mensajes que puedan partirse: el WM pisa el contenido y el
  * cliente lee el ultimo estado, que es exactamente lo que una barra de tareas
@@ -49,10 +49,16 @@
  * lo tome el primer open/dup que venga. */
 #define SAVANXP_WM_SHELL_FD_LAST SAVANXP_WM_FD_SHELL_REQUEST
 
-#define SAVANXP_WM_SHELL_PROTOCOL_VERSION 1u
+#define SAVANXP_WM_SHELL_PROTOCOL_VERSION 2u
 #define SAVANXP_WM_WINDOW_TITLE_CAPACITY 64u
 /* Igual que WINDOWD_MAX_OVERLAY_CLIENTS, mas el shell. */
 #define SAVANXP_WM_MAX_WINDOWS 13u
+
+/* Mismo tamano que WINDOWD_PRESENTATION_ICON_EXTENT: la entrada transporta el
+ * icono chico tal como el WM ya lo tenia resuelto, sin reescalar. */
+#define SAVANXP_WM_WINDOW_ICON_EXTENT 16u
+#define SAVANXP_WM_WINDOW_ICON_PIXELS \
+    (SAVANXP_WM_WINDOW_ICON_EXTENT * SAVANXP_WM_WINDOW_ICON_EXTENT)
 
 enum savanxp_wm_window_flags {
     SAVANXP_WM_WINDOW_FLAG_NONE = 0,
@@ -67,11 +73,21 @@ struct savanxp_wm_window_entry {
      * contra sus clientes al recibir el pedido. */
     uint32_t window_id;
     uint32_t flags; /* savanxp_wm_window_flags */
-    /* Icono chico, resuelto por el WM desde los recursos SXE del binario (ver
-     * docs/SXE_FORMAT.md). El cliente lo dibuja con desktop_icon_small(). */
+    /* Ultimo recurso cuando la ventana no trajo icono propio: el cliente lo
+     * dibuja con desktop_icon_small(). */
     uint32_t icon_id;
-    uint32_t reserved0;
+    /* 0 = sin icono propio, se usa icon_id. Si no, el lado de icon_pixels.
+     *
+     * Los PIXELES viajan y no una referencia al binario porque el WM ya los
+     * leyo del .sxe al crear la ventana (docs/SXE_FORMAT.md): mandar el path
+     * obligaria al shell a reabrir y parsear cada ejecutable por su cuenta, y
+     * a mantener su propia cache, para llegar exactamente al mismo bitmap.
+     * Cuesta 1 KiB por entrada -- 13 KiB de seccion -- y esa es toda la deuda.
+     */
+    uint32_t icon_extent;
     char title[SAVANXP_WM_WINDOW_TITLE_CAPACITY];
+    /* BGRA8888, icon_extent x icon_extent, en el tope del arreglo. */
+    uint32_t icon_pixels[SAVANXP_WM_WINDOW_ICON_PIXELS];
 };
 
 /*

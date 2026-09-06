@@ -1848,18 +1848,29 @@ static int launch_keyboard_popup_client(struct windowd_session *session)
  * Seqlock: la secuencia sube a IMPAR antes de tocar las entradas y a PAR al
  * terminar, asi el cliente sabe si leyo un estado a medio escribir. Hace falta
  * de verdad -- son dos procesos y al WM lo pueden desalojar en el medio. */
-/* Comparacion byte a byte. Las dos structs se escriben enteras (memset y luego
- * todos los campos), asi que el padding tambien coincide y no hay falsos
- * distintos. Va a mano porque este libc no trae memcmp. */
+/* Comparacion palabra a palabra. Las dos structs se escriben enteras (memset y
+ * luego todos los campos), asi que el padding tambien coincide y no hay falsos
+ * distintos. Va a mano porque este libc no trae memcmp.
+ *
+ * De a uint64_t y no de a byte porque desde que la entrada transporta el icono
+ * la lista pasa de un KiB a mas de diez, y esto corre en CADA vuelta del bucle
+ * del WM. La struct se alinea a 8 (tiene un uint64_t) y su tamano es multiplo
+ * de 8, asi que el recorrido es exacto; una la escribio el WM en la seccion y
+ * la otra es estatica, las dos con la alineacion que pide el tipo.
+ */
+_Static_assert(
+    sizeof(struct savanxp_wm_window_list) % sizeof(uint64_t) == 0,
+    "la lista de ventanas se compara de a uint64_t: su tamano debe ser multiplo de 8");
+
 static int window_lists_equal(
     const struct savanxp_wm_window_list *left,
     const struct savanxp_wm_window_list *right)
 {
-    const unsigned char *a = (const unsigned char *)left;
-    const unsigned char *b = (const unsigned char *)right;
+    const uint64_t *a = (const uint64_t *)left;
+    const uint64_t *b = (const uint64_t *)right;
     size_t index;
 
-    for (index = 0; index < sizeof(*left); ++index)
+    for (index = 0; index < sizeof(*left) / sizeof(uint64_t); ++index)
     {
         if (a[index] != b[index])
         {
@@ -1869,10 +1880,17 @@ static int window_lists_equal(
     return 1;
 }
 
+/* El icono viaja copiado tal cual: los dos lados tienen que medir lo mismo o la
+ * copia se sale del destino. */
+_Static_assert(
+    WINDOWD_PRESENTATION_ICON_EXTENT == SAVANXP_WM_WINDOW_ICON_EXTENT,
+    "el icono de la presentacion y el de la entrada del shell deben coincidir");
+
 static void publish_window_list(struct windowd_session *session)
 {
-    /* Estatico y no del stack: son mas de mil bytes y este WM ya tiene el
-     * habito de no dejar buffers grandes en el stack. */
+    /* Estatico y no del stack: pasan los diez KiB -- cada entrada lleva su
+     * icono -- y este WM ya tiene el habito de no dejar buffers grandes en el
+     * stack. */
     static struct savanxp_wm_window_list staging;
     struct savanxp_wm_window_list *list;
     int index;
@@ -1936,12 +1954,20 @@ static void publish_window_list(struct windowd_session *session)
                 entry->flags |= SAVANXP_WM_WINDOW_FLAG_MINIMIZED;
             }
         }
-        /* Va el id del set horneado y no los pixeles propios del .sxe: el icono
-         * de un binario son 16x16x4, y trece de esos serian 13 KiB en la
-         * seccion. La barra dibuja el fallback; que el icono propio llegue
-         * hasta aca es trabajo aparte. */
+        /* Icono: van los pixeles propios del .sxe cuando el binario los trajo,
+         * y el id del set horneado como ultimo recurso. La barra no puede
+         * resolverlos sola -- el fallback generico para todo el mundo era
+         * justamente lo que se veia antes de que la entrada los transporte. */
         entry->icon_id = client->presentation.fallback_icon_id;
-        entry->reserved0 = 0;
+        entry->icon_extent = 0;
+        if (client->presentation.icon_extent == SAVANXP_WM_WINDOW_ICON_EXTENT)
+        {
+            entry->icon_extent = SAVANXP_WM_WINDOW_ICON_EXTENT;
+            memcpy(
+                entry->icon_pixels,
+                client->presentation.icon_pixels,
+                sizeof(entry->icon_pixels));
+        }
 
         title = windowd_presentation_label(&client->presentation, client->path);
         length = title != 0 ? strlen(title) : 0;

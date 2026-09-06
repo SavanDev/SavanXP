@@ -225,6 +225,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **The taskbar drew the generic icon for every window.** The shell window list
+  only carried a baked-in icon id, and that set is now just the generic one, so
+  each button gets the window's own 16x16 `.sxicon` instead.
+
 - **The ELF loader failed on two `PT_LOAD`s sharing a page.**
   `map_segment_pages` treated an already-mapped page as an error and the load
   died reporting "out of memory". The shared page now keeps the union of the

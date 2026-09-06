@@ -88,6 +88,35 @@ static int taskbar_snapshot(void)
     return 0;
 }
 
+/*
+ * Icono del boton: el propio de la ventana si el WM lo mando, y el generico si
+ * no. `storage` lo aporta el llamador para describir los pixeles que viven en
+ * la entrada del snapshot sin copiarlos de nuevo -- es el mismo reparto que
+ * windowd_presentation_icon() del lado del WM.
+ *
+ * El generico deja de ser lo unico que se ve: hasta que la entrada transporto
+ * los pixeles, TODA ventana caia aca porque icon_id ya no distingue apps (el
+ * set horneado se redujo al generico cuando cada binario consiguio su .sxicon,
+ * ver docs/SXE_FORMAT.md).
+ */
+static const struct desktop_embedded_bitmap *taskbar_entry_icon(
+    const struct savanxp_wm_window_entry *entry,
+    struct desktop_embedded_bitmap *storage)
+{
+    /* El lado se valida contra el tope y no solo contra 0: los pixeles son un
+     * arreglo fijo, y un extent mayor haria que el blit leyera fuera de la
+     * entrada. */
+    if (entry != 0 && storage != 0 &&
+        entry->icon_extent != 0u && entry->icon_extent <= SAVANXP_WM_WINDOW_ICON_EXTENT)
+    {
+        storage->width = entry->icon_extent;
+        storage->height = entry->icon_extent;
+        storage->pixels = entry->icon_pixels;
+        return storage;
+    }
+    return desktop_icon_small((enum desktop_icon_id)(entry != 0 ? entry->icon_id : 0u));
+}
+
 static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
 {
     int usable;
@@ -153,6 +182,7 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         int sunken = active || index == g_pressed_index;
         int text_x = rect.x + 6;
         const struct desktop_embedded_bitmap *icon;
+        struct desktop_embedded_bitmap own_icon;
 
         if (rect.width < TASKBAR_BUTTON_MIN_WIDTH)
         {
@@ -162,7 +192,7 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         sx_painter_fill_rect(&painter, rect, SXGUI_COLOR_FACE);
         taskbar_bevel(&painter, rect, sunken);
 
-        icon = desktop_icon_small((enum desktop_icon_id)entry->icon_id);
+        icon = taskbar_entry_icon(entry, &own_icon);
         if (icon != 0 && rect.width > TASKBAR_ICON_SIZE + 24)
         {
             struct savanxp_fb_info icon_info;
