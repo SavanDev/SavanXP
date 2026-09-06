@@ -25,6 +25,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SXGFX_ROADMAP.md`](SXGFX_ROADMAP.md) — the plan for hardening `sxgfx`, the
   2D rasterization layer, into the role `SYSTEM_LAYERING.md` assigns it: the
   GDI32 underneath SXGUI-C.
+- [`SMP_ROADMAP.md`](SMP_ROADMAP.md) — the plan for running on more than one
+  core: bringing up the APs, per-CPU state, a big kernel lock over the
+  scheduler, TLB shootdown, and why splitting that lock should wait for
+  threads.
 
 ## Formats
 
