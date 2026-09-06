@@ -15,8 +15,9 @@ namespace {
 
 constexpr bool kLogRtl = false;
 
-// Prioridad alta: por ahora es el unico NIC, pero el numero deja lugar para un
-// virtio-net que deberia ganarle cuando exista.
+// Prioridad por debajo de virtio-net (110): en la practica nunca compiten por
+// hardware real (build.ps1 arma uno u otro segun -Virtio, nunca los dos
+// juntos), pero esto fija el orden si algun dia coexistieran.
 constexpr int kDriverPriority = 100;
 
 constexpr uint16_t kVendorRealtek = 0x10ecu;

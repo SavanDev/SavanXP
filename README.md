@@ -198,11 +198,11 @@ nuevas que esos modelos exponen al guest). Por eso `-Accel whpx` fuerza
 sintetico) y usa `-cpu host`.
 
 La maquina QEMU se arma por defecto con hardware "base": VGA estandar, mouse y
-teclado PS/2, audio AC'97 y disco IDE, el mismo que emula VirtualBox. Asi el
-kernel ejercita los backends de fallback (`fb_gpu`, `ps2`, `ac97`, `ata`) sin
-salir de QEMU. Para levantar la maquina con dispositivos paravirtualizados
-(virtio-vga, virtio-tablet, virtio-keyboard, virtio-sound, virtio-blk) hay que
-pedirlo explicitamente:
+teclado PS/2, audio AC'97, disco IDE y NIC rtl8139, el mismo que emula
+VirtualBox. Asi el kernel ejercita los backends de fallback (`fb_gpu`, `ps2`,
+`ac97`, `ata`, `rtl8139`) sin salir de QEMU. Para levantar la maquina con
+dispositivos paravirtualizados (virtio-vga, virtio-tablet, virtio-keyboard,
+virtio-sound, virtio-blk, virtio-net) hay que pedirlo explicitamente:
 
 ```powershell
 .\build.ps1 run -Virtio

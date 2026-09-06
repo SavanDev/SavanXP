@@ -42,6 +42,7 @@
 #include "kernel/virtio_blk.hpp"
 #include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
+#include "kernel/virtio_net.hpp"
 #include "kernel/virtio_sound.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
@@ -218,9 +219,12 @@ namespace
         console::printf("audio: ningun driver reclamo hardware de sonido\n");
     }
     audio_device::initialize();
-    // NIC: mismo registro por prioridad que display y audio. El probe deja el
-    // device reconocido y le rutea la INTx, pero no lo levanta: la subida real
+    // NIC: mismo registro por prioridad que display y audio. virtio-net gana
+    // si el probe PCI lo encontro (build.ps1 arma la maquina con
+    // virtio-net-pci O rtl8139 sobre el mismo netdev, nunca los dos a la vez).
+    // El probe deja el device reconocido, pero no lo levanta: la subida real
     // la pide net:: cuando alguien hace NET_IOC_UP sobre /dev/net0.
+    nic::register_driver(virtio_net::driver());
     nic::register_driver(rtl8139::driver());
     if (const nic::Driver* bound = nic::bind_best())
     {

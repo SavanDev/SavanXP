@@ -12,6 +12,24 @@ Notas de corte:
 
 ### Agregado
 
+- **Driver `virtio-net` para la NIC.** `-Virtio` paravirtualizaba GPU, input,
+  sonido y disco pero la red seguia siempre por `rtl8139`. `build.ps1` arma
+  `virtio-net-pci` en vez de `rtl8139` sobre el mismo `-netdev` con `-Virtio`
+  (`Get-QemuNicDevice`; QEMU no deja atar dos `-device` de red a un mismo
+  netdev, asi que es uno u otro) y `nic::` suma `virtio_net::driver()` con
+  prioridad por encima de `rtl8139::` (mismo lugar que ya reservaba su
+  comentario desde el driver original). Sigue el contrato `nic::Nic` al pie de
+  la letra: `probe()` negocia features (solo `VIRTIO_NET_F_MAC`, sin
+  offload/GSO) y lee la MAC del config space sin levantar las colas;
+  `bring_up()` recien arma RX (32 buffers posteados, se re-postean solos en
+  cada `poll_receive()`) y TX (sincronico -- un solo buffer, espera la
+  confirmacion del device antes de volver, igual que `rtl8139::transmit`).
+  Por ahora es polling-only, sin IRQ propia: alcanza porque `net::` ya llama
+  `nic::poll_receive()` desde sus loops de espera (ARP, ping, TCP) tanto si
+  hay interrupcion como si no. Verificado con `net-smoke -Virtio` (MAC leida
+  del device, resolucion ARP, 3/3 pings con respuesta, 4 tx/4 rx) y
+  `net-smoke` sin regresion sobre `rtl8139`.
+
 - **`-Accel kvm`.** `build.ps1 run`/`debug` solo aceleraban con `whpx`
   (Hyper-V, Windows); en Linux con VT-x/AMD-V corrian siempre por TCG aunque
   `/dev/kvm` estuviera disponible. `Get-AccelCpu` suma la rama `kvm` con

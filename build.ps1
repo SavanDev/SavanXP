@@ -99,6 +99,7 @@ $KernelSources = @(
     "kernel/ramdisk.cpp",
     "kernel/nic.cpp",
     "kernel/rtl8139.cpp",
+    "kernel/virtio_net.cpp",
     "kernel/pci.cpp",
     "kernel/input.cpp",
     "kernel/tty.cpp",
@@ -1050,6 +1051,17 @@ function Get-QemuAudioDevice([string]$Audio) {
     return @("-device", "AC97,audiodev=audio1")
 }
 
+# NIC. Sin -Virtio queda rtl8139, el mismo chip que emula VirtualBox. Con
+# -Virtio pasa a virtio-net-pci. Los dos van sobre el mismo "-netdev
+# user,id=net0": QEMU no deja atar dos -device de red al mismo netdev, asi que
+# es uno u otro, nunca los dos juntos.
+function Get-QemuNicDevice {
+    if ($Virtio) {
+        return @("-device", "virtio-net-pci,netdev=net0")
+    }
+    return @("-device", "rtl8139,netdev=net0")
+}
+
 # Disco persistente. Sin -Virtio queda IDE (isa-ide + ide-hd), el mismo
 # controlador que emula VirtualBox. Con -Virtio pasa a virtio-blk-pci. Nunca
 # los dos frentes a la vez: es el mismo "-drive if=none,id=svdisk,...,file=
@@ -1088,11 +1100,11 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-drive", "if=pflash,format=raw,file=$VarsTemplate",
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
-        "-device", "rtl8139,netdev=net0",
         "-serial", "stdio",
         "-debugcon", "file:$DebugConLog",
         "-global", "isa-debugcon.iobase=0xe9"
     )
+    $args += Get-QemuNicDevice
     $args += Get-QemuDiskDevices $DiskImage
     $args += Get-QemuVideoInputDevices
     $args += Get-QemuAudioDevice "auto"
@@ -1195,7 +1207,6 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-drive", "if=pflash,format=raw,file=""$VarsTemplate""",
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
-        "-device", "rtl8139,netdev=net0",
         "-serial", "file:$SmokeSerialLog",
         "-debugcon", "file:$DebugConLog",
         "-global", "isa-debugcon.iobase=0xe9",
@@ -1206,6 +1217,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
     if ($qmpPort -gt 0) {
         $args += @("-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait")
     }
+    $args += Get-QemuNicDevice
     $args += Get-QemuDiskDevices """$DiskImage"""
     $args += Get-QemuVideoInputDevices
 
