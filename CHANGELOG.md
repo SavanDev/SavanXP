@@ -132,6 +132,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The boot screen is now a splash with the project logo.** Black background,
+  `assets/brand/logo.png` baked in by `tools/gen_boot_logo.py`, the system name
+  below it, a sliding block bar, and the step names now in English.
+
 - **All repository documentation is in English, and the README leads with a
   quickstart.** The Linux requirements move to `docs/BUILD_LINUX.md`,
   `docs/README.md` indexes the design docs, and `CLAUDE.md` points at

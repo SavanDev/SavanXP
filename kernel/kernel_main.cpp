@@ -124,33 +124,33 @@ namespace
     if (boot_screen::ready())
     {
         console::set_framebuffer_console_enabled(false);
-        boot_screen::show(4, "Preparando CPU");
+        boot_screen::show(4, "Preparing CPU");
     }
 
     console::printf("%s booting...\n", SAVANXP_DISPLAY_NAME);
 
-    boot_screen::show(12, "Inicializando memoria fisica");
+    boot_screen::show(12, "Initializing physical memory");
     memory::initialize(boot_info);
     if (!memory::ready())
     {
         panic("pmm: no usable memory");
     }
 
-    boot_screen::show(20, "Inicializando heap");
+    boot_screen::show(20, "Initializing heap");
     heap::initialize();
     if (!heap::ready())
     {
         panic("heap: bootstrap failed");
     }
 
-    boot_screen::show(28, "Activando memoria virtual");
+    boot_screen::show(28, "Enabling virtual memory");
     vm::initialize(boot_info);
     if (!vm::ready())
     {
         panic("vmm: bootstrap failed");
     }
 
-    boot_screen::show(36, "Detectando firmware");
+    boot_screen::show(36, "Detecting firmware");
     acpi::initialize(boot_info);
 
     tty::initialize();
@@ -167,7 +167,7 @@ namespace
     uacpi_glue::bringup(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
     uacpi_glue::dump_pci_routing();
     pci::initialize();
-    boot_screen::show(46, "Inicializando entrada");
+    boot_screen::show(46, "Initializing input");
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();
     process::initialize();
@@ -178,10 +178,10 @@ namespace
     {
         panic("subsystem: registro de dispatch incompleto");
     }
-    boot_screen::show(56, "Cargando userland");
+    boot_screen::show(56, "Loading userland");
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
-    boot_screen::show(68, "Preparando display");
+    boot_screen::show(68, "Preparing display");
     // Elegir el backend de display: cada driver se registra y bind_best corre
     // sus probes por prioridad, quedandose con el primero que reclame el
     // hardware (virtio-gpu si el probe PCI lo encontro, si no el framebuffer
@@ -200,7 +200,7 @@ namespace
     }
     gpu_device::initialize();
     ui::initialize(boot_info.framebuffer);
-    boot_screen::show(80, "Inicializando dispositivos");
+    boot_screen::show(80, "Initializing devices");
     pcspeaker::initialize();
     power::initialize();
     clipboard::initialize();
@@ -280,7 +280,7 @@ namespace
         }
     }
     console::write("\n");
-    boot_screen::show(90, "Montando almacenamiento");
+    boot_screen::show(90, "Mounting storage");
     // Registro de sistemas de archivos: fs:: decide QUE device se monta y
     // DONDE, y cada driver solo dice si reconoce el formato. mount_any recorre
     // los block devices (particiones incluidas) y se queda con el primero que
@@ -349,6 +349,6 @@ namespace
         disk_mounted ? "mounted" : "offline");
     console::write_line("");
 
-    boot_screen::show(100, "Iniciando bienvenida");
+    boot_screen::show(100, "Starting session");
     process::start_init("/bin/init");
 }

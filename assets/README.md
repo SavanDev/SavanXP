@@ -1,9 +1,11 @@
-# Desktop assets
+# Assets
 
 Structure:
 
 ```
 assets/
+  brand/
+    logo.png                    the project logo (source of the boot splash)
   desktop/
     cursors/                    source cursors for the compositor
     fonts/                      source fonts (baked by hand, see below)
@@ -25,6 +27,22 @@ file-type catalog. Provenance and reasoning in
 [`docs/THIRD_PARTY_PROVENANCE.md`](../docs/THIRD_PARTY_PROVENANCE.md). The
 directory split is what keeps "this is ours" a claim you can verify by looking
 at the tree.
+
+## Brand
+
+`assets/brand/logo.png` is the project logo at full resolution (1254x1254,
+RGBA) and the source of truth for the mark: anything that needs it at another
+size is derived from this file, not edited in place. It lives outside
+`desktop/` because it is not desktop art — the desktop never draws it.
+
+`tools/gen_boot_logo.py` converts it into `build/generated/boot_logo.h` on
+every build: the logo flattened over the splash background, scaled to 224x224
+and quantized to a 256-colour palette, plus the system name rasterized from
+Noto Sans as an 8-bit coverage mask. The kernel boot screen
+(`kernel/boot_screen.cpp`) only does palette lookup and blit, because at that
+point in boot there is no image decoder, no heap and no compositor. The
+wordmark text comes from `SAVANXP_SYSTEM_NAME` in `include/shared/version.h`,
+so renaming the system regenerates it.
 
 ## File-type icons
 

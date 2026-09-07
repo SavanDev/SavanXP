@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/logo.png" alt="SavanXP" width="160">
+</p>
+
 # SavanXP
 
 SavanXP is an experimental operating system for `x86_64 + UEFI`, with the

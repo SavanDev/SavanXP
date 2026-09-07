@@ -343,7 +343,9 @@ function Get-CommonFlags {
         "-I", (Join-Path $ProjectRoot "include"),
         "-I", (Join-Path $PosixSdkRoot "include"),
         "-I", (Join-Path $ProjectRoot "vendor"),
-        "-I", (Join-Path $ProjectRoot "vendor/uacpi/include")
+        "-I", (Join-Path $ProjectRoot "vendor/uacpi/include"),
+        # El boot screen incluye build/generated/boot_logo.h (arte horneado).
+        "-I", $GeneratedRoot
     )
 }
 
@@ -640,6 +642,31 @@ function Generate-CursorAsset {
     }
 }
 
+function Generate-BootLogoAsset {
+    New-Directory $GeneratedRoot
+
+    $scriptPath = Join-Path $ToolRoot "gen_boot_logo.py"
+    $outputPath = Join-Path $GeneratedRoot "boot_logo.h"
+    # version.h entra como dependencia porque de ahi sale el texto del wordmark
+    # (SAVANXP_SYSTEM_NAME), que se hornea rendereado.
+    $deps = @(
+        $scriptPath,
+        (Join-Path $ProjectRoot "assets/brand/logo.png"),
+        (Join-Path $ProjectRoot "assets/desktop/fonts/NotoSans-Regular.ttf"),
+        (Join-Path $ProjectRoot "include/shared/version.h")
+    )
+
+    if (-not (Test-NeedsRegen $outputPath $deps)) {
+        return
+    }
+
+    $python = Get-PythonExecutable
+    & $python $scriptPath --project-root $ProjectRoot --output $outputPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion de boot_logo.h."
+    }
+}
+
 function Generate-DesktopIconAssets {
     New-Directory $GeneratedRoot
 
@@ -869,6 +896,7 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
     $userFlags = Get-UserFlags -IncludeTestApps $IncludeTestApps
     $uacpiFlags = Get-UacpiFlags
 
+    Generate-BootLogoAsset
     Generate-CursorAsset
     Generate-DesktopIconAssets
     Generate-SxeResources -IncludeTestApps $IncludeTestApps
