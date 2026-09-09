@@ -3,6 +3,10 @@
 # Los valores reproducen la presentacion que hoy vive hardcodeada en
 # windowd_appinfo.c y en los defaults de progman_registry.c: la idea de las
 # fases 3 y 4 es borrar esas tablas y que la salida sea identica.
+#
+# SIN category= A PROPOSITO: el launcher no se lista a si mismo. Es ademas la
+# demostracion de que la clave es opt-in -- progman esta estampado como todo lo
+# demas y aun asi no aparece en su propia lista. El selftest lo verifica.
 name=Program Manager
 description=Launcher de programas
 version=system

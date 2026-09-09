@@ -97,6 +97,14 @@ _TEXT_KEYS = {
     "copyright": "SXE_TAG_COPYRIGHT",
     "build_id": "SXE_TAG_BUILD_ID",
     "interpreter": "SXE_TAG_INTERPRETER",
+    # Grupo del launcher. Declararlo es lo que hace que el programa aparezca en
+    # la lista de programas; sin la clave el binario sigue siendo lanzable y
+    # simplemente no se muestra (ver SXE_TAG_CATEGORY en sxe_format.h).
+    "category": "SXE_TAG_CATEGORY",
+    # Directorio de datos persistentes. Lo lee el desinstalador para poder
+    # ofrecer llevarselos; es una declaracion, no un permiso (ver el comentario
+    # de SXE_TAG_DATA_DIR en sxe_format.h).
+    "data_dir": "SXE_TAG_DATA_DIR",
 }
 
 _LIST_KEYS = {

@@ -2,6 +2,9 @@
 
 #include "savanxp/sxe.h"
 
+#include <dirent.h>
+#include <stdio.h>
+
 /* Las apps de diagnostico se compilan solo si el build las pide, igual que en
  * windowd_menu.c: -NoTestApps las saca del rootfs y de los defaults a la vez. */
 #ifndef DESKTOP_INCLUDE_TEST_APPS
@@ -453,7 +456,7 @@ int progman_registry_parse(const char *text, size_t length)
     return g_item_count;
 }
 
-void progman_registry_load(void)
+int progman_registry_load_file(void)
 {
     static char file_buffer[PROGMAN_REGISTRY_MAX_BYTES];
     int fd = (int)savanxp_open_mode(PROGMAN_REGISTRY_PATH, SAVANXP_OPEN_READ);
@@ -479,11 +482,14 @@ void progman_registry_load(void)
 
     if (total != 0 && progman_registry_parse(file_buffer, total) > 0)
     {
-        return;
+        return g_item_count;
     }
-    /* Sin archivo, ilegible, o sin ningun item valido: defaults horneados. El
-     * launcher nunca queda vacio. */
-    progman_registry_load_defaults();
+    /* Sin archivo, ilegible, o sin ningun item valido: registro VACIO. Lo que
+     * llene el menu -- el escaneo, y solo si tampoco encuentra nada, los
+     * defaults -- lo decide el llamador. */
+    reset_registry();
+    g_source = PROGMAN_REGISTRY_SOURCE_DEFAULTS;
+    return 0;
 }
 
 int progman_registry_prune_missing(progman_path_exists_fn exists)
@@ -669,6 +675,277 @@ int progman_registry_apply_sxe(void)
         }
     }
     return touched;
+}
+
+/* --- escaneo de programas instalados -------------------------------------- */
+
+static int g_last_scan_examined = 0;
+
+static int default_path_exists(const char *path)
+{
+    long fd;
+
+    if (path == 0 || path[0] == '\0')
+    {
+        return 0;
+    }
+    fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
+    if (fd < 0)
+    {
+        return 0;
+    }
+    (void)savanxp_close((int)fd);
+    return 1;
+}
+
+static const char *path_basename(const char *path)
+{
+    const char *base = path;
+
+    if (path == 0)
+    {
+        return "";
+    }
+    while (*path != '\0')
+    {
+        if (*path == '/')
+        {
+            base = path + 1;
+        }
+        path += 1;
+    }
+    return base;
+}
+
+/*
+ * Si el registro ya tiene un item apuntando a un binario con este basename.
+ *
+ * El desempate va por BASENAME y no por path completo porque /disk/bin es una
+ * copia de /bin (build.ps1): comparar paths dejaria entrar cada programa del
+ * sistema dos veces, una por directorio, y son el mismo programa.
+ */
+static int item_with_basename_exists(const char *basename)
+{
+    int index;
+
+    for (index = 0; index < g_item_count; ++index)
+    {
+        if (strcmp(path_basename(g_items[index].path), basename) == 0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Da de alta un candidato si su .sxmeta declara categoria. Devuelve 1 si lo
+ * agrego.
+ *
+ * El nombre se copia ACA, y no se le deja el trabajo entero a apply_sxe, por
+ * una razon concreta: el orden alfabetico del final tiene que ser el que ve el
+ * usuario ("Shell"), no el del archivo ("shellapp"). El .sxmeta ya esta abierto
+ * en este punto, asi que sale gratis. Igual entra sin overrides, asi que
+ * apply_sxe despues lo vuelve a resolver por el camino normal.
+ */
+static int scan_candidate(const char *path, void *meta_buffer, size_t meta_capacity)
+{
+    struct sxe_meta meta;
+    struct progman_item item;
+    char category[PROGMAN_NAME_CAPACITY];
+    char name[PROGMAN_NAME_CAPACITY];
+    int group_index;
+
+    if (sxe_load_meta(path, meta_buffer, meta_capacity, &meta) != SXE_OK)
+    {
+        return 0;
+    }
+    if (sxe_meta_string(&meta, SXE_TAG_CATEGORY, category, sizeof(category)) == 0u)
+    {
+        /* No pidio estar en el menu. Sigue siendo lanzable por shell, por
+         * filesapp y por cualquier item del .ini que lo apunte a mano. */
+        return 0;
+    }
+    if (item_with_basename_exists(path_basename(path)))
+    {
+        return 0;
+    }
+
+    group_index = find_group(category);
+    if (group_index == PROGMAN_GROUP_NONE)
+    {
+        group_index = append_group(category);
+    }
+    if (group_index < 0)
+    {
+        /* Sin lugar para un grupo mas. Se descarta el candidato en vez de
+         * meterlo en un grupo que no es el suyo. */
+        return 0;
+    }
+
+    begin_item(&item, group_index);
+    copy_field(item.path, sizeof(item.path), path);
+    if (sxe_meta_string(&meta, SXE_TAG_NAME, name, sizeof(name)) > 0u)
+    {
+        copy_field(item.name, sizeof(item.name), name);
+    }
+    else
+    {
+        copy_field(item.name, sizeof(item.name), path_basename(path));
+    }
+    return append_item(&item);
+}
+
+static int scan_directory(const char *directory, progman_path_exists_fn exists, void *meta_buffer, size_t meta_capacity)
+{
+    char full_path[PROGMAN_PATH_CAPACITY];
+    DIR *handle = opendir(directory);
+    struct dirent *entry = 0;
+    int added = 0;
+
+    if (handle == 0)
+    {
+        return 0;
+    }
+    while ((entry = readdir(handle)) != 0)
+    {
+        if (entry->d_name[0] == '.')
+        {
+            continue;
+        }
+        {
+            int written = snprintf(full_path, sizeof(full_path), "%s/%s", directory, entry->d_name);
+            /* Un path truncado apuntaria a OTRO archivo, no al que se quiso:
+             * se descarta en vez de abrirlo. */
+            if (written < 0 || (size_t)written >= sizeof(full_path))
+            {
+                continue;
+            }
+        }
+        if (!exists(full_path))
+        {
+            continue;
+        }
+        g_last_scan_examined += 1;
+        added += scan_candidate(full_path, meta_buffer, meta_capacity);
+    }
+    closedir(handle);
+    return added;
+}
+
+/*
+ * Ordena alfabeticamente los grupos que CREO el escaneo, dejando adelante y
+ * en su orden a los que venian del .ini -- ese orden lo eligio el usuario.
+ *
+ * Sin esto el orden de las solapas es el del readdir, o sea el de la imagen:
+ * determinista, pero arbitrario para cualquiera que busque un grupo en una
+ * lista. Los items guardan su group_index, asi que mover un grupo obliga a
+ * reapuntarlos, igual que hace el pruning.
+ */
+static void sort_scanned_groups(int first)
+{
+    static struct progman_group sorted[PROGMAN_MAX_GROUPS];
+    int remap[PROGMAN_MAX_GROUPS];
+    int order[PROGMAN_MAX_GROUPS];
+    int count = g_group_count - first;
+    int index;
+
+    if (count < 2)
+    {
+        return;
+    }
+    for (index = 0; index < count; ++index)
+    {
+        order[index] = first + index;
+    }
+    for (index = 1; index < count; ++index)
+    {
+        int pivot = order[index];
+        int hole = index;
+
+        while (hole > 0 && strcmp(g_groups[order[hole - 1]].name, g_groups[pivot].name) > 0)
+        {
+            order[hole] = order[hole - 1];
+            hole -= 1;
+        }
+        order[hole] = pivot;
+    }
+
+    for (index = 0; index < count; ++index)
+    {
+        sorted[index] = g_groups[order[index]];
+        remap[order[index]] = first + index;
+    }
+    for (index = 0; index < count; ++index)
+    {
+        g_groups[first + index] = sorted[index];
+    }
+    for (index = 0; index < g_item_count; ++index)
+    {
+        if (g_items[index].group_index >= first)
+        {
+            g_items[index].group_index = remap[g_items[index].group_index];
+        }
+    }
+}
+
+/* Ordena alfabeticamente por nombre el tramo que agrego el escaneo, dejando
+ * intacto lo que ya estaba. Los items guardan su group_index, asi que mover
+ * uno de lugar no lo cambia de grupo: alcanza con ordenar el tramo entero para
+ * que cada grupo quede ordenado por dentro. */
+static void sort_scanned_items(int first)
+{
+    /* Estatico y no en el stack: struct progman_item pasa los 400 bytes y esta
+     * libc corre con un stack acotado, el mismo criterio que el resto de los
+     * scratch de este archivo. */
+    static struct progman_item pivot;
+    int index;
+
+    for (index = first + 1; index < g_item_count; ++index)
+    {
+        int hole = index;
+
+        pivot = g_items[index];
+        while (hole > first && strcmp(g_items[hole - 1].name, pivot.name) > 0)
+        {
+            g_items[hole] = g_items[hole - 1];
+            hole -= 1;
+        }
+        g_items[hole] = pivot;
+    }
+}
+
+int progman_registry_scan_programs(progman_path_exists_fn exists)
+{
+    /* Estatico y no en el stack: son 12 KiB reusados por cada binario del
+     * escaneo, igual que en file_assoc. */
+    _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
+    int first = g_item_count;
+    int first_group = g_group_count;
+    int added = 0;
+
+    g_last_scan_examined = 0;
+    if (exists == 0)
+    {
+        exists = default_path_exists;
+    }
+    added += scan_directory(PROGMAN_SCAN_DIR_PRIMARY, exists, meta_buffer, sizeof(meta_buffer));
+    added += scan_directory(PROGMAN_SCAN_DIR_SECONDARY, exists, meta_buffer, sizeof(meta_buffer));
+    sort_scanned_groups(first_group);
+    sort_scanned_items(first);
+
+    /* El escaneo solo se adjudica la fuente si armo el catalogo el: con un
+     * .ini valido delante, el arreglo lo sigue firmando el usuario. */
+    if (first == 0 && added > 0)
+    {
+        g_source = PROGMAN_REGISTRY_SOURCE_SCAN;
+    }
+    return added;
+}
+
+int progman_registry_scan_examined(void)
+{
+    return g_last_scan_examined;
 }
 
 const struct desktop_embedded_bitmap *progman_item_icon(const struct progman_item *item)
@@ -967,7 +1244,7 @@ static void selftest_empty(void)
     expect(progman_registry_parse("", 0) == 0, "entrada vacia");
     expect(progman_registry_parse("# solo comentarios\n", 19) == 0, "solo comentarios");
     /* Tras una entrada vacia el registro queda vacio, y los defaults lo repueblan:
-     * es el camino que toma progman_registry_load() cuando el archivo no sirve. */
+     * es el camino de ultimo recurso, cuando ni el .ini ni el escaneo aportan. */
     expect(progman_item_count() == 0, "registro vacio tras parse vacio");
     progman_registry_load_defaults();
     expect(progman_item_count() > 0, "defaults repueblan");

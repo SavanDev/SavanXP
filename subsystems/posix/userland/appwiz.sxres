@@ -1,0 +1,14 @@
+# Recursos SXE de Agregar o quitar programas. Ver docs/SXE_FORMAT.md.
+#
+# Va en System, al lado de About: es la ventana que se abre para mirar que hay
+# instalado, no una herramienta que se use todos los dias.
+# El nombre entra en DOS lineas del rotulo del launcher (96 px de celda), que
+# es lo que se ve en la grilla: "Add or Remove Programs" no entraba y quedaba
+# cortado con puntos suspensivos aunque el rotulo ya soporte dos lineas.
+name=Add/Remove Programs
+description=Uninstall programs installed outside the system image
+version=system
+vendor=SavanXP
+accent=8a6d3b
+icon=desktop
+category=System

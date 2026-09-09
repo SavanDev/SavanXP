@@ -12,6 +12,19 @@ Cut-off notes:
 
 ### Added
 
+- **Add or Remove Programs (`/bin/appwiz`), in the System group.** It lists what
+  was installed outside the system image — in `/disk/bin` and not in `/bin` —
+  and deletes the binary, optionally with the data directory the program
+  declares as `data_dir=` in its `.sxres`. New `build.ps1 appwiz-smoke`.
+  [Why that is the rule](docs/SXE_FORMAT.md#uninstalling-the-other-half-of-the-same-idea).
+
+- **Program Manager lists every installed program on its own.** A binary whose
+  `.sxres` declares `category=` shows up under that group with nothing to
+  register: installing is copying it to `/disk/bin`, uninstalling is deleting
+  it. Without the key it stays launchable, just unlisted. `F5` (File >
+  Actualizar) rebuilds the catalog, and launching an entry that is gone says so
+  instead of nothing. [How it works](docs/SXE_FORMAT.md#all-programs-the-catalog-discovers-itself).
+
 - **`virtio-net` driver for the NIC.** With `-Virtio`, `build.ps1` builds
   `virtio-net-pci` instead of `rtl8139`, and `nic::` prefers
   `virtio_net::driver()`. Polling-only, no IRQ of its own.
@@ -131,6 +144,12 @@ Cut-off notes:
   `clipboard_set_text`, `_get_text`, `_get_info` and `_clear`.
 
 ### Changed
+
+- **Launcher icon captions wrap to two lines.** A name that does not fit on one
+  line breaks at a space and is centred over two, and only what still does not
+  fit is cut with an ellipsis — before, a long caption was clipped at *both*
+  ends and read as broken rather than as truncated. The cell now derives its
+  height from the active font instead of a baked 76 pixels.
 
 - **The boot screen is now a splash with the project logo.** Black background,
   `assets/brand/logo.png` baked in by `tools/gen_boot_logo.py`, the system name

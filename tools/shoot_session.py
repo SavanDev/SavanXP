@@ -156,23 +156,42 @@ class Session(object):
         print("  captura:", os.path.basename(png))
         return image
 
-    def launch(self, steps):
-        """Lanza el icono que esta `steps` a la derecha del primero.
+    def launch(self, steps, groups=0):
+        """Lanza el icono que esta `steps` a la derecha del primero, `groups`
+        solapas a la derecha de la primera.
 
-        La barra de menu de sxgui no tiene acceso por teclado, pero los iconos
-        del launcher si: flechas para moverse y Enter para lanzar. El orden es
-        el de k_default_items (progman_registry.c): Shell, Files, Notepad.
+        La barra de menu de sxgui no tiene acceso por teclado, pero el launcher
+        si: TAB cambia de grupo, las flechas mueven la seleccion y Enter lanza
+        (progman.c on_key). Cambiar de grupo vuelve la seleccion al primer
+        icono, asi que los `groups` van antes que los `steps`.
+
+        EL ORDEN YA NO ES EL DE UNA TABLA HORNEADA. progman arma su catalogo
+        escaneando los binarios instalados y los ordena alfabeticamente dentro
+        de cada grupo (docs/SXE_FORMAT.md, "All Programs"), asi que estos
+        indices son posiciones en ese orden. Con las categorias de hoy:
+
+            Accessories: Files, Notepad, Shell
+            Diagnostics: Gfx Demo, Key Test, Mouse Test, Widgets
+            Games:       Doom                     (solo si esta instalado)
+            System:      About, Add or Remove Programs
         """
+        for _ in range(groups):
+            self.qmp.tap("tab", pause=0.6)
         for _ in range(steps):
             self.qmp.tap("right", pause=0.4)
         self.qmp.tap("ret")
         time.sleep(25)
 
     def open_notepad(self):
-        self.launch(2)
+        self.launch(1)
 
     def open_files(self):
-        self.launch(1)
+        self.launch(0)
+
+    def open_appwiz(self):
+        # Grupo System: la cuarta solapa cuando Doom esta instalado, que es la
+        # precondicion que verifica shoot.ps1 antes de arrancar el escenario.
+        self.launch(1, groups=3)
 
 
 # Paleta de sxgui, para leer los pixeles con el mismo vocabulario con el que se
@@ -290,6 +309,45 @@ def scenario_files(s):
     s.shot("files-disk")
 
 
+def scenario_appwiz(s):
+    """Agregar o quitar programas: la ventana que desinstala.
+
+    Se llega por el grupo System del launcher, que es donde la declara su
+    .sxres. La lista muestra lo instalado FUERA de la imagen del sistema, asi
+    que con Doom instalado tiene exactamente una fila -- por eso shoot.ps1
+    exige que este antes de arrancar: sin el, la captura seria de una lista
+    vacia y no se veria ni el icono, ni el tamano, ni la casilla de datos.
+
+    NO se aprieta Remove: este harness saca fotos, no desinstala. El que valida
+    el borrado es 'build.ps1 appwiz-smoke'.
+    """
+    s.open_appwiz()
+    s.shot("appwiz")
+    # TAB lleva el foco de la lista a la casilla de datos y el espacio la marca:
+    # con Doom seleccionado ahi se lee el path de los WAD, que es la mitad
+    # interesante de la ventana.
+    s.qmp.tap("tab", pause=5.0)
+    s.qmp.tap("spc", pause=6.0)
+    s.shot("appwiz-datos")
+    # Y la confirmacion, que es donde se ve que el dialogo dice exactamente que
+    # se va a borrar. Se llega con el mouse y no con TAB porque llegar al boton
+    # por teclado no resulto reproducible en este harness; coordenadas fijas,
+    # como en el escenario del layout de teclado, que la ventana la ubica el WM
+    # siempre en el mismo lugar (1280x800, ver windowd_layout.h).
+    s.qmp.move_to(530, 551)
+    s.qmp.click()
+    time.sleep(6.0)
+    s.shot("appwiz-confirmacion")
+    # Se cancela con ESC: el boton por defecto del dialogo es Cancel justamente
+    # para que un Enter de mas no borre nada. Este harness saca fotos.
+    s.qmp.tap("esc", pause=3.0)
+    # Un ESC mas cierra appwiz y descubre la grilla del launcher, que es donde
+    # se mira el rotulo de dos lineas: un nombre largo tiene que partirse por un
+    # espacio y quedar centrado, no recortado por los dos lados.
+    s.qmp.tap("esc", pause=8.0)
+    s.shot("progman-rotulo")
+
+
 def scenario_kbdlayout(s):
     """Selector de layout de teclado: click en el indicador de la taskbar
     abre el popup anclado, click en una fila lo aplica y lo cierra.
@@ -367,6 +425,7 @@ SCENARIOS = {
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
     "files": scenario_files,
+    "appwiz": scenario_appwiz,
     "taskbar": scenario_taskbar,
     "kbdlayout": scenario_kbdlayout,
 }

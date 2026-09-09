@@ -114,10 +114,12 @@ int sxe_tag_is_known(uint16_t tag)
     case SXE_TAG_BUILD_ID:
     case SXE_TAG_ACCENT:
     case SXE_TAG_LAUNCH_FLAGS:
+    case SXE_TAG_CATEGORY:
     case SXE_TAG_INTERPRETER:
     case SXE_TAG_SUBSYSTEM:
     case SXE_TAG_MIME_OPEN:
     case SXE_TAG_EXT_OPEN:
+    case SXE_TAG_DATA_DIR:
         return 1;
     default:
         return 0;

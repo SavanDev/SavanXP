@@ -43,6 +43,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "progman")) {
         return "PROGMAN SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "appwiz")) {
+        return "APPWIZ SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "sxe")) {
         return "SXE SMOKE";
     }
@@ -94,6 +97,7 @@ static int run_automation_spec(const char* spec) {
     const char* windowd_argv[] = {"/bin/windowd", "--selftest", 0};
     const char* cursor_repro_argv[] = {"/bin/windowd", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
+    const char* appwiz_selftest_argv[] = {"/bin/appwiz", "--selftest", 0};
     const char* sxetest_argv[] = {"/disk/bin/sxetest", 0};
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
@@ -121,6 +125,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "progman-selftest") == 0 || strcmp(spec, "progman") == 0) {
             path = "/bin/progman";
             argv = progman_selftest_argv;
+            argc = 2;
+        } else if (strcmp(spec, "appwiz-selftest") == 0 || strcmp(spec, "appwiz") == 0) {
+            path = "/bin/appwiz";
+            argv = appwiz_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "sxe-selftest") == 0 || strcmp(spec, "sxe") == 0) {
             path = "/disk/bin/sxetest";

@@ -115,7 +115,8 @@ struct sxe_record {
  *   0x0100-0x01FF  Presentacion
  *   0x0200-0x02FF  Ejecucion
  *   0x0300-0x03FF  Capacidades
- *   0x0400-0x7FFF  Reservado para el sistema
+ *   0x0400-0x04FF  Instalacion
+ *   0x0500-0x7FFF  Reservado para el sistema
  *   0x8000-0xFFFF  Privado / experimental -- el sistema nunca los define, y
  *                  por lo tanto nunca los "conoce": un tag privado con
  *                  REQUIRED invalida el blob para cualquier lector estandar.
@@ -134,6 +135,15 @@ struct sxe_record {
 /* Presentacion. */
 #define SXE_TAG_ACCENT 0x0101u       /* uint32 0x00RRGGBB, formato de gfx_rgb */
 #define SXE_TAG_LAUNCH_FLAGS 0x0102u /* uint32 SAVANXP_DESKTOP_LAUNCH_FLAG_* */
+/*
+ * utf8: grupo del launcher ("Games", "Accessories"). Declararlo es la forma en
+ * que un programa PIDE aparecer en la lista de programas -- el equivalente de
+ * "el instalador creo un acceso directo". Ausente = ejecutable de primera
+ * clase que simplemente no se muestra en el menu (busybox y sus applets, los
+ * binarios de diagnostico, el propio launcher). Es la unica alternativa a una
+ * lista de exclusion horneada, que se desincroniza sola.
+ */
+#define SXE_TAG_CATEGORY 0x0103u
 
 /* Ejecucion. */
 #define SXE_TAG_INTERPRETER 0x0201u /* utf8; ausente/vacio = lo corre el kernel */
@@ -142,6 +152,20 @@ struct sxe_record {
 /* Capacidades: listas de entradas separadas por NUL. */
 #define SXE_TAG_MIME_OPEN 0x0301u /* utf8: "text/plain\0text/markdown" */
 #define SXE_TAG_EXT_OPEN 0x0302u  /* utf8 con punto: ".txt\0.md" */
+
+/*
+ * Instalacion: lo que el programa OCUPA en el disco ademas de su binario.
+ *
+ * utf8: directorio absoluto de los datos persistentes del programa
+ * ("/disk/games/doom"). Existe para que desinstalar pueda ofrecer llevarse los
+ * datos: sin esta clave, borrar el ejecutable deja huerfano todo lo que haya
+ * escrito -- los WAD de Doom son 30 MiB que nadie volveria a nombrar.
+ *
+ * ES UNA DECLARACION, NO UN PERMISO. Quien borra valida el path antes de
+ * tocarlo (appwiz_data_dir_is_removable): un manifiesto mal escrito no puede
+ * convertirse en un rm -rf de /disk.
+ */
+#define SXE_TAG_DATA_DIR 0x0401u
 
 /* Longitudes fijas de los payloads que no son texto. */
 #define SXE_VERSION_COMPONENTS 4u

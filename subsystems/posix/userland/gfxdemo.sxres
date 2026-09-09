@@ -8,3 +8,4 @@ vendor=SavanXP
 accent=228e60
 icon=app-libgfx-demo
 launch_flags=fullscreen
+category=Diagnostics

@@ -47,6 +47,13 @@
  * -- que siguen siendo ejecutables de primera clase -- simplemente se saltean
  * ese escalon.
  *
+ * Y EL ARCHIVO YA NO ES LA UNICA FUENTE DE ITEMS. progman_registry_scan_programs()
+ * recorre /bin y /disk/bin y da de alta cada ejecutable que declare
+ * SXE_TAG_CATEGORY, que es como un programa pide aparecer en el menu. El .ini
+ * dejo de ser obligatorio para que algo se vea: es el ARREGLO (que grupos hay,
+ * en que orden, que renombrar) por encima de un catalogo que se descubre solo.
+ * Instalar es copiar el binario; desinstalar es borrarlo.
+ *
  * `icon=` en un [item] YA NO elige de un catalogo horneado por nombre: apunta
  * a un PROGRAMA cuyo .sxicon tomar prestado (icon=/bin/notepad). El binario
  * referenciado no tiene que ser el que este item lanza -- pedir el icono de
@@ -69,9 +76,11 @@
 
 enum progman_registry_source
 {
-    /* Defaults horneados: no habia archivo, o no aporto ningun item valido. */
+    /* Defaults horneados: ni el archivo ni el escaneo aportaron un solo item. */
     PROGMAN_REGISTRY_SOURCE_DEFAULTS = 0,
     PROGMAN_REGISTRY_SOURCE_FILE = 1,
+    /* No habia .ini utilizable y el catalogo lo armo el escaneo del disco. */
+    PROGMAN_REGISTRY_SOURCE_SCAN = 2,
 };
 
 /*
@@ -111,10 +120,19 @@ struct progman_group
     int item_count;
 };
 
-/* Carga el registro desde PROGMAN_REGISTRY_PATH; si el archivo falta, no entra
- * en el buffer, o no aporta items validos, cae a los defaults horneados. Nunca
- * deja el registro vacio: el launcher siempre tiene algo que mostrar. */
-void progman_registry_load(void);
+/*
+ * Carga el registro desde PROGMAN_REGISTRY_PATH. Devuelve la cantidad de items
+ * que aporto el archivo; si falta, no entra en el buffer o no tiene ningun item
+ * valido, devuelve 0 y DEJA EL REGISTRO VACIO.
+ *
+ * Antes esta funcion caia sola a los defaults horneados. Ya no: con el escaneo
+ * (progman_registry_scan_programs) los defaults pasaron a ser la red de
+ * seguridad de ULTIMO recurso, y solo tienen sentido despues de que el escaneo
+ * TAMBIEN se haya venido con las manos vacias. Quien orquesta esa secuencia es
+ * el llamador -- progman.c --, porque es el unico que puede decidir entre las
+ * dos fuentes con el disco delante.
+ */
+int progman_registry_load_file(void);
 /* Carga solo los defaults horneados (instalacion fresca / recuperacion). */
 void progman_registry_load_defaults(void);
 /* Parsea desde memoria. Devuelve la cantidad de items validos cargados. Es el
@@ -137,8 +155,8 @@ typedef int (*progman_path_exists_fn)(const char *path);
  * disco. Aplica igual a los defaults horneados y a lo que venga del .ini: una
  * entrada que no se puede lanzar es ruido venga de donde venga.
  *
- * A diferencia de progman_registry_load(), esto SI puede dejar el registro
- * vacio -- si de verdad no hay nada lanzable, mostrar nada es lo honesto.
+ * Esto SI puede dejar el registro vacio -- si de verdad no hay nada lanzable,
+ * mostrar nada es lo honesto. El escaneo corre despues y tiene su chance.
  */
 int progman_registry_prune_missing(progman_path_exists_fn exists);
 
@@ -155,6 +173,50 @@ int progman_registry_prune_missing(progman_path_exists_fn exists);
  * un error: ese item simplemente se queda con sus valores previos.
  */
 int progman_registry_apply_sxe(void);
+
+/*
+ * Directorios que recorre el escaneo, en este orden. Espejan los de file_assoc
+ * (file_assoc.h) por el mismo motivo: /disk/bin es una COPIA de /bin, asi que
+ * cada programa del sistema aparece dos veces y hace falta una regla estable
+ * de desempate en vez de una heuristica.
+ */
+#define PROGMAN_SCAN_DIR_PRIMARY "/bin"
+#define PROGMAN_SCAN_DIR_SECONDARY "/disk/bin"
+
+/*
+ * "Todos los programas": agrega al registro cada ejecutable instalado que PIDA
+ * aparecer, o sea que declare SXE_TAG_CATEGORY en su .sxmeta. La categoria es
+ * el nombre del grupo; el resto de la identidad (nombre, descripcion, icono,
+ * flags) la completa progman_registry_apply_sxe() como para cualquier otro
+ * item. Devuelve cuantos items agrego.
+ *
+ * Que la categoria sea OPT-IN es la decision de diseno: el alta en el menu la
+ * pide el programa, igual que en la era XP la pedia su instalador creando un
+ * acceso directo. Lo contrario -- listar todo lo estampado -- obligaria a una
+ * lista de exclusion horneada para busybox (30 copias del MISMO binario bajo
+ * nombres distintos, ver build.ps1) y para los binarios de diagnostico, y esa
+ * lista se desincroniza sola en cuanto alguien agrega un *test nuevo.
+ *
+ * Reglas:
+ *   - No pisa NADA de lo que ya haya en el registro: si un item existente ya
+ *     apunta a un binario con el mismo BASENAME, el candidato se saltea. Asi
+ *     el .ini del usuario siempre gana, y /disk/bin no duplica a /bin.
+ *   - Los items que agrega entran sin overrides, para que apply_sxe complete
+ *     su presentacion desde el propio binario.
+ *   - Va DESPUES de progman_registry_prune_missing() y ANTES de
+ *     progman_registry_apply_sxe(): el pruning reordena items y apply_sxe
+ *     asigna los slots de icono contra los indices finales.
+ *   - Los grupos que crea y los items que agrega quedan ordenados
+ *     alfabeticamente, atras de los que ya estaban. El orden de readdir es el
+ *     de la imagen, no uno que le sirva a nadie para buscar en una lista.
+ *
+ * `exists` es el mismo predicado inyectable del pruning. Con 0 usa el propio.
+ */
+int progman_registry_scan_programs(progman_path_exists_fn exists);
+
+/* Cuantos ejecutables abrio el ultimo escaneo. Lo reporta el smoke: es la
+ * magnitud a mirar antes de decidir si hace falta una cache. */
+int progman_registry_scan_examined(void);
 
 /*
  * Icono propio del item, traido de su .sxicon. Devuelve 0 si el binario no

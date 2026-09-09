@@ -5,10 +5,11 @@
 > [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
 > [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), the stamping in
 > [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`,
-> and the consumers are `progman_registry_apply_sxe()` (launcher),
-> `windowd_presentation_load()` (window chrome and Task List) and `file_assoc`
-> (file associations in filesapp). Validated by `sxe-smoke`, `progman-smoke`,
-> `windowd-smoke` and `filesapp-smoke`.
+> and the consumers are `progman_registry_apply_sxe()` and
+> `progman_registry_scan_programs()` (launcher), `appwiz_catalog_scan()`
+> (uninstaller), `windowd_presentation_load()` (window chrome and Task List)
+> and `file_assoc` (file associations in filesapp). Validated by `sxe-smoke`,
+> `progman-smoke`, `appwiz-smoke`, `windowd-smoke` and `filesapp-smoke`.
 >
 > **Stamping by default: every program the build links comes out with
 > `.sxmeta`, whether or not it has a `.sxres`.** It is no longer opt-in.
@@ -153,7 +154,8 @@ is defined now because afterwards would be too late.
 | `0x0100`–`0x01FF` | Presentation |
 | `0x0200`–`0x02FF` | Execution |
 | `0x0300`–`0x03FF` | Capabilities |
-| `0x0400`–`0x7FFF` | Reserved for the system |
+| `0x0400`–`0x04FF` | Installation |
+| `0x0500`–`0x7FFF` | Reserved for the system |
 | `0x8000`–`0xFFFF` | Private / experimental — the system never defines these |
 
 ### v1 tags
@@ -169,8 +171,10 @@ is defined now because afterwards would be too late.
 | `0x0007` | `BUILD_ID` | utf8 | Short git commit. **Always** set by the generator ([default stamping](#default-stamping)); a `.sxres` can pin another value by hand if needed |
 | `0x0101` | `ACCENT` | `uint32` | `0x00RRGGBB`, the format `gfx_rgb` already returns. Replaces the `accent` field of `windowd_appinfo` |
 | `0x0102` | `LAUNCH_FLAGS` | `uint32` | `SAVANXP_DESKTOP_LAUNCH_FLAG_*` **by default**. The launcher can override them |
+| `0x0103` | `CATEGORY` | utf8 | Launcher group. Its **presence** is what puts the program in the list — see [All Programs](#all-programs-the-catalog-discovers-itself). Recommended ≤ 31 bytes (`PROGMAN_NAME_CAPACITY`) |
 | `0x0201` | `INTERPRETER` | utf8 | Absolute path of the program that executes this image. **Absent or empty = the kernel executes it directly** |
 | `0x0202` | `SUBSYSTEM` | `uint8` | An **informational** mirror of `EI_OSABI`. The authority is still the ELF byte ([elf.hpp:14](../include/kernel/elf.hpp:14)); this exists so a userland reader does not have to parse the ELF header |
+| `0x0401` | `DATA_DIR` | utf8 | Absolute directory holding the program's persistent data. A **declaration, not a permission**: whoever deletes validates it first — see [Uninstalling](#uninstalling-the-other-half-of-the-same-idea) |
 | `0x0301` | `MIME_OPEN` | utf8, NUL-separated entries | Types the program **declares it can** open |
 | `0x0302` | `EXT_OPEN` | utf8, NUL-separated entries | Extensions, with the dot: `.txt` |
 
@@ -183,6 +187,12 @@ kernel but by `/bin/hlvm`. It is the equivalent of a shebang /
 **`MIME_OPEN` declares capability, not association.** A program saying it can
 open `text/plain` does not make it the one that opens `.txt` files: that is
 user policy, and it is resolved in the registry (see below).
+
+**`CATEGORY` is the same idea applied to the menu.** The program declares which
+group it belongs to; whether it ends up there, under that name and in that
+order, is the registry's call. What is *not* the registry's call any more is
+whether the program is listed at all — the tag being present is the request,
+and it is granted by default.
 
 ### Size cap
 
@@ -484,6 +494,121 @@ It stops being a catalog with hardcoded icons and becomes what a start menu
 really is. And it resolves the mime question: the binary **declares
 capability**, the registry **resolves the association**.
 
+### All Programs: the catalog discovers itself
+
+The registry stopped being **required** for a program to be visible.
+`progman_registry_scan_programs()` walks `/bin` and `/disk/bin`, reads each
+executable's `.sxmeta`, and lists every one that declares `SXE_TAG_CATEGORY`.
+The category is the group name; the rest of the presentation is filled in by
+`progman_registry_apply_sxe()`, the same way as for any other item.
+
+**Installing is copying the binary. Uninstalling is deleting it.** Nothing on
+the host writes an entry anywhere, so there is no second copy of the truth that
+can drift from the image. `sdk/doomgeneric/build.ps1` registers Doom in the
+`Games` group by shipping `category=Games` in its manifest — and by no other
+means.
+
+**The catalog describes the disk, and the disk changes while the launcher is
+open.** The scan runs when `progman` starts, and there is no activation event in
+the WM protocol for it to hang a refresh on — the client only receives
+`KEY_DOWN`, `KEY_UP` and `RESIZED`. So the rebuild has two triggers, and the
+second one is the one that matters:
+
+- **`F5`, or *File > Actualizar***, rebuilds the whole catalog in place. The
+  window is deliberately **not** resized: at startup its size comes from the
+  catalog, but after that it belongs to whoever moved it.
+- **Launching an entry that is no longer installed** refreshes on the spot and
+  says so. Without this the failure is silent and therefore the worst kind:
+  `gfx_desktop_launch_ex()` writes the request to a file descriptor and returns
+  0 **without ever checking that the path exists** — the WM does not validate
+  it either — so a dead icon sat in the grid answering "Lanzando ..." forever
+  while nothing happened, until a reboot rebuilt the catalog.
+
+The selected group survives a rebuild **by name, not by index**: uninstalling
+the last game takes the whole `Games` group with it, and an index would then
+point at a tab the user never chose.
+
+**The category is opt-in, and that is the design decision.** A program asks to
+be in the menu the way its installer used to ask by creating a shortcut. The
+alternative — listing everything stamped — needs a baked exclusion list for
+busybox (**30 copies of the same binary under different names**, see
+`Install-BusyBox` in `build.ps1`) and for the diagnostic binaries, and that list
+desynchronizes on its own the moment somebody adds a new `*test`. A binary
+without a category is still a first-class executable: launchable from the
+shell, from filesapp, and from any `.ini` item pointing at it by hand. `progman`
+itself carries no category on purpose, and the smoke asserts it does not list
+itself.
+
+Order of the stages, which is not free:
+
+1. `progman_registry_load_file()` — the user's arrangement. It no longer falls
+   back to the baked defaults on its own: with no usable file it leaves the
+   registry **empty**.
+2. `progman_registry_prune_missing()` — drop what is not installed.
+3. `progman_registry_scan_programs()` — add what asked to be listed. It skips
+   any candidate whose **basename** already has an item, so the `.ini` always
+   wins and `/disk/bin` never duplicates `/bin` — which is not theoretical,
+   since `/disk/bin` is a copy of `/bin` (`build.ps1`).
+4. The baked defaults, **only** if the registry is still empty. They are the
+   safety net for an image where not one binary can be read, not anybody's
+   catalog.
+5. `progman_registry_apply_sxe()` — presentation, last, because it assigns icon
+   slots against the final indices.
+
+Groups created by the scan, and the items it adds, are sorted alphabetically
+behind whatever the `.ini` already placed: `readdir` order is the image's
+order, not one that helps anybody find a name in a list.
+
+The cost is the same one measured for the association scan, and for the same
+reason — it opens every installed executable. `progman-smoke` reports it as
+`examined=` so the magnitude stays visible: **145 files** on the current image.
+
+### Uninstalling: the other half of the same idea
+
+If installing is copying the binary, uninstalling is deleting it — and the entry
+disappears from the launcher because there was never an entry to delete. That is
+what `/bin/appwiz` ("Add or Remove Programs", `category=System`) does with a
+button, and what `appwiz_catalog.h` decides.
+
+**What can be uninstalled is a subtraction, not a list:**
+
+```
+    in /disk/bin   AND   not in /bin
+```
+
+This is not a policy choice, it is the filesystem. `/bin` is the initramfs
+ramdisk (`Backend::memory` in [kernel/vfs.cpp:800](../kernel/vfs.cpp:800)), so
+`unlink()` there only invalidates the vnode in RAM and the file is back on the
+next boot. The only deletion that persists is on `/disk`, which is SxFS. And
+since the build copies all of `/bin` into `/disk/bin`, every system program
+appears on both sides — the subtraction is exactly what separates "shipped with
+the OS" from "somebody installed it". A system program is not *forbidden* from
+being uninstalled here; it *cannot* be, because the next build puts it back.
+
+**`data_dir` is a declaration, not a permission.** The program says where its
+persistent data lives (Doom: `/disk/games/doom`, ~30 MiB of WADs that nothing
+else would ever name again) so the uninstaller can offer to take it along, as a
+separate checkbox that is off by default. But the path was written by whoever
+compiled the program, so `appwiz_data_dir_is_removable()` validates it before
+anything is touched — without that, a manifest saying `data_dir=/disk` would
+turn one click into wiping the disk. It requires the path to be absolute and
+under `/disk/`, with at least one segment of its own, no `.` or `..` segment
+anywhere, and not one of the system's own directories. A manifest that declares
+something else is not an error and does not block uninstalling the program: the
+entry is listed with the data checkbox off and the reason on it.
+
+**The binary is deleted first, and it matters.** If the order were reversed and
+deleting the executable failed, the program would still be installed and its
+data already gone — the worst of the possible outcomes. The reverse leaves at
+worst an orphaned data directory, which the status line says out loud instead of
+reporting a plain failure for something that did happen.
+
+`appwiz-smoke` validates it by actually deleting: the path validation case by
+case, a two-level tree it builds under `/disk/tmp`, and a full install →
+appears → uninstall → gone round trip using a fixture binary it drops in
+`/disk/bin`. It never touches a program the user installed — a smoke run that
+uninstalls your games is not a test, it is a bug.
+
 ### File associations (phase 5)
 
 The association does not live in `progman.ini` but in its own registry,
@@ -566,6 +691,8 @@ ext_open=.txt,.ini,.cfg,.md
 | `subsystem` | `posix` or `native` |
 | `icon` | asset name under `assets/desktop/icons/{16x16,32x32}/<icon>.png` — the same way `progman.ini` references it today |
 | `icon_file` | the program's own PNG, resolved **relative to the `.sxres`**. The two sizes the runtime requires are derived from that file |
+| `category` | launcher group (`Games`, `Accessories`). Declaring it is how a program **asks** to be listed — see "All Programs" below |
+| `data_dir` | absolute directory of the program's persistent data, offered for deletion when uninstalling |
 | `mime_open`, `ext_open` | comma-separated lists |
 
 **`icon` and `icon_file` are mutually exclusive, and the difference matters.**

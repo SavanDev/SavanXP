@@ -11,3 +11,4 @@ accent=78643c
 icon=app-notepad
 mime_open=text/plain
 ext_open=.txt,.ini,.cfg,.md
+category=Accessories

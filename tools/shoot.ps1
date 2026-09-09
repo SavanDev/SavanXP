@@ -11,6 +11,7 @@
 # Uso:
 #   .\tools\shoot.ps1                       # escenario 'desktop'
 #   .\tools\shoot.ps1 -Scenario clipboard
+#   .\tools\shoot.ps1 -Scenario appwiz     # necesita un programa externo instalado
 #   .\tools\shoot.ps1 -Scenario alttab -OutDir build\shots
 #
 # Las teclas van por QMP (input-send-event) y no por el sendkey del monitor HMP,
@@ -20,7 +21,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("desktop", "alttab", "clipboard", "files", "taskbar", "kbdlayout")]
+    [ValidateSet("desktop", "alttab", "clipboard", "files", "appwiz", "taskbar", "kbdlayout")]
     [string]$Scenario = "desktop",
 
     [string]$OutDir,
@@ -58,6 +59,19 @@ if (Test-Path $automationSpec) {
 $image = Join-Path $ProjectRoot "build/image"
 if (-not (Test-Path $image)) {
     throw "No existe build/image. Corre '.\build.ps1 build' primero."
+}
+
+# El escenario de Agregar o quitar programas navega el launcher por teclado, y
+# la cantidad de solapas depende de que haya instalado: con Doom hay un grupo
+# Games y System es la cuarta, sin Doom es la tercera. En vez de adivinar se
+# exige el estado en el que la captura ademas sirve para algo -- una lista de
+# desinstalables vacia no muestra nada.
+if ($Scenario -eq "appwiz") {
+    $diskImage = Join-Path $ProjectRoot "build/disk.img"
+    $sxfs = Open-SxfsImage $diskImage
+    if (-not (Get-SxfsPathInfo $sxfs "/disk/bin/doomgeneric")) {
+        throw "El escenario 'appwiz' necesita un programa externo instalado. Corre '.\sdk\doomgeneric\build.ps1' primero."
+    }
 }
 
 $qemu = Require-Executable "qemu-system-x86_64" (Get-ToolchainCandidates "qemu-system-x86_64")

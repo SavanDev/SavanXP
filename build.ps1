@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -193,6 +193,15 @@ $UserPrograms = @(
         "subsystems/posix/userland/progman_registry.c",
         "subsystems/posix/userland/desktop_icons.c",
         "subsystems/posix/userland/desktop_wallpaper.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
+    ) },
+    # appwiz lee el .sxmeta de los binarios de /disk/bin para listarlos y para
+    # saber que datos declara cada uno (docs/SXE_FORMAT.md).
+    @{ Name = "appwiz"; Sources = @(
+        "subsystems/posix/sdk/v1/runtime/sxe.c",
+        "subsystems/posix/userland/appwiz.c",
+        "subsystems/posix/userland/appwiz_catalog.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
@@ -1456,6 +1465,17 @@ function Run-ProgmanSmokeQemu {
     }
 }
 
+# Agregar o quitar programas. El selftest BORRA de verdad -- es lo unico que
+# puede validar un desinstalador --, pero solo sobre fixtures que el mismo crea
+# en /disk/tmp y /disk/bin: correr este smoke no desinstala nada de lo que haya
+# instalado el usuario. Doom se repone igual antes de arrancar, porque es el
+# unico programa externo real de la imagen y el catalogo tiene que verlo.
+function Run-AppwizSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "appwiz-selftest" -SuccessToken "APPWIZ SMOKE PASS" -FailureToken "APPWIZ SMOKE FAIL" -TimeoutMinutes 3 -PreLaunch {
+        Restore-ExternalDoom
+    }
+}
+
 # Lector de recursos SXE (docs/SXE_FORMAT.md, fase 1). El grueso del selftest
 # es parseo puro en memoria -- blobs bien formados y todos los degradados que
 # ningun generador correcto produciria --, mas el camino de disco contra los
@@ -1731,6 +1751,9 @@ switch ($Command) {
     }
     "progman-smoke" {
         Run-ProgmanSmokeQemu
+    }
+    "appwiz-smoke" {
+        Run-AppwizSmokeQemu
     }
     "sxe-smoke" {
         Run-SxeSmokeQemu

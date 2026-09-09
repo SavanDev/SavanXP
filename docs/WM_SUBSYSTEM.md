@@ -7,7 +7,10 @@
 > - The WM is `windowd.c` + the `windowd_*` modules (`_session`, `_render`,
 >   `_layout`, `_compositor_client`, `_appinfo`). Binary `/bin/windowd`.
 > - The shell is a set of client processes: `shellui` draws the background,
->   `progman` is the launcher, with its registry in `/disk/progman.ini`.
+>   `progman` is the launcher: it lists every installed program that declares
+>   a category in its `.sxmeta` (see
+>   [SXE_FORMAT.md](SXE_FORMAT.md#all-programs-the-catalog-discovers-itself)),
+>   with `/disk/progman.ini` on top as the user's arrangement.
 > - The WM↔client contract is `savanxp/wm_protocol.h` (fds 3..10).
 > - The taskbar is replaced by the Task List (Ctrl+Esc), which is WM UI.
 > - Modules shared with clients (`desktop_icons`, `desktop_wallpaper`) keep
