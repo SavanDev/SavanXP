@@ -25,6 +25,12 @@
     # (fb_gpu / ps2 / ac97) sin salir de QEMU.
     [switch]$Virtio,
 
+    # Cores que se le dan a QEMU. Por defecto 1: el kernel arranca los APs y los
+    # deja estacionados, pero nadie planifica sobre ellos todavia, asi que subir
+    # esto solo sirve para ejercitar el camino de arranque de SMP.
+    [ValidateRange(1, 32)]
+    [int]$Smp = 1,
+
     # Excluye del build las apps de testeo/diagnostico (marcadas Test en
     # $UserPrograms): no se compilan, no entran al rootfs y el menu del
     # escritorio se compila sin sus entradas. Los comandos de automatizacion
@@ -87,6 +93,7 @@ $KernelSources = @(
     "arch/x86_64/entry.cpp",
     "arch/x86_64/cpu_init.cpp",
     "arch/x86_64/timer.cpp",
+    "arch/x86_64/smp.cpp",
     "kernel/kernel_main.cpp",
     "kernel/boot_screen.cpp",
     "kernel/console.cpp",
@@ -1128,6 +1135,7 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-machine", "q35,pcspk-audiodev=audio0",
         "-accel", $accelCpu.Accel,
         "-m", "256M",
+        "-smp", "$Smp",
         "-cpu", $accelCpu.Cpu,
         "-audiodev", "sdl,id=audio0",
         "-audiodev", "sdl,id=audio1",
@@ -1236,6 +1244,7 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-machine", "q35,pcspk-audiodev=audio0",
         "-accel", "tcg",
         "-m", "256M",
+        "-smp", "$Smp",
         "-cpu", "max",
         "-audiodev", "none,id=audio0",
         "-display", "none",

@@ -11,6 +11,9 @@
 namespace {
 
 constexpr size_t kMaxMemoryMapEntries = 512;
+// Tope de cores que se copian del bootloader. Mas que eso se reporta y se
+// ignora: arrancar con menos CPUs es mejor que no arrancar.
+constexpr size_t kMaxCpuEntries = 32;
 
 // Los modulos de Limine se identifican por el sufijo de su ruta (module_path
 // en limine.conf), no por el orden en que aparecen en la respuesta.
@@ -95,10 +98,22 @@ volatile limine_module_request g_module_request = {
     .internal_modules = nullptr,
 };
 
+[[gnu::used, gnu::section(".limine_requests")]]
+volatile limine_mp_request g_mp_request = {
+    .id = LIMINE_MP_REQUEST_ID,
+    .revision = 0,
+    .response = nullptr,
+    // Pedir que los APIC locales lleguen ya en x2APIC cuando el hardware lo
+    // tenga: es lo que initialize_local_apic() elige igual, y asi los ids que
+    // reporta el bootloader son los mismos que lee el kernel.
+    .flags = LIMINE_MP_REQUEST_X86_64_X2APIC,
+};
+
 [[gnu::used, gnu::section(".limine_requests_end_marker")]]
 volatile uint64_t g_limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
 
 boot::MemoryRegion g_memory_regions[kMaxMemoryMapEntries];
+boot::CpuInfo g_cpu_infos[kMaxCpuEntries];
 
 boot::FirmwareType translate_firmware_type(uint64_t firmware_type) {
     switch (firmware_type) {
@@ -241,6 +256,42 @@ boot::BootInfo build_boot_info() {
                 "warning: memmap truncated from %u to %u entries\n",
                 static_cast<unsigned>(entry_count),
                 static_cast<unsigned>(copied_entries)
+            );
+        }
+    }
+
+    if (g_mp_request.response != nullptr) {
+        volatile limine_mp_response* mp = g_mp_request.response;
+        const uint64_t cpu_count = mp->cpu_count;
+        const size_t copied_cpus = cpu_count < kMaxCpuEntries
+            ? static_cast<size_t>(cpu_count)
+            : kMaxCpuEntries;
+
+        info.smp.available = true;
+        info.smp.x2apic = (mp->flags & LIMINE_MP_RESPONSE_X86_64_X2APIC) != 0;
+        info.smp.bsp_lapic_id = mp->bsp_lapic_id;
+        info.smp.cpu_count = cpu_count;
+        info.smp.cpus = g_cpu_infos;
+        info.smp.cpu_entries = copied_cpus;
+
+        for (size_t index = 0; index < copied_cpus; ++index) {
+            limine_mp_info* cpu = mp->cpus[index];
+            if (cpu == nullptr) {
+                continue;
+            }
+            g_cpu_infos[index].processor_id = cpu->processor_id;
+            g_cpu_infos[index].lapic_id = cpu->lapic_id;
+            // El BSP es este mismo core: ya corre y su casilla no se toca.
+            g_cpu_infos[index].start_slot = cpu->lapic_id == mp->bsp_lapic_id
+                ? nullptr
+                : reinterpret_cast<volatile uint64_t*>(&cpu->goto_address);
+        }
+
+        if (cpu_count > copied_cpus) {
+            console::printf(
+                "warning: cpu list truncated from %u to %u entries\n",
+                static_cast<unsigned>(cpu_count),
+                static_cast<unsigned>(copied_cpus)
             );
         }
     }

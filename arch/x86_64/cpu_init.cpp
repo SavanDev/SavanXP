@@ -32,12 +32,20 @@ constexpr uint32_t kApicEoi = 0x0b0;
 constexpr uint32_t kApicSpuriousVector = 0x0f0;
 constexpr uint32_t kApicLvtTimer = 0x320;
 constexpr uint32_t kApicLvtLint0 = 0x350;
+constexpr uint32_t kApicIcrLow = 0x300;
+constexpr uint32_t kApicIcrHigh = 0x310;
 constexpr uint32_t kApicInitialCount = 0x380;
 constexpr uint32_t kApicCurrentCount = 0x390;
 constexpr uint32_t kApicDivideConfiguration = 0x3e0;
 constexpr uint32_t kApicSoftwareEnable = 1u << 8;
 constexpr uint32_t kApicTimerPeriodic = 1u << 17;
 constexpr uint32_t kApicLvtExtInt = 0x7u << 8;
+// ICR: entrega pendiente (solo xAPIC) y nivel en assert. El resto de los campos
+// que usamos valen cero -- modo fixed, destino fisico, flanco, sin shorthand --
+// asi que el comando es el vector mas este bit.
+constexpr uint32_t kApicIcrDeliveryStatus = 1u << 12;
+constexpr uint32_t kApicIcrAssert = 1u << 14;
+constexpr uint32_t kIpiDeliverySpinLimit = 1000000u;
 
 extern "C" void x86_64_syscall_entry();
 extern "C" void x86_64_timer_entry();
@@ -315,7 +323,10 @@ void install_tss_descriptor() {
     g_tss.iomap_base = sizeof(g_tss);
 }
 
-void load_gdt() {
+// Apuntar este core a la GDT del kernel y recargar los selectores. Separado de
+// load_gdt() porque un AP hace exactamente esto y nada mas: el `ltr` de abajo
+// no se puede repetir con un TSS que ya esta cargado en otro core.
+void load_gdt_without_tss() {
     asm volatile(
         "lgdt (%0)\n\t"
         "movw %1, %%ax\n\t"
@@ -335,7 +346,10 @@ void load_gdt() {
           "i"(static_cast<uint64_t>(kKernelCodeSelector))
         : "rax", "memory"
     );
+}
 
+void load_gdt() {
+    load_gdt_without_tss();
     asm volatile("ltr %0" : : "r"(kTssSelector) : "memory");
 }
 
@@ -474,6 +488,10 @@ DEFINE_EXTERNAL_ISR(60)
 DEFINE_EXTERNAL_ISR(61)
 DEFINE_EXTERNAL_ISR(62)
 DEFINE_EXTERNAL_ISR(63)
+// Vectores 64-71: mensajes entre cores (IPIs). Por ahora solo el 64, que es el
+// ping con el que el arranque de los APs comprueba que el ICR entrega de
+// verdad. El resto del rango queda para reschedule y shootdown de TLB.
+DEFINE_EXTERNAL_ISR(64)
 #undef DEFINE_ISR_NOERR
 #undef DEFINE_ISR_ERR
 #undef DEFINE_EXTERNAL_ISR
@@ -543,6 +561,7 @@ void initialize_idt() {
     set_idt_gate(61, reinterpret_cast<InterruptHandler>(vector_61), kInterruptGate);
     set_idt_gate(62, reinterpret_cast<InterruptHandler>(vector_62), kInterruptGate);
     set_idt_gate(63, reinterpret_cast<InterruptHandler>(vector_63), kInterruptGate);
+    set_idt_gate(64, reinterpret_cast<InterruptHandler>(vector_64), kInterruptGate);
     set_idt_gate(kSyscallVector, reinterpret_cast<InterruptHandler>(x86_64_syscall_entry), kUserInterruptGate);
     load_idt();
 }
@@ -556,7 +575,10 @@ namespace arch::x86_64 {
  * enmascaradas), en vez de un FXRSTOR sobre bytes en cero. */
 alignas(16) static uint8_t g_default_fpu_state[kFpuStateSize];
 
-void enable_fpu() {
+// La parte de la FPU que le toca a cada core: los bits de CR0/CR4 y un estado
+// x87/SSE limpio. Un AP corre solo esto. La plantilla para procesos nuevos la
+// captura el BSP una sola vez, en enable_fpu().
+void configure_fpu_for_this_core() {
     uint64_t cr0 = 0;
     asm volatile("mov %%cr0, %0" : "=r"(cr0));
     cr0 &= ~(1ull << 2); // EM=0: sin emulacion de coprocesador (FPU real)
@@ -572,6 +594,10 @@ void enable_fpu() {
     asm volatile("fninit");
     const uint32_t mxcsr = 0x1f80u; // todas las excepciones enmascaradas, round-to-nearest
     asm volatile("ldmxcsr %0" ::"m"(mxcsr));
+}
+
+void enable_fpu() {
+    configure_fpu_for_this_core();
 
     // Capturar el estado limpio como plantilla para los procesos nuevos.
     asm volatile("fxsave64 (%0)" ::"r"(g_default_fpu_state) : "memory");
@@ -601,6 +627,86 @@ void initialize_cpu() {
     initialize_idt();
     enable_fpu();
     run_breakpoint_probe();
+}
+
+void ap_initialize_cpu() {
+    disable_interrupts();
+    // Las tablas ya las armo el BSP y desde aca son de solo lectura: este core
+    // solo tiene que apuntarles. Nada de install_tss_descriptor() ni `ltr` (hay
+    // un unico TSS y cargarlo dos veces prende el bit Busy y da #GP), nada de
+    // remap_pic() (el 8259 es del sistema, no del core) y nada de la sonda de
+    // breakpoint, que ya corrio.
+    load_gdt_without_tss();
+    load_idt();
+    configure_fpu_for_this_core();
+}
+
+bool ap_initialize_local_apic() {
+    // El APIC local es por core, asi que cada AP tiene que habilitar el suyo.
+    // Pero solo eso: el mapeo MMIO en modo xAPIC ya lo hizo el BSP y es global,
+    // y LINT0 no se toca -- la regla del APIC es un solo ExtINT por sistema y
+    // ese lugar ya lo ocupo el BSP en initialize_local_apic().
+    if (!g_local_apic_ready) {
+        return false;
+    }
+
+    uint64_t apic_base = read_msr(kApicBaseMsr);
+    apic_base |= kApicBaseEnable;
+    if (g_local_apic_x2apic) {
+        apic_base |= kApicBaseX2ApicEnable;
+    } else {
+        apic_base &= ~static_cast<uint64_t>(kApicBaseX2ApicEnable);
+    }
+    write_msr(kApicBaseMsr, apic_base);
+
+    write_local_apic(kApicSpuriousVector, kApicSoftwareEnable | 0xff);
+    return true;
+}
+
+// El bit de entrega pendiente del ICR solo existe en xAPIC. Sondearlo antes de
+// pisar el registro evita perder un IPI que todavia esta en vuelo.
+static bool wait_for_ipi_delivery() {
+    if (g_local_apic_x2apic) {
+        return true;
+    }
+    for (uint32_t spin = 0; spin < kIpiDeliverySpinLimit; ++spin) {
+        if ((read_local_apic(kApicIcrLow) & kApicIcrDeliveryStatus) == 0) {
+            return true;
+        }
+        asm volatile("pause");
+    }
+    return false;
+}
+
+bool send_ipi(uint32_t destination_lapic_id, uint8_t vector) {
+    if (!g_local_apic_ready) {
+        return false;
+    }
+
+    const uint32_t command = static_cast<uint32_t>(vector) | kApicIcrAssert;
+
+    if (g_local_apic_x2apic) {
+        // Un unico MSR de 64 bits: destino arriba, comando abajo. El x2APIC no
+        // expone bit de entrega pendiente, no hay nada que sondear.
+        write_msr(x2apic_msr(kApicIcrLow),
+                  (static_cast<uint64_t>(destination_lapic_id) << 32) | command);
+        return true;
+    }
+
+    // En xAPIC el destino fisico tiene 8 bits. Un id mas grande no es
+    // direccionable asi y necesita destino logico, que es trabajo de cuando
+    // haya mas de 255 cores.
+    if (destination_lapic_id > 0xffu) {
+        return false;
+    }
+    if (!wait_for_ipi_delivery()) {
+        return false;
+    }
+
+    // La parte alta primero: escribir la baja es lo que dispara el envio.
+    write_local_apic(kApicIcrHigh, destination_lapic_id << 24);
+    write_local_apic(kApicIcrLow, command);
+    return wait_for_ipi_delivery();
 }
 
 bool register_irq_handler(uint8_t irq, IrqHandler handler) {

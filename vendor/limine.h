@@ -190,6 +190,38 @@ struct limine_module_request {
     LIMINE_PTR(struct limine_file **) internal_modules;
 };
 
+#define LIMINE_MP_REQUEST_ID { LIMINE_COMMON_MAGIC, 0x95a67b819a1b857e, 0xa0b61b723b6a73e0 }
+
+#define LIMINE_MP_REQUEST_X86_64_X2APIC (1 << 0)
+#define LIMINE_MP_RESPONSE_X86_64_X2APIC (1 << 0)
+
+struct limine_mp_info;
+
+typedef void (*limine_goto_address)(struct limine_mp_info *);
+
+struct limine_mp_info {
+    uint32_t processor_id;
+    uint32_t lapic_id;
+    uint64_t reserved;
+    LIMINE_PTR(limine_goto_address) goto_address;
+    uint64_t extra_argument;
+};
+
+struct limine_mp_response {
+    uint64_t revision;
+    uint32_t flags;
+    uint32_t bsp_lapic_id;
+    uint64_t cpu_count;
+    LIMINE_PTR(struct limine_mp_info **) cpus;
+};
+
+struct limine_mp_request {
+    uint64_t id[4];
+    uint64_t revision;
+    LIMINE_PTR(struct limine_mp_response *) response;
+    uint64_t flags;
+};
+
 #ifdef __cplusplus
 }
 #endif

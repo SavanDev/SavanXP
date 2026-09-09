@@ -15,6 +15,29 @@ enum class InterruptEoi : uint8_t {
 };
 
 void initialize_cpu();
+
+/* --- SMP ---------------------------------------------------------------------
+ * Puesta en marcha de los application processors. El BSP corre initialize_cpu();
+ * un AP corre ap_initialize_cpu(), que es deliberadamente mas angosto: apunta el
+ * core a las tablas que ya armo el BSP y le prepara la FPU, nada mas.
+ *
+ * Dos cosas que un AP no hace, y conviene saber por que:
+ *  - `ltr`. Hay un unico TSS; cargarlo en un segundo core prende su bit Busy y
+ *    da #GP. Un TSS por core es trabajo de la fase 1 (docs/SMP_ROADMAP.md).
+ *  - LINT0 = ExtINT. La regla del APIC es un solo ExtINT por sistema y ese lugar
+ *    ya lo tomo el BSP en initialize_local_apic().
+ */
+void ap_initialize_cpu();
+bool ap_initialize_local_apic();
+
+// Vectores 64-71: mensajes entre cores. Por ahora solo el ping del arranque.
+constexpr uint8_t kIpiPingVector = 64;
+
+// IPI de vector fijo (modo fixed, destino fisico, flanco) a un core por su LAPIC
+// id. false si el APIC local no esta listo, si el destino no entra en 8 bits en
+// modo xAPIC, o si la entrega anterior no termino.
+bool send_ipi(uint32_t destination_lapic_id, uint8_t vector);
+
 bool register_irq_handler(uint8_t irq, IrqHandler handler);
 bool register_interrupt_handler(uint8_t vector, IrqHandler handler, InterruptEoi eoi);
 bool initialize_local_apic();

@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **The application processors boot and park.** `smp::` starts the cores the
+  bootloader reports, proves the ICR delivers with a ping IPI, and says so at
+  boot (`smp: N cores reportados, M en linea`). Nothing schedules on them yet;
+  `build.ps1 -Smp <n>` exercises that path. Phase 0 of `docs/SMP_ROADMAP.md`.
+
 - **Add or Remove Programs (`/bin/appwiz`), in the System group.** It lists what
   was installed outside the system image — in `/disk/bin` and not in `/bin` —
   and deletes the binary, optionally with the data directory the program

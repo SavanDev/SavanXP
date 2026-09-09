@@ -33,6 +33,7 @@
 #include "kernel/ps2.hpp"
 #include "kernel/ramdisk.hpp"
 #include "kernel/rtl8139.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
@@ -160,6 +161,10 @@ namespace
     // parsea la MADT y deja el ruteo de GSIs listo para SCI e INTx (_PRT). Si no
     // hay MADT/IOAPIC cae en silencio y el sistema sigue con el PIC legacy.
     ioapic::initialize(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
+    // Los APs, ya con el APIC local del BSP listo y los GSIs ruteados. Quedan
+    // estacionados: nadie planifica sobre ellos todavia (docs/SMP_ROADMAP.md).
+    smp::initialize(boot_info);
+    smp::selftest_ipi();
     // Con el IOAPIC listo, habilitar el modo ACPI y rutear la SCI (boton de power).
     acpi::start_sci();
     // Traer uACPI hasta cargar/inicializar el namespace (interpreta el AML de la

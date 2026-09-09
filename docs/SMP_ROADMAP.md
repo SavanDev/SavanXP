@@ -1,9 +1,15 @@
 # SMP — running SavanXP on more than one core
 
-> **Status: not started.** Nothing described here is implemented. This document
-> is the measurement: what the kernel already has, what it is missing, and in
-> what order to attack it so that every phase boots and can be verified on its
-> own.
+> **Status: phase 0 done, on master. Phases 1-4 not started.** This document is
+> the measurement: what the kernel already has, what it is missing, and in what
+> order to attack it so that every phase boots and can be verified on its own.
+>
+> Phase 0 landed as `smp::` ([smp.hpp](../include/kernel/smp.hpp),
+> [smp.cpp](../arch/x86_64/smp.cpp)): the APs start, identify themselves by
+> their own LAPIC ID and park in a `hlt` loop, and a ping IPI proves the ICR
+> delivers. Verified on 4 cores in **both** APIC modes — x2APIC (`-cpu max`)
+> and xAPIC (`-cpu qemu64`, the VirtualBox path). Nothing schedules on them:
+> from the outside the system behaves exactly as it did on one core.
 
 The short version: **bringing up the other cores is the cheap part.** The
 kernel has around 450 mutable globals and no lock discipline at all, so the
@@ -69,10 +75,39 @@ process it is running.
 | QEMU is launched without `-smp`; every smoke runs on one core | [`build.ps1`](../build.ps1) |
 | Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:73`](../kernel/process.cpp:73) |
 
-## Phase 0 — bring the APs up
+## Phase 0 — bring the APs up — **DONE**
 
 **Goal:** the other cores execute kernel code and park in `hlt`. Nothing else
 changes.
+
+What it actually took, against the plan below:
+
+- **The Limine path was the right call.** `limine_mp_request` went into the
+  vendored header; the APs arrive in long mode, on their own stacks, on the
+  same page tables — no real-mode trampoline, no identity mapping. The MADT
+  type 0 path stays available behind the same `smp::` API if another bootloader
+  ever matters.
+- **The MP structures survive the boot for free.** They live in
+  bootloader-reclaimable memory, which this kernel never reclaims —
+  `memory::initialize` takes only `usable` regions
+  ([`physical_memory.cpp:117`](../kernel/physical_memory.cpp:117)). That removed
+  the usual hazard of the bootloader's AP stacks being recycled underfoot.
+- **Two things an AP must not do**, both found by reading before writing:
+  `ltr` on the shared TSS (its Busy bit makes the second load a #GP), and
+  `initialize_local_apic()`, which sets LINT0 to ExtINT — legal for exactly one
+  core in the system, and the BSP already claimed it. Hence the narrower
+  `ap_initialize_cpu()` / `ap_initialize_local_apic()` pair.
+- **An AP cannot print.** The console is unprotected shared state, so the parked
+  cores touch nothing but their own registers and atomics. The BSP does all the
+  reporting.
+- **Step 3 was not needed.** Limine gives each AP a stack, and a parked core
+  does not outgrow it. Allocating kernel stacks belongs to phase 1, where the AP
+  actually runs something.
+
+**Delivered:** `smp: 4 cores reportados, 4 en linea (bsp lapic 0, x2APIC)` and
+`smp: ping IPI 3/3 ok` under `build.ps1 -Smp 4`.
+
+The original plan follows.
 
 1. Enumerate the CPUs. Two options: add `limine_mp_request` to the vendored
    header, or extend `parse_madt()` with entry type 0. The Limine path also
@@ -202,7 +237,8 @@ The existing smoke suite runs on one core and will therefore keep passing while
 being blind to every race introduced. Phases 0-3 need `-smp` variants:
 
 - `build.ps1` gains an `-Smp <n>` switch that reaches the QEMU argument list,
-  defaulting to 1 so nothing existing changes.
+  defaulting to 1 so nothing existing changes. **Done in phase 0**; it feeds
+  both the interactive and the smoke invocations.
 - At least `smoke`, `windowd-smoke` and `sxfs-smoke` get an `-smp 4` run. The
   filesystem and compositor smokes are the ones that actually exercise shared
   state from several processes at once.

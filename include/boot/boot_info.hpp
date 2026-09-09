@@ -48,6 +48,32 @@ struct MemoryRegion {
     MemoryRegionType type;
 };
 
+// Un core tal como lo reporta el bootloader. `start_slot` apunta a la casilla
+// que el bootloader sondea para este AP: escribirle la direccion de una funcion
+// lo saca de su bucle de espera y lo lanza ahi, en modo largo, con pila propia y
+// las interrupciones apagadas. Es nula en el BSP, que ya viene corriendo.
+//
+// La casilla vive en memoria bootloader-reclaimable, que este kernel nunca
+// reclama (memory::initialize solo toma regiones usable), asi que sigue siendo
+// valida despues del boot.
+struct CpuInfo {
+    uint32_t processor_id;
+    uint32_t lapic_id;
+    volatile uint64_t* start_slot;
+};
+
+struct SmpInfo {
+    bool available;
+    // El firmware ya entrego los APIC locales en modo x2APIC.
+    bool x2apic;
+    uint32_t bsp_lapic_id;
+    // Cores reportados, BSP incluido. Puede ser mayor que `cpu_entries` si el
+    // arreglo se quedo corto.
+    uint64_t cpu_count;
+    const CpuInfo* cpus;
+    size_t cpu_entries;
+};
+
 struct BootInfo {
     const char* bootloader_name;
     const char* bootloader_version;
@@ -61,6 +87,7 @@ struct BootInfo {
     uint64_t disk_image_size;
     const MemoryRegion* memory_map;
     size_t memory_map_entries;
+    SmpInfo smp;
 };
 
 } // namespace boot
