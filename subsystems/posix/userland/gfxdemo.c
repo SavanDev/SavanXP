@@ -9,7 +9,7 @@ static uint32_t g_background[GFX_MAX_WIDTH * GFX_MAX_HEIGHT];
 
 static void draw_static_scene(struct savanxp_gfx_context* gfx, uint32_t* pixels) {
     const int panel_width = 320;
-    const int panel_height = 84;
+    const int panel_height = 108;
     const int title_y = 8;
     const int title_x = ((int)gfx->info.width - gfx_text_width("SavanXP gfx demo")) / 2;
 
@@ -22,6 +22,7 @@ static void draw_static_scene(struct savanxp_gfx_context* gfx, uint32_t* pixels)
     gfx_frame(pixels, &gfx->info, 24, 52, panel_width, panel_height, gfx_rgb(82, 131, 166));
     gfx_blit_text(pixels, &gfx->info, 40, 68, "ARROWS move the box", gfx_rgb(213, 244, 223));
     gfx_blit_text(pixels, &gfx->info, 40, 92, "ESC returns to shell", gfx_rgb(213, 244, 223));
+    gfx_blit_text(pixels, &gfx->info, 40, 116, "S toggles auto-motion", gfx_rgb(213, 244, 223));
 }
 
 static void draw_box(struct savanxp_gfx_context* gfx, uint32_t* pixels, int box_x, int box_y) {
@@ -68,6 +69,9 @@ int main(void) {
     int box_y = 140;
     int previous_box_x;
     int previous_box_y;
+    /* Modo automatico (tecla S): ver el manejo de la tecla mas abajo. */
+    int spin = 0;
+    int spin_dx = 8;
 
     if (gfx_open(&gfx) < 0) {
         puts_fd(2, "gfxdemo: open failed\n");
@@ -132,6 +136,16 @@ int main(void) {
                 gfx_close(&gfx);
                 return 0;
             }
+            /* S alterna el modo automatico: la caja avanza sola en cada vuelta,
+             * sin esperar teclas. Como gfx_present_region bloquea hasta que el
+             * compositor consumio el frame anterior, en ese modo los fps son el
+             * techo del camino de display y no el ritmo de la entrada, que es
+             * lo que hace falta para medirlo (docs/GRAPHICS_PERF.md). */
+            if (event.ascii == 's' || event.ascii == 'S') {
+                spin = !spin;
+                moved = 1;
+                continue;
+            }
             if (event.key == SAVANXP_KEY_LEFT) {
                 box_x -= 8;
                 moved = 1;
@@ -145,6 +159,14 @@ int main(void) {
                 box_y += 8;
                 moved = 1;
             }
+        }
+
+        if (spin) {
+            box_x += spin_dx;
+            if (box_x <= 0 || box_x + BOX_SIZE >= (int)gfx.info.width) {
+                spin_dx = -spin_dx;
+            }
+            moved = 1;
         }
 
         if (box_x < 0) {

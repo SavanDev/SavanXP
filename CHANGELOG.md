@@ -18,6 +18,10 @@ Cut-off notes:
   write-only `/dev/serial`. New `monotonic_ns()`; compositor protocol v2.
   [How to read it](docs/GRAPHICS_PERF.md).
 
+- **Gfx Demo has an auto-motion mode.** `S` moves the box every frame without
+  input, so the demo presents as fast as the compositor allows — the load that
+  shows the display path's real ceiling.
+
 - **The application processors boot and park.** `smp::` starts the cores the
   bootloader reports, proves the ICR delivers with a ping IPI, and says so at
   boot (`smp: N cores reportados, M en linea`). Nothing schedules on them yet;
