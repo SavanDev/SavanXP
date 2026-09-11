@@ -263,6 +263,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A blocking pipe read did not get the CPU when its data arrived.** Only
+  event waits asked for the preemptive wakeup, so a synchronous RPC over pipes
+  waited for the round-robin. Present drops ~470x, and 1.4 to 5.8 fps.
+
 - **The taskbar drew the generic icon for every window.** The shell window list
   only carried a baked-in icon id, and that set is now just the generic one, so
   each button gets the window's own 16x16 `.sxicon` instead.

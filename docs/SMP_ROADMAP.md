@@ -176,6 +176,11 @@ being allowed to schedule.
 - **Release the BKL around the idle `hlt`**, or the idle core holds the lock and
   the machine stops.
 
+Once user processes run on more than one core,
+[asynchronous present](GRAPHICS_PERF.md#asynchronous-present) is ready to turn
+the compositor round trip into real overlap. It was implemented and measured
+on one core, and reverted only because one core has nothing to overlap with.
+
 This phase is where the debugging lives. **Estimate: 1-2 weeks.**
 
 ## Phase 3 — TLB shootdown
@@ -258,6 +263,18 @@ being blind to every race introduced. Phases 0-3 need `-smp` variants:
 - **`kMaxProcesses` and the fd budget** are unchanged by SMP, but a scheduler
   that actually runs four processes at once makes the existing ceilings easier
   to hit.
+- **Phase 2's first cut for the reschedule IPI undoes a measured fix.** Every
+  synchronous RPC on the desktop — `windowd` writing a request to
+  `compositord` and blocking on the reply — relies on `g_resched_pending`
+  handing the CPU to the woken reader on the same core. Before pipe completions
+  requested it, that round trip was 99% of the cost of a frame: 205 ms against
+  127 µs of GPU work on a 672-pixel frame. After, present got ~470x faster
+  and Doom went to 35 FPS in VirtualBox
+  ([numbers](GRAPHICS_PERF.md#what-that-bought)). If `windowd` and
+  `compositord` land on different cores and the wakeup waits for the next tick,
+  that regression comes back. Implement the IPI in the same phase, or keep the
+  two on one core until it exists, and rerun
+  [the `spin` scenario](GRAPHICS_PERF.md#which-workload-measures-what) to check.
 
 ## Is it worth it?
 

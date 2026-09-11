@@ -1173,6 +1173,13 @@ process::SavedContext* choose_next_context(process::SavedContext* current_contex
     return next->context;
 }
 
+// Los tres complete_blocked_* piden el mismo wakeup preemptivo. Al principio
+// solo lo hacia complete_blocked_wait, y eso dejaba a los PIPES sin el: un RPC
+// sincrono -- escribir la request y bloquearse leyendo la reply, que es como
+// habla windowd con compositord -- despertaba al que esperaba pero lo dejaba
+// esperando su turno del round-robin. Medido en el camino de display eso era el
+// 99% del costo de poner un frame en pantalla (ver docs/GRAPHICS_PERF.md), con
+// el trabajo de GPU real en dos ordenes de magnitud menos.
 int complete_blocked_read(process::Process& proc, int result) {
     proc.blocked_io_fd = 0;
     proc.blocked_read_buffer = 0;
@@ -1180,6 +1187,9 @@ int complete_blocked_read(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
+    if (&proc != g_current) {
+        g_resched_pending = true;
+    }
     return result;
 }
 
@@ -1191,6 +1201,9 @@ int complete_blocked_write(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
+    if (&proc != g_current) {
+        g_resched_pending = true;
+    }
     return result;
 }
 
