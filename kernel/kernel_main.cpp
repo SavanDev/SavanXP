@@ -33,6 +33,7 @@
 #include "kernel/ps2.hpp"
 #include "kernel/ramdisk.hpp"
 #include "kernel/rtl8139.hpp"
+#include "kernel/serial_dev.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/sxfs.hpp"
@@ -209,6 +210,7 @@ namespace
     pcspeaker::initialize();
     power::initialize();
     clipboard::initialize();
+    serial_dev::initialize();
     // Backend de audio: mismo registro por prioridad que display. virtio-sound
     // gana si el probe PCI lo encontro; si no, AC97 (el caso VirtualBox).
     // audio_device registra /dev/audio0 sobre el backend elegido, o no lo

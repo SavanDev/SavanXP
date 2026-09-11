@@ -284,6 +284,19 @@ static int compositor_init(
     return 0;
 }
 
+/* Delta contra un instante anterior, robusto al reloj sin calibrar: si
+ * monotonic_ns devuelve 0 (o el reloj retrocede) el intervalo vale 0, que el
+ * consumidor ya trata como 'sin muestra'. */
+static uint64_t elapsed_since(unsigned long long mark)
+{
+    unsigned long long now = monotonic_ns();
+    if (mark == 0ull || now <= mark)
+    {
+        return 0ull;
+    }
+    return (uint64_t)(now - mark);
+}
+
 static int compositor_present(
     struct compositor_state *state,
     const struct savanxp_compositor_request *request,
@@ -293,6 +306,7 @@ static int compositor_present(
     struct savanxp_gpu_surface_present_batch batch;
     long result;
     uint32_t index;
+    unsigned long long mark;
 
     if (state == 0 || request == 0 || reply == 0 || !state->initialized)
     {
@@ -306,7 +320,9 @@ static int compositor_present(
     }
 
     memset(&timeline, 0, sizeof(timeline));
+    mark = monotonic_ns();
     result = gpu_get_present_timeline(state->gpu_fd, &timeline);
+    reply->service_timing.timeline_ns = elapsed_since(mark);
     if (result < 0)
     {
         return (int)result;
@@ -322,7 +338,9 @@ static int compositor_present(
         batch.rects[index] = request->rects[index];
     }
 
+    mark = monotonic_ns();
     result = gpu_present_surface_batch(state->gpu_fd, &batch);
+    reply->service_timing.gpu_ns = elapsed_since(mark);
     if (result < 0)
     {
         return (int)result;
@@ -534,6 +552,7 @@ int main(void)
 {
     struct compositor_state state;
     int running = 1;
+    unsigned long long service_begin = 0ull;
 
     compositor_state_init(&state);
 
@@ -547,12 +566,16 @@ int main(void)
             break;
         }
 
+        /* El cronometro arranca apenas volvio read_exact: lo que se mide es el
+           servicio, no la espera por una request que todavia no llego. */
+        service_begin = monotonic_ns();
         memset(&reply, 0, sizeof(reply));
         reply.magic = SAVANXP_COMPOSITOR_PROTOCOL_MAGIC;
         reply.version = SAVANXP_COMPOSITOR_PROTOCOL_VERSION;
         reply.type = request.type;
         reply.serial = request.serial;
         reply.status = handle_request(&state, &request, &reply);
+        reply.service_timing.service_ns = elapsed_since(service_begin);
         if (request.type == SAVANXP_COMPOSITOR_MSG_SHUTDOWN)
         {
             running = 0;

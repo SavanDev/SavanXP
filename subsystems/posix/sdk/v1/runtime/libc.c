@@ -261,6 +261,10 @@ unsigned long uptime_ms(void) {
     return (unsigned long)syscall0(SAVANXP_SYS_UPTIME_MS);
 }
 
+unsigned long long monotonic_ns(void) {
+    return (unsigned long long)syscall0(SAVANXP_SYS_MONOTONIC_NS);
+}
+
 long clear_screen(void) {
     return syscall0(SAVANXP_SYS_CLEAR);
 }

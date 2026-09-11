@@ -53,6 +53,9 @@ long semaphore_release(int handle, unsigned long release_count);
 long yield(void);
 long sleep_ms(unsigned long milliseconds);
 unsigned long uptime_ms(void);
+/* Nanosegundos desde el boot. Devuelve 0 si el TSC no llego a calibrarse; el
+ * llamador que mida intervalos tiene que tratar el 0 como "sin reloj". */
+unsigned long long monotonic_ns(void);
 long clear_screen(void);
 long proc_info(unsigned long index, struct savanxp_process_info* info);
 long system_info(struct savanxp_system_info* info);

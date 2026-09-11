@@ -4,6 +4,7 @@
 #include "desktop_wallpaper.h"
 #include "windowd_layout.h"
 #include "windowd_render.h"
+#include "windowd_stats.h"
 
 #define WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME 16
 #define WINDOWD_SURFACE_PAGE_SIZE 4096u
@@ -4146,6 +4147,7 @@ int main(int argc, char **argv)
     int drag_offset_x = 0;
     int drag_offset_y = 0;
     int compositor_recoveries = 0;
+    struct windowd_stats stats;
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
@@ -4187,6 +4189,7 @@ int main(int argc, char **argv)
     {
         puts_fd(2, "desktop: Program Manager no arranco; sesion sin launcher\n");
     }
+    windowd_stats_open(&stats);
     windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 
     for (;;)
@@ -4371,8 +4374,12 @@ int main(int argc, char **argv)
 
         {
             int frame_ready = 1;
+            int sync_result;
 
-            if (sync_pending_present(&session, 0, &frame_ready) < 0)
+            windowd_stats_sync_begin(&stats);
+            sync_result = sync_pending_present(&session, 0, &frame_ready);
+            windowd_stats_sync_end(&stats);
+            if (sync_result < 0)
             {
                 if (!windowd_compositor_connected(&session.compositor) &&
                     compositor_recoveries < WINDOWD_MAX_COMPOSITOR_RECOVERIES &&
@@ -4398,7 +4405,9 @@ int main(int argc, char **argv)
             }
         }
 
+        windowd_stats_frame_begin(&stats);
         windowd_draw_desktop(&session, cursor_x, cursor_y, &dirty);
+        windowd_stats_compose_done(&stats);
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
@@ -4414,9 +4423,15 @@ int main(int argc, char **argv)
             break;
         }
         compositor_recoveries = 0;
+        /* El danio se mide ANTES del reset: es el del frame que se acaba
+           de presentar. */
+        windowd_stats_frame_end(&stats, &dirty, &session.compositor.last_present_timing);
+        windowd_stats_report(&stats, 0);
         windowd_dirty_rect_reset(&dirty);
     }
 
+    windowd_stats_report(&stats, 1);
+    windowd_stats_close(&stats);
     close_compositor_session(&session);
     return 1;
 }

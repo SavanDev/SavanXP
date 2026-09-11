@@ -71,6 +71,10 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_UNMAP_VIEW = 52,
     SAVANXP_SYS_SEMAPHORE_CREATE = 53,
     SAVANXP_SYS_SEMAPHORE_RELEASE = 54,
+    /* Reloj monotono en nanosegundos desde el boot, por TSC. A diferencia de
+     * UPTIME_MS avanza con las interrupciones deshabilitadas y tiene
+     * resolucion suficiente para medir un frame. */
+    SAVANXP_SYS_MONOTONIC_NS = 55,
 };
 
 enum savanxp_open_flags {

@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **The compositor measures itself.** `windowd` reports compose, sync and
+  present times — present split into `ipc`/`svc`/`gpu`/`tl`, and `blk_us` for
+  the total time blocked on `compositord` — plus damage area, over the new
+  write-only `/dev/serial`. New `monotonic_ns()`; compositor protocol v2.
+  [How to read it](docs/GRAPHICS_PERF.md).
+
 - **The application processors boot and park.** `smp::` starts the cores the
   bootloader reports, proves the ICR delivers with a ping IPI, and says so at
   boot (`smp: N cores reportados, M en linea`). Nothing schedules on them yet;

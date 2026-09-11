@@ -22,6 +22,12 @@ struct windowd_compositor_connection
     int cursor_y;
     int cursor_visible;
     int cursor_shape;
+    /* Desglose que estampo compositord en las replies de present. Se acumula
+       sobre todas las que se leyeron -- un present con mas de 32 rects se
+       parte en varias RPC -- hasta que windowd_stats_frame_end lo consume.
+       No se resetea al empezar un present, asi funciona igual si la reply se
+       lee despues (ver "Asynchronous present" en docs/GRAPHICS_PERF.md). */
+    struct savanxp_compositor_service_timing last_present_timing;
 };
 
 void windowd_compositor_connection_init(struct windowd_compositor_connection *connection);

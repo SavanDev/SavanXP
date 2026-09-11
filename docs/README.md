@@ -30,6 +30,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   scheduler, TLB shootdown, and why splitting that lock should wait for
   threads.
 
+- [`GRAPHICS_PERF.md`](GRAPHICS_PERF.md) — how the graphics pipeline is
+  measured and what it costs: every field of the `windowd-stats` line, which
+  load measures the display path and which only measures the harness, the
+  scheduler fix that made present ~470x faster, the numbers across backends,
+  and why asynchronous present buys nothing on one core.
+
 ## Formats
 
 - [`SXE_FORMAT.md`](SXE_FORMAT.md) — the SXE executable format: icons and

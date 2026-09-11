@@ -134,6 +134,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_UPTIME_MS:
             context->rax = current_uptime_ms();
             return context;
+        case SAVANXP_SYS_MONOTONIC_NS:
+            context->rax = timer::monotonic_ns();
+            return context;
         case SAVANXP_SYS_CLEAR:
             tty::clear();
             context->rax = 0;

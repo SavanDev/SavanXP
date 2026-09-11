@@ -17,7 +17,12 @@
  */
 
 #define SAVANXP_COMPOSITOR_PROTOCOL_MAGIC 0x5358434fu /* SXCO */
-#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 1u
+/* v2 agrego savanxp_compositor_service_timing a la reply. Windowd y
+ * compositord se construyen siempre juntos, asi que un desajuste de tamano no
+ * puede pasar en la practica; la version igual sube porque el header promete
+ * formato fijo y versionado, y asi un desajuste falla limpio en vez de
+ * desincronizar el pipe. */
+#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 2u
 
 #define SAVANXP_COMPOSITOR_REQUEST_FD 3
 #define SAVANXP_COMPOSITOR_REPLY_FD 4
@@ -63,6 +68,26 @@ struct savanxp_compositor_request
     struct savanxp_gpu_cursor_position cursor_position;
 };
 
+/*
+ * Cuanto tardo compositord en atender la request, medido por el propio
+ * compositord. Existe para partir el `present_us` que mide windowd, que es el
+ * camino ENTERO -- ida y vuelta por los pipes, compositord, kernel y backend --
+ * y por si solo no dice a cual de los cuatro atacar.
+ *
+ * Los intervalos anidan: gpu_ns y timeline_ns caen adentro de service_ns, y
+ * service_ns adentro de lo que mide windowd. La diferencia entre los dos
+ * ultimos es el transporte mas el costo de despertar al otro proceso.
+ *
+ * Todo en cero significa 'sin reloj' (monotonic_ns todavia sin calibrar), no
+ * 'instantaneo': el consumidor tiene que descartar la muestra.
+ */
+struct savanxp_compositor_service_timing
+{
+    uint64_t service_ns;   /* leer la request -> escribir la reply */
+    uint64_t gpu_ns;       /* el syscall de present (kernel + backend) */
+    uint64_t timeline_ns;  /* el ioctl de timeline que lo precede */
+};
+
 struct savanxp_compositor_reply
 {
     uint32_t magic;
@@ -75,4 +100,5 @@ struct savanxp_compositor_reply
     struct savanxp_fb_info fb_info;
     struct savanxp_gpu_info gpu_info;
     struct savanxp_gpu_present_timeline timeline;
+    struct savanxp_compositor_service_timing service_timing;
 };

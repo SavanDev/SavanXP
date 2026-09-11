@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdarg.h>
+#include <stddef.h>
 
 #include "boot/boot_info.hpp"
 #include "savanxp/syscall.h"
@@ -18,6 +19,10 @@ bool present_pixels(const void* pixels, size_t byte_count);
 bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 void clear();
 void write_char(char character);
+/* Solo al puerto serie, sin pasar por la consola de texto del framebuffer.
+ * Es lo que hace falta para emitir diagnostico mientras hay algo compuesto en
+ * pantalla; ver kernel/serial_dev.cpp. */
+void serial_write(const char* text, size_t length);
 void write(const char* text);
 void write_line(const char* text);
 void vprintf(const char* format, va_list args);

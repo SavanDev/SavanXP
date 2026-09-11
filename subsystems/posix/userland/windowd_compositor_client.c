@@ -559,6 +559,9 @@ int windowd_compositor_present(
         {
             connection->pending_present_sequence = reply.present_sequence;
         }
+        connection->last_present_timing.service_ns += reply.service_timing.service_ns;
+        connection->last_present_timing.gpu_ns += reply.service_timing.gpu_ns;
+        connection->last_present_timing.timeline_ns += reply.service_timing.timeline_ns;
     }
 
     return 0;

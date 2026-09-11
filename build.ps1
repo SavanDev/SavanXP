@@ -98,6 +98,7 @@ $KernelSources = @(
     "kernel/boot_screen.cpp",
     "kernel/console.cpp",
     "kernel/device.cpp",
+    "kernel/serial_dev.cpp",
     "kernel/display.cpp",
     "kernel/ata.cpp",
     "kernel/virtio_blk.cpp",
@@ -182,7 +183,8 @@ $UserPrograms = @(
         "subsystems/posix/userland/windowd_appinfo.c",
         "subsystems/posix/userland/desktop_wallpaper.c",
         "subsystems/posix/userland/windowd_layout.c",
-        "subsystems/posix/userland/windowd_render.c"
+        "subsystems/posix/userland/windowd_render.c",
+        "subsystems/posix/userland/windowd_stats.c"
     ) },
     @{ Name = "shellui"; Sources = @(
         "subsystems/posix/userland/shellui.c",

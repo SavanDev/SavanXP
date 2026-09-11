@@ -386,6 +386,20 @@ void clear() {
     redraw_all();
 }
 
+void serial_write(const char* text, size_t length) {
+    if (text == nullptr) {
+        return;
+    }
+    for (size_t index = 0; index < length; ++index) {
+        /* El '\n' se expande a CRLF igual que en write_char: del otro lado hay
+         * una terminal, no un archivo de texto. */
+        if (text[index] == '\n') {
+            serial_write_char('\r');
+        }
+        serial_write_char(text[index]);
+    }
+}
+
 void write_char(char character) {
     if (character == '\r') {
         return;
