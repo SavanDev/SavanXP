@@ -19,7 +19,11 @@ import time
 
 
 class Qmp(object):
-    def __init__(self, port, timeout=60):
+    def __init__(self, port, timeout=60, abs_pointer=False, screen=(1280, 800)):
+        # El puntero del guest es relativo (PS/2) o absoluto (virtio-tablet), y
+        # eso cambia por completo como se lo lleva a una posicion. Ver move_to.
+        self.abs_pointer = abs_pointer
+        self.screen = screen
         deadline = time.time() + timeout
         while True:
             try:
@@ -90,6 +94,17 @@ class Qmp(object):
             self.cmd("input-send-event", events=events)
             time.sleep(0.03)
 
+    def _abs_move(self, x, y):
+        """Puntero absoluto (virtio-tablet): se manda la posicion y listo.
+
+        El eje absoluto de QMP va en el rango normalizado 0..32767 mapeado sobre
+        el tamano de pantalla, no en pixeles."""
+        width, height = self.screen
+        self.cmd("input-send-event", events=[
+            {"type": "abs", "data": {"axis": "x", "value": int(x * 32767 // max(width - 1, 1))}},
+            {"type": "abs", "data": {"axis": "y", "value": int(y * 32767 // max(height - 1, 1))}}])
+        time.sleep(0.5)
+
     def move_to(self, x, y):
         """Lleva el cursor a (x, y), por pasos.
 
@@ -98,6 +113,10 @@ class Qmp(object):
         o sea que pasarse deja el cursor en (0,0), el unico origen conocido.
         Despues se avanza hasta el destino. Todo de a pasos de 64 px.
         """
+        if self.abs_pointer:
+            self._abs_move(x, y)
+            return
+
         step = 64
         for _ in range((1280 // step) + 2):
             self._rel_step(-step, -step)
@@ -420,6 +439,94 @@ def scenario_taskbar(s):
     expect_taskbar_present(image, "despues de minimizar")
 
 
+def scenario_bench(s):
+    """Carga para windowd-stats: danio chico y continuo, a ritmo de pipeline.
+
+    No asierta nada visual -- mide. Gfx Demo mueve una caja 8 px por flecha y
+    presenta solo esa region, y junta en un solo frame todas las flechas que
+    llegaron mientras esperaba al compositor. Una rafaga mas rapida de lo que
+    drena el pipeline lo deja saturado: lo que sale en la linea de stats es el
+    throughput del camino de display, no el ritmo de un humano. Va a pantalla
+    completa (launch_flags=fullscreen) pero compuesto, que es el camino a medir.
+
+    Las teclas van sin la pausa de tap(): con 50 ms entre bajar y subir el
+    techo serian 20 frames por segundo impuestos por el harness.
+    """
+    s.launch(0, groups=1)            # Diagnostics -> Gfx Demo
+    start = time.time()
+    deadline = start + 20.0
+    direction = "right"
+    sent = 0
+    while time.time() < deadline:
+        for _ in range(40):
+            s.qmp.key(direction, True)
+            s.qmp.key(direction, False)
+            time.sleep(0.003)
+        sent += 40
+        direction = "left" if direction == "right" else "right"
+    elapsed = time.time() - start
+    print("bench: %d pulsaciones en %.1f s (%.0f/s)" % (sent, elapsed, sent / elapsed), flush=True)
+    time.sleep(4.0)                  # la ultima linea de stats sale cada 2 s
+    s.shot("bench-final")
+
+
+def scenario_saturate(s):
+    """Como bench, pero con la entrada mas rapida que el pipeline.
+
+    bench resulto limitado por la ENTRADA, no por el pipeline: con una tecla
+    por comando QMP, windowd pasaba ~98% de cada frame ocioso esperando la
+    proxima, asi que ningun cambio en el camino de display podia mover sus
+    fps. Aca cada comando lleva 16 pulsaciones: Gfx Demo junta en un frame
+    todas las que encuentra, asi que si hay siempre alguna pendiente al
+    terminar un frame no duerme nunca y los fps pasan a ser el techo del
+    camino de display.
+
+    OJO con la cifra de pulsaciones: son las ENVIADAS. El PS/2 emulado acepta
+    ~16 bytes en cola y descarta el resto, asi que las entregadas son menos.
+    La prueba de que se salio del regimen limitado por la entrada no es esa
+    cifra sino la ocupacion de windowd en la linea de stats.
+    """
+    s.launch(0, groups=1)            # Diagnostics -> Gfx Demo
+    start = time.time()
+    deadline = start + 20.0
+    direction = "right"
+    sent = 0
+    commands = 0
+    while time.time() < deadline:
+        events = []
+        for _ in range(16):
+            for down in (True, False):
+                events.append({"type": "key", "data": {
+                    "down": down, "key": {"type": "qcode", "data": direction}}})
+        s.qmp.cmd("input-send-event", events=events)
+        sent += 16
+        commands += 1
+        direction = "left" if direction == "right" else "right"
+    elapsed = time.time() - start
+    print("saturate: %d pulsaciones en %.1f s (%.0f/s), %d comandos QMP (%.0f/s)"
+          % (sent, elapsed, sent / elapsed, commands, commands / elapsed), flush=True)
+    time.sleep(4.0)                  # la ultima linea de stats sale cada 2 s
+    s.shot("saturate-final")
+
+
+def scenario_spin(s):
+    """Carga que SI satura el pipeline: el cliente dibuja sin esperar la entrada.
+
+    bench y saturate resultaron limitados por la entrada -- un frame por tecla
+    o por comando QMP -- y con windowd ocioso la mayor parte de cada frame no
+    distinguen un pipeline rapido de uno lento. Aca Gfx Demo entra en su modo
+    automatico (tecla S): la caja avanza en cada vuelta y gfx_present_region
+    bloquea hasta que el compositor consumio el frame anterior, asi que los
+    fps son el techo del camino de display y nada mas.
+    """
+    s.launch(0, groups=1)            # Diagnostics -> Gfx Demo
+    s.qmp.tap("s")                   # modo automatico: encendido
+    time.sleep(20.0)
+    s.qmp.tap("s")                   # apagado: la sesion vuelve a quedar quieta
+    time.sleep(4.0)                  # la ultima linea de stats sale cada 2 s
+    s.shot("spin-final")
+
+
 SCENARIOS = {
     "desktop": scenario_desktop,
     "alttab": scenario_alttab,
@@ -428,6 +535,9 @@ SCENARIOS = {
     "appwiz": scenario_appwiz,
     "taskbar": scenario_taskbar,
     "kbdlayout": scenario_kbdlayout,
+    "bench": scenario_bench,
+    "saturate": scenario_saturate,
+    "spin": scenario_spin,
 }
 
 
@@ -449,9 +559,11 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--scenario", required=True, choices=sorted(SCENARIOS))
     parser.add_argument("--boot-wait", type=float, default=45.0)
+    parser.add_argument("--abs-pointer", action="store_true",
+                        help="el guest tiene un puntero absoluto (virtio-tablet), no PS/2")
     opts = parser.parse_args()
 
-    qmp = Qmp(opts.port)
+    qmp = Qmp(opts.port, abs_pointer=opts.abs_pointer)
     marker = "handoff: starting /bin/init"
     if not wait_for_marker(opts.serial, marker):
         print("no aparecio '%s' en %s" % (marker, opts.serial), file=sys.stderr)

@@ -164,6 +164,10 @@ Cut-off notes:
   merging dirty rectangles by bounding box: dragging a window now repaints and
   presents the ring that changed, not the box around the old and new frames.
 
+- **`tools/shoot.ps1` drives other hardware and loads the display path.**
+  `-Virtio`/`-Accel` (`tcg`/`kvm`/`whpx`) pick devices and accelerator; the
+  `bench`, `saturate` and `spin` scenarios feed `windowd-stats`.
+
 - **Launcher icon captions wrap to two lines.** A name that does not fit on one
   line breaks at a space and is centred over two, and only what still does not
   fit is cut with an ellipsis — before, a long caption was clipped at *both*
@@ -266,6 +270,11 @@ Cut-off notes:
   `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
 
 ### Fixed
+
+- **`tools/shoot.ps1` guarded the wrong path for a planted automation spec.**
+  It checked `build/image/SMOKE` while `build.ps1` plants `build/rootfs/SMOKE`,
+  so after any smoke target the guest silently ran that harness, not the
+  desktop.
 
 - **A blocking pipe read did not get the CPU when its data arrived.** Only
   event waits asked for the preemptive wakeup, so a synchronous RPC over pipes

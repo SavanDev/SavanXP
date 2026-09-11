@@ -47,6 +47,21 @@ Limine's `v10.x-binary` branch only ships a prebuilt `limine.exe` for Windows,
 so elsewhere the `limine` deployer (used for the BIOS boot path of the ISO) is
 compiled once from `limine.c` with the Makefile in Limine's own repository.
 
+## QEMU virtio display devices
+
+Arch packages QEMU's display devices as separate modules, so a plain
+`qemu-system-x86` has no `virtio-vga` and `build.ps1 -Virtio` fails with
+`'virtio-vga' is not a valid device model name`:
+
+```bash
+pacman -S qemu-hw-display-virtio-vga qemu-hw-display-virtio-gpu-pci
+```
+
+These modules link against QEMU internals and must match the installed
+`qemu-system-x86` exactly. Installing one on its own against a stale package
+database gets a version that segfaults QEMU -- upgrade the whole install rather
+than pulling a single module.
+
 ## QEMU with a graphical window
 
 For `.\build.ps1 run` / `debug`, Arch splits the QEMU backends into packages

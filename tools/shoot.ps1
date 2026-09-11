@@ -21,10 +21,20 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("desktop", "alttab", "clipboard", "files", "appwiz", "taskbar", "kbdlayout")]
+    [ValidateSet("desktop", "alttab", "clipboard", "files", "appwiz", "taskbar", "kbdlayout", "bench", "saturate", "spin")]
     [string]$Scenario = "desktop",
 
     [string]$OutDir,
+
+    # Hardware paravirtualizado (virtio-vga + virtio-tablet + virtio-keyboard +
+    # virtio-net + virtio-blk), el mismo set que "build.ps1 -Virtio". Sin esto
+    # se arma el hardware base, que es lo que emula VirtualBox.
+    [switch]$Virtio,
+
+    # Acelerador. tcg es determinista y es lo que usan los harnesses; kvm/whpx
+    # sirven para medir, no para asertar -- ver docs/GRAPHICS_PERF.md.
+    [ValidateSet("tcg", "kvm", "whpx")]
+    [string]$Accel = "tcg",
 
     # Segundos de espera despues del handoff antes del primer paso. La sesion
     # (windowd + shellui + progman) tarda en estar pintada, y bajo TCG el tiempo
@@ -51,7 +61,12 @@ if (-not (Test-Path $OutDir)) {
 # sistema bootea ese runner y las capturas salen de la consola en vez de la
 # sesion grafica. Se falla temprano y con el remedio, en vez de dejar al que
 # mira una captura desconcertante.
-$automationSpec = Join-Path $ProjectRoot "build/image/SMOKE"
+# El spec vive en el rootfs, que es lo que se hornea en el initramfs -- NO en
+# build/image, que es la ESP FAT. Apuntaba ahi y por eso el guard nunca salto:
+# despues de un "build.ps1 net-smoke" este script arrancaba el guest, corria el
+# runner de red en vez del escritorio, y fallaba con un error que no tenia nada
+# que ver.
+$automationSpec = Join-Path $ProjectRoot "build/rootfs/SMOKE"
 if (Test-Path $automationSpec) {
     throw "Hay un spec de automatizacion plantado ($automationSpec): el guest arrancaria ese harness y no el escritorio. Corre '.\build.ps1 build' primero."
 }
@@ -93,15 +108,36 @@ $listener.Start()
 $qmpPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
 $listener.Stop()
 
-# Hardware "base" (VGA estandar + PS/2 + AC'97), el mismo que arma build.ps1 por
-# defecto. Se repite aca a proposito: build.ps1 es un script monolitico sin
-# funciones exportables, y refactorizarlo para compartir esta lista seria un
-# cambio mucho mas grande que este harness.
+# Hardware "base" (VGA estandar + PS/2 + AC'97) por defecto, o el set
+# paravirtualizado con -Virtio: el mismo criterio que build.ps1. Se repite aca a
+# proposito: build.ps1 es un script monolitico sin funciones exportables, y
+# refactorizarlo para compartir estas listas seria un cambio mucho mas grande
+# que este harness.
+# El cpu tiene que seguir al acelerador: con kvm "max" no sirve y hay que pasar
+# "host"; bajo whpx "max"/"host" crashean OVMF y va "qemu64". Mismo criterio que
+# Get-AccelCpu en build.ps1.
+$cpuModel = switch ($Accel) { "kvm" { "host" } "whpx" { "qemu64" } default { "max" } }
+
+$videoInputDevices = if ($Virtio) {
+    @("-device", "virtio-vga,xres=1280,yres=800",
+      "-device", "virtio-tablet-pci",
+      "-device", "virtio-keyboard-pci")
+} else {
+    @("-device", "VGA,edid=on,xres=1280,yres=800")
+}
+$nicDevice = if ($Virtio) { @("-device", "virtio-net-pci,netdev=net0") }
+             else { @("-device", "rtl8139,netdev=net0") }
+$audioDevice = if ($Virtio) { @("-device", "virtio-sound-pci,audiodev=audio1,streams=2") }
+               else { @("-device", "AC97,audiodev=audio1") }
+$diskDrive = @("-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$(Join-Path $ProjectRoot 'build/disk.img')""")
+$diskDevices = if ($Virtio) { $diskDrive + @("-device", "virtio-blk-pci,drive=svdisk") }
+               else { @("-device", "isa-ide,id=svide") + $diskDrive + @("-device", "ide-hd,drive=svdisk,bus=svide.0") }
+
 $qemuArgs = @(
     "-machine", "q35,pcspk-audiodev=audio0",
-    "-accel", "tcg",
+    "-accel", $Accel,
     "-m", "256M",
-    "-cpu", "max",
+    "-cpu", $cpuModel,
     "-audiodev", "none,id=audio0",
     "-audiodev", "none,id=audio1",
     "-display", "none",
@@ -110,19 +146,18 @@ $qemuArgs = @(
     "-drive", "if=pflash,format=raw,file=""$varsCopy""",
     "-drive", "file=fat:rw:build/image,format=raw",
     "-netdev", "user,id=net0",
-    "-device", "rtl8139,netdev=net0",
-    "-device", "isa-ide,id=svide",
-    "-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$(Join-Path $ProjectRoot 'build/disk.img')""",
-    "-device", "ide-hd,drive=svdisk,bus=svide.0",
-    "-device", "VGA,edid=on,xres=1280,yres=800",
-    "-device", "AC97,audiodev=audio1",
     "-serial", "file:$serialLog",
     "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait",
     "-no-reboot",
     "-no-shutdown"
-)
+) + $nicDevice + $diskDevices + $videoInputDevices + $audioDevice
 
 Write-Host "shoot: escenario '$Scenario', salida en $OutDir"
+
+# Con -Virtio el puntero es virtio-tablet, que es ABSOLUTO: el truco de
+# empujar contra la esquina para encontrar el origen solo vale para el PS/2
+# relativo. Ver move_to en shoot_session.py.
+$absPointerArg = if ($Virtio) { @("--abs-pointer") } else { @() }
 
 Push-Location $ProjectRoot
 try {
@@ -133,7 +168,7 @@ try {
     try {
         & $python (Join-Path $PSScriptRoot "shoot_session.py") `
             --port $qmpPort --serial $serialLog --out $OutDir `
-            --scenario $Scenario --boot-wait $BootWait
+            --scenario $Scenario --boot-wait $BootWait $absPointerArg
         if ($LASTEXITCODE -ne 0) {
             throw "El escenario '$Scenario' fallo. Revisar $serialLog"
         }
