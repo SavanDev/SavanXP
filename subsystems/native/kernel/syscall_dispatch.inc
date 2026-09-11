@@ -1,10 +1,10 @@
 SavedContext* dispatch_native_syscall(SavedContext* context) {
-    if (g_current == nullptr) {
+    if (this_cpu().current == nullptr) {
         return context;
     }
 
-    g_current->context = context;
-    g_current->state = State::running;
+    this_cpu().current->context = context;
+    this_cpu().current->state = State::running;
 
     // Fase 1: prueba observable de que el camino nativo esta vivo. Se emite una
     // sola vez (la primera syscall nativa de todo el sistema); confirma que un
@@ -14,7 +14,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         announced = true;
         console::printf(
             "native: dispatcher activo (pid=%u, syscall=%u)\n",
-            static_cast<unsigned>(g_current->pid),
+            static_cast<unsigned>(this_cpu().current->pid),
             static_cast<unsigned>(context->rax)
         );
     }
@@ -25,16 +25,16 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
     switch (context->rax) {
         case SXN_SYS_INFO: {
             if (!vm::is_user_range_accessible(
-                    g_current->address_space, context->rdi, sizeof(sxn_native_info), true)) {
+                    this_cpu().current->address_space, context->rdi, sizeof(sxn_native_info), true)) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
 
             sxn_native_info info = {};
             info.abi_version = SXN_ABI_VERSION;
-            info.subsystem_id = static_cast<uint32_t>(g_current->subsystem_id);
-            info.pid = g_current->pid;
-            if (!write_to_process_memory(*g_current, context->rdi, &info, sizeof(info))) {
+            info.subsystem_id = static_cast<uint32_t>(this_cpu().current->subsystem_id);
+            info.pid = this_cpu().current->pid;
+            if (!write_to_process_memory(*this_cpu().current, context->rdi, &info, sizeof(info))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -44,12 +44,12 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         }
         case SXN_SYS_LOG: {
             char message[256] = {};
-            if (!copy_user_string(*g_current, context->rdi, message, sizeof(message))) {
+            if (!copy_user_string(*this_cpu().current, context->rdi, message, sizeof(message))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
 
-            console::printf("native[%u]: %s\n", static_cast<unsigned>(g_current->pid), message);
+            console::printf("native[%u]: %s\n", static_cast<unsigned>(this_cpu().current->pid), message);
             context->rax = 0;
             return context;
         }
@@ -59,7 +59,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         // terminate).
         case SXN_SYS_GFX_INFO: {
             if (!vm::is_user_range_accessible(
-                    g_current->address_space, context->rdi, sizeof(sxn_gfx_info), true)) {
+                    this_cpu().current->address_space, context->rdi, sizeof(sxn_gfx_info), true)) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -76,7 +76,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             info.pitch = gpu_info.pitch;
             info.bpp = gpu_info.bpp;
             info.buffer_size = gpu_info.buffer_size;
-            if (!write_to_process_memory(*g_current, context->rdi, &info, sizeof(info))) {
+            if (!write_to_process_memory(*this_cpu().current, context->rdi, &info, sizeof(info))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -86,29 +86,29 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         }
         case SXN_SYS_GFX_ACQUIRE: {
             context->rax = static_cast<uint64_t>(
-                display::acquire_session(g_current->pid) ? 0 : negative_error(SAVANXP_EBUSY));
+                display::acquire_session(this_cpu().current->pid) ? 0 : negative_error(SAVANXP_EBUSY));
             return context;
         }
         case SXN_SYS_GFX_RELEASE: {
-            if (!display::owns_session(g_current->pid)) {
+            if (!display::owns_session(this_cpu().current->pid)) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EBUSY));
                 return context;
             }
             display::release_session_resources();
-            display::release_session(g_current->pid);
+            display::release_session(this_cpu().current->pid);
             context->rax = 0;
             return context;
         }
         case SXN_SYS_GFX_PRESENT: {
-            if (!display::owns_session(g_current->pid)) {
+            if (!display::owns_session(this_cpu().current->pid)) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EBUSY));
                 return context;
             }
 
             sxn_gfx_present region = {};
             if (!vm::is_user_range_accessible(
-                    g_current->address_space, context->rdi, sizeof(region), false) ||
-                !read_from_process_memory(*g_current, &region, context->rdi, sizeof(region))) {
+                    this_cpu().current->address_space, context->rdi, sizeof(region), false) ||
+                !read_from_process_memory(*this_cpu().current, &region, context->rdi, sizeof(region))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -127,7 +127,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             const uint64_t touched_bytes = (last_row * region.source_pitch) +
                 (static_cast<uint64_t>(region.x) * sizeof(uint32_t)) + row_bytes;
             if (!vm::is_user_range_accessible(
-                    g_current->address_space, region.pixels, touched_bytes, false)) {
+                    this_cpu().current->address_space, region.pixels, touched_bytes, false)) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
                 return context;
             }

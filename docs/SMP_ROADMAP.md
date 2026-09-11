@@ -1,6 +1,6 @@
 # SMP — running SavanXP on more than one core
 
-> **Status: phase 0 done, on master. Phases 1-4 not started.** This document is
+> **Status: phases 0 and 1 done, on master. Phases 2-4 not started.** This document is
 > the measurement: what the kernel already has, what it is missing, and in what
 > order to attack it so that every phase boots and can be verified on its own.
 >
@@ -10,6 +10,10 @@
 > delivers. Verified on 4 cores in **both** APIC modes — x2APIC (`-cpu max`)
 > and xAPIC (`-cpu qemu64`, the VirtualBox path). Nothing schedules on them:
 > from the outside the system behaves exactly as it did on one core.
+>
+> Phase 1 gave every core its own TSS and its own `smp::Cpu` (current process,
+> idle, reschedule request), indexed by the TSS selector. Still nothing
+> schedules on the APs.
 
 The short version: **bringing up the other cores is the cheap part.** The
 kernel has around 450 mutable globals and no lock discipline at all, so the
@@ -22,7 +26,7 @@ Two decisions already in the tree make SMP far cheaper here than in a typical
 hobby kernel. Both should be defended rather than traded away.
 
 **1. The kernel is already non-preemptible.** Every IDT gate is an interrupt
-gate ([`cpu_init.cpp:17`](../arch/x86_64/cpu_init.cpp:17)), the syscall gate at
+gate ([`cpu_init.cpp:16`](../arch/x86_64/cpu_init.cpp:16)), the syscall gate at
 vector `0x80` included, and nothing in the syscall path re-enables interrupts.
 `IF` is 0 from the moment a process enters the kernel until it leaves. That is
 a big kernel lock, implicitly held, with no code written to implement it. Phase
@@ -31,15 +35,15 @@ already exists and making it hold across cores.
 
 **2. Syscalls never block on the kernel stack.** A syscall that cannot complete
 records a state and returns `kBlockedResult`
-([`process.cpp:46`](../kernel/process.cpp:46)); the waker then **retries the
+([`process.cpp:47`](../kernel/process.cpp:47)); the waker then **retries the
 operation on the sleeper's behalf** and completes it — see
 `wake_blocked_readers_for_pipe()`
-([`process.cpp:1358`](../kernel/process.cpp:1358)), which re-runs `try_pipe_read`
+([`process.cpp:1377`](../kernel/process.cpp:1377)), which re-runs `try_pipe_read`
 for every process parked on that pipe. There are no kernel threads halted
 halfway down a call stack, no sleep queues holding kernel context, and no
 stack-switching context switch: the scheduler picks a `SavedContext` and
 `iretq`s into it (`pick_next_runnable()`,
-[`process.cpp:1142`](../kernel/process.cpp:1142)). A second core therefore needs
+[`process.cpp:1147`](../kernel/process.cpp:1147)). A second core therefore needs
 no second copy of anything the scheduler owns — only its own idea of which
 process it is running.
 
@@ -49,7 +53,7 @@ process it is running.
 
 - **Local APIC**, in both modes: xAPIC through MMIO and x2APIC through MSRs,
   behind one pair of accessors
-  ([`cpu_init.cpp:179`](../arch/x86_64/cpu_init.cpp:179)). `local_apic_id()` is
+  ([`cpu_init.cpp:191`](../arch/x86_64/cpu_init.cpp:191)). `local_apic_id()` is
   already exported.
 - **A calibrated periodic LAPIC timer** with a PIT fallback
   ([`timer.cpp`](../arch/x86_64/timer.cpp)), and a tick handler that already
@@ -123,10 +127,37 @@ The original plan follows.
 **Deliverable:** `cpu: 3 APs online` in the boot log under `-smp 4`, with the
 system otherwise behaving exactly as it does today. **Estimate: 2-3 days.**
 
-## Phase 1 — per-CPU state
+## Phase 1 — per-CPU state — **DONE**
 
 **Goal:** each core can hold its own current process, without any core yet
 being allowed to schedule.
+
+What it actually took, against the plan below:
+
+- **One GDT, a TSS per core.** Not a GDT per core: every TSS descriptor sits in
+  the one shared GDT, side by side from selector `0x28`, all installed by the
+  BSP before any AP starts. Each core then loads its own with `ltr`.
+- **Indexed by the TSS selector, not the LAPIC ID.** Each core has a different
+  TSS loaded, so `str` names the core with a register read
+  (`arch::x86_64::cpu_index()`). The LAPIC ID is an MSR or MMIO read that can
+  exit the VM under KVM or WHPX on every access, and the current process is
+  read dozens of times per syscall. `ltr` is privileged, so user space cannot
+  change the answer. Each AP reads its selector back at boot and the BSP checks
+  it: `smp: TSS propio en 3/3 APs ok`.
+- **`smp::Cpu` holds `current`, `idle` and `resched_pending`.** The 162
+  references in `process.cpp` and both `syscall_dispatch.inc` now go through
+  `this_cpu()`. `g_schedule_cursor` stays global on purpose: it is the cursor
+  of the one shared queue that phase 2 puts under the lock.
+- **Deferred: an idle process per AP.** Only the BSP has one. Whether the idle
+  of an AP is a process like the BSP one (a process slot, an address space and
+  16 KiB of kernel stack each) or a `hlt` loop in the kernel is a phase 2
+  decision, and phase 2 is its first consumer.
+- **Still not needed: kernel stacks per AP.** A parked AP never reaches ring 3,
+  so its `rsp0` is never used.
+
+Verified on 4 cores in both APIC modes, as in phase 0.
+
+The original plan follows.
 
 - **A TSS per CPU.** This is the hard requirement, not a nicety: `rsp0` is
   where the CPU lands on a ring 3 to ring 0 transition, and two cores sharing
@@ -159,16 +190,17 @@ being allowed to schedule.
   `savanxp_handle_timer_interrupt`
   ([`timer.cpp:228`](../arch/x86_64/timer.cpp:228)) and
   `dispatch_external_vector`
-  ([`cpu_init.cpp:268`](../arch/x86_64/cpu_init.cpp:268)).
+  ([`cpu_init.cpp:280`](../arch/x86_64/cpu_init.cpp:280)).
 - **A shared ready queue under the BKL.** `pick_next_runnable()`
-  ([`process.cpp:1142`](../kernel/process.cpp:1142)) must skip processes already
+  ([`process.cpp:1147`](../kernel/process.cpp:1147)) must skip processes already
   running on another core, so `Process` grows an owning-CPU field. Without it,
   two cores resume the same `SavedContext` and the process forks in place.
-  `has_runnable_non_idle()` ([`process.cpp:1133`](../kernel/process.cpp:1133))
+  `has_runnable_non_idle()` ([`process.cpp:1138`](../kernel/process.cpp:1138))
   needs the same treatment, or an idle core spins waking itself for a process
   another core is already running.
-- **A reschedule IPI.** `g_resched_pending`
-  ([`process.cpp:84`](../kernel/process.cpp:84)) currently hands the CPU to a
+- **A reschedule IPI.** `resched_pending`
+  (per core since phase 1, in [`smp::Cpu`](../include/kernel/smp.hpp))
+  currently hands the CPU to a
   woken process on the syscall return path. When the waker and the target are on
   different cores, that becomes an IPI to the core running something less
   urgent — or, in the first cut, nothing at all: the next tick will pick it up,
@@ -265,7 +297,7 @@ being blind to every race introduced. Phases 0-3 need `-smp` variants:
   to hit.
 - **Phase 2's first cut for the reschedule IPI undoes a measured fix.** Every
   synchronous RPC on the desktop — `windowd` writing a request to
-  `compositord` and blocking on the reply — relies on `g_resched_pending`
+  `compositord` and blocking on the reply — relies on `resched_pending`
   handing the CPU to the woken reader on the same core. Before pipe completions
   requested it, that round trip was 99% of the cost of a frame: 205 ms against
   127 µs of GPU work on a 672-pixel frame. After, present got ~470x faster
@@ -275,6 +307,9 @@ being blind to every race introduced. Phases 0-3 need `-smp` variants:
   that regression comes back. Implement the IPI in the same phase, or keep the
   two on one core until it exists, and rerun
   [the `spin` scenario](GRAPHICS_PERF.md#which-workload-measures-what) to check.
+  Phase 1 kept the one-core half intact: `resched_pending` lives in
+  `smp::Cpu`, the waker marks its own core, and that core still reschedules
+  on the syscall return. What phase 2 adds is the cross-core half.
 
 ## Is it worth it?
 

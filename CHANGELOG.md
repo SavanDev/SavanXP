@@ -22,10 +22,11 @@ Cut-off notes:
   input, so the demo presents as fast as the compositor allows — the load that
   shows the display path's real ceiling.
 
-- **The application processors boot and park.** `smp::` starts the cores the
-  bootloader reports, proves the ICR delivers with a ping IPI, and says so at
-  boot (`smp: N cores reportados, M en linea`). Nothing schedules on them yet;
-  `build.ps1 -Smp <n>` exercises that path. Phase 0 of `docs/SMP_ROADMAP.md`.
+- **The application processors boot and park, each with its own TSS.** `smp::`
+  starts the cores the bootloader reports, gives each its own TSS and per-core
+  state (`smp::this_cpu()`), and checks both at boot (`smp: TSS propio en N/M
+  APs ok`, `smp: ping IPI N/M ok`). Nothing schedules on them yet; `build.ps1
+  -Smp <n>` exercises that path. Phases 0-1 of `docs/SMP_ROADMAP.md`.
 
 - **Add or Remove Programs (`/bin/appwiz`), in the System group.** It lists what
   was installed outside the system image — in `/disk/bin` and not in `/bin` —

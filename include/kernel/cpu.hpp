@@ -17,18 +17,60 @@ enum class InterruptEoi : uint8_t {
 void initialize_cpu();
 
 /* --- SMP ---------------------------------------------------------------------
- * Puesta en marcha de los application processors. El BSP corre initialize_cpu();
- * un AP corre ap_initialize_cpu(), que es deliberadamente mas angosto: apunta el
- * core a las tablas que ya armo el BSP y le prepara la FPU, nada mas.
+ * Puesta en marcha de los application processors y estado por core.
  *
- * Dos cosas que un AP no hace, y conviene saber por que:
- *  - `ltr`. Hay un unico TSS; cargarlo en un segundo core prende su bit Busy y
- *    da #GP. Un TSS por core es trabajo de la fase 1 (docs/SMP_ROADMAP.md).
- *  - LINT0 = ExtINT. La regla del APIC es un solo ExtINT por sistema y ese lugar
- *    ya lo tomo el BSP en initialize_local_apic().
+ * El BSP corre initialize_cpu(); un AP corre ap_initialize_cpu(), que es
+ * deliberadamente mas angosto: apunta el core a la GDT y la IDT que ya armo el
+ * BSP y le prepara la FPU, nada mas. Recien cuando sabe que indice le toca
+ * carga su propio TSS, con load_task_register().
+ *
+ * Lo que un AP nunca hace: programar LINT0 = ExtINT. La regla del APIC es un
+ * solo ExtINT por sistema y ese lugar ya lo tomo el BSP en
+ * initialize_local_apic(). Por eso ap_initialize_local_apic() existe aparte.
  */
+constexpr uint32_t kMaxCpus = 32;
+
+// La GDT es una sola para todos los cores; lo que es de cada core es su TSS.
+// Cada TSS tiene su descriptor en la GDT, uno detras de otro a partir de este
+// selector, y en modo largo un descriptor de TSS ocupa dos entradas (16 bytes).
+constexpr uint16_t kTssSelectorBase = 0x28;
+constexpr uint16_t kTssDescriptorSize = 16;
+
+// Indice denso de este core: 0 es el BSP y los APs siguen en orden de arranque.
+//
+// Sale del selector del TSS cargado. Como cada core carga el suyo, `str`
+// identifica al core con una lectura de registro: sin MSR ni MMIO del APIC (que
+// bajo KVM o WHPX pueden salir de la VM en cada acceso, y esto se consulta
+// decenas de veces por syscall) y sin depender de nada que el userland pueda
+// tocar, porque `ltr` es privilegiada.
+//
+// El asm no es volatile a proposito: TR no cambia durante una entrada al
+// kernel, que no es preemptible, asi que el compilador puede fusionar lecturas
+// repetidas dentro de una misma funcion. Antes del primer `ltr` TR vale 0 y
+// esto devuelve 0, que en ese punto del boot es el BSP.
+inline uint32_t cpu_index() {
+    uint16_t selector = 0;
+    asm("str %0" : "=r"(selector));
+    const uint32_t index =
+        static_cast<uint32_t>(selector - kTssSelectorBase) / kTssDescriptorSize;
+    return index < kMaxCpus ? index : 0;
+}
+
+// Lo mismo sin fusionar: lee TR de verdad cada vez. Es para el arranque de un
+// AP, el unico lugar donde TR cambia, y donde una lectura adelantada por encima
+// del `ltr` devolveria el core equivocado.
+inline uint16_t read_task_register() {
+    uint16_t selector = 0;
+    asm volatile("str %0" : "=r"(selector) : : "memory");
+    return selector;
+}
+
 void ap_initialize_cpu();
 bool ap_initialize_local_apic();
+
+// Carga en este core el TSS del core `index`. Un AP lo hace una sola vez, al
+// arrancar; el BSP ya cargo el suyo (el 0) en initialize_cpu().
+void load_task_register(uint32_t index);
 
 // Vectores 64-71: mensajes entre cores. Por ahora solo el ping del arranque.
 constexpr uint8_t kIpiPingVector = 64;

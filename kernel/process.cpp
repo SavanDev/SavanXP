@@ -18,6 +18,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/ps2.hpp"
 #include "kernel/rtc.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
@@ -71,20 +72,23 @@ enum class ImageFailure : uint8_t {
 uint64_t milliseconds_to_ticks(uint64_t milliseconds);
 
 process::Process g_processes[process::kMaxProcesses] = {};
-process::Process* g_current = nullptr;
-process::Process* g_idle = nullptr;
 process::Pipe g_pipes[kMaxPipeCount] = {};
 uint8_t g_pipe_storage[kMaxPipeCount][kPipeCapacity] = {};
 object::IoObject g_io_objects[object::kMaxIoObjects] = {};
 uint32_t g_next_pid = 1;
+// Compartido entre cores a proposito: con la fase 2 es el cursor de la cola de
+// listos unica, que va a vivir bajo el lock grande del kernel.
 size_t g_schedule_cursor = 0;
-// Set when a syscall wakes a waiter other than the caller, so the syscall
-// return path can hand the CPU to the woken thread immediately instead of
-// letting it wait for the next timer tick (preemptive event wakeup).
-bool g_resched_pending = false;
 bool g_ready = false;
 savanxp_system_info g_boot_system_info = {};
 bool g_boot_system_info_ready = false;
+
+// El proceso en curso, el idle y el pedido de replanificar son de cada core y
+// viven en smp::Cpu (kernel/smp.hpp). Este atajo deja que el scheduler y los
+// syscalls digan "el de este core" sin repetir el namespace en cada linea.
+smp::Cpu& this_cpu() {
+    return smp::this_cpu();
+}
 
 uint64_t read_cr3() {
     uint64_t value = 0;
@@ -281,17 +285,18 @@ void switch_to_process(process::Process* target) {
     }
 
     // Cambio real de proceso: guardar el estado FPU/SSE del saliente y restaurar
-    // el del entrante. Si target == g_current el proceso sigue corriendo y su
-    // FPU ya esta viva en registros -- un FXRSTOR aqui la pisaria con una copia
-    // vieja, asi que se omite. El kernel es -mno-sse, no toca la FPU entremedio.
-    if (g_current != target) {
-        if (g_current != nullptr) {
-            arch::x86_64::fpu_save(g_current->fpu_state);
+    // el del entrante. Si target ya es this_cpu().current, el proceso sigue
+    // corriendo y su FPU ya esta viva en registros -- un FXRSTOR aqui la pisaria
+    // con una copia vieja, asi que se omite. El kernel es -mno-sse, no toca la
+    // FPU entremedio.
+    if (this_cpu().current != target) {
+        if (this_cpu().current != nullptr) {
+            arch::x86_64::fpu_save(this_cpu().current->fpu_state);
         }
         arch::x86_64::fpu_restore(target->fpu_state);
     }
 
-    g_current = target;
+    this_cpu().current = target;
     target->state = process::State::running;
     arch::x86_64::set_kernel_stack(target->kernel_stack_base + target->kernel_stack_size);
     write_cr3(target->address_space.pml4_physical);
@@ -426,7 +431,7 @@ bool read_from_process_memory(const process::Process& proc, void* destination, u
         return false;
     }
 
-    if (&proc == g_current) {
+    if (&proc == this_cpu().current) {
         memcpy(destination, reinterpret_cast<const void*>(user_address), count);
         return true;
     }
@@ -446,7 +451,7 @@ bool write_to_process_memory(process::Process& proc, uint64_t user_address, cons
         return false;
     }
 
-    if (&proc == g_current) {
+    if (&proc == this_cpu().current) {
         memcpy(reinterpret_cast<void*>(user_address), source, count);
         return true;
     }
@@ -1149,18 +1154,18 @@ process::Process* pick_next_runnable() {
         }
     }
 
-    if (g_idle != nullptr &&
-        (g_idle->state == process::State::ready || g_idle->state == process::State::running)) {
-        g_schedule_cursor = process_index(g_idle);
-        return g_idle;
+    if (this_cpu().idle != nullptr &&
+        (this_cpu().idle->state == process::State::ready || this_cpu().idle->state == process::State::running)) {
+        g_schedule_cursor = process_index(this_cpu().idle);
+        return this_cpu().idle;
     }
 
     return nullptr;
 }
 
 process::SavedContext* choose_next_context(process::SavedContext* current_context) {
-    if (g_current != nullptr && current_context != nullptr) {
-        g_current->context = current_context;
+    if (this_cpu().current != nullptr && current_context != nullptr) {
+        this_cpu().current->context = current_context;
     }
 
     process::Process* next = pick_next_runnable();
@@ -1187,8 +1192,8 @@ int complete_blocked_read(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
-    if (&proc != g_current) {
-        g_resched_pending = true;
+    if (&proc != this_cpu().current) {
+        this_cpu().resched_pending = true;
     }
     return result;
 }
@@ -1201,8 +1206,8 @@ int complete_blocked_write(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
-    if (&proc != g_current) {
-        g_resched_pending = true;
+    if (&proc != this_cpu().current) {
+        this_cpu().resched_pending = true;
     }
     return result;
 }
@@ -1212,8 +1217,8 @@ int complete_blocked_wait(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
-    if (&proc != g_current) {
-        g_resched_pending = true;
+    if (&proc != this_cpu().current) {
+        this_cpu().resched_pending = true;
     }
     return result;
 }
@@ -1717,7 +1722,7 @@ int kill_process(process::Process& sender, int pid, int signal_number) {
     if (signal_number == SAVANXP_SIGCHLD) {
         return 0;
     }
-    if (target == g_current) {
+    if (target == this_cpu().current) {
         process::terminate_current(128 + signal_number);
         return 0;
     }
@@ -2661,11 +2666,11 @@ void initialize() {
     memset(g_pipe_storage, 0, sizeof(g_pipe_storage));
     memset(g_io_objects, 0, sizeof(g_io_objects));
     memset(&g_boot_system_info, 0, sizeof(g_boot_system_info));
-    g_current = nullptr;
-    g_idle = nullptr;
+    this_cpu().current = nullptr;
+    this_cpu().idle = nullptr;
     g_next_pid = 1;
     g_schedule_cursor = 0;
-    g_resched_pending = false;
+    this_cpu().resched_pending = false;
     g_boot_system_info_ready = false;
 
     subsystem::reset();
@@ -2680,11 +2685,11 @@ bool ready() {
 }
 
 Process* current() {
-    return g_current;
+    return this_cpu().current;
 }
 
 uint32_t current_pid() {
-    return g_current != nullptr ? g_current->pid : 0;
+    return this_cpu().current != nullptr ? this_cpu().current->pid : 0;
 }
 
 Process* find(uint32_t pid) {
@@ -2747,31 +2752,31 @@ bool snapshot_system_info(savanxp_system_info& info) {
 }
 
 bool copy_from_user(void* destination, uint64_t user_address, size_t count) {
-    if (g_current == nullptr) {
+    if (this_cpu().current == nullptr) {
         return false;
     }
-    return read_from_process_memory(*g_current, destination, user_address, count);
+    return read_from_process_memory(*this_cpu().current, destination, user_address, count);
 }
 
 bool copy_to_user(uint64_t user_address, const void* source, size_t count) {
-    if (g_current == nullptr) {
+    if (this_cpu().current == nullptr) {
         return false;
     }
-    return write_to_process_memory(*g_current, user_address, source, count);
+    return write_to_process_memory(*this_cpu().current, user_address, source, count);
 }
 
 bool validate_user_range(uint64_t user_address, size_t count, bool require_write) {
-    if (g_current == nullptr) {
+    if (this_cpu().current == nullptr) {
         return false;
     }
-    return vm::is_user_range_accessible(g_current->address_space, user_address, count, require_write);
+    return vm::is_user_range_accessible(this_cpu().current->address_space, user_address, count, require_write);
 }
 
 int export_handle(object::Header* handle_object, uint32_t access, uint32_t flags) {
-    if (g_current == nullptr || handle_object == nullptr) {
+    if (this_cpu().current == nullptr || handle_object == nullptr) {
         return negative_error(SAVANXP_EBADF);
     }
-    return allocate_fd(*g_current, handle_object, access, flags);
+    return allocate_fd(*this_cpu().current, handle_object, access, flags);
 }
 
 void notify_object_signal(object::Header* handle_object) {
@@ -2784,8 +2789,8 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 }
 
 [[noreturn]] void start_init(const char* path) {
-    g_idle = create_idle_process();
-    if (g_idle == nullptr) {
+    this_cpu().idle = create_idle_process();
+    if (this_cpu().idle == nullptr) {
         panic("scheduler: unable to create idle task");
     }
 
@@ -2802,14 +2807,14 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 }
 
 void terminate_current(int exit_code) {
-    if (g_current == nullptr || g_current->idle) {
+    if (this_cpu().current == nullptr || this_cpu().current->idle) {
         panic("process: invalid current task on exit");
     }
 
-    terminate_process(*g_current, exit_code);
+    terminate_process(*this_cpu().current, exit_code);
 
     SavedContext* next = choose_next_context(nullptr);
-    arch::x86_64::resume_context(next, g_current->address_space.pml4_physical);
+    arch::x86_64::resume_context(next, this_cpu().current->address_space.pml4_physical);
 }
 
 /* Crecimiento por demanda del stack.
@@ -2823,7 +2828,7 @@ void terminate_current(int exit_code) {
  * fault legible en vez de pisar en silencio lo que hubiera abajo.
  */
 bool grow_user_stack(uint64_t fault_address) {
-    process::Process* proc = g_current;
+    process::Process* proc = this_cpu().current;
     uint64_t page_address = 0;
 
     if (proc == nullptr || proc->state == process::State::unused) {
@@ -2843,7 +2848,7 @@ void terminate_current_from_exception(uint8_t vector) {
     console::printf(
         "user: exception #%u killed pid=%u\n",
         static_cast<unsigned>(vector),
-        g_current != nullptr ? g_current->pid : 0
+        this_cpu().current != nullptr ? this_cpu().current->pid : 0
     );
     terminate_current(128 + vector);
 }
@@ -2853,18 +2858,18 @@ void terminate_current_from_exception(uint8_t vector) {
 
 SavedContext* handle_syscall(SavedContext* context) {
     const subsystem::Id id =
-        g_current != nullptr ? g_current->subsystem_id : subsystem::Id::posix;
+        this_cpu().current != nullptr ? this_cpu().current->subsystem_id : subsystem::Id::posix;
     SavedContext* result = subsystem::dispatch(id, context);
 
     // Preemptive event wakeup: if this syscall made another process runnable
     // and we are still the running caller (i.e. the syscall did not itself
     // block), hand the CPU over now so the woken waiter runs without waiting
     // for the next timer tick. Mirrors the SYS_YIELD path.
-    if (g_resched_pending) {
-        g_resched_pending = false;
-        if (g_current != nullptr && g_current->state == State::running) {
-            g_current->context = result;
-            g_current->state = State::ready;
+    if (this_cpu().resched_pending) {
+        this_cpu().resched_pending = false;
+        if (this_cpu().current != nullptr && this_cpu().current->state == State::running) {
+            this_cpu().current->context = result;
+            this_cpu().current->state = State::ready;
             return choose_next_context(result);
         }
     }
@@ -2872,37 +2877,37 @@ SavedContext* handle_syscall(SavedContext* context) {
 }
 
 SavedContext* handle_timer_tick(SavedContext* context) {
-    if (g_current == nullptr) {
+    if (this_cpu().current == nullptr) {
         return context;
     }
 
-    g_current->context = context;
+    this_cpu().current->context = context;
     const uint64_t current_tick = timer::ticks();
     object::poll_timers(current_tick, wake_waiters_for_object);
     wake_sleepers(current_tick);
     wake_wait_timeouts(current_tick);
     // The tick makes its own reschedule decision below, so any wakeups above
     // must not leak a preemptive-resched request into the next syscall return.
-    g_resched_pending = false;
+    this_cpu().resched_pending = false;
 
-    if (g_current->state != State::running) {
+    if (this_cpu().current->state != State::running) {
         return choose_next_context(context);
     }
 
-    if (g_current->idle) {
+    if (this_cpu().current->idle) {
         if (has_runnable_non_idle()) {
-            g_current->state = State::ready;
+            this_cpu().current->state = State::ready;
             return choose_next_context(context);
         }
         return context;
     }
 
-    if (g_current->time_slice > 1) {
-        g_current->time_slice -= 1;
+    if (this_cpu().current->time_slice > 1) {
+        this_cpu().current->time_slice -= 1;
         return context;
     }
 
-    g_current->state = State::ready;
+    this_cpu().current->state = State::ready;
     return choose_next_context(context);
 }
 

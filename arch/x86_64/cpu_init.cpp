@@ -9,7 +9,6 @@ namespace {
 
 constexpr uint16_t kKernelCodeSelector = 0x08;
 constexpr uint16_t kKernelDataSelector = 0x10;
-constexpr uint16_t kTssSelector = 0x28;
 constexpr uint8_t kIrqCount = 16;
 constexpr uint8_t kPicVectorBase = 32;
 constexpr uint8_t kSyscallVector = 0x80;
@@ -112,17 +111,22 @@ struct ExternalHandlerSlot {
     InterruptEoi eoi;
 };
 
-uint64_t g_gdt[7] = {
+// Cinco entradas fijas -- nula, codigo y datos de kernel, datos y codigo de
+// usuario -- y despues un descriptor de TSS por core. La GDT es una sola y la
+// comparten todos los cores; lo que es de cada core es su TSS.
+constexpr uint32_t kGdtFixedEntries = 5;
+static_assert(kGdtFixedEntries * 8 == arch::x86_64::kTssSelectorBase,
+              "el primer TSS tiene que caer justo despues de las entradas fijas");
+
+uint64_t g_gdt[kGdtFixedEntries + 2 * arch::x86_64::kMaxCpus] = {
     0x0000000000000000ULL,
     0x00af9a000000ffffULL,
     0x00af92000000ffffULL,
     0x00aff2000000ffffULL,
     0x00affa000000ffffULL,
-    0,
-    0,
 };
 
-Tss g_tss = {};
+Tss g_tss[arch::x86_64::kMaxCpus] = {};
 GdtDescriptor g_gdt_descriptor = {
     .limit = static_cast<uint16_t>(sizeof(g_gdt) - 1),
     .base = reinterpret_cast<uint64_t>(&g_gdt[0]),
@@ -182,8 +186,8 @@ uint32_t x2apic_msr(uint32_t reg) {
 // distintos: x2APIC via MSR (0x800 + reg/16) y xAPIC via MMIO, donde cada
 // registro es un dword alineado a 16 bytes dentro de la pagina base. El resto
 // del kernel solo usa registros de 32 bits (EOI, SVR, LVT, timer), asi que este
-// par de helpers alcanza; el ICR de 64 bits del x2APIC no tiene consumidores
-// mientras no haya SMP.
+// par de helpers alcanza. El ICR de 64 bits del x2APIC es la excepcion: lo
+// escribe send_ipi() con su propio write_msr.
 void write_local_apic(uint32_t reg, uint32_t value) {
     if (g_local_apic_x2apic) {
         write_msr(x2apic_msr(reg), value);
@@ -311,21 +315,33 @@ void set_idt_gate(uint8_t vector, InterruptHandler handler, uint8_t attributes) 
     };
 }
 
-void install_tss_descriptor() {
-    const uint64_t base = reinterpret_cast<uint64_t>(&g_tss);
-    const uint64_t limit = sizeof(g_tss) - 1;
-    g_gdt[5] = (limit & 0xffffULL) |
+void install_tss_descriptor(uint32_t index) {
+    Tss& tss = g_tss[index];
+    const uint64_t base = reinterpret_cast<uint64_t>(&tss);
+    const uint64_t limit = sizeof(Tss) - 1;
+    const uint32_t entry = kGdtFixedEntries + 2 * index;
+    g_gdt[entry] = (limit & 0xffffULL) |
         ((base & 0xffffffULL) << 16) |
         (0x89ULL << 40) |
         (((limit >> 16) & 0xfULL) << 48) |
         (((base >> 24) & 0xffULL) << 56);
-    g_gdt[6] = base >> 32;
-    g_tss.iomap_base = sizeof(g_tss);
+    g_gdt[entry + 1] = base >> 32;
+    tss.iomap_base = sizeof(Tss);
 }
 
-// Apuntar este core a la GDT del kernel y recargar los selectores. Separado de
-// load_gdt() porque un AP hace exactamente esto y nada mas: el `ltr` de abajo
-// no se puede repetir con un TSS que ya esta cargado en otro core.
+// Todos los descriptores de una vez, desde el BSP y antes de que arranque ningun
+// AP: la GDT queda completa y ningun core la vuelve a escribir. La unica
+// escritura posterior es la del propio procesador, que al hacer `ltr` prende el
+// bit Busy del descriptor que carga -- cada core el suyo, sin carrera.
+void install_tss_descriptors() {
+    for (uint32_t index = 0; index < arch::x86_64::kMaxCpus; ++index) {
+        install_tss_descriptor(index);
+    }
+}
+
+// Apuntar este core a la GDT del kernel y recargar los selectores. Separado del
+// `ltr` porque un AP llega aca antes de saber que indice le toca: carga la GDT,
+// se identifica, y recien entonces carga su propio TSS.
 void load_gdt_without_tss() {
     asm volatile(
         "lgdt (%0)\n\t"
@@ -348,9 +364,15 @@ void load_gdt_without_tss() {
     );
 }
 
+void load_task_register_for(uint32_t index) {
+    const uint16_t selector = static_cast<uint16_t>(
+        arch::x86_64::kTssSelectorBase + index * arch::x86_64::kTssDescriptorSize);
+    asm volatile("ltr %0" : : "r"(selector) : "memory");
+}
+
 void load_gdt() {
     load_gdt_without_tss();
-    asm volatile("ltr %0" : : "r"(kTssSelector) : "memory");
+    load_task_register_for(0); // el BSP es siempre el core 0
 }
 
 void load_idt() {
@@ -621,7 +643,7 @@ void fpu_init_area(void* area) {
 
 void initialize_cpu() {
     disable_interrupts();
-    install_tss_descriptor();
+    install_tss_descriptors();
     load_gdt();
     remap_pic();
     initialize_idt();
@@ -632,8 +654,8 @@ void initialize_cpu() {
 void ap_initialize_cpu() {
     disable_interrupts();
     // Las tablas ya las armo el BSP y desde aca son de solo lectura: este core
-    // solo tiene que apuntarles. Nada de install_tss_descriptor() ni `ltr` (hay
-    // un unico TSS y cargarlo dos veces prende el bit Busy y da #GP), nada de
+    // solo tiene que apuntarles. Su TSS lo carga despues, con
+    // load_task_register(), cuando ya sabe que indice le toca. Nada de
     // remap_pic() (el 8259 es del sistema, no del core) y nada de la sonda de
     // breakpoint, que ya corrio.
     load_gdt_without_tss();
@@ -872,7 +894,15 @@ void acknowledge_pic_irq(uint8_t irq) {
 }
 
 void set_kernel_stack(uint64_t stack_top) {
-    g_tss.rsp0 = stack_top;
+    // El rsp0 de ESTE core: ahi aterriza la proxima transicion de ring 3 a
+    // ring 0 que ocurra aca, y el proceso que la dispara es el que corre aca.
+    g_tss[cpu_index()].rsp0 = stack_top;
+}
+
+void load_task_register(uint32_t index) {
+    if (index < kMaxCpus) {
+        load_task_register_for(index);
+    }
 }
 
 void enable_irq(uint8_t irq) {
