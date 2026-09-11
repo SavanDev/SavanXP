@@ -1345,12 +1345,13 @@ static int present_frame(struct windowd_session *session, const struct windowd_d
     snapshot_pending_retire_sequences(session);
     for (index = 0; index < windowd_dirty_rect_count(dirty); ++index)
     {
-        const struct sx_rect *rect = windowd_dirty_rect_at(dirty, index);
-        if (rect == 0 || rect->width <= 0 || rect->height <= 0)
+        struct sx_rect rect;
+
+        if (!windowd_dirty_rect_at(dirty, index, &rect) || rect.width <= 0 || rect.height <= 0)
         {
             continue;
         }
-        rects[rect_count++] = *rect;
+        rects[rect_count++] = rect;
         if (rect_count >= SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS)
         {
             result = windowd_compositor_present(&session->compositor, rects, rect_count);

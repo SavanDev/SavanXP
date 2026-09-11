@@ -885,6 +885,60 @@ void case_subtract_alone_does_not_over_cover() {
     check(rect_set_area(set) == exact, "y con una sola fuente de danio, el set tampoco");
 }
 
+void case_region_rect_at_enumerates_the_region() {
+    printf("caso: region -- rect_at enumera exactamente lo que cubre\n");
+    // El present del compositor necesita una LISTA de rects, no un clip: manda
+    // cada rect sucio al kernel por separado. Esto pinta que lo que enumera
+    // sx_region_rect_at es la misma area que la region, sin solapes ni huecos.
+    sx_region r;
+    Grid g;
+    sx_region_clear(&r);
+
+    // El caso de arrastrar una ventana: marco viejo U marco nuevo, solapados.
+    const sx_rect old_frame = sx_rect_make(2, 2, 20, 12);
+    const sx_rect new_frame = sx_rect_make(8, 6, 20, 12);
+    sx_region_union_rect(&r, old_frame);
+    sx_region_union_rect(&r, new_frame);
+    g.op_rect(old_frame, 0);
+    g.op_rect(new_frame, 0);
+
+    const size_t count = sx_region_rect_count(&r);
+    check(count > 0, "hay rects para enumerar");
+
+    Grid enumerated;
+    long area = 0;
+    for (size_t i = 0; i < count; ++i) {
+        sx_rect piece;
+        check(sx_region_rect_at(&r, i, &piece) == 1, "cada indice valido devuelve su rect");
+        check(!sx_rect_is_empty(piece), "y ninguno sale vacio");
+        // Solape: si ya estaba marcado, dos rects enumerados se pisan.
+        for (int y = piece.y; y < sx_rect_bottom(piece); ++y) {
+            for (int x = piece.x; x < sx_rect_right(piece); ++x) {
+                check(!enumerated.cell[y][x], "los rects enumerados son disjuntos");
+            }
+        }
+        enumerated.op_rect(piece, 0);
+        area += (long)piece.width * (long)piece.height;
+    }
+
+    check(enumerated.area() == g.area(), "la enumeracion cubre exactamente la region");
+    check(area == (long)g.area(), "y la suma de areas no cuenta un pixel dos veces");
+
+    sx_rect overflow_probe;
+    check(sx_region_rect_at(&r, count, &overflow_probe) == 0, "un indice pasado del final devuelve 0");
+    check(sx_region_rect_at(&r, count + 5, &overflow_probe) == 0, "y sigue devolviendo 0 mas alla");
+
+    sx_region empty;
+    sx_region_clear(&empty);
+    check(sx_region_rect_at(&empty, 0, &overflow_probe) == 0, "una region vacia no enumera nada");
+
+    // La prueba del delito, otra vez: el bounding box cubre de mas.
+    const sx_rect bb = sx_region_bounds(&r);
+    printf("    exacto=%d px en %d rects  bounding box=%d px\n",
+           g.area(), (int)count, bb.width * bb.height);
+    check(bb.width * bb.height > g.area(), "el bounding box -- lo que se presentaba antes -- cubre de mas");
+}
+
 void case_region_beats_rect_set_on_multi_rect_damage() {
     printf("caso: region vs sx_rect_set con danio en varios rects\n");
     // ESTE es el caso donde windowd pierde hoy: cuando el frame trae varios
@@ -1722,6 +1776,7 @@ int main() {
     case_region_overflow_is_a_superset();
     case_subtract_alone_does_not_over_cover();
     case_region_beats_rect_set_on_multi_rect_damage();
+    case_region_rect_at_enumerates_the_region();
 
     case_utf8_decodes_codepoints();
     case_utf8_walks_a_whole_string();

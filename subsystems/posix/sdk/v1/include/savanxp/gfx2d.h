@@ -299,6 +299,12 @@ void sx_region_from_polygon(struct sx_region* region, const struct sx_point* poi
 /* Cantidad de rectangulos que hace falta recorrer para cubrir la region. Sirve
  * para comparar contra el conteo de un sx_rect_set equivalente. */
 size_t sx_region_rect_count(const struct sx_region* region);
+/* Enumera la region como rects disjuntos, en orden de bandas (de arriba hacia
+ * abajo, y de izquierda a derecha dentro de cada banda). Devuelve 0 cuando el
+ * indice se pasa de sx_region_rect_count. Es la contraparte de sx_rect_set.rects
+ * para quien necesita una LISTA de rects y no un clip: el present del compositor,
+ * que manda los rects sucios al kernel de a uno. */
+int sx_region_rect_at(const struct sx_region* region, size_t index, struct sx_rect* out);
 
 void sx_rect_set_clear(struct sx_rect_set* set);
 int sx_rect_set_add(struct sx_rect_set* set, struct sx_rect rect);

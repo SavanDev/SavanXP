@@ -84,7 +84,7 @@ void windowd_dirty_rect_reset(struct windowd_dirty_rect *dirty)
 {
     if (dirty != 0)
     {
-        sx_rect_set_clear(&dirty->rects);
+        sx_region_clear(&dirty->region);
     }
 }
 
@@ -96,7 +96,7 @@ void windowd_dirty_rect_add(struct windowd_dirty_rect *dirty, const struct savan
     {
         return;
     }
-    (void)sx_rect_set_add(&dirty->rects, rect);
+    sx_region_union_rect(&dirty->region, rect);
 }
 
 void windowd_dirty_rect_add_fullscreen(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info)
@@ -127,26 +127,26 @@ void windowd_dirty_rect_add_client(struct windowd_dirty_rect *dirty, const struc
         return;
     }
     rect = client->frame_visible ? windowd_client_frame_rect(client) : windowd_client_surface_rect(client);
-    (void)sx_rect_set_add(&dirty->rects, rect);
+    sx_region_union_rect(&dirty->region, rect);
 }
 
 int windowd_dirty_rect_valid(const struct windowd_dirty_rect *dirty)
 {
-    return dirty != 0 && sx_rect_set_valid(&dirty->rects);
+    return dirty != 0 && !sx_region_is_empty(&dirty->region);
 }
 
 size_t windowd_dirty_rect_count(const struct windowd_dirty_rect *dirty)
 {
-    return dirty != 0 ? dirty->rects.count : 0;
+    return dirty != 0 ? sx_region_rect_count(&dirty->region) : 0;
 }
 
-const struct sx_rect *windowd_dirty_rect_at(const struct windowd_dirty_rect *dirty, size_t index)
+int windowd_dirty_rect_at(const struct windowd_dirty_rect *dirty, size_t index, struct sx_rect *out)
 {
-    if (dirty == 0 || index >= dirty->rects.count)
+    if (dirty == 0)
     {
         return 0;
     }
-    return &dirty->rects.rects[index];
+    return sx_region_rect_at(&dirty->region, index, out);
 }
 
 static void format_clock_text(char *buffer, unsigned int hours, unsigned int minutes)
@@ -423,6 +423,80 @@ static int rect_set_intersects(const struct sx_rect_set *set, struct sx_rect hol
     return 0;
 }
 
+/* El caso que motivo pasar el danio de sx_rect_set a sx_region: arrastrar una
+ * ventana ensucia el marco viejo Y el nuevo, que se solapan. Fusionados por
+ * bounding box eso es el rectangulo que contiene a los dos; exacto es la union,
+ * que aca son 1200 px menos de repintar y de transferir. */
+static long region_total_area(const struct sx_region *region)
+{
+    long area = 0;
+    size_t index;
+    size_t count = sx_region_rect_count(region);
+    struct sx_rect rect;
+
+    for (index = 0; index < count; ++index)
+    {
+        if (sx_region_rect_at(region, index, &rect))
+        {
+            area += (long)rect.width * (long)rect.height;
+        }
+    }
+    return area;
+}
+
+static int windowd_dirty_region_selftest(void)
+{
+    struct windowd_dirty_rect dirty;
+    struct savanxp_fb_info info;
+    const struct sx_rect old_frame = sx_rect_make(10, 10, 100, 60);
+    const struct sx_rect new_frame = sx_rect_make(40, 30, 100, 60);
+    /* 6000 + 6000 - 2800 de solape. El bounding box seria 130x80 = 10400. */
+    const long exact_union = 9200;
+    struct sx_rect bounds;
+
+    memset(&info, 0, sizeof(info));
+    info.width = 1280u;
+    info.height = 800u;
+    info.pitch = info.width * (uint32_t)sizeof(uint32_t);
+    info.bpp = 32u;
+    info.buffer_size = info.pitch * info.height;
+
+    windowd_dirty_rect_reset(&dirty);
+    if (windowd_dirty_rect_valid(&dirty) || windowd_dirty_rect_count(&dirty) != 0)
+    {
+        return 1;
+    }
+
+    windowd_dirty_rect_add(&dirty, &info, old_frame.x, old_frame.y, old_frame.width, old_frame.height);
+    windowd_dirty_rect_add(&dirty, &info, new_frame.x, new_frame.y, new_frame.width, new_frame.height);
+
+    if (!windowd_dirty_rect_valid(&dirty))
+    {
+        return 1;
+    }
+    /* La suma de lo que enumera windowd_dirty_rect_at es el area exacta: eso
+     * valida de una la region Y el enumerador que usa el present. */
+    if (region_total_area(&dirty.region) != exact_union)
+    {
+        return 1;
+    }
+    /* Y el bounding box, que es lo que se presentaba antes, cubre de mas. */
+    bounds = sx_region_bounds(&dirty.region);
+    if ((long)bounds.width * (long)bounds.height <= exact_union)
+    {
+        return 1;
+    }
+
+    /* Un indice pasado del final no devuelve nada, que es de lo que depende el
+     * lazo del present para cortar. */
+    if (sx_region_rect_at(&dirty.region, windowd_dirty_rect_count(&dirty), &bounds))
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
 int windowd_region_selftest(void)
 {
     struct sx_rect_set set;
@@ -469,7 +543,7 @@ int windowd_region_selftest(void)
         return 1;
     }
 
-    return 0;
+    return windowd_dirty_region_selftest();
 }
 
 /* Compositor layers, back-to-front. Each layer carries its screen-space bounds
@@ -806,7 +880,7 @@ void windowd_draw_desktop(
 {
     /* Single-threaded compositor: keep the working sets off the stack. */
     static struct windowd_layer layers[WINDOWD_MAX_COMPOSE_LAYERS];
-    static struct sx_rect_set damage;
+    static struct sx_region damage;
     static struct sx_region visible;
     struct sx_bitmap backbuffer_bitmap;
     struct sx_painter painter;
@@ -822,19 +896,16 @@ void windowd_draw_desktop(
     sx_painter_init(&painter, &backbuffer_bitmap);
 
     /* Damage region for this frame; an empty/invalid dirty set forces a full
-     * repaint (still occlusion-aware: each layer painted once). */
-    sx_rect_set_clear(&damage);
+     * repaint (still occlusion-aware: each layer painted once). El danio ya
+     * viene acumulado como region exacta, asi que alcanza con copiarlo: no hay
+     * que re-unir rect por rect ni se pierde la forma al hacerlo. */
     if (dirty != 0 && windowd_dirty_rect_valid(dirty))
     {
-        size_t i;
-        for (i = 0; i < dirty->rects.count; ++i)
-        {
-            (void)sx_rect_set_add(&damage, dirty->rects.rects[i]);
-        }
+        sx_region_copy(&damage, &dirty->region);
     }
-    if (!sx_rect_set_valid(&damage))
+    else
     {
-        (void)sx_rect_set_add(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
+        sx_region_set_rect(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
     }
 
     layer_count = build_layers(session, cursor_x, cursor_y, layers);
@@ -844,22 +915,14 @@ void windowd_draw_desktop(
     for (layer_index = 0; layer_index < layer_count; ++layer_index)
     {
         const struct windowd_layer *layer = &layers[layer_index];
-        size_t damage_index;
         int front;
 
         /* visible = damage ∩ bounds − (opacas al frente), como region exacta.
          * Antes esto era un sx_rect_set, que fusiona por bounding box: dos
          * pedazos en L se volvian el rectangulo que los contiene y la capa se
          * repintaba sobre area ya tapada. */
-        sx_region_clear(&visible);
-        for (damage_index = 0; damage_index < damage.count; ++damage_index)
-        {
-            struct sx_rect clipped = sx_rect_intersect(damage.rects[damage_index], layer->bounds);
-            if (!sx_rect_is_empty(clipped))
-            {
-                sx_region_union_rect(&visible, clipped);
-            }
-        }
+        sx_region_copy(&visible, &damage);
+        sx_region_intersect_rect(&visible, layer->bounds);
 
         for (front = layer_index + 1; front < layer_count && !sx_region_is_empty(&visible); ++front)
         {

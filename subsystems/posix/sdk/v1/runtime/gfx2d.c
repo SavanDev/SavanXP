@@ -1587,6 +1587,39 @@ size_t sx_region_rect_count(const struct sx_region* region)
     return total;
 }
 
+/* Recorre las bandas acumulando tramos hasta pasar el indice pedido. Lineal en
+ * la cantidad de bandas, que es lo que hay: quien enumere la region entera paga
+ * O(bandas x rects), y con 32 bandas como techo eso no vale un iterador con
+ * estado. */
+int sx_region_rect_at(const struct sx_region* region, size_t index, struct sx_rect* out)
+{
+    size_t seen = 0;
+    int band_index;
+
+    if (out == 0 || sx_region_is_empty(region))
+    {
+        return 0;
+    }
+
+    for (band_index = 0; band_index < region->band_count; ++band_index)
+    {
+        const struct sx_region_band* band = &region->bands[band_index];
+        const size_t span_count = (size_t)band->span_count;
+
+        /* Invariante del lazo: index >= seen, porque solo se sigue de largo
+         * cuando el indice cae mas alla de esta banda. La resta no se va abajo
+         * de cero. */
+        if (index < seen + span_count)
+        {
+            const struct sx_region_span* span = &band->spans[index - seen];
+            *out = sx_rect_make(span->x0, band->y0, span->x1 - span->x0, band->y1 - band->y0);
+            return 1;
+        }
+        seen += span_count;
+    }
+    return 0;
+}
+
 int sx_region_contains_point(const struct sx_region* region, int x, int y)
 {
     int index;

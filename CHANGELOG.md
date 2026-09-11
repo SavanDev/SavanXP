@@ -150,6 +150,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The compositor accumulates damage as an exact region.** `windowd` stopped
+  merging dirty rectangles by bounding box: dragging a window now repaints and
+  presents the ring that changed, not the box around the old and new frames.
+
 - **Launcher icon captions wrap to two lines.** A name that does not fit on one
   line breaks at a space and is centred over two, and only what still does not
   fit is cut with an ellipsis — before, a long caption was clipped at *both*
