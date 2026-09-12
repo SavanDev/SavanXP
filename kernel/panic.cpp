@@ -1,9 +1,11 @@
 #include "kernel/panic.hpp"
 
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 
 [[noreturn]] void panic(const char* message) {
+    boot_screen::finish();
     console::set_framebuffer_console_enabled(true);
     console::write_line("");
     console::write_line("*** PANIC ***");

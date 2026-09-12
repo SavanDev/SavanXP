@@ -224,6 +224,10 @@ Cut-off notes:
   `assets/brand/logo.png` baked in by `tools/gen_boot_logo.py`, the system name
   below it, a sliding block bar, and the step names now in English.
 
+- **The splash bar keeps moving through the long boot steps.** It advances on
+  `monotonic_ns()`, now calibrated at the start of boot by
+  `timer::calibrate_monotonic()` instead of during the ACPI bring-up.
+
 - **All repository documentation is in English, and the README leads with a
   quickstart.** The Linux requirements move to `docs/BUILD_LINUX.md`,
   `docs/README.md` indexes the design docs, and `CLAUDE.md` points at

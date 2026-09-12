@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/timer.hpp"
 #include "shared/version.h"
 
 namespace boot_screen {
@@ -23,15 +24,21 @@ constexpr uint32_t kBlockHighlight = 0x007fd3f5U;
 #include "kernel/console_font_unifont.inc"
 #include "boot_logo.h"
 
-// Cuantos pasos tiene el ciclo de la barra. El porcentaje de progreso se mapea
-// a este ciclo (dos vueltas completas de 0 a 100) para que los bloques avancen
-// con el arranque real y no con un timer, que a esta altura todavia no anima
-// nada.
-constexpr uint32_t kMarqueePhases = 24;
+// Pasos del ciclo de la barra. A 20 pasos por segundo, una vuelta completa
+// dura poco mas de un segundo, como la de XP.
+constexpr uint32_t kMarqueeSteps = 24;
+constexpr uint64_t kStepNs = 50000000ull;
 
 boot::FramebufferInfo g_framebuffer = {};
 bool g_ready = false;
 bool g_painted = false;
+// Lo que sigue lo comparten el hilo de arranque y el handler del timer, que
+// puede caer en cualquier instruccion del medio: `g_drawing` es la exclusion
+// entre los dos (un solo core, alcanza con que el handler vea el flag) y
+// `g_active` lo apaga cuando el splash deja de ser dueño de la pantalla.
+volatile bool g_active = false;
+volatile bool g_drawing = false;
+volatile uint32_t g_phase = 0;
 
 size_t text_length(const char* text) {
     size_t length = 0;
@@ -67,6 +74,27 @@ void fill_rect(uint64_t x, uint64_t y, uint64_t width, uint64_t height, uint32_t
             plot_pixel(column, row, colour);
         }
     }
+}
+
+// Igual que fill_rect pero recortado a una ventana horizontal, y con la x en
+// con signo: los bloques de la barra nacen y mueren fuera de la canaleta.
+void fill_rect_clipped(int64_t x, uint64_t y, uint64_t width, uint64_t height,
+                       uint64_t clip_x, uint64_t clip_width, uint32_t colour) {
+    int64_t left = x;
+    int64_t right = x + static_cast<int64_t>(width);
+    const int64_t clip_left = static_cast<int64_t>(clip_x);
+    const int64_t clip_right = clip_left + static_cast<int64_t>(clip_width);
+
+    if (left < clip_left) {
+        left = clip_left;
+    }
+    if (right > clip_right) {
+        right = clip_right;
+    }
+    if (right <= left) {
+        return;
+    }
+    fill_rect(static_cast<uint64_t>(left), y, static_cast<uint64_t>(right - left), height, colour);
 }
 
 // Rectangulo con las cuatro esquinas comidas en un pixel: alcanza para que la
@@ -203,33 +231,59 @@ Layout compute_layout() {
     return layout;
 }
 
-// Los tres bloques de XP: avanzan juntos por la canaleta y vuelven a empezar.
-void draw_marquee(const Layout& layout, uint32_t progress_percent) {
+// La canaleta no cambia entre pasos: se pinta una sola vez y despues solo se
+// repinta la franja por donde corren los bloques.
+void draw_trough(const Layout& layout) {
+    const uint64_t scale = layout.scale;
+    fill_round_rect(layout.bar_x, layout.bar_y, layout.bar_width, layout.bar_height, kTroughEdge);
+    fill_round_rect(layout.bar_x + (2 * scale), layout.bar_y + (2 * scale),
+                    layout.bar_width - (4 * scale), layout.bar_height - (4 * scale), kTroughFill);
+}
+
+// Los tres bloques de XP: entran por la izquierda, cruzan la canaleta y salen
+// por la derecha. `phase` es la posicion dentro del ciclo, no el progreso: la
+// barra dice "sigo vivo", y quien dice en que anda el arranque es el texto.
+void draw_marquee(const Layout& layout, uint32_t phase) {
     const uint64_t scale = layout.scale;
     const uint64_t inner_x = layout.bar_x + (2 * scale);
-    const uint64_t inner_y = layout.bar_y + (2 * scale);
     const uint64_t inner_width = layout.bar_width - (4 * scale);
-    const uint64_t inner_height = layout.bar_height - (4 * scale);
+    const uint64_t band_y = layout.bar_y + (3 * scale);
+    const uint64_t band_height = layout.bar_height - (6 * scale);
 
-    fill_round_rect(layout.bar_x, layout.bar_y, layout.bar_width, layout.bar_height, kTroughEdge);
-    fill_round_rect(inner_x, inner_y, inner_width, inner_height, kTroughFill);
+    fill_rect(inner_x, band_y, inner_width, band_height, kTroughFill);
 
     const uint64_t block_width = 12 * scale;
     const uint64_t block_gap = 6 * scale;
-    const uint64_t group_width = (3 * block_width) + (2 * block_gap);
-    if (inner_width <= group_width) {
+    if (inner_width <= block_width) {
         return;
     }
 
-    const uint32_t phase = ((progress_percent * 2u * kMarqueePhases) / 100u) % kMarqueePhases;
-    const uint64_t travel = inner_width - group_width;
-    const uint64_t offset = (travel * phase) / (kMarqueePhases - 1);
+    // El grupo arranca pegado al borde izquierdo y se va recortando contra el
+    // derecho. Que la fase 0 lo muestre entero y adentro importa: mientras el
+    // reloj todavia no corre, esa es la imagen fija que se ve.
+    const int64_t offset = static_cast<int64_t>((inner_width * phase) / kMarqueeSteps);
 
-    for (uint64_t index = 0; index < 3; ++index) {
-        const uint64_t x = inner_x + offset + (index * (block_width + block_gap));
-        fill_rect(x, inner_y + scale, block_width, inner_height - (2 * scale), kBlock);
-        fill_rect(x, inner_y + scale, block_width, scale, kBlockHighlight);
+    for (int64_t index = 0; index < 3; ++index) {
+        const int64_t x = static_cast<int64_t>(inner_x) + offset +
+            (index * static_cast<int64_t>(block_width + block_gap));
+        fill_rect_clipped(x, band_y, block_width, band_height, inner_x, inner_width, kBlock);
+        fill_rect_clipped(x, band_y, block_width, scale, inner_x, inner_width, kBlockHighlight);
     }
+}
+
+// Posicion dentro del ciclo de la barra: ~20 pasos por segundo. El reloj es el
+// TSC y no el contador de ticks porque buena parte del arranque corre con las
+// interrupciones deshabilitadas, y ahi los ticks no avanzan; el TSC si. Los
+// ticks quedan de respaldo para antes de que el TSC este calibrado.
+uint32_t marquee_phase() {
+    const uint64_t elapsed_ns = timer::monotonic_ns();
+    if (elapsed_ns != 0) {
+        return static_cast<uint32_t>((elapsed_ns / kStepNs) % kMarqueeSteps);
+    }
+
+    const uint32_t frequency = timer::frequency_hz();
+    const uint64_t ticks_per_step = frequency >= 20u ? (frequency / 20u) : 1u;
+    return static_cast<uint32_t>((timer::ticks() / ticks_per_step) % kMarqueeSteps);
 }
 
 } // namespace
@@ -243,20 +297,21 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         framebuffer.pitch >= framebuffer.width * sizeof(uint32_t) &&
         framebuffer.bpp == 32;
     g_painted = false;
+    g_active = g_ready;
+    g_drawing = false;
+    g_phase = 0;
 }
 
 bool ready() {
     return g_ready;
 }
 
-void show(uint32_t progress_percent, const char* status) {
-    if (!g_ready) {
+void show(const char* status) {
+    if (!g_ready || !g_active) {
         return;
     }
-    if (progress_percent > 100u) {
-        progress_percent = 100u;
-    }
 
+    g_drawing = true;
     const Layout layout = compute_layout();
 
     // El logo y el wordmark se pintan una sola vez: repintarlos en cada paso
@@ -273,13 +328,36 @@ void show(uint32_t progress_percent, const char* status) {
         draw_text(g_framebuffer.width - version_width - (16 * layout.scale),
                   g_framebuffer.height - (SX_CONSOLE_GLYPH_H * layout.scale) - (12 * layout.scale),
                   SAVANXP_VERSION_STRING, layout.scale, kMuted);
+        draw_trough(layout);
         g_painted = true;
     }
 
-    draw_marquee(layout, progress_percent);
+    g_phase = marquee_phase();
+    draw_marquee(layout, g_phase);
 
     fill_rect(0, layout.status_y, g_framebuffer.width, SX_CONSOLE_GLYPH_H * layout.scale, kBackground);
     draw_centered_text(layout.status_y, status != nullptr ? status : "Starting", layout.scale, kMuted);
+    g_drawing = false;
+}
+
+void animate() {
+    if (!g_ready || !g_active || !g_painted || g_drawing) {
+        return;
+    }
+
+    const uint32_t phase = marquee_phase();
+    if (phase == g_phase) {
+        return;
+    }
+
+    g_drawing = true;
+    g_phase = phase;
+    draw_marquee(compute_layout(), phase);
+    g_drawing = false;
+}
+
+void finish() {
+    g_active = false;
 }
 
 } // namespace boot_screen

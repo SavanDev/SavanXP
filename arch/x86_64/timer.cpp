@@ -1,5 +1,6 @@
 #include "kernel/timer.hpp"
 
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
@@ -94,6 +95,10 @@ namespace
 
         for (uint32_t spin = 0; spin < 5000000u; ++spin)
         {
+            // Calibrar el APIC cuesta dos bordes de segundo del RTC, casi dos
+            // segundos de espera activa y el tramo mas largo del arranque:
+            // sin esto la barra del splash se congela justo ahi.
+            boot_screen::animate();
             if (!rtc::read_time(&current) || current.valid == 0)
             {
                 continue;
@@ -256,6 +261,11 @@ namespace timer
         const uint64_t entry_ns = monotonic_ns();
 
         g_ticks = g_ticks + 1;
+        // La barra del splash avanza con el reloj y no con los pasos del
+        // arranque: entre paso y paso pueden pasar segundos, y una barra
+        // clavada es justo lo que parece un cuelgue. No hace nada una vez
+        // que el splash suelta la pantalla.
+        boot_screen::animate();
         device::service_background();
         input::poll();
         if (g_backend == Backend::local_apic)

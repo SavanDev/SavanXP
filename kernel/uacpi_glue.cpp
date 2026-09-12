@@ -22,6 +22,7 @@ extern "C" {
 #include <stdint.h>
 
 #include "kernel/acpi.hpp"
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/heap.hpp"
@@ -54,6 +55,9 @@ inline uint64_t rdtsc() {
 }
 
 void calibrate_tsc() {
+    if (g_tsc_per_us != 0) {
+        return; // ya calibrado: el arranque lo pide antes que uACPI
+    }
     constexpr uint16_t kPitCount = 11932; // ~10ms @ 1193182 Hz
     const uint8_t saved = in8(0x61);
     // Gate ch2 on (bit0=1), speaker off (bit1=0).
@@ -393,7 +397,16 @@ uacpi_status uacpi_kernel_pci_write32(uacpi_handle h, uacpi_size off, uacpi_u32 
 uacpi_status uacpi_kernel_pci_write8 (uacpi_handle h, uacpi_size off, uacpi_u8  v){ auto d=pci_unpack(h); pci::write_config_u8 (d.bus,d.slot,d.func,off,v); return UACPI_STATUS_OK; }
 
 // ======================= Heap =======================
-void* uacpi_kernel_alloc(uacpi_size size) { return heap::allocate(size); }
+// Cargar el namespace es el tramo mas largo del arranque (segundos bajo TCG)
+// y no vuelve al kernel por ningun otro lado: sin interrupciones no hay tick
+// que anime el splash y sin log no hay linea que lo pulse. Reservar memoria
+// es lo unico que uACPI hace todo el tiempo mientras construye el arbol, asi
+// que de ahi sale el pulso. animate() sale por derecha sola si la fase del
+// reloj no cambio.
+void* uacpi_kernel_alloc(uacpi_size size) {
+    boot_screen::animate();
+    return heap::allocate(size);
+}
 void* uacpi_kernel_alloc_zeroed(uacpi_size size) {
     void* p = heap::allocate(size);
     if (p) { for (uacpi_size i = 0; i < size; ++i) reinterpret_cast<uint8_t*>(p)[i] = 0; }
@@ -541,6 +554,10 @@ uacpi_status uacpi_kernel_wait_for_work_completion(void) {
 } // extern "C"
 
 namespace timer {
+void calibrate_monotonic() {
+    calibrate_tsc();
+}
+
 uint64_t monotonic_ns() {
     return uacpi_kernel_get_nanoseconds_since_boot();
 }

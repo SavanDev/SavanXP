@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
@@ -248,6 +249,9 @@ bool acquire_graphics_session(uint32_t pid) {
     reset_mouse_queue();
     virtio_input::begin_graphics_session();
     console::set_framebuffer_console_enabled(false);
+    // A partir de aca la pantalla es del cliente grafico: el splash del
+    // arranque tiene que dejar de repintar su barra por debajo.
+    boot_screen::finish();
     return true;
 }
 

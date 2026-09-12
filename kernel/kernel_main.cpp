@@ -121,38 +121,43 @@ namespace
 [[noreturn]] void kernel_main(const boot::BootInfo &boot_info)
 {
     arch::x86_64::initialize_cpu();
+    // Reloj monotono antes que nada: hasta que este calibrado el kernel no
+    // tiene forma de medir el tiempo (los ticks necesitan interrupciones, y
+    // recien se habilitan bastante mas adelante), y el splash no puede animar
+    // su barra durante todo ese tramo.
+    timer::calibrate_monotonic();
 
     boot_screen::initialize(boot_info.framebuffer);
     if (boot_screen::ready())
     {
         console::set_framebuffer_console_enabled(false);
-        boot_screen::show(4, "Preparing CPU");
+        boot_screen::show("Preparing CPU");
     }
 
     console::printf("%s booting...\n", SAVANXP_DISPLAY_NAME);
 
-    boot_screen::show(12, "Initializing physical memory");
+    boot_screen::show("Initializing physical memory");
     memory::initialize(boot_info);
     if (!memory::ready())
     {
         panic("pmm: no usable memory");
     }
 
-    boot_screen::show(20, "Initializing heap");
+    boot_screen::show("Initializing heap");
     heap::initialize();
     if (!heap::ready())
     {
         panic("heap: bootstrap failed");
     }
 
-    boot_screen::show(28, "Enabling virtual memory");
+    boot_screen::show("Enabling virtual memory");
     vm::initialize(boot_info);
     if (!vm::ready())
     {
         panic("vmm: bootstrap failed");
     }
 
-    boot_screen::show(36, "Detecting firmware");
+    boot_screen::show("Detecting firmware");
     acpi::initialize(boot_info);
 
     tty::initialize();
@@ -170,10 +175,12 @@ namespace
     acpi::start_sci();
     // Traer uACPI hasta cargar/inicializar el namespace (interpreta el AML de la
     // DSDT). Todavia no toma los eventos: convive con acpi::start_sci.
+    boot_screen::show("Starting ACPI");
     uacpi_glue::bringup(boot_info.acpi_rsdp_address, boot_info.hhdm_offset);
     uacpi_glue::dump_pci_routing();
+    boot_screen::show("Scanning PCI bus");
     pci::initialize();
-    boot_screen::show(46, "Initializing input");
+    boot_screen::show("Initializing input");
     virtio_input::initialize(boot_info.framebuffer);
     ps2::initialize();
     process::initialize();
@@ -184,10 +191,10 @@ namespace
     {
         panic("subsystem: registro de dispatch incompleto");
     }
-    boot_screen::show(56, "Loading userland");
+    boot_screen::show("Loading userland");
     vfs::initialize(boot_info.initramfs_address, static_cast<size_t>(boot_info.initramfs_size));
     device::initialize();
-    boot_screen::show(68, "Preparing display");
+    boot_screen::show("Preparing display");
     // Elegir el backend de display: cada driver se registra y bind_best corre
     // sus probes por prioridad, quedandose con el primero que reclame el
     // hardware (virtio-gpu si el probe PCI lo encontro, si no el framebuffer
@@ -206,7 +213,7 @@ namespace
     }
     gpu_device::initialize();
     ui::initialize(boot_info.framebuffer);
-    boot_screen::show(80, "Initializing devices");
+    boot_screen::show("Initializing devices");
     pcspeaker::initialize();
     power::initialize();
     clipboard::initialize();
@@ -287,7 +294,7 @@ namespace
         }
     }
     console::write("\n");
-    boot_screen::show(90, "Mounting storage");
+    boot_screen::show("Mounting storage");
     // Registro de sistemas de archivos: fs:: decide QUE device se monta y
     // DONDE, y cada driver solo dice si reconoce el formato. mount_any recorre
     // los block devices (particiones incluidas) y se queda con el primero que
@@ -356,6 +363,6 @@ namespace
         disk_mounted ? "mounted" : "offline");
     console::write_line("");
 
-    boot_screen::show(100, "Starting session");
+    boot_screen::show("Starting session");
     process::start_init("/bin/init");
 }

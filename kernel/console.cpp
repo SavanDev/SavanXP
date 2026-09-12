@@ -1,3 +1,4 @@
+#include "kernel/boot_screen.hpp"
 #include "kernel/console.hpp"
 
 #include <stddef.h>
@@ -409,6 +410,11 @@ void write_char(char character) {
         serial_write_char('\r');
         serial_write_char('\n');
         newline();
+        // Buena parte del arranque corre con las interrupciones
+        // deshabilitadas: ahi no hay tick que anime el splash, y el unico
+        // pulso regular que le queda al kernel es su propio log. No hace
+        // nada una vez que el splash suelta la pantalla.
+        boot_screen::animate();
         return;
     }
 
