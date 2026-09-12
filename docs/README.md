@@ -30,6 +30,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   scheduler, TLB shootdown, and why splitting that lock should wait for
   threads.
 
+- [`NETWORKING.md`](NETWORKING.md) — what the TCP path guarantees and what it
+  deliberately does not: retransmission with backoff, reassembly by extents,
+  the advertised window, why the retransmission clock is the poll path, and the
+  fault injector that makes any of it testable.
+
 - [`GRAPHICS_PERF.md`](GRAPHICS_PERF.md) — how the graphics pipeline is
   measured and what it costs: every field of the `windowd-stats` line, which
   load measures the display path and which only measures the harness, the

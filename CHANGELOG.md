@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **TCP survives a network that loses and reorders.** Segments are kept and
+  resent with backoff (`SYN` included), out-of-order data is reassembled, and a
+  dead connection now reports `ECONNRESET`/`ETIMEDOUT` instead of a clean end of
+  file. New `build.ps1 tcp-smoke`, `NET_IOC_GET_TCP_STATS` and
+  `NET_IOC_SET_TCP_FAULT`. [What it guarantees](docs/NETWORKING.md).
+
 - **The mouse wheel works.** PS/2 negotiates IntelliMouse 4-byte packets (`ps2:
   mouse wheel enabled`), virtio reads `REL_WHEEL`, and the new `wheel` field of
   `savanxp_gui_pointer_event` scrolls lists, text views and scrollbars under the

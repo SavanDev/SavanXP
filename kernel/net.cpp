@@ -30,6 +30,19 @@ struct UdpPacket {
     uint8_t data[1024];
 };
 
+// Tope de payload por segmento y ranuras de reensamblado. Cuatro tramos
+// alcanzan para el caso normal -- una sola perdida deja un solo agujero --; si
+// se llenan, los datos se descartan y el peer los retransmite.
+constexpr size_t kTcpSegmentMax = 1024;
+constexpr size_t kTcpOutOfOrderSlots = 4;
+
+// Tramo de bytes recibidos fuera de orden, en secuencias absolutas.
+// start == end marca la ranura libre.
+struct TcpRange {
+    uint32_t start;
+    uint32_t end;
+};
+
 struct Socket {
     bool in_use;
     bool bound;
@@ -42,10 +55,34 @@ struct Socket {
     TcpState tcp_state;
     bool connected;
     bool fin_received;
+    // La conexion murio sin cierre limpio: RST del peer, o retransmisiones
+    // agotadas. Va aparte de fin_received porque el lector tiene que ver un
+    // error y no un fin de archivo -- si no, un cuerpo HTTP cortado a la mitad
+    // pasa por completo y el error aparece mucho despues, en el parser.
+    bool aborted;
+    uint32_t abort_status; // savanxp_net_status con el que murio la conexion
     uint32_t send_unacked;
     uint32_t send_next;
     uint32_t recv_next;
     uint32_t initial_sequence;
+    // Un solo segmento en vuelo (stop-and-wait). Guardar la copia es lo que
+    // habilita retransmitir: antes se mandaba una vez y se avanzaba send_next,
+    // asi que un segmento perdido dejaba el stream desincronizado para siempre
+    // mientras el socket seguia diciendo que estaba conectado.
+    bool tx_pending;
+    uint8_t tx_flags;
+    uint32_t tx_sequence;
+    uint32_t tx_seq_length; // payload, o 1 si el segmento lleva SYN o FIN
+    uint32_t tx_length;     // bytes utiles de tx_buffer
+    uint64_t tx_deadline_ms;
+    uint32_t tx_rto_ms;
+    uint32_t tx_retries;
+    uint8_t tx_buffer[kTcpSegmentMax];
+    // Ventana anunciada en el ultimo segmento. Si llego a cero hay que mandar
+    // una actualizacion cuando la app libere lugar, o los dos lados se quedan
+    // esperando al otro.
+    uint16_t advertised_window;
+    TcpRange out_of_order[kTcpOutOfOrderSlots];
     size_t packet_queue_head;
     size_t packet_queue_size;
     UdpPacket queue[16];
@@ -70,7 +107,22 @@ constexpr uint16_t kPingIdentifier = 0x5358;
 constexpr size_t kMaxSockets = 32;
 constexpr uint16_t kEphemeralPortStart = 49152;
 constexpr uint16_t kEphemeralPortEnd = 65535;
-constexpr uint16_t kTcpWindowSize = 4096;
+// Retransmision: el RTO inicial esta pensado para LAN y para slirp, con
+// backoff exponencial y un tope de reintentos. La suma da ~12 s antes de dar
+// la conexion por muerta.
+constexpr uint32_t kTcpInitialRtoMs = 300;
+constexpr uint32_t kTcpMaxRtoMs = 4000;
+constexpr uint32_t kTcpMaxRetries = 6;
+// Cuanto retiene el inyector de fallas un segmento antes de soltarlo si no
+// llega otro atras. Sin este tope, invertir un par de segmentos traba una
+// conversacion de ida y vuelta: el segundo segmento nunca llega porque el
+// primero es el que lo provoca.
+constexpr uint32_t kTcpReorderHoldMs = 40;
+// Umbral de la actualizacion de ventana. Anunciar de a poco es peor que no
+// anunciar: el peer manda segmentos diminutos y el ancho de banda se va en
+// cabeceras (silly window syndrome). Un MSS de Ethernet es la unidad minima
+// que vale la pena ofrecer.
+constexpr size_t kTcpMinUsefulWindow = 1460;
 constexpr uint8_t kTcpFlagFin = 0x01;
 constexpr uint8_t kTcpFlagSyn = 0x02;
 constexpr uint8_t kTcpFlagRst = 0x04;
@@ -176,6 +228,29 @@ bool g_ping_complete = false;
 bool g_ready = false;
 net::Socket g_sockets[kMaxSockets] = {};
 uint16_t g_next_ephemeral_port = kEphemeralPortStart;
+savanxp_net_tcp_stats g_tcp_stats = {};
+savanxp_net_tcp_fault g_tcp_fault = {};
+uint32_t g_tcp_tx_counter = 0;
+uint32_t g_tcp_rx_counter = 0;
+uint32_t g_tcp_reorder_counter = 0;
+
+// Segmento retenido por el inyector de reordenamiento. Uno solo alcanza: lo
+// que se quiere reproducir es el par invertido, que es el caso que el
+// reensamblado tiene que resolver.
+struct ReorderStash {
+    bool in_use;
+    // Se esta entregando el retenido justo ahora. Entregar puede mandar un ACK,
+    // mandar puede esperar un ARP, y esperar un ARP vuelve a pollear el NIC:
+    // sin esta marca, ese camino anidado pisa el buffer que se esta por leer o
+    // entrega el mismo segmento dos veces.
+    bool releasing;
+    uint64_t deadline_ms;
+    uint32_t source_ip;
+    size_t length;
+    uint8_t data[1600];
+};
+
+ReorderStash g_tcp_reorder = {};
 constexpr bool kLogNet = false;
 
 constexpr uint32_t kConfiguredIpv4 = (10u << 24) | (0u << 16) | (2u << 8) | 15u;
@@ -229,6 +304,25 @@ uint16_t be16_to_host(uint16_t value) {
 
 uint32_t be32_to_host(uint32_t value) {
     return byteswap32(value);
+}
+
+// Aritmetica de numeros de secuencia (RFC 1982). Comparar con < y > directo
+// se rompe cuando el contador de 32 bits da la vuelta, y a 1 KiB por segmento
+// eso pasa a los 4 GiB transferidos, no "nunca".
+bool seq_lt(uint32_t left, uint32_t right) {
+    return static_cast<int32_t>(left - right) < 0;
+}
+
+bool seq_leq(uint32_t left, uint32_t right) {
+    return static_cast<int32_t>(left - right) <= 0;
+}
+
+bool seq_gt(uint32_t left, uint32_t right) {
+    return static_cast<int32_t>(left - right) > 0;
+}
+
+bool seq_geq(uint32_t left, uint32_t right) {
+    return static_cast<int32_t>(left - right) >= 0;
 }
 
 bool same_subnet(uint32_t left, uint32_t right) {
@@ -587,15 +681,130 @@ size_t tcp_rx_free(const net::Socket& socket) {
     return sizeof(socket.rx_buffer) - socket.rx_size;
 }
 
-bool enqueue_tcp_bytes(net::Socket& socket, const uint8_t* payload, size_t length) {
-    if (payload == nullptr || length > tcp_rx_free(socket)) {
-        return false;
-    }
+// Ventana que se le anuncia al peer: el lugar libre real del buffer de
+// recepcion. Antes era una constante de 4096 sobre un buffer de 8192, asi que
+// el numero mentia en las dos direcciones -- invitaba a mandar cuando ya no
+// entraba nada, y desperdiciaba la mitad cuando si entraba.
+uint16_t tcp_window(const net::Socket& socket) {
+    const size_t free_space = tcp_rx_free(socket);
+    return free_space > 65535u ? 65535u : static_cast<uint16_t>(free_space);
+}
+
+// Escribe los bytes en el ring en la posicion que les toca por numero de
+// secuencia, este el tramo en orden o no. El offset se mide desde recv_next,
+// que es donde termina lo que ya se puede leer.
+void tcp_store_at(net::Socket& socket, uint32_t offset, const uint8_t* data, size_t length) {
+    const size_t base = (socket.rx_head + socket.rx_size + offset) % sizeof(socket.rx_buffer);
     for (size_t index = 0; index < length; ++index) {
-        socket.rx_buffer[(socket.rx_head + socket.rx_size + index) % sizeof(socket.rx_buffer)] = payload[index];
+        socket.rx_buffer[(base + index) % sizeof(socket.rx_buffer)] = data[index];
     }
-    socket.rx_size += length;
-    return true;
+}
+
+// Despues de que recv_next avanza, los tramos fuera de orden que quedaron
+// pegados pasan a ser legibles. Se repite hasta que no haya mas: rellenar un
+// agujero puede encadenar varios tramos de golpe.
+void tcp_absorb_ranges(net::Socket& socket) {
+    bool progress = true;
+    while (progress) {
+        progress = false;
+        for (auto& range : socket.out_of_order) {
+            if (range.start == range.end) {
+                continue;
+            }
+            if (seq_leq(range.end, socket.recv_next)) {
+                range.start = 0;
+                range.end = 0;
+                continue;
+            }
+            if (seq_leq(range.start, socket.recv_next)) {
+                socket.rx_size += range.end - socket.recv_next;
+                socket.recv_next = range.end;
+                range.start = 0;
+                range.end = 0;
+                progress = true;
+            }
+        }
+    }
+}
+
+// Anota [start, end) fusionandolo con los tramos que toque. Fusionar es lo que
+// permite que cuatro ranuras alcancen: sin eso, cada segmento fuera de orden
+// gastaria una.
+bool tcp_record_range(net::Socket& socket, uint32_t start, uint32_t end) {
+    bool merged = true;
+    while (merged) {
+        merged = false;
+        for (auto& range : socket.out_of_order) {
+            if (range.start == range.end) {
+                continue;
+            }
+            if (seq_leq(start, range.end) && seq_leq(range.start, end)) {
+                if (seq_lt(range.start, start)) {
+                    start = range.start;
+                }
+                if (seq_gt(range.end, end)) {
+                    end = range.end;
+                }
+                range.start = 0;
+                range.end = 0;
+                merged = true;
+            }
+        }
+    }
+
+    for (auto& range : socket.out_of_order) {
+        if (range.start == range.end) {
+            range.start = start;
+            range.end = end;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Camino de datos de un segmento recibido. Recorta lo que ya se entrego y lo
+// que no entra en la ventana, deja el resto en su lugar del ring y avanza
+// recv_next solo cuando el tramo empieza justo donde toca.
+void tcp_receive_data(net::Socket& socket, uint32_t sequence, const uint8_t* data, size_t length) {
+    if (data == nullptr || length == 0) {
+        return;
+    }
+
+    // Se recorta en vez de descartar el segmento entero: una retransmision del
+    // peer suele traer bytes ya vistos y bytes nuevos en el mismo segmento.
+    if (seq_lt(sequence, socket.recv_next)) {
+        const uint32_t already_seen = socket.recv_next - sequence;
+        ++g_tcp_stats.rx_duplicates;
+        if (already_seen >= length) {
+            return;
+        }
+        data += already_seen;
+        length -= already_seen;
+        sequence = socket.recv_next;
+    }
+
+    const size_t free_space = tcp_rx_free(socket);
+    if (free_space == 0 || seq_geq(sequence, socket.recv_next + static_cast<uint32_t>(free_space))) {
+        ++g_tcp_stats.rx_out_of_window;
+        return;
+    }
+
+    const uint32_t offset = sequence - socket.recv_next;
+    if (offset + length > free_space) {
+        length = free_space - offset;
+    }
+
+    tcp_store_at(socket, offset, data, length);
+
+    if (offset == 0) {
+        socket.rx_size += length;
+        socket.recv_next += static_cast<uint32_t>(length);
+        tcp_absorb_ranges(socket);
+        return;
+    }
+
+    ++g_tcp_stats.rx_out_of_order;
+    (void)tcp_record_range(socket, sequence, sequence + static_cast<uint32_t>(length));
 }
 
 size_t dequeue_tcp_bytes(net::Socket& socket, uint8_t* output, size_t length) {
@@ -653,7 +862,7 @@ bool send_tcp_segment(
     uint32_t sequence_number,
     uint32_t acknowledgement_number
 ) {
-    if (payload_length > 1024) {
+    if (payload_length > net::kTcpSegmentMax) {
         return false;
     }
 
@@ -664,7 +873,7 @@ bool send_tcp_segment(
         return false;
     }
 
-    uint8_t frame[14 + 20 + 20 + 1024] = {};
+    uint8_t frame[14 + 20 + 20 + net::kTcpSegmentMax] = {};
     auto* ethernet = reinterpret_cast<EthernetHeader*>(frame);
     auto* ipv4 = reinterpret_cast<Ipv4Header*>(frame + sizeof(EthernetHeader));
     auto* tcp = reinterpret_cast<TcpHeader*>(frame + sizeof(EthernetHeader) + sizeof(Ipv4Header));
@@ -691,7 +900,9 @@ bool send_tcp_segment(
     tcp->acknowledgement_number = host_to_be32(acknowledgement_number);
     tcp->data_offset_reserved = static_cast<uint8_t>(5u << 4);
     tcp->flags = flags;
-    tcp->window_size = host_to_be16(kTcpWindowSize);
+    const uint16_t window = tcp_window(socket);
+    socket.advertised_window = window;
+    tcp->window_size = host_to_be16(window);
     tcp->checksum = 0;
     tcp->urgent_pointer = 0;
 
@@ -701,7 +912,112 @@ bool send_tcp_segment(
 
     tcp->checksum = host_to_be16(compute_transport_checksum(kConfiguredIpv4, destination_ip, kIpProtocolTcp, tcp, sizeof(TcpHeader) + payload_length));
     ipv4->checksum = host_to_be16(compute_checksum(ipv4, sizeof(Ipv4Header)));
+
+    ++g_tcp_stats.segments_sent;
+    // Solo entran al sorteo los segmentos que consumen espacio de secuencia:
+    // datos, SYN y FIN. Perder un ACK puro prueba la retransmision del OTRO
+    // lado, no la propia, y como los ACK son la mayoria del trafico, incluirlos
+    // dejaba el periodo gastado en ellos y la retransmision propia sin tocar.
+    const bool consumes_sequence = payload_length != 0 || (flags & (kTcpFlagSyn | kTcpFlagFin)) != 0;
+    if (consumes_sequence && g_tcp_fault.drop_tx_every != 0 &&
+        (++g_tcp_tx_counter % g_tcp_fault.drop_tx_every) == 0) {
+        // Se arma el frame entero y se tira aca a proposito: para el resto del
+        // stack tiene que ser indistinguible de un segmento que salio y se
+        // perdio en el cable.
+        return true;
+    }
     return nic::transmit(frame, sizeof(EthernetHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader) + payload_length);
+}
+
+// Manda el segmento y lo deja guardado para poder repetirlo. seq_length es
+// cuanto avanza el espacio de secuencias: el payload, o 1 cuando el segmento
+// lleva SYN o FIN y no lleva datos.
+bool tcp_arm_segment(
+    net::Socket& socket,
+    uint8_t flags,
+    const uint8_t* payload,
+    size_t length,
+    uint32_t sequence,
+    uint32_t seq_length
+) {
+    if (length > net::kTcpSegmentMax) {
+        return false;
+    }
+    if (length != 0 && payload != nullptr) {
+        memcpy(socket.tx_buffer, payload, length);
+    }
+    socket.tx_flags = flags;
+    socket.tx_sequence = sequence;
+    socket.tx_seq_length = seq_length;
+    socket.tx_length = static_cast<uint32_t>(length);
+    socket.tx_pending = true;
+    socket.tx_retries = 0;
+    socket.tx_rto_ms = kTcpInitialRtoMs;
+    socket.tx_deadline_ms = monotonic_ms() + kTcpInitialRtoMs;
+    return send_tcp_segment(socket, flags, socket.tx_buffer, length, sequence, socket.recv_next);
+}
+
+// Un ACK que cubra todo el segmento en vuelo lo da por entregado y libera la
+// ranura de retransmision.
+void tcp_complete_send(net::Socket& socket, uint32_t acknowledgement) {
+    if (!socket.tx_pending) {
+        return;
+    }
+    if (seq_geq(acknowledgement, socket.tx_sequence + socket.tx_seq_length)) {
+        socket.tx_pending = false;
+        socket.tx_length = 0;
+        socket.tx_seq_length = 0;
+        socket.tx_retries = 0;
+        socket.tx_rto_ms = kTcpInitialRtoMs;
+    }
+}
+
+void tcp_abort(net::Socket& socket, uint32_t status) {
+    socket.abort_status = status;
+    socket.connected = false;
+    socket.tcp_state = net::TcpState::closed;
+    socket.aborted = true;
+    // Tambien se marca el FIN para que los que estan esperando en poll() o en
+    // un read() bloqueante se despierten; el error lo distingue aborted.
+    socket.fin_received = true;
+    socket.tx_pending = false;
+    ++g_tcp_stats.aborts;
+    set_status(status);
+}
+
+// Vencio el RTO del segmento en vuelo: se repite con backoff exponencial hasta
+// el tope de reintentos, y ahi la conexion se da por muerta.
+// Traduce la muerte de la conexion al errno que ve la app: se perdio el peer
+// (ETIMEDOUT) o el peer corto (ECONNRESET). Los dos son errores; devolver fin
+// de archivo, como se hacia antes, hace pasar por completo un cuerpo truncado.
+int tcp_abort_error(const net::Socket& socket) {
+    return negative_error(
+        socket.abort_status == SAVANXP_NET_STATUS_TCP_TIMEOUT ? SAVANXP_ETIMEDOUT : SAVANXP_ECONNRESET
+    );
+}
+
+void tcp_service_socket(net::Socket& socket) {
+    if (!socket.in_use || socket.type != SAVANXP_SOCK_STREAM || !socket.tx_pending) {
+        return;
+    }
+
+    const uint64_t now_ms = monotonic_ms();
+    if (now_ms < socket.tx_deadline_ms) {
+        return;
+    }
+    if (socket.tx_retries >= kTcpMaxRetries) {
+        tcp_abort(socket, SAVANXP_NET_STATUS_TCP_TIMEOUT);
+        return;
+    }
+
+    ++socket.tx_retries;
+    ++g_tcp_stats.retransmits;
+    const uint32_t next_rto = socket.tx_rto_ms * 2u;
+    socket.tx_rto_ms = next_rto > kTcpMaxRtoMs ? kTcpMaxRtoMs : next_rto;
+    socket.tx_deadline_ms = now_ms + socket.tx_rto_ms;
+    // El ACK viaja actualizado: la retransmision aprovecha para confirmar todo
+    // lo que se recibio mientras tanto.
+    (void)send_tcp_segment(socket, socket.tx_flags, socket.tx_buffer, socket.tx_length, socket.tx_sequence, socket.recv_next);
 }
 
 bool send_udp_datagram(
@@ -832,11 +1148,7 @@ void handle_udp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
     (void)deliver_udp_payload(source_ip, source_port, kConfiguredIpv4, destination_port, udp_payload, udp_payload_length);
 }
 
-void handle_tcp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
-    if (length < sizeof(TcpHeader)) {
-        return;
-    }
-
+void deliver_tcp(uint32_t source_ip, const uint8_t* payload, size_t length) {
     const auto* tcp = reinterpret_cast<const TcpHeader*>(payload);
     const size_t header_length = static_cast<size_t>((tcp->data_offset_reserved >> 4) * 4u);
     if (header_length < sizeof(TcpHeader) || header_length > length) {
@@ -845,7 +1157,6 @@ void handle_tcp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
 
     const uint16_t destination_port = be16_to_host(tcp->destination_port);
     const uint16_t source_port = be16_to_host(tcp->source_port);
-    const uint32_t source_ip = be32_to_host(ipv4.source_ip);
     const uint32_t sequence_number = be32_to_host(tcp->sequence_number);
     const uint32_t acknowledgement_number = be32_to_host(tcp->acknowledgement_number);
     const uint8_t flags = tcp->flags;
@@ -860,14 +1171,20 @@ void handle_tcp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
         return;
     }
 
-    if ((flags & kTcpFlagAck) != 0 && acknowledgement_number > socket->send_unacked) {
+    // Un ACK solo vale si reconoce algo nuevo y nada que no hayamos mandado:
+    // sin el segundo control, un segmento viejo o forjado adelanta send_unacked
+    // y da por entregado lo que sigue en vuelo.
+    if ((flags & kTcpFlagAck) != 0 &&
+        seq_gt(acknowledgement_number, socket->send_unacked) &&
+        seq_leq(acknowledgement_number, socket->send_next)) {
         socket->send_unacked = acknowledgement_number;
+    }
+    if ((flags & kTcpFlagAck) != 0) {
+        tcp_complete_send(*socket, acknowledgement_number);
     }
 
     if ((flags & kTcpFlagRst) != 0) {
-        socket->connected = false;
-        socket->tcp_state = net::TcpState::closed;
-        socket->fin_received = true;
+        tcp_abort(*socket, SAVANXP_NET_STATUS_TCP_RESET);
         return;
     }
 
@@ -889,24 +1206,83 @@ void handle_tcp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
         return;
     }
 
-    uint32_t consumed_sequence = sequence_number;
+    bool needs_ack = false;
     if (tcp_payload_length != 0) {
-        if (sequence_number == socket->recv_next && enqueue_tcp_bytes(*socket, tcp_payload, tcp_payload_length)) {
-            socket->recv_next += static_cast<uint32_t>(tcp_payload_length);
-            consumed_sequence = socket->recv_next;
-            (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
-        }
+        tcp_receive_data(*socket, sequence_number, tcp_payload, tcp_payload_length);
+        // Se contesta siempre, incluso cuando el segmento vino fuera de orden o
+        // repetido: ese ACK duplicado es justo lo que dispara el fast
+        // retransmit del otro lado en vez de hacerlo esperar su propio RTO.
+        needs_ack = true;
     }
 
     if ((flags & kTcpFlagFin) != 0) {
-        if (consumed_sequence == socket->recv_next) {
+        // El FIN ocupa el lugar del byte que sigue al payload del segmento. Si
+        // todavia falta algo antes, no se acepta: cerrar con un agujero sin
+        // rellenar perderia datos en silencio.
+        const uint32_t fin_sequence = sequence_number + static_cast<uint32_t>(tcp_payload_length);
+        if (fin_sequence == socket->recv_next) {
             socket->recv_next += 1;
             socket->fin_received = true;
             socket->tcp_state = net::TcpState::close_wait;
             set_status(SAVANXP_NET_STATUS_TCP_FIN);
-            (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
+        }
+        needs_ack = true;
+    }
+
+    if (needs_ack) {
+        (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
+    }
+}
+
+// Punto de entrada del TCP desde IPv4. Aca vive el inyector de fallas y nada
+// mas: la logica del protocolo esta toda en deliver_tcp, que no sabe que el
+// inyector existe.
+void handle_tcp(const Ipv4Header& ipv4, const uint8_t* payload, size_t length) {
+    if (length < sizeof(TcpHeader)) {
+        return;
+    }
+
+    const uint32_t source_ip = be32_to_host(ipv4.source_ip);
+    ++g_tcp_stats.segments_received;
+
+    if (g_tcp_fault.drop_rx_every != 0 && (++g_tcp_rx_counter % g_tcp_fault.drop_rx_every) == 0) {
+        return;
+    }
+
+    if (g_tcp_fault.reorder_rx_every != 0) {
+        if (g_tcp_reorder.in_use) {
+            // Ya habia uno retenido: entra primero el que acaba de llegar y el
+            // viejo sale atras, que es la inversion que se queria provocar.
+            g_tcp_reorder.in_use = false;
+            g_tcp_reorder.releasing = true;
+            deliver_tcp(source_ip, payload, length);
+            g_tcp_reorder.releasing = false;
+            deliver_tcp(g_tcp_reorder.source_ip, g_tcp_reorder.data, g_tcp_reorder.length);
+            return;
+        }
+        if (g_tcp_reorder.releasing) {
+            deliver_tcp(source_ip, payload, length);
+            return;
+        }
+        // Solo se retienen segmentos con datos. Invertir un ACK vacio no
+        // ejercita nada del reensamblado y hace que el periodo se gaste en el
+        // trafico de control, que es la mayoria: el test quedaba dependiendo de
+        // cuantos ACKs sueltos hubiera pasado justo antes.
+        const auto* header = reinterpret_cast<const TcpHeader*>(payload);
+        const size_t header_length = static_cast<size_t>((header->data_offset_reserved >> 4) * 4u);
+        const bool carries_data = header_length >= sizeof(TcpHeader) && header_length < length;
+        if (carries_data && length <= sizeof(g_tcp_reorder.data) &&
+            (++g_tcp_reorder_counter % g_tcp_fault.reorder_rx_every) == 0) {
+            g_tcp_reorder.in_use = true;
+            g_tcp_reorder.deadline_ms = monotonic_ms() + kTcpReorderHoldMs;
+            g_tcp_reorder.source_ip = source_ip;
+            g_tcp_reorder.length = length;
+            memcpy(g_tcp_reorder.data, payload, length);
+            return;
         }
     }
+
+    deliver_tcp(source_ip, payload, length);
 }
 
 void handle_ipv4(const EthernetHeader& ethernet, const uint8_t* payload, size_t length) {
@@ -966,6 +1342,43 @@ const nic::Events kNicEvents = {
     &on_frame,
     &set_status,
 };
+
+// Suelta el segmento retenido por el inyector de reordenamiento cuando se
+// vencio la espera y no llego otro atras.
+void tcp_release_stash() {
+    if (!g_tcp_reorder.in_use || g_tcp_reorder.releasing || monotonic_ms() < g_tcp_reorder.deadline_ms) {
+        return;
+    }
+    g_tcp_reorder.in_use = false;
+    g_tcp_reorder.releasing = true;
+    deliver_tcp(g_tcp_reorder.source_ip, g_tcp_reorder.data, g_tcp_reorder.length);
+    g_tcp_reorder.releasing = false;
+}
+
+// El reloj de la retransmision es este pump y no una interrupcion: el kernel no
+// tiene callbacks periodicos, asi que el RTO se revisa en cada lugar donde el
+// stack ya hacia polling del NIC (los loops de connect/read/write y el poll()
+// que llama poll_fds). La consecuencia a tener presente es que un socket con
+// datos sin confirmar no retransmite mientras nadie del proceso entre al
+// stack; los caminos bloqueantes entran solos, y los no bloqueantes lo hacen
+// por poll().
+bool g_in_pump = false;
+
+void net_pump() {
+    if (g_in_pump) {
+        // Reentrada desde un send que espera un ARP: mover el NIC alcanza, el
+        // barrido de sockets ya esta corriendo mas abajo en la pila.
+        nic::poll_receive();
+        return;
+    }
+    g_in_pump = true;
+    nic::poll_receive();
+    tcp_release_stash();
+    for (auto& socket : g_sockets) {
+        tcp_service_socket(socket);
+    }
+    g_in_pump = false;
+}
 
 
 // Deja en out_mac la MAC de target_ip, resolviendola por ARP si hace falta. La
@@ -1060,6 +1473,35 @@ int net_ioctl(uint64_t request, uint64_t argument) {
             info.ping_requests = g_ping_requests;
             info.ping_timeouts = g_ping_timeouts;
             return process::copy_to_user(argument, &info, sizeof(info)) ? 0 : negative_error(SAVANXP_EINVAL);
+        }
+        case NET_IOC_GET_TCP_STATS: {
+            if (!process::validate_user_range(argument, sizeof(savanxp_net_tcp_stats), true)) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            return process::copy_to_user(argument, &g_tcp_stats, sizeof(g_tcp_stats)) ? 0 : negative_error(SAVANXP_EINVAL);
+        }
+        case NET_IOC_SET_TCP_FAULT: {
+            if (!process::validate_user_range(argument, sizeof(savanxp_net_tcp_fault), false)) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            savanxp_net_tcp_fault fault = {};
+            if (!process::copy_from_user(&fault, argument, sizeof(fault))) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            g_tcp_fault = fault;
+            g_tcp_tx_counter = 0;
+            g_tcp_rx_counter = 0;
+            g_tcp_reorder_counter = 0;
+            // Apagar el inyector con un segmento retenido lo perderia, y el
+            // test que apaga las fallas al terminar veria un agujero que ya no
+            // se puede explicar.
+            if (g_tcp_reorder.in_use && !g_tcp_reorder.releasing) {
+                g_tcp_reorder.in_use = false;
+                g_tcp_reorder.releasing = true;
+                deliver_tcp(g_tcp_reorder.source_ip, g_tcp_reorder.data, g_tcp_reorder.length);
+                g_tcp_reorder.releasing = false;
+            }
+            return 0;
         }
         case NET_IOC_UP:
             return bring_up() ? 0 : negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
@@ -1219,12 +1661,19 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     socket->recv_next = 0;
     socket->connected = false;
     socket->fin_received = false;
+    socket->aborted = false;
+    socket->abort_status = 0;
+    socket->tx_pending = false;
+    socket->advertised_window = 0;
+    memset(socket->out_of_order, 0, sizeof(socket->out_of_order));
     socket->rx_head = 0;
     socket->rx_size = 0;
     socket->tcp_state = net::TcpState::syn_sent;
     set_status(SAVANXP_NET_STATUS_TCP_SYN_SENT);
 
-    if (!send_tcp_segment(*socket, kTcpFlagSyn, nullptr, 0, socket->initial_sequence, 0)) {
+    // El SYN sale por la ranura de retransmision como cualquier otro segmento:
+    // antes se mandaba una sola vez y un SYN perdido era un connect fallido.
+    if (!tcp_arm_segment(*socket, kTcpFlagSyn, nullptr, 0, socket->initial_sequence, 1)) {
         socket->tcp_state = net::TcpState::closed;
         return negative_error(SAVANXP_EIO);
     }
@@ -1232,9 +1681,12 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     const uint32_t effective_timeout = timeout_ms != 0 ? timeout_ms : 3000u;
     const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (!socket->connected) {
-        nic::poll_receive();
-        if (socket->tcp_state == net::TcpState::closed && socket->fin_received) {
-            return negative_error(SAVANXP_EIO);
+        net_pump();
+        if (socket->connected) {
+            break;
+        }
+        if (socket->aborted) {
+            return tcp_abort_error(*socket);
         }
         const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
         if (now_ms - start_ms >= effective_timeout) {
@@ -1311,7 +1763,7 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
 
     const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
     while (true) {
-        nic::poll_receive();
+        net_pump();
 
         UdpPacket packet = {};
         if (dequeue_udp_packet(*socket, packet)) {
@@ -1344,19 +1796,54 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
     }
 }
 
+// Espera a que se confirme el segmento en vuelo. El tope esta por encima del
+// presupuesto de retransmision a proposito: el que tiene que cortar es el abort
+// del RTO, que sabe por que murio la conexion, y no un timeout ciego.
+int wait_for_send_window(Socket& socket) {
+    const uint64_t start_ms = monotonic_ms();
+    while (socket.tx_pending) {
+        net_pump();
+        if (!socket.tx_pending) {
+            break;
+        }
+        if (socket.aborted) {
+            return tcp_abort_error(socket);
+        }
+        if (monotonic_ms() - start_ms >= 20000u) {
+            return negative_error(SAVANXP_ETIMEDOUT);
+        }
+        wait_for_tick();
+    }
+    return 0;
+}
+
 int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
-    if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || !socket->connected || count == 0) {
+    if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || count == 0) {
         return count == 0 ? 0 : negative_error(SAVANXP_EBADF);
+    }
+    // Lo que ya esta en el buffer se entrega aunque la conexion se haya caido:
+    // son bytes que llegaron y se confirmaron antes del cierre.
+    if (!socket->connected && socket->rx_size == 0) {
+        if (socket->aborted) {
+            return tcp_abort_error(*socket);
+        }
+        if (socket->fin_received) {
+            return 0;
+        }
+        return negative_error(SAVANXP_EBADF);
     }
     if (!process::validate_user_range(user_buffer, count, true)) {
         return negative_error(SAVANXP_EINVAL);
     }
 
-    uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+    const uint64_t start_ms = monotonic_ms();
     while (socket->rx_size == 0) {
-        nic::poll_receive();
+        net_pump();
         if (socket->rx_size != 0) {
             break;
+        }
+        if (socket->aborted) {
+            return tcp_abort_error(*socket);
         }
         if (socket->fin_received) {
             return 0;
@@ -1364,59 +1851,85 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonbloc
         if (nonblocking) {
             return negative_error(SAVANXP_EAGAIN);
         }
-        const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
-        if (now_ms - start_ms >= 5000u) {
+        if (monotonic_ms() - start_ms >= 5000u) {
             return negative_error(SAVANXP_ETIMEDOUT);
         }
         wait_for_tick();
     }
 
-    uint8_t scratch[1024] = {};
+    uint8_t scratch[net::kTcpSegmentMax] = {};
     const size_t to_copy = count < sizeof(scratch) ? count : sizeof(scratch);
+    const uint16_t window_before = socket->advertised_window;
     const size_t copied = dequeue_tcp_bytes(*socket, scratch, to_copy);
     if (!process::copy_to_user(user_buffer, scratch, copied)) {
         return negative_error(SAVANXP_EINVAL);
+    }
+
+    // La app se atraso, la ventana anunciada quedo abajo de un segmento util y
+    // este read acaba de hacer lugar. Hay que avisarlo: el peer no manda porque
+    // la ventana que conoce es chica, y la ventana no crece sola en el aire --
+    // los dos lados se quedan esperando al otro. Se espera a tener un MSS libre
+    // para no invitar a mandar segmentos diminutos.
+    const size_t free_after = tcp_rx_free(*socket);
+    if (socket->connected &&
+        window_before < kTcpMinUsefulWindow &&
+        free_after >= kTcpMinUsefulWindow &&
+        free_after > window_before) {
+        ++g_tcp_stats.window_updates;
+        (void)send_tcp_segment(*socket, kTcpFlagAck, nullptr, 0, socket->send_next, socket->recv_next);
     }
     return static_cast<int>(copied);
 }
 
 int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
-    if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || !socket->connected) {
+    if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (socket->aborted) {
+        return tcp_abort_error(*socket);
+    }
+    if (!socket->connected) {
         return negative_error(SAVANXP_EBADF);
     }
     if (count == 0) {
         return 0;
     }
-    if (count > 1024 || !process::validate_user_range(user_buffer, count, false)) {
+    if (count > net::kTcpSegmentMax || !process::validate_user_range(user_buffer, count, false)) {
         return negative_error(SAVANXP_EINVAL);
     }
 
-    uint8_t payload[1024] = {};
+    // Hay un solo segmento en vuelo por socket: mientras el anterior no este
+    // confirmado, la ranura de retransmision no se puede reusar.
+    if (socket->tx_pending) {
+        if (nonblocking) {
+            return negative_error(SAVANXP_EAGAIN);
+        }
+        const int drained = wait_for_send_window(*socket);
+        if (drained < 0) {
+            return drained;
+        }
+    }
+
+    uint8_t payload[net::kTcpSegmentMax] = {};
     if (!process::copy_from_user(payload, user_buffer, count)) {
         return negative_error(SAVANXP_EINVAL);
     }
 
-    const uint32_t sequence_number = socket->send_next;
-    if (!send_tcp_segment(*socket, kTcpFlagAck | kTcpFlagPsh, payload, count, sequence_number, socket->recv_next)) {
+    if (!tcp_arm_segment(*socket, kTcpFlagAck | kTcpFlagPsh, payload, count, socket->send_next, static_cast<uint32_t>(count))) {
         return negative_error(SAVANXP_EIO);
     }
     socket->send_next += static_cast<uint32_t>(count);
 
+    // Volver enseguida en modo no bloqueante ahora es honesto: el segmento
+    // quedo guardado, asi que si se pierde lo repite el RTO en vez de
+    // desaparecer sin que nadie se entere.
     if (nonblocking) {
         return static_cast<int>(count);
     }
 
-    const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
-    while (socket->send_unacked < socket->send_next) {
-        nic::poll_receive();
-        if (socket->send_unacked >= socket->send_next) {
-            break;
-        }
-        const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
-        if (now_ms - start_ms >= 3000u) {
-            return negative_error(SAVANXP_ETIMEDOUT);
-        }
-        wait_for_tick();
+    const int flushed = wait_for_send_window(*socket);
+    if (flushed < 0) {
+        return flushed;
     }
     return static_cast<int>(count);
 }
@@ -1442,7 +1955,9 @@ bool socket_can_write(const Socket* socket) {
         return true;
     }
     if (socket->type == SAVANXP_SOCK_STREAM) {
-        return socket->connected && !socket->fin_received;
+        // Sin ranura libre no se puede aceptar otra escritura, asi que POLLOUT
+        // tiene que esperar al ACK del segmento anterior.
+        return socket->connected && !socket->fin_received && !socket->tx_pending;
     }
     return false;
 }
@@ -1475,7 +1990,7 @@ bool present() {
 }
 
 void poll() {
-    nic::poll_receive();
+    net_pump();
 }
 
 } // namespace net

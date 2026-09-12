@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -171,6 +171,7 @@ $UserPrograms = @(
     @{ Name = "udptest"; Source = "subsystems/posix/userland/udptest.c"; Test = $true },
     @{ Name = "nettest"; Source = "subsystems/posix/userland/nettest.c"; Test = $true },
     @{ Name = "tcpget"; Source = "subsystems/posix/userland/tcpget.c" },
+    @{ Name = "tcptest"; Source = "subsystems/posix/userland/tcptest.c"; Test = $true },
     @{ Name = "beep"; Source = "subsystems/posix/userland/beep.c" },
     @{ Name = "audiotest"; Source = "subsystems/posix/userland/audiotest.c"; Test = $true },
     @{ Name = "compositord"; Source = "subsystems/posix/userland/compositord.c" },
@@ -1530,6 +1531,56 @@ function Run-NetSmokeQemu {
     Run-AutomationQemu -AutomationCommand "netsmoke" -SuccessToken "NET SMOKE PASS" -FailureToken "NET SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Harness del TCP propiamente dicho (subsystems/posix/userland/tcptest.c). El
+# net-smoke de arriba mira el driver; este mira el protocolo, y lo hace con el
+# inyector de fallas del kernel encendido: perdida de segmentos en las dos
+# direcciones e inversion de pares, que es lo unico que ejercita la
+# retransmision y el reensamblado. Ni slirp ni una LAN pierden paquetes cuando
+# uno los necesita.
+#
+# El otro extremo corre en el host, en la loopback: el guest lo alcanza por
+# 10.0.2.2, la direccion con la que el user-net de QEMU representa al host, asi
+# que no hace falta red de verdad ni tocar el firewall.
+function Run-TcpSmokeQemu {
+    $serverScript = Join-Path $ToolRoot "tcp_echo_server.ps1"
+    if (-not (Test-Path $serverScript)) {
+        throw "Falta $serverScript."
+    }
+
+    $portListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $portListener.Start()
+    $port = ([System.Net.IPEndPoint]$portListener.LocalEndpoint).Port
+    $portListener.Stop()
+
+    $job = Start-Job -FilePath $serverScript -ArgumentList $port
+    try {
+        # Sondeo previo: si el servidor no llego a escuchar, el sintoma seria un
+        # connect fallido adentro del guest y la culpa parece del stack.
+        $ready = $false
+        foreach ($attempt in 1..50) {
+            try {
+                $probe = [System.Net.Sockets.TcpClient]::new("127.0.0.1", $port)
+                $probe.Close()
+                $ready = $true
+                break
+            } catch {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+        if (-not $ready) {
+            throw "tcp_echo_server.ps1 no llego a escuchar en 127.0.0.1:$port."
+        }
+        Write-Host "tcp-smoke: servidor de eco en 127.0.0.1:$port"
+
+        Run-AutomationQemu -AutomationCommand "tcptest $port" -SuccessToken "TCP SMOKE PASS" -FailureToken "TCP SMOKE FAIL" -TimeoutMinutes 5
+    }
+    finally {
+        Stop-Job $job -ErrorAction SilentlyContinue | Out-Null
+        Receive-Job $job -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        Remove-Job $job -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+}
+
 # Harness headless del camino de punto flotante (sdk/floatsmoke). Es el unico
 # consumidor del switch -Sse hasta ahora, y valida las tres capas que ese switch
 # destraba: el ABI de SSE, la libm de runtime/math.c y -- lo que no se puede
@@ -1777,6 +1828,9 @@ switch ($Command) {
     }
     "net-smoke" {
         Run-NetSmokeQemu
+    }
+    "tcp-smoke" {
+        Run-TcpSmokeQemu
     }
     "kbd-smoke" {
         Run-KbdSmokeQemu

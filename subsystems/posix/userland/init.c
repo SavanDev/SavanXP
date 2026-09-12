@@ -70,6 +70,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "netsmoke")) {
         return "NET SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "tcptest")) {
+        return "TCP SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "wavinfo")) {
         return "FFMPEG SMOKE";
     }
@@ -103,6 +106,7 @@ static int run_automation_spec(const char* spec) {
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
+    const char* tcptest_argv[] = {"/disk/bin/tcptest", 0, 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
     const char* nativehello_argv[] = {"/disk/bin/nativehello", 0};
@@ -189,6 +193,18 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "kbdtest") == 0 || strcmp(spec, "kbd-selftest") == 0) {
             path = "/disk/bin/kbdtest";
             argv = kbdtest_argv;
+            argc = 2;
+        } else if (text_starts_with(spec, "tcptest ")) {
+            /* El puerto no se puede hornear en el binario: lo elige el host al
+             * levantar tools/tcp_echo_server.ps1. */
+            const char* port = skip_spaces(spec + strlen("tcptest"));
+            if (port[0] == '\0') {
+                printf("%s FAIL missing port\n", label);
+                return 1;
+            }
+            path = "/disk/bin/tcptest";
+            tcptest_argv[1] = port;
+            argv = tcptest_argv;
             argc = 2;
         } else if (text_starts_with(spec, "gputest --soak ")) {
             const char* iterations = skip_spaces(spec + strlen("gputest --soak"));

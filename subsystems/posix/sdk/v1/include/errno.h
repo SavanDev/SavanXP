@@ -24,6 +24,7 @@
 #define ENOSYS 38
 #define ELOOP 40
 #define ENOTEMPTY 39
+#define ECONNRESET 104
 #define ETIMEDOUT 110
 
 /* Los que faltaban. No es cosmetico: libavutil/error.c arma su tabla de

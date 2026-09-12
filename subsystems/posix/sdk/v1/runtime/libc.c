@@ -651,6 +651,8 @@ const char* error_string(int error_code) {
             return "argument list too long";
         case SAVANXP_ECHILD:
             return "no child process";
+        case SAVANXP_ECONNRESET:
+            return "connection reset by peer";
         case SAVANXP_ETIMEDOUT:
             return "timed out";
         default:

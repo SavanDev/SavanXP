@@ -107,6 +107,7 @@ enum savanxp_error_code {
     SAVANXP_ENOTEMPTY = 39,
     SAVANXP_ECHILD = 10,
     SAVANXP_E2BIG = 7,
+    SAVANXP_ECONNRESET = 104,
     SAVANXP_ETIMEDOUT = 110,
 };
 
@@ -276,6 +277,8 @@ enum savanxp_net_ioctl {
     NET_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 1),
     NET_IOC_UP = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 2),
     NET_IOC_PING = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 3),
+    NET_IOC_GET_TCP_STATS = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 4),
+    NET_IOC_SET_TCP_FAULT = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_NET, 5),
 };
 
 enum savanxp_net_status {
@@ -297,6 +300,7 @@ enum savanxp_net_status {
     SAVANXP_NET_STATUS_TCP_ESTABLISHED = 15,
     SAVANXP_NET_STATUS_TCP_FIN = 16,
     SAVANXP_NET_STATUS_TCP_TIMEOUT = 17,
+    SAVANXP_NET_STATUS_TCP_RESET = 18,
 };
 
 enum savanxp_pcspk_ioctl {
@@ -869,6 +873,36 @@ struct savanxp_net_ping_request {
     uint16_t sequence;
     uint16_t payload_size;
     uint64_t result_ptr;
+};
+
+/* Contadores del camino TCP. Son la prueba observable de que la retransmision
+ * y el reensamblado corrieron de verdad: un stack que solo funcione contra una
+ * red perfecta los deja en cero. */
+struct savanxp_net_tcp_stats {
+    uint32_t segments_sent;
+    uint32_t segments_received;
+    uint32_t retransmits;
+    uint32_t rx_out_of_order;
+    uint32_t rx_duplicates;
+    uint32_t rx_out_of_window;
+    uint32_t window_updates;
+    uint32_t aborts;
+};
+
+/* Inyeccion de fallas del camino TCP, para los tests. Cada campo es un
+ * periodo: 0 desactiva, N > 0 afecta a uno de cada N segmentos. Sin esto no hay
+ * forma de ejercitar la retransmision, porque ni slirp ni una LAN de
+ * laboratorio pierden paquetes cuando uno los necesita.
+ *
+ * drop_tx_every cuenta solo los segmentos que consumen espacio de secuencia
+ * (datos, SYN, FIN) y reorder_rx_every solo los que traen datos: son los que
+ * ejercitan la retransmision propia y el reensamblado. Contar tambien los ACK
+ * puros, que son la mayoria del trafico, deja el periodo gastado en ellos. */
+struct savanxp_net_tcp_fault {
+    uint32_t drop_tx_every;
+    uint32_t drop_rx_every;
+    uint32_t reorder_rx_every;
+    uint32_t reserved0;
 };
 
 struct savanxp_pcspk_beep {

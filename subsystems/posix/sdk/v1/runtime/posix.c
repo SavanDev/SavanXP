@@ -858,6 +858,7 @@ char* sx_strerror(int error_number) {
         case ENOSYS: return "function not implemented";
         case ENOTEMPTY: return "directory not empty";
         case E2BIG: return "argument list too long";
+        case ECONNRESET: return "connection reset by peer";
         case ETIMEDOUT: return "timed out";
         default: return "error";
     }
