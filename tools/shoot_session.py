@@ -718,6 +718,50 @@ def scenario_wheel(s):
         raise Failure("la lista no volvio al tope: ticks perdidos, duplicados o signo al reves")
 
 
+def scenario_notepadwheel(s):
+    """Verificacion ad hoc del scroll del editor de Notepad (rueda + barra)."""
+    s.open_notepad()
+    for i in range(1, 41):
+        s.qmp.type_text("linea%02d" % i)
+        s.qmp.tap("ret")
+    time.sleep(1.0)
+    image = s.shot("notepad-lleno")
+    area = find_list_area(image)
+    print("  editor en", area)
+    s.qmp.move_to((area[0] + area[2]) // 2, (area[1] + area[3]) // 2)
+
+    # Tipear deja el caret al final: el editor ya esta scrolleado al fondo, asi
+    # que la rueda hay que probarla subiendo primero -- bajar ya esta clampeado.
+    before = s.shot("notepad-abajo").crop(area).tobytes()
+    s.qmp.wheel(2)                    # dos muescas arriba
+    scrolled = s.shot("notepad-rueda-arriba").crop(area).tobytes()
+    if scrolled == before:
+        raise Failure("la rueda no scrolleo el editor de notepad")
+
+    s.qmp.wheel(-20)                  # de vuelta al fondo, de sobra
+    back = s.shot("notepad-rueda-vuelta").crop(area).tobytes()
+    if back != before:
+        raise Failure("el editor no volvio al fondo con la rueda: ticks perdidos, duplicados o signo al reves")
+
+    # Flecha de ARRIBA de la barra incrustada: abajo ya esta clampeado por el
+    # mismo motivo que la rueda. find_list_area mide el panel blanco y se pasa
+    # un par de pixeles hacia la barra (el borde entre los dos no es un blanco
+    # limpio), asi que el punto de click va hacia ADENTRO del area detectada y
+    # no area[2] + margen -- eso ultimo cae en el borde de la ventana. La base
+    # se toma con el mouse YA en posicion para que el cursor mismo, al no
+    # moverse entre las dos capturas, no cuente como "cambio".
+    sb_x = area[2] - 8
+    sb_y = area[1] + 6
+    s.qmp.move_to(sb_x, sb_y)
+    before_click = s.shot("notepad-antes-del-click").crop(area).tobytes()
+    s.qmp.click()
+    s.qmp.click()
+    s.qmp.click()
+    clicked = s.shot("notepad-scrollbar-click").crop(area).tobytes()
+    if clicked == before_click:
+        raise Failure("clickear la barra de scroll no movio el editor")
+
+
 def scenario_spin(s):
     """Carga que SI satura el pipeline: el cliente dibuja sin esperar la entrada.
 
@@ -746,6 +790,7 @@ SCENARIOS = {
     "system": scenario_system,
     "taskbar": scenario_taskbar,
     "wheel": scenario_wheel,
+    "notepadwheel": scenario_notepadwheel,
     "kbdlayout": scenario_kbdlayout,
     "bench": scenario_bench,
     "saturate": scenario_saturate,

@@ -306,6 +306,12 @@ Cut-off notes:
 
 ### Fixed
 
+- **Notepad's editor ignored the mouse wheel and its own scrollbar.** The
+  wheel dispatcher and the embedded-scrollbar hit test only knew about
+  `SXGUI_LISTBOX`/`SXGUI_TEXTVIEW`, not the editable `SXGUI_TEXTEDIT`; a click
+  on the bar moved the caret instead of scrolling. `tools/shoot.ps1
+  -Scenario notepadwheel` covers it.
+
 - **`tools/shoot.ps1` guarded the wrong path for a planted automation spec.**
   It checked `build/image/SMOKE` while `build.ps1` plants `build/rootfs/SMOKE`,
   so after any smoke target the guest silently ran that harness, not the

@@ -1779,24 +1779,65 @@ static struct sx_rect sxgui_textedit_inner(const struct sxgui_widget *widget)
     return inner;
 }
 
-static void sxgui_textedit_metrics(const struct sxgui_widget *widget, struct sxgui_scroll_metrics *metrics)
+static struct sx_rect sxgui_textedit_scrollbar_rect(const struct sxgui_widget *widget)
 {
     struct sx_rect inner = sxgui_inset(widget->rect, SXGUI_BORDER_SUNKEN);
+    return sx_rect_make(
+        inner.x + inner.width - SXGUI_SCROLLBAR_THICKNESS,
+        inner.y,
+        SXGUI_SCROLLBAR_THICKNESS,
+        inner.height);
+}
+
+static void sxgui_textedit_metrics(const struct sxgui_widget *widget, struct sxgui_scroll_metrics *metrics)
+{
     int visible = sxgui_textedit_visible_rows(widget);
     int max_scroll = sxgui_textedit_line_count(widget->edit_buffer) - visible;
 
     sxgui_scroll_metrics_init(
         metrics,
-        sx_rect_make(
-            inner.x + inner.width - SXGUI_SCROLLBAR_THICKNESS,
-            inner.y,
-            SXGUI_SCROLLBAR_THICKNESS,
-            inner.height),
+        sxgui_textedit_scrollbar_rect(widget),
         0,
         0,
         max_scroll > 0 ? max_scroll : 0,
         visible,
         widget->value);
+}
+
+/* Press on textedit's embedded scrollbar column. Mirrors
+ * sxgui_listbox_scrollbar_press, but writes `value` (the first visible line)
+ * instead of `scroll`, which here is the horizontal pixel offset shared with
+ * textfield. Returns non-zero when the press landed on the scrollbar. */
+static int sxgui_textedit_scrollbar_press(
+    struct sxgui_context *ctx,
+    int index,
+    struct sxgui_widget *widget,
+    const struct savanxp_gui_pointer_event *event,
+    int *changed)
+{
+    struct sxgui_scroll_metrics metrics;
+    int grab_offset = 0;
+    int part;
+
+    if (!sxgui_textedit_has_scrollbar(widget) ||
+        !sx_rect_contains_point(sxgui_textedit_scrollbar_rect(widget), event->x, event->y))
+    {
+        return 0;
+    }
+    sxgui_textedit_metrics(widget, &metrics);
+    part = sxgui_scroll_hit_part(&metrics, event->x, event->y, &grab_offset);
+    if (part == SXGUI_SCROLL_THUMB)
+    {
+        ctx->capture_index = index;
+        ctx->capture_part = part;
+        ctx->capture_offset = grab_offset;
+    }
+    else if (part != SXGUI_SCROLL_NONE)
+    {
+        widget->value = sxgui_scroll_step_value(&metrics, part);
+        *changed = 1;
+    }
+    return 1;
 }
 
 /* `value` es la primera linea visible y `scroll` el desplazamiento horizontal
@@ -2461,6 +2502,20 @@ static int sxgui_capture_motion(struct sxgui_context *ctx, struct sxgui_widget *
         sxgui_textfield_scroll_to_caret(widget);
         return 1;
     }
+    if (widget->kind == SXGUI_TEXTEDIT && widget->edit_buffer != 0 && ctx->capture_part == SXGUI_SCROLL_THUMB)
+    {
+        struct sxgui_scroll_metrics metrics;
+        int value;
+
+        sxgui_textedit_metrics(widget, &metrics);
+        value = sxgui_scroll_value_from_drag(&metrics, event->x, event->y, ctx->capture_offset);
+        if (value != widget->value)
+        {
+            widget->value = value;
+            return 1;
+        }
+        return 0;
+    }
     if (widget->kind == SXGUI_TEXTEDIT && widget->edit_buffer != 0)
     {
         /* Arrastrar mueve el caret y deja el ancla quieta: eso ES extender la
@@ -2546,6 +2601,14 @@ static int sxgui_wheel_scroll_widget(struct sxgui_widget *widget, int rows)
         widget->scroll = sxgui_clamp_int(
             widget->scroll + rows, 0, sxgui_listbox_max_scroll(widget));
         return widget->scroll != before;
+    }
+    if (widget->kind == SXGUI_TEXTEDIT && widget->edit_buffer != 0)
+    {
+        int before = widget->value;
+        int max_scroll = sxgui_textedit_line_count(widget->edit_buffer) - sxgui_textedit_visible_rows(widget);
+
+        widget->value = sxgui_clamp_int(widget->value + rows, 0, max_scroll > 0 ? max_scroll : 0);
+        return widget->value != before;
     }
     if (widget->kind == SXGUI_SCROLLBAR)
     {
@@ -2975,6 +3038,10 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             {
                 if (widget->edit_buffer != 0)
                 {
+                    if (sxgui_textedit_scrollbar_press(ctx, index, widget, event, &changed))
+                    {
+                        break;
+                    }
                     /* Shift+click extiende desde el ancla que ya habia, como en
                      * cualquier editor; un click pelado ancla donde se hizo y
                      * deja lista una seleccion vacia que el arrastre estira. */
