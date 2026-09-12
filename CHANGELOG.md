@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **`build.ps1 clock-smoke`.** Measures `uptime_ms` and `monotonic_ns` against
+  the RTC while spinning and while idle, and fails only if a clock changes rate
+  with idleness. [What it measured](docs/SYSTEM_MONITORING.md#ticks-are-guest-time-not-wall-time).
+
 - **Sockets that ported code can use.** `recv()`/`send()` work on streams,
   `SO_RCVTIMEO`/`SO_SNDTIMEO` govern the wait through the new `setsockopt()`
   (0 = wait forever, replacing a hardcoded 5 s cap on reads), and a `write()`
@@ -312,6 +316,14 @@ Cut-off notes:
   `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
 
 ### Fixed
+
+- **A process waiting in `poll()` wakes on the event, not only on the next
+  tick.** Blocking `poll()` left the compositor noticing a client's frame up to
+  a tick late, and that latency landed on every frame drawn.
+
+- **`build.ps1 build` no longer deletes `build/disk.img` when it cannot read
+  it.** A locked image — a VM running on it — raised the same error as a corrupt
+  one and fell into the branch that recreates it. It now reports and stops.
 
 - **`poll()` blocks instead of spinning, and an idle machine halts.** The
   syscall parks the caller (`WaitReason::poll`) and the tick wakes it, so a

@@ -66,9 +66,36 @@ half (the caller's counter is advancing).
 
 ### Ticks are guest time, not wall time
 
-`cpu_ticks_total` and `uptime_ms` come from the timer interrupt, so they measure
-the *emulated* machine. Under TCG a minute of wall time is a handful of guest
-seconds. Neither number is wrong; they are just not host numbers.
+`cpu_ticks_total` and `uptime_ms` come from the timer interrupt, so they count
+interrupts *delivered*, which under emulation is not the same as time passing.
+`build.ps1 clock-smoke` measures both kernel clocks against the one reference
+that does not depend on either — the RTC — while spinning and while idle:
+
+| | reference | `uptime_ms` | `monotonic_ns` |
+| --- | --- | --- | --- |
+| QEMU/TCG, spinning | 12.0 s | 7.9 s (65%) | 11.5 s (95%) |
+| QEMU/TCG, idle | 12.0 s | 8.0 s (66%) | 12.1 s (101%) |
+| VirtualBox, spinning | 12.0 s | 11.1 s (92%) | 11.2 s (93%) |
+| VirtualBox, idle | 12.0 s | 12.0 s (100%) | 11.8 s (98%) |
+
+Two things to take from it. **Under TCG `uptime_ms` runs about a third slow**,
+because QEMU cannot hand a slowly-emulated guest a thousand interrupts a
+second; the TSC tracks reality. On hardware virtualization both clocks are
+right. And in every case **the numbers do not change between the two phases**:
+halting costs neither clock any time, which is what the test asserts on. The
+absolute skew is reported as a warning rather than a failure, because it
+belongs to the emulator and not to the kernel.
+
+The corollary for anything timed against `uptime_ms` — Doom's game clock is the
+obvious one — is that under TCG it runs slow against the wall while staying
+self-consistent: a frame counter divided by guest time still reads its nominal
+rate. That is a property of the harness, not a bug in the program.
+
+`monotonic_ns` has its own failure mode worth knowing: it is calibrated once at
+boot against the PIT over a 10 ms window, and a bad calibration poisons it for
+the whole session. One VirtualBox boot was measured reporting roughly 6.8x real
+time before a later boot came back correct. When a timing number looks absurd,
+re-run `clock-smoke` before believing it.
 
 ### Waiting is not running: what the first measurement found
 

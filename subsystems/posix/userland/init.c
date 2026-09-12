@@ -55,6 +55,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "taskmgr")) {
         return "TASKMGR SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "clocktest")) {
+        return "CLOCK SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "soak")) {
         return "SOAK";
     }
@@ -107,6 +110,7 @@ static int run_automation_spec(const char* spec) {
     const char* sxetest_argv[] = {"/disk/bin/sxetest", 0};
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* taskmgr_selftest_argv[] = {"/bin/taskmgr", "--selftest", 0};
+    const char* clocktest_argv[] = {"/disk/bin/clocktest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
@@ -150,6 +154,10 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/taskmgr";
             argv = taskmgr_selftest_argv;
             argc = 2;
+        } else if (strcmp(spec, "clocktest") == 0) {
+            path = "/disk/bin/clocktest";
+            argv = clocktest_argv;
+            argc = 1;
         } else if (strcmp(spec, "netsmoke") == 0) {
             path = "/disk/bin/nettest";
             argv = nettest_argv;

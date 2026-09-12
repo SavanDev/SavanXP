@@ -535,6 +535,7 @@ void free_pipe_if_unused(process::Pipe* pipe) {
 void wake_blocked_readers_for_pipe(process::Pipe& pipe);
 void wake_blocked_writers_for_pipe(process::Pipe& pipe);
 void wake_waiters_for_object(object::Header* handle_object);
+void recheck_poll_waiters();
 void release_all_handles(process::Process& proc);
 
 void discard_io_object(object::IoObject*& file_ptr) {
@@ -1376,6 +1377,11 @@ void wake_waiters_for_object(object::Header* handle_object) {
         }
         complete_blocked_wait(proc, result);
     }
+
+    // Un objeto senalizado tambien puede ser lo que espera un poll. El evento de
+    // submit de un cliente grafico entra por aca, que es el camino por el que el
+    // compositor se entera de que hay un frame.
+    recheck_poll_waiters();
 }
 
 void wake_blocked_readers_for_pipe(process::Pipe& pipe) {
@@ -1398,6 +1404,9 @@ void wake_blocked_readers_for_pipe(process::Pipe& pipe) {
         }
         complete_blocked_read(proc, result);
     }
+
+    // Y los que esperaban ese pipe por poll en vez de por read.
+    recheck_poll_waiters();
 }
 
 void wake_blocked_writers_for_pipe(process::Pipe& pipe) {
@@ -1434,6 +1443,9 @@ void wake_blocked_writers_for_pipe(process::Pipe& pipe) {
             complete_blocked_write(proc, static_cast<int>(proc.blocked_write_length));
         }
     }
+
+    // Hacer lugar en el pipe es lo que un poll por POLLOUT esta esperando.
+    recheck_poll_waiters();
 }
 
 object::Header* lookup_handle(process::Process& proc, uint64_t fd, uint32_t desired_access) {
@@ -1663,6 +1675,46 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
  * vez por tick y SOLO si hay alguien esperando, que es exactamente la cadencia
  * que tenia antes: mientras nadie hace poll, nadie lo llamaba tampoco.
  */
+
+// Despierta a los que estan parados en poll y ya tienen algo que informar.
+// `honour_deadline` distingue las dos entradas: el tick tambien tiene que
+// vencer plazos, un evento solo mira si hay datos.
+void complete_ready_poll_waiters(uint64_t current_tick, bool honour_deadline) {
+    for (process::Process& proc : g_processes) {
+        if (proc.state != process::State::blocked_wait || proc.wait_reason != process::WaitReason::poll) {
+            continue;
+        }
+
+        const int ready = evaluate_poll_entries(proc);
+        const bool expired = honour_deadline && proc.wake_tick != 0 && proc.wake_tick <= current_tick;
+        if (ready == 0 && !expired) {
+            continue;
+        }
+        // El commit puede fallar solo si el proceso dejo de tener mapeado su
+        // propio arreglo, que estando parado no puede pasar; si pasara, se lo
+        // despierta con el error en vez de dejarlo esperando para siempre.
+        complete_blocked_poll(proc, commit_poll_entries(proc) ? ready : negative_error(SAVANXP_EINVAL));
+    }
+}
+
+/*
+ * Despertar por EVENTO: lo llaman los mismos lugares donde el kernel ya
+ * despierta a un lector o a un waiter -- un pipe que recibe datos, un objeto
+ * que se senaliza --, en el contexto del que provoco el cambio.
+ *
+ * Sin esto, un proceso parado en poll no se entera hasta el proximo tick, y esa
+ * latencia entra ENTERA en cada vuelta del compositor: el cliente publica su
+ * frame, windowd lo espera por poll, y el frame se queda esperando el tick. El
+ * bucle viejo no tenia el problema porque su hlt se despertaba con CUALQUIER
+ * interrupcion y volvia a mirar en el acto; un tick de 1 ms nominal, ademas, es
+ * mucho mas que 1 ms de reloj real cuando el hipervisor junta interrupciones.
+ * Esto lo devuelve, y de paso mejor que antes: se despierta por el evento y no
+ * por la siguiente interrupcion cualquiera.
+ */
+void recheck_poll_waiters() {
+    complete_ready_poll_waiters(0, false);
+}
+
 void wake_poll_waiters(uint64_t current_tick) {
     bool any_waiting = false;
 
@@ -1677,22 +1729,7 @@ void wake_poll_waiters(uint64_t current_tick) {
     }
 
     net::poll();
-
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_wait || proc.wait_reason != process::WaitReason::poll) {
-            continue;
-        }
-
-        const int ready = evaluate_poll_entries(proc);
-        const bool expired = proc.wake_tick != 0 && proc.wake_tick <= current_tick;
-        if (ready == 0 && !expired) {
-            continue;
-        }
-        // El commit puede fallar solo si el proceso dejo de tener mapeado su
-        // propio arreglo, que estando parado no puede pasar; si pasara, se lo
-        // despierta con el error en vez de dejarlo esperando para siempre.
-        complete_blocked_poll(proc, commit_poll_entries(proc) ? ready : negative_error(SAVANXP_EINVAL));
-    }
+    complete_ready_poll_waiters(current_tick, true);
 }
 
 /*

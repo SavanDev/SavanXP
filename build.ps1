@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "clock-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -252,6 +252,7 @@ $UserPrograms = @(
     @{ Name = "sysinfo"; Source = "subsystems/posix/userland/sysinfo.c" },
     @{ Name = "forktest"; Source = "subsystems/posix/userland/forktest.c"; Test = $true },
     @{ Name = "polltest"; Source = "subsystems/posix/userland/polltest.c"; Test = $true },
+    @{ Name = "clocktest"; Source = "subsystems/posix/userland/clocktest.c"; Test = $true },
     @{ Name = "sigtest"; Source = "subsystems/posix/userland/sigtest.c"; Test = $true },
     @{ Name = "eventtest"; Source = "subsystems/posix/userland/eventtest.c"; Test = $true },
     @{ Name = "timertest"; Source = "subsystems/posix/userland/timertest.c"; Test = $true },
@@ -521,9 +522,18 @@ function Build-SxfsDiskImage([string]$SourceRoot, [string]$OutputPath) {
 
     # Crea la imagen si falta o si la existente no es un SxFS valido. Una imagen
     # valida se preserva (persistencia); el sync de abajo reconcilia el arbol.
+    #
+    # "No se pudo LEER" y "se leyo y no es un SxFS" son dos cosas distintas y una
+    # sola de las dos justifica borrar. Antes las dos caian en el mismo catch: con
+    # una VM corriendo sobre la imagen, Open-SxfsImage tira IOException al abrirla
+    # y el build la daba por corrupta y la borraba, llevandose puesto todo lo
+    # persistente -- justo lo que prohibe la regla 4 de AGENTS.md. Un archivo que
+    # no se puede leer se reporta y se corta; no se toca.
     if (Test-Path $OutputPath) {
         try {
             Open-SxfsImage $OutputPath | Out-Null
+        } catch [System.IO.IOException] {
+            throw "No se pudo leer '$OutputPath': $($_.Exception.Message) La imagen NO se toco. Si hay una VM o un QEMU corriendo sobre ella, cerralo y volve a construir."
         } catch {
             Remove-Item $OutputPath -Force
         }
@@ -1535,6 +1545,16 @@ function Run-TaskmgrSmokeQemu {
     Run-AutomationQemu -AutomationCommand "taskmgr-selftest" -SuccessToken "TASKMGR SMOKE PASS" -FailureToken "TASKMGR SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# El reloj de ticks contra el del TSC, girando y durmiendo. Existe porque el
+# resto de los harnesses mide plazos con el MISMO reloj que estan validando: un
+# sleep de 2 s que tarda 10 pasa todos en verde. Es el unico que mira el reloj
+# desde afuera, y lo que atrapa es que la maquina pierda interrupciones del
+# timer mientras haltea -- que atrasa sleep_ms, los plazos de poll, el RTO y el
+# reloj con el que Doom mueve el juego.
+function Run-ClockSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "clocktest" -SuccessToken "CLOCK SMOKE PASS" -FailureToken "CLOCK SMOKE FAIL" -TimeoutMinutes 3
+}
+
 # Lector de recursos SXE (docs/SXE_FORMAT.md, fase 1). El grueso del selftest
 # es parseo puro en memoria -- blobs bien formados y todos los degradados que
 # ningun generador correcto produciria --, mas el camino de disco contra los
@@ -1866,6 +1886,9 @@ switch ($Command) {
     }
     "taskmgr-smoke" {
         Run-TaskmgrSmokeQemu
+    }
+    "clock-smoke" {
+        Run-ClockSmokeQemu
     }
     "sxe-smoke" {
         Run-SxeSmokeQemu
