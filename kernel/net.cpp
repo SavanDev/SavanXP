@@ -82,6 +82,13 @@ struct Socket {
     // una actualizacion cuando la app libere lugar, o los dos lados se quedan
     // esperando al otro.
     uint16_t advertised_window;
+    // Plazos de la app (SO_RCVTIMEO / SO_SNDTIMEO), en milisegundos. 0 =
+    // esperar indefinidamente, como manda POSIX. Viven en el socket y no en la
+    // capa POSIX de userland para que valgan igual por read() que por recv():
+    // el plazo es una propiedad del socket, no del envoltorio por el que se
+    // entro.
+    uint32_t recv_timeout_ms;
+    uint32_t send_timeout_ms;
     TcpRange out_of_order[kTcpOutOfOrderSlots];
     size_t packet_queue_head;
     size_t packet_queue_size;
@@ -1567,6 +1574,10 @@ int net_ioctl(uint64_t request, uint64_t argument) {
 
 namespace net {
 
+int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblocking);
+int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking);
+int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking);
+
 int create_socket(uint32_t domain, uint32_t type, uint32_t protocol, Socket*& out_socket) {
     out_socket = nullptr;
     if (domain != SAVANXP_AF_INET) {
@@ -1700,6 +1711,17 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
 }
 
 int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, bool nonblocking) {
+    // send() sobre un socket conectado entra por aca. Sin esto, el unico camino
+    // de salida de un stream era write(), y todo codigo de red portado usa
+    // send()/recv(). El destino es el peer al que ya se conecto, asi que una
+    // direccion explicita no tiene donde ir.
+    if (socket != nullptr && socket->in_use && socket->type == SAVANXP_SOCK_STREAM) {
+        if (user_address != 0) {
+            return negative_error(SAVANXP_EINVAL);
+        }
+        return write_socket(socket, user_buffer, count, nonblocking);
+    }
+
     (void)nonblocking;
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_DGRAM || socket->protocol != SAVANXP_IPPROTO_UDP || count == 0 || count > 1024) {
         return count == 0 ? 0 : negative_error(SAVANXP_EINVAL);
@@ -1746,6 +1768,25 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
 }
 
 int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms, bool nonblocking) {
+    // recv() sobre un socket conectado. timeout_ms es del camino de datagramas:
+    // en un stream el plazo es el del socket (SO_RCVTIMEO), porque tiene que
+    // valer lo mismo se haya entrado por read() o por recv().
+    if (socket != nullptr && socket->in_use && socket->type == SAVANXP_SOCK_STREAM) {
+        const int received = read_socket(socket, user_buffer, count, nonblocking);
+        if (received >= 0 && user_address != 0) {
+            if (!process::validate_user_range(user_address, sizeof(savanxp_sockaddr_in), true)) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            savanxp_sockaddr_in address = {};
+            address.ipv4 = socket->remote_ip;
+            address.port = socket->remote_port;
+            if (!process::copy_to_user(user_address, &address, sizeof(address))) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+        }
+        return received;
+    }
+
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_DGRAM || socket->protocol != SAVANXP_IPPROTO_UDP || count == 0 || !process::validate_user_range(user_buffer, count, true)) {
         return negative_error(SAVANXP_EINVAL);
     }
@@ -1809,7 +1850,9 @@ int wait_for_send_window(Socket& socket) {
         if (socket.aborted) {
             return tcp_abort_error(socket);
         }
-        if (monotonic_ms() - start_ms >= 20000u) {
+        // Sin plazo de la app no hace falta uno propio: el que corta es el
+        // abort del RTO, a los ~12 s, y ese sabe por que murio la conexion.
+        if (socket.send_timeout_ms != 0 && monotonic_ms() - start_ms >= socket.send_timeout_ms) {
             return negative_error(SAVANXP_ETIMEDOUT);
         }
         wait_for_tick();
@@ -1817,8 +1860,17 @@ int wait_for_send_window(Socket& socket) {
     return 0;
 }
 
-int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
-    if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || count == 0) {
+/*
+ * Nucleo del read de un stream. Deja los bytes en memoria del KERNEL a
+ * proposito: cuando el despertador del tick reintenta un read estacionado, el
+ * proceso dueno de ese read NO es el que esta corriendo, asi que la copia a
+ * userland tiene que hacerla el llamador -- que es el unico que sabe a que
+ * espacio de direcciones va. Copiar aca adentro con copy_to_user escribia en el
+ * proceso equivocado, y el sintoma era un stream que llegaba con bytes ajenos
+ * en el medio.
+ */
+int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblocking) {
+    if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || output == nullptr || count == 0) {
         return count == 0 ? 0 : negative_error(SAVANXP_EBADF);
     }
     // Lo que ya esta en el buffer se entrega aunque la conexion se haya caido:
@@ -1832,10 +1884,6 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonbloc
         }
         return negative_error(SAVANXP_EBADF);
     }
-    if (!process::validate_user_range(user_buffer, count, true)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
-
     const uint64_t start_ms = monotonic_ms();
     while (socket->rx_size == 0) {
         net_pump();
@@ -1851,19 +1899,18 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonbloc
         if (nonblocking) {
             return negative_error(SAVANXP_EAGAIN);
         }
-        if (monotonic_ms() - start_ms >= 5000u) {
+        // Antes habia 5000 ms fijos aca, y no eran un plazo sino una trampa:
+        // una respuesta que tardaba mas fallaba sobre una conexion sana. Un
+        // cliente que hace long-poll -- pregunta y el servidor le retiene el
+        // pedido -- es justamente el caso que no puede vivir con eso.
+        if (socket->recv_timeout_ms != 0 && monotonic_ms() - start_ms >= socket->recv_timeout_ms) {
             return negative_error(SAVANXP_ETIMEDOUT);
         }
         wait_for_tick();
     }
 
-    uint8_t scratch[net::kTcpSegmentMax] = {};
-    const size_t to_copy = count < sizeof(scratch) ? count : sizeof(scratch);
     const uint16_t window_before = socket->advertised_window;
-    const size_t copied = dequeue_tcp_bytes(*socket, scratch, to_copy);
-    if (!process::copy_to_user(user_buffer, scratch, copied)) {
-        return negative_error(SAVANXP_EINVAL);
-    }
+    const size_t copied = dequeue_tcp_bytes(*socket, output, count < kTcpSegmentMax ? count : kTcpSegmentMax);
 
     // La app se atraso, la ventana anunciada quedo abajo de un segmento util y
     // este read acaba de hacer lugar. Hay que avisarlo: el peer no manda porque
@@ -1881,6 +1928,22 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonbloc
     return static_cast<int>(copied);
 }
 
+int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
+    if (!process::validate_user_range(user_buffer, count, true)) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    uint8_t scratch[kTcpSegmentMax] = {};
+    const int received = read_socket_bytes(socket, scratch, count, nonblocking);
+    if (received <= 0) {
+        return received;
+    }
+    if (!process::copy_to_user(user_buffer, scratch, static_cast<size_t>(received))) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    return received;
+}
+
 int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM) {
         return negative_error(SAVANXP_EBADF);
@@ -1894,8 +1957,14 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
     if (count == 0) {
         return 0;
     }
-    if (count > net::kTcpSegmentMax || !process::validate_user_range(user_buffer, count, false)) {
+    if (!process::validate_user_range(user_buffer, count, false)) {
         return negative_error(SAVANXP_EINVAL);
+    }
+    // Escritura corta, que es el contrato de write(2): antes un write de mas de
+    // un segmento devolvia EINVAL, y cualquier codigo portado que hiciera
+    // write(fd, buffer, 4096) fallaba en vez de escribir lo que entraba.
+    if (count > net::kTcpSegmentMax) {
+        count = net::kTcpSegmentMax;
     }
 
     // Hay un solo segmento en vuelo por socket: mientras el anterior no este
@@ -1932,6 +2001,29 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
         return flushed;
     }
     return static_cast<int>(count);
+}
+
+int set_socket_option(Socket* socket, uint32_t option, uint64_t value) {
+    if (socket == nullptr || !socket->in_use) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (value > 0xffffffffull) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    switch (option) {
+        case SAVANXP_SO_RCVTIMEO:
+            socket->recv_timeout_ms = static_cast<uint32_t>(value);
+            return 0;
+        case SAVANXP_SO_SNDTIMEO:
+            socket->send_timeout_ms = static_cast<uint32_t>(value);
+            return 0;
+        default:
+            return negative_error(SAVANXP_ENOSYS);
+    }
+}
+
+uint32_t socket_recv_timeout_ms(const Socket* socket) {
+    return socket != nullptr ? socket->recv_timeout_ms : 0;
 }
 
 bool socket_can_read(const Socket* socket) {

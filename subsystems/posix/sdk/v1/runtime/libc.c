@@ -179,6 +179,10 @@ long savanxp_connect(int fd, const struct savanxp_sockaddr_in* address, unsigned
     return syscall3(SAVANXP_SYS_CONNECT, (unsigned long)fd, (unsigned long)address, timeout_ms);
 }
 
+long savanxp_setsockopt(int fd, unsigned long option, unsigned long value) {
+    return syscall3(SAVANXP_SYS_SETSOCKOPT, (unsigned long)fd, option, value);
+}
+
 long savanxp_waitpid(int pid, int* status) {
     return syscall2(SAVANXP_SYS_WAITPID, (unsigned long)pid, (unsigned long)status);
 }

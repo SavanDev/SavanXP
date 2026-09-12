@@ -75,6 +75,9 @@ enum savanxp_syscall_number {
      * UPTIME_MS avanza con las interrupciones deshabilitadas y tiene
      * resolucion suficiente para medir un frame. */
     SAVANXP_SYS_MONOTONIC_NS = 55,
+    /* Opciones de socket. El valor es un escalar y no un puntero porque las
+     * unicas que el kernel entiende son los dos plazos, en milisegundos. */
+    SAVANXP_SYS_SETSOCKOPT = 56,
 };
 
 enum savanxp_open_flags {
@@ -448,6 +451,15 @@ enum savanxp_socket_type {
 enum savanxp_socket_protocol {
     SAVANXP_IPPROTO_UDP = 17,
     SAVANXP_IPPROTO_TCP = 6,
+};
+
+/* Opciones de SAVANXP_SYS_SETSOCKOPT. Los valores coinciden con los SO_* de
+ * <sys/socket.h> a proposito, para que la capa POSIX no tenga que traducir.
+ * El plazo va en milisegundos y 0 significa esperar indefinidamente, igual que
+ * en POSIX. */
+enum savanxp_socket_option {
+    SAVANXP_SO_RCVTIMEO = 20,
+    SAVANXP_SO_SNDTIMEO = 21,
 };
 
 struct savanxp_fb_info {

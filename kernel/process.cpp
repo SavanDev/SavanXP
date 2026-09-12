@@ -1695,6 +1695,70 @@ void wake_poll_waiters(uint64_t current_tick) {
     }
 }
 
+/*
+ * Re-intenta los read() estacionados sobre sockets. Es el gemelo de
+ * wake_poll_waiters() y tiene el mismo motivo para llamar a net::poll(): el
+ * pump de red no tiene latido propio, y el que espera datos no puede ser el que
+ * los va a buscar si esta dormido.
+ *
+ * Que este despertador exista es ademas lo que hace honesto el plazo por
+ * defecto de SO_RCVTIMEO. POSIX dice que 0 es esperar indefinidamente; con el
+ * bucle viejo, un programa parado para siempre en un read se veia al 100% de
+ * CPU para siempre.
+ */
+// Igual que el tope por segmento de net::, y por el mismo motivo: es lo que
+// entra en un scratch del stack del kernel.
+constexpr size_t kSocketReadChunk = 1024;
+
+void wake_blocked_socket_readers(uint64_t current_tick) {
+    bool any_waiting = false;
+
+    for (const process::Process& proc : g_processes) {
+        if (proc.state != process::State::blocked_read || proc.blocked_io_fd >= process::kMaxFileHandles) {
+            continue;
+        }
+        const object::IoObject* file = object::as_io(proc.handles[proc.blocked_io_fd].object);
+        if (file != nullptr && file->kind == process::HandleKind::socket) {
+            any_waiting = true;
+            break;
+        }
+    }
+    if (!any_waiting) {
+        return;
+    }
+
+    net::poll();
+
+    for (process::Process& proc : g_processes) {
+        if (proc.state != process::State::blocked_read || proc.blocked_io_fd >= process::kMaxFileHandles) {
+            continue;
+        }
+        object::IoObject* file = object::as_io(proc.handles[proc.blocked_io_fd].object);
+        if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
+            continue;
+        }
+
+        uint8_t scratch[kSocketReadChunk] = {};
+        const size_t want = proc.blocked_read_capacity < sizeof(scratch)
+            ? static_cast<size_t>(proc.blocked_read_capacity)
+            : sizeof(scratch);
+        int result = net::read_socket_bytes(file->socket, scratch, want, true);
+        if (result > 0 &&
+            !write_to_process_memory(proc, proc.blocked_read_buffer, scratch, static_cast<size_t>(result))) {
+            result = negative_error(SAVANXP_EINVAL);
+        }
+        if (result == negative_error(SAVANXP_EAGAIN)) {
+            if (proc.wake_tick != 0 && proc.wake_tick <= current_tick) {
+                proc.wake_tick = 0;
+                complete_blocked_read(proc, negative_error(SAVANXP_ETIMEDOUT));
+            }
+            continue;
+        }
+        proc.wake_tick = 0;
+        complete_blocked_read(proc, result);
+    }
+}
+
 bool inherit_all_handles(process::Process& child, const process::Process& parent) {
     for (size_t fd = 0; fd < process::kMaxFileHandles; ++fd) {
         clear_handle_entry(child.handles[fd]);
@@ -1937,6 +2001,14 @@ int bind_fd(process::Process& proc, uint64_t fd, uint64_t user_address) {
         return negative_error(SAVANXP_EBADF);
     }
     return net::bind_socket(file->socket, user_address);
+}
+
+int setsockopt_fd(process::Process& proc, uint64_t fd, uint64_t option, uint64_t value) {
+    object::IoObject* file = fd_to_io_object(proc, fd, object::access_write);
+    if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    return net::set_socket_option(file->socket, static_cast<uint32_t>(option), value);
 }
 
 int connect_fd(process::Process& proc, uint64_t fd, uint64_t user_address, uint32_t timeout_ms) {
@@ -2237,8 +2309,32 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
         }
         case process::HandleKind::device:
             return device::read(file->device, user_buffer, count);
-        case process::HandleKind::socket:
-            return net::read_socket(file->socket, user_buffer, count, (file->open_flags & process::open_nonblock) != 0);
+        case process::HandleKind::socket: {
+            // Siempre se intenta sin bloquear y, si no hay nada, se estaciona el
+            // proceso: el camino bloqueante de net:: gira con hlt en el contexto
+            // del que llama, que es el mismo defecto que tenia poll() -- el
+            // proceso nunca sale de running y se le carga cada tick de la
+            // espera. Ver docs/SYSTEM_MONITORING.md.
+            const int result = net::read_socket(file->socket, user_buffer, count, true);
+            if (result != negative_error(SAVANXP_EAGAIN)) {
+                return result;
+            }
+            if ((file->open_flags & process::open_nonblock) != 0) {
+                return result;
+            }
+            const uint32_t timeout_ms = net::socket_recv_timeout_ms(file->socket);
+            proc.blocked_io_fd = fd;
+            proc.blocked_read_buffer = user_buffer;
+            proc.blocked_read_capacity = count;
+            // wake_tick 0 = sin vencimiento, igual que en poll y en la espera
+            // por objetos; asi SO_RCVTIMEO en 0 (esperar para siempre, que es
+            // lo que manda POSIX) no necesita un caso aparte.
+            proc.wake_tick = timeout_ms != 0
+                ? (timer::ticks() + milliseconds_to_ticks(static_cast<uint64_t>(timeout_ms)))
+                : 0;
+            proc.state = process::State::blocked_read;
+            return kBlockedResult;
+        }
         default:
             return negative_error(SAVANXP_EBADF);
     }
@@ -3055,6 +3151,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     wake_sleepers(current_tick);
     wake_wait_timeouts(current_tick);
     wake_poll_waiters(current_tick);
+    wake_blocked_socket_readers(current_tick);
     // The tick makes its own reschedule decision below, so any wakeups above
     // must not leak a preemptive-resched request into the next syscall return.
     this_cpu().resched_pending = false;

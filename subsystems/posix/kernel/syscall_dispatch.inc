@@ -275,6 +275,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->r10,
                 static_cast<uint32_t>(context->r8)));
             return context;
+        case SAVANXP_SYS_SETSOCKOPT:
+            context->rax = static_cast<uint64_t>(setsockopt_fd(*this_cpu().current, context->rdi, context->rsi, context->rdx));
+            return context;
         case SAVANXP_SYS_CONNECT:
             context->rax = static_cast<uint64_t>(connect_fd(*this_cpu().current, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
             return context;

@@ -31,6 +31,8 @@ int bind(int fd, const struct sockaddr* address, socklen_t address_length);
 int connect(int fd, const struct sockaddr* address, socklen_t address_length);
 ssize_t sendto(int fd, const void* buffer, size_t count, int flags, const struct sockaddr* address, socklen_t address_length);
 ssize_t recvfrom(int fd, void* buffer, size_t count, int flags, struct sockaddr* address, socklen_t* address_length);
+ssize_t send(int fd, const void* buffer, size_t count, int flags);
+ssize_t recv(int fd, void* buffer, size_t count, int flags);
 int setsockopt(int fd, int level, int option_name, const void* option_value, socklen_t option_length);
 int getsockopt(int fd, int level, int option_name, void* option_value, socklen_t* option_length);
 int shutdown(int fd, int how);

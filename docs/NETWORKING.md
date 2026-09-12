@@ -100,7 +100,11 @@ context. Now that `poll()` parks its callers instead
 ([`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found)),
 `wake_poll_waiters()` calls it from the timer tick — but **only while at least
 one process is waiting in `poll`**, which is the same cadence as before: with
-nobody polling, nobody called it either. It is still not a heartbeat.
+nobody polling, nobody called it either. `wake_blocked_socket_readers()` does
+the same for processes parked in a blocking socket `read()`, for the same
+reason: whoever is waiting for the data cannot be the one who goes and gets it
+while asleep. Neither is a heartbeat — together they cover every case where
+somebody is actually waiting on the network.
 
 The consequence to keep in mind is unchanged: **a socket with unacknowledged
 data does not retransmit while no thread is inside the stack.** Blocking calls
@@ -108,6 +112,52 @@ are inside it by construction, and non-blocking callers get there through
 `poll()`. A program that writes non-blocking and then never polls will stall
 until it comes back. If that ever becomes a real pattern, the fix is an
 unconditional periodic callback in the kernel, not more pump call sites.
+
+## The socket contract
+
+The guarantees above are about the protocol. What decides whether ported C code
+compiles and runs is duller, and was wrong in three places until the contract
+was fixed:
+
+- **`SO_RCVTIMEO` / `SO_SNDTIMEO` govern the wait**, set through
+  `setsockopt()`, and `0` means wait indefinitely as POSIX says. The receive
+  timeout used to be a hardcoded 5 seconds inside the kernel, which is not a
+  timeout but a trap: a reply that took longer failed on a perfectly healthy
+  connection. A client that long-polls — asks, and the server holds the request
+  while it works — is exactly the case that cannot live with that.
+- **`recv()` and `send()` work on stream sockets.** They did not exist at all:
+  the only way out of a stream was `write()`, and `recvfrom()` rejected
+  anything that was not a datagram. Every piece of ported network code uses
+  them.
+- **`write()` of more than one segment does a short write** and returns what it
+  took, instead of failing the whole call with `EINVAL`. That is the `write(2)`
+  contract, and the previous behaviour broke any caller that handed over a
+  buffer larger than 1 KiB.
+
+### A blocking read parks the process
+
+`read()` on a socket tries once without blocking and, if there is nothing,
+parks the process in `State::blocked_read` — the same machinery pipes and the
+tty already used — with `wake_tick` set from `SO_RCVTIMEO`. The timer tick
+retries it and completes it with the data, with the end of the stream, or with
+`ETIMEDOUT`.
+
+This is what makes the indefinite default honest. The waiting loop inside
+`net::` never leaves `State::running`, so every tick of the wait is charged to
+the waiter: a program parked forever in a read would have shown 100% CPU
+forever, which is the defect `poll()` had before
+[its own fix](SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found).
+`tcp-smoke` measures it rather than assuming it — the process samples its own
+`cpu_ticks` around a 7-second wait and requires its share to stay negligible
+(one tick out of some 4700).
+
+The one trap worth remembering when touching this path: the tick's retry runs
+while **another** process is current, so it cannot copy into the reader with
+`copy_to_user`. That is why the core of the read (`read_socket_bytes`) leaves
+its bytes in kernel memory and the caller places them —
+`write_to_process_memory` for the parked reader. Getting this wrong does not
+fail loudly; it silently writes one process's data into another's buffer, and
+the symptom is a stream that arrives with foreign bytes in the middle of it.
 
 ## Testing what only a bad network exercises
 
@@ -151,6 +201,9 @@ Not defects — scope. In rough order of when each would start to hurt:
 - **No `listen`/`accept`.** Client sockets only. Nothing in the guest can be a
   server.
 - **No DNS.** Addresses are numeric.
+- **`setsockopt` understands only the two timeouts.** `SO_REUSEADDR` and
+  `SO_BROADCAST` are accepted and ignored in userland; everything else is
+  `ENOSYS`. `getsockopt` reads back a userland copy, not the kernel's.
 - **No congestion control.** With one segment in flight there is nothing to
   control; a real send window needs slow start and congestion avoidance with it.
 - **No `FIN` retransmission and no `TIME_WAIT`.** `close()` sends `FIN` once and

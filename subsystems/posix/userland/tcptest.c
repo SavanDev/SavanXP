@@ -23,6 +23,11 @@
  * NET_IOC_GET_TCP_STATS: un stack que solo funcione con la red perfecta
  * terminaria el test con retransmits y rx_out_of_order en cero.
  *
+ * La ultima fase no mira el protocolo sino el CONTRATO del socket, que es lo
+ * que decide si un programa portado compila y anda: los plazos, las escrituras
+ * cortas, y que el read bloqueante estacione al proceso en vez de girar
+ * quemando CPU.
+ *
  * Ojo: el printf de userland solo entiende %s %d %u %x, sin ancho ni relleno.
  */
 
@@ -162,6 +167,35 @@ static int read_and_verify(int fd, unsigned int first_index, unsigned int count)
     return 1;
 }
 
+/* Ticks de CPU que consumio ESTE proceso, contra los que consumio la maquina.
+ * Los dos solo significan algo juntos y del mismo par de muestras. */
+static int sample_cpu(unsigned long* mine, unsigned long* total) {
+    struct savanxp_system_info system;
+    struct savanxp_process_info process;
+    unsigned long index;
+    long self = savanxp_getpid();
+
+    memset(&system, 0, sizeof(system));
+    if (system_info(&system) < 0) {
+        return 0;
+    }
+    *total = (unsigned long)system.cpu_ticks_total;
+
+    /* Las ranuras son ralas: se barren todas y se saltean las vacias, en vez de
+     * confiar en que process_count sea el indice mas alto. */
+    for (index = 0; index < 64u; ++index) {
+        memset(&process, 0, sizeof(process));
+        if (proc_info(index, &process) < 0) {
+            continue;
+        }
+        if ((long)process.pid == self) {
+            *mine = (unsigned long)process.cpu_ticks;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int set_fault(int net_fd, unsigned int drop_tx, unsigned int drop_rx, unsigned int reorder_rx) {
     struct savanxp_net_tcp_fault fault;
     memset(&fault, 0, sizeof(fault));
@@ -169,6 +203,134 @@ static int set_fault(int net_fd, unsigned int drop_tx, unsigned int drop_rx, uns
     fault.drop_rx_every = drop_rx;
     fault.reorder_rx_every = reorder_rx;
     return savanxp_ioctl(net_fd, NET_IOC_SET_TCP_FAULT, (unsigned long)&fault) >= 0;
+}
+
+/* Tres cosas que rompen a cualquier programa de red portado, y una cuarta que
+ * decide si el sistema se puede usar mientras espera. */
+static int check_socket_contract(int fd) {
+    unsigned char buffer[64];
+    unsigned long cpu_before = 0;
+    unsigned long cpu_after = 0;
+    unsigned long total_before = 0;
+    unsigned long total_after = 0;
+    int sampled;
+    long status;
+
+    /* 1. Una respuesta que tarda mas que el viejo tope fijo de 5 s. Con el plazo
+     * por defecto (0 = esperar indefinidamente, como POSIX) tiene que llegar. */
+    if (!send_command(fd, "DELAY 7000", 16u)) {
+        return 0;
+    }
+    sampled = sample_cpu(&cpu_before, &total_before);
+    if (!read_and_verify(fd, 0, 16u)) {
+        eprintf("tcptest: a 7 s reply did not arrive\n");
+        return 0;
+    }
+
+    /* 2. Y mientras esperaba esos 7 s el proceso tiene que haber estado
+     * estacionado, no girando: si el read bloqueante gira con hlt en el
+     * contexto del que llama, el proceso nunca sale de running y se lleva casi
+     * todos los ticks de la espera. Es el mismo defecto que tenia poll(). */
+    if (sampled && sample_cpu(&cpu_after, &total_after)) {
+        const unsigned long mine = cpu_after - cpu_before;
+        const unsigned long everyone = total_after - total_before;
+        printf("tcptest: waiting cost %u of %u ticks\n", (unsigned int)mine, (unsigned int)everyone);
+        if (everyone >= 100u && mine > everyone / 4u) {
+            eprintf("tcptest: the blocking read spun instead of parking\n");
+            return 0;
+        }
+    }
+
+    /* 3. SO_RCVTIMEO se respeta. Se lee con NADA pendiente a proposito: pedirle
+     * al servidor una respuesta demorada y correr contra ella hace depender el
+     * resultado de cuanto avanza el guest en ese rato, y con el host cargado el
+     * dato llega antes de que el read arranque. Sin nada del otro lado, lo unico
+     * que puede terminar este read es el plazo. */
+    if (savanxp_setsockopt(fd, SAVANXP_SO_RCVTIMEO, 500u) < 0) {
+        eprintf("tcptest: setsockopt failed\n");
+        return 0;
+    }
+    {
+        const unsigned long before = uptime_ms();
+        status = savanxp_read(fd, buffer, sizeof(buffer));
+        printf("tcptest: timed read returned %d after %u ms\n",
+               (int)status, (unsigned int)(uptime_ms() - before));
+    }
+    if (!result_is_error(status) || result_error_code(status) != SAVANXP_ETIMEDOUT) {
+        eprintf("tcptest: SO_RCVTIMEO did not fire, read returned %d\n", (int)status);
+        return 0;
+    }
+
+    /* Y el socket sigue vivo despues de que su propio plazo venciera. */
+    if (savanxp_setsockopt(fd, SAVANXP_SO_RCVTIMEO, 0u) < 0) {
+        return 0;
+    }
+    if (!send_command(fd, "DELAY 1000", 16u) || !read_and_verify(fd, 0, 16u)) {
+        eprintf("tcptest: the socket did not survive its own timeout\n");
+        return 0;
+    }
+
+    /* 4. Una escritura mas grande que un segmento devuelve lo que entro, no
+     * EINVAL, y recv()/send() andan sobre un stream. */
+    if (!send_command(fd, "ECHO", 4096u)) {
+        return 0;
+    }
+    {
+        unsigned char big[4096];
+        unsigned int offset;
+        for (offset = 0; offset < sizeof(big); ++offset) {
+            big[offset] = pattern_byte(offset);
+        }
+        status = savanxp_write(fd, big, sizeof(big));
+        if (status <= 0 || (size_t)status >= sizeof(big)) {
+            eprintf("tcptest: a 4096 byte write returned %d\n", (int)status);
+            return 0;
+        }
+        printf("tcptest: short write returned %u of 4096\n", (unsigned int)status);
+
+        /* El resto sale por send() y vuelve por recv(): sin ellos, ningun
+         * codigo de red portado enlaza siquiera. */
+        {
+            size_t written = (size_t)status;
+            while (written < sizeof(big)) {
+                size_t chunk = sizeof(big) - written;
+                if (chunk > CHUNK_BYTES) {
+                    chunk = CHUNK_BYTES;
+                }
+                status = savanxp_sendto(fd, big + written, chunk, 0);
+                if (status <= 0) {
+                    eprintf("tcptest: send failed (%s)\n", result_error_string(status));
+                    return 0;
+                }
+                written += (size_t)status;
+            }
+        }
+        {
+            unsigned int received = 0;
+            while (received < sizeof(big)) {
+                unsigned int index;
+                size_t want = sizeof(big) - received;
+                if (want > CHUNK_BYTES) {
+                    want = CHUNK_BYTES;
+                }
+                status = savanxp_recvfrom(fd, buffer, want < sizeof(buffer) ? want : sizeof(buffer), 0, 0);
+                if (status <= 0) {
+                    eprintf("tcptest: recv failed (%s)\n", result_error_string(status));
+                    return 0;
+                }
+                for (index = 0; index < (unsigned int)status; ++index) {
+                    if (buffer[index] != pattern_byte(received + index)) {
+                        eprintf("tcptest: recv returned the wrong byte at %u\n", received + index);
+                        return 0;
+                    }
+                }
+                received += (unsigned int)status;
+            }
+        }
+    }
+
+    puts_out("tcptest: socket contract ok\n");
+    return 1;
 }
 
 int main(int argc, char** argv) {
@@ -274,7 +436,16 @@ int main(int argc, char** argv) {
     }
     printf("tcptest: echo %u bytes verified\n", ECHO_BYTES);
 
+    /* Las fallas se apagan: lo que sigue mide el contrato del socket, no la
+     * resistencia del protocolo, y los plazos tienen que ser legibles. */
     (void)set_fault((int)net_fd, 0, 0, 0);
+
+    if (!check_socket_contract((int)fd)) {
+        savanxp_close((int)fd);
+        savanxp_close((int)net_fd);
+        return fail("socket contract");
+    }
+
     savanxp_close((int)fd);
 
     memset(&stats, 0, sizeof(stats));

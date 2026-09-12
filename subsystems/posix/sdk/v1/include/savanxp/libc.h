@@ -34,6 +34,7 @@ long savanxp_bind(int fd, const struct savanxp_sockaddr_in* address);
 long savanxp_sendto(int fd, const void* buffer, size_t count, const struct savanxp_sockaddr_in* address);
 long savanxp_recvfrom(int fd, void* buffer, size_t count, struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
 long savanxp_connect(int fd, const struct savanxp_sockaddr_in* address, unsigned long timeout_ms);
+long savanxp_setsockopt(int fd, unsigned long option, unsigned long value);
 long savanxp_waitpid(int pid, int* status);
 long savanxp_fork(void);
 long savanxp_kill(int pid, int signal_number);

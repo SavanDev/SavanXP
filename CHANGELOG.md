@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **Sockets that ported code can use.** `recv()`/`send()` work on streams,
+  `SO_RCVTIMEO`/`SO_SNDTIMEO` govern the wait through the new `setsockopt()`
+  (0 = wait forever, replacing a hardcoded 5 s cap on reads), and a `write()`
+  larger than one segment writes what fits instead of failing. A blocking
+  socket `read()` now parks the process instead of spinning.
+  [The contract](docs/NETWORKING.md#the-socket-contract).
+
 - **A network adapter with no driver is reported as such.** `system_info` gained
   `net_hardware` and the PCI id of the adapter it found, so System Properties and
   the Task Manager stop saying "no adapter" on a machine that has one SavanXP

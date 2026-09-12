@@ -6,9 +6,15 @@
 #
 # Protocolo, en lineas terminadas en \n:
 #
-#   BULK <n>   devuelve n bytes del patron, de un tiron
-#   ECHO <n>   lee n bytes y los devuelve tal cual, a medida que llegan
-#   QUIT       cierra
+#   BULK <n>       devuelve n bytes del patron, de un tiron
+#   ECHO <n>       lee n bytes y los devuelve tal cual, a medida que llegan
+#   DELAY <ms> <n> espera ms y recien ahi manda n bytes del patron
+#   QUIT           cierra
+#
+# DELAY es para el contrato del socket, no para el protocolo: un servidor que
+# tarda en contestar es lo normal (long-poll), y hasta que read() respeto
+# SO_RCVTIMEO cualquier respuesta de mas de 5 s fallaba sobre una conexion
+# sana.
 #
 # El patron es el mismo que genera el guest: byte i = (i * 31 + 7) & 0xff. Que
 # sea aritmetico y no aleatorio es lo que permite verificar sin compartir un
@@ -79,6 +85,15 @@ try {
                         $stream.Write($bytes, 0, $chunk)
                         $sent += $chunk
                     }
+                    $stream.Flush()
+                }
+                elseif ($line -match "^DELAY (\d+) (\d+)$") {
+                    $waitMs = [int]$Matches[1]
+                    $total = [int]$Matches[2]
+                    Write-Host "tcp_echo_server: DELAY $waitMs $total"
+                    Start-Sleep -Milliseconds $waitMs
+                    $bytes = Get-PatternBytes 0 $total
+                    $stream.Write($bytes, 0, $total)
                     $stream.Flush()
                 }
                 elseif ($line -match "^ECHO (\d+)$") {

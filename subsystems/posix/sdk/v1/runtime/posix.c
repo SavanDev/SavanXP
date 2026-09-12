@@ -4565,6 +4565,17 @@ ssize_t sx_recvfrom(int fd, void* buffer, size_t count, int flags, struct sockad
     return result;
 }
 
+/* recv() y send() no existian: el unico camino de salida de un stream era
+ * write(), y todo codigo de red portado usa estos dos. Son recvfrom/sendto sin
+ * direccion, que es literalmente su definicion. */
+ssize_t sx_recv(int fd, void* buffer, size_t count, int flags) {
+    return sx_recvfrom(fd, buffer, count, flags, 0, 0);
+}
+
+ssize_t sx_send(int fd, const void* buffer, size_t count, int flags) {
+    return sx_sendto(fd, buffer, count, flags, 0, 0);
+}
+
 int sx_setsockopt(int fd, int level, int option_name, const void* option_value, socklen_t option_length) {
     struct sx_socket_state* state = sx_find_socket_state(fd);
     unsigned long value = 0;
@@ -4575,12 +4586,20 @@ int sx_setsockopt(int fd, int level, int option_name, const void* option_value, 
     if (option_value != 0 && option_length >= sizeof(unsigned long)) {
         value = *(const unsigned long*)option_value;
     }
-    if (option_name == 20) {
-        state->recv_timeout_ms = value;
-        return 0;
-    }
-    if (option_name == 21) {
-        state->send_timeout_ms = value;
+    /* Los plazos bajan al kernel ademas de quedar aca. La copia de userland es
+     * para getsockopt; la del socket es la que gobierna, y tiene que valer lo
+     * mismo se lea por read() o por recv(). */
+    if (option_name == 20 || option_name == 21) {
+        const long result = savanxp_setsockopt(fd, (unsigned long)option_name, value);
+        if (result < 0) {
+            sx_set_errno_from_result(result);
+            return -1;
+        }
+        if (option_name == 20) {
+            state->recv_timeout_ms = value;
+        } else {
+            state->send_timeout_ms = value;
+        }
         return 0;
     }
     if (option_name == 2 || option_name == 6) {
@@ -4947,6 +4966,8 @@ __attribute__((weak, alias("sx_bind"))) int bind(int fd, const struct sockaddr* 
 __attribute__((weak, alias("sx_connect"))) int connect(int fd, const struct sockaddr* address, socklen_t address_length);
 __attribute__((weak, alias("sx_sendto"))) ssize_t sendto(int fd, const void* buffer, size_t count, int flags, const struct sockaddr* address, socklen_t address_length);
 __attribute__((weak, alias("sx_recvfrom"))) ssize_t recvfrom(int fd, void* buffer, size_t count, int flags, struct sockaddr* address, socklen_t* address_length);
+__attribute__((weak, alias("sx_recv"))) ssize_t recv(int fd, void* buffer, size_t count, int flags);
+__attribute__((weak, alias("sx_send"))) ssize_t send(int fd, const void* buffer, size_t count, int flags);
 __attribute__((weak, alias("sx_setsockopt"))) int setsockopt(int fd, int level, int option_name, const void* option_value, socklen_t option_length);
 __attribute__((weak, alias("sx_getsockopt"))) int getsockopt(int fd, int level, int option_name, void* option_value, socklen_t* option_length);
 __attribute__((weak, alias("sx_shutdown"))) int shutdown(int fd, int how);
