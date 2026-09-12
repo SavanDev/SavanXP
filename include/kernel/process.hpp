@@ -144,7 +144,9 @@ struct Process {
     // devolver los revents en `poll_user_fds`.
     uint64_t poll_user_fds;
     uint32_t poll_count;
-    uint64_t wake_tick;
+    // Vencimiento en milisegundos del reloj monotono (process::now_ms()), 0 =
+    // sin vencimiento. NO son ticks: ver el comentario de now_ms().
+    uint64_t wake_deadline_ms;
     // Ticks del timer del sistema que encontraron a este proceso corriendo. Es
     // la contabilidad de CPU mas barata posible -- un incremento por tick, en el
     // camino que ya existe -- y alcanza para un porcentaje: el administrador de

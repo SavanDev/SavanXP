@@ -64,38 +64,54 @@ because only both together prove the counters land on the right process: after
 after a busy loop, both system usage and the test's own process must be above
 half (the caller's counter is advancing).
 
-### Ticks are guest time, not wall time
+### The wall clock is the TSC; ticks only count CPU
 
-`cpu_ticks_total` and `uptime_ms` come from the timer interrupt, so they count
-interrupts *delivered*, which under emulation is not the same as time passing.
-`build.ps1 clock-smoke` measures both kernel clocks against the one reference
-that does not depend on either — the RTC — while spinning and while idle:
+Two clocks, two jobs, and mixing them up cost a long hunt:
 
-| | reference | `uptime_ms` | `monotonic_ns` |
-| --- | --- | --- | --- |
-| QEMU/TCG, spinning | 12.0 s | 7.9 s (65%) | 11.5 s (95%) |
-| QEMU/TCG, idle | 12.0 s | 8.0 s (66%) | 12.1 s (101%) |
-| VirtualBox, spinning | 12.0 s | 11.1 s (92%) | 11.2 s (93%) |
-| VirtualBox, idle | 12.0 s | 12.0 s (100%) | 11.8 s (98%) |
+- `timer::ticks()` counts timer **interrupts delivered**. It is the basis of
+  `cpu_ticks` and `cpu_ticks_total`, and it is exactly right for that: one tick
+  increments exactly one process.
+- `process::now_ms()` — behind `uptime_ms` and every deadline in the kernel —
+  comes from the **TSC**, because counting interrupts does not measure time.
 
-Two things to take from it. **Under TCG `uptime_ms` runs about a third slow**,
-because QEMU cannot hand a slowly-emulated guest a thousand interrupts a
-second; the TSC tracks reality. On hardware virtualization both clocks are
-right. And in every case **the numbers do not change between the two phases**:
-halting costs neither clock any time, which is what the test asserts on. The
-absolute skew is reported as a warning rather than a failure, because it
-belongs to the emulator and not to the kernel.
+`build.ps1 clock-smoke` is what settled it, by measuring both against the one
+reference that depends on neither: the RTC.
 
-The corollary for anything timed against `uptime_ms` — Doom's game clock is the
-obvious one — is that under TCG it runs slow against the wall while staying
-self-consistent: a frame counter divided by guest time still reads its nominal
-rate. That is a property of the harness, not a bug in the program.
+The finding that forced the split came from VirtualBox. With the machine
+halting — which only started happening once `poll()` blocked — the APIC timer's
+delivery turns **bursty**: `timer-stats` measured windows of 2000 ticks arriving
+across 13.2 s (≈151 Hz) and other windows of 2000 ticks arriving in 533 ms
+(≈4000 Hz), with the timer programmed at 1000 Hz. The handler was cheap
+throughout (72-97 µs average), so it was not the kernel holding interrupts off;
+the hypervisor was dropping them while the vCPU idled and replaying the backlog
+when something woke it.
 
-`monotonic_ns` has its own failure mode worth knowing: it is calibrated once at
-boot against the PIT over a 10 ms window, and a bad calibration poisons it for
-the whole session. One VirtualBox boot was measured reporting roughly 6.8x real
-time before a later boot came back correct. When a timing number looks absurd,
-re-run `clock-smoke` before believing it.
+The total averages out — which is why a 12-second measurement had reported
+`uptime_ms` at 92-100% of the RTC and looked fine — but the instantaneous rate
+does not. Anything that paces itself on that clock stalls and then
+fast-forwards. Doom, whose game clock and FPS counter both read `uptime_ms`,
+crawled while its counter still read 36, and sped up whenever the mouse moved,
+because any interrupt flushed the backlog.
+
+With `uptime_ms` on the TSC, the same test under TCG went from 29% (spinning)
+and 6% (idle) of real time to **94% and 100%**.
+
+`timer-stats:` stays, printed every 2000 ticks, because interrupt delivery is
+still worth watching even though timekeeping no longer depends on it:
+
+```
+timer-stats: real=2979 ms ticks=2000 ms perdido=979 ms (32%) handler avg=25 us max=1128 us
+```
+
+`real` is TSC time, `ticks` is what the interrupt counter saw, the difference is
+what the hypervisor did not deliver, and `handler` is what this kernel spends
+inside the interrupt — the part that is ours to keep small.
+
+One more trap worth remembering: `monotonic_ns` is calibrated once at boot
+against the PIT over a 10 ms window, and a bad calibration poisons the whole
+session. One VirtualBox boot was measured reporting roughly 6.8x real time
+before a later boot came back correct. When a timing number looks absurd,
+re-run `clock-smoke` before believing it — and before building a theory on it.
 
 ### Waiting is not running: what the first measurement found
 

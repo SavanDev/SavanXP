@@ -321,14 +321,14 @@ void reset_event(EventObject* event_object) {
     }
 }
 
-void set_timer(TimerObject* timer_object, uint64_t due_tick, uint64_t period_ticks) {
+void set_timer(TimerObject* timer_object, uint64_t due_ms, uint64_t period_ms) {
     if (timer_object == nullptr || !timer_object->in_use) {
         return;
     }
     timer_object->armed = true;
     timer_object->header.signal_count = 0;
-    timer_object->due_tick = due_tick;
-    timer_object->period_ticks = period_ticks;
+    timer_object->due_ms = due_ms;
+    timer_object->period_ms = period_ms;
 }
 
 void cancel_timer(TimerObject* timer_object) {
@@ -337,24 +337,24 @@ void cancel_timer(TimerObject* timer_object) {
     }
     timer_object->armed = false;
     timer_object->header.signal_count = 0;
-    timer_object->due_tick = 0;
-    timer_object->period_ticks = 0;
+    timer_object->due_ms = 0;
+    timer_object->period_ms = 0;
 }
 
-void poll_timers(uint64_t current_tick, void (*on_signal)(Header* object)) {
+void poll_timers(uint64_t now_ms, void (*on_signal)(Header* object)) {
     for (TimerObject& timer_object : g_timer_objects) {
-        if (!timer_object.in_use || !timer_object.armed || timer_object.due_tick > current_tick) {
+        if (!timer_object.in_use || !timer_object.armed || timer_object.due_ms > now_ms) {
             continue;
         }
 
         timer_object.header.signal_count = 1;
-        if (timer_object.period_ticks != 0) {
+        if (timer_object.period_ms != 0) {
             do {
-                timer_object.due_tick += timer_object.period_ticks;
-            } while (timer_object.due_tick <= current_tick);
+                timer_object.due_ms += timer_object.period_ms;
+            } while (timer_object.due_ms <= now_ms);
         } else {
             timer_object.armed = false;
-            timer_object.due_tick = 0;
+            timer_object.due_ms = 0;
         }
 
         if (on_signal != nullptr) {

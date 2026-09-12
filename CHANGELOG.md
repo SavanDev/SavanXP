@@ -321,6 +321,13 @@ Cut-off notes:
 
 ### Fixed
 
+- **The kernel's wall clock is the TSC, not a count of timer interrupts.**
+  `uptime_ms` and every deadline — `sleep_ms`, `poll` timeouts, the TCP RTO —
+  used to advance only when an interrupt was delivered, and on VirtualBox that
+  delivery turns bursty once the machine idles: measured between 151 Hz and
+  4000 Hz with the timer set to 1000. Anything paced on it stalled and then
+  fast-forwarded. [How it was found](docs/SYSTEM_MONITORING.md#the-wall-clock-is-the-tsc-ticks-only-count-cpu).
+
 - **A process waiting in `poll()` wakes on the event, not only on the next
   tick.** Blocking `poll()` left the compositor noticing a client's frame up to
   a tick late, and that latency landed on every frame drawn.

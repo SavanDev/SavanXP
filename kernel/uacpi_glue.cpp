@@ -562,6 +562,10 @@ uint64_t monotonic_ns() {
     return uacpi_kernel_get_nanoseconds_since_boot();
 }
 
+uint64_t monotonic_ms() {
+    return monotonic_ns() / 1000000ull;
+}
+
 uint32_t tsc_khz() {
     // g_tsc_per_us ES la frecuencia en MHz por construccion (ticks del TSC en
     // un microsegundo), asi que los kHz son eso por mil. El calibrado fuerza un

@@ -1,16 +1,23 @@
 /*
  * Los tres relojes del sistema, medidos uno contra otro.
  *
- *   ticks  uptime_ms(): cuenta INTERRUPCIONES del timer.
- *   tsc    monotonic_ns(): lee el TSC, calibrado una vez contra el PIT.
- *   rtc    realtime(): el reloj de la maquina, en segundos.
+ *   uptime  uptime_ms(): el reloj de pared del kernel.
+ *   tsc     monotonic_ns(): lee el TSC, calibrado una vez contra el PIT.
+ *   rtc     realtime(): el reloj de la maquina, en segundos.
  *
- * Los dos primeros son del kernel y pueden mentir los dos: los ticks si el
- * hipervisor no entrega todas las interrupciones, y el TSC si el calibrado
- * salio mal o si el contador se frena cuando el CPU haltea. El RTC no depende
- * de ninguna de las dos cosas -- es el unico que mide el mundo -- asi que es el
- * que arbitra. Tiene resolucion de un segundo, y por eso cada fase dura lo
- * suficiente como para que eso no importe.
+ * Los dos primeros son del kernel y pueden mentir los dos, asi que el RTC es el
+ * que arbitra: es el unico que no depende de nada que el kernel haga. Tiene
+ * resolucion de un segundo, y por eso cada fase dura lo suficiente como para
+ * que eso no importe.
+ *
+ * uptime_ms sale del TSC desde que se descubrio que contar interrupciones no
+ * mide tiempo: en VirtualBox, con la maquina halteando, la entrega del tick del
+ * APIC se vuelve a rafagas -- entre 151 Hz y 4000 Hz con el timer programado a
+ * 1000 --, y el total se promedia bien pero el ritmo instantaneo no. Por eso
+ * este test mide DOS veces lo mismo hoy: se deja asi a proposito, porque lo que
+ * vigila es que sigan coincidiendo con el mundo. Lo que todavia se puede ver
+ * crudo, y sigue perdiendose, es la entrega de interrupciones: esa es la linea
+ * `timer-stats:` del kernel.
  *
  * Dos fases, con los mismos tres relojes, donde lo unico que cambia es si la
  * maquina tiene algo que hacer:
@@ -88,7 +95,7 @@ struct phase_result {
 
 static void report_phase(const char *label, const struct phase_result *phase)
 {
-    printf("clocktest: %s rtc=%lu ms ticks=%lu ms tsc=%lu ms | ticks %lu%% tsc %lu%% del reloj real\n",
+    printf("clocktest: %s rtc=%lu ms uptime=%lu ms tsc=%lu ms | uptime %lu%% tsc %lu%% del reloj real\n",
            label,
            phase->wall_ms,
            phase->tick_ms,

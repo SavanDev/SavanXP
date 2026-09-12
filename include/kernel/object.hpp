@@ -94,8 +94,8 @@ struct TimerObject {
     Header header;
     bool in_use;
     bool armed;
-    uint64_t due_tick;
-    uint64_t period_ticks;
+    uint64_t due_ms;
+    uint64_t period_ms;
 };
 
 struct SectionObject {
@@ -137,7 +137,7 @@ void set_event(EventObject* event_object);
 void reset_event(EventObject* event_object);
 void set_timer(TimerObject* timer_object, uint64_t due_tick, uint64_t period_ticks);
 void cancel_timer(TimerObject* timer_object);
-void poll_timers(uint64_t current_tick, void (*on_signal)(Header* object));
+void poll_timers(uint64_t now_ms, void (*on_signal)(Header* object));
 // Suma release_count (>0) al contador del semáforo, sin superar max_count.
 // Devuelve false (sin modificar nada) si el resultado excedería max_count.
 bool release_semaphore(SemaphoreObject* semaphore_object, int32_t release_count, int32_t* previous_count);

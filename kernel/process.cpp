@@ -71,7 +71,7 @@ enum class ImageFailure : uint8_t {
     no_handles,
 };
 
-uint64_t milliseconds_to_ticks(uint64_t milliseconds);
+uint64_t now_ms();
 
 process::Process g_processes[process::kMaxProcesses] = {};
 process::Pipe g_pipes[kMaxPipeCount] = {};
@@ -106,8 +106,34 @@ int negative_error(savanxp_error_code code) {
     return -static_cast<int>(code);
 }
 
-uint64_t current_uptime_ms() {
+/*
+ * Reloj de pared del kernel, en milisegundos desde el arranque.
+ *
+ * Sale del TSC y NO del contador de interrupciones del timer. La diferencia es
+ * la que hizo que Doom se arrastrara en VirtualBox: con la maquina halteando,
+ * la entrega del tick del APIC se vuelve a rafagas -- medido entre 151 Hz y
+ * 4000 Hz con el timer programado a 1000 --, y el total se promedia bien pero
+ * el ritmo instantaneo no. Todo lo que pacea tiempo contra eso se traba y
+ * despues se adelanta. El TSC, medido contra el RTC en los dos hipervisores,
+ * no hace eso.
+ *
+ * timer::ticks() se queda para lo unico que mide bien: la contabilidad de CPU,
+ * donde un tick ES un proceso (docs/SYSTEM_MONITORING.md).
+ *
+ * El contador de interrupciones queda de reserva por si el TSC no llego a
+ * calibrarse; como el calibrado corre al principio del arranque, eso solo pasa
+ * antes de que exista userland.
+ */
+uint64_t now_ms() {
+    const uint64_t monotonic = timer::monotonic_ms();
+    if (monotonic != 0) {
+        return monotonic;
+    }
     return (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
+}
+
+uint64_t current_uptime_ms() {
+    return now_ms();
 }
 
 uint32_t exported_timer_backend(timer::Backend backend) {
@@ -232,7 +258,7 @@ void clear_wait_state(process::Process& proc) {
     }
     proc.poll_user_fds = 0;
     proc.poll_count = 0;
-    proc.wake_tick = 0;
+    proc.wake_deadline_ms = 0;
 }
 
 bool object_is_waitable(const object::Header* handle_object) {
@@ -1326,11 +1352,11 @@ void wake_waiting_parent(process::Process& child) {
 
 void wake_sleepers(uint64_t current_tick) {
     for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::sleeping || proc.wake_tick > current_tick) {
+        if (proc.state != process::State::sleeping || proc.wake_deadline_ms > current_tick) {
             continue;
         }
 
-        proc.wake_tick = 0;
+        proc.wake_deadline_ms = 0;
         proc.context->rax = 0;
         proc.state = process::State::ready;
         reset_time_slice(proc);
@@ -1341,8 +1367,8 @@ void wake_wait_timeouts(uint64_t current_tick) {
     for (process::Process& proc : g_processes) {
         if (proc.state != process::State::blocked_wait ||
             proc.wait_reason != process::WaitReason::object ||
-            proc.wake_tick == 0 ||
-            proc.wake_tick > current_tick) {
+            proc.wake_deadline_ms == 0 ||
+            proc.wake_deadline_ms > current_tick) {
             continue;
         }
 
@@ -1654,12 +1680,10 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
         return ready;
     }
 
-    // wake_tick 0 significa sin vencimiento, igual que en la espera por objetos:
+    // wake_deadline_ms 0 significa sin vencimiento, igual que en la espera por objetos:
     // asi un timeout negativo (esperar para siempre) no necesita un caso aparte.
     proc.wait_reason = process::WaitReason::poll;
-    proc.wake_tick = timeout_ms > 0
-        ? (timer::ticks() + milliseconds_to_ticks(static_cast<uint64_t>(timeout_ms)))
-        : 0;
+    proc.wake_deadline_ms = timeout_ms > 0 ? (now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
     proc.state = process::State::blocked_wait;
     return kBlockedResult;
 }
@@ -1686,7 +1710,7 @@ void complete_ready_poll_waiters(uint64_t current_tick, bool honour_deadline) {
         }
 
         const int ready = evaluate_poll_entries(proc);
-        const bool expired = honour_deadline && proc.wake_tick != 0 && proc.wake_tick <= current_tick;
+        const bool expired = honour_deadline && proc.wake_deadline_ms != 0 && proc.wake_deadline_ms <= current_tick;
         if (ready == 0 && !expired) {
             continue;
         }
@@ -1785,13 +1809,13 @@ void wake_blocked_socket_readers(uint64_t current_tick) {
             result = negative_error(SAVANXP_EINVAL);
         }
         if (result == negative_error(SAVANXP_EAGAIN)) {
-            if (proc.wake_tick != 0 && proc.wake_tick <= current_tick) {
-                proc.wake_tick = 0;
+            if (proc.wake_deadline_ms != 0 && proc.wake_deadline_ms <= current_tick) {
+                proc.wake_deadline_ms = 0;
                 complete_blocked_read(proc, negative_error(SAVANXP_ETIMEDOUT));
             }
             continue;
         }
-        proc.wake_tick = 0;
+        proc.wake_deadline_ms = 0;
         complete_blocked_read(proc, result);
     }
 }
@@ -2363,12 +2387,10 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
             proc.blocked_io_fd = fd;
             proc.blocked_read_buffer = user_buffer;
             proc.blocked_read_capacity = count;
-            // wake_tick 0 = sin vencimiento, igual que en poll y en la espera
+            // wake_deadline_ms 0 = sin vencimiento, igual que en poll y en la espera
             // por objetos; asi SO_RCVTIMEO en 0 (esperar para siempre, que es
             // lo que manda POSIX) no necesita un caso aparte.
-            proc.wake_tick = timeout_ms != 0
-                ? (timer::ticks() + milliseconds_to_ticks(static_cast<uint64_t>(timeout_ms)))
-                : 0;
+            proc.wake_deadline_ms = timeout_ms != 0 ? (now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
             proc.state = process::State::blocked_read;
             return kBlockedResult;
         }
@@ -2617,12 +2639,10 @@ int set_timer_handle(process::Process& proc, uint64_t fd, uint64_t due_ms, uint6
         return negative_error(SAVANXP_EBADF);
     }
 
-    const uint64_t current_tick = timer::ticks();
-    const uint64_t due_ticks = due_ms == 0 ? 0 : milliseconds_to_ticks(due_ms);
-    const uint64_t period_ticks = period_ms == 0 ? 0 : milliseconds_to_ticks(period_ms);
-    object::set_timer(timer_object, current_tick + due_ticks, period_ticks);
-    if (due_ticks == 0) {
-        object::poll_timers(current_tick, wake_waiters_for_object);
+    const uint64_t now = now_ms();
+    object::set_timer(timer_object, now + due_ms, period_ms);
+    if (due_ms == 0) {
+        object::poll_timers(now, wake_waiters_for_object);
     }
     return 0;
 }
@@ -2751,7 +2771,7 @@ int begin_object_wait(process::Process& proc, object::Header* const* handles, si
         return negative_error(SAVANXP_ETIMEDOUT);
     }
 
-    proc.wake_tick = timeout_ms > 0 ? (timer::ticks() + milliseconds_to_ticks(static_cast<uint64_t>(timeout_ms))) : 0;
+    proc.wake_deadline_ms = timeout_ms > 0 ? (now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
     proc.state = process::State::blocked_wait;
     return kBlockedResult;
 }
@@ -2805,12 +2825,11 @@ int sleep_via_timer(process::Process& proc, uint64_t milliseconds) {
         return negative_error(SAVANXP_ENOMEM);
     }
 
-    const uint64_t current_tick = timer::ticks();
-    const uint64_t due_ticks = milliseconds == 0 ? 0 : milliseconds_to_ticks(milliseconds);
-    object::set_timer(timer_object, current_tick + due_ticks, 0);
+    const uint64_t now = now_ms();
+    object::set_timer(timer_object, now + milliseconds, 0);
     object::Header* handle_object = &timer_object->header;
-    if (due_ticks == 0) {
-        object::poll_timers(current_tick, wake_waiters_for_object);
+    if (milliseconds == 0) {
+        object::poll_timers(now, wake_waiters_for_object);
     }
     return begin_object_wait(proc, &handle_object, 1, false, -1);
 }
@@ -2875,12 +2894,6 @@ bool copy_spawn_arguments(
     arguments.argc = requested;
     arguments.argv[requested] = nullptr;
     return true;
-}
-
-uint64_t milliseconds_to_ticks(uint64_t milliseconds) {
-    const uint32_t hz = timer::frequency_hz() != 0 ? timer::frequency_hz() : 1;
-    const uint64_t ticks = (milliseconds * hz + 999ULL) / 1000ULL;
-    return ticks != 0 ? ticks : 1;
 }
 
 } // namespace
@@ -3183,7 +3196,10 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     // Este tick lo consumio el que estaba corriendo cuando llego, antes de que
     // nada de abajo pueda reemplazarlo.
     this_cpu().current->cpu_ticks += 1;
-    const uint64_t current_tick = timer::ticks();
+    // Los vencimientos se miden con el reloj monotono, no con el contador de
+    // ticks: ver now_ms(). El tick sigue siendo el que los revisa -- es el
+    // latido que ya existe -- pero no es la regla con la que se miden.
+    const uint64_t current_tick = now_ms();
     object::poll_timers(current_tick, wake_waiters_for_object);
     wake_sleepers(current_tick);
     wake_wait_timeouts(current_tick);

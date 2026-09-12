@@ -27,6 +27,10 @@ process::SavedContext* handle_interrupt(process::SavedContext* context);
 // Devuelve 0 si todavia no se calibro.
 uint64_t monotonic_ns();
 
+// Lo mismo en milisegundos, que es la unidad en la que el kernel lleva sus
+// vencimientos. 0 si todavia no se calibro.
+uint64_t monotonic_ms();
+
 // Calibra el reloj de monotonic_ns() contra el PIT, sin interrupciones y sin
 // depender de la ACPI. El arranque la llama temprano para tener reloj desde el
 // principio; el bring-up de uACPI, que es quien la necesitaba, la vuelve a
