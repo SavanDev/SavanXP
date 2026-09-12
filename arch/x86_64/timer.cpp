@@ -23,6 +23,50 @@ namespace
     uint32_t g_frequency_hz = 0;
     timer::Backend g_backend = timer::Backend::none;
 
+    /* --- entrega del tick, medida contra el TSC ------------------------------
+     *
+     * El timer es PERIODICO por hardware, asi que no se pierde un tick por
+     * re-armarlo tarde: se pierde porque la interrupcion no se puede ENTREGAR,
+     * y eso pasa cuando el handler anterior todavia esta corriendo con IF=0.
+     * O sea que el costo de este handler se paga en atraso del reloj, y de
+     * uptime_ms cuelgan sleep_ms, los plazos de poll, el RTO y el reloj de
+     * juego de cualquier port.
+     *
+     * Que se mida solo es lo unico que vuelve visible esa perdida desde
+     * adentro: el TSC dice cuanto tiempo paso de verdad y g_ticks cuantas
+     * interrupciones llegaron. La diferencia son los ticks que no se
+     * entregaron. Mismo criterio que la linea `windowd-stats:` del compositor.
+     */
+    constexpr uint64_t kTickReportPeriod = 2000;
+    uint64_t g_report_begin_ns = 0;
+    uint64_t g_report_begin_tick = 0;
+    uint64_t g_handler_ns_total = 0;
+    uint64_t g_handler_ns_max = 0;
+
+    void report_tick_delivery(uint64_t now_ns)
+    {
+        const uint64_t elapsed_ns = now_ns - g_report_begin_ns;
+        const uint64_t delivered = g_ticks - g_report_begin_tick;
+        const uint64_t expected_ms = elapsed_ns / 1000000ull;
+        const uint64_t delivered_ms =
+            g_frequency_hz != 0 ? (delivered * 1000ull) / g_frequency_hz : delivered;
+        const uint64_t lost_ms = expected_ms > delivered_ms ? expected_ms - delivered_ms : 0;
+
+        console::printf(
+            "timer-stats: real=%llu ms ticks=%llu ms perdido=%llu ms (%llu%%) handler avg=%llu us max=%llu us\n",
+            (unsigned long long)expected_ms,
+            (unsigned long long)delivered_ms,
+            (unsigned long long)lost_ms,
+            (unsigned long long)(expected_ms != 0 ? (lost_ms * 100ull) / expected_ms : 0),
+            (unsigned long long)(delivered != 0 ? (g_handler_ns_total / delivered) / 1000ull : 0),
+            (unsigned long long)(g_handler_ns_max / 1000ull));
+
+        g_report_begin_ns = now_ns;
+        g_report_begin_tick = g_ticks;
+        g_handler_ns_total = 0;
+        g_handler_ns_max = 0;
+    }
+
     void out8(uint16_t port, uint8_t value)
     {
         asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -209,6 +253,8 @@ namespace timer
 
     process::SavedContext *handle_interrupt(process::SavedContext *context)
     {
+        const uint64_t entry_ns = monotonic_ns();
+
         g_ticks = g_ticks + 1;
         device::service_background();
         input::poll();
@@ -220,7 +266,31 @@ namespace timer
         {
             arch::x86_64::acknowledge_pic_irq(kPitIrq);
         }
-        return process::handle_timer_tick(context);
+
+        process::SavedContext *next = process::handle_timer_tick(context);
+
+        // Sin TSC calibrado no hay con que medir, y el reporte se apaga solo.
+        if (entry_ns != 0)
+        {
+            const uint64_t exit_ns = monotonic_ns();
+            const uint64_t spent_ns = exit_ns > entry_ns ? exit_ns - entry_ns : 0;
+
+            g_handler_ns_total += spent_ns;
+            if (spent_ns > g_handler_ns_max)
+            {
+                g_handler_ns_max = spent_ns;
+            }
+            if (g_report_begin_ns == 0)
+            {
+                g_report_begin_ns = entry_ns;
+                g_report_begin_tick = g_ticks;
+            }
+            else if (g_ticks - g_report_begin_tick >= kTickReportPeriod)
+            {
+                report_tick_delivery(exit_ns);
+            }
+        }
+        return next;
     }
 
 } // namespace timer
