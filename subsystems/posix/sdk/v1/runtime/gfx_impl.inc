@@ -922,25 +922,80 @@ int gfx_text_width_mono(const char* text) {
     return count * SX_CONSOLE_GLYPH_W;
 }
 
+/* El clip efectivo es la interseccion del clip del llamador con la superficie:
+ * calculado una sola vez, el loop interno no vuelve a validar nada. La version
+ * anterior llamaba gfx_pixel() por pixel encendido, y gfx_pixel revalida los
+ * cuatro bordes y recalcula info->pitch / 4 -- una division -- en cada pixel.
+ * Una grilla de 80x24 son ~245k iteraciones por repintado, asi que esa division
+ * por pixel era el costo dominante de dibujar texto monospace. */
 static void gfx_blit_text_mono_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                                      int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    int clip_left = 0;
+    int clip_top = 0;
+    int clip_right;
+    int clip_bottom;
+    uint32_t pitch_pixels;
     int pen_x = x;
+
+    if (pixels == 0 || info == 0 || info->pitch == 0) {
+        return;
+    }
+
+    clip_right = (int)info->width;
+    clip_bottom = (int)info->height;
+    if (has_clip) {
+        if (clip_x0 > clip_left) {
+            clip_left = clip_x0;
+        }
+        if (clip_y0 > clip_top) {
+            clip_top = clip_y0;
+        }
+        if (clip_x1 < clip_right) {
+            clip_right = clip_x1;
+        }
+        if (clip_y1 < clip_bottom) {
+            clip_bottom = clip_y1;
+        }
+    }
+    if (clip_left >= clip_right || clip_top >= clip_bottom) {
+        return;
+    }
+
+    pitch_pixels = info->pitch / 4;
+
     while (text != 0 && *text != '\0') {
         const unsigned char* glyph = sx_console_glyph(sx_utf8_next(&text));
+        int column_begin = clip_left - pen_x;
+        int column_end = clip_right - pen_x;
         int row;
-        int column;
+
+        if (column_begin < 0) {
+            column_begin = 0;
+        }
+        if (column_end > SX_CONSOLE_GLYPH_W) {
+            column_end = SX_CONSOLE_GLYPH_W;
+        }
+        /* La celda entera cayo fuera del clip: el pen igual avanza, porque la
+         * grilla tiene que seguir alineada con el texto que si se dibuja. */
+        if (column_begin >= column_end) {
+            pen_x += SX_CONSOLE_GLYPH_W;
+            continue;
+        }
+
         for (row = 0; row < SX_CONSOLE_GLYPH_H; ++row) {
-            int py = y + row;
-            if (has_clip && (py < clip_y0 || py >= clip_y1)) {
+            const int py = y + row;
+            const unsigned int bits = glyph[row];
+            uint32_t* row_pixels;
+            int column;
+
+            if (bits == 0 || py < clip_top || py >= clip_bottom) {
                 continue;
             }
-            for (column = 0; column < SX_CONSOLE_GLYPH_W; ++column) {
-                int px = pen_x + column;
-                if (has_clip && (px < clip_x0 || px >= clip_x1)) {
-                    continue;
-                }
-                if ((glyph[row] & (0x80u >> column)) != 0) {
-                    gfx_pixel(pixels, info, px, py, colour);
+
+            row_pixels = pixels + ((size_t)py * pitch_pixels);
+            for (column = column_begin; column < column_end; ++column) {
+                if ((bits & (0x80u >> column)) != 0) {
+                    row_pixels[pen_x + column] = colour;
                 }
             }
         }

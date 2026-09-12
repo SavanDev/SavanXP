@@ -22,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("desktop", "alttab", "clipboard", "files", "appwiz", "taskbar", "kbdlayout", "wheel", "bench", "saturate", "spin")]
+    [ValidateSet("desktop", "alttab", "clipboard", "files", "shell", "appwiz", "taskbar", "kbdlayout", "wheel", "bench", "saturate", "spin")]
     [string]$Scenario = "desktop",
 
     [string]$OutDir,

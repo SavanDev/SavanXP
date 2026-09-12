@@ -160,6 +160,12 @@ class Qmp(object):
     def type_text(self, text):
         # Los qcodes de QEMU no son los caracteres: la barra espaciadora es
         # "spc". Las letras y digitos si coinciden con su caracter.
+        #
+        # La puntuacion NO entra aca. Un qcode es la TECLA FISICA, y el guest la
+        # traduce con su layout activo, que por default es ES: mandar "slash"
+        # -- la tecla que dice / en un teclado US -- escribe un guion. Para
+        # tipear un simbolo hay que saber su combinacion en el layout del guest,
+        # asi que lo hace el escenario, no este helper.
         for ch in text:
             self.tap("spc" if ch == " " else ch, pause=0.12)
 
@@ -223,6 +229,9 @@ class Session(object):
 
     def open_files(self):
         self.launch(0)
+
+    def open_shell(self):
+        self.launch(2)
 
     def open_appwiz(self):
         # Grupo System: la cuarta solapa cuando Doom esta instalado, que es la
@@ -343,6 +352,28 @@ def scenario_files(s):
     # regresion para el catalogo.
     s.qmp.tap("ret", pause=2.5)
     s.shot("files-disk")
+
+
+def scenario_shell(s):
+    """Terminal: los tres repintados que hace, uno por captura.
+
+    El prompt se repinta por cada tecla, la salida de un comando entra por el
+    sink y empuja el historial, y una salida larga lo hace desbordar. Los tres
+    caminos dibujan recortados contra la banda sucia, asi que un error de clip
+    deja residuos o texto faltante que se ve directo en la captura.
+    """
+    s.open_shell()
+    s.shot("shell-abierta")
+    s.qmp.type_text("help")
+    time.sleep(1.0)
+    s.shot("shell-tipeando")
+    s.qmp.tap("ret", pause=3.0)
+    s.shot("shell-salida")
+    # Un segundo `help` pasa de largo las lineas visibles: fuerza el descarte
+    # por el anillo del historial y el repintado del area de contenido entera.
+    s.qmp.type_text("help")
+    s.qmp.tap("ret", pause=4.0)
+    s.shot("shell-scroll")
 
 
 def scenario_appwiz(s):
@@ -638,6 +669,7 @@ SCENARIOS = {
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
     "files": scenario_files,
+    "shell": scenario_shell,
     "appwiz": scenario_appwiz,
     "taskbar": scenario_taskbar,
     "wheel": scenario_wheel,

@@ -166,6 +166,11 @@ Cut-off notes:
 
 ### Changed
 
+- **The Shell window opens and types far faster.** `/bin/shellapp` dropped an
+  unused 8 MiB static backbuffer, repaints only the dirty band, blinks the
+  cursor without a full repaint, and keeps scrollback in a ring. Monospace text
+  blits ~16x faster system-wide. New `shoot.ps1 -Scenario shell`.
+
 - **The compositor accumulates damage as an exact region.** `windowd` stopped
   merging dirty rectangles by bounding box: dragging a window now repaints and
   presents the ring that changed, not the box around the old and new frames.
