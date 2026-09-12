@@ -32,7 +32,7 @@ void submit_mouse_event(const MouseEvent& event) {
         return;
     }
 
-    ui::handle_mouse_event(event.delta_x, event.delta_y, event.buttons);
+    ui::handle_mouse_event(event.delta_x, event.delta_y, event.wheel, event.buttons);
 }
 
 } // namespace input

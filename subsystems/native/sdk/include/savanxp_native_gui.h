@@ -93,6 +93,7 @@ struct sxn_gui_input_event {
 struct sxn_gui_pointer_event {
     int32_t x;
     int32_t y;
+    int32_t wheel; /* ticks de rueda; positivo = lejos del usuario */
     uint32_t buttons; /* mascara de bits SXN_GUI_MOUSE_BUTTON_* */
 };
 

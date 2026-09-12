@@ -140,6 +140,23 @@ class Qmp(object):
             {"type": "btn", "data": {"down": False, "button": "left"}}])
         time.sleep(0.6)
 
+    def wheel(self, ticks):
+        """Gira la rueda `ticks` muescas: positivo hacia arriba.
+
+        QEMU modela la rueda como dos botones que se aprietan y se sueltan
+        (wheel-up / wheel-down), no como un eje: hay que mandar el par entero
+        por muesca o el guest no ve nada. El backend PS/2 lo traduce al cuarto
+        byte del paquete IntelliMouse, el virtio a REL_WHEEL.
+        """
+        button = "wheel-up" if ticks > 0 else "wheel-down"
+        for _ in range(abs(ticks)):
+            self.cmd("input-send-event", events=[
+                {"type": "btn", "data": {"down": True, "button": button}}])
+            self.cmd("input-send-event", events=[
+                {"type": "btn", "data": {"down": False, "button": button}}])
+            time.sleep(0.15)
+        time.sleep(0.6)
+
     def type_text(self, text):
         # Los qcodes de QEMU no son los caracteres: la barra espaciadora es
         # "spc". Las letras y digitos si coinciden con su caracter.
@@ -509,6 +526,95 @@ def scenario_saturate(s):
     s.shot("saturate-final")
 
 
+def find_list_area(image, min_width=150, min_height=60):
+    """Area util de la lista: el rectangulo blanco mas alto de la pantalla.
+
+    Se busca en la captura en vez de calcular la geometria porque la posicion
+    de la ventana la decide el WM (centrada + cascada sobre el area de trabajo)
+    y el alto de la lista lo decide el size hint de la app: replicar esa cadena
+    aca seria copiar tres archivos de layout para llegar a un punto que el
+    propio dibujo ya delata. El campo de texto tambien es blanco, pero mide
+    veintipico de alto -- de ahi el min_height.
+    """
+    width, height = image.size
+    pixels = image.load()
+    runs = []                        # (y, x0, x1) del tramo blanco mas largo de la fila
+    # El texto negro de cada fila parte el blanco en pedazos, asi que los
+    # tramos separados por menos que un par de glifos cuentan como uno solo.
+    # Sin esto la lista no se encuentra: cada renglon con texto queda hecho
+    # tiras de 40 px.
+    max_gap = 24
+
+    for y in range(height):
+        best = None
+        spans = []
+        x = 0
+        while x < width:
+            if pixels[x, y] != LIGHT:
+                x += 1
+                continue
+            start = x
+            while x < width and pixels[x, y] == LIGHT:
+                x += 1
+            if spans and start - spans[-1][1] <= max_gap:
+                spans[-1] = (spans[-1][0], x)
+            else:
+                spans.append((start, x))
+        for span in spans:
+            if span[1] - span[0] >= min_width and (best is None or span[1] - span[0] > best[2] - best[1]):
+                best = (y, span[0], span[1])
+        if best is not None:
+            runs.append(best)
+
+    # Agrupar filas consecutivas cuyos runs se solapan: cada grupo es un panel.
+    best_group = None
+    group = []
+    for run in runs:
+        if group and run[0] == group[-1][0] + 1 and run[1] < group[-1][2] and run[2] > group[-1][1]:
+            group.append(run)
+        else:
+            group = [run]
+        if len(group) >= min_height and (best_group is None or len(group) > len(best_group)):
+            best_group = list(group)
+
+    if best_group is None:
+        raise Failure("no se encontro ningun panel blanco donde probar la rueda")
+    x0 = max(run[1] for run in best_group)
+    x1 = min(run[2] for run in best_group)
+    return (x0, best_group[0][0], x1, best_group[-1][0] + 1)
+
+
+def scenario_wheel(s):
+    """La rueda, de punta a punta: QEMU -> driver -> WM -> toolkit.
+
+    Widgets es la unica ventana con una lista mas larga que su caja (14 items,
+    7 filas visibles), asi que es la que puede probar que la rueda scrollea de
+    verdad y no solo que el evento llega.
+
+    La asercion fuerte no es "algo cambio" sino la vuelta: girar hacia arriba
+    mas muescas de las que se bajo tiene que dejar la lista EXACTAMENTE como
+    estaba, porque arriba de todo el scroll clampea en cero. Eso prueba las dos
+    direcciones, el signo, y que no se pierde ni se duplica ningun tick -- un
+    tick de mas o de menos deja la lista corrida y los pixeles no coinciden.
+    """
+    s.launch(3, groups=1)            # Diagnostics -> Widgets
+    image = s.shot("wheel-ventana")
+    area = find_list_area(image)
+    print("  lista en", area)
+    s.qmp.move_to((area[0] + area[2]) // 2, (area[1] + area[3]) // 2)
+
+    before = s.shot("wheel-arriba-de-todo").crop(area).tobytes()
+    s.qmp.wheel(-2)                  # dos muescas abajo = seis filas
+    scrolled = s.shot("wheel-abajo").crop(area).tobytes()
+    if scrolled == before:
+        raise Failure("la rueda hacia abajo no movio la lista")
+
+    s.qmp.wheel(5)                   # mas de las que bajo: clampea arriba
+    back = s.shot("wheel-de-vuelta").crop(area).tobytes()
+    if back != before:
+        raise Failure("la lista no volvio al tope: ticks perdidos, duplicados o signo al reves")
+
+
 def scenario_spin(s):
     """Carga que SI satura el pipeline: el cliente dibuja sin esperar la entrada.
 
@@ -534,6 +640,7 @@ SCENARIOS = {
     "files": scenario_files,
     "appwiz": scenario_appwiz,
     "taskbar": scenario_taskbar,
+    "wheel": scenario_wheel,
     "kbdlayout": scenario_kbdlayout,
     "bench": scenario_bench,
     "saturate": scenario_saturate,

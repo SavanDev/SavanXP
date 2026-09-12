@@ -959,7 +959,8 @@ static int route_packet(int fd, const void *packet, size_t size)
 /* Deliver the pointer to a client in its own surface-local coordinates, so the
  * app hit-tests in local space and stays aligned with the system cursor the
  * compositor draws. */
-static int route_pointer(const struct windowd_client *client, int cursor_x, int cursor_y, uint32_t buttons)
+static int route_pointer(
+    const struct windowd_client *client, int cursor_x, int cursor_y, int wheel, uint32_t buttons)
 {
     struct sx_rect surface_rect;
     struct savanxp_gui_pointer_event event;
@@ -971,6 +972,7 @@ static int route_pointer(const struct windowd_client *client, int cursor_x, int 
     surface_rect = windowd_client_surface_rect(client);
     event.x = cursor_x - surface_rect.x;
     event.y = cursor_y - surface_rect.y;
+    event.wheel = wheel;
     event.buttons = buttons;
     return route_packet(client->mouse_write_fd, &event, sizeof(event));
 }
@@ -1012,6 +1014,10 @@ static size_t coalesce_mouse_events(
         {
             coalesced[coalesced_count - 1u].delta_x += event->delta_x;
             coalesced[coalesced_count - 1u].delta_y += event->delta_y;
+            /* La rueda se SUMA como los deltas y no se pisa: fundir dos eventos
+             * quedandose con el wheel del primero descarta ticks, y un tick
+             * perdido es scroll que no ocurre nunca. */
+            coalesced[coalesced_count - 1u].wheel += event->wheel;
         }
 
         current_buttons = event->buttons;
@@ -2729,6 +2735,67 @@ static int windowd_cursor_repro(void)
     return 0;
 }
 
+/* La coalescencia es el unico punto del camino de la rueda donde perder ticks
+ * no se nota: el cursor sigue andando, el scroll simplemente se queda corto y
+ * parece "el mouse anda pesado". Por eso se asserta el total, que es la unica
+ * propiedad que importa -- cuantos eventos salgan es decision del coalescer. */
+static int windowd_wheel_coalesce_selftest(void)
+{
+    struct savanxp_mouse_event raw[6];
+    struct savanxp_mouse_event coalesced[6];
+    size_t count;
+    size_t index;
+    int total = 0;
+
+    memset(raw, 0, sizeof(raw));
+    memset(coalesced, 0, sizeof(coalesced));
+
+    /* Una tanda de movimiento con rueda y sin cambio de botones: el caso que
+     * el coalescer funde en un solo evento. */
+    for (index = 0; index < 4u; ++index)
+    {
+        raw[index].delta_x = 1;
+        raw[index].wheel = 1;
+    }
+    /* Y dos mas con el boton apretado, que fuerzan eventos aparte. */
+    raw[4].wheel = -3;
+    raw[4].buttons = SAVANXP_MOUSE_BUTTON_LEFT;
+    raw[5].wheel = -1;
+    raw[5].buttons = SAVANXP_MOUSE_BUTTON_LEFT;
+
+    count = coalesce_mouse_events(raw, 6u, coalesced, 6u, 0);
+    if (count == 0u || count > 6u)
+    {
+        return 1;
+    }
+    for (index = 0; index < count; ++index)
+    {
+        total += coalesced[index].wheel;
+    }
+    /* 4 * (+1) + (-3) + (-1) = 0 solo si no se perdio ni se duplico ninguno. */
+    if (total != 0)
+    {
+        return 1;
+    }
+
+    /* Cuatro eventos de rueda pura, sin movimiento ni botones: no hay nada que
+     * los distinga entre si, asi que es el peor caso para un coalescer que
+     * pisara el campo en vez de sumarlo. */
+    memset(raw, 0, sizeof(raw));
+    memset(coalesced, 0, sizeof(coalesced));
+    for (index = 0; index < 4u; ++index)
+    {
+        raw[index].wheel = 1;
+    }
+    count = coalesce_mouse_events(raw, 4u, coalesced, 6u, 0);
+    total = 0;
+    for (index = 0; index < count; ++index)
+    {
+        total += coalesced[index].wheel;
+    }
+    return total == 4 ? 0 : 1;
+}
+
 static int windowd_selftest(void)
 {
     struct windowd_session session;
@@ -2759,6 +2826,12 @@ static int windowd_selftest(void)
     if (windowd_region_selftest() != 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL region subtract primitive\n");
+        return 1;
+    }
+
+    if (windowd_wheel_coalesce_selftest() != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL wheel ticks lost in coalescing\n");
         return 1;
     }
 
@@ -3070,7 +3143,7 @@ static int windowd_selftest(void)
 
         for (index = 0; index < 65536; ++index)
         {
-            if (!route_pointer(&session.background_client, 10 + (index & 31), 10, 0))
+            if (!route_pointer(&session.background_client, 10 + (index & 31), 10, 0, 0))
             {
                 dropped = 1;
                 break;
@@ -3941,7 +4014,7 @@ static void handle_pointer_event(
                  * este caso especial el click caia en el camino generico de
                  * ventana -- donde overlay_slot_for_client_ptr devuelve -1,
                  * anula el hover, y se pierde el click entero. */
-                (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
+                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
                 current_hover_client = 0;
             }
@@ -3953,7 +4026,7 @@ static void handle_pointer_event(
                  * overlay_slot_for_client_ptr devuelve -1 y el hover se anulaba
                  * -- y con el se perdian TODAS las ramas siguientes, incluida la
                  * que rutea el evento al cliente. */
-                (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
+                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
                 current_hover_client = 0;
             }
@@ -4041,7 +4114,7 @@ static void handle_pointer_event(
             }
             else if (current_hover_client != 0 && current_hover_client->mouse_write_fd >= 0)
             {
-                (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
+                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
             }
         }
@@ -4098,7 +4171,7 @@ static void handle_pointer_event(
         current_hover_client->mouse_write_fd >= 0 &&
         !(left_pressed != 0 && left_was_pressed == 0))
     {
-        (void)route_pointer(current_hover_client, cursor_x, cursor_y, pressed_buttons);
+        (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
     }
     else if (!mouse_routed &&
              !drag_was_active &&
@@ -4108,7 +4181,7 @@ static void handle_pointer_event(
              previous_hover_client->mouse_write_fd >= 0 &&
              !(left_pressed != 0 && left_was_pressed == 0))
     {
-        (void)route_pointer(previous_hover_client, cursor_x, cursor_y, pressed_buttons);
+        (void)route_pointer(previous_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
     }
 
     refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);

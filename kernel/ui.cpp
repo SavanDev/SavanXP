@@ -83,15 +83,22 @@ void enqueue_event(uint32_t type, uint32_t key, int32_t ascii, uint32_t modifier
     g_input_count += 1;
 }
 
-void enqueue_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
+void enqueue_mouse_event(int32_t delta_x, int32_t delta_y, int32_t wheel, uint32_t buttons) {
     if (g_mouse_count == kMouseQueueCapacity) {
+        // Al descartar el mas viejo se arrastran sus ticks de rueda al que pasa
+        // a ser el mas viejo. Un delta de movimiento perdido se corrige solo --
+        // el cursor es una posicion absoluta y el proximo evento la reubica --,
+        // pero un tick de rueda perdido es scroll que no ocurre nunca.
+        const int32_t dropped_wheel = g_mouse_queue[g_mouse_read_index].wheel;
         g_mouse_read_index = (g_mouse_read_index + 1) % kMouseQueueCapacity;
         g_mouse_count -= 1;
+        g_mouse_queue[g_mouse_read_index].wheel += dropped_wheel;
     }
 
     g_mouse_queue[g_mouse_write_index] = {
         .delta_x = delta_x,
         .delta_y = delta_y,
+        .wheel = wheel,
         .buttons = buttons,
     };
     g_mouse_write_index = (g_mouse_write_index + 1) % kMouseQueueCapacity;
@@ -271,11 +278,11 @@ void handle_key_event(uint32_t key, bool pressed, char ascii, uint32_t modifiers
     );
 }
 
-void handle_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
+void handle_mouse_event(int32_t delta_x, int32_t delta_y, int32_t wheel, uint32_t buttons) {
     if (!graphics_active() || !g_mouse_available) {
         return;
     }
-    enqueue_mouse_event(delta_x, delta_y, buttons);
+    enqueue_mouse_event(delta_x, delta_y, wheel, buttons);
 }
 
 void sync_framebuffer_geometry() {

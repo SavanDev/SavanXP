@@ -2529,6 +2529,92 @@ int sxgui_cursor_shape(const struct sxgui_context *ctx)
     return ctx != 0 ? ctx->cursor_shape : SAVANXP_CURSOR_ARROW;
 }
 
+/* ---- wheel ---------------------------------------------------------------
+ *
+ * Un tick mueve tres filas, la convencion de Win9x. El destino es el widget
+ * BAJO EL PUNTERO y no el que tiene el foco: es lo que ya decidio el WM al
+ * rutear el evento al cliente bajo el cursor, y es lo que espera cualquiera
+ * que apoye el mouse sobre una lista sin haberla clickeado antes. */
+#define SXGUI_WHEEL_ROWS_PER_TICK 3
+
+static int sxgui_wheel_scroll_widget(struct sxgui_widget *widget, int rows)
+{
+    if (widget->kind == SXGUI_LISTBOX || widget->kind == SXGUI_TEXTVIEW)
+    {
+        int before = widget->scroll;
+
+        widget->scroll = sxgui_clamp_int(
+            widget->scroll + rows, 0, sxgui_listbox_max_scroll(widget));
+        return widget->scroll != before;
+    }
+    if (widget->kind == SXGUI_SCROLLBAR)
+    {
+        int before = widget->value;
+
+        widget->value = sxgui_clamp_int(
+            widget->value + rows, widget->range_min, widget->range_max);
+        if (widget->value != before)
+        {
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static int sxgui_handle_wheel(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event)
+{
+    struct sxgui_widget *target = 0;
+    int index;
+    int rows;
+
+    if (event->wheel == 0)
+    {
+        return 0;
+    }
+
+    /* Un menu abierto se come la rueda sin scrollear nada: mientras esta
+     * desplegado es el duenio del puntero, y dejar que el scroll se filtre a
+     * lo que quedo debajo mueve contenido que el usuario ni siquiera ve. */
+    if (ctx->menubar != 0 && ctx->menubar->open_menu >= 0)
+    {
+        return 0;
+    }
+
+    /* wheel positivo = lejos del usuario = el contenido sube = baja el indice
+     * de la primera fila visible. */
+    rows = -event->wheel * SXGUI_WHEEL_ROWS_PER_TICK;
+
+    /* Un dropdown abierto se queda con la rueda, igual que se queda con el
+     * click, este el puntero sobre el o no. */
+    if (ctx->popup_owner >= 0 && ctx->popup_owner < ctx->widget_count)
+    {
+        const struct sxgui_widget *owner = &ctx->widgets[ctx->popup_owner];
+        int max_scroll = owner->item_count - sxgui_popup_visible_rows(owner);
+        int before = ctx->popup_scroll;
+
+        ctx->popup_scroll = sxgui_clamp_int(
+            ctx->popup_scroll + rows, 0, max_scroll > 0 ? max_scroll : 0);
+        return ctx->popup_scroll != before;
+    }
+
+    /* El ultimo widget que da hit es el de mas arriba: mismo orden que usa el
+     * barrido de foco del click. */
+    for (index = 0; index < ctx->widget_count; ++index)
+    {
+        struct sxgui_widget *widget = &ctx->widgets[index];
+
+        if (sxgui_widget_visible(widget) && sxgui_widget_enabled(widget) &&
+            sxgui_hit(widget, event->x, event->y))
+        {
+            target = widget;
+        }
+    }
+
+    return target != 0 ? sxgui_wheel_scroll_widget(target, rows) : 0;
+}
+
 int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_pointer_event *event)
 {
     int changed = 0;
@@ -2579,6 +2665,14 @@ int sxgui_handle_pointer(struct sxgui_context *ctx, const struct savanxp_gui_poi
             changed = 1;
         }
         return changed;
+    }
+
+    /* La rueda se despacha antes que todo lo demas porque no depende del
+     * estado de los botones ni del foco, solo de que hay debajo del puntero.
+     * El evento sigue su camino: trae posicion y botones como cualquier otro. */
+    if (sxgui_handle_wheel(ctx, event))
+    {
+        changed = 1;
     }
 
     /* an open menu owns the pointer: hovering the bar switches menus, click

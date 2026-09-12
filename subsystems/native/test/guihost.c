@@ -174,6 +174,7 @@ int main(void) {
             }
             pointer.x = GUIHOST_POINTER_X;
             pointer.y = GUIHOST_POINTER_Y;
+            pointer.wheel = 0;
             pointer.buttons = SAVANXP_MOUSE_BUTTON_LEFT;
             if (savanxp_write(mouse_pipe[1], &pointer, sizeof(pointer)) != (long)sizeof(pointer)) {
                 return fail("no se pudo mandar el evento de puntero");

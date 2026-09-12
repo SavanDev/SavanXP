@@ -92,12 +92,32 @@ contract onto every client:
 |----|---------------------------------|------------------|
 | 3  | shared-memory surface (header + dirty-rect batches + pixels) | WM→app (map RW) |
 | 4  | keyboard input                  | WM→app           |
-| 5  | mouse input                     | WM→app           |
+| 5  | mouse input (position, buttons, wheel) | WM→app    |
 | 6  | *submit* event (frame ready)    | app→WM           |
 | 7  | *retire* event (frame released) | WM→app           |
 | 8  | *shutdown* event                | WM→app           |
 | 9  | launch pipe (app asks to launch another app) | app→WM |
 | 10 | cursor hint pipe (cursor shape) | app→WM           |
+
+### The pointer channel carries a wheel, and it accumulates
+
+`savanxp_gui_pointer_event` (fd 5) has a `wheel` field alongside `x`, `y` and
+`buttons`: signed ticks since the previous event, positive away from the user,
+same sign as evdev's `REL_WHEEL`. Unlike the other three it is **not a state** —
+it is an increment that is zero in most events.
+
+That difference is a rule for anyone touching the input path: **every stage must
+sum `wheel`, never overwrite it.** A dropped motion delta corrects itself,
+because the cursor is an absolute position the next event repositions; a dropped
+tick is scroll that never happens. The two stages that merge events —
+`enqueue_mouse_event()` when the kernel queue overflows, and
+`coalesce_mouse_events()` in the WM — both fold the field instead of keeping the
+newest one, and `windowd --selftest` asserts the WM half.
+
+The wheel goes to the client **under the cursor**, not the focused one, which
+falls out of the existing routing for free. The WM has no wheel behavior of its
+own. Neither does the middle button: it travels in the `buttons` mask like any
+other, and no WM interaction keys off it.
 
 The **client half** of this protocol is already factored out as a library in
 `subsystems/posix/sdk/v1/runtime/gfx_impl.inc` (behind

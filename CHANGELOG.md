@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **The mouse wheel works.** PS/2 negotiates IntelliMouse 4-byte packets (`ps2:
+  mouse wheel enabled`), virtio reads `REL_WHEEL`, and the new `wheel` field of
+  `savanxp_gui_pointer_event` scrolls lists, text views and scrollbars under the
+  cursor. [Why it accumulates](docs/WM_SUBSYSTEM.md#the-pointer-channel-carries-a-wheel-and-it-accumulates).
+
 - **The compositor measures itself.** `windowd` reports compose, sync and
   present times — present split into `ipc`/`svc`/`gpu`/`tl`, and `blk_us` for
   the total time blocked on `compositord` — plus damage area, over the new

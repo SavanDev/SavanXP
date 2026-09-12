@@ -67,6 +67,20 @@ static void format_delta(char* buffer, int dx, int dy) {
     (void)append_int(buffer, offset, 64, dy);
 }
 
+/* El acumulado importa tanto como el ultimo tick: un tick suelto se ve igual
+ * venga de donde venga, pero el total delata si el camino esta perdiendo
+ * eventos (la coalescencia del WM o la cola del kernel) al no coincidir con lo
+ * que la rueda giro de verdad. */
+static void format_wheel(char* buffer, int wheel_last, int wheel_total) {
+    int offset = 0;
+    memset(buffer, 0, 64);
+    offset = append_text(buffer, offset, 64, "Wheel: ");
+    offset = append_int(buffer, offset, 64, wheel_last);
+    offset = append_text(buffer, offset, 64, " (total ");
+    offset = append_int(buffer, offset, 64, wheel_total);
+    (void)append_text(buffer, offset, 64, ")");
+}
+
 static void format_buttons(char* buffer, uint32_t buttons) {
     int offset = 0;
     memset(buffer, 0, 96);
@@ -93,14 +107,14 @@ static void draw_crosshair(struct savanxp_gfx_context* gfx, int x, int y) {
 }
 
 /* El panel de lecturas fija el ancho; abajo queda una zona libre para mover el
- * puntero, que es de lo que se trata la prueba. Alto del panel = las cuatro
+ * puntero, que es de lo que se trata la prueba. Alto del panel = las cinco
  * lineas completas; estaba en 98 y le cortaba la ultima por dos pixeles. */
 #define MOUSETEST_PANEL_TOP 54
-#define MOUSETEST_PANEL_HEIGHT 104
+#define MOUSETEST_PANEL_HEIGHT 126
 #define MOUSETEST_PLAYGROUND_HEIGHT 200
 
 static void request_content_size(struct savanxp_gfx_context* gfx) {
-    int text_width = gfx_text_width("Move the mouse, click buttons, ESC exits");
+    int text_width = gfx_text_width("Move the mouse, roll the wheel, click buttons, ESC exits");
     uint32_t width = (uint32_t)(40 + text_width + 40);
     uint32_t height = (uint32_t)(MOUSETEST_PANEL_TOP + MOUSETEST_PANEL_HEIGHT + MOUSETEST_PLAYGROUND_HEIGHT);
 
@@ -112,14 +126,17 @@ static void request_content_size(struct savanxp_gfx_context* gfx) {
     }
 }
 
-static void draw_scene(struct savanxp_gfx_context* gfx, int cursor_x, int cursor_y, int delta_x, int delta_y, uint32_t buttons) {
+static void draw_scene(struct savanxp_gfx_context* gfx, int cursor_x, int cursor_y, int delta_x, int delta_y,
+    int wheel_last, int wheel_total, uint32_t buttons) {
     char line0[64];
     char line1[64];
-    char line2[96];
+    char line2[64];
+    char line3[96];
 
     format_position(line0, cursor_x, cursor_y);
     format_delta(line1, delta_x, delta_y);
-    format_buttons(line2, buttons);
+    format_wheel(line2, wheel_last, wheel_total);
+    format_buttons(line3, buttons);
 
     gfx_clear(g_backbuffer, &gfx->info, gfx_rgb(18, 59, 102));
     gfx_rect(g_backbuffer, &gfx->info, 0, 0, (int)gfx->info.width, 34, gfx_rgb(6, 40, 78));
@@ -128,10 +145,11 @@ static void draw_scene(struct savanxp_gfx_context* gfx, int cursor_x, int cursor
 
     gfx_rect(g_backbuffer, &gfx->info, 24, MOUSETEST_PANEL_TOP, (int)gfx->info.width - 48, MOUSETEST_PANEL_HEIGHT, gfx_rgb(225, 232, 238));
     gfx_frame(g_backbuffer, &gfx->info, 24, MOUSETEST_PANEL_TOP, (int)gfx->info.width - 48, MOUSETEST_PANEL_HEIGHT, gfx_rgb(60, 90, 120));
-    gfx_blit_text(g_backbuffer, &gfx->info, 40, 70, "Move the mouse, click buttons, ESC exits", gfx_rgb(0, 0, 0));
+    gfx_blit_text(g_backbuffer, &gfx->info, 40, 70, "Move the mouse, roll the wheel, click buttons, ESC exits", gfx_rgb(0, 0, 0));
     gfx_blit_text(g_backbuffer, &gfx->info, 40, 92, line0, gfx_rgb(0, 0, 0));
     gfx_blit_text(g_backbuffer, &gfx->info, 40, 114, line1, gfx_rgb(0, 0, 0));
     gfx_blit_text(g_backbuffer, &gfx->info, 40, 136, line2, gfx_rgb(0, 0, 0));
+    gfx_blit_text(g_backbuffer, &gfx->info, 40, 158, line3, gfx_rgb(0, 0, 0));
 
     draw_crosshair(gfx, cursor_x, cursor_y);
 }
@@ -145,6 +163,8 @@ int main(void) {
     int cursor_y;
     int delta_x = 0;
     int delta_y = 0;
+    int wheel_last = 0;
+    int wheel_total = 0;
     uint32_t buttons = 0;
     int needs_redraw = 1;
 
@@ -202,6 +222,10 @@ int main(void) {
             cursor_x = pointer_event.x;
             cursor_y = pointer_event.y;
             buttons = pointer_event.buttons;
+            if (pointer_event.wheel != 0) {
+                wheel_last = pointer_event.wheel;
+                wheel_total += pointer_event.wheel;
+            }
 
             if (cursor_x < 0) {
                 cursor_x = 0;
@@ -224,7 +248,7 @@ int main(void) {
             continue;
         }
 
-        draw_scene(&gfx, cursor_x, cursor_y, delta_x, delta_y, buttons);
+        draw_scene(&gfx, cursor_x, cursor_y, delta_x, delta_y, wheel_last, wheel_total, buttons);
         if (gfx_present(&gfx, g_backbuffer) < 0) {
             break;
         }

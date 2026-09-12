@@ -11,6 +11,7 @@
 # Uso:
 #   .\tools\shoot.ps1                       # escenario 'desktop'
 #   .\tools\shoot.ps1 -Scenario clipboard
+#   .\tools\shoot.ps1 -Scenario wheel       # rueda del mouse, de punta a punta
 #   .\tools\shoot.ps1 -Scenario appwiz     # necesita un programa externo instalado
 #   .\tools\shoot.ps1 -Scenario alttab -OutDir build\shots
 #
@@ -21,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("desktop", "alttab", "clipboard", "files", "appwiz", "taskbar", "kbdlayout", "bench", "saturate", "spin")]
+    [ValidateSet("desktop", "alttab", "clipboard", "files", "appwiz", "taskbar", "kbdlayout", "wheel", "bench", "saturate", "spin")]
     [string]$Scenario = "desktop",
 
     [string]$OutDir,

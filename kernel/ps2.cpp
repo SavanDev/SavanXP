@@ -46,7 +46,13 @@ constexpr uint8_t kKeyboardCommandReset = 0xff;
 
 constexpr uint8_t kMouseCommandSetDefaults = 0xf6;
 constexpr uint8_t kMouseCommandEnableDataReporting = 0xf4;
+constexpr uint8_t kMouseCommandSetSampleRate = 0xf3;
+constexpr uint8_t kMouseCommandGetDeviceId = 0xf2;
 constexpr uint8_t kMouseCommandReset = 0xff;
+
+constexpr uint8_t kMouseDeviceIdStandard = 0x00;
+constexpr uint8_t kMouseDeviceIdWheel = 0x03;
+constexpr uint8_t kMouseDefaultSampleRate = 100;
 
 constexpr uint8_t kKeyboardResponseAck = 0xfa;
 constexpr uint8_t kKeyboardResponseResend = 0xfe;
@@ -99,8 +105,12 @@ bool g_num_lock_enabled = false;
 bool g_scroll_lock_enabled = false;
 bool g_led_sync_pending = false;
 
-uint8_t g_mouse_packet[3] = {};
+// Cuatro bytes en modo IntelliMouse (el cuarto es la rueda), tres en el modo
+// estandar. g_mouse_packet_length es el framing vigente: lo fija la deteccion
+// del arranque y no cambia despues.
+uint8_t g_mouse_packet[4] = {};
 uint8_t g_mouse_packet_index = 0;
+uint8_t g_mouse_packet_length = 3;
 
 inline void out8(uint16_t port, uint8_t value) {
     asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -192,7 +202,9 @@ void reset_input_state() {
     g_mouse_packet[0] = 0;
     g_mouse_packet[1] = 0;
     g_mouse_packet[2] = 0;
+    g_mouse_packet[3] = 0;
     g_mouse_packet_index = 0;
+    g_mouse_packet_length = 3;
 }
 
 void clear_raw_queue() {
@@ -326,6 +338,22 @@ bool mouse_send_byte_with_ack(uint8_t value) {
         }
     }
     return false;
+}
+
+// Siguiente byte de datos del puerto auxiliar, salteando los del principal.
+// Solo vale durante la inicializacion, cuando el mouse todavia no esta en
+// streaming: ahi cada byte auxiliar es la respuesta a un comando y no dato de
+// un paquete. Mismo criterio que mouse_wait_for_ack().
+bool mouse_read_data_byte(uint8_t& value) {
+    for (;;) {
+        bool auxiliary = false;
+        if (!read_output_byte(value, auxiliary)) {
+            return false;
+        }
+        if (auxiliary) {
+            return true;
+        }
+    }
 }
 
 bool keyboard_reset_device() {
@@ -645,10 +673,11 @@ void emit_key_event(uint32_t key, bool pressed, char ascii_key, char ascii_text)
     });
 }
 
-void emit_mouse_event(int32_t delta_x, int32_t delta_y, uint32_t buttons) {
+void emit_mouse_event(int32_t delta_x, int32_t delta_y, int32_t wheel, uint32_t buttons) {
     input::submit_mouse_event({
         .delta_x = delta_x,
         .delta_y = delta_y,
+        .wheel = wheel,
         .buttons = buttons,
         .source = input::MouseSource::ps2,
     });
@@ -889,7 +918,18 @@ void process_mouse_packet() {
     delta_x = clamp_mouse_delta(delta_x, kMaxPlausibleDelta);
     raw_delta_y = clamp_mouse_delta(raw_delta_y, kMaxPlausibleDelta);
 
-    emit_mouse_event(delta_x, -raw_delta_y, buttons);
+    // Cuarto byte: Z en complemento a dos, positivo hacia el usuario. El signo
+    // se invierte porque savanxp_mouse_event.wheel va al reves (positivo = lejos
+    // del usuario, como REL_WHEEL). Mismo criterio de clamp que los deltas: un
+    // paquete corrupto no puede pasar de un tick plausible.
+    int32_t wheel = 0;
+    if (g_mouse_packet_length == 4) {
+        constexpr int32_t kMaxPlausibleWheel = 8;
+        wheel = clamp_mouse_delta(
+            -static_cast<int32_t>(static_cast<int8_t>(g_mouse_packet[3])), kMaxPlausibleWheel);
+    }
+
+    emit_mouse_event(delta_x, -raw_delta_y, wheel, buttons);
 }
 
 void process_mouse_byte(uint8_t byte) {
@@ -904,7 +944,7 @@ void process_mouse_byte(uint8_t byte) {
     }
 
     g_mouse_packet[g_mouse_packet_index++] = byte;
-    if (g_mouse_packet_index < 3) {
+    if (g_mouse_packet_index < g_mouse_packet_length) {
         return;
     }
 
@@ -965,6 +1005,39 @@ bool initialize_keyboard() {
     return true;
 }
 
+// "Knock" de IntelliMouse: la secuencia de sample rates 200/100/80 es el codigo
+// que un mouse con rueda reconoce para pasar a paquetes de 4 bytes. Un mouse sin
+// rueda la ignora y sigue devolviendo el ID 0x00, asi que no hay nada que
+// preguntar antes: se intenta siempre y manda el ID resultante.
+//
+// Va ANTES de habilitar el reporte de datos (0xf4) a proposito. Con el stream ya
+// abierto, los ACK de estos siete comandos se mezclarian con los bytes de los
+// paquetes y desincronizarian el framing -- exactamente el modo de falla que
+// documenta process_mouse_byte().
+bool enable_mouse_wheel() {
+    constexpr uint8_t kKnockRates[] = {200, 100, 80};
+    for (const uint8_t rate : kKnockRates) {
+        if (!mouse_send_byte_with_ack(kMouseCommandSetSampleRate) ||
+            !mouse_send_byte_with_ack(rate)) {
+            return false;
+        }
+    }
+
+    if (!mouse_send_byte_with_ack(kMouseCommandGetDeviceId)) {
+        return false;
+    }
+
+    uint8_t device_id = kMouseDeviceIdStandard;
+    if (!mouse_read_data_byte(device_id) || device_id != kMouseDeviceIdWheel) {
+        return false;
+    }
+
+    // El knock deja el sample rate en 80. Reponer el default para no heredar la
+    // tasa del codigo de deteccion como configuracion de funcionamiento.
+    return mouse_send_byte_with_ack(kMouseCommandSetSampleRate) &&
+        mouse_send_byte_with_ack(kMouseDefaultSampleRate);
+}
+
 bool initialize_mouse() {
     flush_controller_output();
     if (!mouse_reset_device()) {
@@ -975,6 +1048,13 @@ bool initialize_mouse() {
         console::write_line("ps2: failed to restore mouse defaults");
         return false;
     }
+
+    const bool wheel = enable_mouse_wheel();
+    g_mouse_packet_length = wheel ? 4 : 3;
+    console::write_line(wheel
+        ? "ps2: mouse wheel enabled (4-byte packets)"
+        : "ps2: mouse without wheel (3-byte packets)");
+
     if (!mouse_send_byte_with_ack(kMouseCommandEnableDataReporting)) {
         console::write_line("ps2: failed to enable mouse data reporting");
         return false;

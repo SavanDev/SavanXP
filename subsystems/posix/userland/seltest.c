@@ -134,6 +134,7 @@ static void pointer(int x, int y, uint32_t buttons)
     struct savanxp_gui_pointer_event event;
     event.x = x;
     event.y = y;
+    event.wheel = 0;
     event.buttons = buttons;
     (void)sxgui_handle_pointer(&g_ctx, &event);
 }

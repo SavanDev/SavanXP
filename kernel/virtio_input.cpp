@@ -22,8 +22,10 @@ constexpr uint8_t kVirtioInputCfgAbsInfo = 0x12;
 
 constexpr uint16_t kEvSyn = 0x00;
 constexpr uint16_t kEvKey = 0x01;
+constexpr uint16_t kEvRel = 0x02;
 constexpr uint16_t kEvAbs = 0x03;
 constexpr uint16_t kSynReport = 0;
+constexpr uint16_t kRelWheel = 0x08;
 constexpr uint16_t kAbsX = 0x00;
 constexpr uint16_t kAbsY = 0x01;
 constexpr uint16_t kBtnLeft = 0x110;
@@ -127,6 +129,9 @@ int32_t g_current_abs_y = 0;
 int32_t g_last_screen_x = 0;
 int32_t g_last_screen_y = 0;
 uint32_t g_buttons = 0;
+// Ticks de rueda acumulados del reporte en curso: EV_REL llega como uno o mas
+// eventos sueltos y recien el EV_SYN cierra el reporte.
+int32_t g_pending_wheel = 0;
 bool g_have_abs_x = false;
 bool g_have_abs_y = false;
 bool g_have_screen_position = false;
@@ -224,7 +229,7 @@ int32_t normalize_axis(int32_t value, int32_t minimum, int32_t maximum, uint32_t
     return static_cast<int32_t>(scaled / range);
 }
 
-void submit_screen_position(int32_t screen_x, int32_t screen_y) {
+void submit_screen_position(int32_t screen_x, int32_t screen_y, int32_t wheel) {
     if (!g_have_screen_position) {
         g_last_screen_x = screen_x;
         g_last_screen_y = screen_y;
@@ -232,6 +237,7 @@ void submit_screen_position(int32_t screen_x, int32_t screen_y) {
         input::submit_mouse_event({
             .delta_x = screen_x,
             .delta_y = screen_y,
+            .wheel = wheel,
             .buttons = g_buttons,
             .source = input::MouseSource::virtio_tablet,
         });
@@ -241,6 +247,7 @@ void submit_screen_position(int32_t screen_x, int32_t screen_y) {
     input::submit_mouse_event({
         .delta_x = screen_x - g_last_screen_x,
         .delta_y = screen_y - g_last_screen_y,
+        .wheel = wheel,
         .buttons = g_buttons,
         .source = input::MouseSource::virtio_tablet,
     });
@@ -261,6 +268,17 @@ void process_pointer_event(const VirtioInputEvent& event) {
         return;
     }
 
+    // La rueda del tablet viene por EV_REL aunque la posicion sea absoluta:
+    // REL_WHEEL es relativo por definicion, no tiene rango que reportar en el
+    // abs_info. Positivo = lejos del usuario, misma convencion que el campo
+    // wheel de savanxp_mouse_event, asi que pasa sin invertir.
+    if (event.type == kEvRel) {
+        if (event.code == kRelWheel) {
+            g_pending_wheel += event.value;
+        }
+        return;
+    }
+
     if (event.type == kEvKey) {
         const uint32_t mask =
             event.code == kBtnLeft ? SAVANXP_MOUSE_BUTTON_LEFT :
@@ -276,13 +294,33 @@ void process_pointer_event(const VirtioInputEvent& event) {
         return;
     }
 
-    if (event.type != kEvSyn || event.code != kSynReport || !g_have_abs_x || !g_have_abs_y) {
+    if (event.type != kEvSyn || event.code != kSynReport) {
+        return;
+    }
+
+    const int32_t wheel = g_pending_wheel;
+    g_pending_wheel = 0;
+
+    if (!g_have_abs_x || !g_have_abs_y) {
+        // Rueda antes del primer reporte de posicion. No hay cursor que mover,
+        // pero el tick es real: descartarlo junto con el resto del reporte
+        // perderia el scroll de quien usa la rueda sin haber movido el mouse.
+        if (wheel != 0) {
+            input::submit_mouse_event({
+                .delta_x = 0,
+                .delta_y = 0,
+                .wheel = wheel,
+                .buttons = g_buttons,
+                .source = input::MouseSource::virtio_tablet,
+            });
+        }
         return;
     }
 
     submit_screen_position(
         normalize_axis(g_current_abs_x, g_abs_min_x, g_abs_max_x, g_framebuffer_width),
-        normalize_axis(g_current_abs_y, g_abs_min_y, g_abs_max_y, g_framebuffer_height)
+        normalize_axis(g_current_abs_y, g_abs_min_y, g_abs_max_y, g_framebuffer_height),
+        wheel
     );
 }
 
@@ -483,6 +521,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_ready = false;
     g_keyboard_ready = false;
     g_buttons = 0;
+    g_pending_wheel = 0;
     g_have_abs_x = false;
     g_have_abs_y = false;
     g_have_screen_position = false;

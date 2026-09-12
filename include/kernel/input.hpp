@@ -34,6 +34,9 @@ struct KeyEvent {
 struct MouseEvent {
     int32_t delta_x;
     int32_t delta_y;
+    // Ticks de rueda desde el evento anterior; positivo = lejos del usuario,
+    // igual que savanxp_mouse_event.wheel. Cero en los dispositivos sin rueda.
+    int32_t wheel;
     uint32_t buttons;
     MouseSource source;
 };

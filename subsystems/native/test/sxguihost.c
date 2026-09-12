@@ -76,6 +76,7 @@ static int send_pointer(int fd, int x, int y, uint32_t buttons) {
     struct savanxp_gui_pointer_event event;
     event.x = x;
     event.y = y;
+    event.wheel = 0;
     event.buttons = buttons;
     return savanxp_write(fd, &event, sizeof(event)) == (long)sizeof(event) ? 0 : -1;
 }

@@ -805,9 +805,20 @@ struct savanxp_input_event {
     uint32_t modifiers; /* enum savanxp_key_modifier */
 };
 
+/* Ticks de rueda acumulados desde el evento anterior. Positivo = lejos del
+ * usuario (el contenido sube, el indice de una lista baja), misma convencion
+ * que REL_WHEEL de evdev. Cero en un mouse sin rueda, y cero en la mayoria de
+ * los eventos de un mouse con rueda: es un campo esporadico, no un estado.
+ *
+ * Va como int32_t y no como un flag porque la magnitud importa -- un tick es
+ * un tick, pero perderlos no se recupera: a diferencia de un delta de
+ * movimiento, que el proximo evento reubica porque el cursor es una posicion
+ * absoluta, un tick descartado es scroll que no ocurre nunca. Por eso todo el
+ * camino (cola del kernel, coalescencia del WM) lo SUMA en vez de pisarlo. */
 struct savanxp_mouse_event {
     int32_t delta_x;
     int32_t delta_y;
+    int32_t wheel;
     uint32_t buttons;
 };
 
@@ -819,6 +830,7 @@ struct savanxp_mouse_event {
 struct savanxp_gui_pointer_event {
     int32_t x;
     int32_t y;
+    int32_t wheel; /* mismo significado y signo que savanxp_mouse_event.wheel */
     uint32_t buttons;
 };
 
