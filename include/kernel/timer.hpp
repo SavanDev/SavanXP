@@ -26,4 +26,9 @@ process::SavedContext* handle_interrupt(process::SavedContext* context);
 // Devuelve 0 si todavia no se calibro.
 uint64_t monotonic_ns();
 
+// Frecuencia del TSC en kHz, del mismo calibrado que alimenta monotonic_ns().
+// Es la velocidad que la ventana de propiedades del sistema muestra como reloj
+// del procesador. 0 si todavia no se calibro.
+uint32_t tsc_khz();
+
 } // namespace timer

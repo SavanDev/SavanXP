@@ -142,12 +142,26 @@ enum savanxp_process_state {
     SAVANXP_PROC_ZOMBIE = 7,
 };
 
+/* El proceso ocioso. Existe siempre, corre cuando no hay nada listo y es el
+ * que vuelve calculable el uso de CPU del sistema: lo que el idle NO se llevo
+ * es lo que se llevaron los demas. */
+#define SAVANXP_PROC_FLAG_IDLE (1u << 0)
+
 struct savanxp_process_info {
     uint32_t pid;
     uint32_t parent_pid;
     int32_t exit_code;
     uint32_t state;
     char name[32];
+
+    /* Contadores vivos. `cpu_ticks` son ticks del timer consumidos por este
+     * proceso desde que arranco: se lee por diferencia contra
+     * savanxp_system_info.cpu_ticks_total, nunca solo. `memory_bytes` son las
+     * paginas de usuario mapeadas en este instante. */
+    uint64_t cpu_ticks;
+    uint64_t memory_bytes;
+    uint32_t handle_count;
+    uint32_t flags;          /* SAVANXP_PROC_FLAG_* */
 };
 
 enum savanxp_fcntl_command {
@@ -234,6 +248,37 @@ struct savanxp_system_info {
     uint64_t sxfs_free_bytes;
     uint64_t initramfs_size;
     uint64_t uptime_ms;
+
+    /* ---- estado vivo y identidad del procesador --------------------------
+     *
+     * Todo lo de arriba se responde con lo que el boot dejo anotado. Esto se
+     * mide en el momento de preguntar, y es lo que hace posible un
+     * administrador de tareas: la memoria que queda libre AHORA y el contador
+     * de ticks contra el que se comparan los `cpu_ticks` de cada proceso.
+     *
+     * `cpu_ticks_total` y `savanxp_process_info.cpu_ticks` solo significan algo
+     * juntos y del MISMO par de muestras: el uso de CPU es el cociente entre
+     * los dos incrementos, no un valor que se pueda leer de una sola lectura.
+     */
+    uint64_t memory_free_bytes;
+    uint64_t cpu_ticks_total;
+    uint32_t process_count;
+    uint32_t cpu_count;      /* cores que reporto el bootloader */
+    uint32_t cpu_online;     /* cores que llegaron a arrancar */
+    uint32_t cpu_khz;        /* reloj del procesador; 0 si no se calibro */
+    uint32_t cpu_features;   /* enum savanxp_cpu_feature */
+    uint32_t reserved1;
+    char cpu_vendor[16];     /* "GenuineIntel", "AuthenticAMD", ... */
+    char cpu_brand[52];      /* marca declarada por el CPU; vacio si no la da */
+};
+
+enum savanxp_cpu_feature {
+    SAVANXP_CPU_FEATURE_SSE2 = 1u << 0,
+    SAVANXP_CPU_FEATURE_PAE = 1u << 1,
+    SAVANXP_CPU_FEATURE_NX = 1u << 2,
+    SAVANXP_CPU_FEATURE_LONG_MODE = 1u << 3,
+    SAVANXP_CPU_FEATURE_X2APIC = 1u << 4,
+    SAVANXP_CPU_FEATURE_HYPERVISOR = 1u << 5,
 };
 
 struct savanxp_realtime {

@@ -1,4 +1,4 @@
-# Verificacion VISUAL de la sesion grafica, headless.
+﻿# Verificacion VISUAL de la sesion grafica, headless.
 #
 # Los harnesses (smoke, windowd-smoke, ...) asertan estado y geometria, no
 # apariencia: pasan en verde con la pantalla mal. Este script arranca el sistema
@@ -13,6 +13,7 @@
 #   .\tools\shoot.ps1 -Scenario clipboard
 #   .\tools\shoot.ps1 -Scenario wheel       # rueda del mouse, de punta a punta
 #   .\tools\shoot.ps1 -Scenario appwiz     # necesita un programa externo instalado
+#   .\tools\shoot.ps1 -Scenario system     # propiedades del sistema + administrador de tareas
 #   .\tools\shoot.ps1 -Scenario alttab -OutDir build\shots
 #
 # Las teclas van por QMP (input-send-event) y no por el sendkey del monitor HMP,
@@ -22,7 +23,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("desktop", "alttab", "clipboard", "files", "shell", "appwiz", "taskbar", "kbdlayout", "wheel", "bench", "saturate", "spin")]
+    [ValidateSet("desktop", "alttab", "clipboard", "files", "shell", "appwiz", "system", "taskbar", "kbdlayout", "wheel", "bench", "saturate", "spin")]
     [string]$Scenario = "desktop",
 
     [string]$OutDir,
@@ -82,11 +83,11 @@ if (-not (Test-Path $image)) {
 # Games y System es la cuarta, sin Doom es la tercera. En vez de adivinar se
 # exige el estado en el que la captura ademas sirve para algo -- una lista de
 # desinstalables vacia no muestra nada.
-if ($Scenario -eq "appwiz") {
+if ($Scenario -eq "appwiz" -or $Scenario -eq "system") {
     $diskImage = Join-Path $ProjectRoot "build/disk.img"
     $sxfs = Open-SxfsImage $diskImage
     if (-not (Get-SxfsPathInfo $sxfs "/disk/bin/doomgeneric")) {
-        throw "El escenario 'appwiz' necesita un programa externo instalado. Corre '.\sdk\doomgeneric\build.ps1' primero."
+        throw "El escenario '$Scenario' necesita un programa externo instalado. Corre '.\sdk\doomgeneric\build.ps1' primero."
     }
 }
 

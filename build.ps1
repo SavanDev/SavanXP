@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -217,6 +217,11 @@ $UserPrograms = @(
     ) },
     @{ Name = "aboutapp"; Sources = @(
         "subsystems/posix/userland/aboutapp.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
+    ) },
+    @{ Name = "taskmgr"; Sources = @(
+        "subsystems/posix/userland/taskmgr.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
@@ -686,6 +691,31 @@ function Generate-BootLogoAsset {
     }
 }
 
+# El mismo logo que el splash, al tamano y con el alfa que necesita una ventana
+# del escritorio. Va aparte de boot_logo.h porque el del arranque esta
+# cuantizado a paleta y compuesto contra negro: son dos horneados distintos del
+# mismo PNG, no dos usos del mismo header.
+function Generate-BrandLogoAsset {
+    New-Directory $GeneratedRoot
+
+    $scriptPath = Join-Path $ToolRoot "gen_brand_logo.py"
+    $outputPath = Join-Path $GeneratedRoot "brand_logo.h"
+    $deps = @(
+        $scriptPath,
+        (Join-Path $ProjectRoot "assets/brand/logo.png")
+    )
+
+    if (-not (Test-NeedsRegen $outputPath $deps)) {
+        return
+    }
+
+    $python = Get-PythonExecutable
+    & $python $scriptPath --project-root $ProjectRoot --output $outputPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la generacion de brand_logo.h."
+    }
+}
+
 function Generate-DesktopIconAssets {
     New-Directory $GeneratedRoot
 
@@ -916,6 +946,7 @@ function Build-Kernel([string]$AutomationCommand = "", [bool]$IncludeTestApps = 
     $uacpiFlags = Get-UacpiFlags
 
     Generate-BootLogoAsset
+    Generate-BrandLogoAsset
     Generate-CursorAsset
     Generate-DesktopIconAssets
     Generate-SxeResources -IncludeTestApps $IncludeTestApps
@@ -1488,6 +1519,15 @@ function Run-AppwizSmokeQemu {
     }
 }
 
+# Administrador de tareas, sin ventana: enumera procesos, toma dos muestras
+# separadas en el tiempo y comprueba que las cuentas de CPU y memoria cierren.
+# Es el harness de los contadores del kernel (cpu_ticks, memory_bytes,
+# cpu_ticks_total) tanto como el de la app: si el kernel deja de exportarlos,
+# esto falla antes que cualquier captura de pantalla.
+function Run-TaskmgrSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "taskmgr-selftest" -SuccessToken "TASKMGR SMOKE PASS" -FailureToken "TASKMGR SMOKE FAIL" -TimeoutMinutes 3
+}
+
 # Lector de recursos SXE (docs/SXE_FORMAT.md, fase 1). El grueso del selftest
 # es parseo puro en memoria -- blobs bien formados y todos los degradados que
 # ningun generador correcto produciria --, mas el camino de disco contra los
@@ -1816,6 +1856,9 @@ switch ($Command) {
     }
     "appwiz-smoke" {
         Run-AppwizSmokeQemu
+    }
+    "taskmgr-smoke" {
+        Run-TaskmgrSmokeQemu
     }
     "sxe-smoke" {
         Run-SxeSmokeQemu

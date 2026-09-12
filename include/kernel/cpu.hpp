@@ -106,6 +106,31 @@ void enable_fpu();
 void fpu_save(void* area);
 void fpu_restore(const void* area);
 void fpu_init_area(void* area);
+/* --- identidad del CPU (CPUID) -----------------------------------------------
+ * Quien es este procesador, tal como el propio procesador se presenta. Lo pide
+ * la ventana de propiedades del sistema, que muestra la marca y la velocidad
+ * igual que el "About this Computer" de la epoca.
+ *
+ * El brand string son las tres hojas 0x80000002..4 concatenadas (48 bytes) y
+ * viene con relleno de espacios adelante; query_cpu_identity lo entrega ya
+ * recortado. Si la hoja extendida no existe -- un CPU muy viejo, o un
+ * hipervisor que la oculta -- `brand` queda vacio y el llamador cae al vendor.
+ */
+constexpr uint32_t kCpuFeatureSse2 = 1u << 0;
+constexpr uint32_t kCpuFeaturePae = 1u << 1;
+constexpr uint32_t kCpuFeatureNx = 1u << 2;
+constexpr uint32_t kCpuFeatureLongMode = 1u << 3;
+constexpr uint32_t kCpuFeatureX2Apic = 1u << 4;
+constexpr uint32_t kCpuFeatureHypervisor = 1u << 5;
+
+struct CpuIdentity {
+    char vendor[16];  // "GenuineIntel", "AuthenticAMD", ...
+    char brand[52];   // hojas 0x80000002..4, recortado; vacio si no hay
+    uint32_t features;
+};
+
+void query_cpu_identity(CpuIdentity& out);
+
 void enable_irq(uint8_t irq);
 void disable_irq(uint8_t irq);
 void enable_interrupts();

@@ -413,6 +413,18 @@ struct sxgui_app {
     int (*on_pointer)(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event);
     void (*on_paint)(struct sxgui_app *app);  /* extra painting after sxgui_paint */
     void (*on_resize)(struct sxgui_app *app); /* widget relayout after RESIZED */
+
+    /* Refresco periodico, para una ventana que muestra datos que cambian solos
+     * -- un monitor, un reloj. Se llama cada `tick_interval_ms` mientras la app
+     * corre; con el hook en NULL o el intervalo en 0 no pasa nada y el loop se
+     * comporta como siempre.
+     *
+     * No es un temporizador preciso: el loop lo mira entre frames, asi que un
+     * repintado largo corre el siguiente tick. Para contar tiempo hay que medir
+     * el reloj adentro del hook, no contar llamadas. */
+    unsigned long tick_interval_ms;
+    void (*on_tick)(struct sxgui_app *app);
+
     void *user;
 };
 

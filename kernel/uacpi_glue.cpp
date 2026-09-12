@@ -544,4 +544,15 @@ namespace timer {
 uint64_t monotonic_ns() {
     return uacpi_kernel_get_nanoseconds_since_boot();
 }
+
+uint32_t tsc_khz() {
+    // g_tsc_per_us ES la frecuencia en MHz por construccion (ticks del TSC en
+    // un microsegundo), asi que los kHz son eso por mil. El calibrado fuerza un
+    // minimo de 1 para no dividir por cero; ese valor de relleno no es una
+    // velocidad real y se reporta como "sin calibrar".
+    if (g_tsc_per_us <= 1) {
+        return 0;
+    }
+    return static_cast<uint32_t>(g_tsc_per_us * 1000ull);
+}
 } // namespace timer

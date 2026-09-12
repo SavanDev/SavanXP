@@ -126,6 +126,13 @@ struct Process {
     uint64_t blocked_write_length;
     uint64_t blocked_write_progress;
     uint64_t wake_tick;
+    // Ticks del timer del sistema que encontraron a este proceso corriendo. Es
+    // la contabilidad de CPU mas barata posible -- un incremento por tick, en el
+    // camino que ya existe -- y alcanza para un porcentaje: el administrador de
+    // tareas compara este contador contra timer::ticks() entre dos muestras. El
+    // idle suma como cualquier otro, que es justamente lo que hace calculable el
+    // uso total del sistema.
+    uint64_t cpu_ticks;
     uint32_t time_slice;
     uint32_t pending_signals;
     uint32_t last_signal;

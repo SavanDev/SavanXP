@@ -41,6 +41,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   scheduler fix that made present ~470x faster, the numbers across backends,
   and why asynchronous present buys nothing on one core.
 
+- [`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md) — what the system reports about
+  itself and how to read it: the per-process tick and memory counters the kernel
+  exports, why a percentage only exists between two samples, why resident memory
+  is walked instead of counted, where processor identity comes from, and which
+  Task Manager tabs are missing and what each would require first.
+
 ## Formats
 
 - [`SXE_FORMAT.md`](SXE_FORMAT.md) — the SXE executable format: icons and

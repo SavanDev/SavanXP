@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **Task Manager (`/bin/taskmgr`), in the System group.** Live CPU, memory and
+  handles per process with an End Process that asks first; meters, history
+  graphs and totals in Performance; adapter throughput in Networking; `File >
+  New Task` and `Shut Down`. `proc_info`/`system_info` gained the counters it
+  reads (`cpu_ticks`, `memory_bytes`, `cpu_ticks_total`, `memory_free_bytes`).
+  New `build.ps1 taskmgr-smoke`. [How it measures](docs/SYSTEM_MONITORING.md).
+
 - **TCP survives a network that loses and reorders.** Segments are kept and
   resent with backoff (`SYN` included), out-of-order data is reassembled, and a
   dead connection now reports `ECONNRESET`/`ETIMEDOUT` instead of a clean end of
@@ -171,6 +178,11 @@ Cut-off notes:
   `clipboard_set_text`, `_get_text`, `_get_info` and `_clear`.
 
 ### Changed
+
+- **About is now System Properties.** General shows the edition, the version,
+  where it is installed and the processor (brand, speed and features from
+  `CPUID`); Hardware lists the devices found. The live counters it used to show
+  moved to the Task Manager.
 
 - **The Shell window opens and types far faster.** `/bin/shellapp` dropped an
   unused 8 MiB static backbuffer, repaints only the dirty band, blinks the

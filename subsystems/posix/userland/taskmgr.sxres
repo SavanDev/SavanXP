@@ -1,0 +1,8 @@
+# Recursos SXE del administrador de tareas. Ver docs/SXE_FORMAT.md.
+name=Task Manager
+description=Processes, performance and network
+version=system
+vendor=SavanXP
+accent=2f6f3f
+icon=desktop
+category=System

@@ -15,6 +15,7 @@ tools/*
 !tools/gen_sxe_resources.py
 !tools/gen_mime_icons.py
 !tools/gen_boot_logo.py
+!tools/gen_brand_logo.py
 !tools/GenerateDefaultWallpaper.py
 !tools/shoot.ps1
 !tools/shoot_session.py

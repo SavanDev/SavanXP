@@ -167,14 +167,30 @@ int sxgui_app_run(struct sxgui_app *app)
 {
     struct savanxp_input_event event;
     struct savanxp_gui_pointer_event pointer_event;
+    unsigned long next_tick_ms = 0;
 
     if (app == 0)
     {
         return 1;
     }
 
+    next_tick_ms = uptime_ms() + app->tick_interval_ms;
+
     while (app->running)
     {
+        /* El intervalo se relee en cada vuelta: una app que deja cambiar la
+         * velocidad de refresco solo tiene que escribir el campo. */
+        if (app->on_tick != 0 && app->tick_interval_ms != 0)
+        {
+            unsigned long now = uptime_ms();
+
+            if (now >= next_tick_ms)
+            {
+                app->on_tick(app);
+                next_tick_ms = now + app->tick_interval_ms;
+            }
+        }
+
         while (gfx_poll_event(&app->gfx, &event) > 0)
         {
             if (event.type == SAVANXP_INPUT_EVENT_RESIZED)

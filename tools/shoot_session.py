@@ -215,7 +215,7 @@ class Session(object):
             Accessories: Files, Notepad, Shell
             Diagnostics: Gfx Demo, Key Test, Mouse Test, Widgets
             Games:       Doom                     (solo si esta instalado)
-            System:      About, Add or Remove Programs
+            System:      Add/Remove Programs, System Properties, Task Manager
         """
         for _ in range(groups):
             self.qmp.tap("tab", pause=0.6)
@@ -236,7 +236,23 @@ class Session(object):
     def open_appwiz(self):
         # Grupo System: la cuarta solapa cuando Doom esta instalado, que es la
         # precondicion que verifica shoot.ps1 antes de arrancar el escenario.
+        self.launch(0, groups=3)
+
+    def open_system_properties(self):
         self.launch(1, groups=3)
+
+    def launch_sibling(self, steps):
+        """Lanza otro icono del grupo en el que el launcher ya quedo parado.
+
+        `launch()` solo sirve para el PRIMER lanzamiento de una sesion: cuenta
+        solapas desde la primera, y el launcher se queda donde lo dejaron. Para
+        abrir una segunda ventana hay que moverse desde donde esta, no desde el
+        principio -- contar solapas de nuevo termina en otro grupo.
+        """
+        for _ in range(steps):
+            self.qmp.tap("right", pause=0.4)
+        self.qmp.tap("ret")
+        time.sleep(25)
 
 
 # Paleta de sxgui, para leer los pixeles con el mismo vocabulario con el que se
@@ -374,6 +390,62 @@ def scenario_shell(s):
     s.qmp.type_text("help")
     s.qmp.tap("ret", pause=4.0)
     s.shot("shell-scroll")
+
+
+def scenario_system(s):
+    """Propiedades del sistema y administrador de tareas, sus dos pantallas.
+
+    Las dos viven en el grupo System del launcher, que con Doom instalado es la
+    cuarta solapa -- la misma precondicion que 'appwiz', y por el mismo motivo:
+    la cantidad de grupos depende de lo que haya instalado.
+
+    Se navega por teclado porque es lo unico que no depende de donde el WM puso
+    la ventana. En Propiedades el foco arranca en el control de pestanias, asi
+    que la flecha alcanza; en el administrador arranca en la lista de procesos
+    y se sube a las pestanias con SHIFT+TAB.
+
+    La segunda ventana NO se abre con launch(): despues del primer lanzamiento
+    el launcher se quedo en el grupo System, y volver a contar solapas desde la
+    primera caeria en otro grupo.
+
+    NO se confirma el fin de un proceso: este harness saca fotos. Se abre el
+    dialogo para ver la advertencia y se cancela con ESC, que ademas es lo que
+    hace el boton por defecto.
+    """
+    s.open_system_properties()
+    s.shot("system-general")
+    s.qmp.tap("right", pause=2.5)
+    s.shot("system-hardware")
+    s.qmp.tap("esc", pause=6.0)
+
+    # El launcher quedo en System con la seleccion en Propiedades del sistema:
+    # el administrador de tareas es el que sigue.
+    s.launch_sibling(1)
+    s.shot("taskmgr-processes")
+    # De la lista al control de pestanias con SHIFT+TAB, que va al widget
+    # ANTERIOR. Contar TABs hacia adelante no sirve: el boton End Process se
+    # deshabilita cuando la fila elegida es el proceso ocioso, y un control
+    # deshabilitado no recibe foco, asi que la cuenta cambia con la seleccion.
+    s.qmp.chord("shift", "tab")
+    time.sleep(1.0)
+    s.qmp.tap("right", pause=3.0)
+    s.shot("taskmgr-performance")
+    s.qmp.tap("right", pause=3.0)
+    s.shot("taskmgr-networking")
+    s.qmp.tap("left", pause=1.0)
+    s.qmp.tap("left", pause=2.5)
+    # De vuelta a la lista y a la ULTIMA fila, que es el propio administrador:
+    # sobre el proceso ocioso -- la fila 0 -- terminar esta deshabilitado a
+    # proposito, y ademas el unico riesgo de un Enter de mas aca es que esta
+    # ventana se cierre sola.
+    # Las pausas son generosas a proposito: bajo TCG el guest va mucho mas lento
+    # que el reloj del host, y un Del que llega antes de que la seleccion se haya
+    # movido cae sobre el proceso ocioso, donde terminar no hace nada.
+    s.qmp.tap("tab", pause=2.0)
+    s.qmp.tap("end", pause=4.0)
+    s.qmp.tap("delete", pause=4.0)
+    s.shot("taskmgr-end-process")
+    s.qmp.tap("esc", pause=2.0)
 
 
 def scenario_appwiz(s):
@@ -671,6 +743,7 @@ SCENARIOS = {
     "files": scenario_files,
     "shell": scenario_shell,
     "appwiz": scenario_appwiz,
+    "system": scenario_system,
     "taskbar": scenario_taskbar,
     "wheel": scenario_wheel,
     "kbdlayout": scenario_kbdlayout,

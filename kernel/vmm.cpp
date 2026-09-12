@@ -444,6 +444,62 @@ void destroy_address_space(VmSpace& space) {
     memset(space.section_views, 0, sizeof(space.section_views));
 }
 
+uint64_t resident_user_bytes(const VmSpace& space) {
+    if (!g_ready || space.pml4_virtual == nullptr) {
+        return 0;
+    }
+
+    // Se cuenta recorriendo las tablas en vez de llevar un contador incremental.
+    // Un contador habria que mantenerlo en map_page, unmap_page, el fork (que
+    // copia tablas sin pasar por map_page), las vistas de seccion y el destroy:
+    // cinco lugares donde desincronizarse. El recorrido no puede mentir, y solo
+    // pasa por las entradas presentes, asi que cuesta proporcional a lo mapeado
+    // y no al espacio de direcciones. Lo pide el administrador de tareas una vez
+    // por proceso por refresco.
+    uint64_t pages = 0;
+    for (uint64_t pml4_slot = 0; pml4_slot < kKernelPml4Start; ++pml4_slot) {
+        const uint64_t pml4e = space.pml4_virtual[pml4_slot];
+        if ((pml4e & kPagePresent) == 0 || (pml4e & kPageUser) == 0) {
+            continue;
+        }
+
+        const uint64_t* pdpt = physical_to_virtual(pml4e & kPageMask);
+        if (pdpt == nullptr) {
+            continue;
+        }
+        for (uint64_t pdpt_slot = 0; pdpt_slot < 512; ++pdpt_slot) {
+            const uint64_t pdpte = pdpt[pdpt_slot];
+            if ((pdpte & kPagePresent) == 0 || (pdpte & kPageUser) == 0) {
+                continue;
+            }
+
+            const uint64_t* pd = physical_to_virtual(pdpte & kPageMask);
+            if (pd == nullptr) {
+                continue;
+            }
+            for (uint64_t pd_slot = 0; pd_slot < 512; ++pd_slot) {
+                const uint64_t pde = pd[pd_slot];
+                if ((pde & kPagePresent) == 0 || (pde & kPageUser) == 0) {
+                    continue;
+                }
+
+                const uint64_t* pt = physical_to_virtual(pde & kPageMask);
+                if (pt == nullptr) {
+                    continue;
+                }
+                for (uint64_t pt_slot = 0; pt_slot < 512; ++pt_slot) {
+                    const uint64_t pte = pt[pt_slot];
+                    if ((pte & kPagePresent) != 0 && (pte & kPageUser) != 0) {
+                        pages += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    return pages * kPageSizeBytes;
+}
+
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags) {
     if (!g_ready || (virtual_address & 0xfff) != 0 || (physical_address & 0xfff) != 0) {
         return false;

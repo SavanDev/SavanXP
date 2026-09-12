@@ -43,6 +43,9 @@ On Linux, skip `bootstrap.ps1` and see [Building on Linux](docs/BUILD_LINUX.md).
   wallpaper and Program Manager as clients, and a Task List (Ctrl+Esc).
 - A taskbar listing the open windows, as a WM client of its own, with an ES/EN
   keyboard layout selector.
+- Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties
+  and a Task Manager with live CPU and memory per process
+  ([how it measures](docs/SYSTEM_MONITORING.md)).
 - Persistent `SxFS` volume mounted at `/disk`.
 - POSIX base and SDK v1 for compiling external applications.
 - `sxgfx` 2D graphics layer for surfaces, painter and rect sets.

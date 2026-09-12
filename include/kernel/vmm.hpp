@@ -76,6 +76,10 @@ void destroy_address_space(VmSpace& space);
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags);
 bool unmap_page(VmSpace& space, uint64_t virtual_address, uint64_t* physical_address);
 bool clone_address_space(const VmSpace& source, VmSpace& destination);
+// Bytes de usuario mapeados en este espacio ahora mismo. Es lo que el
+// administrador de tareas muestra como uso de memoria de un proceso: paginas
+// presentes con el bit de usuario, contadas recorriendo las tablas.
+uint64_t resident_user_bytes(const VmSpace& space);
 bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint64_t& base_address, bool share_on_fork);
 bool unmap_section_view(VmSpace& space, uint64_t base_address);
 bool map_kernel_pages(const uint64_t* physical_pages, uint64_t page_count, uint64_t flags, void** virtual_base);

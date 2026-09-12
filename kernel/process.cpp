@@ -2717,6 +2717,19 @@ bool snapshot_process(size_t index, savanxp_process_info& info) {
         info.exit_code = proc.exit_code;
         info.state = exported_state(proc.state);
         memcpy(info.name, proc.name, sizeof(info.name));
+        info.cpu_ticks = proc.cpu_ticks;
+        // Un zombie ya solto su espacio de direcciones: preguntarle la memoria
+        // devolveria 0 igual, pero recorrer tablas que ya no son suyas no es
+        // algo que convenga ni intentar.
+        info.memory_bytes = proc.state == State::zombie
+            ? 0
+            : vm::resident_user_bytes(proc.address_space);
+        for (const HandleEntry& handle : proc.handles) {
+            if (handle.object != nullptr) {
+                info.handle_count += 1;
+            }
+        }
+        info.flags = proc.idle ? SAVANXP_PROC_FLAG_IDLE : 0u;
         return true;
     }
     return false;
@@ -2748,6 +2761,44 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.sxfs_used_bytes = sxfs::used_bytes(sxfs::root());
     info.sxfs_free_bytes = sxfs::free_bytes(sxfs::root());
     info.uptime_ms = current_uptime_ms();
+
+    info.memory_free_bytes = memory::free_page_count() * memory::kPageSize;
+    info.cpu_ticks_total = timer::ticks();
+    info.process_count = 0;
+    for (const Process& proc : g_processes) {
+        if (proc.state != State::unused) {
+            info.process_count += 1;
+        }
+    }
+    info.cpu_count = smp::cpu_count();
+    info.cpu_online = smp::online_count();
+    info.cpu_khz = timer::tsc_khz();
+
+    arch::x86_64::CpuIdentity identity = {};
+    arch::x86_64::query_cpu_identity(identity);
+    memcpy(info.cpu_vendor, identity.vendor, sizeof(info.cpu_vendor));
+    memcpy(info.cpu_brand, identity.brand, sizeof(info.cpu_brand));
+    info.cpu_vendor[sizeof(info.cpu_vendor) - 1] = '\0';
+    info.cpu_brand[sizeof(info.cpu_brand) - 1] = '\0';
+    info.cpu_features = 0;
+    if ((identity.features & arch::x86_64::kCpuFeatureSse2) != 0) {
+        info.cpu_features |= SAVANXP_CPU_FEATURE_SSE2;
+    }
+    if ((identity.features & arch::x86_64::kCpuFeaturePae) != 0) {
+        info.cpu_features |= SAVANXP_CPU_FEATURE_PAE;
+    }
+    if ((identity.features & arch::x86_64::kCpuFeatureNx) != 0) {
+        info.cpu_features |= SAVANXP_CPU_FEATURE_NX;
+    }
+    if ((identity.features & arch::x86_64::kCpuFeatureLongMode) != 0) {
+        info.cpu_features |= SAVANXP_CPU_FEATURE_LONG_MODE;
+    }
+    if ((identity.features & arch::x86_64::kCpuFeatureX2Apic) != 0) {
+        info.cpu_features |= SAVANXP_CPU_FEATURE_X2APIC;
+    }
+    if ((identity.features & arch::x86_64::kCpuFeatureHypervisor) != 0) {
+        info.cpu_features |= SAVANXP_CPU_FEATURE_HYPERVISOR;
+    }
     return true;
 }
 
@@ -2882,6 +2933,9 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     }
 
     this_cpu().current->context = context;
+    // Este tick lo consumio el que estaba corriendo cuando llego, antes de que
+    // nada de abajo pueda reemplazarlo.
+    this_cpu().current->cpu_ticks += 1;
     const uint64_t current_tick = timer::ticks();
     object::poll_timers(current_tick, wake_waiters_for_object);
     wake_sleepers(current_tick);
