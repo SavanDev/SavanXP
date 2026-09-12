@@ -1129,10 +1129,17 @@ function Get-QemuAudioDevice([string]$Audio) {
     return @("-device", "AC97,audiodev=audio1")
 }
 
-# NIC. Sin -Virtio queda rtl8139, el mismo chip que emula VirtualBox. Con
-# -Virtio pasa a virtio-net-pci. Los dos van sobre el mismo "-netdev
-# user,id=net0": QEMU no deja atar dos -device de red al mismo netdev, asi que
-# es uno u otro, nunca los dos juntos.
+# NIC. Sin -Virtio queda rtl8139; con -Virtio, virtio-net-pci. Los dos van sobre
+# el mismo "-netdev user,id=net0": QEMU no deja atar dos -device de red al mismo
+# netdev, asi que es uno u otro, nunca los dos juntos.
+#
+# OJO: a diferencia del resto del hardware base, el rtl8139 NO es el que emula
+# VirtualBox. VirtualBox ofrece PCnet, Intel PRO/1000 (su default, 8086:100e) y
+# virtio-net, ninguno rtl8139, asi que una VM recien creada arranca sin red --
+# el boot lo dice con "nic: ningun driver reclamo el hardware", y el
+# administrador de tareas lo muestra como adaptador sin driver. Para tener red
+# en VirtualBox hoy hay que ponerle "Paravirtualized Network (virtio-net)" al
+# adaptador; manejar la PRO/1000 pide un driver e1000 que todavia no existe.
 function Get-QemuNicDevice {
     if ($Virtio) {
         return @("-device", "virtio-net-pci,netdev=net0")

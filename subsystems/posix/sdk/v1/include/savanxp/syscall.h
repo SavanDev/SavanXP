@@ -267,7 +267,19 @@ struct savanxp_system_info {
     uint32_t cpu_online;     /* cores que llegaron a arrancar */
     uint32_t cpu_khz;        /* reloj del procesador; 0 si no se calibro */
     uint32_t cpu_features;   /* enum savanxp_cpu_feature */
-    uint32_t reserved1;
+
+    /* Hardware de red que EXISTE en el bus, que no es lo mismo que
+     * `net_present`: ese dice que un driver reclamo el adaptador, y este que
+     * hay un dispositivo PCI de clase red enchufado. Los dos juntos son los que
+     * distinguen "esta maquina no tiene placa de red" de "tiene una que este
+     * sistema todavia no sabe manejar", que es lo que pasa en VirtualBox, donde
+     * la placa por default es una Intel PRO/1000. Decirle "sin adaptador" a la
+     * segunda es mentir sobre la maquina. */
+    uint8_t net_hardware;
+    uint8_t reserved1;
+    uint16_t net_hardware_vendor;
+    uint16_t net_hardware_device;
+    uint16_t reserved2;
     char cpu_vendor[16];     /* "GenuineIntel", "AuthenticAMD", ... */
     char cpu_brand[52];      /* marca declarada por el CPU; vacio si no la da */
 };

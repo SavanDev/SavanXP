@@ -890,6 +890,13 @@ static void paint_performance(struct sx_painter *painter, struct sx_rect page)
     }
 }
 
+static const char *no_adapter_headline(void)
+{
+    return g_info.net_hardware != 0
+        ? "The installed network adapter has no driver in this system."
+        : "No network adapter installed.";
+}
+
 static void paint_networking(struct sx_painter *painter, struct sx_rect page)
 {
     int pad = TASKMGR_PAGE_PAD;
@@ -913,14 +920,31 @@ static void paint_networking(struct sx_painter *painter, struct sx_rect page)
     }
     else
     {
-        sx_painter_draw_text(painter, area.x, area.y, "No network adapter present.", SXGUI_COLOR_TEXT);
+        sx_painter_draw_text(painter, area.x, area.y, no_adapter_headline(), SXGUI_COLOR_TEXT);
     }
     y += graph_height + pad;
 
+    /* Sin adaptador manejable no hay filas que mostrar, pero SI hay algo que
+     * decir, y son dos cosas distintas: que la maquina no tiene placa, o que
+     * tiene una para la que este sistema no trae driver -- el caso de
+     * VirtualBox, cuya placa por default es una Intel PRO/1000. Decirle "not
+     * present" a la segunda manda a buscar el problema a la configuracion de
+     * la VM, que esta bien. */
     area = draw_group(painter, sx_rect_make(x, y, full_width, adapter_height), "Adapter");
     if (!g_net_available)
     {
-        sx_painter_draw_text(painter, area.x, area.y, "net0: not present", SXGUI_COLOR_TEXT);
+        if (g_info.net_hardware != 0)
+        {
+            snprintf(number, sizeof(number), "PCI %04x:%04x, no driver in this system",
+                     (unsigned)g_info.net_hardware_vendor,
+                     (unsigned)g_info.net_hardware_device);
+            draw_field(painter, area, 0, "Adapter found", number);
+            draw_field(painter, area, 1, "net0", "unavailable");
+        }
+        else
+        {
+            draw_field(painter, area, 0, "net0", "no adapter installed");
+        }
         return;
     }
 

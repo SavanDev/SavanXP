@@ -316,7 +316,24 @@ static void build_hardware_rows(const struct savanxp_system_info *info)
     add_hardware_row("Keyboard/mouse", "PS/2 controller %s", present_absent(info->input_ready));
     add_hardware_row("Storage", "block device %s", present_absent(info->block_ready));
     add_hardware_row("File system", info->sxfs_mounted != 0 ? "SxFS mounted at /disk" : "not mounted");
-    add_hardware_row("Network", "adapter %s", present_absent(info->net_present));
+    /* "No hay placa" y "hay una que no sabemos manejar" son dos respuestas
+     * distintas sobre la maquina, y la segunda es la que da VirtualBox. El
+     * id del fabricante va en la linea porque es lo unico que se puede hacer
+     * con esa informacion: buscar de que placa se trata. */
+    if (info->net_present != 0)
+    {
+        add_hardware_row("Network", "adapter present");
+    }
+    else if (info->net_hardware != 0)
+    {
+        add_hardware_row("Network", "adapter present, no driver (%04x:%04x)",
+                         (unsigned)info->net_hardware_vendor,
+                         (unsigned)info->net_hardware_device);
+    }
+    else
+    {
+        add_hardware_row("Network", "no adapter");
+    }
     add_hardware_row("Speaker", "PC speaker %s", present_absent(info->speaker_ready));
     add_hardware_row("PCI devices", "%u found", (unsigned)info->pci_device_count);
     add_hardware_row("Timer", "%s at %u Hz",

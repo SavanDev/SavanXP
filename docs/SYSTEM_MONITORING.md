@@ -68,8 +68,37 @@ half (the caller's counter is advancing).
 
 `cpu_ticks_total` and `uptime_ms` come from the timer interrupt, so they measure
 the *emulated* machine. Under TCG a minute of wall time is a handful of guest
-seconds, and 100% CPU means the guest is saturated, which it usually is. Neither
-number is wrong; they are just not host numbers.
+seconds. Neither number is wrong; they are just not host numbers.
+
+### A process waiting in `poll()` counts as running
+
+The first thing the Task Manager reported was `windowd` at 97-99%, in QEMU and
+in VirtualBox alike. That number is correct and the machine is **not** saturated:
+what it exposes is that `poll_fds()` in `kernel/process.cpp` does not block its
+caller.
+
+Instead of parking the process, the syscall spins in the caller's context —
+re-checking the descriptors, calling `device::service_background()`,
+`input::poll()` and `net::poll()`, and going back to `hlt` — until a descriptor
+is ready or the timeout expires. The process state never leaves `running`, so
+every timer tick during the wait lands on the caller, and the idle process,
+which is the only thing that makes idleness visible, barely runs.
+
+The compositor's own instrumentation is what settles it. From a VirtualBox
+session at 60 fps: `compose_us=54 present_us=113`, so windowd's real work is
+about 170 µs per frame, roughly 1% of a second — and `blk_us=455` is time
+*waiting* on `compositord`, through a second `poll()` that does not block
+either. Under TCG the absolute numbers change and the conclusion does not.
+
+There is a smaller, real cost underneath the accounting one: the loop re-polls
+the whole device layer once per timer tick (1000 Hz) rather than once per
+timeout, and some of those calls touch I/O ports, which are VM exits.
+
+Both halves have the same fix: make `poll_fds()` block the caller with the
+machinery `wait_many` already uses — `State::blocked_wait` plus `wake_tick`,
+woken by `wake_wait_timeouts` — instead of spinning. Until that happens, read
+any percentage next to a process that polls as "this process is waiting", not
+as "this process is busy".
 
 ## Memory is walked, not counted
 
@@ -103,6 +132,26 @@ Two details worth keeping:
 The feature bits are what fills the line where Windows XP printed "Physical
 Address Extension": `SAVANXP_CPU_FEATURE_LONG_MODE`, `_PAE` and `_NX` are shown
 by name, and `_HYPERVISOR` is why the window can say "virtualized".
+
+## A network adapter can exist without a driver
+
+`savanxp_system_info` carries two different network facts, and confusing them
+misreports the machine:
+
+- `net_present` — a driver claimed the adapter, so there is a usable `net0`.
+- `net_hardware` (plus `net_hardware_vendor`/`net_hardware_device`) — a PCI
+  device of class `0x02` is plugged in, whether or not anything drives it.
+
+This is not hypothetical. VirtualBox's default adapter is an Intel PRO/1000
+(`8086:100e`), and SavanXP only has drivers for `rtl8139` and `virtio-net`: a
+freshly created VM boots with `nic: ningun driver reclamo el hardware` and no
+network. Reporting that as "no adapter" sends whoever reads it to check the VM's
+configuration, which is fine. Both windows say "adapter present, no driver"
+instead, with the PCI id, because the id is the only thing that can be acted on.
+
+The way to have network in VirtualBox today is to set the adapter type to
+*Paravirtualized Network (virtio-net)*, which the existing driver claims.
+Driving the PRO/1000 needs an `e1000` driver that does not exist yet.
 
 ## What the Task Manager does not have
 

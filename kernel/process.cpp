@@ -34,6 +34,9 @@ namespace {
 
 constexpr uint16_t kUserDataSelector = 0x1b;
 constexpr uint16_t kUserCodeSelector = 0x23;
+// Clase PCI de un controlador de red, para reportar el hardware que existe
+// aunque ningun driver lo haya reclamado.
+constexpr uint8_t kPciClassNetwork = 0x02;
 constexpr uint64_t kKernelStackPages = 4;
 constexpr uint64_t kIdleCodeAddress = 0x0000000000800000ULL;
 // Round-robin quantum in timer ticks. Sized to ~20 ms of wall clock at the
@@ -2773,6 +2776,23 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.cpu_count = smp::cpu_count();
     info.cpu_online = smp::online_count();
     info.cpu_khz = timer::tsc_khz();
+
+    // Placa de red enchufada, la reclame un driver o no: clase PCI 0x02. Se
+    // busca aca y no en nic:: porque nic:: solo conoce el hardware que alguno
+    // de sus drivers reclamo, y justamente lo que falta saber es lo otro.
+    info.net_hardware = 0;
+    info.net_hardware_vendor = 0;
+    info.net_hardware_device = 0;
+    for (size_t index = 0; index < pci::device_count(); ++index) {
+        pci::DeviceInfo device = {};
+        if (!pci::device_info(index, device) || device.class_code != kPciClassNetwork) {
+            continue;
+        }
+        info.net_hardware = 1;
+        info.net_hardware_vendor = device.vendor_id;
+        info.net_hardware_device = device.device_id;
+        break;
+    }
 
     arch::x86_64::CpuIdentity identity = {};
     arch::x86_64::query_cpu_identity(identity);

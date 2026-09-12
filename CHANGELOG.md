@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **A network adapter with no driver is reported as such.** `system_info` gained
+  `net_hardware` and the PCI id of the adapter it found, so System Properties and
+  the Task Manager stop saying "no adapter" on a machine that has one SavanXP
+  cannot drive — VirtualBox's default Intel PRO/1000, for one.
+  [What to do about it](docs/SYSTEM_MONITORING.md#a-network-adapter-can-exist-without-a-driver).
+
 - **Task Manager (`/bin/taskmgr`), in the System group.** Live CPU, memory and
   handles per process with an End Process that asks first; meters, history
   graphs and totals in Performance; adapter throughput in Networking; `File >
