@@ -70,35 +70,53 @@ half (the caller's counter is advancing).
 the *emulated* machine. Under TCG a minute of wall time is a handful of guest
 seconds. Neither number is wrong; they are just not host numbers.
 
-### A process waiting in `poll()` counts as running
+### Waiting is not running: what the first measurement found
 
 The first thing the Task Manager reported was `windowd` at 97-99%, in QEMU and
-in VirtualBox alike. That number is correct and the machine is **not** saturated:
-what it exposes is that `poll_fds()` in `kernel/process.cpp` does not block its
-caller.
+in VirtualBox alike — while the compositor's own instrumentation said its real
+work was about 170 µs per frame (`compose_us=54 present_us=113` at 60 fps in
+VirtualBox), roughly 1% of a second. The machine was not saturated. What the
+number exposed was that `poll_fds()` did not block its caller: it spun in the
+caller's context, re-checking descriptors and re-polling the whole device layer
+at timer-tick rate, halting in between, without ever leaving `State::running`.
+Every tick of the wait therefore landed on whoever called `poll`, and the idle
+process — the only thing that makes idleness visible — barely ran.
 
-Instead of parking the process, the syscall spins in the caller's context —
-re-checking the descriptors, calling `device::service_background()`,
-`input::poll()` and `net::poll()`, and going back to `hlt` — until a descriptor
-is ready or the timeout expires. The process state never leaves `running`, so
-every timer tick during the wait lands on the caller, and the idle process,
-which is the only thing that makes idleness visible, barely runs.
+`poll()` now parks the caller (`WaitReason::poll` over `State::blocked_wait`)
+and `wake_poll_waiters()` re-evaluates it from the tick, the same place
+`wake_sleepers` and `wake_wait_timeouts` run. The wait granularity did not
+change: the old loop did not look more often than that either, because between
+checks it was halted. On the same idle desktop the report is now `idle 99%` and
+`CPU Usage: 0%`, and average compose time dropped about 4x — the compositor had
+been losing the CPU to processes that were only waiting for it.
 
-The compositor's own instrumentation is what settles it. From a VirtualBox
-session at 60 fps: `compose_us=54 present_us=113`, so windowd's real work is
-about 170 µs per frame, roughly 1% of a second — and `blk_us=455` is time
-*waiting* on `compositord`, through a second `poll()` that does not block
-either. Under TCG the absolute numbers change and the conclusion does not.
+Two details worth keeping:
 
-There is a smaller, real cost underneath the accounting one: the loop re-polls
-the whole device layer once per timer tick (1000 Hz) rather than once per
-timeout, and some of those calls touch I/O ports, which are VM exits.
+- **The request is cached in the kernel.** `Process::poll_entries` holds a copy
+  of the descriptor array, so re-evaluating a parked process costs no access to
+  its user memory. Reading it there would mean switching `CR3` from the timer
+  interrupt handler, a thousand times a second per waiter. User memory is
+  touched once, on completion, to hand back the `revents`.
+- **`net::poll()` moved with it.** The network pump, and with it the TCP
+  retransmission clock ([`NETWORKING.md`](NETWORKING.md)), has no periodic
+  heartbeat of its own — the poll spin was what drove it. `wake_poll_waiters()`
+  calls it once per tick and only while someone is waiting, which is exactly the
+  cadence it had before: with nobody polling, nobody called it either.
+  `device::service_background()` and `input::poll()` did not need moving;
+  `timer::handle_interrupt()` already runs them every tick.
 
-Both halves have the same fix: make `poll_fds()` block the caller with the
-machinery `wait_many` already uses — `State::blocked_wait` plus `wake_tick`,
-woken by `wake_wait_timeouts` — instead of spinning. Until that happens, read
-any percentage next to a process that polls as "this process is waiting", not
-as "this process is busy".
+### An idle machine has to actually halt
+
+Making `poll()` block exposed the other half. The idle process is a `yield` loop
+in userland, and `hlt` is privileged, so it cannot halt itself. It used to
+barely run — the poll spin held the CPU and halted inside the syscall — so
+nothing showed. Once `poll()` parks its callers, idle runs whenever there is
+nothing to do, and it was spinning through the syscall at full speed.
+
+The `yield` syscall now halts on the idle process's behalf when no other process
+is runnable, with the usual atomic `sti; hlt`. Without it the fix would only
+have moved the spin from `windowd` to `idle`: the accounting would be honest and
+the machine would still never rest.
 
 ## Memory is walked, not counted
 

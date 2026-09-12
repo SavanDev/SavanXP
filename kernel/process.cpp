@@ -48,7 +48,6 @@ constexpr size_t kPipeCapacity = 8192;
 constexpr size_t kPipeChunkSize = 256;
 constexpr uint32_t kWaitAnyPid = 0xffffffffu;
 constexpr int kBlockedResult = -0x70000000;
-constexpr size_t kMaxPollDescriptors = 128;
 constexpr bool kLogProc = false;
 constexpr uint8_t kIdleCode[] = {
     0xb8, static_cast<uint8_t>(SAVANXP_SYS_YIELD), 0x00, 0x00, 0x00,
@@ -231,6 +230,8 @@ void clear_wait_state(process::Process& proc) {
     for (size_t index = 0; index < process::kMaxWaitHandles; ++index) {
         proc.waited_objects[index] = nullptr;
     }
+    proc.poll_user_fds = 0;
+    proc.poll_count = 0;
     proc.wake_tick = 0;
 }
 
@@ -1536,68 +1537,161 @@ short poll_open_file(const object::IoObject* file, short events) {
     return revents;
 }
 
+// Recorre la copia en kernel del pedido y deja los revents ahi mismo. No toca
+// memoria de usuario ni el estado del proceso: sirve igual para el que esta
+// llamando a poll que para uno ya parado, que es de donde lo llama el tick.
+int evaluate_poll_entries(process::Process& proc) {
+    int ready = 0;
+
+    for (size_t index = 0; index < proc.poll_count; ++index) {
+        savanxp_pollfd& entry = proc.poll_entries[index];
+
+        entry.revents = 0;
+        if (entry.fd < 0) {
+            continue;
+        }
+
+        object::IoObject* file = fd_to_io_object(proc, static_cast<uint64_t>(entry.fd), object::access_synchronize);
+        if (file != nullptr) {
+            entry.revents = poll_open_file(file, entry.events);
+        } else if ((entry.events & SAVANXP_POLLIN) != 0) {
+            // Waitable kernel objects (events, timers) are not IoObjects but
+            // can still be polled: report POLLIN when the object is signaled.
+            object::Header* waitable =
+                lookup_handle(proc, static_cast<uint64_t>(entry.fd), object::access_synchronize);
+            if (waitable != nullptr && object::can_satisfy_wait(waitable)) {
+                entry.revents = static_cast<short>(SAVANXP_POLLIN);
+            }
+        }
+        if (entry.revents != 0) {
+            ++ready;
+        }
+    }
+    return ready;
+}
+
+// Devuelve los revents al arreglo del proceso. Es el unico momento en que el
+// camino de poll toca memoria de usuario de un proceso que no esta corriendo.
+bool commit_poll_entries(process::Process& proc) {
+    if (proc.poll_count == 0) {
+        return true;
+    }
+    return write_to_process_memory(
+        proc, proc.poll_user_fds, proc.poll_entries, proc.poll_count * sizeof(savanxp_pollfd));
+}
+
+int complete_blocked_poll(process::Process& proc, int result) {
+    clear_wait_state(proc);
+    proc.context->rax = static_cast<uint64_t>(result);
+    proc.state = process::State::ready;
+    reset_time_slice(proc);
+    if (&proc != this_cpu().current) {
+        this_cpu().resched_pending = true;
+    }
+    return result;
+}
+
+/*
+ * poll() bloquea al proceso, no gira en su contexto.
+ *
+ * Hasta sep 2026 este syscall era un bucle con hlt: el proceso nunca salia de
+ * State::running, asi que cada tick del timer de la espera se le cargaba a EL
+ * -- cualquier programa que hiciera poll se veia al 100% de CPU, y el proceso
+ * ocioso, lo unico que hace visible la ociosidad, casi no corria. windowd daba
+ * 97-99% en QEMU y en VirtualBox mientras su propia instrumentacion media ~1%
+ * de trabajo real. Ver docs/SYSTEM_MONITORING.md.
+ *
+ * Ahora se prueba una vez y, si no hay nada listo, el proceso se estaciona con
+ * WaitReason::poll y lo despierta wake_poll_waiters() desde el tick. La
+ * granularidad de la espera no cambia: el bucle viejo tampoco miraba mas
+ * seguido que eso, porque entre chequeo y chequeo estaba halteado.
+ */
 int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeout_ms) {
-    if (count > kMaxPollDescriptors) {
+    if (count > process::kMaxPollDescriptors) {
         return negative_error(SAVANXP_EINVAL);
     }
     if (count != 0 && !vm::is_user_range_accessible(proc.address_space, user_fds, count * sizeof(savanxp_pollfd), true)) {
         return negative_error(SAVANXP_EINVAL);
     }
 
-    savanxp_pollfd local[kMaxPollDescriptors] = {};
-    if (count != 0 && !read_from_process_memory(proc, local, user_fds, count * sizeof(savanxp_pollfd))) {
+    clear_wait_state(proc);
+    proc.poll_user_fds = user_fds;
+    proc.poll_count = static_cast<uint32_t>(count);
+    if (count != 0 &&
+        !read_from_process_memory(proc, proc.poll_entries, user_fds, count * sizeof(savanxp_pollfd))) {
+        proc.poll_user_fds = 0;
+        proc.poll_count = 0;
         return negative_error(SAVANXP_EINVAL);
     }
 
-    const uint64_t start_ms = current_uptime_ms();
-    while (true) {
-        int ready = 0;
+    // Primera pasada en el contexto del que llama, con interrupciones
+    // habilitadas: es la que atiende el caso comun de "ya hay algo" sin pagar un
+    // cambio de proceso, y la unica que corre cuando el timeout es 0.
+    device::service_background();
+    input::poll();
+    net::poll();
 
-        device::service_background();
-        input::poll();
-        net::poll();
-
-        for (size_t index = 0; index < count; ++index) {
-            local[index].revents = 0;
-            if (local[index].fd < 0) {
-                continue;
-            }
-
-            object::IoObject* file = fd_to_io_object(proc, static_cast<uint64_t>(local[index].fd), object::access_synchronize);
-            if (file != nullptr) {
-                local[index].revents = poll_open_file(file, local[index].events);
-            } else if ((local[index].events & SAVANXP_POLLIN) != 0) {
-                // Waitable kernel objects (events, timers) are not IoObjects but
-                // can still be polled: report POLLIN when the object is signaled.
-                object::Header* waitable =
-                    lookup_handle(proc, static_cast<uint64_t>(local[index].fd), object::access_synchronize);
-                if (waitable != nullptr && object::can_satisfy_wait(waitable)) {
-                    local[index].revents = static_cast<short>(SAVANXP_POLLIN);
-                }
-            }
-            if (local[index].revents != 0) {
-                ++ready;
-            }
-        }
-
-        if (count != 0 && !write_to_process_memory(proc, user_fds, local, count * sizeof(savanxp_pollfd))) {
+    const int ready = evaluate_poll_entries(proc);
+    if (ready != 0 || timeout_ms == 0) {
+        const bool committed = commit_poll_entries(proc);
+        proc.poll_user_fds = 0;
+        proc.poll_count = 0;
+        if (!committed) {
             return negative_error(SAVANXP_EINVAL);
         }
-        if (ready != 0) {
-            return ready;
+        return ready;
+    }
+
+    // wake_tick 0 significa sin vencimiento, igual que en la espera por objetos:
+    // asi un timeout negativo (esperar para siempre) no necesita un caso aparte.
+    proc.wait_reason = process::WaitReason::poll;
+    proc.wake_tick = timeout_ms > 0
+        ? (timer::ticks() + milliseconds_to_ticks(static_cast<uint64_t>(timeout_ms)))
+        : 0;
+    proc.state = process::State::blocked_wait;
+    return kBlockedResult;
+}
+
+/*
+ * Re-evalua a los que estan parados en poll y despierta a los que ya tienen
+ * algo o se les vencio el plazo. Corre en el tick, donde device::poll() e
+ * input::poll() ya los atendio timer::handle_interrupt() un momento antes.
+ *
+ * net::poll() es el que hay que traer: el pump de red -- y con el, el reloj de
+ * retransmision de TCP (docs/NETWORKING.md) -- no tiene ningun otro latido
+ * periodico, y hasta ahora lo hacia girar el propio bucle de poll. Se llama una
+ * vez por tick y SOLO si hay alguien esperando, que es exactamente la cadencia
+ * que tenia antes: mientras nadie hace poll, nadie lo llamaba tampoco.
+ */
+void wake_poll_waiters(uint64_t current_tick) {
+    bool any_waiting = false;
+
+    for (const process::Process& proc : g_processes) {
+        if (proc.state == process::State::blocked_wait && proc.wait_reason == process::WaitReason::poll) {
+            any_waiting = true;
+            break;
         }
-        if (timeout_ms == 0) {
-            return 0;
+    }
+    if (!any_waiting) {
+        return;
+    }
+
+    net::poll();
+
+    for (process::Process& proc : g_processes) {
+        if (proc.state != process::State::blocked_wait || proc.wait_reason != process::WaitReason::poll) {
+            continue;
         }
 
-        const uint64_t now_ms = current_uptime_ms();
-        if (timeout_ms > 0 && now_ms - start_ms >= static_cast<uint64_t>(timeout_ms)) {
-            return 0;
+        const int ready = evaluate_poll_entries(proc);
+        const bool expired = proc.wake_tick != 0 && proc.wake_tick <= current_tick;
+        if (ready == 0 && !expired) {
+            continue;
         }
-
-        arch::x86_64::enable_interrupts();
-        arch::x86_64::halt_once();
-        arch::x86_64::disable_interrupts();
+        // El commit puede fallar solo si el proceso dejo de tener mapeado su
+        // propio arreglo, que estando parado no puede pasar; si pasara, se lo
+        // despierta con el error en vez de dejarlo esperando para siempre.
+        complete_blocked_poll(proc, commit_poll_entries(proc) ? ready : negative_error(SAVANXP_EINVAL));
     }
 }
 
@@ -2960,6 +3054,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     object::poll_timers(current_tick, wake_waiters_for_object);
     wake_sleepers(current_tick);
     wake_wait_timeouts(current_tick);
+    wake_poll_waiters(current_tick);
     // The tick makes its own reschedule decision below, so any wakeups above
     // must not leak a preemptive-resched request into the next syscall return.
     this_cpu().resched_pending = false;

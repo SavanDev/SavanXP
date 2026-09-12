@@ -128,6 +128,22 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             terminate_current(static_cast<int>(context->rdi));
             return nullptr;
         case SAVANXP_SYS_YIELD:
+            // El proceso ocioso es un bucle de yield en userland, que no puede
+            // haltear porque hlt es privilegiada. Si el que cede es EL y no hay
+            // nadie mas listo, la maquina no tiene nada que hacer: se haltea
+            // aca, en su nombre, hasta la proxima interrupcion. Sin esto la
+            // ociosidad se gasta girando por el syscall a toda velocidad --
+            // invisible mientras poll() se quedaba con la CPU, y el costo real
+            // apenas poll paso a bloquear.
+            //
+            // sti;hlt es el par atomico de siempre: sti recien surte efecto
+            // despues de la instruccion que sigue, asi que una interrupcion que
+            // llegue entre el chequeo y el hlt lo despierta igual.
+            if (this_cpu().current->idle && !has_runnable_non_idle()) {
+                arch::x86_64::enable_interrupts();
+                arch::x86_64::halt_once();
+                arch::x86_64::disable_interrupts();
+            }
             this_cpu().current->state = State::ready;
             context->rax = 0;
             return choose_next_context(context);
@@ -331,13 +347,18 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_FCNTL:
             context->rax = static_cast<uint64_t>(fcntl_fd(*this_cpu().current, context->rdi, context->rsi, context->rdx));
             return context;
-        case SAVANXP_SYS_POLL:
-            context->rax = static_cast<uint64_t>(poll_fds(
+        case SAVANXP_SYS_POLL: {
+            const int result = poll_fds(
                 *this_cpu().current,
                 context->rdi,
                 static_cast<size_t>(context->rsi),
-                static_cast<int32_t>(context->rdx)));
+                static_cast<int32_t>(context->rdx));
+            if (result == kBlockedResult) {
+                return choose_next_context(context);
+            }
+            context->rax = static_cast<uint64_t>(result);
             return context;
+        }
         case SAVANXP_SYS_FORK: {
             Process* child = fork_process(*this_cpu().current, *context);
             context->rax = static_cast<uint64_t>(child != nullptr ? static_cast<int>(child->pid) : negative_error(SAVANXP_ENOMEM));

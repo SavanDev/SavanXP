@@ -306,6 +306,13 @@ Cut-off notes:
 
 ### Fixed
 
+- **`poll()` blocks instead of spinning, and an idle machine halts.** The
+  syscall parks the caller (`WaitReason::poll`) and the tick wakes it, so a
+  process that only waits no longer books every tick of the wait: the idle
+  desktop went from `windowd 99%` to `idle 99%`, `CPU Usage: 0%`, with average
+  compose time ~4x lower. `yield` now halts for the idle process.
+  [What it found and how](docs/SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found).
+
 - **Notepad's editor ignored the mouse wheel and its own scrollbar.** The
   wheel dispatcher and the embedded-scrollbar hit test only knew about
   `SXGUI_LISTBOX`/`SXGUI_TEXTVIEW`, not the editable `SXGUI_TEXTEDIT`; a click

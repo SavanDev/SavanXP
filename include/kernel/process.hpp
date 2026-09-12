@@ -24,6 +24,12 @@ constexpr size_t kMaxFileHandles = 64;
 constexpr size_t kMaxWaitHandles = 16;
 constexpr size_t kProcessNameLength = 32;
 constexpr size_t kProcessPathLength = 256;
+// Descriptores que admite un poll. Es el tamano de la tabla de descriptores del
+// proceso porque no puede haber mas: pedir mas de kMaxFileHandles solo se logra
+// repitiendo un fd, que nadie hace. El tope importa porque la copia en kernel
+// del pedido vive en el Process (poll_entries): es lo que deja re-evaluar a un
+// proceso bloqueado sin tocar su memoria de usuario en cada tick.
+constexpr size_t kMaxPollDescriptors = kMaxFileHandles;
 
 enum class State : uint8_t {
     unused = 0,
@@ -97,6 +103,11 @@ enum class WaitReason : uint8_t {
     none = 0,
     child = 1,
     object = 2,
+    // Esperando en poll(). Comparte State::blocked_wait con la espera por
+    // objetos porque para el resto del kernel son lo mismo -- un proceso
+    // parado con vencimiento --; lo que cambia es quien lo despierta y con
+    // que resultado.
+    poll = 3,
 };
 
 struct HandleEntry {
@@ -125,6 +136,14 @@ struct Process {
     uint64_t blocked_write_buffer;
     uint64_t blocked_write_length;
     uint64_t blocked_write_progress;
+    // Pedido de poll en curso (WaitReason::poll). `poll_entries` es la COPIA EN
+    // KERNEL de lo que pidio el proceso, y existe para que la re-evaluacion por
+    // tick no tenga que leer su memoria de usuario: eso obligaria a cambiar de
+    // CR3 desde el handler del timer, mil veces por segundo y por proceso
+    // parado. La memoria de usuario se toca una sola vez, al completar, para
+    // devolver los revents en `poll_user_fds`.
+    uint64_t poll_user_fds;
+    uint32_t poll_count;
     uint64_t wake_tick;
     // Ticks del timer del sistema que encontraron a este proceso corriendo. Es
     // la contabilidad de CPU mas barata posible -- un incremento por tick, en el
@@ -136,6 +155,7 @@ struct Process {
     uint32_t time_slice;
     uint32_t pending_signals;
     uint32_t last_signal;
+    savanxp_pollfd poll_entries[kMaxPollDescriptors];
     char name[kProcessNameLength];
     char cwd[kProcessPathLength];
     object::TimerObject* sleep_timer;

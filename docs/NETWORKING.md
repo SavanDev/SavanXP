@@ -17,9 +17,9 @@ app  ──►  socket syscalls  ──►  net::  ──►  nic::  ──►  
                                  └─ TCP  (client only — see below)
 ```
 
-Everything is polled. There is no periodic kernel callback, so nothing in the
-stack runs on its own: frames are pulled from the NIC by whoever is inside the
-stack at that moment. This has a direct consequence for TCP, spelled out under
+Everything is polled. The stack has no heartbeat of its own: frames are pulled
+from the NIC by whoever is inside the stack at that moment. This has a direct
+consequence for TCP, spelled out under
 [the retransmission clock](#the-retransmission-clock-is-the-poll-path).
 
 ## What TCP guarantees
@@ -93,15 +93,21 @@ overwrites identical bytes.
 ### The retransmission clock is the poll path
 
 `net_pump()` — poll the NIC, then service every socket's retransmission timer —
-is called from the blocking `connect`/`read`/`write` loops and from `net::poll()`,
-which `poll_fds()` calls. There is no timer interrupt behind it.
+is called from the blocking `connect`/`read`/`write` loops and from `net::poll()`.
 
-The consequence to keep in mind: **a socket with unacknowledged data does not
-retransmit while no thread is inside the stack.** Blocking calls are inside it
-by construction, and non-blocking callers get there through `poll()`. A program
-that writes non-blocking and then never polls will stall until it comes back.
-If that ever becomes a real pattern, the fix is a periodic callback in the
-kernel, not more pump call sites.
+`net::poll()` used to be called by `poll_fds()`, which spun in the caller's
+context. Now that `poll()` parks its callers instead
+([`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found)),
+`wake_poll_waiters()` calls it from the timer tick — but **only while at least
+one process is waiting in `poll`**, which is the same cadence as before: with
+nobody polling, nobody called it either. It is still not a heartbeat.
+
+The consequence to keep in mind is unchanged: **a socket with unacknowledged
+data does not retransmit while no thread is inside the stack.** Blocking calls
+are inside it by construction, and non-blocking callers get there through
+`poll()`. A program that writes non-blocking and then never polls will stall
+until it comes back. If that ever becomes a real pattern, the fix is an
+unconditional periodic callback in the kernel, not more pump call sites.
 
 ## Testing what only a bad network exercises
 
