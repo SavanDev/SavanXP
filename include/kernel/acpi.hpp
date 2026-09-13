@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #include "boot/boot_info.hpp"
 
 namespace acpi {
@@ -10,6 +12,15 @@ void initialize(const boot::BootInfo& boot_info);
 
 // true si se encontraron RSDP y FADT validos.
 bool ready();
+
+// PM timer del chipset (ACPI): contador libre a 3.579545 MHz declarado por la
+// FADT. Puerto 0 = la maquina no lo expone. Es de 24 bits salvo que la FADT
+// diga TMR_VAL_EXT, y en ese caso de 32. Lo lee timer::adopt_pm_timer para
+// tener un reloj de pared que siga al tiempo virtual de la maquina.
+uint16_t pm_timer_port();
+bool pm_timer_is_32bit();
+uint32_t pm_timer_read();
+constexpr uint32_t kPmTimerHz = 3579545u;
 
 // Habilita el modo ACPI y rutea la SCI (via IOAPIC, o PIC como fallback) para
 // atender eventos fijos: hoy el boton de encendido (PWRBTN -> shutdown S5). Las

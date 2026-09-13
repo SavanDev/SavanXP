@@ -32,6 +32,12 @@ inline uint16_t in16(uint16_t port) {
     return value;
 }
 
+inline uint32_t in32(uint16_t port) {
+    uint32_t value = 0;
+    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
 void io_wait() {
     out8(0x80, 0);
 }
@@ -130,12 +136,16 @@ struct [[gnu::packed]] Fadt {
 };
 
 constexpr uint32_t kFadtFlagResetRegSupported = 1u << 10;
+// TMR_VAL_EXT: el contador del PM timer es de 32 bits en vez de 24.
+constexpr uint32_t kFadtFlagTimerValueExtended = 1u << 8;
 
 // --- Estado del modulo ---
 
 uint64_t g_hhdm_offset = 0;
 bool g_ready = false;
 
+uint16_t g_pm_tmr_port = 0;
+bool g_pm_tmr_32bit = false;
 uint16_t g_pm1a_cnt_port = 0;
 uint16_t g_pm1b_cnt_port = 0;
 uint8_t g_slp_typ_a = 0;
@@ -344,6 +354,14 @@ void initialize(const boot::BootInfo& boot_info) {
         g_pm1b_cnt_port = static_cast<uint16_t>(fadt->pm1b_cnt_blk);
     }
 
+    // PM timer: contador libre de 3.579545 MHz, el reloj de pared del chipset.
+    // Vale la pena aunque el TSC exista porque lo mueve el MISMO tiempo virtual
+    // que a los devices emulados (ver timer::adopt_pm_timer).
+    if (fadt->pm_tmr_len == 4 && fadt->pm_tmr_blk != 0) {
+        g_pm_tmr_port = static_cast<uint16_t>(fadt->pm_tmr_blk);
+        g_pm_tmr_32bit = (fadt->flags & kFadtFlagTimerValueExtended) != 0;
+    }
+
     // Reset register (ACPI 2.0+).
     if (fadt->header.length >= offsetof(Fadt, reset_value) + sizeof(uint8_t) &&
         (fadt->flags & kFadtFlagResetRegSupported) != 0 &&
@@ -393,6 +411,18 @@ void initialize(const boot::BootInfo& boot_info) {
 
 bool ready() {
     return g_ready;
+}
+
+uint16_t pm_timer_port() {
+    return g_pm_tmr_port;
+}
+
+bool pm_timer_is_32bit() {
+    return g_pm_tmr_32bit;
+}
+
+uint32_t pm_timer_read() {
+    return g_pm_tmr_port != 0 ? in32(g_pm_tmr_port) : 0u;
 }
 
 bool enable_power_button() {

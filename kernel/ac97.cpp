@@ -9,6 +9,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
+#include "kernel/timer.hpp"
 #include "savanxp/syscall.h"
 
 namespace {
@@ -88,6 +89,18 @@ uint32_t g_head = 0;       // proxima ranura del BDL a llenar
 uint32_t g_tail = 0;       // ranura mas vieja aun no consumida por el hardware
 uint32_t g_in_flight = 0;  // periodos entregados al hardware sin consumir
 uint32_t g_underruns = 0;  // veces que el ring se vacio durante la reproduccion
+// Instrumentacion de la alimentacion, en el mismo espiritu que las lineas
+// windowd-stats: y timer-stats:. El productor de audio es un programa de
+// userland que escribe "lo que paso en tiempo real" una vez por frame, asi que
+// lo que se rompe cuando el scheduler o el reloj cambian no es el driver sino el
+// RITMO con que le llega el dato. Sin medirlo desde adentro, un audio
+// entrecortado se diagnostica adivinando.
+uint32_t g_submitted = 0;      // periodos aceptados desde el ultimo reporte
+uint64_t g_submitted_bytes = 0;// bytes aceptados: un periodo puede ir a medias
+uint32_t g_dropped = 0;        // periodos descartados por ring lleno
+uint64_t g_last_write_ms = 0;  // reloj de la ultima escritura del productor
+uint32_t g_max_gap_ms = 0;     // hueco mas largo entre dos escrituras
+uint64_t g_report_start_ms = 0;
 bool g_ready = false;
 bool g_prepared = false;   // motor DMA preparado para la sesion de escritura actual
 bool g_running = false;    // RPBM activo
@@ -294,10 +307,55 @@ bool ac97_configure() {
     g_tail = 0;
     g_in_flight = 0;
     g_underruns = 0;
+    g_submitted = 0;
+    g_submitted_bytes = 0;
+    g_dropped = 0;
+    g_max_gap_ms = 0;
+    g_last_write_ms = 0;
+    g_report_start_ms = 0;
     g_running = false;
     prime_silence();
     g_prepared = true;
     return true;
+}
+
+// Cada cuantos periodos aceptados sale la linea de estadisticas. 512 periodos
+// son ~11 s de audio: bastante para promediar y poco para ver una racha mala.
+constexpr uint32_t kStatsPeriodCount = 512u;
+
+// Mide el hueco entre escrituras del productor y reporta cada tanto. El hueco
+// es la mitad interesante: el ring aguanta ~170 ms, asi que un maximo por
+// encima de eso explica solo un underrun.
+void account_write() {
+    const uint64_t now = timer::monotonic_ms();
+    if (g_last_write_ms != 0 && now > g_last_write_ms) {
+        const uint32_t gap = static_cast<uint32_t>(now - g_last_write_ms);
+        if (gap > g_max_gap_ms) {
+            g_max_gap_ms = gap;
+        }
+    }
+    g_last_write_ms = now;
+    if (g_report_start_ms == 0) {
+        g_report_start_ms = now;
+        return;
+    }
+    if (g_submitted < kStatsPeriodCount) {
+        return;
+    }
+    console::printf(
+        "ac97-stats: real=%u ms periodos=%u audio=%u ms descartes=%u underruns=%u hueco_max=%u ms\n",
+        static_cast<unsigned>(now - g_report_start_ms),
+        static_cast<unsigned>(g_submitted),
+        static_cast<unsigned>((g_submitted_bytes * 1000ull) / (kSampleRateHz * kFrameBytes)),
+        static_cast<unsigned>(g_dropped),
+        static_cast<unsigned>(g_underruns),
+        static_cast<unsigned>(g_max_gap_ms));
+    g_submitted = 0;
+    g_submitted_bytes = 0;
+    g_dropped = 0;
+    g_underruns = 0;
+    g_max_gap_ms = 0;
+    g_report_start_ms = now;
 }
 
 int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
@@ -318,6 +376,8 @@ int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
     // alimentacion en tiempo real, "lleno" casi nunca ocurre; un descarte
     // ocasional es un glitch inaudible, mejor que congelar el reloj.
     if (g_in_flight >= kMaxInFlight) {
+        ++g_dropped;
+        account_write();
         return 0;
     }
 
@@ -338,6 +398,9 @@ int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
     ++g_in_flight;
 
     publish(new_lvi);
+    ++g_submitted;
+    g_submitted_bytes += byte_count;
+    account_write();
     return 0;
 }
 
@@ -346,8 +409,9 @@ void ac97_stop() {
         return;
     }
     halt_engine();
-    if (g_underruns != 0) {
-        console::printf("ac97: stop con %u underruns\n", static_cast<unsigned>(g_underruns));
+    if (g_underruns != 0 || g_dropped != 0) {
+        console::printf("ac97: stop con %u underruns y %u descartes desde el ultimo reporte\n",
+                        static_cast<unsigned>(g_underruns), static_cast<unsigned>(g_dropped));
     }
     g_head = 0;
     g_tail = 0;

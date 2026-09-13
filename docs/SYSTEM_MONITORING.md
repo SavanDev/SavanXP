@@ -64,7 +64,7 @@ because only both together prove the counters land on the right process: after
 after a busy loop, both system usage and the test's own process must be above
 half (the caller's counter is advancing).
 
-### The wall clock is the TSC; ticks only count CPU
+### The wall clock is a free-running counter; ticks only count CPU
 
 Two clocks, two jobs, and mixing them up cost a long hunt:
 
@@ -72,7 +72,9 @@ Two clocks, two jobs, and mixing them up cost a long hunt:
   `cpu_ticks` and `cpu_ticks_total`, and it is exactly right for that: one tick
   increments exactly one process.
 - `process::now_ms()` — behind `uptime_ms` and every deadline in the kernel —
-  comes from the **TSC**, because counting interrupts does not measure time.
+  comes from a **free-running counter**, because counting interrupts does not
+  measure time. Which counter, and why it is not always the TSC, is its own
+  story: [`TIME.md`](TIME.md).
 
 `build.ps1 clock-smoke` is what settled it, by measuring both against the one
 reference that depends on neither: the RTC.
@@ -103,15 +105,16 @@ still worth watching even though timekeeping no longer depends on it:
 timer-stats: real=2979 ms ticks=2000 ms perdido=979 ms (32%) handler avg=25 us max=1128 us
 ```
 
-`real` is TSC time, `ticks` is what the interrupt counter saw, the difference is
+`real` is wall-clock time, `ticks` is what the interrupt counter saw, the difference is
 what the hypervisor did not deliver, and `handler` is what this kernel spends
 inside the interrupt — the part that is ours to keep small.
 
-One more trap worth remembering: `monotonic_ns` is calibrated once at boot
-against the PIT over a 10 ms window, and a bad calibration poisons the whole
-session. One VirtualBox boot was measured reporting roughly 6.8x real time
-before a later boot came back correct. When a timing number looks absurd,
-re-run `clock-smoke` before believing it — and before building a theory on it.
+One more trap worth remembering: a VirtualBox boot was measured reporting
+roughly 6.8x real time, and it was written off as a bad TSC calibration. It was
+not — the TSC runs ahead there whenever the guest is busy, which is also why the
+`perdido` column above read 52-62% where the truth was 2%. A measurement is only
+as good as the clock that took it: when a timing number looks absurd, re-run
+`clock-smoke` before believing it, and read [`TIME.md`](TIME.md).
 
 ### Waiting is not running: what the first measurement found
 

@@ -554,11 +554,69 @@ uacpi_status uacpi_kernel_wait_for_work_completion(void) {
 } // extern "C"
 
 namespace timer {
+
+// --- Reloj de pared ---------------------------------------------------------
+//
+// Dos fuentes, y cual es la buena depende de donde corra el kernel. El TSC
+// cuenta ciclos del procesador real; el PM timer de la ACPI es un contador del
+// chipset a 3.579545 MHz. En metal desnudo miden lo mismo. Adentro de un
+// hipervisor no: el tiempo de la maquina virtual no es el del reloj de pared
+// del host, y el PM timer es el que va con el primero -- que es tambien el que
+// mueve a los devices emulados. Ver timer::adopt_pm_timer() en timer.hpp.
+//
+// El acumulador no es reentrante. Alcanza mientras los syscalls corran con
+// IF=0 (nadie puede entrar dos veces) y haya un solo core planificando; cuando
+// el scheduler use los APs esto pide un lock, igual que el resto del kernel.
+uint16_t g_pm_port = 0;
+uint32_t g_pm_last = 0;
+uint64_t g_pm_ticks = 0;     // acumulado desde que se adopto, ya sin vueltas
+uint64_t g_pm_epoch_ns = 0;  // lo que marcaba el TSC al adoptarlo, para no saltar
+
+uint64_t pm_timer_ns() {
+    const uint32_t raw = in32(g_pm_port);
+    g_pm_ticks += static_cast<uint32_t>(raw - g_pm_last);
+    g_pm_last = raw;
+    // Partido en segundos y resto: ticks * 1e9 desborda un uint64 a la hora y
+    // media de encendido.
+    const uint64_t seconds = g_pm_ticks / acpi::kPmTimerHz;
+    const uint64_t remainder = g_pm_ticks % acpi::kPmTimerHz;
+    return g_pm_epoch_ns + seconds * 1000000000ull +
+           (remainder * 1000000000ull) / acpi::kPmTimerHz;
+}
+
 void calibrate_monotonic() {
     calibrate_tsc();
 }
 
+void adopt_pm_timer() {
+    if (g_pm_port != 0) {
+        return;
+    }
+    if (!acpi::ready() || acpi::pm_timer_port() == 0) {
+        console::printf("timer: sin PM timer ACPI, el reloj de pared sigue en el TSC\n");
+        return;
+    }
+    // Con 24 bits el contador da la vuelta cada 4,7 s y no hay forma honesta de
+    // saber cuantas dio si nadie lo leyo en ese rato. Mejor el TSC, que podra
+    // irse de ritmo pero no pierde tiempo de golpe.
+    if (!acpi::pm_timer_is_32bit()) {
+        console::printf("timer: PM timer ACPI de 24 bits (0x%x), el reloj de pared sigue en el TSC\n",
+                        static_cast<unsigned>(acpi::pm_timer_port()));
+        return;
+    }
+
+    g_pm_epoch_ns = uacpi_kernel_get_nanoseconds_since_boot();
+    g_pm_last = acpi::pm_timer_read();
+    g_pm_ticks = 0;
+    g_pm_port = acpi::pm_timer_port();
+    console::printf("timer: reloj de pared por PM timer ACPI (0x%x, 32 bits)\n",
+                    static_cast<unsigned>(g_pm_port));
+}
+
 uint64_t monotonic_ns() {
+    if (g_pm_port != 0) {
+        return pm_timer_ns();
+    }
     return uacpi_kernel_get_nanoseconds_since_boot();
 }
 

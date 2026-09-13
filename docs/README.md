@@ -41,6 +41,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   scheduler fix that made present ~470x faster, the numbers across backends,
   and why asynchronous present buys nothing on one core.
 
+- [`TIME.md`](TIME.md) — which clock the kernel reads for what: the tick
+  counter as CPU accounting and nothing else, why the wall clock cannot be the
+  TSC inside a hypervisor (host time vs. virtual time), the ACPI PM timer rule
+  and its 32-bit condition, what a runaway clock did to the audio feed, and the
+  three lines that diagnose a clock problem.
+
 - [`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md) — what the system reports about
   itself and how to read it: the per-process tick and memory counters the kernel
   exports, why a percentage only exists between two samples, why resident memory

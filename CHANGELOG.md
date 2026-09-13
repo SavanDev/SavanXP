@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **The AC'97 driver measures its own feed.** An `ac97-stats:` line every
+  ~11 s of audio over `/dev/serial`: wall time against audio actually
+  delivered, periods discarded because the ring was full, underruns, and the
+  longest gap between two writes. [How to read it](docs/TIME.md#diagnosing-a-clock-problem).
+
 - **`build.ps1 clock-smoke`.** Measures `uptime_ms` and `monotonic_ns` against
   the RTC while spinning and while idle, and fails only if a clock changes rate
   with idleness. [What it measured](docs/SYSTEM_MONITORING.md#ticks-are-guest-time-not-wall-time).
@@ -321,12 +326,20 @@ Cut-off notes:
 
 ### Fixed
 
-- **The kernel's wall clock is the TSC, not a count of timer interrupts.**
+- **The wall clock follows the ACPI PM timer on machines that expose a usable
+  one.** The TSC measures the host's time, not the virtual machine's: with
+  VirtualBox under load it counted 561% of real time, and everything paced on
+  it ran ahead — Doom offered three times the audio the device could take and
+  the driver dropped the rest, which is what a chopped-up sound is. Needs a
+  32-bit PM timer; QEMU's is 24-bit and stays on the TSC. [Why](docs/TIME.md).
+
+- **The kernel's wall clock is a free-running counter, not a count of timer
+  interrupts.**
   `uptime_ms` and every deadline — `sleep_ms`, `poll` timeouts, the TCP RTO —
   used to advance only when an interrupt was delivered, and on VirtualBox that
   delivery turns bursty once the machine idles: measured between 151 Hz and
   4000 Hz with the timer set to 1000. Anything paced on it stalled and then
-  fast-forwarded. [How it was found](docs/SYSTEM_MONITORING.md#the-wall-clock-is-the-tsc-ticks-only-count-cpu).
+  fast-forwarded. [How it was found](docs/SYSTEM_MONITORING.md#the-wall-clock-is-a-free-running-counter-ticks-only-count-cpu).
 
 - **A process waiting in `poll()` wakes on the event, not only on the next
   tick.** Blocking `poll()` left the compositor noticing a client's frame up to

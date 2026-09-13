@@ -159,6 +159,10 @@ namespace
 
     boot_screen::show("Detecting firmware");
     acpi::initialize(boot_info);
+    // Con la FADT ya parseada, el reloj de pared se pasa al PM timer si la
+    // maquina lo expone: es el que va al ritmo del tiempo virtual y de los
+    // devices emulados, mientras que el TSC va al del host (ver timer.hpp).
+    timer::adopt_pm_timer();
 
     tty::initialize();
     input::initialize();
