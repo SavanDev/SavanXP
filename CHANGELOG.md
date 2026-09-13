@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **`tools/bootstrap.ps1` bakes Python (with Pillow) and provisions Visual
+  Studio Build Tools.** An embedded, portable Python goes into `toolchain/`
+  like the rest of the toolchain (`-SkipPython` opts out); Build Tools
+  installs system-wide via `winget` when the MSVC headers `sxfs-cli` needs are
+  missing (`-SkipVsBuildTools` opts out). [Why Build Tools can't be pinned like the rest](docs/WINDOWS_BOOTSTRAP.md).
+
 - **The AC'97 driver measures its own feed.** An `ac97-stats:` line every
   ~11 s of audio over `/dev/serial`: wall time against audio actually
   delivered, periods discarded because the ring was full, underruns, and the
@@ -325,6 +331,11 @@ Cut-off notes:
   `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
 
 ### Fixed
+
+- **The kernel/userland build no longer breaks when the Windows profile name
+  has a space in it.** The generated `compile.ninja` only escaped `$` in flag
+  values, so an unquoted `-I` path like `C:\Users\Jane Doe\...` split into two
+  bogus arguments. [How it was found](docs/WINDOWS_BOOTSTRAP.md#a-space-in-the-windows-profile-name-can-break-the-build).
 
 - **Closing a window that was playing sound no longer mutes the machine.**
   `windowd` kills the client, so the close handler of `/dev/audio0` ran in the

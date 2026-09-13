@@ -6,7 +6,12 @@ param(
     [switch]$SkipLlvm,
     [switch]$SkipQemu,
     [switch]$SkipXorriso,
-    [switch]$SkipNinja
+    [switch]$SkipNinja,
+    [switch]$SkipPython,
+    # Build Tools es el unico componente que no se hornea en toolchain/: no hay
+    # zip portable, se instala a nivel de sistema. Omitilo si ya tenes MSVC (o
+    # una Visual Studio completa) o preferis instalarlo vos.
+    [switch]$SkipVsBuildTools
 )
 
 Set-StrictMode -Version Latest
@@ -248,6 +253,113 @@ function Install-Ninja($Spec) {
     return $target
 }
 
+# Python embebido oficial de python.org: portable (un zip, sin instalador),
+# pero sale sin pip ni site-packages habilitados. Prendemos "import site" en
+# python312._pth y bootstrapeamos pip con un get-pip.py pineado por commit
+# (mismo criterio que xorriso: pineado, no "latest"). Pillow se instala
+# despues via pip a la version fijada en el lock; pip ya verifica la
+# integridad del wheel contra el indice, por eso esta no lleva sha256 propio.
+function Install-Python($Spec) {
+    $target = Join-Path $ToolchainRoot "python"
+    $pythonExe = Join-Path $target "python.exe"
+    $stampPath = Join-Path $target "pillow.stamp"
+    $stamp = "$($Spec.version)|$($Spec.pillowVersion)"
+    if ((Test-Path $pythonExe) -and (Test-Path $stampPath) -and -not $Force) {
+        if ((Get-Content -Raw -Path $stampPath).Trim() -eq $stamp) {
+            Write-Step "Python ya presente en $target (usa -Force para re-instalar)"
+            return $target
+        }
+    }
+
+    if (Test-Path $target) {
+        Remove-Item -Recurse -Force $target
+    }
+
+    Ensure-Directory $CacheRoot
+    $archive = Join-Path $CacheRoot ("python-" + $Spec.version + "-embed-amd64.zip")
+    if ($Force -or -not (Test-Path $archive)) {
+        Get-RemoteFile $Spec.url $archive
+    }
+    Confirm-FileHash $archive $Spec.sha256 "Python $($Spec.version)"
+
+    Write-Step "Extrayendo Python..."
+    Expand-ZipArchive $archive $target
+
+    # El embebido trae "import site" comentado: sin site-packages, pip no
+    # tiene donde instalarse ni de donde importarse despues.
+    $pthFiles = Get-ChildItem -Path $target -Filter "python3*._pth"
+    foreach ($pth in $pthFiles) {
+        (Get-Content -Path $pth.FullName) -replace '^#\s*import site$', 'import site' |
+            Set-Content -Path $pth.FullName
+    }
+
+    $getPip = Join-Path $CacheRoot "get-pip.py"
+    if ($Force -or -not (Test-Path $getPip)) {
+        Get-RemoteFile $Spec.getPipUrl $getPip
+    }
+    Confirm-FileHash $getPip $Spec.getPipSha256 "get-pip ($($Spec.getPipCommit))"
+
+    # El stdout de pip (progreso normal) no se descarta: sin el Out-Null, ese
+    # texto se cuela en el stream de salida de la funcion y "return $target"
+    # termina siendo un array con el log de pip adentro, no un string.
+    Write-Step "Instalando pip..."
+    & $pythonExe $getPip --no-warn-script-location | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la instalacion de pip en el Python horneado."
+    }
+
+    Write-Step "Instalando Pillow $($Spec.pillowVersion)..."
+    & $pythonExe -m pip install --no-warn-script-location ("Pillow==" + $Spec.pillowVersion) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la instalacion de Pillow."
+    }
+
+    Set-Content -Path $stampPath -Value $stamp -NoNewline
+
+    if (-not (Test-Path $pythonExe)) {
+        throw "Tras instalar Python no se encontro $pythonExe"
+    }
+    return $target
+}
+
+# Unico componente del toolchain que no es un zip/tar portable: Microsoft no
+# distribuye las cabeceras/libs de MSVC (que clang necesita para compilar
+# herramientas de host nativas de Windows, como sxfs-cli) como un archivo
+# hasheable y version-pineable -- aka.ms/vs/17/release sirve siempre el build
+# vigente, a proposito, por seguridad. Por eso esto se instala a nivel de
+# sistema via winget en vez de vivir bajo toolchain/.
+function Test-VcToolsInstalled {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) {
+        return $false
+    }
+    $installPath = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath
+    return [bool]$installPath
+}
+
+function Install-VsBuildTools {
+    if (Test-VcToolsInstalled) {
+        Write-Step "Visual Studio Build Tools (C++) ya presente"
+        return
+    }
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        Write-Warning "No se encontro winget. Instala manualmente 'Visual Studio Build Tools' (workload 'Desktop development with C++') y volve a correr build.ps1 build."
+        return
+    }
+
+    Write-Step "Instalando Visual Studio Build Tools (workload C++, puede tardar varios minutos)..."
+    & winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget `
+        --accept-package-agreements --accept-source-agreements `
+        --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la instalacion de Visual Studio Build Tools. Instalala manualmente o usa -SkipVsBuildTools."
+    }
+}
+
 function Resolve-OvmfFromQemu([string]$QemuRoot) {
     $share = Join-Path $QemuRoot "share"
     $candidates = @(
@@ -308,8 +420,17 @@ if (-not $SkipNinja) {
     $manifest["ninja"] = Join-Path $ninjaRoot "ninja.exe"
 }
 
+if (-not $SkipPython) {
+    $pythonRoot = Install-Python $lock.python
+    $manifest["python"] = Join-Path $pythonRoot "python.exe"
+}
+
+if (-not $SkipVsBuildTools) {
+    Install-VsBuildTools
+}
+
 # Fusiona con el manifiesto previo para no perder claves de un run parcial.
-if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu -or $SkipXorriso -or $SkipNinja)) {
+if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu -or $SkipXorriso -or $SkipNinja -or $SkipPython)) {
     $existing = Get-Content -Raw -Path $ManifestPath | ConvertFrom-Json
     foreach ($prop in $existing.PSObject.Properties) {
         if (-not $manifest.Contains($prop.Name)) {

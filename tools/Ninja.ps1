@@ -20,10 +20,17 @@ function Format-NinjaPathToken([string]$Path) {
     return $result
 }
 
-# Escapa un valor de variable (flags, ruta del compilador). Ninja lo pasa
-# tal cual al comando, asi que ':' y ' ' no necesitan escape ahi - solo '$'.
+# Escapa un valor de variable (flags, ruta del compilador). Ninja lo pasa tal
+# cual al comando, asi que ':' no necesita escape ahi - solo '$'. Un token con
+# espacios (ruta bajo un perfil de Windows como "Oasis Desktop") se entrecomilla
+# para que siga siendo un solo argumento; ningun token de estas listas de flags
+# representa intencionalmente mas de un argumento.
 function Format-NinjaVarValue([string]$Text) {
-    return $Text.Replace('$', '$$')
+    $escaped = $Text.Replace('$', '$$')
+    if ($escaped -match ' ') {
+        $escaped = '"' + $escaped + '"'
+    }
+    return $escaped
 }
 
 # Cada edge: @{ SourcePath; ObjectPath; FlagsVar = "kernelflags"|"userflags"; LangFlag = "" | "-x c" | "-x assembler-with-cpp" }

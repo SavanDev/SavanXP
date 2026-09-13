@@ -12,6 +12,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`BUILD_LINUX.md`](BUILD_LINUX.md) — building and running outside Windows:
   PowerShell itself, distribution packages, QEMU display and audio backends,
   virtio devices, KVM.
+- [`WINDOWS_BOOTSTRAP.md`](WINDOWS_BOOTSTRAP.md) — what `tools/bootstrap.ps1`
+  bakes on Windows and what it deliberately does not: the embedded Python,
+  why Visual Studio Build Tools cannot be pinned like the rest of the
+  toolchain, and the path-quoting bug a space in the Windows profile name
+  used to trigger.
 
 ## Architecture
 

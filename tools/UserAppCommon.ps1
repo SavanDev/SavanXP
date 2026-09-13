@@ -192,7 +192,10 @@ function Set-AsciiField([byte[]]$Buffer, [int]$Offset, [string]$Text, [int]$Capa
 function Get-PythonExecutable {
     # "python" primero: en Windows, "python3" suele resolver al alias-stub de
     # la Microsoft Store (existe para Get-Command pero falla al ejecutarlo).
-    return Require-Executable "python" @("python", "python3")
+    # El toolchain horneado (tools/bootstrap.ps1) va antes que el PATH para no
+    # depender de ese stub ni de que el PATH del proceso se haya refrescado.
+    $candidates = @(Get-ToolchainCandidates "python") + @("python3")
+    return Require-Executable "python" $candidates
 }
 
 # llvm-objcopy y llvm-readelf viven al lado de clang en el bundle de LLVM. El

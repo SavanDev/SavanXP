@@ -27,6 +27,7 @@ $Script:ToolchainTools = @{
     "haxe"               = @{ Env = "SAVANXP_HAXE";    Manifest = "haxe" }
     "haxelib"            = @{ Env = "SAVANXP_HAXELIB"; Manifest = "haxelib" }
     "ninja"              = @{ Env = "SAVANXP_NINJA";   Manifest = "ninja" }
+    "python"             = @{ Env = "SAVANXP_PYTHON";  Manifest = "python" }
 }
 
 function Get-ToolchainManifest {

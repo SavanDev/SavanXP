@@ -61,11 +61,21 @@ The recommended path is to bake a self-contained local toolchain:
 
 That downloads pinned versions (LLVM/Clang with `ld.lld`, `llvm-objcopy` and
 `llvm-readelf`; QEMU with the OVMF firmware it ships; `xorriso` for generating
-ISOs; and `ninja`) into `toolchain/` (git-ignored) and writes the
-`toolchain/toolchain.json` manifest that `build.ps1` consumes. The versions are
-pinned in `tools/toolchain.lock.json`; updating a tool means editing that file.
-`xorriso` can be skipped with `-SkipXorriso`, and `ninja` with `-SkipNinja`, if
+ISOs; `ninja`; and an embedded Python with `Pillow`) into `toolchain/`
+(git-ignored) and writes the `toolchain/toolchain.json` manifest that
+`build.ps1` consumes. The versions are pinned in `tools/toolchain.lock.json`;
+updating a tool means editing that file. `xorriso` can be skipped with
+`-SkipXorriso`, `ninja` with `-SkipNinja`, and Python with `-SkipPython`, if
 you already have them.
+
+`bootstrap.ps1` also installs Visual Studio Build Tools (the C++ workload)
+through `winget` if the MSVC headers/libs are not already present —
+`clang` needs them to compile `sxfs-cli`, the native Windows host tool the
+build uses to write `SxFS` images. Unlike everything else here it is a
+system-wide install, not a drop into `toolchain/`: Microsoft does not ship a
+portable, version-pinned archive of it the way it does for the rest of this
+list. Skip it with `-SkipVsBuildTools` if you already have a full Visual
+Studio. [Why it has to work this way](docs/WINDOWS_BOOTSTRAP.md).
 
 `build.ps1` contains no paths from any particular machine: it resolves each
 tool in this order and keeps the first one that exists.
@@ -73,22 +83,19 @@ tool in this order and keeps the first one that exists.
 1. explicit environment variable override
    (`SAVANXP_CLANG`, `SAVANXP_CLANGXX`, `SAVANXP_LD`, `SAVANXP_OBJCOPY`,
    `SAVANXP_READELF`, `SAVANXP_QEMU`, `SAVANXP_XORRISO`, `SAVANXP_NINJA`,
-   `OVMF_CODE` / `OVMF_VARS`)
+   `SAVANXP_PYTHON`, `OVMF_CODE` / `OVMF_VARS`)
 2. the toolchain baked into `toolchain/`
 3. the system `PATH`
 
 That is why `bootstrap.ps1` is optional: if you already have `clang++`,
-`ld.lld`, `llvm-objcopy`, `llvm-readelf`, `ninja` and `qemu-system-x86_64` on
-the `PATH`, the build works all the same. `git` is also required on the `PATH`.
-`build.ps1` automatically downloads Limine's `v10.x-binary` branch if it is not
-present in `tools/limine`.
+`ld.lld`, `llvm-objcopy`, `llvm-readelf`, `ninja`, `qemu-system-x86_64` and
+`python`/`python3` with `Pillow` on the `PATH`, the build works all the same.
+`git` is also required on the `PATH`. `build.ps1` automatically downloads
+Limine's `v10.x-binary` branch if it is not present in `tools/limine`.
 
-`python3` (or `python`) with `Pillow` installed (`pip install Pillow`) is
-required too: `build.ps1` uses it on every build to generate the desktop art
-and convert the cursor/icon PNGs into C headers
-(`tools/gen_desktop_source_art.py`, `tools/gen_cursor_asset.py`,
-`tools/gen_desktop_icon_assets.py`). It is not part of the toolchain baked by
-`bootstrap.ps1`.
+Python (with `Pillow`) is used on every build to generate the desktop art and
+convert the cursor/icon PNGs into C headers (`tools/gen_desktop_source_art.py`,
+`tools/gen_cursor_asset.py`, `tools/gen_desktop_icon_assets.py`).
 
 For anything outside Windows — PowerShell itself, distribution packages, QEMU
 backends, virtio devices — see [Building on Linux](docs/BUILD_LINUX.md).
