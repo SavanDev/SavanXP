@@ -170,6 +170,20 @@ void audio_close() {
 
 namespace audio_device {
 
+void release_session_for(uint32_t pid) {
+    if (pid == 0) {
+        return;
+    }
+    if (g_owner_pid == pid) {
+        audio::stop();
+        g_owner_pid = 0;
+    }
+    if (g_capture_owner_pid == pid) {
+        audio::capture_stop();
+        g_capture_owner_pid = 0;
+    }
+}
+
 bool initialize() {
     if (!audio::ready()) {
         return false;

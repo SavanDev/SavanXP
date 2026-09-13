@@ -326,6 +326,11 @@ Cut-off notes:
 
 ### Fixed
 
+- **Closing a window that was playing sound no longer mutes the machine.**
+  `windowd` kills the client, so the close handler of `/dev/audio0` ran in the
+  killer's context and the device stayed owned by a dead pid: every later
+  program got `EBUSY`. It is released by pid on exit, like the GPU session.
+
 - **The wall clock follows the ACPI PM timer on machines that expose a usable
   one.** The TSC measures the host's time, not the virtual machine's: with
   VirtualBox under load it counted 561% of real time, and everything paced on

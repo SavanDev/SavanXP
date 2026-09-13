@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+#include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
@@ -1916,6 +1917,10 @@ void terminate_process(process::Process& proc, int exit_code) {
        owner check fails. Reclaim the session here by pid so a crashed compositor
        does not leave the GPU acquired forever. */
     display::release_session_for(exiting_pid);
+    /* Y lo mismo con el audio: /dev/audio0 tiene un unico dueno y windowd mata
+       al cliente cuando cierran la ventana, asi que sin esto la sesion queda
+       tomada por un pid muerto y el proximo programa con sonido recibe EBUSY. */
+    audio_device::release_session_for(exiting_pid);
     proc.state = process::State::zombie;
     wake_waiting_parent(proc);
     reparent_orphaned_children(exiting_pid);
