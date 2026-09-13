@@ -56,10 +56,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   meditation, and how to read that crash back to a line of the kernel.
 
 - [`GRAPHICS_PERF.md`](GRAPHICS_PERF.md) — how the graphics pipeline is
-  measured and what it costs: every field of the `windowd-stats` line, which
-  load measures the display path and which only measures the harness, the
-  scheduler fix that made present ~470x faster, the numbers across backends,
-  and why asynchronous present buys nothing on one core.
+  measured and what it costs: every field of the `windowd-stats` and
+  `shellapp-stats` lines, which load measures the display path and which only
+  measures the harness, the scheduler fix that made present ~470x faster, why a
+  client derives its damage instead of declaring it, the numbers across
+  backends, and why asynchronous present buys nothing on one core.
 
 - [`TIME.md`](TIME.md) — which clock the kernel reads for what: the tick
   counter as CPU accounting and nothing else, why the wall clock cannot be the

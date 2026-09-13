@@ -147,7 +147,7 @@ $KernelSources = @(
 $UserPrograms = @(
     @{ Name = "init"; Source = "subsystems/posix/userland/init.c" },
     @{ Name = "sh"; Sources = @("subsystems/posix/userland/sh.c", "subsystems/posix/userland/shell_core.c") },
-    @{ Name = "shellapp"; Sources = @("subsystems/posix/userland/shellapp.c", "subsystems/posix/userland/shell_core.c") },
+    @{ Name = "shellapp"; Sources = @("subsystems/posix/userland/shellapp.c", "subsystems/posix/userland/shell_core.c", "subsystems/posix/userland/shellapp_stats.c") },
     @{ Name = "uname"; Source = "subsystems/posix/userland/uname.c" },
     @{ Name = "df"; Source = "subsystems/posix/userland/df.c" },
     @{ Name = "ticker"; Source = "subsystems/posix/userland/ticker.c"; Test = $true },

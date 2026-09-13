@@ -76,6 +76,74 @@ is TSC-based and calibrated in `uacpi_glue::bringup` before userland exists, so
 it is always available; a `0` return is treated as "no clock" and the frame is
 discarded rather than counted as noise.
 
+## What `shellapp-stats` reports
+
+Stage 1 of the pipeline — *the client draws* — is measured separately, because
+the compositor cannot see it. `windowd` only learns how many pixels a client
+declared dirty; whether the client repainted ten times that area to produce them
+is invisible from there. The terminal (`/bin/shellapp`) carries the same kind of
+instrumentation, on the same channel and the same two-second cadence:
+
+```
+shellapp-stats: window_ms=2044 redraws=8 blinks=2 draw_us=381/666 \
+                present_us=124/197 rows=0.1 damage_px=27048 bounds_px=56784 \
+                rects=1.1
+```
+
+| field | meaning |
+|---|---|
+| `redraws` | full paint passes in the window. A terminal nobody is using emits nothing. |
+| `blinks` | cursor blinks, counted apart. They present 16 pixels, and averaging them into the redraws hides what the redraws cost. |
+| `draw_us` | average / worst microseconds painting. |
+| `present_us` | average / worst microseconds in `gfx_present*`, which **includes blocking until the compositor has consumed the previous frame**. If this dominates, tightening the painting will not be felt. |
+| `rows` | text rows re-blitted per redraw, in tenths. The figure for per-row repainting: the ideal is one row for one changed line. |
+| `damage_px` | pixels actually presented. |
+| `bounds_px` | pixels the bounding box of that damage would have covered — what painting by band costs over painting per rectangle. |
+| `rects` | dirty rectangles per redraw, in tenths. |
+
+### Damage is derived, not declared
+
+A client that declares its own damage will over-declare it: the code that
+appends a line knows the history changed, not which rows moved. `shellapp`
+therefore does not let callers mark an area — every history line carries a
+monotonic `serial` (identity, so a row can be recognised after the history
+scrolls) and a `revision` (bumped per character, so a line that grew is
+detected without a new line being pushed). Before each paint, the shadow of what
+is painted in each screen row is compared against what that row should show, and
+the mismatches *are* the damage.
+
+The rule that follows: **painting happens per dirty rectangle, never over the
+bounding box that contains them.** With the header and one middle row dirty, that
+box is almost the whole window, and painting it throws away everything the row
+diff just bought. Clearing and drawing inside each rectangle stays correct even
+when two overlap — the shared area is cleared and redrawn whole by the second
+one, never composited twice over itself, which matters because the header text
+is alpha-blended and blending it twice would darken it.
+
+Measured on `shoot.ps1 -Scenario shell`, same scenario and same instrumentation,
+declared damage versus derived:
+
+| workload | | `rows` | `damage_px` | `draw_us` | `present_us` |
+|---|---|---|---|---|---|
+| typing at the prompt | declared | 3.1 | 321 216 | 4016 | 1138 |
+| | derived | **0.1** | **27 048** | **381** | **124** |
+| command output | declared | 20.0 | 327 936 | 5243 | 3920 |
+| | derived | **5.3** | **88 704** | **2105** | **1816** |
+
+`present_us` falling with `damage_px` is the part worth noting: shrinking a
+client's damage does not only save the client's own painting, it shortens how
+long it waits for the compositor.
+
+### What it does not yet answer
+
+Under *sustained* scrolling every row genuinely shows a different line, so the
+row diff marks all of them and the cost returns to a full content repaint. The
+fix is a scroll blit — `memmove` the rows up and repaint only the newly exposed
+one — which on the host measures 2.45x faster than repainting a 24-row grid. It
+is not implemented: it requires splitting damage in two, because after a blit the
+pixels that must be *presented* (everything moved) are no longer the pixels that
+must be *repainted* (one row).
+
 ## How to capture it
 
 The instrumentation lives in the interactive session, not in the self-tests, so

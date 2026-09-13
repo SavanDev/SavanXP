@@ -313,10 +313,11 @@ Cut-off notes:
   `CPUID`); Hardware lists the devices found. The live counters it used to show
   moved to the Task Manager.
 
-- **The Shell window opens and types far faster.** `/bin/shellapp` dropped an
-  unused 8 MiB static backbuffer, repaints only the dirty band, blinks the
-  cursor without a full repaint, and keeps scrollback in a ring. Monospace text
-  blits ~16x faster system-wide. New `shoot.ps1 -Scenario shell`.
+- **The Shell window opens and repaints far faster.** `/bin/shellapp` dropped an
+  unused 8 MiB static backbuffer, repaints only the text rows that actually
+  changed instead of the whole surface, blinks the cursor without a repaint, and
+  keeps scrollback in a ring. Monospace text blits ~16x faster system-wide. New
+  `shellapp-stats:` line over `/dev/serial` and `shoot.ps1 -Scenario shell`.
 
 - **The compositor accumulates damage as an exact region.** `windowd` stopped
   merging dirty rectangles by bounding box: dragging a window now repaints and

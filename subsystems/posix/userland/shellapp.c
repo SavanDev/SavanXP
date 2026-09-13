@@ -1,4 +1,5 @@
 #include "shell_core.h"
+#include "shellapp_stats.h"
 
 #include "shared/version.h"
 
@@ -8,6 +9,11 @@
 #define SHELLAPP_MARGIN_Y 14
 #define SHELLAPP_HEADER_HEIGHT 30
 #define SHELLAPP_LINE_HEIGHT 18
+#define SHELLAPP_HISTORY_TOP (SHELLAPP_HEADER_HEIGHT + SHELLAPP_MARGIN_Y)
+/* Techo de filas de texto visibles. A 18 px por fila son 4600 px de alto, muy
+ * por encima de cualquier pantalla: el tope existe para que la sombra de filas
+ * sea un array fijo, no para limitar la ventana. */
+#define SHELLAPP_MAX_ROWS 256
 /* La terminal se mide en celdas, no en pixeles: 80x24 es el tamano clasico y
  * el que asumen casi todos los programas de consola al formatear su salida. */
 #define SHELLAPP_CONTENT_COLUMNS 80
@@ -19,6 +25,18 @@ struct shellapp_line {
     char text[SHELLAPP_LINE_LENGTH];
     int length;
     int stream;
+    /* Identidad y version. `serial` es monotono y no se reusa, asi que dice si
+     * una fila de la pantalla sigue mostrando LA MISMA linea despues de que el
+     * historial se corra; `revision` sube con cada caracter, que es como se
+     * detecta que la linea abierta crecio sin haber empujado una nueva. */
+    unsigned long serial;
+    unsigned long revision;
+};
+
+/* Lo que quedo pintado en cada fila de la pantalla. */
+struct shellapp_row {
+    unsigned long serial;
+    unsigned long revision;
 };
 
 struct shellapp_state {
@@ -26,6 +44,9 @@ struct shellapp_state {
     uint32_t* frame;
     char input[256];
     int line_count;
+    unsigned long next_serial;
+    struct shellapp_row rows[SHELLAPP_MAX_ROWS];
+    struct shellapp_stats stats;
     /* Indice de la linea mas vieja viva dentro de g_lines: el historial es un
      * anillo. Antes era un array compacto y descartar la linea mas vieja movia
      * las otras 255 (~42 KB de memmove) por cada linea nueva -- un `ls` de 200
@@ -59,6 +80,8 @@ static struct shellapp_line* shellapp_push_line(int stream) {
     line = shellapp_line_at(g_shellapp.line_count++);
     memset(line, 0, sizeof(*line));
     line->stream = stream;
+    line->serial = ++g_shellapp.next_serial;
+    line->revision = 1;
     g_shellapp.current_line_open = 1;
     return line;
 }
@@ -119,6 +142,7 @@ static void shellapp_append_char(int stream, char value) {
     line->text[length] = value;
     line->text[length + 1] = '\0';
     line->length = length + 1;
+    ++line->revision;
 }
 
 static void shellapp_append_text_line(int stream, const char* text) {
@@ -137,6 +161,24 @@ static void shellapp_clear_history(void) {
 
 static int shellapp_prompt_y(const struct savanxp_fb_info* info) {
     return (int)info->height - SHELLAPP_MARGIN_Y - gfx_cell_height();
+}
+
+/* Filas de texto que entran entre el header y el prompt. Una sola definicion:
+ * la sombra de filas y el pintado tienen que estar de acuerdo o una fila se
+ * marca sucia en una grilla y se dibuja en otra. */
+static int shellapp_visible_rows(const struct savanxp_fb_info* info) {
+    const int history_bottom = shellapp_prompt_y(info) - SHELLAPP_LINE_HEIGHT;
+    int rows = history_bottom > SHELLAPP_HISTORY_TOP
+        ? (history_bottom - SHELLAPP_HISTORY_TOP) / SHELLAPP_LINE_HEIGHT
+        : 0;
+
+    return rows > SHELLAPP_MAX_ROWS ? SHELLAPP_MAX_ROWS : rows;
+}
+
+/* Indice de la linea que va en la fila 0: el historial se muestra pegado al
+ * prompt, asi que la ventana visible es siempre la cola. */
+static int shellapp_first_visible_line(int visible_rows) {
+    return g_shellapp.line_count > visible_rows ? g_shellapp.line_count - visible_rows : 0;
 }
 
 static uint32_t shellapp_background_colour(void) {
@@ -183,6 +225,9 @@ static void shellapp_invalidate_rect(int x, int y, int width, int height) {
 
 static void shellapp_invalidate_full(void) {
     g_shellapp.force_full_present = 1;
+    /* La sombra deja de valer: cambio la geometria o el contenido entero, asi
+     * que ninguna fila puede darse por pintada. */
+    memset(g_shellapp.rows, 0, sizeof(g_shellapp.rows));
     shellapp_invalidate_rect(0, 0, (int)g_shellapp.gfx.info.width, (int)g_shellapp.gfx.info.height);
 }
 
@@ -190,15 +235,46 @@ static void shellapp_invalidate_header(void) {
     shellapp_invalidate_rect(0, 0, (int)g_shellapp.gfx.info.width, SHELLAPP_HEADER_HEIGHT + 2);
 }
 
-/* Sin force_full_present: el area de contenido es un rectangulo y va por
- * gfx_present_rects. Marcarla como superficie completa hacia que cada chunk de
- * 256 bytes de salida obligara al compositor a recomponer la ventana entera. */
-static void shellapp_invalidate_content(void) {
-    shellapp_invalidate_rect(
-        0,
-        SHELLAPP_HEADER_HEIGHT,
-        (int)g_shellapp.gfx.info.width,
-        (int)g_shellapp.gfx.info.height - SHELLAPP_HEADER_HEIGHT);
+/* Deriva el danio del contenido comparando lo que cada fila MUESTRA contra lo
+ * que quedo PINTADO en ella, y devuelve cuantas filas no coinciden.
+ *
+ * Antes el danio lo declaraba el que llamaba: invalidate_content() marcaba el
+ * area entera, asi que una sola linea nueva costaba repintar y presentar las 24
+ * filas visibles. Comparar serial+revision lo vuelve exacto -- una linea que
+ * crecio ensucia su fila y nada mas -- y de paso hace que el pintado no pueda
+ * desincronizarse de lo que se declaro sucio, porque sale del mismo lugar. */
+static int shellapp_sync_rows(const struct savanxp_fb_info* info) {
+    const int visible = shellapp_visible_rows(info);
+    const int first_line = shellapp_first_visible_line(visible);
+    int dirty = 0;
+    int row;
+
+    for (row = 0; row < visible; ++row) {
+        const int line_index = first_line + row;
+        unsigned long serial = 0;
+        unsigned long revision = 0;
+
+        if (line_index < g_shellapp.line_count) {
+            const struct shellapp_line* line = shellapp_line_at(line_index);
+            serial = line->serial;
+            revision = line->revision;
+        }
+
+        if (g_shellapp.rows[row].serial == serial && g_shellapp.rows[row].revision == revision) {
+            continue;
+        }
+
+        g_shellapp.rows[row].serial = serial;
+        g_shellapp.rows[row].revision = revision;
+        shellapp_invalidate_rect(
+            0,
+            SHELLAPP_HISTORY_TOP + (row * SHELLAPP_LINE_HEIGHT),
+            (int)info->width,
+            SHELLAPP_LINE_HEIGHT);
+        ++dirty;
+    }
+
+    return dirty;
 }
 
 static void shellapp_invalidate_prompt(void) {
@@ -206,37 +282,27 @@ static void shellapp_invalidate_prompt(void) {
     shellapp_invalidate_rect(0, y, (int)g_shellapp.gfx.info.width, (int)g_shellapp.gfx.info.height - y);
 }
 
-static void shellapp_redraw(void) {
-    const struct savanxp_fb_info* info = &g_shellapp.gfx.info;
+/* Repinta lo que cae adentro de UN rectangulo sucio y devuelve cuantas filas de
+ * texto tuvo que blittear.
+ *
+ * Limpiar y dibujar adentro del propio rect deja el resultado bien aunque dos
+ * rects se pisen: el area compartida se limpia y se vuelve a dibujar entera en
+ * el segundo, nunca se compone dos veces sobre si misma. Eso importa porque el
+ * texto del header va con alfa y blendearlo dos veces lo oscureceria. */
+static unsigned long shellapp_paint_rect(const struct savanxp_fb_info* info, struct sx_rect clip) {
+    const int clip_right = clip.x + clip.width;
+    const int clip_bottom = clip.y + clip.height;
     const int prompt_y = shellapp_prompt_y(info);
-    const int history_top = SHELLAPP_HEADER_HEIGHT + SHELLAPP_MARGIN_Y;
-    const int history_bottom = prompt_y - SHELLAPP_LINE_HEIGHT;
-    const int visible_lines = history_bottom > history_top ? (history_bottom - history_top) / SHELLAPP_LINE_HEIGHT : 0;
-    const int first_line = g_shellapp.line_count > visible_lines ? g_shellapp.line_count - visible_lines : 0;
-    /* Todo el repintado se recorta contra el bounding box de los rectangulos
-     * sucios. Antes se limpiaba la superficie entera y se rehacian las 24 lineas
-     * de texto en cada evento: los dirty rects solo acotaban el present, nunca
-     * el dibujo. */
-    struct sx_rect clip;
-    int clip_bottom = 0;
-    int clip_right = 0;
-    char cwd[256] = {};
-    int line_index = 0;
-    int y = history_top;
-
-    if (!sx_rect_set_valid(&g_shellapp.dirty_rects)) {
-        g_shellapp.needs_redraw = 0;
-        g_shellapp.force_full_present = 0;
-        return;
-    }
-
-    clip = sx_rect_set_bounds(&g_shellapp.dirty_rects);
-    clip_bottom = clip.y + clip.height;
-    clip_right = clip.x + clip.width;
+    const int visible = shellapp_visible_rows(info);
+    const int first_line = shellapp_first_visible_line(visible);
+    unsigned long rows_painted = 0;
+    int row;
 
     gfx_rect(g_shellapp.frame, info, clip.x, clip.y, clip.width, clip.height, shellapp_background_colour());
 
     if (clip.y <= SHELLAPP_HEADER_HEIGHT) {
+        char cwd[256] = {};
+
         shell_current_directory(cwd, sizeof(cwd));
         shellapp_fill_clipped(info, 0, 0, (int)info->width, SHELLAPP_HEADER_HEIGHT, clip, gfx_rgb(25, 36, 52));
         shellapp_fill_clipped(info, 0, SHELLAPP_HEADER_HEIGHT, (int)info->width, 1, clip, gfx_rgb(76, 112, 156));
@@ -246,20 +312,23 @@ static void shellapp_redraw(void) {
             clip.x, clip.y, clip_right, clip_bottom);
     }
 
-    for (line_index = first_line; line_index < g_shellapp.line_count; ++line_index) {
-        const struct shellapp_line* line = shellapp_line_at(line_index);
+    for (row = 0; row < visible; ++row) {
+        const int line_index = first_line + row;
+        const int y = SHELLAPP_HISTORY_TOP + (row * SHELLAPP_LINE_HEIGHT);
+        const struct shellapp_line* line = 0;
 
-        /* Una linea fuera de la banda sucia no se dibuja: cuando solo cambio el
-         * prompt, el historial entero se saltea. */
-        if (y < clip_bottom && (y + gfx_cell_height()) > clip.y) {
-            const uint32_t colour = line->stream == 2 ? gfx_rgb(255, 170, 170) : gfx_rgb(220, 233, 245);
-            gfx_blit_text_mono_clip(g_shellapp.frame, info, SHELLAPP_MARGIN_X, y, line->text, colour,
-                clip.x, clip.y, clip_right, clip_bottom);
-        }
-        y += SHELLAPP_LINE_HEIGHT;
-        if (y + gfx_cell_height() > prompt_y) {
+        if (line_index >= g_shellapp.line_count) {
             break;
         }
+        if (y >= clip_bottom || (y + gfx_cell_height()) <= clip.y) {
+            continue;
+        }
+
+        line = shellapp_line_at(line_index);
+        gfx_blit_text_mono_clip(g_shellapp.frame, info, SHELLAPP_MARGIN_X, y, line->text,
+            line->stream == 2 ? gfx_rgb(255, 170, 170) : gfx_rgb(220, 233, 245),
+            clip.x, clip.y, clip_right, clip_bottom);
+        ++rows_painted;
     }
 
     shellapp_fill_clipped(info, 0, prompt_y - 8, (int)info->width, 1, clip, gfx_rgb(41, 58, 78));
@@ -275,14 +344,48 @@ static void shellapp_redraw(void) {
         shellapp_fill_clipped(info, cursor.x, cursor.y, cursor.width, cursor.height, clip, shellapp_cursor_colour());
     }
 
+    return rows_painted;
+}
+
+static void shellapp_redraw(void) {
+    const struct savanxp_fb_info* info = &g_shellapp.gfx.info;
+    unsigned long rows_painted = 0;
+    unsigned long long damage_px = 0;
+    struct sx_rect bounds;
+    size_t index;
+
+    /* El contenido declara su propio danio antes de mirar si hay algo que hacer:
+     * los que lo cambian solo piden un repintado, no saben que filas movieron. */
+    (void)shellapp_sync_rows(info);
+
+    if (!sx_rect_set_valid(&g_shellapp.dirty_rects)) {
+        g_shellapp.needs_redraw = 0;
+        g_shellapp.force_full_present = 0;
+        return;
+    }
+
+    /* Un rectangulo a la vez, no el bounding box que los contiene: con el header
+     * y una fila del medio sucios, la banda que los abarca es casi la ventana
+     * entera y repintarla desperdicia todo lo que la sombra de filas acota. */
+    shellapp_stats_draw_begin(&g_shellapp.stats);
+    for (index = 0; index < g_shellapp.dirty_rects.count; ++index) {
+        const struct sx_rect rect = g_shellapp.dirty_rects.rects[index];
+
+        rows_painted += shellapp_paint_rect(info, rect);
+        damage_px += (unsigned long long)rect.width * (unsigned long long)rect.height;
+    }
+    shellapp_stats_draw_done(&g_shellapp.stats, rows_painted);
+
+    bounds = sx_rect_set_bounds(&g_shellapp.dirty_rects);
+    shellapp_stats_present_begin(&g_shellapp.stats);
     {
         long present_result = 0;
         if (g_shellapp.force_full_present ||
             (g_shellapp.dirty_rects.count == 1 &&
-            clip.x == 0 &&
-            clip.y == 0 &&
-            clip.width == (int)info->width &&
-            clip.height == (int)info->height)) {
+            bounds.x == 0 &&
+            bounds.y == 0 &&
+            bounds.width == (int)info->width &&
+            bounds.height == (int)info->height)) {
             present_result = gfx_present(&g_shellapp.gfx, g_shellapp.frame);
         } else {
             present_result = gfx_present_rects(
@@ -295,10 +398,17 @@ static void shellapp_redraw(void) {
             exit(1);
         }
     }
+    shellapp_stats_present_done(
+        &g_shellapp.stats,
+        damage_px,
+        (unsigned long long)bounds.width * (unsigned long long)bounds.height,
+        (unsigned long)g_shellapp.dirty_rects.count);
+
     g_shellapp.needs_redraw = 0;
     g_shellapp.force_full_present = 0;
     sx_rect_set_clear(&g_shellapp.dirty_rects);
     g_shellapp.last_present_ms = uptime_ms();
+    shellapp_stats_report(&g_shellapp.stats, 0);
 }
 
 static void shellapp_request_redraw(int immediate) {
@@ -329,8 +439,11 @@ static void shellapp_blink_cursor(void) {
         exit(1);
     }
     g_shellapp.last_present_ms = uptime_ms();
+    shellapp_stats_blink(&g_shellapp.stats);
 }
 
+/* Los que cambian el historial ya no declaran que area se ensucio: piden un
+ * repintado y shellapp_sync_rows() averigua que filas movieron. */
 static void shellapp_sink_emit(void* context, int fd, const char* bytes, size_t length) {
     size_t index = 0;
     (void)context;
@@ -340,14 +453,12 @@ static void shellapp_sink_emit(void* context, int fd, const char* bytes, size_t 
         ++index;
     }
 
-    shellapp_invalidate_content();
     shellapp_request_redraw(0);
 }
 
 static void shellapp_sink_clear(void* context) {
     (void)context;
     shellapp_clear_history();
-    shellapp_invalidate_content();
     shellapp_request_redraw(1);
 }
 
@@ -388,7 +499,9 @@ static void shellapp_submit_input(void) {
     memset(g_shellapp.input, 0, sizeof(g_shellapp.input));
     g_shellapp.cursor_visible = 1;
     g_shellapp.next_cursor_toggle_ms = uptime_ms() + SHELLAPP_CURSOR_PERIOD_MS;
-    shellapp_invalidate_content();
+    /* El prompt si hay que declararlo: se vacio el input. El eco del comando en
+     * el historial lo encuentra sync_rows. */
+    shellapp_invalidate_prompt();
     shellapp_request_redraw(1);
 
     if (line[0] == '\0') {
@@ -400,8 +513,8 @@ static void shellapp_submit_input(void) {
         exit(0);
     }
 
+    /* El header muestra el cwd, que un `cd` acaba de cambiar. */
     shellapp_invalidate_header();
-    shellapp_invalidate_content();
     shellapp_request_redraw(1);
 }
 
@@ -483,6 +596,7 @@ int main(void) {
         return 1;
     }
     g_shellapp.frame = g_shellapp.gfx.pixels;
+    shellapp_stats_open(&g_shellapp.stats);
     g_shellapp.cursor_visible = 1;
     g_shellapp.next_cursor_toggle_ms = uptime_ms() + SHELLAPP_CURSOR_PERIOD_MS;
     shellapp_append_text_line(1, SAVANXP_DISPLAY_NAME " shell app");
@@ -557,6 +671,9 @@ int main(void) {
         shellapp_invalidate_prompt();
         shellapp_handle_key(&event);
     }
+
+    shellapp_stats_report(&g_shellapp.stats, 1);
+    shellapp_stats_close(&g_shellapp.stats);
 
     gfx_close(&g_shellapp.gfx);
     return 0;
