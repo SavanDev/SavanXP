@@ -4,105 +4,46 @@
 
 /* ---- low level chrome helpers ------------------------------------------- */
 
-/* Las lineas de 1px las pone el painter (sx_painter_hline/vline): el toolkit ya
- * no las arma con rects de altura 1. */
+/* EL DIBUJO DE LOS BISELES NO ESTA ACA: vive en savanxp/sxchrome.h, porque el
+ * toolkit no es el unico que pinta chrome del sistema -- el marco de ventana de
+ * windowd y una app que pinta contenido propio dan con los mismos bordes, y
+ * antes cada uno tenia su copia. Lo que queda aca son los nombres internos que
+ * usa el resto del archivo, como envoltorios que el compilador inlinea. */
 
-/* Un borde 3D de la epoca son DOS anillos de un pixel, cada uno con su tono
- * arriba-izquierda y abajo-derecha: cuatro colores en total. El anillo externo
- * es el que separa el control del fondo y el interno el que le da el espesor.
- * Todo el resto del chrome sale de aca cambiando el orden de los cuatro, que es
- * lo que hace que hundido y levantado sean exactamente el reverso uno del otro
- * y no dos dibujos parecidos. */
-static void sxgui_draw_edge(
-    struct sx_painter *painter,
-    struct sx_rect rect,
-    uint32_t outer_light,
-    uint32_t outer_dark,
-    uint32_t inner_light,
-    uint32_t inner_dark)
-{
-    int right = rect.x + rect.width - 1;
-    int bottom = rect.y + rect.height - 1;
-
-    if (rect.width <= 0 || rect.height <= 0)
-    {
-        return;
-    }
-
-    /* anillo externo: la L clara arriba-izquierda y la oscura abajo-derecha */
-    sx_painter_hline(painter, rect.x, rect.y, rect.width, outer_light);
-    sx_painter_vline(painter, rect.x, rect.y, rect.height, outer_light);
-    sx_painter_hline(painter, rect.x, bottom, rect.width, outer_dark);
-    sx_painter_vline(painter, right, rect.y, rect.height, outer_dark);
-
-    if (rect.width <= 2 || rect.height <= 2)
-    {
-        return;
-    }
-
-    /* anillo interno, corrido un pixel hacia adentro por los cuatro lados */
-    sx_painter_hline(painter, rect.x + 1, rect.y + 1, rect.width - 2, inner_light);
-    sx_painter_vline(painter, rect.x + 1, rect.y + 1, rect.height - 2, inner_light);
-    sx_painter_hline(painter, rect.x + 1, bottom - 1, rect.width - 2, inner_dark);
-    sx_painter_vline(painter, right - 1, rect.y + 1, rect.height - 2, inner_dark);
-}
-
-/* Raised 3D border (buttons, window face). */
 static void sxgui_draw_raised(struct sx_painter *painter, struct sx_rect rect)
 {
-    sxgui_draw_edge(painter, rect, SXGUI_COLOR_BEVEL, SXGUI_COLOR_DARK, SXGUI_COLOR_LIGHT, SXGUI_COLOR_SHADOW);
+    sxchrome_draw_raised(painter, rect);
 }
 
-/* Pressed / sunken 3D border: el reverso exacto del levantado. Lo comparten el
- * boton apretado y los campos, que es lo que hace que un boton hundido y una
- * caja de texto tengan el mismo espesor. */
 static void sxgui_draw_sunken(struct sx_painter *painter, struct sx_rect rect)
 {
-    sxgui_draw_edge(painter, rect, SXGUI_COLOR_SHADOW, SXGUI_COLOR_LIGHT, SXGUI_COLOR_DARK, SXGUI_COLOR_BEVEL);
+    sxchrome_draw_sunken(painter, rect);
 }
 
 static void sxgui_draw_pressed(struct sx_painter *painter, struct sx_rect rect)
 {
-    sxgui_draw_sunken(painter, rect);
+    sxchrome_draw_sunken(painter, rect);
 }
 
-/* Los dos anteriores, publicos, para la app que pinta contenido propio y lo
- * quiere con el chrome del sistema (ver savanxp/sxgui.h). Son envoltorios y no
- * los internos renombrados a proposito: el resto de este archivo sigue llamando
- * a las versiones estaticas, que el compilador inlinea. */
+/* Publicos para la app que pinta contenido propio (ver savanxp/sxgui.h). */
 void sxgui_draw_raised_edge(struct sx_painter *painter, struct sx_rect rect)
 {
-    sxgui_draw_raised(painter, rect);
+    sxchrome_draw_raised(painter, rect);
 }
 
 void sxgui_draw_sunken_edge(struct sx_painter *painter, struct sx_rect rect)
 {
-    sxgui_draw_sunken(painter, rect);
+    sxchrome_draw_sunken(painter, rect);
 }
 
-/* Bisel de un solo pixel, para lo que no lleva espesor: los paneles de la barra
- * de estado y las cajas que solo separan del fondo. */
 static void sxgui_draw_inset(struct sx_painter *painter, struct sx_rect rect)
 {
-    int right = rect.x + rect.width - 1;
-    int bottom = rect.y + rect.height - 1;
-
-    sx_painter_hline(painter, rect.x, rect.y, rect.width, SXGUI_COLOR_SHADOW);
-    sx_painter_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_SHADOW);
-    sx_painter_hline(painter, rect.x, bottom, rect.width, SXGUI_COLOR_LIGHT);
-    sx_painter_vline(painter, right, rect.y, rect.height, SXGUI_COLOR_LIGHT);
+    sxchrome_draw_inset(painter, rect);
 }
 
-/* Linea "grabada": el marco oscuro y el claro corridos un pixel en diagonal.
- * Es el borde del group box y el de los separadores de menu. */
 static void sxgui_draw_etched(struct sx_painter *painter, struct sx_rect rect)
 {
-    if (rect.width <= 1 || rect.height <= 1)
-    {
-        return;
-    }
-    sx_painter_draw_frame(painter, sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 1, rect.height - 1), SXGUI_COLOR_LIGHT);
-    sx_painter_draw_frame(painter, sx_rect_make(rect.x, rect.y, rect.width - 1, rect.height - 1), SXGUI_COLOR_SHADOW);
+    sxchrome_draw_etched(painter, rect);
 }
 
 /* Rectangulo de foco punteado. El marco lleno que habia antes competia con el
@@ -395,9 +336,8 @@ static int sxgui_focusable(const struct sxgui_widget *widget)
 
 /* ---- painting ----------------------------------------------------------- */
 
-/* Rotulo de un control deshabilitado: gris con una copia blanca corrida un pixel
- * abajo a la derecha. Es el texto "grabado" de la epoca -- se lee apagado sin
- * desaparecer, que es justo lo que un gris plano sobre gris no logra. */
+/* Rotulo de un control: el relieve grabado del deshabilitado lo pone sxchrome,
+ * que es de donde lo saca tambien cualquier glifo apagado fuera del toolkit. */
 static void sxgui_draw_control_text(struct sx_painter *painter, int x, int y, const char *text, int enabled)
 {
     if (text == 0)
@@ -409,8 +349,7 @@ static void sxgui_draw_control_text(struct sx_painter *painter, int x, int y, co
         sx_painter_draw_text(painter, x, y, text, SXGUI_COLOR_TEXT);
         return;
     }
-    sx_painter_draw_text(painter, x + 1, y + 1, text, SXGUI_COLOR_LIGHT);
-    sx_painter_draw_text(painter, x, y, text, SXGUI_COLOR_DISABLED_TEXT);
+    sxchrome_draw_text_disabled(painter, x, y, text);
 }
 
 static void sxgui_paint_label(struct sx_painter *painter, const struct sxgui_widget *widget)

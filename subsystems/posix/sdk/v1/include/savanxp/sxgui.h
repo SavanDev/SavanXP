@@ -10,31 +10,32 @@
 
 #include "savanxp/libc.h"
 #include "savanxp/gfx2d.h"
+#include "savanxp/sxchrome.h"
 #include "savanxp/syscall.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define SXGUI_RGB(r, g, b) (((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
+#define SXGUI_RGB(r, g, b) SXCHROME_RGB(r, g, b)
 
 /* Classic 3D system palette.
  *
- * Son los cuatro tonos del esquema "Windows Standard" y en ese orden se leen:
- * DARK y SHADOW hunden, BEVEL y LIGHT levantan. Un borde 3D de la epoca usa
- * los CUATRO -- dos pixeles por lado, no uno -- y BEVEL es el que faltaba: sin
- * el, el bisel queda de un solo pixel y los controles se ven planos. */
-#define SXGUI_COLOR_FACE          SXGUI_RGB(192, 192, 192)  /* 3DFACE */
-#define SXGUI_COLOR_SHADOW        SXGUI_RGB(128, 128, 128)  /* 3DSHADOW */
-#define SXGUI_COLOR_DARK          SXGUI_RGB(0, 0, 0)        /* 3DDKSHADOW */
-#define SXGUI_COLOR_BEVEL         SXGUI_RGB(223, 223, 223)  /* 3DLIGHT */
-#define SXGUI_COLOR_LIGHT         SXGUI_RGB(255, 255, 255)  /* 3DHILIGHT */
-#define SXGUI_COLOR_TEXT          SXGUI_RGB(0, 0, 0)
-#define SXGUI_COLOR_DISABLED_TEXT SXGUI_RGB(128, 128, 128)
-#define SXGUI_COLOR_FIELD         SXGUI_RGB(255, 255, 255)
-#define SXGUI_COLOR_SELECT        SXGUI_RGB(0, 0, 128)
-#define SXGUI_COLOR_SELECT_TEXT   SXGUI_RGB(255, 255, 255)
-#define SXGUI_COLOR_WINDOW        SXGUI_RGB(192, 192, 192)
+ * VIVE EN savanxp/sxchrome.h: no es del toolkit, es del sistema -- el marco de
+ * ventana del WM y una app que pinta contenido propio tienen que dar con los
+ * mismos tonos que un boton. Estos nombres siguen siendo los que usa el codigo
+ * del toolkit y de las apps, asi que se quedan como alias. */
+#define SXGUI_COLOR_FACE          SXCHROME_COLOR_FACE
+#define SXGUI_COLOR_SHADOW        SXCHROME_COLOR_SHADOW
+#define SXGUI_COLOR_DARK          SXCHROME_COLOR_DARK
+#define SXGUI_COLOR_BEVEL         SXCHROME_COLOR_BEVEL
+#define SXGUI_COLOR_LIGHT         SXCHROME_COLOR_LIGHT
+#define SXGUI_COLOR_TEXT          SXCHROME_COLOR_TEXT
+#define SXGUI_COLOR_DISABLED_TEXT SXCHROME_COLOR_DISABLED_TEXT
+#define SXGUI_COLOR_FIELD         SXCHROME_COLOR_FIELD
+#define SXGUI_COLOR_SELECT        SXCHROME_COLOR_SELECT
+#define SXGUI_COLOR_SELECT_TEXT   SXCHROME_COLOR_SELECT_TEXT
+#define SXGUI_COLOR_WINDOW        SXCHROME_COLOR_WINDOW
 
 /* ---- metricas -------------------------------------------------------------
  *
@@ -46,9 +47,10 @@ extern "C" {
  * El grosor del bisel entra en la cuenta de cualquiera que reparta el ancho de
  * un listbox entre columnas: el area util es el rect menos SXGUI_BORDER_SUNKEN
  * de cada lado, y menos SXGUI_SCROLLBAR_THICKNESS si aparece la barra. */
-#define SXGUI_BORDER_RAISED       2   /* botones, cabeceras, popups */
-#define SXGUI_BORDER_SUNKEN       2   /* campos, listas, editores */
-#define SXGUI_BORDER_INSET        1   /* paneles de barra de estado */
+/* El espesor de cada bisel lo define quien lo dibuja (savanxp/sxchrome.h). */
+#define SXGUI_BORDER_RAISED       SXCHROME_BORDER_RAISED
+#define SXGUI_BORDER_SUNKEN       SXCHROME_BORDER_SUNKEN
+#define SXGUI_BORDER_INSET        SXCHROME_BORDER_INSET
 #define SXGUI_SCROLLBAR_THICKNESS 16
 /* Icono de fila de listbox. El tamano es fijo y no sale del bitmap para que la
  * sangria del texto sea la misma en todas las filas, tenga icono o no. */
@@ -330,7 +332,12 @@ void sxgui_paint_overlay(struct sxgui_context *ctx);
  * dos, o que use el gris equivocado de los cuatro del esquema.
  *
  * Pintan solo el borde, SXGUI_BORDER_RAISED / SXGUI_BORDER_SUNKEN pixeles de
- * espesor por lado; el relleno del interior es del llamador. */
+ * espesor por lado; el relleno del interior es del llamador.
+ *
+ * Son alias de savanxp/sxchrome.h, que es donde vive el dibujo desde que el WM
+ * tambien lo consume. Una app que ya linkea el toolkit puede seguir usando
+ * estos nombres; una que necesite el bisel de UN pixel, la cara de un control o
+ * el relieve de deshabilitado va directo a sxchrome, que no pide el toolkit. */
 void sxgui_draw_raised_edge(struct sx_painter *painter, struct sx_rect rect);
 void sxgui_draw_sunken_edge(struct sx_painter *painter, struct sx_rect rect);
 

@@ -858,7 +858,11 @@ function Get-UserlandCompileEdges([bool]$IncludeTestApps = $true) {
             "subsystems/posix/sdk/v1/runtime/posix.c",
             "subsystems/posix/sdk/v1/runtime/math.c",
             "subsystems/posix/sdk/v1/runtime/gfx.c",
-            "subsystems/posix/sdk/v1/runtime/gfx2d.c"
+            "subsystems/posix/sdk/v1/runtime/gfx2d.c",
+            # Los bordes 3D del sistema. Van en la base y no como fuente opcional
+            # porque los consume tanto el toolkit como windowd, que a proposito
+            # no linkea el toolkit (ver savanxp/sxchrome.h).
+            "subsystems/posix/sdk/v1/runtime/sxchrome.c"
         ) + $programSources) {
             $sourcePath = Join-Path $ProjectRoot $source
             $objectName = "$($program.Name)_$([IO.Path]::GetFileNameWithoutExtension($source)).o"

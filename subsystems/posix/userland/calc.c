@@ -1314,24 +1314,6 @@ static int calc_content_height(void)
         + SXGUI_CONTENT_MARGIN;
 }
 
-/* Bisel hundido de dos pixeles, el mismo que el toolkit le pone a un campo.
- * Se repite aca porque sxgui no lo exporta y la pantalla no es un widget: es
- * texto alineado a la derecha, que ningun control del toolkit hace. */
-static void calc_draw_sunken(struct sx_painter *painter, struct sx_rect rect)
-{
-    int right = rect.x + rect.width - 1;
-    int bottom = rect.y + rect.height - 1;
-
-    sx_painter_hline(painter, rect.x, rect.y, rect.width, SXGUI_COLOR_SHADOW);
-    sx_painter_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_SHADOW);
-    sx_painter_hline(painter, rect.x, bottom, rect.width, SXGUI_COLOR_LIGHT);
-    sx_painter_vline(painter, right, rect.y, rect.height, SXGUI_COLOR_LIGHT);
-    sx_painter_hline(painter, rect.x + 1, rect.y + 1, rect.width - 2, SXGUI_COLOR_DARK);
-    sx_painter_vline(painter, rect.x + 1, rect.y + 1, rect.height - 2, SXGUI_COLOR_DARK);
-    sx_painter_hline(painter, rect.x + 1, bottom - 1, rect.width - 2, SXGUI_COLOR_BEVEL);
-    sx_painter_vline(painter, right - 1, rect.y + 1, rect.height - 2, SXGUI_COLOR_BEVEL);
-}
-
 static void calc_paint_display(struct sx_painter *painter)
 {
     struct sx_rect inner = sx_rect_make(
@@ -1344,7 +1326,7 @@ static void calc_paint_display(struct sx_painter *painter)
     int text_x = inner.x + inner.width - SXGUI_TEXT_PAD - text_width;
 
     sx_painter_fill_rect(painter, g_display_rect, SXGUI_COLOR_FIELD);
-    calc_draw_sunken(painter, g_display_rect);
+    sxgui_draw_sunken_edge(painter, g_display_rect);
 
     /* Alineado a la derecha, que es por donde crece un numero. Si no entra, el
      * clip le come la cabeza y no la cola: los digitos que importan son los de
@@ -1364,7 +1346,7 @@ static void calc_paint_display(struct sx_painter *painter)
 static void calc_paint_indicator(struct sx_painter *painter)
 {
     sx_painter_fill_rect(painter, g_indicator_rect, SXGUI_COLOR_FACE);
-    calc_draw_sunken(painter, g_indicator_rect);
+    sxgui_draw_sunken_edge(painter, g_indicator_rect);
     if (g_memory_used)
     {
         int text_width = sx_painter_text_width(painter, "M");

@@ -1,4 +1,5 @@
 #include "libc.h"
+#include "savanxp/sxchrome.h"
 #include "shared/version.h"
 #include "cursor_asset.h"
 #include "desktop_icons.h"
@@ -188,54 +189,43 @@ static const char *window_title_for_client(const struct windowd_client *client)
     return windowd_presentation_label(&client->presentation, client->path);
 }
 
+/*
+ * El marco del WM tiene su propia paleta, MAS CLARA que la de los controles:
+ * 48/88 donde el toolkit pone 0/128, y el claro externo e interno al reves. No
+ * es un descuido -- una ventana con el contorno negro del esquema de controles
+ * se lee como un boton gigante --, asi que lo que se comparte con
+ * savanxp/sxchrome.h es el DIBUJO del bisel, no sus cuatro tonos, que van por
+ * parametro. Los pixeles son exactamente los de la copia que habia aca.
+ */
+#define WINDOWD_CHROME_SHADOW gfx_rgb(88, 88, 88)
+#define WINDOWD_CHROME_DARK gfx_rgb(48, 48, 48)
+#define WINDOWD_CHROME_LIGHT gfx_rgb(255, 255, 255)
+#define WINDOWD_CHROME_HIGHLIGHT gfx_rgb(223, 223, 223)
+
 static void draw_button(struct sx_painter *painter, struct sx_rect rect, uint32_t face, int pressed)
 {
-    const uint32_t shadow = gfx_rgb(88, 88, 88);
-    const uint32_t dark = gfx_rgb(48, 48, 48);
-    const uint32_t light = gfx_rgb(255, 255, 255);
-    const uint32_t highlight = gfx_rgb(223, 223, 223);
-
     sx_painter_fill_rect(painter, rect, face);
     if (!pressed)
     {
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), light);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), light);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, 1), highlight);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + 1, 1, rect.height - 2), highlight);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), dark);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), dark);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + rect.height - 2, rect.width - 2, 1), shadow);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 2, rect.y + 1, 1, rect.height - 2), shadow);
+        sxchrome_draw_edge(
+            painter, rect,
+            WINDOWD_CHROME_LIGHT, WINDOWD_CHROME_DARK,
+            WINDOWD_CHROME_HIGHLIGHT, WINDOWD_CHROME_SHADOW);
+        return;
     }
-    else
-    {
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), dark);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), dark);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, 1), shadow);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + 1, 1, rect.height - 2), shadow);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), light);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), light);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + rect.height - 2, rect.width - 2, 1), highlight);
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 2, rect.y + 1, 1, rect.height - 2), highlight);
-    }
+    sxchrome_draw_edge(
+        painter, rect,
+        WINDOWD_CHROME_DARK, WINDOWD_CHROME_LIGHT,
+        WINDOWD_CHROME_SHADOW, WINDOWD_CHROME_HIGHLIGHT);
 }
 
 static void draw_inset_box(struct sx_painter *painter, struct sx_rect rect, uint32_t face)
 {
-    const uint32_t shadow = gfx_rgb(88, 88, 88);
-    const uint32_t dark = gfx_rgb(48, 48, 48);
-    const uint32_t light = gfx_rgb(255, 255, 255);
-    const uint32_t highlight = gfx_rgb(223, 223, 223);
-
     sx_painter_fill_rect(painter, rect, face);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), shadow);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), shadow);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, 1), dark);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + 1, 1, rect.height - 2), dark);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), light);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), light);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + 1, rect.y + rect.height - 2, rect.width - 2, 1), highlight);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 2, rect.y + 1, 1, rect.height - 2), highlight);
+    sxchrome_draw_edge(
+        painter, rect,
+        WINDOWD_CHROME_SHADOW, WINDOWD_CHROME_LIGHT,
+        WINDOWD_CHROME_DARK, WINDOWD_CHROME_HIGHLIGHT);
 }
 static void draw_close_button(struct sx_painter *painter, const struct windowd_client *client)
 {

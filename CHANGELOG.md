@@ -235,6 +235,12 @@ Cut-off notes:
 
 ### Changed
 
+- **The system 3D edges moved to `savanxp/sxchrome.h`, out of the toolkit.**
+  `sxchrome_draw_edge/_raised/_sunken/_inset/_etched`, `sxchrome_fill_raised`
+  and the disabled relief (`_draw_text_disabled`, `_draw_glyph_disabled`) are in
+  every binary's base runtime, so `windowd`, `calc` and `taskmgr` dropped their
+  private copies. [Why not in SXGUI-C](docs/SYSTEM_LAYERING.md#the-two-layers).
+
 - **The userland links with `--gc-sections`.** Each binary keeps only what it
   reaches from `_start` instead of whole runtime objects: the initramfs goes
   from ~14 MB to ~5.5 MB, libm included.

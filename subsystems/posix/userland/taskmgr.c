@@ -684,17 +684,6 @@ static struct sx_rect draw_group(struct sx_painter *painter, struct sx_rect rect
                         frame.width - (SXGUI_GAP * 2), frame.height - (SXGUI_GAP * 2));
 }
 
-static void draw_sunken(struct sx_painter *painter, struct sx_rect rect)
-{
-    int right = rect.x + rect.width - 1;
-    int bottom = rect.y + rect.height - 1;
-
-    sx_painter_hline(painter, rect.x, rect.y, rect.width, SXGUI_COLOR_SHADOW);
-    sx_painter_vline(painter, rect.x, rect.y, rect.height, SXGUI_COLOR_SHADOW);
-    sx_painter_hline(painter, rect.x, bottom, rect.width, SXGUI_COLOR_LIGHT);
-    sx_painter_vline(painter, right, rect.y, rect.height, SXGUI_COLOR_LIGHT);
-}
-
 /* Medidor vertical: la barra que el original dibuja al lado de cada grafico.
  * El relleno va por bloques con un pixel de corte, que es lo que le da el
  * aspecto de segmentos en vez de barra lisa. */
@@ -704,7 +693,7 @@ static void draw_meter(struct sx_painter *painter, struct sx_rect rect, unsigned
     int filled;
     int y;
 
-    draw_sunken(painter, rect);
+    sxchrome_draw_inset(painter, rect);
     inner = sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
     sx_painter_fill_rect(painter, inner, TASKMGR_GRAPH_BACKGROUND);
 
@@ -741,7 +730,7 @@ static void draw_history(
     int previous_y = 0;
     int have_previous = 0;
 
-    draw_sunken(painter, rect);
+    sxchrome_draw_inset(painter, rect);
     inner = sx_rect_make(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
     if (inner.width <= 0 || inner.height <= 0)
     {

@@ -32,7 +32,8 @@ piece of the platform, and the platform never grows a dependency on an app.
                               ▼
   ┌─────────────────────────────────────────────────────────────┐
   │  Native platform (C)                                         │
-  │  kernel · drivers · compositord · windowd · SXGFX · SXGUI-C  │
+  │  kernel · drivers · compositord · windowd                    │
+  │  SXGFX · SXCHROME · SXGUI-C                                  │
   └─────────────────────────────────────────────────────────────┘
 
   ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
@@ -96,7 +97,13 @@ The platform, always:
   (`subsystems/posix/sdk/v1/.../gfx2d.*`): surfaces, painter, blit, clipping,
   damage. The analogue of GDI; the gaps against GDI32 and the order for closing
   them are in [SXGFX_ROADMAP.md](SXGFX_ROADMAP.md).
-- **SXGUI-C** — the Win9x widget toolkit on top of SXGFX
+- **SXCHROME** — the system's 3D edges and the disabled relief
+  (`subsystems/posix/sdk/v1/.../sxchrome.*`), between SXGFX and SXGUI-C. Not
+  part of the toolkit because the toolkit is not the only thing that paints
+  chrome: `windowd` and any app drawing its own content need the same bevels,
+  and `windowd` deliberately does not link SXGUI-C. It ships in the base
+  runtime of every userland binary, so nothing has to opt in.
+- **SXGUI-C** — the Win9x widget toolkit on top of SXGFX and SXCHROME
   (`subsystems/posix/sdk/v1/.../sxgui.*`). The analogue of USER/comctl32.
 
 And the apps, all of them, against the POSIX SDK:
@@ -206,6 +213,21 @@ toolkit: an app that paints its own content — a board of cells, a grid, a canv
 behind it is the one this document already states: SXGUI-C is the canonical
 toolkit, and an app never reimplements a piece of it.
 
+Exporting them from the toolkit turned out to be only half the fix. The same
+private copies kept appearing where the toolkit could not reach: `calc` and
+`taskmgr` had one each, and `windowd` had two — and the WM could not just call
+the toolkit, because the edges lived inside the monolithic `sxgui.c` and linking
+it would have dragged menus, listbox and textedit into the window manager for
+eight lines of bevel. So the edges moved **down**, to SXCHROME, and everyone
+consumes them from there — the toolkit included.
+
+The corollary, which is why the palette did not move with them: sharing the
+*drawing* is not the same as sharing the *tones*. `windowd`'s frame is
+deliberately lighter than a control (48/88 where the toolkit uses 0/128), so
+`sxchrome_draw_edge()` takes its four colours as parameters and the wrappers
+that bake in the system palette sit on top. A caller with its own scheme stops
+duplicating the algorithm without being forced into someone else's greys.
+
 ## Where the runtime work stopped
 
 The middle tier was planned in two stages, and it stopped at the first one, which
@@ -242,6 +264,7 @@ complementary**:
 | Role | SavanXP | Windows | Android |
 |---|---|---|---|
 | 2D rasterization | **SXGFX** | GDI32 | Skia / hwui |
+| System chrome (3D edges) | **SXCHROME** | DrawEdge / DrawFrameControl | (native) |
 | Control toolkit | **SXGUI-C** | USER32 / comctl32 | (native) |
 | Window manager | **windowd** | win32k / USER | WindowManager / SurfaceFlinger |
 | Display server | **compositord** | DWM | SurfaceFlinger |
