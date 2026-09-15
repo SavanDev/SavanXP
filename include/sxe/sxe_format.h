@@ -145,6 +145,17 @@ struct sxe_record {
  */
 #define SXE_TAG_CATEGORY 0x0103u
 
+/*
+ * uint32 SAVANXP_WM_WINDOW_STYLE_*: propiedades de la ventana del programa.
+ *
+ * Va aparte de LAUNCH_FLAGS porque no es lo mismo: aquellos le dicen al WM COMO
+ * lanzar (que superficie darle), los declara quien pide el launch y viajan en
+ * el pedido. Estos describen la ventana en si, los lee el WM del binario al
+ * crearla -- igual que NAME y ACCENT -- y por lo tanto valen sin importar
+ * quien lo haya lanzado.
+ */
+#define SXE_TAG_WINDOW_FLAGS 0x0104u
+
 /* Ejecucion. */
 #define SXE_TAG_INTERPRETER 0x0201u /* utf8; ausente/vacio = lo corre el kernel */
 #define SXE_TAG_SUBSYSTEM 0x0202u   /* uint8, espejo INFORMATIVO de EI_OSABI */

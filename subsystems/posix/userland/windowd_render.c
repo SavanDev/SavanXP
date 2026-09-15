@@ -283,6 +283,17 @@ static void draw_minimize_button(struct sx_painter *painter, const struct window
         gfx_rgb(32, 32, 32));
 }
 
+/* El cuadrado del maximizar, en un color. Aparte para poder pasarselo a
+ * sxchrome_draw_glyph_disabled, que lo dibuja dos veces con el relieve
+ * grabado. `rect` es el del boton, no el del glifo. */
+static void draw_maximize_glyph(struct sx_painter *painter, struct sx_rect rect, uint32_t colour)
+{
+    sx_painter_draw_frame(
+        painter,
+        sx_rect_make(rect.x + 4, rect.y + 4, rect.width - 8, rect.height - 8),
+        colour);
+}
+
 static void draw_maximize_button(struct sx_painter *painter, const struct windowd_client *client)
 {
     struct sx_rect rect;
@@ -299,10 +310,21 @@ static void draw_maximize_button(struct sx_painter *painter, const struct window
     }
 
     draw_button(painter, rect, gfx_rgb(196, 199, 203), 0);
-    sx_painter_draw_frame(
-        painter,
-        sx_rect_make(rect.x + 4, rect.y + 4, rect.width - 8, rect.height - 8),
-        gfx_rgb(32, 32, 32));
+
+    /*
+     * Ventana de tamano fijo: el boton se queda, apagado. Sacarlo dejaria un
+     * hueco entre minimizar y cerrar -- el layout esta anclado a la derecha y
+     * cuenta tres botones (windowd_client_minimize_button_rect) --, y ademas
+     * una barra de titulo con distinta cantidad de botones segun la app se lee
+     * como un chrome inconsistente antes que como una propiedad de la ventana.
+     */
+    if (windowd_client_fixed_size(client))
+    {
+        sxchrome_draw_glyph_disabled(painter, rect, draw_maximize_glyph);
+        return;
+    }
+
+    draw_maximize_glyph(painter, rect, gfx_rgb(32, 32, 32));
     if (client->maximized)
     {
         sx_painter_draw_frame(

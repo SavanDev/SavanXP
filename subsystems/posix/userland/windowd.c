@@ -2504,10 +2504,31 @@ static void reposition_overlay_client_window(
  * manda el usuario, y una app que insistiera no podria pelearle el resize.
  * resize_overlay_client_surface ya recorta a la capacidad de la superficie.
  *
+ * LA EXCEPCION es la ventana de tamano fijo: ahi el usuario no tiene ninguna
+ * geometria que defender -- no puede redimensionarla ni maximizarla --, asi que
+ * la razon de la regla no aplica y el hint se atiende siempre. Es lo que hace
+ * que el buscaminas cambie de nivel y la ventana lo siga en vez de quedarse
+ * grande con el tablero chico adentro.
+ *
  * slot < 0 = drenar y descartar. El contrato de fds es uno solo, asi que el
  * canal existe tambien para el shell y el cliente de fondo, que son
  * full-screen por definicion; si nadie lo leyera, un cliente que escribiera
  * ahi terminaria bloqueado con el pipe lleno. */
+/*
+ * La regla de arriba, aislada para poder asertarla: la ventana tiene que estar
+ * en estado de aceptar un tamano -- con marco, ni maximizada ni a pantalla
+ * completa -- y ademas ser el PRIMER hint, salvo que sea de tamano fijo, donde
+ * no hay geometria de usuario que defender y valen todos.
+ */
+static int client_accepts_size_hint(const struct windowd_client *client)
+{
+    if (client == 0 || !client->frame_visible || client->maximized || client->fullscreen)
+    {
+        return 0;
+    }
+    return !client->size_hint_applied || windowd_client_fixed_size(client);
+}
+
 static void service_client_size_hints(
     struct windowd_session *session,
     struct windowd_dirty_rect *dirty,
@@ -2545,13 +2566,26 @@ static void service_client_size_hints(
             return;
         }
         if (session == 0 || dirty == 0 || !overlay_slot_valid(slot) ||
-            client->size_hint_applied || client->maximized || client->fullscreen || !client->frame_visible)
+            !client_accepts_size_hint(client))
         {
             continue;
         }
-        client->size_hint_applied = 1;
-        resize_overlay_client_surface(session, dirty, slot, (int)hint.width, (int)hint.height);
-        reposition_overlay_client_window(session, dirty, client);
+        {
+            /* Recolocar en la cascada solo en el PRIMER hint: ahi la ventana
+             * sigue donde la puso el launch y centrarla con el tamano nuevo es
+             * lo correcto. En los siguientes ya la movio el usuario, y volver
+             * a la posicion de cascada seria teletransportarsela bajo el
+             * cursor. resize_overlay_client_surface deja el origen quieto y
+             * reencuadra sola si el tamano nuevo no entra. */
+            int first_hint = !client->size_hint_applied;
+
+            client->size_hint_applied = 1;
+            resize_overlay_client_surface(session, dirty, slot, (int)hint.width, (int)hint.height);
+            if (first_hint)
+            {
+                reposition_overlay_client_window(session, dirty, client);
+            }
+        }
     }
 }
 
@@ -3487,6 +3521,101 @@ static int windowd_selftest(void)
         }
     }
 
+    /*
+     * Subtest de ventana de tamano fijo. Se mide sobre progman poniendole y
+     * sacandole el flag a mano, en vez de lanzar el buscaminas: lo que se
+     * prueba es el GATEO, y hacerlo sobre la misma ventana antes y despues
+     * descarta que el borde no agarre por alguna otra razon (geometria,
+     * estado) en vez de por el flag.
+     */
+    if (!failed)
+    {
+        struct windowd_client *client = &session.overlay_clients[kProgmanSlot];
+        struct sx_rect frame = windowd_client_frame_rect(client);
+        /* Un punto sobre el borde derecho, dentro de la franja que agarra. */
+        const int probe_x = sx_rect_right(frame) - 1;
+        const int probe_y = frame.y + (frame.height / 2);
+        const uint32_t saved_flags = client->presentation.window_flags;
+
+        if (windowd_resize_edge_from_point(client, probe_x, probe_y) == WINDOWD_RESIZE_EDGE_NONE)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL fixed size: el borde no agarraba ni siendo redimensionable\n");
+            failed = 1;
+        }
+
+        client->presentation.window_flags = saved_flags | SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE;
+
+        if (!failed && !windowd_client_fixed_size(client))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL fixed size: el flag no se leyo de la presentacion\n");
+            failed = 1;
+        }
+        if (!failed && windowd_resize_edge_from_point(client, probe_x, probe_y) != WINDOWD_RESIZE_EDGE_NONE)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL fixed size: el borde sigue agarrando\n");
+            failed = 1;
+        }
+        /* El boton de maximizar NO desaparece: queda dibujado y deshabilitado.
+         * Sacarlo dejaria un hueco entre minimizar y cerrar, asi que esta
+         * asercion es la que fija esa decision. */
+        if (!failed && !windowd_point_in_maximize_button(
+                client,
+                windowd_client_maximize_button_rect(client).x,
+                windowd_client_maximize_button_rect(client).y))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL fixed size: el maximizar se fue en vez de apagarse\n");
+            failed = 1;
+        }
+
+        /*
+         * La otra mitad del flag: en una ventana fija el size hint deja de ser
+         * de una sola vez, que es lo que deja al buscaminas cambiar de nivel y
+         * que la ventana lo siga. Se prueba sobre el predicado porque el hint
+         * real entra por un pipe que escribe el cliente, no el WM.
+         *
+         * El caso maximizada esta para fijar que "fija" no es un permiso que
+         * pase por encima del resto del estado: una ventana maximizada no
+         * acepta un tamano nuevo por mas fija que sea.
+         */
+        {
+            const int saved_applied = client->size_hint_applied;
+
+            /* El caso normal se mide SIN el flag: venimos de haberlo puesto
+             * arriba, y dejarlo probaria dos veces la misma rama. */
+            client->presentation.window_flags = saved_flags;
+            client->size_hint_applied = 1;
+            if (!failed && client_accepts_size_hint(client))
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL size hint: la ventana normal acepto un segundo hint\n");
+                failed = 1;
+            }
+
+            client->presentation.window_flags = saved_flags | SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE;
+            if (!failed && !client_accepts_size_hint(client))
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL size hint: la ventana fija rechazo un segundo hint\n");
+                failed = 1;
+            }
+
+            client->maximized = 1;
+            if (!failed && client_accepts_size_hint(client))
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL size hint: la ventana fija acepto un hint estando maximizada\n");
+                failed = 1;
+            }
+            client->maximized = 0;
+            client->size_hint_applied = saved_applied;
+        }
+
+        client->presentation.window_flags = saved_flags;
+
+        if (!failed && windowd_resize_edge_from_point(client, probe_x, probe_y) == WINDOWD_RESIZE_EDGE_NONE)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL fixed size: sacar el flag no devolvio el borde\n");
+            failed = 1;
+        }
+    }
+
     if (!failed && frames_presented < kTargetFrames)
     {
         printf("DESKTOP SMOKE FAIL insufficient presented frames=%d iters=%d batches=%u\n",
@@ -4057,7 +4186,10 @@ static void handle_pointer_event(
                      windowd_point_in_maximize_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
-                if (overlay_slot_valid(target_slot))
+                /* En una ventana de tamano fijo el boton se dibuja pero no
+                 * hace nada: es el unico camino a maximizar, asi que alcanza
+                 * con cortar aca para que el estado quede inalcanzable. */
+                if (overlay_slot_valid(target_slot) && !windowd_client_fixed_size(current_hover_client))
                 {
                     toggle_overlay_client_maximized(session, dirty, target_slot);
                 }

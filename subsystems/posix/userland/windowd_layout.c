@@ -349,13 +349,23 @@ int windowd_point_in_titlebar(const struct windowd_client *client, int x, int y)
     return sx_rect_contains_point(rect, x, y);
 }
 
+int windowd_client_fixed_size(const struct windowd_client *client)
+{
+    if (client == 0)
+    {
+        return 0;
+    }
+    return (client->presentation.window_flags & SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE) != 0;
+}
+
 uint32_t windowd_resize_edge_from_point(const struct windowd_client *client, int x, int y)
 {
     struct sx_rect frame;
     uint32_t edges = WINDOWD_RESIZE_EDGE_NONE;
 
     if (client == 0 || client->pid <= 0 || !client->frame_visible ||
-        client->maximized || client->fullscreen || client->minimized)
+        client->maximized || client->fullscreen || client->minimized ||
+        windowd_client_fixed_size(client))
     {
         return WINDOWD_RESIZE_EDGE_NONE;
     }

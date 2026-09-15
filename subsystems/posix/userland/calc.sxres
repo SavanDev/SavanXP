@@ -9,3 +9,6 @@ vendor=SavanXP
 accent=2f6f5e
 icon=app-calc
 category=Accessories
+
+# Tamano fijo: el teclado es una grilla de botones que no se estira.
+window_flags=fixed_size

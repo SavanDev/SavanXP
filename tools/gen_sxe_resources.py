@@ -113,7 +113,9 @@ _LIST_KEYS = {
 }
 
 # Claves con tratamiento propio (no son texto directo).
-_SPECIAL_KEYS = ("version", "accent", "launch_flags", "subsystem", "icon", "icon_file")
+_SPECIAL_KEYS = (
+    "version", "accent", "launch_flags", "window_flags", "subsystem", "icon", "icon_file",
+)
 
 _SUBSYSTEM_POSIX = 0
 
@@ -123,7 +125,8 @@ def load_format(project_root):
 
     missing = [key for key in _REQUIRED_FORMAT_KEYS if key not in fmt]
     for key in list(_TEXT_KEYS.values()) + list(_LIST_KEYS.values()) + [
-        "SXE_TAG_VERSION", "SXE_TAG_ACCENT", "SXE_TAG_LAUNCH_FLAGS", "SXE_TAG_SUBSYSTEM"
+        "SXE_TAG_VERSION", "SXE_TAG_ACCENT", "SXE_TAG_LAUNCH_FLAGS", "SXE_TAG_SUBSYSTEM",
+        "SXE_TAG_WINDOW_FLAGS"
     ]:
         if key not in fmt:
             missing.append(key)
@@ -144,6 +147,18 @@ def load_launch_flags(project_root):
         flags[name[len("SAVANXP_DESKTOP_LAUNCH_FLAG_"):].lower()] = value
     if "none" not in flags or "fullscreen" not in flags:
         raise SystemExit(f"'{path}' no define los flags de lanzamiento esperados.")
+    return flags
+
+
+def load_window_flags(project_root):
+    """SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE -> {'fixed_size': 1}."""
+    path = os.path.join(project_root, "subsystems", "posix", "sdk", "v1", "include", "savanxp", "syscall.h")
+    defines = parse_defines(path, "SAVANXP_WM_WINDOW_STYLE_")
+    flags = {}
+    for name, value in defines.items():
+        flags[name[len("SAVANXP_WM_WINDOW_STYLE_"):].lower()] = value
+    if "none" not in flags or "fixed_size" not in flags:
+        raise SystemExit(f"'{path}' no define los flags de estilo de ventana esperados.")
     return flags
 
 
@@ -227,7 +242,7 @@ def parse_accent(text):
     return int(raw, 16)
 
 
-def parse_launch_flag_list(text, flags):
+def parse_flag_list(key, text, flags):
     value = 0
     for token in text.split(","):
         token = token.strip().lower()
@@ -235,7 +250,7 @@ def parse_launch_flag_list(text, flags):
             continue
         if token not in flags:
             raise SystemExit(
-                f"launch_flags '{token}' desconocido. Validos: " + ", ".join(sorted(flags))
+                f"{key} '{token}' desconocido. Validos: " + ", ".join(sorted(flags))
             )
         value |= flags[token]
     return value
@@ -276,7 +291,7 @@ def align_up(value, alignment):
     return (value + alignment - 1) & ~(alignment - 1)
 
 
-def build_meta_blob(fmt, manifest, launch_flags, native_osabi, system_version, label):
+def build_meta_blob(fmt, manifest, launch_flags, window_flags, native_osabi, system_version, label):
     alignment = fmt["SXE_RECORD_ALIGNMENT"]
     records = []
 
@@ -303,8 +318,14 @@ def build_meta_blob(fmt, manifest, launch_flags, native_osabi, system_version, l
         add(fmt["SXE_TAG_ACCENT"], struct.pack("<I", parse_accent(manifest["accent"])))
 
     if "launch_flags" in manifest and manifest["launch_flags"]:
-        value = parse_launch_flag_list(manifest["launch_flags"], launch_flags)
+        value = parse_flag_list("launch_flags", manifest["launch_flags"], launch_flags)
         add(fmt["SXE_TAG_LAUNCH_FLAGS"], struct.pack("<I", value))
+
+    # Estilo de ventana (tamano fijo). Lo lee el WM del binario al crear la
+    # ventana, no el que pide el launch: ver SXE_TAG_WINDOW_FLAGS.
+    if "window_flags" in manifest and manifest["window_flags"]:
+        value = parse_flag_list("window_flags", manifest["window_flags"], window_flags)
+        add(fmt["SXE_TAG_WINDOW_FLAGS"], struct.pack("<I", value))
 
     if "subsystem" in manifest and manifest["subsystem"]:
         name = manifest["subsystem"].strip().lower()
@@ -491,6 +512,7 @@ def main():
     project_root = args.project_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     fmt = load_format(project_root)
     launch_flags = load_launch_flags(project_root)
+    window_flags = load_window_flags(project_root)
     native_osabi = load_native_osabi(project_root)
     system_version = load_system_version(project_root)
 
@@ -517,7 +539,8 @@ def main():
         label = manifest_path or f"{name} (sin .sxres, estampado automatico)"
         manifest = apply_automatic_defaults(manifest, name, args.build_id)
 
-        meta = build_meta_blob(fmt, manifest, launch_flags, native_osabi, system_version, label)
+        meta = build_meta_blob(
+            fmt, manifest, launch_flags, window_flags, native_osabi, system_version, label)
         write_if_changed(os.path.join(args.output_dir, name + ".sxmeta"), meta)
 
         icon_path = os.path.join(args.output_dir, name + ".sxicon")

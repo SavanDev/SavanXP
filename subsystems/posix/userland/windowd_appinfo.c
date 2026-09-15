@@ -153,6 +153,12 @@ void windowd_presentation_load(struct windowd_presentation *presentation, const 
         {
             presentation->accent = value;
         }
+        /* Estilo de ventana (tamano fijo). No tiene escalon de tabla: una
+         * ventana es redimensionable salvo que el binario diga lo contrario. */
+        if (sxe_meta_u32(&meta, SXE_TAG_WINDOW_FLAGS, &value))
+        {
+            presentation->window_flags = value;
+        }
     }
 
     if (sxe_load_icons(path, icon_buffer, sizeof(icon_buffer), &icons) == SXE_OK)
@@ -244,6 +250,11 @@ int windowd_presentation_selftest(void)
     expect(icon == &storage, "presentacion: usa el icono propio");
     expect(icon != 0 && icon->width == 16u && icon->height == 16u, "presentacion: icono de 16x16");
 
+    /* Notepad estira su editor con la ventana, asi que NO declara tamano fijo.
+     * Va junto al caso positivo de mas abajo: sin este, un bug que devolviera
+     * el flag siempre puesto pasaria las dos pruebas. */
+    expect(presentation.window_flags == 0u, "presentacion: notepad no es de tamano fijo");
+
     /*
      * Los pixeles que windowd_presentation_load copio a icon_pixels tienen
      * que ser identicos a los que hay REALMENTE en el .sxicon de notepad,
@@ -278,6 +289,21 @@ int windowd_presentation_selftest(void)
     {
         expect(0, "presentacion: no se pudo releer el .sxicon para comparar");
     }
+
+    /*
+     * Camino entero del flag de ventana, de punta a punta: el .sxres declara
+     * window_flags=fixed_size, el generador lo estampa como SXE_TAG_WINDOW_FLAGS
+     * y el WM lo lee aca. Se mide sobre el buscaminas porque es el caso que lo
+     * motivo -- un tablero de celdas que en una ventana mas grande solo gana
+     * margen vacio.
+     *
+     * VA DESPUES del cruce de iconos y no antes: `icon` apunta al storage que
+     * describe los pixeles de ESTA struct, asi que recargarla con otro binario
+     * le cambia el contenido bajo los pies a la comparacion de arriba.
+     */
+    windowd_presentation_load(&presentation, "/bin/mines");
+    expect((presentation.window_flags & SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE) != 0u,
+        "presentacion: el buscaminas declara tamano fijo");
 
     /*
      * init nunca declaro un init.sxres, pero el build lo estampa igual con un

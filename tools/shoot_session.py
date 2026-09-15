@@ -422,6 +422,23 @@ def scenario_mines(s):
     s.qmp.tap("f", pause=1.2)
     s.shot("mines-bandera")
 
+    # Cambio de nivel, POR MOUSE: el menu no tiene acceso por teclado y los
+    # niveles no tienen atajo. Va al final para no correrle las coordenadas a
+    # las capturas de arriba.
+    #
+    # Lo que hay que mirar en las dos ultimas: la ventana tiene que CRECER con
+    # el tablero de Experto en vez de quedarse del tamano de Principiante con
+    # el tablero grande recortado. Es la mitad "el programa sigue eligiendo su
+    # tamano" del flag de ventana fija (docs/WM_SUBSYSTEM.md).
+    s.qmp.move_to(613, 332)
+    s.qmp.click()
+    s.shot("mines-menu-nivel")
+
+    s.qmp.move_to(632, 433)
+    s.qmp.click()
+    time.sleep(1.0)
+    s.shot("mines-experto")
+
 
 def scenario_files(s):
     """Explorador: la ventana con mas controles distintos a la vez.

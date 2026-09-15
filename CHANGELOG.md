@@ -18,6 +18,13 @@ Cut-off notes:
   consumer that defines the subset of the future SxGL, not a port.
   New `tools/shoot.ps1 -Scenario gears`. [The plan it serves](docs/SXGL_ROADMAP.md#batch-0--the-consumer-before-any-api).
 
+- **Fixed-size windows: `window_flags=fixed_size` in a `.sxres`.** The edges
+  stop grabbing and maximize is drawn disabled, so a layout that cannot stretch
+  no longer gets an empty margin around it; Minesweeper and Calculator declare
+  it. The program still sizes its own window — in a fixed one *every* size hint
+  is honoured, so changing Minesweeper's level resizes the window.
+  [How it works](docs/WM_SUBSYSTEM.md#fixed-size-windows).
+
 - **Floating point in every app of the image.** The in-tree userland compiles
   with `-msse2` and links the libm of `runtime/math.c`, so `double`, `%f`,
   `strtod` and `sqrt` work with no switch to remember; `-Sse` stays for

@@ -11,3 +11,9 @@ vendor=SavanXP
 accent=3f6f2f
 icon=app-mines
 category=Games
+
+# Tamano fijo: el tablero es una grilla de celdas de tamano fijo, asi que una
+# ventana mas grande no le da mas juego -- solo margen vacio alrededor. El WM
+# le apaga el maximizar y no le deja agarrar los bordes; el tamano lo sigue
+# pidiendo el programa al cambiar de nivel (savanxp/syscall.h).
+window_flags=fixed_size

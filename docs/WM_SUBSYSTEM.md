@@ -299,3 +299,43 @@ the shell), A2.4 (retire the Win95 chrome, proto-Progman launcher), A2.5
   protocol channel has to be weighed against that ceiling; it is the reason the
   clipboard became a kernel device node (`/dev/clipboard`) instead of a WM
   service.
+
+## Fixed-size windows
+
+Some programs have a layout with nowhere to go. A board of cells, a calculator
+keypad: made bigger they gain no room, only an empty margin around content that
+stays the size it always was. Before this existed the WM had no way to know,
+so every window was resizable and those programs could only mitigate it — the
+Minesweeper board centres itself in whatever window it is given, which reads as
+a choice rather than a bug, and is still a workaround.
+
+A program declares itself fixed with `SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE`, via
+`window_flags=fixed_size` in its `.sxres`
+([SXE_FORMAT.md](SXE_FORMAT.md#window_flags-is-not-launch_flags)). The WM reads
+it from the binary when it creates the window, so it holds no matter who
+launched the program.
+
+**One flag, not two.** Win32 separates `WS_THICKFRAME` from `WS_MAXIMIZEBOX`
+and so can express "resizable but not maximizable". Nothing here needs that
+combination, and two flags would mean two gates in four places, so fixed means
+both: the edges do not grab, and maximize is off.
+
+**The maximize button is disabled, not removed.** Removing it would leave a gap
+between minimize and close — the title bar layout is anchored to the right and
+counts three buttons — and a title bar whose button count varies per app reads
+as inconsistent chrome rather than as a property of the window. So it stays,
+greyed with the same etched relief the toolkit gives a disabled control
+(`sxchrome_draw_glyph_disabled`, see
+[SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#the-two-layers)).
+
+**What it forbids is the *user* resizing, not resizing.** The program keeps
+asking for its own size over `SAVANXP_WM_FD_SIZE_HINT`, and in a fixed window
+the WM honours **every** hint instead of only the first. The reason that channel
+is one-shot is that the WM must not let an app fight the user over geometry;
+where the user has no geometry to defend, the reason does not apply. That is
+what lets Minesweeper switch from Beginner to Expert and have the window follow,
+instead of staying at the old size with the new board centred inside it.
+
+Repeat hints resize in place: only the first one re-centres the window on its
+cascade slot, because after that the user has moved it and re-centring would
+teleport the window out from under the cursor.

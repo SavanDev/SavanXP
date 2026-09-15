@@ -56,6 +56,8 @@ struct windowd_presentation
     /* Vacio = ni el binario ni la tabla dieron nombre. */
     char label[WINDOWD_PRESENTATION_LABEL_CAPACITY];
     uint32_t accent;
+    /* SAVANXP_WM_WINDOW_STYLE_*, del .sxe del binario. 0 = ventana normal. */
+    uint32_t window_flags;
     /* 0 = el binario no trajo icono; se usa fallback_icon_id. */
     uint32_t icon_extent;
     uint32_t fallback_icon_id; /* enum desktop_icon_id */

@@ -25,6 +25,17 @@
 #define WINDOWD_RESIZE_EDGE_TOP 4u
 #define WINDOWD_RESIZE_EDGE_BOTTOM 8u
 
+/*
+ * La ventana es de tamano fijo: el USUARIO no la redimensiona (los bordes no
+ * agarran, el maximizar esta deshabilitado). Sale del .sxe del binario, asi
+ * que no hay estado que mantener sincronizado -- se deriva de la presentacion
+ * que la ventana ya tiene.
+ *
+ * No dice nada sobre el tamano que pide el PROGRAMA: ver
+ * SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE en savanxp/syscall.h.
+ */
+int windowd_client_fixed_size(const struct windowd_client *client);
+
 /* Mascara de bordes bajo el punto, o WINDOWD_RESIZE_EDGE_NONE. Las esquinas
  * devuelven dos bits. Devuelve NONE para ventanas sin marco, maximizadas o en
  * fullscreen: ahi el tamano no lo decide el usuario. */

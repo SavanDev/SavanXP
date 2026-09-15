@@ -172,6 +172,7 @@ is defined now because afterwards would be too late.
 | `0x0101` | `ACCENT` | `uint32` | `0x00RRGGBB`, the format `gfx_rgb` already returns. Replaces the `accent` field of `windowd_appinfo` |
 | `0x0102` | `LAUNCH_FLAGS` | `uint32` | `SAVANXP_DESKTOP_LAUNCH_FLAG_*` **by default**. The launcher can override them |
 | `0x0103` | `CATEGORY` | utf8 | Launcher group. Its **presence** is what puts the program in the list — see [All Programs](#all-programs-the-catalog-discovers-itself). Recommended ≤ 31 bytes (`PROGMAN_NAME_CAPACITY`) |
+| `0x0104` | `WINDOW_FLAGS` | `uint32` | `SAVANXP_WM_WINDOW_STYLE_*`. Properties of the program's **window**, read by the WM itself — see [WINDOW_FLAGS is not LAUNCH_FLAGS](#window_flags-is-not-launch_flags) |
 | `0x0201` | `INTERPRETER` | utf8 | Absolute path of the program that executes this image. **Absent or empty = the kernel executes it directly** |
 | `0x0202` | `SUBSYSTEM` | `uint8` | An **informational** mirror of `EI_OSABI`. The authority is still the ELF byte ([elf.hpp:14](../include/kernel/elf.hpp:14)); this exists so a userland reader does not have to parse the ELF header |
 | `0x0401` | `DATA_DIR` | utf8 | Absolute directory holding the program's persistent data. A **declaration, not a permission**: whoever deletes validates it first — see [Uninstalling](#uninstalling-the-other-half-of-the-same-idea) |
@@ -196,6 +197,29 @@ group it belongs to; whether it ends up there, under that name and in that
 order, is the registry's call. What is *not* the registry's call any more is
 whether the program is listed at all — the tag being present is the request,
 and it is granted by default.
+
+#### `WINDOW_FLAGS` is not `LAUNCH_FLAGS`
+
+They look like the same idea and they are not, which is why they are two tags:
+
+- **`LAUNCH_FLAGS` says how to *start* the program** — what surface to give it.
+  They are declared by *whoever asks for the launch* and travel in the launch
+  request, because the WM
+  [knows no catalog of applications](WM_SUBSYSTEM.md). The launcher reads them
+  from the binary as a default and may override them.
+- **`WINDOW_FLAGS` describes the *window itself*.** The WM reads them straight
+  from the binary when it creates the window, by the same path as `NAME` and
+  `ACCENT`. Nobody passes them on and nobody can override them.
+
+The practical difference is what happens when the program is started by
+something other than the launcher — a shell command, a file association, a
+program launching another program. A `LAUNCH_FLAGS` value only reaches the WM
+if the caller bothered to forward it; a `WINDOW_FLAGS` value always applies,
+because the WM went and read it. A fixed-size window that became resizable
+depending on who double-clicked it would be a bug nobody could reproduce.
+
+The one flag in v1 is `SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE`, described in
+[WM_SUBSYSTEM.md](WM_SUBSYSTEM.md#fixed-size-windows).
 
 ### Size cap
 

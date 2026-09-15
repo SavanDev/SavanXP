@@ -779,6 +779,30 @@ enum savanxp_input_event_type {
  * vez de como una ventana normal cascada/decorada. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP 0x00000002u
 
+/* Estilo de ventana: propiedades de la VENTANA de un programa, no de su
+ * lanzamiento. El WM las lee del .sxe del binario al crear la ventana, por el
+ * mismo camino que el titulo y el accent (SXE_TAG_WINDOW_FLAGS en
+ * include/sxe/sxe_format.h), asi que valen sin importar quien lo lanzo -- el
+ * launcher, la shell o una asociacion de archivo. */
+#define SAVANXP_WM_WINDOW_STYLE_NONE 0x00000000u
+
+/*
+ * La ventana tiene TAMANO FIJO: el usuario no la redimensiona. Los bordes no
+ * agarran y el boton de maximizar se dibuja deshabilitado.
+ *
+ * Es para el programa cuyo layout no tiene como estirarse -- un tablero de
+ * celdas, un teclado de calculadora --, que en una ventana mas grande no gana
+ * nada y deja un margen vacio alrededor del contenido.
+ *
+ * NO congela el tamano: lo que prohibe es que lo cambie el USUARIO. El programa
+ * sigue pidiendo el suyo por SAVANXP_WM_FD_SIZE_HINT, y en una ventana fija el
+ * WM le hace caso TODAS las veces y no solo la primera -- la razon por la que
+ * el size hint es de una sola vez es no pelearle la geometria al usuario, y
+ * aca el usuario no tiene ninguna que defender. Es lo que permite que el
+ * buscaminas cambie de nivel y la ventana lo siga.
+ */
+#define SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE 0x00000001u
+
 /* Un unico argumento opcional para el programa lanzado, que llega como
  * argv[1]. Alcanza para el caso que lo motivo -- "abri este archivo" -- y deja
  * afuera la cola de argumentos entera, que el WM no tiene por que interpretar.
