@@ -237,10 +237,24 @@ than approximately GL.
 
 The rule this repository already applies: `sx_pen` and the path recorder stayed
 out of SxGFX because nothing was going to call them. Same criterion, and it is
-stricter here because the surface is far larger. **A port lands first** — a
-gears demo, a model viewer, a small engine — as a self-contained program in
-`ports/` that rasterizes by hand. It is what makes the API real, and it doubles
-as the specification of the subset: whatever it calls is batch 1.
+stricter here because the surface is far larger. **The consumer lands first** —
+a gears demo — rasterizing by hand, and it doubles as the specification of the
+subset: whatever it calls is batch 1.
+
+**It goes where the system's own test apps go, not in `ports/`.** An in-tree
+program in `subsystems/posix/userland/`, registered in `build.ps1` with
+`Test = $true` and listed in the Diagnostics group next to Gfx Demo — the 2D
+rendering test that `tools/shoot.ps1` already drives for `windowd-stats`. A
+gears demo is its 3D sibling and belongs beside it. `ports/` is gitignored and
+disposable, which is right for a throwaway port and wrong for the program that
+defines the API: this one has to be versioned, has to break the build when SxGL
+breaks it, and has to be reachable by the smoke harness from day one.
+
+That this is possible at all is recent. While the in-tree userland compiled
+without floating point, anything doing 3D maths had to be an external app in
+`/disk/bin`, and `ports/` was the only place it could start from. Since the
+userland moved to SSE2 that constraint is gone, and the consumer can be an
+ordinary test app of the image.
 
 ### Batch 1 — the context and the swapchain, with no triangles
 
@@ -295,7 +309,8 @@ A `build.ps1 sxgl-test` alongside it is the right instrument for the whole of
 batches 2–4: a rasterizer is exactly the kind of code where a rendered image
 plus a hash catches regressions a human eye would sign off on. Batch 1 is the
 part that cannot be tested on the host — it is the seam with `windowd`, so it
-belongs in a smoke scenario with `tools/shoot.ps1`.
+belongs in a smoke scenario with `tools/shoot.ps1`, driving the batch 0 demo the
+same way the existing scenarios drive Gfx Demo.
 
 Add one measurement no 2D test needed: **triangles and fragments per second on
 the host**, recorded per batch. A software rasterizer without a number attached
