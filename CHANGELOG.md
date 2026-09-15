@@ -332,6 +332,11 @@ Cut-off notes:
 
 ### Fixed
 
+- **QEMU starts from a path with a space in it.** `build.ps1 run` and every
+  `*-smoke` target passed the OVMF, disk and log paths to QEMU unquoted, so it
+  read half a path as a second drive and refused to boot.
+  [The other half of the same bug](docs/WINDOWS_BOOTSTRAP.md#the-same-space-reaches-qemu).
+
 - **The kernel/userland build no longer breaks when the Windows profile name
   has a space in it.** The generated `compile.ninja` only escaped `$` in flag
   values, so an unquoted `-I` path like `C:\Users\Jane Doe\...` split into two

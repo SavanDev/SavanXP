@@ -1192,16 +1192,16 @@ function Run-Qemu([switch]$WaitForDebugger) {
         "-audiodev", "sdl,id=audio1",
         "-display", "gtk,grab-on-hover=on,show-cursor=off,window-close=on,zoom-to-fit=off",
         "-rtc", "base=localtime",
-        "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
-        "-drive", "if=pflash,format=raw,file=$VarsTemplate",
+        "-drive", "if=pflash,format=raw,readonly=on,file=""$($ovmf.Code)""",
+        "-drive", "if=pflash,format=raw,file=""$VarsTemplate""",
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
         "-serial", "stdio",
-        "-debugcon", "file:$DebugConLog",
+        "-debugcon", "file:""$DebugConLog""",
         "-global", "isa-debugcon.iobase=0xe9"
     )
     $args += Get-QemuNicDevice
-    $args += Get-QemuDiskDevices $DiskImage
+    $args += Get-QemuDiskDevices """$DiskImage"""
     $args += Get-QemuVideoInputDevices
     $args += Get-QemuAudioDevice "auto"
 
@@ -1304,8 +1304,8 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
         "-drive", "if=pflash,format=raw,file=""$VarsTemplate""",
         "-drive", "file=fat:rw:build/image,format=raw",
         "-netdev", "user,id=net0",
-        "-serial", "file:$SmokeSerialLog",
-        "-debugcon", "file:$DebugConLog",
+        "-serial", "file:""$SmokeSerialLog""",
+        "-debugcon", "file:""$DebugConLog""",
         "-global", "isa-debugcon.iobase=0xe9",
         "-monitor", "tcp:127.0.0.1:$monitorPort,server,nowait",
         "-no-reboot",

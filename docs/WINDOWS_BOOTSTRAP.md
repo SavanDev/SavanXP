@@ -80,3 +80,18 @@ gets wrapped in quotes before it is joined into the ninja variable. Every
 token in `Get-CommonFlags`/`Get-UacpiFlags` (`build.ps1`) is meant to be a
 single argument — none of them intentionally pack two words into one
 element — so quoting on a space is safe everywhere this function is used.
+
+### The same space reaches QEMU
+
+Compiling was only half of it. `build.ps1` also hands QEMU paths under the
+profile directory — the OVMF pair, `build/disk.img`, the serial and debugcon
+logs — and PowerShell 5.1 does not quote them on their way to a native
+executable. QEMU received `file:C:\Users\Jane` and `Doe\...\smoke-serial.log`
+as two arguments, took the second for a positional disk image, and died with
+`drive with bus=0, unit=0 (index=0) exists`: a message about drives for a
+problem about quoting. That killed `build.ps1 run` and every `*-smoke` target
+on such a machine, while the build itself passed.
+
+Those arguments now carry doubled quotes, the way the `-drive if=pflash` lines
+already did it: PowerShell emits the inner quotes literally and QEMU's own
+argument parser strips them, leaving one argument with its spaces intact.
