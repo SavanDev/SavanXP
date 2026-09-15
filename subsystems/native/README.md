@@ -1,5 +1,25 @@
 # Subsistema nativo (Haxe)
 
+> **ESTADO: CONGELADO HASTA DESPUÉS DE LA v1.0** (decisión del 2026-09-15, ver
+> [../../docs/SYSTEM_LAYERING.md](../../docs/SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10)).
+>
+> Hasta la v1.0, **todo SavanXP se escribe en C sobre el SDK POSIX**: el sistema,
+> las apps y los juegos. Este subsistema se conserva como **experimento
+> validado** —la cadena AOT, el ABI nativo y la demo gráfica funcionan y están
+> verificados en QEMU—, pero **no se mantiene como producto**: no entra en el
+> camino principal de `build.ps1`, sus binarios no se instalan en la imagen, y
+> nada de lo que se distribuye puede depender de él. No agregar apps nuevas ni
+> ampliar el ABI acá.
+>
+> Después de la v1.0 se replantea desde cero si el sistema quiere una capa
+> gestionada y de qué estaría hecha —nada de lo que sigue compromete la
+> respuesta a HashLink ni a Haxe—. Si la respuesta es que sí, la forma es un
+> **port selectivo al estilo UWP**: un segundo modelo de apps que convive con el
+> nativo, nunca un reemplazo.
+>
+> Lo que sigue es el registro de lo que se alcanzó y cómo se verificó. Se lee en
+> pasado.
+
 El subsistema nativo de SavanXP se escribe en **Haxe**, con la visión de largo
 plazo de una VM en el SO al estilo Java/ART en Android. Se construye en
 **etapas (enfoque híbrido)**:

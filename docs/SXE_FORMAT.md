@@ -178,11 +178,14 @@ is defined now because afterwards would be too late.
 | `0x0301` | `MIME_OPEN` | utf8, NUL-separated entries | Types the program **declares it can** open |
 | `0x0302` | `EXT_OPEN` | utf8, NUL-separated entries | Extensions, with the dot: `.txt` |
 
-**`INTERPRETER` is in from v1 even though there is no VM yet.** It is the field
-that resolves the case that is coming: when a Haxe app is HashLink bytecode and
-not an x86-64 ELF, the launcher has to know the image is executed not by the
-kernel but by `/bin/hlvm`. It is the equivalent of a shebang /
-`binfmt_misc`, and it does not fit in the `EI_OSABI` byte.
+**`INTERPRETER` is in from v1 even though there is no VM**, and the managed
+layer that would have needed one is
+[deferred to after v1.0](SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
+It is the field for an image that the kernel does not execute itself — bytecode
+run by a `/bin/…` interpreter — the equivalent of a shebang / `binfmt_misc`,
+which does not fit in the `EI_OSABI` byte. It stays in the format because a tag
+nobody writes costs nothing, and adding a field to a stamped format later costs
+a version.
 
 **`MIME_OPEN` declares capability, not association.** A program saying it can
 open `text/plain` does not make it the one that opens `.txt` files: that is

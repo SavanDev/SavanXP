@@ -220,6 +220,12 @@ Cut-off notes:
 
 ### Changed
 
+- **The managed app layer (Haxe on a VM) is deferred until after v1.0.** Until
+  then everything ships in C against the POSIX SDK; `subsystems/native` stays as
+  a frozen, validated experiment that nothing in the image depends on. If it is
+  ever needed, it arrives as a selective port, UWP-style, beside the native apps.
+  [The decision and the shape it would have to fit](docs/SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
+
 - **About is now System Properties.** General shows the edition, the version,
   where it is installed and the processor (brand, speed and features from
   `CPUID`); Hardware lists the devices found. The live counters it used to show

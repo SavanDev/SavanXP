@@ -1,46 +1,92 @@
-# System layering model (native C + Haxe apps on a VM)
+# System layering model (C + POSIX, and a managed layer deferred to after v1.0)
 
-> Status: **decision fixed (2026-07-21).** This document is the **source of
-> truth** for SavanXP's language layering. If another document contradicts it,
-> this one wins.
+> Status: **layering fixed (2026-07-21), managed layer deferred
+> (2026-09-15).** This document is the **source of truth** for SavanXP's
+> language layering. If another document contradicts it, this one wins.
 
 ## The rule in one line
 
-**The low-level core and the system programs are written in C. The rest of the
-user apps are written in Haxe wherever possible, running on the VM
-(HashLink).**
+**Everything SavanXP ships is written in C against the POSIX SDK
+(`subsystems/posix`): the kernel, the drivers, the graphics stack and every
+app.** A managed app layer on a VM (the Haxe work in `subsystems/native`)
+is **not part of the road to v1.0** — see
+[The managed layer is deferred to after v1.0](#the-managed-layer-is-deferred-to-after-v10),
+which governs the rest of this document.
 
-This is the **Android/ART** model: a mature native core, with a managed app
-layer on top. It is not "replace C with Haxe" — it is "C is the platform, Haxe
-is the application layer".
+The layering that does apply today is about *roles*, not languages: the
+platform (kernel, drivers, `compositord`, `windowd`, SXGFX, SXGUI-C) is one
+thing, and the apps that consume it are another. An app never reimplements a
+piece of the platform, and the platform never grows a dependency on an app.
 
-## The three layers
+## The two layers
 
 ```
   ┌─────────────────────────────────────────────────────────────┐
-  │  User apps (Haxe)                                            │
-  │  run on the VM; bind SXGUI-C through the FFI                 │
+  │  Apps (C, POSIX SDK v1)                                      │
+  │  shell · files · notepad · calculator · task manager · games │
+  │  paint with SXGUI-C / SXGFX, talk to windowd over the WM     │
+  │  protocol, and to the kernel through the POSIX syscalls      │
   └─────────────────────────────────────────────────────────────┘
                               ▲
-                              │  FFI / interop (sxn_*), stable native ABI
-                              ▼
-  ┌─────────────────────────────────────────────────────────────┐
-  │  Intermediate runtime (staged: AOT reflaxe.CPP today → VM)   │
-  │  SavanXP's "CLR/ART": runtime + GC + interop to C            │
-  └─────────────────────────────────────────────────────────────┘
-                              ▲
-                              │  native ABI v1 (savanxp_native_abi.h)
+                              │  POSIX SDK v1 (subsystems/posix/sdk/v1)
                               ▼
   ┌─────────────────────────────────────────────────────────────┐
   │  Native platform (C)                                         │
   │  kernel · drivers · compositord · windowd · SXGFX · SXGUI-C  │
-  │  + system apps: shell · file manager · task manager          │
   └─────────────────────────────────────────────────────────────┘
+
+  ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+  ┊  Managed layer (Haxe on a VM) — DEFERRED until after v1.0    ┊
+  ┊  subsystems/native: validated experiment, nothing ships on it┊
+  ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
 ```
 
-## What goes in C (platform + system apps)
+## The managed layer is deferred to after v1.0
 
-Low level, always C:
+> Status: **decision fixed (2026-09-15).** It supersedes, for everything up to
+> v1.0, the parts of this document that read as "user apps are written in Haxe
+> wherever possible".
+
+**Until v1.0, everything is C and POSIX.** The managed layer is not being built,
+not being designed and not being planned around. The question of whether SavanXP
+wants one — and of what it would be made — is **reopened from scratch after
+v1.0**; nothing written here or in `subsystems/native` commits the answer to
+HashLink, to reflaxe.CPP or even to Haxe.
+
+**Why it is deferred and not cancelled.** A runtime with a GC in the middle of a
+system whose kernel, WM, drivers and apps are still moving multiplies the surface
+that has to be kept working, and it buys a user exactly nothing before v1.0: the
+apps that exist are the ones that make the system usable, and they are already
+written. Deciding it now would mean designing an app model for a platform whose
+shape is not final yet.
+
+**If it turns out to be needed, the shape is a selective port, UWP-style.** Not a
+migration: a *second* app model that coexists with the native one. Win32 did not
+go away when UWP arrived, and neither do SXGUI-C and the C apps here — they stay
+canonical, and only what is actually worth moving moves, one app at a time. Two
+consequences follow, and they are the ones to check a future design against:
+
+- The managed layer must be an **addition**. No existing app may have to be
+  rewritten, recompiled or relinked for it to exist, and nothing in the boot path
+  may come to depend on it.
+- The platform is consumed, never duplicated. A managed app binds SXGUI-C through
+  an FFI; a second toolkit written in the managed language is what this document
+  has said from the start it will not have.
+
+**What that means for work done today** — this is the operative part:
+
+- A new app goes in **C against the POSIX SDK**, whatever kind of app it is. The
+  first game (`/bin/mines`) is the reference case, not an exception.
+- Nothing in the image may depend on `subsystems/native`. It stays in the tree as
+  a **validated experiment** — the ABI, the AOT chain and the GUI demo all work
+  and are worth keeping — but it is not maintained as a product, it is not in
+  `build.ps1`'s main path, and its binaries are not installed.
+- Do not design platform interfaces "for the VM". An API that exists today
+  because a future runtime might want it is an API nobody is using.
+
+## What goes in C (all of it, today)
+
+The platform, always:
 
 - **Kernel, drivers, HAL** (display/audio/GPU/network/storage).
 - **`compositord`** — owner of the GPU and of the single display surface.
@@ -53,17 +99,18 @@ Low level, always C:
 - **SXGUI-C** — the Win9x widget toolkit on top of SXGFX
   (`subsystems/posix/sdk/v1/.../sxgui.*`). The analogue of USER/comctl32.
 
-System programs, in C **at this initial stage**:
+And the apps, all of them, against the POSIX SDK:
 
-- **Shell** — the desktop (`subsystems/posix/userland/desktop*.c`): taskbar,
-  start menu, icons, wallpaper. After the WM extraction it becomes
-  `shell-client`, a client of `windowd`, **but it stays in C**.
+- **Shell** — the desktop (`subsystems/posix/userland/shellui.c`, `taskbar.c`,
+  `progman.c`): taskbar, launcher, icons, wallpaper. Client of `windowd` since
+  the WM extraction, **and in C**.
 - **File manager** — `subsystems/posix/userland/filesapp.c`.
-- **Task manager** — does not exist yet; it will be written in C (the `ps.c`
-  CLI can seed it).
+- **Notepad**, **Calculator**, **Task Manager**, **Minesweeper** — and whatever
+  comes next, including games, which used to be the clearest candidate for the
+  managed layer.
 
-> More system programs may be added in C in the future if needed. The list
-> above is this stage's minimum, not a ceiling.
+> The list grows; the language does not change with it. Deciding per app what it
+> is written in is exactly the fork this document exists to close.
 
 ### An in-tree app has no floating point
 
@@ -90,19 +137,23 @@ interchangeable:
   `sdk/floatsmoke` and of the ported programs, and it leaves the main build:
   the binary lives in `/disk/bin`, not in the image's `/bin`.
 
-## What goes in Haxe (user apps, via the VM)
+## What a managed layer would have to respect (after v1.0)
 
-Everything else, **wherever possible**, is written in Haxe and runs on the VM.
-The Haxe layer **does not reimplement** the platform: it consumes it.
+Nothing in this section is being built. It is the **shape** any future managed
+layer has to fit, written down while the reasons are fresh, so that the question
+reopened after v1.0 starts from a design and not from a blank page.
 
-- **SXGUI-C is the canonical, permanent toolkit.** The C system apps use it
-  directly; the Haxe apps **bind** it through the VM's FFI. This is the
+- **SXGUI-C is the canonical, permanent toolkit.** The C apps use it directly; a
+  managed app would **bind** it through the runtime's FFI. This is the
   **WinForms/JNI** model: a thin managed facade over native controls, not a
   second toolkit. Maintaining two parallel toolkits would be absurd when the C
   one is never going away.
-- The new design piece in the binding is **callback marshalling** (Haxe
-  closures ↔ C function pointers in `sxgui_widget.on_action`), typically
-  through a C trampoline with a `void* ctx`.
+- The hard design piece in that binding is **callback marshalling** (managed
+  closures ↔ C function pointers in `sxgui_widget.on_action`), typically through
+  a C trampoline with a `void* ctx`. It is the piece to prototype first, because
+  it is the one that decides whether the binding is thin.
+- It is an **app model, not a migration** (the UWP point above): it ships beside
+  the native one or it does not ship.
 
 ### Status of the existing Haxe apps
 
@@ -112,20 +163,16 @@ official ones. The `aboutapp-hx` and `filesapp-hx` ports were retired: they had
 served their purpose (proving the Haxe chain reaches a real app) and keeping
 them alive duplicated system apps that belong to C in this layering. Likewise,
 `haxe-toolkit/` (a reimplementation of Painter/Button/... in Haxe) is a
-**bootstrap** that validated the chain, not the end state: the end state is the
-binding to SXGUI-C.
+**bootstrap** that validated the chain — and the clearest example of what a
+managed layer must not become: a second toolkit next to SXGUI-C.
 
-### Games, and the first one
+## Games, and the first one
 
-A game is a **user app** by the rule above, so its natural home is the Haxe
-layer. The first one nevertheless ships in C, and the reason is the stage, not a
-change of mind: **the VM does not exist yet**. Putting a program someone plays on
-top of a bootstrap runtime would make the program hostage to work that is still
-being designed — and the AOT ELFs are validation artifacts, by this document's
-own words.
-
-So **Minesweeper (`/bin/mines`) is written in C against SXGUI-C**, and it is
-deliberately built in the *shape* of a Haxe app rather than of a system program:
+A game used to be the clearest candidate for the managed layer — which is not
+arriving before v1.0, so the first one ships in C like everything else.
+**Minesweeper (`/bin/mines`) is written in C against SXGUI-C**, and it is
+nevertheless split the way a managed app would be, which costs nothing and keeps
+the seam visible:
 
 - The **rules** live in one module with no window (`mines_board.c`): board
   generation, first-click safety, cascade, chord, win and loss, and the best
@@ -133,8 +180,8 @@ deliberately built in the *shape* of a Haxe app rather than of a system program:
   `.\build.ps1 mines-smoke` asserts — so the port has a specification, not a
   screenshot, to be judged against.
 - The **window** is a thin client of the toolkit (`mines.c`): layout, drawing
-  and input, and nothing else. That is the half a Haxe app would rewrite against
-  the FFI.
+  and input, and nothing else. That is the half a managed port would rewrite
+  against the FFI.
 
 What this does **not** mean: the game is not part of the platform. Nothing in the
 kernel, `windowd`, `compositord` or the SDK may grow a dependency on it — it is
@@ -150,21 +197,25 @@ toolkit: an app that paints its own content — a board of cells, a grid, a canv
 behind it is the one this document already states: SXGUI-C is the canonical
 toolkit, and an app never reimplements a piece of it.
 
-## Runtime stages (the middle tier)
+## Where the runtime work stopped
 
-SavanXP's "CLR/ART" is built in stages; the native ABI is designed **once** and
-both stages target the same contract:
+The middle tier was planned in two stages, and it stopped at the first one, which
+is where it stays until after v1.0:
 
-1. **Today — AOT** with [reflaxe.CPP](https://github.com/SomeRanDev/reflaxe.CPP):
-   Haxe → minimal C++17 (no GC) → freestanding ELF. It served to validate the
-   chain and design the ABI. The AOT ELFs are **validation artifacts**, not the
-   final product.
-2. **Target — VM (HashLink)** in the OS: HL's runtime/GC is ported onto the
-   native ABI and the Haxe apps run on the VM. `sxn_*` and the ABI do not
-   change.
+1. **Done, and frozen — AOT** with
+   [reflaxe.CPP](https://github.com/SomeRanDev/reflaxe.CPP): Haxe → minimal
+   C++17 (no GC) → freestanding ELF, running as a real native process with its
+   own ABI (`sxn_*`), its own heap and graphics syscalls. It did what it was for:
+   it proved the chain reaches a program that puts pixels on screen. The ELFs are
+   **validation artifacts** and are not installed.
+2. **Not started, and not on the road to v1.0 — the VM** (HashLink was the
+   candidate). Reopened after v1.0, with the candidate itself back on the table.
 
-See [../subsystems/native/README.md](../subsystems/native/README.md) for the
-phase and verification details.
+`subsystems/native` is kept, not maintained: it is a result, and deleting a
+result to "clean up" would only mean paying for it again. What it must not do is
+grow — no new apps, no new ABI surface, no place in the main build.
+See [../subsystems/native/README.md](../subsystems/native/README.md) for what
+exactly was reached and how it was verified.
 
 ## Relationship with the WM extraction
 
@@ -173,9 +224,9 @@ complementary**:
 
 - WM_SUBSYSTEM.md pulls `windowd` (the WM) out of `desktop.c`. That is platform
   work, **in C**, and independent of the clients' language.
-- After the extraction, `shell-client` (and an eventual `progman`) **stay in
-  C** — they are not rewritten in Haxe. That removes any concern about putting
-  the Haxe runtime in the critical boot path.
+- After the extraction, the shell and `progman` **stay in C** — they are not
+  rewritten. Nothing in the boot path ever depended on a runtime that is not
+  being built, which is the reason the deferral above costs nothing.
 
 ## Analogy (to fix the mental model)
 
@@ -185,6 +236,7 @@ complementary**:
 | Control toolkit | **SXGUI-C** | USER32 / comctl32 | (native) |
 | Window manager | **windowd** | win32k / USER | WindowManager / SurfaceFlinger |
 | Display server | **compositord** | DWM | SurfaceFlinger |
-| Shell / launcher | **desktop\*.c** (C) | explorer.exe | SystemUI / Launcher |
-| Managed runtime | **reflaxe.CPP → HashLink** | CLR | ART |
-| User apps | **Haxe / VM** | .NET (WinForms) | Java/Kotlin |
+| Shell / launcher | **shellui + taskbar + progman** (C) | explorer.exe | SystemUI / Launcher |
+| Apps | **C on the POSIX SDK** | Win32 | (native) |
+| Managed runtime | *deferred to after v1.0* | CLR | ART |
+| Managed apps | *deferred; UWP-style beside the native ones* | .NET / UWP | Java/Kotlin |

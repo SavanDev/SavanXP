@@ -21,9 +21,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 ## Architecture
 
 - [`SYSTEM_LAYERING.md`](SYSTEM_LAYERING.md) — **source of truth** for the
-  language layering: what is written in C (platform and system apps) and what
-  is written in Haxe on top of the VM (user apps). If another document
-  contradicts this one, this one wins.
+  language layering: everything SavanXP ships is C on the POSIX SDK, and the
+  managed app layer (Haxe on a VM) is **deferred until after v1.0** — why, what
+  it would have to look like if it ever arrives (a selective port, UWP-style,
+  beside the native apps and never replacing them), and what that means for work
+  done today. If another document contradicts this one, this one wins.
 - [`WM_SUBSYSTEM.md`](WM_SUBSYSTEM.md) — extraction of the window manager into
   its own subsystem, following the NT 3.5 model: `windowd` as the WM, the shell
   as client processes, and the WM↔client protocol.
