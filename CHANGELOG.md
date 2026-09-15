@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **Gears (`/bin/gears`), in the Diagnostics group.** A hand-written software
+  rasterizer — matrices, viewport, z-buffer, backface culling and flat shading
+  with one directional light — drawing the three meshed gears. It is the
+  consumer that defines the subset of the future SxGL, not a port.
+  New `tools/shoot.ps1 -Scenario gears`. [The plan it serves](docs/SXGL_ROADMAP.md#batch-0--the-consumer-before-any-api).
+
 - **Floating point in every app of the image.** The in-tree userland compiles
   with `-msse2` and links the libm of `runtime/math.c`, so `double`, `%f`,
   `strtod` and `sqrt` work with no switch to remember; `-Sse` stays for

@@ -1,11 +1,13 @@
 # SxGL — the 3D layer goes beside SxGFX, never inside it
 
-> **Status: nothing is built, and nothing should be built until a port asks for
-> it.** This document is not a plan in progress: it is the *shape* a 3D API
-> would have to take here, written down while the reasoning is fresh, so that
-> the day someone wants OpenGL the answer starts from a design instead of from
-> a blank page — and so that nobody tries to grow it out of SxGFX in the
-> meantime.
+> **Status: batch 0 landed; SxGL itself is not built.** `/bin/gears` is in the
+> image, in the Diagnostics group, rasterizing by hand — so the consumer that
+> defines the subset now exists and the rest of this document has something
+> concrete to be measured against. Everything from batch 1 on is still only the
+> *shape* a 3D API would have to take here, written down while the reasoning is
+> fresh, so that the day someone wants OpenGL the answer starts from a design
+> instead of from a blank page — and so that nobody tries to grow it out of
+> SxGFX in the meantime.
 >
 > The question that produced it: *if SxGFX is the closest thing to GDI, do we
 > need a new API to implement OpenGL?* The answer is **yes**, and
@@ -233,7 +235,22 @@ than approximately GL.
 
 ## Suggested order
 
-### Batch 0 — the consumer, before any API
+### Batch 0 — the consumer, before any API — **done**
+
+`/bin/gears` (`subsystems/posix/userland/gears.c`) is in the image and in the
+Diagnostics group next to Gfx Demo, with `tools/shoot.ps1 -Scenario gears` to
+capture it. It is split into three blocks on purpose — matrices, rasterizer,
+scene — and only the third survives when SxGL exists; the first two are what
+batches 1 and 2 absorb. What it asks of them is the subset, and it is short:
+model/view/projection, viewport, depth test, backface culling and flat shading
+with one directional light.
+
+Two deliberate debts it hands to batch 2, both already anticipated above: the
+fill rule is "all three barycentrics >= 0", which double-draws shared edges
+instead of being top-left, and there is no near-plane clipping — a triangle with
+any vertex behind the eye is dropped whole.
+
+The reasoning that put it there:
 
 The rule this repository already applies: `sx_pen` and the path recorder stayed
 out of SxGFX because nothing was going to call them. Same criterion, and it is

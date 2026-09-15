@@ -34,7 +34,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   GDI32 underneath SXGUI-C.
 - [`SXGL_ROADMAP.md`](SXGL_ROADMAP.md) — the shape a 3D API would have to take:
   why OpenGL cannot grow out of SxGFX, where SxGL binds to `windowd` instead,
-  and which GL subset is worth implementing. Nothing is built.
+  and which GL subset is worth implementing. Batch 0 landed (`/bin/gears`);
+  SxGL itself is not built.
 - [`SMP_ROADMAP.md`](SMP_ROADMAP.md) — the plan for running on more than one
   core: bringing up the APs, per-CPU state, a big kernel lock over the
   scheduler, TLB shootdown, and why splitting that lock should wait for

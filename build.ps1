@@ -257,6 +257,7 @@ $UserPrograms = @(
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ); Test = $true },
     @{ Name = "gfxdemo"; Source = "subsystems/posix/userland/gfxdemo.c"; Test = $true },
+    @{ Name = "gears"; Source = "subsystems/posix/userland/gears.c"; Test = $true },
     @{ Name = "gputest"; Source = "subsystems/posix/userland/gputest.c"; Test = $true },
     @{ Name = "keytest"; Source = "subsystems/posix/userland/keytest.c"; Test = $true },
     @{ Name = "kbdtest"; Source = "subsystems/posix/userland/kbdtest.c"; Test = $true },

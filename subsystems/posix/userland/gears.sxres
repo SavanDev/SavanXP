@@ -1,0 +1,15 @@
+# Recursos SXE de la demo de rasterizacion 3D. Ver docs/SXE_FORMAT.md.
+#
+# launch_flags es el DEFAULT del programa: quien lanza puede sobrescribirlo.
+#
+# icon=desktop es el generico a proposito: el arte propio no existe todavia y
+# reusar app-libgfx-demo pondria dos programas distintos con el mismo icono en
+# el mismo grupo de Diagnostics.
+name=Gears
+description=3D rendering test
+version=system
+vendor=SavanXP
+accent=8e6022
+icon=desktop
+launch_flags=fullscreen
+category=Diagnostics

@@ -213,7 +213,7 @@ class Session(object):
         indices son posiciones en ese orden. Con las categorias de hoy:
 
             Accessories: Calculator, Files, Notepad, Shell
-            Diagnostics: Gfx Demo, Key Test, Mouse Test, Widgets
+            Diagnostics: Gears, Gfx Demo, Key Test, Mouse Test, Widgets
             Games:       Doom (solo si esta instalado), Minesweeper
             System:      Add/Remove Programs, System Properties, Task Manager
 
@@ -646,7 +646,7 @@ def scenario_bench(s):
     Las teclas van sin la pausa de tap(): con 50 ms entre bajar y subir el
     techo serian 20 frames por segundo impuestos por el harness.
     """
-    s.launch(0, groups=1)            # Diagnostics -> Gfx Demo
+    s.launch(1, groups=1)            # Diagnostics -> Gfx Demo
     start = time.time()
     deadline = start + 20.0
     direction = "right"
@@ -680,7 +680,7 @@ def scenario_saturate(s):
     La prueba de que se salio del regimen limitado por la entrada no es esa
     cifra sino la ocupacion de windowd en la linea de stats.
     """
-    s.launch(0, groups=1)            # Diagnostics -> Gfx Demo
+    s.launch(1, groups=1)            # Diagnostics -> Gfx Demo
     start = time.time()
     deadline = start + 20.0
     direction = "right"
@@ -774,7 +774,7 @@ def scenario_wheel(s):
     direcciones, el signo, y que no se pierde ni se duplica ningun tick -- un
     tick de mas o de menos deja la lista corrida y los pixeles no coinciden.
     """
-    s.launch(3, groups=1)            # Diagnostics -> Widgets
+    s.launch(4, groups=1)            # Diagnostics -> Widgets
     image = s.shot("wheel-ventana")
     area = find_list_area(image)
     print("  lista en", area)
@@ -836,6 +836,30 @@ def scenario_notepadwheel(s):
         raise Failure("clickear la barra de scroll no movio el editor")
 
 
+def scenario_gears(s):
+    """Captura la demo de engranajes: el consumidor del batch 0 de SxGL.
+
+    No asierta pixeles todavia -- lo que hace falta de este escenario hoy es
+    MIRAR el resultado, que es la unica forma de ver si el winding, el backface
+    culling y el depth test estan del lado correcto. Un rasterizador con el
+    culling invertido no falla: dibuja el interior de la pieza, y eso solo se
+    nota a ojo.
+
+    Tres capturas: girando, pausada y rotada, porque las flechas mueven la
+    camara y ahi es donde se ve si la silueta se arma bien desde otro angulo.
+    """
+    s.launch(0, groups=1)            # Diagnostics -> Gears
+    time.sleep(3.0)
+    s.shot("gears-girando")
+    s.qmp.tap("s")                   # pausa: la captura queda estable
+    time.sleep(1.0)
+    s.shot("gears-pausada")
+    for _ in range(6):
+        s.qmp.tap("right", pause=0.3)
+    time.sleep(1.5)
+    s.shot("gears-rotada")
+
+
 def scenario_spin(s):
     """Carga que SI satura el pipeline: el cliente dibuja sin esperar la entrada.
 
@@ -846,7 +870,7 @@ def scenario_spin(s):
     bloquea hasta que el compositor consumio el frame anterior, asi que los
     fps son el techo del camino de display y nada mas.
     """
-    s.launch(0, groups=1)            # Diagnostics -> Gfx Demo
+    s.launch(1, groups=1)            # Diagnostics -> Gfx Demo
     s.qmp.tap("s")                   # modo automatico: encendido
     time.sleep(20.0)
     s.qmp.tap("s")                   # apagado: la sesion vuelve a quedar quieta
@@ -871,6 +895,7 @@ SCENARIOS = {
     "bench": scenario_bench,
     "saturate": scenario_saturate,
     "spin": scenario_spin,
+    "gears": scenario_gears,
 }
 
 

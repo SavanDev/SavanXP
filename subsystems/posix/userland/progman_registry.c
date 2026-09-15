@@ -78,6 +78,7 @@ static const struct progman_default_item k_default_items[] = {
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Diagnostics", "Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
+    {"Diagnostics", "Gears", "/bin/gears", "3D rendering test", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
     {"Diagnostics", "Key Test", "/bin/keytest", "Keyboard diagnostics", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Diagnostics", "Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 #endif
@@ -194,6 +195,10 @@ static const char *icon_reference_path(const char *value)
     if (strcmp(value, "gfxdemo") == 0)
     {
         return "/bin/gfxdemo";
+    }
+    if (strcmp(value, "gears") == 0)
+    {
+        return "/bin/gears";
     }
     if (strcmp(value, "keytest") == 0)
     {
