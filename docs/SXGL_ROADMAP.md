@@ -151,6 +151,86 @@ unimplemented entry points absent rather than present-and-lying.** A
 `glGetString(GL_VERSION)` that claims more than is there costs a day of somebody
 else's debugging.
 
+## What DirectX is good for here
+
+Choosing OpenGL for the public API does not mean ignoring the other tradition.
+The rule that keeps both useful: **DirectX is worth copying inside SxGL and
+below it, never at its public surface.** GL outside, because that is what ports
+speak; D3D-shaped internals, because that is what makes a software rasterizer
+fast.
+
+### The layer below is already D3D-shaped
+
+Not an analogy — read the structs. The client surface header carries
+`submit_sequence`, `retired_sequence` and `composed_sequence`
+([syscall.h:728](../subsystems/posix/sdk/v1/include/savanxp/syscall.h:728)), and
+every `savanxp_gpu_dirty_rect_batch` carries its own `submit_sequence`. That is
+a fence over a swapchain with numbered command lists.
+`savanxp_gpu_present_timeline` (`submitted`/`retired`/`pending_count`) is
+`GetCompletedValue`, and `GPU_IOC_WAIT_PRESENT` is `SetEventOnCompletion`.
+OpenGL has no vocabulary for any of it — `SwapBuffers` is opaque and `ARB_sync`
+arrived fifteen years later.
+
+The immediate use is the resize question at the end of this document. DXGI
+answers it (`ResizeBuffers`, and you do not resize with frames in flight) and
+D3D9's *device lost* is the cautionary tale of what happens when the answer is
+discovered in production instead of written down. **Settle it before batch 1,
+not during.**
+
+One boundary this does not move: the fence is there to be **read**, not to
+submit around. SxGL may consult the timeline to avoid blocking; it may not step
+past `gfx_present_region`.
+
+### Pipeline state objects — the one idea worth taking early
+
+The known cost of GL is revalidating state on every draw. In a software
+rasterizer it is worse, because it becomes an `if (depth_test)`, an
+`if (texturing)` and an `if (blending)` *per pixel*, inside the span loop. D3D10
+solved it by freezing state into an immutable object and paying the cost once.
+
+Here that means hashing the state that affects the inner loop and selecting a
+specialized span routine — the manual version of what Quake and TinyGL did.
+It is invisible from the API: `glEnable` on the outside, constants in the loop.
+**This is why it is part of batch 2 rather than an optimization to retrofit:
+retrofitting it means rewriting the rasterizer, which is the one piece nobody
+wants to write twice.**
+
+### Immutable resource descriptions
+
+A `D3D11_TEXTURE2D_DESC` is fixed at creation; a GL texture is mutable at any
+time, which forces the sampler to re-check format and size. Internally,
+`glTexImage2D` can mean "build a new internal resource with a normalized format,
+precomputed strides and whatever layout the sampler wants, then swap the
+pointer". GL semantics preserved, constants in the loop again. It costs nothing
+to plan for: the upload formats are the ones SxGFX already speaks.
+
+### A debug layer, not `glGetError`
+
+`glGetError` is global, sticky and deferred — a poor design even for its time.
+D3D's debug layer validates at the call and names it. In a system where you
+cannot attach a graphics debugger that matters more, not less, and it is cheap:
+a compile-time `SXGL_VALIDATE` writing to `/dev/serial`, the channel
+`windowd-stats` already uses precisely so that measuring does not corrupt what
+is being measured ([GRAPHICS_PERF.md](GRAPHICS_PERF.md#why-devserial-and-not-stderr)).
+
+### And the precedent: WARP
+
+Microsoft ships a **conformant** software rasterizer. It is the argument behind
+the recommendation above — software, but real and conformant to a subset, rather
+than approximately GL.
+
+### What not to bring
+
+- **COM, `HRESULT`, interface refcounting.** This is C, and the SDK is plain
+  structs.
+- **A D3D-shaped public API.** Ports speak GL; nobody is going to arrive with a
+  D3D port. The value of GL here is the body of code that already exists, not
+  the design.
+- **Command lists and deferred contexts.** They solve submission parallelism to
+  a GPU. There is neither a GPU nor threads.
+- **Descriptor heaps and the binding model.** They solve a hardware problem this
+  system does not have.
+
 ## Suggested order
 
 ### Batch 0 — the consumer, before any API
@@ -171,16 +251,27 @@ window that clears to a colour and presents. **It is worth landing as its own
 step**: it proves the seam against `windowd` — resize, damage, the wait for the
 compositor — before any of it is entangled with rasterization.
 
-### Batch 2 — the fixed-function pipeline
+### Batch 2 — the fixed-function pipeline, over a state object
 
 Matrix stacks (`GL_MODELVIEW`/`GL_PROJECTION`), the transform, clipping against
 the near plane, the viewport map, backface culling, the triangle rasterizer with
-a depth test, and flat plus Gouraud shading. This is the core, and it is where
-the correctness work is: the fill rule has to be consistent, for exactly the
-reason batch 3 of SxGFX found the hard way — a shared edge rasterized from two
-triangles must not overlap or leave a seam. **Reuse that lesson, not that code:
-the polygon scanline in `gfx2d.c` is integer and 2D, and a 3D rasterizer needs
-subpixel precision and interpolated attributes.**
+a depth test, and flat plus Gouraud shading.
+
+**The rasterizer is built against an internal state object from the first line,
+not against the GL state directly.** The draw path collapses the state that
+affects the inner loop into one immutable descriptor, hashes it, and selects the
+span routine for it; `glEnable` and company invalidate that descriptor instead
+of being read per pixel. It is D3D's PSO, described above, and it is in this
+batch for one reason: adding it later means rewriting the rasterizer, and the
+rasterizer is the piece nobody wants to write twice. Starting with two or three
+specializations and a generic fallback is enough — what must exist from day one
+is the seam that lets a fourth be added without touching the pipeline.
+
+This is also where the correctness work is: the fill rule has to be consistent,
+for exactly the reason batch 3 of SxGFX found the hard way — a shared edge
+rasterized from two triangles must not overlap or leave a seam. **Reuse that
+lesson, not that code: the polygon scanline in `gfx2d.c` is integer and 2D, and
+a 3D rasterizer needs subpixel precision and interpolated attributes.**
 
 ### Batch 3 — texturing
 
