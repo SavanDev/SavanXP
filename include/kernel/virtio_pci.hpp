@@ -134,6 +134,14 @@ struct Queue {
 
 void memory_barrier();
 size_t align_up(size_t value, size_t alignment);
+// Los campos MMIO de 64 bits del device se tocan en DOS mitades de 32 bits, la
+// baja primero: el spec de virtio (4.1.3.1) solo garantiza accesos del ancho
+// natural de cada campo, y el unico acceso portable a uno de 64 bits es de a 32
+// -- es lo que hace el driver de Linux. Un movq de 8 bytes de una sola vez lo
+// parte QEMU por su cuenta, pero VirtualBox lo rechaza y se lleva puesta la VM
+// entera con un guru meditation, asi que nadie escribe estos campos a mano.
+void write_mmio_u64(volatile uint64_t& field, uint64_t value);
+uint64_t read_mmio_u64(const volatile uint64_t& field);
 bool looks_like_modern_device(const pci::DeviceInfo& info, uint16_t modern_device_id, uint16_t subsystem_device_id);
 bool find_modern_device(uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info);
 // Como find_modern_device, pero arranca la busqueda en start_index y, si

@@ -257,7 +257,7 @@ void enumerate() {
     }
     g_flush_supported = (requested_word0 & kFeatureFlushBit) != 0;
 
-    const uint64_t capacity_sectors = device_cfg()->capacity;
+    const uint64_t capacity_sectors = virtio_pci::read_mmio_u64(device_cfg()->capacity);
     if (capacity_sectors == 0 || capacity_sectors > 0xffffffffu) {
         fail_device("unsupported capacity");
         return;

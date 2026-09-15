@@ -42,6 +42,11 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   the advertised window, why the retransmission clock is the poll path, and the
   fault injector that makes any of it testable.
 
+- [`VIRTIO.md`](VIRTIO.md) — what the virtio-pci transport asks of every
+  paravirtualized driver: why a 64-bit MMIO field is touched in two 32-bit
+  halves, why QEMU forgives an access VirtualBox answers with a guru
+  meditation, and how to read that crash back to a line of the kernel.
+
 - [`GRAPHICS_PERF.md`](GRAPHICS_PERF.md) — how the graphics pipeline is
   measured and what it costs: every field of the `windowd-stats` line, which
   load measures the display path and which only measures the harness, the

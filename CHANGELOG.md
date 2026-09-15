@@ -351,6 +351,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **`netinfo` over `virtio-net` no longer kills the machine on VirtualBox.** A
+  64-bit virtio MMIO field now goes in two 32-bit halves: a single 64-bit access
+  is what VirtualBox answers with a guru meditation. [The rule](docs/VIRTIO.md).
+
 - **QEMU starts from a path with a space in it.** `build.ps1 run` and every
   `*-smoke` target passed the OVMF, disk and log paths to QEMU unquoted, so it
   read half a path as a second drive and refused to boot.

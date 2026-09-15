@@ -10,6 +10,19 @@ void memory_barrier() {
     asm volatile("mfence" : : : "memory");
 }
 
+void write_mmio_u64(volatile uint64_t& field, uint64_t value) {
+    volatile uint32_t* halves = reinterpret_cast<volatile uint32_t*>(&field);
+    halves[0] = static_cast<uint32_t>(value);
+    halves[1] = static_cast<uint32_t>(value >> 32);
+}
+
+uint64_t read_mmio_u64(const volatile uint64_t& field) {
+    const volatile uint32_t* halves = reinterpret_cast<const volatile uint32_t*>(&field);
+    const uint32_t low = halves[0];
+    const uint32_t high = halves[1];
+    return (static_cast<uint64_t>(high) << 32) | static_cast<uint64_t>(low);
+}
+
 size_t align_up(size_t value, size_t alignment) {
     const size_t mask = alignment - 1;
     return (value + mask) & ~mask;
@@ -291,9 +304,9 @@ bool setup_queue(Device& device, uint16_t queue_index, uint16_t queue_limit, siz
 
     cfg->queue_size = chosen_size;
     memory_barrier();
-    cfg->queue_desc = queue.allocation.physical_address + queue.layout.desc_offset;
-    cfg->queue_driver = queue.allocation.physical_address + queue.layout.avail_offset;
-    cfg->queue_device = queue.allocation.physical_address + queue.layout.used_offset;
+    write_mmio_u64(cfg->queue_desc, queue.allocation.physical_address + queue.layout.desc_offset);
+    write_mmio_u64(cfg->queue_driver, queue.allocation.physical_address + queue.layout.avail_offset);
+    write_mmio_u64(cfg->queue_device, queue.allocation.physical_address + queue.layout.used_offset);
     cfg->queue_enable = 1;
     memory_barrier();
 
