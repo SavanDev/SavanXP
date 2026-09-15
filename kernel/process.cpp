@@ -1854,6 +1854,15 @@ process::Process* fork_process(process::Process& parent, const process::SavedCon
     memcpy(child->name, parent.name, sizeof(child->name));
     memcpy(child->cwd, parent.cwd, sizeof(child->cwd));
 
+    // El hijo hereda los registros de punto flotante como hereda los enteros.
+    // Mientras el padre corre, su FPU vive en los registros y el area guardada
+    // esta vieja (switch_to_process solo vuelca en el cambio real), asi que hay
+    // que volcarla antes de copiarla.
+    if (this_cpu().current == &parent) {
+        arch::x86_64::fpu_save(parent.fpu_state);
+    }
+    memcpy(child->fpu_state, parent.fpu_state, sizeof(child->fpu_state));
+
     if (!vm::clone_address_space(parent.address_space, child->address_space)) {
         reset_process_slot(*child);
         return nullptr;

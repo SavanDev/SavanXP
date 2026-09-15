@@ -112,30 +112,39 @@ And the apps, all of them, against the POSIX SDK:
 > The list grows; the language does not change with it. Deciding per app what it
 > is written in is exactly the fork this document exists to close.
 
-### An in-tree app has no floating point
+### An in-tree app has floating point
 
-`Get-UserFlags` (`build.ps1`) compiles the whole in-tree userland with
-`-mno-sse -mno-sse2 -mgeneral-regs-only`. That is not an oversight: without SSE
-there is no floating-point ABI to preserve, so the kernel does not have to save
-and restore FPU/SSE state for these processes. The consequences are concrete —
-a `double` does not compile, and `%f` in `printf`/`snprintf` is behind
-`#if defined(__SSE2__)` in `runtime/posix.c`, so it silently prints nothing.
+`Get-UserFlags` (`build.ps1`) compiles the whole in-tree userland with `-msse
+-msse2`, and every program links the libm in `runtime/math.c`. A `double` and a
+`%f` work in any app of the tree, with no switch to remember.
 
-A program that needs real numbers has two ways out, and they are not
-interchangeable:
+What that rests on is the kernel, and it was already there for the native
+subsystem: SSE is enabled at boot, the FPU/SSE area travels per process and the
+scheduler saves and restores it with `fxsave64`/`fxrstor64` on the real context
+switch (`kernel/process.cpp`); `fork` copies it, so the child inherits the
+floating-point registers the same way it inherits the integer ones. `crt0.S`
+leaves `rsp` aligned to 16 and `sx_malloc` returns 16-aligned memory, which is
+what SSE's aligned accesses need.
 
-- **Integer arithmetic**, for a system app that must stay in the image. The
-  reference case is the calculator (`subsystems/posix/userland/calc.c`): a
-  decimal float of 16 significant digits, mantissa in `int64_t` and exponent of
-  ten, with the intermediates in `__int128`. Decimal because a calculator is
-  read by a person — `0.1 + 0.2` has to be `0.3` — and integer because of the
-  flags above. Note that 128-bit **division** is not free: the compiler resolves
-  it with `__divti3` from compiler-rt, which this system does not link, so
-  `calc.c` does the long division by hand.
-- **An external app built with `-Sse`** (`tools/build-user.ps1 -Sse`), which
-  gets the hardware unit and the libm in `runtime/math.c`. It is the path of
-  `sdk/floatsmoke` and of the ported programs, and it leaves the main build:
-  the binary lives in `/disk/bin`, not in the image's `/bin`.
+Two consequences worth keeping in mind:
+
+- **The compiler now emits SSE on its own**, in a vectorized `memcpy` for
+  instance, in apps that never mention a `double`. That is fine — the state is
+  saved either way — but it is why the userland links with `--gc-sections` and
+  compiles with `-ffunction-sections`: without that every binary carried the
+  whole libm, and the tree has dozens of programs.
+- **The calculator keeps its integer engine** (`subsystems/posix/userland/
+  calc.c`): a decimal float of 16 significant digits, mantissa in `int64_t` and
+  exponent of ten. That was never only about the flags — a calculator is read by
+  a person and `0.1 + 0.2` has to print `0.3`, which binary IEEE-754 does not
+  give. Note that 128-bit **division** is not free: the compiler resolves it
+  with `__divti3` from compiler-rt, which this system does not link, so `calc.c`
+  does the long division by hand.
+
+An **external** app still opts in with `-Sse` (`tools/build-user.ps1 -Sse`): a
+port that does not use real numbers prefers the compiler to leave SSE out of it.
+`sdk/floatsmoke` is the harness of that path, and of the kernel keeping the
+FPU state straight while it multiplexes processes doing math at the same time.
 
 ## What a managed layer would have to respect (after v1.0)
 

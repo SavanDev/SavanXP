@@ -3,13 +3,12 @@
  *
  * ---- por que la aritmetica es decimal y hecha a mano ----------------------
  *
- * La userland in-tree se compila con -mno-sse -mgeneral-regs-only (build.ps1,
- * Get-UserFlags): no hay punto flotante de hardware, `double` no compila y el
- * %f de snprintf esta detras de #if defined(__SSE2__). Asi que el motor es un
- * flotante DECIMAL propio: mantisa de 16 digitos en int64 mas exponente de 10.
+ * El motor es un flotante DECIMAL propio: mantisa de 16 digitos en int64 mas
+ * exponente de 10. Nacio cuando la userland in-tree iba -mno-sse y `double` no
+ * compilaba, pero se queda por su propio motivo, que es el que vale:
  *
- * Decimal y no binario, ademas, porque es lo que espera quien usa una
- * calculadora: 0.1 + 0.2 da 0.3 exacto y no 0.30000000000000004. La deuda que
+ * decimal y no binario, porque es lo que espera quien usa una calculadora:
+ * 0.1 + 0.2 da 0.3 exacto y no 0.30000000000000004. La deuda que
  * si se paga es la de siempre -- 1/3 vuelve a 0.9999999999999999 al
  * multiplicar por 3 --, que es el redondeo a 16 digitos y no un artefacto de
  * la base.

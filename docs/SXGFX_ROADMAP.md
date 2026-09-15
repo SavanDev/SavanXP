@@ -81,8 +81,8 @@
 >   rect. Everything leans on the painter's `hline`/`vline`/`set_pixel`, so the
 >   clip, the region and the origin come out free and correct.
 > - **Quality scaling**: `sx_painter_draw_scaled_bitmap` with a selectable
->   filter; bilinear in 8-bit fixed point (this layer is linked by every binary
->   and cannot depend on `-Sse`).
+>   filter; bilinear in 8-bit fixed point (this layer is linked by every binary,
+>   and integer is what a blit wants; back then it could not use SSE either).
 > - **Memory DC**: `sx_bitmap_create`/`destroy`, the missing
 >   `CreateCompatibleBitmap`. `destroy` on a `wrap` bitmap is a deliberate
 >   no-op.
@@ -131,6 +131,11 @@ Curiously the kernel is already more DirectX-like than SxGFX:
 it goes in a new layer beside — not inside — SxGFX, talking directly to
 `/dev/gpu0`. This document is about the other direction: making SxGFX a **good
 GDI**.
+
+The OpenGL version of that same question is worked out in
+[SXGL_ROADMAP.md](SXGL_ROADMAP.md), and it reaches the same place: a sibling
+layer that binds to the window surface and the present path, and that adds
+nothing to SxGFX.
 
 ## Batch 1 — what already hurts
 

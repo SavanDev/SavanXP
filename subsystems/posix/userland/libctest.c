@@ -16,6 +16,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -424,6 +425,43 @@ static void test_time(void) {
     check(localtime(&stamp) != 0, "localtime");
 }
 
+/* Punto flotante. El arbol se compila con SSE2, asi que un port encuentra el
+ * double entero: el ABI (los argumentos en xmm0..7), la libm de runtime/math.c
+ * y el formateo de stdio. Sin eso esto no linkeaba, no fallaba: cada operacion
+ * quedaba como una llamada a un helper de soft-float que nadie define. */
+static void test_float(void) {
+    char text[64] = {};
+    char* end = 0;
+    double parsed = 0.0;
+    volatile double tenth = 0.1;
+    volatile double fifth = 0.2;
+
+    check(snprintf(text, sizeof(text), "%.2f", 3.14159) == 4, "snprintf %f devuelve el largo");
+    check(strcmp(text, "3.14") == 0, "snprintf redondea a dos decimales");
+    snprintf(text, sizeof(text), "%.2f", 0.999);
+    check(strcmp(text, "1.00") == 0, "el redondeo acarrea hacia la parte entera");
+    snprintf(text, sizeof(text), "%g", 1.5e-7);
+    check(strchr(text, 'e') != 0, "%g cae en notacion exponencial");
+
+    check(strtod("2.5", &end) == 2.5 && end != 0 && *end == 0, "strtod");
+    check(strtod("-1.25e2xyz", &end) == -125.0 && end != 0 && *end == 'x',
+          "strtod con exponente y sobrante");
+    check(sscanf("6.25", "%lf", &parsed) == 1 && parsed == 6.25, "sscanf %lf");
+
+    check(sqrt(2.25) == 1.5, "sqrt");
+    check(pow(2.0, 10.0) == 1024.0, "pow");
+    check(floor(-1.5) == -2.0 && ceil(-1.5) == -1.0, "floor/ceil");
+    check(fabs(-2.5) == 2.5, "fabs");
+    check(fmin(2.0, hypot(3.0, 4.0)) == 2.0, "dobles como argumento y como retorno");
+
+    /* IEEE-754 de verdad, no decimal: 0.1+0.2 NO es 0.3 exacto (eso es lo que
+     * distingue esto del motor decimal de la calculadora), pero redondeado a
+     * dos decimales tiene que dar 0.30. */
+    check(tenth + fifth != 0.3, "la suma es binaria, no decimal");
+    snprintf(text, sizeof(text), "%.2f", tenth + fifth);
+    check(strcmp(text, "0.30") == 0, "0.1+0.2 formatea 0.30");
+}
+
 int main(void) {
     const struct file_ops ops = {
         .close = close,
@@ -442,6 +480,7 @@ int main(void) {
     test_stdio_extra();
     test_scan();
     test_time();
+    test_float();
     test_error_convention();
     test_directories();
 

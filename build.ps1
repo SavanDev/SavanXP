@@ -431,6 +431,18 @@ function Get-UacpiCompileEdges {
     return [pscustomobject]@{ Edges = $edges; ObjectFiles = $objectFiles }
 }
 
+# El userland in-tree se compila CON SSE2: `double` y `%f` andan en cualquier
+# app del arbol, sin switch. Del lado del SO ya estaba todo: el kernel habilita
+# SSE en el boot y guarda/restaura el area FPU/SSE por proceso en el cambio de
+# contexto (fxsave64/fxrstor64, ver kernel/process.cpp), crt0.S deja rsp
+# alineado a 16 y sx_malloc alinea a 16 como pide max_align_t. Lo que faltaba
+# era el ABI: sin -msse2 clang pasa los double por una convencion propia y
+# resuelve cada operacion con helpers de soft-float de compiler-rt que este
+# sistema no linkea, asi que el codigo con floats compilaba pero no linkeaba.
+#
+# -ffunction-sections/-fdata-sections van de la mano con --gc-sections en el
+# link (ver Build-Userland): sin eso cada binario se llevaria entero el math.o
+# de la libm, y el arbol tiene decenas de programas.
 function Get-UserFlags([bool]$IncludeTestApps = $true) {
     return @(
         "-DDESKTOP_INCLUDE_TEST_APPS=$(if ($IncludeTestApps) { 1 } else { 0 })",
@@ -442,9 +454,10 @@ function Get-UserFlags([bool]$IncludeTestApps = $true) {
         "-mno-red-zone",
         "-mcmodel=small",
         "-mno-mmx",
-        "-mno-sse",
-        "-mno-sse2",
-        "-mgeneral-regs-only",
+        "-msse",
+        "-msse2",
+        "-ffunction-sections",
+        "-fdata-sections",
         "-Wall",
         "-Wextra",
         "-Wpedantic",
@@ -842,6 +855,7 @@ function Get-UserlandCompileEdges([bool]$IncludeTestApps = $true) {
             "subsystems/posix/sdk/v1/runtime/crt0.S",
             "subsystems/posix/sdk/v1/runtime/libc.c",
             "subsystems/posix/sdk/v1/runtime/posix.c",
+            "subsystems/posix/sdk/v1/runtime/math.c",
             "subsystems/posix/sdk/v1/runtime/gfx.c",
             "subsystems/posix/sdk/v1/runtime/gfx2d.c"
         ) + $programSources) {
@@ -889,6 +903,10 @@ function Build-Userland([string]$Linker, [object[]]$Programs) {
             "-m", "elf_x86_64",
             "-T", (Join-Path $PosixSdkRoot "linker.ld"),
             "-z", "max-page-size=0x1000",
+            # Con -ffunction-sections, esto tira lo que ningun camino alcanza
+            # desde _start. Los blobs SXE no corren riesgo: .sxmeta/.sxres los
+            # estampa Add-SxeResources DESPUES del link.
+            "--gc-sections",
             "--build-id=none",
             "-o", $outputPath
         ) + $program.ObjectFiles
@@ -1677,14 +1695,14 @@ function Run-TcpSmokeQemu {
     }
 }
 
-# Harness headless del camino de punto flotante (sdk/floatsmoke). Es el unico
-# consumidor del switch -Sse hasta ahora, y valida las tres capas que ese switch
-# destraba: el ABI de SSE, la libm de runtime/math.c y -- lo que no se puede
-# comprobar compilando -- que el kernel preserve el estado FPU/SSE cuando
-# multiplexa procesos que hacen matematica al mismo tiempo.
+# Harness headless del camino de punto flotante (sdk/floatsmoke). Valida las
+# tres capas del float: el ABI de SSE, la libm de runtime/math.c y -- lo que no
+# se puede comprobar compilando -- que el kernel preserve el estado FPU/SSE
+# cuando multiplexa procesos que hacen matematica al mismo tiempo.
 #
-# Se construye en el PreLaunch como app externa, igual que sxguihost: el camino
-# in-tree de build.ps1 sigue siendo -mno-sse para todas sus apps.
+# Sigue construyendose en el PreLaunch como app EXTERNA, igual que sxguihost,
+# aunque el userland in-tree ya vaya con SSE2: asi el harness cubre tambien el
+# camino de tools/build-user.ps1 -Sse, que es el de las apps portadas.
 function Run-FloatSmokeQemu {
     $userBuild = Join-Path $ToolRoot "build-user.ps1"
     $floatSmokeSource = Join-Path $ProjectRoot "sdk/floatsmoke"

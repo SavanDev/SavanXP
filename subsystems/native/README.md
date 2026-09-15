@@ -377,9 +377,9 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
   `allocate_process_slot`). Como el kernel es `-mno-sse` nunca toca la FPU entre
   medio, así que el save/restore solo hace falta en el cambio real de proceso.
   El build nativo pasó a compilar **con** SSE2 (sacó `-mno-sse`/`-mgeneral-regs-
-  only`) y el `crt0` alinea el stack a 16. Nota: `fork` sin `exec` arranca al
-  hijo con FPU limpia (no hereda la del padre) — desviación menor de POSIX,
-  inocua porque fork va seguido de exec.
+  only`) y el `crt0` alinea el stack a 16. `fork` copia el área del padre, así
+  que el hijo hereda los registros de punto flotante igual que los enteros
+  (`forktest` lo verifica dejando un valor en `xmm5` y leyéndolo del otro lado).
 - **Un método estático que devuelve su propia clase no compila**: reflaxe.CPP
   emite `static std::shared_ptr<Foo> bar();` en `Foo.h` pero **no agrega el
   `#include <memory>`** en ese caso (sí lo hace cuando `shared_ptr` aparece en

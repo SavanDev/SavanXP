@@ -12,11 +12,20 @@ Cut-off notes:
 
 ### Added
 
+- **Floating point in every app of the image.** The in-tree userland compiles
+  with `-msse2` and links the libm of `runtime/math.c`, so `double`, `%f`,
+  `strtod` and `sqrt` work with no switch to remember; `-Sse` stays for
+  external apps. [The rule it replaces](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
+
+- **`docs/SXGL_ROADMAP.md`.** OpenGL does not grow out of SxGFX: SxGL would be a
+  sibling layer binding to the window surface and `gfx_present_region`, as a
+  runtime module of the SDK. Nothing is implemented.
+
 - **Calculator (`/bin/calc`), in the Accessories group.** Four operations,
   `%`, `sqrt`, `1/x`, memory keys, copy/paste and the numeric keypad, over a
   decimal engine of 16 significant digits written in integers, so `0.1 + 0.2`
   is `0.3`. New `build.ps1 calc-smoke` and `tools/shoot.ps1 -Scenario calc`.
-  [Why an app in the image has no floating point](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-no-floating-point).
+  [Why its engine is decimal and integer anyway](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
 
 - **Minesweeper (`/bin/mines`), in the Games group.** The first game that comes
   in the image instead of being installed like Doom: three levels, LED counters,
@@ -220,6 +229,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The userland links with `--gc-sections`.** Each binary keeps only what it
+  reaches from `_start` instead of whole runtime objects: the initramfs goes
+  from ~14 MB to ~5.5 MB, libm included.
+
 - **The managed app layer (Haxe on a VM) is deferred until after v1.0.** Until
   then everything ships in C against the POSIX SDK; `subsystems/native` stays as
   a frozen, validated experiment that nothing in the image depends on. If it is
@@ -350,6 +363,10 @@ Cut-off notes:
   `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
 
 ### Fixed
+
+- **`fork` hands the child the floating-point registers too.** It used to start
+  with the clean FPU/SSE state the kernel seeds, so a `double` live across the
+  call read as 0 in the child. `forktest` now checks it.
 
 - **A command typed in the desktop Shell keeps its arguments.** The parser
   tokenizes the line in place, and the window then handed that same line to
