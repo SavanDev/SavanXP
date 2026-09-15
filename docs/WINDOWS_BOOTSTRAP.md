@@ -1,4 +1,4 @@
-# Windows bootstrap: what gets baked and what does not
+﻿# Windows bootstrap: what gets baked and what does not
 
 `tools/bootstrap.ps1` aims for a self-contained `toolchain/` directory so a
 clean Windows checkout can go from `git clone` to `.\build.ps1 build` without
@@ -95,3 +95,14 @@ on such a machine, while the build itself passed.
 Those arguments now carry doubled quotes, the way the `-drive if=pflash` lines
 already did it: PowerShell emits the inner quotes literally and QEMU's own
 argument parser strips them, leaving one argument with its spaces intact.
+
+`tools/shoot.ps1` assembles its own QEMU command line instead of sharing the one
+in `build.ps1`, so that pass missed it and the screenshot harness — and
+`build.ps1 taskbar-smoke`, which runs through it — kept dying with the same
+drive message. It quotes at the point of launch rather than inside each string:
+`Quote-QemuArg` wraps any element containing whitespace, whole, just before
+`Start-Process` joins the list. Wrapping the whole element instead of only the
+path is safe because QEMU splits an option into its parts on commas, never on
+spaces, so `if=pflash,format=raw,file=C:\dir with space\OVMF.fd` arrives as a
+single `argv` and parses normally. Any argument added to that list later is
+covered without having to remember the rule.

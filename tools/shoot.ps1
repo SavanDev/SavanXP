@@ -133,7 +133,7 @@ $nicDevice = if ($Virtio) { @("-device", "virtio-net-pci,netdev=net0") }
              else { @("-device", "rtl8139,netdev=net0") }
 $audioDevice = if ($Virtio) { @("-device", "virtio-sound-pci,audiodev=audio1,streams=2") }
                else { @("-device", "AC97,audiodev=audio1") }
-$diskDrive = @("-drive", "if=none,id=svdisk,media=disk,format=raw,file=""$(Join-Path $ProjectRoot 'build/disk.img')""")
+$diskDrive = @("-drive", "if=none,id=svdisk,media=disk,format=raw,file=$(Join-Path $ProjectRoot 'build/disk.img')")
 $diskDevices = if ($Virtio) { $diskDrive + @("-device", "virtio-blk-pci,drive=svdisk") }
                else { @("-device", "isa-ide,id=svide") + $diskDrive + @("-device", "ide-hd,drive=svdisk,bus=svide.0") }
 
@@ -146,8 +146,8 @@ $qemuArgs = @(
     "-audiodev", "none,id=audio1",
     "-display", "none",
     "-rtc", "base=localtime",
-    "-drive", "if=pflash,format=raw,readonly=on,file=""$($ovmf.Code)""",
-    "-drive", "if=pflash,format=raw,file=""$varsCopy""",
+    "-drive", "if=pflash,format=raw,readonly=on,file=$($ovmf.Code)",
+    "-drive", "if=pflash,format=raw,file=$varsCopy",
     "-drive", "file=fat:rw:build/image,format=raw",
     "-netdev", "user,id=net0",
     "-serial", "file:$serialLog",
@@ -163,9 +163,31 @@ Write-Host "shoot: escenario '$Scenario', salida en $OutDir"
 # relativo. Ver move_to en shoot_session.py.
 $absPointerArg = if ($Virtio) { @("--abs-pointer") } else { @() }
 
+# Start-Process une el ArgumentList con espacios y NO entrecomilla cada
+# elemento: si la ruta del proyecto o del perfil tiene un espacio (p. ej.
+# "C:\Users\Oasis Desktop"), el argumento se parte en dos y QEMU lee la segunda
+# mitad como una opcion suelta -- el sintoma era que "-serial file:<log>"
+# terminaba en "drive with bus=0, unit=0 (index=0) exists", con QEMU muerto
+# antes del primer paso y un ConnectionResetError del lado QMP.
+# Se entrecomilla el elemento ENTERO, no solo la ruta: QEMU separa las opciones
+# por comas, asi que "if=pflash,format=raw,file=C:\con espacio\OVMF.fd" llega
+# intacto como un unico argv.
+function Quote-QemuArg([string]$Value) {
+    if ($Value -notmatch '[\s"]') {
+        return $Value
+    }
+    # Reglas de la CRT de Windows: una barra invertida solo escapa si precede a
+    # una comilla, asi que hay que duplicar las que caigan justo antes de la
+    # comilla de cierre.
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
 Push-Location $ProjectRoot
 try {
-    $process = Start-Process -FilePath $qemu -ArgumentList $qemuArgs -PassThru `
+    $process = Start-Process -FilePath $qemu -PassThru `
+        -ArgumentList @($qemuArgs | ForEach-Object { Quote-QemuArg $_ }) `
         -RedirectStandardOutput (Join-Path $OutDir "shoot-qemu-out.log") `
         -RedirectStandardError (Join-Path $OutDir "shoot-qemu-err.log")
 
