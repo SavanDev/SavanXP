@@ -351,6 +351,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **A command typed in the desktop Shell keeps its arguments.** The parser
+  tokenizes the line in place, and the window then handed that same line to
+  `/bin/sh -c`: only the first word survived, so `echo hola` printed nothing.
+
 - **`netinfo` over `virtio-net` no longer kills the machine on VirtualBox.** A
   64-bit virtio MMIO field now goes in two 32-bit halves: a single 64-bit access
   is what VirtualBox answers with a guru meditation. [The rule](docs/VIRTIO.md).

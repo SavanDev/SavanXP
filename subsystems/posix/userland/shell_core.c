@@ -4,6 +4,9 @@
 
 #define SHELL_MAX_STAGES 8
 #define SHELL_MAX_ARGS 16
+/* Entra el buffer de linea de los dos frentes: 256 en la consola (sh.c) y 160
+ * en la ventana del escritorio (SHELLAPP_LINE_LENGTH). */
+#define SHELL_MAX_LINE 256
 
 struct shell_command_stage {
     char* argv[SHELL_MAX_ARGS];
@@ -754,11 +757,33 @@ static int shell_execute_capture_external(char* line, const struct shell_capture
 
 int shell_execute_line(char* line, enum shell_execute_mode mode, const struct shell_capture_sink* sink) {
     struct shell_command_stage stages[SHELL_MAX_STAGES];
+    /* El parser tokeniza EN EL LUGAR: parte la linea en palabras escribiendo
+     * '\0' sobre los separadores. El camino de captura le entrega la linea
+     * entera a `/bin/sh -c`, asi que parsear sobre el buffer del que llama le
+     * dejaba al shell hijo solo la primera palabra -- `echo hola` llegaba como
+     * `echo` y `ping 10.0.2.2` contestaba su linea de uso. Se parsea sobre una
+     * copia y el original queda entero para el hijo. */
+    char parsed[SHELL_MAX_LINE];
+    size_t length = 0;
     int stage_count = 0;
     int exit_requested = 0;
     int builtin_result = 0;
 
-    stage_count = shell_parse_pipeline(line, stages, SHELL_MAX_STAGES);
+    if (line == 0) {
+        shell_emit_text(sink, 2, "sh: parse error\n");
+        return SHELL_EXEC_RESULT_ERROR;
+    }
+    while (line[length] != '\0') {
+        if (length + 1 >= sizeof(parsed)) {
+            shell_emit_text(sink, 2, "sh: line too long\n");
+            return SHELL_EXEC_RESULT_ERROR;
+        }
+        parsed[length] = line[length];
+        ++length;
+    }
+    parsed[length] = '\0';
+
+    stage_count = shell_parse_pipeline(parsed, stages, SHELL_MAX_STAGES);
     if (stage_count == 0) {
         return SHELL_EXEC_RESULT_OK;
     }
