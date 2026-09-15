@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "clock-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "calc-smoke", "clock-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -236,6 +236,11 @@ $UserPrograms = @(
     ) },
     @{ Name = "notepad"; Sources = @(
         "subsystems/posix/userland/notepad.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
+    ) },
+    @{ Name = "calc"; Sources = @(
+        "subsystems/posix/userland/calc.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
@@ -1545,6 +1550,14 @@ function Run-TaskmgrSmokeQemu {
     Run-AutomationQemu -AutomationCommand "taskmgr-selftest" -SuccessToken "TASKMGR SMOKE PASS" -FailureToken "TASKMGR SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Motor decimal de la calculadora (subsystems/posix/userland/calc.c), headless.
+# La ventana no se mira: lo que se valida es la aritmetica -- redondeo a 16
+# digitos, division, raiz, porcentaje -- y la maquina de teclas, tecleada con
+# los mismos comandos que produce el teclado real.
+function Run-CalcSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "calc-selftest" -SuccessToken "CALC SMOKE PASS" -FailureToken "CALC SMOKE FAIL" -TimeoutMinutes 3
+}
+
 # El reloj de ticks contra el del TSC, girando y durmiendo. Existe porque el
 # resto de los harnesses mide plazos con el MISMO reloj que estan validando: un
 # sleep de 2 s que tarda 10 pasa todos en verde. Es el unico que mira el reloj
@@ -1886,6 +1899,9 @@ switch ($Command) {
     }
     "taskmgr-smoke" {
         Run-TaskmgrSmokeQemu
+    }
+    "calc-smoke" {
+        Run-CalcSmokeQemu
     }
     "clock-smoke" {
         Run-ClockSmokeQemu

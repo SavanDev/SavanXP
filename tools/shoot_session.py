@@ -212,7 +212,7 @@ class Session(object):
         de cada grupo (docs/SXE_FORMAT.md, "All Programs"), asi que estos
         indices son posiciones en ese orden. Con las categorias de hoy:
 
-            Accessories: Files, Notepad, Shell
+            Accessories: Calculator, Files, Notepad, Shell
             Diagnostics: Gfx Demo, Key Test, Mouse Test, Widgets
             Games:       Doom                     (solo si esta instalado)
             System:      Add/Remove Programs, System Properties, Task Manager
@@ -224,14 +224,17 @@ class Session(object):
         self.qmp.tap("ret")
         time.sleep(25)
 
-    def open_notepad(self):
-        self.launch(1)
-
-    def open_files(self):
+    def open_calc(self):
         self.launch(0)
 
-    def open_shell(self):
+    def open_files(self):
+        self.launch(1)
+
+    def open_notepad(self):
         self.launch(2)
+
+    def open_shell(self):
+        self.launch(3)
 
     def open_appwiz(self):
         # Grupo System: la cuarta solapa cuando Doom esta instalado, que es la
@@ -347,6 +350,30 @@ def scenario_clipboard(s):
     s.qmp.chord("ctrl", "v")
     time.sleep(2.0)
     s.shot("pegado")
+
+
+def scenario_calc(s):
+    """Calculadora: la pantalla alineada a la derecha y el bloque numerico.
+
+    Se teclea por el KEYPAD a proposito. Es el unico camino que no depende del
+    layout activo del guest -- kp_add/kp_multiply/kp_divide dan siempre + * /
+    (kernel/ps2.cpp, translate_keypad) -- y ademas es el que una persona usaria
+    para hacer una cuenta. Los digitos del keypad necesitan NumLock puesto, que
+    arranca apagado.
+    """
+    s.open_calc()
+    s.shot("calc-abierta")
+    s.qmp.tap("num_lock", pause=0.6)
+    for key in ("kp_1", "kp_2", "kp_5"):
+        s.qmp.tap(key, pause=0.3)
+    s.qmp.tap("kp_divide", pause=0.4)
+    s.qmp.tap("kp_8", pause=0.4)
+    s.qmp.tap("kp_enter", pause=1.8)
+    s.shot("calc-division")
+    # Raiz del resultado: el caso que llena la pantalla de decimales y deja ver
+    # que el numero crece hacia la izquierda.
+    s.qmp.tap("q", pause=1.8)
+    s.shot("calc-raiz")
 
 
 def scenario_files(s):
@@ -784,6 +811,7 @@ SCENARIOS = {
     "desktop": scenario_desktop,
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
+    "calc": scenario_calc,
     "files": scenario_files,
     "shell": scenario_shell,
     "appwiz": scenario_appwiz,

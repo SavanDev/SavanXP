@@ -65,6 +65,31 @@ System programs, in C **at this initial stage**:
 > More system programs may be added in C in the future if needed. The list
 > above is this stage's minimum, not a ceiling.
 
+### An in-tree app has no floating point
+
+`Get-UserFlags` (`build.ps1`) compiles the whole in-tree userland with
+`-mno-sse -mno-sse2 -mgeneral-regs-only`. That is not an oversight: without SSE
+there is no floating-point ABI to preserve, so the kernel does not have to save
+and restore FPU/SSE state for these processes. The consequences are concrete —
+a `double` does not compile, and `%f` in `printf`/`snprintf` is behind
+`#if defined(__SSE2__)` in `runtime/posix.c`, so it silently prints nothing.
+
+A program that needs real numbers has two ways out, and they are not
+interchangeable:
+
+- **Integer arithmetic**, for a system app that must stay in the image. The
+  reference case is the calculator (`subsystems/posix/userland/calc.c`): a
+  decimal float of 16 significant digits, mantissa in `int64_t` and exponent of
+  ten, with the intermediates in `__int128`. Decimal because a calculator is
+  read by a person — `0.1 + 0.2` has to be `0.3` — and integer because of the
+  flags above. Note that 128-bit **division** is not free: the compiler resolves
+  it with `__divti3` from compiler-rt, which this system does not link, so
+  `calc.c` does the long division by hand.
+- **An external app built with `-Sse`** (`tools/build-user.ps1 -Sse`), which
+  gets the hardware unit and the libm in `runtime/math.c`. It is the path of
+  `sdk/floatsmoke` and of the ported programs, and it leaves the main build:
+  the binary lives in `/disk/bin`, not in the image's `/bin`.
+
 ## What goes in Haxe (user apps, via the VM)
 
 Everything else, **wherever possible**, is written in Haxe and runs on the VM.

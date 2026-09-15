@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **Calculator (`/bin/calc`), in the Accessories group.** Four operations,
+  `%`, `sqrt`, `1/x`, memory keys, copy/paste and the numeric keypad, over a
+  decimal engine of 16 significant digits written in integers, so `0.1 + 0.2`
+  is `0.3`. New `build.ps1 calc-smoke` and `tools/shoot.ps1 -Scenario calc`.
+  [Why an app in the image has no floating point](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-no-floating-point).
+
 - **`tools/bootstrap.ps1` bakes Python (with Pillow) and provisions Visual
   Studio Build Tools.** An embedded, portable Python goes into `toolchain/`
   like the rest of the toolchain (`-SkipPython` opts out); Build Tools

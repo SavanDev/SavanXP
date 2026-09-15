@@ -171,6 +171,36 @@ def new_notepad_icon_16():
     return bmp
 
 
+def new_calc_icon_16():
+    body = (206, 212, 218, 255)
+    outline = (58, 68, 76, 255)
+    screen = (36, 92, 78, 255)
+    screen_glow = (126, 214, 176, 255)
+    key = (247, 249, 250, 255)
+    key_shadow = (150, 160, 168, 255)
+    accent = (232, 137, 63, 255)
+    bmp = new_canvas(16, 16)
+    draw = ImageDraw.Draw(bmp)
+
+    fill_rect(draw, 2, 1, 12, 14, body)
+    stroke_rect(draw, 2, 1, 12, 14, outline)
+    fill_rect(draw, 4, 3, 8, 3, screen)
+    fill_rect(draw, 5, 4, 5, 1, screen_glow)
+
+    # Tres por tres teclas, con la de abajo a la derecha -- el "=" -- en el
+    # color de acento: es lo que distingue una calculadora de un teclado.
+    for row in range(3):
+        for column in range(3):
+            x = 4 + (column * 3)
+            y = 8 + (row * 2)
+            is_equals = row == 2 and column == 2
+            fill_rect(draw, x, y, 2, 2, accent if is_equals else key)
+            if not is_equals:
+                set_pixel_safe(bmp, x + 1, y + 1, key_shadow)
+
+    return bmp
+
+
 def write_icon_set(base_path, name, factory):
     icon16 = factory()
     icon32 = scale_nearest(icon16, 2)
@@ -199,6 +229,7 @@ def main():
     write_icon_set(asset_root, "app-keyboard-settings.png", new_keyboard_icon_16)
     write_icon_set(asset_root, "app-mouse.png", new_mouse_icon_16)
     write_icon_set(asset_root, "app-notepad.png", new_notepad_icon_16)
+    write_icon_set(asset_root, "app-calc.png", new_calc_icon_16)
 
 
 if __name__ == "__main__":

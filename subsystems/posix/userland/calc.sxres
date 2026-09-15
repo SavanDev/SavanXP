@@ -1,0 +1,11 @@
+# Recursos SXE de la calculadora. Ver docs/SXE_FORMAT.md.
+#
+# Sin mime_open/ext_open: la calculadora no abre archivos, asi que no declara
+# ninguna capacidad para el registro de asociaciones.
+name=Calculator
+description=Standard calculator
+version=system
+vendor=SavanXP
+accent=2f6f5e
+icon=app-calc
+category=Accessories
