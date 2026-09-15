@@ -12,6 +12,7 @@
 #   .\tools\shoot.ps1                       # escenario 'desktop'
 #   .\tools\shoot.ps1 -Scenario clipboard
 #   .\tools\shoot.ps1 -Scenario calc        # calculadora, por el keypad
+#   .\tools\shoot.ps1 -Scenario mines       # buscaminas, por el teclado
 #   .\tools\shoot.ps1 -Scenario wheel       # rueda del mouse, de punta a punta
 #   .\tools\shoot.ps1 -Scenario appwiz     # necesita un programa externo instalado
 #   .\tools\shoot.ps1 -Scenario system     # propiedades del sistema + administrador de tareas
@@ -24,7 +25,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("desktop", "alttab", "clipboard", "calc", "files", "shell", "appwiz", "system", "taskbar", "kbdlayout", "wheel", "notepadwheel", "bench", "saturate", "spin")]
+    [ValidateSet("desktop", "alttab", "clipboard", "calc", "mines", "files", "shell", "appwiz", "system", "taskbar", "kbdlayout", "wheel", "notepadwheel", "bench", "saturate", "spin")]
     [string]$Scenario = "desktop",
 
     [string]$OutDir,
@@ -79,11 +80,11 @@ if (-not (Test-Path $image)) {
     throw "No existe build/image. Corre '.\build.ps1 build' primero."
 }
 
-# El escenario de Agregar o quitar programas navega el launcher por teclado, y
-# la cantidad de solapas depende de que haya instalado: con Doom hay un grupo
-# Games y System es la cuarta, sin Doom es la tercera. En vez de adivinar se
-# exige el estado en el que la captura ademas sirve para algo -- una lista de
-# desinstalables vacia no muestra nada.
+# El escenario de Agregar o quitar programas navega el launcher por teclado. El
+# grupo Games existe siempre desde que el Buscaminas viene en la imagen, asi que
+# System es siempre la cuarta solapa; lo que se sigue exigiendo es un programa
+# EXTERNO instalado, porque es el unico que appwiz lista: una ventana de
+# desinstalacion vacia no muestra nada.
 if ($Scenario -eq "appwiz" -or $Scenario -eq "system") {
     $diskImage = Join-Path $ProjectRoot "build/disk.img"
     $sxfs = Open-SxfsImage $diskImage

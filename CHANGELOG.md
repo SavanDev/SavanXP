@@ -18,6 +18,13 @@ Cut-off notes:
   is `0.3`. New `build.ps1 calc-smoke` and `tools/shoot.ps1 -Scenario calc`.
   [Why an app in the image has no floating point](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-no-floating-point).
 
+- **Minesweeper (`/bin/mines`), in the Games group.** The first game that comes
+  in the image instead of being installed like Doom: three levels, LED counters,
+  the face button, `?` marks, chord with both buttons, keyboard play and best
+  times in `/disk/mines.ini`. New `build.ps1 mines-smoke`, and apps that paint
+  their own content now get the system 3D edges from `sxgui_draw_raised_edge()`.
+  [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
+
 - **`tools/bootstrap.ps1` bakes Python (with Pillow) and provisions Visual
   Studio Build Tools.** An embedded, portable Python goes into `toolchain/`
   like the rest of the toolchain (`-SkipPython` opts out); Build Tools

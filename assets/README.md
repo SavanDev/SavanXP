@@ -84,6 +84,7 @@ The desktop's PNG icons live in `assets/desktop/icons/16x16` and
 - `app-keyboard-settings.png`
 - `app-mouse.png`
 - `app-notepad.png`
+- `app-mines.png`
 
 They are used for two different things, and it is worth not confusing them:
 

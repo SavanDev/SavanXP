@@ -55,6 +55,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "taskmgr")) {
         return "TASKMGR SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "mines")) {
+        return "MINES SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "calc")) {
         return "CALC SMOKE";
     }
@@ -114,6 +117,7 @@ static int run_automation_spec(const char* spec) {
     const char* filesapp_selftest_argv[] = {"/bin/filesapp", "--selftest", 0};
     const char* taskmgr_selftest_argv[] = {"/bin/taskmgr", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
+    const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* clocktest_argv[] = {"/disk/bin/clocktest", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
@@ -157,6 +161,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "taskmgr-selftest") == 0 || strcmp(spec, "taskmgr") == 0) {
             path = "/bin/taskmgr";
             argv = taskmgr_selftest_argv;
+            argc = 2;
+        } else if (strcmp(spec, "mines-selftest") == 0 || strcmp(spec, "mines") == 0) {
+            path = "/bin/mines";
+            argv = mines_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "calc-selftest") == 0 || strcmp(spec, "calc") == 0) {
             path = "/bin/calc";

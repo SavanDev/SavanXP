@@ -1,0 +1,13 @@
+# Recursos SXE del Buscaminas. Ver docs/SXE_FORMAT.md.
+#
+# category=Games es lo UNICO que lo pone en el grupo Juegos del launcher: el
+# catalogo se descubre escaneando los binarios instalados, no hay una tabla que
+# haya que editar aparte. Es el mismo camino por el que entra Doom, con la
+# diferencia de que este viene en la imagen.
+name=Minesweeper
+description=Clear the minefield without stepping on a mine
+version=system
+vendor=SavanXP
+accent=3f6f2f
+icon=app-mines
+category=Games

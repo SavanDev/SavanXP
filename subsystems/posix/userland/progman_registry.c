@@ -73,6 +73,7 @@ static const struct progman_default_item k_default_items[] = {
     {"Main", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "Task Manager", "/bin/taskmgr", "Processes, performance and network", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "System Properties", "/bin/aboutapp", "Version, hardware and installation", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Games", "Minesweeper", "/bin/mines", "Clear the minefield without stepping on a mine", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},

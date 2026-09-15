@@ -214,8 +214,12 @@ class Session(object):
 
             Accessories: Calculator, Files, Notepad, Shell
             Diagnostics: Gfx Demo, Key Test, Mouse Test, Widgets
-            Games:       Doom                     (solo si esta instalado)
+            Games:       Doom (solo si esta instalado), Minesweeper
             System:      Add/Remove Programs, System Properties, Task Manager
+
+        El grupo Games ya no depende de que haya un port externo instalado: el
+        Buscaminas viene en la imagen, asi que la solapa existe siempre y System
+        es SIEMPRE la cuarta.
         """
         for _ in range(groups):
             self.qmp.tap("tab", pause=0.6)
@@ -236,9 +240,18 @@ class Session(object):
     def open_shell(self):
         self.launch(3)
 
+    def open_mines(self):
+        # Grupo Games (tercera solapa), segundo icono. El `right` sirve con Doom
+        # instalado y sin el: progman mueve la seleccion en modulo, asi que en un
+        # grupo de un solo icono vuelve al mismo. Por eso este escenario no
+        # necesita la precondicion de programa externo que piden appwiz y system.
+        self.launch(1, groups=2)
+
     def open_appwiz(self):
-        # Grupo System: la cuarta solapa cuando Doom esta instalado, que es la
-        # precondicion que verifica shoot.ps1 antes de arrancar el escenario.
+        # Grupo System: la cuarta solapa. Games existe siempre desde que el
+        # Buscaminas viene en la imagen; lo que shoot.ps1 sigue exigiendo antes
+        # de este escenario es Doom, pero por otro motivo -- sin un programa
+        # externo instalado la lista de desinstalables sale vacia.
         self.launch(0, groups=3)
 
     def open_system_properties(self):
@@ -374,6 +387,40 @@ def scenario_calc(s):
     # que el numero crece hacia la izquierda.
     s.qmp.tap("q", pause=1.8)
     s.shot("calc-raiz")
+
+
+def scenario_mines(s):
+    """Buscaminas: el tablero en sus tres estados dibujables a voluntad.
+
+    Todo por TECLADO, que es lo que lo vuelve determinista: con el mouse habria
+    que acertarle a una celda de 16 px calculando la posicion de la ventana, y
+    el mismo gesto daria una captura distinta en cada corrida. Las flechas mueven
+    el cursor, Enter descubre y F pone bandera (mines.c, on_key).
+
+    Lo que hay que mirar: los dos contadores de LEDs y la cara en el panel, el
+    bisel levantado de las celdas tapadas contra el hundido del tablero, los
+    colores de los numeros y la bandera roja.
+    """
+    s.open_mines()
+    s.shot("mines-abierto")
+
+    # La primera flecha solo hace aparecer el cursor en (0,0); las siguientes lo
+    # mueven. Se va al centro, que es donde una primera jugada abre una cascada
+    # grande en vez de una sola celda contra el borde.
+    s.qmp.tap("down", pause=0.4)
+    for _ in range(4):
+        s.qmp.tap("right", pause=0.25)
+    for _ in range(4):
+        s.qmp.tap("down", pause=0.25)
+    s.qmp.tap("ret", pause=1.5)
+    s.shot("mines-descubierto")
+
+    # Bandera en una celda tapada del borde: el contador de minas tiene que
+    # bajar de 010 a 009 en la misma captura.
+    for _ in range(4):
+        s.qmp.tap("up", pause=0.25)
+    s.qmp.tap("f", pause=1.2)
+    s.shot("mines-bandera")
 
 
 def scenario_files(s):
@@ -812,6 +859,7 @@ SCENARIOS = {
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
     "calc": scenario_calc,
+    "mines": scenario_mines,
     "files": scenario_files,
     "shell": scenario_shell,
     "appwiz": scenario_appwiz,

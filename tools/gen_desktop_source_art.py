@@ -201,6 +201,35 @@ def new_calc_icon_16():
     return bmp
 
 
+def new_mines_icon_16():
+    """Campo de celdas con una bandera clavada: el icono del Buscaminas.
+
+    La bandera y no una mina a proposito -- una mina negra de 8 px en un icono de
+    16 se lee como una mancha, y ademas el juego se gana marcando, no pisando."""
+    frame = (128, 128, 128, 255)
+    face = (192, 192, 192, 255)
+    light = (255, 255, 255, 255)
+    grid = (128, 128, 128, 255)
+    flag = (200, 0, 0, 255)
+    pole = (32, 32, 32, 255)
+    bmp = new_canvas(16, 16)
+    draw = ImageDraw.Draw(bmp)
+
+    fill_rect(draw, 1, 1, 14, 14, frame)
+    fill_rect(draw, 2, 2, 12, 12, face)
+    fill_rect(draw, 2, 2, 12, 1, light)
+    fill_rect(draw, 2, 2, 1, 12, light)
+    for offset in (6, 10):
+        fill_rect(draw, offset, 2, 1, 12, grid)
+        fill_rect(draw, 2, offset, 12, 1, grid)
+
+    draw.polygon([(8, 3), (4, 5), (8, 7)], fill=flag)
+    fill_rect(draw, 8, 3, 1, 8, pole)
+    fill_rect(draw, 6, 11, 5, 1, pole)
+    fill_rect(draw, 5, 12, 7, 1, pole)
+    return bmp
+
+
 def write_icon_set(base_path, name, factory):
     icon16 = factory()
     icon32 = scale_nearest(icon16, 2)
@@ -229,6 +258,7 @@ def main():
     write_icon_set(asset_root, "app-keyboard-settings.png", new_keyboard_icon_16)
     write_icon_set(asset_root, "app-mouse.png", new_mouse_icon_16)
     write_icon_set(asset_root, "app-notepad.png", new_notepad_icon_16)
+    write_icon_set(asset_root, "app-mines.png", new_mines_icon_16)
     write_icon_set(asset_root, "app-calc.png", new_calc_icon_16)
 
 

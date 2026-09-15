@@ -321,6 +321,19 @@ void sxgui_paint(struct sxgui_context *ctx);
 void sxgui_paint_content(struct sxgui_context *ctx);
 void sxgui_paint_overlay(struct sxgui_context *ctx);
 
+/* ---- chrome para contenido propio ----------------------------------------
+ *
+ * Los dos biseles del esquema 3D, para la app que pinta su propio contenido y
+ * necesita que se vea como el resto del sistema: un tablero de celdas, una
+ * grilla, un visor. Son LOS MISMOS que usan los widgets, no una copia -- que es
+ * lo que evita que una app dibuje un borde de un pixel al lado de un boton de
+ * dos, o que use el gris equivocado de los cuatro del esquema.
+ *
+ * Pintan solo el borde, SXGUI_BORDER_RAISED / SXGUI_BORDER_SUNKEN pixeles de
+ * espesor por lado; el relleno del interior es del llamador. */
+void sxgui_draw_raised_edge(struct sx_painter *painter, struct sx_rect rect);
+void sxgui_draw_sunken_edge(struct sx_painter *painter, struct sx_rect rect);
+
 /* Convenience widget constructors (fill an entry in the caller's array). */
 struct sxgui_widget sxgui_label(struct sx_rect rect, const char *text);
 struct sxgui_widget sxgui_button(struct sx_rect rect, const char *text, void (*on_action)(struct sxgui_widget *, void *), void *user);

@@ -66,6 +66,20 @@ static void sxgui_draw_pressed(struct sx_painter *painter, struct sx_rect rect)
     sxgui_draw_sunken(painter, rect);
 }
 
+/* Los dos anteriores, publicos, para la app que pinta contenido propio y lo
+ * quiere con el chrome del sistema (ver savanxp/sxgui.h). Son envoltorios y no
+ * los internos renombrados a proposito: el resto de este archivo sigue llamando
+ * a las versiones estaticas, que el compilador inlinea. */
+void sxgui_draw_raised_edge(struct sx_painter *painter, struct sx_rect rect)
+{
+    sxgui_draw_raised(painter, rect);
+}
+
+void sxgui_draw_sunken_edge(struct sx_painter *painter, struct sx_rect rect)
+{
+    sxgui_draw_sunken(painter, rect);
+}
+
 /* Bisel de un solo pixel, para lo que no lleva espesor: los paneles de la barra
  * de estado y las cajas que solo separan del fondo. */
 static void sxgui_draw_inset(struct sx_painter *painter, struct sx_rect rect)

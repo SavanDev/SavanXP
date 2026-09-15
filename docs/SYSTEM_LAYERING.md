@@ -115,6 +115,41 @@ them alive duplicated system apps that belong to C in this layering. Likewise,
 **bootstrap** that validated the chain, not the end state: the end state is the
 binding to SXGUI-C.
 
+### Games, and the first one
+
+A game is a **user app** by the rule above, so its natural home is the Haxe
+layer. The first one nevertheless ships in C, and the reason is the stage, not a
+change of mind: **the VM does not exist yet**. Putting a program someone plays on
+top of a bootstrap runtime would make the program hostage to work that is still
+being designed — and the AOT ELFs are validation artifacts, by this document's
+own words.
+
+So **Minesweeper (`/bin/mines`) is written in C against SXGUI-C**, and it is
+deliberately built in the *shape* of a Haxe app rather than of a system program:
+
+- The **rules** live in one module with no window (`mines_board.c`): board
+  generation, first-click safety, cascade, chord, win and loss, and the best
+  times. It is what a port would carry over unchanged, and what
+  `.\build.ps1 mines-smoke` asserts — so the port has a specification, not a
+  screenshot, to be judged against.
+- The **window** is a thin client of the toolkit (`mines.c`): layout, drawing
+  and input, and nothing else. That is the half a Haxe app would rewrite against
+  the FFI.
+
+What this does **not** mean: the game is not part of the platform. Nothing in the
+kernel, `windowd`, `compositord` or the SDK may grow a dependency on it — it is
+an app that consumes the platform, exactly like Doom does, with the single
+difference that it **comes in the image** instead of being installed into
+`/disk/bin`. Being preinstalled is a packaging fact (an entry in `build.ps1` and
+`category=Games` in its `.sxres`), not a layer.
+
+The one thing the game did push into the platform is the gap it found in the
+toolkit: an app that paints its own content — a board of cells, a grid, a canvas
+— needs the **system** 3D edges, not a private copy of them, which is why
+`sxgui_draw_raised_edge()` / `sxgui_draw_sunken_edge()` are public. The rule
+behind it is the one this document already states: SXGUI-C is the canonical
+toolkit, and an app never reimplements a piece of it.
+
 ## Runtime stages (the middle tier)
 
 SavanXP's "CLR/ART" is built in stages; the native ABI is designed **once** and

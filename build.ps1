@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "calc-smoke", "clock-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "mines-smoke", "calc-smoke", "clock-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -236,6 +236,13 @@ $UserPrograms = @(
     ) },
     @{ Name = "notepad"; Sources = @(
         "subsystems/posix/userland/notepad.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui.c",
+        "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
+    ) },
+    # El Buscaminas viene en la imagen: no es un port externo como doomgeneric.
+    @{ Name = "mines"; Sources = @(
+        "subsystems/posix/userland/mines.c",
+        "subsystems/posix/userland/mines_board.c",
         "subsystems/posix/sdk/v1/runtime/sxgui.c",
         "subsystems/posix/sdk/v1/runtime/sxgui_app.c"
     ) },
@@ -1550,6 +1557,15 @@ function Run-TaskmgrSmokeQemu {
     Run-AutomationQemu -AutomationCommand "taskmgr-selftest" -SuccessToken "TASKMGR SMOKE PASS" -FailureToken "TASKMGR SMOKE FAIL" -TimeoutMinutes 3
 }
 
+# Reglas del Buscaminas (subsystems/posix/userland/mines_board.c), headless. Lo
+# que valida no es la ventana sino las invariantes del juego: que el primer
+# descubrimiento nunca pise una mina sobre 200 tableros distintos, que el conteo
+# de vecinos cierre recontandolo a mano, la cascada, el acorde y la ida y vuelta
+# de los records por disco.
+function Run-MinesSmokeQemu {
+    Run-AutomationQemu -AutomationCommand "mines-selftest" -SuccessToken "MINES SMOKE PASS" -FailureToken "MINES SMOKE FAIL" -TimeoutMinutes 3
+}
+
 # Motor decimal de la calculadora (subsystems/posix/userland/calc.c), headless.
 # La ventana no se mira: lo que se valida es la aritmetica -- redondeo a 16
 # digitos, division, raiz, porcentaje -- y la maquina de teclas, tecleada con
@@ -1899,6 +1915,9 @@ switch ($Command) {
     }
     "taskmgr-smoke" {
         Run-TaskmgrSmokeQemu
+    }
+    "mines-smoke" {
+        Run-MinesSmokeQemu
     }
     "calc-smoke" {
         Run-CalcSmokeQemu
