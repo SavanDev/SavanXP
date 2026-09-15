@@ -865,7 +865,15 @@ def scenario_gears(s):
     Tres capturas: girando, pausada y rotada, porque las flechas mueven la
     camara y ahi es donde se ve si la silueta se arma bien desde otro angulo.
     """
-    s.launch(0, groups=1)            # Diagnostics -> Gears
+    # El lanzamiento va desarmado y no por s.launch() para poder sacar una
+    # captura del launcher ANTES de entrar: ahi se ve la entrada del catalogo
+    # con su icono, que es lo unico que prueba que el .sxres llego entero.
+    # Gears es el primero de Diagnostics por orden alfabetico, asi que no hay
+    # flechas de por medio.
+    s.qmp.tap("tab", pause=0.6)      # Main -> Diagnostics
+    s.shot("gears-launcher")
+    s.qmp.tap("ret")
+    time.sleep(25)
     time.sleep(3.0)
     s.shot("gears-girando")
     s.qmp.tap("s")                   # pausa: la captura queda estable

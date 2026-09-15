@@ -10,6 +10,7 @@ Uso:  python tools/gen_desktop_source_art.py [--project-root DIR]
 """
 
 import argparse
+import math
 import os
 
 from PIL import Image, ImageDraw
@@ -230,6 +231,81 @@ def new_mines_icon_16():
     return bmp
 
 
+def blocks_to_pixels(blocks):
+    """Convierte una lista de (x, y, ancho, alto) en el conjunto de pixeles."""
+    pixels = set()
+    for (x, y, width, height) in blocks:
+        for row in range(y, y + height):
+            for column in range(x, x + width):
+                pixels.add((column, row))
+    return pixels
+
+
+def paint_shape(bmp, shape, body, shadow, hole=()):
+    """Pinta una silueta con una sombra de 1 px abajo y a la derecha.
+
+    Sombra y no contorno completo: a 16 px un diente mide dos pixeles, y un
+    contorno que rodea todo se los come enteros -- la pieza deja de leerse como
+    engranaje y pasa a ser una mancha con puas. Por eso se oscurece solo el
+    canto grueso, y un pixel que sobresale -- el que no tiene vecino arriba Y a
+    la izquierda -- se queda con el color del cuerpo.
+    """
+    hole_pixels = set(hole)
+    for (x, y) in shape:
+        if (x, y) in hole_pixels:
+            continue
+        thick = (x - 1, y) in shape and (x, y - 1) in shape
+        lit_edge = (x + 1, y) not in shape or (x, y + 1) not in shape
+        set_pixel_safe(bmp, x, y, shadow if (thick and lit_edge) else body)
+
+
+def new_gears_icon_16():
+    """Un engranaje de ocho dientes: el icono de la demo de rasterizacion 3D.
+
+    UNO y no dos, que era la idea original para no repetir el icono universal de
+    "configuracion". No entra: con el grande ocupando lo que necesita para que
+    se le vean los dientes, al segundo le quedan 4 o 5 px, y ahi deja de leerse
+    como rueda -- probado como disco dentado (sale un rombo) y como nucleo con
+    brazos (sale un signo mas, que se lee "agregar", peor todavia). Un engranaje
+    bien dibujado gana contra dos ilegibles, y la confusion con configuracion es
+    teorica: este set no tiene icono de configuracion, y el item dice "Gears" en
+    el grupo Diagnostics.
+
+    Los dientes van puestos a mano y no por formula. Se intento generarlos con
+    la misma parametrizacion que usa gears.c para la malla (radio de raiz, de
+    punta y cantidad de dientes) y a 16 px no sirve: segun donde cae cada diente
+    en la grilla sale de uno o de dos pixeles, y la silueta queda despareja. Los
+    bloques de aca son simetricos respecto de los dos ejes, que es lo que hace
+    que se lea como una rueda.
+
+    El ambar sale del engranaje rojo de la escena, corrido hasta donde aguanta
+    16 px sobre el gris del launcher y sobre el fondo del escritorio.
+    """
+    body = (226, 152, 56, 255)
+    shadow = (140, 82, 24, 255)
+    bmp = new_canvas(16, 16)
+
+    gear = blocks_to_pixels([
+        # Cuerpo: un octogono de 8 px, centrado en (7.5, 7).
+        (6, 4, 4, 1),
+        (5, 5, 6, 1),
+        (4, 6, 8, 3),
+        (5, 9, 6, 1),
+        (6, 10, 4, 1),
+        # Dientes: cuatro rectos de 3 px y cuatro en diagonal de 2x2.
+        (6, 1, 4, 3),
+        (6, 11, 4, 3),
+        (1, 6, 3, 3),
+        (12, 6, 3, 3),
+        (4, 3, 2, 2),
+        (10, 3, 2, 2),
+        (4, 10, 2, 2),
+        (10, 10, 2, 2),
+    ])
+    paint_shape(bmp, gear, body, shadow, hole=blocks_to_pixels([(7, 6, 2, 3)]))
+    return bmp
+
+
 def write_icon_set(base_path, name, factory):
     icon16 = factory()
     icon32 = scale_nearest(icon16, 2)
@@ -260,6 +336,7 @@ def main():
     write_icon_set(asset_root, "app-notepad.png", new_notepad_icon_16)
     write_icon_set(asset_root, "app-mines.png", new_mines_icon_16)
     write_icon_set(asset_root, "app-calc.png", new_calc_icon_16)
+    write_icon_set(asset_root, "app-gears.png", new_gears_icon_16)
 
 
 if __name__ == "__main__":
