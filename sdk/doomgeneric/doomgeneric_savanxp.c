@@ -14,8 +14,7 @@ static struct savanxp_gfx_context g_gfx = {
     .fb_fd = -1,
     .input_fd = -1,
     .submit_event_fd = -1,
-    .retire_event_fd = -1,
-    .shutdown_event_fd = -1,
+    .wake_event_fd = -1,
 };
 static uint32_t *g_present_buffer = 0;
 static uint32_t *g_previous_frame = 0;

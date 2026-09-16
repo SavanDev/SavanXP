@@ -587,7 +587,7 @@ struct windowd_layer
 
 /* Un cliente se compone recien cuando publico su PRIMER frame. Antes de eso su
  * superficie esta en blanco y su geometria todavia puede cambiar -- una app
- * pide el tamano de su contenido durante el arranque (size hint, fd 11) --, asi
+ * pide el tamano de su contenido durante el arranque (size hint, en el header) --, asi
  * que dibujarla antes muestra por unos milisegundos una ventana vacia del
  * tamano generico que enseguida encoge. Mientras tanto el usuario igual tiene
  * feedback: any_overlay_client_starting() pone el cursor en WAIT. */

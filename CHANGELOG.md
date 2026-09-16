@@ -243,6 +243,13 @@ Cut-off notes:
 
 ### Changed
 
+- **WM↔client protocol v4: the session opens all 12 windows.** Each costs
+  `windowd` two descriptors instead of nine: one event pipe (`SAVANXP_WM_FD_EVENTS`),
+  a wake event, one submit event per session, and hints and launches in the surface
+  header (`gfx_should_close` is new). Apps no longer inherit `windowd`'s descriptors.
+  **Breaks the client ABI:** rebuild external apps such as `doomgeneric`.
+  [Descriptor budget](docs/WM_SUBSYSTEM.md#descriptor-budget).
+
 - **The automated smokes honour `-Accel`.** `build.ps1 smoke -Accel whpx` (or
   `kvm`) runs the suite on the hypervisor instead of TCG; the default is still
   `tcg`.

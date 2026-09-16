@@ -3,80 +3,67 @@
 #include "savanxp/syscall.h"
 
 /*
- * Protocolo WM <-> cliente (A3, ver docs/WM_SUBSYSTEM.md).
+ * Protocolo WM <-> cliente, version 4 (ver docs/WM_SUBSYSTEM.md).
  *
- * Contrato entre el window manager (windowd, hoy subsystems/posix/userland/
- * desktop.c) y cada proceso cliente que tiene una ventana. El WM lo establece
- * al lanzar el cliente: hace fork y remapea con dup2 los extremos de sus pipes
- * y secciones sobre los descriptores fijos de abajo, antes del exec. El cliente
- * los encuentra ya abiertos al arrancar; no los abre ni los negocia.
+ * Contrato entre el window manager (windowd, subsystems/posix/userland/
+ * windowd.c) y cada proceso cliente que tiene una ventana. El WM lo establece
+ * al lanzar el cliente: hace fork, remapea con dup2 sus canales sobre los
+ * descriptores fijos de abajo y cierra todo lo demas antes del exec. El
+ * cliente los encuentra ya abiertos al arrancar; no los abre ni los negocia.
  *
- * Este header existe porque el contrato estaba implicito y ya habia empezado a
- * divergir: la mitad-servidor usaba numeros crudos en dup2, la mitad-cliente
- * posix otros numeros crudos en dup/map_view, y el SDK nativo mantenia su
- * propia copia de constantes (SXN_GUI_FD_*) sincronizada a mano leyendo
- * desktop.c -- copia que ya quedo corta, sin el fd de cursor hint. Las tres
- * partes deben referirse a estos nombres.
+ * Por que tiene esta forma: el WM paga cada canal con un descriptor POR
+ * VENTANA contra el limite de 64 por proceso (process::kMaxFileHandles), y
+ * cada pipe contra los 64 pipes del sistema entero. La v3 le costaba nueve
+ * descriptores y cinco pipes a cada ventana y no llegaba ni a la mitad de las
+ * WINDOWD_MAX_OVERLAY_CLIENTS que declara. La v4 le cuesta DOS descriptores
+ * (el pipe de eventos y el evento de wake) y un pipe: la seccion se cierra en
+ * el WM despues del fork, el evento de submit es uno solo para toda la sesion,
+ * y lo que iba por pipes cliente -> WM viaja en el header de la superficie.
+ *
+ * Un cliente de la v3 falla en gfx_open (la version del header no coincide)
+ * en vez de hablar un protocolo que el WM ya no entiende.
  *
  * Las estructuras que viajan por estos canales (savanxp_gpu_client_surface_
- * header, savanxp_gpu_dirty_rect_batch, savanxp_input_event,
- * savanxp_gui_pointer_event, savanxp_desktop_launch_request,
- * savanxp_desktop_cursor_hint, savanxp_desktop_size_hint) estan en syscall.h.
+ * header, savanxp_wm_client_requests, savanxp_gpu_dirty_rect_batch,
+ * savanxp_wm_event, savanxp_desktop_launch_request) estan en syscall.h.
  *
  * NOTA sobre el subsistema nativo: por diseno no comparte los headers del SDK
  * posix (ver docs/SYSTEM_LAYERING.md), asi que mantiene su espejo en
  * savanxp_native_gui.h. Este header es la fuente canonica: cualquier cambio
- * acá tiene que replicarse allá, y los valores deben coincidir.
+ * aca tiene que replicarse alla, y los valores deben coincidir.
  */
 
 /* Seccion compartida de la superficie: header + anillo de dirty-rect batches +
  * pixeles. El cliente la mapea RW. El WM la crea y la dimensiona; el cliente
- * NO elige su tamano (se entera por el header, y por eventos RESIZED); puede
- * sugerirlo al arrancar por SAVANXP_WM_FD_SIZE_HINT, pero decide el WM. */
+ * NO elige su tamano (se entera por el header). En el header tambien van sus
+ * pedidos al WM (savanxp_wm_client_requests) y el pedido de cierre del WM
+ * (SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN). */
 #define SAVANXP_WM_FD_SECTION 3
 
-/* Teclado: el WM escribe savanxp_input_event al cliente con foco. Tambien
- * llegan por aca los eventos RESIZED sinteticos. Solo-lectura para el cliente. */
-#define SAVANXP_WM_FD_INPUT 4
-
-/* Puntero: el WM escribe savanxp_gui_pointer_event en coordenadas LOCALES a la
- * superficie del cliente, no de pantalla. Solo-lectura para el cliente.
+/* Eventos: el WM escribe registros savanxp_wm_event -- teclado del cliente con
+ * foco y puntero en coordenadas LOCALES a la superficie. Solo-lectura para el
+ * cliente, que lee de a registros enteros. El resize no viaja aca: el cliente
+ * lo sintetiza al ver cambiar el ancho o el alto del header.
  *
- * Un cliente que no drene este canal no bloquea al WM: los extremos de
- * escritura son no-bloqueantes y el WM descarta el evento si el pipe esta
- * lleno. Los eventos llevan posicion absoluta, asi que perder uno es
- * inofensivo. Vale para cualquier canal WM->cliente que se agregue. */
-#define SAVANXP_WM_FD_MOUSE 5
+ * Un cliente que no drene este canal no bloquea al WM: el extremo de escritura
+ * es no-bloqueante y el WM descarta el evento si el pipe esta lleno. Como
+ * teclado y puntero comparten el pipe, el runtime drena los dos tipos aunque la
+ * app solo pida uno, y guarda el otro para despues. */
+#define SAVANXP_WM_FD_EVENTS 4
 
-/* Evento submit: el CLIENTE lo señaliza tras publicar un batch de frame, para
- * despertar al WM sin esperar su timeout. */
+/* Evento wake (manual reset): el WM lo senala cuando avanza composed_sequence
+ * o retired_sequence, y cuando prende el pedido de cierre en el header. Quien
+ * espera tiene que resetearlo, volver a mirar el header y recien ahi esperar:
+ * es un solo evento para varias condiciones. */
+#define SAVANXP_WM_FD_WAKE_EVENT 5
+
+/* Evento submit (manual reset): el CLIENTE lo senala despues de publicar un
+ * batch de frame o un pedido en el header, para despertar al WM sin esperar
+ * su timeout. Es el MISMO objeto para todos los clientes de la sesion: el WM
+ * lo resetea antes de revisarlos a todos, asi que un cliente no puede hacerle
+ * perder un submit a otro por mas de un timeout del loop. */
 #define SAVANXP_WM_FD_SUBMIT_EVENT 6
 
-/* Evento retire: el WM lo señaliza cuando los frames del cliente ya se
- * presentaron y sus slots de batch quedan libres. */
-#define SAVANXP_WM_FD_RETIRE_EVENT 7
-
-/* Evento shutdown: el WM lo señaliza para pedirle al cliente que termine. */
-#define SAVANXP_WM_FD_SHUTDOWN_EVENT 8
-
-/* Launch: el cliente escribe savanxp_desktop_launch_request para pedirle al WM
- * que lance otro programa. El que pide declara los flags de lanzamiento
- * (SAVANXP_DESKTOP_LAUNCH_FLAG_*): el WM no conoce ningun catalogo de apps. */
-#define SAVANXP_WM_FD_LAUNCH 9
-
-/* Cursor hint: el cliente escribe savanxp_desktop_cursor_hint para pedir una
- * forma de cursor sobre su ventana. El WM decide si la muestra. */
-#define SAVANXP_WM_FD_CURSOR_HINT 10
-
-/* Size hint: el cliente escribe savanxp_desktop_size_hint para pedir el tamano
- * de area util que necesita su contenido. El WM sigue siendo el que dimensiona
- * la superficie -- recorta el pedido y lo ignora si la ventana ya salio de su
- * geometria de lanzamiento --, pero el tamano natural de una ventana lo sabe
- * el programa, que es quien conoce su layout. */
-#define SAVANXP_WM_FD_SIZE_HINT 11
-
-/* Rango reservado: descriptores 0..2 son stdio y 3..11 este protocolo. Al
- * preparar el hijo, el WM no debe cerrar por numero un fd de origen que caiga
- * dentro del rango -- puede ser el destino recien mapeado de otro dup2. */
+/* Rango reservado: descriptores 0..2 son stdio y 3..6 este protocolo. */
 #define SAVANXP_WM_FD_FIRST SAVANXP_WM_FD_SECTION
-#define SAVANXP_WM_FD_LAST SAVANXP_WM_FD_SIZE_HINT
+#define SAVANXP_WM_FD_LAST SAVANXP_WM_FD_SUBMIT_EVENT

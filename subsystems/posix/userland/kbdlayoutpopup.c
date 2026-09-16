@@ -142,7 +142,7 @@ int main(void)
             }
         }
 
-        while (gfx_poll_pointer(SAVANXP_WM_FD_MOUSE, &pointer) > 0)
+        while (gfx_poll_pointer(SAVANXP_WM_FD_EVENTS, &pointer) > 0)
         {
             uint32_t down = pointer.buttons & ~last_buttons;
             uint32_t up = last_buttons & ~pointer.buttons;

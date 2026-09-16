@@ -403,10 +403,10 @@ enum savanxp_power_ioctl {
 
 /* Portapapeles del sistema, expuesto como `/dev/clipboard`.
  *
- * Vive en el kernel y no en el window manager por una razon concreta: windowd
- * guarda NUEVE descriptores por cliente contra un limite de 64 por proceso
- * (process::kMaxFileHandles), asi que un par de canales mas por cliente le
- * bajaria el techo de ventanas simultaneas. Como device node el cliente lo
+ * Vive en el kernel y no en el window manager por una razon concreta: cada
+ * canal del WM se paga con descriptores POR CLIENTE contra un limite de 64 por
+ * proceso (process::kMaxFileHandles), asi que un par de canales mas por cliente
+ * le bajaria el techo de ventanas simultaneas. Como device node el cliente lo
  * abre cuando copia o pega y lo cierra enseguida, no cuesta un fd permanente,
  * y ademas lo pueden usar procesos sin ventana.
  *
@@ -715,6 +715,10 @@ struct savanxp_gpu_stats {
 #define SAVANXP_GPU_CLIENT_SURFACE_VERSION_1 1u
 #define SAVANXP_GPU_CLIENT_SURFACE_VERSION_2 2u
 #define SAVANXP_GPU_CLIENT_SURFACE_VERSION_3 3u
+/* v4: los pedidos del cliente al WM (cursor, size hint, launch) y el pedido de
+ * cierre viajan en el header en vez de por descriptores propios. Ver
+ * savanxp/wm_protocol.h. */
+#define SAVANXP_GPU_CLIENT_SURFACE_VERSION_4 4u
 #define SAVANXP_GPU_CLIENT_BATCH_CAPACITY 8u
 #define SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS 32u
 
@@ -723,23 +727,6 @@ struct savanxp_gpu_dirty_rect_batch {
     uint32_t rect_count;
     uint32_t flags;
     struct savanxp_gpu_dirty_rect rects[SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS];
-};
-
-struct savanxp_gpu_client_surface_header {
-    uint32_t magic;
-    uint32_t pixels_offset;
-    struct savanxp_fb_info info;
-    uint32_t version;
-    uint32_t flags;
-    uint32_t pixel_format;
-    uint32_t reserved0;
-    uint32_t command_offset;
-    uint32_t batch_capacity;
-    uint32_t rect_capacity;
-    uint32_t reserved1;
-    uint64_t submit_sequence;
-    uint64_t retired_sequence;
-    uint64_t composed_sequence;
 };
 
 enum savanxp_audio_backend {
@@ -795,7 +782,7 @@ enum savanxp_input_event_type {
  * nada y deja un margen vacio alrededor del contenido.
  *
  * NO congela el tamano: lo que prohibe es que lo cambie el USUARIO. El programa
- * sigue pidiendo el suyo por SAVANXP_WM_FD_SIZE_HINT, y en una ventana fija el
+ * sigue pidiendo el suyo con gfx_request_content_size, y en una ventana fija el
  * WM le hace caso TODAS las veces y no solo la primera -- la razon por la que
  * el size hint es de una sola vez es no pelearle la geometria al usuario, y
  * aca el usuario no tiene ninguna que defender. Es lo que permite que el
@@ -815,19 +802,64 @@ struct savanxp_desktop_launch_request {
     char argument[SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY];
 };
 
-struct savanxp_desktop_cursor_hint {
-    uint32_t shape; /* enum savanxp_cursor_shape */
+/* Pedido de cierre del WM al cliente (bit de savanxp_gpu_client_surface_header
+ * .flags). El WM lo prende y despues senala el evento de wake. */
+#define SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN 0x00000001u
+
+/* Launches pendientes que entran en el header a la vez. Un click produce uno;
+ * si la cola esta llena el cliente espera a que el WM la drene. */
+#define SAVANXP_WM_LAUNCH_QUEUE_CAPACITY 4u
+
+/*
+ * Pedidos del cliente al WM, dentro del header de superficie (v4). Antes eran
+ * tres pipes por ventana; como seccion no cuestan ningun descriptor en el WM.
+ * El cliente escribe y despues senala el evento de submit, el mismo que usa
+ * para los frames. El WM trata todo esto como memoria hostil: copia, valida y
+ * recien ahi usa.
+ *
+ * cursor_shape: la ultima forma pedida (enum savanxp_cursor_shape). Es estado,
+ * no cola: 0 es la flecha, que es tambien "sin pedido".
+ *
+ * size_hint_*: el tamano de area util (el "contenido") que el programa pide
+ * para su ventana. Es una SUGERENCIA: el WM la recorta a la capacidad de la
+ * superficie y la ignora una vez que la ventana dejo de estar en la geometria
+ * de lanzamiento (maximizada, fullscreen o redimensionada a mano), porque a
+ * partir de ahi manda el usuario. Existe porque el tamano natural de una
+ * ventana lo sabe el programa -- es su layout --, no el WM. Seqlock: el cliente
+ * pone size_hint_sequence en impar, escribe ancho y alto y lo vuelve a par; el
+ * WM atiende cada valor par nuevo una vez, y si vale el ultimo.
+ *
+ * launch: cola circular de un productor y un consumidor. El cliente escribe la
+ * entrada launch[launch_head % CAPACITY] y DESPUES incrementa launch_head; el
+ * WM consume hasta launch_head e incrementa launch_tail. Los dos contadores
+ * solo crecen, asi que llena es head - tail == CAPACITY.
+ */
+struct savanxp_wm_client_requests {
+    uint32_t cursor_shape;
+    uint32_t size_hint_width;
+    uint32_t size_hint_height;
+    uint32_t size_hint_sequence;
+    uint32_t launch_head; /* lo escribe solo el cliente */
+    uint32_t launch_tail; /* lo escribe solo el WM */
+    struct savanxp_desktop_launch_request launch[SAVANXP_WM_LAUNCH_QUEUE_CAPACITY];
 };
 
-/* Tamano de area util (el "contenido") que el programa pide para su ventana.
- * Es una SUGERENCIA: el WM la recorta a la capacidad de la superficie y la
- * ignora una vez que la ventana dejo de estar en la geometria de lanzamiento
- * (maximizada, fullscreen o redimensionada a mano), porque a partir de ahi
- * manda el usuario. Existe porque el tamano natural de una ventana lo sabe el
- * programa -- es su layout --, no el WM. */
-struct savanxp_desktop_size_hint {
-    uint32_t width;
-    uint32_t height;
+struct savanxp_gpu_client_surface_header {
+    uint32_t magic;
+    uint32_t pixels_offset;
+    struct savanxp_fb_info info;
+    uint32_t version;
+    uint32_t flags; /* SAVANXP_GPU_CLIENT_SURFACE_FLAG_*, los escribe el WM */
+    uint32_t pixel_format;
+    uint32_t reserved0;
+    uint32_t command_offset;
+    uint32_t batch_capacity;
+    uint32_t rect_capacity;
+    uint32_t reserved1;
+    uint64_t submit_sequence;
+    uint64_t retired_sequence;
+    uint64_t composed_sequence;
+    struct savanxp_wm_client_requests requests;
 };
 
 enum savanxp_mouse_button {
@@ -920,15 +952,35 @@ struct savanxp_mouse_event {
 };
 
 /* Pointer event delivered by the compositor to a windowed client over its
- * routed mouse channel (client fd 5). x,y are relative to the top-left of the
+ * event channel (SAVANXP_WM_FD_EVENTS). x,y are relative to the top-left of the
  * client's own surface (already accounting for window frame and position), so
  * apps can hit-test in their local coordinate space and stay aligned with the
- * system cursor the compositor draws. Same wire size as savanxp_mouse_event. */
+ * system cursor the compositor draws. Same size as savanxp_mouse_event. */
 struct savanxp_gui_pointer_event {
     int32_t x;
     int32_t y;
     int32_t wheel; /* mismo significado y signo que savanxp_mouse_event.wheel */
     uint32_t buttons;
+};
+
+enum savanxp_wm_event_kind {
+    SAVANXP_WM_EVENT_KEY = 1,
+    SAVANXP_WM_EVENT_POINTER = 2,
+};
+
+/* Registro del canal de eventos WM -> cliente (savanxp/wm_protocol.h). Teclado
+ * y puntero comparten el pipe, asi que cada registro dice que trae. Mide 32
+ * bytes a proposito: el pipe del kernel tiene 8 KiB, un multiplo exacto, y
+ * mientras todas las escrituras y lecturas sean de registros enteros el
+ * espacio libre tambien lo es -- una escritura nunca queda por la mitad. */
+struct savanxp_wm_event {
+    uint32_t kind; /* enum savanxp_wm_event_kind */
+    uint32_t reserved;
+    union {
+        struct savanxp_input_event key;
+        struct savanxp_gui_pointer_event pointer;
+        uint8_t bytes[24];
+    } payload;
 };
 
 struct savanxp_net_info {

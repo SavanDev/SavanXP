@@ -5,8 +5,8 @@
  * compone el frame inicial y valida el render sxgui (boton levantado + lampara
  * apagada), luego envia un press del puntero sobre "Aceptar" (verifica que el
  * boton se hunde), un release (verifica que se enciende la lampara verde y el
- * boton vuelve a levantarse), y por ultimo senala shutdown y comprueba que el
- * cliente salga limpio. Imprime SXGUI HOST PASS/FAIL.
+ * boton vuelve a levantarse), y por ultimo pide el cierre (flag del header +
+ * wake) y comprueba que el cliente salga limpio. Imprime SXGUI HOST PASS/FAIL.
  *
  * Las coordenadas replican el layout FIJO de haxe-sxgui/Main.hx.
  */
@@ -41,7 +41,7 @@ static struct savanxp_gpu_client_surface_header *g_header;
 static struct savanxp_gpu_dirty_rect_batch *g_batches;
 static uint32_t *g_pixels;
 static int g_submit_event;
-static int g_retire_event;
+static int g_wake_event;
 
 /* Espera y compone el proximo frame sometido (avanza composed y senala retire).
  * Devuelve 0 al componer al menos uno, -1 en batch inconsistente, -2 timeout. */
@@ -58,7 +58,7 @@ static int compose_next_frame(void) {
                 }
                 g_header->retired_sequence = sequence;
                 g_header->composed_sequence = sequence;
-                (void)event_set(g_retire_event);
+                (void)event_set(g_wake_event);
             }
             return 0;
         }
@@ -73,12 +73,14 @@ static uint32_t pixel_at(unsigned int x, unsigned int y) {
 }
 
 static int send_pointer(int fd, int x, int y, uint32_t buttons) {
-    struct savanxp_gui_pointer_event event;
-    event.x = x;
-    event.y = y;
-    event.wheel = 0;
-    event.buttons = buttons;
-    return savanxp_write(fd, &event, sizeof(event)) == (long)sizeof(event) ? 0 : -1;
+    struct savanxp_wm_event record;
+    memset(&record, 0, sizeof(record));
+    record.kind = SAVANXP_WM_EVENT_POINTER;
+    record.payload.pointer.x = x;
+    record.payload.pointer.y = y;
+    record.payload.pointer.wheel = 0;
+    record.payload.pointer.buttons = buttons;
+    return savanxp_write(fd, &record, sizeof(record)) == (long)sizeof(record) ? 0 : -1;
 }
 
 int main(void) {
@@ -87,18 +89,15 @@ int main(void) {
     unsigned long pixels_offset;
     unsigned long buffer_size;
     long section_fd;
-    int input_pipe[2] = {-1, -1};
-    int mouse_pipe[2] = {-1, -1};
-    int launch_pipe[2] = {-1, -1};
+    int events_pipe[2] = {-1, -1};
     int submit_event;
-    int retire_event;
-    int shutdown_event;
+    int wake_event;
     long pid;
     int status = -1;
-    int guard_fds[7];
+    int guard_fds[4];
     int guard_index;
 
-    for (guard_index = 0; guard_index < 7; ++guard_index) {
+    for (guard_index = 0; guard_index < 4; ++guard_index) {
         guard_fds[guard_index] = savanxp_dup(0);
         if (guard_fds[guard_index] < 0) {
             return fail("no se pudieron reservar los fds guardia");
@@ -128,7 +127,7 @@ int main(void) {
     g_header->info.pitch = SXGUI_WIDTH * 4u;
     g_header->info.bpp = 32;
     g_header->info.buffer_size = (uint32_t)buffer_size;
-    g_header->version = SAVANXP_GPU_CLIENT_SURFACE_VERSION_3;
+    g_header->version = SAVANXP_GPU_CLIENT_SURFACE_VERSION_4;
     g_header->pixel_format = SAVANXP_GPU_SURFACE_FORMAT_BGRX8888;
     g_header->batch_capacity = SAVANXP_GPU_CLIENT_BATCH_CAPACITY;
     g_header->rect_capacity = SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS;
@@ -137,14 +136,12 @@ int main(void) {
     memset(g_pixels, 0, buffer_size);
 
     submit_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    if (submit_event < 0 || retire_event < 0 || shutdown_event < 0 ||
-        savanxp_pipe(input_pipe) < 0 || savanxp_pipe(mouse_pipe) < 0 || savanxp_pipe(launch_pipe) < 0) {
+    wake_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
+    if (submit_event < 0 || wake_event < 0 || savanxp_pipe(events_pipe) < 0) {
         return fail("no se pudieron crear eventos/pipes");
     }
     g_submit_event = submit_event;
-    g_retire_event = retire_event;
+    g_wake_event = wake_event;
 
     pid = savanxp_fork();
     if (pid < 0) {
@@ -152,13 +149,10 @@ int main(void) {
     }
     if (pid == 0) {
         const char *argv[2] = {SXGUI_CLIENT_PATH, 0};
-        if (savanxp_dup2((int)section_fd, 3) < 0 ||
-            savanxp_dup2(input_pipe[0], 4) < 0 ||
-            savanxp_dup2(mouse_pipe[0], 5) < 0 ||
-            savanxp_dup2(submit_event, 6) < 0 ||
-            savanxp_dup2(retire_event, 7) < 0 ||
-            savanxp_dup2(shutdown_event, 8) < 0 ||
-            savanxp_dup2(launch_pipe[1], 9) < 0) {
+        if (savanxp_dup2((int)section_fd, SAVANXP_WM_FD_SECTION) < 0 ||
+            savanxp_dup2(events_pipe[0], SAVANXP_WM_FD_EVENTS) < 0 ||
+            savanxp_dup2(wake_event, SAVANXP_WM_FD_WAKE_EVENT) < 0 ||
+            savanxp_dup2(submit_event, SAVANXP_WM_FD_SUBMIT_EVENT) < 0) {
             exit(1);
         }
         (void)exec(SXGUI_CLIENT_PATH, argv, 1);
@@ -166,7 +160,7 @@ int main(void) {
         exit(1);
     }
 
-    for (guard_index = 0; guard_index < 7; ++guard_index) {
+    for (guard_index = 0; guard_index < 4; ++guard_index) {
         (void)savanxp_close(guard_fds[guard_index]);
     }
 
@@ -183,7 +177,7 @@ int main(void) {
     }
 
     /* 2) Press sobre "Aceptar": el boton debe hundirse (borde superior SHADOW). */
-    if (send_pointer(mouse_pipe[1], SXGUI_ACEPTAR_CX, SXGUI_ACEPTAR_CY, SAVANXP_MOUSE_BUTTON_LEFT) != 0) {
+    if (send_pointer(events_pipe[1], SXGUI_ACEPTAR_CX, SXGUI_ACEPTAR_CY, SAVANXP_MOUSE_BUTTON_LEFT) != 0) {
         return fail("no se pudo enviar el press");
     }
     if (compose_next_frame() != 0) {
@@ -194,7 +188,7 @@ int main(void) {
     }
 
     /* 3) Release sobre "Aceptar": click -> lampara verde + boton levantado. */
-    if (send_pointer(mouse_pipe[1], SXGUI_ACEPTAR_CX, SXGUI_ACEPTAR_CY, 0u) != 0) {
+    if (send_pointer(events_pipe[1], SXGUI_ACEPTAR_CX, SXGUI_ACEPTAR_CY, 0u) != 0) {
         return fail("no se pudo enviar el release");
     }
     if (compose_next_frame() != 0) {
@@ -207,8 +201,9 @@ int main(void) {
         return fail("el boton no volvio a levantarse tras el release");
     }
 
-    /* 4) Shutdown y salida limpia. */
-    (void)event_set(shutdown_event);
+    /* 4) Pedido de cierre y salida limpia: flag primero, wake despues. */
+    g_header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+    (void)event_set(wake_event);
     if (savanxp_waitpid((int)pid, &status) != pid) {
         return fail("waitpid fallo");
     }

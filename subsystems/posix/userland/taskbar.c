@@ -278,16 +278,11 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
 }
 
 /* Pide a windowd que abra el popup de layout, anclado arriba de la franja
- * (SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP). path/argument los ignora windowd
- * para este pedido -- el binario es fijo -- pero el struct exige llenarlos. */
-static void taskbar_open_layout_popup(void)
+ * (SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP). El path lo ignora windowd para
+ * este pedido -- el binario es fijo -- pero el pedido exige uno absoluto. */
+static void taskbar_open_layout_popup(const struct savanxp_gfx_context *gfx)
 {
-    struct savanxp_desktop_launch_request request;
-
-    memset(&request, 0, sizeof(request));
-    request.flags = SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP;
-    memcpy(request.path, "/bin/kbdlayoutpopup", sizeof("/bin/kbdlayoutpopup"));
-    (void)savanxp_write(SAVANXP_WM_FD_LAUNCH, &request, sizeof(request));
+    (void)gfx_desktop_launch_ex(gfx, "/bin/kbdlayoutpopup", SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP);
 }
 
 static void taskbar_request(uint32_t action, uint32_t window_id)
@@ -352,7 +347,7 @@ int main(void)
             }
         }
 
-        while (gfx_poll_pointer(SAVANXP_WM_FD_MOUSE, &pointer) > 0)
+        while (gfx_poll_pointer(SAVANXP_WM_FD_EVENTS, &pointer) > 0)
         {
             uint32_t down = pointer.buttons & ~last_buttons;
             uint32_t up = last_buttons & ~pointer.buttons;
@@ -367,7 +362,7 @@ int main(void)
             {
                 if (index == TASKBAR_HIT_LAYOUT && index == g_pressed_index)
                 {
-                    taskbar_open_layout_popup();
+                    taskbar_open_layout_popup(&gfx);
                 }
                 else if (index >= 0 && index == g_pressed_index &&
                     index < (int)g_snapshot.count)

@@ -1424,8 +1424,8 @@ function Run-SmokeQemu {
 # Harness headless del protocolo cliente del compositor (subsystems/native):
 # construye e instala la app ventaneada nativa (nativegui) y el host que
 # interpreta el rol del compositor (nativeguihost), luego arranca init con el
-# spec "guihost". Valida secuencias/rects/pixeles, el input de teclado y el
-# canal de mouse (fd 5) de punta a punta. Ver subsystems/native/test/guihost.c.
+# spec "guihost". Valida secuencias/rects/pixeles y el canal de eventos
+# (teclado y puntero mezclados) de punta a punta. Ver subsystems/native/test/guihost.c.
 function Run-NativeGuihostQemu {
     $nativeBuild = Join-Path $ProjectRoot "subsystems/native/build.ps1"
     $userBuild = Join-Path $ToolRoot "build-user.ps1"

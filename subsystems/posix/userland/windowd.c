@@ -55,37 +55,45 @@ static void close_fd_if_needed(int *fd)
     }
 }
 
-/*
- * El hijo remapea con dup2 los handles heredados sobre los descriptores
- * reservados del protocolo (savanxp/wm_protocol.h) antes del exec. Un
- * descriptor de ORIGEN puede caer el mismo dentro de esa ventana reservada
- * (p.ej. la seccion abierta en el fd 8 mientras el evento de shutdown se
- * dup2'ea sobre el 8), asi que cerrarlo por su numero viejo destruiria el
- * destino recien mapeado. Solo se liberan los origenes por encima de la
- * ventana; 0..2 son stdio y el resto son destinos vivos.
- *
- * El tope sale del protocolo, no de una constante propia: estaba clavado en 9
- * y se quedo corto cuando el cursor hint sumo el fd 10, dejando ese destino
- * expuesto a que lo cerraran por numero.
- */
-/* Cubre TAMBIEN los fds opcionales del rol de shell: son destinos de dup2 en
- * el hijo, y cerrar uno por numero libera el hueco para que se lo lleve el
- * primer open o dup que venga despues -- que fue exactamente lo que paso
- * cuando la barra de tareas terminaba leyendo la seccion de su superficie
- * en vez de la lista de ventanas. */
-#define WINDOWD_CLIENT_RESERVED_FD_MAX SAVANXP_WM_SHELL_FD_LAST
+/* Tamano de la tabla de descriptores de un proceso (process::kMaxFileHandles). */
+#define WINDOWD_PROCESS_FD_LIMIT 64
 
-static void close_client_setup_fd(int *fd)
+/*
+ * El hijo remapea con dup2 sus canales sobre los descriptores del protocolo
+ * (savanxp/wm_protocol.h) antes del exec. Un descriptor de ORIGEN puede caer
+ * dentro de esa ventana y quedar pisado por un dup2 anterior, asi que primero
+ * se lo muda por encima del ultimo destino. dup() da el menor libre, de ahi el
+ * reintento.
+ */
+static int child_relocate_above(int fd, int last_target)
 {
-    if (fd == 0)
+    while (fd >= 0 && fd <= last_target)
     {
-        return;
+        long moved = savanxp_dup(fd);
+        if (moved < 0)
+        {
+            return -1;
+        }
+        fd = (int)moved;
     }
-    if (*fd > WINDOWD_CLIENT_RESERVED_FD_MAX)
+    return fd;
+}
+
+/*
+ * Despues de los dup2, el hijo cierra TODO lo que heredo por encima del
+ * protocolo. fork copia la tabla entera de windowd, y exec no cierra nada: sin
+ * esto cada app arrancaba con los canales de todas las ventanas anteriores
+ * abiertos -- con la sesion llena, casi sin lugar en su propia tabla para abrir
+ * un archivo. Cerrar un fd que no esta abierto es inofensivo.
+ */
+static void child_close_above(int last_target)
+{
+    int fd;
+
+    for (fd = last_target + 1; fd < WINDOWD_PROCESS_FD_LIMIT; ++fd)
     {
-        savanxp_close(*fd);
+        savanxp_close(fd);
     }
-    *fd = -1;
 }
 
 static void reset_client(struct windowd_client *client)
@@ -96,16 +104,8 @@ static void reset_client(struct windowd_client *client)
     }
 
     memset(client, 0, sizeof(*client));
-    client->section_fd = -1;
-    client->input_write_fd = -1;
-    client->mouse_write_fd = -1;
-    client->submit_event_fd = -1;
-    client->retire_event_fd = -1;
-    client->shutdown_event_fd = -1;
-    client->launch_read_fd = -1;
-    client->cursor_hint_read_fd = -1;
-    client->size_hint_read_fd = -1;
-    client->window_list_section_fd = -1;
+    client->events_write_fd = -1;
+    client->wake_event_fd = -1;
     client->shell_request_read_fd = -1;
 }
 
@@ -955,14 +955,29 @@ static int recover_compositor(struct windowd_session *session)
  * (extremo no-bloqueante) y el evento se DESCARTA: preferimos perder input de un
  * cliente que no drena antes que congelar la sesion. Es seguro para el puntero,
  * que lleva posicion absoluta -- el proximo evento corrige --, y aceptable para
- * el teclado, que se recupera solo en cuanto el cliente vuelve a leer. */
-static int route_packet(int fd, const void *packet, size_t size)
+ * el teclado, que se recupera solo en cuanto el cliente vuelve a leer. Siempre
+ * se escribe un registro entero (ver savanxp_wm_event). */
+static int route_event(const struct windowd_client *client, const struct savanxp_wm_event *event)
 {
-    if (fd < 0)
+    if (client == 0 || client->events_write_fd < 0 || event == 0)
     {
         return 0;
     }
-    return savanxp_write(fd, packet, size) == (long)size;
+    return savanxp_write(client->events_write_fd, event, sizeof(*event)) == (long)sizeof(*event);
+}
+
+static int route_key(const struct windowd_client *client, const struct savanxp_input_event *key_event)
+{
+    struct savanxp_wm_event event;
+
+    if (key_event == 0)
+    {
+        return 0;
+    }
+    memset(&event, 0, sizeof(event));
+    event.kind = SAVANXP_WM_EVENT_KEY;
+    event.payload.key = *key_event;
+    return route_event(client, &event);
 }
 
 /* Deliver the pointer to a client in its own surface-local coordinates, so the
@@ -972,18 +987,20 @@ static int route_pointer(
     const struct windowd_client *client, int cursor_x, int cursor_y, int wheel, uint32_t buttons)
 {
     struct sx_rect surface_rect;
-    struct savanxp_gui_pointer_event event;
+    struct savanxp_wm_event event;
 
-    if (client == 0 || client->mouse_write_fd < 0)
+    if (client == 0 || client->events_write_fd < 0)
     {
         return 0;
     }
     surface_rect = windowd_client_surface_rect(client);
-    event.x = cursor_x - surface_rect.x;
-    event.y = cursor_y - surface_rect.y;
-    event.wheel = wheel;
-    event.buttons = buttons;
-    return route_packet(client->mouse_write_fd, &event, sizeof(event));
+    memset(&event, 0, sizeof(event));
+    event.kind = SAVANXP_WM_EVENT_POINTER;
+    event.payload.pointer.x = cursor_x - surface_rect.x;
+    event.payload.pointer.y = cursor_y - surface_rect.y;
+    event.payload.pointer.wheel = wheel;
+    event.payload.pointer.buttons = buttons;
+    return route_event(client, &event);
 }
 
 static size_t coalesce_mouse_events(
@@ -1109,9 +1126,9 @@ static void signal_client_retire(struct windowd_client *client, uint64_t retired
         client->header->retired_sequence = retired_sequence;
         advanced = 1;
     }
-    if (advanced && client->retire_event_fd >= 0)
+    if (advanced && client->wake_event_fd >= 0)
     {
-        (void)event_set(client->retire_event_fd);
+        (void)event_set(client->wake_event_fd);
     }
 }
 
@@ -1129,9 +1146,9 @@ static void signal_client_composed(struct windowd_client *client, uint64_t compo
         client->header->composed_sequence = composed_sequence;
         advanced = 1;
     }
-    if (advanced && client->retire_event_fd >= 0)
+    if (advanced && client->wake_event_fd >= 0)
     {
-        (void)event_set(client->retire_event_fd);
+        (void)event_set(client->wake_event_fd);
     }
 }
 
@@ -1293,12 +1310,8 @@ static int consume_client_present_batches(
         windowd_dirty_rect_add(dirty, &session->gfx.info, frame.x, frame.y, frame.width, frame.height);
     }
 
-    if (client->submit_event_fd >= 0 &&
-        client->consumed_submit_sequence >= client->header->submit_sequence)
-    {
-        (void)event_reset(client->submit_event_fd);
-    }
-
+    /* El evento de submit es de la sesion, no de este cliente: lo resetea el
+     * loop principal antes de revisar a todos. */
     return 0;
 }
 
@@ -1464,9 +1477,15 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
         return;
     }
 
-    if (client->shutdown_event_fd >= 0)
+    /* Pedido de cierre: primero el flag, despues el wake. En ese orden, un
+     * cliente que resetea el evento y vuelve a mirar el header no se lo pierde. */
+    if (client->header != 0)
     {
-        (void)event_set(client->shutdown_event_fd);
+        client->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+    }
+    if (client->wake_event_fd >= 0)
+    {
+        (void)event_set(client->wake_event_fd);
     }
     if (client->pid > 0)
     {
@@ -1476,14 +1495,8 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
         }
         (void)savanxp_waitpid((int)client->pid, &status);
     }
-    close_fd_if_needed(&client->input_write_fd);
-    close_fd_if_needed(&client->mouse_write_fd);
-    close_fd_if_needed(&client->submit_event_fd);
-    close_fd_if_needed(&client->retire_event_fd);
-    close_fd_if_needed(&client->shutdown_event_fd);
-    close_fd_if_needed(&client->launch_read_fd);
-    close_fd_if_needed(&client->cursor_hint_read_fd);
-    close_fd_if_needed(&client->size_hint_read_fd);
+    close_fd_if_needed(&client->events_write_fd);
+    close_fd_if_needed(&client->wake_event_fd);
     close_fd_if_needed(&client->shell_request_read_fd);
     if (client->mapped_view != 0 && !result_is_error((long)client->mapped_view))
     {
@@ -1493,40 +1506,42 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     {
         (void)unmap_view(client->window_list);
     }
-    close_fd_if_needed(&client->section_fd);
-    close_fd_if_needed(&client->window_list_section_fd);
     reset_client(client);
 }
 
-/* `shell_role` cablea los canales opcionales de savanxp/wm_shell_protocol.h
- * (lista de ventanas y pedidos). Solo lo pide la barra de tareas: un cliente
- * normal no los tiene abiertos, asi que son dos fds en todo el sistema y no dos
- * por ventana -- que importa, porque windowd ya guarda nueve por cliente contra
- * el limite de 64 por proceso. */
+/*
+ * Lanza el proceso de un cliente y le cablea el protocolo v4
+ * (savanxp/wm_protocol.h). windowd se queda con DOS descriptores por cliente:
+ * el extremo de escritura del pipe de eventos y el evento de wake. La seccion
+ * se cierra apenas el hijo la hereda -- el WM sigue usando su mapeo, que la
+ * mantiene viva --, y el evento de submit es el de la sesion.
+ *
+ * `shell_role` cablea ademas los canales opcionales de
+ * savanxp/wm_shell_protocol.h (lista de ventanas y pedidos). Solo lo pide la
+ * barra de tareas, asi que su pipe de pedidos es un fd en todo el sistema y no
+ * uno por ventana.
+ */
 static int start_client_process(
     struct windowd_client *client,
     const char *path,
     const char *argument,
+    int submit_event_fd,
     int shell_role)
 {
     struct savanxp_gpu_client_surface_header *header;
     unsigned long command_bytes = 0;
     unsigned long pixels_offset = 0;
     unsigned long section_size = 0;
+    int section_fd = -1;
+    int window_list_section_fd = -1;
+    int events_pipe[2] = {-1, -1};
     int shell_request_pipe[2] = {-1, -1};
-    int input_pipe[2] = {-1, -1};
-    int mouse_pipe[2] = {-1, -1};
-    int launch_pipe[2] = {-1, -1};
-    int cursor_hint_pipe[2] = {-1, -1};
-    int size_hint_pipe[2] = {-1, -1};
-    int submit_event = -1;
-    int retire_event = -1;
-    int shutdown_event = -1;
+    int wake_event = -1;
     const char *argv[3] = {path, argument, 0};
     int argc = (argument != 0 && argument[0] != '\0') ? 2 : 1;
     long pid;
 
-    if (client == 0 || path == 0 ||
+    if (client == 0 || path == 0 || submit_event_fd < 0 ||
         client->surface_info.width == 0 || client->surface_info.height == 0 || client->surface_info.buffer_size == 0)
     {
         return -1;
@@ -1534,61 +1549,52 @@ static int start_client_process(
 
     command_bytes = (unsigned long)(SAVANXP_GPU_CLIENT_BATCH_CAPACITY * sizeof(struct savanxp_gpu_dirty_rect_batch));
     /* Page-align the pixel region. Older fullscreen-exclusive scanout used this
-     * directly; keeping the alignment preserves the v3 client ABI. */
+     * directly; keeping the alignment keeps the client ABI simple. */
     pixels_offset = ((unsigned long)sizeof(*header) + command_bytes + (WINDOWD_SURFACE_PAGE_SIZE - 1u)) & ~(unsigned long)(WINDOWD_SURFACE_PAGE_SIZE - 1u);
     section_size = pixels_offset + client->surface_info.buffer_size;
-    client->section_fd = (int)section_create(section_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-    if (client->section_fd < 0)
+    section_fd = (int)section_create(section_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (section_fd < 0)
     {
         return -1;
     }
-    client->mapped_view = map_view(client->section_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    client->mapped_view = map_view(section_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     if (result_is_error((long)client->mapped_view))
     {
-        close_fd_if_needed(&client->section_fd);
+        client->mapped_view = 0;
+        close_fd_if_needed(&section_fd);
         return -1;
     }
 
     header = (struct savanxp_gpu_client_surface_header *)client->mapped_view;
+    /* Entero, incluidos los pedidos: un launch_head basura seria una cola de
+     * launches fantasma. */
+    memset(header, 0, sizeof(*header));
     header->magic = SAVANXP_GPU_CLIENT_SURFACE_MAGIC;
     header->command_offset = (uint32_t)sizeof(*header);
     header->pixels_offset = (uint32_t)pixels_offset;
     header->info = client->surface_info;
-    header->version = SAVANXP_GPU_CLIENT_SURFACE_VERSION_3;
-    header->flags = 0;
+    header->version = SAVANXP_GPU_CLIENT_SURFACE_VERSION_4;
     header->pixel_format = SAVANXP_GPU_SURFACE_FORMAT_BGRX8888;
-    header->reserved0 = 0;
     header->batch_capacity = SAVANXP_GPU_CLIENT_BATCH_CAPACITY;
     header->rect_capacity = SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS;
-    header->reserved1 = 0;
-    header->submit_sequence = 0;
-    header->retired_sequence = 0;
-    header->composed_sequence = 0;
     client->header = header;
     client->command_batches = (struct savanxp_gpu_dirty_rect_batch *)((unsigned char *)client->mapped_view + header->command_offset);
     client->pixels = (uint32_t *)((unsigned char *)client->mapped_view + header->pixels_offset);
     memset(client->command_batches, 0, command_bytes);
     memset(client->pixels, 0, client->surface_info.buffer_size);
 
-    submit_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    if (savanxp_pipe(input_pipe) < 0 || savanxp_pipe(mouse_pipe) < 0 || savanxp_pipe(launch_pipe) < 0 || savanxp_pipe(cursor_hint_pipe) < 0 ||
-        savanxp_pipe(size_hint_pipe) < 0 || submit_event < 0 || retire_event < 0 || shutdown_event < 0)
+    wake_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
+    if (wake_event < 0 || savanxp_pipe(events_pipe) < 0)
     {
         goto fail;
     }
-    /* Los extremos de ESCRITURA de teclado y mouse tambien van en no-bloqueante:
-     * el WM no puede quedar bloqueado por un cliente que no drena su input. Pasa
-     * de verdad al lanzar una app -- raise_overlay la hace activa al instante,
-     * pero tarda en empezar a leer (carga de disco, gfx_open copiando la
-     * superficie), y mientras tanto cada movimiento del mouse va a su pipe. Con
-     * writes bloqueantes, el pipe se llena y se congela la sesion entera. */
-    if (savanxp_fcntl(launch_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        savanxp_fcntl(cursor_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        savanxp_fcntl(size_hint_pipe[0], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        savanxp_fcntl(input_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0 ||
-        savanxp_fcntl(mouse_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
+    /* El extremo de ESCRITURA va en no-bloqueante: el WM no puede quedar
+     * bloqueado por un cliente que no drena sus eventos. Pasa de verdad al
+     * lanzar una app -- raise_overlay la hace activa al instante, pero tarda en
+     * empezar a leer (carga de disco, gfx_open copiando la superficie), y
+     * mientras tanto cada movimiento del mouse va a su pipe. Con writes
+     * bloqueantes, el pipe se llena y se congela la sesion entera. */
+    if (savanxp_fcntl(events_pipe[1], SAVANXP_F_SETFL, SAVANXP_OPEN_NONBLOCK) < 0)
     {
         goto fail;
     }
@@ -1600,18 +1606,19 @@ static int start_client_process(
          * desincronizaria el stream para siempre. Con una seccion el WM pisa el
          * contenido y el cliente lee el ultimo estado, que es lo unico que una
          * barra de tareas necesita. */
-        client->window_list_section_fd = (int)section_create(
+        window_list_section_fd = (int)section_create(
             sizeof(struct savanxp_wm_window_list),
             SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-        if (client->window_list_section_fd < 0)
+        if (window_list_section_fd < 0)
         {
             goto fail;
         }
         client->window_list = (struct savanxp_wm_window_list *)map_view(
-            client->window_list_section_fd,
+            window_list_section_fd,
             SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-        if (client->window_list == 0)
+        if (result_is_error((long)client->window_list))
         {
+            client->window_list = 0;
             goto fail;
         }
         memset(client->window_list, 0, sizeof(*client->window_list));
@@ -1636,44 +1643,34 @@ static int start_client_process(
     }
     if (pid == 0)
     {
-        /* Establece el contrato de fds del protocolo WM<->cliente
-         * (savanxp/wm_protocol.h) antes del exec. */
-        if (savanxp_dup2(client->section_fd, SAVANXP_WM_FD_SECTION) < 0 ||
-            savanxp_dup2(input_pipe[0], SAVANXP_WM_FD_INPUT) < 0 ||
-            savanxp_dup2(mouse_pipe[0], SAVANXP_WM_FD_MOUSE) < 0 ||
-            savanxp_dup2(submit_event, SAVANXP_WM_FD_SUBMIT_EVENT) < 0 ||
-            savanxp_dup2(retire_event, SAVANXP_WM_FD_RETIRE_EVENT) < 0 ||
-            savanxp_dup2(shutdown_event, SAVANXP_WM_FD_SHUTDOWN_EVENT) < 0 ||
-            savanxp_dup2(launch_pipe[1], SAVANXP_WM_FD_LAUNCH) < 0 ||
-            savanxp_dup2(cursor_hint_pipe[1], SAVANXP_WM_FD_CURSOR_HINT) < 0 ||
-            savanxp_dup2(size_hint_pipe[1], SAVANXP_WM_FD_SIZE_HINT) < 0)
+        const int last_target = shell_role ? SAVANXP_WM_SHELL_FD_LAST : SAVANXP_WM_FD_LAST;
+        int child_section = child_relocate_above(section_fd, last_target);
+        int child_events = child_relocate_above(events_pipe[0], last_target);
+        int child_wake = child_relocate_above(wake_event, last_target);
+        int child_submit = child_relocate_above(submit_event_fd, last_target);
+
+        if (child_section < 0 || child_events < 0 || child_wake < 0 || child_submit < 0 ||
+            savanxp_dup2(child_section, SAVANXP_WM_FD_SECTION) < 0 ||
+            savanxp_dup2(child_events, SAVANXP_WM_FD_EVENTS) < 0 ||
+            savanxp_dup2(child_wake, SAVANXP_WM_FD_WAKE_EVENT) < 0 ||
+            savanxp_dup2(child_submit, SAVANXP_WM_FD_SUBMIT_EVENT) < 0)
         {
             exit(1);
         }
-        if (shell_role &&
-            (savanxp_dup2(client->window_list_section_fd, SAVANXP_WM_FD_WINDOW_LIST) < 0 ||
-             savanxp_dup2(shell_request_pipe[1], SAVANXP_WM_FD_SHELL_REQUEST) < 0))
+        if (shell_role)
         {
-            exit(1);
+            int child_window_list = child_relocate_above(window_list_section_fd, last_target);
+            int child_shell_request = child_relocate_above(shell_request_pipe[1], last_target);
+
+            if (child_window_list < 0 || child_shell_request < 0 ||
+                savanxp_dup2(child_window_list, SAVANXP_WM_FD_WINDOW_LIST) < 0 ||
+                savanxp_dup2(child_shell_request, SAVANXP_WM_FD_SHELL_REQUEST) < 0)
+            {
+                exit(1);
+            }
         }
 
-        close_client_setup_fd(&input_pipe[0]);
-        close_client_setup_fd(&input_pipe[1]);
-        close_client_setup_fd(&mouse_pipe[0]);
-        close_client_setup_fd(&mouse_pipe[1]);
-        close_client_setup_fd(&submit_event);
-        close_client_setup_fd(&retire_event);
-        close_client_setup_fd(&shutdown_event);
-        close_client_setup_fd(&launch_pipe[0]);
-        close_client_setup_fd(&launch_pipe[1]);
-        close_client_setup_fd(&cursor_hint_pipe[0]);
-        close_client_setup_fd(&cursor_hint_pipe[1]);
-        close_client_setup_fd(&size_hint_pipe[0]);
-        close_client_setup_fd(&size_hint_pipe[1]);
-        close_client_setup_fd(&shell_request_pipe[0]);
-        close_client_setup_fd(&shell_request_pipe[1]);
-        close_client_setup_fd(&client->section_fd);
-        close_client_setup_fd(&client->window_list_section_fd);
+        child_close_above(last_target);
         {
             long exec_result = exec(path, argv, argc);
             if (exec_result < 0)
@@ -1683,6 +1680,13 @@ static int start_client_process(
         }
         exit(1);
     }
+
+    /* Lo que ya tiene el hijo se suelta ANTES de leer el .sxe de abajo: con la
+     * sesion llena, cada fd transitorio cuenta. */
+    close_fd_if_needed(&section_fd);
+    close_fd_if_needed(&window_list_section_fd);
+    close_fd_if_needed(&events_pipe[0]);
+    close_fd_if_needed(&shell_request_pipe[1]);
 
     {
         size_t path_length = strlen(path);
@@ -1703,22 +1707,11 @@ static int start_client_process(
      */
     windowd_presentation_load(&client->presentation, client->path);
     client->pid = pid;
-    client->input_write_fd = input_pipe[1];
-    client->mouse_write_fd = mouse_pipe[1];
-    client->submit_event_fd = submit_event;
-    client->retire_event_fd = retire_event;
-    client->shutdown_event_fd = shutdown_event;
-    client->launch_read_fd = launch_pipe[0];
-    client->cursor_hint_read_fd = cursor_hint_pipe[0];
-    client->size_hint_read_fd = size_hint_pipe[0];
+    client->events_write_fd = events_pipe[1];
+    client->wake_event_fd = wake_event;
     client->shell_request_read_fd = shell_request_pipe[0];
-
-    close_fd_if_needed(&input_pipe[0]);
-    close_fd_if_needed(&mouse_pipe[0]);
-    close_fd_if_needed(&launch_pipe[1]);
-    close_fd_if_needed(&cursor_hint_pipe[1]);
-    close_fd_if_needed(&size_hint_pipe[1]);
-    close_fd_if_needed(&shell_request_pipe[1]);
+    client->launch_tail = 0;
+    client->size_hint_consumed_sequence = 0;
     return 0;
 
 fail:
@@ -1729,20 +1722,11 @@ fail:
         unmap_view(client->window_list);
         client->window_list = 0;
     }
-    close_fd_if_needed(&client->window_list_section_fd);
-    close_fd_if_needed(&input_pipe[0]);
-    close_fd_if_needed(&input_pipe[1]);
-    close_fd_if_needed(&mouse_pipe[0]);
-    close_fd_if_needed(&mouse_pipe[1]);
-    close_fd_if_needed(&launch_pipe[0]);
-    close_fd_if_needed(&launch_pipe[1]);
-    close_fd_if_needed(&cursor_hint_pipe[0]);
-    close_fd_if_needed(&cursor_hint_pipe[1]);
-    close_fd_if_needed(&size_hint_pipe[0]);
-    close_fd_if_needed(&size_hint_pipe[1]);
-    close_fd_if_needed(&submit_event);
-    close_fd_if_needed(&retire_event);
-    close_fd_if_needed(&shutdown_event);
+    close_fd_if_needed(&window_list_section_fd);
+    close_fd_if_needed(&events_pipe[0]);
+    close_fd_if_needed(&events_pipe[1]);
+    close_fd_if_needed(&wake_event);
+    close_fd_if_needed(&section_fd);
     destroy_client_instance(client, 0);
     return -1;
 }
@@ -1785,7 +1769,7 @@ static int launch_background_client(struct windowd_session *session)
     reset_client(client);
     fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
     position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    return start_client_process(client, k_background_client_path, 0, 0);
+    return start_client_process(client, k_background_client_path, 0, session->submit_event_fd, 0);
 }
 
 /* La barra de tareas es un cliente con rol de shell: su superficie ocupa la
@@ -1818,7 +1802,7 @@ static int launch_taskbar_client(struct windowd_session *session)
     client->window_height = strip.height;
     client->frame_visible = 0;
 
-    if (start_client_process(client, k_taskbar_client_path, 0, 1) < 0)
+    if (start_client_process(client, k_taskbar_client_path, 0, session->submit_event_fd, 1) < 0)
     {
         return -1;
     }
@@ -1857,7 +1841,7 @@ static int launch_keyboard_popup_client(struct windowd_session *session)
     client->window_height = WINDOWD_KEYBOARD_POPUP_HEIGHT;
     client->frame_visible = 0;
 
-    return start_client_process(client, k_keyboard_popup_client_path, 0, 0);
+    return start_client_process(client, k_keyboard_popup_client_path, 0, session->submit_event_fd, 0);
 }
 
 /* Publica el estado de las ventanas en la seccion compartida.
@@ -2138,7 +2122,7 @@ static int launch_shell_client(struct windowd_session *session, const char *path
     reset_client(client);
     fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
     position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    if (start_client_process(client, path, 0, 0) < 0)
+    if (start_client_process(client, path, 0, session->submit_event_fd, 0) < 0)
     {
         return -1;
     }
@@ -2190,7 +2174,7 @@ static int launch_overlay_client(
     }
     client->cascade_index = session->overlay_count;
     position_client_window(session, client, WINDOWD_CLIENT_APP, client->cascade_index);
-    if (start_client_process(client, path, argument, 0) < 0)
+    if (start_client_process(client, path, argument, session->submit_event_fd, 0) < 0)
     {
         return -1;
     }
@@ -2213,6 +2197,7 @@ static int open_compositor_session(struct windowd_session *session)
     windowd_compositor_connection_init(&session->compositor);
     session->input_fd = -1;
     session->mouse_fd = -1;
+    session->submit_event_fd = -1;
     session->hw_cursor_enabled = 0;
     session->active_client_kind = WINDOWD_CLIENT_SHELL;
     session->active_overlay_slot = -1;
@@ -2253,6 +2238,15 @@ static int open_compositor_session(struct windowd_session *session)
         session->mouse_fd = -1;
     }
 
+    /* Uno solo para toda la sesion: cada cliente lo recibe en
+     * SAVANXP_WM_FD_SUBMIT_EVENT y el loop lo resetea antes de revisarlos a
+     * todos. Tiene que existir antes del primer launch. */
+    session->submit_event_fd = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
+    if (session->submit_event_fd < 0)
+    {
+        return windowd_stage_failed("create submit event", session->submit_event_fd);
+    }
+
     memset(session->compositor.framebuffer, 0, session->gfx.info.buffer_size);
     windowd_set_backbuffer(session->compositor.framebuffer);
     refresh_active_state(session);
@@ -2276,6 +2270,7 @@ static void close_compositor_session(struct windowd_session *session)
     destroy_background_client(session, 1);
     close_fd_if_needed(&session->input_fd);
     close_fd_if_needed(&session->mouse_fd);
+    close_fd_if_needed(&session->submit_event_fd);
     (void)sync_pending_present(session, 1, 0);
     windowd_compositor_close(&session->compositor);
     windowd_set_backbuffer(0);
@@ -2368,40 +2363,44 @@ static int reap_dead_clients(struct windowd_session *session, struct windowd_dir
     return 0;
 }
 
+/*
+ * Drena la cola de launches del header (savanxp_wm_client_requests). El
+ * cliente es otro proceso y escribe esa memoria cuando quiere, asi que cada
+ * entrada se COPIA antes de validarla -- validar in situ y usar despues dejaria
+ * que la cambie en el medio -- y la cola del WM es launch_tail propio, no el
+ * del header.
+ */
 static int service_client_launch_requests(struct windowd_session *session, struct windowd_dirty_rect *dirty, struct windowd_client *client)
 {
     struct savanxp_desktop_launch_request request;
-    long read_result = 0;
+    uint32_t head = 0;
+    int woke_client = 0;
 
-    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->launch_read_fd < 0)
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->header == 0)
     {
         return 0;
     }
 
-    for (;;)
+    head = client->header->requests.launch_head;
+    if (head - client->launch_tail > SAVANXP_WM_LAUNCH_QUEUE_CAPACITY)
     {
-        memset(&request, 0, sizeof(request));
-        read_result = savanxp_read(client->launch_read_fd, &request, sizeof(request));
-        if (read_result == 0)
-        {
-            return 0;
-        }
-        if (read_result < 0)
-        {
-            if (result_error_code(read_result) == SAVANXP_EAGAIN)
-            {
-                return 0;
-            }
-            eprintf("desktop: launch request read failed for %s (%s)\n",
-                client->path[0] != '\0' ? client->path : "?",
-                result_error_string(read_result));
-            return 0;
-        }
-        if (read_result != (long)sizeof(request) || request.path[0] != '/')
-        {
-            eprintf("desktop: invalid launch request from %s\n", client->path[0] != '\0' ? client->path : "?");
-            return 0;
-        }
+        /* Un head que se adelanta mas que la cola no lo produce el runtime:
+         * se descarta lo pendiente en vez de leer entradas que no existen. */
+        eprintf("desktop: invalid launch queue from %s\n", client->path[0] != '\0' ? client->path : "?");
+        client->launch_tail = head;
+        client->header->requests.launch_tail = head;
+        return 0;
+    }
+
+    while (client->launch_tail != head)
+    {
+        memcpy(&request,
+            &client->header->requests.launch[client->launch_tail % SAVANXP_WM_LAUNCH_QUEUE_CAPACITY],
+            sizeof(request));
+        client->launch_tail += 1u;
+        client->header->requests.launch_tail = client->launch_tail;
+        woke_client = 1;
+
         request.path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY - 1u] = '\0';
         request.argument[SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY - 1u] = '\0';
         /* El popup de layout de teclado no es una ventana mas: se ignora
@@ -2412,9 +2411,14 @@ static int service_client_launch_requests(struct windowd_session *session, struc
             if (launch_keyboard_popup_client(session) < 0)
             {
                 eprintf("desktop: failed to launch keyboard layout popup\n");
-                return 0;
+                continue;
             }
             windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            continue;
+        }
+        if (request.path[0] != '/')
+        {
+            eprintf("desktop: invalid launch request from %s\n", client->path[0] != '\0' ? client->path : "?");
             continue;
         }
         /* Se ignoran los bits desconocidos: un cliente viejo o mal formado no
@@ -2426,50 +2430,38 @@ static int service_client_launch_requests(struct windowd_session *session, struc
                 request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) < 0)
         {
             eprintf("desktop: failed to launch requested app %s\n", request.path);
-            return 0;
+            continue;
         }
         windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
+
+    /* Un cliente con la cola llena espera el wake para volver a mirar. */
+    if (woke_client && client->wake_event_fd >= 0)
+    {
+        (void)event_set(client->wake_event_fd);
+    }
+    return 0;
 }
 
-/* Drains cursor-shape hints an app reports about its own widgets (e.g. the
- * pointer entering a textfield). Just caches the latest value on the client;
- * resolve_cursor_shape() decides whether it is actually shown, and only
- * while this exact client is the one under the pointer. No repaint here --
- * the shape-resolution pass on the next mouse event picks it up. */
+/* Picks up the cursor shape an app requests for its own widgets (e.g. the
+ * pointer entering a textfield) from the surface header. Just caches the latest
+ * valid value on the client; resolve_cursor_shape() decides whether it is
+ * actually shown, and only while this exact client is the one under the
+ * pointer. No repaint here -- the shape-resolution pass on the next mouse
+ * event picks it up. */
 static void service_client_cursor_hints(struct windowd_client *client)
 {
-    struct savanxp_desktop_cursor_hint hint;
-    long read_result = 0;
+    uint32_t shape = 0;
 
-    if (client == 0 || client->pid <= 0 || client->cursor_hint_read_fd < 0)
+    if (client == 0 || client->pid <= 0 || client->header == 0)
     {
         return;
     }
 
-    for (;;)
+    shape = client->header->requests.cursor_shape;
+    if (shape < (uint32_t)SAVANXP_CURSOR_SHAPE_COUNT)
     {
-        read_result = savanxp_read(client->cursor_hint_read_fd, &hint, sizeof(hint));
-        if (read_result == 0)
-        {
-            return;
-        }
-        if (read_result < 0)
-        {
-            if (result_error_code(read_result) != SAVANXP_EAGAIN)
-            {
-                eprintf("desktop: cursor hint read failed for %s (%s)\n",
-                    client->path[0] != '\0' ? client->path : "?",
-                    result_error_string(read_result));
-            }
-            return;
-        }
-        if (read_result != (long)sizeof(hint) || hint.shape >= (uint32_t)SAVANXP_CURSOR_SHAPE_COUNT)
-        {
-            eprintf("desktop: invalid cursor hint from %s\n", client->path[0] != '\0' ? client->path : "?");
-            return;
-        }
-        client->last_cursor_hint_shape = (int)hint.shape;
+        client->last_cursor_hint_shape = (int)shape;
     }
 }
 
@@ -2519,10 +2511,9 @@ static void reposition_overlay_client_window(
  * que el buscaminas cambie de nivel y la ventana lo siga en vez de quedarse
  * grande con el tablero chico adentro.
  *
- * slot < 0 = drenar y descartar. El contrato de fds es uno solo, asi que el
- * canal existe tambien para el shell y el cliente de fondo, que son
- * full-screen por definicion; si nadie lo leyera, un cliente que escribiera
- * ahi terminaria bloqueado con el pipe lleno. */
+ * slot < 0 = consumir y descartar: el header es el mismo para todos, asi que
+ * el shell y el cliente de fondo tambien pueden pedir un tamano, pero son
+ * full-screen por definicion. */
 /*
  * La regla de arriba, aislada para poder asertarla: la ventana tiene que estar
  * en estado de aceptar un tamano -- con marco, ni maximizada ni a pantalla
@@ -2544,56 +2535,56 @@ static void service_client_size_hints(
     struct windowd_client *client,
     int slot)
 {
-    struct savanxp_desktop_size_hint hint;
-    long read_result = 0;
+    uint32_t sequence = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
 
-    if (client == 0 || client->pid <= 0 || client->size_hint_read_fd < 0)
+    if (client == 0 || client->pid <= 0 || client->header == 0)
     {
         return;
     }
 
-    for (;;)
+    /* Seqlock del lado lector: una secuencia impar es un pedido a medio
+     * escribir, y si cambio mientras se copiaba el par hay que volver a leer en
+     * la proxima vuelta. Nunca se reintenta aca: un cliente que se quedara en
+     * impar no puede trabar el loop del WM. */
+    sequence = client->header->requests.size_hint_sequence;
+    if ((sequence & 1u) != 0 || sequence == client->size_hint_consumed_sequence)
     {
-        read_result = savanxp_read(client->size_hint_read_fd, &hint, sizeof(hint));
-        if (read_result == 0)
-        {
-            return;
-        }
-        if (read_result < 0)
-        {
-            if (result_error_code(read_result) != SAVANXP_EAGAIN)
-            {
-                eprintf("desktop: size hint read failed for %s (%s)\n",
-                    client->path[0] != '\0' ? client->path : "?",
-                    result_error_string(read_result));
-            }
-            return;
-        }
-        if (read_result != (long)sizeof(hint) || hint.width == 0 || hint.height == 0)
-        {
-            eprintf("desktop: invalid size hint from %s\n", client->path[0] != '\0' ? client->path : "?");
-            return;
-        }
-        if (session == 0 || dirty == 0 || !overlay_slot_valid(slot) ||
-            !client_accepts_size_hint(client))
-        {
-            continue;
-        }
-        {
-            /* Recolocar en la cascada solo en el PRIMER hint: ahi la ventana
-             * sigue donde la puso el launch y centrarla con el tamano nuevo es
-             * lo correcto. En los siguientes ya la movio el usuario, y volver
-             * a la posicion de cascada seria teletransportarsela bajo el
-             * cursor. resize_overlay_client_surface deja el origen quieto y
-             * reencuadra sola si el tamano nuevo no entra. */
-            int first_hint = !client->size_hint_applied;
+        return;
+    }
+    width = client->header->requests.size_hint_width;
+    height = client->header->requests.size_hint_height;
+    if (client->header->requests.size_hint_sequence != sequence)
+    {
+        return;
+    }
+    client->size_hint_consumed_sequence = sequence;
 
-            client->size_hint_applied = 1;
-            resize_overlay_client_surface(session, dirty, slot, (int)hint.width, (int)hint.height);
-            if (first_hint)
-            {
-                reposition_overlay_client_window(session, dirty, client);
-            }
+    if (width == 0 || height == 0)
+    {
+        eprintf("desktop: invalid size hint from %s\n", client->path[0] != '\0' ? client->path : "?");
+        return;
+    }
+    if (session == 0 || dirty == 0 || !overlay_slot_valid(slot) ||
+        !client_accepts_size_hint(client))
+    {
+        return;
+    }
+    {
+        /* Recolocar en la cascada solo en el PRIMER hint: ahi la ventana
+         * sigue donde la puso el launch y centrarla con el tamano nuevo es
+         * lo correcto. En los siguientes ya la movio el usuario, y volver
+         * a la posicion de cascada seria teletransportarsela bajo el
+         * cursor. resize_overlay_client_surface deja el origen quieto y
+         * reencuadra sola si el tamano nuevo no entra. */
+        int first_hint = !client->size_hint_applied;
+
+        client->size_hint_applied = 1;
+        resize_overlay_client_surface(session, dirty, slot, (int)width, (int)height);
+        if (first_hint)
+        {
+            reposition_overlay_client_window(session, dirty, client);
         }
     }
 }
@@ -2837,6 +2828,143 @@ static int windowd_wheel_coalesce_selftest(void)
         total += coalesced[index].wheel;
     }
     return total == 4 ? 0 : 1;
+}
+
+/* Descriptores que a windowd le tienen que sobrar con todas las ventanas
+ * abiertas: el cliente de shell (la terminal), que todavia se puede abrir, mas
+ * los fds transitorios de un launch y la lectura del .sxe. */
+#define WINDOWD_SELFTEST_FD_HEADROOM 8
+/* Una app recien arrancada tiene stdio, los cuatro del protocolo y lo que abra
+ * su runtime. Si heredara la tabla de windowd serian decenas. */
+#define WINDOWD_SELFTEST_APP_FD_MAX 20
+#define WINDOWD_SELFTEST_START_DEADLINE_MS 15000ul
+
+static int selftest_handle_count(long pid, uint32_t *handles)
+{
+    struct savanxp_process_info info;
+    unsigned long index = 0;
+
+    memset(&info, 0, sizeof(info));
+    while (proc_info(index, &info) > 0)
+    {
+        ++index;
+        if (info.state != SAVANXP_PROC_UNUSED && (long)info.pid == pid)
+        {
+            *handles = info.handle_count;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/*
+ * Capacidad de la sesion (docs/WM_SUBSYSTEM.md, "Descriptor budget"): con la
+ * barra de tareas -- el cliente con mas canales -- y el popup de teclado vivos,
+ * TODOS los slots de ventana se tienen que poder llenar, a windowd le tiene que
+ * sobrar tabla, y cada app tiene que arrancar con la suya limpia. Con el
+ * protocolo v3 la sesion no pasaba de la mitad de los slots.
+ */
+static int windowd_capacity_selftest(struct windowd_session *session)
+{
+    const char *filler_path = "/bin/aboutapp";
+    unsigned long deadline = 0;
+    uint32_t windowd_handles = 0;
+    uint32_t handles_after_refusal = 0;
+    uint32_t app_handles = 0;
+    long last_pid = -1;
+    int windows = 0;
+    int slot;
+
+    if (launch_taskbar_client(session) < 0 || launch_keyboard_popup_client(session) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL capacidad: no arrancaron la barra y el popup\n");
+        return 1;
+    }
+
+    while ((slot = find_free_overlay_slot(session)) >= 0)
+    {
+        if (launch_overlay_client(session, filler_path, 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+        {
+            printf("DESKTOP SMOKE FAIL capacidad: la ventana del slot %d no arranco\n", slot);
+            return 1;
+        }
+        last_pid = session->overlay_clients[slot].pid;
+    }
+
+    /* Recien con el primer frame sometido la app paso el exec y gfx_open: antes
+     * de eso su tabla todavia es la copia de la de windowd. */
+    deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+    for (;;)
+    {
+        int pending = 0;
+
+        windows = 0;
+        for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+        {
+            const struct windowd_client *client = &session->overlay_clients[slot];
+
+            if (client->pid <= 0 || client->header == 0)
+            {
+                continue;
+            }
+            ++windows;
+            if (client->header->submit_sequence == 0)
+            {
+                ++pending;
+            }
+        }
+        if (pending == 0)
+        {
+            break;
+        }
+        if (uptime_ms() >= deadline)
+        {
+            printf("DESKTOP SMOKE FAIL capacidad: %d de %d ventanas nunca presentaron\n", pending, windows);
+            return 1;
+        }
+        sleep_ms(20);
+    }
+
+    if (windows != WINDOWD_MAX_OVERLAY_CLIENTS)
+    {
+        printf("DESKTOP SMOKE FAIL capacidad: %d ventanas vivas de %d\n", windows, WINDOWD_MAX_OVERLAY_CLIENTS);
+        return 1;
+    }
+
+    if (selftest_handle_count(savanxp_getpid(), &windowd_handles) != 0 ||
+        selftest_handle_count(last_pid, &app_handles) != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL capacidad: no se pudo leer la tabla de handles\n");
+        return 1;
+    }
+    if (windowd_handles + WINDOWD_SELFTEST_FD_HEADROOM > WINDOWD_PROCESS_FD_LIMIT)
+    {
+        printf("DESKTOP SMOKE FAIL capacidad: windowd usa %u descriptores con la sesion llena\n",
+            (unsigned)windowd_handles);
+        return 1;
+    }
+    if (app_handles > WINDOWD_SELFTEST_APP_FD_MAX)
+    {
+        printf("DESKTOP SMOKE FAIL capacidad: la app arranco con %u descriptores heredados\n",
+            (unsigned)app_handles);
+        return 1;
+    }
+
+    /* Con los slots llenos, un launch mas se rechaza sin dejar nada abierto. */
+    if (launch_overlay_client(session, filler_path, 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) == 0 ||
+        selftest_handle_count(savanxp_getpid(), &handles_after_refusal) != 0 ||
+        handles_after_refusal != windowd_handles)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL capacidad: el launch de mas no se rechazo limpio\n");
+        return 1;
+    }
+
+    printf("DESKTOP SMOKE capacity windows=%d windowd_fds=%u app_fds=%u\n",
+        windows, (unsigned)windowd_handles, (unsigned)app_handles);
+
+    destroy_client_instance(&session->keyboard_popup_client, 1);
+    destroy_client_instance(&session->taskbar_client, 1);
+    return 0;
 }
 
 static int windowd_selftest(void)
@@ -3199,8 +3327,8 @@ static int windowd_selftest(void)
     (void)sync_pending_present(&session, 1, 0);
 
     /* Subtest de contrapresion de input: el WM no debe bloquearse nunca por un
-     * cliente que no drena. shellui sirve de cliente "sordo" -- nunca abre su
-     * pipe de puntero --, asi que le bombardeamos eventos hasta llenar el pipe y
+     * cliente que no drena. shellui drena sus eventos una vez por frame, asi que
+     * entre dos pasadas le bombardeamos eventos hasta llenar el pipe y
      * verificamos que el write FALLA en vez de bloquear. Sin los extremos de
      * escritura en no-bloqueante esto congelaba windowd, y con el toda la
      * sesion: es la regresion que colgaba el escritorio al lanzar una app
@@ -3606,7 +3734,7 @@ static int windowd_selftest(void)
          * La otra mitad del flag: en una ventana fija el size hint deja de ser
          * de una sola vez, que es lo que deja al buscaminas cambiar de nivel y
          * que la ventana lo siga. Se prueba sobre el predicado porque el hint
-         * real entra por un pipe que escribe el cliente, no el WM.
+         * real lo escribe el cliente en el header, no el WM.
          *
          * El caso maximizada esta para fijar que "fija" no es un permiso que
          * pase por encima del resto del estado: una ventana maximizada no
@@ -3708,6 +3836,12 @@ static int windowd_selftest(void)
         }
     }
 
+    /* Ultimo: llena la sesion, y lo que queda despues ya no se compone. */
+    if (!failed && windowd_capacity_selftest(&session) != 0)
+    {
+        failed = 1;
+    }
+
     close_compositor_session(&session);
 
     if (failed)
@@ -3717,27 +3851,6 @@ static int windowd_selftest(void)
     printf("DESKTOP SMOKE PASS frames=%d batches=%u\n",
         frames_presented, (unsigned)consumed_submit);
     return 0;
-}
-
-/* Append a live client's submit event to the poll set so a client frame
- * submission wakes the compositor immediately instead of waiting out the poll
- * timeout. Returns the new descriptor count. poll_clients[] maps each poll slot
- * back to its client so the level-triggered event can be reset afterwards. */
-static int add_client_submit_pollfd(
-    struct savanxp_pollfd *poll_fds,
-    struct windowd_client **poll_clients,
-    int poll_count,
-    struct windowd_client *client)
-{
-    if (client == 0 || client->pid <= 0 || client->submit_event_fd < 0)
-    {
-        return poll_count;
-    }
-    poll_fds[poll_count].fd = client->submit_event_fd;
-    poll_fds[poll_count].events = SAVANXP_POLLIN;
-    poll_fds[poll_count].revents = 0;
-    poll_clients[poll_count] = client;
-    return poll_count + 1;
 }
 
 /* --- Task List (Ctrl+Esc) ------------------------------------------------
@@ -4279,7 +4392,7 @@ static void handle_pointer_event(
                     drag_offset_y = cursor_y - current_hover_client->window_y;
                 }
             }
-            else if (current_hover_client != 0 && current_hover_client->mouse_write_fd >= 0)
+            else if (current_hover_client != 0 && current_hover_client->events_write_fd >= 0)
             {
                 (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
@@ -4335,7 +4448,7 @@ static void handle_pointer_event(
         !drag_was_active &&
         !drag_active_now &&
         current_hover_client != 0 &&
-        current_hover_client->mouse_write_fd >= 0 &&
+        current_hover_client->events_write_fd >= 0 &&
         !(left_pressed != 0 && left_was_pressed == 0))
     {
         (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
@@ -4345,7 +4458,7 @@ static void handle_pointer_event(
              !drag_active_now &&
              current_hover_client == 0 &&
              previous_hover_client != 0 &&
-             previous_hover_client->mouse_write_fd >= 0 &&
+             previous_hover_client->events_write_fd >= 0 &&
              !(left_pressed != 0 && left_was_pressed == 0))
     {
         (void)route_pointer(previous_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
@@ -4434,14 +4547,12 @@ int main(int argc, char **argv)
 
     for (;;)
     {
-        /* input + mouse + background_client + shell_client + overlays. */
-        struct savanxp_pollfd poll_fds[4 + WINDOWD_MAX_OVERLAY_CLIENTS];
-        struct windowd_client *poll_clients[4 + WINDOWD_MAX_OVERLAY_CLIENTS];
+        /* input + mouse + el evento de submit de la sesion. */
+        struct savanxp_pollfd poll_fds[3];
         int input_poll_index = -1;
         int mouse_poll_index = -1;
+        int submit_poll_index = -1;
         int poll_count = 0;
-        int client_poll_start = 0;
-        int poll_idx;
         int slot;
         long count = 0;
 
@@ -4449,7 +4560,6 @@ int main(int argc, char **argv)
         poll_fds[poll_count].fd = session.input_fd;
         poll_fds[poll_count].events = SAVANXP_POLLIN;
         poll_fds[poll_count].revents = 0;
-        poll_clients[poll_count] = 0;
         ++poll_count;
 
         if (session.mouse_fd >= 0)
@@ -4458,36 +4568,29 @@ int main(int argc, char **argv)
             poll_fds[poll_count].fd = session.mouse_fd;
             poll_fds[poll_count].events = SAVANXP_POLLIN;
             poll_fds[poll_count].revents = 0;
-            poll_clients[poll_count] = 0;
             ++poll_count;
         }
 
-        /* Wake on client frame submissions, not just the 16 ms timeout (kept as
-         * a backstop). The timeout still bounds latency if a wakeup is missed. */
-        client_poll_start = poll_count;
-        poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.background_client);
-        poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.shell_client);
-        for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
-        {
-            poll_count = add_client_submit_pollfd(poll_fds, poll_clients, poll_count, &session.overlay_clients[slot]);
-        }
+        /* Wake on client frame submissions and header requests, not just the
+         * 16 ms timeout (kept as a backstop). The timeout still bounds latency
+         * if a wakeup is missed. */
+        submit_poll_index = poll_count;
+        poll_fds[poll_count].fd = session.submit_event_fd;
+        poll_fds[poll_count].events = SAVANXP_POLLIN;
+        poll_fds[poll_count].revents = 0;
+        ++poll_count;
 
         if (savanxp_poll(poll_fds, (unsigned long)poll_count, 16) < 0)
         {
             break;
         }
 
-        /* Clear the level-triggered submit events we observed; a fresh submit
-         * re-arms the event and wakes the next poll. Draining of the actual
-         * frame content happens below via the shared submit_sequence. */
-        for (poll_idx = client_poll_start; poll_idx < poll_count; ++poll_idx)
+        /* Reset BEFORE servicing: a client that submits after this point
+         * re-arms the event and wakes the next poll. Every client is serviced
+         * below on every pass, so one shared event is enough. */
+        if ((poll_fds[submit_poll_index].revents & SAVANXP_POLLIN) != 0)
         {
-            if ((poll_fds[poll_idx].revents & SAVANXP_POLLIN) != 0 &&
-                poll_clients[poll_idx] != 0 &&
-                poll_clients[poll_idx]->submit_event_fd >= 0)
-            {
-                (void)event_reset(poll_clients[poll_idx]->submit_event_fd);
-            }
+            (void)event_reset(session.submit_event_fd);
         }
 
         if (input_poll_index >= 0 && (poll_fds[input_poll_index].revents & SAVANXP_POLLIN) != 0)
@@ -4502,10 +4605,7 @@ int main(int argc, char **argv)
                 }
                 {
                     struct windowd_client *client = active_client(&session);
-                    if (client != 0 && client->input_write_fd >= 0)
-                    {
-                        (void)route_packet(client->input_write_fd, &key_event, sizeof(key_event));
-                    }
+                    (void)route_key(client, &key_event);
                 }
             }
         }

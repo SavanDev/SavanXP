@@ -1,13 +1,14 @@
 /*
  * SavanXP - implementacion del cliente del compositor para el subsistema
  * nativo. Espejo funcional de gfx_open_client y el flujo de submit del SDK
- * posix (subsystems/posix/sdk/v1/runtime/gfx_impl.inc), sobre los fds 3..9
- * heredados del shell y syscalls del baseline. Diferencias deliberadas:
+ * posix (subsystems/posix/sdk/v1/runtime/gfx_impl.inc), sobre los fds 3..6
+ * heredados del WM (protocolo v4) y syscalls del baseline. Diferencias
+ * deliberadas:
  *  - una sesion global por proceso (el modelo del compositor actual);
  *  - sin backbuffer privado en seccion: el frame del cliente vive donde el
  *    llamador quiera (en Haxe, un Array<Int> contiguo) y se copia a la
  *    superficie compartida al presentar;
- *  - sin dup de los fds: se usan los numeros fijos 3..9.
+ *  - sin dup de los fds: se usan los numeros fijos 3..6.
  */
 #include "savanxp_native.h"
 
@@ -31,12 +32,6 @@ static long sxn_gui_event_reset(int handle) {
 
 static long sxn_gui_wait_one(int handle, long timeout_ms) {
     return sxn_syscall3(SXN_SYS_WAIT_ONE, handle, timeout_ms, 0);
-}
-
-static long sxn_gui_wait_many(const int *handles, unsigned long count,
-                              unsigned long flags, long timeout_ms) {
-    return sxn_syscall5(SXN_SYS_WAIT_MANY, (long)handles, (long)count, (long)flags,
-                        timeout_ms, 0);
 }
 
 struct sxn_gui_pollfd {
@@ -87,7 +82,7 @@ long sxn_gui_open(void) {
 
     header = (struct sxn_gui_surface_header *)mapped;
     if (header->magic != SXN_GUI_SURFACE_MAGIC ||
-        header->version != SXN_GUI_SURFACE_VERSION_3 ||
+        header->version != SXN_GUI_SURFACE_VERSION_4 ||
         header->pixels_offset < sizeof(*header) ||
         header->command_offset < sizeof(*header) ||
         header->batch_capacity == 0 ||
@@ -142,36 +137,39 @@ unsigned long sxn_gui_composed_sequence(void) {
     return g_gui.open ? g_gui.header->composed_sequence : 0;
 }
 
+static int sxn_gui_shutdown_requested(void) {
+    return (g_gui.header->flags & SXN_GUI_SURFACE_FLAG_SHUTDOWN) != 0;
+}
+
 int sxn_gui_should_close(void) {
     if (!g_gui.open) {
         return 1;
     }
-    return sxn_gui_wait_one(SXN_GUI_FD_SHUTDOWN_EVENT, 0) >= 0 ? 1 : 0;
+    return sxn_gui_shutdown_requested();
 }
 
-/* Espera hasta que (submit - composed) < limite, con corte por shutdown. */
+/* Espera hasta que (submit - composed) < limite, con corte por shutdown. El
+ * wake es un solo evento para varias condiciones: resetear, volver a mirar el
+ * header y recien ahi dormir, o un wake entre la mirada y el reset se pierde. */
 static long sxn_gui_wait_below(unsigned long limit) {
     while ((g_gui.header->submit_sequence - g_gui.header->composed_sequence) >= limit) {
-        int handles[2];
         long wait_result;
 
-        if (sxn_gui_wait_one(SXN_GUI_FD_SHUTDOWN_EVENT, 0) >= 0) {
+        if (sxn_gui_shutdown_requested()) {
             return -SXN_GUI_EPIPE;
         }
 
-        (void)sxn_gui_event_reset(SXN_GUI_FD_RETIRE_EVENT);
+        (void)sxn_gui_event_reset(SXN_GUI_FD_WAKE_EVENT);
         if ((g_gui.header->submit_sequence - g_gui.header->composed_sequence) < limit) {
             break;
         }
+        if (sxn_gui_shutdown_requested()) {
+            return -SXN_GUI_EPIPE;
+        }
 
-        handles[0] = SXN_GUI_FD_SHUTDOWN_EVENT;
-        handles[1] = SXN_GUI_FD_RETIRE_EVENT;
-        wait_result = sxn_gui_wait_many(handles, 2, SXN_WAIT_FLAG_ANY, -1);
+        wait_result = sxn_gui_wait_one(SXN_GUI_FD_WAKE_EVENT, -1);
         if (wait_result < 0) {
             return wait_result;
-        }
-        if (wait_result == 0) {
-            return -SXN_GUI_EPIPE;
         }
     }
     return 0;
@@ -257,9 +255,69 @@ long sxn_gui_present(const void *frame) {
                                   g_gui.header->info.height);
 }
 
-int sxn_gui_poll_event(struct sxn_gui_input_event *event) {
+/* Teclado y puntero comparten el fd 4. Lo que una funcion de poll lee y no es
+ * suyo lo guarda para la otra -- y lo lee igual, porque si quedara en el pipe
+ * lo llenaria y el WM empezaria a descartar eventos (ver gfx_impl.inc). */
+#define SXN_GUI_STASH_CAPACITY 64u
+#define SXN_GUI_DRAIN_LIMIT 256u
+/* Vueltas de 50 ms que sxn_gui_launch espera lugar en la cola: un segundo. */
+#define SXN_GUI_LAUNCH_WAIT_ROUNDS 20
+
+static struct {
+    struct sxn_gui_input_event items[SXN_GUI_STASH_CAPACITY];
+    unsigned int head;
+    unsigned int count;
+} g_key_stash;
+
+static struct {
+    struct sxn_gui_pointer_event items[SXN_GUI_STASH_CAPACITY];
+    unsigned int head;
+    unsigned int count;
+} g_pointer_stash;
+
+static void sxn_gui_stash_key(const struct sxn_gui_input_event *event) {
+    if (g_key_stash.count == SXN_GUI_STASH_CAPACITY) {
+        return;
+    }
+    g_key_stash.items[(g_key_stash.head + g_key_stash.count) % SXN_GUI_STASH_CAPACITY] = *event;
+    g_key_stash.count += 1;
+}
+
+static void sxn_gui_stash_pointer(const struct sxn_gui_pointer_event *event) {
+    if (g_pointer_stash.count == SXN_GUI_STASH_CAPACITY) {
+        /* Llena: se funde con el ultimo, sumando la rueda. */
+        struct sxn_gui_pointer_event *last = &g_pointer_stash.items[
+            (g_pointer_stash.head + g_pointer_stash.count - 1u) % SXN_GUI_STASH_CAPACITY];
+        int32_t wheel = last->wheel + event->wheel;
+        *last = *event;
+        last->wheel = wheel;
+        return;
+    }
+    g_pointer_stash.items[(g_pointer_stash.head + g_pointer_stash.count) % SXN_GUI_STASH_CAPACITY] = *event;
+    g_pointer_stash.count += 1;
+}
+
+/* Lee un registro entero sin bloquear: 1 leido, 0 nada, negativo error. */
+static int sxn_gui_read_event(struct sxn_gui_wm_event *record) {
     struct sxn_gui_pollfd pollfd;
     long result;
+
+    pollfd.fd = SXN_GUI_FD_EVENTS;
+    pollfd.events = SXN_POLLIN | SXN_POLLHUP;
+    pollfd.revents = 0;
+    if (sxn_gui_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SXN_POLLIN) == 0) {
+        return 0;
+    }
+
+    result = sxn_gui_read(SXN_GUI_FD_EVENTS, record, sizeof(*record));
+    if (result < 0) {
+        return (int)result;
+    }
+    return result == (long)sizeof(*record) ? 1 : 0;
+}
+
+int sxn_gui_poll_event(struct sxn_gui_input_event *event) {
+    unsigned int drained;
 
     if (!g_gui.open || event == 0) {
         return -SXN_GUI_EINVAL;
@@ -277,53 +335,79 @@ int sxn_gui_poll_event(struct sxn_gui_input_event *event) {
         return 1;
     }
 
-    pollfd.fd = SXN_GUI_FD_INPUT;
-    pollfd.events = SXN_POLLIN | SXN_POLLHUP;
-    pollfd.revents = 0;
-    if (sxn_gui_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SXN_POLLIN) == 0) {
-        return 0;
+    if (g_key_stash.count != 0) {
+        *event = g_key_stash.items[g_key_stash.head];
+        g_key_stash.head = (g_key_stash.head + 1u) % SXN_GUI_STASH_CAPACITY;
+        g_key_stash.count -= 1;
+        return 1;
     }
 
-    result = sxn_gui_read(SXN_GUI_FD_INPUT, event, sizeof(*event));
-    if (result < 0) {
-        return (int)result;
+    for (drained = 0; drained < SXN_GUI_DRAIN_LIMIT; ++drained) {
+        struct sxn_gui_wm_event record;
+        int result = sxn_gui_read_event(&record);
+
+        if (result <= 0) {
+            return result;
+        }
+        if (record.kind == SXN_GUI_WM_EVENT_KEY) {
+            *event = record.payload.key;
+            return 1;
+        }
+        if (record.kind == SXN_GUI_WM_EVENT_POINTER) {
+            sxn_gui_stash_pointer(&record.payload.pointer);
+        }
     }
-    return result == (long)sizeof(*event) ? 1 : 0;
+    return 0;
 }
 
 int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event) {
-    struct sxn_gui_pollfd pollfd;
-    long result;
+    unsigned int drained;
 
     if (!g_gui.open || event == 0) {
         return -SXN_GUI_EINVAL;
     }
 
-    /* El shell entrega el puntero en coordenadas locales a la superficie (ver
-     * route_pointer en desktop.c); no hay sintesis como en el canal de teclado.
-     * Mismo patron que el cliente posix (gfx_poll_pointer en libc.c). */
-    pollfd.fd = SXN_GUI_FD_MOUSE;
-    pollfd.events = SXN_POLLIN | SXN_POLLHUP;
-    pollfd.revents = 0;
-    if (sxn_gui_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SXN_POLLIN) == 0) {
-        return 0;
+    /* El WM entrega el puntero en coordenadas locales a la superficie (ver
+     * route_pointer en windowd.c); no hay sintesis como en el teclado. */
+    if (g_pointer_stash.count != 0) {
+        *event = g_pointer_stash.items[g_pointer_stash.head];
+        g_pointer_stash.head = (g_pointer_stash.head + 1u) % SXN_GUI_STASH_CAPACITY;
+        g_pointer_stash.count -= 1;
+        return 1;
     }
 
-    result = sxn_gui_read(SXN_GUI_FD_MOUSE, event, sizeof(*event));
-    if (result < 0) {
-        return (int)result;
+    for (drained = 0; drained < SXN_GUI_DRAIN_LIMIT; ++drained) {
+        struct sxn_gui_wm_event record;
+        int result = sxn_gui_read_event(&record);
+
+        if (result <= 0) {
+            return result;
+        }
+        if (record.kind == SXN_GUI_WM_EVENT_POINTER) {
+            *event = record.payload.pointer;
+            return 1;
+        }
+        if (record.kind == SXN_GUI_WM_EVENT_KEY) {
+            sxn_gui_stash_key(&record.payload.key);
+        }
     }
-    return result == (long)sizeof(*event) ? 1 : 0;
+    return 0;
+}
+
+static int sxn_gui_launch_queue_has_room(void) {
+    return g_gui.header->requests.launch_head - g_gui.header->requests.launch_tail <
+        SXN_GUI_LAUNCH_QUEUE_CAPACITY;
 }
 
 long sxn_gui_launch(const char *path) {
-    struct sxn_gui_launch_request request;
+    struct sxn_gui_launch_request *request;
     unsigned long length = 0;
     unsigned long index;
-    long written;
+    uint32_t head;
+    int round;
 
-    /* El shell exige un path absoluto que entre en el buffer del pedido. */
-    if (path == 0 || path[0] != '/') {
+    /* El WM exige un path absoluto que entre en el buffer del pedido. */
+    if (!g_gui.open || path == 0 || path[0] != '/') {
         return -SXN_GUI_EINVAL;
     }
     while (path[length] != '\0') {
@@ -333,30 +417,51 @@ long sxn_gui_launch(const char *path) {
         return -SXN_GUI_EINVAL;
     }
 
-    request.reserved0 = 0;
-    for (index = 0; index < SXN_GUI_LAUNCH_PATH_CAPACITY; ++index) {
-        request.path[index] = 0;
-    }
-    for (index = 0; index <= length; ++index) {
-        request.path[index] = path[index];
+    /* Cola llena: avisar al WM y esperar su wake, que manda cada vez que la
+     * drena. Acotado, para que un WM que no atiende no cuelgue a la app. */
+    for (round = 0; !sxn_gui_launch_queue_has_room(); ++round) {
+        if (sxn_gui_shutdown_requested()) {
+            return -SXN_GUI_EPIPE;
+        }
+        if (round >= SXN_GUI_LAUNCH_WAIT_ROUNDS) {
+            return -SXN_GUI_EPIPE;
+        }
+        (void)sxn_gui_event_set(SXN_GUI_FD_SUBMIT_EVENT);
+        (void)sxn_gui_event_reset(SXN_GUI_FD_WAKE_EVENT);
+        if (sxn_gui_launch_queue_has_room()) {
+            break;
+        }
+        (void)sxn_gui_wait_one(SXN_GUI_FD_WAKE_EVENT, 50);
     }
 
-    written = sxn_write(SXN_GUI_FD_LAUNCH, (const char *)&request, (int)sizeof(request));
-    return written == (long)sizeof(request) ? 0 : -SXN_GUI_EPIPE;
+    /* La entrada se escribe entera ANTES de publicar el head. */
+    head = g_gui.header->requests.launch_head;
+    request = &g_gui.header->requests.launch[head % SXN_GUI_LAUNCH_QUEUE_CAPACITY];
+    request->flags = 0;
+    for (index = 0; index < SXN_GUI_LAUNCH_PATH_CAPACITY; ++index) {
+        request->path[index] = 0;
+    }
+    for (index = 0; index < SXN_GUI_LAUNCH_ARG_CAPACITY; ++index) {
+        request->argument[index] = 0;
+    }
+    for (index = 0; index <= length; ++index) {
+        request->path[index] = path[index];
+    }
+    g_gui.header->requests.launch_head = head + 1u;
+    return sxn_gui_event_set(SXN_GUI_FD_SUBMIT_EVENT) < 0 ? -SXN_GUI_EPIPE : 0;
 }
 
 long sxn_gui_request_content_size(unsigned int width, unsigned int height) {
-    struct sxn_gui_size_hint hint;
-    long written;
-
     if (!g_gui.open || width == 0 || height == 0) {
         return -SXN_GUI_EINVAL;
     }
 
-    hint.width = width;
-    hint.height = height;
-    written = sxn_write(SXN_GUI_FD_SIZE_HINT, (const char *)&hint, (int)sizeof(hint));
-    return written == (long)sizeof(hint) ? 0 : -SXN_GUI_EPIPE;
+    /* Seqlock: impar mientras el par esta a medio escribir. */
+    g_gui.header->requests.size_hint_sequence |= 1u;
+    g_gui.header->requests.size_hint_width = width;
+    g_gui.header->requests.size_hint_height = height;
+    g_gui.header->requests.size_hint_sequence += 1u;
+    return sxn_gui_event_set(SXN_GUI_FD_SUBMIT_EVENT) < 0 ? -SXN_GUI_EPIPE : 0;
 }
 
 long sxn_gui_wait_content_size(long timeout_ms) {

@@ -1,7 +1,7 @@
 // SavanXP - nativegui: primera app VENTANEADA del subsistema nativo.
 //
 // Cliente del compositor escrito en Haxe sobre la capa sxn_gui_* del runtime
-// (protocolo de superficie v3 por los fds 3..9 que instala el shell antes del
+// (protocolo de superficie v4 por los fds 3..6 que instala el WM antes del
 // exec). Dibuja un patron reconocible, presenta varios frames y procesa algo
 // de input; disenada para correr igual de bien bajo el escritorio real que
 // bajo el harness headless (subsystems/native/test/guihost.c), que ademas
@@ -98,8 +98,8 @@ function main() {
     frames += 1;
   }
 
-  // Puntero: el shell (o el harness) rutea el mouse por el fd 5 en coordenadas
-  // locales a la superficie. Lo drenamos, dibujamos un marcador donde apunta y
+  // Puntero: el WM (o el harness) rutea el mouse por el canal de eventos en
+  // coordenadas locales a la superficie. Lo drenamos, dibujamos un marcador donde apunta y
   // presentamos esa region -- prueba end-to-end del canal. El poll es no
   // bloqueante; el harness ya encolo el evento durante la animacion, pero unos
   // reintentos con sleep cubren cualquier carrera (y bajo el escritorio real,

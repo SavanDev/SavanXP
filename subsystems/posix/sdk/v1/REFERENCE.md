@@ -137,6 +137,9 @@ Helpers públicos expuestos por el runtime:
 - `gfx_release`
 - `gfx_present`
 - `gfx_poll_event`
+- `gfx_pointer_open`
+- `gfx_poll_pointer`
+- `gfx_should_close`
 - `mouse_open`
 - `mouse_poll_event`
 - `gfx_rgb`
@@ -162,9 +165,11 @@ Contrato actual:
   es parte del camino normal.
 - `gfx_present` y `gfx_present_region` aceptan 32-bpp desde userland y
   notifican regiones sucias al compositor.
-- `gfx_poll_event` y `mouse_open`/`mouse_poll_event` leen del compositor si la
-  app fue lanzada como cliente; para diagnostico de bajo nivel siguen
-  existiendo `/dev/input0` y `/dev/mouse0`.
+- `gfx_poll_event` (teclado) y `gfx_poll_pointer` (puntero, con el fd de
+  `gfx_pointer_open`) leen el canal de eventos del WM, que es uno solo para los
+  dos tipos. `mouse_open`/`mouse_poll_event` leen siempre `/dev/mouse0`, que
+  junto con `/dev/input0` queda para diagnostico de bajo nivel.
+- `gfx_should_close` devuelve 1 cuando el WM pidio cerrar la ventana.
 - bajo QEMU, el kernel puede respaldar `/dev/mouse0` con un backend absoluto
   `virtio-tablet-pci`, traducido a deltas para preservar la ABI 1.1
 - `/dev/gpu0` queda reservado como ABI de bajo nivel para `compositord`,

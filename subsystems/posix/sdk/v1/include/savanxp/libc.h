@@ -64,6 +64,10 @@ long realtime(struct savanxp_realtime* value);
 long savanxp_sync(void);
 long mouse_open(void);
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event);
+/* Duplicado del canal de eventos del WM, para leer el puntero con
+ * gfx_poll_pointer. Negativo si el proceso no se lanzo como cliente del WM.
+ * Teclado y puntero comparten el canal: lo que una de las dos funciones de
+ * poll lea y no sea suyo queda guardado para la otra. */
 long gfx_pointer_open(void);
 int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event);
 long audio_open(void);
@@ -101,14 +105,15 @@ void exit(int code) __attribute__((noreturn));
 
 struct savanxp_gfx_context {
     int fb_fd;
+    /* Canal de eventos del WM (SAVANXP_WM_FD_EVENTS): teclado y puntero. Se
+     * puede pasar a poll() para dormir hasta que llegue input, pero que quede
+     * legible NO garantiza una tecla: puede ser un evento de puntero, y
+     * entonces gfx_poll_event devuelve 0. Solo un negativo es un error. */
     int input_fd;
     struct savanxp_fb_info info;
     int submit_event_fd;
-    int retire_event_fd;
-    int shutdown_event_fd;
-    int launch_fd;
-    int cursor_hint_fd;
-    int size_hint_fd;
+    /* Frames compuestos y pedido de cierre (SAVANXP_WM_FD_WAKE_EVENT). */
+    int wake_event_fd;
     int mode;
     void* mapped_view;
     uint32_t* pixels;
@@ -148,6 +153,11 @@ long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_
 long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t* pixels, const struct sx_rect* rects, size_t rect_count);
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
 long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event);
+/* 1 si el WM pidio cerrar la ventana. Presentar despues de eso devuelve
+ * -SAVANXP_EPIPE. */
+int gfx_should_close(const struct savanxp_gfx_context* context);
+/* Encola el pedido en el header. Si la cola ya esta llena espera un momento a
+ * que el WM la drene y devuelve -SAVANXP_EAGAIN si no pasa. */
 long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* path);
 /* Variante con flags SAVANXP_DESKTOP_LAUNCH_FLAG_*: el lanzador declara las
  * necesidades del programa (p.ej. fullscreen composited). gfx_desktop_launch

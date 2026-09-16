@@ -531,8 +531,17 @@ int main(void) {
             continue;
         }
 
-        if (gfx_poll_event(&g_shellapp.gfx, &event) <= 0) {
-            break;
+        /* 0 no es un error: el canal trae tambien el puntero, y un registro de
+         * puntero despierta el poll sin dejar ninguna tecla. Cerrar la terminal
+         * en ese caso la hacia desaparecer apenas el mouse pasaba por encima. */
+        {
+            const int polled = gfx_poll_event(&g_shellapp.gfx, &event);
+            if (polled < 0) {
+                break;
+            }
+            if (polled == 0) {
+                continue;
+            }
         }
 
         if (event.type == SAVANXP_INPUT_EVENT_RESIZED) {

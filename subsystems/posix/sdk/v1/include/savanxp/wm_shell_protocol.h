@@ -8,9 +8,9 @@
  * Extension OPCIONAL de savanxp/wm_protocol.h. Un cliente normal no tiene
  * estos descriptores abiertos: el WM los cablea unicamente al proceso que
  * lanza en el rol de shell. Eso importa porque los fds del protocolo se pagan
- * POR CLIENTE y windowd ya guarda nueve contra el limite de 64 por proceso
- * (ver docs/WM_SUBSYSTEM.md), asi que estos dos son dos fds en todo el sistema
- * y no dos por ventana.
+ * POR CLIENTE contra el limite de 64 por proceso (ver docs/WM_SUBSYSTEM.md),
+ * asi que esto es un fd en todo el sistema y no uno por ventana: la seccion de
+ * la lista el WM la cierra despues del fork, y le queda solo el pipe.
  *
  * Por que existe: la barra de tareas es un CLIENTE, no chrome del WM -- el
  * modelo de explorer.exe, y el mismo layering que separo a shellui y progman
@@ -34,22 +34,20 @@
  *
  * El cliente la mapea de SOLO LECTURA.
  */
-#define SAVANXP_WM_FD_WINDOW_LIST 12
+#define SAVANXP_WM_FD_WINDOW_LIST 7
 
 /*
  * Pedidos del shell al WM. Aca si un pipe es lo correcto: los mensajes son
  * chicos, esporadicos (los produce un click) y van en la direccion que no
  * tiene la restriccion de "el WM nunca bloquea".
  */
-#define SAVANXP_WM_FD_SHELL_REQUEST 13
+#define SAVANXP_WM_FD_SHELL_REQUEST 8
 
-/* Ultimo descriptor del protocolo CON la extension de shell. El WM lo necesita
- * para no cerrar por numero un fd de origen que caiga en el rango: puede ser el
- * destino recien mapeado de otro dup2, y cerrarlo deja el hueco libre para que
- * lo tome el primer open/dup que venga. */
+/* Ultimo descriptor del protocolo CON la extension de shell. */
 #define SAVANXP_WM_SHELL_FD_LAST SAVANXP_WM_FD_SHELL_REQUEST
 
-#define SAVANXP_WM_SHELL_PROTOCOL_VERSION 2u
+/* 3: los descriptores pasaron a 7 y 8 con la v4 de savanxp/wm_protocol.h. */
+#define SAVANXP_WM_SHELL_PROTOCOL_VERSION 3u
 #define SAVANXP_WM_WINDOW_TITLE_CAPACITY 64u
 /* Igual que WINDOWD_MAX_OVERLAY_CLIENTS, mas el shell. */
 #define SAVANXP_WM_MAX_WINDOWS 13u

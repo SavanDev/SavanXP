@@ -289,45 +289,13 @@ long savanxp_sync(void) {
     return syscall0(SAVANXP_SYS_SYNC);
 }
 
+/* El mouse crudo del kernel. Una app con ventana recibe el puntero del WM por
+ * gfx_pointer_open/gfx_poll_pointer, ya en coordenadas de su superficie. */
 long mouse_open(void) {
-    long duplicated = savanxp_dup(5);
-    if (duplicated >= 0) {
-        return duplicated;
-    }
     return savanxp_open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
 }
 
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event) {
-    struct savanxp_pollfd pollfd = {
-        .fd = fd,
-        .events = SAVANXP_POLLIN | SAVANXP_POLLHUP,
-        .revents = 0,
-    };
-    if (fd < 0 || event == 0) {
-        return -SAVANXP_EINVAL;
-    }
-    if (savanxp_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
-        return 0;
-    }
-    {
-        const long result = savanxp_read(fd, event, sizeof(*event));
-        if (result < 0) {
-            return (int)result;
-        }
-        if (result != (long)sizeof(*event)) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-/* Canal de puntero ruteado por el WM (SAVANXP_WM_FD_MOUSE). Devuelve -1 en
- * procesos que no se lanzaron como cliente del WM y por lo tanto no lo tienen. */
-long gfx_pointer_open(void) {
-    return savanxp_dup(SAVANXP_WM_FD_MOUSE);
-}
-
-int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
     struct savanxp_pollfd pollfd = {
         .fd = fd,
         .events = SAVANXP_POLLIN | SAVANXP_POLLHUP,

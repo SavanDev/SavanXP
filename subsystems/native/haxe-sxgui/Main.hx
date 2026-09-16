@@ -2,7 +2,7 @@
 // Fase 3 del port del escritorio.
 //
 // Usa el toolkit compartido (haxe-toolkit: Painter, Boton) via -cp. Modelo de
-// widgets con estado, hit-test del puntero (canal fd 5), estados pressed/click
+// widgets con estado, hit-test del puntero (canal de eventos), estados pressed/click
 // con feedback visual y un event loop que repinta on-change. Cliente del
 // compositor igual que nativegui; el escritorio pone la barra de titulo.
 //

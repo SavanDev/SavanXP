@@ -137,90 +137,66 @@ static void gfx_copy_present_region(
     }
 }
 
-static long gfx_wait_for_client_idle(const struct savanxp_gfx_context* context) {
-    if (context == 0 || context->header == 0) {
-        return -SAVANXP_EINVAL;
-    }
+static int gfx_shutdown_requested(const struct savanxp_gfx_context* context) {
+    return context != 0 && context->header != 0 &&
+        (context->header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0;
+}
 
-    while (context->header->composed_sequence < context->header->submit_sequence) {
-        if (context->shutdown_event_fd >= 0 && wait_one(context->shutdown_event_fd, 0) >= 0) {
+/* Espera a que `ready` se cumpla, con corte por pedido de cierre. El evento de
+ * wake es uno para varias condiciones, asi que el orden importa: resetear,
+ * volver a mirar el header y recien ahi dormir. Al reves, un wake que llega
+ * entre la mirada y el reset se pierde y la espera no vuelve nunca. */
+static long gfx_wait_for_header(
+    const struct savanxp_gfx_context* context,
+    int (*ready)(const struct savanxp_gfx_context* context)) {
+    while (!ready(context)) {
+        long wait_result = 0;
+
+        if (gfx_shutdown_requested(context)) {
             return -SAVANXP_EPIPE;
         }
-        if (context->retire_event_fd < 0) {
+        if (context->wake_event_fd < 0) {
             sleep_ms(1);
             continue;
         }
 
-        (void)event_reset(context->retire_event_fd);
-        if (context->header->composed_sequence >= context->header->submit_sequence) {
+        (void)event_reset(context->wake_event_fd);
+        if (ready(context)) {
             break;
         }
+        if (gfx_shutdown_requested(context)) {
+            return -SAVANXP_EPIPE;
+        }
 
-        if (context->shutdown_event_fd >= 0) {
-            int handles[2];
-            long wait_result = 0;
-
-            handles[0] = context->shutdown_event_fd;
-            handles[1] = context->retire_event_fd;
-            wait_result = wait_many(handles, 2, SAVANXP_WAIT_FLAG_ANY, -1);
-            if (wait_result < 0) {
-                return wait_result;
-            }
-            if (wait_result == 0) {
-                return -SAVANXP_EPIPE;
-            }
-        } else {
-            long wait_result = wait_one(context->retire_event_fd, -1);
-            if (wait_result < 0) {
-                return wait_result;
-            }
+        wait_result = wait_one(context->wake_event_fd, -1);
+        if (wait_result < 0) {
+            return wait_result;
         }
     }
 
     return 0;
 }
 
+static int gfx_client_idle(const struct savanxp_gfx_context* context) {
+    return context->header->composed_sequence >= context->header->submit_sequence;
+}
+
+static int gfx_client_slot_free(const struct savanxp_gfx_context* context) {
+    return (context->header->submit_sequence - context->header->composed_sequence) < context->batch_capacity;
+}
+
+static long gfx_wait_for_client_idle(const struct savanxp_gfx_context* context) {
+    if (context == 0 || context->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return gfx_wait_for_header(context, gfx_client_idle);
+}
+
 static long gfx_wait_for_client_slot(const struct savanxp_gfx_context* context) {
     if (context == 0 || context->header == 0 || context->batch_capacity == 0) {
         return -SAVANXP_EINVAL;
     }
-
-    while ((context->header->submit_sequence - context->header->composed_sequence) >= context->batch_capacity) {
-        if (context->shutdown_event_fd >= 0 && wait_one(context->shutdown_event_fd, 0) >= 0) {
-            return -SAVANXP_EPIPE;
-        }
-        if (context->retire_event_fd < 0) {
-            sleep_ms(1);
-            continue;
-        }
-
-        (void)event_reset(context->retire_event_fd);
-        if ((context->header->submit_sequence - context->header->composed_sequence) < context->batch_capacity) {
-            break;
-        }
-
-        if (context->shutdown_event_fd >= 0) {
-            int handles[2];
-            long wait_result = 0;
-
-            handles[0] = context->shutdown_event_fd;
-            handles[1] = context->retire_event_fd;
-            wait_result = wait_many(handles, 2, SAVANXP_WAIT_FLAG_ANY, -1);
-            if (wait_result < 0) {
-                return wait_result;
-            }
-            if (wait_result == 0) {
-                return -SAVANXP_EPIPE;
-            }
-        } else {
-            long wait_result = wait_one(context->retire_event_fd, -1);
-            if (wait_result < 0) {
-                return wait_result;
-            }
-        }
-    }
-
-    return 0;
+    return gfx_wait_for_header(context, gfx_client_slot_free);
 }
 
 static long gfx_submit_client_batch(
@@ -278,11 +254,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     long section_fd = -1;
     long input_fd = -1;
     long submit_event_fd = -1;
-    long retire_event_fd = -1;
-    long shutdown_event_fd = -1;
-    long launch_fd = -1;
-    long cursor_hint_fd = -1;
-    long size_hint_fd = -1;
+    long wake_event_fd = -1;
 
     if (result_is_error((long)mapped)) {
         return -SAVANXP_ENODEV;
@@ -290,7 +262,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
 
     header = (struct savanxp_gpu_client_surface_header*)mapped;
     if (header->magic != SAVANXP_GPU_CLIENT_SURFACE_MAGIC ||
-        header->version != SAVANXP_GPU_CLIENT_SURFACE_VERSION_3 ||
+        header->version != SAVANXP_GPU_CLIENT_SURFACE_VERSION_4 ||
         header->pixels_offset < sizeof(*header) ||
         header->command_offset < sizeof(*header) ||
         header->batch_capacity == 0 ||
@@ -323,14 +295,10 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     memcpy(private_pixels, shared_pixels, header->info.buffer_size);
 
     section_fd = savanxp_dup(SAVANXP_WM_FD_SECTION);
-    input_fd = savanxp_dup(SAVANXP_WM_FD_INPUT);
+    input_fd = savanxp_dup(SAVANXP_WM_FD_EVENTS);
     submit_event_fd = savanxp_dup(SAVANXP_WM_FD_SUBMIT_EVENT);
-    retire_event_fd = savanxp_dup(SAVANXP_WM_FD_RETIRE_EVENT);
-    shutdown_event_fd = savanxp_dup(SAVANXP_WM_FD_SHUTDOWN_EVENT);
-    launch_fd = savanxp_dup(SAVANXP_WM_FD_LAUNCH);
-    cursor_hint_fd = savanxp_dup(SAVANXP_WM_FD_CURSOR_HINT);
-    size_hint_fd = savanxp_dup(SAVANXP_WM_FD_SIZE_HINT);
-    if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || retire_event_fd < 0 || shutdown_event_fd < 0) {
+    wake_event_fd = savanxp_dup(SAVANXP_WM_FD_WAKE_EVENT);
+    if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || wake_event_fd < 0) {
         if (section_fd >= 0) {
             (void)savanxp_close((int)section_fd);
         }
@@ -340,20 +308,8 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
         if (submit_event_fd >= 0) {
             (void)savanxp_close((int)submit_event_fd);
         }
-        if (retire_event_fd >= 0) {
-            (void)savanxp_close((int)retire_event_fd);
-        }
-        if (shutdown_event_fd >= 0) {
-            (void)savanxp_close((int)shutdown_event_fd);
-        }
-        if (launch_fd >= 0) {
-            (void)savanxp_close((int)launch_fd);
-        }
-        if (cursor_hint_fd >= 0) {
-            (void)savanxp_close((int)cursor_hint_fd);
-        }
-        if (size_hint_fd >= 0) {
-            (void)savanxp_close((int)size_hint_fd);
+        if (wake_event_fd >= 0) {
+            (void)savanxp_close((int)wake_event_fd);
         }
         (void)unmap_view(private_pixels);
         (void)unmap_view(mapped);
@@ -363,11 +319,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     context->fb_fd = (int)section_fd;
     context->input_fd = (int)input_fd;
     context->submit_event_fd = (int)submit_event_fd;
-    context->retire_event_fd = (int)retire_event_fd;
-    context->shutdown_event_fd = (int)shutdown_event_fd;
-    context->launch_fd = (int)launch_fd;
-    context->cursor_hint_fd = (int)cursor_hint_fd;
-    context->size_hint_fd = (int)size_hint_fd;
+    context->wake_event_fd = (int)wake_event_fd;
     context->mode = kGfxModeClient;
     context->mapped_view = mapped;
     context->header = header;
@@ -392,11 +344,7 @@ long gfx_open(struct savanxp_gfx_context* context) {
     context->fb_fd = -1;
     context->input_fd = -1;
     context->submit_event_fd = -1;
-    context->retire_event_fd = -1;
-    context->shutdown_event_fd = -1;
-    context->launch_fd = -1;
-    context->cursor_hint_fd = -1;
-    context->size_hint_fd = -1;
+    context->wake_event_fd = -1;
 
     return gfx_open_client(context);
 }
@@ -434,25 +382,9 @@ long gfx_close(struct savanxp_gfx_context* context) {
         (void)savanxp_close(context->submit_event_fd);
         context->submit_event_fd = -1;
     }
-    if (context->retire_event_fd >= 0) {
-        (void)savanxp_close(context->retire_event_fd);
-        context->retire_event_fd = -1;
-    }
-    if (context->shutdown_event_fd >= 0) {
-        (void)savanxp_close(context->shutdown_event_fd);
-        context->shutdown_event_fd = -1;
-    }
-    if (context->launch_fd >= 0) {
-        (void)savanxp_close(context->launch_fd);
-        context->launch_fd = -1;
-    }
-    if (context->cursor_hint_fd >= 0) {
-        (void)savanxp_close(context->cursor_hint_fd);
-        context->cursor_hint_fd = -1;
-    }
-    if (context->size_hint_fd >= 0) {
-        (void)savanxp_close(context->size_hint_fd);
-        context->size_hint_fd = -1;
+    if (context->wake_event_fd >= 0) {
+        (void)savanxp_close(context->wake_event_fd);
+        context->wake_event_fd = -1;
     }
     context->mode = 0;
     return result;
@@ -577,8 +509,78 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
     return result;
 }
 
-int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event) {
+/* --- Canal de eventos del WM (savanxp/wm_protocol.h) -----------------------
+ *
+ * Teclado y puntero llegan mezclados por el mismo pipe, pero la API los pide
+ * por separado. Lo que una funcion de poll lee y no es suyo lo guarda aca para
+ * la otra, y lo tiene que leer igual: si una app que solo mira el teclado
+ * dejara el puntero en el pipe, el pipe se llenaria y el WM descartaria las
+ * teclas. Es estado del proceso porque un proceso tiene una sola ventana.
+ */
+#define GFX_EVENT_STASH_CAPACITY 64u
+/* Tope de registros por llamada: un pipe lleno entero. Evita quedarse drenando
+ * para siempre si el WM escribe tan rapido como se lee. */
+#define GFX_EVENT_DRAIN_LIMIT 256u
+/* Cuanto espera gfx_desktop_launch a que el WM le haga lugar en la cola. */
+#define GFX_LAUNCH_WAIT_MS 1000ul
+
+static struct {
+    struct savanxp_input_event items[GFX_EVENT_STASH_CAPACITY];
+    uint32_t head;
+    uint32_t count;
+} g_gfx_key_stash;
+
+static struct {
+    struct savanxp_gui_pointer_event items[GFX_EVENT_STASH_CAPACITY];
+    uint32_t head;
+    uint32_t count;
+} g_gfx_pointer_stash;
+
+static void gfx_stash_key(const struct savanxp_input_event* event) {
+    /* Llena: se descarta, que es lo mismo que haria el WM con el pipe lleno. */
+    if (g_gfx_key_stash.count == GFX_EVENT_STASH_CAPACITY) {
+        return;
+    }
+    g_gfx_key_stash.items[(g_gfx_key_stash.head + g_gfx_key_stash.count) % GFX_EVENT_STASH_CAPACITY] = *event;
+    g_gfx_key_stash.count += 1u;
+}
+
+static void gfx_stash_pointer(const struct savanxp_gui_pointer_event* event) {
+    if (g_gfx_pointer_stash.count == GFX_EVENT_STASH_CAPACITY) {
+        /* Llena: se funde con el ultimo. Posicion y botones son absolutos, pero
+         * la rueda se SUMA -- un tick perdido es scroll que no ocurre nunca. */
+        struct savanxp_gui_pointer_event* last = &g_gfx_pointer_stash.items[
+            (g_gfx_pointer_stash.head + g_gfx_pointer_stash.count - 1u) % GFX_EVENT_STASH_CAPACITY];
+        int32_t wheel = last->wheel + event->wheel;
+        *last = *event;
+        last->wheel = wheel;
+        return;
+    }
+    g_gfx_pointer_stash.items[(g_gfx_pointer_stash.head + g_gfx_pointer_stash.count) % GFX_EVENT_STASH_CAPACITY] = *event;
+    g_gfx_pointer_stash.count += 1u;
+}
+
+/* Lee un registro entero sin bloquear: 1 leido, 0 nada, negativo error. */
+static int gfx_read_wm_event(int fd, struct savanxp_wm_event* record) {
     struct savanxp_pollfd pollfd;
+    long result = 0;
+
+    pollfd.fd = fd;
+    pollfd.events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
+    pollfd.revents = 0;
+    if (savanxp_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
+        return 0;
+    }
+    result = savanxp_read(fd, record, sizeof(*record));
+    if (result < 0) {
+        return (int)result;
+    }
+    return result == (long)sizeof(*record) ? 1 : 0;
+}
+
+int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event) {
+    uint32_t drained = 0;
+
     if (context == 0 || context->input_fd < 0 || event == 0) {
         return -SAVANXP_EINVAL;
     }
@@ -592,23 +594,69 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
         return 1;
     }
 
-    pollfd.fd = context->input_fd;
-    pollfd.events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
-    pollfd.revents = 0;
-    if (savanxp_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
-        return 0;
+    if (g_gfx_key_stash.count != 0) {
+        *event = g_gfx_key_stash.items[g_gfx_key_stash.head];
+        g_gfx_key_stash.head = (g_gfx_key_stash.head + 1u) % GFX_EVENT_STASH_CAPACITY;
+        g_gfx_key_stash.count -= 1u;
+        return 1;
     }
 
-    {
-        long result = savanxp_read(context->input_fd, event, sizeof(*event));
-        if (result < 0) {
-            return (int)result;
+    for (drained = 0; drained < GFX_EVENT_DRAIN_LIMIT; ++drained) {
+        struct savanxp_wm_event record;
+        int result = gfx_read_wm_event(context->input_fd, &record);
+
+        if (result <= 0) {
+            return result;
         }
-        if (result != (long)sizeof(*event)) {
-            return 0;
+        if (record.kind == SAVANXP_WM_EVENT_KEY) {
+            *event = record.payload.key;
+            return 1;
+        }
+        if (record.kind == SAVANXP_WM_EVENT_POINTER) {
+            gfx_stash_pointer(&record.payload.pointer);
         }
     }
-    return 1;
+    return 0;
+}
+
+long gfx_pointer_open(void) {
+    return savanxp_dup(SAVANXP_WM_FD_EVENTS);
+}
+
+int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
+    uint32_t drained = 0;
+
+    if (fd < 0 || event == 0) {
+        return -SAVANXP_EINVAL;
+    }
+
+    if (g_gfx_pointer_stash.count != 0) {
+        *event = g_gfx_pointer_stash.items[g_gfx_pointer_stash.head];
+        g_gfx_pointer_stash.head = (g_gfx_pointer_stash.head + 1u) % GFX_EVENT_STASH_CAPACITY;
+        g_gfx_pointer_stash.count -= 1u;
+        return 1;
+    }
+
+    for (drained = 0; drained < GFX_EVENT_DRAIN_LIMIT; ++drained) {
+        struct savanxp_wm_event record;
+        int result = gfx_read_wm_event(fd, &record);
+
+        if (result <= 0) {
+            return result;
+        }
+        if (record.kind == SAVANXP_WM_EVENT_POINTER) {
+            *event = record.payload.pointer;
+            return 1;
+        }
+        if (record.kind == SAVANXP_WM_EVENT_KEY) {
+            gfx_stash_key(&record.payload.key);
+        }
+    }
+    return 0;
+}
+
+int gfx_should_close(const struct savanxp_gfx_context* context) {
+    return gfx_shutdown_requested(context);
 }
 
 long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event) {
@@ -633,15 +681,28 @@ long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct sa
     return 0;
 }
 
+/* Los pedidos al WM se escriben en el header y se avisan con el mismo evento
+ * de submit que los frames (savanxp_wm_client_requests). */
+static long gfx_notify_wm(const struct savanxp_gfx_context* context) {
+    return context->submit_event_fd >= 0 ? event_set(context->submit_event_fd) : 0;
+}
+
+static int gfx_launch_queue_has_room(const struct savanxp_gfx_context* context) {
+    const struct savanxp_wm_client_requests* requests = &context->header->requests;
+    return requests->launch_head - requests->launch_tail < SAVANXP_WM_LAUNCH_QUEUE_CAPACITY;
+}
+
 long gfx_desktop_launch_arg(
         const struct savanxp_gfx_context* context,
         const char* path,
         const char* argument,
         uint32_t flags) {
-    struct savanxp_desktop_launch_request request;
+    struct savanxp_wm_client_requests* requests = 0;
+    unsigned long deadline = 0;
     size_t length = 0;
+    uint32_t head = 0;
 
-    if (context == 0 || context->launch_fd < 0 || path == 0 || path[0] != '/') {
+    if (context == 0 || context->header == 0 || path == 0 || path[0] != '/') {
         return -SAVANXP_EINVAL;
     }
 
@@ -649,21 +710,43 @@ long gfx_desktop_launch_arg(
     if (length == 0 || length >= SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY) {
         return -SAVANXP_EINVAL;
     }
-
-    memset(&request, 0, sizeof(request));
-    request.flags = flags;
-    memcpy(request.path, path, length + 1u);
-
-    if (argument != 0 && argument[0] != '\0') {
-        size_t argument_length = strlen(argument);
-        if (argument_length >= SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY) {
-            return -SAVANXP_EINVAL;
-        }
-        memcpy(request.argument, argument, argument_length + 1u);
+    if (argument != 0 && strlen(argument) >= SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY) {
+        return -SAVANXP_EINVAL;
     }
-    return savanxp_write(context->launch_fd, &request, sizeof(request)) == (long)sizeof(request)
-        ? 0
-        : -SAVANXP_EIO;
+
+    /* Cola llena: se le avisa al WM y se espera su wake, que manda cada vez que
+     * drena. Acotado, porque un WM que no atiende no puede colgar a la app. */
+    requests = &context->header->requests;
+    deadline = uptime_ms() + GFX_LAUNCH_WAIT_MS;
+    while (!gfx_launch_queue_has_room(context)) {
+        if (gfx_shutdown_requested(context)) {
+            return -SAVANXP_EPIPE;
+        }
+        if (context->wake_event_fd < 0 || uptime_ms() >= deadline) {
+            return -SAVANXP_EAGAIN;
+        }
+        (void)gfx_notify_wm(context);
+        (void)event_reset(context->wake_event_fd);
+        if (gfx_launch_queue_has_room(context)) {
+            break;
+        }
+        (void)wait_one(context->wake_event_fd, 50);
+    }
+
+    /* La entrada se escribe entera ANTES de publicar el head: el WM lee hasta
+     * el head, asi que nunca ve una a medio llenar. */
+    head = requests->launch_head;
+    {
+        struct savanxp_desktop_launch_request* request = &requests->launch[head % SAVANXP_WM_LAUNCH_QUEUE_CAPACITY];
+        memset(request, 0, sizeof(*request));
+        request->flags = flags;
+        memcpy(request->path, path, length + 1u);
+        if (argument != 0 && argument[0] != '\0') {
+            memcpy(request->argument, argument, strlen(argument) + 1u);
+        }
+    }
+    requests->launch_head = head + 1u;
+    return gfx_notify_wm(context) < 0 ? -SAVANXP_EIO : 0;
 }
 
 long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags) {
@@ -675,30 +758,28 @@ long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* p
 }
 
 long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape) {
-    struct savanxp_desktop_cursor_hint hint;
-
-    if (context == 0 || context->cursor_hint_fd < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT) {
+    if (context == 0 || context->header == 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT) {
         return -SAVANXP_EINVAL;
     }
 
-    hint.shape = shape;
-    return savanxp_write(context->cursor_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
-        ? 0
-        : -SAVANXP_EIO;
+    context->header->requests.cursor_shape = shape;
+    return gfx_notify_wm(context) < 0 ? -SAVANXP_EIO : 0;
 }
 
 long gfx_request_content_size(const struct savanxp_gfx_context* context, uint32_t width, uint32_t height) {
-    struct savanxp_desktop_size_hint hint;
+    struct savanxp_wm_client_requests* requests = 0;
 
-    if (context == 0 || context->size_hint_fd < 0 || width == 0 || height == 0) {
+    if (context == 0 || context->header == 0 || width == 0 || height == 0) {
         return -SAVANXP_EINVAL;
     }
 
-    hint.width = width;
-    hint.height = height;
-    return savanxp_write(context->size_hint_fd, &hint, sizeof(hint)) == (long)sizeof(hint)
-        ? 0
-        : -SAVANXP_EIO;
+    /* Seqlock: impar mientras el par esta a medio escribir. */
+    requests = &context->header->requests;
+    requests->size_hint_sequence |= 1u;
+    requests->size_hint_width = width;
+    requests->size_hint_height = height;
+    requests->size_hint_sequence += 1u;
+    return gfx_notify_wm(context) < 0 ? -SAVANXP_EIO : 0;
 }
 
 long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long timeout_ms) {

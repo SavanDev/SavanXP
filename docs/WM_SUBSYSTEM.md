@@ -11,7 +11,8 @@
 >   a category in its `.sxmeta` (see
 >   [SXE_FORMAT.md](SXE_FORMAT.md#all-programs-the-catalog-discovers-itself)),
 >   with `/disk/progman.ini` on top as the user's arrangement.
-> - The WM↔client contract is `savanxp/wm_protocol.h` (fds 3..10).
+> - The WM↔client contract is `savanxp/wm_protocol.h` (protocol v4, fds 3..6;
+>   see [Descriptor budget](#descriptor-budget)).
 > - The taskbar is replaced by the Task List (Ctrl+Esc), which is WM UI.
 > - Modules shared with clients (`desktop_icons`, `desktop_wallpaper`) keep
 >   their names on purpose: they do not belong to the WM.
@@ -86,7 +87,8 @@ against a file that also draws the start menu.
 ## The WM↔client protocol already exists (implicitly)
 
 `start_client_process()` (desktop.c:1265) does a `fork` + `dup2` of a fixed fd
-contract onto every client:
+contract onto every client (this is the v3 layout the plan started from; v4
+replaced it, see [Descriptor budget](#descriptor-budget)):
 
 | fd | contents                        | direction        |
 |----|---------------------------------|------------------|
@@ -101,7 +103,7 @@ contract onto every client:
 
 ### The pointer channel carries a wheel, and it accumulates
 
-`savanxp_gui_pointer_event` (fd 5) has a `wheel` field alongside `x`, `y` and
+`savanxp_gui_pointer_event` (on the event channel) has a `wheel` field alongside `x`, `y` and
 `buttons`: signed ticks since the previous event, positive away from the user,
 same sign as evdev's `REL_WHEEL`. Unlike the other three it is **not a state** —
 it is an increment that is zero in most events.
@@ -112,7 +114,9 @@ because the cursor is an absolute position the next event repositions; a dropped
 tick is scroll that never happens. The two stages that merge events —
 `enqueue_mouse_event()` when the kernel queue overflows, and
 `coalesce_mouse_events()` in the WM — both fold the field instead of keeping the
-newest one, and `windowd --selftest` asserts the WM half.
+newest one, and `windowd --selftest` asserts the WM half. The client runtimes
+(`gfx_impl.inc`, `sx_gui.c`) are a third stage: when their pointer stash is
+full they fold a new event into the last one, summing the wheel the same way.
 
 The wheel goes to the client **under the cursor**, not the focused one, which
 falls out of the existing routing for free. The WM has no wheel behavior of its
@@ -231,8 +235,9 @@ A two-hop approach, to de-risk cutting a boot-critical process:
 **Constraint of the current protocol:** each client receives ONE surface (fd 3,
 `gfx_open_client` in `gfx_impl.inc`), placed by the WM at
 `window_x/y/width/height`. The WM sizes it; the client may *suggest* its
-content size at startup over fd 11 (size hint), which the WM applies once and
-clamps. Input over fds 4/5, launch over fd 9, cursor hint over fd 10.
+content size at startup (size hint, in the surface header), which the WM
+applies once and clamps. Input over the event channel (fd 4); launch requests
+and the cursor hint also travel in the header.
 
 **The knot:** the shell chrome lives at two z-order levels that are
 incompatible with a single surface:
@@ -293,12 +298,70 @@ the shell), A2.4 (retire the Win95 chrome, proto-Progman launcher), A2.5
   windows — the mechanics are there, what is missing is showing which one is
   active — and repaint correctness.
 
-  Design note for what comes next: `windowd` holds **nine** descriptors per
-  client against the 64-per-process limit, so it does not reach the 12 clients
-  `WINDOWD_MAX_OVERLAY_CLIENTS` declares — it tops out near six. Any new
-  protocol channel has to be weighed against that ceiling; it is the reason the
-  clipboard became a kernel device node (`/dev/clipboard`) instead of a WM
-  service.
+  Design note for what comes next: every per-client channel is paid for in
+  `windowd`'s descriptor table, see [Descriptor budget](#descriptor-budget).
+
+## Descriptor budget
+
+`windowd` is one process, and every channel it keeps to a client is a
+descriptor in **its** table: 64 per process (`process::kMaxFileHandles`). Every
+pipe is also one of the 64 pipes of the **whole system** (`kMaxPipeCount` in
+`kernel/process.cpp`). A window is only as cheap as the channels it needs, and
+that — not `WINDOWD_MAX_OVERLAY_CLIENTS` — is what decides how many fit.
+
+Protocol v3 cost nine descriptors and five pipes per client (section, keyboard
+and pointer pipes, submit/retire/shutdown events, launch/cursor/size-hint
+pipes). With the background client and the taskbar that left room for about
+four application windows, and the pipes ran out before twelve anyway.
+
+Protocol v4 (`savanxp/wm_protocol.h`) costs **two descriptors and one pipe**:
+
+| fd | v4 channel | what `windowd` keeps |
+|----|------------|----------------------|
+| 3  | surface section: header, batches, pixels, **and the client's requests** (`savanxp_wm_client_requests`) | nothing — closed after `fork`, the mapping keeps it alive |
+| 4  | event pipe: `savanxp_wm_event` records, keyboard and pointer | the write end |
+| 5  | wake event: composed/retired advanced, or shutdown requested | the event |
+| 6  | submit event, **one for the whole session** | one descriptor in total |
+| 7, 8 | taskbar only: window list section, shell request pipe | the pipe's read end |
+
+With every slot full — twelve windows plus background, taskbar and keyboard
+popup — `windowd --selftest` measures 40 descriptors, and asserts at least 8
+remain free for the terminal client and a launch in progress.
+
+The rules that keep it there:
+
+- **A new per-client channel is a descriptor times every window.** Before
+  adding one, see whether it fits in the surface header (state, or a small
+  queue with a single producer) or in a device node the client opens and closes
+  (that is why the clipboard is `/dev/clipboard`).
+- **Client→WM data goes in the header.** The cursor shape is plain state; the
+  size hint is a seqlock (odd sequence = being written); launches are a ring
+  where the client writes the entry *before* publishing `launch_head`. The WM
+  copies each value before validating it and keeps its own `launch_tail`: the
+  header is memory another process writes at any time.
+- **One wake event serves several conditions**, so every waiter resets it,
+  re-reads the header and only then sleeps. Shutdown is a header flag
+  (`SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN`) set before the wake, never the
+  other way round. The shared submit event is reset by the WM *before* it
+  services every client, so one client resetting it costs the others at most
+  one 16 ms loop timeout.
+- **Event records are 32 bytes and always written and read whole.** The kernel
+  pipe holds 8 KiB, an exact multiple, so free space is always a whole number
+  of records and a non-blocking write never lands half a record. Keyboard and
+  pointer share the pipe, so the runtime drains both kinds even when the app
+  asks for one, stashing the other: a keyboard-only app that left pointer
+  records behind would fill the pipe and lose keys. The flip side: an app that
+  `poll`s `input_fd` may wake for a pointer record, so `gfx_poll_event`
+  returning 0 after a readable `poll` is normal, not end of input. The desktop
+  Shell treated it as end of input and closed as soon as the mouse crossed it.
+- **A child closes everything above the protocol before `exec`.** `fork`
+  copies `windowd`'s whole table and `exec` closes nothing; without the sweep
+  an app launched into a full session started with dozens of foreign
+  descriptors and little room to open files.
+
+A v3 client started by a v4 WM fails in `gfx_open` (the header version does
+not match) instead of talking to channels that no longer exist. External apps
+built against the SDK, such as `doomgeneric`, must be rebuilt.
 
 ## Fixed-size windows
 
@@ -329,7 +392,7 @@ greyed with the same etched relief the toolkit gives a disabled control
 [SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#the-two-layers)).
 
 **What it forbids is the *user* resizing, not resizing.** The program keeps
-asking for its own size over `SAVANXP_WM_FD_SIZE_HINT`, and in a fixed window
+asking for its own size with `gfx_request_content_size`, and in a fixed window
 the WM honours **every** hint instead of only the first. The reason that channel
 is one-shot is that the WM must not let an app fight the user over geometry;
 where the user has no geometry to defend, the reason does not apply. That is

@@ -12,11 +12,11 @@
  * Portapapeles del sistema (`/dev/clipboard`).
  *
  * Por que vive en el kernel y no en el window manager, que es donde lo pondria
- * un sistema con mas holgura: windowd guarda NUEVE descriptores por cliente
- * (seccion, teclado, puntero, tres eventos, launch, cursor hint, size hint)
- * contra el limite de 64 por proceso de process::kMaxFileHandles. Sumarle un
- * par de canales por cliente para copiar y pegar le bajaria el techo de
- * ventanas simultaneas, que ya es lo bastante ajustado. Como device node el
+ * un sistema con mas holgura: windowd paga cada canal con descriptores POR
+ * CLIENTE (hoy dos: el pipe de eventos y el evento de wake) contra el limite de
+ * 64 por proceso de process::kMaxFileHandles. Sumarle un par de canales por
+ * cliente para copiar y pegar le bajaria el techo de ventanas simultaneas, que
+ * costo bastante subir (docs/WM_SUBSYSTEM.md). Como device node el
  * cliente lo abre al copiar o pegar y lo cierra enseguida, no cuesta ningun fd
  * permanente, y ademas queda disponible para procesos sin ventana.
  *

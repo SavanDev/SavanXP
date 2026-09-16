@@ -217,7 +217,7 @@ las apps nativas post-rebuild y las corren en QEMU):
 
 ```powershell
 .\build.ps1 native-hello      # valida el runtime: clases, String/Array, Null<T>, Map, Float, gfx
-.\build.ps1 native-guihost    # valida el cliente del compositor: teclado + puntero (fd 5)
+.\build.ps1 native-guihost    # valida el cliente del compositor: teclado + puntero por el canal de eventos
 .\build.ps1 native-sxgui      # valida la app sxgui-style (demo): toolkit + texto Noto
 
 ```
@@ -270,11 +270,11 @@ invoca y, sin `-Install`, no toca `build/disk.img`.
 - `sdk/runtime/sx_entry.cpp` — entrada propia: handshake de ABI + llamada a la
   `main` generada por Haxe. Reemplaza el `_main_.cpp` de reflaxe.CPP.
 - `sdk/include/savanxp_native_gui.h` + `sdk/runtime/sx_gui.c` — cliente del
-  compositor: espejos del contrato de superficie v3 (fuente de verdad en el SDK
-  posix y desktop.c) y la API `sxn_gui_*` (open/present/present_region/
-  poll_event/poll_pointer/should_close/launch) sobre los fds 3..9 heredados del
-  shell. `sxn_gui_launch` escribe el pedido de lanzamiento por el fd 9 (espejo
-  de `gfx_desktop_launch`).
+  compositor: espejos del contrato de superficie v4 (fuente de verdad en
+  `savanxp/wm_protocol.h` del SDK posix) y la API `sxn_gui_*` (open/present/
+  present_region/poll_event/poll_pointer/should_close/launch) sobre los fds
+  3..6 heredados del WM. `sxn_gui_launch` encola el pedido en el header de la
+  superficie (espejo de `gfx_desktop_launch`).
 - `sdk/runtime/sx_text.c` — render de texto (`sxn_text_width`/`sxn_text_height`/
   `sxn_text_draw`) reusando la fuente Noto horneada del SDK posix (include
   relativo de `gfx_font_noto.inc`, fuente de verdad `tools/font/genfont.py`).

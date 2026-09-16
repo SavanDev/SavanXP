@@ -1,17 +1,17 @@
 /*
  * SavanXP - cliente del compositor para el subsistema nativo (runtime v1).
  *
- * Protocolo de app VENTANEADA bajo el escritorio: el shell hace fork + dup2 de
- * los canales de la sesion a los fds 3..9 + exec del binario (nuestro exec ya
+ * Protocolo de app VENTANEADA bajo el escritorio: el WM hace fork + dup2 de
+ * los canales de la sesion a los fds 3..6 + exec del binario (nuestro exec ya
  * marca nativo por EI_OSABI, y los fds se heredan). Todo el protocolo corre
  * sobre syscalls del baseline posix (< SXN_SYS_BASE): mapear la seccion
- * compartida, poll/read de input y eventos de submit/retire/shutdown.
+ * compartida, poll/read de eventos y los eventos de wake/submit.
  *
- * Los structs de abajo son ESPEJOS del contrato de superficie v3 del
+ * Los structs de abajo son ESPEJOS del contrato de superficie v4 del
  * compositor (fuente de verdad: savanxp_gpu_client_surface_header y amigos en
- * subsystems/posix/sdk/v1/include/savanxp/syscall.h, y el armado de la seccion
- * en subsystems/posix/userland/desktop.c). Mismos campos, mismo orden: el
- * layout es el contrato de wire con el compositor.
+ * subsystems/posix/sdk/v1/include/savanxp/syscall.h, y el contrato de fds en
+ * savanxp/wm_protocol.h). Mismos campos, mismo orden: el layout es el contrato
+ * de wire con el compositor.
  */
 #pragma once
 
@@ -21,12 +21,14 @@
 extern "C" {
 #endif
 
-/* --- Contrato de superficie v3 (espejo) ------------------------------------- */
+/* --- Contrato de superficie v4 (espejo) ------------------------------------- */
 
 #define SXN_GUI_SURFACE_MAGIC 0x53584746u /* "SXGF" */
-#define SXN_GUI_SURFACE_VERSION_3 3u
+#define SXN_GUI_SURFACE_VERSION_4 4u
 #define SXN_GUI_BATCH_CAPACITY 8u
 #define SXN_GUI_BATCH_MAX_RECTS 32u
+/* Bit de flags: el WM pidio cerrar la ventana. */
+#define SXN_GUI_SURFACE_FLAG_SHUTDOWN 0x00000001u
 
 struct sxn_gui_fb_info {
     uint32_t width;
@@ -50,6 +52,33 @@ struct sxn_gui_batch {
     struct sxn_gui_dirty_rect rects[SXN_GUI_BATCH_MAX_RECTS];
 };
 
+/* Pedido de lanzamiento para que el WM abra otra app. Espejo de
+ * savanxp_desktop_launch_request del SDK posix. */
+#define SXN_GUI_LAUNCH_PATH_CAPACITY 192u
+#define SXN_GUI_LAUNCH_ARG_CAPACITY 192u
+
+struct sxn_gui_launch_request {
+    uint32_t flags;
+    char path[SXN_GUI_LAUNCH_PATH_CAPACITY];
+    char argument[SXN_GUI_LAUNCH_ARG_CAPACITY];
+};
+
+/* Pedidos del cliente al WM dentro del header. Espejo de
+ * savanxp_wm_client_requests: cursor como estado, size hint con seqlock
+ * (impar = a medio escribir) y launches en una cola circular donde el cliente
+ * escribe la entrada y despues incrementa launch_head. */
+#define SXN_GUI_LAUNCH_QUEUE_CAPACITY 4u
+
+struct sxn_gui_requests {
+    uint32_t cursor_shape;
+    uint32_t size_hint_width;
+    uint32_t size_hint_height;
+    uint32_t size_hint_sequence;
+    uint32_t launch_head;
+    uint32_t launch_tail;
+    struct sxn_gui_launch_request launch[SXN_GUI_LAUNCH_QUEUE_CAPACITY];
+};
+
 struct sxn_gui_surface_header {
     uint32_t magic;
     uint32_t pixels_offset;
@@ -65,9 +94,10 @@ struct sxn_gui_surface_header {
     uint64_t submit_sequence;
     uint64_t retired_sequence;
     uint64_t composed_sequence;
+    struct sxn_gui_requests requests;
 };
 
-/* Evento de input crudo que el shell rutea por el fd 4. */
+/* Evento de teclado (o resize sintetizado del header). */
 struct sxn_gui_input_event {
     uint32_t type; /* 1 = key down, 2 = key up, 3 = resized */
     uint32_t key;
@@ -87,9 +117,9 @@ struct sxn_gui_input_event {
 #define SXN_GUI_EVENT_KEY_UP 2u
 #define SXN_GUI_EVENT_RESIZED 3u
 
-/* Evento de puntero que el shell rutea por el fd 5, en coordenadas locales a la
- * superficie del cliente (route_pointer resta el origen de la ventana). Espejo
- * de savanxp_gui_pointer_event del SDK posix. */
+/* Evento de puntero en coordenadas locales a la superficie del cliente
+ * (route_pointer resta el origen de la ventana). Espejo de
+ * savanxp_gui_pointer_event del SDK posix. */
 struct sxn_gui_pointer_event {
     int32_t x;
     int32_t y;
@@ -101,34 +131,26 @@ struct sxn_gui_pointer_event {
 #define SXN_GUI_MOUSE_BUTTON_RIGHT (1u << 1)
 #define SXN_GUI_MOUSE_BUTTON_MIDDLE (1u << 2)
 
-/* Pedido de lanzamiento que el cliente escribe por el fd 9 para que el shell
- * abra otra app. Espejo de savanxp_desktop_launch_request del SDK posix. */
-#define SXN_GUI_LAUNCH_PATH_CAPACITY 192u
-#define SXN_GUI_LAUNCH_ARG_CAPACITY 192u
+/* Registro de 32 bytes del canal de eventos (fd 4): teclado y puntero por el
+ * mismo pipe. Espejo de savanxp_wm_event. */
+#define SXN_GUI_WM_EVENT_KEY 1u
+#define SXN_GUI_WM_EVENT_POINTER 2u
 
-struct sxn_gui_launch_request {
-    uint32_t reserved0;
-    char path[SXN_GUI_LAUNCH_PATH_CAPACITY];
-    char argument[SXN_GUI_LAUNCH_ARG_CAPACITY];
+struct sxn_gui_wm_event {
+    uint32_t kind;
+    uint32_t reserved;
+    union {
+        struct sxn_gui_input_event key;
+        struct sxn_gui_pointer_event pointer;
+        uint8_t bytes[24];
+    } payload;
 };
 
-/* Tamano de area util que el cliente pide por el fd 11 para su contenido.
- * Espejo de savanxp_desktop_size_hint del SDK posix. */
-struct sxn_gui_size_hint {
-    uint32_t width;
-    uint32_t height;
-};
-
-/* Fds fijos que el shell instala antes del exec del cliente. */
+/* Fds fijos que el WM instala antes del exec del cliente. */
 #define SXN_GUI_FD_SECTION 3
-#define SXN_GUI_FD_INPUT 4
-#define SXN_GUI_FD_MOUSE 5
+#define SXN_GUI_FD_EVENTS 4
+#define SXN_GUI_FD_WAKE_EVENT 5
 #define SXN_GUI_FD_SUBMIT_EVENT 6
-#define SXN_GUI_FD_RETIRE_EVENT 7
-#define SXN_GUI_FD_SHUTDOWN_EVENT 8
-#define SXN_GUI_FD_LAUNCH 9
-#define SXN_GUI_FD_CURSOR_HINT 10
-#define SXN_GUI_FD_SIZE_HINT 11
 
 /* --- API del runtime ---------------------------------------------------------
  * Una sesion de ventana por proceso (estado global en sx_gui.c): suficiente
@@ -149,7 +171,7 @@ unsigned int sxn_gui_stride_pixels(void);
 /* Secuencia de frames ya compuestos por el compositor (del header). */
 unsigned long sxn_gui_composed_sequence(void);
 
-/* 1 si el compositor pidio cerrar (evento de shutdown senalado). */
+/* 1 si el compositor pidio cerrar (flag de shutdown en el header). */
 int sxn_gui_should_close(void);
 
 /* Presentan copiando del frame del cliente a la superficie compartida y
@@ -160,18 +182,19 @@ long sxn_gui_present_region(const void *frame, unsigned int x, unsigned int y,
                             unsigned int width, unsigned int height);
 
 /* Devuelve 1 con un evento (teclado o resize sintetizado), 0 sin eventos,
- * negativo en error. */
+ * negativo en error. Los eventos de puntero que lea en el camino quedan
+ * guardados para sxn_gui_poll_pointer. */
 int sxn_gui_poll_event(struct sxn_gui_input_event *event);
 
-/* Devuelve 1 con un evento de puntero del fd 5 (coordenadas locales a la
- * superficie), 0 si no hay ninguno encolado, negativo en error (-EINVAL sin
- * sesion). Igual que el canal de teclado pero sin sintesis: el shell entrega
- * movimiento y botones crudos. */
+/* Devuelve 1 con un evento de puntero (coordenadas locales a la superficie),
+ * 0 si no hay ninguno encolado, negativo en error (-EINVAL sin sesion). Sin
+ * sintesis: el WM entrega movimiento y botones crudos. Las teclas que lea en el
+ * camino quedan guardadas para sxn_gui_poll_event. */
 int sxn_gui_poll_pointer(struct sxn_gui_pointer_event *event);
 
 /* Le pide al escritorio que lance `path` (debe ser absoluto) en otra ventana,
- * escribiendo el pedido por el fd 9. Devuelve 0, o negativo si el path no
- * sirve / falla la escritura. Espejo de gfx_desktop_launch del SDK posix. */
+ * encolando el pedido en el header. Devuelve 0, o negativo si el path no sirve
+ * o la cola sigue llena. Espejo de gfx_desktop_launch del SDK posix. */
 long sxn_gui_launch(const char *path);
 
 /* Pide el area util que necesita el contenido de la ventana. Es una

@@ -1,17 +1,18 @@
 /*
  * SavanXP - guihost: harness headless del protocolo cliente del compositor.
  *
- * Programa POSIX que interpreta el lado HOST del contrato de superficie v3
+ * Programa POSIX que interpreta el lado HOST del contrato de superficie v4
  * (el rol del escritorio/compositor, espejando start_client_process de
- * subsystems/posix/userland/desktop.c): crea la seccion compartida con header
- * + batches + pixeles, instala los canales en los fds 3..9 y ejecuta el
+ * subsystems/posix/userland/windowd.c): crea la seccion compartida con header
+ * + batches + pixeles, instala los canales en los fds 3..6 y ejecuta el
  * cliente nativo /disk/bin/nativegui. Despues compone (avanza
  * composed_sequence y senala retire) cada frame sometido, le manda una tecla
  * y verifica que el cliente salga limpio con los frames esperados.
  *
  * Esto valida headless, de punta a punta: el marcado nativo via exec (fork
  * posix -> exec ELF nativo), el mapeo de la seccion heredada, el handshake del
- * header, las secuencias submit/composed con eventos, y el input por pipe.
+ * header, las secuencias submit/composed con eventos, y el canal de eventos
+ * (puntero y teclado por el mismo pipe).
  * Imprime NATIVEGUI HOST PASS/FAIL (formato apto para el arnes de smoke).
  */
 #include "savanxp/libc.h"
@@ -41,24 +42,20 @@ int main(void) {
     unsigned long pixels_offset;
     unsigned long buffer_size;
     long section_fd;
-    int input_pipe[2] = {-1, -1};
-    int mouse_pipe[2] = {-1, -1};
-    int launch_pipe[2] = {-1, -1};
+    int events_pipe[2] = {-1, -1};
     int submit_event;
-    int retire_event;
-    int shutdown_event;
+    int wake_event;
     long pid;
     unsigned long deadline;
     int sent_key = 0;
     int status = -1;
-    int guard_fds[7];
+    int guard_fds[4];
     int guard_index;
 
-    /* Reservar los fds 3..9: guihost arranca con la tabla casi vacia, asi que
+    /* Reservar los fds 3..6: guihost arranca con la tabla casi vacia, asi que
      * sin esto los recursos reales caerian dentro del rango destino de los
-     * dup2 del hijo y se pisarian entre si (el escritorio real no lo sufre
-     * porque ya tiene muchos fds abiertos). */
-    for (guard_index = 0; guard_index < 7; ++guard_index) {
+     * dup2 del hijo y se pisarian entre si. */
+    for (guard_index = 0; guard_index < 4; ++guard_index) {
         guard_fds[guard_index] = savanxp_dup(0);
         if (guard_fds[guard_index] < 0) {
             return fail("no se pudieron reservar los fds guardia");
@@ -88,7 +85,7 @@ int main(void) {
     header->info.pitch = GUIHOST_WIDTH * 4u;
     header->info.bpp = 32;
     header->info.buffer_size = (uint32_t)buffer_size;
-    header->version = SAVANXP_GPU_CLIENT_SURFACE_VERSION_3;
+    header->version = SAVANXP_GPU_CLIENT_SURFACE_VERSION_4;
     header->pixel_format = SAVANXP_GPU_SURFACE_FORMAT_BGRX8888;
     header->batch_capacity = SAVANXP_GPU_CLIENT_BATCH_CAPACITY;
     header->rect_capacity = SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS;
@@ -97,10 +94,8 @@ int main(void) {
     memset(pixels, 0, buffer_size);
 
     submit_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    retire_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    shutdown_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    if (submit_event < 0 || retire_event < 0 || shutdown_event < 0 ||
-        savanxp_pipe(input_pipe) < 0 || savanxp_pipe(mouse_pipe) < 0 || savanxp_pipe(launch_pipe) < 0) {
+    wake_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
+    if (submit_event < 0 || wake_event < 0 || savanxp_pipe(events_pipe) < 0) {
         return fail("no se pudieron crear eventos/pipes");
     }
 
@@ -110,13 +105,10 @@ int main(void) {
     }
     if (pid == 0) {
         const char *argv[2] = {GUIHOST_CLIENT_PATH, 0};
-        if (savanxp_dup2((int)section_fd, 3) < 0 ||
-            savanxp_dup2(input_pipe[0], 4) < 0 ||
-            savanxp_dup2(mouse_pipe[0], 5) < 0 ||
-            savanxp_dup2(submit_event, 6) < 0 ||
-            savanxp_dup2(retire_event, 7) < 0 ||
-            savanxp_dup2(shutdown_event, 8) < 0 ||
-            savanxp_dup2(launch_pipe[1], 9) < 0) {
+        if (savanxp_dup2((int)section_fd, SAVANXP_WM_FD_SECTION) < 0 ||
+            savanxp_dup2(events_pipe[0], SAVANXP_WM_FD_EVENTS) < 0 ||
+            savanxp_dup2(wake_event, SAVANXP_WM_FD_WAKE_EVENT) < 0 ||
+            savanxp_dup2(submit_event, SAVANXP_WM_FD_SUBMIT_EVENT) < 0) {
             exit(1);
         }
         (void)exec(GUIHOST_CLIENT_PATH, argv, 1);
@@ -126,8 +118,8 @@ int main(void) {
     }
 
     /* Cerrar los guardias del padre: solo existian para correr los fds reales
-     * fuera del rango 3..9. En el hijo los dup2 los pisan solos. */
-    for (guard_index = 0; guard_index < 7; ++guard_index) {
+     * fuera del rango 3..6. En el hijo los dup2 los pisan solos. */
+    for (guard_index = 0; guard_index < 4; ++guard_index) {
         (void)savanxp_close(guard_fds[guard_index]);
     }
 
@@ -160,30 +152,34 @@ int main(void) {
 
             header->retired_sequence = sequence;
             header->composed_sequence = sequence;
-            (void)event_set(retire_event);
+            (void)event_set(wake_event);
         }
 
-        /* Con el primer frame compuesto, verificar pixeles y mandar el puntero
-         * (fd 5) + la tecla (fd 4). El cliente drena el puntero tras la
-         * animacion y dibuja un marcador donde apunta. */
+        /* Con el primer frame compuesto, verificar pixeles y mandar la tecla y
+         * el puntero, EN ESE ORDEN y por el mismo pipe. El cliente pide el
+         * puntero primero, asi que el runtime tiene que guardarse la tecla que
+         * lee en el camino y entregarla despues en sxn_gui_poll_event. */
         if (!sent_key && header->composed_sequence >= 1) {
-            struct savanxp_input_event event;
-            struct savanxp_gui_pointer_event pointer;
+            struct savanxp_wm_event record;
             if (pixels[25 * GUIHOST_WIDTH + 30] == 0) {
                 return fail("la superficie quedo vacia tras el primer frame");
             }
-            pointer.x = GUIHOST_POINTER_X;
-            pointer.y = GUIHOST_POINTER_Y;
-            pointer.wheel = 0;
-            pointer.buttons = SAVANXP_MOUSE_BUTTON_LEFT;
-            if (savanxp_write(mouse_pipe[1], &pointer, sizeof(pointer)) != (long)sizeof(pointer)) {
-                return fail("no se pudo mandar el evento de puntero");
-            }
-            event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
-            event.key = SAVANXP_KEY_ENTER;
-            event.ascii = 13;
-            if (savanxp_write(input_pipe[1], &event, sizeof(event)) != (long)sizeof(event)) {
+            memset(&record, 0, sizeof(record));
+            record.kind = SAVANXP_WM_EVENT_KEY;
+            record.payload.key.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+            record.payload.key.key = SAVANXP_KEY_ENTER;
+            record.payload.key.ascii = 13;
+            if (savanxp_write(events_pipe[1], &record, sizeof(record)) != (long)sizeof(record)) {
                 return fail("no se pudo mandar el evento de tecla");
+            }
+            memset(&record, 0, sizeof(record));
+            record.kind = SAVANXP_WM_EVENT_POINTER;
+            record.payload.pointer.x = GUIHOST_POINTER_X;
+            record.payload.pointer.y = GUIHOST_POINTER_Y;
+            record.payload.pointer.wheel = 0;
+            record.payload.pointer.buttons = SAVANXP_MOUSE_BUTTON_LEFT;
+            if (savanxp_write(events_pipe[1], &record, sizeof(record)) != (long)sizeof(record)) {
+                return fail("no se pudo mandar el evento de puntero");
             }
             sent_key = 1;
         }
@@ -203,10 +199,10 @@ int main(void) {
     }
 
     /* El marcador del puntero: el cliente lo pinto en (GUIHOST_POINTER_X,
-     * GUIHOST_POINTER_Y) al recibir el evento por el fd 5. Confirma el canal de
-     * mouse de punta a punta. */
+     * GUIHOST_POINTER_Y) al recibir el evento de puntero. Confirma el canal de
+     * eventos de punta a punta, mezcla de tipos incluida. */
     if (pixels[GUIHOST_POINTER_Y * GUIHOST_WIDTH + GUIHOST_POINTER_X] != GUIHOST_MARKER_COLOR) {
-        return fail("el cliente no dibujo el marcador del puntero (fd 5 no llego)");
+        return fail("el cliente no dibujo el marcador del puntero (el evento no llego)");
     }
 
     printf("guihost: frames compuestos=%d\n", (int)header->composed_sequence);

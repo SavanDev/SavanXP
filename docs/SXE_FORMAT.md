@@ -364,7 +364,7 @@ can be measured again when something changes.
       ▼
   progman ──► paints the launcher (name, icon, description)
       │
-      │ fd 9 (SAVANXP_WM_FD_LAUNCH): path + flags, exactly as today
+      │ launch queue in the surface header: path + flags
       ▼
   windowd ──► re-reads the .sxe at that path when creating the window
               title, window icon, accent, Task List

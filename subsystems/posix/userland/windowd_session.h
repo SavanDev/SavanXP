@@ -24,23 +24,21 @@ struct windowd_client
      * al crear la ventana (docs/SXE_FORMAT.md, fase 4). */
     struct windowd_presentation presentation;
     long pid;
-    int section_fd;
-    int input_write_fd;
-    int mouse_write_fd;
-    int submit_event_fd;
-    int retire_event_fd;
-    int shutdown_event_fd;
-    int launch_read_fd;
-    int cursor_hint_read_fd;
-    int size_hint_read_fd;
-    /* Rol de shell (savanxp/wm_shell_protocol.h): solo los tiene el cliente de
-     * la barra de tareas. En cualquier otro cliente quedan en -1, que es el
-     * punto -- los fds del protocolo se pagan por cliente y windowd ya esta
-     * cerca de su techo. */
-    int window_list_section_fd;
+    /* Los UNICOS descriptores que windowd guarda por cliente (savanxp/
+     * wm_protocol.h v4). Todo lo demas vive en la seccion, que se cierra
+     * despues del fork: a 64 descriptores por proceso, cada fd que se sume aca
+     * le resta ventanas simultaneas a la sesion (docs/WM_SUBSYSTEM.md). */
+    int events_write_fd;
+    int wake_event_fd;
+    /* Rol de shell (savanxp/wm_shell_protocol.h): solo lo tiene el cliente de
+     * la barra de tareas. En cualquier otro cliente queda en -1. */
     int shell_request_read_fd;
     struct savanxp_wm_window_list *window_list;
     int last_cursor_hint_shape;
+    /* Estado del WM sobre los pedidos del header. Se guarda aca y no se relee
+     * del header porque el cliente puede escribir ahi lo que quiera. */
+    uint32_t launch_tail;
+    uint32_t size_hint_consumed_sequence;
     /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
      * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
      * el indice de cascada del launch para poder recolocarla despues de
@@ -85,6 +83,9 @@ struct windowd_session
     struct windowd_compositor_connection compositor;
     int input_fd;
     int mouse_fd;
+    /* Evento de submit compartido por TODOS los clientes (SAVANXP_WM_FD_SUBMIT_
+     * EVENT): uno por sesion en vez de uno por ventana. */
+    int submit_event_fd;
     int hw_cursor_enabled;
     int current_cursor_shape;
     int previous_cursor_shape;
