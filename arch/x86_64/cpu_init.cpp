@@ -1069,6 +1069,20 @@ void restore_interrupts(uint64_t flags) {
     asm volatile("push %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
+void flush_tlb() {
+    constexpr uint64_t kCr4Pge = 1ull << 7;
+    uint64_t cr4 = 0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    if ((cr4 & kCr4Pge) != 0) {
+        asm volatile("mov %0, %%cr4" : : "r"(cr4 & ~kCr4Pge) : "memory");
+        asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
+        return;
+    }
+    uint64_t cr3 = 0;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+}
+
 void halt_once() {
     asm volatile("hlt");
 }

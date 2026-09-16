@@ -175,6 +175,7 @@ namespace
     // estacionados: nadie planifica sobre ellos todavia (docs/SMP_ROADMAP.md).
     smp::initialize(boot_info);
     smp::selftest_ipi();
+    smp::selftest_tlb();
     // Con el IOAPIC listo, habilitar el modo ACPI y rutear la SCI (boton de power).
     acpi::start_sci();
     // Traer uACPI hasta cargar/inicializar el namespace (interpreta el AML de la

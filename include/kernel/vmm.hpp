@@ -108,4 +108,40 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags);
 bool ensure_user_stack_page(VmSpace& space, uint64_t address);
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write);
 
+/* --- TLB con varios cores (docs/SMP_ROADMAP.md, fase 3) ---------------------
+ *
+ * La mitad de kernel del espacio de direcciones la comparten todos los cores:
+ * cuando un core desmapea una pagina de kernel, el invlpg solo limpia SU TLB, y
+ * los demas conservan la traduccion vieja.
+ *
+ * Se resuelve sin IPIs, apoyado en el lock grande del kernel. Todo acceso a
+ * memoria del kernel que pueda desmapearse ocurre con el lock tomado, asi que
+ * alcanza con que cada core se ponga al dia ANTES de tocar nada: desmapear sube
+ * una generacion global, y smp::lock_kernel() llama a sync_kernel_tlb(), que
+ * vacia la TLB de este core si su generacion quedo atras. Un IPI con espera de
+ * acuse, en cambio, no funciona mientras haya un solo lock: el que desmapea lo
+ * tiene, y los cores que esperan ese lock giran con IF=0 y nunca atienden el
+ * IPI.
+ *
+ * La mitad de usuario no necesita nada de esto, y conviene saber por que para
+ * no romperlo: un espacio de usuario esta cargado en un solo core a la vez (no
+ * hay threads), cambiar de proceso recarga CR3 -- lo que vacia las traducciones
+ * no globales --, y solo se desmapea el espacio del proceso que corre en este
+ * core o el de uno que no corre en ninguno (un proceso muerto; matar a uno que
+ * corre en otro core se difiere). Cualquier camino nuevo que toque el espacio de
+ * un proceso que puede estar corriendo en otro core rompe esa regla.
+ *
+ * La regla del lado del kernel es la de arriba: si algun dia se toca memoria del
+ * kernel desmapeable sin el lock (fase 4), esto deja de alcanzar. */
+
+// Vacia la TLB de este core si una pagina del kernel se desmapeo desde la ultima
+// vez. La llama smp::lock_kernel() apenas toma el lock.
+void sync_kernel_tlb();
+
+// Apunta una pagina de kernel ya mapeada a otra pagina fisica, en la misma
+// direccion virtual. Es exactamente el caso que deja una traduccion vieja en los
+// otros cores, y hoy solo lo usa el autotest de arranque que lo comprueba
+// (smp::selftest_tlb): el resto del kernel nunca reusa una VA.
+bool retarget_kernel_page(void* virtual_address, uint64_t physical_address, uint64_t flags);
+
 } // namespace vm

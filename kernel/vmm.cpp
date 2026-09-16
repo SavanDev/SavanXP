@@ -1,5 +1,6 @@
 #include "kernel/vmm.hpp"
 
+#include "kernel/cpu.hpp"
 #include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -21,6 +22,12 @@ uint64_t g_kernel_mmio_base = 0;
 uint64_t g_kernel_mmio_next = 0;
 uint64_t g_kernel_mmio_limit = 0;
 bool g_ready = false;
+
+// Cuantas veces se desmapeo una pagina del kernel. Sube con el lock del kernel
+// tomado. Ver sync_kernel_tlb() en vmm.hpp.
+uint64_t g_kernel_tlb_generation = 0;
+// La generacion con la que quedo al dia la TLB de cada core.
+uint64_t g_kernel_tlb_synced[arch::x86_64::kMaxCpus] = {};
 
 uint64_t pml4_index(uint64_t virtual_address) {
     return (virtual_address >> 39) & 0x1ff;
@@ -369,6 +376,15 @@ bool unmap_kernel_page(uint64_t virtual_address) {
 
     pt[entry_index] = 0;
     invalidate_page(virtual_address);
+
+    // Los demas cores se enteran al tomar el lock. Este ya invalido la pagina:
+    // si estaba al dia, sigue al dia.
+    const uint32_t cpu = arch::x86_64::cpu_index();
+    const bool was_synced = g_kernel_tlb_synced[cpu] == g_kernel_tlb_generation;
+    g_kernel_tlb_generation += 1;
+    if (was_synced) {
+        g_kernel_tlb_synced[cpu] = g_kernel_tlb_generation;
+    }
     return true;
 }
 
@@ -947,6 +963,22 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags) {
         invalidate_page(page);
     }
     return true;
+}
+
+bool retarget_kernel_page(void* virtual_address, uint64_t physical_address, uint64_t flags) {
+    const uint64_t address = reinterpret_cast<uint64_t>(virtual_address);
+    return unmap_kernel_page(address) &&
+        map_kernel_page(address, physical_address, (flags | vm::kPageWrite) & ~vm::kPageUser);
+}
+
+void sync_kernel_tlb() {
+    const uint32_t cpu = arch::x86_64::cpu_index();
+    const uint64_t generation = g_kernel_tlb_generation;
+    if (g_kernel_tlb_synced[cpu] == generation) {
+        return;
+    }
+    arch::x86_64::flush_tlb();
+    g_kernel_tlb_synced[cpu] = generation;
 }
 
 bool ensure_user_stack_page(VmSpace& space, uint64_t address) {

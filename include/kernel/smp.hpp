@@ -74,6 +74,12 @@ bool initialize(const boot::BootInfo& boot_info);
 // de TLB. true tambien cuando no hay APs: no hay nada que probar.
 bool selftest_ipi();
 
+// Comprueba en un AP que la TLB perezosa del kernel funciona (vm::sync_kernel_tlb):
+// el AP lee una pagina del kernel, el BSP la apunta a otra pagina fisica en la
+// misma direccion, y el AP la vuelve a leer sin sincronizar y sincronizando. La
+// segunda lectura tiene que ver la pagina nueva. true tambien sin APs.
+bool selftest_tlb();
+
 /* --- planificar en todos los cores ------------------------------------------
  *
  * El BSP arranca el scheduler en process::start_init(). Ahi pregunta que cores

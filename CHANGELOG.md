@@ -106,9 +106,9 @@ Cut-off notes:
 - **Every core runs user processes, under one big kernel lock.** Each core the
   bootloader reports gets its own TSS, idle process and LAPIC timer (`smp:
   planificando en N de M cores`); `/bin/smptest` in `build.ps1 smoke` proves the
-  overlap. Task Manager usage is now of all cores together. `-Smp <n>` still
-  defaults to 1: without TLB shootdown more cores are not yet safe for the
-  desktop. Phases 0-2 of [the SMP roadmap](docs/SMP_ROADMAP.md).
+  overlap. Task Manager usage is now of all cores together. Unmapped kernel
+  pages are flushed from every core's TLB (`smp: TLB perezosa ok`). `-Smp <n>`
+  still defaults to 1. Phases 0-3 of [the SMP roadmap](docs/SMP_ROADMAP.md).
 
 - **Add or Remove Programs (`/bin/appwiz`), in the System group.** It lists what
   was installed outside the system image — in `/disk/bin` and not in `/bin` —

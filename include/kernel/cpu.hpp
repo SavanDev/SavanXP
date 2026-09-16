@@ -150,6 +150,9 @@ void disable_interrupts();
 // caso deja entrar una interrupcion anidada que quiere el mismo lock.
 uint64_t save_and_disable_interrupts();
 void restore_interrupts(uint64_t flags);
+// Vacia la TLB entera de este core, paginas globales incluidas: con CR4.PGE
+// prendido, apagarlo y volver a prenderlo; si no, recargar CR3.
+void flush_tlb();
 void halt_once();
 // `sti; hlt` en una sola instruccion de asm. sti recien surte efecto despues de
 // la instruccion siguiente, asi que una interrupcion pendiente despierta al hlt

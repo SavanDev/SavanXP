@@ -3,9 +3,11 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/panic.hpp"
+#include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
 #include "kernel/spinlock.hpp"
 #include "kernel/timer.hpp"
+#include "kernel/vmm.hpp"
 
 namespace smp {
 
@@ -63,8 +65,45 @@ uint32_t g_scheduling_count = 1;
 // una sola vez, con los idles ya creados.
 volatile uint32_t g_scheduling_started = 0;
 
+// Sonda del autotest de TLB: si hay una direccion cargada, el AP que recibe el
+// ping lee un byte de ahi, opcionalmente despues de ponerse al dia con la TLB
+// del kernel. Solo corre durante el arranque, con el BSP esperando el acuse y
+// sin nadie mas en el kernel: por eso puede tocar memoria del kernel sin lock.
+volatile uint64_t g_probe_address = 0;
+volatile uint32_t g_probe_sync = 0;
+volatile uint32_t g_probe_value = 0;
+
 void ping_handler() {
+    const uint64_t address = __atomic_load_n(&g_probe_address, __ATOMIC_ACQUIRE);
+    if (address != 0) {
+        if (__atomic_load_n(&g_probe_sync, __ATOMIC_ACQUIRE) != 0) {
+            vm::sync_kernel_tlb();
+        }
+        __atomic_store_n(
+            &g_probe_value,
+            static_cast<uint32_t>(*reinterpret_cast<const uint8_t*>(address)),
+            __ATOMIC_RELEASE);
+    }
     __atomic_add_fetch(&g_ping_count, 1ull, __ATOMIC_ACQ_REL);
+}
+
+// Un ping a un AP con la sonda cargada, esperando el acuse. -1 si no llego.
+int probe_on(uint32_t lapic_id, uint64_t address, bool sync) {
+    __atomic_store_n(&g_probe_sync, sync ? 1u : 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_probe_address, address, __ATOMIC_RELEASE);
+    const uint64_t before = __atomic_load_n(&g_ping_count, __ATOMIC_ACQUIRE);
+    int result = -1;
+    if (arch::x86_64::send_ipi(lapic_id, arch::x86_64::kIpiPingVector)) {
+        for (uint64_t spin = 0; spin < kPingSpinLimit; ++spin) {
+            if (__atomic_load_n(&g_ping_count, __ATOMIC_ACQUIRE) > before) {
+                result = static_cast<int>(__atomic_load_n(&g_probe_value, __ATOMIC_ACQUIRE));
+                break;
+            }
+            asm volatile("pause");
+        }
+    }
+    __atomic_store_n(&g_probe_address, 0ull, __ATOMIC_RELEASE);
+    return result;
 }
 
 void spin_hint() {
@@ -369,6 +408,71 @@ bool selftest_ipi() {
     return true;
 }
 
+bool selftest_tlb() {
+    if (!g_ipi_ok) {
+        return true; // sin APs, o sin IPIs: no hay otro core con TLB propia
+    }
+
+    uint32_t lapic_id = 0;
+    bool found = false;
+    for (uint32_t index = 0; index < g_slot_count; ++index) {
+        const BootSlot& slot = g_slots[index];
+        if (slot.start_slot != nullptr && __atomic_load_n(&slot.online, __ATOMIC_ACQUIRE) != 0) {
+            lapic_id = slot.lapic_id;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return true;
+    }
+
+    constexpr uint8_t kOldMarker = 0xa1;
+    constexpr uint8_t kNewMarker = 0xb2;
+    memory::PageAllocation old_page = {};
+    memory::PageAllocation new_page = {};
+    if (!memory::allocate_page(old_page) || !memory::allocate_page(new_page)) {
+        console::printf("smp: autotest de TLB sin memoria\n");
+        if (old_page.physical_address != 0) {
+            (void)memory::free_allocation(old_page);
+        }
+        return false;
+    }
+    *static_cast<uint8_t*>(old_page.virtual_address) = kOldMarker;
+    *static_cast<uint8_t*>(new_page.virtual_address) = kNewMarker;
+
+    const uint64_t physical = old_page.physical_address;
+    void* window = nullptr;
+    bool ok = false;
+    if (vm::map_kernel_pages(&physical, 1, vm::kPageWrite, &window)) {
+        const uint64_t address = reinterpret_cast<uint64_t>(window);
+        // El AP lee la pagina vieja: ahora la tiene en su TLB.
+        const int before = probe_on(lapic_id, address, true);
+        // El BSP la apunta a la nueva. Su invlpg no llega al AP.
+        const bool retargeted = vm::retarget_kernel_page(window, new_page.physical_address, vm::kPageWrite);
+        // Sin sincronizar puede leer todavia la vieja; que lo haga depende de si
+        // la TLB del AP conservo la entrada, asi que se informa y no se exige.
+        const int stale = probe_on(lapic_id, address, false);
+        // Sincronizando tiene que leer la nueva. Esto es lo que se exige.
+        const int synced = probe_on(lapic_id, address, true);
+
+        ok = retargeted && before == kOldMarker && synced == kNewMarker;
+        console::printf(
+            "smp: TLB perezosa %s (antes 0x%x, sin sincronizar 0x%x, sincronizando 0x%x)\n",
+            ok ? "ok" : "FALLA",
+            static_cast<unsigned>(before),
+            static_cast<unsigned>(stale),
+            static_cast<unsigned>(synced));
+        // El AP se entera de este desmapeo como de cualquier otro: al tomar el
+        // lock por primera vez, antes de que estas paginas se puedan reusar.
+        (void)vm::unmap_kernel_pages(window, 1);
+    }
+
+    (void)memory::free_allocation(old_page);
+    (void)memory::free_allocation(new_page);
+    return ok;
+}
+
 bool may_schedule(uint32_t index) {
     if (index == 0) {
         return true;
@@ -448,6 +552,9 @@ void lock_kernel() {
         panic("smp: el lock del kernel se tomo dos veces en el mismo core");
     }
     sync::acquire(g_kernel_lock);
+    // Antes de tocar cualquier cosa del kernel: si otro core desmapeo paginas
+    // del kernel mientras este no tenia el lock, su TLB puede tenerlas todavia.
+    vm::sync_kernel_tlb();
 }
 
 void unlock_kernel() {

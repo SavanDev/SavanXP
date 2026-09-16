@@ -1,6 +1,6 @@
 # SMP — running SavanXP on more than one core
 
-> **Status: phases 0, 1 and 2 done, on master. Phases 3-4 not started.** This document is
+> **Status: phases 0 to 3 done, on master. Phase 4 not started.** This document is
 > the measurement: what the kernel already has, what it is missing, and in what
 > order to attack it so that every phase boots and can be verified on its own.
 >
@@ -17,9 +17,12 @@
 >
 > Phase 2 made every core run user processes, one at a time inside the kernel,
 > under a single big kernel lock. `build.ps1 -Smp <n>` still defaults to one
-> core. **Until phase 3 lands, more than one core is not safe for the desktop:**
-> kernel mappings that change at runtime are not invalidated on the other
-> cores ([why](#phase-3--tlb-shootdown)).
+> core.
+>
+> Phase 3 keeps the other cores' TLBs honest when a kernel page is unmapped —
+> lazily, at lock acquisition, not with an IPI
+> ([why](#phase-3--tlb-shootdown)). A boot self-test catches an AP reading a
+> stale translation and proves the flush removes it.
 
 The short version: **bringing up the other cores is the cheap part.** The
 kernel has around 450 mutable globals and no lock discipline at all, so the
@@ -257,12 +260,9 @@ emulates the disk, and `progman` measured more than 1.8 s of CPU without
 getting there. Nothing is lost or corrupted — it is phase 4's problem showing
 up early, and the reason not to size `-Smp` to every host CPU.
 
-**Not done, and why it matters:** TLB shootdown (phase 3). The smoke suite
-passes on 4 cores, but the GPU drivers map and unmap kernel pages on every
-surface import and destroy, and the other cores keep the stale translations.
-Until then, `-Smp` above 1 is for testing the scheduler, not for using the
-desktop. Also still pending: a `panic` on one core does not stop the others, and
-every device interrupt still goes to the BSP (phase 4).
+**Not done:** TLB shootdown, which became [phase 3](#phase-3--tlb-shootdown).
+Also still pending: a `panic` on one core does not stop the others, and every
+device interrupt still goes to the BSP (phase 4).
 
 The original plan follows.
 
@@ -299,7 +299,51 @@ on one core, and reverted only because one core has nothing to overlap with.
 
 This phase is where the debugging lives. **Estimate: 1-2 weeks.**
 
-## Phase 3 — TLB shootdown
+## Phase 3 — TLB shootdown — **DONE**
+
+What it actually took, against the plan below: **no IPI at all.**
+
+- **The planned IPI deadlocks under the BKL.** The core that unmaps holds the
+  lock; the cores it would wait on are, as often as not, spinning for that same
+  lock with `IF=0` — interrupt gates — and never take the IPI. Waiting without
+  the lock would work, but it would mean dropping the lock in the middle of an
+  unmap.
+- **The BKL already gives the ordering the IPI was for.** Every access to kernel
+  memory that can be unmapped happens with the lock held, so a core only has to
+  be current *before it takes the lock*, not at the moment of the unmap.
+  `unmap_kernel_page` bumps a global generation; `smp::lock_kernel()` calls
+  `vm::sync_kernel_tlb()`, which flushes this core's TLB (toggling `CR4.PGE`,
+  so global pages go too) when its generation is behind. The cost is one
+  comparison per lock acquisition and one full flush per core per batch of
+  unmaps, which are rare: the compositor's display surface, uACPI regions.
+- **Today no correct code needed it** — the audit that preceded the change.
+  The kernel mapping window is a bump allocator (`g_kernel_mmio_next` only
+  grows), so an unmapped kernel VA is never mapped again; a stale translation
+  could only be used by a use-after-unmap bug, which on one core faults and on
+  several silently reads freed memory. The generation check turns that back into
+  a fault, and it keeps the system correct the day the window starts reusing
+  addresses, which it will have to eventually: the window never gives back
+  address space, nor the page tables under ranges that were unmapped.
+- **User space needs no mechanism, but the reasons are now rules.** The
+  argument below holds, and is written down next to `sync_kernel_tlb()` in
+  [`vmm.hpp`](../include/kernel/vmm.hpp): an address space is loaded on at most
+  one core, a process switch reloads `CR3`, and only the space of the process
+  running *here* or of one running *nowhere* is ever unmapped. Deferring the
+  kill of a process that runs on another core (phase 2) is what keeps the last
+  part true.
+- **Proven at boot, not argued.** `smp::selftest_tlb()` has an AP read a kernel
+  page, retargets that page to another physical page on the BSP
+  (`vm::retarget_kernel_page`), and reads again: `smp: TLB perezosa ok (antes
+  0xa1, sin sincronizar 0xa1, sincronizando 0xb2)`. The unsynchronized read
+  returning the old byte is the stale translation, observed under both TCG and
+  WHPX; the synchronized one is the fix.
+
+**The rule this leaves for phase 4:** the moment any code touches unmappable
+kernel memory without the lock, the lazy flush stops being enough, and the IPI
+comes back — designed against cores that wait for locks with interrupts
+enabled.
+
+The original plan follows.
 
 `map_page`/`unmap_page` invalidate only when the current `CR3` matches the space
 being modified ([`vmm.cpp:473`](../kernel/vmm.cpp:473),
