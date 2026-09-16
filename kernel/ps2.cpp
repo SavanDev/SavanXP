@@ -957,16 +957,19 @@ void service_pending_led_update() {
         return;
     }
 
-    arch::x86_64::disable_interrupts();
+    // Guardar y reponer IF en vez de prenderlas al salir: esto corre tambien
+    // desde el tick y desde el IRQ del teclado, con el lock del kernel tomado,
+    // y una interrupcion anidada ahi se quedaria esperando ese mismo lock.
+    const uint64_t flags = arch::x86_64::save_and_disable_interrupts();
     if (g_raw_count != 0 || (in8(kStatusPort) & kStatusOutputReady) != 0) {
-        arch::x86_64::enable_interrupts();
+        arch::x86_64::restore_interrupts(flags);
         return;
     }
 
     if (synchronize_leds_locked()) {
         g_led_sync_pending = false;
     }
-    arch::x86_64::enable_interrupts();
+    arch::x86_64::restore_interrupts(flags);
 }
 
 bool detect_second_port() {

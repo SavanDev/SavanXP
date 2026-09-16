@@ -130,19 +130,17 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_YIELD:
             // El proceso ocioso es un bucle de yield en userland, que no puede
             // haltear porque hlt es privilegiada. Si el que cede es EL y no hay
-            // nadie mas listo, la maquina no tiene nada que hacer: se haltea
-            // aca, en su nombre, hasta la proxima interrupcion. Sin esto la
-            // ociosidad se gasta girando por el syscall a toda velocidad --
-            // invisible mientras poll() se quedaba con la CPU, y el costo real
-            // apenas poll paso a bloquear.
+            // nadie mas listo para este core, el core no tiene nada que hacer:
+            // se haltea aca, en su nombre, hasta la proxima interrupcion. Sin
+            // esto la ociosidad se gasta girando por el syscall a toda
+            // velocidad -- invisible mientras poll() se quedaba con la CPU, y
+            // el costo real apenas poll paso a bloquear.
             //
-            // sti;hlt es el par atomico de siempre: sti recien surte efecto
-            // despues de la instruccion que sigue, asi que una interrupcion que
-            // llegue entre el chequeo y el hlt lo despierta igual.
+            // Con el lock del kernel soltado mientras duerme, o los demas cores
+            // se quedan esperandolo. Lo despierta su propio tick, que es el que
+            // se fija si en la cola aparecio algo para este core.
             if (this_cpu().current->idle && !has_runnable_non_idle()) {
-                arch::x86_64::enable_interrupts();
-                arch::x86_64::halt_once();
-                arch::x86_64::disable_interrupts();
+                smp::wait_for_interrupt();
             }
             this_cpu().current->state = State::ready;
             context->rax = 0;

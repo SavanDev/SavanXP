@@ -19,6 +19,13 @@ uint64_t ticks();
 void wait_ticks(uint64_t tick_count);
 process::SavedContext* handle_interrupt(process::SavedContext* context);
 
+// Arranca el timer del APIC local de ESTE core con la misma cuenta que calibro
+// el BSP: los APICs locales de una maquina comparten reloj y divisor, asi que
+// no hace falta volver a calibrar. Lo corre cada AP antes de planificar. false
+// si el backend del BSP no es el APIC local (no hay cuenta que copiar) o si el
+// timer no arranco.
+bool start_on_secondary();
+
 // Reloj monotono por TSC, calibrado por calibrate_monotonic() al principio del
 // arranque (implementado en uacpi_glue.cpp, que es quien lo estreno). A
 // diferencia de ticks(), avanza aunque las interrupciones

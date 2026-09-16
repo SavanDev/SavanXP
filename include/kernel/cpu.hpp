@@ -72,8 +72,17 @@ bool ap_initialize_local_apic();
 // arrancar; el BSP ya cargo el suyo (el 0) en initialize_cpu().
 void load_task_register(uint32_t index);
 
-// Vectores 64-71: mensajes entre cores. Por ahora solo el ping del arranque.
+// Vectores 64-71: mensajes entre cores.
+//
+// El ping lo manda el BSP durante el arranque para comprobar que el ICR entrega;
+// su handler solo toca un atomico y no toma el lock del kernel.
+//
+// El de replanificar entra por su propio stub con contexto (como el timer) y
+// si toma el lock: le dice a un core que pase por el scheduler ya, sea para
+// tomar un proceso recien despertado o para terminar uno que mataron desde otro
+// core.
 constexpr uint8_t kIpiPingVector = 64;
+constexpr uint8_t kIpiRescheduleVector = 65;
 
 // IPI de vector fijo (modo fixed, destino fisico, flanco) a un core por su LAPIC
 // id. false si el APIC local no esta listo, si el destino no entra en 8 bits en
@@ -135,7 +144,18 @@ void enable_irq(uint8_t irq);
 void disable_irq(uint8_t irq);
 void enable_interrupts();
 void disable_interrupts();
+// Apagar IF devolviendo el RFLAGS anterior, y reponerlo. Para una seccion corta
+// que no sabe si la llaman con interrupciones prendidas (el arranque) o desde
+// un handler (IF=0 y con el lock del kernel): prenderlas a ciegas en el segundo
+// caso deja entrar una interrupcion anidada que quiere el mismo lock.
+uint64_t save_and_disable_interrupts();
+void restore_interrupts(uint64_t flags);
 void halt_once();
+// `sti; hlt` en una sola instruccion de asm. sti recien surte efecto despues de
+// la instruccion siguiente, asi que una interrupcion pendiente despierta al hlt
+// en vez de entrar antes y dejarlo dormido hasta la otra. Separados en dos
+// llamadas, el `ret` de por medio abre justo esa ventana.
+void enable_interrupts_and_halt();
 [[noreturn]] void halt_forever();
 
 } // namespace arch::x86_64

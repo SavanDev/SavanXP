@@ -26,7 +26,7 @@ Three fields carry the whole scheme (`savanxp/syscall.h`):
 | Field | Where | What it is |
 | --- | --- | --- |
 | `savanxp_process_info.cpu_ticks` | per process | timer ticks that found this process running, since it started |
-| `savanxp_system_info.cpu_ticks_total` | system | the timer tick counter |
+| `savanxp_system_info.cpu_ticks_total` | system | timer ticks that found a process running, on any core |
 | `savanxp_process_info.memory_bytes` | per process | user pages mapped **right now** |
 
 `cpu_ticks` is incremented in `process::handle_timer_tick` for whatever process
@@ -64,13 +64,36 @@ because only both together prove the counters land on the right process: after
 after a busy loop, both system usage and the test's own process must be above
 half (the caller's counter is advancing).
 
+### More than one core
+
+With SMP every core has its own timer and its own idle process, and every tick
+charges whatever that core was running. `cpu_ticks_total` counts those ticks
+across all cores, so the invariant holds unchanged — **one tick increments
+exactly one process** — and so does the arithmetic above. What changes is the
+size of the pie: `cores × interval`.
+
+- **System usage** subtracts *every* idle process, not one. `taskmgr` sums the
+  deltas of all the processes flagged `SAVANXP_PROC_FLAG_IDLE`.
+- **A process's percentage is of all cores together.** A program spinning on
+  one core of four reads 25%, as in the classic Task Manager.
+- `savanxp_system_info.cpu_online` is the number of cores that schedule, which
+  is also the number of idle processes. A core that booted but cannot schedule
+  (no LAPIC timer, IPIs not delivered) is not counted.
+
+`cpu_ticks_total` is therefore no longer `timer::ticks()`. That one is still
+the BSP's counter alone, because it is a clock: every AP adding to it would make
+everything measured in ticks run N times too fast.
+
+`taskmgr-smoke` scales its thresholds by `cpu_online`: it expects one idle
+process per core, and a busy loop above `50 / cores` percent.
+
 ### The wall clock is a free-running counter; ticks only count CPU
 
 Two clocks, two jobs, and mixing them up cost a long hunt:
 
-- `timer::ticks()` counts timer **interrupts delivered**. It is the basis of
-  `cpu_ticks` and `cpu_ticks_total`, and it is exactly right for that: one tick
-  increments exactly one process.
+- Timer ticks count **interrupts delivered**. They are the basis of
+  `cpu_ticks` and `cpu_ticks_total`, and they are exactly right for that: one
+  tick increments exactly one process.
 - `process::now_ms()` — behind `uptime_ms` and every deadline in the kernel —
   comes from a **free-running counter**, because counting interrupts does not
   measure time. Which counter, and why it is not always the TSC, is its own

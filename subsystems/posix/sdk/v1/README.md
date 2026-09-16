@@ -195,6 +195,7 @@ Smoke tests útiles en el estado actual:
 - `audiotest`
 - `gfxdemo`
 - `forktest`
+- `smptest` (con `-Smp 4`: procesos corriendo en paralelo, `kill` entre cores)
 - `polltest`
 - `sigtest`
 - `busybox ls /disk/bin`

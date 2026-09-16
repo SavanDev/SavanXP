@@ -10,8 +10,12 @@
  * ticks (savanxp_system_info.cpu_ticks_total). Un tick incrementa exactamente
  * un proceso, asi que entre dos muestras la suma de los incrementos ES el
  * incremento global, y el porcentaje de cada uno es su parte de esa torta. El
- * del sistema es lo que NO se llevo el proceso ocioso. De ahi que todo lo que
- * se muestra salga de comparar dos muestras: una sola no dice nada.
+ * del sistema es lo que NO se llevaron los procesos ociosos, uno por core. De
+ * ahi que todo lo que se muestra salga de comparar dos muestras: una sola no
+ * dice nada.
+ *
+ * Con varios cores la torta es la de todos juntos: un proceso que ocupa un core
+ * entero de cuatro se ve al 25%, igual que en el Task Manager de siempre.
  *
  * QUE NO ESTA. No hay pestania de Aplicaciones ni de Usuarios. La primera
  * necesita que el WM publique su lista de ventanas, que hoy no es parte del
@@ -503,7 +507,7 @@ static void refresh_sample(void)
         }
         if ((sample->flags & SAVANXP_PROC_FLAG_IDLE) != 0u)
         {
-            idle_delta = delta;
+            idle_delta += delta;
         }
     }
 
@@ -1251,6 +1255,9 @@ static int selftest(void)
     int index;
     uint64_t ticks_before;
     char grouped[32];
+    /* Cores que planifican: uno ocioso por cada uno. Un proceso que gira ocupa
+     * un core entero, que es 100/cores de la torta. */
+    unsigned int cores = 1;
 
     refresh_sample();
     ticks_before = g_info.cpu_ticks_total;
@@ -1281,9 +1288,11 @@ static int selftest(void)
                 }
             }
         }
-        if (idle_seen != 1)
+        cores = g_info.cpu_online != 0u ? g_info.cpu_online : 1u;
+        if (idle_seen != (int)cores)
         {
-            printf("TASKMGR SMOKE FAIL se esperaba un proceso ocioso, hay %d\n", idle_seen);
+            printf("TASKMGR SMOKE FAIL se esperaba un proceso ocioso por core (%u), hay %d\n",
+                   cores, idle_seen);
             failures += 1;
         }
         if (!self_seen)
@@ -1348,12 +1357,12 @@ static int selftest(void)
                 self_percent = g_processes[index].cpu_percent;
             }
         }
-        if (g_cpu_percent < 50u)
+        if (g_cpu_percent < 50u / cores)
         {
             printf("TASKMGR SMOKE FAIL girando, el sistema reporta %u%% de CPU\n", g_cpu_percent);
             failures += 1;
         }
-        if (self_percent < 50u)
+        if (self_percent < 50u / cores)
         {
             printf("TASKMGR SMOKE FAIL girando, el propio proceso reporta %u%% de CPU\n", self_percent);
             failures += 1;

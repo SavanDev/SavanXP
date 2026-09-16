@@ -95,6 +95,7 @@ static void cleanup_smoke_directory(void) {
 
 int main(void) {
     const char* forktest_argv[] = {"/disk/bin/forktest", 0};
+    const char* smptest_argv[] = {"/disk/bin/smptest", 0};
     const char* polltest_argv[] = {"/disk/bin/polltest", 0};
     const char* sigtest_argv[] = {"/disk/bin/sigtest", 0};
     const char* eventtest_argv[] = {"/disk/bin/eventtest", 0};
@@ -126,6 +127,7 @@ int main(void) {
     puts_out("SMOKE START\n");
 
     if (!file_exists("/disk/bin/forktest") ||
+        !file_exists("/disk/bin/smptest") ||
         !file_exists("/disk/bin/polltest") ||
         !file_exists("/disk/bin/sigtest") ||
         !file_exists("/disk/bin/eventtest") ||
@@ -153,6 +155,7 @@ int main(void) {
     }
 
     if (!run_and_expect("/disk/bin/forktest", forktest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/smptest", smptest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/polltest", polltest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/sigtest", sigtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/eventtest", eventtest_argv, 1, 0) ||

@@ -264,6 +264,7 @@ $UserPrograms = @(
     @{ Name = "mousetest"; Source = "subsystems/posix/userland/mousetest.c"; Test = $true },
     @{ Name = "sysinfo"; Source = "subsystems/posix/userland/sysinfo.c" },
     @{ Name = "forktest"; Source = "subsystems/posix/userland/forktest.c"; Test = $true },
+    @{ Name = "smptest"; Source = "subsystems/posix/userland/smptest.c"; Test = $true },
     @{ Name = "polltest"; Source = "subsystems/posix/userland/polltest.c"; Test = $true },
     @{ Name = "clocktest"; Source = "subsystems/posix/userland/clocktest.c"; Test = $true },
     @{ Name = "sigtest"; Source = "subsystems/posix/userland/sigtest.c"; Test = $true },
@@ -1328,10 +1329,10 @@ function Run-AutomationQemu([string]$AutomationCommand, [string]$SuccessToken, [
 
     $args = @(
         "-machine", "q35,pcspk-audiodev=audio0",
-        "-accel", "tcg",
+        "-accel", (Get-AccelCpu $Accel).Accel,
         "-m", "256M",
         "-smp", "$Smp",
-        "-cpu", "max",
+        "-cpu", (Get-AccelCpu $Accel).Cpu,
         "-audiodev", "none,id=audio0",
         "-display", "none",
         "-rtc", "base=localtime",

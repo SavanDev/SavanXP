@@ -1,6 +1,6 @@
 # SMP — running SavanXP on more than one core
 
-> **Status: phases 0 and 1 done, on master. Phases 2-4 not started.** This document is
+> **Status: phases 0, 1 and 2 done, on master. Phases 3-4 not started.** This document is
 > the measurement: what the kernel already has, what it is missing, and in what
 > order to attack it so that every phase boots and can be verified on its own.
 >
@@ -14,6 +14,12 @@
 > Phase 1 gave every core its own TSS and its own `smp::Cpu` (current process,
 > idle, reschedule request), indexed by the TSS selector. Still nothing
 > schedules on the APs.
+>
+> Phase 2 made every core run user processes, one at a time inside the kernel,
+> under a single big kernel lock. `build.ps1 -Smp <n>` still defaults to one
+> core. **Until phase 3 lands, more than one core is not safe for the desktop:**
+> kernel mappings that change at runtime are not invalidated on the other
+> cores ([why](#phase-3--tlb-shootdown)).
 
 The short version: **bringing up the other cores is the cheap part.** The
 kernel has around 450 mutable globals and no lock discipline at all, so the
@@ -178,9 +184,87 @@ The original plan follows.
 
 **Estimate: 3-5 days.**
 
-## Phase 2 — the big kernel lock and the multi-core scheduler
+## Phase 2 — the big kernel lock and the multi-core scheduler — **DONE**
 
 **Goal:** all cores run user processes. Correct, with essentially no scaling.
+
+What it actually took, against the plan below:
+
+- **Five doors, not three.** The lock (`smp::lock_kernel()`, a ticket
+  spinlock from [`spinlock.hpp`](../include/kernel/spinlock.hpp)) is taken by
+  the syscall, timer and reschedule-IPI stubs in
+  [`context.S`](../arch/x86_64/context.S), by `dispatch_external_vector` for
+  device vectors, and by `handle_exception` for faults from ring 3 — a
+  user page fault grows the stack or kills the process, and both are kernel
+  state. The ping IPI does not take it: the BSP sends it during boot and waits
+  for the acknowledgement.
+- **Released after the stack switch, never before.** The stubs release it after
+  `movq %rax, %rsp`, and `resume_context` after loading the new `rsp`.
+  Releasing it in C, still on the outgoing process's kernel stack, lets another
+  core resume that process; its next syscall lands at the top of the very stack
+  the first core is still executing on.
+- **Boot runs without the lock.** The APs are parked until
+  `process::start_init()`, so there is nobody to exclude; `start_init` takes it,
+  creates the idles and releases the APs with `smp::start_scheduling()`.
+- **Sleeping inside the kernel was the real work.** Four places did `sti; hlt`
+  in the middle of a syscall — the idle's `SYS_YIELD`, the network stack's
+  `wait_for_tick`, the PC speaker's beep and `tty::read_line` — and one driver
+  (the PS/2 LED update) turned interrupts back on unconditionally from inside
+  the tick. All now go through `smp::wait_for_interrupt()`, which releases the
+  lock around the `hlt`, or save and restore `IF`.
+- **A context preempted in ring 0 is pinned to its core.** A process sleeping
+  in `wait_for_interrupt` can be preempted by the tick with its context in the
+  middle of a syscall. That context is only resumed on the core it slept on
+  (`runnable_here()` in [`process.cpp`](../kernel/process.cpp)): the kernel code
+  around it — `cpu_index()` is deliberately fusable by the compiler — assumes
+  the core does not change during one kernel entry.
+- **The idle of an AP is a process, like the BSP's.** Deferred from phase 1.
+  The scheduler only knows how to return to a `SavedContext`, so an in-kernel
+  `hlt` loop would have needed a second way out of the kernel. Each idle costs
+  a process slot, 16 KiB of kernel stack and two pages; each core returns only
+  to its own.
+- **One clock, N preemption timers.** Each AP starts its LAPIC timer with the
+  BSP's calibrated count (`timer::start_on_secondary()`). Only the BSP's tick
+  advances `timer::ticks()` and does the system's periodic work — sleeper and
+  timeout scans, device service, input polling, `timer-stats`. With N cores
+  adding to it, everything paced in ticks would run N times too fast.
+- **Killing a process that runs on another core is deferred.** Its kernel
+  stack and page tables are live over there. `terminate_process` marks it
+  `kill_pending` and sends the reschedule IPI; the owning core terminates it on
+  its next return to ring 3 — the IPI itself, the next tick, or the end of the
+  syscall it was in.
+- **No reschedule IPI for wakeups.** See
+  [the trap below](#known-traps): the same-core handoff stays, and an idle core
+  picks up whatever is left in the queue on its own tick, at most 1 ms later.
+  The IPI exists, but only kills use it.
+- **CPU accounting counts every core.** `cpu_ticks_total` is now the ticks that
+  found a process running on *any* core, so one tick still increments exactly
+  one process; `cpu_online` is the number of cores that schedule, which is also
+  the number of idle processes. [Details](SYSTEM_MONITORING.md#more-than-one-core).
+
+**Delivered:** `smp: planificando en 4 de 4 cores` under `build.ps1 -Smp 4`,
+and `smptest` in the smoke suite: it sees a child in `State::running` from
+inside its own syscall — impossible on one core — kills a child spinning on
+another core, and runs a pipe ping-pong.
+
+**One measurement to keep: the lock is held across disk I/O.** On the
+development host (an i5-2400, 4 logical CPUs) `windowd-smoke` passes at
+`-Smp 2` under TCG and WHPX but fails at `-Smp 4` under both: its size-hint
+check assumes `progman` finishes its startup scan of `/disk` within 60 frames.
+That scan is ATA PIO inside syscalls, under the lock; with four vCPUs on four
+host CPUs, the cores spinning for the lock take host time from the thread that
+emulates the disk, and `progman` measured more than 1.8 s of CPU without
+getting there. Nothing is lost or corrupted — it is phase 4's problem showing
+up early, and the reason not to size `-Smp` to every host CPU.
+
+**Not done, and why it matters:** TLB shootdown (phase 3). The smoke suite
+passes on 4 cores, but the GPU drivers map and unmap kernel pages on every
+surface import and destroy, and the other cores keep the stale translations.
+Until then, `-Smp` above 1 is for testing the scheduler, not for using the
+desktop. Also still pending: a `panic` on one core does not stop the others, and
+every device interrupt still goes to the BSP (phase 4).
+
+The original plan follows.
 
 - **A real spinlock** in `include/kernel/spinlock.hpp`: a ticket lock that saves
   and restores `IF`, with `pause` in the spin body. Recursion is not needed if
@@ -278,7 +362,11 @@ being blind to every race introduced. Phases 0-3 need `-smp` variants:
   both the interactive and the smoke invocations.
 - At least `smoke`, `windowd-smoke` and `sxfs-smoke` get an `-smp 4` run. The
   filesystem and compositor smokes are the ones that actually exercise shared
-  state from several processes at once.
+  state from several processes at once. **Done in phase 2**, with the caveat
+  about host CPUs above; `smoke` also carries `smptest`, which fails when the
+  cores reported as scheduling do not actually run processes at the same time.
+- The automated smokes honour `-Accel`, so the same suite runs under WHPX or
+  KVM. **Done in phase 2.**
 - TCG stays the accelerator for the smokes, for determinism — but note that TCG
   serializes far more than real hardware does, so a clean TCG run is weak
   evidence. A KVM run (`-Accel kvm`) is where memory-ordering bugs surface.
@@ -310,6 +398,17 @@ being blind to every race introduced. Phases 0-3 need `-smp` variants:
   Phase 1 kept the one-core half intact: `resched_pending` lives in
   `smp::Cpu`, the waker marks its own core, and that core still reschedules
   on the syscall return. What phase 2 adds is the cross-core half.
+
+  **What phase 2 measured.** The first cut sent a woken process to an idle core
+  by IPI instead of handing over the waker's core. With `smptest`'s pipe
+  ping-pong (2000 round trips, the shape of a synchronous RPC) under TCG, that
+  took 1791 ms on 4 cores against 544 ms on one: the waker blocks on the reply
+  right away, so the handoff was the shorter path all along. Keeping the
+  handoff brought TCG to ~1100 ms, and neither an IPI for the displaced waker
+  nor a cache-hot migration delay improved on it. The rest is TCG itself: under
+  WHPX the same test takes 15 ms on one core and 16 ms on four. So wakeups keep
+  the one-core behaviour and nothing else; if a real workload ever shows the
+  displaced waker waiting for a tick, that is the measurement to start from.
 
 ## Is it worth it?
 

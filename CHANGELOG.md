@@ -103,11 +103,12 @@ Cut-off notes:
   input, so the demo presents as fast as the compositor allows — the load that
   shows the display path's real ceiling.
 
-- **The application processors boot and park, each with its own TSS.** `smp::`
-  starts the cores the bootloader reports, gives each its own TSS and per-core
-  state (`smp::this_cpu()`), and checks both at boot (`smp: TSS propio en N/M
-  APs ok`, `smp: ping IPI N/M ok`). Nothing schedules on them yet; `build.ps1
-  -Smp <n>` exercises that path. Phases 0-1 of `docs/SMP_ROADMAP.md`.
+- **Every core runs user processes, under one big kernel lock.** Each core the
+  bootloader reports gets its own TSS, idle process and LAPIC timer (`smp:
+  planificando en N de M cores`); `/bin/smptest` in `build.ps1 smoke` proves the
+  overlap. Task Manager usage is now of all cores together. `-Smp <n>` still
+  defaults to 1: without TLB shootdown more cores are not yet safe for the
+  desktop. Phases 0-2 of [the SMP roadmap](docs/SMP_ROADMAP.md).
 
 - **Add or Remove Programs (`/bin/appwiz`), in the System group.** It lists what
   was installed outside the system image — in `/disk/bin` and not in `/bin` —
@@ -241,6 +242,10 @@ Cut-off notes:
   `clipboard_set_text`, `_get_text`, `_get_info` and `_clear`.
 
 ### Changed
+
+- **The automated smokes honour `-Accel`.** `build.ps1 smoke -Accel whpx` (or
+  `kvm`) runs the suite on the hypervisor instead of TCG; the default is still
+  `tcg`.
 
 - **The system 3D edges moved to `savanxp/sxchrome.h`, out of the toolkit.**
   `sxchrome_draw_edge/_raised/_sunken/_inset/_etched`, `sxchrome_fill_raised`

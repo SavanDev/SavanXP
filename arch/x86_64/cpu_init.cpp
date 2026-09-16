@@ -3,6 +3,7 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/process.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/vmm.hpp"
 
 namespace {
@@ -48,6 +49,7 @@ constexpr uint32_t kIpiDeliverySpinLimit = 1000000u;
 
 extern "C" void x86_64_syscall_entry();
 extern "C" void x86_64_timer_entry();
+extern "C" void x86_64_reschedule_entry();
 
 struct [[gnu::packed]] GdtDescriptor {
     uint16_t limit;
@@ -253,17 +255,28 @@ void handle_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code
         return;
     }
 
-    if (frame != nullptr && (frame->cs & 0x3) == 0x3 && process::current() != nullptr) {
+    if (frame != nullptr && (frame->cs & 0x3) == 0x3) {
+        // Una excepcion de ring 3 es una entrada al kernel como un syscall: toca
+        // el proceso, sus tablas de paginas y, si lo mata, el scheduler. Desde
+        // ring 3 no hay forma de tener ya el lock en este core.
+        smp::lock_kernel();
+        if (process::current() == nullptr) {
+            smp::unlock_kernel();
+            stop_on_exception(vector, frame, error_code, has_error_code);
+        }
         // #PF de no-presente adentro de la region del stack: se mapea la pagina
         // que falta y se reintenta la instruccion. El bit 0 del codigo de error
         // distingue "la pagina no esta" de "esta pero el acceso no se permite";
         // solo el primero se puede resolver creciendo el stack.
         const bool not_present = has_error_code && (error_code & 0x1) == 0;
         if (vector == 14 && not_present && process::grow_user_stack(read_cr2())) {
+            // Se vuelve al mismo proceso sobre la misma pila: soltar aca no
+            // tiene el problema que resuelve el stub de context.S.
+            smp::unlock_kernel();
             return;
         }
-        (void)error_code;
-        (void)has_error_code;
+        // No vuelve: resume_context suelta el lock ya sobre la pila del
+        // proceso siguiente.
         process::terminate_current_from_exception(vector);
     }
 
@@ -280,6 +293,15 @@ void send_pic_eoi(uint8_t irq) {
 void dispatch_external_vector(uint8_t vector) {
     if (vector >= kIdtEntryCount) {
         return;
+    }
+
+    // Los IRQ de dispositivos corren drivers, y los drivers son estado del
+    // kernel: van con el lock. Los IPI no -- el ping llega mientras el BSP,
+    // que lo mando, esta corriendo el arranque y espera el acuse. Estos
+    // handlers no cambian de contexto, asi que soltar el lock aca es seguro.
+    const bool takes_kernel_lock = vector < arch::x86_64::kIpiPingVector;
+    if (takes_kernel_lock) {
+        smp::lock_kernel();
     }
 
     const ExternalHandlerSlot& slot = g_external_handlers[vector];
@@ -299,6 +321,10 @@ void dispatch_external_vector(uint8_t vector) {
         case InterruptEoi::none:
         default:
             break;
+    }
+
+    if (takes_kernel_lock) {
+        smp::unlock_kernel();
     }
 }
 
@@ -510,9 +536,10 @@ DEFINE_EXTERNAL_ISR(60)
 DEFINE_EXTERNAL_ISR(61)
 DEFINE_EXTERNAL_ISR(62)
 DEFINE_EXTERNAL_ISR(63)
-// Vectores 64-71: mensajes entre cores (IPIs). Por ahora solo el 64, que es el
-// ping con el que el arranque de los APs comprueba que el ICR entrega de
-// verdad. El resto del rango queda para reschedule y shootdown de TLB.
+// Vectores 64-71: mensajes entre cores (IPIs). El 64 es el ping con el que el
+// arranque de los APs comprueba que el ICR entrega de verdad. El 65, replanificar,
+// entra por el stub con contexto de context.S y no esta aca. El resto del rango
+// queda para el shootdown de TLB.
 DEFINE_EXTERNAL_ISR(64)
 #undef DEFINE_ISR_NOERR
 #undef DEFINE_ISR_ERR
@@ -584,6 +611,7 @@ void initialize_idt() {
     set_idt_gate(62, reinterpret_cast<InterruptHandler>(vector_62), kInterruptGate);
     set_idt_gate(63, reinterpret_cast<InterruptHandler>(vector_63), kInterruptGate);
     set_idt_gate(64, reinterpret_cast<InterruptHandler>(vector_64), kInterruptGate);
+    set_idt_gate(arch::x86_64::kIpiRescheduleVector, reinterpret_cast<InterruptHandler>(x86_64_reschedule_entry), kInterruptGate);
     set_idt_gate(kSyscallVector, reinterpret_cast<InterruptHandler>(x86_64_syscall_entry), kUserInterruptGate);
     load_idt();
 }
@@ -1031,8 +1059,22 @@ void disable_interrupts() {
     asm volatile("cli");
 }
 
+uint64_t save_and_disable_interrupts() {
+    uint64_t flags = 0;
+    asm volatile("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+
+void restore_interrupts(uint64_t flags) {
+    asm volatile("push %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
 void halt_once() {
     asm volatile("hlt");
+}
+
+void enable_interrupts_and_halt() {
+    asm volatile("sti; hlt");
 }
 
 [[noreturn]] void halt_forever() {

@@ -165,6 +165,16 @@ struct Process {
     uint64_t kernel_stack_base;
     uint64_t kernel_stack_size;
     SavedContext* context;
+    // El core que lo corrio por ultima vez (indice de cpu_index()). Solo decide
+    // algo cuando `context` quedo en ring 0 -- desalojado mientras dormia
+    // adentro de una syscall --: ese contexto se retoma en este core y en
+    // ningun otro.
+    uint32_t cpu;
+    // Lo mataron mientras corria en otro core. No se lo puede desarmar ahi
+    // mismo (su core esta usando su pila y sus tablas de paginas): lo termina
+    // su propio core, en la proxima vuelta a ring 3, con este codigo de salida.
+    bool kill_pending;
+    int kill_exit_code;
     HandleEntry handles[kMaxFileHandles];
     // Estado FPU/SSE (formato FXSAVE, 512 bytes alineados a 16). El scheduler lo
     // guarda/restaura al cambiar de proceso; se siembra con un estado limpio en
@@ -182,6 +192,9 @@ bool copy_to_user(uint64_t user_address, const void* source, size_t count);
 bool validate_user_range(uint64_t user_address, size_t count, bool require_write);
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid);
 [[noreturn]] void start_init(const char* path);
+// Entrada al scheduler de un AP, con el lock del kernel tomado y su timer ya
+// corriendo. Arranca por su idle o por lo que haya listo.
+[[noreturn]] void run_secondary_core();
 void terminate_current(int exit_code);
 void terminate_current_from_exception(uint8_t vector);
 // Atiende un #PF del proceso actual que caiga adentro de la region reservada
@@ -191,6 +204,9 @@ void terminate_current_from_exception(uint8_t vector);
 bool grow_user_stack(uint64_t fault_address);
 SavedContext* handle_syscall(SavedContext* context);
 SavedContext* handle_timer_tick(SavedContext* context);
+// El IPI de replanificar (smp::kick): tomar un proceso recien despertado si
+// este core estaba ocioso, o terminar al actual si lo mataron desde otro core.
+SavedContext* handle_reschedule_ipi(SavedContext* context);
 void notify_tty_line_ready();
 bool snapshot_process(size_t index, savanxp_process_info& info);
 void set_boot_system_info(const savanxp_system_info& info);

@@ -267,7 +267,7 @@ struct savanxp_system_info {
     uint64_t cpu_ticks_total;
     uint32_t process_count;
     uint32_t cpu_count;      /* cores que reporto el bootloader */
-    uint32_t cpu_online;     /* cores que llegaron a arrancar */
+    uint32_t cpu_online;     /* cores que corren procesos (uno ocioso por cada uno) */
     uint32_t cpu_khz;        /* reloj del procesador; 0 si no se calibro */
     uint32_t cpu_features;   /* enum savanxp_cpu_feature */
 

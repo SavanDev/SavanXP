@@ -2,6 +2,10 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/panic.hpp"
+#include "kernel/process.hpp"
+#include "kernel/spinlock.hpp"
+#include "kernel/timer.hpp"
 
 namespace smp {
 
@@ -46,6 +50,18 @@ bool g_ready = false;
 
 // Pings recibidos entre todos los APs. Solo la comprueba el autotest de arranque.
 volatile uint64_t g_ping_count = 0;
+bool g_ipi_ok = false;
+
+// El lock grande del kernel. Ver smp.hpp.
+constinit sync::SpinLock g_kernel_lock;
+
+// Que cores planifican, por indice denso. El BSP siempre.
+bool g_can_schedule[smp::kMaxCpus] = {true};
+uint32_t g_scheduling_count = 1;
+
+// La senal para que los APs estacionados entren al scheduler. La escribe el BSP
+// una sola vez, con los idles ya creados.
+volatile uint32_t g_scheduling_started = 0;
 
 void ping_handler() {
     __atomic_add_fetch(&g_ping_count, 1ull, __ATOMIC_ACQ_REL);
@@ -102,14 +118,50 @@ extern "C" void savanxp_ap_entry(void*) {
     slot->loaded_selector = arch::x86_64::read_task_register();
 
     // Habilitar antes de reportarse, para que "online" signifique tambien "ya
-    // acepta IPIs". El unico vector que puede llegarle a un AP es el ping: los
-    // GSI del IOAPIC estan ruteados al BSP y su timer local nunca se arranca.
+    // acepta IPIs". Mientras esta estacionado, el unico vector que puede
+    // llegarle es un IPI: los GSI del IOAPIC estan ruteados al BSP y su timer
+    // local todavia no arranco.
     arch::x86_64::enable_interrupts();
     __atomic_store_n(&slot->online, 1u, __ATOMIC_RELEASE);
 
-    // Estacionado. La fase 2 lo mete al scheduler; hasta entonces despertarse
-    // por un IPI y volver a dormir es todo lo que hace.
-    park();
+    // Estacionado hasta que el BSP arranque el scheduler. `cli` antes de mirar
+    // y `sti; hlt` juntos: si la senal y su IPI llegan entre la lectura y el
+    // hlt, el IPI queda pendiente y despierta al hlt en vez de perderse. Un AP
+    // no tiene timer que lo despierte despues.
+    for (;;) {
+        arch::x86_64::disable_interrupts();
+        if (__atomic_load_n(&g_scheduling_started, __ATOMIC_ACQUIRE) != 0) {
+            break;
+        }
+        arch::x86_64::enable_interrupts_and_halt();
+    }
+
+    // Un AP que no planifica (sin idle, sin timer o sin IPIs) sigue dormido.
+    if (!smp::can_schedule(slot->kernel_index)) {
+        arch::x86_64::enable_interrupts();
+        park();
+    }
+
+    smp::lock_kernel();
+    if (!timer::start_on_secondary()) {
+        // El BSP ya comprobo el backend antes de crearle el idle; si igual no
+        // arranca, este core no puede preemptar a nadie.
+        panic("smp: el timer local de un AP no arranco");
+    }
+    process::run_secondary_core();
+}
+
+extern "C" void savanxp_kernel_lock_acquire() {
+    smp::lock_kernel();
+}
+
+extern "C" void savanxp_kernel_lock_release() {
+    smp::unlock_kernel();
+}
+
+extern "C" process::SavedContext* savanxp_handle_reschedule_ipi(process::SavedContext* context) {
+    arch::x86_64::acknowledge_local_apic_interrupt();
+    return process::handle_reschedule_ipi(context);
 }
 
 namespace smp {
@@ -313,7 +365,110 @@ bool selftest_ipi() {
         "smp: ping IPI %u/%u ok\n",
         static_cast<unsigned>(received),
         static_cast<unsigned>(expected));
+    g_ipi_ok = true;
     return true;
+}
+
+bool may_schedule(uint32_t index) {
+    if (index == 0) {
+        return true;
+    }
+    if (index >= kMaxCpus || g_online <= 1 || !g_ipi_ok ||
+        timer::backend() != timer::Backend::local_apic) {
+        return false;
+    }
+    for (uint32_t slot_index = 0; slot_index < g_slot_count; ++slot_index) {
+        const BootSlot& slot = g_slots[slot_index];
+        if (slot.start_slot != nullptr && slot.kernel_index == index) {
+            return __atomic_load_n(&slot.online, __ATOMIC_ACQUIRE) != 0;
+        }
+    }
+    return false;
+}
+
+bool can_schedule(uint32_t index) {
+    return index < kMaxCpus && g_can_schedule[index];
+}
+
+uint32_t scheduling_count() {
+    return g_scheduling_count;
+}
+
+void start_scheduling() {
+    g_scheduling_count = 0;
+    for (uint32_t index = 0; index < kMaxCpus; ++index) {
+        g_can_schedule[index] = may_schedule(index) && g_cpu_state[index].idle != nullptr;
+        if (g_can_schedule[index]) {
+            ++g_scheduling_count;
+        }
+    }
+
+    // La tabla tiene que estar entera antes de la senal: cada AP la lee en
+    // cuanto se despierta.
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_store_n(&g_scheduling_started, 1u, __ATOMIC_RELEASE);
+
+    // Despertarlos a todos, planifiquen o no: el que no planifica vuelve a
+    // dormirse solo. Y un AP que no despierta no tiene arreglo: sin IPIs no
+    // hay forma de moverlo.
+    for (uint32_t slot_index = 0; slot_index < g_slot_count; ++slot_index) {
+        const BootSlot& slot = g_slots[slot_index];
+        if (slot.start_slot == nullptr ||
+            __atomic_load_n(&slot.online, __ATOMIC_ACQUIRE) == 0) {
+            continue;
+        }
+        (void)arch::x86_64::send_ipi(slot.lapic_id, arch::x86_64::kIpiPingVector);
+    }
+
+    if (g_online > 1) {
+        console::printf(
+            "smp: planificando en %u de %u cores\n",
+            static_cast<unsigned>(g_scheduling_count),
+            static_cast<unsigned>(g_online));
+    }
+}
+
+void kick(uint32_t index) {
+    if (!can_schedule(index) || index == arch::x86_64::cpu_index()) {
+        return;
+    }
+    Cpu& cpu = g_cpu_state[index];
+    if (cpu.kicked) {
+        return;
+    }
+    if (arch::x86_64::send_ipi(cpu.lapic_id, arch::x86_64::kIpiRescheduleVector)) {
+        cpu.kicked = true;
+    }
+}
+
+void lock_kernel() {
+    if (sync::held_by_this_cpu(g_kernel_lock)) {
+        // Tomarlo dos veces desde el mismo core no se destraba nunca. Mejor un
+        // panic que diga que paso que un core girando en silencio.
+        panic("smp: el lock del kernel se tomo dos veces en el mismo core");
+    }
+    sync::acquire(g_kernel_lock);
+}
+
+void unlock_kernel() {
+    sync::release(g_kernel_lock);
+}
+
+bool kernel_locked_here() {
+    return sync::held_by_this_cpu(g_kernel_lock);
+}
+
+void wait_for_interrupt() {
+    arch::x86_64::disable_interrupts();
+    const bool held = kernel_locked_here();
+    if (held) {
+        unlock_kernel();
+    }
+    arch::x86_64::enable_interrupts_and_halt();
+    arch::x86_64::disable_interrupts();
+    if (held) {
+        lock_kernel();
+    }
 }
 
 } // namespace smp

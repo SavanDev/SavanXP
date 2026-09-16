@@ -5,6 +5,7 @@
 #include "kernel/device.hpp"
 #include "kernel/input.hpp"
 #include "kernel/process.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "savanxp/syscall.h"
 
@@ -92,8 +93,7 @@ size_t read_line(char* buffer, size_t capacity) {
     while (!g_main_tty.line_ready) {
         device::service_background();
         input::poll();
-        arch::x86_64::enable_interrupts();
-        arch::x86_64::halt_once();
+        smp::wait_for_interrupt();
     }
 
     const size_t to_copy = g_main_tty.pending_length < (capacity - 1)

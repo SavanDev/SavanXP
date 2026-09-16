@@ -9,6 +9,7 @@
 #include "kernel/device.hpp"
 #include "kernel/nic.hpp"
 #include "kernel/process.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
 #include "savanxp/syscall.h"
@@ -392,9 +393,7 @@ uint16_t compute_transport_checksum(uint32_t source_ip, uint32_t destination_ip,
 }
 
 void wait_for_tick() {
-    arch::x86_64::enable_interrupts();
-    arch::x86_64::halt_once();
-    arch::x86_64::disable_interrupts();
+    smp::wait_for_interrupt();
 }
 
 // Los loops de espera de este archivo ya calculaban esto a mano; la cache ARP

@@ -79,9 +79,14 @@ process::Pipe g_pipes[kMaxPipeCount] = {};
 uint8_t g_pipe_storage[kMaxPipeCount][kPipeCapacity] = {};
 object::IoObject g_io_objects[object::kMaxIoObjects] = {};
 uint32_t g_next_pid = 1;
-// Compartido entre cores a proposito: con la fase 2 es el cursor de la cola de
-// listos unica, que va a vivir bajo el lock grande del kernel.
+// Compartido entre cores a proposito: es el cursor de la cola de listos unica,
+// que vive bajo el lock grande del kernel.
 size_t g_schedule_cursor = 0;
+// Ticks que encontraron a un proceso corriendo, en cualquier core. Es el
+// denominador de la contabilidad de CPU (cpu_ticks_total): cada uno incrementa
+// exactamente un cpu_ticks, asi que los dos lados suman igual con N cores. No es
+// timer::ticks(), que cuenta solo los del BSP porque es un reloj.
+uint64_t g_cpu_ticks_total = 0;
 bool g_ready = false;
 savanxp_system_info g_boot_system_info = {};
 bool g_boot_system_info_ready = false;
@@ -329,6 +334,7 @@ void switch_to_process(process::Process* target) {
 
     this_cpu().current = target;
     target->state = process::State::running;
+    target->cpu = this_cpu().index;
     arch::x86_64::set_kernel_stack(target->kernel_stack_base + target->kernel_stack_size);
     write_cr3(target->address_space.pml4_physical);
 }
@@ -1167,9 +1173,27 @@ void reparent_orphaned_children(uint32_t parent_pid) {
     }
 }
 
+// Listo para correr en ESTE core. La cola es una sola y cualquier core toma de
+// ella, con una excepcion: un proceso desalojado mientras dormia adentro del
+// kernel (smp::wait_for_interrupt) tiene el contexto en ring 0, en la mitad de
+// una syscall, y solo lo retoma el core donde se durmio.
+//
+// Los que corren en otro core no hace falta filtrarlos: estan en
+// State::running, no en ready. Y los idles no entran nunca, cada core vuelve al
+// suyo por separado.
+bool runnable_here(const process::Process& proc) {
+    if (proc.idle || proc.state != process::State::ready) {
+        return false;
+    }
+    if (proc.context != nullptr && (proc.context->cs & 0x3) == 0) {
+        return proc.cpu == this_cpu().index;
+    }
+    return true;
+}
+
 bool has_runnable_non_idle() {
     for (const process::Process& proc : g_processes) {
-        if (!proc.idle && proc.state == process::State::ready) {
+        if (runnable_here(proc)) {
             return true;
         }
     }
@@ -1180,7 +1204,7 @@ process::Process* pick_next_runnable() {
     for (size_t offset = 1; offset <= process::kMaxProcesses; ++offset) {
         const size_t index = (g_schedule_cursor + offset) % process::kMaxProcesses;
         process::Process& proc = g_processes[index];
-        if (proc.state == process::State::ready && !proc.idle) {
+        if (runnable_here(proc)) {
             g_schedule_cursor = index;
             return &proc;
         }
@@ -1200,6 +1224,10 @@ process::SavedContext* choose_next_context(process::SavedContext* current_contex
         this_cpu().current->context = current_context;
     }
 
+    // Pasar por aca atiende cualquier IPI de replanificar que ande en vuelo:
+    // el que llegue despues encuentra la decision ya tomada y no hace nada.
+    this_cpu().kicked = false;
+
     process::Process* next = pick_next_runnable();
     if (next == nullptr) {
         panic("scheduler: no runnable process");
@@ -1208,6 +1236,19 @@ process::SavedContext* choose_next_context(process::SavedContext* current_contex
     reset_time_slice(*next);
     switch_to_process(next);
     return next->context;
+}
+
+// Un proceso paso a listo: este core le entrega la CPU a la vuelta de la
+// syscall, en vez de dejarlo esperando al proximo tick. Es lo mismo que con un
+// solo core, y a proposito no se le pasa el despertado a un core ocioso por IPI:
+// en un RPC sincrono el que despierta se bloquea enseguida esperando la
+// respuesta, y cederle este core es el camino mas corto. El que queda
+// desplazado lo toma cualquier core ocioso en su proximo tick.
+void note_woken(process::Process& proc) {
+    if (&proc == this_cpu().current) {
+        return;
+    }
+    this_cpu().resched_pending = true;
 }
 
 // Los tres complete_blocked_* piden el mismo wakeup preemptivo. Al principio
@@ -1224,9 +1265,7 @@ int complete_blocked_read(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
-    if (&proc != this_cpu().current) {
-        this_cpu().resched_pending = true;
-    }
+    note_woken(proc);
     return result;
 }
 
@@ -1238,9 +1277,7 @@ int complete_blocked_write(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
-    if (&proc != this_cpu().current) {
-        this_cpu().resched_pending = true;
-    }
+    note_woken(proc);
     return result;
 }
 
@@ -1249,9 +1286,7 @@ int complete_blocked_wait(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
-    if (&proc != this_cpu().current) {
-        this_cpu().resched_pending = true;
-    }
+    note_woken(proc);
     return result;
 }
 
@@ -1624,9 +1659,7 @@ int complete_blocked_poll(process::Process& proc, int result) {
     proc.context->rax = static_cast<uint64_t>(result);
     proc.state = process::State::ready;
     reset_time_slice(proc);
-    if (&proc != this_cpu().current) {
-        this_cpu().resched_pending = true;
-    }
+    note_woken(proc);
     return result;
 }
 
@@ -1915,6 +1948,19 @@ void terminate_process(process::Process& proc, int exit_code) {
     if (proc.idle || proc.state == process::State::unused || proc.state == process::State::zombie) {
         return;
     }
+
+    // Corriendo en otro core: su pila de kernel y sus tablas de paginas estan
+    // en uso ahi mismo, y liberarlas ahora es pisarselas. Lo termina su propio
+    // core en la proxima vuelta a ring 3 (tick, IPI o fin de syscall).
+    if (proc.state == process::State::running && &proc != this_cpu().current) {
+        if (!proc.kill_pending) {
+            proc.kill_pending = true;
+            proc.kill_exit_code = exit_code;
+        }
+        smp::kick(proc.cpu);
+        return;
+    }
+    proc.kill_pending = false;
 
     const uint32_t exiting_pid = proc.pid;
     proc_log("proc: terminate pid=%u status=%d\n", proc.pid, exit_code);
@@ -3020,7 +3066,7 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.uptime_ms = current_uptime_ms();
 
     info.memory_free_bytes = memory::free_page_count() * memory::kPageSize;
-    info.cpu_ticks_total = timer::ticks();
+    info.cpu_ticks_total = g_cpu_ticks_total;
     info.process_count = 0;
     for (const Process& proc : g_processes) {
         if (proc.state != State::unused) {
@@ -3028,7 +3074,7 @@ bool snapshot_system_info(savanxp_system_info& info) {
         }
     }
     info.cpu_count = smp::cpu_count();
-    info.cpu_online = smp::online_count();
+    info.cpu_online = smp::scheduling_count();
     info.cpu_khz = timer::tsc_khz();
 
     // Placa de red enchufada, la reclame un driver o no: clase PCI 0x02. Se
@@ -3114,9 +3160,28 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 }
 
 [[noreturn]] void start_init(const char* path) {
-    this_cpu().idle = create_idle_process();
-    if (this_cpu().idle == nullptr) {
-        panic("scheduler: unable to create idle task");
+    // Desde aca el kernel deja de ser solo del BSP. El arranque corrio sin el
+    // lock porque no habia con quien competir; lo que sigue ya no. IF=0 antes
+    // de tomarlo: un tick con el lock tomado por este mismo core no entra.
+    arch::x86_64::disable_interrupts();
+    smp::lock_kernel();
+
+    // Un idle por core que pueda planificar. El del BSP es imprescindible; el
+    // de un AP que no se pudo crear deja a ese AP estacionado, nada mas.
+    for (uint32_t index = 0; index < smp::kMaxCpus; ++index) {
+        if (!smp::may_schedule(index)) {
+            continue;
+        }
+        Process* idle = create_idle_process();
+        if (idle == nullptr) {
+            if (index == 0) {
+                panic("scheduler: unable to create idle task");
+            }
+            console::printf("smp: sin idle para el core %u, queda estacionado\n", static_cast<unsigned>(index));
+            continue;
+        }
+        idle->cpu = index;
+        smp::g_cpu_state[index].idle = idle;
     }
 
     const char* argv[] = {path, nullptr};
@@ -3126,9 +3191,18 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
         panic("process: unable to start init");
     }
 
+    // Los APs salen a buscar trabajo en cuanto el lock se libere, que es al
+    // retomar init.
+    smp::start_scheduling();
+
     g_schedule_cursor = process_index(init);
     switch_to_process(init);
     arch::x86_64::resume_context(init->context, init->address_space.pml4_physical);
+}
+
+[[noreturn]] void run_secondary_core() {
+    SavedContext* next = choose_next_context(nullptr);
+    arch::x86_64::resume_context(next, this_cpu().current->address_space.pml4_physical);
 }
 
 void terminate_current(int exit_code) {
@@ -3182,9 +3256,20 @@ void terminate_current_from_exception(uint8_t vector) {
 #include "../subsystems/native/kernel/syscall_dispatch.inc"
 
 SavedContext* handle_syscall(SavedContext* context) {
-    const subsystem::Id id =
-        this_cpu().current != nullptr ? this_cpu().current->subsystem_id : subsystem::Id::posix;
+    Process* const caller = this_cpu().current;
+    const subsystem::Id id = caller != nullptr ? caller->subsystem_id : subsystem::Id::posix;
     SavedContext* result = subsystem::dispatch(id, context);
+
+    // Lo mataron desde otro core mientras estaba en esta syscall. Si todavia es
+    // el que corre aca, termina ahora, antes de volver a ring 3. Si la syscall
+    // lo bloqueo o le cedio la CPU a otro, ya no corre en ningun lado y se lo
+    // puede desarmar como a cualquier proceso parado.
+    if (caller != nullptr && caller->kill_pending) {
+        if (caller == this_cpu().current && caller->state == State::running) {
+            terminate_current(caller->kill_exit_code);
+        }
+        terminate_process(*caller, caller->kill_exit_code);
+    }
 
     // Preemptive event wakeup: if this syscall made another process runnable
     // and we are still the running caller (i.e. the syscall did not itself
@@ -3210,18 +3295,27 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     // Este tick lo consumio el que estaba corriendo cuando llego, antes de que
     // nada de abajo pueda reemplazarlo.
     this_cpu().current->cpu_ticks += 1;
+    g_cpu_ticks_total += 1;
+
     // Los vencimientos se miden con el reloj monotono, no con el contador de
     // ticks: ver now_ms(). El tick sigue siendo el que los revisa -- es el
-    // latido que ya existe -- pero no es la regla con la que se miden.
-    const uint64_t current_tick = now_ms();
-    object::poll_timers(current_tick, wake_waiters_for_object);
-    wake_sleepers(current_tick);
-    wake_wait_timeouts(current_tick);
-    wake_poll_waiters(current_tick);
-    wake_blocked_socket_readers(current_tick);
+    // latido que ya existe -- pero no es la regla con la que se miden. Y los
+    // revisa uno solo, el del BSP: son del sistema, no de cada core.
+    if (this_cpu().index == 0) {
+        const uint64_t current_tick = now_ms();
+        object::poll_timers(current_tick, wake_waiters_for_object);
+        wake_sleepers(current_tick);
+        wake_wait_timeouts(current_tick);
+        wake_poll_waiters(current_tick);
+        wake_blocked_socket_readers(current_tick);
+    }
     // The tick makes its own reschedule decision below, so any wakeups above
     // must not leak a preemptive-resched request into the next syscall return.
     this_cpu().resched_pending = false;
+
+    if (this_cpu().current->kill_pending && (context->cs & 0x3) == 0x3) {
+        terminate_current(this_cpu().current->kill_exit_code);
+    }
 
     if (this_cpu().current->state != State::running) {
         return choose_next_context(context);
@@ -3242,6 +3336,25 @@ SavedContext* handle_timer_tick(SavedContext* context) {
 
     this_cpu().current->state = State::ready;
     return choose_next_context(context);
+}
+
+SavedContext* handle_reschedule_ipi(SavedContext* context) {
+    this_cpu().kicked = false;
+    if (this_cpu().current == nullptr) {
+        return context;
+    }
+
+    this_cpu().current->context = context;
+    // Solo desde ring 3: en ring 0 esta dormido adentro de una syscall, y el
+    // final de esa syscall es quien lo termina.
+    if (this_cpu().current->kill_pending && (context->cs & 0x3) == 0x3) {
+        terminate_current(this_cpu().current->kill_exit_code);
+    }
+    if (this_cpu().current->idle && has_runnable_non_idle()) {
+        this_cpu().current->state = State::ready;
+        return choose_next_context(context);
+    }
+    return context;
 }
 
 void notify_tty_line_ready() {

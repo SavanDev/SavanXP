@@ -5,6 +5,7 @@
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
 #include "kernel/process.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/timer.hpp"
 #include "savanxp/syscall.h"
 
@@ -66,9 +67,7 @@ void wait_milliseconds(uint32_t duration_ms) {
     const uint64_t target = start + ((static_cast<uint64_t>(duration_ms) * timer::frequency_hz() + 999ULL) / 1000ULL);
 
     while (timer::ticks() < target) {
-        arch::x86_64::enable_interrupts();
-        arch::x86_64::halt_once();
-        arch::x86_64::disable_interrupts();
+        smp::wait_for_interrupt();
     }
 }
 

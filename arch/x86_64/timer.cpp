@@ -20,9 +20,16 @@ namespace
     constexpr uint16_t kPitChannel0Data = 0x40;
     constexpr uint16_t kPitCommand = 0x43;
 
+    // Ticks del BSP. Es el reloj de ticks del sistema: los APs tienen su propio
+    // timer, pero solo para preemptar lo que corre en ellos, y no suman aca --
+    // con N cores contando, todo lo que mide tiempo en ticks correria N veces
+    // mas rapido.
     volatile uint64_t g_ticks = 0;
     uint32_t g_frequency_hz = 0;
     timer::Backend g_backend = timer::Backend::none;
+    // La cuenta periodica con la que arranco el APIC local del BSP. Los APs
+    // arrancan el suyo con la misma.
+    uint32_t g_periodic_initial_count = 0;
 
     /* --- entrega del tick, medida contra el TSC ------------------------------
      *
@@ -229,7 +236,20 @@ namespace timer
             return;
         }
 
+        g_periodic_initial_count = periodic_initial_count;
         g_backend = Backend::local_apic;
+    }
+
+    bool start_on_secondary()
+    {
+        if (g_backend != Backend::local_apic || g_periodic_initial_count == 0)
+        {
+            return false;
+        }
+        return arch::x86_64::local_apic_start_periodic_timer(
+            kTimerVector,
+            g_periodic_initial_count,
+            kApicDivideBy16);
     }
 
     Backend backend()
@@ -258,6 +278,16 @@ namespace timer
 
     process::SavedContext *handle_interrupt(process::SavedContext *context)
     {
+        // El tick de un AP solo sirve para preemptar lo que corre en ese core:
+        // el reloj de ticks, la animacion del splash, el servicio de devices,
+        // el sondeo de input y la medicion de entrega son del sistema, y los
+        // hace el BSP una sola vez.
+        if (arch::x86_64::cpu_index() != 0)
+        {
+            arch::x86_64::acknowledge_local_apic_interrupt();
+            return process::handle_timer_tick(context);
+        }
+
         const uint64_t entry_ns = monotonic_ns();
 
         g_ticks = g_ticks + 1;
