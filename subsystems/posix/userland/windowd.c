@@ -369,12 +369,19 @@ static void toggle_overlay_client_maximized(struct windowd_session *session, str
     int area_height = 0;
     int target_surface_width = 0;
     int target_surface_height = 0;
+    struct sx_rect previous_frame;
 
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
     {
         return;
     }
 
+    /* El marco viejo se toma ANTES de tocar la geometria: resize_overlay_
+     * client_surface calcula su "marco previo" con window_x/y/width/height ya
+     * pisados, o sea el marco nuevo. Al restaurar eso dejaba sin dañar toda el
+     * area maximizada, y el fondo quedaba con restos de la ventana hasta que
+     * otra cosa pasara por encima. */
+    previous_frame = windowd_client_frame_rect(client);
     if (!client->maximized)
     {
         client->restore_window_x = client->window_x;
@@ -409,6 +416,8 @@ static void toggle_overlay_client_maximized(struct windowd_session *session, str
     }
 
     resize_overlay_client_surface(session, dirty, slot, target_surface_width, target_surface_height);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, previous_frame.x, previous_frame.y, previous_frame.width, previous_frame.height);
+    windowd_dirty_rect_add_client(dirty, client);
     raise_overlay(session, slot);
 }
 
@@ -3044,12 +3053,38 @@ static int windowd_selftest(void)
             }
         }
 
+        if (iteration == 20)
+        {
+            /* Restaurar tiene que dañar el area que ocupaba maximizada, no solo
+             * el marco chico: si no, el fondo queda con restos de la ventana.
+             * Se mide sobre un daño propio porque el acumulado del loop ya
+             * puede traer el marco entero de los presents del cliente. */
+            struct windowd_dirty_rect probe = {0};
+            struct sx_rect maximized_frame = windowd_client_frame_rect(&session.overlay_clients[kSlot]);
+            struct sx_rect probe_rect;
+            size_t probe_index;
+
+            toggle_overlay_client_maximized(&session, &probe, kSlot);
+            if (session.overlay_clients[kSlot].maximized ||
+                !sx_region_contains_point(&probe.region, maximized_frame.x, maximized_frame.y) ||
+                !sx_region_contains_point(
+                    &probe.region,
+                    sx_rect_right(maximized_frame) - 1,
+                    maximized_frame.y + maximized_frame.height - 1))
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL restore: el area maximizada quedo sin danar\n");
+                failed = 1;
+                break;
+            }
+            for (probe_index = 0; windowd_dirty_rect_at(&probe, probe_index, &probe_rect); ++probe_index)
+            {
+                windowd_dirty_rect_add(&dirty, &session.gfx.info, probe_rect.x, probe_rect.y, probe_rect.width, probe_rect.height);
+            }
+        }
+
         switch (iteration)
         {
         case 10:
-            toggle_overlay_client_maximized(&session, &dirty, kSlot);
-            break;
-        case 20:
             toggle_overlay_client_maximized(&session, &dirty, kSlot);
             break;
         case 30:

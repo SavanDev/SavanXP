@@ -383,6 +383,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Restoring a maximized window no longer leaves residue on the wallpaper.**
+  Only the restored frame was repainted, so the rest of the maximized area kept
+  stale pixels until something passed over it. `windowd-smoke` now checks it.
+
 - **`fork` hands the child the floating-point registers too.** It used to start
   with the clean FPU/SSE state the kernel seeds, so a `double` live across the
   call read as 0 in the child. `forktest` now checks it.
