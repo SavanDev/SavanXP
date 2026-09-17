@@ -254,6 +254,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The boot screen fades in from black, like Windows XP's.** Logo, name,
+  progress bar and status line brighten together over about a second, driven
+  by the monotonic clock; without a calibrated clock the splash appears at once.
+
 - **The FFmpeg port builds on Windows without WSL.** `sdk/ffmpeg/build.ps1` runs
   the scripts with Git for Windows' bash, the baked LLVM and a native GNU make
   that `tools/bootstrap.ps1` now pins and installs (`-SkipMake`, `SAVANXP_MAKE`).

@@ -29,9 +29,17 @@ constexpr uint32_t kBlockHighlight = 0x007fd3f5U;
 constexpr uint32_t kMarqueeSteps = 24;
 constexpr uint64_t kStepNs = 50000000ull;
 
+// Entrada desde negro, como la de XP: todo el splash sube de brillo durante
+// un segundo. Se pinta por escalones y no pixel a pixel del tiempo, porque cada
+// escalon repinta el logo entero y eso tambien corre desde el tick del timer.
+constexpr uint32_t kFadeSteps = 32;
+constexpr uint64_t kFadeNs = 1000000000ull;
+constexpr uint32_t kFadeOpaque = 255;
+
 boot::FramebufferInfo g_framebuffer = {};
 bool g_ready = false;
 bool g_painted = false;
+uint64_t g_fade_start_ns = 0;
 // Lo que sigue lo comparten el hilo de arranque y el handler del timer, que
 // puede caer en cualquier instruccion del medio: `g_drawing` es la exclusion
 // entre los dos (un solo core, alcanza con que el handler vea el flag) y
@@ -39,6 +47,10 @@ bool g_painted = false;
 volatile bool g_active = false;
 volatile bool g_drawing = false;
 volatile uint32_t g_phase = 0;
+// Brillo con el que esta pintado el splash ahora (0..255) y la linea de estado
+// vigente: un escalon de la entrada la tiene que repintar sin pasar por show().
+volatile uint32_t g_fade = kFadeOpaque;
+const char* volatile g_status = nullptr;
 
 size_t text_length(const char* text) {
     size_t length = 0;
@@ -120,6 +132,11 @@ uint32_t blend(uint32_t background, uint32_t foreground, uint32_t coverage) {
     return (red << 16) | (green << 8) | blue;
 }
 
+// El color tal como se ve en el escalon actual de la entrada desde negro.
+uint32_t faded(uint32_t colour) {
+    return g_fade >= kFadeOpaque ? colour : blend(kBackground, colour, g_fade);
+}
+
 void draw_glyph(uint64_t x, uint64_t y, char character, uint32_t scale, uint32_t colour) {
     const auto* glyph = sx_console_glyph(static_cast<unsigned char>(character));
     for (uint64_t row = 0; row < SX_CONSOLE_GLYPH_H; ++row) {
@@ -154,11 +171,16 @@ void draw_centered_text(uint64_t y, const char* text, uint32_t scale, uint32_t c
 
 // El logo viaja horneado como indices de paleta (tools/gen_boot_logo.py), ya
 // compuesto sobre el fondo del splash: aca solo hay lookup y replicacion por
-// un factor entero.
+// un factor entero. Durante la entrada se atenua la paleta, no cada pixel.
 void draw_logo(uint64_t x, uint64_t y, uint32_t scale) {
+    uint32_t palette[256] = {};
+    for (size_t index = 0; index < SX_BOOT_LOGO_COLORS && index < 256; ++index) {
+        palette[index] = faded(k_boot_logo_palette[index]);
+    }
+
     for (uint64_t row = 0; row < SX_BOOT_LOGO_H; ++row) {
         for (uint64_t column = 0; column < SX_BOOT_LOGO_W; ++column) {
-            const uint32_t colour = k_boot_logo_palette[k_boot_logo_pixels[(row * SX_BOOT_LOGO_W) + column]];
+            const uint32_t colour = palette[k_boot_logo_pixels[(row * SX_BOOT_LOGO_W) + column]];
             fill_rect(x + (column * scale), y + (row * scale), scale, scale, colour);
         }
     }
@@ -168,6 +190,7 @@ void draw_logo(uint64_t x, uint64_t y, uint32_t scale) {
 // Sans del escritorio, no la fuente de consola: un wordmark de splash necesita
 // bordes suavizados.
 void draw_wordmark(uint64_t x, uint64_t y, uint32_t scale, uint32_t colour) {
+    colour = faded(colour);
     for (uint64_t row = 0; row < SX_BOOT_WORDMARK_H; ++row) {
         for (uint64_t column = 0; column < SX_BOOT_WORDMARK_W; ++column) {
             const uint32_t coverage = k_boot_wordmark_alpha[(row * SX_BOOT_WORDMARK_W) + column];
@@ -231,13 +254,13 @@ Layout compute_layout() {
     return layout;
 }
 
-// La canaleta no cambia entre pasos: se pinta una sola vez y despues solo se
-// repinta la franja por donde corren los bloques.
+// La canaleta no cambia entre pasos: se pinta con el resto de lo estatico
+// (draw_static) y despues solo se repinta la franja por donde corren los bloques.
 void draw_trough(const Layout& layout) {
     const uint64_t scale = layout.scale;
-    fill_round_rect(layout.bar_x, layout.bar_y, layout.bar_width, layout.bar_height, kTroughEdge);
+    fill_round_rect(layout.bar_x, layout.bar_y, layout.bar_width, layout.bar_height, faded(kTroughEdge));
     fill_round_rect(layout.bar_x + (2 * scale), layout.bar_y + (2 * scale),
-                    layout.bar_width - (4 * scale), layout.bar_height - (4 * scale), kTroughFill);
+                    layout.bar_width - (4 * scale), layout.bar_height - (4 * scale), faded(kTroughFill));
 }
 
 // Los tres bloques de XP: entran por la izquierda, cruzan la canaleta y salen
@@ -250,7 +273,7 @@ void draw_marquee(const Layout& layout, uint32_t phase) {
     const uint64_t band_y = layout.bar_y + (3 * scale);
     const uint64_t band_height = layout.bar_height - (6 * scale);
 
-    fill_rect(inner_x, band_y, inner_width, band_height, kTroughFill);
+    fill_rect(inner_x, band_y, inner_width, band_height, faded(kTroughFill));
 
     const uint64_t block_width = 12 * scale;
     const uint64_t block_gap = 6 * scale;
@@ -266,8 +289,8 @@ void draw_marquee(const Layout& layout, uint32_t phase) {
     for (int64_t index = 0; index < 3; ++index) {
         const int64_t x = static_cast<int64_t>(inner_x) + offset +
             (index * static_cast<int64_t>(block_width + block_gap));
-        fill_rect_clipped(x, band_y, block_width, band_height, inner_x, inner_width, kBlock);
-        fill_rect_clipped(x, band_y, block_width, scale, inner_x, inner_width, kBlockHighlight);
+        fill_rect_clipped(x, band_y, block_width, band_height, inner_x, inner_width, faded(kBlock));
+        fill_rect_clipped(x, band_y, block_width, scale, inner_x, inner_width, faded(kBlockHighlight));
     }
 }
 
@@ -275,15 +298,53 @@ void draw_marquee(const Layout& layout, uint32_t phase) {
 // TSC y no el contador de ticks porque buena parte del arranque corre con las
 // interrupciones deshabilitadas, y ahi los ticks no avanzan; el TSC si. Los
 // ticks quedan de respaldo para antes de que el TSC este calibrado.
-uint32_t marquee_phase() {
-    const uint64_t elapsed_ns = timer::monotonic_ns();
-    if (elapsed_ns != 0) {
-        return static_cast<uint32_t>((elapsed_ns / kStepNs) % kMarqueeSteps);
+uint32_t marquee_phase(uint64_t now_ns) {
+    if (now_ns != 0) {
+        return static_cast<uint32_t>((now_ns / kStepNs) % kMarqueeSteps);
     }
 
     const uint32_t frequency = timer::frequency_hz();
     const uint64_t ticks_per_step = frequency >= 20u ? (frequency / 20u) : 1u;
     return static_cast<uint32_t>((timer::ticks() / ticks_per_step) % kMarqueeSteps);
+}
+
+// Brillo de la entrada para este instante, redondeado al escalon. Sin reloj
+// calibrado no hay entrada: con los ticks quietos (IF=0) el splash se quedaria
+// en negro hasta que alguien habilite interrupciones.
+uint32_t fade_level(uint64_t now_ns) {
+    if (g_fade_start_ns == 0 || now_ns <= g_fade_start_ns) {
+        return g_fade_start_ns == 0 ? kFadeOpaque : 0;
+    }
+
+    const uint64_t elapsed_ns = now_ns - g_fade_start_ns;
+    if (elapsed_ns >= kFadeNs) {
+        return kFadeOpaque;
+    }
+    const uint64_t step = (elapsed_ns * kFadeSteps) / kFadeNs;
+    return static_cast<uint32_t>((step * kFadeOpaque) / kFadeSteps);
+}
+
+// Lo que no cambia entre pasos del arranque: logo, nombre, version y canaleta.
+// Se repinta solo al pintar el splash por primera vez y en cada escalon de la
+// entrada; todo va encima de lo anterior y cada escalon es mas claro, asi que
+// no hace falta borrar antes. La canaleta tapa la barra: hay que redibujarla.
+void draw_static(const Layout& layout) {
+    if (layout.with_logo) {
+        draw_logo(layout.logo_x, layout.logo_y, layout.scale);
+    }
+    draw_wordmark(layout.wordmark_x, layout.wordmark_y, layout.scale, kWordmark);
+
+    const uint64_t version_width = text_width(SAVANXP_VERSION_STRING, layout.scale);
+    draw_text(g_framebuffer.width - version_width - (16 * layout.scale),
+              g_framebuffer.height - (SX_CONSOLE_GLYPH_H * layout.scale) - (12 * layout.scale),
+              SAVANXP_VERSION_STRING, layout.scale, faded(kMuted));
+    draw_trough(layout);
+}
+
+void draw_status(const Layout& layout) {
+    const char* status = g_status;
+    fill_rect(0, layout.status_y, g_framebuffer.width, SX_CONSOLE_GLYPH_H * layout.scale, kBackground);
+    draw_centered_text(layout.status_y, status != nullptr ? status : "Starting", layout.scale, faded(kMuted));
 }
 
 } // namespace
@@ -297,9 +358,12 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         framebuffer.pitch >= framebuffer.width * sizeof(uint32_t) &&
         framebuffer.bpp == 32;
     g_painted = false;
+    g_fade_start_ns = 0;
     g_active = g_ready;
     g_drawing = false;
     g_phase = 0;
+    g_fade = kFadeOpaque;
+    g_status = nullptr;
 }
 
 bool ready() {
@@ -312,31 +376,31 @@ void show(const char* status) {
     }
 
     g_drawing = true;
+    g_status = status;
     const Layout layout = compute_layout();
+    const uint64_t now_ns = timer::monotonic_ns();
 
-    // El logo y el wordmark se pintan una sola vez: repintarlos en cada paso
-    // del arranque los haria parpadear. De ahi en mas solo se refrescan la
-    // barra y la linea de estado.
+    // El logo y el wordmark no se repintan en cada paso del arranque, que los
+    // haria parpadear: solo la primera vez, arrancando la entrada desde negro,
+    // y en cada escalon de esa entrada. Fuera de eso se refrescan la barra y
+    // la linea de estado.
     if (!g_painted) {
         fill_rect(0, 0, g_framebuffer.width, g_framebuffer.height, kBackground);
-        if (layout.with_logo) {
-            draw_logo(layout.logo_x, layout.logo_y, layout.scale);
-        }
-        draw_wordmark(layout.wordmark_x, layout.wordmark_y, layout.scale, kWordmark);
-
-        const uint64_t version_width = text_width(SAVANXP_VERSION_STRING, layout.scale);
-        draw_text(g_framebuffer.width - version_width - (16 * layout.scale),
-                  g_framebuffer.height - (SX_CONSOLE_GLYPH_H * layout.scale) - (12 * layout.scale),
-                  SAVANXP_VERSION_STRING, layout.scale, kMuted);
-        draw_trough(layout);
+        g_fade_start_ns = now_ns;
+        g_fade = fade_level(now_ns);
+        draw_static(layout);
         g_painted = true;
+    } else {
+        const uint32_t fade = fade_level(now_ns);
+        if (fade != g_fade) {
+            g_fade = fade;
+            draw_static(layout);
+        }
     }
 
-    g_phase = marquee_phase();
+    g_phase = marquee_phase(now_ns);
     draw_marquee(layout, g_phase);
-
-    fill_rect(0, layout.status_y, g_framebuffer.width, SX_CONSOLE_GLYPH_H * layout.scale, kBackground);
-    draw_centered_text(layout.status_y, status != nullptr ? status : "Starting", layout.scale, kMuted);
+    draw_status(layout);
     g_drawing = false;
 }
 
@@ -345,14 +409,22 @@ void animate() {
         return;
     }
 
-    const uint32_t phase = marquee_phase();
-    if (phase == g_phase) {
+    const uint64_t now_ns = timer::monotonic_ns();
+    const uint32_t phase = marquee_phase(now_ns);
+    const uint32_t fade = fade_level(now_ns);
+    if (phase == g_phase && fade == g_fade) {
         return;
     }
 
     g_drawing = true;
+    const Layout layout = compute_layout();
+    if (fade != g_fade) {
+        g_fade = fade;
+        draw_static(layout);
+        draw_status(layout);
+    }
     g_phase = phase;
-    draw_marquee(compute_layout(), phase);
+    draw_marquee(layout, phase);
     g_drawing = false;
 }
 
