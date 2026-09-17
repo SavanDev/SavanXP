@@ -330,6 +330,9 @@ remain free for the terminal client and a launch in progress.
 
 The rules that keep it there:
 
+- **A window is not a channel.** A process's owned windows (dialogs) reuse its
+  event pipe and wake event through duplicates, and their surfaces arrive by
+  handle passing on that pipe; see [OWNED_WINDOWS.md](OWNED_WINDOWS.md).
 - **A new per-client channel is a descriptor times every window.** Before
   adding one, see whether it fits in the surface header (state, or a small
   queue with a single producer) or in a device node the client opens and closes

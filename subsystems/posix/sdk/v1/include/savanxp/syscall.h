@@ -78,6 +78,13 @@ enum savanxp_syscall_number {
     /* Opciones de socket. El valor es un escalar y no un puntero porque las
      * unicas que el kernel entiende son los dos plazos, en milisegundos. */
     SAVANXP_SYS_SETSOCKOPT = 56,
+    /* Paso de handles por pipe (estilo I_SENDFD): el extremo de escritura deja
+     * una seccion, un evento, un semaforo o un timer en una cola chica del pipe,
+     * y el de lectura lo recibe como un fd nuevo con el mismo acceso. No
+     * viajan fds de archivos, pipes ni sockets. Recibir nunca bloquea: con la
+     * cola vacia devuelve EAGAIN. Ver docs/OWNED_WINDOWS.md. */
+    SAVANXP_SYS_PIPE_SEND_HANDLE = 57,
+    SAVANXP_SYS_PIPE_RECEIVE_HANDLE = 58,
 };
 
 enum savanxp_open_flags {
@@ -834,6 +841,35 @@ struct savanxp_desktop_launch_request {
  * WM consume hasta launch_head e incrementa launch_tail. Los dos contadores
  * solo crecen, asi que llena es head - tail == CAPACITY.
  */
+/*
+ * Ventanas con dueno (docs/OWNED_WINDOWS.md). Un proceso tiene UNA conexion con
+ * el WM -- estos canales -- y puede tener varias ventanas: la principal (id 0) y
+ * hasta SAVANXP_WM_MAX_OWNED_WINDOWS con dueno, cuyo id elige el cliente. Crear
+ * una es un pedido por el header de la PRINCIPAL; su superficie llega como
+ * handle de seccion por la cola de handles del pipe de eventos
+ * (SAVANXP_SYS_PIPE_SEND_HANDLE), y sus eventos por el mismo pipe con su id en
+ * savanxp_wm_event.window_id.
+ */
+#define SAVANXP_WM_MAX_OWNED_WINDOWS 4u
+#define SAVANXP_WM_WINDOW_TITLE_CAPACITY 64u
+
+enum savanxp_wm_window_action {
+    SAVANXP_WM_WINDOW_ACTION_NONE = 0,
+    /* Crear la ventana `window_id`. Respuesta 0: el handle de la seccion quedo
+     * en la cola del pipe de eventos y hay que recibirlo. */
+    SAVANXP_WM_WINDOW_ACTION_OPEN = 1,
+    /* Destruirla. Cerrar una que no existe no es error. */
+    SAVANXP_WM_WINDOW_ACTION_CLOSE = 2,
+};
+
+struct savanxp_wm_window_request {
+    uint32_t action; /* enum savanxp_wm_window_action */
+    uint32_t window_id;
+    uint32_t width;  /* area util, como el size hint */
+    uint32_t height;
+    char title[SAVANXP_WM_WINDOW_TITLE_CAPACITY];
+};
+
 struct savanxp_wm_client_requests {
     uint32_t cursor_shape;
     uint32_t size_hint_width;
@@ -842,6 +878,17 @@ struct savanxp_wm_client_requests {
     uint32_t launch_head; /* lo escribe solo el cliente */
     uint32_t launch_tail; /* lo escribe solo el WM */
     struct savanxp_desktop_launch_request launch[SAVANXP_WM_LAUNCH_QUEUE_CAPACITY];
+    /* Un pedido de ventana a la vez, con el mismo seqlock que el size hint: el
+     * cliente pone window_sequence en impar, escribe `window` y lo vuelve a par.
+     * El WM atiende cada valor par nuevo una vez, escribe el resultado en
+     * window_reply_status (0 o -errno), copia la secuencia a
+     * window_reply_sequence y senala el wake. Solo el header de la ventana
+     * PRINCIPAL se lee; en el de una ventana con dueno se ignora. */
+    uint32_t window_sequence;      /* lo escribe solo el cliente */
+    uint32_t window_reply_sequence; /* lo escribe solo el WM */
+    int32_t window_reply_status;    /* lo escribe solo el WM */
+    uint32_t window_reserved;
+    struct savanxp_wm_window_request window;
 };
 
 struct savanxp_gpu_client_surface_header {
@@ -975,7 +1022,9 @@ enum savanxp_wm_event_kind {
  * espacio libre tambien lo es -- una escritura nunca queda por la mitad. */
 struct savanxp_wm_event {
     uint32_t kind; /* enum savanxp_wm_event_kind */
-    uint32_t reserved;
+    /* Ventana del proceso a la que va el evento: 0 la principal, 1..N una con
+     * dueno (SAVANXP_WM_MAX_OWNED_WINDOWS). El pipe es uno por proceso. */
+    uint32_t window_id;
     union {
         struct savanxp_input_event key;
         struct savanxp_gui_pointer_event pointer;

@@ -39,6 +39,15 @@ struct windowd_client
      * del header porque el cliente puede escribir ahi lo que quiera. */
     uint32_t launch_tail;
     uint32_t size_hint_consumed_sequence;
+    uint32_t window_request_consumed_sequence;
+    /* Ventana con dueno (docs/OWNED_WINDOWS.md): slot del overlay dueno, o -1 en
+     * una ventana principal. Una con dueno es del MISMO proceso -- comparte pid
+     * y, con duplicados propios, el pipe de eventos y el wake -- pero es una
+     * ventana aparte: su superficie, su marco, su lugar en el z-order. No se
+     * lanza, no se mata y no va a la lista de tareas. window_id es el id que le
+     * dio el cliente, y viaja en cada evento que se le rutea. */
+    int owner_slot;
+    uint32_t window_id;
     /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
      * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
      * el indice de cascada del launch para poder recolocarla despues de

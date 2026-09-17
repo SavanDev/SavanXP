@@ -416,6 +416,12 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_UNMAP_VIEW:
             context->rax = static_cast<uint64_t>(unmap_view_address(*this_cpu().current, context->rdi));
             return context;
+        case SAVANXP_SYS_PIPE_SEND_HANDLE:
+            context->rax = static_cast<uint64_t>(pipe_send_handle(*this_cpu().current, context->rdi, context->rsi));
+            return context;
+        case SAVANXP_SYS_PIPE_RECEIVE_HANDLE:
+            context->rax = static_cast<uint64_t>(pipe_receive_handle(*this_cpu().current, context->rdi));
+            return context;
         case SAVANXP_SYS_SEMAPHORE_CREATE:
             context->rax = static_cast<uint64_t>(create_semaphore_handle(
                 *this_cpu().current,

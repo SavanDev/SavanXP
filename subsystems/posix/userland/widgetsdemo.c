@@ -150,6 +150,17 @@ static struct sxgui_menubar g_menubar = {
     0
 };
 
+/* --dialog-selftest: abre el About apenas corre el loop, sin que nadie haga
+ * click. Es el cliente con el que `windowd --selftest` prueba las ventanas con
+ * dueno de punta a punta (docs/OWNED_WINDOWS.md). Desde el primer tick y no
+ * antes: el dialogo tiene ventana propia solo adentro de sxgui_app_run. */
+static void open_about_on_first_tick(struct sxgui_app *app)
+{
+    app->on_tick = 0;
+    sxgui_dialog_begin(&app->ui, &g_about_dialog, 260, 104);
+    sxgui_app_request_repaint(app);
+}
+
 /* Grilla de la galeria: dos columnas, el mismo margen que deja autosize del
  * otro lado y las alturas estandar de cada control. Es la ventana que existe
  * para mostrar como se ve el toolkit, asi que es la que menos puede permitirse
@@ -163,7 +174,7 @@ static struct sxgui_menubar g_menubar = {
 #define DEMO_SCROLL_X (DEMO_MARGIN + DEMO_COL_WIDTH + SXGUI_GAP * 2)
 #define DEMO_COL2 (DEMO_SCROLL_X + SXGUI_SCROLLBAR_THICKNESS + SXGUI_GAP * 2)
 
-int main(void)
+int main(int argc, char **argv)
 {
     static struct sxgui_widget widgets[13];
     int item_count = (int)(sizeof(g_list_items) / sizeof(g_list_items[0]));
@@ -237,5 +248,10 @@ int main(void)
     /* Layout fijo: la ventana es exactamente lo que ocupa la galeria. */
     (void)sxgui_app_autosize(&g_app);
     sxgui_set_menubar(&g_app.ui, &g_menubar);
+    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--dialog-selftest") == 0)
+    {
+        g_app.on_tick = open_about_on_first_tick;
+        g_app.tick_interval_ms = 1;
+    }
     return sxgui_app_run(&g_app);
 }

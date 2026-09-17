@@ -271,6 +271,7 @@ $UserPrograms = @(
     @{ Name = "eventtest"; Source = "subsystems/posix/userland/eventtest.c"; Test = $true },
     @{ Name = "timertest"; Source = "subsystems/posix/userland/timertest.c"; Test = $true },
     @{ Name = "sectiontest"; Source = "subsystems/posix/userland/sectiontest.c"; Test = $true },
+    @{ Name = "handletest"; Source = "subsystems/posix/userland/handletest.c"; Test = $true },
     @{ Name = "semaphoretest"; Source = "subsystems/posix/userland/semaphoretest.c"; Test = $true },
     @{ Name = "cliptest"; Source = "subsystems/posix/userland/cliptest.c"; Test = $true },
     @{ Name = "seltest"; Sources = @(

@@ -245,16 +245,15 @@ static long gfx_submit_client_batch(
     return event_set(context->submit_event_fd);
 }
 
-static long gfx_open_client(struct savanxp_gfx_context* context) {
+/* Mapea y valida la seccion de una superficie del WM -- la principal que llega
+ * en el fd 3 o la de una ventana con dueno que llega por la cola de handles -- y
+ * llena los campos de mapeo del contexto. Los canales los pone el llamador. */
+static long gfx_map_client_surface(struct savanxp_gfx_context* context, int surface_fd) {
     struct savanxp_gpu_client_surface_header* header;
-    void* mapped = map_view(SAVANXP_WM_FD_SECTION, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    void* mapped = map_view(surface_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     long private_section_fd = -1;
     void* private_pixels = 0;
     uint32_t* shared_pixels = 0;
-    long section_fd = -1;
-    long input_fd = -1;
-    long submit_event_fd = -1;
-    long wake_event_fd = -1;
 
     if (result_is_error((long)mapped)) {
         return -SAVANXP_ENODEV;
@@ -294,10 +293,49 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     }
     memcpy(private_pixels, shared_pixels, header->info.buffer_size);
 
-    section_fd = savanxp_dup(SAVANXP_WM_FD_SECTION);
-    input_fd = savanxp_dup(SAVANXP_WM_FD_EVENTS);
-    submit_event_fd = savanxp_dup(SAVANXP_WM_FD_SUBMIT_EVENT);
-    wake_event_fd = savanxp_dup(SAVANXP_WM_FD_WAKE_EVENT);
+    context->mapped_view = mapped;
+    context->header = header;
+    context->command_batches = (struct savanxp_gpu_dirty_rect_batch*)((unsigned char*)mapped + header->command_offset);
+    context->pixels_offset = header->pixels_offset;
+    context->pixels = (uint32_t*)private_pixels;
+    context->shared_pixels = shared_pixels;
+    context->info = header->info;
+    context->batch_capacity = header->batch_capacity;
+    context->rect_capacity = header->rect_capacity;
+    context->notified_width = header->info.width;
+    context->notified_height = header->info.height;
+    return 0;
+}
+
+static void gfx_unmap_client_surface(struct savanxp_gfx_context* context) {
+    if (context->pixels != 0 && context->pixels != context->shared_pixels) {
+        (void)unmap_view(context->pixels);
+    }
+    if (context->mapped_view != 0) {
+        (void)unmap_view(context->mapped_view);
+    }
+    context->mapped_view = 0;
+    context->pixels = 0;
+    context->shared_pixels = 0;
+    context->pixels_offset = 0;
+    context->header = 0;
+    context->command_batches = 0;
+    context->batch_capacity = 0;
+    context->rect_capacity = 0;
+}
+
+/* Duplica los canales del proceso sobre el contexto. `section_fd` queda como
+ * fb_fd y pasa a ser del contexto aunque falle. */
+static long gfx_adopt_channels(
+    struct savanxp_gfx_context* context,
+    long section_fd,
+    int input_source,
+    int submit_source,
+    int wake_source) {
+    long input_fd = savanxp_dup(input_source);
+    long submit_event_fd = savanxp_dup(submit_source);
+    long wake_event_fd = savanxp_dup(wake_source);
+
     if (section_fd < 0 || input_fd < 0 || submit_event_fd < 0 || wake_event_fd < 0) {
         if (section_fd >= 0) {
             (void)savanxp_close((int)section_fd);
@@ -311,8 +349,6 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
         if (wake_event_fd >= 0) {
             (void)savanxp_close((int)wake_event_fd);
         }
-        (void)unmap_view(private_pixels);
-        (void)unmap_view(mapped);
         return -SAVANXP_EBADF;
     }
 
@@ -321,17 +357,26 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     context->submit_event_fd = (int)submit_event_fd;
     context->wake_event_fd = (int)wake_event_fd;
     context->mode = kGfxModeClient;
-    context->mapped_view = mapped;
-    context->header = header;
-    context->command_batches = (struct savanxp_gpu_dirty_rect_batch*)((unsigned char*)mapped + header->command_offset);
-    context->pixels_offset = header->pixels_offset;
-    context->pixels = (uint32_t*)private_pixels;
-    context->shared_pixels = shared_pixels;
-    context->info = header->info;
-    context->batch_capacity = header->batch_capacity;
-    context->rect_capacity = header->rect_capacity;
-    context->notified_width = header->info.width;
-    context->notified_height = header->info.height;
+    return 0;
+}
+
+static long gfx_open_client(struct savanxp_gfx_context* context) {
+    long result = gfx_map_client_surface(context, SAVANXP_WM_FD_SECTION);
+
+    if (result < 0) {
+        return result;
+    }
+    result = gfx_adopt_channels(
+        context,
+        savanxp_dup(SAVANXP_WM_FD_SECTION),
+        SAVANXP_WM_FD_EVENTS,
+        SAVANXP_WM_FD_SUBMIT_EVENT,
+        SAVANXP_WM_FD_WAKE_EVENT);
+    if (result < 0) {
+        gfx_unmap_client_surface(context);
+        return result;
+    }
+    context->window_id = 0;
     return 0;
 }
 
@@ -356,18 +401,7 @@ long gfx_close(struct savanxp_gfx_context* context) {
     }
 
     if (context->mode == kGfxModeClient && context->mapped_view != 0) {
-        if (context->pixels != 0 && context->pixels != context->shared_pixels) {
-            (void)unmap_view(context->pixels);
-        }
-        (void)unmap_view(context->mapped_view);
-        context->mapped_view = 0;
-        context->pixels = 0;
-        context->shared_pixels = 0;
-        context->pixels_offset = 0;
-        context->header = 0;
-        context->command_batches = 0;
-        context->batch_capacity = 0;
-        context->rect_capacity = 0;
+        gfx_unmap_client_surface(context);
     }
 
     if (context->fb_fd >= 0) {
@@ -515,49 +549,83 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
  * por separado. Lo que una funcion de poll lee y no es suyo lo guarda aca para
  * la otra, y lo tiene que leer igual: si una app que solo mira el teclado
  * dejara el puntero en el pipe, el pipe se llenaria y el WM descartaria las
- * teclas. Es estado del proceso porque un proceso tiene una sola ventana.
+ * teclas.
+ *
+ * El pipe es uno por PROCESO y las ventanas pueden ser varias (la principal y
+ * las con dueno, docs/OWNED_WINDOWS.md), asi que lo guardado se separa tambien
+ * por window_id: un evento del dialogo leido mientras se drenaba la principal
+ * espera en la bandeja del dialogo.
  */
 #define GFX_EVENT_STASH_CAPACITY 64u
+#define GFX_EVENT_WINDOW_SLOTS (SAVANXP_WM_MAX_OWNED_WINDOWS + 1u)
 /* Tope de registros por llamada: un pipe lleno entero. Evita quedarse drenando
  * para siempre si el WM escribe tan rapido como se lee. */
 #define GFX_EVENT_DRAIN_LIMIT 256u
 /* Cuanto espera gfx_desktop_launch a que el WM le haga lugar en la cola. */
 #define GFX_LAUNCH_WAIT_MS 1000ul
 
-static struct {
+struct gfx_key_stash {
     struct savanxp_input_event items[GFX_EVENT_STASH_CAPACITY];
     uint32_t head;
     uint32_t count;
-} g_gfx_key_stash;
+};
 
-static struct {
+struct gfx_pointer_stash {
     struct savanxp_gui_pointer_event items[GFX_EVENT_STASH_CAPACITY];
     uint32_t head;
     uint32_t count;
-} g_gfx_pointer_stash;
+};
 
-static void gfx_stash_key(const struct savanxp_input_event* event) {
-    /* Llena: se descarta, que es lo mismo que haria el WM con el pipe lleno. */
-    if (g_gfx_key_stash.count == GFX_EVENT_STASH_CAPACITY) {
+static struct gfx_key_stash g_gfx_key_stash[GFX_EVENT_WINDOW_SLOTS];
+static struct gfx_pointer_stash g_gfx_pointer_stash[GFX_EVENT_WINDOW_SLOTS];
+
+static void gfx_stash_key(uint32_t window_id, const struct savanxp_input_event* event) {
+    struct gfx_key_stash* stash = 0;
+
+    /* Una ventana que el runtime no conoce no tiene quien la lea. */
+    if (window_id >= GFX_EVENT_WINDOW_SLOTS) {
         return;
     }
-    g_gfx_key_stash.items[(g_gfx_key_stash.head + g_gfx_key_stash.count) % GFX_EVENT_STASH_CAPACITY] = *event;
-    g_gfx_key_stash.count += 1u;
+    stash = &g_gfx_key_stash[window_id];
+    /* Llena: se descarta, que es lo mismo que haria el WM con el pipe lleno. */
+    if (stash->count == GFX_EVENT_STASH_CAPACITY) {
+        return;
+    }
+    stash->items[(stash->head + stash->count) % GFX_EVENT_STASH_CAPACITY] = *event;
+    stash->count += 1u;
 }
 
-static void gfx_stash_pointer(const struct savanxp_gui_pointer_event* event) {
-    if (g_gfx_pointer_stash.count == GFX_EVENT_STASH_CAPACITY) {
+static void gfx_stash_pointer(uint32_t window_id, const struct savanxp_gui_pointer_event* event) {
+    struct gfx_pointer_stash* stash = 0;
+
+    if (window_id >= GFX_EVENT_WINDOW_SLOTS) {
+        return;
+    }
+    stash = &g_gfx_pointer_stash[window_id];
+    if (stash->count == GFX_EVENT_STASH_CAPACITY) {
         /* Llena: se funde con el ultimo. Posicion y botones son absolutos, pero
          * la rueda se SUMA -- un tick perdido es scroll que no ocurre nunca. */
-        struct savanxp_gui_pointer_event* last = &g_gfx_pointer_stash.items[
-            (g_gfx_pointer_stash.head + g_gfx_pointer_stash.count - 1u) % GFX_EVENT_STASH_CAPACITY];
+        struct savanxp_gui_pointer_event* last = &stash->items[
+            (stash->head + stash->count - 1u) % GFX_EVENT_STASH_CAPACITY];
         int32_t wheel = last->wheel + event->wheel;
         *last = *event;
         last->wheel = wheel;
         return;
     }
-    g_gfx_pointer_stash.items[(g_gfx_pointer_stash.head + g_gfx_pointer_stash.count) % GFX_EVENT_STASH_CAPACITY] = *event;
-    g_gfx_pointer_stash.count += 1u;
+    stash->items[(stash->head + stash->count) % GFX_EVENT_STASH_CAPACITY] = *event;
+    stash->count += 1u;
+}
+
+/* Lo que quedo guardado de una ventana que se cierra no es de nadie: si el id
+ * se reusa, la ventana nueva no tiene que recibir clicks de la vieja. */
+static void gfx_discard_stashes(uint32_t window_id) {
+    if (window_id >= GFX_EVENT_WINDOW_SLOTS) {
+        return;
+    }
+    g_gfx_key_stash[window_id].head = 0;
+    g_gfx_key_stash[window_id].count = 0;
+    g_gfx_pointer_stash[window_id].head = 0;
+    g_gfx_pointer_stash[window_id].count = 0;
 }
 
 /* Lee un registro entero sin bloquear: 1 leido, 0 nada, negativo error. */
@@ -578,10 +646,35 @@ static int gfx_read_wm_event(int fd, struct savanxp_wm_event* record) {
     return result == (long)sizeof(*record) ? 1 : 0;
 }
 
-int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event) {
+/* Drena el pipe hasta encontrar un registro de `kind` para `window_id`; todo lo
+ * demas va a su bandeja. 1 = `record` trae el buscado, 0 = no habia. */
+static int gfx_drain_for(int fd, uint32_t window_id, uint32_t kind, struct savanxp_wm_event* record) {
     uint32_t drained = 0;
 
-    if (context == 0 || context->input_fd < 0 || event == 0) {
+    for (drained = 0; drained < GFX_EVENT_DRAIN_LIMIT; ++drained) {
+        int result = gfx_read_wm_event(fd, record);
+
+        if (result <= 0) {
+            return result;
+        }
+        if (record->window_id == window_id && record->kind == kind) {
+            return 1;
+        }
+        if (record->kind == SAVANXP_WM_EVENT_KEY) {
+            gfx_stash_key(record->window_id, &record->payload.key);
+        } else if (record->kind == SAVANXP_WM_EVENT_POINTER) {
+            gfx_stash_pointer(record->window_id, &record->payload.pointer);
+        }
+    }
+    return 0;
+}
+
+int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event) {
+    struct savanxp_wm_event record;
+    struct gfx_key_stash* stash = 0;
+    int result = 0;
+
+    if (context == 0 || context->input_fd < 0 || event == 0 || context->window_id >= GFX_EVENT_WINDOW_SLOTS) {
         return -SAVANXP_EINVAL;
     }
 
@@ -594,65 +687,61 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
         return 1;
     }
 
-    if (g_gfx_key_stash.count != 0) {
-        *event = g_gfx_key_stash.items[g_gfx_key_stash.head];
-        g_gfx_key_stash.head = (g_gfx_key_stash.head + 1u) % GFX_EVENT_STASH_CAPACITY;
-        g_gfx_key_stash.count -= 1u;
+    stash = &g_gfx_key_stash[context->window_id];
+    if (stash->count != 0) {
+        *event = stash->items[stash->head];
+        stash->head = (stash->head + 1u) % GFX_EVENT_STASH_CAPACITY;
+        stash->count -= 1u;
         return 1;
     }
 
-    for (drained = 0; drained < GFX_EVENT_DRAIN_LIMIT; ++drained) {
-        struct savanxp_wm_event record;
-        int result = gfx_read_wm_event(context->input_fd, &record);
-
-        if (result <= 0) {
-            return result;
-        }
-        if (record.kind == SAVANXP_WM_EVENT_KEY) {
-            *event = record.payload.key;
-            return 1;
-        }
-        if (record.kind == SAVANXP_WM_EVENT_POINTER) {
-            gfx_stash_pointer(&record.payload.pointer);
-        }
+    result = gfx_drain_for(context->input_fd, context->window_id, SAVANXP_WM_EVENT_KEY, &record);
+    if (result <= 0) {
+        return result;
     }
-    return 0;
+    *event = record.payload.key;
+    return 1;
+}
+
+static int gfx_poll_pointer_for(int fd, uint32_t window_id, struct savanxp_gui_pointer_event* event) {
+    struct savanxp_wm_event record;
+    struct gfx_pointer_stash* stash = 0;
+    int result = 0;
+
+    if (fd < 0 || event == 0 || window_id >= GFX_EVENT_WINDOW_SLOTS) {
+        return -SAVANXP_EINVAL;
+    }
+
+    stash = &g_gfx_pointer_stash[window_id];
+    if (stash->count != 0) {
+        *event = stash->items[stash->head];
+        stash->head = (stash->head + 1u) % GFX_EVENT_STASH_CAPACITY;
+        stash->count -= 1u;
+        return 1;
+    }
+
+    result = gfx_drain_for(fd, window_id, SAVANXP_WM_EVENT_POINTER, &record);
+    if (result <= 0) {
+        return result;
+    }
+    *event = record.payload.pointer;
+    return 1;
 }
 
 long gfx_pointer_open(void) {
     return savanxp_dup(SAVANXP_WM_FD_EVENTS);
 }
 
+/* El fd suelto no dice de que ventana es: es la principal, como siempre. */
 int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
-    uint32_t drained = 0;
+    return gfx_poll_pointer_for(fd, 0, event);
+}
 
-    if (fd < 0 || event == 0) {
+int gfx_poll_window_pointer(const struct savanxp_gfx_context* context, struct savanxp_gui_pointer_event* event) {
+    if (context == 0) {
         return -SAVANXP_EINVAL;
     }
-
-    if (g_gfx_pointer_stash.count != 0) {
-        *event = g_gfx_pointer_stash.items[g_gfx_pointer_stash.head];
-        g_gfx_pointer_stash.head = (g_gfx_pointer_stash.head + 1u) % GFX_EVENT_STASH_CAPACITY;
-        g_gfx_pointer_stash.count -= 1u;
-        return 1;
-    }
-
-    for (drained = 0; drained < GFX_EVENT_DRAIN_LIMIT; ++drained) {
-        struct savanxp_wm_event record;
-        int result = gfx_read_wm_event(fd, &record);
-
-        if (result <= 0) {
-            return result;
-        }
-        if (record.kind == SAVANXP_WM_EVENT_POINTER) {
-            *event = record.payload.pointer;
-            return 1;
-        }
-        if (record.kind == SAVANXP_WM_EVENT_KEY) {
-            gfx_stash_key(&record.payload.key);
-        }
-    }
-    return 0;
+    return gfx_poll_pointer_for(context->input_fd, context->window_id, event);
 }
 
 int gfx_should_close(const struct savanxp_gfx_context* context) {
@@ -810,6 +899,147 @@ long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long ti
         }
         sleep_ms(2);
     }
+}
+
+/* --- Ventanas con dueno (docs/OWNED_WINDOWS.md) ------------------------------
+ *
+ * El pedido va por el header de la ventana principal y la superficie vuelve
+ * como handle por la cola del pipe de eventos. La espera es acotada: un WM que
+ * no atiende no puede colgar a la app, que cae a dibujar el dialogo adentro de
+ * su propia superficie como antes. */
+#define GFX_WINDOW_OPEN_WAIT_MS 1000ul
+#define GFX_WINDOW_CLOSE_WAIT_MS 250ul
+
+static long gfx_window_request(
+    const struct savanxp_gfx_context* owner,
+    uint32_t action,
+    uint32_t window_id,
+    uint32_t width,
+    uint32_t height,
+    const char* title,
+    unsigned long timeout_ms) {
+    struct savanxp_wm_client_requests* requests = &owner->header->requests;
+    uint32_t sequence = 0;
+    unsigned long deadline = 0;
+
+    /* Seqlock: impar mientras el pedido esta a medio escribir. */
+    requests->window_sequence |= 1u;
+    memset(&requests->window, 0, sizeof(requests->window));
+    requests->window.action = action;
+    requests->window.window_id = window_id;
+    requests->window.width = width;
+    requests->window.height = height;
+    if (title != 0) {
+        size_t length = strlen(title);
+        if (length >= SAVANXP_WM_WINDOW_TITLE_CAPACITY) {
+            length = SAVANXP_WM_WINDOW_TITLE_CAPACITY - 1u;
+        }
+        memcpy(requests->window.title, title, length);
+    }
+    requests->window_sequence += 1u;
+    sequence = requests->window_sequence;
+    (void)gfx_notify_wm(owner);
+
+    deadline = uptime_ms() + timeout_ms;
+    for (;;) {
+        if (requests->window_reply_sequence == sequence) {
+            return requests->window_reply_status;
+        }
+        if (gfx_shutdown_requested(owner)) {
+            return -SAVANXP_EPIPE;
+        }
+        if (owner->wake_event_fd < 0 || uptime_ms() >= deadline) {
+            return -SAVANXP_EAGAIN;
+        }
+        /* El wake sirve a varias condiciones: resetear, volver a mirar y recien
+         * ahi dormir, igual que gfx_wait_for_header. */
+        (void)event_reset(owner->wake_event_fd);
+        if (requests->window_reply_sequence == sequence) {
+            return requests->window_reply_status;
+        }
+        (void)wait_one(owner->wake_event_fd, 20);
+    }
+}
+
+long gfx_window_open(
+    const struct savanxp_gfx_context* owner,
+    struct savanxp_gfx_context* window,
+    uint32_t window_id,
+    uint32_t width,
+    uint32_t height,
+    const char* title) {
+    long section_fd = -1;
+    long result = 0;
+
+    if (owner == 0 || owner->header == 0 || owner->window_id != 0 || owner->input_fd < 0 || window == 0 ||
+        window_id == 0 || window_id > SAVANXP_WM_MAX_OWNED_WINDOWS || width == 0 || height == 0) {
+        return -SAVANXP_EINVAL;
+    }
+
+    memset(window, 0, sizeof(*window));
+    window->fb_fd = -1;
+    window->input_fd = -1;
+    window->submit_event_fd = -1;
+    window->wake_event_fd = -1;
+
+    /* Un handle que ya esta en la cola es de un pedido anterior que vencio del
+     * lado del cliente: no es el de este pedido y no tiene quien lo use. */
+    while ((section_fd = pipe_receive_handle(owner->input_fd)) >= 0) {
+        (void)savanxp_close((int)section_fd);
+    }
+
+    result = gfx_window_request(
+        owner, SAVANXP_WM_WINDOW_ACTION_OPEN, window_id, width, height, title, GFX_WINDOW_OPEN_WAIT_MS);
+    if (result < 0) {
+        if (result == -SAVANXP_EAGAIN) {
+            /* Vencio el plazo: si el WM la crea igual, que la destruya. */
+            (void)gfx_window_request(owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, 0);
+        }
+        return result;
+    }
+
+    section_fd = pipe_receive_handle(owner->input_fd);
+    if (section_fd < 0) {
+        result = section_fd;
+        goto fail;
+    }
+    result = gfx_map_client_surface(window, (int)section_fd);
+    if (result < 0) {
+        (void)savanxp_close((int)section_fd);
+        goto fail;
+    }
+    result = gfx_adopt_channels(window, section_fd, owner->input_fd, owner->submit_event_fd, owner->wake_event_fd);
+    if (result < 0) {
+        gfx_unmap_client_surface(window);
+        goto fail;
+    }
+    window->window_id = window_id;
+    gfx_discard_stashes(window_id);
+    return 0;
+
+fail:
+    (void)gfx_window_request(
+        owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, GFX_WINDOW_CLOSE_WAIT_MS);
+    return result;
+}
+
+long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gfx_context* window) {
+    uint32_t window_id = 0;
+
+    if (window == 0 || window->window_id == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    window_id = window->window_id;
+    (void)gfx_close(window);
+    if (owner != 0 && owner->header != 0) {
+        (void)gfx_window_request(
+            owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, GFX_WINDOW_CLOSE_WAIT_MS);
+    }
+    /* Despues del pedido y no antes: lo que el WM haya mandado hasta destruirla
+     * cae en la bandeja y se tira aca. */
+    gfx_discard_stashes(window_id);
+    window->window_id = 0;
+    return 0;
 }
 
 void gfx_clear(uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t colour) {

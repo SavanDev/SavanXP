@@ -107,6 +107,8 @@ static void reset_client(struct windowd_client *client)
     client->events_write_fd = -1;
     client->wake_event_fd = -1;
     client->shell_request_read_fd = -1;
+    /* -1 y no 0: con el memset toda ventana seria "con dueno el slot 0". */
+    client->owner_slot = -1;
 }
 
 static int overlay_slot_valid(int slot)
@@ -295,18 +297,99 @@ static void activate_shell(struct windowd_session *session)
     refresh_active_state(session);
 }
 
+/* --- Ventanas con dueno (docs/OWNED_WINDOWS.md) ------------------------------
+ *
+ * Un dialogo es una ventana del mismo proceso que su dueno, en un slot de
+ * overlay propio. El z-order, la activacion y el minimizado tratan a dueno y
+ * dialogos como una FAMILIA: suben juntos, el dialogo siempre arriba, y mientras
+ * haya uno el dueno no recibe input. */
+
+static int overlay_client_owned(const struct windowd_client *client)
+{
+    return client != 0 && client->owner_slot >= 0;
+}
+
+/* Slot de la ventana principal de la familia: el del dueno para una ventana con
+ * dueno, el mismo slot para las demas. */
+static int overlay_root_slot(const struct windowd_session *session, int slot)
+{
+    if (session == 0 || !overlay_slot_valid(slot) || !overlay_slot_valid(session->overlay_clients[slot].owner_slot))
+    {
+        return slot;
+    }
+    return session->overlay_clients[slot].owner_slot;
+}
+
+/* Slot de la ventana `window_id` de `owner_slot`, o de cualquiera de sus
+ * ventanas con dueno si window_id es 0. -1 si no hay. */
+static int owned_window_slot(const struct windowd_session *session, int owner_slot, uint32_t window_id)
+{
+    int slot;
+
+    if (session == 0 || !overlay_slot_valid(owner_slot))
+    {
+        return -1;
+    }
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        const struct windowd_client *client = &session->overlay_clients[slot];
+
+        if (client->pid > 0 && client->owner_slot == owner_slot &&
+            (window_id == 0 || client->window_id == window_id))
+        {
+            return slot;
+        }
+    }
+    return -1;
+}
+
+/* Deshabilitado = tiene una ventana con dueno abierta. No recibe input: un click
+ * sobre el solo levanta la familia, y el dialogo queda activo. Es el
+ * EnableWindow(owner, FALSE) de DialogBox, decidido por el WM. */
+static int overlay_client_disabled(const struct windowd_session *session, const struct windowd_client *client)
+{
+    int slot = overlay_slot_for_client_ptr(session, client);
+
+    return overlay_slot_valid(slot) && !overlay_client_owned(client) && owned_window_slot(session, slot, 0) >= 0;
+}
+
 static void raise_overlay(struct windowd_session *session, int slot)
 {
+    int root;
+    int child;
+
     if (session == 0 || !overlay_slot_valid(slot) || session->overlay_clients[slot].pid <= 0)
     {
         refresh_active_state(session);
         return;
     }
 
-    session->overlay_clients[slot].minimized = 0;
-    append_overlay_to_order(session, slot);
+    /* Se levante la ventana que se levante, la familia termina en el mismo
+     * orden: el dueno y encima sus ventanas con dueno. Si no, un click sobre el
+     * dueno taparia a su propio dialogo, que es el unico que puede cerrarse. */
+    root = overlay_root_slot(session, slot);
+    session->overlay_clients[root].minimized = 0;
+    append_overlay_to_order(session, root);
+    session->active_overlay_slot = root;
+    for (child = 0; child < WINDOWD_MAX_OVERLAY_CLIENTS; ++child)
+    {
+        struct windowd_client *owned = &session->overlay_clients[child];
+
+        if (owned->pid <= 0 || owned->owner_slot != root)
+        {
+            continue;
+        }
+        owned->minimized = 0;
+        append_overlay_to_order(session, child);
+        session->active_overlay_slot = child;
+    }
+    /* Con mas de un dialogo, el que se pidio queda arriba y activo. */
+    if (slot != root)
+    {
+        append_overlay_to_order(session, slot);
+        session->active_overlay_slot = slot;
+    }
     session->active_client_kind = WINDOWD_CLIENT_APP;
-    session->active_overlay_slot = slot;
     refresh_active_state(session);
 }
 
@@ -328,36 +411,64 @@ static int drag_overlay_slot_active(const struct windowd_session *session, int s
     return session != 0 && overlay_slot_valid(slot) && overlay_client_visible(&session->overlay_clients[slot]);
 }
 
+/* Marca como sucio el marco de la ventana y de las que tiene con dueno. */
+static void dirty_overlay_family(struct windowd_session *session, struct windowd_dirty_rect *dirty, int root)
+{
+    int slot;
+
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        const struct windowd_client *client = &session->overlay_clients[slot];
+        struct sx_rect frame_rect;
+
+        if (client->pid <= 0 || (slot != root && client->owner_slot != root))
+        {
+            continue;
+        }
+        frame_rect = windowd_client_frame_rect(client);
+        windowd_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
+    }
+}
+
+/* Minimizar actua sobre la familia entera: un dialogo no se queda flotando
+ * sobre el escritorio con su dueno escondido. */
 static void minimize_overlay_client(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
 {
-    struct windowd_client *client = overlay_client_at(session, slot);
-    struct sx_rect frame_rect;
+    struct windowd_client *client = 0;
+    int root = overlay_root_slot(session, slot);
+    int child;
 
+    client = overlay_client_at(session, root);
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->minimized)
     {
         return;
     }
 
-    frame_rect = windowd_client_frame_rect(client);
-    windowd_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
+    dirty_overlay_family(session, dirty, root);
     client->minimized = 1;
+    for (child = 0; child < WINDOWD_MAX_OVERLAY_CLIENTS; ++child)
+    {
+        if (session->overlay_clients[child].pid > 0 && session->overlay_clients[child].owner_slot == root)
+        {
+            session->overlay_clients[child].minimized = 1;
+        }
+    }
     refresh_active_state(session);
 }
 
 static void restore_overlay_client(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
 {
     struct windowd_client *client = overlay_client_at(session, slot);
-    struct sx_rect frame_rect;
 
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
     {
         return;
     }
 
-    client->minimized = 0;
-    frame_rect = windowd_client_frame_rect(client);
-    windowd_dirty_rect_add(dirty, &session->gfx.info, frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
+    /* raise_overlay desminimiza la familia; el danio se toma despues, con todos
+     * los marcos ya en su lugar. */
     raise_overlay(session, slot);
+    dirty_overlay_family(session, dirty, overlay_root_slot(session, slot));
 }
 
 static void toggle_overlay_client_maximized(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
@@ -857,8 +968,11 @@ static int resolve_cursor_shape(
                 : SAVANXP_CURSOR_RESIZE_V;
         }
     }
+    /* Un dueno deshabilitado no reacciona al puntero, asi que tampoco muestra
+     * el cursor que pidieron sus widgets. */
     if (current_hover_client != 0 &&
         current_hover_client != &session->shell_client &&
+        !overlay_client_disabled(session, current_hover_client) &&
         windowd_point_in_client(current_hover_client, cursor_x, cursor_y))
     {
         return current_hover_client->last_cursor_hint_shape;
@@ -959,11 +1073,16 @@ static int recover_compositor(struct windowd_session *session)
  * se escribe un registro entero (ver savanxp_wm_event). */
 static int route_event(const struct windowd_client *client, const struct savanxp_wm_event *event)
 {
+    struct savanxp_wm_event tagged;
+
     if (client == 0 || client->events_write_fd < 0 || event == 0)
     {
         return 0;
     }
-    return savanxp_write(client->events_write_fd, event, sizeof(*event)) == (long)sizeof(*event);
+    /* El pipe es del proceso: el id dice a cual de sus ventanas va. */
+    tagged = *event;
+    tagged.window_id = client->window_id;
+    return savanxp_write(client->events_write_fd, &tagged, sizeof(tagged)) == (long)sizeof(tagged);
 }
 
 static int route_key(const struct windowd_client *client, const struct savanxp_input_event *key_event)
@@ -1487,7 +1606,9 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     {
         (void)event_set(client->wake_event_fd);
     }
-    if (client->pid > 0)
+    /* Una ventana con dueno comparte el pid del proceso, que sigue vivo y es de
+     * su ventana principal: ni se mata ni se espera. */
+    if (client->pid > 0 && client->owner_slot < 0)
     {
         if (terminate_client)
         {
@@ -1521,31 +1642,20 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
  * barra de tareas, asi que su pipe de pedidos es un fd en todo el sistema y no
  * uno por ventana.
  */
-static int start_client_process(
-    struct windowd_client *client,
-    const char *path,
-    const char *argument,
-    int submit_event_fd,
-    int shell_role)
+/*
+ * Crea la seccion de la superficie de `client` con el tamano de surface_info, la
+ * mapea en el WM y le escribe el header v4. Devuelve el fd de la seccion, que el
+ * llamador le entrega al cliente -- por fork o por la cola de handles -- y
+ * despues cierra; el mapeo del WM la mantiene viva. -1 si falla, sin dejar
+ * nada abierto ni mapeado.
+ */
+static int create_client_surface(struct windowd_client *client)
 {
     struct savanxp_gpu_client_surface_header *header;
     unsigned long command_bytes = 0;
     unsigned long pixels_offset = 0;
     unsigned long section_size = 0;
     int section_fd = -1;
-    int window_list_section_fd = -1;
-    int events_pipe[2] = {-1, -1};
-    int shell_request_pipe[2] = {-1, -1};
-    int wake_event = -1;
-    const char *argv[3] = {path, argument, 0};
-    int argc = (argument != 0 && argument[0] != '\0') ? 2 : 1;
-    long pid;
-
-    if (client == 0 || path == 0 || submit_event_fd < 0 ||
-        client->surface_info.width == 0 || client->surface_info.height == 0 || client->surface_info.buffer_size == 0)
-    {
-        return -1;
-    }
 
     command_bytes = (unsigned long)(SAVANXP_GPU_CLIENT_BATCH_CAPACITY * sizeof(struct savanxp_gpu_dirty_rect_batch));
     /* Page-align the pixel region. Older fullscreen-exclusive scanout used this
@@ -1582,6 +1692,36 @@ static int start_client_process(
     client->pixels = (uint32_t *)((unsigned char *)client->mapped_view + header->pixels_offset);
     memset(client->command_batches, 0, command_bytes);
     memset(client->pixels, 0, client->surface_info.buffer_size);
+    return section_fd;
+}
+
+static int start_client_process(
+    struct windowd_client *client,
+    const char *path,
+    const char *argument,
+    int submit_event_fd,
+    int shell_role)
+{
+    int section_fd = -1;
+    int window_list_section_fd = -1;
+    int events_pipe[2] = {-1, -1};
+    int shell_request_pipe[2] = {-1, -1};
+    int wake_event = -1;
+    const char *argv[3] = {path, argument, 0};
+    int argc = (argument != 0 && argument[0] != '\0') ? 2 : 1;
+    long pid;
+
+    if (client == 0 || path == 0 || submit_event_fd < 0 ||
+        client->surface_info.width == 0 || client->surface_info.height == 0 || client->surface_info.buffer_size == 0)
+    {
+        return -1;
+    }
+
+    section_fd = create_client_surface(client);
+    if (section_fd < 0)
+    {
+        return -1;
+    }
 
     wake_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
     if (wake_event < 0 || savanxp_pipe(events_pipe) < 0)
@@ -1925,7 +2065,9 @@ static void publish_window_list(struct windowd_session *session)
         const char *title;
         size_t length;
 
-        if (client->pid <= 0)
+        /* Un dialogo no es una tarea: su boton es el de su dueno, y el id (el
+         * pid) seria el mismo. */
+        if (client->pid <= 0 || client->owner_slot >= 0)
         {
             continue;
         }
@@ -1946,7 +2088,7 @@ static void publish_window_list(struct windowd_session *session)
         else
         {
             if (session->active_client_kind == WINDOWD_CLIENT_APP &&
-                slot == session->active_overlay_slot)
+                slot == overlay_root_slot(session, session->active_overlay_slot))
             {
                 entry->flags |= SAVANXP_WM_WINDOW_FLAG_ACTIVE;
             }
@@ -2031,6 +2173,7 @@ static int resolve_window_id(const struct windowd_session *session, uint32_t win
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         if (session->overlay_clients[slot].pid > 0 &&
+            session->overlay_clients[slot].owner_slot < 0 &&
             (uint32_t)session->overlay_clients[slot].pid == window_id)
         {
             return slot;
@@ -2083,10 +2226,26 @@ static void service_shell_requests(struct windowd_session *session, struct windo
 static void destroy_overlay_client(struct windowd_session *session, int slot, int terminate_client)
 {
     struct windowd_client *client = overlay_client_at(session, slot);
+    int child;
 
     if (client == 0)
     {
         return;
+    }
+
+    /* Las ventanas con dueno se van antes que su dueno: son del mismo proceso y
+     * no tienen sentido sin el. Nunca se matan (no son un proceso). */
+    if (client->pid > 0 && client->owner_slot < 0)
+    {
+        for (child = 0; child < WINDOWD_MAX_OVERLAY_CLIENTS; ++child)
+        {
+            if (child != slot && session->overlay_clients[child].pid > 0 &&
+                session->overlay_clients[child].owner_slot == slot)
+            {
+                destroy_client_instance(&session->overlay_clients[child], 0);
+                remove_overlay_from_order(session, child);
+            }
+        }
     }
 
     if (session->fullscreen_slot == slot)
@@ -2590,6 +2749,217 @@ static void service_client_size_hints(
 }
 
 /*
+ * Crea la ventana con dueno que pide el cliente del slot `owner_slot`
+ * (docs/OWNED_WINDOWS.md). Todo lo que cuesta sale de lo que ya existe: un slot
+ * de overlay libre, una seccion para la superficie -- que viaja al cliente por
+ * la cola de handles de SU pipe de eventos -- y duplicados del pipe y del wake
+ * del dueno. Ningun pipe nuevo, ningun proceso nuevo.
+ *
+ * Devuelve 0 con el handle ya encolado, o -errno sin dejar nada.
+ */
+static int open_owned_window(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    int owner_slot,
+    const struct savanxp_wm_window_request *request)
+{
+    struct windowd_client *owner = overlay_client_at(session, owner_slot);
+    struct windowd_client *client = 0;
+    struct sx_rect owner_frame;
+    int slot = -1;
+    int section_fd = -1;
+    long result = 0;
+    size_t length = 0;
+
+    if (owner == 0 || owner->pid <= 0 || owner->events_write_fd < 0 || owner->wake_event_fd < 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if (request->window_id == 0 || request->window_id > SAVANXP_WM_MAX_OWNED_WINDOWS ||
+        owned_window_slot(session, owner_slot, request->window_id) >= 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    /* Un dialogo que no entra en la pantalla con su marco no se puede usar;
+     * mejor que el cliente lo dibuje adentro de su ventana como antes. */
+    if (request->width == 0 || request->height == 0 ||
+        request->width + (uint32_t)(WINDOWD_WINDOW_BORDER * 2) > session->gfx.info.width ||
+        request->height + (uint32_t)(WINDOWD_WINDOW_TITLEBAR_HEIGHT + WINDOWD_WINDOW_BORDER) > session->gfx.info.height)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    slot = find_free_overlay_slot(session);
+    if (!overlay_slot_valid(slot))
+    {
+        return -SAVANXP_ENOSPC;
+    }
+
+    /* A pantalla completa solo se compone la app: su dialogo quedaria activo e
+     * invisible, y la app, bloqueada. */
+    if (session->fullscreen_slot == owner_slot)
+    {
+        exit_overlay_fullscreen(session, dirty);
+    }
+
+    client = &session->overlay_clients[slot];
+    reset_client(client);
+    client->surface_info.width = request->width;
+    client->surface_info.height = request->height;
+    client->surface_info.pitch = request->width * (uint32_t)sizeof(uint32_t);
+    client->surface_info.bpp = 32u;
+    client->surface_info.buffer_size = client->surface_info.pitch * request->height;
+
+    section_fd = create_client_surface(client);
+    if (section_fd < 0)
+    {
+        reset_client(client);
+        return -SAVANXP_ENOMEM;
+    }
+    client->events_write_fd = (int)savanxp_dup(owner->events_write_fd);
+    client->wake_event_fd = (int)savanxp_dup(owner->wake_event_fd);
+    result = (client->events_write_fd < 0 || client->wake_event_fd < 0)
+        ? -SAVANXP_EBADF
+        : pipe_send_handle(owner->events_write_fd, section_fd);
+    close_fd_if_needed(&section_fd);
+    if (result < 0)
+    {
+        destroy_client_instance(client, 0);
+        return (int)result;
+    }
+
+    client->pid = owner->pid;
+    client->owner_slot = owner_slot;
+    client->window_id = request->window_id;
+    memcpy(client->path, owner->path, sizeof(client->path));
+    /* Presentacion del dueno (accent, icono) con el titulo del dialogo, y de
+     * tamano fijo: el tamano lo decide el layout del dialogo. */
+    client->presentation = owner->presentation;
+    length = strlen(request->title);
+    if (length >= sizeof(client->presentation.label))
+    {
+        length = sizeof(client->presentation.label) - 1u;
+    }
+    memcpy(client->presentation.label, request->title, length);
+    client->presentation.label[length] = '\0';
+    client->presentation.window_flags |= SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE;
+
+    /* Centrado sobre el dueno y adentro de la pantalla. */
+    client->window_width = (int)request->width + (WINDOWD_WINDOW_BORDER * 2);
+    client->window_height = (int)request->height + WINDOWD_WINDOW_TITLEBAR_HEIGHT + WINDOWD_WINDOW_BORDER;
+    owner_frame = windowd_client_frame_rect(owner);
+    client->window_x = owner_frame.x + (owner_frame.width - client->window_width) / 2;
+    client->window_y = owner_frame.y + (owner_frame.height - client->window_height) / 2;
+    windowd_clamp_overlay_frame_position(
+        &session->gfx.info, client->window_width, client->window_height, &client->window_x, &client->window_y);
+    client->restore_window_x = client->window_x;
+    client->restore_window_y = client->window_y;
+    client->restore_window_width = client->window_width;
+    client->restore_window_height = client->window_height;
+    client->frame_visible = 1;
+    client->cascade_index = owner->cascade_index;
+    /* Nunca pide tamano: el que tiene es el que pidio. */
+    client->size_hint_applied = 1;
+
+    raise_overlay(session, slot);
+    windowd_dirty_rect_add_client(dirty, owner);
+    windowd_dirty_rect_add_client(dirty, client);
+    return 0;
+}
+
+static void close_owned_window(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    int owner_slot,
+    uint32_t window_id)
+{
+    int slot = owned_window_slot(session, owner_slot, window_id);
+    int was_active = 0;
+    struct sx_rect frame;
+
+    if (window_id == 0 || !overlay_slot_valid(slot))
+    {
+        return;
+    }
+    was_active = session->active_client_kind == WINDOWD_CLIENT_APP && session->active_overlay_slot == slot;
+    frame = windowd_client_frame_rect(&session->overlay_clients[slot]);
+    destroy_overlay_client(session, slot, 0);
+    windowd_dirty_rect_add(dirty, &session->gfx.info, frame.x, frame.y, frame.width, frame.height);
+    /* El foco vuelve al dueno, salvo que el usuario ya estuviera en otra app. */
+    if (was_active)
+    {
+        raise_overlay(session, owner_slot);
+    }
+    windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, owner_slot));
+}
+
+/* Drena el pedido de ventana del header (savanxp_wm_client_requests.window).
+ * Como todo lo que viene del header: se copia, se valida y recien ahi se usa.
+ * Solo la ventana PRINCIPAL de un overlay puede tener ventanas con dueno; para
+ * cualquier otro cliente el pedido se contesta con error, que el runtime toma
+ * como "segui dibujando el dialogo adentro". */
+static void service_client_window_requests(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    struct windowd_client *client,
+    int slot)
+{
+    struct savanxp_wm_window_request request;
+    uint32_t sequence = 0;
+    int status = 0;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->header == 0)
+    {
+        return;
+    }
+
+    sequence = client->header->requests.window_sequence;
+    if ((sequence & 1u) != 0 || sequence == client->window_request_consumed_sequence)
+    {
+        return;
+    }
+    memcpy(&request, &client->header->requests.window, sizeof(request));
+    if (client->header->requests.window_sequence != sequence)
+    {
+        return;
+    }
+    client->window_request_consumed_sequence = sequence;
+    request.title[SAVANXP_WM_WINDOW_TITLE_CAPACITY - 1u] = '\0';
+
+    if (!overlay_slot_valid(slot) || client->owner_slot >= 0)
+    {
+        status = -SAVANXP_EINVAL;
+    }
+    else if (request.action == SAVANXP_WM_WINDOW_ACTION_OPEN)
+    {
+        status = open_owned_window(session, dirty, slot, &request);
+        if (status < 0)
+        {
+            eprintf("desktop: owned window %u for %s refused (%s)\n",
+                (unsigned)request.window_id,
+                client->path[0] != '\0' ? client->path : "?",
+                result_error_string(status));
+        }
+    }
+    else if (request.action == SAVANXP_WM_WINDOW_ACTION_CLOSE)
+    {
+        close_owned_window(session, dirty, slot, request.window_id);
+    }
+    else
+    {
+        status = -SAVANXP_EINVAL;
+    }
+
+    /* Respuesta despues del handle: el cliente lo va a buscar apenas vea la
+     * secuencia, asi que tiene que estar encolado antes. */
+    client->header->requests.window_reply_status = status;
+    client->header->requests.window_reply_sequence = sequence;
+    if (client->wake_event_fd >= 0)
+    {
+        (void)event_set(client->wake_event_fd);
+    }
+}
+
+/*
  * Headless compositor self-test driven by init under /SMOKE.
  *
  * It reuses the exact compose/present building blocks of the main loop, but
@@ -2964,6 +3334,180 @@ static int windowd_capacity_selftest(struct windowd_session *session)
 
     destroy_client_instance(&session->keyboard_popup_client, 1);
     destroy_client_instance(&session->taskbar_client, 1);
+    return 0;
+}
+
+/* Una vuelta de servicio para los overlays del selftest: pedidos del header y
+ * frames, como el loop real, sin componer. Senalar los compuestos hace falta
+ * igual: un cliente no presenta el frame siguiente hasta verlo. */
+static void selftest_service_overlays(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    int slot;
+
+    (void)event_reset(session->submit_event_fd);
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        service_client_window_requests(session, dirty, &session->overlay_clients[slot], slot);
+        service_client_size_hints(session, dirty, &session->overlay_clients[slot], slot);
+        (void)service_client_batches(session, dirty, &session->overlay_clients[slot]);
+    }
+    signal_composed_batches(session);
+    windowd_dirty_rect_reset(dirty);
+}
+
+static int selftest_order_index(const struct windowd_session *session, int slot)
+{
+    int index;
+
+    for (index = 0; index < session->overlay_count; ++index)
+    {
+        if (session->overlay_order[index] == slot)
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/*
+ * Ventanas con dueno de punta a punta (docs/OWNED_WINDOWS.md): widgetsdemo abre
+ * su About por el runtime real -- pedido en el header, seccion por la cola de
+ * handles del pipe, eventos con window_id --, y aca se asertan las reglas del
+ * WM: familia en el z-order, dueno deshabilitado, fuera de la lista de tareas,
+ * la X como pedido de cierre y ningun descriptor perdido al cerrar.
+ */
+static int windowd_owned_window_selftest(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    struct savanxp_wm_window_request request;
+    const struct windowd_client *owner = 0;
+    const struct windowd_client *dialog = 0;
+    uint32_t handles_before_launch = 0;
+    uint32_t handles_launched = 0;
+    uint32_t handles_dialog = 0;
+    uint32_t handles_after = 0;
+    unsigned long deadline = 0;
+    int owner_slot = find_free_overlay_slot(session);
+    int dialog_slot = -1;
+    int second_slot = -1;
+    int tasks_before = windowd_task_count(session);
+
+    if (!overlay_slot_valid(owner_slot) ||
+        selftest_handle_count(savanxp_getpid(), &handles_before_launch) != 0 ||
+        launch_overlay_client(session, "/bin/widgetsdemo", "--dialog-selftest", SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0 ||
+        selftest_handle_count(savanxp_getpid(), &handles_launched) != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: no arranco widgetsdemo\n");
+        return 1;
+    }
+    owner = &session->overlay_clients[owner_slot];
+
+    deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+    for (;;)
+    {
+        selftest_service_overlays(session, dirty);
+        dialog_slot = owned_window_slot(session, owner_slot, 0);
+        if (dialog_slot >= 0 && session->overlay_clients[dialog_slot].consumed_submit_sequence > 0)
+        {
+            break;
+        }
+        if (owner->pid <= 0 || uptime_ms() >= deadline)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL owned: el dialogo nunca presento en su ventana\n");
+            return 1;
+        }
+        sleep_ms(10);
+    }
+    dialog = &session->overlay_clients[dialog_slot];
+
+    if (dialog->pid != owner->pid || dialog->window_id != 1u ||
+        dialog->surface_info.width != 260u || dialog->surface_info.height != 104u)
+    {
+        printf("DESKTOP SMOKE FAIL owned: ventana id=%u %ux%u\n",
+            (unsigned)dialog->window_id, (unsigned)dialog->surface_info.width, (unsigned)dialog->surface_info.height);
+        return 1;
+    }
+    if (windowd_task_count(session) != tasks_before + 1)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: el dialogo aparece como tarea\n");
+        return 1;
+    }
+    if (!overlay_client_disabled(session, owner) || overlay_client_disabled(session, dialog) ||
+        session->active_overlay_slot != dialog_slot)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: el dueno no quedo deshabilitado con el dialogo activo\n");
+        return 1;
+    }
+    /* Levantar al dueno trae la familia y deja el dialogo arriba y activo. */
+    raise_overlay(session, owner_slot);
+    if (session->active_overlay_slot != dialog_slot ||
+        selftest_order_index(session, dialog_slot) <= selftest_order_index(session, owner_slot))
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: levantar al dueno tapo a su dialogo\n");
+        return 1;
+    }
+    if (!sx_rect_is_empty(windowd_client_minimize_button_rect(dialog)) ||
+        sx_rect_is_empty(windowd_client_close_button_rect(dialog)) ||
+        !windowd_client_fixed_size(dialog))
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: el marco del dialogo no es de dialogo\n");
+        return 1;
+    }
+    /* Dos duplicados por dialogo, nada mas: la seccion se cerro al encolarla. */
+    if (selftest_handle_count(savanxp_getpid(), &handles_dialog) != 0 || handles_dialog != handles_launched + 2u)
+    {
+        printf("DESKTOP SMOKE FAIL owned: windowd paso de %u a %u descriptores al abrir el dialogo\n",
+            (unsigned)handles_launched, (unsigned)handles_dialog);
+        return 1;
+    }
+
+    /* La X: el WM pide, el proceso cancela el dialogo y manda el CLOSE. */
+    session->overlay_clients[dialog_slot].header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+    (void)event_set(session->overlay_clients[dialog_slot].wake_event_fd);
+    deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+    while (owned_window_slot(session, owner_slot, 0) >= 0)
+    {
+        selftest_service_overlays(session, dirty);
+        if (owner->pid <= 0 || uptime_ms() >= deadline)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL owned: la X no cerro el dialogo\n");
+            return 1;
+        }
+        sleep_ms(10);
+    }
+    if (session->active_overlay_slot != owner_slot || overlay_client_disabled(session, owner) ||
+        selftest_handle_count(savanxp_getpid(), &handles_after) != 0 || handles_after != handles_launched)
+    {
+        printf("DESKTOP SMOKE FAIL owned: tras cerrar el dialogo activo=%d fds=%u (esperados %u)\n",
+            session->active_overlay_slot, (unsigned)handles_after, (unsigned)handles_launched);
+        return 1;
+    }
+
+    /* Un proceso que se muere con un dialogo abierto se lleva las dos ventanas.
+     * La seccion queda encolada sin recibir: la suelta el pipe al cerrarse. */
+    memset(&request, 0, sizeof(request));
+    request.action = SAVANXP_WM_WINDOW_ACTION_OPEN;
+    request.window_id = 2u;
+    request.width = 120u;
+    request.height = 60u;
+    memcpy(request.title, "Selftest", sizeof("Selftest"));
+    if (open_owned_window(session, dirty, owner_slot, &request) != 0 ||
+        (second_slot = owned_window_slot(session, owner_slot, 2u)) < 0 ||
+        open_owned_window(session, dirty, owner_slot, &request) == 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: no se pudo abrir (o se duplico) el segundo dialogo\n");
+        return 1;
+    }
+    destroy_overlay_client(session, owner_slot, 1);
+    windowd_dirty_rect_reset(dirty);
+    if (session->overlay_clients[owner_slot].pid > 0 || session->overlay_clients[second_slot].pid > 0 ||
+        selftest_handle_count(savanxp_getpid(), &handles_after) != 0 || handles_after != handles_before_launch)
+    {
+        printf("DESKTOP SMOKE FAIL owned: al terminar el dueno quedaron ventanas o fds=%u (esperados %u)\n",
+            (unsigned)handles_after, (unsigned)handles_before_launch);
+        return 1;
+    }
+
+    printf("DESKTOP SMOKE owned windows ok windowd_fds=%u\n", (unsigned)handles_dialog);
     return 0;
 }
 
@@ -3836,6 +4380,11 @@ static int windowd_selftest(void)
         }
     }
 
+    if (!failed && windowd_owned_window_selftest(&session, &dirty) != 0)
+    {
+        failed = 1;
+    }
+
     /* Ultimo: llena la sesion, y lo que queda despues ya no se compone. */
     if (!failed && windowd_capacity_selftest(&session) != 0)
     {
@@ -3894,8 +4443,9 @@ static int windowd_active_task_index(const struct windowd_session *session)
         {
             return index;
         }
+        /* Con un dialogo activo, la tarea activa es la de su dueno. */
         if (session->active_client_kind == WINDOWD_CLIENT_APP && !is_shell &&
-            slot == session->active_overlay_slot)
+            slot == overlay_root_slot(session, session->active_overlay_slot))
         {
             return index;
         }
@@ -4314,8 +4864,13 @@ static void handle_pointer_event(
             else
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
+                int disabled = overlay_client_disabled(session, current_hover_client);
+
                 raise_overlay(session, target_slot);
-                current_hover_client = overlay_client_at_const(session, target_slot);
+                /* Dueno deshabilitado: el click solo trajo la familia al frente
+                 * y dejo activo al dialogo. No llega ni a la app ni a los
+                 * botones del marco, y no arrastra. */
+                current_hover_client = disabled ? 0 : overlay_client_at_const(session, target_slot);
             }
             if (current_hover_client != 0 &&
                 current_hover_client != &session->shell_client &&
@@ -4349,7 +4904,24 @@ static void handle_pointer_event(
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
                 struct sx_rect closed_frame = windowd_client_frame_rect(current_hover_client);
 
-                if (overlay_slot_valid(target_slot))
+                if (overlay_slot_valid(target_slot) && overlay_client_owned(current_hover_client))
+                {
+                    /* La X de un dialogo no lo destruye: le pide al proceso que
+                     * lo cierre, como ESC. El proceso decide que significa
+                     * cancelar y despues pide el CLOSE. */
+                    struct windowd_client *owned = overlay_client_at(session, target_slot);
+                    if (owned->header != 0)
+                    {
+                        owned->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+                    }
+                    if (owned->wake_event_fd >= 0)
+                    {
+                        (void)event_set(owned->wake_event_fd);
+                    }
+                    current_hover_client = 0;
+                    drag_overlay_slot = -1;
+                }
+                else if (overlay_slot_valid(target_slot))
                 {
                     destroy_overlay_client(session, target_slot, 1);
                     windowd_dirty_rect_add(
@@ -4449,6 +5021,7 @@ static void handle_pointer_event(
         !drag_active_now &&
         current_hover_client != 0 &&
         current_hover_client->events_write_fd >= 0 &&
+        !overlay_client_disabled(session, current_hover_client) &&
         !(left_pressed != 0 && left_was_pressed == 0))
     {
         (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
@@ -4459,6 +5032,7 @@ static void handle_pointer_event(
              current_hover_client == 0 &&
              previous_hover_client != 0 &&
              previous_hover_client->events_write_fd >= 0 &&
+             !overlay_client_disabled(session, previous_hover_client) &&
              !(left_pressed != 0 && left_was_pressed == 0))
     {
         (void)route_pointer(previous_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
@@ -4693,8 +5267,10 @@ int main(int argc, char **argv)
         }
         service_client_cursor_hints(&session.shell_client);
         service_client_size_hints(&session, &dirty, &session.shell_client, -1);
+        service_client_window_requests(&session, &dirty, &session.shell_client, -1);
         for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
         {
+            service_client_window_requests(&session, &dirty, &session.overlay_clients[slot], slot);
             service_client_size_hints(&session, &dirty, &session.overlay_clients[slot], slot);
             if (service_client_batches(&session, &dirty, &session.overlay_clients[slot]) < 0)
             {

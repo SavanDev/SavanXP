@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **Dialogs are windows of their own.** Under `sxgui_app_run`, `sxgui_dialog_begin`
+  opens a WM window owned by the app — framed, kept above its owner, which takes
+  no input meanwhile — so Minesweeper's About no longer gets cut off at Beginner.
+  New `gfx_window_open`/`gfx_window_close` and `SAVANXP_SYS_PIPE_SEND_HANDLE`/
+  `_RECEIVE_HANDLE` (handle passing over a pipe), tested by `handletest`.
+  [How it works](docs/OWNED_WINDOWS.md).
+
 - **Media Player (`/disk/bin/mediaplayer`), in the Accessories group.** Plays
   audio and video in a window: icon buttons for open, play/pause, stop and ±5 s,
   a draggable seek bar with accurate seek, volume, and Space/arrows/Home/O on the

@@ -27,6 +27,14 @@
  * header, savanxp_wm_client_requests, savanxp_gpu_dirty_rect_batch,
  * savanxp_wm_event, savanxp_desktop_launch_request) estan en syscall.h.
  *
+ * Una conexion, varias ventanas: estos canales son del PROCESO, no de una
+ * ventana. Ademas de la principal, el cliente puede pedir ventanas con dueno
+ * (dialogos) por el header de la principal (savanxp_wm_client_requests.window);
+ * el WM crea su seccion y se la entrega como handle por la cola de handles del
+ * pipe de eventos, y sus eventos viajan por ese mismo pipe con su window_id. Ni
+ * el WM ni el cliente abren un canal nuevo por ventana. Ver
+ * docs/OWNED_WINDOWS.md.
+ *
  * NOTA sobre el subsistema nativo: por diseno no comparte los headers del SDK
  * posix (ver docs/SYSTEM_LAYERING.md), asi que mantiene su espejo en
  * savanxp_native_gui.h. Este header es la fuente canonica: cualquier cambio
@@ -41,8 +49,9 @@
 #define SAVANXP_WM_FD_SECTION 3
 
 /* Eventos: el WM escribe registros savanxp_wm_event -- teclado del cliente con
- * foco y puntero en coordenadas LOCALES a la superficie. Solo-lectura para el
- * cliente, que lee de a registros enteros. El resize no viaja aca: el cliente
+ * foco y puntero en coordenadas LOCALES a la superficie de la ventana que dice
+ * window_id. Solo-lectura para el cliente, que lee de a registros enteros. Su
+ * cola de handles trae las secciones de las ventanas con dueno. El resize no viaja aca: el cliente
  * lo sintetiza al ver cambiar el ancho o el alto del header.
  *
  * Un cliente que no drene este canal no bloquea al WM: el extremo de escritura

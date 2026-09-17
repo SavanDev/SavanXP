@@ -101,6 +101,7 @@ int main(void) {
     const char* eventtest_argv[] = {"/disk/bin/eventtest", 0};
     const char* timertest_argv[] = {"/disk/bin/timertest", 0};
     const char* sectiontest_argv[] = {"/disk/bin/sectiontest", 0};
+    const char* handletest_argv[] = {"/disk/bin/handletest", 0};
     const char* semaphoretest_argv[] = {"/disk/bin/semaphoretest", 0};
     const char* cliptest_argv[] = {"/disk/bin/cliptest", 0};
     const char* seltest_argv[] = {"/disk/bin/seltest", 0};
@@ -133,6 +134,7 @@ int main(void) {
         !file_exists("/disk/bin/eventtest") ||
         !file_exists("/disk/bin/timertest") ||
         !file_exists("/disk/bin/sectiontest") ||
+        !file_exists("/disk/bin/handletest") ||
         !file_exists("/disk/bin/semaphoretest") ||
         !file_exists("/disk/bin/cliptest") ||
         !file_exists("/disk/bin/seltest") ||
@@ -161,6 +163,7 @@ int main(void) {
         !run_and_expect("/disk/bin/eventtest", eventtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/timertest", timertest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/sectiontest", sectiontest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/handletest", handletest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/semaphoretest", semaphoretest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/cliptest", cliptest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/seltest", seltest_argv, 1, 0) ||

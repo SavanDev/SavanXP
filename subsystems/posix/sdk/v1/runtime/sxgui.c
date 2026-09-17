@@ -2196,6 +2196,14 @@ static int sxgui_dialog_title_height(void)
 static struct sx_point sxgui_dialog_client_origin(const struct sxgui_dialog *dialog)
 {
     struct sx_point origin;
+    /* En su propia ventana el marco y el titulo los dibuja el WM: la superficie
+     * entera es el area util. */
+    if (dialog->windowed)
+    {
+        origin.x = 0;
+        origin.y = 0;
+        return origin;
+    }
     origin.x = dialog->rect.x + SXGUI_DIALOG_BORDER;
     origin.y = dialog->rect.y + SXGUI_DIALOG_BORDER + sxgui_dialog_title_height();
     return origin;
@@ -2205,26 +2213,30 @@ static void sxgui_paint_dialog(struct sxgui_context *ctx)
 {
     struct sxgui_dialog *dialog = ctx->modal;
     struct sx_painter *painter = &ctx->painter;
-    int title_height = sxgui_dialog_title_height();
-    struct sx_rect title = sx_rect_make(
-        dialog->rect.x + SXGUI_DIALOG_BORDER,
-        dialog->rect.y + SXGUI_DIALOG_BORDER,
-        dialog->rect.width - SXGUI_DIALOG_BORDER * 2,
-        title_height);
     struct sx_point origin = sxgui_dialog_client_origin(dialog);
     int index;
 
     sx_painter_fill_rect(painter, dialog->rect, SXGUI_COLOR_FACE);
-    sxgui_draw_raised(painter, dialog->rect);
-    sx_painter_fill_rect(painter, title, SXGUI_COLOR_SELECT);
-    if (dialog->title != 0)
+    if (!dialog->windowed)
     {
-        sx_painter_draw_text(
-            painter,
-            title.x + SXGUI_TEXT_PAD,
-            title.y + (title_height - gfx_text_height()) / 2,
-            dialog->title,
-            SXGUI_COLOR_SELECT_TEXT);
+        int title_height = sxgui_dialog_title_height();
+        struct sx_rect title = sx_rect_make(
+            dialog->rect.x + SXGUI_DIALOG_BORDER,
+            dialog->rect.y + SXGUI_DIALOG_BORDER,
+            dialog->rect.width - SXGUI_DIALOG_BORDER * 2,
+            title_height);
+
+        sxgui_draw_raised(painter, dialog->rect);
+        sx_painter_fill_rect(painter, title, SXGUI_COLOR_SELECT);
+        if (dialog->title != 0)
+        {
+            sx_painter_draw_text(
+                painter,
+                title.x + SXGUI_TEXT_PAD,
+                title.y + (title_height - gfx_text_height()) / 2,
+                dialog->title,
+                SXGUI_COLOR_SELECT_TEXT);
+        }
     }
 
     /* El borde doble va DEBAJO del boton: se dibuja el marco alrededor de su
@@ -2296,10 +2308,38 @@ void sxgui_paint_overlay(struct sxgui_context *ctx)
     {
         sxgui_paint_menu_popup(ctx);
     }
-    if (ctx->modal != 0)
+    if (ctx->modal != 0 && !ctx->modal->windowed)
     {
         sxgui_paint_dialog(ctx);
     }
+}
+
+void sxgui_paint_dialog_window(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info)
+{
+    struct sx_bitmap saved_target;
+    struct sx_painter saved_painter;
+
+    if (ctx == 0 || ctx->modal == 0 || !ctx->modal->windowed || pixels == 0 || info == 0)
+    {
+        return;
+    }
+    /* Los widgets pintan con el painter del contexto: se lo apunta un momento a
+     * la superficie del dialogo en vez de duplicar el camino de pintado. */
+    saved_target = ctx->target;
+    saved_painter = ctx->painter;
+    sx_bitmap_wrap(&ctx->target, pixels, info, SX_PIXEL_FORMAT_BGRX8888);
+    sx_painter_init(&ctx->painter, &ctx->target);
+    ctx->modal->rect = sx_rect_make(0, 0, (int)info->width, (int)info->height);
+    sxgui_paint_dialog(ctx);
+    /* El painter guardado apunta a &ctx->target, que vuelve a ser el bitmap de
+     * la app en el lugar de siempre. */
+    ctx->target = saved_target;
+    ctx->painter = saved_painter;
+}
+
+int sxgui_dialog_windowed(const struct sxgui_context *ctx)
+{
+    return ctx != 0 && ctx->modal != 0 && ctx->modal->windowed;
 }
 
 void sxgui_paint(struct sxgui_context *ctx)
@@ -2319,19 +2359,35 @@ void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, 
     {
         return;
     }
-    total_width = width + SXGUI_DIALOG_BORDER * 2;
-    total_height = height + SXGUI_DIALOG_BORDER * 2 + sxgui_dialog_title_height();
-    x = ((int)ctx->target.info.width - total_width) / 2;
-    y = ((int)ctx->target.info.height - total_height) / 2;
-    if (x < 0)
+    /* Un dialogo sobre otro reemplaza al primero, como siempre; lo nuevo es que
+     * el primero puede tener una ventana, y esa hay que cerrarla. */
+    if (ctx->modal != 0)
     {
-        x = 0;
+        sxgui_dialog_end(ctx, 0);
     }
-    if (y < 0)
+    dialog->windowed = 0;
+    if (ctx->dialog_host != 0 && ctx->dialog_host->open != 0 &&
+        ctx->dialog_host->open(ctx->dialog_host, dialog, width, height) == 0)
     {
-        y = 0;
+        dialog->windowed = 1;
+        dialog->rect = sx_rect_make(0, 0, width, height);
     }
-    dialog->rect = sx_rect_make(x, y, total_width, total_height);
+    else
+    {
+        total_width = width + SXGUI_DIALOG_BORDER * 2;
+        total_height = height + SXGUI_DIALOG_BORDER * 2 + sxgui_dialog_title_height();
+        x = ((int)ctx->target.info.width - total_width) / 2;
+        y = ((int)ctx->target.info.height - total_height) / 2;
+        if (x < 0)
+        {
+            x = 0;
+        }
+        if (y < 0)
+        {
+            y = 0;
+        }
+        dialog->rect = sx_rect_make(x, y, total_width, total_height);
+    }
     dialog->result = 0;
     dialog->saved_focus = ctx->focus_index;
     ctx->modal = dialog;
@@ -2373,6 +2429,14 @@ void sxgui_dialog_end(struct sxgui_context *ctx, int result)
     ctx->modal = 0;
     ctx->capture_index = -1;
     ctx->focus_index = dialog->saved_focus;
+    if (dialog->windowed)
+    {
+        dialog->windowed = 0;
+        if (ctx->dialog_host != 0 && ctx->dialog_host->close != 0)
+        {
+            ctx->dialog_host->close(ctx->dialog_host, dialog);
+        }
+    }
 }
 
 int sxgui_dialog_active(const struct sxgui_context *ctx)

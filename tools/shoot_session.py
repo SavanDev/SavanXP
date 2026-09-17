@@ -432,6 +432,21 @@ def scenario_mines(s):
     s.qmp.tap("f", pause=1.2)
     s.shot("mines-bandera")
 
+    # About en Principiante, el caso que motivo las ventanas con dueno
+    # (docs/OWNED_WINDOWS.md): el dialogo mide casi el doble que la ventana del
+    # tablero. Lo que hay que mirar: sale ENTERO, con marco y titulo del WM,
+    # centrado sobre el buscaminas y encima de el. ESC lo cierra desde el
+    # teclado, que el WM le rutea al dialogo por ser la ventana activa.
+    s.qmp.move_to(660, 332)
+    s.qmp.click()
+    s.shot("mines-menu-ayuda")
+    s.qmp.move_to(700, 354)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("mines-about")
+    s.qmp.tap("esc", pause=1.2)
+    s.shot("mines-about-cerrado")
+
     # Cambio de nivel, POR MOUSE: el menu no tiene acceso por teclado y los
     # niveles no tienen atajo. Va al final para no correrle las coordenadas a
     # las capturas de arriba.

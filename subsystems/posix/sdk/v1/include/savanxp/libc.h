@@ -49,6 +49,12 @@ long timer_cancel(int handle);
 long section_create(unsigned long size, unsigned long flags);
 void* map_view(int handle, unsigned long flags);
 long unmap_view(void* base);
+/* Deja una seccion, evento, semaforo o timer en la cola de handles del pipe;
+ * `pipe_fd` es el extremo de escritura. -SAVANXP_EAGAIN con la cola llena. */
+long pipe_send_handle(int pipe_fd, int handle);
+/* Saca el siguiente handle de la cola como un fd nuevo; `pipe_fd` es el
+ * extremo de lectura. Nunca bloquea: -SAVANXP_EAGAIN si no hay ninguno. */
+long pipe_receive_handle(int pipe_fd);
 long semaphore_create(long initial_count, long max_count);
 long semaphore_release(int handle, unsigned long release_count);
 long yield(void);
@@ -125,6 +131,11 @@ struct savanxp_gfx_context {
     uint32_t rect_capacity;
     uint32_t notified_width;
     uint32_t notified_height;
+    /* Ventana de este contexto dentro del proceso: 0 es la principal, la que
+     * abre gfx_open; 1..SAVANXP_WM_MAX_OWNED_WINDOWS son ventanas con dueno
+     * abiertas con gfx_window_open. Los eventos del pipe compartido se reparten
+     * por este id (docs/OWNED_WINDOWS.md). */
+    uint32_t window_id;
 };
 
 int power_shutdown(void);
@@ -182,6 +193,24 @@ long gfx_request_content_size(const struct savanxp_gfx_context* context, uint32_
  * suyo; el evento RESIZED igual queda consumido, asi que no hace falta
  * volver a aplicarlo. */
 long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long timeout_ms);
+/* Ventanas con dueno (docs/OWNED_WINDOWS.md). gfx_window_open le pide al WM una
+ * ventana de `width` x `height` de area util, con `title`, cuyo dueno es la
+ * ventana principal de `owner`; `window_id` la elige el llamador entre 1 y
+ * SAVANXP_WM_MAX_OWNED_WINDOWS. Mientras exista, el WM la mantiene arriba de su
+ * dueno y no le deja input al dueno. Devuelve 0 con `window` listo para
+ * presentar, o negativo si el WM no la creo (un WM que no la soporta vence el
+ * plazo con -SAVANXP_EAGAIN): el llamador cae a lo que hacia antes. */
+long gfx_window_open(
+    const struct savanxp_gfx_context* owner,
+    struct savanxp_gfx_context* window,
+    uint32_t window_id,
+    uint32_t width,
+    uint32_t height,
+    const char* title);
+long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gfx_context* window);
+/* Puntero de la ventana de `context`, sea la principal o una con dueno. Comparte
+ * el pipe y el reparto con gfx_poll_event/gfx_poll_pointer. */
+int gfx_poll_window_pointer(const struct savanxp_gfx_context* context, struct savanxp_gui_pointer_event* event);
 uint32_t gfx_rgb(uint8_t red, uint8_t green, uint8_t blue);
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info);
 size_t gfx_buffer_pixels(const struct savanxp_fb_info* info);

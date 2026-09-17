@@ -219,10 +219,17 @@ struct sxgui_menubar {
 
 /* ---- modal dialogs ---------------------------------------------------------
  *
- * A second caller-owned widget array painted as a centred overlay. While a
- * dialog is active it captures all input; Tab cycles inside it and ESC ends
- * it with result 0. Widget rects are RELATIVE to the dialog client area.
- * Comboboxes inside dialogs are not supported.
+ * A second caller-owned widget array. While a dialog is active it captures all
+ * input; Tab cycles inside it and ESC ends it with result 0. Widget rects are
+ * RELATIVE to the dialog client area. Comboboxes inside dialogs are not
+ * supported.
+ *
+ * Where it is painted depends on the context's dialog host. Under
+ * sxgui_app_run the dialog is its own window owned by the app's window
+ * (docs/OWNED_WINDOWS.md): the WM draws its frame and title and keeps it above
+ * the owner, so it no longer has to fit inside the app. Without a host, or if
+ * the WM does not create the window, it falls back to a centred overlay inside
+ * the app's own surface. The API is the same either way.
  */
 
 struct sxgui_dialog {
@@ -241,6 +248,18 @@ struct sxgui_dialog {
     int default_button;
     int saved_focus;                /* owned by the toolkit */
     int result;
+    /* Owned by the toolkit: 1 while the dialog lives in its own window (rect is
+     * then the whole window surface, origin 0,0), 0 while it is an overlay. */
+    int windowed;
+};
+
+/* Gives dialogs a window of their own. `open` returns 0 once the window exists
+ * with a client area of width x height; anything else keeps the overlay. The
+ * host paints and pumps that window (sxgui_app_run is the one host there is). */
+struct sxgui_dialog_host {
+    int (*open)(struct sxgui_dialog_host *host, struct sxgui_dialog *dialog, int width, int height);
+    void (*close)(struct sxgui_dialog_host *host, struct sxgui_dialog *dialog);
+    void *user;
 };
 
 struct sxgui_context {
@@ -277,6 +296,8 @@ struct sxgui_context {
      * dispatch against the dialog's widget array */
     struct sxgui_dialog *modal;
     int modal_route;
+    /* NULL = dialogs are overlays inside this surface */
+    struct sxgui_dialog_host *dialog_host;
 
     /* cursor shape the pointer should show given the widget currently under
      * it (enum savanxp_cursor_shape); updated by sxgui_handle_pointer */
@@ -304,6 +325,12 @@ int sxgui_menubar_height(void);
 void sxgui_dialog_begin(struct sxgui_context *ctx, struct sxgui_dialog *dialog, int width, int height);
 void sxgui_dialog_end(struct sxgui_context *ctx, int result);
 int sxgui_dialog_active(const struct sxgui_context *ctx);
+/* 1 while the active dialog lives in its own window. Pointer events of the
+ * app's window must not reach the toolkit then: their coordinates are not the
+ * dialog's. */
+int sxgui_dialog_windowed(const struct sxgui_context *ctx);
+/* Paints the active windowed dialog into its window's backbuffer. */
+void sxgui_paint_dialog_window(struct sxgui_context *ctx, uint32_t *pixels, const struct savanxp_fb_info *info);
 
 /* Feed compositor-routed input. Each returns non-zero when the UI changed and
  * a repaint is needed. */
@@ -446,6 +473,12 @@ struct sxgui_app {
     void (*on_tick)(struct sxgui_app *app);
 
     void *user;
+
+    /* Owned by the frame: the window of the active dialog (docs/OWNED_WINDOWS.md). */
+    struct sxgui_dialog_host dialog_host;
+    struct savanxp_gfx_context dialog_gfx;
+    int dialog_window_open;
+    int dialog_last_cursor_shape;
 };
 
 /* Margen que sxgui_app_autosize deja a la derecha y abajo del bounding box de

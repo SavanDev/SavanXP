@@ -277,7 +277,10 @@ struct sx_rect windowd_client_minimize_button_rect(const struct windowd_client *
     int button_x;
     int button_y;
 
-    if (client == 0 || client->pid <= 0 || !client->frame_visible)
+    /* Un dialogo (ventana con dueno) solo tiene la X, como en Windows: no se
+     * minimiza solo -- lo hace con su dueno -- ni se maximiza. Sin minimizar
+     * tampoco hay maximizar, que se ubica a partir de este rect. */
+    if (client == 0 || client->pid <= 0 || !client->frame_visible || client->owner_slot >= 0)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
@@ -461,7 +464,9 @@ int windowd_task_count(const struct windowd_session *session)
     for (index = 0; index < session->overlay_count; ++index)
     {
         int slot = session->overlay_order[index];
-        if (slot >= 0 && slot < WINDOWD_MAX_OVERLAY_CLIENTS && session->overlay_clients[slot].pid > 0)
+        /* Las ventanas con dueno no son tareas: se llega a ellas por su dueno. */
+        if (slot >= 0 && slot < WINDOWD_MAX_OVERLAY_CLIENTS && session->overlay_clients[slot].pid > 0 &&
+            session->overlay_clients[slot].owner_slot < 0)
         {
             count += 1;
         }
@@ -503,7 +508,8 @@ const struct windowd_client *windowd_task_client(const struct windowd_session *s
     for (order_index = 0; order_index < session->overlay_count; ++order_index)
     {
         int overlay_slot = session->overlay_order[order_index];
-        if (overlay_slot < 0 || overlay_slot >= WINDOWD_MAX_OVERLAY_CLIENTS || session->overlay_clients[overlay_slot].pid <= 0)
+        if (overlay_slot < 0 || overlay_slot >= WINDOWD_MAX_OVERLAY_CLIENTS || session->overlay_clients[overlay_slot].pid <= 0 ||
+            session->overlay_clients[overlay_slot].owner_slot >= 0)
         {
             continue;
         }

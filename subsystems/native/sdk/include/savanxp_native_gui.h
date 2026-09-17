@@ -77,6 +77,17 @@ struct sxn_gui_requests {
     uint32_t launch_head;
     uint32_t launch_tail;
     struct sxn_gui_launch_request launch[SXN_GUI_LAUNCH_QUEUE_CAPACITY];
+    /* Pedido de ventana con dueno (docs/OWNED_WINDOWS.md). Este runtime no abre
+     * ventanas con dueno; los campos estan para que el layout coincida. */
+    uint32_t window_sequence;
+    uint32_t window_reply_sequence;
+    int32_t window_reply_status;
+    uint32_t window_reserved;
+    uint32_t window_action;
+    uint32_t window_id;
+    uint32_t window_width;
+    uint32_t window_height;
+    char window_title[64];
 };
 
 struct sxn_gui_surface_header {
@@ -138,7 +149,7 @@ struct sxn_gui_pointer_event {
 
 struct sxn_gui_wm_event {
     uint32_t kind;
-    uint32_t reserved;
+    uint32_t window_id; /* 0 = la ventana principal, la unica que abre este runtime */
     union {
         struct sxn_gui_input_event key;
         struct sxn_gui_pointer_event pointer;

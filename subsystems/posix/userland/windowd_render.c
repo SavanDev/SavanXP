@@ -383,8 +383,18 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
     {
         draw_button(painter, frame_rect, frame_face, 0);
         sx_painter_fill_rect(painter, sx_rect_make(frame_rect.x + 2, frame_rect.y + 2, frame_rect.width - 4, WINDOWD_WINDOW_TITLEBAR_HEIGHT - 4), title_colour);
-        draw_embedded_bitmap(painter, icon, frame_rect.x + 6, frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - 16) / 2);
-        sx_painter_draw_text(painter, frame_rect.x + 26, frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - gfx_text_height()) / 2, window_title_for_client(client), gfx_rgb(255, 255, 255));
+        /* Los dialogos no llevan icono en la barra de titulo: el icono es de la
+         * aplicacion, y la aplicacion es su dueno. */
+        if (client->owner_slot < 0)
+        {
+            draw_embedded_bitmap(painter, icon, frame_rect.x + 6, frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - 16) / 2);
+        }
+        sx_painter_draw_text(
+            painter,
+            frame_rect.x + (client->owner_slot < 0 ? 26 : 8),
+            frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - gfx_text_height()) / 2,
+            window_title_for_client(client),
+            gfx_rgb(255, 255, 255));
         draw_minimize_button(painter, client);
         draw_maximize_button(painter, client);
         draw_close_button(painter, client);

@@ -556,9 +556,27 @@ process::Pipe* allocate_pipe() {
     return nullptr;
 }
 
+// Suelta los handles que quedaron viajando. Se llama cuando ya nadie los puede
+// recibir: sin lectores, o con el pipe muerto. Los objetos encolados nunca son
+// IoObjects (pipe_send_handle los rechaza), asi que soltar uno no puede volver a
+// entrar aca por el destroy de otro pipe.
+void drain_pipe_handles(process::Pipe& pipe) {
+    while (pipe.handle_count != 0) {
+        object::Header*& queued = pipe.handles[pipe.handle_head];
+        object::release(queued);
+        pipe.handle_access[pipe.handle_head] = object::access_none;
+        pipe.handle_head = (pipe.handle_head + 1u) % process::kPipeHandleQueueCapacity;
+        pipe.handle_count -= 1u;
+    }
+    pipe.handle_head = 0;
+}
+
 void free_pipe_if_unused(process::Pipe* pipe) {
     if (pipe == nullptr || !pipe->in_use) {
         return;
+    }
+    if (pipe->reader_refs == 0) {
+        drain_pipe_handles(*pipe);
     }
     if (pipe->reader_refs == 0 && pipe->writer_refs == 0) {
         memset(pipe, 0, sizeof(*pipe));
@@ -2619,6 +2637,76 @@ int create_pipe(process::Process& proc, uint64_t user_fd_array) {
         return negative_error(SAVANXP_EINVAL);
     }
     return 0;
+}
+
+/*
+ * Paso de handles por pipe, al estilo de I_SENDFD de System V: quien tiene el
+ * extremo de ESCRITURA le deja un handle a quien tenga el de LECTURA. El permiso
+ * es tener el canal -- no hace falta un handle al proceso destino ni una regla de
+ * quien puede meterle objetos a quien.
+ *
+ * Solo viajan objetos que no son IoObjects (secciones, eventos, semaforos,
+ * timers): un IoObject compartido arrastraria su offset y, si fuera otro pipe, la
+ * cuenta de lectores y escritores. El receptor recibe exactamente el acceso que
+ * tenia el emisor, nunca mas.
+ */
+int pipe_send_handle(process::Process& proc, uint64_t pipe_fd, uint64_t handle_fd) {
+    object::IoObject* file = fd_to_io_object(proc, pipe_fd, object::access_write);
+    if (file == nullptr || file->kind != process::HandleKind::pipe || file->pipe == nullptr ||
+        (file->open_flags & process::open_write) == 0) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    object::Header* handle_object = lookup_handle(proc, handle_fd, object::access_none);
+    if (handle_object == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (handle_object->type == object::Type::io) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    process::Pipe& pipe = *file->pipe;
+    if (pipe.reader_refs == 0) {
+        return negative_error(SAVANXP_EPIPE);
+    }
+    if (pipe.handle_count >= process::kPipeHandleQueueCapacity) {
+        return negative_error(SAVANXP_EAGAIN);
+    }
+
+    const uint32_t tail = (pipe.handle_head + pipe.handle_count) % process::kPipeHandleQueueCapacity;
+    object::retain(handle_object);
+    pipe.handles[tail] = handle_object;
+    pipe.handle_access[tail] = proc.handles[handle_fd].granted_access;
+    pipe.handle_count += 1u;
+    return 0;
+}
+
+// Nunca bloquea: el protocolo que usa el pipe anuncia el handle con sus propios
+// registros, asi que una cola vacia es un error del que llama, no una espera.
+int pipe_receive_handle(process::Process& proc, uint64_t pipe_fd) {
+    object::IoObject* file = fd_to_io_object(proc, pipe_fd, object::access_read);
+    if (file == nullptr || file->kind != process::HandleKind::pipe || file->pipe == nullptr ||
+        (file->open_flags & process::open_read) == 0) {
+        return negative_error(SAVANXP_EBADF);
+    }
+
+    process::Pipe& pipe = *file->pipe;
+    if (pipe.handle_count == 0) {
+        return negative_error(SAVANXP_EAGAIN);
+    }
+
+    object::Header* handle_object = pipe.handles[pipe.handle_head];
+    const int fd = allocate_fd(proc, handle_object, pipe.handle_access[pipe.handle_head], object::handle_none);
+    if (fd < 0) {
+        // Sin lugar en la tabla el handle se queda en la cola: el receptor puede
+        // cerrar algo y reintentar.
+        return fd;
+    }
+    // allocate_fd tomo su propia referencia; la de la cola se suelta.
+    object::release(pipe.handles[pipe.handle_head]);
+    pipe.handle_access[pipe.handle_head] = object::access_none;
+    pipe.handle_head = (pipe.handle_head + 1u) % process::kPipeHandleQueueCapacity;
+    pipe.handle_count -= 1u;
+    return fd;
 }
 
 int create_event_handle(process::Process& proc, uint32_t flags) {

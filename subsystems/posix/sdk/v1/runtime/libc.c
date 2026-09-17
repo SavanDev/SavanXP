@@ -245,6 +245,14 @@ long unmap_view(void* base) {
     return syscall1(SAVANXP_SYS_UNMAP_VIEW, (unsigned long)base);
 }
 
+long pipe_send_handle(int pipe_fd, int handle) {
+    return syscall2(SAVANXP_SYS_PIPE_SEND_HANDLE, (unsigned long)pipe_fd, (unsigned long)handle);
+}
+
+long pipe_receive_handle(int pipe_fd) {
+    return syscall1(SAVANXP_SYS_PIPE_RECEIVE_HANDLE, (unsigned long)pipe_fd);
+}
+
 long semaphore_create(long initial_count, long max_count) {
     return syscall2(SAVANXP_SYS_SEMAPHORE_CREATE, (unsigned long)initial_count, (unsigned long)max_count);
 }

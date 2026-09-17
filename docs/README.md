@@ -29,6 +29,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`WM_SUBSYSTEM.md`](WM_SUBSYSTEM.md) — extraction of the window manager into
   its own subsystem, following the NT 3.5 model: `windowd` as the WM, the shell
   as client processes, and the WM↔client protocol.
+- [`OWNED_WINDOWS.md`](OWNED_WINDOWS.md) — one connection, several windows:
+  why a dialog is a window owned by its app and not a process, NT's split of
+  responsibilities, handle passing over a pipe as the transport, the
+  window-manager rules for an owner and its dialogs, and what is left (popups).
 - [`SXGFX_ROADMAP.md`](SXGFX_ROADMAP.md) — the plan for hardening `sxgfx`, the
   2D rasterization layer, into the role `SYSTEM_LAYERING.md` assigns it: the
   GDI32 underneath SXGUI-C.

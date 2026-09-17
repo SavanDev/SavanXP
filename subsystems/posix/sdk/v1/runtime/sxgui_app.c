@@ -152,6 +152,69 @@ void sxgui_app_quit(struct sxgui_app *app, int exit_code)
     }
 }
 
+/* --- dialogo en ventana propia (docs/OWNED_WINDOWS.md) ---------------------
+ *
+ * El frame es el host de dialogos de su contexto: cada sxgui_dialog_begin pide
+ * al WM una ventana con dueno para el dialogo, y el loop de abajo la pinta, la
+ * presenta y le reparte su input. Un dialogo a la vez, como el toolkit. */
+#define SXGUI_APP_DIALOG_WINDOW_ID 1u
+
+static int sxgui_app_dialog_open(struct sxgui_dialog_host *host, struct sxgui_dialog *dialog, int width, int height)
+{
+    struct sxgui_app *app = (struct sxgui_app *)host->user;
+
+    if (app == 0 || app->dialog_window_open || width <= 0 || height <= 0)
+    {
+        return -1;
+    }
+    if (gfx_window_open(
+            &app->gfx,
+            &app->dialog_gfx,
+            SXGUI_APP_DIALOG_WINDOW_ID,
+            (uint32_t)width,
+            (uint32_t)height,
+            dialog->title) < 0)
+    {
+        return -1;
+    }
+    app->dialog_window_open = 1;
+    app->dialog_last_cursor_shape = 0;
+    app->needs_repaint = 1;
+    return 0;
+}
+
+static void sxgui_app_dialog_close(struct sxgui_dialog_host *host, struct sxgui_dialog *dialog)
+{
+    struct sxgui_app *app = (struct sxgui_app *)host->user;
+
+    (void)dialog;
+    if (app == 0 || !app->dialog_window_open)
+    {
+        return;
+    }
+    (void)gfx_window_close(&app->gfx, &app->dialog_gfx);
+    app->dialog_window_open = 0;
+    app->needs_repaint = 1;
+}
+
+static void sxgui_app_attach_dialog_host(struct sxgui_app *app)
+{
+    app->dialog_host.open = sxgui_app_dialog_open;
+    app->dialog_host.close = sxgui_app_dialog_close;
+    app->dialog_host.user = app;
+    app->ui.dialog_host = &app->dialog_host;
+}
+
+static void sxgui_app_detach_dialog_host(struct sxgui_app *app)
+{
+    /* Un dialogo abierto al salir se cierra con su ventana, no se abandona. */
+    if (sxgui_dialog_active(&app->ui))
+    {
+        sxgui_dialog_end(&app->ui, 0);
+    }
+    app->ui.dialog_host = 0;
+}
+
 static void sxgui_app_shutdown(struct sxgui_app *app)
 {
     gfx_release(&app->gfx);
@@ -175,6 +238,9 @@ int sxgui_app_run(struct sxgui_app *app)
     }
 
     next_tick_ms = uptime_ms() + app->tick_interval_ms;
+    /* Solo este loop sabe pintar y bombear la ventana de un dialogo: una app con
+     * loop propio sigue teniendo el dialogo adentro de su superficie. */
+    sxgui_app_attach_dialog_host(app);
 
     while (app->running)
     {
@@ -188,6 +254,55 @@ int sxgui_app_run(struct sxgui_app *app)
             {
                 app->on_tick(app);
                 next_tick_ms = now + app->tick_interval_ms;
+            }
+        }
+
+        /* El WM le pidio cerrar al dialogo (la X de su marco): es un Cancel,
+         * igual que ESC. */
+        if (app->dialog_window_open && gfx_should_close(&app->dialog_gfx))
+        {
+            sxgui_dialog_end(&app->ui, 0);
+            app->needs_repaint = 1;
+        }
+
+        /* El teclado del dialogo entra por el mismo camino que el de la
+         * ventana principal: con un modal activo el toolkit ya lo manda al
+         * dialogo, y las apps que miran teclas antes (on_key) siguen viendo lo
+         * mismo que cuando el dialogo era un overlay. Su superficie no cambia
+         * de tamano, asi que no trae RESIZED. */
+        while (app->dialog_window_open && gfx_poll_event(&app->dialog_gfx, &event) > 0)
+        {
+            if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
+            {
+                continue;
+            }
+            if (app->on_key != 0 && app->on_key(app, &event))
+            {
+                app->needs_repaint = 1;
+                continue;
+            }
+            if (sxgui_handle_key(&app->ui, &event))
+            {
+                app->needs_repaint = 1;
+            }
+        }
+
+        while (app->dialog_window_open && gfx_poll_window_pointer(&app->dialog_gfx, &pointer_event) > 0)
+        {
+            /* Sin on_pointer: el hook de la app piensa en coordenadas de SU
+             * ventana, y estas son del dialogo. */
+            if (sxgui_handle_pointer(&app->ui, &pointer_event))
+            {
+                app->needs_repaint = 1;
+            }
+            if (app->dialog_window_open)
+            {
+                int shape = sxgui_cursor_shape(&app->ui);
+                if (shape != app->dialog_last_cursor_shape &&
+                    gfx_desktop_set_cursor_shape(&app->dialog_gfx, (uint32_t)shape) == 0)
+                {
+                    app->dialog_last_cursor_shape = shape;
+                }
             }
         }
 
@@ -222,6 +337,13 @@ int sxgui_app_run(struct sxgui_app *app)
 
         while (app->pointer_fd >= 0 && gfx_poll_pointer((int)app->pointer_fd, &pointer_event) > 0)
         {
+            /* Con el dialogo en su ventana la principal esta deshabilitada: el WM
+             * ya no le manda puntero, y lo que quedo en camino no se puede
+             * interpretar contra el dialogo. */
+            if (sxgui_dialog_windowed(&app->ui))
+            {
+                continue;
+            }
             if (app->on_pointer != 0 && app->on_pointer(app, &pointer_event))
             {
                 app->needs_repaint = 1;
@@ -263,6 +385,16 @@ int sxgui_app_run(struct sxgui_app *app)
                 sxgui_app_quit(app, 1);
                 break;
             }
+            if (app->dialog_window_open && sxgui_dialog_windowed(&app->ui))
+            {
+                sxgui_paint_dialog_window(&app->ui, app->dialog_gfx.pixels, &app->dialog_gfx.info);
+                /* Un dialogo que no se puede presentar no se deja abierto e
+                 * invisible: se cancela y la app sigue. */
+                if (gfx_present(&app->dialog_gfx, app->dialog_gfx.pixels) < 0)
+                {
+                    sxgui_dialog_end(&app->ui, 0);
+                }
+            }
             app->needs_repaint = 0;
         }
         else
@@ -271,6 +403,7 @@ int sxgui_app_run(struct sxgui_app *app)
         }
     }
 
+    sxgui_app_detach_dialog_host(app);
     sxgui_app_shutdown(app);
     return app->exit_code;
 }
