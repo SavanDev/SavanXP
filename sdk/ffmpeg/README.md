@@ -1,115 +1,127 @@
-# Port de FFmpeg
+# FFmpeg port and Media Player
 
-libavutil / libavcodec / libavformat / libswresample / libswscale compiladas
-contra la libc de SavanXP, con dos consumidores que corren adentro del SO.
+libavutil / libavcodec / libavformat / libswresample / libswscale compiled
+against the SavanXP libc, and **Media Player** (`/disk/bin/mediaplayer`), the
+windowed audio/video player built on them.
 
-Estado: **reproduce video**. `build.ps1 ffmpeg-smoke` corre tres cosas:
+How the player works -- the single-threaded loop, the clock, the audio latency
+it compensates, what is missing -- is in
+[`docs/MEDIA_PLAYER.md`](../../docs/MEDIA_PLAYER.md). This file is about
+building it.
 
-| binario | que hace |
-| --- | --- |
-| `wavinfo` | abre un WAV, informa lo que hay adentro y lo decodifica entero |
-| `player --selftest` | decodifica MJPEG y convierte YUV->RGB con swscale, sin pantalla |
-| `player --hold` | lo mismo pero presentando por `/dev/gpu0`, y deja el ultimo cuadro fijo para que el harness saque una captura |
+## Building
 
-El set de codecs es a proposito acotado: WAV/PCM s16le y MJPEG. MJPEG y no
-H.264 porque este build va sin asm y sin hilos, y porque un stream MJPEG crudo
-son JPEGs concatenados -- se genera sin muxear nada.
+### Windows
 
-## Requisitos
-
-FFmpeg se construye con GNU make, que el pipeline de SavanXP no usa para nada
-mas. Asi que el port se construye aparte, en un entorno POSIX que tenga:
-
-- **GNU make**
-- **clang** y **ld.lld** (cualquier version reciente sirve)
-- shell POSIX, `curl`, `tar`
-
-En Linux o macOS eso ya esta. En Windows hace falta un entorno que lo provea:
-WSL y MSYS2 sirven los dos. Los scripts derivan la raiz del repo de su propia
-ubicacion, asi que no hay rutas que ajustar.
-
-Que se use OTRO clang que el de `toolchain/` no parte el build en dos: se
-compila con los mismos flags de `tools/UserAppCommon.ps1` y para el mismo
-`-target x86_64-unknown-none-elf`, asi que lo que sale son objetos ELF x86-64
-freestanding, iguales a los que produce el clang horneado. La division es:
-
-- el entorno POSIX produce `build/external/wavinfo.elf` (los `.a` de FFmpeg
-  quedan en su directorio de trabajo, no cruzan);
-- `build.ps1 ffmpeg-smoke` lo instala en la imagen y lo corre.
-
-El fuente de FFmpeg no entra al repo: se baja y se construye en el directorio de
-trabajo (`$HOME/savanxp-ffmpeg` por default, se cambia con `WORK=`). Si ese
-directorio cae sobre un filesystem montado desde otro sistema -- por ejemplo
-`/mnt/...` en WSL -- el build tarda un orden de magnitud mas, porque son decenas
-de miles de operaciones de archivo. Conviene dejarlo en el filesystem nativo.
-
-## Uso
-
-```
-bash sdk/ffmpeg/all.sh          # en el entorno POSIX
-python sdk/ffmpeg/make-tone.py  # genera build/media/tono.wav
-python sdk/ffmpeg/make-clip.py  # genera build/media/clip.mjpeg
-build.ps1 ffmpeg-smoke          # instala y corre adentro del SO
+```powershell
+.\tools\bootstrap.ps1          # once: bakes GNU make into toolchain/ with the rest
+.\sdk\ffmpeg\build.ps1         # fetch, configure, build, link, stamp, install
+.\build.ps1 run                # Media Player is in the Accessories group
 ```
 
-La captura del player queda en `build/shots/player/`.
+Needs Git for Windows (its `bash` runs the `.sh` scripts) and the baked
+toolchain: the LLVM that builds the OS and a pinned native GNU make
+(`tools/toolchain.lock.json`). No WSL, no MSYS2.
 
-`all.sh` encadena los pasos, que tambien se pueden correr sueltos:
+Switches: `-NoInstall` builds and stamps without touching `build/disk.img`;
+`-SkipPort` only stamps and installs the already linked ELF; `-WithTestMedia`
+also installs the test clips into `/disk/media`; `-Work <dir>` moves the work
+directory.
 
-| script | que hace |
+### Linux / macOS
+
+```sh
+bash sdk/ffmpeg/all.sh         # needs clang, ld.lld, llvm-ar and GNU make in PATH
+pwsh sdk/ffmpeg/install.ps1    # stamp and install into build/disk.img
+```
+
+### The work directory
+
+FFmpeg's source never enters the repository. It is downloaded (sha256-pinned)
+and built in `$HOME/savanxp-ffmpeg`, overridable with `WORK=` / `-Work`. The
+first build takes a few minutes; later ones only relink.
+
+The path **must not contain whitespace**: `configure` expands `CFLAGS` unquoted,
+so a path with a space silently splits into two arguments. On Windows a profile
+directory with a space is common, so the scripts switch to its 8.3 short form
+(`C:\Users\OASISD~1\...`) on their own. For the same reason the SDK headers and
+linker script are copied into `$WORK/sysroot` instead of referenced in place.
+
+## Scripts
+
+`all.sh` chains the steps; each one can also run alone.
+
+| script | what it does |
 | --- | --- |
-| `fetch.sh` | baja y desempaqueta FFmpeg (version fijada adentro) |
-| `runtime.sh` | compila el runtime de SavanXP como `libsavanxp.a` |
-| `configure.sh` | corre el configure de FFmpeg apuntando al target |
-| `build.sh` | `make -k` y resume que fallo |
-| `link-demo.sh` | compila y linkea `wavinfo.c` y `player.c` contra las libav* |
+| `env.sh` | shared environment: paths, target flags, the whitespace rule |
+| `fetch.sh` | downloads and verifies the FFmpeg tarball |
+| `runtime.sh` | builds the SavanXP runtime as `libsavanxp.a` and `libsxgui.a` |
+| `configure.sh` | runs FFmpeg's configure with the player's format set; skipped when the arguments did not change (`FORCE_CONFIGURE=1`) |
+| `build.sh` | `make -k`, and a summary of what failed |
+| `link.sh` | compiles `mediaplayer/*.c` and links `build/external/mediaplayer.elf` |
+| `install.ps1` | stamps the SXE resources on a copy and installs it |
 
-El material de prueba lo generan `make-tone.py` (un WAV de 440 Hz) y
-`make-clip.py` (24 cuadros MJPEG). El clip esta dibujado para que un error se
-VEA: una barra que avanza un paso por cuadro, franjas de color puro -- si los
-planos U/V se cruzan cambian de color -- y el numero de cuadro.
+## Formats
 
-## Las tres cosas que no son obvias
+The set lives in `configure.sh`; the rest is resolved by configure from each
+component's dependencies.
 
-Las tres comparten la misma forma: no fallan ruidosamente, producen una
-configuracion equivocada.
+| | |
+| --- | --- |
+| Containers | MP4/MOV, Matroska/WebM, AVI, Ogg, MPEG-PS, MPEG-TS, MP3, FLAC, WAV, ADTS AAC, AC-3, IVF, raw H.264/HEVC/MPEG video, MJPEG |
+| Video | H.264, HEVC, VP8, VP9, MPEG-4 Part 2, MS-MPEG4v3, Theora, MPEG-1/2, MJPEG |
+| Audio | AAC, MP3, MP2, Vorbis, Opus, FLAC, AC-3, PCM |
 
-1. **`runtime.sh` existe porque el configure de FFmpeg LINKEA.** Sin una libc
-   contra la que linkear, sus checks no dan error: concluyen que la libc no
-   tiene nada y siguen.
+Everything decodes in scalar C on one core: no assembly (the toolchain has no
+nasm) and no threads (the kernel has none). What that costs is measured in
+`docs/MEDIA_PLAYER.md`.
 
-2. **`-no-pie` es obligatorio.** El driver de clang le pasa `-pie` al linker por
-   default, y con `-fno-pic` lld rechaza cualquier programa por las
-   reubicaciones absolutas. El sintoma no es un error de link sino un configure
-   que decide que no existe `trunc`.
+## Testing
 
-3. **`-static` es obligatorio.** Sin el, el driver marca el ELF como dinamico y
-   agrega `.interp`, que empuja al segundo `PT_LOAD` a una direccion sin alinear
-   a pagina.
+```powershell
+.\sdk\ffmpeg\build.ps1 -NoInstall
+.\build.ps1 ffmpeg-smoke
+```
 
-## Como se verifica lo visual
+`ffmpeg-smoke` installs the player and three generated clips and boots twice:
 
-"Se ve bien" no es algo que un harness pueda asertar, asi que esta partido en
-dos. El `--selftest` cubre lo comprobable sin ojos: que todos los cuadros
-decodifiquen, que mantengan el tamano declarado y que la conversion produzca
-pixeles que no sean todos iguales. El `--hold` cubre lo otro -- que los pixeles
-LLEGUEN a la pantalla --: deja el ultimo cuadro fijo, avisa por serial, y ahi el
-harness saca una captura por QMP y comprueba que no sea de un solo color.
+- `mediaplayer --selftest` decodes `tono.wav` (audio only), `clip.mjpeg` (raw
+  video, no container) and `avsync.avi` (MJPEG + PCM interleaved, resampled
+  from 44.1 kHz mono): every frame converts, audio lasts as long as the file,
+  a seek lands on the requested frame and sample, and on `avsync.avi` each
+  flash frame starts within 20 ms of its beep.
+- `mediaplayer --gpu-hold` shows `avsync.avi` through `/dev/gpu0` and holds the
+  last frame; the harness takes a QMP screenshot into `build/shots/player/` and
+  fails if it is a flat colour.
 
-El player presenta por `/dev/gpu0` (`gpu_open`/`gpu_acquire`/`gpu_present`) y no
-por `gfx_open`: ese es el camino de un cliente del WM, que mapea un fd heredado
-de windowd. Un proceso lanzado por init -- que es como corre en el harness -- no
-lo tiene. Es el mismo camino que usa `gputest`.
+The clips are generated with Python + Pillow by `make-tone.py`, `make-clip.py`
+and `make-avclip.py`. They are drawn so that errors are visible: a bar that
+moves one step per frame, pure colour stripes that change hue if the U/V planes
+are swapped, and in `avsync.avi` a flash and a 1 kHz beep at the start of every
+second, which is also the manual sync check in the window.
 
-## Que falta para subir de codecs
+`mediaplayer --probe <file>` prints what a file contains and decodes it whole,
+for trying a new file from the shell.
 
-El set se agranda en `configure.sh` (`--enable-decoder=`, `--enable-demuxer=`).
-Lo que probablemente aparezca al hacerlo:
+## Three things that are not obvious
 
-- Mas superficie de libc. Lo que ya se sabe que falta: `fscanf`, `mkstemp`,
-  `realpath`.
-- Rendimiento: el build va sin asm (`--disable-asm`) y sin hilos
-  (`--disable-pthreads`), porque el kernel no tiene primitiva de hilos y el
-  toolchain no trae nasm.
-- Tamano: `wavinfo` pesa ~700 KB con un solo codec PCM. La imagen SxFS son 64
-  MiB y 255 inodos, asi que un set grande hay que medirlo.
+All three share a shape: they do not fail loudly, they produce a wrong
+configuration.
+
+1. **`runtime.sh` exists because FFmpeg's configure LINKS.** Without a libc to
+   link against, its checks do not error out: they conclude the libc has
+   nothing and carry on.
+
+2. **The link goes through the Linux target triple.** Compiling targets
+   `x86_64-unknown-none-elf`, but with that triple clang's driver hands the link
+   to a `gcc` that does not exist on Windows. With `x86_64-unknown-linux-gnu`
+   it calls `ld.lld` directly on every host; `-nostdlib -static -no-pie` and
+   the SDK linker script decide the output, so the ELF is the same. Without
+   `-no-pie` lld rejects every program and configure decides there is no
+   `trunc`; without `-static` the ELF gets an `.interp` that misaligns the
+   second `PT_LOAD`.
+
+3. **H.264 does not link without HEVC in FFmpeg 7.1.1.** `h2645_sei.o`
+   references `ff_aom_uninit_film_grain_params`, which is only compiled with
+   the HEVC decoder. The library build succeeds and the error only shows up
+   when linking the program.

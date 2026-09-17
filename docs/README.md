@@ -63,6 +63,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   and its 32-bit condition, what a runaway clock did to the audio feed, and the
   three lines that diagnose a clock problem.
 
+- [`MEDIA_PLAYER.md`](MEDIA_PLAYER.md) — how Media Player plays a file on one
+  thread: the pull-based FFmpeg engine, accurate seek, why the clock is the
+  wall clock and not the audio device, the driver latency it compensates and
+  why pause, seek and stalls restart the audio stream, what the sync selftest
+  proves and what it cannot, and the roadmap (audio position, threads, asm).
+
 - [`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md) — what the system reports about
   itself and how to read it: the per-process tick and memory counters the kernel
   exports, why a percentage only exists between two samples, why resident memory

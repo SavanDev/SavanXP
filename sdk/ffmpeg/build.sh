@@ -1,30 +1,32 @@
 #!/bin/bash
-# Compila FFmpeg contra SavanXP y resume que fallo.
+# Compila las bibliotecas de FFmpeg contra SavanXP y resume que fallo.
 #
-# Corre con -k a proposito: en la primera pasada interesa el INVENTARIO de lo
-# que falta, no el primer error. Arreglar de a uno pagando un build entero por
-# vez es mucho mas lento que juntar la lista y hacer una tanda.
+# Corre con -k a proposito: cuando se agranda el set de formatos, lo que
+# interesa es el INVENTARIO de lo que falta en la libc, no el primer error.
+# Arreglar de a uno pagando un build entero por vez es mucho mas lento que
+# juntar la lista y hacer una tanda.
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.1}"
-WORK="${WORK:-$HOME/savanxp-ffmpeg}"
-BUILD="$WORK/build"
+MAKE="${MAKE:-make}"
 LOG="$WORK/make.log"
+export TMPDIR="$WORK/tmp"
+mkdir -p "$TMPDIR"
 
 cd "$BUILD"
-echo "== make -k -j$(nproc)"
-make -k -j"$(nproc)" >"$LOG" 2>&1
+echo "== $MAKE -k -j$(sx_jobs)"
+"$MAKE" -k -j"$(sx_jobs)" >"$LOG" 2>&1
 status=$?
 
 echo "== make salio con $status"
-echo
-echo "===== errores distintos ====="
-grep -oE "error: .*" "$LOG" | sed 's/ \[-W.*//' | sort | uniq -c | sort -rn | head -40
-echo
-echo "===== archivos que fallaron ====="
-grep -oE "^[a-z0-9_/]+\.c:[0-9]+:[0-9]+: error" "$LOG" | cut -d: -f1 | sort -u | head -30
-echo
-echo "===== total de lineas de error ====="
-grep -c "error:" "$LOG"
-echo "log completo en $LOG"
+if [ $status -ne 0 ]; then
+    echo
+    echo "===== errores distintos ====="
+    grep -oE "error: .*" "$LOG" | sed 's/ \[-W.*//' | sort | uniq -c | sort -rn | head -40
+    echo
+    echo "===== archivos que fallaron ====="
+    grep -oE "[^ ]+\.c:[0-9]+:[0-9]+: error" "$LOG" | sed -E 's/:[0-9]+:[0-9]+: error$//' | sort -u | head -30
+    echo
+    echo "log completo en $LOG"
+fi
 exit $status

@@ -27,6 +27,7 @@ $Script:ToolchainTools = @{
     "haxe"               = @{ Env = "SAVANXP_HAXE";    Manifest = "haxe" }
     "haxelib"            = @{ Env = "SAVANXP_HAXELIB"; Manifest = "haxelib" }
     "ninja"              = @{ Env = "SAVANXP_NINJA";   Manifest = "ninja" }
+    "make"               = @{ Env = "SAVANXP_MAKE";    Manifest = "make" }
     "python"             = @{ Env = "SAVANXP_PYTHON";  Manifest = "python" }
 }
 
@@ -104,4 +105,36 @@ function Resolve-OvmfPair {
     }
 
     throw "No se encontro OVMF. Ejecuta 'tools/bootstrap.ps1' o defini OVMF_CODE y OVMF_VARS."
+}
+
+# Shell POSIX para los scripts .sh (hoy, solo el port de FFmpeg). No se hornea:
+# en Windows es el bash de Git for Windows, que cualquiera que clono el repo ya
+# tiene. Lo que NO sirve es el `bash` pelado del PATH: en Windows suele ser
+# System32/bash.exe, el lanzador de WSL, que corre los scripts en
+# otra maquina con otro filesystem.
+function Resolve-PosixShell {
+    if ($env:SAVANXP_BASH -and (Test-Path $env:SAVANXP_BASH)) {
+        return $env:SAVANXP_BASH
+    }
+
+    if (Test-IsWindowsHost) {
+        $git = Get-Command git -ErrorAction SilentlyContinue
+        if ($git) {
+            # git.exe vive en <Git>/cmd o <Git>/bin; bash, en <Git>/bin.
+            $gitRoot = Split-Path -Parent (Split-Path -Parent $git.Source)
+            foreach ($candidate in @("bin/bash.exe", "usr/bin/bash.exe")) {
+                $path = Join-Path $gitRoot $candidate
+                if (Test-Path $path) {
+                    return $path
+                }
+            }
+        }
+        throw "No se encontro el bash de Git for Windows. Instala Git for Windows o defini SAVANXP_BASH."
+    }
+
+    $bash = Get-Command bash -ErrorAction SilentlyContinue
+    if (-not $bash) {
+        throw "No se encontro bash en el PATH. Defini SAVANXP_BASH."
+    }
+    return $bash.Source
 }

@@ -212,7 +212,7 @@ class Session(object):
         de cada grupo (docs/SXE_FORMAT.md, "All Programs"), asi que estos
         indices son posiciones en ese orden. Con las categorias de hoy:
 
-            Accessories: Calculator, Files, Notepad, Shell
+            Accessories: Calculator, Files, [Media Player], Notepad, Shell
             Diagnostics: Gears, Gfx Demo, Key Test, Mouse Test, Widgets
             Games:       Doom (solo si esta instalado), Minesweeper
             System:      Add/Remove Programs, System Properties, Task Manager
@@ -220,11 +220,16 @@ class Session(object):
         El grupo Games ya no depende de que haya un port externo instalado: el
         Buscaminas viene en la imagen, asi que la solapa existe siempre y System
         es SIEMPRE la cuarta.
+
+        Un `steps` negativo cuenta desde el ULTIMO icono: la seleccion da la
+        vuelta, asi que una flecha a la izquierda desde el primero cae en el
+        ultimo. Sirve para llegar a un icono que queda estable aunque se instale
+        un programa externo que se ordena antes que el.
         """
         for _ in range(groups):
             self.qmp.tap("tab", pause=0.6)
-        for _ in range(steps):
-            self.qmp.tap("right", pause=0.4)
+        for _ in range(abs(steps)):
+            self.qmp.tap("right" if steps > 0 else "left", pause=0.4)
         self.qmp.tap("ret")
         time.sleep(25)
 
@@ -234,11 +239,16 @@ class Session(object):
     def open_files(self):
         self.launch(1)
 
+    # Notepad y Shell se cuentan desde el final: Media Player (sdk/ffmpeg), si
+    # esta instalado, entra en Accessories entre Files y Notepad.
     def open_notepad(self):
-        self.launch(2)
+        self.launch(-2)
 
     def open_shell(self):
-        self.launch(3)
+        self.launch(-1)
+
+    def open_mediaplayer(self):
+        self.launch(2)
 
     def open_mines(self):
         # Grupo Games (tercera solapa), segundo icono. El `right` sirve con Doom
@@ -903,6 +913,36 @@ def scenario_spin(s):
     s.shot("spin-final")
 
 
+def scenario_mediaplayer(s):
+    """Media Player reproduciendo el clip de sincronia, en ventana.
+
+    Necesita el reproductor y el material instalados (shoot.ps1 lo exige). Se
+    abre por el launcher y el archivo por el dialogo Open, que arranca con
+    /disk/media/ escrito: solo falta el nombre. El punto se manda como la tecla
+    "dot", que en el layout ES del guest tambien es el punto.
+
+    Capturas: reproduciendo, en pausa (Space), despues de un seek (flecha
+    derecha, +5 s) y al terminar. La del seek en pausa tiene que mostrar el
+    cuadro pedido, no el keyframe anterior.
+    """
+    s.open_mediaplayer()
+    s.shot("mediaplayer-vacio")
+    s.qmp.tap("o", pause=1.5)
+    s.qmp.type_text("avsync")
+    s.qmp.tap("dot")
+    s.qmp.type_text("avi")
+    s.shot("mediaplayer-dialogo")
+    s.qmp.tap("ret", pause=3.0)
+    s.shot("mediaplayer-reproduciendo")
+    time.sleep(1.5)
+    s.qmp.tap("spc", pause=2.0)
+    s.shot("mediaplayer-pausa")
+    s.qmp.tap("left", pause=3.0)
+    s.shot("mediaplayer-seek-pausa")
+    s.qmp.tap("spc", pause=12.0)
+    s.shot("mediaplayer-fin")
+
+
 SCENARIOS = {
     "desktop": scenario_desktop,
     "alttab": scenario_alttab,
@@ -921,6 +961,7 @@ SCENARIOS = {
     "saturate": scenario_saturate,
     "spin": scenario_spin,
     "gears": scenario_gears,
+    "mediaplayer": scenario_mediaplayer,
 }
 
 

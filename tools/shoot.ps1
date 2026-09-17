@@ -25,7 +25,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("desktop", "alttab", "clipboard", "calc", "mines", "files", "shell", "appwiz", "system", "taskbar", "kbdlayout", "wheel", "notepadwheel", "bench", "saturate", "spin", "gears")]
+    [ValidateSet("desktop", "alttab", "clipboard", "calc", "mines", "files", "shell", "appwiz", "system", "taskbar", "kbdlayout", "wheel", "notepadwheel", "bench", "saturate", "spin", "gears", "mediaplayer")]
     [string]$Scenario = "desktop",
 
     [string]$OutDir,
@@ -78,6 +78,13 @@ if (Test-Path $automationSpec) {
 $image = Join-Path $ProjectRoot "build/image"
 if (-not (Test-Path $image)) {
     throw "No existe build/image. Corre '.\build.ps1 build' primero."
+}
+
+if ($Scenario -eq "mediaplayer") {
+    $sxfs = Open-SxfsImage (Join-Path $ProjectRoot "build/disk.img")
+    if (-not (Get-SxfsPathInfo $sxfs "/disk/bin/mediaplayer") -or -not (Get-SxfsPathInfo $sxfs "/disk/media/avsync.avi")) {
+        throw "El escenario 'mediaplayer' necesita el reproductor y su material. Corre 'sdk/ffmpeg/build.ps1 -WithTestMedia' primero."
+    }
 }
 
 # El escenario de Agregar o quitar programas navega el launcher por teclado. El

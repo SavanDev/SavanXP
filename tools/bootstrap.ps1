@@ -7,6 +7,7 @@ param(
     [switch]$SkipQemu,
     [switch]$SkipXorriso,
     [switch]$SkipNinja,
+    [switch]$SkipMake,
     [switch]$SkipPython,
     # Build Tools es el unico componente que no se hornea en toolchain/: no hay
     # zip portable, se instala a nivel de sistema. Omitilo si ya tenes MSVC (o
@@ -35,12 +36,16 @@ function Ensure-Directory([string]$Path) {
     }
 }
 
-function Get-RemoteFile([string]$Url, [string]$Destination) {
+function Get-RemoteFile([string]$Url, [string]$Destination, [string]$UserAgent) {
     Write-Step "Descargando $Url"
     $previous = $ProgressPreference
     $ProgressPreference = "SilentlyContinue"
+    $agent = @{}
+    if ($UserAgent) {
+        $agent["UserAgent"] = $UserAgent
+    }
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing @agent
     } catch {
         throw "Fallo la descarga de '$Url'. Revisa la URL/version en toolchain.lock.json. Detalle: $_"
     } finally {
@@ -253,6 +258,39 @@ function Install-Ninja($Spec) {
     return $target
 }
 
+# GNU make solo lo usa el port de FFmpeg (sdk/ffmpeg/build.ps1): el build de
+# FFmpeg es GNU make y no hay forma razonable de evitarlo. Es un make NATIVO de
+# Windows y no uno de MSYS: entiende las rutas C:/... que clang escribe en los
+# .d de dependencias, que un make de MSYS toma por patrones de target.
+function Install-Make($Spec) {
+    $target = Join-Path $ToolchainRoot "make"
+    $makeExe = Join-Path $target "bin/make.exe"
+    if ((Test-Path $makeExe) -and -not $Force) {
+        Write-Step "GNU make ya presente en $target (usa -Force para re-instalar)"
+        return $makeExe
+    }
+
+    if (Test-Path $target) {
+        Remove-Item -Recurse -Force $target
+    }
+
+    Ensure-Directory $CacheRoot
+    $archive = Join-Path $CacheRoot ("make-" + $Spec.version + "." + $Spec.archive)
+    $userAgent = if ($Spec.PSObject.Properties["userAgent"]) { $Spec.userAgent } else { "" }
+    if ($Force -or -not (Test-Path $archive)) {
+        Get-RemoteFile $Spec.url $archive $userAgent
+    }
+    Confirm-FileHash $archive $Spec.sha256 "GNU make $($Spec.version)"
+
+    Write-Step "Extrayendo GNU make..."
+    Expand-ZipArchive $archive $target
+
+    if (-not (Test-Path $makeExe)) {
+        throw "Tras instalar GNU make no se encontro $makeExe"
+    }
+    return $makeExe
+}
+
 # Python embebido oficial de python.org: portable (un zip, sin instalador),
 # pero sale sin pip ni site-packages habilitados. Prendemos "import site" en
 # python312._pth y bootstrapeamos pip con un get-pip.py pineado por commit
@@ -420,6 +458,10 @@ if (-not $SkipNinja) {
     $manifest["ninja"] = Join-Path $ninjaRoot "ninja.exe"
 }
 
+if (-not $SkipMake) {
+    $manifest["make"] = Install-Make $lock.make
+}
+
 if (-not $SkipPython) {
     $pythonRoot = Install-Python $lock.python
     $manifest["python"] = Join-Path $pythonRoot "python.exe"
@@ -430,7 +472,7 @@ if (-not $SkipVsBuildTools) {
 }
 
 # Fusiona con el manifiesto previo para no perder claves de un run parcial.
-if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu -or $SkipXorriso -or $SkipNinja -or $SkipPython)) {
+if ((Test-Path $ManifestPath) -and ($SkipLlvm -or $SkipQemu -or $SkipXorriso -or $SkipNinja -or $SkipMake -or $SkipPython)) {
     $existing = Get-Content -Raw -Path $ManifestPath | ConvertFrom-Json
     foreach ($prop in $existing.PSObject.Properties) {
         if (-not $manifest.Contains($prop.Name)) {

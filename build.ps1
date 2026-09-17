@@ -1720,60 +1720,39 @@ function Run-FloatSmokeQemu {
 }
 
 
-# Corre el port de FFmpeg (libav* compiladas contra esta libc). A diferencia del
-# resto de los smokes, el binario NO lo produce este script: las libav* se
-# construyen dentro de WSL con sdk/ffmpeg/*.sh, porque FFmpeg se construye con
-# GNU make y en Windows no hay. Aca se consume el ELF ya linkeado.
-# Reinstala el demo y su material despues de que Build-Kernel regenere la
-# imagen, igual que Restore-ExternalDoom.
+# Corre el reproductor sobre el port de FFmpeg (libav* compiladas contra esta
+# libc). A diferencia del resto de los smokes, el binario NO lo produce este
+# script: se construye aparte con sdk/ffmpeg/build.ps1, porque FFmpeg se
+# construye con GNU make. Aca se consume el ELF ya linkeado.
+# Reinstala el reproductor y su material despues de que Build-Kernel regenere
+# la imagen, igual que Restore-ExternalDoom.
 function Install-FfmpegDemo {
-    Install-SxfsFilesWithTool $DiskImage @(
-        @{ Dir = "bin" }
-        @{ Dir = "media" }
-        @{ File = "/disk/bin/wavinfo"; Source = (Join-Path $BuildRoot "external/wavinfo.elf") }
-        @{ File = "/disk/bin/player"; Source = (Join-Path $BuildRoot "external/player.elf") }
-        @{ File = "/disk/media/tono.wav"; Source = (Join-Path $BuildRoot "media/tono.wav") }
-        @{ File = "/disk/media/clip.mjpeg"; Source = (Join-Path $BuildRoot "media/clip.mjpeg") }
-    )
+    & (Join-Path $ProjectRoot "sdk/ffmpeg/install.ps1") -WithTestMedia
 }
 
-# Dos arranques y no uno: el harness hornea UN comando en el kernel, y son dos
-# caminos distintos -- audio (demuxer + decoder) y video (eso mas swscale).
+# Dos arranques y no uno: el harness hornea UN comando en el kernel. El primero
+# verifica sin pantalla (decodificar, convertir, reposicionar, sincronia); el
+# segundo, que los pixeles LLEGAN a la pantalla.
 function Run-FfmpegSmokeQemu {
-    foreach ($needed in @(
-        "external/wavinfo.elf",
-        "external/player.elf"
-    )) {
-        if (-not (Test-Path (Join-Path $BuildRoot $needed))) {
-            throw "Falta $needed. Se construye aparte, con GNU make; ver sdk/ffmpeg/README.md."
-        }
-    }
-    foreach ($needed in @("media/tono.wav", "media/clip.mjpeg")) {
-        if (-not (Test-Path (Join-Path $BuildRoot $needed))) {
-            throw "Falta $needed. Lo generan sdk/ffmpeg/make-tone.py y make-clip.py."
-        }
+    if (-not (Test-Path (Join-Path $BuildRoot "external/mediaplayer.elf"))) {
+        throw "Falta external/mediaplayer.elf. Se construye aparte con sdk/ffmpeg/build.ps1; ver sdk/ffmpeg/README.md."
     }
 
-    Run-AutomationQemu -AutomationCommand "wavinfo" -SuccessToken "WAVINFO PASS" -FailureToken "WAVINFO FAIL" -TimeoutMinutes 3 -PreLaunch {
-        Install-FfmpegDemo
-    }
-    Run-AutomationQemu -AutomationCommand "player" -SuccessToken "PLAYER PASS" -FailureToken "PLAYER FAIL" -TimeoutMinutes 3 -PreLaunch {
+    Run-AutomationQemu -AutomationCommand "mediaplayer" -SuccessToken "MEDIAPLAYER PASS" -FailureToken "MEDIAPLAYER FAIL" -TimeoutMinutes 4 -PreLaunch {
         Install-FfmpegDemo
     }
 
-    # Tercer arranque, el visual. El selftest de arriba prueba que decodifica y
-    # convierte; esto prueba que los pixeles LLEGAN a la pantalla, que es lo
-    # unico que ninguna asercion sobre buffers puede cubrir. El player deja el
-    # ultimo cuadro fijo y avisa por serial; ahi se saca la captura por QMP.
+    # El reproductor deja el ultimo cuadro fijo y avisa por serial; ahi se saca
+    # la captura por QMP, que tiene que mostrar un cuadro y no un color plano.
     $python = Get-PythonExecutable
     $shooter = Join-Path $ToolRoot "player_shot.py"
     $shotDir = Join-Path $BuildRoot "shots/player"
-    Run-AutomationQemu -AutomationCommand "player-show" -SuccessToken "PLAYER PASS" -FailureToken "PLAYER FAIL" -TimeoutMinutes 4 -ReadyToken "PLAYER DISPLAY READY" -PreLaunch {
+    Run-AutomationQemu -AutomationCommand "mediaplayer-show" -SuccessToken "MEDIAPLAYER PASS" -FailureToken "MEDIAPLAYER FAIL" -TimeoutMinutes 4 -ReadyToken "MEDIAPLAYER DISPLAY READY" -PreLaunch {
         Install-FfmpegDemo
     } -OnReady {
         param($QmpPort)
-        & $python $shooter --port $QmpPort --out-dir $shotDir --name mjpeg
-        if ($LASTEXITCODE -ne 0) { throw "La captura del player no muestra un cuadro." }
+        & $python $shooter --port $QmpPort --out-dir $shotDir --name avsync
+        if ($LASTEXITCODE -ne 0) { throw "La captura del reproductor no muestra un cuadro." }
     }.GetNewClosure()
 }
 # Test de host del driver de particiones. Tampoco usa QEMU, y por el mismo

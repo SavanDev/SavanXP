@@ -1,13 +1,12 @@
 #!/bin/bash
-# Baja y desempaqueta el fuente de FFmpeg en el filesystem de WSL.
+# Baja, verifica y desempaqueta el fuente de FFmpeg en el directorio de trabajo.
 #
-# En ext4 y no en /mnt/f a proposito: el build de FFmpeg hace decenas de miles
-# de operaciones de archivo y sobre drvfs eso tarda un orden de magnitud mas.
-# Lo unico que despues cruza a Windows son los .a.
+# El fuente no entra al repo ni cruza a el: son decenas de miles de archivos.
+# Conviene que WORK caiga en un filesystem nativo -- en WSL, ext4 y no /mnt/c --,
+# porque el build hace decenas de miles de operaciones de archivo.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.1}"
-WORK="${WORK:-$HOME/savanxp-ffmpeg}"
 TARBALL="ffmpeg-${FFMPEG_VERSION}.tar.xz"
 URL="https://ffmpeg.org/releases/${TARBALL}"
 
@@ -19,15 +18,18 @@ if [ ! -f "$TARBALL" ]; then
     curl -fsSL -o "$TARBALL.part" "$URL"
     mv "$TARBALL.part" "$TARBALL"
 fi
-echo "== tarball: $(du -h "$TARBALL" | cut -f1)  sha256: $(sha256sum "$TARBALL" | cut -d' ' -f1)"
 
-if [ ! -d "ffmpeg-${FFMPEG_VERSION}" ]; then
+actual="$(sha256sum "$TARBALL" | cut -d' ' -f1)"
+if [ "$FFMPEG_VERSION" = "7.1.1" ] && [ "$actual" != "$FFMPEG_SHA256" ]; then
+    echo "error: sha256 de $TARBALL no coincide" >&2
+    echo "       esperado $FFMPEG_SHA256" >&2
+    echo "       obtenido $actual" >&2
+    exit 1
+fi
+echo "== tarball: $(du -h "$TARBALL" | cut -f1)  sha256: $actual"
+
+if [ ! -f "$SRC/configure" ]; then
     echo "== desempaquetando"
     tar xf "$TARBALL"
 fi
-
-cd "ffmpeg-${FFMPEG_VERSION}"
-echo "== version: $(cat RELEASE 2>/dev/null || echo desconocida)"
-echo "== target-os soportados por configure:"
-grep -A 3 "^    none)" configure | head -8 || echo "  (no hay caso 'none')"
-echo "== listo en $WORK/ffmpeg-${FFMPEG_VERSION}"
+echo "== fuente en $SRC ($(cat "$SRC/RELEASE" 2>/dev/null || echo version desconocida))"

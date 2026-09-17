@@ -12,6 +12,17 @@ Cut-off notes:
 
 ### Added
 
+- **Media Player (`/disk/bin/mediaplayer`), in the Accessories group.** Plays
+  audio and video in a window: icon buttons for open, play/pause, stop and ±5 s,
+  a draggable seek bar with accurate seek, volume, and Space/arrows/Home/O on the
+  keyboard. It declares MP4, MKV, WebM, AVI, Ogg, MP3, FLAC and WAV for
+  `/disk/assoc.ini`, and Files shows those types' icons. Built with
+  `sdk/ffmpeg/build.ps1`. [How it plays](docs/MEDIA_PLAYER.md).
+
+- **The FFmpeg port decodes the common formats.** H.264, HEVC, VP8, VP9, MPEG-4,
+  Theora and MPEG-1/2 video; AAC, MP3, Vorbis, Opus, FLAC and AC-3 audio; MP4,
+  Matroska/WebM, AVI, Ogg and MPEG-PS/TS containers; plus swscale and swresample.
+
 - **Gears (`/bin/gears`), in the Diagnostics group.** A hand-written software
   rasterizer — matrices, viewport, z-buffer, backface culling and flat shading
   with one directional light — drawing the three meshed gears. It is the
@@ -243,6 +254,14 @@ Cut-off notes:
 
 ### Changed
 
+- **The FFmpeg port builds on Windows without WSL.** `sdk/ffmpeg/build.ps1` runs
+  the scripts with Git for Windows' bash, the baked LLVM and a native GNU make
+  that `tools/bootstrap.ps1` now pins and installs (`-SkipMake`, `SAVANXP_MAKE`).
+
+- **`ffmpeg-smoke` tests Media Player.** `mediaplayer --selftest` covers WAV,
+  raw MJPEG and a generated `avsync.avi` whose flash frames must start within
+  20 ms of their beeps; `mediaplayer --gpu-hold` takes the screenshot.
+
 - **WM↔client protocol v4: the session opens all 12 windows.** Each costs
   `windowd` two descriptors instead of nine: one event pipe (`SAVANXP_WM_FD_EVENTS`),
   a wake event, one submit event per session, and hints and launches in the surface
@@ -380,6 +399,10 @@ Cut-off notes:
 
 ### Removed
 
+- **The `wavinfo` and `player` FFmpeg demos.** Every binary that links
+  libavcodec carries all its decoders, so they became modes of the player:
+  `mediaplayer --probe`, `--selftest` and `--gpu-hold`.
+
 - **The icon set baked into `desktop_icons.h` is down to one.** Only
   `DESKTOP_ICON_DESKTOP` survives, as the safety net for a binary that cannot be
   read at all. The PNGs in `assets/desktop/icons/` stay as the catalog each
@@ -394,6 +417,9 @@ Cut-off notes:
   `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
 
 ### Fixed
+
+- **Shell scripts keep LF line endings on Windows checkouts.** A new
+  `.gitattributes` stops `core.autocrlf` from giving `*.sh` the CRLF bash rejects.
 
 - **Restoring a maximized window no longer leaves residue on the wallpaper.**
   Only the restored frame was repainted, so the rest of the maximized area kept

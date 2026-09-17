@@ -28,6 +28,14 @@
     "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
     "archive": "zip"
   },
+  "_make_note": "GNU make nativo de Windows, solo para el port de FFmpeg (sdk/ffmpeg/build.ps1): el pipeline principal no usa make. Build de ezwinports (make sin Guile), pineado por sha256. SourceForge le devuelve una pagina HTML a Invoke-WebRequest salvo con un user-agent de herramienta de descarga, por eso userAgent.",
+  "make": {
+    "version": "4.4.1",
+    "url": "https://sourceforge.net/projects/ezwinports/files/make-4.4.1-without-guile-w32-bin.zip/download",
+    "sha256": "fb66a02b530f7466f6222ce53c0b602c5288e601547a034e4156a512dd895ee7",
+    "archive": "zip",
+    "userAgent": "Wget/1.21"
+  },
   "_python_note": "Python embebido oficial de python.org: portable, un zip sin instalador, pero sin pip ni site-packages habilitados de fabrica. bootstrap.ps1 descomenta 'import site' en python312._pth y bootstrapea pip con get-pip.py pineado por commit (mismo criterio que xorriso: pineado, no 'latest'). Pillow se instala despues via pip a 'pillowVersion'; pip ya verifica la integridad del wheel contra el indice, por eso no lleva sha256 propio aca.",
   "python": {
     "version": "3.12.10",

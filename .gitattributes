@@ -1,0 +1,3 @@
+# Los scripts de shell tienen que quedar con LF en cualquier checkout: en
+# Windows (core.autocrlf=true) salian con CRLF y bash los rechaza.
+*.sh text eol=lf
