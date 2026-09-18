@@ -464,6 +464,23 @@ def scenario_mines(s):
     time.sleep(1.0)
     s.shot("mines-experto")
 
+    # Alt+F4 con teclas reales: el primero cierra el About (es la ventana
+    # activa, y a un dialogo se le pide cancelar), el segundo el buscaminas.
+    # La ventana crecio con Experto pero su esquina no se movio, asi que el
+    # menu Help sigue en el mismo lugar.
+    s.qmp.move_to(660, 332)
+    s.qmp.click()
+    s.qmp.move_to(700, 354)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("mines-experto-about")
+    s.qmp.chord("alt", "f4")
+    time.sleep(1.0)
+    s.shot("mines-alt-f4-dialogo")
+    s.qmp.chord("alt", "f4")
+    time.sleep(1.5)
+    s.shot("mines-alt-f4-ventana")
+
 
 def scenario_files(s):
     """Explorador: la ventana con mas controles distintos a la vez.

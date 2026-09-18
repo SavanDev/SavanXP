@@ -120,10 +120,11 @@ owner's pid. The rules are all expressed as "the family" — owner plus owned:
 - **Disabled owner:** while it has an owned window, the owner gets no pointer
   input. A click on it only raises the family and activates the dialog; hover,
   frame buttons and title dragging are ignored, and it shows the arrow cursor.
-- **Close button:** the dialog's X does not destroy it. It sets
-  `SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN` on the dialog's header; the process
-  treats it as Cancel (like ESC) and sends `CLOSE`. The process decides what
-  cancelling means.
+- **Close button and Alt+F4:** the dialog's X does not destroy it, and neither
+  does Alt+F4 while it is the active window (both go through
+  `close_overlay_window`). They set `SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN` on
+  the dialog's header; the process treats it as Cancel (like ESC) and sends
+  `CLOSE`. The process decides what cancelling means.
 - **Frame:** close button only, no icon, fixed size, the owner's accent, the
   title from the request. Placed centred over the owner and clamped to the
   screen.
@@ -176,8 +177,9 @@ Two consequences worth remembering:
 - `windowd --selftest` (`build.ps1 windowd-smoke`): launches
   `widgetsdemo --dialog-selftest`, which opens its About through the real
   runtime, and asserts the family rules, the dialog frame, the task count, the
-  descriptor cost, the X closing it, and both windows disappearing when the
-  owner is terminated with a dialog open.
+  descriptor cost, Alt+F4 closing it (and then closing a main window with its
+  process), and both windows disappearing when the owner is terminated with a
+  dialog open.
 
 ## Not done yet
 

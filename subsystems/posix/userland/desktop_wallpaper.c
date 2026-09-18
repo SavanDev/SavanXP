@@ -1,4 +1,5 @@
 #include "desktop_wallpaper.h"
+#include "shared/version.h"
 
 #define DESKTOP_WALLPAPER_CONFIG_PATH "/disk/desktop.cfg"
 #define DESKTOP_WALLPAPER_IMAGE_PATH "/disk/wallpaper.bmp"
@@ -367,13 +368,43 @@ static void draw_image(struct sx_painter *painter, const struct savanxp_fb_info 
         SX_SCALE_BILINEAR);
 }
 
-void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_info *info)
-{
-    if (painter == 0 || info == 0)
-    {
-        return;
-    }
+/*
+ * Nombre y version del sistema abajo a la derecha, sobre el fondo: lo que hacen
+ * Windows en sus builds de prueba y ReactOS siempre. Es parte del FONDO y no de
+ * una ventana, asi que queda debajo de todo y nunca tapa nada.
+ *
+ * Se levanta por encima de la barra de tareas, que se compone sobre el fondo
+ * al pie de la pantalla. Sin barra queda un hueco de su alto, que es preferible
+ * a que el texto dependa de si un cliente arranco o no.
+ */
+#define DESKTOP_WALLPAPER_STAMP_MARGIN 8
 
+static void draw_version_stamp(struct sx_painter *painter, const struct savanxp_fb_info *info)
+{
+    static const char *const lines[] = {
+        SAVANXP_SYSTEM_NAME,
+        "Version " SAVANXP_STRINGIFY(SAVANXP_VERSION_MAJOR) "."
+            SAVANXP_STRINGIFY(SAVANXP_VERSION_MINOR) "."
+            SAVANXP_STRINGIFY(SAVANXP_VERSION_PATCH),
+    };
+    const int line_count = (int)(sizeof(lines) / sizeof(lines[0]));
+    const int line_height = gfx_text_height();
+    int bottom = (int)info->height - DESKTOP_WALLPAPER_TASKBAR_HEIGHT - DESKTOP_WALLPAPER_STAMP_MARGIN;
+    int index;
+
+    for (index = 0; index < line_count; ++index)
+    {
+        int x = (int)info->width - DESKTOP_WALLPAPER_STAMP_MARGIN - gfx_text_width(lines[index]);
+        int y = bottom - (line_count - index) * line_height;
+
+        /* Sombra de un pixel: el blanco solo se pierde sobre un bitmap claro. */
+        sx_painter_draw_text(painter, x + 1, y + 1, lines[index], gfx_rgb(0, 0, 0));
+        sx_painter_draw_text(painter, x, y, lines[index], gfx_rgb(255, 255, 255));
+    }
+}
+
+static void draw_background(struct sx_painter *painter, const struct savanxp_fb_info *info)
+{
     switch (g_mode)
     {
     case DESKTOP_WALLPAPER_GRADIENT:
@@ -393,4 +424,15 @@ void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_
         break;
     }
     sx_painter_fill(painter, gfx_rgb(0, 128, 128));
+}
+
+void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_info *info)
+{
+    if (painter == 0 || info == 0)
+    {
+        return;
+    }
+
+    draw_background(painter, info);
+    draw_version_stamp(painter, info);
 }

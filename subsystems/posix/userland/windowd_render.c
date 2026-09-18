@@ -8,6 +8,12 @@
 #include "windowd_layout.h"
 #include "windowd_render.h"
 
+/* El sello de version del fondo se levanta por encima de la barra con una copia
+ * de su alto (desktop_wallpaper.h): si la barra cambia, el sello la sigue. */
+_Static_assert(
+    DESKTOP_WALLPAPER_TASKBAR_HEIGHT == WINDOWD_TASKBAR_HEIGHT,
+    "el alto de la barra que usa el fondo debe coincidir con el del WM");
+
 #define WINDOWD_RGB_LITERAL(red, green, blue) (((uint32_t)(red) << 16) | ((uint32_t)(green) << 8) | (uint32_t)(blue))
 
 static uint32_t *g_backbuffer = 0;

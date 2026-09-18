@@ -2267,6 +2267,60 @@ static void destroy_overlay_client(struct windowd_session *session, int slot, in
     refresh_active_state(session);
 }
 
+/*
+ * Cerrar una ventana, por la X de su marco o por Alt+F4: los dos caminos son el
+ * mismo gesto y tienen que hacer lo mismo.
+ *
+ * - Una ventana principal se destruye con su proceso, como siempre hizo la X.
+ * - Un dialogo (ventana con dueno) no se destruye: se le pide al proceso que lo
+ *   cierre, igual que ESC. El proceso decide que significa cancelar y despues
+ *   manda el CLOSE (docs/OWNED_WINDOWS.md).
+ *
+ * Devuelve 1 si habia una ventana que cerrar.
+ */
+static int close_overlay_window(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot)
+{
+    struct windowd_client *client = overlay_client_at(session, slot);
+
+    if (client == 0 || client->pid <= 0)
+    {
+        return 0;
+    }
+    if (overlay_client_owned(client))
+    {
+        if (client->header != 0)
+        {
+            client->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+        }
+        if (client->wake_event_fd >= 0)
+        {
+            (void)event_set(client->wake_event_fd);
+        }
+        return 1;
+    }
+
+    /* A pantalla completa la ventana tapaba todo, y cerrarla ademas devuelve el
+     * modo de video: hay que repintar la pantalla entera, no su marco. */
+    if (client->fullscreen)
+    {
+        destroy_overlay_client(session, slot, 1);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        return 1;
+    }
+    /* El danio se toma antes de destruir: con la ventana se van sus dialogos,
+     * que pueden quedar fuera de su marco. */
+    dirty_overlay_family(session, dirty, slot);
+    destroy_overlay_client(session, slot, 1);
+    /* La activacion pasa a otra ventana, y su barra de titulo cambia de color.
+     * El camino del mouse la repinta al final de su evento; Alt+F4 no tiene ese
+     * final, asi que se hace aca para los dos. */
+    if (session->active_client_kind == WINDOWD_CLIENT_APP && overlay_slot_valid(session->active_overlay_slot))
+    {
+        windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
+    }
+    return 1;
+}
+
 static int launch_shell_client(struct windowd_session *session, const char *path)
 {
     struct windowd_client *client = 0;
@@ -3379,6 +3433,7 @@ static int selftest_order_index(const struct windowd_session *session, int slot)
 static int windowd_owned_window_selftest(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     struct savanxp_wm_window_request request;
+    struct savanxp_input_event alt_f4;
     const struct windowd_client *owner = 0;
     const struct windowd_client *dialog = 0;
     uint32_t handles_before_launch = 0;
@@ -3460,16 +3515,24 @@ static int windowd_owned_window_selftest(struct windowd_session *session, struct
         return 1;
     }
 
-    /* La X: el WM pide, el proceso cancela el dialogo y manda el CLOSE. */
-    session->overlay_clients[dialog_slot].header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
-    (void)event_set(session->overlay_clients[dialog_slot].wake_event_fd);
+    /* Alt+F4 sobre el dialogo activo, que es el mismo camino que su X: el WM
+     * pide, el proceso cancela el dialogo y manda el CLOSE. El dueno sigue. */
+    memset(&alt_f4, 0, sizeof(alt_f4));
+    alt_f4.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+    alt_f4.key = SAVANXP_KEY_F4;
+    alt_f4.modifiers = SAVANXP_KEY_MOD_ALT;
+    if (!wm_handle_key(session, &alt_f4, dirty))
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: el WM no consumio Alt+F4\n");
+        return 1;
+    }
     deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
     while (owned_window_slot(session, owner_slot, 0) >= 0)
     {
         selftest_service_overlays(session, dirty);
         if (owner->pid <= 0 || uptime_ms() >= deadline)
         {
-            puts_fd(2, "DESKTOP SMOKE FAIL owned: la X no cerro el dialogo\n");
+            puts_fd(2, "DESKTOP SMOKE FAIL owned: Alt+F4 no cerro el dialogo\n");
             return 1;
         }
         sleep_ms(10);
@@ -3506,6 +3569,19 @@ static int windowd_owned_window_selftest(struct windowd_session *session, struct
             (unsigned)handles_after, (unsigned)handles_before_launch);
         return 1;
     }
+
+    /* Alt+F4 sobre una ventana principal la cierra con su proceso, como su X. */
+    if (launch_overlay_client(session, "/bin/widgetsdemo", 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0 ||
+        session->active_overlay_slot != owner_slot ||
+        !wm_handle_key(session, &alt_f4, dirty) ||
+        session->overlay_clients[owner_slot].pid > 0 ||
+        selftest_handle_count(savanxp_getpid(), &handles_after) != 0 || handles_after != handles_before_launch)
+    {
+        printf("DESKTOP SMOKE FAIL owned: Alt+F4 no cerro la ventana principal (fds=%u, esperados %u)\n",
+            (unsigned)handles_after, (unsigned)handles_before_launch);
+        return 1;
+    }
+    windowd_dirty_rect_reset(dirty);
 
     printf("DESKTOP SMOKE owned windows ok windowd_fds=%u\n", (unsigned)handles_dialog);
     return 0;
@@ -4626,6 +4702,22 @@ static int wm_handle_key(
         return 1;
     }
 
+    /* Alt+F4 cierra la ventana activa, igual que su X (close_overlay_window):
+     * un dialogo recibe el pedido de cancelar, una ventana principal se cierra
+     * con su proceso, y a pantalla completa tambien vale, que es donde no hay
+     * marco que clickear. Con el shell activo no hay ventana que cerrar y la
+     * tecla se consume igual: nadie espera que Alt+F4 le llegue a una app. */
+    if (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN &&
+        key_event->key == SAVANXP_KEY_F4 &&
+        (key_event->modifiers & SAVANXP_KEY_MOD_ALT) != 0)
+    {
+        if (session->active_client_kind == WINDOWD_CLIENT_APP)
+        {
+            (void)close_overlay_window(session, dirty, session->active_overlay_slot);
+        }
+        return 1;
+    }
+
     if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || key_event->key != SAVANXP_KEY_F11)
     {
         return 0;
@@ -4902,35 +4994,9 @@ static void handle_pointer_event(
                 windowd_point_in_close_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
-                struct sx_rect closed_frame = windowd_client_frame_rect(current_hover_client);
 
-                if (overlay_slot_valid(target_slot) && overlay_client_owned(current_hover_client))
+                if (close_overlay_window(session, dirty, target_slot))
                 {
-                    /* La X de un dialogo no lo destruye: le pide al proceso que
-                     * lo cierre, como ESC. El proceso decide que significa
-                     * cancelar y despues pide el CLOSE. */
-                    struct windowd_client *owned = overlay_client_at(session, target_slot);
-                    if (owned->header != 0)
-                    {
-                        owned->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
-                    }
-                    if (owned->wake_event_fd >= 0)
-                    {
-                        (void)event_set(owned->wake_event_fd);
-                    }
-                    current_hover_client = 0;
-                    drag_overlay_slot = -1;
-                }
-                else if (overlay_slot_valid(target_slot))
-                {
-                    destroy_overlay_client(session, target_slot, 1);
-                    windowd_dirty_rect_add(
-                        dirty,
-                        &session->gfx.info,
-                        closed_frame.x,
-                        closed_frame.y,
-                        closed_frame.width,
-                        closed_frame.height);
                     current_hover_client = 0;
                     drag_overlay_slot = -1;
                 }

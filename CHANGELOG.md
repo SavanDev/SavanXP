@@ -12,6 +12,14 @@ Cut-off notes:
 
 ### Added
 
+- **Alt+F4 closes the active window,** the same as its X button: a dialog is
+  cancelled, a main window closes with its process, and it also works for an app
+  in fullscreen.
+
+- **System name and version at the bottom right of the desktop,** above the
+  taskbar, as Windows and ReactOS show them. Drawn with the wallpaper, so every
+  wallpaper mode has it and no window is covered.
+
 - **Dialogs are windows of their own.** Under `sxgui_app_run`, `sxgui_dialog_begin`
   opens a WM window owned by the app — framed, kept above its owner, which takes
   no input meanwhile — so Minesweeper's About no longer gets cut off at Beginner.

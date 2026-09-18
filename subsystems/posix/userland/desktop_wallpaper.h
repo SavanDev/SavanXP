@@ -39,4 +39,11 @@ int desktop_wallpaper_cycle_config(void);
  * hay que repintar), 0 si no. Lo usa el cliente de fondo para reaccionar cuando
  * otro proceso cambia el wallpaper. */
 int desktop_wallpaper_reload(void);
+/* Pinta el fondo y, encima, el nombre y la version del sistema abajo a la
+ * derecha. */
 void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_info *info);
+
+/* Alto de la barra de tareas, para dejar el sello de version por encima. Este
+ * modulo lo comparten clientes que no conocen el layout del WM, asi que es una
+ * copia: windowd_render.c aserta que coincide con WINDOWD_TASKBAR_HEIGHT. */
+#define DESKTOP_WALLPAPER_TASKBAR_HEIGHT 28

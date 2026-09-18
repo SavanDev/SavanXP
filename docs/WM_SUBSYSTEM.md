@@ -294,7 +294,10 @@ the shell), A2.4 (retire the Win95 chrome, proto-Progman launcher), A2.5
   an icon) — which does not exist today.
 - **Phase C** — maturing the WM against the clean server. **Done**: edge
   resizing, and Alt-Tab over the Task List (while Alt is held, each Tab moves
-  the selection; releasing it confirms). **Open**: focus/activation between
+  the selection; releasing it confirms), and Alt+F4, which closes the active
+  window exactly like its X button — a dialog is asked to cancel, a main window
+  goes with its process, and it works in fullscreen where there is no frame to
+  click. **Open**: focus/activation between
   windows — the mechanics are there, what is missing is showing which one is
   active — and repaint correctness.
 
