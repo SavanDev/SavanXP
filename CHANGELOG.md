@@ -450,6 +450,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **The keyboard-layout popup can change the active layout again.** It opens
+  `/dev/input0` for the write access required by the setter and no longer
+  persists a selection that the kernel rejected.
+
 - **Kernel stack-canary failures report the actual return address.** The panic
   diagnostic no longer assumes a compiler-specific stack-frame offset.
 

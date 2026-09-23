@@ -119,9 +119,11 @@ int main(void)
         return 1;
     }
 
-    /* Solo para el ioctl: jamas hay que leer de este fd -- la cola de
-     * /dev/input0 es global y windowd es quien la drena de verdad. */
-    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    /* Solo para los ioctl: nunca hay que leer de este fd -- la cola de
+     * /dev/input0 es global y windowd es quien la drena de verdad. El setter
+     * es una operacion mutante y por eso el descriptor necesita escritura. */
+    input_fd = savanxp_open_mode(
+        "/dev/input0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (input_fd >= 0)
     {
         long layout = input_get_layout((int)input_fd);
@@ -161,10 +163,11 @@ int main(void)
             {
                 if (row >= 0 && row == pressed_row)
                 {
-                    if (input_fd >= 0)
+                    if (input_fd < 0 || input_set_layout((int)input_fd, row) < 0)
                     {
-                        (void)input_set_layout((int)input_fd, row);
+                        puts_fd(2, "kbdlayoutpopup: input_set_layout failed\n");
                     }
+                    else
                     {
                         char digit = (char)('0' + row);
                         int config_fd = (int)savanxp_open_mode(
@@ -175,13 +178,10 @@ int main(void)
                             (void)savanxp_write(config_fd, &digit, 1);
                             savanxp_close(config_fd);
                         }
-                    }
-                    if (input_fd >= 0)
-                    {
                         savanxp_close((int)input_fd);
+                        gfx_close(&gfx);
+                        return 0;
                     }
-                    gfx_close(&gfx);
-                    return 0;
                 }
                 pressed_row = -1;
             }
