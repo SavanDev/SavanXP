@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "mines-smoke", "calc-smoke", "clock-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
+    [ValidateSet("build", "iso", "run", "debug", "smoke", "ac97-stream", "ac97-count", "virtio-count", "virtio-stream", "virtio-record", "windowd-smoke", "progman-smoke", "appwiz-smoke", "taskmgr-smoke", "mines-smoke", "calc-smoke", "clock-smoke", "sxe-smoke", "filesapp-smoke", "net-smoke", "tcp-smoke", "float-smoke", "kbd-smoke", "taskbar-smoke", "sxfs-smoke", "partition-smoke", "gfx2d-test", "audio-test", "ffmpeg-smoke", "cursor-repro", "gpu-soak", "native-guihost", "native-hello", "native-sxgui", "clean")]
     [string]$Command = "build",
 
     [ValidateRange(1, 4096)]
@@ -1799,6 +1799,38 @@ function Run-Gfx2dTest {
     & $exe
     if ($LASTEXITCODE -ne 0) { throw "GFX2D TEST FAIL" }
 }
+
+function Run-AudioMixerTest {
+    $clang = Require-Executable "clang" (Get-ToolchainCandidates "clang")
+    $clangxx = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
+    $toolsOut = Join-Path $BuildRoot "tools"
+    New-Directory $toolsOut
+    $exe = Join-Path $toolsOut ("audio-mixer-test" + $(if (Test-IsWindowsHost) { ".exe" } else { "" }))
+    $testRoot = Join-Path $ProjectRoot "tests/host"
+    $sdkInclude = Join-Path $ProjectRoot "subsystems/posix/sdk/v1/include"
+    $audioObj = Join-Path $toolsOut "audio-mixer-host.o"
+    $testObj = Join-Path $toolsOut "audio-mixer-test.o"
+
+    Write-Host "Compilando audio-mixer-test (test de host del mixer PCM del SDK)..."
+    & $clang @("-c", "-std=c11", "-O1", "-Wall", "-Wextra",
+        "-I", $sdkInclude,
+        (Join-Path $ProjectRoot "subsystems/posix/sdk/v1/runtime/audio.c"),
+        "-o", $audioObj)
+    if ($LASTEXITCODE -ne 0) { throw "Fallo la compilacion de audio.c para el host." }
+
+    & $clangxx @("-c", "-std=c++20", "-O1", "-Wall", "-Wextra",
+        "-D_CRT_SECURE_NO_WARNINGS",
+        "-I", $sdkInclude,
+        (Join-Path $testRoot "audio_mixer_test.cpp"),
+        "-o", $testObj)
+    if ($LASTEXITCODE -ne 0) { throw "Fallo la compilacion de audio_mixer_test.cpp." }
+
+    & $clangxx @($audioObj, $testObj, "-o", $exe)
+    if ($LASTEXITCODE -ne 0) { throw "Fallo el link de audio-mixer-test." }
+
+    & $exe
+    if ($LASTEXITCODE -ne 0) { throw "AUDIO MIXER TEST FAIL" }
+}
 function Run-PartitionSmoke {
     $clang = Require-Executable "clang++" (Get-ToolchainCandidates "clang++")
     $toolsOut = Join-Path $BuildRoot "tools"
@@ -1961,6 +1993,9 @@ switch ($Command) {
     }
     "gfx2d-test" {
         Run-Gfx2dTest
+    }
+    "audio-test" {
+        Run-AudioMixerTest
     }
     "cursor-repro" {
         Run-CursorReproQemu

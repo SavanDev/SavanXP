@@ -16,67 +16,12 @@ static struct savanxp_gfx_context g_gfx = {
     .submit_event_fd = -1,
     .wake_event_fd = -1,
 };
-static uint32_t *g_present_buffer = 0;
-static uint32_t *g_previous_frame = 0;
-static uint32_t *g_scaled_row = 0;
-static int g_present_buffer_owned = 0;
-static uint32_t g_scale = 1;
-static int g_offset_x = 0;
-static int g_offset_y = 0;
-static uint32_t g_scaled_width = 0;
-static uint32_t g_scaled_height = 0;
-static int g_previous_frame_valid = 0;
+static struct sx_scaled_presenter g_presenter;
 
 static void sx_fail(const char *message);
 
-static void sx_configure_output_layout(void) {
-    if (g_scaled_row != 0) {
-        free(g_scaled_row);
-        g_scaled_row = 0;
-    }
-
-    g_scale = g_gfx.info.width / DOOMGENERIC_RESX;
-    if (g_gfx.info.height / DOOMGENERIC_RESY < g_scale) {
-        g_scale = g_gfx.info.height / DOOMGENERIC_RESY;
-    }
-    if (g_scale == 0) {
-        sx_fail("doomgeneric: framebuffer too small");
-    }
-
-    g_scaled_width = (uint32_t)(DOOMGENERIC_RESX * g_scale);
-    g_scaled_height = (uint32_t)(DOOMGENERIC_RESY * g_scale);
-    g_offset_x = (int)(g_gfx.info.width - g_scaled_width) / 2;
-    g_offset_y = (int)(g_gfx.info.height - g_scaled_height) / 2;
-
-    g_scaled_row = (uint32_t *)malloc((size_t)g_scaled_width * sizeof(uint32_t));
-    if (g_scaled_row == 0) {
-        sx_fail("doomgeneric: unable to allocate scale cache");
-    }
-
-    gfx_clear(g_present_buffer, &g_gfx.info, gfx_rgb(0, 0, 0));
-    g_previous_frame_valid = 0;
-}
-
-static int sx_uses_client_surface(void) {
-    return g_gfx.mapped_view != 0 && g_gfx.pixels != 0 && g_gfx.submit_event_fd >= 0;
-}
-
 static void sx_shutdown_video(void) {
-    if (g_scaled_row != 0) {
-        free(g_scaled_row);
-        g_scaled_row = 0;
-    }
-
-    if (g_previous_frame != 0) {
-        free(g_previous_frame);
-        g_previous_frame = 0;
-    }
-
-    if (g_present_buffer_owned && g_present_buffer != 0) {
-        free(g_present_buffer);
-    }
-    g_present_buffer = 0;
-    g_present_buffer_owned = 0;
+    sx_scaled_presenter_destroy(&g_presenter);
 
     if (g_gfx.fb_fd >= 0 || g_gfx.input_fd >= 0) {
         gfx_release(&g_gfx);
@@ -187,32 +132,6 @@ static unsigned char sx_map_keycode(uint32_t key, int ascii) {
     return special != 0 ? special : sx_map_printable_key(key, ascii);
 }
 
-static void sx_blit_rows(int start_row, int end_row) {
-    const uint32_t pitch = gfx_stride_pixels(&g_gfx.info);
-    int source_y = 0;
-
-    for (source_y = start_row; source_y <= end_row; ++source_y) {
-        const uint32_t *source_row = DG_ScreenBuffer + ((size_t)source_y * DOOMGENERIC_RESX);
-        uint32_t *expanded = g_scaled_row;
-        uint32_t *destination_row = g_present_buffer + ((size_t)(g_offset_y + (source_y * (int)g_scale)) * pitch) + (size_t)g_offset_x;
-        int source_x;
-        int repeat_y;
-
-        for (source_x = 0; source_x < DOOMGENERIC_RESX; ++source_x) {
-            uint32_t colour = source_row[source_x];
-            uint32_t repeat_x;
-            for (repeat_x = 0; repeat_x < g_scale; ++repeat_x) {
-                *expanded++ = colour;
-            }
-        }
-
-        memcpy(destination_row, g_scaled_row, (size_t)g_scaled_width * sizeof(uint32_t));
-        for (repeat_y = 1; repeat_y < (int)g_scale; ++repeat_y) {
-            memcpy(destination_row + ((size_t)repeat_y * pitch), g_scaled_row, (size_t)g_scaled_width * sizeof(uint32_t));
-        }
-    }
-}
-
 /* --- FPS / present-latency debug overlay --------------------------------- */
 /* Doom runs as a desktop-compositor client: every gfx_present_region() blocks
  * in gfx_wait_for_client_idle() until the previous frame has been composed.
@@ -222,8 +141,8 @@ static void sx_blit_rows(int start_row, int end_row) {
  * (average and peak ms over the sampling window).  That stall is precisely what
  * starves the audio mixer and caps the frame rate, so it is the number to
  * watch while tuning the GPU path. The text is stamped straight into
- * DG_ScreenBuffer so it rides the existing dirty-row / scale / present pipeline
- * with no changes to the present logic. */
+ * DG_ScreenBuffer so it rides the SDK presenter's dirty-row / scale pipeline
+ * with no extra Doom-side compositing. */
 
 #define SX_FPS_WINDOW_MS 500u
 
@@ -348,74 +267,30 @@ void DG_Init(void) {
         sx_fail("doomgeneric: gfx_acquire failed");
     }
 
+    if (sx_scaled_presenter_init(&g_presenter,
+                                 &g_gfx,
+                                 DOOMGENERIC_RESX,
+                                 DOOMGENERIC_RESY,
+                                 DG_ScreenBuffer,
+                                 gfx_rgb(0, 0, 0)) < 0) {
+        sx_fail("doomgeneric: scaled presenter initialization failed");
+    }
     sx_register_shutdown(sx_shutdown_video);
-
-    if (sx_uses_client_surface()) {
-        g_present_buffer = g_gfx.pixels;
-        g_present_buffer_owned = 0;
-    } else {
-        g_present_buffer = (uint32_t *)calloc(1, gfx_buffer_bytes(&g_gfx.info));
-        g_present_buffer_owned = 1;
-        if (g_present_buffer == 0) {
-            sx_fail("doomgeneric: unable to allocate present buffer");
-        }
-    }
-
-    g_previous_frame = (uint32_t *)malloc((size_t)DOOMGENERIC_RESX * (size_t)DOOMGENERIC_RESY * sizeof(uint32_t));
-    if (g_previous_frame == 0) {
-        sx_fail("doomgeneric: unable to allocate previous frame buffer");
-    }
-
-    sx_configure_output_layout();
     sx_fps_init();
 }
 
 void DG_DrawFrame(void) {
-    int dirty_start = DOOMGENERIC_RESY;
-    int dirty_end = -1;
-    int source_y = 0;
+    unsigned long present_start;
+    long present_result;
 
     sx_fps_stamp();
-
-    if (!g_previous_frame_valid) {
-        dirty_start = 0;
-        dirty_end = DOOMGENERIC_RESY - 1;
-        memcpy(g_previous_frame, DG_ScreenBuffer, (size_t)DOOMGENERIC_RESX * (size_t)DOOMGENERIC_RESY * sizeof(uint32_t));
-        g_previous_frame_valid = 1;
-    } else {
-        for (source_y = 0; source_y < DOOMGENERIC_RESY; ++source_y) {
-            const uint32_t *current_row = DG_ScreenBuffer + ((size_t)source_y * DOOMGENERIC_RESX);
-            uint32_t *previous_row = g_previous_frame + ((size_t)source_y * DOOMGENERIC_RESX);
-
-            if (memcmp(previous_row, current_row, (size_t)DOOMGENERIC_RESX * sizeof(uint32_t)) == 0) {
-                continue;
-            }
-
-            memcpy(previous_row, current_row, (size_t)DOOMGENERIC_RESX * sizeof(uint32_t));
-            if (source_y < dirty_start) {
-                dirty_start = source_y;
-            }
-            dirty_end = source_y;
-        }
+    present_start = uptime_ms();
+    present_result = sx_scaled_presenter_present(&g_presenter, DG_ScreenBuffer);
+    if (present_result < 0) {
+        eprintf("doomgeneric: gfx_present failed (%s)\n", result_error_string(present_result));
+        sx_shutdown_exit(1);
     }
-
-    if (dirty_end < dirty_start) {
-        return;
-    }
-
-    sx_blit_rows(dirty_start, dirty_end);
-    {
-        unsigned long present_start = uptime_ms();
-        long present_result = gfx_present_region(&g_gfx,
-                                                 g_present_buffer,
-                                                 (uint32_t)g_offset_x,
-                                                 (uint32_t)(g_offset_y + (dirty_start * (int)g_scale)),
-                                                 g_scaled_width,
-                                                 (uint32_t)((dirty_end - dirty_start + 1) * (int)g_scale));
-        if (present_result < 0) {
-            eprintf("doomgeneric: gfx_present failed (%s)\n", result_error_string(present_result));
-            sx_shutdown_exit(1);
-        }
+    if (present_result > 0) {
         sx_fps_sample(uptime_ms() - present_start);
     }
 }
@@ -442,8 +317,10 @@ int DG_GetKey(int *pressed, unsigned char *doom_key) {
 
     while (gfx_poll_event(&g_gfx, &event) > 0) {
         if (event.type == SAVANXP_INPUT_EVENT_RESIZED) {
-            (void)gfx_apply_resize_event(&g_gfx, &event);
-            sx_configure_output_layout();
+            if (gfx_apply_resize_event(&g_gfx, &event) < 0 ||
+                sx_scaled_presenter_retarget(&g_presenter, gfx_rgb(0, 0, 0)) < 0) {
+                sx_fail("doomgeneric: scaled presenter resize failed");
+            }
             continue;
         }
         unsigned char mapped = sx_map_keycode(event.key, event.ascii);

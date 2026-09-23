@@ -13,6 +13,8 @@ param(
     # Necesario para cualquier fuente que use float o double: sin esto el link
     # falla con __adddf3 y compania sin resolver.
     [switch]$Sse,
+    # Linkea el modulo de audio PCM temporizado/mixer del SDK.
+    [switch]$Audio,
     [switch]$NoInstall
 )
 
@@ -39,7 +41,7 @@ $outputRoot = Join-Path $BuildRoot "external"
 Ensure-Directory $outputRoot
 $elfOutputPath = if ($OutputPath) { [System.IO.Path]::GetFullPath($OutputPath) } else { Join-Path $outputRoot ("{0}.elf" -f $Name) }
 
-$elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath -HeapMiB $HeapMiB -Gui:$Gui -Sse:$Sse
+$elfPath = Build-ExternalUserProgram -SourcePath $sourceFull -ProgramName $Name -OutputPath $elfOutputPath -HeapMiB $HeapMiB -Gui:$Gui -Sse:$Sse -Audio:$Audio
 
 if (-not $NoInstall) {
     Install-SxfsFilesWithTool $DiskImage @(

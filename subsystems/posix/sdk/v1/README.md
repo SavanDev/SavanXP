@@ -20,6 +20,8 @@ Incluye:
 - `REFERENCE.md`
 - `include/savanxp/gfx2d.h`
 - `runtime/gfx2d.c`
+- `include/savanxp/audio.h`
+- `runtime/audio.c` (optional with `build-user.ps1 -Audio`)
 
 ## ABI pública v1.2
 
@@ -34,6 +36,8 @@ Categorías soportadas:
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `poll`, `select`, `raise`
 - graficos: `gfx_open`, `gfx_close`, `gfx_acquire`, `gfx_release`, `gfx_present`, `gfx_present_region`, `gfx_poll_event`, `gfx_pointer_open`, `gfx_poll_pointer`, `gfx_should_close`
 - toolkit 2D: `sx_bitmap`, `sx_painter`, `sx_rect_set`, `gfx_present_rects`
+- presentation helper: `sx_scaled_presenter` for centered integer-scaled pixel-art frames
+- optional PCM playback: `savanxp/audio.h` and `sx_audio_mixer` (`-Audio`)
 - mouse: `mouse_open`, `mouse_poll_event`
 - primitivas software: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`, `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`, `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`, `gfx_blit_text`
 

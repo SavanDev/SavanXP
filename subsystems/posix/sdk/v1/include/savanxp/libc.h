@@ -6,6 +6,7 @@
 #include "savanxp/syscall.h"
 #include "savanxp/wm_protocol.h"
 #include "savanxp/gfx2d.h"
+#include "savanxp/audio.h"
 
 long savanxp_read(int fd, void* buffer, size_t count);
 long savanxp_write(int fd, const void* buffer, size_t count);

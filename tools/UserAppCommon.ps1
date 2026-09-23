@@ -343,7 +343,7 @@ function Add-SxeResources([string]$Name, [string]$BinaryPath, [string]$ResourceD
     }
 }
 
-function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 0, [switch]$Gui, [switch]$Sse) {
+function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [string]$OutputPath, [int]$HeapMiB = 0, [switch]$Gui, [switch]$Sse, [switch]$Audio) {
     $compiler = Require-Executable "clang" (Get-ToolchainCandidates "clang")
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
@@ -409,6 +409,16 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion del runtime gfx2d."
     }
 
+    $audioObjects = @()
+    if ($Audio) {
+        $audioObject = Join-Path $objectRoot "audio.o"
+        & $compiler -c -x c (Join-Path $Script:SdkRoot "runtime/audio.c") -o $audioObject @compileFlags
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fallo la compilacion del runtime audio."
+        }
+        $audioObjects += $audioObject
+    }
+
     # -Gui suma el toolkit SXGUI, el mismo par de fuentes que build.ps1 le pone
     # a las apps ventaneadas in-tree (aboutapp, notepad, filesapp). Es opt-in a
     # proposito: sin el switch una app de consola no se lleva el toolkit entero
@@ -452,7 +462,7 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
         throw "Fallo la compilacion de crt0."
     }
 
-    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $gfx2dObject $setjmpObject @mathObjects @guiObjects @appObjects
+    & $linker -nostdlib -static -T (Join-Path $Script:SdkRoot "linker.ld") -o $outputFull $crtObject $libcObject $posixObject $gfxObject $gfx2dObject $setjmpObject @mathObjects @audioObjects @guiObjects @appObjects
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo el link de '$SourcePath'."
     }

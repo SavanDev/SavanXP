@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The SDK now owns Doom-style pixel presentation and timed PCM mixing.**
+  `sx_scaled_presenter` handles scaling/centering/row damage; opt-in
+  `savanxp/audio.h` provides `sx_audio_mixer`, and Doom uses both.
+
 - **Kernel security boundaries are documented and enforced.** NX/W^X, stack
   canaries, partial mapping ASLR and checked user/device/storage boundaries land
   together with the [kernel audit](docs/KERNEL_SECURITY.md).

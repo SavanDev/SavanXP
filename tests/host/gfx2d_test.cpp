@@ -25,13 +25,12 @@
 extern "C" {
 #include <stdio.h>
 #include <string.h>
+#include "savanxp/libc.h"
 }
 /* El `stdout` del <stdio.h> del SDK no es el del CRT del host, asi que
  * setvbuf(stdout, ...) ni siquiera linkea. fflush(NULL) vacia todos los streams
  * sin nombrar ninguno: alcanza para que un crash no se lleve la salida ya
  * impresa, que es como se ubica el caso que rompio. */
-
-#include "savanxp/gfx2d.h"
 
 /* El decodificador real, el mismo .inc que compilan el SDK posix y el runtime
  * nativo. No hay copia en el test: si se rompe aca, se rompio en los dos. */
@@ -106,6 +105,16 @@ const uint32_t kInk = 0x00112233u;
 int g_mono_blits = 0;
 int g_ui_blits = 0;
 const uint32_t kBack = 0x00445566u;
+
+struct PresentCall {
+    int count;
+    int x;
+    int y;
+    int width;
+    int height;
+    long result;
+};
+PresentCall g_present_call = {};
 
 /* ---- origen ------------------------------------------------------------- */
 
@@ -1663,11 +1672,104 @@ void case_scaled_nearest_wrapper_is_unchanged() {
           "el wrapper y el filtro explicito coinciden");
 }
 
+void case_scaled_presenter_scales_and_damage() {
+    printf("caso: presenter escalado -- layout, damage y resize\n");
+    uint32_t source[4 * 3];
+    uint32_t target[32 * 24];
+    struct savanxp_gfx_context gfx = {};
+    struct sx_scaled_presenter presenter = {};
+    const uint32_t background = 0x00101010u;
+    const uint32_t red = 0xffffffffu;
+    const uint32_t green = 0x0000ff00u;
+
+    memset(source, red, sizeof(source));
+    memset(target, 0, sizeof(target));
+    gfx.fb_fd = 3;
+    gfx.pixels = target;
+    gfx.info.width = 14;
+    gfx.info.height = 10;
+    gfx.info.pitch = 32 * sizeof(uint32_t);
+    gfx.info.bpp = 32;
+    gfx.info.buffer_size = gfx.info.pitch * gfx.info.height;
+    g_present_call = {};
+
+    check(sx_scaled_presenter_init(&presenter, &gfx, 4, 3, source, background) == 0,
+          "el presenter inicializa");
+    check(presenter.scale == 3 && presenter.destination.x == 1 &&
+              presenter.destination.y == 0 && presenter.destination.width == 12 &&
+              presenter.destination.height == 9,
+          "escala entera y centra en el work area");
+    check(sx_scaled_presenter_present(&presenter, source) == 1,
+          "el primer frame presenta completo");
+    check(g_present_call.count == 1 && g_present_call.x == 0 && g_present_call.y == 0 &&
+              g_present_call.width == 14 && g_present_call.height == 10,
+          "el primer frame presenta superficie y margins");
+    check(target[0] == background && target[1] == red,
+          "respeta el margen y repite el pixel fuente");
+    check(sx_scaled_presenter_present(&presenter, source) == 0 && g_present_call.count == 1,
+          "un frame sin cambios no presenta otra vez");
+
+    source[4] = green;
+    check(sx_scaled_presenter_present(&presenter, source) == 1,
+          "un cambio de una fila si presenta");
+    check(g_present_call.y == 3 && g_present_call.height == 3,
+          "el damage empieza y termina en la banda correcta");
+    check(target[3 * 32 + 1] == green,
+          "la fila cambiada se escala en el destino");
+
+    gfx.info.width = 32;
+    gfx.info.height = 24;
+    gfx.info.buffer_size = gfx.info.pitch * gfx.info.height;
+    check(sx_scaled_presenter_retarget(&presenter, background) == 0,
+          "reaplica el layout al cambiar el tamano");
+    check(presenter.scale == 8 && presenter.destination.x == 0 &&
+              presenter.destination.y == 0 && presenter.destination.width == 32 &&
+              presenter.destination.height == 24,
+          "el nuevo layout usa la superficie completa");
+    check(sx_scaled_presenter_present(&presenter, source) == 1 &&
+              g_present_call.x == 0 && g_present_call.y == 0 &&
+              g_present_call.width == 32 && g_present_call.height == 24,
+          "el resize invalida y presenta un frame completo");
+
+    source[0] = green;
+    g_present_call.result = -5;
+    check(sx_scaled_presenter_present(&presenter, source) < 0,
+          "un present fallido no confirma el damage");
+    g_present_call.result = 0;
+    check(sx_scaled_presenter_present(&presenter, source) == 1,
+          "el siguiente intento vuelve a presentar el damage");
+
+    sx_scaled_presenter_destroy(&presenter);
+    check(presenter.gfx == nullptr && presenter.previous == nullptr,
+          "destroy libera el estado del presenter");
+}
+
 } // namespace
 
 /* ---- stubs de las primitivas crudas ------------------------------------- */
 
 extern "C" {
+
+void gfx_clear(uint32_t* pixels, const struct savanxp_fb_info* info, uint32_t colour) {
+    const uint32_t stride = info->pitch / static_cast<uint32_t>(sizeof(uint32_t));
+    for (uint32_t row = 0; row < info->height; ++row) {
+        for (uint32_t column = 0; column < info->width; ++column) {
+            pixels[(size_t)row * stride + column] = colour;
+        }
+    }
+}
+
+long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_t* pixels,
+                        uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    (void)context;
+    (void)pixels;
+    ++g_present_call.count;
+    g_present_call.x = (int)x;
+    g_present_call.y = (int)y;
+    g_present_call.width = (int)width;
+    g_present_call.height = (int)height;
+    return g_present_call.result;
+}
 
 uint32_t gfx_stride_pixels(const struct savanxp_fb_info* info) {
     return info->pitch / (uint32_t)sizeof(uint32_t);
@@ -1808,6 +1910,7 @@ int main() {
     case_bilinear_downscale_averages();
     case_bilinear_stays_inside_the_source_rect();
     case_scaled_nearest_wrapper_is_unchanged();
+    case_scaled_presenter_scales_and_damage();
 
     case_painter_clips_to_region();
     case_painter_region_clip_with_hole();

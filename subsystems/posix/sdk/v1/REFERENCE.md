@@ -136,6 +136,8 @@ Helpers públicos expuestos por el runtime:
 - `gfx_acquire`
 - `gfx_release`
 - `gfx_present`
+- `gfx_present_region`
+- `gfx_present_rects`
 - `gfx_poll_event`
 - `gfx_pointer_open`
 - `gfx_poll_pointer`
@@ -155,6 +157,7 @@ Helpers públicos expuestos por el runtime:
 - `gfx_text_width`
 - `gfx_text_height`
 - `gfx_blit_text`
+- `sx_scaled_presenter` (integer pixel-art scaling, centered layout and row damage)
 
 Contrato actual:
 
@@ -177,15 +180,24 @@ Contrato actual:
 - hay `mmap` / `munmap` anónimo básico; no hay `mmap` file-backed, ventanas
   arbitrarias ni rueda en v1
 - el backbuffer sigue siendo propiedad de la app; `gfx_buffer_pixels` y `gfx_buffer_bytes` ayudan a validarlo
+- `sx_scaled_presenter` is the path for low-resolution BGRX frames: it scales
+  by an integer factor, centers the image, caches the expanded row, and
+  presents only the smallest changed source band. `retarget` forces a full
+  frame after a resize.
 
 Audio PCM v1.2:
 
-- `audio_open` abre `/dev/audio0` en modo escritura.
-- `AUDIO_IOC_GET_INFO` expone `48000 Hz`, `2` canales, `16` bits y tamaños
-  de periodo/buffer fijos para el backend actual.
-- `write(fd, pcm, bytes)` sobre `/dev/audio0` acepta PCM interleaved
-  `S16LE stereo` y exige múltiplos de `frame_bytes`.
-- el backend actual usa `virtio-sound` sobre PCI y es playback-only.
+- `audio_open` abre `/dev/audio0` para playback; the device also reserves the
+  independent capture direction when the kernel supports it.
+- `AUDIO_IOC_GET_INFO` exposes the active sample rate, channel count, sample
+  width, and period/buffer sizes.
+- `write(fd, pcm, bytes)` accepts interleaved `S16LE stereo` and requires a
+  whole number of `frame_bytes`.
+- the optional `savanxp/audio.h` module adds `sx_audio_mixer`: a wall-clock
+  frame sink with a growable stereo buffer and unsigned-8 mono voices, source
+  rate/pitch conversion, and classic volume/separation panning. Link it with
+  `build-user.ps1 -Audio`; the kernel remains a raw PCM transport.
+- the current playback backend is `virtio-sound` over PCI.
 
 ## Flujo recomendado
 
@@ -234,4 +246,5 @@ Límites prácticos de esta primera ola POSIX:
 - DHCP
 - `termios` y job control
 - `chmod`, `chown`, `link`, `symlink`, `readlink`, `utime*`
-- captura de audio, mixer y `mmap`/shared buffers para audio
+- audio capture and `mmap`/shared buffers for audio; the optional playback mixer
+  lives in `savanxp/audio.h`

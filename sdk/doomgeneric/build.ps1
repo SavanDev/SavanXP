@@ -24,7 +24,7 @@ if (-not $WadPath) {
 # previo/audio salen de RAM que solo se ocupa cuando se usa. Antes habia que
 # clavar 24 MiB de arena en la BSS -- residentes por instancia aunque Doom no
 # los tocara --, y con los 48 MiB genericos una segunda instancia ni entraba.
-& $buildUser -Source $scriptDir -Name doomgeneric -NoInstall:$NoInstall
+& $buildUser -Source $scriptDir -Name doomgeneric -Audio -NoInstall:$NoInstall
 
 if ($NoInstall) {
     return
