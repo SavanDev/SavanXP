@@ -86,7 +86,10 @@ The loader now rejects an image before exposing its entry point when it has:
 The maximum is 64 program headers and 64 load segments. This is deliberately
 smaller than the architectural ELF limit: the table is validated and held on
 the fixed kernel stack, so an untrusted image cannot turn header count into
-unbounded kernel stack use.
+unbounded kernel stack use. SavanXP also deliberately rejects `PT_LOAD` page
+overlap and `p_memsz == 0`; its linker contract uses 4 KiB maximum page size,
+and accepting shared pages would require a permission-union policy that never
+creates W+X.
 
 ### Compiler hardening
 
