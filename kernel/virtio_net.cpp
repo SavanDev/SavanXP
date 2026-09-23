@@ -143,6 +143,9 @@ void poll_receive() {
                 report(SAVANXP_NET_STATUS_RX_INVALID);
             } else {
                 const uint8_t* buffer = virtio_pci::queue_extra(g_rx_queue, rx_slot_offset(slot));
+                // This is redundant with element.len's upper bound today;
+                // keep the frame-level defense in depth if the RX buffer and
+                // Ethernet limit ever diverge.
                 const size_t frame_length = element.len - kNetHeaderBytes;
                 if (frame_length > kMaxFrameBytes) {
                     ++g_rx_errors;
