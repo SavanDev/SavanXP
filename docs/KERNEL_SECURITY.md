@@ -70,7 +70,9 @@ The audit confirmed the following defenses were already present:
 - User stack and shared-section pages preserve the NX bit across fork.
 - Kernel stacks grow from 16 KiB to 32 KiB. Canaries detect corruption before a
   normal return, although a dedicated non-present guard page is not implemented
-  yet.
+  yet. The eight-page backing allocation is intentionally contiguous: it trades
+  fragmentation resistance for a simple, bounded stack layout until the PMM can
+  provide non-contiguous ownership and guard-page support.
 
 ### ELF validation
 
