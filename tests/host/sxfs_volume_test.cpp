@@ -99,6 +99,40 @@ bool build_clean_image(uint8_t* image) {
     return ok;
 }
 
+bool corrupt_inode_extent_overlap(uint8_t* image) {
+    sxfs_inode first = {};
+    sxfs_inode second = {};
+    bool have_first = false;
+    uint32_t second_index = 0;
+
+    for (uint32_t index = 0; index < SXFS_MAX_INODES; ++index) {
+        sxfs_inode inode = {};
+        memcpy(&inode, sector_at(image, SXFS_INODE_TABLE_LBA) + index * SXFS_INODE_SIZE,
+               sizeof(inode));
+        if (inode.type == SXFS_INODE_UNUSED || inode.extent_count == 0) {
+            continue;
+        }
+        if (!have_first) {
+            first = inode;
+            have_first = true;
+        } else {
+            second = inode;
+            second_index = index;
+            break;
+        }
+    }
+    if (!have_first || second.inode_id == 0) {
+        return false;
+    }
+
+    second.extent_count = 1;
+    second.extents[0] = first.extents[0];
+    second.size = 0;
+    memcpy(sector_at(image, SXFS_INODE_TABLE_LBA) + second_index * SXFS_INODE_SIZE,
+           &second, sizeof(second));
+    return true;
+}
+
 // Deja la imagen como la dejaria un corte de luz en medio de un commit: el
 // journal con una transaccion pendiente (payload = la metadata que hay que
 // replicar en su lugar definitivo) y los superblocks sin el flag de limpio.
@@ -244,6 +278,22 @@ void case_recovered_journal_is_writable(uint8_t* image) {
     hoststub::detach_device();
 }
 
+void case_overlapping_inode_extents_are_rejected(uint8_t* image) {
+    printf("caso: dos inodos reclaman el mismo extent\n");
+
+    if (!check(build_clean_image(image), "imagen SxFS construida") ||
+        !check(corrupt_inode_extent_overlap(image), "metadata con overlap preparada")) {
+        return;
+    }
+
+    hoststub::reset_vfs();
+    hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
+    sxfs::initialize();
+    check(sxfs::probe(0, sxfs::kRootMountPoint) == sxfs::kInvalidVolume,
+          "el volumen con overlap global se rechaza");
+    hoststub::detach_device();
+}
+
 // El caso que separa de verdad los dos comportamientos: device ESCRIBIBLE, pero
 // la escritura de la recuperacion se topa con un error de I/O transitorio. El
 // volumen queda read_only con un device que despues acepta escrituras, asi que
@@ -312,6 +362,7 @@ int main() {
 
     case_unrecoverable_journal_stays_read_only(image, pristine);
     case_transient_io_failure_rejects_writes(image, pristine);
+    case_overlapping_inode_extents_are_rejected(image);
     case_recovered_journal_is_writable(image);
 
     free(image);

@@ -450,6 +450,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **SxFS now rejects data extents claimed by more than one inode.** Metadata
+  validation tracks a per-volume claim bitmap across the complete inode table.
+
 - **SMEP and kernel write protection are enabled on supported processors.**
   Every application processor establishes the same execution boundary; SMAP
   remains a separate follow-up.

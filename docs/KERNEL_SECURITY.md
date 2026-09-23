@@ -129,8 +129,9 @@ at fixed addresses, and the kernel is not relocated.
 
 - SxFS now validates every inode before use and before journal replay:
   `extent_count` is bounded, extents are nonempty, contained in the data area,
-  non-overlapping, covered by the allocation bitmap and large enough for the
-  inode size. Inode IDs, allocation bitmaps and inode types must agree.
+  non-overlapping both within and across inodes, covered by the allocation bitmap
+  and large enough for the inode size. Inode IDs, allocation bitmaps and inode
+  types must agree.
 - A journal containing invalid metadata is rejected before any of it is written
   to the home metadata area.
 - Directory entries require valid terminated names, valid IDs, matching file or

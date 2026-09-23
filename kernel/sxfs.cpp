@@ -74,6 +74,10 @@ struct Volume {
     Superblock superblock;
     uint8_t block_bitmap[kBlockBitmapBytes];
     uint8_t inode_bitmap[kInodeBitmapBytes];
+    // Claims are rebuilt from the complete inode set during validation. They
+    // are deliberately not the allocation bitmap: the latter permits free
+    // future blocks, while this scratch bitmap must have exactly one owner.
+    uint8_t extent_claims[kBlockBitmapBytes];
     Inode inodes[kMaxInodes];
     sxfs::FileRecord records[kMaxRecords];
     MetadataSnapshot snapshot;
@@ -226,7 +230,8 @@ bool inode_metadata_is_valid(const Volume& volume, const Inode& inode, uint32_t 
     return true;
 }
 
-bool home_metadata_is_valid(const Volume& volume) {
+bool home_metadata_is_valid(Volume& volume) {
+    memset(volume.extent_claims, 0, sizeof(volume.extent_claims));
     if (bitmap_test(volume.inode_bitmap, kRootInodeId - 1) == false) {
         return false;
     }
@@ -236,6 +241,17 @@ bool home_metadata_is_valid(const Volume& volume) {
         if (allocated != (inode.type != kInodeTypeUnused) ||
             !inode_metadata_is_valid(volume, inode, inode_id)) {
             return false;
+        }
+
+        for (uint32_t index = 0; index < inode.extent_count; ++index) {
+            const Extent& extent = inode.extents[index];
+            for (uint32_t sector = 0; sector < extent.sector_count; ++sector) {
+                const uint32_t lba = extent.start_lba + sector;
+                if (bitmap_test(volume.extent_claims, lba)) {
+                    return false;
+                }
+                bitmap_set(volume.extent_claims, lba, true);
+            }
         }
     }
     return true;
