@@ -192,6 +192,33 @@ at fixed addresses, and the kernel is not relocated.
 | SMP panic | Panic halts only the reporting core | Medium | Open |
 | Boot trust | Kernel, initramfs and disk image are unauthenticated | High | Open |
 
+## Second-pass audit disposition
+
+The second review of `be3622c` confirmed the following outcomes. The A3 policy
+was checked against the current executable corpus and kept as a deliberate
+loader restriction; it is not a reproduced runtime failure.
+
+| ID | Disposition |
+| --- | --- |
+| A1 | Fixed: RTL8139 bounds CRC-inclusive records, uses the wrap tail and resynchronizes invalid records with `CBR`. |
+| A2 | Fixed: the keyboard-layout popup opens `/dev/input0` read/write and reports setter failures. |
+| A3 | Policy retained: 1,065 current ELF artifacts had no shared `PT_LOAD` pages, zero `p_memsz`, RWX or low vaddr cases. |
+| A4 | Fixed: every application processor establishes its own NX baseline. |
+| A5 | Fixed: the kernel canary hook uses the compiler builtin return address. |
+| B1 | Fixed: kernel boot and each new process receive a nonconstant canary; `fork` inherits it. |
+| B2 | Fixed: BusyBox builds and runs with the normal canary runtime. |
+| B3 | Fixed: SxFS validates a global per-volume extent-claim bitmap. |
+| B4 | Fixed for the current stack budget: directory recursion is capped at 32 levels. |
+| B5 | Fixed: over-capacity CPIO archives leave the VFS unready. |
+| B6 | Fixed: supported processors enable SMEP and `CR0.WP` per core. |
+| B7 | Documented open trade-off: eight contiguous pages remain until non-contiguous stacks and guard pages exist. |
+| C1 | Documentation corrected: canaries are no longer described as build-time constants. |
+| C2 | NX comments corrected without changing page-table behavior. |
+| C3 | Refuted as a vulnerability: signal 0 is rejected as unsupported; normal self-termination remains valid. |
+| C4 | Redundancy documented and retained as defense in depth. |
+
+The D1-D3 design decisions remain unimplemented by design.
+
 ## Required follow-up work
 
 The next security phase should not add more ad-hoc device checks. It should add
