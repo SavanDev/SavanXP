@@ -450,6 +450,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **BusyBox is built with stack canaries enabled.** The port boots and runs its
+  applets with the same runtime protection as other external applications.
+
 - **SxFS directory reconstruction now uses a bounded 32-level depth.** The
   visited-cycle check remains, while recursive frames stay within the kernel
   stack budget used by the current 32 KiB stacks.
@@ -480,8 +483,8 @@ Cut-off notes:
 
 - **User memory is no longer uniformly executable.** NX is now enforced for data,
   stacks and shared sections; ELF segments must be valid, non-RWX and remain in
-  the user half. Stack canaries cover kernel, in-tree and supported external
-  SDK builds; BusyBox remains a documented compatibility exception.
+  the user half. Stack canaries cover kernel, in-tree, BusyBox and supported
+  external SDK builds.
 
 - **Malformed storage and boot images are rejected before use.** SxFS extents,
   inode metadata and directory graphs, CPIO names/hex/trailers, GPU geometry and

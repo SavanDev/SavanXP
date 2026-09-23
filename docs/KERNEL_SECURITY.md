@@ -98,11 +98,10 @@ creates W+X.
 
 ### Compiler hardening
 
-- Kernel, uACPI, in-tree POSIX userland, external SDK applications, FFmpeg and
-  the native SDK are compiled with `-fstack-protector-strong`. BusyBox is the
-  explicit compatibility exception: its current port still needs the legacy
-  no-canary build to boot, so it remains a tracked gap rather than silently
-  claiming coverage.
+- Kernel, uACPI, in-tree POSIX userland, external SDK applications, BusyBox,
+  FFmpeg and the native SDK are compiled with `-fstack-protector-strong`. The
+  BusyBox port now boots and runs its applets with the same runtime canary
+  contract as the rest of userland.
 - `crt0` installs a fresh nonzero canary from a kernel register before calling
   `main`. The value is not stored in the executable image; `fork` inherits it
   with the parent's context and address space, while `exec` receives a new one.

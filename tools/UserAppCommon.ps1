@@ -348,9 +348,6 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
     $compileFlags = Get-ExternalCompileFlags $sourceSpec.IncludeDirs -Sse:$Sse
-    if ($ProgramName -eq "busybox") {
-        $compileFlags += "-fno-stack-protector"
-    }
     $outputFull = [System.IO.Path]::GetFullPath($OutputPath)
     $objectRoot = Join-Path $Script:SdkBuildRoot $ProgramName
     Ensure-Directory $objectRoot
