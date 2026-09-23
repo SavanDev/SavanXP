@@ -9,7 +9,7 @@ struct Device {
     const char* name;
     int (*read)(uint64_t user_buffer, size_t count);
     int (*write)(uint64_t user_buffer, size_t count);
-    int (*ioctl)(uint64_t request, uint64_t argument);
+    int (*ioctl)(uint64_t request, uint64_t argument, uint32_t granted_access);
     void (*close)();
     bool (*can_read)();
 };
@@ -19,7 +19,7 @@ bool ready();
 bool register_node(const char* path, Device* device, bool writable);
 int read(Device* device, uint64_t user_buffer, size_t count);
 int write(Device* device, uint64_t user_buffer, size_t count);
-int ioctl(Device* device, uint64_t request, uint64_t argument);
+int ioctl(Device* device, uint64_t request, uint64_t argument, uint32_t granted_access);
 void close(Device* device);
 bool can_read(Device* device);
 void service_background();

@@ -15,6 +15,7 @@ namespace {
 constexpr uint64_t kPageMask = 0x000ffffffffff000ULL;
 constexpr uint64_t kKernelPml4Start = 256;
 constexpr uint64_t kKernelPml4WindowBytes = 1ULL << 39;
+constexpr uint64_t kSectionAslrWindowBytes = 16ULL << 30;
 
 uint64_t g_hhdm_offset = 0;
 uint64_t g_kernel_pml4_physical = 0;
@@ -431,6 +432,15 @@ bool create_address_space(VmSpace& space) {
     return true;
 }
 
+void randomize_section_base(VmSpace& space, uint64_t seed) {
+    if (space.pml4_virtual == nullptr) {
+        return;
+    }
+
+    const uint64_t offset = (seed % kSectionAslrWindowBytes) & ~(memory::kPageSize - 1);
+    space.next_section_base = kSectionViewBase + offset;
+}
+
 void destroy_address_space(VmSpace& space) {
     if (!g_ready || space.pml4_physical == 0 || space.pml4_virtual == nullptr) {
         return;
@@ -517,21 +527,28 @@ uint64_t resident_user_bytes(const VmSpace& space) {
 }
 
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags) {
-    if (!g_ready || (virtual_address & 0xfff) != 0 || (physical_address & 0xfff) != 0) {
+    // map_page es exclusivamente la API de mappings de usuario. El half kernel
+    // se copia de las tablas de Limine y nunca debe recibir entradas creadas por
+    // un proceso, aunque una imagen ELF manipulada lo intente.
+    if (!g_ready || !canonical_user_address(virtual_address) ||
+        (virtual_address & 0xfff) != 0 || (physical_address & 0xfff) != 0) {
         return false;
     }
 
-    uint64_t* pdpt = next_table(space.pml4_virtual, pml4_index(virtual_address), flags);
+    // NX is a PTE/PDPTE/PDE permission, but bit 63 is reserved in a PML4E.
+    // Keep the leaf flag and create the upper tables without it.
+    const uint64_t table_flags = flags & ~vm::kPageNoExecute;
+    uint64_t* pdpt = next_table(space.pml4_virtual, pml4_index(virtual_address), table_flags);
     if (pdpt == nullptr) {
         return false;
     }
 
-    uint64_t* pd = next_table(pdpt, pdpt_index(virtual_address), flags);
+    uint64_t* pd = next_table(pdpt, pdpt_index(virtual_address), table_flags);
     if (pd == nullptr) {
         return false;
     }
 
-    uint64_t* pt = next_table(pd, pd_index(virtual_address), flags);
+    uint64_t* pt = next_table(pd, pd_index(virtual_address), table_flags);
     if (pt == nullptr) {
         return false;
     }
@@ -646,6 +663,9 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
                     if ((pte & kPageWrite) != 0) {
                         flags |= kPageWrite;
                     }
+                    if ((pte & kPageNoExecute) != 0) {
+                        flags |= kPageNoExecute;
+                    }
 
                     memcpy(page.virtual_address, physical_to_virtual(source_physical), memory::kPageSize);
 
@@ -721,7 +741,7 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
         return false;
     }
 
-    uint64_t page_flags = kPageUser;
+    uint64_t page_flags = kPageUser | kPageNoExecute;
     if ((access_mask & object::access_write) != 0) {
         page_flags |= kPageWrite;
     }
@@ -786,7 +806,7 @@ bool map_kernel_pages(const uint64_t* physical_pages, uint64_t page_count, uint6
             !map_kernel_page(
                 mapping_base + (page_index * memory::kPageSize),
                 physical_pages[page_index],
-                (flags | vm::kPageWrite) & ~vm::kPageUser)) {
+                (flags | vm::kPageWrite | vm::kPageNoExecute) & ~vm::kPageUser)) {
             for (uint64_t rollback = 0; rollback < mapped_pages; ++rollback) {
                 (void)unmap_kernel_page(mapping_base + (rollback * memory::kPageSize));
             }
@@ -838,7 +858,7 @@ bool map_kernel_device_memory(uint64_t physical_base, size_t size, uint64_t flag
         if (!map_kernel_page(
                 mapping_base + offset,
                 aligned_physical + offset,
-                (flags | vm::kPageWrite) & ~vm::kPageUser)) {
+                (flags | vm::kPageWrite | vm::kPageNoExecute) & ~vm::kPageUser)) {
             for (uint64_t rollback = 0; rollback < mapped_bytes; rollback += memory::kPageSize) {
                 (void)unmap_kernel_page(mapping_base + rollback);
             }
@@ -958,7 +978,7 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags) {
     if (table == nullptr) {
         return false;
     }
-    table[pt_index(page)] |= (flags & (kPageWrite | kPageUser));
+    table[pt_index(page)] |= (flags & (kPageWrite | kPageUser | kPageNoExecute));
     if ((read_cr3() & kPageMask) == space.pml4_physical) {
         invalidate_page(page);
     }
@@ -968,7 +988,8 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags) {
 bool retarget_kernel_page(void* virtual_address, uint64_t physical_address, uint64_t flags) {
     const uint64_t address = reinterpret_cast<uint64_t>(virtual_address);
     return unmap_kernel_page(address) &&
-        map_kernel_page(address, physical_address, (flags | vm::kPageWrite) & ~vm::kPageUser);
+        map_kernel_page(address, physical_address,
+                        (flags | vm::kPageWrite | vm::kPageNoExecute) & ~vm::kPageUser);
 }
 
 void sync_kernel_tlb() {
@@ -995,7 +1016,7 @@ bool ensure_user_stack_page(VmSpace& space, uint64_t address) {
         return false;
     }
     memset(allocation.virtual_address, 0, memory::kPageSize);
-    if (!map_page(space, page, allocation.physical_address, kPageUser | kPageWrite)) {
+    if (!map_page(space, page, allocation.physical_address, kPageUser | kPageWrite | kPageNoExecute)) {
         (void)memory::free_allocation(allocation);
         return false;
     }

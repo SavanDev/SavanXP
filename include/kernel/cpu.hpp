@@ -15,6 +15,10 @@ enum class InterruptEoi : uint8_t {
 };
 
 void initialize_cpu();
+// Entropia para cookies y decisiones de colocacion. Usa RDRAND cuando el CPU
+// la anuncia; el fallback de TSC es para arrancar igual en maquinas viejas, no
+// para criptografia.
+uint64_t random_u64();
 
 /* --- SMP ---------------------------------------------------------------------
  * Puesta en marcha de los application processors y estado por core.

@@ -182,6 +182,24 @@ int main(void) {
         return fail("clear final fallo");
     }
 
+    /* Un descriptor read-only puede consultar informacion, pero no ejecutar
+     * un ioctl mutante aunque el handler del device siga registrado. */
+    int read_only = savanxp_open_mode("/dev/clipboard", SAVANXP_OPEN_READ);
+    if (read_only < 0) {
+        return fail("no se pudo abrir clipboard read-only");
+    }
+    struct savanxp_clipboard_info read_info = {};
+    if (savanxp_ioctl(read_only, CLIP_IOC_GET_INFO, (unsigned long)&read_info) < 0) {
+        savanxp_close(read_only);
+        return fail("GET_INFO read-only fallo");
+    }
+    long denied = savanxp_ioctl(read_only, CLIP_IOC_CLEAR, 0);
+    savanxp_close(read_only);
+    if (denied >= 0 || result_error_code(denied) != SAVANXP_EACCES) {
+        eprintf("cliptest: CLEAR read-only no fue rechazado (%ld)\n", denied);
+        return 1;
+    }
+
     puts_out("cliptest: PASS\n");
     return 0;
 }

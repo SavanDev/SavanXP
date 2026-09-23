@@ -177,6 +177,70 @@ void bitmap_set(uint8_t* bitmap, uint32_t bit, bool value) {
     sxfs_bitmap_set(bitmap, bit, value ? 1 : 0);
 }
 
+bool extent_is_valid(const Volume& volume, const Extent& extent) {
+    return extent.sector_count != 0 && extent.start_lba >= volume.superblock.data_lba &&
+        extent.start_lba < volume.superblock.total_sectors &&
+        extent.sector_count <= volume.superblock.total_sectors - extent.start_lba;
+}
+
+bool inode_metadata_is_valid(const Volume& volume, const Inode& inode, uint32_t inode_id) {
+    if ((inode.type != kInodeTypeUnused && inode.inode_id != inode_id) ||
+        (inode.type != kInodeTypeUnused && inode.type != kInodeTypeFile &&
+         inode.type != kInodeTypeDirectory) ||
+        inode.extent_count > kMaxExtents) {
+        return false;
+    }
+
+    uint64_t capacity_sectors = 0;
+    for (uint32_t index = 0; index < inode.extent_count; ++index) {
+        const Extent& extent = inode.extents[index];
+        if (!extent_is_valid(volume, extent)) {
+            return false;
+        }
+        for (uint32_t other = index + 1; other < inode.extent_count; ++other) {
+            const Extent& next = inode.extents[other];
+            if (extent.start_lba < next.start_lba + next.sector_count &&
+                next.start_lba < extent.start_lba + extent.sector_count) {
+                return false;
+            }
+        }
+        capacity_sectors += extent.sector_count;
+    }
+
+    if (inode.type == kInodeTypeUnused) {
+        return inode.extent_count == 0 && inode.size == 0;
+    }
+    if (capacity_sectors > (SIZE_MAX / block::kSectorSize) ||
+        inode.size > capacity_sectors * block::kSectorSize) {
+        return false;
+    }
+
+    for (uint32_t index = 0; index < inode.extent_count; ++index) {
+        const Extent& extent = inode.extents[index];
+        for (uint32_t sector = 0; sector < extent.sector_count; ++sector) {
+            if (!bitmap_test(volume.block_bitmap, extent.start_lba + sector)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool home_metadata_is_valid(const Volume& volume) {
+    if (bitmap_test(volume.inode_bitmap, kRootInodeId - 1) == false) {
+        return false;
+    }
+    for (uint32_t inode_id = 1; inode_id <= kMaxInodes; ++inode_id) {
+        const bool allocated = bitmap_test(volume.inode_bitmap, inode_id - 1);
+        const Inode& inode = volume.inodes[inode_id - 1];
+        if (allocated != (inode.type != kInodeTypeUnused) ||
+            !inode_metadata_is_valid(volume, inode, inode_id)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void snapshot_metadata(Volume& volume) {
     volume.snapshot.superblock = volume.superblock;
     memcpy(volume.snapshot.block_bitmap, volume.block_bitmap, sizeof(volume.block_bitmap));
@@ -252,6 +316,9 @@ RecoveryState recover_journal(Volume& volume) {
         return RecoveryState::failed;
     }
 
+    if (!home_metadata_is_valid(volume)) {
+        return RecoveryState::failed;
+    }
     if (!write_home_metadata(volume) || !write_superblocks(volume, header.sequence, kFlagClean) || !clear_journal(volume)) {
         return RecoveryState::read_only;
     }
@@ -569,7 +636,8 @@ bool allocate_blocks(Volume& volume, Inode& inode, uint32_t additional_sectors) 
 }
 
 void free_inode_blocks(Volume& volume, Inode& inode) {
-    for (uint32_t index = 0; index < inode.extent_count; ++index) {
+    const uint32_t extent_count = inode.extent_count < kMaxExtents ? inode.extent_count : kMaxExtents;
+    for (uint32_t index = 0; index < extent_count; ++index) {
         const Extent& extent = inode.extents[index];
         for (uint32_t sector = 0; sector < extent.sector_count; ++sector) {
             bitmap_set(volume.block_bitmap, extent.start_lba + sector, false);
@@ -581,7 +649,8 @@ void free_inode_blocks(Volume& volume, Inode& inode) {
 
 void shrink_inode_to_sectors(Volume& volume, Inode& inode, uint32_t target_sectors) {
     uint32_t kept = 0;
-    for (uint32_t index = 0; index < inode.extent_count; ++index) {
+    const uint32_t extent_count = inode.extent_count < kMaxExtents ? inode.extent_count : kMaxExtents;
+    for (uint32_t index = 0; index < extent_count; ++index) {
         Extent& extent = inode.extents[index];
         if (kept >= target_sectors) {
             for (uint32_t sector = 0; sector < extent.sector_count; ++sector) {
@@ -635,7 +704,8 @@ bool ensure_inode_capacity(Volume& volume, Inode& inode, size_t required_size) {
 
 bool locate_inode_offset(const Inode& inode, size_t offset, uint32_t& lba, size_t& sector_offset) {
     size_t remaining = offset;
-    for (uint32_t index = 0; index < inode.extent_count; ++index) {
+    const uint32_t extent_count = inode.extent_count < kMaxExtents ? inode.extent_count : kMaxExtents;
+    for (uint32_t index = 0; index < extent_count; ++index) {
         const Extent& extent = inode.extents[index];
         const size_t extent_bytes = static_cast<size_t>(extent.sector_count) * block::kSectorSize;
         if (remaining < extent_bytes) {
@@ -652,7 +722,7 @@ bool read_inode_bytes(Volume& volume, const Inode& inode, size_t offset, void* b
     if (buffer == nullptr || count == 0) {
         return true;
     }
-    if (offset + count > inode.size) {
+    if (offset > inode.size || count > inode.size - offset) {
         return false;
     }
 
@@ -737,10 +807,26 @@ bool zero_inode_range(Volume& volume, const Inode& inode, size_t offset, size_t 
 }
 
 bool read_dir_entry(Volume& volume, const Inode& directory, size_t offset, DirEntry& entry) {
-    if (offset + sizeof(entry) > directory.size) {
+    if (offset > directory.size || sizeof(entry) > directory.size - offset ||
+        !read_inode_bytes(volume, directory, offset, &entry, sizeof(entry))) {
         return false;
     }
-    return read_inode_bytes(volume, directory, offset, &entry, sizeof(entry));
+    if (entry.inode_id == 0) {
+        return entry.name_length == 0 && entry.type == 0;
+    }
+    if (entry.name_length == 0 || entry.name_length > kMaxDirNameLength ||
+        entry.name[entry.name_length] != '\0') {
+        return false;
+    }
+    for (uint16_t index = 0; index < entry.name_length; ++index) {
+        if (entry.name[index] == '\0') {
+            return false;
+        }
+    }
+    const Inode* child = inode_for_id(volume, entry.inode_id);
+    return child != nullptr && child->type != kInodeTypeUnused &&
+        ((child->type == kInodeTypeDirectory && entry.type == kInodeTypeDirectory) ||
+         (child->type == kInodeTypeFile && entry.type == kInodeTypeFile));
 }
 
 bool write_dir_entry(Volume& volume, const Inode& directory, size_t offset, const DirEntry& entry) {
@@ -828,11 +914,14 @@ bool remove_directory_entry(Volume& volume, Inode& directory, const char* name) 
     return write_dir_entry(volume, directory, offset, empty);
 }
 
-bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t parent_inode, const char* parent_relative) {
+bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t parent_inode,
+                           const char* parent_relative, bool visited[kMaxInodes], uint32_t depth) {
     const Inode* directory = inode_for_id(volume, directory_inode);
-    if (directory == nullptr || directory->type != kInodeTypeDirectory) {
+    if (directory == nullptr || directory->type != kInodeTypeDirectory ||
+        depth > 64 || visited[directory_inode - 1]) {
         return false;
     }
+    visited[directory_inode - 1] = true;
 
     for (size_t offset = 0; offset + sizeof(DirEntry) <= directory->size; offset += sizeof(DirEntry)) {
         DirEntry entry = {};
@@ -865,7 +954,8 @@ bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t p
         strcpy(record->name, entry.name);
         strcpy(record->path, relative);
 
-        if (record->directory && !build_record_recursive(volume, record->inode_id, record->inode_id, record->path)) {
+        if (record->directory &&
+            !build_record_recursive(volume, record->inode_id, record->inode_id, record->path, visited, depth + 1)) {
             return false;
         }
     }
@@ -875,7 +965,8 @@ bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t p
 
 bool rebuild_record_cache(Volume& volume) {
     memset(volume.records, 0, sizeof(volume.records));
-    return build_record_recursive(volume, kRootInodeId, kRootInodeId, "");
+    bool visited[kMaxInodes] = {};
+    return build_record_recursive(volume, kRootInodeId, kRootInodeId, "", visited, 0);
 }
 
 void refresh_record_size(Volume& volume, uint32_t inode_id) {
@@ -956,11 +1047,14 @@ bool load_filesystem_from_device(Volume& volume, size_t device_index) {
 
     volume.superblock = (!secondary_ok || (primary_ok && primary.sequence >= secondary.sequence)) ? primary : secondary;
     volume.device_index = device_index;
-    if (!read_home_metadata(volume)) {
+    block::DeviceInfo device_info = {};
+    if (!block::device_info(device_index, device_info) || volume.superblock.total_sectors > device_info.sector_count ||
+        !read_home_metadata(volume) || !home_metadata_is_valid(volume)) {
         return false;
     }
     const RecoveryState recovery = recover_journal(volume);
-    if (recovery == RecoveryState::failed || !rebuild_record_cache(volume)) {
+    if (recovery == RecoveryState::failed || !home_metadata_is_valid(volume) ||
+        !rebuild_record_cache(volume)) {
         return false;
     }
     volume.status = recovery == RecoveryState::read_only ? sxfs::MountStatus::read_only : sxfs::MountStatus::mounted;

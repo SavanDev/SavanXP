@@ -8,6 +8,7 @@
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/nic.hpp"
+#include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
@@ -1452,7 +1453,11 @@ bool bring_up() {
 }
 
 
-int net_ioctl(uint64_t request, uint64_t argument) {
+int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
+    if (request != NET_IOC_GET_INFO && request != NET_IOC_GET_TCP_STATS &&
+        (granted_access & object::access_write) == 0) {
+        return negative_error(SAVANXP_EACCES);
+    }
     switch (request) {
         case NET_IOC_GET_INFO: {
             if (!process::validate_user_range(argument, sizeof(savanxp_net_info), true)) {

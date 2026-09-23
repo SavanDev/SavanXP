@@ -43,6 +43,10 @@ enum PageFlags : uint64_t {
     kPageUser = 1ULL << 2,
     kPageWriteThrough = 1ULL << 3,
     kPageCacheDisable = 1ULL << 4,
+    // Bit 63 de las entradas de paging x86-64. Con EFER.NXE activo vuelve
+    // NX un permiso de solo paginas, no un flag de CPU completo: el hardware
+    // haceUltimo el control en la TLB.
+    kPageNoExecute = 1ULL << 63,
     // Bit PAT. SOLO valido en la entrada de ultimo nivel: en un PDE/PDPTE el
     // mismo bit es PS y crearia una pagina grande. map_kernel_page lo aplica
     // unicamente a la hoja, que es lo que lo hace seguro de pasar aca.
@@ -73,6 +77,11 @@ void initialize(const boot::BootInfo& boot_info);
 bool ready();
 bool create_address_space(VmSpace& space);
 void destroy_address_space(VmSpace& space);
+// Cambia el punto de partida de las vistas de seccion para este espacio. El
+// rango es una ventana de 16 GiB reservada para mappings compartidos; el kernel
+// lo siembra con entropia de CPU para que dos procesos no-usarios no reciban
+// siempre la misma secuencia de direcciones.
+void randomize_section_base(VmSpace& space, uint64_t seed);
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags);
 bool unmap_page(VmSpace& space, uint64_t virtual_address, uint64_t* physical_address);
 bool clone_address_space(const VmSpace& source, VmSpace& destination);

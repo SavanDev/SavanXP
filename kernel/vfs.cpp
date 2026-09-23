@@ -31,26 +31,24 @@ size_t g_node_count = 0;
 bool g_ready = false;
 int g_last_error = SAVANXP_ENOENT;
 
-uint32_t parse_hex_u32(const char* text, size_t count) {
+bool parse_hex_u32(const char* text, size_t count, uint32_t& value_out) {
     uint32_t value = 0;
     for (size_t index = 0; index < count; ++index) {
-        value <<= 4;
         const char digit = text[index];
+        uint32_t nibble = 0;
         if (digit >= '0' && digit <= '9') {
-            value |= static_cast<uint32_t>(digit - '0');
+            nibble = static_cast<uint32_t>(digit - '0');
         } else if (digit >= 'a' && digit <= 'f') {
-            value |= static_cast<uint32_t>(digit - 'a' + 10);
+            nibble = static_cast<uint32_t>(digit - 'a' + 10);
         } else if (digit >= 'A' && digit <= 'F') {
-            value |= static_cast<uint32_t>(digit - 'A' + 10);
+            nibble = static_cast<uint32_t>(digit - 'A' + 10);
+        } else {
+            return false;
         }
+        value = (value << 4) | nibble;
     }
-    return value;
-}
-
-const uint8_t* align4(const uint8_t* cursor, const uint8_t* base) {
-    const uintptr_t offset = static_cast<uintptr_t>(cursor - base);
-    const uintptr_t aligned = (offset + 3u) & ~static_cast<uintptr_t>(3u);
-    return base + aligned;
+    value_out = value;
+    return true;
 }
 
 int add_node(vfs::NodeType type, const char* name, int parent) {
@@ -475,38 +473,74 @@ void initialize(const void* archive, size_t size) {
     const uint8_t* cursor = base;
     const uint8_t* end = base + size;
 
-    while (cursor + 110 <= end) {
+    while (static_cast<size_t>(end - cursor) >= 110) {
         const char* header = reinterpret_cast<const char*>(cursor);
         if (memcmp(header, "070701", 6) != 0) {
-            break;
+            return;
         }
 
-        const uint32_t mode = parse_hex_u32(header + 14, 8);
-        const uint32_t file_size = parse_hex_u32(header + 54, 8);
-        const uint32_t name_size = parse_hex_u32(header + 94, 8);
+        uint32_t mode = 0;
+        uint32_t file_size = 0;
+        uint32_t name_size = 0;
+        if (!parse_hex_u32(header + 14, 8, mode) ||
+            !parse_hex_u32(header + 54, 8, file_size) ||
+            !parse_hex_u32(header + 94, 8, name_size)) {
+            return;
+        }
         cursor += 110;
 
-        if (cursor + name_size > end || name_size == 0) {
-            break;
+        if (name_size == 0 || name_size > kMaxPathLength ||
+            name_size > static_cast<size_t>(end - cursor)) {
+            return;
         }
 
         const char* name = reinterpret_cast<const char*>(cursor);
-        cursor = align4(cursor + name_size, base);
+        bool terminated = false;
+        for (uint32_t index = 0; index < name_size; ++index) {
+            if (name[index] == '\0' && index + 1 == name_size) {
+                terminated = true;
+                break;
+            }
+            if (name[index] == '\0') {
+                return;
+            }
+        }
+        if (!terminated) {
+            return;
+        }
+
+        const size_t name_end_offset = static_cast<size_t>(cursor - base) + name_size;
+        const size_t name_padding = (4 - (name_end_offset & 3u)) & 3u;
+        if (name_padding > static_cast<size_t>(end - cursor) - name_size) {
+            return;
+        }
+        cursor += name_size + name_padding;
         if (strcmp(name, "TRAILER!!!") == 0) {
             g_ready = true;
             return;
         }
 
-        if (cursor + file_size > end) {
-            break;
+        if (file_size > static_cast<size_t>(end - cursor)) {
+            return;
         }
+        const uint8_t* data = cursor;
+        const size_t data_end_offset = static_cast<size_t>(cursor - base) + file_size;
+        const size_t data_padding = (4 - (data_end_offset & 3u)) & 3u;
+        if (data_padding > static_cast<size_t>(end - cursor) - file_size) {
+            return;
+        }
+        cursor += file_size + data_padding;
 
-        const NodeType type = (mode & 0040000u) != 0 ? NodeType::directory : NodeType::file;
-        add_entry(name, type, cursor, file_size);
-        cursor = align4(cursor + file_size, base);
+        const uint32_t file_type = mode & 0170000u;
+        if (file_type != 0 && file_type != 0040000u && file_type != 0100000u) {
+            return;
+        }
+        const NodeType type = file_type == 0040000u ? NodeType::directory : NodeType::file;
+        add_entry(name, type, data, file_size);
+        if (g_node_count > kMaxNodes) {
+            return;
+        }
     }
-
-    g_ready = true;
 }
 
 bool ready() {

@@ -11,7 +11,9 @@ constexpr uint32_t kElfDataLittle = 1;
 constexpr uint16_t kElfTypeExec = 2;
 constexpr uint16_t kElfMachineX86_64 = 62;
 constexpr uint32_t kProgramLoad = 1;
+constexpr uint32_t kProgramExecutable = 1u << 0;
 constexpr uint32_t kProgramWritable = 1u << 1;
+constexpr uint16_t kMaxLoadSegments = 64;
 
 struct [[gnu::packed]] ElfHeader {
     uint32_t magic;
@@ -55,15 +57,28 @@ uint64_t align_up(uint64_t value, uint64_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
+bool range_within(uint64_t offset, uint64_t size, uint64_t limit) {
+    return size <= limit && offset <= limit - size;
+}
+
 bool validate_header(const ElfHeader& header, size_t size) {
+    const uint64_t table_size = static_cast<uint64_t>(header.program_header_count) * sizeof(ProgramHeader);
     return header.magic == kElfMagic &&
         header.elf_class == kElfClass64 &&
         header.data_encoding == kElfDataLittle &&
+        header.version == 1 &&
+        header.version2 == 1 &&
         header.type == kElfTypeExec &&
         header.machine == kElfMachineX86_64 &&
-        header.program_header_offset < size &&
+        header.header_size == sizeof(ElfHeader) &&
+        header.program_header_count != 0 &&
+        header.program_header_count <= kMaxLoadSegments &&
         header.program_header_entry_size == sizeof(ProgramHeader) &&
-        (header.program_header_offset + (header.program_header_count * sizeof(ProgramHeader))) <= size;
+        range_within(header.program_header_offset, table_size, size);
+}
+
+bool page_ranges_overlap(uint64_t left_start, uint64_t left_end, uint64_t right_start, uint64_t right_end) {
+    return left_start < right_end && right_start < left_end;
 }
 
 bool map_segment_pages(vm::VmSpace& space, uint64_t start, uint64_t end, uint64_t flags) {
@@ -132,7 +147,7 @@ bool map_fresh_user_page(vm::VmSpace& address_space, uint64_t virtual_address, u
     }
     memset(page.virtual_address, 0, memory::kPageSize);
     if (!vm::map_page(address_space, virtual_address, page.physical_address,
-                      vm::kPageUser | vm::kPageWrite)) {
+                      vm::kPageUser | vm::kPageWrite | vm::kPageNoExecute)) {
         (void)memory::free_allocation(page);
         return false;
     }
@@ -256,6 +271,8 @@ const char* load_failure_string(LoadFailure failure) {
             return "ok";
         case LoadFailure::bad_header:
             return "bad elf header";
+        case LoadFailure::bad_segment:
+            return "bad elf segment";
         case LoadFailure::truncated:
             return "truncated segment";
         case LoadFailure::out_of_memory:
@@ -291,6 +308,12 @@ bool load_user_image(
         return false;
     }
 
+    ProgramHeader segments[kMaxLoadSegments] = {};
+    uint64_t segment_starts[kMaxLoadSegments] = {};
+    uint64_t segment_ends[kMaxLoadSegments] = {};
+    size_t segment_count = 0;
+    bool entry_is_executable = false;
+
     for (uint16_t index = 0; index < header.program_header_count; ++index) {
         ProgramHeader program = {};
         const uint64_t header_offset =
@@ -300,19 +323,65 @@ bool load_user_image(
             failure = LoadFailure::truncated;
             return false;
         }
-        if (program.type != kProgramLoad || program.memory_size == 0) {
+        if (program.type != kProgramLoad) {
             continue;
         }
-        if ((program.offset + program.file_size) > size) {
-            failure = LoadFailure::truncated;
+        if (segment_count >= kMaxLoadSegments) {
+            failure = LoadFailure::bad_segment;
+            return false;
+        }
+
+        const bool executable = (program.flags & kProgramExecutable) != 0;
+        const bool writable = (program.flags & kProgramWritable) != 0;
+        const bool valid_alignment = program.alignment == 0 || program.alignment == 1 ||
+            ((program.alignment & (program.alignment - 1)) == 0 &&
+             (program.offset % program.alignment) == (program.virtual_address % program.alignment));
+        const uint64_t image_end = program.virtual_address + program.memory_size;
+        const bool address_range_valid = program.memory_size != 0 && image_end >= program.virtual_address &&
+            program.virtual_address >= vm::kUserBase && image_end <= vm::kUserStackGuardBottom;
+        const bool mapped_range_valid = address_range_valid &&
+            align_up(image_end, memory::kPageSize) >= image_end;
+        const bool file_range_valid = program.file_size <= program.memory_size &&
+            range_within(program.offset, program.file_size, size);
+
+        if ((executable && writable) || !valid_alignment || !mapped_range_valid || !file_range_valid) {
+            failure = range_within(program.offset, program.file_size, size)
+                ? LoadFailure::bad_segment
+                : LoadFailure::truncated;
             return false;
         }
 
         const uint64_t mapped_start = align_down(program.virtual_address, memory::kPageSize);
-        const uint64_t mapped_end = align_up(program.virtual_address + program.memory_size, memory::kPageSize);
-        const uint64_t flags = vm::kPageUser | ((program.flags & kProgramWritable) != 0 ? vm::kPageWrite : 0);
+        const uint64_t mapped_end = align_up(image_end, memory::kPageSize);
+        for (size_t previous = 0; previous < segment_count; ++previous) {
+            if (page_ranges_overlap(mapped_start, mapped_end, segment_starts[previous], segment_ends[previous])) {
+                failure = LoadFailure::bad_segment;
+                return false;
+            }
+        }
 
-        if (!map_segment_pages(address_space, mapped_start, mapped_end, flags)) {
+        if (executable && header.entry >= program.virtual_address &&
+            header.entry < program.virtual_address + program.file_size) {
+            entry_is_executable = true;
+        }
+        segments[segment_count] = program;
+        segment_starts[segment_count] = mapped_start;
+        segment_ends[segment_count] = mapped_end;
+        ++segment_count;
+    }
+
+    if (segment_count == 0 || !entry_is_executable) {
+        failure = LoadFailure::bad_segment;
+        return false;
+    }
+
+    for (size_t index = 0; index < segment_count; ++index) {
+        const ProgramHeader& program = segments[index];
+        const uint64_t flags = vm::kPageUser |
+            ((program.flags & kProgramWritable) != 0 ? vm::kPageWrite : 0) |
+            ((program.flags & kProgramExecutable) == 0 ? vm::kPageNoExecute : 0);
+
+        if (!map_segment_pages(address_space, segment_starts[index], segment_ends[index], flags)) {
             failure = LoadFailure::out_of_memory;
             return false;
         }

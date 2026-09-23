@@ -28,7 +28,24 @@ bool owns_session() {
     return display::owns_session(process::current_pid());
 }
 
-int gpu_ioctl(uint64_t request, uint64_t argument) {
+bool gpu_ioctl_is_query(uint64_t request) {
+    switch (request) {
+        case GPU_IOC_GET_INFO:
+        case GPU_IOC_GET_STATS:
+        case GPU_IOC_GET_PRESENT_TIMELINE:
+        case GPU_IOC_WAIT_PRESENT:
+        case GPU_IOC_GET_CONNECTOR_PROPERTIES:
+        case GPU_IOC_GET_SCANOUTS:
+            return true;
+        default:
+            return false;
+    }
+}
+
+int gpu_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
+    if (!gpu_ioctl_is_query(request) && (granted_access & object::access_write) == 0) {
+        return negative_error(SAVANXP_EACCES);
+    }
     switch (request) {
         case GPU_IOC_GET_INFO: {
             savanxp_gpu_info info = {};

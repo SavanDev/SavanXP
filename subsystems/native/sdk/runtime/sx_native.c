@@ -7,6 +7,8 @@
  */
 #include "savanxp_native.h"
 
+uintptr_t __stack_chk_guard = 0xbb67ae8584caa73bULL;
+
 /* --- Syscalls crudas -------------------------------------------------------- */
 
 long sxn_syscall1(long number, long a) {
@@ -116,6 +118,10 @@ void sxn_exit(int code) {
     for (;;) {
         __asm__ volatile("hlt");
     }
+}
+
+__attribute__((noreturn)) void __stack_chk_fail(void) {
+    sxn_exit(134);
 }
 
 void sxn_hello(void) {

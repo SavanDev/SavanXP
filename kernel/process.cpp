@@ -38,7 +38,7 @@ constexpr uint16_t kUserCodeSelector = 0x23;
 // Clase PCI de un controlador de red, para reportar el hardware que existe
 // aunque ningun driver lo haya reclamado.
 constexpr uint8_t kPciClassNetwork = 0x02;
-constexpr uint64_t kKernelStackPages = 4;
+constexpr uint64_t kKernelStackPages = 8;
 constexpr uint64_t kIdleCodeAddress = 0x0000000000800000ULL;
 // Round-robin quantum in timer ticks. Sized to ~20 ms of wall clock at the
 // 1000 Hz tick rate so raising the tick frequency does not multiply the
@@ -79,6 +79,7 @@ process::Pipe g_pipes[kMaxPipeCount] = {};
 uint8_t g_pipe_storage[kMaxPipeCount][kPipeCapacity] = {};
 object::IoObject g_io_objects[object::kMaxIoObjects] = {};
 uint32_t g_next_pid = 1;
+uint32_t g_init_pid = 0;
 // Compartido entre cores a proposito: es el cursor de la cola de listos unica,
 // que vive bajo el lock grande del kernel.
 size_t g_schedule_cursor = 0;
@@ -917,6 +918,7 @@ bool prepare_exec_image(
         report_image_failure("exec", path, failure, reported_size);
         return false;
     }
+    vm::randomize_section_base(new_space, arch::x86_64::random_u64() ^ proc.pid);
 
     elf::LoadResult load_result = {};
     elf::LoadFailure load_failure = elf::LoadFailure::none;
@@ -996,7 +998,7 @@ process::Process* create_idle_process() {
         vm::map_page(proc->address_space,
             vm::kUserStackTop - memory::kPageSize,
             stack_page.physical_address,
-            vm::kPageUser | vm::kPageWrite);
+            vm::kPageUser | vm::kPageWrite | vm::kPageNoExecute);
     if (!code_mapped || !stack_mapped) {
         if (!code_mapped) {
             (void)memory::free_allocation(code_page);
@@ -1065,6 +1067,8 @@ process::Process* create_process_internal(
         report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
+    vm::randomize_section_base(proc->address_space,
+        arch::x86_64::random_u64() ^ static_cast<uint64_t>(proc->pid));
 
     memory::PageAllocation kernel_stack = {};
     if (!memory::allocate_contiguous_pages(kKernelStackPages, kernel_stack)) {
@@ -1187,7 +1191,8 @@ void reparent_orphaned_children(uint32_t parent_pid) {
             reap_process(proc);
             continue;
         }
-        proc.parent_pid = 0;
+        proc.parent_pid = g_init_pid;
+        proc.orphaned = true;
     }
 }
 
@@ -1393,6 +1398,9 @@ int pipe_write_chunk(process::Process& proc, process::Pipe& pipe, uint64_t user_
 void wake_waiting_parent(process::Process& child) {
     process::Process* parent = find_waiting_parent_for(child.pid);
     if (parent == nullptr) {
+        if (child.orphaned) {
+            reap_process(child);
+        }
         return;
     }
 
@@ -2016,6 +2024,9 @@ int kill_process(process::Process& sender, int pid, int signal_number) {
     if (target == nullptr) {
         return negative_error(SAVANXP_ENOENT);
     }
+    if (target->idle || target->pid == g_init_pid) {
+        return negative_error(SAVANXP_EACCES);
+    }
 
     target->pending_signals |= flag;
     target->last_signal = static_cast<uint32_t>(signal_number);
@@ -2370,12 +2381,11 @@ int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
 }
 
 int ioctl_handle(process::Process& proc, uint64_t fd, uint64_t request, uint64_t argument) {
-    (void)proc;
     object::IoObject* file = fd_to_io_object(proc, fd, object::access_query);
     if (file == nullptr || file->kind != process::HandleKind::device || file->device == nullptr) {
         return negative_error(SAVANXP_EBADF);
     }
-    return device::ioctl(file->device, request, argument);
+    return device::ioctl(file->device, request, argument, proc.handles[fd].granted_access);
 }
 
 int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t count) {
@@ -3278,6 +3288,7 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
     if (init == nullptr) {
         panic("process: unable to start init");
     }
+    g_init_pid = init->pid;
 
     // Los APs salen a buscar trabajo en cuanto el lock se libere, que es al
     // retomar init.

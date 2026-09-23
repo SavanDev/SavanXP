@@ -72,6 +72,20 @@
 #define SX_IOLBF 1
 #define SX_IONBF 2
 
+/* Stack canary for the in-tree POSIX userland. Clang's strong mode protects
+ * functions with local arrays and address-taken locals; this symbol and the
+ * failure hook below are the freestanding runtime side of that contract. */
+uintptr_t __stack_chk_guard = 0x6a09e667f3bcc909ULL;
+
+__attribute__((noreturn)) void __stack_chk_fail(void) {
+    /* Do not route this through sx_abort: that path is libc and may itself have
+     * a protected frame. Exit with the conventional abort status instead. */
+    exit(134);
+    for (;;) {
+        __asm__ volatile("");
+    }
+}
+
 typedef long ssize_t;
 typedef long off_t;
 typedef int pid_t;

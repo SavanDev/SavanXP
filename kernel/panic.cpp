@@ -4,6 +4,13 @@
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
 
+extern "C" [[noreturn]] void __stack_chk_fail() {
+    uint64_t caller = 0;
+    asm volatile("movq 8(%%rsp), %0" : "=r"(caller));
+    console::printf("kernel: stack canary failure at 0x%llx\n", caller);
+    panic("kernel: stack canary failure");
+}
+
 [[noreturn]] void panic(const char* message) {
     boot_screen::finish();
     console::set_framebuffer_console_enabled(true);

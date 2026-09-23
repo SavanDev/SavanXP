@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Kernel security boundaries are documented and enforced.** NX/W^X, stack
+  canaries, partial mapping ASLR and checked user/device/storage boundaries land
+  together with the [kernel audit](docs/KERNEL_SECURITY.md).
+
 - **Alt+F4 closes the active window,** the same as its X button: a dialog is
   cancelled, a main window closes with its process, and it also works for an app
   in fullscreen.
@@ -437,6 +441,18 @@ Cut-off notes:
   `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
 
 ### Fixed
+
+- **User memory is no longer uniformly executable.** NX is now enforced for data,
+  stacks and shared sections; ELF segments must be valid, non-RWX and remain in
+  the user half. Stack canaries cover kernel, in-tree and supported external
+  SDK builds; BusyBox remains a documented compatibility exception.
+
+- **Malformed storage and boot images are rejected before use.** SxFS extents,
+  inode metadata and directory graphs, CPIO names/hex/trailers, GPU geometry and
+  device-reported packet lengths are now bounded before they reach kernel memory.
+
+- **Mutating device ioctls require a writable descriptor.** Init and idle tasks
+  cannot be killed, and reparented descendants no longer leave permanent zombies.
 
 - **Shell scripts keep LF line endings on Windows checkouts.** A new
   `.gitattributes` stops `core.autocrlf` from giving `*.sh` the CRLF bash rejects.

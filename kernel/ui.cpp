@@ -7,6 +7,7 @@
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
+#include "kernel/object.hpp"
 #include "kernel/ps2.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
@@ -110,7 +111,10 @@ bool input_device_can_read() {
     return g_input_count != 0;
 }
 
-int input_ioctl(uint64_t request, uint64_t argument) {
+int input_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
+    if (request == INPUT_IOC_SET_LAYOUT && (granted_access & object::access_write) == 0) {
+        return negative_error(SAVANXP_EACCES);
+    }
     switch (request) {
         case INPUT_IOC_SET_LAYOUT:
             if (!ps2::set_layout(static_cast<int>(argument))) {

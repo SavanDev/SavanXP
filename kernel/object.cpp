@@ -13,6 +13,7 @@ EventObject g_event_objects[kMaxEventObjects] = {};
 TimerObject g_timer_objects[kMaxTimerObjects] = {};
 SectionObject g_section_objects[kMaxSectionObjects] = {};
 SemaphoreObject g_semaphore_objects[kMaxSemaphoreObjects] = {};
+constexpr uint64_t kMaxSectionBytes = 64ULL << 20;
 
 uint64_t align_up(uint64_t value, uint64_t alignment) {
     const uint64_t mask = alignment - 1;
@@ -188,12 +189,18 @@ TimerObject* create_timer(bool manual_reset) {
 }
 
 SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
-    if (size_bytes == 0) {
+    if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
         return nullptr;
     }
 
     const uint64_t aligned_size = align_up(size_bytes, memory::kPageSize);
+    if (aligned_size < size_bytes) {
+        return nullptr;
+    }
     const uint64_t page_count = aligned_size / memory::kPageSize;
+    if (page_count == 0 || page_count > SIZE_MAX / sizeof(uint64_t)) {
+        return nullptr;
+    }
     if (page_count == 0) {
         return nullptr;
     }

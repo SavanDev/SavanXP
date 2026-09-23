@@ -131,6 +131,7 @@ struct Process {
     uint32_t parent_pid;
     State state;
     bool idle;
+    bool orphaned;  // reparentado a init; al morir se auto-reapea
     subsystem::Id subsystem_id;  // posix(0) por defecto via memset en allocate_process_slot
     int exit_code;
     WaitReason wait_reason;

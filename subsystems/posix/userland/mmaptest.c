@@ -104,5 +104,32 @@ int main(void) {
     if (!expect_success((long)munmap((void*)shared, 4096), "unmap shared")) {
         return 1;
     }
+
+    /* Un tamaño publicado por userland no puede desbordar la aritmética del
+     * allocator, y mappings ejecutables siguen sin soportarse: el código solo
+     * puede entrar a través de un PT_LOAD validado por el loader. */
+    void* oversized = mmap(
+        0,
+        (size_t)-1,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0);
+    if (oversized != MAP_FAILED) {
+        eprintf("mmaptest: mapping demasiado grande fue aceptado\n");
+        return 1;
+    }
+    void* executable_data = mmap(
+        0,
+        4096,
+        PROT_READ | PROT_WRITE | PROT_EXEC,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0);
+    if (executable_data != MAP_FAILED) {
+        eprintf("mmaptest: mapping de datos ejecutable fue aceptado\n");
+        (void)munmap(executable_data, 4096);
+        return 1;
+    }
     return 0;
 }

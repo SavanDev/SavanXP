@@ -54,7 +54,7 @@ OUT="$WORK/out"
 # SSE si o si. Los headers del SDK entran con -isystem y no con -I: -MMD deja
 # afuera de los .d a los headers de sistema, y asi las dependencias que ve make
 # son solo rutas de FFmpeg.
-SX_TARGET_CFLAGS="-ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone"
+SX_TARGET_CFLAGS="-ffreestanding -fstack-protector-strong -fno-pic -fno-pie -mno-red-zone"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -mcmodel=small -mno-mmx -msse -msse2"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -isystem $SYSROOT/include"
 

@@ -70,7 +70,7 @@ function Get-UserCompileFlags([switch]$Sse) {
     return @(
         "-target", "x86_64-unknown-none-elf",
         "-ffreestanding",
-        "-fno-stack-protector",
+        "-fstack-protector-strong",
         "-fno-pic",
         "-fno-pie",
         "-mno-red-zone",
@@ -348,6 +348,9 @@ function Build-ExternalUserProgram([string]$SourcePath, [string]$ProgramName, [s
     $linker = Require-Executable "ld.lld" (Get-ToolchainCandidates "ld.lld")
     $sourceSpec = Get-ExternalSourceSpec $SourcePath
     $compileFlags = Get-ExternalCompileFlags $sourceSpec.IncludeDirs -Sse:$Sse
+    if ($ProgramName -eq "busybox") {
+        $compileFlags += "-fno-stack-protector"
+    }
     $outputFull = [System.IO.Path]::GetFullPath($OutputPath)
     $objectRoot = Join-Path $Script:SdkBuildRoot $ProgramName
     Ensure-Directory $objectRoot

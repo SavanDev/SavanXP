@@ -151,7 +151,7 @@ $nativeHeader = Join-Path $nativeSdk "include/savanxp_native.h"
 # el crt0. -mno-red-zone se mantiene por consistencia con el resto del userland.
 $cFlags = @(
     "-target", "x86_64-unknown-none-elf",
-    "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-pie",
+    "-ffreestanding", "-fstack-protector-strong", "-fno-pic", "-fno-pie",
     "-mno-red-zone", "-mcmodel=small",
     "-I", (Join-Path $nativeSdk "include"),
     "-I", (Join-Path $genDir "include"),

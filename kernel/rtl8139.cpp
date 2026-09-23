@@ -46,6 +46,7 @@ constexpr uint8_t kCommandRxBufferEmpty = 0x01;
 
 constexpr uint32_t kRxBufferSize = 8192;
 constexpr uint32_t kRxBufferBytes = kRxBufferSize + 16 + 1500;
+constexpr uint32_t kMaxFrameBytes = 1514;
 constexpr uint32_t kTxBufferBytes = 2048;
 constexpr uint16_t kRxOk = 0x0001;
 constexpr uint32_t kTxOk = 1u << 15;
@@ -211,7 +212,9 @@ void poll_receive() {
             (unsigned)in16(static_cast<uint16_t>(g_io_base + kRegCbr)),
             (unsigned)in8(static_cast<uint16_t>(g_io_base + kRegCommand))
         );
-        if ((status & kRxOk) == 0 || length < 4) {
+        const bool fits_ring = g_cur_rx < kRxBufferSize && g_cur_rx <= kRxBufferSize - 4u &&
+            length <= kMaxFrameBytes && length <= (kRxBufferSize - g_cur_rx) - 4u;
+        if ((status & kRxOk) == 0 || length < 4 || !fits_ring) {
             rtl_log("rtl8139: rx invalid status=%x len=%u\n", (unsigned)status, (unsigned)length);
             ++g_rx_errors;
             report(SAVANXP_NET_STATUS_RX_INVALID);

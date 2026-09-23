@@ -4,6 +4,7 @@
 
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
+#include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/timer.hpp"
@@ -71,7 +72,10 @@ void wait_milliseconds(uint32_t duration_ms) {
     }
 }
 
-int speaker_ioctl(uint64_t request, uint64_t argument) {
+int speaker_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
+    if ((granted_access & object::access_write) == 0) {
+        return negative_error(SAVANXP_EACCES);
+    }
     switch (request) {
         case PCSPK_IOC_BEEP: {
             if (!process::validate_user_range(argument, sizeof(savanxp_pcspk_beep), false)) {

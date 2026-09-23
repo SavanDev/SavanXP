@@ -29,6 +29,7 @@ struct LoadResult {
 enum class LoadFailure : uint8_t {
     none = 0,
     bad_header,   // magia/clase/tipo/maquina invalidos, o phdrs fuera de la imagen
+    bad_segment,  // PT_LOAD inconsistente, solapado, fuera de usuario o sin W^X
     truncated,    // un PT_LOAD apunta mas alla del final de la imagen
     out_of_memory // no se pudo reservar/mapear una pagina del segmento o del stack
 };

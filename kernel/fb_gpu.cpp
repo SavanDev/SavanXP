@@ -597,13 +597,22 @@ bool normalize_import_info(const savanxp_gpu_surface_import& request, savanxp_fb
     const uint32_t width = request.width != 0 ? request.width : g_fb_info.width;
     const uint32_t height = request.height != 0 ? request.height : g_fb_info.height;
     const uint32_t bpp = request.bpp != 0 ? request.bpp : 32u;
-    const uint32_t pitch = request.pitch != 0 ? request.pitch : static_cast<uint32_t>(width * sizeof(uint32_t));
-    const uint32_t buffer_size = request.buffer_size != 0 ? request.buffer_size : static_cast<uint32_t>(pitch * height);
-
-    if (width == 0 || height == 0 || bpp != 32u || pitch < (width * sizeof(uint32_t))) {
+    const uint64_t row_bytes = static_cast<uint64_t>(width) * sizeof(uint32_t);
+    if (row_bytes > UINT32_MAX) {
         return false;
     }
-    if (buffer_size < (pitch * height)) {
+    const uint32_t pitch = request.pitch != 0 ? request.pitch : static_cast<uint32_t>(row_bytes);
+    const uint64_t required_bytes = static_cast<uint64_t>(pitch) * height;
+    const uint64_t requested_buffer_size = request.buffer_size != 0
+        ? request.buffer_size
+        : required_bytes;
+
+    if (width == 0 || height == 0 || bpp != 32u || pitch < row_bytes ||
+        required_bytes > UINT32_MAX || requested_buffer_size > UINT32_MAX) {
+        return false;
+    }
+    const uint32_t buffer_size = static_cast<uint32_t>(requested_buffer_size);
+    if (required_bytes > buffer_size) {
         return false;
     }
     if (width != g_fb_info.width || height != g_fb_info.height) {
@@ -630,7 +639,7 @@ bool import_surface(savanxp_gpu_surface_import& request) {
     }
 
     process::HandleEntry& entry = current->handles[request.section_handle];
-    if (entry.object == nullptr || (entry.granted_access & object::access_query) == 0) {
+    if (entry.object == nullptr || (entry.granted_access & object::access_read) == 0) {
         return false;
     }
     object::SectionObject* section = object::as_section(entry.object);

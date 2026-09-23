@@ -51,14 +51,14 @@ int write(Device* device, uint64_t user_buffer, size_t count) {
     return device->write(user_buffer, count);
 }
 
-int ioctl(Device* device, uint64_t request, uint64_t argument) {
+int ioctl(Device* device, uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (device == nullptr) {
         return negative_error(SAVANXP_ENODEV);
     }
     if (device->ioctl == nullptr) {
         return negative_error(SAVANXP_ENOSYS);
     }
-    return device->ioctl(request, argument);
+    return device->ioctl(request, argument, granted_access);
 }
 
 void close(Device* device) {

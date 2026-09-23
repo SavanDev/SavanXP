@@ -296,7 +296,7 @@ static void apply_keyboard_layout_preference(void) {
         return;
     }
 
-    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
+    input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
     if (input_fd < 0) {
         return;
     }

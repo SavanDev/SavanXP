@@ -2,6 +2,7 @@
 
 #include "kernel/console.hpp"
 #include "kernel/cpu.hpp"
+#include "kernel/panic.hpp"
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/vmm.hpp"
@@ -22,6 +23,8 @@ constexpr uint16_t kPicSlaveCommand = 0xa0;
 constexpr uint16_t kPicSlaveData = 0xa1;
 constexpr uint8_t kPicEoi = 0x20;
 constexpr uint32_t kApicBaseMsr = 0x1b;
+constexpr uint32_t kEferMsr = 0xc0000080;
+constexpr uint64_t kEferNoExecuteEnable = 1ull << 11;
 constexpr uint32_t kApicBaseEnable = 1u << 11;
 constexpr uint32_t kApicBaseX2ApicEnable = 1u << 10;
 constexpr uint32_t kX2ApicMsrBase = 0x800;
@@ -145,6 +148,9 @@ volatile bool g_breakpoint_probe_active = false;
 ExternalHandlerSlot g_external_handlers[kIdtEntryCount] = {};
 bool g_local_apic_ready = false;
 bool g_local_apic_x2apic = false;
+bool g_rdrand_available = false;
+uint64_t g_entropy_counter = 0;
+extern "C" uintptr_t __stack_chk_guard = 0x4f8b2d1c6a7e9051ULL;
 // Ventana MMIO del APIC local en modo xAPIC (por defecto 0xfee00000, una pagina
 // uncacheable). Nula mientras no se mapee o si el CPU expone x2APIC.
 volatile uint32_t* g_local_apic_mmio = nullptr;
@@ -178,6 +184,45 @@ void write_msr(uint32_t msr, uint64_t value) {
     const uint32_t low = static_cast<uint32_t>(value);
     const uint32_t high = static_cast<uint32_t>(value >> 32);
     asm volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
+}
+
+uint64_t read_timestamp_counter() {
+    uint32_t low = 0;
+    uint32_t high = 0;
+    asm volatile("rdtsc" : "=a"(low), "=d"(high));
+    return (static_cast<uint64_t>(high) << 32) | low;
+}
+
+bool enable_nx() {
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(0x80000000u, 0, eax, ebx, ecx, edx);
+    if (eax < 0x80000001u) {
+        return false;
+    }
+
+    cpuid(0x80000001u, 0, eax, ebx, ecx, edx);
+    if ((edx & (1u << 20)) == 0) {
+        return false;
+    }
+    write_msr(kEferMsr, read_msr(kEferMsr) | kEferNoExecuteEnable);
+    return true;
+}
+
+uint64_t random_u64_local() {
+    for (uint32_t attempt = 0; g_rdrand_available && attempt < 16; ++attempt) {
+        uint64_t value = 0;
+        uint8_t success = 0;
+        asm volatile("rdrand %0; setc %1" : "=r"(value), "=qm"(success));
+        if (success != 0 && value != 0) {
+            return value;
+        }
+    }
+
+    const uint64_t tsc = read_timestamp_counter();
+    return (tsc ^ ++g_entropy_counter) * 0x9e3779b97f4a7c15ULL;
 }
 
 uint32_t x2apic_msr(uint32_t reg) {
@@ -275,6 +320,14 @@ void handle_exception(uint8_t vector, InterruptFrame* frame, uint64_t error_code
             smp::unlock_kernel();
             return;
         }
+        console::printf(
+            "user: exception #%u pid=%u name=%s cr2=0x%llx rip=0x%llx\n",
+            static_cast<unsigned>(vector),
+            process::current_pid(),
+            process::current()->name,
+            read_cr2(),
+            frame->rip
+        );
         // No vuelve: resume_context suelta el lock ya sobre la pila del
         // proceso siguiente.
         process::terminate_current_from_exception(vector);
@@ -620,6 +673,10 @@ void initialize_idt() {
 
 namespace arch::x86_64 {
 
+uint64_t random_u64() {
+    return random_u64_local();
+}
+
 /* Estado FPU/SSE limpio capturado en el boot; se copia a cada proceso nuevo
  * para que arranque con la FPU en un estado valido (MXCSR con excepciones
  * enmascaradas), en vez de un FXRSTOR sobre bytes en cero. */
@@ -671,6 +728,19 @@ void fpu_init_area(void* area) {
 
 void initialize_cpu() {
     disable_interrupts();
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(1, 0, eax, ebx, ecx, edx);
+    g_rdrand_available = (ecx & (1u << 30)) != 0;
+    // The compiler canary is intentionally stable for the whole boot. A
+    // protected function (including this one) may already hold the old value
+    // on its frame; reseeding it here would turn every such frame into a false
+    // positive. RDRAND/TSC is used for placement entropy below instead.
+    if (!enable_nx()) {
+        panic("cpu: NX/W^X is required");
+    }
     install_tss_descriptors();
     load_gdt();
     remap_pic();

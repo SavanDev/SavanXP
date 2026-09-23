@@ -44,6 +44,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   core: bringing up the APs, per-CPU state, a big kernel lock over the
   scheduler, TLB shootdown, and why splitting that lock should wait for
   threads.
+- [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and
+  audit record: NX/W^X, ELF and storage validation, compiler hardening, device
+  and DMA bounds, access checks, and the authorization/resource risks that are
+  still open.
 
 - [`NETWORKING.md`](NETWORKING.md) — what the TCP path guarantees and what it
   deliberately does not: retransmission with backoff, reassembly by extents,

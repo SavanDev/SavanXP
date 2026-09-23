@@ -4,6 +4,7 @@
 
 #include "kernel/acpi.hpp"
 #include "kernel/device.hpp"
+#include "kernel/object.hpp"
 #include "savanxp/syscall.h"
 
 namespace {
@@ -19,7 +20,10 @@ device::Device g_device = {
 
 bool g_ready = false;
 
-int power_ioctl(uint64_t request, uint64_t /*argument*/) {
+int power_ioctl(uint64_t request, uint64_t /*argument*/, uint32_t granted_access) {
+    if ((granted_access & object::access_write) == 0) {
+        return -static_cast<int>(SAVANXP_EACCES);
+    }
     switch (request) {
         case POWER_IOC_SHUTDOWN:
             acpi::shutdown(); // no retorna

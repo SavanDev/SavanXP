@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/device.hpp"
+#include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "savanxp/syscall.h"
@@ -69,7 +70,7 @@ int clipboard_write(uint64_t user_buffer, size_t count) {
     // Se copia a un temporal antes de pisar el contenido vigente: si el puntero
     // de userland resulta invalido a mitad de camino, el portapapeles anterior
     // sigue intacto en vez de quedar a medio escribir. El temporal es estatico
-    // y NO del stack: el stack de kernel son cuatro paginas (16 KiB, ver
+    // y NO del stack: el stack de kernel son ocho paginas (32 KiB, ver
     // kKernelStackPages) y un buffer de 8 KiB ahi se comeria la mitad en un
     // solo frame -- el mismo error que tenia ensure_capacity en SxFS.
     static uint8_t g_staging[SAVANXP_CLIPBOARD_CAPACITY];
@@ -86,7 +87,7 @@ int clipboard_write(uint64_t user_buffer, size_t count) {
     return static_cast<int>(count);
 }
 
-int clipboard_ioctl(uint64_t request, uint64_t argument) {
+int clipboard_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     switch (request) {
         case CLIP_IOC_GET_INFO: {
             savanxp_clipboard_info info = {};
@@ -102,6 +103,9 @@ int clipboard_ioctl(uint64_t request, uint64_t argument) {
             return 0;
         }
         case CLIP_IOC_CLEAR:
+            if ((granted_access & object::access_write) == 0) {
+                return negative_error(SAVANXP_EACCES);
+            }
             g_length = 0;
             g_format = SAVANXP_CLIPBOARD_FORMAT_EMPTY;
             g_sequence += 1;

@@ -138,12 +138,20 @@ void poll_receive() {
 
         const uint16_t slot = static_cast<uint16_t>(element.id);
         if (slot < kRxSlots) {
-            if (element.len < kNetHeaderBytes) {
+            if (element.len < kNetHeaderBytes || element.len > kRxBufferBytes) {
                 ++g_rx_errors;
                 report(SAVANXP_NET_STATUS_RX_INVALID);
             } else {
                 const uint8_t* buffer = virtio_pci::queue_extra(g_rx_queue, rx_slot_offset(slot));
                 const size_t frame_length = element.len - kNetHeaderBytes;
+                if (frame_length > kMaxFrameBytes) {
+                    ++g_rx_errors;
+                    report(SAVANXP_NET_STATUS_RX_INVALID);
+                    if (post_rx_slot(slot)) {
+                        notified = true;
+                    }
+                    continue;
+                }
                 ++g_rx_frames;
                 if (g_events.frame != nullptr) {
                     g_events.frame(buffer + kNetHeaderBytes, frame_length);

@@ -135,7 +135,7 @@ int audio_write(uint64_t user_buffer, size_t count) {
     return static_cast<int>(count);
 }
 
-int audio_ioctl(uint64_t request, uint64_t argument) {
+int audio_ioctl(uint64_t request, uint64_t argument, uint32_t) {
     switch (request) {
         case AUDIO_IOC_GET_INFO: {
             savanxp_audio_info info = {};
