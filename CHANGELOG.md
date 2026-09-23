@@ -450,6 +450,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **NX is now enabled explicitly on every application processor.** APs no
+  longer depend on the per-core `EFER.NXE` state inherited from the bootloader.
+
 - **The keyboard-layout popup can change the active layout again.** It opens
   `/dev/input0` for the write access required by the setter and no longer
   persists a selection that the kernel rejected.

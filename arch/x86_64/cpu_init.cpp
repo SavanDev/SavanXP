@@ -766,6 +766,11 @@ void initialize_cpu() {
 
 void ap_initialize_cpu() {
     disable_interrupts();
+    // EFER belongs to each logical processor. Do not rely on Limine leaving
+    // NXE enabled on an AP before the scheduler can run user NX mappings there.
+    if (!enable_nx()) {
+        halt_forever();
+    }
     // Las tablas ya las armo el BSP y desde aca son de solo lectura: este core
     // solo tiene que apuntarles. Su TSS lo carga despues, con
     // load_task_register(), cuando ya sabe que indice le toca. Nada de
