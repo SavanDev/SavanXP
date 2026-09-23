@@ -25,6 +25,8 @@ constexpr uint8_t kPicEoi = 0x20;
 constexpr uint32_t kApicBaseMsr = 0x1b;
 constexpr uint32_t kEferMsr = 0xc0000080;
 constexpr uint64_t kEferNoExecuteEnable = 1ull << 11;
+constexpr uint64_t kCr0WriteProtect = 1ull << 16;
+constexpr uint64_t kCr4Smep = 1ull << 20;
 constexpr uint32_t kApicBaseEnable = 1u << 11;
 constexpr uint32_t kApicBaseX2ApicEnable = 1u << 10;
 constexpr uint32_t kX2ApicMsrBase = 0x800;
@@ -208,6 +210,33 @@ bool enable_nx() {
         return false;
     }
     write_msr(kEferMsr, read_msr(kEferMsr) | kEferNoExecuteEnable);
+    return true;
+}
+
+bool enable_smep() {
+    uint32_t maximum_leaf = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(0, 0, maximum_leaf, ebx, ecx, edx);
+    if (maximum_leaf < 7) {
+        return false;
+    }
+
+    cpuid(7, 0, maximum_leaf, ebx, ecx, edx);
+    if ((ebx & (1u << 7)) == 0) {
+        return false;
+    }
+
+    uint64_t cr0 = 0;
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 |= kCr0WriteProtect;
+    asm volatile("mov %0, %%cr0" ::"r"(cr0) : "memory");
+
+    uint64_t cr4 = 0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= kCr4Smep;
+    asm volatile("mov %0, %%cr4" ::"r"(cr4) : "memory");
     return true;
 }
 
@@ -756,6 +785,9 @@ void initialize_cpu() {
     if (!enable_nx()) {
         panic("cpu: NX/W^X is required");
     }
+    if (!enable_smep()) {
+        console::printf("cpu: SMEP unavailable on this processor\n");
+    }
     install_tss_descriptors();
     load_gdt();
     remap_pic();
@@ -769,6 +801,9 @@ void ap_initialize_cpu() {
     // EFER belongs to each logical processor. Do not rely on Limine leaving
     // NXE enabled on an AP before the scheduler can run user NX mappings there.
     if (!enable_nx()) {
+        halt_forever();
+    }
+    if (!enable_smep()) {
         halt_forever();
     }
     // Las tablas ya las armo el BSP y desde aca son de solo lectura: este core

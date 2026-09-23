@@ -56,11 +56,14 @@ The audit confirmed the following defenses were already present:
   user-page API; kernel mappings cannot be created through it.
 - NX is a leaf-page permission. The loader, stack mappings and section views set
   bit 63 only on PTEs; the bit is removed before creating upper paging levels.
-- SavanXP now requires an NX-capable CPU and enables `EFER.NXE` during early
-  CPU initialization. The static kernel image inherited from Limine is not yet
-  repartitioned into executable and NX mappings, so this phase enforces W^X for
-  user pages and NX for dynamically mapped kernel pages, not yet for all kernel
-  data.
+- SavanXP now requires an NX-capable CPU and enables `EFER.NXE` on every logical
+  processor during early CPU initialization. The static kernel image inherited
+  from Limine is not yet repartitioned into executable and NX mappings, so this
+  phase enforces W^X for user pages and NX for dynamically mapped kernel pages,
+  not yet for all kernel data.
+- When CPUID advertises SMEP, every logical processor also sets `CR4.SMEP` and
+  `CR0.WP`; the BSP continues on older CPUs while an AP that cannot establish
+  the same baseline remains offline. SMAP is not enabled yet.
 - ELF `PT_LOAD` segments marked both writable and executable are rejected.
   Executable segments are mapped without `PF_W`; non-executable segments,
   BSS, stacks and section views are mapped with NX.
@@ -180,7 +183,7 @@ at fixed addresses, and the kernel is not relocated.
 | Networking | Incoming IP/TCP checksums and pending-socket tuple matching | High | Open |
 | Kernel stacks | Canary and 32 KiB size, but no non-present guard page | Medium | Partial |
 | Fault handling | No exception-table-based `copy_*_user` recovery | Medium | Open |
-| CPU isolation | SMEP/SMAP/KPTI are not enabled | Medium | Open |
+| CPU isolation | SMEP is enabled when available; SMAP/KPTI are not enabled | Medium | Partial |
 | Control flow | No CET shadow stacks, PIE, KASLR or compiler CFI | Medium | Open |
 | SMP panic | Panic halts only the reporting core | Medium | Open |
 | Boot trust | Kernel, initramfs and disk image are unauthenticated | High | Open |

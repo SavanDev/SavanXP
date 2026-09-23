@@ -450,6 +450,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **SMEP and kernel write protection are enabled on supported processors.**
+  Every application processor establishes the same execution boundary; SMAP
+  remains a separate follow-up.
+
 - **Initramfs archives that exceed the VFS node limit now fail closed.** The
   parser no longer silently discards entries and mounts a partial root filesystem.
 
