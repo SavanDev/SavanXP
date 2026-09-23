@@ -30,6 +30,7 @@ constexpr uint32_t kMaxInodes = SXFS_MAX_INODES;
 constexpr uint32_t kMaxRecords = SXFS_MAX_RECORDS;
 constexpr uint32_t kRootInodeId = SXFS_ROOT_INODE;
 constexpr uint32_t kMaxExtents = SXFS_MAX_EXTENTS;
+constexpr uint32_t kMaxDirectoryDepth = 32;
 constexpr uint32_t kMinimumGrowthSectors = 64; // politica de crecimiento, no on-disk
 constexpr size_t kBlockBitmapBytes = static_cast<size_t>(kBlockBitmapSectors) * block::kSectorSize;
 constexpr size_t kInodeBitmapBytes = static_cast<size_t>(kInodeBitmapSectors) * block::kSectorSize;
@@ -934,7 +935,7 @@ bool build_record_recursive(Volume& volume, uint32_t directory_inode, uint32_t p
                            const char* parent_relative, bool visited[kMaxInodes], uint32_t depth) {
     const Inode* directory = inode_for_id(volume, directory_inode);
     if (directory == nullptr || directory->type != kInodeTypeDirectory ||
-        depth > 64 || visited[directory_inode - 1]) {
+        depth > kMaxDirectoryDepth || visited[directory_inode - 1]) {
         return false;
     }
     visited[directory_inode - 1] = true;

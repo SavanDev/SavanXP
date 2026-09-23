@@ -450,6 +450,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **SxFS directory reconstruction now uses a bounded 32-level depth.** The
+  visited-cycle check remains, while recursive frames stay within the kernel
+  stack budget used by the current 32 KiB stacks.
+
 - **SxFS now rejects data extents claimed by more than one inode.** Metadata
   validation tracks a per-volume claim bitmap across the complete inode table.
 

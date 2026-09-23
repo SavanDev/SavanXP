@@ -136,9 +136,9 @@ at fixed addresses, and the kernel is not relocated.
   to the home metadata area.
 - Directory entries require valid terminated names, valid IDs, matching file or
   directory types and matching inode types.
-- Recursive directory reconstruction carries a visited bitmap and a depth cap,
-  preventing self-references and ancestor cycles from overflowing the kernel
-  stack.
+- Recursive directory reconstruction carries a visited bitmap and a 32-level
+  depth cap, preventing self-references and ancestor cycles while keeping the
+  worst-case frames within the bounded 32 KiB kernel stack.
 - The superblock's total sector count is checked against the real block device.
 - The initramfs parser now requires strict hexadecimal fields, exactly one NUL
   at the end of each name, supported regular/directory file types, bounded
