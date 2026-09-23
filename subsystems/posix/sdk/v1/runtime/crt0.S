@@ -11,6 +11,10 @@ _start:
     # rsp alineado a 16 en cada call (rsp % 16 == 0), y SSE (doubles de Haxe en
     # el subsistema nativo) puede emitir movaps que fallan con #GP si no lo esta.
     andq $-16, %rsp
+    # El kernel deja un canary nuevo en rdx al crear el proceso. rdx no forma
+    # parte del ABI de entrada a main, asi que crt0 lo instala antes de la
+    # primera llamada protegida. El byte bajo nunca es cero (ABI canary).
+    movq %rdx, __stack_chk_guard(%rip)
     call main
     movq %rax, %rdi
     movq $7, %rax

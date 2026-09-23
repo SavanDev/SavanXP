@@ -72,10 +72,9 @@
 #define SX_IOLBF 1
 #define SX_IONBF 2
 
-/* Stack canary for the in-tree POSIX userland. Clang's strong mode protects
- * functions with local arrays and address-taken locals; this symbol and the
- * failure hook below are the freestanding runtime side of that contract. */
-uintptr_t __stack_chk_guard = 0x6a09e667f3bcc909ULL;
+/* Stack canary for the in-tree POSIX userland. crt0 replaces this zero with
+ * the fresh value supplied by the kernel before it calls main. */
+uintptr_t __stack_chk_guard = 0;
 
 __attribute__((noreturn)) void __stack_chk_fail(void) {
     /* Do not route this through sx_abort: that path is libc and may itself have

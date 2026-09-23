@@ -16,6 +16,10 @@ Cut-off notes:
   `sx_scaled_presenter` handles scaling/centering/row damage; opt-in
   `savanxp/audio.h` provides `sx_audio_mixer`, and Doom uses both.
 
+- **Stack canaries are randomized at kernel boot and for every new process.**
+  `fork` inherits the parent guard, while `exec` installs a fresh one before
+  `main`; the runtime no longer embeds a reusable cookie in each image.
+
 - **Kernel security boundaries are documented and enforced.** NX/W^X, stack
   canaries, partial mapping ASLR and checked user/device/storage boundaries land
   together with the [kernel audit](docs/KERNEL_SECURITY.md).

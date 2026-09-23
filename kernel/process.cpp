@@ -740,6 +740,16 @@ void release_all_handles(process::Process& proc) {
     }
 }
 
+uint64_t initial_stack_guard() {
+    uint64_t value = arch::x86_64::random_u64();
+    // The stack-protector ABI reserves the least-significant byte for string
+    // termination, so a canary must never contain a zero there.
+    if ((value & 0xffu) == 0) {
+        value ^= 0xa5u;
+    }
+    return value;
+}
+
 process::SavedContext* fabricate_initial_context(
     process::Process& proc,
     uint64_t entry_point,
@@ -757,6 +767,10 @@ process::SavedContext* fabricate_initial_context(
     context->ss = kUserDataSelector;
     context->rdi = static_cast<uint64_t>(argc);
     context->rsi = argv_pointer;
+    // crt0 consumes this otherwise-unused startup register to install a fresh
+    // process canary before calling main. Fork copies the full context and
+    // address space, so children inherit their parent's guard.
+    context->rdx = initial_stack_guard();
     proc.context = context;
     return context;
 }

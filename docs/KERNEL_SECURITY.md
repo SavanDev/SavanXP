@@ -95,17 +95,17 @@ unbounded kernel stack use.
   explicit compatibility exception: its current port still needs the legacy
   no-canary build to boot, so it remains a tracked gap rather than silently
   claiming coverage.
-- The POSIX runtime supplies a nonzero process-image canary and a failure hook
-  that exits without recursively entering protected libc frames.
-- The kernel uses a stable nonzero boot-wide canary and panics on failure. It is
-  deliberately not reseeded after protected frames exist: doing so would turn
-  every in-flight frame into a false positive. RDRAND/TSC entropy is reserved
-  for placement decisions.
-- The native runtime supplies the compiler runtime symbols required by Clang.
+- `crt0` installs a fresh nonzero canary from a kernel register before calling
+  `main`. The value is not stored in the executable image; `fork` inherits it
+  with the parent's context and address space, while `exec` receives a new one.
+- `_start` seeds the kernel canary before the first protected frame and the
+  kernel keeps it stable for the rest of boot; a detected failure panics.
+- The native and POSIX runtimes supply the compiler runtime symbols required by
+  Clang.
 
-The fallback seed is not cryptographic. It improves corruption detection and
-is not presented as an entropy source for network keys, signatures or storage
-encryption.
+The TSC fallback is not cryptographic. The canaries improve corruption detection
+and make prebuilt stack cookies less useful, but are not presented as an entropy
+source for network keys, signatures or storage encryption.
 
 ### Mapping randomization
 

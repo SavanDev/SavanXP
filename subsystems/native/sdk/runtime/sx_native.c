@@ -7,7 +7,8 @@
  */
 #include "savanxp_native.h"
 
-uintptr_t __stack_chk_guard = 0xbb67ae8584caa73bULL;
+/* Replaced by crt0 with the fresh per-process value supplied by the kernel. */
+uintptr_t __stack_chk_guard = 0;
 
 /* --- Syscalls crudas -------------------------------------------------------- */
 

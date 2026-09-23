@@ -150,7 +150,7 @@ bool g_local_apic_ready = false;
 bool g_local_apic_x2apic = false;
 bool g_rdrand_available = false;
 uint64_t g_entropy_counter = 0;
-extern "C" uintptr_t __stack_chk_guard = 0x4f8b2d1c6a7e9051ULL;
+extern "C" uintptr_t __stack_chk_guard = 0;
 // Ventana MMIO del APIC local en modo xAPIC (por defecto 0xfee00000, una pagina
 // uncacheable). Nula mientras no se mapee o si el CPU expone x2APIC.
 volatile uint32_t* g_local_apic_mmio = nullptr;
@@ -673,6 +673,22 @@ void initialize_idt() {
 
 namespace arch::x86_64 {
 
+__attribute__((no_stack_protector))
+void initialize_stack_chk_guard() {
+    uint32_t eax = 0;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    cpuid(1, 0, eax, ebx, ecx, edx);
+    g_rdrand_available = (ecx & (1u << 30)) != 0;
+
+    uint64_t value = random_u64_local();
+    if ((value & 0xffu) == 0) {
+        value ^= 0xa5u;
+    }
+    __stack_chk_guard = static_cast<uintptr_t>(value);
+}
+
 uint64_t random_u64() {
     return random_u64_local();
 }
@@ -734,10 +750,9 @@ void initialize_cpu() {
     uint32_t edx = 0;
     cpuid(1, 0, eax, ebx, ecx, edx);
     g_rdrand_available = (ecx & (1u << 30)) != 0;
-    // The compiler canary is intentionally stable for the whole boot. A
-    // protected function (including this one) may already hold the old value
-    // on its frame; reseeding it here would turn every such frame into a false
-    // positive. RDRAND/TSC is used for placement entropy below instead.
+    // The canary was seeded in _start, before any protected frame could retain
+    // the boot-time zero. It stays stable for this boot so in-flight frames
+    // continue to compare against the value they loaded.
     if (!enable_nx()) {
         panic("cpu: NX/W^X is required");
     }

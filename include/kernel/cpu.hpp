@@ -14,6 +14,9 @@ enum class InterruptEoi : uint8_t {
     local_apic = 2,
 };
 
+// Se llama como primera operacion de _start. La funcion y la generacion de
+// entropia estan excluidas del stack protector: todavia no existe un canary.
+void initialize_stack_chk_guard();
 void initialize_cpu();
 // Entropia para cookies y decisiones de colocacion. Usa RDRAND cuando el CPU
 // la anuncia; el fallback de TSC es para arrancar igual en maquinas viejas, no
