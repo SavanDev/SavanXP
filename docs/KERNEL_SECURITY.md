@@ -160,7 +160,9 @@ at fixed addresses, and the kernel is not relocated.
 - `ioctl` receives the opened descriptor's granted access. Mutating GPU,
   clipboard, input, network, speaker and power operations require write access;
   a read-only descriptor can no longer invoke them.
-- Init and idle processes cannot be terminated through `kill`.
+- Init and idle processes cannot be terminated through `kill`. Unsupported
+  signals, including signal 0, are rejected with `EINVAL`; a normal process may
+  still terminate itself by sending a supported terminating signal.
 - Orphaned descendants are reparented to init and automatically reaped when
   they exit, preventing permanent zombie-slot exhaustion.
 
