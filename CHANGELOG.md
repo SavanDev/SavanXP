@@ -450,6 +450,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Initramfs archives that exceed the VFS node limit now fail closed.** The
+  parser no longer silently discards entries and mounts a partial root filesystem.
+
 - **RTL8139 accepts valid maximum-size frames and recovers from bad records.**
   RX validation now accounts for the CRC header and wrap tail, and resynchronizes
   with the hardware pointer instead of repeatedly parsing one malformed frame.

@@ -103,7 +103,7 @@ int ensure_directory_node(int parent, const char* name) {
     return add_node(vfs::NodeType::directory, name, parent);
 }
 
-void add_entry(const char* path, vfs::NodeType type, const void* data, size_t size) {
+bool add_entry(const char* path, vfs::NodeType type, const void* data, size_t size) {
     char component[kMaxNameLength] = {};
     const char* cursor = path;
     int parent = 0;
@@ -113,7 +113,7 @@ void add_entry(const char* path, vfs::NodeType type, const void* data, size_t si
     }
 
     if (*cursor == '\0') {
-        return;
+        return true;
     }
 
     for (;;) {
@@ -129,7 +129,7 @@ void add_entry(const char* path, vfs::NodeType type, const void* data, size_t si
         if (cursor[length] == '/') {
             parent = ensure_directory_node(parent, component);
             if (parent < 0) {
-                return;
+                return false;
             }
             cursor += length + 1;
             continue;
@@ -139,13 +139,14 @@ void add_entry(const char* path, vfs::NodeType type, const void* data, size_t si
         if (node < 0) {
             node = add_node(type, component, parent);
         }
-        if (node >= 0) {
-            g_nodes[node].vnode.type = type;
-            g_nodes[node].vnode.data = const_cast<void*>(data);
-            g_nodes[node].vnode.size = size;
-            g_nodes[node].vnode.writable = false;
+        if (node < 0) {
+            return false;
         }
-        return;
+        g_nodes[node].vnode.type = type;
+        g_nodes[node].vnode.data = const_cast<void*>(data);
+        g_nodes[node].vnode.size = size;
+        g_nodes[node].vnode.writable = false;
+        return true;
     }
 }
 
@@ -536,8 +537,7 @@ void initialize(const void* archive, size_t size) {
             return;
         }
         const NodeType type = file_type == 0040000u ? NodeType::directory : NodeType::file;
-        add_entry(name, type, data, file_size);
-        if (g_node_count > kMaxNodes) {
+        if (!add_entry(name, type, data, file_size)) {
             return;
         }
     }

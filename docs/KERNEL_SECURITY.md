@@ -136,8 +136,8 @@ at fixed addresses, and the kernel is not relocated.
 - The superblock's total sector count is checked against the real block device.
 - The initramfs parser now requires strict hexadecimal fields, exactly one NUL
   at the end of each name, supported regular/directory file types, bounded
-  lengths, checked padding, and a `TRAILER!!!` record. A truncated or malformed
-  archive leaves the VFS unready instead of mounting partial data.
+  lengths, checked padding, and a `TRAILER!!!` record. A truncated, malformed or
+  over-capacity archive leaves the VFS unready instead of mounting partial data.
 
 ### Device and DMA boundaries
 
