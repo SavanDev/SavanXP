@@ -45,8 +45,11 @@ constexpr uint8_t kCommandTxEnable = 0x04;
 constexpr uint8_t kCommandRxBufferEmpty = 0x01;
 
 constexpr uint32_t kRxBufferSize = 8192;
-constexpr uint32_t kRxBufferBytes = kRxBufferSize + 16 + 1500;
-constexpr uint32_t kMaxFrameBytes = 1514;
+// The hardware length includes the four-byte CRC. The extra tail is the
+// contiguous wrap area promised by RCR.wrap, not part of the logical ring.
+constexpr uint32_t kRxHeaderBytes = 4;
+constexpr uint32_t kMaxRxRecordBytes = kRxHeaderBytes + 1514;
+constexpr uint32_t kRxBufferBytes = kRxBufferSize + 16 + kMaxRxRecordBytes;
 constexpr uint32_t kTxBufferBytes = 2048;
 constexpr uint16_t kRxOk = 0x0001;
 constexpr uint32_t kTxOk = 1u << 15;
@@ -212,16 +215,28 @@ void poll_receive() {
             (unsigned)in16(static_cast<uint16_t>(g_io_base + kRegCbr)),
             (unsigned)in8(static_cast<uint16_t>(g_io_base + kRegCommand))
         );
-        const bool fits_ring = g_cur_rx < kRxBufferSize && g_cur_rx <= kRxBufferSize - 4u &&
-            length <= kMaxFrameBytes && length <= (kRxBufferSize - g_cur_rx) - 4u;
-        if ((status & kRxOk) == 0 || length < 4 || !fits_ring) {
+        const uint64_t record_end = static_cast<uint64_t>(g_cur_rx) +
+            kRxHeaderBytes + length;
+        const bool fits_buffer = g_cur_rx < kRxBufferSize &&
+            length >= kRxHeaderBytes && length <= kMaxRxRecordBytes &&
+            record_end <= kRxBufferBytes;
+        if ((status & kRxOk) == 0 || !fits_buffer) {
             rtl_log("rtl8139: rx invalid status=%x len=%u\n", (unsigned)status, (unsigned)length);
             ++g_rx_errors;
             report(SAVANXP_NET_STATUS_RX_INVALID);
+            // The card has already advanced its write pointer. Resynchronize
+            // with it instead of breaking with CAPR unchanged and repeatedly
+            // parsing the same malformed record forever.
+            g_cur_rx = static_cast<uint16_t>(
+                in16(static_cast<uint16_t>(g_io_base + kRegCbr)) & (kRxBufferSize - 1));
+            out16(
+                static_cast<uint16_t>(g_io_base + kRegCapr),
+                static_cast<uint16_t>(g_cur_rx == 0 ? 0xfff0u : (g_cur_rx - 16u))
+            );
             break;
         }
 
-        const size_t frame_length = static_cast<size_t>(length - 4);
+        const size_t frame_length = static_cast<size_t>(length - kRxHeaderBytes);
         ++g_rx_frames;
         if (g_events.frame != nullptr) {
             g_events.frame(packet + 4, frame_length);

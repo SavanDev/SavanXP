@@ -143,8 +143,9 @@ at fixed addresses, and the kernel is not relocated.
 - GPU section import now requires read access rather than merely query access.
 - virtio-net rejects used-element lengths above the RX buffer and frames above
   the Ethernet limit.
-- RTL8139 rejects packet lengths that do not fit from the current ring cursor
-  to the end of the ring, as well as oversized frames.
+- RTL8139 bounds the complete hardware record, including its CRC header, against
+  the allocated ring plus wrap tail. Invalid records resynchronize with `CBR`
+  instead of leaving `CAPR` stuck on the same malformed packet.
 - Shared sections are capped at 64 MiB and checked for alignment and allocation
   arithmetic overflow before any pages are requested.
 

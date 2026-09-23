@@ -450,6 +450,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **RTL8139 accepts valid maximum-size frames and recovers from bad records.**
+  RX validation now accounts for the CRC header and wrap tail, and resynchronizes
+  with the hardware pointer instead of repeatedly parsing one malformed frame.
+
 - **NX is now enabled explicitly on every application processor.** APs no
   longer depend on the per-core `EFER.NXE` state inherited from the bootloader.
 
