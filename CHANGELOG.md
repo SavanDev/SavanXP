@@ -450,6 +450,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **Kernel stack-canary failures report the actual return address.** The panic
+  diagnostic no longer assumes a compiler-specific stack-frame offset.
+
 - **User memory is no longer uniformly executable.** NX is now enforced for data,
   stacks and shared sections; ELF segments must be valid, non-RWX and remain in
   the user half. Stack canaries cover kernel, in-tree and supported external

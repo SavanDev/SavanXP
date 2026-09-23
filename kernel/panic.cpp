@@ -5,8 +5,7 @@
 #include "kernel/cpu.hpp"
 
 extern "C" [[noreturn]] void __stack_chk_fail() {
-    uint64_t caller = 0;
-    asm volatile("movq 8(%%rsp), %0" : "=r"(caller));
+    const auto caller = reinterpret_cast<uint64_t>(__builtin_return_address(0));
     console::printf("kernel: stack canary failure at 0x%llx\n", caller);
     panic("kernel: stack canary failure");
 }
