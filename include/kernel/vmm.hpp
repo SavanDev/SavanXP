@@ -44,8 +44,8 @@ enum PageFlags : uint64_t {
     kPageWriteThrough = 1ULL << 3,
     kPageCacheDisable = 1ULL << 4,
     // Bit 63 de las entradas de paging x86-64. Con EFER.NXE activo vuelve
-    // NX un permiso de solo paginas, no un flag de CPU completo: el hardware
-    // haceUltimo el control en la TLB.
+    // NX un permiso de solo paginas, no un flag de CPU completo: la CPU
+    // aplica el permiso durante la traduccion de la direccion.
     kPageNoExecute = 1ULL << 63,
     // Bit PAT. SOLO valido en la entrada de ultimo nivel: en un PDE/PDPTE el
     // mismo bit es PS y crearia una pagina grande. map_kernel_page lo aplica

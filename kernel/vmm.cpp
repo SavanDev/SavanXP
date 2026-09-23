@@ -535,8 +535,9 @@ bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_addres
         return false;
     }
 
-    // NX is a PTE/PDPTE/PDE permission, but bit 63 is reserved in a PML4E.
-    // Keep the leaf flag and create the upper tables without it.
+    // NX is enforced at the leaf. Do not copy it into upper-level entries:
+    // an upper-level NX bit would constrain every executable page in that
+    // subtree when a later mapping needs different permissions.
     const uint64_t table_flags = flags & ~vm::kPageNoExecute;
     uint64_t* pdpt = next_table(space.pml4_virtual, pml4_index(virtual_address), table_flags);
     if (pdpt == nullptr) {
