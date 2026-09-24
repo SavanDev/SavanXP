@@ -41,7 +41,7 @@ extern "C" {
  *
  * Las medidas que una app necesita para ubicar sus controles. Estan aca y no
  * cada una en su .c porque el punto es que dos ventanas distintas caigan en la
- * MISMA grilla: si files usa 8 de margen y notepad 5, las dos se ven bien por
+ * MISMA grilla: si files usa un margen y notepad otro, las dos se ven bien por
  * separado y mal uno al lado del otro.
  *
  * El grosor del bisel entra en la cuenta de cualquiera que reparta el ancho de
@@ -60,13 +60,13 @@ extern "C" {
  * quiera alinear con el texto de un campo se corre BORDER + TEXT_PAD. */
 #define SXGUI_TEXT_PAD            3
 
-#define SXGUI_MARGIN              8   /* del borde del cliente al control */
+#define SXGUI_MARGIN              4   /* del borde del cliente al control */
 #define SXGUI_GAP                 6   /* entre controles vecinos */
 #define SXGUI_BUTTON_WIDTH        84
 #define SXGUI_BUTTON_HEIGHT       26
 #define SXGUI_FIELD_HEIGHT        24
 #define SXGUI_STATUS_HEIGHT       22
-#define SXGUI_DIALOG_MARGIN       12
+#define SXGUI_DIALOG_MARGIN       8
 
 enum sxgui_kind {
     SXGUI_LABEL = 0,

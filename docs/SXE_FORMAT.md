@@ -169,7 +169,7 @@ is defined now because afterwards would be too late.
 | `0x0005` | `VENDOR` | utf8 | |
 | `0x0006` | `COPYRIGHT` | utf8 | |
 | `0x0007` | `BUILD_ID` | utf8 | Short git commit. **Always** set by the generator ([default stamping](#default-stamping)); a `.sxres` can pin another value by hand if needed |
-| `0x0101` | `ACCENT` | `uint32` | `0x00RRGGBB`, the format `gfx_rgb` already returns. Replaces the `accent` field of `windowd_appinfo` |
+| `0x0101` | `ACCENT` | `uint32` | `0x00RRGGBB`, the format `gfx_rgb` already returns. Application-declared identity color; the WM blends it into the active caption gradient without replacing the system colors |
 | `0x0102` | `LAUNCH_FLAGS` | `uint32` | `SAVANXP_DESKTOP_LAUNCH_FLAG_*` **by default**. The launcher can override them |
 | `0x0103` | `CATEGORY` | utf8 | Launcher group. Its **presence** is what puts the program in the list — see [All Programs](#all-programs-the-catalog-discovers-itself). Recommended ≤ 31 bytes (`PROGMAN_NAME_CAPACITY`) |
 | `0x0104` | `WINDOW_FLAGS` | `uint32` | `SAVANXP_WM_WINDOW_STYLE_*`. Properties of the program's **window**, read by the WM itself — see [WINDOW_FLAGS is not LAUNCH_FLAGS](#window_flags-is-not-launch_flags) |
@@ -297,7 +297,7 @@ executable, forever.**
   |---|---|
   | name | basename of the path |
   | icon | generic from the system set |
-  | accent | `gfx_rgb(59, 95, 156)` — the one [windowd_render.c:356](../subsystems/posix/userland/windowd_render.c:356) already uses |
+  | accent | `gfx_rgb(59, 95, 156)`; the WM uses it as a controlled tint on the active caption |
   | flags | `SAVANXP_DESKTOP_LAUNCH_FLAG_NONE` |
 
 ### The extension is a hint, not the authority
@@ -367,7 +367,7 @@ can be measured again when something changes.
       │ launch queue in the surface header: path + flags
       ▼
   windowd ──► re-reads the .sxe at that path when creating the window
-              title, window icon, accent, Task List
+              title, window icon, declared accent, Task List
 ```
 
 The WM stops guessing from the path and starts reading; `windowd_appinfo.c`

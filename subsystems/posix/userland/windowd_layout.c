@@ -286,15 +286,15 @@ struct sx_rect windowd_client_minimize_button_rect(const struct windowd_client *
     }
 
     titlebar_rect = windowd_client_titlebar_rect(client);
-    if (titlebar_rect.width < (WINDOWD_WINDOW_BUTTON_SIZE * 3) + (WINDOWD_WINDOW_BUTTON_GAP * 2) + 8 ||
-        titlebar_rect.height < WINDOWD_WINDOW_BUTTON_SIZE)
+    if (titlebar_rect.width < (WINDOWD_WINDOW_BUTTON_WIDTH * 3) + (WINDOWD_WINDOW_BUTTON_GAP * 2) + 8 ||
+        titlebar_rect.height < WINDOWD_WINDOW_BUTTON_HEIGHT)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    button_x = titlebar_rect.x + titlebar_rect.width - (WINDOWD_WINDOW_BUTTON_SIZE * 3) - (WINDOWD_WINDOW_BUTTON_GAP * 2) - 5;
-    button_y = titlebar_rect.y + ((titlebar_rect.height - WINDOWD_WINDOW_BUTTON_SIZE) / 2);
-    return sx_rect_make(button_x, button_y, WINDOWD_WINDOW_BUTTON_SIZE, WINDOWD_WINDOW_BUTTON_SIZE);
+    button_x = titlebar_rect.x + titlebar_rect.width - (WINDOWD_WINDOW_BUTTON_WIDTH * 3) - (WINDOWD_WINDOW_BUTTON_GAP * 2) - 2;
+    button_y = titlebar_rect.y + ((titlebar_rect.height - WINDOWD_WINDOW_BUTTON_HEIGHT) / 2);
+    return sx_rect_make(button_x, button_y, WINDOWD_WINDOW_BUTTON_WIDTH, WINDOWD_WINDOW_BUTTON_HEIGHT);
 }
 
 struct sx_rect windowd_client_maximize_button_rect(const struct windowd_client *client)
@@ -306,10 +306,10 @@ struct sx_rect windowd_client_maximize_button_rect(const struct windowd_client *
         return sx_rect_make(0, 0, 0, 0);
     }
     return sx_rect_make(
-        minimize_rect.x + WINDOWD_WINDOW_BUTTON_SIZE + WINDOWD_WINDOW_BUTTON_GAP,
+        minimize_rect.x + WINDOWD_WINDOW_BUTTON_WIDTH + WINDOWD_WINDOW_BUTTON_GAP,
         minimize_rect.y,
-        WINDOWD_WINDOW_BUTTON_SIZE,
-        WINDOWD_WINDOW_BUTTON_SIZE);
+        WINDOWD_WINDOW_BUTTON_WIDTH,
+        WINDOWD_WINDOW_BUTTON_HEIGHT);
 }
 
 struct sx_rect windowd_client_close_button_rect(const struct windowd_client *client)
@@ -324,14 +324,14 @@ struct sx_rect windowd_client_close_button_rect(const struct windowd_client *cli
     }
 
     titlebar_rect = windowd_client_titlebar_rect(client);
-    if (titlebar_rect.width < WINDOWD_WINDOW_BUTTON_SIZE || titlebar_rect.height < WINDOWD_WINDOW_BUTTON_SIZE)
+    if (titlebar_rect.width < WINDOWD_WINDOW_BUTTON_WIDTH || titlebar_rect.height < WINDOWD_WINDOW_BUTTON_HEIGHT)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
 
-    button_x = titlebar_rect.x + titlebar_rect.width - WINDOWD_WINDOW_BUTTON_SIZE - 5;
-    button_y = titlebar_rect.y + ((titlebar_rect.height - WINDOWD_WINDOW_BUTTON_SIZE) / 2);
-    return sx_rect_make(button_x, button_y, WINDOWD_WINDOW_BUTTON_SIZE, WINDOWD_WINDOW_BUTTON_SIZE);
+    button_x = titlebar_rect.x + titlebar_rect.width - WINDOWD_WINDOW_BUTTON_WIDTH - 2;
+    button_y = titlebar_rect.y + ((titlebar_rect.height - WINDOWD_WINDOW_BUTTON_HEIGHT) / 2);
+    return sx_rect_make(button_x, button_y, WINDOWD_WINDOW_BUTTON_WIDTH, WINDOWD_WINDOW_BUTTON_HEIGHT);
 }
 
 int windowd_point_in_client(const struct windowd_client *client, int x, int y)

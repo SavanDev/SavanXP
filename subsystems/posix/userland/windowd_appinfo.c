@@ -62,7 +62,9 @@ const struct windowd_appinfo *windowd_appinfo_for_path(const char *path)
 
 /* --- presentacion resuelta ------------------------------------------------ */
 
-/* Azul de barra de titulo del sistema, para lo que no declara accent propio. */
+/* Fallback de identidad para una presentacion sin ACCENT.  El caption de las
+ * ventanas usa la paleta global de Windows Standard y mezcla este valor en sus
+ * extremos; nunca lo usa como color plano ni como color de reemplazo. */
 #define WINDOWD_DEFAULT_ACCENT WINDOWD_RGB_LITERAL(59, 95, 156)
 
 static void copy_label(char *destination, size_t capacity, const char *source)

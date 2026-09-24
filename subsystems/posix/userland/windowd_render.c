@@ -14,8 +14,6 @@ _Static_assert(
     DESKTOP_WALLPAPER_TASKBAR_HEIGHT == WINDOWD_TASKBAR_HEIGHT,
     "el alto de la barra que usa el fondo debe coincidir con el del WM");
 
-#define WINDOWD_RGB_LITERAL(red, green, blue) (((uint32_t)(red) << 16) | ((uint32_t)(green) << 8) | (uint32_t)(blue))
-
 static uint32_t *g_backbuffer = 0;
 
 static const char *window_title_for_client(const struct windowd_client *client);
@@ -195,50 +193,120 @@ static const char *window_title_for_client(const struct windowd_client *client)
     return windowd_presentation_label(&client->presentation, client->path);
 }
 
-/*
- * El marco del WM tiene su propia paleta, MAS CLARA que la de los controles:
- * 48/88 donde el toolkit pone 0/128, y el claro externo e interno al reves. No
- * es un descuido -- una ventana con el contorno negro del esquema de controles
- * se lee como un boton gigante --, asi que lo que se comparte con
- * savanxp/sxchrome.h es el DIBUJO del bisel, no sus cuatro tonos, que van por
- * parametro. Los pixeles son exactamente los de la copia que habia aca.
- */
-#define WINDOWD_CHROME_SHADOW gfx_rgb(88, 88, 88)
-#define WINDOWD_CHROME_DARK gfx_rgb(48, 48, 48)
-#define WINDOWD_CHROME_LIGHT gfx_rgb(255, 255, 255)
-#define WINDOWD_CHROME_HIGHLIGHT gfx_rgb(223, 223, 223)
+/* El caption usa los colores de sistema de Windows Standard.  El degradado va
+ * en 24 bandas: evita interpolar cada pixel y mantiene el costo acotado aunque
+ * la ventana mida casi toda la pantalla. */
+#define WINDOWD_CAPTION_BANDS 24
+#define WINDOWD_CAPTION_ICON_SIZE 16
+/* El acento se nota, pero no convierte la barra en un color plano: se mezcla
+ * mas en el extremo oscuro y menos en el claro para conservar el contraste. */
+#define WINDOWD_CAPTION_ACCENT_LEFT_MIX 96
+#define WINDOWD_CAPTION_ACCENT_RIGHT_MIX 48
 
-static void draw_button(struct sx_painter *painter, struct sx_rect rect, uint32_t face, int pressed)
+static uint8_t windowd_mix_channel(uint8_t from, uint8_t to, int amount)
 {
-    sx_painter_fill_rect(painter, rect, face);
-    if (!pressed)
+    if (to >= from)
     {
-        sxchrome_draw_edge(
-            painter, rect,
-            WINDOWD_CHROME_LIGHT, WINDOWD_CHROME_DARK,
-            WINDOWD_CHROME_HIGHLIGHT, WINDOWD_CHROME_SHADOW);
+        return (uint8_t)(from + (((int)to - from) * amount + 127) / 255);
+    }
+    return (uint8_t)(from - (((int)from - to) * amount + 127) / 255);
+}
+
+static uint32_t windowd_caption_colour(uint32_t left, uint32_t right, int amount)
+{
+    return SXCHROME_RGB(
+        windowd_mix_channel((uint8_t)(left >> 16), (uint8_t)(right >> 16), amount),
+        windowd_mix_channel((uint8_t)(left >> 8), (uint8_t)(right >> 8), amount),
+        windowd_mix_channel((uint8_t)left, (uint8_t)right, amount));
+}
+
+static void draw_caption(
+    struct sx_painter *painter,
+    struct sx_rect rect,
+    int active,
+    uint32_t accent)
+{
+    uint32_t left = active
+        ? SXCHROME_COLOR_CAPTION_ACTIVE
+        : SXCHROME_COLOR_CAPTION_INACTIVE;
+    uint32_t right = active
+        ? SXCHROME_COLOR_CAPTION_ACTIVE_GRADIENT
+        : SXCHROME_COLOR_CAPTION_INACTIVE_GRADIENT;
+    int bands = WINDOWD_CAPTION_BANDS;
+    int band;
+
+    if (painter == 0 || rect.width <= 0 || rect.height <= 0)
+    {
         return;
     }
-    sxchrome_draw_edge(
-        painter, rect,
-        WINDOWD_CHROME_DARK, WINDOWD_CHROME_LIGHT,
-        WINDOWD_CHROME_SHADOW, WINDOWD_CHROME_HIGHLIGHT);
+    if (bands > rect.width)
+    {
+        bands = rect.width;
+    }
+    if (bands < 1)
+    {
+        bands = 1;
+    }
+    if (active && accent != 0u)
+    {
+        left = windowd_caption_colour(left, accent, WINDOWD_CAPTION_ACCENT_LEFT_MIX);
+        right = windowd_caption_colour(right, accent, WINDOWD_CAPTION_ACCENT_RIGHT_MIX);
+    }
+
+    for (band = 0; band < bands; ++band)
+    {
+        int x = rect.x + ((rect.width * band) / bands);
+        int right_x = rect.x + ((rect.width * (band + 1)) / bands);
+        int amount = bands > 1 ? (band * 255) / (bands - 1) : 0;
+        uint32_t colour = windowd_caption_colour(left, right, amount);
+
+        if (right_x > x)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x, rect.y, right_x - x, rect.height), colour);
+        }
+    }
 }
 
-static void draw_inset_box(struct sx_painter *painter, struct sx_rect rect, uint32_t face)
+static uint32_t windowd_caption_text_colour(int active)
 {
-    sx_painter_fill_rect(painter, rect, face);
-    sxchrome_draw_edge(
-        painter, rect,
-        WINDOWD_CHROME_SHADOW, WINDOWD_CHROME_LIGHT,
-        WINDOWD_CHROME_DARK, WINDOWD_CHROME_HIGHLIGHT);
+    return active
+        ? SXCHROME_COLOR_CAPTION_TEXT
+        : SXCHROME_COLOR_CAPTION_INACTIVE_TEXT;
 }
+
+static void draw_caption_button(struct sx_painter *painter, struct sx_rect rect)
+{
+    sxchrome_fill_raised(painter, rect, SXCHROME_COLOR_FACE, 0);
+}
+
+static void draw_caption_box(
+    struct sx_painter *painter,
+    int x,
+    int y,
+    int width,
+    int height,
+    uint32_t colour)
+{
+    if (width <= 0 || height <= 0)
+    {
+        return;
+    }
+    sx_painter_fill_rect(painter, sx_rect_make(x, y, width, height > 2 ? 2 : height), colour);
+    if (height > 2)
+    {
+        sx_painter_vline(painter, x, y + 2, height - 2, colour);
+        sx_painter_vline(painter, x + width - 1, y + 2, height - 2, colour);
+    }
+    if (height > 1)
+    {
+        sx_painter_hline(painter, x, y + height - 1, width, colour);
+    }
+}
+
 static void draw_close_button(struct sx_painter *painter, const struct windowd_client *client)
 {
     struct sx_rect rect;
-    int inset = 0;
-    int glyph_size = 0;
-    int index = 0;
+    int index;
 
     if (painter == 0 || client == 0 || client->pid <= 0 || !client->frame_visible)
     {
@@ -251,19 +319,11 @@ static void draw_close_button(struct sx_painter *painter, const struct windowd_c
         return;
     }
 
-    draw_button(painter, rect, gfx_rgb(196, 199, 203), 0);
-
-    inset = rect.width >= 16 ? 4 : 3;
-    glyph_size = rect.width - (inset * 2);
-    if (glyph_size < 4)
+    draw_caption_button(painter, rect);
+    for (index = 0; index < 8; ++index)
     {
-        glyph_size = 4;
-    }
-
-    for (index = 0; index < glyph_size; ++index)
-    {
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + inset + index, rect.y + inset + index, 1, 1), gfx_rgb(32, 32, 32));
-        sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - inset - 1 - index, rect.y + inset + index, 1, 1), gfx_rgb(32, 32, 32));
+        sx_painter_set_pixel(painter, rect.x + 4 + index, rect.y + 3 + index, SXCHROME_COLOR_TEXT);
+        sx_painter_set_pixel(painter, rect.x + 11 - index, rect.y + 3 + index, SXCHROME_COLOR_TEXT);
     }
 }
 
@@ -282,22 +342,22 @@ static void draw_minimize_button(struct sx_painter *painter, const struct window
         return;
     }
 
-    draw_button(painter, rect, gfx_rgb(196, 199, 203), 0);
+    draw_caption_button(painter, rect);
     sx_painter_fill_rect(
         painter,
-        sx_rect_make(rect.x + 4, rect.y + rect.height - 6, rect.width - 8, 2),
-        gfx_rgb(32, 32, 32));
+        sx_rect_make(rect.x + 5, rect.y + 9, 6, 2),
+        SXCHROME_COLOR_TEXT);
 }
 
-/* El cuadrado del maximizar, en un color. Aparte para poder pasarselo a
- * sxchrome_draw_glyph_disabled, que lo dibuja dos veces con el relieve
- * grabado. `rect` es el del boton, no el del glifo. */
 static void draw_maximize_glyph(struct sx_painter *painter, struct sx_rect rect, uint32_t colour)
 {
-    sx_painter_draw_frame(
-        painter,
-        sx_rect_make(rect.x + 4, rect.y + 4, rect.width - 8, rect.height - 8),
-        colour);
+    draw_caption_box(painter, rect.x + 4, rect.y + 3, 7, 7, colour);
+}
+
+static void draw_restore_glyph(struct sx_painter *painter, struct sx_rect rect, uint32_t colour)
+{
+    draw_caption_box(painter, rect.x + 6, rect.y + 3, 6, 6, colour);
+    draw_caption_box(painter, rect.x + 4, rect.y + 5, 6, 6, colour);
 }
 
 static void draw_maximize_button(struct sx_painter *painter, const struct windowd_client *client)
@@ -315,28 +375,21 @@ static void draw_maximize_button(struct sx_painter *painter, const struct window
         return;
     }
 
-    draw_button(painter, rect, gfx_rgb(196, 199, 203), 0);
+    draw_caption_button(painter, rect);
 
-    /*
-     * Ventana de tamano fijo: el boton se queda, apagado. Sacarlo dejaria un
-     * hueco entre minimizar y cerrar -- el layout esta anclado a la derecha y
-     * cuenta tres botones (windowd_client_minimize_button_rect) --, y ademas
-     * una barra de titulo con distinta cantidad de botones segun la app se lee
-     * como un chrome inconsistente antes que como una propiedad de la ventana.
-     */
+    /* La ventana fija conserva los tres botones; el de maximizar queda grabado. */
     if (windowd_client_fixed_size(client))
     {
         sxchrome_draw_glyph_disabled(painter, rect, draw_maximize_glyph);
         return;
     }
-
-    draw_maximize_glyph(painter, rect, gfx_rgb(32, 32, 32));
     if (client->maximized)
     {
-        sx_painter_draw_frame(
-            painter,
-            sx_rect_make(rect.x + 6, rect.y + 6, rect.width - 8, rect.height - 8),
-            gfx_rgb(32, 32, 32));
+        draw_restore_glyph(painter, rect, SXCHROME_COLOR_TEXT);
+    }
+    else
+    {
+        draw_maximize_glyph(painter, rect, SXCHROME_COLOR_TEXT);
     }
 }
 
@@ -368,39 +421,71 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
     struct sx_bitmap bitmap;
     struct sx_rect surface_rect;
     struct sx_rect frame_rect;
+    struct sx_rect titlebar_rect;
+    struct sx_rect right_button;
+    struct sx_rect text_clip;
     struct desktop_embedded_bitmap icon_storage;
-    const struct desktop_embedded_bitmap *icon = windowd_presentation_icon(&client->presentation, &icon_storage);
-    uint32_t title_colour = client != 0 && client->active
-        ? windowd_presentation_accent(&client->presentation)
-        : gfx_rgb(126, 132, 142);
-    uint32_t frame_face = client != 0 && client->active
-        ? gfx_rgb(208, 212, 219)
-        : gfx_rgb(188, 192, 198);
+    const struct desktop_embedded_bitmap *icon = 0;
+    int icon_size = 16;
+    int text_x;
+    int text_right;
 
-    if (client == 0 || client->pid <= 0 || client->pixels == 0 || client->minimized)
+    if (painter == 0 || client == 0 || client->pid <= 0 || client->pixels == 0 || client->minimized)
     {
         return;
     }
 
     surface_rect = windowd_client_surface_rect(client);
     frame_rect = windowd_client_frame_rect(client);
+    icon = windowd_presentation_icon(&client->presentation, &icon_storage);
 
     if (client->frame_visible)
     {
-        draw_button(painter, frame_rect, frame_face, 0);
-        sx_painter_fill_rect(painter, sx_rect_make(frame_rect.x + 2, frame_rect.y + 2, frame_rect.width - 4, WINDOWD_WINDOW_TITLEBAR_HEIGHT - 4), title_colour);
-        /* Los dialogos no llevan icono en la barra de titulo: el icono es de la
-         * aplicacion, y la aplicacion es su dueno. */
-        if (client->owner_slot < 0)
-        {
-            draw_embedded_bitmap(painter, icon, frame_rect.x + 6, frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - 16) / 2);
-        }
-        sx_painter_draw_text(
+        titlebar_rect = windowd_client_titlebar_rect(client);
+        sxchrome_fill_raised(painter, frame_rect, SXCHROME_COLOR_FACE, 0);
+        draw_caption(
             painter,
-            frame_rect.x + (client->owner_slot < 0 ? 26 : 8),
-            frame_rect.y + (WINDOWD_WINDOW_TITLEBAR_HEIGHT - gfx_text_height()) / 2,
-            window_title_for_client(client),
-            gfx_rgb(255, 255, 255));
+            titlebar_rect,
+            client->active,
+            windowd_presentation_accent(&client->presentation));
+
+        text_x = titlebar_rect.x + 4;
+        /* Los dialogos no llevan icono: el icono de la aplicacion identifica al
+         * dueno, no al dialogo modal que esta encima. */
+        if (client->owner_slot < 0 && icon != 0 &&
+            icon->width > 0u && icon->height > 0u &&
+            icon->width <= (uint32_t)WINDOWD_CAPTION_ICON_SIZE &&
+            icon->height <= (uint32_t)WINDOWD_CAPTION_ICON_SIZE)
+        {
+            icon_size = (int)icon->width;
+            draw_embedded_bitmap(
+                painter,
+                icon,
+                titlebar_rect.x + 3,
+                titlebar_rect.y + ((titlebar_rect.height - icon_size) / 2));
+            text_x += icon_size + 4;
+        }
+
+        right_button = windowd_client_minimize_button_rect(client);
+        if (sx_rect_is_empty(right_button))
+        {
+            right_button = windowd_client_close_button_rect(client);
+        }
+        text_right = sx_rect_is_empty(right_button)
+            ? sx_rect_right(titlebar_rect) - 3
+            : right_button.x - 4;
+        text_clip = sx_rect_make(text_x, titlebar_rect.y, text_right - text_x, titlebar_rect.height);
+        if (text_right > text_x && sx_painter_push_clip(painter, text_clip))
+        {
+            sx_painter_draw_text(
+                painter,
+                text_x,
+                titlebar_rect.y + ((titlebar_rect.height - gfx_text_height()) / 2),
+                window_title_for_client(client),
+                windowd_caption_text_colour(client->active));
+            sx_painter_pop_clip(painter);
+        }
+
         draw_minimize_button(painter, client);
         draw_maximize_button(painter, client);
         draw_close_button(painter, client);
@@ -627,29 +712,29 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
     const struct savanxp_fb_info *info = &session->gfx.info;
     int task_count = windowd_task_count(session);
     struct sx_rect dialog = windowd_tasklist_rect(info, task_count);
+    struct sx_rect caption = sx_rect_make(
+        dialog.x + 3,
+        dialog.y + 3,
+        dialog.width - 6,
+        WINDOWD_TASKLIST_TITLE_HEIGHT - 6);
     struct sx_rect list = windowd_tasklist_list_rect(info, task_count);
     int first = windowd_tasklist_first_visible(task_count, session->tasklist_selected);
     int visible = windowd_tasklist_visible_count(task_count);
     int index;
 
-    sx_painter_fill_rect(painter, dialog, gfx_rgb(198, 202, 208));
-    draw_button(painter, dialog, gfx_rgb(198, 202, 208), 0);
-
-    sx_painter_fill_rect(
-        painter,
-        sx_rect_make(dialog.x + 3, dialog.y + 3, dialog.width - 6, WINDOWD_TASKLIST_TITLE_HEIGHT - 4),
-        gfx_rgb(40, 76, 140));
+    sxchrome_fill_raised(painter, dialog, SXCHROME_COLOR_FACE, 0);
+    draw_caption(painter, caption, 1, 0u);
     sx_painter_draw_text(
         painter,
-        dialog.x + 9,
-        dialog.y + 3 + ((WINDOWD_TASKLIST_TITLE_HEIGHT - 4 - gfx_text_height()) / 2),
+        caption.x + 4,
+        caption.y + ((caption.height - gfx_text_height()) / 2),
         "Task List",
-        gfx_rgb(255, 255, 255));
+        SXCHROME_COLOR_CAPTION_TEXT);
 
-    draw_inset_box(painter, list, gfx_rgb(255, 255, 255));
+    sxchrome_fill_raised(painter, list, SXCHROME_COLOR_FIELD, 1);
     if (task_count == 0)
     {
-        sx_painter_draw_text(painter, list.x + 6, list.y + 3, "(sin ventanas abiertas)", gfx_rgb(112, 116, 122));
+        sx_painter_draw_text(painter, list.x + 6, list.y + 3, "(sin ventanas abiertas)", SXCHROME_COLOR_DISABLED_TEXT);
     }
 
     for (index = 0; index < visible; ++index)
@@ -670,7 +755,7 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
 
         if (selected)
         {
-            sx_painter_fill_rect(painter, row, gfx_rgb(0, 0, 128));
+            sx_painter_fill_rect(painter, row, SXCHROME_COLOR_SELECT);
         }
         if (sx_painter_push_clip(painter, row))
         {
@@ -679,7 +764,7 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
                 row.x + 5,
                 row.y + ((row.height - gfx_text_height()) / 2),
                 label,
-                selected ? gfx_rgb(255, 255, 255) : gfx_rgb(16, 20, 24));
+                selected ? SXCHROME_COLOR_SELECT_TEXT : SXCHROME_COLOR_TEXT);
             /* Marca las minimizadas: son las que sin taskbar quedarian perdidas. */
             if (client->minimized)
             {
@@ -688,7 +773,9 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
                     row.x + row.width - gfx_text_width("(minimizada)") - 6,
                     row.y + ((row.height - gfx_text_height()) / 2),
                     "(minimizada)",
-                    selected ? gfx_rgb(198, 208, 226) : gfx_rgb(112, 116, 122));
+                    selected
+                        ? SXCHROME_COLOR_CAPTION_INACTIVE_TEXT
+                        : SXCHROME_COLOR_DISABLED_TEXT);
             }
             sx_painter_pop_clip(painter);
         }
@@ -699,13 +786,13 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
         struct sx_rect rect = windowd_tasklist_button_rect(info, task_count, index);
         int label_width = gfx_text_width(k_button_labels[index]);
 
-        draw_button(painter, rect, gfx_rgb(198, 202, 208), 0);
+        sxchrome_fill_raised(painter, rect, SXCHROME_COLOR_FACE, 0);
         sx_painter_draw_text(
             painter,
             rect.x + ((rect.width - label_width) / 2),
             rect.y + ((rect.height - gfx_text_height()) / 2),
             k_button_labels[index],
-            gfx_rgb(16, 20, 24));
+            SXCHROME_COLOR_TEXT);
     }
 }
 

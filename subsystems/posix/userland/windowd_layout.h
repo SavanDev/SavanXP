@@ -2,10 +2,15 @@
 
 #include "windowd_session.h"
 
-#define WINDOWD_WINDOW_BORDER 3
-#define WINDOWD_WINDOW_TITLEBAR_HEIGHT 26
-#define WINDOWD_WINDOW_BUTTON_SIZE 16
-#define WINDOWD_WINDOW_BUTTON_GAP 3
+/* Windows Standard non-client metrics at the desktop's native pixel scale:
+ * a four-pixel frame, an 18-pixel caption inside it, and adjacent 16x14 caption
+ * buttons.  The titlebar constant includes the frame above the caption, so the
+ * client starts at TITLEBAR_HEIGHT and the bottom/side frame at BORDER. */
+#define WINDOWD_WINDOW_BORDER 4
+#define WINDOWD_WINDOW_TITLEBAR_HEIGHT 22
+#define WINDOWD_WINDOW_BUTTON_WIDTH 16
+#define WINDOWD_WINDOW_BUTTON_HEIGHT 14
+#define WINDOWD_WINDOW_BUTTON_GAP 0
 
 /* Redimensionado por bordes.
  *

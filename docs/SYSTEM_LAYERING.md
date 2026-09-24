@@ -221,12 +221,11 @@ it would have dragged menus, listbox and textedit into the window manager for
 eight lines of bevel. So the edges moved **down**, to SXCHROME, and everyone
 consumes them from there — the toolkit included.
 
-The corollary, which is why the palette did not move with them: sharing the
-*drawing* is not the same as sharing the *tones*. `windowd`'s frame is
-deliberately lighter than a control (48/88 where the toolkit uses 0/128), so
-`sxchrome_draw_edge()` takes its four colours as parameters and the wrappers
-that bake in the system palette sit on top. A caller with its own scheme stops
-duplicating the algorithm without being forced into someone else's greys.
+The primitive still takes its four colours as parameters, so a caller with a
+custom scheme can reuse the algorithm without being forced into the system
+palette. System chrome, however, now shares one Windows Standard scheme: the
+window frame uses the same face and bevel tones as a control, while active and
+inactive captions use the matching system gradients.
 
 ## Where the runtime work stopped
 

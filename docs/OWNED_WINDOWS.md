@@ -125,9 +125,9 @@ owner's pid. The rules are all expressed as "the family" — owner plus owned:
   `close_overlay_window`). They set `SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN` on
   the dialog's header; the process treats it as Cancel (like ESC) and sends
   `CLOSE`. The process decides what cancelling means.
-- **Frame:** close button only, no icon, fixed size, the owner's accent, the
-  title from the request. Placed centred over the owner and clamped to the
-  screen.
+- **Frame:** close button only, no icon, fixed size, the standard active caption
+  gradient tinted with the owner's accent, and the title from the request.
+  Placed centred over the owner and clamped to the screen.
 - **Not a task:** excluded from the Task List, Alt+Tab and the taskbar's window
   list. With a dialog active, the task shown as active is its owner's.
 - **Minimize** acts on the whole family; restoring or switching to the owner

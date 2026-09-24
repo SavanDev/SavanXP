@@ -20,11 +20,10 @@
 > **Phase B** is next (an MDI primitive in sxgui for Progman's groups).
 >
 > Of **Phase C** (the maturing work that motivated all of this), **edge
-> resizing** and **Alt-Tab** are done; the latter uses the Task List as the
-> switcher, with the cycle confirmed on releasing Alt. Still open:
-> **focus/activation** (the mechanics exist — `raise_overlay`,
-> `active_overlay_slot` — what is missing is making the active window look
-> different from the rest) and **repaint correctness**.
+> resizing**, **Alt-Tab**, and **focus/activation** are done; the latter uses the
+> Task List as the switcher, with the cycle confirmed on releasing Alt. Active
+> and inactive captions now use the Windows Standard gradients. Still open:
+> **repaint correctness**.
 >
 > **From here down, this document is the record of the original plan** — with
 > the decisions and findings exactly as they were made. It is written in the
@@ -293,13 +292,11 @@ the shell), A2.4 (retire the Win95 chrome, proto-Progman launcher), A2.5
   (child window with a title bar, drag clamped to the client area, minimize to
   an icon) — which does not exist today.
 - **Phase C** — maturing the WM against the clean server. **Done**: edge
-  resizing, and Alt-Tab over the Task List (while Alt is held, each Tab moves
-  the selection; releasing it confirms), and Alt+F4, which closes the active
-  window exactly like its X button — a dialog is asked to cancel, a main window
-  goes with its process, and it works in fullscreen where there is no frame to
-  click. **Open**: focus/activation between
-  windows — the mechanics are there, what is missing is showing which one is
-  active — and repaint correctness.
+  resizing, Alt-Tab over the Task List (while Alt is held, each Tab moves the
+  selection; releasing it confirms), Alt+F4, which closes the active window
+  exactly like its X button, and focus/activation. The active window uses the
+  Windows Standard blue caption gradient while inactive windows use the gray
+  one. **Open**: repaint correctness.
 
   Design note for what comes next: every per-client channel is paid for in
   `windowd`'s descriptor table, see [Descriptor budget](#descriptor-budget).

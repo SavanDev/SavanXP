@@ -726,6 +726,18 @@ Cut-off notes:
 
 ### Changed
 
+- **Window frames now use the Windows 95 caption treatment.** Active and inactive
+  title bars use the period gradients, classic 16x14 caption buttons, and the
+  shared system 3D palette; the Task List follows the same scheme.
+
+- **Application accents tint the active title gradient.** The declared accent is
+  blended more strongly into the dark end and more gently into the light end;
+  inactive captions and the Task List keep the shared system colors.
+
+- **Client controls sit closer to the window edge.** The shared inset is now 4 px
+  for window content and 8 px for dialogs, keeping controls attached without
+  losing their breathing room.
+
 - **F11 lowers the scanout resolution instead of scaling in software.** The shell
   used to stretch a fullscreen app's 640x400 buffer every frame, at two integer
   divisions per output pixel. It now asks the compositor for the client surface's

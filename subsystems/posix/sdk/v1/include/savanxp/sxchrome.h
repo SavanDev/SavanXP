@@ -48,6 +48,17 @@ extern "C" {
 #define SXCHROME_COLOR_SELECT_TEXT   SXCHROME_RGB(255, 255, 255)
 #define SXCHROME_COLOR_WINDOW        SXCHROME_RGB(192, 192, 192)
 
+/* Windows Standard caption palette.  These are the base system colors: the
+ * active title bar runs from navy to blue, while the inactive one runs from
+ * dark to light gray.  The WM may blend an application's accent into the active
+ * endpoints, but it never replaces this shared scheme. */
+#define SXCHROME_COLOR_CAPTION_ACTIVE            SXCHROME_RGB(0, 0, 128)
+#define SXCHROME_COLOR_CAPTION_ACTIVE_GRADIENT   SXCHROME_RGB(16, 132, 208)
+#define SXCHROME_COLOR_CAPTION_INACTIVE          SXCHROME_RGB(128, 128, 128)
+#define SXCHROME_COLOR_CAPTION_INACTIVE_GRADIENT SXCHROME_RGB(181, 181, 181)
+#define SXCHROME_COLOR_CAPTION_TEXT              SXCHROME_RGB(255, 255, 255)
+#define SXCHROME_COLOR_CAPTION_INACTIVE_TEXT     SXCHROME_RGB(192, 192, 192)
+
 /* Espesor de cada bisel. Entra en la cuenta de cualquiera que reparta el area
  * util de un control: el interior es el rect menos esto de cada lado. */
 #define SXCHROME_BORDER_RAISED 2 /* botones, cabeceras, popups */
@@ -63,11 +74,10 @@ extern "C" {
  * lo que hace que hundido y levantado sean exactamente el reverso uno del otro
  * y no dos dibujos parecidos.
  *
- * Se exporta con los cuatro tonos abiertos, y no solo los envoltorios de abajo,
- * porque no todo el chrome del sistema usa la paleta del toolkit: el marco de
- * ventana de `windowd` tiene sus propios tonos (mas claros: 48/88 en vez de
- * 0/128) y su propio orden. Compartir el DIBUJO sin imponer la PALETA es lo que
- * permite que el WM deje de tener su copia sin cambiar un pixel.
+ * Se exporta con los cuatro tonos abiertos, y no solo con los envoltorios de
+ * abajo, porque el WM compone superficies que pueden necesitar ordenar los tonos
+ * de otra manera. Compartir la primitiva permite que toda superficie del sistema
+ * conserve la misma construccion de dos pixeles sin copiarla.
  *
  * No dibuja nada si el rect es vacio; con ancho o alto <= 2 dibuja solo el
  * anillo externo, que es donde el interno ya no entra.

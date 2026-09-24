@@ -4,7 +4,7 @@
 #include "desktop_icons.h"
 
 /*
- * Presentacion de ventanas: titulo, icono y color de barra de titulo.
+ * Presentacion de ventanas: titulo, icono y accent de identidad.
  *
  * DESDE LA FASE 4 DE SXE (docs/SXE_FORMAT.md) el WM ya no adivina: lee el
  * .sxmeta/.sxicon del binario que lanzo, una sola vez, al crear la ventana.
@@ -75,7 +75,7 @@ void windowd_presentation_load(struct windowd_presentation *presentation, const 
 /* Titulo resuelto. `path` es el ultimo recurso cuando nadie dio un nombre. */
 const char *windowd_presentation_label(const struct windowd_presentation *presentation, const char *path);
 
-/* Color de la barra de titulo con la ventana activa. */
+/* Accent declarado por la app; el caption lo mezcla como tinte, no override. */
 uint32_t windowd_presentation_accent(const struct windowd_presentation *presentation);
 
 /*
