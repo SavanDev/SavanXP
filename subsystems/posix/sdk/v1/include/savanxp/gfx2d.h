@@ -124,6 +124,8 @@ enum sx_font_id {
     /* UniFont 8x16, monoespaciada y de 1 bit. La de la consola; ademas trae
      * box drawing y bloques. */
     SX_FONT_MONO = 1,
+    /* Noto Sans a 12 px con cobertura bold; la variante de los captions. */
+    SX_FONT_UI_TITLE = 2,
 };
 
 struct sx_painter {

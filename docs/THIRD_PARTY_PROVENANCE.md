@@ -153,8 +153,9 @@ which is why both go into the registry.
 - License reviewed: SIL OFL-1.1,
   `assets/desktop/fonts/LICENSE-OFL-1.1.txt`
 - Decision: `Adopt`
-- Distributed in: the binary, as an 8-bit antialiased coverage atlas at 13px
-  baked by `tools/font/genfont.py`
+- Distributed in: the binary, as 8-bit antialiased coverage atlases baked by
+  `tools/font/genfont.py`: a 13px UI face and a derived 12px faux-bold face for
+  window captions
 - Reason: a proportional typeface for the desktop chrome and the widgets
 
 ### Desktop icons and art

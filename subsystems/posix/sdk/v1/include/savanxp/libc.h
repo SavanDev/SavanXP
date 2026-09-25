@@ -228,6 +228,12 @@ void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, 
 /* Same as gfx_blit_text, but blended pixels are restricted to [clip_x0, clip_x1) x [clip_y0, clip_y1). */
 void gfx_blit_text_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                          int clip_x0, int clip_y0, int clip_x1, int clip_y1);
+/* Noto Sans 12px, bold caption variant used by window titles. */
+int gfx_text_width_title(const char* text);
+int gfx_text_height_title(void);
+void gfx_blit_text_title(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour);
+void gfx_blit_text_title_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                              int clip_x0, int clip_y0, int clip_x1, int clip_y1);
 /* Monospace UniFont path (fixed 8x16 cell), used for terminal-style output. */
 int gfx_cell_width(void);
 int gfx_cell_height(void);

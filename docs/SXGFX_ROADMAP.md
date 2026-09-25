@@ -57,8 +57,9 @@
 >   and the native runtime the same way the font data is), the Noto table
 >   reindexed **by codepoint** with ranges — Latin-1 plus typographic
 >   punctuation and the euro sign — and `sx_painter_set_font` selecting between
->   `SX_FONT_UI` and `SX_FONT_MONO`, which is the `SelectObject(hFont)` that was
->   missing. The mono path gained its clipped blit, which did not exist.
+>   `SX_FONT_UI`, the compact `SX_FONT_UI_TITLE` caption face, and
+>   `SX_FONT_MONO`, which is the `SelectObject(hFont)` that was missing. The mono
+>   path gained its clipped blit, which did not exist.
 >
 > **A measurement that corrected an assumption:** `sx_rect_set` subtraction was
 > already exact (it uses `push_raw`, which does not merge), so with a single

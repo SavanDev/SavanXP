@@ -308,6 +308,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Window title text is now one pixel smaller and bold.** Caption text uses a
+  dedicated 12px Noto Sans face while the rest of the UI keeps its regular font.
+
 - **Normal builds no longer regenerate desktop source icons.** Checked-in PNGs are
   treated as editable artwork; `tools/gen_desktop_source_art.py` remains available
   through the optional `savanxp_desktop_source_art` target.

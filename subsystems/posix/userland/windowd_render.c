@@ -477,12 +477,18 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
         text_clip = sx_rect_make(text_x, titlebar_rect.y, text_right - text_x, titlebar_rect.height);
         if (text_right > text_x && sx_painter_push_clip(painter, text_clip))
         {
+            /* Captions use the compact, bold face; restore the painter before
+             * returning to the rest of the frame so client chrome is unaffected. */
+            int previous_font = sx_painter_set_font(painter, SX_FONT_UI_TITLE);
+            int text_y = titlebar_rect.y +
+                ((titlebar_rect.height - sx_painter_text_height(painter)) / 2);
             sx_painter_draw_text(
                 painter,
                 text_x,
-                titlebar_rect.y + ((titlebar_rect.height - gfx_text_height()) / 2),
+                text_y,
                 window_title_for_client(client),
                 windowd_caption_text_colour(client->active));
+            (void)sx_painter_set_font(painter, previous_font);
             sx_painter_pop_clip(painter);
         }
 
@@ -724,12 +730,18 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
 
     sxchrome_fill_raised(painter, dialog, SXCHROME_COLOR_FACE, 0);
     draw_caption(painter, caption, 1, 0u);
-    sx_painter_draw_text(
-        painter,
-        caption.x + 4,
-        caption.y + ((caption.height - gfx_text_height()) / 2),
-        "Task List",
-        SXCHROME_COLOR_CAPTION_TEXT);
+    {
+        int previous_font = sx_painter_set_font(painter, SX_FONT_UI_TITLE);
+        int text_y = caption.y +
+            ((caption.height - sx_painter_text_height(painter)) / 2);
+        sx_painter_draw_text(
+            painter,
+            caption.x + 4,
+            text_y,
+            "Task List",
+            SXCHROME_COLOR_CAPTION_TEXT);
+        (void)sx_painter_set_font(painter, previous_font);
+    }
 
     sxchrome_fill_raised(painter, list, SXCHROME_COLOR_FIELD, 1);
     if (task_count == 0)

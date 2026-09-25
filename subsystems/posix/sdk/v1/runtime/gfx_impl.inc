@@ -3,6 +3,7 @@
  *   - UniFont, fixed 8x16 1-bit, for the monospace terminal path.
  */
 #include "gfx_font_noto.inc"
+#include "gfx_font_noto_title.inc"
 #include "console_font_unifont.inc"
 #include "gfx_utf8.inc"
 
@@ -1207,6 +1208,71 @@ void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, 
 void gfx_blit_text_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                          int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
     gfx_blit_text_impl(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
+}
+
+/* --- 12px bold Noto caption variant ------------------------------------- */
+
+int gfx_text_width_title(const char* text) {
+    int pen_x = 0;
+    int right = 0;
+    if (text == 0) {
+        return 0;
+    }
+    while (*text != '\0') {
+        const struct sx_noto_title_glyph* g = sx_noto_title_glyph(sx_utf8_next(&text));
+        int glyph_right = pen_x + g->left + g->width;
+        if (glyph_right > right) {
+            right = glyph_right;
+        }
+        pen_x += g->advance;
+    }
+    /* The faux-bold atlas can extend a final stem past its advance. Keep that
+     * pixel in the painter's clip box instead of shaving it off at the edge. */
+    return right > pen_x ? right : pen_x;
+}
+
+int gfx_text_height_title(void) {
+    return SX_NOTO_TITLE_LINE_HEIGHT;
+}
+
+/* The title face has the same baseline contract as the regular UI face, just
+ * with a smaller, already-bold coverage atlas. Keeping the clipped path here
+ * means the painter's region/clip behavior is identical for every font. */
+static void gfx_blit_text_title_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                                     int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    int pen_x = x;
+    int baseline = y + SX_NOTO_TITLE_ASCENT;
+    while (text != 0 && *text != '\0') {
+        const struct sx_noto_title_glyph* g = sx_noto_title_glyph(sx_utf8_next(&text));
+        int row;
+        int column;
+        for (row = 0; row < g->rows; ++row) {
+            int py = baseline - g->top + row;
+            if (has_clip && (py < clip_y0 || py >= clip_y1)) {
+                continue;
+            }
+            for (column = 0; column < g->width; ++column) {
+                int px = pen_x + g->left + column;
+                if (has_clip && (px < clip_x0 || px >= clip_x1)) {
+                    continue;
+                }
+                unsigned int alpha = kNotoTitleCoverage[g->offset + (unsigned int)row * g->width + column];
+                if (alpha != 0) {
+                    gfx_pixel_blend(pixels, info, px, py, colour, alpha);
+                }
+            }
+        }
+        pen_x += g->advance;
+    }
+}
+
+void gfx_blit_text_title(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+    gfx_blit_text_title_impl(pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
+}
+
+void gfx_blit_text_title_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                              int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    gfx_blit_text_title_impl(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
 }
 
 /* --- Fixed 8x16 UniFont (monospace terminal text) ----------------------- */

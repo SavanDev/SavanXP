@@ -1277,7 +1277,7 @@ int sx_painter_set_font(struct sx_painter* painter, int font)
         return SX_FONT_UI;
     }
     previous = painter->font;
-    if (font == SX_FONT_UI || font == SX_FONT_MONO)
+    if (font == SX_FONT_UI || font == SX_FONT_MONO || font == SX_FONT_UI_TITLE)
     {
         painter->font = font;
     }
@@ -1295,6 +1295,10 @@ int sx_painter_text_width(const struct sx_painter* painter, const char* text)
     {
         return gfx_text_width_mono(text);
     }
+    if (painter != 0 && painter->font == SX_FONT_UI_TITLE)
+    {
+        return gfx_text_width_title(text);
+    }
     return gfx_text_width(text);
 }
 
@@ -1303,6 +1307,10 @@ int sx_painter_text_height(const struct sx_painter* painter)
     if (painter != 0 && painter->font == SX_FONT_MONO)
     {
         return gfx_cell_height();
+    }
+    if (painter != 0 && painter->font == SX_FONT_UI_TITLE)
+    {
+        return gfx_text_height_title();
     }
     return gfx_text_height();
 }
@@ -1316,6 +1324,12 @@ static void sx_blit_text_clipped(
     if (painter->font == SX_FONT_MONO)
     {
         gfx_blit_text_mono_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
+                                 clip.x, clip.y, sx_rect_right(clip), sx_rect_bottom(clip));
+        return;
+    }
+    if (painter->font == SX_FONT_UI_TITLE)
+    {
+        gfx_blit_text_title_clip(painter->target->pixels, &painter->target->info, x, y, text, colour,
                                  clip.x, clip.y, sx_rect_right(clip), sx_rect_bottom(clip));
         return;
     }
@@ -1785,6 +1799,11 @@ void sx_painter_draw_text(struct sx_painter* painter, int x, int y, const char* 
     if (painter->font == SX_FONT_MONO)
     {
         gfx_blit_text_mono(painter->target->pixels, &painter->target->info, x, y, text, colour);
+        return;
+    }
+    if (painter->font == SX_FONT_UI_TITLE)
+    {
+        gfx_blit_text_title(painter->target->pixels, &painter->target->info, x, y, text, colour);
         return;
     }
     gfx_blit_text(painter->target->pixels, &painter->target->info, x, y, text, colour);

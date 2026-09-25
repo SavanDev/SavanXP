@@ -131,8 +131,9 @@ Unlike the PNGs, the fonts are **not** converted during the normal build: they
 are baked by hand with `tools/font/genfont.py` (requires `pip install
 freetype-py`) and the resulting `.inc` tables are committed. UniFont comes from
 the canonical `.hex` (crisp 8x16 bitmaps); Noto Sans is rasterized from the TTF
-as an antialiased coverage atlas. Provenance and licenses in
-`docs/THIRD_PARTY_PROVENANCE.md`.
+as an antialiased coverage atlas. The window-caption face is derived from the
+same source at 12px with a one-pixel faux-bold expansion. Provenance and
+licenses in `docs/THIRD_PARTY_PROVENANCE.md`.
 
 To regenerate (from the repository root):
 
@@ -142,4 +143,7 @@ python tools/font/genfont.py unifont --hex assets/desktop/fonts/unifont.hex \
     --out subsystems/posix/sdk/v1/runtime/console_font_unifont.inc
 python tools/font/genfont.py noto --ttf assets/desktop/fonts/NotoSans-Regular.ttf \
     --out subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc
+python tools/font/genfont.py noto --ttf assets/desktop/fonts/NotoSans-Regular.ttf --size 12 \
+    --prefix SX_NOTO_TITLE --bold 1 \
+    --out subsystems/posix/sdk/v1/runtime/gfx_font_noto_title.inc
 ```

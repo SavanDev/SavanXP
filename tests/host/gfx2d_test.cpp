@@ -34,10 +34,11 @@ extern "C" {
  * nativo. No hay copia en el test: si se rompe aca, se rompio en los dos. */
 #include "../../subsystems/posix/sdk/v1/runtime/gfx_utf8.inc"
 
-/* Y la tabla de glifos horneada, para poder afirmar QUE codepoints existen de
- * verdad. Es data + una busqueda inline; no arrastra syscalls. El painter que se
- * prueba mas abajo usa stubs, asi que no hay colision. */
+/* Y las tablas de glifos horneadas, para poder afirmar QUE codepoints existen
+ * de verdad. Es data + una busqueda inline; no arrastra syscalls. El painter que
+ * se prueba mas abajo usa stubs, asi que no hay colision. */
 #include "../../subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc"
+#include "../../subsystems/posix/sdk/v1/runtime/gfx_font_noto_title.inc"
 
 namespace {
 
@@ -102,6 +103,7 @@ const uint32_t kInk = 0x00112233u;
 // que pixeles quedaron.
 int g_mono_blits = 0;
 int g_ui_blits = 0;
+int g_title_blits = 0;
 const uint32_t kBack = 0x00445566u;
 
 struct PresentCall {
@@ -1095,6 +1097,13 @@ void case_font_table_has_the_codepoints_that_matter() {
     for (const char* c = plain; *c;) { wp += sx_noto_glyph(sx_utf8_next(&c))->advance; }
     printf("    ancho con acento=%d  sin acento=%d\n", wa, wp);
     check(wa > 0 && wa == wp, "'Configuracion' mide igual con y sin tilde (misma cantidad de glifos)");
+
+    const struct sx_noto_title_glyph* title_fallback = sx_noto_title_glyph(0x1F642u);
+    const struct sx_noto_title_glyph* title_o = sx_noto_title_glyph(0x00F3u);
+    check(title_fallback->rows == 0 && title_fallback->advance > 0 &&
+              title_o->rows > 0 && title_o->advance > 0 &&
+              SX_NOTO_TITLE_LINE_HEIGHT > 0 && SX_NOTO_TITLE_LINE_HEIGHT < SX_NOTO_LINE_HEIGHT,
+          "la tabla de titulo tiene fallback y una linea mas compacta");
 }
 
 /* ---- objeto fuente ------------------------------------------------------ */
@@ -1120,6 +1129,7 @@ void case_font_drives_metrics_and_blit() {
     Canvas c;
     g_mono_blits = 0;
     g_ui_blits = 0;
+    g_title_blits = 0;
 
     // Los stubs dan anchos distintos por fuente (1 px/char vs 8 px/char), asi
     // que las metricas delatan cual se consulto.
@@ -1130,7 +1140,15 @@ void case_font_drives_metrics_and_blit() {
     check(sx_painter_text_height(&c.painter) == 16, "y text_height tambien");
 
     sx_painter_draw_text(&c.painter, 0, 0, "abcd", kInk);
-    check(g_mono_blits == 1 && g_ui_blits == 0, "con mono activa se usa el blit mono");
+    check(g_mono_blits == 1 && g_ui_blits == 0 && g_title_blits == 0,
+          "con mono activa se usa el blit mono");
+
+    sx_painter_set_font(&c.painter, SX_FONT_UI_TITLE);
+    const int title_width = sx_painter_text_width(&c.painter, "abcd");
+    check(title_width == 4 && sx_painter_text_height(&c.painter) == 16,
+          "la fuente de titulo usa sus propias metricas");
+    sx_painter_draw_text(&c.painter, 0, 0, "abcd", kInk);
+    check(g_title_blits == 1 && g_ui_blits == 0, "y el blit de titulo no cae en UI");
 
     sx_painter_set_font(&c.painter, SX_FONT_UI);
     sx_painter_draw_text(&c.painter, 0, 0, "abcd", kInk);
@@ -1152,6 +1170,14 @@ void case_font_survives_clip_and_region() {
 
     check(g_mono_blits >= 1 && g_ui_blits == 0, "el camino por region respeta la fuente");
     check(sx_painter_font(&c.painter) == SX_FONT_MONO, "y el pop del clip no la toca");
+
+    g_title_blits = 0;
+    sx_painter_set_font(&c.painter, SX_FONT_UI_TITLE);
+    sx_painter_push_clip_region(&c.painter, &r);
+    sx_painter_draw_text(&c.painter, 0, 0, "ab", kInk);
+    sx_painter_pop_clip(&c.painter);
+    check(g_title_blits >= 1 && g_ui_blits == 0, "la variante de titulo tambien respeta el clip");
+    check(sx_painter_font(&c.painter) == SX_FONT_UI_TITLE, "y el pop conserva la fuente de titulo");
 }
 
 /* ---- lote 3: raster ops ------------------------------------------------- */
@@ -1837,6 +1863,26 @@ void gfx_blit_text_clip(uint32_t* pixels, const struct savanxp_fb_info* info, in
         }
         pixels[(size_t)y * stride + (size_t)px] = colour;
     }
+}
+
+int gfx_text_width_title(const char* text) {
+    return text == nullptr ? 0 : (int)strlen(text);
+}
+
+int gfx_text_height_title(void) {
+    return 16;
+}
+
+void gfx_blit_text_title(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
+    ++g_title_blits;
+    (void)pixels; (void)info; (void)x; (void)y; (void)text; (void)colour;
+}
+
+void gfx_blit_text_title_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                              int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    ++g_title_blits;
+    (void)pixels; (void)info; (void)x; (void)y; (void)text; (void)colour;
+    (void)clip_x0; (void)clip_y0; (void)clip_x1; (void)clip_y1;
 }
 
 } // extern "C"
