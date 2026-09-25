@@ -311,6 +311,8 @@ Cut-off notes:
 - **Normal builds no longer regenerate desktop source icons.** Checked-in PNGs are
   treated as editable artwork; `tools/gen_desktop_source_art.py` remains available
   through the optional `savanxp_desktop_source_art` target.
+- **Gears (`/bin/gears`) has a redesigned app icon.** The launcher and taskbar now
+  use fuller 16×16 and 32×32 gear artwork.
 - **The About app now identifies the system as the Alpha edition.**
 - **The boot screen fades in from black, like a classic desktop splash.** Logo,
   name, progress bar and status line brighten together over about a second,
