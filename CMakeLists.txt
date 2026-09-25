@@ -495,37 +495,6 @@ target_include_directories(savanxp-partition-test PRIVATE
 target_compile_options(savanxp-partition-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-partition-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
-# The SxMedia engine and its registry. Deliberately with no savanxp_* stubs: the
-# engine opens no file, because opening a source is a backend's job, so the
-# whole registry is exercised on the host in seconds rather than in a QEMU boot.
-# See docs/SXMEDIA.md.
-add_executable(savanxp-sxmedia-test
-    subsystems/posix/sdk/v1/runtime/sxmedia.c
-    tests/host/sxmedia_test.cpp)
-target_include_directories(savanxp-sxmedia-test PRIVATE
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
-target_compile_options(savanxp-sxmedia-test PRIVATE -O1 -Wall -Wextra)
-set_target_properties(savanxp-sxmedia-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
-
-# SxCodecs' first codec, against a real Ogg file. Separate from the engine test
-# because it is the only test here that needs a codec and a fixture, and because
-# it is the one that says whether the PCM coming out is right rather than whether
-# the plumbing moved it. See docs/SXMEDIA.md.
-add_executable(savanxp-sxmedia-vorbis-test
-    subsystems/posix/sdk/v1/runtime/sxmedia.c
-    subsystems/posix/sdk/v1/runtime/sxmedia_vorbis.c
-    tests/host/sxmedia_vorbis_test.cpp)
-target_include_directories(savanxp-sxmedia-vorbis-test PRIVATE
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/vendor/stb")
-# stb_vorbis is third-party and is not held to this tree's warning settings: it
-# has one tautological comparison of its own, and patching a pinned vendored file
-# to silence a warning is how a pin stops being reproducible.
-target_compile_options(savanxp-sxmedia-vorbis-test PRIVATE -O1 -Wall -Wextra)
-set_source_files_properties(subsystems/posix/sdk/v1/runtime/sxmedia_vorbis.c
-    TARGET_DIRECTORY savanxp-sxmedia-vorbis-test PROPERTIES COMPILE_OPTIONS "-w")
-set_target_properties(savanxp-sxmedia-vorbis-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
-
 add_executable(savanxp-sxfs-volume-test
     kernel/sxfs.cpp
     tests/host/kernel_string_stubs.cpp
@@ -540,18 +509,12 @@ target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-d
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test
-            savanxp-sxmedia-test savanxp-sxmedia-vorbis-test savanxp-sxfs-volume-test
+    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test
     COMMENT "Building SavanXP host tests"
 )
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
-add_test(NAME sxmedia-test COMMAND savanxp-sxmedia-test)
-# The fixtures are named by relative path, so the test runs from the repository
-# root rather than from wherever ctest was invoked.
-add_test(NAME sxmedia-vorbis-test COMMAND savanxp-sxmedia-vorbis-test
-         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
 
 add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
@@ -607,10 +570,6 @@ add_test(NAME tcp-echo-server-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/tcp_echo_server_test.py"
             --server "${CMAKE_SOURCE_DIR}/tools/tcp_echo_server.py")
-add_test(NAME system-mediaplayer-layout-test
-    COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_SOURCE_DIR}/tests/host/system_mediaplayer_layout_test.py"
-            --root "${CMAKE_SOURCE_DIR}")
 add_dependencies(savanxp_tests savanxp_sxfs_cli)
 
 set(SAVANXP_APPLETS busybox ls cat echo mkdir rm mv cp ps true false sleep)

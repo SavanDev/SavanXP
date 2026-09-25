@@ -31,35 +31,14 @@ unsigned long long playback_now_ns(void) {
 }
 
 void playback_init(struct playback* playback) {
-    /* El engine es opaco y sobrevive a los archivos, porque abrir uno es una
-     * operacion del engine y no del player. playback_open vuelve a llamar a
-     * init, asi que el puntero tiene que sobrevivir al memset. */
-    struct sx_media* engine = playback->media;
-
     memset(playback, 0, sizeof(*playback));
     playback->state = PLAYBACK_EMPTY;
     playback->audio_fd = -1;
     playback->volume = 100;
-    if (engine == NULL) {
-        if (sx_media_create(&playback->media) < 0) {
-            playback->media = NULL;
-        }
-    } else {
-        playback->media = engine;
-    }
-}
-
-void playback_destroy(struct playback* playback) {
-    if (playback == NULL) {
-        return;
-    }
-    playback_close(playback);
-    sx_media_destroy(playback->media);
-    playback->media = NULL;
 }
 
 static int has_video(const struct playback* playback) {
-    return playback->state != PLAYBACK_EMPTY && sx_media_has_video(playback->media);
+    return playback->state != PLAYBACK_EMPTY && media_has_video(&playback->media);
 }
 
 /* ---- audio --------------------------------------------------------------- */
@@ -102,7 +81,7 @@ static void audio_start(struct playback* playback, unsigned long long now_ns) {
     long fd = -1;
 
     audio_stop(playback);
-    if (!playback->audio_device_ok || !sx_media_has_audio(playback->media) || playback->audio_finished) {
+    if (!playback->audio_device_ok || !media_has_audio(&playback->media) || playback->audio_finished) {
         return;
     }
     fd = audio_open();
@@ -167,7 +146,7 @@ static void feed_audio(struct playback* playback, unsigned long long now_ns) {
         const int64_t position = playback_position_us(playback, now_ns);
         int64_t resume_us = playback->audio_written_until_us;
         if (position > resume_us) {
-            sx_media_skip_until(playback->media, position);
+            playback->media.audio_skip_until_us = position;
             resume_us = position;
         }
         playback->audio_restarts += 1;
@@ -183,8 +162,8 @@ static void feed_audio(struct playback* playback, unsigned long long now_ns) {
     target_us = playback->anchor_us + elapsed_us + PLAYBACK_AUDIO_LEAD_US;
 
     while (playback->audio_written_until_us < target_us && guard-- > 0) {
-        int64_t first_us = SX_MEDIA_NO_TIME;
-        const int frames = sx_media_read_audio(playback->media, playback->audio_chunk,
+        int64_t first_us = MEDIA_NO_TIME;
+        const int frames = media_read_audio(&playback->media, playback->audio_chunk,
                                             playback->audio_period_frames, &first_us);
         if (frames <= 0) {
             playback->audio_finished = 1;
@@ -193,7 +172,7 @@ static void feed_audio(struct playback* playback, unsigned long long now_ns) {
 
         /* Un hueco en el audio (el stream empieza despues que el video, o le
          * faltan paquetes) se rellena con silencio para no correr el reloj. */
-        if (first_us != SX_MEDIA_NO_TIME && first_us > playback->audio_written_until_us + 20000) {
+        if (first_us != MEDIA_NO_TIME && first_us > playback->audio_written_until_us + 20000) {
             int64_t gap = (first_us - playback->audio_written_until_us) *
                           playback->audio_format.sample_rate / 1000000LL;
             int16_t* silence = (int16_t*)calloc((size_t)playback->audio_period_frames *
@@ -227,9 +206,9 @@ static void feed_audio(struct playback* playback, unsigned long long now_ns) {
 
 void playback_close(struct playback* playback) {
     audio_stop(playback);
-    /* Idempotente: sx_media_open ya se limpia solo cuando falla a medias, y un
-     * close sin source abierto no hace nada. */
-    sx_media_close(playback->media);
+    if (playback->state != PLAYBACK_EMPTY) {
+        media_close(&playback->media);
+    }
     free(playback->audio_chunk);
     playback->audio_chunk = NULL;
     playback->state = PLAYBACK_EMPTY;
@@ -240,8 +219,6 @@ void playback_close(struct playback* playback) {
 
 int playback_open(struct playback* playback, const char* path) {
     int volume = playback->volume;
-    struct sx_media_source source;
-    enum sx_media_status status = SX_MEDIA_OK;
 
     playback_close(playback);
     playback_init(playback);
@@ -249,26 +226,9 @@ int playback_open(struct playback* playback, const char* path) {
     snprintf(playback->path, sizeof(playback->path), "%s", path);
 
     probe_audio_device(playback);
-    memset(&source, 0, sizeof(source));
-    source.path = path;
-    source.fd = -1;
-    source.audio_out = playback->audio_device_ok ? &playback->audio_format : NULL;
-    if (sx_media_open(playback->media, &source, &status) < 0) {
-        /* El motivo viene tipado, no como una frase: "no hay demuxer para este
-         * contenedor" y "no hay decoder" son cosas distintas y el usuario solo
-         * puede actuar sobre una. Ver sx_media_status_string. */
-        snprintf(playback->error, sizeof(playback->error), "%s", sx_media_status_string(status));
+    if (!media_open(&playback->media, path, playback->audio_device_ok ? &playback->audio_format : NULL,
+                    playback->error, sizeof(playback->error))) {
         return 0;
-    }
-    /* Un stream que este build no puede decodificar no es un fallo de apertura:
-     * el archivo se reproduce sin el, y se dice cual. */
-    if (sx_media_stream_missing_count(playback->media) > 0) {
-        char codec[SX_MEDIA_CODEC_CAPACITY];
-        char detail[SX_MEDIA_CODEC_CAPACITY + 8];
-        if (sx_media_stream_missing_at(playback->media, 0, codec, sizeof(codec))) {
-            snprintf(detail, sizeof(detail), " without %s", codec);
-            snprintf(playback->error, sizeof(playback->error), "plays%s", detail);
-        }
     }
     if (playback->audio_device_ok) {
         playback->audio_chunk = (int16_t*)malloc((size_t)playback->audio_period_frames *
@@ -282,16 +242,11 @@ int playback_open(struct playback* playback, const char* path) {
     playback->paused_us = 0;
     playback->fresh = 1;
     playback->show_next_now = 1;
-    if (playback->video_width == 0) {
-        /* Nadie fijo un tamano todavia: se muestra al tamano del archivo, con el
-         * aspecto de pixel ya corregido por el engine. */
-        sx_media_display_size(playback->media, &playback->video_width, &playback->video_height);
-    }
     return 1;
 }
 
 int64_t playback_duration_us(const struct playback* playback) {
-    return playback->state != PLAYBACK_EMPTY ? sx_media_duration_us(playback->media) : 0;
+    return playback->state != PLAYBACK_EMPTY ? playback->media.duration_us : 0;
 }
 
 int64_t playback_position_us(const struct playback* playback, unsigned long long now_ns) {
@@ -310,8 +265,8 @@ int64_t playback_position_us(const struct playback* playback, unsigned long long
         }
     }
     position += playback->anchor_us;
-    if (sx_media_duration_us(playback->media) > 0 && position > sx_media_duration_us(playback->media)) {
-        position = sx_media_duration_us(playback->media);
+    if (playback->media.duration_us > 0 && position > playback->media.duration_us) {
+        position = playback->media.duration_us;
     }
     return position;
 }
@@ -331,7 +286,7 @@ void playback_play(struct playback* playback) {
     }
     if (playback->state == PLAYBACK_ENDED) {
         playback->paused_us = 0;
-        if (sx_media_seek(playback->media, 0)) {
+        if (media_seek(&playback->media, 0)) {
             reset_streams_after_seek(playback);
         } else {
             /* Un archivo sin seek (un MJPEG crudo) se vuelve a abrir. */
@@ -347,7 +302,7 @@ void playback_play(struct playback* playback) {
     /* Reanudar despues de una pausa: el motor quedo ADELANTADO respecto de lo
      * que se oyo (lo que estaba en la cola del driver se perdio al cerrarlo), asi
      * que se reposiciona exactamente donde se pauso. */
-    if (!playback->fresh && sx_media_seek(playback->media, playback->paused_us)) {
+    if (!playback->fresh && media_seek(&playback->media, playback->paused_us)) {
         reset_streams_after_seek(playback);
     }
     playback->fresh = 0;
@@ -387,14 +342,14 @@ void playback_stop(struct playback* playback) {
 int playback_seek(struct playback* playback, int64_t target_us) {
     const unsigned long long now = playback_now_ns();
 
-    if (playback->state == PLAYBACK_EMPTY || !sx_media_seek(playback->media, target_us)) {
+    if (playback->state == PLAYBACK_EMPTY || !media_seek(&playback->media, target_us)) {
         return 0;
     }
     if (target_us < 0) {
         target_us = 0;
     }
-    if (sx_media_duration_us(playback->media) > 0 && target_us > sx_media_duration_us(playback->media)) {
-        target_us = sx_media_duration_us(playback->media);
+    if (playback->media.duration_us > 0 && target_us > playback->media.duration_us) {
+        target_us = playback->media.duration_us;
     }
     reset_streams_after_seek(playback);
     playback->paused_us = target_us;
@@ -417,19 +372,11 @@ void playback_set_volume(struct playback* playback, int volume) {
     playback->volume = volume < 0 ? 0 : (volume > 100 ? 100 : volume);
 }
 
-void playback_set_video_size(struct playback* playback, int width, int height) {
-    /* Lo decide quien tiene la ventana; el player solo lo pasa al conversor. */
-    if (width > 0 && height > 0) {
-        playback->video_width = width;
-        playback->video_height = height;
-    }
-}
-
 /* ---- bomba --------------------------------------------------------------- */
 
 static int decode_ahead(struct playback* playback) {
     if (!playback->video_pending && !playback->video_finished) {
-        if (sx_media_next_video_frame(playback->media) > 0) {
+        if (media_next_video_frame(&playback->media) > 0) {
             playback->video_pending = 1;
         } else {
             playback->video_finished = 1;
@@ -438,24 +385,15 @@ static int decode_ahead(struct playback* playback) {
     return playback->video_pending;
 }
 
-/* Escala al tamano pedido y se lo pasa al front end ya en pixeles. El callback
- * recibia `struct media*` antes, con lo que la ventana tenia que conocer el
- * tipo del engine; ahora recibe lo que va a pintar y nada mas. */
 static void present_pending(struct playback* playback, playback_present_fn present, void* user,
                             unsigned long long now_ns) {
-    const uint32_t* pixels;
-
-    sx_media_show_video_frame(playback->media);
+    media_show_video_frame(&playback->media);
     playback->video_pending = 0;
     playback->show_next_now = 0;
     playback->last_present_ns = now_ns;
     playback->frames_presented += 1;
-    if (present == NULL) {
-        return;
-    }
-    pixels = sx_media_scale_video(playback->media, playback->video_width, playback->video_height);
-    if (pixels != NULL) {
-        present(user, pixels, playback->video_width, playback->video_height);
+    if (present != NULL) {
+        present(user, &playback->media);
     }
 }
 
@@ -484,7 +422,7 @@ unsigned playback_pump(struct playback* playback, unsigned long long now_ns, pla
     position = playback_position_us(playback, now_ns);
 
     while (has_video(playback) && decode_ahead(playback)) {
-        const int64_t late_us = position - sx_media_video_time_us(playback->media);
+        const int64_t late_us = position - playback->media.video_time_us;
         if (!playback->show_next_now && late_us < 0) {
             break;
         }
@@ -516,7 +454,7 @@ unsigned playback_pump(struct playback* playback, unsigned long long now_ns, pla
     }
 
     if (playback->video_pending) {
-        const int64_t until_us = sx_media_video_time_us(playback->media) - position;
+        const int64_t until_us = playback->media.video_time_us - position;
         *wait_ms = until_us <= 0 ? 0 : (unsigned long)(until_us / 1000);
     } else {
         *wait_ms = PLAYBACK_MAX_WAIT_MS;

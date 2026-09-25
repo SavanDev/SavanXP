@@ -22,28 +22,6 @@ Incluye:
 - `runtime/gfx2d.c`
 - `include/savanxp/audio.h`
 - `runtime/audio.c` (optional with `tools/build-user.sh --audio`)
-- `include/savanxp/sxmedia.h`
-- `runtime/sxmedia.c` (opt-in; no image binary links it yet)
-
-## SxMedia
-
-`savanxp/sxmedia.h` + `runtime/sxmedia.c` son el motor de medios y el registro
-de backends. El motor no abre ficheros --abrir un source es trabajo de un
-backend-- y no lee muestras ni pixeles, asi que sus tests corren en el host
-(`savanxp-sxmedia-test`, 98 checks) sin stubs de `savanxp_*` ni boot de QEMU.
-
-Un backend se registra en tres roles separables: `claim_source` (el demuxer),
-`claim_stream` (los decoders, por stream) y los conversores. FFmpeg llenaria
-los tres; una libreria de un solo codec deja `claim_source` en NULL. El motor
-es el unico codigo que sabe quien demultiplexo un archivo y que decoder tiene
-cada stream, y por eso un demuxer y un decoder de librerias distintas pueden
-encontrarse en el mismo proceso. Lo unico que cruza ese limite es
-`stream->extradata`: los parameter sets de H.264/HEVC o el
-AudioSpecificConfig de AAC, que solo tiene el demuxer.
-
-Estado: el motor y el registro estan completos y verificados; ningun binario de
-la imagen los enlaza todavia. El primer consumidor es el port de FFmpeg. Ver
-`docs/SXMEDIA.md` para el plan por lotes.
 
 ## ABI pública v1.2
 

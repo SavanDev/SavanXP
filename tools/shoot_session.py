@@ -955,36 +955,6 @@ def scenario_spin(s):
     s.shot("spin-final")
 
 
-def scenario_mediaplayer(s):
-    """Media Player reproduciendo el clip de sincronia, en ventana.
-
-    Necesita el reproductor y el material instalados. Se
-    abre por el launcher y el archivo por el dialogo Open, que arranca con
-    /disk/media/ escrito: solo falta el nombre. El punto se manda como la tecla
-    "dot", que en el layout ES del guest tambien es el punto.
-
-    Capturas: reproduciendo, en pausa (Space), despues de un seek (flecha
-    derecha, +5 s) y al terminar. La del seek en pausa tiene que mostrar el
-    cuadro pedido, no el keyframe anterior.
-    """
-    s.open_mediaplayer()
-    s.shot("mediaplayer-vacio")
-    s.qmp.tap("o", pause=1.5)
-    s.qmp.type_text("avsync")
-    s.qmp.tap("dot")
-    s.qmp.type_text("avi")
-    s.shot("mediaplayer-dialogo")
-    s.qmp.tap("ret", pause=3.0)
-    s.shot("mediaplayer-reproduciendo")
-    time.sleep(1.5)
-    s.qmp.tap("spc", pause=2.0)
-    s.shot("mediaplayer-pausa")
-    s.qmp.tap("left", pause=3.0)
-    s.shot("mediaplayer-seek-pausa")
-    s.qmp.tap("spc", pause=12.0)
-    s.shot("mediaplayer-fin")
-
-
 def scenario_ccleste(s):
     """Celeste Classic: el port completo sobre el escritorio de verdad.
 
@@ -1026,7 +996,6 @@ SCENARIOS = {
     "saturate": scenario_saturate,
     "spin": scenario_spin,
     "gears": scenario_gears,
-    "mediaplayer": scenario_mediaplayer,
     "ccleste": scenario_ccleste,
 }
 

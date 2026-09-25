@@ -38,8 +38,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`TIME.md`](TIME.md) — kernel clocks, virtualization, and diagnosis.
 - [`MEDIA_PLAYER.md`](MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.
-- [`SXMEDIA.md`](SXMEDIA.md) — the proposed multimedia layer: the engine, the
-  device sinks, and the backend registry that makes FFmpeg a fallback.
+- [`SXMEDIA.md`](SXMEDIA.md) — **withdrawn.** What the multimedia layer was, what
+  building it taught, and what has to exist before trying again: a way for one
+  program to use a codec library it was not built with.
 - [`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md) — process, memory, and system
   metrics exposed by the kernel.
 

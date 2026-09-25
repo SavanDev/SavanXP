@@ -12,14 +12,6 @@ Cut-off notes:
 
 ### Added
 
-- **The SDK now has a media engine with a pluggable backend registry.**
-  `savanxp/sxmedia.h` and `runtime/sxmedia.c` provide the source-to-frames
-  pipeline, a per-stream decoder claim, and a capability query
-  (`sx_media_has_codec`) so a program can tell a missing codec from a missing
-  container. The FFmpeg port is the first backend and no longer owns a decode
-  engine of its own, and `vendor/stb` holds the pinned Vorbis decoder that will
-  be the second. [The design](docs/SXMEDIA.md)
-
 - **Celeste Classic is now an official port.** `./ports/ccleste/build.sh` builds
   the upstream engine unpatched and installs `/disk/bin/ccleste` plus the game
   assets under `/disk/games/celeste`; the overlay replaces the SDL frontend, so
@@ -323,34 +315,6 @@ Cut-off notes:
 
 ### Changed
 
-- **A program can now ask the system what it can play, instead of carrying a list
-  of its own.** There was no such answer before: no table of decodable formats
-  existed anywhere in the system. A backend that ships a codec library publishes
-  what it has, the FFmpeg port's list is generated from the configuration that
-  built it, and the entries are the codec names a notice shows.
-
-- **The system can now decode Ogg Vorbis, and says so when it cannot.**
-  `savanxp/sxmedia_vorbis.h` is a Vorbis decoder that a program registers like any
-  other backend and never learns is stb_vorbis inside; the notice for a track it
-  cannot play names `vorbis`. A file whose Vorbis stream is declined still plays
-  through the next provider, and only a file with nothing decodable in it fails to
-  open. Converting a 44.1 kHz track to the device's rate is the one thing it
-  refuses rather than approximates. [The design](docs/SXMEDIA.md)
-
-- **A media frame is now converted only by the library that produced it.** A
-  backend that decodes a stream also supplies the converter for that stream's
-  frames, because a frame's bytes are opaque and belong to its own library. Until
-  now the converter was taken from the file's demuxer, which worked only while one
-  library filled every role and handed a block of PCM to a scaler that read it as
-  a frame header otherwise.
-
-- **A media backend may now decode a stream by reading the source itself.** A
-  provider that fills `open_whole` instead of `send_packet` takes ownership of the
-  stream and pulls frames from the file, which is the shape libraries like
-  `stb_vorbis` need. Choosing a decoder now asks every provider that claims the
-  stream for a turn and keeps the first that opens it, so one that turns a file
-  down hands it to the next provider instead of losing it.
-
 - **Window title text is now one pixel smaller and bold.** Caption text uses a
   dedicated 12px Noto Sans face while the rest of the UI keeps its regular font.
 
@@ -516,6 +480,14 @@ Cut-off notes:
   SDK need a rebuild** — Doom reads this struct.
 
 ### Removed
+
+- **The SxMedia multimedia layer is withdrawn, and the Media Player is the
+  optional FFmpeg port again rather than a system program.** A program can only
+  use the codec libraries it was built with, so "one player that plays whatever is
+  installed" cannot be arranged without a dynamic linker or a codec service. The
+  design, the findings and the prerequisites to try again are in
+  [docs/SXMEDIA.md](docs/SXMEDIA.md).
+
 
 - **The alternate host compatibility surface is removed.** Its entry points,
   bootstrap/toolchain cache, non-native accelerator selection, and TCP QMP

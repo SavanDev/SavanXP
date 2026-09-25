@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import re
 import subprocess
 from pathlib import Path
 
@@ -46,6 +45,8 @@ def main() -> int:
         "gen_icons.py",
         "icon.png",
         "icons.inc",
+        "media.c",
+        "media.h",
         "mediaplayer.c",
         "mediaplayer-ffmpeg.sxres",
         "playback.c",
@@ -56,46 +57,6 @@ def main() -> int:
     overlay = port / "overlay" / "mediaplayer"
     actual_overlay = {path.name for path in overlay.iterdir() if path.is_file()}
     assert actual_overlay == expected_overlay
-    # The decode engine left the overlay: it is the SDK's runtime/sxmedia.c, and
-    # what the port keeps is the one file that tells a library how to be a
-    # backend. media.c and media.h are gone, so nothing in the port is
-    # FFmpeg-shaped except the backend.
-    backend_dir = port / "overlay" / "sxmedia"
-    assert {path.name for path in backend_dir.iterdir() if path.is_file()} == {
-        "sxmedia_ffmpeg.c",
-        "sxmedia_ffmpeg.h",
-    }
-    backend_source = (backend_dir / "sxmedia_ffmpeg.c").read_text(encoding="utf-8")
-    assert "sx_media_backend_ops" in backend_source
-    assert "sxmedia_ffmpeg_register" in backend_source
-    assert "claim_source" in backend_source and "claim_stream" in backend_source
-    # The front end and the selftest talk to the engine and to the registry and
-    # never to a library. This is the assertion that would have caught the
-    # engine leaking back into the window, and it checks the dependency rather
-    # than the prose: a comment may name the library to explain why the modes
-    # share a binary, but no include and no call may.
-    for name in ("mediaplayer.c", "playback.c", "selftest.c", "playback.h"):
-        # Comments may name what the code used to use; the code may not. A
-        # comment explaining the seam is the documentation for it.
-        text = (overlay / name).read_text(encoding="utf-8")
-        code = "\n".join(
-            line for line in text.splitlines()
-            if not line.lstrip().startswith(("*", "/*", "//"))
-        )
-        assert "#include <libav" not in code, f"{name} includes a library header"
-        assert "av_log_set_level" not in code, f"{name} calls a library function"
-        for symbol in ("AVFrame", "AVCodec", "AVFormatContext", "AVPacket", "SwsContext", "SwrContext"):
-            assert symbol not in code, f"{name} names the library type {symbol}"
-        assert "struct media" not in code, f"{name} still uses the old engine type"
-        # `sx_media_open` contains "media_open", so the old call has to be
-        # matched with a lookbehind rather than a substring test.
-        assert not re.search(r"(?<!sx_)\bmedia_(open|close|seek|read_audio|scale_video)\b", code), (
-            f"{name} still calls the old engine"
-        )
-    # ...and they do go through the engine rather than around it.
-    for name in ("mediaplayer.c", "playback.c", "selftest.c"):
-        text = (overlay / name).read_text(encoding="utf-8")
-        assert "savanxp/sxmedia.h" in text or "sx_media_" in text, f"{name} bypasses the engine"
     backend_manifest = (overlay / "mediaplayer-ffmpeg.sxres").read_text(encoding="utf-8")
     assert "category=" not in backend_manifest
     assert "mime_open=" not in backend_manifest
@@ -121,44 +82,6 @@ def main() -> int:
         "qmp_display.py",
     }
     ast.parse((port / "tests" / "qmp_display.py").read_text(encoding="utf-8"))
-
-    # The vtable is initialised positionally, so a field added to
-    # `sx_media_backend_ops` shifts every entry after it and the result is a
-    # provider whose converters are the wrong functions -- or a compile error
-    # that only shows up when a port is relinked, which is not something the host
-    # suite does. This is not a substitute for compiling the port; it is the only
-    # check that can run without libav, and it is what would have caught the two
-    # whole-source slots being left out of the FFmpeg backend.
-    backend_source = (port / "overlay" / "sxmedia" / "sxmedia_ffmpeg.c").read_text(encoding="utf-8")
-    initialiser = backend_source.split("kFFmpegOps = {", 1)[1].split("};", 1)[0]
-    # Comments come out first: an English comma inside a block comment is not an
-    # initialiser entry, and counting one turns a correct table into a failure.
-    initialiser = re.sub(r"/\*.*?\*/", " ", initialiser, flags=re.DOTALL)
-    initialiser = re.sub(r"//[^\n]*", " ", initialiser)
-    ops_entries = [entry for entry in initialiser.split(",") if entry.strip()]
-    header = (root / "subsystems/posix/sdk/v1/include/savanxp/sxmedia.h").read_text(encoding="utf-8")
-    declared_ops = header.split("struct sx_media_backend_ops {", 1)[1].split("\n};", 1)[0]
-    fields = [line for line in declared_ops.splitlines() if "(*" in line]
-    assert len(fields) == len(ops_entries), (
-        f"sx_media_backend_ops has {len(fields)} entries and the FFmpeg backend "
-        f"initialises {len(ops_entries)}; the positional table is misaligned"
-    )
-
-    # The capability table is generated, never committed. A copy in the tree would
-    # be a promise about a build nobody made, and it would be wrong the first time
-    # `--enable-decoder` changed without anybody editing a C file.
-    generator = port / "tools" / "gen_sxmedia_caps.py"
-    assert generator.is_file()
-    assert not (port / "overlay" / "sxmedia" / "sxmedia_ffmpeg_caps.inc").exists()
-    assert "gen_sxmedia_caps.py" in link_script
-    # And the backend must not name a codec by hand: the whole point is that the
-    # list cannot drift from what libav was configured with.
-    assert "ffmpeg_list_codecs" in backend_source
-    assert '#include "sxmedia_ffmpeg_caps.inc"' in backend_source
-    # A hand-written name in the backend would be the thing this arrangement
-    # exists to prevent, so the check is that the only table it has is generated.
-    assert 'kFFmpegCodecs' in backend_source
-    assert backend_source.count("kFFmpegCodecs[] = {") == 0
 
     for name in ("build.sh", "all.sh", "fetch.sh", "runtime.sh", "configure.sh", "make.sh", "link.sh", "install.sh", "smoke.sh"):
         script = port / name

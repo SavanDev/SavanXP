@@ -134,10 +134,10 @@ static int run_automation_spec(const char* spec) {
     const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
     /* Tres caminos: audio solo (WAV), video solo sin contenedor (MJPEG crudo) y
      * los dos intercalados en AVI, que ademas mide la sincronia. */
-    const char* mediaplayer_argv[] = {"/bin/mediaplayer", "--selftest", "/disk/media/tono.wav",
+    const char* mediaplayer_argv[] = {"/disk/bin/mediaplayer-ffmpeg", "--selftest", "/disk/media/tono.wav",
                                       "/disk/media/clip.mjpeg", "--sync", "/disk/media/avsync.avi", 0};
-    const char* mediaplayer_show_argv[] = {"/bin/mediaplayer", "--gpu-hold", "8000", "/disk/media/avsync.avi", 0};
-    const char* mediaplayer_availability_argv[] = {"/bin/mediaplayer", "--availability", 0};
+    const char* mediaplayer_show_argv[] = {"/disk/bin/mediaplayer-ffmpeg", "--gpu-hold", "8000", "/disk/media/avsync.avi", 0};
+    const char* mediaplayer_availability_argv[] = {"/disk/bin/mediaplayer-ffmpeg", "--availability", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -186,15 +186,15 @@ static int run_automation_spec(const char* spec) {
             argv = nettest_argv;
             argc = 1;
         } else if (strcmp(spec, "mediaplayer-availability") == 0) {
-            path = "/bin/mediaplayer";
+            path = "/disk/bin/mediaplayer-ffmpeg";
             argv = mediaplayer_availability_argv;
             argc = 2;
         } else if (strcmp(spec, "mediaplayer") == 0) {
-            path = "/bin/mediaplayer";
+            path = "/disk/bin/mediaplayer-ffmpeg";
             argv = mediaplayer_argv;
             argc = 6;
         } else if (strcmp(spec, "mediaplayer-show") == 0) {
-            path = "/bin/mediaplayer";
+            path = "/disk/bin/mediaplayer-ffmpeg";
             argv = mediaplayer_show_argv;
             argc = 4;
         } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {

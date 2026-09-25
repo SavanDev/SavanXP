@@ -124,49 +124,6 @@ which is why both go into the registry.
   and `/disk/bin/sxguiapp`; the Haxe compiler and reflaxe checkout remain
   outside the image
 
-### stb_vorbis (vendored, and **not adoptable as an SxMedia decoder**)
-
-> The entry records a component that is committed, licensed and **deliberately
-> not used**. It is here rather than deleted because the reason it cannot be used
-> is the useful part: `stb_vorbis` decodes whole files, and the SxMedia decoder
-> role is fed packets by a demuxer. See `docs/SXMEDIA.md`, batch 4.
-
-- Origin: https://github.com/nothings/stb, `stb_vorbis.c`
-- Versioned: yes. The file is committed at the commit below, unmodified, with
-  its original header and both license texts intact. SHA-256 of the vendored
-  file: `4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636`
-- Pin: commit `1ee679ca2ef753a528db5ba6801e1067b40481b8`, file version v1.22,
-  last changed 2021-07-12
-- License reviewed: dual **Unlicense (public domain) or MIT**, at the author's
-  option. Both texts are reproduced verbatim at the end of the vendored file.
-  The Unlicense half is what makes this a `Selective port` with no obligation
-  beyond keeping the notices
-- Decision: `Selective port`, as the decoder behind a SavanXP SxMedia backend.
-  It is the first codec implementation the system chooses over FFmpeg, and the
-  reason is in [`SXMEDIA.md`](SXMEDIA.md): two ports already carry music
-  switched off for want of a Vorbis decoder, and a decoder SavanXP controls is
-  also the path to throughput the LGPL fallback cannot reach
-- Distributed in: **nothing yet.** The vendored file is committed and the
-  adapter is designed, but no binary in the image links it yet, so this entry
-  records an adopted component rather than a distributed one. The registry
-  invariant is about what is baked into the ISO, the initramfs or the disk image,
-  and as of this commit nothing is
-- Credit: original decoder written by Sean Barrett in 2007, originally sponsored
-  by RAD Game Tools; the seeking implementation sponsored by Phillip Bennefall,
-  Marc Andersen, Aaron Baker, Elias Software, Aras Pranckevicius and Sean
-  Barrett; sample-exact seeking by Dougall Johnson. `stb_vorbis.c` carries the
-  full contributor list at the top
-- **Why it is not used, in one line:** `stb_vorbis_open_pushdata` and
-  `stb_vorbis_open_memory` both take *file bytes* -- the first wants the start of
-  the file with its Ogg page headers, the second wants all of it -- while an
-  SxMedia decoder is fed **packets** by whichever provider demuxed the source.
-  The bytes are not the same bytes, and no adapter bridges that
-- Not `our own codec`: even if the shape matched, the decoder would be stb's and
-  the adapter the repository's. A decoder written from scratch is a different
-  order of magnitude and is not what this was
-- If it is adopted later, it will be as a **source + decoder in one** -- a
-  provider that opens the file itself -- and not behind a foreign demuxer
-
 ## Bootloader
 
 ### Limine

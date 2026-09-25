@@ -125,10 +125,6 @@ savanxp_program(NAME calc SOURCES
     subsystems/posix/userland/calc.c
     subsystems/posix/sdk/v1/runtime/sxgui.c
     subsystems/posix/sdk/v1/runtime/sxgui_app.c)
-savanxp_program(NAME mediaplayer SOURCES
-    subsystems/posix/userland/mediaplayer.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
 savanxp_program(NAME widgetsdemo TEST SOURCES
     subsystems/posix/userland/widgetsdemo.c
     subsystems/posix/sdk/v1/runtime/sxgui.c

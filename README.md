@@ -44,9 +44,10 @@ experiment has `./subsystems/native/build.sh`.
   wallpaper and Program Manager as clients, and a Task List (Ctrl+Esc).
 - A taskbar listing the open windows, as a WM client of its own, with an ES/EN
   keyboard layout selector.
-- Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties,
-  Media Player and a Task Manager with live CPU and memory per process
-  ([how it measures](docs/SYSTEM_MONITORING.md)).
+- Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties
+  and a Task Manager with live CPU and memory per process
+  ([how it measures](docs/SYSTEM_MONITORING.md)). Media Player is an optional port
+  ([docs/MEDIA_PLAYER.md](docs/MEDIA_PLAYER.md)).
 - Persistent `SxFS` volume mounted at `/disk`.
 - POSIX base and SDK v1 for compiling external applications.
 - `sxgfx` 2D graphics layer for surfaces, painter and rect sets.
