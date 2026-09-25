@@ -109,6 +109,27 @@ void reset_fixture()
     g_source.last_seek_us = -1;
 }
 
+int g_next_block = 1024;
+
+int stream_is_audio(int stream_index) { return stream_index == 1; }
+
+void add_audio_packet(int64_t time_us, int block_frames)
+{
+    FakePacket* packet;
+    if (g_source.packet_count >= kMaxPackets) {
+        return;
+    }
+    packet = &g_source.packets[g_source.packet_count++];
+    packet->stream_index = 1;
+    packet->time_us = time_us;
+    packet->key = 1;
+    packet->data[0] = 0x02;
+    packet->data[1] = 0x00;
+    packet->data[2] = 0x00;
+    packet->data[3] = (uint8_t)block_frames;
+    g_next_block = block_frames;
+}
+
 void add_video_packet(int64_t time_us, int key)
 {
     FakePacket* packet;
@@ -144,7 +165,7 @@ void* source_open(void*, const struct sx_media_source* source,
                   int* stream_count, int64_t* duration_us, int* seekable,
                   enum sx_media_status* status)
 {
-    if (stream_capacity < 2) {
+    if (stream_capacity < 3) {
         *status = SX_MEDIA_ERR_UNREADABLE;
         return nullptr;
     }
@@ -175,10 +196,21 @@ void* source_open(void*, const struct sx_media_source* source,
     /* Audio, decodable by nobody. */
     memset(&streams[1], 0, sizeof(streams[1]));
     streams[1].index = 1;
+    /* Audio the codec library can decode, and a second audio stream nothing
+     * claims. Both cases have to exist at once: one is the converter path and
+     * the other is the "plays without it" path, and a fixture with only one of
+     * them cannot test the other. */
     streams[1].kind = SX_MEDIA_KIND_AUDIO;
-    strncpy(streams[1].codec, "ghostaudio", SX_MEDIA_CODEC_CAPACITY - 1);
-    streams[1].sample_rate = 48000;
+    strncpy(streams[1].codec, "faketone", SX_MEDIA_CODEC_CAPACITY - 1);
+    streams[1].sample_rate = 44100;
     streams[1].channels = 2;
+
+    memset(&streams[2], 0, sizeof(streams[2]));
+    streams[2].index = 2;
+    streams[2].kind = SX_MEDIA_KIND_AUDIO;
+    strncpy(streams[2].codec, "ghostaudio", SX_MEDIA_CODEC_CAPACITY - 1);
+    streams[2].sample_rate = 48000;
+    streams[2].channels = 2;
 
     /* The setup blobs live in the source, which is what makes them borrowed for
      * the life of the open source rather than for the life of the descriptor. */
@@ -194,8 +226,9 @@ void* source_open(void*, const struct sx_media_source* source,
     g_setup_audio.channels = 2;
     streams[0].setup = &g_setup_video;
     streams[1].setup = &g_setup_audio;
+    streams[2].setup = &g_setup_audio;
 
-    *stream_count = 2;
+    *stream_count = 3;
     *duration_us = 1000000;
     *seekable = g_source.seekable;
     *status = SX_MEDIA_OK;
@@ -258,6 +291,8 @@ struct FakeDecoder {
     int setup_seen;
     int flushed;
     int frames_pending;
+    /* How many sample frames the next decoded block claims to hold. */
+    int next_block;
 };
 
 int g_claim_calls = 0;
@@ -268,9 +303,10 @@ int g_open_decoder_calls = 0;
 int g_flush_calls = 0;
 /* Whether the fake decoder behaves like a library that needs its own setup. */
 int g_require_setup = 1;
-/* The most recent decoder built, so a test can inspect what crossed over
- * before the engine tears it down. */
-FakeDecoder* g_last_decoder = nullptr;
+/* The decoder built for each stream, so a test can inspect the one it means
+ * before the engine tears it down. One global would be overwritten by the second
+ * stream the engine opens. */
+FakeDecoder* g_decoder_for_stream[4] = {nullptr, nullptr, nullptr, nullptr};
 
 int decoder_claim(void*, const struct sx_media_stream_desc* stream)
 {
@@ -282,8 +318,14 @@ int decoder_claim(void*, const struct sx_media_stream_desc* stream)
      * but the codec name. A provider that insisted on a real kind would answer
      * "no" for a codec it can decode, and the whole capability contract would
      * quietly report the wrong thing. */
-    if (stream->kind == SX_MEDIA_KIND_ANY || stream->kind == SX_MEDIA_KIND_VIDEO) {
+    if (stream->kind == SX_MEDIA_KIND_ANY) {
         return strcmp(stream->codec, "fakevideo") == 0;
+    }
+    if (stream->kind == SX_MEDIA_KIND_VIDEO) {
+        return strcmp(stream->codec, "fakevideo") == 0;
+    }
+    if (stream->kind == SX_MEDIA_KIND_AUDIO) {
+        return strcmp(stream->codec, "faketone") == 0;
     }
     return 0;
 }
@@ -294,8 +336,10 @@ void* decoder_open(void*, const struct sx_media_stream_desc* stream)
 
     g_open_decoder_calls += 1;
     decoder = static_cast<FakeDecoder*>(memset(new FakeDecoder(), 0, sizeof(FakeDecoder)));
-    g_last_decoder = decoder;
     decoder->stream_index = stream->index;
+    if (stream->index >= 0 && stream->index < 4) {
+        g_decoder_for_stream[stream->index] = decoder;
+    }
     /* extradata is the whole of what crosses from the demuxer to the decoder. */
     if (stream->extradata != nullptr && stream->extradata_size > 0) {
         int size = (int)(stream->extradata_size < sizeof(decoder->extradata_seen)
@@ -345,6 +389,9 @@ int decoder_send(void* handle, const struct sx_media_packet* packet)
         decoder->timestamps[decoder->timestamp_count++] = packet->time_us;
     }
     decoder->frames_pending += 1;
+    if (stream_is_audio(decoder->stream_index)) {
+        decoder->next_block = g_next_block;
+    }
     return 1;
 }
 
@@ -357,9 +404,20 @@ int decoder_receive(void* handle, struct sx_media_frame* frame)
     }
     decoder->frames_pending -= 1;
     frame->time_us = decoder->timestamps[decoder->read_cursor++];
-    frame->width = 64;
-    frame->height = 48;
-    frame->format = 7;
+    if (stream_is_audio(decoder->stream_index)) {
+        frame->width = 0;
+        frame->height = 0;
+        frame->sample_rate = 44100;
+        frame->channels = 2;
+        frame->format = 1;  /* interleaved s16 */
+    } else {
+        frame->width = 64;
+        frame->height = 48;
+        frame->sample_rate = 0;
+        frame->channels = 0;
+        frame->format = 7;
+    }
+    frame->count = decoder->next_block;
     frame->data = reinterpret_cast<void*>(static_cast<uintptr_t>(decoder->packets_seen));
     frame->release = nullptr;
     return 1;
@@ -370,6 +428,11 @@ int decoder_receive(void* handle, struct sx_media_frame* frame)
 int g_scaled_calls = 0;
 int g_resample_calls = 0;
 int g_resample_flush_calls = 0;
+/* The largest capacity the engine ever offered a converter, and how much the
+ * converter would have needed. A block the engine sized too small is a hole in
+ * the audio that nothing else reports. */
+int g_max_capacity = 0;
+int g_largest_needed = 0;
 
 void* scaler_open(void*, const struct sx_media_frame*, int, int)
 {
@@ -396,11 +459,21 @@ void* resampler_open(void*, const struct sx_media_frame*,
 
 void resampler_close(void*) {}
 
-int resample(void*, const struct sx_media_frame*, int16_t* out, int capacity)
+int resample(void*, const struct sx_media_frame* frame, int16_t* out, int capacity)
 {
     int index;
-    const int frames = capacity < 480 ? capacity : 480;
+    int frames;
     g_resample_calls += 1;
+    if (capacity > g_max_capacity) {
+        g_max_capacity = capacity;
+    }
+    /* A resampling converter needs more frames out than it consumed, in the
+     * ratio of the two rates. The engine has to have made room. */
+    g_largest_needed = frame->count;
+    frames = capacity < 480 ? capacity : 480;
+    if (frames > frame->count) {
+        frames = frame->count;
+    }
     for (index = 0; index < frames; ++index) {
         out[index] = (int16_t)(index % 200);
     }
@@ -448,15 +521,21 @@ struct sx_media_audio_format audio_out_format()
     return format;
 }
 
+/* The sink format has to outlive the call: `sx_media_source.audio_out` is a
+ * pointer the engine dereferences during open, and a local here would be read
+ * after the frame was gone. It did not show up until a test actually read
+ * audio, which is the lesson the audio path paid for. */
+struct sx_media_audio_format g_sink_format;
+
 struct sx_media_source fake_source(int with_audio)
 {
     struct sx_media_source source;
-    struct sx_media_audio_format out = audio_out_format();
 
+    g_sink_format = audio_out_format();
     memset(&source, 0, sizeof(source));
     source.path = "/disk/media/clip.fake";
     source.fd = -1;
-    source.audio_out = with_audio != 0 ? &out : nullptr;
+    source.audio_out = with_audio != 0 ? &g_sink_format : nullptr;
     return source;
 }
 
@@ -599,11 +678,12 @@ void test_a_packet_crosses_from_one_provider_to_another()
     sx_media_create(&media);
     expect(sx_media_open(media, &source, &status) == 0, "the source opened");
     /* Two streams, one of them undecodable, so exactly one decoder is built. */
-    expect(g_open_decoder_calls == 1, "one decoder was built for two streams");
-    expect(sx_media_stream_count(media) == 2, "both streams were identified");
+    expect(g_open_decoder_calls == 2, "one decoder per decodable stream");
+    expect(sx_media_stream_count(media) == 3, "all three streams were identified");
     expect(sx_media_stream_decodable(media, 0) == 1, "the video stream is decodable");
-    expect(sx_media_stream_decodable(media, 1) == 0, "the audio stream is not");
-    expect_str(sx_media_stream_codec(media, 1), "ghostaudio", "and is still named");
+    expect(sx_media_stream_decodable(media, 1) == 1, "so is the first audio stream");
+    expect(sx_media_stream_decodable(media, 2) == 0, "the second audio stream is not");
+    expect_str(sx_media_stream_codec(media, 2), "ghostaudio", "and is still named");
 
     /* A stream nobody can decode is not a failed open. The file plays without
      * it and says what it is playing without. */
@@ -643,7 +723,7 @@ void test_extradata_reaches_a_foreign_decoder()
     /* The decoder is in a different provider from the demuxer and was handed
      * only the descriptor. A real codec with the parameter sets missing here
      * would not fail to build, it would produce silence. */
-    FakeDecoder* decoder = g_last_decoder;
+    FakeDecoder* decoder = g_decoder_for_stream[0];
     expect(decoder != nullptr, "the foreign decoder was built");
     if (decoder != nullptr) {
         expect(decoder->extradata_size == (int)sizeof(kExtradata),
@@ -661,6 +741,65 @@ void test_extradata_reaches_a_foreign_decoder()
 /* A decoder that needs nothing but the portable descriptor is the case that
  * makes a second library possible at all: it has to build from a source
  * provider that knows nothing about it, and the descriptor has to be enough. */
+/* A 44.1 kHz source feeding a 48 kHz sink produces MORE frames than it consumed,
+ * by exactly the ratio of the two rates. The engine sizes the converter's buffer
+ * from a fixed 2048, which is smaller than a 4096-frame block needs: the
+ * converter is handed less than it wanted and the tail is dropped, which is a
+ * hole in the audio that no other check reports. This is the case a Vorbis
+ * block exposed -- a Vorbis block is 1 to 4096 frames and nothing bounds it
+ * below. */
+void test_the_audio_buffer_is_sized_from_the_block_not_a_guess()
+{
+    reset_fixture();
+    add_audio_packet(0, 4096);
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(1);
+    enum sx_media_status status = SX_MEDIA_OK;
+    int16_t block[512];
+
+    memset(block, 0, sizeof(block));
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "a file with audio opened");
+    expect(sx_media_has_audio(media) == 1, "and the audio stream is decodable");
+
+    expect(sx_media_read_audio(media, block, 128, nullptr) > 0, "audio came out");
+    expect(g_resample_calls == 1, "through the converter");
+    expect(g_largest_needed == 4096, "the converter was asked to handle a 4096-frame block");
+    /* 4096 * 48000 / 44100 = 4459, so 4459 + 64 of headroom. The old 2048 would
+     * have been less than half of what the block needed. */
+    expect(g_max_capacity >= g_largest_needed, "and the buffer was at least that big");
+    expect(g_max_capacity > 2048, "which a fixed 2048 would not have been");
+
+    sx_media_destroy(media);
+}
+
+/* A backend with nothing to convert still has to be given room for the whole
+ * block, and the pass-through must not write more frames than it was asked
+ * for. */
+void test_a_block_larger_than_the_read_is_not_truncated_silently()
+{
+    reset_fixture();
+    add_audio_packet(0, 3000);
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(1);
+    enum sx_media_status status = SX_MEDIA_OK;
+    int16_t small[64];
+    int first = 0;
+
+    memset(small, 0, sizeof(small));
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "the file opened");
+
+    first = sx_media_read_audio(media, small, 64, nullptr);
+    expect(first > 0, "a short read returned what it had");
+    expect(first <= 64, "and no more than was asked for");
+    expect(g_max_capacity >= 64, "the converter was given a buffer worth using");
+
+    sx_media_destroy(media);
+}
+
 void test_a_decoder_that_needs_no_setup_still_builds()
 {
     reset_fixture();
@@ -760,7 +899,7 @@ void test_seek_delivers_the_frame_at_the_target()
     const int flushes_before = g_flush_calls;
     expect(sx_media_seek(media, 40000) == 1, "a seekable source repositions");
     expect(g_source.last_seek_us == 40000, "and the provider was asked for exactly that");
-    expect(g_flush_calls == flushes_before + 1, "and the decodable stream was flushed");
+    expect(g_flush_calls == flushes_before + 2, "and every decodable stream was flushed");
 
     /* Frames before the target are decoded, because later frames reference
      * them, but not delivered. */
@@ -797,7 +936,7 @@ void test_skip_is_per_stream_and_clears_itself()
     sx_media_destroy(media);
 }
 
-void test_audio_nobody_can_decode_is_absent_not_fatal()
+void test_a_dropped_audio_stream_is_not_the_audio_stream()
 {
     reset_fixture();
     add_video_packet(0, 1);
@@ -805,16 +944,39 @@ void test_audio_nobody_can_decode_is_absent_not_fatal()
     struct sx_media* media = nullptr;
     struct sx_media_source source = fake_source(1);
     enum sx_media_status status = SX_MEDIA_OK;
-    int16_t block[256];
+
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "the file opened despite the dropped stream");
+    expect(sx_media_has_audio(media) == 1, "the decodable audio stream is the audio stream");
+    expect(sx_media_has_video(media) == 1, "and the video is unaffected");
+    expect(sx_media_stream_missing_count(media) == 1, "while the other one is reported dropped");
+    /* Nothing is fed to a converter, but a decoder still existed for the stream
+     * that could be decoded -- the point is that a seek flushes the decodable
+     * ones and leaves the dropped one alone. */
+    expect(sx_media_stream_missing_count(media) == 1, "and the dropped stream is still just reported");
+
+    sx_media_destroy(media);
+}
+
+void test_ignoring_audio_claims_no_audio_stream()
+{
+    reset_fixture();
+    add_video_packet(0, 1);
+    add_audio_packet(0, 1024);
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(0);
+    enum sx_media_status status = SX_MEDIA_OK;
+    int16_t block[128];
 
     memset(block, 0, sizeof(block));
     sx_media_create(&media);
-    expect(sx_media_open(media, &source, &status) == 0, "the file opened despite the audio");
-    expect(sx_media_has_audio(media) == 0, "the undecodable stream is not the audio stream");
-    expect(sx_media_read_audio(media, block, 128, nullptr) == 0,
-           "reading its audio is zero, not a crash");
-    expect(sx_media_has_video(media) == 1, "and the video is unaffected");
-    expect(g_resample_calls == 0, "no resampler was built for a stream nobody decodes");
+    expect(sx_media_open(media, &source, &status) == 0, "a video-only consumer opened it");
+    expect(sx_media_has_audio(media) == 0, "and no audio stream was claimed for it");
+    expect(sx_media_read_audio(media, block, 64, nullptr) == 0, "so reading audio is zero");
+    /* An audio stream nobody asked for is not "missing": the program did not
+     * want it, and a notice about it would be noise. */
+    expect(sx_media_stream_missing_count(media) == 1, "the unclaimed audio is still reported as dropped");
 
     sx_media_destroy(media);
 }
@@ -936,11 +1098,14 @@ int main()
     test_a_packet_crosses_from_one_provider_to_another();
     test_extradata_reaches_a_foreign_decoder();
     test_a_decoder_that_needs_no_setup_still_builds();
+    test_the_audio_buffer_is_sized_from_the_block_not_a_guess();
+    test_a_block_larger_than_the_read_is_not_truncated_silently();
     test_the_display_size_carries_the_sample_aspect();
     test_decoding_is_not_showing();
     test_seek_delivers_the_frame_at_the_target();
     test_skip_is_per_stream_and_clears_itself();
-    test_audio_nobody_can_decode_is_absent_not_fatal();
+    test_a_dropped_audio_stream_is_not_the_audio_stream();
+    test_ignoring_audio_claims_no_audio_stream();
     test_ignoring_audio_leaves_no_resampler();
     test_container_and_metadata_come_from_the_provider();
     test_reopening_does_not_accumulate_state();

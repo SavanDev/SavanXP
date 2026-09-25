@@ -1022,6 +1022,45 @@ tree" or "link FFmpeg into the game" — and the first is smaller by two orders
 of magnitude and carries no LGPL surface. The other option, a media service
 that both programs talk to, is the end state below.
 
+#### What the Vorbis work found before it found a decoder
+
+The first attempt at this backend was written against the wrong API and is
+recorded here because what it found is worth more than the file was.
+
+**`stb_vorbis` v1.22 does not have the API the design assumed.** There is no
+`stb_vorbis_get_channels`, no `stb_vorbis_get_sample_rate` and no
+`stb_vorbis_pushdata` in that revision. The shape that exists is
+`stb_vorbis_open_pushdata` plus `stb_vorbis_decode_frame_pushdata`, and it
+**outputs float**, not interleaved s16 -- so a "pass-through resampler" writes
+raw floats into a buffer the sinks read as s16, which is not a wrong resample,
+it is noise. Any Vorbis backend needs a float-to-s16 step, and where it lives
+has to be decided rather than skipped.
+
+**`stb_vorbis_open_memory` really does need the whole stream.** Its comment says
+so and it means it: it parses the three headers and then pumps a first frame
+from the same buffer, so a decoder opened on `extradata` alone decodes nothing.
+The pushdata workflow is the one that matches a per-packet `send_packet` /
+`receive_frame` split -- which is itself a point in favour of that split being
+mandatory rather than a convenience.
+
+**`decode_frame_pushdata` needs accumulation.** It returns `need_more_data` for
+an incomplete block, so the backend has to keep a partial buffer across calls,
+and that buffer has to be reset by both `flush` and any reposition. That is real
+state, and it is state the engine does not know about.
+
+**A Vorbis block is between 1 and 4096 sample frames**, and nothing bounds it
+from below. That exposed an engine bug that has nothing to do with Vorbis: the
+audio buffer was sized from a fixed 2048 frames, which is smaller than a
+4096-frame block needs when the sink's rate is above the source's. The converter
+would have been handed less than it wanted and the tail dropped -- a hole in the
+audio with nothing reporting it. `sx_media_frame` gained `count` and the engine
+now sizes from the block and the rate ratio. FFmpeg never hit it because
+`swr_get_out_samples` reported the real figure; the fixed guess was luck.
+
+So the next attempt starts with a `pushdata` accumulator, a float-to-s16 step,
+and a decision about whether the converter role or the decoder owns that step.
+Getting that wrong is what the two provider paths are for.
+
 **Verification**, and the second assertion is the one that matters:
 
 - a Vorbis stream plays in a program that links only the Vorbis backend, and

@@ -124,6 +124,37 @@ which is why both go into the registry.
   and `/disk/bin/sxguiapp`; the Haxe compiler and reflaxe checkout remain
   outside the image
 
+### stb_vorbis (vendored, not yet built into a distributed binary)
+
+- Origin: https://github.com/nothings/stb, `stb_vorbis.c`
+- Versioned: yes. The file is committed at the commit below, unmodified, with
+  its original header and both license texts intact. SHA-256 of the vendored
+  file: `4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636`
+- Pin: commit `1ee679ca2ef753a528db5ba6801e1067b40481b8`, file version v1.22,
+  last changed 2021-07-12
+- License reviewed: dual **Unlicense (public domain) or MIT**, at the author's
+  option. Both texts are reproduced verbatim at the end of the vendored file.
+  The Unlicense half is what makes this a `Selective port` with no obligation
+  beyond keeping the notices
+- Decision: `Selective port`, as the decoder behind a SavanXP SxMedia backend.
+  It is the first codec implementation the system chooses over FFmpeg, and the
+  reason is in [`SXMEDIA.md`](SXMEDIA.md): two ports already carry music
+  switched off for want of a Vorbis decoder, and a decoder SavanXP controls is
+  also the path to throughput the LGPL fallback cannot reach
+- Distributed in: **nothing yet.** The vendored file is committed and the
+  adapter is designed, but no binary in the image links it yet, so this entry
+  records an adopted component rather than a distributed one. The registry
+  invariant is about what is baked into the ISO, the initramfs or the disk image,
+  and as of this commit nothing is
+- Credit: original decoder written by Sean Barrett in 2007, originally sponsored
+  by RAD Game Tools; the seeking implementation sponsored by Phillip Bennefall,
+  Marc Andersen, Aaron Baker, Elias Software, Aras Pranckevicius and Sean
+  Barrett; sample-exact seeking by Dougall Johnson. `stb_vorbis.c` carries the
+  full contributor list at the top
+- Not `our own codec`: the adapter and the routing are the repository's, the
+  decoder is stb's. A decoder written from scratch is a different order of
+  magnitude and is not what this adoption is
+
 ## Bootloader
 
 ### Limine

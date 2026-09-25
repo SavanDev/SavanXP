@@ -198,6 +198,15 @@ struct sx_media_frame {
     int format;                   /* backend-private format tag; see above */
     int sar_num, sar_den;
     int key;
+    /* Audio: how many sample FRAMES `data` holds, not how many interleaved
+     * values. A resampler cannot write a correct amount without it, and a
+     * backend has no way to say "a whole block" -- blocks differ. Video: 0,
+     * because a picture's extent is its width and height.
+     *
+     * It is here because the Vorbis backend is what made it necessary: a
+     * Vorbis block is between one and 4096 frames, and `out_capacity` alone does
+     * not say which. */
+    int count;
     void* data;                   /* backend-private, never read here */
     void (*release)(void* data);
 };
@@ -296,7 +305,9 @@ struct sx_media_backend_ops {
     void* (*resampler_open)(void* user, const struct sx_media_frame* prototype,
                             const struct sx_media_audio_format* dst);
     void (*resampler_close)(void* resampler);
-    /* Writes interleaved s16 and returns how many frames, or < 0 on error. */
+    /* Writes interleaved s16 and returns how many frames, or < 0 on error. At
+     * most `frame->count` and at most `out_capacity`; a frame with no room left
+     * is not an error, it is a block that has to be taken again. */
     int (*resample)(void* resampler, const struct sx_media_frame* frame,
                     int16_t* out, int out_capacity);
     /* The resampler's own delay, drained once the stream is over so the tail is

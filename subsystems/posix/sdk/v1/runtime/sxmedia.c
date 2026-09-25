@@ -966,13 +966,21 @@ static int refill_audio(struct sx_media* media) {
         if (time_us == SX_MEDIA_NO_TIME) {
             time_us = stream->next_time_us != SX_MEDIA_NO_TIME ? stream->next_time_us : 0;
         }
-        /* Worst case for a resampling converter is more frames out than in;
-         * headroom is cheap and a short buffer would drop audio. */
-        capacity = frame.sample_rate > 0 ? (int)(((long)media->audio_out.sample_rate * 2048) /
-                                                 (frame.sample_rate > 0 ? frame.sample_rate : 1))
-                                         : 2048;
-        if (capacity < 2048) {
-            capacity = 2048;
+        /* Room for the converted block, not a fixed guess. A converter produces
+         * more frames than it consumes whenever the sink's rate is above the
+         * source's, and the ratio decides how many, so the old fixed 2048 was
+         * quietly too small for a 48 kHz sink fed by a 44.1 kHz source: the
+         * converter would be handed less than it wanted and the engine would
+         * drop the tail, which is a hole in the audio with nothing reporting it.
+         *
+         * A backend with nothing to convert still writes at most `frame->count`,
+         * so this is an upper bound rather than a requirement. */
+        capacity = 2048;
+        if (frame.count > 0 && frame.sample_rate > 0) {
+            const int64_t needed = (int64_t)frame.count * media->audio_out.sample_rate / frame.sample_rate;
+            if (needed + 64 > capacity) {
+                capacity = (int)(needed + 64);
+            }
         }
         if (!ensure_audio_capacity(media, capacity)) {
             release_frame(&frame);
