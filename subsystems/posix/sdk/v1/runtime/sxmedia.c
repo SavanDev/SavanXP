@@ -502,7 +502,15 @@ int sx_media_open(struct sx_media* media, const struct sx_media_source* source,
             stream->decoder = owner->ops->open_decoder(owner->user, &stream->desc);
         }
         if (stream->decoder == NULL) {
-            note_missing(media, stream->desc.codec);
+            /* Only playback content is reported as dropped. A text stream
+             * nobody decodes is a known gap of the system, not something wrong
+             * with this file, and a notice that says "this system has no
+             * subtitle decoder" every time an MKV has subtitles would be
+             * noise. Subtitles are listed in the docs, not shouted per file. */
+            if (stream->desc.kind == SX_MEDIA_KIND_VIDEO ||
+                stream->desc.kind == SX_MEDIA_KIND_AUDIO) {
+                note_missing(media, stream->desc.codec);
+            }
             continue;
         }
         stream->ops = owner->ops;
@@ -543,6 +551,39 @@ int sx_media_has_video(const struct sx_media* media) {
 
 int sx_media_has_audio(const struct sx_media* media) {
     return media != NULL && media->audio_slot >= 0;
+}
+
+int sx_media_is_seekable(const struct sx_media* media) {
+    return media != NULL && media->source != NULL && media->source_seekable;
+}
+
+const char* sx_media_video_codec(const struct sx_media* media) {
+    if (media == NULL || media->video_slot < 0) {
+        return NULL;
+    }
+    return media->streams[media->video_slot].desc.codec;
+}
+
+const char* sx_media_audio_codec(const struct sx_media* media) {
+    if (media == NULL || media->audio_slot < 0) {
+        return NULL;
+    }
+    return media->streams[media->audio_slot].desc.codec;
+}
+
+int sx_media_audio_source_format(const struct sx_media* media,
+                                 struct sx_media_audio_format* out) {
+    if (out == NULL) {
+        return 0;
+    }
+    out->sample_rate = 0;
+    out->channels = 0;
+    if (media == NULL || media->audio_slot < 0) {
+        return 0;
+    }
+    out->sample_rate = media->streams[media->audio_slot].desc.sample_rate;
+    out->channels = media->streams[media->audio_slot].desc.channels;
+    return out->sample_rate > 0 && out->channels > 0;
 }
 
 void sx_media_display_size(const struct sx_media* media, int* width, int* height) {
@@ -620,6 +661,19 @@ int sx_media_stream_missing_at(const struct sx_media* media, int index, char* co
         copy_text(codec, codec_capacity, media->missing[index]);
     }
     return 1;
+}
+
+int sx_media_packet_drops(const struct sx_media* media) {
+    int total = 0;
+    int index;
+
+    if (media == NULL) {
+        return 0;
+    }
+    for (index = 0; index < media->stream_count; ++index) {
+        total += media->streams[index].queue.dropped;
+    }
+    return total;
 }
 
 /* ---- decode -------------------------------------------------------------- */
@@ -809,7 +863,10 @@ const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int heig
 
     pixels = (size_t)width * (size_t)height;
     if (media->scaled == NULL || media->scaled_width != width || media->scaled_height != height) {
-        uint32_t* grown = (uint32_t*)realloc(media->scaled, pixels * sizeof(uint32_t));
+        /* One spare row. swscale can read and write a little past the end of the
+         * last row on some paths, and the alternative to the slack is a
+         * converter that scribbles one row past the buffer. */
+        uint32_t* grown = (uint32_t*)realloc(media->scaled, pixels * sizeof(uint32_t) + 4u);
         if (grown == NULL) {
             media->source_ops->scaler_close(media->scaler);
             media->scaler = NULL;

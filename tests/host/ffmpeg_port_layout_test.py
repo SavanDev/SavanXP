@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import subprocess
 from pathlib import Path
 
@@ -45,8 +46,6 @@ def main() -> int:
         "gen_icons.py",
         "icon.png",
         "icons.inc",
-        "media.c",
-        "media.h",
         "mediaplayer.c",
         "mediaplayer-ffmpeg.sxres",
         "playback.c",
@@ -57,6 +56,46 @@ def main() -> int:
     overlay = port / "overlay" / "mediaplayer"
     actual_overlay = {path.name for path in overlay.iterdir() if path.is_file()}
     assert actual_overlay == expected_overlay
+    # The decode engine left the overlay: it is the SDK's runtime/sxmedia.c, and
+    # what the port keeps is the one file that tells a library how to be a
+    # backend. media.c and media.h are gone, so nothing in the port is
+    # FFmpeg-shaped except the backend.
+    backend_dir = port / "overlay" / "sxmedia"
+    assert {path.name for path in backend_dir.iterdir() if path.is_file()} == {
+        "sxmedia_ffmpeg.c",
+        "sxmedia_ffmpeg.h",
+    }
+    backend_source = (backend_dir / "sxmedia_ffmpeg.c").read_text(encoding="utf-8")
+    assert "sx_media_backend_ops" in backend_source
+    assert "sxmedia_ffmpeg_register" in backend_source
+    assert "claim_source" in backend_source and "claim_stream" in backend_source
+    # The front end and the selftest talk to the engine and to the registry and
+    # never to a library. This is the assertion that would have caught the
+    # engine leaking back into the window, and it checks the dependency rather
+    # than the prose: a comment may name the library to explain why the modes
+    # share a binary, but no include and no call may.
+    for name in ("mediaplayer.c", "playback.c", "selftest.c", "playback.h"):
+        # Comments may name what the code used to use; the code may not. A
+        # comment explaining the seam is the documentation for it.
+        text = (overlay / name).read_text(encoding="utf-8")
+        code = "\n".join(
+            line for line in text.splitlines()
+            if not line.lstrip().startswith(("*", "/*", "//"))
+        )
+        assert "#include <libav" not in code, f"{name} includes a library header"
+        assert "av_log_set_level" not in code, f"{name} calls a library function"
+        for symbol in ("AVFrame", "AVCodec", "AVFormatContext", "AVPacket", "SwsContext", "SwrContext"):
+            assert symbol not in code, f"{name} names the library type {symbol}"
+        assert "struct media" not in code, f"{name} still uses the old engine type"
+        # `sx_media_open` contains "media_open", so the old call has to be
+        # matched with a lookbehind rather than a substring test.
+        assert not re.search(r"(?<!sx_)\bmedia_(open|close|seek|read_audio|scale_video)\b", code), (
+            f"{name} still calls the old engine"
+        )
+    # ...and they do go through the engine rather than around it.
+    for name in ("mediaplayer.c", "playback.c", "selftest.c"):
+        text = (overlay / name).read_text(encoding="utf-8")
+        assert "savanxp/sxmedia.h" in text or "sx_media_" in text, f"{name} bypasses the engine"
     backend_manifest = (overlay / "mediaplayer-ffmpeg.sxres").read_text(encoding="utf-8")
     assert "category=" not in backend_manifest
     assert "mime_open=" not in backend_manifest

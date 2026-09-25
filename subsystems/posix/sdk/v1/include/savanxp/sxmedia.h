@@ -316,6 +316,22 @@ void sx_media_close(struct sx_media* media);
 const char* sx_media_container_name(const struct sx_media* media);
 int sx_media_has_video(const struct sx_media* media);
 int sx_media_has_audio(const struct sx_media* media);
+
+/* Whether the source can be repositioned, so a program can grey out a seek bar
+ * without having opened a second time to find out. */
+int sx_media_is_seekable(const struct sx_media* media);
+
+/* The codec of the stream actually being played, for a title line or a
+ * property panel. Not "the codec of some stream": a program that wanted that
+ * would ask `sx_media_stream_codec` with an index it chose. */
+const char* sx_media_video_codec(const struct sx_media* media);
+const char* sx_media_audio_codec(const struct sx_media* media);
+
+/* The audio format of the source, as opposed to the interleaved s16 the sinks
+ * asked for. Diagnostics and a resampler's own reporting; a player does not
+ * need it, because it asked for its format in the first place. */
+int sx_media_audio_source_format(const struct sx_media* media,
+                                 struct sx_media_audio_format* out);
 void sx_media_display_size(const struct sx_media* media, int* width, int* height);
 int64_t sx_media_duration_us(const struct sx_media* media);
 int64_t sx_media_frame_duration_us(const struct sx_media* media);
@@ -333,6 +349,11 @@ const char* sx_media_stream_codec(const struct sx_media* media, int stream_index
 int sx_media_stream_missing_count(const struct sx_media* media);
 int sx_media_stream_missing_at(const struct sx_media* media, int index,
                                char* codec, size_t codec_capacity);
+
+/* Packets discarded because a stream's queue was full, summed over streams. A
+ * healthy file never reaches the cap, and the selftest asserts this is zero: a
+ * dropped packet is a hole in the audio and nothing else would report it. */
+int sx_media_packet_drops(const struct sx_media* media);
 
 /* ---- decoding ------------------------------------------------------------ */
 

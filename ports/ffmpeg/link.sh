@@ -4,6 +4,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 APP="$PORT/overlay/mediaplayer"
+BACKEND="$PORT/overlay/sxmedia"
 mkdir -p "$OUT" "$OUTPUT_ROOT/external"
 cd "$OUT"
 
@@ -13,9 +14,18 @@ for source in "$APP"/*.c; do
     echo "== compilando $name.c"
     $SX_CC -c -x c "$source" -o "$name.o" $SX_TARGET_CFLAGS \
         -Wall -Wextra -Wno-unused-parameter \
-        -I "$SRC" -I "$BUILD"
+        -I "$BACKEND" -I "$SRC" -I "$BUILD"
     objects+=("$name.o")
 done
+
+# El backend de SxMedia: el unico archivo que le dice a una libreria como ser un
+# backend. El engine (`sxmedia.c`) entra por libsavanxp.a, que runtime.sh ya
+# compila; lo que se compila aca es el lado FFmpeg del vtable.
+echo "== compilando sxmedia_ffmpeg.c"
+$SX_CC -c -x c "$BACKEND/sxmedia_ffmpeg.c" -o sxmedia_ffmpeg.o $SX_TARGET_CFLAGS \
+    -Wall -Wextra -Wno-unused-parameter \
+    -I "$BACKEND" -I "$SRC" -I "$BUILD"
+objects+=("sxmedia_ffmpeg.o")
 
 # The order is part of the static-link contract.
 echo "== linkeando mediaplayer"

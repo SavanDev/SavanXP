@@ -17,11 +17,9 @@
 #include "savanxp/libc.h"
 #include "savanxp/sxgui.h"
 
-#include <libavutil/log.h>
-
-#include "media.h"
 #include "playback.h"
 #include "selftest.h"
+#include "sxmedia_ffmpeg.h"
 
 #include "icons.inc"
 
@@ -120,10 +118,10 @@ static void layout_frame(void) {
     int height = 0;
 
     memset(&g.frame_rect, 0, sizeof(g.frame_rect));
-    if (!has_file() || !media_has_video(&g.playback.media)) {
+    if (!has_file() || !sx_media_has_video(g.playback.media)) {
         return;
     }
-    media_display_size(&g.playback.media, &display_w, &display_h);
+    sx_media_display_size(g.playback.media, &display_w, &display_h);
     if (display_w <= 0 || display_h <= 0 || g.video_rect.width <= 0 || g.video_rect.height <= 0) {
         return;
     }
@@ -198,10 +196,10 @@ static void request_window_size(void) {
     }
     g.size_requested = 1;
 
-    if (has_file() && media_has_video(&g.playback.media)) {
+    if (has_file() && sx_media_has_video(g.playback.media)) {
         int display_w = 0;
         int display_h = 0;
-        media_display_size(&g.playback.media, &display_w, &display_h);
+        sx_media_display_size(g.playback.media, &display_w, &display_h);
         if (display_w > 0 && display_h > 0) {
             width = display_w;
             video_h = display_h;
@@ -245,7 +243,7 @@ static void update_controls_text(void) {
     g.widgets[W_TIME].text = g.time_text;
     for (int index = W_BACK; index <= W_FORWARD; ++index) {
         const int seek_button = index == W_BACK || index == W_FORWARD;
-        if (has_file() && (!seek_button || g.playback.media.seekable)) {
+        if (has_file() && (!seek_button || sx_media_is_seekable(g.playback.media))) {
             g.widgets[index].flags &= ~SXGUI_FLAG_DISABLED;
         } else {
             g.widgets[index].flags |= SXGUI_FLAG_DISABLED;
@@ -260,30 +258,41 @@ static void paint_centered_text(struct sx_painter* painter, int y, const char* t
 
 /* Copia el ultimo cuadro escalado al backbuffer. Solo re-escala si cambio el
  * tamano: un repintado de los controles no tiene por que pagar swscale. */
-static int blit_frame(int rescale) {
+/* Una sola copia de pixeles para los dos caminos: el repintado, que pide el
+ * cuadro mostrado al engine, y el callback de presentacion, que lo recibe ya
+ * escalado. */
+static int blit_pixels(const uint32_t* pixels, int width, int height) {
     const struct sx_rect rect = g.frame_rect;
     const uint32_t stride = gfx_stride_pixels(&g.app.gfx.info);
-    const uint32_t* pixels = NULL;
-    struct media* media = &g.playback.media;
     int row = 0;
 
-    if (rect.width <= 0 || !has_file() || !media_has_shown_frame(media)) {
-        return 0;
-    }
-    if (rescale || media->scaled == NULL || media->scaled_width != rect.width ||
-        media->scaled_height != rect.height) {
-        pixels = media_scale_video(media, rect.width, rect.height);
-    } else {
-        pixels = (const uint32_t*)(void*)media->scaled;
-    }
-    if (pixels == NULL) {
+    if (pixels == NULL || rect.width <= 0 || width != rect.width || height != rect.height) {
         return 0;
     }
     for (row = 0; row < rect.height; ++row) {
-        memcpy(&g.app.gfx.pixels[(uint32_t)(rect.y + row) * stride + (uint32_t)rect.x], &pixels[row * rect.width],
-               (size_t)rect.width * sizeof(uint32_t));
+        memcpy(&g.app.gfx.pixels[(uint32_t)(rect.y + row) * stride + (uint32_t)rect.x], &pixels[row * width],
+               (size_t)width * sizeof(uint32_t));
     }
     return 1;
+}
+
+/* El rect del cuadro es lo unico que la ventana decide; si el tamano cambio, el
+ * rescale es problema del engine y no de la ventana. Antes el flag `rescale`
+ * viajaba desde los dos llamadores y la ventana llegaba a tocar el buffer de
+ * escalado del engine, que es justo lo que un `struct sx_media` opaco
+ * prohibe. */
+static int blit_frame(void) {
+    const struct sx_rect rect = g.frame_rect;
+    const uint32_t* pixels;
+
+    if (rect.width <= 0 || !has_file() || !sx_media_has_shown_frame(g.playback.media)) {
+        return 0;
+    }
+    pixels = sx_media_scale_video(g.playback.media, rect.width, rect.height);
+    if (pixels == NULL) {
+        return 0;
+    }
+    return blit_pixels(pixels, rect.width, rect.height);
 }
 
 static void paint_video_area(void) {
@@ -295,7 +304,7 @@ static void paint_video_area(void) {
         return;
     }
     sx_painter_fill_rect(painter, g.video_rect, gfx_rgb(0, 0, 0));
-    if (blit_frame(0)) {
+    if (blit_frame()) {
         return;
     }
 
@@ -305,17 +314,17 @@ static void paint_video_area(void) {
     } else if (!has_file()) {
         paint_centered_text(painter, y, "No file open.", gfx_rgb(220, 220, 220));
         paint_centered_text(painter, y + line, "Press O or click Open.", gfx_rgb(160, 160, 160));
-    } else if (!media_has_video(&g.playback.media)) {
-        const char* title = media_metadata(&g.playback.media, "title");
-        const char* artist = media_metadata(&g.playback.media, "artist");
+    } else if (!sx_media_has_video(g.playback.media)) {
+        const char* title = sx_media_metadata(g.playback.media, "title");
+        const char* artist = sx_media_metadata(g.playback.media, "artist");
         char detail[96];
-        snprintf(detail, sizeof(detail), "%s audio", media_audio_codec_name(&g.playback.media));
+        snprintf(detail, sizeof(detail), "%s audio", sx_media_audio_codec(g.playback.media));
         paint_centered_text(painter, y - line, title != NULL ? title : base_name(g.playback.path),
                             gfx_rgb(240, 240, 240));
         if (artist != NULL) {
             paint_centered_text(painter, y, artist, gfx_rgb(190, 190, 190));
         }
-        paint_centered_text(painter, y + line, media_has_audio(&g.playback.media) ? detail : "No audio device.",
+        paint_centered_text(painter, y + line, sx_media_has_audio(g.playback.media) ? detail : "No audio device.",
                             gfx_rgb(140, 140, 140));
     }
 }
@@ -459,13 +468,15 @@ static void present_controls(void) {
     g.last_ui_ns = playback_now_ns();
 }
 
-/* Callback de playback_pump: llego la hora de un cuadro. */
-static void on_present(void* user, struct media* media) {
+/* Callback de playback_pump: llego la hora de un cuadro, ya escalado a pixeles
+ * del tamano que la ventana pidio. El engine no aparece en la firma: antes
+ * llegaba un `struct media*` y la ventana no tenia por que saber que habia uno
+ * debajo. */
+static void on_present(void* user, const uint32_t* pixels, int width, int height) {
     const struct sx_rect rect = g.frame_rect;
     (void)user;
-    (void)media;
 
-    if (rect.width <= 0 || !blit_frame(1)) {
+    if (rect.width <= 0 || !blit_pixels(pixels, width, height)) {
         return;
     }
     /* Con un dialogo abierto el cuadro nuevo quedaria encima de el: ahi se
@@ -505,7 +516,7 @@ static void open_file(const char* path) {
 static void seek_relative(int64_t delta_us) {
     const unsigned long long now = playback_now_ns();
     int64_t target = playback_position_us(&g.playback, now) + delta_us;
-    if (!has_file() || !g.playback.media.seekable) {
+    if (!has_file() || !sx_media_is_seekable(g.playback.media)) {
         return;
     }
     if (target < 0) {
@@ -660,7 +671,7 @@ static int handle_pointer(const struct savanxp_gui_pointer_event* event) {
         }
         return 1;
     }
-    if (pressed && point_in(seek_hit, event->x, event->y) && has_file() && g.playback.media.seekable) {
+    if (pressed && point_in(seek_hit, event->x, event->y) && has_file() && sx_media_is_seekable(g.playback.media)) {
         g.dragging = 1;
         g.drag_us = seek_position_at(event->x);
         g.needs_controls = 1;
@@ -803,7 +814,7 @@ static int run_window(const char* path) {
         (void)savanxp_poll(&ready, 1, (long)wait_ms);
     }
 
-    playback_close(&g.playback);
+    playback_destroy(&g.playback);
     gfx_release(&g.app.gfx);
     if (g.app.pointer_fd >= 0) {
         savanxp_close((int)g.app.pointer_fd);
@@ -813,9 +824,14 @@ static int run_window(const char* path) {
 }
 
 int main(int argc, char** argv) {
-    /* Los avisos de FFmpeg van a stdout, que en el escritorio no mira nadie y en
-     * el harness ensucia el log: solo los errores. */
-    av_log_set_level(AV_LOG_ERROR);
+    /* Un solo registro, antes de nada: el engine no abre un source sin un
+     * backend, y este programa no sabe que su backend es FFmpeg mas alla de
+     * este registro. Un segundo backend prioridad 0 registrado despues seria
+     * rechazado por nombre duplicado, no por un conflicto de implementacion. */
+    if (sxmedia_ffmpeg_register() != 0) {
+        fprintf(stderr, "mediaplayer: the FFmpeg backend could not be registered\n");
+        return 1;
+    }
 
     if (argc >= 2 && strcmp(argv[1], "--selftest") == 0) {
         return selftest_main(argc - 2, argv + 2);

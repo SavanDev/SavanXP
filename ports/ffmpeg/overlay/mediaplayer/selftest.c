@@ -1,8 +1,9 @@
 /* Modos sin ventana del reproductor: las herramientas de prueba del port.
  *
- * Viven adentro del mismo binario porque cada ejecutable que linkea libavcodec
- * se lleva todos los decoders habilitados (ver link.sh): un wavinfo y un player
- * aparte eran megas repetidos en una imagen de 64 MiB.
+ * Viven adentro del mismo binario porque cada ejecutable que registra un
+ * backend de decodificacion se lleva todos los decoders habilitados (ver
+ * link.sh): un wavinfo y un player aparte eran megas repetidos en una imagen de
+ * 64 MiB.
  *
  *   --probe <archivo>                 lo que hay adentro, y decodificarlo entero
  *   --selftest [--sync] <archivo>...  decodifica, convierte, reposiciona y
@@ -22,9 +23,6 @@
 
 #include "savanxp/libc.h"
 
-#include <libavcodec/avcodec.h>
-
-#include "media.h"
 #include "playback.h"
 #include "selftest.h"
 
@@ -45,7 +43,7 @@ static long long abs_ll(long long value) {
 }
 
 static void print_time(const char* label, int64_t us) {
-    if (us == MEDIA_NO_TIME) {
+    if (us == SX_MEDIA_NO_TIME) {
         printf("%s=?", label);
         return;
     }
@@ -108,19 +106,19 @@ static void fail(struct selftest_run* run, const char* what) {
     run->failures += 1;
 }
 
-static void check_video_frame(struct media* media, struct selftest_run* run, int sync) {
+static void check_video_frame(struct sx_media* media, struct selftest_run* run, int sync) {
     const uint32_t* thumb = NULL;
-    const int64_t time_us = media->video_time_us;
+    const int64_t time_us = sx_media_video_time_us(media);
 
-    media_show_video_frame(media);
+    sx_media_show_video_frame(media);
     run->video_frames += 1;
-    if (run->last_video_us != MEDIA_NO_TIME && time_us < run->last_video_us) {
+    if (run->last_video_us != SX_MEDIA_NO_TIME && time_us < run->last_video_us) {
         printf("mediaplayer: el cuadro %ld retrocede en el tiempo\n", run->video_frames);
         fail(run, "timestamps de video no monotonos");
     }
     run->last_video_us = time_us;
 
-    thumb = media_scale_video(media, SELFTEST_THUMB_W, SELFTEST_THUMB_H);
+    thumb = sx_media_scale_video(media, SELFTEST_THUMB_W, SELFTEST_THUMB_H);
     if (thumb == NULL) {
         fail(run, "swscale no convirtio un cuadro");
         return;
@@ -138,15 +136,15 @@ static void check_video_frame(struct media* media, struct selftest_run* run, int
     }
 }
 
-static void check_audio_chunk(struct media* media, struct selftest_run* run, const int16_t* samples, int frames,
+static void check_audio_chunk(struct sx_media* media, struct selftest_run* run, const int16_t* samples, int frames,
                               int64_t first_us, int sync) {
     int index = 0;
 
     run->audio_frames += frames;
-    if (first_us != MEDIA_NO_TIME) {
+    if (first_us != SX_MEDIA_NO_TIME) {
         run->audio_end_us = first_us + (int64_t)frames * 1000000LL / SELFTEST_RATE;
     }
-    if (!sync || first_us == MEDIA_NO_TIME) {
+    if (!sync || first_us == SX_MEDIA_NO_TIME) {
         return;
     }
     for (index = 0; index < frames; ++index) {
@@ -166,19 +164,19 @@ static void check_audio_chunk(struct media* media, struct selftest_run* run, con
 
 /* Decodifica el archivo entero intercalando video y audio como lo hace la
  * reproduccion: el audio se pide hasta alcanzar al video. */
-static void decode_everything(struct media* media, struct selftest_run* run, int sync) {
+static void decode_everything(struct sx_media* media, struct selftest_run* run, int sync) {
     int16_t samples[SELFTEST_CHUNK * SELFTEST_CHANNELS];
-    int video_done = !media_has_video(media);
-    int audio_done = !media_has_audio(media);
+    int video_done = !sx_media_has_video(media);
+    int audio_done = !sx_media_has_audio(media);
 
-    run->last_video_us = MEDIA_NO_TIME;
+    run->last_video_us = SX_MEDIA_NO_TIME;
     run->audio_end_us = 0;
     run->quiet_samples = SELFTEST_RATE;
 
     while (!video_done || !audio_done) {
-        if (!video_done && (audio_done || media->video_time_us == MEDIA_NO_TIME ||
-                            media->video_time_us <= run->audio_end_us)) {
-            if (media_next_video_frame(media) > 0) {
+        if (!video_done && (audio_done || sx_media_video_time_us(media) == SX_MEDIA_NO_TIME ||
+                            sx_media_video_time_us(media) <= run->audio_end_us)) {
+            if (sx_media_next_video_frame(media) > 0) {
                 check_video_frame(media, run, sync);
             } else {
                 video_done = 1;
@@ -186,8 +184,8 @@ static void decode_everything(struct media* media, struct selftest_run* run, int
             continue;
         }
         {
-            int64_t first_us = MEDIA_NO_TIME;
-            const int frames = media_read_audio(media, samples, SELFTEST_CHUNK, &first_us);
+            int64_t first_us = SX_MEDIA_NO_TIME;
+            const int frames = sx_media_read_audio(media, samples, SELFTEST_CHUNK, &first_us);
             if (frames <= 0) {
                 audio_done = 1;
             } else {
@@ -222,50 +220,52 @@ static void check_sync(struct selftest_run* run, int64_t duration_us) {
 
 /* Reposiciona a la mitad (redondeada a segundo, que en el clip de sync es un
  * destello con su pitido) y comprueba donde cae cada stream. */
-static void check_seek(struct media* media, struct selftest_run* run, int sync) {
+static void check_seek(struct sx_media* media, struct selftest_run* run, int sync) {
     int16_t samples[SELFTEST_CHUNK * SELFTEST_CHANNELS];
-    int64_t target = (media->duration_us / 2) / 1000000 * 1000000;
-    const int64_t frame_us = media_frame_duration_us(media);
+    const int64_t duration_us = sx_media_duration_us(media);
+    const int64_t frame_us = sx_media_frame_duration_us(media);
+    int64_t target;
 
-    if (!media->seekable || media->duration_us < 2000000) {
+    if (!sx_media_is_seekable(media) || duration_us < 2000000) {
         printf("mediaplayer: seek: no aplica a este archivo\n");
         return;
     }
+    target = (duration_us / 2) / 1000000 * 1000000;
     if (target == 0) {
         target = 1000000;
     }
-    if (!media_seek(media, target)) {
-        fail(run, "media_seek fallo");
+    if (!sx_media_seek(media, target)) {
+        fail(run, "sx_media_seek fallo");
         return;
     }
-    if (media_has_video(media)) {
-        if (media_next_video_frame(media) <= 0) {
+    if (sx_media_has_video(media)) {
+        if (sx_media_next_video_frame(media) <= 0) {
             fail(run, "no hay video despues del seek");
         } else {
-            const int64_t delta = media->video_time_us - target;
+            const int64_t delta = sx_media_video_time_us(media) - target;
             printf("mediaplayer: seek a %llds: video ", (long long)(target / 1000000));
-            print_time("t", media->video_time_us);
+            print_time("t", sx_media_video_time_us(media));
             printf("\n");
             if (delta > frame_us / 2 || -delta >= frame_us) {
                 fail(run, "el seek de video no cae en el cuadro pedido");
             }
             if (sync) {
                 const uint32_t* thumb = NULL;
-                media_show_video_frame(media);
-                thumb = media_scale_video(media, SELFTEST_THUMB_W, SELFTEST_THUMB_H);
+                sx_media_show_video_frame(media);
+                thumb = sx_media_scale_video(media, SELFTEST_THUMB_W, SELFTEST_THUMB_H);
                 if (thumb == NULL || mean_luma(thumb, SELFTEST_THUMB_W, SELFTEST_THUMB_H) < SELFTEST_FLASH_LUMA) {
                     fail(run, "el cuadro despues del seek no es el destello");
                 }
             }
         }
     }
-    if (media_has_audio(media)) {
-        int64_t first_us = MEDIA_NO_TIME;
-        const int frames = media_read_audio(media, samples, SELFTEST_CHUNK, &first_us);
+    if (sx_media_has_audio(media)) {
+        int64_t first_us = SX_MEDIA_NO_TIME;
+        const int frames = sx_media_read_audio(media, samples, SELFTEST_CHUNK, &first_us);
         printf("mediaplayer: seek a %llds: audio ", (long long)(target / 1000000));
         print_time("t", first_us);
         printf("\n");
-        if (frames <= 0 || first_us == MEDIA_NO_TIME || abs_ll(first_us - target) > 2000) {
+        if (frames <= 0 || first_us == SX_MEDIA_NO_TIME || abs_ll(first_us - target) > 2000) {
             fail(run, "el seek de audio no cae en la muestra pedida");
         } else if (sync) {
             int index = 0;
@@ -284,48 +284,69 @@ static void check_seek(struct media* media, struct selftest_run* run, int sync) 
 }
 
 static int selftest_file(const char* path, int sync) {
-    const struct media_audio_format format = {SELFTEST_RATE, SELFTEST_CHANNELS};
+    const struct sx_media_audio_format format = {SELFTEST_RATE, SELFTEST_CHANNELS};
     struct selftest_run run;
-    struct media media;
-    char error[128];
+    struct sx_media* media = NULL;
+    struct sx_media_source source;
+    enum sx_media_status status = SX_MEDIA_OK;
+    int64_t duration_us = 0;
 
     memset(&run, 0, sizeof(run));
-    if (!media_open(&media, path, &format, error, sizeof(error))) {
-        printf("mediaplayer: FAIL %s: %s\n", path, error);
+    if (sx_media_create(&media) < 0) {
+        printf("mediaplayer: FAIL %s: out of memory\n", path);
         return 1;
     }
-    printf("mediaplayer: %s: %s, video %s, audio %s, ", path, media_container_name(&media),
-           media_video_codec_name(&media), media_audio_codec_name(&media));
-    print_time("duracion", media.duration_us);
+    memset(&source, 0, sizeof(source));
+    source.path = path;
+    source.fd = -1;
+    source.audio_out = &format;
+    if (sx_media_open(media, &source, &status) < 0) {
+        /* El motivo sale del engine y ya esta en su propia frase: el selftest
+         * no vuelve a formatear el error. */
+        printf("mediaplayer: FAIL %s: %s\n", path, sx_media_status_string(status));
+        sx_media_destroy(media);
+        return 1;
+    }
+    duration_us = sx_media_duration_us(media);
+    printf("mediaplayer: %s: %s, video %s, audio %s, ", path, sx_media_container_name(media),
+           sx_media_video_codec(media), sx_media_audio_codec(media));
+    print_time("duracion", duration_us);
     printf("\n");
+    if (sx_media_stream_missing_count(media) > 0) {
+        char codec[SX_MEDIA_CODEC_CAPACITY];
+        if (sx_media_stream_missing_at(media, 0, codec, sizeof(codec))) {
+            printf("mediaplayer:   sin stream %s en este build\n", codec);
+        }
+    }
 
-    decode_everything(&media, &run, sync);
+    decode_everything(media, &run, sync);
     printf("mediaplayer: %ld cuadros hasta ", run.video_frames);
     print_time("t", run.last_video_us);
     printf(", %ld muestras hasta ", run.audio_frames);
     print_time("t", run.audio_end_us);
     printf("\n");
 
-    if (media_has_video(&media) && run.video_frames == 0) {
+    if (sx_media_has_video(media) && run.video_frames == 0) {
         fail(&run, "el stream de video no entrego cuadros");
     }
-    if (media_has_audio(&media)) {
-        const long long tolerance = 100000 + media.duration_us / 50;
+    if (sx_media_has_audio(media)) {
+        const long long tolerance = 100000 + duration_us / 50;
         if (run.audio_frames == 0) {
             fail(&run, "el stream de audio no entrego muestras");
-        } else if (media.duration_us > 0 && abs_ll(run.audio_end_us - media.duration_us) > tolerance) {
+        } else if (duration_us > 0 && abs_ll(run.audio_end_us - duration_us) > tolerance) {
             fail(&run, "el audio no dura lo que el archivo");
         }
     }
-    if (media.video.packets.dropped != 0 || media.audio.packets.dropped != 0) {
+    if (sx_media_packet_drops(media) != 0) {
         fail(&run, "se descartaron paquetes por cola llena");
     }
     if (sync) {
-        check_sync(&run, media.duration_us);
+        check_sync(&run, duration_us);
     }
-    check_seek(&media, &run, sync);
+    check_seek(media, &run, sync);
 
-    media_close(&media);
+    sx_media_close(media);
+    sx_media_destroy(media);
     return run.failures;
 }
 
@@ -355,34 +376,69 @@ int selftest_main(int argc, char** argv) {
 /* ---- --probe ------------------------------------------------------------- */
 
 int probe_main(const char* path) {
-    const struct media_audio_format format = {SELFTEST_RATE, SELFTEST_CHANNELS};
+    const struct sx_media_audio_format format = {SELFTEST_RATE, SELFTEST_CHANNELS};
     struct selftest_run run;
-    struct media media;
-    char error[128];
+    struct sx_media* media = NULL;
+    struct sx_media_source source;
+    struct sx_media_audio_format source_format;
+    enum sx_media_status status = SX_MEDIA_OK;
     int width = 0;
     int height = 0;
 
     memset(&run, 0, sizeof(run));
-    if (!media_open(&media, path, &format, error, sizeof(error))) {
-        printf("mediaplayer: %s: %s\n", path, error);
+    if (sx_media_create(&media) < 0) {
+        printf("mediaplayer: %s: out of memory\n", path);
         return 1;
     }
-    media_display_size(&media, &width, &height);
-    printf("%s\n  container %s, ", path, media_container_name(&media));
-    print_time("duration", media.duration_us);
-    printf(", %s\n", media.seekable ? "seekable" : "not seekable");
-    if (media_has_video(&media)) {
-        printf("  video %s, %dx%d display, frame %lld us\n", media_video_codec_name(&media), width, height,
-               (long long)media_frame_duration_us(&media));
+    memset(&source, 0, sizeof(source));
+    source.path = path;
+    source.fd = -1;
+    source.audio_out = &format;
+    if (sx_media_open(media, &source, &status) < 0) {
+        printf("mediaplayer: %s: %s\n", path, sx_media_status_string(status));
+        sx_media_destroy(media);
+        return 1;
     }
-    if (media_has_audio(&media)) {
-        printf("  audio %s, %d Hz, %d channel(s)\n", media_audio_codec_name(&media),
-               media.audio.decoder->sample_rate, media.audio.decoder->ch_layout.nb_channels);
+    sx_media_display_size(media, &width, &height);
+    printf("%s\n  container %s, ", path, sx_media_container_name(media));
+    print_time("duration", sx_media_duration_us(media));
+    printf(", %s\n", sx_media_is_seekable(media) ? "seekable" : "not seekable");
+    if (sx_media_has_video(media)) {
+        printf("  video %s, %dx%d display, frame %lld us\n", sx_media_video_codec(media), width, height,
+               (long long)sx_media_frame_duration_us(media));
     }
-    decode_everything(&media, &run, 0);
+    if (sx_media_has_audio(media)) {
+        if (sx_media_audio_source_format(media, &source_format)) {
+            printf("  audio %s, %d Hz, %d channel(s)\n", sx_media_audio_codec(media), source_format.sample_rate,
+                   source_format.channels);
+        } else {
+            printf("  audio %s\n", sx_media_audio_codec(media));
+        }
+    }
+    if (sx_media_stream_missing_count(media) > 0) {
+        char codec[SX_MEDIA_CODEC_CAPACITY];
+        int index = 0;
+        while (sx_media_stream_missing_at(media, index++, codec, sizeof(codec))) {
+            printf("  no decoder for %s in this build\n", codec);
+        }
+    }
+    /* --probe es el camino de diagnostico y el unico donde el nombre de una
+     * implementacion tiene que aparecer: el aviso que ve el usuario nunca lo
+     * nombra, este si. */
+    {
+        const char* backend = NULL;
+        int index = 0;
+        printf("  backends:");
+        while ((backend = sx_media_backend_name_at(index++)) != NULL) {
+            printf(" %s", backend);
+        }
+        printf("\n");
+    }
+    decode_everything(media, &run, 0);
     printf("  decoded %ld video frames, %ld audio samples at %d Hz\n", run.video_frames, run.audio_frames,
            SELFTEST_RATE);
-    media_close(&media);
+    sx_media_close(media);
+    sx_media_destroy(media);
     return 0;
 }
 
@@ -394,8 +450,9 @@ int probe_main(const char* path) {
 int gpu_hold_main(unsigned long hold_ms, const char* path) {
     struct savanxp_gpu_info gpu_info;
     struct savanxp_fb_info fb_info;
-    struct media media;
-    char error[128];
+    struct sx_media* media = NULL;
+    struct sx_media_source source;
+    enum sx_media_status status = SX_MEDIA_OK;
     uint32_t* framebuffer = NULL;
     unsigned long long start_ns = 0;
     long gpu_fd = -1;
@@ -427,12 +484,31 @@ int gpu_hold_main(unsigned long hold_ms, const char* path) {
     fb_info.bpp = gpu_info.bpp;
     fb_info.buffer_size = gpu_info.buffer_size;
 
-    if (!media_open(&media, path, NULL, error, sizeof(error)) || !media_has_video(&media)) {
-        if (media.format != NULL) {
-            snprintf(error, sizeof(error), "sin video");
-            media_close(&media);
-        }
-        printf("mediaplayer: %s: %s\n", path, error);
+    /* audio_out en NULL: este modo solo quiere el video en la pantalla, y no
+     * tiene por que tocar /dev/audio0 para conseguirlo. */
+    if (sx_media_create(&media) < 0) {
+        printf("mediaplayer: %s: out of memory\n", path);
+        gpu_release((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
+        free(framebuffer);
+        return 1;
+    }
+    memset(&source, 0, sizeof(source));
+    source.path = path;
+    source.fd = -1;
+    source.audio_out = NULL;
+    if (sx_media_open(media, &source, &status) < 0) {
+        printf("mediaplayer: %s: %s\n", path, sx_media_status_string(status));
+        sx_media_destroy(media);
+        gpu_release((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
+        free(framebuffer);
+        return 1;
+    }
+    if (!sx_media_has_video(media)) {
+        printf("mediaplayer: %s: sin video\n", path);
+        sx_media_close(media);
+        sx_media_destroy(media);
         gpu_release((int)gpu_fd);
         savanxp_close((int)gpu_fd);
         free(framebuffer);
@@ -440,14 +516,14 @@ int gpu_hold_main(unsigned long hold_ms, const char* path) {
     }
 
     /* Al doble si entra, para que la captura se lea; si no, tal cual. */
-    media_display_size(&media, &width, &height);
+    sx_media_display_size(media, &width, &height);
     target_w = width * 2 <= (int)fb_info.width && height * 2 <= (int)fb_info.height ? width * 2 : width;
     target_h = target_w == width * 2 ? height * 2 : height;
 
     gfx_clear(framebuffer, &fb_info, gfx_rgb(0, 0, 0));
     start_ns = playback_now_ns();
-    while (media_next_video_frame(&media) > 0) {
-        const int64_t due_us = media.video_time_us;
+    while (sx_media_next_video_frame(media) > 0) {
+        const int64_t due_us = sx_media_video_time_us(media);
         const uint32_t* pixels = NULL;
         const uint32_t stride = gfx_stride_pixels(&fb_info);
         const int x0 = ((int)fb_info.width - target_w) / 2;
@@ -458,8 +534,8 @@ int gpu_hold_main(unsigned long hold_ms, const char* path) {
         if (due_us > now_us) {
             sleep_ms((unsigned long)((due_us - now_us) / 1000));
         }
-        media_show_video_frame(&media);
-        pixels = media_scale_video(&media, target_w, target_h);
+        sx_media_show_video_frame(media);
+        pixels = sx_media_scale_video(media, target_w, target_h);
         if (pixels == NULL) {
             continue;
         }
@@ -480,7 +556,7 @@ int gpu_hold_main(unsigned long hold_ms, const char* path) {
         puts_out("MEDIAPLAYER DISPLAY READY\n");
         sleep_ms(hold_ms);
     }
-    media_close(&media);
+    sx_media_close(media);
     gpu_release((int)gpu_fd);
     savanxp_close((int)gpu_fd);
     free(framebuffer);

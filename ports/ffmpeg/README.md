@@ -5,6 +5,27 @@ Media Player adapter. FFmpeg itself is not forked and is not patched. The
 port supplies the target runtime, a small SavanXP Media Player overlay, and
 the exact `configure`/GNU Make integration.
 
+## SxMedia
+
+The port is FFmpeg's **first SxMedia backend**, and the decode engine is not
+here any more. What lives in this port is one file,
+`overlay/sxmedia/sxmedia_ffmpeg.c`, that fills a vtable so that FFmpeg can be
+asked for a codec; the engine that asks is the SDK's
+`subsystems/posix/sdk/v1/runtime/sxmedia.c`, and it is linked in through
+`runtime.sh` like the rest of the runtime.
+
+`mediaplayer.c`, `playback.c` and `selftest.c` include no libav header and name
+no libav type. `tests/host/ffmpeg_port_layout_test.py` asserts it, because the
+point of the seam is that the window does not know what decoded the frame. The
+one place a library name is allowed to appear in user-facing output is
+`--probe`, which is the diagnostic path; the messages a player shows do not
+name an implementation, only a codec.
+
+FFmpeg fills all three backend roles -- source, decoder, converter -- at
+priority 0, so it is the fallback: anything this build cannot decode is
+reported by codec name and the file still plays. See
+[`docs/SXMEDIA.md`](../../docs/SXMEDIA.md).
+
 The versioned port is the only FFmpeg integration kept in the repository.
 
 ## Upstream and license

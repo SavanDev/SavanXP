@@ -17,13 +17,16 @@ cd "$RUNTIME"
 echo "== compilando el runtime con $($CLANG --version | head -1)"
 $SX_CC -c -x assembler-with-cpp "$SDK/runtime/crt0.S" -o crt0.o $SX_TARGET_CFLAGS
 $SX_CC -c -x assembler-with-cpp "$SDK/runtime/setjmp.S" -o setjmp.o $SX_TARGET_CFLAGS
-for unit in libc posix gfx gfx2d sxgui sxgui_app sxchrome; do
+for unit in libc posix gfx gfx2d sxmedia sxgui sxgui_app sxchrome; do
     $SX_CC -c -x c "$SDK/runtime/$unit.c" -o "$unit.o" $SX_TARGET_CFLAGS
 done
 $SX_CC -c -x c "$SDK/runtime/math.c" -o math.o -fno-builtin $SX_TARGET_CFLAGS
 
 rm -f libsavanxp.a libsxgui.a
-$AR_CMD rcs libsavanxp.a libc.o posix.o gfx.o gfx2d.o math.o setjmp.o
+# sxmedia.o goes in the core archive, not the GUI one: the engine is the media
+# half of the SDK, and a program that only wants the mixer should not have to
+# drag SXGUI in to get it.
+$AR_CMD rcs libsavanxp.a libc.o posix.o gfx.o gfx2d.o sxmedia.o math.o setjmp.o
 $AR_CMD rcs libsxgui.a sxgui.o sxgui_app.o sxchrome.o
 $RANLIB_CMD libsavanxp.a libsxgui.a
 sdk_fingerprint=$( {
