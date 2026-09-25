@@ -323,6 +323,21 @@ Cut-off notes:
 
 ### Changed
 
+- **The system can now decode Ogg Vorbis, and says so when it cannot.**
+  `savanxp/sxmedia_vorbis.h` is a Vorbis decoder that a program registers like any
+  other backend and never learns is stb_vorbis inside; the notice for a track it
+  cannot play names `vorbis`. A file whose Vorbis stream is declined still plays
+  through the next provider, and only a file with nothing decodable in it fails to
+  open. Converting a 44.1 kHz track to the device's rate is the one thing it
+  refuses rather than approximates. [The design](docs/SXMEDIA.md)
+
+- **A media frame is now converted only by the library that produced it.** A
+  backend that decodes a stream also supplies the converter for that stream's
+  frames, because a frame's bytes are opaque and belong to its own library. Until
+  now the converter was taken from the file's demuxer, which worked only while one
+  library filled every role and handed a block of PCM to a scaler that read it as
+  a frame header otherwise.
+
 - **A media backend may now decode a stream by reading the source itself.** A
   provider that fills `open_whole` instead of `send_packet` takes ownership of the
   stream and pulls frames from the file, which is the shape libraries like

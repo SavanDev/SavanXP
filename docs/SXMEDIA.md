@@ -1129,6 +1129,73 @@ test in the suite had exactly that bug -- `int16_t small[64]` for a 64-frame
 stereo read -- and AddressSanitizer found it, which is the argument for running
 under a sanitizer rather than trusting a green suite.
 
+### The bug only a second codec could find
+
+The Vorbis backend decodes a real Ogg file to within 1 LSB of libvorbis, on the
+host, in 0.01 s. Then it was wired into the media player and the image produced
+**silence**, with nothing reporting why.
+
+The cause is worth more than the fix. The converter role was resolved from the
+**source** provider and nothing else, so FFmpeg's `swr` was handed a frame from
+SxCodecs. `ffmpeg_resampler_open` casts `frame->data` to an `AVFrame*` and reads
+`ch_layout`, `format` and `sample_rate` out of it. What it actually got was the
+first bytes of a block of interleaved s16, so `swr_alloc_set_opts2` was given a
+channel layout made of PCM samples, `swr_init` failed, `resampler_open` returned
+NULL, and the engine looped over a stream that could never convert. The file was
+demuxed correctly, the codec was named correctly, the notice system was never
+reached, and the audio simply did not exist.
+
+This is invisible while one library fills every role, which is what "a demuxer
+and a decoder from the same place" looks like, and it is why the mistake survived
+a great many passing tests. The header had said all along that the engine hands a
+frame back to "this same provider's scaler or resampler"; the engine did not do
+that. **A design document that describes the right thing and an implementation
+that does the other thing is a bug that has not been written down yet**, and no
+amount of reading the document finds it.
+
+The fix is one rule, and it has a consequence that is not optional:
+
+> The converter that reads a frame is the provider that produced the frame.
+
+No fallback to the source provider's converter. A fallback is the bug in a more
+visible disguise: it hands a foreign library's bytes to something that cannot
+interpret them, and when the bytes happen to be readable it looks like it works.
+A source provider produces packets, not frames, so its converter role is now
+dead weight. A decoder that ships no converter produces no converted audio for
+its stream, and the engine says so instead of handing its frames to whoever is
+handiest.
+
+### What SxCodecs can and cannot do yet
+
+Decoding Vorbis: **done, and verified against another decoder.** Registering it
+without FFmpeg: **done.** Being wired into the image: **done.** Converting a
+44.1 kHz Vorbis track to a 48 kHz device: **not done, and deliberately refused.**
+
+The backend's converter copies the samples and does nothing else, and it returns
+NULL when the sink's rate or channel count differs from the stream's. A linear
+resampler is about sixty lines and would make this codec "work" on a mismatched
+device, and a music track resampled by something that is not a resampler is a
+music track with an artefact in it. The first two consumers of this codec are two
+platformers' worth of music, and an artefact in a music track is the whole
+failure this library exists to avoid. So the stream produces no audio and the
+notice names `vorbis`.
+
+That is a real gap and not a placeholder dressed up. The next piece of SxCodecs
+is a proper windowed-sinc resampler, and it deserves to be written as one.
+
+### The tail of a track, and what two decoders disagree about
+
+stb_vorbis decodes 22050 frames of the fixture and libvorbis trims to 21922. The
+file itself declares 22050, which is what `ffprobe` reports as the duration, so
+the disagreement is about the final partial block: stb_vorbis plays what the file
+declares and ffmpeg stops at the last packet. The extra 128 frames are signal, not
+padding -- about a tenth of full scale -- so this is a real 2.9 ms of tail rather
+than silence.
+
+Nothing is broken, but a track that loops gains a seam, and the two consumers of
+this codec both loop music. It is recorded here because it was measured, with the
+numbers, rather than discovered later by someone wondering why the seam is there.
+
 Getting the shape right is what the two provider paths are for, and this is the
 case that says so.
 

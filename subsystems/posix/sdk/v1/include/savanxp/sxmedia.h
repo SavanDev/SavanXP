@@ -321,6 +321,20 @@ struct sx_media_backend_ops {
     int (*seek_stream)(void* decoder, int64_t target_us);
 
     /* -- converter role -----------------------------------------------------
+     *
+     * These are the *frame's own* provider's, never the source provider's, and
+     * that is a rule rather than a convention. A frame's `data` is opaque and
+     * belongs to the library that produced it, so the converter that reads it has
+     * to be that library's: the alternative is handing a block of interleaved s16
+     * to a scaler that casts it to `AVFrame*`, which reads a channel layout out
+     * of the middle of the PCM and fails with nothing to report.
+     *
+     * A source provider hands out packets, never frames, so it has nothing to
+     * convert and filling this role on one is dead weight at best. A decoder
+     * without a converter produces no converted audio for its stream, and says
+     * so; there is deliberately no fallback to another provider's converter,
+     * because a fallback reads somebody else's bytes as its own and looks like
+     * it works whenever the bytes happen to line up.
      * To the formats the consumers fixed, never negotiated.
      *
      * Both converters take a prototype FRAME and not the stream descriptor,

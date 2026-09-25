@@ -37,6 +37,7 @@ $SX_LD $SX_TARGET_LDFLAGS -o mediaplayer.elf \
     "$BUILD/libswresample/libswresample.a" \
     "$BUILD/libavutil/libavutil.a" \
     "$RUNTIME/libsxgui.a" \
+    "$RUNTIME/libsxcodecs.a" \
     "$RUNTIME/libsavanxp.a"
 
 echo "== mediaplayer.elf: $(du -h mediaplayer.elf | cut -f1)"

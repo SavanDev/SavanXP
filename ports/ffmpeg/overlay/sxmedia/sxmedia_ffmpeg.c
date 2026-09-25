@@ -680,6 +680,11 @@ static const struct sx_media_backend_ops kFFmpegOps = {
     ffmpeg_container_name, ffmpeg_metadata,
     ffmpeg_claim_stream, ffmpeg_open_decoder, ffmpeg_close_decoder, ffmpeg_flush,
     ffmpeg_send_packet, ffmpeg_receive_frame,
+    /* The whole-source decoder shape, absent: libavcodec is fed packets and
+     * wants nothing else. The two entries have to be here anyway -- they sit in
+     * the middle of the table, and leaving them out shifts every converter
+     * after them. */
+    NULL, NULL,
     ffmpeg_scaler_open, ffmpeg_scaler_close, ffmpeg_scale,
     ffmpeg_resampler_open, ffmpeg_resampler_close, ffmpeg_resample, ffmpeg_resample_flush,
 };

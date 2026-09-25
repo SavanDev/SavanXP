@@ -300,6 +300,10 @@ struct sx_media_stream {
 
 struct sx_media {
     const struct sx_media_backend_ops* source_ops;
+    /* The provider that built the live converter, which is the frame's own
+     * provider and not necessarily the source's. */
+    const struct sx_media_backend_ops* resampler_ops;
+    const struct sx_media_backend_ops* scaler_ops;
     void* source_user;
     void* source;
     int source_seekable;
@@ -364,6 +368,34 @@ int sx_media_create(struct sx_media** out) {
     return 0;
 }
 
+/* The provider whose converter may touch a stream's frames.
+ *
+ * A frame's `data` is opaque and it belongs to the library that produced it, so
+ * the converter that reads it has to be that library's. The header said this --
+ * "the engine hands it back to this same provider's scaler or resampler" -- and
+ * the engine did not do it: it took the converter from the source provider and
+ * nothing else.
+ *
+ * That is invisible while one library fills every role, which is what a demuxer
+ * and a decoder from the same place looks like, and it is why the mistake
+ * survived a lot of passing tests. It stops being invisible the moment a second
+ * codec exists: a SxCodecs Vorbis frame is a block of interleaved s16, and
+ * FFmpeg's resampler was being handed it as an `AVFrame*`, read a `ch_layout`
+ * out of the middle of a PCM array, and failed to initialise. The stream then
+ * produced no audio at all, with nothing reporting why.
+ *
+ * There is deliberately no fallback to the source provider's converter. A
+ * fallback is the bug: it hands a foreign library's bytes to a converter that
+ * cannot interpret them, which is worse than having no converter, because it
+ * looks like it works until the frame layout happens to be readable. A stream
+ * whose provider ships no converter is unconvertible, and says so. */
+static const struct sx_media_backend_ops* converter_ops(const struct sx_media* media, int slot) {
+    if (slot >= 0 && slot < media->stream_count && media->streams[slot].ops != NULL) {
+        return media->streams[slot].ops;
+    }
+    return media->source_ops;
+}
+
 static void release_frame(struct sx_media_frame* frame) {
     if (frame->data != NULL && frame->release != NULL) {
         frame->release(frame->data);
@@ -391,12 +423,16 @@ void sx_media_close(struct sx_media* media) {
         stream->user = NULL;
         queue_reset(&stream->queue);
     }
-    if (media->scaler != NULL && media->source_ops != NULL && media->source_ops->scaler_close != NULL) {
-        media->source_ops->scaler_close(media->scaler);
+    if (media->scaler != NULL) {
+        if (media->scaler_ops != NULL && media->scaler_ops->scaler_close != NULL) {
+            media->scaler_ops->scaler_close(media->scaler);
+        }
+        media->scaler_ops = NULL;
     }
-    if (media->resampler != NULL && media->source_ops != NULL &&
-        media->source_ops->resampler_close != NULL) {
-        media->source_ops->resampler_close(media->resampler);
+    if (media->resampler != NULL && media->resampler_ops != NULL &&
+        media->resampler_ops->resampler_close != NULL) {
+        media->resampler_ops->resampler_close(media->resampler);
+        media->resampler_ops = NULL;
     }
     release_frame(&media->video);
     release_frame(&media->shown);
@@ -880,6 +916,7 @@ int64_t sx_media_video_time_us(const struct sx_media* media) {
 const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int height) {
     size_t pixels;
     const struct sx_media_frame* shown;
+    const struct sx_media_backend_ops* scaler_ops;
     int cache_valid;
 
     if (media == NULL || media->video_slot < 0 || !media->has_shown) {
@@ -889,8 +926,10 @@ const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int heig
         return NULL;
     }
     shown = &media->shown;
-    if (media->source_ops == NULL || media->source_ops->scale == NULL ||
-        media->source_ops->scaler_open == NULL) {
+    /* Same rule as the audio: the scaler that reads a frame is the one that made
+     * it. See `converter_ops`. */
+    scaler_ops = converter_ops(media, media->video_slot);
+    if (scaler_ops == NULL || scaler_ops->scale == NULL || scaler_ops->scaler_open == NULL) {
         return NULL;
     }
 
@@ -915,11 +954,19 @@ const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int heig
         (media->scaled == NULL || media->scaled_width != width || media->scaled_height != height ||
          media->scaler_format != shown->format || media->scaler_rate != shown->sample_rate ||
          media->scaler_channels != shown->channels)) {
-        media->source_ops->scaler_close(media->scaler);
+        if (media->scaler_ops != NULL && media->scaler_ops->scaler_close != NULL) {
+            media->scaler_ops->scaler_close(media->scaler);
+        }
+        media->scaler_ops = NULL;
         media->scaler = NULL;
     }
     if (media->scaler == NULL) {
-        media->scaler = media->source_ops->scaler_open(media->source_user, shown, width, height);
+        media->scaler = scaler_ops->scaler_open(
+            (media->video_slot >= 0 && media->video_slot < media->stream_count)
+                ? media->streams[media->video_slot].user
+                : media->source_user,
+            shown, width, height);
+        media->scaler_ops = scaler_ops;
         if (media->scaler == NULL) {
             return NULL;
         }
@@ -935,7 +982,10 @@ const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int heig
          * converter that scribbles one row past the buffer. */
         uint32_t* grown = (uint32_t*)realloc(media->scaled, pixels * sizeof(uint32_t) + 4u);
         if (grown == NULL) {
-            media->source_ops->scaler_close(media->scaler);
+            if (media->scaler_ops != NULL && media->scaler_ops->scaler_close != NULL) {
+                media->scaler_ops->scaler_close(media->scaler);
+            }
+            media->scaler_ops = NULL;
             media->scaler = NULL;
             return NULL;
         }
@@ -943,7 +993,7 @@ const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int heig
         media->scaled_width = width;
         media->scaled_height = height;
     }
-    if (media->source_ops->scale(media->scaler, shown, media->scaled, width, height, width) < 0) {
+    if (scaler_ops->scale(media->scaler, shown, media->scaled, width, height, width) < 0) {
         return NULL;
     }
     media->scaled_source = shown->data;
@@ -954,17 +1004,32 @@ const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int heig
  * format changes mid-flight is real, and a resampler built for the container's
  * declared format is wrong for every frame after the change. */
 static int ensure_resampler(struct sx_media* media, const struct sx_media_frame* frame) {
+    const struct sx_media_backend_ops* ops = converter_ops(media, media->audio_slot);
+    void* user;
+
     if (media->resampler != NULL && media->resampler_format == frame->format &&
         media->resampler_rate == frame->sample_rate && media->resampler_channels == frame->channels) {
         return 1;
     }
-    if (media->resampler != NULL && media->source_ops->resampler_close != NULL) {
-        media->source_ops->resampler_close(media->resampler);
+    if (media->resampler != NULL && media->resampler_ops != NULL &&
+        media->resampler_ops->resampler_close != NULL) {
+        media->resampler_ops->resampler_close(media->resampler);
     }
-    media->resampler = media->source_ops->resampler_open(media->source_user, frame, &media->audio_out);
+    media->resampler = NULL;
+    if (ops == NULL || ops->resampler_open == NULL) {
+        return 0;
+    }
+    user = (media->audio_slot >= 0 && media->audio_slot < media->stream_count)
+               ? media->streams[media->audio_slot].user
+               : media->source_user;
+    media->resampler = ops->resampler_open(user, frame, &media->audio_out);
     if (media->resampler == NULL) {
         return 0;
     }
+    /* Remembered so the close below goes back to the provider that built it: a
+     * stream can change provider mid-source, and closing an FFmpeg resampler
+     * through a codec library's vtable is the same class of mistake. */
+    media->resampler_ops = ops;
     media->resampler_format = frame->format;
     media->resampler_rate = frame->sample_rate;
     media->resampler_channels = frame->channels;
@@ -1008,11 +1073,13 @@ static int refill_audio(struct sx_media* media) {
         if (!stream_receive(media, media->audio_slot, &frame)) {
             /* What the resampler still holds from its own delay, so the tail of
              * the file is not lost. Drained once and then dropped. */
-            if (media->resampler != NULL && media->source_ops->resample_flush != NULL &&
+            if (media->resampler != NULL && media->resampler_ops != NULL &&
+                media->resampler_ops->resample_flush != NULL &&
                 ensure_audio_capacity(media, SX_MEDIA_RESAMPLE_TAIL)) {
-                converted = media->source_ops->resample_flush(media->resampler, media->audio_buffer,
-                                                             media->audio_capacity);
-                media->source_ops->resampler_close(media->resampler);
+                converted = media->resampler_ops->resample_flush(media->resampler, media->audio_buffer,
+                                                                media->audio_capacity);
+                media->resampler_ops->resampler_close(media->resampler);
+                media->resampler_ops = NULL;
                 media->resampler = NULL;
                 if (converted > 0) {
                     media->audio_frames = converted;
@@ -1024,7 +1091,12 @@ static int refill_audio(struct sx_media* media) {
             }
             return 0;
         }
-        if (media->source_ops->resample == NULL || !ensure_resampler(media, &frame)) {
+        /* The converter is the frame's own provider's, so asking the source's
+         * vtable here is what handed a Vorbis PCM block to swresample. See
+         * `converter_ops`. */
+        if (converter_ops(media, media->audio_slot) == NULL ||
+            converter_ops(media, media->audio_slot)->resample == NULL ||
+            !ensure_resampler(media, &frame)) {
             release_frame(&frame);
             continue;
         }
@@ -1053,7 +1125,8 @@ static int refill_audio(struct sx_media* media) {
             release_frame(&frame);
             continue;
         }
-        converted = media->source_ops->resample(media->resampler, &frame, media->audio_buffer,
+        converted = converter_ops(media, media->audio_slot)->resample(media->resampler, &frame,
+                                                                     media->audio_buffer,
                                                 media->audio_capacity);
         release_frame(&frame);
         if (converted <= 0) {
@@ -1153,8 +1226,10 @@ int sx_media_seek(struct sx_media* media, int64_t target_us) {
     if (media->source_ops->seek == NULL || !media->source_ops->seek(media->source, target_us)) {
         return 0;
     }
-    if (media->resampler != NULL && media->source_ops->resampler_close != NULL) {
-        media->source_ops->resampler_close(media->resampler);
+    if (media->resampler != NULL && media->resampler_ops != NULL &&
+        media->resampler_ops->resampler_close != NULL) {
+        media->resampler_ops->resampler_close(media->resampler);
+        media->resampler_ops = NULL;
         media->resampler = NULL;
     }
     for (index = 0; index < media->stream_count; ++index) {

@@ -645,8 +645,13 @@ const struct sx_media_backend_ops kCodecOnlyOps = {
     /* decoder role, packet-oriented: no open_whole, no seek_stream */
     decoder_claim, decoder_open, decoder_close, decoder_flush, decoder_send, decoder_receive,
     nullptr, nullptr,
-    /* converter role, all null */
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+    /* converter role: THIS provider's, because a frame's data belongs to the
+     * library that produced it and only that library can read it. A demuxer
+     * hands out packets, not frames, so it has nothing to convert and its
+     * converter role is left null. Splitting the two was what the engine used to
+     * allow, and it is the bug this arrangement exists to prevent. */
+    scaler_open, scaler_close, scale,
+    resampler_open, resampler_close, resample, resample_flush,
 };
 
 const struct sx_media_backend_ops kSourceOps = {
@@ -655,9 +660,11 @@ const struct sx_media_backend_ops kSourceOps = {
     source_container_name, source_metadata,
     /* decoder role, all null: this provider only demuxes and converts */
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-    /* converter role */
-    scaler_open, scaler_close, scale,
-    resampler_open, resampler_close, resample, resample_flush,
+    /* converter role: none. It hands out packets and never sees a frame, so
+     * filling this in would only be a way for the wrong library to be handed
+     * somebody else's bytes. */
+    nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr,
 };
 
 struct sx_media_audio_format audio_out_format()
@@ -1227,6 +1234,10 @@ void test_a_whole_file_decoder_is_handed_the_source()
     int16_t block[256];
     int frames = 0;
     int reads = 0;
+    /* Cumulative across the whole run, so the baseline is taken here rather than
+     * cleared: clearing would hide a conversion that happened during the open,
+     * which is when the engine builds one. */
+    const int resamples_before = g_resample_calls;
 
     memset(block, 0, sizeof(block));
     sx_media_create(&media);
@@ -1240,7 +1251,19 @@ void test_a_whole_file_decoder_is_handed_the_source()
     while (sx_media_read_audio(media, block, 128, nullptr) > 0 && ++reads < 16) {
         frames += 128;
     }
-    expect(frames > 0, "the self-fed decoder produced audio");
+    /* No audio, and that is the assertion. This provider fills no converter role,
+     * and a frame's data is its own to interpret, so the demuxer's resampler is
+     * not asked to read it. Asking it anyway is what handed a SxCodecs Vorbis
+     * block of interleaved s16 to swresample as an `AVFrame*` on the real target:
+     * the first bytes of the PCM read as a channel layout, `swr_init` failed, and
+     * the stream produced silence with nothing reporting why.
+     *
+     * A fallback would be the wrong fix twice over: it reads somebody else's bytes
+     * as its own, and when the bytes happen to be readable it looks like it
+     * works. */
+    expect(frames == 0, "a provider with no converter produces no converted audio");
+    expect(g_resample_calls == resamples_before,
+           "and the demuxer's resampler is never asked to read its frames");
     expect(g_whole.send_calls == 0, "and not one packet was sent to it");
 
     sx_media_destroy(media);
@@ -1264,6 +1287,7 @@ void test_no_packet_is_read_when_every_stream_reads_its_own_source()
     int16_t block[256];
     int frames = 0;
     int reads = 0;
+    const int resamples_before = g_resample_calls;
 
     memset(block, 0, sizeof(block));
     sx_media_create(&media);
@@ -1273,9 +1297,15 @@ void test_no_packet_is_read_when_every_stream_reads_its_own_source()
     while (sx_media_read_audio(media, block, 128, nullptr) > 0 && ++reads < 16) {
         frames += 128;
     }
-    expect(frames > 0, "and audio came out of it");
-    expect(sx_media_next_video_frame(media) == 1, "and video came out of it too");
-    expect(g_source.read_calls == 0, "while the demuxer was never asked for a single packet");
+    /* No converted audio, for the reason the first test gives: this provider
+     * ships no converter, so its frames go unconverted rather than through the
+     * demuxer's. The video still arrives, because `next_video_frame` hands out the
+     * decoder's frame and conversion is the caller's business. */
+    expect(sx_media_read_audio(media, block, 128, nullptr) == 0,
+           "no converted audio without a converter");
+    expect(g_resample_calls == resamples_before, "and the demuxer's resampler was never asked");
+    expect(sx_media_next_video_frame(media) == 1, "while the video frame still arrives");
+    expect(g_source.read_calls == 0, "and the demuxer read no packet either");
 
     sx_media_destroy(media);
 }

@@ -20,6 +20,7 @@
 #include "playback.h"
 #include "selftest.h"
 #include "sxmedia_ffmpeg.h"
+#include "savanxp/sxmedia_vorbis.h"
 
 #include "icons.inc"
 
@@ -830,6 +831,18 @@ int main(int argc, char** argv) {
      * rechazado por nombre duplicado, no por un conflicto de implementacion. */
     if (sxmedia_ffmpeg_register() != 0) {
         fprintf(stderr, "mediaplayer: the FFmpeg backend could not be registered\n");
+        return 1;
+    }
+    /* Y el códec que es del sistema, que va primero: prioridad 100 contra 0.
+     *
+     * Este registro es el que no dice nada. El reproductor no sabe que hay un
+     * Vorbis dentro, ni que la biblioteca se llama stb_vorbis, ni que el fichero
+     * se lee dos veces. Sabe que hay un códec del sistema con prioridad mas
+     * alta, y si un dia no lo hay, el stream cae al de FFmpeg y suena igual.
+     * El aviso que veria un usuario si los dos faltaran diria "vorbis", no
+     * "stb_vorbis", y eso es exactamente lo que se pidio al disenar esto. */
+    if (sxmedia_vorbis_register() != 0) {
+        fprintf(stderr, "mediaplayer: the Vorbis codec could not be registered\n");
         return 1;
     }
 

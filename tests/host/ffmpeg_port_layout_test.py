@@ -122,6 +122,28 @@ def main() -> int:
     }
     ast.parse((port / "tests" / "qmp_display.py").read_text(encoding="utf-8"))
 
+    # The vtable is initialised positionally, so a field added to
+    # `sx_media_backend_ops` shifts every entry after it and the result is a
+    # provider whose converters are the wrong functions -- or a compile error
+    # that only shows up when a port is relinked, which is not something the host
+    # suite does. This is not a substitute for compiling the port; it is the only
+    # check that can run without libav, and it is what would have caught the two
+    # whole-source slots being left out of the FFmpeg backend.
+    backend_source = (port / "overlay" / "sxmedia" / "sxmedia_ffmpeg.c").read_text(encoding="utf-8")
+    initialiser = backend_source.split("kFFmpegOps = {", 1)[1].split("};", 1)[0]
+    # Comments come out first: an English comma inside a block comment is not an
+    # initialiser entry, and counting one turns a correct table into a failure.
+    initialiser = re.sub(r"/\*.*?\*/", " ", initialiser, flags=re.DOTALL)
+    initialiser = re.sub(r"//[^\n]*", " ", initialiser)
+    ops_entries = [entry for entry in initialiser.split(",") if entry.strip()]
+    header = (root / "subsystems/posix/sdk/v1/include/savanxp/sxmedia.h").read_text(encoding="utf-8")
+    declared_ops = header.split("struct sx_media_backend_ops {", 1)[1].split("\n};", 1)[0]
+    fields = [line for line in declared_ops.splitlines() if "(*" in line]
+    assert len(fields) == len(ops_entries), (
+        f"sx_media_backend_ops has {len(fields)} entries and the FFmpeg backend "
+        f"initialises {len(ops_entries)}; the positional table is misaligned"
+    )
+
     for name in ("build.sh", "all.sh", "fetch.sh", "runtime.sh", "configure.sh", "make.sh", "link.sh", "install.sh", "smoke.sh"):
         script = port / name
         assert script.is_file()
