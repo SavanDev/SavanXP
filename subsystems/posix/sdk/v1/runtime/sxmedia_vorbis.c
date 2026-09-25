@@ -31,6 +31,7 @@
  */
 
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -332,6 +333,23 @@ static int vorbis_resample(void* opaque, const struct sx_media_frame* frame, int
     return frames;
 }
 
+/* -- enumeration role ------------------------------------------------------ */
+
+/* One codec, and it is written out rather than generated. The generation that
+ * matters is for a codec *library* with hundreds of decoders, where a typed list
+ * would be a maintenance hole; SxCodecs will need the same generator once it has
+ * more than one codec, and not before. */
+static int vorbis_list_codecs(void* user, struct sx_media_codec_info* out, int capacity) {
+    (void)user;
+    if (out == NULL || capacity <= 0) {
+        return 1;  /* the total, so a caller can size its buffer */
+    }
+    memset(&out[0], 0, sizeof(out[0]));
+    snprintf(out[0].name, SX_MEDIA_CODEC_CAPACITY, "vorbis");
+    out[0].kind = SX_MEDIA_KIND_AUDIO;
+    return 1;
+}
+
 /* -- the vtable ------------------------------------------------------------
  *
  * Source role null: this is a codec library, not a container library. It never
@@ -354,6 +372,8 @@ static const struct sx_media_backend_ops kVorbisOps = {
     NULL, NULL, NULL,
     /* audio converters: the identity, and only the identity */
     vorbis_resampler_open, vorbis_resampler_close, vorbis_resample, NULL,
+    /* enumeration: one codec, named the way `claim_stream` names it */
+    vorbis_list_codecs,
 };
 
 static struct sx_media_backend g_vorbis_backend = {

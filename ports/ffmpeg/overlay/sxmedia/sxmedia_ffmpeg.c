@@ -31,6 +31,7 @@
 #include "sxmedia_ffmpeg.h"
 
 #include <libavcodec/avcodec.h>
+#include <stdio.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/log.h>
@@ -673,6 +674,31 @@ static int ffmpeg_resample_flush(void* opaque, int16_t* out, int out_capacity) {
     return swr_convert(resampler->context, planes, out_capacity, NULL, 0);
 }
 
+/* The generated table of decoders, and the row type it uses -- the generator emits
+ * both, so there is exactly one definition and a change to the shape cannot leave
+ * one of the two behind. It lands in the build directory beside the other artifacts
+ * rather than in the overlay, because it is a function of how libav was configured
+ * and a checked-in copy would be a promise about a build nobody made. */
+#include "sxmedia_ffmpeg_caps.inc"
+
+/* -- enumeration role ------------------------------------------------------ */
+
+static int ffmpeg_list_codecs(void* user, struct sx_media_codec_info* out, int capacity) {
+    const int total = (int)(sizeof(kFFmpegCodecs) / sizeof(kFFmpegCodecs[0]));
+    int index;
+
+    (void)user;
+    if (out == NULL || capacity <= 0) {
+        return total;
+    }
+    for (index = 0; index < total && index < capacity; ++index) {
+        memset(&out[index], 0, sizeof(out[index]));
+        snprintf(out[index].name, SX_MEDIA_CODEC_CAPACITY, "%s", kFFmpegCodecs[index].name);
+        out[index].kind = kFFmpegCodecs[index].kind;
+    }
+    return total;
+}
+
 /* ---- the backend --------------------------------------------------------- */
 
 static const struct sx_media_backend_ops kFFmpegOps = {
@@ -687,6 +713,12 @@ static const struct sx_media_backend_ops kFFmpegOps = {
     NULL, NULL,
     ffmpeg_scaler_open, ffmpeg_scaler_close, ffmpeg_scale,
     ffmpeg_resampler_open, ffmpeg_resampler_close, ffmpeg_resample, ffmpeg_resample_flush,
+    /* Enumeration, from the generated table. This build's decoder list is
+     * whatever libav was configured with, so it is emitted by
+     * `tools/sxmedia-caps.c` walking the library rather than written here: a list
+     * typed by hand drifts from what actually got linked, and then the player
+     * advertises a file it cannot open. */
+    ffmpeg_list_codecs,
 };
 
 static struct sx_media_backend g_ffmpeg_backend = {

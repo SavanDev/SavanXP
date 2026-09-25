@@ -323,6 +323,12 @@ Cut-off notes:
 
 ### Changed
 
+- **A program can now ask the system what it can play, instead of carrying a list
+  of its own.** There was no such answer before: no table of decodable formats
+  existed anywhere in the system. A backend that ships a codec library publishes
+  what it has, the FFmpeg port's list is generated from the configuration that
+  built it, and the entries are the codec names a notice shows.
+
 - **The system can now decode Ogg Vorbis, and says so when it cannot.**
   `savanxp/sxmedia_vorbis.h` is a Vorbis decoder that a program registers like any
   other backend and never learns is stb_vorbis inside; the notice for a track it

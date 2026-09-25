@@ -61,6 +61,8 @@ static void copy_text(char* destination, size_t capacity, const char* source) {
  * registration is a link-time fact and a registry that could be emptied would
  * have nothing to offer. */
 static struct sx_media_backend g_backends[SX_MEDIA_MAX_BACKENDS];
+/* Set by registration, cleared by the enumeration. See `collect_codecs`. */
+static int g_codecs_stale = 1;
 static int g_backend_count;
 
 int sx_media_register_backend(const struct sx_media_backend* backend) {
@@ -96,7 +98,96 @@ int sx_media_register_backend(const struct sx_media_backend* backend) {
     }
     g_backends[position] = *backend;
     g_backend_count += 1;
+    /* The enumeration is a function of the table, so the table changing has to
+     * make it stale. */
+    g_codecs_stale = 1;
     return 0;
+}
+
+/* The codec enumeration, gathered once and then handed out.
+ *
+ * Two passes because the total is not known in advance: a provider returns what
+ * it would write, so the count is summed first and the array filled second, and a
+ * provider that lies upward only wastes a slot. A provider that returns fewer on
+ * the second pass than it claimed on the first is not believed, because the
+ * alternative is a hole in the array that the caller cannot see.
+ *
+ * Bounded on purpose. Eight backends publishing a library's worth of decoders
+ * would not fit a fixed buffer, and the honest response to "there are more than
+ * this" is a count the caller can see rather than a silent truncation that reads
+ * as a complete list. A build that overflows this is a build whose player cannot
+ * show the whole catalogue, and it says so. */
+#define SX_MEDIA_MAX_CODECS 256
+static struct sx_media_codec_info g_codecs[SX_MEDIA_MAX_CODECS];
+static int g_codec_count;
+
+static int codec_same(const struct sx_media_codec_info* a, const struct sx_media_codec_info* b) {
+    return a->kind == b->kind && strncmp(a->name, b->name, SX_MEDIA_CODEC_CAPACITY) == 0;
+}
+
+/* Registration invalidates the enumeration, and it has to.
+ *
+ * Caching it without this made the registry inconsistent with itself: a backend
+ * registered after the first question was invisible to `sx_media_codec_count` and
+ * visible to `sx_media_has_codec`, which asks the providers live. Two ways to ask
+ * the same question with two different answers is worse than not caching, and
+ * registration is rare enough that recomputing costs nothing that matters. */
+static void collect_codecs(void) {
+    int index;
+
+    g_codec_count = 0;
+    for (index = 0; index < g_backend_count && g_codec_count < SX_MEDIA_MAX_CODECS; ++index) {
+        const struct sx_media_backend_ops* ops = g_backends[index].ops;
+        int total;
+        if (ops->list_codecs == NULL) {
+            continue;
+        }
+        total = ops->list_codecs(g_backends[index].user, NULL, 0);
+        if (total <= 0) {
+            continue;
+        }
+        if (total > SX_MEDIA_MAX_CODECS - g_codec_count) {
+            total = SX_MEDIA_MAX_CODECS - g_codec_count;
+        }
+        total = ops->list_codecs(g_backends[index].user, &g_codecs[g_codec_count], total);
+        if (total <= 0) {
+            continue;
+        }
+        for (int written = 0; written < total && g_codec_count < SX_MEDIA_MAX_CODECS; ++written) {
+            int seen;
+            for (seen = 0; seen < g_codec_count; ++seen) {
+                if (codec_same(&g_codecs[seen], &g_codecs[g_codec_count])) {
+                    break;
+                }
+            }
+            if (seen == g_codec_count) {
+                g_codec_count += 1;
+            }
+        }
+    }
+    g_codecs_stale = 0;
+}
+
+int sx_media_codec_count(void) {
+    if (g_codecs_stale) {
+        collect_codecs();
+    }
+    return g_codec_count;
+}
+
+int sx_media_codec_at(int index, struct sx_media_codec_info* out) {
+    if (out == NULL) {
+        return 0;
+    }
+    if (g_codecs_stale) {
+        collect_codecs();
+    }
+    if (index < 0 || index >= g_codec_count) {
+        memset(out, 0, sizeof(*out));
+        return 0;
+    }
+    *out = g_codecs[index];
+    return 1;
 }
 
 int sx_media_backend_count(void) {

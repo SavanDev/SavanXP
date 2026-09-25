@@ -144,6 +144,22 @@ def main() -> int:
         f"initialises {len(ops_entries)}; the positional table is misaligned"
     )
 
+    # The capability table is generated, never committed. A copy in the tree would
+    # be a promise about a build nobody made, and it would be wrong the first time
+    # `--enable-decoder` changed without anybody editing a C file.
+    generator = port / "tools" / "gen_sxmedia_caps.py"
+    assert generator.is_file()
+    assert not (port / "overlay" / "sxmedia" / "sxmedia_ffmpeg_caps.inc").exists()
+    assert "gen_sxmedia_caps.py" in link_script
+    # And the backend must not name a codec by hand: the whole point is that the
+    # list cannot drift from what libav was configured with.
+    assert "ffmpeg_list_codecs" in backend_source
+    assert '#include "sxmedia_ffmpeg_caps.inc"' in backend_source
+    # A hand-written name in the backend would be the thing this arrangement
+    # exists to prevent, so the check is that the only table it has is generated.
+    assert 'kFFmpegCodecs' in backend_source
+    assert backend_source.count("kFFmpegCodecs[] = {") == 0
+
     for name in ("build.sh", "all.sh", "fetch.sh", "runtime.sh", "configure.sh", "make.sh", "link.sh", "install.sh", "smoke.sh"):
         script = port / name
         assert script.is_file()

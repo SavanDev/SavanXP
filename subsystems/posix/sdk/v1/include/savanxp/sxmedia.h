@@ -108,6 +108,32 @@ const char* sx_media_status_string(enum sx_media_status status);
  * by the registry, and the reason the whole "the codec exists or it does not"
  * contract is answerable without opening anything. */
 int sx_media_has_codec(const char* codec);
+/* One codec a build can decode, as the registry reports it.
+ *
+ * This is a *fact about the build*, published so a program can be told what it
+ * can play instead of carrying a list of its own. It is deliberately not a list of
+ * file extensions: an extension is a container choice and belongs to policy, the
+ * same way `/disk/mimeicon.ini` maps extensions to icons from an editable file.
+ * Whether H.264 can be decoded here is not a preference, and a program that
+ * guessed wrong about it would show a file it then refuses to open. */
+struct sx_media_codec_info {
+    char name[SX_MEDIA_CODEC_CAPACITY];
+    int kind;  /* SX_MEDIA_KIND_*: audio, video, or SX_MEDIA_KIND_ANY if both */
+};
+
+/* What this build can decode, gathered from every registered provider and
+ * de-duplicated. `count` is how many there are, and `at` fills one out; `at`
+ * returns 0 for an index outside the range. The order is by provider priority and
+ * then by the order the provider listed, and it is not stable across builds --
+ * nothing should key off the position, only off the names.
+ *
+ * This is the answer to "what can this system play", asked of the system instead
+ * of guessed by the caller. It is not an answer about files: for a particular
+ * path, `sx_media_open` and the missing-codec list are authoritative, because
+ * only they have seen the file. */
+int sx_media_codec_count(void);
+int sx_media_codec_at(int index, struct sx_media_codec_info* out);
+
 int sx_media_backend_count(void);
 const char* sx_media_backend_name_at(int index);
 
@@ -357,9 +383,24 @@ struct sx_media_backend_ops {
      * is not an error, it is a block that has to be taken again. */
     int (*resample)(void* resampler, const struct sx_media_frame* frame,
                     int16_t* out, int out_capacity);
+
     /* The resampler's own delay, drained once the stream is over so the tail is
      * not lost. 0 when it has none. Returns how many frames it wrote. */
     int (*resample_flush)(void* resampler, int16_t* out, int out_capacity);
+
+    /* -- enumeration role ----------------------------------------------------
+     *
+     * Optional. Writes up to `capacity` entries and returns how many it wrote, or
+     * the total it would write if that is more than `capacity` -- so a caller can
+     * size a buffer with one call and fill it with the next, and a truncated fill
+     * is not mistaken for a complete one. Returns 0 when the provider cannot
+     * enumerate, which is different from enumerating nothing.
+     *
+     * A provider that ships a whole codec library fills this from what the library
+     * actually has, and for a build-time library that means a generated table: a
+     * list typed by hand can disagree with what got linked, and then the program
+     * advertises a file it cannot open. */
+    int (*list_codecs)(void* user, struct sx_media_codec_info* out, int capacity);
 };
 
 struct sx_media_backend {

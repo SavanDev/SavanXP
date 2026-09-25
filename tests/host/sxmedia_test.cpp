@@ -621,6 +621,24 @@ static int whole_seek(void* opaque, int64_t target_us) {
     return 1;
 }
 
+/* The claim list doubles as the enumeration, which is what a real codec
+ * provider's would: one table, claimed by and published from, so a codec cannot
+ * be advertised without also being decodable. Two separate lists is the shape
+ * that lets a program show a file it cannot open. */
+static int whole_list_codecs(void*, struct sx_media_codec_info* out, int capacity)
+{
+    int index;
+    if (out == nullptr || capacity <= 0) {
+        return g_whole.count;
+    }
+    for (index = 0; index < g_whole.count && index < capacity; ++index) {
+        memset(&out[index], 0, sizeof(out[index]));
+        snprintf(out[index].name, SX_MEDIA_CODEC_CAPACITY, "%s", g_whole.codecs[index]);
+        out[index].kind = SX_MEDIA_KIND_AUDIO;
+    }
+    return g_whole.count;
+}
+
 static const struct sx_media_backend_ops kWholeOps = {
     /* source role: none */
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
@@ -631,6 +649,8 @@ static const struct sx_media_backend_ops kWholeOps = {
     nullptr, nullptr, nullptr,
     /* audio converters: none */
     nullptr, nullptr, nullptr, nullptr,
+    /* enumeration: the three codecs it will claim, in the order it lists them */
+    whole_list_codecs,
 };
 
 static struct sx_media_backend g_whole_backend = {
@@ -652,6 +672,10 @@ const struct sx_media_backend_ops kCodecOnlyOps = {
      * allow, and it is the bug this arrangement exists to prevent. */
     scaler_open, scaler_close, scale,
     resampler_open, resampler_close, resample, resample_flush,
+    /* enumeration: this provider cannot list codecs. The capability query is a
+     * different code path, and a provider that is silent in one role is the
+     * normal case rather than an exception. */
+    nullptr,
 };
 
 const struct sx_media_backend_ops kSourceOps = {
@@ -665,6 +689,8 @@ const struct sx_media_backend_ops kSourceOps = {
      * somebody else's bytes. */
     nullptr, nullptr, nullptr,
     nullptr, nullptr, nullptr, nullptr,
+    /* enumeration: a demuxer knows containers, not codecs, so it lists none. */
+    nullptr,
 };
 
 struct sx_media_audio_format audio_out_format()
@@ -1408,6 +1434,48 @@ void test_a_self_fed_decoder_that_cannot_read_drops_only_its_stream()
     sx_media_destroy(media);
 }
 
+/* What this build can decode, asked of the system instead of guessed by the
+ * caller.
+ *
+ * One test, because there is one answer. The registry is permanent and the
+ * enumeration is a snapshot of it, so the first question in a process fixes the
+ * answer for the rest of the run. Three scenarios for three different expected
+ * answers would be three tests of a mutable thing that is not mutable, and the
+ * second and third would be asserting the first one's leftovers.
+ *
+ * Four claimed codecs go in and three come out, so the duplicate is proven by the
+ * arithmetic rather than by a comment. */
+void test_the_codec_enumeration_gathers_deduplicates_and_bounds()
+{
+    struct sx_media_codec_info info;
+    reset_fixture();
+
+    /* Two providers claim "faketone" and the whole-file provider claims it too;
+     * a catalogue is not helped by a name appearing three times, and a duplicated
+     * entry is how a list starts to look like it was typed by hand. */
+    g_whole.codecs[0] = "wholetone";
+    g_whole.codecs[1] = "wholeclip";
+    g_whole.codecs[2] = "faketone";
+    g_whole.codecs[3] = "faketone";
+    g_whole.count = 4;
+
+    /* Only the whole-file provider lists anything here. The demuxer knows
+     * containers, not codecs, and the packet-fed fake is silent in this role --
+     * both are the normal case and neither is an empty catalogue. */
+    expect(sx_media_codec_count() == 3, "four claimed codecs, listed once each");
+
+    expect(sx_media_codec_at(0, &info) == 1, "the first codec is addressable");
+    expect(info.kind == SX_MEDIA_KIND_AUDIO, "and carries its kind");
+    expect(sx_media_codec_at(2, &info) == 1, "so is the last one");
+    expect(strcmp(info.name, "faketone") == 0, "and the duplicate is one entry, not three");
+
+    expect(sx_media_codec_at(3, &info) == 0, "one past the end is refused");
+    memset(&info, 'x', sizeof(info));
+    expect(sx_media_codec_at(-1, &info) == 0, "a negative index is refused");
+    expect(info.name[0] == 0, "and the output is cleared rather than left as it was");
+    expect(sx_media_codec_at(0, nullptr) == 0, "a null output is refused");
+}
+
 int main()
 {
     /* The registry is process-global and permanent, so the order these are
@@ -1462,6 +1530,7 @@ int main()
     test_reopening_does_not_accumulate_state();
     test_null_is_not_a_crash();
     test_a_whole_file_decoder_is_handed_the_source();
+    test_the_codec_enumeration_gathers_deduplicates_and_bounds();
     test_no_packet_is_read_when_every_stream_reads_its_own_source();
     test_a_self_fed_stream_is_seeked_by_its_own_decoder();
     test_a_self_fed_decoder_that_declines_hands_the_stream_on();
