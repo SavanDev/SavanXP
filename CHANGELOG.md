@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **The SDK now has a media engine with a pluggable backend registry.**
+  `savanxp/sxmedia.h` and `runtime/sxmedia.c` provide the source-to-frames
+  pipeline, a per-stream decoder claim, and a capability query
+  (`sx_media_has_codec`) so a program can tell a missing codec from a missing
+  container. No image binary links it yet; the FFmpeg port is the first
+  consumer. [The design](docs/SXMEDIA.md)
+
 - **Celeste Classic is now an official port.** `./ports/ccleste/build.sh` builds
   the upstream engine unpatched and installs `/disk/bin/ccleste` plus the game
   assets under `/disk/games/celeste`; the overlay replaces the SDL frontend, so

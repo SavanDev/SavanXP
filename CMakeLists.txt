@@ -495,6 +495,18 @@ target_include_directories(savanxp-partition-test PRIVATE
 target_compile_options(savanxp-partition-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-partition-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# The SxMedia engine and its registry. Deliberately with no savanxp_* stubs: the
+# engine opens no file, because opening a source is a backend's job, so the
+# whole registry is exercised on the host in seconds rather than in a QEMU boot.
+# See docs/SXMEDIA.md.
+add_executable(savanxp-sxmedia-test
+    subsystems/posix/sdk/v1/runtime/sxmedia.c
+    tests/host/sxmedia_test.cpp)
+target_include_directories(savanxp-sxmedia-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-sxmedia-test PRIVATE -O1 -Wall -Wextra)
+set_target_properties(savanxp-sxmedia-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 add_executable(savanxp-sxfs-volume-test
     kernel/sxfs.cpp
     tests/host/kernel_string_stubs.cpp
@@ -509,12 +521,14 @@ target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-d
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test
+    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test
+            savanxp-sxmedia-test savanxp-sxfs-volume-test
     COMMENT "Building SavanXP host tests"
 )
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
+add_test(NAME sxmedia-test COMMAND savanxp-sxmedia-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
 
 add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"
