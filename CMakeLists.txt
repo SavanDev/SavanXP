@@ -292,29 +292,25 @@ set_target_properties(savanxp_external_runtime PROPERTIES
     C_EXTENSIONS YES
 )
 
-# The generated desktop assets are deliberately kept as Python calls. CMake
-# owns their ordering and the compile dependency, while the existing generators
-# remain the source of truth for the binary formats.
-set(SAVANXP_DESKTOP_ART_STAMP "${SAVANXP_GENERATED_ROOT}/desktop-source-art.stamp")
-add_custom_command(OUTPUT "${SAVANXP_DESKTOP_ART_STAMP}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_GENERATED_ROOT}"
+# Desktop icon PNGs are checked-in, hand-editable source assets. Keep the
+# generator as an explicit target, but never let a normal build redraw or
+# overwrite artwork that an app author has replaced.
+add_custom_target(savanxp_desktop_source_art
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_desktop_source_art.py"
             --project-root "${CMAKE_SOURCE_DIR}"
-    COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_DESKTOP_ART_STAMP}"
-    DEPENDS "${CMAKE_SOURCE_DIR}/tools/gen_desktop_source_art.py"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Generating desktop source art"
+    COMMENT "Generating optional desktop source art"
     VERBATIM
 )
-add_custom_target(savanxp_desktop_source_art DEPENDS "${SAVANXP_DESKTOP_ART_STAMP}")
 set(SAVANXP_BOOT_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/boot_logo.h")
 set(SAVANXP_BRAND_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/brand_logo.h")
 set(SAVANXP_CURSOR_HEADER "${SAVANXP_GENERATED_ROOT}/cursor_asset.h")
 set(SAVANXP_DESKTOP_ICONS_HEADER "${SAVANXP_GENERATED_ROOT}/desktop_icon_assets.h")
+set(SAVANXP_DESKTOP_ICON_SOURCES
+    "${CMAKE_SOURCE_DIR}/assets/desktop/icons/16x16/desktop.png"
+    "${CMAKE_SOURCE_DIR}/assets/desktop/icons/32x32/desktop.png")
 file(GLOB SAVANXP_CURSOR_ASSETS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/desktop/cursors/*.png")
-file(GLOB SAVANXP_DESKTOP_ICON_ASSETS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png")
 add_custom_command(OUTPUT "${SAVANXP_BOOT_LOGO_HEADER}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_GENERATED_ROOT}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_boot_logo.py"
@@ -353,8 +349,7 @@ add_custom_command(OUTPUT "${SAVANXP_DESKTOP_ICONS_HEADER}"
             --project-root "${CMAKE_SOURCE_DIR}" --output "${SAVANXP_DESKTOP_ICONS_HEADER}"
     DEPENDS
         "${CMAKE_SOURCE_DIR}/tools/gen_desktop_icon_assets.py"
-        "${SAVANXP_DESKTOP_ART_STAMP}"
-        ${SAVANXP_DESKTOP_ICON_ASSETS}
+        ${SAVANXP_DESKTOP_ICON_SOURCES}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     VERBATIM
 )

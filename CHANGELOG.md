@@ -308,6 +308,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Normal builds no longer regenerate desktop source icons.** Checked-in PNGs are
+  treated as editable artwork; `tools/gen_desktop_source_art.py` remains available
+  through the optional `savanxp_desktop_source_art` target.
 - **The About app now identifies the system as the Alpha edition.**
 - **The boot screen fades in from black, like a classic desktop splash.** Logo,
   name, progress bar and status line brighten together over about a second,

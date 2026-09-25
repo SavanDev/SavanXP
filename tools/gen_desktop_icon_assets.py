@@ -2,8 +2,8 @@
 """Convierte los PNG de iconos/menu strip del desktop a
 build/generated/desktop_icon_assets.h.
 
-Usa Pillow para convertir los PNG a un header C; `build.sh` lo invoca después de
-`gen_desktop_source_art.py`.
+Usa Pillow para convertir los PNG versionados a un header C. El build normal
+solo empaqueta esos PNG: no crea ni reemplaza el arte fuente.
 
 Uso:  python tools/gen_desktop_icon_assets.py --project-root DIR --output desktop_icon_assets.h
 """
@@ -16,8 +16,8 @@ from PIL import Image
 # Solo el generico: es el unico desktop_icon_id que sigue existiendo
 # (desktop_icons.h). app-terminal.png, app-libgfx-demo.png,
 # app-keyboard-settings.png, app-mouse.png y app-notepad.png SIGUEN en
-# assets/desktop/icons/ -- gen_desktop_source_art.py los sigue regenerando --
-# pero ya no se hornean aca: son el catalogo del sistema que
+# assets/desktop/icons/ como PNG editables, pero ya no se hornean aca: son el
+# catalogo del sistema que
 # gen_sxe_resources.py lee para icon=<nombre>, un consumidor DISTINTO de este
 # header (ver docs/SXE_FORMAT.md, "icon= ya no elige de un catalogo").
 MANIFEST = [

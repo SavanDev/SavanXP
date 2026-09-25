@@ -2,8 +2,9 @@
 """Genera el arte fuente del desktop (iconos 16x16/32x32 + banda del menu
 Start) como PNGs bajo assets/desktop/.
 
-Genera el arte con Pillow. `build.sh` lo invoca en cada build antes de convertir
-los PNG a headers C.
+Genera el arte con Pillow como punto de partida. El build normal trata los PNG
+versionados como fuentes editables y NO invokes este script; correlo solo de
+forma explicita cuando quieras regenerar el set base.
 
 Uso:  python tools/gen_desktop_source_art.py [--project-root DIR]
 """

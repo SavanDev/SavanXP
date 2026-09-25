@@ -461,9 +461,10 @@ the binary already brings its own").
 > `app-keyboard-settings.png`, `app-mouse.png`, `app-notepad.png`) **are still
 > in `assets/desktop/icons/`** — unlike Doom's, they did not move anywhere.
 > They remain the source each `.sxres` references with `icon=<name>`
-> (`shellapp.sxres` says `icon=app-terminal`, etc.) and
-> `tools/gen_desktop_source_art.py` still regenerates them on every build. The
-> only thing retired was the step that *also* baked them into a second C array
+> (`shellapp.sxres` says `icon=app-terminal`, etc.). They remain checked-in,
+> editable PNGs; normal builds package them without calling
+> `tools/gen_desktop_source_art.py`. The only thing retired was the step that
+> *also* baked them into a second C array
 > inside `desktop_icons.c` — `tools/gen_desktop_icon_assets.py` no longer lists
 > them. Two catalogs that shared PNGs by coincidence, not one catalog with two
 > names.
