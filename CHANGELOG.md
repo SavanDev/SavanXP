@@ -323,6 +323,13 @@ Cut-off notes:
 
 ### Changed
 
+- **A media backend may now decode a stream by reading the source itself.** A
+  provider that fills `open_whole` instead of `send_packet` takes ownership of the
+  stream and pulls frames from the file, which is the shape libraries like
+  `stb_vorbis` need. Choosing a decoder now asks every provider that claims the
+  stream for a turn and keeps the first that opens it, so one that turns a file
+  down hands it to the next provider instead of losing it.
+
 - **Window title text is now one pixel smaller and bold.** Caption text uses a
   dedicated 12px Noto Sans face while the rest of the UI keeps its regular font.
 

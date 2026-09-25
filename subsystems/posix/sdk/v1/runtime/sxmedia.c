@@ -134,15 +134,27 @@ int sx_media_has_codec(const char* codec) {
 }
 
 /* The provider that owns a stream, by priority. NULL when nobody claims it. */
-static const struct sx_media_backend* find_decoder(const struct sx_media_stream_desc* stream) {
+static const struct sx_media_backend* find_decoder_from(int from,
+                                                       const struct sx_media_stream_desc* stream) {
     int index;
-    for (index = 0; index < g_backend_count; ++index) {
+    for (index = from; index < g_backend_count; ++index) {
         const struct sx_media_backend_ops* ops = g_backends[index].ops;
         if (ops->claim_stream != NULL && ops->claim_stream(g_backends[index].user, stream)) {
             return &g_backends[index];
         }
     }
     return NULL;
+}
+
+static const struct sx_media_backend* find_decoder(const struct sx_media_stream_desc* stream) {
+    return find_decoder_from(0, stream);
+}
+
+/* The next provider after `previous` that also claims this stream, so an open
+ * that failed can hand the stream on instead of dropping it. */
+static const struct sx_media_backend* find_decoder_after(const struct sx_media_backend* previous,
+                                                         const struct sx_media_stream_desc* stream) {
+    return find_decoder_from((int)(previous - g_backends) + 1, stream);
 }
 
 /* The provider that parses this source. NULL when nobody will. */
@@ -509,13 +521,30 @@ int sx_media_open(struct sx_media* media, const struct sx_media_source* source,
             stream->desc.sar_den = 1;
         }
 
-        owner = find_decoder(&stream->desc);
-        if (owner != NULL && owner->ops->open_whole != NULL) {
-            /* A whole-file decoder is handed the source and reads it itself. */
-            stream->decoder = owner->ops->open_whole(owner->user, &media->request, &stream->desc);
-            stream->self_fed = stream->decoder != NULL;
-        } else if (owner != NULL && owner->ops->open_decoder != NULL) {
-            stream->decoder = owner->ops->open_decoder(owner->user, &stream->desc);
+        /* Every provider that claims the stream gets a turn, and the first one
+         * that actually opens it wins.
+         *
+         * The whole-source variant is why this is a loop and not a single
+         * lookup. A whole-file decoder cannot know whether it can read a file
+         * until it has tried, so `open_whole` returning NULL is how it says "not
+         * this one" -- and treating that as final would lose a stream that the
+         * next provider can decode, which is the exact opposite of what a
+         * fallback is for. Its claim is by codec name and on purpose, so the
+         * engine has to be able to move on. */
+        for (owner = find_decoder(&stream->desc); owner != NULL;
+             owner = find_decoder_after(owner, &stream->desc)) {
+            if (owner->ops->open_whole != NULL) {
+                /* A whole-file decoder is handed the source and reads it
+                 * itself, so the request outlives the caller's struct. */
+                stream->decoder = owner->ops->open_whole(owner->user, &media->request,
+                                                         &stream->desc);
+                stream->self_fed = stream->decoder != NULL;
+            } else if (owner->ops->open_decoder != NULL) {
+                stream->decoder = owner->ops->open_decoder(owner->user, &stream->desc);
+            }
+            if (stream->decoder != NULL) {
+                break;
+            }
         }
         if (stream->decoder == NULL) {
             /* Only playback content is reported as dropped. A text stream

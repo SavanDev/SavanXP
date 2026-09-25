@@ -21,6 +21,7 @@
  * library is used, for the same reason the gfx2d test avoids it. */
 extern "C" {
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 }
 
@@ -91,6 +92,7 @@ struct FakeSource {
     int cursor;
     int open_calls;
     int claim_calls;
+    int read_calls;
     int64_t last_seek_us;
     int seekable;
     int open_fails;
@@ -98,12 +100,30 @@ struct FakeSource {
     char opened_path[128];
 };
 
+/* The claim list of the whole-file fake, declared here because the fixture
+ * clears it and the fake itself is defined further down. A test that leaves it
+ * empty leaves that provider inert, which is what keeps the other 118 checks
+ * reading a packet-fed video stream. */
+struct WholeClaims {
+    const char* codecs[4];
+    int count;
+    int open_calls;
+    int send_calls;
+    int seeks;
+    int64_t last_seek_us;
+    int pending_frames;
+    int declines;
+};
+
+static WholeClaims g_whole;
+
 FakeSource g_source;
 FakeStreamSetup g_setup_video;
 FakeStreamSetup g_setup_audio;
 
 void reset_fixture()
 {
+    memset(&g_whole, 0, sizeof(g_whole));
     memset(&g_source, 0, sizeof(g_source));
     g_source.seekable = 1;
     g_source.last_seek_us = -1;
@@ -266,6 +286,7 @@ int source_read_packet(void* handle, struct sx_media_packet* packet)
     packet->key = fake->key;
     packet->data = fake->data;
     packet->size = sizeof(fake->data);
+    self->read_calls += 1;
     self->cursor += 1;
     return 1;
 }
@@ -491,6 +512,131 @@ int resample_flush(void*, int16_t* out, int capacity)
     return frames;
 }
 
+/* ---- a whole-file decoder, shaped like stb_vorbis ----------------------
+ *
+ * The other fake decoder is fed packets. This one is handed the source and
+ * reads it itself, which is the shape a whole-file library has to be given and
+ * the one `stb_vorbis` is.
+ *
+ * It claims from a LIST the test sets, and `reset_fixture` empties it. That
+ * isolation is the point: every other check in this file needs the video stream
+ * to be packet-fed, so a fake that always claimed it would quietly rewrite the
+ * whole suite. An empty claim list makes this provider inert unless a test asks
+ * for it, and a claim list is data anyway.
+ */
+
+struct FakeWholeDecoder {
+    int kind;
+    int produced;
+    /* The frame's data is this decoder's own, not an allocation: a provider that
+     * hands over a malloc'd block owes the engine a `release`, and the packet-fed
+     * fake sets none for the same reason this one does not. */
+    int16_t samples[64];
+};
+
+static int whole_claim(void*, const struct sx_media_stream_desc* stream)
+{
+    int index;
+    if (stream == nullptr) {
+        return 0;
+    }
+    if (stream->kind != SX_MEDIA_KIND_ANY && stream->kind != SX_MEDIA_KIND_AUDIO &&
+        stream->kind != SX_MEDIA_KIND_VIDEO) {
+        return 0;
+    }
+    for (index = 0; index < g_whole.count; ++index) {
+        if (strcmp(stream->codec, g_whole.codecs[index]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* `open_decoder` is NULL on purpose. A provider that fills `open_whole` is
+ * saying it will not be fed, and the engine must take that at its word instead
+ * of falling back to the packet path. */
+static void* whole_open(void*, const struct sx_media_source* source,
+                        const struct sx_media_stream_desc* stream)
+{
+    FakeWholeDecoder* decoder;
+    g_whole.open_calls += 1;
+    /* It needs the source and nothing else: a whole-file decoder does not care
+     * about `extradata`, because it reads the file. That is the whole difference
+     * between the two shapes. */
+    if (g_whole.declines || source == nullptr || source->path == nullptr) {
+        return nullptr;
+    }
+    decoder = new FakeWholeDecoder();
+    decoder->kind = stream->kind;
+    return decoder;
+}
+
+static void whole_close(void* handle) { delete static_cast<FakeWholeDecoder*>(handle); }
+
+static void whole_flush(void* opaque) {
+    static_cast<FakeWholeDecoder*>(opaque)->produced = 0;
+}
+
+/* Present so the engine can tell it apart from a missing one, and never called:
+ * a test that sees this counter move has found a routing bug. */
+static int whole_send(void*, const struct sx_media_packet*) {
+    g_whole.send_calls += 1;
+    return 1;
+}
+
+static int whole_receive(void* opaque, struct sx_media_frame* out)
+{
+    FakeWholeDecoder* decoder = static_cast<FakeWholeDecoder*>(opaque);
+    if (decoder->produced >= g_whole.pending_frames) {
+        return -1;
+    }
+    out->time_us = (int64_t)decoder->produced * 1000000LL;
+    if (decoder->kind == SX_MEDIA_KIND_VIDEO) {
+        out->width = 64;
+        out->height = 48;
+        out->sample_rate = 0;
+        out->channels = 0;
+        out->format = 7;
+        out->count = 0;
+        out->data = nullptr;
+        out->release = nullptr;
+    } else {
+        out->width = 0;
+        out->height = 0;
+        out->sample_rate = 8000;
+        out->channels = 1;
+        out->format = 1;
+        out->count = 64;
+        out->data = decoder->samples;
+        out->release = nullptr;
+    }
+    decoder->produced += 1;
+    return 1;
+}
+
+static int whole_seek(void* opaque, int64_t target_us) {
+    static_cast<FakeWholeDecoder*>(opaque)->produced = 0;
+    g_whole.seeks += 1;
+    g_whole.last_seek_us = target_us;
+    return 1;
+}
+
+static const struct sx_media_backend_ops kWholeOps = {
+    /* source role: none */
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+    /* decoder role: claims, refuses to be fed, and reads the source itself */
+    whole_claim, nullptr, whole_close, whole_flush, whole_send, whole_receive,
+    whole_open, whole_seek,
+    /* video converters: none */
+    nullptr, nullptr, nullptr,
+    /* audio converters: none */
+    nullptr, nullptr, nullptr, nullptr,
+};
+
+static struct sx_media_backend g_whole_backend = {
+    "wholefile", SX_MEDIA_BACKEND_ABI, 500, &kWholeOps, &g_whole,
+};
+
 /* ---- the two providers, shaped like the two libraries -------------------- */
 
 const struct sx_media_backend_ops kCodecOnlyOps = {
@@ -564,18 +710,19 @@ void test_registration_rejects_bad_input()
     duplicate.abi_version = SX_MEDIA_BACKEND_ABI;
     duplicate.ops = &kCodecOnlyOps;
     expect(sx_media_register_backend(&duplicate) == -17, "a duplicate name is rejected");
-    expect(sx_media_backend_count() == 3, "and the table did not grow");
+    expect(sx_media_backend_count() == 4, "and the table did not grow");
 }
 
 void test_registry_order()
 {
     /* Priority descending; registration order breaks a tie. The table is
      * permanent, so this asserts against the order main() built. */
-    expect(sx_media_backend_count() == 3, "three backends are registered");
-    expect_str(sx_media_backend_name_at(0), "refuses", "the highest priority is asked first");
-    expect_str(sx_media_backend_name_at(1), "fakecodec", "then the codec library");
-    expect_str(sx_media_backend_name_at(2), "fakedemux", "then the demuxer");
-    expect(sx_media_backend_name_at(3) == nullptr, "an index past the end is null");
+    expect(sx_media_backend_count() == 4, "four backends are registered");
+    expect_str(sx_media_backend_name_at(0), "wholefile", "the highest priority is asked first");
+    expect_str(sx_media_backend_name_at(1), "refuses", "then the refusing provider");
+    expect_str(sx_media_backend_name_at(2), "fakecodec", "then the codec library");
+    expect_str(sx_media_backend_name_at(3), "fakedemux", "then the demuxer");
+    expect(sx_media_backend_name_at(4) == nullptr, "an index past the end is null");
     expect(sx_media_backend_name_at(-1) == nullptr, "a negative index is null");
 }
 
@@ -786,7 +933,10 @@ void test_a_block_larger_than_the_read_is_not_truncated_silently()
     struct sx_media* media = nullptr;
     struct sx_media_source source = fake_source(1);
     enum sx_media_status status = SX_MEDIA_OK;
-    int16_t small[64];
+    /* 64 FRAMES of stereo is 128 shorts, not 64. Sizing the buffer by `frames`
+     * alone overflows it, which is the trap the header spells out; a previous
+     * version of this test had `small[64]` and AddressSanitizer found it. */
+    int16_t small[64 * 2];
     int first = 0;
 
     memset(small, 0, sizeof(small));
@@ -1059,6 +1209,175 @@ void test_null_is_not_a_crash()
 
 }  // namespace
 
+/* A whole-file decoder is handed the source and reads it. The engine's half of
+ * that contract is three things, and each is one that could silently not happen:
+ * the stream is opened through `open_whole` rather than `open_decoder`, no
+ * packet is ever routed to it, and a seek reaches the decoder rather than
+ * travelling through the demuxer. */
+void test_a_whole_file_decoder_is_handed_the_source()
+{
+    reset_fixture();
+    g_whole.codecs[0] = "faketone";
+    g_whole.count = 1;
+    g_whole.pending_frames = 3;
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(1);
+    enum sx_media_status status = SX_MEDIA_OK;
+    int16_t block[256];
+    int frames = 0;
+    int reads = 0;
+
+    memset(block, 0, sizeof(block));
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "a file with a self-fed stream opened");
+    expect(g_whole.open_calls == 1, "and the whole-file decoder was the one that opened it");
+    /* The packet fake also claims "faketone" and sits at a lower priority, so
+     * this is a contest and not a foregone conclusion. */
+    expect(sx_media_stream_decodable(media, 1) == 1, "the self-fed stream is decodable");
+    expect(sx_media_has_audio(media) == 1, "and it is the audio stream");
+
+    while (sx_media_read_audio(media, block, 128, nullptr) > 0 && ++reads < 16) {
+        frames += 128;
+    }
+    expect(frames > 0, "the self-fed decoder produced audio");
+    expect(g_whole.send_calls == 0, "and not one packet was sent to it");
+
+    sx_media_destroy(media);
+}
+
+/* When every decodable stream reads its own source there is nothing left for
+ * the demuxer to do, and walking the payload would be reading the file for
+ * nothing. The demuxer still enumerated the streams, so it is still opened; it
+ * is `read_packet` that must never be called. */
+void test_no_packet_is_read_when_every_stream_reads_its_own_source()
+{
+    reset_fixture();
+    g_whole.codecs[0] = "faketone";
+    g_whole.codecs[1] = "fakevideo";
+    g_whole.count = 2;
+    g_whole.pending_frames = 3;
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(1);
+    enum sx_media_status status = SX_MEDIA_OK;
+    int16_t block[256];
+    int frames = 0;
+    int reads = 0;
+
+    memset(block, 0, sizeof(block));
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "the source opened with every stream self-fed");
+    expect(g_whole.open_calls == 2, "both streams went to the whole-file decoder");
+
+    while (sx_media_read_audio(media, block, 128, nullptr) > 0 && ++reads < 16) {
+        frames += 128;
+    }
+    expect(frames > 0, "and audio came out of it");
+    expect(sx_media_next_video_frame(media) == 1, "and video came out of it too");
+    expect(g_source.read_calls == 0, "while the demuxer was never asked for a single packet");
+
+    sx_media_destroy(media);
+}
+
+void test_a_self_fed_stream_is_seeked_by_its_own_decoder()
+{
+    reset_fixture();
+    g_whole.codecs[0] = "faketone";
+    g_whole.count = 1;
+    g_whole.pending_frames = 4;
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(1);
+    enum sx_media_status status = SX_MEDIA_OK;
+
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "the source opened with a self-fed stream");
+    expect(g_whole.seeks == 0, "nothing has seeked yet");
+    expect(sx_media_seek(media, 500000) == 1, "the source repositions");
+    expect(g_whole.seeks == 1, "and the self-fed decoder was the one that moved");
+    expect(g_whole.last_seek_us == 500000, "to the target asked for");
+
+    sx_media_destroy(media);
+}
+
+/* A whole-file decoder cannot know whether it can read a file until it has
+ * tried, so a NULL from `open_whole` means "not this one" and not "I claim it
+ * and I failed". When someone else can decode the stream, they get it: the
+ * whole-file provider is asked first, declines, and the packet-fed one behind it
+ * takes over. Claiming by codec name is the price of that, and the loop in the
+ * engine is what pays it. */
+void test_a_self_fed_decoder_that_declines_hands_the_stream_on()
+{
+    reset_fixture();
+    g_whole.codecs[0] = "faketone";
+    g_whole.count = 1;
+    g_whole.pending_frames = 3;
+    g_whole.declines = 1;
+    add_audio_packet(0, 1024);
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(1);
+    enum sx_media_status status = SX_MEDIA_OK;
+    int16_t block[256];
+    char missing[SX_MEDIA_CODEC_CAPACITY];
+    const int opens_before = g_open_decoder_calls;
+    int frames = 0;
+    int reads = 0;
+
+    memset(block, 0, sizeof(block));
+    memset(missing, 0, sizeof(missing));
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "the source opened");
+    expect(g_whole.open_calls == 1, "the whole-file decoder was asked first");
+    expect(sx_media_has_audio(media) == 1, "and the stream survived the decline");
+    /* Two packet-fed decoders were opened: the video, and the audio that the
+     * whole-file provider handed back. */
+    expect(g_open_decoder_calls == opens_before + 2,
+           "because the provider behind it opened that stream");
+
+    while (sx_media_read_audio(media, block, 128, nullptr) > 0 && ++reads < 16) {
+        frames += 128;
+    }
+    expect(frames > 0, "and the audio plays");
+    /* The fixture's third stream is undecodable by anyone, and it is the only
+     * thing reported missing. A decline that also showed up here would mean the
+     * engine had dropped a stream another provider could handle. */
+    expect(sx_media_stream_missing_count(media) == 1, "and one stream is reported missing");
+    expect(sx_media_stream_missing_at(media, 0, missing, sizeof(missing)) == 1, "by name");
+    expect_str(missing, "ghostaudio", "and it is the one nobody could decode");
+
+    sx_media_destroy(media);
+}
+
+/* The other outcome of a NULL: nobody else wanted the stream either. Then it is
+ * dropped with a reason and the rest of the source is untouched, so a notice can
+ * name the codec. `ghostaudio` is the stream the fixture leaves unclaimed, which
+ * is the only way to get here without a second fake. */
+void test_a_self_fed_decoder_that_cannot_read_drops_only_its_stream()
+{
+    reset_fixture();
+    g_whole.codecs[0] = "ghostaudio";
+    g_whole.count = 1;
+    g_whole.declines = 1;
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(1);
+    enum sx_media_status status = SX_MEDIA_OK;
+    char codec[SX_MEDIA_CODEC_CAPACITY];
+
+    memset(codec, 0, sizeof(codec));
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "the source still opened");
+    expect(sx_media_has_video(media) == 1, "and the video stream is untouched");
+    expect(sx_media_has_audio(media) == 1, "and so is the audio the other provider took");
+    expect(sx_media_stream_missing_count(media) == 1, "with the undecodable stream dropped");
+    expect(sx_media_stream_missing_at(media, 0, codec, sizeof(codec)) == 1, "and named");
+    expect_str(codec, "ghostaudio", "by the codec a notice can show");
+
+    sx_media_destroy(media);
+}
+
 int main()
 {
     /* The registry is process-global and permanent, so the order these are
@@ -1083,7 +1402,8 @@ int main()
     demuxer.priority = 0;
     demuxer.ops = &kSourceOps;
 
-    if (sx_media_register_backend(&refuses) != 0 || sx_media_register_backend(&codec) != 0 ||
+    if (sx_media_register_backend(&g_whole_backend) != 0 ||
+        sx_media_register_backend(&refuses) != 0 || sx_media_register_backend(&codec) != 0 ||
         sx_media_register_backend(&demuxer) != 0) {
         printf("sxmedia: FAIL the fixture backends did not register\n");
         return 1;
@@ -1111,6 +1431,11 @@ int main()
     test_container_and_metadata_come_from_the_provider();
     test_reopening_does_not_accumulate_state();
     test_null_is_not_a_crash();
+    test_a_whole_file_decoder_is_handed_the_source();
+    test_no_packet_is_read_when_every_stream_reads_its_own_source();
+    test_a_self_fed_stream_is_seeked_by_its_own_decoder();
+    test_a_self_fed_decoder_that_declines_hands_the_stream_on();
+    test_a_self_fed_decoder_that_cannot_read_drops_only_its_stream();
 
     if (g_failures != 0) {
         printf("sxmedia: %d of %d checks FAILED\n", g_failures, g_checks);

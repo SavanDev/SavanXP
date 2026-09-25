@@ -1084,15 +1084,31 @@ for the role as the role is defined. A decoder for it has to be one of
   before anything can use it, and that is a design change with its own
   justification rather than a first milestone.
 
-### What the vtable gained, and what is not verified about it
+### The second shape of the decoder role, and the loop it forced
 
 `stb_vorbis` is a whole-file decoder, so the decoder role grew a second shape: a
 provider that fills `open_whole` instead of `send_packet` is saying that this
 stream is its own and it reads the source itself. The engine then routes no
 packet to it, queues none, and calls only `open_whole`, `receive_frame` and
-`seek_stream`. A NULL from `open_whole` still drops the stream with a reason, so
-a whole-file decoder that cannot read a particular file falls back to the next
-provider exactly like any other.
+`seek_stream`.
+
+Writing the test for it turned up something the header had claimed and the code
+did not do. A whole-file decoder **cannot know whether it can read a file until it
+has tried**: its claim is by codec name, on purpose, because that is all it has. So
+`open_whole` returning NULL means "not this one", and treating that as final would
+lose a stream the provider behind it can decode -- the exact opposite of what a
+fallback is for. Choosing a decoder was a single lookup over the registry, and
+it became a loop that asks every claimant for a turn and keeps the first one that
+actually opens the stream. Both shapes go through it now, which is also the more
+honest reading of a claim: an intention, not a guarantee.
+
+The two outcomes of that NULL are worth separating, because they are different
+properties and a provider needs to know which one it is relying on:
+
+- **someone else can decode it** -- the stream plays, invisibly. A notice never
+  appears because nothing was lost.
+- **nobody else wants it** -- the stream is dropped with a reason, and the codec
+  is named. That is the only case that reaches a program as a notice.
 
 What it costs is written in the header and repeated here because it is a real
 price and not an implementation detail: **a file with a self-fed stream in it is
@@ -1100,18 +1116,6 @@ read twice**, once by the provider that enumerates the streams and once by the
 decoder. Both are sequential and read-only, and the engine stops pulling packets
 once every stream is self-fed, so only the second read touches the payload. A
 provider that wanted to avoid that would have to be the demuxer too.
-
-**The shape is not covered by a test.** Both providers in
-`savanxp-sxmedia-test` leave `open_whole` and `seek_stream` NULL, so every
-existing check exercises the packet path and the packet path is unchanged --
-that much is verified. But a test for the new branch was written and did not pass,
-and it was removed rather than committed: shipping a failing check to look
-covered is worse than shipping an uncovered branch that says so. The three things
-it has to assert are: the stream is opened through `open_whole`, no packet is
-routed to it and none is read when nothing else needs one, and a seek reaches the
-decoder rather than the demuxer. The fake it needs is a provider that claims a
-codec and *refuses to be fed*, which is the shape that made the difference
-visible in the first place.
 
 The engine change the earlier work justified is in `sx_media_frame.count` and is
 in: a block is between 1 and 4096 frames and nothing bounds it from below, and
