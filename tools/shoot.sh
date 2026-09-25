@@ -27,7 +27,7 @@ ACCEL="tcg"
 VIRTIO=0
 BOOT_WAIT=45
 KEEP_RUNNING=0
-SCENARIOS="desktop alttab clipboard calc mines files shell appwiz system taskbar kbdlayout wheel notepadwheel bench saturate spin gears mediaplayer"
+SCENARIOS="desktop alttab clipboard calc mines files shell appwiz system taskbar kbdlayout wheel notepadwheel bench saturate spin gears mediaplayer ccleste"
 
 usage() {
     cat <<'EOF'

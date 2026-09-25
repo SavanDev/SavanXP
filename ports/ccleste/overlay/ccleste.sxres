@@ -1,0 +1,29 @@
+# SXE resources for the ccleste port. See docs/SXE_FORMAT.md.
+#
+# The values below give the port an identity in the desktop. It is built by a
+# separate build (ports/ccleste/build.sh), so nothing on the host registers it
+# and without this manifest it would keep falling back to the generic set.
+#
+# icon_file= names a PNG RELATIVE to this manifest (icon.png, next to this
+# file). Declaring it is what puts the icon inside the executable, which is what
+# the format is for; the alternative, icon=<name>, resolves against
+# assets/desktop/icons/ and that catalog has no entry for this port.
+#
+# category= is what lists the port in the system program list.
+#
+# version= is the port revision, NOT a system version: this is not shipped with
+# SavanXP, it is a third-party port installed separately.
+name=Celeste Classic
+description=Pico-8 precision platformer test port
+version=0.1
+version_string=ccleste 261d96f
+vendor=ccleste
+accent=29adff
+icon_file=icon.png
+launch_flags=fullscreen
+category=Games
+
+# The tile sheet, the font and the 23 sound effects live here (~1.1 MB) and are
+# named by no other program. Declaring the directory is what lets the
+# uninstaller offer to take them instead of leaving them orphaned on the disk.
+data_dir=/disk/games/celeste

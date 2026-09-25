@@ -40,6 +40,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "float")) {
         return "FLOAT SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "ccleste")) {
+        return "CCLESTE SELFTEST";
+    }
     if (spec != 0 && text_contains(spec, "progman")) {
         return "PROGMAN SMOKE";
     }
@@ -124,6 +127,7 @@ static int run_automation_spec(const char* spec) {
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
     const char* tcptest_argv[] = {"/disk/bin/tcptest", 0, 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
+    const char* ccleste_argv[] = {"/disk/bin/ccleste", "--selftest", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
     const char* nativehello_argv[] = {"/disk/bin/nativehello", 0};
     const char* sxguihost_argv[] = {"/disk/bin/sxguihost", 0};
@@ -197,6 +201,10 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/floatsmoke";
             argv = floatsmoke_argv;
             argc = 1;
+        } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
+            path = "/disk/bin/ccleste";
+            argv = ccleste_argv;
+            argc = 2;
         } else if (strcmp(spec, "windowd-cursor-repro") == 0) {
             path = "/bin/windowd";
             argv = cursor_repro_argv;

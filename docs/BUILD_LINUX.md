@@ -52,7 +52,11 @@ Ports are independent from the base CMake target and use the same SxFS image:
 ./ports/doomgeneric/build.sh --wad ports/doomgeneric/wad/doom1.wad
 ./ports/ffmpeg/build.sh
 ./ports/ffmpeg/smoke.sh
+./ports/ccleste/build.sh
 ```
+
+`ccleste` downloads its pinned upstream archive and hash-verifies it, then
+installs the game assets from that same archive under `/disk/games/celeste`.
 
 The optional native Haxe experiment has its own entry point:
 

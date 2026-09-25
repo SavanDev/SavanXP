@@ -30,9 +30,9 @@ On Linux, from a clean checkout:
 
 The native path uses tools from `PATH` (or CMake cache overrides); see
 [Building with Bash and CMake](docs/BUILD_CMAKE.md). The versioned ports are
-built independently with `./ports/doomgeneric/build.sh` and
-`./ports/ffmpeg/build.sh`. The optional Haxe AOT experiment has
-`./subsystems/native/build.sh`.
+built independently with `./ports/doomgeneric/build.sh`,
+`./ports/ffmpeg/build.sh` and `./ports/ccleste/build.sh`. The optional Haxe AOT
+experiment has `./subsystems/native/build.sh`.
 
 ## What works today
 

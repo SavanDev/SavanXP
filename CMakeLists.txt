@@ -554,6 +554,10 @@ add_test(NAME ffmpeg-port-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/ffmpeg_port_layout_test.py"
             --port "${CMAKE_SOURCE_DIR}/ports/ffmpeg")
+add_test(NAME ccleste-port-layout-test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/host/ccleste_port_layout_test.py"
+            --port "${CMAKE_SOURCE_DIR}/ports/ccleste")
 add_test(NAME native-port-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/native_port_layout_test.py"

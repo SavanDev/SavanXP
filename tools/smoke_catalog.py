@@ -281,6 +281,13 @@ SCENARIOS: dict[str, Scenario] = {
         description="FFmpeg Media Player two-phase selftest and display smoke",
         port_command="./ports/ffmpeg/smoke.sh",
     ),
+    "ccleste-selftest": _qemu_scenario(
+        "ccleste-selftest",
+        "CCLESTE SELFTEST PASS",
+        "CCLESTE SELFTEST FAIL",
+        "Celeste Classic asset decoding and headless engine self-test",
+        180.0,
+    ),
     "native-guihost": _qemu_scenario(
         "guihost",
         "NATIVEGUI HOST PASS",

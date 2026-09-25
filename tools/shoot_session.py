@@ -261,6 +261,12 @@ class Session(object):
         # necesita la precondicion de programa externo que piden appwiz y system.
         self.launch(1, groups=2)
 
+    def open_ccleste(self):
+        # Grupo Games (tercera solapa), primer icono: el launcher ordena los
+        # nombres alfabeticamente y "Celeste Classic" va antes que Doom y que
+        # Minesweeper. Sin steps no hay flecha que pueda dar la vuelta.
+        self.launch(0, groups=2)
+
     def open_appwiz(self):
         # Grupo System: la cuarta solapa. Games existe siempre desde que el
         # Buscaminas viene en la imagen; el escenario sigue exigiendo antes
@@ -979,6 +985,29 @@ def scenario_mediaplayer(s):
     s.shot("mediaplayer-fin")
 
 
+def scenario_ccleste(s):
+    """Celeste Classic: el port completo sobre el escritorio de verdad.
+
+    Necesita el port y sus assets instalados. Se abre por el launcher, que es
+    el unico camino que da una superficie de cliente al compositor, y con
+    launch_flags=fullscreen la ventana sale al tamano de la presentacion.
+
+    Lo que hay que mirar: la pantalla de titulo dibujada con la hoja de tiles y
+    la fuente del port, escalada por entero y centrada, y la paleta PICO-8 de 16
+    colores. Despues se entra a la habitacion para comprobar que el mapa, las
+    colisiones y el fondo ya estan.
+    """
+    s.open_ccleste()
+    s.shot("ccleste-titulo")
+    s.qmp.tap("ret", pause=3.0)
+    s.shot("ccleste-habitacion")
+    # Un salto a la derecha pega contra la pared de la habitacion, que es donde
+    # el dash tiene que dejar al personaje pegado sin atravesarla.
+    s.qmp.tap("right", pause=1.0)
+    s.qmp.tap("x", pause=1.0)
+    s.shot("ccleste-dash")
+
+
 SCENARIOS = {
     "desktop": scenario_desktop,
     "alttab": scenario_alttab,
@@ -998,6 +1027,7 @@ SCENARIOS = {
     "spin": scenario_spin,
     "gears": scenario_gears,
     "mediaplayer": scenario_mediaplayer,
+    "ccleste": scenario_ccleste,
 }
 
 

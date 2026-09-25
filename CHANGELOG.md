@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **Celeste Classic is now an official port.** `./ports/ccleste/build.sh` builds
+  the upstream engine unpatched and installs `/disk/bin/ccleste` plus the game
+  assets under `/disk/games/celeste`; the overlay replaces the SDL frontend, so
+  the port carries no patches. `./build.sh smoke ccleste-selftest` and
+  `./tools/shoot.sh --scenario ccleste` cover it. Music is out of scope: the
+  tracks are OGG Vorbis and the SDK has no decoder.
+
 - **The SDK now owns Doom-style pixel presentation and timed PCM mixing.**
   `sx_scaled_presenter` handles scaling/centering/row damage; opt-in
   `savanxp/audio.h` provides `sx_audio_mixer`, and Doom uses both.

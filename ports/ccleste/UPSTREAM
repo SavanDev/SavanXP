@@ -1,0 +1,11 @@
+name=ccleste
+repository=https://github.com/lemon32767/ccleste.git
+archived=true
+archived_on=2023-11-07
+commit=261d96f15af430b8111abc7a5250229246654f52
+tree=8a5143facf7c8a6818817b7c33e4956e3a0caa8b
+archive_url=https://codeload.github.com/lemon32767/ccleste/tar.gz/261d96f15af430b8111abc7a5250229246654f52
+archive_sha256=2f6c7f753d1c8d0ba13bbc144a2a3ab9d3942ed4333e4f7f56e058e3f3677069
+archive_size=1539189
+license=Unlicensed
+patch_count=0

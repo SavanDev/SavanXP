@@ -80,6 +80,35 @@ which is why both go into the registry.
 - Local test media is generated under `build/media` and is not a third-party
   repository asset
 
+### Celeste Classic (ccleste)
+
+- Origin: https://github.com/lemon32767/ccleste, commit
+  `261d96f15af430b8111abc7a5250229246654f52` (tree
+  `8a5143facf7c8a6818817b7c33e4956e3a0caa8b`)
+- Versioned: no source vendored. The repository is archived read-only since
+  2023-11-07, so nothing is committed here; `ports/ccleste/UPSTREAM` pins the
+  commit and the archive SHA-256
+  `2f6c7f753d1c8d0ba13bbc144a2a3ab9d3942ed4333e4f7f56e058e3f3677069`, and
+  `ports/ccleste/fetch.sh` verifies it before use
+- License reviewed: **none exists**. Upstream has no `LICENSE`, `COPYING` or SPDX
+  identifier, and the GitHub API reports `license: null`, which leaves the code
+  under the default "all rights reserved". `UPSTREAM` records this as
+  `license=Unlicensed` rather than guessing
+- Decision: `Adopt`, with the redistribution question left open. The engine
+  (`celeste.c`) is compiled unpatched and the port replaces the SDL frontend
+  with an overlay, so no upstream code is committed. The archive is fetched and
+  hash-verified at build time, and what the built image redistributes is the
+  binary plus the game assets
+- Distributed in: `/disk/bin/ccleste` and `/disk/games/celeste` (the 128x128
+  tile sheet, the font and 23 sound effects, ~1.1 MB). Built separately with
+  `ports/ccleste/build.sh`, not by the main build
+- Known debt: because the license is unstated, this port cannot be
+  redistributed as a binary image by anyone else without resolving it first.
+  The music is also absent from the image: the tracks are OGG Vorbis and the
+  SDK has no Vorbis decoder
+- Credit for the original game: Maddy Thorson and Noel Berry, per upstream's
+  README
+
 ### Haxe native AOT toolchain (optional)
 
 - Haxe compiler: https://github.com/HaxeFoundation/haxe, release `4.3.7`, commit
