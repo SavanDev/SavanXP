@@ -14,7 +14,7 @@ extern "C" {
  * sink, a growable interleaved stereo buffer, and mono unsigned-8-bit voices
  * with source-rate/pitch conversion and classic volume/separation panning.
  *
- * Link runtime/audio.c or build an external app with `build-user.ps1 -Audio`.
+ * Link runtime/audio.c or build an external app with `tools/build-user.sh --audio`.
  */
 #define SX_AUDIO_PITCH_NORMAL_Q16 65536u
 #define SX_AUDIO_DEFAULT_MAX_DELTA_MS 100u

@@ -3,7 +3,7 @@
  *
  * Todo el peso esta en sxe_selftest(), dentro del runtime del SDK: este
  * binario solo lo corre y traduce el resultado a los tokens que busca
- * build.ps1 sxe-smoke.
+ * ./build.sh smoke sxe-smoke.
  */
 
 #include "savanxp/libc.h"

@@ -239,7 +239,7 @@ namespace
     }
     audio_device::initialize();
     // NIC: mismo registro por prioridad que display y audio. virtio-net gana
-    // si el probe PCI lo encontro (build.ps1 arma la maquina con
+    // si el probe PCI lo encontro (la maquina puede usar
     // virtio-net-pci O rtl8139 sobre el mismo netdev, nunca los dos a la vez).
     // El probe deja el device reconocido, pero no lo levanta: la subida real
     // la pide net:: cuando alguien hace NET_IOC_UP sobre /dev/net0.
@@ -258,8 +258,8 @@ namespace
     // los devices de todos COEXISTEN, asi que probe_all corre todos los
     // enumerate en vez de cortar en el primero. La prioridad define el orden de
     // los indices: virtio-blk y ATA enumeran antes que el ramdisk (uno de los
-    // dos, nunca los dos a la vez: build.ps1 arma la maquina con virtio-blk-pci
-    // O isa-ide+ide-hd sobre el mismo disk.img, segun -Virtio), asi que un disco
+    // dos, nunca los dos a la vez: la configuración de QEMU usa virtio-blk-pci
+    // O isa-ide+ide-hd sobre el mismo disk.img, segun --virtio), asi que un disco
     // persistente tiene prioridad y en la ISO pura montamos el ramdisk. Cual de
     // estos devices termina siendo la raiz lo decide fs::mount_any mas abajo,
     // recorriendolos en este mismo orden.

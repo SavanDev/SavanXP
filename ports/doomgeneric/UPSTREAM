@@ -1,0 +1,10 @@
+name=DoomGeneric
+repository=https://github.com/ozkl/doomgeneric.git
+commit=fc601639494e089702a1ada082eb51aaafc03722
+tree=4b8c10b05138583636e5425131242b7212023ef7
+source_path=doomgeneric
+archive_url=https://codeload.github.com/ozkl/doomgeneric/tar.gz/fc601639494e089702a1ada082eb51aaafc03722
+archive_sha256=6a5879c5f686199f0156ea8abcdaab820350c3a74aff211e81558f8675c8e2d5
+archive_size=3090394
+source_tree_sha256=4cdeac88cd3db3b31e54ea975dd54d00f00939d64dcded73f0d73d19cd2ff5cf
+license=GPL-2.0

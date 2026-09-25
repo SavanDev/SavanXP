@@ -7,8 +7,8 @@
 
 #define WINDOWD_RGB_LITERAL(red, green, blue) (((uint32_t)(red) << 16) | ((uint32_t)(green) << 8) | (uint32_t)(blue))
 
-/* Las apps de diagnostico se compilan solo si el build las pide (build.ps1
- * -NoTestApps las excluye del rootfs y de esta tabla a la vez). */
+/* Las apps de diagnostico se compilan solo si el build las pide (CMake
+ * --no-test-apps las excluye del rootfs y de esta tabla a la vez). */
 #ifndef DESKTOP_INCLUDE_TEST_APPS
 #define DESKTOP_INCLUDE_TEST_APPS 1
 #endif
@@ -329,7 +329,7 @@ int windowd_presentation_selftest(void)
     /*
      * Escalon de la tabla, con nombre y accent -- lo unico que sigue siendo
      * genuinamente de la tabla. El icono de Doom ya no lo es: se fue del set
-     * horneado (vive en sdk/doomgeneric/icon.png, via icon_file=), asi que
+     * horneado (vive en ports/doomgeneric/overlay/icon.png, via icon_file=), asi que
      * fallback_icon_id vuelve al generico igual que para cualquier programa
      * sin fila propia. Doom se instala con un build APARTE -- en esta imagen
      * puede estar o no --, asi que su .sxicon real no es un hecho estable

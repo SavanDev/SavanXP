@@ -15,7 +15,7 @@
  */
 
 #if !defined(__SSE2__)
-#error "math.c necesita SSE2: construi la app con -Sse (ver tools/build-user.ps1)."
+#error "math.c necesita SSE2: construi la app con --sse (ver tools/build-user.sh)."
 #endif
 
 #include <math.h>

@@ -1,7 +1,7 @@
 /*
  * smptest: que los procesos corran de verdad en varios cores a la vez.
  *
- * Que el sistema arranque y pase el resto de los tests con -Smp 4 no prueba
+ * Que el sistema arranque y pase el resto de los tests con `--smp 4` no prueba
  * nada: pasaria igual con los APs estacionados. Lo que si lo prueba es el
  * estado de los procesos. En un core, mientras este proceso esta adentro de una
  * syscall, el unico en State::running es el: todos los demas estan listos,

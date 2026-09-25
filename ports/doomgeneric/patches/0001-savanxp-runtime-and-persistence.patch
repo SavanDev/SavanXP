@@ -1,0 +1,380 @@
+diff --git a/config.h b/config.h
+--- a/config.h
++++ b/config.h
+@@ -97,4 +97,4 @@
+ #undef ORIGCODE
+ 
+ /* Define to the directory where all game files are located */
+-#define FILES_DIR "."
++#define FILES_DIR "/disk/games/doom"
+diff --git a/g_game.c b/g_game.c
+--- a/g_game.c
++++ b/g_game.c
+@@ -20,6 +20,7 @@
+ #include <string.h>
+ #include <stdlib.h>
+ #include <math.h>
++#include <errno.h>
+ 
+ #include "doomdef.h" 
+ #include "doomkeys.h"
+@@ -1657,7 +1658,11 @@
+     
+     // Finish up, close the savegame file.
+ 
+-    fclose(save_stream);
++    if (fclose(save_stream) != 0)
++    {
++        I_Error("Failed to finalize savegame '%s' (errno=%d)",
++                temp_savegame_file, errno);
++    }
+ 
+     if (recovery_savegame_file != NULL)
+     {
+@@ -1672,8 +1677,15 @@
+     // Now rename the temporary savegame file to the actual savegame
+     // file, overwriting the old savegame if there was one there.
+ 
+-    remove(savegame_file);
+-    rename(temp_savegame_file, savegame_file);
++    if (remove(savegame_file) < 0 && errno != ENOENT)
++    {
++    }
++
++    if (rename(temp_savegame_file, savegame_file) < 0)
++    {
++        I_Error("Failed to install savegame '%s' -> '%s' (errno=%d)",
++                temp_savegame_file, savegame_file, errno);
++    }
+     
+     gameaction = ga_nothing;
+     M_StringCopy(savedescription, "", sizeof(savedescription));
+@@ -2251,19 +2263,25 @@
+ 	 
+     if (timingdemo) 
+     { 
+-        float fps;
+         int realtics;
++        int fps_whole;
++        int fps_fraction;
+ 
+ 	endtime = I_GetTime (); 
+         realtics = endtime - starttime;
+-        fps = ((float) gametic * TICRATE) / realtics;
++        if (realtics <= 0)
++        {
++            realtics = 1;
++        }
++        fps_whole = (gametic * TICRATE) / realtics;
++        fps_fraction = ((gametic * TICRATE * 100) / realtics) % 100;
+ 
+         // Prevent recursive calls
+         timingdemo = false;
+         demoplayback = false;
+ 
+-	I_Error ("timed %i gametics in %i realtics (%f fps)",
+-                 gametic, realtics, fps);
++	I_Error ("timed %i gametics in %i realtics (%i.%02i fps)",
++                 gametic, realtics, fps_whole, fps_fraction);
+     } 
+ 	 
+     if (demoplayback) 
+diff --git a/m_config.c b/m_config.c
+--- a/m_config.c
++++ b/m_config.c
+@@ -25,6 +25,7 @@
+ #include <errno.h>
+ 
+ #include "config.h"
++#include "savanxp_compat.h"
+ 
+ #include "doomtype.h"
+ #include "doomkeys.h"
+@@ -105,6 +106,57 @@
+     CONFIG_VARIABLE_GENERIC(name, DEFAULT_FLOAT)
+ #define CONFIG_VARIABLE_STRING(name) \
+     CONFIG_VARIABLE_GENERIC(name, DEFAULT_STRING)
++
++static uint32_t M_GetFloatBits(const float *value)
++{
++    uint32_t bits = 0;
++    memcpy(&bits, value, sizeof(bits));
++    return bits;
++}
++
++static void M_SetFloatBits(float *value, uint32_t bits)
++{
++    memcpy(value, &bits, sizeof(bits));
++}
++
++static const char *M_FloatBitsToText(uint32_t bits)
++{
++    switch (bits)
++    {
++        case 0x00000000u:
++            return "0";
++        case 0x3f000000u:
++            return "0.5";
++        case 0x3f800000u:
++            return "1";
++        case 0x40000000u:
++            return "2";
++        default:
++            return "1";
++    }
++}
++
++static uint32_t M_ParseFloatBits(const char *value)
++{
++    if (strcmp(value, "0") == 0 || strcmp(value, "0.0") == 0)
++    {
++        return 0x00000000u;
++    }
++    if (strcmp(value, "0.5") == 0)
++    {
++        return 0x3f000000u;
++    }
++    if (strcmp(value, "1") == 0 || strcmp(value, "1.0") == 0)
++    {
++        return 0x3f800000u;
++    }
++    if (strcmp(value, "2") == 0 || strcmp(value, "2.0") == 0)
++    {
++        return 0x40000000u;
++    }
++
++    return 0x3f800000u;
++}
+ 
+ //! @begin_config_file default
+ 
+@@ -1608,7 +1660,6 @@
+ 
+ static void SaveDefaultCollection(default_collection_t *collection)
+ {
+-#if ORIGCODE
+     default_t *defaults;
+     int i, v;
+     FILE *f;
+@@ -1696,7 +1747,8 @@
+                 break;
+ 
+             case DEFAULT_FLOAT:
+-                fprintf(f, "%f", * (float *) defaults[i].location);
++                fprintf(f, "%s",
++                        M_FloatBitsToText(M_GetFloatBits((float *) defaults[i].location)));
+                 break;
+ 
+             case DEFAULT_STRING:
+@@ -1708,20 +1760,14 @@
+     }
+ 
+     fclose (f);
+-#endif
+ }
+ 
+ // Parses integer values in the configuration file
+ 
+ static int ParseIntParameter(char *strparm)
+ {
+-    int parm;
+-
+-    if (strparm[0] == '0' && strparm[1] == 'x')
+-        sscanf(strparm+2, "%x", &parm);
+-    else
+-        sscanf(strparm, "%i", &parm);
+-
++    int parm = 0;
++    (void)sx_parse_int(strparm, &parm);
+     return parm;
+ }
+ 
+@@ -1755,7 +1801,9 @@
+             }
+             else
+             {
+-                intparm = 0;
++                // Keep internal key codes such as KEY_FIRE/KEY_USE when
++                // they have been written directly to the config file.
++                intparm = def->untranslated;
+             }
+ 
+             def->original_translated = intparm;
+@@ -1763,16 +1811,16 @@
+             break;
+ 
+         case DEFAULT_FLOAT:
+-            * (float *) def->location = (float) atof(value);
++            M_SetFloatBits((float *) def->location, M_ParseFloatBits(value));
+             break;
+     }
+ }
+ 
+ static void LoadDefaultCollection(default_collection_t *collection)
+ {
+-#if ORIGCODE
+     FILE *f;
+     default_t *def;
++    char line[192];
+     char defname[80];
+     char strparm[100];
+ 
+@@ -1787,14 +1835,54 @@
+         return;
+     }
+ 
+-    while (!feof(f))
+-    {
+-        if (fscanf(f, "%79s %99[^\n]\n", defname, strparm) != 2)
++    while (fgets(line, sizeof(line), f) != NULL)
++    {
++        char *cursor = line;
++        char *value;
++        size_t defname_len = 0;
++        size_t value_len;
++
++        while (*cursor != '\0' && isspace((int)*cursor))
+         {
+-            // This line doesn't match
+-
++            ++cursor;
++        }
++
++        if (*cursor == '\0' || *cursor == '\n' || *cursor == '#')
++        {
+             continue;
+         }
++
++        while (cursor[defname_len] != '\0'
++            && !isspace((int)cursor[defname_len])
++            && defname_len + 1 < sizeof(defname))
++        {
++            defname[defname_len] = cursor[defname_len];
++            ++defname_len;
++        }
++        defname[defname_len] = '\0';
++        cursor += defname_len;
++
++        while (*cursor != '\0' && isspace((int)*cursor))
++        {
++            ++cursor;
++        }
++        if (*cursor == '\0')
++        {
++            continue;
++        }
++
++        value = cursor;
++        value_len = strlen(value);
++        while (value_len > 0 && !isprint((unsigned char)value[value_len - 1]))
++        {
++            value[--value_len] = '\0';
++        }
++        if (value_len >= sizeof(strparm))
++        {
++            value_len = sizeof(strparm) - 1;
++        }
++        memcpy(strparm, value, value_len);
++        strparm[value_len] = '\0';
+ 
+         // Find the setting in the list
+ 
+@@ -1806,14 +1894,6 @@
+             // as unknown.
+ 
+             continue;
+-        }
+-
+-        // Strip off trailing non-printable characters (\r characters
+-        // from DOS text files)
+-
+-        while (strlen(strparm) > 0 && !isprint(strparm[strlen(strparm)-1]))
+-        {
+-            strparm[strlen(strparm)-1] = '\0';
+         }
+ 
+         // Surrounded by quotes? If so, remove them.
+@@ -1828,7 +1908,6 @@
+     }
+ 
+     fclose (f);
+-#endif
+ }
+ 
+ // Set the default filenames to use for configuration files.
+@@ -1902,7 +1981,7 @@
+     else
+     {
+         doom_defaults.filename
+-            = M_StringJoin(configdir, default_main_config, NULL);
++            = M_StringJoin(configdir, DIR_SEPARATOR_S, default_main_config, NULL);
+     }
+ 
+     printf("saving config in %s\n", doom_defaults.filename);
+@@ -1925,7 +2004,7 @@
+     else
+     {
+         extra_defaults.filename
+-            = M_StringJoin(configdir, default_extra_config, NULL);
++            = M_StringJoin(configdir, DIR_SEPARATOR_S, default_extra_config, NULL);
+     }
+ 
+     LoadDefaultCollection(&doom_defaults);
+@@ -2042,11 +2121,7 @@
+ 
+ static char *GetDefaultConfigDir(void)
+ {
+-    char *result = (char *)malloc(2);
+-    result[0] = '.';
+-    result[1] = '\0';
+-
+-    return result;
++    return strdup(FILES_DIR);
+ }
+ 
+ // 
+@@ -2115,7 +2190,7 @@
+ 
+         free(topdir);
+ #else
+-        savegamedir = M_StringJoin(configdir, DIR_SEPARATOR_S, ".savegame/", NULL);
++        savegamedir = M_StringJoin(configdir, DIR_SEPARATOR_S, "savegames/", NULL);
+ 
+         M_MakeDirectory(savegamedir);
+ 
+diff --git a/m_misc.c b/m_misc.c
+--- a/m_misc.c
++++ b/m_misc.c
+@@ -23,6 +23,8 @@
+ #include <string.h>
+ #include <ctype.h>
+ #include <errno.h>
++
++#include "savanxp_compat.h"
+ 
+ #ifdef _WIN32
+ #define WIN32_LEAN_AND_MEAN
+@@ -55,9 +57,9 @@
+ void M_MakeDirectory(char *path)
+ {
+ #ifdef _WIN32
+-    mkdir(path);
++    savanxp_mkdir(path);
+ #else
+-    mkdir(path, 0755);
++    sx_make_dirs(path);
+ #endif
+ }
+ 
+@@ -189,10 +191,7 @@
+ 
+ boolean M_StrToInt(const char *str, int *result)
+ {
+-    return sscanf(str, " 0x%x", result) == 1
+-        || sscanf(str, " 0X%x", result) == 1
+-        || sscanf(str, " 0%o", result) == 1
+-        || sscanf(str, " %d", result) == 1;
++    return sx_parse_int(str, result);
+ }
+ 
+ void M_ExtractFileBase(char *path, char *dest)

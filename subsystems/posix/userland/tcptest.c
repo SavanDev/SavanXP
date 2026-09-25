@@ -8,7 +8,7 @@
  * expone NET_IOC_SET_TCP_FAULT: las perdidas y las inversiones las produce el
  * propio stack, aguas abajo del checksum, y el resto del camino no se entera.
  *
- * El otro extremo es tools/tcp_echo_server.ps1 corriendo en el host, al que se
+ * El otro extremo es tools/tcp_echo_server.py corriendo en el host, al que se
  * llega por 10.0.2.2 -- la direccion con la que el user-net de QEMU representa
  * al host. Se prueban las dos direcciones porque los caminos son distintos:
  *

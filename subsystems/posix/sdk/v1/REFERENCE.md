@@ -14,8 +14,8 @@ Se consideran parte del contrato:
 - `runtime/libc.c`
 - `runtime/posix.c`
 - `linker.ld`
-- `tools/build-user.ps1`
-- `tools/new-user-app.ps1`
+- `tools/build-user.sh`
+- `tools/new-user-app.sh`
 
 ## Límites visibles
 
@@ -196,13 +196,13 @@ Audio PCM v1.2:
 - the optional `savanxp/audio.h` module adds `sx_audio_mixer`: a wall-clock
   frame sink with a growable stereo buffer and unsigned-8 mono voices, source
   rate/pitch conversion, and classic volume/separation panning. Link it with
-  `build-user.ps1 -Audio`; the kernel remains a raw PCM transport.
+  `./tools/build-user.sh --audio`; the kernel remains a raw PCM transport.
 - the current playback backend is `virtio-sound` over PCI.
 
 ## Flujo recomendado
 
-1. Crear una app desde `sdk/template` o con `tools/new-user-app.ps1`
-2. Compilar con `tools/build-user.ps1`
+1. Crear una app desde `sdk/template` o con `tools/new-user-app.sh`
+2. Compilar con `tools/build-user.sh`
 3. Instalar en `/disk/bin`
 4. Ejecutar desde la shell por nombre o ruta
 

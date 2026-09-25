@@ -4,14 +4,14 @@
 #include <stdint.h>
 
 #include "kernel/vmm.hpp"
+#include "abi/savanxp_native_abi.h"
 
 namespace elf {
 
 // e_ident[EI_OSABI] (byte 7 del ELF) con el que se marca un binario del
-// subsistema nativo (Haxe). Los binarios posix usan 0 (System V). El build del
-// nativo (subsystems/native/build.ps1) estampa este valor; el espejo en
-// userland vive en subsystems/native/sdk/include/savanxp_native.h.
-constexpr uint8_t kOsAbiNative = 0x53; // 'S' de SavanXP
+// subsistema nativo. El valor vive en el contrato ABI neutral para que el
+// loader, el generator de SXE y el standalone build no lo dupliquen.
+constexpr uint8_t kOsAbiNative = SXN_ELF_OSABI_NATIVE;
 
 struct LoadResult {
     uint64_t entry_point;

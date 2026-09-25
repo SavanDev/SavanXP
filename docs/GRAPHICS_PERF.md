@@ -120,7 +120,7 @@ when two overlap — the shared area is cleared and redrawn whole by the second
 one, never composited twice over itself, which matters because the header text
 is alpha-blended and blending it twice would darken it.
 
-Measured on `shoot.ps1 -Scenario shell`, same scenario and same instrumentation,
+Measured on `tools/shoot.sh --scenario shell`, same scenario and same instrumentation,
 declared damage versus derived:
 
 | workload | | `rows` | `damage_px` | `draw_us` | `present_us` |
@@ -150,16 +150,16 @@ The instrumentation lives in the interactive session, not in the self-tests, so
 `windowd --selftest` does not exercise it. Anything that boots the real desktop
 with the serial port redirected to a file will:
 
-```powershell
-.\build.ps1 taskbar-smoke                              # default hardware, TCG
-.\tools\shoot.ps1 -Scenario taskbar -Virtio -Accel whpx
+```bash
+./build.sh smoke taskbar-smoke                         # default hardware, TCG
+./tools/shoot.sh --scenario taskbar --virtio --accel kvm
 ```
 
-Then read `build/shots/<scenario>/shoot-serial.log`. `shoot.ps1` takes `-Virtio`
-(the paravirtualized device set, same as `build.ps1 -Virtio`) and `-Accel`
-(`tcg`/`kvm`/`whpx`), which is how the table further down was produced.
+Then read `build/shots/<scenario>/shoot-serial.log`. `tools/shoot.sh` takes
+`--virtio` for the paravirtualized device set and `--accel tcg|kvm`, which is
+how the table further down was produced.
 
-With `-Virtio` the pointer is a `virtio-tablet`, which is **absolute**: the trick
+With `--virtio` the pointer is a `virtio-tablet`, which is **absolute**: the trick
 of shoving the cursor into a corner to find the origin only works for the
 relative PS/2 mouse, so `shoot_session.py` gets `--abs-pointer` and positions the
 cursor directly. The scenario's pixel assertions still fail partway through on
@@ -169,7 +169,7 @@ is emitted per frame, so a partial run still yields data.
 
 ### Which workload measures what
 
-`shoot.ps1` has three scenarios built for `windowd-stats`. All three drive Gfx
+`tools/shoot.sh` has three scenarios built for `windowd-stats`. All three drive Gfx
 Demo (the Diagnostics group), which moves a 96-pixel box and presents only that
 region:
 
@@ -202,7 +202,7 @@ number to keep in mind for interactive use: no input-driven load comes close.
 ## What the numbers said
 
 Captured under TCG, QEMU standard VGA (the default hardware — `fb_gpu`, not
-virtio), while `shoot.ps1` drove the desktop headless.
+virtio), while `tools/shoot.sh` drove the desktop headless.
 
 **A frame with small damage** — moving the pointer:
 
@@ -285,11 +285,10 @@ microseconds per frame, medians, on the stage that repaints ~522 000 pixels:
 
 | configuration | compose | ipc | gpu | present | gpu share |
 |---|---|---|---|---|---|
-| TCG + base (Windows) | 6 126 | 8 598 | 26 386 | 35 027 | 75% |
-| TCG + virtio (Windows) | 5 297 | 10 420 | 409 | 11 030 | 3.7% |
-| WHPX + virtio (Windows) | 1 326 | 6 490 | 151 | 6 647 | 2.3% |
-| KVM + base (WSL2) | 1 520 | 1 845 | 763 | 2 727 | 28% |
-| KVM + virtio (WSL2) | 1 360 | 2 518 | 85 | 2 599 | 3.3% |
+| TCG + base | 6 126 | 8 598 | 26 386 | 35 027 | 75% |
+| TCG + virtio | 5 297 | 10 420 | 409 | 11 030 | 3.7% |
+| KVM + base | 1 520 | 1 845 | 763 | 2 727 | 28% |
+| KVM + virtio | 1 360 | 2 518 | 85 | 2 599 | 3.3% |
 
 Read one axis at a time, and only within the same host:
 
@@ -300,12 +299,9 @@ Read one axis at a time, and only within the same host:
   VRAM aperture far more expensive than it is on real hardware. Either way the
   direction is the same: `virtio-gpu` only queues a descriptor and lets the host
   do the copy.
-- **The accelerator.** TCG + virtio against WHPX + virtio changes nothing but
-  the accelerator: `compose_us` drops 4x, which is guest CPU work no longer
-  being interpreted.
-
-Do not read across hosts. WHPX and KVM are different hypervisors on different
-machines, so their `ipc_us` figures say nothing about each other.
+- **The accelerator.** TCG and KVM change the cost of guest CPU work, but their
+  absolute timings are meaningful only on the host that produced them. The
+  stable result is the device comparison above.
 
 **The conclusion that matters.** On the best configuration measured -- KVM with
 paravirtualized devices -- the GPU work is **3.3% of a frame**: 85 microseconds

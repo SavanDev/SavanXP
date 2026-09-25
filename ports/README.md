@@ -1,69 +1,36 @@
-# ports
+# Official ports
 
-Banco de pruebas **local**. Todo lo que este en esta carpeta esta gitignorado
-(salvo este README): sirve para probar ports y apps que no van a llegar al
-repo, sin ensuciar `sdk/` ni el historial.
+`ports/` contains versioned third-party integrations that SavanXP supports
+officially. Each port owns its upstream pin, small patches, SavanXP overlay,
+build entry point, and documentation. A port is built independently from the
+base CMake target and installs through the SxFS candidate flow.
 
-`sdk/` = ejemplos canonicos y versionados del SDK.
-`ports/` = tu copia local, descartable.
+The official ports are `doomgeneric` and `ffmpeg`. FFmpeg intentionally
+keeps its upstream archive outside Git; its `UPSTREAM` pin and build recipe
+make the download reproducible.
 
-## Flujo
+The first official port is `doomgeneric`. Its persistent-data regression is
+`/disk/bin/doomgeneric` plus the WAD under `/disk/games/doom`.
 
-Es el mismo tooling que `sdk/`, que ya acepta cualquier ruta como `-Source`:
+## Port layout
 
-```powershell
-.\build.ps1 build
-.\tools\build-user.ps1 -Source .\ports\miport -Name miport
-.\build.ps1 run
+```text
+ports/<name>/
+  UPSTREAM          # repository, revision, and source URL
+  source/           # pinned upstream tree when it is vendored (optional)
+  patches/          # focused upstream patches (when source is vendored)
+  overlay/          # SavanXP adapter files
+  build.sh          # standalone host build/install entry point
+  README.md         # behavior, provenance, and test instructions
 ```
 
-App nueva desde el template del SDK, directo en `ports/`:
+Do not commit generated binaries, downloaded IWADs, or other personal assets.
+Keep local experiments outside the official port directories.
 
-```powershell
-.\tools\new-user-app.ps1 -Name miport -DestinationRoot ports
-```
+## Common rules
 
-Compilar sin instalar en `build/disk.img`:
-
-```powershell
-.\tools\build-user.ps1 -Source .\ports\miport -Name miport -NoInstall
-```
-
-Compilar, instalar y arrancar QEMU en un paso:
-
-```powershell
-.\tools\run-user.ps1 -Source .\ports\miport -Name miport
-```
-
-## Que acepta el compilador
-
-Identico a `sdk/` (ver `sdk/README.md` para el detalle):
-
-- un `.c` suelto o un directorio entero con fuentes `.c` y `.S`
-- headers locales en la raiz del directorio o en `include/`
-- `compile-exclude.txt` con una ruta relativa por linea para saltear fuentes
-- `<nombre>.sxres` al lado de la fuente para estampar icono/metadata SXE
-
-Se linkean siempre `crt0` + `libc` + `posix` + `gfx` + `gfx2d` + `setjmp` desde
-`subsystems/posix/sdk/v1`. Los includes publicos (`savanxp/libc.h`,
-`savanxp/gfx2d.h`, ...) y `include/` del repo ya vienen en los `-I`.
-
-## Apps con ventana
-
-El toolkit SXGUI (`savanxp/sxgui.h`) no entra por default: suma ~48 KB al
-binario y una app de consola no lo necesita. Se pide con `-Gui`, que linkea
-`sxgui.c` + `sxgui_app.c`, el mismo par que build.ps1 le pone a las apps
-ventaneadas in-tree:
-
-```powershell
-.\tools\build-user.ps1 -Source .\ports\miapp -Name miapp -Gui
-.\tools\run-user.ps1 -Source .\ports\miapp -Name miapp -Gui
-```
-
-Sin el switch el link falla con simbolos `sxgui_*` sin resolver.
-
-## Ports pesados
-
-Si el port necesita un pipeline propio (mas de un artefacto, WADs, assets),
-copiale el patron a `sdk/doomgeneric/build.ps1`: script propio en la carpeta del
-port que termina llamando a `tools/build-user.ps1`.
+- Pin the exact upstream revision; do not build from an unversioned checkout.
+- Keep upstream changes small and reviewable in `patches/`.
+- Keep OS integration in `overlay/`, not mixed into upstream files.
+- Use `tools/sxfs_sync.py`/the `disk.img.lock` contract for installation.
+- Run the normal Linux build after installing the port and verify persistence.

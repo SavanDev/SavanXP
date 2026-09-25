@@ -114,7 +114,7 @@ first.
 ## The two costs, stated plainly
 
 **It no longer leaves the image — this cost was paid elsewhere.** Floats used to
-mean `-Sse`, and `-Sse` meant `tools/build-user.ps1` and a binary installed into
+mean `--sse`, and `--sse` means `tools/build-user.sh` and a binary installed into
 `/disk/bin` instead of the image's `/bin`. The in-tree userland now compiles
 with `-msse2` and links the libm, so a `float` no longer decides where a binary
 lives — see
@@ -238,7 +238,7 @@ than approximately GL.
 ### Batch 0 — the consumer, before any API — **done**
 
 `/bin/gears` (`subsystems/posix/userland/gears.c`) is in the image and in the
-Diagnostics group next to Gfx Demo, with `tools/shoot.ps1 -Scenario gears` to
+Diagnostics group next to Gfx Demo, with `tools/shoot.sh --scenario gears` to
 capture it. It is split into three blocks on purpose — matrices, rasterizer,
 scene — and only the third survives when SxGL exists; the first two are what
 batches 1 and 2 absorb. What it asks of them is the subset, and it is short:
@@ -259,9 +259,10 @@ a gears demo — rasterizing by hand, and it doubles as the specification of the
 subset: whatever it calls is batch 1.
 
 **It goes where the system's own test apps go, not in `ports/`.** An in-tree
-program in `subsystems/posix/userland/`, registered in `build.ps1` with
-`Test = $true` and listed in the Diagnostics group next to Gfx Demo — the 2D
-rendering test that `tools/shoot.ps1` already drives for `windowd-stats`. A
+program in `subsystems/posix/userland/`, registered in the CMake userland
+registry as a test application and listed in the Diagnostics group next to Gfx
+Demo — the 2D rendering test that `tools/shoot.sh` already drives for
+`windowd-stats`. A
 gears demo is its 3D sibling and belongs beside it. `ports/` is gitignored and
 disposable, which is right for a throwaway port and wrong for the program that
 defines the API: this one has to be versioned, has to break the build when SxGL
@@ -320,13 +321,13 @@ ports, one at a time, the same way batch 3 of SxGFX was.
 
 The pattern is already established and should be copied, not reinvented:
 `tests/host/gfx2d_test.cpp` compiles the real painter on the **host** and
-asserts pixels without booting, behind `build.ps1 gfx2d-test` (182 checks).
+asserts pixels without booting, behind `./build.sh test` (the gfx2d host test).
 
-A `build.ps1 sxgl-test` alongside it is the right instrument for the whole of
+A native `sxgl-test` alongside it is the right instrument for the whole of
 batches 2–4: a rasterizer is exactly the kind of code where a rendered image
 plus a hash catches regressions a human eye would sign off on. Batch 1 is the
 part that cannot be tested on the host — it is the seam with `windowd`, so it
-belongs in a smoke scenario with `tools/shoot.ps1`, driving the batch 0 demo the
+belongs in a smoke scenario with `tools/shoot.sh`, driving the batch 0 demo the
 same way the existing scenarios drive Gfx Demo.
 
 Add one measurement no 2D test needed: **triangles and fragments per second on
@@ -341,7 +342,7 @@ to it accumulates slowdowns nobody notices until a port is unusable.
 - **No second present path.** `gfx_present_region` throttles against the
   compositor; a GL loop that submits around it will look faster and be wrong.
 - **No `libGL` in the image.** That is the floating-point rule, and it is not
-  negotiable without changing `Get-UserCompileFlags` for everybody.
+  negotiable without changing the CMake userland flags for everybody.
 - **No hardware backend until the kernel has one.** Accelerating this means
   virgl in `virtio_gpu`, 3D ioctls next to the 21 that exist, and a command
   submission path — a kernel project with its own roadmap, which SxGL would sit

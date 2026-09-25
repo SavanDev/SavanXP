@@ -15,8 +15,6 @@
  * partition:: se cuelga de el para publicar cada rebanada.
  */
 
-#define _CRT_SECURE_NO_WARNINGS 1
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

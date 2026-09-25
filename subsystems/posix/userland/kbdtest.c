@@ -4,7 +4,7 @@
  * (manual, requiere un humano) y de windowd_selftest (que inyecta un
  * savanxp_input_event a mano sin tocar PS/2), este binario adquiere la sesion
  * grafica igual que gputest.c en modo interactivo y lee /dev/input0 de
- * verdad, mientras el harness host (build.ps1 kbd-smoke) mueve el teclado
+ * verdad, mientras el harness host (`./build.sh smoke kbd-smoke`) mueve el teclado
  * emulado por QMP. Verifica make/break, la tabla shifted, el bit de
  * modificador de Ctrl y el camino de tecla extendida (0xE0) de una sola vez. */
 

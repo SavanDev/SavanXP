@@ -21,7 +21,7 @@ Incluye:
 - `include/savanxp/gfx2d.h`
 - `runtime/gfx2d.c`
 - `include/savanxp/audio.h`
-- `runtime/audio.c` (optional with `build-user.ps1 -Audio`)
+- `runtime/audio.c` (optional with `tools/build-user.sh --audio`)
 
 ## ABI pública v1.2
 
@@ -158,28 +158,28 @@ Diagnostico de red v1:
 
 Compilar e instalar una app externa:
 
-```powershell
-.\build.ps1 build
-.\tools\build-user.ps1 -Source .\sdk\hello -Name hello
+```bash
+./build.sh build
+./tools/build-user.sh --source sdk/hello --name hello
 ```
 
 Compilar solo el ELF:
 
-```powershell
-.\tools\build-user.ps1 -Source .\sdk\multifile -Name multifile -NoInstall
+```bash
+./tools/build-user.sh --source sdk/multifile --name multifile --no-install
 ```
 
 Compilar e instalar desde un directorio con varias fuentes:
 
-```powershell
-.\tools\build-user.ps1 -Source .\sdk\multifile -Name multifile
+```bash
+./tools/build-user.sh --source sdk/multifile --name multifile
 ```
 
 Crear una app nueva desde el template público:
 
-```powershell
-.\tools\new-user-app.ps1 -Name miapp
-.\tools\build-user.ps1 -Source .\sdk\miapp -Name miapp
+```bash
+./tools/new-user-app.sh --name myapp
+./tools/build-user.sh --source sdk/myapp --name myapp
 ```
 
 El tooling:
@@ -199,18 +199,18 @@ Smoke tests útiles en el estado actual:
 - `audiotest`
 - `gfxdemo`
 - `forktest`
-- `smptest` (con `-Smp 4`: procesos corriendo en paralelo, `kill` entre cores)
+- `smptest` (con `--smp 4`: procesos corriendo en paralelo, `kill` entre cores)
 - `polltest`
 - `sigtest`
 - `busybox ls /disk/bin`
-- `smoke` via `.\build.ps1 smoke`
+- `smoke` via `./build.sh smoke smoke`
 
 Ejemplo externo recomendado para GUI:
 
-```powershell
-.\tools\build-user.ps1 -Source .\sdk\gfxhello -Name gfxhello
-.\tools\build-user.ps1 -Source .\sdk\udptest -Name udptest
-.\tools\build-user.ps1 -Source .\sdk\tcpget -Name tcpget
+```bash
+./tools/build-user.sh --source sdk/gfxhello --name gfxhello
+./tools/build-user.sh --source sdk/udptest --name udptest
+./tools/build-user.sh --source sdk/tcpget --name tcpget
 ```
 
 Nota de red:

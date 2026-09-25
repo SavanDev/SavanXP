@@ -40,16 +40,16 @@ project should be readable by anyone who finds it.
 
 ### 4. Never break the persistence of `build/disk.img`
 
-`.\build.ps1 build` must not delete or unconditionally recreate the image if
+`./build.sh build` must not delete or unconditionally recreate the image if
 one already exists and is valid. Changes to the kernel, the build, the SDK,
 `SxFS` or the host tooling must not lose external binaries in `/disk/bin` nor
 persistent assets under `/disk/games`.
 
 When touching that area, verify it:
 
-```powershell
-.\sdk\doomgeneric\build.ps1   # install an external app into the image
-.\build.ps1 build             # then rebuild
+```bash
+./ports/doomgeneric/build.sh # install an external app into the image
+./build.sh build              # then rebuild
 ```
 
 `/disk/bin/doomgeneric` and `/disk/games/doom/*.wad` must both still be there.
@@ -57,18 +57,24 @@ If they are not, treat it as a regression of the persistent image flow.
 
 ### 5. No machine-specific paths in the tooling
 
-Build tools resolve through `tools/Toolchain.ps1` (env var > baked
-`toolchain/` > `PATH`). A new tool goes into `tools/toolchain.lock.json` and
-that map — never as an absolute path in `build.ps1`.
+Build tools resolve through CMake and the host `PATH`, with documented
+environment or cache overrides. A new host tool belongs in CMake discovery and
+the documented dependency list — never as an absolute path in `build.sh` or
+the CMake files.
 
 ## Build commands
 
-```powershell
-.\build.ps1 build           # kernel, userland and disk image
-.\build.ps1 run             # boot in QEMU (add -Virtio for paravirtualized hw)
-.\build.ps1 smoke           # automated headless test suite
-.\build.ps1 windowd-smoke   # graphical compositor
+Native Linux path:
+
+```bash
+./build.sh build             # kernel, userland and disk image
+./build.sh run               # boot in QEMU
+./build.sh iso               # bootable ISO
+./build.sh test              # CTest/host tests
+./build.sh smoke smoke       # core QEMU smoke
+./tools/shoot.sh             # visual desktop/QMP check
+./tools/build-user.sh --source path/to/app --name app
 ```
 
 `README.md` has the full list and the requirements;
-[`docs/BUILD_LINUX.md`](docs/BUILD_LINUX.md) covers building outside Windows.
+[`docs/BUILD_CMAKE.md`](docs/BUILD_CMAKE.md) covers the native build path.

@@ -58,7 +58,7 @@ else took.**
 system_percent = 100 * (total_delta - idle_delta) / total_delta
 ```
 
-The headless self-test (`build.ps1 taskmgr-smoke`) checks both directions,
+The headless self-test (`./build.sh smoke taskmgr-smoke`) checks both directions,
 because only both together prove the counters land on the right process: after
 `sleep_ms`, system usage must be near zero (the idle counter is advancing);
 after a busy loop, both system usage and the test's own process must be above
@@ -99,7 +99,7 @@ Two clocks, two jobs, and mixing them up cost a long hunt:
   measure time. Which counter, and why it is not always the TSC, is its own
   story: [`TIME.md`](TIME.md).
 
-`build.ps1 clock-smoke` is what settled it, by measuring both against the one
+`./build.sh smoke clock-smoke` is what settled it, by measuring both against the one
 reference that depends on neither: the RTC.
 
 The finding that forced the split came from VirtualBox. With the machine

@@ -1,119 +1,102 @@
 # SDK
 
-Esta carpeta contiene ejemplos y ports externos en `C` para SavanXP. Se compilan en Windows y se instalan directo en `build/disk.img`, sin reconstruir `initramfs`.
+This directory contains C examples and external application sources for
+SavanXP. Applications are built for the public POSIX SDK and can be installed
+into `build/disk.img` without rebuilding the initramfs.
 
-La superficie pública canónica del SDK ahora está en `subsystems/posix/sdk/v1`.
+The canonical public SDK surface is [`subsystems/posix/sdk/v1`](../subsystems/posix/sdk/v1).
 
-Flujo base:
+## Basic workflow
 
-```powershell
-.\build.ps1 build
-.\tools\build-user.ps1 -Source .\sdk\hello -Name hello
-.\build.ps1 run
+From the repository root:
+
+```bash
+./build.sh build
+./tools/build-user.sh --source sdk/hello --name hello
+./build.sh run
 ```
 
-Una vez en SavanXP:
+Inside SavanXP:
 
 ```text
 which hello
 hello
 ```
 
-Ejemplos incluidos:
+The builder accepts either a single `.c`/`.S` file or a directory containing
+sources and local headers. A directory source is compiled recursively, with
+`include/` added to the include path when present.
 
-- `sdk/hello/main.c`: salida simple a `stdout`
-- `sdk/errdemo/main.c`: salida simple a `stderr`
-- `sdk/fsdemo/main.c`: create/write/read en `/disk/tmp`
+## Included examples
+
+- `sdk/hello/main.c`: simple stdout output
+- `sdk/errdemo/main.c`: simple stderr output
+- `sdk/fsdemo/main.c`: create/write/read under `/disk/tmp`
 - `sdk/pathops/main.c`: `mkdir`/`rename`/`truncate`/`unlink`/`rmdir`
-- `sdk/procpeek/main.c`: snapshot simple de procesos
-- `sdk/spawnwait/main.c`: `spawn` + `waitpid`
-- `sdk/statusdemo/main.c`: errores, estados de proceso y metadata del SDK
-- `sdk/gfxhello/main.c`: app fullscreen usando `gfx_*` desde el SDK
-- `sdk/doomgeneric/`: port de DoomGeneric con script propio y carpeta `wad/` para copiar `doom1.wad`
-- `sdk/udptest/main.c`: self-test local de sockets UDP IPv4
-- `sdk/tcpget/main.c`: cliente HTTP minimo sobre sockets TCP IPv4
-- `sdk/multifile/*`: app externa con varias fuentes y headers locales
-- `sdk/template/main.c`: punto de partida mínimo para apps nuevas
+- `sdk/procpeek/main.c`: simple process snapshots
+- `sdk/spawnwait/main.c`: `spawn` and `waitpid`
+- `sdk/statusdemo/main.c`: errors, process states, and SDK metadata
+- `sdk/gfxhello/main.c`: a fullscreen application using `gfx_*`
+- `sdk/udptest/main.c`: local IPv4 UDP self-test
+- `sdk/tcpget/main.c`: minimal HTTP client over IPv4 TCP
+- `sdk/multifile/`: an external application with several source files
+- `sdk/template/main.c`: minimal starting point for a new application
 
-Las apps deberían incluir:
+Applications normally include:
 
 ```c
 #include "savanxp/libc.h"
 ```
 
-Tambien pueden usar `savanxp/gfx2d.h`, con primitivas `sx_bitmap`,
-`sx_painter` y `sx_rect_set` para composicion 2D minima sobre buffers de 32
-bits.
+They can also use `savanxp/gfx2d.h` and its 32-bit bitmap, painter, and
+rectangle primitives.
 
-El tooling acepta:
+## Build options
 
-- un archivo `.c` individual
-- un directorio completo con fuentes `.c` y `.S`
-- headers locales en el directorio raíz o en `include/`
+Install under an explicit path below `/disk`:
 
-Instalacion con ruta explicita:
-
-```powershell
-.\tools\build-user.ps1 -Source .\sdk\fsdemo -Name fsdemo -Destination /disk/bin/fsdemo
+```bash
+./tools/build-user.sh --source sdk/fsdemo --name fsdemo \
+  --destination /disk/bin/fsdemo
 ```
 
-Compilar solo el ELF sin instalar:
+Build the ELF without installing it:
 
-```powershell
-.\tools\build-user.ps1 -Source .\sdk\procpeek -Name procpeek -NoInstall
+```bash
+./tools/build-user.sh --source sdk/procpeek --name procpeek --no-install
 ```
 
-Ejemplo multifile:
+Build a multi-file application:
 
-```powershell
-.\tools\build-user.ps1 -Source .\sdk\multifile -Name multifile
+```bash
+./tools/build-user.sh --source sdk/multifile --name multifile
 ```
 
-Crear una app nueva desde el template:
+Create an application from the public template:
 
-```powershell
-.\tools\new-user-app.ps1 -Name miapp
-.\tools\build-user.ps1 -Source .\sdk\miapp -Name miapp
+```bash
+./tools/new-user-app.sh --name myapp
+./tools/build-user.sh --source sdk/myapp --name myapp
 ```
 
-Estructura recomendada para una app nueva:
+Create a port-like application under another repository directory:
 
-```text
-miapp/
-  main.c
-  include/
-    miapp.h
-  helper.c
+```bash
+./tools/new-user-app.sh --name myport --destination-root ports
 ```
 
-Compilar, instalar y arrancar QEMU en un paso:
+Applications that need the SXGUI runtime, PCM audio, or SSE/SSE2 opt in with
+`--gui`, `--audio`, and `--sse` respectively. The runtime is not linked into
+every external binary by default.
 
-```powershell
-.\tools\run-user.ps1 -Source .\sdk\errdemo -Name errdemo
+## Build, install, and run
+
+`tools/run-user.sh` builds, installs, and boots one application:
+
+```bash
+./tools/run-user.sh --source sdk/errdemo --name errdemo
 ```
 
-Apps con ventana (toolkit SXGUI): el runtime base no incluye `sxgui.c` /
-`sxgui_app.c` porque suman ~48 KB a cada binario. Se piden con `-Gui`:
-
-```powershell
-.\tools\build-user.ps1 -Source .\sdk\miapp -Name miapp -Gui
-```
-
-Banco de pruebas local: `ports/` es una carpeta gitignorada para ports y apps
-que no van al repo. Usa exactamente este mismo tooling; ver `ports/README.md`.
-
-```powershell
-.\tools\new-user-app.ps1 -Name miport -DestinationRoot ports
-```
-
-Referencia canónica del SDK:
-
-```text
-subsystems/posix/sdk/v1
-```
-
-Caso DoomGeneric:
-
-```powershell
-.\sdk\doomgeneric\build.ps1
-```
+The official Doom and FFmpeg integrations live under [`ports/`](../ports/README.md)
+and are built independently. They use the same candidate-based SxFS installer
+and must not be copied into this directory.

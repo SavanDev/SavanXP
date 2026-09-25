@@ -24,7 +24,8 @@ which is why both go into the registry.
   `vendor/uacpi/LICENSE`
 - Decision: `Adopt`
 - Distributed in: the kernel binary; built with its own flags
-  (`Get-UacpiFlags`) and integrated through `kernel/uacpi_glue.cpp`
+  (`SAVANXP_UACPI_COMPILE_OPTIONS`) and integrated through
+  `kernel/uacpi_glue.cpp`
 
 ### BusyBox
 
@@ -33,7 +34,7 @@ which is why both go into the registry.
 - License reviewed: GPLv2, `vendor/busybox/LICENSE`
 - Decision: `Adopt`, with replacement planned
 - Distributed in: `/bin/busybox` and one copy of the binary per applet
-  (`Install-BusyBox` in `build.ps1`)
+  (`savanxp-busybox` CMake target)
 - Actual scope: only six applets are compiled from upstream (`cat`, `cp`,
   `echo`, `mkdir`, `mv`, `rm`), through the one-line `#include`s in
   `vendor/busybox-port/applet_*.c`. The other five (`ls`, `ps`, `true`,
@@ -44,21 +45,62 @@ which is why both go into the registry.
 
 ### Doom (DoomGeneric)
 
-- Origin: DoomGeneric, on the Chocolate Doom line
-- Versioned: yes, `sdk/doomgeneric/`
-- License reviewed: GPLv2. Copyright (C) 1993-1996 Id Software, Inc. and
+- Origin: https://github.com/ozkl/doomgeneric, commit
+  `fc601639494e089702a1ada082eb51aaafc03722` (tree
+  `4b8c10b05138583636e5425131242b7212023ef7`)
+- Versioned: yes, `ports/doomgeneric/` (pristine source, reviewed patches, and
+  SavanXP overlay)
+- License reviewed: GPL-2.0. Copyright (C) 1993-1996 Id Software, Inc. and
   Copyright (C) 2005-2014 Simon Howard. Full text in
-  `sdk/doomgeneric/COPYING`; the per-file notices stay in the headers
+  `ports/doomgeneric/source/LICENSE`; the per-file notices stay in the headers
 - Decision: `Adopt`
 - Distributed in: `/disk/bin/doomgeneric`. Built separately with
-  `sdk/doomgeneric/build.ps1`, not by the main build
+  `ports/doomgeneric/build.sh`, not by the main build
+- Reproduction pin: archive SHA-256
+  `6a5879c5f686199f0156ea8abcdaab820350c3a74aff211e81558f8675c8e2d5`
+
+### FFmpeg / Media Player
+
+- Origin: https://github.com/FFmpeg/FFmpeg, release `n7.1.1`, commit
+  `db69d06eeeab4f46da15030a80d539efb4503ca8` (tree
+  `94e0dc384ffe4b562568294cf3846e47cb0260d6`)
+- Versioned: no source vendored; `ports/ffmpeg/UPSTREAM` pins the release,
+  archive SHA-256 `733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1`,
+  and signature fingerprint
+  `FCF986EA15E6E293A5644F10B4322F04D67658D8`
+- License reviewed: LGPL-2.1-or-later for the selected configuration. Exact
+  texts are in `ports/ffmpeg/LICENSE.md` and
+  `ports/ffmpeg/COPYING.LGPLv2.1`; the build guard rejects GPL, LGPLv3, and
+  nonfree components
+- Decision: `Adopt`
+- Distributed in: the system launcher `/bin/mediaplayer` plus the optional
+  `/disk/bin/mediaplayer-ffmpeg` static backend linked with the selected FFmpeg
+  libraries. Corresponding source/relinking instructions are in
+  `ports/ffmpeg/SOURCE.md`
+- Local test media is generated under `build/media` and is not a third-party
+  repository asset
+
+### Haxe native AOT toolchain (optional)
+
+- Haxe compiler: https://github.com/HaxeFoundation/haxe, release `4.3.7`, commit
+  `e0b355c6be312c1b17382603f018cf52522ec651`
+- reflaxe: https://github.com/SomeRanDev/reflaxe, commit
+  `73a983112e039daad46b37912ab238df6bf0cf53`
+- reflaxe.CPP: https://github.com/SomeRanDev/reflaxe.CPP, commit
+  `e07ab05a32ab9d2e2717ad9bc7d1c4e18f88927b`
+- License reviewed: reflaxe and reflaxe.CPP are MIT at the pinned revisions;
+  the Haxe compiler is build-only and is not redistributed by this repository
+- Decision: `Selective port` for the optional AOT experiment
+- Distributed in: optional `/disk/bin/nativehello`, `/disk/bin/nativegui`,
+  and `/disk/bin/sxguiapp`; the Haxe compiler and reflaxe checkout remain
+  outside the image
 
 ## Bootloader
 
 ### Limine
 
 - Origin: https://github.com/limine-bootloader/limine, `v10.x-binary` branch
-- Versioned: no. `build.ps1` clones it into `tools/limine`, which is in
+- Versioned: no. `build.sh` clones it into `tools/limine`, which is in
   `.gitignore`
 - License reviewed: BSD-2-Clause, `tools/limine/LICENSE`
 - Decision: `Adopt`
@@ -79,8 +121,8 @@ which is why both go into the registry.
 ### Freedoom
 
 - Origin: https://freedoom.github.io
-- Versioned: no. `.gitignore` excludes `sdk/doomgeneric/wad/*.wad`; the file is
-  downloaded separately and the build prints the URL if it is missing
+- Versioned: no. `.gitignore` excludes `ports/doomgeneric/wad/*.wad`; the file
+  is supplied separately and the port prints the URL if it is missing
 - License reviewed: BSD-3-Clause. Independent project, unrelated to id Software
 - Decision: `Adopt`
 - Distributed in: `/disk/games/doom/freedoom1.wad` of the built image. It is
@@ -156,10 +198,9 @@ which is why both go into the registry.
 
 ## Build only: not distributed
 
-The baked toolchain tools (LLVM, QEMU, xorriso, Ninja) do not enter any image:
-they produce the binaries and stay outside. Their provenance, version and
-`sha256` are pinned in `tools/toolchain.lock.json`, which is the authoritative
-registry for them. They are not duplicated here.
+Host build tools (LLVM, QEMU, xorriso, Ninja) do not enter any image: they
+produce the binaries and stay outside. They are resolved from `PATH` or CMake
+cache overrides, and are not duplicated in this registry.
 
 ## Reference: no third-party bits in the repository
 

@@ -10,7 +10,7 @@
  * que el conteo de vecinos cierra, que la victoria se detecta cuando y solo
  * cuando falta descubrir exactamente las minas -- no necesita pantalla, y
  * probarlo mirando pixeles seria probarlo por el camino mas fragil. El
- * selftest de aca es el que corre `.\build.ps1 mines-smoke`.
+ * selftest de aca es el que corre `./build.sh smoke mines-smoke`.
  *
  * Sin malloc, igual que el resto del userland: el tablero es del tamano del
  * peor caso y vive en el llamador.

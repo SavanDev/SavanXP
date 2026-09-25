@@ -201,7 +201,7 @@ A two-hop approach, to de-risk cutting a boot-critical process:
      hit) stays inline. A2's process boundary forces it naturally (the WM
      decides forward-to-shell vs. handle-the-window) and there it is testable
      with the shell already a separate client. Verify with `desktop --selftest`
-     / `build.ps1 desktop-smoke` (headless compositor) + QMP mouse driving.
+     / `./build.sh smoke desktop-smoke` (headless compositor) + QMP mouse driving.
      Zero behavior change.
 
    **Chrome state migrating to `struct shell_state`:** `menu_open`,

@@ -1,7 +1,7 @@
-"""Driver QMP de tools/shoot.ps1: manda teclas y saca capturas.
+"""Shared QMP driver for the visual desktop scenarios.
 
-No arranca ni apaga QEMU -- de eso se encarga el .ps1, que es donde vive la
-definicion de la maquina. Aca solo se habla QMP contra un puerto ya abierto.
+The native launcher is `tools/shoot.sh`; this module only speaks QMP against
+an already-running QEMU instance.
 
 Los eventos van por `input-send-event` y no por el `sendkey` del monitor HMP
 porque hace falta SOSTENER un modificador: capturar el switcher de Alt+Tab
@@ -16,22 +16,26 @@ import os
 import socket
 import sys
 import time
+from pathlib import Path
 
 
 class Qmp(object):
-    def __init__(self, port, timeout=60, abs_pointer=False, screen=(1280, 800)):
+    def __init__(self, socket_path, timeout=60, abs_pointer=False, screen=(1280, 800)):
         # El puntero del guest es relativo (PS/2) o absoluto (virtio-tablet), y
         # eso cambia por completo como se lo lleva a una posicion. Ver move_to.
         self.abs_pointer = abs_pointer
         self.screen = screen
         deadline = time.time() + timeout
         while True:
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(5)
             try:
-                self.sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+                self.sock.connect(str(socket_path))
                 break
             except OSError:
+                self.sock.close()
                 if time.time() > deadline:
-                    raise RuntimeError("no se pudo conectar a QMP en el puerto %d" % port)
+                    raise RuntimeError("no se pudo conectar a QMP en %s" % socket_path)
                 time.sleep(0.2)
         self.buf = b""
         self._read()                    # saludo
@@ -239,8 +243,8 @@ class Session(object):
     def open_files(self):
         self.launch(1)
 
-    # Notepad y Shell se cuentan desde el final: Media Player (sdk/ffmpeg), si
-    # esta instalado, entra en Accessories entre Files y Notepad.
+    # Notepad y Shell se cuentan desde el final: Media Player siempre está en
+    # Accessories; el backend FFmpeg es un componente externo que no se lista.
     def open_notepad(self):
         self.launch(-2)
 
@@ -259,7 +263,7 @@ class Session(object):
 
     def open_appwiz(self):
         # Grupo System: la cuarta solapa. Games existe siempre desde que el
-        # Buscaminas viene en la imagen; lo que shoot.ps1 sigue exigiendo antes
+        # Buscaminas viene en la imagen; el escenario sigue exigiendo antes
         # de este escenario es Doom, pero por otro motivo -- sin un programa
         # externo instalado la lista de desinstalables sale vacia.
         self.launch(0, groups=3)
@@ -586,12 +590,12 @@ def scenario_appwiz(s):
 
     Se llega por el grupo System del launcher, que es donde la declara su
     .sxres. La lista muestra lo instalado FUERA de la imagen del sistema, asi
-    que con Doom instalado tiene exactamente una fila -- por eso shoot.ps1
-    exige que este antes de arrancar: sin el, la captura seria de una lista
-    vacia y no se veria ni el icono, ni el tamano, ni la casilla de datos.
+    que con Doom instalado tiene exactamente una fila; sin el, la captura seria
+    de una lista vacia y no se veria ni el icono, ni el tamano, ni la casilla
+    de datos.
 
     NO se aprieta Remove: este harness saca fotos, no desinstala. El que valida
-    el borrado es 'build.ps1 appwiz-smoke'.
+    el borrado es `build.sh smoke appwiz-smoke`.
     """
     s.open_appwiz()
     s.shot("appwiz")
@@ -948,7 +952,7 @@ def scenario_spin(s):
 def scenario_mediaplayer(s):
     """Media Player reproduciendo el clip de sincronia, en ventana.
 
-    Necesita el reproductor y el material instalados (shoot.ps1 lo exige). Se
+    Necesita el reproductor y el material instalados. Se
     abre por el launcher y el archivo por el dialogo Open, que arranca con
     /disk/media/ escrito: solo falta el nombre. El punto se manda como la tecla
     "dot", que en el layout ES del guest tambien es el punto.
@@ -1010,7 +1014,7 @@ def wait_for_marker(path, marker, timeout=240):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--socket", type=Path, required=True, help="QMP Unix socket")
     parser.add_argument("--serial", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--scenario", required=True, choices=sorted(SCENARIOS))
@@ -1019,7 +1023,7 @@ def main():
                         help="el guest tiene un puntero absoluto (virtio-tablet), no PS/2")
     opts = parser.parse_args()
 
-    qmp = Qmp(opts.port, abs_pointer=opts.abs_pointer)
+    qmp = Qmp(opts.socket, abs_pointer=opts.abs_pointer)
     marker = "handoff: starting /bin/init"
     if not wait_for_marker(opts.serial, marker):
         print("no aparecio '%s' en %s" % (marker, opts.serial), file=sys.stderr)
@@ -1030,9 +1034,6 @@ def main():
     try:
         SCENARIOS[opts.scenario](Session(qmp, opts.out))
     except Failure as failure:
-        # A stdout y no a stderr: PowerShell convierte el stderr de un comando
-        # nativo en registros de error y el `throw` del .ps1 termina tapando el
-        # motivo real, que es lo unico que hace falta leer.
         print("FALLO: %s" % failure)
         print("Las capturas quedaron en %s para ver que paso." % opts.out)
         return 1

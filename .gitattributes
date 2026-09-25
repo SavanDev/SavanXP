@@ -1,3 +1,2 @@
-# Los scripts de shell tienen que quedar con LF en cualquier checkout: en
-# Windows (core.autocrlf=true) salian con CRLF y bash los rechaza.
+# Keep shell scripts portable across checkout environments.
 *.sh text eol=lf

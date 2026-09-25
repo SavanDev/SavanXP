@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 /* Las apps de diagnostico se compilan solo si el build las pide, igual que en
- * windowd_menu.c: -NoTestApps las saca del rootfs y de los defaults a la vez. */
+ * windowd_menu.c: --no-test-apps las saca del rootfs y de los defaults a la vez. */
 #ifndef DESKTOP_INCLUDE_TEST_APPS
 #define DESKTOP_INCLUDE_TEST_APPS 1
 #endif
@@ -729,7 +729,7 @@ static const char *path_basename(const char *path)
  * Si el registro ya tiene un item apuntando a un binario con este basename.
  *
  * El desempate va por BASENAME y no por path completo porque /disk/bin es una
- * copia de /bin (build.ps1): comparar paths dejaria entrar cada programa del
+ * copia de /bin (CMake): comparar paths dejaria entrar cada programa del
  * sistema dos veces, una por directorio, y son el mismo programa.
  */
 static int item_with_basename_exists(const char *basename)

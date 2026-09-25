@@ -81,7 +81,7 @@ consequences follow, and they are the ones to check a future design against:
 - Nothing in the image may depend on `subsystems/native`. It stays in the tree as
   a **validated experiment** — the ABI, the AOT chain and the GUI demo all work
   and are worth keeping — but it is not maintained as a product, it is not in
-  `build.ps1`'s main path, and its binaries are not installed.
+  the main CMake path, and its binaries are not installed.
 - Do not design platform interfaces "for the VM". An API that exists today
   because a future runtime might want it is an API nobody is using.
 
@@ -121,9 +121,9 @@ And the apps, all of them, against the POSIX SDK:
 
 ### An in-tree app has floating point
 
-`Get-UserFlags` (`build.ps1`) compiles the whole in-tree userland with `-msse
--msse2`, and every program links the libm in `runtime/math.c`. A `double` and a
-`%f` work in any app of the tree, with no switch to remember.
+The in-tree CMake userland target compiles the whole userland with
+`-msse -msse2`, and every program links the libm in `runtime/math.c`. A
+`double` and a `%f` work in any app of the tree, with no switch to remember.
 
 What that rests on is the kernel, and it was already there for the native
 subsystem: SSE is enabled at boot, the FPU/SSE area travels per process and the
@@ -148,7 +148,7 @@ Two consequences worth keeping in mind:
   with `__divti3` from compiler-rt, which this system does not link, so `calc.c`
   does the long division by hand.
 
-An **external** app still opts in with `-Sse` (`tools/build-user.ps1 -Sse`): a
+An **external** app still opts in with `--sse` (`tools/build-user.sh --sse`): a
 port that does not use real numbers prefers the compiler to leave SSE out of it.
 `sdk/floatsmoke` is the harness of that path, and of the kernel keeping the
 FPU state straight while it multiplexes processes doing math at the same time.
@@ -193,8 +193,8 @@ the seam visible:
 - The **rules** live in one module with no window (`mines_board.c`): board
   generation, first-click safety, cascade, chord, win and loss, and the best
   times. It is what a port would carry over unchanged, and what
-  `.\build.ps1 mines-smoke` asserts — so the port has a specification, not a
-  screenshot, to be judged against.
+  `./build.sh smoke mines-smoke` asserts — so the port has a specification, not
+  a screenshot, to be judged against.
 - The **window** is a thin client of the toolkit (`mines.c`): layout, drawing
   and input, and nothing else. That is the half a managed port would rewrite
   against the FFI.
@@ -203,8 +203,8 @@ What this does **not** mean: the game is not part of the platform. Nothing in th
 kernel, `windowd`, `compositord` or the SDK may grow a dependency on it — it is
 an app that consumes the platform, exactly like Doom does, with the single
 difference that it **comes in the image** instead of being installed into
-`/disk/bin`. Being preinstalled is a packaging fact (an entry in `build.ps1` and
-`category=Games` in its `.sxres`), not a layer.
+`/disk/bin`. Being preinstalled is a packaging fact (an entry in the CMake userland
+registry and `category=Games` in its `.sxres`), not a layer.
 
 The one thing the game did push into the platform is the gap it found in the
 toolkit: an app that paints its own content — a board of cells, a grid, a canvas

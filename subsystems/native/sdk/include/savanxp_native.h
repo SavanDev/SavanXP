@@ -9,17 +9,11 @@
  */
 #pragma once
 
-#include "savanxp_native_abi.h"
+#include "../../../../include/abi/savanxp_native_abi.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Marca e_ident[EI_OSABI] (byte 7 del ELF) con la que el kernel reconoce un
- * binario nativo y lo corre con identidad de subsistema "native". El build
- * (subsystems/native/build.ps1) estampa este valor en el ELF; el kernel lo lee
- * en elf.cpp y lo compara contra elf::kOsAbiNative (deben coincidir). */
-#define SXN_ELF_OSABI_NATIVE 0x53 /* 'S' de SavanXP */
 
 /* Numeros de syscall del baseline transitorio compartido con posix
  * (< SXN_SYS_BASE). Espejo de subsystems/posix/sdk/v1/include/savanxp/syscall.h. */

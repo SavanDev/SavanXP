@@ -24,7 +24,7 @@
  * El contenido es un VALOR, no un stream: `write` reemplaza todo y `read`
  * devuelve todo desde el principio, sin cursor. No hay dueño ni negociacion de
  * formatos al estilo X11 -- el que copia deja los bytes y se olvida --, que es
- * el modelo de Windows y el que le corresponde a un sistema donde el que copio
+ * el modelo de escritorio y el que le corresponde a un sistema donde el que copio
  * puede haber terminado antes de que alguien pegue.
  */
 

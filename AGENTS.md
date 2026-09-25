@@ -2,12 +2,11 @@
 
 ## Toolchain
 
-- The build tools (clang, ld.lld, qemu, OVMF) are baked into `toolchain/`
-  (git-ignored) by `tools/bootstrap.ps1`. Resolution is centralized in
-  `tools/Toolchain.ps1` (env var > baked toolchain > PATH).
-- Do not put absolute paths from a specific machine back into `build.ps1` or
-  the tooling: if a new tool is needed, add it to `tools/toolchain.lock.json`
-  and to the map in `tools/Toolchain.ps1`.
+- The native build uses `build.sh` and CMake, resolving tools from the host
+  `PATH` with optional CMake cache and environment overrides.
+- Do not put absolute paths from a specific machine back into `build.sh`,
+  `CMakeLists.txt` or the tooling. A new host tool belongs in CMake tool
+  discovery and the documented dependency list.
 
 ## Changelog
 
@@ -60,7 +59,7 @@
 ## Repository rules
 
 - Do not break the persistence of external apps installed in `build/disk.img`.
-- `.\build.ps1 build` must not delete or unconditionally recreate the disk
+- `./build.sh build` must not delete or unconditionally recreate the disk
   image if one already exists and is valid.
 - Changes to the kernel, the build, the SDK, `SxFS` or the host tooling must
   not lose external binaries already installed in `/disk/bin`, nor persistent
@@ -71,20 +70,22 @@
 - The main build may sync the internal userland onto the existing image, but it
   must not reset it except on real corruption or a format incompatibility.
 - If `build/disk.img` has to be recreated, that must be a deliberate and
-  justified decision, not the normal behavior of `.\build.ps1 build`.
+  justified decision, not the normal behavior of `./build.sh build`.
 
 ## Minimum verification when touching that area
 
 - Install an external app into the image, for example with:
-  `.\sdk\doomgeneric\build.ps1`
-- Then run:
-  `.\build.ps1 build`
-- Confirm the executable is still present in `/disk/bin`
+  `./ports/doomgeneric/build.sh --wad ports/doomgeneric/wad/doom1.wad`
+- Then run the normal build:
+  `./build.sh build`
+- Confirm the executable is still present in `/disk/bin`.
 - Confirm its persistent assets, for example
-  `/disk/games/doom/doom1.wad`, are still present
+  `/disk/games/doom/doom1.wad`, are still present.
+- For a repeatable isolated check, run
+  `./tools/verify_doom_persistence.sh` (or pass `--wad` for a real IWAD).
 
 ## Current reference case
 
-- `sdk/doomgeneric` is used as the real regression test for this point.
+- `ports/doomgeneric` is the canonical Doom port and persistence regression.
 - If after a `build` the system cannot find `doomgeneric`, the change must be
   treated as a regression of the persistent image flow.

@@ -16,8 +16,8 @@ namespace {
 constexpr bool kLogRtl = false;
 
 // Prioridad por debajo de virtio-net (110): en la practica nunca compiten por
-// hardware real (build.ps1 arma uno u otro segun -Virtio, nunca los dos
-// juntos), pero esto fija el orden si algun dia coexistieran.
+// hardware real (la maquina usa uno u otro segun la configuracion de QEMU,
+// nunca los dos juntos), pero esto fija el orden si algun dia coexistieran.
 constexpr int kDriverPriority = 100;
 
 constexpr uint16_t kVendorRealtek = 0x10ecu;

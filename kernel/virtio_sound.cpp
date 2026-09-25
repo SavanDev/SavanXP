@@ -320,7 +320,7 @@ bool stream_matches_format(const VirtioSndPcmInfo& info, uint8_t direction) {
 // false solo ante un error real de comunicacion con el device (query_stream_info
 // fallo). No encontrar un stream de esa direccion NO es un error aca -- el
 // caller decide si le hace falta: playback lo trata como fatal, capture como
-// opcional (streams=1 en el perfil sin -Virtio-record, por ejemplo).
+// opcional (streams=1 en el perfil sin grabación virtio, por ejemplo).
 bool select_stream(uint8_t direction, StreamState& state) {
     const uint32_t stream_count = device_cfg()->streams;
     for (uint32_t stream_id = 0; stream_id < stream_count; ++stream_id) {
@@ -809,7 +809,7 @@ void initialize() {
         return;
     }
 
-    // Captura opcional: el perfil sin -Virtio-record (streams=1) no ofrece
+    // Captura opcional: el perfil sin grabación virtio (streams=1) no ofrece
     // ningun stream de entrada y eso es normal, no un fallo del device -- solo
     // deja /dev/audio0 sin soporte de lectura. Un error real de query aca
     // (comunicacion con el device rota) tampoco tira abajo la salida, que ya

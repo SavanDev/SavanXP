@@ -2,9 +2,8 @@
 """Genera el arte fuente del desktop (iconos 16x16/32x32 + banda del menu
 Start) como PNGs bajo assets/desktop/.
 
-Reemplaza a tools/GenerateDesktopSourceArt.ps1 (System.Drawing/GDI+, solo
-Windows) por Pillow, que corre igual en Windows/Linux/macOS. build.ps1 lo
-invoca en cada build antes de convertir esos PNG a headers C.
+Genera el arte con Pillow. `build.sh` lo invoca en cada build antes de convertir
+los PNG a headers C.
 
 Uso:  python tools/gen_desktop_source_art.py [--project-root DIR]
 """
@@ -327,7 +326,7 @@ def main():
     write_icon_set(asset_root, "desktop.png", new_desktop_icon_16)
     write_icon_set(asset_root, "app-terminal.png", new_terminal_icon_16)
     # El de Doom (antes "app-spider.png") se fue del set del sistema: vive
-    # ahora en sdk/doomgeneric/icon.png y se estampa via icon_file= en
+    # ahora en ports/doomgeneric/overlay/icon.png y se estampa via icon_file= en
     # doomgeneric.sxres. Doom se construye con un build aparte, asi que no
     # tiene sentido que su icono siga horneado en el binario del WM.
     write_icon_set(asset_root, "app-libgfx-demo.png", new_gfx_demo_icon_16)

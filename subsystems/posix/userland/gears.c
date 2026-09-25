@@ -639,7 +639,7 @@ int main(void)
     float view_rot_x = 20.0f * (GEARS_PI / 180.0f);
     float view_rot_y = 30.0f * (GEARS_PI / 180.0f);
     /* Arranca girando: un demo de engranajes quieto no dice nada. S lo pausa,
-     * que es la tecla con la que shoot.ps1 ya maneja a Gfx Demo. */
+     * que es la tecla con la que `tools/shoot.sh` maneja a Gfx Demo. */
     int spinning = 1;
 
     if (gfx_open(&gfx) < 0) {

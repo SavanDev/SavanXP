@@ -14,8 +14,6 @@
  * brushes -- no el rasterizado de glifos.
  */
 
-#define _CRT_SECURE_NO_WARNINGS 1
-
 #include <stdint.h>
 
 /* El include del SDK trae su propio <stdio.h>/<string.h> (los de userland, sin

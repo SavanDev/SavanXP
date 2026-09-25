@@ -47,7 +47,7 @@ constexpr uint16_t kTssDescriptorSize = 16;
 //
 // Sale del selector del TSS cargado. Como cada core carga el suyo, `str`
 // identifica al core con una lectura de registro: sin MSR ni MMIO del APIC (que
-// bajo KVM o WHPX pueden salir de la VM en cada acceso, y esto se consulta
+// bajo KVM pueden salir de la VM en cada acceso, y esto se consulta
 // decenas de veces por syscall) y sin depender de nada que el userland pueda
 // tocar, porque `ltr` es privilegiada.
 //

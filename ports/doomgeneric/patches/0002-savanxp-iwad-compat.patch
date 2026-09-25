@@ -1,0 +1,31 @@
+diff --git a/m_menu.c b/m_menu.c
+--- a/m_menu.c
++++ b/m_menu.c
+@@ -656,8 +656,8 @@
+     }
+ 	
+     if (gamestate != GS_LEVEL)
+-	return;
+-	
++        return;
++
+     M_SetupNextMenu(&SaveDef);
+     M_ReadSaveStrings();
+ }
+@@ -2111,11 +2111,11 @@
+ 	break;
+     }
+ 
+-    // Versions of doom.exe before the Ultimate Doom release only had
+-    // three episodes; if we're emulating one of those then don't try
+-    // to show episode four. If we are, then do show episode four
+-    // (should crash if missing).
+-    if (gameversion < exe_ultimate)
++    // Versions before Ultimate Doom only had three episodes. Some IWAD
++    // variants also omit the episode four menu patch even if E4M1 exists,
++    // so hide the fourth entry unless the menu art is actually available.
++    if (gameversion < exe_ultimate
++     || W_CheckNumForName(DEH_String("M_EPI4")) < 0)
+     {
+ 	EpiDef.numitems--;
+     }

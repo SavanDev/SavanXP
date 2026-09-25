@@ -1449,7 +1449,7 @@ static void selftest_default_stamped(void)
 
     /* El commit no se puede predecir en un selftest: solo se valida que este
      * y que no este vacio. Compararlo contra el HEAD real es trabajo del
-     * build.ps1 que arma la imagen, no de este binario en tiempo de ejecucion. */
+     * CMake y sxfs_sync.py que arman la imagen, no de este binario en tiempo de ejecucion. */
     expect(sxe_meta_string(&meta, SXE_TAG_BUILD_ID, text, sizeof(text)) > 0u,
         "BUILD_ID automatico presente");
 

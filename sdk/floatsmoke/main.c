@@ -2,7 +2,7 @@
  *
  * Se construye como app externa CON -Sse y se corre headless desde init:
  *
- *     .\build.ps1 float-smoke
+ *     ./build.sh smoke float-smoke
  *
  * Cubre las tres cosas que pueden fallar por separado:
  *

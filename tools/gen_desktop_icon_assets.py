@@ -2,9 +2,8 @@
 """Convierte los PNG de iconos/menu strip del desktop a
 build/generated/desktop_icon_assets.h.
 
-Reemplaza a tools/GenerateDesktopIconAssets.ps1 (System.Drawing/GDI+, solo
-Windows) por Pillow, que corre igual en Windows/Linux/macOS. build.ps1 lo
-invoca en cada build, despues de gen_desktop_source_art.py.
+Usa Pillow para convertir los PNG a un header C; `build.sh` lo invoca después de
+`gen_desktop_source_art.py`.
 
 Uso:  python tools/gen_desktop_icon_assets.py --project-root DIR --output desktop_icon_assets.h
 """

@@ -3,12 +3,9 @@
  *
  * FUENTE DE VERDAD UNICA del layout persistente de SxFS. Todo lo que lee o
  * escribe una imagen de disco SxFS (el driver del kernel en kernel/sxfs.cpp,
- * el futuro tool nativo del host, y --por verificacion-- el instalador
- * host-side en tools/UserAppCommon.ps1) debe derivar de aqui, no reimplementar
- * offsets, tamanos ni bit-math por su cuenta. Historicamente el formato vivia
- * duplicado a mano entre el kernel (C++) y el host (PowerShell), y las dos
- * copias se desincronizaban: ver el bug del indexado de bitmap ([int]($Bit/8)
- * redondeaba en PowerShell mientras el kernel hacia floor).
+ * el tool nativo del host y el sincronizador de imagen deben derivar de aqui,
+ * no reimplementar offsets, tamanos ni bit-math por su cuenta. El formato se
+ * mantiene unico entre el kernel y las herramientas de host.
  *
  * Freestanding a proposito: solo depende de <stdint.h> y <stddef.h>, sin libc
  * ni headers del kernel, para compilar igual en el kernel y en un tool de host.
@@ -60,6 +57,8 @@
 #define SXFS_BLOCK_BITMAP_SECTORS 32u
 #define SXFS_INODE_BITMAP_SECTORS 1u
 #define SXFS_INODE_TABLE_SECTORS 64u
+#define SXFS_MAX_TOTAL_SECTORS \
+    (SXFS_BLOCK_BITMAP_SECTORS * SXFS_SECTOR_SIZE * 8u)
 
 /* El journal guarda una copia fija de la metadata (bitmaps + tabla de inodos) */
 /* mas su propio header de 1 sector. */
@@ -76,6 +75,8 @@
 /* la tabla (indice = id - 1) y por lo tanto SXFS_MAX_RECORDS archivos/dirs.   */
 #define SXFS_MAX_INODES 256u
 #define SXFS_MAX_RECORDS (SXFS_MAX_INODES - 1u)
+#define SXFS_MAX_RELATIVE_PATH 255u
+#define SXFS_MAX_NAME_LENGTH (SXFS_INODE_NAME_CAPACITY - 1u)
 #define SXFS_ROOT_INODE 1u
 
 /* Checksum: FNV-1a de 32 bits sobre el registro con su campo checksum en 0. */
@@ -184,6 +185,39 @@ static inline void sxfs_bitmap_set(uint8_t* bitmap, uint32_t bit, int value) {
     }
 }
 
+/* Valida una ruta relativa escribible sin depender de libc. La politica es
+ * compartida por el writer host y el driver: sin slash inicial, componentes
+ * no vacios, sin `.`/`..` y con los limites del formato. */
+static inline int sxfs_path_valid(const char* path) {
+    if (path == NULL || path[0] == '\0' || path[0] == '/') {
+        return 0;
+    }
+    size_t length = 0;
+    size_t component_length = 0;
+    for (const char* cursor = path;; ++cursor) {
+        const unsigned char value = (unsigned char)*cursor;
+        if (value == '\0' || value == '/') {
+            if (component_length == 0 || component_length > SXFS_MAX_NAME_LENGTH ||
+                length > SXFS_MAX_RELATIVE_PATH ||
+                (component_length == 1 && path[length - component_length] == '.') ||
+                (component_length == 2 && path[length - component_length] == '.' &&
+                 path[length - component_length + 1] == '.')) {
+                return 0;
+            }
+            if (value == '\0') {
+                return length <= SXFS_MAX_RELATIVE_PATH;
+            }
+            component_length = 0;
+        } else {
+            if (value < 0x20u || value == 0x7fu || component_length >= SXFS_MAX_NAME_LENGTH) {
+                return 0;
+            }
+            ++component_length;
+            ++length;
+        }
+    }
+}
+
 /* Compara dos campos de magia de 8 bytes (incluidos los NUL de cola) sin
  * depender de memcmp, que no esta garantizado en freestanding. */
 static inline int sxfs_magic_equals(const char a[8], const char b[8]) {
@@ -231,6 +265,7 @@ static inline int sxfs_superblock_valid(const struct sxfs_superblock* sb) {
         sb->max_inodes == SXFS_MAX_INODES &&
         sb->root_inode == SXFS_ROOT_INODE &&
         sb->total_sectors > sb->data_lba &&
+        sb->total_sectors <= SXFS_MAX_TOTAL_SECTORS &&
         sb->checksum == sxfs_superblock_checksum(sb);
 }
 

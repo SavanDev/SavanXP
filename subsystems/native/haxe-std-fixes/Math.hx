@@ -1,5 +1,5 @@
 // SavanXP - shadow de std/cxx/_std/Math.hx de reflaxe.CPP (pineado en
-// tools/toolchain.lock.json), con UN arreglo: en Haxe 4, el par de overloads
+// upstream), con UN arreglo: en Haxe 4, el par de overloads
 // isFinite(Float)/isFinite(Int) es ambiguo cuando el llamador pasa Dynamic
 // (haxe.format.JsonPrinter:92 hace Math.isFinite(v:Dynamic)), lo que rompe la
 // compilacion apenas algo tipa JsonPrinter. Colapsamos al overload unico de

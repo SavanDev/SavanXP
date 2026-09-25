@@ -17,7 +17,7 @@
  * kernel/vfs.cpp), asi que borrar ahi solo invalida el vnode en RAM y el
  * archivo vuelve al reiniciar. La unica desinstalacion que persiste es sobre
  * /disk, que es SxFS. Y como el build copia /bin entero a /disk/bin
- * (build.ps1), un programa del sistema aparece en los dos lados: la resta es
+ * (CMake), un programa del sistema aparece en los dos lados: la resta es
  * la que separa "vino con el SO" de "lo instalo alguien".
  *
  * De ahi que un programa del sistema no se pueda desinstalar desde aca. No es

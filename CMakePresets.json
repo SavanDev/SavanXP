@@ -1,0 +1,76 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "linux",
+      "displayName": "SavanXP Linux debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-linux.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "SAVANXP_OUTPUT_ROOT": "${sourceDir}/build",
+        "SAVANXP_INCLUDE_TEST_APPS": "ON",
+        "SAVANXP_SMOKE_COMMAND": ""
+      }
+    },
+    {
+      "name": "linux-release",
+      "inherits": "linux",
+      "displayName": "SavanXP Linux release",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SAVANXP_OUTPUT_ROOT": "${sourceDir}/build/linux-release-out"
+      }
+    },
+    {
+      "name": "linux-no-tests",
+      "inherits": "linux",
+      "displayName": "SavanXP Linux without diagnostic apps",
+      "binaryDir": "${sourceDir}/build/linux-no-tests",
+      "cacheVariables": {
+        "SAVANXP_INCLUDE_TEST_APPS": "OFF",
+        "SAVANXP_OUTPUT_ROOT": "${sourceDir}/build/linux-no-tests-out"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux",
+      "configurePreset": "linux",
+      "targets": [
+        "savanxp"
+      ]
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "targets": [
+        "savanxp"
+      ]
+    },
+    {
+      "name": "linux-no-tests",
+      "configurePreset": "linux-no-tests",
+      "targets": [
+        "savanxp"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux",
+      "configurePreset": "linux",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

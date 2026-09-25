@@ -283,7 +283,7 @@ void enumerate() {
     );
 }
 
-// Mayor prioridad que ata:: (100): en una maquina -Virtio, isa-ide ni siquiera
+// Mayor prioridad que ata:: (100): en una maquina --virtio, isa-ide ni siquiera
 // esta en la linea de comandos de QEMU, asi que en la practica nunca compiten
 // por el mismo indice de device; esto solo fija el orden si algun dia
 // coexistieran los dos frentes sobre discos distintos.

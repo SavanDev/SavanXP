@@ -1,0 +1,15 @@
+name=FFmpeg
+repository=https://github.com/FFmpeg/FFmpeg.git
+canonical_repository=https://git.ffmpeg.org/ffmpeg.git
+mirror=true
+tag=n7.1.1
+tag_object=a1328e68877e12ab5a6e5d92a84aefa566783ea5
+commit=db69d06eeeab4f46da15030a80d539efb4503ca8
+tree=94e0dc384ffe4b562568294cf3846e47cb0260d6
+archive_url=https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz
+archive_sha256=733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
+archive_size=11019500
+signature_url=https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz.asc
+signature_key_fingerprint=FCF986EA15E6E293A5644F10B4322F04D67658D8
+license=LGPL-2.1-or-later
+patch_count=0

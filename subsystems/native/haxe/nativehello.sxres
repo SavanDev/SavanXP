@@ -1,0 +1,6 @@
+name=Native Haxe Hello
+description=Haxe native runtime validation
+version=0.1
+vendor=SavanXP
+category=Diagnostics
+subsystem=native

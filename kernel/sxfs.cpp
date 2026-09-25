@@ -34,8 +34,8 @@ constexpr uint32_t kMaxDirectoryDepth = 32;
 constexpr uint32_t kMinimumGrowthSectors = 64; // politica de crecimiento, no on-disk
 constexpr size_t kBlockBitmapBytes = static_cast<size_t>(kBlockBitmapSectors) * block::kSectorSize;
 constexpr size_t kInodeBitmapBytes = static_cast<size_t>(kInodeBitmapSectors) * block::kSectorSize;
-constexpr size_t kMaxRelativePath = 255;
-constexpr size_t kMaxDirNameLength = 63;
+constexpr size_t kMaxRelativePath = SXFS_MAX_RELATIVE_PATH;
+constexpr size_t kMaxDirNameLength = SXFS_MAX_NAME_LENGTH;
 
 // Bridge: el kernel indexa bitmaps/tabla en unidades de block::kSectorSize,
 // mientras que el formato compartido define SXFS_SECTOR_SIZE. Ambos deben ser

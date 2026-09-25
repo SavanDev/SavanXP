@@ -250,16 +250,16 @@ paths such as UART and AC'97.
 
 At minimum, a security change is accepted only after:
 
-```powershell
-.\build.ps1 build
-.\build.ps1 smoke -Smp 4
+```bash
+./build.sh build
+./build.sh smoke smoke --smp 4
 ```
 
 The loader/build flow must also preserve external applications and their data:
 
-```powershell
-.\sdk\doomgeneric\build.ps1
-.\build.ps1 build
+```bash
+./ports/doomgeneric/build.sh --wad ports/doomgeneric/wad/doom1.wad
+./build.sh build
 ```
 
 The smoke serial log must show `/disk/bin/doomgeneric` and the persistent Doom

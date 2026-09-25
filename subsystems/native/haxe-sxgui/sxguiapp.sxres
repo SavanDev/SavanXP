@@ -1,0 +1,6 @@
+name=Native SXGUI Demo
+description=Haxe native SXGUI validation client
+version=0.1
+vendor=SavanXP
+category=Accessories
+subsystem=native

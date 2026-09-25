@@ -98,6 +98,21 @@ int sxfs_write_file(struct sxfs_ctx* ctx, const char* relpath, const void* data,
  * bajo un directorio inexistente es SXFS_ERR_NOT_FOUND. */
 int sxfs_remove(struct sxfs_ctx* ctx, const char* relpath);
 
+/* Lee el contenido logico de un inodo. `dst_capacity` debe ser al menos
+ * inode->size; no se trunca silenciosamente. El callback de `read` sigue
+ * siendo la unica forma de acceder a los datos. */
+int sxfs_read_inode(const struct sxfs_ctx* ctx, uint32_t inode_id,
+                    void* dst, uint32_t dst_capacity, uint32_t* out_size);
+
+/* Recorre el arbol de directorios en orden de profundidad. El callback recibe
+ * rutas relativas a la raiz (sin `/` inicial), el inodo y el tipo on-disk.
+ * Es una API de mantenimiento host-only y aplica el limite de ruta de 255
+ * bytes. Un alias/ciclo o una entrada invalida devuelve SXFS_ERR_INVALID: las
+ * operaciones de mantenimiento deben fallar cerradas, no duplicar datos. */
+typedef int (*sxfs_walk_fn)(void* cookie, const char* relpath,
+                            uint32_t inode_id, uint16_t type);
+int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie);
+
 #ifdef __cplusplus
 }
 #endif

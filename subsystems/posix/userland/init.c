@@ -85,20 +85,23 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "tcptest")) {
         return "TCP SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "mediaplayer-availability")) {
+        return "MEDIAPLAYER AVAILABILITY";
+    }
     if (spec != 0 && text_contains(spec, "mediaplayer-show")) {
         return "MEDIAPLAYER DISPLAY";
     }
     if (spec != 0 && text_contains(spec, "mediaplayer")) {
         return "MEDIAPLAYER SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "sxgui")) {
+        return "SXGUI HOST";
+    }
     if (spec != 0 && text_contains(spec, "guihost")) {
         return "NATIVEGUI HOST";
     }
     if (spec != 0 && text_contains(spec, "hello")) {
         return "NATIVE HELLO";
-    }
-    if (spec != 0 && text_contains(spec, "sxgui")) {
-        return "SXGUI HOST";
     }
     return "SMOKE";
 }
@@ -127,9 +130,10 @@ static int run_automation_spec(const char* spec) {
     const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
     /* Tres caminos: audio solo (WAV), video solo sin contenedor (MJPEG crudo) y
      * los dos intercalados en AVI, que ademas mide la sincronia. */
-    const char* mediaplayer_argv[] = {"/disk/bin/mediaplayer", "--selftest", "/disk/media/tono.wav",
+    const char* mediaplayer_argv[] = {"/bin/mediaplayer", "--selftest", "/disk/media/tono.wav",
                                       "/disk/media/clip.mjpeg", "--sync", "/disk/media/avsync.avi", 0};
-    const char* mediaplayer_show_argv[] = {"/disk/bin/mediaplayer", "--gpu-hold", "8000", "/disk/media/avsync.avi", 0};
+    const char* mediaplayer_show_argv[] = {"/bin/mediaplayer", "--gpu-hold", "8000", "/disk/media/avsync.avi", 0};
+    const char* mediaplayer_availability_argv[] = {"/bin/mediaplayer", "--availability", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -177,12 +181,16 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/nettest";
             argv = nettest_argv;
             argc = 1;
+        } else if (strcmp(spec, "mediaplayer-availability") == 0) {
+            path = "/bin/mediaplayer";
+            argv = mediaplayer_availability_argv;
+            argc = 2;
         } else if (strcmp(spec, "mediaplayer") == 0) {
-            path = "/disk/bin/mediaplayer";
+            path = "/bin/mediaplayer";
             argv = mediaplayer_argv;
             argc = 6;
         } else if (strcmp(spec, "mediaplayer-show") == 0) {
-            path = "/disk/bin/mediaplayer";
+            path = "/bin/mediaplayer";
             argv = mediaplayer_show_argv;
             argc = 4;
         } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {
@@ -223,7 +231,7 @@ static int run_automation_spec(const char* spec) {
             argc = 2;
         } else if (text_starts_with(spec, "tcptest ")) {
             /* El puerto no se puede hornear en el binario: lo elige el host al
-             * levantar tools/tcp_echo_server.ps1. */
+             * levantar tools/tcp_echo_server.py. */
             const char* port = skip_spaces(spec + strlen("tcptest"));
             if (port[0] == '\0') {
                 printf("%s FAIL missing port\n", label);

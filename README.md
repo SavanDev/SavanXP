@@ -5,8 +5,8 @@
 # SavanXP
 
 SavanXP is an experimental operating system for `x86_64 + UEFI`, with the
-`Limine` bootloader, its own kernel in `C/C++`, and a workflow built to be
-developed and tested from native Windows with `PowerShell`.
+`Limine` bootloader, its own kernel in `C/C++`, and a native Bash/CMake
+workflow.
 
 It boots to a working graphical session with its own window manager, a userland
 shell, a persistent volume mounted at `/disk`, a minimal POSIX base, built-in
@@ -20,18 +20,19 @@ Current version: `v0.3.4` &middot; [Changelog](CHANGELOG.md) &middot;
 
 ## Quick start
 
-On Windows, from a clean checkout:
+On Linux, from a clean checkout:
 
-```powershell
-.\tools\bootstrap.ps1   # bake a local toolchain (clang, qemu, xorriso, ninja)
-.\build.ps1 build       # build kernel, userland and the disk image
-.\build.ps1 run         # boot it in QEMU
+```bash
+./build.sh build       # configure, compile, stage SxFS and EFI artifacts
+./build.sh run         # boot the staged image in QEMU
+./build.sh smoke smoke # run the core QEMU smoke scenario
 ```
 
-That is the whole loop. Everything below is detail you only need when you want
-it.
-
-On Linux, skip `bootstrap.ps1` and see [Building on Linux](docs/BUILD_LINUX.md).
+The native path uses tools from `PATH` (or CMake cache overrides); see
+[Building with Bash and CMake](docs/BUILD_CMAKE.md). The versioned ports are
+built independently with `./ports/doomgeneric/build.sh` and
+`./ports/ffmpeg/build.sh`. The optional Haxe AOT experiment has
+`./subsystems/native/build.sh`.
 
 ## What works today
 
@@ -43,8 +44,8 @@ On Linux, skip `bootstrap.ps1` and see [Building on Linux](docs/BUILD_LINUX.md).
   wallpaper and Program Manager as clients, and a Task List (Ctrl+Esc).
 - A taskbar listing the open windows, as a WM client of its own, with an ES/EN
   keyboard layout selector.
-- Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties
-  and a Task Manager with live CPU and memory per process
+- Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties,
+  Media Player and a Task Manager with live CPU and memory per process
   ([how it measures](docs/SYSTEM_MONITORING.md)).
 - Persistent `SxFS` volume mounted at `/disk`.
 - POSIX base and SDK v1 for compiling external applications.
@@ -53,57 +54,22 @@ On Linux, skip `bootstrap.ps1` and see [Building on Linux](docs/BUILD_LINUX.md).
 
 ## Requirements
 
-The recommended path is to bake a self-contained local toolchain:
+On Linux, install Clang/LLVM, CMake, Ninja, GNU Make, Python 3 with Pillow,
+Git, QEMU, OVMF and xorriso. `build.sh` resolves these tools from `PATH` and
+fetches the pinned Limine checkout when needed. Distribution package names and
+QEMU backend details are in [Building on Linux](docs/BUILD_LINUX.md).
 
-```powershell
-.\tools\bootstrap.ps1
-```
-
-That downloads pinned versions (LLVM/Clang with `ld.lld`, `llvm-objcopy` and
-`llvm-readelf`; QEMU with the OVMF firmware it ships; `xorriso` for generating
-ISOs; `ninja`; and an embedded Python with `Pillow`) into `toolchain/`
-(git-ignored) and writes the `toolchain/toolchain.json` manifest that
-`build.ps1` consumes. The versions are pinned in `tools/toolchain.lock.json`;
-updating a tool means editing that file. `xorriso` can be skipped with
-`-SkipXorriso`, `ninja` with `-SkipNinja`, and Python with `-SkipPython`, if
-you already have them.
-
-`bootstrap.ps1` also installs Visual Studio Build Tools (the C++ workload)
-through `winget` if the MSVC headers/libs are not already present —
-`clang` needs them to compile `sxfs-cli`, the native Windows host tool the
-build uses to write `SxFS` images. Unlike everything else here it is a
-system-wide install, not a drop into `toolchain/`: Microsoft does not ship a
-portable, version-pinned archive of it the way it does for the rest of this
-list. Skip it with `-SkipVsBuildTools` if you already have a full Visual
-Studio. [Why it has to work this way](docs/WINDOWS_BOOTSTRAP.md).
-
-`build.ps1` contains no paths from any particular machine: it resolves each
-tool in this order and keeps the first one that exists.
-
-1. explicit environment variable override
-   (`SAVANXP_CLANG`, `SAVANXP_CLANGXX`, `SAVANXP_LD`, `SAVANXP_OBJCOPY`,
-   `SAVANXP_READELF`, `SAVANXP_QEMU`, `SAVANXP_XORRISO`, `SAVANXP_NINJA`,
-   `SAVANXP_PYTHON`, `OVMF_CODE` / `OVMF_VARS`)
-2. the toolchain baked into `toolchain/`
-3. the system `PATH`
-
-That is why `bootstrap.ps1` is optional: if you already have `clang++`,
-`ld.lld`, `llvm-objcopy`, `llvm-readelf`, `ninja`, `qemu-system-x86_64` and
-`python`/`python3` with `Pillow` on the `PATH`, the build works all the same.
-`git` is also required on the `PATH`. `build.ps1` automatically downloads
-Limine's `v10.x-binary` branch if it is not present in `tools/limine`.
-
-Python (with `Pillow`) is used on every build to generate the desktop art and
-convert the cursor/icon PNGs into C headers (`tools/gen_desktop_source_art.py`,
+Python (with `Pillow`) is used on every build to generate desktop art and
+convert PNG assets into C headers (`tools/gen_desktop_source_art.py`,
 `tools/gen_cursor_asset.py`, `tools/gen_desktop_icon_assets.py`).
 
-For anything outside Windows — PowerShell itself, distribution packages, QEMU
-backends, virtio devices — see [Building on Linux](docs/BUILD_LINUX.md).
+CMake tool locations can be overridden in the cache or with the corresponding
+`SAVANXP_*` environment variables.
 
 ## Building
 
-```powershell
-.\build.ps1 build
+```bash
+./build.sh build
 ```
 
 That command:
@@ -115,50 +81,39 @@ That command:
 - syncs the internal contents onto the persistent volume
 
 Important: a normal build must not recreate `build/disk.img` unconditionally.
-The persistent image is kept across builds except on real corruption or a
-format incompatibility.
+The native build applies changes to a validated sibling candidate and installs
+it atomically. The persistent image is kept across builds except on real
+corruption or a format incompatibility.
 
 To build without the test and diagnostic apps (keytest, gfxdemo, smoke, ...),
-use `-NoTestApps`: those binaries stay out of the rootfs and the desktop menu
+use `--no-test-apps`: those binaries stay out of the rootfs and the desktop menu
 is built without their entries. The automation commands (`smoke`,
 `windowd-smoke`, ...) always include them, because their harnesses depend on
 them.
 
-```powershell
-.\build.ps1 build -NoTestApps
+```bash
+./build.sh build --no-test-apps
 ```
 
 Generating a bootable ISO:
 
-```powershell
-.\build.ps1 iso
+```bash
+./build.sh iso
 ```
 
-The ISO lands in `build/SavanXP.iso`. That command requires `xorriso` —
-resolved through `SAVANXP_XORRISO`, `toolchain/toolchain.json` or the `PATH` —
-and uses the EFI tree the build already prepared. To keep `/disk` data when
-booting under VirtualBox or another hypervisor, attach `build/disk.img` as an
-extra disk as well.
+The ISO lands in `build/SavanXP.iso`. That command requires `xorriso` from
+`PATH` (or `SAVANXP_XORRISO`) and uses the EFI tree the build already prepared.
+To keep `/disk` data when booting under VirtualBox or another hypervisor,
+attach `build/disk.img` as an extra disk as well.
 
 ## Running
 
-```powershell
-.\build.ps1 run
+```bash
+./build.sh run
+./build.sh run --accel kvm
 ```
 
-By default this uses TCG (software emulation). With Hyper-V enabled on Windows,
-`-Accel whpx` accelerates the boot through the Windows Hypervisor Platform; on
-Linux with VT-x/AMD-V, `-Accel kvm` does the same against `/dev/kvm`:
-
-```powershell
-.\build.ps1 run -Accel whpx
-.\build.ps1 run -Accel kvm
-```
-
-Note: under whpx, `-cpu max` / `-cpu host` crash OVMF with a #GP in PlatformPei
-right at boot (WHPX cannot back the very recent CPU features those models
-expose to the guest). That is why `-Accel whpx` forces `-cpu qemu64`, which
-boots fine. `-Accel kvm` does not have that problem and uses `-cpu host`.
+The native launcher uses TCG by default and KVM when requested.
 
 The QEMU machine is assembled with "base" hardware by default: standard VGA,
 PS/2 mouse and keyboard, AC'97 audio, IDE disk and an rtl8139 NIC — the same
@@ -168,8 +123,8 @@ machine up with paravirtualized devices (virtio-vga, virtio-tablet,
 virtio-keyboard, virtio-sound, virtio-blk, virtio-net) has to be asked for
 explicitly:
 
-```powershell
-.\build.ps1 run -Virtio
+```bash
+./build.sh run --virtio
 ```
 
 The switch applies to every command that launches QEMU (`run`, `debug`, the
@@ -178,12 +133,12 @@ smokes and `gpu-soak`). The audio harnesses that measure one specific driver
 
 Other available targets:
 
-```powershell
-.\build.ps1 debug
-.\build.ps1 smoke
-.\build.ps1 windowd-smoke
-.\build.ps1 gpu-soak
-.\build.ps1 clean
+```bash
+./build.sh debug
+./build.sh smoke
+./build.sh windowd-smoke
+./build.sh gpu-soak
+./build.sh clean
 ```
 
 - `run` starts QEMU with a graphical session and serial output on the terminal.
@@ -191,8 +146,10 @@ Other available targets:
 - `smoke` runs an automated headless test and leaves logs in `build/`.
 - `windowd-smoke` exercises the graphical compositor.
 - `gpu-soak` stresses the GPU presentation path.
-- `clean` removes build artifacts and can force the environment to be recreated
-  on the next build.
+- `clean` removes generated build outputs while preserving the persistent disk
+  image and external artifacts.
+- `tools/shoot.sh --scenario desktop` performs the native visual/QMP check on a
+  disposable image copy.
 
 ## First boot
 
@@ -229,11 +186,14 @@ The recommended flow for testing your own programs does not require rebuilding
 the `initramfs`. External apps are compiled against the SDK and installed
 straight into `build/disk.img`, normally under `/disk/bin`.
 
-```powershell
-.\build.ps1 build
-.\tools\build-user.ps1 -Source .\sdk\hello\main.c -Name hello
-.\build.ps1 run
+```bash
+./build.sh build
+./tools/build-user.sh --source sdk/hello/main.c --name hello
+./build.sh run
 ```
+
+Use `--destination /disk/bin/NAME` (or another path below `/disk`) when the
+program should not use the default `/disk/bin/NAME` location.
 
 Inside SavanXP:
 
@@ -245,8 +205,8 @@ hello
 There is also a wrapper that compiles, installs and boots the system in one
 step:
 
-```powershell
-.\tools\run-user.ps1 -Source .\sdk\errdemo\main.c -Name errdemo
+```bash
+./tools/run-user.sh --source sdk/errdemo/main.c --name errdemo
 ```
 
 Included examples:
@@ -255,7 +215,7 @@ Included examples:
 - `sdk/errdemo`
 - `sdk/fsdemo`
 - `sdk/gfxhello`
-- `sdk/doomgeneric`
+- `ports/doomgeneric`
 
 ## Persistence
 
@@ -276,7 +236,7 @@ sync
 cat /disk/notes.txt
 ```
 
-The repo workflow protects this persistence: a `.\build.ps1 build` must not
+The repo workflow protects this persistence: `./build.sh build` must not
 delete external applications that are already installed, nor persistent assets
 such as the ones `doomgeneric` uses.
 
@@ -289,14 +249,16 @@ such as the ones `doomgeneric` uses.
   tool that does all disk image writing
 - `rootfs/`: contents of the `initramfs`
 - `diskfs/`: initial contents of the persistent volume
-- `sdk/`: examples, tooling and external ports
+- `sdk/`: SDK examples
+- `ports/`: versioned official third-party ports with independent build flows
 - `tools/`: host-side scripts and development utilities
 - `vendor/`: third-party dependencies
 
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — index of every design document
-- [`docs/BUILD_LINUX.md`](docs/BUILD_LINUX.md) — building outside Windows
+- [`docs/BUILD_CMAKE.md`](docs/BUILD_CMAKE.md) — native build graph and commands
+- [`docs/BUILD_LINUX.md`](docs/BUILD_LINUX.md) — native host requirements and QEMU setup
 - [`docs/SYSTEM_LAYERING.md`](docs/SYSTEM_LAYERING.md) — which layer is written
   in which language, and why
 - [`AGENTS.md`](AGENTS.md) — working rules for this repository (changelog

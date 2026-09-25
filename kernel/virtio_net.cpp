@@ -66,7 +66,7 @@ nic::Events g_events = {};
 
 // Prioridad por encima de rtl8139 (100): si algun dia coexistieran los dos
 // devices en la linea de comandos de QEMU, este gana. En la practica nunca
-// compiten por hardware real: build.ps1 arma la maquina con virtio-net-pci O
+// compiten por hardware real: la configuracion de QEMU usa virtio-net-pci O
 // rtl8139 sobre el mismo netdev, nunca los dos a la vez.
 constexpr int kDriverPriority = 110;
 

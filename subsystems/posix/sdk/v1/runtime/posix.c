@@ -1772,7 +1772,7 @@ double sx_atof(const char* text) {
 
 /* Sin SSE no hay como leer ni devolver un double: se deja el stub historico
  * para que el simbolo exista y el link no se caiga. Una app que necesite
- * punto flotante se construye con -Sse (ver tools/build-user.ps1). */
+ * punto flotante se construye con `--sse` (ver tools/build-user.sh). */
 double sx_atof(const char* text) {
     union {
         uint64_t bits;

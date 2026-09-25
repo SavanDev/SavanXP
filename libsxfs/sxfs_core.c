@@ -1,16 +1,18 @@
 /*
  * sxfs_core.c -- Implementacion del core portable de SxFS.
  *
- * Porta fielmente la logica del instalador host-side historico
- * (tools/UserAppCommon.ps1): allocacion de inodos secuencial, allocacion de
- * bloques first-fit contigua, modelo de extent unico por inodo (cada grow
- * reubica a una sola corrida contigua) y directorios como arrays empaquetados
- * de sxfs_dir_entry. Mantener esa equivalencia es lo que hace que las imagenes
- * que produce este core sean montables por el kernel igual que las de antes.
+ * El core conserva la asignacion secuencial de inodos, la asignacion first-fit
+ * de bloques contiguos, un extent unico por inodo y directorios como arrays
+ * empaquetados de sxfs_dir_entry. Las imagenes que produce son montables por el
+ * kernel y por las herramientas de host.
  */
 #include "sxfs_core.h"
 
 #include <string.h>
+
+/* API de mantenimiento host-only: usa el mismo limite de rutas que el
+ * driver, mas el NUL final. La recursion no se usa desde el kernel. */
+#define SXFS_WALK_PATH_CAPACITY (SXFS_MAX_RELATIVE_PATH + 1u)
 
 static uint32_t sectors_for(uint32_t bytes) {
     return (bytes + (SXFS_SECTOR_SIZE - 1u)) / SXFS_SECTOR_SIZE;
@@ -23,13 +25,21 @@ static struct sxfs_inode* inode_at(struct sxfs_ctx* ctx, uint32_t inode_id) {
     return &ctx->inodes[inode_id - 1];
 }
 
+static const struct sxfs_inode* inode_at_const(const struct sxfs_ctx* ctx,
+                                               uint32_t inode_id) {
+    if (inode_id == 0 || inode_id > SXFS_MAX_INODES) {
+        return NULL;
+    }
+    return &ctx->inodes[inode_id - 1];
+}
+
 static uint32_t inode_capacity_bytes(const struct sxfs_inode* inode) {
     return sxfs_inode_capacity_sectors(inode) * SXFS_SECTOR_SIZE;
 }
 
 /* --- I/O de datos por extents (via callbacks) ---------------------------- */
 
-static int read_inode_bytes(struct sxfs_ctx* ctx, const struct sxfs_inode* inode,
+static int read_inode_bytes(const struct sxfs_ctx* ctx, const struct sxfs_inode* inode,
                             uint8_t* dst, uint32_t dst_capacity, uint32_t* out_len) {
     uint32_t want = inode->size;
     if (want > dst_capacity) {
@@ -213,9 +223,9 @@ static int ensure_capacity(struct sxfs_ctx* ctx, uint32_t inode_id, uint32_t req
 
 /* --- Directorios y resolucion de rutas ----------------------------------- */
 
-static int read_dir_entries(struct sxfs_ctx* ctx, uint32_t dir_id,
+static int read_dir_entries(const struct sxfs_ctx* ctx, uint32_t dir_id,
                             struct sxfs_dir_entry* entries, uint32_t* out_count) {
-    struct sxfs_inode* inode = inode_at(ctx, dir_id);
+    const struct sxfs_inode* inode = inode_at_const(ctx, dir_id);
     if (inode == NULL) {
         return SXFS_ERR_INVALID;
     }
@@ -364,7 +374,7 @@ void sxfs_ctx_init(struct sxfs_ctx* ctx, void* cookie, sxfs_read_fn read, sxfs_w
 }
 
 int sxfs_format(struct sxfs_ctx* ctx, uint32_t total_sectors) {
-    if (total_sectors <= SXFS_DATA_LBA) {
+    if (total_sectors <= SXFS_DATA_LBA || total_sectors > SXFS_MAX_TOTAL_SECTORS) {
         return SXFS_ERR_INVALID;
     }
     ctx->total_sectors = total_sectors;
@@ -399,6 +409,16 @@ int sxfs_format(struct sxfs_ctx* ctx, uint32_t total_sectors) {
     return SXFS_OK;
 }
 
+static int journal_header_is_empty(const struct sxfs_journal_header* header) {
+    const uint8_t* bytes = (const uint8_t*)header;
+    for (size_t index = 0; index < sizeof(*header); ++index) {
+        if (bytes[index] != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int sxfs_open(struct sxfs_ctx* ctx) {
     struct sxfs_superblock primary;
     struct sxfs_superblock secondary;
@@ -416,6 +436,20 @@ int sxfs_open(struct sxfs_ctx* ctx) {
     } else if (have_secondary) {
         chosen = &secondary;
     } else {
+        return SXFS_ERR_INVALID;
+    }
+
+    if ((chosen->flags & SXFS_FLAG_CLEAN) == 0) {
+        return SXFS_ERR_INVALID;
+    }
+    struct sxfs_journal_header journal;
+    if (ctx->read(ctx->cookie, SXFS_JOURNAL_LBA, 1, &journal) != 0) {
+        return SXFS_ERR_IO;
+    }
+    if (!journal_header_is_empty(&journal) &&
+        (!sxfs_journal_valid(&journal) || journal.pending != 0)) {
+        /* El host no recovery-escribe un journal sobre la imagen persistente.
+         * Un pending o header corrupto se rechaza para no perder su estado. */
         return SXFS_ERR_INVALID;
     }
 
@@ -453,7 +487,7 @@ int sxfs_flush(struct sxfs_ctx* ctx) {
 }
 
 int sxfs_mkdir_p(struct sxfs_ctx* ctx, const char* relpath) {
-    if (relpath == NULL) {
+    if (!sxfs_path_valid(relpath)) {
         return SXFS_ERR_INVALID;
     }
     /* Recorre componentes de a uno, creando los que falten. */
@@ -527,7 +561,7 @@ static int dir_is_empty(struct sxfs_ctx* ctx, uint32_t dir_id, int* out_empty) {
 }
 
 int sxfs_remove(struct sxfs_ctx* ctx, const char* relpath) {
-    if (relpath == NULL || *relpath == '\0') {
+    if (!sxfs_path_valid(relpath)) {
         /* La raiz no se borra. */
         return SXFS_ERR_INVALID;
     }
@@ -623,7 +657,7 @@ int sxfs_remove(struct sxfs_ctx* ctx, const char* relpath) {
 }
 
 int sxfs_write_file(struct sxfs_ctx* ctx, const char* relpath, const void* data, uint32_t size) {
-    if (relpath == NULL || *relpath == '\0') {
+    if (!sxfs_path_valid(relpath)) {
         return SXFS_ERR_INVALID;
     }
 
@@ -688,4 +722,137 @@ int sxfs_write_file(struct sxfs_ctx* ctx, const char* relpath, const void* data,
         return rc;
     }
     return write_inode_bytes(ctx, file_inode, (const uint8_t*)data, size);
+}
+
+int sxfs_read_inode(const struct sxfs_ctx* ctx, uint32_t inode_id,
+                    void* dst, uint32_t dst_capacity, uint32_t* out_size) {
+    const struct sxfs_inode* inode = inode_at_const(ctx, inode_id);
+    if (inode == NULL || inode->type == SXFS_INODE_UNUSED || inode->size > dst_capacity ||
+        (inode->size > 0 && dst == NULL)) {
+        return SXFS_ERR_INVALID;
+    }
+    uint32_t read_size = 0;
+    int rc = read_inode_bytes(ctx, inode, (uint8_t*)dst, dst_capacity, &read_size);
+    if (rc == SXFS_OK && read_size != inode->size) {
+        return SXFS_ERR_INVALID;
+    }
+    if (out_size != NULL) {
+        *out_size = read_size;
+    }
+    return rc;
+}
+
+static int walk_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
+                          char* path, size_t path_len, uint32_t depth,
+                          uint8_t visited[SXFS_MAX_INODES], sxfs_walk_fn visit,
+                          void* cookie) {
+    if (depth > 32u) {
+        return SXFS_ERR_INVALID;
+    }
+    const struct sxfs_inode* directory = inode_at_const(ctx, dir_id);
+    if (directory == NULL || directory->type != SXFS_INODE_DIRECTORY ||
+        directory->size % SXFS_DIR_ENTRY_SIZE != 0 ||
+        directory->size / SXFS_DIR_ENTRY_SIZE > SXFS_MAX_RECORDS) {
+        return SXFS_ERR_INVALID;
+    }
+
+    struct sxfs_dir_entry entries[SXFS_MAX_RECORDS];
+    uint32_t count = 0;
+    int rc = read_dir_entries(ctx, dir_id, entries, &count);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    if (count != directory->size / SXFS_DIR_ENTRY_SIZE) {
+        return SXFS_ERR_INVALID;
+    }
+
+    for (uint32_t index = 0; index < count; ++index) {
+        const struct sxfs_dir_entry* entry = &entries[index];
+        if (entry->inode_id == 0) {
+            if (entry->type != SXFS_INODE_UNUSED || entry->name_length != 0 || entry->name[0] != '\0') {
+                return SXFS_ERR_INVALID;
+            }
+            continue;
+        }
+        if (entry->name_length == 0 || entry->name_length > SXFS_INODE_NAME_CAPACITY - 1 ||
+            entry->name[entry->name_length] != '\0' ||
+            (entry->type != SXFS_INODE_FILE && entry->type != SXFS_INODE_DIRECTORY) ||
+            entry->inode_id > SXFS_MAX_INODES ||
+            memchr(entry->name, '/', entry->name_length) != NULL ||
+            memchr(entry->name, '\\', entry->name_length) != NULL ||
+            memchr(entry->name, ':', entry->name_length) != NULL ||
+            memchr(entry->name, '\0', entry->name_length) != NULL ||
+            (entry->name_length == 1 && entry->name[0] == '.') ||
+            (entry->name_length == 2 && entry->name[0] == '.' && entry->name[1] == '.')) {
+            return SXFS_ERR_INVALID;
+        }
+        for (uint32_t previous = 0; previous < index; ++previous) {
+            if (entries[previous].inode_id != 0 && entries[previous].name_length == entry->name_length &&
+                memcmp(entries[previous].name, entry->name, entry->name_length) == 0) {
+                return SXFS_ERR_INVALID;
+            }
+        }
+        if (visited[entry->inode_id - 1]) {
+            /* No seguimos aliases ni ciclos: una compactacion no puede elegir
+             * silenciosamente cual copia de un archivo sobrevivira. */
+            return SXFS_ERR_INVALID;
+        }
+        const struct sxfs_inode* child = inode_at_const(ctx, entry->inode_id);
+        if (child == NULL || child->inode_id != entry->inode_id || child->type != entry->type ||
+            !sxfs_bitmap_test(ctx->inode_bitmap, entry->inode_id - 1)) {
+            return SXFS_ERR_INVALID;
+        }
+
+        const size_t name_len = entry->name_length;
+        const size_t required = path_len + (path_len != 0 ? 1u : 0u) + name_len + 1u;
+        if (required > SXFS_WALK_PATH_CAPACITY) {
+            return SXFS_ERR_TOO_LONG;
+        }
+        size_t child_len = path_len;
+        if (child_len != 0) {
+            path[child_len++] = '/';
+        }
+        memcpy(path + child_len, entry->name, name_len);
+        child_len += name_len;
+        path[child_len] = '\0';
+        visited[entry->inode_id - 1] = 1;
+
+        rc = visit(cookie, path, entry->inode_id, entry->type);
+        if (rc == SXFS_OK && entry->type == SXFS_INODE_DIRECTORY) {
+            rc = walk_directory(ctx, entry->inode_id, path, child_len, depth + 1u, visited, visit, cookie);
+        }
+        path[path_len] = '\0';
+        if (rc != SXFS_OK) {
+            return rc;
+        }
+    }
+    return SXFS_OK;
+}
+
+int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie) {
+    if (ctx == NULL || visit == NULL) {
+        return SXFS_ERR_INVALID;
+    }
+    const struct sxfs_inode* root = inode_at_const(ctx, SXFS_ROOT_INODE);
+    if (root == NULL || root->type != SXFS_INODE_DIRECTORY ||
+        !sxfs_bitmap_test(ctx->inode_bitmap, SXFS_ROOT_INODE - 1)) {
+        return SXFS_ERR_INVALID;
+    }
+    uint8_t visited[SXFS_MAX_INODES];
+    memset(visited, 0, sizeof(visited));
+    visited[SXFS_ROOT_INODE - 1] = 1;
+    char path[SXFS_WALK_PATH_CAPACITY];
+    path[0] = '\0';
+    int rc = walk_directory(ctx, SXFS_ROOT_INODE, path, 0, 0, visited, visit, cookie);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    for (uint32_t inode_id = SXFS_ROOT_INODE + 1u; inode_id <= SXFS_MAX_INODES; ++inode_id) {
+        if (sxfs_bitmap_test(ctx->inode_bitmap, inode_id - 1u) && !visited[inode_id - 1u]) {
+            /* Un inode asignado pero no alcanzable no se puede conservar
+             * razonablemente en una reconstruccion: fallamos antes de perderlo. */
+            return SXFS_ERR_INVALID;
+        }
+    }
+    return SXFS_OK;
 }

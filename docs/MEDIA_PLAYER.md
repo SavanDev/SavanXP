@@ -1,9 +1,28 @@
 # Media Player
 
-How `/disk/bin/mediaplayer` plays a file, what it can and cannot promise about
+How the system `/bin/mediaplayer` launcher delegates to the optional
+`/disk/bin/mediaplayer-ffmpeg` FFmpeg port, what it can and cannot promise about
 audio/video sync on the devices SavanXP has today, and the order in which the
 missing pieces should arrive. Building it is covered by
-[`sdk/ffmpeg/README.md`](../sdk/ffmpeg/README.md).
+[`ports/ffmpeg/README.md`](../ports/ffmpeg/README.md).
+
+## System entry point
+
+`/bin/mediaplayer` is always built into the system image and is the program
+shown by the launcher. It checks for `/disk/bin/mediaplayer-ffmpeg` at startup:
+
+- with the FFmpeg port installed, it `exec`s the real player and preserves
+  the normal command-line arguments;
+- without the port, it opens a normal SavanXP window explaining that the
+  optional FFmpeg port is missing and that `ports/ffmpeg` must be built first;
+- an installed binary that cannot be executed produces the same in-app
+  explanation with a start-error variant.
+
+The backend deliberately has a different filename and no `category=`, so it
+cannot replace the system program or create a second launcher entry. The base
+manifest owns the media `mime_open`/`ext_open` capabilities; Files therefore
+always launches `/bin/mediaplayer`, which delegates when the backend is present
+and shows the unavailable window when it is not.
 
 ## Layers
 
@@ -13,6 +32,10 @@ playback.c      clock, audio to /dev/audio0, which frame goes on screen and when
 media.c         FFmpeg: demux, packet queues, decoders, swresample, swscale, seek
 selftest.c      --probe, --selftest, --gpu-hold: the same engine without a window
 ```
+
+The files in `ports/ffmpeg/overlay/mediaplayer/` implement the optional backend;
+the small in-tree `subsystems/posix/userland/mediaplayer.c` is only the stable
+launcher described above.
 
 `media.c` knows nothing about screens, speakers or time of day; `playback.c`
 knows nothing about windows. The split is what lets the headless selftest drive
@@ -133,7 +156,7 @@ dropping everything would freeze the picture while the sound goes on.
 ## Control icons
 
 The transport buttons, Open and the volume speaker are icon buttons with **our
-own 16x16 art**, drawn by `sdk/ffmpeg/mediaplayer/gen_icons.py` and embedded as
+own 16x16 art**, drawn by `ports/ffmpeg/overlay/mediaplayer/gen_icons.py` and embedded as
 `icons.inc` (~4 KiB, useless outside this program, so not `.sxicon` files on
 disk). The app icon is separate and also our own.
 
@@ -152,8 +175,9 @@ without touching the program.
 
 ## What sync is verified, and how
 
-`mediaplayer --selftest --sync /disk/media/avsync.avi` (part of
-`build.ps1 ffmpeg-smoke`) decodes a generated AVI with a white flash frame and
+`/bin/mediaplayer --selftest --sync /disk/media/avsync.avi` (part of
+`build.sh smoke ffmpeg-smoke`) decodes
+a generated AVI with a white flash frame and
 a 1 kHz beep at the start of every second, audio resampled from 44.1 kHz mono,
 and checks that every flash starts within 20 ms of its beep, and that a seek to
 the middle lands on a flash frame and on the first sample of a beep.

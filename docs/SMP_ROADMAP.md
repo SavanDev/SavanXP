@@ -16,8 +16,8 @@
 > schedules on the APs.
 >
 > Phase 2 made every core run user processes, one at a time inside the kernel,
-> under a single big kernel lock. `build.ps1 -Smp <n>` still defaults to one
-> core.
+> under a single big kernel lock. `./build.sh smoke smoke --smp <n>` still
+> defaults to one core.
 >
 > Phase 3 keeps the other cores' TLBs honest when a kernel page is unmapped —
 > lazily, at lock acquisition, not with an IPI
@@ -85,7 +85,7 @@ process it is running.
 | No spinlock primitive. The only lock in the kernel is a bare `__atomic_test_and_set` in SxFS | [`sxfs.cpp:148`](../kernel/sxfs.cpp:148) |
 | uACPI's spinlocks and mutexes are stubs that only save and restore `IF` | [`uacpi_glue.cpp:428`](../kernel/uacpi_glue.cpp:428) |
 | The vendored `limine.h` is a 197-line subset with no `limine_mp_request` | [`vendor/limine.h`](../vendor/limine.h) |
-| QEMU is launched without `-smp`; every smoke runs on one core | [`build.ps1`](../build.ps1) |
+| QEMU is launched without `--smp`; every smoke runs on one core | [`build.sh`](../build.sh) |
 | Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:73`](../kernel/process.cpp:73) |
 
 ## Phase 0 — bring the APs up — **DONE**
@@ -118,7 +118,7 @@ What it actually took, against the plan below:
   actually runs something.
 
 **Delivered:** `smp: 4 cores reportados, 4 en linea (bsp lapic 0, x2APIC)` and
-`smp: ping IPI 3/3 ok` under `build.ps1 -Smp 4`.
+`smp: ping IPI 3/3 ok` under `./build.sh smoke smoke --smp 4`.
 
 The original plan follows.
 
@@ -133,7 +133,7 @@ The original plan follows.
    first, and needs the delivery-status poll.
 3. Give each AP a kernel stack and park it.
 
-**Deliverable:** `cpu: 3 APs online` in the boot log under `-smp 4`, with the
+**Deliverable:** `cpu: 3 APs online` in the boot log under `--smp 4`, with the
 system otherwise behaving exactly as it does today. **Estimate: 2-3 days.**
 
 ## Phase 1 — per-CPU state — **DONE**
@@ -149,7 +149,7 @@ What it actually took, against the plan below:
 - **Indexed by the TSS selector, not the LAPIC ID.** Each core has a different
   TSS loaded, so `str` names the core with a register read
   (`arch::x86_64::cpu_index()`). The LAPIC ID is an MSR or MMIO read that can
-  exit the VM under KVM or WHPX on every access, and the current process is
+  exit the VM under KVM on every access, and the current process is
   read dozens of times per syscall. `ltr` is privileged, so user space cannot
   change the answer. Each AP reads its selector back at boot and the BSP checks
   it: `smp: TSS propio en 3/3 APs ok`.
@@ -245,20 +245,22 @@ What it actually took, against the plan below:
   one process; `cpu_online` is the number of cores that schedule, which is also
   the number of idle processes. [Details](SYSTEM_MONITORING.md#more-than-one-core).
 
-**Delivered:** `smp: planificando en 4 de 4 cores` under `build.ps1 -Smp 4`,
+**Delivered:** `smp: planificando en 4 de 4 cores` under
+`./build.sh smoke smoke --smp 4`,
 and `smptest` in the smoke suite: it sees a child in `State::running` from
 inside its own syscall — impossible on one core — kills a child spinning on
 another core, and runs a pipe ping-pong.
 
 **One measurement to keep: the lock is held across disk I/O.** On the
 development host (an i5-2400, 4 logical CPUs) `windowd-smoke` passes at
-`-Smp 2` under TCG and WHPX but fails at `-Smp 4` under both: its size-hint
-check assumes `progman` finishes its startup scan of `/disk` within 60 frames.
+`./build.sh smoke windowd-smoke --smp 2` under the available accelerators but
+fails at `./build.sh smoke windowd-smoke --smp 4`: its size-hint check assumes
+`progman` finishes its startup scan of `/disk` within 60 frames.
 That scan is ATA PIO inside syscalls, under the lock; with four vCPUs on four
 host CPUs, the cores spinning for the lock take host time from the thread that
 emulates the disk, and `progman` measured more than 1.8 s of CPU without
 getting there. Nothing is lost or corrupted — it is phase 4's problem showing
-up early, and the reason not to size `-Smp` to every host CPU.
+up early, and the reason not to size `--smp` to every host CPU.
 
 **Not done:** TLB shootdown, which became [phase 3](#phase-3--tlb-shootdown).
 Also still pending: a `panic` on one core does not stop the others, and every
@@ -335,8 +337,8 @@ What it actually took, against the plan below: **no IPI at all.**
   page, retargets that page to another physical page on the BSP
   (`vm::retarget_kernel_page`), and reads again: `smp: TLB perezosa ok (antes
   0xa1, sin sincronizar 0xa1, sincronizando 0xb2)`. The unsynchronized read
-  returning the old byte is the stale translation, observed under both TCG and
-  WHPX; the synchronized one is the fix.
+  returning the old byte is the stale translation, observed under the supported
+  accelerators; the synchronized one is the fix.
 
 **The rule this leaves for phase 4:** the moment any code touches unmappable
 kernel memory without the lock, the lazy flush stops being enough, and the IPI
@@ -399,21 +401,21 @@ write uses.
 ## Verification
 
 The existing smoke suite runs on one core and will therefore keep passing while
-being blind to every race introduced. Phases 0-3 need `-smp` variants:
+being blind to every race introduced. Phases 0-3 need `--smp` variants:
 
-- `build.ps1` gains an `-Smp <n>` switch that reaches the QEMU argument list,
+- `build.sh` gains an `--smp <n>` switch that reaches the QEMU argument list,
   defaulting to 1 so nothing existing changes. **Done in phase 0**; it feeds
   both the interactive and the smoke invocations.
-- At least `smoke`, `windowd-smoke` and `sxfs-smoke` get an `-smp 4` run. The
+- At least `smoke`, `windowd-smoke` and `sxfs-smoke` get an `--smp 4` run. The
   filesystem and compositor smokes are the ones that actually exercise shared
   state from several processes at once. **Done in phase 2**, with the caveat
   about host CPUs above; `smoke` also carries `smptest`, which fails when the
   cores reported as scheduling do not actually run processes at the same time.
-- The automated smokes honour `-Accel`, so the same suite runs under WHPX or
+- The automated smokes honour `--accel`, so the same suite runs under TCG or
   KVM. **Done in phase 2.**
 - TCG stays the accelerator for the smokes, for determinism — but note that TCG
   serializes far more than real hardware does, so a clean TCG run is weak
-  evidence. A KVM run (`-Accel kvm`) is where memory-ordering bugs surface.
+  evidence. A KVM run (`--accel kvm`) is where memory-ordering bugs surface.
 
 ## Known traps
 
@@ -450,8 +452,8 @@ being blind to every race introduced. Phases 0-3 need `-smp` variants:
   right away, so the handoff was the shorter path all along. Keeping the
   handoff brought TCG to ~1100 ms, and neither an IPI for the displaced waker
   nor a cache-hot migration delay improved on it. The rest is TCG itself: under
-  WHPX the same test takes 15 ms on one core and 16 ms on four. So wakeups keep
-  the one-core behaviour and nothing else; if a real workload ever shows the
+  hardware acceleration the same test is much faster, so wakeups keep the
+  one-core behaviour and nothing else; if a real workload ever shows the
   displaced waker waiting for a tick, that is the measurement to start from.
 
 ## Is it worth it?

@@ -3,23 +3,21 @@
 el build va a linkear. Ver docs/SXE_FORMAT.md (fases 2 y "estampado por
 default").
 
-build.ps1 lo invoca una sola vez por build, antes de linkear userland; despues
+`build.sh` lo invoca una sola vez por build, antes de linkear userland; después
 el paso de llvm-objcopy estampa los blobs en cada binario como secciones
 NO-alloc.
 
 ESTAMPADO POR DEFAULT: todo programa que se pasa por --program recibe un
 .sxmeta, tenga o no un .sxres al lado del fuente. Sin manifiesto, el programa
 igual sale con NAME (su propio nombre), VERSION (la del sistema), SUBSYSTEM y
-BUILD_ID (el commit) -- es el mismo rol que cumple el bloque VERSIONINFO que
-el linker de Windows agrega aunque el programador no haya escrito un .rc. El
-.sxres nunca dejo de existir: es el ENRIQUECIMIENTO (icono, descripcion,
-accent, mimes) que nadie puede inferir del build.
+BUILD_ID (el commit). El .sxres es el enriquecimiento (icono, descripcion,
+accent, mimes) que el generador conserva cuando existe.
 
 NADA DE NUMEROS DUPLICADOS: los magics, tags, versiones, tamanos y topes se
 leen de include/sxe/sxe_format.h, y los flags de lanzamiento de
-savanxp/syscall.h. Es el mismo criterio que Assert-SxfsFormatMatchesHeader:
-un formato copiado a mano entre el lector y el generador se desincroniza, y la
-falla es silenciosa (blobs que el runtime descarta sin decir por que).
+savanxp/syscall.h. Un formato copiado a mano entre el lector y el generador se
+desincroniza, y la falla es silenciosa (blobs que el runtime descarta sin decir
+por que).
 
 A diferencia del parser de runtime, que ignora lo que no entiende para poder
 leer binarios mas nuevos, este es ESTRICTO con lo que SI viene en un .sxres:
@@ -181,7 +179,7 @@ def load_system_version(project_root):
 
 
 def load_native_osabi(project_root):
-    path = os.path.join(project_root, "subsystems", "native", "sdk", "include", "savanxp_native.h")
+    path = os.path.join(project_root, "include", "abi", "savanxp_native_abi.h")
     defines = parse_defines(path, "SXN_ELF_OSABI_NATIVE")
     if "SXN_ELF_OSABI_NATIVE" not in defines:
         raise SystemExit(f"'{path}' no define SXN_ELF_OSABI_NATIVE.")
@@ -264,9 +262,8 @@ def split_list(text):
 
 
 def apply_automatic_defaults(manifest, program_name, build_id):
-    """Identidad minima que todo binario recibe SIN pedirla, igual que un EXE
-    de Windows linkeado sin .rc igual sale con su bloque VERSIONINFO por
-    default. Una clave presente pero vacia en el .sxres ("name=") cuenta como
+    """Identidad minima que todo binario recibe SIN pedirla.
+    Una clave presente pero vacia en el .sxres ("name=") cuenta como
     no declarada: se completa igual, no se respeta el vacio.
 
     Deliberadamente NO se inventan aca: icono, accent, launch_flags,
@@ -563,7 +560,7 @@ def main():
         generated += 1
 
     # Un .sxres cuyo programa no se paso por --program no es necesariamente un
-    # error (puede ser una app excluida por -NoTestApps), pero silenciarlo del
+    # error (puede ser una app excluida por --no-test-apps), pero silenciarlo del
     # todo esconde el typo mas comun: renombrar el .c y olvidar el .sxres.
     orphans = sorted(name for name in sxres_by_name if name not in set(program_names))
     if orphans:

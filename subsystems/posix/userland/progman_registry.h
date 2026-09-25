@@ -194,7 +194,7 @@ int progman_registry_apply_sxe(void);
  * pide el programa, igual que en la era XP la pedia su instalador creando un
  * acceso directo. Lo contrario -- listar todo lo estampado -- obligaria a una
  * lista de exclusion horneada para busybox (30 copias del MISMO binario bajo
- * nombres distintos, ver build.ps1) y para los binarios de diagnostico, y esa
+ * nombres distintos, ver CMake) y para los binarios de diagnostico, y esa
  * lista se desincroniza sola en cuanto alguien agrega un *test nuevo.
  *
  * Reglas:

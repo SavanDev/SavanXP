@@ -4,7 +4,7 @@
 > [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), the SDK reader in
 > [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
 > [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), the stamping in
-> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `Add-SxeResources`,
+> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `stamp_sxe.py`,
 > and the consumers are `progman_registry_apply_sxe()` and
 > `progman_registry_scan_programs()` (launcher), `appwiz_catalog_scan()`
 > (uninstaller), `windowd_presentation_load()` (window chrome and Task List)
@@ -74,8 +74,8 @@ capability that does not exist today appears: copying a `.sxe` to `/disk/bin`
   in BSS mapped eagerly), putting tens of KiB of icons into a loadable segment
   **per process** would be an expensive mistake.
 - **Tooling survives.** `readelf`, `objdump`, `nm` and gdb keep working.
-- **Stamping is already possible with what is baked**:
-  `toolchain/llvm/bin/llvm-objcopy.exe` is in the toolchain. Zero new tools.
+- **Stamping is already possible with the host tools**: `llvm-objcopy` from
+  `PATH` is sufficient. Zero new tools.
 
 Using standard `SHT_NOTE` (name/desc/type) was considered and dropped: our own
 TLV is simpler to parse without malloc and gains nothing from sharing the note
@@ -387,7 +387,7 @@ are the *application* icons, which is what should never have been there.
 
 **The first to go was Doom.** `DESKTOP_ICON_DOOM` / `app-spider.png` no longer
 exist: the art moved, pixel by pixel, to
-[sdk/doomgeneric/icon.png](../sdk/doomgeneric/icon.png), and
+[ports/doomgeneric/overlay/icon.png](../ports/doomgeneric/overlay/icon.png), and
 `doomgeneric.sxres` declares it with `icon_file=` instead of `icon=`. It is the
 same logic that already governed `ports/ccleste` — the icon travels *inside*
 the executable, not in the system tree — applied for the first time to a
@@ -531,7 +531,7 @@ The category is the group name; the rest of the presentation is filled in by
 
 **Installing is copying the binary. Uninstalling is deleting it.** Nothing on
 the host writes an entry anywhere, so there is no second copy of the truth that
-can drift from the image. `sdk/doomgeneric/build.ps1` registers Doom in the
+can drift from the image. `ports/doomgeneric/build.sh` registers Doom in the
 `Games` group by shipping `category=Games` in its manifest — and by no other
 means.
 
@@ -558,8 +558,8 @@ point at a tab the user never chose.
 **The category is opt-in, and that is the design decision.** A program asks to
 be in the menu the way its installer used to ask by creating a shortcut. The
 alternative — listing everything stamped — needs a baked exclusion list for
-busybox (**30 copies of the same binary under different names**, see
-`Install-BusyBox` in `build.ps1`) and for the diagnostic binaries, and that list
+busybox (**30 copies of the same binary under different names**, see the
+`savanxp-busybox` CMake target) and for the diagnostic binaries, and that list
 desynchronizes on its own the moment somebody adds a new `*test`. A binary
 without a category is still a first-class executable: launchable from the
 shell, from filesapp, and from any `.ini` item pointing at it by hand. `progman`
@@ -575,7 +575,7 @@ Order of the stages, which is not free:
 3. `progman_registry_scan_programs()` — add what asked to be listed. It skips
    any candidate whose **basename** already has an item, so the `.ini` always
    wins and `/disk/bin` never duplicates `/bin` — which is not theoretical,
-   since `/disk/bin` is a copy of `/bin` (`build.ps1`).
+   since `/disk/bin` is a copy of `/bin` (CMake).
 4. The baked defaults, **only** if the registry is still empty. They are the
    safety net for an image where not one binary can be read, not anybody's
    catalog.
@@ -695,7 +695,7 @@ longer picks from a catalog: it points at a program".
 Each program declares its resources in a `<name>.sxres` **next to its source**.
 The convention is all you need to know: if the file exists it gets stamped, and
 if it does not the binary comes out exactly as before. Nothing to register in
-`build.ps1`.
+CMake.
 
 ```ini
 # subsystems/posix/userland/notepad.sxres
@@ -748,15 +748,16 @@ avoids everywhere else.
 ### Default stamping
 
 When phase 2 was implemented, a `.sxres` was the **condition** for a binary to
-receive sections: with no manifest, `Add-SxeResources` did not touch the file.
-With 67 programs in the tree and 9 manifests written, that means "every program
+receive sections: with no manifest, `gen_sxe_resources.py` still receives the
+program from the build registry and stamps the minimum identity. With 67
+programs in the tree and 9 manifests written, that means "every program
 compiled is already in SXE format" was not true — the default had to be
 inverted.
 
 Now **the generator always stamps**. Besides the directories to search for
 `.sxres`, `gen_sxe_resources.py` receives the full list of programs the build
 is going to link (`--program`, repeatable) — the same list, filtered by
-`-NoTestApps`, that the compilation phase already uses. Every name on that list
+`--no-test-apps`, that the compilation phase already uses. Every name on that list
 gets a `.sxmeta`, manifest or not:
 
 | tag | where it comes from without a `.sxres` |
@@ -780,26 +781,26 @@ fabricating it would be worse than leaving it absent. The `.sxres` did not lose
 its place: it became exactly that, optional enrichment over an identity that
 already exists.
 
-Coverage verified with `llvm-readelf` over the complete image: **67/67**
-installed binaries with `.sxmeta`, in-tree and external (Doom, busybox) alike —
-no build path was left out except the native subsystem
-(`subsystems/native/build.ps1`), which is paused and out of scope for now.
+Coverage is verified with `llvm-readelf` for the base image and the optional
+ports. The native AOT builder now uses the same Python generator and stamping
+path when it is explicitly requested; it remains outside the base target.
 
 ### The generator
 
 [tools/gen_sxe_resources.py](../tools/gen_sxe_resources.py) turns the manifests
 into blobs. **It does not duplicate a single number**: magics, tags, versions,
 sizes and caps come from `include/sxe/sxe_format.h`; the launch flags from
-`savanxp/syscall.h`; the native OSABI from `savanxp_native.h`. It is the
-criterion of `Assert-SxfsFormatMatchesHeader` — a format copied by hand between
-reader and generator drifts apart, and the failure is silent.
+`savanxp/syscall.h`; the native OSABI from
+`include/abi/savanxp_native_abi.h`. It is the same criterion as the
+header-driven source-tree check: a format copied by hand between reader and
+generator drifts apart, and the failure is silent.
 
 Unlike the runtime parser, which ignores what it does not understand so it can
 read newer binaries, **the generator is strict** about what does come in a
 `.sxres`: an unknown key, a missing icon or a nonexistent flag breaks the
 build. A typo in a manifest has to fail, not silently leave the app without an
 icon. A `.sxres` whose program is not on the `--program` list breaks nothing —
-it may be an app excluded by `-NoTestApps` — but it is reported on the console,
+it may be an app excluded by `--no-test-apps` — but it is reported on the console,
 because the most likely error there is a `.c` renamed without renaming its
 manifest.
 
@@ -815,25 +816,16 @@ but it is **verified** anyway, reading the raw `sh_flags` value with
 up, the cost is paid in RAM per process and **with no visible symptom**: that
 is exactly the class of regression that needs an automatic guard.
 
-`Add-SxeResources` and `Invoke-SxeResourceGenerator` live in
-`tools/UserAppCommon.ps1`, not in `build.ps1`, so that both build paths — the
-in-tree one and the external app one (`build-user.ps1`) — stamp with the same
-implementation. Duplicating the step would mean the non-alloc check applies to
-one and not the other.
-
-> **PowerShell gotcha:** anything a command writes without being captured is
-> added to the return value of the enclosing function. A stray `sxe: N
-> manifests` turned the path returned by `Build-ExternalUserProgram` into a
-> two-element array, and the build broke far away from there (busybox copying
-> to a "drive" called `sxe`). That is why the python and objcopy invocations
-> capture their output and re-emit it with `Write-Host`.
+The native standalone builder uses the same Python generator and stamping
+tools, so the resource contract and the non-alloc check stay identical across
+all build entry points.
 
 ## Suggested phases
 
 1. ~~**Format + reader.**~~ **DONE.** The canonical format in
    `include/sxe/sxe_format.h` (freestanding, C/C++, with layout static
    asserts), the reader in `savanxp/sxe.h` + `runtime/sxe.c`, and the
-   `build.ps1 sxe-smoke` harness (`/disk/bin/sxetest`). Pure parsing is
+   `./build.sh smoke sxe-smoke` harness (`/disk/bin/sxetest`). Pure parsing is
    exercised against blobs fabricated on the stack — well formed and every
    degraded case no correct generator would produce — and the disk path against
    the image's real binaries.
@@ -887,7 +879,7 @@ one and not the other.
    > same catalog and the same mapping file.
 
 6. ~~**Default stamping.**~~ **DONE.** Phases 1 to 5 left stamping *opt-in*:
-   with no `.sxres`, `Add-SxeResources` did not touch the binary. With 67
+   with no `.sxres`, the generator still stamps the minimum identity. With 67
    programs in the tree and 9 manifests, that was the real gap between "the
    format exists" and *"every program compiled for the OS is already in that
    format"*. Now `gen_sxe_resources.py` receives the build's complete program
@@ -897,7 +889,7 @@ one and not the other.
    **67/67**.
 7. ~~**Doom leaves the baked set.**~~ **DONE.** `DESKTOP_ICON_DOOM` /
    `app-spider.png` are retired; the art moves pixel by pixel to
-   `sdk/doomgeneric/icon.png`, declared with `icon_file=`. The first program
+   `ports/doomgeneric/overlay/icon.png`, declared with `icon_file=`. The first program
    *versioned in the repository* to use `icon_file=` (previously only
    `ports/ccleste`, which is gitignored). Along the way a real bug in
    `collect_icons_from_file()` was fixed: it did not detect an integer multiple
@@ -917,10 +909,11 @@ one and not the other.
 `INTERPRETER` has no phase: the field has been there since v1 and starts being
 honored the day the VM exists.
 
-## Out of scope for now: the native subsystem
+## Optional native subsystem
 
-`subsystems/native/build.ps1` links with its own `ld.lld` and never goes
-through `Add-SxeResources`, so the native subsystem's apps (Haxe → C++) come
-out without resources **even if a `.sxres` is written for them**. It is a
-coverage gap, not a design decision — but the native subsystem is paused, so it
-is documented and left alone until it is picked up again.
+`subsystems/native/build.sh` is an optional standalone builder. It uses the
+same `gen_sxe_resources.py` and `stamp_sxe.py` implementation as the base
+tooling, and its validation apps have native `.sxres` manifests. The Haxe
+compiler and generated applications are still not part of the base CMake
+target or default image; the neutral ABI header and kernel dispatcher remain
+base compatibility infrastructure.

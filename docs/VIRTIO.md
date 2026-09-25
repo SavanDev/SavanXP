@@ -48,7 +48,7 @@ Changing the VM state from 'RUNNING' to 'GURU_MEDITATION'
 log lists it, `f0000000` for `virtio-net #0 (modern)`) and the remainder is the
 offset inside the common configuration — `0x20` is `queue_desc`. The `rip` in
 the same dump resolves against `build/kernel.elf` with
-`toolchain/llvm/bin/llvm-symbolizer`, which names the function directly.
+`llvm-symbolizer` from `PATH`, which names the function directly.
 
 The consequence for the work: **the QEMU smokes cannot catch this class of
 bug**. A change to `virtio_pci::` or to any virtio driver is only verified once

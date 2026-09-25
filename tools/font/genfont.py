@@ -2,7 +2,7 @@
 """Bake TrueType fonts into C glyph tables (.inc) for SavanXP.
 
 The OS does not parse TrueType at runtime: glyphs are rasterised offline here
-and the generated .inc files are committed, mirroring the old genfont.ps1 flow.
+and the generated .inc files are committed for reproducible builds.
 
 Two modes:
 

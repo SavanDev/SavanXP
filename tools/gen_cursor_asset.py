@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Convierte los PNG de assets/desktop/cursors/ a build/generated/cursor_asset.h.
 
-Reemplaza a tools/GenerateCursorAsset.ps1 (System.Drawing/GDI+, solo Windows)
-por Pillow, que corre igual en Windows/Linux/macOS. build.ps1 lo invoca en
-cada build.
+Usa Pillow para convertir los PNG a un header C; `build.sh` lo invoca en cada
+build.
 
 Uso:  python tools/gen_cursor_asset.py --project-root DIR --output cursor_asset.h
 """

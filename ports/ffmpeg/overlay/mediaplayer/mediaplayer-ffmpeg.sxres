@@ -1,0 +1,10 @@
+# Metadata for the optional FFmpeg backend installed as mediaplayer-ffmpeg.
+# The stable launcher (/bin/mediaplayer) owns the visible Accessories entry and
+# media associations; this backend deliberately stays out of the launcher.
+name=FFmpeg Media Player Backend
+description=Optional FFmpeg playback backend for Media Player
+version=0.1
+version_string=Media Player FFmpeg backend 0.1 (FFmpeg 7.1.1)
+vendor=SavanXP
+accent=2f5f8f
+icon_file=icon.png

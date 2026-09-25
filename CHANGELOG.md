@@ -16,6 +16,40 @@ Cut-off notes:
   `sx_scaled_presenter` handles scaling/centering/row damage; opt-in
   `savanxp/audio.h` provides `sx_audio_mixer`, and Doom uses both.
 
+- **Linux builds can now be driven by Bash and CMake.** `build.sh` drives the
+  freestanding CMake graph, stages the rootfs, validates sibling SxFS candidates,
+  and produces EFI/ISO artifacts through one native workflow.
+
+- **Official ports now have a versioned layout.** Each port keeps its upstream
+  pin, focused patches, SavanXP overlay, standalone build script, and persistence
+  instructions; local experiments remain outside the official tree.
+
+- **DoomGeneric now has a versioned official port.** `ports/doomgeneric` pins
+  upstream, separates reviewed patches from the SavanXP overlay, builds with
+  Bash, and installs through the persistent SxFS candidate flow.
+
+- **The optional Haxe subsystem now has a standalone Linux build.**
+  `subsystems/native/build.sh` pins Haxe/reflaxe, keeps the base CMake target
+  independent, and installs native demos through the SxFS candidate flow.
+
+- **Linux now has a headless smoke runner.** `./build.sh smoke <scenario>`
+  injects the scenario into the initramfs, runs QEMU on a validated disposable
+  image copy, records serial output, and supports QMP keyboard/taskbar input.
+- **Linux smoke orchestration now covers audio, TCP, and external native apps.**
+  Audio backends/WAV files, the TCP echo server, and `tools/build-user.sh` keep
+  these scenarios outside the base CMake target.
+- **Linux build commands now match the one-word smoke aliases and SDK install destinations.**
+  Direct `windowd-smoke`/`gpu-soak` targets, `build-user.sh --destination`, and
+  `tools/run-user.sh` cover the matching Bash workflows.
+
+- **The host `sxfs-cli check` command validates SxFS metadata.** Linux image
+  synchronization checks before and after candidate applies and fails closed on
+  corruption, dirty/pending journals, or no-space conditions.
+
+- **SxFS images now compact safely when fragmentation blocks an apply.** The
+  Linux sync path preserves reachable external data, validates a same-size
+  staging image, and atomically installs it without deleting the original first.
+
 - **Stack canaries are randomized at kernel boot and for every new process.**
   `fork` inherits the parent guard, while `exec` installs a fresh one before
   `main`; the runtime no longer embeds a reusable cookie in each image.
@@ -29,7 +63,7 @@ Cut-off notes:
   in fullscreen.
 
 - **System name and version at the bottom right of the desktop,** above the
-  taskbar, as Windows and ReactOS show them. Drawn with the wallpaper, so every
+  taskbar, as classic desktop systems show them. Drawn with the wallpaper, so every
   wallpaper mode has it and no window is covered.
 
 - **Dialogs are windows of their own.** Under `sxgui_app_run`, `sxgui_dialog_begin`
@@ -39,12 +73,11 @@ Cut-off notes:
   `_RECEIVE_HANDLE` (handle passing over a pipe), tested by `handletest`.
   [How it works](docs/OWNED_WINDOWS.md).
 
-- **Media Player (`/disk/bin/mediaplayer`), in the Accessories group.** Plays
-  audio and video in a window: icon buttons for open, play/pause, stop and ±5 s,
-  a draggable seek bar with accurate seek, volume, and Space/arrows/Home/O on the
-  keyboard. It declares MP4, MKV, WebM, AVI, Ogg, MP3, FLAC and WAV for
-  `/disk/assoc.ini`, and Files shows those types' icons. Built with
-  `sdk/ffmpeg/build.ps1`. [How it plays](docs/MEDIA_PLAYER.md).
+- **Media Player is now a system application in Accessories.** `/bin/mediaplayer`
+  is always built, delegates to `/disk/bin/mediaplayer-ffmpeg` when installed,
+  and otherwise opens an in-OS warning explaining that `ports/ffmpeg` must be
+  built; the installed player keeps the audio/video controls and associations.
+  [How it plays](docs/MEDIA_PLAYER.md).
 
 - **The FFmpeg port decodes the common formats.** H.264, HEVC, VP8, VP9, MPEG-4,
   Theora and MPEG-1/2 video; AAC, MP3, Vorbis, Opus, FLAC and AC-3 audio; MP4,
@@ -54,7 +87,7 @@ Cut-off notes:
   rasterizer — matrices, viewport, z-buffer, backface culling and flat shading
   with one directional light — drawing the three meshed gears. It is the
   consumer that defines the subset of the future SxGL, not a port.
-  New `tools/shoot.ps1 -Scenario gears`. [The plan it serves](docs/SXGL_ROADMAP.md#batch-0--the-consumer-before-any-api).
+  New `tools/shoot.sh --scenario gears`. [The plan it serves](docs/SXGL_ROADMAP.md#batch-0--the-consumer-before-any-api).
 
 - **Fixed-size windows: `window_flags=fixed_size` in a `.sxres`.** The edges
   stop grabbing and maximize is drawn disabled, so a layout that cannot stretch
@@ -65,7 +98,7 @@ Cut-off notes:
 
 - **Floating point in every app of the image.** The in-tree userland compiles
   with `-msse2` and links the libm of `runtime/math.c`, so `double`, `%f`,
-  `strtod` and `sqrt` work with no switch to remember; `-Sse` stays for
+  `strtod` and `sqrt` work with no switch to remember; `--sse` stays for
   external apps. [The rule it replaces](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
 
 - **`docs/SXGL_ROADMAP.md`.** OpenGL does not grow out of SxGFX: SxGL would be a
@@ -75,28 +108,22 @@ Cut-off notes:
 - **Calculator (`/bin/calc`), in the Accessories group.** Four operations,
   `%`, `sqrt`, `1/x`, memory keys, copy/paste and the numeric keypad, over a
   decimal engine of 16 significant digits written in integers, so `0.1 + 0.2`
-  is `0.3`. New `build.ps1 calc-smoke` and `tools/shoot.ps1 -Scenario calc`.
+  is `0.3`. New `./build.sh smoke calc-smoke` and `tools/shoot.sh --scenario calc`.
   [Why its engine is decimal and integer anyway](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
 
 - **Minesweeper (`/bin/mines`), in the Games group.** The first game that comes
   in the image instead of being installed like Doom: three levels, LED counters,
   the face button, `?` marks, chord with both buttons, keyboard play and best
-  times in `/disk/mines.ini`. New `build.ps1 mines-smoke`, and apps that paint
+  times in `/disk/mines.ini`. New `./build.sh smoke mines-smoke`, and apps that paint
   their own content now get the system 3D edges from `sxgui_draw_raised_edge()`.
   [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
-
-- **`tools/bootstrap.ps1` bakes Python (with Pillow) and provisions Visual
-  Studio Build Tools.** An embedded, portable Python goes into `toolchain/`
-  like the rest of the toolchain (`-SkipPython` opts out); Build Tools
-  installs system-wide via `winget` when the MSVC headers `sxfs-cli` needs are
-  missing (`-SkipVsBuildTools` opts out). [Why Build Tools can't be pinned like the rest](docs/WINDOWS_BOOTSTRAP.md).
 
 - **The AC'97 driver measures its own feed.** An `ac97-stats:` line every
   ~11 s of audio over `/dev/serial`: wall time against audio actually
   delivered, periods discarded because the ring was full, underruns, and the
   longest gap between two writes. [How to read it](docs/TIME.md#diagnosing-a-clock-problem).
 
-- **`build.ps1 clock-smoke`.** Measures `uptime_ms` and `monotonic_ns` against
+- **`./build.sh smoke clock-smoke`.** Measures `uptime_ms` and `monotonic_ns` against
   the RTC while spinning and while idle, and fails only if a clock changes rate
   with idleness. [What it measured](docs/SYSTEM_MONITORING.md#ticks-are-guest-time-not-wall-time).
 
@@ -118,12 +145,12 @@ Cut-off notes:
   graphs and totals in Performance; adapter throughput in Networking; `File >
   New Task` and `Shut Down`. `proc_info`/`system_info` gained the counters it
   reads (`cpu_ticks`, `memory_bytes`, `cpu_ticks_total`, `memory_free_bytes`).
-  New `build.ps1 taskmgr-smoke`. [How it measures](docs/SYSTEM_MONITORING.md).
+  New `./build.sh smoke taskmgr-smoke`. [How it measures](docs/SYSTEM_MONITORING.md).
 
 - **TCP survives a network that loses and reorders.** Segments are kept and
   resent with backoff (`SYN` included), out-of-order data is reassembled, and a
   dead connection now reports `ECONNRESET`/`ETIMEDOUT` instead of a clean end of
-  file. New `build.ps1 tcp-smoke`, `NET_IOC_GET_TCP_STATS` and
+  file. New `./build.sh smoke tcp-smoke`, `NET_IOC_GET_TCP_STATS` and
   `NET_IOC_SET_TCP_FAULT`. [What it guarantees](docs/NETWORKING.md).
 
 - **The mouse wheel works.** PS/2 negotiates IntelliMouse 4-byte packets (`ps2:
@@ -143,15 +170,15 @@ Cut-off notes:
 
 - **Every core runs user processes, under one big kernel lock.** Each core the
   bootloader reports gets its own TSS, idle process and LAPIC timer (`smp:
-  planificando en N de M cores`); `/bin/smptest` in `build.ps1 smoke` proves the
+  planificando en N de M cores`); `/bin/smptest` in `./build.sh smoke` proves the
   overlap. Task Manager usage is now of all cores together. Unmapped kernel
-  pages are flushed from every core's TLB (`smp: TLB perezosa ok`). `-Smp <n>`
+  pages are flushed from every core's TLB (`smp: TLB perezosa ok`). `--smp <n>`
   still defaults to 1. Phases 0-3 of [the SMP roadmap](docs/SMP_ROADMAP.md).
 
 - **Add or Remove Programs (`/bin/appwiz`), in the System group.** It lists what
   was installed outside the system image — in `/disk/bin` and not in `/bin` —
   and deletes the binary, optionally with the data directory the program
-  declares as `data_dir=` in its `.sxres`. New `build.ps1 appwiz-smoke`.
+  declares as `data_dir=` in its `.sxres`. New `./build.sh smoke appwiz-smoke`.
   [Why that is the rule](docs/SXE_FORMAT.md#uninstalling-the-other-half-of-the-same-idea).
 
 - **Program Manager lists every installed program on its own.** A binary whose
@@ -161,22 +188,22 @@ Cut-off notes:
   Actualizar) rebuilds the catalog, and launching an entry that is gone says so
   instead of nothing. [How it works](docs/SXE_FORMAT.md#all-programs-the-catalog-discovers-itself).
 
-- **`virtio-net` driver for the NIC.** With `-Virtio`, `build.ps1` builds
+- **`virtio-net` driver for the NIC.** With `--virtio`, `./build.sh` builds
   `virtio-net-pci` instead of `rtl8139`, and `nic::` prefers
   `virtio_net::driver()`. Polling-only, no IRQ of its own.
 
-- **`-Accel kvm`.** `run`/`debug` accelerate against `/dev/kvm` with `-cpu
+- **`--accel kvm`.** `run`/`debug` accelerate against `/dev/kvm` with `-cpu
   host` on Linux. The smokes stay on TCG on purpose, to remain deterministic.
 
 - **Audio capture (`virtio-sound` RX) and duplex `/dev/audio0`.** `read()` has
   its own session owner, independent of `write()`, so recording and playback can
   come from different processes. New `audiotest --record` and `virtio-record`.
 
-- **Keyboard over `virtio-input`.** `-Virtio` adds `virtio-keyboard-pci`; its
+- **Keyboard over `virtio-input`.** `--virtio` adds `virtio-keyboard-pci`; its
   `EV_KEY` events become scancode set 1 (`ps2::inject_scancode`) and reuse the
   existing layout logic. `ps2::` disables its own keyboard while it is active.
 
-- **`virtio-blk` driver for the persistent disk.** With `-Virtio` the machine
+- **`virtio-blk` driver for the persistent disk.** With `--virtio` the machine
   gets `virtio-blk-pci` instead of IDE, appearing in `block:` as `vblk0`. It
   flushes after every write, or a "successful" write could stay in QEMU's cache.
 
@@ -185,23 +212,23 @@ Cut-off notes:
   is extension to icon, not type detection: `MIME_OPEN` is still unresolved.**
 
 - **Video player on FFmpeg: MJPEG decoding, YUV->RGB through swscale, on
-  screen.** `build.ps1 ffmpeg-smoke` runs `wavinfo`, the player in `--selftest`
+  screen.** `./build.sh smoke ffmpeg-smoke` runs `wavinfo`, the player in `--selftest`
   and the player in `--hold`, which presents over `/dev/gpu0`.
 
 - **FFmpeg runs inside SavanXP.** libavutil, libavcodec, libavformat and
   libswresample compile against this libc and really decode. Minimal codec set
   (WAV + PCM s16le), no asm and no threads; built separately with GNU make, see
-  `sdk/ffmpeg/README.md`.
+  `ports/ffmpeg/README.md`.
 
 - **`static_assert` in `<assert.h>`, the `PRI*`/`SCN*` in `<inttypes.h>`, and
   `fpclassify`.** Plus the missing errnos (`EDOM`, `EILSEQ`, `EPERM`, `ESPIPE`),
   `mkdir`, `F_SETFD`/`FD_CLOEXEC` and `imaxabs`/`strtoimax`/`strtoumax`.
 
-- **`build.ps1 smoke` runs `imagetest`.** It inspects itself to verify what a
+- **`./build.sh smoke` runs `imagetest`.** It inspects itself to verify what a
   streaming loader can break: `.rodata` byte by byte, `.bss` zeroed and `.data`
   with its initial values, from `/bin` and from `/disk/bin`.
 
-- **`build.ps1 smoke` runs `stacktest`.** Deep recursion in the process and in a
+- **`./build.sh smoke` runs `stacktest`.** Deep recursion in the process and in a
   child, an overflow that must die with a `#PF` on the guard page, and a
   40-argument `argv`.
 
@@ -217,7 +244,7 @@ Cut-off notes:
   `lround`, `frexp`, `modf`, `scalbn`, `nextafter`, `fdim`, `fma`, `log1p`,
   `expm1`, the hyperbolics, `remainder` and their `float` variants.
 
-- **`build.ps1 smoke` runs `libctest`.** Exercises the libc surface a port
+- **`./build.sh smoke` runs `libctest`.** Exercises the libc surface a port
   consumes: standard names as struct fields, `qsort`/`bsearch`, streams,
   directories and the POSIX error convention (`-1` plus `errno`).
 
@@ -226,7 +253,7 @@ Cut-off notes:
   (`INPUT_IOC_SET_LAYOUT`/`GET_LAYOUT`), saved in `/disk/keyboard.cfg` and
   applied at boot, before windowd. UI in `kbdlayoutpopup.c`.
 
-- **`build.ps1 kbd-smoke`: the keyboard driver is tested on its own.** It closes
+- **`./build.sh smoke kbd-smoke`: the keyboard driver is tested on its own.** It closes
   the real PS/2 -> IRQ -> `kernel/ps2.cpp` -> `/dev/input0` path, which the
   harnesses that inject already-formed events do not cover.
 
@@ -241,12 +268,12 @@ Cut-off notes:
   `assets/`.** It takes a PNG relative to the `.sxres` and derives the two sizes
   the runtime needs. Mutually exclusive with `icon=`.
 
-- **Floating point in userland, with `-Sse` and a libm of our own.** Code using
+- **Floating point in userland, with `--sse` and a libm of our own.** Code using
   `float`/`double` compiled but did NOT link: under `-mno-sse` clang resolves
   each operation through compiler-rt soft-float helpers this system does not
   have. The switch is opt-in, and `math.h` declares the library under `#if
   defined(__SSE2__)` so the error appears at COMPILE time naming the function.
-  New `build.ps1 float-smoke`.
+  New `./build.sh smoke float-smoke`.
 
 - **Tab control in sxgui (`sxgui_tabs`).** The active tab is drawn taller and
   covers the page's top border, so both parts read as one sheet. Program
@@ -258,10 +285,10 @@ Cut-off notes:
   z-order, or the next click would land on something else. What a client cannot
   know arrives over the new channels in `savanxp/wm_shell_protocol.h`.
 
-- **`tools/shoot.ps1`: visual verification of the session, headless.** It boots
+- **`tools/shoot.sh`: visual verification of the session, headless.** It boots
   without a window, sends keys over QMP (holding modifiers, which the monitor's
   `sendkey` cannot) and captures PNGs. The `taskbar` scenario verifies pixels
-  and is wired as `build.ps1 taskbar-smoke`. Not part of the build.
+  and is wired as `./build.sh smoke taskbar-smoke`. Not part of the build.
 
 - **Alt+Tab to switch windows.** While Alt is held each Tab moves the selection
   and releasing it confirms; Alt+Shift+Tab goes backwards. The switcher shown is
@@ -281,17 +308,26 @@ Cut-off notes:
 
 ### Changed
 
-- **The boot screen fades in from black, like Windows XP's.** Logo, name,
-  progress bar and status line brighten together over about a second, driven
-  by the monotonic clock; without a calibrated clock the splash appears at once.
+- **The About app now identifies the system as the Alpha edition.**
+- **The boot screen fades in from black, like a classic desktop splash.** Logo,
+  name, progress bar and status line brighten together over about a second,
+  driven by the monotonic clock; without a calibrated clock the splash appears
+  at once.
 
-- **The FFmpeg port builds on Windows without WSL.** `sdk/ffmpeg/build.ps1` runs
-  the scripts with Git for Windows' bash, the baked LLVM and a native GNU make
-  that `tools/bootstrap.ps1` now pins and installs (`-SkipMake`, `SAVANXP_MAKE`).
+- **Visual desktop verification uses the native Bash launcher.**
+  `tools/shoot.sh` reuses the shared scenario driver over Unix QMP and a
+  disposable SxFS copy.
 
-- **`ffmpeg-smoke` tests Media Player.** `mediaplayer --selftest` covers WAV,
-  raw MJPEG and a generated `avsync.avi` whose flash frames must start within
-  20 ms of their beeps; `mediaplayer --gpu-hold` takes the screenshot.
+- **Linux Program Manager and Add/Remove Programs smokes restore Doom when its
+  external ELF exists.** The optional image remains unchanged when no ELF is
+  installed.
+
+- **Doom persistence now has an isolated Linux regression command.**
+  `tools/verify_doom_persistence.sh` rebuilds a disposable image and compares
+  the Doom binary, WAD, configuration, and savegame bytes.
+- **ISO verification now covers El Torito plus BIOS and UEFI boot.**
+  `tools/iso_boot_test.py` boots the generated image through both firmware paths
+  and waits for the guest handoff token.
 
 - **WM↔client protocol v4: the session opens all 12 windows.** Each costs
   `windowd` two descriptors instead of nine: one event pipe (`SAVANXP_WM_FD_EVENTS`),
@@ -300,9 +336,8 @@ Cut-off notes:
   **Breaks the client ABI:** rebuild external apps such as `doomgeneric`.
   [Descriptor budget](docs/WM_SUBSYSTEM.md#descriptor-budget).
 
-- **The automated smokes honour `-Accel`.** `build.ps1 smoke -Accel whpx` (or
-  `kvm`) runs the suite on the hypervisor instead of TCG; the default is still
-  `tcg`.
+- **The automated smokes honour `--accel`.** `./build.sh smoke smoke --accel kvm`
+  runs the suite with KVM instead of TCG; the default remains `tcg`.
 
 - **The system 3D edges moved to `savanxp/sxchrome.h`, out of the toolkit.**
   `sxchrome_draw_edge/_raised/_sunken/_inset/_etched`, `sxchrome_fill_raised`
@@ -329,14 +364,14 @@ Cut-off notes:
   unused 8 MiB static backbuffer, repaints only the text rows that actually
   changed instead of the whole surface, blinks the cursor without a repaint, and
   keeps scrollback in a ring. Monospace text blits ~16x faster system-wide. New
-  `shellapp-stats:` line over `/dev/serial` and `shoot.ps1 -Scenario shell`.
+  `shellapp-stats:` line over `/dev/serial` and `tools/shoot.sh --scenario shell`.
 
 - **The compositor accumulates damage as an exact region.** `windowd` stopped
   merging dirty rectangles by bounding box: dragging a window now repaints and
   presents the ring that changed, not the box around the old and new frames.
 
-- **`tools/shoot.ps1` drives other hardware and loads the display path.**
-  `-Virtio`/`-Accel` (`tcg`/`kvm`/`whpx`) pick devices and accelerator; the
+- **`tools/shoot.sh` drives other hardware and loads the display path.**
+  `--virtio`/`--accel` (`tcg`/`kvm`) pick devices and accelerator; the
   `bench`, `saturate` and `spin` scenarios feed `windowd-stats`.
 
 - **Launcher icon captions wrap to two lines.** A name that does not fit on one
@@ -390,7 +425,7 @@ Cut-off notes:
 
 - **Streams read in batches and `malloc` aligns to 16.** `fgets` was issuing one
   `read()` per character; file streams now fill a 512-byte buffer. 16 is
-  x86-64's `max_align_t`: with 8, a `movaps` in an `-Sse` app could fault.
+  x86-64's `max_align_t`: with 8, a `movaps` in an `--sse` app could fault.
 
 - **The libc stops renaming with `#define`: the standard names are now real
   symbols.** The SDK headers defined `#define read sx_read` and ~140 more, so
@@ -419,7 +454,7 @@ Cut-off notes:
   `savanxp/sxgui.h` (`SXGUI_MARGIN`, `SXGUI_GAP`, `SXGUI_BUTTON_WIDTH`, ...) and
   are used by notepad, files, progman, aboutapp and widgetsdemo.
 
-- **`tools/shoot.ps1` gains the `files` scenario.** The explorer is the window
+- **`tools/shoot.sh` gains the `files` scenario.** The explorer is the window
   with the most distinct controls at once, so it is where a stray toolkit margin
   shows up.
 
@@ -431,6 +466,11 @@ Cut-off notes:
 
 ### Removed
 
+- **The alternate host compatibility surface is removed.** Its entry points,
+  bootstrap/toolchain cache, non-native accelerator selection, and TCP QMP
+  fallback are gone; Bash/CMake is the canonical build and test path.
+- **The legacy SDK trees for Doom and FFmpeg are removed.** Doom and FFmpeg now
+  live exclusively under `ports/doomgeneric` and `ports/ffmpeg`.
 - **The `wavinfo` and `player` FFmpeg demos.** Every binary that links
   libavcodec carries all its decoders, so they became modes of the player:
   `mediaplayer --probe`, `--selftest` and `--gpu-hold`.
@@ -448,7 +488,24 @@ Cut-off notes:
   deleted.** `cat.c`, `echo.c`, `ls.c`, `mv.c`, `rm.c`, `sleep.c`, `true.c` and
   `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
 
+
 ### Fixed
+
+- **The native SXGUI smoke label is now distinct from the native GUI host.**
+  `sxguihost` no longer reports `NATIVEGUI HOST` when its runner exits.
+- **CMake-generated UEFI images now include `startup.nsh`.** The file selects
+  `fs0:\EFI\BOOT\BOOTX64.EFI` for firmware and removable-media boot paths.
+- **Linux `gpu-soak` now uses the legacy 96-iteration default.** Explicit
+  iteration counts derive a proportional timeout on both build frontends.
+- **DoomGeneric verifies its vendored upstream tree before building.** The
+  deterministic digest in `UPSTREAM` rejects accidental source drift.
+- **`build.sh --jobs` now applies to every CMake build target.** Kernel,
+  userland, ISO, smoke, run, debug, test and clean paths share the same limit.
+- **Linux QEMU launches honor `SAVANXP_QEMU` and custom OVMF pairs.** Normal
+  runs and smoke scenarios use the same explicit toolchain overrides.
+- **Native Haxe `--force` now clears stale generated artifacts.** The normal
+  path preserves reusable output directories instead of silently rebuilding
+  from an identical clean state.
 
 - **BusyBox is built with stack canaries enabled.** The port boots and runs its
   applets with the same runtime protection as other external applications.
@@ -493,9 +550,6 @@ Cut-off notes:
 - **Mutating device ioctls require a writable descriptor.** Init and idle tasks
   cannot be killed, and reparented descendants no longer leave permanent zombies.
 
-- **Shell scripts keep LF line endings on Windows checkouts.** A new
-  `.gitattributes` stops `core.autocrlf` from giving `*.sh` the CRLF bash rejects.
-
 - **Restoring a maximized window no longer leaves residue on the wallpaper.**
   Only the restored frame was repainted, so the rest of the maximized area kept
   stale pixels until something passed over it. `windowd-smoke` now checks it.
@@ -512,15 +566,13 @@ Cut-off notes:
   64-bit virtio MMIO field now goes in two 32-bit halves: a single 64-bit access
   is what VirtualBox answers with a guru meditation. [The rule](docs/VIRTIO.md).
 
-- **QEMU starts from a path with a space in it.** `build.ps1 run`, every
-  `*-smoke` target and `tools/shoot.ps1` (so `taskbar-smoke` too) passed the
-  OVMF, disk and log paths unquoted, and QEMU read half a path as a second drive.
-  [The other half of the same bug](docs/WINDOWS_BOOTSTRAP.md#the-same-space-reaches-qemu).
+- **QEMU starts from a path with a space in it.** `./build.sh run`, smoke targets,
+  and `tools/shoot.sh` now pass OVMF, disk, and log paths as quoted arguments,
+  so QEMU cannot interpret half a path as a second drive.
 
-- **The kernel/userland build no longer breaks when the Windows profile name
-  has a space in it.** The generated `compile.ninja` only escaped `$` in flag
-  values, so an unquoted `-I` path like `C:\Users\Jane Doe\...` split into two
-  bogus arguments. [How it was found](docs/WINDOWS_BOOTSTRAP.md#a-space-in-the-windows-profile-name-can-break-the-build).
+- **The kernel/userland build handles host paths with spaces.** CMake and Ninja
+  receive quoted include and output paths, so a directory containing whitespace
+  is passed as one argument instead of being split.
 
 - **Closing a window that was playing sound no longer mutes the machine.**
   `windowd` kills the client, so the close handler of `/dev/audio0` ran in the
@@ -546,7 +598,7 @@ Cut-off notes:
   tick.** Blocking `poll()` left the compositor noticing a client's frame up to
   a tick late, and that latency landed on every frame drawn.
 
-- **`build.ps1 build` no longer deletes `build/disk.img` when it cannot read
+- **`./build.sh build` no longer deletes `build/disk.img` when it cannot read
   it.** A locked image — a VM running on it — raised the same error as a corrupt
   one and fell into the branch that recreates it. It now reports and stops.
 
@@ -560,11 +612,11 @@ Cut-off notes:
 - **Notepad's editor ignored the mouse wheel and its own scrollbar.** The
   wheel dispatcher and the embedded-scrollbar hit test only knew about
   `SXGUI_LISTBOX`/`SXGUI_TEXTVIEW`, not the editable `SXGUI_TEXTEDIT`; a click
-  on the bar moved the caret instead of scrolling. `tools/shoot.ps1
-  -Scenario notepadwheel` covers it.
+  on the bar moved the caret instead of scrolling. `tools/shoot.sh
+  --scenario notepadwheel` covers it.
 
-- **`tools/shoot.ps1` guarded the wrong path for a planted automation spec.**
-  It checked `build/image/SMOKE` while `build.ps1` plants `build/rootfs/SMOKE`,
+- **`tools/shoot.sh` guarded the wrong path for a planted automation spec.**
+  It checked `build/image/SMOKE` while `./build.sh` plants `build/rootfs/SMOKE`,
   so after any smoke target the guest silently ran that harness, not the
   desktop.
 
@@ -599,7 +651,7 @@ Cut-off notes:
 - **A read-only SxFS volume became writable again once published.**
   `sxfs::attach()` set the status to `mounted` without looking at how the mount
   had ended, so a volume whose journal could not be recovered accepted writes.
-  New `build.ps1 sxfs-smoke` mounts a broken volume from a host test.
+  New `./build.sh smoke sxfs-smoke` mounts a broken volume from a host test.
 
 - **Two windowd bugs uncovered by the keyboard selector popup.** The click-down
   landed on the overlay window path, and the popup never entered the

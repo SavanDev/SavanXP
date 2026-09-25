@@ -171,10 +171,10 @@ Two consequences worth remembering:
 
 ## Tests
 
-- `handletest` (in `build.ps1 smoke`): shared memory through a received
+- `handletest` (in `./build.sh smoke smoke`): shared memory through a received
   section, handles crossing `fork`, the queue limit, wrong pipe ends and I/O
   objects rejected, and queued sections released with the pipe.
-- `windowd --selftest` (`build.ps1 windowd-smoke`): launches
+- `windowd --selftest` (`./build.sh smoke windowd-smoke`): launches
   `widgetsdemo --dialog-selftest`, which opens its About through the real
   runtime, and asserts the family rules, the dialog frame, the task count, the
   descriptor cost, Alt+F4 closing it (and then closing a main window with its

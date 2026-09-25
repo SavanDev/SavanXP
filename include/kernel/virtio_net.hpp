@@ -4,7 +4,7 @@
 
 // Driver moderno de virtio-net sobre virtio_pci. Sigue el mismo contrato que
 // rtl8139::driver(): se registra en nic:: y, si el probe PCI no encuentra el
-// dispositivo (maquina sin -Virtio), su probe() devuelve false sin tocar
+// dispositivo (maquina sin --virtio), su probe() devuelve false sin tocar
 // nada mas.
 namespace virtio_net {
 

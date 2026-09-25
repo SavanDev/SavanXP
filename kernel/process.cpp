@@ -27,9 +27,9 @@
 #include "kernel/ui.hpp"
 
 // Contrato ABI del subsistema nativo (numeros de syscall propios y structs),
-// consumido por subsystems/native/kernel/syscall_dispatch.inc. Se incluye aca
-// afuera de los namespaces, igual que el resto de headers de contrato.
-#include "../subsystems/native/sdk/include/savanxp_native_abi.h"
+// consumed by kernel/native_syscall_dispatch.inc. It is included here outside
+// the namespaces, like the other contract headers.
+#include "../include/abi/savanxp_native_abi.h"
 
 namespace {
 
@@ -3366,7 +3366,7 @@ void terminate_current_from_exception(uint8_t vector) {
 }
 
 #include "../subsystems/posix/kernel/syscall_dispatch.inc"
-#include "../subsystems/native/kernel/syscall_dispatch.inc"
+#include "native_syscall_dispatch.inc"
 
 SavedContext* handle_syscall(SavedContext* context) {
     Process* const caller = this_cpu().current;

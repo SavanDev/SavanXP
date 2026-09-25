@@ -184,14 +184,14 @@ out-of-order, duplicates, out-of-window, window updates, aborts. A stack that
 only works against a perfect network finishes a test run with those at zero, so
 the test asserts on them as well as on the data.
 
-`build.ps1 tcp-smoke` puts it together: `tools/tcp_echo_server.ps1` listens on
+`./build.sh smoke tcp-smoke` puts it together: `tools/tcp_echo_server.py` listens on
 the host's loopback, the guest reaches it at `10.0.2.2` (how QEMU's user-mode
 networking presents the host — no real network, no firewall rule), and
 `tcptest` connects through 50% loss on the handshake, verifies 32 KiB streamed
 in and 8 KiB echoed out byte for byte, and requires the counters to prove the
 failures happened. It is deterministic: the same counts on every run.
 
-`build.ps1 net-smoke` is the other half and covers the layer below — the NIC
+`./build.sh smoke net-smoke` is the other half and covers the layer below — the NIC
 driver, ARP and ICMP against the slirp gateway.
 
 ## What this does not do

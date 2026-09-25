@@ -26,10 +26,10 @@
 > would be speculative API; it goes in when the first stroke with a width or a
 > style shows up.
 >
-> Verification: `build.ps1 gfx2d-test` (43 pixel-exact checks against the real
-> painter, on the host, without booting) plus `windowd-smoke`, `progman-smoke`,
-> `filesapp-smoke`, `taskbar-smoke` and `cursor-repro`. The `files` scenario of
-> `tools/shoot.ps1` produces **pixel-identical** captures before and after:
+> Verification: `./build.sh test` (the host gfx2d test) plus
+> `./build.sh smoke windowd-smoke`, `progman-smoke`, `filesapp-smoke`,
+> `taskbar-smoke` and `cursor-repro`. The `files` scenario of
+> `tools/shoot.sh` produces **pixel-identical** captures before and after:
 > batch 1 is a refactor with no change in appearance.
 >
 > The code in question is

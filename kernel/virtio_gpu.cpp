@@ -712,7 +712,7 @@ uint64_t cursor_response_physical() {
 // alcanza tambien durante el boot temprano, con interrupciones globalmente
 // deshabilitadas (IF=0): ahi timer::ticks() nunca avanza (depende del IRQ del
 // timer) y un timer::wait_ticks()/hlt jamas se despierta bajo un hipervisor
-// fiel al hardware (confirmado bajo WHPX: HLT con IF=0 solo despierta con
+// fiel al hardware (confirmado bajo KVM: HLT con IF=0 solo despierta con
 // NMI). El TSC es monotono independientemente de IF, asi que esta espera hace
 // busy-spin en vez de halt.
 uint64_t wait_deadline(uint64_t wait_ms) {

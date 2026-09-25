@@ -1,0 +1,6 @@
+name=Native Haxe GUI
+description=Haxe native compositor client validation
+version=0.1
+vendor=SavanXP
+category=Accessories
+subsystem=native

@@ -20,7 +20,7 @@
  *
  * Es de solo escritura y sin estado: no hay cursor, no hay buffer y no hay
  * lectura. Lo que se escribe sale por COM1 (y por el puerto de debug del
- * emulador), que es donde `build.ps1` ya redirige con `-serial file:`.
+ * emulador), que es donde el runner redirige con `-serial file:`.
  */
 
 namespace {

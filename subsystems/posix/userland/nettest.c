@@ -11,7 +11,7 @@
  * tx_frames/rx_frames del driver: un stack que respondiera desde una cache sin
  * tocar el device no los haria avanzar.
  *
- * Imprime NET SMOKE PASS / NET SMOKE FAIL para el harness de build.ps1.
+ * Imprime NET SMOKE PASS / NET SMOKE FAIL para el harness de smoke.
  *
  * Ojo: el printf de userland solo entiende %s %d %u %x, sin ancho ni relleno.
  */
