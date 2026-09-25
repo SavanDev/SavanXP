@@ -38,6 +38,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`TIME.md`](TIME.md) — kernel clocks, virtualization, and diagnosis.
 - [`MEDIA_PLAYER.md`](MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.
+- [`SXMEDIA.md`](SXMEDIA.md) — the proposed multimedia layer: the engine, the
+  device sinks, and the backend registry that makes FFmpeg a fallback.
 - [`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md) — process, memory, and system
   metrics exposed by the kernel.
 
