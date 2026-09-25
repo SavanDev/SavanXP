@@ -124,7 +124,12 @@ which is why both go into the registry.
   and `/disk/bin/sxguiapp`; the Haxe compiler and reflaxe checkout remain
   outside the image
 
-### stb_vorbis (vendored, not yet built into a distributed binary)
+### stb_vorbis (vendored, and **not adoptable as an SxMedia decoder**)
+
+> The entry records a component that is committed, licensed and **deliberately
+> not used**. It is here rather than deleted because the reason it cannot be used
+> is the useful part: `stb_vorbis` decodes whole files, and the SxMedia decoder
+> role is fed packets by a demuxer. See `docs/SXMEDIA.md`, batch 4.
 
 - Origin: https://github.com/nothings/stb, `stb_vorbis.c`
 - Versioned: yes. The file is committed at the commit below, unmodified, with
@@ -151,9 +156,16 @@ which is why both go into the registry.
   Marc Andersen, Aaron Baker, Elias Software, Aras Pranckevicius and Sean
   Barrett; sample-exact seeking by Dougall Johnson. `stb_vorbis.c` carries the
   full contributor list at the top
-- Not `our own codec`: the adapter and the routing are the repository's, the
-  decoder is stb's. A decoder written from scratch is a different order of
-  magnitude and is not what this adoption is
+- **Why it is not used, in one line:** `stb_vorbis_open_pushdata` and
+  `stb_vorbis_open_memory` both take *file bytes* -- the first wants the start of
+  the file with its Ogg page headers, the second wants all of it -- while an
+  SxMedia decoder is fed **packets** by whichever provider demuxed the source.
+  The bytes are not the same bytes, and no adapter bridges that
+- Not `our own codec`: even if the shape matched, the decoder would be stb's and
+  the adapter the repository's. A decoder written from scratch is a different
+  order of magnitude and is not what this was
+- If it is adopted later, it will be as a **source + decoder in one** -- a
+  provider that opens the file itself -- and not behind a foreign demuxer
 
 ## Bootloader
 

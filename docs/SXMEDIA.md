@@ -1057,9 +1057,40 @@ audio with nothing reporting it. `sx_media_frame` gained `count` and the engine
 now sizes from the block and the rate ratio. FFmpeg never hit it because
 `swr_get_out_samples` reported the real figure; the fixed guess was luck.
 
-So the next attempt starts with a `pushdata` accumulator, a float-to-s16 step,
-and a decision about whether the converter role or the decoder owns that step.
-Getting that wrong is what the two provider paths are for.
+**And then the decisive one, which is that `stb_vorbis` cannot be a decoder-role
+backend at all.** Its pushdata workflow takes *file bytes*: `open_pushdata` is
+handed the first N bytes of the file, page headers and all, and
+`decode_frame_pushdata` resynchronises by finding Ogg page boundaries inside
+what it is given. The other entry point, `open_memory`, wants the entire file
+for the same reason. A demuxer hands out **packets**, with the Ogg framing
+already stripped, which is exactly what FFmpeg's `oggparsevorbis` does when it
+puts the three header packets into `extradata`. So the bytes stb_vorbis needs
+and the bytes a decoder role is given are not the same bytes.
+
+That is not a bug in the adapter. It is a mismatch of shape: **the decoder role
+in this design is packet-oriented, and `stb_vorbis` is a whole-file decoder.**
+Closing the gap would mean either handing a decoder the whole source, which is a
+second decoder shape in the vtable, or giving SxCodecs its own Ogg demuxer,
+which is a different project wearing this one's name.
+
+So the recommendation in this section was wrong and is corrected here: Vorbis is
+a real demand with two waiting consumers, and it is the wrong *first* occupant
+for the role as the role is defined. A decoder for it has to be one of
+
+- a **packet-oriented Vorbis decoder** -- `libopus`-shaped work, a
+  `opus_decode`-style interface fed packet by packet, which is what the role
+  wants and what stb is not; or
+- a **whole-file decoder**, which means adding a second shape to the vtable
+  before anything can use it, and that is a design change with its own
+  justification rather than a first milestone.
+
+The engine change the work did justify is in `sx_media_frame.count` and is
+already in: a block is between 1 and 4096 frames and nothing bounds it from
+below, and the fixed 2048 the engine used to size the converter's buffer was
+smaller than a large block needs at a higher sink rate.
+
+Getting the shape right is what the two provider paths are for, and this is the
+case that says so.
 
 **Verification**, and the second assertion is the one that matters:
 
