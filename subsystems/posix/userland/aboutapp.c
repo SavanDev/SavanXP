@@ -162,7 +162,7 @@ static void build_system_block(void)
     g_system.title = "System:";
     g_system.line_count = 0;
     snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "%s", SAVANXP_SYSTEM_NAME);
-    snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "Alpha edition");
+    snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "Alpha Edition");
     snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "Version %d.%d.%d",
              SAVANXP_VERSION_MAJOR, SAVANXP_VERSION_MINOR, SAVANXP_VERSION_PATCH);
     snprintf(block_line(&g_system), ABOUT_LINE_CAPACITY, "SDK %d.%d",

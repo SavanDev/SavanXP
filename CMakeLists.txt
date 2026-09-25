@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(SavanXP
-    VERSION 0.3.4
+    VERSION 0.4.0
     DESCRIPTION "SavanXP operating system"
     LANGUAGES C CXX ASM
 )
