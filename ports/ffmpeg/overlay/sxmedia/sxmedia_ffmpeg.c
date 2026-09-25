@@ -53,10 +53,31 @@
 
 /* ---- source role --------------------------------------------------------- */
 
+/* What the source provider publishes per stream, and what the decoder role
+ * reads. It is FFmpeg's own type on purpose: decoder configuration is demuxer
+ * data, and the only honest way to carry it across a library boundary is as
+ * something the boundary's owner recognises. A decoder that needs nothing but a
+ * codec name and the extradata -- stb_vorbis, for instance -- would leave
+ * `setup` NULL and work with any source provider, which is the case that keeps
+ * the seam worth having. */
+typedef struct {
+    AVCodecParameters* parameters;
+    /* The stream's time base. It is here rather than in the descriptor because
+     * AVCodecParameters does not carry one, and because leaving it out is silent:
+     * the decoder still produces frames and the timestamps come out in the
+     * default base, so video lands 1000x late and only the --sync test sees it.
+     * The engine's contract is microseconds, so the conversion has to happen
+     * somewhere and this is where both directions of it live. */
+    AVRational time_base;
+    int64_t start_time_us;
+} SxFFmpegStreamSetup;
+
 typedef struct {
     AVFormatContext* format;
     AVPacket* packet;
     int64_t start_time_us;
+    SxFFmpegStreamSetup* setups;
+    int setup_count;
 } SxFFmpegSource;
 
 static void ffmpeg_close(void* opaque);
@@ -82,13 +103,6 @@ static int ffmpeg_claim_source(void* user, const struct sx_media_source* source)
      * means there is no other. The fd field exists so that adding one is not a
      * signature change, and FFmpeg has no way to take it today. */
     return source->path != NULL && source->path[0] != '\0';
-}
-
-static AVStream* find_stream(SxFFmpegSource* source, int index) {
-    if (index < 0 || index >= (int)source->format->nb_streams) {
-        return NULL;
-    }
-    return source->format->streams[index];
 }
 
 static void* ffmpeg_open(void* user, const struct sx_media_source* source,
@@ -126,7 +140,11 @@ static void* ffmpeg_open(void* user, const struct sx_media_source* source,
 
     handle->start_time_us = handle->format->start_time != AV_NOPTS_VALUE ? handle->format->start_time : 0;
     handle->packet = av_packet_alloc();
-    if (handle->packet == NULL) {
+    handle->setups = (SxFFmpegStreamSetup*)calloc(stream_capacity > 0 ? (size_t)stream_capacity : 1u,
+                                                  sizeof(SxFFmpegStreamSetup));
+    if (handle->packet == NULL || handle->setups == NULL) {
+        av_packet_free(&handle->packet);
+        free(handle->setups);
         avformat_close_input(&handle->format);
         free(handle);
         *status = SX_MEDIA_ERR_NOMEM;
@@ -176,9 +194,27 @@ static void* ffmpeg_open(void* user, const struct sx_media_source* source,
             desc->kind = SX_MEDIA_KIND_ANY;
         }
         /* The parameter sets and the AudioSpecificConfig, handed to whichever
-         * library ends up owning the stream. This is the whole handoff. */
+         * library ends up owning the stream. */
         desc->extradata = stream->codecpar->extradata;
         desc->extradata_size = stream->codecpar->extradata_size;
+        /* And the library's own setup blob, for a decoder that needs more than
+         * the descriptor carries. It has to be a copy: the descriptor outlives
+         * nothing, but the source handle does, and this is freed with it. */
+        desc->setup = NULL;
+        if (count < stream_capacity) {
+            SxFFmpegStreamSetup* setup = (SxFFmpegStreamSetup*)calloc(1, sizeof(*setup));
+            if (setup != NULL) {
+                setup->parameters = avcodec_parameters_alloc();
+                if (setup->parameters != NULL &&
+                    avcodec_parameters_copy(setup->parameters, stream->codecpar) < 0) {
+                    avcodec_parameters_free(&setup->parameters);
+                }
+                setup->time_base = stream->time_base;
+                setup->start_time_us = handle->start_time_us;
+                handle->setups[handle->setup_count++] = *setup;
+                desc->setup = &handle->setups[handle->setup_count - 1];
+            }
+        }
         count += 1;
     }
 
@@ -200,6 +236,16 @@ static void ffmpeg_close(void* opaque) {
         return;
     }
     av_packet_free(&source->packet);
+    if (source->setups != NULL) {
+        int index = 0;
+        for (index = 0; index < source->setup_count; ++index) {
+            SxFFmpegStreamSetup* setup = &source->setups[index];
+            if (setup->parameters != NULL) {
+                avcodec_parameters_free(&setup->parameters);
+            }
+        }
+        free(source->setups);
+    }
     avformat_close_input(&source->format);
     free(source);
 }
@@ -267,55 +313,50 @@ static int ffmpeg_read_packet(void* opaque, struct sx_media_packet* packet) {
 
 typedef struct {
     AVCodecContext* decoder;
-    AVStream* stream;
-    AVFrame* scratch;   /* the decoder's reusable output frame */
-    /* The container's start_time, so the engine's microseconds can be turned
-     * back into the stream's time base on the way in and out. A decoder that
-     * loses this mis-times B-frame reordering, which is silent. */
+    AVFrame* scratch;  /* the decoder's reusable output frame */
+    /* The stream's time base and the container's start_time, so the engine's
+     * microseconds can be turned into the stream's units on the way in and out.
+     * A decoder that loses the base mis-times B-frame reordering, which is
+     * silent: frames come out, in the wrong order. */
+    AVRational time_base;
     int64_t start_time_us;
 } SxFFmpegDecoder;
 
-static AVCodec* decoder_for_desc(void* user, const struct sx_media_stream_desc* stream) {
-    SxFFmpegSource* source = (SxFFmpegSource*)user;
-    AVStream* av_stream;
-    const AVCodec* codec;
+/* The codec behind a descriptor, from the setup the source provider published.
+ * When there is none -- the capability query has no source at all -- the name is
+ * looked up across the whole library instead, which is how a codec name is
+ * resolved with nothing but a name. */
+static AVCodec* decoder_for_desc(const struct sx_media_stream_desc* stream) {
+    const SxFFmpegStreamSetup* setup = (const SxFFmpegStreamSetup*)stream->setup;
+    const AVCodecParameters* parameters = setup != NULL ? setup->parameters : NULL;
+    const AVCodec* codec = NULL;
+    void* iterator = NULL;
+    const AVCodec* next = NULL;
 
-    if (source == NULL || source->format == NULL) {
-        return NULL;
-    }
-    /* SX_MEDIA_KIND_ANY is the capability query: a codec name and nothing else,
-     * so the decoder is looked up by name across the whole library. */
-    if (stream->kind == SX_MEDIA_KIND_ANY) {
-        const AVCodec* candidate = NULL;
-        void* iterator = NULL;
-        const AVCodec* next = NULL;
-        while ((next = av_codec_iterate(&iterator)) != NULL) {
-            if (next->name != NULL && strcmp(next->name, stream->codec) == 0) {
-                candidate = next;
-                break;
-            }
+    if (parameters != NULL) {
+        if (parameters->codec_type == AVMEDIA_TYPE_VIDEO && stream->kind != SX_MEDIA_KIND_VIDEO) {
+            return NULL;
         }
-        return (AVCodec*)candidate;
+        if (parameters->codec_type == AVMEDIA_TYPE_AUDIO && stream->kind != SX_MEDIA_KIND_AUDIO) {
+            return NULL;
+        }
+        return (AVCodec*)avcodec_find_decoder(parameters->codec_id);
     }
-    av_stream = find_stream(source, stream->index);
-    if (av_stream == NULL) {
-        return NULL;
+    while ((next = av_codec_iterate(&iterator)) != NULL) {
+        if (next->name != NULL && strcmp(next->name, stream->codec) == 0) {
+            codec = next;
+            break;
+        }
     }
-    if (av_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && stream->kind != SX_MEDIA_KIND_VIDEO) {
-        return NULL;
-    }
-    if (av_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && stream->kind != SX_MEDIA_KIND_AUDIO) {
-        return NULL;
-    }
-    codec = avcodec_find_decoder(av_stream->codecpar->codec_id);
     return (AVCodec*)codec;
 }
 
 static int ffmpeg_claim_stream(void* user, const struct sx_media_stream_desc* stream) {
+    (void)user;
     if (stream == NULL) {
         return 0;
     }
-    return decoder_for_desc(user, stream) != NULL;
+    return decoder_for_desc(stream) != NULL;
 }
 
 static void ffmpeg_frame_release(void* data) {
@@ -324,16 +365,13 @@ static void ffmpeg_frame_release(void* data) {
 }
 
 static void* ffmpeg_open_decoder(void* user, const struct sx_media_stream_desc* stream) {
-    SxFFmpegSource* source = (SxFFmpegSource*)user;
+    const SxFFmpegStreamSetup* setup = (const SxFFmpegStreamSetup*)stream->setup;
+    const AVCodecParameters* parameters = setup != NULL ? setup->parameters : NULL;
     SxFFmpegDecoder* handle;
     AVCodec* codec;
-    AVStream* av_stream;
 
-    av_stream = find_stream(source, stream->index);
-    if (av_stream == NULL) {
-        return NULL;
-    }
-    codec = decoder_for_desc(user, stream);
+    (void)user;
+    codec = decoder_for_desc(stream);
     if (codec == NULL) {
         return NULL;
     }
@@ -346,15 +384,25 @@ static void* ffmpeg_open_decoder(void* user, const struct sx_media_stream_desc* 
         free(handle);
         return NULL;
     }
-    /* The extradata the demuxer published arrives here, through
-     * avcodec_parameters_to_context. A decoder without it does not fail to
-     * open, it produces silence. */
-    if (avcodec_parameters_to_context(handle->decoder, av_stream->codecpar) < 0) {
-        avcodec_free_context(&handle->decoder);
-        free(handle);
-        return NULL;
+    if (parameters != NULL) {
+        /* Everything the decoder needs, including the extradata: a decoder
+         * without the parameter sets does not fail to open, it produces
+         * silence. */
+        if (avcodec_parameters_to_context(handle->decoder, parameters) < 0) {
+            avcodec_free_context(&handle->decoder);
+            free(handle);
+            return NULL;
+        }
+        handle->time_base = setup->time_base;
+        if (handle->time_base.den <= 0) {
+            handle->time_base = av_inv_q(AV_TIME_BASE_Q);
+        }
+        /* pkt_timebase has to agree with the packets the engine will hand over,
+         * or libavcodec reads the timestamps in the wrong unit. */
+        handle->decoder->pkt_timebase = handle->time_base;
+    } else {
+        handle->time_base = av_inv_q(AV_TIME_BASE_Q);
     }
-    handle->decoder->pkt_timebase = av_stream->time_base;
     /* The kernel has no threads: a decoder that tries to create them does not
      * start. */
     handle->decoder->thread_count = 1;
@@ -363,8 +411,7 @@ static void* ffmpeg_open_decoder(void* user, const struct sx_media_stream_desc* 
         free(handle);
         return NULL;
     }
-    handle->stream = av_stream;
-    handle->start_time_us = source->start_time_us;
+    handle->start_time_us = setup != NULL ? setup->start_time_us : 0;
     handle->scratch = av_frame_alloc();
     if (handle->scratch == NULL) {
         avcodec_free_context(&handle->decoder);
@@ -372,6 +419,13 @@ static void* ffmpeg_open_decoder(void* user, const struct sx_media_stream_desc* 
         return NULL;
     }
     return handle;
+}
+
+static void ffmpeg_flush(void* opaque) {
+    SxFFmpegDecoder* handle = (SxFFmpegDecoder*)opaque;
+    if (handle != NULL && handle->decoder != NULL) {
+        avcodec_flush_buffers(handle->decoder);
+    }
 }
 
 static void ffmpeg_close_decoder(void* opaque) {
@@ -419,11 +473,11 @@ static int ffmpeg_send_packet(void* opaque, const struct sx_media_packet* packet
      * without rescaling would leave every timestamp wrong by a factor of the
      * time base, which for B-frame reordering shows up as frames out of order
      * rather than as an error. */
-    if (packet->time_us == SX_MEDIA_NO_TIME || handle->stream == NULL) {
+    if (packet->time_us == SX_MEDIA_NO_TIME) {
         wrapped->pts = AV_NOPTS_VALUE;
     } else {
         wrapped->pts = av_rescale_q(packet->time_us + handle->start_time_us, AV_TIME_BASE_Q,
-                                    handle->stream->time_base);
+                                    handle->time_base);
     }
     wrapped->dts = wrapped->pts;
     wrapped->flags = packet->key != 0 ? AV_PKT_FLAG_KEY : 0;
@@ -460,10 +514,9 @@ static int ffmpeg_receive_frame(void* opaque, struct sx_media_frame* out) {
         return 0;
     }
     out->time_us = SX_MEDIA_NO_TIME;
-    if (handle->stream != NULL && handle->stream->time_base.den > 0 &&
-        handle->scratch->best_effort_timestamp != AV_NOPTS_VALUE) {
-        out->time_us = av_rescale_q(handle->scratch->best_effort_timestamp, handle->stream->time_base,
-                                    AV_TIME_BASE_Q) - handle->start_time_us;
+    if (handle->scratch->best_effort_timestamp != AV_NOPTS_VALUE) {
+        out->time_us = av_rescale_q(handle->scratch->best_effort_timestamp, handle->time_base, AV_TIME_BASE_Q) -
+                       handle->start_time_us;
     }
     out->width = handle->scratch->width;
     out->height = handle->scratch->height;
@@ -494,6 +547,12 @@ static void* ffmpeg_scaler_open(void* user, const struct sx_media_frame* prototy
 
     (void)user;
     if (frame == NULL || width <= 0 || height <= 0) {
+        av_log(NULL, AV_LOG_ERROR, "sxmedia: scaler prototype is empty\n");
+        return NULL;
+    }
+    if (frame->width == 0 || frame->height == 0 || frame->format < 0) {
+        av_log(NULL, AV_LOG_ERROR, "sxmedia: scaler prototype is degenerate: %dx%d format %d\n",
+               frame->width, frame->height, frame->format);
         return NULL;
     }
     scaler = (SxFFmpegScaler*)calloc(1, sizeof(*scaler));
@@ -505,6 +564,8 @@ static void* ffmpeg_scaler_open(void* user, const struct sx_media_frame* prototy
     context = sws_getContext(frame->width, frame->height, (enum AVPixelFormat)frame->format, width, height,
                              SX_FFMPEG_PIXEL_FORMAT, SWS_FAST_BILINEAR, NULL, NULL, NULL);
     if (context == NULL) {
+        av_log(NULL, AV_LOG_ERROR, "sxmedia: sws_getContext(%d,%d,fmt %d -> %d,%d) failed\n",
+               frame->width, frame->height, frame->format, width, height);
         free(scaler);
         return NULL;
     }
@@ -529,14 +590,25 @@ static int ffmpeg_scale(void* opaque, const struct sx_media_frame* frame, uint32
     int strides[4] = {0, 0, 0, 0};
 
     if (scaler == NULL || av_frame == NULL || out == NULL) {
+        av_log(NULL, AV_LOG_ERROR, "sxmedia: scale called with an empty argument\n");
+        return -1;
+    }
+    if (av_frame->width == 0 || av_frame->height == 0) {
+        av_log(NULL, AV_LOG_ERROR, "sxmedia: scale got a degenerate frame %dx%d\n", av_frame->width,
+               av_frame->height);
         return -1;
     }
     planes[0] = (uint8_t*)out;
     strides[0] = stride * 4;
-    return sws_scale(scaler->context, (const uint8_t* const*)av_frame->data, av_frame->linesize, 0, height,
-                     planes, strides) == height
-               ? 0
-               : -1;
+    {
+        const int written = sws_scale(scaler->context, (const uint8_t* const*)av_frame->data, av_frame->linesize,
+                                      0, av_frame->height, planes, strides);
+        if (written != height) {
+            av_log(NULL, AV_LOG_ERROR, "sxmedia: sws_scale wrote %d rows, wanted %d\n", written, height);
+            return -1;
+        }
+    }
+    return 0;
 }
 
 static void* ffmpeg_resampler_open(void* user, const struct sx_media_frame* prototype,
@@ -606,8 +678,8 @@ static int ffmpeg_resample_flush(void* opaque, int16_t* out, int out_capacity) {
 static const struct sx_media_backend_ops kFFmpegOps = {
     ffmpeg_claim_source, ffmpeg_open, ffmpeg_close, ffmpeg_seek, ffmpeg_read_packet,
     ffmpeg_container_name, ffmpeg_metadata,
-    ffmpeg_claim_stream, ffmpeg_open_decoder, ffmpeg_close_decoder, ffmpeg_send_packet,
-    ffmpeg_receive_frame,
+    ffmpeg_claim_stream, ffmpeg_open_decoder, ffmpeg_close_decoder, ffmpeg_flush,
+    ffmpeg_send_packet, ffmpeg_receive_frame,
     ffmpeg_scaler_open, ffmpeg_scaler_close, ffmpeg_scale,
     ffmpeg_resampler_open, ffmpeg_resampler_close, ffmpeg_resample, ffmpeg_resample_flush,
 };
@@ -616,7 +688,13 @@ static struct sx_media_backend g_ffmpeg_backend = {
     "ffmpeg", SX_MEDIA_BACKEND_ABI, 0, &kFFmpegOps, NULL,
 };
 
-/* The one symbol the program needs from this file.
+/* The av_log calls on the converter's failure paths are deliberate. A scaler
+ * that returns NULL without a word is indistinguishable from a window that
+ * forgot to paint, and finding which one it was took two smoke runs. They are
+ * diagnostics on stderr, not a notice: a program that shows a message to a
+ * person still names a codec and never a library.
+ *
+ * The one symbol the program needs from this file.
  *
  * The log level is set here rather than in the program on purpose: it was
  * `av_log_set_level(AV_LOG_ERROR)` in the player's main, which meant the window

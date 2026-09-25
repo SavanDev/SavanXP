@@ -1075,6 +1075,11 @@ int sx_media_seek(struct sx_media* media, int64_t target_us) {
     for (index = 0; index < media->stream_count; ++index) {
         struct sx_media_stream* stream = &media->streams[index];
         queue_reset(&stream->queue);
+        /* The decoder has to let go of what it is holding: reference frames from
+         * before the seek make the picture after it wrong, not merely slow. */
+        if (stream->decoder != NULL && stream->ops != NULL && stream->ops->flush != NULL) {
+            stream->ops->flush(stream->decoder);
+        }
         stream->flushed = 0;
         stream->finished = 0;
         stream->next_time_us = SX_MEDIA_NO_TIME;

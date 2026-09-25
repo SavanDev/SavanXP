@@ -62,6 +62,20 @@ void expect_str(const char* actual, const char* expected, const char* what)
 
 const uint8_t kExtradata[4] = {0x67, 0x42, 0x00, 0x1f};  /* a parameter set */
 
+/* What the fake demuxer publishes per stream. It is deliberately not a type the
+ * fake decoder could do without: the first version of this test passed while the
+ * real FFmpeg backend could not build a single decoder, because the fake only
+ * read `codec` and `extradata` and the real one needs its library's own
+ * configuration. A fake has to be as demanding as its consumer or the test
+ * proves less than it looks like it proves. */
+struct FakeStreamSetup {
+    int64_t start_time_us;
+    int width;
+    int height;
+    int sample_rate;
+    int channels;
+};
+
 struct FakePacket {
     int stream_index;
     int64_t time_us;
@@ -85,6 +99,8 @@ struct FakeSource {
 };
 
 FakeSource g_source;
+FakeStreamSetup g_setup_video;
+FakeStreamSetup g_setup_audio;
 
 void reset_fixture()
 {
@@ -164,6 +180,21 @@ void* source_open(void*, const struct sx_media_source* source,
     streams[1].sample_rate = 48000;
     streams[1].channels = 2;
 
+    /* The setup blobs live in the source, which is what makes them borrowed for
+     * the life of the open source rather than for the life of the descriptor. */
+    g_setup_video.start_time_us = 0;
+    g_setup_video.width = 64;
+    g_setup_video.height = 48;
+    g_setup_video.sample_rate = 0;
+    g_setup_video.channels = 0;
+    g_setup_audio.start_time_us = 0;
+    g_setup_audio.width = 0;
+    g_setup_audio.height = 0;
+    g_setup_audio.sample_rate = 48000;
+    g_setup_audio.channels = 2;
+    streams[0].setup = &g_setup_video;
+    streams[1].setup = &g_setup_audio;
+
     *stream_count = 2;
     *duration_us = 1000000;
     *seekable = g_source.seekable;
@@ -224,12 +255,19 @@ struct FakeDecoder {
     uint8_t extradata_seen[4];
     int extradata_size;
     int extradata_matches;
+    int setup_seen;
     int flushed;
     int frames_pending;
 };
 
 int g_claim_calls = 0;
 int g_open_decoder_calls = 0;
+/* How many times a decoder was told to drop what it was holding. A decoder that
+ * keeps reference frames across a seek produces the wrong picture afterwards,
+ * not merely a slow one, so this is load-bearing and not a diagnostic. */
+int g_flush_calls = 0;
+/* Whether the fake decoder behaves like a library that needs its own setup. */
+int g_require_setup = 1;
 /* The most recent decoder built, so a test can inspect what crossed over
  * before the engine tears it down. */
 FakeDecoder* g_last_decoder = nullptr;
@@ -267,10 +305,32 @@ void* decoder_open(void*, const struct sx_media_stream_desc* stream)
         decoder->extradata_size = size;
         decoder->extradata_matches = memcmp(decoder->extradata_seen, kExtradata, (size_t)size) == 0;
     }
+    /* A decoder that needs its library's own configuration refuses to build
+     * without the published setup, which is what the FFmpeg backend does. A
+     * decoder that does not need it ignores it. Both are legal; what is not
+     * legal is a vtable that cannot express either. */
+    if (g_require_setup && stream->setup == nullptr) {
+        delete decoder;
+        return nullptr;
+    }
+    if (stream->setup != nullptr) {
+        const FakeStreamSetup* setup = static_cast<const FakeStreamSetup*>(stream->setup);
+        decoder->setup_seen = setup->sample_rate > 0 ? setup->sample_rate : setup->height;
+    }
     return decoder;
 }
 
 void decoder_close(void* handle) { delete static_cast<FakeDecoder*>(handle); }
+
+void decoder_flush(void* handle) {
+    FakeDecoder* decoder = static_cast<FakeDecoder*>(handle);
+    g_flush_calls += 1;
+    /* A decoder that keeps what it is holding across a seek produces the wrong
+     * picture afterwards, so the fake drops it too. */
+    decoder->frames_pending = 0;
+    decoder->timestamp_count = 0;
+    decoder->read_cursor = 0;
+}
 
 int decoder_send(void* handle, const struct sx_media_packet* packet)
 {
@@ -309,7 +369,7 @@ int decoder_receive(void* handle, struct sx_media_frame* frame)
 
 int g_scaled_calls = 0;
 int g_resample_calls = 0;
-int g_flush_calls = 0;
+int g_resample_flush_calls = 0;
 
 void* scaler_open(void*, const struct sx_media_frame*, int, int)
 {
@@ -351,7 +411,7 @@ int resample_flush(void*, int16_t* out, int capacity)
 {
     int index;
     const int frames = capacity < 32 ? capacity : 32;
-    g_flush_calls += 1;
+    g_resample_flush_calls += 1;
     for (index = 0; index < frames; ++index) {
         out[index] = 7;
     }
@@ -364,7 +424,7 @@ const struct sx_media_backend_ops kCodecOnlyOps = {
     /* source role, all null: this library ships no demuxer */
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
     /* decoder role */
-    decoder_claim, decoder_open, decoder_close, decoder_send, decoder_receive,
+    decoder_claim, decoder_open, decoder_close, decoder_flush, decoder_send, decoder_receive,
     /* converter role, all null */
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
@@ -374,7 +434,7 @@ const struct sx_media_backend_ops kSourceOps = {
     source_claim, source_open, source_close, source_seek, source_read_packet,
     source_container_name, source_metadata,
     /* decoder role, all null: this provider only demuxes and converts */
-    nullptr, nullptr, nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
     /* converter role */
     scaler_open, scaler_close, scale,
     resampler_open, resampler_close, resample, resample_flush,
@@ -589,8 +649,32 @@ void test_extradata_reaches_a_foreign_decoder()
         expect(decoder->extradata_size == (int)sizeof(kExtradata),
                "it received the parameter sets");
         expect(decoder->extradata_matches == 1, "and they are the ones the demuxer published");
+        /* Height, not sample rate: this is the video stream, and a decoder that
+         * read the setup blob wrong would report 0 here rather than failing. */
+        expect(decoder->setup_seen == 48, "and it read the source's own setup blob");
     }
     expect(sx_media_next_video_frame(media) == 1, "and it decoded a frame with that setup");
+
+    sx_media_destroy(media);
+}
+
+/* A decoder that needs nothing but the portable descriptor is the case that
+ * makes a second library possible at all: it has to build from a source
+ * provider that knows nothing about it, and the descriptor has to be enough. */
+void test_a_decoder_that_needs_no_setup_still_builds()
+{
+    reset_fixture();
+    g_require_setup = 0;
+    add_video_packet(0, 1);
+
+    struct sx_media* media = nullptr;
+    struct sx_media_source source = fake_source(0);
+    enum sx_media_status status = SX_MEDIA_OK;
+
+    sx_media_create(&media);
+    expect(sx_media_open(media, &source, &status) == 0, "the source opened");
+    expect(sx_media_next_video_frame(media) == 1,
+           "a decoder that ignores the setup blob still decodes");
 
     sx_media_destroy(media);
 }
@@ -673,8 +757,10 @@ void test_seek_delivers_the_frame_at_the_target()
 
     sx_media_create(&media);
     sx_media_open(media, &source, &status);
+    const int flushes_before = g_flush_calls;
     expect(sx_media_seek(media, 40000) == 1, "a seekable source repositions");
     expect(g_source.last_seek_us == 40000, "and the provider was asked for exactly that");
+    expect(g_flush_calls == flushes_before + 1, "and the decodable stream was flushed");
 
     /* Frames before the target are decoded, because later frames reference
      * them, but not delivered. */
@@ -849,6 +935,7 @@ int main()
     test_a_failing_demuxer_keeps_its_own_reason();
     test_a_packet_crosses_from_one_provider_to_another();
     test_extradata_reaches_a_foreign_decoder();
+    test_a_decoder_that_needs_no_setup_still_builds();
     test_the_display_size_carries_the_sample_aspect();
     test_decoding_is_not_showing();
     test_seek_delivers_the_frame_at_the_target();

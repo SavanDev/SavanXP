@@ -148,6 +148,23 @@ struct sx_media_stream_desc {
     int64_t frame_duration_us;
     const uint8_t* extradata;
     size_t extradata_size;
+    /* Codec setup the source provider published for this stream, opaque to the
+     * engine and to any other provider. This is what a decoder needs beyond the
+     * fields above, and it exists because the honest answer to "what does a
+     * decoder need to configure itself" is "whatever its library's context
+     * struct wants", which no portable field list can be.
+     *
+     * A decoder provider that reads only `codec` and `extradata` leaves this
+     * NULL and works with any source provider -- that is the case that makes a
+     * cross-library decoder possible at all. One that needs its library's own
+     * setup type can only be fed by a source provider that produces the same
+     * type, which in practice means the same library filling both roles, and
+     * that is a real limit rather than an oversight: decoder configuration *is*
+     * demuxer data.
+     *
+     * Borrowed from the source handle, valid until the source is closed. NULL
+     * when the source provider had nothing to publish. */
+    const void* setup;
 };
 
 /* A packet is BORROWED: `data` is valid until the next `read_packet` on the
@@ -233,6 +250,12 @@ struct sx_media_backend_ops {
      * rather than failing the source. */
     void* (*open_decoder)(void* user, const struct sx_media_stream_desc* stream);
     void (*close_decoder)(void* decoder);
+    /* Drops whatever the decoder is holding, which after a reposition is not
+     * just waste: a decoder left holding reference frames from before the seek
+     * produces the wrong picture, and libavcodec requires this after every
+     * seek. Called by the engine on every stream when `sx_media_seek` succeeds.
+     * NULL is allowed and means "there is nothing buffered". */
+    void (*flush)(void* decoder);
 
     /* Feeding and draining are separate, because every real decoder has this
      * shape: a decoder that has been sent input may have several frames
