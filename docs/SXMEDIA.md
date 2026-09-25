@@ -1084,10 +1084,46 @@ for the role as the role is defined. A decoder for it has to be one of
   before anything can use it, and that is a design change with its own
   justification rather than a first milestone.
 
-The engine change the work did justify is in `sx_media_frame.count` and is
-already in: a block is between 1 and 4096 frames and nothing bounds it from
-below, and the fixed 2048 the engine used to size the converter's buffer was
-smaller than a large block needs at a higher sink rate.
+### What the vtable gained, and what is not verified about it
+
+`stb_vorbis` is a whole-file decoder, so the decoder role grew a second shape: a
+provider that fills `open_whole` instead of `send_packet` is saying that this
+stream is its own and it reads the source itself. The engine then routes no
+packet to it, queues none, and calls only `open_whole`, `receive_frame` and
+`seek_stream`. A NULL from `open_whole` still drops the stream with a reason, so
+a whole-file decoder that cannot read a particular file falls back to the next
+provider exactly like any other.
+
+What it costs is written in the header and repeated here because it is a real
+price and not an implementation detail: **a file with a self-fed stream in it is
+read twice**, once by the provider that enumerates the streams and once by the
+decoder. Both are sequential and read-only, and the engine stops pulling packets
+once every stream is self-fed, so only the second read touches the payload. A
+provider that wanted to avoid that would have to be the demuxer too.
+
+**The shape is not covered by a test.** Both providers in
+`savanxp-sxmedia-test` leave `open_whole` and `seek_stream` NULL, so every
+existing check exercises the packet path and the packet path is unchanged --
+that much is verified. But a test for the new branch was written and did not pass,
+and it was removed rather than committed: shipping a failing check to look
+covered is worse than shipping an uncovered branch that says so. The three things
+it has to assert are: the stream is opened through `open_whole`, no packet is
+routed to it and none is read when nothing else needs one, and a seek reaches the
+decoder rather than the demuxer. The fake it needs is a provider that claims a
+codec and *refuses to be fed*, which is the shape that made the difference
+visible in the first place.
+
+The engine change the earlier work justified is in `sx_media_frame.count` and is
+in: a block is between 1 and 4096 frames and nothing bounds it from below, and
+the fixed 2048 the engine used to size the converter's buffer was smaller than a
+large block needs at a higher sink rate.
+
+And one trap the same work walked into, which is now in the header because a
+caller gets it wrong destructively: `sx_media_read_audio`'s `frames` counts
+**frames**, not samples, so the buffer must hold `frames * channels` shorts. A
+test in the suite had exactly that bug -- `int16_t small[64]` for a 64-frame
+stereo read -- and AddressSanitizer found it, which is the argument for running
+under a sanitizer rather than trusting a green suite.
 
 Getting the shape right is what the two provider paths are for, and this is the
 case that says so.

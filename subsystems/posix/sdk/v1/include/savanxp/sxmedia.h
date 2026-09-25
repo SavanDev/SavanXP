@@ -287,6 +287,39 @@ struct sx_media_backend_ops {
      * same provider's scaler or resampler; `release` is how it lets go of it. */
     int (*receive_frame)(void* decoder, struct sx_media_frame* frame);
 
+    /* -- decoder role, whole-source variant --------------------------------
+     *
+     * A decoder role is packet-oriented by default: the demuxer reads packets and
+     * the engine routes them to `send_packet`. Some libraries are not built that
+     * way and cannot be. `stb_vorbis` is the case that motivated this -- its entry
+     * points want the *file*, since `open_memory` takes the whole thing and the
+     * pushdata workflow resynchronises by finding Ogg page boundaries inside the
+     * bytes it is handed, while a demuxer hands out packets with that framing
+     * already stripped. The two are not the same bytes and no adapter bridges
+     * them.
+     *
+     * A provider that fills `open_whole` instead of `send_packet` is saying: this
+     * stream is mine and I read the source myself. The engine then routes no
+     * packet to it, queues none, and calls only `open_whole`, `receive_frame`
+     * and `seek_stream`. The stream is still claimed by `claim_stream` in the
+     * ordinary way, and a NULL from `open_whole` still drops the stream with a
+     * reason rather than failing the source, so a whole-file decoder that cannot
+     * read a particular file falls back to the next provider like any other.
+     *
+     * What it costs, stated plainly: a file with a self-fed stream in it is read
+     * twice -- once by the provider that enumerates the streams and once by the
+     * decoder. Both are sequential and read-only, and the engine stops pulling
+     * packets once every stream is self-fed, so only the second read touches the
+     * payload. A provider that wanted to avoid that entirely would have to be the
+     * demuxer as well, which is what `claim_source` is for.
+     */
+    void* (*open_whole)(void* user, const struct sx_media_source* source,
+                        const struct sx_media_stream_desc* stream);
+    /* Repositions a self-fed stream. Optional: without it the stream cannot be
+     * seeked and `sx_media_seek` fails for the source, which is honest. The
+     * target is microseconds from the start of the source. */
+    int (*seek_stream)(void* decoder, int64_t target_us);
+
     /* -- converter role -----------------------------------------------------
      * To the formats the consumers fixed, never negotiated.
      *
@@ -403,9 +436,16 @@ int64_t sx_media_video_time_us(const struct sx_media* media);
  * scaler or the allocation failed. */
 const uint32_t* sx_media_scale_video(struct sx_media* media, int width, int height);
 
-/* Fills `out` with up to `frames` interleaved s16 frames, in the sink's format.
- * `first_time_us`, when not NULL, receives the time of the first frame written.
- * Returns how many it wrote, 0 when the audio is finished. */
+/* Fills `out` with up to `frames` interleaved s16 FRAMES, in the sink's
+ * format, and returns how many it wrote; 0 when the audio is finished.
+ *
+ * `frames` counts frames, not samples: the buffer must hold
+ * `frames * sink_channels` shorts, and the return value is in the same unit.
+ * A caller that sizes the buffer by `frames` alone writes past the end of it,
+ * which is why it is said here rather than left to the reader.
+ *
+ * `first_time_us`, when not NULL, receives the time of the first frame written,
+ * or SX_MEDIA_NO_TIME if nothing was. */
 int sx_media_read_audio(struct sx_media* media, int16_t* out, int frames,
                         int64_t* first_time_us);
 

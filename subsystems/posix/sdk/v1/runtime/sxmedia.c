@@ -275,6 +275,10 @@ struct sx_media_stream {
     const struct sx_media_backend_ops* ops;  /* NULL = undecodable */
     void* user;
     void* decoder;
+    /* The decoder reads the source itself instead of being fed packets, because
+     * its library is a whole-file decoder. No packet is ever routed to it and it
+     * has no queue. */
+    int self_fed;
     struct sx_queue queue;
     int flushed;
     int finished;
@@ -288,6 +292,11 @@ struct sx_media {
     void* source;
     int source_seekable;
     int64_t duration_us;
+    /* A copy of the caller's request, with `audio_out` pointed at the engine's
+     * own copy of the format rather than at the caller's. A self-fed decoder is
+     * handed this after the caller's struct may be gone, and the format has to
+     * still be there. */
+    struct sx_media_source request;
 
     int stream_count;
     int video_slot;  /* index into streams[], -1 if none */
@@ -477,6 +486,9 @@ int sx_media_open(struct sx_media* media, const struct sx_media_source* source,
     if (media->wants_audio) {
         media->audio_out = *source->audio_out;
     }
+    media->request.path = source->path;
+    media->request.fd = source->fd;
+    media->request.audio_out = media->wants_audio ? &media->audio_out : NULL;
 
     if (count > SX_MEDIA_MAX_STREAMS) {
         count = SX_MEDIA_MAX_STREAMS;
@@ -498,7 +510,11 @@ int sx_media_open(struct sx_media* media, const struct sx_media_source* source,
         }
 
         owner = find_decoder(&stream->desc);
-        if (owner != NULL && owner->ops->open_decoder != NULL) {
+        if (owner != NULL && owner->ops->open_whole != NULL) {
+            /* A whole-file decoder is handed the source and reads it itself. */
+            stream->decoder = owner->ops->open_whole(owner->user, &media->request, &stream->desc);
+            stream->self_fed = stream->decoder != NULL;
+        } else if (owner != NULL && owner->ops->open_decoder != NULL) {
             stream->decoder = owner->ops->open_decoder(owner->user, &stream->desc);
         }
         if (stream->decoder == NULL) {
@@ -696,6 +712,23 @@ static int demux_one(struct sx_media* media) {
     if (media->source == NULL || media->source_ops->read_packet == NULL) {
         return 0;
     }
+    /* Once every stream reads its own source, the payload is nobody's business
+     * but the self-fed decoders'. Reading it would walk the whole file for
+     * nothing, and on a large one that is the difference between a demuxer pass
+     * over the headers and a second pass over the gigabytes. */
+    {
+        int index;
+        int fed = 0;
+        for (index = 0; index < media->stream_count; ++index) {
+            if (media->streams[index].decoder != NULL && !media->streams[index].self_fed) {
+                fed = 1;
+                break;
+            }
+        }
+        if (!fed) {
+            return 0;
+        }
+    }
     memset(&packet, 0, sizeof(packet));
     if (media->source_ops->read_packet(media->source, &packet) <= 0) {
         return 0;
@@ -730,6 +763,11 @@ static int stream_receive(struct sx_media* media, int slot, struct sx_media_fram
         }
         if (status < 0) {
             stream->finished = 1;
+            return 0;
+        }
+        if (stream->self_fed) {
+            /* Nothing to feed and nothing to wait for: the decoder either has a
+             * frame or it is at the end. Spinning here would be a busy loop. */
             return 0;
         }
         if (queue_pop(&stream->queue, &packet)) {
@@ -1072,6 +1110,16 @@ int sx_media_seek(struct sx_media* media, int64_t target_us) {
 
     if (media == NULL || media->source == NULL || !media->source_seekable) {
         return 0;
+    }
+    /* A self-fed stream repositions itself; the source provider only knows about
+     * the streams it feeds. Both happen: a file can have a self-fed audio stream
+     * and packet-fed video, and seeking has to move the second as well. */
+    for (index = 0; index < media->stream_count; ++index) {
+        struct sx_media_stream* stream = &media->streams[index];
+        if (stream->self_fed && stream->ops->seek_stream != NULL &&
+            !stream->ops->seek_stream(stream->decoder, target_us)) {
+            return 0;
+        }
     }
     if (media->source_ops->seek == NULL || !media->source_ops->seek(media->source, target_us)) {
         return 0;

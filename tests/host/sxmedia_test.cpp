@@ -496,8 +496,9 @@ int resample_flush(void*, int16_t* out, int capacity)
 const struct sx_media_backend_ops kCodecOnlyOps = {
     /* source role, all null: this library ships no demuxer */
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-    /* decoder role */
+    /* decoder role, packet-oriented: no open_whole, no seek_stream */
     decoder_claim, decoder_open, decoder_close, decoder_flush, decoder_send, decoder_receive,
+    nullptr, nullptr,
     /* converter role, all null */
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
@@ -507,7 +508,7 @@ const struct sx_media_backend_ops kSourceOps = {
     source_claim, source_open, source_close, source_seek, source_read_packet,
     source_container_name, source_metadata,
     /* decoder role, all null: this provider only demuxes and converts */
-    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
     /* converter role */
     scaler_open, scaler_close, scale,
     resampler_open, resampler_close, resample, resample_flush,
