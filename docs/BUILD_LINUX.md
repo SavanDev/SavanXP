@@ -206,6 +206,62 @@ bytes, which is how a 64 MiB volume turns a 98 MB ISO into a 541 MB one.
 `tools/iso_volume.py` stages the volume at exactly what the superblock declares
 and leaves the development image untouched.
 
+### The v1 image does not mount
+
+SxFS is at format version 2. A v1 image is rejected on sight, by both the kernel
+and `sxfs-cli`:
+
+```text
+sxfs-cli: 'disk.img' no es una imagen SxFS valida: argumento/ruta invalida.
+```
+
+That is deliberate and not a bug. v2 moved the inode table from 64 to 1024
+sectors and the block bitmap from 32 to 512, and every other LBA is derived from
+those two numbers, so a v1 image would have its metadata read from offsets that
+now mean something else. The superblock validator compares the on-disk geometry
+against the compiled constants, which turns that into an explicit refusal.
+
+There is no converter. To keep the contents of a v1 image, extract it with a v1
+`sxfs-cli` and rebuild it into a v2 one. `build/disk.img` itself is simply
+deleted and recreated by the next build.
+
+### The geometry
+
+| | v1 | v2 |
+| --- | --- | --- |
+| `SXFS_VERSION` | 1 | 2 |
+| `SXFS_MAX_INODES` | 256 | 4096 |
+| `SXFS_INODE_TABLE_SECTORS` | 64 | 1024 |
+| `SXFS_BLOCK_BITMAP_SECTORS` | 32 | 512 |
+| `data_lba` | 197 | 3077 |
+| volume ceiling | 64 MiB | 1 GiB |
+
+The ceiling is the block bitmap: every bit is a sector, so 512 sectors of bitmap
+address 2 Mi sectors. The inode bitmap stays at one sector because 4096 inodes
+are exactly its 4096 bits.
+
+The cost is metadata, and it is not free. Two things to know:
+
+**Capacity.** With the default 64 MiB volume, usable data drops from 63.9 MiB to
+62.5 MiB, because the metadata grew from 97 to 1537 sectors. A bigger volume
+recovers that and more.
+
+**Commits got 16 times more expensive.** The journal copies the whole metadata
+and rewrites it, so commit cost tracks metadata size, not volume size. Measured
+on the core smoke with `fscheck`:
+
+```text
+commits             19
+bytes_written       29933056
+bytes_per_commit    1575424
+```
+
+That is 28.5 MiB of PIO writes per smoke, against 1.8 MiB in v1, and the smoke's
+wall clock went from about 7.4 s to 16.5 s. It is affordable but it is the wall
+for the next round of growth, and the fix is a delta journal: log which blocks
+changed instead of copying everything. The counters above exist so that decision
+rests on a measurement.
+
 ## Persistence checks
 
 The repository provides a repeatable external-data regression:

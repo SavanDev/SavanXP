@@ -58,6 +58,17 @@ struct sxfs_ctx {
     uint8_t block_bitmap[SXFS_BLOCK_BITMAP_SECTORS * SXFS_SECTOR_SIZE];
     uint8_t inode_bitmap[SXFS_INODE_BITMAP_SECTORS * SXFS_SECTOR_SIZE];
     struct sxfs_inode inodes[SXFS_MAX_INODES];
+
+    /* Scratch para las operaciones que necesitan recorrer TODAS las entradas de
+     * un directorio (resolver una ruta, agregar una entrada, quitar la ultima,
+     * validar el arbol). Antes vivia en la pila de cada una de esas funciones,
+     * y eso estaba bien mientras un directorio tenia 255 entradas y mal en
+     * cuanto la tabla de inodos crecio: 4095 entradas son 320 KiB, y
+     * walk_directory es recursiva con 32 niveles de profundidad, o sea 10 MiB de
+     * pila garantizados. El buffer es del ctx, que el CLI pide en el heap, y lo
+     * comparten todas ellas. No es reentrante a proposito: el ctx ya es de un
+     * solo hilo. */
+    struct sxfs_dir_entry dir_scratch[SXFS_MAX_RECORDS];
 };
 
 /* Ata el ctx a un backend. No toca el disco. */

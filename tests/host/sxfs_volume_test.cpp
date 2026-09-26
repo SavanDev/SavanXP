@@ -24,7 +24,10 @@
 
 namespace {
 
-constexpr uint32_t kTotalSectors = 1024;
+// La imagen tiene que dar para la metadata v2 (data_lba 3077) y para el arbol
+// de prueba. 8192 sectores dejan 5115 de datos, y cada archivo del test ocupa al
+// menos un sector.
+constexpr uint32_t kTotalSectors = 8192;
 constexpr size_t kImageBytes = static_cast<size_t>(kTotalSectors) * SXFS_SECTOR_SIZE;
 
 constexpr const char* kFilePath = "/disk/docs/hello.txt";
@@ -241,6 +244,132 @@ void orphan_an_inode(uint8_t* image, const char* file_name, const char* dir_name
         break;
     }
     check(removed, "se vacio la entrada del directorio");
+}
+
+// --- El recorrido del arbol ---------------------------------------------------
+
+// Lo que sxfs_walk tiene que reportar. El caso de abajo depende de que el
+// camino de cada entrada sea completo, no solo de que aparezca.
+struct walk_record {
+    char deepest[512];
+    uint32_t files;
+    uint32_t directories;
+};
+
+int record_visit(void* cookie, const char* relpath, uint32_t inode_id, uint16_t type) {
+    (void)inode_id;
+    walk_record* record = static_cast<walk_record*>(cookie);
+    if (type == SXFS_INODE_FILE) {
+        ++record->files;
+    } else if (type == SXFS_INODE_DIRECTORY) {
+        ++record->directories;
+    }
+    if (strlen(relpath) > strlen(record->deepest)) {
+        snprintf(record->deepest, sizeof(record->deepest), "%s", relpath);
+    }
+    return SXFS_OK;
+}
+
+constexpr uint32_t kTreeDepth = 20;
+constexpr uint32_t kTreeSiblings = 150;
+
+// Une con separadores. `path` vacio al principio, que es como la raiz.
+void join_path(char* out, size_t capacity, const char* prefix, const char* leaf) {
+    if (prefix == NULL || prefix[0] == '\0') {
+        snprintf(out, capacity, "%s", leaf);
+    } else {
+        snprintf(out, capacity, "%s/%s", prefix, leaf);
+    }
+}
+
+// Construye un arbol de kTreeDepth niveles con un archivo al final, mas
+// kTreeSiblings hermanos en la raiz. Las dos formas molestan al recorrido por
+// razones distintas: la profundidad llena el stack de frames, y los hermanos
+// llenan un directorio hasta que sus entradas cruzan sectores (80 bytes contra
+// 512, o sea que la septima de cada sector se parte en dos).
+bool build_deep_tree(uint8_t* image) {
+    memset(image, 0, kImageBytes);
+    ImageCookie cookie = {image, kTotalSectors};
+    sxfs_ctx* ctx = static_cast<sxfs_ctx*>(calloc(1, sizeof(sxfs_ctx)));
+    if (ctx == nullptr) {
+        return false;
+    }
+    sxfs_ctx_init(ctx, &cookie, &image_read, &image_write);
+
+    bool ok = sxfs_format(ctx, kTotalSectors) == SXFS_OK;
+    char path[512];
+    path[0] = '\0';
+    for (uint32_t level = 0; ok && level < kTreeDepth; ++level) {
+        char leaf[32];
+        snprintf(leaf, sizeof(leaf), "dir%u", level);
+        char next[512];
+        join_path(next, sizeof(next), path, leaf);
+        ok = sxfs_mkdir_p(ctx, next) == SXFS_OK;
+        memcpy(path, next, strlen(next) + 1u);
+    }
+    if (ok) {
+        char leaf_path[512];
+        join_path(leaf_path, sizeof(leaf_path), path, "leaf.txt");
+        ok = sxfs_write_file(ctx, leaf_path, "bottom\n", 7) == SXFS_OK;
+    }
+    for (uint32_t index = 0; ok && index < kTreeSiblings; ++index) {
+        char leaf[32];
+        snprintf(leaf, sizeof(leaf), "sibling%03u.txt", index);
+        ok = sxfs_write_file(ctx, leaf, "s\n", 2) == SXFS_OK;
+    }
+    ok = ok && sxfs_flush(ctx) == SXFS_OK;
+
+    free(ctx);
+    return ok;
+}
+
+// El recorrido es iterativo con una pila explicita, y su parte dificil no es la
+// validacion sino el camino: cada nivel se construye a partir del de su padre y
+// hay que recortar al volver. Un recorte en el momento equivocado deja al hijo
+// con un camino vacio, y eso se manifiesta como un error de I/O al abrir un
+// nombre de archivo vacio, no como un fallo de validacion. Este caso fija las
+// dos cosas: que recorra todo, y que el camino mas profundo sea el correcto.
+void case_walk_reports_every_path(uint8_t* image) {
+    printf("caso: el recorrido reporta todos los caminos completos\n");
+
+    if (!check(build_deep_tree(image), "arbol profundo construido")) {
+        return;
+    }
+
+    ImageCookie cookie = {image, kTotalSectors};
+    sxfs_ctx* ctx = static_cast<sxfs_ctx*>(calloc(1, sizeof(sxfs_ctx)));
+    if (!check(ctx != nullptr, "ctx para recorrer")) {
+        return;
+    }
+    sxfs_ctx_init(ctx, &cookie, &image_read, &image_write);
+    if (!check(sxfs_open(ctx) == SXFS_OK, "sxfs_open")) {
+        free(ctx);
+        return;
+    }
+
+    walk_record record = {};
+    const int rc = sxfs_walk(ctx, record_visit, &record);
+    check(rc == SXFS_OK, "sxfs_walk completo");
+    check(record.files == kTreeSiblings + 1u, "vio todos los archivos");
+    check(record.directories == kTreeDepth, "vio todos los directorios");
+
+    char expected[512];
+    expected[0] = '\0';
+    for (uint32_t level = 0; level < kTreeDepth; ++level) {
+        char leaf[32];
+        snprintf(leaf, sizeof(leaf), "dir%u", level);
+        char next[512];
+        join_path(next, sizeof(next), expected, leaf);
+        memcpy(expected, next, strlen(next) + 1u);
+    }
+    char expected_leaf[512];
+    join_path(expected_leaf, sizeof(expected_leaf), expected, "leaf.txt");
+    check(strcmp(record.deepest, expected_leaf) == 0, "el camino mas profundo es el esperado");
+    if (strcmp(record.deepest, expected_leaf) != 0) {
+        printf("    esperado: %s\n    obtenido: %s\n", expected_leaf, record.deepest);
+    }
+
+    free(ctx);
 }
 
 // --- Casos ------------------------------------------------------------------
@@ -579,6 +708,7 @@ int main() {
         return 1;
     }
 
+    case_walk_reports_every_path(image);
     case_clean_image_reports_clean(image);
     case_leaked_blocks_are_reported(image);
     case_orphan_inode_is_reported(image);

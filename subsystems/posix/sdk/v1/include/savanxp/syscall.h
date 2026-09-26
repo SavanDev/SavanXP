@@ -279,6 +279,14 @@ struct savanxp_fscheck_report {
     uint32_t duplicate_names;
     uint32_t bad_dir_entries;
     uint32_t unreadable_dirs;
+
+    /* Costo de metadata desde el arranque. El journal copia toda la metadata en
+     * cada commit y la reescribe, asi que `metadata_bytes_written` crece con el
+     * tamano de la metadata y no con el del volumen: es el numero que decide si
+     * conviene un journal de delta. */
+    uint32_t metadata_commits;
+    uint32_t reserved1;
+    uint64_t metadata_bytes_written;
 };
 
 struct savanxp_system_info {

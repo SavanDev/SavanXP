@@ -76,9 +76,12 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
     # que obligan a compactar: nueve archivos y se borran los alternos, dejando
     # el espacio libre en corridas que no alcanzan para el archivo nuevo.
     names = ("grown_a", "grown_b", "grown_c", "grown_d", "grown_e", "grown_f", "grown_g", "grown_h", "grown_i")
+    # Mismos tamanos que el caso de fragmentacion de arriba, y por el mismo
+    # motivo: sin esta fragmentacion el rebuild ni siquiera se intenta y el caso
+    # pasaria sin probar nada.
     for name in names:
-        (seed / f"{name}.bin").write_bytes(b"savanxp-compaction-payload\n" * 1200)
-    (source / "added.bin").write_bytes(b"new-build-file\n" * 12000)
+        (seed / f"{name}.bin").write_bytes(b"savanxp-compaction-payload\n" * 9200)
+    (source / "added.bin").write_bytes(b"new-build-file\n" * 42858)
     manifest = root / "grow.manifest"
     manifest.write_text(
         "\n".join(f"file\t{name}.bin\t{seed / (name + '.bin')}" for name in names) + "\n",
@@ -86,7 +89,7 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
     )
 
     image = root / "grown.img"
-    run([str(cli), "create", str(image), "1000"], root)
+    run([str(cli), "create", str(image), "8192"], root)
     run([str(cli), "apply", str(image), str(manifest)], root)
     # Fragment it so the next sync is forced through compaction.
     run(
@@ -103,7 +106,10 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
     )
 
     # Grow the FILE without growing the filesystem, exactly as an admin would.
-    os.truncate(image, 2 * 1024 * 1024)
+    # Relative to the current size, because the point is "bigger than the
+    # filesystem" and the base image is as big as the format needs for its
+    # metadata (8192 sectors with the v2 layout is already 4 MiB).
+    os.truncate(image, image.stat().st_size * 2)
     grown_size = image.stat().st_size
     if allocated_bytes(image) >= grown_size:
         raise RuntimeError("the grown image is not sparse to begin with")
@@ -119,7 +125,7 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
             "--cli",
             str(cli),
             "--sectors",
-            "1000",
+            "8192",
         ],
         root,
     )
@@ -134,7 +140,7 @@ def assert_grown_image_survives_compaction(cli: Path, sync: Path, root: Path) ->
         raise RuntimeError("compaction de-sparsified the reserved tail of a grown image")
     # The filesystem itself is unchanged: the tail is room, not data.
     reported = run([str(cli), "info", str(image)], root).stdout.strip()
-    if reported != "1000":
+    if reported != "8192":
         raise RuntimeError(f"the filesystem grew on its own: sxfs-cli info says {reported!r}")
 
     extracted = root / "grow-extracted"
@@ -161,8 +167,8 @@ def assert_grown_image_stays_sparse_on_ordinary_sync(cli: Path, sync: Path, root
     (source / "one.bin").write_bytes(b"savanxp-ordinary-sync\n" * 40)
 
     image = root / "sparse.img"
-    run([str(cli), "create", str(image), "1000"], root)
-    os.truncate(image, 2 * 1024 * 1024)
+    run([str(cli), "create", str(image), "8192"], root)
+    os.truncate(image, image.stat().st_size * 2)
     grown_size = image.stat().st_size
     if allocated_bytes(image) >= grown_size:
         raise RuntimeError("the grown image is not sparse to begin with")
@@ -178,7 +184,7 @@ def assert_grown_image_stays_sparse_on_ordinary_sync(cli: Path, sync: Path, root
             "--cli",
             str(cli),
             "--sectors",
-            "1000",
+            "8192",
         ],
         root,
     )
@@ -208,10 +214,10 @@ def main() -> int:
         seed.mkdir()
         source.mkdir()
         names = ("external", "a", "b", "c", "d", "e", "f", "g", "h")
-        payload = b"savanxp-compaction-payload\n" * 1200
+        payload = b"savanxp-compaction-payload\n" * 9200
         for name in names:
             (seed / f"{name}.bin").write_bytes(payload)
-        new_payload = b"new-build-file\n" * 12000
+        new_payload = b"new-build-file\n" * 42858
         (source / "new.bin").write_bytes(new_payload)
         manifest = root / "seed.manifest"
         manifest.write_text(
@@ -220,7 +226,7 @@ def main() -> int:
         )
 
         image = root / "disk.img"
-        run([str(cli), "create", str(image), "1000"], root)
+        run([str(cli), "create", str(image), "8192"], root)
         run([str(cli), "apply", str(image), str(manifest)], root)
         run([str(cli), "rm", str(image), "a.bin", "c.bin", "e.bin", "g.bin"], root)
         before_blocked_sync = digest(image)
@@ -235,7 +241,7 @@ def main() -> int:
                 "--cli",
                 str(cli),
                 "--sectors",
-                "1000",
+                "8192",
                 "--no-compact",
             ],
             cwd=root,
@@ -248,7 +254,7 @@ def main() -> int:
 
         capacity_source = root / "capacity-source"
         capacity_source.mkdir()
-        (capacity_source / "too-large.bin").write_bytes(b"x" * 450000)
+        (capacity_source / "too-large.bin").write_bytes(b"x" * 3000000)
         capacity_image = root / "capacity.img"
         capacity_image.write_bytes(image.read_bytes())
         before_capacity_failure = digest(capacity_image)
@@ -263,7 +269,7 @@ def main() -> int:
                 "--cli",
                 str(cli),
                 "--sectors",
-                "1000",
+                "8192",
             ],
             cwd=root,
             text=True,
@@ -284,7 +290,7 @@ def main() -> int:
                 "--cli",
                 str(cli),
                 "--sectors",
-                "1000",
+                "8192",
             ],
             root,
         )

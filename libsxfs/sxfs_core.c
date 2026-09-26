@@ -248,6 +248,15 @@ static int name_matches(const struct sxfs_dir_entry* entry, const char* name, si
         memcmp(entry->name, name, name_len) == 0;
 }
 
+/* El buffer de entradas de directorio vive en el ctx, no en la pila. Las
+ * funciones que lo necesitan lo reciben como `const struct sxfs_ctx*` porque no
+ * modifican la metadata del volumen, y el cast queda confinado a esta linea en
+ * vez de repartido por los seis lugares. Es seguro: el ctx no es un objeto
+ * const-qualified, lo que es const es el puntero que el llamador paso. */
+static struct sxfs_dir_entry* dir_scratch(const struct sxfs_ctx* ctx) {
+    return (struct sxfs_dir_entry*)ctx->dir_scratch;
+}
+
 /* Resuelve una ruta relativa (separada por '/', sin barras iniciales) a un
  * inode id. La cadena vacia resuelve a la raiz. */
 static int resolve_path(struct sxfs_ctx* ctx, const char* relpath,
@@ -271,7 +280,7 @@ static int resolve_path(struct sxfs_ctx* ctx, const char* relpath,
             return SXFS_ERR_NOT_FOUND;
         }
 
-        struct sxfs_dir_entry entries[SXFS_MAX_RECORDS];
+        struct sxfs_dir_entry* entries = dir_scratch(ctx);
         uint32_t count = 0;
         int rc = read_dir_entries(ctx, current, entries, &count);
         if (rc != SXFS_OK) {
@@ -309,7 +318,7 @@ static int resolve_path(struct sxfs_ctx* ctx, const char* relpath,
  * falta. */
 static int add_dir_entry(struct sxfs_ctx* ctx, uint32_t parent_id, uint32_t child_id,
                          uint16_t type, const char* name, size_t name_len) {
-    struct sxfs_dir_entry entries[SXFS_MAX_RECORDS];
+    struct sxfs_dir_entry* entries = ctx->dir_scratch;
     uint32_t count = 0;
     int rc = read_dir_entries(ctx, parent_id, entries, &count);
     if (rc != SXFS_OK) {
@@ -507,7 +516,7 @@ int sxfs_mkdir_p(struct sxfs_ctx* ctx, const char* relpath) {
         }
 
         /* Busca el componente en el directorio padre actual. */
-        struct sxfs_dir_entry entries[SXFS_MAX_RECORDS];
+        struct sxfs_dir_entry* entries = ctx->dir_scratch;
         uint32_t count = 0;
         int rc = read_dir_entries(ctx, parent, entries, &count);
         if (rc != SXFS_OK) {
@@ -544,7 +553,7 @@ int sxfs_mkdir_p(struct sxfs_ctx* ctx, const char* relpath) {
 
 /* Un directorio esta vacio si no le queda ninguna entrada viva. */
 static int dir_is_empty(struct sxfs_ctx* ctx, uint32_t dir_id, int* out_empty) {
-    struct sxfs_dir_entry entries[SXFS_MAX_RECORDS];
+    struct sxfs_dir_entry* entries = ctx->dir_scratch;
     uint32_t count = 0;
     int rc = read_dir_entries(ctx, dir_id, entries, &count);
     if (rc != SXFS_OK) {
@@ -598,7 +607,7 @@ int sxfs_remove(struct sxfs_ctx* ctx, const char* relpath) {
         }
     }
 
-    struct sxfs_dir_entry entries[SXFS_MAX_RECORDS];
+    struct sxfs_dir_entry* entries = ctx->dir_scratch;
     uint32_t count = 0;
     int rc = read_dir_entries(ctx, parent, entries, &count);
     if (rc != SXFS_OK) {
@@ -742,13 +751,14 @@ int sxfs_read_inode(const struct sxfs_ctx* ctx, uint32_t inode_id,
     return rc;
 }
 
-static int walk_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
-                          char* path, size_t path_len, uint32_t depth,
-                          uint8_t visited[SXFS_MAX_INODES], sxfs_walk_fn visit,
-                          void* cookie) {
-    if (depth > 32u) {
-        return SXFS_ERR_INVALID;
-    }
+/* Valida por completo un directorio y marca a sus hijos como alcanzables.
+ * Devuelve la cantidad de entradas en `out_count`.
+ *
+ * Esta pasada usa el scratch del ctx, asi que el llamador tiene que
+ * Ensure que ningun hijo se recorra mientras el buffer este vivo: por eso el
+ * recorrido es iterativo y los hijos se procesan despues, entrada por entrada. */
+static int validate_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
+                              uint8_t visited[SXFS_MAX_INODES], uint32_t* out_count) {
     const struct sxfs_inode* directory = inode_at_const(ctx, dir_id);
     if (directory == NULL || directory->type != SXFS_INODE_DIRECTORY ||
         directory->size % SXFS_DIR_ENTRY_SIZE != 0 ||
@@ -756,7 +766,7 @@ static int walk_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
         return SXFS_ERR_INVALID;
     }
 
-    struct sxfs_dir_entry entries[SXFS_MAX_RECORDS];
+    struct sxfs_dir_entry* entries = dir_scratch(ctx);
     uint32_t count = 0;
     int rc = read_dir_entries(ctx, dir_id, entries, &count);
     if (rc != SXFS_OK) {
@@ -802,32 +812,70 @@ static int walk_directory(const struct sxfs_ctx* ctx, uint32_t dir_id,
             !sxfs_bitmap_test(ctx->inode_bitmap, entry->inode_id - 1)) {
             return SXFS_ERR_INVALID;
         }
-
-        const size_t name_len = entry->name_length;
-        const size_t required = path_len + (path_len != 0 ? 1u : 0u) + name_len + 1u;
-        if (required > SXFS_WALK_PATH_CAPACITY) {
-            return SXFS_ERR_TOO_LONG;
-        }
-        size_t child_len = path_len;
-        if (child_len != 0) {
-            path[child_len++] = '/';
-        }
-        memcpy(path + child_len, entry->name, name_len);
-        child_len += name_len;
-        path[child_len] = '\0';
         visited[entry->inode_id - 1] = 1;
-
-        rc = visit(cookie, path, entry->inode_id, entry->type);
-        if (rc == SXFS_OK && entry->type == SXFS_INODE_DIRECTORY) {
-            rc = walk_directory(ctx, entry->inode_id, path, child_len, depth + 1u, visited, visit, cookie);
-        }
-        path[path_len] = '\0';
-        if (rc != SXFS_OK) {
-            return rc;
-        }
     }
+    *out_count = count;
     return SXFS_OK;
 }
+
+/* Ubica el sector y el desplazamiento dentro de el de un offset de bytes de un
+ * inodo. */
+static int locate_inode_offset(const struct sxfs_inode* inode, uint64_t offset,
+                               uint32_t* out_lba, uint32_t* out_within) {
+    for (uint32_t e = 0; e < inode->extent_count; ++e) {
+        const struct sxfs_extent* extent = &inode->extents[e];
+        const uint64_t capacity = (uint64_t)extent->sector_count * SXFS_SECTOR_SIZE;
+        if (offset < capacity) {
+            *out_lba = extent->start_lba + (uint32_t)(offset / SXFS_SECTOR_SIZE);
+            *out_within = (uint32_t)(offset % SXFS_SECTOR_SIZE);
+            return SXFS_OK;
+        }
+        offset -= capacity;
+    }
+    return SXFS_ERR_INVALID;
+}
+
+/* Lee UNA entrada del directorio, la `index`-esima. El recorrido la usa para
+ * retomar despues de haber descendido a un hijo, cuando el scratch del ctx ya
+ * no contiene las entradas de este directorio. Leer una sola entrada mantiene
+ * el costo en O(1) por entrada en vez de releer el directorio entero.
+ *
+ * Una entrada mide 80 bytes y un sector 512, o sea que 6.4 entradas por sector:
+ * la septima SI cruza el limite, asi que hay que traer los dos sectores. */
+static int read_dir_entry_at(const struct sxfs_ctx* ctx, uint32_t dir_id,
+                             uint32_t index, struct sxfs_dir_entry* out) {
+    const struct sxfs_inode* directory = inode_at_const(ctx, dir_id);
+    if (directory == NULL || directory->type != SXFS_INODE_DIRECTORY) {
+        return SXFS_ERR_INVALID;
+    }
+    const uint64_t offset = (uint64_t)index * SXFS_DIR_ENTRY_SIZE;
+    if (offset + SXFS_DIR_ENTRY_SIZE > directory->size) {
+        return SXFS_ERR_INVALID;
+    }
+    uint32_t lba = 0;
+    uint32_t within = 0;
+    const int rc = locate_inode_offset(directory, offset, &lba, &within);
+    if (rc != SXFS_OK) {
+        return rc;
+    }
+    const uint32_t sectors =
+        (within + SXFS_DIR_ENTRY_SIZE + SXFS_SECTOR_SIZE - 1u) / SXFS_SECTOR_SIZE;
+    uint8_t buffer[2 * SXFS_SECTOR_SIZE];
+    if (sectors > 2u || ctx->read(ctx->cookie, lba, sectors, buffer) != 0) {
+        return SXFS_ERR_IO;
+    }
+    memcpy(out, buffer + within, sizeof(*out));
+    return SXFS_OK;
+}
+
+/* Un nivel del recorrido: que directorio es, por cual entrada va, cuantas tiene
+ * y que largo tenia el camino antes de entrar. */
+struct walk_frame {
+    uint32_t dir_id;
+    uint32_t next;
+    uint32_t count;
+    size_t path_len;
+};
 
 int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie) {
     if (ctx == NULL || visit == NULL) {
@@ -838,15 +886,103 @@ int sxfs_walk(const struct sxfs_ctx* ctx, sxfs_walk_fn visit, void* cookie) {
         !sxfs_bitmap_test(ctx->inode_bitmap, SXFS_ROOT_INODE - 1)) {
         return SXFS_ERR_INVALID;
     }
+
+    /* El recorrido es iterativo con una pila explicita y NO recursivo. Antes
+     * lo era, y cada nivel de recursion tenia un arreglo de SXFS_MAX_RECORDS
+     * entradas en la pila: 20 KiB con la tabla de inodos de 256, y 320 KiB con
+     * la de 4096, o sea 10 MiB de pila con los 32 niveles que el formato
+     * permite. La pila aqui mide un frame por nivel (16 bytes) mas el camino. */
+    enum { kMaxDepth = 33 };
+    struct walk_frame frames[kMaxDepth];
     uint8_t visited[SXFS_MAX_INODES];
+    char path[SXFS_WALK_PATH_CAPACITY];
+
     memset(visited, 0, sizeof(visited));
     visited[SXFS_ROOT_INODE - 1] = 1;
-    char path[SXFS_WALK_PATH_CAPACITY];
     path[0] = '\0';
-    int rc = walk_directory(ctx, SXFS_ROOT_INODE, path, 0, 0, visited, visit, cookie);
-    if (rc != SXFS_OK) {
-        return rc;
+
+    uint32_t depth = 0;
+    frames[depth].dir_id = SXFS_ROOT_INODE;
+    frames[depth].next = 0;
+    frames[depth].count = 0;
+    frames[depth].path_len = 0;
+    depth += 1;
+
+    while (depth != 0) {
+        struct walk_frame* frame = &frames[depth - 1];
+
+        if (frame->next == 0) {
+            /* Primera vez en este directorio: se lee entero, se valida entero y
+             * se marcan los hijos. El scratch del ctx queda libre recien aqui,
+             * despues de esta pasada. */
+            const int rc = validate_directory(ctx, frame->dir_id, visited, &frame->count);
+            if (rc != SXFS_OK) {
+                return rc;
+            }
+        }
+        if (frame->next >= frame->count) {
+            /* Se termino este directorio. El corte del camino va al del padre
+             * que vamos a retomar, y NO al de este: el padre guardo en su
+             * path_len el largo ANTES de su propio nombre, y es ese corte el que
+             * deja el camino listo para la siguiente entrada suya. */
+            --depth;
+            if (depth != 0) {
+                path[frames[depth - 1].path_len] = '\0';
+            }
+            continue;
+        }
+
+        struct sxfs_dir_entry entry = {};
+        const uint32_t index = frame->next;
+        ++frame->next;
+        const int rc = read_dir_entry_at(ctx, frame->dir_id, index, &entry);
+        if (rc != SXFS_OK) {
+            return rc;
+        }
+        if (entry.inode_id == 0) {
+            continue;
+        }
+
+        const size_t name_len = entry.name_length;
+        const size_t required = frame->path_len + (frame->path_len != 0 ? 1u : 0u) + name_len + 1u;
+        if (required > SXFS_WALK_PATH_CAPACITY) {
+            return SXFS_ERR_TOO_LONG;
+        }
+        size_t child_len = frame->path_len;
+        if (child_len != 0) {
+            path[child_len++] = '/';
+        }
+        memcpy(path + child_len, entry.name, name_len);
+        child_len += name_len;
+        path[child_len] = '\0';
+
+        /* Descender antes de visitar, como hacia la version recursiva: el
+         * recorrido es en profundidad. El frame del hijo entra con next = 0, que
+         * es la señal de "validame el directorio entero". */
+        if (entry.type == SXFS_INODE_DIRECTORY) {
+            if (depth >= kMaxDepth) {
+                return SXFS_ERR_INVALID;
+            }
+            frames[depth].dir_id = entry.inode_id;
+            frames[depth].next = 0;
+            frames[depth].count = 0;
+            frames[depth].path_len = child_len;
+            depth += 1;
+        }
+
+        /* Acá NO se recorta el camino. Si esta entrada era un directorio, el
+         * frame que se acaba de empujar tiene que encontrar `path` con el
+         * nombre del hijo dentro para poder extenderlo con los nietos; si fuera
+         * un archivo, la siguiente iteracion lo sobreescribe igual. El recorte
+         * corresponding esta en el pop de mas arriba. Este fue el bug que hizo
+         * que el hijo leyera un camino vacio y que la extraccion fallara con un
+         * error de I/O al abrir un nombre de archivo vacio. */
+        const int visited_rc = visit(cookie, path, entry.inode_id, entry.type);
+        if (visited_rc != SXFS_OK) {
+            return visited_rc;
+        }
     }
+
     for (uint32_t inode_id = SXFS_ROOT_INODE + 1u; inode_id <= SXFS_MAX_INODES; ++inode_id) {
         if (sxfs_bitmap_test(ctx->inode_bitmap, inode_id - 1u) && !visited[inode_id - 1u]) {
             /* Un inode asignado pero no alcanzable no se puede conservar

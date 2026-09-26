@@ -85,6 +85,13 @@ struct Volume {
     // Por volumen y no global: escribir en el destino del instalador no tiene
     // por que serializar contra la raiz.
     volatile uint32_t mutation_lock;
+    // Contadores de costo de metadata. El journal copia TODA la metadata en
+    // cada commit y la vuelve a escribir, asi que el costo por commit es
+    // proporcional al tamano de la metadata: con la tabla de inodos de v2 un
+    // commit pasa de 97 a 1537 sectores. Estos dos numeros existen para que
+    // eso se pueda MEDIR en vez de deducirse del reloj de pared.
+    uint32_t metadata_commits;
+    uint64_t metadata_bytes_written;
 };
 
 // Raiz + destino del instalador. Cada volumen pesa ~185 KiB de BSS (bitmaps,
@@ -359,6 +366,15 @@ bool commit_metadata(Volume& volume) {
         !clear_journal(volume)) {
         return false;
     }
+
+    // El payload del journal y la metadata en su lugar definitivo son la misma
+    // cosa escrita dos veces, y ahi esta el costo. Se cuenta lo que sale de
+    // verdad: los dos copiados mas el header del journal, los dos superblocks y
+    // el borrado del journal.
+    const uint64_t payload = static_cast<uint64_t>(kJournalMetadataSectors) * block::kSectorSize;
+    const uint64_t overhead = 3u * static_cast<uint64_t>(block::kSectorSize);
+    volume.metadata_commits += 1u;
+    volume.metadata_bytes_written += 2u * payload + overhead;
 
     return true;
 }
@@ -1323,6 +1339,8 @@ bool check(VolumeId id, CheckReport& report) {
     report.data_lba = superblock.data_lba;
     report.sequence = superblock.sequence;
     report.clean_shutdown = (superblock.flags & kFlagClean) != 0 ? 1u : 0u;
+    report.metadata_commits = volume->metadata_commits;
+    report.metadata_bytes_written = volume->metadata_bytes_written;
 
     // clear_journal() borra el header a cero, y sxfs_journal_valid() exige la
     // magia: un journal limpio NO valida contra el. "Todo cero" es el estado

@@ -100,6 +100,19 @@ int main(void) {
     print_u64_line("  data_used", report.data_used_sectors);
     print_u64_line("  data_claimed", report.data_claimed_sectors);
 
+    /* El journal copia toda la metadata en cada commit y la vuelve a escribir,
+     * asi que el costo por commit es proporcional al tamano de la metadata y no
+     * al del volumen. Estos dos numeros son los que dicen si hace falta un
+     * journal de delta. */
+    puts_out("metadata cost:\n");
+    print_u64_line("  commits", report.metadata_commits);
+    print_u64_line("  bytes_written", report.metadata_bytes_written);
+    if (report.metadata_commits != 0) {
+        print_label("  bytes_per_commit");
+        print_u64(report.metadata_bytes_written / report.metadata_commits);
+        putchar_fd(1, '\n');
+    }
+
     /* Los dos numeros que de verdad importan, uno al lado del otro.
      * Iguales: el bitmap y los archivos coinciden. Distintos: hay diferencia y
      * los hallazgos de abajo dicen de que lado esta. */

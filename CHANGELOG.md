@@ -12,6 +12,20 @@ Cut-off notes:
 
 ### Changed
 
+- **SxFS format v2: 4096 inodes and a 1 GiB ceiling.** The inode table went from
+  64 to 1024 sectors and the block bitmap from 32 to 512, so a volume is no
+  longer capped at 64 MiB. `build/disk.img` is reformatted once; a v1 image does
+  not mount, and `sxfs-cli` says so instead of failing obscurely later.
+
+- **ATA now splits large requests instead of rejecting them.** A metadata commit
+  asks for 1537 sectors and the PIO count register holds 8 bits, so writes over
+  255 sectors were being refused — harmless while the metadata fit in 97
+  sectors, fatal on the default IDE machine once it did not.
+
+- **`fscheck` reports metadata commit cost.** `commits`, `bytes_written` and
+  `bytes_per_commit` per volume, so the journal's cost is a measurement instead
+  of an inference from the wall clock.
+
 - **The development path no longer carries the persistent volume as a boot
   module.** `build/disk.img` reaches QEMU as an attached disk instead, which
   frees the 64 MiB it was occupying in RAM and drops the staged EFI tree from

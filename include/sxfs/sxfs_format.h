@@ -30,7 +30,14 @@
 /* --- Geometria basica ---------------------------------------------------- */
 
 #define SXFS_SECTOR_SIZE 512u
-#define SXFS_VERSION 1u
+/* v2. La v1 no monta con este codigo, y no hay conversion: la geometria cambio
+ * (tabla de inodos de 64 a 1024 sectores, bitmap de bloques de 32 a 512) y las
+ * posiciones de todo lo demas se derivan de esos numeros, asi que una imagen v1
+ * leeria LBAs que ya no significan lo mismo. Superblock y layout se validan
+ * contra las constantes de aqui, de modo que el rechazo es explicito y no un
+ * fallo de lectura mas adelante. Quien tenga una imagen v1 y quiera conservar
+ * sus datos tiene que extraerla con un sxfs-cli v1 y volver a construirla. */
+#define SXFS_VERSION 2u
 #define SXFS_FLAG_CLEAN 1u
 
 /* Tipos de inodo (campo sxfs_inode.type). */
@@ -54,9 +61,17 @@
 #define SXFS_SECONDARY_SB_LBA 1u
 #define SXFS_JOURNAL_LBA 2u
 
-#define SXFS_BLOCK_BITMAP_SECTORS 32u
+/* El bitmap de bloques ES el espacio de direcciones: cada bit es un sector, asi
+ * que el techo del volumen es su tamano en bits. Con 512 sectores son 256 KiB
+ * y 2 Mi sectores direccionables, o sea 1 GiB. Antes eran 32 sectores y el techo
+ * caia en 64 MiB, que era el limite real del sistema y no una decision de
+ * diseno: un volumen de 512 MiB no se podia ni formatear. */
+#define SXFS_BLOCK_BITMAP_SECTORS 512u
+/* 1 sector = 512 bytes = 4096 bits, que es exactamente SXFS_MAX_INODES. Por eso
+ * el bitmap de inodos no crece con la tabla: los 4096 inodos caben justos. */
 #define SXFS_INODE_BITMAP_SECTORS 1u
-#define SXFS_INODE_TABLE_SECTORS 64u
+/* 4096 inodos de 128 bytes = 512 KiB. */
+#define SXFS_INODE_TABLE_SECTORS 1024u
 #define SXFS_MAX_TOTAL_SECTORS \
     (SXFS_BLOCK_BITMAP_SECTORS * SXFS_SECTOR_SIZE * 8u)
 
@@ -73,7 +88,10 @@
 
 /* Inodos: id 0 es invalido, id 1 es la raiz; hay SXFS_MAX_INODES entradas en  */
 /* la tabla (indice = id - 1) y por lo tanto SXFS_MAX_RECORDS archivos/dirs.   */
-#define SXFS_MAX_INODES 256u
+/* Eran 256, y con un solo juego instalado la imagen real ya usaba 152: eran 59 */
+/* de 256, o sea que el techo no era teorico. Ahora 4096, y el bitmap de inodos  */
+/* sigue entrando en un sector porque 4096 son exactamente sus 4096 bits.       */
+#define SXFS_MAX_INODES 4096u
 #define SXFS_MAX_RECORDS (SXFS_MAX_INODES - 1u)
 #define SXFS_MAX_RELATIVE_PATH 255u
 #define SXFS_MAX_NAME_LENGTH (SXFS_INODE_NAME_CAPACITY - 1u)

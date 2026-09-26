@@ -365,6 +365,8 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             out.duplicate_names = report.duplicate_names;
             out.bad_dir_entries = report.bad_dir_entries;
             out.unreadable_dirs = report.unreadable_dirs;
+            out.metadata_commits = report.metadata_commits;
+            out.metadata_bytes_written = report.metadata_bytes_written;
 
             if (!write_to_process_memory(*this_cpu().current, context->rdi, &out, sizeof(out))) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));

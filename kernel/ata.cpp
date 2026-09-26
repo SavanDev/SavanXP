@@ -22,7 +22,9 @@ constexpr uint8_t kCommandWriteSectors = 0x30;
 constexpr uint8_t kCommandCacheFlush = 0xe7;
 
 // Tope de sectores por comando del PIO de 28 bits. Es del protocolo ATA, no del
-// contrato de block::, asi que la validacion vive aca.
+// contrato de block::, asi que la particion en pedazos vive aca: el registro de
+// conteo de sectores es de 8 bits, asi que un comando no puede pedir mas de 256
+// (o sea, 255 sin ambiguedad con el 0 que significa 256).
 constexpr uint32_t kMaxSectorsPerCommand = 255;
 
 // Prioridad alta: los ATA enumeran antes que el ramdisk, asi un disco IDE
@@ -156,15 +158,8 @@ bool identify(Slot& slot) {
     return true;
 }
 
-// El rango de LBA ya lo valido block::read/write; aca solo queda el tope por
-// comando del protocolo.
-bool rw_sectors(Slot& slot, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
-    if (sector_count > kMaxSectorsPerCommand) {
-        return false;
-    }
-
-    auto* bytes = static_cast<uint8_t*>(buffer);
-
+// Una sola transferancia PIO de hasta kMaxSectorsPerCommand sectores.
+bool rw_chunk(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* bytes, bool write) {
     select_drive(slot, lba);
     outb(static_cast<uint16_t>(slot.io_base + 1), 0);
     outb(static_cast<uint16_t>(slot.io_base + 2), static_cast<uint8_t>(sector_count));
@@ -203,6 +198,30 @@ bool rw_sectors(Slot& slot, uint32_t lba, uint32_t sector_count, void* buffer, b
         }
     }
 
+    return true;
+}
+
+// El rango de LBA ya lo valido block::read/write; aca solo queda el tope por
+// comando del protocolo, y se resuelve troceando en vez de fallar. Antes
+// rw_sectors rechazaba cualquier peticion de mas de 255 sectores, y eso era
+// inofensivo solo porque la metadata de SxFS cabia en 97. Con la tabla de inodos
+// de 1024 sectores y el bitmap de bloques de 512, los commits de metadata piden
+// 1537 sectores de una: habrian fallado los cuatro, y con ellos el montaje, la
+// recuperacion del journal y toda mutacion, en la maquina base por defecto. Es el
+// mismo troceo que ya hace virtio-blk, con la diferencia de que hay que volver
+// a emitir select_drive con el LBA adelantado, porque el registro LBA es de 28
+// bits y no puede addressing mas alla de 128 GiB por si solo.
+bool rw_sectors(Slot& slot, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
+    auto* bytes = static_cast<uint8_t*>(buffer);
+    while (sector_count != 0) {
+        const uint32_t chunk = sector_count > kMaxSectorsPerCommand ? kMaxSectorsPerCommand : sector_count;
+        if (!rw_chunk(slot, lba, chunk, bytes, write)) {
+            return false;
+        }
+        lba += chunk;
+        bytes += static_cast<size_t>(chunk) * block::kSectorSize;
+        sector_count -= chunk;
+    }
     return true;
 }
 

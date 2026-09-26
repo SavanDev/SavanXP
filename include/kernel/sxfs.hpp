@@ -119,6 +119,12 @@ struct CheckReport {
     uint32_t bad_dir_entries;      // entrada que no pasa read_dir_entry
     uint32_t unreadable_dirs;      // directorio ilegible o mas profundo del limite
 
+    // Costo de metadata desde el arranque, para poder medir en vez de deducir.
+    // El journal copia toda la metadata en cada commit y la reescribe, asi que
+    // esto crece con el tamano de la metadata, no con el del volumen.
+    uint32_t metadata_commits;
+    uint64_t metadata_bytes_written;
+
     // true si y solo si no hay ningun hallazgo. La geometria, la poblacion y la
     // contabilidad NO son hallazgos: son datos.
     //
