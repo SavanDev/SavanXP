@@ -54,6 +54,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 - [`SXE_FORMAT.md`](SXE_FORMAT.md) — the executable format, resource sections,
   generator, stamping, and runtime rules.
+- [`SXFS_ROADMAP.md`](SXFS_ROADMAP.md) — the SxFS work left after format v2, the
+  measured baseline to compare against, and which of it can land without moving
+  the on-disk format.
 
 ## Third-party code
 
