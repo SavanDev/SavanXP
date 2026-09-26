@@ -28,6 +28,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   3D API.
 - [`SMP_ROADMAP.md`](SMP_ROADMAP.md) — multi-core startup, scheduler locking,
   and TLB shootdown work.
+- [`REAL_HARDWARE.md`](REAL_HARDWARE.md) — what stops SavanXP from booting real
+  2003-era hardware: the 64-bit-only blockers, the driver gaps QEMU hides, and
+  the routes for reaching a Compaq Evo N1020v.
 - [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and
   audit record.
 - [`NETWORKING.md`](NETWORKING.md) — TCP guarantees, retransmission, windows,
