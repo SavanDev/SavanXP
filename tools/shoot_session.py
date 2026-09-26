@@ -969,7 +969,10 @@ def scenario_ccleste(s):
     """
     s.open_ccleste()
     s.shot("ccleste-titulo")
-    s.qmp.tap("ret", pause=3.0)
+    # La pantalla de titulo se descarta con jump o dash (celeste.c, is_title),
+    # no con Enter: el mismo prompt "x+c" que dibuja arriba es el que dice que
+    # tecla apretar. Z es jump.
+    s.qmp.tap("z", pause=3.0)
     s.shot("ccleste-habitacion")
     # Un salto a la derecha pega contra la pared de la habitacion, que es donde
     # el dash tiene que dejar al personaje pegado sin atravesarla.

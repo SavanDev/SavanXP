@@ -84,6 +84,17 @@ def main() -> int:
     staged = [line for line in build_script.splitlines() if "sdl12main" in line]
     assert all(line.lstrip().startswith("#") for line in staged), staged
 
+    # The installer used to refresh the stamped copy only when it was absent,
+    # which made every rebuild after the first one a silent no-op: the image
+    # kept the original binary and no fix to the overlay ever reached it. The
+    # copy must be unconditional, and must not sit behind a test on the file.
+    refresh = [
+        line.strip()
+        for line in build_script.splitlines()
+        if line.strip().startswith("cp ") and '"$OUTPUT" "$STAMPED"' in line
+    ]
+    assert refresh == ['cp "$OUTPUT" "$STAMPED"'], refresh
+
     for name in ("build.sh", "fetch.sh", "env.sh"):
         script = port / name
         assert script.is_file(), name

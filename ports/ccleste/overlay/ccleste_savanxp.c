@@ -91,6 +91,7 @@ static struct sx_audio_mixer ccleste_mixer = { .fd = -1 };
 
 static unsigned char* ccleste_initial_state;
 static unsigned ccleste_buttons;
+static unsigned ccleste_buttons_pending;
 static unsigned ccleste_voice_cursor;
 static unsigned ccleste_reset_frames;
 static int ccleste_reset_held;
@@ -441,10 +442,16 @@ static int ccleste_pico8emu(CELESTE_P8_CALLBACK_TYPE call, ...) {
         } break;
 
         case CELESTE_P8_BTN: {
-            /* btn(b) */
+            /* btn(b). The engine polls a level, but gfx_poll_event drains the
+             * whole queue at once, so a tap shorter than a frame would set and
+             * clear the latch before any update() ever saw it. A press
+             * therefore also sets a pending bit that survives until the frame
+             * that follows the press has been simulated. */
             int b = CCLESTE_ARG();
-
-            CCLESTE_RETURN(b >= 0 && b < 6 ? (int)((ccleste_buttons >> b) & 1u) : 0);
+            int lvl = b >= 0 && b < 6
+                ? (int)(((ccleste_buttons | ccleste_buttons_pending) >> b) & 1u)
+                : 0;
+            CCLESTE_RETURN(lvl);
         } break;
 
         case CELESTE_P8_SFX:
@@ -583,9 +590,35 @@ done:
 
 /* --- Input ---------------------------------------------------------------- */
 
+/* A letter key arrives as raw ASCII, not as a keycode: translate_key_code has no
+ * case for the letter scancodes, so emit_key_event falls back to the ASCII byte.
+ * Which case it is depends on the guest's active keyboard layout, and the
+ * default one is ES, where an unshifted letter comes through lowercase. Matching
+ * only uppercase therefore leaves the whole jump/dash half of the game dead.
+ * The event's ascii is accepted too, for the layouts that only fill that field. */
+static int ccleste_key_is(uint32_t key, int ascii, char lower, char upper) {
+    if (key == (uint32_t)(unsigned char)lower || key == (uint32_t)(unsigned char)upper) {
+        return 1;
+    }
+    return ascii != 0 && (ascii == lower || ascii == upper);
+}
+
+static int ccleste_key_is_any_letter(uint32_t key, int ascii, const char* letters) {
+    int index;
+
+    for (index = 0; letters[index] != '\0'; ++index) {
+        char upper = (char)(letters[index] - 'a' + 'A');
+
+        if (ccleste_key_is(key, ascii, letters[index], upper)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Returns 1 when the key belongs to the port. The engine polls btn() for held
  * state, so movement keys latch here and are cleared on their key-up. */
-static int ccleste_handle_key(uint32_t key, int down) {
+static int ccleste_handle_key(uint32_t key, int ascii, int down) {
     unsigned bit = 0;
     int action = 0;
     int owned = 1;
@@ -595,33 +628,40 @@ static int ccleste_handle_key(uint32_t key, int down) {
         case SAVANXP_KEY_RIGHT: bit = CCLESTE_BTN_RIGHT; break;
         case SAVANXP_KEY_UP: bit = CCLESTE_BTN_UP; break;
         case SAVANXP_KEY_DOWN: bit = CCLESTE_BTN_DOWN; break;
-        case 'Z':
-        case 'C':
-        case 'N': bit = CCLESTE_BTN_JUMP; break;
-        case 'X':
-        case 'V':
-        case 'M': bit = CCLESTE_BTN_DASH; break;
         case SAVANXP_KEY_ESC: action = down ? 1 : 0; break;
-        case 'R':
-            /* The reset is a hold, so it is driven from the frame loop; the
-             * press only latches and the release clears the counter. */
-            ccleste_reset_held = down;
-            if (!down) {
-                ccleste_reset_frames = 0;
-            }
-            break;
-        case 'E': action = down ? 2 : 0; break;
-        case 'S': action = down ? 3 : 0; break;
-        case 'D': action = down ? 4 : 0; break;
         default: owned = 0; break;
     }
 
     if (owned == 0) {
-        return 0;
+        /* jump and dash are the two keys the game itself is played with, and the
+         * only ones that leave the title screen (celeste.c, is_title). */
+        if (ccleste_key_is_any_letter(key, ascii, "zcn")) {
+            bit = CCLESTE_BTN_JUMP;
+        } else if (ccleste_key_is_any_letter(key, ascii, "xvm")) {
+            bit = CCLESTE_BTN_DASH;
+        } else if (ccleste_key_is_any_letter(key, ascii, "r")) {
+            /* The reset is a hold, so the frame loop drives it; the press only
+             * latches and the release clears the counter. */
+            ccleste_reset_held = down;
+            if (!down) {
+                ccleste_reset_frames = 0;
+            }
+            return 1;
+        } else if (ccleste_key_is_any_letter(key, ascii, "e")) {
+            action = down ? 2 : 0;
+        } else if (ccleste_key_is_any_letter(key, ascii, "s")) {
+            action = down ? 3 : 0;
+        } else if (ccleste_key_is_any_letter(key, ascii, "d")) {
+            action = down ? 4 : 0;
+        } else {
+            return 0;
+        }
     }
+
     if (bit != 0) {
         if (down) {
             ccleste_buttons |= bit;
+            ccleste_buttons_pending |= bit;
         } else {
             ccleste_buttons &= ~bit;
         }
@@ -664,7 +704,8 @@ static void ccleste_pump_input(void) {
             }
             continue;
         }
-        (void)ccleste_handle_key(event.key, event.type == SAVANXP_INPUT_EVENT_KEY_DOWN);
+        (void)ccleste_handle_key(event.key, event.ascii,
+                                 event.type == SAVANXP_INPUT_EVENT_KEY_DOWN);
     }
 }
 
@@ -705,6 +746,10 @@ static void ccleste_tick(void) {
         Celeste_P8_update();
         Celeste_P8_draw();
     }
+
+    /* The frame that could see the press has now run, so the pending bits are
+     * spent. Held keys are untouched: they live in ccleste_buttons. */
+    ccleste_buttons_pending = 0;
 
     {
         long presented = sx_scaled_presenter_present(&ccleste_presenter, ccleste_frame);

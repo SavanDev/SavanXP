@@ -179,9 +179,12 @@ if [[ ! -f "$OUTPUT" ]]; then
     echo "ccleste: missing $OUTPUT" >&2
     exit 1
 fi
-if [[ ! -f "$STAMPED" ]]; then
-    cp "$OUTPUT" "$STAMPED"
-fi
+# Always refresh the stamped copy from the published ELF. Guarding this on the
+# file being absent made every rebuild after the first one a silent no-op: the
+# installer staged the original binary forever, so fixes to the overlay never
+# reached the image while the build reported success. --skip-port still means
+# "reuse build/external/ccleste.elf", which is exactly what $OUTPUT holds then.
+cp "$OUTPUT" "$STAMPED"
 
 IMAGE="${SAVANXP_DISK_IMAGE:-$OUTPUT_ROOT/disk.img}"
 SXFS_CLI="${SAVANXP_SXFS_CLI:-$OUTPUT_ROOT/tools/sxfs-cli}"

@@ -155,8 +155,12 @@ int sx_bmp_load(const char* path, struct sx_bmp* out) {
                     target[x] = (unsigned char)((source[x >> 3] >> (7u - (x & 7))) & 1u);
                     break;
                 case 4u:
-                    target[x] = (unsigned char)((x & 1) == 0 ? (source[x >> 1] & 0x0fu)
-                                                             : (source[x >> 1] >> 4));
+                    /* A 4 bpp row packs two pixels per byte and the leftmost
+                     * one is in the HIGH nibble. Reading the low nibble first
+                     * swaps every pixel pair, which leaves the colors plausible
+                     * and the shapes scrambled. */
+                    target[x] = (unsigned char)((x & 1) == 0 ? (source[x >> 1] >> 4)
+                                                             : (source[x >> 1] & 0x0fu));
                     break;
                 default:
                     target[x] = source[x];
