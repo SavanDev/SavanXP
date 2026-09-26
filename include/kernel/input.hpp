@@ -38,6 +38,12 @@ struct MouseEvent {
     // igual que savanxp_mouse_event.wheel. Cero en los dispositivos sin rueda.
     int32_t wheel;
     uint32_t buttons;
+    // Posicion verdadera del puntero en pixeles de pantalla, valida solo con
+    // has_absolute. La mandan los dispositivos absolutos (virtio-tablet); un
+    // relativo (PS/2) no la tiene y aqui queda en cero con has_absolute falso.
+    int32_t absolute_x;
+    int32_t absolute_y;
+    bool has_absolute;
     MouseSource source;
 };
 

@@ -170,6 +170,36 @@ bool read_abs_info(virtio_pci::Device& device, uint8_t axis, int32_t& minimum, i
     return maximum > minimum;
 }
 
+// El rango que el device publica en su config space no es fijo: depende de la
+// geometria con la que el host presenta la pantalla, asi que un cambio de modo
+// puede cambiarlo. Leerlo una sola vez en el probe deja el mapeo
+// normalize_axis usando un rango viejo contra una pantalla nueva, y el puntero
+// queda corrido de forma sistematica. Releerlo aqui, junto con el extent que
+// ya se relee, cierra las dos mitades del problema.
+//
+// Es una lectura de config space, no un comando, asi que no invalida nada en
+// cola: si falla se conservan los valores buenos en vez de dejar el puntero sin
+// rango, que lo dejaria clavado en 0,0 por el clamp de normalize_axis.
+void refresh_pointer_range() {
+    if (!g_ready) {
+        return;
+    }
+
+    int32_t min_x = 0;
+    int32_t max_x = 0;
+    int32_t min_y = 0;
+    int32_t max_y = 0;
+    if (!read_abs_info(g_device, kAbsX, min_x, max_x) ||
+        !read_abs_info(g_device, kAbsY, min_y, max_y)) {
+        return;
+    }
+
+    g_abs_min_x = min_x;
+    g_abs_max_x = max_x;
+    g_abs_min_y = min_y;
+    g_abs_max_y = max_y;
+}
+
 VirtioInputEvent* queue_event_buffer(virtio_pci::Queue& queue, uint16_t index) {
     return reinterpret_cast<VirtioInputEvent*>(
         virtio_pci::queue_extra(queue, sizeof(VirtioInputEvent) * index)
@@ -229,6 +259,10 @@ int32_t normalize_axis(int32_t value, int32_t minimum, int32_t maximum, uint32_t
     return static_cast<int32_t>(scaled / range);
 }
 
+// La posicion del tablet es absoluta y verdadera: el host la manda y no depende
+// de lo que el invitado haya acumulado. Por eso viaja entera ademas del delta,
+// que sigue siendo lo que necesitan los dispositivos relativos y lo que
+// necesita un consumidor que solo suma.
 void submit_screen_position(int32_t screen_x, int32_t screen_y, int32_t wheel) {
     if (!g_have_screen_position) {
         g_last_screen_x = screen_x;
@@ -239,6 +273,9 @@ void submit_screen_position(int32_t screen_x, int32_t screen_y, int32_t wheel) {
             .delta_y = screen_y,
             .wheel = wheel,
             .buttons = g_buttons,
+            .absolute_x = screen_x,
+            .absolute_y = screen_y,
+            .has_absolute = true,
             .source = input::MouseSource::virtio_tablet,
         });
         return;
@@ -249,6 +286,9 @@ void submit_screen_position(int32_t screen_x, int32_t screen_y, int32_t wheel) {
         .delta_y = screen_y - g_last_screen_y,
         .wheel = wheel,
         .buttons = g_buttons,
+        .absolute_x = screen_x,
+        .absolute_y = screen_y,
+        .has_absolute = true,
         .source = input::MouseSource::virtio_tablet,
     });
 
@@ -311,6 +351,12 @@ void process_pointer_event(const VirtioInputEvent& event) {
                 .delta_y = 0,
                 .wheel = wheel,
                 .buttons = g_buttons,
+                // Sin posicion no hay nada que mandar: hasta ahora no se leyo
+                // ningun EV_ABS, asi que el flag no se pone y el consumidor
+                // sigue sumando deltas, que para la rueda es lo unico que hay.
+                .absolute_x = 0,
+                .absolute_y = 0,
+                .has_absolute = false,
                 .source = input::MouseSource::virtio_tablet,
             });
         }
@@ -567,6 +613,7 @@ bool keyboard_ready() {
 void set_framebuffer_extent(uint32_t width, uint32_t height) {
     g_framebuffer_width = width;
     g_framebuffer_height = height;
+    refresh_pointer_range();
 }
 
 void begin_graphics_session() {

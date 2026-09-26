@@ -162,6 +162,16 @@ Cut-off notes:
   their own content now get the system 3D edges from `sxgui_draw_raised_edge()`.
   [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
 
+### Fixed
+
+- **The mouse no longer drifts away from the host's.** A `virtio-tablet` event
+  now carries the true pointer position to userland, not only a delta, so an
+  event dropped by a full `/dev/mouse0` queue re-places the cursor instead of
+  leaving it offset for good. `savanxp_mouse_event` grows `absolute_x`,
+  `absolute_y` and `flags` (`SAVANXP_MOUSE_FLAG_ABSOLUTE`); `windowd` assigns
+  that position and still sums deltas for a relative mouse (PS/2).
+  [The rule the event used to break](docs/VIRTIO.md#a-dropped-delta-is-not-a-dropped-position).
+
 - **The AC'97 driver measures its own feed.** An `ac97-stats:` line every
   ~11 s of audio over `/dev/serial`: wall time against audio actually
   delivered, periods discarded because the ring was full, underruns, and the

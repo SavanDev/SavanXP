@@ -66,3 +66,57 @@ NIC: nothing sets up the network queues until userland asks the interface to go
 up — `netinfo` on `/dev/net0` is normally the first thing that does — and so a
 transport bug surfaces as "running this program kills the machine" rather than
 as a boot failure.
+
+## A dropped delta is not a dropped position
+
+This is the rule the pointer path got wrong for a while, and it is worth
+stating as a rule because the mistake is invisible from the code that makes it.
+
+`virtio-tablet` is an **absolute** device: it reports where the pointer is, not
+how far it moved. That is strictly more information than PS/2's deltas, and it
+is the reason a `virtio-tablet` guest stays aligned with the host cursor at all.
+The temptation is to collapse it to deltas at the device boundary, since every
+consumer downstream accumulates. **Doing so throws the absolute information
+away, and then no consumer can recover from losing an event.**
+
+`virtio_input::submit_screen_position()` used to emit only
+`screen_x - g_last_screen_x`, and the `/dev/mouse0` queue dropped the oldest
+event when it filled. The comment in `ui::enqueue_mouse_event` justified that
+as harmless — *"un delta de movimiento perdido se corrige solo, el cursor es una
+posicion absoluta y el proximo evento la reubica"* — and it reads as true right
+up until you notice that the absolute position had already been thrown away one
+layer earlier, in the line that produced the delta. So it was a dropped
+position: permanent, and the cursor stayed offset from the host's for the rest
+of the session, which is what the user sees as *"queda corrido"*.
+
+The fix is to let the position travel: `savanxp_mouse_event` carries
+`absolute_x`/`absolute_y` and `SAVANXP_MOUSE_FLAG_ABSOLUTE`, a relative device
+(`ps2::emit_mouse_event`) leaves the flag clear, and `windowd` **assigns** the
+position when the flag is set and only sums deltas when it is not. A dropped
+delta is then a gap that the next event closes, and the queue only has to
+preserve the wheel — which is a magnitude, and a lost tick is scroll that never
+happens.
+
+Two consequences worth keeping:
+
+- **The kernel queue may drop events; it may not drop the position.** Any new
+  field that says "this is where the pointer is" has to survive the overflow
+  path, or the bug comes back under load.
+- **Coalescing has to take the last position, never a sum and never the first.**
+  Summing absolute positions invents a point nobody was at; keeping the first
+  leaves the cursor off by however far the host moved in between.
+  `windowd_pointer_coalesce_selftest` is the regression for both.
+
+## The host cursor is still drawn
+
+The guest and the host both draw a cursor, and SavanXP has no way to ask QEMU
+to stop. Hiding it is the QEMU "wm" mouse protocol, carried over the `fw_cfg`
+`boot-fw-wm/*` channel; the tree has no `fw_cfg` support at all today, so this
+is boot-loader work rather than driver work.
+
+Until that exists, the two cursors agree on the pixel (the tablet is absolute,
+so the guest plane is placed at the position the host reported) and what
+remains is cosmetic. The guest cursor is a real hardware plane on `virtio-gpu`
+(`MOVE_CURSOR`, one RPC per pointer event); where the backend has no cursor
+plane, the desktop falls back to a software cursor.
+

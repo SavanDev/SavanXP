@@ -1163,6 +1163,22 @@ static size_t coalesce_mouse_events(
              * quedandose con el wheel del primero descarta ticks, y un tick
              * perdido es scroll que no ocurre nunca. */
             coalesced[coalesced_count - 1u].wheel += event->wheel;
+            /* La posicion se PISA con la del evento que se acaba de fundir,
+             * porque es la ultima que vio el host y es la que manda. Si el que
+             * entra no trae posicion, el fundido tampoco la lleva: conservar la
+             * vieja aplicaria una posicion que ya no es de nadie. Los deltas
+             * de los dos siguen sumando igual, y con el flag puesto el
+             * consumidor asigna la posicion en vez de sumar los deltas. */
+            if ((event->flags & SAVANXP_MOUSE_FLAG_ABSOLUTE) != 0u)
+            {
+                coalesced[coalesced_count - 1u].absolute_x = event->absolute_x;
+                coalesced[coalesced_count - 1u].absolute_y = event->absolute_y;
+                coalesced[coalesced_count - 1u].flags |= SAVANXP_MOUSE_FLAG_ABSOLUTE;
+            }
+            else
+            {
+                coalesced[coalesced_count - 1u].flags &= ~(uint32_t)SAVANXP_MOUSE_FLAG_ABSOLUTE;
+            }
         }
 
         current_buttons = event->buttons;
@@ -3254,6 +3270,73 @@ static int windowd_wheel_coalesce_selftest(void)
     return total == 4 ? 0 : 1;
 }
 
+/* La posicion del puntero tiene que sobrevivir a la fusion, y de una sola
+ * manera: la del ultimo evento, que es la que vio el host. Un coalescer que
+ * sumara las posiciones inventaria un punto que nadie estuvo ahi, y uno que
+ * conservara la primera dejaria el cursor corrido por la cantidad que el host
+ * movio entre las dos. */
+static int windowd_pointer_coalesce_selftest(void)
+{
+    struct savanxp_mouse_event raw[4];
+    struct savanxp_mouse_event coalesced[4];
+    size_t count;
+    size_t index;
+    int delta_total = 0;
+
+    memset(raw, 0, sizeof(raw));
+    memset(coalesced, 0, sizeof(coalesced));
+
+    /* Cuatro muestras de un tablet que avanza 10 px por paso, con la rueda en
+     * medio. Todas fundibles: mismo estado de botones, sin transicion. */
+    for (index = 0; index < 4u; ++index)
+    {
+        raw[index].delta_x = 10;
+        raw[index].absolute_x = 100 + (int)(index + 1u) * 10;
+        raw[index].absolute_y = 500;
+        raw[index].flags = SAVANXP_MOUSE_FLAG_ABSOLUTE;
+    }
+    raw[2].wheel = 3;
+
+    count = coalesce_mouse_events(raw, 4u, coalesced, 4u, 0);
+    if (count != 1u)
+    {
+        return 1;
+    }
+    if (coalesced[0].flags & SAVANXP_MOUSE_FLAG_ABSOLUTE)
+    {
+        if (coalesced[0].absolute_x != 140 || coalesced[0].absolute_y != 500)
+        {
+            return 1;
+        }
+    }
+    for (index = 0; index < count; ++index)
+    {
+        delta_total += coalesced[index].delta_x;
+    }
+    if (delta_total != 40 || coalesced[0].wheel != 3)
+    {
+        return 1;
+    }
+
+    /* Al reves: un evento sin posicion (un PS/2, o la rueda antes del primer
+     * EV_ABS) no puede dejar la posicion de otro en el fundido. Aplicarla seria
+     * mover el cursor a un lugar del que nadie informo. */
+    memset(raw, 0, sizeof(raw));
+    memset(coalesced, 0, sizeof(coalesced));
+    raw[0].delta_x = 5;
+    raw[0].absolute_x = 700;
+    raw[0].absolute_y = 400;
+    raw[0].flags = SAVANXP_MOUSE_FLAG_ABSOLUTE;
+    raw[1].delta_x = 5;
+
+    count = coalesce_mouse_events(raw, 2u, coalesced, 2u, 0);
+    if (count != 1u)
+    {
+        return 1;
+    }
+    return (coalesced[0].flags & SAVANXP_MOUSE_FLAG_ABSOLUTE) != 0u ? 1 : 0;
+}
+
 /* Descriptores que a windowd le tienen que sobrar con todas las ventanas
  * abiertas: el cliente de shell (la terminal), que todavia se puede abrir, mas
  * los fds transitorios de un launch y la lectura del .sxe. */
@@ -3623,6 +3706,12 @@ static int windowd_selftest(void)
     if (windowd_wheel_coalesce_selftest() != 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL wheel ticks lost in coalescing\n");
+        return 1;
+    }
+
+    if (windowd_pointer_coalesce_selftest() != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL pointer position lost in coalescing\n");
         return 1;
     }
 
@@ -4900,8 +4989,22 @@ static void handle_pointer_event(
     }
     drag_was_active = drag_overlay_slot_active(session, drag_overlay_slot);
     previous_hover_client = top_client_at_point(session, cursor_x, cursor_y);
-    cursor_x = windowd_clamp_int(cursor_x + mouse_event.delta_x, 0, (int)session->gfx.info.width - 1);
-    cursor_y = windowd_clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session->gfx.info.height - 1);
+    if ((mouse_event.flags & SAVANXP_MOUSE_FLAG_ABSOLUTE) != 0u)
+    {
+        /* Puntero absoluto: el host sabe donde esta y lo dice. Se asigna en vez
+         * de sumar el delta, asi que un delta que se perdio en el camino (cola
+         * del kernel llena, evento coalescido) no deja el cursor corrido: el
+         * siguiente evento lo devuelve a la posicion verdadera. El clamp se
+         * sigue aplicando porque el frame propio puede ser menor que la
+         * pantalla. */
+        cursor_x = windowd_clamp_int(mouse_event.absolute_x, 0, (int)session->gfx.info.width - 1);
+        cursor_y = windowd_clamp_int(mouse_event.absolute_y, 0, (int)session->gfx.info.height - 1);
+    }
+    else
+    {
+        cursor_x = windowd_clamp_int(cursor_x + mouse_event.delta_x, 0, (int)session->gfx.info.width - 1);
+        cursor_y = windowd_clamp_int(cursor_y + mouse_event.delta_y, 0, (int)session->gfx.info.height - 1);
+    }
     current_hover_client = top_client_at_point(session, cursor_x, cursor_y);
 
     session->previous_cursor_shape = session->current_cursor_shape;

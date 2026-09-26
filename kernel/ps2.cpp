@@ -679,6 +679,14 @@ void emit_mouse_event(int32_t delta_x, int32_t delta_y, int32_t wheel, uint32_t 
         .delta_y = delta_y,
         .wheel = wheel,
         .buttons = buttons,
+        // Un mouse PS/2 es relativo: no sabe donde esta el puntero, solo cuanto
+        // se movio. Lo que el accumulation del consumidor y el del host hacen
+        // siempre igual es lo que mantiene los dos alineados, asi que un delta
+        // perdido se recupera solo en la proxima muestra. No hay posicion
+        // verdadera que mandar.
+        .absolute_x = 0,
+        .absolute_y = 0,
+        .has_absolute = false,
         .source = input::MouseSource::ps2,
     });
 }

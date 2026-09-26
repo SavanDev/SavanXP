@@ -972,6 +972,15 @@ enum savanxp_mouse_button {
     SAVANXP_MOUSE_BUTTON_MIDDLE = 1u << 2,
 };
 
+/* Flags de savanxp_mouse_event.flags.
+ *
+ * SAVANXP_MOUSE_FLAG_ABSOLUTE: absolute_x/absolute_y traen la posicion
+ * verdadera del puntero y hay que asignarlas, no sumarles el delta. Solo lo
+ * pone un dispositivo absoluto (virtio-tablet). */
+enum savanxp_mouse_event_flag {
+    SAVANXP_MOUSE_FLAG_ABSOLUTE = 1u << 0,
+};
+
 enum savanxp_key_code {
     SAVANXP_KEY_NONE = 0,
     SAVANXP_KEY_BACKSPACE = 8,
@@ -1044,22 +1053,38 @@ struct savanxp_input_event {
  * los eventos de un mouse con rueda: es un campo esporadico, no un estado.
  *
  * Va como int32_t y no como un flag porque la magnitud importa -- un tick es
- * un tick, pero perderlos no se recupera: a diferencia de un delta de
- * movimiento, que el proximo evento reubica porque el cursor es una posicion
- * absoluta, un tick descartado es scroll que no ocurre nunca. Por eso todo el
- * camino (cola del kernel, coalescencia del WM) lo SUMA en vez de pisarlo. */
+ * un tick, pero perderlos no se recupera, mientras que un delta de movimiento
+ * perdido se reubica solo: absolute_x/absolute_y traen la posicion verdadera
+ * del puntero y el consumidor la asigna. Por eso la rueda se SUMA en todo el
+ * camino (cola del kernel, coalescencia del WM) en vez de pisarse. */
 struct savanxp_mouse_event {
     int32_t delta_x;
     int32_t delta_y;
     int32_t wheel;
     uint32_t buttons;
+    /* Posicion del puntero en la pantalla, en pixeles, presente solo si flags
+     * trae SAVANXP_MOUSE_FLAG_ABSOLUTE. Sin el flag, x/y no se tocan.
+     *
+     * Un puntero absoluto (virtio-tablet) es la verdad: el host la manda y no
+     * depende de lo que el invitado haya acumulado. Un delta de movimiento
+     * perdido -- cola llena, evento descartado -- es posicion que no vuelve,
+     * porque despues de la frontera del kernel el consumidor solo suma. Por eso
+     * la posicion viaja entera: el que aplica un evento con el flag pone
+     * absolute_x/y en vez de sumarle el delta, y un delta perdido se corrige en
+     * el proximo evento en vez decorrerse para siempre. Un puntero relativo
+     * (PS/2) no tiene posicion que mandar y no pone el flag. */
+    int32_t absolute_x;
+    int32_t absolute_y;
+    uint32_t flags;
 };
 
 /* Pointer event delivered by the compositor to a windowed client over its
  * event channel (SAVANXP_WM_FD_EVENTS). x,y are relative to the top-left of the
  * client's own surface (already accounting for window frame and position), so
  * apps can hit-test in their local coordinate space and stay aligned with the
- * system cursor the compositor draws. Same size as savanxp_mouse_event. */
+ * system cursor the compositor draws. These are already absolute, so this one
+ * needs no savanxp_mouse_event_flag: it is built by the compositor from the
+ * cursor position it already resolved, not read off a device. */
 struct savanxp_gui_pointer_event {
     int32_t x;
     int32_t y;
