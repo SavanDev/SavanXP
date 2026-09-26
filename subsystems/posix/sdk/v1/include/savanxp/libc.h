@@ -69,6 +69,9 @@ long proc_info(unsigned long index, struct savanxp_process_info* info);
 long system_info(struct savanxp_system_info* info);
 long realtime(struct savanxp_realtime* value);
 long savanxp_sync(void);
+/* Informe de consistencia del volumen SxFS montado. Solo lectura: no repara y
+ * no modifica nada. Negativo si el volumen no esta disponible. */
+long fscheck(struct savanxp_fscheck_report* report);
 long mouse_open(void);
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event);
 /* Duplicado del canal de eventos del WM, para leer el puntero con

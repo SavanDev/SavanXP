@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **`fscheck` reports SxFS consistency from inside the system.** It reconciles
+  the block bitmap against the inodes in both directions and walks the tree for
+  unreachable inodes, aliased entries and duplicate names. Read-only: it repairs
+  nothing and runs against the mounted `/disk`. Exits non-zero on findings.
+
 - **Celeste Classic is now an official port.** `./ports/ccleste/build.sh` builds
   the upstream engine unpatched and installs `/disk/bin/ccleste` plus the game
   assets under `/disk/games/celeste`; the overlay replaces the SDL frontend, so

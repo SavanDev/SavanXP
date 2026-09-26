@@ -124,6 +124,12 @@ int main(void) {
     const char* imagetest_disk_argv[] = {"/disk/bin/imagetest", 0};
     const char* gputest_argv[] = {"/disk/bin/gputest", "--smoke", 0};
     const char* audiotest_argv[] = {"/disk/bin/audiotest", "--smoke", 0};
+    /* El informe de consistencia tiene que dar "clean" sobre el volumen que el
+     * propio smoke acaba de usar para escribir y borrar. Es la unica forma de
+     * comprobar que la reconciliacion no inventa fugas donde no las hay: si
+     * create/write/rm/update dejan el bitmap y los extents fuera de sincronia,
+     * aqui se ve. */
+    const char* fscheck_argv[] = {"/bin/fscheck", 0};
 
     puts_out("SMOKE START\n");
 
@@ -187,7 +193,8 @@ int main(void) {
         !run_and_expect("/bin/imagetest", imagetest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/imagetest", imagetest_disk_argv, 1, 0) ||
         !run_and_expect("/disk/bin/gputest", gputest_argv, 2, 0) ||
-        !run_and_expect("/disk/bin/audiotest", audiotest_argv, 2, 0)) {
+        !run_and_expect("/disk/bin/audiotest", audiotest_argv, 2, 0) ||
+        !run_and_expect("/bin/fscheck", fscheck_argv, 0, 0)) {
         puts_out("SMOKE FAIL\n");
         return 1;
     }

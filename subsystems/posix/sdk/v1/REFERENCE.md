@@ -43,6 +43,7 @@ Se consideran parte del contrato:
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `getpid`, `stat`, `fstat`, `chdir`, `getcwd`, `system_info`, `poll`, `select`, `raise`
 - tiempo real: `realtime`
+- consistencia: `fscheck` (informe de solo lectura del volumen; ver `docs/SXFS_CHECK.md`)
 
 ## Errores visibles
 
@@ -96,6 +97,7 @@ Tipos compartidos:
 - `struct savanxp_mouse_event`
 - `struct savanxp_net_info`
 - `struct savanxp_system_info`
+- `struct savanxp_fscheck_report`
 - `struct savanxp_realtime`
 - `enum savanxp_net_status`
 - `enum savanxp_timer_backend`

@@ -297,6 +297,10 @@ long savanxp_sync(void) {
     return syscall0(SAVANXP_SYS_SYNC);
 }
 
+long fscheck(struct savanxp_fscheck_report* report) {
+    return syscall1(SAVANXP_SYS_FSCHECK, (unsigned long)report);
+}
+
 /* El mouse crudo del kernel. Una app con ventana recibe el puntero del WM por
  * gfx_pointer_open/gfx_poll_pointer, ya en coordenadas de su superficie. */
 long mouse_open(void) {

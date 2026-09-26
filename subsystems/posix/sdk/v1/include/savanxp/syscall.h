@@ -85,6 +85,9 @@ enum savanxp_syscall_number {
      * cola vacia devuelve EAGAIN. Ver docs/OWNED_WINDOWS.md. */
     SAVANXP_SYS_PIPE_SEND_HANDLE = 57,
     SAVANXP_SYS_PIPE_RECEIVE_HANDLE = 58,
+    /* Informe de consistencia del volumen SxFS: solo lectura, sin reparacion.
+     * Ver struct savanxp_fscheck_report. */
+    SAVANXP_SYS_FSCHECK = 59,
 };
 
 enum savanxp_open_flags {
@@ -230,6 +233,52 @@ enum savanxp_timer_backend {
     SAVANXP_TIMER_NONE = 0,
     SAVANXP_TIMER_LOCAL_APIC = 1,
     SAVANXP_TIMER_PIT = 2,
+};
+
+/* Informe de consistencia del volumen SxFS, el equivalente dentro del sistema de
+ * lo que `sxfs-cli check` hace en el host. Es de SOLO LECTURA: no repara nada y
+ * no puede empeorar un volumen ya roto, asi que se puede correr con `/disk`
+ * montado. Devuelve 0 si el informe se lleno, o un error negativo.
+ *
+ * Todos los contadores `*_blocks` y `*_inodes` estan en cero en un volumen sano.
+ * Los que no son cero describen el defecto:
+ *
+ *   leaked_blocks       sector ocupado en el bitmap que ningun inodo reclama
+ *   lost_blocks         sector reclamado por un inodo y libre en el bitmap
+ *   double_claimed      dos inodos sobre el mismo sector
+ *   metadata_unmarked   sector de [0, data_lba) que el bitmap da por libre
+ *   orphan_inodes       inodo asignado que ningun directorio alcanza
+ *   alias_inodes        dos entradas de directorio apuntan al mismo inodo
+ *   duplicate_names     un nombre repetido dentro de un mismo directorio
+ *   bad_dir_entries     entrada de directorio que no valida
+ *   unreadable_dirs     directorio ilegible o mas profundo que el limite
+ *
+ * `journal_pending` distinto de cero significa que una transaccion quedo a
+ * medias; el montaje la haya reintentado, asi que finding informed.
+ */
+struct savanxp_fscheck_report {
+    uint32_t total_sectors;
+    uint32_t data_lba;
+    uint32_t sequence;
+    uint32_t journal_pending;
+    uint8_t clean_shutdown;
+    uint8_t journal_valid;
+    uint16_t reserved0;
+    uint32_t inodes_allocated;
+    uint32_t files;
+    uint32_t directories;
+    uint32_t data_sectors;
+    uint32_t data_used_sectors;
+    uint32_t data_claimed_sectors;
+    uint32_t leaked_blocks;
+    uint32_t lost_blocks;
+    uint32_t double_claimed;
+    uint32_t metadata_unmarked;
+    uint32_t orphan_inodes;
+    uint32_t alias_inodes;
+    uint32_t duplicate_names;
+    uint32_t bad_dir_entries;
+    uint32_t unreadable_dirs;
 };
 
 struct savanxp_system_info {

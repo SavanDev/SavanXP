@@ -35,6 +35,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   audit record.
 - [`NETWORKING.md`](NETWORKING.md) — TCP guarantees, retransmission, windows,
   and fault injection.
+- [`SXFS_CHECK.md`](SXFS_CHECK.md) — the `fscheck` consistency report: what
+  mounting does not validate, what a leak looks like from the guest, and why
+  there is no repair yet.
 - [`VIRTIO.md`](VIRTIO.md) — the virtio-pci transport and its MMIO rules.
 - [`GRAPHICS_PERF.md`](GRAPHICS_PERF.md) — graphics measurements and the
   interpretation of the performance tables.

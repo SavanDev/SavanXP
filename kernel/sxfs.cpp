@@ -1212,6 +1212,217 @@ uint64_t free_bytes(VolumeId id) {
     return total >= used ? (total - used) : 0;
 }
 
+// --- Informe de consistencia (sxfs::check) ---------------------------------
+//
+// Todo lo que sigue es de solo lectura. No escribe un byte, no toca el bitmap
+// en disco y no repara nada: la intencion es que se pueda correr con el volumen
+// montado y que el peor caso de una imagen corrupta sea un informe, no un
+// segunda lesion.
+//
+// Dos decisiones que conviene no volver a discutir:
+//
+// 1. `extent_claims` se reutiliza como scratch. home_metadata_is_valid lo
+//    borra y lo rellena en cada llamada y nadie lo lee fuera de ahi, asi que
+//    no hay estado que preservar y el informe no cuesta BSS.
+// 2. El recorrido del arbol es ITERATIVO con una pila explicita, y la deteccion
+//    de nombres repetidos relee las entradas anteriores en vez de copiar el
+//    directorio a memoria. El stack del kernel son 8 paginas (32 KiB,
+//    kKernelStackPages): el arreglo de 255 entradas que usa el validador del host
+//    son 20 KiB y con recursion eso no entra. Releer es O(n^2) lecturas sobre un
+//    directorio que el formato limita a 255 entradas, a cambio de 0 bytes.
+
+namespace {
+
+// Recorre el arbol desde la raiz y deja en `visited` el conjunto de inodes
+// alcanzables. Cuenta la poblacion que ve y los defectos de estructura.
+void walk_reachable(Volume& volume, uint32_t root_id, uint8_t* visited, CheckReport& report) {
+    uint32_t pending[kMaxDirectoryDepth];
+    uint32_t depth = 0;
+
+    if (!bitmap_test(visited, root_id - 1u)) {
+        bitmap_set(visited, root_id - 1u, true);
+        pending[depth++] = root_id;
+    }
+
+    while (depth != 0) {
+        const uint32_t dir_id = pending[--depth];
+        const Inode* directory = inode_for_id(volume, dir_id);
+        if (directory == nullptr || directory->type != kInodeTypeDirectory) {
+            ++report.unreadable_dirs;
+            continue;
+        }
+        // Un directorio se cuenta cuando se lo visita, no cuando se lo empuja:
+        // la raiz y los subdirectorios entran por la misma pila, y el conteo va
+        // en el mismo lugar para los dos.
+        ++report.directories;
+
+        for (size_t offset = 0; offset + sizeof(DirEntry) <= directory->size;
+             offset += sizeof(DirEntry)) {
+            DirEntry entry = {};
+            if (!read_dir_entry(volume, *directory, offset, entry)) {
+                ++report.bad_dir_entries;
+                continue;
+            }
+            if (entry.inode_id == 0) {
+                continue; // hueco de una entrada que se borro
+            }
+
+            // Nombre repetido dentro de ESTE directorio. Se releen las entradas
+            // anteriores en vez de bufferizar: el directorio no entra en el stack.
+            for (size_t previous = 0; previous < offset; previous += sizeof(DirEntry)) {
+                DirEntry other = {};
+                if (!read_dir_entry(volume, *directory, previous, other) || other.inode_id == 0) {
+                    continue;
+                }
+                if (other.name_length == entry.name_length &&
+                    memcmp(other.name, entry.name, entry.name_length) == 0) {
+                    ++report.duplicate_names;
+                    break;
+                }
+            }
+
+            // Dos caminos al mismo inodo. SxFS no tiene hard links: create_file
+            // escribe link_count = 1 y nadie lo sube, asi que un segundo camino
+            // es un defecto, no una caracteristica. El host sxfs-walk falla la
+            // imagen por esto mismo.
+            if (bitmap_test(visited, entry.inode_id - 1u)) {
+                ++report.alias_inodes;
+                continue; // no se sigue dos veces
+            }
+            bitmap_set(visited, entry.inode_id - 1u, true);
+
+            if (entry.type == kInodeTypeDirectory) {
+                if (depth < kMaxDirectoryDepth) {
+                    pending[depth++] = entry.inode_id;
+                } else {
+                    ++report.unreadable_dirs; // mas profundo que el limite del formato
+                }
+            } else if (entry.type == kInodeTypeFile) {
+                ++report.files;
+            }
+        }
+    }
+}
+
+} // namespace
+
+bool check(VolumeId id, CheckReport& report) {
+    Volume* volume = volume_for_id(id);
+    if (volume == nullptr || !volume->metadata_ready) {
+        return false;
+    }
+    memset(&report, 0, sizeof(report));
+
+    // El guard serializa contra los que mutan el volumen. Es un spinlock sin
+    // espera activa, y el recorrido hace lecturas de disco: se acepta el coste
+    // porque un informe a mitad de una mutacion daria una respuesta falsa.
+    MutationGuard guard(*volume);
+
+    const Superblock& superblock = volume->superblock;
+    report.total_sectors = superblock.total_sectors;
+    report.data_lba = superblock.data_lba;
+    report.sequence = superblock.sequence;
+    report.clean_shutdown = (superblock.flags & kFlagClean) != 0 ? 1u : 0u;
+
+    // clear_journal() borra el header a cero, y sxfs_journal_valid() exige la
+    // magia: un journal limpio NO valida contra el. "Todo cero" es el estado
+    // normal de un volumen sano, no un defecto, asi que el header solo se
+    // interpreta cuando trae la magia, que es cuando hay algo que decir.
+    JournalHeader journal = {};
+    if (block::read(volume->device_index, superblock.journal_lba, 1, &journal) &&
+        sxfs_magic_equals(journal.magic, sxfs_journal_magic)) {
+        // Magia presente: hay transaccion o hay header danado. El checksum lo
+        // separa. Sin validar no se puede confiar en `pending`.
+        report.journal_valid = valid_journal(journal) ? 1u : 0u;
+        report.journal_pending = valid_journal(journal) ? journal.pending : 1u;
+    }
+
+    // Solo el numero de inodos asignados. Los archivos y directorios se cuentan
+    // en walk_reachable, que es el unico lugar donde "cuantos hay" y "cuantos
+    // son alcanzables" se distinguen: inodes_allocated es el total del volumen y
+    // files + directories es lo que la raiz puede ver. La diferencia son los
+    // huerfanos, que se cuentan mas abajo.
+    for (uint32_t inode_id = 1; inode_id <= kMaxInodes; ++inode_id) {
+        if (bitmap_test(volume->inode_bitmap, inode_id - 1u)) {
+            ++report.inodes_allocated;
+        }
+    }
+
+    // Quien reclama cada sector. Mismo recorrido que home_metadata_is_valid pero
+    // contando en vez de fallar, y con la comparacion contra el bitmap que
+    // allows las dos direcciones.
+    memset(volume->extent_claims, 0, sizeof(volume->extent_claims));
+    for (uint32_t inode_id = 1; inode_id <= kMaxInodes; ++inode_id) {
+        const Inode& inode = volume->inodes[inode_id - 1];
+        for (uint32_t index = 0; index < inode.extent_count; ++index) {
+            const Extent& extent = inode.extents[index];
+            for (uint32_t sector = 0; sector < extent.sector_count; ++sector) {
+                const uint32_t lba = extent.start_lba + sector;
+                if (lba >= SXFS_MAX_TOTAL_SECTORS) {
+                    // No deberia pasar: montar ya valida los extents. Se cuenta
+                    // como bloque perdido para nosnow un finding con el bitmap.
+                    ++report.lost_blocks;
+                    continue;
+                }
+                if (bitmap_test(volume->extent_claims, lba)) {
+                    ++report.double_claimed_blocks;
+                    continue;
+                }
+                bitmap_set(volume->extent_claims, lba, true);
+            }
+        }
+    }
+
+    // Region de datos: la reconciliacion que no hacia nadie. Un bloque ocupado
+    // en el bitmap sin dueno es una fuga; un bloque reclamado y libre en el
+    // bitmap es lo que permitiria una doble asignacion.
+    for (uint32_t sector = superblock.data_lba; sector < superblock.total_sectors; ++sector) {
+        ++report.data_sectors;
+        const bool used = bitmap_test(volume->block_bitmap, sector);
+        const bool claimed = bitmap_test(volume->extent_claims, sector);
+        if (used) {
+            ++report.data_used_sectors;
+            if (!claimed) {
+                ++report.leaked_blocks;
+            }
+        }
+        if (claimed) {
+            ++report.data_claimed_sectors;
+            if (!used) {
+                ++report.lost_blocks;
+            }
+        }
+    }
+
+    // La region de metadata deberia estar reservada. sxfs_find_free_run arranca en
+    // data_lba, asi que un sector libre aca no se puede entregar: es una
+    // inconsistencia que reportar, no un corruption activa.
+    for (uint32_t sector = 0; sector < superblock.data_lba; ++sector) {
+        if (!bitmap_test(volume->block_bitmap, sector)) {
+            ++report.metadata_unmarked;
+        }
+    }
+
+    // Recorrido desde la raiz. `visited` es un bitmap de kMaxInodes bits en
+    // memoria de pila: 32 bytes, contra los 20 KiB que necesitaria una copia de
+    // las entradas de un directorio.
+    uint8_t visited[(kMaxInodes + 7u) / 8u] = {};
+    walk_reachable(*volume, kRootInodeId, visited, report);
+
+    // El invariante de la reconciliacion de inodos: lo que el bitmap de inodos
+    // tiene asignado es exactamente lo que el recorrido alcanzo mas lo que no.
+    // Un inodo huerfano es la diferencia entre ambos, y por eso se cuenta
+    // DESPUES de recorrer y no durante.
+    for (uint32_t inode_id = kRootInodeId + 1u; inode_id <= kMaxInodes; ++inode_id) {
+        if (bitmap_test(volume->inode_bitmap, inode_id - 1u) &&
+            !bitmap_test(visited, inode_id - 1u)) {
+            ++report.orphan_inodes;
+        }
+    }
+
+    return true;
+}
+
 bool sync(VolumeId id) {
     Volume* volume = volume_for_id(id);
     if (volume == nullptr || !volume->metadata_ready) {

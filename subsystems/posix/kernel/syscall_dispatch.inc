@@ -329,6 +329,51 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_SYNC:
             context->rax = static_cast<uint64_t>(sxfs::sync(sxfs::root()) ? 0 : negative_error(SAVANXP_EIO));
             return context;
+        case SAVANXP_SYS_FSCHECK: {
+            if (!vm::is_user_range_accessible(this_cpu().current->address_space, context->rdi, sizeof(savanxp_fscheck_report), true)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+
+            /* El informe se arma en el struct del kernel y recien ahi se copia al
+             * proceso: el driver no debe conocer los tipos del SDK. */
+            sxfs::CheckReport report = {};
+            if (!sxfs::check(sxfs::root(), report)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EIO));
+                return context;
+            }
+
+            savanxp_fscheck_report out = {};
+            out.total_sectors = report.total_sectors;
+            out.data_lba = report.data_lba;
+            out.sequence = report.sequence;
+            out.journal_pending = report.journal_pending;
+            out.clean_shutdown = report.clean_shutdown;
+            out.journal_valid = report.journal_valid;
+            out.inodes_allocated = report.inodes_allocated;
+            out.files = report.files;
+            out.directories = report.directories;
+            out.data_sectors = report.data_sectors;
+            out.data_used_sectors = report.data_used_sectors;
+            out.data_claimed_sectors = report.data_claimed_sectors;
+            out.leaked_blocks = report.leaked_blocks;
+            out.lost_blocks = report.lost_blocks;
+            out.double_claimed = report.double_claimed_blocks;
+            out.metadata_unmarked = report.metadata_unmarked;
+            out.orphan_inodes = report.orphan_inodes;
+            out.alias_inodes = report.alias_inodes;
+            out.duplicate_names = report.duplicate_names;
+            out.bad_dir_entries = report.bad_dir_entries;
+            out.unreadable_dirs = report.unreadable_dirs;
+
+            if (!write_to_process_memory(*this_cpu().current, context->rdi, &out, sizeof(out))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+
+            context->rax = 0;
+            return context;
+        }
         case SAVANXP_SYS_REALTIME: {
             if (!vm::is_user_range_accessible(this_cpu().current->address_space, context->rdi, sizeof(savanxp_realtime), true)) {
                 context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));

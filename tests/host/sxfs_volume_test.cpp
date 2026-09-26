@@ -162,7 +162,226 @@ void make_journal_pending(uint8_t* image) {
     memcpy(sector_at(image, SXFS_SECONDARY_SB_LBA), &superblock, sizeof(superblock));
 }
 
+// Marca sectores libres del bitmap de bloques como ocupados sin que ningun inodo
+// los reclame: una fuga. El montaje NO la rechaza (home_metadata_is_valid solo
+// mira el otro sentido, que cada sector ocupado tenga dueno), asi que el volumen
+// arranca bien y el espacio queda perdido sin explicacion. Es exactamente el
+// defecto que sxfs::check() existe para ver.
+// sxfs_mkdir_p crea el arbol de directorios, asi que la imagen recien construida
+// tiene mas de una entrada en la raiz. El helper de orphans necesita por eso
+// buscar un archivo por nombre, no "el primer archivo de la tabla".
+sxfs_inode* find_inode_by_name(uint8_t* image, const char* wanted) {
+    sxfs_inode* table = reinterpret_cast<sxfs_inode*>(sector_at(image, SXFS_INODE_TABLE_LBA));
+    for (uint32_t index = 0; index < SXFS_MAX_INODES; ++index) {
+        if (table[index].type != SXFS_INODE_DIRECTORY || table[index].extent_count == 0) {
+            continue;
+        }
+        const uint32_t dir_lba = table[index].extents[0].start_lba;
+        for (uint32_t offset = 0; offset + SXFS_DIR_ENTRY_SIZE <= table[index].size;
+             offset += SXFS_DIR_ENTRY_SIZE) {
+            sxfs_dir_entry entry = {};
+            memcpy(&entry, sector_at(image, dir_lba) + offset, sizeof(entry));
+            if (entry.inode_id != 0 && strcmp(entry.name, wanted) == 0) {
+                return &table[entry.inode_id - 1u];
+            }
+        }
+    }
+    return nullptr;
+}
+
+void mark_blocks_leaked(uint8_t* image, uint32_t count) {
+    sxfs_superblock superblock = {};
+    memcpy(&superblock, sector_at(image, SXFS_PRIMARY_SB_LBA), sizeof(superblock));
+
+    uint8_t* bitmap = sector_at(image, SXFS_BLOCK_BITMAP_LBA);
+    uint32_t marked = 0;
+    for (uint32_t sector = superblock.data_lba;
+         sector < superblock.total_sectors && marked < count; ++sector) {
+        if (!sxfs_bitmap_test(bitmap, sector)) {
+            sxfs_bitmap_set(bitmap, sector, 1);
+            ++marked;
+        }
+    }
+    check(marked == count, "se pudieron marcar sectores como fugados");
+}
+
+// Deja la entrada de directorio de `name` apuntando a un inodo que ningun otro
+// camino alcanza: un huerfano. El inodo sigue asignado y con sus sectores
+// propios, asi que todas las validaciones por inodo pasan; lo que falla es la
+// alcanzabilidad desde la raiz.
+void orphan_an_inode(uint8_t* image, const char* file_name, const char* dir_name) {
+    const sxfs_inode* victim = find_inode_by_name(image, file_name);
+    if (!check(victim != nullptr, "se encontro el archivo para dejar huerfano")) {
+        return;
+    }
+    const uint32_t victim_id = victim->inode_id;
+    const sxfs_inode* parent = find_inode_by_name(image, dir_name);
+    if (!check(parent != nullptr, "se encontro el directorio que lo contenia")) {
+        return;
+    }
+
+    // Vaciar la ranura del directorio: el inodo sigue en la tabla y con sus
+    // sectores, pero ya no lo nombra ninguna entrada.
+    const uint32_t dir_lba = parent->extents[0].start_lba;
+    bool removed = false;
+    for (uint32_t offset = 0; offset + SXFS_DIR_ENTRY_SIZE <= parent->size;
+         offset += SXFS_DIR_ENTRY_SIZE) {
+        sxfs_dir_entry entry = {};
+        memcpy(&entry, sector_at(image, dir_lba) + offset, sizeof(entry));
+        if (entry.inode_id != victim_id) {
+            continue;
+        }
+        check(true, "la entrada apunta al inodo esperado");
+        entry.inode_id = 0;
+        entry.type = 0;
+        entry.name_length = 0;
+        entry.name[0] = '\0';
+        memcpy(sector_at(image, dir_lba) + offset, &entry, sizeof(entry));
+        removed = true;
+        break;
+    }
+    check(removed, "se vacio la entrada del directorio");
+}
+
 // --- Casos ------------------------------------------------------------------
+
+// El informe tiene que dar "clean" sobre una imagen recien construida, sin
+// findings de ningun tipo. Es el caso base: si el informe se queja de una
+// imagen que el core acaba de formatear, o el driver o el informe estan mal.
+void case_clean_image_reports_clean(uint8_t* image) {
+    printf("caso: una imagen limpia se informa como limpia\n");
+
+    if (!check(build_clean_image(image), "imagen SxFS construida")) {
+        return;
+    }
+
+    hoststub::reset_vfs();
+    hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
+    sxfs::initialize();
+
+    const sxfs::VolumeId volume = sxfs::probe(0, sxfs::kRootMountPoint);
+    if (!check(volume != sxfs::kInvalidVolume, "probe reconoce el volumen")) {
+        hoststub::detach_device();
+        return;
+    }
+    check(sxfs::attach(volume), "attach publica el arbol");
+
+    sxfs::CheckReport report = {};
+    check(sxfs::check(volume, report), "check llena el informe");
+    // Estos cinco counters SI tienen que estar en cero: son los que el
+    // recorrido no tiene forma desarpar. Si el recorrido se salta un inodo, los
+    // cuenta como huerfano y clean() lo delata.
+    check(report.leaked_blocks == 0, "sin bloques fugados");
+    check(report.lost_blocks == 0, "sin bloques perdidos");
+    check(report.double_claimed_blocks == 0, "sin sectores con dos duenos");
+    check(report.orphan_inodes == 0, "sin inodos huerfanos");
+    check(report.alias_inodes == 0, "sin inodos con dos entradas");
+    check(report.duplicate_names == 0, "sin nombres repetidos");
+    check(report.bad_dir_entries == 0, "sin entradas invalidas");
+    check(report.unreadable_dirs == 0, "sin directorios ilegibles");
+    check(report.metadata_unmarked == 0, "la region de metadata esta reservada");
+    check(report.clean(), "una imagen recien construida no tiene findings");
+    check(report.data_used_sectors == report.data_claimed_sectors,
+          "el bitmap y los archivos coinciden");
+    check(report.data_used_sectors > 0, "el volumen tiene datos (el informe no es vacio)");
+    check(report.clean_shutdown != 0, "el superblock quedo marcado limpio");
+    // sxfs_mkdir_p crea docs/ ademas de la raiz, y el archivo vive dentro de el.
+    // Los valores exactos los fija el core compartido, no este test; lo que se
+    // comprueba es que haya contenido y que el directorio este entre los
+    // alcanzables, que es lo que un recorrido mal hecho perderia.
+    check(report.files >= 1, "el informe ve el archivo de la imagen");
+    check(report.directories >= 1, "el informe ve el directorio docs");
+
+    // El informe es de solo lectura: la imagen no puede haber cambiado, y dos
+    // llamadas seguidas tienen que coincidir sector por sector.
+    uint8_t* before = static_cast<uint8_t*>(malloc(kImageBytes));
+    if (before != nullptr) {
+        memcpy(before, image, kImageBytes);
+        sxfs::CheckReport first = {};
+        sxfs::CheckReport second = {};
+        sxfs::check(volume, first);
+        sxfs::check(volume, second);
+        check(memcmp(before, image, kImageBytes) == 0, "check() no escribio en el volumen");
+        check(memcmp(&first, &second, sizeof(first)) == 0,
+              "el informe es identico entre llamadas");
+        free(before);
+    }
+
+    hoststub::detach_device();
+}
+
+// Una fuga: sectores ocupados en el bitmap que ningun inodo reclama. El montaje
+// la acepta (no es un fallo de montaje) pero el informe tiene que verla, y
+// tiene que ver exactamente tantos como se marcaron.
+void case_leaked_blocks_are_reported(uint8_t* image) {
+    printf("caso: bloques fugados que el montaje no rechaza\n");
+
+    if (!check(build_clean_image(image), "imagen SxFS construida")) {
+        return;
+    }
+    constexpr uint32_t kLeaked = 5;
+    mark_blocks_leaked(image, kLeaked);
+
+    hoststub::reset_vfs();
+    hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
+    sxfs::initialize();
+
+    const sxfs::VolumeId volume = sxfs::probe(0, sxfs::kRootMountPoint);
+    if (!check(volume != sxfs::kInvalidVolume, "probe acepta el volumen con fugas")) {
+        hoststub::detach_device();
+        return;
+    }
+    check(sxfs::attach(volume), "attach publica el arbol");
+
+    sxfs::CheckReport report = {};
+    check(sxfs::check(volume, report), "check llena el informe");
+    check(report.leaked_blocks == kLeaked, "el informe ve todas las fugas");
+    check(!report.clean(), "el informe NO dice clean con fugas");
+    // La fuga hace crecer used sin que claimed se mueva: esa es la asimetria
+    // que df no puede explicar y el informe si.
+    check(report.data_used_sectors == report.data_claimed_sectors + kLeaked,
+          "used excede a claimed por exactamente las fugas");
+    check(report.lost_blocks == 0, "una fuga no es un bloque perdido");
+
+    hoststub::detach_device();
+}
+
+// Un huerfano: inodo asignado, con sectores propios, que ningun directorio
+// alcanza. Sobrevive a todas las validaciones por inodo; solo la alcanzabilidad
+// desde la raiz lo delata.
+void case_orphan_inode_is_reported(uint8_t* image) {
+    printf("caso: inodo huerfano invisible para el montaje\n");
+
+    if (!check(build_clean_image(image), "imagen SxFS construida")) {
+        return;
+    }
+    orphan_an_inode(image, "hello.txt", "docs");
+
+    hoststub::reset_vfs();
+    hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
+    sxfs::initialize();
+
+    const sxfs::VolumeId volume = sxfs::probe(0, sxfs::kRootMountPoint);
+    if (!check(volume != sxfs::kInvalidVolume, "probe acepta el volumen con un huerfano")) {
+        hoststub::detach_device();
+        return;
+    }
+    check(sxfs::attach(volume), "attach publica el arbol");
+
+    sxfs::CheckReport report = {};
+    check(sxfs::check(volume, report), "check llena el informe");
+    check(report.orphan_inodes == 1, "el informe ve el huerfano");
+    check(!report.clean(), "el informe NO dice clean con un huerfano");
+    // El huerfano sigue siendo un inodo asignado con sus sectores: el bitmap y
+    // los extents siguen cuadrados, por eso el defecto es de alcanzabilidad.
+    check(report.leaked_blocks == 0, "el huerfano no produce fugas de bloques");
+    check(report.data_used_sectors == report.data_claimed_sectors,
+          "el huerfano no desbalancea el bitmap");
+    check(report.files == 0, "desde la raiz ya no se ve ningun archivo");
+    check(report.inodes_allocated >= 1, "el inodo huerfano sigue asignado");
+
+    hoststub::detach_device();
+}
 
 // Un volumen con el journal pendiente sobre un device de solo lectura: la
 // recuperacion no se puede persistir, asi que el volumen queda read_only y
@@ -360,6 +579,9 @@ int main() {
         return 1;
     }
 
+    case_clean_image_reports_clean(image);
+    case_leaked_blocks_are_reported(image);
+    case_orphan_inode_is_reported(image);
     case_unrecoverable_journal_stays_read_only(image, pristine);
     case_transient_io_failure_rejects_writes(image, pristine);
     case_overlapping_inode_extents_are_rejected(image);
