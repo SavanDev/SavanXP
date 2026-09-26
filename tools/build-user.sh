@@ -235,7 +235,7 @@ if ((NO_INSTALL == 0)); then
     rm -rf "$STAGE"
     mkdir -p "$STAGE/$(dirname -- "$DESTINATION_RELATIVE")"
     cp "$RAW_OUTPUT" "$STAGE/$DESTINATION_RELATIVE"
-    SYNC_ARGS=(--image "$IMAGE" --source "$STAGE" --cli "$CLI" --sectors "${SAVANXP_SXFS_SECTORS:-131072}")
+    SYNC_ARGS=(--image "$IMAGE" --source "$STAGE" --cli "$CLI" --sectors "${SAVANXP_SXFS_SECTORS:-2097152}")
     ((NO_COMPACT == 0)) || SYNC_ARGS+=(--no-compact)
     "$PYTHON" "$ROOT/tools/sxfs_sync.py" "${SYNC_ARGS[@]}"
     echo "build-user.sh: installed $DESTINATION"

@@ -318,7 +318,7 @@ PY
             --image "$IMAGE"
             --source "$stage"
             --cli "$SXFS_CLI"
-            --sectors "${SAVANXP_SXFS_SECTORS:-131072}"
+            --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
         )
         if ((NO_COMPACT)); then
             SYNC_ARGS+=(--no-compact)

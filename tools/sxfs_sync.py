@@ -131,6 +131,14 @@ def copy_preserving_holes(source: Path, destination: Path) -> None:
                 break
             data_end = min(reader.tell(), size)
             reader.seek(data_start)
+            # El destino tiene que saltar al MISMO offset. Sin este seek los datos
+            # se escriben en secuencia desde el principio y la copia sale
+            # corrupta en cuanto la imagen tiene un hueco en medio, que es
+            # exactamente lo que produce un volumen grande: borrar un archivo
+            # deja un hueco donde estaba, y el siguiente archivo vive mas
+            # adelante. Con los datos usados en un solo prefijo (imagen chica
+            # recien creada) el error no se ve, y por eso pasaban las pruebas.
+            writer.seek(data_start)
             remaining = data_end - data_start
             while remaining > 0:
                 chunk = reader.read(min(remaining, 1 << 20))
@@ -354,7 +362,7 @@ def main() -> int:
     parser.add_argument("--image", required=True, type=Path)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--cli", required=True, type=Path)
-    parser.add_argument("--sectors", type=int, default=131072)
+    parser.add_argument("--sectors", type=int, default=2097152)
     parser.add_argument("--no-compact", action="store_true", help="fail instead of compacting on exit 3")
     parser.add_argument(
         "--reset",

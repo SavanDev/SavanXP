@@ -103,7 +103,7 @@ SYNC_ARGS=(
     --image "$IMAGE"
     --source "$STAGE"
     --cli "$CLI"
-    --sectors "${SAVANXP_SXFS_SECTORS:-131072}"
+    --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
 )
 if ((NO_COMPACT)); then
     SYNC_ARGS+=(--no-compact)

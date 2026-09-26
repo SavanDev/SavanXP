@@ -101,7 +101,7 @@ printf 'savegame payload\n' > "$DATA_STAGE/games/doom/savegames/regression.sav"
     --image "$TEMP/disk.img" \
     --source "$DATA_STAGE" \
     --cli "$TEMP/tools/sxfs-cli" \
-    --sectors "${SAVANXP_SXFS_SECTORS:-131072}"
+    --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
 
 EXTRACT="$TEMP/extracted"
 "$TEMP/tools/sxfs-cli" extract "$TEMP/disk.img" "$EXTRACT" >/dev/null

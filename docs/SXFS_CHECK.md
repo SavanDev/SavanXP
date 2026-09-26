@@ -64,20 +64,24 @@ distinguish "repaired" from "could not repair", because there is no repair.
 ```text
 SxFS consistency report
 geometry:
-  total_sectors       131072
-  data_lba            197
-  data_sectors        130875
+  total_sectors       2097152
+  data_lba            3077
+  data_sectors        2094075
   superblock_seq      20
   clean_shutdown      yes
   journal_valid       no
   journal_pending     0
 population:
-  inodes_allocated    152
-  files               142
-  directories         10
+  inodes_allocated    103
+  files               98
+  directories         5
 block accounting:
-  data_used           105277
-  data_claimed        105277
+  data_used           59575
+  data_claimed        59575
+metadata cost:
+  commits             19
+  bytes_written       29933056
+  bytes_per_commit    1575424
 reconciliation:
   used == claimed (balanced)
 findings:
@@ -85,6 +89,11 @@ findings:
 
 result: clean
 ```
+
+The `metadata cost` block is what makes the journal's price a measurement rather
+than an inference: the journal copies the whole metadata on every commit, so
+commit cost tracks metadata size and not volume size. See
+[`BUILD_LINUX.md`](BUILD_LINUX.md#the-geometry).
 
 The two numbers that carry the most information are `data_used` and
 `data_claimed`. One counts sectors the bitmap marks occupied; the other counts

@@ -32,7 +32,11 @@
 #define _POSIX_C_SOURCE 200809L /* fseeko/off_t: glibc los oculta bajo -std=c11 sin esto */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -93,28 +97,36 @@ static int exit_code_for(int rc) {
     return rc == SXFS_ERR_NO_SPACE ? SXFS_CLI_EXIT_NO_SPACE : 1;
 }
 
-/* Crea (o trunca) una imagen de total_sectors * 512 bytes rellena de ceros. */
+/* Crea una imagen de total_sectors * 512 bytes, toda ella ceros.
+ *
+ * Los ceros NO se escriben: el archivo se deja sparse con ftruncate, y el
+ * filesystem lo ve igual porque un hueco lee como cero. La diferencia no es
+ * cosmetics: escribir de verdad un volumen de 1 GiB costaria 1 GiB en disco y,
+ * peor, cada build copiaria la imagen entera. copy_candidate preserva los
+ * huecos, pero no puede preservar lo que nunca fue un hueco. Con el volumen
+ * default de 1 GiB eso son 1 GiB de escritura por build en vez de los ~40 MiB
+ * que el volumen ocupa de verdad. */
 static int create_zeroed_image(const char* path, uint32_t total_sectors) {
-    FILE* file = fopen(path, "wb");
-    if (file == NULL) {
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
         fprintf(stderr, "sxfs-cli: no se pudo crear '%s'.\n", path);
         return 1;
     }
-    static uint8_t zeros[SXFS_SECTOR_SIZE * 64];
-    memset(zeros, 0, sizeof(zeros));
-    uint32_t remaining = total_sectors;
-    const uint32_t chunk_sectors = sizeof(zeros) / SXFS_SECTOR_SIZE;
-    while (remaining > 0) {
-        uint32_t n = remaining < chunk_sectors ? remaining : chunk_sectors;
-        if (fwrite(zeros, 1, (size_t)n * SXFS_SECTOR_SIZE, file) != (size_t)n * SXFS_SECTOR_SIZE) {
-            fprintf(stderr, "sxfs-cli: fallo al escribir ceros en '%s'.\n", path);
-            fclose(file);
-            return 1;
-        }
-        remaining -= n;
+    const off_t bytes = (off_t)total_sectors * SXFS_SECTOR_SIZE;
+    int rc = 0;
+    if (ftruncate(fd, bytes) != 0) {
+        fprintf(stderr, "sxfs-cli: no se pudo dimensionar '%s' a %lld bytes: %s.\n",
+                path, (long long)bytes, strerror(errno));
+        rc = 1;
     }
-    fclose(file);
-    return 0;
+    if (close(fd) != 0 && rc == 0) {
+        fprintf(stderr, "sxfs-cli: no se pudo cerrar '%s'.\n", path);
+        rc = 1;
+    }
+    if (rc != 0) {
+        unlink(path);
+    }
+    return rc;
 }
 
 /* Lee un archivo del host completo en memoria (malloc). El caller hace free. */

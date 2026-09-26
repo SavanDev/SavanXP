@@ -236,6 +236,11 @@ deleted and recreated by the next build.
 | `data_lba` | 197 | 3077 |
 | volume ceiling | 64 MiB | 1 GiB |
 
+The development image is 1 GiB, and it costs about 30 MiB of real disk: the
+volume is created sparse, so the unused tail is a hole and costs nothing until
+the filesystem writes into it. `sxfs-cli create` used to write real zeros, which
+at this size would have been 1 GiB of disk and 1 GiB copied on every build.
+
 The ceiling is the block bitmap: every bit is a sector, so 512 sectors of bitmap
 address 2 Mi sectors. The inode bitmap stays at one sector because 4096 inodes
 are exactly its 4096 bits.
@@ -261,6 +266,34 @@ wall clock went from about 7.4 s to 16.5 s. It is affordable but it is the wall
 for the next round of growth, and the fix is a delta journal: log which blocks
 changed instead of copying everything. The counters above exist so that decision
 rests on a measurement.
+
+### The development machine and the LiveCD have different volumes
+
+They are different on purpose, and the sizes are independent:
+
+| | Volume | Where it lives |
+| --- | --- | --- |
+| `run`, `debug`, smokes, `gpu-soak` | 1 GiB | a disk QEMU attaches |
+| ISO / LiveCD | 256 MiB | RAM, as a Limine module |
+
+The LiveCD volume is smaller because it is loaded into memory, so every byte of
+it is also a byte of guest RAM. Measured on the ISO boot with a 512 MiB machine:
+
+```text
+block: 1 device(s) livecd(rw)
+boot ready: 219 MiB usable, 2 MiB reclaimable
+```
+
+The development machine, which attaches the volume as a disk instead, has 1 GiB
+of RAM and reports 938 MiB usable with the same kernel and the same filesystem.
+
+The ISO tree gets its own copy of the volume at the LiveCD size rather than a
+copy of the development image. `tools/iso_volume.py` extracts, recreates at the
+requested size and applies, which is what shrinking a filesystem means, and it
+fails with a clear message if the contents do not fit. Two consequences worth
+knowing: the ISO is about 286 MB, because a sparse 256 MiB volume becomes 256 MiB
+of real bytes in ISO9660, and growing the LiveCD volume past the development one
+is refused rather than silently producing a larger file.
 
 ## Persistence checks
 

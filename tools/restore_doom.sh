@@ -26,6 +26,6 @@ cp "$ELF" "$stage/bin/doomgeneric"
     --image "$IMAGE" \
     --source "$stage" \
     --cli "$CLI" \
-    --sectors "${SAVANXP_SXFS_SECTORS:-131072}"
+    --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
 rm -rf "$stage"
 echo "doom: restored /disk/bin/doomgeneric"

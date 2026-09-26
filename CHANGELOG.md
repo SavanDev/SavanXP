@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The test machine now boots with 1 GiB of RAM**, and the persistent volume is
+  1 GiB while the LiveCD carries 256 MiB. The image stays sparse, so it costs
+  ~30 MiB of real disk.
+
 - **SxFS format v2: 4096 inodes and a 1 GiB ceiling.** The inode table went from
   64 to 1024 sectors and the block bitmap from 32 to 512, so a volume is no
   longer capped at 64 MiB. `build/disk.img` is reformatted once; a v1 image does

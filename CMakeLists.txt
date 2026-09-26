@@ -20,7 +20,12 @@ set(SAVANXP_SMOKE_COMMAND "" CACHE STRING
     "Optional init automation command staged in the smoke initramfs")
 set(SAVANXP_OUTPUT_ROOT "${CMAKE_SOURCE_DIR}/build" CACHE PATH
     "Shared SavanXP output root (staging, images and persistent disk)")
-set(SAVANXP_SXFS_SECTORS 131072 CACHE STRING "Size of the persistent SxFS image in sectors")
+set(SAVANXP_SXFS_SECTORS 2097152 CACHE STRING "Size of the persistent SxFS image in sectors")
+# El volumen de la ISO es mas chico a proposito: es un LiveCD, tiene que entrar
+# en un medio optico y ademas se carga en RAM como modulo de Limine, asi que cada
+# byte suyo es tambien un byte de memoria del invitado. La imagen de desarrollo
+# no tiene por que ser chica. Ver tools/iso_volume.py.
+set(SAVANXP_ISO_SECTORS 524288 CACHE STRING "Size of the LiveCD SxFS volume in sectors")
 
 set(SAVANXP_GENERATED_ROOT "${SAVANXP_OUTPUT_ROOT}/generated")
 set(SAVANXP_SXE_ROOT "${SAVANXP_GENERATED_ROOT}/sxe")
@@ -743,6 +748,7 @@ add_custom_target(savanxp_iso_root
             --image "${SAVANXP_DISK_IMAGE}"
             --output "${SAVANXP_ISO_ROOT}/boot/disk.img"
             --cli "${SAVANXP_SXFS_CLI}"
+            --sectors "${SAVANXP_ISO_SECTORS}"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_LIMINE_ROOT}/BOOTX64.EFI" "${SAVANXP_ISO_ROOT}/EFI/BOOT/BOOTX64.EFI"
     COMMAND "${CMAKE_COMMAND}" -E copy
