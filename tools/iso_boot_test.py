@@ -43,7 +43,17 @@ def terminate(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
-def run_boot(qemu: str, label: str, args: list[str], serial: Path, timeout: float) -> None:
+def run_boot(
+    qemu: str, label: str, args: list[str], serial: Path, timeout: float, require: tuple[str, ...] = ()
+) -> None:
+    """Boot the ISO and wait for init, then assert `require` also showed up.
+
+    The extra tokens matter: the ISO carries the persistent volume as a Limine
+    module and has no disk attached, so the livecd ramdisk is the only /disk it
+    can get. A boot that reaches init without it still "passes" a token-only
+    check while the system underneath has no storage at all, which is exactly
+    the regression a change to the boot tree would cause.
+    """
     serial.unlink(missing_ok=True)
     process = subprocess.Popen(
         args,
@@ -57,6 +67,9 @@ def run_boot(qemu: str, label: str, args: list[str], serial: Path, timeout: floa
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
             if "handoff: starting /bin/init" in text or "SMOKE PASS" in text:
+                missing = [token for token in require if token not in text]
+                if missing:
+                    raise RuntimeError(f"{label}: booted but missing {missing!r} in the serial log")
                 print(f"{label}: PASS")
                 return
             if process.poll() is not None:
@@ -124,7 +137,16 @@ def main() -> int:
             "-no-reboot",
             "-no-shutdown",
         ]
-        run_boot(qemu, "BIOS", common, serial_bios, args.timeout)
+        # El volumen persistente tiene que haber llegado como modulo: en la ISO
+        # no hay disco adjunto, asi que sin el no hay /disk.
+        run_boot(
+            qemu,
+            "BIOS",
+            common,
+            serial_bios,
+            args.timeout,
+            require=("livecd(rw)", "/disk mounted"),
+        )
         code = find_ovmf("CODE")
         variables = find_ovmf("VARS")
         if not code or not variables:
@@ -156,7 +178,14 @@ def main() -> int:
             "-no-reboot",
             "-no-shutdown",
         ]
-        run_boot(qemu, "UEFI", uefi, serial_uefi, args.timeout)
+        run_boot(
+            qemu,
+            "UEFI",
+            uefi,
+            serial_uefi,
+            args.timeout,
+            require=("livecd(rw)", "/disk mounted"),
+        )
     return 0
 
 

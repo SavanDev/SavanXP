@@ -28,6 +28,7 @@ tools/*
 !tools/smoke_catalog.py
 !tools/source_tree_digest.py
 !tools/iso_boot_test.py
+!tools/iso_volume.py
 !tools/write_smoke_spec.py
 !tools/font/
 !tools/font/**

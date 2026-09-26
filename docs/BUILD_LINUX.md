@@ -133,31 +133,16 @@ Two rules keep that safe, and both are covered by
   reserved tail into real bytes and every build after it would rewrite all of
   them.
 
-### The 496 MiB ceiling is the EFI FAT16 image, not SxFS
+### The 496 MiB ceiling is gone from the development path
 
-`build/image` is the staged EFI tree, and QEMU mounts it as a FAT16 filesystem
-(`-drive file=fat:rw:...`). `CMakeLists.txt` copies `build/disk.img` into that
-tree as `boot/disk.img`, so growing the image also grows the directory QEMU has
-to fit into FAT16.
+It used to be the FAT16 staging. It no longer applies to `run` or the smokes,
+because the development boot tree no longer carries the persistent image at all
+— see the section above. The ceiling that binds there now is SxFS itself, at
+64 MiB, which is the block-bitmap geometry rather than anything about staging.
 
-FAT16 as QEMU implements it tops out just under 512 MiB, and the tree carries
-the initramfs and the kernel on top of the image, so **496 MiB is the practical
-limit for the file, not 512 MiB**:
-
-```text
-qemu-system-x86_64: -drive file=fat:rw:.../build/image,format=raw:
-  Directory does not fit in FAT16 (capacity 516.06 MB)
-```
-
-Past that point the smoke fails at QEMU startup with no serial log, and the
-runner discards QEMU's stderr, so the cause is invisible from the log. A larger
-persistent volume therefore needs a different staging path — a prebuilt FAT32
-image file, or shipping the volume outside the EFI tree — before the SxFS
-geometry is even the limiting factor.
-
-Note that this ceiling and the SxFS one are independent: SxFS itself cannot
-exceed 64 MiB at the current block-bitmap geometry, and the FAT16 staging caps
-the file well above that. Both have to move.
+The ISO is not limited either: `--efi-boot-image` builds a small El Torito FAT
+image for the bootloader and leaves the rest of the tree on ISO9660, which has
+no FAT16 ceiling.
 
 ## QEMU packages and firmware
 
@@ -179,6 +164,47 @@ The launcher accepts only `tcg` and `kvm` for acceleration:
 
 KVM requires hardware virtualization support and uses the host CPU model. The
 default `tcg` mode works without `/dev/kvm` and is the portable fallback.
+
+### The 496 MiB ceiling is gone from the development path
+
+`build/image` no longer contains `build/disk.img`. The persistent volume reaches
+the system two different ways, and only one of them belongs to each path:
+
+| Path | How `/disk` arrives | Boot config |
+| --- | --- | --- |
+| `run`, `debug`, smokes, `gpu-soak` | QEMU attaches `build/disk.img` as an ATA or virtio-blk disk | `boot/limine-dev.conf` |
+| ISO / LiveCD | a Limine module, mounted as the `livecd` ramdisk | `boot/limine.conf` |
+
+In the development path the module was pure overhead. `kernel_main.cpp` registers
+it as a `livecd` ramdisk with priority 10, against ATA's 100 and virtio-blk's
+110, and `fs::mount_any` takes the first device that claims the root — so Limine
+loaded the whole image into RAM, the kernel enumerated it as a second device, and
+nothing ever mounted it. Measured effect of dropping it:
+
+```text
+block: 2 device(s) ata0(rw) livecd(rw)   ->  block: 1 device(s) ata0(rw)
+boot ready: 367 MiB usable               ->  boot ready: 431 MiB usable
+```
+
+and the staged EFI tree went from 542 MiB to 30 MiB, which is what lifts the
+FAT16 limit for `run` and the smokes. The ISO keeps its own tree in
+`build/iso-root`, where the module is the only source of storage there is.
+
+The kernel does not depend on the module either way: `build_boot_info()` leaves
+`disk_image_address` null when no such module came, and `kernel_main.cpp` checks
+it before calling `ramdisk::attach_image`.
+
+`tools/iso_boot_test.py` requires `livecd(rw)` and `/disk mounted` in the serial
+log of both the BIOS and the UEFI ISO boots. Reaching `init` is not enough: an ISO
+whose volume module went missing still hands off to `init` and then has no
+storage at all.
+
+The ISO carries its own tree in `build/iso-root`, and that tree gets its own
+**compacted** copy of the volume. A grown development image has a sparse tail
+that is reserved room and nothing else; copied into an ISO it becomes real zero
+bytes, which is how a 64 MiB volume turns a 98 MB ISO into a 541 MB one.
+`tools/iso_volume.py` stages the volume at exactly what the superblock declares
+and leaves the development image untouched.
 
 ## Persistence checks
 

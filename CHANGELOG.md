@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Changed
 
+- **The development path no longer carries the persistent volume as a boot
+  module.** `build/disk.img` reaches QEMU as an attached disk instead, which
+  frees the 64 MiB it was occupying in RAM and drops the staged EFI tree from
+  542 MiB to 30 MiB. The ISO keeps its own tree and its `livecd` volume, since
+  there is no disk to attach, staged at its exact filesystem size so a grown
+  image does not pad the ISO.
+
 - **`build/disk.img` may now be larger than the volume inside it.** `sxfs-cli`
   accepts an oversized image and still rejects a truncated one, and a build
   preserves both the size and the sparseness of the file, so `truncate -s` is

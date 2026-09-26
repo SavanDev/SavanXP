@@ -28,6 +28,8 @@ set(SAVANXP_ROOTFS_ROOT "${SAVANXP_OUTPUT_ROOT}/rootfs")
 set(SAVANXP_ROOTFS_STAMP "${SAVANXP_OUTPUT_ROOT}/rootfs.stamp")
 set(SAVANXP_DISKFS_ROOT "${SAVANXP_OUTPUT_ROOT}/diskfs")
 set(SAVANXP_IMAGE_ROOT "${SAVANXP_OUTPUT_ROOT}/image")
+# Arbol de arranque de la ISO, aparte del de desarrollo. Ver savanxp_iso_root.
+set(SAVANXP_ISO_ROOT "${SAVANXP_OUTPUT_ROOT}/iso-root")
 set(SAVANXP_INITRAMFS "${SAVANXP_OUTPUT_ROOT}/initramfs.cpio")
 set(SAVANXP_DISK_IMAGE "${SAVANXP_OUTPUT_ROOT}/disk.img")
 set(SAVANXP_KERNEL_ELF "${SAVANXP_OUTPUT_ROOT}/kernel.elf")
@@ -697,15 +699,13 @@ add_custom_target(savanxp_image
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_IMAGE_ROOT}/boot/limine"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_IMAGE_ROOT}/EFI/BOOT"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "${CMAKE_SOURCE_DIR}/boot/limine.conf" "${SAVANXP_IMAGE_ROOT}/limine.conf"
+            "${CMAKE_SOURCE_DIR}/boot/limine-dev.conf" "${SAVANXP_IMAGE_ROOT}/limine.conf"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "${CMAKE_SOURCE_DIR}/boot/limine.conf" "${SAVANXP_IMAGE_ROOT}/boot/limine/limine.conf"
+            "${CMAKE_SOURCE_DIR}/boot/limine-dev.conf" "${SAVANXP_IMAGE_ROOT}/boot/limine/limine.conf"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_KERNEL_ELF}" "${SAVANXP_IMAGE_ROOT}/boot/kernel.elf"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_INITRAMFS}" "${SAVANXP_IMAGE_ROOT}/boot/initramfs.cpio"
-    COMMAND "${CMAKE_COMMAND}" -E copy
-            "${SAVANXP_DISK_IMAGE}" "${SAVANXP_IMAGE_ROOT}/boot/disk.img"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_LIMINE_ROOT}/BOOTX64.EFI" "${SAVANXP_IMAGE_ROOT}/EFI/BOOT/BOOTX64.EFI"
     COMMAND "${CMAKE_COMMAND}" -E copy
@@ -716,8 +716,45 @@ add_custom_target(savanxp_image
             "${SAVANXP_LIMINE_ROOT}/limine-uefi-cd.bin" "${SAVANXP_IMAGE_ROOT}/boot/limine/limine-uefi-cd.bin"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${CMAKE_SOURCE_DIR}/boot/startup.nsh" "${SAVANXP_IMAGE_ROOT}/startup.nsh"
-    DEPENDS savanxp_kernel savanxp_initramfs savanxp_disk
-    COMMENT "Staging EFI boot image"
+    DEPENDS savanxp_kernel savanxp_initramfs
+    COMMENT "Staging the development boot tree"
+    VERBATIM
+)
+
+# El arbol de la ISO es aparte y NO es el mismo: alla el volumen persistente
+# viaja como modulo de Limine porque no hay disco adjunto, y el kernel lo monta
+# como ramdisk "livecd". Un solo arbol no puede servir a los dos caminos, porque
+# el dev no quiere el modulo (se carga en RAM y no se usa) y la ISO no puede
+# prescindir de el. Ademas el dev no quiere disk.img dentro del arbol EFI: QEMU
+# monta ese arbol como FAT16, que no llega a 512 MiB.
+add_custom_target(savanxp_iso_root
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ISO_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ISO_ROOT}/boot/limine"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ISO_ROOT}/EFI/BOOT"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${CMAKE_SOURCE_DIR}/boot/limine.conf" "${SAVANXP_ISO_ROOT}/limine.conf"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${CMAKE_SOURCE_DIR}/boot/limine.conf" "${SAVANXP_ISO_ROOT}/boot/limine/limine.conf"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${SAVANXP_KERNEL_ELF}" "${SAVANXP_ISO_ROOT}/boot/kernel.elf"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${SAVANXP_INITRAMFS}" "${SAVANXP_ISO_ROOT}/boot/initramfs.cpio"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/iso_volume.py"
+            --image "${SAVANXP_DISK_IMAGE}"
+            --output "${SAVANXP_ISO_ROOT}/boot/disk.img"
+            --cli "${SAVANXP_SXFS_CLI}"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${SAVANXP_LIMINE_ROOT}/BOOTX64.EFI" "${SAVANXP_ISO_ROOT}/EFI/BOOT/BOOTX64.EFI"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${SAVANXP_LIMINE_ROOT}/limine-bios-cd.bin" "${SAVANXP_ISO_ROOT}/boot/limine/limine-bios-cd.bin"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${SAVANXP_LIMINE_ROOT}/limine-bios.sys" "${SAVANXP_ISO_ROOT}/boot/limine/limine-bios.sys"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${SAVANXP_LIMINE_ROOT}/limine-uefi-cd.bin" "${SAVANXP_ISO_ROOT}/boot/limine/limine-uefi-cd.bin"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "${CMAKE_SOURCE_DIR}/boot/startup.nsh" "${SAVANXP_ISO_ROOT}/startup.nsh"
+    DEPENDS savanxp_kernel savanxp_initramfs savanxp_disk savanxp_sxfs_cli
+    COMMENT "Staging the ISO boot tree"
     VERBATIM
 )
 
@@ -767,17 +804,17 @@ if(EXISTS "${SAVANXP_LIMINE_INSTALLER}")
                 -iso-level 3
                 -V SAVANXP
                 -o "${SAVANXP_ISO_IMAGE}"
-                "${SAVANXP_IMAGE_ROOT}"
+                "${SAVANXP_ISO_ROOT}"
         COMMAND "${SAVANXP_LIMINE_INSTALLER}" bios-install "${SAVANXP_ISO_IMAGE}"
-        DEPENDS savanxp_image
-        WORKING_DIRECTORY "${SAVANXP_IMAGE_ROOT}"
+        DEPENDS savanxp_iso_root
+        WORKING_DIRECTORY "${SAVANXP_ISO_ROOT}"
         COMMENT "Creating SavanXP.iso"
         VERBATIM
     )
 endif()
 
 add_custom_target(savanxp
-    DEPENDS savanxp_image
+    DEPENDS savanxp_image savanxp_disk
     COMMENT "Building SavanXP base system"
 )
 
