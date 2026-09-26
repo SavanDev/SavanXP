@@ -63,7 +63,7 @@ def build_qemu_args(
         "-accel",
         accel,
         "-m",
-        "256M",
+        "512M",
         "-smp",
         str(smp),
         "-cpu",

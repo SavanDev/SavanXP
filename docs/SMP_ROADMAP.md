@@ -423,9 +423,10 @@ being blind to every race introduced. Phases 0-3 need `--smp` variants:
   I/O APIC masking LINT0, which required xAPIC-over-MMIO support and a restored
   virtual wire). AP bring-up under VirtualBox should be treated as its own
   investigation, not as a footnote to the QEMU work.
-- **The RAM budget.** A kernel stack, a GDT and a TSS per CPU are small, but the
-  machine runs in 256 MiB with roughly 133 MiB usable, and an idle process per
-  core costs a real process slot each.
+- **The RAM budget.** A kernel stack, a GDT and a TSS per CPU are small, but an
+  idle process per core costs a real process slot each. The machine runs in
+  512 MiB, and the boot log puts the usable figure at 368 MiB with another
+  46 MiB reclaimable.
 - **`kMaxProcesses` and the fd budget** are unchanged by SMP, but a scheduler
   that actually runs four processes at once makes the existing ceilings easier
   to hit.

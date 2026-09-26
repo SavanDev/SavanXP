@@ -315,6 +315,9 @@ Cut-off notes:
 
 ### Changed
 
+- **The test machine now boots with 512 MiB of RAM**, up from 256 MiB, for
+  `run`, `debug`, the smoke scenarios, `gpu-soak` and the ISO boot test.
+
 - **Window title text is now one pixel smaller and bold.** Caption text uses a
   dedicated 12px Noto Sans face while the rest of the UI keeps its regular font.
 
