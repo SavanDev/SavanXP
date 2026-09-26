@@ -130,18 +130,33 @@ Fullscreen is the launcher's decision, not the game's: `launch_flags=fullscreen`
 in the `.sxres` makes the window manager hand the port a client surface at the
 presentation size.
 
-## Music is out of scope
+## Music is deferred, not excluded
 
-The five tracks ship as OGG Vorbis and SavanXP has no Vorbis decoder. The SDK
-mixer plays raw PCM, and decoding the tracks to PCM on the host would cost about
-24 MB, which does not fit the persistent image. `CELESTE_P8_MUSIC` is therefore a
-logged no-op, `build.sh` does not copy the `.ogg` files, and the game runs
-silent. This is the same kind of boundary the FFmpeg port draws around
-networking, encoders and muxers.
+The five tracks ship as OGG Vorbis, and the SDK has no Vorbis decoder.
 
-Adding music later means a Vorbis decoder, not a change to this port's
-structure: the callback already receives `(index, fade, mask)` and the SDK
-already has a wall-clock frame sink to feed.
+The FFmpeg port has one, and this port cannot reach it. That port links with
+`--disable-shared` and the SDK has no dynamic linker, so FFmpeg lives inside
+one program and no other program can borrow it. This is not hypothetical: the
+SxMedia layer was built to solve exactly that, and
+[`docs/SXMEDIA.md`](../../docs/SXMEDIA.md) records the attempt together with
+the reason it was withdrawn, which is the first item under "What has to exist
+before trying again": a way for one program to use a codec library it was not
+built with.
+
+Decoding the tracks to PCM on the host is not the answer either. It would add a
+host tool to the build for a codec path the system still lacks, and bake a
+decoded asset into the image. Space is not the obstacle either way: the tracks
+are 4,028,033 samples, about 4 MB as unsigned 8-bit or 8 MB as signed 16-bit.
+
+So `CELESTE_P8_MUSIC` is a logged no-op, `build.sh` does not copy the `.ogg`
+files, and the game runs silent. Music arrives when the OS has a dynamic
+linker, and it should not be worked around inside this port before then.
+
+The port will be ready for it: `CELESTE_P8_MUSIC` already receives
+`(index, fade, mask)` and the SDK already has a wall-clock frame sink to feed.
+The mixer's one real limitation is that `sx_audio_mixer_start_voice` takes a
+whole sample buffer, so a track has to be decoded before it plays, which for
+these five short loops is a flag (`SX_HEAP_SIZE`) and not a redesign.
 
 Save and load state (`Shift+S` / `Shift+D` upstream) are announced and dropped.
 The port keeps the state in memory only rather than writing an undocumented file

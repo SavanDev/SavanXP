@@ -49,12 +49,12 @@ Cut-off notes:
   unreachable inodes, aliased entries and duplicate names. Read-only: it repairs
   nothing and runs against the mounted `/disk`. Exits non-zero on findings.
 
-- **Celeste Classic is now an official port.** `./ports/ccleste/build.sh` builds
-  the upstream engine unpatched and installs `/disk/bin/ccleste` plus the game
-  assets under `/disk/games/celeste`; the overlay replaces the SDL frontend, so
-  the port carries no patches. `./build.sh smoke ccleste-selftest` and
-  `./tools/shoot.sh --scenario ccleste` cover it. Music is out of scope: the
-  tracks are OGG Vorbis and the SDK has no decoder.
+- **Celeste Classic is now an official port.** `./ports/ccleste/build.sh` installs
+  `/disk/bin/ccleste` plus the game assets under `/disk/games/celeste`, building
+  the upstream engine unpatched because the overlay replaces its SDL frontend.
+  `./build.sh smoke ccleste-selftest` and `./tools/shoot.sh --scenario ccleste`
+  cover it. Music is deferred until the OS has a dynamic linker, so that a
+  program can reach a codec it was not built with.
 
 - **The SDK now owns Doom-style pixel presentation and timed PCM mixing.**
   `sx_scaled_presenter` handles scaling/centering/row damage; opt-in
