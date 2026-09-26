@@ -104,6 +104,46 @@ def recovery_path(image: Path) -> Path:
     return image.with_name(image.name + ".pre-compact")
 
 
+def copy_preserving_holes(source: Path, destination: Path) -> None:
+    """Copy an image file keeping its holes.
+
+    A grown image is sparse on purpose: everything past the filesystem is
+    reserved room that must not occupy disk until the filesystem is actually
+    grown into it. shutil.copy2 does not preserve holes on Linux, so one build
+    would de-sparsify the image and every build after it would rewrite the whole
+    tail. SEEK_DATA/SEEK_HOLE walk the extents instead of the bytes.
+
+    This is a plain byte copy otherwise, so it behaves the same for an image
+    with no holes at all.
+    """
+    size = source.stat().st_size
+    with source.open("rb") as reader, destination.open("wb") as writer:
+        offset = 0
+        while offset < size:
+            try:
+                reader.seek(offset, os.SEEK_DATA)
+            except OSError:
+                break  # no data left; the rest of the file is a hole
+            data_start = reader.tell()
+            try:
+                reader.seek(data_start, os.SEEK_HOLE)
+            except OSError:
+                break
+            data_end = min(reader.tell(), size)
+            reader.seek(data_start)
+            remaining = data_end - data_start
+            while remaining > 0:
+                chunk = reader.read(min(remaining, 1 << 20))
+                if not chunk:
+                    break
+                writer.write(chunk)
+                remaining -= len(chunk)
+            offset = data_end
+        writer.truncate(size)
+        writer.flush()
+        os.fsync(writer.fileno())
+
+
 def make_recovery_copy(image: Path) -> Path:
     backup = recovery_path(image)
     if backup.exists():
@@ -111,7 +151,7 @@ def make_recovery_copy(image: Path) -> Path:
     # A hard link would be cheaper, but an older QEMU or external tool could
     # still write through the original path. A separate copy keeps the recovery
     # image independent even if another process has the disk open.
-    shutil.copy2(image, backup)
+    copy_preserving_holes(image, backup)
     fsync_file(backup)
     return backup
 
@@ -124,8 +164,36 @@ def restore_recovery(backup: Path, image: Path) -> bool:
     return True
 
 
+def grow_candidate_to(candidate: Path, image: Path) -> int:
+    """Keep a candidate at least as large on disk as the image it replaces.
+
+    An image file is allowed to be bigger than the filesystem inside it: the
+    kernel accepts `superblock.total_sectors <= device sectors` and ignores the
+    tail, which is what makes room to grow later. A rebuild does not know that,
+    because `sxfs-cli create` writes exactly `total_sectors` sectors, so
+    compaction would quietly shrink a deliberately grown image back to the size
+    of its filesystem.
+
+    os.truncate only ever grows here, and on Linux it leaves a sparse hole
+    rather than writing zeros, so the reserved tail costs no space until the
+    filesystem is actually grown into it.
+    """
+    try:
+        current = image.stat().st_size
+        if candidate.stat().st_size >= current:
+            return 0
+        os.truncate(candidate, current)
+        fsync_file(candidate)
+    except OSError as exc:
+        print(f"sxfs: no se pudo preservar el tamano de la imagen: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def install_candidate(candidate: Path, image: Path, cli: Path) -> int:
     """Atomically install a validated sibling, retaining a rollback copy."""
+    if image.exists() and grow_candidate_to(candidate, image) != 0:
+        return 1
     if run([str(cli), "check", str(candidate)]) != 0:
         return 1
     fsync_file(candidate)
@@ -219,7 +287,7 @@ def compact_image(
 def copy_candidate(image: Path) -> Path:
     candidate = make_sibling(image, f"{image.name}.candidate-", ".img")
     try:
-        shutil.copy2(image, candidate)
+        copy_preserving_holes(image, candidate)
         fsync_file(candidate)
     except OSError:
         candidate.unlink(missing_ok=True)

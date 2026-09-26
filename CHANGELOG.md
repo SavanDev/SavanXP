@@ -10,6 +10,13 @@ Cut-off notes:
 
 ## [Unreleased]
 
+### Changed
+
+- **`build/disk.img` may now be larger than the volume inside it.** `sxfs-cli`
+  accepts an oversized image and still rejects a truncated one, and a build
+  preserves both the size and the sparseness of the file, so `truncate -s` is
+  enough to make room for a later volume grow.
+
 ### Added
 
 - **`fscheck` reports SxFS consistency from inside the system.** It reconciles

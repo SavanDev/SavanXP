@@ -106,6 +106,59 @@ A normal build removes the temporary smoke specification from the image.
 as the media-player display assertion. The keyboard and taskbar smoke drivers
 use `tools/qmp_client.py`.
 
+## The persistent image may be larger than its filesystem
+
+`build/disk.img` is allowed to be bigger than the SxFS volume inside it. The
+kernel mounts an image whose file is larger than `superblock.total_sectors`
+without complaint — it only requires `total_sectors <= device sectors` — and
+ignores the tail. `sxfs-cli` follows the same rule: it rejects an image that is
+*smaller* than the superblock declares, and accepts one that is larger.
+
+That is the room a volume grow needs. Nothing has to be reformatted to make the
+file bigger:
+
+```bash
+truncate -s 496M build/disk.img   # sparse: the tail costs no space yet
+./build.sh build                   # keeps the size and keeps it sparse
+```
+
+Two rules keep that safe, and both are covered by
+`tests/host/sxfs_compaction_test.py`:
+
+- The rebuild path must preserve the file size. Safe compaction recreates the
+  image from scratch at exactly `total_sectors`, so it would otherwise shrink a
+  grown image back to 64 MiB and throw the room away.
+- The rebuild path must preserve holes. `shutil.copy2` does not on Linux, and an
+  ordinary sync copies the image before applying, so one build would turn the
+  reserved tail into real bytes and every build after it would rewrite all of
+  them.
+
+### The 496 MiB ceiling is the EFI FAT16 image, not SxFS
+
+`build/image` is the staged EFI tree, and QEMU mounts it as a FAT16 filesystem
+(`-drive file=fat:rw:...`). `CMakeLists.txt` copies `build/disk.img` into that
+tree as `boot/disk.img`, so growing the image also grows the directory QEMU has
+to fit into FAT16.
+
+FAT16 as QEMU implements it tops out just under 512 MiB, and the tree carries
+the initramfs and the kernel on top of the image, so **496 MiB is the practical
+limit for the file, not 512 MiB**:
+
+```text
+qemu-system-x86_64: -drive file=fat:rw:.../build/image,format=raw:
+  Directory does not fit in FAT16 (capacity 516.06 MB)
+```
+
+Past that point the smoke fails at QEMU startup with no serial log, and the
+runner discards QEMU's stderr, so the cause is invisible from the log. A larger
+persistent volume therefore needs a different staging path — a prebuilt FAT32
+image file, or shipping the volume outside the EFI tree — before the SxFS
+geometry is even the limiting factor.
+
+Note that this ceiling and the SxFS one are independent: SxFS itself cannot
+exceed 64 MiB at the current block-bitmap geometry, and the FAT16 staging caps
+the file well above that. Both have to move.
+
 ## QEMU packages and firmware
 
 Some distributions split QEMU's optional display and audio backends into

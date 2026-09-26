@@ -455,10 +455,26 @@ static int validate_image_file(const char* image_path, const struct sxfs_ctx* ct
     if (rc != SXFS_OK) {
         return rc;
     }
+    /* El archivo puede ser MAS GRANDE que el filesystem, y eso es lo que el
+     * kernel ya acepta: mount exige superblock.total_sectors <= sectores del
+     * device, no igualdad (kernel/sxfs.cpp, load_filesystem_from_device). La
+     * cola de mas queda fuera del sistema de archivos, sin tocar, y es lo que
+     * permite agrandar la imagen sin que el guest se entere. Antes esto exigia
+     * igualdad y rechazaba una imagen que el kernel monta sin pestanear.
+     *
+     * Lo que si es un error es lo contrario: un archivo mas corto que lo que el
+     * superblock declara es una imagen truncada, y ahi si hay un sector que el
+     * filesystem cree suyo y no existe. */
     struct stat info;
-    if (stat(image_path, &info) != 0 ||
-        (uint64_t)info.st_size != (uint64_t)ctx->total_sectors * SXFS_SECTOR_SIZE) {
-        fprintf(stderr, "sxfs-cli: '%s' no tiene el tamano declarado por el superblock.\n", image_path);
+    const uint64_t declared = (uint64_t)ctx->total_sectors * SXFS_SECTOR_SIZE;
+    if (stat(image_path, &info) != 0) {
+        fprintf(stderr, "sxfs-cli: no se pudo consultar el tamano de '%s'.\n", image_path);
+        return SXFS_ERR_INVALID;
+    }
+    if ((uint64_t)info.st_size < declared) {
+        fprintf(stderr,
+            "sxfs-cli: '%s' esta truncada: %llu bytes en disco, %llu declarados por el superblock.\n",
+            image_path, (unsigned long long)info.st_size, (unsigned long long)declared);
         return SXFS_ERR_INVALID;
     }
     return SXFS_OK;

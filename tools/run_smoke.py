@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from qmp_client import QmpClient, QmpError, send_kbd_smoke_actions
+from sxfs_sync import copy_preserving_holes
 from taskbar_smoke import run_taskbar_actions
 from run_qemu import build_qemu_args, find_qemu, prepare_image
 
@@ -74,7 +75,10 @@ def make_smoke_copy(source: Path, destination: Path, sxfs_cli: Path) -> None:
         raise SystemExit(f"smoke: persistent image is not valid: {detail}")
     destination.unlink(missing_ok=True)
     try:
-        shutil.copy2(source, destination)
+        # copy_preserving_holes, not shutil.copy2: a grown persistent image is
+        # sparse, and a plain copy would de-sparsify the disposable one, making
+        # every smoke write the whole reserved tail to disk for nothing.
+        copy_preserving_holes(source, destination)
         with destination.open("rb") as handle:
             os.fsync(handle.fileno())
         copied = subprocess.run(
