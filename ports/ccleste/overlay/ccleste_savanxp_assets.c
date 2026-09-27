@@ -144,8 +144,13 @@ int sx_bmp_load(const char* path, struct sx_bmp* out) {
         return -1;
     }
 
+    /* A positive height means the rows are stored bottom-up: the first row in
+     * the file is the BOTTOM row of the image. Both sheets rely on it -- the
+     * font's space character is the tell, since it is only blank when the
+     * sheet is the right way up. */
     for (y = 0; y < height; ++y) {
-        const unsigned char* source = data + pixel_offset + stride * (uint32_t)y;
+        uint32_t source_row = (uint32_t)(height - 1 - y);
+        const unsigned char* source = data + pixel_offset + stride * source_row;
         unsigned char* target = pixels + (size_t)width * (size_t)y;
         int32_t x;
 

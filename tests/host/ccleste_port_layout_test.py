@@ -61,6 +61,15 @@ def main() -> int:
     assert "mime_open=" not in manifest
     assert "ext_open=" not in manifest
 
+    # A BMP stores rows bottom-up when its height field is positive, which both
+    # sheets are. A decoder that forgets this mirrors every sheet vertically and
+    # still passes its own tests, so the handling is asserted here. This is a
+    # text check standing in for a decode; the real fix is a host-side test of
+    # the pixel output, which does not exist yet.
+    assets = (port / "overlay" / "ccleste_savanxp_assets.c").read_text(encoding="utf-8")
+    assert "height - 1 - y" in assets, "BMP rows are not un-mirrored bottom-up"
+    assert "source[x >> 1] >> 4" in assets, "4bpp must read the high nibble first"
+
     env = (port / "env.sh").read_text(encoding="utf-8")
     # The engine units are the whole upstream build, and none of them may be an
     # SDL host frontend: sdl12main.c is what this port replaces.
