@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Window caption bars are two pixels taller.** The title area now has a 20px
+  caption, giving the compact title text and caption buttons more breathing room.
+
 - **The test machine now boots with 1 GiB of RAM**, and the persistent volume is
   1 GiB while the LiveCD carries 256 MiB. The image stays sparse, so it costs
   ~30 MiB of real disk.
