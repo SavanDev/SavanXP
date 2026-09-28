@@ -9,6 +9,12 @@
 # the format is for; the alternative, icon=<name>, resolves against
 # assets/desktop/icons/ and that catalog has no entry for this port.
 #
+# icon.png is authored at 16x16. One PNG feeds both sizes the runtime wants, and
+# gen_sxe_resources.py derives the 32x32 with NEAREST, which is what keeps the
+# pixel art exact. The house set follows the same rule: nine of its ten 32x32
+# icons are the 16x16 scaled by two. Authoring at 32 and letting it be halved on
+# the way down is what made an earlier version of this icon unreadable.
+#
 # category= is what lists the port in the system program list.
 #
 # version= is the port revision, NOT a system version: this is not shipped with

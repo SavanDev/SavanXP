@@ -162,6 +162,16 @@ Save and load state (`Shift+S` / `Shift+D` upstream) are announced and dropped.
 The port keeps the state in memory only rather than writing an undocumented file
 under `/disk`.
 
+## Icon
+
+`overlay/icon.png` is a 16x16 face in the same construction as the Doom port
+icon: an object on transparency with a dark outline, filling the frame, in
+colours taken from the game's own default palette. It is authored at 16x16
+because `gen_sxe_resources.py` derives the 32x32 from it with NEAREST, which is
+the rule the house set follows (nine of its ten 32x32 icons are the 16x16
+scaled by two). There is no background plate, since no icon in
+`assets/desktop/icons/` has one.
+
 ## Test
 
 The port ships a headless self-test that needs no window and no audio device:
