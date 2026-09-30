@@ -56,6 +56,9 @@ The audit confirmed the following defenses were already present:
   user-page API; kernel mappings cannot be created through it.
 - NX is a leaf-page permission. The loader, stack mappings and section views set
   bit 63 only on PTEs; the bit is removed before creating upper paging levels.
+  It is a derived permission, not a constant: a section view maps without NX only
+  when the view requests execution and the section grants it. See
+  [`SECTIONS.md`](SECTIONS.md).
 - SavanXP now requires an NX-capable CPU and enables `EFER.NXE` on every logical
   processor during early CPU initialization. The static kernel image inherited
   from Limine is not yet repartitioned into executable and NX mappings, so this
@@ -65,9 +68,25 @@ The audit confirmed the following defenses were already present:
   `CR0.WP`; the BSP continues on older CPUs while an AP that cannot establish
   the same baseline remains offline. SMAP is not enabled yet.
 - ELF `PT_LOAD` segments marked both writable and executable are rejected.
-  Executable segments are mapped without `PF_W`; non-executable segments,
-  BSS, stacks and section views are mapped with NX.
-- User stack and shared-section pages preserve the NX bit across fork.
+  Executable segments are mapped without `PF_W`; non-executable segments, BSS
+  and stacks are mapped with NX. Section views no longer belong in that
+  sentence: execution is now a permission they can hold, granted by the section,
+  and what stays unconditional is that **no view is ever writable and executable
+  at the same time** — refused in `vm::map_section_view`, so no caller including
+  `fork` can produce one, and again in `map_view_handle`, where it is reported
+  as `EINVAL` instead of the generic `ENOMEM`.
+- `mmap` does not gain `PROT_EXEC`. It still returns `ENOSYS`, and `mmaptest`
+  asserts it: an executable mapping is reachable only through the explicit
+  `section_create` + `map_view` pair, where the grant and the W^X rule are
+  enforced. Widening `mmap` would have made executable memory reachable from the
+  path least able to say why it is allowed.
+- User stack and shared-section pages preserve the NX bit across fork. For a
+  section view the flag is derived again on the clone from the view's own
+  `access_mask`, so an executable view stays executable in the child and a
+  non-executable one stays NX. A `share_on_fork` view is re-mapped onto the same
+  section object and shares pages; a private one is re-mapped onto a full page
+  copy made by `clone_section`, which is a copy at fork time and not
+  copy-on-write.
 - Kernel stacks grow from 16 KiB to 32 KiB. Canaries detect corruption before a
   normal return, although a dedicated non-present guard page is not implemented
   yet. The eight-page backing allocation is intentionally contiguous: it trades
@@ -240,6 +259,11 @@ Memory safety should then proceed in this order:
 4. user stack ASLR, followed by PIE/ET_DYN and a load-bias implementation;
 5. exception-table user-copy helpers before enabling SMAP;
 6. per-stack non-present guard pages and SMP-wide panic stop.
+7. for the shared-library loader: `mprotect` with per-page copy-on-write, and
+   RELRO. Dropping write on a view another process still holds writable would
+   change that process's mapping without its consent, so the first `mprotect`
+   cannot be a plain flag rewrite. `BIND_NOW` does not need either; lazy PLT
+   binding does. See [`SECTIONS.md`](SECTIONS.md).
 
 Firmware and hardware inputs need their own parser tests: fuzz CPIO, ACPI/MADT,
 SxFS and virtio rings; validate every PCI BAR against physical memory, reserved

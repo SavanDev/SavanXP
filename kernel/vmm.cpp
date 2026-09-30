@@ -724,6 +724,21 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
         return false;
     }
 
+    /* NX es un permiso de la vista, no un default del mapa: sale puesto salvo
+     * que la vista pida ejecucion, y para eso la seccion tiene que haberla
+     * concedido -- el chequeo de arriba ya exigio que requested este dentro
+     * del grant, asi que no hay forma de obtener exec de una seccion que no
+     * la da.
+     *
+     * W^X sigue siendo estructural: una vista escribible y ejecutable a la vez
+     * se rechaza aca. map_view_handle la rechaza tambien, porque ahi el rechazo
+     * se puede volver EINVAL en vez del ENOMEM generico que devuelve esta
+     * funcion, y el que programo el cargador merece un error que diga algo. */
+    const bool wants_execute = (access_mask & object::access_execute) != 0;
+    if (wants_execute && (access_mask & object::access_write) != 0) {
+        return false;
+    }
+
     const uint64_t view_size = section.size_bytes;
     if (view_size == 0) {
         return false;
@@ -742,9 +757,12 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
         return false;
     }
 
-    uint64_t page_flags = kPageUser | kPageNoExecute;
+    uint64_t page_flags = kPageUser;
     if ((access_mask & object::access_write) != 0) {
         page_flags |= kPageWrite;
+    }
+    if (!wants_execute) {
+        page_flags |= kPageNoExecute;
     }
 
     for (uint64_t page_index = 0; page_index < section.page_count; ++page_index) {

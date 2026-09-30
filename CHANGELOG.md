@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Changed
 
+- **Section budgets raised: 64 section views per process, 256 sections
+  system-wide.** The old limits left no room for shared libraries, and 32 views
+  per process was already tight for heap arenas alone. Exhaustion is still a
+  clean `ENOMEM`.
+
 - **Window caption bars are two pixels taller.** The title area now has a 20px
   caption, giving the compact title text and caption buttons more breathing room.
 
@@ -46,6 +51,12 @@ Cut-off notes:
   enough to make room for a later volume grow.
 
 ### Added
+
+- **`SAVANXP_SECTION_EXEC` maps a section view as executable.** Execution is a
+  permission of the view, granted by the section, instead of a hardcoded `NX` on
+  every mapping. A view that asks for write and execute is still refused, with
+  `EINVAL`. `mmap` keeps refusing `PROT_EXEC`: executable mappings go through
+  `section_create`/`map_view` only.
 
 - **`fscheck` reports SxFS consistency from inside the system.** It reconciles
   the block bitmap against the inodes in both directions and walks the tree for

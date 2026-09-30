@@ -33,6 +33,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   the routes for reaching a Compaq Evo N1020v.
 - [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and
   audit record.
+- [`SECTIONS.md`](SECTIONS.md) — section objects and views: the grant model,
+  execution as a view permission, W^X, the view and section budgets, and where
+  shared library images belong.
 - [`NETWORKING.md`](NETWORKING.md) — TCP guarantees, retransmission, windows,
   and fault injection.
 - [`SXFS_CHECK.md`](SXFS_CHECK.md) — the `fscheck` consistency report: what

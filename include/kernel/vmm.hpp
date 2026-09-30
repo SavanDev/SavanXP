@@ -35,7 +35,21 @@ constexpr uint64_t kUserStackGuardBottom =
     kUserStackBottom - (kUserStackGuardPages * kPageSizeBytes);
 
 constexpr uint64_t kSectionViewBase = 0x0000001000000000ULL;
-constexpr size_t kMaxSectionViews = 32;
+
+/* Lugares de vista POR PROCESO.
+ *
+ * El arreglo es en linea dentro de VmSpace, que a su vez es miembro de Process,
+ * asi que cada vista cuesta sizeof(SectionView) = 32 bytes en los kMaxProcesses
+ * procesos de la tabla: 64 vistas x 32 bytes x 64 procesos son 128 KiB de kernel,
+ * y subir mas no compra nada.
+ *
+ * El presupuesto que hay que cubrir, con el cargador de librerias en el medio:
+ *   - hasta SX_ARENA_CAPACITY (8) arenas de heap por proceso
+ *   - hasta 3 vistas por libreria (texto/rodata respaldado por el archivo,
+ *     datos privados, bss): 6 librerias son 18
+ *   - mmap anonimos explicitos y superficies de GPU, un puñado
+ * Eso da ~40 en el peor caso realista, y 32 era el numero que lo rozaba. */
+constexpr size_t kMaxSectionViews = 64;
 
 enum PageFlags : uint64_t {
     kPagePresent = 1ULL << 0,

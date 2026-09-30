@@ -223,6 +223,10 @@ enum savanxp_timer_flags {
 enum savanxp_section_flags {
     SAVANXP_SECTION_READ = 1u << 0,
     SAVANXP_SECTION_WRITE = 1u << 1,
+    /* Pide que las paginas de la vista se puedan ejecutar. Sin este bit salen
+     * con NX, como antes. Combinado con WRITE se rechaza: el kernel no hace
+     * jamas una vista que sea escribible y ejecutable a la vez. */
+    SAVANXP_SECTION_EXEC = 1u << 2,
 };
 
 enum savanxp_view_flags {

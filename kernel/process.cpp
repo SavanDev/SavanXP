@@ -244,6 +244,9 @@ uint32_t object_access_for_section_flags(uint32_t flags, uint32_t default_access
     if ((flags & SAVANXP_SECTION_WRITE) != 0) {
         access |= object::access_write;
     }
+    if ((flags & SAVANXP_SECTION_EXEC) != 0) {
+        access |= object::access_execute;
+    }
     return access != object::access_none ? access : default_access;
 }
 
@@ -2906,6 +2909,14 @@ int64_t map_view_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
     }
     if ((requested_access & section_object->access_mask) != requested_access) {
         return negative_error(SAVANXP_EACCES);
+    }
+    // W^X tambien se rechaza aca, y no solo en vm::map_section_view: alla el
+    // rechazo llega como un ENOMEM que no dice por que fallo la vista. Un
+    // cargador que pide texto ejecutable y escribible por error -- el error
+    // clasico de un segmento mal declarado -- merece un EINVAL que lo diga.
+    if ((requested_access & object::access_execute) != 0 &&
+        (requested_access & object::access_write) != 0) {
+        return negative_error(SAVANXP_EINVAL);
     }
 
     uint64_t base_address = 0;

@@ -27,7 +27,19 @@ namespace object {
 constexpr size_t kMaxIoObjects = 256;
 constexpr size_t kMaxEventObjects = 128;
 constexpr size_t kMaxTimerObjects = 128;
-constexpr size_t kMaxSectionObjects = 64;
+/* Secciones del sistema, tabla GLOBAL (no por proceso).
+ *
+ * El presupuesto que la fija son las arenas de heap, no las imagenes de
+ * librerias: cada proceso puede retener SX_ARENA_CAPACITY (8), asi que el techo
+ * teorico es kMaxProcesses (64) x 8 = 512. Una sesion real corre 8-12 procesos,
+ * y 12 x 8 + unas 10 librerias + superficies anda por 115; 256 deja margen para
+ * duplicarlo. Agotarla degrada con ENOMEM limpio, no es una corrupcion.
+ * sizeof(SectionObject) son 80 bytes, asi que el reparto son 20 KiB de BSS.
+ *
+ * Quien escriba el cargador de librerias deberia leer antes
+ * docs/SECTIONS.md: por que esta tabla -- y no una sola para imagenes -- es el
+ * lugar donde va a vivir la identidad de un archivo respaldado. */
+constexpr size_t kMaxSectionObjects = 256;
 constexpr size_t kMaxSemaphoreObjects = 64;
 
 enum class Type : uint8_t {
