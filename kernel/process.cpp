@@ -2894,6 +2894,43 @@ int create_section_handle(process::Process& proc, uint64_t size, uint32_t flags)
     return handle;
 }
 
+int open_section_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
+    object::Header* handle_object = lookup_handle(proc, fd, object::access_read);
+    object::IoObject* file = object::as_io(handle_object);
+    if (file == nullptr || file->node == nullptr) {
+        return negative_error(SAVANXP_EBADF);
+    }
+    if (file->node->type != vfs::NodeType::file) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+
+    /* El grant se deriva de los flags pedidos, con un piso de lectura. No hay
+     * forma de pedir escritura: el respaldo de una libreria es de solo lectura,
+     * y los segmentos que el cargador tiene que escribir son secciones anonimas
+     * aparte. Pedir WRITE aca no da una escritura, da un EINVAL. */
+    if ((flags & SAVANXP_SECTION_WRITE) != 0) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    uint32_t section_access = object_access_for_section_flags(
+        flags,
+        object::access_read);
+    section_access |= object::access_read;
+
+    object::SectionObject* section_object = object::create_file_section(*file->node, section_access);
+    if (section_object == nullptr) {
+        return negative_error(SAVANXP_ENOMEM);
+    }
+
+    const uint32_t handle_access = object::access_query | object::access_synchronize | section_access;
+    const int handle = allocate_fd(proc, &section_object->header, handle_access, object::handle_none);
+    if (handle < 0) {
+        object::Header* header = &section_object->header;
+        object::release(header);
+        return handle;
+    }
+    return handle;
+}
+
 int64_t map_view_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
     object::Header* handle_object = lookup_handle(proc, fd, object::access_query);
     object::SectionObject* section_object = object::as_section(handle_object);

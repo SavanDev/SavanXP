@@ -143,6 +143,7 @@ const SemaphoreObject* as_semaphore(const Header* object);
 EventObject* create_event(bool manual_reset, bool initial_state);
 TimerObject* create_timer(bool manual_reset);
 SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask);
+SectionObject* create_file_section(vfs::Vnode& node, uint32_t access_mask);
 SectionObject* clone_section(const SectionObject& source);
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count);
 void set_event(EventObject* event_object);

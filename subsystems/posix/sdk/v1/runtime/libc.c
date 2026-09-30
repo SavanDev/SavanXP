@@ -237,6 +237,10 @@ long section_create(unsigned long size, unsigned long flags) {
     return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);
 }
 
+long section_open(int handle, unsigned long flags) {
+    return syscall2(SAVANXP_SYS_SECTION_OPEN, (unsigned long)handle, flags);
+}
+
 void* map_view(int handle, unsigned long flags) {
     return (void*)syscall2(SAVANXP_SYS_MAP_VIEW, (unsigned long)handle, flags);
 }

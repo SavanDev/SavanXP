@@ -3,6 +3,7 @@
 #include "kernel/heap.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
+#include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 
 namespace object {
@@ -188,23 +189,10 @@ TimerObject* create_timer(bool manual_reset) {
     return nullptr;
 }
 
-SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
-    if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
-        return nullptr;
-    }
-
-    const uint64_t aligned_size = align_up(size_bytes, memory::kPageSize);
-    if (aligned_size < size_bytes) {
-        return nullptr;
-    }
-    const uint64_t page_count = aligned_size / memory::kPageSize;
-    if (page_count == 0 || page_count > SIZE_MAX / sizeof(uint64_t)) {
-        return nullptr;
-    }
-    if (page_count == 0) {
-        return nullptr;
-    }
-
+/* Reserva una ranura de seccion y sus paginas fisicas, con el grant pedido.
+ * No borra las paginas: el que llama decide si las deja en cero (una seccion
+ * anonima) o si las llena desde otro lado (una respaldada por archivo). */
+static SectionObject* allocate_section(uint64_t aligned_size, uint64_t page_count, uint32_t access_mask) {
     for (SectionObject& section_object : g_section_objects) {
         if (section_object.in_use) {
             continue;
@@ -250,6 +238,69 @@ SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
     }
 
     return nullptr;
+}
+
+SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
+    if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
+        return nullptr;
+    }
+
+    const uint64_t aligned_size = align_up(size_bytes, memory::kPageSize);
+    if (aligned_size < size_bytes) {
+        return nullptr;
+    }
+    const uint64_t page_count = aligned_size / memory::kPageSize;
+    if (page_count == 0 || page_count > SIZE_MAX / sizeof(uint64_t)) {
+        return nullptr;
+    }
+    if (page_count == 0) {
+        return nullptr;
+    }
+
+    return allocate_section(aligned_size, page_count, access_mask);
+}
+
+SectionObject* create_file_section(vfs::Vnode& node, uint32_t access_mask) {
+    const uint64_t size_bytes = node.size;
+    if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
+        return nullptr;
+    }
+
+    const uint64_t aligned_size = align_up(size_bytes, memory::kPageSize);
+    if (aligned_size < size_bytes) {
+        return nullptr;
+    }
+    const uint64_t page_count = aligned_size / memory::kPageSize;
+    if (page_count == 0 || page_count > SIZE_MAX / sizeof(uint64_t)) {
+        return nullptr;
+    }
+
+    SectionObject* section_object = allocate_section(aligned_size, page_count, access_mask);
+    if (section_object == nullptr) {
+        return nullptr;
+    }
+
+    /* Se lee el archivo entero adentro de las paginas que se acaba de reservar.
+     * Si a mitad de camino el archivo resulta mas corto que lo que prometia
+     * vnode.size, la seccion queda con ceros en la cola y se devuelve igual: un
+     * binario truncado a medio leer no es un motivo para tumbar al proceso que
+     * lo pide, y el cargador va a fallar al validar el ELF. Lo que NO se tolera
+     * es un error de lectura real, que si se reporta. */
+    uint64_t filled = 0;
+    while (filled < size_bytes) {
+        const uint64_t chunk = (size_bytes - filled) > memory::kPageSize
+            ? static_cast<uint64_t>(memory::kPageSize)
+            : (size_bytes - filled);
+        void* buffer = vm::physical_to_virtual(section_object->physical_pages[filled / memory::kPageSize]);
+        const size_t got = vfs::read(node, static_cast<size_t>(filled), buffer, static_cast<size_t>(chunk));
+        if (got == 0) {
+            /* Fin de archivo antes de lo prometido: el resto queda en cero. */
+            break;
+        }
+        filled += got;
+    }
+
+    return section_object;
 }
 
 SectionObject* clone_section(const SectionObject& source) {

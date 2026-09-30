@@ -19,10 +19,39 @@ Three callers, and they want different things from it:
 | --- | --- | --- |
 | Heap arenas (`sx_arena_acquire`, `runtime/posix.c`) | anonymous, writable, private | per process |
 | GPU surfaces (`GPU_IOC_IMPORT_SECTION`) | shared with another process by handle | while a handle is open |
-| Library images (not built yet) | read-only, backed by a file, shared by every process that loads it | as long as one view exists |
+| File images (`section_open`) | read-only, backed by a file's bytes | as long as one view exists |
+| Library images (not built yet) | the same, resolved by file identity so two processes share pages | as long as one view exists |
 
 The heap allocator is the reason this subsystem is budget-driven rather than
 cheap: arenas are per process and per-process caps multiply.
+
+## `section_open` and what it does not do yet
+
+`section_open(fd, flags)` takes an already-open read descriptor and returns a
+section handle whose pages hold the file's bytes. The whole file is read at
+create time — there is no demand paging for files — and the tail of the last page
+is zero when the file is not a multiple of 4 KiB.
+
+Write access cannot be requested: `SAVANXP_SECTION_WRITE` is `EINVAL`. That is
+the design, not an omission. The backing is read-only so that no page another
+process has mapped is ever written, which is what keeps copy-on-write out of the
+first milestone; a loader fills writable segments from the file into private
+anonymous sections instead.
+
+Two things are deliberately missing:
+
+- **No identity cache.** Two calls with descriptors on the same file return two
+  independent sections with two copies of the pages, so a library loaded by two
+  processes costs twice the memory. `vfs::open` hands back a pointer into one
+  global node table, so the pointer *is* stable across processes and can key a
+  cache — but a pointer alone is not enough, because replacing a library in
+  place reuses the node while changing the bytes, and a cache keyed on it alone
+  would keep serving the old image. That is why the cache is a separate step and
+  not folded in here.
+- **No end-to-end execution from the mapping.** `sectiontest` proves the bytes
+  arrive intact and that the view maps executable, but code that actually *runs*
+  out of a file-backed view needs a loader to apply relocations first. The
+  anonymous-section test is the one that executes real machine code.
 
 ## The grant is the intersection of three things
 

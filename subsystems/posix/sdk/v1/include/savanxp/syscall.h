@@ -88,6 +88,7 @@ enum savanxp_syscall_number {
     /* Informe de consistencia del volumen SxFS: solo lectura, sin reparacion.
      * Ver struct savanxp_fscheck_report. */
     SAVANXP_SYS_FSCHECK = 59,
+    SAVANXP_SYS_SECTION_OPEN = 60,
 };
 
 enum savanxp_open_flags {

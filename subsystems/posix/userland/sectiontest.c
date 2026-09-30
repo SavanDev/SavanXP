@@ -57,6 +57,144 @@ static unsigned long fill_sections_until_full(void) {
     return count;
 }
 
+/* Los dos bloques de abajo se escribieron antes que estos helpers; se declaran
+ * aqui para que el orden del archivo no los obligue a ir al final. */
+static int expect_success(long result, const char* label);
+static int expect_pointer(void* value, const char* label);
+static int expect_refused(void* value, const char* label);
+
+/* Abre un archivo que el smoke garantiza presente, para usar de respaldo de
+ * prueba. No importa cual: el test compara el contenido de la seccion contra
+ * lo que read() trae del mismo descriptor, asi que le sirve cualquiera. */
+static long open_known_file(void) {
+    static const char* const paths[] = {
+        "/disk/bin/sectiontest",
+        "/bin/sectiontest",
+        "/disk/bin/true",
+        "/bin/true",
+    };
+    for (unsigned index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index) {
+        const long fd = savanxp_open(paths[index]);
+        if (fd >= 0) {
+            return fd;
+        }
+    }    return -1;
+}
+
+/* --- secciones respaldadas por archivo -----------------------------------
+ *
+ * Un backing de solo lectura: se abre un descriptor, la seccion se llena con el
+ * contenido del archivo, y despues solo se puede leer. No hay forma de pedir
+ * escritura, porque los segmentos que el cargador tiene que escribir son
+ * secciones anonimas aparte. */
+static int test_file_backed_section(void) {
+    const long fd = open_known_file();
+    if (fd < 0) {
+        eprintf("sectiontest: no se encontro ningun archivo conocido para el respaldo\n");
+        return 0;
+    }
+
+    /* El grant se pide al CREAR la seccion, no al mapear. Acquire lo lleva para
+     * que la vista ejecutable se pueda pedir despues; una seccion creada sin
+     * exec no la concede ni aunque se la pida la vista. */
+    const long section = section_open((int)fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
+    if (!expect_success(section, "open file-backed section")) {
+        savanxp_close((int)fd);
+        return 0;
+    }
+
+    /* Escritura sobre el respaldo se rechaza con EINVAL, no con ENOMEM: el
+     * rechazo es una decision de diseno, no falta de memoria. */
+    if (!expect_refused((void*)(long)section_open((int)fd, SAVANXP_SECTION_WRITE),
+                        "un respaldo escribible")) {
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+
+    void* runnable = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
+    if (!expect_pointer(runnable, "map file-backed view")) {
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+
+    /* El contenido tiene que ser el del archivo. Se comparan los primeros 512
+     * bytes contra read() del mismo descriptor: si la seccion salio de otro lado
+     * o desalineada, el primer byte difiere. */
+    unsigned char from_read[512];
+    const long got = savanxp_read(fd, from_read, sizeof(from_read));    if (got <= 0) {
+        eprintf("sectiontest: read del archivo fallo (%s)\n", result_error_string(got));
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    const unsigned char* mapped = (const unsigned char*)runnable;
+    int mismatch = 0;
+    for (long index = 0; index < got; ++index) {
+        if (mapped[index] != from_read[index]) {
+            eprintf("sectiontest: byte %ld difiere (seccion %02x, archivo %02x)\n",
+                    index, mapped[index], from_read[index]);
+            mismatch = 1;
+            break;
+        }
+    }
+    if (mismatch) {
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+
+    /* Los primeros cuatro bytes de cualquier ejecutable del sistema son el
+     * ELF magic. No prueba que el codigo CORRA desde aca -- eso llega con el
+     * cargador -- pero si que la pagina quedo mapeada y legible como codigo. */
+    if (mapped[0] != 0x7f || mapped[1] != 0x45 || mapped[2] != 0x4c || mapped[3] != 0x46) {
+        eprintf("sectiontest: la seccion respaldada no arranca con ELF magic (%02x %02x %02x %02x)\n",
+                mapped[0], mapped[1], mapped[2], mapped[3]);
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+
+    /* Sin cache de identidad todavia: dos aperturas del mismo archivo dan dos
+     * secciones distintas. Esto es lo que va a cambiar cuando la identidad viva
+     * en la tabla global, y el test va a tener que cambiar con ella. */
+    const long second = section_open((int)fd, SAVANXP_SECTION_READ);
+    if (!expect_success(second, "reopen file-backed section")) {
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    void* second_view = map_view((int)second, SAVANXP_SECTION_READ);
+    if (!expect_pointer(second_view, "map second file-backed view")) {
+        savanxp_close((int)second);
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    if (second_view == runnable) {
+        eprintf("sectiontest: dos secciones del mismo archivo salieron en la misma direccion\n");
+        unmap_view(second_view);
+        savanxp_close((int)second);
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+
+    unmap_view(second_view);
+    savanxp_close((int)second);
+    unmap_view(runnable);
+    savanxp_close((int)section);
+    savanxp_close((int)fd);
+    return 1;
+}
+
 static int expect_success(long result, const char* label) {
     if (result < 0) {
         eprintf("sectiontest: %s failed (%s)\n", label, result_error_string(result));
@@ -314,6 +452,10 @@ int main(void) {
         return 1;
     }
     savanxp_close((int)code_section);
+
+    if (!test_file_backed_section()) {
+        return 1;
+    }
 
     /* --- la tabla global de secciones, llenada entre varios ---------------
      *

@@ -48,6 +48,7 @@ long timer_create(unsigned long flags);
 long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
 long timer_cancel(int handle);
 long section_create(unsigned long size, unsigned long flags);
+long section_open(int handle, unsigned long flags);
 void* map_view(int handle, unsigned long flags);
 long unmap_view(void* base);
 /* Deja una seccion, evento, semaforo o timer en la cola de handles del pipe;
