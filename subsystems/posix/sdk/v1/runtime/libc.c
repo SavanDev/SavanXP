@@ -260,7 +260,14 @@ extern int sx_run_interpreter(void) __attribute__((weak));
  * puede olvidarse. */
 void sx_start_dynamic(void) {
     if (sx_run_interpreter != 0) {
-        sx_run_interpreter();
+        const int result = sx_run_interpreter();
+        if (result != 0) {
+            /* Un programa que no queda operativo no puede decir nada util con
+             * printf todavia, y el sintoma de no haberse reubicado --punteros a
+             * cero, secciones que no abren-- no dice nada de la causa. El paso
+             * que fallo va numerado igual que en ldso_load. */
+            eprintf("sx_start_dynamic: el interprete fallo (paso %d)\n", -result);
+        }
     }
 }
 

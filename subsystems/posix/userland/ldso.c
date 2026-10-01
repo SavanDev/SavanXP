@@ -459,12 +459,15 @@ int ldso_start(void) {
     done = 1;
     adopt_executable_once();
     if (g_lib_count == 0) {
-        /* No se encontro la cabecera de la imagen. Un programa que no depende de
-         * ninguna libreria no la necesita, asi que no es un fallo. */
-        return 0;
+        /* Sin la imagen no hay nada que reubicar, pero una imagen ET_DYN SI
+         * necesita que la reubiquen. Devolver 0 aqui seria mentir: el programa
+         * arranca con punteros sin sumar el bias y falla mas tarde, en un sitio
+         * que no dice nada de esto. Un programa que de verdad no depende de
+         * nada no llega aca, porque no llega a enlazar el cargador. */
+        return -10;
     }
     if (g_libs[0].dynsym == 0) {
-        return 0;
+        return -11;
     }
     if (load_needed_chain(0) != 0) {
         return -8;

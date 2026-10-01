@@ -185,7 +185,6 @@ savanxp_program(NAME beep SOURCES subsystems/posix/userland/beep.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 savanxp_program(NAME compositord SOURCES subsystems/posix/userland/compositord.c)
 savanxp_program(NAME windowd SOURCES
-    subsystems/posix/sdk/v1/runtime/sxe.c
     subsystems/posix/userland/windowd.c
     subsystems/posix/userland/windowd_compositor_client.c
     subsystems/posix/userland/desktop_icons.c
@@ -202,51 +201,42 @@ savanxp_program(NAME taskbar SOURCES
     subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME kbdlayoutpopup SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
 savanxp_program(NAME progman SOURCES
-    subsystems/posix/sdk/v1/runtime/sxe.c
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/desktop_icons.c
-    subsystems/posix/userland/desktop_wallpaper.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/desktop_wallpaper.c)
 savanxp_program(NAME appwiz SOURCES
-    subsystems/posix/sdk/v1/runtime/sxe.c
     subsystems/posix/userland/appwiz.c
-    subsystems/posix/userland/appwiz_catalog.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/appwiz_catalog.c)
 savanxp_program(NAME aboutapp SOURCES
-    subsystems/posix/userland/aboutapp.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/aboutapp.c)
 savanxp_program(NAME taskmgr SOURCES
-    subsystems/posix/userland/taskmgr.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/taskmgr.c)
 savanxp_program(NAME filesapp SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c
-    subsystems/posix/userland/mime_icon.c
-    subsystems/posix/sdk/v1/runtime/sxe.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/mime_icon.c)
 savanxp_program(NAME notepad SOURCES
-    subsystems/posix/userland/notepad.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/notepad.c)
 savanxp_program(NAME mines SOURCES
     subsystems/posix/userland/mines.c
-    subsystems/posix/userland/mines_board.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/mines_board.c)
+# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
+# pruebas en el perfil PIE: depende de SxGUI y se dibuja, asi que si el perfil
+# serviriera para algo mas que para mover sqrt, este es el programa que lo
+# demuestra. La migracion es una linea porque las unidades del runtime ya no se
+# listan a mano.
+# La calculadora sigue en STATIC, a proposito.
+#
+# Su migracion a PIE esta a medias y NO se manda asi: como ET_DYN, calc corre y
+# muere en la primera escritura a stdout. Dos bugs ya quedaron corregidos en el
+# camino --crt0 destruia argc/argv, y el kernel escribia la ruta del interprete
+# encima de la cadena del ultimo argumento--, pero queda un tercero sin
+# diagnosticar. docs/SHARED_LIBRARIES.md dice cual es y como se llego a el.
 savanxp_program(NAME calc SOURCES
-    subsystems/posix/userland/calc.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/calc.c)
 savanxp_program(NAME widgetsdemo TEST SOURCES
-    subsystems/posix/userland/widgetsdemo.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+    subsystems/posix/userland/widgetsdemo.c)
 savanxp_program(NAME gfxdemo TEST SOURCES subsystems/posix/userland/gfxdemo.c)
 savanxp_program(NAME gears TEST SOURCES subsystems/posix/userland/gears.c)
 savanxp_program(NAME gputest TEST SOURCES subsystems/posix/userland/gputest.c)
@@ -266,8 +256,7 @@ savanxp_program(NAME handletest TEST SOURCES subsystems/posix/userland/handletes
 savanxp_program(NAME semaphoretest TEST SOURCES subsystems/posix/userland/semaphoretest.c)
 savanxp_program(NAME cliptest TEST SOURCES subsystems/posix/userland/cliptest.c)
 savanxp_program(NAME seltest TEST SOURCES
-    subsystems/posix/userland/seltest.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c)
+    subsystems/posix/userland/seltest.c)
 savanxp_program(NAME mmaptest TEST SOURCES subsystems/posix/userland/mmaptest.c)
 savanxp_program(NAME libctest TEST SOURCES subsystems/posix/userland/libctest.c)
 savanxp_program(NAME stacktest TEST SOURCES subsystems/posix/userland/stacktest.c)
@@ -275,5 +264,4 @@ savanxp_program(NAME imagetest TEST SOURCES subsystems/posix/userland/imagetest.
 savanxp_program(NAME heaptest TEST SOURCES subsystems/posix/userland/heaptest.c)
 savanxp_program(NAME smoke TEST SOURCES subsystems/posix/userland/smoke.c)
 savanxp_program(NAME sxetest TEST SOURCES
-    subsystems/posix/userland/sxetest.c
-    subsystems/posix/sdk/v1/runtime/sxe.c)
+    subsystems/posix/userland/sxetest.c)

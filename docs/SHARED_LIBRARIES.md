@@ -133,6 +133,21 @@ Today `ldso_start()` is called from `main`, so a program must not touch a librar
 symbol before it. `crt0` doing it is the step after this one, and it is the
 point where the model stops being hybrid.
 
+## One runtime unit list
+
+`savanxp_user_runtime`, `savanxp_user_runtime_pic` and `savanxp_user_runtime_pic_nomath`
+used to have different source lists, and the PIC one was a superset: it carried
+`sxgui`, `sxe` and `audio`. A working `STATIC` program had to list those units by
+hand, and the moment it moved to `PIE` the same units became duplicate symbols.
+Changing profile was not a one-line change but a source edit, which is the
+opposite of what a profile is for.
+
+One list now feeds all three, and the 14 programs that listed runtime units
+stopped listing them. Extra units cost nothing in a program that does not use
+them: the compile options carry `-ffunction-sections`/`-fdata-sections` and the
+`STATIC` profile passes `--gc-sections`, so the unreferenced ones go at link
+time.
+
 ## The build has to leave the symbol undefined
 
 `libtest` links `LINK_PROFILE PIE WITHOUT_MATH`. `WITHOUT_MATH` drops `math.c`
@@ -215,13 +230,60 @@ to whichever library was loaded last.
 looked up is the question, not the answer, and its `st_value` of zero would
 translate to the base of the image — a call that lands on the ELF header.
 
+## calc is not PIE yet, and why
+
+`calc` was the first real program to be flipped to `LINK_PROFILE PIE`, to find
+out whether the profile was worth anything beyond moving `sqrt`. It is not, yet.
+As `ET_DYN` it starts, runs the loader, and dies on the first write to stdout
+with `cr2 = 0x40000c` — a write to address zero plus the load bias, landing in
+the read-only first page of its own image.
+
+Getting there turned up three bugs. Two are fixed:
+
+1. **`crt0` destroyed `argc` and `argv`.** It called `sx_start_dynamic` between
+   receiving them in `%rdi`/`%rsi` and calling `main`, and there is nowhere to
+   put them: a call may use either register. `sx_start_dynamic` happens not to
+   touch them when the loader is absent, which is why nothing noticed — every
+   program that runs the loader for real has work to do, and that clobbers both.
+   `crt0` now pushes them and restores them.
+
+2. **The kernel wrote the interpreter path over an argv string.** It went
+   *above* the pointer array, on the reasoning that the space where `envp` lives
+   in Linux is unused here. It is not unused: the argv *strings* sit immediately
+   above the array. With `calc --selftest` the array landed at `0x6fffffffc8`,
+   the `"--selftest"` string at `0x6fffffffe0`, and the 28-byte interpreter path
+   began at exactly `0x6fffffffe0`. `argv` looked perfect — right pointers,
+   right count — and the program read `argv[1]` as
+   `/lib64/ld-linux-x86-64.so.2`. The path is now reserved *between* the strings
+   and the array, by lowering `user_sp` before the array is built.
+
+   This was reachable before: `interptest` has a `PT_INTERP` and simply never
+   collided, because whether the interpreter path happens to land on the lowest
+   string depends on the lengths involved.
+
+3. **The link profile declared an interpreter that does not exist.** lld, given
+   `-pie` without `-static`, writes `/lib64/ld-linux-x86-64.so.2` into every
+   `ET_DYN` by default — a path from the host that builds. That is what made bug
+   2 bite. The profile now declares `/disk/lib/ld.so.0.4`.
+
+The third failure is **not** diagnosed. `stdout` is a relocated pointer in the
+data segment, and the loader turns its zero into `0x400000` by adding the bias
+to a slot that was already zero. The slot is inside `LOAD 3`, not in the gap
+between segments, and the kernel writes segment content at `p_vaddr`, so the
+bytes should be in the image. Where the zero comes from is still open.
+
+Two hypotheses were tried and rejected rather than shipped: writing segment
+content from the page boundary (the `stdout` address was *not* in the gap), and
+suspecting a `NULL` that a `RELATIVE` relocation turned into the bias (there are
+no zero addends in `calc`'s relocation table). `calc` therefore stays `ET_EXEC`
+— it is a program that runs every day, and a half-migrated one is worse than a
+documented `ET_EXEC`.
+
 ## What blocks the rest, in order
 
-1. **PIE for real programs.** The mechanism is proven end to end — `libtest` links
-   `libmath.so.0.4`, `crt0` runs the loader, and `sqrt` is called normally — but
-   every other program is still `ET_EXEC` with no table to resolve against.
-   `SECTIONS.md` has the detail. It is a per-program decision, not another
-   mechanism.
+1. **`stdout` under PIE.** The third failure above, before any more program is
+   migrated. Until it is understood, the profile is proven only on programs that
+   do not write through a relocated global pointer.
 
 2. **Wider libraries.** `libmath.so.0.4` is linked by one test. The saving it
    promises — `sqrt` mapped once instead of in every binary — is real but only

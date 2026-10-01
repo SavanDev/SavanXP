@@ -160,14 +160,22 @@ set(SAVANXP_USER_LINK_OPTIONS_STATIC
 # modo que no se expresa como "agregar una opcion", y sin --export-dynamic la
 # salida DYN sale sin .dynsym y el cargador no tiene contra que resolver.
 #
-# Se define aunque nada lo pida todavia: que exista es lo que hace que
-# LINK_PROFILE=PIE deje de fallar en savanxp_program. Usarlo es el paso
-# siguiente, no este.
+# --dynamic-linker va con la ruta real del interprete. lld, al ver -pie sin
+# -static, mete por defecto /lib64/ld-linux-x86-64.so.2, que es del host que
+# compila y no existe en SavanXP. El efecto no era cosmeticso: el kernel copia
+# esa ruta al stack inicial, y una imagen ET_DYN la llevaba a una posicion que
+# pisaba la cadena del ultimo argumento. Un programa recibia su propio argv con
+# una ruta de glibc en lugar de la suya.
+#
+# La ruta que va es la que el interprete tendria si fuera un archivo aparte.
+# Hoy el cargador va enlazado dentro del programa, asi que el kernel mapea la
+# imagen principal y crt0 corre el cargador; PT_INTERP no se ejecuta todavia.
 set(SAVANXP_USER_LINK_OPTIONS_PIE
     -nostdlib
     -fuse-ld=lld
     -pie
     "-Wl,-z,max-page-size=0x1000"
+    "-Wl,--dynamic-linker,/disk/lib/ld.so.0.4"
     -Wl,--build-id=none
     -Wl,--export-dynamic
     -Wl,-e,_start
@@ -269,8 +277,20 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
 # The freestanding userland runtime is shared by every in-tree executable. The
 # final link still uses --gc-sections, so each program only retains the runtime
 # pieces it references.
-add_library(savanxp_user_runtime OBJECT
-    subsystems/posix/sdk/v1/runtime/crt0.S
+# Las unidades del runtime del usuario. UNA sola lista para los tres targets:
+# el normal, el PIC y el PIC sin math.
+#
+# Antes cada uno tenia la suya y no coincidian: el PIC traia sxgui, sxe y audio,
+# el normal no. Un programa.funcional bajo STATIC tiene que listar a mano las
+# unidades que el runtime no trae, y en cuanto se migra a PIE esas mismas
+# unidades dan simbolo duplicado. Eso hacia que cambiar de perfil no fuera un
+# cambio de una linea sino una reedicion de fuentes, que es justo lo que el
+# perfil deberia evitar.
+#
+# Sobran unidades en un programa que no las use no cuesta nada: las opciones de
+# compilacion llevan -ffunction-sections/-fdata-sections y el perfil STATIC
+# pasa --gc-sections, asi que lo no referenciado se descarta en el enlace.
+set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/crt0.S
     subsystems/posix/sdk/v1/runtime/libc.c
     subsystems/posix/sdk/v1/runtime/posix.c
@@ -278,7 +298,12 @@ add_library(savanxp_user_runtime OBJECT
     subsystems/posix/sdk/v1/runtime/gfx.c
     subsystems/posix/sdk/v1/runtime/gfx2d.c
     subsystems/posix/sdk/v1/runtime/sxchrome.c
+    subsystems/posix/sdk/v1/runtime/sxgui.c
+    subsystems/posix/sdk/v1/runtime/sxgui_app.c
+    subsystems/posix/sdk/v1/runtime/sxe.c
+    subsystems/posix/sdk/v1/runtime/audio.c
 )
+add_library(savanxp_user_runtime OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
 target_include_directories(savanxp_user_runtime PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
@@ -292,29 +317,6 @@ set_target_properties(savanxp_user_runtime PROPERTIES
     C_EXTENSIONS YES
 )
 
-# Perfil PIC del runtime: las mismas unidades, compiladas position independent
-# para que un ejecutable ET_DYN pueda nacer de ellas. La prueba en frio dice
-# que las 10 compilan sin tocarlas (la unica que fallaba era por falta del
-# include path, no por el codigo).
-#
-# crt0.S SI va, verificado: ya es position independent. Sus accesos a
-# __stack_chk_guard y sx_interpreter_path son %rip-relativos y el call main es
-# relativo, asi que no hay direccion absoluta que relativizar. setjmp.S no va,
-# porque su trampolin es position dependent por diseno.
-
-set(SAVANXP_USER_PIC_SOURCES
-    subsystems/posix/sdk/v1/runtime/crt0.S
-    subsystems/posix/sdk/v1/runtime/libc.c
-    subsystems/posix/sdk/v1/runtime/posix.c
-    subsystems/posix/sdk/v1/runtime/math.c
-    subsystems/posix/sdk/v1/runtime/gfx.c
-    subsystems/posix/sdk/v1/runtime/gfx2d.c
-    subsystems/posix/sdk/v1/runtime/sxchrome.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c
-    subsystems/posix/sdk/v1/runtime/sxe.c
-    subsystems/posix/sdk/v1/runtime/audio.c
-)
 set(SAVANXP_USER_COMPILE_OPTIONS_PIC
     "-target;${SAVANXP_TARGET_TRIPLE}"
     -ffreestanding
@@ -333,7 +335,7 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
     -Wno-language-extension-token
     -Wno-c23-extensions
 )
-add_library(savanxp_user_runtime_pic OBJECT ${SAVANXP_USER_PIC_SOURCES})
+add_library(savanxp_user_runtime_pic OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
 target_include_directories(savanxp_user_runtime_pic PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
@@ -358,14 +360,14 @@ set_target_properties(savanxp_user_runtime_pic PROPERTIES
 # programa enlazaria igual y pareceria funcionar, pero estaria copiaprivate de
 # math.c y no habria ninguna libreria en juego: la prueba pasaria sin probar el
 # mecanismo. Sacar math.c de las unidades es lo que hace que la prueba sea real.
-set(SAVANXP_USER_PIC_SOURCES_NO_MATH
+set(SAVANXP_USER_RUNTIME_SOURCES_NO_MATH
 )
-foreach(source IN LISTS SAVANXP_USER_PIC_SOURCES)
+foreach(source IN LISTS SAVANXP_USER_RUNTIME_SOURCES)
     if(NOT source STREQUAL "subsystems/posix/sdk/v1/runtime/math.c")
-        list(APPEND SAVANXP_USER_PIC_SOURCES_NO_MATH ${source})
+        list(APPEND SAVANXP_USER_RUNTIME_SOURCES_NO_MATH ${source})
     endif()
 endforeach()
-add_library(savanxp_user_runtime_pic_nomath OBJECT ${SAVANXP_USER_PIC_SOURCES_NO_MATH})
+add_library(savanxp_user_runtime_pic_nomath OBJECT ${SAVANXP_USER_RUNTIME_SOURCES_NO_MATH})
 target_include_directories(savanxp_user_runtime_pic_nomath PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"

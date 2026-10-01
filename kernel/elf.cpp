@@ -219,6 +219,41 @@ bool build_initial_stack(
         }
 
         user_sp &= ~static_cast<uint64_t>(0xf);
+
+        /* La ruta del intérprete se reserva ENTRE las cadenas de argv y el
+         * arreglo de punteros, nunca arriba del arreglo.
+         *
+         * Arriba del arreglo no hay espacio libre: las cadenas quedan justo
+         * encima de él, porque el kernel las copia desde la punta hacia abajo y
+         * recién después reserva el arreglo. Escribir arriba pisa la cadena del
+         * último argumento, y el síntoma es desconcertante porque los punteros
+         * de argv quedan correctos: con `calc --selftest` el arreglo quedaba en
+         * 0x6fffffffc8, la cadena de "--selftest" en 0x6fffffffe0, y una ruta de
+         * intérprete de 28 bytes arrancaba exactamente en 0x6fffffffe0. El
+         * programa leía argv[1] = "/lib64/ld-linux-x86-64.so.2".
+         *
+         * Reservarlo acá, bajando user_sp ANTES de armar el arreglo, deja la
+         * pila contigua: cadenas, intérprete, arreglo. Y no mueve rsp: rsp queda
+         * en el arreglo, que es lo que recibe el proceso.
+         *
+         * Se reserva un multiplo de 8 y se escriben p_filesz bytes. El
+         * terminador lo aporta el redondeo hacia arriba del espacio reservado,
+         * no el contenido de la pagina: depender de que la pagina venga en cero
+         * no es una precondicion que se pueda dar por cierta. */
+        if (interpreter_length != 0 && interpreter_offset != 0) {
+            const uint64_t reserved = (interpreter_length + 7u) & ~static_cast<uint64_t>(7u);
+            const uint64_t slot = user_sp - reserved;
+            if (slot < mapped_bottom) {
+                return false;
+            }
+            if (read_image(read_context, interpreter_offset,
+                           stack_kernel_pointer(backing, mapped_bottom, slot),
+                           static_cast<size_t>(interpreter_length))) {
+                user_sp = slot;
+                interpreter_address = slot;
+            }
+        }
+
         user_sp -= static_cast<uint64_t>((stored_argc + 1) * sizeof(uint64_t));
         if (user_sp < mapped_bottom) {
             return false;
@@ -235,22 +270,7 @@ bool build_initial_stack(
                    sizeof(terminator));
         }
 
-        /* La ruta del intérprete va ARRIBA del arreglo de argv, en el hueco donde
-         * en Linux iría envp y acá no hay nada. No va debajo: bajando user_sp se
-         * corre rsp, y rsp tiene que seguir apuntando al argc porque es el
-         * contrato del stack inicial. */
-        if (interpreter_length != 0 && interpreter_offset != 0) {
-            const uint64_t slot = user_sp + ((static_cast<uint64_t>(stored_argc) + 1) * sizeof(uint64_t));
-            const uint64_t room = mapped_bottom + (initial_pages * memory::kPageSize);
-            if (slot + interpreter_length <= room) {
-                if (read_image(read_context, interpreter_offset,
-                               stack_kernel_pointer(backing, mapped_bottom, slot),
-                               static_cast<size_t>(interpreter_length))) {
-                    interpreter_address = slot;
-                }
-            }
         }
-    }
 
     // El argc que recibe el proceso es el que REALMENTE quedo en el arreglo.
     // Antes se copiaban 15 argumentos como maximo pero se pasaba el argc

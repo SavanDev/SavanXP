@@ -24,7 +24,18 @@ _start:
     # ensamblador habria que hacer movq simbolo(%rip) -- que LEE la memoria de esa
     # direccion. Con el simbolo debil sin definir esa direccion es 0 y el proceso
     # muere leyendo la pagina cero antes de llegar a main.
+    #
+    # %rdi y %rsi traen argc y argv desde el kernel, y no hay donde copiarlos:
+    # una llamada puede usar cualquiera de los dos. Hay que guardarlos en el
+    # stack y restaurarlos antes de entrar a main.
+    #
+    # Los dos push dejan rsp alineado a 16 igual que estaba: main exige
+    # rsp % 16 == 0 en el call, y main es justamente a donde se llega.
+    pushq %rdi
+    pushq %rsi
     call sx_start_dynamic
+    popq %rsi
+    popq %rdi
     call main
     movq %rax, %rdi
     movq $7, %rax

@@ -69,6 +69,9 @@ Cut-off notes:
 
 ### Added
 
+- **`sx_start_dynamic` reports a failing interpreter.** A program that could not
+  be relocated said nothing and failed later somewhere unrelated.
+
 - **`crt0` now runs the library loader before `main`.** A program that links the
   loader is ready to call into its libraries with no setup of its own; programs
   that do not link it are unaffected.
@@ -260,6 +263,19 @@ Cut-off notes:
   [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
 
 ### Fixed
+
+- **`crt0` no longer loses `argc` and `argv`.** Running the library loader before
+  `main` used the registers the kernel had put them in, so a program with
+  arguments lost them. Every program that ran the loader with real work to do
+  was affected.
+
+- **The interpreter path no longer overwrites an argument string.** It was
+  written above the `argv` pointer array, where the argument strings live; a
+  program could read a path instead of its own argument.
+
+- **PIE executables no longer declare a glibc interpreter path.** `lld` inserts
+  `/lib64/ld-linux-x86-64.so.2` by default for `-pie`, a path from the host that
+  builds and not one SavanXP has.
 
 - **A shared library no longer resolves its calls against the wrong image.** All
   its `PT_LOAD` segments now share one load bias, and each segment's file bytes
