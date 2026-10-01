@@ -55,7 +55,11 @@ Cut-off notes:
 - **`section_open` maps a file into a read-only section.** Given an open file
   descriptor it returns a section handle holding the file's bytes, so user mode
   can map a library image. Write access cannot be requested: the backing is
-  read-only and writable segments are separate anonymous sections.
+  read-only and writable segments are separate anonymous sections. Two processes
+  asking for the same file share one set of pages.
+
+- **`savanxp_system_info` reports live section counts.** `sections_live` and
+  `file_sections_live`, so a shared mapping is observable instead of assumed.
 
 - **`SAVANXP_SECTION_EXEC` maps a section view as executable.** Execution is a
   permission of the view, granted by the section, instead of a hardcoded `NX` on

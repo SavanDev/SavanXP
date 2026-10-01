@@ -3,6 +3,7 @@
 #include "kernel/heap.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
+#include "kernel/sxfs.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
 
@@ -260,7 +261,38 @@ SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
     return allocate_section(aligned_size, page_count, access_mask);
 }
 
-SectionObject* create_file_section(vfs::Vnode& node, uint32_t access_mask) {
+/* Devuelve la seccion ya cargada para este inode, o nullptr. Solo hay una por * inode: la tabla tiene 256 lugares y el punto de este cache es no multiplicar
+ * las paginas fisicas de una libreria entre procesos. */
+void section_live_counts(uint32_t& live, uint32_t& file_backed) {
+    live = 0;
+    file_backed = 0;
+    for (const SectionObject& section_object : g_section_objects) {
+        if (!section_object.in_use) {
+            continue;
+        }
+        live++;
+        if (section_object.file_backed != 0) {
+            file_backed++;
+        }
+    }
+}
+
+static SectionObject* find_file_section(uint32_t inode_id) {
+    if (inode_id == 0) {
+        return nullptr;
+    }
+    for (SectionObject& section_object : g_section_objects) {
+        if (!section_object.in_use || section_object.file_backed == 0) {
+            continue;
+        }
+        if (section_object.source_inode_id == inode_id) {
+            return &section_object;
+        }
+    }
+    return nullptr;
+}
+
+SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask) {
     const uint64_t size_bytes = node.size;
     if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
         return nullptr;
@@ -275,10 +307,35 @@ SectionObject* create_file_section(vfs::Vnode& node, uint32_t access_mask) {
         return nullptr;
     }
 
+    /* La clave de identidad es el inode de SxFS. Para un archivo del initramfs
+     * no hay inode: se lee igual, pero sin cache, porque no hay nada estable
+     * contra que comparar entre procesos. */
+    uint32_t inode_id = 0;
+    if (node.backend == vfs::Backend::sxfs) {
+        sxfs::FileRecord* record = sxfs::file_from_vnode(node);
+        if (record == nullptr) {
+            return nullptr;
+        }
+        inode_id = record->inode_id;
+        if (inode_id == 0) {
+            return nullptr;
+        }
+        if (SectionObject* existing = find_file_section(inode_id)) {
+            /* NO se retiene aca. create_section tampoco deja referencia puesta:
+             * la establish el llamador al instalar el handle (install_handle
+             * hace retain). Retener aqui y dejar que install_handle retenga
+             * otra vez deja una referencia de mas y la seccion no muere nunca. */
+            return existing;
+        }
+    }
+
     SectionObject* section_object = allocate_section(aligned_size, page_count, access_mask);
     if (section_object == nullptr) {
         return nullptr;
     }
+
+    section_object->file_backed = 1;
+    section_object->source_inode_id = inode_id;
 
     /* Se lee el archivo entero adentro de las paginas que se acaba de reservar.
      * Si a mitad de camino el archivo resulta mas corto que lo que prometia

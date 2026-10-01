@@ -19,8 +19,8 @@ Three callers, and they want different things from it:
 | --- | --- | --- |
 | Heap arenas (`sx_arena_acquire`, `runtime/posix.c`) | anonymous, writable, private | per process |
 | GPU surfaces (`GPU_IOC_IMPORT_SECTION`) | shared with another process by handle | while a handle is open |
-| File images (`section_open`) | read-only, backed by a file's bytes | as long as one view exists |
-| Library images (not built yet) | the same, resolved by file identity so two processes share pages | as long as one view exists |
+| File images (`section_open`) | read-only, backed by a file's bytes, shared by inode | as long as one view exists |
+| Library images (not built yet) | the same; they are what file images exist for | as long as one view exists |
 
 The heap allocator is the reason this subsystem is budget-driven rather than
 cheap: arenas are per process and per-process caps multiply.
@@ -40,18 +40,31 @@ anonymous sections instead.
 
 Two things are deliberately missing:
 
-- **No identity cache.** Two calls with descriptors on the same file return two
-  independent sections with two copies of the pages, so a library loaded by two
-  processes costs twice the memory. `vfs::open` hands back a pointer into one
-  global node table, so the pointer *is* stable across processes and can key a
-  cache — but a pointer alone is not enough, because replacing a library in
-  place reuses the node while changing the bytes, and a cache keyed on it alone
-  would keep serving the old image. That is why the cache is a separate step and
-  not folded in here.
+- **No in-place update detection.** The cache key is the SxFS `inode_id`, which is
+  stable and cross-process, but `write_file` rewrites an existing inode rather
+  than allocating a new one. So overwriting a library's bytes in place would
+  leave the cache serving the old image. This is unreachable today and must stay
+  that way until it is handled: **there is no install syscall**, Add/Remove
+  Programs can only uninstall, and the build rewrites `disk.img` from the host
+  with no kernel running to be stale. The moment an install syscall lands — or
+  anything else that writes a file's bytes in place — the key needs a content
+  generation bumped by `write_file`, `truncate_file`, `unlink_file`,
+  `rename_path` and create, **plus the test that proves it**: open a section,
+  overwrite the file with same-size different content, open again, expect
+  different bytes. Adding the counter before the mutation path exists would be
+  five hooks guarding a case that cannot occur, and one forgotten hook would be
+  a silent staleness bug.
 - **No end-to-end execution from the mapping.** `sectiontest` proves the bytes
   arrive intact and that the view maps executable, but code that actually *runs*
   out of a file-backed view needs a loader to apply relocations first. The
   anonymous-section test is the one that executes real machine code.
+
+Sharing is observable rather than assumed: `savanxp_system_info` reports
+`sections_live` and `file_sections_live`, and `sectiontest` checks that a forked
+child opening the same file does not push the count up. The parent has to sample
+while the child still holds its handle — hence the event handshake, because a
+child that closed first would make the count return to its old value and the
+check would pass whether or not the pages were shared.
 
 ## The grant is the intersection of three things
 

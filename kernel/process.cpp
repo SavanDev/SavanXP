@@ -2916,7 +2916,7 @@ int open_section_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
         object::access_read);
     section_access |= object::access_read;
 
-    object::SectionObject* section_object = object::create_file_section(*file->node, section_access);
+    object::SectionObject* section_object = object::acquire_file_section(*file->node, section_access);
     if (section_object == nullptr) {
         return negative_error(SAVANXP_ENOMEM);
     }
@@ -3219,6 +3219,7 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.timer_frequency_hz = timer::frequency_hz();
     info.pci_device_count = static_cast<uint32_t>(pci::device_count());
     info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(sxfs::root()));
+    object::section_live_counts(info.sections_live, info.file_sections_live);
     info.memory_total_pages = memory::total_page_count();
     info.sxfs_total_bytes = sxfs::total_bytes(sxfs::root());
     info.sxfs_used_bytes = sxfs::used_bytes(sxfs::root());

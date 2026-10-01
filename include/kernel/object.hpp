@@ -113,9 +113,15 @@ struct TimerObject {
 struct SectionObject {
     Header header;
     bool in_use;
-    uint8_t reserved0;
+    // La seccion nace de un archivo (section_open) y no de section_create. Las
+    // respaldadas se comparten por inode_id entre procesos; las anonimas nunca.
+    uint8_t file_backed;
     uint16_t reserved1;
     uint32_t access_mask;
+    // Solo valido con file_backed. Es la clave del cache: dos peticiones del
+    // mismo archivo encuentran la misma seccion y por lo tanto las mismas
+    // paginas fisicas. Ver docs/SECTIONS.md para que NO alcanza como clave.
+    uint32_t source_inode_id;
     uint64_t size_bytes;
     uint64_t page_count;
     memory::PageAllocation allocation;
@@ -143,7 +149,11 @@ const SemaphoreObject* as_semaphore(const Header* object);
 EventObject* create_event(bool manual_reset, bool initial_state);
 TimerObject* create_timer(bool manual_reset);
 SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask);
-SectionObject* create_file_section(vfs::Vnode& node, uint32_t access_mask);
+// Devuelve una seccion respaldada por el archivo, REUSANDO la existente si ya
+// hay una para ese inode. Devuelve nullptr solo si no se pudo crear ninguna.
+// No deja referencia puesta, igual que create_section: la que instala el handle
+// la toma. Retener aqui seria una referencia de mas y la seccion no muere nunca.
+SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask);
 SectionObject* clone_section(const SectionObject& source);
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count);
 void set_event(EventObject* event_object);
@@ -155,6 +165,9 @@ void poll_timers(uint64_t now_ms, void (*on_signal)(Header* object));
 // Devuelve false (sin modificar nada) si el resultado excedería max_count.
 bool release_semaphore(SemaphoreObject* semaphore_object, int32_t release_count, int32_t* previous_count);
 bool can_satisfy_wait(const Header* object);
-bool try_acquire_wait(Header* object);
+// Secciones vivas en la tabla, y cuantas respaldan un archivo. Es lo que hace
+// observable el cache por inode: dos procesos con la misma libreria tienen que
+// sumar 1 entre los dos, no 2.
+void section_live_counts(uint32_t& live, uint32_t& file_backed);bool try_acquire_wait(Header* object);
 
 } // namespace object

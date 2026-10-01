@@ -312,6 +312,11 @@ struct savanxp_system_info {
     uint32_t framebuffer_bpp;
     uint32_t pci_device_count;
     uint32_t sxfs_file_count;
+    /* Secciones vivas en la tabla global, y cuantas de ellas estan respaldadas
+     * por un archivo. Las respaldadas se comparten entre procesos por inode, asi
+     * que dos procesos con la misma libreria deberian sumar 1 entre los dos. */
+    uint32_t sections_live;
+    uint32_t file_sections_live;
     uint64_t memory_usable_bytes;
     uint64_t memory_reclaimable_bytes;
     uint64_t memory_total_pages;

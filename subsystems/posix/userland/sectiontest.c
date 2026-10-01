@@ -1,4 +1,5 @@
 #include "libc.h"
+#include <unistd.h>
 
 /* Codigo de maquina minimo y posicion independiente, escrito a mano para que el
  * test no dependa de como compilo el compilador una funcion equivalente:
@@ -94,6 +95,22 @@ static int test_file_backed_section(void) {
         return 0;
     }
 
+    /* El cache por inode se comprueba con el contador de secciones respaldadas.
+     * Comparar "antes" contra "despues de cerrar el segundo" NO alcanza: si el
+     * cache estuviera roto, el segundo pedido sumaria una y al cerrarla el
+     * conteo volveria al mismo numero, y la comparacion daria igual. Hacen
+     * falta los cuatro puntos: +1 al primer pedido, +0 al segundo, y que cerrar
+     * todo devuelva el numero inicial. */
+    struct savanxp_system_info before;
+    struct savanxp_system_info mid;
+    struct savanxp_system_info peak;
+    struct savanxp_system_info after;
+    memset(&before, 0, sizeof(before));
+    if (!expect_success(system_info(&before), "sysinfo before")) {
+        savanxp_close((int)fd);
+        return 0;
+    }
+
     /* El grant se pide al CREAR la seccion, no al mapear. Acquire lo lleva para
      * que la vista ejecutable se pueda pedir despues; una seccion creada sin
      * exec no la concede ni aunque se la pida la vista. */
@@ -114,6 +131,20 @@ static int test_file_backed_section(void) {
 
     void* runnable = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
     if (!expect_pointer(runnable, "map file-backed view")) {
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    if (!expect_success(system_info(&mid), "sysinfo mid")) {
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    if (mid.file_sections_live != before.file_sections_live + 1) {
+        eprintf("sectiontest: el primer pedido no sumo una seccion (%u -> %u)\n",
+                before.file_sections_live, mid.file_sections_live);
+        unmap_view(runnable);
         savanxp_close((int)section);
         savanxp_close((int)fd);
         return 0;
@@ -159,17 +190,14 @@ static int test_file_backed_section(void) {
         return 0;
     }
 
-    /* Sin cache de identidad todavia: dos aperturas del mismo archivo dan dos
-     * secciones distintas. Esto es lo que va a cambiar cuando la identidad viva
-     * en la tabla global, y el test va a tener que cambiar con ella. */
-    const long second = section_open((int)fd, SAVANXP_SECTION_READ);
+    const long second = section_open((int)fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
     if (!expect_success(second, "reopen file-backed section")) {
         unmap_view(runnable);
         savanxp_close((int)section);
         savanxp_close((int)fd);
         return 0;
     }
-    void* second_view = map_view((int)second, SAVANXP_SECTION_READ);
+    void* second_view = map_view((int)second, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
     if (!expect_pointer(second_view, "map second file-backed view")) {
         savanxp_close((int)second);
         unmap_view(runnable);
@@ -177,8 +205,10 @@ static int test_file_backed_section(void) {
         savanxp_close((int)fd);
         return 0;
     }
+    /* Dos vistas del mismo archivo, en direcciones distintas: son vistas, no
+     * secciones, asi que el reparto de direcciones sigue siendo por vista. */
     if (second_view == runnable) {
-        eprintf("sectiontest: dos secciones del mismo archivo salieron en la misma direccion\n");
+        eprintf("sectiontest: dos vistas del mismo archivo salieron en la misma direccion\n");
         unmap_view(second_view);
         savanxp_close((int)second);
         unmap_view(runnable);
@@ -186,11 +216,114 @@ static int test_file_backed_section(void) {
         savanxp_close((int)fd);
         return 0;
     }
+    if (!expect_success(system_info(&peak), "sysinfo peak")) {
+        unmap_view(second_view);
+        savanxp_close((int)second);
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    if (peak.file_sections_live != mid.file_sections_live) {
+        eprintf("sectiontest: el segundo pedido del mismo archivo sumo otra seccion (%u -> %u)\n",
+                mid.file_sections_live, peak.file_sections_live);
+        unmap_view(second_view);
+        savanxp_close((int)second);
+        unmap_view(runnable);
+        savanxp_close((int)section);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    /* Y lo que de verdad importa: que lo comparta OTRO proceso. La tabla de
+     * secciones es global, asi que un hijo que abre el mismo archivo tiene que
+     * encontrar la seccion que el padre ya tiene viva y NO sumar otra.
+     *
+     * El handshake va por evento, que es un objeto compartido del kernel y
+     * sobrevive al fork, porque el padre tiene que poder mirar el conteo
+     * MIENTRAS el hijo todavia tiene su handle abierto: si el hijo cerrara
+     * antes del muestreo, el conteo volveria a su valor y la comprobacion
+     * daria igual tanto si comparte como si no. */
+    const long child_ready = event_create(SAVANXP_EVENT_AUTO_RESET);
+    const long child_go = event_create(SAVANXP_EVENT_MANUAL_RESET);
+    if (!expect_success(child_ready, "create child_ready event") ||
+        !expect_success(child_go, "create child_go event")) {
+        savanxp_close((int)fd);
+        return 0;
+    }
+    const long pid = savanxp_fork();
+    if (pid < 0) {
+        eprintf("sectiontest: fork del comprobante fallo (%s)\n", result_error_string(pid));
+        savanxp_close((int)child_go);
+        savanxp_close((int)child_ready);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    if (pid == 0) {
+        const long inherited = section_open((int)fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
+        if (inherited < 0) {
+            _exit(100 + (int)(-inherited));
+        }
+        const unsigned char* inherited_bytes =
+            (const unsigned char*)map_view((int)inherited, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
+        if (inherited_bytes == 0 || result_is_error((long)inherited_bytes)) {
+            _exit(2);
+        }
+        for (long index = 0; index < got; ++index) {
+            if (inherited_bytes[index] != from_read[index]) {
+                _exit(3);
+            }
+        }
+        (void)event_set((int)child_ready);
+        (void)wait_one((int)child_go, 10000);
+        (void)unmap_view((void*)inherited_bytes);
+        (void)savanxp_close((int)inherited);
+        /* _exit y no return: con return el hijo salia de ESTA funcion y seguia
+         * ejecutando el resto del test como si fuera el padre, forkeando sus
+         * propios hijos en el bloque del tally. */
+        _exit(0);
+    }
+    if (!expect_success(wait_one((int)child_ready, 10000), "childReady")) {
+        (void)event_set((int)child_go);
+        (void)savanxp_waitpid((int)pid, NULL);
+        savanxp_close((int)child_go);
+        savanxp_close((int)child_ready);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    struct savanxp_system_info shared;
+    if (!expect_success(system_info(&shared), "sysinfo with child")) {
+        (void)event_set((int)child_go);
+        (void)savanxp_waitpid((int)pid, NULL);
+        savanxp_close((int)child_go);
+        savanxp_close((int)child_ready);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    /* El padre tiene una y el hijo deberia haber encontrado esa misma. Dos
+     * seria que el hijo se copio el archivo entero por su cuenta. */
+    if (shared.file_sections_live != mid.file_sections_live) {
+        eprintf("sectiontest: el hijo no compartio, sumo su propia seccion (%u -> %u)\n",
+                mid.file_sections_live, shared.file_sections_live);
+        (void)event_set((int)child_go);
+        (void)savanxp_waitpid((int)pid, NULL);
+        savanxp_close((int)child_go);
+        savanxp_close((int)child_ready);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    (void)event_set((int)child_go);
+    int child_status = -1;
+    if (!expect_success(savanxp_waitpid((int)pid, &child_status), "waitpid del comprobante") ||
+        child_status != 0) {
+        eprintf("sectiontest: el hijo comprobante fallo con codigo %d\n", child_status);
+        savanxp_close((int)child_go);
+        savanxp_close((int)child_ready);
+        savanxp_close((int)fd);
+        return 0;
+    }
+    savanxp_close((int)child_go);
+    savanxp_close((int)child_ready);
 
-    unmap_view(second_view);
-    savanxp_close((int)second);
-    unmap_view(runnable);
-    savanxp_close((int)section);
     savanxp_close((int)fd);
     return 1;
 }
