@@ -50,6 +50,7 @@ long timer_cancel(int handle);
 long section_create(unsigned long size, unsigned long flags);
 long section_open(int handle, unsigned long flags);
 void* map_view(int handle, unsigned long flags);
+void* map_view_at(int handle, unsigned long base, unsigned long flags);
 long unmap_view(void* base);
 /* Deja una seccion, evento, semaforo o timer en la cola de handles del pipe;
  * `pipe_fd` es el extremo de escritura. -SAVANXP_EAGAIN con la cola llena. */

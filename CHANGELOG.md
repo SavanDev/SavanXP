@@ -58,6 +58,10 @@ Cut-off notes:
   read-only and writable segments are separate anonymous sections. Two processes
   asking for the same file share one set of pages.
 
+- **`map_view_at` maps a section view at an address the caller chooses.** The
+  base must be page-aligned and free. `map_view` is the same call with the base
+  left to the kernel.
+
 - **`savanxp_system_info` reports live section counts.** `sections_live` and
   `file_sections_live`, so a shared mapping is observable instead of assumed.
 

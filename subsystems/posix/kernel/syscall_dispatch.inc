@@ -463,6 +463,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_MAP_VIEW:
             context->rax = static_cast<uint64_t>(map_view_handle(*this_cpu().current, context->rdi, static_cast<uint32_t>(context->rsi)));
             return context;
+        case SAVANXP_SYS_MAP_VIEW_AT:
+            context->rax = static_cast<uint64_t>(map_view_base_handle(*this_cpu().current, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
+            return context;
         case SAVANXP_SYS_UNMAP_VIEW:
             context->rax = static_cast<uint64_t>(unmap_view_address(*this_cpu().current, context->rdi));
             return context;

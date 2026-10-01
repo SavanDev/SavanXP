@@ -89,6 +89,7 @@ enum savanxp_syscall_number {
      * Ver struct savanxp_fscheck_report. */
     SAVANXP_SYS_FSCHECK = 59,
     SAVANXP_SYS_SECTION_OPEN = 60,
+    SAVANXP_SYS_MAP_VIEW_AT = 61,
 };
 
 enum savanxp_open_flags {

@@ -578,6 +578,60 @@ int main(void) {
         }
     }
 
+    /* map_view_at deja que sea el llamador elija la direccion, que es lo que
+     * necesita el cargador para respetar el p_vaddr de cada PT_LOAD. Sin eso no
+     * hay forma de poner un .so donde el dice que va. */
+    const unsigned long asked = 0x0000002000000000UL;
+    void* placed = map_view_at((int)code_section, asked, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (!expect_pointer(placed, "map view at chosen base")) {
+        unmap_view(runnable);
+        unmap_view(staging);
+        savanxp_close((int)code_section);
+        return 1;
+    }
+    if ((unsigned long)placed != asked) {
+        eprintf("sectiontest: map_view_at devolvio %p, se pidio %p\n", placed, (void*)asked);
+        (void)unmap_view(placed);
+        unmap_view(runnable);
+        unmap_view(staging);
+        savanxp_close((int)code_section);
+        return 1;
+    }
+    /* Dos vistas del mismo archivo en la misma direccion no pueden coexistir:
+     * la segunda tiene que ser rechazada, no pisar la primera. */
+    if (!expect_refused(map_view_at((int)code_section, asked, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE),
+                        "una segunda vista en la misma direccion")) {
+        (void)unmap_view(placed);
+        unmap_view(runnable);
+        unmap_view(staging);
+        savanxp_close((int)code_section);
+        return 1;
+    }
+    if (!expect_success(unmap_view(placed), "unmap placed view")) {
+        return 1;
+    }
+    /* Y una base desalineada se rechaza: el kernel mapea paginas completas y no
+     * puede dar una vista parcial, asi que bajarla en silencio seria mentir. */
+    if (!expect_refused(
+            map_view_at((int)code_section, asked + 8, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE),
+            "una base desalineada")) {
+        unmap_view(runnable);
+        unmap_view(staging);
+        savanxp_close((int)code_section);
+        return 1;
+    }
+
+    /* Y tampoco se puede mapear encima de la imagen del propio proceso, que
+     * arranca en 0x400000 (kUserBase, el mismo valor que el linker script). */
+    if (!expect_refused(
+            map_view_at((int)code_section, 0x400000UL, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE),
+            "un mapa encima de la imagen")) {
+        unmap_view(runnable);
+        unmap_view(staging);
+        savanxp_close((int)code_section);
+        return 1;
+    }
+
     if (!expect_success(unmap_view(runnable), "unmap executable view")) {
         return 1;
     }

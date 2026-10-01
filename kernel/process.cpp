@@ -2931,7 +2931,7 @@ int open_section_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
     return handle;
 }
 
-int64_t map_view_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
+int64_t map_view_base_handle(process::Process& proc, uint64_t fd, uint64_t base, uint32_t flags) {
     object::Header* handle_object = lookup_handle(proc, fd, object::access_query);
     object::SectionObject* section_object = object::as_section(handle_object);
     if (section_object == nullptr) {
@@ -2956,11 +2956,22 @@ int64_t map_view_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
         return negative_error(SAVANXP_EINVAL);
     }
 
-    uint64_t base_address = 0;
+    /* base == 0 deja que el kernel elija, como map_view. Con base fija, el
+     * cargador la elige para respetar el p_vaddr que pide el ELF. La pagina se
+     * alinea igual hacia abajo: el kernel mapea por paginas completas y no puede
+     * mapear un parcial. */
+    if (base != 0 && (base & (memory::kPageSize - 1)) != 0) {
+        return negative_error(SAVANXP_EINVAL);
+    }
+    uint64_t base_address = base;
     if (!vm::map_section_view(proc.address_space, *section_object, requested_access, base_address, share_on_fork)) {
         return negative_error(SAVANXP_ENOMEM);
     }
     return static_cast<int64_t>(base_address);
+}
+
+int64_t map_view_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
+    return map_view_base_handle(proc, fd, 0, flags);
 }
 
 int unmap_view_address(process::Process& proc, uint64_t base_address) {

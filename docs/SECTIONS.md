@@ -66,6 +66,26 @@ while the child still holds its handle — hence the event handshake, because a
 child that closed first would make the count return to its old value and the
 check would pass whether or not the pages were shared.
 
+## `map_view_at`, and why a loader needs it
+
+`map_view` lets the kernel choose the address. `map_view_at(handle, base, flags)`
+lets the caller choose it, which is what a loader requires: an ELF's program
+headers state where each segment goes, and a loader that cannot honour `p_vaddr`
+cannot place anything.
+
+The kernel already supported a caller-chosen base internally —
+`vm::map_section_view` honours a non-zero `base_address` and checks
+`user_range_is_free` — so this exposes existing behaviour rather than adding a
+new one. Two rules keep it honest:
+
+- The base must be page-aligned, and a misaligned one is `EINVAL` rather than
+  being silently rounded down. The kernel maps whole pages; returning a page that
+  starts before the one asked for would be a lie about the layout.
+- The range must be entirely free. A second view over an occupied address is
+  refused rather than replacing the first.
+
+`base == 0` is exactly `map_view`.
+
 ## The grant is the intersection of three things
 
 `SAVANXP_SECTION_READ`, `_WRITE` and `_EXEC` are requested at two separate

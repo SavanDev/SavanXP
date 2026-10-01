@@ -245,6 +245,13 @@ void* map_view(int handle, unsigned long flags) {
     return (void*)syscall2(SAVANXP_SYS_MAP_VIEW, (unsigned long)handle, flags);
 }
 
+/* Igual que map_view pero con la direccion elegida por el llamador. El
+ * cargador la necesita para respetar el p_vaddr de cada PT_LOAD. base tiene que
+ * venir alineada a pagina; base == 0 es lo mismo que map_view. */
+void* map_view_at(int handle, unsigned long base, unsigned long flags) {
+    return (void*)syscall3(SAVANXP_SYS_MAP_VIEW_AT, (unsigned long)handle, base, flags);
+}
+
 long unmap_view(void* base) {
     return syscall1(SAVANXP_SYS_UNMAP_VIEW, (unsigned long)base);
 }
