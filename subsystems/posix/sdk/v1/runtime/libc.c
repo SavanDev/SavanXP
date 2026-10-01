@@ -233,8 +233,15 @@ long timer_cancel(int handle) {
     return syscall1(SAVANXP_SYS_TIMER_CANCEL, (unsigned long)handle);
 }
 
-long section_create(unsigned long size, unsigned long flags) {
-    return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);
+/* Ruta del interprete que el kernel copio al stack inicial, o NULL si la imagen
+ * no declara PT_INTERP. La escribe crt0 antes de la primera llamada. */
+const char* sx_interpreter_path = 0;
+
+const char* savanxp_interpreter_path(void) {
+    return sx_interpreter_path;
+}
+
+long section_create(unsigned long size, unsigned long flags) {    return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);
 }
 
 long section_open(int handle, unsigned long flags) {

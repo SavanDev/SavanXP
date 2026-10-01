@@ -17,6 +17,11 @@ Cut-off notes:
   per process was already tight for heap arenas alone. Exhaustion is still a
   clean `ENOMEM`.
 
+- **Two `PT_LOAD` segments may now share a page.** Required by any binary linked
+  with an interpreter, where the text segment does not end on a page boundary.
+  The page takes the union of both segments' permissions, and a union that is
+  both writable and executable is still refused.
+
 - **The section cache keys on the file range, not just the inode.** Asking for
   the whole file and asking for a slice of it are different sections, and
   confusing them mapped a segment with the whole image behind it.
@@ -58,6 +63,12 @@ Cut-off notes:
   enough to make room for a later volume grow.
 
 ### Added
+
+- **The kernel reads `PT_INTERP` and hands the path to `crt0`.** A binary linked
+  with `--dynamic-linker` now has its interpreter path delivered in `rcx` and
+  readable through `savanxp_interpreter_path()`. `interptest` is linked with one
+  and checks it arrives. The interpreter is not run yet: `crt0` still goes
+  straight to `main`.
 
 - **`libmath.so.0.4`, a real shared library, and a minimal loader that maps
   it.** `/lib/libmath.so.0.4` is built as PIC and lands on the volume, not in

@@ -758,7 +758,8 @@ process::SavedContext* fabricate_initial_context(
     uint64_t entry_point,
     uint64_t stack_pointer,
     int argc,
-    uint64_t argv_pointer
+    uint64_t argv_pointer,
+    uint64_t interpreter_address
 ) {
     auto* stack_top = reinterpret_cast<uint8_t*>(proc.kernel_stack_base + proc.kernel_stack_size);
     auto* context = reinterpret_cast<process::SavedContext*>(stack_top - sizeof(process::SavedContext));
@@ -774,6 +775,9 @@ process::SavedContext* fabricate_initial_context(
     // process canary before calling main. Fork copies the full context and
     // address space, so children inherit their parent's guard.
     context->rdx = initial_stack_guard();
+    // rcx queda libre para la ruta del interprete (PT_INTERP), que el loader
+    // copio al stack inicial. rcx no forma parte del ABI de entrada a main.
+    context->rcx = interpreter_address;
     proc.context = context;
     return context;
 }
@@ -965,7 +969,7 @@ bool prepare_exec_image(
     proc.blocked_write_progress = 0;
     clear_wait_state(proc);
     reset_time_slice(proc);
-    fabricate_initial_context(proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer);
+    fabricate_initial_context(proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address);
     return true;
 }
 
@@ -1028,7 +1032,7 @@ process::Process* create_idle_process() {
         return nullptr;
     }
 
-    fabricate_initial_context(*proc, kIdleCodeAddress, vm::kUserStackTop, 0, 0);
+    fabricate_initial_context(*proc, kIdleCodeAddress, vm::kUserStackTop, 0, 0, 0);
     return proc;
 }
 
@@ -1143,7 +1147,7 @@ process::Process* create_process_internal(
         console::printf("process: pid=%u marcado nativo\n", static_cast<unsigned>(proc->pid));
     }
 
-    fabricate_initial_context(*proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer);
+    fabricate_initial_context(*proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address);
     return proc;
 }
 

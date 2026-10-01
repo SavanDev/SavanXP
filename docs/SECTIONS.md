@@ -215,14 +215,18 @@ Two things it had to get right that are easy to get wrong:
 
 ### What it does not do yet
 
-No `PT_INTERP`, so nothing loads a library *by itself* yet — `ldtest` calls the
-loader explicitly. No `DT_NEEDED` chain, so a library cannot pull in another. No
-symbol scope: a library can only use symbols it defines itself, which is why
-`libmath.so.0.4` is built without `-fstack-protector-strong` (its canary would
-need `__stack_chk_fail` from the executable). No lazy binding, so every
-`JUMP_SLOT` is resolved up front. And `lseek` is declared but not implemented, so
-no code can reposition a descriptor — which is why segment bytes are read through
-a temporary range section rather than `read`.
+No `PT_INTERP` handling in the loader itself, but the plumbing exists: the kernel
+reads the segment, copies the path onto the initial stack and passes it to
+`crt0` in `rcx`, and `savanxp_interpreter_path()` returns it. `interptest` is
+linked with `--dynamic-linker` and checks it arrives. What does not happen yet is
+`crt0` *running* that interpreter — it still goes straight to `main`. Until it
+does, no `DT_NEEDED` chain, and the loader can only use symbols it defines
+itself, which is why `libmath.so.0.4` is built without
+`-fstack-protector-strong` (its canary would need `__stack_chk_fail` from the
+executable). No lazy binding, so every `JUMP_SLOT` is resolved up front. And
+`lseek` is declared but not implemented, so no code can reposition a descriptor —
+which is why segment bytes are read through a temporary range section rather
+than `read`.
 
 ## Not decided yet
 

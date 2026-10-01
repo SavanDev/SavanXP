@@ -2,7 +2,7 @@
 # makes the target graph the single source of truth for the userland.
 function(savanxp_program)
     set(options TEST)
-    set(oneValueArgs NAME)
+    set(oneValueArgs NAME INTERPRETER)
     set(multiValueArgs SOURCES)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(P_UNPARSED_ARGUMENTS)
@@ -25,6 +25,9 @@ function(savanxp_program)
     target_compile_definitions(${P_NAME} PRIVATE DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
     target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
     target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime)
+    if(P_INTERPRETER)
+        target_link_options(${P_NAME} PRIVATE "-Wl,--dynamic-linker,${P_INTERPRETER}")
+    endif()
     target_link_options(${P_NAME} PRIVATE ${SAVANXP_USER_LINK_OPTIONS})
     set_target_properties(${P_NAME} PROPERTIES OUTPUT_NAME "${P_NAME}" SUFFIX "")
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_TARGETS ${P_NAME})
@@ -72,6 +75,8 @@ endfunction()
 savanxp_program(NAME ldtest TEST SOURCES
     subsystems/posix/userland/ldtest.c
     subsystems/posix/userland/ldso.c)
+savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
+    SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/math.c)
 

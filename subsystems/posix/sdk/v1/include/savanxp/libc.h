@@ -47,6 +47,7 @@ long wait_many(const int* handles, unsigned long count, unsigned long flags, lon
 long timer_create(unsigned long flags);
 long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
 long timer_cancel(int handle);
+const char* savanxp_interpreter_path(void);
 long section_create(unsigned long size, unsigned long flags);
 long section_open(int handle, unsigned long flags);
 long section_open_range(int handle, unsigned long offset, unsigned long length, unsigned long flags);

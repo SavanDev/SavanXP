@@ -80,6 +80,14 @@ The audit confirmed the following defenses were already present:
   `section_create` + `map_view` pair, where the grant and the W^X rule are
   enforced. Widening `mmap` would have made executable memory reachable from the
   path least able to say why it is allowed.
+- Two `PT_LOAD` segments may share a page. This is not a relaxation of W^X: the
+  page takes the **union** of both segments' permissions, and a union that is
+  both writable and executable is still rejected. It had to change because every
+  binary linked with an interpreter has a text segment that does not end on a
+  page boundary, and the previous validation refused those images outright. The
+  union is computed *before* mapping, because a page cannot lose permissions
+  depending on order: map the executable segment first and a plain read-only
+  segment arriving later would put `NX` back on the text.
 - User stack and shared-section pages preserve the NX bit across fork. For a
   section view the flag is derived again on the clone from the view's own
   `access_mask`, so an executable view stays executable in the child and a

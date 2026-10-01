@@ -11,6 +11,10 @@ constexpr uint32_t kElfDataLittle = 1;
 constexpr uint16_t kElfTypeExec = 2;
 constexpr uint16_t kElfMachineX86_64 = 62;
 constexpr uint32_t kProgramLoad = 1;
+constexpr uint32_t kProgramInterp = 3;
+// Tope de la ruta del interprete. Es una ruta de sistema, no entrada de usuario:
+// un valor absurdo es un ELF roto, no algo que haya que truncar en silencio.
+constexpr uint64_t kMaxInterpreterPath = 512;
 constexpr uint32_t kProgramExecutable = 1u << 0;
 constexpr uint32_t kProgramWritable = 1u << 1;
 constexpr uint16_t kMaxLoadSegments = 64;
@@ -81,34 +85,7 @@ bool page_ranges_overlap(uint64_t left_start, uint64_t left_end, uint64_t right_
     return left_start < right_end && right_start < left_end;
 }
 
-bool map_segment_pages(vm::VmSpace& space, uint64_t start, uint64_t end, uint64_t flags) {
-    for (uint64_t page = start; page < end; page += memory::kPageSize) {
-        memory::PageAllocation page_allocation = {};
-
-        // Dos PT_LOAD pueden compartir una pagina: pasa cuando un segmento no
-        // termina en un borde y el siguiente empieza en la misma. Es un ELF
-        // valido, y hasta ahora el segundo mapeo fallaba y la carga entera
-        // moria reportando "out of memory" -- que ademas era mentira. La pagina
-        // se queda con la union de los permisos, que es lo unico posible
-        // cuando dos segmentos comparten granularidad.
-        if (vm::add_user_page_flags(space, page, flags)) {
-            continue;
-        }
-
-        if (!memory::allocate_page(page_allocation)) {
-            return false;
-        }
-
-        memset(page_allocation.virtual_address, 0, memory::kPageSize);
-        if (!vm::map_page(space, page, page_allocation.physical_address, flags)) {
-            // Sin mapear, destroy_address_space no la ve: hay que devolverla aca
-            // o cada carga fallida se lleva una pagina puesta.
-            (void)memory::free_allocation(page_allocation);
-            return false;
-        }
-    }
-    return true;
-}
+uint8_t* segment_page_pointer(vm::VmSpace& space, uint64_t virtual_page);
 
 // Puntero de kernel al respaldo fisico de una pagina ya mapeada del espacio
 // destino. El espacio todavia no es el activo, asi que no se puede escribir por
@@ -184,11 +161,16 @@ uint8_t* stack_kernel_pointer(uint8_t* const* backing, uint64_t mapped_bottom, u
 }
 
 bool build_initial_stack(
+    elf::ImageReader read_image,
+    void* read_context,
     vm::VmSpace& address_space,
     int argc,
     const char* const* argv,
     int& accepted_argc,
-    uint64_t& stack_pointer
+    uint64_t& stack_pointer,
+    uint64_t interpreter_offset,
+    uint64_t interpreter_length,
+    uint64_t& interpreter_address
 ) {
     uint8_t* backing[kInitialStackPages] = {};
     uint64_t argv_values[kMaxArguments] = {};
@@ -251,6 +233,22 @@ bool build_initial_stack(
             memcpy(stack_kernel_pointer(backing, mapped_bottom, slot), &terminator,
                    sizeof(terminator));
         }
+
+        /* La ruta del intérprete va ARRIBA del arreglo de argv, en el hueco donde
+         * en Linux iría envp y acá no hay nada. No va debajo: bajando user_sp se
+         * corre rsp, y rsp tiene que seguir apuntando al argc porque es el
+         * contrato del stack inicial. */
+        if (interpreter_length != 0 && interpreter_offset != 0) {
+            const uint64_t slot = user_sp + ((static_cast<uint64_t>(stored_argc) + 1) * sizeof(uint64_t));
+            const uint64_t room = mapped_bottom + (initial_pages * memory::kPageSize);
+            if (slot + interpreter_length <= room) {
+                if (read_image(read_context, interpreter_offset,
+                               stack_kernel_pointer(backing, mapped_bottom, slot),
+                               static_cast<size_t>(interpreter_length))) {
+                    interpreter_address = slot;
+                }
+            }
+        }
     }
 
     // El argc que recibe el proceso es el que REALMENTE quedo en el arreglo.
@@ -311,6 +309,8 @@ bool load_user_image(
     ProgramHeader segments[kMaxLoadSegments] = {};
     uint64_t segment_starts[kMaxLoadSegments] = {};
     uint64_t segment_ends[kMaxLoadSegments] = {};
+    uint64_t interpreter_offset = 0;
+    uint64_t interpreter_path_length = 0;
     size_t segment_count = 0;
     bool entry_is_executable = false;
 
@@ -323,6 +323,34 @@ bool load_user_image(
             failure = LoadFailure::truncated;
             return false;
         }
+        if (program.type == kProgramInterp) {
+            /* La ruta del intérprete no se mapea: es una cadena, y copiarla al
+             * stack inicial alcanza. Solo se acepta si es una cadena NUL
+             * terminada dentro del archivo y de largo sensato; el resto de
+             * entradas PT_INTERP se ignoran y la imagen arranca como estatica,
+             * que es lo que hacen las imagenes que no declaran uno. */
+            if (interpreter_path_length == 0 && program.file_size > 0 &&
+                program.file_size <= kMaxInterpreterPath &&
+                program.offset + program.file_size <= size) {
+                char candidate[kMaxInterpreterPath];
+                if (read_image(context, program.offset, candidate, static_cast<size_t>(program.file_size))) {
+                    const uint64_t limit = program.file_size;
+                    bool terminated = false;
+                    for (uint64_t index = 0; index < limit; ++index) {
+                        if (candidate[index] == '\0') {
+                            terminated = true;
+                            break;
+                        }
+                    }
+                    if (terminated && candidate[0] == '/') {
+                        interpreter_path_length = limit;
+                        interpreter_offset = program.offset;
+                    }
+                }
+            }
+            continue;
+        }
+
         if (program.type != kProgramLoad) {
             continue;
         }
@@ -354,7 +382,23 @@ bool load_user_image(
         const uint64_t mapped_start = align_down(program.virtual_address, memory::kPageSize);
         const uint64_t mapped_end = align_up(image_end, memory::kPageSize);
         for (size_t previous = 0; previous < segment_count; ++previous) {
-            if (page_ranges_overlap(mapped_start, mapped_end, segment_starts[previous], segment_ends[previous])) {
+            if (!page_ranges_overlap(mapped_start, mapped_end, segment_starts[previous], segment_ends[previous])) {
+                continue;
+            }
+            /* Compartir pagina entre dos PT_LOAD es un ELF valido y lo produce
+             * cualquier binario enlazado con un interprete: el segmento de
+             * texto no termina en un borde de pagina y el de datos empieza en esa
+             * misma pagina. map_segment_pages ya lo contemplaba --la pagina queda
+             * con la union de permisos--, pero esta validacion lo rechazaba, y
+             * una imagen legitima no cargaba.
+             *
+             * Lo que no se admite es que la union sea escribible Y ejecutable:
+             * eso seria una pagina W^X que hoy ningun segmento produce por su
+             * cuenta. */
+            const uint32_t union_flags = program.flags | segments[previous].flags;
+            const bool union_writable = (union_flags & kProgramWritable) != 0;
+            const bool union_executable = (union_flags & kProgramExecutable) != 0;
+            if (union_writable && union_executable) {
                 failure = LoadFailure::bad_segment;
                 return false;
             }
@@ -377,13 +421,37 @@ bool load_user_image(
 
     for (size_t index = 0; index < segment_count; ++index) {
         const ProgramHeader& program = segments[index];
-        const uint64_t flags = vm::kPageUser |
-            ((program.flags & kProgramWritable) != 0 ? vm::kPageWrite : 0) |
-            ((program.flags & kProgramExecutable) == 0 ? vm::kPageNoExecute : 0);
+        /* La pagina compartida por dos segmentos necesita la union de los
+         * permisos de los dos, no los de este. Se calcula antes de mapear porque
+         * despues es tarde: si el ejecutable va primero y el de solo lectura
+         * segundo, un OR le devuelve NX al texto y la pagina deja de ser
+         * ejecutable. */
+        uint64_t page = segment_starts[index];
+        while (page < segment_ends[index]) {
+            uint32_t union_program_flags = program.flags;
+            for (size_t other = 0; other < segment_count; ++other) {
+                if (page >= segment_starts[other] && page < segment_ends[other]) {
+                    union_program_flags |= segments[other].flags;
+                }
+            }
+            const uint64_t page_flags = vm::kPageUser |
+                ((union_program_flags & kProgramWritable) != 0 ? vm::kPageWrite : 0) |
+                ((union_program_flags & kProgramExecutable) == 0 ? vm::kPageNoExecute : 0);
 
-        if (!map_segment_pages(address_space, segment_starts[index], segment_ends[index], flags)) {
-            failure = LoadFailure::out_of_memory;
-            return false;
+            memory::PageAllocation page_allocation = {};
+            if (!vm::add_user_page_flags(address_space, page, page_flags)) {
+                if (!memory::allocate_page(page_allocation)) {
+                    failure = LoadFailure::out_of_memory;
+                    return false;
+                }
+                memset(page_allocation.virtual_address, 0, memory::kPageSize);
+                if (!vm::map_page(address_space, page, page_allocation.physical_address, page_flags)) {
+                    (void)memory::free_allocation(page_allocation);
+                    failure = LoadFailure::out_of_memory;
+                    return false;
+                }
+            }
+            page += memory::kPageSize;
         }
 
         // El contenido del segmento se lee sobre las paginas del proceso, de a
@@ -413,7 +481,9 @@ bool load_user_image(
         }
     }
 
-    if (!build_initial_stack(address_space, argc, argv, result.accepted_argc, result.stack_pointer)) {
+    if (!build_initial_stack(
+            read_image, context, address_space, argc, argv, result.accepted_argc, result.stack_pointer,
+            interpreter_offset, interpreter_path_length, result.interpreter_address)) {
         failure = LoadFailure::out_of_memory;
         return false;
     }

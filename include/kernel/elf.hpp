@@ -21,6 +21,10 @@ struct LoadResult {
     // que el argc pedido si el argv no entraba; el proceso tiene que arrancar
     // con ESTE, no con el original.
     int accepted_argc;
+    // Ruta del intérprete (PT_INTERP) ya copiada al stack inicial, o 0 si la
+    // imagen no declara uno. Es lo que crt0 lee de rcx para saber que tiene que
+    // arrancar el cargador antes de llegar a main.
+    uint64_t interpreter_address;
 };
 
 // Motivo de fallo de la carga. Existe para que el llamador pueda distinguir

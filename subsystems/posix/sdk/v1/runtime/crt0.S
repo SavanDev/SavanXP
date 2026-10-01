@@ -15,6 +15,10 @@ _start:
     # parte del ABI de entrada a main, asi que crt0 lo instala antes de la
     # primera llamada protegida. El byte bajo nunca es cero (ABI canary).
     movq %rdx, __stack_chk_guard(%rip)
+    # rcx trae la ruta del interprete (PT_INTERP) que el loader copio al stack,
+    # o 0 si la imagen es estatica. Se guarda antes de la primera llamada porque
+    # rcx no sobrevive a un call.
+    movq %rcx, sx_interpreter_path(%rip)
     call main
     movq %rax, %rdi
     movq $7, %rax

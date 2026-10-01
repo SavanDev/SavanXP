@@ -1013,6 +1013,18 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags) {
     if (table == nullptr) {
         return false;
     }
+    /* Suma permisos, pero el bit de ejecucion se RESUELVE en vez de sumarse: si
+     * el segmento no ejecutable se mapea primero, la pagina queda con NX y un
+     * segmento de texto posterior no podria volver a ejecutarse nunca. Con solo
+     * OR el NX es irreversible, que es al reves de como funciona una union de
+     * permisos.
+     *
+     * El caso que se resuelve es R con R+X, que es el que produce cualquier
+     * binario con interprete. W^X no queda en manos de aca: la union escribible
+     * y ejecutable la rechaza el loader antes de mapear. */
+    if ((flags & kPageNoExecute) == 0) {
+        table[pt_index(page)] &= ~static_cast<uint64_t>(kPageNoExecute);
+    }
     table[pt_index(page)] |= (flags & (kPageWrite | kPageUser | kPageNoExecute));
     if ((read_cr3() & kPageMask) == space.pml4_physical) {
         invalidate_page(page);
