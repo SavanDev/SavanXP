@@ -195,11 +195,42 @@ only, would make the budget honest. It is not done: with 256 entries and a
 realistic peak near 115 the sharing is affordable, and splitting a subsystem that
 two unrelated callers use is a larger change than the numbers justify.
 
+## The premise: the executable has to export symbols
+
+A shared library can only be useful if the program and the library end up sharing
+one copy of things. That needs the executable to expose a dynamic symbol table so
+a library can resolve against it — and on SavanXP it does not have one.
+
+This is not a missing linker flag. **lld emits no dynamic symbol table for a
+non-PIE `ET_EXEC`**, verified three ways: `--export-dynamic` on the `-static` link
+produces an `EXEC` with no `.dynsym`; `-Bdynamic --export-dynamic` does the same;
+and adding `--unresolved-symbols=ignore-all` changes nothing. The flag only has an
+effect when the output is `ET_DYN`.
+
+The consequences are worth stating plainly, because they are what the remaining
+work is made of:
+
+- A library cannot resolve `__stack_chk_fail` or the rest of the runtime, so
+  `libmath.so.0.4` is built without `-fstack-protector-strong`.
+- There is no interposition: `sqrt` in the program and `sqrt` in `libmath.so` are
+  two separate copies.
+
+The way out is PIE. `kernel/elf.cpp` now accepts `ET_DYN` and relocates it onto a
+load bias (still a constant, not entropy yet), and the mechanism is proven to
+work — an SDK runtime file compiled `-fPIC -fPIE -mcmodel=medium` and linked
+without the fixed linker script does produce a `DYN`. What is missing is the
+userland half, which is not a small step: `SAVANXP_USER_LINK_OPTIONS` carries
+`-static` and `-T` for every target and CMake cannot drop them for one, so the
+link options need restructuring per profile first, and then the whole SDK runtime
+has to be recompiled as PIC.
+
 ## The loader, and what it proved
 
-`ldso` (`subsystems/posix/userland/ldso.c`) is the smallest thing that can fail
-interesting: one `.so`, its `PT_LOAD`s placed where the ELF says, its relocations
-applied, its symbols resolved by name. `ldtest` calls `sqrt`, `fabs` and `floor`
+The decisions, the order of the remaining work and what blocks it are in
+[`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md).
+
+`ldso` is the smallest thing that can fail interesting: one `.so`, its `PT_LOAD`s
+placed where the ELF says, its relocations applied, its symbols resolved by name. `ldtest` calls `sqrt`, `fabs` and `floor`
 through the loaded pointers and checks the results, so the code really executes
 from a file-backed section with its relocated data beside it.
 

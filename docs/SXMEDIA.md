@@ -156,7 +156,11 @@ In order, because each one removes a reason the last attempt failed:
 
 1. **A way for one program to use a codec library it was not built with.** Either a
    dynamic linker, or a codec service over the pipes the system already has. Without
-   this there is no "one player", only N players.
+   this there is no "one player", only N players. The dynamic linker is now a real
+   project with decisions on record in
+   [`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md) — but note that this item needs
+   `dlopen`, loading a library by name, where that work is on `DT_NEEDED`. Those are
+   different features, and a codec service over pipes may well be the cheaper answer.
 2. **A generated capability table**, which the attempt already proved is a good
    idea: derived from the same configuration that linked the library, never typed.
    Cheap, and it stays correct on its own.
