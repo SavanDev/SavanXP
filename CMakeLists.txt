@@ -350,6 +350,36 @@ set_target_properties(savanxp_user_runtime_pic PROPERTIES
 # El perfil PIC existe como target independiente aunque ningun programa lo use
 # todavia: la prueba en frio de que las 10 unidades compilan position
 # independent sin tocarlas deja de ser cierta en silencio si alguien rompe una.
+# El perfil PIC sin math.c: para un programa que tiene que dejar sqrt
+# INDEFINIDO y resolverlo contra libmath.so.0.4 en tiempo de carga.
+#
+# Con el runtime completo, math.c ya define sqrt dentro del ejecutable, el
+# enlazador no encuentra nada que pedir a la libreria y no emite DT_NEEDED. El
+# programa enlazaria igual y pareceria funcionar, pero estaria copiaprivate de
+# math.c y no habria ninguna libreria en juego: la prueba pasaria sin probar el
+# mecanismo. Sacar math.c de las unidades es lo que hace que la prueba sea real.
+set(SAVANXP_USER_PIC_SOURCES_NO_MATH
+)
+foreach(source IN LISTS SAVANXP_USER_PIC_SOURCES)
+    if(NOT source STREQUAL "subsystems/posix/sdk/v1/runtime/math.c")
+        list(APPEND SAVANXP_USER_PIC_SOURCES_NO_MATH ${source})
+    endif()
+endforeach()
+add_library(savanxp_user_runtime_pic_nomath OBJECT ${SAVANXP_USER_PIC_SOURCES_NO_MATH})
+target_include_directories(savanxp_user_runtime_pic_nomath PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime"
+    "${SAVANXP_GENERATED_ROOT}"
+)
+target_compile_definitions(savanxp_user_runtime_pic_nomath PRIVATE
+    DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
+target_compile_options(savanxp_user_runtime_pic_nomath PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
+set_target_properties(savanxp_user_runtime_pic_nomath PROPERTIES
+    C_EXTENSIONS YES
+)
+
 add_custom_target(savanxp_user_runtime_pic_check ALL
     DEPENDS savanxp_user_runtime_pic
 )

@@ -49,6 +49,12 @@ typedef uint64_t Elf64_Xword;
 
 #define R_X86_64_JUMP_SLOT 7
 #define R_X86_64_GLOB_DAT 6
+/* El valor guardado ya es una direccion de enlace, sin simbolo: hay que
+ * sumarle el bias de la imagen. Es lo que hace que un ejecutable PIE con
+ * punteros a datos -- una tabla de vtables, una cadena constante, un GOT
+ * inicial -- arranque con las direcciones donde el codigo las busca. Una
+ * imagen reubicada sin esto tiene punteros al valor cero. */
+#define R_X86_64_RELATIVE 8
 
 typedef struct {
     unsigned char e_ident[EI_NIDENT];
@@ -169,15 +175,9 @@ static void copy_bytes(const void* from, void* to, size_t count);
 static int read_header(const unsigned char* bytes, Elf64_Ehdr* out);
 static void* place_segment(const Elf64_Phdr* ph);
 static void* map_of(int slot, Elf64_Addr vaddr);
-static int read_dynamic_of(int slot);
+static int read_dynamic_in(int slot);
 static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out);
-static void* at_vaddr_here(Elf64_Addr vaddr);
 static void* bias_in(int slot, Elf64_Addr value);
-static int find_dynamic(Elf64_Sword wanted, void* out);
-static int apply_table(unsigned long elf_table, unsigned long elf_size);
-static void* translate(unsigned long elf_address);
-static int read_dynamic(void);
-static int apply_relocs(void);
 static int resolve(const char* name, Elf64_Addr* value_out);
 static const char* next_needed(int slot);
 static int load_needed_chain(int parent_slot);
@@ -274,6 +274,8 @@ static int adopt_executable(void) {
      * para una ET_EXEC. Es la misma regla de kernel/elf.cpp, y tiene que
      * coincidir con ella o cada direccion del ejecutable caeria en otra pagina. */
     const unsigned long bias = (header.e_type == ET_DYN) ? kExecutableBase : 0UL;
+    exe->bias = bias;
+    exe->bias_ready = 1;
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
         if (exe->headers[index].p_type != PT_LOAD || exe->headers[index].p_memsz == 0) {
             continue;
@@ -281,7 +283,7 @@ static int adopt_executable(void) {
         exe->placed[index] = (void*)(bias + (exe->headers[index].p_vaddr & ~(Elf64_Addr)4095));
     }
     g_lib_count++;
-    (void)read_dynamic_of(g_lib_count - 1);
+    (void)read_dynamic_in(g_lib_count - 1);
     return 1;
 }
 
@@ -338,8 +340,8 @@ static void publish(void) {
  * de llamar a nada, asi que no hay version perezosa todavia. Solo estan
  * soportados JUMP_SLOT y GLOB_DAT, que son los que emite lld para este
  * objetivo. */
-static int apply_table(unsigned long elf_table, unsigned long elf_size) {
-    const unsigned char* table = (const unsigned char*)translate(elf_table);
+static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_size) {
+    const unsigned char* table = (const unsigned char*)map_of(slot, elf_table);
     if (table == 0) {
         return 0;
     }
@@ -348,19 +350,29 @@ static int apply_table(unsigned long elf_table, unsigned long elf_size) {
         Elf64_Rela rela;
         copy_bytes(table + offset, &rela, sizeof(rela));
         const unsigned type = (unsigned)(rela.r_info & 0xffffffffu);
+        if (type == R_X86_64_RELATIVE) {
+            /* Sin simbolo que buscar: lo que hay que hacer es sumar el bias al
+             * valor que la imagen trae escrito. */
+            Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
+            if (where == 0) {
+                return 0;
+            }
+            *where += g_libs[slot].bias;
+            continue;
+        }
         if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT) {
             return 0;
         }
         const unsigned name_index = (unsigned)(rela.r_info >> 32);
         Elf64_Sym symbol;
-        copy_bytes(g_lib->dynsym + (name_index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
+        copy_bytes(g_libs[slot].dynsym + (name_index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
 
         /* Por nombre, no por st_value. Un st_value es relativo a la libreria que
          * DEFINIO el simbolo, y el que necesita la llamada puede ser otra: sin
          * la busqueda, una llamada a una dependencia se resolveria con la
          * direccion del simbolo dentro de la imagen que la invoca. */
         Elf64_Addr target = 0;
-        const int owner = resolve(g_lib->dynstr + symbol.st_name, &target);
+        const int owner = resolve(g_libs[slot].dynstr + symbol.st_name, &target);
         if (owner < 0) {
             return 0;
         }
@@ -368,11 +380,11 @@ static int apply_table(unsigned long elf_table, unsigned long elf_size) {
         if (value == 0) {
             return 0;
         }
-        Elf64_Addr* slot = (Elf64_Addr*)at_vaddr_here(rela.r_offset);
-        if (slot == 0) {
+        Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
+        if (where == 0) {
             return 0;
         }
-        *slot = value;
+        *where = value;
     }
     return 1;
 }
@@ -383,42 +395,18 @@ static int apply_table(unsigned long elf_table, unsigned long elf_size) {
  * dynstr, y DT_NEEDED hay que recorrer antes de reubicar: una llamada a la
  * dependencia se resuelve en un GOT que todavia esta en cero. Si se reubicara
  * primero, la cadena se resolveria contra un mundo incompleto. */
-static int read_dynamic(void) {
-    unsigned long strtab = 0;
-    unsigned long symtab = 0;
-    unsigned long strsz = 0;
-    if (!find_dynamic(DT_STRTAB, &strtab)) { g_lib_reloc_step = 1; return 0; }
-    if (!find_dynamic(DT_SYMTAB, &symtab)) { g_lib_reloc_step = 2; return 0; }
-    (void)find_dynamic(DT_STRSZ, &strsz);
-    const unsigned char* strings = (const unsigned char*)translate(strtab);
-    const unsigned char* symbols = (const unsigned char*)translate(symtab);
-    if (strings == 0) { g_lib_reloc_step = 3; return 0; }
-    if (symbols == 0) { g_lib_reloc_step = 4; return 0; }
-    g_lib->dynstr = (const char*)strings;
-    g_lib->dynstr_size = strsz != 0 ? strsz : 4096;
-    g_lib->dynsym = symbols;
-    return 1;
-}
-
-/* Igual que read_dynamic pero para el ejecutable, que ocupa el slot 0 y no
- * necesita g_lib porque no esta "en curso": no se esta armando, ya esta mapeado.
- *
- * Un ejecutable sin .dynsym devuelve 0 y deja el slot con las tablas en 0, que
- * es lo que hace que resolve lo salte. Es el caso normal de una ET_EXEC no PIE,
- * no un fallo de carga. */
-static int read_dynamic_of(int slot) {
+static int read_dynamic_in(int slot) {
     Library* library = &g_libs[slot];
     unsigned long strtab = 0;
     unsigned long symtab = 0;
     unsigned long strsz = 0;
-    if (!find_dynamic_in(slot, DT_STRTAB, &strtab)) { return 0; }
-    if (!find_dynamic_in(slot, DT_SYMTAB, &symtab)) { return 0; }
+    if (!find_dynamic_in(slot, DT_STRTAB, &strtab)) { g_lib_reloc_step = 1; return 0; }
+    if (!find_dynamic_in(slot, DT_SYMTAB, &symtab)) { g_lib_reloc_step = 2; return 0; }
     (void)find_dynamic_in(slot, DT_STRSZ, &strsz);
     const unsigned char* strings = (const unsigned char*)map_of(slot, strtab);
     const unsigned char* symbols = (const unsigned char*)map_of(slot, symtab);
-    if (strings == 0 || symbols == 0) {
-        return 0;
-    }
+    if (strings == 0) { g_lib_reloc_step = 3; return 0; }
+    if (symbols == 0) { g_lib_reloc_step = 4; return 0; }
     library->dynstr = (const char*)strings;
     library->dynstr_size = strsz != 0 ? strsz : 4096;
     library->dynsym = symbols;
@@ -426,25 +414,56 @@ static int read_dynamic_of(int slot) {
     return 1;
 }
 
-/* Fase dos: rellenar los GOT. Solo tiene sentido con la cadena ya cargada.
- *
- * Las dos tablas son OPCIONALES. Una libreria que no llama a nada de fuera no
+/* Las dos tablas son OPCIONALES. Una libreria que no llama a nada de fuera no
  * tiene .rela.plt, y exigirla la hacia fallar al cargar: el fallo no era de la
- * reubicacion sino de una tabla que no existe. Con DT_STRSZ ausente tambien se
- * sobrevive, con un limite laxo para no leer fuera de la tabla. */
-static int apply_relocs(void) {
+ * reubicacion sino de una tabla que no existe. */
+static int apply_relocs_in(int slot) {
     unsigned long jmprel = 0;
     unsigned long pltrelsz = 0;
     unsigned long rel = 0;
     unsigned long relasz = 0;
-    if (find_dynamic(DT_RELA, &rel) && find_dynamic(DT_RELASZ, &relasz) && relasz != 0) {
-        if (!apply_table(rel, relasz)) { g_lib_reloc_step = 5; return 0; }
+    if (find_dynamic_in(slot, DT_RELA, &rel) && find_dynamic_in(slot, DT_RELASZ, &relasz) &&
+        relasz != 0) {
+        if (!apply_table_in(slot, rel, relasz)) { g_lib_reloc_step = 5; return 0; }
     }
-    if (find_dynamic(DT_JMPREL, &jmprel) && find_dynamic(DT_PLTRELSZ, &pltrelsz) &&
-        pltrelsz != 0) {
-        if (!apply_table(jmprel, pltrelsz)) { g_lib_reloc_step = 6; return 0; }
+    if (find_dynamic_in(slot, DT_JMPREL, &jmprel) &&
+        find_dynamic_in(slot, DT_PLTRELSZ, &pltrelsz) && pltrelsz != 0) {
+        if (!apply_table_in(slot, jmprel, pltrelsz)) { g_lib_reloc_step = 6; return 0; }
     }
     return 1;
+}
+
+/* Prepara el ejecutable para llamar a una libreria.
+ *
+ * El kernel mapeo la imagen principal pero NO toco su GOT: deja el proceso
+ * corriendo con un ejecutable que declara DT_NEEDED y tiene entradas sin
+ * rellenar. Por eso hace falta este paso, y por eso el programa tiene que
+ * llamarlo ANTES de usar cualquier simbolo de libreria.
+ *
+ * El orden es el mismo que para una libreria: primero la cadena de DT_NEEDED del
+ * ejecutable, y despues sus propias reubicaciones. Al reves, una llamada a una
+ * dependencia se resolveria contra una libreria todavia no mapeada.
+ *
+ * Devuelve 0 si el ejecutable quedo operativo, o un numero negativo dizendo en
+ * que paso fallo, con la misma convencion que ldso_load. Un ejecutable sin
+ * .dynsym no tiene nada que reubicar y devuelve 0. */
+int ldso_start(void) {
+    adopt_executable_once();
+    if (g_lib_count == 0) {
+        /* No se encontro la cabecera de la imagen. Un programa que no depende de
+         * ninguna libreria no la necesita, asi que no es un fallo. */
+        return 0;
+    }
+    if (g_libs[0].dynsym == 0) {
+        return 0;
+    }
+    if (load_needed_chain(0) != 0) {
+        return -8;
+    }
+    if (!apply_relocs_in(0)) {
+        return -9;
+    }
+    return 0;
 }
 
 int ldso_load(const char* path) {
@@ -527,7 +546,7 @@ int ldso_load(const char* path) {
         }
     }
 
-    if (!read_dynamic()) {
+    if (!read_dynamic_in(g_lib - g_libs)) {
         end_load(0);
         return -7;
     }
@@ -540,6 +559,7 @@ int ldso_load(const char* path) {
      * Cada carga de la cadena pisa g_lib, asi que se guarda esta libreria y se
      * restaura al volver. Sin eso, las reubicaciones de aqui se aplicarian
      * sobre la ultima dependencia traida. */
+    const int slot = (int)(g_lib - g_libs);
     Library* self = g_lib;
     publish();
     const int chain_failed = load_needed_chain(g_lib_count - 1);
@@ -549,7 +569,7 @@ int ldso_load(const char* path) {
         return -8;
     }
 
-    if (!apply_relocs()) {
+    if (!apply_relocs_in(slot)) {
         g_lib = 0;
         return -9;
     }
@@ -763,21 +783,6 @@ static void* map_of(int slot, Elf64_Addr vaddr) {
     return 0;
 }
 
-static void* at_vaddr_here(Elf64_Addr vaddr) {
-    if (g_lib == 0) {
-        return 0;
-    }
-    /* El slot en curso todavia no esta publicado, asi que no se puede comparar
-     * contra g_lib_count: durante la carga de la primera libreria ese contador
-     * sigue en cero y el limite rechazaria justo la libreria que se esta
-     * armando. */
-    const int slot = (int)(g_lib - g_libs);
-    if (slot < 0 || slot >= kMaxLibraries) {
-        return 0;
-    }
-    return map_of(slot, vaddr);
-}
-
 typedef struct {
     Elf64_Sword tag;
     union {
@@ -816,10 +821,6 @@ static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out) {
     return 0;
 }
 
-static int find_dynamic(Elf64_Sword wanted, void* out) {
-    const int slot = (int)(g_lib - g_libs);
-    return find_dynamic_in(slot, wanted, out);
-}
 
 /* El nombre del primer DT_NEEDED que aun no se cargo, o 0 si no queda ninguno.
  *
@@ -871,10 +872,6 @@ static const char* next_needed(int slot) {
         return 0;
     }
     return 0;
-}
-
-static void* translate(unsigned long elf_address) {
-    return at_vaddr_here((Elf64_Addr)elf_address);
 }
 
 static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {

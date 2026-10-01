@@ -1,9 +1,9 @@
 # Every in-tree program is registered explicitly. Keeping this list in CMake
 # makes the target graph the single source of truth for the userland.
 function(savanxp_program)
-    set(options TEST)
+    set(options TEST WITHOUT_MATH)
     set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
-    set(multiValueArgs SOURCES)
+    set(multiValueArgs SOURCES DEPENDS)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(P_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR "savanxp_program(${P_NAME}): unknown arguments: ${P_UNPARSED_ARGUMENTS}")
@@ -29,8 +29,24 @@ function(savanxp_program)
     elseif(P_LINK_PROFILE STREQUAL "PIE")
         # Un PIE nace del runtime PIC: crt0.S ya es position independent
         # (%rip y call relativo) y esta dentro de savanxp_user_runtime_pic.
-        target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic)
+        #
+        # WITHOUT_MATH saca math.c de las unidades. Es lo unico que hace que un
+        # simbolo como sqrt quede indefinido y el enlazador emita un DT_NEEDED
+        # de verdad en vez de resolverlo contra una copia dentro del binario.
+        if(P_WITHOUT_MATH)
+            target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic_nomath)
+        else()
+            target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic)
+        endif()
         target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
+    elseif(P_WITHOUT_MATH)
+        message(FATAL_ERROR "savanxp_program(${P_NAME}): WITHOUT_MATH solo tiene sentido con LINK_PROFILE PIE")
+    endif()
+    # DEPENDS produce los DT_NEEDED del ejecutable. Solo el -soname de cada
+    # libreria llega a la tabla dinamica, no la ruta de build, asi que el
+    # nombre que el cargador tiene que volver a convertir en ruta bajo /lib.
+    if(P_DEPENDS)
+        target_link_libraries(${P_NAME} PRIVATE ${P_DEPENDS})
     endif()
     if(P_INTERPRETER)
         target_link_options(${P_NAME} PRIVATE "-Wl,--dynamic-linker,${P_INTERPRETER}")
@@ -108,6 +124,12 @@ function(savanxp_library)
 endfunction()
 
 savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/pietest.c)
+# El unico programa que linkea contra una libreria de verdad. Todo lo demas usa
+# el cargador a mano; este usa sqrt como funcion normal y no busca su direccion.
+savanxp_program(NAME libtest TEST LINK_PROFILE PIE WITHOUT_MATH DEPENDS libmath
+    SOURCES
+        subsystems/posix/userland/libtest.c
+        subsystems/posix/userland/ldso.c)
 # PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
 # .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que

@@ -87,6 +87,35 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | `DT_NEEDED` walked from `/lib`, each dependency loaded once | done |
 | The executable in the symbol scope, with its `.dynsym` | done |
 | `-fstack-protector-strong` back on for libraries | done |
+| `ldso` relocates the executable, `R_X86_64_RELATIVE` and all | done |
+| A program linking `libmath.so.0.4` and calling `sqrt` (`libtest`) | done |
+
+## The executable has to be relocated too
+
+The kernel maps the main image and hands it to the process, but it does not touch
+the `GOT`. A program that links a library therefore starts life with `DT_NEEDED`
+in its dynamic table and an empty slot for every call into one. `ldso_start()`
+is that missing step: walk the *executable's* `DT_NEEDED`, then apply the
+executable's own relocations. Same order as for a library — chain first,
+relocations after — because a call into a dependency cannot be resolved before
+that dependency is mapped.
+
+`R_X86_64_RELATIVE` is the other half. It carries no symbol: the value stored in
+the image is already a link-time address and only needs the image's bias added.
+Skipping it leaves a relocated image with pointers to address zero, which is not
+a crash but a program that quietly reads the wrong thing.
+
+Today `ldso_start()` is called from `main`, so a program must not touch a library
+symbol before it. `crt0` doing it is the step after this one, and it is the
+point where the model stops being hybrid.
+
+## The build has to leave the symbol undefined
+
+`libtest` links `LINK_PROFILE PIE WITHOUT_MATH`. `WITHOUT_MATH` drops `math.c`
+from the runtime sources — without that, `sqrt` is defined inside the executable,
+the linker never emits a `DT_NEEDED`, and the test passes against a private copy
+of `math.c` with no library involved at all. Removing the unit is what makes the
+test real.
 
 ## Finding the executable
 
@@ -164,21 +193,25 @@ translate to the base of the image — a call that lands on the ELF header.
 
 ## What blocks the rest, in order
 
-1. **PIE for real programs.** The mechanism is proven — `ldtest` and `pietest` are
-   `ET_DYN` with a `.dynsym` the loader reads — but every other program is still
-   `ET_EXEC` with no table to resolve against, so nothing but the tests can use
-   this yet. `SECTIONS.md` has the detail. It is a per-program decision, not
-   another mechanism.
+1. **`crt0` runs the interpreter.** `ldso_start()` works and is called by hand.
+   Until `crt0` calls it, a program must remember to call it before touching any
+   library symbol — a rule with no teeth, since nothing checks it. `crt0` already
+   receives the `PT_INTERP` path in `rcx`, so the plumbing is there; what changes
+   is how all 82 binaries start, so it is worth doing once and in one place.
 
-2. **`crt0` runs the interpreter.** The kernel still maps the main image itself
-   rather than handing the whole job to `ld.so` as Linux does. The plumbing is in
-   place; changing that would alter how all 82 binaries start, so it is worth
-   doing once 1 is done.
+2. **PIE for real programs.** The mechanism is proven — `libtest`, `ldtest` and
+   `pietest` are `ET_DYN` with a `.dynsym` the loader reads — but every other
+   program is still `ET_EXEC` with no table to resolve against. `SECTIONS.md` has
+   the detail. It is a per-program decision, not another mechanism.
 
-3. **A real library to replace `libmath`.** Everything above is proven against
-   fixtures. `libmath.so.0.4` is built and loadable, but nothing links against it
-   yet, so the payoff — `sqrt` in one mapped copy instead of in 82 binaries — is
-   still ahead.
+3. **Wider libraries.** `libmath.so.0.4` is linked by one test. The saving it
+   promises — `sqrt` mapped once instead of in every binary — is real but only
+   `libtest` collects it so far. SxGFX, SxGUI and FFmpeg come after the programs
+   they live in are PIE.
+
+4. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
+   name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
+   versioned names, are not implemented.
 
 ## Explicitly not worth doing yet
 

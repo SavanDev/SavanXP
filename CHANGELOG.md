@@ -69,6 +69,16 @@ Cut-off notes:
 
 ### Added
 
+- **`libtest`, the first program that links against a shared library.** It calls
+  `sqrt` like any other function instead of resolving it by hand, after
+  `ldso_start()` loads what the program declares and fills its `GOT`. It is
+  built without `math.c`, so `sqrt` genuinely comes from `libmath.so.0.4`.
+
+- **The loader relocates the executable, not just libraries.** The kernel maps
+  the main image but leaves its `GOT` empty, so a program that links a library
+  has to call `ldso_start()` before using it. `R_X86_64_RELATIVE` is now
+  applied: without it a relocated image keeps pointers to address zero.
+
 - **The executable is now in the library loader's symbol scope.** A library can
   resolve a symbol against the program that started it, so `-fstack-protector-
   strong` is back on for shared libraries. `ldtest` checks the stack canary
