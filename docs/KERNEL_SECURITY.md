@@ -265,6 +265,9 @@ Memory safety should then proceed in this order:
 2. PMM ownership metadata and double-free detection;
 3. a page-table VMM selftest and malformed-ELF corpus;
 4. user stack ASLR, followed by PIE/ET_DYN and a load-bias implementation;
+   the second half is now partly done — `elf.cpp` accepts `ET_DYN` and relocates
+   it onto a base — but the base is still a constant, and no userland image is
+   linked as PIE yet;
 5. exception-table user-copy helpers before enabling SMAP;
 6. per-stack non-present guard pages and SMP-wide panic stop.
 7. for the shared-library loader: `mprotect` with per-page copy-on-write, and

@@ -9,6 +9,7 @@ constexpr uint32_t kElfMagic = 0x464c457fU;
 constexpr uint32_t kElfClass64 = 2;
 constexpr uint32_t kElfDataLittle = 1;
 constexpr uint16_t kElfTypeExec = 2;
+constexpr uint16_t kElfTypeShared = 3;
 constexpr uint16_t kElfMachineX86_64 = 62;
 constexpr uint32_t kProgramLoad = 1;
 constexpr uint32_t kProgramInterp = 3;
@@ -72,7 +73,7 @@ bool validate_header(const ElfHeader& header, size_t size) {
         header.data_encoding == kElfDataLittle &&
         header.version == 1 &&
         header.version2 == 1 &&
-        header.type == kElfTypeExec &&
+        (header.type == kElfTypeExec || header.type == kElfTypeShared) &&
         header.machine == kElfMachineX86_64 &&
         header.header_size == sizeof(ElfHeader) &&
         header.program_header_count != 0 &&
@@ -310,6 +311,15 @@ bool load_user_image(
     uint64_t segment_starts[kMaxLoadSegments] = {};
     uint64_t segment_ends[kMaxLoadSegments] = {};
     uint64_t interpreter_offset = 0;
+    /* Desplazamiento de carga. Un ET_EXEC tiene direcciones absolutas y se carga
+     * donde dice: sesgo cero, exactamente igual que antes. Un ET_DYN (PIE) las
+     * tiene relativas y hay que(sumarlas) a una base.
+     *
+     * La base arranca en kUserBase, que es la misma que usa el linker script, de
+     * modo que una imagen PIE ocupa el mismo lugar que una ET_EXEC. Eso es lo
+     * unico que cambia aca: elegir una base por proceso con entropia es el
+     * trabajo siguiente, y es tambien lo que le da ASLR al ejecutable. */
+    const uint64_t load_bias = header.type == kElfTypeShared ? vm::kUserBase : 0;
     uint64_t interpreter_path_length = 0;
     size_t segment_count = 0;
     bool entry_is_executable = false;
@@ -364,9 +374,10 @@ bool load_user_image(
         const bool valid_alignment = program.alignment == 0 || program.alignment == 1 ||
             ((program.alignment & (program.alignment - 1)) == 0 &&
              (program.offset % program.alignment) == (program.virtual_address % program.alignment));
-        const uint64_t image_end = program.virtual_address + program.memory_size;
+        const uint64_t vaddr = program.virtual_address + load_bias;
+        const uint64_t image_end = vaddr + program.memory_size;
         const bool address_range_valid = program.memory_size != 0 && image_end >= program.virtual_address &&
-            program.virtual_address >= vm::kUserBase && image_end <= vm::kUserStackGuardBottom;
+            vaddr >= vm::kUserBase && image_end <= vm::kUserStackGuardBottom;
         const bool mapped_range_valid = address_range_valid &&
             align_up(image_end, memory::kPageSize) >= image_end;
         const bool file_range_valid = program.file_size <= program.memory_size &&
@@ -379,7 +390,7 @@ bool load_user_image(
             return false;
         }
 
-        const uint64_t mapped_start = align_down(program.virtual_address, memory::kPageSize);
+        const uint64_t mapped_start = align_down(vaddr, memory::kPageSize);
         const uint64_t mapped_end = align_up(image_end, memory::kPageSize);
         for (size_t previous = 0; previous < segment_count; ++previous) {
             if (!page_ranges_overlap(mapped_start, mapped_end, segment_starts[previous], segment_ends[previous])) {
@@ -404,8 +415,7 @@ bool load_user_image(
             }
         }
 
-        if (executable && header.entry >= program.virtual_address &&
-            header.entry < program.virtual_address + program.file_size) {
+        if (executable && header.entry >= vaddr && header.entry < vaddr + program.file_size) {
             entry_is_executable = true;
         }
         segments[segment_count] = program;
@@ -460,7 +470,7 @@ bool load_user_image(
         uint64_t remaining = program.file_size;
         uint64_t written = 0;
         while (remaining != 0) {
-            const uint64_t address = program.virtual_address + written;
+            const uint64_t address = program.virtual_address + load_bias + written;
             const uint64_t page = align_down(address, memory::kPageSize);
             const uint64_t page_offset = address & (memory::kPageSize - 1);
             const uint64_t room = memory::kPageSize - page_offset;
@@ -488,7 +498,7 @@ bool load_user_image(
         return false;
     }
 
-    result.entry_point = header.entry;
+    result.entry_point = header.entry + load_bias;
     result.os_abi = header.os_abi;
     return true;
 }

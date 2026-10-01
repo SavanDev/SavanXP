@@ -64,6 +64,11 @@ Cut-off notes:
 
 ### Added
 
+- **The kernel loads `ET_DYN` images with a load bias.** An `ET_EXEC` is unchanged
+  — bias zero, exactly where the linker script put it. An `ET_DYN` is relocated
+  onto a base, which starts at `kUserBase`. Per-process entropy for that base, and
+  ASLR for the executable image, is the next step.
+
 - **The kernel reads `PT_INTERP` and hands the path to `crt0`.** A binary linked
   with `--dynamic-linker` now has its interpreter path delivered in `rcx` and
   readable through `savanxp_interpreter_path()`. `interptest` is linked with one
