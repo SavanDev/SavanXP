@@ -448,6 +448,15 @@ static int apply_relocs_in(int slot) {
  * que paso fallo, con la misma convencion que ldso_load. Un ejecutable sin
  * .dynsym no tiene nada que reubicar y devuelve 0. */
 int ldso_start(void) {
+    /* Idempotente a proposito: crt0 lo llama antes de main y un programa puede
+     * llamarlo otra vez. Reaplicar las reubicaciones del ejecutable escribiria
+     * los mismos valores, pero R_X86_64_RELATIVE SUMA el bias, y hacerlo dos
+     * veces dejaria los punteros de la imagen corridos por kUserBase. */
+    static int done = 0;
+    if (done) {
+        return 0;
+    }
+    done = 1;
     adopt_executable_once();
     if (g_lib_count == 0) {
         /* No se encontro la cabecera de la imagen. Un programa que no depende de
@@ -464,6 +473,16 @@ int ldso_start(void) {
         return -9;
     }
     return 0;
+}
+
+/* El hook que crt0 llama antes de main.
+ *
+ * El nombre sigue el del campo que ya existia, sx_interpreter_path, y el modelo
+ * es el que el kernel ya impone: la imagen principal la mapea el kernel y el
+ * programa hace el trabajo de enlace. Asi que "correr el interprete" aca es
+ * dejar operativo al ejecutable: cargar lo que declara y rellenar su GOT. */
+int sx_run_interpreter(void) {
+    return ldso_start();
 }
 
 int ldso_load(const char* path) {

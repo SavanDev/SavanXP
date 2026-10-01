@@ -19,6 +19,12 @@ _start:
     # o 0 si la imagen es estatica. Se guarda antes de la primera llamada porque
     # rcx no sobrevive a un call.
     movq %rcx, sx_interpreter_path(%rip)
+    # Correr el interprete antes de main. El hook vive en C, no aca: comprobar si
+    # un simbolo debil esta definido exige mirar su entrada en el GOT, y en
+    # ensamblador habria que hacer movq simbolo(%rip) -- que LEE la memoria de esa
+    # direccion. Con el simbolo debil sin definir esa direccion es 0 y el proceso
+    # muere leyendo la pagina cero antes de llegar a main.
+    call sx_start_dynamic
     call main
     movq %rax, %rdi
     movq $7, %rax

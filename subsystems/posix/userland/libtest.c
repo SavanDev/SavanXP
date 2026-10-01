@@ -16,13 +16,11 @@
 #include "math.h"
 
 int main(void) {
-    /* El kernel mapeo la imagen principal pero no relleno su GOT. Este es el
-     * paso que le falta, y tiene que pasar antes de la primera llamada. */
-    const int why = ldso_start();
-    if (why != 0) {
-        eprintf("libtest: ldso_start fallo (paso %d)\n", -why);
-        return 1;
-    }
+    /* Nada de llamar al cargador aca. crt0 ya lo corrio antes de llegar a
+     * main, porque este binario enlaza el cargador y crt0 lo encuentra por el
+     * hook debil. Si el GOT no estuviera relleno, la llamada de abajo sale por
+     * el PLT a una entrada vacia. Que esta prueba no llame a ldso_start es lo
+     * que la convierte en prueba. */
 
     /* sqrt(144) tiene que dar 12. */
     const double got = sqrt(144.0);

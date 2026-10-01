@@ -4,10 +4,14 @@
  * DT_NEEDED desde /lib, aplica sus reubicaciones, y deja searchable un simbolo
  * por nombre en todas las imagenes cargadas mas el ejecutable.
  *
- * Que NO hace todavia: no hay PT_INTERP -- el kernel mapea la imagen principal y
- * el programa tiene que llamar a ldso_start() a mano --, ni dlopen, ni control
- * de visibilidad mas alla de global, ni nombres versionados. DT_SONAME se lee y
- * se ignora: un DT_NEEDED se busca tal cual bajo /lib.
+ * Que NO hace todavia: no hay dlopen, ni control de visibilidad mas alla de
+ * global, ni nombres versionados. DT_SONAME se lee y se ignora: un DT_NEEDED se
+ * busca tal cual bajo /lib.
+ *
+ * Quien lo arranca: un programa que enlace este archivo queda con el cargador
+ * operativo ANTES de main, porque crt0 llama a sx_run_interpreter. El modelo
+ * sigue siendo hibrido -- el kernel mapea la imagen principal y el programa
+ * hace el enlace --, pero el programa ya no tiene que acordarse.
  *
  * Que se mapeen los segmentos de verdad (texto desde la seccion respaldada por
  * el archivo, datos como copias privadas) es lo que distingue esto de leer el
@@ -18,10 +22,13 @@
 
 /* Prepara el ejecutable: carga lo que declara en DT_NEEDED y rellena su GOT.
  *
- * El kernel mapea la imagen principal pero no la reubica, asi que un programa
- * que linkee contra una libreria tiene que llamar a esto ANTES de usar un
- * simbolo de ella. Sin la llamada, la entrada del GOT sigue vacia y la llamada
- * salta a donde se le ocurra.
+ * El kernel mapea la imagen principal pero no la reubica, asi que sin esto la
+ * entrada del GOT de cada llamada a una libreria queda vacia y la llamada salta
+ * a donde se le ocurra.
+ *
+ * No hace falta llamarla: crt0 ya lo hace por el programa. Se expone para las
+ * pruebas y para el caso de un programa que quiera cargarse sus librerias en un
+ * momento concreto.
  *
  * Devuelve 0 si quedo operativo, o un numero negativo diciendo en que paso
  * fallo, con la misma convencion que ldso_load. Un ejecutable sin .dynsym no

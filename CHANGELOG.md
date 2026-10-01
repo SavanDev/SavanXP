@@ -69,6 +69,10 @@ Cut-off notes:
 
 ### Added
 
+- **`crt0` now runs the library loader before `main`.** A program that links the
+  loader is ready to call into its libraries with no setup of its own; programs
+  that do not link it are unaffected.
+
 - **`libtest`, the first program that links against a shared library.** It calls
   `sqrt` like any other function instead of resolving it by hand, after
   `ldso_start()` loads what the program declares and fills its `GOT`. It is

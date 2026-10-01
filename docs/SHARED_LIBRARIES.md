@@ -89,6 +89,30 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | `-fstack-protector-strong` back on for libraries | done |
 | `ldso` relocates the executable, `R_X86_64_RELATIVE` and all | done |
 | A program linking `libmath.so.0.4` and calling `sqrt` (`libtest`) | done |
+| `crt0` runs the loader before `main`, via a weak hook | done |
+
+## crt0 runs the interpreter
+
+A program that links a library must be operable before `main`, and the kernel
+maps the main image without relocating it. `crt0` calls `sx_start_dynamic()` on
+the way to `main`; that checks a weak `sx_run_interpreter` and calls it if the
+program defined one. `ldso.c` defines it, so linking the loader is what opts a
+program in. The other programs do not define it and pay nothing but a null test.
+
+The check has to be in C. Asking in assembly whether a weak symbol is defined
+means `movq symbol(%rip), %rax`, which *reads memory at the symbol's address* —
+and for an undefined weak symbol that address is zero, so the process takes a
+page fault on address 0 before reaching `main`. The linker gives an undefined
+weak symbol a GOT entry holding zero, and that is what the C test reads.
+
+This does not make the model Linux-shaped: the kernel still maps the main image
+and the program still does its own linking. What it removes is the rule that
+every program has to remember to call the loader first, which had no teeth
+because nothing checked it.
+
+`ldso_start()` is idempotent on purpose. `R_X86_64_RELATIVE` *adds* the bias, so
+running the relocations twice would leave the image's pointers off by
+`kUserBase`.
 
 ## The executable has to be relocated too
 
@@ -193,25 +217,24 @@ translate to the base of the image — a call that lands on the ELF header.
 
 ## What blocks the rest, in order
 
-1. **`crt0` runs the interpreter.** `ldso_start()` works and is called by hand.
-   Until `crt0` calls it, a program must remember to call it before touching any
-   library symbol — a rule with no teeth, since nothing checks it. `crt0` already
-   receives the `PT_INTERP` path in `rcx`, so the plumbing is there; what changes
-   is how all 82 binaries start, so it is worth doing once and in one place.
+1. **PIE for real programs.** The mechanism is proven end to end — `libtest` links
+   `libmath.so.0.4`, `crt0` runs the loader, and `sqrt` is called normally — but
+   every other program is still `ET_EXEC` with no table to resolve against.
+   `SECTIONS.md` has the detail. It is a per-program decision, not another
+   mechanism.
 
-2. **PIE for real programs.** The mechanism is proven — `libtest`, `ldtest` and
-   `pietest` are `ET_DYN` with a `.dynsym` the loader reads — but every other
-   program is still `ET_EXEC` with no table to resolve against. `SECTIONS.md` has
-   the detail. It is a per-program decision, not another mechanism.
-
-3. **Wider libraries.** `libmath.so.0.4` is linked by one test. The saving it
+2. **Wider libraries.** `libmath.so.0.4` is linked by one test. The saving it
    promises — `sqrt` mapped once instead of in every binary — is real but only
    `libtest` collects it so far. SxGFX, SxGUI and FFmpeg come after the programs
    they live in are PIE.
 
-4. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
+3. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
    versioned names, are not implemented.
+
+4. **`dlopen`, and unloading.** The library array is fixed at load time and there
+   is no reference counting, so nothing can be removed once mapped. `kMaxLibraries`
+   is 8.
 
 ## Explicitly not worth doing yet
 
