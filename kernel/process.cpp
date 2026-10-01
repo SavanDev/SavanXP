@@ -948,7 +948,7 @@ bool prepare_exec_image(
         failure = load_failure == elf::LoadFailure::out_of_memory
             ? ImageFailure::no_load_memory
             : ImageFailure::bad_image;
-        console::printf("process: elf de '%s': %s\n", path, elf::load_failure_string(load_failure));
+        console::printf("process: elf de '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
         report_image_failure("exec", path, failure, reported_size);
         return false;
     }
@@ -1133,7 +1133,7 @@ process::Process* create_process_internal(
         failure = load_failure == elf::LoadFailure::out_of_memory
             ? ImageFailure::no_load_memory
             : ImageFailure::bad_image;
-        console::printf("process: elf de '%s': %s\n", path, elf::load_failure_string(load_failure));
+        console::printf("process: elf de '%s': %s (phdr %u)\n", path, elf::load_failure_string(load_failure), load_result.fail_index);
         report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }

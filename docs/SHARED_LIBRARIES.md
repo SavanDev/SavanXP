@@ -79,14 +79,17 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | `ldso`: place `PT_LOAD`s, relocate, resolve by name | done |
 | `PT_INTERP` delivered to `crt0` | done |
 | `ET_DYN` accepted by the kernel with a load bias | done |
+| First PIE executable with `.dynsym` (`pietest`) | done |
 | Two `PT_LOAD`s may share a page, union of permissions | done |
 
 ## What blocks the rest, in order
 
 1. **PIE for userland.** The premise: lld emits no dynamic symbol table for a
    non-PIE `ET_EXEC`, so the executable cannot export anything to a library.
-   `SECTIONS.md` has the detail. Needs the link options restructured per profile,
-   then the whole SDK runtime compiled as PIC. Everything below depends on it.
+   `SECTIONS.md` has the detail. The link options are restructured per profile,
+   the SDK runtime has a PIC-clean check target, and `pietest` is the first `DYN`
+   with `.dynsym`. What is missing is migrating real programs to the profile —
+   which is a per-program decision, not another mechanism.
 
 2. **A real symbol scope.** `resolve` currently looks only in the library being
    loaded. A `DT_NEEDED` chain needs: the library, its dependencies in reverse

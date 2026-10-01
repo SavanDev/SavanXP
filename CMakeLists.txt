@@ -154,11 +154,24 @@ set(SAVANXP_USER_LINK_OPTIONS_STATIC
     -Wl,--gc-sections
     -Wl,--build-id=none
 )
-# Alias del perfil de hoy, para que lo que llame no nombre un modelo que no le
-# importa. El bloque PIE aparecera al lado de este cuando el runtime compile
-# como PIC; hasta entonces LINK_PROFILE=PIE falla en savanxp_program en vez de
-# producir en silencio un ET_EXEC con banderas contradictorias.
-set(SAVANXP_USER_LINK_OPTIONS ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+# El bloque PIE de verdad: sin -static, sin -T fijo, -pie y --export-dynamic.
+# Sin esto un ejecutable PIE no nace: -static y el -T compiten con -pie de un
+# modo que no se expresa como "agregar una opcion", y sin --export-dynamic la
+# salida DYN sale sin .dynsym y el cargador no tiene contra que resolver.
+#
+# Se define aunque nada lo pida todavia: que exista es lo que hace que
+# LINK_PROFILE=PIE deje de fallar en savanxp_program. Usarlo es el paso
+# siguiente, no este.
+set(SAVANXP_USER_LINK_OPTIONS_PIE
+    -nostdlib
+    -fuse-ld=lld
+    -pie
+    "-Wl,-z,max-page-size=0x1000"
+    -Wl,--build-id=none
+    -Wl,--export-dynamic
+    -Wl,-e,_start
+)
+set(SAVANXP_USER_COMPILE_OPTIONS_PIE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
 
 set(SAVANXP_KERNEL_SOURCES
     arch/x86_64/context.S
@@ -257,6 +270,7 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
 # pieces it references.
 add_library(savanxp_user_runtime OBJECT
     subsystems/posix/sdk/v1/runtime/crt0.S
+    subsystems/posix/sdk/v1/runtime/crt0.S
     subsystems/posix/sdk/v1/runtime/libc.c
     subsystems/posix/sdk/v1/runtime/posix.c
     subsystems/posix/sdk/v1/runtime/math.c
@@ -282,10 +296,13 @@ set_target_properties(savanxp_user_runtime PROPERTIES
 # que las 10 compilan sin tocarlas (la unica que fallaba era por falta del
 # include path, no por el codigo).
 #
-# crt0.S no va: un crt0 para PIE necesita otro arranque (relativizar su propio
-# GOT antes de llamar a nada), y setjmp.S tampoco, porque su trampolin es
-# position dependent por diseno.
+# crt0.S SI va, verificado: ya es position independent. Sus accesos a
+# __stack_chk_guard y sx_interpreter_path son %rip-relativos y el call main es
+# relativo, asi que no hay direccion absoluta que relativizar. setjmp.S no va,
+# porque su trampolin es position dependent por diseno.
+
 set(SAVANXP_USER_PIC_SOURCES
+    subsystems/posix/sdk/v1/runtime/crt0.S
     subsystems/posix/sdk/v1/runtime/libc.c
     subsystems/posix/sdk/v1/runtime/posix.c
     subsystems/posix/sdk/v1/runtime/math.c

@@ -366,15 +366,16 @@ bool load_user_image(
         }
         if (segment_count >= kMaxLoadSegments) {
             failure = LoadFailure::bad_segment;
+            result.fail_index = index;
             return false;
         }
 
         const bool executable = (program.flags & kProgramExecutable) != 0;
         const bool writable = (program.flags & kProgramWritable) != 0;
+        const uint64_t vaddr = program.virtual_address + load_bias;
         const bool valid_alignment = program.alignment == 0 || program.alignment == 1 ||
             ((program.alignment & (program.alignment - 1)) == 0 &&
-             (program.offset % program.alignment) == (program.virtual_address % program.alignment));
-        const uint64_t vaddr = program.virtual_address + load_bias;
+             (program.offset % program.alignment) == (vaddr % program.alignment));
         const uint64_t image_end = vaddr + program.memory_size;
         const bool address_range_valid = program.memory_size != 0 && image_end >= program.virtual_address &&
             vaddr >= vm::kUserBase && image_end <= vm::kUserStackGuardBottom;
@@ -383,10 +384,19 @@ bool load_user_image(
         const bool file_range_valid = program.file_size <= program.memory_size &&
             range_within(program.offset, program.file_size, size);
 
-        if ((executable && writable) || !valid_alignment || !mapped_range_valid || !file_range_valid) {
-            failure = range_within(program.offset, program.file_size, size)
-                ? LoadFailure::bad_segment
-                : LoadFailure::truncated;
+        if (!valid_alignment) {
+            failure = LoadFailure::bad_segment;
+            result.fail_index = index;
+            return false;
+        }
+        if (!mapped_range_valid || !file_range_valid) {
+            failure = LoadFailure::bad_segment;
+            result.fail_index = index;
+            return false;
+        }
+        if (executable && writable) {
+            failure = LoadFailure::bad_segment;
+            result.fail_index = index;
             return false;
         }
 
@@ -411,11 +421,13 @@ bool load_user_image(
             const bool union_executable = (union_flags & kProgramExecutable) != 0;
             if (union_writable && union_executable) {
                 failure = LoadFailure::bad_segment;
+                result.fail_index = index;
                 return false;
             }
         }
 
-        if (executable && header.entry >= vaddr && header.entry < vaddr + program.file_size) {
+        if (executable && header.entry + load_bias >= vaddr &&
+            header.entry + load_bias < vaddr + program.file_size) {
             entry_is_executable = true;
         }
         segments[segment_count] = program;
@@ -426,6 +438,7 @@ bool load_user_image(
 
     if (segment_count == 0 || !entry_is_executable) {
         failure = LoadFailure::bad_segment;
+        result.fail_index = 0xffff;
         return false;
     }
 

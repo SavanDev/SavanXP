@@ -103,6 +103,7 @@ int main(void) {
     const char* sectiontest_argv[] = {"/disk/bin/sectiontest", 0};
     const char* ldtest_argv[] = {"/disk/bin/ldtest", 0};
     const char* interptest_argv[] = {"/disk/bin/interptest", 0};
+    const char* pietest_argv[] = {"/disk/bin/pietest", 0};
     const char* handletest_argv[] = {"/disk/bin/handletest", 0};
     const char* semaphoretest_argv[] = {"/disk/bin/semaphoretest", 0};
     const char* cliptest_argv[] = {"/disk/bin/cliptest", 0};
@@ -144,6 +145,7 @@ int main(void) {
         !file_exists("/disk/bin/sectiontest") ||
         !file_exists("/disk/bin/ldtest") ||
         !file_exists("/disk/bin/interptest") ||
+        !file_exists("/disk/bin/pietest") ||
         !file_exists("/disk/bin/handletest") ||
         !file_exists("/disk/bin/semaphoretest") ||
         !file_exists("/disk/bin/cliptest") ||
@@ -175,6 +177,7 @@ int main(void) {
         !run_and_expect("/disk/bin/sectiontest", sectiontest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/ldtest", ldtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/interptest", interptest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/pietest", pietest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/handletest", handletest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/semaphoretest", semaphoretest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/cliptest", cliptest_argv, 1, 0) ||

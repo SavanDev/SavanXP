@@ -22,6 +22,11 @@ Cut-off notes:
   The page takes the union of both segments' permissions, and a union that is
   both writable and executable is still refused.
 
+- **The ELF loader reports which program header it rejected.** `bad elf segment`
+  now carries the segment index, or 65535 when the rejection is not about any
+  one segment. Without it, a `PT_LOAD` table with four entries fails as one
+  opaque message.
+
 - **The section cache keys on the file range, not just the inode.** Asking for
   the whole file and asking for a slice of it are different sections, and
   confusing them mapped a segment with the whole image behind it.
@@ -63,6 +68,12 @@ Cut-off notes:
   enough to make room for a later volume grow.
 
 ### Added
+
+- **`pietest`, the first PIE executable in the tree.** `ET_DYN`, relocated by the
+  kernel onto a base, with `.dynsym` and `.dynamic`. It proves a relocated image
+  loads and runs — and it proves the premise the whole feature rests on: a PIE
+  executable exports symbols a library can resolve against, which lld denies to
+  a non-PIE `ET_EXEC`.
 
 - **The kernel loads `ET_DYN` images with a load bias.** An `ET_EXEC` is unchanged
   — bias zero, exactly where the linker script put it. An `ET_DYN` is relocated

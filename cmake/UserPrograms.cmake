@@ -24,7 +24,14 @@ function(savanxp_program)
     )
     target_compile_definitions(${P_NAME} PRIVATE DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
     target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
-    target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime)
+    if(P_LINK_PROFILE STREQUAL "STATIC" OR NOT P_LINK_PROFILE)
+        target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime)
+    elseif(P_LINK_PROFILE STREQUAL "PIE")
+        # Un PIE nace del runtime PIC: crt0.S ya es position independent
+        # (%rip y call relativo) y esta dentro de savanxp_user_runtime_pic.
+        target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic)
+        target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
+    endif()
     if(P_INTERPRETER)
         target_link_options(${P_NAME} PRIVATE "-Wl,--dynamic-linker,${P_INTERPRETER}")
     endif()
@@ -85,6 +92,7 @@ function(savanxp_library)
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_LIBRARY_NAMES ${P_SONAME})
 endfunction()
 
+savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/pietest.c)
 savanxp_program(NAME ldtest TEST SOURCES
     subsystems/posix/userland/ldtest.c
     subsystems/posix/userland/ldso.c)

@@ -25,6 +25,8 @@ struct LoadResult {
     // imagen no declara uno. Es lo que crt0 lee de rcx para saber que tiene que
     // arrancar el cargador antes de llegar a main.
     uint64_t interpreter_address;
+    // Ver abajo: indice del segmento que fallo, o 0xffff.
+    uint16_t fail_index;
 };
 
 // Motivo de fallo de la carga. Existe para que el llamador pueda distinguir
@@ -37,6 +39,10 @@ enum class LoadFailure : uint8_t {
     truncated,    // un PT_LOAD apunta mas alla del final de la imagen
     out_of_memory // no se pudo reservar/mapear una pagina del segmento o del stack
 };
+
+// Donde fallo dentro de la imagen: 0xffff es cabecera o final, otro valor es
+// el indice del program header que no gusto. Sin esto, "bad elf segment" no
+// dice cual de los N segmentos es.
 
 const char* load_failure_string(LoadFailure failure);
 
