@@ -2894,7 +2894,7 @@ int create_section_handle(process::Process& proc, uint64_t size, uint32_t flags)
     return handle;
 }
 
-int open_section_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
+int open_range_section_handle(process::Process& proc, uint64_t fd, uint64_t offset, uint64_t length, uint32_t flags) {
     object::Header* handle_object = lookup_handle(proc, fd, object::access_read);
     object::IoObject* file = object::as_io(handle_object);
     if (file == nullptr || file->node == nullptr) {
@@ -2903,24 +2903,17 @@ int open_section_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
     if (file->node->type != vfs::NodeType::file) {
         return negative_error(SAVANXP_EINVAL);
     }
-
-    /* El grant se deriva de los flags pedidos, con un piso de lectura. No hay
-     * forma de pedir escritura: el respaldo de una libreria es de solo lectura,
-     * y los segmentos que el cargador tiene que escribir son secciones anonimas
-     * aparte. Pedir WRITE aca no da una escritura, da un EINVAL. */
     if ((flags & SAVANXP_SECTION_WRITE) != 0) {
         return negative_error(SAVANXP_EINVAL);
     }
-    uint32_t section_access = object_access_for_section_flags(
-        flags,
-        object::access_read);
+    uint32_t section_access = object_access_for_section_flags(flags, object::access_read);
     section_access |= object::access_read;
 
-    object::SectionObject* section_object = object::acquire_file_section(*file->node, section_access);
+    object::SectionObject* section_object =
+        object::acquire_file_range_section(*file->node, offset, length, section_access);
     if (section_object == nullptr) {
         return negative_error(SAVANXP_ENOMEM);
     }
-
     const uint32_t handle_access = object::access_query | object::access_synchronize | section_access;
     const int handle = allocate_fd(proc, &section_object->header, handle_access, object::handle_none);
     if (handle < 0) {
@@ -2929,6 +2922,10 @@ int open_section_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
         return handle;
     }
     return handle;
+}
+
+int open_section_handle(process::Process& proc, uint64_t fd, uint32_t flags) {
+    return open_range_section_handle(proc, fd, 0, 0, flags);
 }
 
 int64_t map_view_base_handle(process::Process& proc, uint64_t fd, uint64_t base, uint32_t flags) {
@@ -3231,6 +3228,7 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.pci_device_count = static_cast<uint32_t>(pci::device_count());
     info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(sxfs::root()));
     object::section_live_counts(info.sections_live, info.file_sections_live);
+    info.last_view_failure = vm::last_view_failure();
     info.memory_total_pages = memory::total_page_count();
     info.sxfs_total_bytes = sxfs::total_bytes(sxfs::root());
     info.sxfs_used_bytes = sxfs::used_bytes(sxfs::root());

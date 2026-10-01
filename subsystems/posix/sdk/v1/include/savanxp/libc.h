@@ -49,6 +49,7 @@ long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
 long timer_cancel(int handle);
 long section_create(unsigned long size, unsigned long flags);
 long section_open(int handle, unsigned long flags);
+long section_open_range(int handle, unsigned long offset, unsigned long length, unsigned long flags);
 void* map_view(int handle, unsigned long flags);
 void* map_view_at(int handle, unsigned long base, unsigned long flags);
 long unmap_view(void* base);

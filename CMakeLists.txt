@@ -127,6 +127,24 @@ set(SAVANXP_USER_COMPILE_OPTIONS
     -Wno-language-extension-token
     -Wno-c23-extensions
 )
+set(SAVANXP_LIBRARY_COMPILE_OPTIONS
+    "-target;${SAVANXP_TARGET_TRIPLE}"
+    -ffreestanding
+    -fPIC
+    -mno-red-zone
+    -mcmodel=medium
+    -mno-mmx
+    -msse
+    -msse2
+    -ffunction-sections
+    -fdata-sections
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wno-language-extension-token
+    -Wno-c23-extensions
+)
+
 set(SAVANXP_USER_LINK_OPTIONS
     -nostdlib
     -static
@@ -653,10 +671,26 @@ add_custom_command(OUTPUT "${SAVANXP_INITRAMFS}"
 )
 add_custom_target(savanxp_initramfs DEPENDS "${SAVANXP_INITRAMFS}")
 
+set(SAVANXP_USER_LIBRARY_TARGETS)
+get_property(SAVANXP_USER_LIBRARY_TARGETS GLOBAL PROPERTY SAVANXP_USER_LIBRARY_TARGETS)
+
+# Shared libraries are staged inside savanxp_diskfs, after its rm -rf, or they
+# would be wiped. Its COMMAND list is variadic and cannot host a foreach, so the
+# commands are built into a list and expanded here.
+set(SAVANXP_LIB_COPY_COMMANDS)
+foreach(library IN LISTS SAVANXP_USER_LIBRARY_TARGETS)
+    get_target_property(library_file ${library} OUTPUT_NAME)
+    list(APPEND SAVANXP_LIB_COPY_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_BINARY_DIR}/${library_file}" "${SAVANXP_DISKFS_ROOT}/lib/")
+endforeach()
+
 add_custom_target(savanxp_diskfs
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_DISKFS_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/bin"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/lib"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/icons"
+    ${SAVANXP_LIB_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/diskfs" "${SAVANXP_DISKFS_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
@@ -664,7 +698,7 @@ add_custom_target(savanxp_diskfs
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_mime_icons.py"
             --project-root "${CMAKE_SOURCE_DIR}"
             --output-dir "${SAVANXP_DISKFS_ROOT}/icons"
-    DEPENDS savanxp_rootfs
+    DEPENDS savanxp_rootfs ${SAVANXP_USER_LIBRARY_TARGETS}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Staging persistent disk tree"
     VERBATIM

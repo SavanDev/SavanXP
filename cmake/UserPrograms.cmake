@@ -31,6 +31,50 @@ function(savanxp_program)
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_PROGRAM_NAMES ${P_NAME})
 endfunction()
 
+# A shared library. Not a program: it gets no SXE stamp, no desktop entry, and
+# lands in /lib rather than /bin, so Program Manager never lists it.
+#
+# Deliberately without -fstack-protector-strong. The canary makes every object
+# reference __stack_chk_guard and __stack_chk_fail, and resolving those needs
+# the executable to export a dynamic symbol table, which does not exist yet. A
+# library with undefined symbols cannot be loaded, and a library built without
+# the canary has none. The canary comes back with the loader's symbol scope.
+function(savanxp_library)
+    set(oneValueArgs NAME SONAME)
+    set(multiValueArgs SOURCES)
+    cmake_parse_arguments(P "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    if(P_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "savanxp_library(${P_NAME}): unknown arguments: ${P_UNPARSED_ARGUMENTS}")
+    endif()
+    if(NOT P_NAME OR NOT P_SOURCES OR NOT P_SONAME)
+        message(FATAL_ERROR "savanxp_library requires NAME, SONAME and SOURCES")
+    endif()
+    add_library(${P_NAME} MODULE ${P_SOURCES})
+    target_include_directories(${P_NAME} PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+        "${SAVANXP_GENERATED_ROOT}"
+    )
+    target_compile_options(${P_NAME} PRIVATE ${SAVANXP_LIBRARY_COMPILE_OPTIONS})
+    # -soname is what a DT_NEEDED would name; today nothing resolves it, because
+    # the loader that reads it does not exist yet.
+    target_link_options(${P_NAME} PRIVATE
+        -nostdlib -fuse-ld=lld "-Wl,-soname,${P_SONAME}"
+        "-Wl,-z,max-page-size=0x1000" -Wl,--build-id=none)
+    set_target_properties(${P_NAME} PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "${P_SONAME}"
+        SUFFIX "")
+    set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_LIBRARY_TARGETS ${P_NAME})
+    set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_LIBRARY_NAMES ${P_SONAME})
+endfunction()
+
+savanxp_program(NAME ldtest TEST SOURCES
+    subsystems/posix/userland/ldtest.c
+    subsystems/posix/userland/ldso.c)
+savanxp_library(NAME libmath SONAME libmath.so.0.4
+    SOURCES subsystems/posix/sdk/v1/runtime/math.c)
+
 savanxp_program(NAME init SOURCES subsystems/posix/userland/init.c)
 savanxp_program(NAME sh SOURCES
     subsystems/posix/userland/sh.c

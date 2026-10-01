@@ -90,6 +90,7 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_FSCHECK = 59,
     SAVANXP_SYS_SECTION_OPEN = 60,
     SAVANXP_SYS_MAP_VIEW_AT = 61,
+    SAVANXP_SYS_SECTION_OPEN_RANGE = 62,
 };
 
 enum savanxp_open_flags {
@@ -318,6 +319,8 @@ struct savanxp_system_info {
      * que dos procesos con la misma libreria deberian sumar 1 entre los dos. */
     uint32_t sections_live;
     uint32_t file_sections_live;
+    /* Motivo del ultimo fallo de map_view/map_view_at. */
+    uint32_t last_view_failure;
     uint64_t memory_usable_bytes;
     uint64_t memory_reclaimable_bytes;
     uint64_t memory_total_pages;

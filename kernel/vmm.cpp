@@ -393,6 +393,11 @@ bool unmap_kernel_page(uint64_t virtual_address) {
 
 namespace vm {
 
+/* Motivo del ultimo fallo de map_section_view, para poder distinguirlo del
+ * ENOMEM generico que devuelve: 1 seccion invalida, 2 grant, 3 sin lugar libre,
+ * 4 rango ocupado, 5 sin vistas libres, 6 map_page. */
+uint32_t g_view_failure = 0;
+
 void initialize(const boot::BootInfo& boot_info) {
     g_hhdm_offset = boot_info.hhdm_offset;
     g_kernel_pml4_physical = read_cr3() & kPageMask;
@@ -408,6 +413,11 @@ void initialize(const boot::BootInfo& boot_info) {
 bool ready() {
     return g_ready;
 }
+
+uint32_t last_view_failure() {
+    return g_view_failure;
+}
+
 
 bool create_address_space(VmSpace& space) {
     if (!g_ready) {
@@ -716,11 +726,13 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
 }
 
 bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint64_t& base_address, bool share_on_fork) {
+    g_view_failure = 1;
     if (!g_ready || !section.in_use || section.page_count == 0 || section.physical_pages == nullptr) {
         return false;
     }
 
     if ((access_mask & section.access_mask) != access_mask) {
+        g_view_failure = 2;
         return false;
     }
 
@@ -746,14 +758,17 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
 
     if (base_address == 0) {
         if (!choose_section_view_base(space, view_size, base_address)) {
+            g_view_failure = 3;
             return false;
         }
     } else if (!user_range_is_free(space, base_address, view_size)) {
+        g_view_failure = 4;
         return false;
     }
 
     VmSpace::SectionView* view = find_free_section_view(space);
     if (view == nullptr) {
+        g_view_failure = 5;
         return false;
     }
 
@@ -768,6 +783,7 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
     for (uint64_t page_index = 0; page_index < section.page_count; ++page_index) {
         const uint64_t virtual_address = base_address + (page_index * memory::kPageSize);
         if (!map_page(space, virtual_address, section.physical_pages[page_index], page_flags)) {
+            g_view_failure = 6;
             for (uint64_t rollback = 0; rollback < page_index; ++rollback) {
                 (void)unmap_page(space, base_address + (rollback * memory::kPageSize), nullptr);
             }

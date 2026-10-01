@@ -40,10 +40,12 @@ anonymous sections instead.
 
 Two things are deliberately missing:
 
-- **No in-place update detection.** The cache key is the SxFS `inode_id`, which is
-  stable and cross-process, but `write_file` rewrites an existing inode rather
-  than allocating a new one. So overwriting a library's bytes in place would
-  leave the cache serving the old image. This is unreachable today and must stay
+- **No in-place update detection.** The cache key is the SxFS `inode_id` plus the
+  range backed — the range matters because "the whole file" and "one slice of it"
+  are different sections, and keying on the inode alone mapped a segment with the
+  whole image behind it. But `write_file` rewrites an existing inode rather than
+  allocating a new one, so overwriting a library's bytes in place would leave the
+  cache serving the old image. This is unreachable today and must stay
   that way until it is handled: **there is no install syscall**, Add/Remove
   Programs can only uninstall, and the build rewrites `disk.img` from the host
   with no kernel running to be stale. The moment an install syscall lands — or
@@ -192,6 +194,35 @@ Separating anonymous arenas into their own table, leaving this one for images
 only, would make the budget honest. It is not done: with 256 entries and a
 realistic peak near 115 the sharing is affordable, and splitting a subsystem that
 two unrelated callers use is a larger change than the numbers justify.
+
+## The loader, and what it proved
+
+`ldso` (`subsystems/posix/userland/ldso.c`) is the smallest thing that can fail
+interesting: one `.so`, its `PT_LOAD`s placed where the ELF says, its relocations
+applied, its symbols resolved by name. `ldtest` calls `sqrt`, `fabs` and `floor`
+through the loaded pointers and checks the results, so the code really executes
+from a file-backed section with its relocated data beside it.
+
+Two things it had to get right that are easy to get wrong:
+
+- **A load bias.** An `ET_DYN` has `p_vaddr` near zero, and zero is not a usable
+  user address. The first segment, whose `p_vaddr` is zero, is mapped with the
+  kernel choosing; that address minus its `p_vaddr` is the bias everything else
+  is placed against.
+- **A segment is a slice, not the file.** `section_open_range` exists for this.
+  Mapping the whole file per segment put the ELF header at the text segment's
+  address and everything shifted by a page.
+
+### What it does not do yet
+
+No `PT_INTERP`, so nothing loads a library *by itself* yet — `ldtest` calls the
+loader explicitly. No `DT_NEEDED` chain, so a library cannot pull in another. No
+symbol scope: a library can only use symbols it defines itself, which is why
+`libmath.so.0.4` is built without `-fstack-protector-strong` (its canary would
+need `__stack_chk_fail` from the executable). No lazy binding, so every
+`JUMP_SLOT` is resolved up front. And `lseek` is declared but not implemented, so
+no code can reposition a descriptor — which is why segment bytes are read through
+a temporary range section rather than `read`.
 
 ## Not decided yet
 

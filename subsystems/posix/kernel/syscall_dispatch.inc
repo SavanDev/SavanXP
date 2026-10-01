@@ -460,6 +460,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_SECTION_OPEN:
             context->rax = static_cast<uint64_t>(open_section_handle(*this_cpu().current, context->rdi, static_cast<uint32_t>(context->rsi)));
             return context;
+        case SAVANXP_SYS_SECTION_OPEN_RANGE:
+            context->rax = static_cast<uint64_t>(open_range_section_handle(*this_cpu().current, context->rdi, context->rsi, context->rdx, static_cast<uint32_t>(context->r10)));
+            return context;
         case SAVANXP_SYS_MAP_VIEW:
             context->rax = static_cast<uint64_t>(map_view_handle(*this_cpu().current, context->rdi, static_cast<uint32_t>(context->rsi)));
             return context;

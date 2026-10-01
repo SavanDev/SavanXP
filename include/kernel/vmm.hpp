@@ -89,6 +89,7 @@ struct VmSpace {
 
 void initialize(const boot::BootInfo& boot_info);
 bool ready();
+uint32_t last_view_failure();
 bool create_address_space(VmSpace& space);
 void destroy_address_space(VmSpace& space);
 // Cambia el punto de partida de las vistas de seccion para este espacio. El

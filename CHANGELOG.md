@@ -17,6 +17,13 @@ Cut-off notes:
   per process was already tight for heap arenas alone. Exhaustion is still a
   clean `ENOMEM`.
 
+- **The section cache keys on the file range, not just the inode.** Asking for
+  the whole file and asking for a slice of it are different sections, and
+  confusing them mapped a segment with the whole image behind it.
+
+- **`savanxp_system_info` reports live section counts** and why the last view
+  mapping failed, so a shared mapping is observable instead of assumed.
+
 - **Window caption bars are two pixels taller.** The title area now has a 20px
   caption, giving the compact title text and caption buttons more breathing room.
 
@@ -51,6 +58,18 @@ Cut-off notes:
   enough to make room for a later volume grow.
 
 ### Added
+
+- **`libmath.so.0.4`, a real shared library, and a minimal loader that maps
+  it.** `/lib/libmath.so.0.4` is built as PIC and lands on the volume, not in
+  `/bin`, so Program Manager never lists it. `ldso` reads its program headers,
+  places each `PT_LOAD` at the address the ELF asks for, copies the writable
+  segments into private anonymous sections, applies `R_X86_64_JUMP_SLOT` and
+  `R_X86_64_GLOB_DAT`, and resolves symbols by name. `/disk/bin/ldtest` calls
+  `sqrt`, `fabs` and `floor` through the loaded pointers.
+
+- **`section_open_range` backs a section with part of a file.** A `PT_LOAD` is a
+  slice of the file, not the whole file, and mapping the whole thing puts the
+  bytes at addresses that are not theirs.
 
 - **`section_open` maps a file into a read-only section.** Given an open file
   descriptor it returns a section handle holding the file's bytes, so user mode

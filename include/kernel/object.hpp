@@ -122,6 +122,12 @@ struct SectionObject {
     // mismo archivo encuentran la misma seccion y por lo tanto las mismas
     // paginas fisicas. Ver docs/SECTIONS.md para que NO alcanza como clave.
     uint32_t source_inode_id;
+    /* Offset y largo de la parte del archivo que respaldo la seccion. Forman
+     * parte de la clave del cache junto con inode_id: pedir el archivo entero y
+     * pedir un tramo son secciones distintas, y confundirlas devuelve una
+     * seccion mas grande de la que se pidio. */
+    uint64_t source_offset;
+    uint64_t source_length;
     uint64_t size_bytes;
     uint64_t page_count;
     memory::PageAllocation allocation;
@@ -154,6 +160,15 @@ SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask);
 // No deja referencia puesta, igual que create_section: la que instala el handle
 // la toma. Retener aqui seria una referencia de mas y la seccion no muere nunca.
 SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask);
+/* Idem pero solo un rango del archivo: [offset, offset+length). Un PT_LOAD es
+ * un tramo del archivo, no el archivo entero, y mapear la seccion completa por
+ * segmento pondria los bytes en la direccion que no les corresponde. offset==0
+ * con length==0 significa "el archivo entero", igual que acquire_file_section. */
+SectionObject* acquire_file_range_section(
+    vfs::Vnode& node,
+    uint64_t offset,
+    uint64_t length,
+    uint32_t access_mask);
 SectionObject* clone_section(const SectionObject& source);
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count);
 void set_event(EventObject* event_object);

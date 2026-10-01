@@ -277,7 +277,7 @@ void section_live_counts(uint32_t& live, uint32_t& file_backed) {
     }
 }
 
-static SectionObject* find_file_section(uint32_t inode_id) {
+static SectionObject* find_file_section(uint32_t inode_id, uint64_t offset, uint64_t length) {
     if (inode_id == 0) {
         return nullptr;
     }
@@ -285,15 +285,28 @@ static SectionObject* find_file_section(uint32_t inode_id) {
         if (!section_object.in_use || section_object.file_backed == 0) {
             continue;
         }
-        if (section_object.source_inode_id == inode_id) {
-            return &section_object;
+        /* La clave incluye el rango. Con solo inode_id, pedir un tramo devolvia
+         * la seccion del archivo entero y el segmento terminaba mapeado con la
+         * imagen completa en lugar de la suya. */
+        if (section_object.source_inode_id != inode_id ||
+            section_object.source_offset != offset ||
+            section_object.source_length != length) {
+            continue;
         }
+        return &section_object;
     }
     return nullptr;
 }
 
-SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask) {
-    const uint64_t size_bytes = node.size;
+SectionObject* acquire_file_range_section(
+    vfs::Vnode& node,
+    uint64_t offset,
+    uint64_t length,
+    uint32_t access_mask) {
+    uint64_t size_bytes = length != 0 ? length : node.size;
+    if (offset > node.size || size_bytes > node.size - offset) {
+        return nullptr;
+    }
     if (size_bytes == 0 || size_bytes > kMaxSectionBytes) {
         return nullptr;
     }
@@ -320,7 +333,7 @@ SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask) {
         if (inode_id == 0) {
             return nullptr;
         }
-        if (SectionObject* existing = find_file_section(inode_id)) {
+        if (SectionObject* existing = find_file_section(inode_id, offset, size_bytes)) {
             /* NO se retiene aca. create_section tampoco deja referencia puesta:
              * la establish el llamador al instalar el handle (install_handle
              * hace retain). Retener aqui y dejar que install_handle retenga
@@ -336,6 +349,8 @@ SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask) {
 
     section_object->file_backed = 1;
     section_object->source_inode_id = inode_id;
+    section_object->source_offset = offset;
+    section_object->source_length = size_bytes;
 
     /* Se lee el archivo entero adentro de las paginas que se acaba de reservar.
      * Si a mitad de camino el archivo resulta mas corto que lo que prometia
@@ -349,7 +364,7 @@ SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask) {
             ? static_cast<uint64_t>(memory::kPageSize)
             : (size_bytes - filled);
         void* buffer = vm::physical_to_virtual(section_object->physical_pages[filled / memory::kPageSize]);
-        const size_t got = vfs::read(node, static_cast<size_t>(filled), buffer, static_cast<size_t>(chunk));
+        const size_t got = vfs::read(node, static_cast<size_t>(offset + filled), buffer, static_cast<size_t>(chunk));
         if (got == 0) {
             /* Fin de archivo antes de lo prometido: el resto queda en cero. */
             break;
@@ -490,6 +505,10 @@ bool try_acquire_wait(Header* object) {
         object->signal_count -= 1;
     }
     return true;
+}
+
+SectionObject* acquire_file_section(vfs::Vnode& node, uint32_t access_mask) {
+    return acquire_file_range_section(node, 0, 0, access_mask);
 }
 
 } // namespace object

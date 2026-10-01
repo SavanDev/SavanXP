@@ -241,6 +241,18 @@ long section_open(int handle, unsigned long flags) {
     return syscall2(SAVANXP_SYS_SECTION_OPEN, (unsigned long)handle, flags);
 }
 
+/* Solo un rango del archivo. Un PT_LOAD es un tramo del archivo, no el archivo
+ * entero, asi que mapearlo exige poder quedarse con la parte que corresponde. */
+long section_open_range(int handle, unsigned long offset, unsigned long length, unsigned long flags) {
+    return syscall5(
+        SAVANXP_SYS_SECTION_OPEN_RANGE,
+        (unsigned long)handle,
+        offset,
+        length,
+        flags,
+        0);
+}
+
 void* map_view(int handle, unsigned long flags) {
     return (void*)syscall2(SAVANXP_SYS_MAP_VIEW, (unsigned long)handle, flags);
 }
