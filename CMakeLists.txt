@@ -145,7 +145,7 @@ set(SAVANXP_LIBRARY_COMPILE_OPTIONS
     -Wno-c23-extensions
 )
 
-set(SAVANXP_USER_LINK_OPTIONS
+set(SAVANXP_USER_LINK_OPTIONS_STATIC
     -nostdlib
     -static
     -fuse-ld=lld
@@ -154,6 +154,11 @@ set(SAVANXP_USER_LINK_OPTIONS
     -Wl,--gc-sections
     -Wl,--build-id=none
 )
+# Alias del perfil de hoy, para que lo que llame no nombre un modelo que no le
+# importa. El bloque PIE aparecera al lado de este cuando el runtime compile
+# como PIC; hasta entonces LINK_PROFILE=PIE falla en savanxp_program en vez de
+# producir en silencio un ET_EXEC con banderas contradictorias.
+set(SAVANXP_USER_LINK_OPTIONS ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 
 set(SAVANXP_KERNEL_SOURCES
     arch/x86_64/context.S

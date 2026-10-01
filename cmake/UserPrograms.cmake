@@ -2,7 +2,7 @@
 # makes the target graph the single source of truth for the userland.
 function(savanxp_program)
     set(options TEST)
-    set(oneValueArgs NAME INTERPRETER)
+    set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
     set(multiValueArgs SOURCES)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(P_UNPARSED_ARGUMENTS)
@@ -28,7 +28,20 @@ function(savanxp_program)
     if(P_INTERPRETER)
         target_link_options(${P_NAME} PRIVATE "-Wl,--dynamic-linker,${P_INTERPRETER}")
     endif()
-    target_link_options(${P_NAME} PRIVATE ${SAVANXP_USER_LINK_OPTIONS})
+    # Un perfil que no existe es un fallo de configuracion, no un default
+    # silencioso: enlazar como STATIC algo que el autor marco PIE daria un
+    # ET_EXEC donde se esperaba un ET_DYN, y el cargador cargaria la imagen
+    # equivocada sin que nadie lo notara.
+    if(P_LINK_PROFILE STREQUAL "PIE" AND DEFINED SAVANXP_USER_LINK_OPTIONS_PIE)
+        target_link_options(${P_NAME} PRIVATE ${SAVANXP_USER_LINK_OPTIONS_PIE})
+        target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIE})
+    elseif(P_LINK_PROFILE STREQUAL "PIE")
+        message(FATAL_ERROR "savanxp_program(${P_NAME}): LINK_PROFILE PIE sin bloque SAVANXP_USER_LINK_OPTIONS_PIE")
+    elseif(P_LINK_PROFILE AND NOT P_LINK_PROFILE STREQUAL "STATIC")
+        message(FATAL_ERROR "savanxp_program(${P_NAME}): LINK_PROFILE desconocido '${P_LINK_PROFILE}'")
+    else()
+        target_link_options(${P_NAME} PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+    endif()
     set_target_properties(${P_NAME} PROPERTIES OUTPUT_NAME "${P_NAME}" SUFFIX "")
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_TARGETS ${P_NAME})
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_PROGRAM_NAMES ${P_NAME})
