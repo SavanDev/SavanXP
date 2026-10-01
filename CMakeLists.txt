@@ -136,6 +136,7 @@ set(SAVANXP_LIBRARY_COMPILE_OPTIONS
     -mno-mmx
     -msse
     -msse2
+    -fstack-protector-strong
     -ffunction-sections
     -fdata-sections
     -Wall

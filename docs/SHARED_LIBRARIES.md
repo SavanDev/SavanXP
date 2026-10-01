@@ -85,6 +85,45 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | One load bias shared by every segment of a library | done |
 | Relocations resolve by name across the loaded set | done |
 | `DT_NEEDED` walked from `/lib`, each dependency loaded once | done |
+| The executable in the symbol scope, with its `.dynsym` | done |
+| `-fstack-protector-strong` back on for libraries | done |
+
+## Finding the executable
+
+The kernel maps the main image, so the loader has no descriptor and no section
+to open for it. It finds the base the way an interpreter does when it has nowhere
+to ask: take the address of one of its own functions — which is by definition in
+the executable's image — and walk backwards a page at a time looking for the ELF
+header. The walk is bounded on both ends, so an unreadable header cannot turn into
+an unbounded scan.
+
+`placed[]` is then filled in from the image's own geometry instead of by mapping
+anything: the kernel put each `PT_LOAD` at `p_vaddr` plus one bias, and the bias
+is `kUserBase` for an `ET_DYN`, zero for an `ET_EXEC`. That is the same rule as
+`kernel/elf.cpp`, and it has to match it — otherwise every executable address
+lands on the wrong page.
+
+The executable takes **slot 0** and libraries start at slot 1. `resolve` already
+walked slots from newest to oldest, so putting the executable first makes it the
+**last** thing searched: the background of the scope, not its beginning.
+
+An executable with no `.dynsym` — a non-PIE `ET_EXEC` — is a normal case, not a
+load failure. Its slot keeps zero tables and `resolve` skips it. `ldtest` is
+linked `LINK_PROFILE PIE` for exactly this reason: without `--export-dynamic` a
+library has nothing to resolve against.
+
+## What the canary proves
+
+`-fstack-protector-strong` was off for libraries because the canary makes every
+object reference `__stack_chk_guard` and `__stack_chk_fail`, which live in the
+executable. With the executable in scope, it is back on.
+
+Resolving the symbol is not the same as the protection working: if the `GLOB_DAT`
+relocation pointed anywhere at all, and both halves of the comparison happened to
+match, the check would pass while detecting nothing. So `ldtest` reads the guard
+through the address the resolver returned and checks it is non-zero and that its
+two halves differ — `crt0` seeds it from two registers precisely so that an
+eight-byte stack smash cannot reach it.
 
 ## One load bias per library
 
@@ -125,24 +164,21 @@ translate to the base of the image — a call that lands on the ELF header.
 
 ## What blocks the rest, in order
 
-1. **The executable in the symbol scope.** `resolve` searches the loaded
-   libraries, newest first. It does not yet reach the executable, so a library
-   with an undefined `__stack_chk_fail` cannot load and
-   `libmath.so.0.4` is still built without `-fstack-protector-strong`. Locating
-   the executable from a library means finding its `.dynsym`, which means knowing
-   where its image was placed; `pietest` is the first one with a table to read.
+1. **PIE for real programs.** The mechanism is proven — `ldtest` and `pietest` are
+   `ET_DYN` with a `.dynsym` the loader reads — but every other program is still
+   `ET_EXEC` with no table to resolve against, so nothing but the tests can use
+   this yet. `SECTIONS.md` has the detail. It is a per-program decision, not
+   another mechanism.
 
-2. **PIE for userland.** The premise: lld emits no dynamic symbol table for a
-   non-PIE `ET_EXEC`, so the executable cannot export anything to a library.
-   `SECTIONS.md` has the detail. The link options are restructured per profile,
-   the SDK runtime has a PIC-clean check target, and `pietest` is the first `DYN`
-   with `.dynsym`. What is missing is migrating real programs to the profile —
-   which is a per-program decision, not another mechanism.
-
-3. **`crt0` runs the interpreter.** The kernel still maps the main image itself
+2. **`crt0` runs the interpreter.** The kernel still maps the main image itself
    rather than handing the whole job to `ld.so` as Linux does. The plumbing is in
    place; changing that would alter how all 82 binaries start, so it is worth
-   doing once 1-2 are solid.
+   doing once 1 is done.
+
+3. **A real library to replace `libmath`.** Everything above is proven against
+   fixtures. `libmath.so.0.4` is built and loadable, but nothing links against it
+   yet, so the payoff — `sqrt` in one mapped copy instead of in 82 binaries — is
+   still ahead.
 
 ## Explicitly not worth doing yet
 

@@ -27,6 +27,42 @@ static int check(const char* name, math_fn1 fn, double input, double expected) {
     return 1;
 }
 
+/* El canario esta vivo de verdad, no solo resuelto.
+ *
+ * libmath se compila con -fstack-protector-strong, asi que referencia
+ * __stack_chk_guard, que vive en el ejecutable y lo inicializa crt0. Que la
+ * reubicacion encuentre la variable no dice que tenga un valor: si la
+ * reubicacion apuntara a cualquier lado y las dos mitades de la comparacion
+ * coincidieran por casualidad, la proteccion no detectaria nada.
+ *
+ * Se comprueba el VALOR a traves de la direccion que devolvio la resolucion, y
+ * ademas que las dos mitades sean distintas: crt0 siembra el canario con dos
+ * registros distintos justamente para que un smashed stack de 8 bytes no lo
+ * alcance. */
+static int check_canary(void) {
+    const unsigned long* guard = (const unsigned long*)ldso_lookup("__stack_chk_guard");
+    if (guard == 0) {
+        eprintf("ldtest: __stack_chk_guard no se resolvio contra el ejecutable\n");
+        return 0;
+    }
+    if (guard[0] == 0) {
+        eprintf("ldtest: el canario es cero, crt0 no lo inicializo\n");
+        return 0;
+    }
+    if (guard[0] == guard[1]) {
+        eprintf("ldtest: las dos mitades del canario son iguales\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* Definido acá, no en una libreria. libchaintop lo llama sin declararlo
+ * ejecutable de otra manera: para resolverlo, el ejecutable tiene que estar en
+ * el ambito de simbolos del cargador, con su .dynsym leida. */
+int exe_answer(void) {
+    return 100;
+}
+
 /* La cadena: libchaintop declara DT_NEEDED libchainbase y llama a chain_base.
  *
  * Probar que chain_top da lo correcto exige las tres piezas a la vez: que el
@@ -50,9 +86,9 @@ static int check_chain(void) {
         eprintf("ldtest: chain_top no se encontro\n");
         return 0;
     }
-    /* 20 -> chain_base(20) = 21 -> 21 * 2 = 42. */
-    if (top(20) != 42) {
-        eprintf("ldtest: chain_top(20) dio %d, se esperaba 42\n", top(20));
+    /* 20 -> chain_base(20) = 21 -> 21 * 2 = 42, mas exe_answer() = 100. */
+    if (top(20) != 142) {
+        eprintf("ldtest: chain_top(20) dio %d, se esperaba 142\n", top(20));
         return 0;
     }
 
@@ -94,6 +130,9 @@ int main(void) {
 
     if (ldso_lookup("no_existe_este_simbolo") != 0) {
         eprintf("ldtest: un simbolo inexistente devolvio una direccion\n");
+        return 1;
+    }
+    if (!check_canary()) {
         return 1;
     }
     return check_chain() ? 0 : 1;

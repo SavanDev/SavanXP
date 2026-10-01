@@ -57,11 +57,10 @@ endfunction()
 # A shared library. Not a program: it gets no SXE stamp, no desktop entry, and
 # lands in /lib rather than /bin, so Program Manager never lists it.
 #
-# Deliberately without -fstack-protector-strong. The canary makes every object
-# reference __stack_chk_guard and __stack_chk_fail, and resolving those needs
-# the executable to export a dynamic symbol table, which does not exist yet. A
-# library with undefined symbols cannot be loaded, and a library built without
-# the canary has none. The canary comes back with the loader's symbol scope.
+# The canary is on. Every object now references __stack_chk_guard and
+# __stack_chk_fail, both of which live in the executable, so a library only
+# loads if the loader puts the executable in the symbol scope. That is no longer
+# conditional, and it is the reason the loader can do it.
 function(savanxp_library)
     set(options TEST)
     set(oneValueArgs NAME SONAME)
@@ -109,7 +108,11 @@ function(savanxp_library)
 endfunction()
 
 savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/pietest.c)
-savanxp_program(NAME ldtest TEST SOURCES
+# PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
+# ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
+# .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que
+# resolver y la mitad de la cadena no se podria probar.
+savanxp_program(NAME ldtest TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/ldtest.c
     subsystems/posix/userland/ldso.c)
 savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4

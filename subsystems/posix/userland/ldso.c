@@ -16,7 +16,15 @@ typedef uint64_t Elf64_Xword;
 #define ELFCLASS64 2
 #define ELFDATA2LSB 1
 #define ET_DYN 3
+#define ET_EXEC 2
 #define EM_X86_64 62
+
+/* La base que elige el kernel para una imagen ET_DYN, y el piso del escaneo que
+ * busca la cabecera del ejecutable. Son el mismo numero por construccion: una
+ * ET_DYN se carga en kUserBase, y el recorrido hacia atras no puede seguir
+ * bajando de ahi. */
+#define kExecutableBase 0x0000000000400000UL
+#define kScanFloor kExecutableBase
 
 #define PT_LOAD 1
 #define PT_DYNAMIC 2
@@ -131,6 +139,12 @@ typedef struct {
 
 static Library g_libs[kMaxLibraries];
 static int g_lib_count;
+/* El ejecutable ocupa el slot 0 y las librerias empiezan en el 1.
+ *
+ * resolve recorre los slots de la mas nueva a la mas vieja, asi que poner el
+ * ejecutable primero lo consulta AL ULTIMO. Ese orden es el del ambito de
+ * simbolos: una libreria gana sobre la que la cargo, y el ejecutable queda de
+ * fondo, que es donde un simbolo exportado por el programa va a caer. */
 /* La libreria que se esta cargando. Todo lo que se escribe mientras se coloca
  * una imagen va aca; el resto del arbol lo lee por indice. */
 static Library* g_lib;
@@ -155,6 +169,8 @@ static void copy_bytes(const void* from, void* to, size_t count);
 static int read_header(const unsigned char* bytes, Elf64_Ehdr* out);
 static void* place_segment(const Elf64_Phdr* ph);
 static void* map_of(int slot, Elf64_Addr vaddr);
+static int read_dynamic_of(int slot);
+static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out);
 static void* at_vaddr_here(Elf64_Addr vaddr);
 static void* bias_in(int slot, Elf64_Addr value);
 static int find_dynamic(Elf64_Sword wanted, void* out);
@@ -188,10 +204,103 @@ static void copy_bytes(const void* from, void* to, size_t count) {
     }
 }
 
+/* Registra el ejecutable en g_libs para que sus simbolos entren en el ambito.
+ *
+ * El cargador no mapeo esta imagen: la mapeo el kernel. Asi que no hay un
+ * descriptor ni una seccion que abrir, y la base hay que deducirla. Se toma la
+ * direccion de una funcion de este mismo archivo --que por definicion esta en la
+ * imagen del ejecutable-- y se retrocede pagina a pagina buscando la cabecera
+ * ELF. Es la misma cuenta que hace un interprete cuando no tiene a donde
+ * preguntarle al nucleo.
+ *
+ * Devuelve 0 si no encuentra una cabecera valida, y el ambito queda como
+ * estaba: resolver solo entre librerias. Un ejecutable sin .dynsym (una ET_EXEC
+ * no PIE) es un caso normal, no un fallo. */
+static int adopt_executable(void) {
+    if (g_lib_count >= kMaxLibraries) {
+        return 0;
+    }
+    const void* anchor = (const void*)adopt_executable;
+    unsigned long cursor = (unsigned long)anchor & ~4095UL;
+
+    Elf64_Ehdr header;
+    int found = 0;
+    /* El techo son 16 MiB y el suelo, la primera pagina mapeable de usuario. Un
+     * ejecutable mas grande que el techo no existe aca, y los dos limites
+     * evitan que una cabecera ilegible se convierta en un recorrido infinito
+     * hasta toparse con algo. */
+    for (unsigned long steps = 0; steps < (16UL << 20) / 4096UL; ++steps) {
+        const unsigned char* bytes = (const unsigned char*)cursor;
+        if (bytes[0] == 0x7f && bytes[1] == 'E' && bytes[2] == 'L' && bytes[3] == 'F') {
+            copy_bytes(bytes, &header, sizeof(header));
+            /* ET_DYN o ET_EXEC: cualquier otra cosa no es una imagen de
+             * programa. Y e_phnum tiene que caber, porque de ahi salen los
+             * segmentos que se usan para traducir direcciones. */
+            if ((header.e_type == ET_DYN || header.e_type == ET_EXEC) &&
+                header.e_machine == EM_X86_64 && header.e_phentsize == sizeof(Elf64_Phdr) &&
+                header.e_phnum != 0 && header.e_phnum <= 64) {
+                found = 1;
+                break;
+            }
+        }
+        if (cursor <= kScanFloor) {
+            return 0;
+        }
+        cursor -= 4096UL;
+    }
+    if (!found) {
+        return 0;
+    }
+
+    Library* exe = &g_libs[g_lib_count];
+    exe->soname[0] = '\0';
+    exe->header = header;
+    exe->header_count = header.e_phnum;
+    exe->dynsym = 0;
+    exe->dynstr = 0;
+    exe->loaded = 0;
+    exe->bias_ready = 0;
+    exe->needed_done = 0;
+    for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
+        copy_bytes((const unsigned char*)cursor + header.e_phoff + (index * header.e_phentsize),
+                   &exe->headers[index], sizeof(Elf64_Phdr));
+        exe->placed[index] = 0;
+    }
+    /* Los segmentos ya estan mapeados: el kernel los puso, y el cargador no
+     * tiene descriptor ni seccion con que mapearlos otra vez. placed[] se deduce
+     * de la geometria de la imagen.
+     *
+     * El bias es el mismo que eligio el kernel: kUserBase para una ET_DYN, cero
+     * para una ET_EXEC. Es la misma regla de kernel/elf.cpp, y tiene que
+     * coincidir con ella o cada direccion del ejecutable caeria en otra pagina. */
+    const unsigned long bias = (header.e_type == ET_DYN) ? kExecutableBase : 0UL;
+    for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
+        if (exe->headers[index].p_type != PT_LOAD || exe->headers[index].p_memsz == 0) {
+            continue;
+        }
+        exe->placed[index] = (void*)(bias + (exe->headers[index].p_vaddr & ~(Elf64_Addr)4095));
+    }
+    g_lib_count++;
+    (void)read_dynamic_of(g_lib_count - 1);
+    return 1;
+}
+
+/* El ejecutable ocupa el slot 0 desde el arranque y las librerias empiezan en 1,
+ * para que resolve lo consulte al ultimo. */
+static void adopt_executable_once(void) {
+    static int done = 0;
+    if (done) {
+        return;
+    }
+    done = 1;
+    (void)adopt_executable();
+}
+
 /* Reserva un slot y lo deja como la libreria en curso. El contenido del slot no
  * se limpia: cada carga escribe todos los campos que usa, y limpiarlo seria
  * otra pasada sobre lo mismo. */
 static Library* begin_load(void) {
+    adopt_executable_once();
     if (g_lib_count >= kMaxLibraries) {
         return 0;
     }
@@ -288,6 +397,32 @@ static int read_dynamic(void) {
     g_lib->dynstr = (const char*)strings;
     g_lib->dynstr_size = strsz != 0 ? strsz : 4096;
     g_lib->dynsym = symbols;
+    return 1;
+}
+
+/* Igual que read_dynamic pero para el ejecutable, que ocupa el slot 0 y no
+ * necesita g_lib porque no esta "en curso": no se esta armando, ya esta mapeado.
+ *
+ * Un ejecutable sin .dynsym devuelve 0 y deja el slot con las tablas en 0, que
+ * es lo que hace que resolve lo salte. Es el caso normal de una ET_EXEC no PIE,
+ * no un fallo de carga. */
+static int read_dynamic_of(int slot) {
+    Library* library = &g_libs[slot];
+    unsigned long strtab = 0;
+    unsigned long symtab = 0;
+    unsigned long strsz = 0;
+    if (!find_dynamic_in(slot, DT_STRTAB, &strtab)) { return 0; }
+    if (!find_dynamic_in(slot, DT_SYMTAB, &symtab)) { return 0; }
+    (void)find_dynamic_in(slot, DT_STRSZ, &strsz);
+    const unsigned char* strings = (const unsigned char*)map_of(slot, strtab);
+    const unsigned char* symbols = (const unsigned char*)map_of(slot, symtab);
+    if (strings == 0 || symbols == 0) {
+        return 0;
+    }
+    library->dynstr = (const char*)strings;
+    library->dynstr_size = strsz != 0 ? strsz : 4096;
+    library->dynsym = symbols;
+    library->loaded = 1;
     return 1;
 }
 
@@ -653,13 +788,14 @@ typedef struct {
 
 /* Recorre la tabla dinamica y deja el puntero a la entrada pedida. Las entradas
  * tienen tamaño fijo, asi que el indice se multiplica por sizeof(Elf64_Dyn). */
-static int find_dynamic(Elf64_Sword wanted, void* out) {
-    for (Elf64_Half index = 0; index < g_lib->header_count; ++index) {
-        const Elf64_Phdr* ph = &g_lib->headers[index];
+static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out) {
+    const Library* library = &g_libs[slot];
+    for (Elf64_Half index = 0; index < library->header_count; ++index) {
+        const Elf64_Phdr* ph = &library->headers[index];
         if (ph->p_type != PT_DYNAMIC) {
             continue;
         }
-        const unsigned char* table = (const unsigned char*)at_vaddr_here(ph->p_vaddr);
+        const unsigned char* table = (const unsigned char*)map_of(slot, ph->p_vaddr);
         if (table == 0) {
             return 0;
         }
@@ -678,6 +814,11 @@ static int find_dynamic(Elf64_Sword wanted, void* out) {
         return 0;
     }
     return 0;
+}
+
+static int find_dynamic(Elf64_Sword wanted, void* out) {
+    const int slot = (int)(g_lib - g_libs);
+    return find_dynamic_in(slot, wanted, out);
 }
 
 /* El nombre del primer DT_NEEDED que aun no se cargo, o 0 si no queda ninguno.

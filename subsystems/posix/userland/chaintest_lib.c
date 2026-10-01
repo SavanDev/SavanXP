@@ -18,9 +18,13 @@
  * simbolo indefinido, y la dependencia queda declarada pero sin usar: el
  * DT_NEEDED existe y no hace falta para que la prueba pase. */
 extern int chain_base(int x);
+/* Definido por el EJECUTABLE, no por ninguna libreria. Una cadena de DT_NEEDED
+ * sola no lo alcanza: hace falta que el ejecutable este en el ambito de
+ * simbolos, que es una capacidad distinta de recorrer dependencias. */
+extern int exe_answer(void);
 
 int chain_top(int x) {
-    return chain_base(x) * 2;
+    return chain_base(x) * 2 + exe_answer();
 }
 
 #else

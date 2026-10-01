@@ -69,6 +69,11 @@ Cut-off notes:
 
 ### Added
 
+- **The executable is now in the library loader's symbol scope.** A library can
+  resolve a symbol against the program that started it, so `-fstack-protector-
+  strong` is back on for shared libraries. `ldtest` checks the stack canary
+  resolves and holds a live value.
+
 - **A library now loads the libraries it declares.** `DT_NEEDED` is walked from
   `/lib`, each dependency is mapped once however many ask for it, and a symbol
   resolves through the whole chain. `ldtest` calls a function in a dependency and
