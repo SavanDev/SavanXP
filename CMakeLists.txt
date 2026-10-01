@@ -277,7 +277,64 @@ set_target_properties(savanxp_user_runtime PROPERTIES
     C_EXTENSIONS YES
 )
 
-# BusyBox follows the external SDK profile: no SSE, and it needs the setjmp
+# Perfil PIC del runtime: las mismas unidades, compiladas position independent
+# para que un ejecutable ET_DYN pueda nacer de ellas. La prueba en frio dice
+# que las 10 compilan sin tocarlas (la unica que fallaba era por falta del
+# include path, no por el codigo).
+#
+# crt0.S no va: un crt0 para PIE necesita otro arranque (relativizar su propio
+# GOT antes de llamar a nada), y setjmp.S tampoco, porque su trampolin es
+# position dependent por diseno.
+set(SAVANXP_USER_PIC_SOURCES
+    subsystems/posix/sdk/v1/runtime/libc.c
+    subsystems/posix/sdk/v1/runtime/posix.c
+    subsystems/posix/sdk/v1/runtime/math.c
+    subsystems/posix/sdk/v1/runtime/gfx.c
+    subsystems/posix/sdk/v1/runtime/gfx2d.c
+    subsystems/posix/sdk/v1/runtime/sxchrome.c
+    subsystems/posix/sdk/v1/runtime/sxgui.c
+    subsystems/posix/sdk/v1/runtime/sxgui_app.c
+    subsystems/posix/sdk/v1/runtime/sxe.c
+    subsystems/posix/sdk/v1/runtime/audio.c
+)
+set(SAVANXP_USER_COMPILE_OPTIONS_PIC
+    "-target;${SAVANXP_TARGET_TRIPLE}"
+    -ffreestanding
+    -fstack-protector-strong
+    -fPIC
+    -mno-red-zone
+    -mcmodel=medium
+    -mno-mmx
+    -msse
+    -msse2
+    -ffunction-sections
+    -fdata-sections
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wno-language-extension-token
+    -Wno-c23-extensions
+)
+add_library(savanxp_user_runtime_pic OBJECT ${SAVANXP_USER_PIC_SOURCES})
+target_include_directories(savanxp_user_runtime_pic PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime"
+    "${SAVANXP_GENERATED_ROOT}"
+)
+target_compile_definitions(savanxp_user_runtime_pic PRIVATE
+    DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
+target_compile_options(savanxp_user_runtime_pic PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
+set_target_properties(savanxp_user_runtime_pic PROPERTIES
+    C_EXTENSIONS YES
+)
+# El perfil PIC existe como target independiente aunque ningun programa lo use
+# todavia: la prueba en frio de que las 10 unidades compilan position
+# independent sin tocarlas deja de ser cierta en silencio si alguien rompe una.
+add_custom_target(savanxp_user_runtime_pic_check ALL
+    DEPENDS savanxp_user_runtime_pic
+)
 # trampoline that the in-tree userland runtime does not use.
 set(SAVANXP_EXTERNAL_COMPILE_OPTIONS
     "-target;${SAVANXP_TARGET_TRIPLE}"
