@@ -63,16 +63,32 @@ endfunction()
 # library with undefined symbols cannot be loaded, and a library built without
 # the canary has none. The canary comes back with the loader's symbol scope.
 function(savanxp_library)
+    set(options TEST)
     set(oneValueArgs NAME SONAME)
-    set(multiValueArgs SOURCES)
-    cmake_parse_arguments(P "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    set(multiValueArgs SOURCES DEFINES DEPENDS)
+    cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(P_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR "savanxp_library(${P_NAME}): unknown arguments: ${P_UNPARSED_ARGUMENTS}")
     endif()
     if(NOT P_NAME OR NOT P_SOURCES OR NOT P_SONAME)
         message(FATAL_ERROR "savanxp_library requires NAME, SONAME and SOURCES")
     endif()
-    add_library(${P_NAME} MODULE ${P_SOURCES})
+    if(P_TEST AND NOT SAVANXP_INCLUDE_TEST_APPS)
+        return()
+    endif()
+    # SHARED, no MODULE: una MODULE_LIBRARY no se puede enlazar contra otro
+    # objetivo, y una libreria que depende de otra es justamente el caso que
+    # DT_NEEDED tiene que cubrir.
+    add_library(${P_NAME} SHARED ${P_SOURCES})
+    if(P_DEFINES)
+        target_compile_definitions(${P_NAME} PRIVATE ${P_DEFINES})
+    endif()
+    # DEPENDS produces the DT_NEEDED the loader walks. Only the -soname reaches
+    # the dynamic table, not the build path, so the recorded name is the one the
+    # loader has to turn back into a path under /lib.
+    if(P_DEPENDS)
+        target_link_libraries(${P_NAME} PRIVATE ${P_DEPENDS})
+    endif()
     target_include_directories(${P_NAME} PRIVATE
         "${CMAKE_SOURCE_DIR}/include"
         "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
@@ -100,6 +116,12 @@ savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
     SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/math.c)
+savanxp_library(NAME libchainbase TEST SONAME libchainbase.so.0.4
+    SOURCES subsystems/posix/userland/chaintest_lib.c)
+savanxp_library(NAME libchaintop TEST SONAME libchaintop.so.0.4
+    SOURCES subsystems/posix/userland/chaintest_lib.c
+    DEFINES CHAIN_TOP
+    DEPENDS libchainbase)
 
 savanxp_program(NAME init SOURCES subsystems/posix/userland/init.c)
 savanxp_program(NAME sh SOURCES

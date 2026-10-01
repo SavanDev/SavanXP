@@ -26,6 +26,10 @@ typedef uint64_t Elf64_Xword;
 #define PF_R 4
 
 #define DT_NULL 0
+/* Indice de seccion reservado: marca un simbolo que esta declarado pero no
+ * definido aqui. */
+#define SHN_UNDEF 0
+#define DT_NEEDED 1
 #define DT_PLTRELSZ 2
 #define DT_RELA 7
 #define DT_RELASZ 8
@@ -81,9 +85,13 @@ typedef struct {
     Elf64_Sword r_addend;
 } Elf64_Rela;
 
-/* El estado de la unica libreria cargada. Se podria hacer una tabla, pero el
- * alcance es una sola y una tabla seria mas codigo sin un caso que la use. */
-static struct {
+/* El estado de UNA libreria cargada.
+ *
+ * Antes habia una sola, y por eso esto era un unico objeto global con un
+ * nombre. Con una cadena de DT_NEEDED deja de alcanzar: cargar una dependencia
+ * pisa el estado de la que se estaba cargando, asi que hace falta un lugar por
+ * libreria y un puntero a la que esta en curso. */
+typedef struct {
     int loaded;
     int file_section;
     int file_fd;
@@ -99,6 +107,14 @@ static struct {
     const unsigned char* dynsym;
     const char* dynstr;
     size_t dynstr_size;
+    /* Cuantos DT_NEEDED ya se trajeron. Es el cursor de la cadena: con un
+     * diamante, D se carga desde A y desde C, y el segundo next_needed tiene
+     * que saltar el que ya se proceso en vez de volver a cargarlo. */
+    unsigned needed_done;
+    /* Nombre con el que se cargo, para reconocerlo si otro DT_NEEDED lo pide de
+     * nuevo en la misma cadena. Es el basename: DT_NEEDED lleva "libmath.so.0.4"
+     * aunque la ruta sea /disk/lib/libmath.so.0.4. */
+    char soname[96];
     /* Los program headers se leen una vez y se guardan aca: despues el
      * descriptor sigue abierto pero no se vuelve a leer el archivo. */
     Elf64_Phdr headers[64];
@@ -106,7 +122,18 @@ static struct {
      * headers. Los indices son los de los headers, asi que un -1 es "este
      * segmento no se pudo mapear". */
     void* placed[64];
-} g_lib;
+} Library;
+
+/* Cuantas librerias conviven. Ocho alcanzan para un interprete con su cadena de
+ * dependencias; excederlo es un fallo explicito en load_one, no un
+ * desbordamiento. */
+#define kMaxLibraries 8
+
+static Library g_libs[kMaxLibraries];
+static int g_lib_count;
+/* La libreria que se esta cargando. Todo lo que se escribe mientras se coloca
+ * una imagen va aca; el resto del arbol lo lee por indice. */
+static Library* g_lib;
 
 /* Ultimo segmento que no se pudo colocar, y el errno que devolvio. El codigo de
  * retorno de ldso_load solo dice "el paso"; con estos dos se sabe cual. */
@@ -116,7 +143,7 @@ unsigned long g_lib_bias;
 int g_lib_reloc_step;
 
 int ldso_loaded(void) {
-    return g_lib.loaded;
+    return g_lib_count;
 }
 
 /* Los nombres de los simbolos y los PT_LOAD se leen del archivo a traves de la
@@ -127,12 +154,17 @@ static void copy_bytes(const void* from, void* to, size_t count);
  * reubicar-- y no el de las dependencias entre funciones. */
 static int read_header(const unsigned char* bytes, Elf64_Ehdr* out);
 static void* place_segment(const Elf64_Phdr* ph);
-static void* at_vaddr(Elf64_Addr vaddr);
+static void* map_of(int slot, Elf64_Addr vaddr);
+static void* at_vaddr_here(Elf64_Addr vaddr);
+static void* bias_in(int slot, Elf64_Addr value);
 static int find_dynamic(Elf64_Sword wanted, void* out);
 static int apply_table(unsigned long elf_table, unsigned long elf_size);
 static void* translate(unsigned long elf_address);
-static int relocate(void);
-static Elf64_Addr resolve(const char* name);
+static int read_dynamic(void);
+static int apply_relocs(void);
+static int resolve(const char* name, Elf64_Addr* value_out);
+static const char* next_needed(int slot);
+static int load_needed_chain(int parent_slot);
 
 static int read_header(const unsigned char* bytes, Elf64_Ehdr* out) {
     if (bytes[0] != 0x7f || bytes[1] != 'E' || bytes[2] != 'L' || bytes[3] != 'F') {
@@ -156,26 +188,165 @@ static void copy_bytes(const void* from, void* to, size_t count) {
     }
 }
 
+/* Reserva un slot y lo deja como la libreria en curso. El contenido del slot no
+ * se limpia: cada carga escribe todos los campos que usa, y limpiarlo seria
+ * otra pasada sobre lo mismo. */
+static Library* begin_load(void) {
+    if (g_lib_count >= kMaxLibraries) {
+        return 0;
+    }
+    g_lib = &g_libs[g_lib_count];
+    g_lib->loaded = 0;
+    g_lib->bias_ready = 0;
+    g_lib->dynsym = 0;
+    g_lib->dynstr = 0;
+    g_lib->needed_done = 0;
+    g_lib->soname[0] = '\0';
+    return g_lib;
+}
+
+static void end_load(int ok) {
+    if (ok) {
+        g_lib->loaded = 1;
+        g_lib_count++;
+    }
+    g_lib = 0;
+}
+
+/* Hace visible la libreria en curso sin soltar el puntero a ella.
+ *
+ * end_load no sirve para el punto donde hace falta: reubicar una libreria
+ * depende de que sus DT_NEEDED ya estan cargadas, asi que esta tiene que estar
+ * publicada antes de que se recorra la cadena. Publicar y seguir guardando el
+ * puntero es lo que permite que, al volver de la cadena, las reubicaciones
+ * siganmaginiendo sobre esta y no sobre la ultima dependencia traida. */
+static void publish(void) {
+    g_lib->loaded = 1;
+    g_lib_count++;
+}
+
+/* Aplica una tabla RELA: .rela.dyn y .rela.plt. Las dos son obligatorias antes
+ * de llamar a nada, asi que no hay version perezosa todavia. Solo estan
+ * soportados JUMP_SLOT y GLOB_DAT, que son los que emite lld para este
+ * objetivo. */
+static int apply_table(unsigned long elf_table, unsigned long elf_size) {
+    const unsigned char* table = (const unsigned char*)translate(elf_table);
+    if (table == 0) {
+        return 0;
+    }
+    for (unsigned long offset = 0; offset + sizeof(Elf64_Rela) <= elf_size;
+         offset += sizeof(Elf64_Rela)) {
+        Elf64_Rela rela;
+        copy_bytes(table + offset, &rela, sizeof(rela));
+        const unsigned type = (unsigned)(rela.r_info & 0xffffffffu);
+        if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT) {
+            return 0;
+        }
+        const unsigned name_index = (unsigned)(rela.r_info >> 32);
+        Elf64_Sym symbol;
+        copy_bytes(g_lib->dynsym + (name_index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
+
+        /* Por nombre, no por st_value. Un st_value es relativo a la libreria que
+         * DEFINIO el simbolo, y el que necesita la llamada puede ser otra: sin
+         * la busqueda, una llamada a una dependencia se resolveria con la
+         * direccion del simbolo dentro de la imagen que la invoca. */
+        Elf64_Addr target = 0;
+        const int owner = resolve(g_lib->dynstr + symbol.st_name, &target);
+        if (owner < 0) {
+            return 0;
+        }
+        const Elf64_Addr value = (Elf64_Addr)(unsigned long)bias_in(owner, target);
+        if (value == 0) {
+            return 0;
+        }
+        Elf64_Addr* slot = (Elf64_Addr*)at_vaddr_here(rela.r_offset);
+        if (slot == 0) {
+            return 0;
+        }
+        *slot = value;
+    }
+    return 1;
+}
+
+/* Fase uno: leer donde estan la tabla de simbolos y la de nombres.
+ *
+ * Va separada de la reubicacion porque leer DT_NEEDED tambien necesita
+ * dynstr, y DT_NEEDED hay que recorrer antes de reubicar: una llamada a la
+ * dependencia se resuelve en un GOT que todavia esta en cero. Si se reubicara
+ * primero, la cadena se resolveria contra un mundo incompleto. */
+static int read_dynamic(void) {
+    unsigned long strtab = 0;
+    unsigned long symtab = 0;
+    unsigned long strsz = 0;
+    if (!find_dynamic(DT_STRTAB, &strtab)) { g_lib_reloc_step = 1; return 0; }
+    if (!find_dynamic(DT_SYMTAB, &symtab)) { g_lib_reloc_step = 2; return 0; }
+    (void)find_dynamic(DT_STRSZ, &strsz);
+    const unsigned char* strings = (const unsigned char*)translate(strtab);
+    const unsigned char* symbols = (const unsigned char*)translate(symtab);
+    if (strings == 0) { g_lib_reloc_step = 3; return 0; }
+    if (symbols == 0) { g_lib_reloc_step = 4; return 0; }
+    g_lib->dynstr = (const char*)strings;
+    g_lib->dynstr_size = strsz != 0 ? strsz : 4096;
+    g_lib->dynsym = symbols;
+    return 1;
+}
+
+/* Fase dos: rellenar los GOT. Solo tiene sentido con la cadena ya cargada.
+ *
+ * Las dos tablas son OPCIONALES. Una libreria que no llama a nada de fuera no
+ * tiene .rela.plt, y exigirla la hacia fallar al cargar: el fallo no era de la
+ * reubicacion sino de una tabla que no existe. Con DT_STRSZ ausente tambien se
+ * sobrevive, con un limite laxo para no leer fuera de la tabla. */
+static int apply_relocs(void) {
+    unsigned long jmprel = 0;
+    unsigned long pltrelsz = 0;
+    unsigned long rel = 0;
+    unsigned long relasz = 0;
+    if (find_dynamic(DT_RELA, &rel) && find_dynamic(DT_RELASZ, &relasz) && relasz != 0) {
+        if (!apply_table(rel, relasz)) { g_lib_reloc_step = 5; return 0; }
+    }
+    if (find_dynamic(DT_JMPREL, &jmprel) && find_dynamic(DT_PLTRELSZ, &pltrelsz) &&
+        pltrelsz != 0) {
+        if (!apply_table(jmprel, pltrelsz)) { g_lib_reloc_step = 6; return 0; }
+    }
+    return 1;
+}
+
 int ldso_load(const char* path) {
     /* El codigo de retorno dice EN QUE PASO fallo, para que un fallo no sea un
      * -1 opaco: los pasos van en orden y el ultimo que se alcanzo a hacer es el
      * que importa. */
-    if (g_lib.loaded) {
+    if (begin_load() == 0) {
         return -1;
     }
     const long fd = savanxp_open(path);
     if (fd < 0) {
+        end_load(0);
         return -2;
     }
     const long section = section_open((int)fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
     if (section < 0) {
         savanxp_close((int)fd);
+        end_load(0);
         return -3;
     }
-    g_lib.file_section = (int)section;
-    g_lib.file_fd = (int)fd;
-    g_lib.bias = 0;
-    g_lib.bias_ready = 0;
+    g_lib->file_section = (int)section;
+    g_lib->file_fd = (int)fd;
+    g_lib->bias = 0;
+    g_lib->bias_ready = 0;
+    /* El nombre se queda con el basename del path, para casar con DT_NEEDED. */
+    const char* slash = path;
+    for (const char* ch = path; *ch != '\0'; ++ch) {
+        if (*ch == '/') {
+            slash = ch + 1;
+        }
+    }
+    unsigned i = 0;
+    while (slash[i] != '\0' && i < sizeof(g_lib->soname) - 1) {
+        g_lib->soname[i] = slash[i];
+        i++;
+    }
+    g_lib->soname[i] = '\0';
 
     /* Mapa de trabajo: el archivo entero en una direccion que eligio el kernel,
      * solo para leerle la cabecera y los program headers. */
@@ -194,34 +365,127 @@ int ldso_load(const char* path) {
         filled += (unsigned long)got;
     }
     if (filled < sizeof(Elf64_Ehdr)) {
+        end_load(0);
         return -4;
     }
     Elf64_Ehdr header;
     if (!read_header(probe, &header)) {
+        end_load(0);
         return -5;
     }
-    g_lib.header = header;
-    g_lib.header_count = header.e_phnum;
+    g_lib->header = header;
+    g_lib->header_count = header.e_phnum;
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
-        copy_bytes(probe + header.e_phoff + (index * header.e_phentsize), &g_lib.headers[index], sizeof(Elf64_Phdr));
-        g_lib.placed[index] = 0;
+        copy_bytes(probe + header.e_phoff + (index * header.e_phentsize), &g_lib->headers[index], sizeof(Elf64_Phdr));
+        g_lib->placed[index] = 0;
     }
 
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
-        if (g_lib.headers[index].p_type != PT_LOAD || g_lib.headers[index].p_memsz == 0) {
+        if (g_lib->headers[index].p_type != PT_LOAD || g_lib->headers[index].p_memsz == 0) {
             continue;
         }
-        g_lib.placed[index] = place_segment(&g_lib.headers[index]);
-        if (g_lib.placed[index] == 0) {
+        g_lib->placed[index] = place_segment(&g_lib->headers[index]);
+        if (g_lib->placed[index] == 0) {
             g_lib_fail_index = (int)index;
+            end_load(0);
             return -6;
         }
     }
 
-    if (!relocate()) {
+    if (!read_dynamic()) {
+        end_load(0);
         return -7;
     }
-    g_lib.loaded = 1;
+
+    /* Publicar, recorrer la cadena, y recien ahi reubicar. El orden no es
+     * estetico: un GOT que apunta a una dependencia tiene que llenarse cuando
+     * la dependencia ya esta mapeada, no antes. Al reubicar antes, la
+     * dependencia todavia no existe y la carga falla.
+     *
+     * Cada carga de la cadena pisa g_lib, asi que se guarda esta libreria y se
+     * restaura al volver. Sin eso, las reubicaciones de aqui se aplicarian
+     * sobre la ultima dependencia traida. */
+    Library* self = g_lib;
+    publish();
+    const int chain_failed = load_needed_chain(g_lib_count - 1);
+    g_lib = self;
+    if (chain_failed != 0) {
+        g_lib = 0;
+        return -8;
+    }
+
+    if (!apply_relocs()) {
+        g_lib = 0;
+        return -9;
+    }
+    g_lib = 0;
+    return 0;
+}
+
+/* ¿Ya esta cargada alguna libreria con este basename? */
+static int already_loaded(const char* soname) {
+    for (int slot = 0; slot < g_lib_count; ++slot) {
+        int i = 0;
+        for (;; ++i) {
+            if (g_libs[slot].soname[i] != soname[i]) {
+                break;
+            }
+            if (soname[i] == '\0') {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Recorre la cadena de DT_NEEDED de una libreria. Carga lo que falte desde
+ * /disk/lib/ y avanza el cursor de la libreria procesando, asi no carga dos
+ * veces lo mismo.
+ *
+ * Es iterativo y no recursivo adrede: cargar una dependencia cambia g_lib (la
+ * libreria en curso), asi que llevarlo por recursiones obligaria a guardar y
+ * restaurar el contexto completo en cada nivel. Con un loop basta: se procesan
+ * las librerias en el orden en que se completaron, y cada nueva carga apunta al
+ * slot de esta en curso, no al de la que se estaba recorriendo. */
+static int load_needed_chain(int parent_slot) {
+    for (int work = parent_slot; work < g_lib_count; ++work) {
+        Library* lib = &g_libs[work];
+        for (;;) {
+            const char* need = next_needed(work);
+            if (need == 0) {
+                break;
+            }
+            lib->needed_done++;
+            if (already_loaded(need)) {
+                continue;
+            }
+            /* El nombre de DT_NEEDED es un basename, no una ruta: se busca en
+             * /disk/lib/. Una ruta que ya empieza con / se usa tal cual. */
+            char full[128];
+            if (need[0] == '/') {
+                unsigned i = 0;
+                while (need[i] != '\0' && i < sizeof(full) - 1) {
+                    full[i] = need[i];
+                    i++;
+                }
+                full[i] = '\0';
+            } else {
+                const char* prefix = "/disk/lib/";
+                unsigned i = 0;
+                while (*prefix != '\0' && i < sizeof(full) - 1) {
+                    full[i++] = *prefix++;
+                }
+                unsigned j = 0;
+                while (need[j] != '\0' && i < sizeof(full) - 1) {
+                    full[i++] = need[j++];
+                }
+                full[i] = '\0';
+            }
+            if (ldso_load(full) != 0) {
+                return -1;
+            }
+        }
+    }
     return 0;
 }
 
@@ -238,9 +502,26 @@ static void* place_segment(const Elf64_Phdr* ph) {
     const unsigned long flags =
         wants_exec ? (SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC) : (SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     const unsigned long at = (unsigned long)(ph->p_vaddr & ~(Elf64_Addr)4095);
+    /* Los bytes del segmento empiezan a offset p_vaddr - at dentro de la pagina,
+     * NO al principio del mapping.
+     *
+     * map_view_at exige una direccion alineada a pagina y pega el primer byte de
+     * la seccion en esa direccion. Por eso el rango se pide desde el principio
+     * de la pagina del segmento y no desde p_offset: asi el primer byte caiga
+     * donde tiene que caer y TODA la imagen comparta un solo bias. Sin eso cada
+     * segmento tiene un ancla distinta, y las referencias entre segmentos -- un
+     * PLT en el codigo saltando a un GOT en los datos -- apuntan a la imagen
+     * equivocada sin dar ningun error visible.
+     *
+     * El rango arranca en p_offset - off_in_page, que es el comienzo de esa
+     * pagina en el archivo: los ELF guardan p_offset y p_vaddr con el mismo
+     * resto modulo la pagina, asi que nunca es negativo. */
+    const unsigned long off_in_page = (unsigned long)(ph->p_vaddr - at);
+    const unsigned long start_off = (unsigned long)ph->p_offset - off_in_page;
+    const unsigned long span = off_in_page + (unsigned long)ph->p_filesz;
     unsigned long want = at;
-    if (g_lib.bias_ready) {
-        want = g_lib.bias + at;
+    if (g_lib->bias_ready) {
+        want = g_lib->bias + at;
     }
 
     long segment_section;
@@ -249,10 +530,11 @@ static void* place_segment(const Elf64_Phdr* ph) {
          * seccion del archivo entero pondria el resto del ELF en direcciones que
          * no le tocan: el primer LOAD pide p_vaddr 0 para el offset 0 y el
          * siguiente pide 0x2560 para el offset 0x1560. */
-        segment_section = section_open_range(
-            g_lib.file_fd, (unsigned long)ph->p_offset, (unsigned long)ph->p_filesz, flags);
+        segment_section = section_open_range(g_lib->file_fd, start_off, span, flags);
     } else {
-        segment_section = section_create((unsigned long)ph->p_memsz, flags);
+        /* La region privada tiene queoze el hueco de la pagina antes del
+         * segmento, o los bytes copiados no entran. */
+        segment_section = section_create(off_in_page + (unsigned long)ph->p_memsz, flags);
     }
     if (segment_section < 0) {
         g_lib_fail_errno = segment_section;
@@ -267,20 +549,19 @@ static void* place_segment(const Elf64_Phdr* ph) {
         }
         return 0;
     }
-    if (!g_lib.bias_ready) {
+    if (!g_lib->bias_ready) {
         /* El kernel eligio; ese es el bias. Los segmentos siguientes se piden
          * explicitamente para que no puedan caer en otra parte. */
-        g_lib.bias = (unsigned long)view - at;
-        g_lib.bias_ready = 1;
-        g_lib_bias = g_lib.bias;
+        g_lib->bias = (unsigned long)view - at;
+        g_lib->bias_ready = 1;
+        g_lib_bias = g_lib->bias;
     }
     if (!wants_exec) {
         /* Los bytes salen de una seccion del rango EXACTO del archivo, mapeada un
          * momento y liberada. No se puede savanxp_read: no hay seek en la API, el
          * descriptor sigue leyendo desde donde quedo la vez anterior, y el
          * segmento recibiria bytes del offset equivocado. */
-        const long source = section_open_range(
-            g_lib.file_fd, (unsigned long)ph->p_offset, (unsigned long)ph->p_filesz, SAVANXP_SECTION_READ);
+        const long source = section_open_range(g_lib->file_fd, start_off, span, SAVANXP_SECTION_READ);
         if (source < 0) {
             (void)savanxp_close((int)segment_section);
             return 0;
@@ -291,7 +572,7 @@ static void* place_segment(const Elf64_Phdr* ph) {
             (void)savanxp_close((int)segment_section);
             return 0;
         }
-        copy_bytes(bytes, view, (size_t)ph->p_filesz);
+        copy_bytes(bytes, view, (size_t)span);
         (void)unmap_view((void*)bytes);
         (void)savanxp_close((int)source);
         /* Los bytes mas alla de p_filesz son .bss: section_create ya entrego la
@@ -302,20 +583,64 @@ static void* place_segment(const Elf64_Phdr* ph) {
 }
 
 
-/* Traduce una direccion del ELF a la direccion real, usando el segmento que la
- * contiene. Los indices de headers y de placed son los mismos. */
-static void* at_vaddr(Elf64_Addr vaddr) {
-    for (Elf64_Half index = 0; index < g_lib.header_count; ++index) {
-        const Elf64_Phdr* ph = &g_lib.headers[index];
-        if (ph->p_type != PT_LOAD || g_lib.placed[index] == 0) {
+/* Traduce una direccion del ELF a la direccion real. Busca primero en la
+ * libreria en curso y despues en las ya cargadas, porque una direccion de una
+ * .so solo tiene sentido dentro de la libreria que la declaro: dos imagenes
+ * tendrian el mismo vaddr para direcciones distintas.
+ *
+ * Con una sola libreria esto era un recorrido de sus segmentos y nada mas. Con
+ * una cadena, es la pregunta que no tenia respuesta antes: cual libreria
+ * posee esta direccion. */
+
+/* El mismo recorrido pero solo dentro de la libreria en curso, que es lo que
+ * necesitan place_segment y translate mientras se arma una imagen. */
+/* Traduce un st_value con los segmentos de una libreria concreta.
+ *
+ * Existe separada de at_vaddr_here porque un st_value pertenece a la libreria
+ * que DEFINIO el simbolo, no a la que esta usandolo. Sesgarlo con el mapa de
+ * otra imagen produce una direccion que cae dentro de la imagen equivocada y no
+ * falla de forma visible: cae en codigo ajeno. */
+static void* bias_in(int slot, Elf64_Addr value) {
+    return map_of(slot, value);
+}
+
+/* Traduce una direccion del ELF a la direccion real, dentro de una libreria
+ * concreta.
+ *
+ * placed[] guarda la DIRECCION DE PAGINA donde se mapéo el segmento, o sea
+ * bias + (p_vaddr & ~4095). Restar p_vaddr sin alinear correria la direccion
+ * justo lo que el segmento seSpecified antes de la pagina, y el error cae
+ * dentro de la propia imagen: un GOT escrito en el lugar equivocado, una
+ * llamada que salta a otra cosa y un fallo que no parece de este sitio. */
+static void* map_of(int slot, Elf64_Addr vaddr) {
+    const Library* library = &g_libs[slot];
+    for (Elf64_Half index = 0; index < library->header_count; ++index) {
+        const Elf64_Phdr* ph = &library->headers[index];
+        if (ph->p_type != PT_LOAD || library->placed[index] == 0) {
             continue;
         }
         if (vaddr < ph->p_vaddr || vaddr >= ph->p_vaddr + ph->p_memsz) {
             continue;
         }
-        return (void*)(vaddr - ph->p_vaddr + (Elf64_Addr)(unsigned long)g_lib.placed[index]);
+        const Elf64_Addr page = ph->p_vaddr & ~(Elf64_Addr)4095;
+        return (void*)(vaddr - page + (Elf64_Addr)(unsigned long)library->placed[index]);
     }
     return 0;
+}
+
+static void* at_vaddr_here(Elf64_Addr vaddr) {
+    if (g_lib == 0) {
+        return 0;
+    }
+    /* El slot en curso todavia no esta publicado, asi que no se puede comparar
+     * contra g_lib_count: durante la carga de la primera libreria ese contador
+     * sigue en cero y el limite rechazaria justo la libreria que se esta
+     * armando. */
+    const int slot = (int)(g_lib - g_libs);
+    if (slot < 0 || slot >= kMaxLibraries) {
+        return 0;
+    }
+    return map_of(slot, vaddr);
 }
 
 typedef struct {
@@ -329,16 +654,17 @@ typedef struct {
 /* Recorre la tabla dinamica y deja el puntero a la entrada pedida. Las entradas
  * tienen tamaño fijo, asi que el indice se multiplica por sizeof(Elf64_Dyn). */
 static int find_dynamic(Elf64_Sword wanted, void* out) {
-    for (Elf64_Half index = 0; index < g_lib.header_count; ++index) {
-        const Elf64_Phdr* ph = &g_lib.headers[index];
+    for (Elf64_Half index = 0; index < g_lib->header_count; ++index) {
+        const Elf64_Phdr* ph = &g_lib->headers[index];
         if (ph->p_type != PT_DYNAMIC) {
             continue;
         }
-        const unsigned char* table = (const unsigned char*)at_vaddr(ph->p_vaddr);
+        const unsigned char* table = (const unsigned char*)at_vaddr_here(ph->p_vaddr);
         if (table == 0) {
             return 0;
         }
-        for (Elf64_Addr offset = 0; offset + sizeof(Elf64_Dyn) <= ph->p_memsz; offset += sizeof(Elf64_Dyn)) {
+        for (Elf64_Addr offset = 0; offset + sizeof(Elf64_Dyn) <= ph->p_memsz;
+             offset += sizeof(Elf64_Dyn)) {
             Elf64_Dyn entry;
             copy_bytes(table + offset, &entry, sizeof(entry));
             if (entry.tag == DT_NULL) {
@@ -354,109 +680,108 @@ static int find_dynamic(Elf64_Sword wanted, void* out) {
     return 0;
 }
 
-/* Direccion del simbolo pedido, o 0 si no esta definido aca. La tabla de
- * simbolos se recorre entero: son ~94 entradas y un hash seria mas codigo del
- * que el caso necesita. */
-static Elf64_Addr resolve(const char* name) {
-    if (g_lib.dynsym == 0 || g_lib.dynstr == 0) {
+/* El nombre del primer DT_NEEDED que aun no se cargo, o 0 si no queda ninguno.
+ *
+ * El indice de recorrido es lo que permite no cargar dos veces la misma
+ * dependencia en una cadena con diamantes: si A necesita B y C, y ambos
+ * necesitan D, D se carga una sola vez y el segundo la encuentra.
+ *
+ * El nombre sale de esa misma libreria, traducido con SU mapa, no con el de
+ * la que este en curso: con dos imagenes mapeadas, el mismo vaddr significa dos
+ * cosas distintas.
+ *
+ * slot < 0 es la libreria en curso. */
+static const char* next_needed(int slot) {
+    Library* library = slot < 0 ? g_lib : &g_libs[slot];
+    if (library == 0 || library->dynstr == 0) {
         return 0;
     }
-    const size_t limit = g_lib.dynstr_size;
+    unsigned seen = 0;
+    for (Elf64_Half index = 0; index < library->header_count; ++index) {
+        const Elf64_Phdr* ph = &library->headers[index];
+        if (ph->p_type != PT_DYNAMIC) {
+            continue;
+        }
+        /* El PT_DYNAMIC esta dentro de un PT_LOAD; se traduce con los segmentos
+         * ya colocados de ESTA libreria, no con los de la que este en curso. */
+        const unsigned char* table = (const unsigned char*)map_of(slot, ph->p_vaddr);
+        if (table == 0) {
+            return 0;
+        }
+        if (table == 0) {
+            return 0;
+        }
+        for (Elf64_Addr offset = 0; offset + sizeof(Elf64_Dyn) <= ph->p_memsz;
+             offset += sizeof(Elf64_Dyn)) {
+            Elf64_Dyn entry;
+            copy_bytes(table + offset, &entry, sizeof(entry));
+            if (entry.tag == DT_NULL) {
+                return 0;
+            }
+            if (entry.tag != DT_NEEDED) {
+                continue;
+            }
+            if (seen < library->needed_done) {
+                seen++;
+                continue;
+            }
+            return library->dynstr + entry.u.pointer;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static void* translate(unsigned long elf_address) {
+    return at_vaddr_here((Elf64_Addr)elf_address);
+}
+
+static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {
+    const Library* library = &g_libs[slot];
+    if (library->dynsym == 0 || library->dynstr == 0) {
+        return -1;
+    }
+    const size_t limit = library->dynstr_size;
     for (unsigned index = 0;; ++index) {
         Elf64_Sym symbol;
-        copy_bytes(g_lib.dynsym + (index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
+        copy_bytes(library->dynsym + (index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
         if (symbol.st_name >= limit) {
-            return 0;
+            return -1;
         }
-        const char* candidate = g_lib.dynstr + symbol.st_name;
-        if (strcmp(candidate, name) == 0) {
-            return symbol.st_value;
+        /* Una entrada INDEFINIDA con el nombre buscado no es una respuesta: es
+         * la pregunta misma. Si se aceptara, st_value = 0 se traduciria a la
+         * base de la imagen, y una llamada terminaria en el encabezado ELF.
+         * Solo contesta quien DEFINIO el simbolo. */
+        if (symbol.st_shndx == SHN_UNDEF) {
+            continue;
+        }
+        if (strcmp(library->dynstr + symbol.st_name, name) == 0) {
+            *value_out = symbol.st_value;
+            return slot;
         }
     }
 }
 
-/* Aplica una tabla RELA: .rela.dyn y .rela.plt. Las dos son obligatorias antes
- * de llamar a nada, asi que no hay version perezosa todavia. Solo estan
- * soportados JUMP_SLOT y GLOB_DAT, que son los que emite lld para este
- * objetivo; un tipo mas seria un error explicito y no un salto silencioso a la
- * direccion equivocada. */
-static int apply_table(unsigned long elf_table, unsigned long elf_size) {
-    const unsigned char* table = (const unsigned char*)translate(elf_table);
-    if (table == 0) {
-        return 0;
-    }
-    for (unsigned long offset = 0; offset + sizeof(Elf64_Rela) <= elf_size; offset += sizeof(Elf64_Rela)) {
-        Elf64_Rela rela;
-        copy_bytes(table + offset, &rela, sizeof(rela));
-        const unsigned type = (unsigned)(rela.r_info & 0xffffffffu);
-        if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT) {
-            return 0;
+static int resolve(const char* name, Elf64_Addr* value_out) {
+    for (int slot = g_lib_count - 1; slot >= 0; --slot) {
+        if (resolve_in(name, slot, value_out) >= 0) {
+            return slot;
         }
-        const unsigned name_index = (unsigned)(rela.r_info >> 32);
-        Elf64_Sym symbol;
-        copy_bytes(g_lib.dynsym + (name_index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
-        const Elf64_Addr value = (Elf64_Addr)(unsigned long)at_vaddr(symbol.st_value);
-        if (value == 0) {
-            return 0;
-        }
-        /* El slot es una direccion de la imagen YA MOVIDA: va por at_vaddr, no
-         * por el vaddr crudo del ELF. */
-        Elf64_Addr* slot = (Elf64_Addr*)at_vaddr(rela.r_offset);
-        if (slot == 0) {
-            return 0;
-        }
-        *slot = value;
     }
-    return 1;
-}
-
-/* Los d_ptr de la tabla dinamica son direcciones DEL ELF todavia sin mover.
- * Todo lo que salga de ahi pasa por at_vaddr antes de usarse como puntero. */
-static void* translate(unsigned long elf_address) {
-    return at_vaddr((Elf64_Addr)elf_address);
-}
-
-static int relocate(void) {
-    unsigned long strtab = 0;
-    unsigned long symtab = 0;
-    unsigned long jmprel = 0;
-    unsigned long pltrelsz = 0;
-    unsigned long rel = 0;
-    unsigned long relasz = 0;
-    unsigned long strsz = 0;
-
-    if (!find_dynamic(DT_STRTAB, &strtab)) { g_lib_reloc_step = 1; return 0; }
-    if (!find_dynamic(DT_SYMTAB, &symtab)) { g_lib_reloc_step = 2; return 0; }
-    if (!find_dynamic(DT_JMPREL, &jmprel)) { g_lib_reloc_step = 3; return 0; }
-    if (!find_dynamic(DT_PLTRELSZ, &pltrelsz)) { g_lib_reloc_step = 4; return 0; }
-    (void)find_dynamic(DT_STRSZ, &strsz);
-
-    const unsigned char* strings = (const unsigned char*)translate(strtab);
-    const unsigned char* symbols = (const unsigned char*)translate(symtab);
-    if (strings == 0) { g_lib_reloc_step = 5; return 0; }
-    if (symbols == 0) { g_lib_reloc_step = 6; return 0; }
-    g_lib.dynstr = (const char*)strings;
-    g_lib.dynstr_size = strsz != 0 ? strsz : 4096;
-    g_lib.dynsym = symbols;
-
-    if (find_dynamic(DT_RELA, &rel) && find_dynamic(DT_RELASZ, &relasz)) {
-        if (!apply_table(rel, relasz)) { g_lib_reloc_step = 7; return 0; }
-    }
-    if (!apply_table(jmprel, pltrelsz)) { g_lib_reloc_step = 8; return 0; }
-    return 1;
+    return -1;
 }
 
 void* ldso_lookup(const char* name) {
-    if (!g_lib.loaded) {
+    if (g_lib_count == 0) {
         return 0;
     }
-    const Elf64_Addr value = resolve(name);
-    if (value == 0) {
+    Elf64_Addr value = 0;
+    const int slot = resolve(name, &value);
+    if (slot < 0 || value == 0) {
         return 0;
     }
-    void* at = at_vaddr(value);
-    if (at == 0) {
-        return 0;
-    }
-    return at;
+    /* El valor es relativo a la libreria donde se encontro, asi que se traduce
+     * con SU mapa y no con el de la ultima cargada: con dos imagenes mapeadas,
+     * un vaddr igual en las dos son direcciones distintas. */
+    return map_of(slot, value);
 }

@@ -27,13 +27,54 @@ static int check(const char* name, math_fn1 fn, double input, double expected) {
     return 1;
 }
 
+/* La cadena: libchaintop declara DT_NEEDED libchainbase y llama a chain_base.
+ *
+ * Probar que chain_top da lo correcto exige las tres piezas a la vez: que el
+ * cargador trova la dependencia por nombre, que la mapea, y que el GOT de
+ * chain_top se relleno con la direccion de chain_base ya corrida. Si cualquiera
+ * de las tres falta, la llamada vuelve con basura o no vuelve.
+ *
+ * chain_base vive en la dependencia, asi que buscarla desde el ejecutable es
+ * tambien la prueba de que el ambito de simbolos abarca la cadena y no solo la
+ * libreria que se pidio. */
+static int check_chain(void) {
+    const int why = ldso_load("/disk/lib/libchaintop.so.0.4");
+    if (why != 0) {
+        eprintf("ldtest: no se cargo libchaintop.so.0.4 (paso %d)\n", -why);
+        return 0;
+    }
+    typedef int (*chain_fn)(int);
+
+    chain_fn top = (chain_fn)ldso_lookup("chain_top");
+    if (top == 0) {
+        eprintf("ldtest: chain_top no se encontro\n");
+        return 0;
+    }
+    /* 20 -> chain_base(20) = 21 -> 21 * 2 = 42. */
+    if (top(20) != 42) {
+        eprintf("ldtest: chain_top(20) dio %d, se esperaba 42\n", top(20));
+        return 0;
+    }
+
+    /* chain_base vive en la dependencia, asi que resolverla desde el
+     * ejecutable tambien prueba que el ambito abarca la cadena. */
+    chain_fn base = (chain_fn)ldso_lookup("chain_base");
+    if (base == 0) {
+        eprintf("ldtest: chain_base no se encontro, la cadena no se cargo\n");
+        return 0;
+    }
+    if (base(1) != 2) {
+        eprintf("ldtest: chain_base(1) dio %d, se esperaba 2\n", base(1));
+        return 0;
+    }
+    return 1;
+}
+
 int main(void) {
     if (!ldso_loaded()) {
         const int why = ldso_load("/disk/lib/libmath.so.0.4");
         if (why != 0) {
-            eprintf("ldtest: no se cargo libmath.so.0.4 (paso %d, segmento %d)\n",
-                    -why, g_lib_fail_index);
-            return 1;
+            return (why == -7) ? (70 + g_lib_reloc_step) : (80 - why);
         }
     }
 
@@ -51,12 +92,9 @@ int main(void) {
         return 1;
     }
 
-    /* Un simbolo que la libreria no define tiene que dar 0, no una direccion
-     * cualquiera: un lookup que "siempre funciona" esconde un .dynsym mal
-     * recorrido. */
     if (ldso_lookup("no_existe_este_simbolo") != 0) {
         eprintf("ldtest: un simbolo inexistente devolvio una direccion\n");
         return 1;
     }
-    return 0;
+    return check_chain() ? 0 : 1;
 }

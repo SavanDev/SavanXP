@@ -81,29 +81,68 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | `ET_DYN` accepted by the kernel with a load bias | done |
 | First PIE executable with `.dynsym` (`pietest`) | done |
 | Two `PT_LOAD`s may share a page, union of permissions | done |
+| `ldso` holds an array of libraries, not one | done |
+| One load bias shared by every segment of a library | done |
+| Relocations resolve by name across the loaded set | done |
+| `DT_NEEDED` walked from `/lib`, each dependency loaded once | done |
+
+## One load bias per library
+
+Every `PT_LOAD` of an `ET_DYN` has to be reachable at `bias + p_vaddr`, because
+that is the arithmetic the linker assumed for every `%rip`-relative reference it
+emitted. Two things follow, and both were wrong at first:
+
+- **The segments must share one bias.** Placing each one wherever the kernel
+  offers leaves a `PLT` in the text segment computing a `GOT` address in the data
+  segment using the text segment's anchor. The two anchors differ by each
+  segment's offset inside its page, and the jump lands in unrelated code.
+
+- **A segment's bytes must start at `p_vaddr`, not at the start of its mapping.**
+  `map_view_at` takes a page-aligned address and puts the section's first byte
+  there, so the loader asks for the range from the start of the segment's *page*
+  (`p_offset - (p_vaddr & 4095)`) rather than from `p_offset`. `p_offset` and
+  `p_vaddr` share the same remainder modulo the page size, so the start is never
+  negative. Mapping from `p_offset` instead puts the content that far too low, and
+  the error lands inside the image: a variable shows up where another one was,
+  and the code runs.
+
+The two bugs hid each other. Reading a table out of a segment worked while the
+address arithmetic was wrong, because the same off-by-offset appeared on both
+sides of the comparison.
+
+## Relocation order
+
+`DT_NEEDED` is walked *before* the GOT is filled, not after. A `JUMP_SLOT` that
+points into a dependency can only be resolved once that dependency is mapped, and
+walking the chain afterwards fills it against a world that does not exist yet.
+Loading a dependency moves the working-library pointer, so `ldso` saves it and
+restores it on the way back; otherwise the caller's relocations would be applied
+to whichever library was loaded last.
+
+`resolve` skips `SHN_UNDEF` entries. An undefined symbol with the name being
+looked up is the question, not the answer, and its `st_value` of zero would
+translate to the base of the image — a call that lands on the ELF header.
 
 ## What blocks the rest, in order
 
-1. **PIE for userland.** The premise: lld emits no dynamic symbol table for a
+1. **The executable in the symbol scope.** `resolve` searches the loaded
+   libraries, newest first. It does not yet reach the executable, so a library
+   with an undefined `__stack_chk_fail` cannot load and
+   `libmath.so.0.4` is still built without `-fstack-protector-strong`. Locating
+   the executable from a library means finding its `.dynsym`, which means knowing
+   where its image was placed; `pietest` is the first one with a table to read.
+
+2. **PIE for userland.** The premise: lld emits no dynamic symbol table for a
    non-PIE `ET_EXEC`, so the executable cannot export anything to a library.
    `SECTIONS.md` has the detail. The link options are restructured per profile,
    the SDK runtime has a PIC-clean check target, and `pietest` is the first `DYN`
    with `.dynsym`. What is missing is migrating real programs to the profile —
    which is a per-program decision, not another mechanism.
 
-2. **A real symbol scope.** `resolve` currently looks only in the library being
-   loaded. A `DT_NEEDED` chain needs: the library, its dependencies in reverse
-   order, then the executable. Loading a dependency overwrites the working
-   library's state, so `ldso` has to become an array of libraries with per-library
-   program headers, `dynsym`/`dynstr` and bias, and `at_vaddr` has to ask which
-   library owns an address. That question has no answer in the current code.
-
-3. **`DT_NEEDED`.** Recursive loading, and the search path that goes with it.
-
-4. **`crt0` runs the interpreter.** The kernel still maps the main image itself
+3. **`crt0` runs the interpreter.** The kernel still maps the main image itself
    rather than handing the whole job to `ld.so` as Linux does. The plumbing is in
    place; changing that would alter how all 82 binaries start, so it is worth
-   doing once 1-3 are solid.
+   doing once 1-2 are solid.
 
 ## Explicitly not worth doing yet
 

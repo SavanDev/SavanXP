@@ -69,6 +69,11 @@ Cut-off notes:
 
 ### Added
 
+- **A library now loads the libraries it declares.** `DT_NEEDED` is walked from
+  `/lib`, each dependency is mapped once however many ask for it, and a symbol
+  resolves through the whole chain. `ldtest` calls a function in a dependency and
+  checks the result.
+
 - **`pietest`, the first PIE executable in the tree.** `ET_DYN`, relocated by the
   kernel onto a base, with `.dynsym` and `.dynamic`. It proves a relocated image
   loads and runs — and it proves the premise the whole feature rests on: a PIE
@@ -236,6 +241,15 @@ Cut-off notes:
   [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
 
 ### Fixed
+
+- **A shared library no longer resolves its calls against the wrong image.** All
+  its `PT_LOAD` segments now share one load bias, and each segment's file bytes
+  land at their `p_vaddr` instead of at the start of the mapping. A `PLT` in the
+  text segment jumping through a `GOT` in the data segment was landing in
+  unrelated code with no visible error.
+
+- **A library that calls nothing from outside now loads.** A missing
+  `DT_JMPREL`/`DT_PLTRELSZ` is skipped instead of treated as a failure.
 
 - **The mouse no longer drifts away from the host's.** A `virtio-tablet` event
   now carries the true pointer position to userland, not only a delta, so an
