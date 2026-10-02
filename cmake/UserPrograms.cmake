@@ -226,14 +226,14 @@ savanxp_program(NAME progman SOURCES
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/desktop_wallpaper.c)
-savanxp_program(NAME appwiz SOURCES
+savanxp_program(NAME appwiz LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/appwiz.c
     subsystems/posix/userland/appwiz_catalog.c)
-savanxp_program(NAME aboutapp SOURCES
+savanxp_program(NAME aboutapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/aboutapp.c)
 savanxp_program(NAME taskmgr SOURCES
     subsystems/posix/userland/taskmgr.c)
-savanxp_program(NAME filesapp SOURCES
+savanxp_program(NAME filesapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c
     subsystems/posix/userland/mime_icon.c)
