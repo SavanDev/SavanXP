@@ -89,6 +89,7 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | `-fstack-protector-strong` back on for libraries | done |
 | `ldso` relocates the executable, `R_X86_64_RELATIVE` and all | done |
 | A program linking `libmath.so.0.4` and calling `sqrt` (`libtest`) | done |
+| A desktop program on the library (`calc`, `sqrt` from `/lib`) | done |
 | `crt0` runs the loader before `main`, via a weak hook | done |
 
 ## crt0 runs the interpreter
@@ -287,12 +288,73 @@ The path is now reserved *between* the strings and the array, by lowering
 a `PT_INTERP` and never collided only because whether the path lands on the
 lowest string depends on the lengths involved.
 
+## calc dropped its own decimal engine
+
+`calc` had a 16-significant-digit decimal arithmetic of its own — a 16-digit
+`int64` mantissa plus an exponent of ten, with `wide_divmod` and a Newton
+`isqrt` in 128-bit integers. The file said why it existed: the in-tree userland
+was built `-mno-sse`, so `double` did not compile. That reason is gone, and
+`math.c` is a shared library now, so the engine was roughly 340 lines to maintain
+for a `sqrt` that lives in `/lib`.
+
+The engine is a `double` and the operations come from `libmath.so.0.4`. `calc`
+declares `DT_NEEDED libmath.so.0.4`, `sqrt` is undefined in the binary, and
+there is no local copy:
+
+```
+$ nm build/linux/calc | grep -w sqrt
+                 U sqrt
+$ objdump -R build/linux/calc | grep sqrt
+0000000000048910 R_X86_64_JUMP_SLOT  sqrt
+```
+
+Two things needed deciding rather than assuming.
+
+**How many digits to show.** The engine had 16. A `double` has 53 mantissa bits,
+about 15.95 decimal digits, so the sixteenth is not always true —
+`9999999999999999` has no exact representation and rounds to `10000000000000000`.
+Showing 16 would advertise a precision the value does not have, and it shows up
+in the last digit. `CALC_DIGITS` is now 15, and the entry buffer follows it
+because both share the constant.
+
+**Not to leak binary noise.** `0.1 + 0.2` is `0.30000000000000004` in binary.
+`%.17g` would show that, which is exactly the defect the decimal engine existed to
+avoid. `calc_format` rounds to `CALC_DIGITS` for display and keeps the full
+precision internally, so the screen reads `0.3` while the number does not.
+
+It also stopped using `%g`, for two reasons: `%g`'s threshold puts `1e-5` where a
+calculator shows `0.00001`, and it zero-pads the exponent, so `1.25e-07` grows a
+phantom zero. `calc_format` picks the notation itself and trims the mantissa —
+moving the exponent suffix rather than writing a NUL over the `e`, which would
+have eaten it.
+
+### What a user sees change
+
+| | before | after | why |
+| --- | --- | --- | --- |
+| `0.1+0.2` | `0.3` | `0.3` | display rounding, unchanged |
+| `2/3` | `0.6666666666666667` | `0.666666666666667` | 15 significant digits |
+| `1/3 × 3` | `0.9999999999999999` | `1` | the hardware result is exact |
+| `√2` | `1.414213562373095` | `1.4142135623731` | 15 significant digits |
+| typed digits | 16 | 15 | a `double` cannot carry 16 |
+| `9999999999999999 × 9` | `8.999999999999999e+16` | `8.99999999999999e+15` | the 16th digit is gone at entry |
+
+The last row is a real loss, not cosmetics: the decimal engine multiplied a
+16-digit integer exactly. Every desktop calculator has it too — they are all
+IEEE-754 — and it is the price of the arithmetic being shared rather than
+maintained here.
+
+`calc_parse` filters the text before handing it to `strtod`, because `strtod`
+stops at the first character it cannot use and `"1,234.5"` — a pasted number
+with a thousands separator — would read as `1`. The old parser ignored
+non-digits anywhere; that leniency is part of the behaviour, so it survived.
+
 ## What blocks the rest, in order
 
-1. **Wider libraries.** `libmath.so.0.4` is linked by `libtest` and `calc`, both
-   `ET_DYN`. The saving it promises — `sqrt` mapped once instead of in every
-   binary — is real but only two programs collect it so far. SxGFX, SxGUI and
-   FFmpeg come next, program by program.
+1. **Wider libraries.** `libmath.so.0.4` is linked by `libtest` and `calc`.
+   `calc` no longer carries a copy of `sqrt`, which is the first time a real
+   program's binary actually got smaller by sharing. SxGUI and SxGFX are next,
+   program by program, and they are much larger than libmath.
 
 2. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and

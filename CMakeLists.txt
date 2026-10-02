@@ -349,9 +349,10 @@ target_compile_options(savanxp_user_runtime_pic PRIVATE ${SAVANXP_USER_COMPILE_O
 set_target_properties(savanxp_user_runtime_pic PROPERTIES
     C_EXTENSIONS YES
 )
-# El perfil PIC existe como target independiente aunque ningun programa lo use
-# todavia: la prueba en frio de que las 10 unidades compilan position
-# independent sin tocarlas deja de ser cierta en silencio si alguien rompe una.
+# El perfil PIC existe como target independiente para que la prueba en frio de
+# que las 11 unidades compilan position independent siga siendo cierta si
+# alguien rompe una. Lo usan libtest, ldtest, pietest y calc.
+#
 # El perfil PIC sin math.c: para un programa que tiene que dejar sqrt
 # INDEFINIDO y resolverlo contra libmath.so.0.4 en tiempo de carga.
 #

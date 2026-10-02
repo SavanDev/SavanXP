@@ -22,23 +22,28 @@
 #include "savanxp/sxgui.h"
 
 #include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
-/* ---- flotante decimal ----------------------------------------------------- */
+/* ---- flotante -------------------------------------------------------------- */
 
-typedef __int128 calc_wide;
-typedef unsigned __int128 calc_uwide;
+/* 15 digitos significativos, que es lo que un double carga de verdad.
+ *
+ * El motor decimal usaba 16. Bajar a 15 no es arbitrarlo: 2^53 vale
+ * 9.007e15, asi que de 16 digitos decimales el ultimo no siempre es cierto --
+ * 9999999999999999 no tiene representacion exacta y redondea a 10000000000000000.
+ * Mostrar 16 seria presume una precision que el numero no tiene, y se notaria
+ * justo en el ultimo digito.
+ *
+ * Un double tiene 53 bits de mantisa, unos 15.95 decimales. Redondear a 15 es
+ * redondear a la precision real del tipo. */
+#define CALC_DIGITS 15
 
-/* 16 digitos significativos: el maximo que entra en int64 dejando lugar para
- * que calc_add alinee dos operandos sin desbordar el intermedio de 128 bits. */
-#define CALC_DIGITS 16
-#define CALC_MANTISSA_MAX ((int64_t)10000000000000000)  /* 10^16 */
-#define CALC_MANTISSA_MIN ((int64_t)1000000000000000)   /* 10^15 */
-
-/* Tope del exponente. No es el limite de int: un resultado mas grande que esto
- * es "Overflow" para el usuario, y acotarlo evita razonar sobre exponentes que
- * ninguna pantalla puede mostrar. */
-#define CALC_EXPONENT_LIMIT 4000
+/* Exponente decimal por encima del cual el resultado es "Overflow" para el
+ * usuario. Un double llega a 1e308, pero un exponente de 300 no entra en una
+ * pantalla de calculadora: el tope no es del numero, es de la vista. */
+#define CALC_EXPONENT_LIMIT 300
 
 enum calc_status {
     CALC_OK = 0,
@@ -47,471 +52,224 @@ enum calc_status {
     CALC_UNDEFINED
 };
 
-/* valor = mantissa * 10^exponent, con |mantissa| en [10^15, 10^16) o cero. */
-struct calc_number {
-    int64_t mantissa;
-    int exponent;
-};
+/* El valor es un double de IEEE-754 y la aritmetica viene de libmath.
+ *
+ * El motor propio que estaba antes --mantisa de 16 digitos en int64 mas exponente
+ * de diez-- nacio cuando la userland in-tree iba -mno-sse y `double` no
+ * compilaba. Hoy no queda esa restriccion y math.c es una libreria compartida,
+ * asi que el motor propio es codigo que hay que mantener sin agregar nada.
+ *
+ * Lo que se pierde, y es lo unico que se pierde: en decimal 0.1 + 0.2 da 0.3, y
+ * en binario da 0.30000000000000004. La pantalla NO muestra eso, porque
+ * calc_format redondea a CALC_DIGITS significativos y por lo tanto muestra 0.3.
+ * El numero interno conserva toda la precision que tenga.
+ *
+ * Ninguna operacion redondea aca. El hardware redondea al mas cercano con
+ * medio al par, y el motor decimal redondeaba alejandose del cero. Es una
+ * diferencia real, y del lado del hardware: a 0.1 todavia no se le puede
+ * guardar el error de representacion. */
+typedef double calc_number;
 
-static const int64_t k_power_of_ten[CALC_DIGITS + 2] = {
-    1LL,
-    10LL,
-    100LL,
-    1000LL,
-    10000LL,
-    100000LL,
-    1000000LL,
-    10000000LL,
-    100000000LL,
-    1000000000LL,
-    10000000000LL,
-    100000000000LL,
-    1000000000000LL,
-    10000000000000LL,
-    100000000000000LL,
-    1000000000000000LL,
-    10000000000000000LL,
-    100000000000000000LL
-};
-
-/* Division larga binaria de 128 bits. Existe para no depender de __divti3:
- * ver el comentario de cabecera. Es O(128) por division y eso aca no se nota
- * -- el peor caso es una tecla apretada. */
-static void wide_divmod(calc_uwide numerator, calc_uwide denominator, calc_uwide *quotient, calc_uwide *remainder)
+static calc_number calc_zero(void)
 {
-    calc_uwide result = 0;
-    calc_uwide rest = 0;
-    int bit;
-
-    if (denominator == 0)
-    {
-        *quotient = 0;
-        *remainder = 0;
-        return;
-    }
-    for (bit = 127; bit >= 0; --bit)
-    {
-        rest = (rest << 1) | ((numerator >> bit) & (calc_uwide)1);
-        if (rest >= denominator)
-        {
-            rest -= denominator;
-            result |= ((calc_uwide)1) << bit;
-        }
-    }
-    *quotient = result;
-    *remainder = rest;
+    return 0.0;
 }
 
-static calc_uwide wide_abs(calc_wide value)
+static int calc_is_zero(calc_number value)
 {
-    return value < 0 ? (calc_uwide)(-value) : (calc_uwide)value;
+    return value == 0.0;
 }
 
-static calc_uwide wide_power_of_ten(int exponent)
+static calc_number calc_negate(calc_number value)
 {
-    calc_uwide result = 1;
-    int index;
-
-    for (index = 0; index < exponent; ++index)
-    {
-        result *= 10u;
-    }
-    return result;
+    return -value;
 }
 
-static struct calc_number calc_zero(void)
+/* Un resultado que no es un numero finito no es un resultado: es algo que la
+ * pantalla tiene que poder nombrar. Dividir por cero ya se trata antes, asi que
+ * un infinito solo aparece por overflow, y un NaN por 0 * infinito o por la raiz
+ * de un negativo que llego aqui sin pasar por el control de la tecla. */
+static int calc_finish(calc_number value, calc_number *out)
 {
-    struct calc_number value;
-
-    value.mantissa = 0;
-    value.exponent = 0;
-    return value;
-}
-
-static int calc_is_zero(struct calc_number value)
-{
-    return value.mantissa == 0;
-}
-
-/* Constante exacta: `digits` significativos con el valor `mantissa` alineado a
- * la izquierda. calc_number_of(1, 0) es 1, calc_number_of(100, 3) es 100. */
-static struct calc_number calc_number_of(int64_t value, int digits)
-{
-    struct calc_number number;
-    int index;
-
-    number.mantissa = value;
-    number.exponent = 0;
-    for (index = digits; index < CALC_DIGITS; ++index)
+    if (__builtin_isnan(value))
     {
-        number.mantissa *= 10;
-        number.exponent -= 1;
+        return CALC_UNDEFINED;
     }
-    return number;
-}
-
-/*
- * Lleva cualquier par (mantisa, exponente) a la forma canonica: exactamente 16
- * digitos significativos. Es el unico lugar que redondea, y redondea al mas
- * cercano alejandose del cero, que es lo que hace una calculadora de
- * escritorio y no lo que hace el hardware (medio al par).
- */
-static int calc_normalize(calc_wide mantissa, int exponent, struct calc_number *out)
-{
-    calc_uwide magnitude = wide_abs(mantissa);
-    int negative = mantissa < 0;
-
-    if (mantissa == 0)
-    {
-        *out = calc_zero();
-        return CALC_OK;
-    }
-
-    /* De mas a menos digitos con UNA division por 10^sobrantes, en vez de
-     * dividir por 10 en un bucle: cada division cuesta 128 pasos. El redondeo
-     * puede devolver el valor a 10^16 (999...9 -> 1000...0), y por eso el
-     * while vuelve a mirar -- la segunda vuelta ya no tiene resto. */
-    while (magnitude >= (calc_uwide)CALC_MANTISSA_MAX)
-    {
-        calc_uwide quotient;
-        calc_uwide remainder;
-        calc_uwide probe = magnitude;
-        calc_uwide divisor;
-        int excess = 0;
-
-        while (probe >= (calc_uwide)CALC_MANTISSA_MAX)
-        {
-            probe /= 10u;
-            excess += 1;
-        }
-        divisor = wide_power_of_ten(excess);
-        wide_divmod(magnitude, divisor, &quotient, &remainder);
-        if (remainder * 2u >= divisor)
-        {
-            quotient += 1u;
-        }
-        magnitude = quotient;
-        exponent += excess;
-    }
-    while (magnitude != 0 && magnitude < (calc_uwide)CALC_MANTISSA_MIN)
-    {
-        magnitude *= 10u;
-        exponent -= 1;
-    }
-
-    if (exponent > CALC_EXPONENT_LIMIT)
+    if (__builtin_isinf(value))
     {
         return CALC_OVERFLOW;
     }
-    if (exponent < -CALC_EXPONENT_LIMIT)
-    {
-        /* Bajo flujo: para quien mira la pantalla esto es cero, no un error. */
-        *out = calc_zero();
-        return CALC_OK;
-    }
-
-    out->mantissa = negative ? -(int64_t)magnitude : (int64_t)magnitude;
-    out->exponent = exponent;
+    *out = value;
     return CALC_OK;
 }
 
-static struct calc_number calc_negate(struct calc_number value)
+static int calc_add(calc_number left, calc_number right, calc_number *out)
 {
-    value.mantissa = -value.mantissa;
-    return value;
+    return calc_finish(left + right, out);
 }
 
-static int calc_add(struct calc_number left, struct calc_number right, struct calc_number *out)
+static int calc_subtract(calc_number left, calc_number right, calc_number *out)
 {
-    struct calc_number larger;
-    struct calc_number smaller;
-    int shift;
-
-    if (calc_is_zero(left))
-    {
-        *out = right;
-        return CALC_OK;
-    }
-    if (calc_is_zero(right))
-    {
-        *out = left;
-        return CALC_OK;
-    }
-
-    larger = left.exponent >= right.exponent ? left : right;
-    smaller = left.exponent >= right.exponent ? right : left;
-    shift = larger.exponent - smaller.exponent;
-
-    /* Mas de 17 ordenes de diferencia y el chico no alcanza ni al ultimo
-     * digito del grande: sumarlo seria escribir el mismo numero, y ademas
-     * 10^shift ya no entraria en el intermedio. */
-    if (shift > CALC_DIGITS + 1)
-    {
-        *out = larger;
-        return CALC_OK;
-    }
-    return calc_normalize(
-        (calc_wide)larger.mantissa * k_power_of_ten[shift] + smaller.mantissa,
-        smaller.exponent,
-        out);
+    return calc_finish(left - right, out);
 }
 
-static int calc_subtract(struct calc_number left, struct calc_number right, struct calc_number *out)
+static int calc_multiply(calc_number left, calc_number right, calc_number *out)
 {
-    return calc_add(left, calc_negate(right), out);
+    return calc_finish(left * right, out);
 }
 
-static int calc_multiply(struct calc_number left, struct calc_number right, struct calc_number *out)
+static int calc_divide(calc_number left, calc_number right, calc_number *out)
 {
-    return calc_normalize(
-        (calc_wide)left.mantissa * right.mantissa,
-        left.exponent + right.exponent,
-        out);
-}
-
-static int calc_divide(struct calc_number left, struct calc_number right, struct calc_number *out)
-{
-    calc_uwide numerator;
-    calc_uwide denominator;
-    calc_uwide quotient;
-    calc_uwide remainder;
-    int negative;
-
     if (calc_is_zero(right))
     {
         return CALC_DIVIDE_BY_ZERO;
     }
-    if (calc_is_zero(left))
-    {
-        *out = calc_zero();
-        return CALC_OK;
-    }
-
-    negative = (left.mantissa < 0) != (right.mantissa < 0);
-    /* 17 digitos de mas en el dividendo: el cociente sale con 17 o 18 digitos
-     * y calc_normalize se queda con los 16 de arriba, ya redondeados. */
-    numerator = wide_abs((calc_wide)left.mantissa) * wide_power_of_ten(CALC_DIGITS + 1);
-    denominator = wide_abs((calc_wide)right.mantissa);
-    wide_divmod(numerator, denominator, &quotient, &remainder);
-    if (remainder * 2u >= denominator)
-    {
-        quotient += 1u;
-    }
-    return calc_normalize(
-        negative ? -(calc_wide)quotient : (calc_wide)quotient,
-        left.exponent - right.exponent - (CALC_DIGITS + 1),
-        out);
+    return calc_finish(left / right, out);
 }
 
-/* Raiz entera de 128 bits por Newton. El arranque es una potencia de dos con
- * la mitad de los bits del radicando, que converge en una decena de pasos. */
-static calc_uwide wide_isqrt(calc_uwide value)
+/* La raiz viene de libmath.so.0.4, no de codigo propio: es la clase de funcion
+ * que tiene sentido compartir en vez de repetir en cada binario. */
+static int calc_sqrt(calc_number value, calc_number *out)
 {
-    calc_uwide guess;
-    calc_uwide probe = value;
-    int bits = 0;
-
-    if (value == 0)
-    {
-        return 0;
-    }
-    while (probe != 0)
-    {
-        probe >>= 1;
-        bits += 1;
-    }
-    guess = ((calc_uwide)1) << ((bits + 1) / 2);
-    for (;;)
-    {
-        calc_uwide quotient;
-        calc_uwide remainder;
-        calc_uwide next;
-
-        wide_divmod(value, guess, &quotient, &remainder);
-        next = (guess + quotient) / 2u;
-        if (next >= guess)
-        {
-            return guess;
-        }
-        guess = next;
-    }
-}
-
-static int calc_sqrt(struct calc_number value, struct calc_number *out)
-{
-    calc_uwide scaled;
-    calc_uwide root;
-    int shift = 20;
-    int exponent;
-
-    if (value.mantissa < 0)
+    if (value < 0.0)
     {
         return CALC_UNDEFINED;
     }
-    if (calc_is_zero(value))
+    if (value == 0.0)
     {
         *out = calc_zero();
         return CALC_OK;
     }
-
-    /* La raiz de 10^e solo es exacta con e par, asi que el corrimiento se
-     * elige para dejarlo par. 16 + 21 digitos como mucho, que es lo que entra
-     * en 128 bits, y dan 18 o 19 digitos de raiz: mas que los 16 con los que
-     * se va a quedar calc_normalize. */
-    exponent = value.exponent - shift;
-    if (exponent % 2 != 0)
-    {
-        shift += 1;
-        exponent -= 1;
-    }
-    scaled = (calc_uwide)value.mantissa * wide_power_of_ten(shift);
-    root = wide_isqrt(scaled);
-    return calc_normalize((calc_wide)root, exponent / 2, out);
+    return calc_finish(sqrt(value), out);
 }
 
 /* ---- texto ---------------------------------------------------------------- */
 
 #define CALC_TEXT_CAPACITY 48
 
-struct calc_writer {
-    char *buffer;
-    int capacity;
-    int length;
-};
-
-static void calc_put(struct calc_writer *writer, char character)
+/*
+ * Numero a texto, con la misma convencion que el motor decimal: notacion normal
+ * mientras el punto decimal caiga donde se lee de un vistazo, y cientifica
+ * cuando no. Un cero de mas o de menos en "0.00000000000001" es un error de
+ * lectura garantizado.
+ *
+ * No se usa %g porque su umbral de notacion cientifica no es el de siempre --
+ * pone "1e-5" donde la pantalla de una calculadora pone "0.00001" -- y porque
+ * dejaria ver el ruido binario. El redondeo a CALC_DIGITS es lo que salva la
+ * diferencia con el motor decimal: 0.1 + 0.2 vale 0.30000000000000004 en
+ * binario y aca se muestra 0.3, que es lo que el usuario espera.
+ *
+ * El cero final y el punto que queda solo se borran al final, despues de la
+ * notacion, porque en "9." el punto no esta al final de la cadena.
+ */
+static void calc_format(calc_number value, char *out, int capacity)
 {
-    if (writer->length + 1 < writer->capacity)
-    {
-        writer->buffer[writer->length] = character;
-        writer->length += 1;
-        writer->buffer[writer->length] = '\0';
-    }
-}
+    double magnitude;
+    char *exponent;
+    char *digits;
+    int scientific_exponent = 0;
+    int decimals;
+    char *mantissa_end;
 
-static void calc_put_number(struct calc_writer *writer, int value)
-{
-    char digits[12];
-    int count = 0;
-
-    if (value == 0)
+    if (capacity <= 0)
     {
-        calc_put(writer, '0');
         return;
     }
-    while (value > 0 && count < (int)sizeof(digits))
-    {
-        digits[count] = (char)('0' + (value % 10));
-        value /= 10;
-        count += 1;
-    }
-    while (count > 0)
-    {
-        count -= 1;
-        calc_put(writer, digits[count]);
-    }
-}
-
-/*
- * Numero a texto. Notacion normal mientras el punto decimal caiga donde se lee
- * de un vistazo, y cientifica cuando no: un cero de mas o de menos en
- * "0.00000000000001" es un error de lectura garantizado.
- */
-static void calc_format(struct calc_number value, char *out, int capacity)
-{
-    struct calc_writer writer;
-    char digits[CALC_DIGITS + 1];
-    int digit_count = CALC_DIGITS;
-    int adjusted;
-    int index;
-    int64_t magnitude;
-
-    writer.buffer = out;
-    writer.capacity = capacity;
-    writer.length = 0;
-    if (capacity > 0)
-    {
-        out[0] = '\0';
-    }
-
     if (calc_is_zero(value))
     {
-        calc_put(&writer, '0');
+        /* %g de un cero negativo imprime "-0". La pantalla jamas muestra eso. */
+        out[0] = '0';
+        out[1] = '\0';
+        return;
+    }
+    if (__builtin_isnan(value))
+    {
+        snprintf(out, (size_t)capacity, "Undefined");
+        return;
+    }
+    if (__builtin_isinf(value))
+    {
+        snprintf(out, (size_t)capacity, value < 0.0 ? "-Overflow" : "Overflow");
         return;
     }
 
-    magnitude = value.mantissa < 0 ? -value.mantissa : value.mantissa;
-    for (index = CALC_DIGITS - 1; index >= 0; --index)
+    /* Potencia de diez del primer digito: decide donde cae el punto, y es el
+     * exponente de la notacion cientifica. Se obtiene escalando y no con
+     * log10 porque log10 vive en math.c, que ya no esta enlazado aca. */
+    magnitude = value < 0.0 ? -value : value;
+    if (magnitude != 0.0)
     {
-        digits[index] = (char)('0' + (int)(magnitude % 10));
-        magnitude /= 10;
-    }
-    digits[CALC_DIGITS] = '\0';
-    while (digit_count > 1 && digits[digit_count - 1] == '0')
-    {
-        digit_count -= 1;
+        while (magnitude >= 10.0)
+        {
+            magnitude /= 10.0;
+            scientific_exponent += 1;
+        }
+        while (magnitude < 1.0)
+        {
+            magnitude *= 10.0;
+            scientific_exponent -= 1;
+        }
     }
 
-    /* Potencia de diez del primer digito: el exponente de la notacion
-     * cientifica y, a la vez, donde cae el punto en la notacion normal. */
-    adjusted = value.exponent + (CALC_DIGITS - 1);
-
-    if (value.mantissa < 0)
+    if (scientific_exponent < -5 || scientific_exponent >= CALC_DIGITS)
     {
-        calc_put(&writer, '-');
+        snprintf(out, (size_t)capacity, "%.*e", CALC_DIGITS - 1, value);
+    }
+    else
+    {
+        decimals = CALC_DIGITS - 1 - scientific_exponent;
+        if (decimals < 0)
+        {
+            decimals = 0;
+        }
+        snprintf(out, (size_t)capacity, "%.*f", decimals, value);
     }
 
-    if (adjusted > CALC_DIGITS - 1 || adjusted < -5)
+    /* Ceros de relleno y punto solo: en notacion normal "1.500" debe ser "1.5", y
+     * en cientifica "9.000e+16" debe ser "9e+16".
+     *
+     * Lo que se limpia es la MANTISA, o sea lo que va antes de la 'e'. Los
+     * digitos del exponente quedan intactos, y por eso el corte se hace en la
+     * 'e' y no en el final de la cadena: en "1.25000000000000e-7" el ultimo
+     * caracter es un 7 del exponente, y barrenar desde ahi no borra nada.
+     *
+     * Y al terminar la mantisa hay que MOVER el exponente, no dejar un NUL en
+     * su lugar: un NUL encima de la 'e' se come "e-07" y 1e-7 se muestra 1. */
+    exponent = strchr(out, 'e');
+    mantissa_end = exponent != 0 ? exponent : out + strlen(out);
+    while (mantissa_end > out && mantissa_end[-1] == '0')
     {
-        calc_put(&writer, digits[0]);
-        if (digit_count > 1)
-        {
-            calc_put(&writer, '.');
-            for (index = 1; index < digit_count; ++index)
-            {
-                calc_put(&writer, digits[index]);
-            }
-        }
-        calc_put(&writer, 'e');
-        calc_put(&writer, adjusted < 0 ? '-' : '+');
-        calc_put_number(&writer, adjusted < 0 ? -adjusted : adjusted);
-        return;
+        mantissa_end -= 1;
+    }
+    if (mantissa_end > out && mantissa_end[-1] == '.')
+    {
+        mantissa_end -= 1;
+    }
+    if (exponent != 0)
+    {
+        memmove(mantissa_end, exponent, strlen(exponent) + 1);
+        exponent = mantissa_end;
+    }
+    else
+    {
+        *mantissa_end = '\0';
     }
 
-    if (adjusted >= digit_count - 1)
+    /* El exponente se reescribe sin el cero de la izquierda: %e lo emite con
+     * dos digitos siempre, y "1.25e-07" tiene un cero de mas. El motor decimal
+     * escribia el exponente como un entero, o sea "1.25e-7". */
+    exponent = strchr(out, 'e');
+    if (exponent != 0)
     {
-        for (index = 0; index < digit_count; ++index)
+        digits = exponent + 1;
+        if (*digits == '-' || *digits == '+')
         {
-            calc_put(&writer, digits[index]);
+            digits += 1;
         }
-        for (index = digit_count - 1; index < adjusted; ++index)
+        if (digits[0] == '0' && digits[1] >= '0' && digits[1] <= '9')
         {
-            calc_put(&writer, '0');
+            memmove(digits, digits + 1, strlen(digits));
         }
-        return;
-    }
-    if (adjusted >= 0)
-    {
-        for (index = 0; index <= adjusted; ++index)
-        {
-            calc_put(&writer, digits[index]);
-        }
-        calc_put(&writer, '.');
-        for (index = adjusted + 1; index < digit_count; ++index)
-        {
-            calc_put(&writer, digits[index]);
-        }
-        return;
-    }
-    calc_put(&writer, '0');
-    calc_put(&writer, '.');
-    for (index = -1; index > adjusted; --index)
-    {
-        calc_put(&writer, '0');
-    }
-    for (index = 0; index < digit_count; ++index)
-    {
-        calc_put(&writer, digits[index]);
     }
 }
 
@@ -519,75 +277,59 @@ static void calc_format(struct calc_number value, char *out, int capacity)
  * Texto a numero. Acepta lo que escribe el teclado y lo que llega del
  * portapapeles, que es texto de cualquiera: lo que no sea un digito, un punto
  * o el signo de adelante se ignora, en vez de rechazar la entrada entera.
+ *
+ * Por eso NO alcanza con strtod: el se detiene en el primer caracter que no
+ * pertenece al numero, y "1,234.5" -- que es como se pega un numero con
+ * separador de miles -- se leeria como 1. Se filtra el texto primero y se
+ * entrega a strtod lo que si es numero.
  */
-static struct calc_number calc_parse(const char *text)
+static calc_number calc_parse(const char *text)
 {
-    struct calc_number value = calc_zero();
-    int64_t mantissa = 0;
-    int exponent = 0;
-    int negative = 0;
-    int digits = 0;
+    char filtered[CALC_TEXT_CAPACITY];
+    size_t kept = 0;
     int after_point = 0;
     const char *cursor = text;
 
     if (cursor == 0)
     {
-        return value;
+        return calc_zero();
     }
     while (*cursor == ' ')
     {
         cursor += 1;
     }
-    if (*cursor == '-')
+    /* El signo se copia en vez de consumirse: si se descarta, "4n" -- que
+     * presiona el signo menos sobre la entrada -- daria 4 en vez de -4, y la
+     * raiz de un negativo responderia 2 en vez de "Invalid input". */
+    if (*cursor == '-' || *cursor == '+')
     {
-        negative = 1;
+        filtered[kept++] = *cursor;
         cursor += 1;
     }
-    else if (*cursor == '+')
-    {
-        cursor += 1;
-    }
-    for (; *cursor != '\0'; ++cursor)
+    for (; *cursor != '\0' && kept + 1 < sizeof(filtered); ++cursor)
     {
         if (*cursor == '.')
         {
-            after_point = 1;
+            /* Un solo punto: "1.2.3" es 1.23, no 1.2 con un 3 colgando. */
+            if (!after_point)
+            {
+                after_point = 1;
+                filtered[kept++] = '.';
+            }
             continue;
         }
         if (*cursor < '0' || *cursor > '9')
         {
             continue;
         }
-        if (mantissa == 0 && *cursor == '0')
-        {
-            /* Los ceros de adelante no son digitos significativos; los de
-             * despues del punto igual corren el exponente. */
-            if (after_point)
-            {
-                exponent -= 1;
-            }
-            continue;
-        }
-        if (digits < CALC_DIGITS + 1)
-        {
-            mantissa = mantissa * 10 + (*cursor - '0');
-            digits += 1;
-            if (after_point)
-            {
-                exponent -= 1;
-            }
-        }
-        else if (!after_point)
-        {
-            exponent += 1;
-        }
+        filtered[kept++] = *cursor;
     }
-    if (negative)
+    filtered[kept] = '\0';
+    if (kept == 0)
     {
-        mantissa = -mantissa;
+        return calc_zero();
     }
-    (void)calc_normalize(mantissa, exponent, &value);
-    return value;
+    return strtod(filtered, 0);
 }
 
 /* ---- maquina de la calculadora -------------------------------------------- */
@@ -633,14 +375,14 @@ enum calc_command {
 
 static char g_entry[CALC_ENTRY_CAPACITY];
 static int g_entering;
-static struct calc_number g_display;
-static struct calc_number g_accumulator;
+static calc_number g_display;
+static calc_number g_accumulator;
 static int g_pending;
 /* Operador y operando del ultimo "=", para que volver a apretarlo repita la
  * operacion, como en la calculadora de siempre. */
-static struct calc_number g_repeat_operand;
+static calc_number g_repeat_operand;
 static int g_repeat_operator;
-static struct calc_number g_memory;
+static calc_number g_memory;
 static int g_memory_used;
 static int g_status;
 static char g_display_text[CALC_TEXT_CAPACITY];
@@ -696,7 +438,7 @@ static void calc_reset(void)
     calc_sync_text();
 }
 
-static struct calc_number calc_current(void)
+static calc_number calc_current(void)
 {
     return g_entering ? calc_parse(g_entry) : g_display;
 }
@@ -820,7 +562,7 @@ static void calc_toggle_sign(void)
     g_display = calc_negate(g_display);
 }
 
-static int calc_apply(int operation, struct calc_number left, struct calc_number right, struct calc_number *out)
+static int calc_apply(int operation, calc_number left, calc_number right, calc_number *out)
 {
     switch (operation)
     {
@@ -840,11 +582,11 @@ static int calc_apply(int operation, struct calc_number left, struct calc_number
 
 static void calc_set_operator(int operation)
 {
-    struct calc_number value = calc_current();
+    calc_number value = calc_current();
 
     if (g_pending != CALC_OP_NONE && g_entering)
     {
-        struct calc_number result;
+        calc_number result;
         int status = calc_apply(g_pending, g_accumulator, value, &result);
 
         if (status != CALC_OK)
@@ -869,8 +611,8 @@ static void calc_set_operator(int operation)
 
 static void calc_equals(void)
 {
-    struct calc_number value = calc_current();
-    struct calc_number result;
+    calc_number value = calc_current();
+    calc_number result;
     int status;
 
     if (g_pending != CALC_OP_NONE)
@@ -907,9 +649,9 @@ static void calc_equals(void)
  */
 static void calc_percent(void)
 {
-    struct calc_number value = calc_current();
-    struct calc_number hundred = calc_number_of(100, 3);
-    struct calc_number result;
+    calc_number value = calc_current();
+    calc_number hundred = 100.0;
+    calc_number result;
     int status;
 
     if (g_pending == CALC_OP_ADD || g_pending == CALC_OP_SUBTRACT)
@@ -935,8 +677,8 @@ static void calc_percent(void)
 
 static void calc_unary(int command)
 {
-    struct calc_number value = calc_current();
-    struct calc_number result;
+    calc_number value = calc_current();
+    calc_number result;
     int status;
 
     if (command == CALC_CMD_SQRT)
@@ -945,7 +687,7 @@ static void calc_unary(int command)
     }
     else
     {
-        status = calc_divide(calc_number_of(1, 1), value, &result);
+        status = calc_divide(1.0, value, &result);
     }
     if (status != CALC_OK)
     {
@@ -958,8 +700,8 @@ static void calc_unary(int command)
 
 static void calc_memory(int command)
 {
-    struct calc_number value = calc_current();
-    struct calc_number result;
+    calc_number value = calc_current();
+    calc_number result;
 
     switch (command)
     {
@@ -1579,21 +1321,32 @@ static void expect_script(const char *script, const char *expected)
 
 static int calc_selftest(void)
 {
-    struct calc_number value;
+    calc_number value;
 
     calc_reset();
 
-    /* Aritmetica basica y lo que distingue a un motor decimal de uno binario:
-     * 0.1 + 0.2 tiene que dar 0.3 y no 0.30000000000000004. */
+    /* Aritmetica basica, y el resultado que un humano espera: 0.1 + 0.2 da
+     * 0.30000000000000004 en binario, y la pantalla tiene que decir 0.3. Que lo
+     * diga depende de que calc_format redondee a CALC_DIGITS; si algun dia
+     * muestra los 17 digitos, este check es el que avisa.
+     *
+     * Este bloque cambio cuando el motor propio de 16 digitos decimales se
+     * cambio por libmath. Lo que se conserva es lo que el usuario ve. */
     expect_script("2+3=", "5");
     expect_script("7-9=", "-2");
     expect_script("6*7=", "42");
     expect_script("1/8=", "0.125");
     expect_script("0.1+0.2=", "0.3");
-    expect_script("2/3=", "0.6666666666666667");
-    /* La deuda del redondeo a 16 digitos, anotada a proposito: si algun dia
-     * este check cambia, cambio la precision del motor. */
-    expect_script("1/3=*3=", "0.9999999999999999");
+    /* 15 significativos y no 16: 2^53 vale 9.007e15, asi que el dieciseisimo
+     * digito decimal no siempre es cierto. Con 15, 2/3 se muestra con 15
+     * decimales; el motor decimal mostraba el mismo numero con 16. */
+    expect_script("2/3=", "0.666666666666667");
+    /* Esta deuda SE MEJORO. El motor decimal redondeaba alejandose del cero y
+     * 1/3 * 3 daba 0.9999999999999999; el hardware multiplica el double mas
+     * cercano a 1/3 por 3 y da exactamente 1, que es la respuesta correcta.
+     * La diferencia real que queda es la representacion de 0.1, que ninguna
+     * base binaria resuelve. */
+    expect_script("1/3=*3=", "1");
 
     /* El "=" repetido repite la ultima operacion. */
     expect_script("2+3==", "8");
@@ -1602,9 +1355,11 @@ static int calc_selftest(void)
     /* Cambiar de operador sin teclear nada solo cambia el pendiente. */
     expect_script("5+*3=", "15");
 
-    /* Funciones. */
+    /* Funciones. La raiz viene de libmath.so.0.4 y no de codigo propio. */
     expect_script("9q", "3");
-    expect_script("2q", "1.414213562373095");
+    /* Raiz de 2 a 15 significativos. El motor decimal mostraba 16 y daba el
+     * mismo numero redondeado a un digito mas. */
+    expect_script("2q", "1.4142135623731");
     expect_script("8r", "0.125");
     expect_script("5n", "-5");
     expect_script("200+10%", "20");
@@ -1619,8 +1374,12 @@ static int calc_selftest(void)
     expect_text(g_display_text, "0", "error: C limpia");
     expect_script("4n q", "Invalid input");
 
-    /* Entrada: el tope de digitos, el punto unico y el borrado. */
-    expect_script("12345678901234567890", "1234567890123456");
+    /* Entrada: el tope de digitos, el punto unico y el borrado.
+     *
+     * El tope bajo de 16 a 15 porque la entrada y la pantalla comparten
+     * CALC_DIGITS, y una double no carga 16 digitos decimales exactos. Teclear
+     * el dieciseisimo digito ya no alcanza. */
+    expect_script("12345678901234567890", "123456789012345");
     expect_script("1.2.3", "1.23");
     expect_script("123", "123");
     calc_execute(CALC_CMD_BACKSPACE);
@@ -1648,8 +1407,19 @@ static int calc_selftest(void)
         g_failures += 1;
     }
 
-    /* Formato: notacion cientifica arriba y abajo del rango legible. */
-    expect_script("9999999999999999*9=", "8.999999999999999e+16");
+    /* Formato: notacion cientifica arriba y abajo del rango legible.
+     *
+     * Este caso baja a 15 digitos de entrada, asi que ya no es el mismo numero:
+     * el motor decimal multiplicaba 9999999999999999 -- que en binario no tiene
+     * representacion exacta, redondea a 1e16 -- por 9 y daba 8.999999999999999e16.
+     * Ahora se teclea 999999999999999 y el producto es 8.99999999999999e15.
+     *
+     * La perdida de precision que introduce el motor binario es real y no se
+     * disimula: es la de cualquier calculadora de escritorio, que tambien usa
+     * IEEE-754. La que no existe aca es la contraria: con decimal, escribir
+     * 9999999999999999 y multiplicar por 9 daba un producto exacto de 17
+     * digitos. */
+    expect_script("9999999999999999*9=", "8.99999999999999e+15");
     expect_script("1/8=/1000000=", "1.25e-7");
     expect_script("0.0000001=", "1e-7");
     expect_script("0.00001=", "0.00001");

@@ -12,6 +12,16 @@ Cut-off notes:
 
 ### Changed
 
+- **The calculator's arithmetic now comes from `libmath.so.0.4`.** Its own
+  16-digit decimal engine existed because the in-tree userland was built
+  `-mno-sse` and `double` did not compile. `sqrt` is now resolved from the
+  shared library, so `calc` carries no copy of it.
+
+- **The calculator shows 15 significant digits instead of 16**, and accepts 15
+  digits of input instead of 16. A `double` carries about 15.95 decimal digits,
+  so the sixteenth was not always true. `1/3 × 3` now reads `1` instead of
+  `0.9999999999999999`, and `2/3` reads `0.666666666666667`.
+
 - **Section budgets raised: 64 section views per process, 256 sections
   system-wide.** The old limits left no room for shared libraries, and 32 views
   per process was already tight for heap arenas alone. Exhaustion is still a

@@ -242,7 +242,7 @@ savanxp_program(NAME mines SOURCES
 # que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
 # lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
-savanxp_program(NAME calc LINK_PROFILE PIE SOURCES
+savanxp_program(NAME calc LINK_PROFILE PIE WITHOUT_MATH DEPENDS libmath SOURCES
     subsystems/posix/userland/calc.c)
 savanxp_program(NAME widgetsdemo TEST SOURCES
     subsystems/posix/userland/widgetsdemo.c)
