@@ -237,7 +237,14 @@ savanxp_program(NAME filesapp SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c
     subsystems/posix/userland/mime_icon.c)
-savanxp_program(NAME notepad SOURCES
+# El editor es la app con mejor verificacion automatizada del arbol: el escenario
+# shoot_session notepadwheel teclea 40 lineas, captura, scrollea con la rueda y
+# COMPARA PIXELES. Si SxGUI viniera de una libreria y dibujara distinto, el
+# scroll no moveria el area y la comparacion fallaria.
+#
+# Ese escenario es lo que faltaba para poder decir que SxGUI funciona bajo una
+# libreria: ningun self-test llega al camino de dibujo.
+savanxp_program(NAME notepad LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/notepad.c)
 savanxp_program(NAME mines SOURCES
     subsystems/posix/userland/mines.c
@@ -257,7 +264,11 @@ savanxp_program(NAME mines SOURCES
 savanxp_program(NAME calc LINK_PROFILE PIE WITHOUT_MATH WITHOUT_SXGUI
     DEPENDS libmath libsxgui SOURCES
     subsystems/posix/userland/calc.c)
-savanxp_program(NAME widgetsdemo TEST SOURCES
+# Galeria de controles: el usuario mas amplio de SxGUI, con 20 funciones, y la
+# app que mas conviene mirar a ojo porque esta hecha para eso. Es la que prueba
+# a mano si SxGUI dibuja bien cuando viene de una libreria, que ninguna
+# comprobacion automatica cubre hoy.
+savanxp_program(NAME widgetsdemo TEST LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/widgetsdemo.c)
 savanxp_program(NAME gfxdemo TEST SOURCES subsystems/posix/userland/gfxdemo.c)
 savanxp_program(NAME gears TEST SOURCES subsystems/posix/userland/gears.c)

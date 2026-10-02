@@ -92,7 +92,7 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | A desktop program on the library (`calc`, `sqrt` from `/lib`) | done |
 | `libsxgui.so.0.4`, resolving `gfx_*` against the executable | done |
 | `ldso_symbol_is_shared()`: "did this come from a `.so`?" | done |
-| SxGUI's own code executing correctly under a library | **not proven** |
+| SxGUI drawing correctly from a library, pixel-compared | done |
 | `crt0` runs the loader before `main`, via a weak hook | done |
 
 ## crt0 runs the interpreter
@@ -373,28 +373,41 @@ PIE" stops being optional housekeeping.
 ### What is verified, and what is not
 
 `calc` is migrated: it declares `DT_NEEDED libmath.so.0.4` and
-`libsxgui.so.0.4`, and has no local copy of either.
+`libsxgui.so.0.4`, and has no local copy of either. `calc-smoke` proves that the
+library opens, relocates, resolves its own two translation units against each
+other, and resolves its `gfx_*` and `sxchrome_*` references **against the
+executable** — if any of those had failed, `apply_table_in` would have returned
+failure and `sx_start_dynamic` would have said so.
 
-What `calc-smoke` proves, and it is worth being precise about:
+It does not prove the library's code runs, because `calc`'s self-test is
+arithmetic and returns before `sxgui_app_init`.
 
-- the library is opened, its own `DT_NEEDED` walked and its segments relocated;
-- `sxgui.c` and `sxgui_app.c` resolve against each other across translation units;
-- its `gfx_*` and `sxchrome_*` references resolve **against the executable** — if
-  any of them had failed, `apply_table_in` would have returned failure,
-  `ldso_start` would have returned -9 and `sx_start_dynamic` would have said so;
-- `calc`'s eighteen SxGUI references are filled and point where the resolver says.
+### The gap, and the visual scenarios
 
-What it does **not** prove: that the library's code runs correctly. `calc`'s
-self-test is arithmetic and returns before `sxgui_app_init`, so no SxGUI function
-is ever called. No SxGUI consumer has a real GUI smoke — `mines-smoke`,
-`appwiz-smoke` and `filesapp-smoke` are all headless self-tests, and
-`taskbar-smoke`, which does launch an app and assert on five screenshots, turns
-out not to call a single `sxgui_*` function. It includes the header for types and
-does its own drawing.
+That gap was "no SxGUI consumer has a smoke that reaches drawing". The fix was
+already in the tree and had been missed: `tools/shoot_session.py` drives real
+apps over QMP and compares pixels, and `scenario_notepadwheel` types forty lines
+into the editor, scrolls with the wheel, clicks the scrollbar and asserts that
+the pixels moved.
 
-So closing that gap needs a program that runs SxGUI for real and something that
-looks at it. Until then, "SxGUI loads and relocates" is proven and "SxGUI draws
-correctly" is not.
+`notepad` is a SxGUI consumer with 23 `sxgui_*` references, so migrating it turns
+that scenario into the verification. It does:
+
+```
+./tools/shoot.sh --scenario notepadwheel --out-dir /tmp/shots
+```
+
+Six screenshots, four pixel comparisons, and `notepadwheel: OK`. Run once with
+`notepad` as `ET_EXEC` and once with it on the library, and **all six PNGs are
+byte-identical**. A renderer that behaved differently under a `.so` would move
+the scroll area, and the comparison would fail.
+
+So SxGUI under a shared library is verified at the pixel level, not just at the
+"it loaded" level. That is the gate for this work: `smoke` and `calc-smoke` say
+the loader is fine, `shoot.sh --scenario notepadwheel` says the toolkit draws.
+
+`widgetsdemo` is migrated as well — twenty `sxgui_*` references, the broadest
+user of SxGUI, and a gallery meant to be looked at by hand.
 
 ### The check that was not a check
 
@@ -411,19 +424,22 @@ the positive assertion would mean nothing.
 
 ## What blocks the rest, in order
 
-1. **A GUI smoke for SxGUI.** `libsxgui.so.0.4` loads and relocates, and
-   nothing has ever *run* it. `taskbar-smoke` is the only scenario that launches
-   an app and looks at the result, and that app does not use SxGUI. Either a
-   scenario that boots the desktop and drives a SxGUI app, or a test program that
-   paints through the library — one of the two, before more programs migrate onto
-   it.
+1. **Migrate the remaining SxGUI programs.** `calc`, `notepad` and `widgetsdemo`
+   are on the library. The other users of `sxgui_*` are `taskmgr`, `progman`,
+   `appwiz`, `mines`, `filesapp`, `aboutapp` and `seltest`. Each has to become
+   PIE at the same time, because the library resolves `gfx_*` against the
+   executable and a non-PIE has no `.dynsym` to export. `kbdlayoutpopup`,
+   `shellui` and `taskbar` include the header for types only and need nothing.
 
-2. **Migrate the remaining SxGUI programs.** `calc` is on the library; the other
-   users of `sxgui_*` are `notepad`, `taskmgr`, `progman`, `appwiz`, `mines`,
-   `widgetsdemo`, `filesapp`, `aboutapp` and `seltest`. Each has to become PIE
-   at the same time, because the library resolves `gfx_*` against the executable
-   and a non-PIE has no `.dynsym` to export. `kbdlayoutpopup`, `shellui` and
-   `taskbar` include the header for types only and need nothing.
+   Every migration should run `./tools/shoot.sh --scenario notepadwheel`
+   afterwards, and the scenario that matches the app being moved if one exists.
+
+2. **Wire the visual scenarios into `build.sh smoke`.** `notepadwheel` is the
+   gate for this work and right now it only runs if someone remembers. It needs
+   `windowd`, screenshots and several seconds, which is why `taskbar-smoke` is
+   its own scenario rather than part of `smoke`. Making the SxGUI gate
+   unskippable is worth a second host driver in `run_smoke.py`, reusing
+   `shoot_session` instead of the separate `taskbar_smoke` client.
 
 3. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
