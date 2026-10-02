@@ -79,6 +79,10 @@ Cut-off notes:
 
 ### Added
 
+- **`libsxgfx.so.0.4`, the graphics layer, as a shared library.** The toolkit
+  now links against it instead of asking the program to export the graphics
+  entry points, so a program no longer has to be PIE just to satisfy it.
+
 - **`sxgui-smoke`, which drives the visual scenario as a smoke test.** The SxGUI
   gate used to run only if someone remembered to ask for it.
 

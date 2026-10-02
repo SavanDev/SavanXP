@@ -170,11 +170,16 @@ savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
     SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/math.c)
-# SxGUI. A diferencia de libmath, NO tiene DT_NEEDED: pide gfx_* y sxchrome_* al
-# EJECUTABLE, que ya esta en el ambito de simbolos. Asi SxGFX sigue en el
-# runtime y la migracion de los 13 programas que usan SxGUI no arrastra todavia
-# a la capa de graficos.
-savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4
+# SxGFX: la capa de graficos del cliente, con sus tres tablas de fuente dentro.
+# Pide del ejecutable solo syscalls y libc, asi que resuelve contra el binario
+# como las otras dos.
+savanxp_library(NAME libsxgfx SONAME libsxgfx.so.0.4
+    SOURCES subsystems/posix/sdk/v1/runtime/gfx.c)
+
+# SxGUI encima de SxGFX. Antes pedia gfx_* al EJECUTABLE, lo que obligaba a que
+# cada programa fuera PIE solo para poder exportar; ahora lo pide a la libreria
+# de abajo y esa atadura se afloja.
+savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4 DEPENDS libsxgfx
     SOURCES
         subsystems/posix/sdk/v1/runtime/sxgui.c
         subsystems/posix/sdk/v1/runtime/sxgui_app.c)
@@ -286,12 +291,17 @@ savanxp_program(NAME calc LINK_PROFILE PIE
 # comprobacion automatica cubre hoy.
 savanxp_program(NAME widgetsdemo TEST LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/widgetsdemo.c)
-savanxp_program(NAME gfxdemo TEST SOURCES subsystems/posix/userland/gfxdemo.c)
-savanxp_program(NAME gears TEST SOURCES subsystems/posix/userland/gears.c)
-savanxp_program(NAME gputest TEST SOURCES subsystems/posix/userland/gputest.c)
-savanxp_program(NAME keytest TEST SOURCES subsystems/posix/userland/keytest.c)
+savanxp_program(NAME gfxdemo TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+    subsystems/posix/userland/gfxdemo.c)
+savanxp_program(NAME gears TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+    subsystems/posix/userland/gears.c)
+savanxp_program(NAME gputest TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+    subsystems/posix/userland/gputest.c)
+savanxp_program(NAME keytest TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+    subsystems/posix/userland/keytest.c)
 savanxp_program(NAME kbdtest TEST SOURCES subsystems/posix/userland/kbdtest.c)
-savanxp_program(NAME mousetest TEST SOURCES subsystems/posix/userland/mousetest.c)
+savanxp_program(NAME mousetest TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+    subsystems/posix/userland/mousetest.c)
 savanxp_program(NAME sysinfo SOURCES subsystems/posix/userland/sysinfo.c)
 savanxp_program(NAME forktest TEST SOURCES subsystems/posix/userland/forktest.c)
 savanxp_program(NAME smptest TEST SOURCES subsystems/posix/userland/smptest.c)
