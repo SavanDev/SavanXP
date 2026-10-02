@@ -235,13 +235,14 @@ savanxp_program(NAME windowd SOURCES
     subsystems/posix/userland/windowd_layout.c
     subsystems/posix/userland/windowd_render.c
     subsystems/posix/userland/windowd_stats.c)
-savanxp_program(NAME shellui SOURCES
+savanxp_program(NAME shellui LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
     subsystems/posix/userland/shellui.c
     subsystems/posix/userland/desktop_wallpaper.c)
-savanxp_program(NAME taskbar SOURCES
+savanxp_program(NAME taskbar LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
     subsystems/posix/userland/taskbar.c
     subsystems/posix/userland/desktop_icons.c)
-savanxp_program(NAME kbdlayoutpopup SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
+savanxp_program(NAME kbdlayoutpopup LINK_PROFILE PIE DEPENDS libsxgfx
+    SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
 savanxp_program(NAME progman LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c
