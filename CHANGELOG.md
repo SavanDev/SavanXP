@@ -79,6 +79,10 @@ Cut-off notes:
 
 ### Added
 
+- **The build now fails if a program carries its own copy of a library it loads.**
+  Such a program links, runs and passes every test — the library is mapped and
+  never called — so the sharing silently stops happening and nothing notices.
+
 - **The kernel now tells a program where its own image starts.** The library
   loader was guessing it by walking backwards a page at a time looking for the ELF
   header, which assumed every page on the way was mapped. A linker can leave a gap

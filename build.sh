@@ -366,6 +366,10 @@ case "$COMMAND" in
     build)
         configure
         build_target savanxp
+        # Que ningun ejecutable lleve copia propia de una libreria que mapea. No
+        # hay fallo visible si lo hace: el programa corre y todo test pasa, solo
+        # no se comparte nada. Ver tools/check_shared_libs.py.
+        python3 "$ROOT/tools/check_shared_libs.py" "$BUILD_DIR"
         ;;
     kernel)
         configure

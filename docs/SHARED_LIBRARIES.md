@@ -451,39 +451,65 @@ is a question a program can ask. `calc` now asserts the symbol is shared *and*
 that one of its own functions is not, which is the negative control: without it,
 the positive assertion would mean nothing.
 
+## A private copy of a library is not a failure, which is the problem
+
+The migration had a failure mode that nothing caught. A program that declares
+`DT_NEEDED libsxgui.so.0.4` and *also* defines the toolkit's symbols links
+cleanly, runs correctly, and passes every test: the executable's own copy
+satisfies the references, the library is mapped and never called. The only
+symptom is that nothing is shared, and that the binaries are bigger.
+
+It happened while moving SxGFX. Adding `libsxgfx` as a `DT_NEEDED` of `libsxgui`
+meant every program already on the toolkit had to declare it too, or keep its own
+copy of 3953 lines. Ten of them did, until the numbers were printed. Then
+`seltest` — which had never been in the way — turned out to have a page gap
+between two `PT_LOAD` segments, and the loader's scan for the image header read
+the unmapped page. Neither showed up as a test.
+
+`tools/check_shared_libs.py` now runs at the end of `./build.sh build` and fails
+if any executable defines symbols belonging to a library it maps. Verified in both
+directions: deleting the `SAVANXP_LIBRARY_REPLACES_libsxgfx` line, which is the
+one-line omission that causes this, produced 21 violations and exit 1 while
+`smoke`, `sxgui-smoke` and `taskbar-smoke` all passed.
+
+## The runtime variant comes from DEPENDS
+
+Excluding a runtime unit needs one runtime target per subset, and with `libmath`,
+`libsxgui` and `libsxgfx` that is eight near-identical blocks that somebody would
+eventually forget to add to. So there are no flags. A library declares the units
+it replaces in `SAVANXP_LIBRARY_REPLACES_<lib>`, and `savanxp_program` derives
+the subset from its own `DEPENDS`. The target is named after what it is missing,
+so programs with different dependencies get different targets without a list.
+
+This removed a way to fail quietly: `WITHOUT_MATH` was something the author had
+to remember, and leaving it off meant the program linked fine and carried a
+private `sqrt`. That mistake is no longer expressible.
+
 ## What blocks the rest, in order
 
-1. **Migrate the remaining SxGUI programs.** `calc`, `notepad` and `widgetsdemo`
-   are on the library. The other users of `sxgui_*` are `taskmgr`, `progman`,
-   `appwiz`, `mines`, `filesapp`, `aboutapp` and `seltest`. Each has to become
-   PIE at the same time, because the library resolves `gfx_*` against the
-   executable and a non-PIE has no `.dynsym` to export. `kbdlayoutpopup`,
-   `shellui` and `taskbar` include the header for types only and need nothing.
-
-   Every migration should run `./tools/shoot.sh --scenario notepadwheel`
-   afterwards, and the scenario that matches the app being moved if one exists.
-
-2. **Read the glyphs, not just the panel.** `sxgui-smoke` catches a toolkit that
+1. **Read the glyphs, not just the panel.** `sxgui-smoke` catches a toolkit that
    stops painting and one that stops responding to scroll, but not one that
    paints the wrong colour or the wrong glyph — the scrollbar thumb moves either
    way. The scenarios in `shoot_session` can check what is on screen; turning
    that into a text assertion is the missing piece.
 
-3. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
+2. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
    versioned names, are not implemented.
 
-4. **`dlopen`, and unloading.** The library array is fixed at load time and there
+3. **`dlopen`, and unloading.** The library array is fixed at load time and there
    is no reference counting, so nothing can be removed once mapped. `kMaxLibraries`
    is 8.
 
-5. **A second executable to lean on.** `calc` and `libtest` both pass, which is
-   two. The profile has only been exercised by programs whose whole working set
-   is a screen and a calculator; a window manager or a compositor under `ET_DYN`
-   would exercise relocation far harder than either does.
+4. **Dead code inside the binaries.** A program that maps `libsxgfx` but not
+   `libsxgui` still carries a full copy of the toolkit, unused, because the PIE
+   profile does not pass `--gc-sections`. Not a sharing problem — the check above
+   passes — but it is a size problem, and the obvious fix carries its own risk of
+   dropping something a program reaches only indirectly.
 
-6. **SxGFX as a library.** 6248 lines are still copied into every program, and
-   once the SxGUI consumers are on PIE the pieces are in place to move it.
+5. **FFmpeg.** The reason any of this exists: the codec libraries are the first
+   thing genuinely too large to copy into every program, and they are loaded by
+   name rather than by `DT_NEEDED`.
 
 ## Explicitly not worth doing yet
 
