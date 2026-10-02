@@ -19,13 +19,6 @@ typedef uint64_t Elf64_Xword;
 #define ET_EXEC 2
 #define EM_X86_64 62
 
-/* La base que elige el kernel para una imagen ET_DYN, y el piso del escaneo que
- * busca la cabecera del ejecutable. Son el mismo numero por construccion: una
- * ET_DYN se carga en kUserBase, y el recorrido hacia atras no puede seguir
- * bajando de ahi. */
-#define kExecutableBase 0x0000000000400000UL
-#define kScanFloor kExecutableBase
-
 #define PT_LOAD 1
 #define PT_DYNAMIC 2
 
@@ -207,48 +200,46 @@ static void copy_bytes(const void* from, void* to, size_t count) {
 /* Registra el ejecutable en g_libs para que sus simbolos entren en el ambito.
  *
  * El cargador no mapeo esta imagen: la mapeo el kernel. Asi que no hay un
- * descriptor ni una seccion que abrir, y la base hay que deducirla. Se toma la
- * direccion de una funcion de este mismo archivo --que por definicion esta en la
- * imagen del ejecutable-- y se retrocede pagina a pagina buscando la cabecera
- * ELF. Es la misma cuenta que hace un interprete cuando no tiene a donde
- * preguntarle al nucleo.
+ * descriptor ni una seccion que abrir, y la base la tiene que decir el kernel.
+ * Llega en r8 y crt0 la guarda en sx_image_base.
  *
- * Devuelve 0 si no encuentra una cabecera valida, y el ambito queda como
- * estaba: resolver solo entre librerias. Un ejecutable sin .dynsym (una ET_EXEC
- * no PIE) es un caso normal, no un fallo. */
+ * ANTES se adivinaba. Se tomaba la direccion de una funcion de este mismo
+ * archivo --que por definicion esta en la imagen-- y se retrocedia pagina a
+ * pagina buscando la magia de ELF. El problema no es que la cuenta este mal: es
+ * que supone que TODA pagina del camino esta mapeada, y un enlazador puede dejar
+ * un hueco entre dos PT_LOAD. seltest lo tiene: su primer segmento termina en
+ * 0xaff3 y el texto arranca en 0xc000, asi que la pagina 0xb000 no existe. El
+ * escaneo la leia y el proceso moria con cr2 = 0x40b000 antes de llegar a main.
+ *
+ * Un escaneo que puede hacer fault no es un escaneo. Con el dato del kernel no
+ * hay recorrido, y no hay forma de que la cuenta falle.
+ *
+ * Devuelve 0 si no hay cabecera valida, y el ambito queda como estaba: resolver
+ * solo entre librerias. Un ejecutable sin .dynsym (una ET_EXEC no PIE) es un caso
+ * normal, no un fallo. */
 static int adopt_executable(void) {
     if (g_lib_count >= kMaxLibraries) {
         return 0;
     }
-    const void* anchor = (const void*)adopt_executable;
-    unsigned long cursor = (unsigned long)anchor & ~4095UL;
+    const unsigned long cursor = sx_image_base & ~4095UL;
+    if (cursor == 0) {
+        /* Sin base no hay nada que registrar. Preferible decirlo a leer
+         * direcciones que pueden no existir. */
+        return 0;
+    }
 
     Elf64_Ehdr header;
-    int found = 0;
-    /* El techo son 16 MiB y el suelo, la primera pagina mapeable de usuario. Un
-     * ejecutable mas grande que el techo no existe aca, y los dos limites
-     * evitan que una cabecera ilegible se convierta en un recorrido infinito
-     * hasta toparse con algo. */
-    for (unsigned long steps = 0; steps < (16UL << 20) / 4096UL; ++steps) {
-        const unsigned char* bytes = (const unsigned char*)cursor;
-        if (bytes[0] == 0x7f && bytes[1] == 'E' && bytes[2] == 'L' && bytes[3] == 'F') {
-            copy_bytes(bytes, &header, sizeof(header));
-            /* ET_DYN o ET_EXEC: cualquier otra cosa no es una imagen de
-             * programa. Y e_phnum tiene que caber, porque de ahi salen los
-             * segmentos que se usan para traducir direcciones. */
-            if ((header.e_type == ET_DYN || header.e_type == ET_EXEC) &&
-                header.e_machine == EM_X86_64 && header.e_phentsize == sizeof(Elf64_Phdr) &&
-                header.e_phnum != 0 && header.e_phnum <= 64) {
-                found = 1;
-                break;
-            }
-        }
-        if (cursor <= kScanFloor) {
-            return 0;
-        }
-        cursor -= 4096UL;
+    const unsigned char* bytes = (const unsigned char*)cursor;
+    if (bytes[0] != 0x7f || bytes[1] != 'E' || bytes[2] != 'L' || bytes[3] != 'F') {
+        return 0;
     }
-    if (!found) {
+    copy_bytes(bytes, &header, sizeof(header));
+    /* ET_DYN o ET_EXEC: cualquier otra cosa no es una imagen de programa. Y
+     * e_phnum tiene que caber, porque de ahi salen los segmentos que se usan
+     * para traducir direcciones. */
+    if ((header.e_type != ET_DYN && header.e_type != ET_EXEC) ||
+        header.e_machine != EM_X86_64 || header.e_phentsize != sizeof(Elf64_Phdr) ||
+        header.e_phnum == 0 || header.e_phnum > 64) {
         return 0;
     }
 
@@ -270,10 +261,29 @@ static int adopt_executable(void) {
      * tiene descriptor ni seccion con que mapearlos otra vez. placed[] se deduce
      * de la geometria de la imagen.
      *
-     * El bias es el mismo que eligio el kernel: kUserBase para una ET_DYN, cero
-     * para una ET_EXEC. Es la misma regla de kernel/elf.cpp, y tiene que
-     * coincidir con ella o cada direccion del ejecutable caeria en otra pagina. */
-    const unsigned long bias = (header.e_type == ET_DYN) ? kExecutableBase : 0UL;
+     * El bias sale de la base que dio el kernel y del primer PT_LOAD: lo que
+     * hay entre donde quedo la cabecera y donde la imagen dice que empieza su
+     * primer segmento. Para una ET_DYN, que carga en kUserBase, da kUserBase;
+     * para una ET_EXEC, que carga en sus propias direcciones de enlace, da cero.
+     *
+     * Antes estaba escrito como una constante --kUserBase para una ET_DYN-- con
+     * el comentario de que tiene que coincidir con kernel/elf.cpp. Coincidia, y
+     * por eso el bug no se veia. Con los dos numeros a la vista la cuenta es
+     * explicita y no puede desincronizarse sola. */
+    Elf64_Addr first_vaddr = 0;
+    int found_first = 0;
+    for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
+        if (exe->headers[index].p_type != PT_LOAD || exe->headers[index].p_memsz == 0) {
+            continue;
+        }
+        first_vaddr = exe->headers[index].p_vaddr;
+        found_first = 1;
+        break;
+    }
+    if (!found_first) {
+        return 0;
+    }
+    const unsigned long bias = cursor - (unsigned long)(first_vaddr & ~(Elf64_Addr)4095);
     exe->bias = bias;
     exe->bias_ready = 1;
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {

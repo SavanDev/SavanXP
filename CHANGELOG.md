@@ -79,6 +79,13 @@ Cut-off notes:
 
 ### Added
 
+- **The kernel now tells a program where its own image starts.** The library
+  loader was guessing it by walking backwards a page at a time looking for the ELF
+  header, which assumed every page on the way was mapped. A linker can leave a gap
+  between two loadable segments, and reading one of those is a page fault — a
+  program died before `main`. A self-test with text starting at `0xc000` and its
+  first segment ending at `0xaff3` is enough to trigger it.
+
 - **`libsxgfx.so.0.4`, the graphics layer, as a shared library.** The toolkit
   now links against it instead of asking the program to export the graphics
   entry points, so a program no longer has to be PIE just to satisfy it.

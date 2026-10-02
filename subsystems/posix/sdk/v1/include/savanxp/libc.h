@@ -48,6 +48,11 @@ long timer_create(unsigned long flags);
 long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
 long timer_cancel(int handle);
 const char* savanxp_interpreter_path(void);
+/* Direccion de la cabecera ELF de la imagen principal. El kernel la pasa en r8
+ * y crt0 la guarda antes de la primera llamada. Un cargador de librerias la
+ * necesita: la base de la imagen no se puede adivinar recorriendo paginas,
+ * porque un PT_LOAD puede dejar paginas sin mapear entre dos segmentos. */
+extern unsigned long sx_image_base;
 long section_create(unsigned long size, unsigned long flags);
 long section_open(int handle, unsigned long flags);
 long section_open_range(int handle, unsigned long offset, unsigned long length, unsigned long flags);

@@ -242,19 +242,19 @@ savanxp_program(NAME taskbar SOURCES
     subsystems/posix/userland/taskbar.c
     subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME kbdlayoutpopup SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
-savanxp_program(NAME progman LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME progman LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/desktop_wallpaper.c)
-savanxp_program(NAME appwiz LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME appwiz LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/appwiz.c
     subsystems/posix/userland/appwiz_catalog.c)
-savanxp_program(NAME aboutapp LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME aboutapp LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/aboutapp.c)
-savanxp_program(NAME taskmgr LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME taskmgr LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/taskmgr.c)
-savanxp_program(NAME filesapp LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME filesapp LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c
     subsystems/posix/userland/mime_icon.c)
@@ -265,9 +265,9 @@ savanxp_program(NAME filesapp LINK_PROFILE PIE DEPENDS libsxgui SOURCES
 #
 # Ese escenario es lo que faltaba para poder decir que SxGUI funciona bajo una
 # libreria: ningun self-test llega al camino de dibujo.
-savanxp_program(NAME notepad LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME notepad LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/notepad.c)
-savanxp_program(NAME mines LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME mines LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/mines.c
     subsystems/posix/userland/mines_board.c)
 # La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
@@ -283,13 +283,13 @@ savanxp_program(NAME mines LINK_PROFILE PIE DEPENDS libsxgui SOURCES
 # lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
 savanxp_program(NAME calc LINK_PROFILE PIE
-    DEPENDS libmath libsxgui SOURCES
+    DEPENDS libmath libsxgui libsxgfx SOURCES
     subsystems/posix/userland/calc.c)
 # Galeria de controles: el usuario mas amplio de SxGUI, con 20 funciones, y la
 # app que mas conviene mirar a ojo porque esta hecha para eso. Es la que prueba
 # a mano si SxGUI dibuja bien cuando viene de una libreria, que ninguna
 # comprobacion automatica cubre hoy.
-savanxp_program(NAME widgetsdemo TEST LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME widgetsdemo TEST LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/widgetsdemo.c)
 savanxp_program(NAME gfxdemo TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
     subsystems/posix/userland/gfxdemo.c)
@@ -314,7 +314,7 @@ savanxp_program(NAME sectiontest TEST SOURCES subsystems/posix/userland/sectiont
 savanxp_program(NAME handletest TEST SOURCES subsystems/posix/userland/handletest.c)
 savanxp_program(NAME semaphoretest TEST SOURCES subsystems/posix/userland/semaphoretest.c)
 savanxp_program(NAME cliptest TEST SOURCES subsystems/posix/userland/cliptest.c)
-savanxp_program(NAME seltest TEST LINK_PROFILE PIE DEPENDS libsxgui SOURCES
+savanxp_program(NAME seltest TEST LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
     subsystems/posix/userland/seltest.c)
 savanxp_program(NAME mmaptest TEST SOURCES subsystems/posix/userland/mmaptest.c)
 savanxp_program(NAME libctest TEST SOURCES subsystems/posix/userland/libctest.c)

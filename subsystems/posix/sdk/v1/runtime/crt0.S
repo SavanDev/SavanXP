@@ -19,6 +19,13 @@ _start:
     # o 0 si la imagen es estatica. Se guarda antes de la primera llamada porque
     # rcx no sobrevive a un call.
     movq %rcx, sx_interpreter_path(%rip)
+    # r8 trae la direccion de la cabecera ELF de la imagen. El kernel la calculo
+    # al mapearla y es el dato exacto; antes el cargador lo adivinaba retrocediendo
+    # pagina a pagina desde una funcion suya, lo que supone que toda pagina del
+    # camino esta mapeada. Un enlazador puede dejar un hueco entre dos PT_LOAD, y
+    # con seltest --cuyo texto arranca en 0xc000 y su primer segmento termina en
+    # 0xaff3-- la pagina intermedia no existe y el escaneo moria alli.
+    movq %r8, sx_image_base(%rip)
     # Correr el interprete antes de main. El hook vive en C, no aca: comprobar si
     # un simbolo debil esta definido exige mirar su entrada en el GOT, y en
     # ensamblador habria que hacer movq simbolo(%rip) -- que LEE la memoria de esa

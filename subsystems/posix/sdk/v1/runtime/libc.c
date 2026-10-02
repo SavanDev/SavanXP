@@ -237,6 +237,15 @@ long timer_cancel(int handle) {
  * no declara PT_INTERP. La escribe crt0 antes de la primera llamada. */
 const char* sx_interpreter_path = 0;
 
+/* Direccion de la cabecera ELF de la imagen principal. El kernel la pasa en r8 y
+ * crt0 la guarda antes de la primera llamada, igual que la ruta del interprete.
+ *
+ * Existe para que el cargador no tenga que buscar la base adivinando. Un recorrido
+ * hacia atras desde una funcion propia hacia el supuesto origen de la imagen
+ * tiene que leer cada pagina del camino, y un PT_LOAD puede dejar paginas sin
+ * mapear entre dos segmentos: leerlas es un fallo de pagina, no un cero. */
+unsigned long sx_image_base = 0;
+
 const char* savanxp_interpreter_path(void) {
     return sx_interpreter_path;
 }

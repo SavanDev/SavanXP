@@ -453,6 +453,12 @@ bool load_user_image(
         segments[segment_count] = program;
         segment_starts[segment_count] = mapped_start;
         segment_ends[segment_count] = mapped_end;
+        // El primer PT_LOAD arranca en el offset 0 de la imagen, asi que su
+        // inicio de pagina ES donde quedo la cabecera ELF. Se lo pasa al
+        // proceso para que el cargador no tenga que buscarlo adivinando.
+        if (segment_count == 0) {
+            result.image_base = mapped_start;
+        }
         ++segment_count;
     }
 

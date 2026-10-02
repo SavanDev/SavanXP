@@ -25,6 +25,16 @@ struct LoadResult {
     // imagen no declara uno. Es lo que crt0 lee de rcx para saber que tiene que
     // arrancar el cargador antes de llegar a main.
     uint64_t interpreter_address;
+    // Dirección donde quedo la cabecera ELF de la imagen: el inicio de la
+    // pagina del primer PT_LOAD. El kernel lo sabe porque acaba de mapearlo.
+    //
+    // Sin esto, el cargador tiene que adivinarlo retrocediendo pagina a pagina
+    // desde una funcion suya buscando la magia, y esa cuenta supone que TODA
+    // pagina entre la funcion y la base esta mapeada. No lo esta: un enlazador
+    // puede dejar un hueco entre dos PT_LOAD, y con seltest --cuyo texto empezo
+    // en 0xc000 y su primer segmento termina en 0xaff3-- la pagina 0xb000 no
+    // existe. El escaneo leia la pagina cero y el proceso moria antes de main.
+    uint64_t image_base;
     // Ver abajo: indice del segmento que fallo, o 0xffff.
     uint16_t fail_index;
 };
