@@ -351,13 +351,22 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         copy_bytes(table + offset, &rela, sizeof(rela));
         const unsigned type = (unsigned)(rela.r_info & 0xffffffffu);
         if (type == R_X86_64_RELATIVE) {
-            /* Sin simbolo que buscar: lo que hay que hacer es sumar el bias al
-             * valor que la imagen trae escrito. */
+            /* Sin simbolo que buscar. Lo que hay que escribir es
+             * r_addend + bias, y NO sumar el bias a lo que ya esta en memoria.
+             *
+             * La diferencia no es academica y cuesta un bug entero: lld deja la
+             * casilla EN CERO y pone el valor de enlace en r_addend. Sumarle el
+             * bias a un cero deja base + 0, que es un puntero a la propia base
+             * de la imagen. Con `stdout` eso daba 0x400000 y la primera
+             * escritura a pantalla moria con cr2 = 0x40000c.
+             *
+             * Leer la memoria en vez de la adenda solo funciona con enlaces que
+             * escriben tambien el valor, y SavanXP se enlaza con lld, que no. */
             Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
             if (where == 0) {
                 return 0;
             }
-            *where += g_libs[slot].bias;
+            *where = (Elf64_Addr)((unsigned long)(Elf64_Xword)rela.r_addend + g_libs[slot].bias);
             continue;
         }
         if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT) {

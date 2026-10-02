@@ -38,6 +38,18 @@ function(savanxp_program)
         else()
             target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic)
         endif()
+        # El cargador va con el perfil, no con el programa. Una imagen ET_DYN la
+        # mapea el kernel pero no la reubica, asi que sin ldso.c el GOT de este
+        # executable queda vacio y la primera llamada a una libreria salta a
+        # donde se le ocurra.
+        #
+        # Que sea automatico no es cosmetico: con la lista a mano, calc llevo
+        # PIE sin el cargador y fallo. Y peor, ldtest lo lleva y lo lleva bien,
+        # porque llama al cargador a mano -- una regla que el build no verifica y
+        # que se cumple por costumbre en un programa y se olvida en el otro.
+        # crt0 lo corre solo por el hook debil sx_run_interpreter, que es lo que
+        # define ldso.c.
+        target_sources(${P_NAME} PRIVATE subsystems/posix/userland/ldso.c)
         target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
     elseif(P_WITHOUT_MATH)
         message(FATAL_ERROR "savanxp_program(${P_NAME}): WITHOUT_MATH solo tiene sentido con LINK_PROFILE PIE")
@@ -127,16 +139,13 @@ savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/user
 # El unico programa que linkea contra una libreria de verdad. Todo lo demas usa
 # el cargador a mano; este usa sqrt como funcion normal y no busca su direccion.
 savanxp_program(NAME libtest TEST LINK_PROFILE PIE WITHOUT_MATH DEPENDS libmath
-    SOURCES
-        subsystems/posix/userland/libtest.c
-        subsystems/posix/userland/ldso.c)
+    SOURCES subsystems/posix/userland/libtest.c)
 # PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
 # .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que
 # resolver y la mitad de la cadena no se podria probar.
 savanxp_program(NAME ldtest TEST LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/ldtest.c
-    subsystems/posix/userland/ldso.c)
+    subsystems/posix/userland/ldtest.c)
 savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
     SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
@@ -226,14 +235,14 @@ savanxp_program(NAME mines SOURCES
 # serviriera para algo mas que para mover sqrt, este es el programa que lo
 # demuestra. La migracion es una linea porque las unidades del runtime ya no se
 # listan a mano.
-# La calculadora sigue en STATIC, a proposito.
+# La calculadora es el primer programa de escritorio en el perfil PIE. Antes de
+# ella solo lo usaban libtest y ldtest, y por eso el perfil parecia funcionar:
+# esos dos llaman sqrt y nada mas, y una llamada entra por un JUMP_SLOT que se
+# resuelve por nombre. Enseñar un programa real que escribe en stdout destapo
+# que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
+# lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
-# Su migracion a PIE esta a medias y NO se manda asi: como ET_DYN, calc corre y
-# muere en la primera escritura a stdout. Dos bugs ya quedaron corregidos en el
-# camino --crt0 destruia argc/argv, y el kernel escribia la ruta del interprete
-# encima de la cadena del ultimo argumento--, pero queda un tercero sin
-# diagnosticar. docs/SHARED_LIBRARIES.md dice cual es y como se llego a el.
-savanxp_program(NAME calc SOURCES
+savanxp_program(NAME calc LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/calc.c)
 savanxp_program(NAME widgetsdemo TEST SOURCES
     subsystems/posix/userland/widgetsdemo.c)

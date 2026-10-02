@@ -15,6 +15,29 @@
 #include "ldso.h"
 #include "math.h"
 
+/* Un puntero global que apunta a un objeto del mismo ejecutable.
+ *
+ * Esto prueba algo que las llamadas a sqrt no prueban. sqrt entra por el PLT con
+ * una R_X86_64_JUMP_SLOT, que se resuelve por nombre. Lo de aqui es una
+ * R_X86_64_RELATIVE, que no tiene nombre: es "pone aqui una direccion de la
+ * imagen". Y es justo donde estaba el bug -- lld deja la casilla en cero y el
+ * valor de enlace en la adenda, asi que sumar el bias a la memoria dejaba
+ * stdout apuntando a la base de la imagen.
+ *
+ * El sintoma era invisible hasta que algo lo usaba: los programas PIE del arbol
+ * llamaban sqrt y nada mas, y a stdout no llegaba nadie. */
+extern void* stdout;
+
+static int check_relocated_pointer(void) {
+    const unsigned long here = (unsigned long)(void*)&check_relocated_pointer;
+    const unsigned long there = (unsigned long)stdout;
+    if (there < here || (there - here) > 0x400000UL) {
+        eprintf("libtest: stdout=%lu no cae en la imagen (esta en %lu)\n", there, here);
+        return 0;
+    }
+    return 1;
+}
+
 int main(void) {
     /* Nada de llamar al cargador aca. crt0 ya lo corrio antes de llegar a
      * main, porque este binario enlaza el cargador y crt0 lo encuentra por el
@@ -23,6 +46,9 @@ int main(void) {
      * que la convierte en prueba. */
 
     /* sqrt(144) tiene que dar 12. */
+    if (!check_relocated_pointer()) {
+        return 1;
+    }
     const double got = sqrt(144.0);
     if (got < 11.999 || got > 12.001) {
         eprintf("libtest: sqrt(144) dio %f\n", got);

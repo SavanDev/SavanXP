@@ -72,6 +72,9 @@ Cut-off notes:
 - **`sx_start_dynamic` reports a failing interpreter.** A program that could not
   be relocated said nothing and failed later somewhere unrelated.
 
+- **`calc` now links as a PIE**, the first desktop program to do so. It joins
+  `libtest` in proving the profile beyond the test programs.
+
 - **`crt0` now runs the library loader before `main`.** A program that links the
   loader is ready to call into its libraries with no setup of its own; programs
   that do not link it are unaffected.
@@ -263,6 +266,12 @@ Cut-off notes:
   [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
 
 ### Fixed
+
+- **Relocated global pointers in a PIE no longer become a pointer to the image
+  base.** `R_X86_64_RELATIVE` took its value from memory, but `lld` leaves the
+  slot at zero and stores the address in the relocation's addend. Every
+  `stdin`/`stdout`/`stderr` and any other relocated global in a PIE program was
+  affected.
 
 - **`crt0` no longer loses `argc` and `argv`.** Running the library loader before
   `main` used the registers the kernel had put them in, so a program with

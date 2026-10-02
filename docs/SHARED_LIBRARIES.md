@@ -230,73 +230,82 @@ to whichever library was loaded last.
 looked up is the question, not the answer, and its `st_value` of zero would
 translate to the base of the image — a call that lands on the ELF header.
 
-## calc is not PIE yet, and why
+## R_X86_64_RELATIVE read the wrong field
 
-`calc` was the first real program to be flipped to `LINK_PROFILE PIE`, to find
-out whether the profile was worth anything beyond moving `sqrt`. It is not, yet.
-As `ET_DYN` it starts, runs the loader, and dies on the first write to stdout
-with `cr2 = 0x40000c` — a write to address zero plus the load bias, landing in
-the read-only first page of its own image.
+`calc` was the first real program to be flipped to `LINK_PROFILE PIE`, and it
+died on the first write to stdout with `cr2 = 0x40000c` — a write to the load
+bias, landing in the read-only first page of its own image. `stdout` is
+`FILE* stdout = &g_stdout_file`, and it held exactly `0x400000`.
 
-Getting there turned up three bugs. Two are fixed:
+The cause is that `R_X86_64_RELATIVE` was applied as `*addr += bias`. That is
+the usual shape of the relocation, and it works only for linkers that also
+*store* the link-time value in the field. `lld` does not: it leaves the slot at
+**zero** and puts the link-time address in `r_addend`. Adding the bias to a zero
+yields `base + 0`, which is a pointer to the start of the image.
 
-1. **`crt0` destroyed `argc` and `argv`.** It called `sx_start_dynamic` between
-   receiving them in `%rdi`/`%rsi` and calling `main`, and there is nowhere to
-   put them: a call may use either register. `sx_start_dynamic` happens not to
-   touch them when the loader is absent, which is why nothing noticed — every
-   program that runs the loader for real has work to do, and that clobbers both.
-   `crt0` now pushes them and restores them.
+For `libtest` the numbers are exact:
 
-2. **The kernel wrote the interpreter path over an argv string.** It went
-   *above* the pointer array, on the reasoning that the space where `envp` lives
-   in Linux is unused here. It is not unused: the argv *strings* sit immediately
-   above the array. With `calc --selftest` the array landed at `0x6fffffffc8`,
-   the `"--selftest"` string at `0x6fffffffe0`, and the 28-byte interpreter path
-   began at exactly `0x6fffffffe0`. `argv` looked perfect — right pointers,
-   right count — and the program read `argv[1]` as
-   `/lib64/ld-linux-x86-64.so.2`. The path is now reserved *between* the strings
-   and the array, by lowering `user_sp` before the array is built.
+| | |
+| --- | --- |
+| `stdout` slot | `0x44bb8` |
+| relocation | `R_X86_64_RELATIVE`, addend `0x45058` |
+| bytes at that offset in the file | `0` |
+| value at runtime | `0x400000` |
 
-   This was reachable before: `interptest` has a `PT_INTERP` and simply never
-   collided, because whether the interpreter path happens to land on the lowest
-   string depends on the lengths involved.
+The authoritative value is `r_addend`, not the memory. The fix is to store
+`r_addend + bias`.
 
-3. **The link profile declared an interpreter that does not exist.** lld, given
-   `-pie` without `-static`, writes `/lib64/ld-linux-x86-64.so.2` into every
-   `ET_DYN` by default — a path from the host that builds. That is what made bug
-   2 bite. The profile now declares `/disk/lib/ld.so.0.4`.
+It went unnoticed because nothing reached it. Every PIE program in the tree
+called `sqrt` and nothing else — a call goes through a `JUMP_SLOT`, resolved by
+name, which was never affected. A relocated global *pointer* was never touched
+by any of them, and that is the whole class of bug `apply_table_in` had. Two
+other things had to be fixed before this one was even reachable: `crt0` was
+destroying `argc`/`argv`, and the kernel was writing the interpreter path over
+the last argument string.
 
-The third failure is **not** diagnosed. `stdout` is a relocated pointer in the
-data segment, and the loader turns its zero into `0x400000` by adding the bias
-to a slot that was already zero. The slot is inside `LOAD 3`, not in the gap
-between segments, and the kernel writes segment content at `p_vaddr`, so the
-bytes should be in the image. Where the zero comes from is still open.
+`libtest` now checks a relocated global pointer, because a test that only calls
+`sqrt` cannot see this.
 
-Two hypotheses were tried and rejected rather than shipped: writing segment
-content from the page boundary (the `stdout` address was *not* in the gap), and
-suspecting a `NULL` that a `RELATIVE` relocation turned into the bias (there are
-no zero addends in `calc`'s relocation table). `calc` therefore stays `ET_EXEC`
-— it is a program that runs every day, and a half-migrated one is worse than a
-documented `ET_EXEC`.
+## The PIE profile used to declare an interpreter that does not exist
+
+`lld`, given `-pie` without `-static`, writes `/lib64/ld-linux-x86-64.so.2` into
+every `ET_DYN` by default — a path from the host that builds, and one SavanXP has
+no file for. The profile now declares `/disk/lib/ld.so.0.4`.
+
+## The kernel wrote the interpreter path over an argv string
+
+It went *above* the `argv` pointer array, reasoning that the space where `envp`
+lives in Linux is unused here. It is not unused: the argv *strings* sit
+immediately above the array. With `calc --selftest` the array landed at
+`0x6fffffffc8`, the `"--selftest"` string at `0x6fffffffe0`, and the 28-byte
+interpreter path began at exactly `0x6fffffffe0`. `argv` looked perfect — right
+pointers, right count — and the program read `argv[1]` as
+`/lib64/ld-linux-x86-64.so.2`.
+
+The path is now reserved *between* the strings and the array, by lowering
+`user_sp` before the array is built. This was already reachable: `interptest` has
+a `PT_INTERP` and never collided only because whether the path lands on the
+lowest string depends on the lengths involved.
 
 ## What blocks the rest, in order
 
-1. **`stdout` under PIE.** The third failure above, before any more program is
-   migrated. Until it is understood, the profile is proven only on programs that
-   do not write through a relocated global pointer.
+1. **Wider libraries.** `libmath.so.0.4` is linked by `libtest` and `calc`, both
+   `ET_DYN`. The saving it promises — `sqrt` mapped once instead of in every
+   binary — is real but only two programs collect it so far. SxGFX, SxGUI and
+   FFmpeg come next, program by program.
 
-2. **Wider libraries.** `libmath.so.0.4` is linked by one test. The saving it
-   promises — `sqrt` mapped once instead of in every binary — is real but only
-   `libtest` collects it so far. SxGFX, SxGUI and FFmpeg come after the programs
-   they live in are PIE.
-
-3. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
+2. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
    versioned names, are not implemented.
 
-4. **`dlopen`, and unloading.** The library array is fixed at load time and there
+3. **`dlopen`, and unloading.** The library array is fixed at load time and there
    is no reference counting, so nothing can be removed once mapped. `kMaxLibraries`
    is 8.
+
+4. **A second executable to lean on.** `calc` and `libtest` both pass, which is
+   two. The profile has only been exercised by programs whose whole working set
+   is a screen and a calculator; a window manager or a compositor under `ET_DYN`
+   would exercise relocation far harder than either does.
 
 ## Explicitly not worth doing yet
 
