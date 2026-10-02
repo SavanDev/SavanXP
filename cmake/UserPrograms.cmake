@@ -226,7 +226,11 @@ savanxp_program(NAME tcptest TEST SOURCES subsystems/posix/userland/tcptest.c)
 savanxp_program(NAME beep SOURCES subsystems/posix/userland/beep.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 savanxp_program(NAME compositord SOURCES subsystems/posix/userland/compositord.c)
-savanxp_program(NAME windowd SOURCES
+# El compositor. Solo pide dos funciones de metrica de fuente, que son puras y
+# no abren superficie, asi que el riesgo es bajo; igual es el programa del que
+# depende todo lo que se ve en pantalla. init lo reinicia si sale y cae a /bin/sh
+# tras tres fallos rapidos, y shoot.sh --scenario desktop lo levanta de verdad.
+savanxp_program(NAME windowd LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
     subsystems/posix/userland/windowd.c
     subsystems/posix/userland/windowd_compositor_client.c
     subsystems/posix/userland/desktop_icons.c
