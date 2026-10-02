@@ -335,53 +335,54 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
     -Wno-language-extension-token
     -Wno-c23-extensions
 )
-add_library(savanxp_user_runtime_pic OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
-target_include_directories(savanxp_user_runtime_pic PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime"
-    "${SAVANXP_GENERATED_ROOT}"
-)
-target_compile_definitions(savanxp_user_runtime_pic PRIVATE
-    DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
-target_compile_options(savanxp_user_runtime_pic PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
-set_target_properties(savanxp_user_runtime_pic PROPERTIES
-    C_EXTENSIONS YES
-)
-# El perfil PIC existe como target independiente para que la prueba en frio de
-# que las 11 unidades compilan position independent siga siendo cierta si
-# alguien rompe una. Lo usan libtest, ldtest, pietest y calc.
+# Variantes del runtime.
 #
-# El perfil PIC sin math.c: para un programa que tiene que dejar sqrt
-# INDEFINIDO y resolverlo contra libmath.so.0.4 en tiempo de carga.
+# Un runtime por combinacion de unidades que seextraen a una libreria. La razon
+# es la misma para las dos: si el ejecutable trae la copia, el enlazador no
+# emite DT_NEEDED, la libreria no se carga y no se comparte nada. El programa
+# tiene que dejar el simbolo INDEFINIDO para que el mecanismo sea real.
 #
-# Con el runtime completo, math.c ya define sqrt dentro del ejecutable, el
-# enlazador no encuentra nada que pedir a la libreria y no emite DT_NEEDED. El
-# programa enlazaria igual y pareceria funcionar, pero estaria copiaprivate de
-# math.c y no habria ninguna libreria en juego: la prueba pasaria sin probar el
-# mecanismo. Sacar math.c de las unidades es lo que hace que la prueba sea real.
-set(SAVANXP_USER_RUNTIME_SOURCES_NO_MATH
-)
-foreach(source IN LISTS SAVANXP_USER_RUNTIME_SOURCES)
-    if(NOT source STREQUAL "subsystems/posix/sdk/v1/runtime/math.c")
-        list(APPEND SAVANXP_USER_RUNTIME_SOURCES_NO_MATH ${source})
+# Las combinaciones crecen con las librerias, asi que se generan con una funcion
+# y no con cuatro bloques copiados.
+function(savanxp_runtime_variant)
+    set(options PIC)
+    set(oneValueArgs NAME)
+    set(multiValueArgs EXCLUDE)
+    cmake_parse_arguments(R "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    set(sources ${SAVANXP_USER_RUNTIME_SOURCES})
+    foreach(dropped IN LISTS R_EXCLUDE)
+        list(REMOVE_ITEM sources ${dropped})
+    endforeach()
+    add_library(${R_NAME} OBJECT ${sources})
+    target_include_directories(${R_NAME} PRIVATE
+        "${CMAKE_SOURCE_DIR}/include"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime"
+        "${SAVANXP_GENERATED_ROOT}"
+    )
+    target_compile_definitions(${R_NAME} PRIVATE
+        DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
+    if(R_PIC)
+        target_compile_options(${R_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
+    else()
+        target_compile_options(${R_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
     endif()
-endforeach()
-add_library(savanxp_user_runtime_pic_nomath OBJECT ${SAVANXP_USER_RUNTIME_SOURCES_NO_MATH})
-target_include_directories(savanxp_user_runtime_pic_nomath PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/runtime"
-    "${SAVANXP_GENERATED_ROOT}"
+    set_target_properties(${R_NAME} PROPERTIES C_EXTENSIONS YES)
+endfunction()
+
+set(SAVANXP_RUNTIME_MATH subsystems/posix/sdk/v1/runtime/math.c)
+set(SAVANXP_RUNTIME_SXGUI
+    subsystems/posix/sdk/v1/runtime/sxgui.c
+    subsystems/posix/sdk/v1/runtime/sxgui_app.c
 )
-target_compile_definitions(savanxp_user_runtime_pic_nomath PRIVATE
-    DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
-target_compile_options(savanxp_user_runtime_pic_nomath PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
-set_target_properties(savanxp_user_runtime_pic_nomath PROPERTIES
-    C_EXTENSIONS YES
-)
+savanxp_runtime_variant(NAME savanxp_user_runtime_pic PIC)
+savanxp_runtime_variant(NAME savanxp_user_runtime_pic_nomath PIC
+    EXCLUDE ${SAVANXP_RUNTIME_MATH})
+savanxp_runtime_variant(NAME savanxp_user_runtime_pic_nosxgui PIC
+    EXCLUDE ${SAVANXP_RUNTIME_SXGUI})
+savanxp_runtime_variant(NAME savanxp_user_runtime_pic_nomath_nosxgui PIC
+    EXCLUDE ${SAVANXP_RUNTIME_MATH} ${SAVANXP_RUNTIME_SXGUI})
 
 add_custom_target(savanxp_user_runtime_pic_check ALL
     DEPENDS savanxp_user_runtime_pic

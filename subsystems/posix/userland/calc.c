@@ -20,6 +20,7 @@
 
 #include "libc.h"
 #include "savanxp/sxgui.h"
+#include "ldso.h"
 
 #include <stdio.h>
 #include <math.h>
@@ -1319,6 +1320,54 @@ static void expect_script(const char *script, const char *expected)
     expect_text(g_display_text, expected, script);
 }
 
+/*
+ * Que SxGUI venga de la libreria y no de una copia en el binario.
+ *
+ * El selftest es aritmetico y nunca entra al camino de la interfaz, asi que por
+ * si solo no probaria NADA de libsxgui.so.0.4. Lo que si se puede verificar sin
+ * levantar un gestor de ventanas es que la libreria esta cargada, que sus
+ * simbolos se resuelven por el ambito del cargador, y que la entrada que el
+ * ejecutable tiene en su GOT apunta a la MISMA direccion que el resolvedor
+ * reporta. Si las dos cosas divergieran, el GOT estaria en otro lado y la
+ * aplicacion dibujaria con codigo distinto del que el cargador cree.
+ *
+ * Es el mismo truco que usa libtest con sqrt: la llamada sola no prueba nada,
+ * la coincidencia de direcciones si.
+ */
+int calc_check_shared_sxgui(void);
+
+int calc_check_shared_sxgui(void)
+{
+    void* reported = ldso_lookup("sxgui_app_init");
+    if (reported == 0)
+    {
+        eprintf("calc: sxgui_app_init no esta en ninguna imagen cargada\n");
+        return 0;
+    }
+    if ((const void*)reported != (const void*)sxgui_app_init)
+    {
+        eprintf("calc: el resolvedor y el GOT apuntan a distinto lado de SxGUI\n");
+        return 0;
+    }
+    /* Y tiene que venir de la libreria. Comparar direcciones no alcanza: si el
+     * ejecutable trajera su propia copia de SxGUI, las dos coincidirian igual y
+     * la comprobacion pasaria sin que haya una libreria en juego. */
+    if (!ldso_symbol_is_shared("sxgui_app_init"))
+    {
+        eprintf("calc: sxgui_app_init vino del ejecutable, no de libsxgui.so.0.4\n");
+        return 0;
+    }
+    /* El control negativo: algo que solo existe en el ejecutable tiene que
+     * seguir saliendo del ejecutable. Si esto pasara, la pregunta de arriba no
+     * distinguiria nada. */
+    if (ldso_symbol_is_shared("calc_check_shared_sxgui"))
+    {
+        eprintf("calc: una funcion del ejecutable aparece como de una libreria\n");
+        return 0;
+    }
+    return 1;
+}
+
 static int calc_selftest(void)
 {
     calc_number value;
@@ -1373,6 +1422,10 @@ static int calc_selftest(void)
     calc_execute(CALC_CMD_CLEAR);
     expect_text(g_display_text, "0", "error: C limpia");
     expect_script("4n q", "Invalid input");
+
+    if (!calc_check_shared_sxgui()) {
+        return 1;
+    }
 
     /* Entrada: el tope de digitos, el punto unico y el borrado.
      *

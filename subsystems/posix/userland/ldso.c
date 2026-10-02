@@ -954,3 +954,15 @@ void* ldso_lookup(const char* name) {
      * un vaddr igual en las dos son direcciones distintas. */
     return map_of(slot, value);
 }
+
+/* El ejecutable es el slot 0, asi que "vino de una libreria compartida" es "el
+ * slot donde se encontro no es el cero".
+ *
+ * La pregunta es mas util de lo que parece. Sin ella, un programa que todavia
+ * trae su propia copia del simbolo en el binario pasa la misma comprobacion,
+ * porque en los dos casos la direccion que reporta el resolvedor coincide con la
+ * que tiene el GOT. */
+int ldso_symbol_is_shared(const char* name) {
+    Elf64_Addr value = 0;
+    return resolve(name, &value) > 0;
+}

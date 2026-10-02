@@ -44,6 +44,16 @@ void* ldso_lookup(const char* name);
 /* Como la libreria se cargo bien, para poder distinguir "no existe" de "fallo". */
 int ldso_loaded(void);
 
+/* 1 si el simbolo se resolvio en una libreria compartida, 0 si no esta en
+ * ninguna imagen o si vino del ejecutable.
+ *
+ * Existe para que "el simbolo es el mismo" no se confunda con "el simbolo viene
+ * de la libreria". Un programa que trae su propia copia del simbolo en el
+ * binario cumple lo primero y no lo segundo: sin esta pregunta, un
+ * ldso_lookup que coincide con la llamada no demuestra que haya una libreria
+ * loadada, solo que las dos direcciones coinciden. */
+int ldso_symbol_is_shared(const char* name);
+
 /* Diagnostico del ultimo fallo de carga: que segmento y con que errno. */
 extern int g_lib_fail_index;
 extern long g_lib_fail_errno;

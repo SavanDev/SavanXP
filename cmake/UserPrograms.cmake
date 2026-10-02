@@ -1,7 +1,7 @@
 # Every in-tree program is registered explicitly. Keeping this list in CMake
 # makes the target graph the single source of truth for the userland.
 function(savanxp_program)
-    set(options TEST WITHOUT_MATH)
+    set(options TEST WITHOUT_MATH WITHOUT_SXGUI)
     set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
     set(multiValueArgs SOURCES DEPENDS)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -33,8 +33,12 @@ function(savanxp_program)
         # WITHOUT_MATH saca math.c de las unidades. Es lo unico que hace que un
         # simbolo como sqrt quede indefinido y el enlazador emita un DT_NEEDED
         # de verdad en vez de resolverlo contra una copia dentro del binario.
-        if(P_WITHOUT_MATH)
+        if(P_WITHOUT_MATH AND P_WITHOUT_SXGUI)
+            target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic_nomath_nosxgui)
+        elseif(P_WITHOUT_MATH)
             target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic_nomath)
+        elseif(P_WITHOUT_SXGUI)
+            target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic_nosxgui)
         else()
             target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic)
         endif()
@@ -51,8 +55,8 @@ function(savanxp_program)
         # define ldso.c.
         target_sources(${P_NAME} PRIVATE subsystems/posix/userland/ldso.c)
         target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
-    elseif(P_WITHOUT_MATH)
-        message(FATAL_ERROR "savanxp_program(${P_NAME}): WITHOUT_MATH solo tiene sentido con LINK_PROFILE PIE")
+    elseif(P_WITHOUT_MATH OR P_WITHOUT_SXGUI)
+        message(FATAL_ERROR "savanxp_program(${P_NAME}): WITHOUT_MATH y WITHOUT_SXGUI solo tienen sentido con LINK_PROFILE PIE")
     endif()
     # DEPENDS produce los DT_NEEDED del ejecutable. Solo el -soname de cada
     # libreria llega a la tabla dinamica, no la ruta de build, asi que el
@@ -150,6 +154,14 @@ savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
     SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/math.c)
+# SxGUI. A diferencia de libmath, NO tiene DT_NEEDED: pide gfx_* y sxchrome_* al
+# EJECUTABLE, que ya esta en el ambito de simbolos. Asi SxGFX sigue en el
+# runtime y la migracion de los 13 programas que usan SxGUI no arrastra todavia
+# a la capa de graficos.
+savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4
+    SOURCES
+        subsystems/posix/sdk/v1/runtime/sxgui.c
+        subsystems/posix/sdk/v1/runtime/sxgui_app.c)
 savanxp_library(NAME libchainbase TEST SONAME libchainbase.so.0.4
     SOURCES subsystems/posix/userland/chaintest_lib.c)
 savanxp_library(NAME libchaintop TEST SONAME libchaintop.so.0.4
@@ -242,7 +254,8 @@ savanxp_program(NAME mines SOURCES
 # que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
 # lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
-savanxp_program(NAME calc LINK_PROFILE PIE WITHOUT_MATH DEPENDS libmath SOURCES
+savanxp_program(NAME calc LINK_PROFILE PIE WITHOUT_MATH WITHOUT_SXGUI
+    DEPENDS libmath libsxgui SOURCES
     subsystems/posix/userland/calc.c)
 savanxp_program(NAME widgetsdemo TEST SOURCES
     subsystems/posix/userland/widgetsdemo.c)

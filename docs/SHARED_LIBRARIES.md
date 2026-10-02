@@ -90,6 +90,9 @@ Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
 | `ldso` relocates the executable, `R_X86_64_RELATIVE` and all | done |
 | A program linking `libmath.so.0.4` and calling `sqrt` (`libtest`) | done |
 | A desktop program on the library (`calc`, `sqrt` from `/lib`) | done |
+| `libsxgui.so.0.4`, resolving `gfx_*` against the executable | done |
+| `ldso_symbol_is_shared()`: "did this come from a `.so`?" | done |
+| SxGUI's own code executing correctly under a library | **not proven** |
 | `crt0` runs the loader before `main`, via a weak hook | done |
 
 ## crt0 runs the interpreter
@@ -349,25 +352,94 @@ stops at the first character it cannot use and `"1,234.5"` — a pasted number
 with a thousands separator — would read as `1`. The old parser ignored
 non-digits anywhere; that leniency is part of the behaviour, so it survived.
 
+## SxGUI as a library
+
+`libsxgui.so.0.4` is `sxgui.c` plus `sxgui_app.c` — 4553 lines that every SxGUI
+program used to carry. It has **no `DT_NEEDED`** of its own, and that is the
+design decision worth explaining.
+
+Its undefined symbols are exactly `gfx_*`, `sxchrome_*`, `clipboard_*`, libc and
+the stack canary. `gfx_*` is SxGFX, the layer underneath, which is *not* a
+library yet. But the executable is already in the symbol scope, so `libsxgui`
+leaves `gfx_*` undefined and the program resolves it out of its own binary. That
+keeps SxGFX in the runtime, which is what lets the GUI migration happen without
+reaching the deepest layer at the same time.
+
+The cost is that **every program using SxGUI has to be PIE**, because a non-PIE
+`ET_EXEC` has no `.dynsym` and therefore exports nothing for the library to
+resolve against. That makes this the natural place where "migrate the programs to
+PIE" stops being optional housekeeping.
+
+### What is verified, and what is not
+
+`calc` is migrated: it declares `DT_NEEDED libmath.so.0.4` and
+`libsxgui.so.0.4`, and has no local copy of either.
+
+What `calc-smoke` proves, and it is worth being precise about:
+
+- the library is opened, its own `DT_NEEDED` walked and its segments relocated;
+- `sxgui.c` and `sxgui_app.c` resolve against each other across translation units;
+- its `gfx_*` and `sxchrome_*` references resolve **against the executable** — if
+  any of them had failed, `apply_table_in` would have returned failure,
+  `ldso_start` would have returned -9 and `sx_start_dynamic` would have said so;
+- `calc`'s eighteen SxGUI references are filled and point where the resolver says.
+
+What it does **not** prove: that the library's code runs correctly. `calc`'s
+self-test is arithmetic and returns before `sxgui_app_init`, so no SxGUI function
+is ever called. No SxGUI consumer has a real GUI smoke — `mines-smoke`,
+`appwiz-smoke` and `filesapp-smoke` are all headless self-tests, and
+`taskbar-smoke`, which does launch an app and assert on five screenshots, turns
+out not to call a single `sxgui_*` function. It includes the header for types and
+does its own drawing.
+
+So closing that gap needs a program that runs SxGUI for real and something that
+looks at it. Until then, "SxGUI loads and relocates" is proven and "SxGUI draws
+correctly" is not.
+
+### The check that was not a check
+
+The first version of the check compared the address `ldso_lookup` reports for
+`sxgui_app_init` with the address `calc` calls. It passed — and it passed with
+SxGUI back inside the binary too, because then the executable had its own copy
+and both addresses still matched. A check that cannot fail is not a check.
+
+`ldso_symbol_is_shared()` exists because of that. The executable is slot 0, so
+"came from a shared library" is "the slot it was found in is not zero", and that
+is a question a program can ask. `calc` now asserts the symbol is shared *and*
+that one of its own functions is not, which is the negative control: without it,
+the positive assertion would mean nothing.
+
 ## What blocks the rest, in order
 
-1. **Wider libraries.** `libmath.so.0.4` is linked by `libtest` and `calc`.
-   `calc` no longer carries a copy of `sqrt`, which is the first time a real
-   program's binary actually got smaller by sharing. SxGUI and SxGFX are next,
-   program by program, and they are much larger than libmath.
+1. **A GUI smoke for SxGUI.** `libsxgui.so.0.4` loads and relocates, and
+   nothing has ever *run* it. `taskbar-smoke` is the only scenario that launches
+   an app and looks at the result, and that app does not use SxGUI. Either a
+   scenario that boots the desktop and drives a SxGUI app, or a test program that
+   paints through the library — one of the two, before more programs migrate onto
+   it.
 
-2. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
+2. **Migrate the remaining SxGUI programs.** `calc` is on the library; the other
+   users of `sxgui_*` are `notepad`, `taskmgr`, `progman`, `appwiz`, `mines`,
+   `widgetsdemo`, `filesapp`, `aboutapp` and `seltest`. Each has to become PIE
+   at the same time, because the library resolves `gfx_*` against the executable
+   and a non-PIE has no `.dynsym` to export. `kbdlayoutpopup`, `shellui` and
+   `taskbar` include the header for types only and need nothing.
+
+3. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
    versioned names, are not implemented.
 
-3. **`dlopen`, and unloading.** The library array is fixed at load time and there
+4. **`dlopen`, and unloading.** The library array is fixed at load time and there
    is no reference counting, so nothing can be removed once mapped. `kMaxLibraries`
    is 8.
 
-4. **A second executable to lean on.** `calc` and `libtest` both pass, which is
+5. **A second executable to lean on.** `calc` and `libtest` both pass, which is
    two. The profile has only been exercised by programs whose whole working set
    is a screen and a calculator; a window manager or a compositor under `ET_DYN`
    would exercise relocation far harder than either does.
+
+6. **SxGFX as a library.** 6248 lines are still copied into every program, and
+   once the SxGUI consumers are on PIE the pieces are in place to move it.
 
 ## Explicitly not worth doing yet
 

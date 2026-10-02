@@ -79,6 +79,15 @@ Cut-off notes:
 
 ### Added
 
+- **`libsxgui.so.0.4`, and the calculator now draws through it.** The calculator
+  declares both `libmath.so.0.4` and `libsxgui.so.0.4` and carries a copy of
+  neither. `libsxgui` resolves the graphics layer against the program that
+  started it, so the layer underneath stays where it is for now.
+
+- **`ldso_symbol_is_shared()`** reports whether a symbol came from a shared
+  library or from the program itself, so a program can check that it really is
+  using the library and not a copy of its own.
+
 - **`sx_start_dynamic` reports a failing interpreter.** A program that could not
   be relocated said nothing and failed later somewhere unrelated.
 
