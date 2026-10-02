@@ -246,7 +246,7 @@ savanxp_program(NAME filesapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SO
 # libreria: ningun self-test llega al camino de dibujo.
 savanxp_program(NAME notepad LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/notepad.c)
-savanxp_program(NAME mines SOURCES
+savanxp_program(NAME mines LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/mines.c
     subsystems/posix/userland/mines_board.c)
 # La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
@@ -288,7 +288,7 @@ savanxp_program(NAME sectiontest TEST SOURCES subsystems/posix/userland/sectiont
 savanxp_program(NAME handletest TEST SOURCES subsystems/posix/userland/handletest.c)
 savanxp_program(NAME semaphoretest TEST SOURCES subsystems/posix/userland/semaphoretest.c)
 savanxp_program(NAME cliptest TEST SOURCES subsystems/posix/userland/cliptest.c)
-savanxp_program(NAME seltest TEST SOURCES
+savanxp_program(NAME seltest TEST LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/seltest.c)
 savanxp_program(NAME mmaptest TEST SOURCES subsystems/posix/userland/mmaptest.c)
 savanxp_program(NAME libctest TEST SOURCES subsystems/posix/userland/libctest.c)
