@@ -335,24 +335,37 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
     -Wno-language-extension-token
     -Wno-c23-extensions
 )
-# Variantes del runtime.
+# Variantes del runtime, elegidas por las librerias que el programa usa.
 #
-# Un runtime por combinacion de unidades que seextraen a una libreria. La razon
-# es la misma para las dos: si el ejecutable trae la copia, el enlazador no
-# emite DT_NEEDED, la libreria no se carga y no se comparte nada. El programa
-# tiene que dejar el simbolo INDEFINIDO para que el mecanismo sea real.
+# Un runtime por COMBINACION de unidades que salen a una libreria. La razon es la
+# misma para todas: si el ejecutable trae la copia, el enlazador no emite
+# DT_NEEDED, la libreria no se carga y no se comparte nada. El programa tiene que
+# dejar el simbolo indefinido para que el mecanismo sea real.
 #
-# Las combinaciones crecen con las librerias, asi que se generan con una funcion
-# y no con cuatro bloques copiados.
+# Las combinaciones las pide el programa segun sus DEPENDS, no una bandera. Con
+# math, sxgui y gfx withdrawn hay ocho subconjuntos: enumerarlos seria ocho
+# bloques casi identicos, y el sexto se olvidaria. Lo que decide es "esta
+# libreria reemplaza estas unidades", y `savanxp_program` lo lee de DEPENDS.
+#
+# El target se nombra por el conjunto que le falta, asi que dos programas con
+# DEPENDS distintos reciben targets distintos sin que nadie los enumere.
+set(SAVANXP_LIBRARY_REPLACES_libmath math.c)
+set(SAVANXP_LIBRARY_REPLACES_libsxgui sxgui.c sxgui_app.c)
+
 function(savanxp_runtime_variant)
     set(options PIC)
     set(oneValueArgs NAME)
     set(multiValueArgs EXCLUDE)
     cmake_parse_arguments(R "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     set(sources ${SAVANXP_USER_RUNTIME_SOURCES})
+    set(key full)
     foreach(dropped IN LISTS R_EXCLUDE)
         list(REMOVE_ITEM sources ${dropped})
+        get_filename_component(base "${dropped}" NAME)
+        set(key "${key}_${base}")
     endforeach()
+    string(REGEX REPLACE "[.]c$" "" key "${key}")
+    string(REGEX REPLACE "_" "-" key "${key}")
     add_library(${R_NAME} OBJECT ${sources})
     target_include_directories(${R_NAME} PRIVATE
         "${CMAKE_SOURCE_DIR}/include"
@@ -369,20 +382,15 @@ function(savanxp_runtime_variant)
         target_compile_options(${R_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
     endif()
     set_target_properties(${R_NAME} PROPERTIES C_EXTENSIONS YES)
+    set(SAVANXP_RUNTIME_TARGET_${key} ${R_NAME} PARENT_SCOPE)
 endfunction()
 
-set(SAVANXP_RUNTIME_MATH subsystems/posix/sdk/v1/runtime/math.c)
-set(SAVANXP_RUNTIME_SXGUI
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c
-)
+# El runtime completo: el caso base, para un programa que no usa ninguna
+# libreria compartida.
 savanxp_runtime_variant(NAME savanxp_user_runtime_pic PIC)
-savanxp_runtime_variant(NAME savanxp_user_runtime_pic_nomath PIC
-    EXCLUDE ${SAVANXP_RUNTIME_MATH})
-savanxp_runtime_variant(NAME savanxp_user_runtime_pic_nosxgui PIC
-    EXCLUDE ${SAVANXP_RUNTIME_SXGUI})
-savanxp_runtime_variant(NAME savanxp_user_runtime_pic_nomath_nosxgui PIC
-    EXCLUDE ${SAVANXP_RUNTIME_MATH} ${SAVANXP_RUNTIME_SXGUI})
+
+# Las demas combinaciones las crea savanxp_program segun sus DEPENDS: cada
+# programa pide las suyas y nadie mantiene una lista a mano.
 
 add_custom_target(savanxp_user_runtime_pic_check ALL
     DEPENDS savanxp_user_runtime_pic

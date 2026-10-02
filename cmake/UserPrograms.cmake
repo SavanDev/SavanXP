@@ -1,7 +1,7 @@
 # Every in-tree program is registered explicitly. Keeping this list in CMake
 # makes the target graph the single source of truth for the userland.
 function(savanxp_program)
-    set(options TEST WITHOUT_MATH WITHOUT_SXGUI)
+    set(options TEST)
     set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
     set(multiValueArgs SOURCES DEPENDS)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -30,15 +30,33 @@ function(savanxp_program)
         # Un PIE nace del runtime PIC: crt0.S ya es position independent
         # (%rip y call relativo) y esta dentro de savanxp_user_runtime_pic.
         #
-        # WITHOUT_MATH saca math.c de las unidades. Es lo unico que hace que un
-        # simbolo como sqrt quede indefinido y el enlazador emita un DT_NEEDED
-        # de verdad en vez de resolverlo contra una copia dentro del binario.
-        if(P_WITHOUT_MATH AND P_WITHOUT_SXGUI)
-            target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic_nomath_nosxgui)
-        elseif(P_WITHOUT_MATH)
-            target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic_nomath)
-        elseif(P_WITHOUT_SXGUI)
-            target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic_nosxgui)
+        # El runtime que corresponde es el que NO trae las unidades que sus
+        # DEPENDSLeaving en una libreria. No es una bandera que el autor pone:
+        # sale de la lista, porque forgettingla es un fallo silencioso --el
+        # programa enlazaria bien y estaria con una copia propia-- en vez de uno
+        # ruidoso.
+        set(dropped_units "")
+        foreach(lib IN LISTS P_DEPENDS)
+            if(SAVANXP_LIBRARY_REPLACES_${lib})
+                foreach(unit IN LISTS SAVANXP_LIBRARY_REPLACES_${lib})
+                    list(APPEND dropped_units "subsystems/posix/sdk/v1/runtime/${unit}")
+                endforeach()
+            endif()
+        endforeach()
+        if(dropped_units)
+            list(SORT dropped_units)
+            set(key full)
+            foreach(unit IN LISTS dropped_units)
+                get_filename_component(base "${unit}" NAME)
+                set(key "${key}_${base}")
+            endforeach()
+            string(REGEX REPLACE "[.]c$" "" key "${key}")
+            string(REGEX REPLACE "_" "-" key "${key}")
+            set(variant "savanxp_user_runtime_pic_${key}")
+            if(NOT TARGET ${variant})
+                savanxp_runtime_variant(NAME ${variant} PIC EXCLUDE ${dropped_units})
+            endif()
+            target_link_libraries(${P_NAME} PRIVATE ${variant})
         else()
             target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime_pic)
         endif()
@@ -55,8 +73,6 @@ function(savanxp_program)
         # define ldso.c.
         target_sources(${P_NAME} PRIVATE subsystems/posix/userland/ldso.c)
         target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
-    elseif(P_WITHOUT_MATH OR P_WITHOUT_SXGUI)
-        message(FATAL_ERROR "savanxp_program(${P_NAME}): WITHOUT_MATH y WITHOUT_SXGUI solo tienen sentido con LINK_PROFILE PIE")
     endif()
     # DEPENDS produce los DT_NEEDED del ejecutable. Solo el -soname de cada
     # libreria llega a la tabla dinamica, no la ruta de build, asi que el
@@ -142,7 +158,7 @@ endfunction()
 savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/pietest.c)
 # El unico programa que linkea contra una libreria de verdad. Todo lo demas usa
 # el cargador a mano; este usa sqrt como funcion normal y no busca su direccion.
-savanxp_program(NAME libtest TEST LINK_PROFILE PIE WITHOUT_MATH DEPENDS libmath
+savanxp_program(NAME libtest TEST LINK_PROFILE PIE DEPENDS libmath
     SOURCES subsystems/posix/userland/libtest.c)
 # PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
@@ -221,19 +237,19 @@ savanxp_program(NAME taskbar SOURCES
     subsystems/posix/userland/taskbar.c
     subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME kbdlayoutpopup SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
-savanxp_program(NAME progman LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME progman LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/desktop_wallpaper.c)
-savanxp_program(NAME appwiz LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME appwiz LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/appwiz.c
     subsystems/posix/userland/appwiz_catalog.c)
-savanxp_program(NAME aboutapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME aboutapp LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/aboutapp.c)
-savanxp_program(NAME taskmgr LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME taskmgr LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/taskmgr.c)
-savanxp_program(NAME filesapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME filesapp LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c
     subsystems/posix/userland/mime_icon.c)
@@ -244,9 +260,9 @@ savanxp_program(NAME filesapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SO
 #
 # Ese escenario es lo que faltaba para poder decir que SxGUI funciona bajo una
 # libreria: ningun self-test llega al camino de dibujo.
-savanxp_program(NAME notepad LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME notepad LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/notepad.c)
-savanxp_program(NAME mines LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME mines LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/mines.c
     subsystems/posix/userland/mines_board.c)
 # La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
@@ -261,14 +277,14 @@ savanxp_program(NAME mines LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURC
 # que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
 # lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
-savanxp_program(NAME calc LINK_PROFILE PIE WITHOUT_MATH WITHOUT_SXGUI
+savanxp_program(NAME calc LINK_PROFILE PIE
     DEPENDS libmath libsxgui SOURCES
     subsystems/posix/userland/calc.c)
 # Galeria de controles: el usuario mas amplio de SxGUI, con 20 funciones, y la
 # app que mas conviene mirar a ojo porque esta hecha para eso. Es la que prueba
 # a mano si SxGUI dibuja bien cuando viene de una libreria, que ninguna
 # comprobacion automatica cubre hoy.
-savanxp_program(NAME widgetsdemo TEST LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME widgetsdemo TEST LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/widgetsdemo.c)
 savanxp_program(NAME gfxdemo TEST SOURCES subsystems/posix/userland/gfxdemo.c)
 savanxp_program(NAME gears TEST SOURCES subsystems/posix/userland/gears.c)
@@ -288,7 +304,7 @@ savanxp_program(NAME sectiontest TEST SOURCES subsystems/posix/userland/sectiont
 savanxp_program(NAME handletest TEST SOURCES subsystems/posix/userland/handletest.c)
 savanxp_program(NAME semaphoretest TEST SOURCES subsystems/posix/userland/semaphoretest.c)
 savanxp_program(NAME cliptest TEST SOURCES subsystems/posix/userland/cliptest.c)
-savanxp_program(NAME seltest TEST LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
+savanxp_program(NAME seltest TEST LINK_PROFILE PIE DEPENDS libsxgui SOURCES
     subsystems/posix/userland/seltest.c)
 savanxp_program(NAME mmaptest TEST SOURCES subsystems/posix/userland/mmaptest.c)
 savanxp_program(NAME libctest TEST SOURCES subsystems/posix/userland/libctest.c)
