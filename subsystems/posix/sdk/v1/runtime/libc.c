@@ -233,27 +233,20 @@ long timer_cancel(int handle) {
     return syscall1(SAVANXP_SYS_TIMER_CANCEL, (unsigned long)handle);
 }
 
-/* Ruta del interprete que el kernel copio al stack inicial, o NULL si la imagen
- * no declara PT_INTERP. La escribe crt0 antes de la primera llamada. */
-const char* sx_interpreter_path = 0;
-
-/* Direccion de la cabecera ELF de la imagen principal. El kernel la pasa en r8 y
- * crt0 la guarda antes de la primera llamada, igual que la ruta del interprete.
- *
- * Existe para que el cargador no tenga que buscar la base adivinando. Un recorrido
- * hacia atras desde una funcion propia hacia el supuesto origen de la imagen
- * tiene que leer cada pagina del camino, y un PT_LOAD puede dejar paginas sin
- * mapear entre dos segmentos: leerlas es un fallo de pagina, no un cero. */
-unsigned long sx_image_base = 0;
-
-const char* savanxp_interpreter_path(void) {
-    return sx_interpreter_path;
-}
-
 /* El hook del interprete, definido por el programa que enlace el cargador de
  * librerias. Debil: los programas sin dependencias no lo definen y el
- * enlazador lo resuelve en 0. */
-extern int sx_run_interpreter(void) __attribute__((weak));
+ * enlazador lo resuelve en 0.
+ *
+ * Recibe los dos datos que crt0 trae en registros y que antes vivian en globals de
+ * este archivo: la ruta del interprete que el kernel copio al stack inicial, y la
+ * direccion de la cabecera ELF de la imagen.
+ *
+ * Que sean ARGUMENTOS y no globals es lo que permite que este archivo sea una
+ * libreria. crt0 corre antes de que exista ninguna pagina de ella, asi que un
+ * global escrito aca seria un acceso a una imagen todavia no cargada. Un registro
+ * no tiene ese problema. */
+extern int sx_run_interpreter(const char* interpreter_path, unsigned long image_base)
+    __attribute__((weak));
 
 /* Lo que crt0 llama antes de main.
  *
@@ -267,9 +260,9 @@ extern int sx_run_interpreter(void) __attribute__((weak));
  * Que este sea el unico lugar donde se decide si el interprete corre es lo que
  * hace que sea automatico: un programa no necesita acordarse de llamarlo, y no
  * puede olvidarse. */
-void sx_start_dynamic(void) {
+void sx_start_dynamic(const char* interpreter_path, unsigned long image_base) {
     if (sx_run_interpreter != 0) {
-        const int result = sx_run_interpreter();
+        const int result = sx_run_interpreter(interpreter_path, image_base);
         if (result != 0) {
             /* Un programa que no queda operativo no puede decir nada util con
              * printf todavia, y el sintoma de no haberse reubicado --punteros a

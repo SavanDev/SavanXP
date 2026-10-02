@@ -47,12 +47,13 @@ long wait_many(const int* handles, unsigned long count, unsigned long flags, lon
 long timer_create(unsigned long flags);
 long timer_set(int handle, unsigned long due_ms, unsigned long period_ms);
 long timer_cancel(int handle);
-const char* savanxp_interpreter_path(void);
-/* Direccion de la cabecera ELF de la imagen principal. El kernel la pasa en r8
- * y crt0 la guarda antes de la primera llamada. Un cargador de librerias la
- * necesita: la base de la imagen no se puede adivinar recorriendo paginas,
- * porque un PT_LOAD puede dejar paginas sin mapear entre dos segmentos. */
-extern unsigned long sx_image_base;
+/* La ruta de PT_INTERP y la direccion de la cabecera ELF de la imagen los pasa
+ * crt0 al cargador, que es quien los necesita y quien los guarda. Ya no estan
+ * aca como globals: crt0 corre antes de que exista ninguna pagina de este
+ * archivo, asi que escribir un global suyo en ese momento solo funciona mientras
+ * este archivo este dentro del ejecutable. Un cargador de librerias los consulta
+ * con ldso_interpreter_path(). */
+
 long section_create(unsigned long size, unsigned long flags);
 long section_open(int handle, unsigned long flags);
 long section_open_range(int handle, unsigned long offset, unsigned long length, unsigned long flags);
