@@ -221,7 +221,7 @@ savanxp_program(NAME taskbar SOURCES
     subsystems/posix/userland/taskbar.c
     subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME kbdlayoutpopup SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
-savanxp_program(NAME progman SOURCES
+savanxp_program(NAME progman LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/desktop_icons.c
@@ -231,7 +231,7 @@ savanxp_program(NAME appwiz LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOUR
     subsystems/posix/userland/appwiz_catalog.c)
 savanxp_program(NAME aboutapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/aboutapp.c)
-savanxp_program(NAME taskmgr SOURCES
+savanxp_program(NAME taskmgr LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/taskmgr.c)
 savanxp_program(NAME filesapp LINK_PROFILE PIE WITHOUT_SXGUI DEPENDS libsxgui SOURCES
     subsystems/posix/userland/filesapp.c

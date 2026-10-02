@@ -79,12 +79,14 @@ Cut-off notes:
 
 ### Added
 
-- **`libsxgui.so.0.4`, and six programs now draw through it.** The calculator,
-  the text editor, the control gallery, the file manager, the application wizard
-  and the system properties window declare it and carry a copy of neither. The
-  toolkit resolves the graphics layer against the program that started it, so the
-  layer underneath stays where it is for now. Verified at the pixel level: the
-  editor's scroll screenshots are byte-identical with and without the library.
+- **`libsxgui.so.0.4`, and ten programs now draw through it.** Every user of the
+  toolkit — the calculator, the text editor, the control gallery, the file
+  manager, the application wizard, the system properties window, Minesweeper, the
+  self-test, Program Manager and Task Manager — declares it and carries a copy
+  of neither. The toolkit resolves the graphics layer against the program that
+  started it, so the layer underneath stays where it is for now. Verified at the
+  pixel level: the editor's scroll screenshots are byte-identical with and
+  without the library.
 
 - **`ldso_symbol_is_shared()`** reports whether a symbol came from a shared
   library or from the program itself, so a program can check that it really is
