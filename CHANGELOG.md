@@ -90,7 +90,7 @@ Cut-off notes:
   now links against it instead of asking the program to export the graphics
   entry points, so a program no longer has to be PIE just to satisfy it. The task
   bar, the keyboard layout popup, the shell wallpaper, the window server and the
-  desktop shell draw through it.
+  desktop shell draw through it, and no executable carries its own copy of it.
 
 - **`sxgui-smoke`, which drives the visual scenario as a smoke test.** The SxGUI
   gate used to run only if someone remembered to ask for it.

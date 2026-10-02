@@ -194,7 +194,9 @@ savanxp_program(NAME init SOURCES subsystems/posix/userland/init.c)
 savanxp_program(NAME sh SOURCES
     subsystems/posix/userland/sh.c
     subsystems/posix/userland/shell_core.c)
-savanxp_program(NAME shellapp SOURCES
+# El shell del escritorio. windowd lo lanza como su cliente principal, asi que
+# el escenario desktop lo levanta de verdad en cada corrida.
+savanxp_program(NAME shellapp LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
     subsystems/posix/userland/shellapp.c
     subsystems/posix/userland/shell_core.c
     subsystems/posix/userland/shellapp_stats.c)
