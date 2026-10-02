@@ -232,6 +232,17 @@ static int read_header(const unsigned char* bytes, Elf64_Ehdr* out) {
     return 1;
 }
 
+/* Compara dos cadenas sin strcmp, por lo mismo que copy_bytes existe: el
+ * cargador no puede depender de libc todavia, porque libc va a ser una libreria y
+ * esta es justo la funcion que la carga. */
+static int same_name(const char* a, const char* b) {
+    while (*a != '\0' && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return *a == *b;
+}
+
 static void copy_bytes(const void* from, void* to, size_t count) {
     const unsigned char* src = (const unsigned char*)from;
     unsigned char* dst = (unsigned char*)to;
@@ -288,7 +299,7 @@ static int adopt_executable(void) {
 
     Library* exe = &g_libs[g_lib_count];
     exe->soname[0] = '\0';
-    exe->header = header;
+    copy_bytes(&header, &exe->header, sizeof(header));
     exe->header_count = header.e_phnum;
     exe->dynsym = 0;
     exe->dynstr = 0;
@@ -634,7 +645,7 @@ int ldso_load(const char* path) {
         end_load(0);
         return -5;
     }
-    g_lib->header = header;
+    copy_bytes(&header, &g_lib->header, sizeof(header));
     g_lib->header_count = header.e_phnum;
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
         copy_bytes(probe + header.e_phoff + (index * header.e_phentsize), &g_lib->headers[index], sizeof(Elf64_Phdr));
@@ -1032,7 +1043,7 @@ static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {
         if (symbol.st_shndx == SHN_UNDEF) {
             continue;
         }
-        if (strcmp(library->dynstr + symbol.st_name, name) == 0) {
+        if (same_name(library->dynstr + symbol.st_name, name)) {
             *value_out = symbol.st_value;
             return slot;
         }

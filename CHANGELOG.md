@@ -84,6 +84,17 @@ Cut-off notes:
   makes is to the C runtime or a system call. A program no longer has to be PIE so
   that a toolkit can find its drawing code.
 
+- **The program startup no longer stores the image facts in the C library.** The
+  interpreter path and the image's own base were library globals that the startup
+  code wrote before its first call, which stops working the moment the C library is
+  a shared library: startup runs before a page of it exists. They are passed to the
+  loader now.
+
+- **The library loader no longer calls the C library.** It needs to keep working
+  before any library is mapped, so its own byte copy and string compare replaced
+  the calls to `memcpy` and `strcmp` — the `memcpy` calls were the compiler lowering
+  two 64-byte header assignments.
+
 - **Up to 32 shared libraries per process, instead of 8.** The longest chain the
   tree can build is seven — a program, its two interface libraries and FFmpeg's
   codec, utility, scale and resample libraries — so eight was one slot from a wall

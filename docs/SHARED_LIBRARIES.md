@@ -614,6 +614,37 @@ before the headers are copied, in both `read_header` and `adopt_executable`, so 
 image with more than 24 program headers is now rejected with a reason instead of
 running off the end of `headers[]`.
 
+## libc cannot move as one file, and the line that decides it
+
+Moving the C runtime into `libc.so.0.4` is the step that lets `--export-dynamic`
+go and lets an `ET_EXEC` use a library at all. It is not a matter of moving
+`libc.c`.
+
+Three things in it cannot move, and all three for the same reason: **the loader
+needs them before a single library is mapped.**
+
+1. **`sx_start_dynamic`.** `crt0` calls it to start the loader. If it lived in
+   `libc.so.0.4`, that call would be an unresolved PLT entry in an image that is not
+   loaded yet.
+2. **`__stack_chk_guard` and `__stack_chk_fail`.** `crt0` writes the canary the
+   kernel handed it in `rdx`, before the first protected call. Same problem.
+3. **The raw syscall wrappers** — `savanxp_open`, `savanxp_read`, `savanxp_close`,
+   `section_create`, `section_open`, `section_open_range`, `map_view_at`,
+   `unmap_view`, `result_is_error`. Opening and mapping a library is what the loader
+   does with them; asking the library that provides them to open the first library
+   is circular.
+
+Everything above that line — `memcpy`, `memset`, `memmove`, `strlen`, `strcmp`,
+`strcpy`, `malloc`, `printf`, the event and timer wrappers, the clipboard — has no
+such constraint and can move.
+
+The third item is what makes this delicate rather than obvious: it is not a clean
+layer boundary in `libc.c`'s current shape, and the exact partition is the kind of
+decision that is expensive to get wrong. `ldso.c`'s undefined-symbol list is the
+authoritative statement of the boundary, which is why the loader was made
+C-library-free first: it now names that set exactly, with no libc entry in it, so
+there is a single place to check when it changes.
+
 ## What blocks the rest, in order
 
 1. **The window caption.** The only remaining text with no glyph assertion, blocked
