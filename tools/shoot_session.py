@@ -18,6 +18,29 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import glyphs
+
+# Las tablas de fuente salen de la libreria construida, no del .inc: lo que se
+# afirma es lo que el proceso mapea de verdad. Se leen una vez.
+_FONTS = {}
+
+
+def fonts():
+    if not _FONTS:
+        library = Path(os.environ.get("SAVANXP_OUTPUT_ROOT", "build")) / "diskfs" / "lib" / "libsxgfx.so.0.4"
+        if not library.exists():
+            library = Path("build/diskfs/lib/libsxgfx.so.0.4")
+        try:
+            _FONTS.update(glyphs.load(library))
+        except (glyphs.FontError, OSError) as exc:
+            raise Failure(
+                "no se pudieron leer las tablas de fuente de %s: %s\n"
+                "Este harness afirma sobre los glifos que dibuja libsxgfx; sin las tablas\n"
+                "no puede afirmar nada, y seguiria pasando sin comprobar nada." % (library, exc)
+            ) from None
+    return _FONTS
+
 
 class Qmp(object):
     def __init__(self, socket_path, timeout=60, abs_pointer=False, screen=(1280, 800)):
@@ -296,6 +319,17 @@ class Session(object):
 FACE = (192, 192, 192)
 LIGHT = (255, 255, 255)
 SHADOW = (128, 128, 128)
+# El editor pinta su campo con SXGUI_COLOR_FIELD y el texto con SXGUI_COLOR_TEXT,
+# que son SXGUI_COLOR_FACE y SXGUI_COLOR_TEXT en sxchrome.h. Espejo, como los de
+# la barra de tareas.
+FIELD = (255, 255, 255)
+TEXT = (0, 0, 0)
+
+# Interlineado del toolkit, no de la fuente: sxgui_row_height() en sxgui.c es
+# gfx_text_height() + 4. La fuente Noto viene con SX_NOTO_ASCENT 14 y DESCENT 4, o
+# sea un LINE_HEIGHT de 18 sin ningun leading, y el toolkit suma 4 encima. Mismo
+# convenio que la barra: si sxgui_row_height cambia, esto cambia con el.
+SXGUI_ROW_LEADING = 4
 
 # Geometria de la barra, espejo de windowd_layout.h y taskbar.c. Si alguno de
 # los dos cambia, este harness tiene que cambiar con el -- que es justamente la
@@ -348,6 +382,78 @@ def expect_taskbar_present(image, label):
     # Bien a la derecha de los botones: ahi la franja tiene que ser cara pelada.
     expect_pixel(image, width - 40, height - (TASKBAR_HEIGHT // 2), FACE,
                  "%s: la franja de la barra" % label)
+
+
+def find_text(image, box, text, colour, background, which="body"):
+    """Locates a drawn string, or reports the closest thing to it.
+
+    Returns (origin, best_at, matched, total), where origin is the text origin --
+    the arguments gfx_blit_text was called with -- or None when nothing matched.
+    `matched` counts the glyph's own pixels that came out right at the best offset,
+    which is what lets the failure message say something useful.
+
+    No se busca una posicion esperada: se busca ALGUNA. La afirmacion es que las
+    letras estan escritas asi, en ese color, sobre ese fondo, en algun punto del
+    area -- no que estan donde el codigo dice. Asi el harness no depende de la
+    geometria interna del control que se esta mirando, que es justo lo que cambia
+    cada vez que se toca el toolkit.
+    """
+    font = fonts()[which]
+    pattern = glyphs.render(font, 0, 0, text, colour, background, (0, 0, 1 << 20, 1 << 20))
+    if not pattern:
+        raise Failure("el texto %r no tiene un solo pixel: nada que afirmar" % text)
+
+    x0, y0, x1, y1 = box
+    region = image.crop((x0, y0, x1, y1))
+    pixels = region.load()
+    region_w, region_h = region.size
+
+    # Ancla: el pixel del patron cuyo color aparece MENOS veces en la region. Un
+    # color solido es comun en cualquier interfaz --el negro del texto hay que
+    # descartarlo--, mientras que un tono de anti-aliasing casi no aparece en
+    # ningun otro sitio, asi que las posiciones candidatas son pocas en vez de miles.
+    counts = {}
+    for value in list(region.getdata()):
+        counts[value] = counts.get(value, 0) + 1
+    anchor_dx, anchor_dy = min(pattern, key=lambda k: (counts.get(pattern[k], 0), k))
+    anchor_colour = pattern[anchor_dx, anchor_dy]
+
+    items = list(pattern.items())
+    best_matched = 0
+    best_at = None
+    for py in range(region_h):
+        for px in range(region_w):
+            if pixels[px, py] != anchor_colour:
+                continue
+            ox = px - anchor_dx
+            oy = py - anchor_dy
+            matched = 0
+            for (dx, dy), expected in items:
+                sx = ox + dx
+                sy = oy + dy
+                if not (0 <= sx < region_w and 0 <= sy < region_h):
+                    continue
+                if pixels[sx, sy] == expected:
+                    matched += 1
+            if matched == len(pattern):
+                return ((x0 + ox, y0 + oy), None, matched, len(pattern))
+            if matched > best_matched:
+                best_matched = matched
+                best_at = (x0 + ox, y0 + oy)
+    return (None, best_at, best_matched, len(pattern))
+
+
+def expect_text(image, box, text, colour, background, label, which="body"):
+    """Falla si la cadena no esta dibujada, y dice cuanto le faltaba si casi lo estaba."""
+    origin, best_at, matched, total = find_text(image, box, text, colour, background, which)
+    if origin is not None:
+        return (origin[0], origin[1])
+    where = "(%d,%d)" % best_at if best_at else "ningun sitio"
+    raise Failure(
+        "%s: %r no aparece escrito en pantalla. Lo mejor que hubo fueron %d de %d "
+        "pixeles del glifo, en %s. Son el texto equivocado, el color equivocado, o "
+        "nada dibujado." % (label, text, matched, total, where)
+    )
 
 
 def scenario_desktop(s):
@@ -872,6 +978,39 @@ def scenario_notepadwheel(s):
     area = find_list_area(image)
     print("  editor en", area)
     s.qmp.move_to((area[0] + area[2]) // 2, (area[1] + area[3]) // 2)
+
+    # Lo que se leyo hasta aqui era "algo se movio". Esto es "esta linea esta
+    # escrita con estas letras, en negro, sobre blanco": el glifo de cada caracter
+    # sale de la tabla que trae libsxgfx y se compara pixel a pixel contra la
+    # pantalla.
+    #
+    # Sin esto, pintar el texto con SXGUI_COLOR_FACE -- invisible sobre el campo
+    # blanco -- pasaba: el scroll se comprueba con el pulgar de la barra, y el
+    # pulgar se movia igual. Un toolkit que dibuja las lineas en el color del
+    # fondo no se nota en ningun otro chequeo de este archivo.
+    #
+    # Dos lineas y no la ultima: el caret queda al final de "linea40" y pisa el
+    # ultimo pixel del cero, que es un gris de cobertura 2 y el caret lo tapa con
+    # negro. Ese pixel es real y esta ahi, pero afirmar sobre el obliga a
+    # modelar el caret, y un modelo del caret aqui no compra nada.
+    #
+    # Dos lineas consecutivas en vez de una: ademas del glifo y del color, esto
+    # afirma el interlineado, que tiene que ser la fila del toolkit. Un solo
+    # acierto podria ser suerte de la posicion; dos seguidas, no.
+    row_height = fonts()["body"].line_height + SXGUI_ROW_LEADING
+    penultimate = expect_text(image, area, "linea39", TEXT, FIELD, "el editor de notepad")
+    third_last = expect_text(image, area, "linea38", TEXT, FIELD, "el editor de notepad")
+    if penultimate[0] != third_last[0]:
+        raise Failure(
+            "las lineas del editor no arrancan en la misma x: %d y %d" % (third_last[0], penultimate[0])
+        )
+    step = penultimate[1] - third_last[1]
+    if step != row_height:
+        raise Failure(
+            "el interlineado del editor es %d y la fila del toolkit es %d: las lineas no "
+            "se pintan donde dicen las metrics de libsxgfx" % (step, row_height)
+        )
+    print("  'linea38'/'linea39' en x=%d, interlineado %d" % (penultimate[0], step))
 
     # Tipear deja el caret al final: el editor ya esta scrolleado al fondo, asi
     # que la rueda hay que probarla subiendo primero -- bajar ya esta clampeado.
