@@ -485,13 +485,81 @@ This removed a way to fail quietly: `WITHOUT_MATH` was something the author had
 to remember, and leaving it off meant the program linked fine and carried a
 private `sqrt`. That mistake is no longer expressible.
 
+## Reading the glyphs, and why the title is still not covered
+
+`sxgui-smoke` used to prove that the editor scrolled by comparing screenshots, and
+the proof was the scrollbar thumb. A toolkit that painted every typed line in
+`SXGUI_COLOR_FACE` — invisible on the white field — moved the thumb identically.
+Nothing noticed.
+
+`tools/glyphs.py` now reads the glyph and coverage tables out of the built
+`libsxgfx.so.0.4` and renders text with the same arithmetic the blitter uses:
+baseline at ascent, bitmap at left/top, pen by advance, blend with
+`inv = 255 - alpha`. It reads the library rather than the generated `.inc`, because
+the library is what the process maps; a source-derived expectation could describe a
+font the process does not have. Array sizes are derived rather than assumed — the
+glyph count falls out of the range table, the coverage extent out of the glyphs.
+
+`expect_text` does not look for a position, it looks for *any* position, so it does
+not have to track the control's geometry — the thing that changes every time the
+toolkit is touched. It refuses outright when asked to assert text in the colour of
+its background: that is indistinguishable from not painting it, and `SXGUI_COLOR_FACE`
+is also the taskbar's background, so a search for a FACE-on-FACE label matches
+anywhere on screen.
+
+Two strings are asserted. The Notepad editor's lines, two consecutive ones, which
+also pins the row height — `sxgui_row_height()` is `gfx_text_height() + 4`, mirrored
+in the harness the way the taskbar geometry already is. And a taskbar button label,
+284 glyph pixels.
+
+Both were verified by breaking them:
+
+| broken | result |
+| --- | --- |
+| editor rows painted in `FACE` | FALLA, 0 of 228 |
+| taskbar label drawn as `XXXROTO` | FALLA, 0 of 284 |
+| taskbar label painted in `FACE` | FALLA, 0 of 284 |
+
+The **window caption is not asserted**, and it is worth saying why rather than
+leaving it to look like coverage. The caption is a 24-band gradient with an accent
+that mixes more at the left than the right; predicting it from the harness means
+copying the arithmetic in `windowd_render.c`. What is left is asserting only the
+glyph pixels at full coverage, which do not depend on the background — and for
+"Notepad" that is **14 pixels**. Changing the caption from `SX_FONT_UI_TITLE` to
+the body font still passed. Eleven pixels are not a claim. It is listed below as
+work, not shipped as a check.
+
+## The staging step did not depend on the programs
+
+Found while proving the taskbar label assertion, by making the label draw
+`XXXROTO`, rebuilding, and seeing `taskbar: OK`.
+
+`add_custom_command(OUTPUT rootfs.stamp ... DEPENDS savanxp_userland ...)`.
+`savanxp_userland` is `add_custom_target(... DEPENDS ${SAVANXP_USER_TARGETS})` — an
+aggregate with no output of its own. CMake does not walk through a custom target to
+find outputs when resolving a custom command's dependency, so the stamp had no file
+dependency on any program and was considered up to date while the executables were
+already rebuilt. `rootfs/bin/taskbar` was ten minutes older than
+`build/linux/taskbar`, and `disk.img` booted the old one.
+
+Nothing failed. The build passed, `check_shared_libs` passed, and the visual
+scenarios passed — because they were testing the previous binary. The stamp now
+depends on `${SAVANXP_USER_TARGETS}` and `savanxp-busybox` directly.
+
+Two things about how it was found are worth keeping. The first two "the assertion
+did not catch it" results were *correct*: Notepad's editor does not go through
+`sxgui_draw_control_text` or the listbox row painter, so breaking those changed
+nothing on screen. Only breaking the path the editor actually uses made it fail,
+which is what a real check does. And the build was being run with its output piped
+to `/dev/null`; one cycle was lost to an edit that did not compile, leaving a stale
+binary that looked like a passing test.
+
 ## What blocks the rest, in order
 
-1. **Read the glyphs, not just the panel.** `sxgui-smoke` catches a toolkit that
-   stops painting and one that stops responding to scroll, but not one that
-   paints the wrong colour or the wrong glyph — the scrollbar thumb moves either
-   way. The scenarios in `shoot_session` can check what is on screen; turning
-   that into a text assertion is the missing piece.
+1. **The window caption.** The only remaining text with no glyph assertion, blocked
+   on the gradient described above. The fix is to model
+   `windowd_caption_colour()` in the harness — or to have `windowd` tell the
+   harness what it painted.
 
 2. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and

@@ -776,7 +776,20 @@ endif()
 
 add_custom_command(OUTPUT "${SAVANXP_ROOTFS_STAMP}"
     ${SAVANXP_STAGE_COMMANDS}
-    DEPENDS savanxp_userland "${CMAKE_SOURCE_DIR}/rootfs/README"
+    # Los binarios de verdad, no savanxp_userland. Ese es un objetivo agregado sin
+    # salida propia, asi que como dependencia de un comando personalizado no aporta
+    # ningun archivo: CMake no atraviesa objetivos personalizados para buscarles
+    # salidas, y el stamp se declaraba al dia con el arbol de rootfs viejo mientras
+    # los ejecutables ya eran nuevos.
+    #
+    # El efecto era que un cambio en cualquier programa no llegaba a la imagen. No
+    # fallaba nada: el build pasaba, check_shared_libs pasaba, y la imagen arrancaba
+    # con el binario anterior. No se nota mirando el build: si se rompe a proposito
+    # el texto de una etiqueta de la barra, build y escenario dan OK los dos,
+    # porque los dos proban el programa viejo. Solo se nota al buscar el binario
+    # extraido de la imagen.
+    DEPENDS ${SAVANXP_USER_TARGETS} savanxp-busybox
+            "${CMAKE_SOURCE_DIR}/rootfs/README"
             "${CMAKE_SOURCE_DIR}/tools/write_smoke_spec.py"
             "${SAVANXP_SMOKE_CONFIG_STAMP}"
     COMMENT "Staging SavanXP initramfs tree"

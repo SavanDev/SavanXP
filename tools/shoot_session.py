@@ -384,7 +384,7 @@ def expect_taskbar_present(image, label):
                  "%s: la franja de la barra" % label)
 
 
-def find_text(image, box, text, colour, background, which="body"):
+def find_text(image, box, text, colour, background, which="body", solid_only=False):
     """Locates a drawn string, or reports the closest thing to it.
 
     Returns (origin, best_at, matched, total), where origin is the text origin --
@@ -397,9 +397,18 @@ def find_text(image, box, text, colour, background, which="body"):
     area -- no que estan donde el codigo dice. Asi el harness no depende de la
     geometria interna del control que se esta mirando, que es justo lo que cambia
     cada vez que se toca el toolkit.
+
+    solid_only mira unicamente los pixeles del glifo con cobertura 255, que
+    gfx_pixel_blend escribe tal cual. Es lo que hay que usar cuando el fondo no es
+    plano -- el titulo de la ventana activa es un degradado, y una mezcla contra
+    un degradado no se puede predecir con un solo color. Se pierde el borde
+    anti-aliasing, pero el nucleo del glifo sigue identificando la letra y la
+    posicion, que es lo que se queria afirmar.
     """
     font = fonts()[which]
     pattern = glyphs.render(font, 0, 0, text, colour, background, (0, 0, 1 << 20, 1 << 20))
+    if solid_only:
+        pattern = {at: rgb for at, rgb in pattern.items() if rgb == tuple(colour)}
     if not pattern:
         raise Failure("el texto %r no tiene un solo pixel: nada que afirmar" % text)
 
@@ -443,9 +452,26 @@ def find_text(image, box, text, colour, background, which="body"):
     return (None, best_at, best_matched, len(pattern))
 
 
-def expect_text(image, box, text, colour, background, label, which="body"):
+def expect_text(image, box, text, colour, background, label, which="body", solid_only=False):
     """Falla si la cadena no esta dibujada, y dice cuanto le faltaba si casi lo estaba."""
-    origin, best_at, matched, total = find_text(image, box, text, colour, background, which)
+    if tuple(colour) == tuple(background):
+        # Texto del color del fondo es indistinguible de no dibujar nada: todos sus
+        # pixels salen igual que el fondo, asi que "esta escrito" y "no esta escrito"
+        # dejan la misma pantalla. Afirmar eso seria un paso en falso con forma de
+        # comprobacion -- y hay una trampa concreta aqui, porque SXGUI_COLOR_FACE
+        # es tambien el fondo de la barra de tareas, de modo que buscar una etiqueta
+        # en FACE sobre FACE coincide en cualquier parte de la pantalla.
+        #
+        # Si el texto se dibuja con el color equivocado, esto tiene que decirse, no
+        #decir "no lo encontre".
+        raise Failure(
+            "%s: no se puede afirmar %r en %s sobre el mismo color %s: pintar texto del "
+            "color del fondo es lo mismo que no pintar nada. Si el codigo dibuja el "
+            "texto en ese color, esto es un fallo del codigo y no del harness." % (
+                label, text, colour, background,
+            )
+        )
+    origin, best_at, matched, total = find_text(image, box, text, colour, background, which, solid_only)
     if origin is not None:
         return (origin[0], origin[1])
     where = "(%d,%d)" % best_at if best_at else "ningun sitio"
@@ -788,6 +814,23 @@ def scenario_taskbar(s):
     # El bloc de notas se acaba de abrir y tiene el foco.
     expect_button(image, 0, False, "con dos ventanas")
     expect_button(image, 1, True, "con dos ventanas")
+
+    # La etiqueta del boton esta escrita con estas letras, en negro, sobre la cara
+    # del boton. 284 pixeles del glifo que tienen que coincidir uno a uno.
+    #
+    # NO se afirma el titulo de la ventana, aunque se ve en la misma captura, y
+    # conviene decir por que. El titulo va sobre un degradado de 24 bandas con un
+    # acento que se mezcla mas a la izquierda que a la derecha, y predecirlo desde
+    # aca significa copiar la aritmetica de windowd_render.c. Lo que queda es
+    # afirmar solo los pixeles del glifo con cobertura 255, que no dependen del
+    # fondo, y son 14 para "Notepad": se probaron y NO detectan ni un cambio de
+    # fuente. Once pixeles no son una afirmacion. Queda como trabajo pendiente, no
+    # como una cobertura que parece existir.
+    bx, by, bw, bh = button_rect(image, 1)
+    expect_text(
+        image, (bx, by, bx + bw, by + bh), "Notepad", TEXT, FACE,
+        "la etiqueta de la barra de tareas",
+    )
 
     # Click sobre el boton de Program Manager: lo activa.
     x, y, w, h = button_rect(image, 0)

@@ -90,7 +90,13 @@
   program that draws is touched. It is the only check that looks at what SxGUI
   puts on screen, and it is what caught a toolkit that stopped painting.
   `smoke` and `calc-smoke` only prove the loader works, not that the toolkit
-  draws.
+  draws. It asserts the glyphs of the editor's lines and a taskbar label, not
+  just that a pixel moved.
+- When checking that something visibly changed, confirm the rebuilt binary is the
+  one being tested. `./build.sh build` output matters: a build that fails leaves
+  the previous binary in the image and every scenario still passes. When a visual
+  check does not fail, extract the binary from `build/disk.img` and look at it
+  before believing the check.
 
 ## Current reference case
 

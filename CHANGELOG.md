@@ -79,11 +79,16 @@ Cut-off notes:
 
 ### Added
 
+- **A rebuilt program now reaches the bootable image.** The rootfs staging step
+  depended on an aggregate build target that produces no file, so it was considered
+  up to date while the programs were already rebuilt. A change to any program left
+  the image booting the previous binary, with every check still passing.
+
 - **The visual scenarios now assert the glyphs on screen, not just that something
-  moved.** A toolkit that painted every line of text in the background colour
-  passed: the scroll was checked with the scrollbar thumb, which moves regardless.
-  The expected pixels are rendered from the font tables inside the built graphics
-  library, so the check is about the characters rather than about ink.
+  moved.** A toolkit that painted text in the background colour passed: the scroll
+  was checked with the scrollbar thumb, which moves regardless. The expected pixels
+  are rendered from the font tables inside the built graphics library, so the check
+  is about the characters rather than about ink.
 
 - **The build now fails if a program carries its own copy of a library it loads.**
   Such a program links, runs and passes every test — the library is mapped and
