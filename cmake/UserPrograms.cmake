@@ -158,8 +158,7 @@ endfunction()
 savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/pietest.c)
 # El unico programa que linkea contra una libreria de verdad. Todo lo demas usa
 # el cargador a mano; este usa sqrt como funcion normal y no busca su direccion.
-savanxp_program(NAME libtest TEST LINK_PROFILE PIE DEPENDS libmath
-    SOURCES subsystems/posix/userland/libtest.c)
+savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/libtest.c)
 # PIE, no STATIC: para que una libreria resuelva un simbolo CONTRA el
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
 # .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que
@@ -176,10 +175,18 @@ savanxp_library(NAME libmath SONAME libmath.so.0.4
 savanxp_library(NAME libsxgfx SONAME libsxgfx.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/gfx.c)
 
-# SxGUI encima de SxGFX. Antes pedia gfx_* al EJECUTABLE, lo que obligaba a que
-# cada programa fuera PIE solo para poder exportar; ahora lo pide a la libreria
-# de abajo y esa atadura se afloja.
-savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4 DEPENDS libsxgfx
+# El pintor de 2D y el cromado, encima de SxGFX. gfx2d.c necesita los glifos de
+# libsxgfx y sxchrome.c necesita el pintor; no hay ninguna otra dependencia, asi
+# que la cadena queda lineal hacia abajo.
+savanxp_library(NAME libgfx2d SONAME libgfx2d.so.0.4 DEPENDS libsxgfx
+    SOURCES
+        subsystems/posix/sdk/v1/runtime/gfx2d.c
+        subsystems/posix/sdk/v1/runtime/sxchrome.c)
+
+# SxGUI encima de los dos. Antes pedia gfx_* y sx_* al EJECUTABLE, lo que obligaba
+# a que cada programa fuera PIE solo para poder exportar. Con las dos librerias de
+# abajo ya no le pide NADA a la aplicacion: ni un simbolo.
+savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4 DEPENDS libgfx2d libsxgfx
     SOURCES
         subsystems/posix/sdk/v1/runtime/sxgui.c
         subsystems/posix/sdk/v1/runtime/sxgui_app.c)
@@ -196,7 +203,7 @@ savanxp_program(NAME sh SOURCES
     subsystems/posix/userland/shell_core.c)
 # El shell del escritorio. windowd lo lanza como su cliente principal, asi que
 # el escenario desktop lo levanta de verdad en cada corrida.
-savanxp_program(NAME shellapp LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME shellapp DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/shellapp.c
     subsystems/posix/userland/shell_core.c
     subsystems/posix/userland/shellapp_stats.c)
@@ -232,7 +239,7 @@ savanxp_program(NAME compositord SOURCES subsystems/posix/userland/compositord.c
 # no abren superficie, asi que el riesgo es bajo; igual es el programa del que
 # depende todo lo que se ve en pantalla. init lo reinicia si sale y cae a /bin/sh
 # tras tres fallos rapidos, y shoot.sh --scenario desktop lo levanta de verdad.
-savanxp_program(NAME windowd LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME windowd DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/windowd.c
     subsystems/posix/userland/windowd_compositor_client.c
     subsystems/posix/userland/desktop_icons.c
@@ -241,43 +248,40 @@ savanxp_program(NAME windowd LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
     subsystems/posix/userland/windowd_layout.c
     subsystems/posix/userland/windowd_render.c
     subsystems/posix/userland/windowd_stats.c)
-savanxp_program(NAME shellui LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME shellui DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/shellui.c
     subsystems/posix/userland/desktop_wallpaper.c)
-savanxp_program(NAME taskbar LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME taskbar DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/taskbar.c
     subsystems/posix/userland/desktop_icons.c)
-savanxp_program(NAME kbdlayoutpopup LINK_PROFILE PIE DEPENDS libsxgfx
-    SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
-savanxp_program(NAME progman LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME kbdlayoutpopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
+savanxp_program(NAME progman DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/desktop_wallpaper.c)
-savanxp_program(NAME appwiz LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME appwiz DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/appwiz.c
     subsystems/posix/userland/appwiz_catalog.c)
-savanxp_program(NAME aboutapp LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME aboutapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/aboutapp.c)
-savanxp_program(NAME taskmgr LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME taskmgr DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/taskmgr.c)
-savanxp_program(NAME filesapp LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_assoc.c
-    subsystems/posix/userland/mime_icon.c)
-# El editor es la app con mejor verificacion automatizada del arbol: el escenario
+    subsystems/posix/userland/mime_icon.c)# El editor es la app con mejor verificacion automatizada del arbol: el escenario
 # shoot_session notepadwheel teclea 40 lineas, captura, scrollea con la rueda y
 # COMPARA PIXELES. Si SxGUI viniera de una libreria y dibujara distinto, el
 # scroll no moveria el area y la comparacion fallaria.
 #
 # Ese escenario es lo que faltaba para poder decir que SxGUI funciona bajo una
 # libreria: ningun self-test llega al camino de dibujo.
-savanxp_program(NAME notepad LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME notepad DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/notepad.c)
-savanxp_program(NAME mines LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mines.c
-    subsystems/posix/userland/mines_board.c)
-# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
+    subsystems/posix/userland/mines_board.c)# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
 # pruebas en el perfil PIE: depende de SxGUI y se dibuja, asi que si el perfil
 # serviriera para algo mas que para mover sqrt, este es el programa que lo
 # demuestra. La migracion es una linea porque las unidades del runtime ya no se
@@ -289,25 +293,24 @@ savanxp_program(NAME mines LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
 # que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
 # lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
-savanxp_program(NAME calc LINK_PROFILE PIE
-    DEPENDS libmath libsxgui libsxgfx SOURCES
-    subsystems/posix/userland/calc.c)
-# Galeria de controles: el usuario mas amplio de SxGUI, con 20 funciones, y la
+savanxp_program(NAME calc DEPENDS libgfx2d libmath libsxgui libsxgfx LINK_PROFILE PIE
+    SOURCES
+    subsystems/posix/userland/calc.c)# Galeria de controles: el usuario mas amplio de SxGUI, con 20 funciones, y la
 # app que mas conviene mirar a ojo porque esta hecha para eso. Es la que prueba
 # a mano si SxGUI dibuja bien cuando viene de una libreria, que ninguna
 # comprobacion automatica cubre hoy.
-savanxp_program(NAME widgetsdemo TEST LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME widgetsdemo DEPENDS libgfx2d libsxgui libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/widgetsdemo.c)
-savanxp_program(NAME gfxdemo TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME gfxdemo DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/gfxdemo.c)
-savanxp_program(NAME gears TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME gears DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/gears.c)
-savanxp_program(NAME gputest TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME gputest DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/gputest.c)
-savanxp_program(NAME keytest TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME keytest DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/keytest.c)
 savanxp_program(NAME kbdtest TEST SOURCES subsystems/posix/userland/kbdtest.c)
-savanxp_program(NAME mousetest TEST LINK_PROFILE PIE DEPENDS libsxgfx SOURCES
+savanxp_program(NAME mousetest DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mousetest.c)
 savanxp_program(NAME sysinfo SOURCES subsystems/posix/userland/sysinfo.c)
 savanxp_program(NAME forktest TEST SOURCES subsystems/posix/userland/forktest.c)
@@ -321,7 +324,7 @@ savanxp_program(NAME sectiontest TEST SOURCES subsystems/posix/userland/sectiont
 savanxp_program(NAME handletest TEST SOURCES subsystems/posix/userland/handletest.c)
 savanxp_program(NAME semaphoretest TEST SOURCES subsystems/posix/userland/semaphoretest.c)
 savanxp_program(NAME cliptest TEST SOURCES subsystems/posix/userland/cliptest.c)
-savanxp_program(NAME seltest TEST LINK_PROFILE PIE DEPENDS libsxgui libsxgfx SOURCES
+savanxp_program(NAME seltest DEPENDS libgfx2d libsxgui libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/seltest.c)
 savanxp_program(NAME mmaptest TEST SOURCES subsystems/posix/userland/mmaptest.c)
 savanxp_program(NAME libctest TEST SOURCES subsystems/posix/userland/libctest.c)

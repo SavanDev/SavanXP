@@ -102,6 +102,9 @@ typedef struct {
     int loaded;
     int file_section;
     int file_fd;
+    /* Los dos de arriba solo viven durante la carga. Este dice si siguen
+     * abiertos, para que el cierre no los repita. */
+    int handles_open;
     /* Desplazamiento de carga. Un ET_DYN tiene p_vaddr cerca de cero, y cero no
      * es una direccion de usuario valida: el kernel no mapea por debajo de
      * kUserBase. Asi que el primer segmento -- el que tiene p_vaddr 0 -- se pide
@@ -323,13 +326,28 @@ static Library* begin_load(void) {
     g_lib->dynstr = 0;
     g_lib->needed_done = 0;
     g_lib->soname[0] = '\0';
+    /* Los handles del archivo tambien se ponen a cero. Este slot pudo ser el de
+     * una libreria cargada antes --cargarla ocupa el hueco y lo deja--, asi que
+     * un savanxp_open fallido dejaba los handles de la anterior puestos aca, y un
+     * cierre de los propios habria cerrado los de aquella. */
+    g_lib->file_section = 0;
+    g_lib->file_fd = 0;
+    g_lib->handles_open = 0;
     return g_lib;
 }
+
+/* Se declara antes de end_load, que la usa: end_load suelta el puntero a la
+ * libreria en curso, y con el puntero no hay forma de cerrarle nada. */
+static void close_file_handles(void);
 
 static void end_load(int ok) {
     if (ok) {
         g_lib->loaded = 1;
         g_lib_count++;
+    } else {
+        /* Un fallo a mitad de la carga dejo handles abiertos. Cerrarlos aca y no
+         * en el llamador es lo que los cierra en todos los caminos de error. */
+        close_file_handles();
     }
     g_lib = 0;
 }
@@ -527,6 +545,7 @@ int ldso_load(const char* path) {
     }
     g_lib->file_section = (int)section;
     g_lib->file_fd = (int)fd;
+    g_lib->handles_open = 1;
     g_lib->bias = 0;
     g_lib->bias_ready = 0;
     /* El nombre se queda con el basename del path, para casar con DT_NEEDED. */
@@ -605,17 +624,49 @@ int ldso_load(const char* path) {
     publish();
     const int chain_failed = load_needed_chain(g_lib_count - 1);
     g_lib = self;
+    /* El cierre va ANTES de soltar el puntero: close_file_handles trabaja sobre
+     * g_lib, asi que ponerlo a cero primero lo dejaria sin hacer nada. */
     if (chain_failed != 0) {
+        close_file_handles();
         g_lib = 0;
         return -8;
     }
 
     if (!apply_relocs_in(slot)) {
+        close_file_handles();
         g_lib = 0;
         return -9;
     }
+    close_file_handles();
     g_lib = 0;
     return 0;
+}
+
+/* Cierra el descriptor y la seccion del archivo de la libreria en curso.
+ *
+ * Los dos handles solo hacen falta mientras se leen los program headers y se
+ * mapean los segmentos, que ya termino. Dejarlos abiertos costaba DOS
+ * descriptores por libreria para siempre, y se nota: windowd lanza sus clientes y
+ * les hereda la tabla, asi que cargar una tercera libreria --libgfx2d-- empujó la
+ * sesion de 20 a 21 descriptores y windowd-smoke fallo por eso. Con tres
+ * libreras eran seis descriptores quemados en cada proceso, sin usar.
+ *
+ * Antes el codigo decia, en el comentario del struct, que el descriptor "sigue
+ * abierto pero no se vuelve a leer el archivo": o sea, un handle guardado para no
+ * hacer nada. */
+static void close_file_handles(void) {
+    if (g_lib == 0 || !g_lib->handles_open) {
+        return;
+    }
+    if (g_lib->file_section != 0) {
+        (void)savanxp_close(g_lib->file_section);
+        g_lib->file_section = 0;
+    }
+    if (g_lib->file_fd != 0) {
+        (void)savanxp_close(g_lib->file_fd);
+        g_lib->file_fd = 0;
+    }
+    g_lib->handles_open = 0;
 }
 
 /* ¿Ya esta cargada alguna libreria con este basename? */

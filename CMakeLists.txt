@@ -352,6 +352,7 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
 set(SAVANXP_LIBRARY_REPLACES_libmath math.c)
 set(SAVANXP_LIBRARY_REPLACES_libsxgui sxgui.c sxgui_app.c)
 set(SAVANXP_LIBRARY_REPLACES_libsxgfx gfx.c)
+set(SAVANXP_LIBRARY_REPLACES_libgfx2d gfx2d.c sxchrome.c)
 
 function(savanxp_runtime_variant)
     set(options PIC)

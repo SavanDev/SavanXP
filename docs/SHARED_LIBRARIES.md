@@ -472,6 +472,41 @@ directions: deleting the `SAVANXP_LIBRARY_REPLACES_libsxgfx` line, which is the
 one-line omission that causes this, produced 21 violations and exit 1 while
 `smoke`, `sxgui-smoke` and `taskbar-smoke` all passed.
 
+## Nothing resolves against the program any more
+
+The layering ended up strictly downward:
+
+| library | holds | needs from below |
+| --- | --- | --- |
+| `libsxgfx.so.0.4` | `gfx_impl.inc` and three font tables | libc, syscalls |
+| `libgfx2d.so.0.4` | `gfx2d.c`, `sxchrome.c` | `libsxgfx`, libc |
+| `libsxgui.so.0.4` | `sxgui.c`, `sxgui_app.c` | `libgfx2d`, `libsxgfx`, libc |
+| `libmath.so.0.4` | `math.c` | nothing at all |
+
+Measured, not asserted: `libmath` asks the executable for nothing, `libgfx2d` asks
+only for `malloc`/`free`/`realloc`/`memcmp`/`memset`, `libsxgui` only for the C
+runtime. **No library asks the program for a single symbol.** The consequence worth
+stating is that a program no longer has to be PIE in order for a toolkit to find its
+drawing code — that leash existed only because `libsxgui` used to resolve `gfx_*` and
+`sx_*` against the executable, and `libgfx2d` is what cut the second half of it.
+
+`--export-dynamic` stays, and it should: the libraries still need `memcpy` and the
+syscalls, which live in the runtime inside the executable. What would remove it is
+making the C runtime itself a library, and that is a much larger change than the one
+that got it here.
+
+The leak found on the way is worth keeping. The loader kept `file_fd` **and** a
+whole-file `file_section` open after the segments were mapped; the struct comment
+even said the descriptor "stays open but the file is not read again" — a handle
+saved in order to do nothing. That is two descriptors per library, forever. It went
+unnoticed for the whole migration because every program loaded at most two
+libraries and the descriptor budget had slack. `windowd` launches its clients and
+they inherit the table, so adding a third library took a fresh app from 20
+descriptors to 21 and `windowd-smoke` failed on its capacity check. Closing them is
+also why `begin_load` now zeroes the two fields: the slot belongs to a library loaded
+earlier, so a failed `open` would otherwise leave a stale handle that the error path
+closes — someone else's descriptor.
+
 ## The runtime variant comes from DEPENDS
 
 Excluding a runtime unit needs one runtime target per subset, and with `libmath`,

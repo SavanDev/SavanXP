@@ -79,6 +79,16 @@ Cut-off notes:
 
 ### Added
 
+- **`libgfx2d.so.0.4`, the 2D painter and window chrome, as a shared library.**
+  No library asks the program for a single symbol now — every reference any of them
+  makes is to the C runtime or a system call. A program no longer has to be PIE so
+  that a toolkit can find its drawing code.
+
+- **The library loader no longer leaks a descriptor per library.** It kept the file
+  descriptor and a whole-file section open after the segments were mapped, two per
+  library, forever. A session with the task bar and the keyboard popup ran out of
+  descriptor headroom once a third library was added.
+
 - **A rebuilt program now reaches the bootable image.** The rootfs staging step
   depended on an aggregate build target that produces no file, so it was considered
   up to date while the programs were already rebuilt. A change to any program left
