@@ -84,6 +84,13 @@ Cut-off notes:
   makes is to the C runtime or a system call. A program no longer has to be PIE so
   that a toolkit can find its drawing code.
 
+- **Up to 32 shared libraries per process, instead of 8.** The longest chain the
+  tree can build is seven — a program, its two interface libraries and FFmpeg's
+  codec, utility, scale and resample libraries — so eight was one slot from a wall
+  that FFmpeg integration would have discovered instead of us. Raising it alone would
+  have cost 134 KiB of resident memory in every process, including programs that load
+  no library at all, so the per-library slot was halved first.
+
 - **The library loader no longer leaks a descriptor per library.** It kept the file
   descriptor and a whole-file section open after the segments were mapped, two per
   library, forever. A session with the task bar and the keyboard popup ran out of

@@ -589,6 +589,31 @@ which is what a real check does. And the build was being run with its output pip
 to `/dev/null`; one cycle was lost to an edit that did not compile, leaving a stale
 binary that looked like a passing test.
 
+## The slot was the expensive part, not the count
+
+`kMaxLibraries` went from 8 to 32, but that number is the cheap half of the change.
+
+`Library` holds the program headers of one library in `headers[64]` and the placed
+address of each segment in `placed[64]` — 4096 of its ~4300 bytes. Measured over
+everything this tree builds, the highest `e_phnum` is **15**. At
+`kMaxProgramHeaders = 24` the slot is ~1812 bytes, so:
+
+| | per slot | 32 slots resident per process |
+| --- | --- | --- |
+| before | 4372 B | 134 KiB |
+| after | 1812 B | **56 KiB** |
+
+That number is real rather than nominal. The kernel maps every page of every
+`PT_LOAD` eagerly, allocating and zeroing a physical page for each, and `p_memsz`
+covers the `.bss` tail — so an untouched static array is resident memory that
+`resident_user_bytes` walks and counts. An `ls` that maps nothing would have paid
+134 KiB for a ceiling it never approaches.
+
+Lowering the array also turned a silent overflow into a refusal. `e_phnum` is checked
+before the headers are copied, in both `read_header` and `adopt_executable`, so an
+image with more than 24 program headers is now rejected with a reason instead of
+running off the end of `headers[]`.
+
 ## What blocks the rest, in order
 
 1. **The window caption.** The only remaining text with no glyph assertion, blocked
@@ -602,7 +627,8 @@ binary that looked like a passing test.
 
 3. **`dlopen`, and unloading.** The library array is fixed at load time and there
    is no reference counting, so nothing can be removed once mapped. `kMaxLibraries`
-   is 8.
+   is 32, which the next item is what it was sized for; exceeding it is an explicit
+   failure in `load_one` rather than an overflow.
 
 4. **Dead code inside the binaries.** A program that maps `libsxgfx` but not
    `libsxgui` still carries a full copy of the toolkit, unused, because the PIE

@@ -92,6 +92,20 @@ typedef struct {
     Elf64_Sword r_addend;
 } Elf64_Rela;
 
+/* Cuantos program headers se aceptan por imagen, y por lo tanto cuantos caben en el
+ * struct de abajo. Es el techo del hueco: cada libreria guarda sus headers en un
+ * array de este tamano, asi que subir kMaxLibraries sin bajar esto multiplica la
+ * memoria de todos los procesos por nada.
+ *
+ * Medido sobre todo lo que produce este arbol, el maximo e_phnum es 15. Veinticuatro
+ * deja margen para un segmento mas sin convertir un rechazo raro en algo normal. Y el
+ * limite se comprueba ANTES de copiar, asi que una imagen con mas headers se rechaza
+ * con un motivo en vez de desbordar el array en silencio.
+ *
+ * Bajarlo de 64 es lo que hace barato el numero de huecos de mas abajo: el hueco pasa
+ * de 4300 B a unos 1750, y treinta y dos huecos de 137 KB se vuelven 56 KB. */
+#define kMaxProgramHeaders 24
+
 /* El estado de UNA libreria cargada.
  *
  * Antes habia una sola, y por eso esto era un unico objeto global con un
@@ -127,17 +141,27 @@ typedef struct {
     char soname[96];
     /* Los program headers se leen una vez y se guardan aca: despues el
      * descriptor sigue abierto pero no se vuelve a leer el archivo. */
-    Elf64_Phdr headers[64];
+    Elf64_Phdr headers[kMaxProgramHeaders];
     /* Direccion final de cada segmento, en el mismo orden que los program
      * headers. Los indices son los de los headers, asi que un -1 es "este
      * segmento no se pudo mapear". */
-    void* placed[64];
+    void* placed[kMaxProgramHeaders];
 } Library;
 
-/* Cuantas librerias conviven. Ocho alcanzan para un interprete con su cadena de
- * dependencias; excederlo es un fallo explicito en load_one, no un
- * desbordamiento. */
-#define kMaxLibraries 8
+/* Cuantas librerias conviven. El ejecutable ocupa el hueco 0.
+ *
+ * La cadena mas larga realista del arbol es la de mediaplayer: el ejecutable, sus
+ * dos librerias de interfaz y, cuando FFmpeg deje de ser estatico, libavcodec +
+ * libavutil + las de escala y remuestreo. Eso son siete, y con ocho estabamos a un
+ * hueco del muro -- un muro queributed descubriria la integracion de FFmpeg y no
+ * nosotros. Treinta y dos deja sitio para un segundo codec; mas alla ya no hay nada
+ * que justifique el numero.
+ *
+ * Subirlo solo es barato porque el hueco se abarata: a 4300 B por hueco, treinta y
+ * dos costarian 137 KB residentES en cada proceso, incluido un ls que no carga
+ * ninguna. Con headers[] de 24 son ~1750 B y el total baja a 56 KB. Los dos cambios
+ * van juntos por eso. */
+#define kMaxLibraries 32
 
 static Library g_libs[kMaxLibraries];
 static int g_lib_count;
@@ -186,7 +210,8 @@ static int read_header(const unsigned char* bytes, Elf64_Ehdr* out) {
     if (out->e_type != ET_DYN || out->e_machine != EM_X86_64) {
         return 0;
     }
-    if (out->e_phentsize != sizeof(Elf64_Phdr) || out->e_phnum == 0 || out->e_phnum > 64) {
+    if (out->e_phentsize != sizeof(Elf64_Phdr) || out->e_phnum == 0 ||
+        out->e_phnum > kMaxProgramHeaders) {
         return 0;
     }
     return 1;
@@ -242,7 +267,7 @@ static int adopt_executable(void) {
      * para traducir direcciones. */
     if ((header.e_type != ET_DYN && header.e_type != ET_EXEC) ||
         header.e_machine != EM_X86_64 || header.e_phentsize != sizeof(Elf64_Phdr) ||
-        header.e_phnum == 0 || header.e_phnum > 64) {
+        header.e_phnum == 0 || header.e_phnum > kMaxProgramHeaders) {
         return 0;
     }
 
@@ -568,9 +593,10 @@ int ldso_load(const char* path) {
      * 64 bytes de Elf64_Ehdr mas 56 por program header, y mapear 40 KiB para
      * leer 3.6 KiB deja una vista viva justo en el rango donde despues se
      * colocan los segmentos. */
-    unsigned char probe[sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * 64)];
+    unsigned char probe[sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * kMaxProgramHeaders)];
     unsigned long filled = 0;
-    const unsigned long want_bytes = sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * 64);
+    const unsigned long want_bytes =
+        sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * kMaxProgramHeaders);
     while (filled < want_bytes) {
         const long got = savanxp_read((int)fd, probe + filled, want_bytes - filled);
         if (got <= 0) {
