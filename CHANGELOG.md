@@ -79,6 +79,9 @@ Cut-off notes:
 
 ### Added
 
+- **`sxgui-smoke`, which drives the visual scenario as a smoke test.** The SxGUI
+  gate used to run only if someone remembered to ask for it.
+
 - **`libsxgui.so.0.4`, and ten programs now draw through it.** Every user of the
   toolkit — the calculator, the text editor, the control gallery, the file
   manager, the application wizard, the system properties window, Minesweeper, the

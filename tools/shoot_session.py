@@ -1045,3 +1045,26 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def run_scenario(name, socket_path, out_dir, boot_wait=45.0, abs_pointer=False):
+    """Ejecuta un escenario visual contra una instancia YA encendida.
+
+    Es el punto de entrada que usa `build.sh smoke` para los escenarios que
+    necesitan mirar la pantalla. `main()` hace lo mismo pero ademas levanta
+    QEMU, espera el handoff en el log y resuelve las rutas desde argv; aca la
+    instancia ya esta corriendo y el que espera el arranque es el runner.
+
+    Devuelve la lista de capturas que el escenario produjo, para que el runner
+    pueda reportar cuantas hubo igual que hace con taskbar.
+    """
+    if name not in SCENARIOS:
+        raise Failure("escenario desconocido: %s" % name)
+    os.makedirs(out_dir, exist_ok=True)
+    qmp = Qmp(Path(socket_path), abs_pointer=abs_pointer)
+    # El handoff es el arranque de init; despues la sesion tarda en estar pintada.
+    if boot_wait:
+        time.sleep(boot_wait)
+    session = Session(qmp, out_dir)
+    SCENARIOS[name](session)
+    return sorted(str(p) for p in Path(out_dir).glob("*.png"))

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from qmp_client import QmpClient, QmpError, send_kbd_smoke_actions
 from sxfs_sync import copy_preserving_holes
+from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
 from run_qemu import build_qemu_args, find_qemu, prepare_image
 
@@ -131,6 +132,14 @@ def main() -> int:
     parser.add_argument("--ready-token", default="")
     parser.add_argument("--qmp-driver", default="")
     parser.add_argument("--completion", choices=("serial", "host"), default="serial")
+    # El catalogo devuelve "" para los escenarios que no eligen una: se acepta
+    # como vacio y se resuelve abajo, en vez de hacer que cada escenario legado
+    # tenga que nombrar laaccion que ya tenia.
+    parser.add_argument("--host-action", choices=("", "taskbar", "visual"), default="taskbar",
+                        help="que corre el host al completion=host: las aserciones propias de "
+                             "taskbar, o un escenario visual de tools/shoot_session.py")
+    parser.add_argument("--visual-scenario", default="",
+                        help="escenario de shoot_session.py a correr con --host-action visual")
     parser.add_argument("--ready-wait", type=float, default=0.0)
     parser.add_argument("--audio-device", choices=("auto", "ac97", "virtio"), default="auto")
     parser.add_argument("--wav-path", type=Path)
@@ -164,6 +173,8 @@ def main() -> int:
         parser.error(f"unsupported QMP driver: {args.qmp_driver}")
     if args.completion == "host" and args.qmp_driver != "taskbar":
         parser.error("host completion requires the taskbar QMP driver")
+    if args.host_action == "visual" and not args.visual_scenario:
+        parser.error("--host-action visual requires --visual-scenario")
 
     qemu = find_qemu()
     if not qemu:
@@ -263,15 +274,25 @@ def main() -> int:
         reason = "QEMU exited before the success token"
 
         def run_host_completion() -> None:
+            shots_dir = log_dir / f"{run_tag}-screenshots"
             try:
-                paths = run_taskbar_actions(
-                    qmp_path,
-                    log_dir / f"{run_tag}-screenshots",
-                    args.ready_wait,
-                )
-                host_result.append((0, f"host taskbar assertions passed ({len(paths)} screenshots)"))
+                if args.host_action == "visual":
+                    # El escenario visual se encarga de sus propias aserciones de
+                    # pixeles: si scrollea y el area no se mueve, levanta Failure
+                    # y esto es un fallo del smoke, no una excepcion opaca.
+                    paths = run_shoot_scenario(
+                        args.visual_scenario,
+                        qmp_path,
+                        shots_dir,
+                        args.ready_wait,
+                    )
+                    host_result.append((0, f"visual scenario {args.visual_scenario} passed "
+                                           f"({len(paths)} screenshots)"))
+                else:
+                    paths = run_taskbar_actions(qmp_path, shots_dir, args.ready_wait)
+                    host_result.append((0, f"host taskbar assertions passed ({len(paths)} screenshots)"))
             except Exception as exc:  # host driver errors are smoke failures
-                host_result.append((1, f"host taskbar driver failed: {exc}"))
+                host_result.append((1, f"host driver failed: {exc}"))
             finally:
                 host_done.set()
 
@@ -318,7 +339,7 @@ def main() -> int:
                                 status, host_reason = host_result[0]
                                 reason = host_reason
                                 if status == 0:
-                                    print("TASKBAR SMOKE PASS", flush=True)
+                                    print(args.success_token, flush=True)
                                     if settle_until is None:
                                         settle_until = time.monotonic() + 2.0
                         elif status == 0 or qmp_error:
@@ -335,7 +356,7 @@ def main() -> int:
                     status, host_reason = host_result[0]
                     reason = host_reason
                     if status == 0 and settle_until is None:
-                        print("TASKBAR SMOKE PASS", flush=True)
+                        print(args.success_token, flush=True)
                         settle_until = time.monotonic() + 2.0
 
                 now = time.monotonic()

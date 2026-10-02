@@ -164,6 +164,8 @@ SMOKE_COMPLETION="serial"
 SMOKE_READY_WAIT=0
 SMOKE_HOST_SERVER=""
 SMOKE_HOST_TEST=""
+SMOKE_HOST_ACTION="taskbar"
+SMOKE_VISUAL_SCENARIO=""
 if [[ "$COMMAND" == smoke ]]; then
     [[ -n "$SMOKE_SCENARIO" ]] || SMOKE_SCENARIO=smoke
     if [[ -n "$SMOKE_COMMAND_OVERRIDE" ]]; then
@@ -188,6 +190,8 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_HOST_SERVER=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_server)
         SMOKE_HOST_TEST=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_test)
         SMOKE_UNSUPPORTED=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field unsupported)
+        SMOKE_HOST_ACTION=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_action)
+        SMOKE_VISUAL_SCENARIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field visual_scenario)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -415,6 +419,8 @@ case "$COMMAND" in
             --ready-token "$SMOKE_READY"
             --qmp-driver "$SMOKE_QMP_DRIVER"
             --completion "$SMOKE_COMPLETION"
+            --host-action "$SMOKE_HOST_ACTION"
+            --visual-scenario "$SMOKE_VISUAL_SCENARIO"
             --ready-wait "$SMOKE_READY_WAIT"
             --audio-device "$SMOKE_AUDIO_DEVICE"
             --image-root "$OUTPUT_ROOT/image"

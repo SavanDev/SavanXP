@@ -27,6 +27,8 @@ class Scenario:
     qmp_callback: str = ""
     port_command: str = ""
     unsupported: str = ""
+    host_action: str = ""
+    visual_scenario: str = ""
 
 
 def _qemu_scenario(
@@ -45,6 +47,8 @@ def _qemu_scenario(
     prepare: tuple[str, ...] = (),
     remove_paths: tuple[str, ...] = (),
     qmp_callback: str = "",
+    host_action: str = "",
+    visual_scenario: str = "",
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -62,6 +66,8 @@ def _qemu_scenario(
         prepare=prepare,
         remove_paths=remove_paths,
         qmp_callback=qmp_callback,
+        host_action=host_action,
+        visual_scenario=visual_scenario,
     )
 
 
@@ -226,6 +232,19 @@ SCENARIOS: dict[str, Scenario] = {
         completion="host",
         ready_wait=45.0,
     ),
+    "sxgui-smoke": _qemu_scenario(
+        "",
+        "SXGUI SMOKE PASS",
+        "SXGUI SMOKE FAIL",
+        "SxGUI drawing correctly from the shared library",
+        300.0,
+        "handoff: starting /bin/init",
+        "taskbar",
+        completion="host",
+        ready_wait=45.0,
+        host_action="visual",
+        visual_scenario="notepadwheel",
+    ),
     "tcp-smoke": _qemu_scenario(
         "tcptest {port}",
         "TCP SMOKE PASS",
@@ -357,6 +376,8 @@ def main() -> int:
             "qmp_callback",
             "port_command",
             "unsupported",
+            "host_action",
+            "visual_scenario",
         ),
         required=False,
     )

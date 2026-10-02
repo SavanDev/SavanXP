@@ -84,6 +84,14 @@
 - For a repeatable isolated check, run
   `./tools/verify_doom_persistence.sh` (or pass `--wad` for a real IWAD).
 
+## Minimum verification for the shared library work
+
+- `./build.sh smoke sxgui-smoke` whenever `libsxgui.so.0.4`, the loader, or a
+  program that draws is touched. It is the only check that looks at what SxGUI
+  puts on screen, and it is what caught a toolkit that stopped painting.
+  `smoke` and `calc-smoke` only prove the loader works, not that the toolkit
+  draws.
+
 ## Current reference case
 
 - `ports/doomgeneric` is the canonical Doom port and persistence regression.

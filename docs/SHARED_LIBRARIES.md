@@ -402,12 +402,41 @@ Six screenshots, four pixel comparisons, and `notepadwheel: OK`. Run once with
 byte-identical**. A renderer that behaved differently under a `.so` would move
 the scroll area, and the comparison would fail.
 
-So SxGUI under a shared library is verified at the pixel level, not just at the
-"it loaded" level. That is the gate for this work: `smoke` and `calc-smoke` say
-the loader is fine, `shoot.sh --scenario notepadwheel` says the toolkit draws.
+So SxGUI under a shared library is verified, and the screenshots being identical
+across the migration is what says the rendering did not change.
+
+What the scenario does **not** check is worth knowing too. Painting
+`sxgui_draw_control_text` in the background colour, so the typed lines are
+invisible, still passes `sxgui-smoke`: the editor panel is still white, and the
+scroll comparison is satisfied by the scrollbar thumb moving rather than by the
+text. So the gate says the toolkit loads, paints, and responds to scroll and
+clicks — it does not read the glyphs. That is fine for what this work needed
+(the migration changed nothing, and identical pixels show it) and it would not be
+fine for a change to how SxGUI draws.
 
 `widgetsdemo` is migrated as well — twenty `sxgui_*` references, the broadest
 user of SxGUI, and a gallery meant to be looked at by hand.
+
+## sxgui-smoke, so the gate cannot rot
+
+For three commits the only way to run that scenario was to remember
+`./tools/shoot.sh --scenario notepadwheel`. A gate nobody runs is not a gate, so
+it is a scenario now:
+
+```
+./build.sh smoke sxgui-smoke
+```
+
+`shoot_session.run_scenario()` is the reusable entry point — `shoot.sh`'s `main()`
+plus a QEMU already running. `run_smoke.py`'s `completion=host` path, which was
+hardcoded to `run_taskbar_actions` and to printing `TASKBAR SMOKE PASS`, now takes
+`--host-action taskbar|visual` and prints whatever success token the scenario
+declares. `taskbar-smoke` is unchanged apart from the token coming from the
+catalog instead of being spelled out.
+
+Checked that the gate can fail: with `sxgui_paint_content` returning immediately,
+`sxgui-smoke` fails with "no se encontro ningun panel blanco donde probar la
+rueda".
 
 ### The check that was not a check
 
@@ -434,12 +463,11 @@ the positive assertion would mean nothing.
    Every migration should run `./tools/shoot.sh --scenario notepadwheel`
    afterwards, and the scenario that matches the app being moved if one exists.
 
-2. **Wire the visual scenarios into `build.sh smoke`.** `notepadwheel` is the
-   gate for this work and right now it only runs if someone remembers. It needs
-   `windowd`, screenshots and several seconds, which is why `taskbar-smoke` is
-   its own scenario rather than part of `smoke`. Making the SxGUI gate
-   unskippable is worth a second host driver in `run_smoke.py`, reusing
-   `shoot_session` instead of the separate `taskbar_smoke` client.
+2. **Read the glyphs, not just the panel.** `sxgui-smoke` catches a toolkit that
+   stops painting and one that stops responding to scroll, but not one that
+   paints the wrong colour or the wrong glyph — the scrollbar thumb moves either
+   way. The scenarios in `shoot_session` can check what is on screen; turning
+   that into a text assertion is the missing piece.
 
 3. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
    name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
