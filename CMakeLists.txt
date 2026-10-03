@@ -178,6 +178,7 @@ set(SAVANXP_USER_LINK_OPTIONS_PIE
     "-Wl,--dynamic-linker,/disk/lib/ld.so.0.4"
     -Wl,--build-id=none
     -Wl,--export-dynamic
+    "-Wl,--gc-sections"
     -Wl,-e,_start
 )
 set(SAVANXP_USER_COMPILE_OPTIONS_PIE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})

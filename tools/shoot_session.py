@@ -832,6 +832,7 @@ def scenario_taskbar(s):
         "la etiqueta de la barra de tareas",
     )
 
+
     # Click sobre el boton de Program Manager: lo activa.
     x, y, w, h = button_rect(image, 0)
     s.qmp.move_to(x + w // 2, y + h // 2)

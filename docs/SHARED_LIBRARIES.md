@@ -751,13 +751,67 @@ object, which is where the rest of these libraries will come from.
 
 ### Phase 2 — size and coverage
 
-1. `--gc-sections` in the PIE profile, which removes the 3534 dead symbols. The
-   risk is dropping something a program reaches only indirectly, so verify with the
-   full smoke plus all 18 scenarios, and check the binaries shrank.
-2. The window caption is the only text with no glyph assertion. Either model
-   `windowd_caption_colour()` in the harness, or have `windowd` report what it
-   painted. The current solid-only mode gives 14 pixels and does not catch a wrong
-   font, so it is deliberately not shipped as a check.
+**`--gc-sections`: blocked, and the blocker is `--export-dynamic`.**
+
+Measured, not assumed. Added to the PIE profile, it drops **nothing**: 666 `gfx_`,
+926 `sx_*` and 2836 `sxgui` dead symbols before and after, and 12 KB across 82
+binaries.
+
+The reason is that the two options are mutually exclusive. `--export-dynamic` puts
+every global symbol in the executable's `.dynsym`, and an exported symbol is a root
+for lld's reachability analysis, so nothing is unreachable by definition. Removing
+it and keeping `--gc-sections` is what works:
+
+| | dead symbols | total executables |
+| --- | --- | --- |
+| today | 4428 | 65.5 MB |
+| `--gc-sections` alone | 4428 | 65.5 MB |
+| `--gc-sections`, no `--export-dynamic` | **361** | **59.9 MB** |
+
+So 5.5 MB is sitting behind the flag. And the flag cannot go: without it `ldtest`
+fails with `sqrt no se encontro en la libreria`, because the libraries resolve
+`memcpy`, `memset` and every syscall against the executable and the executable no
+longer advertises them.
+
+That is the same conclusion the reverted work reached, now with a number attached:
+the saving depends on the C runtime leaving the executable. Phase 2 as written was
+understood as "add a flag"; it is actually "finish the thing that was reverted".
+
+**The window caption: two attempts, both non-discriminating, so no check.**
+
+The caption is the only text with no glyph assertion, and it is also the only place
+`SX_FONT_UI_TITLE` is used — the title font has no coverage at all.
+
+It is hard because the caption is a 24-band gradient with an accent that mixes more
+at the left than at the right. Two ways around that were tried and measured:
+
+*Model the gradient.* That means copying `windowd_caption_colour()` and the band
+arithmetic out of `windowd_render.c` into the harness. Honest coupling, but the
+harness then breaks for an unrelated reason whenever the caption design changes.
+
+*Do not model it: require the background to be some colour present in the area.*
+This is the interesting one, and it fails for a measurable reason. The desktop
+wallpaper behind the caption is itself a smooth gradient, so the area contains
+thousands of colours. Counting first, to keep only colours that cover area:
+
+| minimum repetitions | candidate backgrounds |
+| --- | --- |
+| 1 | 3330 |
+| 64 | 1321 |
+| 1024 | 45 |
+
+At 1321 candidates the check accepted **both** fonts: the right one at the real
+position, and the wrong one at an unrelated offset. A glyph match stops being
+evidence once almost any pixel can be explained by some background. This is the same
+mistake as the 14-pixel version it replaced, one step further along: not "too few
+constraints" but "constraints that constrain nothing".
+
+Both attempts were reverted rather than shipped. What would make it possible is the
+caption's band geometry, which means either the compositor reporting what it painted,
+or the harness modelling the gradient on purpose and accepting the coupling.
+
+**What is left of Phase 2 is therefore empty of cheap work**, and both halves are
+recorded above with the measurements that closed them.
 
 ### Phase 3 — FFmpeg
 

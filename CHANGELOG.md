@@ -107,6 +107,10 @@ Cut-off notes:
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
 
+- **Dead code in the binaries is now measured against what would recover it:** 5.5 MB
+  across the tree, held back by `--export-dynamic`, which has to stay while the
+  libraries resolve the C runtime against the program.
+
 - **A relocation type the loader does not implement now says so,** instead of
   failing with a step number that leads nowhere. It cannot arise from this linker,
   which only emits the three supported types; it is there for a hand-linked object.
