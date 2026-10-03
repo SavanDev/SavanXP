@@ -36,9 +36,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SECTIONS.md`](SECTIONS.md) — section objects and views: the grant model,
   execution as a view permission, W^X, the view and section budgets, and where
   shared library images belong.
-- [`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md) — the shared-library work: what the
-  measurements said, the decisions taken (naming, versioning, cache keys), what is
-  built, and what blocks the rest.
+- [`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md) — the shared-library subsystem: what
+  is built and measured, the decisions and the bugs behind them, and the remaining
+  work as ordered phases with the dependencies between them.
 - [`NETWORKING.md`](NETWORKING.md) — TCP guarantees, retransmission, windows,
   and fault injection.
 - [`SXFS_CHECK.md`](SXFS_CHECK.md) — the `fscheck` consistency report: what

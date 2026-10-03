@@ -67,33 +67,109 @@ headers *are* the SDK's public surface and nobody verifies what may change. The
 
 ## What is built
 
-Verified by `./build.sh smoke smoke`, `--smp 4`, and the Doom persistence check.
+Everything in this section is measured against the current tree, not against the
+plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`.
+
+### The mechanism
 
 | | |
 | --- | --- |
-| Section views can be executable; W^X preserved | done |
-| Section view and section budgets raised, and proven | done |
+| File-backed sections shared across processes by inode | done |
+| Section views can be executable, W^X preserved | done |
 | `section_open`, `section_open_range`, `map_view_at` | done |
-| One file-backed section shared across processes by inode | done |
-| `libmath.so.0.4` built as PIC, staged in `/lib` | done |
-| `ldso`: place `PT_LOAD`s, relocate, resolve by name | done |
-| `PT_INTERP` delivered to `crt0` | done |
-| `ET_DYN` accepted by the kernel with a load bias | done |
-| First PIE executable with `.dynsym` (`pietest`) | done |
-| Two `PT_LOAD`s may share a page, union of permissions | done |
-| `ldso` holds an array of libraries, not one | done |
-| One load bias shared by every segment of a library | done |
-| Relocations resolve by name across the loaded set | done |
-| `DT_NEEDED` walked from `/lib`, each dependency loaded once | done |
-| The executable in the symbol scope, with its `.dynsym` | done |
-| `-fstack-protector-strong` back on for libraries | done |
-| `ldso` relocates the executable, `R_X86_64_RELATIVE` and all | done |
-| A program linking `libmath.so.0.4` and calling `sqrt` (`libtest`) | done |
-| A desktop program on the library (`calc`, `sqrt` from `/lib`) | done |
-| `libsxgui.so.0.4`, resolving `gfx_*` against the executable | done |
-| `ldso_symbol_is_shared()`: "did this come from a `.so`?" | done |
-| SxGUI drawing correctly from a library, pixel-compared | done |
-| `crt0` runs the loader before `main`, via a weak hook | done |
+| Section and section-view budgets raised, and proven | done |
+| Two `PT_LOAD` segments may share a page, union of permissions | done |
+| `ET_DYN` accepted by the kernel, with a load bias | done |
+| Kernel delivers the interpreter path in `rcx`, the image base in `r8`, a fresh canary in `rdx` | done |
+| `crt0` runs the loader before `main`, through a weak hook | done |
+| `PT_INTERP` declared by the PIE profile | done |
+| Loader places `PT_LOAD`s: text from the file, data as private copies | done |
+| One load bias per library, shared by every segment | done |
+| `R_X86_64_RELATIVE`, `R_X86_64_JUMP_SLOT`, `R_X86_64_GLOB_DAT` | done |
+| The executable is in the symbol scope, and is relocated too | done |
+| `DT_NEEDED` walked from `/disk/lib`, each dependency loaded once | done |
+| A two-library dependency chain, proven by `libchaintop` → `libchainbase` | done |
+| A diamond in the dependency graph | handled, **not tested** |
+| `ldso_lookup()`, `ldso_loaded()`, `ldso_symbol_is_shared()` | done |
+| 32 library slots, 24 program headers per image | done |
+
+### The libraries
+
+372 KB total, six files. The layering is strictly downward: nothing depends on
+anything above it.
+
+| library | size | `DT_NEEDED` |
+| --- | --- | --- |
+| `libmath.so.0.4` | 44 KB | — |
+| `libsxgfx.so.0.4` | 100 KB | — (syscalls only) |
+| `libgfx2d.so.0.4` | 92 KB | `libsxgfx` |
+| `libsxgui.so.0.4` | 136 KB | `libgfx2d`, `libsxgfx` |
+| `libchainbase.so.0.4`, `libchaintop.so.0.4` | 4 KB each | each other (test chain) |
+
+### The programs
+
+82 executables: 30 are `ET_DYN`, 27 declare a `DT_NEEDED`. By library:
+`libsxgfx` 20, `libgfx2d` 15, `libsxgui` 10, `libmath` 2.
+
+No library asks the application for a single symbol. What each still needs from the
+executable:
+
+| library | asks the executable for |
+| --- | --- |
+| `libmath` | nothing |
+| `libgfx2d` | `malloc` `free` `realloc` `memcmp` `memset` |
+| `libsxgui` | `clipboard_*` `memmove` `memset` `puts_fd` `savanxp_close` `sleep_ms` `uptime_ms` |
+| `libsxgfx` | syscalls and libc |
+
+All of those live in the runtime, not in the application. That is what removes the
+old constraint — a program no longer has to be PIE in order for a toolkit to find
+its drawing code.
+
+### The guarantees, and what enforces each
+
+| guarantee | enforced by |
+| --- | --- |
+| No executable carries a private copy of a library it maps | `tools/check_shared_libs.py`, at the end of every `./build.sh build`, exit 1 |
+| The loader never calls the C library | `ldso.c`'s undefined list: zero `libc` entries |
+| The stack canary is in the executable, seeded by `crt0`, with two distinct halves | `ldtest`, on every run |
+| The interpreter path reaches the loader | `interptest`, including that a library actually loaded |
+| The toolkit draws the right glyphs in the right colour | `expect_text()` in `shoot_session`, from the font tables inside the built `libsxgfx` |
+| Rebuilt programs reach the bootable image | the rootfs stamp depends on the binaries themselves |
+
+`check_shared_libs` derives each library's symbols from the built artifacts rather
+than a list of prefixes, so a new library is covered without editing it.
+
+Every one of these was verified by breaking the thing it watches. Deleting
+`SAVANXP_LIBRARY_REPLACES_libsxgfx` or `..._libgfx2d` gives 21 and 15 violations and
+exit 1; making `sxboot.c` a library kills a process at `cr2=0x467f6` before `main`;
+painting the editor's rows or a taskbar label in the background colour fails at 0
+of 228 and 0 of 284 glyph pixels.
+
+### What runs
+
+`smoke`, `sxgui-smoke`, `taskbar-smoke`, `windowd-smoke`, `calc-smoke`, `--smp 4`,
+`verify_doom_persistence.sh`, and 18 visual scenarios in `shoot_session`.
+
+### Limits that are part of the current design, not bugs
+
+- **Lazy PLT binding.** No `BIND_NOW`, so a relocation error surfaces at the first
+  call through that entry point rather than at load.
+- **`--export-dynamic` is still required.** The raw syscall wrappers stay in the
+  executable because the loader needs them to map the first library, so every
+  library resolves `savanxp_*` against the program.
+- **A non-PIE program cannot use a library.** An `ET_EXEC` has no `PT_DYNAMIC`, so
+  it has nothing to declare a `DT_NEEDED` with. This is a property of the link
+  model, not of the loader.
+- **`DT_SONAME` is read and ignored**; a `DT_NEEDED` is looked up verbatim under
+  `/disk/lib`.
+- **Global visibility only.** No `STV_HIDDEN`, `STV_PROTECTED`, or `.symver`.
+- **No `dlopen`, no unload, no reference counting.** The library array is fixed at
+  load time.
+- **3534 dead symbols inside 16 binaries** — 2359 `sxgui`, 731 `sx_*`, 444 `gfx` —
+  because the PIE profile does not pass `--gc-sections`. Not a sharing problem; the
+  check above passes.
+- **The two limits are hard and untested.** `kMaxLibraries` and
+  `kMaxProgramHeaders` are enforced with an explicit failure that no test exercises.
 
 ## crt0 runs the interpreter
 
@@ -474,7 +550,8 @@ one-line omission that causes this, produced 21 violations and exit 1 while
 
 ## Nothing resolves against the program any more
 
-The layering ended up strictly downward:
+The inventory above states this; this is why it happened. The layering ended up
+strictly downward:
 
 | library | holds | needs from below |
 | --- | --- | --- |
@@ -616,9 +693,11 @@ running off the end of `headers[]`.
 
 ## libc cannot move as one file, and the line that decides it
 
-Moving the C runtime into `libc.so.0.4` is the step that lets `--export-dynamic`
-go and lets an `ET_EXEC` use a library at all. It is not a matter of moving
-`libc.c`.
+Phase 2 of the plan above carries the steps. What follows is why the partition is
+where it is, because it is not a layer boundary and getting it wrong is expensive.
+
+Moving the C runtime into `libc.so.0.4` is a matter of moving most of `libc.c`, and
+the reason it is not simply that, is the bootstrap order.
 
 Three things in it cannot move, and all three for the same reason: **the loader
 needs them before a single library is mapped.**
@@ -670,36 +749,154 @@ there is a single place to check when it changes.
 
 ## What blocks the rest, in order
 
-1. **The window caption.** The only remaining text with no glyph assertion, blocked
-   on the gradient described above. The fix is to model
-   `windowd_caption_colour()` in the harness — or to have `windowd` tell the
-   harness what it painted.
+The order is not by importance, it is by dependency, and the first two phases come
+before anything that makes the system more capable. Both are small, neither depends
+on the libc work, and together they turn "it works on what was tested" into "it
+fails in a way you can act on". Everything after them is easier to get right with
+those in place, and much easier to debug when it goes wrong.
 
-2. **Export control and versioning.** `DT_SONAME` is read but ignored; a `DT_NEEDED`
-   name is looked up verbatim under `/lib`. Symbol visibility beyond global, and
-   versioned names, are not implemented.
+```
+  Phase 0  diagnosable failures      ─┐  no dependency on anything
+  Phase 1  fail at load, not later  ─┘
 
-3. **`dlopen`, and unloading.** The library array is fixed at load time and there
-   is no reference counting, so nothing can be removed once mapped. `kMaxLibraries`
-   is 32, which the next item is what it was sized for; exceeding it is an explicit
-   failure in `load_one` rather than an overflow.
+  Phase 2  libc.so.0.4            ── needs sxboot.c  ✓ done
+  Phase 3  a real ld.so           ── needs Phase 2, and gates the next one
+  Phase 4  --export-dynamic off   ── needs Phase 3
+  Phase 5  libposix.so.0.4        ── needs Phase 2
+  Phase 6  size and coverage      ── independent
 
-4. **Dead code inside the binaries.** A program that maps `libsxgfx` but not
-   `libsxgui` still carries a full copy of the toolkit, unused, because the PIE
-   profile does not pass `--gc-sections`. Not a sharing problem — the check above
-   passes — but it is a size problem, and the obvious fix carries its own risk of
-   dropping something a program reaches only indirectly.
+  Phase 7  FFmpeg shared          ── needs dlopen, which none of the above provide
+```
 
-5. **FFmpeg.** The reason any of this exists: the codec libraries are the first
-   thing genuinely too large to copy into every program, and they are loaded by
-   name rather than by `DT_NEEDED`.
+### Phase 0 — make failure diagnosable
+
+Right now a library that cannot be resolved reports a step number and nothing else,
+and nothing at all is tested for a library that is missing, one that exceeds the
+slot count, or one with an unresolvable symbol. `ldtest` covers a missing *symbol*
+through `ldso_lookup`, which is a different thing.
+
+1. Record the failing symbol's name when `apply_table_in` gives up, next to the
+   `g_lib_reloc_step` it already sets, and print it from the failure path.
+2. Test a program whose `DT_NEEDED` names a file that is not in `/disk/lib`.
+3. Test a chain that asks for more libraries than `kMaxLibraries` holds.
+4. Test a library carrying a symbol nothing defines.
+5. Test a diamond — A and B both need D. `needed_done` exists in the loader for
+   exactly that, and nothing exercises it: `libchaintop` → `libchainbase` is a
+   chain, so loading D twice is not something any run has ever done.
+
+**Done when** each of those failures exits non-zero and names the file or the
+symbol, and each is in the smoke catalog.
+
+### Phase 1 — fail at load instead of at the first call
+
+Add `BIND_NOW` to the PIE profile. Every relocation is applied during load, so a
+missing or wrong dependency is reported while the loader can still say what it was.
+
+**Done when** a library with an unresolvable symbol fails at startup with the name
+in the message, instead of crashing later at whichever call site happened to be
+first. This is what makes Phase 0's work reachable in practice.
+
+### Phase 2 — `libc.so.0.4`
+
+`libc.c` cannot move as one file. The partition is fixed by `ldso.c`'s undefined
+list, which is why the loader was made C-library-free first:
+
+- **stays in the executable** — `savanxp_open`, `savanxp_read`, `savanxp_close`,
+  `section_create`, `section_open`, `section_open_range`, `map_view_at`,
+  `unmap_view`, `result_is_error`: the loader uses these to map the first library,
+  and a library cannot be asked to open the first library.
+- **already out of the way** — `sxboot.c` holds the canary and the dynamic hook,
+  because `crt0` writes them before any library exists.
+- **moves** — `memcpy`, `memset`, `memmove`, `strlen`, `strcmp`, `strcpy`, `malloc`,
+  `printf`, the event and timer wrappers, the clipboard.
+
+1. Split `libc.c` along that line into the syscall layer and the rest.
+2. `SAVANXP_LIBRARY_REPLACES_libc`, and `LINK_PROFILE PIE` implies `DEPENDS libc`,
+   because a PIE program always carries the runtime.
+3. Check the runtime variants still name `sxboot.c` — it must never be excluded.
+
+**Done when** all 30 PIE programs still run, `check_shared_libs` passes, and the
+volume holds one libc instead of 82 copies.
+
+Note what this does **not** achieve: `--export-dynamic` stays, because the syscall
+layer stays. Phase 2 buys one copy on the volume, not a smaller export surface.
+
+### Phase 3 — a real `ld.so`
+
+The reason `--export-dynamic` cannot go is that the syscall wrappers are in the
+executable because the loader needs them, and the loader is *in* the executable.
+Breaking that circle needs the loader to be the first thing loaded, by something
+that does not need it.
+
+1. Build `ld.so` as a real object, with its own entry point.
+2. Have the kernel map and enter it before the main image's start, or make `crt0`'s
+   first action be an absolute jump into it with no PLT involved.
+3. Keep the loader's C-library-free property; it is what lets it run at all.
+
+**Done when** `ld.so` exists in `/disk/lib`, is what `PT_INTERP` names for real, and
+runs before the program's own image needs anything.
+
+### Phase 4 — `--export-dynamic` off
+
+Only now, with the syscall layer inside `ld.so` rather than in the program, nothing
+resolves against the executable.
+
+1. Drop the flag from `SAVANXP_USER_LINK_OPTIONS_PIE`.
+2. Build; every unresolved symbol must come from a library or the failure is real.
+3. Add the check to `check_shared_libs`: no executable should be exporting symbols
+   at all.
+
+**Done when** the flag is gone and `readelf -d` shows no program in the tree with
+`DT_SYMTAB` entries meant for someone else.
+
+### Phase 5 — `libposix.so.0.4`
+
+`posix.c`, 5046 lines. The canary is already in `sxboot.c`, so nothing in it has a
+bootstrap reason to stay. `sxe.c` and `audio.c` come along: 63 symbols, depending on
+`savanxp_*` only.
+
+**Done when** programs map it and the volume holds one copy. This is a size and
+single-source win, not a sharing win at runtime — each process maps one copy either
+way.
+
+The non-PIE question is separate and probably better answered by making everything
+PIE than by teaching `ET_EXEC` to have a `PT_DYNAMIC`. Decide it when the tree gets
+close; nothing else depends on the answer.
+
+### Phase 6 — size and coverage
+
+1. `--gc-sections` in the PIE profile, which removes the 3534 dead symbols. The
+   risk is dropping something a program reaches only indirectly, so verify with the
+   full smoke plus all 18 scenarios, and check the binaries shrank.
+2. The window caption is the only text with no glyph assertion. Either model
+   `windowd_caption_colour()` in the harness, or have `windowd` report what it
+   painted. The current solid-only mode gives 14 pixels and does not catch a wrong
+   font, so it is deliberately not shipped as a check.
+
+### Phase 7 — FFmpeg
+
+The reason any of this exists, and the phase nothing above delivers on its own.
+
+`ports/ffmpeg/configure.sh` still passes `--disable-shared --enable-static`. Codec
+libraries are loaded **by name**, so they need `dlopen` — a different feature from
+`DT_NEEDED`, and not implemented at all. The library array is fixed at load time and
+there is no reference counting, so nothing can be unloaded either.
+
+**Done when** a program maps `libavcodec` and its codec, and `dlopen` exists to load
+one by name. Treat this as the acceptance test for the whole subsystem: it is the
+first workload that genuinely needs it.
 
 ## Explicitly not worth doing yet
 
-- **`mprotect` and RELRO.** `BIND_NOW` does not need either; lazy PLT binding does.
+- **`mprotect` and RELRO.** `BIND_NOW` does not need either; lazy PLT binding does,
+  and Phase 1 removes the laziness. RELRO becomes worth revisiting only after
+  Phase 4, once nothing resolves against the executable and there is no longer a
+  GOT to protect from it.
 - **File demand paging.** A file-backed section is read whole. Sharing saves
   resident memory, not mapped memory, and `memory_bytes` counts mapped-present
   pages, so Task Manager shows the same per-process figure either way.
-- **`dlopen`.** Loading by name is a different feature from `DT_NEEDED`, and the
-  FFmpeg codec case needs `dlopen`, not this. `CHANGELOG.md` records music as
-  deferred for exactly this reason.
+- **`dlopen` as a general feature.** It is not on the critical path and Phase 7 is
+  the only thing that wants it, so it should be built for the codec case or not at
+  all — a general `dlopen` with reference counting and unloading is a much larger
+  feature than the one FFmpeg needs, and building the larger one first would put a
+  second subsystem between here and a working player.
