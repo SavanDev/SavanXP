@@ -679,10 +679,27 @@ running off the end of `headers[]`.
 ## What blocks the rest, in order
 
 Four phases. Each has steps and a "done when" line, because a phase without an
-acceptance condition is a wish. Phases 0 and 1 come before anything that makes the
-system more capable: neither depends on future work, both are small, and together
-they are the difference between a loader that works on what was tested and one that
-fails in a way you can act on.
+acceptance condition is a wish.
+
+| phase | state |
+| --- | --- |
+| 0 — diagnosable failures | done, five cases, each verified by breaking it |
+| 1 — fail at load | already satisfied; the loader binds eagerly and always did |
+| 2 — size and coverage | closed by measurement: 5.5 MB held back by `--export-dynamic`, and the caption assertion is not discriminating |
+| 3 — FFmpeg shared | the only open phase, and it does not need `dlopen` |
+
+So one phase is open. But the phase list is not the same as the list of things that
+are missing, and the two should not be confused. What no phase covers:
+
+- **`DT_SONAME` and visibility.** A `DT_NEEDED` is looked up verbatim by filename,
+  and only global visibility exists: no `STV_HIDDEN`, `STV_PROTECTED`, `.symver`.
+  Nothing in this tree needs them, and nothing that runs on it needs them either.
+- **Half the loader's failure paths are untested.** Eleven return codes; four have a
+  self-test. `-3` (a section that will not open), `-4`, `-5` (a file that is not a
+  usable ELF — the message exists, nothing produces it), `-6`, `-7`, `-8` (a
+  dependency's own chain failed) and `-10`/`-11` are all unexercised.
+- **A non-PIE program silently cannot use a library.** Not a crash: it links, runs,
+  and its libraries fail to resolve. Nothing detects it at build time.
 
 ### Phase 0 — make failure diagnosable
 
@@ -817,14 +834,27 @@ recorded above with the measurements that closed them.
 
 The reason any of this exists, and the phase nothing above delivers on its own.
 
-`ports/ffmpeg/configure.sh` still passes `--disable-shared --enable-static`. Codec
-libraries are loaded **by name**, so they need `dlopen` — a different feature from
-`DT_NEEDED`, and not implemented at all. The library array is fixed at load time and
-there is no reference counting, so nothing can be unloaded either.
+`ports/ffmpeg/configure.sh` still passes `--disable-shared --enable-static`. The work
+is to build it shared, declare it, and have `mediaplayer` use it.
 
-**Done when** a program maps `libavcodec` and its codec, and `dlopen` exists to load
-one by name. Treat this as the acceptance test for the whole subsystem: it is the
-first workload that genuinely needs it.
+**This phase does not need `dlopen`, and an earlier draft of this document said it
+did.** That is wrong for this port. `configure.sh` enables decoders with
+`--enable-decoder=...` and enables **no** external codec library — there is no
+`--enable-lib*` anywhere in it — so h264, hevc, vp9, opus and the rest are compiled
+into `libavcodec` itself. Nothing has to be found by name at runtime, and
+`DT_NEEDED` covers the whole thing.
+
+`dlopen` would only be needed if external codec libraries were enabled, which this
+port does not do. It stays on the list as a missing feature, not as a blocker here.
+
+What it will exercise, which nothing has so far: a chain of real depth with large
+tables. `mediaplayer` would map `libavformat`, `libavcodec`, `libavutil`, and
+`libswscale`/`libswresample` alongside the three interface libraries — eight slots
+of the 32, and a genuine `DT_NEEDED` graph rather than four hand-made libraries
+built to fit.
+
+**Done when** `mediaplayer` maps `libavcodec` and decodes. Treat it as the acceptance
+test for the subsystem: it is the first workload that was not designed to fit.
 
 ## Deliberately out of scope for the first implementation
 
@@ -871,8 +901,9 @@ it.
 - **File demand paging.** A file-backed section is read whole. Sharing saves
   resident memory, not mapped memory, and `memory_bytes` counts mapped-present
   pages, so Task Manager shows the same per-process figure either way.
-- **`dlopen` as a general feature.** It is not on the critical path and Phase 7 is
-  the only thing that wants it, so it should be built for the codec case or not at
-  all — a general `dlopen` with reference counting and unloading is a much larger
-  feature than the one FFmpeg needs, and building the larger one first would put a
-  second subsystem between here and a working player.
+- **`dlopen` as a general feature.** Not on the critical path: this FFmpeg port
+  compiles its decoders into `libavcodec` and enables no external codec library, so
+  nothing is looked up by name at runtime. If a port ever does enable one, `dlopen`
+  arrives with it — a general `dlopen` with reference counting and unloading is a
+  much larger feature, and building that first would put a second subsystem between
+  here and a working player.
