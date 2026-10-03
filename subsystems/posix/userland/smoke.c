@@ -104,6 +104,7 @@ int main(void) {
     const char* ldtest_argv[] = {"/disk/bin/ldtest", 0};
     const char* libtest_argv[] = {"/disk/bin/libtest", 0};
     const char* interptest_argv[] = {"/disk/bin/interptest", 0};
+    const char* brokentest_argv[] = {"/disk/bin/brokentest", 0};
     const char* pietest_argv[] = {"/disk/bin/pietest", 0};
     const char* handletest_argv[] = {"/disk/bin/handletest", 0};
     const char* semaphoretest_argv[] = {"/disk/bin/semaphoretest", 0};
@@ -145,6 +146,8 @@ int main(void) {
         !file_exists("/disk/bin/timertest") ||
         !file_exists("/disk/bin/sectiontest") ||
         !file_exists("/disk/bin/ldtest") ||
+        !file_exists("/disk/bin/brokentest") ||
+        !file_exists("/disk/lib/libbroken.so.0.4") ||
         !file_exists("/disk/bin/libtest") ||
         !file_exists("/disk/bin/interptest") ||
         !file_exists("/disk/bin/pietest") ||
@@ -180,6 +183,9 @@ int main(void) {
         !run_and_expect("/disk/bin/ldtest", ldtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/libtest", libtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/interptest", interptest_argv, 1, 0) ||
+        /* El diagnostico del enlazador. Que la carga falle ya lo hacia; que el
+         * mensaje diga el simbolo es lo que se comprueba. */
+        !run_and_expect("/disk/bin/brokentest", brokentest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/pietest", pietest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/handletest", handletest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/semaphoretest", semaphoretest_argv, 1, 0) ||

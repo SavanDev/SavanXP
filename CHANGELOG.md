@@ -107,6 +107,12 @@ Cut-off notes:
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
 
+- **The library loader says which symbol it could not resolve.** A load failure
+  reported a step number, which says where the failure was and nothing about what
+  it was. A dependency built with an incomplete `DT_NEEDED` now names the missing
+  symbol and the library that wanted it, and a self-test asserts the name rather
+  than just the failure.
+
 - **The runtime for external applications is derived from the one for the system's
   own programs**, instead of being listed again by hand. The two lists have to agree
   and nothing complained when they did not — the symptom is an undefined symbol much

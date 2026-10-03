@@ -59,4 +59,9 @@ extern int g_lib_fail_index;
 extern long g_lib_fail_errno;
 extern unsigned long g_lib_bias;
 extern int g_lib_reloc_step;
+/* El simbolo y la libreria del ultimo fallo de reubicacion, en palabras. Lo
+ * guarda el cargador para que una prueba pueda afirmarlo: el mensaje impreso es
+ * para una persona y no se puede leer desde un programa. */
+extern const char* g_lib_fail_symbol;
+extern const char* g_lib_fail_library;
 #endif

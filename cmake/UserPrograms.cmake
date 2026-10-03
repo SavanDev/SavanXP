@@ -110,7 +110,7 @@ endfunction()
 # loads if the loader puts the executable in the symbol scope. That is no longer
 # conditional, and it is the reason the loader can do it.
 function(savanxp_library)
-    set(options TEST)
+    set(options TEST ALLOW_UNDEFINED)
     set(oneValueArgs NAME SONAME)
     set(multiValueArgs SOURCES DEFINES DEPENDS)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -147,6 +147,14 @@ function(savanxp_library)
     target_link_options(${P_NAME} PRIVATE
         -nostdlib -fuse-ld=lld "-Wl,-soname,${P_SONAME}"
         "-Wl,-z,max-page-size=0x1000" -Wl,--build-id=none)
+    # ALLOW_UNDEFINED es lo contrario de lo que se quiere en general, y existe solo
+    # para la prueba del diagnostico: una libreria con un simbolo que nada define
+    # NO se puede construir de otra manera, porque lld la rechaza en el enlace con
+    # --no-allow-shlib-undefined. Es como se construye de verdad una libreria de
+    # terceros rota, que es el caso que el cargador tiene que saber diagnosticar.
+    if(P_ALLOW_UNDEFINED)
+        target_link_options(${P_NAME} PRIVATE "-Wl,--allow-shlib-undefined")
+    endif()
     set_target_properties(${P_NAME} PROPERTIES
         PREFIX ""
         OUTPUT_NAME "${P_SONAME}"
@@ -163,6 +171,12 @@ savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsy
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
 # .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que
 # resolver y la mitad de la cadena no se podria probar.
+# Carga a proposito la libreria con el simbolo irresoluble. NO la declara como
+# dependencia: la pide por ruta, que es como se encuentra el caso roto de verdad
+# --una libreria que el programa no conoce-- y ademas evita que lld examine sus
+# simbolos al enlazar al programa, que es justo lo que esta prueba no quiere.
+savanxp_program(NAME brokentest TEST LINK_PROFILE PIE
+    SOURCES subsystems/posix/userland/brokentest.c)
 savanxp_program(NAME ldtest TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/ldtest.c)
 savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
@@ -190,6 +204,8 @@ savanxp_library(NAME libsxgui SONAME libsxgui.so.0.4 DEPENDS libgfx2d libsxgfx
     SOURCES
         subsystems/posix/sdk/v1/runtime/sxgui.c
         subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+savanxp_library(NAME libbroken TEST ALLOW_UNDEFINED SONAME libbroken.so.0.4
+    SOURCES subsystems/posix/userland/brokenlib.c)
 savanxp_library(NAME libchainbase TEST SONAME libchainbase.so.0.4
     SOURCES subsystems/posix/userland/chaintest_lib.c)
 savanxp_library(NAME libchaintop TEST SONAME libchaintop.so.0.4

@@ -181,6 +181,11 @@ int g_lib_fail_index;
 long g_lib_fail_errno;
 unsigned long g_lib_bias;
 int g_lib_reloc_step;
+/* Que simbolo y de que libreria fallaron. El paso dice donde; esto dice que.
+ * El puntero apunta a la .dynstr de la libreria, que queda mapeada, asi que no
+ * hay copia que hacer ni que se pueda invalidar. */
+const char* g_lib_fail_symbol;
+const char* g_lib_fail_library;
 
 int ldso_loaded(void) {
     return g_lib_count;
@@ -393,6 +398,40 @@ static void publish(void) {
  * de llamar a nada, asi que no hay version perezosa todavia. Solo estan
  * soportados JUMP_SLOT y GLOB_DAT, que son los que emite lld para este
  * objetivo. */
+/* Los tres por que una reubicacion con simbolo puede fallar, en palabras.
+ *
+ * La funcion que las llama devuelve cero y quien lo ve solo tiene un numero de
+ * paso. El numero dice DONDE, no QUE: "paso 5" son todas las reubicaciones de la
+ * tabla, con toda la tabla de simbolos por delante. Un numero de paso ahorra
+ * trabajo; un nombre ahorra la tarde.
+ *
+ * Se imprimen desde aca y no desde arriba porque aca esta el nombre, y quien llama
+ * ya lo solto: el retorno es un int. */
+static void report_unresolved(const char* library, const char* symbol)
+{
+    /* Se guarda ademas de imprimirse. Imprimir es lo que ayuda a una persona; el
+     * global es lo que permite a una PRUEBA afirmar el nombre, porque una prueba
+     * no puede leer la salida estandar. */
+    g_lib_fail_library = library;
+    g_lib_fail_symbol = symbol;
+    eprintf("loader: %s necesita \"%s\" y no esta en ninguna imagen cargada\n",
+            library, symbol);
+}
+
+static void report_unplaced(const char* symbol, int owner)
+{
+    eprintf("loader: \"%s\" se encontro en %s, pero su direccion no cae en ningun "
+            "segmento mapeado\n",
+            symbol, g_libs[owner].soname);
+}
+
+static void report_unmapped(const char* library, const char* symbol, Elf64_Addr offset)
+{
+    eprintf("loader: %s escribe en 0x%lx para \"%s\", que no esta en ningun segmento "
+            "mapeado de la imagen\n",
+            library, (unsigned long)offset, symbol);
+}
+
 static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_size) {
     const unsigned char* table = (const unsigned char*)map_of(slot, elf_table);
     if (table == 0) {
@@ -436,14 +475,25 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         Elf64_Addr target = 0;
         const int owner = resolve(g_libs[slot].dynstr + symbol.st_name, &target);
         if (owner < 0) {
+            /* El nombre es lo unico que hay. Sin el, el sintoma es "paso 5" y la
+             * unica manera de sacar algo es un volcado de la .dynsym. */
+            report_unresolved(g_libs[slot].soname, g_libs[slot].dynstr + symbol.st_name);
             return 0;
         }
         const Elf64_Addr value = (Elf64_Addr)(unsigned long)bias_in(owner, target);
         if (value == 0) {
+            /* Se encontro la imagen pero la direccion no se puede traducir: un
+             * st_value que cae en un segmento que no quedo mapeado. Distinto del
+             * caso de arriba porque el nombre SI existe, y por eso el mensaje
+             * tiene que decir las dos cosas. */
+            report_unplaced(g_libs[slot].dynstr + symbol.st_name, owner);
             return 0;
         }
         Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
         if (where == 0) {
+            /* El GOT de esta entrada no esta en ningun segmento mapeado. Un
+             * error de la imagen, no del enlazado. */
+            report_unmapped(g_libs[slot].soname, g_libs[slot].dynstr + symbol.st_name, rela.r_offset);
             return 0;
         }
         *where = value;
@@ -555,15 +605,26 @@ int ldso_load(const char* path) {
      * -1 opaco: los pasos van en orden y el ultimo que se alcanzo a hacer es el
      * que importa. */
     if (begin_load() == 0) {
+        /* No es "no se pudo cargar": es que ya hay 32 y no cabe una mas. El
+         * numero de paso no distingue los dos, y la accion es distinta: una
+         * son 32 es una cadena demasiado larga, la otra es que el archivo no
+         * esta. */
+        eprintf("loader: no cabe una libreria mas, el limite es %d y ya hay %d\n",
+                kMaxLibraries, g_lib_count);
         return -1;
     }
     const long fd = savanxp_open(path);
     if (fd < 0) {
+        /* El caso mas comun de todos y el que mas cuesta adivinar: una
+         * dependencia que no esta en el volumen. El nombre va en el mensaje
+         * porque el que se imprime arriba es solo un numero de paso. */
+        eprintf("loader: no se pudo abrir %s (paso 2)\n", path);
         end_load(0);
         return -2;
     }
     const long section = section_open((int)fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC);
     if (section < 0) {
+        eprintf("loader: no se pudo mapear %s como seccion ejecutable (paso 3)\n", path);
         savanxp_close((int)fd);
         end_load(0);
         return -3;
@@ -610,6 +671,20 @@ int ldso_load(const char* path) {
     }
     Elf64_Ehdr header;
     if (!read_header(probe, &header)) {
+        /* read_header no dice cual de sus seis condiciones fallo, y aqui hay un
+         * solo mensaje para las seis. Se distingue el caso comun --no es una
+         * imagen ELF-- del resto, porque un archivo que no es una imagen y una
+         * imagen con un e_phnum imposible se rompen distinto. */
+        if (probe[0] != 0x7f || probe[1] != 'E' || probe[2] != 'L' || probe[3] != 'F')
+        {
+            eprintf("loader: %s no empieza con la magia de ELF\n", path);
+        }
+        else
+        {
+            eprintf("loader: %s es un ELF que no sirve de libreria (clase, tipo, "
+                    "maquina o numero de program headers)\n",
+                    path);
+        }
         end_load(0);
         return -5;
     }
