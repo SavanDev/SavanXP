@@ -41,6 +41,16 @@ int ldso_load(const char* path);
 /* Direccion del simbolo, o 0 si la libreria no lo define. */
 void* ldso_lookup(const char* name);
 
+/* La dependencia que no se pudo cargar, por nombre, o 0 si ninguna fallo.
+ *
+ * Para que un programa pueda reportar que le falta en lugar de morir. El cargador
+ * imprime el fallo y devuelve: main se llama igual, asi que arrancar no es el
+ * problema -- enterarse de que algo fallo si lo era.
+ *
+ * Significa "no se pudo cargar", no "falta": un archivo presente y roto tambien
+ * deja el nombre aqui. El motivo esta en el mensaje que el cargador ya imprimio. */
+const char* ldso_missing(void);
+
 /* Cuantas imagenes hay mapeadas, el ejecutable incluido. Para las pruebas que
  * necesitan comprobar que una dependencia compartida se cargo una sola vez. */
 int ldso_count(void);

@@ -108,6 +108,7 @@ int main(void) {
     const char* missingtest_argv[] = {"/disk/bin/missingtest", 0};
     const char* diamondtest_argv[] = {"/disk/bin/diamondtest", 0};
     const char* slottest_argv[] = {"/disk/bin/slottest", 0};
+    const char* needstest_argv[] = {"/disk/bin/needstest", 0};
     const char* pietest_argv[] = {"/disk/bin/pietest", 0};
     const char* handletest_argv[] = {"/disk/bin/handletest", 0};
     const char* semaphoretest_argv[] = {"/disk/bin/semaphoretest", 0};
@@ -153,6 +154,7 @@ int main(void) {
         !file_exists("/disk/bin/missingtest") ||
         !file_exists("/disk/bin/diamondtest") ||
         !file_exists("/disk/bin/slottest") ||
+        !file_exists("/disk/bin/needstest") ||
         !file_exists("/disk/lib/libdia_top.so.0.4") ||
         !file_exists("/disk/lib/libbroken.so.0.4") ||
         !file_exists("/disk/bin/libtest") ||
@@ -199,6 +201,8 @@ int main(void) {
         !run_and_expect("/disk/bin/missingtest", missingtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/diamondtest", diamondtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/slottest", slottest_argv, 1, 0) ||
+        /* Con la libreria en su sitio: resuelve y finds todo. */
+        !run_and_expect("/disk/bin/needstest", needstest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/pietest", pietest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/handletest", handletest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/semaphoretest", semaphoretest_argv, 1, 0) ||

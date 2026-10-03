@@ -168,6 +168,8 @@ typedef struct {
 
 static Library g_libs[kMaxLibraries];
 static int g_lib_count;
+/* La dependencia cuyo DT_NEEDED no se pudo traer. Ver ldso_missing(). */
+static const char* g_missing_library = 0;
 /* El ejecutable ocupa el slot 0 y las librerias empiezan en el 1.
  *
  * resolve recorre los slots de la mas nueva a la mas vieja, asi que poner el
@@ -189,6 +191,26 @@ int g_lib_reloc_step;
  * hay copia que hacer ni que se pueda invalidar. */
 const char* g_lib_fail_symbol;
 const char* g_lib_fail_library;
+
+/* La dependencia que no se pudo cargar, por nombre, o 0 si no fallo ninguna.
+ *
+ * Existe para que un programa pueda DECIR que le falta en vez de morirse. El
+ * cargador no es fatal: sx_start_dynamic imprime el fallo y vuelve, y crt0 llama a
+ * main igual, asi que un programa con un DT_NEEDED irresoluble arranca. Lo que no
+ * podia era enterarse: ldso_loaded() devuelve g_lib_count, que es al menos 1 porque
+ * el ejecutable ocupa el hueco 0, asi que responde "si" aunque falte una
+ * dependencia. Eso era un accidente, no una interfaz.
+ *
+ * Ojo con lo que significa: "esta dependencia no se pudo cargar", no "falta". Un
+ * archivo presente y roto tambien deja el nombre aqui, y en ese caso decir que
+ * falta seria mentira. El motivo fino esta en el mensaje que el cargador ya
+ * imprimio, con su paso y su razon.
+ *
+ * No se limpia nunca. Un fallo en el arranque es permanente, y el programa lo
+ * reporta cuando abre su ventana, no antes. */
+const char* ldso_missing(void) {
+    return g_missing_library;
+}
 
 /* Cuantas imagenes hay mapeadas, el ejecutable incluido. Existe para las pruebas:
  * sin el, la unica forma de comprobar que una dependencia compartida se cargo UNA
@@ -855,6 +877,19 @@ static int load_needed_chain(int parent_slot) {
                 full[i] = '\0';
             }
             if (ldso_load(full) != 0) {
+                /* Se guarda el NOMBRE, no solo el codigo de paso. El codigo dice
+                 * donde fallo --y donde fallo es "en algun punto de la cadena"--
+                 * y el nombre dice que falta. Sin el, un programa no puede ni
+                 * distinguir "no esta instalado" de "esta roto" ni decir cual.
+                 *
+                 * Queda el fallo MAS PROFUNDO, porque la recursion llega aqui desde
+                 * la libreria que fallo y la sobreescribe: si top -> left -> leaf y
+                 * falta leaf, el nombre guardado es el de leaf, que es el que de
+                 * verdad falta.
+                 *
+                 * `need` es un basename --DT_NEEDED lo es-- y el registro es el
+                 * mismo buffer, asi que no hay copia que hacer. */
+                g_missing_library = need;
                 return -1;
             }
         }

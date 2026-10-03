@@ -262,6 +262,18 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/floatsmoke --name floatsmoke --sse",
         ),
     ),
+    # Una dependencia DECLARADA que no esta en el volumen. Es el caso que decide
+    # como va a funcionar el reproductor cuando FFmpeg sea libreria: el programa
+    # tiene que SEGUIR VIVO y decir cual falta, en vez de desaparecer.
+    "needstest-missing": _qemu_scenario(
+        "needstest",
+        "NEEDSTEST SURVIVED",
+        "NEEDSTEST OK",
+        "A program with an unresolvable DT_NEEDED still runs and names the library",
+        180.0,
+        remove_paths=("lib/libneeded.so.0.4",),
+    ),
+
     # mediaplayer-availability y mediaplayer-missing se fueron con SxMedia.
     #
     # Los dos usaban el modo `--availability` del reproductor, que vivia en

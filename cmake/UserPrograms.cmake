@@ -205,6 +205,13 @@ savanxp_program(NAME slottest TEST LINK_PROFILE PIE
 savanxp_program(NAME missingtest TEST LINK_PROFILE PIE
     SOURCES subsystems/posix/userland/missingtest.c)
 
+# El caso de una dependencia DECLARADA que no esta en el volumen. El escenario la
+# borra y el programa tiene que seguir vivo y decir cual falta.
+savanxp_library(NAME libneeded TEST SONAME libneeded.so.0.4
+    SOURCES subsystems/posix/userland/neededlib.c)
+savanxp_program(NAME needstest TEST LINK_PROFILE PIE DEPENDS libneeded
+    SOURCES subsystems/posix/userland/needstest.c)
+
 # Carga a proposito la libreria con el simbolo irresoluble. NO la declara como
 # dependencia: la pide por ruta, que es como se encuentra el caso roto de verdad
 # --una libreria que el programa no conoce-- y ademas evita que lld examine sus

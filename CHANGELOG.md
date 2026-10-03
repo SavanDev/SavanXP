@@ -107,6 +107,12 @@ Cut-off notes:
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
 
+- **A program can now ask the loader which dependency failed to load.** The loader
+  was never fatal — a program with an unresolvable library still starts — but there
+  was no way to find that out, so the ability existed by accident rather than by
+  design. Both properties are now covered by a self-test that removes a declared
+  library from the volume.
+
 - **The Media Player is built position-independent.** Its objects were compiled
   `-fno-pic`, so they could not go into a shared library at all. `libffmpeg.so.0.4`
   now links from them: 6.7 MB, 2334 exported symbols, no relocation errors.

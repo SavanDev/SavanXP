@@ -867,12 +867,28 @@ must consult the loader **before its first call** rather than merely at startup:
 window opens, the state is checked, the message goes on screen, and no `av_*`
 function is ever touched.
 
-Two things follow that the loader does not provide yet:
+The loader now provides the missing piece. `ldso_missing()` returns the name of the
+dependency that could not be loaded, and the `needstest-missing` scenario removes a
+declared library from the volume to prove two things at once:
 
-- There is no way for a program to ask **which** dependency failed.
-  `ldso_loaded()` returns `g_lib_count`, which is at least 1 because the executable
-  occupies slot 0 — so it answers "yes" even when a dependency is missing. Today that
-  is an accident, not an interface.
+```
+loader: no se pudo abrir /disk/lib/libneeded.so.0.4 (paso 2)
+NEEDSTEST SURVIVED
+```
+
+That the program is still running is the part that was never tested. `sx_start_dynamic`
+prints the failure and returns, and `crt0` calls `main` anyway — so a program with an
+unresolvable `DT_NEEDED` starts. That property is what makes an in-application report
+possible at all, and if someone ever makes the loader fatal, this scenario fails.
+
+The name recorded is the **deepest** failure, not the outermost: if `top` needs
+`left` needs `leaf` and `leaf` is absent, `ldso_missing()` returns `leaf`, because
+that is the one actually missing.
+
+What it does not say is *why*. `ldso_missing()` means "this dependency did not load",
+not "this dependency is absent" — a library that is present and broken also leaves its
+name there, and saying "missing" would be a lie. The reason is in the line the loader
+already printed.
 - The check is "did any dependency fail to load", not "is every symbol present". A
   library whose own `DT_NEEDED` is incomplete loads, and calls into the missing part
   fault. The application's message would be wrong in that case, and only the symbol
