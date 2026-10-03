@@ -44,7 +44,18 @@ OUT="$WORK/out"
 
 # FFmpeg uses floating point in the selected decoders, so this port uses the
 # SSE/SSE2 ABI and links the SDK math runtime.
-SX_TARGET_CFLAGS="-ffreestanding -fstack-protector-strong -fno-pic -fno-pie -mno-red-zone"
+# -fPIC, y no -fno-pic, porque el objetivo de este puerto es que FFmpeg acabe en
+# /disk/lib/libffmpeg.so.0.4: los objetos de un .a tienen que ser reubicables para
+# poder entrar en una libreria compartida, y con -fno-pic no lo son.
+#
+# Compilar con -fPIC no rompe el enlace estatico que se hace hoy --codigo PIC
+# funciona en un enlace estatico-- asi que el cambio es reversible quitando el flag
+# si alguna vez estorba.
+#
+# -fno-pie se va con el: es lo que dice "este ejecutable no es position
+# independent", y la siguiente linea compila las unidades del runtime con los mismos
+# flags, asi que dejarlos en -fno-pie mientras FFmpeg es PIC no describe nada real.
+SX_TARGET_CFLAGS="-ffreestanding -fstack-protector-strong -fPIC -mno-red-zone"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -mcmodel=small -mno-mmx -msse -msse2"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -isystem $SYSROOT/include"
 

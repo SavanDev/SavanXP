@@ -88,9 +88,6 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "tcptest")) {
         return "TCP SMOKE";
     }
-    if (spec != 0 && text_contains(spec, "mediaplayer-availability")) {
-        return "MEDIAPLAYER AVAILABILITY";
-    }
     if (spec != 0 && text_contains(spec, "mediaplayer-show")) {
         return "MEDIAPLAYER DISPLAY";
     }
@@ -137,7 +134,6 @@ static int run_automation_spec(const char* spec) {
     const char* mediaplayer_argv[] = {"/disk/bin/mediaplayer-ffmpeg", "--selftest", "/disk/media/tono.wav",
                                       "/disk/media/clip.mjpeg", "--sync", "/disk/media/avsync.avi", 0};
     const char* mediaplayer_show_argv[] = {"/disk/bin/mediaplayer-ffmpeg", "--gpu-hold", "8000", "/disk/media/avsync.avi", 0};
-    const char* mediaplayer_availability_argv[] = {"/disk/bin/mediaplayer-ffmpeg", "--availability", 0};
     const char* path = "/disk/bin/smoke";
     const char* const* argv = smoke_argv;
     const char* label = automation_label_for_spec(spec);
@@ -185,10 +181,6 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/nettest";
             argv = nettest_argv;
             argc = 1;
-        } else if (strcmp(spec, "mediaplayer-availability") == 0) {
-            path = "/disk/bin/mediaplayer-ffmpeg";
-            argv = mediaplayer_availability_argv;
-            argc = 2;
         } else if (strcmp(spec, "mediaplayer") == 0) {
             path = "/disk/bin/mediaplayer-ffmpeg";
             argv = mediaplayer_argv;

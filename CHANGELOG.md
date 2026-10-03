@@ -107,6 +107,16 @@ Cut-off notes:
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
 
+- **The Media Player is built position-independent.** Its objects were compiled
+  `-fno-pic`, so they could not go into a shared library at all. `libffmpeg.so.0.4`
+  now links from them: 6.7 MB, 2334 exported symbols, no relocation errors.
+
+- **Two Media Player smoke scenarios are removed.** They tested a `--availability`
+  mode that stopped existing when SxMedia was withdrawn, and they had been asking for
+  output nothing produced since. The absence-detection they covered is going away for
+  a better reason: the player becomes a system application and reports a missing
+  library itself.
+
 - **A missing shared library is now recorded as reported by the application itself.**
   The loader does not abort when a dependency fails, so a program can still open a
   window and say what is missing; the two pieces the loader would need for that are

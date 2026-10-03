@@ -262,21 +262,16 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/floatsmoke --name floatsmoke --sse",
         ),
     ),
-    "mediaplayer-availability": _qemu_scenario(
-        "mediaplayer-availability",
-        "MEDIAPLAYER AVAILABLE",
-        "MEDIAPLAYER UNAVAILABLE",
-        "System Media Player optional-backend detection",
-        180.0,
-    ),
-    "mediaplayer-missing": _qemu_scenario(
-        "mediaplayer-availability",
-        "MEDIAPLAYER UNAVAILABLE",
-        "MEDIAPLAYER AVAILABLE",
-        "System Media Player fallback detection when the FFmpeg backend is absent",
-        180.0,
-        remove_paths=("bin/mediaplayer-ffmpeg",),
-    ),
+    # mediaplayer-availability y mediaplayer-missing se fueron con SxMedia.
+    #
+    # Los dos usaban el modo `--availability` del reproductor, que vivia en
+    # sxmedia_ffmpeg.c y borro el commit 26b16e0 ("withdraw SxMedia", 2026-09-25).
+    # El modo no existe: mediaplayer.c maneja --gpu-hold, --probe y --selftest, y
+    # ningun otro. Los dos escenarios seguian en el catalogo pidiendo tokens que ya
+    # no emite nadie, y `init.c` seguia con sus dos ramas.
+    #
+    # No se notaron porque no son parte del escenario `smoke` por defecto: solo
+    # corren si alguien los pide a mano.
     "mediaplayer-selftest": _qemu_scenario(
         "mediaplayer",
         "MEDIAPLAYER PASS",
