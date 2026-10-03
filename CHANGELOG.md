@@ -107,6 +107,10 @@ Cut-off notes:
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
 
+- **A relocation type the loader does not implement now says so,** instead of
+  failing with a step number that leads nowhere. It cannot arise from this linker,
+  which only emits the three supported types; it is there for a hand-linked object.
+
 - **Three more loader failures now say what they are, and each has a self-test.** A
   missing library and a full slot table were both just numbers, and they are
   different problems with different fixes. A dependency shared by two branches of a

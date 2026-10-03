@@ -151,8 +151,10 @@ at 0 of 228 and 0 of 284 glyph pixels.
 
 ### Limits that are part of the current design, not bugs
 
-- **Lazy PLT binding.** No `BIND_NOW`, so a relocation error surfaces at the first
-  call through that entry point rather than at load.
+- **No lazy binding, deliberately.** The loader applies `DT_JMPREL` at load, like
+  `BIND_NOW` and without reading it. It costs a little work per library at startup
+  and buys the property that a broken dependency is a startup failure with a name
+  rather than a crash at whichever call site happened to be first.
 - **`--export-dynamic` is still required.** The raw syscall wrappers stay in the
   executable because the loader needs them to map the first library, so every
   library resolves `savanxp_*` against the program.
@@ -725,12 +727,27 @@ to diagnose.
 
 ### Phase 1 — fail at load instead of at the first call
 
-Add `BIND_NOW` to the PIE profile. Every relocation is applied during load, so a
-missing or wrong dependency is reported while the loader can still say what it was.
+**Already satisfied, and the premise was wrong.** This phase was written assuming
+the loader binds lazily, which is what a glibc-style loader does and what `-z now`
+exists to turn off. SavanXP's loader does not: `apply_relocs_in` applies
+`DT_JMPREL` as well as `DT_RELA`, unconditionally, from `ldso_load` and
+`ldso_start`. There is no deferred path anywhere in it.
 
-**Done when** a library with an unresolvable symbol fails at startup with the name
-in the message, instead of crashing later at whichever call site happened to be
-first.
+`brokentest` proves it without having to be believed. The missing symbol in
+`libbroken` is reached through a **call**, so its relocation is a PLT entry, and the
+test asserts the failure is step `-9` — the code `ldso_load` returns when
+`apply_relocs_in` fails. If binding were lazy, that library would have loaded and
+crashed at the call instead.
+
+So `-z now` is a flag the loader does not read, and adding it would be decoration.
+What the phase was actually after — an unresolved symbol reported by name at
+startup rather than by a crash at some later call site — is what Phase 0 delivered.
+
+One adjacent gap did come out of checking. A relocation whose type the loader does
+not implement failed with a step number and nothing else, the same dead end the
+symbol cases were. It now names the type. It cannot be provoked with this linker:
+lld only emits those three for a well-formed `.so`. It is there for a hand-linked
+object, which is where the rest of these libraries will come from.
 
 ### Phase 2 — size and coverage
 
@@ -793,10 +810,10 @@ it.
 
 ## Explicitly not worth doing yet
 
-- **`mprotect` and RELRO.** `BIND_NOW` does not need either; lazy PLT binding does,
-  and Phase 1 removes the laziness. RELRO becomes worth revisiting only after
-  Phase 4, once nothing resolves against the executable and there is no longer a
-  GOT to protect from it.
+- **`mprotect` and RELRO.** Neither is needed while binding is eager, and both need
+  `mprotect`, which does not exist. RELRO only becomes worth revisiting after the
+  loader lives outside the program, since a GOT nothing writes to needs no
+  protection.
 - **File demand paging.** A file-backed section is read whole. Sharing saves
   resident memory, not mapped memory, and `memory_bytes` counts mapped-present
   pages, so Task Manager shows the same per-process figure either way.

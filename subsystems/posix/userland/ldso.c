@@ -475,6 +475,18 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
             continue;
         }
         if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT) {
+            /* El cargador no implementa este tipo. Fallar es lo correcto --seguir y
+             * dejar la casilla como estaba seria una referencia rota que no se
+             * manifestaria hasta la llamada-- pero sin decir cual es el tipo, el
+             "paso 5" no lleva a ninguna parte.
+             *
+             * No se puede provocar con este enlazador: lld solo emite estos tres
+             * para un .so bien construido. Queda puesto por si aparece uno de un
+             * enlace hecho a mano, que es de donde viene el resto de estas
+             * librerias. */
+            eprintf("loader: %s tiene una reubicacion de tipo %u, y solo se "
+                    "implementan JUMP_SLOT, GLOB_DAT y RELATIVE\n",
+                    g_libs[slot].soname, type);
             return 0;
         }
         const unsigned name_index = (unsigned)(rela.r_info >> 32);
