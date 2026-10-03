@@ -856,6 +856,55 @@ built to fit.
 **Done when** `mediaplayer` maps `libavcodec` and decodes. Treat it as the acceptance
 test for the subsystem: it is the first workload that was not designed to fit.
 
+**A missing library is reported by the application, not by the launcher.** The
+choice is deliberate and it rests on a property of the loader worth stating: when
+`ldso_start` fails, `sx_start_dynamic` prints and **returns**, and `crt0` calls
+`main` anyway. A program with an unresolvable `DT_NEEDED` still starts.
+
+That makes the design possible, and it is not free of consequences. The GOT entries
+pointing into the library that failed to load are still zero, so the application
+must consult the loader **before its first call** rather than merely at startup: the
+window opens, the state is checked, the message goes on screen, and no `av_*`
+function is ever touched.
+
+Two things follow that the loader does not provide yet:
+
+- There is no way for a program to ask **which** dependency failed.
+  `ldso_loaded()` returns `g_lib_count`, which is at least 1 because the executable
+  occupies slot 0 — so it answers "yes" even when a dependency is missing. Today that
+  is an accident, not an interface.
+- The check is "did any dependency fail to load", not "is every symbol present". A
+  library whose own `DT_NEEDED` is incomplete loads, and calls into the missing part
+  fault. The application's message would be wrong in that case, and only the symbol
+  diagnostics from Phase 0 would catch it.
+
+`mediaplayer-availability` and `mediaplayer-missing` are already system-side:
+`init.c` probes for the backend and prints the verdict, and the smoke catalog reads
+it. They do not move; what they remove changes from the binary to the library.
+
+## A library is not uninstallable, and that is the point
+
+Stated here because it is a gap that will otherwise look like a bug.
+
+`appwiz_uninstall` does two things: it unlinks one binary, and it optionally removes
+the application's data directory after revalidating that it is removable. There is
+no library concept in it, and adding one would be wrong. `libmath.so.0.4` is in the
+image because twenty programs need it; removing it breaks all twenty, and no
+uninstaller can be the thing that decides otherwise. A shared library belongs to
+the set of images that reference it, not to any one of them.
+
+So an installed third-party library lands in `/disk/lib` beside the system's own and
+there is no way to take it out again, short of rebuilding the image. For `libffmpeg`
+that is the arrangement: it is part of the system once installed, and the
+application that uses it is a system application that cannot be removed either.
+
+One consequence follows from the flat layout and is worth naming before a third-party
+library arrives. Resolution is one directory and an exact filename — `/disk/lib/`
+plus the `DT_NEEDED` string — so `libffmpeg.so.0.4` and `libsxgui.so.0.4` share one
+namespace, and a library installed by a third party can shadow a system's. There is
+no SONAME matching to keep them apart, which is the same limitation already recorded
+above and now has a practical consequence rather than only a theoretical one.
+
 ## Deliberately out of scope for the first implementation
 
 Three things were designed, cost real time, and have been taken back out. Recording

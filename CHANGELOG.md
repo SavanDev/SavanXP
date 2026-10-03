@@ -107,6 +107,12 @@ Cut-off notes:
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
 
+- **A missing shared library is now recorded as reported by the application itself.**
+  The loader does not abort when a dependency fails, so a program can still open a
+  window and say what is missing; the two pieces the loader would need for that are
+  written down, along with the fact that an installed library cannot be uninstalled
+  and why that is correct.
+
 - **Dead code in the binaries is now measured against what would recover it:** 5.5 MB
   across the tree, held back by `--export-dynamic`, which has to stay while the
   libraries resolve the C runtime against the program.
