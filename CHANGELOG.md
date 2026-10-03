@@ -84,28 +84,6 @@ Cut-off notes:
   makes is to the C runtime or a system call. A program no longer has to be PIE so
   that a toolkit can find its drawing code.
 
-- **The symbols the startup code must touch now live in a file of their own.** The
-  stack canary and the dynamic-loader hook were spread across the C library and the
-  POSIX layer, which is where a future shared library would want them. They are in
-  `sxboot.c` now, with the reason stated in one place: startup runs before any
-  library is mapped, so anything it writes has to be in the executable.
-
-- **The runtime for external applications is derived from the one for the system's
-  own programs**, instead of being listed again by hand. The two lists have to agree
-  and nothing complained when they did not — the symptom is an undefined symbol much
-  later than the change that caused it.
-
-- **The program startup no longer stores the image facts in the C library.** The
-  interpreter path and the image's own base were library globals that the startup
-  code wrote before its first call, which stops working the moment the C library is
-  a shared library: startup runs before a page of it exists. They are passed to the
-  loader now.
-
-- **The library loader no longer calls the C library.** It needs to keep working
-  before any library is mapped, so its own byte copy and string compare replaced
-  the calls to `memcpy` and `strcmp` — the `memcpy` calls were the compiler lowering
-  two 64-byte header assignments.
-
 - **Up to 32 shared libraries per process, instead of 8.** The longest chain the
   tree can build is seven — a program, its two interface libraries and FFmpeg's
   codec, utility, scale and resample libraries — so eight was one slot from a wall
@@ -128,6 +106,11 @@ Cut-off notes:
   was checked with the scrollbar thumb, which moves regardless. The expected pixels
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
+
+- **The runtime for external applications is derived from the one for the system's
+  own programs**, instead of being listed again by hand. The two lists have to agree
+  and nothing complained when they did not — the symptom is an undefined symbol much
+  later than the change that caused it.
 
 - **The build now fails if a program carries its own copy of a library it loads.**
   Such a program links, runs and passes every test — the library is mapped and

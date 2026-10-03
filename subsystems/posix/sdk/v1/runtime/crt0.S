@@ -15,18 +15,17 @@ _start:
     # parte del ABI de entrada a main, asi que crt0 lo instala antes de la
     # primera llamada protegida. El byte bajo nunca es cero (ABI canary).
     movq %rdx, __stack_chk_guard(%rip)
-    # rcx trae la ruta del interprete (PT_INTERP) que el loader copio al stack, o 0
-    # si la imagen es estatica. r8 trae la direccion de la cabecera ELF de la imagen:
-    # el kernel la calculo al mapearla y es el dato exacto. Antes el cargador lo
-    # adivinaba retrocediendo pagina a pagina desde una funcion suya, lo que supone
-    # que toda pagina del camino esta mapeada, y un enlazador puede dejar un hueco
-    # entre dos PT_LOAD.
-    #
-    # Los dos se PASAN a sx_start_dynamic en vez de escribirse en un global. No es
-    # una preferencia de estilo: cuando libc sea una libreria, un global escrito
-    # aca estaria en una imagen que todavia no esta cargada, y no habria pagina que
-    # escribir. Los registros no tienen ese problema.
-    #
+    # rcx trae la ruta del interprete (PT_INTERP) que el loader copio al stack,
+    # o 0 si la imagen es estatica. Se guarda antes de la primera llamada porque
+    # rcx no sobrevive a un call.
+    movq %rcx, sx_interpreter_path(%rip)
+    # r8 trae la direccion de la cabecera ELF de la imagen. El kernel la calculo
+    # al mapearla y es el dato exacto; antes el cargador lo adivinaba retrocediendo
+    # pagina a pagina desde una funcion suya, lo que supone que toda pagina del
+    # camino esta mapeada. Un enlazador puede dejar un hueco entre dos PT_LOAD, y
+    # con seltest --cuyo texto arranca en 0xc000 y su primer segmento termina en
+    # 0xaff3-- la pagina intermedia no existe y el escaneo moria alli.
+    movq %r8, sx_image_base(%rip)
     # Correr el interprete antes de main. El hook vive en C, no aca: comprobar si
     # un simbolo debil esta definido exige mirar su entrada en el GOT, y en
     # ensamblador habria que hacer movq simbolo(%rip) -- que LEE la memoria de esa
@@ -35,14 +34,12 @@ _start:
     #
     # %rdi y %rsi traen argc y argv desde el kernel, y no hay donde copiarlos:
     # una llamada puede usar cualquiera de los dos. Hay que guardarlos en el
-    # stack y restaurarlos antes de entrar a main. Se hace antes de repurposar
-    # %rdi y %rsi como argumentos, y los dos push dejan rsp alineado a 16 igual que
-    # estaba: main exige rsp % 16 == 0 en el call, y main es justamente a donde se
-    # llega.
+    # stack y restaurarlos antes de entrar a main.
+    #
+    # Los dos push dejan rsp alineado a 16 igual que estaba: main exige
+    # rsp % 16 == 0 en el call, y main es justamente a donde se llega.
     pushq %rdi
     pushq %rsi
-    movq %rcx, %rdi
-    movq %r8, %rsi
     call sx_start_dynamic
     popq %rsi
     popq %rdi

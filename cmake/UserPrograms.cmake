@@ -165,11 +165,7 @@ savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsy
 # resolver y la mitad de la cadena no se podria probar.
 savanxp_program(NAME ldtest TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/ldtest.c)
-# Declara PT_INTERP, asi que el perfil PIE y con el el cargador: la ruta del
-# interprete llega por crt0 al cargador y se consulta con ldso_interpreter_path().
-# Antes se guardaba en un global de libc; que ahora viva en el cargador es lo que
-# permite que libc sea libreria, y este programa es el que lo comprueba.
-savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4 LINK_PROFILE PIE
+savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
     SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/math.c)

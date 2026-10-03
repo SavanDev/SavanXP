@@ -165,17 +165,6 @@ typedef struct {
 
 static Library g_libs[kMaxLibraries];
 static int g_lib_count;
-/* La ruta del interprete que crt0 pasa. Antes era un global de libc al que
- * escribia crt0 antes de la primera llamada; ahora la recibe el cargador y la
- * guarda aca, que es un punto donde escribir un global no cuesta nada: la pagina
- * de este archivo existe. Guardarlo es lo unico que permite que un programa lo
- * consulte despues con ldso_interpreter_path(). */
-static const char* g_interpreter_path = 0;
-/* La base de la imagen principal, que crt0 pasa como argumento. Se guarda por la
- * misma razon que la ruta: adopt_executable_once() la necesita y no puede pedirla,
- * porque ldso_load es publico y un programa puede llamarla antes de que nadie le
- * haya pasado la base. */
-static unsigned long g_image_base = 0;
 /* El ejecutable ocupa el slot 0 y las librerias empiezan en el 1.
  *
  * resolve recorre los slots de la mas nueva a la mas vieja, asi que poner el
@@ -192,10 +181,6 @@ int g_lib_fail_index;
 long g_lib_fail_errno;
 unsigned long g_lib_bias;
 int g_lib_reloc_step;
-
-const char* ldso_interpreter_path(void) {
-    return g_interpreter_path;
-}
 
 int ldso_loaded(void) {
     return g_lib_count;
@@ -232,17 +217,6 @@ static int read_header(const unsigned char* bytes, Elf64_Ehdr* out) {
     return 1;
 }
 
-/* Compara dos cadenas sin strcmp, por lo mismo que copy_bytes existe: el
- * cargador no puede depender de libc todavia, porque libc va a ser una libreria y
- * esta es justo la funcion que la carga. */
-static int same_name(const char* a, const char* b) {
-    while (*a != '\0' && *a == *b) {
-        ++a;
-        ++b;
-    }
-    return *a == *b;
-}
-
 static void copy_bytes(const void* from, void* to, size_t count) {
     const unsigned char* src = (const unsigned char*)from;
     unsigned char* dst = (unsigned char*)to;
@@ -275,7 +249,7 @@ static int adopt_executable(void) {
     if (g_lib_count >= kMaxLibraries) {
         return 0;
     }
-    const unsigned long cursor = g_image_base & ~4095UL;
+    const unsigned long cursor = sx_image_base & ~4095UL;
     if (cursor == 0) {
         /* Sin base no hay nada que registrar. Preferible decirlo a leer
          * direcciones que pueden no existir. */
@@ -299,7 +273,7 @@ static int adopt_executable(void) {
 
     Library* exe = &g_libs[g_lib_count];
     exe->soname[0] = '\0';
-    copy_bytes(&header, &exe->header, sizeof(header));
+    exe->header = header;
     exe->header_count = header.e_phnum;
     exe->dynsym = 0;
     exe->dynstr = 0;
@@ -535,7 +509,7 @@ static int apply_relocs_in(int slot) {
  * Devuelve 0 si el ejecutable quedo operativo, o un numero negativo dizendo en
  * que paso fallo, con la misma convencion que ldso_load. Un ejecutable sin
  * .dynsym no tiene nada que reubicar y devuelve 0. */
-int ldso_start(const char* interpreter_path, unsigned long image_base) {
+int ldso_start(void) {
     /* Idempotente a proposito: crt0 lo llama antes de main y un programa puede
      * llamarlo otra vez. Reaplicar las reubicaciones del ejecutable escribiria
      * los mismos valores, pero R_X86_64_RELATIVE SUMA el bias, y hacerlo dos
@@ -545,12 +519,6 @@ int ldso_start(const char* interpreter_path, unsigned long image_base) {
         return 0;
     }
     done = 1;
-    /* Los dos datos de la imagen se guardan ANTES de adopt_executable_once, que
-     * los necesita. Es el punto donde el estado del cargador deja de depender de
-     * que alguien escribiera un global antes de que este archivo estuviera
-     * cargado. */
-    g_interpreter_path = interpreter_path;
-    g_image_base = image_base;
     adopt_executable_once();
     if (g_lib_count == 0) {
         /* Sin la imagen no hay nada que reubicar, pero una imagen ET_DYN SI
@@ -578,8 +546,8 @@ int ldso_start(const char* interpreter_path, unsigned long image_base) {
  * es el que el kernel ya impone: la imagen principal la mapea el kernel y el
  * programa hace el trabajo de enlace. Asi que "correr el interprete" aca es
  * dejar operativo al ejecutable: cargar lo que declara y rellenar su GOT. */
-int sx_run_interpreter(const char* interpreter_path, unsigned long image_base) {
-    return ldso_start(interpreter_path, image_base);
+int sx_run_interpreter(void) {
+    return ldso_start();
 }
 
 int ldso_load(const char* path) {
@@ -645,7 +613,7 @@ int ldso_load(const char* path) {
         end_load(0);
         return -5;
     }
-    copy_bytes(&header, &g_lib->header, sizeof(header));
+    g_lib->header = header;
     g_lib->header_count = header.e_phnum;
     for (Elf64_Half index = 0; index < header.e_phnum; ++index) {
         copy_bytes(probe + header.e_phoff + (index * header.e_phentsize), &g_lib->headers[index], sizeof(Elf64_Phdr));
@@ -1043,7 +1011,7 @@ static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {
         if (symbol.st_shndx == SHN_UNDEF) {
             continue;
         }
-        if (same_name(library->dynstr + symbol.st_name, name)) {
+        if (strcmp(library->dynstr + symbol.st_name, name) == 0) {
             *value_out = symbol.st_value;
             return slot;
         }

@@ -292,7 +292,6 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
 # pasa --gc-sections, asi que lo no referenciado se descarta en el enlace.
 set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/crt0.S
-    subsystems/posix/sdk/v1/runtime/sxboot.c
     subsystems/posix/sdk/v1/runtime/libc.c
     subsystems/posix/sdk/v1/runtime/posix.c
     subsystems/posix/sdk/v1/runtime/math.c
@@ -427,7 +426,7 @@ set(SAVANXP_EXTERNAL_LINK_OPTIONS
 # del toolkit, mas setjmp. Se deriva en vez de restcribirse, porque son dos listas
 # que tienen que coincidir y que no coincidir no da ningun error: el enlazador se
 # queja de un simbolo indefinido que nadie sabe de donde deberia venir, mucho despues
-# del cambio que lo rompio. sxboot.c se quedo fuera de esta lista justo por eso.
+# del cambio que lo rompio.
 set(SAVANXP_EXTERNAL_RUNTIME_SOURCES ${SAVANXP_USER_RUNTIME_SOURCES}
     subsystems/posix/sdk/v1/runtime/setjmp.S)
 list(REMOVE_ITEM SAVANXP_EXTERNAL_RUNTIME_SOURCES

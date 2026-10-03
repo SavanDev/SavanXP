@@ -233,6 +233,53 @@ long timer_cancel(int handle) {
     return syscall1(SAVANXP_SYS_TIMER_CANCEL, (unsigned long)handle);
 }
 
+/* Ruta del interprete que el kernel copio al stack inicial, o NULL si la imagen
+ * no declara PT_INTERP. La escribe crt0 antes de la primera llamada. */
+const char* sx_interpreter_path = 0;
+
+/* Direccion de la cabecera ELF de la imagen principal. El kernel la pasa en r8 y
+ * crt0 la guarda antes de la primera llamada, igual que la ruta del interprete.
+ *
+ * Existe para que el cargador no tenga que buscar la base adivinando. Un recorrido
+ * hacia atras desde una funcion propia hacia el supuesto origen de la imagen
+ * tiene que leer cada pagina del camino, y un PT_LOAD puede dejar paginas sin
+ * mapear entre dos segmentos: leerlas es un fallo de pagina, no un cero. */
+unsigned long sx_image_base = 0;
+
+const char* savanxp_interpreter_path(void) {
+    return sx_interpreter_path;
+}
+
+/* El hook del interprete, definido por el programa que enlace el cargador de
+ * librerias. Debil: los programas sin dependencias no lo definen y el
+ * enlazador lo resuelve en 0. */
+extern int sx_run_interpreter(void) __attribute__((weak));
+
+/* Lo que crt0 llama antes de main.
+ *
+ * La comprobacion va en C a proposito. En ensamblador, preguntar si un simbolo
+ * debil esta definido obliga a hacer `movq simbolo(%rip), %rax`, que LEE la
+ * memoria en la direccion del simbolo; si no esta definido, esa direccion es
+ * cero y el proceso muere en un fallo de pagina antes de llegar a main. El
+ * enlazador le da a un simbolo debil indefinido una entrada en el GOT con valor
+ * cero, y eso es lo que se consulta aca.
+ *
+ * Que este sea el unico lugar donde se decide si el interprete corre es lo que
+ * hace que sea automatico: un programa no necesita acordarse de llamarlo, y no
+ * puede olvidarse. */
+void sx_start_dynamic(void) {
+    if (sx_run_interpreter != 0) {
+        const int result = sx_run_interpreter();
+        if (result != 0) {
+            /* Un programa que no queda operativo no puede decir nada util con
+             * printf todavia, y el sintoma de no haberse reubicado --punteros a
+             * cero, secciones que no abren-- no dice nada de la causa. El paso
+             * que fallo va numerado igual que en ldso_load. */
+            eprintf("sx_start_dynamic: el interprete fallo (paso %d)\n", -result);
+        }
+    }
+}
+
 long section_create(unsigned long size, unsigned long flags) {    return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);
 }
 

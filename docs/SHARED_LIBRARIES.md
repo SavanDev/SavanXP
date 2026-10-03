@@ -141,9 +141,8 @@ than a list of prefixes, so a new library is covered without editing it.
 
 Every one of these was verified by breaking the thing it watches. Deleting
 `SAVANXP_LIBRARY_REPLACES_libsxgfx` or `..._libgfx2d` gives 21 and 15 violations and
-exit 1; making `sxboot.c` a library kills a process at `cr2=0x467f6` before `main`;
-painting the editor's rows or a taskbar label in the background colour fails at 0
-of 228 and 0 of 284 glyph pixels.
+exit 1; painting the editor's rows or a taskbar label in the background colour fails
+at 0 of 228 and 0 of 284 glyph pixels.
 
 ### What runs
 
@@ -173,45 +172,31 @@ of 228 and 0 of 284 glyph pixels.
 
 ## crt0 runs the interpreter
 
-A program that links a library must be operable before `main`, and the kernel
-maps the main image without relocating it. `crt0` calls `sx_start_dynamic()` on
-the way to `main`; that checks a weak `sx_run_interpreter` and calls it if the
-program defined one. `ldso.c` defines it, so linking the loader is what opts a
-program in. The other programs do not define it and pay nothing but a null test.
+`crt0` calls `sx_start_dynamic()` before `main`, through a weak hook the program
+only defines if it links the loader. That is the whole of the mechanism by which a
+program's dependencies get resolved: nothing in an application has to remember to do
+it, and nothing can forget.
 
-The check has to be in C. Asking in assembly whether a weak symbol is defined
-means `movq symbol(%rip), %rax`, which *reads memory at the symbol's address* —
-and for an undefined weak symbol that address is zero, so the process takes a
-page fault on address 0 before reaching `main`. The linker gives an undefined
-weak symbol a GOT entry holding zero, and that is what the C test reads.
+The check that the hook is defined lives in C, not in assembly. Testing a weak symbol
+means looking at its GOT entry, and in assembly that would be `movq symbol(%rip)` --
+which *reads memory at that address*. An undefined weak symbol has address zero
+there, so the process died reading page zero before reaching `main`.
 
-This does not make the model Linux-shaped: the kernel still maps the main image
-and the program still does its own linking. What it removes is the rule that
-every program has to remember to call the loader first, which had no teeth
-because nothing checked it.
-
-`ldso_start()` is idempotent on purpose. `R_X86_64_RELATIVE` *adds* the bias, so
-running the relocations twice would leave the image's pointers off by
-`kUserBase`.
+The image's own base comes from the kernel in `r8`, recorded above in the table.
 
 ## The executable has to be relocated too
 
 The kernel maps the main image and hands it to the process, but it does not touch
-the `GOT`. A program that links a library therefore starts life with `DT_NEEDED`
-in its dynamic table and an empty slot for every call into one. `ldso_start()`
-is that missing step: walk the *executable's* `DT_NEEDED`, then apply the
-executable's own relocations. Same order as for a library — chain first,
-relocations after — because a call into a dependency cannot be resolved before
-that dependency is mapped.
+the `GOT`. A program that links a library therefore starts life with `DT_NEEDED` in
+its dynamic table and an empty slot for every call into one. `ldso_start()` is that
+missing step: walk the *executable's* `DT_NEEDED`, then apply the executable's own
+relocations. Same order as for a library — chain first, relocations after — because
+a call into a dependency cannot be resolved before that dependency is mapped.
 
-`R_X86_64_RELATIVE` is the other half. It carries no symbol: the value stored in
-the image is already a link-time address and only needs the image's bias added.
-Skipping it leaves a relocated image with pointers to address zero, which is not
-a crash but a program that quietly reads the wrong thing.
-
-Today `ldso_start()` is called from `main`, so a program must not touch a library
-symbol before it. `crt0` doing it is the step after this one, and it is the
-point where the model stops being hybrid.
+`R_X86_64_RELATIVE` is the other half. It carries no symbol: the value stored in the
+image is already a link-time address and only needs the image's bias added. Skipping
+it leaves a relocated image with pointers to address zero, which is not a crash but a
+program that quietly reads the wrong thing.
 
 ## One runtime unit list
 
@@ -568,9 +553,7 @@ drawing code — that leash existed only because `libsxgui` used to resolve `gfx
 `sx_*` against the executable, and `libgfx2d` is what cut the second half of it.
 
 `--export-dynamic` stays, and it should: the libraries still need `memcpy` and the
-syscalls, which live in the runtime inside the executable. What would remove it is
-making the C runtime itself a library, and that is a much larger change than the one
-that got it here.
+syscalls, which live in the runtime inside the executable.
 
 The leak found on the way is worth keeping. The loader kept `file_fd` **and** a
 whole-file `file_section` open after the segments were mapped; the struct comment
@@ -691,89 +674,20 @@ before the headers are copied, in both `read_header` and `adopt_executable`, so 
 image with more than 24 program headers is now rejected with a reason instead of
 running off the end of `headers[]`.
 
-## libc cannot move as one file, and the line that decides it
-
-Phase 2 of the plan above carries the steps. What follows is why the partition is
-where it is, because it is not a layer boundary and getting it wrong is expensive.
-
-Moving the C runtime into `libc.so.0.4` is a matter of moving most of `libc.c`, and
-the reason it is not simply that, is the bootstrap order.
-
-Three things in it cannot move, and all three for the same reason: **the loader
-needs them before a single library is mapped.**
-
-1. **`sx_start_dynamic`.** `crt0` calls it to start the loader. If it lived in
-   `libc.so.0.4`, that call would be an unresolved PLT entry in an image that is not
-   loaded yet.
-2. **`__stack_chk_guard` and `__stack_chk_fail`.** `crt0` writes the canary the
-   kernel handed it in `rdx`, before the first protected call. Same problem.
-3. **The raw syscall wrappers** — `savanxp_open`, `savanxp_read`, `savanxp_close`,
-   `section_create`, `section_open`, `section_open_range`, `map_view_at`,
-   `unmap_view`, `result_is_error`. Opening and mapping a library is what the loader
-   does with them; asking the library that provides them to open the first library
-   is circular.
-
-Everything above that line — `memcpy`, `memset`, `memmove`, `strlen`, `strcmp`,
-`strcpy`, `malloc`, `printf`, the event and timer wrappers, the clipboard — has no
-such constraint and can move.
-
-The first and second items are now in `sxboot.c`, which is the criterion made into a
-file: it is exactly what `crt0` touches, and by construction it is what cannot become
-a library. The third item stays in the runtime implicitly, as the loader's undefined
-list already said.
-
-Making `sxboot.c` a library, which is the mistake the file exists to prevent, was
-tried and measured:
-
-```
-  user: exception #14 pid=29 name=ldtest cr2=0x467f6
-  SMOKE FAIL status /disk/bin/ldtest expected=0 got=142
-```
-
-`crt0` writes the canary at `movq %rdx, __stack_chk_guard(%rip)`; with the variable
-in an unmapped library the GOT entry is still zero at that point, so the store lands
-near address zero. The process dies before `main`, which means no diagnostic and no
-`ldtest` output to explain it.
-
-`sx_start_dynamic` could not keep using `eprintf` either. It runs from `crt0`, at the
-exact moment `printf` does not yet exist, so a libc it was loading failing would have
-taken its own error report down with it. It writes through a raw `write` syscall, and
-the step number is formatted as characters because every step is one or two digits.
-
-The third item is what makes this delicate rather than obvious: it is not a clean
-layer boundary in `libc.c`'s current shape, and the exact partition is the kind of
-decision that is expensive to get wrong. `ldso.c`'s undefined-symbol list is the
-authoritative statement of the boundary, which is why the loader was made
-C-library-free first: it now names that set exactly, with no libc entry in it, so
-there is a single place to check when it changes.
-
 ## What blocks the rest, in order
 
-The order is not by importance, it is by dependency, and the first two phases come
-before anything that makes the system more capable. Both are small, neither depends
-on the libc work, and together they turn "it works on what was tested" into "it
-fails in a way you can act on". Everything after them is easier to get right with
-those in place, and much easier to debug when it goes wrong.
-
-```
-  Phase 0  diagnosable failures      ─┐  no dependency on anything
-  Phase 1  fail at load, not later  ─┘
-
-  Phase 2  libc.so.0.4            ── needs sxboot.c  ✓ done
-  Phase 3  a real ld.so           ── needs Phase 2, and gates the next one
-  Phase 4  --export-dynamic off   ── needs Phase 3
-  Phase 5  libposix.so.0.4        ── needs Phase 2
-  Phase 6  size and coverage      ── independent
-
-  Phase 7  FFmpeg shared          ── needs dlopen, which none of the above provide
-```
+Four phases. Each has steps and a "done when" line, because a phase without an
+acceptance condition is a wish. Phases 0 and 1 come before anything that makes the
+system more capable: neither depends on future work, both are small, and together
+they are the difference between a loader that works on what was tested and one that
+fails in a way you can act on.
 
 ### Phase 0 — make failure diagnosable
 
-Right now a library that cannot be resolved reports a step number and nothing else,
-and nothing at all is tested for a library that is missing, one that exceeds the
-slot count, or one with an unresolvable symbol. `ldtest` covers a missing *symbol*
-through `ldso_lookup`, which is a different thing.
+A library that cannot be resolved reports a step number and nothing else, and
+nothing at all is tested for a library that is missing, one that exceeds the slot
+count, or one with an unresolvable symbol. `ldtest` covers a missing *symbol* through
+`ldso_lookup`, which is a different thing.
 
 1. Record the failing symbol's name when `apply_table_in` gives up, next to the
    `g_lib_reloc_step` it already sets, and print it from the failure path.
@@ -794,76 +708,9 @@ missing or wrong dependency is reported while the loader can still say what it w
 
 **Done when** a library with an unresolvable symbol fails at startup with the name
 in the message, instead of crashing later at whichever call site happened to be
-first. This is what makes Phase 0's work reachable in practice.
+first.
 
-### Phase 2 — `libc.so.0.4`
-
-`libc.c` cannot move as one file. The partition is fixed by `ldso.c`'s undefined
-list, which is why the loader was made C-library-free first:
-
-- **stays in the executable** — `savanxp_open`, `savanxp_read`, `savanxp_close`,
-  `section_create`, `section_open`, `section_open_range`, `map_view_at`,
-  `unmap_view`, `result_is_error`: the loader uses these to map the first library,
-  and a library cannot be asked to open the first library.
-- **already out of the way** — `sxboot.c` holds the canary and the dynamic hook,
-  because `crt0` writes them before any library exists.
-- **moves** — `memcpy`, `memset`, `memmove`, `strlen`, `strcmp`, `strcpy`, `malloc`,
-  `printf`, the event and timer wrappers, the clipboard.
-
-1. Split `libc.c` along that line into the syscall layer and the rest.
-2. `SAVANXP_LIBRARY_REPLACES_libc`, and `LINK_PROFILE PIE` implies `DEPENDS libc`,
-   because a PIE program always carries the runtime.
-3. Check the runtime variants still name `sxboot.c` — it must never be excluded.
-
-**Done when** all 30 PIE programs still run, `check_shared_libs` passes, and the
-volume holds one libc instead of 82 copies.
-
-Note what this does **not** achieve: `--export-dynamic` stays, because the syscall
-layer stays. Phase 2 buys one copy on the volume, not a smaller export surface.
-
-### Phase 3 — a real `ld.so`
-
-The reason `--export-dynamic` cannot go is that the syscall wrappers are in the
-executable because the loader needs them, and the loader is *in* the executable.
-Breaking that circle needs the loader to be the first thing loaded, by something
-that does not need it.
-
-1. Build `ld.so` as a real object, with its own entry point.
-2. Have the kernel map and enter it before the main image's start, or make `crt0`'s
-   first action be an absolute jump into it with no PLT involved.
-3. Keep the loader's C-library-free property; it is what lets it run at all.
-
-**Done when** `ld.so` exists in `/disk/lib`, is what `PT_INTERP` names for real, and
-runs before the program's own image needs anything.
-
-### Phase 4 — `--export-dynamic` off
-
-Only now, with the syscall layer inside `ld.so` rather than in the program, nothing
-resolves against the executable.
-
-1. Drop the flag from `SAVANXP_USER_LINK_OPTIONS_PIE`.
-2. Build; every unresolved symbol must come from a library or the failure is real.
-3. Add the check to `check_shared_libs`: no executable should be exporting symbols
-   at all.
-
-**Done when** the flag is gone and `readelf -d` shows no program in the tree with
-`DT_SYMTAB` entries meant for someone else.
-
-### Phase 5 — `libposix.so.0.4`
-
-`posix.c`, 5046 lines. The canary is already in `sxboot.c`, so nothing in it has a
-bootstrap reason to stay. `sxe.c` and `audio.c` come along: 63 symbols, depending on
-`savanxp_*` only.
-
-**Done when** programs map it and the volume holds one copy. This is a size and
-single-source win, not a sharing win at runtime — each process maps one copy either
-way.
-
-The non-PIE question is separate and probably better answered by making everything
-PIE than by teaching `ET_EXEC` to have a `PT_DYNAMIC`. Decide it when the tree gets
-close; nothing else depends on the answer.
-
-### Phase 6 — size and coverage
+### Phase 2 — size and coverage
 
 1. `--gc-sections` in the PIE profile, which removes the 3534 dead symbols. The
    risk is dropping something a program reaches only indirectly, so verify with the
@@ -873,7 +720,7 @@ close; nothing else depends on the answer.
    painted. The current solid-only mode gives 14 pixels and does not catch a wrong
    font, so it is deliberately not shipped as a check.
 
-### Phase 7 — FFmpeg
+### Phase 3 — FFmpeg
 
 The reason any of this exists, and the phase nothing above delivers on its own.
 
@@ -885,6 +732,42 @@ there is no reference counting, so nothing can be unloaded either.
 **Done when** a program maps `libavcodec` and its codec, and `dlopen` exists to load
 one by name. Treat this as the acceptance test for the whole subsystem: it is the
 first workload that genuinely needs it.
+
+## Deliberately out of scope for the first implementation
+
+Three things were designed, cost real time, and have been taken back out. Recording
+them here rather than deleting them, because the reasoning is the part that survives.
+
+**Moving the C runtime into `libc.so.0.4`.** It cannot move as one file. `crt0` runs
+before a page of any library exists, so the stack canary, `__stack_chk_fail` and
+`sx_start_dynamic` have to stay in the executable; and the raw syscall wrappers have
+to stay too, because they are what the loader uses to map the first library. A
+library cannot be asked to open the first library.
+
+**Making `--export-dynamic` unnecessary.** It follows from the above: while the
+syscall wrappers are in the executable, every library resolves `savanxp_*` against
+the program, and the program has to export. Removing the flag needs a real `ld.so`
+mapped before everything else — the loader living in the executable is the reason
+the wrappers have to be there.
+
+**A shared POSIX layer.** `posix.c` is 5046 lines and none of it has a bootstrap
+reason to stay, so in principle it moves easily. It is a volume-size win, not a
+runtime one: each process maps one copy either way.
+
+What was reverted along with them, and why it is not coming back:
+
+- `crt0` passing the interpreter path and the image base as arguments instead of
+  storing them in libc globals. Only needed if libc could be a library.
+- `sxboot.c`, a file holding exactly what `crt0` touches. Its whole justification
+  was "this cannot become a library", which stops being true.
+- The loader no longer calling the C library. True and harmless, but nothing in this
+  scope consumes it.
+
+One thing from that work was kept, because it was never about libc: the runtime for
+external applications is now derived from the runtime for the system's own programs
+instead of being listed again by hand. The two lists have to agree, and when they
+did not, the symptom was an undefined symbol much later than the change that caused
+it.
 
 ## Explicitly not worth doing yet
 

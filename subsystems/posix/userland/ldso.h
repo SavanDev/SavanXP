@@ -33,13 +33,7 @@
  * Devuelve 0 si quedo operativo, o un numero negativo diciendo en que paso
  * fallo, con la misma convencion que ldso_load. Un ejecutable sin .dynsym no
  * tiene nada que reubicar y devuelve 0. */
-int ldso_start(const char* interpreter_path, unsigned long image_base);
-
-/* La ruta de PT_INTERP que crt0 recibio del kernel, o NULL si la imagen no declara
- * una. La guarda el cargador, que antes la guardaba libc en un global al que
- * escribia crt0 antes de la primera llamada: cuando libc sea una libreria ese
- * global estaria en una imagen todavia no cargada. */
-const char* ldso_interpreter_path(void);
+int ldso_start(void);
 
 /* Abre, mapea y reubica una libreria. Devuelve 0 si todo fue bien. */
 int ldso_load(const char* path);
