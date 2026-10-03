@@ -107,6 +107,12 @@ Cut-off notes:
   are rendered from the font tables inside the built graphics library, so the check
   is about the characters rather than about ink.
 
+- **Three more loader failures now say what they are, and each has a self-test.** A
+  missing library and a full slot table were both just numbers, and they are
+  different problems with different fixes. A dependency shared by two branches of a
+  dependency graph was loaded once per branch; nothing exercised that case, because
+  a two-library chain cannot produce it.
+
 - **The library loader says which symbol it could not resolve.** A load failure
   reported a step number, which says where the failure was and nothing about what
   it was. A dependency built with an incomplete `DT_NEEDED` now names the missing

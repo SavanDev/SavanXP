@@ -105,6 +105,9 @@ int main(void) {
     const char* libtest_argv[] = {"/disk/bin/libtest", 0};
     const char* interptest_argv[] = {"/disk/bin/interptest", 0};
     const char* brokentest_argv[] = {"/disk/bin/brokentest", 0};
+    const char* missingtest_argv[] = {"/disk/bin/missingtest", 0};
+    const char* diamondtest_argv[] = {"/disk/bin/diamondtest", 0};
+    const char* slottest_argv[] = {"/disk/bin/slottest", 0};
     const char* pietest_argv[] = {"/disk/bin/pietest", 0};
     const char* handletest_argv[] = {"/disk/bin/handletest", 0};
     const char* semaphoretest_argv[] = {"/disk/bin/semaphoretest", 0};
@@ -147,6 +150,10 @@ int main(void) {
         !file_exists("/disk/bin/sectiontest") ||
         !file_exists("/disk/bin/ldtest") ||
         !file_exists("/disk/bin/brokentest") ||
+        !file_exists("/disk/bin/missingtest") ||
+        !file_exists("/disk/bin/diamondtest") ||
+        !file_exists("/disk/bin/slottest") ||
+        !file_exists("/disk/lib/libdia_top.so.0.4") ||
         !file_exists("/disk/lib/libbroken.so.0.4") ||
         !file_exists("/disk/bin/libtest") ||
         !file_exists("/disk/bin/interptest") ||
@@ -186,6 +193,12 @@ int main(void) {
         /* El diagnostico del enlazador. Que la carga falle ya lo hacia; que el
          * mensaje diga el simbolo es lo que se comprueba. */
         !run_and_expect("/disk/bin/brokentest", brokentest_argv, 1, 0) ||
+        /* Los otros tres fallos que el enlazador tiene que saber explicar:
+         * un archivo que no esta, una dependencia compartida que se trae dos
+         * veces, y el limite de librerias. */
+        !run_and_expect("/disk/bin/missingtest", missingtest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/diamondtest", diamondtest_argv, 1, 0) ||
+        !run_and_expect("/disk/bin/slottest", slottest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/pietest", pietest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/handletest", handletest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/semaphoretest", semaphoretest_argv, 1, 0) ||

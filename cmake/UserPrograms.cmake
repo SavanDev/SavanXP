@@ -3,7 +3,7 @@
 function(savanxp_program)
     set(options TEST)
     set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
-    set(multiValueArgs SOURCES DEPENDS)
+    set(multiValueArgs SOURCES DEPENDS DEFINES)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
     if(P_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR "savanxp_program(${P_NAME}): unknown arguments: ${P_UNPARSED_ARGUMENTS}")
@@ -23,6 +23,12 @@ function(savanxp_program)
         "${SAVANXP_GENERATED_ROOT}"
     )
     target_compile_definitions(${P_NAME} PRIVATE DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
+    # DEFINES es para las pruebas que necesitan cambiar un limite del cargador.
+    # ldso.c se compila DENTRO de cada programa, as que un -D alcanza: es el mismo
+    # codigo con otra constante, no una variante.
+    if(P_DEFINES)
+        target_compile_definitions(${P_NAME} PRIVATE ${P_DEFINES})
+    endif()
     target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
     if(P_LINK_PROFILE STREQUAL "STATIC" OR NOT P_LINK_PROFILE)
         target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime)
@@ -171,6 +177,34 @@ savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsy
 # ejecutable, el ejecutable tiene que exportar una tabla dinamica. lld no emite
 # .dynsym para una ET_EXEC, asi que un ldtest no-PIE no tendria contra que
 # resolver y la mitad de la cadena no se podria probar.
+# El diamante de DT_NEEDED: top -> {left, right} -> leaf. Los dos necesitan la
+# misma, y el recorrido tiene que traerla una vez.
+savanxp_library(NAME libdia_leaf TEST SONAME libdia_leaf.so.0.4
+    DEFINES DIA_LEAF SOURCES subsystems/posix/userland/diamondlib.c)
+savanxp_library(NAME libdia_left TEST SONAME libdia_left.so.0.4 DEPENDS libdia_leaf
+    DEFINES DIA_LEFT SOURCES subsystems/posix/userland/diamondlib.c)
+savanxp_library(NAME libdia_right TEST SONAME libdia_right.so.0.4 DEPENDS libdia_leaf
+    DEFINES DIA_RIGHT SOURCES subsystems/posix/userland/diamondlib.c)
+savanxp_library(NAME libdia_top TEST SONAME libdia_top.so.0.4
+    DEPENDS libdia_left libdia_right
+    DEFINES DIA_TOP SOURCES subsystems/posix/userland/diamondlib.c)
+savanxp_program(NAME diamondtest TEST LINK_PROFILE PIE
+    SOURCES subsystems/posix/userland/diamondtest.c)
+
+# El limite de librerias, con un tope de 4 en vez de 32 para no necesitar 33
+# libreras de prueba. Es el mismo ldso.c con otra constante: ldso.c se compila
+# dentro de cada programa, asi que un -D alcanza.
+#
+# NO declara las libreras del ejercicio como DEPENDS. Si las declarara, el arranque
+# las cargaria antes de main y el programa naceria con el tope ya medio lleno, que
+# es otra prueba distinta. Las pide por ruta, que es lo que quiere medir.
+savanxp_program(NAME slottest TEST LINK_PROFILE PIE
+    DEFINES SAVANXP_LD_MAX_LIBRARIES=4
+    SOURCES subsystems/posix/userland/slottest.c)
+
+savanxp_program(NAME missingtest TEST LINK_PROFILE PIE
+    SOURCES subsystems/posix/userland/missingtest.c)
+
 # Carga a proposito la libreria con el simbolo irresoluble. NO la declara como
 # dependencia: la pide por ruta, que es como se encuentra el caso roto de verdad
 # --una libreria que el programa no conoce-- y ademas evita que lld examine sus

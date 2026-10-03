@@ -41,6 +41,10 @@ int ldso_load(const char* path);
 /* Direccion del simbolo, o 0 si la libreria no lo define. */
 void* ldso_lookup(const char* name);
 
+/* Cuantas imagenes hay mapeadas, el ejecutable incluido. Para las pruebas que
+ * necesitan comprobar que una dependencia compartida se cargo una sola vez. */
+int ldso_count(void);
+
 /* Como la libreria se cargo bien, para poder distinguir "no existe" de "fallo". */
 int ldso_loaded(void);
 

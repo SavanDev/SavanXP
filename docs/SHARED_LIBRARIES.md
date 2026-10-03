@@ -689,17 +689,39 @@ nothing at all is tested for a library that is missing, one that exceeds the slo
 count, or one with an unresolvable symbol. `ldtest` covers a missing *symbol* through
 `ldso_lookup`, which is a different thing.
 
-1. Record the failing symbol's name when `apply_table_in` gives up, next to the
-   `g_lib_reloc_step` it already sets, and print it from the failure path.
-2. Test a program whose `DT_NEEDED` names a file that is not in `/disk/lib`.
-3. Test a chain that asks for more libraries than `kMaxLibraries` holds.
-4. Test a library carrying a symbol nothing defines.
-5. Test a diamond — A and B both need D. `needed_done` exists in the loader for
-   exactly that, and nothing exercises it: `libchaintop` → `libchainbase` is a
-   chain, so loading D twice is not something any run has ever done.
+**Done.** Five items, all in the smoke catalog, each verified by breaking it:
 
-**Done when** each of those failures exits non-zero and names the file or the
-symbol, and each is in the smoke catalog.
+| case | how it is provoked | what it asserts |
+| --- | --- | --- |
+| unresolved symbol | `libbroken.so.0.4` calls a symbol nothing defines | `g_lib_fail_symbol` and `g_lib_fail_library` name it |
+| missing library | `ldso_load` on a path that is not in `/disk/lib` | step `-2`, no slot consumed, and the path really does not open |
+| full slot table | `slottest`, compiled with `SAVANXP_LD_MAX_LIBRARIES=4` | step `-1`, and `-1` is not `-2` |
+| the diamond | `libdia_top` → `{left, right}` → `leaf` | `ldso_count()` is 5, not 6 |
+| a chain | `ldtest`, `libchaintop` → `libchainbase` | already covered |
+
+What the negative runs produced, which is the point of doing them:
+
+```
+already_loaded off   ->  diamondtest: tras cargar top hay 6 imagenes y deberian ser 5
+slot-full reports -2 ->  slottest: la cuarta dio -2, y el cupo lleno es -1
+missing reports -1   ->  missingtest: fallo en el paso -1, y el de un archivo ausente es -2
+no symbol recorded   ->  brokentest: la carga fallo pero el cargador no guardo ningun simbolo
+```
+
+Two things came out of writing them rather than out of reading the code.
+
+**The slot limit is a compile-time constant per program.** `ldso.c` is compiled
+*into* each program, so `SAVANXP_LD_MAX_LIBRARIES` is a `-D` away. `slottest` runs
+with a limit of 4 instead of 32: it is the same loader with a different number, and
+proving the path does not need 33 test libraries in the volume.
+
+**A broken library cannot be built the obvious way.** lld rejects a shared library
+with an unresolved symbol under `--no-allow-shlib-undefined`, which is the right
+default and left no way to produce the case. `ALLOW_UNDEFINED` on `savanxp_library`
+exists only for `libbroken` and says so in the build file — that flag is how a
+broken third-party library is actually produced. `brokentest` then loads it by path
+rather than declaring it, so the linker never inspects the library the test exists
+to diagnose.
 
 ### Phase 1 — fail at load instead of at the first call
 

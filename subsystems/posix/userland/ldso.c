@@ -161,7 +161,10 @@ typedef struct {
  * dos costarian 137 KB residentES en cada proceso, incluido un ls que no carga
  * ninguna. Con headers[] de 24 son ~1750 B y el total baja a 56 KB. Los dos cambios
  * van juntos por eso. */
-#define kMaxLibraries 32
+#ifndef SAVANXP_LD_MAX_LIBRARIES
+#define SAVANXP_LD_MAX_LIBRARIES 32
+#endif
+#define kMaxLibraries SAVANXP_LD_MAX_LIBRARIES
 
 static Library g_libs[kMaxLibraries];
 static int g_lib_count;
@@ -186,6 +189,16 @@ int g_lib_reloc_step;
  * hay copia que hacer ni que se pueda invalidar. */
 const char* g_lib_fail_symbol;
 const char* g_lib_fail_library;
+
+/* Cuantas imagenes hay mapeadas, el ejecutable incluido. Existe para las pruebas:
+ * sin el, la unica forma de comprobar que una dependencia compartida se cargo UNA
+ * vez -- el caso del diamante-- seria contar ficheros.
+ *
+ * El ejecutable cuenta porque ocupa un hueco, y porque el limite incluye su
+ * hueco: con kMaxLibraries 32 hay 31 huecos para librerias. */
+int ldso_count(void) {
+    return g_lib_count;
+}
 
 int ldso_loaded(void) {
     return g_lib_count;
