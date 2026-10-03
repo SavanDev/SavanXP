@@ -84,6 +84,17 @@ Cut-off notes:
   makes is to the C runtime or a system call. A program no longer has to be PIE so
   that a toolkit can find its drawing code.
 
+- **The symbols the startup code must touch now live in a file of their own.** The
+  stack canary and the dynamic-loader hook were spread across the C library and the
+  POSIX layer, which is where a future shared library would want them. They are in
+  `sxboot.c` now, with the reason stated in one place: startup runs before any
+  library is mapped, so anything it writes has to be in the executable.
+
+- **The runtime for external applications is derived from the one for the system's
+  own programs**, instead of being listed again by hand. The two lists have to agree
+  and nothing complained when they did not — the symptom is an undefined symbol much
+  later than the change that caused it.
+
 - **The program startup no longer stores the image facts in the C library.** The
   interpreter path and the image's own base were library globals that the startup
   code wrote before its first call, which stops working the moment the C library is

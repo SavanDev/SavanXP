@@ -638,6 +638,29 @@ Everything above that line — `memcpy`, `memset`, `memmove`, `strlen`, `strcmp`
 `strcpy`, `malloc`, `printf`, the event and timer wrappers, the clipboard — has no
 such constraint and can move.
 
+The first and second items are now in `sxboot.c`, which is the criterion made into a
+file: it is exactly what `crt0` touches, and by construction it is what cannot become
+a library. The third item stays in the runtime implicitly, as the loader's undefined
+list already said.
+
+Making `sxboot.c` a library, which is the mistake the file exists to prevent, was
+tried and measured:
+
+```
+  user: exception #14 pid=29 name=ldtest cr2=0x467f6
+  SMOKE FAIL status /disk/bin/ldtest expected=0 got=142
+```
+
+`crt0` writes the canary at `movq %rdx, __stack_chk_guard(%rip)`; with the variable
+in an unmapped library the GOT entry is still zero at that point, so the store lands
+near address zero. The process dies before `main`, which means no diagnostic and no
+`ldtest` output to explain it.
+
+`sx_start_dynamic` could not keep using `eprintf` either. It runs from `crt0`, at the
+exact moment `printf` does not yet exist, so a libc it was loading failing would have
+taken its own error report down with it. It writes through a raw `write` syscall, and
+the step number is formatted as characters because every step is one or two digits.
+
 The third item is what makes this delicate rather than obvious: it is not a clean
 layer boundary in `libc.c`'s current shape, and the exact partition is the kind of
 decision that is expensive to get wrong. `ldso.c`'s undefined-symbol list is the

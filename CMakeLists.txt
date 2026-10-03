@@ -292,6 +292,7 @@ set_target_properties(savanxp_uacpi_objects PROPERTIES
 # pasa --gc-sections, asi que lo no referenciado se descarta en el enlace.
 set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/crt0.S
+    subsystems/posix/sdk/v1/runtime/sxboot.c
     subsystems/posix/sdk/v1/runtime/libc.c
     subsystems/posix/sdk/v1/runtime/posix.c
     subsystems/posix/sdk/v1/runtime/math.c
@@ -422,14 +423,22 @@ set(SAVANXP_EXTERNAL_LINK_OPTIONS
     "-Wl,-z,max-page-size=0x1000"
     -Wl,--build-id=none
 )
-add_library(savanxp_external_runtime OBJECT
-    subsystems/posix/sdk/v1/runtime/crt0.S
-    subsystems/posix/sdk/v1/runtime/libc.c
-    subsystems/posix/sdk/v1/runtime/posix.c
-    subsystems/posix/sdk/v1/runtime/gfx.c
-    subsystems/posix/sdk/v1/runtime/gfx2d.c
-    subsystems/posix/sdk/v1/runtime/setjmp.S
-)
+# El runtime de las apps externas es el de los programas internos MENOS las unidades
+# del toolkit, mas setjmp. Se deriva en vez de restcribirse, porque son dos listas
+# que tienen que coincidir y que no coincidir no da ningun error: el enlazador se
+# queja de un simbolo indefinido que nadie sabe de donde deberia venir, mucho despues
+# del cambio que lo rompio. sxboot.c se quedo fuera de esta lista justo por eso.
+set(SAVANXP_EXTERNAL_RUNTIME_SOURCES ${SAVANXP_USER_RUNTIME_SOURCES}
+    subsystems/posix/sdk/v1/runtime/setjmp.S)
+list(REMOVE_ITEM SAVANXP_EXTERNAL_RUNTIME_SOURCES
+    subsystems/posix/sdk/v1/runtime/math.c
+    subsystems/posix/sdk/v1/runtime/audio.c
+    subsystems/posix/sdk/v1/runtime/sxe.c
+    subsystems/posix/sdk/v1/runtime/sxchrome.c
+    subsystems/posix/sdk/v1/runtime/sxgui.c
+    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+
+add_library(savanxp_external_runtime OBJECT ${SAVANXP_EXTERNAL_RUNTIME_SOURCES})
 target_include_directories(savanxp_external_runtime PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"

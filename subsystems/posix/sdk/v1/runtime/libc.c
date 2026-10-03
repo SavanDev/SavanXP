@@ -233,46 +233,6 @@ long timer_cancel(int handle) {
     return syscall1(SAVANXP_SYS_TIMER_CANCEL, (unsigned long)handle);
 }
 
-/* El hook del interprete, definido por el programa que enlace el cargador de
- * librerias. Debil: los programas sin dependencias no lo definen y el
- * enlazador lo resuelve en 0.
- *
- * Recibe los dos datos que crt0 trae en registros y que antes vivian en globals de
- * este archivo: la ruta del interprete que el kernel copio al stack inicial, y la
- * direccion de la cabecera ELF de la imagen.
- *
- * Que sean ARGUMENTOS y no globals es lo que permite que este archivo sea una
- * libreria. crt0 corre antes de que exista ninguna pagina de ella, asi que un
- * global escrito aca seria un acceso a una imagen todavia no cargada. Un registro
- * no tiene ese problema. */
-extern int sx_run_interpreter(const char* interpreter_path, unsigned long image_base)
-    __attribute__((weak));
-
-/* Lo que crt0 llama antes de main.
- *
- * La comprobacion va en C a proposito. En ensamblador, preguntar si un simbolo
- * debil esta definido obliga a hacer `movq simbolo(%rip), %rax`, que LEE la
- * memoria en la direccion del simbolo; si no esta definido, esa direccion es
- * cero y el proceso muere en un fallo de pagina antes de llegar a main. El
- * enlazador le da a un simbolo debil indefinido una entrada en el GOT con valor
- * cero, y eso es lo que se consulta aca.
- *
- * Que este sea el unico lugar donde se decide si el interprete corre es lo que
- * hace que sea automatico: un programa no necesita acordarse de llamarlo, y no
- * puede olvidarse. */
-void sx_start_dynamic(const char* interpreter_path, unsigned long image_base) {
-    if (sx_run_interpreter != 0) {
-        const int result = sx_run_interpreter(interpreter_path, image_base);
-        if (result != 0) {
-            /* Un programa que no queda operativo no puede decir nada util con
-             * printf todavia, y el sintoma de no haberse reubicado --punteros a
-             * cero, secciones que no abren-- no dice nada de la causa. El paso
-             * que fallo va numerado igual que en ldso_load. */
-            eprintf("sx_start_dynamic: el interprete fallo (paso %d)\n", -result);
-        }
-    }
-}
-
 long section_create(unsigned long size, unsigned long flags) {    return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);
 }
 
