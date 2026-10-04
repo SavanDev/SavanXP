@@ -1,0 +1,25 @@
+# Recursos SXE del reproductor. Ver docs/SXE_FORMAT.md y
+# docs/MEDIA_PLAYER.md.
+#
+# icon_file se resuelve relativo a ESTE manifiesto, asi que el icono del reproductor
+# viaja con el, en este directorio. Antes vivia en ports/ffmpeg/overlay/ y el arbol
+# no tenia copia ninguna: sin icono, el reproductor salia en el lanzador con el
+# generico de escritorio, el unico icono horneado del catalogo.
+icon_file=icon.png
+
+# Y lo de este manifiesto son las CAPACIDADES de medios: es lo que hace que Files
+# abra un .avi o un .mp3 con /bin/mediaplayer. Si el port de FFmpeg no esta, el
+# reproductor no llega a construirse y el registro lo descarta --como hace con Doom--
+# asi que la asociacion no puede apuntar a un binario que no exista.
+#
+# Las extensiones son las que el port realmente habilita (ports/ffmpeg/configure.sh:
+# --enable-demuxer y --enable-decoder). Anadir una aqui que el port no sepa
+# decodificar daria un error de descompresion en vez de un aviso claro.
+name=Media Player
+description=Play video and audio files
+version=system
+vendor=SavanXP
+accent=2f5f8f
+mime_open=video/mp4,video/x-matroska,video/x-msvideo,video/mp2t,video/x-ivf,video/mpeg,video/x-m4v,audio/mpeg,audio/mp4,audio/wav,audio/x-wav,audio/flac,audio/ogg,audio/opus,audio/aac,audio/ac3
+ext_open=.mp4,.m4v,.mov,.mkv,.webm,.avi,.ts,.m2ts,.mts,.mpg,.mpeg,.m2v,.ivf,.wav,.mp3,.mp2,.flac,.ogg,.oga,.ogv,.opus,.aac,.ac3
+category=Accessories

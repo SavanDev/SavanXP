@@ -88,20 +88,27 @@ Cut-off notes:
   with FFmpeg linked in to 344 KB with one `DT_NEEDED`, and it decodes through
   `/disk/lib/libffmpeg.so.0.4`.
 
-- **`/bin/mediaplayer` is back, and it is what the launcher shows.** The
-  Accessories group lists Media Player; opening it hands the process to
-  `/disk/bin/mediaplayer-ffmpeg` when the port is installed, and shows a window
-  saying it is not when it is not. Opening `.mp3`, `.avi` and `.flac` from Files
-  goes through it too, so a media file explains itself instead of failing.
+- **The Media Player is a program of the system tree, and the FFmpeg port builds
+  no program at all.** Its source moved to `subsystems/posix/userland/mediaplayer/`
+  and the port's only artifact is `/disk/lib/libffmpeg.so.0.4`. Opening `.mp3`,
+  `.avi` and `.flac` from Files goes through `/bin/mediaplayer`, which says in its
+  own window which library it could not load. The program is built when the port
+  has been built — FFmpeg's headers are generated, not versioned — and CMake says
+  so instead of skipping quietly; without the port the launcher drops the entry,
+  as it does for Doom.
 
 - **A program whose library is missing now says so and keeps running.** It used
   to die with a page fault at the address of a PLT stub. `ldso_missing()` is part
   of the SDK, and the player checks it before its first call.
 
-- **A missing dependency no longer leaves the program unrelocated.** Relocations
-  were skipped when a `DT_NEEDED` failed to load, which left every global pointer
-  at its link-time value — `stdout` among them, so the program could not even
-  print the reason it was broken.
+- **A missing dependency no longer leaves the program unrelocated, and no longer
+  takes the rest of them with it.** Relocations were skipped when a `DT_NEEDED`
+  failed to load, which left every global pointer at its link-time value —
+  `stdout` among them, so the program could not even print the reason it was
+  broken. And the walk stopped at the first missing library, so a missing
+  `libffmpeg.so.0.4` also left `libsxgfx`, `libgfx2d` and `libsxgui` unloaded: the
+  Media Player started and died on its first toolkit call, jumping through
+  `sx_rect_make@plt` with no link between that address and its cause.
 
 - **The loader applies `R_X86_64_64`.** A data slot holding the address of an
   imported symbol needs a runtime resolution, and the loader aborted the load on

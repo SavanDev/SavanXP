@@ -355,6 +355,46 @@ set(SAVANXP_LIBRARY_REPLACES_libsxgui sxgui.c sxgui_app.c)
 set(SAVANXP_LIBRARY_REPLACES_libsxgfx gfx.c)
 set(SAVANXP_LIBRARY_REPLACES_libgfx2d gfx2d.c sxchrome.c)
 
+# El reproductor de medios es un programa de este arbol que depende de una libreria
+# que construye ports/ffmpeg. Eso rompe una suposicion: un programa se compila con
+# lo que hay en el arbol.
+#
+# Lo que hace falta son DOS cosas del port --la libreria, para el DT_NEEDED, y las
+# CABECERAS, que `configure` genera y no estan versionadas-- y por eso el programa
+# es condicional. Sin el port no hay reproductor, y el registro lo descarta igual
+# que a Doom. Se dice en voz alta porque un programa que aparece y desaparece
+#dependiendo de lo que haya en el disco es exactamente lo que no debe pasar sin
+# decirse.
+#
+# La alternativa --dejar el reproductor FUERA del port-- exige que la libreria se
+# pueda enlazar sin existir, y eso se resuelve con un stub de enlace que ademas
+# obliga a renunciar a la comprobacion de la API de FFmpeg en tiempo de enlace. Es un
+# intercambio: ahora se comprueba y el programa es condicional; con stub, el
+# programa es siempre y la comprobacion pasa a ser de arranque.
+# Dos directorios de cabeceras y no uno, porque FFmpeg separa lo que genera de lo
+# que trae: las cabeceras publicas estan en el arbol de fuentes y `configure` solo
+# pone config.h y config_components.h en el directorio de build. El port los pasa
+# con -I "$SRC" -I "$BUILD" (ports/ffmpeg/link.sh), y aqui hace falta lo mismo.
+set(SAVANXP_FFMPEG_LIBRARY "${SAVANXP_OUTPUT_ROOT}/external/libffmpeg.so.0.4")
+set(SAVANXP_FFMPEG_SOURCE "${SAVANXP_OUTPUT_ROOT}/ports/ffmpeg/work/ffmpeg-7.1.1")
+set(SAVANXP_FFMPEG_BUILD "${SAVANXP_OUTPUT_ROOT}/ports/ffmpeg/work/build")
+set(SAVANXP_HAVE_FFMPEG OFF)
+if(EXISTS "${SAVANXP_FFMPEG_LIBRARY}"
+   AND EXISTS "${SAVANXP_FFMPEG_SOURCE}/libavcodec/avcodec.h"
+   AND EXISTS "${SAVANXP_FFMPEG_BUILD}/config.h")
+    set(SAVANXP_HAVE_FFMPEG ON)
+    add_library(libffmpeg SHARED IMPORTED GLOBAL)
+    set_target_properties(libffmpeg PROPERTIES
+        IMPORTED_LOCATION "${SAVANXP_FFMPEG_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES
+            "${SAVANXP_FFMPEG_SOURCE};${SAVANXP_FFMPEG_BUILD}")
+    message(STATUS "mediaplayer: se construye con ${SAVANXP_FFMPEG_LIBRARY}")
+else()
+    message(STATUS
+        "mediaplayer: NO se construye; falta ${SAVANXP_FFMPEG_LIBRARY} o el arbol de "
+        "FFmpeg. Construi ports/ffmpeg primero. El registro lo descarta.")
+endif()
+
 function(savanxp_runtime_variant)
     set(options PIC)
     set(oneValueArgs NAME)
@@ -573,6 +613,11 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --output-dir "${SAVANXP_SXE_ROOT}"
             --build-id "${SAVANXP_BUILD_ID}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+            # El reproductor es el unico programa con fuentes en un subdirectorio, y
+            # --manifest-dir NO es recursivo: sin esta linea su .sxres no se encuentra,
+            # el binario queda sin estampar, el escaneo del lanzador no le ve categoria
+            # y desaparece del catalogo sin decir nada.
+            --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS

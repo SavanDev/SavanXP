@@ -356,15 +356,24 @@ savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE S
 # que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
 # lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
-# El reproductor es una aplicacion del sistema cuyo motor es un port opcional. Este
-# programa es lo que el lanzador muestra y lo que las asociaciones de medios abren:
-# si el port esta, delega con exec y desaparece; si no, se queda y explica.
+# El reproductor de medios es un programa de este arbol. Su motor --FFmpeg-- es un
+# port, asi que el programa se construye solo cuando el port esta (ver la deteccion en
+# CMakeLists.txt) y lleva DEPENDS libffmpeg, que es lo que produce su DT_NEEDED.
 #
-# No lleva DEPENDS de libffmpeg a proposito --no la usa, ni la puede: todavia no se
-# sabe si estara en el volumen cuando se arranca.
-savanxp_program(NAME mediaplayer DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
-    SOURCES
-    subsystems/posix/userland/mediaplayer.c)
+# Antes esto era un lanzador de 114 lineas que hacia exec del binario del port. Ya no:
+# el programa es el reproductor, y el port no construye ninguno. Lo que queda del
+# lanzador --comprobar que el motor esta y decirlo si no-- lo hace el propio programa
+# con ldso_missing(), antes de su primera llamada a FFmpeg.
+if(SAVANXP_HAVE_FFMPEG)
+    set(SAVANXP_MEDIA_PLAYER_SOURCES
+        subsystems/posix/userland/mediaplayer/media.c
+        subsystems/posix/userland/mediaplayer/mediaplayer.c
+        subsystems/posix/userland/mediaplayer/playback.c
+        subsystems/posix/userland/mediaplayer/selftest.c)
+    savanxp_program(NAME mediaplayer DEPENDS libgfx2d libffmpeg libmath libsxgui libsxgfx
+        LINK_PROFILE PIE
+        SOURCES ${SAVANXP_MEDIA_PLAYER_SOURCES})
+endif()
 
 savanxp_program(NAME calc DEPENDS libgfx2d libmath libsxgui libsxgfx LINK_PROFILE PIE
     SOURCES

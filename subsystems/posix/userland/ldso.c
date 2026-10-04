@@ -900,6 +900,7 @@ static int already_loaded(const char* soname) {
  * las librerias en el orden en que se completaron, y cada nueva carga apunta al
  * slot de esta en curso, no al de la que se estaba recorriendo. */
 static int load_needed_chain(int parent_slot) {
+    int failed = 0;
     for (int work = parent_slot; work < g_lib_count; ++work) {
         Library* lib = &g_libs[work];
         for (;;) {
@@ -942,16 +943,32 @@ static int load_needed_chain(int parent_slot) {
                  * Queda el fallo MAS PROFUNDO, porque la recursion llega aqui desde
                  * la libreria que fallo y la sobreescribe: si top -> left -> leaf y
                  * falta leaf, el nombre guardado es el de leaf, que es el que de
-                 * verdad falta.
+                 * verdad falta. Con varias ausentes el nombre guardado es el de la
+                 * ULTIMA que fallo, que es arbitrario; el recuento de lo que quedo
+                 * sin reubicar dice cuanto falta, no cual.
                  *
                  * `need` es un basename --DT_NEEDED lo es-- y el registro es el
                  * mismo buffer, asi que no hay copia que hacer. */
                 g_missing_library = need;
-                return -1;
+                failed = 1;
             }
         }
     }
-    return 0;
+    /* Una dependencia que falta NO puede terminar el recorrido.
+     *
+     * El DT_NEEDED del ejecutable es una lista, no una cadena: si libffmpeg no esta,
+     * eso dice algo de libffmpeg y nada de libsxgui, libgfx2d o libsxgfx, que son
+     * las siguientes de la lista y las necesita igual. Volver aqui las dejaba sin
+     * cargar a TODAS, y con la reubicacion tolerante --que salta lo que no resuelve
+     * en vez de abortar-- el programa arranco con las cuatro ausentes y se mato en la
+     * primera llamada al toolkit, en un salto a la casilla sin reubicar de
+     * sx_rect_make@plt. Un fallo mudo y sin relacion con su causa: lo peor de los dos
+     * mundos.
+     *
+     * Se sigue informando del fallo, y por eso se devuelve != 0 igual, pero despues
+     * de haber cargado todo lo que si se puede. La diferencia entre esto y lo de
+     * antes es la que hay entre "no esta libffmpeg" y "no esta nada". */
+    return failed;
 }
 
 /* Mapea un segmento en la direccion que pide el ELF.

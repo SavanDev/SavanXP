@@ -1,31 +1,41 @@
 # Media Player
 
-How the system `/bin/mediaplayer` launcher delegates to the optional
-`/disk/bin/mediaplayer-ffmpeg` FFmpeg port, what it can and cannot promise about
-audio/video sync on the devices SavanXP has today, and the order in which the
-missing pieces should arrive. Building it is covered by
-[`ports/ffmpeg/README.md`](../ports/ffmpeg/README.md).
+How the Media Player is built, what it needs from the optional FFmpeg port, what
+it can and cannot promise about audio/video sync on the devices SavanXP has today,
+and the order in which the missing pieces should arrive. Building the port is
+covered by [`ports/ffmpeg/README.md`](../ports/ffmpeg/README.md).
 
-## System entry point
+## Where it lives
 
-`/bin/mediaplayer` is always built into the system image and is the program
-shown by the launcher. It was removed with SxMedia in `26b16e0` — a launcher that
-delegates has nothing to delegate to when nothing installable exists — and restored
-once `libffmpeg.so.0.4` made the decoder installable. See
-[`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md#the-launcher-entry-and-the-third-stale-claim). It checks for `/disk/bin/mediaplayer-ffmpeg` at startup:
+`subsystems/posix/userland/mediaplayer/`, and the system tree builds it. The port
+does not. `ports/ffmpeg` produces exactly one artifact, `/disk/lib/libffmpeg.so.0.4`,
+and `mediaplayer` is a PIE program with a `DT_NEEDED` on it.
 
-- with the FFmpeg port installed, it `exec`s the real player and preserves
-  the normal command-line arguments;
-- without the port, it opens a normal SavanXP window explaining that the
-  optional FFmpeg port is missing and that `ports/ffmpeg` must be built first;
-- an installed binary that cannot be executed produces the same in-app
-  explanation with a start-error variant.
+That split was arrived at twice. The player started as a port artifact installed as
+`/disk/bin/mediaplayer-ffmpeg`, with a 114-line launcher in the tree that `exec`ed
+it. The launcher was removed with SxMedia in `26b16e0`, correctly — a launcher that
+delegates has nothing to delegate to when nothing installable exists that is not
+itself a program. It came back once `libffmpeg.so.0.4` made the engine installable,
+and then it went away again for good when the player moved into the tree: with one
+program there is nothing to hand over, and a launcher that only checks whether its
+own backend exists is a check the program can make itself.
 
-The backend deliberately has a different filename and no `category=`, so it
-cannot replace the system program or create a second launcher entry. The base
-manifest owns the media `mime_open`/`ext_open` capabilities; Files therefore
-always launches `/bin/mediaplayer`, which delegates when the backend is present
-and shows the unavailable window when it is not.
+**The program is conditional, and that is the honest cost.** FFmpeg's `configure`
+generates its public headers into the port's work tree and they are not versioned,
+so `mediaplayer` cannot be compiled without the port having been built. CMake says
+so out loud (`mediaplayer: NO se construye; ...`) rather than skipping quietly, and
+the launcher registry drops the entry the way it drops Doom's. Making it
+unconditional would mean linking against a stub to record the `DT_NEEDED`, and that
+costs the link-time check of the FFmpeg API — a signature change would become a
+runtime crash instead of a build failure. That trade is not worth taking yet.
+
+## What it does when the library is missing
+
+A failed load is not fatal: `crt0` prints a diagnostic and `main` runs anyway with
+the library's symbols unrelocated. So the player asks first, with
+`ldso_missing()`, as the first statement of `main` — before `av_log_set_level`,
+which is itself an FFmpeg call and was the one that faulted before the check
+existed. With no motor, the window still opens and says which library is missing.
 
 ## Layers
 
@@ -35,10 +45,6 @@ playback.c      clock, audio to /dev/audio0, which frame goes on screen and when
 media.c         FFmpeg: demux, packet queues, decoders, swresample, swscale, seek
 selftest.c      --probe, --selftest, --gpu-hold: the same engine without a window
 ```
-
-The files in `ports/ffmpeg/overlay/mediaplayer/` implement the optional backend;
-the small in-tree `subsystems/posix/userland/mediaplayer.c` is only the stable
-launcher described above.
 
 `media.c` knows nothing about screens, speakers or time of day; `playback.c`
 knows nothing about windows. The split is what lets the headless selftest drive
@@ -59,10 +65,17 @@ That is the price of no threads, and the first thing threads would buy.
 
 ## What a binary costs
 
-Every enabled decoder is linked in: `allcodecs.c` references them all, so static
-linking cannot drop the ones a program never opens. That is why the test tools
-are modes of `mediaplayer` and not separate binaries. With the current format
-set the ELF is ~6.6 MiB of text.
+Every enabled decoder is inside `libffmpeg.so.0.4`: `allcodecs.c` references them
+all, and neither `--whole-archive` nor the archive's own semantics can drop the
+ones a program never opens. That is why the test tools are modes of `mediaplayer`
+and not separate binaries. The split now shows in the sizes: `mediaplayer` is
+~496 KB and `libffmpeg.so.0.4` is ~6.8 MB, where before the move the player was a
+single ~7 MB binary.
+
+The library also costs 17.25 MB of BSS, 16 MB of it FFmpeg's FFT tables, which the
+codec registry drags in whether or not any given file needs a transform. That is an
+FFmpeg build-configuration decision, not the loader's; see
+[`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md#ffmpeg-as-one-library-and-what-it-cost-to-find-out).
 
 It also carries **~18 MiB of BSS**, almost all of it `ff_tx_tab_*`: libavutil's
 transform tables, one static array per size up to 2^21 entries for each of

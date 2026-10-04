@@ -48,33 +48,29 @@ configure expands compiler flags without quoting. Set
 `SAVANXP_VERIFY_SIGNATURE=1` to additionally download and verify the release
 signature with GPG; the archive SHA-256 is always mandatory.
 
-The build produces the raw link output at:
+The build produces one artifact:
 
 ```text
-build/external/mediaplayer.elf
+build/external/libffmpeg.so.0.4
 ```
 
-and a stamped copy at:
-
-```text
-build/ffmpeg/mediaplayer-ffmpeg
-```
+That is the whole port. **It builds no program.** The Media Player itself lives in
+`subsystems/posix/userland/mediaplayer/` and is built by the system tree, which
+links it against this library; when the port has not been built the player is not
+built either, and the launcher registry drops the entry the way it drops Doom's.
 
 ## Installation
 
-`install.sh` stages only the optional Media Player backend and, when requested,
-the three deterministic test clips under `build/media/`. The base image already
-contains `/bin/mediaplayer`; when this backend is absent, opening that system
-application shows an in-window message explaining that the FFmpeg port must be
-built. It requires an existing valid `build/disk.img` and
-`build/tools/sxfs-cli`, then uses
-`tools/sxfs_sync.py` with the persistent-image lock, candidate validation,
-atomic replacement, rollback, and safe compaction. It never passes `--reset`.
-The installed backend has the distinct name `mediaplayer-ffmpeg`; the system
-launcher remains `/bin/mediaplayer`, and the base manifest owns media file
-associations. When upgrading an image that used the old
-`/disk/bin/mediaplayer` backend, run this installer once before the next normal
-build so the backend is preserved under its new name.
+`install.sh` stages one file, `/disk/lib/libffmpeg.so.0.4`, and when requested the
+three deterministic test clips under `build/media/`. It requires an existing valid
+`build/disk.img` and `build/tools/sxfs-cli`, then uses `tools/sxfs_sync.py` with
+the persistent-image lock, candidate validation, atomic replacement, rollback, and
+safe compaction. It never passes `--reset`.
+
+Nothing under `/disk/bin` is installed, so an image built before this change can
+keep its stale `/disk/bin/mediaplayer-ffmpeg`; remove it once with
+`build/tools/sxfs-cli rm build/disk.img /bin/mediaplayer-ffmpeg` if you want the
+volume tidy. It is inert: nothing lists it and nothing has a `DT_NEEDED` for it.
 
 Stop QEMU or another VM before installing; the image lock coordinates SavanXP
 builders but cannot stop an external writer that bypasses the protocol.
@@ -113,8 +109,8 @@ flow finishes.
 After installation, run the normal Linux build and verify that these remain:
 
 ```text
+/disk/lib/libffmpeg.so.0.4
 /disk/bin/mediaplayer
-/disk/bin/mediaplayer-ffmpeg
 /disk/bin/doomgeneric
 /disk/games/doom/doom1.wad
 ```

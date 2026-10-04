@@ -1,21 +1,7 @@
 #!/bin/bash
-# Compile and statically link the Media Player against the FFmpeg libraries.
+# Link libffmpeg.so.0.4 out of the FFmpeg archives. This port builds NO program.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
-
-APP="$PORT/overlay/mediaplayer"
-mkdir -p "$OUT" "$OUTPUT_ROOT/external"
-cd "$OUT"
-
-objects=()
-for source in "$APP"/*.c; do
-    name="$(basename "$source" .c)"
-    echo "== compilando $name.c"
-    $SX_CC -c -x c "$source" -o "$name.o" $SX_TARGET_CFLAGS \
-        -Wall -Wextra -Wno-unused-parameter \
-        -I "$SRC" -I "$BUILD"
-    objects+=("$name.o")
-done
 
 # ---- libffmpeg.so.0.4 -----------------------------------------------------
 #
@@ -53,6 +39,31 @@ ARCHIVES=(
     "$BUILD/libavutil/libavutil.a"
 )
 
+# El reproductor NO se construye aqui. Vive en subsystems/posix/userland/mediaplayer/
+# y lo enlaza el arbol, que es donde estan la ventana, los controles y el reloj; este
+# port solo aporta el motor. Antes lo compilaba este script y lo instalaba como
+# /disk/bin/mediaplayer-ffmpeg, con un lanzador de 114 lineas en el arbol que hacia
+# exec de este binario. Los dos se fueron: el motor es la libreria, y el programa es
+# del arbol.
+# libffmpeg DECLARA que necesita libmath, y no es cosmetico.
+#
+# El cargador recorre el DT_NEEDED del ejecutable en orden y, en cuanto trae una
+# libreria, la reubica antes de traer la siguiente. Asi que si libffmpeg se carga
+# antes que libmath, sus 42 referencias a funciones de doble precision --fabs y
+#IPSIBLE-- no tienen donde resolverse y la carga falla con "necesita \"fabs\" y no
+# esta en ninguna imagen cargada". Con la dependencia declarada, el cargador trae la
+# cadena de la PROPIA libreria antes de reubicarla, que es lo unico que garantiza el
+# orden.
+#
+# Antes esto no pasaba porque el reproductor del port llevaba math.c estatico dentro
+# y no necesitaba la libreria. El fallo aparece al mover el reproductor al arbol, y
+# por eso es de este lado: una libreria que usa otra tiene que decirlo.
+SAVANXP_MATH_LIBRARY="${SAVANXP_MATH_LIBRARY:-$OUTPUT_ROOT/diskfs/lib}"
+if [[ ! -f "$SAVANXP_MATH_LIBRARY/libmath.so.0.4" ]]; then
+    echo "ffmpeg: falta $SAVANXP_MATH_LIBRARY/libmath.so.0.4; ejecuta ./build.sh build primero" >&2
+    exit 1
+fi
+
 echo "== linkeando libffmpeg.so.0.4"
 # -Wl,-shared y NO -shared. El driver de clang con el triple none ignora -shared
 # (avisa "argument unused during compilation") y linkea un ET_EXEC etiquetado como
@@ -62,6 +73,7 @@ $LINK_CC -target x86_64-unknown-none-elf -nostdlib -Wl,-shared -fuse-ld=lld \
     -Wl,--whole-archive "${ARCHIVES[@]}" -Wl,--no-whole-archive \
     -Wl,--unresolved-symbols=ignore-all \
     -Wl,-soname,libffmpeg.so.0.4 \
+    -L"$SAVANXP_MATH_LIBRARY" -Wl,-Bdynamic -Wl,--no-as-needed -l:libmath.so.0.4 -Wl,-Bstatic \
     -Wl,-z,max-page-size=0x1000 -Wl,--build-id=none \
     -o libffmpeg.so.0.4
 
@@ -69,35 +81,3 @@ echo "== libffmpeg.so.0.4: $(du -h libffmpeg.so.0.4 | cut -f1)"
 $SIZE_CMD libffmpeg.so.0.4 | tail -1
 cp libffmpeg.so.0.4 "$OUTPUT_ROOT/external/libffmpeg.so.0.4"
 echo "listo: $OUTPUT_ROOT/external/libffmpeg.so.0.4"
-
-# ---- mediaplayer: PIE, con libffmpeg.so.0.4 como dependencia ---------------
-#
-# Aqui es donde el reproductor deja de llevar los cinco .a dentro. Es la primera
-# aplicacion del sistema que depende de una libreria compartida, y la razon de que
-# sea PIE es concreta: el ejecutable tiene que estar en el ambito de simbolos de
-# libffmpeg, porque las 112 referencias externas de la libreria las resuelve el
-# cargador contra el ejecutable y no hay mas sitio donde buscarlas.
-#
-# El orden NO es negociable: la libreria se linkea antes, porque el enlazador necesita el
-# archivo para poder escribir el DT_NEEDED.
-#
-# Y se pasa POR SU NOMBRE, no con -lffmpeg. El archivo se llama libffmpeg.so.0.4 y -l
-# busca libffmpeg.so o libffmpeg.a; ademas, pasando la ruta, es el SONAME del archivo
-# --no su nombre de archivo-- lo que queda en el DT_NEEDED, y asi el reproductor
-# pedira libffmpeg.so.0.4 aunque el archivo se llame de otra forma en el volumen.
-#
-# Lo que NO entra: libsxgui.a y libsavanxp.a si, pero las de FFmpeg no. Sus 112
-# simbolos se resuelven en tiempo de carga, no de enlace.
-echo "== linkeando mediaplayer (PIE, depende de libffmpeg.so.0.4)"
-$SX_LD $SX_TARGET_LDFLAGS_PIE -o mediaplayer.elf \
-    "$RUNTIME/crt0.o" "${objects[@]}" \
-    "$OUT/libffmpeg.so.0.4" \
-    "$RUNTIME/ldso.o" \
-    "$RUNTIME/libsxgui.a" \
-    "$RUNTIME/libsavanxp.a"
-
-echo "== mediaplayer.elf: $(du -h mediaplayer.elf | cut -f1)"
-$SIZE_CMD mediaplayer.elf | tail -1
-readelf -dW mediaplayer.elf | grep -E 'NEEDED' | sed 's/^/   /'
-cp mediaplayer.elf "$OUTPUT_ROOT/external/mediaplayer.elf"
-echo "listo: $OUTPUT_ROOT/external/mediaplayer.elf"

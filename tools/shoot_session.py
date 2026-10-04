@@ -1165,34 +1165,39 @@ def scenario_ccleste(s):
 
 
 def scenario_mediaplayer_unavailable(s):
-    """El reproductor sin su port: tiene que abrir una ventana y explicar.
+    """El reproductor sin su motor: tiene que abrir una ventana y explicar.
 
     Se lanza desde el lanzador, no ejecutandolo a mano, porque la mitad de lo que se
     comprueba aqui es que la entrada exista y se pueda abrir: la posicion que usa
     open_mediaplayer() es una afirmacion sobre el catalogo, y este escenario es lo
     que la hace verdad.
 
-    Se afirma el TEXTO del lanzador y no el rótulo de la barra de tareas. El rótulo
+    Antes quitaba el binario del port y el aviso lo ponia el lanzador. Ya no hay
+    lanzador --el reproductor es un programa del arbol-- y lo que falta es la
+    LIBRERIA, asi que el aviso lo pone el propio reproductor desde run_window. Es el
+    mismo texto en el mismo sitio, y el escenario que lo cubre ahora es el que
+    verifica que el reproductor sobreviva a su motor faltante.
+
+    Se afirma el TEXTO de la ventana y no el rotulo de la barra de tareas. El rotulo
     son 14 pixeles con la fuente actual y no detecta ni un cambio de fuente (esta
-    medido y escrito en scenario_taskbar); el texto de la ventana son cuatro lineas
-    enteras, y ademas es lo unico que el lanzador puede dibujar: cuando el port esta
-    instalado este programa no abre ninguna ventana, porque sustituye su proceso.
+    medido y escrito en scenario_taskbar); el aviso son dos lineas, y ademas es lo
+    unico que el reproductor pinta cuando no hay motor.
     """
     s.open_mediaplayer()
-    image = s.shot("mediaplayer-sin-port")
+    image = s.shot("mediaplayer-sin-motor")
     area = (0, 0, image.width, image.height)
-    # El fondo es FIELD, no FACE: el texto vive en un textview, que pinta su
-    # propio campo blanco. Con FACE la busqueda no encuentra ni un pixel.
+    # El aviso se pinta en ROJO sobre el NEGRO del area de video, no en el color de
+    # texto del toolkit: es g.message, y mediaplayer.c lo dibuja con
+    # gfx_rgb(230, 120, 110) porque es un error (la misma pinta "Cannot open ...").
+    # Con TEXT/FIELD --que es lo que-pinaban los textos-- la busqueda da 0 de 335.
+    WARNING = (230, 120, 110)
     expect_text(
-        image, area, "unavailable", TEXT, FIELD,
-        "el aviso del lanzador: Media Player is unavailable",
+        image, area, "libffmpeg", WARNING, (0, 0, 0),
+        "el aviso nombra la libreria que falta",
     )
-    # Sin barra en el texto buscado: el "/" no empareja con la tabla de glifos
-    # --434 de 436 pixeles-- y una comprobacion que falla por el caracter que se
-    # busca no esta midiendo lo que dice medir.
     expect_text(
-        image, area, "enable playback", TEXT, FIELD,
-        "el aviso dice que hay que construir el port",
+        image, area, "reproduccion", WARNING, (0, 0, 0),
+        "el aviso dice que no hay motor de reproduccion",
     )
 
 

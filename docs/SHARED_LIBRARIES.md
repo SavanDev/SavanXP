@@ -1148,6 +1148,69 @@ never allowed to mean "half-loaded".
 for shared objects only — and the message came out as `39 entradas de  se
 quedaron`. The image's name is the first thing anyone reads in a diagnostic.
 
+### A missing library took every other one with it
+
+Moving the Media Player into the tree made it depend on five libraries instead of
+two, and one of them going missing took the other four.
+
+`load_needed_chain` returned at the first failure. An executable's `DT_NEEDED` is
+a *list*, not a chain: if `libffmpeg.so.0.4` is absent that is a fact about
+`libffmpeg.so.0.4` and says nothing about `libmath`, `libsxgfx`, `libgfx2d` or
+`libsxgui`, which are later in the list and are needed just as much. Returning
+meant none of them were ever loaded.
+
+The symptom was the worst kind. `mediaplayer` passed its `ldso_missing()` check —
+correctly, `libffmpeg.so.0.4` really was the missing one — went on to build its
+window, and died on `sx_rect_make@plt`:
+
+```
+loader: no se pudo abrir /disk/lib/libffmpeg.so.0.4 (paso 2)
+user: exception #14 name=mediaplayer cr2=0x2c036
+```
+
+`sx_rect_make` is SxGUI, not FFmpeg, so nothing in the log connects the cause to
+the address. **And this was my own doing.** Before the tolerant-relocation change,
+an unresolvable symbol aborted the table and the failure was loud. Tolerance plus
+an early return is the combination that turns a loud failure into a silent one
+somewhere unrelated. Neither change is wrong alone; together they hid the real
+problem behind a plausible-looking crash.
+
+The walk now records the failure and continues, and returns non-zero afterwards so
+`ldso_missing()` and `sx_start_dynamic` still report it. The difference is between
+"libffmpeg is missing" and "nothing is there":
+
+```
+loader: no se pudo abrir /disk/lib/libffmpeg.so.0.4 (paso 2)
+loader: 39 entradas de el ejecutable se quedaron sin reubicar porque libffmpeg.so.0.4 no cargo
+```
+
+39, and not 74, and not everything. The count is what tells the two apart.
+
+### A library has to declare the libraries it needs
+
+`libffmpeg.so.0.4` had no `DT_NEEDED` at all, and `mediaplayer`'s list put it
+first:
+
+```
+libffmpeg.so.0.4   libmath.so.0.4   libsxgui.so.0.4   libgfx2d.so.0.4   libsxgfx.so.0.4
+```
+
+The loader relocates each library as soon as it brings it, so `libffmpeg`'s 42
+double-precision references had nowhere to resolve and the load failed with
+*"libffmpeg.so.0.4 necesita 'fabs' y no esta en ninguna imagen cargada"*. It never
+showed up before because the port's player carried `math.c` **statically** and so
+had no `libmath` to be missing.
+
+The order of an executable's `DT_NEEDED` is a build artefact nobody reads, so a
+library that uses another has to say so itself — which is the only thing that makes
+the loader bring the chain first and relocate after. `libffmpeg.so.0.4` now carries
+`libmath.so.0.4`, and the port's link needs `-Wl,-Bdynamic` because clang defaults
+to a static link for the `none` triple.
+
+Putting `libmath` earlier in the program's `DEPENDS` would also have worked. That
+is the wrong fix: it depends on a list nobody reads, and the next reorder breaks it
+silently.
+
 ### The loader is not part of `libsavanxp.a`, on purpose
 
 The port links `ldso.c` separately. `crt0` calls `sx_start_dynamic`, which in
@@ -1208,6 +1271,13 @@ one binary and nothing to delegate to. The commit also named what would have to
 exist first: *"a way for one program to use a codec library it was not built with,
 by dynamic linking"*. That is what `libffmpeg.so.0.4` is, so the launcher became
 meaningful again and was restored rather than redesigned.
+
+**And then it was deleted again on purpose.** The player moved into the tree and
+the port stopped building a program, so there was nothing left to hand over. The
+launcher had one job beyond delegation — say the port is missing instead of
+vanishing from the launcher — and the player does that itself, from `main`, with
+`ldso_missing()`. Restoring it was the cheapest way to make three descriptions true
+at once; keeping it was never the destination. What follows is why it existed.
 
 What was still standing from the original design:
 

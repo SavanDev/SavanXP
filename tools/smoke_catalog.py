@@ -297,15 +297,15 @@ SCENARIOS: dict[str, Scenario] = {
         remove_paths=("lib/libffmpeg.so.0.4",),
     ),
 
-    # El reproductor sin su port. El lanzador tiene que abrir una ventana y decir
-    # que falta, porque es lo unico que queda de la aplicacion cuando el motor no
-    # esta. Se quita el BACKEND, no la libreria: quitando la libreria el backend
-    # sigue ahi y es el quien informa, que es otro escenario.
+    # El reproductor sin su motor, en la variante que se ve: la ventana con el aviso.
+    # Se quita la LIBRERIA y no hay que quitar ningun programa, porque el reproductor
+    # es del arbol y existe siempre que el port se ha construido. La variante sin
+    # ventana --stdout y codigo de salida-- es mediaplayer-nolib.
     "mediaplayer-noport": _qemu_scenario(
         "",
         "SXGUI SMOKE PASS",
         "SXGUI SMOKE FAIL",
-        "The launcher entry opens a window explaining that the FFmpeg port is missing",
+        "The player opens a window naming the decoding library it could not load",
         300.0,
         "handoff: starting /bin/init",
         "taskbar",
@@ -313,7 +313,8 @@ SCENARIOS: dict[str, Scenario] = {
         ready_wait=45.0,
         host_action="visual",
         visual_scenario="mediaplayer_unavailable",
-        remove_paths=("bin/mediaplayer-ffmpeg",),
+        prepare=("./ports/ffmpeg/install.sh --with-test-media",),
+        remove_paths=("lib/libffmpeg.so.0.4",),
     ),
 
     # Cuanto tarda el cargador con libffmpeg: 6.8 MB, 2334 simbolos. Es lo unico
