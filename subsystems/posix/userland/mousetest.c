@@ -154,7 +154,157 @@ static void draw_scene(struct savanxp_gfx_context* gfx, int cursor_x, int cursor
     draw_crosshair(gfx, cursor_x, cursor_y);
 }
 
-int main(void) {
+/* Smoke del camino del puntero real: a diferencia de windowd --cursor-repro,
+ * que inyecta savanxp_mouse_event a mano y por lo tanto no toca la cola de
+ * virtio-input, este binario lee /dev/mouse0 de verdad mientras el harness host
+ * (`./build.sh smoke pointer-smoke --virtio`) mueve el raton emulado por QMP.
+ *
+ * Es lo unico que pasa por la cola del device, y esa cola hay que reponer para
+ * avisarle al device que hay hueco: un refill que calcula mal la direccion de
+ * notify tumba la VM entera con un #PF la primera vez que el puntero se mueve,
+ * mucho despues del arranque y sin que ningun escenario lo viera.
+ *
+ * Tambien afirma lo que el recorrido tiene que conservar: que la posicion
+ * absoluta llega como posicion -- con el flag puesto y con el valor del host --
+ * y no como un delta que el invitado acumularia. El host manda el centro y la
+ * esquina del rango del tablet (0..32767), y esos son el centro y la esquina de
+ * la pantalla.
+ *
+ * Sin checkpoint de rueda: el QMP de este QEMU solo acepta los ejes rel 'x' y
+ * 'y', asi que un tick de rueda no se puede pedir por ahi (hmp mouse_move si lo
+ * haria, y ese monitor es del runner, no del driver). La rueda pasa por el
+ * mismo notify, asi que no es lo que esta regresion mide.
+ */
+#define POINTER_SELFTEST_TIMEOUT_MS 20000u
+
+/* Dos pixeles de tolerancia: el mapeo del rango del tablet al tamano de pantalla
+ * redondea (kernel/virtio_input.cpp, normalize_axis), asi que dos pixeles no
+ * son margen sino el redondeo. Un consumidor que sumara las posiciones, o que
+ * ignorara la bandera y solo usara deltas, se quedaria a cientos de pixeles. */
+#define POINTER_POSITION_TOLERANCE 2
+
+enum pointer_step {
+    POINTER_STEP_CENTER = 0,
+    POINTER_STEP_BUTTON,
+    POINTER_STEP_CORNER,
+    POINTER_STEP_COUNT
+};
+
+static const char* const g_pointer_step_label[POINTER_STEP_COUNT] = {
+    "posicion absoluta al centro",
+    "boton izquierdo",
+    "posicion absoluta en la esquina"
+};
+
+static int near_pixel(int value, int expected) {
+    int difference = value - expected;
+    if (difference < 0) {
+        difference = -difference;
+    }
+    return difference <= POINTER_POSITION_TOLERANCE;
+}
+
+static int pointer_selftest(void) {
+    struct savanxp_gpu_info info = {0};
+    struct savanxp_mouse_event event = {0};
+    long gpu_fd;
+    long mouse_fd;
+    unsigned long deadline_ms;
+    int step = 0;
+    int center_x;
+    int center_y;
+    int corner_x;
+    int corner_y;
+
+    /* Sesion grafica por /dev/gpu0 y no por gfx_open: gfx_open habla con el
+     * compositor, y este escenario corre sin windowd -- igual que kbdtest. Es
+     * la sesion la que hace que el kernel encole el puntero: sin dueno de
+     * pantalla, ui::graphics_active() es falso y el evento se descarta. */
+    gpu_fd = gpu_open();
+    if (gpu_fd < 0) {
+        puts_fd(2, "POINTER SMOKE FAIL /dev/gpu0 no disponible\n");
+        return 1;
+    }
+    if (gpu_get_info((int)gpu_fd, &info) < 0) {
+        puts_fd(2, "POINTER SMOKE FAIL GPU_IOC_GET_INFO fallo\n");
+        savanxp_close((int)gpu_fd);
+        return 1;
+    }
+    if (gpu_acquire((int)gpu_fd) < 0) {
+        puts_fd(2, "POINTER SMOKE FAIL GPU_IOC_ACQUIRE fallo\n");
+        savanxp_close((int)gpu_fd);
+        return 1;
+    }
+
+    mouse_fd = savanxp_open_mode("/dev/mouse0", SAVANXP_OPEN_READ);
+    if (mouse_fd < 0) {
+        puts_fd(2, "POINTER SMOKE FAIL /dev/mouse0 no disponible\n");
+        gpu_release((int)gpu_fd);
+        savanxp_close((int)gpu_fd);
+        return 1;
+    }
+
+    center_x = (int)info.width / 2;
+    center_y = (int)info.height / 2;
+    corner_x = (int)info.width - 1;
+    corner_y = (int)info.height - 1;
+
+    /* El harness host espera esta linea antes de tocar el raton: sin ella las
+     * posiciones absolutas podrian llegar antes de que este proceso sea el
+     * dueno de la sesion y se perderian. */
+    puts_out("POINTER SMOKE READY\n");
+
+    deadline_ms = uptime_ms() + POINTER_SELFTEST_TIMEOUT_MS;
+    while (step < POINTER_STEP_COUNT) {
+        while (savanxp_read((int)mouse_fd, &event, sizeof(event)) == (long)sizeof(event)) {
+            if (step == POINTER_STEP_BUTTON) {
+                if ((event.buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0u) {
+                    continue;
+                }
+            } else {
+                /* Both position checkpoints want the ABSOLUTE flag set: it is the
+                 * claim that the position travelled as a position. A relative
+                 * device (PS/2) or a kernel that collapsed the tablet to deltas
+                 * leaves the flag clear and never satisfies either one. */
+                if ((event.flags & SAVANXP_MOUSE_FLAG_ABSOLUTE) == 0u) {
+                    continue;
+                }
+                if (!near_pixel(event.absolute_x, step == POINTER_STEP_CENTER ? center_x : corner_x)) {
+                    continue;
+                }
+                if (!near_pixel(event.absolute_y, step == POINTER_STEP_CENTER ? center_y : corner_y)) {
+                    continue;
+                }
+            }
+
+            printf("mousetest: checkpoint '%s' OK\n", g_pointer_step_label[step]);
+            step += 1;
+            if (step >= POINTER_STEP_COUNT) {
+                break;
+            }
+        }
+
+        if (step >= POINTER_STEP_COUNT) {
+            break;
+        }
+        if (uptime_ms() >= deadline_ms) {
+            printf("POINTER SMOKE FAIL timeout esperando '%s'\n", g_pointer_step_label[step]);
+            savanxp_close((int)mouse_fd);
+            gpu_release((int)gpu_fd);
+            savanxp_close((int)gpu_fd);
+            return 1;
+        }
+        sleep_ms(20);
+    }
+
+    savanxp_close((int)mouse_fd);
+    gpu_release((int)gpu_fd);
+    savanxp_close((int)gpu_fd);
+    puts_out("POINTER SMOKE PASS\n");
+    return 0;
+}
+
+int main(int argc, char** argv) {
     struct savanxp_gfx_context gfx;
     struct savanxp_input_event key_event;
     struct savanxp_gui_pointer_event pointer_event;
@@ -167,6 +317,10 @@ int main(void) {
     int wheel_total = 0;
     uint32_t buttons = 0;
     int needs_redraw = 1;
+
+    if (argc > 1 && strcmp(argv[1], "--selftest") == 0) {
+        return pointer_selftest();
+    }
 
     if (gfx_open(&gfx) < 0) {
         puts_fd(2, "mousetest: open failed\n");

@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from qmp_client import QmpClient, QmpError, send_kbd_smoke_actions
+from qmp_client import QmpClient, QmpError, send_kbd_smoke_actions, send_pointer_smoke_actions
 from sxfs_sync import copy_preserving_holes
 from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
@@ -165,12 +165,17 @@ def main() -> int:
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     parser.add_argument("--smp", type=int, default=1)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--requires-virtio", action="store_true",
+                        help="Refuse to run unless --virtio: the scenario needs a "
+                             "paravirtual device the base machine does not have.")
     parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
-    if args.qmp_driver not in ("", "kbd", "taskbar"):
+    if args.qmp_driver not in ("", "kbd", "taskbar", "pointer"):
         parser.error(f"unsupported QMP driver: {args.qmp_driver}")
+    if args.requires_virtio and not args.virtio:
+        parser.error("this scenario needs the virtio machine: pass --virtio")
     if args.completion == "host" and args.qmp_driver != "taskbar":
         parser.error("host completion requires the taskbar QMP driver")
     if args.host_action == "visual" and not args.visual_scenario:
@@ -285,6 +290,14 @@ def main() -> int:
                         qmp_path,
                         shots_dir,
                         args.ready_wait,
+                        # En la maquina virtio el puntero es un tablet ABSOLUTO:
+                        # los escenarios se posicionan con _abs_move y no con el
+                        # truco de empujar el raton contra una esquina, que solo
+                        # sirve para el PS/2 relativo. Sin esto el host mueve el
+                        # raton con ejes rel, el guest los convierte en posicion
+                        # y las aserciones de pixeles caian en la ventana
+                        # equivocada -- tools/shoot.sh ya lo pasaba, el runner no.
+                        abs_pointer=args.virtio,
                     )
                     host_result.append((0, f"visual scenario {args.visual_scenario} passed "
                                            f"({len(paths)} screenshots)"))
@@ -325,6 +338,8 @@ def main() -> int:
                                         with QmpClient(qmp_path) as client:
                                             if args.qmp_driver == "kbd":
                                                 send_kbd_smoke_actions(client)
+                                            elif args.qmp_driver == "pointer":
+                                                send_pointer_smoke_actions(client)
                                             else:
                                                 raise QmpError(
                                                     f"unsupported QMP driver: {args.qmp_driver}"

@@ -29,6 +29,7 @@ class Scenario:
     unsupported: str = ""
     host_action: str = ""
     visual_scenario: str = ""
+    requires_virtio: bool = False
 
 
 def _qemu_scenario(
@@ -49,6 +50,7 @@ def _qemu_scenario(
     qmp_callback: str = "",
     host_action: str = "",
     visual_scenario: str = "",
+    requires_virtio: bool = False,
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -68,6 +70,7 @@ def _qemu_scenario(
         qmp_callback=qmp_callback,
         host_action=host_action,
         visual_scenario=visual_scenario,
+        requires_virtio=requires_virtio,
     )
 
 
@@ -173,6 +176,22 @@ SCENARIOS: dict[str, Scenario] = {
         "CURSOR REPRO PASS",
         "CURSOR REPRO FAIL",
         "Window cursor presentation regression",
+    ),
+    # El unico escenario que mueve el puntero de verdad a traves del device:
+    # cursor-repro inyecta savanxp_mouse_event a mano y no toca la cola de
+    # virtio-input, asi que una cola que se repone contra una direccion de notify
+    # equivocada -- que es lo que colgaba la VM al entrar el raton en la ventana
+    # -- no la veia nadie. Necesita la maquina virtio: con PS/2 no hay puntero
+    # absoluto, y sin el flag el invitado no tiene posicion que afirmar.
+    "pointer-smoke": _qemu_scenario(
+        "mousetest --selftest",
+        "POINTER SMOKE PASS",
+        "POINTER SMOKE FAIL",
+        "virtio-tablet position and button path",
+        120.0,
+        ready="POINTER SMOKE READY",
+        qmp_driver="pointer",
+        requires_virtio=True,
     ),
     "gpu-soak": _qemu_scenario(
         "gputest --soak 96",
@@ -440,6 +459,7 @@ def main() -> int:
             "unsupported",
             "host_action",
             "visual_scenario",
+            "requires_virtio",
         ),
         required=False,
     )

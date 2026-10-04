@@ -192,6 +192,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_UNSUPPORTED=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field unsupported)
         SMOKE_HOST_ACTION=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_action)
         SMOKE_VISUAL_SCENARIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field visual_scenario)
+        SMOKE_REQUIRES_VIRTIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field requires_virtio)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -437,6 +438,10 @@ case "$COMMAND" in
             --smp "$SMP"
         )
         [[ "$VIRTIO" == ON ]] && SMOKE_ARGS+=(--virtio)
+        # Un escenario que necesita un device paravirtualizado no puede correr
+        # en la maquina base: sin --virtio no hay tablet y el fallo seria del
+        # escenario, no del arbol. Decirlo aqui evita ese falso positivo.
+        [[ "$SMOKE_REQUIRES_VIRTIO" == True ]] && SMOKE_ARGS+=(--requires-virtio)
         [[ -z "$SMOKE_WAV_NAME" ]] || SMOKE_ARGS+=(--wav-path "$OUTPUT_ROOT/$SMOKE_WAV_NAME")
         if [[ -n "$SMOKE_QMP_CALLBACK" ]]; then
             if [[ "$SMOKE_QMP_CALLBACK" = /* ]]; then

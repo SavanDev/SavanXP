@@ -103,8 +103,14 @@ boots QEMU, and records the command and serial output under `build/smoke-logs/`.
 A normal build removes the temporary smoke specification from the image.
 
 `tools/shoot.sh` speaks QMP over a Unix socket and uses the same scenario driver
-as the media-player display assertion. The keyboard and taskbar smoke drivers
-use `tools/qmp_client.py`.
+as the media-player display assertion. The keyboard, pointer and taskbar smoke
+drivers use `tools/qmp_client.py`.
+
+A scenario whose device only exists on the paravirtualized machine declares it
+in the catalog (`requires_virtio`) and the runner refuses to start without
+`--virtio` rather than failing on a missing device. `pointer-smoke` is the one
+today: it drives `virtio-tablet`, and the base machine has PS/2, which has no
+absolute pointer to assert on.
 
 ## The persistent image may be larger than its filesystem
 

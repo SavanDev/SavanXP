@@ -606,6 +606,12 @@ Cut-off notes:
   the real PS/2 -> IRQ -> `kernel/ps2.cpp` -> `/dev/input0` path, which the
   harnesses that inject already-formed events do not cover.
 
+- **`./build.sh smoke pointer-smoke --virtio`: the pointer is tested on its own.**
+  The pointer twin of `kbd-smoke`: `mousetest --selftest` reads the real
+  `/dev/mouse0` while the host moves the emulated tablet over QMP, and asserts the
+  centre, a click and the opposite corner as screen positions. Nothing covered the
+  `virtio-input` queue: `cursor-repro` injects events by hand.
+
 - **SXE stamping is no longer opt-in: everything built for the system comes out
   in that format.** Coverage over the complete image is 68/68 installed
   binaries, in-tree and external (Doom, busybox) alike. Every program gets a

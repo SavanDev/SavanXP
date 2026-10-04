@@ -76,6 +76,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "kbd")) {
         return "KBD SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "mousetest")) {
+        return "POINTER SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "audiostream")) {
         return "AUDIO STREAM";
     }
@@ -131,6 +134,7 @@ static int run_automation_spec(const char* spec) {
     const char* nativehello_argv[] = {"/disk/bin/nativehello", 0};
     const char* sxguihost_argv[] = {"/disk/bin/sxguihost", 0};
     const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
+    const char* mousetest_argv[] = {"/disk/bin/mousetest", "--selftest", 0};
     /* Tres caminos: audio solo (WAV), video solo sin contenedor (MJPEG crudo) y
      * los dos intercalados en AVI, que ademas mide la sincronia. */
     const char* mediaplayer_argv[] = {"/bin/mediaplayer", "--selftest", "/disk/media/tono.wav",
@@ -243,6 +247,13 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "kbdtest") == 0 || strcmp(spec, "kbd-selftest") == 0) {
             path = "/disk/bin/kbdtest";
             argv = kbdtest_argv;
+            argc = 2;
+        } else if (strcmp(spec, "mousetest") == 0 || strcmp(spec, "mousetest --selftest") == 0) {
+            /* El gemelo del kbdtest para el puntero: mismo patron (sesion
+             * grafica, READY, el host mueve el device por QMP, checkpoints),
+             * distinto device. */
+            path = "/disk/bin/mousetest";
+            argv = mousetest_argv;
             argc = 2;
         } else if (text_starts_with(spec, "tcptest ")) {
             /* El puerto no se puede hornear en el binario: lo elige el host al

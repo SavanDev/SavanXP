@@ -132,6 +132,23 @@ class QmpClient:
             },
         )
 
+    def absolute(self, x: int, y: int) -> None:
+        """Place the pointer at an absolute device position.
+
+        The values are in the device's own coordinate space, not screen pixels:
+        virtio-tablet publishes 0..32767 for both axes. Only a device with an
+        absolute handler takes these, so this is virtio-only.
+        """
+        self.execute(
+            "input-send-event",
+            {
+                "events": [
+                    {"type": "abs", "data": {"axis": "x", "value": x}},
+                    {"type": "abs", "data": {"axis": "y", "value": y}},
+                ]
+            },
+        )
+
     def button(self, name: str, down: bool) -> None:
         self.execute(
             "input-send-event",
@@ -153,3 +170,33 @@ def send_kbd_smoke_actions(client: QmpClient) -> None:
     client.chord("ctrl", "c")
     client.tap("right")
     client.tap("ret")
+
+
+# The range virtio-tablet publishes: 0 at one corner, 32767 at the other, and
+# 16383/16384 right in the middle. The guest expects the middle of the range to
+# land on the middle of its screen and 32767 on the opposite corner.
+_POINTER_RANGE_LAST = 32767
+_POINTER_RANGE_MIDDLE = 16384
+
+
+def send_pointer_smoke_actions(client: QmpClient) -> None:
+    """Send the pointer sequence expected by mousetest --selftest.
+
+    Absolute moves and one click, in the order the guest asserts them: centre,
+    button, opposite corner. The second absolute move is the one that matters
+    most -- a consumer that accumulated positions instead of assigning them
+    would land off-screen rather than in the corner.
+
+    No wheel tick on purpose: this QMP only accepts the 'x' and 'y' rel axes, so
+    a REL_WHEEL cannot be asked for over it (hmp `mouse_move 0 0 1` can, and
+    that monitor belongs to the runner, not to a driver). The wheel travels the
+    same notify, so it is not what this smoke is measuring.
+    """
+    client.absolute(_POINTER_RANGE_MIDDLE, _POINTER_RANGE_MIDDLE)
+    time.sleep(0.30)
+    client.button("left", True)
+    time.sleep(0.20)
+    client.button("left", False)
+    time.sleep(0.20)
+    client.absolute(_POINTER_RANGE_LAST, _POINTER_RANGE_LAST)
+    time.sleep(0.30)
