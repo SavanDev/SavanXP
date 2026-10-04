@@ -88,6 +88,12 @@ Cut-off notes:
   with FFmpeg linked in to 344 KB with one `DT_NEEDED`, and it decodes through
   `/disk/lib/libffmpeg.so.0.4`.
 
+- **`/bin/mediaplayer` is back, and it is what the launcher shows.** The
+  Accessories group lists Media Player; opening it hands the process to
+  `/disk/bin/mediaplayer-ffmpeg` when the port is installed, and shows a window
+  saying it is not when it is not. Opening `.mp3`, `.avi` and `.flac` from Files
+  goes through it too, so a media file explains itself instead of failing.
+
 - **A program whose library is missing now says so and keeps running.** It used
   to die with a page fault at the address of a PLT stub. `ldso_missing()` is part
   of the SDK, and the player checks it before its first call.

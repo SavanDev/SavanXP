@@ -9,7 +9,10 @@ missing pieces should arrive. Building it is covered by
 ## System entry point
 
 `/bin/mediaplayer` is always built into the system image and is the program
-shown by the launcher. It checks for `/disk/bin/mediaplayer-ffmpeg` at startup:
+shown by the launcher. It was removed with SxMedia in `26b16e0` — a launcher that
+delegates has nothing to delegate to when nothing installable exists — and restored
+once `libffmpeg.so.0.4` made the decoder installable. See
+[`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md#the-launcher-entry-and-the-third-stale-claim). It checks for `/disk/bin/mediaplayer-ffmpeg` at startup:
 
 - with the FFmpeg port installed, it `exec`s the real player and preserves
   the normal command-line arguments;

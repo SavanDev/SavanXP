@@ -553,6 +553,20 @@ static void selftest_scan(void)
     program = file_assoc_program_for_file("/disk/algo.md");
     expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: .md lo toma notepad");
 
+    /* Medios: la asociacion tiene que apuntar al LANZADOR y no al backend.
+
+     * /disk/bin/mediaplayer-ffmpeg es del port y puede no estar; /bin/mediaplayer
+     * esta siempre y es el que delega o explica. Es lo que hace que abrir un .avi
+     * en una imagen sin FFmpeg muestre el aviso en vez de fallar, y lo unico que lo
+     * ata con la realidad es esta linea: las capacidades salen del .sxres
+     * estampado, asi que si el estampado se rompe esto cae. */
+    program = file_assoc_program_for_file("/disk/cancion.mp3");
+    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .mp3 lo toma el lanzador");
+    program = file_assoc_program_for_file("/disk/pelicula.avi");
+    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .avi lo toma el lanzador");
+    program = file_assoc_program_for_file("/disk/audio.flac");
+    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .flac lo toma el lanzador");
+
     /* Una extension que nadie declara sigue sin duenio. */
     expect(file_assoc_program_for_file("/disk/algo.xyz") == 0, "escaneo: extension sin duenio");
 

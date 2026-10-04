@@ -73,6 +73,19 @@ static const struct progman_default_item k_default_items[] = {
     {"Main", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "Task Manager", "/bin/taskmgr", "Processes, performance and network", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Main", "System Properties", "/bin/aboutapp", "Version, hardware and installation", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    /* El reproductor es SIEMPRE una entrada, porque /bin/mediaplayer esta siempre
+     * construido. Si el port no esta instalado, el propio programa explica por que
+     * --falta /disk/lib, no el reproductor-- y el pruning no lo descarta, porque
+     * /bin/mediaplayer si que esta. Es lo unico que Doom no puede hacer:
+     * doomgeneric vive en el volumen.
+     *
+     * Va en el PRIMER grupo, no en uno propio, y el motivo es el orden: el launcher
+     * ordena alfabeticamente dentro de cada grupo, y aqui eso lo pone en la tercera
+     * posicion --Calculator, Files, Media Player, Notepad...-- que es exactamente
+     * donde lo espera open_mediaplayer() en tools/shoot_session.py. Un grupo con un
+     * solo icono habria puesto esa posicion en otro sitio y habria roto el
+     * escenario que la usa. */
+    {"Main", "Media Player", "/bin/mediaplayer", "Play video and audio files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Games", "Minesweeper", "/bin/mines", "Clear the minefield without stepping on a mine", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
 #if DESKTOP_INCLUDE_TEST_APPS

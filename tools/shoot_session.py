@@ -1164,8 +1164,41 @@ def scenario_ccleste(s):
     s.shot("ccleste-dash")
 
 
+def scenario_mediaplayer_unavailable(s):
+    """El reproductor sin su port: tiene que abrir una ventana y explicar.
+
+    Se lanza desde el lanzador, no ejecutandolo a mano, porque la mitad de lo que se
+    comprueba aqui es que la entrada exista y se pueda abrir: la posicion que usa
+    open_mediaplayer() es una afirmacion sobre el catalogo, y este escenario es lo
+    que la hace verdad.
+
+    Se afirma el TEXTO del lanzador y no el rótulo de la barra de tareas. El rótulo
+    son 14 pixeles con la fuente actual y no detecta ni un cambio de fuente (esta
+    medido y escrito en scenario_taskbar); el texto de la ventana son cuatro lineas
+    enteras, y ademas es lo unico que el lanzador puede dibujar: cuando el port esta
+    instalado este programa no abre ninguna ventana, porque sustituye su proceso.
+    """
+    s.open_mediaplayer()
+    image = s.shot("mediaplayer-sin-port")
+    area = (0, 0, image.width, image.height)
+    # El fondo es FIELD, no FACE: el texto vive en un textview, que pinta su
+    # propio campo blanco. Con FACE la busqueda no encuentra ni un pixel.
+    expect_text(
+        image, area, "unavailable", TEXT, FIELD,
+        "el aviso del lanzador: Media Player is unavailable",
+    )
+    # Sin barra en el texto buscado: el "/" no empareja con la tabla de glifos
+    # --434 de 436 pixeles-- y una comprobacion que falla por el caracter que se
+    # busca no esta midiendo lo que dice medir.
+    expect_text(
+        image, area, "enable playback", TEXT, FIELD,
+        "el aviso dice que hay que construir el port",
+    )
+
+
 SCENARIOS = {
     "desktop": scenario_desktop,
+    "mediaplayer_unavailable": scenario_mediaplayer_unavailable,
     "alttab": scenario_alttab,
     "clipboard": scenario_clipboard,
     "calc": scenario_calc,

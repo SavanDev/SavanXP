@@ -31,6 +31,7 @@ static const struct windowd_appinfo k_window_items[] = {
     {"Notepad", "/bin/notepad", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(120, 100, 60)},
     {"Calculator", "/bin/calc", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(47, 111, 94)},
     {"Minesweeper", "/bin/mines", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(63, 111, 47)},
+    {"Media Player", "/bin/mediaplayer", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(47, 95, 143)},
     {"Doom", "/disk/bin/doomgeneric", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(181, 81, 55)},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Widgets", "/bin/widgetsdemo", DESKTOP_ICON_DESKTOP, WINDOWD_RGB_LITERAL(96, 110, 140)},

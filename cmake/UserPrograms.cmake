@@ -356,6 +356,16 @@ savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE S
 # que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
 # lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
 #
+# El reproductor es una aplicacion del sistema cuyo motor es un port opcional. Este
+# programa es lo que el lanzador muestra y lo que las asociaciones de medios abren:
+# si el port esta, delega con exec y desaparece; si no, se queda y explica.
+#
+# No lleva DEPENDS de libffmpeg a proposito --no la usa, ni la puede: todavia no se
+# sabe si estara en el volumen cuando se arranca.
+savanxp_program(NAME mediaplayer DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
+    SOURCES
+    subsystems/posix/userland/mediaplayer.c)
+
 savanxp_program(NAME calc DEPENDS libgfx2d libmath libsxgui libsxgfx LINK_PROFILE PIE
     SOURCES
     subsystems/posix/userland/calc.c)# Galeria de controles: el usuario mas amplio de SxGUI, con 20 funciones, y la

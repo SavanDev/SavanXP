@@ -1,0 +1,31 @@
+# Recursos SXE del lanzador del reproductor. Ver docs/SXE_FORMAT.md y
+# docs/MEDIA_PLAYER.md.
+#
+# El icono es una COPIA de ports/ffmpeg/overlay/mediaplayer/icon.png, y se copia
+# en vez de referenciarse porque icon_file se resuelve relativo a este manifiesto:
+# apuntar al port meteria al arbol del sistema dentro del layout de un port, que es
+# justo lo que el arbol no debe saber. Y la copia no es opcional: este programa es
+# lo que el lanzador muestra, y sin icono sale con el generico de escritorio, que
+# es el unico icono horneado del catalogo.
+#
+# El backend sigue con el suyo porque tambien se puede lanzar directamente. Los dos
+# pueden divergir --es arte, no codigo-- y el que importa es el de aqui.
+icon_file=mediaplayer-icon.png
+
+# Lo que si es de este manifiesto son las CAPACIDADES de medios. Es lo que hace
+# que Files abra un .avi o un .mp3 con /bin/mediaplayer y no con el backend: la
+# asociacion tiene que apuntar a algo que exista siempre, porque el reproductor de
+# verdad puede no estar instalado y de todos modos quien explica por que es este
+# programa.
+#
+# Las extensiones son las que el port realmente habilita (ports/ffmpeg/configure.sh:
+# --enable-demuxer y --enable-decoder). Anadir una aqui que el port no sepa
+# decodificar daria un error de descompresion en vez de un aviso claro.
+name=Media Player
+description=Play video and audio files
+version=system
+vendor=SavanXP
+accent=2f5f8f
+mime_open=video/mp4,video/x-matroska,video/x-msvideo,video/mp2t,video/x-ivf,video/mpeg,video/x-m4v,audio/mpeg,audio/mp4,audio/wav,audio/x-wav,audio/flac,audio/ogg,audio/opus,audio/aac,audio/ac3
+ext_open=.mp4,.m4v,.mov,.mkv,.webm,.avi,.ts,.m2ts,.mts,.mpg,.mpeg,.m2v,.ivf,.wav,.mp3,.mp2,.flac,.ogg,.oga,.ogv,.opus,.aac,.ac3
+category=Accessories

@@ -1193,3 +1193,96 @@ stale one keeps pointing at the old absolute source path and `make` fails with
 `No hay ninguna regla para construir el objetivo`. Deleting it and re-running
 `configure` is the fix. The freshly generated one says `include src/Makefile`,
 which is relative and relocatable.
+
+## The launcher entry, and the third stale claim
+
+Registering the player was supposed to be one table row. It was not, because three
+places in the tree described a `/bin/mediaplayer` that had never existed — or had
+been deleted.
+
+`26b16e0` removed `subsystems/posix/userland/mediaplayer.c` together with SxMedia,
+and said why: *"the base system launcher gone with it"*. A launcher that delegates
+to another program is pointless when nothing can be installed that is not itself a
+program, because the decoder has to be inside the binary and then there is exactly
+one binary and nothing to delegate to. The commit also named what would have to
+exist first: *"a way for one program to use a codec library it was not built with,
+by dynamic linking"*. That is what `libffmpeg.so.0.4` is, so the launcher became
+meaningful again and was restored rather than redesigned.
+
+What was still standing from the original design:
+
+- a **closed** `CHANGELOG.md` section: *"`/bin/mediaplayer` is always built,
+  delegates to `/disk/bin/mediaplayer-ffmpeg` when installed, and otherwise opens an
+  in-OS warning"*
+- `docs/MEDIA_PLAYER.md`: *"`/bin/mediaplayer` is always built into the system image
+  and is the program shown by the launcher"*
+- the port's `.sxres`: *"The stable launcher (/bin/mediaplayer) owns the visible
+  Accessories entry"*
+
+None of it was true, and none of it was wrong on the merits. Restoring the file
+made all three true at once, which is the cheapest possible fix for a documentation
+lie: the documentation was the spec.
+
+### The launcher is 114 lines
+
+`port_is_installed()` with `savanxp_stat`, then `exec()` with `argv[0]` replaced.
+No `fork`, no pipe, no polling: the process image is replaced, so the child's exit
+code is the launcher's. Without the port it runs `sxgui_app_run` on a two-widget
+window and says so.
+
+The `--availability` probe that used to be in it is gone, with the two scenarios
+that used it — the launcher now has a real behaviour to assert instead.
+
+It is deliberately linked against `libgfx2d`/`libsxgfx`/`libsxgui` and **not**
+`libffmpeg`: it does not use it and cannot, because whether it is in the volume is
+the question it exists to answer.
+
+### Where it goes in the launcher, and why it was not its own group
+
+`tools/shoot_session.py` had an unused `open_mediaplayer()` doing `launch(2)`,
+with a comment documenting the catalog as *Accessories: Calculator, Files, [Media
+Player], Notepad, Shell*. That index only holds if Media Player is in the same
+group, because the launcher sorts alphabetically inside each group. So it went into
+the first baked group, not into a group of its own — a one-icon group would have put
+that position somewhere else and broken the helper.
+
+A third inconsistency turned up here and was **not** fixed, because fixing it moves
+every application between groups. The baked table in `progman_registry.c` uses
+`Main`/`Games`/`Diagnostics`; every `.sxres` declares `Accessories`/`System`/
+`Games`/`Diagnostics`; `shoot_session.py` documents the manifest names. Once the
+catalog is rebuilt by scanning, the manifests win and the groups become the
+documented ones — the baked table is only a fallback. But the fallback disagrees
+with every manifest, and `calc`, `filesapp`, `notepad` and `shellapp` all declare
+`category=Accessories` while the table calls it `Main`.
+
+### The icon is a copy, and that is the lesser evil
+
+`progman-smoke`'s scan prints `icono=propio` or `icono=horneado`, and with no
+`icon=` in the manifest Media Player came out the only `horneado` in the catalog —
+the generic desktop icon. `icon_file` resolves *relative to the manifest*, so
+pointing at `ports/ffmpeg/overlay/mediaplayer/icon.png` would put the system's tree
+inside a port's layout. The PNG is therefore copied to
+`subsystems/posix/userland/mediaplayer-icon.png`, and the duplication is deliberate:
+the backend keeps its own because it can also be launched directly, and the two can
+drift because it is artwork, not code.
+
+### The scenario proves the entry, not just the file
+
+`mediaplayer-noport` removes `/disk/bin/mediaplayer-ffmpeg` from the volume and
+drives the launcher through the taskbar. It asserts the launcher's own text, not the
+taskbar caption: the caption is 14 pixels at the current font and detects no font
+change at all (measured, and written down in `scenario_taskbar`), whereas the
+launcher's four lines are the only thing it can draw — when the port is installed it
+opens no window at all.
+
+Two things had to be got right for that assertion, and both were wrong first time:
+the text sits on `FIELD` (white), not `FACE`, and a `/` does not match the glyph
+table (434 of 436 pixels), so the search string avoids slashes. With the launcher
+patched to `return 1` instead of showing the window, the scenario finds 0 of 345
+pixels.
+
+`file_assoc` gained three assertions for the same reason: the `ext_open` list in
+`mediaplayer.sxres` is a claim, and `.mp3`, `.avi` and `.flac` now have to resolve to
+`/bin/mediaplayer` against the stamped binaries in the real image. They must resolve
+to the **launcher** and not to the backend — the backend is a port artifact that may
+not be there, and the launcher is what explains itself.
