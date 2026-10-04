@@ -55,6 +55,51 @@ bug**. A change to `virtio_pci::` or to any virtio driver is only verified once
 it has also brought a queue up under VirtualBox, which is the stricter of the
 two and the one that behaves like real hardware would.
 
+## A capability never stores a pointer into its own device
+
+`CapabilityView` says *where* a virtio capability lives: the index of its BAR,
+the offset inside that BAR, and the `base` pointer already resolved to the
+mapping. It deliberately does **not** keep a `MappedBar*` into the `Device` it
+was resolved from.
+
+That is not a style rule, it is the fix for a bug that took the whole machine
+down. `virtio-input` cannot initialize straight into its global `Device`: it has
+to decide which of the pair of virtio-input functions is the tablet and which is
+the keyboard, and a device that turns out to be the wrong one must be left
+untouched. So it builds the `Device` in a local, and publishes it by value:
+
+```c
+virtio_pci::Device device = {};               // a stack frame
+...
+g_device = device;                            // copied. `device` is now history.
+```
+
+With a `MappedBar* bar` in the view, `g_device.notify_view.bar` was a pointer
+into that dead frame. Every other field copied correctly — `base` is a plain
+address, so the config, notify-off multiplier and ISR reads were all fine — which
+is why the machine booted, ran the desktop, and survived everything until the
+first pointer event. Then `notify_queue()` dereferenced the stale pointer,
+computed a notify address out of reused stack memory, and stored the queue index
+there: `#14 page fault`, `cr2` inside the low 4 GB, and `stop_on_exception()`'s
+`halt_forever()`. Moving the mouse was enough to trigger it, because the
+descriptor refill is the first thing that notifies *after* the copy.
+
+Two rules fall out of that, and they generalize past virtio:
+
+- **A struct that gets published by value carries no interior pointers.** Store
+  the index, or recompute the pointer at the point of use against the object you
+  were handed. A copy that silently invalidates part of itself is the kind of bug
+  that reads as "works until it doesn't".
+- **A pointer field that is only read on a rare path hides this until the rare
+  path runs.** `notify_view.base` was correct, so every probe, every queue setup
+  and every status read agreed. Only `notify_view.bar->base`, on the refill,
+  disagreed. When a struct mixes "copied by value" data with "cached pointer"
+  data, the cached pointer is the one that is wrong.
+
+The regression is `./build.sh smoke pointer-smoke --virtio`. It moves the pointer
+through QMP, which is the only way to reach the refill, and asserts the position
+arrives as a position rather than a delta.
+
 ## Where a queue comes up
 
 `probe()` only reads the configuration space: the device identity, the feature

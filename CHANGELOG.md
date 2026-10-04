@@ -420,6 +420,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Moving the mouse over a virtio machine no longer freezes the VM.** Letting the
+  cursor into the QEMU window was enough for the guest to take `#14 page fault` and
+  halt. [What the fix was about](docs/VIRTIO.md#a-capability-never-stores-a-pointer-into-its-own-device).
+
 - **`progman-smoke` passes again.** It was failing on its 180 s timeout, not on
   anything it asserts. Copying the 390 KB stamped fixture into the volume costs
   365930 ms on its own — five metadata commits, each copying the whole 1537-sector
