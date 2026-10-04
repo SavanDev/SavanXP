@@ -48,6 +48,25 @@ v2 writes 16× that.
 and it happens twice per commit because the journal and the home copy are the
 same bytes written to two places.
 
+**What one write of a real file costs.** `progman-smoke` copies a whole stamped
+program to `/disk/bin` to get a fixture, and that copy is the most expensive
+single operation anywhere in the smoke suite: **365930 ms for 390664 bytes**, about
+1 KB/s, on the same host and with the same caveats as the numbers above (wall clock
+under TCG moves by 4× with host load). Everything else in that smoke — two catalog
+scans, the rebuild, the `unlink` and the rescan — adds up to about 3 s.
+
+The arithmetic matches the bill exactly. Growing a new file 390 KB means five
+metadata commits (64 → 128 → 256 → 512 → 1024 sectors), each writing 1537 sectors
+twice, which is 15 370 sectors of metadata for 768 sectors of actual data — a 20×
+write amplification on top of a transfer that is PIO word-at-a-time, 256 `outw` per
+sector, plus a cache flush per command.
+
+So the ledger is: **a single guest-side file write can cost six minutes**, and the
+first program to notice was a smoke that had been failing for 180 s and reading as
+"the launcher is broken". It was not. Its timeout was raised to 900 s and the cost
+is now printed by the smoke itself, because a red test that says nothing is worse
+than a slow one that says why.
+
 **What it would be.** ext3's answer: log *which blocks changed* instead of
 copying the whole metadata. A metadata commit currently touches a handful of
 sectors of the 1537; the delta journal would write those handfuls.

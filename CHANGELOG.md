@@ -413,6 +413,13 @@ Cut-off notes:
 
 ### Fixed
 
+- **`progman-smoke` passes again.** It was failing on its 180 s timeout, not on
+  anything it asserts. Copying the 390 KB stamped fixture into the volume costs
+  365930 ms on its own — five metadata commits, each copying the whole 1537-sector
+  metadata region twice — while the rest of the smoke adds up to 3 s. The timeout
+  is now 900 s and the smoke prints what the copy cost, because a test that goes
+  red without saying why is what made this read as a broken launcher.
+
 - **Relocated global pointers in a PIE no longer become a pointer to the image
   base.** `R_X86_64_RELATIVE` took its value from memory, but `lld` leaves the
   slot at zero and stores the address in the relocation's addend. Every

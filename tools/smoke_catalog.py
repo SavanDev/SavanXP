@@ -101,11 +101,22 @@ SCENARIOS: dict[str, Scenario] = {
         "WINDOWD SMOKE FAIL",
         "Window manager and compositor self-test",
     ),
+    # Timeout de 900 s, y no es holgura: este smoke copia un programa entero
+    # (390 KB) para tener una fixture con .sxmeta, y esa copia mide 365930 ms en esta
+    # imagen. El resto del smoke suma 3 s. A 180 s expiraba siempre y se leia como
+    # "el launcher esta roto", que no era el caso: solo faltaba tiempo.
+    #
+    # La causa esta en el grow-in del fichero, no en el smoke: cada crecimiento
+    # commit de metadata, y cada commit escribe dos veces los 1537 sectores de la
+    # region, y la transferencia del dispositivo emulado es PIO palabra a palabra.
+    # Arreglar eso es otra cosa --ver ATA rw_chunk-- y hasta que se haga, este
+    # escenario es lento por construccion.
     "progman-smoke": _qemu_scenario(
         "progman-selftest",
         "PROGMAN SMOKE PASS",
         "PROGMAN SMOKE FAIL",
         "Program Manager registry self-test",
+        900.0,
         prepare=("./tools/restore_doom.sh",),
     ),
     "appwiz-smoke": _qemu_scenario(
