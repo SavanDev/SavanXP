@@ -420,6 +420,15 @@ Cut-off notes:
 
 ### Fixed
 
+- **The emulated disk transfers 32 bits per port access instead of 16**, which
+  makes a 390 KB write ~26% faster (measured: 365930 and 401218 ms down to
+  280703 and 278922). Most of that cost is not the port writes at all: dropping
+  every cache flush changes nothing, and the per-sector cost on the device side
+  is what remains. Bus-master DMA is the fix for that, and the kernel does not
+  use it.
+
+### Fixed
+
 - **Four loader diagnostics can now fail.** `brokentest`, `missingtest`,
   `slottest` and `diamondtest` asserted only through `eprintf`, so they had
   nothing a smoke scenario could look for and none of them had one: they were

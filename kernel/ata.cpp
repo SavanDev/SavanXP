@@ -67,6 +67,16 @@ void outw(uint16_t port, uint16_t value) {
     asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
 }
 
+uint32_t inl(uint16_t port) {
+    uint32_t value = 0;
+    asm volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+void outl(uint16_t port, uint32_t value) {
+    asm volatile("outl %0, %1" : : "a"(value), "Nd"(port));
+}
+
 void io_wait() {
     outb(0x80, 0);
 }
@@ -173,20 +183,47 @@ bool rw_chunk(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* bytes, b
             return false;
         }
 
+        /* 32 bits por acceso al puerto de datos, no 16.
+         *
+         * El puerto de datos es una ventana de 16 bits sobre el sector, asi que la
+         * forma canonica es ir de palabra en palabra. Se puede de doble en doble, y el
+         * protocolo lo permite: el dispositivo ve dos mitades del mismo dword y las
+         * entrega en orden. Menos la mitad de las salidas a puerto para los mismos
+         * bytes.
+         *
+         * Medido con la fixture de progman-smoke, que escribe 390 KB y por lo tanto
+         * pasa por ~16.000 sectores: 365930 y 401218 ms con 16 bits, 280703 y 278922
+         * con 32. Un 26% menos, reproducible en dos muestras de cada.
+         *
+         * Y 26% es mucho menos que la mitad, que es lo que haria falta si el coste
+         * estuviese en el numero de escrituras. No esta: esta en algo FIJO por sector,
+         * del lado del dispositivo emulado, que cobra una peticion al medio de
+         * almacenamiento por sector. Medido aparte: quitar el cache flush --143 por
+         * este mismo fichero-- no cambio nada (379989 ms), y tampoco es el numero de
+         * escrituras, porque duplicarlo solo dio el 26%.
+         *
+         * Lo que si lo quita es DMA de bus master, que entrega los sectores en una
+         * sola peticion. isa-ide lo ofrece y el kernel no lo usa. Es la pieza que
+         * falta, y no se escribe aqui porque es otra cosa: una tabla de descriptores
+         * en memoria del kernel, barreras, y esperar a que el dispositivo la recorra. */
         if (write) {
-            for (size_t word = 0; word < (block::kSectorSize / sizeof(uint16_t)); ++word) {
-                const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + word * sizeof(uint16_t);
-                const uint16_t value =
-                    static_cast<uint16_t>(bytes[byte_index]) |
-                    (static_cast<uint16_t>(bytes[byte_index + 1]) << 8);
-                outw(slot.io_base, value);
+            for (size_t dword = 0; dword < (block::kSectorSize / sizeof(uint32_t)); ++dword) {
+                const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + dword * sizeof(uint32_t);
+                const uint32_t value =
+                    static_cast<uint32_t>(bytes[byte_index]) |
+                    (static_cast<uint32_t>(bytes[byte_index + 1]) << 8) |
+                    (static_cast<uint32_t>(bytes[byte_index + 2]) << 16) |
+                    (static_cast<uint32_t>(bytes[byte_index + 3]) << 24);
+                outl(slot.io_base, value);
             }
         } else {
-            for (size_t word = 0; word < (block::kSectorSize / sizeof(uint16_t)); ++word) {
-                const uint16_t value = inw(slot.io_base);
-                const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + word * sizeof(uint16_t);
+            for (size_t dword = 0; dword < (block::kSectorSize / sizeof(uint32_t)); ++dword) {
+                const uint32_t value = inl(slot.io_base);
+                const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + dword * sizeof(uint32_t);
                 bytes[byte_index] = static_cast<uint8_t>(value & 0xff);
                 bytes[byte_index + 1] = static_cast<uint8_t>((value >> 8) & 0xff);
+                bytes[byte_index + 2] = static_cast<uint8_t>((value >> 16) & 0xff);
+                bytes[byte_index + 3] = static_cast<uint8_t>((value >> 24) & 0xff);
             }
         }
     }

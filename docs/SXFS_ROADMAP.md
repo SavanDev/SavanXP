@@ -67,6 +67,32 @@ first program to notice was a smoke that had been failing for 180 s and reading 
 is now printed by the smoke itself, because a red test that says nothing is worse
 than a slow one that says why.
 
+**Where the six minutes are not.** Three hypotheses, measured, and two of them wrong:
+
+| change | ms for the same 390 KB |
+| --- | --- |
+| as it was, 16 bits per port access | 365930, 401218 |
+| no cache flush — only the wait kept | 379989 |
+| 32 bits per port access | 280703, 278922 |
+
+The cache flush is free: ~143 of them per file, one per transfer command, and
+removing every one changed nothing. It stays, because it is also what waits for the
+device to go idle.
+
+Halving the port writes bought 26%, not 50%, and **that ratio is the finding**. If
+the cost were the number of `outw`, doubling their width would halve the time. It
+does not, so most of it is a fixed per-sector cost on the device side — QEMU's IDE
+model issues one backend request per sector in a PIO data phase. Nothing the guest
+does in that loop can remove it.
+
+What removes it is **bus-master DMA**, which `isa-ide` offers and the kernel does
+not use: one backend request for a run of sectors instead of one per sector. It
+needs a descriptor table in kernel memory, the BM registers, and a way to know the
+device finished — a real feature, not a flag. That is the fix, and it is worth
+roughly an order of magnitude on every metadata mutation. Until then the honest
+summary is that the journal's cost per commit is the right thing to attack first,
+and this is second.
+
 **What it would be.** ext3's answer: log *which blocks changed* instead of
 copying the whole metadata. A metadata commit currently touches a handful of
 sectors of the 1537; the delta journal would write those handfuls.
