@@ -420,6 +420,23 @@ Cut-off notes:
 
 ### Fixed
 
+- **Four loader diagnostics can now fail.** `brokentest`, `missingtest`,
+  `slottest` and `diamondtest` asserted only through `eprintf`, so they had
+  nothing a smoke scenario could look for and none of them had one: they were
+  built, shipped in the image and never run. Each now prints a success token,
+  each has a scenario, and each was checked against a build with the loader
+  logic it tests disabled — where it stops passing.
+
+- **The launcher's baked table and the manifests agree.** The table said
+  `Main`/`Games`/`Diagnostics` and every `.sxres` said
+  `Accessories`/`System`/`Games`/`Diagnostics`, and had done for months without
+  anything failing, because the real catalog is rebuilt by scanning the
+  manifests. A plan B that disagrees with the plan A is a second answer to the
+  same question; `progman-smoke` now fails if a group exists in one and not the
+  other.
+
+### Fixed
+
 - **The visual smoke scenarios work on a virtio machine.** They drove an absolute
   tablet with relative moves, so their clicks landed on the wrong window, and they
   compared screenshots pixel by pixel including the cursor glyph, so an editor that

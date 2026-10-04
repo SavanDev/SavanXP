@@ -1123,12 +1123,19 @@ static int selftest_wrap_label(void)
     return failures;
 }
 
+#define SELFTEST_MAX_GROUPS 16
+
 static int progman_selftest(void)
 {
     int failures = progman_registry_selftest() + selftest_wrap_label();
     int dropped;
     int applied;
     int index;
+    /* Los nombres de grupo de la tabla horneada, ANTES de que el escaneo la
+     * rearme. Es la unica forma de que la comparacion de mas abajo signifique algo:
+     * despues del escaneo los dos lados son la misma lista. */
+    char baked_groups[SELFTEST_MAX_GROUPS][32];
+    int baked_group_count = 0;
 
     if (failures != 0)
     {
@@ -1167,6 +1174,12 @@ static int progman_selftest(void)
         if (group != 0)
         {
             printf("PROGMAN SMOKE group %s items=%d\n", group->name, group->item_count);
+            if (group != 0 && baked_group_count < SELFTEST_MAX_GROUPS)
+            {
+                snprintf(baked_groups[baked_group_count],
+                    sizeof(baked_groups[baked_group_count]), "%s", group->name);
+                baked_group_count++;
+            }
         }
     }
 
@@ -1261,6 +1274,45 @@ static int progman_selftest(void)
                 printf("PROGMAN SMOKE scan group %s items=%d\n", group->name, group->item_count);
             }
         }
+
+        /* Los grupos del fallback tienen que existir TODOS en el catalogo escaneado.
+         *
+         * Estas dos listas pueden decir cosas distintas durante años sin que nada
+         * falle: el catalogo real lo rearma el escaneo desde los .sxres, asi que un
+         * grupo que solo existe en la tabla horneada no se ve nunca, y uno que solo
+         * existe en un manifiesto tampoco. Lo que se perdio asi fue una categoria
+         * entera --la tabla decia Main y los manifiestos decian Accessories-- durante
+         * meses, y la divergencia solo aparecio al leer las dos cosas una al lado de
+         * la otra. Comparar aqui lo prohibe.
+         *
+         * Los items NO tienen que coincidir: el escaneo encuentra ademas lo que
+         * instalan los ports --Celeste, Doom-- y una tabla horneada no puede saberlo.
+         * Los grupos si, porque los declara el sistema entero y no hay quien los anada.
+         *
+         * Y esto compara dos listas de verdad: los nombres de la horneada se copiaron
+         * ANTES del escaneo. Comparar despues seria la misma lista contra si misma. */
+        for (index = 0; index < baked_group_count; ++index)
+        {
+            int found = 0;
+            int scanned_index;
+            for (scanned_index = 0; scanned_index < progman_group_count(); ++scanned_index)
+            {
+                const struct progman_group *scanned = progman_group_at(scanned_index);
+                if (scanned != 0 && strcmp(baked_groups[index], scanned->name) == 0)
+                {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                printf("PROGMAN SMOKE FAIL el grupo \"%s\" esta en la tabla horneada y "
+                    "no en el catalogo\n", baked_groups[index]);
+                return 1;
+            }
+        }
+        printf("PROGMAN SMOKE los %d grupos horneados existen en el catalogo\n",
+            baked_group_count);
         applied = progman_registry_apply_sxe();
         printf("PROGMAN SMOKE scan sxe applied=%d of %d\n", applied, progman_item_count());
         for (index = 0; index < progman_item_count(); ++index)

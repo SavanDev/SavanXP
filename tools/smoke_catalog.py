@@ -336,6 +336,42 @@ SCENARIOS: dict[str, Scenario] = {
         remove_paths=("lib/libffmpeg.so.0.4",),
     ),
 
+    # Los cuatro caminos de fallo del cargador. Estos programas existen desde la fase
+    # "fallos diagnosticables" y NO los ejecutaba nadie: afirmaban con eprintf al
+    # fallar y no tenian token de exito, asi que no habia nada que afirmar. Ya lo
+    # tienen, y por eso hay un escenario cada uno.
+    #
+    # El token de exito es lo que las hace discriminantes: sin el, un programa que
+    # solo habla cuando algo va mal pasa tanto si todo bien como si todo mal.
+    "brokentest": _qemu_scenario(
+        "brokentest",
+        "BROKENTEST DIAGNOSED",
+        "BROKENTEST OK",
+        "A library with an unresolvable symbol names the symbol and the library",
+        180.0,
+    ),
+    "missingtest": _qemu_scenario(
+        "missingtest",
+        "MISSINGTEST DIAGNOSED",
+        "MISSINGTEST OK",
+        "A missing file fails at the open step and leaves no half-loaded image",
+        180.0,
+    ),
+    "slottest": _qemu_scenario(
+        "slottest",
+        "SLOTTEST CAPPED",
+        "SLOTTEST OK",
+        "The per-process library table refuses the overflow instead of overwriting",
+        180.0,
+    ),
+    "diamondtest": _qemu_scenario(
+        "diamondtest",
+        "DIAMONDTEST ONCED",
+        "DIAMONDTEST OK",
+        "A diamond of four libraries loads the shared leaf exactly once",
+        180.0,
+    ),
+
     # Cuanto tarda el cargador con libffmpeg: 6.8 MB, 2334 simbolos. Es lo unico
     # aqui que mide algo en vez de afirmar un resultado, y por eso es el escenario
     # que contesta si la busqueda lineal de simbolos es un problema.

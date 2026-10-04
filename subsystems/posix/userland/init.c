@@ -123,6 +123,13 @@ static int run_automation_spec(const char* spec) {
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* clocktest_argv[] = {"/disk/bin/clocktest", 0};
     const char* needstest_argv[] = {"/disk/bin/needstest", 0};
+    /* Los cuatro diagnósticos del cargador. Cada uno afirmaba en error y nada más,
+     * así que ninguno podía tener escenario: ahora cada uno imprime su token de
+     * éxito y hay uno que lo ejecuta. */
+    const char* brokentest_argv[] = {"/disk/bin/brokentest", 0};
+    const char* missingtest_argv[] = {"/disk/bin/missingtest", 0};
+    const char* slottest_argv[] = {"/disk/bin/slottest", 0};
+    const char* diamondtest_argv[] = {"/disk/bin/diamondtest", 0};
     const char* ffmpegload_argv[] = {"/disk/bin/ffmpegload", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
@@ -184,6 +191,22 @@ static int run_automation_spec(const char* spec) {
              * asi que la libreria esta en el volumen. */
             path = "/disk/bin/ffmpegload";
             argv = ffmpegload_argv;
+            argc = 1;
+        } else if (strcmp(spec, "brokentest") == 0) {
+            path = "/disk/bin/brokentest";
+            argv = brokentest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "missingtest") == 0) {
+            path = "/disk/bin/missingtest";
+            argv = missingtest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "slottest") == 0) {
+            path = "/disk/bin/slottest";
+            argv = slottest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "diamondtest") == 0) {
+            path = "/disk/bin/diamondtest";
+            argv = diamondtest_argv;
             argc = 1;
         } else if (strcmp(spec, "needstest") == 0) {
             /* El programa con una dependencia declarada. El escenario

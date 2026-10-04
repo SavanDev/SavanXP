@@ -1082,15 +1082,35 @@ timing *does* say is that the loader's cost is proportional to bytes mapped, so
 the lever is the image, not the algorithm — and the image is an FFmpeg build
 decision.
 
-### Four test programs that nothing runs
+### Four test programs that nothing ran
 
 `brokentest`, `missingtest`, `slottest` and `diamondtest` are built, staged into
 `/disk/bin`, and exercise the failure paths of the loader: an unresolved symbol, a
-missing library, a full slot table, and a diamond of four libraries. **No
-smoke scenario runs any of them.** They were validated by breaking the code on
-purpose, which proves the diagnostic once and not twice. A scenario per program,
-with `remove_paths` for the two that need a library absent, is the obvious gap
-this work exposed.
+missing library, a full slot table, and a diamond of four libraries. **No smoke
+scenario ran any of them**, and the reason is worth writing down because it is not
+obvious from the outside.
+
+They had no success token. Every assertion in the four is an `eprintf` on the way
+out, and `return 0` at the end. So there was nothing for a scenario to look for:
+the only string they could produce was the text of a failure. They had been
+validated by breaking the loader on purpose, which proves a diagnostic once — the
+moment you made the break — and not twice.
+
+A program that only speaks when something is wrong cannot be checked that
+something is right. Each of the four now prints its token and has a scenario, and
+each was verified by disabling the exact loader logic it tests:
+
+| scenario | what it disables | result |
+| --- | --- | --- |
+| `brokentest` | `report_unresolved` stops naming the symbol | stops passing |
+| `missingtest` | a failed load leaves its slot occupied (`end_load(1)`) | stops passing |
+| `slottest` | the `kMaxLibraries` cap in `begin_load` | stops passing |
+| `diamondtest` | `already_loaded`, so the shared leaf loads twice | stops passing |
+
+`slottest` earned its keep during that check. The first attempt to disable it
+replaced the cap in `adopt_executable()` instead of the one in `begin_load()`, and
+the scenario passed — which proved nothing except that the cap in `begin_load`
+works. A check that passes when you break something else is not yet a check.
 
 ## The first application with a library, and the two bugs it found
 
@@ -1334,6 +1354,30 @@ catalog is rebuilt by scanning, the manifests win and the groups become the
 documented ones — the baked table is only a fallback. But the fallback disagrees
 with every manifest, and `calc`, `filesapp`, `notepad` and `shellapp` all declare
 `category=Accessories` while the table calls it `Main`.
+
+### The baked table had drifted from every manifest
+
+`progman_registry.c` carries its own list of programs, and it disagreed with the
+`.sxres` files about which groups exist: the table said `Main`/`Games`/
+`Diagnostics`, all fourteen manifests said `Accessories`/`System`/`Games`/
+`Diagnostics`. It survived because the real catalog is rebuilt by scanning the
+installed binaries and reading their stamped `category=`, so the table is only a
+fallback — and a fallback nobody exercises disagrees with the real thing quietly.
+
+It also disagreed on **order**, which was not cosmetic. The scan sorts groups
+alphabetically, and the launcher's tabs are the group index, so
+`tools/shoot_session.py`'s "System is always the fourth tab" was only true of the
+scan. The table listed Main first.
+
+Both lists are now the same, in the same order, and `progman-smoke` asserts it:
+every group in the baked table must exist in the scanned catalog. It does not
+compare the *items*, and deliberately so — the scan also finds what the ports
+install (Celeste, Doom) and a baked table cannot know that. The groups it can
+compare, because the whole system declares them and nothing adds any.
+
+`Add/Remove Programs` was missing from the table entirely, even though
+`appwiz.sxres` declares `category=System`. Adding it is what made the counts line
+up: Accessories 5, Diagnostics 5, Games 2, System 3.
 
 ### The icon is a copy, and that is the lesser evil
 

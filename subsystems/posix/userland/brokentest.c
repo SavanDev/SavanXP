@@ -42,5 +42,12 @@ int main(void)
                 g_lib_fail_library == 0 ? "(ninguna)" : g_lib_fail_library);
         return 1;
     }
+    /* Un token de EXITO, y no solo de error. needstest lleva el suyo desde el
+     * principio y por eso hay un escenario que lo ejecuta; estos cuatro se
+     * compilaron, entraron en la imagen y no los ejecuto nadie nunca, porque un
+     * programa que solo habla cuando algo va mal no permite comprobar que algo
+     * va bien. Un token de exito es lo que convierte una prueba en algo que se
+     * puede automatizar. */
+    puts_fd(1, "BROKENTEST DIAGNOSED\n");
     return 0;
 }

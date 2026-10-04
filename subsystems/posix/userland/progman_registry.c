@@ -67,34 +67,44 @@ struct progman_default_item
  * progman.ini falte/este corrupto Y ADEMAS el binario no se pueda leer.
  */
 static const struct progman_default_item k_default_items[] = {
-    {"Main", "Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Main", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Main", "Notepad", "/bin/notepad", "Edit text files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Main", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Main", "Task Manager", "/bin/taskmgr", "Processes, performance and network", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Main", "System Properties", "/bin/aboutapp", "Version, hardware and installation", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    /* El reproductor es SIEMPRE una entrada, porque /bin/mediaplayer esta siempre
-     * construido. Si el port no esta instalado, el propio programa explica por que
-     * --falta /disk/lib, no el reproductor-- y el pruning no lo descarta, porque
-     * /bin/mediaplayer si que esta. Es lo unico que Doom no puede hacer:
-     * doomgeneric vive en el volumen.
+    /* Categorias y orden, LOS MISMOS que los manifiestos declaran.
      *
-     * Va en el PRIMER grupo, no en uno propio, y el motivo es el orden: el launcher
-     * ordena alfabeticamente dentro de cada grupo, y aqui eso lo pone en la tercera
-     * posicion --Calculator, Files, Media Player, Notepad...-- que es exactamente
-     * donde lo espera open_mediaplayer() en tools/shoot_session.py. Un grupo con un
-     * solo icono habria puesto esa posicion en otro sitio y habria roto el
-     * escenario que la usa. */
-    {"Main", "Media Player", "/bin/mediaplayer", "Play video and audio files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Games", "Minesweeper", "/bin/mines", "Clear the minefield without stepping on a mine", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
+     * Esta tabla fue durante mucho tiempo el unico sitio con la lista de programas
+     * y se fue quedando atras: decia Main/Games/Diagnostics mientras todos los .sxres
+     * decian Accessories/System/Games/Diagnostics. El escaneo del catalogo rearmaba
+     * desde los manifiestos y todo funcionaba, asi que el desacuerdo no se veia
+     * --solo se veia al leer las dos cosas, que es como se descubrio-- y en la
+     * practice lo que gobierna es el manifiesto. Esta tabla es el plan B para cuando
+     * no hay binarios que escanear, y un plan B que no coincide con el plan A es
+     * una segunda respuesta a la misma pregunta.
+     *
+     * El ORDEN de los grupos tambien coincide, y por un motivo que no es estetico: el
+     * escaneo los ordena alfabeticamente y las solapas del lanzador son el numero de
+     * grupo. Con Main primero y System ausente, "la cuarta solapa" que dice
+     * tools/shoot_session.py no existia. Aqui es lo mismo: se lee de arriba abajo.
+     */
+    {"Accessories", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Accessories", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    /* El reproductor SIEMPRE es una entrada cuando el port esta construido, porque
+     * /bin/mediaplayer existe entonces. Si el port no esta, el pruning lo descarta
+     * --igual que a Doom, que tambien vive en el volumen-- y no hace falta ningun
+     * lanzador que explique su ausencia: quien lo explica es el propio reproductor,
+     * desde main, con ldso_missing(). */
+    {"Accessories", "Media Player", "/bin/mediaplayer", "Play video and audio files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Accessories", "Notepad", "/bin/notepad", "Edit text files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Accessories", "Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 #if DESKTOP_INCLUDE_TEST_APPS
-    {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Diagnostics", "Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
     {"Diagnostics", "Gears", "/bin/gears", "3D rendering test", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
+    {"Diagnostics", "Gfx Demo", "/bin/gfxdemo", "2D rendering test", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
     {"Diagnostics", "Key Test", "/bin/keytest", "Keyboard diagnostics", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Diagnostics", "Mouse Test", "/bin/mousetest", "Mouse diagnostics", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Diagnostics", "Widgets", "/bin/widgetsdemo", "sxgui control gallery", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 #endif
+    {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
+    {"Games", "Minesweeper", "/bin/mines", "Clear the minefield without stepping on a mine", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"System", "Add/Remove Programs", "/bin/appwiz", "Uninstall programs installed outside the system image", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"System", "System Properties", "/bin/aboutapp", "Version, hardware and installation", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"System", "Task Manager", "/bin/taskmgr", "Processes, performance and network", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 };
 
 static int default_item_count(void)
