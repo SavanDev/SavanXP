@@ -836,12 +836,22 @@ or the harness modelling the gradient on purpose and accepting the coupling.
 **What is left of Phase 2 is therefore empty of cheap work**, and both halves are
 recorded above with the measurements that closed them.
 
-### Phase 3 — FFmpeg
+### Phase 3 — FFmpeg — done
 
-The reason any of this exists, and the phase nothing above delivers on its own.
+**Done.** `libffmpeg.so.0.4` is built shared, installed at `/disk/lib`, and
+`mediaplayer` maps it and decodes. The acceptance test below is met.
 
-`ports/ffmpeg/configure.sh` still passes `--disable-shared --enable-static`. The work
-is to build it shared, declare it, and have `mediaplayer` use it.
+One correction to what this section predicted: it expected `mediaplayer` to map
+`libavformat`, `libavcodec`, `libavutil` and `libswscale`/`libswresample` as five
+libraries. It maps **one**. Splitting FFmpeg into its own components is a
+distribution convenience — change a codec without relinking everything — and this
+system has nothing to gain from it. One library is also the stronger test of the
+loader, because a big `.dynsym` and a big relocation table are exactly what had
+never been exercised. What the prediction got right is the part that mattered:
+**eight slots of the 32 and a genuine `DT_NEEDED` graph.**
+
+What follows is the reasoning as it stood, including why `dlopen` turned out not to
+be needed. It has not aged badly.
 
 **This phase does not need `dlopen`, and an earlier draft of this document said it
 did.** That is wrong for this port. `configure.sh` enables decoders with
