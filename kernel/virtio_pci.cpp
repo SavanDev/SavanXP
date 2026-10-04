@@ -104,7 +104,7 @@ static bool resolve_capability(Device& device, uint8_t cfg_type, bool required, 
     }
 
     view.valid = true;
-    view.bar = mapped_bar;
+    view.bar_index = static_cast<uint8_t>(capability.bar_index);
     view.base = mapped_bar->base + capability.capability_offset;
     view.offset_within_bar = capability.capability_offset;
     view.length = capability.capability_length;
@@ -361,12 +361,23 @@ uint64_t queue_extra_physical(const Queue& queue, size_t offset) {
 void notify_queue(Device& device, const Queue& queue) {
     // notify_off_multiplier == 0 es valido (todas las colas comparten la misma
     // direccion de notify), asi que no se exige extra != 0.
-    if (!device.notify_view.valid || device.notify_view.bar == nullptr) {
+    if (!device.notify_view.valid) {
+        return;
+    }
+
+    // El BAR se busca por indice contra *este* Device, no contra el que
+    // resolvio la capacidad: Device se copia por valor y un puntero guardado en
+    // la vista quedaria apuntando al original. Con notify_off == 0 -- el caso
+    // del unico notify que usa el arbol -- el BAR del notify es el del indice
+    // que guardo la vista, y el offset de la capacidad es lo que lo separa del
+    // inicio del BAR.
+    const MappedBar& bar = device.bars[device.notify_view.bar_index];
+    if (!bar.mapped || bar.base == nullptr) {
         return;
     }
 
     volatile uint16_t* notify = reinterpret_cast<volatile uint16_t*>(
-        device.notify_view.bar->base + device.notify_view.offset_within_bar + (queue.notify_off * device.notify_view.extra)
+        bar.base + device.notify_view.offset_within_bar + (queue.notify_off * device.notify_view.extra)
     );
     *notify = queue.index;
 }

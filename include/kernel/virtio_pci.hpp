@@ -91,7 +91,14 @@ struct MappedBar {
 
 struct CapabilityView {
     bool valid;
-    MappedBar* bar;
+    // Indice del BAR dentro de device.bars[], no un puntero a el. Device se
+    // copia por valor -- un driver puede inicializar en un Device local y
+    // publicarlo en su global solo si el intento resulto ser de otro tipo --
+    // y un puntero al bars[] de origen quedaria apuntando a un frame de pila
+    // ya muerto: base (que si se copia bien, por ser un puntero) quedaria bien
+    // mientras bar->base, que se relee desde el frame muerto, seria cualquier
+    // cosa. El BAR se resuelve por indice contra el Device que se esta usando.
+    uint8_t bar_index;
     uint8_t* base;
     uint32_t offset_within_bar;
     uint32_t length;
