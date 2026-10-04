@@ -3,6 +3,8 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
+mkdir -p "$OUT"
+
 # ---- libffmpeg.so.0.4 -----------------------------------------------------
 #
 # Una sola libreria con los cinco componentes, y no cinco librerias. La division
@@ -64,6 +66,15 @@ if [[ ! -f "$SAVANXP_MATH_LIBRARY/libmath.so.0.4" ]]; then
     exit 1
 fi
 
+# Todo se escribe con ruta ABSOLUTA. Antes este script hacia `cd "$OUT"` y vivia
+# dentro del directorio de trabajo; se fue al quitarse el reproductor, y el -o de
+# abajo se quedo resolviendo contra el directorio desde el que se llama. Lanzado
+# desde la raiz del repo --que es como lo llama build.sh-- eso escribia un
+# libffmpeg.so.0.4 de 7 MB en la raiz, y un `git add -a` de raiz lo versiono.
+#
+# Un artefacto de 7 MB en el arbol no es un descuido de forma: es 7 MB en cada
+# clon y un binario que no se revisa en un diff.
+cd "$OUT"
 echo "== linkeando libffmpeg.so.0.4"
 # -Wl,-shared y NO -shared. El driver de clang con el triple none ignora -shared
 # (avisa "argument unused during compilation") y linkea un ET_EXEC etiquetado como
@@ -79,5 +90,5 @@ $LINK_CC -target x86_64-unknown-none-elf -nostdlib -Wl,-shared -fuse-ld=lld \
 
 echo "== libffmpeg.so.0.4: $(du -h libffmpeg.so.0.4 | cut -f1)"
 $SIZE_CMD libffmpeg.so.0.4 | tail -1
-cp libffmpeg.so.0.4 "$OUTPUT_ROOT/external/libffmpeg.so.0.4"
+cp "$OUT/libffmpeg.so.0.4" "$OUTPUT_ROOT/external/libffmpeg.so.0.4"
 echo "listo: $OUTPUT_ROOT/external/libffmpeg.so.0.4"

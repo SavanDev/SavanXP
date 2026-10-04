@@ -1,5 +1,13 @@
 build/
 __pycache__/
+
+# Una libreria compartida en la RAIZ del arbol es siempre un bug de un script que
+# perdio su cd. Se versiono una vez: libffmpeg.so.0.4, 7 MB, porque link.sh dejo de
+# hacer `cd "$OUT"` y el -o resolvio contra el directorio desde el que se leia. No se
+# ignores *.so en general --los .so de build/ ya estan fuera por build/--, solo la
+# raiz, que es donde ese error cae.
+/*.so
+/*.so.*
 *.pyc
 tools/*
 !tools/gen_cursor_asset.py
