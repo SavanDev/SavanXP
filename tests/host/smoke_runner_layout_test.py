@@ -81,13 +81,23 @@ def main() -> int:
     assert '"native-hello"' in catalog
     assert '"sxfs-smoke"' in catalog
     assert '"kbd-smoke"' in catalog
+    assert '"pointer-smoke"' in catalog
+    # pointer-smoke es el unico que exige la maquina virtio, y el runner tiene que
+    # negarse a arrancarlo sin ella en vez de fallar por el device que falta.
+    assert "requires_virtio=True" in catalog
+    assert "--requires-virtio" in build_script
+    assert "requires_virtio" in runner
+    assert "send_pointer_smoke_actions" in runner
     assert '"ac97-stream"' in catalog
     assert '"tcp-smoke"' in catalog
-    assert '"mediaplayer-availability"' in catalog
+    # mediaplayer-availability y mediaplayer-missing se fueron con SxMedia: se
+    # afirman los que el catalogo tiene hoy, no los que tenia cuando se escribio
+    # esta linea. Un assert sobre un escenario retirado es un test que no puede
+    # volver a pasar, y uno que no pasa no vigila nada.
     assert '"mediaplayer-selftest"' in catalog
     assert '"mediaplayer-display"' in catalog
-    assert '"mediaplayer-missing"' in catalog
-    assert 'remove_paths=("bin/mediaplayer-ffmpeg",)' in catalog
+    assert '"mediaplayer-nolib"' in catalog
+    assert 'remove_paths=("lib/libffmpeg.so.0.4",)' in catalog
     qmp_display = (root / "ports" / "ffmpeg" / "tests" / "qmp_display.py").read_text(encoding="utf-8")
     assert "--socket" in qmp_display
     assert 'qmp_callback="./ports/ffmpeg/tests/qmp_display.py"' in catalog
