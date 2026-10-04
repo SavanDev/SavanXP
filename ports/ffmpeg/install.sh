@@ -65,6 +65,16 @@ BUILD_ID=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || true)
     --readelf "${SAVANXP_READELF:-llvm-readelf}"
 cp "$STAMPED" "$STAGE/bin/$BACKEND_NAME"
 
+# La libreria va a /disk/lib, no a /bin. Es lo unico opcional del puerto: el
+# reproductor es una aplicacion del sistema y esta es la pieza que puede faltar.
+if [[ -f "$OUTPUT_ROOT/external/libffmpeg.so.0.4" ]]; then
+    mkdir -p "$STAGE/lib"
+    cp "$OUTPUT_ROOT/external/libffmpeg.so.0.4" "$STAGE/lib/libffmpeg.so.0.4"
+    echo "ffmpeg: instalado /disk/lib/libffmpeg.so.0.4"
+else
+    echo "ffmpeg: sin libffmpeg.so.0.4; el puerto queda como estaba" >&2
+fi
+
 if ((WITH_TEST_MEDIA)); then
     mkdir -p "$OUTPUT_ROOT/media" "$STAGE/media"
     for generator in make-tone.py make-clip.py make-avclip.py; do

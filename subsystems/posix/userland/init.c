@@ -120,6 +120,7 @@ static int run_automation_spec(const char* spec) {
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* clocktest_argv[] = {"/disk/bin/clocktest", 0};
     const char* needstest_argv[] = {"/disk/bin/needstest", 0};
+    const char* ffmpegload_argv[] = {"/disk/bin/ffmpegload", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
@@ -174,6 +175,12 @@ static int run_automation_spec(const char* spec) {
             path = "/bin/calc";
             argv = calc_selftest_argv;
             argc = 2;
+        } else if (strcmp(spec, "ffmpegload") == 0) {
+            /* Carga libffmpeg.so.0.4 y mide. El escenario instala el port antes,
+             * asi que la libreria esta en el volumen. */
+            path = "/disk/bin/ffmpegload";
+            argv = ffmpegload_argv;
+            argc = 1;
         } else if (strcmp(spec, "needstest") == 0) {
             /* El programa con una dependencia declarada. El escenario
              * needstest-missing borra la libreria del volumen antes de arrancar;

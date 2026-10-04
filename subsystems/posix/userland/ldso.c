@@ -48,6 +48,10 @@ typedef uint64_t Elf64_Xword;
  * inicial -- arranque con las direcciones donde el codigo las busca. Una
  * imagen reubicada sin esto tiene punteros al valor cero. */
 #define R_X86_64_RELATIVE 8
+/* Direccion absoluta de 64 bits de un simbolo IMPORTADO, guardada en datos. Es lo
+ * mismo que un GLOB_DAT --resolver por nombre y escribir el valor-- y aparece
+ * cuando el codigo hace &simbolo y lo guarda en una tabla. */
+#define R_X86_64_64 1
 
 typedef struct {
     unsigned char e_ident[EI_NIDENT];
@@ -496,7 +500,8 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
             *where = (Elf64_Addr)((unsigned long)(Elf64_Xword)rela.r_addend + g_libs[slot].bias);
             continue;
         }
-        if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT) {
+        if (type != R_X86_64_JUMP_SLOT && type != R_X86_64_GLOB_DAT &&
+            type != R_X86_64_64) {
             /* El cargador no implementa este tipo. Fallar es lo correcto --seguir y
              * dejar la casilla como estaba seria una referencia rota que no se
              * manifestaria hasta la llamada-- pero sin decir cual es el tipo, el
@@ -507,7 +512,7 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
              * enlace hecho a mano, que es de donde viene el resto de estas
              * librerias. */
             eprintf("loader: %s tiene una reubicacion de tipo %u, y solo se "
-                    "implementan JUMP_SLOT, GLOB_DAT y RELATIVE\n",
+                    "implementan JUMP_SLOT, GLOB_DAT, R_X86_64_64 y RELATIVE\n",
                     g_libs[slot].soname, type);
             return 0;
         }

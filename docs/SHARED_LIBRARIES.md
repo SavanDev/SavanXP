@@ -106,6 +106,12 @@ anything above it.
 | `libsxgui.so.0.4` | 136 KB | `libgfx2d`, `libsxgfx` |
 | `libchainbase.so.0.4`, `libchaintop.so.0.4` | 4 KB each | each other (test chain) |
 
+`libffmpeg.so.0.4` is not in this table because the tree does not build it: the
+FFmpeg port links it and stages it at `/disk/lib`, so it exists only in an image
+that has the port installed. It is two orders of magnitude larger than anything
+above, and [its section](#ffmpeg-as-one-library-and-what-it-cost-to-find-out)
+records what loading it exposed.
+
 ### The programs
 
 82 executables: 30 are `ET_DYN`, 27 declare a `DT_NEEDED`. By library:
@@ -972,3 +978,106 @@ it.
   arrives with it — a general `dlopen` with reference counting and unloading is a
   much larger feature, and building that first would put a second subsystem between
   here and a working player.
+
+## FFmpeg as one library, and what it cost to find out
+
+`libffmpeg.so.0.4` is the first library the loader meets that it was not built
+for. The six system libraries weigh 2 KiB to 136 KiB. This one is 6.8 MB on
+disk, exports 2334 symbols and carries 9228 relocations. Everything below came
+out of building it and failing to load it.
+
+### One thing the loader was missing, found by this library
+
+**`R_X86_64_64` was not implemented.** A data slot holding the address of an
+*imported* symbol — `&func` stored in a table — needs a runtime resolution, and
+the loader aborted the load on it. There are 253 of them. It is the same work as
+`R_X86_64_GLOB_DAT`: look the name up, write the value. The diagnostic added in
+the earlier phase named the type on its own, which is how it was found.
+
+### Symbol lookup was tried and rejected
+
+`resolve` walks the whole `.dynsym` with `strcmp`, once per relocation needing a
+name. With FFmpeg that is 2029 lookups against 2334 symbols — about 4.7 million
+string comparisons, which reads like the obvious bottleneck.
+
+It was implemented and measured. `lld` writes a SysV `DT_HASH` table into
+`libffmpeg.so.0.4`, so the loader was given one to use:
+
+| | ms |
+| --- | --- |
+| load resolving through `DT_HASH` | 3585 |
+| load with the hash path disabled, linear scan forced | 3577 |
+
+Noise. The load is not CPU-bound on lookup, so `DT_HASH` was removed again and
+`resolve` still walks the table. Two further facts killed it:
+
+- **No library in the tree emits SysV `DT_HASH`.** All six system libraries carry
+  `DT_GNU_HASH`; only the port-built FFmpeg library has the SysV table. So the
+  change would have applied to one library out of thirteen.
+- **A `DT_GNU_HASH` implementation would not have helped either**, for the same
+  reason the SysV one did not. That is the whole reason to leave the scan alone:
+  the measurement says lookup is not what costs, so implementing either hash
+  format buys nothing that the measurement can see.
+
+Phase timing inside `ldso_load` says where the time actually goes:
+
+| phase | ms |
+| --- | --- |
+| place segments | 1015 |
+| dynamic table | 1 |
+| `DT_NEEDED` chain | 0 |
+| 9228 relocations | 1226 |
+
+Two halves, and neither is the algorithm. Placing the segments reads 6.8 MB and
+allocates 17.25 MB of BSS. The relocations are 133 µs each, which is absurd for
+a header scan and an 8-byte store: they are first-touch page faults spread over
+18 MB. Opening and mapping the file, by contrast, is 3 ms — `map_view_at` is
+lazy, so the read cost lands inside the load, not before it.
+
+The kernel's per-page `memset` in `allocate_section` was the obvious suspect and
+is not: removing it made the load *slower* (4059 ms), because the zeroing only
+moves to the first-touch fault handler. It stays — the free-page list hands back
+dirty memory, and skipping it would leak stale bytes across processes.
+
+### The 17.25 MB of BSS is FFmpeg's, not the link's
+
+The fourth `PT_LOAD` is `filesz` 13.5 KiB and `memsz` 17.25 MB. Across the five
+archives, 17 MB of BSS of which **16 MB is FFT tables** — `ff_tx_tab_*`, every
+transform size in every precision.
+
+The obvious suspect is `--whole-archive`, which does pull in every codec and
+every table. It was measured: linking with the 48 FFmpeg entry points the player
+actually uses as `-u` roots, and letting archive semantics pull the transitive
+closure, gives the same 6.8 MB and the same 17.99 MB of BSS. The codec registry
+is one table that references every decoder, so the closure genuinely reaches the
+transform tables. `--whole-archive` costs nothing and is the more robust link,
+so it stays.
+
+The consequence is a user-visible one: loading FFmpeg maps about 25 MB, and the
+library's resident footprint is more than triple its size on disk. Anything that
+wants that down has to change FFmpeg's build configuration, not our loader.
+
+### The link produced an ET_EXEC, and the guard caught it
+
+`clang -target x86_64-unknown-none-elf -nostdlib -shared` warns
+`argument unused during compilation: '-shared'`, ignores the flag, and links an
+`ET_EXEC` with a library's name on it. `read_header` rejected it by type, which
+is exactly what it is there for. `-Wl,-shared` is the form the driver honours.
+
+### What this says about the loader
+
+Nothing measured here argues for optimising `ldso` further. The linear scan cost
+nothing against a memory-bound load, and the memory is FFmpeg's. What the phase
+timing *does* say is that the loader's cost is proportional to bytes mapped, so
+the lever is the image, not the algorithm — and the image is an FFmpeg build
+decision.
+
+### Four test programs that nothing runs
+
+`brokentest`, `missingtest`, `slottest` and `diamondtest` are built, staged into
+`/disk/bin`, and exercise the failure paths of the loader: an unresolved symbol, a
+missing library, a full slot table, and a diamond of four libraries. **No
+smoke scenario runs any of them.** They were validated by breaking the code on
+purpose, which proves the diagnostic once and not twice. A scenario per program,
+with `remove_paths` for the two that need a library absent, is the obvious gap
+this work exposed.

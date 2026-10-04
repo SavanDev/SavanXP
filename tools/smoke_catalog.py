@@ -274,6 +274,18 @@ SCENARIOS: dict[str, Scenario] = {
         remove_paths=("lib/libneeded.so.0.4",),
     ),
 
+    # Cuanto tarda el cargador con libffmpeg: 6.8 MB, 2334 simbolos. Es lo unico
+    # aqui que mide algo en vez de afirmar un resultado, y por eso es el escenario
+    # que contesta si la busqueda lineal de simbolos es un problema.
+    "ffmpegload": _qemu_scenario(
+        "ffmpegload",
+        "FFMPEGLOAD OK",
+        "FFMPEGLOAD FAIL",
+        "Library loader timing with the real 6.8 MB FFmpeg library",
+        240.0,
+        prepare=("./ports/ffmpeg/install.sh --with-test-media",),
+    ),
+
     # mediaplayer-availability y mediaplayer-missing se fueron con SxMedia.
     #
     # Los dos usaban el modo `--availability` del reproductor, que vivia en

@@ -79,6 +79,15 @@ Cut-off notes:
 
 ### Added
 
+- **`libffmpeg.so.0.4`, FFmpeg's five components as one shared library.** The
+  FFmpeg port installs it at `/disk/lib`, and `ldso_load` maps it: 6.8 MB on disk,
+  2334 exported symbols and 9228 relocations, which is the first workload the
+  loader has seen that it was not built for.
+
+- **The loader applies `R_X86_64_64`.** A data slot holding the address of an
+  imported symbol needs a runtime resolution, and the loader aborted the load on
+  it. `libffmpeg.so.0.4` has 253 of them.
+
 - **`libgfx2d.so.0.4`, the 2D painter and window chrome, as a shared library.**
   No library asks the program for a single symbol now — every reference any of them
   makes is to the C runtime or a system call. A program no longer has to be PIE so
