@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Del cargador de librerias del propio SavanXP, no de un ld.so de Linux. */
+#include <savanxp/ldso.h>
+
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
@@ -151,6 +154,10 @@ static int open_stream(struct media* media, struct media_stream* stream, enum AV
     return 1;
 }
 
+const char* media_missing_library(void) {
+    return ldso_missing();
+}
+
 int media_open(struct media* media, const char* path, const struct media_audio_format* audio_out,
                char* error, size_t error_capacity) {
     memset(media, 0, sizeof(*media));
@@ -160,6 +167,12 @@ int media_open(struct media* media, const char* path, const struct media_audio_f
     media->audio_skip_until_us = MEDIA_NO_TIME;
     media->video_time_us = MEDIA_NO_TIME;
     media->shown_time_us = MEDIA_NO_TIME;
+
+    const char* missing = media_missing_library();
+    if (missing != NULL) {
+        copy_error(error, error_capacity, missing);
+        return 0;
+    }
 
     if (avformat_open_input(&media->format, path, NULL, NULL) < 0) {
         copy_error(error, error_capacity, "cannot open the file");

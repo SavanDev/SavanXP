@@ -84,6 +84,19 @@ Cut-off notes:
   2334 exported symbols and 9228 relocations, which is the first workload the
   loader has seen that it was not built for.
 
+- **The Media Player is a program that depends on a library.** It went from 7 MB
+  with FFmpeg linked in to 344 KB with one `DT_NEEDED`, and it decodes through
+  `/disk/lib/libffmpeg.so.0.4`.
+
+- **A program whose library is missing now says so and keeps running.** It used
+  to die with a page fault at the address of a PLT stub. `ldso_missing()` is part
+  of the SDK, and the player checks it before its first call.
+
+- **A missing dependency no longer leaves the program unrelocated.** Relocations
+  were skipped when a `DT_NEEDED` failed to load, which left every global pointer
+  at its link-time value — `stdout` among them, so the program could not even
+  print the reason it was broken.
+
 - **The loader applies `R_X86_64_64`.** A data slot holding the address of an
   imported symbol needs a runtime resolution, and the loader aborted the load on
   it. `libffmpeg.so.0.4` has 253 of them.

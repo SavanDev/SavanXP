@@ -23,7 +23,7 @@
  * Mide el tiempo de CARGA COMPLETA: cabeceras, mapeo de segmentos, tabla dinamica y
  * TODAS las reubicaciones. Eso ultimo es donde esta el coste que se quiere conocer. */
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 /* El runtime da milisegundos de reloj de pared, no de proceso: sirve para comparar
  * magnitudes, que es lo que se necesita. */

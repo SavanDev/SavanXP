@@ -6,7 +6,7 @@
  * codigo los busca. Un .so con GOT no arranca si eso esta mal. */
 
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 typedef double (*math_fn1)(double);
 typedef double (*math_fn2)(double, double);

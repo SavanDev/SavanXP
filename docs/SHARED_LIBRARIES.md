@@ -1081,3 +1081,115 @@ smoke scenario runs any of them.** They were validated by breaking the code on
 purpose, which proves the diagnostic once and not twice. A scenario per program,
 with `remove_paths` for the two that need a library absent, is the obvious gap
 this work exposed.
+
+## The first application with a library, and the two bugs it found
+
+`mediaplayer` is the first program in the tree that depends on a shared library.
+It is still built by the FFmpeg port, not by CMake — its engine is FFmpeg, and a
+system must work without FFmpeg installed — but it is a PIE with one
+`DT_NEEDED`, and it went from 7 MB with the archives linked in to 344 KB.
+
+Two things came out of that, and neither was visible from the test programs.
+
+### The first FFmpeg call was before the first FFmpeg call's guard
+
+The player was told to check `ldso_missing()` before touching FFmpeg, and the
+check went into `media_open`, which is where every `av_*` call was believed to
+live. It did not work, and the way it failed is worth writing down:
+
+```
+loader: no se pudo abrir /disk/lib/libffmpeg.so.0.4 (paso 2)
+sx_start_dynamic: el interprete fallo (paso 8)
+user: exception #14 name=mediaplayer-ffmpeg cr2=0x4b6d6 rip=0x4b6d6
+```
+
+`0x4b6d6` is `av_log_set_level@plt + 6`, and `main` calls `av_log_set_level` as
+its very first statement — before the `--selftest` dispatch, before any window,
+before `media_open`. So the process jumped through an unrelocated GOT slot into
+an address below `kUserBase` and died. The check was correct and in the wrong
+place. It is now the first thing in `main`, and `media_missing_library()` in
+`media.c` is the single place that answers the question.
+
+**The general lesson:** "before the first call" is not a place you can pick. It is
+the earliest statement of `main`, and you only find out where that is when a
+dependency is missing.
+
+### A missing dependency left the program unrelocated, so it could not report it
+
+With the library gone, the program printed *nothing*. The loader had reported the
+problem, and then `main` ran and could not even say so.
+
+The cause was the order in `ldso_start`. The `DT_NEEDED` chain is walked before
+relocations, because a GOT entry pointing at a dependency can only be filled once
+that dependency is mapped. But the chain's failure returned immediately, so
+`apply_relocs_in(0)` never ran for the executable. Every `R_X86_64_RELATIVE` in
+the program stayed at its link-time value — including `stdout`, which is
+`FILE* stdout = &g_stdout_file`. `printf` wrote through a pointer into nowhere
+and the message was lost. It did not fault; that was luck.
+
+So a failed chain now still relocates, and relocations are **tolerant**: entries
+that cannot be resolved are skipped and counted, rather than aborting the table on
+the first one. Aborting was what left the image half-built:
+
+```
+loader: 39 entradas de el ejecutable se quedaron sin reubicar porque libffmpeg.so.0.4 no cargo
+mediaplayer: falta libffmpeg.so.0.4, y sin ella no hay motor de reproduccion
+```
+
+39 is the count of `DT_JMPREL` entries, and it matches. That count is worth
+having: it says how much of the program is not working, and the name alone does
+not.
+
+The load stays non-fatal, which is what makes any of this reachable: a program
+that cannot load a dependency still has to be able to say so. "Non-fatal" was
+never allowed to mean "half-loaded".
+
+`image_name()` exists because the executable has no `DT_SONAME` — that field is
+for shared objects only — and the message came out as `39 entradas de  se
+quedaron`. The image's name is the first thing anyone reads in a diagnostic.
+
+### The loader is not part of `libsavanxp.a`, on purpose
+
+The port links `ldso.c` separately. `crt0` calls `sx_start_dynamic`, which in
+`libc.c` checks whether the weak symbol `sx_run_interpreter` is defined; only
+`ldso.c` defines it. Leave it out of the link and the check yields zero, the
+interpreter never runs, and `DT_NEEDED` is ignored in silence — the program starts
+cleanly and the library's functions do not exist. It is the quietest possible
+failure, which is why it is worth a paragraph.
+
+It stays out of `libsavanxp.a` because in the archive every static program of the
+port would carry and run the loader's entry path for nothing.
+
+### `ldso.h` moved into the SDK
+
+`ldso_missing()` is not an internal detail: an application that depends on a
+library has to be able to ask whether it loaded. The header moved from
+`subsystems/posix/userland/` to `subsystems/posix/sdk/v1/include/savanxp/`, and
+the port picks it up through the sysroot it already builds. The implementation
+stays in `userland/`, because it is compiled into each program rather than
+linked once.
+
+### What the Media Player does with the answer
+
+`--selftest`, `--probe` and `--gpu-hold` do not open a window, so they print
+`mediaplayer: falta libffmpeg.so.0.4, y sin ella no hay motor de reproduccion`
+and exit 2. The window path opens anyway with the message painted in it: that is
+the one place a person is looking, and there is no console to fall back on. The
+scenario is `mediaplayer-nolib`, and it was checked against a build with the fix
+reverted, where it times out instead of finding the message.
+
+### The FFmpeg work tree moved into the build directory
+
+`ports/ffmpeg/env.sh` defaulted `WORK` to `$HOME/savanxp-ffmpeg` while
+`ports/ccleste/env.sh` used `$OUTPUT_ROOT/ports/ccleste/work`. Both ports were
+added on the same day and picked different conventions; the FFmpeg one was copied
+verbatim from where it lived before it entered the tree. It now points into
+`OUTPUT_ROOT`.
+
+Worth knowing if you move a port work tree: FFmpeg's `configure` only creates the
+build directory's top-level `Makefile` when it is missing
+(`test -e Makefile || echo "include $source_path/Makefile" > Makefile`), so a
+stale one keeps pointing at the old absolute source path and `make` fails with
+`No hay ninguna regla para construir el objetivo`. Deleting it and re-running
+`configure` is the fix. The freshly generated one says `include src/Makefile`,
+which is relative and relocatable.

@@ -26,9 +26,24 @@ rm -f libsavanxp.a libsxgui.a
 $AR_CMD rcs libsavanxp.a libc.o posix.o gfx.o gfx2d.o math.o setjmp.o
 $AR_CMD rcs libsxgui.a sxgui.o sxgui_app.o sxchrome.o
 $RANLIB_CMD libsavanxp.a libsxgui.a
+
+# El cargador va SUELTO, no dentro de libsavanxp.a.
+#
+# crt0 llama a sx_start_dynamic, que en libc.c mira si el simbolo debil
+# sx_run_interpreter esta definido, y solo lo define ldso.c. Sin este objeto, esa
+# comprobacion da cero, el interprete no corre nunca y DT_NEEDED se ignora en
+# silencio: el programa arranca bien y las funciones de la libreria no existen. No
+# es un fallo ruidoso, que es lo peor.
+#
+# Y no se mete en libsavanxp.a porque ahi lo acabaria llevando --y ejecutando el
+# arranque de-- cada programa estatico del port, que no lo necesita.
+echo "== compilando el cargador"
+$SX_CC -c -x c "$REPO/subsystems/posix/userland/ldso.c" -o ldso.o $SX_TARGET_CFLAGS
+
 sdk_fingerprint=$( {
     find "$SDK/include" "$REPO/include" "$SDK/runtime" -type f -exec sha256sum {} +
     sha256sum "$SDK/linker.ld"
+    sha256sum "$REPO/subsystems/posix/userland/ldso.c"
 } | sort | sha256sum | cut -d' ' -f1 )
 printf '%s\n' "$FFMPEG_COMMIT" "$SX_TARGET_CFLAGS" "$SX_TARGET_LDFLAGS" "$sdk_fingerprint" > .savanxp-runtime-fingerprint
 echo "== libsavanxp.a: $(du -h libsavanxp.a | cut -f1)  libsxgui.a: $(du -h libsxgui.a | cut -f1)"

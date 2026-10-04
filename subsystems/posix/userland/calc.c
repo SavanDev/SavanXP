@@ -20,7 +20,7 @@
 
 #include "libc.h"
 #include "savanxp/sxgui.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 #include <stdio.h>
 #include <math.h>

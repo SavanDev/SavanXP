@@ -274,6 +274,18 @@ SCENARIOS: dict[str, Scenario] = {
         remove_paths=("lib/libneeded.so.0.4",),
     ),
 
+    # El reproductor sin su motor: tiene que DECIR que falta, no desaparecer. La
+    # exit 2 es correcta y el exito del escenario es el mensaje, no el codigo.
+    "mediaplayer-nolib": _qemu_scenario(
+        "mediaplayer",
+        "mediaplayer: falta libffmpeg.so.0.4",
+        "MEDIAPLAYER PASS",
+        "The Media Player names its missing decoding library instead of crashing",
+        180.0,
+        prepare=("./ports/ffmpeg/install.sh --with-test-media",),
+        remove_paths=("lib/libffmpeg.so.0.4",),
+    ),
+
     # Cuanto tarda el cargador con libffmpeg: 6.8 MB, 2334 simbolos. Es lo unico
     # aqui que mide algo en vez de afirmar un resultado, y por eso es el escenario
     # que contesta si la busqueda lineal de simbolos es un problema.

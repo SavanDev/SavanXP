@@ -18,7 +18,7 @@
  * Con la libreria presente el mismo programa tiene que encontrar todo en su sitio,
  * y eso lo comprueba la mitad de abajo. */
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 /* NO se define needed_answer aqui a proposito. Una version anterior de este
  * archivo lo definiia, y la comprobacion de abajo --"con la libreria ausente el

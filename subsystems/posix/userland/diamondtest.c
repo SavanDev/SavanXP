@@ -13,7 +13,7 @@
  * retorno-- sino CUANTAS imagenes quedan mapeadas. Si leaf se carga dos veces, hay
  * una imagen de mas y el numero lo delata. */
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 /* El ejecutable ocupa un hueco, asi que antes de cargar nada hay una imagen. */
 #define EXPECTED_AFTER_TOP 5 /* ejecutable, leaf, left, right, top */

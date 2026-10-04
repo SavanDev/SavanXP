@@ -1,7 +1,7 @@
 /* Ver ldso.h. Todo el trabajo es aritmetica de punteros sobre una imagen ya
  * mapeada, mas la copia de los segmentos escribibles. */
 
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 #include "libc.h"
 
@@ -471,7 +471,31 @@ static void report_unmapped(const char* library, const char* symbol, Elf64_Addr 
             library, (unsigned long)offset, symbol);
 }
 
+/* Como se llama una imagen en los mensajes.
+ *
+ * El ejecutable no tiene DT_SONAME --ese campo es solo para .so--, asi que su
+ * nombre queda vacio y el mensaje sale como "39 entradas de  se quedaron". El
+ * nombre de la imagen es lo primero que se lee de un diagnostico, y que este en
+ * blanco lo hace inutil. */
+static const char* image_name(int slot) {
+    return g_libs[slot].soname[0] != '\0' ? g_libs[slot].soname : "el ejecutable";
+}
+
 static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_size) {
+    /* Con una dependencia ausente, la imagen se reubica IGUAL Y LA ENTERA.
+     *
+     * Antes se abortaba en el primer simbolo que no se podia resolver, y como la
+     * cadena se recorre ANTES de reubicar, un solo DT_NEEDED ausente dejaba el
+     * ejecutable entero sin reubicar: main() corria con stdout --un puntero global
+     * reubicado por R_X86_64_RELATIVE-- apuntando al valor de enlace. El programa no
+     * podia ni imprimir por que estaba roto, que es justo lo que un fallo
+     * diagnosticable tiene que poder hacer.
+     *
+     * Asi que en modo tolerante las entradas irresolubles se saltan y se cuentan. El
+     * nombre de lo que falta ya lo da ldso_missing(), y repetirlo una vez por cada
+     * av_* del programa seria ruido. */
+    const int tolerant = g_missing_library != 0;
+    unsigned int skipped = 0;
     const unsigned char* table = (const unsigned char*)map_of(slot, elf_table);
     if (table == 0) {
         return 0;
@@ -513,7 +537,7 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
              * librerias. */
             eprintf("loader: %s tiene una reubicacion de tipo %u, y solo se "
                     "implementan JUMP_SLOT, GLOB_DAT, R_X86_64_64 y RELATIVE\n",
-                    g_libs[slot].soname, type);
+                    image_name(slot), type);
             return 0;
         }
         const unsigned name_index = (unsigned)(rela.r_info >> 32);
@@ -527,9 +551,13 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         Elf64_Addr target = 0;
         const int owner = resolve(g_libs[slot].dynstr + symbol.st_name, &target);
         if (owner < 0) {
+            if (tolerant) {
+                skipped++;
+                continue;
+            }
             /* El nombre es lo unico que hay. Sin el, el sintoma es "paso 5" y la
              * unica manera de sacar algo es un volcado de la .dynsym. */
-            report_unresolved(g_libs[slot].soname, g_libs[slot].dynstr + symbol.st_name);
+            report_unresolved(image_name(slot), g_libs[slot].dynstr + symbol.st_name);
             return 0;
         }
         const Elf64_Addr value = (Elf64_Addr)(unsigned long)bias_in(owner, target);
@@ -538,6 +566,10 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
              * st_value que cae en un segmento que no quedo mapeado. Distinto del
              * caso de arriba porque el nombre SI existe, y por eso el mensaje
              * tiene que decir las dos cosas. */
+            if (tolerant) {
+                skipped++;
+                continue;
+            }
             report_unplaced(g_libs[slot].dynstr + symbol.st_name, owner);
             return 0;
         }
@@ -545,10 +577,20 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         if (where == 0) {
             /* El GOT de esta entrada no esta en ningun segmento mapeado. Un
              * error de la imagen, no del enlazado. */
-            report_unmapped(g_libs[slot].soname, g_libs[slot].dynstr + symbol.st_name, rela.r_offset);
+            if (tolerant) {
+                skipped++;
+                continue;
+            }
+            report_unmapped(image_name(slot), g_libs[slot].dynstr + symbol.st_name, rela.r_offset);
             return 0;
         }
         *where = value;
+    }
+    if (skipped != 0) {
+        /* Una linea, no una por simbolo: el nombre de la libreria ya lo enseanyo
+         * el mensaje de la carga, y lo que aporta aqui es el RECUENTO. */
+        eprintf("loader: %u entradas de %s se quedaron sin reubicar porque %s no cargo\n",
+                skipped, image_name(slot), g_missing_library);
     }
     return 1;
 }
@@ -633,10 +675,20 @@ int ldso_start(void) {
     if (g_libs[0].dynsym == 0) {
         return -11;
     }
-    if (load_needed_chain(0) != 0) {
+    /* La cadena se recorre antes que la reubicacion porque un GOT que apunta a una
+     * dependencia tiene que llenarse cuando esa dependencia ya esta mapeada. Pero si
+     * la cadena falla, la reubicacion SE HACE IGUAL y el fallo se devuelve despues.
+     *
+     * Volver aqui no deja la imagen como estaba: deja el ejecutable entero sin
+     * reubicar, con stdout y el resto de punteros globales apuntando a sus valores
+     * de enlace. El programa arranca y no puede ni imprimir el motivo. Que el fallo
+     * sea no mortal no significa que la imagen pueda quedar a medias. */
+    const int chain_failed = load_needed_chain(0) != 0;
+    const int relocated = apply_relocs_in(0);
+    if (chain_failed) {
         return -8;
     }
-    if (!apply_relocs_in(0)) {
+    if (!relocated) {
         return -9;
     }
     return 0;

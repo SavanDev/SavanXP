@@ -12,7 +12,7 @@
  * El nombre no se afirma sobre el mensaje impreso porque una prueba no lee la
  * salida estandar. El cargador lo guarda en un global justamente para esto. */
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 int main(void)
 {

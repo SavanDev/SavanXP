@@ -87,6 +87,17 @@ struct media {
     int64_t audio_skip_until_us;
 };
 
+/* El nombre de la libreria que el cargador no pudo traer, o NULL si el motor esta
+ * completo.
+ *
+ * El motor de reproduccion es una libreria compartida, DT_NEEDED del ejecutable, y
+ * una carga fallida NO es mortal: main() arranca igual y las casillas del GOT se
+ * quedan sin reubicar. Cualquier llamada a FFmpeg es entonces un salto a una
+ * direccion sin desplazamiento de carga, y el sintoma es un fallo de pagina en una
+ * direccion que no dice nada. Por eso esto se consulta ANTES de la primera llamada,
+ * y no dentro de una funcion de error. */
+const char* media_missing_library(void);
+
 /* Abre el archivo y los decoders del mejor stream de video y de audio. Con
  * audio_out en NULL el audio se ignora. Devuelve 1 si hay al menos un stream
  * que se pueda reproducir; si no, 0 con el motivo en error. */

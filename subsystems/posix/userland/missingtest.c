@@ -7,7 +7,7 @@
  * El archivo que se pide no existe y no va a existir nunca: no es que este mal
  * puesto en el build, es que el nombre esta bien escrito y el volumen no lo tiene. */
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 int main(void)
 {

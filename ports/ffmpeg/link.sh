@@ -17,23 +17,6 @@ for source in "$APP"/*.c; do
     objects+=("$name.o")
 done
 
-# The order is part of the static-link contract.
-echo "== linkeando mediaplayer"
-$SX_LD $SX_TARGET_LDFLAGS -o mediaplayer.elf \
-    "$RUNTIME/crt0.o" "${objects[@]}" \
-    "$BUILD/libavformat/libavformat.a" \
-    "$BUILD/libavcodec/libavcodec.a" \
-    "$BUILD/libswscale/libswscale.a" \
-    "$BUILD/libswresample/libswresample.a" \
-    "$BUILD/libavutil/libavutil.a" \
-    "$RUNTIME/libsxgui.a" \
-    "$RUNTIME/libsavanxp.a"
-
-echo "== mediaplayer.elf: $(du -h mediaplayer.elf | cut -f1)"
-$SIZE_CMD mediaplayer.elf | tail -1
-cp mediaplayer.elf "$OUTPUT_ROOT/external/mediaplayer.elf"
-echo "listo: $OUTPUT_ROOT/external/mediaplayer.elf"
-
 # ---- libffmpeg.so.0.4 -----------------------------------------------------
 #
 # Una sola libreria con los cinco componentes, y no cinco librerias. La division
@@ -86,3 +69,35 @@ echo "== libffmpeg.so.0.4: $(du -h libffmpeg.so.0.4 | cut -f1)"
 $SIZE_CMD libffmpeg.so.0.4 | tail -1
 cp libffmpeg.so.0.4 "$OUTPUT_ROOT/external/libffmpeg.so.0.4"
 echo "listo: $OUTPUT_ROOT/external/libffmpeg.so.0.4"
+
+# ---- mediaplayer: PIE, con libffmpeg.so.0.4 como dependencia ---------------
+#
+# Aqui es donde el reproductor deja de llevar los cinco .a dentro. Es la primera
+# aplicacion del sistema que depende de una libreria compartida, y la razon de que
+# sea PIE es concreta: el ejecutable tiene que estar en el ambito de simbolos de
+# libffmpeg, porque las 112 referencias externas de la libreria las resuelve el
+# cargador contra el ejecutable y no hay mas sitio donde buscarlas.
+#
+# El orden NO es negociable: la libreria se linkea antes, porque el enlazador necesita el
+# archivo para poder escribir el DT_NEEDED.
+#
+# Y se pasa POR SU NOMBRE, no con -lffmpeg. El archivo se llama libffmpeg.so.0.4 y -l
+# busca libffmpeg.so o libffmpeg.a; ademas, pasando la ruta, es el SONAME del archivo
+# --no su nombre de archivo-- lo que queda en el DT_NEEDED, y asi el reproductor
+# pedira libffmpeg.so.0.4 aunque el archivo se llame de otra forma en el volumen.
+#
+# Lo que NO entra: libsxgui.a y libsavanxp.a si, pero las de FFmpeg no. Sus 112
+# simbolos se resuelven en tiempo de carga, no de enlace.
+echo "== linkeando mediaplayer (PIE, depende de libffmpeg.so.0.4)"
+$SX_LD $SX_TARGET_LDFLAGS_PIE -o mediaplayer.elf \
+    "$RUNTIME/crt0.o" "${objects[@]}" \
+    "$OUT/libffmpeg.so.0.4" \
+    "$RUNTIME/ldso.o" \
+    "$RUNTIME/libsxgui.a" \
+    "$RUNTIME/libsavanxp.a"
+
+echo "== mediaplayer.elf: $(du -h mediaplayer.elf | cut -f1)"
+$SIZE_CMD mediaplayer.elf | tail -1
+readelf -dW mediaplayer.elf | grep -E 'NEEDED' | sed 's/^/   /'
+cp mediaplayer.elf "$OUTPUT_ROOT/external/mediaplayer.elf"
+echo "listo: $OUTPUT_ROOT/external/mediaplayer.elf"

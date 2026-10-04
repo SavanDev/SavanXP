@@ -12,7 +12,7 @@
  * esta" son -1 y -2, y son problemas distintos. Uno se arregla encogiendo la
  * cadena, el otro poniendo el archivo. */
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 
 /* libchaintop referencia exe_answer, que el ejecutable tiene que definir. Aqui solo
  * se carga por su cuenta de dependencias --lo que importa es que ocupa un hueco y

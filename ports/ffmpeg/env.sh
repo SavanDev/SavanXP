@@ -27,7 +27,13 @@ FFMPEG_COMMIT=$(metadata commit)
 
 # FFmpeg's configure expands flags without quoting, so the work tree must
 # remain free of whitespace.
-WORK="${WORK:-$HOME/savanxp-ffmpeg}"
+#
+# Dentro de OUTPUT_ROOT, como el de ports/ccleste, y no en el HOME. La ruta del
+# HOME era de cuando el port vivia fuera del repo y se copio sin revisarla al
+# traerlo; el resultado era que el arbol CMake consumia build/external/... y sus
+# entradas estaban a medio camino del HOME, fuera de lo que ./build.sh clean
+# sabe recuperar.
+WORK="${WORK:-$OUTPUT_ROOT/ports/ffmpeg/work}"
 case "$WORK" in
     *[[:space:]]*)
         echo "error: el directorio de trabajo '$WORK' tiene espacios." >&2
@@ -77,6 +83,20 @@ SX_LD="$LINK_CC -target x86_64-unknown-linux-gnu"
 # PT_LOAD layout free of an ELF interpreter.
 SX_TARGET_LDFLAGS="-nostdlib -static -no-pie -fuse-ld=lld -Wl,-T,$SYSROOT/linker.ld"
 SX_TARGET_LDFLAGS="$SX_TARGET_LDFLAGS -Wl,-z,max-page-size=0x1000 -Wl,--build-id=none"
+
+# El perfil PIE, para el reproductor. Son las mismas banderas que usa el arbol
+# (SAVANXP_USER_LINK_OPTIONS_PIE en CMakeLists.txt) y estan duplicadas aqui a
+# proposito: el port no puede leer las variables de CMake, y copiar el guion de
+# enlace a mano seria peor que copiar nueve banderas. Si una de las dos listas
+# cambia, hay que cambiar la otra.
+#
+# --export-dynamic no es opcional: libffmpeg.so.0.4 deja 112 simbolos sin definir
+# y el cargador los resuelve contra ESTE ejecutable. Sin la bandera, la carga falla.
+SX_TARGET_LDFLAGS_PIE="-nostdlib -fuse-ld=lld -pie"
+SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,-z,max-page-size=0x1000"
+SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,--dynamic-linker,/disk/lib/ld.so.0.4"
+SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,--build-id=none -Wl,--export-dynamic"
+SX_TARGET_LDFLAGS_PIE="$SX_TARGET_LDFLAGS_PIE -Wl,-e,_start"
 
 sx_jobs() {
     if command -v nproc >/dev/null 2>&1; then

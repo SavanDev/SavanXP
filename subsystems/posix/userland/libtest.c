@@ -12,7 +12,7 @@
  * el enlazador nunca emitiria un DT_NEEDED. */
 
 #include "libc.h"
-#include "ldso.h"
+#include <savanxp/ldso.h>
 #include "math.h"
 
 /* Un puntero global que apunta a un objeto del mismo ejecutable.

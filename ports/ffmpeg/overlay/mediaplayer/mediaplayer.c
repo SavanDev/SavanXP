@@ -753,6 +753,12 @@ static void build_widgets(void) {
 
 static int run_window(const char* path) {
     memset(&g, 0, sizeof(g));
+    /* Sin motor de reproduccion no hay archivo que abrir, pero la ventana se abre
+     * igual: es la unica forma de que alguien se entere de por que, sin consola. */
+    const char* missing = media_missing_library();
+    if (missing != NULL) {
+        snprintf(g.message, sizeof(g.message), "Falta %s: no hay motor de reproduccion", missing);
+    }
     playback_init(&g.playback);
     build_widgets();
     update_controls_text();
@@ -813,9 +819,32 @@ static int run_window(const char* path) {
 }
 
 int main(int argc, char** argv) {
-    /* Los avisos de FFmpeg van a stdout, que en el escritorio no mira nadie y en
-     * el harness ensucia el log: solo los errores. */
-    av_log_set_level(AV_LOG_ERROR);
+    /* Lo PRIMERO de main, antes incluso de av_log_set_level.
+     *
+     * Esa llamada ES una llamada a FFmpeg. Con la libreria ausente, su casilla del
+     * GOT conserva el valor de enlace --la direccion del stub del PLT sin sumar el
+     * desplazamiento de carga-- y el proceso muere con un fallo de pagina en
+     * 0x4b6d6, que es la direccion del stub de av_log_set_level. Estuvo aqui
+     * una comprobacion en media_open que no servia de nada, porque main ya habia
+     * saltado antes de llegar. */
+    const char* missing = media_missing_library();
+
+    if (missing != NULL && argc >= 2) {
+        const char* mode = argv[1];
+        /* Estos tres modos no abren ventana --estan para el arnes-- asi que la
+         * salida estandar es el unico sitio donde pueden decirlo. */
+        if (strcmp(mode, "--selftest") == 0 || strcmp(mode, "--probe") == 0 ||
+            strcmp(mode, "--gpu-hold") == 0) {
+            printf("mediaplayer: falta %s, y sin ella no hay motor de reproduccion\n", missing);
+            return 2;
+        }
+    }
+
+    if (missing == NULL) {
+        /* Los avisos de FFmpeg van a stdout, que en el escritorio no mira nadie y
+         * en el harness ensucia el log: solo los errores. */
+        av_log_set_level(AV_LOG_ERROR);
+    }
 
     if (argc >= 2 && strcmp(argv[1], "--selftest") == 0) {
         return selftest_main(argc - 2, argv + 2);
