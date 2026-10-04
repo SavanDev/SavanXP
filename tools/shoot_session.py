@@ -1011,6 +1011,19 @@ def scenario_wheel(s):
         raise Failure("la lista no volvio al tope: ticks perdidos, duplicados o signo al reves")
 
 
+# Recorta `box` dejando un hueco del color del campo donde el compositor pinta el
+# cursor, para comparar el CONTENIDO y no el puntero que esta encima. El cursor
+# no se mueve entre las dos capturas, asi que el hueco cae en el mismo sitio en
+# ambas y solo come pixeles suyos. Para el por que, ver scenario_notepadwheel.
+def crop_without_cursor(image, box, cursor_x, cursor_y, size=40):
+    cropped = image.crop(box)
+    cropped.paste(
+        FIELD,
+        (cursor_x - box[0] - size // 2, cursor_y - box[1] - size // 2, size, size),
+    )
+    return cropped.tobytes()
+
+
 def scenario_notepadwheel(s):
     """Verificacion ad hoc del scroll del editor de Notepad (rueda + barra)."""
     s.open_notepad()
@@ -1058,32 +1071,47 @@ def scenario_notepadwheel(s):
 
     # Tipear deja el caret al final: el editor ya esta scrolleado al fondo, asi
     # que la rueda hay que probarla subiendo primero -- bajar ya esta clampeado.
-    before = s.shot("notepad-abajo").crop(area).tobytes()
+    #
+    # Las dos aserciones de la rueda afirman TEXTO, no bytes del recorte. El
+    # recorte incluye el cursor que el compositor dibuja encima, y ese glifo
+    # depende de lo que hay debajo (flecha sobre el campo, I-beam sobre el area
+    # de texto): dos capturas con el editor exactamente igual dan bytes
+    # distintos y se leian como "la rueda no volvio al fondo". Decir que linea26
+    # esta escrita afirma lo mismo -- el editor esta en su ultima pagina -- sin
+    # depender de lo que se dibuja encima. Y el fallo dice que linea falta, que
+    # es justo lo que distingue ticks perdidos de ticks duplicados.
+    #
+    # linea26 es la primera de la ultima pagina, y linea20 la primera tras dos
+    # muescas: el editor avanza tres lineas por muesca.
+    before = s.shot("notepad-abajo")
+    expect_text(before, area, "linea26", TEXT, FIELD, "el editor de notepad al fondo")
     s.qmp.wheel(2)                    # dos muescas arriba
-    scrolled = s.shot("notepad-rueda-arriba").crop(area).tobytes()
-    if scrolled == before:
-        raise Failure("la rueda no scrolleo el editor de notepad")
+    scrolled = s.shot("notepad-rueda-arriba")
+    expect_text(
+        scrolled, area, "linea20", TEXT, FIELD,
+        "el editor de notepad tras dos muescas arriba",
+    )
 
     s.qmp.wheel(-20)                  # de vuelta al fondo, de sobra
-    back = s.shot("notepad-rueda-vuelta").crop(area).tobytes()
-    if back != before:
-        raise Failure("el editor no volvio al fondo con la rueda: ticks perdidos, duplicados o signo al reves")
+    back = s.shot("notepad-rueda-vuelta")
+    expect_text(
+        back, area, "linea26", TEXT, FIELD,
+        "el editor de notepad de vuelta al fondo",
+    )
 
     # Flecha de ARRIBA de la barra incrustada: abajo ya esta clampeado por el
     # mismo motivo que la rueda. find_list_area mide el panel blanco y se pasa
     # un par de pixeles hacia la barra (el borde entre los dos no es un blanco
     # limpio), asi que el punto de click va hacia ADENTRO del area detectada y
-    # no area[2] + margen -- eso ultimo cae en el borde de la ventana. La base
-    # se toma con el mouse YA en posicion para que el cursor mismo, al no
-    # moverse entre las dos capturas, no cuente como "cambio".
+    # no area[2] + margen -- eso ultimo cae en el borde de la ventana.
     sb_x = area[2] - 8
     sb_y = area[1] + 6
     s.qmp.move_to(sb_x, sb_y)
-    before_click = s.shot("notepad-antes-del-click").crop(area).tobytes()
+    before_click = crop_without_cursor(s.shot("notepad-antes-del-click"), area, sb_x, sb_y)
     s.qmp.click()
     s.qmp.click()
     s.qmp.click()
-    clicked = s.shot("notepad-scrollbar-click").crop(area).tobytes()
+    clicked = crop_without_cursor(s.shot("notepad-scrollbar-click"), area, sb_x, sb_y)
     if clicked == before_click:
         raise Failure("clickear la barra de scroll no movio el editor")
 

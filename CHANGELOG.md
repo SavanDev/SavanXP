@@ -420,9 +420,20 @@ Cut-off notes:
 
 ### Fixed
 
+- **The visual smoke scenarios work on a virtio machine.** They drove an absolute
+  tablet with relative moves, so their clicks landed on the wrong window, and they
+  compared screenshots pixel by pixel including the cursor glyph, so an editor that
+  had not moved read as one that had. `sxgui-smoke --virtio` was failing on "the
+  wheel did not scroll the editor".
+
 - **Moving the mouse over a virtio machine no longer freezes the VM.** Letting the
   cursor into the QEMU window was enough for the guest to take `#14 page fault` and
   halt. [What the fix was about](docs/VIRTIO.md#a-capability-never-stores-a-pointer-into-its-own-device).
+
+- **`smoke_runner_layout_test.py` runs again.** It asserted two Media Player
+  scenarios withdrawn with SxMedia, and a `remove_paths` entry from before
+  `libffmpeg.so.0.4` moved to `/disk/lib`, so it had been red and was guarding
+  nothing.
 
 - **`progman-smoke` passes again.** It was failing on its 180 s timeout, not on
   anything it asserts. Copying the 390 KB stamped fixture into the volume costs

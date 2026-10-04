@@ -162,10 +162,8 @@ how the table further down was produced.
 With `--virtio` the pointer is a `virtio-tablet`, which is **absolute**: the trick
 of shoving the cursor into a corner to find the origin only works for the
 relative PS/2 mouse, so `shoot_session.py` gets `--abs-pointer` and positions the
-cursor directly. The scenario's pixel assertions still fail partway through on
-the virtio path -- a click does not land on the taskbar button -- which is a
-real difference worth chasing but not one that blocks measuring: the stats line
-is emitted per frame, so a partial run still yields data.
+cursor directly. `build.sh smoke <scenario> --virtio` passes the same flag for the
+scenarios with a visual host action, so their pixel assertions hold on both paths.
 
 ### Which workload measures what
 
