@@ -12,9 +12,13 @@ Two modes:
               is outline-only and rasterises off-grid with artefacts. Consumed
               by the kernel framebuffer console and the gfx monospace text path.
 
-  noto     -> 8-bit coverage (antialiased) proportional UI font (Noto Sans),
-              rasterised from the TTF outline. ASCII + Latin-1. Consumed by the
-              gfx proportional text path. Requires freetype-py.
+  noto     -> 8-bit coverage (antialiased) proportional UI font baked from a
+              TTF outline. ASCII + Latin-1. Consumed by the gfx proportional
+              text path. Requires freetype-py. The mode name is historical: it
+              bakes any proportional TTF, not just Noto Sans. The C prefix
+              selects the symbols (SX_NOTO for the body, SX_TITLE for window
+              captions, SX_PIXEL_SANS and SX_IMPACTFUL_BITS for the spare
+              pixel faces).
 
 Regenerate (run from repo root):
   python tools/font/genfont.py unifont \
@@ -25,9 +29,17 @@ Regenerate (run from repo root):
       --ttf assets/desktop/fonts/NotoSans-Regular.ttf \
       --out subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc
   python tools/font/genfont.py noto \
-      --ttf assets/desktop/fonts/NotoSans-Regular.ttf --size 12 \
-      --prefix SX_NOTO_TITLE --bold 1 \
-      --out subsystems/posix/sdk/v1/runtime/gfx_font_noto_title.inc
+      --ttf assets/desktop/fonts/RetroSans.ttf --size 18 \
+      --prefix SX_TITLE \
+      --out subsystems/posix/sdk/v1/runtime/gfx_font_title.inc
+  python tools/font/genfont.py noto \
+      --ttf assets/desktop/fonts/PixelSans.ttf \
+      --prefix SX_PIXEL_SANS \
+      --out subsystems/posix/sdk/v1/runtime/gfx_font_pixelsans.inc
+  python tools/font/genfont.py noto \
+      --ttf assets/desktop/fonts/ImpactfulBits.ttf \
+      --prefix SX_IMPACTFUL_BITS \
+      --out subsystems/posix/sdk/v1/runtime/gfx_font_impactfulbits.inc
 """
 
 import argparse
@@ -139,18 +151,21 @@ def gen_unifont(hexpath, outs):
 
 
 def _noto_symbols(prefix):
-    """Return C identifiers for one generated Noto face.
+    """Return C identifiers for one generated proportional face.
 
-    Keeping the prefix in one place lets the same source font produce the normal
-    UI face and a separately-sized caption face without making the generated
-    tables collide when both are included in the POSIX runtime.
+    Keeping the prefix in one place lets the same tool bake the normal UI
+    face and separately-sized faces without making the generated tables
+    collide when more than one is included in the POSIX runtime. Any SX_
+    prefix works (SX_NOTO, SX_TITLE, SX_PIXEL_SANS); the part after SX_
+    names the symbols. SX_NOTO and SX_NOTO_TITLE keep their historical
+    names.
     """
     normalized = prefix.strip("_")
     all_parts = normalized.lower().split("_")
-    parts = all_parts[1:] if all_parts[:2] == ["sx", "noto"] else all_parts
-    if (len(all_parts) < 2 or all_parts[:2] != ["sx", "noto"] or
+    if (len(all_parts) < 2 or all_parts[0] != "sx" or
             not all(part.isidentifier() for part in all_parts)):
-        raise ValueError("Noto symbol prefix must start with SX_NOTO and contain C identifiers: %s" % prefix)
+        raise ValueError("Font symbol prefix must start with SX_ and contain C identifiers: %s" % prefix)
+    parts = all_parts[1:]
     words = [part.capitalize() for part in parts]
     return {
         "macro": normalized.upper(),

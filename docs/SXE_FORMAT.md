@@ -297,7 +297,7 @@ executable, forever.**
   |---|---|
   | name | basename of the path |
   | icon | generic from the system set |
-  | accent | `gfx_rgb(59, 95, 156)`; the WM uses it as a controlled tint on the active caption |
+  | accent | `gfx_rgb(59, 95, 156)`; when declared, the active caption is a gradient of the accent alone, otherwise the Windows Standard gradient |
   | flags | `SAVANXP_DESKTOP_LAUNCH_FLAG_NONE` |
 
 ### The extension is a hint, not the authority

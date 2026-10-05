@@ -123,17 +123,23 @@ The source fonts live in `assets/desktop/fonts/`:
 ```
 fonts/
   unifont.hex              GNU UniFont 17.0.04 (bitmap, console/terminal)
-  NotoSans-Regular.ttf     Noto Sans Regular v1.06 (proportional, desktop)
-  LICENSE-OFL-1.1.txt      SIL Open Font License 1.1 (both)
+  NotoSans-Regular.ttf     Noto Sans Regular v1.06 (proportional, desktop body)
+  RetroSans.ttf            Retro Sans (proportional pixel, window captions)
+  PixelSans.ttf            Pixel Sans (spare proportional pixel face)
+  ImpactfulBits.ttf        Impactful Bits (spare proportional pixel face)
+  readme.txt               SpicyGame pixel fonts, CC0
+  LICENSE-OFL-1.1.txt      SIL Open Font License 1.1 (UniFont dual, Noto Sans)
 ```
 
 Unlike the PNGs, the fonts are **not** converted during the normal build: they
 are baked by hand with `tools/font/genfont.py` (requires `pip install
 freetype-py`) and the resulting `.inc` tables are committed. UniFont comes from
 the canonical `.hex` (crisp 8x16 bitmaps); Noto Sans is rasterized from the TTF
-as an antialiased coverage atlas. The window-caption face is derived from the
-same source at 12px with a one-pixel faux-bold expansion. Provenance and
-licenses in `docs/THIRD_PARTY_PROVENANCE.md`.
+as an antialiased coverage atlas for the desktop body at 13px. Window captions
+use RetroSans at 18px with no faux-bold. PixelSans and ImpactfulBits are baked
+at 13px as committed spares (`gfx_font_pixelsans.inc`,
+`gfx_font_impactfulbits.inc`) and are not linked into any binary yet.
+Provenance and licenses in `docs/THIRD_PARTY_PROVENANCE.md`.
 
 To regenerate (from the repository root):
 
@@ -143,7 +149,13 @@ python tools/font/genfont.py unifont --hex assets/desktop/fonts/unifont.hex \
     --out subsystems/posix/sdk/v1/runtime/console_font_unifont.inc
 python tools/font/genfont.py noto --ttf assets/desktop/fonts/NotoSans-Regular.ttf \
     --out subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc
-python tools/font/genfont.py noto --ttf assets/desktop/fonts/NotoSans-Regular.ttf --size 12 \
-    --prefix SX_NOTO_TITLE --bold 1 \
-    --out subsystems/posix/sdk/v1/runtime/gfx_font_noto_title.inc
+python tools/font/genfont.py noto --ttf assets/desktop/fonts/RetroSans.ttf --size 18 \
+    --prefix SX_TITLE \
+    --out subsystems/posix/sdk/v1/runtime/gfx_font_title.inc
+python tools/font/genfont.py noto --ttf assets/desktop/fonts/PixelSans.ttf \
+    --prefix SX_PIXEL_SANS \
+    --out subsystems/posix/sdk/v1/runtime/gfx_font_pixelsans.inc
+python tools/font/genfont.py noto --ttf assets/desktop/fonts/ImpactfulBits.ttf \
+    --prefix SX_IMPACTFUL_BITS \
+    --out subsystems/posix/sdk/v1/runtime/gfx_font_impactfulbits.inc
 ```

@@ -193,15 +193,19 @@ static const char *window_title_for_client(const struct windowd_client *client)
     return windowd_presentation_label(&client->presentation, client->path);
 }
 
-/* El caption usa los colores de sistema de Windows Standard.  El degradado va
- * en 24 bandas: evita interpolar cada pixel y mantiene el costo acotado aunque
- * la ventana mida casi toda la pantalla. */
+/* El caption sin acento declarado usa los colores de sistema de Windows
+ * Standard.  El degradado va en 24 bandas: evita interpolar cada pixel y
+ * mantiene el costo acotado aunque la ventana mida casi toda la pantalla. */
 #define WINDOWD_CAPTION_BANDS 24
 #define WINDOWD_CAPTION_ICON_SIZE 16
-/* El acento se nota, pero no convierte la barra en un color plano: se mezcla
- * mas en el extremo oscuro y menos en el claro para conservar el contraste. */
-#define WINDOWD_CAPTION_ACCENT_LEFT_MIX 96
-#define WINDOWD_CAPTION_ACCENT_RIGHT_MIX 48
+/* El caption activo sale del acento declarado por la app, no de la base: una
+ * rampa exclusiva del acento, sombra a la izquierda y luz a la derecha. Con
+ * un tinte desigual (mas a la izquierda que a la derecha) un acento saturado
+ * lejos del azul partia el degradado en dos tonos -- rojizo al inicio y
+ * azulado al final en Files. Sin acento declarado queda el degradado
+ * Windows Standard, que es tambien el de las ventanas inactivas. */
+#define WINDOWD_CAPTION_ACCENT_SHADE 120
+#define WINDOWD_CAPTION_ACCENT_TINT 100
 
 static uint8_t windowd_mix_channel(uint8_t from, uint8_t to, int amount)
 {
@@ -249,8 +253,8 @@ static void draw_caption(
     }
     if (active && accent != 0u)
     {
-        left = windowd_caption_colour(left, accent, WINDOWD_CAPTION_ACCENT_LEFT_MIX);
-        right = windowd_caption_colour(right, accent, WINDOWD_CAPTION_ACCENT_RIGHT_MIX);
+        left = windowd_caption_colour(accent, 0x000000u, WINDOWD_CAPTION_ACCENT_SHADE);
+        right = windowd_caption_colour(accent, 0x00FFFFFFu, WINDOWD_CAPTION_ACCENT_TINT);
     }
 
     for (band = 0; band < bands; ++band)
@@ -447,7 +451,9 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
             painter,
             titlebar_rect,
             client->active,
-            windowd_presentation_accent(&client->presentation));
+            windowd_presentation_has_accent(&client->presentation)
+                ? windowd_presentation_accent(&client->presentation)
+                : 0u);
 
         text_x = titlebar_rect.x + 4;
         /* Los dialogos no llevan icono: el icono de la aplicacion identifica al
@@ -477,7 +483,7 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
         text_clip = sx_rect_make(text_x, titlebar_rect.y, text_right - text_x, titlebar_rect.height);
         if (text_right > text_x && sx_painter_push_clip(painter, text_clip))
         {
-            /* Captions use the compact, bold face; restore the painter before
+            /* Captions use the compact RetroSans face; restore the painter before
              * returning to the rest of the frame so client chrome is unaffected. */
             int previous_font = sx_painter_set_font(painter, SX_FONT_UI_TITLE);
             int text_y = titlebar_rect.y +

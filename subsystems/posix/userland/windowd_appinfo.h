@@ -56,6 +56,11 @@ struct windowd_presentation
     /* Vacio = ni el binario ni la tabla dieron nombre. */
     char label[WINDOWD_PRESENTATION_LABEL_CAPACITY];
     uint32_t accent;
+    /* 1 = el accent salio del .sxe del binario o de la tabla por path;
+     * 0 = generico (WINDOWD_DEFAULT_ACCENT). El caption activo dibuja una
+     * rampa exclusiva del accent solo cuando esta declarado; sin declarar
+     * queda el degradado Windows Standard. */
+    uint32_t accent_declared;
     /* SAVANXP_WM_WINDOW_STYLE_*, del .sxe del binario. 0 = ventana normal. */
     uint32_t window_flags;
     /* 0 = el binario no trajo icono; se usa fallback_icon_id. */
@@ -75,8 +80,13 @@ void windowd_presentation_load(struct windowd_presentation *presentation, const 
 /* Titulo resuelto. `path` es el ultimo recurso cuando nadie dio un nombre. */
 const char *windowd_presentation_label(const struct windowd_presentation *presentation, const char *path);
 
-/* Accent declarado por la app; el caption lo mezcla como tinte, no override. */
+/* Accent resuelto (declarado o default). El caption solo lo usa como rampa
+ * exclusiva cuando esta declarado; ver accent_declared. */
 uint32_t windowd_presentation_accent(const struct windowd_presentation *presentation);
+
+/* 1 si el accent lo declaro la app (.sxe) o la tabla por path, 0 si es el
+ * generico. */
+int windowd_presentation_has_accent(const struct windowd_presentation *presentation);
 
 /*
  * Icono chico. `storage` lo aporta el llamador para describir los pixeles

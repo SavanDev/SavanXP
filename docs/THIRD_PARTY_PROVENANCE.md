@@ -174,7 +174,7 @@ which is why both go into the registry.
   from the canonical `.hex` (ASCII, Latin-1, box drawing and blocks) because
   the TTF outline rasterizes off-grid
 
-### Noto Sans (desktop and UI)
+### Noto Sans (desktop body text)
 
 - Origin: Noto Sans Regular v1.06 (Copyright 2012 Google Inc.), the Noto
   project (https://fonts.google.com/noto)
@@ -182,10 +182,27 @@ which is why both go into the registry.
 - License reviewed: SIL OFL-1.1,
   `assets/desktop/fonts/LICENSE-OFL-1.1.txt`
 - Decision: `Adopt`
-- Distributed in: the binary, as 8-bit antialiased coverage atlases baked by
-  `tools/font/genfont.py`: a 13px UI face and a derived 12px faux-bold face for
-  window captions
+- Distributed in: the binary, as an 8-bit antialiased coverage atlas baked by
+  `tools/font/genfont.py`: the 13px UI face (`gfx_font_noto.inc`)
 - Reason: a proportional typeface for the desktop chrome and the widgets
+
+### SpicyGame pixel fonts (captions and spares)
+
+- Origin: Retro Sans, Pixel Sans and Impactful Bits by SpicyGame
+  (https://spicygame.itch.io/fonts)
+- Versioned: yes, `assets/desktop/fonts/RetroSans.ttf`,
+  `assets/desktop/fonts/PixelSans.ttf`, `assets/desktop/fonts/ImpactfulBits.ttf`
+  and `assets/desktop/fonts/readme.txt`
+- License reviewed: CC0, per `readme.txt`
+- Decision: `Adopt`
+- Distributed in: the binary, as an 8-bit coverage atlas baked by
+  `tools/font/genfont.py`: RetroSans at 18px for window captions
+  (`gfx_font_title.inc`). PixelSans and ImpactfulBits are baked at 13px as
+  committed spares (`gfx_font_pixelsans.inc`, `gfx_font_impactfulbits.inc`)
+  and are not linked into any binary yet
+- Reason: a pixel face for window captions; the spares cover future chrome
+  without a new adoption. PixelSans lacks Latin-1 accents, so Spanish text
+  would fall back to blank advances there
 
 ### Desktop icons and art
 

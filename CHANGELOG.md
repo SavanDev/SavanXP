@@ -77,7 +77,19 @@ Cut-off notes:
   preserves both the size and the sparseness of the file, so `truncate -s` is
   enough to make room for a later volume grow.
 
+- **Window titles use RetroSans instead of Noto Sans.** The caption face is
+  `RetroSans.ttf` at 18px with no faux-bold; the desktop body stays on Noto Sans 13px.
+
+- **Active captions follow the declared accent instead of tinting the blue base.**
+  A declared accent renders as its own shade-to-tint ramp; windows without one
+  keep the Windows Standard gradient. Fixes the two-tone split on accents like Files.
+
 ### Added
+
+- **Three SpicyGame pixel fonts join the baked set.** `RetroSans.ttf`,
+  `PixelSans.ttf` and `ImpactfulBits.ttf` (CC0) are baked by
+  `tools/font/genfont.py` into committed tables; only the RetroSans caption is
+  linked, the other two are spares. `genfont.py` now accepts any `SX_*` prefix.
 
 - **`libffmpeg.so.0.4`, FFmpeg's five components as one shared library.** The
   FFmpeg port installs it at `/disk/lib`, and `ldso_load` maps it: 6.8 MB on disk,

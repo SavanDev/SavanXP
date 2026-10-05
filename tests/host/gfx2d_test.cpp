@@ -38,7 +38,7 @@ extern "C" {
  * de verdad. Es data + una busqueda inline; no arrastra syscalls. El painter que
  * se prueba mas abajo usa stubs, asi que no hay colision. */
 #include "../../subsystems/posix/sdk/v1/runtime/gfx_font_noto.inc"
-#include "../../subsystems/posix/sdk/v1/runtime/gfx_font_noto_title.inc"
+#include "../../subsystems/posix/sdk/v1/runtime/gfx_font_title.inc"
 
 namespace {
 
@@ -1098,12 +1098,12 @@ void case_font_table_has_the_codepoints_that_matter() {
     printf("    ancho con acento=%d  sin acento=%d\n", wa, wp);
     check(wa > 0 && wa == wp, "'Configuracion' mide igual con y sin tilde (misma cantidad de glifos)");
 
-    const struct sx_noto_title_glyph* title_fallback = sx_noto_title_glyph(0x1F642u);
-    const struct sx_noto_title_glyph* title_o = sx_noto_title_glyph(0x00F3u);
+    const struct sx_title_glyph* title_fallback = sx_title_glyph(0x1F642u);
+    const struct sx_title_glyph* title_o = sx_title_glyph(0x00F3u);
     check(title_fallback->rows == 0 && title_fallback->advance > 0 &&
               title_o->rows > 0 && title_o->advance > 0 &&
-              SX_NOTO_TITLE_LINE_HEIGHT > 0 && SX_NOTO_TITLE_LINE_HEIGHT < SX_NOTO_LINE_HEIGHT,
-          "la tabla de titulo tiene fallback y una linea mas compacta");
+              SX_TITLE_LINE_HEIGHT > 0 && SX_TITLE_LINE_HEIGHT <= SX_NOTO_LINE_HEIGHT,
+          "la tabla de titulo tiene fallback y linea no mayor que el cuerpo");
 }
 
 /* ---- objeto fuente ------------------------------------------------------ */

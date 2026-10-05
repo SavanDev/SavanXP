@@ -63,9 +63,9 @@ const struct windowd_appinfo *windowd_appinfo_for_path(const char *path)
 
 /* --- presentacion resuelta ------------------------------------------------ */
 
-/* Fallback de identidad para una presentacion sin ACCENT.  El caption de las
- * ventanas usa la paleta global de Windows Standard y mezcla este valor en sus
- * extremos; nunca lo usa como color plano ni como color de reemplazo. */
+/* Fallback de identidad para una presentacion sin ACCENT. Solo cubre el valor:
+ * si nadie lo declaro, el caption activo usa el degradado Windows Standard
+ * en vez de este color (ver accent_declared). */
 #define WINDOWD_DEFAULT_ACCENT WINDOWD_RGB_LITERAL(59, 95, 156)
 
 static void copy_label(char *destination, size_t capacity, const char *source)
@@ -140,6 +140,7 @@ void windowd_presentation_load(struct windowd_presentation *presentation, const 
         copy_label(presentation->label, sizeof(presentation->label), item->label);
         presentation->fallback_icon_id = (uint32_t)item->icon_id;
         presentation->accent = item->accent;
+        presentation->accent_declared = 1u;
     }
 
     /* Escalon 1: lo que el binario declara de si mismo, que gana. */
@@ -155,6 +156,7 @@ void windowd_presentation_load(struct windowd_presentation *presentation, const 
         if (sxe_meta_u32(&meta, SXE_TAG_ACCENT, &value))
         {
             presentation->accent = value;
+            presentation->accent_declared = 1u;
         }
         /* Estilo de ventana (tamano fijo). No tiene escalon de tabla: una
          * ventana es redimensionable salvo que el binario diga lo contrario. */
@@ -183,6 +185,11 @@ const char *windowd_presentation_label(const struct windowd_presentation *presen
 uint32_t windowd_presentation_accent(const struct windowd_presentation *presentation)
 {
     return presentation != 0 ? presentation->accent : WINDOWD_DEFAULT_ACCENT;
+}
+
+int windowd_presentation_has_accent(const struct windowd_presentation *presentation)
+{
+    return presentation != 0 && presentation->accent_declared != 0u;
 }
 
 const struct desktop_embedded_bitmap *windowd_presentation_icon(
@@ -246,6 +253,8 @@ int windowd_presentation_selftest(void)
         "presentacion: nombre de notepad");
     expect(windowd_presentation_accent(&presentation) == WINDOWD_RGB_LITERAL(120, 100, 60),
         "presentacion: accent de notepad");
+    expect(windowd_presentation_has_accent(&presentation),
+        "presentacion: accent de notepad declarado");
     expect(presentation.icon_extent == WINDOWD_PRESENTATION_ICON_EXTENT,
         "presentacion: icono propio de notepad");
 
@@ -324,6 +333,8 @@ int windowd_presentation_selftest(void)
         "presentacion: init sin icono (enriquecimiento, no identidad)");
     expect(windowd_presentation_accent(&presentation) == WINDOWD_DEFAULT_ACCENT,
         "presentacion: init con accent default (sin ACCENT declarado)");
+    expect(!windowd_presentation_has_accent(&presentation),
+        "presentacion: init sin accent declarado");
     expect(windowd_presentation_icon(&presentation, &storage) == desktop_icon_small(DESKTOP_ICON_DESKTOP),
         "presentacion: init cae al icono horneado");
 
@@ -342,10 +353,14 @@ int windowd_presentation_selftest(void)
         "presentacion: nombre de doom");
     expect(windowd_presentation_accent(&presentation) == WINDOWD_RGB_LITERAL(181, 81, 55),
         "presentacion: accent de doom");
+    expect(windowd_presentation_has_accent(&presentation),
+        "presentacion: accent de doom por tabla");
 
     /* Path inexistente y path nulo: no deben romper nada. */
     windowd_presentation_load(&presentation, "/bin/__no_existe__");
     expect(presentation.icon_extent == 0u, "presentacion: path inexistente sin icono");
+    expect(!windowd_presentation_has_accent(&presentation),
+        "presentacion: path inexistente sin accent declarado");
     expect(strcmp(windowd_presentation_label(&presentation, "/bin/__no_existe__"), "/bin/__no_existe__") == 0,
         "presentacion: path inexistente cae al path");
     windowd_presentation_load(&presentation, 0);
