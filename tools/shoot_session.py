@@ -336,8 +336,12 @@ SXGUI_ROW_LEADING = 4
 # gracia: el numero deja de estar solo en el codigo.
 TASKBAR_HEIGHT = 28
 TASKBAR_MARGIN = 2
+TASKBAR_START_WIDTH = 64
 TASKBAR_BUTTON_WIDTH = 160
 TASKBAR_BUTTON_GAP = 2
+STARTMENU_WIDTH = 232
+STARTMENU_HEIGHT = 512
+STARTMENU_STRIP_WIDTH = 24
 
 
 class Failure(Exception):
@@ -346,11 +350,30 @@ class Failure(Exception):
 
 def button_rect(image, index):
     width, height = image.size
+    base = TASKBAR_MARGIN + TASKBAR_START_WIDTH + TASKBAR_BUTTON_GAP
     return (
-        TASKBAR_MARGIN + index * (TASKBAR_BUTTON_WIDTH + TASKBAR_BUTTON_GAP),
+        base + index * (TASKBAR_BUTTON_WIDTH + TASKBAR_BUTTON_GAP),
         height - TASKBAR_HEIGHT + TASKBAR_MARGIN,
         TASKBAR_BUTTON_WIDTH,
         TASKBAR_HEIGHT - (TASKBAR_MARGIN * 2),
+    )
+
+
+def start_button_center(image):
+    width, height = image.size
+    return (
+        TASKBAR_MARGIN + TASKBAR_START_WIDTH // 2,
+        height - TASKBAR_HEIGHT // 2,
+    )
+
+
+def startmenu_rect(image):
+    width, height = image.size
+    return (
+        TASKBAR_MARGIN,
+        height - TASKBAR_HEIGHT - STARTMENU_HEIGHT,
+        STARTMENU_WIDTH,
+        STARTMENU_HEIGHT,
     )
 
 
@@ -795,8 +818,9 @@ def scenario_taskbar(s):
     """Barra de tareas: clicks reales con VERIFICACION de pixeles.
 
     Los botones van en orden estable por slot, asi que el 0 es Program Manager
-    (lanzado con la sesion) y el 1 el bloc de notas. La franja esta al pie y los
-    botones miden 160 desde x=2.
+    (lanzado con la sesion) y el 1 el bloc de notas. La franja esta al pie,
+    los botones de ventana miden 160 desde x=68 (despues del boton Start de
+    64) y el indicador de layout sigue a la derecha del todo.
 
     No alcanza con sacar capturas para que las mire alguien: los cuatro bugs que
     tuvo esta barra -- dos de fds, dos de input -- pasaban todos los harnesses
@@ -850,6 +874,70 @@ def scenario_taskbar(s):
     image = s.shot("minimizado")
     expect_button(image, 0, False, "despues de minimizar")
     expect_taskbar_present(image, "despues de minimizar")
+
+
+def wait_menu_open(s, stem="menu-abierto"):
+    """Polling hasta ver cara en el contenido del menu (ver scenario_startmenu).
+
+    El punto esta a la derecha de la franja lateral y sobre la primera
+    cabecera, antes de su texto: el menu lo pinta FACE siempre.
+    """
+    image = None
+    for _ in range(15):
+        time.sleep(2.0)
+        image = s.shot(stem)
+        mx, my, mw, mh = startmenu_rect(image)
+        if image.getpixel((mx + 2 + STARTMENU_STRIP_WIDTH + 2, my + 4)) == FACE:
+            break
+    return image
+
+
+def scenario_startmenu(s):
+    """Menu Inicio recortado: boton Start, lista plana y toggle.
+
+    Se abre con click en Start, se verifica un pixel de cara del marco (el
+    menu pinta FACE en todo su rect) y se cierra con otro click en Start.
+    Sin aserciones de contenido todavia: el catalogo depende de lo instalado
+    (Doom, FFmpeg) y las filas no caen en coordenadas fijas -- igual que
+    gears, hoy esto es para MIRAR.
+    """
+    s.shot("sin-menu")
+    # El tamano del display sale de una captura cualquiera; el boton Start
+    # esta abajo a la izquierda por construccion (taskbar.c).
+    probe = s.shot("medida")
+    x, y = start_button_center(probe)
+    s.qmp.move_to(x, y)
+    s.qmp.click()
+    # El menu escanea el catalogo antes del primer frame (igual que progman
+    # al arrancar); bajo TCG eso tarda. Polling hasta ver su marco en cara,
+    # en vez de un sleep fijo que seria lento siempre o corto a veces.
+    image = wait_menu_open(s)
+    mx, my, mw, mh = startmenu_rect(image)
+    expect_pixel(image, mx + 2 + STARTMENU_STRIP_WIDTH + 2, my + 4, FACE, "menu abierto: contenido en cara")
+    # Primera fila de programa (Calculator, primer item de Accessories):
+    # cabecera de 20 + mitad de fila de 24, desde el margen 2.
+    s.qmp.move_to(mx + 100, my + 2 + 20 + 12)
+    s.qmp.click()
+    time.sleep(3.0)
+    launched = s.shot("menu-lanzo")
+    mlx, mly, mlw, mlh = startmenu_rect(launched)
+    if launched.getpixel((mlx + 2 + STARTMENU_STRIP_WIDTH + 2, mly + 4)) == FACE:
+        raise Failure("el menu sigue abierto tras clickear Calculator: el launch no salio")
+    # La app tarda en presentar bajo TCG; la captura es para mirar, no afirma.
+    time.sleep(9.0)
+    s.shot("calc-desde-menu")
+    # Reabrir tras un launch prueba que el menu relanza limpio despues de
+    # haber salido (el toggle con el menu vivo lo cierra, como arriba).
+    x, y = start_button_center(launched)
+    s.qmp.move_to(x, y)
+    s.qmp.click()
+    reopened = wait_menu_open(s, "menu-reabierto")
+    rx, ry, rw, rh = startmenu_rect(reopened)
+    expect_pixel(reopened, rx + 2 + STARTMENU_STRIP_WIDTH + 2, ry + 4, FACE, "menu reabierto: contenido en cara")
+    # Y el toggle lo vuelve a cerrar.
+    s.qmp.click()
+    time.sleep(2.0)
+    s.shot("menu-cerrado")
 
 
 def scenario_bench(s):
@@ -1241,6 +1329,7 @@ SCENARIOS = {
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "taskbar": scenario_taskbar,
+    "startmenu": scenario_startmenu,
     "wheel": scenario_wheel,
     "notepadwheel": scenario_notepadwheel,
     "kbdlayout": scenario_kbdlayout,

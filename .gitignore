@@ -17,6 +17,7 @@ tools/*
 !tools/gen_mime_icons.py
 !tools/gen_boot_logo.py
 !tools/gen_brand_logo.py
+!tools/gen_start_logo.py
 !tools/mkinitramfs.py
 !tools/sxfs_sync.py
 !tools/stamp_sxe.py

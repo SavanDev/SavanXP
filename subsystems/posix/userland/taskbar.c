@@ -3,14 +3,17 @@
 #include "savanxp/wm_shell_protocol.h"
 
 #include "desktop_icons.h"
+#include "start_logo.h"
 
 /*
  * Barra de tareas: un CLIENTE del WM, no chrome de windowd.
  *
  * Es el modelo de explorer.exe y el mismo layering que separo a shellui y
  * progman del window manager: windowd maneja ventanas, el shell las muestra.
- * Solo lista las ventanas abiertas -- sin menu inicio y sin area de
- * notificaciones, que es lo que se retiro con el chrome Win95 y no vuelve.
+ * Lista las ventanas abiertas y lleva el boton Start, que abre el menu Inicio
+ * (cliente aparte, ver startmenu.c) con el catalogo de progman en lista
+ * plana. Sin area de notificaciones, que es lo que se retiro con el chrome
+ * Win95 y no vuelve.
  *
  * Lo que no puede saber por su cuenta -- que ventanas hay, cual esta activa,
  * cual minimizada -- se lo cuenta el WM por la seccion compartida del fd 12
@@ -24,6 +27,8 @@
 #define TASKBAR_MARGIN 2
 #define TASKBAR_ICON_SIZE 16
 #define TASKBAR_LAYOUT_WIDTH 32
+#define TASKBAR_START_WIDTH 64
+#define TASKBAR_HIT_START (-3)
 #define TASKBAR_HIT_LAYOUT (-2)
 
 /* g_active_layout se refresca por polling (mismo criterio que
@@ -127,7 +132,8 @@ static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
         return 0;
     }
     usable = (int)info->width - (TASKBAR_MARGIN * 2) - (TASKBAR_BUTTON_GAP * (count - 1))
-        - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP;
+        - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP
+        - TASKBAR_START_WIDTH - TASKBAR_BUTTON_GAP;
     width = usable / count;
     if (width > TASKBAR_BUTTON_MAX_WIDTH)
     {
@@ -142,9 +148,20 @@ static struct sx_rect taskbar_button_rect(const struct savanxp_fb_info *info, in
     int height = (int)info->height - (TASKBAR_MARGIN * 2);
 
     return sx_rect_make(
-        TASKBAR_MARGIN + index * (width + TASKBAR_BUTTON_GAP),
+        TASKBAR_MARGIN + TASKBAR_START_WIDTH + TASKBAR_BUTTON_GAP + index * (width + TASKBAR_BUTTON_GAP),
         TASKBAR_MARGIN,
         width,
+        height);
+}
+
+static struct sx_rect taskbar_start_rect(const struct savanxp_fb_info *info)
+{
+    int height = (int)info->height - (TASKBAR_MARGIN * 2);
+
+    return sx_rect_make(
+        TASKBAR_MARGIN,
+        TASKBAR_MARGIN,
+        TASKBAR_START_WIDTH,
         height);
 }
 
@@ -173,6 +190,33 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
     /* Filo claro arriba: la barra se lee como una superficie levantada sobre el
      * escritorio, igual que en Win95. */
     sx_painter_fill_rect(&painter, sx_rect_make(0, 0, (int)gfx->info.width, 1), SXGUI_COLOR_LIGHT);
+
+    {
+        /* Boton Start, estilo Win: logo a la izquierda y texto, hundido
+         * mientras se aprieta. Si el menu esta abierto no lo sabe (el WM es
+         * quien hace el toggle), asi que no intenta quedar hundido. */
+        struct sx_rect start_rect = taskbar_start_rect(&gfx->info);
+        struct savanxp_fb_info logo_info;
+        struct sx_bitmap logo_bitmap;
+        const char *start_label = "Start";
+        int sunken = (g_pressed_index == TASKBAR_HIT_START);
+        int logo_x = start_rect.x + 4 + (sunken ? 1 : 0);
+        int logo_y = start_rect.y + (start_rect.height - (int)k_start_logo.height) / 2 + (sunken ? 1 : 0);
+        int start_text_x = logo_x + (int)k_start_logo.width + 4;
+        int start_text_y = start_rect.y + (start_rect.height - gfx_text_height()) / 2 + (sunken ? 1 : 0);
+
+        sx_painter_fill_rect(&painter, start_rect, SXGUI_COLOR_FACE);
+        taskbar_bevel(&painter, start_rect, sunken);
+
+        logo_info.width = k_start_logo.width;
+        logo_info.height = k_start_logo.height;
+        logo_info.pitch = k_start_logo.width * 4u;
+        logo_info.bpp = 32;
+        logo_info.buffer_size = logo_info.pitch * k_start_logo.height;
+        sx_bitmap_wrap(&logo_bitmap, (uint32_t *)k_start_logo.pixels, &logo_info, SX_PIXEL_FORMAT_BGRA8888);
+        sx_painter_blit_bitmap(&painter, &logo_bitmap, logo_x, logo_y);
+        sx_painter_draw_text(&painter, start_text_x, start_text_y, start_label, SXGUI_COLOR_TEXT);
+    }
 
     for (index = 0; index < count && index < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
     {
@@ -254,6 +298,13 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
     int count = (int)g_snapshot.count;
     int index;
     struct sx_rect layout_rect = taskbar_layout_rect(info);
+    struct sx_rect start_rect = taskbar_start_rect(info);
+
+    if (x >= start_rect.x && x < start_rect.x + start_rect.width &&
+        y >= start_rect.y && y < start_rect.y + start_rect.height)
+    {
+        return TASKBAR_HIT_START;
+    }
 
     if (x >= layout_rect.x && x < layout_rect.x + layout_rect.width &&
         y >= layout_rect.y && y < layout_rect.y + layout_rect.height)
@@ -283,6 +334,13 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
 static void taskbar_open_layout_popup(const struct savanxp_gfx_context *gfx)
 {
     (void)gfx_desktop_launch_ex(gfx, "/bin/kbdlayoutpopup", SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP);
+}
+
+/* Igual que el popup de layout pero con toggle del lado del WM: si el menu
+ * ya esta abierto, el pedido lo cierra. */
+static void taskbar_toggle_start_menu(const struct savanxp_gfx_context *gfx)
+{
+    (void)gfx_desktop_launch_ex(gfx, "/bin/startmenu", SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU);
 }
 
 static void taskbar_request(uint32_t action, uint32_t window_id)
@@ -360,7 +418,11 @@ int main(void)
             }
             else if ((up & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
             {
-                if (index == TASKBAR_HIT_LAYOUT && index == g_pressed_index)
+                if (index == TASKBAR_HIT_START && index == g_pressed_index)
+                {
+                    taskbar_toggle_start_menu(&gfx);
+                }
+                else if (index == TASKBAR_HIT_LAYOUT && index == g_pressed_index)
                 {
                     taskbar_open_layout_popup(&gfx);
                 }

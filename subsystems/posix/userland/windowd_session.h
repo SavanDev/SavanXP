@@ -134,5 +134,11 @@ struct windowd_session
      * taskbar_client -- rect a mano, sin bordes -- pero anclado arriba de la
      * franja en vez de ocuparla. Se cierra solo (exit) al elegir un layout. */
     struct windowd_client keyboard_popup_client;
+    /* Menu Inicio: mismo patron que el popup de layout pero anclado abajo a
+     * la izquierda y con toggle en el pedido (si esta abierto, lo cierra).
+     * Escanea el catalogo de progman en cada apertura, asi que siempre esta
+     * fresco; se cierra solo (exit) al lanzar, por toggle del boton Start, o
+     * por click afuera (el WM lo destruye). Solo mouse, como el popup. */
+    struct windowd_client startmenu_client;
     struct windowd_client overlay_clients[WINDOWD_MAX_OVERLAY_CLIENTS];
 };

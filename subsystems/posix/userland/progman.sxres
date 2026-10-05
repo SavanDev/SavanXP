@@ -4,12 +4,14 @@
 # windowd_appinfo.c y en los defaults de progman_registry.c: la idea de las
 # fases 3 y 4 es borrar esas tablas y que la salida sea identica.
 #
-# SIN category= A PROPOSITO: el launcher no se lista a si mismo. Es ademas la
-# demostracion de que la clave es opt-in -- progman esta estampado como todo lo
-# demas y aun asi no aparece en su propia lista. El selftest lo verifica.
+# Con category= a proposito: el launcher se lista a si mismo en System, en
+# orden alfabetico entre Add/Remove Programs y System Properties. Sigue
+# siendo opt-in -- busybox y los applets no declaran categoria y por eso no
+# aparecen -- y el selftest verifica ambos lados.
 name=Program Manager
 description=Launcher de programas
 version=system
 vendor=SavanXP
 accent=425c96
 icon=desktop
+category=System

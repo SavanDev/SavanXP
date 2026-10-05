@@ -58,7 +58,9 @@ def _pixel(image: Image.Image, x: int, y: int) -> tuple[int, int, int]:
 
 
 def _button(image: Image.Image, index: int) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
-    x = 2 if index == 0 else 164
+    # Espejo de taskbar.c: boton Start de 64 + gap 2, despues botones de 160
+    # con gap 2 desde el margen 2.
+    x = 2 + 64 + 2 + index * (160 + 2)
     y = 774
     return _pixel(image, x, y), _pixel(image, x + 159, y + 23)
 
@@ -110,7 +112,9 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         for _ in range(22):
             client.relative(-64, -64)
             time.sleep(0.03)
-        for dx, dy in [(64, 64), (18, 64)] + [(0, 64)] * 10 + [(0, 18)]:
+        # Al centro del boton 0 (x=68+80=148, y=786): Start de 64 + gap 2
+        # desde el margen 2, despues medio boton de 160.
+        for dx, dy in [(64, 64), (84, 64)] + [(0, 64)] * 10 + [(0, 18)]:
             client.relative(dx, dy)
         time.sleep(0.5)
         third = _capture(client, output_dir, "03-cursor-sobre-boton")

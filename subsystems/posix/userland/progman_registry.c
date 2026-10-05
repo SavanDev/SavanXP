@@ -103,6 +103,7 @@ static const struct progman_default_item k_default_items[] = {
     {"Games", "Doom", "/disk/bin/doomgeneric", "Classic FPS test port", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
     {"Games", "Minesweeper", "/bin/mines", "Clear the minefield without stepping on a mine", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"System", "Add/Remove Programs", "/bin/appwiz", "Uninstall programs installed outside the system image", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"System", "Program Manager", "/bin/progman", "Launcher de programas", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"System", "System Properties", "/bin/aboutapp", "Version, hardware and installation", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"System", "Task Manager", "/bin/taskmgr", "Processes, performance and network", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 };

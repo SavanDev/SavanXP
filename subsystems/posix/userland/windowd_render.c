@@ -982,6 +982,16 @@ static int build_layers(
         ++count;
     }
 
+    /* Menu Inicio: misma altura que el popup, otra esquina. */
+    if (client_is_drawable(&session->startmenu_client))
+    {
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->startmenu_client);
+        layers[count].client = &session->startmenu_client;
+        ++count;
+    }
+
     /* El Task List va sobre todo: es el conmutador de ventanas. */
     if (session->tasklist_open)
     {

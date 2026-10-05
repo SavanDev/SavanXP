@@ -91,6 +91,14 @@ Cut-off notes:
   `tools/font/genfont.py` into committed tables; only the RetroSans caption is
   linked, the other two are spares. `genfont.py` now accepts any `SX_*` prefix.
 
+- **Start menu (trimmed): Start button plus a flat Programs list.** `/bin/startmenu`
+  opens anchored above the button with the progman catalog grouped by category,
+  launches on click and closes on toggle or outside click. Mouse only, no cascade.
+
+- **The Start menu gains a footer, a banner strip, a logo button and a self-listed launcher.**
+  Shut Down (with its icon) and Restart over a margin above the taskbar, a 24px
+  gradient strip in title blue, the brand logo on Start, Program Manager under System.
+
 - **`libffmpeg.so.0.4`, FFmpeg's five components as one shared library.** The
   FFmpeg port installs it at `/disk/lib`, and `ldso_load` maps it: 6.8 MB on disk,
   2334 exported symbols and 9228 relocations, which is the first workload the

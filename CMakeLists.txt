@@ -504,6 +504,7 @@ set(SAVANXP_BOOT_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/boot_logo.h")
 set(SAVANXP_BRAND_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/brand_logo.h")
 set(SAVANXP_CURSOR_HEADER "${SAVANXP_GENERATED_ROOT}/cursor_asset.h")
 set(SAVANXP_DESKTOP_ICONS_HEADER "${SAVANXP_GENERATED_ROOT}/desktop_icon_assets.h")
+set(SAVANXP_START_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/start_logo.h")
 set(SAVANXP_DESKTOP_ICON_SOURCES
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/16x16/desktop.png"
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/32x32/desktop.png")
@@ -551,11 +552,23 @@ add_custom_command(OUTPUT "${SAVANXP_DESKTOP_ICONS_HEADER}"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     VERBATIM
 )
+add_custom_command(OUTPUT "${SAVANXP_START_LOGO_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_GENERATED_ROOT}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_start_logo.py"
+            --project-root "${CMAKE_SOURCE_DIR}" --output "${SAVANXP_START_LOGO_HEADER}"
+    DEPENDS
+        "${CMAKE_SOURCE_DIR}/tools/gen_start_logo.py"
+        "${CMAKE_SOURCE_DIR}/assets/brand/start_logo.png"
+        "${CMAKE_SOURCE_DIR}/assets/desktop/icons/16x16/shutdown.png"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    VERBATIM
+)
 set(SAVANXP_GENERATED_HEADER_FILES
     "${SAVANXP_BOOT_LOGO_HEADER}"
     "${SAVANXP_BRAND_LOGO_HEADER}"
     "${SAVANXP_CURSOR_HEADER}"
     "${SAVANXP_DESKTOP_ICONS_HEADER}"
+    "${SAVANXP_START_LOGO_HEADER}"
 )
 set_source_files_properties(${SAVANXP_GENERATED_HEADER_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
 add_custom_target(savanxp_generated_headers DEPENDS ${SAVANXP_GENERATED_HEADER_FILES})

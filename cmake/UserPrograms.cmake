@@ -318,6 +318,13 @@ savanxp_program(NAME taskbar DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/taskbar.c
     subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME kbdlayoutpopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
+# El menu Inicio: mismo molde que el popup de layout (cliente sin bordes,
+# anclado por windowd, sin .sxres para no salir en el launcher), pero con el
+# catalogo de progman enlazado. Solo mouse en la version recortada.
+savanxp_program(NAME startmenu DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
+    subsystems/posix/userland/startmenu.c
+    subsystems/posix/userland/progman_registry.c
+    subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME progman DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c

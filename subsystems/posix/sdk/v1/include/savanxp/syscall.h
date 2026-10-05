@@ -843,6 +843,10 @@ enum savanxp_input_event_type {
  * path/argument y lo posiciona anclado arriba de la franja, sin bordes, en
  * vez de como una ventana normal cascada/decorada. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP 0x00000002u
+/* El pedido es del menu Inicio de la taskbar: igual que TASKBAR_POPUP pero
+ * anclado abajo a la izquierda y con toggle -- si ya esta abierto, el pedido
+ * lo cierra en vez de relanzarlo. */
+#define SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU 0x00000004u
 
 /* Estilo de ventana: propiedades de la VENTANA de un programa, no de su
  * lanzamiento. El WM las lee del .sxe del binario al crear la ventana, por el

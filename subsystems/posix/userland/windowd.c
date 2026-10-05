@@ -17,6 +17,7 @@ static const char *k_shellapp_path = "/bin/shellapp";
 static const char *k_background_client_path = "/bin/shellui";
 static const char *k_taskbar_client_path = "/bin/taskbar";
 static const char *k_keyboard_popup_client_path = "/bin/kbdlayoutpopup";
+static const char *k_startmenu_client_path = "/bin/startmenu";
 static const char *k_progman_path = "/bin/progman";
 
 /* Tamano del popup de layout de teclado (dos filas, ES/EN): fijo, no depende
@@ -24,6 +25,14 @@ static const char *k_progman_path = "/bin/progman";
  * le reserva el rect anclado arriba de la franja de la taskbar. */
 #define WINDOWD_KEYBOARD_POPUP_WIDTH 96
 #define WINDOWD_KEYBOARD_POPUP_HEIGHT 44
+
+/* Menu Inicio: superficie fija, ancha como dos botones de taskbar y alta para
+ * ~24 filas (cabeceras + items). El contenido real varia con lo instalado;
+ * lo que sobra queda en cara y lo que falta se scrollea con la rueda -- el
+ * tamano no puede salir del catalogo porque windowd no lo lee (ver
+ * launch_start_menu_client). */
+#define WINDOWD_STARTMENU_WIDTH 232
+#define WINDOWD_STARTMENU_HEIGHT 512
 
 static int launch_overlay_client(
     struct windowd_session *session,
@@ -888,6 +897,15 @@ static const struct windowd_client *top_client_at_point(const struct windowd_ses
         return &session->keyboard_popup_client;
     }
 
+    /* El menu Inicio va segundo: misma altura que el popup pero en la otra
+     * esquina, asi que el orden entre ellos no importa -- lo que importa es
+     * que ambos ganen a la taskbar y a las ventanas. */
+    if (session != 0 && session->startmenu_client.pid > 0 &&
+        windowd_point_in_client(&session->startmenu_client, x, y))
+    {
+        return &session->startmenu_client;
+    }
+
     /* La barra de tareas se compone por ENCIMA de las ventanas normales, asi
      * que gana el hit-test contra ellas. Con una app a pantalla completa queda
      * detras y no recibe nada: coincide con como se arma el z-order. */
@@ -1299,6 +1317,7 @@ static void signal_composed_batches(struct windowd_session *session)
     signal_client_composed(&session->background_client, session->background_client.consumed_submit_sequence);
     signal_client_composed(&session->taskbar_client, session->taskbar_client.consumed_submit_sequence);
     signal_client_composed(&session->keyboard_popup_client, session->keyboard_popup_client.consumed_submit_sequence);
+    signal_client_composed(&session->startmenu_client, session->startmenu_client.consumed_submit_sequence);
     signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -1331,6 +1350,12 @@ static void retire_presented_batches(struct windowd_session *session)
     {
         signal_client_retire(&session->keyboard_popup_client, session->keyboard_popup_client.pending_retire_sequence);
         session->keyboard_popup_client.pending_retire_sequence = 0;
+    }
+
+    if (session->startmenu_client.pending_retire_sequence != 0)
+    {
+        signal_client_retire(&session->startmenu_client, session->startmenu_client.pending_retire_sequence);
+        session->startmenu_client.pending_retire_sequence = 0;
     }
 
     if (session->shell_client.pending_retire_sequence != 0)
@@ -2000,6 +2025,54 @@ static int launch_keyboard_popup_client(struct windowd_session *session)
     return start_client_process(client, k_keyboard_popup_client_path, 0, session->submit_event_fd, 0);
 }
 
+/* Menu Inicio: mismo molde que el popup de layout (rect a mano,
+ * frame_visible=0), anclado en la esquina inferior izquierda, pegado arriba
+ * de la franja. A diferencia del popup, el pedido es un toggle: si el menu
+ * ya esta vivo, lo cierra en vez de relanzarlo. */
+static int launch_start_menu_client(struct windowd_session *session)
+{
+    struct windowd_client *client = 0;
+    struct sx_rect strip;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    destroy_client_instance(&session->startmenu_client, 1);
+    client = &session->startmenu_client;
+    reset_client(client);
+
+    strip = windowd_taskbar_rect(&session->gfx.info);
+    client->surface_info = session->gfx.info;
+    client->surface_info.width = (uint32_t)WINDOWD_STARTMENU_WIDTH;
+    client->surface_info.height = (uint32_t)WINDOWD_STARTMENU_HEIGHT;
+    client->surface_info.pitch = (uint32_t)WINDOWD_STARTMENU_WIDTH * 4u;
+    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)WINDOWD_STARTMENU_HEIGHT;
+    client->window_x = strip.x + 2;
+    client->window_y = strip.y - WINDOWD_STARTMENU_HEIGHT;
+    client->window_width = WINDOWD_STARTMENU_WIDTH;
+    client->window_height = WINDOWD_STARTMENU_HEIGHT;
+    client->frame_visible = 0;
+
+    return start_client_process(client, k_startmenu_client_path, 0, session->submit_event_fd, 0);
+}
+
+/* Cierra el menu sin importar quien lo pidio (toggle del boton Start o click
+ * afuera). Es el unico de los dos popups que se puede cerrar sin salir. */
+static void close_start_menu_client(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    if (session == 0 || session->startmenu_client.pid <= 0)
+    {
+        return;
+    }
+    destroy_client_instance(&session->startmenu_client, 1);
+    if (dirty != 0)
+    {
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+}
+
 /* Publica el estado de las ventanas en la seccion compartida.
  *
  * Seqlock: la secuencia sube a IMPAR antes de tocar las entradas y a PAR al
@@ -2441,6 +2514,7 @@ static int open_compositor_session(struct windowd_session *session)
     reset_client(&session->taskbar_client);
     reset_client(&session->shell_client);
     reset_client(&session->keyboard_popup_client);
+    reset_client(&session->startmenu_client);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         reset_client(&session->overlay_clients[slot]);
@@ -2579,6 +2653,14 @@ static int reap_dead_clients(struct windowd_session *session, struct windowd_dir
         windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 
+    if (session->startmenu_client.pid > 0 && !windowd_process_alive(session->startmenu_client.pid))
+    {
+        /* Igual que el popup: exit(0) al lanzar un programa es el cierre
+         * normal, no una caida -- sin relaunch. */
+        destroy_client_instance(&session->startmenu_client, 0);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         struct windowd_client *client = &session->overlay_clients[slot];
@@ -2640,6 +2722,24 @@ static int service_client_launch_requests(struct windowd_session *session, struc
             if (launch_keyboard_popup_client(session) < 0)
             {
                 eprintf("desktop: failed to launch keyboard layout popup\n");
+                continue;
+            }
+            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            continue;
+        }
+        /* El menu Inicio es un toggle: con el menu vivo el pedido lo cierra.
+         * Sin esto el boton Start solo sabria abrir, y cerrar quedaria atado
+         * unicamente al click afuera. */
+        if ((request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU) != 0)
+        {
+            if (session->startmenu_client.pid > 0)
+            {
+                close_start_menu_client(session, dirty);
+                continue;
+            }
+            if (launch_start_menu_client(session) < 0)
+            {
+                eprintf("desktop: failed to launch start menu\n");
                 continue;
             }
             windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
@@ -5023,6 +5123,16 @@ static void handle_pointer_event(
         goto done;
     }
 
+    /* Click afuera del menu lo cierra, pero el click SIGUE su curso hacia la
+     * ventana o el fondo que toco. La franja de la taskbar se excluye: ahi
+     * vive el boton Start y su pedido ya es un toggle. */
+    if (left_pressed != 0 && left_was_pressed == 0 && session->startmenu_client.pid > 0 &&
+        !windowd_point_in_client(&session->startmenu_client, cursor_x, cursor_y) &&
+        !windowd_point_in_client(&session->taskbar_client, cursor_x, cursor_y))
+    {
+        close_start_menu_client(session, dirty);
+    }
+
     if (left_pressed != 0 && left_was_pressed == 0)
     {
         /* Sin chrome: un click solo puede caer sobre una ventana o sobre el
@@ -5036,6 +5146,16 @@ static void handle_pointer_event(
                  * este caso especial el click caia en el camino generico de
                  * ventana -- donde overlay_slot_for_client_ptr devuelve -1,
                  * anula el hover, y se pierde el click entero. */
+                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
+                mouse_routed = 1;
+                current_hover_client = 0;
+            }
+            else if (current_hover_client == &session->startmenu_client)
+            {
+                /* Igual que el popup de layout: el menu no es una ventana (no
+                 * se activa ni entra al z-order), solo recibe el click. La
+                 * rueda tambien llega por este camino y el menu la usa para
+                 * scrollear cuando el catalogo no entra. */
                 (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
                 current_hover_client = 0;
@@ -5423,6 +5543,17 @@ int main(int argc, char **argv)
          * nada por su cuenta, no tiene cursor hints ni size hints (rect fijo,
          * nunca los pide). */
         if (service_client_batches(&session, &dirty, &session.keyboard_popup_client) < 0)
+        {
+            break;
+        }
+        /* Menu Inicio: presenta sus frames y lanza programas por su propia
+         * cola (item->launch_flags, igual que progman). Sin cursor ni size
+         * hints: rect fijo que nunca los pide. */
+        if (service_client_batches(&session, &dirty, &session.startmenu_client) < 0)
+        {
+            break;
+        }
+        if (service_client_launch_requests(&session, &dirty, &session.startmenu_client) < 0)
         {
             break;
         }

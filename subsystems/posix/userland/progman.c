@@ -1245,23 +1245,36 @@ static int progman_selftest(void)
         }
 
         /*
-         * El opt-in, por los dos lados. progman se lanza a si mismo desde el
-         * menu si alguien lo anota, pero no declara categoria y por lo tanto no
-         * se lista solo; busybox tampoco, y ahi importa de verdad, porque son
-         * 30 copias del mismo binario bajo nombres distintos.
+         * El opt-in, por los dos lados. progman declara categoria y por eso
+         * el escaneo LO lista; busybox y los applets no, y ahi importa de
+         * verdad, porque son 30 copias del mismo binario bajo nombres
+         * distintos.
          */
-        for (index = 0; index < progman_item_count(); ++index)
         {
-            const struct progman_item *item = progman_item_at(index);
-            if (item == 0)
+            int progman_listed = 0;
+
+            for (index = 0; index < progman_item_count(); ++index)
             {
-                continue;
+                const struct progman_item *item = progman_item_at(index);
+
+                if (item == 0)
+                {
+                    continue;
+                }
+                if (strcmp(item->path, "/bin/progman") == 0)
+                {
+                    progman_listed = 1;
+                }
+                if (strcmp(item->path, "/bin/busybox") == 0 ||
+                    strcmp(item->path, "/bin/ls") == 0)
+                {
+                    printf("PROGMAN SMOKE FAIL el escaneo listo '%s' sin categoria declarada\n", item->path);
+                    return 1;
+                }
             }
-            if (strcmp(item->path, "/bin/progman") == 0 ||
-                strcmp(item->path, "/bin/busybox") == 0 ||
-                strcmp(item->path, "/bin/ls") == 0)
+            if (!progman_listed)
             {
-                printf("PROGMAN SMOKE FAIL el escaneo listo '%s' sin categoria declarada\n", item->path);
+                printf("PROGMAN SMOKE FAIL el escaneo no listo a progman con categoria declarada\n");
                 return 1;
             }
         }
