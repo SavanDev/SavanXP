@@ -19,8 +19,10 @@ Measured, not estimated:
   one part application.
 - Resident code is roughly 170 KB of `.text`+`.rodata` per process, so a desktop
   session duplicates ~1.4 MB.
-- `mediaplayer-ffmpeg` is 7 MB: all of FFmpeg inside one binary, and the only
-  consumer.
+- the Media Player **was** 7 MB with all of FFmpeg inside one binary, and was the
+  only consumer of it. It is now 496 KB and shares `libffmpeg.so.0.4` with nothing
+  else, which is the point of the library: the duplication moved from "the runtime,
+  once per program" to "the engine, once per image".
 
 So the case is the runtime duplication, and it is real.
 
@@ -106,16 +108,30 @@ anything above it.
 | `libsxgui.so.0.4` | 136 KB | `libgfx2d`, `libsxgfx` |
 | `libchainbase.so.0.4`, `libchaintop.so.0.4` | 4 KB each | each other (test chain) |
 
-`libffmpeg.so.0.4` is not in this table because the tree does not build it: the
-FFmpeg port links it and stages it at `/disk/lib`, so it exists only in an image
-that has the port installed. It is two orders of magnitude larger than anything
-above, and [its section](#ffmpeg-as-one-library-and-what-it-cost-to-find-out)
-records what loading it exposed.
+`libffmpeg.so.0.4` is not in this table because the tree does not **build** it:
+`ports/ffmpeg` links it and stages it at `/disk/lib`, and the tree consumes it as an
+imported CMake target, so it exists only in an image that has the port installed —
+which is also when `mediaplayer` is built at all. It is two orders of magnitude
+larger than anything above, and
+[its section](#ffmpeg-as-one-library-and-what-it-cost-to-find-out) records what
+loading it exposed.
+
+That count is of the table above: six files, of which two are a test chain. The
+image actually carries **thirteen**, and the number is worth reading carefully
+because most of it is not the system:
+
+- 4 interface libraries — `libmath`, `libsxgfx`, `libgfx2d`, `libsxgui`
+- 1 from the port — `libffmpeg.so.0.4`
+- 8 that exist only to be loaded by a test — `libchainbase`, `libchaintop`,
+  `libneeded`, `libbroken`, and the four `libdia_*` of the diamond
+
+So "thirteen shared libraries" is not a claim about what the system can do. Four is.
 
 ### The programs
 
-82 executables: 30 are `ET_DYN`, 27 declare a `DT_NEEDED`. By library:
-`libsxgfx` 20, `libgfx2d` 15, `libsxgui` 10, `libmath` 2.
+93 executables: 30 are `ET_DYN`, 24 declare a `DT_NEEDED`. By library:
+`libsxgfx` 21, `libgfx2d` 16, `libsxgui` 11, `libmath` 4, `libffmpeg` 1,
+`libneeded` 1 (the test chain).
 
 No library asks the application for a single symbol. What each still needs from the
 executable:
@@ -1373,9 +1389,16 @@ for a buffer the CPU wrote and the device reads. Neither was verified, so nothin
 was committed. A block layer that silently returns wrong bytes is worse than a slow
 one, and the 26% already banked from 32-bit accesses is safe.
 
-### The launcher is 114 lines
+### The launcher was 114 lines
 
-`port_is_installed()` with `savanxp_stat`, then `exec()` with `argv[0]` replaced.
+**Deleted.** The player moved into the tree and the port stopped building a
+program, so there was nothing left to delegate to. What follows describes what it
+was and why, not what is there — it is kept because the reasoning is what decided
+that the player itself checks `ldso_missing()`, and because "it was removed twice"
+is a thing worth being able to check against.
+
+It was `port_is_installed()` with `savanxp_stat`, then `exec()` with `argv[0]`
+replaced.
 No `fork`, no pipe, no polling: the process image is replaced, so the child's exit
 code is the launcher's. Without the port it runs `sxgui_app_run` on a two-widget
 window and says so.
@@ -1442,21 +1465,30 @@ drift because it is artwork, not code.
 
 ### The scenario proves the entry, not just the file
 
-`mediaplayer-noport` removes `/disk/bin/mediaplayer-ffmpeg` from the volume and
-drives the launcher through the taskbar. It asserts the launcher's own text, not the
-taskbar caption: the caption is 14 pixels at the current font and detects no font
-change at all (measured, and written down in `scenario_taskbar`), whereas the
-launcher's four lines are the only thing it can draw — when the port is installed it
-opens no window at all.
+`mediaplayer-noport` removes the **library** and drives the player from the taskbar.
+It used to remove the backend binary and check the launcher's window instead, and
+the move to the tree changed what it has to remove: there is no backend binary
+anymore, and the window that says so is the player's own.
 
-Two things had to be got right for that assertion, and both were wrong first time:
-the text sits on `FIELD` (white), not `FACE`, and a `/` does not match the glyph
-table (434 of 436 pixels), so the search string avoids slashes. With the launcher
-patched to `return 1` instead of showing the window, the scenario finds 0 of 345
-pixels.
+It asserts the player's own text, not the taskbar caption: the caption is 14 pixels
+at the current font and detects no font change at all (measured, and written down in
+`scenario_taskbar`), whereas the notice is the only thing the player draws when it
+has no engine.
+
+Three things had to be got right for that assertion, and all three were wrong first
+time, which is the usual ratio:
+
+- the notice is **red on black** (`gfx_rgb(230, 120, 110)` over the video area),
+  not the toolkit's `TEXT` on `FIELD`. With `TEXT`/`FIELD` the search finds 0 of 335.
+- a `/` does not match the glyph table — 434 of 436 pixels — so the search string
+  avoids slashes.
+- the search string is the library name and the phrase after it, and both had to be
+  re-picked when the wording moved from the launcher's to the player's.
+
+With the player patched to `return 1` instead of showing the window, the scenario
+finds 0 pixels.
 
 `file_assoc` gained three assertions for the same reason: the `ext_open` list in
 `mediaplayer.sxres` is a claim, and `.mp3`, `.avi` and `.flac` now have to resolve to
-`/bin/mediaplayer` against the stamped binaries in the real image. They must resolve
-to the **launcher** and not to the backend — the backend is a port artifact that may
-not be there, and the launcher is what explains itself.
+`/bin/mediaplayer` against the stamped binaries in the real image — and to the
+player, which is a program of the tree, rather than to anything the port installs.
