@@ -98,6 +98,10 @@ struct media {
  * y no dentro de una funcion de error. */
 const char* media_missing_library(void);
 
+/* Cuantas dependencias no se pudieron traer. Con una sola, el nombre basta; con
+ * varias hay que decirlo, porque "falta X" insinua que solo falta X. */
+unsigned media_missing_count(void);
+
 /* Abre el archivo y los decoders del mejor stream de video y de audio. Con
  * audio_out en NULL el audio se ignora. Devuelve 1 si hay al menos un stream
  * que se pueda reproducir; si no, 0 con el motivo en error. */

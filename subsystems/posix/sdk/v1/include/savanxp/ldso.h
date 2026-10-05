@@ -51,6 +51,19 @@ void* ldso_lookup(const char* name);
  * deja el nombre aqui. El motivo esta en el mensaje que el cargador ya imprimio. */
 const char* ldso_missing(void);
 
+/* Cuantas dependencias NO PUDIERON CARGARSE, o 0 si se cargo todo.
+ *
+ * Ojo al significado: son librerias que fallaron al cargarse, NO archivos ausentes.
+ * Quitar un solo archivo deja sin cargar a todas las librerias que la necesitan --
+ * y a las que necesitan a esas-- asi que dos archivos fuera del volumen pueden dar
+ * un recuento de cuatro o mas. Para un programa que quiere saber "me falta esto",
+ * el numero no sirve; para uno que quiere decir la verdad sobre cuanto de si
+ * funciona, si.
+ *
+ * ldso_missing() da el nombre de la PRIMERA que fallo, no el de todas, y con
+ * varias el nombre solo no basta: de ahi el recuento. */
+unsigned ldso_missing_count(void);
+
 /* Cuantas imagenes hay mapeadas, el ejecutable incluido. Para las pruebas que
  * necesitan comprobar que una dependencia compartida se cargo una sola vez. */
 int ldso_count(void);

@@ -1323,6 +1323,56 @@ None of it was true, and none of it was wrong on the merits. Restoring the file
 made all three true at once, which is the cheapest possible fix for a documentation
 lie: the documentation was the spec.
 
+### The name of a missing library was arbitrary
+
+`ldso_missing()` reported whichever missing library failed **last**, so the same
+image with the same three files absent could name three different libraries
+depending on the order of `DT_NEEDED` and on what else had recursed. It is now the
+**first** one that failed — a definition rather than an accident of the walk — and
+there is a count beside it.
+
+The count took three tries to get right, and the wrong versions are the interesting
+part:
+
+- Counting failed load **attempts** gave 6 for 2 missing files. Removing
+  `libsxgfx.so.0.4` makes the load of `libgfx2d` and `libsxgui` fail as well,
+  because all three need it, and each retries. A number that lies is worse than no
+  number, so it counts **distinct** names now, deduplicated.
+- Distinct names gave 4 for the same 2 files, which is still not "4 files are
+  missing". Four libraries could not be loaded; two files are absent. So the count
+  means *libraries that failed to load*, the header says so, and the player says
+  "no se pudieron cargar 4 librerias" rather than "faltan 4", which would be false.
+
+What the loader can honestly answer is *how much of the program is not working*,
+not *which files you forgot to copy*. The message in the window:
+
+```
+no se pudieron cargar 4 librerias; la primera es libffmpeg.so.0.4
+```
+
+### Bus-master DMA: attempted, measured, reverted
+
+The other half of this was the PIO data phase. `rw_chunk` delivers one sector per
+backend request and reaches it through the data port; the reasoning and the numbers
+are in [`SXFS_ROADMAP.md`](SXFS_ROADMAP.md) item 1, which concludes that DMA is the
+only thing that removes the per-sector cost.
+
+It was written — descriptor table in kernel-contiguous pages, the BM registers, a
+PIO fallback so it could not break anything — and it **broke the volume**: the
+guest could no longer `savanxp_open` anything, so no library loaded and the kernel
+crashed at the first unrelated call. Two attempts, both reverted.
+
+The first waited for BM status bit 0 to go 1 and then 0, and that is a race: the
+device starts the DMA when it processes the ATA command, so a status read issued
+early says *idle* and the copy comes out garbage. The second waited for BSY on the
+ATA register instead, which is unambiguous, and still returned short data.
+
+What it needs next is the completion signal the PIIX bus master actually defines
+for this case — IRQ pending, bit 4, not the active bit — and a coherency argument
+for a buffer the CPU wrote and the device reads. Neither was verified, so nothing
+was committed. A block layer that silently returns wrong bytes is worse than a slow
+one, and the 26% already banked from 32-bit accesses is safe.
+
 ### The launcher is 114 lines
 
 `port_is_installed()` with `savanxp_stat`, then `exec()` with `argv[0]` replaced.

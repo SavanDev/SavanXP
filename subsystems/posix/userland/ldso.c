@@ -174,6 +174,15 @@ static Library g_libs[kMaxLibraries];
 static int g_lib_count;
 /* La dependencia cuyo DT_NEEDED no se pudo traer. Ver ldso_missing(). */
 static const char* g_missing_library = 0;
+/* Las dependencias DISTINTAS que no se pudieron traer, con su nombre.
+ *
+ * Distintas, y no un contador de intentos: quitar libsxgfx.so.0.4 hace fallar la
+ * carga de libffmpeg, de libgfx2d y de libsxgui, porque las tres la necesitan, y
+ * cada una reintenta. Con un contador de intentos el reproductor llegaba a decir
+ * "faltan 6 librerias" cuando faltaban dos, y un numero que miente es peor que
+ * ninguno. El nombre de la primera va aparte porque es lo que se enseña. */
+static char g_missing_names[kMaxLibraries][64];
+static unsigned g_missing_count = 0;
 /* El ejecutable ocupa el slot 0 y las librerias empiezan en el 1.
  *
  * resolve recorre los slots de la mas nueva a la mas vieja, asi que poner el
@@ -214,6 +223,10 @@ const char* g_lib_fail_library;
  * reporta cuando abre su ventana, no antes. */
 const char* ldso_missing(void) {
     return g_missing_library;
+}
+
+unsigned ldso_missing_count(void) {
+    return g_missing_count;
 }
 
 /* Cuantas imagenes hay mapeadas, el ejecutable incluido. Existe para las pruebas:
@@ -949,7 +962,29 @@ static int load_needed_chain(int parent_slot) {
                  *
                  * `need` es un basename --DT_NEEDED lo es-- y el registro es el
                  * mismo buffer, asi que no hay copia que hacer. */
-                g_missing_library = need;
+                /* El PRIMERO que falla, no el último.
+                 *
+                 * Con el último, el nombre dependía del orden del DT_NEEDED y de qué
+                 * recursion hubo, así que dos imágenes con las mismas tres librerías ausentes
+                 * podían nombrar tres librerías distintas. Con el primero, el nombre
+                 * es "la primera dependencia que no se pudo traer", que es una
+                 * definición y no un accidente del recorrido.
+                 *
+                 * Y se cuentan todos, que es lo que permite al programa decir que
+                 * faltan tres en vez de insinuar que falta una. */
+                unsigned seen;
+                for (seen = 0; seen < g_missing_count; ++seen) {
+                    if (strcmp(g_missing_names[seen], need) == 0) {
+                        break;
+                    }
+                }
+                if (seen == g_missing_count && g_missing_count < kMaxLibraries) {
+                    copy_bytes(need, g_missing_names[seen], sizeof(g_missing_names[0]));
+                    g_missing_count++;
+                }
+                if (g_missing_count == 1) {
+                    g_missing_library = need;
+                }
                 failed = 1;
             }
         }

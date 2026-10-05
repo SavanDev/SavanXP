@@ -420,6 +420,14 @@ Cut-off notes:
 
 ### Fixed
 
+- **A missing library is now named deterministically, and counted.** It used to be
+  whichever failed last, so the same image could name three different libraries for
+  the same three absent files. It is now the first, plus a count of how many
+  libraries could not be loaded — which is not the same as how many files are
+  missing: two absent files can stop four libraries from loading.
+
+### Fixed
+
 - **The emulated disk transfers 32 bits per port access instead of 16**, which
   makes a 390 KB write ~26% faster (measured: 365930 and 401218 ms down to
   280703 and 278922). Most of that cost is not the port writes at all: dropping

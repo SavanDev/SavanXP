@@ -158,6 +158,10 @@ const char* media_missing_library(void) {
     return ldso_missing();
 }
 
+unsigned media_missing_count(void) {
+    return ldso_missing_count();
+}
+
 int media_open(struct media* media, const char* path, const struct media_audio_format* audio_out,
                char* error, size_t error_capacity) {
     memset(media, 0, sizeof(*media));

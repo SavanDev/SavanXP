@@ -757,7 +757,21 @@ static int run_window(const char* path) {
      * igual: es la unica forma de que alguien se entere de por que, sin consola. */
     const char* missing = media_missing_library();
     if (missing != NULL) {
-        snprintf(g.message, sizeof(g.message), "Falta %s: no hay motor de reproduccion", missing);
+        /* "falta X" con tres librerias ausentes es una mentira: insinua que solo
+         * falta X. El cargador nombra la primera que no pudo traer y lleva la cuenta
+         * de todas, asi que el mensaje usa las dos. */
+        const unsigned missing_count = media_missing_count();
+        if (missing_count > 1) {
+            /* "no se pudieron cargar N librerias" y no "faltan N": quitar una sola
+             * deja sin cargar a todas las que la necesitan, asi que el numero cuenta
+             * librerias que NO PUDIERON CARGARSE y no archivos ausentes. Con dos
+             * ficheros fuera del volumen el numero puede ser cuatro. */
+            snprintf(g.message, sizeof(g.message),
+                "No se pudieron cargar %u librerias; la primera es %s", missing_count, missing);
+        } else {
+            snprintf(g.message, sizeof(g.message),
+                "Falta %s: no hay motor de reproduccion", missing);
+        }
     }
     playback_init(&g.playback);
     build_widgets();
@@ -835,7 +849,18 @@ int main(int argc, char** argv) {
          * salida estandar es el unico sitio donde pueden decirlo. */
         if (strcmp(mode, "--selftest") == 0 || strcmp(mode, "--probe") == 0 ||
             strcmp(mode, "--gpu-hold") == 0) {
-            printf("mediaplayer: falta %s, y sin ella no hay motor de reproduccion\n", missing);
+            const unsigned missing_count = media_missing_count();
+            if (missing_count > 1) {
+                /* El numero son librerias que no pudieron cargarse, no archivos
+                 * ausentes: quitar una deja sin cargar a todas las que la necesitan.
+                 * Decir "faltan N" seria falso con dos ficheros fuera y cuatro
+                 * librerias sin cargar. */
+                printf("mediaplayer: no se pudieron cargar %u librerias; la primera es %s\n",
+                    missing_count, missing);
+            } else {
+                printf("mediaplayer: falta %s, y sin ella no hay motor de reproduccion\n",
+                    missing);
+            }
             return 2;
         }
     }
