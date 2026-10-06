@@ -97,6 +97,12 @@ int sx_audio_mixer_set_voice_loop(
     size_t voice_index,
     int loop);
 
+/* Nombre que el demonio muestra para este mixer ("doomgeneric"). Vale para
+ * el proximo stream que se anuncie; sin efecto sobre uno ya anunciado. */
+void sx_audio_mixer_set_client_name(
+    struct sx_audio_mixer* mixer,
+    const char* name);
+
 /* Mixes and writes exactly the wall-clock frames since the previous call.
  * Returns 1 after a successful write, 0 when no frame is due, and a negative
  * error after disabling the device and stopping all voices. */

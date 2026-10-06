@@ -199,6 +199,7 @@ static boolean DG_Sound_Init(boolean use_sfx_prefix) {
                             SX_AUDIO_DEFAULT_MAX_DELTA_MS) < 0) {
         return false;
     }
+    sx_audio_mixer_set_client_name(&g_audio_mixer, "doomgeneric");
 
     g_use_sfx_prefix = use_sfx_prefix ? 1 : 0;
     snd_samplerate = (int)g_audio_mixer.info.sample_rate_hz;

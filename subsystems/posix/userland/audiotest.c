@@ -86,6 +86,7 @@ static int run_stream(int fd, const struct savanxp_audio_info* info) {
     struct sx_audio_server_link link;
 
     sx_audio_server_link_init(&link);
+    sx_audio_server_set_client_name(&link, "audiotest");
 
     if (full_period == 0u) {
         full_period = 1u;
@@ -234,6 +235,7 @@ int main(int argc, char** argv) {
         struct sx_audio_server_link link;
 
         sx_audio_server_link_init(&link);
+    sx_audio_server_set_client_name(&link, "audiotest");
         result = sx_audio_server_output(&link, (int)fd, g_samples, info.buffer_bytes, info.sample_rate_hz);
         sx_audio_server_link_close(&link);
     }

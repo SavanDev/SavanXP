@@ -1201,6 +1201,7 @@ int main(int argc, char** argv) {
                             SX_AUDIO_DEFAULT_MAX_DELTA_MS) < 0) {
         eprintf("ccleste: sin dispositivo de audio; el juego corre sin sonido\n");
     }
+    sx_audio_mixer_set_client_name(&ccleste_mixer, "ccleste");
 
     Celeste_P8_set_call_func(ccleste_pico8emu);
 

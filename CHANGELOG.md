@@ -458,6 +458,11 @@ Cut-off notes:
   and sums what clients send over UDP loopback; every writer falls back to
   direct turn-taking without it, so nothing changes where it does not run.
 
+- **Per-application volume.** Streams carry names now, the daemon levels each
+  one, and `volume list` / `volume set <app> <0-100>` drive the census; the
+  mixer, the player, Doom, Celeste and the test tone all introduce
+  themselves.
+
 ### Fixed
 
 - **Celeste's effects no longer saturate at any volume.** Its 16-bit WAVs were

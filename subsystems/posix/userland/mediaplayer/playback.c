@@ -36,6 +36,7 @@ void playback_init(struct playback* playback) {
     playback->audio_fd = -1;
     playback->volume = 100;
     sx_audio_server_link_init(&playback->server_link);
+    sx_audio_server_set_client_name(&playback->server_link, "mediaplayer");
 }
 
 static int has_video(const struct playback* playback) {

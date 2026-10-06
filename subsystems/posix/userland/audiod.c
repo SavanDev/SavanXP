@@ -39,6 +39,8 @@ struct audiod_stream {
     int used;
     uint16_t port;
     uint32_t rate_hz;
+    uint8_t volume; /* 0..100, 100 de fabrica */
+    char name[SAVANXP_AUDIOD_NAME_BYTES];
     uint32_t last_sequence;
     int has_sequence;
     uint64_t last_ms;
@@ -122,12 +124,29 @@ static struct audiod_stream* audiod_register_stream(uint16_t port, uint32_t rate
             stream->used = 1;
             stream->port = port;
             stream->rate_hz = rate_hz;
+            stream->volume = 100;
             stream->last_ms = now_ms;
             eprintf("audiod: cliente en puerto %u (%u Hz)\n", (unsigned int)port, rate_hz);
             return stream;
         }
     }
     return 0;
+}
+
+static void audiod_copy_name(char* out, const char* in)
+{
+    size_t index = 0;
+
+    memset(out, 0, SAVANXP_AUDIOD_NAME_BYTES);
+    if (in == 0)
+    {
+        return;
+    }
+    while (index + 1u < SAVANXP_AUDIOD_NAME_BYTES && in[index] != '\0')
+    {
+        out[index] = in[index];
+        ++index;
+    }
 }
 
 static int audiod_push_frames(
@@ -177,7 +196,67 @@ static int audiod_push_frames(
     return 0;
 }
 
+static void audiod_handle_audio(
+    const unsigned char* data,
+    size_t length,
+    uint16_t source_port,
+    uint64_t now_ms);
+static void audiod_handle_declare(
+    const unsigned char* data,
+    size_t length,
+    uint16_t source_port,
+    uint64_t now_ms);
+static void audiod_handle_set_volume(
+    const unsigned char* data,
+    size_t length,
+    uint64_t now_ms);
+static void audiod_handle_list(
+    int sock_fd,
+    const struct savanxp_sockaddr_in* source,
+    uint64_t now_ms);
+
 static void audiod_handle_datagram(
+    int sock_fd,
+    const unsigned char* data,
+    size_t length,
+    const struct savanxp_sockaddr_in* source,
+    uint64_t now_ms)
+{
+    uint32_t magic = 0;
+
+    if (length >= sizeof(magic))
+    {
+        memcpy(&magic, data, sizeof(magic));
+    }
+    if (magic == SAVANXP_AUDIOD_CONTROL_MAGIC)
+    {
+        uint16_t kind = 0;
+        if (length >= sizeof(magic) + 2u + 2u)
+        {
+            memcpy(&kind, data + sizeof(magic) + 2u, sizeof(kind));
+        }
+        if (kind == SAVANXP_AUDIOD_DECLARE)
+        {
+            audiod_handle_declare(data, length, source->port, now_ms);
+        }
+        else if (kind == SAVANXP_AUDIOD_SET_VOLUME)
+        {
+            audiod_handle_set_volume(data, length, now_ms);
+        }
+        else if (kind == SAVANXP_AUDIOD_LIST)
+        {
+            audiod_handle_list(sock_fd, source, now_ms);
+        }
+        else
+        {
+            ++g_mismatch_packets;
+        }
+        return;
+    }
+    audiod_handle_audio(data, length, source->port, now_ms);
+}
+
+static void audiod_handle_audio(
     const unsigned char* data,
     size_t length,
     uint16_t source_port,
@@ -240,6 +319,120 @@ static void audiod_expire_streams(uint64_t now_ms)
     }
 }
 
+static void audiod_handle_declare(
+    const unsigned char* data,
+    size_t length,
+    uint16_t source_port,
+    uint64_t now_ms)
+{
+    struct savanxp_audiod_declare declare;
+    struct audiod_stream* stream;
+
+    if (length < sizeof(declare))
+    {
+        ++g_dropped_packets;
+        return;
+    }
+    memcpy(&declare, data, sizeof(declare));
+    if (declare.version != SAVANXP_AUDIOD_CONTROL_VERSION ||
+        declare.kind != SAVANXP_AUDIOD_DECLARE)
+    {
+        ++g_mismatch_packets;
+        return;
+    }
+    declare.name[sizeof(declare.name) - 1u] = '\0';
+    stream = audiod_find_stream(source_port);
+    if (stream == 0)
+    {
+        stream = audiod_register_stream(source_port, g_device_rate_hz, now_ms);
+        if (stream == 0)
+        {
+            ++g_dropped_packets;
+            return;
+        }
+    }
+    audiod_copy_name(stream->name, declare.name);
+    stream->last_ms = now_ms;
+}
+
+static void audiod_handle_set_volume(
+    const unsigned char* data,
+    size_t length,
+    uint64_t now_ms)
+{
+    struct savanxp_audiod_set_volume request;
+    struct audiod_stream* stream;
+    size_t index;
+
+    (void)now_ms;
+    if (length < sizeof(request))
+    {
+        ++g_dropped_packets;
+        return;
+    }
+    memcpy(&request, data, sizeof(request));
+    if (request.version != SAVANXP_AUDIOD_CONTROL_VERSION ||
+        request.kind != SAVANXP_AUDIOD_SET_VOLUME || request.volume > 100)
+    {
+        ++g_mismatch_packets;
+        return;
+    }
+    for (index = 0; index < AUDIOD_MAX_STREAMS; ++index)
+    {
+        if (g_streams[index].used && g_streams[index].port == request.target_port)
+        {
+            stream = &g_streams[index];
+            stream->volume = request.volume;
+            return;
+        }
+    }
+    ++g_dropped_packets;
+}
+
+static void audiod_handle_list(
+    int sock_fd,
+    const struct savanxp_sockaddr_in* source,
+    uint64_t now_ms)
+{
+    struct savanxp_audiod_list_reply reply;
+    struct audiod_stream* snapshot[AUDIOD_MAX_STREAMS];
+    size_t count = 0;
+    size_t index;
+
+    (void)now_ms;
+    for (index = 0; index < AUDIOD_MAX_STREAMS; ++index)
+    {
+        if (g_streams[index].used)
+        {
+            snapshot[count++] = &g_streams[index];
+        }
+    }
+    if (count == 0)
+    {
+        memset(&reply, 0, sizeof(reply));
+        reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        reply.kind = SAVANXP_AUDIOD_REPLY;
+        reply.count = 0;
+        reply.index = 0;
+        (void)savanxp_sendto(sock_fd, &reply, sizeof(reply), source);
+        return;
+    }
+    for (index = 0; index < count; ++index)
+    {
+        memset(&reply, 0, sizeof(reply));
+        reply.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        reply.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        reply.kind = SAVANXP_AUDIOD_REPLY;
+        reply.count = (uint8_t)count;
+        reply.index = (uint8_t)index;
+        reply.port = snapshot[index]->port;
+        reply.volume = snapshot[index]->volume;
+        audiod_copy_name(reply.name, snapshot[index]->name);
+        (void)savanxp_sendto(sock_fd, &reply, sizeof(reply), source);
+    }
+}
+
 static int32_t audiod_soft_knee(int32_t mixed)
 {
     /* La misma rodilla del mixer del SDK (0.75 FS, 8:1): la suma de submixes
@@ -286,8 +479,8 @@ static size_t audiod_render(int16_t* out, size_t frame_count)
                 ++stream->underruns;
                 continue;
             }
-            left += stream->fifo[stream->fifo_head * 2u];
-            right += stream->fifo[stream->fifo_head * 2u + 1u];
+            left += (int32_t)stream->fifo[stream->fifo_head * 2u] * (int32_t)stream->volume / 100;
+            right += (int32_t)stream->fifo[stream->fifo_head * 2u + 1u] * (int32_t)stream->volume / 100;
             stream->fifo_head = (stream->fifo_head + 1u) % AUDIOD_FIFO_FRAMES;
             stream->fifo_frames -= 1u;
         }
@@ -403,7 +596,7 @@ static int audiod_serve(int sock_fd, int audio_fd)
         while ((got = savanxp_recvfrom(
                     sock_fd, datagram, sizeof(datagram), &source, 0)) > 0)
         {
-            audiod_handle_datagram(datagram, (size_t)got, source.port, now_ms);
+            audiod_handle_datagram(sock_fd, datagram, (size_t)got, &source, now_ms);
         }
         audiod_expire_streams(now_ms);
 
@@ -590,7 +783,7 @@ static int audiod_selftest(void)
             while ((got = savanxp_recvfrom(
                         (int)daemon_fd, datagram, sizeof(datagram), &source, 0)) > 0)
             {
-                audiod_handle_datagram(datagram, (size_t)got, source.port, uptime_ms());
+                audiod_handle_datagram(daemon_fd, datagram, (size_t)got, &source, uptime_ms());
             }
         }
         if (failed)
@@ -624,7 +817,7 @@ static int audiod_selftest(void)
             goto fail;
         }
         now_ms = uptime_ms();
-        audiod_handle_datagram(datagram, (size_t)got, source.port, now_ms);
+        audiod_handle_datagram(daemon_fd, datagram, (size_t)got, &source, now_ms);
     }
     {
         size_t index;
@@ -654,6 +847,173 @@ static int audiod_selftest(void)
     {
         eprintf("AUDIOD SELFTEST FAIL mezcla inexacta en frame %u\n", (unsigned int)frame);
         goto fail;
+    }
+    /* Nombres, volumen por app y censo: declarar ambos, fijar A a 50 por su
+     * puerto (aprendido del censo) y comprobar la mezcla escalada. */
+    {
+        struct savanxp_audiod_declare declare_a;
+        struct savanxp_audiod_declare declare_b;
+        struct savanxp_sockaddr_in control;
+        struct sx_audio_server_entry census[8];
+        long census_count;
+        uint16_t port_a = 0;
+        size_t i;
+        size_t sent;
+
+        memset(&declare_a, 0, sizeof(declare_a));
+        declare_a.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        declare_a.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        declare_a.kind = SAVANXP_AUDIOD_DECLARE;
+        memcpy(declare_a.name, "test-a", 7);
+        memset(&declare_b, 0, sizeof(declare_b));
+        declare_b.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        declare_b.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        declare_b.kind = SAVANXP_AUDIOD_DECLARE;
+        memcpy(declare_b.name, "test-b", 7);
+        control.ipv4 = SAVANXP_AUDIOD_HOST_IPV4;
+        control.port = SAVANXP_AUDIOD_PORT;
+        control.reserved0 = 0;
+        if (savanxp_sendto((int)sock_a, &declare_a, sizeof(declare_a), &control) !=
+                (long)sizeof(declare_a) ||
+            savanxp_sendto((int)sock_b, &declare_b, sizeof(declare_b), &control) !=
+                (long)sizeof(declare_b))
+        {
+            eprintf("AUDIOD SELFTEST FAIL no se pudo declarar\n");
+            goto fail;
+        }
+        /* Drenar para que el demonio procese los DECLARE antes del censo:
+         * en servicio lo hace el loop, aca hay que bombearlo a mano. */
+        for (;;)
+        {
+            long got = savanxp_recvfrom(
+                (int)daemon_fd, datagram, sizeof(datagram), &source, 0);
+            if (got <= 0)
+            {
+                break;
+            }
+            audiod_handle_datagram(daemon_fd, datagram, (size_t)got, &source, uptime_ms());
+        }
+        /* Censo a mano (no vale sx_audio_server_list: nadie bombearia al
+         * demonio mientras espera las respuestas). */
+        {
+            struct savanxp_audiod_list_query query;
+            long collected = 0;
+            int rounds = 0;
+            memset(&query, 0, sizeof(query));
+            query.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+            query.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+            query.kind = SAVANXP_AUDIOD_LIST;
+            if (savanxp_sendto((int)sock_a, &query, sizeof(query), &control) !=
+                (long)sizeof(query))
+            {
+                eprintf("AUDIOD SELFTEST FAIL no se pudo pedir censo\n");
+                goto fail;
+            }
+            census_count = -1;
+            while (rounds < 20 && collected < 2)
+            {
+                long got = savanxp_recvfrom(
+                    (int)daemon_fd, datagram, sizeof(datagram), &source, 0);
+                uint64_t now_ms = uptime_ms();
+                long answer;
+                if (got > 0)
+                {
+                    audiod_handle_datagram(
+                        daemon_fd, datagram, (size_t)got, &source, now_ms);
+                }
+                answer = savanxp_recvfrom(
+                    (int)sock_a, datagram, sizeof(datagram), &source, 20);
+                if (answer == (long)sizeof(struct savanxp_audiod_list_reply))
+                {
+                    struct savanxp_audiod_list_reply reply;
+                    memcpy(&reply, datagram, sizeof(reply));
+                    if (reply.magic == SAVANXP_AUDIOD_CONTROL_MAGIC &&
+                        reply.version == SAVANXP_AUDIOD_CONTROL_VERSION &&
+                        reply.kind == SAVANXP_AUDIOD_REPLY && reply.count == 2 &&
+                        reply.index < 2u)
+                    {
+                        census[reply.index].port = reply.port;
+                        census[reply.index].volume = reply.volume;
+                        memcpy(census[reply.index].name, reply.name,
+                               sizeof(census[reply.index].name));
+                        census[reply.index].name[sizeof(census[reply.index].name) - 1u] = '\0';
+                        ++collected;
+                    }
+                }
+                ++rounds;
+            }
+            if (collected == 2)
+            {
+                census_count = 2;
+            }
+        }
+        if (census_count != 2)
+        {
+            eprintf("AUDIOD SELFTEST FAIL censo=%d\n", (int)census_count);
+            goto fail;
+        }
+        for (i = 0; i < 2u; ++i)
+        {
+            if (strcmp(census[i].name, "test-a") == 0)
+            {
+                port_a = census[i].port;
+            }
+            if (census[i].volume != 100)
+            {
+                eprintf("AUDIOD SELFTEST FAIL volumen inicial %u\n",
+                        (unsigned int)census[i].volume);
+                goto fail;
+            }
+        }
+        if (port_a == 0)
+        {
+            eprintf("AUDIOD SELFTEST FAIL test-a sin puerto\n");
+            goto fail;
+        }
+        if (sx_audio_server_set_volume((int)sock_a, port_a, 50) < 0)
+        {
+            eprintf("AUDIOD SELFTEST FAIL no se pudo fijar volumen\n");
+            goto fail;
+        }
+        for (sent = 0; sent < 480u;)
+        {
+            size_t chunk = 480u - sent;
+            long got;
+            if (chunk > SAVANXP_AUDIOD_MAX_FRAMES)
+            {
+                chunk = SAVANXP_AUDIOD_MAX_FRAMES;
+            }
+            if (audiod_selftest_send_one((int)sock_a, 0, &sequence_a, 4800u + sent, chunk) < 0 ||
+                audiod_selftest_send_one((int)sock_b, 1, &sequence_b, 4800u + sent, chunk) < 0)
+            {
+                eprintf("AUDIOD SELFTEST FAIL no se pudo reenviar\n");
+                goto fail;
+            }
+            sent += chunk;
+            while ((got = savanxp_recvfrom(
+                        (int)daemon_fd, datagram, sizeof(datagram), &source, 0)) > 0)
+            {
+                audiod_handle_datagram(daemon_fd, datagram, (size_t)got, &source, uptime_ms());
+            }
+        }
+        (void)audiod_render(mixed, 480u);
+        ok = 1;
+        for (frame = 0; frame < 480u; ++frame)
+        {
+            int16_t a = (int16_t)(audiod_selftest_tone(0, 4800u + frame) * 50 / 100);
+            int16_t expect = (int16_t)(a + audiod_selftest_tone(1, 4800u + frame));
+            if (mixed[frame * 2u] != expect || mixed[frame * 2u + 1u] != expect)
+            {
+                ok = 0;
+                break;
+            }
+        }
+        if (!ok)
+        {
+            eprintf("AUDIOD SELFTEST FAIL mezcla con volumen inexacta en frame %u\n",
+                    (unsigned int)frame);
+            goto fail;
+        }
     }
     if (savanxp_write((int)audio_fd, mixed, sizeof(mixed)) != (long)sizeof(mixed))
     {

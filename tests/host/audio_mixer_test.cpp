@@ -16,6 +16,7 @@ int g_write_fails = 0;
 int g_write_busy = 0;
 int g_sendto_fails = 0;
 long g_sendto_calls = 0;
+long g_declare_count = 0;
 unsigned char g_last_datagram[1024];
 size_t g_last_datagram_bytes = 0;
 size_t g_last_write_bytes = 0;
@@ -103,7 +104,47 @@ long savanxp_sendto(
     ++g_sendto_calls;
     g_last_datagram_bytes = count;
     memcpy(g_last_datagram, buffer, count);
+    if (count >= 4) {
+        uint32_t magic = 0;
+        memcpy(&magic, buffer, 4);
+        if (magic == SAVANXP_AUDIOD_CONTROL_MAGIC) {
+            ++g_declare_count;
+        }
+    }
     return static_cast<long>(count);
+}
+
+static unsigned char g_recv_script[8][64];
+static size_t g_recv_script_lengths[8];
+static size_t g_recv_script_count = 0;
+static size_t g_recv_script_index = 0;
+
+long savanxp_recvfrom(
+    int fd,
+    void* buffer,
+    size_t count,
+    struct savanxp_sockaddr_in* address,
+    unsigned long timeout_ms)
+{
+    (void)timeout_ms;
+    if (fd != 42 || buffer == nullptr) {
+        return -1;
+    }
+    if (g_recv_script_index >= g_recv_script_count) {
+        return -SAVANXP_ETIMEDOUT;
+    }
+    size_t take = g_recv_script_lengths[g_recv_script_index];
+    if (take > count) {
+        take = count;
+    }
+    memcpy(buffer, g_recv_script[g_recv_script_index], take);
+    if (address != 0) {
+        address->ipv4 = 0;
+        address->port = 0;
+        address->reserved0 = 0;
+    }
+    ++g_recv_script_index;
+    return static_cast<long>(take);
 }
 
 unsigned long uptime_ms(void) {
@@ -271,10 +312,12 @@ int main() {
         check(sx_audio_mixer_start_voice(&remote, 0, square, sizeof(square), 44100,
                                          SX_AUDIO_PITCH_NORMAL_Q16, 127, 127) == 0,
               "arranca la voz remota");
+        sx_audio_mixer_set_client_name(&remote, "test");
         g_write_busy = 1;
         g_now_ms += 10;
         check(sx_audio_mixer_update(&remote) == 1, "con EBUSY no se desactiva");
         check(remote.server_link.mode == 2, "el EBUSY lo pasa a remoto");
+        check(g_declare_count >= 1, "al pasar a remoto se presenta");
         check(g_sendto_calls > 0 && g_last_datagram_bytes <= 1024, "manda datagramas");
         {
             uint32_t magic = 0;
@@ -299,7 +342,79 @@ int main() {
         check(sx_audio_mixer_update(&remote) == 1, "sin demonio no se desactiva");
         check(remote.server_link.mode == 1, "sin demonio vuelve a directo");
         g_sendto_fails = 0;
+        {
+            long declares = g_declare_count;
+            g_now_ms += 15000u;
+            /* La voz termino hace rato; reactivarla para que haya que mezclar. */
+            check(sx_audio_mixer_start_voice(&remote, 0, square, sizeof(square), 44100,
+                                             SX_AUDIO_PITCH_NORMAL_Q16, 127, 127) == 0,
+                  "rearranca la voz para el heartbeat");
+            g_write_busy = 1;
+            check(sx_audio_mixer_update(&remote) == 1, "sigue remoto tras el hueco");
+            check(g_declare_count > declares, "el heartbeat re-anuncia el nombre");
+            g_write_busy = 0;
+        }
         sx_audio_mixer_destroy(&remote);
+    }
+
+    {
+        /* Censo: dos respuestas enlatadas con nombres y niveles, y el caso
+         * vacio. El demonio real lo cubre el selftest en QEMU; aca va el
+         * parseo del SDK, que sin esto no lo ejercita nadie. */
+        struct sx_audio_server_entry census[8];
+        struct savanxp_audiod_list_reply answers[2];
+        long total;
+        memset(answers, 0, sizeof(answers));
+        answers[0].magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        answers[0].version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        answers[0].kind = SAVANXP_AUDIOD_REPLY;
+        answers[0].count = 2;
+        answers[0].index = 0;
+        answers[0].port = 100;
+        answers[0].volume = 50;
+        memcpy(answers[0].name, "test-a", 7);
+        answers[1].magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+        answers[1].version = SAVANXP_AUDIOD_CONTROL_VERSION;
+        answers[1].kind = SAVANXP_AUDIOD_REPLY;
+        answers[1].count = 2;
+        answers[1].index = 1;
+        answers[1].port = 200;
+        answers[1].volume = 100;
+        memcpy(answers[1].name, "test-b", 7);
+        memcpy(g_recv_script[0], &answers[0], sizeof(answers[0]));
+        g_recv_script_lengths[0] = sizeof(answers[0]);
+        memcpy(g_recv_script[1], &answers[1], sizeof(answers[1]));
+        g_recv_script_lengths[1] = sizeof(answers[1]);
+        g_recv_script_count = 2;
+        g_recv_script_index = 0;
+        memset(census, 0xAA, sizeof(census));
+        total = sx_audio_server_list(42, census, 8);
+        check(total == 2, "el censo dice cuantos hay");
+        check(census[0].port == 100 && census[0].volume == 50 &&
+                  strcmp(census[0].name, "test-a") == 0,
+            "la primera entrada trae puerto, nivel y nombre");
+        check(census[1].port == 200 && census[1].volume == 100 &&
+                  strcmp(census[1].name, "test-b") == 0,
+            "la segunda entrada trae puerto, nivel y nombre");
+        g_recv_script_count = 0;
+        g_recv_script_index = 0;
+        total = sx_audio_server_list(42, census, 8);
+        check(total == -SAVANXP_ETIMEDOUT, "sin respuestas hay timeout, no censo vacio");
+        {
+            struct savanxp_audiod_list_reply empty;
+            memset(&empty, 0, sizeof(empty));
+            empty.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+            empty.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+            empty.kind = SAVANXP_AUDIOD_REPLY;
+            empty.count = 0;
+            empty.index = 0;
+            memcpy(g_recv_script[0], &empty, sizeof(empty));
+            g_recv_script_lengths[0] = sizeof(empty);
+            g_recv_script_count = 1;
+            g_recv_script_index = 0;
+            total = sx_audio_server_list(42, census, 8);
+            check(total == 0, "el censo vacio vuelve con su respuesta");
+        }
     }
 
     printf(g_failures == 0 ? "AUDIO MIXER TEST PASS\n" : "AUDIO MIXER TEST FAIL\n");

@@ -64,6 +64,7 @@ void sx_audio_mixer_disable(struct sx_audio_mixer* mixer)
     }
     mixer->server_link.mode = 0;
     mixer->server_link.sequence = 0;
+    mixer->server_link.last_declare_ms = 0;
     memset(&mixer->info, 0, sizeof(mixer->info));
     mixer->frame_remainder = 0;
     mixer->last_update_ms = 0;
@@ -244,6 +245,17 @@ int sx_audio_mixer_set_voice_loop(
     return 0;
 }
 
+void sx_audio_mixer_set_client_name(
+    struct sx_audio_mixer* mixer,
+    const char* name)
+{
+    if (mixer == 0)
+    {
+        return;
+    }
+    sx_audio_server_set_client_name(&mixer->server_link, name);
+}
+
 static int sx_audio_mixer_ensure_capacity(struct sx_audio_mixer* mixer, size_t frames)
 {
     int16_t* buffer;
@@ -405,6 +417,8 @@ void sx_audio_server_link_init(struct sx_audio_server_link* link)
     link->mode = 0;
     link->udp_fd = -1;
     link->sequence = 0;
+    memset(link->client_name, 0, sizeof(link->client_name));
+    link->last_declare_ms = 0;
 }
 
 void sx_audio_server_link_close(struct sx_audio_server_link* link)
@@ -417,9 +431,179 @@ void sx_audio_server_link_close(struct sx_audio_server_link* link)
     {
         savanxp_close(link->udp_fd);
     }
+    /* El nombre configurado sobrevive: es del programa, no del socket, y
+     * el proximo stream tiene que anunciarse igual. */
     link->mode = 0;
     link->udp_fd = -1;
     link->sequence = 0;
+    link->last_declare_ms = 0;
+}
+
+void sx_audio_server_set_client_name(
+    struct sx_audio_server_link* link,
+    const char* name)
+{
+    size_t index = 0;
+
+    if (link == 0)
+    {
+        return;
+    }
+    memset(link->client_name, 0, sizeof(link->client_name));
+    if (name == 0)
+    {
+        return;
+    }
+    while (index + 1u < sizeof(link->client_name) && name[index] != '\0')
+    {
+        link->client_name[index] = name[index];
+        ++index;
+    }
+}
+
+static void sx_audio_server_address(struct savanxp_sockaddr_in* address)
+{
+    address->ipv4 = SAVANXP_AUDIOD_HOST_IPV4;
+    address->port = SAVANXP_AUDIOD_PORT;
+    address->reserved0 = 0;
+}
+
+static long sx_audio_server_declare(int socket_fd, const char* name)
+{
+    struct savanxp_audiod_declare declare;
+    struct savanxp_sockaddr_in address;
+
+    if (socket_fd < 0 || name == 0 || name[0] == '\0')
+    {
+        return -SAVANXP_EINVAL;
+    }
+    memset(&declare, 0, sizeof(declare));
+    declare.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    declare.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    declare.kind = SAVANXP_AUDIOD_DECLARE;
+    {
+        size_t index = 0;
+        while (index + 1u < sizeof(declare.name) && name[index] != '\0')
+        {
+            declare.name[index] = name[index];
+            ++index;
+        }
+    }
+    sx_audio_server_address(&address);
+    if (savanxp_sendto(socket_fd, &declare, sizeof(declare), &address) != (long)sizeof(declare))
+    {
+        return -SAVANXP_EIO;
+    }
+    return 0;
+}
+
+long sx_audio_server_set_volume(
+    int socket_fd,
+    uint16_t target_port,
+    int volume)
+{
+    struct savanxp_audiod_set_volume request;
+    struct savanxp_sockaddr_in address;
+
+    if (socket_fd < 0 || target_port == 0 || volume < 0 || volume > 100)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    memset(&request, 0, sizeof(request));
+    request.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    request.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    request.kind = SAVANXP_AUDIOD_SET_VOLUME;
+    request.target_port = target_port;
+    request.volume = (uint8_t)volume;
+    sx_audio_server_address(&address);
+    if (savanxp_sendto(socket_fd, &request, sizeof(request), &address) != (long)sizeof(request))
+    {
+        return -SAVANXP_EIO;
+    }
+    return 0;
+}
+
+long sx_audio_server_list(
+    int socket_fd,
+    struct sx_audio_server_entry* out,
+    size_t capacity)
+{
+    struct savanxp_audiod_list_query query;
+    struct savanxp_sockaddr_in address;
+    struct savanxp_sockaddr_in source;
+    unsigned char datagram[128];
+    long total = -1;
+    long collected = 0;
+
+    if (socket_fd < 0 || (out == 0 && capacity != 0))
+    {
+        return -SAVANXP_EINVAL;
+    }
+    memset(&query, 0, sizeof(query));
+    query.magic = SAVANXP_AUDIOD_CONTROL_MAGIC;
+    query.version = SAVANXP_AUDIOD_CONTROL_VERSION;
+    query.kind = SAVANXP_AUDIOD_LIST;
+    sx_audio_server_address(&address);
+    if (out != 0 && capacity != 0)
+    {
+        /* Llenar de ceros lo que no llegue: una respuesta perdida no puede
+         * dejar basura legible en una entrada. */
+        memset(out, 0, capacity * sizeof(*out));
+    }
+    if (savanxp_sendto(socket_fd, &query, sizeof(query), &address) != (long)sizeof(query))
+    {
+        return -SAVANXP_EIO;
+    }
+    for (;;)
+    {
+        long got = savanxp_recvfrom(
+            socket_fd, datagram, sizeof(datagram), &source, 200);
+        struct savanxp_audiod_list_reply reply;
+
+        if (got == -SAVANXP_ETIMEDOUT || got == -SAVANXP_EAGAIN)
+        {
+            break;
+        }
+        if (got != (long)sizeof(reply))
+        {
+            continue;
+        }
+        memcpy(&reply, datagram, sizeof(reply));
+        if (reply.magic != SAVANXP_AUDIOD_CONTROL_MAGIC ||
+            reply.version != SAVANXP_AUDIOD_CONTROL_VERSION ||
+            reply.kind != SAVANXP_AUDIOD_REPLY)
+        {
+            continue;
+        }
+        if (total < 0)
+        {
+            total = reply.count;
+        }
+        else if (reply.count != (uint8_t)total)
+        {
+            continue;
+        }
+        if (reply.index < (uint8_t)total && (size_t)reply.index < capacity && out != 0)
+        {
+            out[reply.index].port = reply.port;
+            out[reply.index].volume = reply.volume;
+            memcpy(out[reply.index].name, reply.name, sizeof(out[reply.index].name));
+            out[reply.index].name[sizeof(out[reply.index].name) - 1u] = '\0';
+            ++collected;
+        }
+        if (total >= 0 && collected >= total)
+        {
+            break;
+        }
+    }
+    /* Sin ninguna respuesta valida no hay censo: el demonio no contesto
+     * (caido a mitad de camino) en vez de un censo vacio, que vuelve con
+     * su propia respuesta de count 0. */
+    if (total < 0)
+    {
+        return -SAVANXP_ETIMEDOUT;
+    }
+    return total;
 }
 
 long sx_audio_server_send(
@@ -469,6 +653,31 @@ long sx_audio_server_send(
     return 0;
 }
 
+/* Re-anuncia el nombre cada tanto: la entrada expira con el silencio, un
+ * demonio nuevo no conoce las viejas, y un DECLARE se puede perder como
+ * cualquier datagrama. Barato (40 bytes cada 10 s) y sin estado que fallar. */
+#define SX_AUDIO_SERVER_DECLARE_PERIOD_MS 10000u
+
+static void sx_audio_server_heartbeat(struct sx_audio_server_link* link)
+{
+    uint64_t now_ms;
+
+    if (link->client_name[0] == '\0' || link->udp_fd < 0)
+    {
+        return;
+    }
+    now_ms = (uint64_t)uptime_ms();
+    if (link->last_declare_ms != 0 &&
+        now_ms - link->last_declare_ms < (uint64_t)SX_AUDIO_SERVER_DECLARE_PERIOD_MS)
+    {
+        return;
+    }
+    if (sx_audio_server_declare(link->udp_fd, link->client_name) == 0)
+    {
+        link->last_declare_ms = now_ms;
+    }
+}
+
 long sx_audio_server_output(
     struct sx_audio_server_link* link,
     int audio_fd,
@@ -487,14 +696,13 @@ long sx_audio_server_output(
         if (sx_audio_server_send(
                 link->udp_fd, &link->sequence, frames, bytes / 4u, rate_hz) == 0)
         {
+            sx_audio_server_heartbeat(link);
             return 1;
         }
+        /* Demonio caido: el socket sirve igual para el proximo (mismo
+         * puerto bien conocido), asi que no se cierra; abajo se prueba
+         * directo y el episodio remoto que venga re-declara. */
         link->mode = 0;
-        if (link->udp_fd >= 0)
-        {
-            savanxp_close(link->udp_fd);
-            link->udp_fd = -1;
-        }
     }
     /* Directo o indeciso: el write decide. Exito = directo de ahora en mas;
      * EBUSY = otro tiene el device, se intenta remoto abajo; cualquier otro
@@ -518,6 +726,13 @@ long sx_audio_server_output(
             return sock;
         }
         link->udp_fd = (int)sock;
+    }
+    if (link->client_name[0] != '\0')
+    {
+        /* Episodio remoto nuevo (o reanudado): presentar el stream antes
+         * del primer slice para que nazca con nombre. */
+        (void)sx_audio_server_declare(link->udp_fd, link->client_name);
+        link->last_declare_ms = uptime_ms();
     }
     if (sx_audio_server_send(
             link->udp_fd, &link->sequence, frames, bytes / 4u, rate_hz) == 0)

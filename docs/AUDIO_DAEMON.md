@@ -34,6 +34,14 @@ Each client sends at the device rate, which it reads with `AUDIO_IOC_GET_INFO`
 (opening never contends). The daemon only mixes streams that match its own
 rate.
 
+Control rides the same socket under another magic (`SAUC`): `DECLARE` names
+the sender's own stream, `SET_VOLUME` levels any stream by port, and `LIST`
+takes a census (the daemon answers one datagram per stream with a count, so
+an empty census still answers). No handshake here either: names attach on
+arrival, volumes persist while the stream lives, and anything malformed is
+dropped and counted. There is deliberately no access control, matching a
+single-user machine where every program already shares the screen.
+
 ## Who holds the device
 
 Whoever writes first keeps it; there is no preemption. init spawns audiod
