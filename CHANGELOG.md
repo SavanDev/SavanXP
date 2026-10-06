@@ -96,7 +96,7 @@ Cut-off notes:
   launches on click and closes on toggle or outside click. Mouse only, no cascade.
 
 - **The Start menu gains a footer, a banner strip, a logo button and a self-listed launcher.**
-  Shut Down (with its icon) and Restart over a margin above the taskbar, a 24px
+  Shut Down (with its icon) and Restart with two-step confirm over a margin, a 24px
   gradient strip in title blue, the brand logo on Start, Program Manager under System.
 
 - **`libffmpeg.so.0.4`, FFmpeg's five components as one shared library.** The

@@ -14,10 +14,11 @@
  *
  * Cada apertura es un proceso nuevo que escanea el catalogo de progman al
  * arrancar, asi que siempre esta fresco sin cache que invalidar. Lista plana
- * por grupos (cabecera + items con icono y nombre); sin cascada, sin teclado
- * y sin shutdown -- solo mouse, como el popup de layout. Se cierra solo
- * (exit) al lanzar, por toggle del boton Start, o por click afuera (el WM lo
- * destruye). Lo que no entra se scrollea con la rueda.
+ * por grupos (cabecera + items con icono y nombre), mas Apagar/Reiniciar con
+ * confirmacion al pie; sin cascada y sin teclado -- solo mouse, como el popup
+ * de layout. Se cierra solo (exit) al lanzar, por toggle del boton Start, o
+ * por click afuera (el WM lo destruye). Lo que no entra se scrollea con la
+ * rueda. El Si real apaga la VM y no se prueba en automation.
  */
 
 #define STARTMENU_MARGIN 2
@@ -276,6 +277,8 @@ static void startmenu_draw_icon(struct sx_painter *painter, const struct desktop
 }
 
 static const char *k_footer_labels[STARTMENU_FOOTER_ROWS] = {"Shut Down", "Restart"};
+static const char *k_footer_armed_labels[STARTMENU_FOOTER_ROWS] = {"Yes, shut down", "Yes, restart"};
+static const char *k_footer_armed_cancel = "No";
 
 /* Rect de la fila de pie `action` (0 = Shut Down, 1 = Restart). El pie va
  * pegado abajo, sobre la vista, y no scrollea con el contenido: primero el
@@ -289,7 +292,7 @@ static struct sx_rect startmenu_footer_rect(int view_x, int view_bottom, int vie
         STARTMENU_ROW_HEIGHT);
 }
 
-static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int hot_footer, int scroll)
+static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int hot_footer, int armed, int scroll)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
@@ -388,7 +391,8 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         sx_painter_pop_clip(&painter);
     }
 
-    /* Pie fijo: separador y las dos acciones, pegadas a la barra. */
+    /* Pie fijo: separador y las dos acciones, pegadas a la barra. Sin armar
+     * son Shut Down / Restart; armada una, la fila 0 confirma y la 1 cancela. */
     sx_painter_hline(
         &painter,
         view.x,
@@ -401,28 +405,40 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         int selected = (action == hot_footer);
         uint32_t background = selected ? SXGUI_COLOR_SELECT : SXGUI_COLOR_FACE;
         uint32_t text_color = selected ? SXGUI_COLOR_SELECT_TEXT : SXGUI_COLOR_TEXT;
+        const char *label = k_footer_labels[action];
         int text_x = rect.x + 4 + STARTMENU_ICON_SIZE + 4;
         int text_y = rect.y + (rect.height - gfx_text_height()) / 2;
 
         sx_painter_fill_rect(&painter, rect, background);
-        if (action == STARTMENU_ACTION_SHUTDOWN)
+        if (armed < 0)
         {
-            struct savanxp_fb_info icon_info;
-            struct sx_bitmap icon_bitmap;
+            if (action == STARTMENU_ACTION_SHUTDOWN)
+            {
+                struct savanxp_fb_info icon_info;
+                struct sx_bitmap icon_bitmap;
 
-            icon_info.width = k_shutdown_icon.width;
-            icon_info.height = k_shutdown_icon.height;
-            icon_info.pitch = k_shutdown_icon.width * 4u;
-            icon_info.bpp = 32;
-            icon_info.buffer_size = icon_info.pitch * k_shutdown_icon.height;
-            sx_bitmap_wrap(&icon_bitmap, (uint32_t *)k_shutdown_icon.pixels, &icon_info, SX_PIXEL_FORMAT_BGRA8888);
-            sx_painter_blit_bitmap(
-                &painter,
-                &icon_bitmap,
-                rect.x + 4,
-                rect.y + (rect.height - (int)k_shutdown_icon.height) / 2);
+                icon_info.width = k_shutdown_icon.width;
+                icon_info.height = k_shutdown_icon.height;
+                icon_info.pitch = k_shutdown_icon.width * 4u;
+                icon_info.bpp = 32;
+                icon_info.buffer_size = icon_info.pitch * k_shutdown_icon.height;
+                sx_bitmap_wrap(&icon_bitmap, (uint32_t *)k_shutdown_icon.pixels, &icon_info, SX_PIXEL_FORMAT_BGRA8888);
+                sx_painter_blit_bitmap(
+                    &painter,
+                    &icon_bitmap,
+                    rect.x + 4,
+                    rect.y + (rect.height - (int)k_shutdown_icon.height) / 2);
+            }
         }
-        sx_painter_draw_text(&painter, text_x, text_y, k_footer_labels[action], text_color);
+        else if (action == 0)
+        {
+            label = k_footer_armed_labels[armed];
+        }
+        else
+        {
+            label = k_footer_armed_cancel;
+        }
+        sx_painter_draw_text(&painter, text_x, text_y, label, text_color);
     }
 }
 
@@ -435,6 +451,7 @@ int main(void)
     int view_y = 0;
     int view_height = 0;
     int scroll = 0;
+    int armed = -1;
     int hot_row = -1;
     int hot_footer = -1;
     int pressed_row = -1;
@@ -466,6 +483,7 @@ int main(void)
                 (void)gfx_apply_resize_event(&gfx, &event);
                 startmenu_view(&gfx.info, &view_x, &view_y, &view_height);
                 scroll = 0;
+                armed = -1;
                 hot_row = -1;
                 hot_footer = -1;
                 pressed_row = -1;
@@ -523,16 +541,29 @@ int main(void)
             {
                 if (footer >= 0 && footer == pressed_footer)
                 {
-                    /* Sin confirmacion en la version recortada: el click es
-                     * deliberado sobre la fila del pie. */
-                    if (footer == STARTMENU_ACTION_REBOOT)
+                    /* Confirmacion en dos pasos: el primer click arma, el
+                     * segundo sobre la fila 0 ejecuta y sobre la 1 cancela.
+                     * El Si real no se prueba en automation (apaga la VM). */
+                    if (armed < 0)
                     {
-                        (void)power_reboot();
+                        armed = footer;
+                    }
+                    else if (footer == 0)
+                    {
+                        if (armed == STARTMENU_ACTION_REBOOT)
+                        {
+                            (void)power_reboot();
+                        }
+                        else
+                        {
+                            (void)power_shutdown();
+                        }
                     }
                     else
                     {
-                        (void)power_shutdown();
+                        armed = -1;
                     }
+                    needs_repaint = 1;
                 }
                 else if (row >= 0 && row == pressed_row)
                 {
@@ -552,7 +583,7 @@ int main(void)
 
         if (needs_repaint)
         {
-            startmenu_paint(&gfx, hot_row, hot_footer, scroll);
+            startmenu_paint(&gfx, hot_row, hot_footer, armed, scroll);
             if (gfx_present(&gfx, gfx.pixels) < 0)
             {
                 break;

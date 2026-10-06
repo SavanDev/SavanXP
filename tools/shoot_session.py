@@ -324,6 +324,8 @@ SHADOW = (128, 128, 128)
 # la barra de tareas.
 FIELD = (255, 255, 255)
 TEXT = (0, 0, 0)
+SELECT = (0, 0, 128)
+SELECT_TEXT = (255, 255, 255)
 
 # Interlineado del toolkit, no de la fuente: sxgui_row_height() en sxgui.c es
 # gfx_text_height() + 4. La fuente Noto viene con SX_NOTO_ASCENT 14 y DESCENT 4, o
@@ -934,7 +936,35 @@ def scenario_startmenu(s):
     reopened = wait_menu_open(s, "menu-reabierto")
     rx, ry, rw, rh = startmenu_rect(reopened)
     expect_pixel(reopened, rx + 2 + STARTMENU_STRIP_WIDTH + 2, ry + 4, FACE, "menu reabierto: contenido en cara")
+    # Confirmacion en dos pasos: click en Shut Down arma ("Yes, shut down"),
+    # click en No desarma. El Si real apaga la VM y no se clickea.
+    footer_y = ry + 2 + (512 - 4 - 55)
+    # Caja holgada en vertical: incluye ascendentes y descendentes ("Yes,
+    # shut down" tiene 'y'). find_text exige TODOS los pixeles del patron
+    # dentro de la region, asi que recortar un descendente falla siempre.
+    shutdown_box = (rx + 28, footer_y + 3, rx + 230, footer_y + 35)
+    s.qmp.move_to(rx + 129, footer_y + 19)
+    s.qmp.click()
+    time.sleep(1.0)
+    # Al extremo derecho de la misma fila: sigue seleccionada pero el cursor
+    # no tapa los glifos (la afirmacion exige todos los pixeles del patron).
+    s.qmp.move_to(rx + 210, footer_y + 19)
+    time.sleep(0.5)
+    armed = s.shot("menu-armado")
+    # El cursor quedo sobre la fila: se pinta seleccionada (blanco sobre azul).
+    # solid_only: el borde antialiaseado sobre degradado no se predice con un
+    # solo color (ver find_text); el nucleo basta para identificar la letra.
+    expect_text(armed, shutdown_box, "Yes, shut down", SELECT_TEXT, SELECT, "el pie pide confirmacion",
+                solid_only=True)
+    s.qmp.move_to(rx + 129, footer_y + 43)
+    s.qmp.click()
+    time.sleep(1.0)
+    s.qmp.move_to(rx + 210, footer_y + 43)
+    time.sleep(0.5)
+    disarmed = s.shot("menu-desarmado")
+    expect_text(disarmed, shutdown_box, "Shut Down", TEXT, FACE, "el No desarma el pie", solid_only=True)
     # Y el toggle lo vuelve a cerrar.
+    s.qmp.move_to(*start_button_center(disarmed))
     s.qmp.click()
     time.sleep(2.0)
     s.shot("menu-cerrado")
