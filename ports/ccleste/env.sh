@@ -35,21 +35,25 @@ FRESH_ELF="$WORK/ccleste.elf"
 OUTPUT="$OUTPUT_ROOT/external/ccleste.elf"
 STAMPED="$OUTPUT_ROOT/ccleste/ccleste"
 
-# The 23 sound effects decode to 772 KiB of unsigned 8-bit mono PCM, which does
-# not fit the 256 KiB default arena, so the port asks for more up front. The heap
-# lives in .bss: it costs address space, not image bytes.
-SX_HEAP_SIZE="$((1024 * 1024))"
+# The 23 sound effects decode to 772 KiB of unsigned 8-bit mono PCM, and the
+# five music loops decode to about 4 MB more, so the port asks for more heap
+# up front. The heap lives in .bss: it costs address space, not image bytes.
+SX_HEAP_SIZE="$((8 * 1024 * 1024))"
 
 # Celeste Classic uses floating point (sin/cos/fmodf/floorf) in its update step,
 # so this port uses the SSE/SSE2 ABI and links the SDK math runtime, exactly
 # like the FFmpeg port. The non-SSE path only exposes four double x87 helpers.
+#
+# The music comes from libffmpeg.so.0.4, so this port links PIE like mediaplayer
+# (same profile: PIC objects, -pie, DT_NEEDED, PT_INTERP): -fno-pic objects
+# cannot go into a shared-library dependency graph, and -static leaves no
+# DT_NEEDED for the loader to map.
 SX_TARGET_CFLAGS=(
     -ffreestanding
     -fstack-protector-strong
-    -fno-pic
-    -fno-pie
+    -fPIC
     -mno-red-zone
-    -mcmodel=small
+    -mcmodel=medium
     -mno-mmx
     -msse
     -msse2
@@ -66,12 +70,27 @@ SIZE_CMD="${SAVANXP_SIZE:-llvm-size}"
 PYTHON="${SAVANXP_PYTHON:-python3}"
 
 # The target compiler is freestanding. The link driver uses the Linux triple so
-# clang delegates to ld.lld. -nostdlib plus the SDK linker script already leave
-# the result without a PT_INTERP, so no -no-pie is needed here.
+# clang delegates to ld.lld. The PIE profile mirrors mediaplayer's: no -static,
+# no fixed linker script, -pie with an explicit entry, --export-dynamic so the
+# loader has symbols to resolve the libraries against, and --dynamic-linker
+# with the path the interpreter would have as a file of its own (PT_INTERP is
+# recorded but not executed yet: the kernel maps the image and crt0 runs the
+# loader linked inside the program).
 SX_CC="$CLANG -target x86_64-unknown-none-elf"
 SX_LD="$LINK_CC -target x86_64-unknown-linux-gnu"
-SX_TARGET_LDFLAGS="-nostdlib -static -fuse-ld=lld -Wl,-T,$SDK/linker.ld"
-SX_TARGET_LDFLAGS="$SX_TARGET_LDFLAGS -Wl,-z,max-page-size=0x1000 -Wl,--build-id=none"
+SX_TARGET_LDFLAGS=(
+    -nostdlib -fuse-ld=lld -pie
+    -Wl,-z,max-page-size=0x1000 -Wl,--dynamic-linker,/disk/lib/ld.so.0.4
+    -Wl,--build-id=none -Wl,--export-dynamic -Wl,--gc-sections -Wl,-e,_start
+)
+
+# libffmpeg.so.0.4 comes from the FFmpeg port (same artifacts mediaplayer uses:
+# the shared object plus the public headers and the generated config.h). The
+# work tree is found by glob so a version bump does not edit this file; with
+# --skip-port nothing compiles and none of this is needed.
+FFMPEG_LIB="$OUTPUT_ROOT/external/libffmpeg.so.0.4"
+FFMPEG_BUILD="$OUTPUT_ROOT/ports/ffmpeg/work/build"
+FFMPEG_SRC=""
 
 # The game data is not vendored: the port installs the upstream data/ tree under
 # /disk/games/celeste and .gitignore keeps it out of the repository.

@@ -35,6 +35,10 @@ struct sx_audio_voice {
     int left_gain;
     int right_gain;
     int active;
+    /* Repite la muestra al terminar en vez de detener la voz, para loops
+     * cortos (musica). Lo pone el programa con sx_audio_mixer_set_voice_loop;
+     * arrancar una voz lo apaga: el loop es opt-in por arranque. */
+    int loop;
 };
 
 struct sx_audio_mixer {
@@ -81,6 +85,12 @@ int sx_audio_mixer_start_voice(
     int separation);
 int sx_audio_mixer_stop_voice(struct sx_audio_mixer* mixer, size_t voice_index);
 int sx_audio_mixer_voice_playing(const struct sx_audio_mixer* mixer, size_t voice_index);
+/* Activa o apaga el loop de una voz (distinto de cero = repite). No toca la
+ * posicion: sobre una voz ya sonando el efecto es desde el proximo borde. */
+int sx_audio_mixer_set_voice_loop(
+    struct sx_audio_mixer* mixer,
+    size_t voice_index,
+    int loop);
 
 /* Mixes and writes exactly the wall-clock frames since the previous call.
  * Returns 1 after a successful write, 0 when no frame is due, and a negative

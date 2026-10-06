@@ -446,6 +446,14 @@ Cut-off notes:
   opens a frameless slider with mute, applied live through the master ioctls;
   a second click or a click outside closes it, like the Start menu.
 
+- **`sx_audio_mixer_set_voice_loop`.** A mixer voice can repeat its buffer
+  instead of stopping at the end, for short music loops; starting a voice
+  leaves it off, so looping stays opt-in per start.
+
+- **Celeste Classic now plays music.** The port links PIE against
+  `libffmpeg.so.0.4` and decodes the five OGG loops on first request into a
+  dedicated looping mixer voice; without the FFmpeg port it runs silent.
+
 ### Fixed
 
 - **Celeste's effects no longer saturate at any volume.** Its 16-bit WAVs were

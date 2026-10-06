@@ -194,6 +194,33 @@ int main() {
         check(g_close_count == 2, "el segundo mixer tambien cierra el device");
     }
 
+    {
+        /* Loop: la voz repite en vez de terminar. Cuatro muestras a 1:1 con
+         * loop dan dos vueltas exactas en 8 frames. */
+        struct sx_audio_mixer loop = {};
+        const unsigned char cycle[] = {0, 255, 128, 64};
+        size_t frame;
+        const int expected[] = {-16254, 16128, 0, -8127, -16254, 16128, 0, -8127};
+        int ok = 1;
+        check(sx_audio_mixer_init(&loop, 1, 25) == 0, "el mixer con loop abre");
+        check(sx_audio_mixer_start_voice(&loop, 0, cycle, sizeof(cycle), 44100,
+                                         SX_AUDIO_PITCH_NORMAL_Q16, 127, 127) == 0,
+              "arranca la voz del loop");
+        check(sx_audio_mixer_set_voice_loop(&loop, 0, 1) == 0, "activa el loop");
+        check(sx_audio_mixer_set_voice_loop(&loop, 9, 1) != 0, "rechaza voz inexistente");
+        g_now_ms += 1;
+        check(sx_audio_mixer_update(&loop) == 1 && g_last_write_frames == 44,
+              "mezcla mas alla del final de la muestra");
+        check(sx_audio_mixer_voice_playing(&loop, 0), "la voz sigue activa tras el borde");
+        for (frame = 0; frame < 8; ++frame) {
+            if (g_last_write_samples[frame * 2] != expected[frame]) {
+                ok = 0;
+            }
+        }
+        check(ok, "los primeros 8 frames repiten el ciclo");
+        sx_audio_mixer_destroy(&loop);
+    }
+
     printf(g_failures == 0 ? "AUDIO MIXER TEST PASS\n" : "AUDIO MIXER TEST FAIL\n");
     return g_failures == 0 ? 0 : 1;
 }

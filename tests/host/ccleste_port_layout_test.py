@@ -82,9 +82,9 @@ def main() -> int:
     assert "SAVANXP_DISK_IMAGE" in build_script
     assert "SAVANXP_SXFS_CLI" in build_script
     assert "sxfs_sync.py" in build_script
-    # The music is out of scope, so the installer must not ship the ogg tracks.
-    assert "*.ogg" not in build_script
-    assert "mus*.ogg" not in build_script
+    # The music decodes in-game through libffmpeg, so the installer ships the
+    # ogg tracks next to the effects.
+    assert "mus*.ogg" in build_script
     assert "snd*.wav" in build_script
     # The upstream frontend is sdl12main.c and this port replaces it, so it must
     # never reach a copy or compile list. The comment in build.sh names it; the

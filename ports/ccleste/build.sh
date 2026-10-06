@@ -63,6 +63,27 @@ if ((SKIP_PORT == 0)); then
     bash "$PORT/fetch.sh"
 fi
 
+if ((SKIP_PORT == 0)); then
+    # The decoder lives in another port: fail here with the fix, not later
+    # with a missing header.
+    [[ -f "$FFMPEG_LIB" ]] || {
+        echo "ccleste: falta $FFMPEG_LIB; construi ports/ffmpeg primero (./ports/ffmpeg/build.sh)" >&2
+        exit 1
+    }
+    [[ -f "$FFMPEG_BUILD/config.h" ]] || {
+        echo "ccleste: falta $FFMPEG_BUILD/config.h; construi ports/ffmpeg primero" >&2
+        exit 1
+    }
+    shopt -s nullglob
+    FFMPEG_HEADERS=("$OUTPUT_ROOT"/ports/ffmpeg/work/ffmpeg-*/libavcodec/avcodec.h)
+    shopt -u nullglob
+    (( ${#FFMPEG_HEADERS[@]} == 1 )) || {
+        echo "ccleste: arbol FFmpeg ambiguo o ausente bajo $OUTPUT_ROOT/ports/ffmpeg/work" >&2
+        exit 1
+    }
+    FFMPEG_SRC=$(dirname "$(dirname "${FFMPEG_HEADERS[0]}")")
+fi
+
 if ((WITH_ASSETS)); then
     for asset in gfx.bmp font.bmp; do
         [[ -f "$DATA_DIR/$asset" ]] || {
@@ -101,6 +122,12 @@ if ((SKIP_PORT == 0)); then
        "$BUILD_SRC/"
 
     INCLUDE_FLAGS=(-I "$SDK/include" -I "$REPO/include" -I "$BUILD_SRC")
+    # ldso.c incluye "libc.h" del userland, y el overlay los headers publicos
+    # de FFmpeg mas el config.h generado (igual que mediaplayer).
+    INCLUDE_FLAGS+=(-I "$REPO/subsystems/posix/userland")
+    if [[ -n "$FFMPEG_SRC" ]]; then
+        INCLUDE_FLAGS+=(-I "$FFMPEG_SRC" -I "$FFMPEG_BUILD")
+    fi
 
     OBJECTS=()
     echo "== compilando el motor (upstream, sin parches)"
@@ -137,11 +164,22 @@ if ((SKIP_PORT == 0)); then
             -fno-builtin "${INCLUDE_FLAGS[@]}"
     done
 
+    echo "== compilando el cargador (ldso va dentro del programa, como en mediaplayer)"
+    compile_c "$REPO/subsystems/posix/userland/ldso.c" "$OBJ/ldso.o" \
+        -Wall -Wextra -Wpedantic "${INCLUDE_FLAGS[@]}"
+
     echo "== linkeando ccleste"
-    $SX_LD $SX_TARGET_LDFLAGS -o "$FRESH_ELF" \
-        "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/gfx.o" "$OBJ/gfx2d.o" \
-        "$OBJ/math.o" "$OBJ/setjmp.o" "$OBJ/audio.o" \
+    LINK_ARGS=(
+        "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/gfx.o" "$OBJ/gfx2d.o"
+        "$OBJ/math.o" "$OBJ/setjmp.o" "$OBJ/audio.o" "$OBJ/ldso.o"
         "${OBJECTS[@]}"
+    )
+    # DT_NEEDED por soname: el cargador mapea libffmpeg.so.0.4 de /disk/lib y
+    # de ahi cuelga libmath. Sin el port no se compila (ver el chequeo arriba).
+    if [[ -n "$FFMPEG_SRC" ]]; then
+        LINK_ARGS+=("$FFMPEG_LIB")
+    fi
+    $SX_LD "${SX_TARGET_LDFLAGS[@]}" -o "$FRESH_ELF" "${LINK_ARGS[@]}"
     $SIZE_CMD "$FRESH_ELF" | tail -1
 
     BUILD_ID=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || true)
@@ -214,10 +252,14 @@ if ((WITH_ASSETS)); then
     mkdir -p "$STAGE/games/celeste"
     cp "$DATA_DIR/gfx.bmp" "$DATA_DIR/font.bmp" "$STAGE/games/celeste/"
     installed=2
-    # The music is deliberately left behind: the OGG tracks have no decoder in
-    # the SDK, and shipping them would cost a megabyte of image space for
-    # nothing. See the port README.
+    # La musica viaja comprimida (~1 MB los cinco OGG): se decodifica en el
+    # juego a pedido con libffmpeg, asi que en disco no cuesta los 4 MB del
+    # PCM. Ver ports/ccleste/README.md.
     shopt -s nullglob
+    for track in "$DATA_DIR"/mus*.ogg; do
+        cp "$track" "$STAGE/games/celeste/$(basename -- "$track")"
+        installed=$((installed + 1))
+    done
     for sound in "$DATA_DIR"/snd*.wav; do
         cp "$sound" "$STAGE/games/celeste/$(basename -- "$sound")"
         installed=$((installed + 1))

@@ -11,23 +11,31 @@
  * the same: index 0 is transparent, `pal()` rewrites the live 16-entry
  * palette, and `map()` blits 8x8 tiles straight out of the sheet.
  *
- * Music is the one deliberate omission. The five tracks ship as OGG Vorbis and
- * SavanXP has no Vorbis decoder; decoding them to PCM on the host would cost
- * roughly 24 MB, which does not fit the persistent image. `CELESTE_P8_MUSIC`
- * is therefore a logged no-op and the game plays silent. See ports/ccleste/README.md.
- */
+ * Music decodes the five OGG tracks through libffmpeg.so.0.4 (shared, from
+ * /disk/lib) into whole u8 loops on a dedicated mixer voice, one track at a
+ * time on first request. Without the FFmpeg port the game still runs, silent.
+ * See ports/ccleste/README.md. */
 #include "savanxp/libc.h"
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "savanxp/audio.h"
+#include "savanxp/ldso.h"
 
 #include "celeste.h"
 #include "ccleste_savanxp_assets.h"
 #include "tilemap.h"
+
+/* FFmpeg decodifica la musica: el programa declara libffmpeg.so.0.4 y el
+ * cargador la mapea de /disk/lib (igual que mediaplayer). Sin el port, el
+ * juego arranca igual y suena sin musica: ldso_missing() lo dice antes del
+ * primer avformat_open_input. */
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 
 #define CCLESTE_PICO8_W 128
 #define CCLESTE_PICO8_H 128
@@ -49,6 +57,14 @@ enum {
 #define CCLESTE_SFX_VOICES 8u
 #define CCLESTE_SFX_VOLUME 127
 #define CCLESTE_SFX_CENTRE 127
+/* La musica vive en la voz que sigue a las de efectos: dedicada, para que el
+ * round-robin de SFX nunca la robe. El mixer la cuenta al inicializar. */
+#define CCLESTE_MUSIC_VOICE CCLESTE_SFX_VOICES
+#define CCLESTE_MUSIC_VOLUME 96
+#define CCLESTE_MUSIC_CENTRE 127
+/* Numeros de pattern de PICO-8, que son los nombres en disco (mus{idx}.ogg). */
+#define CCLESTE_MUSIC_TRACKS 5u
+static const int ccleste_music_ids[CCLESTE_MUSIC_TRACKS] = {0, 10, 20, 30, 40};
 /* Hold R this many frames to restart the run, matching upstream's held F9. */
 #define CCLESTE_RESET_HOLD_FRAMES 30u
 /* Celeste Classic is a 30 Hz PICO-8 game; running the loop flat out would make
@@ -80,6 +96,21 @@ static struct sx_bmp ccleste_font;
 static struct sx_wav ccleste_sfx[CCLESTE_SFX_SLOTS];
 static unsigned ccleste_sfx_index[CCLESTE_SFX_SLOTS];
 
+/* Pistas decodificadas a u8 mono a su rate nativo (el mixer convierte al del
+ * dispositivo, igual que con los SFX). Se decodifican a pedido y quedan en
+ * memoria: las cinco suman ~4 MB y los niveles las revisitan. Vida del
+ * proceso, sin release: el juego no sale limpio (windowd lo mata). */
+struct ccleste_music_track {
+    unsigned char* samples;
+    uint32_t sample_count;
+    uint32_t sample_rate_hz;
+    int cached; /* ya intentado: samples 0 significa fallo, no reintentar */
+};
+static struct ccleste_music_track ccleste_music[CCLESTE_MUSIC_TRACKS];
+static int ccleste_music_current = -1;
+static int ccleste_music_missing_reported;
+static int ccleste_music_unknown_reported;
+
 static struct savanxp_gfx_context ccleste_gfx = {
     .fb_fd = -1,
     .input_fd = -1,
@@ -98,7 +129,6 @@ static int ccleste_reset_held;
 static int ccleste_paused;
 static int ccleste_screenshake = 1;
 static int ccleste_video_open;
-static int ccleste_music_reported;
 static int ccleste_display_ready;
 
 static void ccleste_reset_palette(void) {
@@ -335,6 +365,296 @@ static void ccleste_print(const char* text, int x, int y, int colour) {
 
 /* --- Audio ---------------------------------------------------------------- */
 
+static int ccleste_music_append(
+    unsigned char** samples,
+    size_t* count,
+    size_t* capacity,
+    const unsigned char* batch,
+    size_t batch_count)
+{
+    if (batch_count > SIZE_MAX - *count) {
+        return -1;
+    }
+    if (*count + batch_count > *capacity) {
+        size_t want = *capacity != 0 ? *capacity : 65536u;
+        unsigned char* grown;
+        while (want < *count + batch_count) {
+            if (want > (size_t)64u * 1024u * 1024u) {
+                return -1;
+            }
+            want *= 2u;
+        }
+        grown = (unsigned char*)realloc(*samples, want);
+        if (grown == 0) {
+            return -1;
+        }
+        *samples = grown;
+        *capacity = want;
+    }
+    memcpy(*samples + *count, batch, batch_count);
+    *count += batch_count;
+    return 0;
+}
+
+/* Un frame decodificado a u8 mono. Vorbis sale en flotantes planares; se
+ * acepta tambien S16 por si el contenedor trae otra cosa. Todo lo demas se
+ * rechaza en vez de adivinarlo. */
+static int ccleste_music_frame(
+    AVFrame* frame,
+    unsigned char** samples,
+    size_t* count,
+    size_t* capacity)
+{
+    int channels = frame->ch_layout.nb_channels;
+    int frames = frame->nb_samples;
+    int planar = frame->format == AV_SAMPLE_FMT_FLTP || frame->format == AV_SAMPLE_FMT_S16P;
+    int floating = frame->format == AV_SAMPLE_FMT_FLTP || frame->format == AV_SAMPLE_FMT_FLT;
+    unsigned char* batch;
+    int j;
+
+    if (channels <= 0 || channels > 8 || frames <= 0) {
+        eprintf("ccleste: frame de audio imposible (%d canales, %d muestras)\n", channels, frames);
+        return -1;
+    }
+    if (frame->format != AV_SAMPLE_FMT_FLTP && frame->format != AV_SAMPLE_FMT_FLT &&
+        frame->format != AV_SAMPLE_FMT_S16P && frame->format != AV_SAMPLE_FMT_S16) {
+        eprintf("ccleste: formato de muestra %d no soportado\n", frame->format);
+        return -1;
+    }
+    batch = (unsigned char*)malloc((size_t)frames);
+    if (batch == 0) {
+        return -1;
+    }
+    for (j = 0; j < frames; ++j) {
+        long mixed = 0;
+        int channel;
+        for (channel = 0; channel < channels; ++channel) {
+            if (floating) {
+                float v;
+                if (planar) {
+                    v = ((const float*)frame->data[channel])[j];
+                } else {
+                    v = ((const float*)frame->data[0])[j * channels + channel];
+                }
+                if (v > 1.0f) {
+                    v = 1.0f;
+                } else if (v < -1.0f) {
+                    v = -1.0f;
+                }
+                mixed += (long)(v * 127.0f);
+            } else {
+                int16_t s;
+                if (planar) {
+                    s = ((const int16_t*)frame->data[channel])[j];
+                } else {
+                    s = ((const int16_t*)frame->data[0])[j * channels + channel];
+                }
+                mixed += (long)(s >> 8);
+            }
+        }
+        mixed /= channels;
+        if (mixed < -128) {
+            mixed = -128;
+        } else if (mixed > 127) {
+            mixed = 127;
+        }
+        batch[j] = (unsigned char)(mixed + 128);
+    }
+    j = ccleste_music_append(samples, count, capacity, batch, (size_t)frames);
+    free(batch);
+    return j;
+}
+
+/* Manda un paquete (o NULL al vaciar) y drena los frames que salgan. */
+static int ccleste_music_send(
+    AVCodecContext* decoder,
+    AVPacket* packet,
+    AVFrame* frame,
+    unsigned char** samples,
+    size_t* count,
+    size_t* capacity)
+{
+    int status = avcodec_send_packet(decoder, packet);
+    if (status == AVERROR(EAGAIN)) {
+        status = avcodec_receive_frame(decoder, frame);
+        if (status < 0) {
+            return -1;
+        }
+        if (ccleste_music_frame(frame, samples, count, capacity) < 0) {
+            av_frame_unref(frame);
+            return -1;
+        }
+        av_frame_unref(frame);
+        status = avcodec_send_packet(decoder, packet);
+    }
+    if (status < 0) {
+        return -1;
+    }
+    for (;;) {
+        status = avcodec_receive_frame(decoder, frame);
+        if (status == AVERROR(EAGAIN) || status == AVERROR_EOF) {
+            return 0;
+        }
+        if (status < 0) {
+            return -1;
+        }
+        if (ccleste_music_frame(frame, samples, count, capacity) < 0) {
+            av_frame_unref(frame);
+            return -1;
+        }
+        av_frame_unref(frame);
+    }
+}
+
+static int ccleste_decode_music(const char* path, struct ccleste_music_track* track) {
+    AVFormatContext* format = 0;
+    AVCodecContext* decoder = 0;
+    AVFrame* frame = 0;
+    AVPacket* packet = 0;
+    const AVCodec* codec = 0;
+    int stream_index = -1;
+    unsigned char* samples = 0;
+    size_t count = 0;
+    size_t capacity = 0;
+    int result = -1;
+
+    av_log_set_level(AV_LOG_ERROR);
+    if (avformat_open_input(&format, path, 0, 0) < 0) {
+        eprintf("ccleste: no se pudo abrir %s\n", path);
+        goto done;
+    }
+    stream_index = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, &codec, 0);
+    if (stream_index < 0 || codec == 0) {
+        eprintf("ccleste: %s no trae audio\n", path);
+        goto done;
+    }
+    decoder = avcodec_alloc_context3(codec);
+    if (decoder == 0) {
+        goto done;
+    }
+    if (avcodec_parameters_to_context(decoder, format->streams[stream_index]->codecpar) < 0) {
+        goto done;
+    }
+    if (avcodec_open2(decoder, codec, 0) < 0) {
+        eprintf("ccleste: no se pudo abrir el decodificador de %s\n", path);
+        goto done;
+    }
+    if (decoder->sample_rate <= 0) {
+        goto done;
+    }
+    frame = av_frame_alloc();
+    packet = av_packet_alloc();
+    if (frame == 0 || packet == 0) {
+        goto done;
+    }
+    while (av_read_frame(format, packet) >= 0) {
+        if (packet->stream_index != stream_index) {
+            av_packet_unref(packet);
+            continue;
+        }
+        if (ccleste_music_send(decoder, packet, frame, &samples, &count, &capacity) < 0) {
+            eprintf("ccleste: fallo decodificando %s\n", path);
+            av_packet_unref(packet);
+            goto done;
+        }
+        av_packet_unref(packet);
+    }
+    if (ccleste_music_send(decoder, 0, frame, &samples, &count, &capacity) < 0) {
+        eprintf("ccleste: fallo vaciando %s\n", path);
+        goto done;
+    }
+    if (count == 0 || count > (size_t)UINT32_MAX) {
+        eprintf("ccleste: %s decodifico vacio\n", path);
+        goto done;
+    }
+    track->samples = samples;
+    samples = 0;
+    track->sample_count = (uint32_t)count;
+    track->sample_rate_hz = (uint32_t)decoder->sample_rate;
+    result = 0;
+done:
+    if (frame != 0) {
+        av_frame_free(&frame);
+    }
+    if (packet != 0) {
+        av_packet_free(&packet);
+    }
+    if (decoder != 0) {
+        avcodec_free_context(&decoder);
+    }
+    if (format != 0) {
+        avformat_close_input(&format);
+    }
+    free(samples);
+    return result;
+}
+
+static void ccleste_play_music(int id) {
+    char path[256];
+    int slot = -1;
+    unsigned track;
+
+    if (!sx_audio_mixer_active(&ccleste_mixer)) {
+        return;
+    }
+    /* Sin motor no hay musica, pero el juego sigue: es el mismo trato que
+     * mediaplayer le da a una libreria ausente, avisado una sola vez. */
+    if (ldso_missing() != 0) {
+        if (!ccleste_music_missing_reported) {
+            eprintf("ccleste: sin libffmpeg (%s); la musica se ignora\n", ldso_missing());
+            ccleste_music_missing_reported = 1;
+        }
+        return;
+    }
+    /* music(-1) detiene, por convencion de PICO-8. */
+    if (id < 0) {
+        (void)sx_audio_mixer_stop_voice(&ccleste_mixer, CCLESTE_MUSIC_VOICE);
+        ccleste_music_current = -1;
+        return;
+    }
+    for (track = 0; track < CCLESTE_MUSIC_TRACKS; ++track) {
+        if (ccleste_music_ids[track] == id) {
+            slot = (int)track;
+        }
+    }
+    if (slot < 0) {
+        if (!ccleste_music_unknown_reported) {
+            eprintf("ccleste: pista de musica %d desconocida; se ignora\n", id);
+            ccleste_music_unknown_reported = 1;
+        }
+        return;
+    }
+    if (slot == ccleste_music_current &&
+        sx_audio_mixer_voice_playing(&ccleste_mixer, CCLESTE_MUSIC_VOICE)) {
+        return;
+    }
+    if (!ccleste_music[slot].cached) {
+        ccleste_music[slot].cached = 1;
+        snprintf(path, sizeof(path), "%s/mus%d.ogg", CCLESTE_DATA_DIR, id);
+        if (ccleste_decode_music(path, &ccleste_music[slot]) < 0) {
+            return;
+        }
+        eprintf("ccleste: musica %d: %u samples @ %u Hz\n",
+                id, ccleste_music[slot].sample_count, ccleste_music[slot].sample_rate_hz);
+    }
+    if (ccleste_music[slot].samples == 0) {
+        return;
+    }
+    (void)sx_audio_mixer_stop_voice(&ccleste_mixer, CCLESTE_MUSIC_VOICE);
+    if (sx_audio_mixer_start_voice(&ccleste_mixer, CCLESTE_MUSIC_VOICE,
+                                   ccleste_music[slot].samples,
+                                   ccleste_music[slot].sample_count,
+                                   ccleste_music[slot].sample_rate_hz,
+                                   SX_AUDIO_PITCH_NORMAL_Q16,
+                                   CCLESTE_MUSIC_VOLUME,
+                                   CCLESTE_MUSIC_CENTRE) < 0) {
+        eprintf("ccleste: no se pudo reproducir la pista %d\n", id);
+        return;
+    }
+    (void)sx_audio_mixer_set_voice_loop(&ccleste_mixer, CCLESTE_MUSIC_VOICE, 1);
+    ccleste_music_current = slot;
+}
+
 static void ccleste_play_sfx(int id) {
     int index;
     int chosen = -1;
@@ -410,15 +730,14 @@ static int ccleste_pico8emu(CELESTE_P8_CALLBACK_TYPE call, ...) {
 
     switch (call) {
         case CELESTE_P8_MUSIC: {
-            /* music(idx, fade, mask) */
+            /* music(idx, fade, mask). Fade y mask se ignoran: las pistas
+             * son mezclas enteras (no hay stems que enmascarar) y el mixer
+             * no hace rampas; la pista arranca de inmediato en loop. */
             int index = CCLESTE_ARG();
 
             (void)CCLESTE_ARG(); /* fade */
             (void)CCLESTE_ARG(); /* mask */
-            if (!ccleste_music_reported) {
-                eprintf("ccleste: sin reproductor de musica; la pista %d se ignora\n", index);
-                ccleste_music_reported = 1;
-            }
+            ccleste_play_music(index);
         } break;
 
         case CELESTE_P8_SPR: {
@@ -793,6 +1112,27 @@ static int ccleste_selftest(void) {
         return 1;
     }
 
+    /* La musica se decodifica sin mixer (headless no tiene device): si esta
+     * el motor y la pista, tiene que salir sana; si falta alguno, se anota
+     * y se sigue, porque el juego corre sin musica en los dos casos. */
+    if (ldso_missing() == 0) {
+        char music_path[256];
+        struct ccleste_music_track probe = {0};
+
+        snprintf(music_path, sizeof(music_path), "%s/mus0.ogg", CCLESTE_DATA_DIR);
+        if (ccleste_decode_music(music_path, &probe) < 0 ||
+            probe.samples == 0 || probe.sample_count == 0 || probe.sample_rate_hz == 0) {
+            eprintf("ccleste: selftest FAIL (la pista 0 no decodifico)\n");
+            free(probe.samples);
+            return 1;
+        }
+        eprintf("ccleste: selftest musica %u samples @ %u Hz\n",
+                probe.sample_count, probe.sample_rate_hz);
+        free(probe.samples);
+    } else {
+        eprintf("ccleste: selftest sin libffmpeg (%s); musica omitida\n", ldso_missing());
+    }
+
     /* Drive the engine headless: no window and no audio device, just the
      * update/draw/callback contract over real frames. */
     Celeste_P8_set_call_func(ccleste_pico8emu);
@@ -855,7 +1195,9 @@ int main(int argc, char** argv) {
                                  ccleste_frame, ccleste_palette[0]) < 0) {
         ccleste_fail("no se pudo inicializar el presentador escalado");
     }
-    if (sx_audio_mixer_init(&ccleste_mixer, CCLESTE_SFX_VOICES,
+    /* Ocho voces de efectos mas la de musica: dedicada para que el
+     * round-robin nunca la robe. */
+    if (sx_audio_mixer_init(&ccleste_mixer, CCLESTE_SFX_VOICES + 1u,
                             SX_AUDIO_DEFAULT_MAX_DELTA_MS) < 0) {
         eprintf("ccleste: sin dispositivo de audio; el juego corre sin sonido\n");
     }

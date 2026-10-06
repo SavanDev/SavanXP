@@ -130,33 +130,27 @@ Fullscreen is the launcher's decision, not the game's: `launch_flags=fullscreen`
 in the `.sxres` makes the window manager hand the port a client surface at the
 presentation size.
 
-## Music is deferred, not excluded
+## Music
 
-The five tracks ship as OGG Vorbis, and the SDK has no Vorbis decoder.
+The five tracks ship as OGG Vorbis and decode through `libffmpeg.so.0.4`,
+the shared library the FFmpeg port installs in `/disk/lib`. The OS grew the
+dynamic linker this port was waiting for (see
+[`docs/SXMEDIA.md`](../../docs/SXMEDIA.md) for why no workaround was built
+before then), so this port links PIE with a `DT_NEEDED` on it, like
+mediaplayer. The build fails fast without the FFmpeg port; at runtime
+without it the game still runs and plays silent with one log line.
 
-The FFmpeg port has one, and this port cannot reach it. That port links with
-`--disable-shared` and the SDK has no dynamic linker, so FFmpeg lives inside
-one program and no other program can borrow it. This is not hypothetical: the
-SxMedia layer was built to solve exactly that, and
-[`docs/SXMEDIA.md`](../../docs/SXMEDIA.md) records the attempt together with
-the reason it was withdrawn, which is the first item under "What has to exist
-before trying again": a way for one program to use a codec library it was not
-built with.
+`build.sh` stages the five `mus*.ogg` (~1 MB) next to the effects. On the
+first `CELESTE_P8_MUSIC` for a track the game decodes the whole loop to
+unsigned 8-bit mono at its native rate and keeps it: the five together are
+4,028,033 samples, about 4 MB, which is why the heap arena is 8 MB
+(`SX_HEAP_SIZE`) instead of a streaming redesign. Playback is a dedicated
+mixer voice with loop on, so SFX stealing never touches it; `music(-1)`
+stops it.
 
-Decoding the tracks to PCM on the host is not the answer either. It would add a
-host tool to the build for a codec path the system still lacks, and bake a
-decoded asset into the image. Space is not the obstacle either way: the tracks
-are 4,028,033 samples, about 4 MB as unsigned 8-bit or 8 MB as signed 16-bit.
-
-So `CELESTE_P8_MUSIC` is a logged no-op, `build.sh` does not copy the `.ogg`
-files, and the game runs silent. Music arrives when the OS has a dynamic
-linker, and it should not be worked around inside this port before then.
-
-The port will be ready for it: `CELESTE_P8_MUSIC` already receives
-`(index, fade, mask)` and the SDK already has a wall-clock frame sink to feed.
-The mixer's one real limitation is that `sx_audio_mixer_start_voice` takes a
-whole sample buffer, so a track has to be decoded before it plays, which for
-these five short loops is a flag (`SX_HEAP_SIZE`) and not a redesign.
+Two PICO-8 details do not survive: `fade` ramps nothing (the track starts
+immediately) and `mask` selects nothing (the OGGs are full mixes, not
+stems). Both are documented at the call site rather than half-implemented.
 
 Save and load state (`Shift+S` / `Shift+D` upstream) are announced and dropped.
 The port keeps the state in memory only rather than writing an undocumented file

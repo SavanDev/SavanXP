@@ -199,6 +199,7 @@ int sx_audio_mixer_start_voice(
     voice->sample_rate_hz = sample_rate_hz;
     voice->position_fixed = 0;
     voice->step_fixed = step;
+    voice->loop = 0;
     sx_audio_voice_set_pan(voice, volume, separation);
     voice->active = 1;
     return 0;
@@ -218,6 +219,19 @@ int sx_audio_mixer_voice_playing(const struct sx_audio_mixer* mixer, size_t voic
 {
     return sx_audio_voice_index_valid(mixer, voice_index) &&
         mixer->voices[voice_index].active;
+}
+
+int sx_audio_mixer_set_voice_loop(
+    struct sx_audio_mixer* mixer,
+    size_t voice_index,
+    int loop)
+{
+    if (!sx_audio_voice_index_valid(mixer, voice_index))
+    {
+        return -SAVANXP_EINVAL;
+    }
+    mixer->voices[voice_index].loop = loop != 0;
+    return 0;
 }
 
 static int sx_audio_mixer_ensure_capacity(struct sx_audio_mixer* mixer, size_t frames)
@@ -330,8 +344,16 @@ static void sx_audio_mixer_render(
             sample_index_wide = voice->position_fixed >> 16;
             if (sample_index_wide >= (uint64_t)voice->sample_count)
             {
-                voice->active = 0;
-                continue;
+                if (voice->loop && voice->sample_count != 0)
+                {
+                    voice->position_fixed %= (uint64_t)voice->sample_count << 16;
+                    sample_index_wide = voice->position_fixed >> 16;
+                }
+                else
+                {
+                    voice->active = 0;
+                    continue;
+                }
             }
             sample_index = (uint32_t)sample_index_wide;
 
@@ -346,7 +368,14 @@ static void sx_audio_mixer_render(
             voice->position_fixed += voice->step_fixed;
             if ((voice->position_fixed >> 16) >= (uint64_t)voice->sample_count)
             {
-                voice->active = 0;
+                if (voice->loop && voice->sample_count != 0)
+                {
+                    voice->position_fixed %= (uint64_t)voice->sample_count << 16;
+                }
+                else
+                {
+                    voice->active = 0;
+                }
             }
         }
 
