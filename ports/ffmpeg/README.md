@@ -2,8 +2,8 @@
 
 This is the official SavanXP port of the FFmpeg 7.1.1 libraries and the
 Media Player adapter. FFmpeg itself is not forked and is not patched. The
-port supplies the target runtime, a small SavanXP Media Player overlay, and
-the exact `configure`/GNU Make integration.
+port supplies the target runtime and the exact `configure`/GNU Make
+integration; the player itself lives in the tree, not in the port.
 
 The versioned port is the only FFmpeg integration kept in the repository.
 

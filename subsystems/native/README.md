@@ -117,7 +117,7 @@ assets, including:
 ```text
 /disk/bin/nativehello
 /disk/bin/mediaplayer
-/disk/bin/mediaplayer-ffmpeg
+/disk/lib/libffmpeg.so.0.4
 /disk/bin/doomgeneric
 /disk/games/doom/doom1.wad
 ```

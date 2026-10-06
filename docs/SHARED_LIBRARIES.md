@@ -1452,16 +1452,14 @@ compare, because the whole system declares them and nothing adds any.
 `appwiz.sxres` declares `category=System`. Adding it is what made the counts line
 up: Accessories 5, Diagnostics 5, Games 2, System 3.
 
-### The icon is a copy, and that is the lesser evil
+### The icon travels with the manifest
 
-`progman-smoke`'s scan prints `icono=propio` or `icono=horneado`, and with no
-`icon=` in the manifest Media Player came out the only `horneado` in the catalog —
-the generic desktop icon. `icon_file` resolves *relative to the manifest*, so
-pointing at `ports/ffmpeg/overlay/mediaplayer/icon.png` would put the system's tree
-inside a port's layout. The PNG is therefore copied to
-`subsystems/posix/userland/mediaplayer-icon.png`, and the duplication is deliberate:
-the backend keeps its own because it can also be launched directly, and the two can
-drift because it is artwork, not code.
+`progman-smoke`'s scan prints `icono=propio` or `icono=horneado`. With no `icon=`
+in the manifest, Media Player came out the only `horneado` in the catalog — the
+generic desktop icon. `icon_file` resolves *relative to the manifest*, so a copy
+was once staged as `subsystems/posix/userland/mediaplayer-icon.png`; once the player
+moved into the tree, `mediaplayer.sxres` simply names `icon.png` next to it, and the
+copy went away.
 
 ### The scenario proves the entry, not just the file
 

@@ -172,9 +172,9 @@ dropping everything would freeze the picture while the sound goes on.
 ## Control icons
 
 The transport buttons, Open and the volume speaker are icon buttons with **our
-own 16x16 art**, drawn by `ports/ffmpeg/overlay/mediaplayer/gen_icons.py` and embedded as
-`icons.inc` (~4 KiB, useless outside this program, so not `.sxicon` files on
-disk). The app icon is separate and also our own.
+own 16x16 art**, drawn by `subsystems/posix/userland/mediaplayer/gen_icons.py`
+and embedded as `icons.inc` (~4 KiB, useless outside this program, so not
+`.sxicon` files on disk). The app icon is separate and also our own.
 
 Tango 0.8.90 -- the set the file-type catalog adopted -- was tried first and
 rejected for this use: its `media-playback-*` and `media-seek-*` glyphs are light

@@ -25,7 +25,7 @@ usage() {
 Usage: ./ports/ffmpeg/smoke.sh [options]
 
 Options:
-  --skip-port       Reuse build/external/mediaplayer.elf and only install it.
+  --skip-port       Install the existing library without rebuilding the port.
   --work PATH       Pass a whitespace-free FFmpeg work directory to the build.
   --no-compact      Disable SxFS compaction while installing the port.
   --accel tcg|kvm   Select the QEMU accelerator for both smoke boots.

@@ -505,7 +505,7 @@ int main(void) {
 
         long pid = savanxp_waitpid(-1, &status);
         if (pid < 0) {
-            /* Sin hijo aun: caso raro; volver a contemplar. */
+            /* Sin hijo que reapear todavia (carrera): reintentar en un rato. */
             sleep_ms(250);
             continue;
         }

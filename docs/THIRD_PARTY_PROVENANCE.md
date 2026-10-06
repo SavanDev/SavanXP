@@ -73,9 +73,9 @@ which is why both go into the registry.
   `ports/ffmpeg/COPYING.LGPLv2.1`; the build guard rejects GPL, LGPLv3, and
   nonfree components
 - Decision: `Adopt`
-- Distributed in: the system launcher `/bin/mediaplayer` plus the optional
-  `/disk/bin/mediaplayer-ffmpeg` static backend linked with the selected FFmpeg
-  libraries. Corresponding source/relinking instructions are in
+- Distributed in: the system launcher `/bin/mediaplayer`, built by the tree, plus
+  the optional shared library `/disk/lib/libffmpeg.so.0.4` linked with the
+  selected FFmpeg libraries. Corresponding source/relinking instructions are in
   `ports/ffmpeg/SOURCE.md`
 - Local test media is generated under `build/media` and is not a third-party
   repository asset

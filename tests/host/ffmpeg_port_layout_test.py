@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Validate the pinned FFmpeg port layout without downloading/building FFmpeg."""
+"""Validate the pinned FFmpeg port layout without downloading/building FFmpeg.
+
+The port ships one library and no program; the Media Player itself lives in
+``subsystems/posix/userland/mediaplayer/`` and is built by the system tree.
+This test guards both halves of that split.
+"""
 
 from __future__ import annotations
 
@@ -41,40 +46,55 @@ def main() -> int:
     assert (port / "LICENSE.md").is_file()
     assert (port / "COPYING.LGPLv2.1").is_file()
 
-    expected_overlay = {
+    # The port builds a library and nothing else: no overlay, no program stamped
+    # into /disk/bin. The player moved into the tree (ada896f), so the port must
+    # not carry an overlay directory again.
+    assert not (port / "overlay").exists()
+    install_script = (port / "install.sh").read_text(encoding="utf-8")
+    assert 'LIBRARY="$OUTPUT_ROOT/external/libffmpeg.so.0.4"' in install_script
+    assert 'cp "$LIBRARY" "$STAGE/lib/libffmpeg.so.0.4"' in install_script
+    assert "$STAGE/bin" not in install_script
+    assert "BACKEND_NAME" not in install_script
+    assert "SAVANXP_DISK_IMAGE" in install_script
+    assert "SAVANXP_SXFS_CLI" in install_script
+    link_script = (port / "link.sh").read_text(encoding="utf-8")
+    assert "-o libffmpeg.so.0.4" in link_script
+    assert "-Wl,-soname,libffmpeg.so.0.4" in link_script
+    assert "subsystems/posix/userland/mediaplayer/" in link_script
+    assert "mediaplayer.elf" not in link_script
+    assert "-l:libmath.so.0.4" in link_script
+    smoke_script = (port / "smoke.sh").read_text(encoding="utf-8")
+    assert "mediaplayer-selftest" in smoke_script
+    assert "mediaplayer-display" in smoke_script
+    assert "build.sh" in smoke_script
+
+    # The player is the tree's, with its own manifest: capabilities (category,
+    # mime_open, ext_open) and an icon that travels with the sources.
+    player = root / "subsystems" / "posix" / "userland" / "mediaplayer"
+    expected_player = {
         "gen_icons.py",
         "icon.png",
         "icons.inc",
         "media.c",
         "media.h",
         "mediaplayer.c",
-        "mediaplayer-ffmpeg.sxres",
+        "mediaplayer.sxres",
         "playback.c",
         "playback.h",
         "selftest.c",
         "selftest.h",
     }
-    overlay = port / "overlay" / "mediaplayer"
-    actual_overlay = {path.name for path in overlay.iterdir() if path.is_file()}
-    assert actual_overlay == expected_overlay
-    backend_manifest = (overlay / "mediaplayer-ffmpeg.sxres").read_text(encoding="utf-8")
-    assert "category=" not in backend_manifest
-    assert "mime_open=" not in backend_manifest
-    assert "ext_open=" not in backend_manifest
-    assert "name=FFmpeg Media Player Backend" in backend_manifest
-    install_script = (port / "install.sh").read_text(encoding="utf-8")
-    assert 'BACKEND_NAME="mediaplayer-ffmpeg"' in install_script
-    assert 'cp "$STAMPED" "$STAGE/bin/$BACKEND_NAME"' in install_script
-    assert 'cp "$STAMPED" "$STAGE/bin/mediaplayer"' not in install_script
-    assert 'SAVANXP_DISK_IMAGE' in install_script
-    assert 'SAVANXP_SXFS_CLI' in install_script
-    smoke_script = (port / "smoke.sh").read_text(encoding="utf-8")
-    assert "mediaplayer-selftest" in smoke_script
-    assert "mediaplayer-display" in smoke_script
-    assert "build.sh" in smoke_script
-    link_script = (port / "link.sh").read_text(encoding="utf-8")
-    assert '"$OUTPUT_ROOT/external/mediaplayer.elf"' in link_script
-    assert len(list((overlay / "icons").glob("*.png"))) == 10
+    actual_player = {path.name for path in player.iterdir() if path.is_file()}
+    assert actual_player == expected_player
+    assert not (player / "mediaplayer-ffmpeg.sxres").exists()
+    manifest = (player / "mediaplayer.sxres").read_text(encoding="utf-8")
+    assert "name=Media Player" in manifest
+    assert "mime_open=" in manifest
+    assert "ext_open=" in manifest
+    assert "category=Accessories" in manifest
+    assert "icon_file=icon.png" in manifest
+    assert len(list((player / "icons").glob("*.png"))) == 10
+
     assert {path.name for path in (port / "tests").glob("*.py")} == {
         "make-tone.py",
         "make-clip.py",

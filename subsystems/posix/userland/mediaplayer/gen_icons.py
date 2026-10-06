@@ -14,7 +14,7 @@ con la misma conversion que gen_sxe_resources.py. Van embebidos y no como
 .sxicon en el disco: son diez de 16x16, ~4 KiB contra 6 MiB de texto, y no
 sirven fuera de este programa. Ambos se versionan; se regeneran con:
 
-    python ports/ffmpeg/overlay/mediaplayer/gen_icons.py
+    python subsystems/posix/userland/mediaplayer/gen_icons.py
 
 Los nombres siguen la Icon Naming Specification de freedesktop, igual que
 diskfs/mimeicon.ini, para poder cambiar de origen sin tocar el programa.

@@ -101,9 +101,9 @@ step.
 - `tools/run_qemu.py` launches the staged image with OVMF and optional virtio.
 - `tools/shoot.sh` runs visual desktop scenarios through a Unix QMP socket.
 - `ports/doomgeneric/build.sh` builds the official Doom port independently.
-- `ports/ffmpeg/build.sh` preserves FFmpeg's configure and GNU Make flow; its
-  optional backend installs as `/disk/bin/mediaplayer-ffmpeg`, separate from
-  the always-built launcher.
+- `ports/ffmpeg/build.sh` preserves FFmpeg's configure and GNU Make flow and
+  installs the shared library `/disk/lib/libffmpeg.so.0.4` and no program; the
+  Media Player is built by the tree from `subsystems/posix/userland/mediaplayer/`.
 - `subsystems/native/build.sh` is the optional native Haxe builder.
 - `tools/limine/` is the ignored, pinned bootloader checkout.
 
