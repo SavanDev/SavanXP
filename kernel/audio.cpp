@@ -7,6 +7,9 @@ namespace audio {
 namespace {
 const Backend* g_backend = nullptr;
 
+uint32_t g_master_volume = 100u;
+bool g_master_muted = false;
+
 const Driver* g_drivers[kMaxDrivers] = {};
 size_t g_driver_count = 0;
 const Driver* g_bound_driver = nullptr;
@@ -62,6 +65,42 @@ int submit_period(uint64_t user_buffer, uint32_t byte_count) {
 }
 
 void stop() { if (g_backend != nullptr) { g_backend->stop(); } }
+
+uint32_t master_volume() { return g_master_volume; }
+
+bool set_master_volume(uint32_t volume) {
+    if (volume > 100u) {
+        return false;
+    }
+    g_master_volume = volume;
+    return true;
+}
+
+bool master_muted() { return g_master_muted; }
+
+void set_master_muted(bool muted) { g_master_muted = muted; }
+
+void apply_playback_gain(void* frames, uint32_t byte_count) {
+    int16_t* samples = static_cast<int16_t*>(frames);
+    uint32_t count = byte_count / 2u;
+    uint32_t index = 0;
+    if (frames == nullptr) {
+        return;
+    }
+    if (g_master_muted) {
+        for (index = 0; index < count; ++index) {
+            samples[index] = 0;
+        }
+        return;
+    }
+    if (g_master_volume >= 100u) {
+        return;
+    }
+    for (index = 0; index < count; ++index) {
+        samples[index] = static_cast<int16_t>(
+            static_cast<int32_t>(samples[index]) * static_cast<int32_t>(g_master_volume) / 100);
+    }
+}
 
 bool capture_ready() {
     return g_backend != nullptr && g_backend->capture_ready != nullptr && g_backend->capture_ready();

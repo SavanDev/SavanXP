@@ -4,9 +4,10 @@
 Usa Pillow para convertir los PNG versionados a un header C, con el mismo
 formato que tools/gen_desktop_icon_assets.py (struct
 savanxp_embedded_bitmap_asset, pixeles ARGB): el logo del boton Start desde
-assets/brand/start_logo.png y el icono de Apagar desde
-assets/desktop/icons/16x16/shutdown.png. El build normal solo empaqueta esos
-PNG: no crea ni reemplaza el arte fuente.
+assets/brand/start_logo.png, el icono de Apagar desde
+assets/desktop/icons/16x16/shutdown.png y el altavoz de la taskbar en sus
+cuatro niveles desde los iconos del reproductor. El build normal solo
+empaqueta esos PNG: no crea ni reemplaza el arte fuente.
 
 Uso:  python tools/gen_start_logo.py --project-root DIR --output start_logo.h
 """
@@ -19,6 +20,13 @@ from PIL import Image
 ASSETS = [
     ("k_start_logo", ("assets", "brand", "start_logo.png")),
     ("k_shutdown_icon", ("assets", "desktop", "icons", "16x16", "shutdown.png")),
+    # Altavoz de la taskbar en sus cuatro niveles, del set del reproductor
+    # (nombres de la Icon Naming Specification de freedesktop): el dibujo es
+    # el mismo en los cuatro lados y asi no hay dos artes que diverjan.
+    ("k_volume_high", ("subsystems", "posix", "userland", "mediaplayer", "icons", "audio-volume-high.png")),
+    ("k_volume_medium", ("subsystems", "posix", "userland", "mediaplayer", "icons", "audio-volume-medium.png")),
+    ("k_volume_low", ("subsystems", "posix", "userland", "mediaplayer", "icons", "audio-volume-low.png")),
+    ("k_volume_muted", ("subsystems", "posix", "userland", "mediaplayer", "icons", "audio-volume-muted.png")),
 ]
 
 

@@ -560,6 +560,10 @@ add_custom_command(OUTPUT "${SAVANXP_START_LOGO_HEADER}"
         "${CMAKE_SOURCE_DIR}/tools/gen_start_logo.py"
         "${CMAKE_SOURCE_DIR}/assets/brand/start_logo.png"
         "${CMAKE_SOURCE_DIR}/assets/desktop/icons/16x16/shutdown.png"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer/icons/audio-volume-high.png"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer/icons/audio-volume-medium.png"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer/icons/audio-volume-low.png"
+        "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer/icons/audio-volume-muted.png"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     VERBATIM
 )
@@ -701,6 +705,24 @@ target_include_directories(savanxp-audio-test PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 set_target_properties(savanxp-audio-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+add_executable(savanxp-kernel-audio-gain-test
+    kernel/audio.cpp
+    tests/host/kernel_audio_gain_test.cpp)
+target_include_directories(savanxp-kernel-audio-gain-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-kernel-audio-gain-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
+set_target_properties(savanxp-kernel-audio-gain-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
+add_executable(savanxp-ccleste-wav-test
+    ports/ccleste/overlay/ccleste_savanxp_assets.c
+    tests/host/ccleste_wav_test.cpp)
+target_include_directories(savanxp-ccleste-wav-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/ports/ccleste/overlay"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-ccleste-wav-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
+set_target_properties(savanxp-ccleste-wav-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 add_executable(savanxp-partition-test
     kernel/partition.cpp
     tests/host/kernel_string_stubs.cpp
@@ -725,11 +747,13 @@ target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-d
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test
+    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test
     COMMENT "Building SavanXP host tests"
 )
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
+add_test(NAME kernel-audio-gain-test COMMAND savanxp-kernel-audio-gain-test)
+add_test(NAME ccleste-wav-test COMMAND savanxp-ccleste-wav-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
 

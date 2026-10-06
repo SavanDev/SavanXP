@@ -18,6 +18,7 @@ static const char *k_background_client_path = "/bin/shellui";
 static const char *k_taskbar_client_path = "/bin/taskbar";
 static const char *k_keyboard_popup_client_path = "/bin/kbdlayoutpopup";
 static const char *k_startmenu_client_path = "/bin/startmenu";
+static const char *k_volume_popup_client_path = "/bin/volumepopup";
 static const char *k_progman_path = "/bin/progman";
 
 /* Tamano del popup de layout de teclado (dos filas, ES/EN): fijo, no depende
@@ -25,6 +26,12 @@ static const char *k_progman_path = "/bin/progman";
  * le reserva el rect anclado arriba de la franja de la taskbar. */
 #define WINDOWD_KEYBOARD_POPUP_WIDTH 96
 #define WINDOWD_KEYBOARD_POPUP_HEIGHT 44
+
+/* Popup de volumen (slider + mute): fijo, mas ancho que el de layout porque
+ * el slider necesita recorrido para 0..100. Misma esquina que el de layout
+ * (abajo a la derecha, arriba de la franja); por eso son excluyentes. */
+#define WINDOWD_VOLUME_POPUP_WIDTH 144
+#define WINDOWD_VOLUME_POPUP_HEIGHT 56
 
 /* Menu Inicio: superficie fija, ancha como dos botones de taskbar y alta para
  * ~24 filas (cabeceras + items). El contenido real varia con lo instalado;
@@ -897,6 +904,15 @@ static const struct windowd_client *top_client_at_point(const struct windowd_ses
         return &session->keyboard_popup_client;
     }
 
+    /* El popup de volumen comparte la esquina con el de layout y va segundo:
+     * solo uno de los dos esta vivo a la vez, asi que el orden entre ellos
+     * no decide nada en la practica. */
+    if (session != 0 && session->volume_popup_client.pid > 0 &&
+        windowd_point_in_client(&session->volume_popup_client, x, y))
+    {
+        return &session->volume_popup_client;
+    }
+
     /* El menu Inicio va segundo: misma altura que el popup pero en la otra
      * esquina, asi que el orden entre ellos no importa -- lo que importa es
      * que ambos ganen a la taskbar y a las ventanas. */
@@ -1317,6 +1333,7 @@ static void signal_composed_batches(struct windowd_session *session)
     signal_client_composed(&session->background_client, session->background_client.consumed_submit_sequence);
     signal_client_composed(&session->taskbar_client, session->taskbar_client.consumed_submit_sequence);
     signal_client_composed(&session->keyboard_popup_client, session->keyboard_popup_client.consumed_submit_sequence);
+    signal_client_composed(&session->volume_popup_client, session->volume_popup_client.consumed_submit_sequence);
     signal_client_composed(&session->startmenu_client, session->startmenu_client.consumed_submit_sequence);
     signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
@@ -1350,6 +1367,12 @@ static void retire_presented_batches(struct windowd_session *session)
     {
         signal_client_retire(&session->keyboard_popup_client, session->keyboard_popup_client.pending_retire_sequence);
         session->keyboard_popup_client.pending_retire_sequence = 0;
+    }
+
+    if (session->volume_popup_client.pending_retire_sequence != 0)
+    {
+        signal_client_retire(&session->volume_popup_client, session->volume_popup_client.pending_retire_sequence);
+        session->volume_popup_client.pending_retire_sequence = 0;
     }
 
     if (session->startmenu_client.pending_retire_sequence != 0)
@@ -1487,6 +1510,7 @@ static void snapshot_pending_retire_sequences(struct windowd_session *session)
     session->background_client.pending_retire_sequence = session->background_client.consumed_submit_sequence;
     session->taskbar_client.pending_retire_sequence = session->taskbar_client.consumed_submit_sequence;
     session->keyboard_popup_client.pending_retire_sequence = session->keyboard_popup_client.consumed_submit_sequence;
+    session->volume_popup_client.pending_retire_sequence = session->volume_popup_client.consumed_submit_sequence;
     session->shell_client.pending_retire_sequence = session->shell_client.consumed_submit_sequence;
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -2006,7 +2030,10 @@ static int launch_keyboard_popup_client(struct windowd_session *session)
         return -1;
     }
 
+    /* La esquina es compartida con el popup de volumen: ver
+     * launch_volume_popup_client. */
     destroy_client_instance(&session->keyboard_popup_client, 1);
+    destroy_client_instance(&session->volume_popup_client, 1);
     client = &session->keyboard_popup_client;
     reset_client(client);
 
@@ -2023,6 +2050,40 @@ static int launch_keyboard_popup_client(struct windowd_session *session)
     client->frame_visible = 0;
 
     return start_client_process(client, k_keyboard_popup_client_path, 0, session->submit_event_fd, 0);
+}
+
+/* Popup de volumen: mismo molde que el de layout (rect a mano,
+ * frame_visible=0), anclado en la misma esquina inferior derecha. Por eso
+ * son excluyentes: abrir uno destruye al otro en vez de apilarlos. Un pedido
+ * repetido reinicia la instancia, igual que la taskbar. */
+static int launch_volume_popup_client(struct windowd_session *session)
+{
+    struct windowd_client *client = 0;
+    struct sx_rect strip;
+
+    if (session == 0)
+    {
+        return -1;
+    }
+
+    destroy_client_instance(&session->keyboard_popup_client, 1);
+    destroy_client_instance(&session->volume_popup_client, 1);
+    client = &session->volume_popup_client;
+    reset_client(client);
+
+    strip = windowd_taskbar_rect(&session->gfx.info);
+    client->surface_info = session->gfx.info;
+    client->surface_info.width = (uint32_t)WINDOWD_VOLUME_POPUP_WIDTH;
+    client->surface_info.height = (uint32_t)WINDOWD_VOLUME_POPUP_HEIGHT;
+    client->surface_info.pitch = (uint32_t)WINDOWD_VOLUME_POPUP_WIDTH * 4u;
+    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)WINDOWD_VOLUME_POPUP_HEIGHT;
+    client->window_x = strip.x + strip.width - 4 - WINDOWD_VOLUME_POPUP_WIDTH;
+    client->window_y = strip.y - WINDOWD_VOLUME_POPUP_HEIGHT;
+    client->window_width = WINDOWD_VOLUME_POPUP_WIDTH;
+    client->window_height = WINDOWD_VOLUME_POPUP_HEIGHT;
+    client->frame_visible = 0;
+
+    return start_client_process(client, k_volume_popup_client_path, 0, session->submit_event_fd, 0);
 }
 
 /* Menu Inicio: mismo molde que el popup de layout (rect a mano,
@@ -2059,7 +2120,7 @@ static int launch_start_menu_client(struct windowd_session *session)
 }
 
 /* Cierra el menu sin importar quien lo pidio (toggle del boton Start o click
- * afuera). Es el unico de los dos popups que se puede cerrar sin salir. */
+ * afuera). Ni el menu ni el popup de volumen salen solos: el WM los destruye. */
 static void close_start_menu_client(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     if (session == 0 || session->startmenu_client.pid <= 0)
@@ -2067,6 +2128,21 @@ static void close_start_menu_client(struct windowd_session *session, struct wind
         return;
     }
     destroy_client_instance(&session->startmenu_client, 1);
+    if (dirty != 0)
+    {
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+}
+
+/* Igual que el menu: el popup de volumen no sale solo, asi que el toggle y el
+ * click afuera lo destruyen. */
+static void close_volume_popup_client(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    if (session == 0 || session->volume_popup_client.pid <= 0)
+    {
+        return;
+    }
+    destroy_client_instance(&session->volume_popup_client, 1);
     if (dirty != 0)
     {
         windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
@@ -2514,6 +2590,7 @@ static int open_compositor_session(struct windowd_session *session)
     reset_client(&session->taskbar_client);
     reset_client(&session->shell_client);
     reset_client(&session->keyboard_popup_client);
+    reset_client(&session->volume_popup_client);
     reset_client(&session->startmenu_client);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -2653,6 +2730,14 @@ static int reap_dead_clients(struct windowd_session *session, struct windowd_dir
         windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
 
+    if (session->volume_popup_client.pid > 0 && !windowd_process_alive(session->volume_popup_client.pid))
+    {
+        /* El WM lo mata al cerrarlo por toggle o click afuera: la muerte del
+         * proceso es el cierre normal, no una caida -- sin relaunch. */
+        destroy_client_instance(&session->volume_popup_client, 0);
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    }
+
     if (session->startmenu_client.pid > 0 && !windowd_process_alive(session->startmenu_client.pid))
     {
         /* Igual que el popup: exit(0) al lanzar un programa es el cierre
@@ -2740,6 +2825,23 @@ static int service_client_launch_requests(struct windowd_session *session, struc
             if (launch_start_menu_client(session) < 0)
             {
                 eprintf("desktop: failed to launch start menu\n");
+                continue;
+            }
+            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+            continue;
+        }
+        /* El popup de volumen es un toggle como el menu: con el popup vivo
+         * el pedido lo cierra. */
+        if ((request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP) != 0)
+        {
+            if (session->volume_popup_client.pid > 0)
+            {
+                close_volume_popup_client(session, dirty);
+                continue;
+            }
+            if (launch_volume_popup_client(session) < 0)
+            {
+                eprintf("desktop: failed to launch volume popup\n");
                 continue;
             }
             windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
@@ -5133,6 +5235,15 @@ static void handle_pointer_event(
         close_start_menu_client(session, dirty);
     }
 
+    /* Igual para el popup de volumen: el boton del altavoz ya es un toggle,
+     * asi que la franja se excluye por la misma razon. */
+    if (left_pressed != 0 && left_was_pressed == 0 && session->volume_popup_client.pid > 0 &&
+        !windowd_point_in_client(&session->volume_popup_client, cursor_x, cursor_y) &&
+        !windowd_point_in_client(&session->taskbar_client, cursor_x, cursor_y))
+    {
+        close_volume_popup_client(session, dirty);
+    }
+
     if (left_pressed != 0 && left_was_pressed == 0)
     {
         /* Sin chrome: un click solo puede caer sobre una ventana o sobre el
@@ -5146,6 +5257,14 @@ static void handle_pointer_event(
                  * este caso especial el click caia en el camino generico de
                  * ventana -- donde overlay_slot_for_client_ptr devuelve -1,
                  * anula el hover, y se pierde el click entero. */
+                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
+                mouse_routed = 1;
+                current_hover_client = 0;
+            }
+            else if (current_hover_client == &session->volume_popup_client)
+            {
+                /* Igual que el popup de layout: tampoco es una ventana y el
+                 * camino generico perderia el click. */
                 (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
                 current_hover_client = 0;
@@ -5543,6 +5662,11 @@ int main(int argc, char **argv)
          * nada por su cuenta, no tiene cursor hints ni size hints (rect fijo,
          * nunca los pide). */
         if (service_client_batches(&session, &dirty, &session.keyboard_popup_client) < 0)
+        {
+            break;
+        }
+        /* Popup de volumen: igual que el de layout -- solo presenta frames. */
+        if (service_client_batches(&session, &dirty, &session.volume_popup_client) < 0)
         {
             break;
         }

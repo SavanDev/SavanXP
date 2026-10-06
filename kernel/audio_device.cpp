@@ -5,6 +5,7 @@
 
 #include "kernel/audio.hpp"
 #include "kernel/device.hpp"
+#include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "savanxp/syscall.h"
 
@@ -135,7 +136,7 @@ int audio_write(uint64_t user_buffer, size_t count) {
     return static_cast<int>(count);
 }
 
-int audio_ioctl(uint64_t request, uint64_t argument, uint32_t) {
+int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     switch (request) {
         case AUDIO_IOC_GET_INFO: {
             savanxp_audio_info info = {};
@@ -149,6 +150,29 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t) {
                 ? 0
                 : negative_error(SAVANXP_EINVAL);
         }
+        case AUDIO_IOC_SET_VOLUME:
+        case AUDIO_IOC_SET_MUTED: {
+            // Mismo corte que INPUT_IOC_SET_LAYOUT: mutar el estado
+            // compartido exige escritura. Leerlo, no.
+            if ((granted_access & object::access_write) == 0) {
+                return negative_error(SAVANXP_EACCES);
+            }
+            if (request == AUDIO_IOC_SET_VOLUME) {
+                if (!audio::set_master_volume(static_cast<uint32_t>(argument))) {
+                    return negative_error(SAVANXP_EINVAL);
+                }
+                return 0;
+            }
+            if (argument != 0 && argument != 1) {
+                return negative_error(SAVANXP_EINVAL);
+            }
+            audio::set_master_muted(argument != 0);
+            return 0;
+        }
+        case AUDIO_IOC_GET_VOLUME:
+            return static_cast<int>(audio::master_volume());
+        case AUDIO_IOC_GET_MUTED:
+            return audio::master_muted() ? 1 : 0;
         default:
             return negative_error(SAVANXP_ENOSYS);
     }

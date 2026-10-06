@@ -27,9 +27,11 @@
 #define TASKBAR_MARGIN 2
 #define TASKBAR_ICON_SIZE 16
 #define TASKBAR_LAYOUT_WIDTH 32
+#define TASKBAR_VOLUME_WIDTH 32
 #define TASKBAR_START_WIDTH 64
 #define TASKBAR_HIT_START (-3)
 #define TASKBAR_HIT_LAYOUT (-2)
+#define TASKBAR_HIT_VOLUME (-4)
 
 /* g_active_layout se refresca por polling (mismo criterio que
  * desktop_wallpaper_reload): no hay push desde el popup, asi que taskbar
@@ -37,6 +39,14 @@
  * abierto una sola vez -- nunca se lee de el, solo se usa para el ioctl. */
 #define TASKBAR_LAYOUT_POLL_FRAMES 30
 static const char *k_layout_labels[2] = {"ES", "EN"};
+
+/* Mismo criterio que el layout: el popup de volumen aplica directo en el
+ * kernel, asi que el altavoz se refresca por polling sobre un fd de
+ * /dev/audio0 abierto una sola vez -- nunca se escribe por el, solo ioctls
+ * de lectura. */
+static long g_audio_fd = -1;
+static int g_audio_muted = 0;
+static int g_audio_volume = 100;
 
 /* Bisel 3D al estilo Win95, con las primitivas publicas del painter: sxgui solo
  * exporta widgets, y sus helpers de bisel son internos. La barra no usa ningun
@@ -50,6 +60,27 @@ static void taskbar_bevel(struct sx_painter *painter, struct sx_rect rect, int s
     sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), top_left);
     sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), bottom_right);
     sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
+}
+
+/* El boton del altavoz usa el mismo arte que el reproductor (nombres de la
+ * Icon Naming Specification): el generador lo empaqueta en start_logo.h y
+ * asi no hay dos dibujos que diverjan. Los tercios son los del reproductor
+ * (mediaplayer.c): 0..33 bajo, 34..66 medio, 67..100 alto. */
+static const struct savanxp_embedded_bitmap_asset *taskbar_volume_glyph(void)
+{
+    if (g_audio_muted || g_audio_volume <= 0)
+    {
+        return &k_volume_muted;
+    }
+    if (g_audio_volume < 34)
+    {
+        return &k_volume_low;
+    }
+    if (g_audio_volume < 67)
+    {
+        return &k_volume_medium;
+    }
+    return &k_volume_high;
 }
 
 static struct savanxp_wm_window_list *g_list;
@@ -133,6 +164,7 @@ static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
     }
     usable = (int)info->width - (TASKBAR_MARGIN * 2) - (TASKBAR_BUTTON_GAP * (count - 1))
         - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP
+        - TASKBAR_VOLUME_WIDTH - TASKBAR_BUTTON_GAP
         - TASKBAR_START_WIDTH - TASKBAR_BUTTON_GAP;
     width = usable / count;
     if (width > TASKBAR_BUTTON_MAX_WIDTH)
@@ -173,6 +205,17 @@ static struct sx_rect taskbar_layout_rect(const struct savanxp_fb_info *info)
         (int)info->width - TASKBAR_MARGIN - TASKBAR_LAYOUT_WIDTH,
         TASKBAR_MARGIN,
         TASKBAR_LAYOUT_WIDTH,
+        height);
+}
+
+static struct sx_rect taskbar_volume_rect(const struct savanxp_fb_info *info)
+{
+    int height = (int)info->height - (TASKBAR_MARGIN * 2);
+
+    return sx_rect_make(
+        (int)info->width - TASKBAR_MARGIN - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_VOLUME_WIDTH,
+        TASKBAR_MARGIN,
+        TASKBAR_VOLUME_WIDTH,
         height);
 }
 
@@ -291,6 +334,37 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         taskbar_bevel(&painter, layout_rect, g_pressed_index == TASKBAR_HIT_LAYOUT);
         sx_painter_draw_text(&painter, text_x, text_y, label, SXGUI_COLOR_TEXT);
     }
+
+    {
+        /* Boton del altavoz: a la izquierda del layout, mismo bisel. El
+         * glifo cambia con el nivel y el mute (el popup aplica directo en
+         * el kernel y la barra se entera por polling, igual que el
+         * layout). */
+        struct sx_rect volume_rect = taskbar_volume_rect(&gfx->info);
+        const struct savanxp_embedded_bitmap_asset *glyph = taskbar_volume_glyph();
+        int sunken = (g_pressed_index == TASKBAR_HIT_VOLUME);
+
+        sx_painter_fill_rect(&painter, volume_rect, SXGUI_COLOR_FACE);
+        taskbar_bevel(&painter, volume_rect, sunken);
+        {
+            int icon_x = volume_rect.x + (volume_rect.width - (int)glyph->width) / 2 + (sunken ? 1 : 0);
+            int icon_y = volume_rect.y + (volume_rect.height - (int)glyph->height) / 2 + (sunken ? 1 : 0);
+            struct savanxp_fb_info icon_info;
+            struct sx_bitmap icon_bitmap;
+
+            icon_info.width = glyph->width;
+            icon_info.height = glyph->height;
+            icon_info.pitch = glyph->width * 4u;
+            icon_info.bpp = 32;
+            icon_info.buffer_size = icon_info.pitch * glyph->height;
+            sx_bitmap_wrap(
+                &icon_bitmap,
+                (uint32_t *)glyph->pixels,
+                &icon_info,
+                SX_PIXEL_FORMAT_BGRA8888);
+            sx_painter_blit_bitmap(&painter, &icon_bitmap, icon_x, icon_y);
+        }
+    }
 }
 
 static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
@@ -298,12 +372,19 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
     int count = (int)g_snapshot.count;
     int index;
     struct sx_rect layout_rect = taskbar_layout_rect(info);
+    struct sx_rect volume_rect = taskbar_volume_rect(info);
     struct sx_rect start_rect = taskbar_start_rect(info);
 
     if (x >= start_rect.x && x < start_rect.x + start_rect.width &&
         y >= start_rect.y && y < start_rect.y + start_rect.height)
     {
         return TASKBAR_HIT_START;
+    }
+
+    if (x >= volume_rect.x && x < volume_rect.x + volume_rect.width &&
+        y >= volume_rect.y && y < volume_rect.y + volume_rect.height)
+    {
+        return TASKBAR_HIT_VOLUME;
     }
 
     if (x >= layout_rect.x && x < layout_rect.x + layout_rect.width &&
@@ -334,6 +415,14 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
 static void taskbar_open_layout_popup(const struct savanxp_gfx_context *gfx)
 {
     (void)gfx_desktop_launch_ex(gfx, "/bin/kbdlayoutpopup", SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP);
+}
+
+/* Igual que el popup de layout pero con toggle del lado del WM: el path lo
+ * ignora windowd (el binario es fijo), el flag pide el popup de volumen y si
+ * ya esta abierto el pedido lo cierra. */
+static void taskbar_open_volume_popup(const struct savanxp_gfx_context *gfx)
+{
+    (void)gfx_desktop_launch_ex(gfx, "/bin/volumepopup", SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP);
 }
 
 /* Igual que el popup de layout pero con toggle del lado del WM: si el menu
@@ -394,6 +483,23 @@ int main(void)
         }
     }
 
+    /* Solo para los ioctl de lectura del volumen -- jamas se escribe por
+     * este fd. Sin audio no hay altavoz que pintar: el boton queda igual. */
+    g_audio_fd = (long)audio_open();
+    if (g_audio_fd >= 0)
+    {
+        long muted = audio_get_muted((int)g_audio_fd);
+        long volume = audio_get_volume((int)g_audio_fd);
+        if (muted == 0 || muted == 1)
+        {
+            g_audio_muted = (int)muted;
+        }
+        if (volume >= 0 && volume <= 100)
+        {
+            g_audio_volume = (int)volume;
+        }
+    }
+
     for (;;)
     {
         while (gfx_poll_event(&gfx, &event) > 0)
@@ -426,6 +532,10 @@ int main(void)
                 {
                     taskbar_open_layout_popup(&gfx);
                 }
+                else if (index == TASKBAR_HIT_VOLUME && index == g_pressed_index)
+                {
+                    taskbar_open_volume_popup(&gfx);
+                }
                 else if (index >= 0 && index == g_pressed_index &&
                     index < (int)g_snapshot.count)
                 {
@@ -452,10 +562,11 @@ int main(void)
 
         /* El popup aplica el cambio directo en el kernel -- no le avisa a la
          * taskbar --, asi que el indicador se refresca por polling cada
-         * TASKBAR_LAYOUT_POLL_FRAMES vueltas en vez de por push. */
-        if (g_input_fd >= 0)
+         * TASKBAR_LAYOUT_POLL_FRAMES vueltas en vez de por push. El mute
+         * va en la misma vuelta: mismo costo, mismo criterio. */
+        if (layout_poll_countdown == 0)
         {
-            if (layout_poll_countdown == 0)
+            if (g_input_fd >= 0)
             {
                 long layout = input_get_layout((int)g_input_fd);
                 if ((layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN) &&
@@ -464,12 +575,27 @@ int main(void)
                     g_active_layout = (int)layout;
                     needs_repaint = 1;
                 }
-                layout_poll_countdown = TASKBAR_LAYOUT_POLL_FRAMES;
             }
-            else
+            if (g_audio_fd >= 0)
             {
-                layout_poll_countdown -= 1;
+                long muted = audio_get_muted((int)g_audio_fd);
+                long volume = audio_get_volume((int)g_audio_fd);
+                if ((muted == 0 || muted == 1) && (int)muted != g_audio_muted)
+                {
+                    g_audio_muted = (int)muted;
+                    needs_repaint = 1;
+                }
+                if (volume >= 0 && volume <= 100 && (int)volume != g_audio_volume)
+                {
+                    g_audio_volume = (int)volume;
+                    needs_repaint = 1;
+                }
             }
+            layout_poll_countdown = TASKBAR_LAYOUT_POLL_FRAMES;
+        }
+        else
+        {
+            layout_poll_countdown -= 1;
         }
 
         if (needs_repaint)
@@ -491,6 +617,10 @@ int main(void)
     if (g_input_fd >= 0)
     {
         savanxp_close((int)g_input_fd);
+    }
+    if (g_audio_fd >= 0)
+    {
+        savanxp_close((int)g_audio_fd);
     }
     gfx_close(&gfx);
     return 0;

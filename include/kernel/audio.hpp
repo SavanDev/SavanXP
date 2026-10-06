@@ -70,6 +70,20 @@ bool configure();
 int submit_period(uint64_t user_buffer, uint32_t byte_count);
 void stop();
 
+// Volumen maestro de reproduccion, compartido por todos los escritores de
+// /dev/audio0. 0..100, 100 de arranque; el silencio va aparte para no perder
+// el nivel al mutear. Los backends lo aplican al PCM ya copiado con
+// apply_playback_gain, asi que el coste es cero a 100 y el control no necesita
+// ser dueno del dispositivo para moverlo.
+uint32_t master_volume();
+bool set_master_volume(uint32_t volume);
+bool master_muted();
+void set_master_muted(bool muted);
+// Escala `byte_count` bytes de PCM S16LE (estereo o no: la ganancia es por
+// muestra) in situ. Mudo escribe ceros, 100 no toca nada. Un resto impar se
+// deja tal cual; los periodos del ABI son multiplos de 4.
+void apply_playback_gain(void* frames, uint32_t byte_count);
+
 bool capture_ready();
 bool capture_configure();
 int capture_read_period(uint64_t user_buffer, uint32_t byte_count);

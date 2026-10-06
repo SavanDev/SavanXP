@@ -472,6 +472,20 @@ enum savanxp_gpu_ioctl {
 
 enum savanxp_audio_ioctl {
     AUDIO_IOC_GET_INFO = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 1),
+    /* Volumen maestro de reproduccion, 0..100. SET lleva el valor directo
+     * como argument (no como puntero: es un escalar, igual que
+     * INPUT_IOC_SET_LAYOUT) y exige acceso de escritura; GET lo devuelve
+     * como el propio valor de retorno no-negativo del ioctl. Se aplica en
+     * el kernel a todo lo que llegue a /dev/audio0, escriba quien escriba,
+     * asi que un control en la barra y un juego hablan del mismo numero.
+     * 100 es identidad: el periodo viaja sin tocarse. */
+    AUDIO_IOC_SET_VOLUME = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 2),
+    AUDIO_IOC_GET_VOLUME = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 3),
+    /* Silencio maestro, 0 (suena) o 1 (mudo). Mismo convenio escalar que el
+     * volumen. Mudo equivale a ganancia cero pero conserva el volumen para
+     * al quitarlo volver al nivel anterior. */
+    AUDIO_IOC_SET_MUTED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 4),
+    AUDIO_IOC_GET_MUTED = SAVANXP_IOCTL(SAVANXP_IOCTL_GROUP_AUDIO, 5),
 };
 
 enum savanxp_power_ioctl {
@@ -847,6 +861,11 @@ enum savanxp_input_event_type {
  * anclado abajo a la izquierda y con toggle -- si ya esta abierto, el pedido
  * lo cierra en vez de relanzarlo. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU 0x00000004u
+/* El pedido es del popup de volumen de la taskbar: mismo molde que
+ * TASKBAR_POPUP (binario fijo, anclado arriba de la franja, sin bordes) pero
+ * con toggle como START_MENU y cierre por click afuera. Un click repetido en
+ * el boton del altavoz lo cierra en vez de duplicarlo. */
+#define SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP 0x00000008u
 
 /* Estilo de ventana: propiedades de la VENTANA de un programa, no de su
  * lanzamiento. El WM las lee del .sxe del binario al crear la ventana, por el

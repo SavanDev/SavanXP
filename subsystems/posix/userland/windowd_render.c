@@ -982,6 +982,17 @@ static int build_layers(
         ++count;
     }
 
+    /* Popup de volumen: misma esquina que el de layout (son excluyentes) y
+     * misma altura en el z-order: sobre la taskbar, bajo el Task List. */
+    if (client_is_drawable(&session->volume_popup_client))
+    {
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->volume_popup_client);
+        layers[count].client = &session->volume_popup_client;
+        ++count;
+    }
+
     /* Menu Inicio: misma altura que el popup, otra esquina. */
     if (client_is_drawable(&session->startmenu_client))
     {

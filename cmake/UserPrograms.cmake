@@ -296,6 +296,7 @@ savanxp_program(NAME nettest TEST SOURCES subsystems/posix/userland/nettest.c)
 savanxp_program(NAME tcpget SOURCES subsystems/posix/userland/tcpget.c)
 savanxp_program(NAME tcptest TEST SOURCES subsystems/posix/userland/tcptest.c)
 savanxp_program(NAME beep SOURCES subsystems/posix/userland/beep.c)
+savanxp_program(NAME volume SOURCES subsystems/posix/userland/volume.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 savanxp_program(NAME compositord SOURCES subsystems/posix/userland/compositord.c)
 # El compositor. Solo pide dos funciones de metrica de fuente, que son puras y
@@ -318,6 +319,10 @@ savanxp_program(NAME taskbar DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/taskbar.c
     subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME kbdlayoutpopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
+# El popup de volumen: mismo molde que el de layout (cliente sin bordes,
+# anclado por windowd, sin .sxres para no salir en el launcher), pero con
+# slider y mute en vez de filas. Solo mouse, como el de layout.
+savanxp_program(NAME volumepopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/volumepopup.c)
 # El menu Inicio: mismo molde que el popup de layout (cliente sin bordes,
 # anclado por windowd, sin .sxres para no salir en el launcher), pero con el
 # catalogo de progman enlazado. Solo mouse en la version recortada.

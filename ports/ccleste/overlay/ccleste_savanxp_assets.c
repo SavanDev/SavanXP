@@ -196,6 +196,24 @@ void sx_bmp_release(struct sx_bmp* bmp) {
 int sx_wav_load(const char* path, struct sx_wav* out) {
     unsigned char* data = 0;
     uint32_t size = 0;
+    int result;
+
+    out->samples = 0;
+    out->sample_count = 0;
+    out->sample_rate_hz = 0;
+
+    if (sx_asset_slurp(path, &data, &size) < 0) {
+        return -1;
+    }
+    result = sx_wav_decode(data, size, path, out);
+    free(data);
+    return result;
+}
+
+/* Parseo puro sobre memoria: la unica parte ejercitable en el host, donde el
+ * `struct stat` del SDK no coincide con el del sistema (probar sx_wav_load
+ * entero ahi corrompe la pila en el fstat). */
+int sx_wav_decode(const unsigned char* data, uint32_t size, const char* path, struct sx_wav* out) {
     uint32_t offset;
     uint16_t format = 0;
     uint16_t channels = 0;
@@ -211,13 +229,12 @@ int sx_wav_load(const char* path, struct sx_wav* out) {
     out->sample_count = 0;
     out->sample_rate_hz = 0;
 
-    if (sx_asset_slurp(path, &data, &size) < 0) {
+    if (data == 0) {
         return -1;
     }
 
     if (size < 44u || memcmp(data, "RIFF", 4) != 0 || memcmp(data + 8, "WAVE", 4) != 0) {
         eprintf("ccleste: %s no es un WAV RIFF\n", path);
-        free(data);
         return -1;
     }
 
@@ -230,7 +247,6 @@ int sx_wav_load(const char* path, struct sx_wav* out) {
         if (memcmp(data + offset, "fmt ", 4) == 0) {
             if (chunk_size < 16u || offset + 8u + 16u > size) {
                 eprintf("ccleste: %s tiene un chunk fmt incompleto\n", path);
-                free(data);
                 return -1;
             }
             format = sx_read_u16le(data + offset + 8);
@@ -240,7 +256,6 @@ int sx_wav_load(const char* path, struct sx_wav* out) {
         } else if (memcmp(data + offset, "data", 4) == 0) {
             if (offset + 8u > size) {
                 eprintf("ccleste: %s tiene un chunk data truncado\n", path);
-                free(data);
                 return -1;
             }
             if (chunk_size > size - offset - 8u) {
@@ -257,40 +272,37 @@ int sx_wav_load(const char* path, struct sx_wav* out) {
     if (format != 1u || channels != 1u || rate == 0u || frames == 0) {
         eprintf("ccleste: %s no es PCM mono (format=%u canales=%u)\n",
                 path, (unsigned int)format, (unsigned int)channels);
-        free(data);
         return -1;
     }
     if (bits != 8u && bits != 16u) {
         eprintf("ccleste: %s usa %u bits por muestra (solo 8 o 16)\n", path, (unsigned int)bits);
-        free(data);
         return -1;
     }
 
     frame_count = frame_bytes / (uint32_t)(bits / 8u);
     if (frame_count == 0u) {
         eprintf("ccleste: %s no tiene muestras\n", path);
-        free(data);
         return -1;
     }
 
     samples = (unsigned char*)malloc(frame_count);
     if (samples == 0) {
         eprintf("ccleste: sin memoria para las muestras de %s\n", path);
-        free(data);
         return -1;
     }
 
     /* The SDK mixer takes unsigned 8-bit mono, so 16-bit input keeps only the
-     * high byte: that is the whole dynamic range the mixer can express anyway. */
+     * high byte: that is the whole dynamic range the mixer can express anyway.
+     * The flip restores the sign: a signed high byte of 0x00 is silence, but
+     * read unsigned it would play as full-negative DC. */
     if (bits == 8u) {
         memcpy(samples, frames, frame_count);
     } else {
         for (i = 0; i < frame_count; ++i) {
-            samples[i] = frames[2u * i + 1u];
+            samples[i] = (unsigned char)(frames[2u * i + 1u] ^ 0x80u);
         }
     }
 
-    free(data);
     out->samples = samples;
     out->sample_count = frame_count;
     out->sample_rate_hz = rate;

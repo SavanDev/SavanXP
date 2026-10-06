@@ -438,7 +438,19 @@ Cut-off notes:
   their own content now get the system 3D edges from `sxgui_draw_raised_edge()`.
   [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
 
+- **System master volume and mute.** `AUDIO_IOC_SET/GET_VOLUME` (0..100, 100 is
+  identity) and `SET/GET_MUTED` on `/dev/audio0` scale every writer's PCM in the
+  kernel; `/bin/volume` reads, sets and persists it to `/disk/audio.cfg`.
+
+- **Taskbar volume button and popup.** The speaker left of the layout indicator
+  opens a frameless slider with mute, applied live through the master ioctls;
+  a second click or a click outside closes it, like the Start menu.
+
 ### Fixed
+
+- **Celeste's effects no longer saturate at any volume.** Its 16-bit WAVs were
+  decoded taking the high byte unsigned, shifting everything half scale (even
+  silence played full-negative); the mixer also compresses past 0.75 FS now.
 
 - **A missing library is now named deterministically, and counted.** It used to be
   whichever failed last, so the same image could name three different libraries for

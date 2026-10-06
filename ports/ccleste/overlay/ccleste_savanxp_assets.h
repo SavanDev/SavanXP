@@ -38,4 +38,9 @@ struct sx_wav {
 int sx_wav_load(const char* path, struct sx_wav* out);
 void sx_wav_release(struct sx_wav* wav);
 
+/* Pure-memory core of sx_wav_load, without file access: the only part that can
+ * run on the host (the SDK `struct stat` does not match the system's). The
+ * buffer stays owned by the caller. Returns 0, or -1 as above. */
+int sx_wav_decode(const unsigned char* data, uint32_t size, const char* path, struct sx_wav* out);
+
 #endif

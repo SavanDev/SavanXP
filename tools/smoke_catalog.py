@@ -209,6 +209,23 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="ac97",
         wav_name="ac97-stream.wav",
     ),
+    "ac97-stream-quiet": _qemu_scenario(
+        "audiostream-quiet",
+        "AUDIO STREAM QUIET PASS",
+        "AUDIO STREAM FAIL",
+        "AC'97 streaming audio at master volume 50",
+        120.0,
+        audio_device="ac97",
+        wav_name="ac97-stream-quiet.wav",
+    ),
+    "volume-smoke": _qemu_scenario(
+        "volumesmoke",
+        "SMOKE PASS",
+        "SMOKE FAIL",
+        "volume CLI sets master volume and persists it",
+        120.0,
+        audio_device="ac97",
+    ),
     "ac97-count": _qemu_scenario(
         "audiostream",
         "AUDIO STREAM PASS",

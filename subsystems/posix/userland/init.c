@@ -132,6 +132,8 @@ static int run_automation_spec(const char* spec) {
     const char* diamondtest_argv[] = {"/disk/bin/diamondtest", 0};
     const char* ffmpegload_argv[] = {"/disk/bin/ffmpegload", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
+    const char* audiostream_quiet_argv[] = {"/disk/bin/audiotest", "--stream-quiet", 0};
+    const char* volume_argv[] = {"/disk/bin/volume", "75", 0};
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
     const char* tcptest_argv[] = {"/disk/bin/tcptest", 0, 0};
@@ -251,6 +253,14 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/audiotest";
             argv = audiostream_argv;
             argc = 2;
+        } else if (strcmp(spec, "audiostream-quiet") == 0) {
+            path = "/disk/bin/audiotest";
+            argv = audiostream_quiet_argv;
+            argc = 2;
+        } else if (strcmp(spec, "volumesmoke") == 0) {
+            path = "/disk/bin/volume";
+            argv = volume_argv;
+            argc = 2;
         } else if (strcmp(spec, "audiorecord") == 0) {
             path = "/disk/bin/audiotest";
             argv = audiorecord_argv;
@@ -330,6 +340,7 @@ static int run_automation_spec(const char* spec) {
 }
 
 #define KEYBOARD_LAYOUT_CONFIG_PATH "/disk/keyboard.cfg"
+#define AUDIO_CONFIG_PATH "/disk/audio.cfg"
 
 /* Layout preferido (mismo patron de 1 digito ASCII que desktop.cfg): se
  * aplica ANTES de arrancar windowd para que el layout ya este activo cuando
@@ -361,6 +372,72 @@ static void apply_keyboard_layout_preference(void) {
     savanxp_close((int)input_fd);
 }
 
+/* Volumen preferido (mismo patron que keyboard.cfg pero con dos numeros:
+ * "75 0" = volumen 75 sin mutear). Se aplica ANTES de arrancar windowd para
+ * que el primer sonido ya salga al nivel guardado. Sin fichero o con
+ * contenido roto no se toca nada: el kernel arranca a 100 sin mutear. */
+static void apply_audio_preference(void) {
+    char text[16] = {0};
+    long config_fd = savanxp_open(AUDIO_CONFIG_PATH);
+    long audio_fd;
+    long bytes_read;
+    unsigned int volume = 0;
+    unsigned int muted = 0;
+    size_t index = 0;
+
+    if (config_fd < 0) {
+        return;
+    }
+    bytes_read = savanxp_read((int)config_fd, text, sizeof(text) - 1);
+    savanxp_close((int)config_fd);
+    if (bytes_read <= 0 || bytes_read >= (long)sizeof(text)) {
+        return;
+    }
+    text[bytes_read] = '\0';
+
+    while (is_space_char(text[index])) {
+        ++index;
+    }
+    if (text[index] < '0' || text[index] > '9') {
+        return;
+    }
+    while (text[index] >= '0' && text[index] <= '9') {
+        volume = volume * 10u + (unsigned int)(text[index] - '0');
+        if (volume > 100u) {
+            return;
+        }
+        ++index;
+    }
+    if (!is_space_char(text[index])) {
+        return;
+    }
+    while (is_space_char(text[index])) {
+        ++index;
+    }
+    if (text[index] != '0' && text[index] != '1') {
+        return;
+    }
+    muted = (unsigned int)(text[index] - '0');
+    ++index;
+    while (text[index] != '\0') {
+        if (!is_space_char(text[index])) {
+            return;
+        }
+        ++index;
+    }
+
+    /* Solo para los ioctl: el volumen vive en el kernel y se lee o fija sin
+     * ser dueno del dispositivo, asi que abrir aca no le quita el audio a
+     * nadie. */
+    audio_fd = savanxp_open_mode("/dev/audio0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    if (audio_fd < 0) {
+        return;
+    }
+    (void)audio_set_volume((int)audio_fd, (int)volume);
+    (void)audio_set_muted((int)audio_fd, (int)muted);
+    savanxp_close((int)audio_fd);
+}
+
 int main(void) {
     const char* windowd_argv[] = {"/bin/windowd", 0};
     const char* shell_argv[] = {"/bin/sh", 0};
@@ -386,6 +463,7 @@ int main(void) {
     }
 
     apply_keyboard_layout_preference();
+    apply_audio_preference();
 
     for (;;) {
         int status = 0;

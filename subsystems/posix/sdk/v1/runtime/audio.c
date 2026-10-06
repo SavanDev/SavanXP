@@ -273,8 +273,25 @@ static size_t sx_audio_mixer_frames_due(struct sx_audio_mixer* mixer)
     return (size_t)(numerator / 1000u);
 }
 
-static int16_t sx_audio_clamp_sample(int mixed)
+static int16_t sx_audio_soft_clip(int mixed)
 {
+    /* Rodilla suave a 0.75 del fondo de escala, 8:1 por encima. Las SFX de
+     * los juegos son cuadradas a fondo de escala por naturaleza (crest ~1),
+     * y con 8 voces a 127 tres solapadas ya cuadran un clamp duro -- que es
+     * lo que se escuchaba saturado por mas que se bajara el volumen maestro
+     * (la forma cuadrada ya venia rota de la mezcla). Por debajo de la
+     * rodilla no se toca ni un bit, asi que una mezcla que no clipeaba es
+     * identica; por encima se comprime en vez de cuadrar, y solo un extremo
+     * absurdo llega al clamp final. */
+    const int knee = 24576;
+    if (mixed > knee)
+    {
+        mixed = knee + (mixed - knee) / 8;
+    }
+    else if (mixed < -knee)
+    {
+        mixed = -knee + (mixed + knee) / 8;
+    }
     if (mixed < -32768)
     {
         return -32768;
@@ -334,9 +351,9 @@ static void sx_audio_mixer_render(
         }
 
         mixer->mix_buffer[(frame * mixer->info.channels) + 0] =
-            sx_audio_clamp_sample(mixed_left);
+            sx_audio_soft_clip(mixed_left);
         mixer->mix_buffer[(frame * mixer->info.channels) + 1] =
-            sx_audio_clamp_sample(mixed_right);
+            sx_audio_soft_clip(mixed_right);
     }
 }
 

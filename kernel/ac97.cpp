@@ -247,6 +247,9 @@ bool copy_period(uint64_t user_buffer, uint32_t byte_count) {
     if (!process::copy_from_user(destination, user_buffer, byte_count)) {
         return false;
     }
+    // La ganancia maestra se aplica aca, sobre el PCM ya en memoria del
+    // kernel: el backend no copia de mas y a 100 el periodo ni se recorre.
+    audio::apply_playback_gain(destination, byte_count);
     set_bdl_descriptor(g_head, byte_count);
     return true;
 }

@@ -140,5 +140,12 @@ struct windowd_session
      * fresco; se cierra solo (exit) al lanzar, por toggle del boton Start, o
      * por click afuera (el WM lo destruye). Solo mouse, como el popup. */
     struct windowd_client startmenu_client;
+    /* Popup de volumen: mismo patron que el de layout pero anclado arriba del
+     * boton del altavoz (misma esquina que el de layout) y con toggle como el
+     * menu: el pedido lo abre o lo cierra, y un click afuera lo destruye. No
+     * tiene accion terminal (el slider aplica en vivo), asi que nunca sale
+     * solo -- el WM lo mata al cerrarlo. Comparte la esquina con el popup de
+     * layout: abrir uno destruye al otro. */
+    struct windowd_client volume_popup_client;
     struct windowd_client overlay_clients[WINDOWD_MAX_OVERLAY_CLIENTS];
 };

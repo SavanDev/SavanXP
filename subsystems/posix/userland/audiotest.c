@@ -40,6 +40,10 @@ static int is_stream_mode(int argc, char** argv) {
     return argc > 1 && strcmp(argv[1], "--stream") == 0;
 }
 
+static int is_stream_quiet_mode(int argc, char** argv) {
+    return argc > 1 && strcmp(argv[1], "--stream-quiet") == 0;
+}
+
 static int is_record_mode(int argc, char** argv) {
     return argc > 1 && strcmp(argv[1], "--record") == 0;
 }
@@ -150,6 +154,7 @@ int main(int argc, char** argv) {
     long result;
     const int smoke_mode = is_smoke_mode(argc, argv);
     const int stream_mode = is_stream_mode(argc, argv);
+    const int stream_quiet_mode = is_stream_quiet_mode(argc, argv);
     const int record_mode = is_record_mode(argc, argv);
 
     if (fd < 0) {
@@ -178,6 +183,38 @@ int main(int argc, char** argv) {
         const int rc = run_stream((int)fd, &info);
         savanxp_close((int)fd);
         return rc;
+    }
+
+    /* El mismo stream pero con el volumen maestro a 50: ejercita los ioctl
+     * de volumen y el camino de ganancia del kernel de punta a punta. El
+     * WAV que graba el host debe salir a mitad de amplitud; el token lo
+     * distingue del stream a 100 para que el catalogo los pida por separado.
+     * El nivel se restaura siempre, pase lo que pase. */
+    if (stream_quiet_mode) {
+        int rc;
+        if (audio_set_volume((int)fd, 50) < 0) {
+            puts_fd(2, "audiotest: AUDIO_IOC_SET_VOLUME failed\n");
+            savanxp_close((int)fd);
+            return 1;
+        }
+        if (audio_get_volume((int)fd) != 50) {
+            puts_fd(2, "audiotest: volume readback mismatch\n");
+            (void)audio_set_volume((int)fd, 100);
+            savanxp_close((int)fd);
+            return 1;
+        }
+        rc = run_stream((int)fd, &info);
+        if (audio_set_volume((int)fd, 100) < 0) {
+            puts_fd(2, "audiotest: volume restore failed\n");
+            savanxp_close((int)fd);
+            return 1;
+        }
+        savanxp_close((int)fd);
+        if (rc != 0) {
+            return rc;
+        }
+        printf("AUDIO STREAM QUIET PASS\n");
+        return 0;
     }
 
     if (record_mode) {

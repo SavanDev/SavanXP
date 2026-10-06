@@ -412,6 +412,22 @@ long audio_get_info(int fd, struct savanxp_audio_info* info) {
     return savanxp_ioctl(fd, AUDIO_IOC_GET_INFO, (unsigned long)info);
 }
 
+long audio_set_volume(int fd, int volume) {
+    return savanxp_ioctl(fd, AUDIO_IOC_SET_VOLUME, (unsigned long)volume);
+}
+
+long audio_get_volume(int fd) {
+    return savanxp_ioctl(fd, AUDIO_IOC_GET_VOLUME, 0);
+}
+
+long audio_set_muted(int fd, int muted) {
+    return savanxp_ioctl(fd, AUDIO_IOC_SET_MUTED, (unsigned long)muted);
+}
+
+long audio_get_muted(int fd) {
+    return savanxp_ioctl(fd, AUDIO_IOC_GET_MUTED, 0);
+}
+
 int power_shutdown(void) {
     long fd = savanxp_open_mode("/dev/power", SAVANXP_OPEN_WRITE);
     if (fd < 0) {

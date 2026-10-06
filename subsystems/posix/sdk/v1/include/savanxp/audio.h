@@ -14,6 +14,11 @@ extern "C" {
  * sink, a growable interleaved stereo buffer, and mono unsigned-8-bit voices
  * with source-rate/pitch conversion and classic volume/separation panning.
  *
+ * The mix bus has a soft knee at 0.75 full scale (8:1 above it): game SFX
+ * are full-scale squares by nature and overlaps would otherwise square at
+ * the rails no matter the master volume. Below the knee the mix is bit
+ * identical, so a mix that never clipped is unchanged.
+ *
  * Link runtime/audio.c or build an external app with `tools/build-user.sh --audio`.
  */
 #define SX_AUDIO_PITCH_NORMAL_Q16 65536u

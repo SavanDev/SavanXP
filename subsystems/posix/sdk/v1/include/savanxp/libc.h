@@ -91,6 +91,14 @@ long gfx_pointer_open(void);
 int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event);
 long audio_open(void);
 long audio_get_info(int fd, struct savanxp_audio_info* info);
+/* Volumen maestro de /dev/audio0, 0..100 (100 = identidad). Silencio aparte:
+ * mutear conserva el nivel. Los setters exigen el fd con escritura, igual que
+ * input_set_layout; los getters devuelven el valor como retorno no-negativo.
+ * Negativo = -errno en los cuatro. */
+long audio_set_volume(int fd, int volume);
+long audio_get_volume(int fd);
+long audio_set_muted(int fd, int muted);
+long audio_get_muted(int fd);
 long gpu_open(void);
 long gpu_get_info(int fd, struct savanxp_gpu_info* info);
 long gpu_acquire(int fd);

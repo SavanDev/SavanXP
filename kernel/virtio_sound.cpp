@@ -447,6 +447,8 @@ bool submit_tx_slot(uint16_t slot, uint64_t user_buffer, uint32_t byte_count, bo
         memset(payload, 0, byte_count);
     } else if (!process::copy_from_user(payload, user_buffer, byte_count)) {
         return false;
+    } else {
+        audio::apply_playback_gain(payload, byte_count);
     }
     memset(status, 0, sizeof(*status));
 
