@@ -133,6 +133,7 @@ static int run_automation_spec(const char* spec) {
     const char* ffmpegload_argv[] = {"/disk/bin/ffmpegload", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* audiostream_quiet_argv[] = {"/disk/bin/audiotest", "--stream-quiet", 0};
+    const char* audiod_selftest_argv[] = {"/bin/audiod", "--selftest", 0};
     const char* volume_argv[] = {"/disk/bin/volume", "75", 0};
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
@@ -256,6 +257,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "audiostream-quiet") == 0) {
             path = "/disk/bin/audiotest";
             argv = audiostream_quiet_argv;
+            argc = 2;
+        } else if (strcmp(spec, "audiodselftest") == 0) {
+            path = "/bin/audiod";
+            argv = audiod_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "volumesmoke") == 0) {
             path = "/disk/bin/volume";
@@ -464,6 +469,19 @@ int main(void) {
 
     apply_keyboard_layout_preference();
     apply_audio_preference();
+
+    /* El demonio de audio antes que windowd: asi gana siempre la carrera por
+     * /dev/audio0 y los clientes lo encuentran ya escuchando. Sin red o sin
+     * audio sale solo y todo sigue directo; no se supervisa: ante un error
+     * fatal sale y los clientes degradan a turnos. En modo smoke no se llega
+     * aca y el device queda libre como siempre. */
+    {
+        const char* audiod_argv[] = {"/bin/audiod", 0};
+        long audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
+        if (audiod_pid < 0) {
+            printf("init: failed to spawn audiod (%s)\n", result_error_string(audiod_pid));
+        }
+    }
 
     for (;;) {
         int status = 0;

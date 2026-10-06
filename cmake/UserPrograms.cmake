@@ -297,6 +297,10 @@ savanxp_program(NAME tcpget SOURCES subsystems/posix/userland/tcpget.c)
 savanxp_program(NAME tcptest TEST SOURCES subsystems/posix/userland/tcptest.c)
 savanxp_program(NAME beep SOURCES subsystems/posix/userland/beep.c)
 savanxp_program(NAME volume SOURCES subsystems/posix/userland/volume.c)
+# El demonio de audio: sin ventana ni toolkit, estatico como init. Sin .sxres
+# para no salir en el launcher; init lo lanza antes de windowd y los clientes
+# lo encuentran por su puerto UDP bien conocido.
+savanxp_program(NAME audiod SOURCES subsystems/posix/userland/audiod.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 savanxp_program(NAME compositord SOURCES subsystems/posix/userland/compositord.c)
 # El compositor. Solo pide dos funciones de metrica de fuente, que son puras y

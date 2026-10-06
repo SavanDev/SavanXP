@@ -35,6 +35,7 @@ void playback_init(struct playback* playback) {
     playback->state = PLAYBACK_EMPTY;
     playback->audio_fd = -1;
     playback->volume = 100;
+    sx_audio_server_link_init(&playback->server_link);
 }
 
 static int has_video(const struct playback* playback) {
@@ -72,6 +73,7 @@ static void audio_stop(struct playback* playback) {
         savanxp_close(playback->audio_fd);
         playback->audio_fd = -1;
     }
+    sx_audio_server_link_close(&playback->server_link);
 }
 
 /* Abre el dispositivo para empezar a sonar desde anchor_us. Cerrar y volver a
@@ -107,8 +109,9 @@ static int64_t frames_to_us(const struct playback* playback, int64_t frames) {
     return frames * 1000000LL / playback->audio_format.sample_rate;
 }
 
-/* Deja de usar el dispositivo para el resto del archivo -- otro proceso lo
- * tiene, o fallo -- y sigue en silencio con el reloj de pared solo. */
+/* Deja de usar el dispositivo para el resto del archivo -- fallo de verdad;
+ * que otro proceso lo tenga ya no silencia: el write con EBUSY se va por el
+ * demonio y sigue sonando mezclado. Solo queda el reloj de pared. */
 static void audio_give_up(struct playback* playback, unsigned long long now_ns) {
     const int64_t position = playback_position_us(playback, now_ns);
     audio_stop(playback);
@@ -119,7 +122,13 @@ static void audio_give_up(struct playback* playback, unsigned long long now_ns) 
 
 static int audio_write(struct playback* playback, const int16_t* samples, int frames, unsigned long long now_ns) {
     const size_t bytes = (size_t)frames * playback->audio_frame_bytes;
-    if (savanxp_write(playback->audio_fd, samples, bytes) != (long)bytes) {
+    long sent = sx_audio_server_output(
+        &playback->server_link,
+        playback->audio_fd,
+        samples,
+        bytes,
+        (uint32_t)playback->audio_format.sample_rate);
+    if (sent < 0) {
         audio_give_up(playback, now_ns);
         return 0;
     }

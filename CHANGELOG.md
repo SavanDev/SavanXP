@@ -454,6 +454,10 @@ Cut-off notes:
   `libffmpeg.so.0.4` and decodes the five OGG loops on first request into a
   dedicated looping mixer voice; without the FFmpeg port it runs silent.
 
+- **Two programs can now sound at once.** `/bin/audiod` owns `/dev/audio0`
+  and sums what clients send over UDP loopback; every writer falls back to
+  direct turn-taking without it, so nothing changes where it does not run.
+
 ### Fixed
 
 - **Celeste's effects no longer saturate at any volume.** Its 16-bit WAVs were

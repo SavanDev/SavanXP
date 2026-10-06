@@ -10,6 +10,8 @@
 
 #include <stdint.h>
 
+#include "savanxp/audio_server.h"
+
 #include "media.h"
 
 enum playback_state {
@@ -33,6 +35,7 @@ struct playback {
 
     /* audio */
     int audio_fd;                   /* -1 = cerrado (en pausa, o sin dispositivo) */
+    struct sx_audio_server_link server_link; /* demonio si esta, directo si no */
     int audio_device_ok;            /* hubo /dev/audio0 al abrir el archivo */
     struct media_audio_format audio_format;
     uint32_t audio_frame_bytes;

@@ -13,6 +13,11 @@ int g_failures = 0;
 int g_checks = 0;
 uint32_t g_now_ms = 1000;
 int g_write_fails = 0;
+int g_write_busy = 0;
+int g_sendto_fails = 0;
+long g_sendto_calls = 0;
+unsigned char g_last_datagram[1024];
+size_t g_last_datagram_bytes = 0;
 size_t g_last_write_bytes = 0;
 size_t g_last_write_frames = 0;
 const int16_t* g_last_write_samples = nullptr;
@@ -63,12 +68,41 @@ long savanxp_write(int fd, const void* buffer, size_t count) {
     if (fd != 41 || buffer == nullptr || (count % 4u) != 0) {
         return -1;
     }
+    if (g_write_busy) {
+        return -SAVANXP_EBUSY;
+    }
     if (g_write_fails) {
         return -5;
     }
     g_last_write_bytes = count;
     g_last_write_frames = count / 4u;
     g_last_write_samples = static_cast<const int16_t*>(buffer);
+    return static_cast<long>(count);
+}
+
+long savanxp_socket(unsigned long domain, unsigned long type, unsigned long protocol) {
+    (void)domain;
+    (void)type;
+    (void)protocol;
+    return 42;
+}
+
+long savanxp_sendto(
+    int fd,
+    const void* buffer,
+    size_t count,
+    const struct savanxp_sockaddr_in* address)
+{
+    (void)address;
+    if (fd != 42 || buffer == nullptr || count == 0 || count > 1024) {
+        return -1;
+    }
+    if (g_sendto_fails) {
+        return -SAVANXP_EIO;
+    }
+    ++g_sendto_calls;
+    g_last_datagram_bytes = count;
+    memcpy(g_last_datagram, buffer, count);
     return static_cast<long>(count);
 }
 
@@ -219,6 +253,53 @@ int main() {
         }
         check(ok, "los primeros 8 frames repiten el ciclo");
         sx_audio_mixer_destroy(&loop);
+    }
+
+    {
+        /* Remoto: el primer write con EBUSY pasa al demonio; el header lleva
+         * magia, version, canales, rate y secuencia creciente; si el envio
+         * falla, la proxima vuelta prueba directo de nuevo. */
+        struct sx_audio_mixer remote = {};
+        unsigned char square[512];
+        uint32_t first_seq = 0;
+        uint32_t last_seq = 0;
+        size_t frame;
+        for (frame = 0; frame < sizeof(square); ++frame) {
+            square[frame] = (frame & 1u) != 0u ? (unsigned char)0 : (unsigned char)255;
+        }
+        check(sx_audio_mixer_init(&remote, 1, 25) == 0, "el mixer remoto abre");
+        check(sx_audio_mixer_start_voice(&remote, 0, square, sizeof(square), 44100,
+                                         SX_AUDIO_PITCH_NORMAL_Q16, 127, 127) == 0,
+              "arranca la voz remota");
+        g_write_busy = 1;
+        g_now_ms += 10;
+        check(sx_audio_mixer_update(&remote) == 1, "con EBUSY no se desactiva");
+        check(remote.server_link.mode == 2, "el EBUSY lo pasa a remoto");
+        check(g_sendto_calls > 0 && g_last_datagram_bytes <= 1024, "manda datagramas");
+        {
+            uint32_t magic = 0;
+            uint16_t version = 0;
+            uint16_t channels = 0;
+            uint32_t rate = 0;
+            memcpy(&magic, g_last_datagram + 0, 4);
+            memcpy(&version, g_last_datagram + 4, 2);
+            memcpy(&channels, g_last_datagram + 6, 2);
+            memcpy(&rate, g_last_datagram + 8, 4);
+            memcpy(&first_seq, g_last_datagram + 12, 4);
+            check(magic == 0x53415544u && version == 1 && channels == 2 && rate == 44100,
+                "el header lleva magia, version, canales y rate");
+        }
+        g_now_ms += 10;
+        check(sx_audio_mixer_update(&remote) == 1, "en remoto sigue mezclando");
+        memcpy(&last_seq, g_last_datagram + 12, 4);
+        check(last_seq != first_seq, "la secuencia avanza por datagrama");
+        g_sendto_fails = 1;
+        g_write_busy = 0;
+        g_now_ms += 10;
+        check(sx_audio_mixer_update(&remote) == 1, "sin demonio no se desactiva");
+        check(remote.server_link.mode == 1, "sin demonio vuelve a directo");
+        g_sendto_fails = 0;
+        sx_audio_mixer_destroy(&remote);
     }
 
     printf(g_failures == 0 ? "AUDIO MIXER TEST PASS\n" : "AUDIO MIXER TEST FAIL\n");

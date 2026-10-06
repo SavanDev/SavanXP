@@ -41,6 +41,8 @@ struct sx_audio_voice {
     int loop;
 };
 
+#include "savanxp/audio_server.h"
+
 struct sx_audio_mixer {
     int fd;
     struct savanxp_audio_info info;
@@ -53,6 +55,9 @@ struct sx_audio_mixer {
     uint32_t max_delta_ms;
     int clock_valid;
     int initialized;
+    /* Salida por el demonio cuando esta, o directo al device cuando no.
+     * Ver savanxp/audio_server.h: el primer write con EBUSY pasa a remoto. */
+    struct sx_audio_server_link server_link;
 };
 
 /* Opens /dev/audio0 and allocates `voice_count` voices. The current device

@@ -1,5 +1,6 @@
 #include "savanxp/audio.h"
 
+#include "savanxp/audio_server.h"
 #include "savanxp/libc.h"
 
 #include <stdlib.h>
@@ -56,6 +57,13 @@ void sx_audio_mixer_disable(struct sx_audio_mixer* mixer)
     }
     mixer->fd = -1;
     mixer->initialized = 0;
+    if (mixer->server_link.udp_fd >= 0)
+    {
+        (void)savanxp_close(mixer->server_link.udp_fd);
+        mixer->server_link.udp_fd = -1;
+    }
+    mixer->server_link.mode = 0;
+    mixer->server_link.sequence = 0;
     memset(&mixer->info, 0, sizeof(mixer->info));
     mixer->frame_remainder = 0;
     mixer->last_update_ms = 0;
@@ -87,6 +95,7 @@ int sx_audio_mixer_init(
     }
     memset(mixer, 0, sizeof(*mixer));
     mixer->fd = -1;
+    mixer->server_link.udp_fd = -1;
     if (voice_count == 0 || voice_count > SX_AUDIO_MIXER_MAX_VOICES)
     {
         return -SAVANXP_EINVAL;
@@ -145,6 +154,7 @@ void sx_audio_mixer_destroy(struct sx_audio_mixer* mixer)
     }
     memset(mixer, 0, sizeof(*mixer));
     mixer->fd = -1;
+    mixer->server_link.udp_fd = -1;
 }
 
 int sx_audio_mixer_active(const struct sx_audio_mixer* mixer)
@@ -386,11 +396,142 @@ static void sx_audio_mixer_render(
     }
 }
 
+void sx_audio_server_link_init(struct sx_audio_server_link* link)
+{
+    if (link == 0)
+    {
+        return;
+    }
+    link->mode = 0;
+    link->udp_fd = -1;
+    link->sequence = 0;
+}
+
+void sx_audio_server_link_close(struct sx_audio_server_link* link)
+{
+    if (link == 0)
+    {
+        return;
+    }
+    if (link->udp_fd >= 0)
+    {
+        savanxp_close(link->udp_fd);
+    }
+    link->mode = 0;
+    link->udp_fd = -1;
+    link->sequence = 0;
+}
+
+long sx_audio_server_send(
+    int socket_fd,
+    uint32_t* sequence,
+    const int16_t* frames,
+    size_t frame_count,
+    uint32_t rate_hz)
+{
+    struct savanxp_sockaddr_in address;
+    size_t offset = 0;
+
+    if (socket_fd < 0 || sequence == 0 || (frames == 0 && frame_count != 0) || rate_hz == 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    address.ipv4 = SAVANXP_AUDIOD_HOST_IPV4;
+    address.port = SAVANXP_AUDIOD_PORT;
+    address.reserved0 = 0;
+
+    while (offset < frame_count)
+    {
+        unsigned char datagram[SAVANXP_AUDIOD_MAX_DATAGRAM];
+        struct savanxp_audiod_header* header = (struct savanxp_audiod_header*)datagram;
+        size_t chunk = frame_count - offset;
+        size_t bytes;
+        long sent;
+
+        if (chunk > SAVANXP_AUDIOD_MAX_FRAMES)
+        {
+            chunk = SAVANXP_AUDIOD_MAX_FRAMES;
+        }
+        bytes = sizeof(*header) + chunk * 4u;
+        header->magic = SAVANXP_AUDIOD_MAGIC;
+        header->version = SAVANXP_AUDIOD_VERSION;
+        header->channels = 2;
+        header->sample_rate_hz = rate_hz;
+        header->sequence = (*sequence)++;
+        memcpy(datagram + sizeof(*header), frames + offset * 2u, chunk * 4u);
+        sent = savanxp_sendto(socket_fd, datagram, bytes, &address);
+        if (sent != (long)bytes)
+        {
+            return sent < 0 ? sent : -SAVANXP_EIO;
+        }
+        offset += chunk;
+    }
+    return 0;
+}
+
+long sx_audio_server_output(
+    struct sx_audio_server_link* link,
+    int audio_fd,
+    const int16_t* frames,
+    size_t bytes,
+    uint32_t rate_hz)
+{
+    long written;
+
+    if (link == 0 || frames == 0 || bytes == 0 || (bytes % 4u) != 0 || rate_hz == 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if (link->mode == 2)
+    {
+        if (sx_audio_server_send(
+                link->udp_fd, &link->sequence, frames, bytes / 4u, rate_hz) == 0)
+        {
+            return 1;
+        }
+        link->mode = 0;
+        if (link->udp_fd >= 0)
+        {
+            savanxp_close(link->udp_fd);
+            link->udp_fd = -1;
+        }
+    }
+    /* Directo o indeciso: el write decide. Exito = directo de ahora en mas;
+     * EBUSY = otro tiene el device, se intenta remoto abajo; cualquier otro
+     * error es fatal. */
+    written = savanxp_write(audio_fd, frames, bytes);
+    if (written == (long)bytes)
+    {
+        link->mode = 1;
+        return 1;
+    }
+    if (written != -(long)SAVANXP_EBUSY)
+    {
+        return written < 0 ? written : -SAVANXP_EIO;
+    }
+    if (link->udp_fd < 0)
+    {
+        long sock = savanxp_socket(
+            SAVANXP_AF_INET, SAVANXP_SOCK_DGRAM, SAVANXP_IPPROTO_UDP);
+        if (sock < 0)
+        {
+            return sock;
+        }
+        link->udp_fd = (int)sock;
+    }
+    if (sx_audio_server_send(
+            link->udp_fd, &link->sequence, frames, bytes / 4u, rate_hz) == 0)
+    {
+        link->mode = 2;
+        return 1;
+    }
+    return 0;
+}
+
 long sx_audio_mixer_update(struct sx_audio_mixer* mixer)
 {
     size_t frames;
     size_t bytes;
-    long written;
 
     if (mixer == 0 || !mixer->initialized || mixer->fd < 0 || mixer->voices == 0)
     {
@@ -414,12 +555,20 @@ long sx_audio_mixer_update(struct sx_audio_mixer* mixer)
         return -SAVANXP_EINVAL;
     }
     bytes = frames * (size_t)mixer->info.frame_bytes;
-    written = savanxp_write(mixer->fd, mixer->mix_buffer, bytes);
-    if (written != (long)bytes)
     {
-        long error = written < 0 ? written : -SAVANXP_EIO;
-        sx_audio_mixer_disable(mixer);
-        return error;
+        /* Por el demonio si esta, o directo al device si no: el enlace
+         * aprende solo con el primer write (EBUSY = remoto). */
+        long sent = sx_audio_server_output(
+            &mixer->server_link,
+            mixer->fd,
+            mixer->mix_buffer,
+            bytes,
+            mixer->info.sample_rate_hz);
+        if (sent < 0)
+        {
+            sx_audio_mixer_disable(mixer);
+            return sent;
+        }
+        return sent;
     }
-    return 1;
 }

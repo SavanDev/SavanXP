@@ -218,6 +218,15 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="ac97",
         wav_name="ac97-stream-quiet.wav",
     ),
+    "audiod-smoke": _qemu_scenario(
+        "audiodselftest",
+        "AUDIOD SELFTEST PASS",
+        "AUDIOD SELFTEST FAIL",
+        "Audio daemon mixes two loopback clients",
+        120.0,
+        audio_device="ac97",
+        wav_name="audiod-smoke.wav",
+    ),
     "volume-smoke": _qemu_scenario(
         "volumesmoke",
         "SMOKE PASS",

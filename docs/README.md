@@ -50,6 +50,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`TIME.md`](TIME.md) — kernel clocks, virtualization, and diagnosis.
 - [`MEDIA_PLAYER.md`](MEDIA_PLAYER.md) — Media Player, the optional FFmpeg
   backend, playback timing, and the synchronization selftest.
+- [`AUDIO_DAEMON.md`](AUDIO_DAEMON.md) — `audiod`, the mixing daemon: UDP
+  loopback transport, the slice protocol, and who holds `/dev/audio0`.
 - [`SXMEDIA.md`](SXMEDIA.md) — **withdrawn.** What the multimedia layer was, what
   building it taught, and what has to exist before trying again: a way for one
   program to use a codec library it was not built with.

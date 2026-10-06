@@ -1,4 +1,5 @@
 #include "libc.h"
+#include "savanxp/audio_server.h"
 
 #define AUDIOTEST_BUFFER_BYTES 16384
 #define AUDIOTEST_MAX_SAMPLES (AUDIOTEST_BUFFER_BYTES / (int)sizeof(int16_t))
@@ -82,6 +83,9 @@ static int run_stream(int fd, const struct savanxp_audio_info* info) {
     unsigned long start_ms = uptime_ms();
     unsigned long last_ms = start_ms;
     uint32_t phase = 0;
+    struct sx_audio_server_link link;
+
+    sx_audio_server_link_init(&link);
 
     if (full_period == 0u) {
         full_period = 1u;
@@ -119,12 +123,14 @@ static int run_stream(int fd, const struct savanxp_audio_info* info) {
         }
 
         want = (long)(frames * info->frame_bytes);
-        if (savanxp_write(fd, g_samples, (unsigned long)want) != want) {
+        if (sx_audio_server_output(&link, fd, g_samples, (size_t)want, rate) < 0) {
             puts_fd(2, "audiotest: stream write failed\n");
+            sx_audio_server_link_close(&link);
             return 1;
         }
     }
 
+    sx_audio_server_link_close(&link);
     printf("AUDIO STREAM PASS\n");
     return 0;
 }
@@ -224,8 +230,14 @@ int main(int argc, char** argv) {
     }
 
     fill_square_wave(&info, smoke_mode ? 440u : 660u);
-    result = savanxp_write((int)fd, g_samples, info.buffer_bytes);
-    if (result != (long)info.buffer_bytes) {
+    {
+        struct sx_audio_server_link link;
+
+        sx_audio_server_link_init(&link);
+        result = sx_audio_server_output(&link, (int)fd, g_samples, info.buffer_bytes, info.sample_rate_hz);
+        sx_audio_server_link_close(&link);
+    }
+    if (result < 0) {
         eprintf("audiotest: write failed (%s)\n", result_error_string(result));
         savanxp_close((int)fd);
         return 1;
