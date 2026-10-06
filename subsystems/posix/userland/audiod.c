@@ -18,9 +18,10 @@
  * Sin red no hay demonio (el loopback necesita la pila, que pide NIC): sale
  * 0 y el sistema sigue por turnos. Sin audio tampoco (exit 1). Si otro
  * audiod ya escucha, el bind da EBUSY y sale 0: singleton por construccion.
- * init lo lanza una vez antes de windowd y no lo supervisa; ante un error
- * fatal de arranque sale, ante uno en servicio sigue (el device se recupera
- * solo cuando el dueño anterior cierra).
+ * init lo lanza antes de windowd y lo relanza si muere sirviendo; una salida
+ * deliberada de arranque (sin red, sin audio, otro demonio) lo deja parado y
+ * el sistema sigue directo por turnos (el device se recupera solo cuando el
+ * dueño anterior cierra).
  *
  * `audiod --selftest` ejercita el camino completo en el invitado: dos
  * clientes, un datagrama roto, mezcla exacta y escritura real al device.
@@ -49,6 +50,12 @@ struct audiod_stream {
     int16_t fifo[AUDIOD_FIFO_FRAMES * 2u];
     size_t fifo_head;
     size_t fifo_frames;
+    /* Ultimo frame ya escalado por volume, para PLC: si el stream calla un
+     * instante por jitter, el render lo repite en vez de inyectar ceros.
+     * has_last queda en 0 hasta que suena el primer frame. */
+    int16_t last_left;
+    int16_t last_right;
+    int has_last;
     uint64_t received;
     uint64_t lost;
     uint64_t underruns;
@@ -476,11 +483,28 @@ static size_t audiod_render(int16_t* out, size_t frame_count)
             }
             if (stream->fifo_frames == 0)
             {
+                /* PLC: sin frame que consumir, repetir el ultimo ya escalado
+                 * por el volumen del stream en vez de inyectar ceros; antes
+                 * del primer frame, silencio. */
                 ++stream->underruns;
+                if (stream->has_last)
+                {
+                    left += stream->last_left;
+                    right += stream->last_right;
+                }
                 continue;
             }
-            left += (int32_t)stream->fifo[stream->fifo_head * 2u] * (int32_t)stream->volume / 100;
-            right += (int32_t)stream->fifo[stream->fifo_head * 2u + 1u] * (int32_t)stream->volume / 100;
+            {
+                int32_t scaled_left =
+                    (int32_t)stream->fifo[stream->fifo_head * 2u] * (int32_t)stream->volume / 100;
+                int32_t scaled_right =
+                    (int32_t)stream->fifo[stream->fifo_head * 2u + 1u] * (int32_t)stream->volume / 100;
+                left += scaled_left;
+                right += scaled_right;
+                stream->last_left = (int16_t)scaled_left;
+                stream->last_right = (int16_t)scaled_right;
+                stream->has_last = 1;
+            }
             stream->fifo_head = (stream->fifo_head + 1u) % AUDIOD_FIFO_FRAMES;
             stream->fifo_frames -= 1u;
         }
@@ -721,6 +745,33 @@ static int audiod_selftest(void)
         return 0;
     }
     g_device_rate_hz = info.sample_rate_hz;
+
+    {
+        /* PLC: el render no puede inyectar ceros si un stream habla de
+         * a momentos; ante jitter repite su ultimo frame (post fondo de
+         * escala, pre volumen maestro). */
+        struct audiod_stream* ai = &g_streams[0];
+        int16_t out0[2] = {0,0};
+        int16_t out1[2] = {0,0};
+        memset(g_streams, 0, sizeof(g_streams));
+        memset(ai, 0, sizeof(*ai));
+        ai->used = 1;
+        ai->volume = 100;
+        ai->fifo_head = 0;
+        ai->fifo_frames = 1;
+        ai->fifo[0] = 8000;
+        ai->fifo[1] = -8000;
+        (void)audiod_render(out0, 1);
+        ai->fifo_frames = 0;
+        (void)audiod_render(out1, 1);
+        if (out0[0] != 8000 || out0[1] != -8000 || out1[0] != 8000 || out1[1] != -8000)
+        {
+            eprintf("AUDIOD SELFTEST FAIL PLC (%d,%d -> %d,%d)\n",
+                    out0[0], out0[1], out1[0], out1[1]);
+            goto fail;
+        }
+        memset(g_streams, 0, sizeof(g_streams));
+    }
 
     daemon_fd = audiod_open_socket();
     if (daemon_fd == -SAVANXP_EBUSY)

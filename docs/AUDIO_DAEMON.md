@@ -34,6 +34,12 @@ Each client sends at the device rate, which it reads with `AUDIO_IOC_GET_INFO`
 (opening never contends). The daemon only mixes streams that match its own
 rate.
 
+A stream that has already played a frame is concealed, not zeroed: while it
+stays registered, the daemon repeats its last frame, scaled by its own volume,
+until the next slice arrives, so a brief packet gap does not click. Before the
+first frame the contribution is silence. Concealed frames are counted as
+underruns in the stats.
+
 Control rides the same socket under another magic (`SAUC`): `DECLARE` names
 the sender's own stream, `SET_VOLUME` levels any stream by port, and `LIST`
 takes a census (the daemon answers one datagram per stream with a count, so
@@ -42,6 +48,12 @@ arrival, volumes persist while the stream lives, and anything malformed is
 dropped and counted. There is deliberately no access control, matching a
 single-user machine where every program already shares the screen.
 
+Per-application volume rides the same control socket: a client `DECLARE`s a
+name, `LIST` returns the census the popup and `volume list` read, and
+`SET_VOLUME` levels any stream by port. Levels are per session and are not
+persisted; the stream's name is announced again every 10 s so a restarted
+daemon relearns it.
+
 ## Who holds the device
 
 Whoever writes first keeps it; there is no preemption. init spawns audiod
@@ -49,19 +61,19 @@ before windowd, so in the steady state the daemon always wins and every
 client learns remote with its first write (`EBUSY` means someone mixes).
 Without a daemon -- smoke mode, no NIC, old image -- the same first write
 succeeds and everything behaves exactly as before, with zero new code paths
-for the no-daemon case. If the daemon dies, clients notice on the next send
-and probe direct again, so the system degrades to turn-taking instead of
-going silent; if a direct holder outlives a daemon restart, the daemon
-waits its turn. A SIGKILLed daemon leaves a zombie (init does not supervise
-it) and the same fallback covers it.
+for the no-daemon case. If the daemon dies serving, init relaunches it and
+clients notice on the next send, probing direct until it is back, so the
+system degrades to turn-taking instead of going silent; a deliberate startup
+exit (no network, no device, another daemon already listening) is left alone
+rather than respawned. If a direct holder outlives a daemon restart, the
+daemon waits its turn.
 
 This is also why there is no per-client state worth persisting: pause and
 close just stop sending, and the stream expires on its own.
 
 ## Deliberately out
 
-Per-application volume (the header has room, the popup does not use it
-yet), capture routing, resampling in the daemon, and real-time promises:
-slices are wall-clock sized and loss is counted, not hidden. See
+Capture routing, resampling in the daemon, and real-time promises: slices are
+wall-clock sized and loss is counted, not hidden. See
 `docs/SXMEDIA.md` for the withdrawn layer this replaces the need for, and
 `docs/MEDIA_PLAYER.md` for the clock both sides still share.

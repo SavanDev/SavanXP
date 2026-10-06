@@ -472,51 +472,91 @@ int main(void) {
 
     /* El demonio de audio antes que windowd: asi gana siempre la carrera por
      * /dev/audio0 y los clientes lo encuentran ya escuchando. Sin red o sin
-     * audio sale solo y todo sigue directo; no se supervisa: ante un error
-     * fatal sale y los clientes degradan a turnos. En modo smoke no se llega
-     * aca y el device queda libre como siempre. */
-    {
-        const char* audiod_argv[] = {"/bin/audiod", 0};
-        long audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
-        if (audiod_pid < 0) {
-            printf("init: failed to spawn audiod (%s)\n", result_error_string(audiod_pid));
-        }
+     * audio sale solo y todo sigue directo; el supervisor de abajo solo lo
+     * relanza si muere sirviendo, no si su salida es deliberada. En modo smoke
+     * no se llega aca y el device queda libre como siempre. */
+    const char* audiod_argv[] = {"/bin/audiod", 0};
+    long audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
+    if (audiod_pid < 0) {
+        printf("init: failed to spawn audiod (%s)\n", result_error_string(audiod_pid));
+        audiod_pid = 0;
     }
 
+    long windowd_pid = 0;
     for (;;) {
         int status = 0;
         unsigned long runtime_ms = 0;
-        long pid = spawn("/bin/windowd", windowd_argv, 1);
-        if (pid < 0) {
-            printf("init: failed to spawn windowd (%s)\n", result_error_string(pid));
+
+        if (windowd_pid <= 0) {
+            windowd_pid = spawn("/bin/windowd", windowd_argv, 1);
+            if (windowd_pid < 0) {
+                printf("init: failed to spawn windowd (%s)\n", result_error_string(windowd_pid));
+                windowd_pid = 0;
+                sleep_ms(1000);
+            } else {
+                last_windowd_start_ms = uptime_ms();
+            }
+        }
+
+        if (audiod_pid <= 0 && windowd_pid <= 0) {
             sleep_ms(1000);
             continue;
         }
 
-        last_windowd_start_ms = uptime_ms();
-        savanxp_waitpid((int)pid, &status);
-        runtime_ms = uptime_ms() - last_windowd_start_ms;
-        printf("init: windowd exited with %d, restarting\n", status);
-
-        if (status != 0 && runtime_ms < 2000UL) {
-            rapid_failures += 1;
-        } else {
-            rapid_failures = 0;
+        long pid = savanxp_waitpid(-1, &status);
+        if (pid < 0) {
+            /* Sin hijo aun: caso raro; volver a contemplar. */
+            sleep_ms(250);
+            continue;
         }
 
-        if (rapid_failures >= 3) {
-            printf("init: windowd unstable, falling back to /bin/sh\n");
-            pid = spawn("/bin/sh", shell_argv, 1);
-            if (pid < 0) {
-                printf("init: failed to spawn fallback shell (%s)\n", result_error_string(pid));
-                sleep_ms(1000);
+        if (pid == audiod_pid && audiod_pid != 0) {
+            audiod_pid = 0;
+            if (status == 0) {
+                /* Salida deliberada (sin red, sin audio, otro demonio): el
+                 * sistema sigue directo por turnos, no hay que insistir. */
+                printf("init: audiod left without mixing (status 0)\n");
             } else {
-                savanxp_waitpid((int)pid, &status);
-                printf("init: fallback shell exited with %d, retrying windowd\n", status);
+                printf("init: audiod exited with %d, restarting\n", status);
+                sleep_ms(250);
+                audiod_pid = spawn("/bin/audiod", audiod_argv, 1);
+                if (audiod_pid < 0) {
+                    printf("init: failed to spawn audiod (%s)\n", result_error_string(audiod_pid));
+                    audiod_pid = 0;
+                }
             }
-            rapid_failures = 0;
+            continue;
         }
 
-        sleep_ms(250);
+        if (pid == windowd_pid && windowd_pid != 0) {
+            runtime_ms = uptime_ms() - last_windowd_start_ms;
+            printf("init: windowd exited with %d, restarting\n", status);
+            windowd_pid = 0;
+
+            if (status != 0 && runtime_ms < 2000UL) {
+                rapid_failures += 1;
+            } else {
+                rapid_failures = 0;
+            }
+
+            if (rapid_failures >= 3) {
+                printf("init: windowd unstable, falling back to /bin/sh\n");
+                long shell_pid = spawn("/bin/sh", shell_argv, 1);
+                if (shell_pid < 0) {
+                    printf("init: failed to spawn fallback shell (%s)\n", result_error_string(shell_pid));
+                    sleep_ms(1000);
+                } else {
+                    int shell_status = 0;
+                    savanxp_waitpid((int)shell_pid, &shell_status);
+                    printf("init: fallback shell exited with %d, retrying windowd\n", shell_status);
+                }
+                rapid_failures = 0;
+            }
+
+            sleep_ms(250);
+            continue;
+        }
+        /* Un hijo que no es audiod ni windowd (una app reparentada al morir
+         * windowd, por ejemplo): se reapea y se sigue; a init no le toca. */
     }
 }

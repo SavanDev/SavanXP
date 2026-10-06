@@ -84,6 +84,10 @@ Cut-off notes:
   A declared accent renders as its own shade-to-tint ramp; windows without one
   keep the Windows Standard gradient. Fixes the two-tone split on accents like Files.
 
+- **init relaunches the audio daemon only when it dies serving.** A deliberate
+  startup exit (no network, no audio, another daemon) leaves it stopped and the
+  system on direct turn-taking instead of respawning forever.
+
 ### Added
 
 - **Three SpicyGame pixel fonts join the baked set.** `RetroSans.ttf`,
@@ -463,11 +467,19 @@ Cut-off notes:
   mixer, the player, Doom, Celeste and the test tone all introduce
   themselves.
 
+- **Per-application sliders in the volume popup.** Every application that is
+  sounding gets a row with its own slider, refreshed from the daemon census
+  once per second; levels are per session and are not persisted.
+
 ### Fixed
 
 - **Celeste's effects no longer saturate at any volume.** Its 16-bit WAVs were
   decoded taking the high byte unsigned, shifting everything half scale (even
   silence played full-negative); the mixer also compresses past 0.75 FS now.
+
+- **A jittery audio stream is concealed instead of zeroed.** While a stream is
+  registered and has already played a frame, the daemon repeats its last frame,
+  scaled by its own volume, so a brief packet gap does not click.
 
 - **A missing library is now named deterministically, and counted.** It used to be
   whichever failed last, so the same image could name three different libraries for

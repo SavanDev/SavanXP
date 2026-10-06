@@ -31,7 +31,7 @@ static const char *k_progman_path = "/bin/progman";
  * el slider necesita recorrido para 0..100. Misma esquina que el de layout
  * (abajo a la derecha, arriba de la franja); por eso son excluyentes. */
 #define WINDOWD_VOLUME_POPUP_WIDTH 144
-#define WINDOWD_VOLUME_POPUP_HEIGHT 56
+#define WINDOWD_VOLUME_POPUP_HEIGHT 140
 
 /* Menu Inicio: superficie fija, ancha como dos botones de taskbar y alta para
  * ~24 filas (cabeceras + items). El contenido real varia con lo instalado;
