@@ -56,7 +56,7 @@ def main() -> int:
         for line in (port / "sources.txt").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    assert len(source_list) == 79
+    assert len(source_list) == 80
     assert len(set(source_list)) == len(source_list)
     assert all((source / relative).is_file() for relative in source_list)
     assert not any(Path(relative).name.startswith("doomgeneric_savanxp") for relative in source_list)

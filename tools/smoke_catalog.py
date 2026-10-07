@@ -301,6 +301,26 @@ SCENARIOS: dict[str, Scenario] = {
         host_action="visual",
         visual_scenario="notepadwheel",
     ),
+    # Necesita el port DoomGeneric instalado y un WAD en el volumen; por eso el
+    # único requisito de maquina es la imagen de siempre. Si el port no esta, el
+    # escenario falla en voz alta (el WAV sale en silencio) en vez de pasar sin
+    # comprobar nada.
+    "doom-music-smoke": _qemu_scenario(
+        "",
+        "DOOM MUSIC SMOKE PASS",
+        "DOOM MUSIC SMOKE FAIL",
+        "DoomGeneric's music through libsxmidi, asserted on the captured audio",
+        420.0,
+        "handoff: starting /bin/init",
+        "taskbar",
+        audio_device="ac97",
+        wav_name="doom-music.wav",
+        completion="host",
+        ready_wait=45.0,
+        prepare=("./tools/restore_doom.sh",),
+        host_action="visual",
+        visual_scenario="doom",
+    ),
     "tcp-smoke": _qemu_scenario(
         "tcptest {port}",
         "TCP SMOKE PASS",
@@ -481,6 +501,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "gfx2d-test": _host_scenario("gfx2d-test", "Host GFX2D test"),
     "audio-test": _host_scenario("audio-test", "Host audio mixer test"),
+    "sxmidi-smoke": _host_scenario("sxmidi-test", "Host MIDI synthesizer test"),
     "partition-smoke": _host_scenario("partition-test", "Host partition table test"),
     "sxfs-smoke": _host_scenario("sxfs-volume-test", "Host SxFS volume test"),
 }

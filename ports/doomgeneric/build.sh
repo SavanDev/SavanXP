@@ -16,10 +16,16 @@ NO_INSTALL=0
 NO_COMPACT=0
 SECTORS="${SAVANXP_SXFS_SECTORS:-2097152}"
 CC="${SAVANXP_CLANG:-clang}"
+LINK_CC="${SAVANXP_LINK_CC:-$CC}"
 LD="${SAVANXP_LD:-ld.lld}"
 OBJCOPY="${SAVANXP_OBJCOPY:-llvm-objcopy}"
 READELF="${SAVANXP_READELF:-llvm-readelf}"
 PYTHON="${SAVANXP_PYTHON:-python3}"
+# La libreria del sistema se busca donde el build base la instala (el mismo
+# directorio que check_shared_libs lee). El port no la construye: la trae el
+# arbol, y sin ella no hay sintetizador que enlazar.
+LIBS_DIR="${SAVANXP_LIBS_DIR:-$OUTPUT_ROOT/diskfs/lib}"
+SX_MIDI_LIB="$LIBS_DIR/libsxmidi.so.0.4"
 
 usage() {
     cat <<'EOF'
@@ -70,6 +76,11 @@ done
     echo "doomgeneric: Python Pillow is required to generate SXE resources" >&2
     exit 1
 }
+if [[ ! -f "$SX_MIDI_LIB" ]]; then
+    echo "doomgeneric: falta $SX_MIDI_LIB; ejecuta ./build.sh build primero" >&2
+    echo "doomgeneric: la musica del port enlaza contra libsxmidi.so.0.4" >&2
+    exit 1
+fi
 
 SOURCE_DIR="$PORT_DIR/source/doomgeneric"
 if [[ ! -d "$SOURCE_DIR" ]]; then
@@ -106,18 +117,21 @@ done
 cp -a "$PORT_DIR/overlay/." "$SRC/"
 
 SDK="$ROOT/subsystems/posix/sdk/v1"
+# Perfil PIE, el mismo que ccleste y mediaplayer: para mapear una libreria el
+# ejecutable tiene que ser ET_DYN con .dynsym, y eso exige PIC, -pie y
+# --export-dynamic. Con -mno-sse no hay motivo: el kernel guarda FPU/SSE por
+# proceso (fpu_save/fpu_restore), asi que el ABI SSE es seguro como en el resto
+# del userland. -mcmodel=medium es el que usa el perfil PIC del arbol.
 COMMON_FLAGS=(
     -target x86_64-unknown-none-elf
     -ffreestanding
     -fstack-protector-strong
-    -fno-pic
-    -fno-pie
+    -fPIC
     -mno-red-zone
-    -mcmodel=small
+    -mcmodel=medium
     -mno-mmx
-    -mno-sse
-    -mno-sse2
-    -mgeneral-regs-only
+    -msse
+    -msse2
     -Wall
     -Wextra
     -Wpedantic
@@ -125,9 +139,22 @@ COMMON_FLAGS=(
     -Wno-c23-extensions
     -fmacro-prefix-map="$SRC=ports/doomgeneric/source/doomgeneric"
 )
+LINK_FLAGS=(
+    -nostdlib
+    -fuse-ld=lld
+    -pie
+    -Wl,-z,max-page-size=0x1000
+    -Wl,--dynamic-linker,/disk/lib/ld.so.0.4
+    -Wl,--build-id=none
+    -Wl,--export-dynamic
+    -Wl,--gc-sections
+    -Wl,-e,_start
+)
+# ldso.c incluye "libc.h" del userland, que no vive en el SDK.
 INCLUDE_FLAGS=(
     -I "$SDK/include"
     -I "$ROOT/include"
+    -I "$ROOT/subsystems/posix/userland"
     -I "$SRC"
 )
 
@@ -173,20 +200,28 @@ libc="$OBJ/libc.o"
 posix="$OBJ/posix.o"
 gfx="$OBJ/gfx.o"
 gfx2d="$OBJ/gfx2d.o"
+math="$OBJ/math.o"
 setjmp_object="$OBJ/setjmp.o"
 audio="$OBJ/audio.o"
+ldso_object="$OBJ/ldso.o"
 compile_asm "$SDK/runtime/crt0.S" "$crt0"
 compile_c "$SDK/runtime/libc.c" "$libc"
 compile_c "$SDK/runtime/posix.c" "$posix"
 compile_c "$SDK/runtime/gfx.c" "$gfx"
 compile_c "$SDK/runtime/gfx2d.c" "$gfx2d"
+compile_c "$SDK/runtime/math.c" "$math"
 compile_asm "$SDK/runtime/setjmp.S" "$setjmp_object"
 compile_c "$SDK/runtime/audio.c" "$audio"
+# El cargador va dentro del programa (como mediaplayer): crt0 lo corre por el
+# hook debil sx_run_interpreter, y sin el DT_NEEDED se ignora en silencio.
+compile_c "$ROOT/subsystems/posix/userland/ldso.c" "$ldso_object" -Wall -Wextra -Wpedantic
 
-"$LD" -nostdlib -static -T "$SDK/linker.ld" \
+"$LINK_CC" -target x86_64-unknown-linux-gnu "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
-    "$crt0" "$libc" "$posix" "$gfx" "$gfx2d" "$setjmp_object" "$audio" \
-    "${APP_OBJECTS[@]}"
+    "$crt0" "$libc" "$posix" "$gfx" "$gfx2d" "$math" "$setjmp_object" "$audio" \
+    "$ldso_object" \
+    "${APP_OBJECTS[@]}" \
+    "$SX_MIDI_LIB"
 
 BUILD_ID=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || true)
 [[ -n "$BUILD_ID" ]] || BUILD_ID=unknown

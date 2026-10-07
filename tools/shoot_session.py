@@ -290,6 +290,14 @@ class Session(object):
         # Minesweeper. Sin steps no hay flecha que pueda dar la vuelta.
         self.launch(0, groups=2)
 
+    def open_doom(self):
+        # Grupo Games (tercera solapa). Con celeste instalado el orden es
+        # Celeste Classic, Doom, Minesweeper, asi que Doom es el segundo icono;
+        # en una imagen sin Celeste la seleccion da la vuelta y el mismo step
+        # cae igual en Minesweeper, no en Doom. El escenario que necesita Doom
+        # lo exige antes (equal to appwiz/system).
+        self.launch(1, groups=2)
+
     def open_appwiz(self):
         # Grupo System: la cuarta solapa. Games existe siempre desde que el
         # Buscaminas viene en la imagen; el escenario sigue exigiendo antes
@@ -1347,7 +1355,137 @@ def scenario_mediaplayer_unavailable(s):
     )
 
 
+def _wav_left(path):
+    """Canal izquierdo del PCM crudo que graba QEMU (`-audiodev wav`).
+
+    QEMU escribe el header al abrir y lo finaliza al cerrar, asi que cuando el
+    runner todavia no mato la VM el archivo no esta cerrado y `wave` lo rechaza:
+    se busca el chunk 'data' a mano en vez de confiar en el tamano declarado.
+    Devuelve None si el archivo no esta.
+    """
+    import array
+    try:
+        blob = Path(path).read_bytes()
+    except OSError:
+        return None
+    marker = blob.find(b"data")
+    pcm = blob[marker + 8:] if marker >= 0 else blob[44:]
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) // 2 * 2])
+    return samples[0::2]
+
+
+def _wav_signal(path, seconds=8.0, rate=48000, window_s=0.25):
+    """Mayor RMS por ventana en la cola del WAV que graba QEMU."""
+    left = _wav_left(path)
+    if left is None:
+        return None
+    span = int(rate * seconds)
+    tail = left[-span:] if len(left) > span else left
+    window = max(1, int(rate * window_s))
+    best = 0.0
+    for start in range(0, max(0, len(tail) - window), window):
+        seg = tail[start:start + window]
+        if not seg:
+            continue
+        mean = sum((x / 32768.0) ** 2 for x in seg) / len(seg)
+        best = max(best, mean ** 0.5)
+    return best
+
+
+def _wav_residue_s(path, seconds=6.0, rate=48000, window_s=0.02, min_crossings=8):
+    """Cuanto sigue sonando DESPUES de la ultima musica real, en segundos.
+
+    Un cliente vivo manda musica que se mueve: sus ventanas cruzan por cero. Lo
+    que deja un cliente que se fue no: el demonio repite el ultimo frame (PLC),
+    o sea una meseta constante, y despues silencio exacto. El residuo es la
+    distancia entre la ultima ventana con movimiento y el ultimo sample no nulo
+    -- exactamente lo que el demonio sigue inventando para un stream muerto, que
+    no es musica de nadie. Devuelve None si no hay WAV.
+    """
+    left = _wav_left(path)
+    if left is None:
+        return None
+    span = int(rate * seconds)
+    tail = left[-span:] if len(left) > span else left
+    window = max(1, int(rate * window_s))
+    last_active = 0
+    for start in range(0, len(tail), window):
+        seg = tail[start:start + window]
+        if not seg:
+            continue
+        crossings = 0
+        previous = seg[0]
+        for value in seg[1:]:
+            if (value < 0) != (previous < 0):
+                crossings += 1
+            previous = value
+        if crossings >= min_crossings:
+            last_active = start + len(seg)
+    last_nonzero = 0
+    for index in range(len(tail) - 1, -1, -1):
+        if tail[index] != 0:
+            last_nonzero = index + 1
+            break
+    return (last_nonzero - last_active) / float(rate)
+
+
+def scenario_doom(s):
+    """DoomGeneric sobre el escritorio real: entra al juego, suena y se cierra.
+
+    Necesita el port y su WAD instalados. Se abre por el launcher, que es el
+    unico camino que da una superficie de cliente al compositor. Lo que se
+    afirma es la MUSICA, y no se puede ver en una captura: el nivel 1 arranca
+    D_E1M1, que el port renderiza con libsxmidi y suena en loop. La evidencia es
+    el WAV que graba QEMU, asi que un port que dibuja pero no suena falla aca.
+
+    Y despues se cierra la ventana con Alt+F4, que es el camino del usuario: el
+    WM le manda el pedido de cierre y mata al cliente con SIGKILL, asi que no hay
+    apagado ordenado de nadie y lo unico que puede acortar la cola es el demonio
+    de audio. El WAV tiene que quedar en silencio apenas se va la ultima musica;
+    lo que suene despues de eso es audio que ya nadie pidio.
+    """
+    s.open_doom()
+    s.shot("doom-titulo")
+    # Enter abre el menu; otro confirma New Game; para Doom 1 quedan el episodio
+    # y la dificultad. Cuatro Enter dejan el nivel cargando con su musica.
+    for _ in range(4):
+        s.qmp.tap("ret", pause=1.5)
+    time.sleep(20)
+    s.shot("doom-nivel")
+
+    wav = Path(s.out).resolve().parent.parent / "doom-music.wav"
+    level = _wav_signal(wav)
+    if level is None:
+        raise Failure(
+            "no quedo el WAV de QEMU en %s: sin el no hay forma de afirmar que "
+            "la musica suena" % wav
+        )
+    if level < 0.01:
+        raise Failure(
+            "el port no suena: el mayor RMS de los ultimos 8 s es %.4f; el WAV "
+            "existe y esta en silencio. Este escenario necesita el port "
+            "DoomGeneric instalado y un WAD en /disk/games/doom." % level
+        )
+    print("  musica: RMS %.4f en la cola de %s" % (level, wav.name))
+
+    s.qmp.chord("alt", "f4")
+    time.sleep(4.0)
+    s.shot("doom-cerrado")
+
+    residue = _wav_residue_s(wav)
+    if residue is None:
+        raise Failure("el WAV %s desaparecio entre la musica y el cierre" % wav)
+    print("  cierre: %.3f s de audio despues de la ultima musica" % residue)
+    if residue > 0.15:
+        raise Failure(
+            "el audio sigue %.3f s despues de cerrar la ventana (tope 0.15 s): "
+            "el demonio arrastra el stream de un cliente que ya no existe." % residue
+        )
+
+
 SCENARIOS = {
+    "doom": scenario_doom,
     "desktop": scenario_desktop,
     "mediaplayer_unavailable": scenario_mediaplayer_unavailable,
     "alttab": scenario_alttab,

@@ -97,12 +97,13 @@ plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`
 
 ### The libraries
 
-372 KB total, six files. The layering is strictly downward: nothing depends on
+386 KB total, seven files. The layering is strictly downward: nothing depends on
 anything above it.
 
 | library | size | `DT_NEEDED` |
 | --- | --- | --- |
 | `libmath.so.0.4` | 44 KB | — |
+| `libsxmidi.so.0.4` | 14 KB | — |
 | `libsxgfx.so.0.4` | 100 KB | — (syscalls only) |
 | `libgfx2d.so.0.4` | 92 KB | `libsxgfx` |
 | `libsxgui.so.0.4` | 136 KB | `libgfx2d`, `libsxgfx` |
@@ -116,22 +117,24 @@ larger than anything above, and
 [its section](#ffmpeg-as-one-library-and-what-it-cost-to-find-out) records what
 loading it exposed.
 
-That count is of the table above: six files, of which two are a test chain. The
-image actually carries **thirteen**, and the number is worth reading carefully
+That count is of the table above: seven files, of which two are a test chain. The
+image actually carries **fourteen**, and the number is worth reading carefully
 because most of it is not the system:
 
-- 4 interface libraries — `libmath`, `libsxgfx`, `libgfx2d`, `libsxgui`
+- 5 interface libraries — `libmath`, `libsxmidi`, `libsxgfx`, `libgfx2d`, `libsxgui`
 - 1 from the port — `libffmpeg.so.0.4`
 - 8 that exist only to be loaded by a test — `libchainbase`, `libchaintop`,
   `libneeded`, `libbroken`, and the four `libdia_*` of the diamond
 
-So "thirteen shared libraries" is not a claim about what the system can do. Four is.
+So "fourteen shared libraries" is not a claim about what the system can do. Five is.
 
 ### The programs
 
 93 executables: 30 are `ET_DYN`, 24 declare a `DT_NEEDED`. By library:
 `libsxgfx` 21, `libgfx2d` 16, `libsxgui` 11, `libmath` 4, `libffmpeg` 1,
-`libneeded` 1 (the test chain).
+`libneeded` 1 (the test chain). `libsxmidi` has no in-tree consumer yet: the only
+program that maps it is `/disk/bin/doomgeneric`, built by `ports/doomgeneric` and
+not part of the `/bin` scan.
 
 No library asks the application for a single symbol. What each still needs from the
 executable:
@@ -139,6 +142,7 @@ executable:
 | library | asks the executable for |
 | --- | --- |
 | `libmath` | nothing |
+| `libsxmidi` | `malloc` `calloc` `realloc` `free` `memcpy` `memset` `memcmp` |
 | `libgfx2d` | `malloc` `free` `realloc` `memcmp` `memset` |
 | `libsxgui` | `clipboard_*` `memmove` `memset` `puts_fd` `savanxp_close` `sleep_ms` `uptime_ms` |
 | `libsxgfx` | syscalls and libc |
@@ -568,6 +572,7 @@ strictly downward:
 | `libgfx2d.so.0.4` | `gfx2d.c`, `sxchrome.c` | `libsxgfx`, libc |
 | `libsxgui.so.0.4` | `sxgui.c`, `sxgui_app.c` | `libgfx2d`, `libsxgfx`, libc |
 | `libmath.so.0.4` | `math.c` | nothing at all |
+| `libsxmidi.so.0.4` | `sxmidi.c` | nothing; libc symbols resolve against the program |
 
 Measured, not asserted: `libmath` asks the executable for nothing, `libgfx2d` asks
 only for `malloc`/`free`/`realloc`/`memcmp`/`memset`, `libsxgui` only for the C

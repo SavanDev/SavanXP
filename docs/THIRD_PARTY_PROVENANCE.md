@@ -58,6 +58,10 @@ which is why both go into the registry.
   `ports/doomgeneric/build.sh`, not by the main build
 - Reproduction pin: archive SHA-256
   `6a5879c5f686199f0156ea8abcdaab820350c3a74aff211e81558f8675c8e2d5`
+- Runtime dependency: the binary links the system's `libsxmidi.so.0.4` for
+  music. That library is SavanXP code, not a third-party component, so it has
+  no entry of its own; the MUS-to-MIDI step is `mus2mid.c`, already inside the
+  pinned GPL-2.0 source tree above
 
 ### FFmpeg / Media Player
 

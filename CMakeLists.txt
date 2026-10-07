@@ -303,6 +303,7 @@ set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/sxgui_app.c
     subsystems/posix/sdk/v1/runtime/sxe.c
     subsystems/posix/sdk/v1/runtime/audio.c
+    subsystems/posix/sdk/v1/runtime/sxmidi.c
 )
 add_library(savanxp_user_runtime OBJECT ${SAVANXP_USER_RUNTIME_SOURCES})
 target_include_directories(savanxp_user_runtime PRIVATE
@@ -351,6 +352,7 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
 # El target se nombra por el conjunto que le falta, asi que dos programas con
 # DEPENDS distintos reciben targets distintos sin que nadie los enumere.
 set(SAVANXP_LIBRARY_REPLACES_libmath math.c)
+set(SAVANXP_LIBRARY_REPLACES_libsxmidi sxmidi.c)
 set(SAVANXP_LIBRARY_REPLACES_libsxgui sxgui.c sxgui_app.c)
 set(SAVANXP_LIBRARY_REPLACES_libsxgfx gfx.c)
 set(SAVANXP_LIBRARY_REPLACES_libgfx2d gfx2d.c sxchrome.c)
@@ -723,6 +725,35 @@ target_include_directories(savanxp-ccleste-wav-test PRIVATE
 target_compile_options(savanxp-ccleste-wav-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-ccleste-wav-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# El sintetizador se compila con el compilador de host y se ejerce de verdad:
+# arma SMF, renderiza y afirma afinacion, duracion y silencio. Es la unica
+# verificacion del motor; un smoke en el invitado solo probaria que carga.
+add_executable(savanxp-sxmidi-test
+    subsystems/posix/sdk/v1/runtime/sxmidi.c
+    tests/host/sxmidi_test.cpp)
+target_include_directories(savanxp-sxmidi-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-sxmidi-test PRIVATE -O1 -Wall -Wextra)
+set_target_properties(savanxp-sxmidi-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
+# La musica del port doomgeneric se prueba fuera de QEMU: el mus2mid de
+# upstream convierte un MUS y libsxmidi lo renderiza. Usa el WAD del repo para
+# cubrir la musica real que suena al jugar.
+add_executable(savanxp-doom-mus-test
+    ports/doomgeneric/source/doomgeneric/mus2mid.c
+    ports/doomgeneric/source/doomgeneric/memio.c
+    subsystems/posix/sdk/v1/runtime/sxmidi.c
+    tests/host/doom_mus_test.cpp)
+target_include_directories(savanxp-doom-mus-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/ports/doomgeneric/source/doomgeneric"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+# El WAD no esta en el repo: la prueba mira el directorio del port y respeta
+# SAVANXP_DOOM_WAD, sin atarse a un nombre de archivo concreto.
+target_compile_definitions(savanxp-doom-mus-test PRIVATE
+    SAVANXP_DOOM_WAD_DIR="${CMAKE_SOURCE_DIR}/ports/doomgeneric/wad")
+target_compile_options(savanxp-doom-mus-test PRIVATE -O1 -Wall -Wextra)
+set_target_properties(savanxp-doom-mus-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 add_executable(savanxp-partition-test
     kernel/partition.cpp
     tests/host/kernel_string_stubs.cpp
@@ -747,13 +778,14 @@ target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-d
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test
-    COMMENT "Building SavanXP host tests"
-)
+    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test
+    COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
 add_test(NAME kernel-audio-gain-test COMMAND savanxp-kernel-audio-gain-test)
 add_test(NAME ccleste-wav-test COMMAND savanxp-ccleste-wav-test)
+add_test(NAME sxmidi-test COMMAND savanxp-sxmidi-test)
+add_test(NAME doom-mus-test COMMAND savanxp-doom-mus-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
 

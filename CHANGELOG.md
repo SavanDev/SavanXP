@@ -12,6 +12,14 @@ Cut-off notes:
 
 ### Changed
 
+- **Doom music now plays the WAD's OPL2 instruments.** With `GENMIDI` the song renders
+  through a two-operator FM voice instead of the families, without it bit-identically;
+  the smoke log names the path (`(FM)` vs `(familias)`).
+
+- **The MIDI bank stopped being one waveform per family.** A voice now has a
+  second partial (interval and weight), a blend toward sine, an optional vibrato
+  LFO and an attack pitch sweep, and the drum kit uses all of it.
+
 - **The calculator's arithmetic now comes from `libmath.so.0.4`.** Its own
   16-digit decimal engine existed because the in-tree userland was built
   `-mno-sse` and `double` did not compile. `sqrt` is now resolved from the
@@ -89,6 +97,27 @@ Cut-off notes:
   system on direct turn-taking instead of respawning forever.
 
 ### Added
+
+- **Per-song `GENMIDI` bank in `libsxmidi`.** `sx_midi_song_create_with_bank` takes the lump
+  with the MIDI, `sx_midi_song_uses_genmidi` reports the fallback, the port passes it always.
+  Host checks plus `doom-mus-test` on the real `D_E1M1` cover both paths (see `docs/MIDI.md`).
+
+- **`libsxmidi.so.0.4`, a General MIDI synthesizer the tree builds and installs
+  in `/disk/lib`.** It parses a Standard MIDI File, plays it through a built-in
+  16-family instrument bank and a drum kit, and renders mono PCM for the mixer.
+  No soundfont and no `libm`; the public surface is `savanxp/midi.h` and the
+  design is in `docs/MIDI.md`.
+
+- **The DoomGeneric port has music.** Each MUS lump is converted to MIDI with
+  the upstream `mus2mid.c`, `libsxmidi` synthesises it into the mixer's buffer as
+  the game runs and a dedicated voice loops that buffer. The port is now PIE and
+  declares a `DT_NEEDED` for the library, so building it requires
+  `./build.sh build` to have produced `/disk/lib/libsxmidi.so.0.4` first.
+
+- **The port's music is checked on the guest audio, and on what follows it.**
+  `./build.sh smoke doom-music-smoke` opens the port from the desktop, starts the
+  level, fails if the WAV QEMU captured comes out silent, then closes the window
+  and fails if any audio outlives the last music.
 
 - **Three SpicyGame pixel fonts join the baked set.** `RetroSans.ttf`,
   `PixelSans.ttf` and `ImpactfulBits.ttf` (CC0) are baked by
@@ -477,9 +506,15 @@ Cut-off notes:
   decoded taking the high byte unsigned, shifting everything half scale (even
   silence played full-negative); the mixer also compresses past 0.75 FS now.
 
-- **A jittery audio stream is concealed instead of zeroed.** While a stream is
-  registered and has already played a frame, the daemon repeats its last frame,
-  scaled by its own volume, so a brief packet gap does not click.
+- **A jittery audio stream is concealed instead of zeroed.** While a stream has
+  played a frame, the daemon repeats its last frame — scaled by its own volume —
+  for up to 50 ms of jitter, so a brief packet gap does not click but a client
+  that is gone does not keep the device busy either.
+
+- **Changing the music no longer stalls the game for a second.** The Doom port
+  synthesised a whole track before playing it, which costs ~120 ms natively and
+  about a second under TCG; it now keeps a one-second lead and fills a
+  quarter-second chunk per frame while the looped voice plays the buffer.
 
 - **A missing library is now named deterministically, and counted.** It used to be
   whichever failed last, so the same image could name three different libraries for

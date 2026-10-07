@@ -230,6 +230,11 @@ savanxp_program(NAME interptest TEST INTERPRETER /disk/lib/ld.so.0.4
     SOURCES subsystems/posix/userland/interptest.c)
 savanxp_library(NAME libmath SONAME libmath.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/math.c)
+# El sintetizador MIDI. Como libmath, no le pide un simbolo a la aplicacion mas
+# alla de malloc/free/memcpy/memset, asi que resuelve contra el ejecutable. El
+# unico consumidor hoy es el port de DoomGeneric, que lo mapea desde /disk/lib.
+savanxp_library(NAME libsxmidi SONAME libsxmidi.so.0.4
+    SOURCES subsystems/posix/sdk/v1/runtime/sxmidi.c)
 # SxGFX: la capa de graficos del cliente, con sus tres tablas de fuente dentro.
 # Pide del ejecutable solo syscalls y libc, asi que resuelve contra el binario
 # como las otras dos.

@@ -29,7 +29,13 @@
 
 #define AUDIOD_MAX_STREAMS 8u
 #define AUDIOD_FIFO_FRAMES 4800u /* 100 ms a 48 kHz */
+/* Dos tiempos distintos que antes eran uno solo. La expiracion es de la ENTRADA
+ * del stream: callado un rato largo, se libera el slot. El PLC es otra cosa:
+ * cubre un instante de jitter repitiendo el ultimo frame. Estirarlo hasta la
+ * expiracion entera dejaba medio segundo de meseta despues de que el cliente se
+ * fuera -- con el cliente muerto, nadie pidio ese audio. */
 #define AUDIOD_STREAM_EXPIRY_MS 500u
+#define AUDIOD_PLC_MS 50u
 #define AUDIOD_RENDER_PERIOD_MS 10u
 #define AUDIOD_MAX_RENDER_FRAMES 4800u
 #define AUDIOD_ACQUIRE_RETRY_MS 500u
@@ -43,7 +49,8 @@ struct audiod_stream {
     char name[SAVANXP_AUDIOD_NAME_BYTES];
     uint32_t last_sequence;
     int has_sequence;
-    uint64_t last_ms;
+    uint64_t last_ms; /* ultima vez que se supo del stream (audio o DECLARE) */
+    uint64_t last_audio_ms; /* ultimo datagrama con muestras: manda el PLC */
     /* Anillo de stereo s16: head consume, tail produce. Sin memmoves: bajo
      * tcg un corrimiento por frame quemaria la CPU para nada. */
     int16_t fifo[AUDIOD_FIFO_FRAMES * 2u];
@@ -132,6 +139,7 @@ static struct audiod_stream* audiod_register_stream(uint16_t port, uint32_t rate
             stream->rate_hz = rate_hz;
             stream->volume = 100;
             stream->last_ms = now_ms;
+            stream->last_audio_ms = now_ms;
             eprintf("audiod: cliente en puerto %u (%u Hz)\n", (unsigned int)port, rate_hz);
             return stream;
         }
@@ -307,6 +315,7 @@ static void audiod_handle_audio(
     stream->has_sequence = 1;
     stream->last_sequence = header->sequence;
     stream->last_ms = now_ms;
+    stream->last_audio_ms = now_ms;
     stream->received += 1;
     (void)audiod_push_frames(stream, (const int16_t*)(data + sizeof(*header)), frame_count);
 }
@@ -463,7 +472,7 @@ static int32_t audiod_soft_knee(int32_t mixed)
     return mixed;
 }
 
-static size_t audiod_render(int16_t* out, size_t frame_count)
+static size_t audiod_render(int16_t* out, size_t frame_count, uint64_t now_ms)
 {
     size_t frame;
 
@@ -482,11 +491,14 @@ static size_t audiod_render(int16_t* out, size_t frame_count)
             }
             if (stream->fifo_frames == 0)
             {
-                /* PLC: sin frame que consumir, repetir el ultimo ya escalado
-                 * por el volumen del stream en vez de inyectar ceros; antes
-                 * del primer frame, silencio. */
+                /* PLC solo mientras el ultimo datagrama es reciente: cubre el
+                 * jitter de un cliente que sigue vivo. Pasado el margen (y
+                 * hasta que expire la entrada) va silencio: un stream callado
+                 * ya no tiene audio que repetir. Antes del primer frame,
+                 * silencio tambien. */
                 ++stream->underruns;
-                if (stream->has_last)
+                if (stream->has_last &&
+                    now_ms - stream->last_audio_ms <= (uint64_t)AUDIOD_PLC_MS)
                 {
                     left += stream->last_left;
                     right += stream->last_right;
@@ -644,7 +656,7 @@ static int audiod_serve(int sock_fd, int audio_fd)
         }
         last_render_ms = now_ms;
         next_tick_ms = now_ms + AUDIOD_RENDER_PERIOD_MS;
-        (void)audiod_render(mixed, frames);
+        (void)audiod_render(mixed, frames, now_ms);
         bytes = frames * 4u;
         written = savanxp_write(audio_fd, mixed, bytes);
         if (written != (long)bytes)
@@ -750,8 +762,10 @@ static int audiod_selftest(void)
          * a momentos; ante jitter repite su ultimo frame (post fondo de
          * escala, pre volumen maestro). */
         struct audiod_stream* ai = &g_streams[0];
+        uint64_t plc_now = uptime_ms();
         int16_t out0[2] = {0,0};
         int16_t out1[2] = {0,0};
+        int16_t out2[2] = {0,0};
         memset(g_streams, 0, sizeof(g_streams));
         memset(ai, 0, sizeof(*ai));
         ai->used = 1;
@@ -760,13 +774,23 @@ static int audiod_selftest(void)
         ai->fifo_frames = 1;
         ai->fifo[0] = 8000;
         ai->fifo[1] = -8000;
-        (void)audiod_render(out0, 1);
+        ai->last_audio_ms = plc_now;
+        (void)audiod_render(out0, 1, plc_now);
         ai->fifo_frames = 0;
-        (void)audiod_render(out1, 1);
+        (void)audiod_render(out1, 1, plc_now);
         if (out0[0] != 8000 || out0[1] != -8000 || out1[0] != 8000 || out1[1] != -8000)
         {
             eprintf("AUDIOD SELFTEST FAIL PLC (%d,%d -> %d,%d)\n",
                     out0[0], out0[1], out1[0], out1[1]);
+            goto fail;
+        }
+        /* Y el PLC tiene que ACABARSE: pasado el margen de jitter, un stream
+         * callado sale en silencio en vez de repetir su ultimo frame. Era el
+         * residuo que seguia sonando despues de cerrar una app. */
+        (void)audiod_render(out2, 1, plc_now + AUDIOD_PLC_MS + 50u);
+        if (out2[0] != 0 || out2[1] != 0)
+        {
+            eprintf("AUDIOD SELFTEST FAIL PLC largo (%d,%d)\n", out2[0], out2[1]);
             goto fail;
         }
         memset(g_streams, 0, sizeof(g_streams));
@@ -882,7 +906,7 @@ static int audiod_selftest(void)
             goto fail;
         }
     }
-    (void)audiod_render(mixed, AUDIOD_SELFTEST_FRAMES);
+    (void)audiod_render(mixed, AUDIOD_SELFTEST_FRAMES, uptime_ms());
     for (frame = 0; frame < AUDIOD_SELFTEST_FRAMES; ++frame)
     {
         int16_t expect =
@@ -1046,7 +1070,7 @@ static int audiod_selftest(void)
                 audiod_handle_datagram(daemon_fd, datagram, (size_t)got, &source, uptime_ms());
             }
         }
-        (void)audiod_render(mixed, 480u);
+        (void)audiod_render(mixed, 480u, uptime_ms());
         ok = 1;
         for (frame = 0; frame < 480u; ++frame)
         {

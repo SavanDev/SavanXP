@@ -54,6 +54,14 @@ Installation uses `tools/sxfs_sync.py`; it never resets or deletes
 QEMU or another VM before installing: the image lock coordinates SavanXP
 builders, but it cannot stop an external writer that bypasses the protocol.
 
+The port links the system's MIDI synthesizer, so the base build has to have
+produced it first. `build.sh` fails with the fix if
+`build/diskfs/lib/libsxmidi.so.0.4` is missing:
+
+```bash
+./build.sh build
+```
+
 ## Persistence regression
 
 After installing the port, run the normal Linux build and verify:
@@ -67,8 +75,27 @@ Existing Doom configuration and `savegames/` data must remain byte-for-byte
 identical across the rebuild. The current regression assets are
 `doom1.wad`, `default.cfg`, `doomgenericdoom.cfg`, and `savegames/`.
 
+## Music
+
+The port plays the WAD's MUS tracks through the WAD's own OPL2 bank. Each MUS lump
+goes to MIDI with the upstream `mus2mid.c`, the `GENMIDI` lump goes with it to
+`sx_midi_song_create_with_bank`, and the synthesizer in `/disk/lib/libsxmidi.so.0.4`
+fills a buffer with one second of lead and then synthesises a quarter-second chunk
+per frame while the mixer loops that buffer on a dedicated voice. Without `GENMIDI`
+the same song falls back to the built-in families; the log names the path
+(`(FM)` vs `(familias)`). Rendering it in one shot made every music change stall the
+game for about a second under TCG. The library is a `DT_NEEDED`; without it in the
+volume the game still runs, silent. See `docs/MIDI.md`.
+
+`./build.sh smoke doom-music-smoke` opens the port on the desktop, starts the
+level and asserts that the audio QEMU captured is not silent: it is the check
+that catches a port which draws but does not sound. It then closes the window and
+asserts that the capture falls silent with the last music, which catches an audio
+daemon still feeding a client that no longer exists. It needs the port and a WAD
+installed in the volume.
+
 ## Current scope
 
-The port remains keyboard-only, uses SFX through the SavanXP PCM mixer, and
-keeps music disabled. Mouse input, MIDI/MUS playback, networking, and
-multiplayer are outside this migration slice.
+The port remains keyboard-only and uses SFX through the SavanXP PCM mixer. Music
+is enabled through `libsxmidi`. Mouse input, networking, and multiplayer are
+outside this migration slice.

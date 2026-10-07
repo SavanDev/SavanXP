@@ -34,11 +34,15 @@ Each client sends at the device rate, which it reads with `AUDIO_IOC_GET_INFO`
 (opening never contends). The daemon only mixes streams that match its own
 rate.
 
-A stream that has already played a frame is concealed, not zeroed: while it
-stays registered, the daemon repeats its last frame, scaled by its own volume,
-until the next slice arrives, so a brief packet gap does not click. Before the
-first frame the contribution is silence. Concealed frames are counted as
-underruns in the stats.
+A stream that has already played a frame is concealed, not zeroed: the daemon
+repeats its last frame, scaled by its own volume, so a brief packet gap does not
+click. Before the first frame the contribution is silence. Concealment is not
+the stream's lifetime: it covers `AUDIOD_PLC_MS` (50 ms) from the last datagram
+with samples and then stops, while the entry itself lives on until 500 ms of
+silence expire it. Holding the last frame for that whole window kept the device
+busy for half a second after a client was killed -- audible residue for audio
+nobody asked for -- and the entry's own expiry does not need it. Concealed
+frames are counted as underruns in the stats.
 
 Control rides the same socket under another magic (`SAUC`): `DECLARE` names
 the sender's own stream, `SET_VOLUME` levels any stream by port, and `LIST`

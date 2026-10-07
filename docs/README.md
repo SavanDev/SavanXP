@@ -52,6 +52,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   backend, playback timing, and the synchronization selftest.
 - [`AUDIO_DAEMON.md`](AUDIO_DAEMON.md) — `audiod`, the mixing daemon: UDP
   loopback transport, the slice protocol, and who holds `/dev/audio0`.
+- [`MIDI.md`](MIDI.md) — `libsxmidi`, the General MIDI synthesizer: the SMF
+  parser, the built-in instrument bank, and how the Doom port plays music
+  through it.
 - [`SXMEDIA.md`](SXMEDIA.md) — **withdrawn.** What the multimedia layer was, what
   building it taught, and what has to exist before trying again: a way for one
   program to use a codec library it was not built with.
