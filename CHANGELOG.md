@@ -802,6 +802,10 @@ Cut-off notes:
   Over `SAVANXP_CLIPBOARD_CAPACITY` (8 KiB) it fails with `ENOSPC`. SDK wrappers
   `clipboard_set_text`, `_get_text`, `_get_info` and `_clear`.
 
+- **Closing a window no longer freezes the desktop while the program is still loading.**
+  `windowd` reaped the client with a blocking `waitpid` inside its event loop, so killing
+  a program stuck in its loader stalled input, compose and present until it died.
+
 ### Changed
 
 - **The test machine now boots with 512 MiB of RAM**, up from 256 MiB, for

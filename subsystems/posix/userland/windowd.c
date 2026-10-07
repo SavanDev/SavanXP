@@ -1247,6 +1247,60 @@ static int windowd_process_alive(long pid)
     }
 }
 
+/* Zombies pendientes de `waitpid`, para no bloquear el bucle de eventos.
+ *
+ * `destroy_client_instance` cerraba la ventana con un `waitpid` bloqueante en
+ * el mismo `for(;;)`: matar un programa que aun esta en su carga (ldso antes
+ * de `main`, disco + secciones bajo el big lock) dejaba a windowd sin rutear
+ * input, sin componer y sin presentar hasta que el hijo moria. Ahora la
+ * ventana se desmonta enseguida y el pid queda aqui; el barrido de cada vuelta
+ * solo llama a `waitpid` cuando `windowd_process_alive` ya dijo que no sigue
+ * vivo (zombie o ido), que son los dos casos que el kernel resuelve sin
+ * bloquear. */
+#define WINDOWD_MAX_PENDING_REAPS 32
+static long g_pending_reaps[WINDOWD_MAX_PENDING_REAPS];
+static int g_pending_reap_count = 0;
+
+static void queue_pending_reap(long pid)
+{
+    int index;
+
+    if (pid <= 0)
+    {
+        return;
+    }
+    for (index = 0; index < g_pending_reap_count; ++index)
+    {
+        if (g_pending_reaps[index] == pid)
+        {
+            return;
+        }
+    }
+    if (g_pending_reap_count >= WINDOWD_MAX_PENDING_REAPS)
+    {
+        return;
+    }
+    g_pending_reaps[g_pending_reap_count++] = pid;
+}
+
+static void sweep_pending_reaps(void)
+{
+    int status = 0;
+    int index = 0;
+
+    while (index < g_pending_reap_count)
+    {
+        long pid = g_pending_reaps[index];
+        if (windowd_process_alive(pid))
+        {
+            ++index;
+            continue;
+        }
+        (void)savanxp_waitpid((int)pid, &status);
+        g_pending_reaps[index] = g_pending_reaps[--g_pending_reap_count];
+    }
+}
+
 static void add_client_present_damage(
     struct windowd_session *session,
     struct windowd_dirty_rect *dirty,
@@ -1679,7 +1733,14 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
         {
             (void)savanxp_kill((int)client->pid, SAVANXP_SIGKILL);
         }
-        (void)savanxp_waitpid((int)client->pid, &status);
+        if (windowd_process_alive(client->pid))
+        {
+            queue_pending_reap(client->pid);
+        }
+        else
+        {
+            (void)savanxp_waitpid((int)client->pid, &status);
+        }
     }
     close_fd_if_needed(&client->events_write_fd);
     close_fd_if_needed(&client->wake_event_fd);
@@ -5566,6 +5627,8 @@ int main(int argc, char **argv)
         {
             break;
         }
+
+        sweep_pending_reaps();
 
         /* Reset BEFORE servicing: a client that submits after this point
          * re-arms the event and wakes the next poll. Every client is serviced
