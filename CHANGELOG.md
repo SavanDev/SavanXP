@@ -10,92 +10,6 @@ Cut-off notes:
 
 ## [Unreleased]
 
-### Changed
-
-- **Doom music now plays the WAD's OPL2 instruments.** With `GENMIDI` the song renders
-  through a two-operator FM voice instead of the families, without it bit-identically;
-  the smoke log names the path (`(FM)` vs `(familias)`).
-
-- **The MIDI bank stopped being one waveform per family.** A voice now has a
-  second partial (interval and weight), a blend toward sine, an optional vibrato
-  LFO and an attack pitch sweep, and the drum kit uses all of it.
-
-- **The calculator's arithmetic now comes from `libmath.so.0.4`.** Its own
-  16-digit decimal engine existed because the in-tree userland was built
-  `-mno-sse` and `double` did not compile. `sqrt` is now resolved from the
-  shared library, so `calc` carries no copy of it.
-
-- **The calculator shows 15 significant digits instead of 16**, and accepts 15
-  digits of input instead of 16. A `double` carries about 15.95 decimal digits,
-  so the sixteenth was not always true. `1/3 × 3` now reads `1` instead of
-  `0.9999999999999999`, and `2/3` reads `0.666666666666667`.
-
-- **Section budgets raised: 64 section views per process, 256 sections
-  system-wide.** The old limits left no room for shared libraries, and 32 views
-  per process was already tight for heap arenas alone. Exhaustion is still a
-  clean `ENOMEM`.
-
-- **Two `PT_LOAD` segments may now share a page.** Required by any binary linked
-  with an interpreter, where the text segment does not end on a page boundary.
-  The page takes the union of both segments' permissions, and a union that is
-  both writable and executable is still refused.
-
-- **The ELF loader reports which program header it rejected.** `bad elf segment`
-  now carries the segment index, or 65535 when the rejection is not about any
-  one segment. Without it, a `PT_LOAD` table with four entries fails as one
-  opaque message.
-
-- **The section cache keys on the file range, not just the inode.** Asking for
-  the whole file and asking for a slice of it are different sections, and
-  confusing them mapped a segment with the whole image behind it.
-
-- **`savanxp_system_info` reports live section counts** and why the last view
-  mapping failed, so a shared mapping is observable instead of assumed.
-
-- **Window caption bars are two pixels taller.** The title area now has a 20px
-  caption, giving the compact title text and caption buttons more breathing room.
-
-- **The test machine now boots with 1 GiB of RAM**, and the persistent volume is
-  1 GiB while the LiveCD carries 256 MiB. The image stays sparse, so it costs
-  ~30 MiB of real disk.
-
-- **SxFS format v2: 4096 inodes and a 1 GiB ceiling.** The inode table went from
-  64 to 1024 sectors and the block bitmap from 32 to 512, so a volume is no
-  longer capped at 64 MiB. `build/disk.img` is reformatted once; a v1 image does
-  not mount, and `sxfs-cli` says so instead of failing obscurely later.
-
-- **ATA now splits large requests instead of rejecting them.** A metadata commit
-  asks for 1537 sectors and the PIO count register holds 8 bits, so writes over
-  255 sectors were being refused — harmless while the metadata fit in 97
-  sectors, fatal on the default IDE machine once it did not.
-
-- **`fscheck` reports metadata commit cost.** `commits`, `bytes_written` and
-  `bytes_per_commit` per volume, so the journal's cost is a measurement instead
-  of an inference from the wall clock.
-
-- **The development path no longer carries the persistent volume as a boot
-  module.** `build/disk.img` reaches QEMU as an attached disk instead, which
-  frees the 64 MiB it was occupying in RAM and drops the staged EFI tree from
-  542 MiB to 30 MiB. The ISO keeps its own tree and its `livecd` volume, since
-  there is no disk to attach, staged at its exact filesystem size so a grown
-  image does not pad the ISO.
-
-- **`build/disk.img` may now be larger than the volume inside it.** `sxfs-cli`
-  accepts an oversized image and still rejects a truncated one, and a build
-  preserves both the size and the sparseness of the file, so `truncate -s` is
-  enough to make room for a later volume grow.
-
-- **Window titles use RetroSans instead of Noto Sans.** The caption face is
-  `RetroSans.ttf` at 18px with no faux-bold; the desktop body stays on Noto Sans 13px.
-
-- **Active captions follow the declared accent instead of tinting the blue base.**
-  A declared accent renders as its own shade-to-tint ramp; windows without one
-  keep the Windows Standard gradient. Fixes the two-tone split on accents like Files.
-
-- **init relaunches the audio daemon only when it dies serving.** A deliberate
-  startup exit (no network, no audio, another daemon) leaves it stopped and the
-  system on direct turn-taking instead of respawning forever.
-
 ### Added
 
 - **Per-song `GENMIDI` bank in `libsxmidi`.** `sx_midi_song_create_with_bank` takes the lump
@@ -388,9 +302,11 @@ Cut-off notes:
 - **Linux now has a headless smoke runner.** `./build.sh smoke <scenario>`
   injects the scenario into the initramfs, runs QEMU on a validated disposable
   image copy, records serial output, and supports QMP keyboard/taskbar input.
+
 - **Linux smoke orchestration now covers audio, TCP, and external native apps.**
   Audio backends/WAV files, the TCP echo server, and `tools/build-user.sh` keep
   these scenarios outside the base CMake target.
+
 - **Linux build commands now match the one-word smoke aliases and SDK install destinations.**
   Direct `windowd-smoke`/`gpu-soak` targets, `build-user.sh --destination`, and
   `tools/run-user.sh` cover the matching Bash workflows.
@@ -500,6 +416,296 @@ Cut-off notes:
   sounding gets a row with its own slider, refreshed from the daemon census
   once per second; levels are per session and are not persisted.
 
+### Changed
+
+- **Doom music now plays the WAD's OPL2 instruments.** With `GENMIDI` the song renders
+  through a two-operator FM voice instead of the families, without it bit-identically;
+  the smoke log names the path (`(FM)` vs `(familias)`).
+
+- **The MIDI bank stopped being one waveform per family.** A voice now has a
+  second partial (interval and weight), a blend toward sine, an optional vibrato
+  LFO and an attack pitch sweep, and the drum kit uses all of it.
+
+- **The calculator's arithmetic now comes from `libmath.so.0.4`.** Its own
+  16-digit decimal engine existed because the in-tree userland was built
+  `-mno-sse` and `double` did not compile. `sqrt` is now resolved from the
+  shared library, so `calc` carries no copy of it.
+
+- **The calculator shows 15 significant digits instead of 16**, and accepts 15
+  digits of input instead of 16. A `double` carries about 15.95 decimal digits,
+  so the sixteenth was not always true. `1/3 × 3` now reads `1` instead of
+  `0.9999999999999999`, and `2/3` reads `0.666666666666667`.
+
+- **Section budgets raised: 64 section views per process, 256 sections
+  system-wide.** The old limits left no room for shared libraries, and 32 views
+  per process was already tight for heap arenas alone. Exhaustion is still a
+  clean `ENOMEM`.
+
+- **Two `PT_LOAD` segments may now share a page.** Required by any binary linked
+  with an interpreter, where the text segment does not end on a page boundary.
+  The page takes the union of both segments' permissions, and a union that is
+  both writable and executable is still refused.
+
+- **The ELF loader reports which program header it rejected.** `bad elf segment`
+  now carries the segment index, or 65535 when the rejection is not about any
+  one segment. Without it, a `PT_LOAD` table with four entries fails as one
+  opaque message.
+
+- **The section cache keys on the file range, not just the inode.** Asking for
+  the whole file and asking for a slice of it are different sections, and
+  confusing them mapped a segment with the whole image behind it.
+
+- **`savanxp_system_info` reports live section counts** and why the last view
+  mapping failed, so a shared mapping is observable instead of assumed.
+
+- **Window caption bars are two pixels taller.** The title area now has a 20px
+  caption, giving the compact title text and caption buttons more breathing room.
+
+- **The test machine now boots with 1 GiB of RAM**, and the persistent volume is
+  1 GiB while the LiveCD carries 256 MiB. The image stays sparse, so it costs
+  ~30 MiB of real disk.
+
+- **SxFS format v2: 4096 inodes and a 1 GiB ceiling.** The inode table went from
+  64 to 1024 sectors and the block bitmap from 32 to 512, so a volume is no
+  longer capped at 64 MiB. `build/disk.img` is reformatted once; a v1 image does
+  not mount, and `sxfs-cli` says so instead of failing obscurely later.
+
+- **ATA now splits large requests instead of rejecting them.** A metadata commit
+  asks for 1537 sectors and the PIO count register holds 8 bits, so writes over
+  255 sectors were being refused — harmless while the metadata fit in 97
+  sectors, fatal on the default IDE machine once it did not.
+
+- **`fscheck` reports metadata commit cost.** `commits`, `bytes_written` and
+  `bytes_per_commit` per volume, so the journal's cost is a measurement instead
+  of an inference from the wall clock.
+
+- **The development path no longer carries the persistent volume as a boot
+  module.** `build/disk.img` reaches QEMU as an attached disk instead, which
+  frees the 64 MiB it was occupying in RAM and drops the staged EFI tree from
+  542 MiB to 30 MiB. The ISO keeps its own tree and its `livecd` volume, since
+  there is no disk to attach, staged at its exact filesystem size so a grown
+  image does not pad the ISO.
+
+- **`build/disk.img` may now be larger than the volume inside it.** `sxfs-cli`
+  accepts an oversized image and still rejects a truncated one, and a build
+  preserves both the size and the sparseness of the file, so `truncate -s` is
+  enough to make room for a later volume grow.
+
+- **Window titles use RetroSans instead of Noto Sans.** The caption face is
+  `RetroSans.ttf` at 18px with no faux-bold; the desktop body stays on Noto Sans 13px.
+
+- **Active captions follow the declared accent instead of tinting the blue base.**
+  A declared accent renders as its own shade-to-tint ramp; windows without one
+  keep the Windows Standard gradient. Fixes the two-tone split on accents like Files.
+
+- **init relaunches the audio daemon only when it dies serving.** A deliberate
+  startup exit (no network, no audio, another daemon) leaves it stopped and the
+  system on direct turn-taking instead of respawning forever.
+
+- **The test machine now boots with 512 MiB of RAM**, up from 256 MiB, for
+  `run`, `debug`, the smoke scenarios, `gpu-soak` and the ISO boot test.
+
+- **Window title text is now one pixel smaller and bold.** Caption text uses a
+  dedicated 12px Noto Sans face while the rest of the UI keeps its regular font.
+
+- **Normal builds no longer regenerate desktop source icons.** Checked-in PNGs are
+  treated as editable artwork; `tools/gen_desktop_source_art.py` remains available
+  through the optional `savanxp_desktop_source_art` target.
+
+- **Gears (`/bin/gears`) has a redesigned app icon.** The launcher and taskbar now
+  use fuller 16×16 and 32×32 gear artwork.
+
+- **The About app now identifies the system as the Alpha edition.**
+
+- **The boot screen fades in from black, like a classic desktop splash.** Logo,
+  name, progress bar and status line brighten together over about a second,
+  driven by the monotonic clock; without a calibrated clock the splash appears
+  at once.
+
+- **Visual desktop verification uses the native Bash launcher.**
+  `tools/shoot.sh` reuses the shared scenario driver over Unix QMP and a
+  disposable SxFS copy.
+
+- **Linux Program Manager and Add/Remove Programs smokes restore Doom when its
+  external ELF exists.** The optional image remains unchanged when no ELF is
+  installed.
+
+- **Doom persistence now has an isolated Linux regression command.**
+  `tools/verify_doom_persistence.sh` rebuilds a disposable image and compares
+  the Doom binary, WAD, configuration, and savegame bytes.
+
+- **ISO verification now covers El Torito plus BIOS and UEFI boot.**
+  `tools/iso_boot_test.py` boots the generated image through both firmware paths
+  and waits for the guest handoff token.
+
+- **WM↔client protocol v4: the session opens all 12 windows.** Each costs
+  `windowd` two descriptors instead of nine: one event pipe (`SAVANXP_WM_FD_EVENTS`),
+  a wake event, one submit event per session, and hints and launches in the surface
+  header (`gfx_should_close` is new). Apps no longer inherit `windowd`'s descriptors.
+  **Breaks the client ABI:** rebuild external apps such as `doomgeneric`.
+  [Descriptor budget](docs/WM_SUBSYSTEM.md#descriptor-budget).
+
+- **The automated smokes honour `--accel`.** `./build.sh smoke smoke --accel kvm`
+  runs the suite with KVM instead of TCG; the default remains `tcg`.
+
+- **The system 3D edges moved to `savanxp/sxchrome.h`, out of the toolkit.**
+  `sxchrome_draw_edge/_raised/_sunken/_inset/_etched`, `sxchrome_fill_raised`
+  and the disabled relief (`_draw_text_disabled`, `_draw_glyph_disabled`) are in
+  every binary's base runtime, so `windowd`, `calc` and `taskmgr` dropped their
+  private copies. [Why not in SXGUI-C](docs/SYSTEM_LAYERING.md#the-two-layers).
+
+- **The userland links with `--gc-sections`.** Each binary keeps only what it
+  reaches from `_start` instead of whole runtime objects: the initramfs goes
+  from ~14 MB to ~5.5 MB, libm included.
+
+- **The managed app layer (Haxe on a VM) is deferred until after v1.0.** Until
+  then everything ships in C against the POSIX SDK; `subsystems/native` stays as
+  a frozen, validated experiment that nothing in the image depends on. If it is
+  ever needed, it arrives as a selective port, UWP-style, beside the native apps.
+  [The decision and the shape it would have to fit](docs/SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
+
+- **About is now System Properties.** General shows the edition, the version,
+  where it is installed and the processor (brand, speed and features from
+  `CPUID`); Hardware lists the devices found. The live counters it used to show
+  moved to the Task Manager.
+
+- **The Shell window opens and repaints far faster.** `/bin/shellapp` dropped an
+  unused 8 MiB static backbuffer, repaints only the text rows that actually
+  changed instead of the whole surface, blinks the cursor without a repaint, and
+  keeps scrollback in a ring. Monospace text blits ~16x faster system-wide. New
+  `shellapp-stats:` line over `/dev/serial` and `tools/shoot.sh --scenario shell`.
+
+- **The compositor accumulates damage as an exact region.** `windowd` stopped
+  merging dirty rectangles by bounding box: dragging a window now repaints and
+  presents the ring that changed, not the box around the old and new frames.
+
+- **`tools/shoot.sh` drives other hardware and loads the display path.**
+  `--virtio`/`--accel` (`tcg`/`kvm`) pick devices and accelerator; the
+  `bench`, `saturate` and `spin` scenarios feed `windowd-stats`.
+
+- **Launcher icon captions wrap to two lines.** A name that does not fit on one
+  line breaks at a space and is centred over two, and only what still does not
+  fit is cut with an ellipsis — before, a long caption was clipped at *both*
+  ends and read as broken rather than as truncated. The cell now derives its
+  height from the active font instead of a baked 76 pixels.
+
+- **The boot screen is now a splash with the project logo.** Black background,
+  `assets/brand/logo.png` baked in by `tools/gen_boot_logo.py`, the system name
+  below it, a sliding block bar, and the step names now in English.
+
+- **The splash bar keeps moving through the long boot steps.** It advances on
+  `monotonic_ns()`, now calibrated at the start of boot by
+  `timer::calibrate_monotonic()` instead of during the ACPI bring-up.
+
+- **All repository documentation is in English, and the README leads with a
+  quickstart.** The Linux requirements move to `docs/BUILD_LINUX.md`,
+  `docs/README.md` indexes the design docs, and `CLAUDE.md` points at
+  `AGENTS.md`.
+
+- **The filesystem is now called `SxFS`, and the `2` leaves the name.** The
+  constants and the namespace never carried the number (`SVFS_*`, `svfs::`), so
+  the name said one version and the code another. The on-disk magic goes from
+  `SVFS2` to `SXFS` (the journal's from `SVJNL2` to `SXJNL`) and `SXFS_VERSION`
+  returns to `1`. **Every earlier image stops mounting**: `build/disk.img`
+  regenerates itself, but a persistent VirtualBox/QEMU disk must be reformatted.
+
+- **`assert()` reports when it fails.** It was `((void)(expression))`, so a
+  failing assert went unnoticed. It now prints and terminates the process; with
+  `NDEBUG` it still disappears.
+
+- **`struct stat` has the fields third-party code names.** `st_uid`, `st_gid`,
+  `st_nlink`, `st_blksize`, `st_blocks`, `st_atime`, `st_mtime`, `st_ctime`. The
+  kernel only reports type and size, so the rest stay zero.
+
+- **`exec` no longer copies the whole image into physically contiguous pages.**
+  `elf::load_user_image` takes an `elf::ImageReader` and reads the file directly
+  onto the process's pages: half the memory during exec, and no contiguous
+  reservation that fails on a fragmented heap.
+
+- **The user stack goes from a fixed 128 KiB to 1 MiB on demand, with a guard
+  page.** Only 8 pages are mapped at startup and the rest appear when touched
+  (`process::grow_user_stack`), so a shallow process uses LESS memory than
+  before. An overflow now dies with a readable fault.
+
+- **`spawn`/`exec` accept 128 arguments and 8 KiB total, instead of 15
+  arguments of 63 characters.** The buffer now comes from the kernel heap
+  instead of 4 pages of kernel stack, and overflow fails with `E2BIG` (new)
+  instead of truncating silently.
+
+- **Streams read in batches and `malloc` aligns to 16.** `fgets` was issuing one
+  `read()` per character; file streams now fill a 512-byte buffer. 16 is
+  x86-64's `max_align_t`: with 8, a `movaps` in an `--sse` app could fault.
+
+- **The libc stops renaming with `#define`: the standard names are now real
+  symbols.** The SDK headers defined `#define read sx_read` and ~140 more, so
+  the preprocessor rewrote any identifier with those names — a `.close` struct
+  field included — and `malloc` or `stat` were not symbols a third-party object
+  could link. The raw syscall layer is prefixed `savanxp_*`; `math.h` and
+  `setjmp.h` keep their macros on purpose.
+
+- **One userland runtime and one `printf`.** `runtime/posix.c` is linked into
+  every program and `runtime/libc.c` is reduced to the raw syscall layer plus
+  gfx. Which formatter ran used to depend on the headers each `.c` included, and
+  libc.c's did not even understand `%ld`/`%lu`. Raw `puts` becomes `puts_out`
+  and `putchar(fd, c)` becomes `putchar_fd`.
+
+- **`icon=` in `progman.ini` points at a program, not at an art catalog.** It
+  stores a PATH and the icon is read from the binary it points at. The old names
+  still work as aliases, and an explicit `icon=` beats the binary.
+
+- **The sxgui chrome moves to the Win95 two-pixel bevel.** A period 3D border
+  takes four tones — `SXGUI_COLOR_BEVEL` (223,223,223) was missing — and sunken
+  is now the exact reverse of raised. Also dotted focus rectangle, 50% scrollbar
+  trough, redrawn checkbox tick, concentric radio button, engraved disabled
+  text.
+
+- **The sxgui apps share a single layout grid.** The metrics live in
+  `savanxp/sxgui.h` (`SXGUI_MARGIN`, `SXGUI_GAP`, `SXGUI_BUTTON_WIDTH`, ...) and
+  are used by notepad, files, progman, aboutapp and widgetsdemo.
+
+- **`tools/shoot.sh` gains the `files` scenario.** The explorer is the window
+  with the most distinct controls at once, so it is where a stray toolkit margin
+  shows up.
+
+- **The keyboard event carries the modifiers.** `savanxp_input_event` gains
+  `modifiers` (`SAVANXP_KEY_MOD_*`); the kernel already computed it and threw it
+  away, so the WM tracked Ctrl by hand and got stuck if a KEY_UP was lost. The
+  event grows from 12 to 16 bytes: **external apps built against the previous
+  SDK need a rebuild** — Doom reads this struct.
+
+### Removed
+
+- **The SxMedia multimedia layer is withdrawn, and the Media Player is the
+  optional FFmpeg port again rather than a system program.** A program can only
+  use the codec libraries it was built with, so "one player that plays whatever is
+  installed" cannot be arranged without a dynamic linker or a codec service. The
+  design, the findings and the prerequisites to try again are in
+  [docs/SXMEDIA.md](docs/SXMEDIA.md).
+
+- **The alternate host compatibility surface is removed.** Its entry points,
+  bootstrap/toolchain cache, non-native accelerator selection, and TCP QMP
+  fallback are gone; Bash/CMake is the canonical build and test path.
+
+- **The legacy SDK trees for Doom and FFmpeg are removed.** Doom and FFmpeg now
+  live exclusively under `ports/doomgeneric` and `ports/ffmpeg`.
+
+- **The `wavinfo` and `player` FFmpeg demos.** Every binary that links
+  libavcodec carries all its decoders, so they became modes of the player:
+  `mediaplayer --probe`, `--selftest` and `--gpu-hold`.
+
+- **The icon set baked into `desktop_icons.h` is down to one.** Only
+  `DESKTOP_ICON_DESKTOP` survives, as the safety net for a binary that cannot be
+  read at all. The PNGs in `assets/desktop/icons/` stay as the catalog each
+  `.sxres` references with `icon=<name>`.
+
+- **The start menu strip art is deleted.** The menu was retired with the rest of
+  the Win95 chrome, but the chain that drew it was still whole, down to a symbol
+  nobody used.
+
+- **The eight hand-written coreutils in `subsystems/posix/userland` are
+  deleted.** `cat.c`, `echo.c`, `ls.c`, `mv.c`, `rm.c`, `sleep.c`, `true.c` and
+  `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
+
 ### Fixed
 
 - **Celeste's effects no longer saturate at any volume.** Its 16-bit WAVs were
@@ -522,16 +728,12 @@ Cut-off notes:
   libraries could not be loaded — which is not the same as how many files are
   missing: two absent files can stop four libraries from loading.
 
-### Fixed
-
 - **The emulated disk transfers 32 bits per port access instead of 16**, which
   makes a 390 KB write ~26% faster (measured: 365930 and 401218 ms down to
   280703 and 278922). Most of that cost is not the port writes at all: dropping
   every cache flush changes nothing, and the per-sector cost on the device side
   is what remains. Bus-master DMA is the fix for that, and the kernel does not
   use it.
-
-### Fixed
 
 - **Four loader diagnostics can now fail.** `brokentest`, `missingtest`,
   `slottest` and `diamondtest` asserted only through `eprintf`, so they had
@@ -547,8 +749,6 @@ Cut-off notes:
   manifests. A plan B that disagrees with the plan A is a second answer to the
   same question; `progman-smoke` now fails if a group exists in one and not the
   other.
-
-### Fixed
 
 - **The visual smoke scenarios work on a virtio machine.** They drove an absolute
   tablet with relative moves, so their clicks landed on the wrong window, and they
@@ -806,222 +1006,24 @@ Cut-off notes:
   `windowd` reaped the client with a blocking `waitpid` inside its event loop, so killing
   a program stuck in its loader stalled input, compose and present until it died.
 
-### Changed
-
-- **The test machine now boots with 512 MiB of RAM**, up from 256 MiB, for
-  `run`, `debug`, the smoke scenarios, `gpu-soak` and the ISO boot test.
-
-- **Window title text is now one pixel smaller and bold.** Caption text uses a
-  dedicated 12px Noto Sans face while the rest of the UI keeps its regular font.
-
-- **Normal builds no longer regenerate desktop source icons.** Checked-in PNGs are
-  treated as editable artwork; `tools/gen_desktop_source_art.py` remains available
-  through the optional `savanxp_desktop_source_art` target.
-- **Gears (`/bin/gears`) has a redesigned app icon.** The launcher and taskbar now
-  use fuller 16×16 and 32×32 gear artwork.
-- **The About app now identifies the system as the Alpha edition.**
-- **The boot screen fades in from black, like a classic desktop splash.** Logo,
-  name, progress bar and status line brighten together over about a second,
-  driven by the monotonic clock; without a calibrated clock the splash appears
-  at once.
-
-- **Visual desktop verification uses the native Bash launcher.**
-  `tools/shoot.sh` reuses the shared scenario driver over Unix QMP and a
-  disposable SxFS copy.
-
-- **Linux Program Manager and Add/Remove Programs smokes restore Doom when its
-  external ELF exists.** The optional image remains unchanged when no ELF is
-  installed.
-
-- **Doom persistence now has an isolated Linux regression command.**
-  `tools/verify_doom_persistence.sh` rebuilds a disposable image and compares
-  the Doom binary, WAD, configuration, and savegame bytes.
-- **ISO verification now covers El Torito plus BIOS and UEFI boot.**
-  `tools/iso_boot_test.py` boots the generated image through both firmware paths
-  and waits for the guest handoff token.
-
-- **WM↔client protocol v4: the session opens all 12 windows.** Each costs
-  `windowd` two descriptors instead of nine: one event pipe (`SAVANXP_WM_FD_EVENTS`),
-  a wake event, one submit event per session, and hints and launches in the surface
-  header (`gfx_should_close` is new). Apps no longer inherit `windowd`'s descriptors.
-  **Breaks the client ABI:** rebuild external apps such as `doomgeneric`.
-  [Descriptor budget](docs/WM_SUBSYSTEM.md#descriptor-budget).
-
-- **The automated smokes honour `--accel`.** `./build.sh smoke smoke --accel kvm`
-  runs the suite with KVM instead of TCG; the default remains `tcg`.
-
-- **The system 3D edges moved to `savanxp/sxchrome.h`, out of the toolkit.**
-  `sxchrome_draw_edge/_raised/_sunken/_inset/_etched`, `sxchrome_fill_raised`
-  and the disabled relief (`_draw_text_disabled`, `_draw_glyph_disabled`) are in
-  every binary's base runtime, so `windowd`, `calc` and `taskmgr` dropped their
-  private copies. [Why not in SXGUI-C](docs/SYSTEM_LAYERING.md#the-two-layers).
-
-- **The userland links with `--gc-sections`.** Each binary keeps only what it
-  reaches from `_start` instead of whole runtime objects: the initramfs goes
-  from ~14 MB to ~5.5 MB, libm included.
-
-- **The managed app layer (Haxe on a VM) is deferred until after v1.0.** Until
-  then everything ships in C against the POSIX SDK; `subsystems/native` stays as
-  a frozen, validated experiment that nothing in the image depends on. If it is
-  ever needed, it arrives as a selective port, UWP-style, beside the native apps.
-  [The decision and the shape it would have to fit](docs/SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
-
-- **About is now System Properties.** General shows the edition, the version,
-  where it is installed and the processor (brand, speed and features from
-  `CPUID`); Hardware lists the devices found. The live counters it used to show
-  moved to the Task Manager.
-
-- **The Shell window opens and repaints far faster.** `/bin/shellapp` dropped an
-  unused 8 MiB static backbuffer, repaints only the text rows that actually
-  changed instead of the whole surface, blinks the cursor without a repaint, and
-  keeps scrollback in a ring. Monospace text blits ~16x faster system-wide. New
-  `shellapp-stats:` line over `/dev/serial` and `tools/shoot.sh --scenario shell`.
-
-- **The compositor accumulates damage as an exact region.** `windowd` stopped
-  merging dirty rectangles by bounding box: dragging a window now repaints and
-  presents the ring that changed, not the box around the old and new frames.
-
-- **`tools/shoot.sh` drives other hardware and loads the display path.**
-  `--virtio`/`--accel` (`tcg`/`kvm`) pick devices and accelerator; the
-  `bench`, `saturate` and `spin` scenarios feed `windowd-stats`.
-
-- **Launcher icon captions wrap to two lines.** A name that does not fit on one
-  line breaks at a space and is centred over two, and only what still does not
-  fit is cut with an ellipsis — before, a long caption was clipped at *both*
-  ends and read as broken rather than as truncated. The cell now derives its
-  height from the active font instead of a baked 76 pixels.
-
-- **The boot screen is now a splash with the project logo.** Black background,
-  `assets/brand/logo.png` baked in by `tools/gen_boot_logo.py`, the system name
-  below it, a sliding block bar, and the step names now in English.
-
-- **The splash bar keeps moving through the long boot steps.** It advances on
-  `monotonic_ns()`, now calibrated at the start of boot by
-  `timer::calibrate_monotonic()` instead of during the ACPI bring-up.
-
-- **All repository documentation is in English, and the README leads with a
-  quickstart.** The Linux requirements move to `docs/BUILD_LINUX.md`,
-  `docs/README.md` indexes the design docs, and `CLAUDE.md` points at
-  `AGENTS.md`.
-
-- **The filesystem is now called `SxFS`, and the `2` leaves the name.** The
-  constants and the namespace never carried the number (`SVFS_*`, `svfs::`), so
-  the name said one version and the code another. The on-disk magic goes from
-  `SVFS2` to `SXFS` (the journal's from `SVJNL2` to `SXJNL`) and `SXFS_VERSION`
-  returns to `1`. **Every earlier image stops mounting**: `build/disk.img`
-  regenerates itself, but a persistent VirtualBox/QEMU disk must be reformatted.
-
-- **`assert()` reports when it fails.** It was `((void)(expression))`, so a
-  failing assert went unnoticed. It now prints and terminates the process; with
-  `NDEBUG` it still disappears.
-
-- **`struct stat` has the fields third-party code names.** `st_uid`, `st_gid`,
-  `st_nlink`, `st_blksize`, `st_blocks`, `st_atime`, `st_mtime`, `st_ctime`. The
-  kernel only reports type and size, so the rest stay zero.
-
-- **`exec` no longer copies the whole image into physically contiguous pages.**
-  `elf::load_user_image` takes an `elf::ImageReader` and reads the file directly
-  onto the process's pages: half the memory during exec, and no contiguous
-  reservation that fails on a fragmented heap.
-
-- **The user stack goes from a fixed 128 KiB to 1 MiB on demand, with a guard
-  page.** Only 8 pages are mapped at startup and the rest appear when touched
-  (`process::grow_user_stack`), so a shallow process uses LESS memory than
-  before. An overflow now dies with a readable fault.
-
-- **`spawn`/`exec` accept 128 arguments and 8 KiB total, instead of 15
-  arguments of 63 characters.** The buffer now comes from the kernel heap
-  instead of 4 pages of kernel stack, and overflow fails with `E2BIG` (new)
-  instead of truncating silently.
-
-- **Streams read in batches and `malloc` aligns to 16.** `fgets` was issuing one
-  `read()` per character; file streams now fill a 512-byte buffer. 16 is
-  x86-64's `max_align_t`: with 8, a `movaps` in an `--sse` app could fault.
-
-- **The libc stops renaming with `#define`: the standard names are now real
-  symbols.** The SDK headers defined `#define read sx_read` and ~140 more, so
-  the preprocessor rewrote any identifier with those names — a `.close` struct
-  field included — and `malloc` or `stat` were not symbols a third-party object
-  could link. The raw syscall layer is prefixed `savanxp_*`; `math.h` and
-  `setjmp.h` keep their macros on purpose.
-
-- **One userland runtime and one `printf`.** `runtime/posix.c` is linked into
-  every program and `runtime/libc.c` is reduced to the raw syscall layer plus
-  gfx. Which formatter ran used to depend on the headers each `.c` included, and
-  libc.c's did not even understand `%ld`/`%lu`. Raw `puts` becomes `puts_out`
-  and `putchar(fd, c)` becomes `putchar_fd`.
-
-- **`icon=` in `progman.ini` points at a program, not at an art catalog.** It
-  stores a PATH and the icon is read from the binary it points at. The old names
-  still work as aliases, and an explicit `icon=` beats the binary.
-
-- **The sxgui chrome moves to the Win95 two-pixel bevel.** A period 3D border
-  takes four tones — `SXGUI_COLOR_BEVEL` (223,223,223) was missing — and sunken
-  is now the exact reverse of raised. Also dotted focus rectangle, 50% scrollbar
-  trough, redrawn checkbox tick, concentric radio button, engraved disabled
-  text.
-
-- **The sxgui apps share a single layout grid.** The metrics live in
-  `savanxp/sxgui.h` (`SXGUI_MARGIN`, `SXGUI_GAP`, `SXGUI_BUTTON_WIDTH`, ...) and
-  are used by notepad, files, progman, aboutapp and widgetsdemo.
-
-- **`tools/shoot.sh` gains the `files` scenario.** The explorer is the window
-  with the most distinct controls at once, so it is where a stray toolkit margin
-  shows up.
-
-- **The keyboard event carries the modifiers.** `savanxp_input_event` gains
-  `modifiers` (`SAVANXP_KEY_MOD_*`); the kernel already computed it and threw it
-  away, so the WM tracked Ctrl by hand and got stuck if a KEY_UP was lost. The
-  event grows from 12 to 16 bytes: **external apps built against the previous
-  SDK need a rebuild** — Doom reads this struct.
-
-### Removed
-
-- **The SxMedia multimedia layer is withdrawn, and the Media Player is the
-  optional FFmpeg port again rather than a system program.** A program can only
-  use the codec libraries it was built with, so "one player that plays whatever is
-  installed" cannot be arranged without a dynamic linker or a codec service. The
-  design, the findings and the prerequisites to try again are in
-  [docs/SXMEDIA.md](docs/SXMEDIA.md).
-
-
-- **The alternate host compatibility surface is removed.** Its entry points,
-  bootstrap/toolchain cache, non-native accelerator selection, and TCP QMP
-  fallback are gone; Bash/CMake is the canonical build and test path.
-- **The legacy SDK trees for Doom and FFmpeg are removed.** Doom and FFmpeg now
-  live exclusively under `ports/doomgeneric` and `ports/ffmpeg`.
-- **The `wavinfo` and `player` FFmpeg demos.** Every binary that links
-  libavcodec carries all its decoders, so they became modes of the player:
-  `mediaplayer --probe`, `--selftest` and `--gpu-hold`.
-
-- **The icon set baked into `desktop_icons.h` is down to one.** Only
-  `DESKTOP_ICON_DESKTOP` survives, as the safety net for a binary that cannot be
-  read at all. The PNGs in `assets/desktop/icons/` stay as the catalog each
-  `.sxres` references with `icon=<name>`.
-
-- **The start menu strip art is deleted.** The menu was retired with the rest of
-  the Win95 chrome, but the chain that drew it was still whole, down to a symbol
-  nobody used.
-
-- **The eight hand-written coreutils in `subsystems/posix/userland` are
-  deleted.** `cat.c`, `echo.c`, `ls.c`, `mv.c`, `rm.c`, `sleep.c`, `true.c` and
-  `false.c` were built by nothing: `/bin` gets them from the busybox multicall.
-
-
-### Fixed
-
 - **The native SXGUI smoke label is now distinct from the native GUI host.**
   `sxguihost` no longer reports `NATIVEGUI HOST` when its runner exits.
+
 - **CMake-generated UEFI images now include `startup.nsh`.** The file selects
   `fs0:\EFI\BOOT\BOOTX64.EFI` for firmware and removable-media boot paths.
+
 - **Linux `gpu-soak` now uses the legacy 96-iteration default.** Explicit
   iteration counts derive a proportional timeout on both build frontends.
+
 - **DoomGeneric verifies its vendored upstream tree before building.** The
   deterministic digest in `UPSTREAM` rejects accidental source drift.
+
 - **`build.sh --jobs` now applies to every CMake build target.** Kernel,
   userland, ISO, smoke, run, debug, test and clean paths share the same limit.
+
 - **Linux QEMU launches honor `SAVANXP_QEMU` and custom OVMF pairs.** Normal
   runs and smoke scenarios use the same explicit toolchain overrides.
+
 - **Native Haxe `--force` now clears stale generated artifacts.** The normal
   path preserves reusable output directories instead of silently rebuilding
   from an identical clean state.
