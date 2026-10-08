@@ -333,6 +333,8 @@ void draw_static(const Layout& layout) {
         draw_logo(layout.logo_x, layout.logo_y, layout.scale);
     }
     draw_wordmark(layout.wordmark_x, layout.wordmark_y, layout.scale, kWordmark);
+    draw_centered_text(layout.wordmark_y + (SX_BOOT_WORDMARK_H * layout.scale) + (12 * layout.scale),
+                       SAVANXP_EDITION, layout.scale, faded(kWordmark));
 
     const uint64_t version_width = text_width(SAVANXP_VERSION_STRING, layout.scale);
     draw_text(g_framebuffer.width - version_width - (16 * layout.scale),

@@ -383,6 +383,7 @@ static void draw_version_stamp(struct sx_painter *painter, const struct savanxp_
 {
     static const char *const lines[] = {
         SAVANXP_SYSTEM_NAME,
+        SAVANXP_EDITION,
         "Version " SAVANXP_STRINGIFY(SAVANXP_VERSION_MAJOR) "."
             SAVANXP_STRINGIFY(SAVANXP_VERSION_MINOR) "."
             SAVANXP_STRINGIFY(SAVANXP_VERSION_PATCH),
