@@ -11,6 +11,7 @@ INCLUDE_TEST_APPS=${SAVANXP_INCLUDE_TEST_APPS:-ON}
 ACCEL=${SAVANXP_ACCEL:-tcg}
 SMP=${SAVANXP_SMP:-1}
 VIRTIO=${SAVANXP_VIRTIO:-OFF}
+LEGACY=${SAVANXP_LEGACY:-OFF}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
 SMOKE_SCENARIO=""
@@ -63,6 +64,10 @@ while [[ $# -gt 0 ]]; do
             VIRTIO=ON
             shift
             ;;
+        --legacy)
+            LEGACY=ON
+            shift
+            ;;
         --headless)
             HEADLESS=ON
             shift
@@ -104,6 +109,7 @@ Options:
   --accel tcg|kvm   select the QEMU accelerator
   --smp N           set the number of virtual CPUs
   --virtio          use QEMU virtio hardware
+  --legacy          use the 32-bit legacy machine (qemu-system-i386, i440FX)
   --headless        do not open a graphical QEMU window
   --jobs N          pass a parallelism limit to Ninja
   --scenario NAME   smoke scenario (for the smoke command)
@@ -149,6 +155,10 @@ esac
     echo "build.sh: --smp must be an integer between 1 and 32" >&2
     exit 2
 }
+if [[ "$LEGACY" == ON && "$VIRTIO" == ON ]]; then
+    echo "build.sh: --legacy and --virtio are mutually exclusive" >&2
+    exit 2
+fi
 
 SMOKE_SUCCESS="SMOKE PASS"
 SMOKE_FAILURE="SMOKE FAIL"
@@ -193,6 +203,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_HOST_ACTION=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field host_action)
         SMOKE_VISUAL_SCENARIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field visual_scenario)
         SMOKE_REQUIRES_VIRTIO=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field requires_virtio)
+        SMOKE_REQUIRES_LEGACY=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field requires_legacy)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
             exit 1
@@ -246,6 +257,7 @@ if [[ "$COMMAND" == smoke && -n "$SMOKE_PORT_COMMAND" && -z "$SMOKE_COMMAND_OVER
     export SAVANXP_ACCEL="$ACCEL"
     export SAVANXP_SMP="$SMP"
     export SAVANXP_VIRTIO="$VIRTIO"
+    export SAVANXP_LEGACY="$LEGACY"
     export SAVANXP_HEADLESS="$HEADLESS"
     ((SMOKE_TIMEOUT_SET == 0)) || export SAVANXP_SMOKE_TIMEOUT="$SMOKE_TIMEOUT"
     [[ -z "$JOBS" ]] || export SAVANXP_JOBS="$JOBS"
@@ -385,6 +397,13 @@ case "$COMMAND" in
         build_target savanxp_iso
         ;;
     smoke)
+        # Host-only preflight: no image is staged and no guest boots. It
+        # asserts over QMP that the legacy machine CPU has no long mode and
+        # no NX, before any i386 guest exists to run on it.
+        if [[ "$SMOKE_SCENARIO" == legacy-cpu && -z "$SMOKE_COMMAND_OVERRIDE" ]]; then
+            require_tool qemu-system-i386
+            exec python3 "$ROOT/tools/check_legacy_cpu.py" --accel "$ACCEL"
+        fi
         if [[ -n "$SMOKE_HOST_TEST" ]]; then
             configure
             build_target savanxp_tests
@@ -438,10 +457,12 @@ case "$COMMAND" in
             --smp "$SMP"
         )
         [[ "$VIRTIO" == ON ]] && SMOKE_ARGS+=(--virtio)
+        [[ "$LEGACY" == ON ]] && SMOKE_ARGS+=(--legacy)
         # Un escenario que necesita un device paravirtualizado no puede correr
         # en la maquina base: sin --virtio no hay tablet y el fallo seria del
         # escenario, no del arbol. Decirlo aqui evita ese falso positivo.
         [[ "$SMOKE_REQUIRES_VIRTIO" == True ]] && SMOKE_ARGS+=(--requires-virtio)
+        [[ "$SMOKE_REQUIRES_LEGACY" == True ]] && SMOKE_ARGS+=(--requires-legacy)
         [[ -z "$SMOKE_WAV_NAME" ]] || SMOKE_ARGS+=(--wav-path "$OUTPUT_ROOT/$SMOKE_WAV_NAME")
         if [[ -n "$SMOKE_QMP_CALLBACK" ]]; then
             if [[ "$SMOKE_QMP_CALLBACK" = /* ]]; then
@@ -475,6 +496,7 @@ case "$COMMAND" in
             --smp "$SMP"
         )
         [[ "$VIRTIO" == ON ]] && QEMU_ARGS+=(--virtio)
+        [[ "$LEGACY" == ON ]] && QEMU_ARGS+=(--legacy)
         [[ "$HEADLESS" == ON ]] && QEMU_ARGS+=(--headless)
         [[ "$COMMAND" == debug ]] && QEMU_ARGS+=(--debug)
         exec python3 "$ROOT/tools/run_qemu.py" "${QEMU_ARGS[@]}"

@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 
-def find_qemu() -> str | None:
+def find_qemu(binary: str = "qemu-system-x86_64") -> str | None:
     override = os.environ.get("SAVANXP_QEMU")
     if override:
         candidate = shutil.which(override)
@@ -21,7 +21,7 @@ def find_qemu() -> str | None:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
         return None
-    return shutil.which("qemu-system-x86_64")
+    return shutil.which(binary)
 
 
 def find_ovmf(name: str) -> Path | None:
@@ -41,25 +41,38 @@ def build_qemu_args(
     *,
     image_root: Path,
     disk_image: Path,
-    code: Path,
-    vars_copy: Path,
+    code: Path | None,
+    vars_copy: Path | None,
     debug_log: Path,
     accel: str,
     smp: int,
     virtio: bool,
     headless: bool,
     debug: bool,
+    legacy: bool = False,
     monitor_path: Path | None = None,
     serial_path: Path | None = None,
     qmp_path: Path | None = None,
     audio_device: str = "auto",
     wav_path: Path | None = None,
 ) -> list[str]:
-    """Build the common QEMU command used by normal and smoke launches."""
+    """Build the common QEMU command used by normal and smoke launches.
+
+    The legacy profile mirrors the base machine on a 32-bit target: SeaBIOS
+    instead of OVMF, i440FX instead of Q35, and a fixed qemu32 CPU with no
+    long mode and no NX, asserted by tools/check_legacy_cpu.py. Storage,
+    network, video and audio stay on the emulated (non-virtio) path so ATA
+    and driver work transfers between profiles.
+    """
+    if legacy and virtio:
+        raise SystemExit("run_qemu: --legacy and --virtio are mutually exclusive")
+    # SeaBIOS is built into qemu-system-i386: no pflash staging needed there.
+    if not legacy and (code is None or vars_copy is None):
+        raise SystemExit("run_qemu: OVMF code/vars are required without --legacy")
     args_list = [
-        "qemu-system-x86_64",
+        "qemu-system-i386" if legacy else "qemu-system-x86_64",
         "-machine",
-        "q35,pcspk-audiodev=audio0",
+        "pc,pcspk-audiodev=audio0" if legacy else "q35,pcspk-audiodev=audio0",
         "-accel",
         accel,
         "-m",
@@ -67,17 +80,22 @@ def build_qemu_args(
         "-smp",
         str(smp),
         "-cpu",
-        "host" if accel == "kvm" else "max",
+        "qemu32" if legacy else ("host" if accel == "kvm" else "max"),
         "-audiodev",
         "none,id=audio0" if headless else "sdl,id=audio0",
         "-display",
         "none" if headless else "gtk,grab-on-hover=on,show-cursor=off,window-close=on,zoom-to-fit=off",
         "-rtc",
         "base=localtime",
-        "-drive",
-        f"if=pflash,format=raw,readonly=on,file={code}",
-        "-drive",
-        f"if=pflash,format=raw,file={vars_copy}",
+    ]
+    if not legacy:
+        args_list += [
+            "-drive",
+            f"if=pflash,format=raw,readonly=on,file={code}",
+            "-drive",
+            f"if=pflash,format=raw,file={vars_copy}",
+        ]
+    args_list += [
         "-drive",
         f"file=fat:rw:{image_root},format=raw",
         "-netdev",
@@ -183,6 +201,9 @@ def main() -> int:
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     parser.add_argument("--smp", type=int, default=1)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--legacy", action="store_true",
+                        help="32-bit legacy machine: qemu-system-i386, i440FX/SeaBIOS, "
+                             "fixed qemu32 CPU without long mode or NX")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--qmp-path", type=Path, help="QMP Unix socket path")
@@ -192,19 +213,25 @@ def main() -> int:
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
+    if args.legacy and args.virtio:
+        parser.error("--legacy and --virtio are mutually exclusive")
 
-    qemu = find_qemu()
+    binary = "qemu-system-i386" if args.legacy else "qemu-system-x86_64"
+    qemu = find_qemu(binary)
     if not qemu:
-        raise SystemExit("qemu-system-x86_64 was not found in PATH")
+        raise SystemExit(f"{binary} was not found in PATH or SAVANXP_QEMU")
     image_root = args.image_root.resolve()
     disk_image = args.disk_image.resolve()
-    code, vars_copy = prepare_image(
-        image_root=image_root,
-        disk_image=disk_image,
-        ovmf_code=args.ovmf_code,
-        ovmf_vars=args.ovmf_vars,
-        vars_copy=args.vars_copy,
-    )
+    if args.legacy:
+        code, vars_copy = None, None
+    else:
+        code, vars_copy = prepare_image(
+            image_root=image_root,
+            disk_image=disk_image,
+            ovmf_code=args.ovmf_code,
+            ovmf_vars=args.ovmf_vars,
+            vars_copy=args.vars_copy,
+        )
     args_list = build_qemu_args(
         image_root=image_root,
         disk_image=disk_image,
@@ -214,6 +241,7 @@ def main() -> int:
         accel=args.accel,
         smp=args.smp,
         virtio=args.virtio,
+        legacy=args.legacy,
         headless=args.headless,
         debug=args.debug,
         qmp_path=args.qmp_path,

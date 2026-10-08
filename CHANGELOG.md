@@ -10,6 +10,14 @@ Cut-off notes:
 
 ## [Unreleased]
 
+### Added
+
+- **A 32-bit legacy QEMU machine profile.** `--legacy` in `build.sh`, `tools/run_qemu.py`
+  and `tools/run_smoke.py` boots `qemu-system-i386` with i440FX/SeaBIOS and a fixed
+  `qemu32` CPU without long mode or NX, mirroring the base emulated devices so ATA
+  and driver work transfers between profiles. `./build.sh smoke legacy-cpu` asserts
+  the CPU over QMP with `tools/check_legacy_cpu.py` before any i386 guest exists.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

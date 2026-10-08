@@ -39,6 +39,7 @@ tools/*
 !tools/iso_boot_test.py
 !tools/iso_volume.py
 !tools/write_smoke_spec.py
+!tools/check_legacy_cpu.py
 !tools/font/
 !tools/font/**
 *.log

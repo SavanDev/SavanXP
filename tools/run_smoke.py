@@ -165,9 +165,14 @@ def main() -> int:
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     parser.add_argument("--smp", type=int, default=1)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--legacy", action="store_true",
+                        help="Boot on the 32-bit legacy machine instead of qemu-system-x86_64.")
     parser.add_argument("--requires-virtio", action="store_true",
                         help="Refuse to run unless --virtio: the scenario needs a "
                              "paravirtual device the base machine does not have.")
+    parser.add_argument("--requires-legacy", action="store_true",
+                        help="Refuse to run unless --legacy: the scenario targets the "
+                             "32-bit machine the base profile cannot provide.")
     parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
@@ -176,14 +181,18 @@ def main() -> int:
         parser.error(f"unsupported QMP driver: {args.qmp_driver}")
     if args.requires_virtio and not args.virtio:
         parser.error("this scenario needs the virtio machine: pass --virtio")
+    if args.requires_legacy and not args.legacy:
+        parser.error("this scenario needs the legacy machine: pass --legacy")
+    if args.legacy and args.virtio:
+        parser.error("--legacy and --virtio are mutually exclusive")
     if args.completion == "host" and args.qmp_driver != "taskbar":
         parser.error("host completion requires the taskbar QMP driver")
     if args.host_action == "visual" and not args.visual_scenario:
         parser.error("--host-action visual requires --visual-scenario")
 
-    qemu = find_qemu()
+    qemu = find_qemu("qemu-system-i386" if args.legacy else "qemu-system-x86_64")
     if not qemu:
-        raise SystemExit("qemu-system-x86_64 was not found in PATH or SAVANXP_QEMU")
+        raise SystemExit("no QEMU binary was found in PATH or SAVANXP_QEMU")
     image_root = args.image_root.resolve()
     source_disk = args.disk_image.resolve()
     # Smoke guests are allowed to create and remove files. Never let their
@@ -221,14 +230,17 @@ def main() -> int:
     if wav_path is not None:
         wav_path.parent.mkdir(parents=True, exist_ok=True)
         wav_path.unlink(missing_ok=True)
-    code, vars_copy = prepare_image(
-        image_root=image_root,
-        disk_image=run_disk,
-        ovmf_code=args.ovmf_code,
-        ovmf_vars=args.ovmf_vars,
-        vars_copy=vars_copy,
-        debug_log=debug_log,
-    )
+    if args.legacy:
+        code, vars_copy = None, None
+    else:
+        code, vars_copy = prepare_image(
+            image_root=image_root,
+            disk_image=run_disk,
+            ovmf_code=args.ovmf_code,
+            ovmf_vars=args.ovmf_vars,
+            vars_copy=vars_copy,
+            debug_log=debug_log,
+        )
     qemu_args = build_qemu_args(
         image_root=image_root,
         disk_image=run_disk,
@@ -238,6 +250,7 @@ def main() -> int:
         accel=args.accel,
         smp=args.smp,
         virtio=args.virtio,
+        legacy=args.legacy,
         headless=True,
         debug=False,
         monitor_path=monitor_path,

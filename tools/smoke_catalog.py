@@ -30,6 +30,7 @@ class Scenario:
     host_action: str = ""
     visual_scenario: str = ""
     requires_virtio: bool = False
+    requires_legacy: bool = False
 
 
 def _qemu_scenario(
@@ -51,6 +52,7 @@ def _qemu_scenario(
     host_action: str = "",
     visual_scenario: str = "",
     requires_virtio: bool = False,
+    requires_legacy: bool = False,
 ) -> Scenario:
     return Scenario(
         command=command,
@@ -71,6 +73,7 @@ def _qemu_scenario(
         host_action=host_action,
         visual_scenario=visual_scenario,
         requires_virtio=requires_virtio,
+        requires_legacy=requires_legacy,
     )
 
 
@@ -97,6 +100,17 @@ def _unsupported(description: str, reason: str) -> Scenario:
 SCENARIOS: dict[str, Scenario] = {
     "smoke": _qemu_scenario(
         "smoke", "SMOKE PASS", "SMOKE FAIL", "Core POSIX userland smoke test", 120.0
+    ),
+    # Host-only: asserts over QMP that the legacy machine CPU has no long
+    # mode and no NX before any i386 guest exists to boot on it. build.sh
+    # runs tools/check_legacy_cpu.py directly instead of staging an image.
+    "legacy-cpu": _qemu_scenario(
+        "legacy-cpu",
+        "LEGACY CPU OK",
+        "LEGACY CPU FAIL",
+        "Legacy i386 machine CPU preflight (host-only QMP check)",
+        60.0,
+        requires_legacy=True,
     ),
     "windowd-smoke": _qemu_scenario(
         "windowd-selftest",
@@ -543,6 +557,7 @@ def main() -> int:
             "host_action",
             "visual_scenario",
             "requires_virtio",
+            "requires_legacy",
         ),
         required=False,
     )
