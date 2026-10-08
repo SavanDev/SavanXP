@@ -8,6 +8,14 @@ Cut-off notes:
 - `v0.1.1` covers the changes after `v0.1.0`, including work already merged into
   the tree but not yet tagged in git.
 
+## [Unreleased]
+
+### Changed
+
+- **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it
+  from `include/shared/version.h` instead of a hardcoded string, and the boot splash
+  and the desktop stamp now show it alongside the system name.
+
 ## [0.4.0] - 2026-10-08
 
 ### Added
