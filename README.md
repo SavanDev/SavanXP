@@ -15,7 +15,7 @@ apps, and support for external apps compiled against the SDK in this repo.
 ![The SavanXP desktop: Program Manager, the About window and Doom running in
 a window, over the window manager's own compositor](docs/images/desktop.png)
 
-Current version: `v0.3.4` &middot; [Changelog](CHANGELOG.md) &middot;
+Current version: `v0.4.0` &middot; [Changelog](CHANGELOG.md) &middot;
 [MIT license](LICENSE)
 
 ## Quick start
