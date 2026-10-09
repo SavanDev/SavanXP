@@ -10,6 +10,24 @@ Cut-off notes:
 
 ## [Unreleased]
 
+### Added
+
+- **Web Viewer (`/bin/webview`), a local HTML viewer in the spirit of IE 1.1.**
+  Opens `.html`/`.htm` files from disk, renders headings, paragraphs, lists, rules
+  and entities in vertical flow, and ships with `/disk/welcome.html` as its sample page.
+
+- **Web Viewer gains its browser chrome.** An address bar with Go (file paths,
+  `file://` included), Back/Forward buttons with a history of visited paths on the
+  buttons, the Go menu and Alt+Left/Right, plus `/disk/about.html` as a second sample page.
+
+- **Web Viewer fetches `http://` pages from numeric IPs, follows links and redirects,
+  and shows source.** Clickable blue underlined links, `View Source` on Ctrl+U, `3xx`
+  following for same-scheme locations, and honest errors where DNS or TLS would be needed.
+
+- **Web Viewer paints a first CSS.** Tag rules from `<style>` plus `style=""`,
+  over colour, background, alignment, bold (double-strike), underline and a two-face
+  size; `body` rules and `<body>` attributes set the page colours, `<font color>` works.
+
 ### Changed
 
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it

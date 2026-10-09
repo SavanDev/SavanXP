@@ -60,6 +60,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   program to use a codec library it was not built with.
 - [`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md) — process, memory, and system
   metrics exposed by the kernel.
+- [`WEBVIEWER.md`](WEBVIEWER.md) — Web Viewer, the in-tree browser prototype:
+  its rendering contract, the CSS subset, and what each milestone leaves out.
 
 ## Formats
 

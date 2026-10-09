@@ -363,6 +363,8 @@ savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PI
 # libreria: ningun self-test llega al camino de dibujo.
 savanxp_program(NAME notepad DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/notepad.c)
+savanxp_program(NAME webview DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+    subsystems/posix/userland/webview.c)
 savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mines.c
     subsystems/posix/userland/mines_board.c)# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las

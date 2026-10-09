@@ -14,6 +14,7 @@ import io
 import json
 import os
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -239,7 +240,7 @@ class Session(object):
         de cada grupo (docs/SXE_FORMAT.md, "All Programs"), asi que estos
         indices son posiciones en ese orden. Con las categorias de hoy:
 
-            Accessories: Calculator, Files, [Media Player], Notepad, Shell
+            Accessories: Calculator, Files, [Media Player], Notepad, Shell, Web Viewer
             Diagnostics: Gears, Gfx Demo, Key Test, Mouse Test, Widgets
             Games:       Doom (solo si esta instalado), Minesweeper
             System:      Add/Remove Programs, System Properties, Task Manager
@@ -266,12 +267,17 @@ class Session(object):
     def open_files(self):
         self.launch(1)
 
-    # Notepad y Shell se cuentan desde el final: Media Player siempre está en
-    # Accessories; el backend FFmpeg es un componente externo que no se lista.
+    # Notepad, Shell y Web Viewer se cuentan desde el final: Media Player
+    # siempre está en Accessories cuando el port FFmpeg esta construido, asi
+    # que solo los indices negativos sobreviven a su presencia o ausencia.
+    # Orden: ..., Notepad, Shell, Web Viewer.
     def open_notepad(self):
-        self.launch(-2)
+        self.launch(-3)
 
     def open_shell(self):
+        self.launch(-2)
+
+    def open_webview(self):
         self.launch(-1)
 
     def open_mediaplayer(self):
@@ -334,6 +340,11 @@ FIELD = (255, 255, 255)
 TEXT = (0, 0, 0)
 SELECT = (0, 0, 128)
 SELECT_TEXT = (255, 255, 255)
+
+# El azul de los links (WEBVIEW_LINK_COLOR en webview.c): la asercion lo usa
+# con solid_only porque el repintado azul va SOBRE el negro y los bordes
+# antialiaseados no salen del blend contra fondo que modela find_text.
+LINK = (0, 0, 255)
 
 # Interlineado del toolkit, no de la fuente: sxgui_row_height() en sxgui.c es
 # gfx_text_height() + 4. La fuente Noto viene con SX_NOTO_ASCENT 14 y DESCENT 4, o
@@ -1242,6 +1253,181 @@ def scenario_notepadwheel(s):
         raise Failure("clickear la barra de scroll no movio el editor")
 
 
+def scenario_webview(s):
+    """Web Viewer v0.1: arranca, abre un archivo local y lo pinta.
+
+    Sin argumentos muestra su pantalla de bienvenida (parrafos sinteticos, sin
+    parser); con F3 se abre el dialogo, se tipea /disk/welcome.html y lo que
+    aparece lo produjo el parser de verdad: el h1 en la fuente de titulos y un
+    item de lista en la del cuerpo, afirmados pixel a pixel contra libsxgfx.
+
+    La barra va con "/" de Shift+7: el layout activo del guest es ES y el qcode
+    es la tecla fisica, asi que "slash" escribiria un guion (ver type_text).
+    """
+    s.open_webview()
+    welcome = s.shot("webview-bienvenida")
+    width, height = welcome.size
+    expect_text(welcome, (0, 0, width, height), "Web Viewer", TEXT, FIELD,
+                "la bienvenida de webviewer", which="title")
+    s.qmp.tap("f3", pause=2.0)
+    s.qmp.chord("shift", "7")
+    s.qmp.type_text("disk")
+    s.qmp.chord("shift", "7")
+    s.qmp.type_text("welcome")
+    s.qmp.tap("dot", pause=0.3)
+    s.qmp.type_text("html")
+    s.qmp.tap("ret", pause=4.0)
+    page = s.shot("webview-pagina")
+    width, height = page.size
+    expect_text(page, (0, 0, width, height), "Welcome to SavanXP", TEXT, FIELD,
+                "el h1 de welcome.html", which="title")
+    # solid_only: donde los bordes antialiaseados de dos glifos se solapan, el
+    # pintor mezcla en secuencia sobre el framebuffer y el modelo del harness
+    # contra el fondo (ver gfx_pixel_blend): esos pixeles difieren en un poco
+    # y no distinguen un fallo. El nucleo identifica letra y posicion igual.
+    expect_text(page, (0, 0, width, height), "Lists like this one", TEXT, FIELD,
+                "un item de lista de welcome.html", solid_only=True)
+    # v0.2: la barra de direcciones lleva a una segunda pagina y Back/Forward
+    # pasean por el historial. El foco quedo en la barra al cerrar el dialogo,
+    # asi que Ctrl+A la selecciona entera antes de tipear la otra ruta.
+    s.qmp.chord("ctrl", "a")
+    s.qmp.chord("shift", "7")
+    s.qmp.type_text("disk")
+    s.qmp.chord("shift", "7")
+    s.qmp.type_text("about")
+    s.qmp.tap("dot", pause=0.3)
+    s.qmp.type_text("html")
+    s.qmp.tap("ret", pause=4.0)
+    second = s.shot("webview-segunda")
+    width, height = second.size
+    expect_text(second, (0, 0, width, height), "Going further", TEXT, FIELD,
+                "el h1 de about.html", which="title")
+    s.qmp.chord("alt", "left")
+    time.sleep(3.0)
+    back = s.shot("webview-atras")
+    width, height = back.size
+    expect_text(back, (0, 0, width, height), "Welcome to SavanXP", TEXT, FIELD,
+                "volver atras a welcome.html", which="title")
+    s.qmp.chord("alt", "right")
+    time.sleep(3.0)
+    fwd = s.shot("webview-adelante")
+    width, height = fwd.size
+    expect_text(fwd, (0, 0, width, height), "Going further", TEXT, FIELD,
+                "volver adelante a about.html", which="title")
+    scenario_webview_http(s)
+
+
+def scenario_webview_http(s):
+    """Web Viewer v0.3: fetch HTTP, links, source y redirect.
+
+    Levanta el fixture HTTP del host (el guest lo ve en 10.0.2.2 por slirp),
+    tipea la URL en la barra, sigue un link con el mouse, mira el fuente con
+    Ctrl+U y atraviesa un 302. Cada paso afirma glifos contra libsxgfx.
+    """
+    root = Path(__file__).resolve().parent
+    server = subprocess.Popen(
+        [sys.executable, str(root / "webview_http_server.py"),
+         "--dir", str(root / "webview-test-www")],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        ready = server.stdout.readline().split()
+        if len(ready) != 2 or ready[0] != "READY":
+            raise Failure("el fixture HTTP no anuncio su puerto: %r" % ready)
+        hostport = "10.0.2.2:%s" % ready[1]
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/index.html")
+        s.qmp.tap("ret", pause=6.0)
+        net = s.shot("webview-http")
+        width, height = net.size
+        expect_text(net, (0, 0, width, height), "It works over HTTP", TEXT, FIELD,
+                    "el h1 traido por HTTP", which="title", solid_only=True)
+        # El link: su origen lo da la misma busqueda de glifos, en azul.
+        link_at = expect_text(net, (0, 0, width, height), "second page", LINK, FIELD,
+                              "el link en azul", solid_only=True)
+        s.qmp.move_to(link_at[0] + 30, link_at[1] + 8)
+        s.qmp.click()
+        time.sleep(5.0)
+        second = s.shot("webview-link")
+        width, height = second.size
+        expect_text(second, (0, 0, width, height), "Second page", TEXT, FIELD,
+                    "el h1 tras seguir el link", which="title", solid_only=True)
+        # Fuente del documento en red, y vuelta.
+        s.qmp.chord("ctrl", "u")
+        time.sleep(2.0)
+        source = s.shot("webview-fuente")
+        width, height = source.size
+        expect_text(source, (0, 0, width, height), "Second page", TEXT, FIELD,
+                    "el titulo en el fuente", solid_only=True)
+        s.qmp.chord("ctrl", "u")
+        time.sleep(2.0)
+        rendered = s.shot("webview-otra-vez")
+        width, height = rendered.size
+        expect_text(rendered, (0, 0, width, height), "Second page", TEXT, FIELD,
+                    "el h1 al salir del fuente", which="title", solid_only=True)
+        # Redirect 302 a /index.html: cae en el destino y el historial guarda
+        # la URL final (Back vuelve a second, no a old).
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/old.html")
+        s.qmp.tap("ret", pause=6.0)
+        redir = s.shot("webview-redirect")
+        width, height = redir.size
+        expect_text(redir, (0, 0, width, height), "It works over HTTP", TEXT, FIELD,
+                    "el destino del redirect", which="title", solid_only=True)
+        s.qmp.chord("alt", "left")
+        time.sleep(3.0)
+        back = s.shot("webview-redirect-atras")
+        width, height = back.size
+        expect_text(back, (0, 0, width, height), "Second page", TEXT, FIELD,
+                    "Back tras el redirect", which="title", solid_only=True)
+        # v0.4: una pagina con CSS. El h1 rojo y centrado prueba regla por tag
+        # (y de paso el fondo crema del body: el patron exige ese fondo); el
+        # verde alineado a la derecha prueba style=""; el resto, runs inline.
+        # El bold de doble golpe solo se mira: no hay patron de glifo para el.
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/style.html")
+        s.qmp.tap("ret", pause=6.0)
+        styled = s.shot("webview-css")
+        width, height = styled.size
+        CREAM = (255, 255, 204)
+        expect_text(styled, (0, 0, width, height), "Styled page", (204, 0, 0), CREAM,
+                    "el h1 con regla de tag", which="title", solid_only=True)
+        expect_text(styled, (0, 0, width, height), "This paragraph is plain.",
+                    (51, 51, 51), CREAM, "el color del body", solid_only=True)
+        expect_text(styled, (0, 0, width, height), "Right and green", (0, 128, 0), CREAM,
+                    "el style inline", solid_only=True)
+        expect_text(styled, (0, 0, width, height), "font color", (128, 0, 128), CREAM,
+                    "el color de font", solid_only=True)
+        expect_text(styled, (0, 0, width, height), "underline", (51, 51, 51), CREAM,
+                    "el subrayado propio", solid_only=True)
+    finally:
+        server.terminate()
+        server.wait()
+
+
+def type_http_url(s, hostport, path):
+    """Tipea http://hostport/path con el layout ES del guest.
+
+    Los simbolos van por su combinacion en el layout activo (ver type_text):
+    "/" es Shift+7 y ":" es Shift+punto.
+    """
+    s.qmp.type_text("http")
+    s.qmp.chord("shift", "dot")
+    s.qmp.chord("shift", "7")
+    s.qmp.chord("shift", "7")
+    for ch in hostport + path:
+        if ch == ".":
+            s.qmp.tap("dot", pause=0.2)
+        elif ch == ":":
+            s.qmp.chord("shift", "dot")
+        elif ch == "/":
+            s.qmp.chord("shift", "7")
+        else:
+            s.qmp.tap(ch, pause=0.12)
+
+
 def scenario_gears(s):
     """Captura la demo de engranajes: el consumidor del batch 0 de SxGL.
 
@@ -1499,6 +1685,7 @@ SCENARIOS = {
     "taskbar": scenario_taskbar,
     "startmenu": scenario_startmenu,
     "wheel": scenario_wheel,
+    "webview": scenario_webview,
     "notepadwheel": scenario_notepadwheel,
     "kbdlayout": scenario_kbdlayout,
     "bench": scenario_bench,

@@ -1,0 +1,14 @@
+# Recursos SXE de Web Viewer. Ver docs/SXE_FORMAT.md.
+#
+# mime_open/ext_open declaran CAPACIDAD, igual que en notepad: que pueda abrir
+# text/html no lo convierte en el programa por defecto para .html. Esa
+# es politica del usuario y se resuelve en el registro.
+name=Web Viewer
+description=Browse local and HTTP pages
+version=system
+vendor=SavanXP
+accent=1f4e79
+icon=app-webview
+mime_open=text/html
+ext_open=.html,.htm
+category=Accessories

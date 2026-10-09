@@ -34,6 +34,9 @@ tools/*
 !tools/verify_doom_persistence.sh
 !tools/shoot.sh
 !tools/tcp_echo_server.py
+!tools/webview_http_server.py
+!tools/webview-test-www/
+!tools/webview-test-www/**
 !tools/smoke_catalog.py
 !tools/source_tree_digest.py
 !tools/iso_boot_test.py
