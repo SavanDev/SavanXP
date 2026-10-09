@@ -1,11 +1,11 @@
-# Web Viewer: the 1.0-dev rendering contract
+# Web Viewer: the rendering contract
 
 `/bin/webview` ("Web Viewer") is the in-tree browser prototype, in the spirit
 of IE 1.1: chrome (address bar, Back/Forward history, menus), local files and
 numeric-IP HTTP fetching, and the rendering pipeline
 `parse → cascade → wrap → paint` in `subsystems/posix/userland/webview.c`.
 
-This document pins what 1.0-dev renders and what it openly ignores, so later
+This document pins what it renders and what it openly ignores, so later
 milestones extend a contract instead of rediscovering it.
 
 ## Selectors and origins

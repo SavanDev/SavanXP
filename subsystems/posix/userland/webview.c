@@ -1,5 +1,5 @@
 /*
- * Web Viewer 1.0-dev: a minimal browser for local files and numeric-IP HTTP, in
+ * Web Viewer: a minimal browser for local files and numeric-IP HTTP, in
  * the spirit of IE 1.1.
  *
  * What this version does: everything before it did, plus a first CSS: tag rules
@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+
+#include "shared/version.h"
 
 #define WEBVIEW_RAW_CAPACITY (32 * 1024)
 #define WEBVIEW_PARA_MAX 256
@@ -40,11 +42,6 @@
 
 #define WEBVIEW_CONTENT_WIDTH 560
 #define WEBVIEW_CONTENT_HEIGHT 420
-
-/* The application's own version, shown in About. Kept apart from the system
- * version on purpose: the .sxres stays on version=system (the SXE version
- * field only takes numeric dotted versions), while this names the app. */
-#define WEBVIEW_VERSION "1.0-dev"
 
 /* Tab order: address first, like a browser. The viewport itself is not a
  * widget, so arrows scroll it whenever the focus is not in the address field
@@ -3602,7 +3599,7 @@ int main(int argc, char **argv)
     g_about_widgets[3] = sxgui_label(
         sx_rect_make(WEBVIEW_DLG_MARGIN, WEBVIEW_DLG_MARGIN + WEBVIEW_DLG_ROW * 3,
             WEBVIEW_ABOUT_WIDTH - WEBVIEW_DLG_MARGIN * 2, 18),
-        "Version " WEBVIEW_VERSION);
+        "Version: " SAVANXP_VERSION_STRING);
     g_about_widgets[4] = sxgui_button(
         sx_rect_make(WEBVIEW_DLG_CENTRED(WEBVIEW_ABOUT_WIDTH, 1, 0),
             WEBVIEW_DLG_BUTTON_ROW(WEBVIEW_ABOUT_HEIGHT), SXGUI_BUTTON_WIDTH,
