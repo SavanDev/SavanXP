@@ -32,6 +32,18 @@ Cut-off notes:
   (numeric IPv4 stays a local fast path), with CNAME chasing, NXDOMAIN told apart,
   and `dns://` plus `--dns` overrides pointing it at a test server.
 
+- **The taskbar shows a W2K-style clock that opens a calendar.** A sunken `HH:MM`
+  readout (RTC in UTC, uptime fallback) whose click toggles a popup with the month grid
+  (today highlighted) and a live `HH:MM:SS`, closed by toggle or outside click.
+
+- **Manual date/time setting (`/bin/date`, `SET_REALTIME`).** A new syscall writes the CMOS
+  RTC (UTC, years 2000..2099, leap-aware validation); `date` prints it bare and sets it as
+  `date YYYY MM DD HH MM SS`, and `date-smoke` covers set, reject and restore.
+
+- **Automatic time sync (`/bin/ntpsync`, `ntp-smoke`).** A one-shot SNTP client over UDP
+  (numeric IPs, transmit + `rtt/2`, sane-range validation) that sets the RTC from the
+  server, with a host fixture and a closed-port failure path in the smoke.
+
 ### Changed
 
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it

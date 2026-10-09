@@ -147,5 +147,10 @@ struct windowd_session
      * solo -- el WM lo mata al cerrarlo. Comparte la esquina con el popup de
      * layout: abrir uno destruye al otro. */
     struct windowd_client volume_popup_client;
+    /* Popup del reloj (calendario + hora): mismo patron que el de volumen pero
+     * con toggle como el menu: el pedido lo abre o lo cierra, y un click
+     * afuera lo destruye. Comparte la esquina con los otros dos popups:
+     * abrir uno destruye a los otros. */
+    struct windowd_client clock_popup_client;
     struct windowd_client overlay_clients[WINDOWD_MAX_OVERLAY_CLIENTS];
 };

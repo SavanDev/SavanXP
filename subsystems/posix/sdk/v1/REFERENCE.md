@@ -42,7 +42,7 @@ Se consideran parte del contrato:
 - descriptores: `pipe`, `dup`, `dup2`, `seek`, `fcntl`
 - filesystem: `unlink`, `mkdir`, `rmdir`, `truncate`, `rename`
 - utilidades: `yield`, `sleep_ms`, `uptime_ms`, `clear_screen`, `proc_info`, `getpid`, `stat`, `fstat`, `chdir`, `getcwd`, `system_info`, `poll`, `select`, `raise`
-- tiempo real: `realtime`
+- tiempo real: `realtime`, `set_realtime` (fija el RTC en UTC, anios 2000..2099)
 - consistencia: `fscheck` (informe de solo lectura del volumen; ver `docs/SXFS_CHECK.md`)
 
 ## Errores visibles

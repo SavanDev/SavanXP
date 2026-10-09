@@ -91,6 +91,11 @@ enum savanxp_syscall_number {
     SAVANXP_SYS_SECTION_OPEN = 60,
     SAVANXP_SYS_MAP_VIEW_AT = 61,
     SAVANXP_SYS_SECTION_OPEN_RANGE = 62,
+    /* Set the CMOS real-time clock from a struct savanxp_realtime (UTC, same
+     * layout as REALTIME; the valid flag is ignored on input). Years are
+     * 2000..2099, the day must exist in its month. Returns 0, -EINVAL for a
+     * bad date or address, -EIO if the chip never goes idle. */
+    SAVANXP_SYS_SET_REALTIME = 63,
 };
 
 enum savanxp_open_flags {
@@ -866,6 +871,11 @@ enum savanxp_input_event_type {
  * con toggle como START_MENU y cierre por click afuera. Un click repetido en
  * el boton del altavoz lo cierra en vez de duplicarlo. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP 0x00000008u
+/* El pedido es del popup del reloj de la taskbar: mismo molde que
+ * VOLUME_POPUP (binario fijo, anclado arriba de la franja, sin bordes, con
+ * toggle y cierre por click afuera). Un click repetido en el reloj lo cierra
+ * en vez de duplicarlo. */
+#define SAVANXP_DESKTOP_LAUNCH_FLAG_CLOCK_POPUP 0x00000010u
 
 /* Estilo de ventana: propiedades de la VENTANA de un programa, no de su
  * lanzamiento. El WM las lee del .sxe del binario al crear la ventana, por el

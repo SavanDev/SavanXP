@@ -303,26 +303,38 @@ cleanup_smoke_server() {
     fi
     [[ -z "$SMOKE_SERVER_PORT_FILE" ]] || rm -f "$SMOKE_SERVER_PORT_FILE"
 }
-if [[ "$COMMAND" == smoke && "$SMOKE_HOST_SERVER" == tcp ]]; then
+if [[ "$COMMAND" == smoke && -n "$SMOKE_HOST_SERVER" ]]; then
+    SMOKE_SERVER_SCRIPT=""
+    SMOKE_SERVER_TAG=""
+    if [[ "$SMOKE_HOST_SERVER" == tcp ]]; then
+        SMOKE_SERVER_SCRIPT="$ROOT/tools/tcp_echo_server.py"
+        SMOKE_SERVER_TAG="tcp"
+    elif [[ "$SMOKE_HOST_SERVER" == ntp ]]; then
+        SMOKE_SERVER_SCRIPT="$ROOT/tools/ntp_server.py"
+        SMOKE_SERVER_TAG="ntp"
+    else
+        echo "build.sh: unknown host server '$SMOKE_HOST_SERVER'" >&2
+        exit 1
+    fi
     mkdir -p "$OUTPUT_ROOT/smoke-logs"
-    SMOKE_SERVER_PORT_FILE="$OUTPUT_ROOT/smoke-logs/tcp-smoke.port"
+    SMOKE_SERVER_PORT_FILE="$OUTPUT_ROOT/smoke-logs/${SMOKE_SERVER_TAG}-smoke.port"
     rm -f "$SMOKE_SERVER_PORT_FILE"
-    python3 "$ROOT/tools/tcp_echo_server.py" \
+    python3 "$SMOKE_SERVER_SCRIPT" \
         --port 0 \
         --port-file "$SMOKE_SERVER_PORT_FILE" \
-        >"$OUTPUT_ROOT/smoke-logs/tcp-smoke.server.log" 2>&1 &
+        >"$OUTPUT_ROOT/smoke-logs/${SMOKE_SERVER_TAG}-smoke.server.log" 2>&1 &
     SMOKE_SERVER_PID=$!
     trap cleanup_smoke_server EXIT
     for _ in {1..100}; do
         [[ -s "$SMOKE_SERVER_PORT_FILE" ]] && break
         kill -0 "$SMOKE_SERVER_PID" 2>/dev/null || {
-            cat "$OUTPUT_ROOT/smoke-logs/tcp-smoke.server.log" >&2
+            cat "$OUTPUT_ROOT/smoke-logs/${SMOKE_SERVER_TAG}-smoke.server.log" >&2
             exit 1
         }
         sleep 0.1
     done
     [[ -s "$SMOKE_SERVER_PORT_FILE" ]] || {
-        echo "build.sh: TCP echo server did not publish a port" >&2
+        echo "build.sh: host server did not publish a port" >&2
         exit 1
     }
     SMOKE_SERVER_PORT=$(<"$SMOKE_SERVER_PORT_FILE")

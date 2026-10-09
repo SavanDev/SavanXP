@@ -362,6 +362,10 @@ long realtime(struct savanxp_realtime* value) {
     return syscall1(SAVANXP_SYS_REALTIME, (unsigned long)value);
 }
 
+long set_realtime(const struct savanxp_realtime* value) {
+    return syscall1(SAVANXP_SYS_SET_REALTIME, (unsigned long)value);
+}
+
 long savanxp_sync(void) {
     return syscall0(SAVANXP_SYS_SYNC);
 }

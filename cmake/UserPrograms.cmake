@@ -332,6 +332,11 @@ savanxp_program(NAME kbdlayoutpopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE S
 # anclado por windowd, sin .sxres para no salir en el launcher), pero con
 # slider y mute en vez de filas. Solo mouse, como el de layout.
 savanxp_program(NAME volumepopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/volumepopup.c)
+# El popup del reloj: mismo molde que el de volumen (cliente sin bordes,
+# anclado por windowd, sin .sxres para no salir en el launcher), pero con el
+# calendario del mes y la hora en vez de slider. Solo muestra, como el de
+# layout muestra filas: el WM lo abre y lo cierra.
+savanxp_program(NAME clockpopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/clockpopup.c)
 # El menu Inicio: mismo molde que el popup de layout (cliente sin bordes,
 # anclado por windowd, sin .sxres para no salir en el launcher), pero con el
 # catalogo de progman enlazado. Solo mouse en la version recortada.
@@ -422,6 +427,14 @@ savanxp_program(NAME forktest TEST SOURCES subsystems/posix/userland/forktest.c)
 savanxp_program(NAME smptest TEST SOURCES subsystems/posix/userland/smptest.c)
 savanxp_program(NAME polltest TEST SOURCES subsystems/posix/userland/polltest.c)
 savanxp_program(NAME clocktest TEST SOURCES subsystems/posix/userland/clocktest.c)
+savanxp_program(NAME date SOURCES subsystems/posix/userland/date.c)
+savanxp_program(NAME datetest TEST SOURCES subsystems/posix/userland/datetest.c)
+savanxp_program(NAME ntpsync SOURCES
+    subsystems/posix/userland/ntpsync.c
+    subsystems/posix/userland/ntpsync_lib.c)
+savanxp_program(NAME ntptest TEST SOURCES
+    subsystems/posix/userland/ntptest.c
+    subsystems/posix/userland/ntpsync_lib.c)
 savanxp_program(NAME sigtest TEST SOURCES subsystems/posix/userland/sigtest.c)
 savanxp_program(NAME eventtest TEST SOURCES subsystems/posix/userland/eventtest.c)
 savanxp_program(NAME timertest TEST SOURCES subsystems/posix/userland/timertest.c)

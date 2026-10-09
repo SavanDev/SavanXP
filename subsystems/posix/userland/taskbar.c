@@ -13,7 +13,8 @@
  * Lista las ventanas abiertas y lleva el boton Start, que abre el menu Inicio
  * (cliente aparte, ver startmenu.c) con el catalogo de progman en lista
  * plana. Sin area de notificaciones, que es lo que se retiro con el chrome
- * Win95 y no vuelve.
+ * Win95 y no vuelve: el reloj de la esquina es un boton que abre el
+ * calendario (cliente aparte, ver clockpopup.c), no una bandeja.
  *
  * Lo que no puede saber por su cuenta -- que ventanas hay, cual esta activa,
  * cual minimizada -- se lo cuenta el WM por la seccion compartida del fd 12
@@ -28,10 +29,12 @@
 #define TASKBAR_ICON_SIZE 16
 #define TASKBAR_LAYOUT_WIDTH 32
 #define TASKBAR_VOLUME_WIDTH 32
+#define TASKBAR_CLOCK_WIDTH 64
 #define TASKBAR_START_WIDTH 64
 #define TASKBAR_HIT_START (-3)
 #define TASKBAR_HIT_LAYOUT (-2)
 #define TASKBAR_HIT_VOLUME (-4)
+#define TASKBAR_HIT_CLOCK (-5)
 
 /* g_active_layout se refresca por polling (mismo criterio que
  * desktop_wallpaper_reload): no hay push desde el popup, asi que taskbar
@@ -90,6 +93,65 @@ static struct savanxp_wm_window_list g_snapshot;
 static int g_pressed_index = -1;
 static int g_active_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
 static long g_input_fd = -1;
+
+/* Reloj estilo W2K, solo lectura en este paso: HH:MM del RTC (UTC, que es lo
+ * que el RTC entrega, ver time.h), con fallback a uptime cuando no hay RTC
+ * valido -- el mismo reparto que windowd_current_clock_stamp() en
+ * windowd_render.c. g_clock_stamp son los minutos del dia que muestra el
+ * texto; -1 fuerza el primer pintado. Se refresca en la misma vuelta de
+ * polling que el layout y el volumen: el RTC solo tiene resolucion de un
+ * segundo y el texto solo cambia una vez por minuto. */
+static char g_clock_text[6] = "00:00";
+static long g_clock_stamp = -1;
+
+static void taskbar_clock_format(char *buffer, unsigned int hours, unsigned int minutes)
+{
+    buffer[0] = (char)('0' + (hours / 10u));
+    buffer[1] = (char)('0' + (hours % 10u));
+    buffer[2] = ':';
+    buffer[3] = (char)('0' + (minutes / 10u));
+    buffer[4] = (char)('0' + (minutes % 10u));
+    buffer[5] = '\0';
+}
+
+/* Relee el reloj y devuelve distinto de cero si el texto cambio. */
+static int taskbar_clock_refresh(void)
+{
+    struct savanxp_realtime now;
+    unsigned long stamp;
+    char text[6];
+
+    memset(&now, 0, sizeof(now));
+    if (realtime(&now) == 0 && now.valid != 0)
+    {
+        stamp = ((unsigned long)now.hour * 60UL) + (unsigned long)now.minute;
+        taskbar_clock_format(text, (unsigned int)now.hour, (unsigned int)now.minute);
+    }
+    else
+    {
+        unsigned long total_minutes = uptime_ms() / 60000UL;
+        unsigned int hours = (unsigned int)((total_minutes / 60UL) % 24UL);
+        unsigned int minutes = (unsigned int)(total_minutes % 60UL);
+
+        stamp = total_minutes % (24UL * 60UL);
+        taskbar_clock_format(text, hours, minutes);
+    }
+    if ((long)stamp != g_clock_stamp ||
+        text[0] != g_clock_text[0] || text[1] != g_clock_text[1] ||
+        text[2] != g_clock_text[2] || text[3] != g_clock_text[3] ||
+        text[4] != g_clock_text[4])
+    {
+        g_clock_stamp = (long)stamp;
+        g_clock_text[0] = text[0];
+        g_clock_text[1] = text[1];
+        g_clock_text[2] = text[2];
+        g_clock_text[3] = text[3];
+        g_clock_text[4] = text[4];
+        g_clock_text[5] = '\0';
+        return 1;
+    }
+    return 0;
+}
 
 /*
  * Lectura con seqlock: si la secuencia es impar el WM esta escribiendo, y si
@@ -163,6 +225,7 @@ static int taskbar_button_width(const struct savanxp_fb_info *info, int count)
         return 0;
     }
     usable = (int)info->width - (TASKBAR_MARGIN * 2) - (TASKBAR_BUTTON_GAP * (count - 1))
+        - TASKBAR_CLOCK_WIDTH - TASKBAR_BUTTON_GAP
         - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP
         - TASKBAR_VOLUME_WIDTH - TASKBAR_BUTTON_GAP
         - TASKBAR_START_WIDTH - TASKBAR_BUTTON_GAP;
@@ -197,12 +260,23 @@ static struct sx_rect taskbar_start_rect(const struct savanxp_fb_info *info)
         height);
 }
 
+static struct sx_rect taskbar_clock_rect(const struct savanxp_fb_info *info)
+{
+    int height = (int)info->height - (TASKBAR_MARGIN * 2);
+
+    return sx_rect_make(
+        (int)info->width - TASKBAR_MARGIN - TASKBAR_CLOCK_WIDTH,
+        TASKBAR_MARGIN,
+        TASKBAR_CLOCK_WIDTH,
+        height);
+}
+
 static struct sx_rect taskbar_layout_rect(const struct savanxp_fb_info *info)
 {
     int height = (int)info->height - (TASKBAR_MARGIN * 2);
 
     return sx_rect_make(
-        (int)info->width - TASKBAR_MARGIN - TASKBAR_LAYOUT_WIDTH,
+        (int)info->width - TASKBAR_MARGIN - TASKBAR_CLOCK_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_LAYOUT_WIDTH,
         TASKBAR_MARGIN,
         TASKBAR_LAYOUT_WIDTH,
         height);
@@ -213,7 +287,7 @@ static struct sx_rect taskbar_volume_rect(const struct savanxp_fb_info *info)
     int height = (int)info->height - (TASKBAR_MARGIN * 2);
 
     return sx_rect_make(
-        (int)info->width - TASKBAR_MARGIN - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_VOLUME_WIDTH,
+        (int)info->width - TASKBAR_MARGIN - TASKBAR_CLOCK_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_LAYOUT_WIDTH - TASKBAR_BUTTON_GAP - TASKBAR_VOLUME_WIDTH,
         TASKBAR_MARGIN,
         TASKBAR_VOLUME_WIDTH,
         height);
@@ -365,12 +439,26 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
             sx_painter_blit_bitmap(&painter, &icon_bitmap, icon_x, icon_y);
         }
     }
+
+    {
+        /* Reloj estilo W2K: pozo hundido en el borde derecho, texto centrado.
+         * Es boton desde que tiene popup: click = toggle del calendario. */
+        struct sx_rect clock_rect = taskbar_clock_rect(&gfx->info);
+        int text_shift = (g_pressed_index == TASKBAR_HIT_CLOCK) ? 1 : 0;
+        int text_x = clock_rect.x + (clock_rect.width - gfx_text_width(g_clock_text)) / 2 + text_shift;
+        int text_y = clock_rect.y + (clock_rect.height - gfx_text_height()) / 2 + text_shift;
+
+        sx_painter_fill_rect(&painter, clock_rect, SXGUI_COLOR_FACE);
+        taskbar_bevel(&painter, clock_rect, 1);
+        sx_painter_draw_text(&painter, text_x, text_y, g_clock_text, SXGUI_COLOR_TEXT);
+    }
 }
 
 static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
 {
     int count = (int)g_snapshot.count;
     int index;
+    struct sx_rect clock_rect = taskbar_clock_rect(info);
     struct sx_rect layout_rect = taskbar_layout_rect(info);
     struct sx_rect volume_rect = taskbar_volume_rect(info);
     struct sx_rect start_rect = taskbar_start_rect(info);
@@ -385,6 +473,12 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
         y >= volume_rect.y && y < volume_rect.y + volume_rect.height)
     {
         return TASKBAR_HIT_VOLUME;
+    }
+
+    if (x >= clock_rect.x && x < clock_rect.x + clock_rect.width &&
+        y >= clock_rect.y && y < clock_rect.y + clock_rect.height)
+    {
+        return TASKBAR_HIT_CLOCK;
     }
 
     if (x >= layout_rect.x && x < layout_rect.x + layout_rect.width &&
@@ -423,6 +517,14 @@ static void taskbar_open_layout_popup(const struct savanxp_gfx_context *gfx)
 static void taskbar_open_volume_popup(const struct savanxp_gfx_context *gfx)
 {
     (void)gfx_desktop_launch_ex(gfx, "/bin/volumepopup", SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP);
+}
+
+/* Igual que el popup de layout pero con toggle del lado del WM: el path lo
+ * ignora windowd (el binario es fijo), el flag pide el popup del reloj y si
+ * ya esta abierto el pedido lo cierra. */
+static void taskbar_open_clock_popup(const struct savanxp_gfx_context *gfx)
+{
+    (void)gfx_desktop_launch_ex(gfx, "/bin/clockpopup", SAVANXP_DESKTOP_LAUNCH_FLAG_CLOCK_POPUP);
 }
 
 /* Igual que el popup de layout pero con toggle del lado del WM: si el menu
@@ -536,6 +638,10 @@ int main(void)
                 {
                     taskbar_open_volume_popup(&gfx);
                 }
+                else if (index == TASKBAR_HIT_CLOCK && index == g_pressed_index)
+                {
+                    taskbar_open_clock_popup(&gfx);
+                }
                 else if (index >= 0 && index == g_pressed_index &&
                     index < (int)g_snapshot.count)
                 {
@@ -563,9 +669,15 @@ int main(void)
         /* El popup aplica el cambio directo en el kernel -- no le avisa a la
          * taskbar --, asi que el indicador se refresca por polling cada
          * TASKBAR_LAYOUT_POLL_FRAMES vueltas en vez de por push. El mute
-         * va en la misma vuelta: mismo costo, mismo criterio. */
+         * va en la misma vuelta: mismo costo, mismo criterio. El reloj va
+         * en la misma vuelta tambien: el RTC tiene resolucion de un segundo
+         * y el texto solo cambia una vez por minuto. */
         if (layout_poll_countdown == 0)
         {
+            if (taskbar_clock_refresh())
+            {
+                needs_repaint = 1;
+            }
             if (g_input_fd >= 0)
             {
                 long layout = input_get_layout((int)g_input_fd);

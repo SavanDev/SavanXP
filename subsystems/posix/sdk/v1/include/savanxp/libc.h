@@ -77,6 +77,7 @@ long clear_screen(void);
 long proc_info(unsigned long index, struct savanxp_process_info* info);
 long system_info(struct savanxp_system_info* info);
 long realtime(struct savanxp_realtime* value);
+long set_realtime(const struct savanxp_realtime* value);
 long savanxp_sync(void);
 /* Informe de consistencia del volumen SxFS montado. Solo lectura: no repara y
  * no modifica nada. Negativo si el volumen no esta disponible. */

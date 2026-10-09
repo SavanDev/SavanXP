@@ -392,6 +392,31 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = 0;
             return context;
         }
+        case SAVANXP_SYS_SET_REALTIME: {
+            savanxp_realtime value = {};
+
+            if (!vm::is_user_range_accessible(this_cpu().current->address_space, context->rdi, sizeof(value), false)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            if (!read_from_process_memory(*this_cpu().current, &value, context->rdi, sizeof(value))) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            // Fecha mala y chip atascado son fallos distintos: el llamador
+            // tiene que saber si corrija el dato o reintente.
+            if (!rtc::valid_time(value)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            if (!rtc::write_time(value)) {
+                context->rax = static_cast<uint64_t>(negative_error(SAVANXP_EIO));
+                return context;
+            }
+
+            context->rax = 0;
+            return context;
+        }
         case SAVANXP_SYS_FCNTL:
             context->rax = static_cast<uint64_t>(fcntl_fd(*this_cpu().current, context->rdi, context->rsi, context->rdx));
             return context;

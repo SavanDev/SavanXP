@@ -694,9 +694,9 @@ struct windowd_layer
 };
 
 /* Tope de capas no-overlay simultaneas: background client, background(iconos),
- * shell_client, taskbar, welcome, menu, confirm, context menu, tasklist y
- * cursor = 10; +11 deja margen. */
-#define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + 11)
+ * shell_client, taskbar, welcome, menu, confirm, context menu, tasklist,
+ * popups y cursor; +12 deja margen para el popup del reloj. */
+#define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + 12)
 
 /* Un cliente se compone recien cuando publico su PRIMER frame. Antes de eso su
  * superficie esta en blanco y su geometria todavia puede cambiar -- una app
@@ -990,6 +990,17 @@ static int build_layers(
         layers[count].opaque = 1;
         layers[count].bounds = client_occluder_rect(&session->volume_popup_client);
         layers[count].client = &session->volume_popup_client;
+        ++count;
+    }
+
+    /* Popup del reloj: misma esquina que los otros dos (son excluyentes) y
+     * misma altura: sobre la taskbar, bajo el Task List. */
+    if (client_is_drawable(&session->clock_popup_client))
+    {
+        layers[count].kind = WINDOWD_LAYER_CLIENT;
+        layers[count].opaque = 1;
+        layers[count].bounds = client_occluder_rect(&session->clock_popup_client);
+        layers[count].client = &session->clock_popup_client;
         ++count;
     }
 

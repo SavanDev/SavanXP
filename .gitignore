@@ -34,6 +34,7 @@ tools/*
 !tools/verify_doom_persistence.sh
 !tools/shoot.sh
 !tools/tcp_echo_server.py
+!tools/ntp_server.py
 !tools/webview_http_server.py
 !tools/webview_dns_server.py
 !tools/webview-test-www/

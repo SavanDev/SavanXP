@@ -122,6 +122,7 @@ static int run_automation_spec(const char* spec) {
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
     const char* clocktest_argv[] = {"/disk/bin/clocktest", 0};
+    const char* datetest_argv[] = {"/disk/bin/datetest", 0};
     const char* needstest_argv[] = {"/disk/bin/needstest", 0};
     /* Los cuatro diagnósticos del cargador. Cada uno afirmaba en error y nada más,
      * así que ninguno podía tener escenario: ahora cada uno imprime su token de
@@ -138,6 +139,7 @@ static int run_automation_spec(const char* spec) {
     const char* audiorecord_argv[] = {"/disk/bin/audiotest", "--record", 0};
     const char* nettest_argv[] = {"/disk/bin/nettest", 0};
     const char* tcptest_argv[] = {"/disk/bin/tcptest", 0, 0};
+    const char* ntptest_argv[] = {"/disk/bin/ntptest", 0, 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
     const char* ccleste_argv[] = {"/disk/bin/ccleste", "--selftest", 0};
     const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
@@ -222,6 +224,10 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/clocktest";
             argv = clocktest_argv;
             argc = 1;
+        } else if (strcmp(spec, "datetest") == 0) {
+            path = "/disk/bin/datetest";
+            argv = datetest_argv;
+            argc = 1;
         } else if (strcmp(spec, "netsmoke") == 0) {
             path = "/disk/bin/nettest";
             argv = nettest_argv;
@@ -304,6 +310,18 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/tcptest";
             tcptest_argv[1] = port;
             argv = tcptest_argv;
+            argc = 2;
+        } else if (text_starts_with(spec, "ntptest ")) {
+            /* Igual que tcptest: el puerto lo elige el host al levantar
+             * tools/ntp_server.py y llega sustituido en el spec. */
+            const char* port = skip_spaces(spec + strlen("ntptest"));
+            if (port[0] == '\0') {
+                printf("%s FAIL missing port\n", label);
+                return 1;
+            }
+            path = "/disk/bin/ntptest";
+            ntptest_argv[1] = port;
+            argv = ntptest_argv;
             argc = 2;
         } else if (text_starts_with(spec, "gputest --soak ")) {
             const char* iterations = skip_spaces(spec + strlen("gputest --soak"));

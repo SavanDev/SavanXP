@@ -153,6 +153,20 @@ SCENARIOS: dict[str, Scenario] = {
         "CLOCK SMOKE FAIL",
         "Clock and RTC self-test",
     ),
+    "date-smoke": _qemu_scenario(
+        "datetest",
+        "DATE SMOKE PASS",
+        "DATE SMOKE FAIL",
+        "RTC set, reject and restore self-test",
+    ),
+    "ntp-smoke": _qemu_scenario(
+        "ntptest {port}",
+        "NTP SMOKE PASS",
+        "NTP SMOKE FAIL",
+        "SNTP sync against a host fixture",
+        180.0,
+        host_server="ntp",
+    ),
     "sxe-smoke": _qemu_scenario(
         "sxe-selftest",
         "SXE SMOKE PASS",
