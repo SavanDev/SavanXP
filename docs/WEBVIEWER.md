@@ -2,7 +2,7 @@
 
 `/bin/webview` ("Web Viewer") is the in-tree browser prototype, in the spirit
 of IE 1.1: chrome (address bar, Back/Forward history, menus), local files and
-numeric-IP HTTP fetching, and the rendering pipeline
+HTTP fetching by name or IP, and the rendering pipeline
 `parse → cascade → wrap → paint` in `subsystems/posix/userland/webview.c`.
 
 This document pins what it renders and what it openly ignores, so later
@@ -35,9 +35,22 @@ lose to run colours. `font-size` is paragraph-level only: runs do not change
 faces. `font-style`, `line-through`, `blink`, `url()` and `rgb()` values are
 parsed past and ignored.
 
+## Names
+
+Numeric IPv4 never touches the network. Anything else goes out as one A/IN
+question over UDP to the network's DNS (10.0.2.3 under QEMU slirp), with
+CNAME chasing, NXDOMAIN told apart from other failures, and every overrun a
+rejection: the bytes are untrusted. Transaction IDs mix uptime with a counter
+(the tree has no kernel RNG yet), and answers are trusted past TXID plus the
+echoed question — fine on a host bridge, not against an adversary. No cache,
+no AAAA, no TCP fallback: each gap says so in the status line.
+
+Two overrides exist for tests: `webview --dns 10.0.2.2:5353` at launch, and
+`dns://10.0.2.2:5353` typed in the address bar (config, never history).
+
 ## What it is not (yet)
 
-No DNS (numeric IPv4 only), no TLS, no images (an `[image]` marker), tables
+No TLS, no images (an `[image]` marker), tables
 degrade to stacked lines, fragments reload the page top, fetches block the UI,
 documents cap at 32 KiB / 256 paragraphs / 64 links / 256 runs / 32 rules /
 4 KiB of CSS. Errors say which of these bit.

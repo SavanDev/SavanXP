@@ -28,6 +28,10 @@ Cut-off notes:
   over colour, background, alignment, bold (double-strike), underline and a two-face
   size; `body` rules and `<body>` attributes set the page colours, `<font color>` works.
 
+- **Web Viewer resolves names through DNS.** A minimal A-record client over UDP
+  (numeric IPv4 stays a local fast path), with CNAME chasing, NXDOMAIN told apart,
+  and `dns://` plus `--dns` overrides pointing it at a test server.
+
 ### Changed
 
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it

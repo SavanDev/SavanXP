@@ -1329,11 +1329,18 @@ def scenario_webview_http(s):
         [sys.executable, str(root / "webview_http_server.py"),
          "--dir", str(root / "webview-test-www")],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    dns = subprocess.Popen(
+        [sys.executable, str(root / "webview_dns_server.py")],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         ready = server.stdout.readline().split()
         if len(ready) != 2 or ready[0] != "READY":
             raise Failure("el fixture HTTP no anuncio su puerto: %r" % ready)
+        dready = dns.stdout.readline().split()
+        if len(dready) != 2 or dready[0] != "READY":
+            raise Failure("el fixture DNS no anuncio su puerto: %r" % dready)
         hostport = "10.0.2.2:%s" % ready[1]
+        dnsport = dready[1]
         s.qmp.tap("tab", pause=1.0)
         s.qmp.chord("ctrl", "a")
         type_http_url(s, hostport, "/index.html")
@@ -1402,9 +1409,56 @@ def scenario_webview_http(s):
                     "el color de font", solid_only=True)
         expect_text(styled, (0, 0, width, height), "underline", (51, 51, 51), CREAM,
                     "el subrayado propio", solid_only=True)
+        # DNS: el resolver apunta al fixture con una URL dns:// (override
+        # tipeable en la instancia ya abierta) y luego la pagina por nombre.
+        # No por shell: lanzar con argumentos (ni pelado ni absoluto) abre
+        # ventana alguna y deja un "webview" rojo en stderr — pendiente del
+        # milestone del shell, no de este. Cada Enter saca el foco de la
+        # barra, asi que cada tipeo arranca con tab (de -1 va al campo).
+        def type_dns_url(url):
+            s.qmp.type_text("dns")
+            s.qmp.chord("shift", "dot")
+            s.qmp.chord("shift", "7")
+            s.qmp.chord("shift", "7")
+            for ch in url:
+                if ch == ".":
+                    s.qmp.tap("dot", pause=0.2)
+                elif ch == ":":
+                    s.qmp.chord("shift", "dot")
+                elif ch == "/":
+                    s.qmp.chord("shift", "7")
+                else:
+                    s.qmp.tap(ch, pause=0.12)
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_dns_url("10.0.2.2:" + dnsport)
+        s.qmp.tap("ret", pause=3.0)
+        resolver = s.shot("webview-resolver")
+        width, height = resolver.size
+        expect_text(resolver, (0, 0, width, height), "Resolver:", TEXT, FACE,
+                    "el override del resolver")
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, "test.savanxp:" + hostport.split(":")[1], "/index.html")
+        s.qmp.tap("ret", pause=6.0)
+        named = s.shot("webview-nombre")
+        width, height = named.size
+        expect_text(named, (0, 0, width, height), "It works over HTTP", TEXT, FIELD,
+                    "el h1 por nombre DNS", which="title", solid_only=True)
+        # NXDOMAIN: el fixture responde 3 a lo desconocido y la barra lo dice.
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, "nosuch.savanxp", "/")
+        s.qmp.tap("ret", pause=5.0)
+        nxdomain = s.shot("webview-nxdomain")
+        width, height = nxdomain.size
+        expect_text(nxdomain, (0, 0, width, height), "No such host", TEXT, FACE,
+                    "el aviso de NXDOMAIN", solid_only=True)
     finally:
         server.terminate()
         server.wait()
+        dns.terminate()
+        dns.wait()
 
 
 def type_http_url(s, hostport, path):

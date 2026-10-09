@@ -35,6 +35,7 @@ tools/*
 !tools/shoot.sh
 !tools/tcp_echo_server.py
 !tools/webview_http_server.py
+!tools/webview_dns_server.py
 !tools/webview-test-www/
 !tools/webview-test-www/**
 !tools/smoke_catalog.py
