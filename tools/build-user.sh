@@ -194,9 +194,10 @@ if ((AUDIO)); then
     RUNTIME_OBJECTS+=("$OBJ_ROOT/audio.o")
 fi
 if ((GUI)); then
+    compile_c "$SDK/runtime/sxchrome.c" "$OBJ_ROOT/sxchrome.o"
     compile_c "$SDK/runtime/sxgui.c" "$OBJ_ROOT/sxgui.o"
     compile_c "$SDK/runtime/sxgui_app.c" "$OBJ_ROOT/sxgui_app.o"
-    RUNTIME_OBJECTS+=("$OBJ_ROOT/sxgui.o" "$OBJ_ROOT/sxgui_app.o")
+    RUNTIME_OBJECTS+=("$OBJ_ROOT/sxchrome.o" "$OBJ_ROOT/sxgui.o" "$OBJ_ROOT/sxgui_app.o")
 fi
 
 "$LD" -nostdlib -static -T "$SDK/linker.ld" \

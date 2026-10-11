@@ -141,6 +141,12 @@ SCENARIOS: dict[str, Scenario] = {
         "MINES SMOKE FAIL",
         "Mines game and persistent settings self-test",
     ),
+    "paint-smoke": _qemu_scenario(
+        "paint-selftest",
+        "PAINT SMOKE PASS",
+        "PAINT SMOKE FAIL",
+        "Paint BMP round-trip self-test",
+    ),
     "calc-smoke": _qemu_scenario(
         "calc-selftest",
         "CALC SMOKE PASS",

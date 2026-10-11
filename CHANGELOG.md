@@ -44,6 +44,34 @@ Cut-off notes:
   (numeric IPs, transmit + `rtt/2`, sane-range validation) that sets the RTC from the
   server, with a host fixture and a closed-port failure path in the smoke.
 
+- **Paint (`/bin/paint`), in the Accessories group.** A drawing sketchbook with the
+  toolbox on the left, the colors on top and the canvas over a status bar; pencil,
+  line, rectangle and ellipse tools, 16 color swatches and 24-bit `BI_RGB` BMP
+  open/save. `./build.sh smoke paint-smoke` covers the geometry plus a bit-exact
+  save/load round-trip through `--selftest`.
+
+- **Paint gains brush, eraser, picker and undo.** The brush stamps ellipses along the
+  drag (`+`/`-` size it), the eraser paints the background, the picker reads the pixel
+  under the cursor, and every stroke pushes one of 8 document snapshots for `Edit >
+  Undo` and Ctrl+Z. `tools/shoot.sh --scenario paint` drives tool switching by keyboard
+  and asserts the status bar on screen.
+
+- **Paint gains a flood-fill bucket.** Clicking pours the current color into the exact-match
+  4-connected region under the cursor (iterative, with a visited set, so it always fits and
+  always terminates); like every stroke it pushes undo first. Covered in `--selftest`
+  (frame intact, no leaks) and in the `paint` visual scenario.
+
+- **`libsximg.so.0.4`, a PNG decoder the tree builds and installs in `/disk/lib`.**
+  Reference implementation (no third-party code): inflate written from RFC 1951 plus the
+  8-bit truecolor/RGBA non-interlaced subset with all five filters, zlib-checked, alpha
+  composited over white. `savanxp-sximg-test` proves the engine on the host (stored,
+  fixed and dynamic blocks, RGB/RGBA, rejections); Paint maps it and opens `.png`
+  through the same load path as BMP, with `/disk/paint-test.png` as its guest fixture.
+
+- **`--gui` external applications link the window-chrome module.** `tools/build-user.sh`
+  was missing `sxchrome.c`, which the toolkit needs since the system 3D edges moved
+  out of it, so no `--gui` binary outside the tree could link.
+
 ### Changed
 
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it

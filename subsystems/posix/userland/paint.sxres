@@ -1,0 +1,14 @@
+# Recursos SXE de Paint. Ver docs/SXE_FORMAT.md.
+#
+# mime_open/ext_open declaran CAPACIDAD, igual que en notepad: que pueda abrir
+# BMP no lo convierte en el visor por omision. Esa es politica del usuario y
+# se resuelve en el registro (fase 5).
+name=Paint
+description=Draw and edit bitmap pictures
+version=system
+vendor=SavanXP
+accent=2b579a
+icon=app-paint
+mime_open=image/bmp,image/png
+ext_open=.bmp,.png
+category=Accessories

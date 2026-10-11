@@ -121,6 +121,7 @@ static int run_automation_spec(const char* spec) {
     const char* taskmgr_selftest_argv[] = {"/bin/taskmgr", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
+    const char* paint_selftest_argv[] = {"/bin/paint", "--selftest", 0};
     const char* clocktest_argv[] = {"/disk/bin/clocktest", 0};
     const char* datetest_argv[] = {"/disk/bin/datetest", 0};
     const char* needstest_argv[] = {"/disk/bin/needstest", 0};
@@ -186,6 +187,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "mines-selftest") == 0 || strcmp(spec, "mines") == 0) {
             path = "/bin/mines";
             argv = mines_selftest_argv;
+            argc = 2;
+        } else if (strcmp(spec, "paint-selftest") == 0 || strcmp(spec, "paint") == 0) {
+            path = "/bin/paint";
+            argv = paint_selftest_argv;
             argc = 2;
         } else if (strcmp(spec, "calc-selftest") == 0 || strcmp(spec, "calc") == 0) {
             path = "/bin/calc";

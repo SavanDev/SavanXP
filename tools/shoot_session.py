@@ -240,7 +240,7 @@ class Session(object):
         de cada grupo (docs/SXE_FORMAT.md, "All Programs"), asi que estos
         indices son posiciones en ese orden. Con las categorias de hoy:
 
-            Accessories: Calculator, Files, [Media Player], Notepad, Shell, Web Viewer
+            Accessories: Calculator, Files, [Media Player], Notepad, Paint, Shell, Web Viewer
             Diagnostics: Gears, Gfx Demo, Key Test, Mouse Test, Widgets
             Games:       Doom (solo si esta instalado), Minesweeper
             System:      Add/Remove Programs, System Properties, Task Manager
@@ -270,8 +270,15 @@ class Session(object):
     # Notepad, Shell y Web Viewer se cuentan desde el final: Media Player
     # siempre está en Accessories cuando el port FFmpeg esta construido, asi
     # que solo los indices negativos sobreviven a su presencia o ausencia.
-    # Orden: ..., Notepad, Shell, Web Viewer.
+    # Orden: ..., Notepad, Paint, Shell, Web Viewer (Paint se ordena entre
+    # Notepad y Shell, asi que Notepad es el cuarto desde el final).
     def open_notepad(self):
+        self.launch(-4)
+
+    def open_paint(self):
+        # Accessories, tercero desde el final: ..., Notepad, Paint, Shell,
+        # Web Viewer. Como open_notepad: el indice negativo sobrevive a que
+        # Media Player este o no, porque va delante de Notepad.
         self.launch(-3)
 
     def open_shell(self):
@@ -666,6 +673,41 @@ def scenario_mines(s):
     s.qmp.chord("alt", "f4")
     time.sleep(1.5)
     s.shot("mines-alt-f4-ventana")
+
+
+def scenario_paint(s):
+    """Paint: la caja a la izquierda, los colores arriba, el lienzo al centro.
+
+    Todo por TECLADO, igual que mines: 1-7 cambian de herramienta y la barra
+    de estado lo refleja. Se afirma el texto de la barra en algun sitio de la
+    pantalla (find_text), no en una posicion: el harness no depende de la
+    geometria interna de la ventana, que es lo que cambia cada vez que se toca
+    el layout.
+    """
+    s.open_paint()
+    # solid_only en las cinco: el borde antialiaseado de estos glifos sale
+    # hasta 8 niveles distinto entre el host y el guest (medido: 283/287 en
+    # "(untitled)", 4 pixeles de franja). El nucleo con cobertura 255 sigue
+    # identificando cada letra y su posicion, que es lo que se afirma.
+    image = s.shot("paint-abierta")
+    expect_text(image, (0, 0, 1280, 800), "(untitled)", TEXT, FACE, "la barra de estado de paint",
+                solid_only=True)
+    expect_text(image, (0, 0, 1280, 800), "Pencil", TEXT, FACE, "la herramienta inicial de paint",
+                solid_only=True)
+    expect_text(image, (0, 0, 1280, 800), "undo 0", TEXT, FACE, "el undo vacio de paint",
+                solid_only=True)
+    s.qmp.tap("2", pause=2.0)
+    image = s.shot("paint-pincel")
+    expect_text(image, (0, 0, 1280, 800), "Brush 9px", TEXT, FACE, "el pincel en la barra de paint",
+                solid_only=True)
+    s.qmp.tap("5", pause=2.0)
+    image = s.shot("paint-cubo")
+    expect_text(image, (0, 0, 1280, 800), "Fill", TEXT, FACE, "el cubo en la barra de paint",
+                solid_only=True)
+    s.qmp.tap("8", pause=2.0)
+    image = s.shot("paint-elipse")
+    expect_text(image, (0, 0, 1280, 800), "Ellipse", TEXT, FACE, "la elipse en la barra de paint",
+                solid_only=True)
 
 
 def scenario_files(s):
@@ -1732,6 +1774,7 @@ SCENARIOS = {
     "clipboard": scenario_clipboard,
     "calc": scenario_calc,
     "mines": scenario_mines,
+    "paint": scenario_paint,
     "files": scenario_files,
     "shell": scenario_shell,
     "appwiz": scenario_appwiz,

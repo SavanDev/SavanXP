@@ -736,6 +736,19 @@ target_include_directories(savanxp-sxmidi-test PRIVATE
 target_compile_options(savanxp-sxmidi-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sxmidi-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# El decodificador PNG se compila con el compilador de host y se ejerce de
+# verdad: PNG armados a mano (stored) y salidos de zlib real (fijo y dinamico),
+# los cinco filtros, RGB y RGBA, mas el rechazo de lo que esta fuera del
+# subconjunto. Es la unica verificacion del motor; el smoke en el invitado
+# solo prueba que la libreria carga y que Paint lee un archivo.
+add_executable(savanxp-sximg-test
+    subsystems/posix/sdk/v1/runtime/sximg.c
+    tests/host/sximg_test.cpp)
+target_include_directories(savanxp-sximg-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-sximg-test PRIVATE -O1 -Wall -Wextra)
+set_target_properties(savanxp-sximg-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 # La musica del port doomgeneric se prueba fuera de QEMU: el mus2mid de
 # upstream convierte un MUS y libsxmidi lo renderiza. Usa el WAD del repo para
 # cubrir la musica real que suena al jugar.
@@ -778,13 +791,14 @@ target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-d
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test
+    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
 add_test(NAME kernel-audio-gain-test COMMAND savanxp-kernel-audio-gain-test)
 add_test(NAME ccleste-wav-test COMMAND savanxp-ccleste-wav-test)
 add_test(NAME sxmidi-test COMMAND savanxp-sxmidi-test)
+add_test(NAME sximg-test COMMAND savanxp-sximg-test)
 add_test(NAME doom-mus-test COMMAND savanxp-doom-mus-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)

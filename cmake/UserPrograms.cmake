@@ -235,6 +235,11 @@ savanxp_library(NAME libmath SONAME libmath.so.0.4
 # unico consumidor hoy es el port de DoomGeneric, que lo mapea desde /disk/lib.
 savanxp_library(NAME libsxmidi SONAME libsxmidi.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/sxmidi.c)
+# El decodificador PNG. Como libsxmidi, no le pide un simbolo a la aplicacion
+# mas alla de malloc/free/memcpy/memset, asi que resuelve contra el ejecutable.
+# El unico consumidor hoy es Paint, que lo mapea desde /disk/lib.
+savanxp_library(NAME libsximg SONAME libsximg.so.0.4
+    SOURCES subsystems/posix/sdk/v1/runtime/sximg.c)
 # SxGFX: la capa de graficos del cliente, con sus tres tablas de fuente dentro.
 # Pide del ejecutable solo syscalls y libc, asi que resuelve contra el binario
 # como las otras dos.
@@ -372,7 +377,9 @@ savanxp_program(NAME webview DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
     subsystems/posix/userland/webview.c)
 savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mines.c
-    subsystems/posix/userland/mines_board.c)# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
+    subsystems/posix/userland/mines_board.c)
+savanxp_program(NAME paint DEPENDS libgfx2d libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
+    subsystems/posix/userland/paint.c)# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
 # pruebas en el perfil PIE: depende de SxGUI y se dibuja, asi que si el perfil
 # serviriera para algo mas que para mover sqrt, este es el programa que lo
 # demuestra. La migracion es una linea porque las unidades del runtime ya no se
