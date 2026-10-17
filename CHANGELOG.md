@@ -24,6 +24,13 @@ Cut-off notes:
   in `include/shared/version.h` feeds System Properties, the boot splash and the
   desktop stamp.
 
+### Fixed
+
+- **A fresh clone can build and run its smokes.** Two tools the tree calls were never
+  committed: `tools/check_shared_libs.py`, required at the end of `./build.sh build`,
+  and `tools/glyphs.py`, imported by `tools/shoot_session.py` for every visual smoke.
+  Both only existed as ignored files in the development tree.
+
 ## [0.4.0] - 2026-10-08
 
 ### Added

@@ -40,6 +40,8 @@ tools/*
 !tools/iso_volume.py
 !tools/write_smoke_spec.py
 !tools/check_legacy_cpu.py
+!tools/check_shared_libs.py
+!tools/glyphs.py
 !tools/font/
 !tools/font/**
 *.log
