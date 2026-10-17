@@ -297,6 +297,15 @@ def main() -> int:
                         "savanxp_socket_domain", "savanxp_socket_type",
                         "savanxp_process_state"):
         assert shared_data in abi_header
+    # The runner must not leak a TCG machine when it dies before its cleanup.
+    # stop_process lives in a finally, and a finally does not run when the
+    # process is killed -- so QEMU gets PR_SET_PDEATHSIG. A/B: without it a
+    # killed runner leaves a VM burning a core for hours, and the accumulated
+    # leftovers slow every scenario after them.
+    runner_text = (root / "tools" / "run_smoke.py").read_text(encoding="utf-8")
+    assert "preexec_fn=_die_with_parent" in runner_text
+    assert "PR_SET_PDEATHSIG" in runner_text
+    assert "libc.prctl" in runner_text
     # The SXE stamp must rerun when the neutral contract changes.
     assert '"${CMAKE_SOURCE_DIR}/include/abi/savanxp_abi.h"' in cmake_text
     # pointer-smoke es el unico que exige la maquina virtio, y el runner tiene que

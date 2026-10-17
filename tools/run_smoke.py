@@ -22,6 +22,27 @@ from taskbar_smoke import run_taskbar_actions
 from run_qemu import build_qemu_args, find_qemu, prepare_image
 
 
+def _die_with_parent() -> None:
+    """Ask the kernel to SIGKILL QEMU if this runner dies first.
+
+    Without it, killing the runner (a tool timeout, a SIGINT, a closed shell)
+    skips the `finally` that calls stop_process, and QEMU stays alive: a TCG
+    machine spinning at 100% of a core, for as long as nobody notices. That is
+    not cosmetic -- the leftovers accumulate one per aborted run, and every
+    scenario after them runs on a slower host than the last, which is exactly
+    the shape of an intermittent timing failure nobody can reproduce on
+    demand.
+    """
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(1, signal.SIGKILL, 0, 0, 0)  # PR_SET_PDEATHSIG
+    except Exception:
+        # Sin prctl el comportamiento es el de antes: nada peor, nada mejor.
+        pass
+
+
 def request_hmp_quit(path: Path) -> bool:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as monitor:
@@ -269,6 +290,7 @@ def main() -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            preexec_fn=_die_with_parent,
         )
         output = bytearray()
         offset = 0

@@ -171,6 +171,12 @@ Cut-off notes:
   existed only to name POSIX signals. The signal vocabulary moves to the POSIX
   subsystem; `kill` and `waitpid` behaviour is unchanged.
 
+- **The smoke runner no longer leaves a QEMU behind when it is killed.** Its
+  cleanup runs in a `finally`, which does not run if the process is killed, so
+  an aborted scenario used to leave a TCG machine spinning on a core
+  indefinitely. QEMU now gets `PR_SET_PDEATHSIG`. Verified A/B: killing the
+  runner mid-scenario leaves zero orphans with the fix and one without it.
+
 - **The error space belongs to the kernel.** Errors returned by the kernel are
   now `sx_status`/`SX_E*` rather than `savanxp_error_code`/`SAVANXP_E*`, with
   the POSIX names kept as aliases so existing programs are unaffected. The
