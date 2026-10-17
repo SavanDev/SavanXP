@@ -151,7 +151,8 @@ function(savanxp_library)
     # -soname is what a DT_NEEDED would name; today nothing resolves it, because
     # the loader that reads it does not exist yet.
     target_link_options(${P_NAME} PRIVATE
-        -nostdlib -fuse-ld=lld "-Wl,-soname,${P_SONAME}"
+        -nostdlib -fuse-ld=lld "-Wl,-m,${SAVANXP_LINK_EMULATION}"
+        "-Wl,-soname,${P_SONAME}"
         "-Wl,-z,max-page-size=0x1000" -Wl,--build-id=none)
     # ALLOW_UNDEFINED es lo contrario de lo que se quiere en general, y existe solo
     # para la prueba del diagnostico: una libreria con un simbolo que nada define

@@ -16,6 +16,15 @@ endif()
 set(SAVANXP_SMP 1 CACHE STRING "Number of virtual CPUs")
 option(SAVANXP_VIRTIO "Use QEMU virtio hardware" OFF)
 option(SAVANXP_HEADLESS "Run QEMU without a graphical display" OFF)
+# La arquitectura objetivo es un eje del grafo, no una constante. x86_64 es el
+# sistema actual; i386 es el objetivo de hardware real de docs/REAL_HARDWARE.md
+# y comparte arbol. Los scripts que corren fuera de CMake leen la misma
+# variable del entorno con tools/arch-env.sh, que repite este mapeo.
+set(SAVANXP_ARCH "x86_64" CACHE STRING "Target architecture: x86_64 or i386")
+set_property(CACHE SAVANXP_ARCH PROPERTY STRINGS x86_64 i386)
+if(NOT SAVANXP_ARCH STREQUAL "x86_64" AND NOT SAVANXP_ARCH STREQUAL "i386")
+    message(FATAL_ERROR "SAVANXP_ARCH must be x86_64 or i386, got '${SAVANXP_ARCH}'")
+endif()
 set(SAVANXP_SMOKE_COMMAND "" CACHE STRING
     "Optional init automation command staged in the smoke initramfs")
 set(SAVANXP_OUTPUT_ROOT "${CMAKE_SOURCE_DIR}/build" CACHE PATH
@@ -73,7 +82,26 @@ if(NOT SAVANXP_GIT_RESULT EQUAL 0 OR NOT SAVANXP_BUILD_ID)
     set(SAVANXP_BUILD_ID unknown)
 endif()
 
-set(SAVANXP_TARGET_TRIPLE x86_64-unknown-none-elf)
+# Todo lo que depende de la arquitectura se deriva aqui: el triple, la
+# emulacion con la que enlaza ld.lld, el guion de enlace del kernel y los
+# modelos de memoria de los perfiles de compilacion.
+if(SAVANXP_ARCH STREQUAL "i386")
+    set(SAVANXP_TARGET_TRIPLE i386-unknown-none-elf)
+    set(SAVANXP_LINK_EMULATION elf_i386)
+    set(SAVANXP_KERNEL_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/linker32.ld")
+    # -mcmodel no existe en 32 bits: clang lo rechaza para i386. Los valores
+    # vacios desaparecen del argv al expandirlos sin comillas.
+    set(SAVANXP_ARCH_MCMODEL_KERNEL)
+    set(SAVANXP_ARCH_MCMODEL_SMALL)
+    set(SAVANXP_ARCH_MCMODEL_MEDIUM)
+else()
+    set(SAVANXP_TARGET_TRIPLE x86_64-unknown-none-elf)
+    set(SAVANXP_LINK_EMULATION elf_x86_64)
+    set(SAVANXP_KERNEL_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/linker.ld")
+    set(SAVANXP_ARCH_MCMODEL_KERNEL -mcmodel=kernel)
+    set(SAVANXP_ARCH_MCMODEL_SMALL -mcmodel=small)
+    set(SAVANXP_ARCH_MCMODEL_MEDIUM -mcmodel=medium)
+endif()
 
 set(SAVANXP_KERNEL_COMPILE_OPTIONS
     "-target;${SAVANXP_TARGET_TRIPLE}"
@@ -84,7 +112,7 @@ set(SAVANXP_KERNEL_COMPILE_OPTIONS
     -fno-pic
     -fno-pie
     -mno-red-zone
-    -mcmodel=kernel
+    ${SAVANXP_ARCH_MCMODEL_KERNEL}
     -mno-mmx
     -mno-sse
     -mno-sse2
@@ -100,7 +128,7 @@ set(SAVANXP_UACPI_COMPILE_OPTIONS
     -fno-pic
     -fno-pie
     -mno-red-zone
-    -mcmodel=kernel
+    ${SAVANXP_ARCH_MCMODEL_KERNEL}
     -mno-mmx
     -mno-sse
     -mno-sse2
@@ -115,7 +143,7 @@ set(SAVANXP_USER_COMPILE_OPTIONS
     -fno-pic
     -fno-pie
     -mno-red-zone
-    -mcmodel=small
+    ${SAVANXP_ARCH_MCMODEL_SMALL}
     -mno-mmx
     -msse
     -msse2
@@ -132,7 +160,7 @@ set(SAVANXP_LIBRARY_COMPILE_OPTIONS
     -ffreestanding
     -fPIC
     -mno-red-zone
-    -mcmodel=medium
+    ${SAVANXP_ARCH_MCMODEL_MEDIUM}
     -mno-mmx
     -msse
     -msse2
@@ -150,6 +178,7 @@ set(SAVANXP_USER_LINK_OPTIONS_STATIC
     -nostdlib
     -static
     -fuse-ld=lld
+    "-Wl,-m,${SAVANXP_LINK_EMULATION}"
     "-Wl,-T,${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld"
     "-Wl,-z,max-page-size=0x1000"
     -Wl,--gc-sections
@@ -173,6 +202,7 @@ set(SAVANXP_USER_LINK_OPTIONS_STATIC
 set(SAVANXP_USER_LINK_OPTIONS_PIE
     -nostdlib
     -fuse-ld=lld
+    "-Wl,-m,${SAVANXP_LINK_EMULATION}"
     -pie
     "-Wl,-z,max-page-size=0x1000"
     "-Wl,--dynamic-linker,/disk/lib/ld.so.0.4"
@@ -183,12 +213,22 @@ set(SAVANXP_USER_LINK_OPTIONS_PIE
 )
 set(SAVANXP_USER_COMPILE_OPTIONS_PIE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
 
+# Las fuentes de arranque son de la arquitectura. En i386 llegan con el
+# bootstrap de 32 bits (docs/REAL_HARDWARE.md); hasta entonces esa lista queda
+# vacia y el kernel no enlaza en esa arquitectura.
+set(SAVANXP_KERNEL_ARCH_SOURCES)
+if(SAVANXP_ARCH STREQUAL "x86_64")
+    set(SAVANXP_KERNEL_ARCH_SOURCES
+        arch/x86_64/context.S
+        arch/x86_64/entry.cpp
+        arch/x86_64/cpu_init.cpp
+        arch/x86_64/timer.cpp
+        arch/x86_64/smp.cpp
+    )
+endif()
+
 set(SAVANXP_KERNEL_SOURCES
-    arch/x86_64/context.S
-    arch/x86_64/entry.cpp
-    arch/x86_64/cpu_init.cpp
-    arch/x86_64/timer.cpp
-    arch/x86_64/smp.cpp
+    ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/kernel_main.cpp
     kernel/boot_screen.cpp
     kernel/console.cpp
@@ -325,7 +365,7 @@ set(SAVANXP_USER_COMPILE_OPTIONS_PIC
     -fstack-protector-strong
     -fPIC
     -mno-red-zone
-    -mcmodel=medium
+    ${SAVANXP_ARCH_MCMODEL_MEDIUM}
     -mno-mmx
     -msse
     -msse2
@@ -448,7 +488,7 @@ set(SAVANXP_EXTERNAL_COMPILE_OPTIONS
     -fno-pic
     -fno-pie
     -mno-red-zone
-    -mcmodel=small
+    ${SAVANXP_ARCH_MCMODEL_SMALL}
     -mno-mmx
     -mno-sse
     -mno-sse2
@@ -461,6 +501,7 @@ set(SAVANXP_EXTERNAL_LINK_OPTIONS
     -nostdlib
     -static
     -fuse-ld=lld
+    "-Wl,-m,${SAVANXP_LINK_EMULATION}"
     "-Wl,-T,${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld"
     "-Wl,-z,max-page-size=0x1000"
     -Wl,--build-id=none
@@ -672,8 +713,8 @@ add_dependencies(savanxp-busybox savanxp_sxe_resources)
 
 add_custom_target(savanxp_kernel
     COMMAND "${SAVANXP_LD}"
-            -m elf_x86_64
-            -T "${CMAKE_SOURCE_DIR}/linker.ld"
+            -m "${SAVANXP_LINK_EMULATION}"
+            -T "${SAVANXP_KERNEL_LINKER_SCRIPT}"
             -z max-page-size=0x1000
             --build-id=none
             -o "${SAVANXP_KERNEL_ELF}"

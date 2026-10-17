@@ -80,7 +80,7 @@ echo "== linkeando libffmpeg.so.0.4"
 # (avisa "argument unused during compilation") y linkea un ET_EXEC etiquetado como
 # libreria. El guardia de read_header en ldso.c lo rechaza por tipo, que es lo
 # correcto, pero es mejor no construir el archivo en esa forma.
-$LINK_CC -target x86_64-unknown-none-elf -nostdlib -Wl,-shared -fuse-ld=lld \
+$LINK_CC -target "$SX_TARGET_TRIPLE" -nostdlib -Wl,-shared -fuse-ld=lld \
     -Wl,--whole-archive "${ARCHIVES[@]}" -Wl,--no-whole-archive \
     -Wl,--unresolved-symbols=ignore-all \
     -Wl,-soname,libffmpeg.so.0.4 \

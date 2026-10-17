@@ -78,6 +78,9 @@ PYTHON="${SAVANXP_PYTHON:-python3}"
 OBJCOPY="${SAVANXP_OBJCOPY:-llvm-objcopy}"
 READELF="${SAVANXP_READELF:-llvm-readelf}"
 
+# SAVANXP_ARCH (x86_64 por defecto) elige el triple, igual que en el arbol.
+. "$ROOT/tools/arch-env.sh"
+
 for tool in "$HAXE" "$CLANG" "$CLANGXX" "$LD" git; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "native: required tool not found: $tool" >&2
@@ -158,13 +161,13 @@ for source in "$HERE"/haxe-std-fixes/*.hx; do
 done
 
 CFLAGS=(
-    -target x86_64-unknown-none-elf
+    -target "$SX_TARGET_TRIPLE"
     -ffreestanding
     -fstack-protector-strong
     -fno-pic
     -fno-pie
     -mno-red-zone
-    -mcmodel=small
+    ${SX_MCMODEL_SMALL}
     -I "$NATIVE_SDK/include"
     -I "$SDK/include"
     -I "$ROOT/include"
@@ -266,7 +269,7 @@ EOF
     done < <(find "$gen_dir/src" -type f -name '*.cpp' -print0 | sort -z)
 
     local elf="$OUT_ROOT/$name.elf"
-    "$LD" -nostdlib -static -T "$SDK/linker.ld" -o "$elf" "${objects[@]}"
+    "$LD" -nostdlib -static -m "$SX_LINK_EMULATION" -T "$SDK/linker.ld" -o "$elf" "${objects[@]}"
     "$PYTHON" - "$elf" "$OSABI_HEX" <<'PY'
 import sys
 from pathlib import Path

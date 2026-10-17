@@ -355,6 +355,9 @@ CONFIGURE_ARGS=(
     "-DSAVANXP_HEADLESS=$HEADLESS"
     "-DSAVANXP_SMOKE_COMMAND=${SMOKE_SPEC:-}"
 )
+# La arquitectura objetivo se propaga solo cuando el entorno la trae: un build
+# dir ya configurado para i386 no vuelve a x86_64 por correr ./build.sh build.
+[[ -z "${SAVANXP_ARCH:-}" ]] || CONFIGURE_ARGS+=("-DSAVANXP_ARCH=$SAVANXP_ARCH")
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     CONFIGURE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$ROOT/cmake/toolchain-linux.cmake")
 fi

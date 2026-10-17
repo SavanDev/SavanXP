@@ -21,6 +21,9 @@ LD="${SAVANXP_LD:-ld.lld}"
 OBJCOPY="${SAVANXP_OBJCOPY:-llvm-objcopy}"
 READELF="${SAVANXP_READELF:-llvm-readelf}"
 PYTHON="${SAVANXP_PYTHON:-python3}"
+
+# SAVANXP_ARCH (x86_64 por defecto) elige el triple, igual que en el arbol.
+. "$ROOT/tools/arch-env.sh"
 # La libreria del sistema se busca donde el build base la instala (el mismo
 # directorio que check_shared_libs lee). El port no la construye: la trae el
 # arbol, y sin ella no hay sintetizador que enlazar.
@@ -123,12 +126,12 @@ SDK="$ROOT/subsystems/posix/sdk/v1"
 # proceso (fpu_save/fpu_restore), asi que el ABI SSE es seguro como en el resto
 # del userland. -mcmodel=medium es el que usa el perfil PIC del arbol.
 COMMON_FLAGS=(
-    -target x86_64-unknown-none-elf
+    -target "$SX_TARGET_TRIPLE"
     -ffreestanding
     -fstack-protector-strong
     -fPIC
     -mno-red-zone
-    -mcmodel=medium
+    ${SX_MCMODEL_MEDIUM}
     -mno-mmx
     -msse
     -msse2
@@ -216,7 +219,7 @@ compile_c "$SDK/runtime/audio.c" "$audio"
 # hook debil sx_run_interpreter, y sin el DT_NEEDED se ignora en silencio.
 compile_c "$ROOT/subsystems/posix/userland/ldso.c" "$ldso_object" -Wall -Wextra -Wpedantic
 
-"$LINK_CC" -target x86_64-unknown-linux-gnu "${LINK_FLAGS[@]}" \
+"$LINK_CC" -target "$SX_HOST_TRIPLE" "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
     "$crt0" "$libc" "$posix" "$gfx" "$gfx2d" "$math" "$setjmp_object" "$audio" \
     "$ldso_object" \

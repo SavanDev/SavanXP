@@ -23,6 +23,10 @@ PYTHON=${SAVANXP_PYTHON:-python3}
 OBJCOPY=${SAVANXP_OBJCOPY:-llvm-objcopy}
 READELF=${SAVANXP_READELF:-llvm-readelf}
 
+# La arquitectura objetivo es la misma variable que lee CMakeLists.txt:
+# SAVANXP_ARCH (x86_64 por defecto) traducida a triple y flags de modelo.
+. "$ROOT/tools/arch-env.sh"
+
 usage() {
     cat <<'EOF'
 Usage: tools/build-user.sh --source PATH --name NAME [options]
@@ -123,13 +127,13 @@ fi
 }
 
 COMMON_FLAGS=(
-    -target x86_64-unknown-none-elf
+    -target "$SX_TARGET_TRIPLE"
     -ffreestanding
     -fstack-protector-strong
     -fno-pic
     -fno-pie
     -mno-red-zone
-    -mcmodel=small
+    ${SX_MCMODEL_SMALL}
     -mno-mmx
     -Wall
     -Wextra
@@ -199,7 +203,7 @@ if ((GUI)); then
     RUNTIME_OBJECTS+=("$OBJ_ROOT/sxgui.o" "$OBJ_ROOT/sxgui_app.o")
 fi
 
-"$LD" -nostdlib -static -T "$SDK/linker.ld" \
+"$LD" -nostdlib -static -m "$SX_LINK_EMULATION" -T "$SDK/linker.ld" \
     -z max-page-size=0x1000 --build-id=none \
     -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
 

@@ -48,6 +48,11 @@ RUNTIME="$WORK/runtime"
 SYSROOT="$WORK/sysroot"
 OUT="$WORK/out"
 
+# SAVANXP_ARCH (x86_64 por defecto) elige el triple y los modelos de memoria,
+# igual que en el arbol. Va antes de SX_TARGET_CFLAGS: esa cadena se expande al
+# asignarse, y un SX_MCMODEL aun vacio desaparece sin avisar.
+. "$REPO/tools/arch-env.sh"
+
 # FFmpeg uses floating point in the selected decoders, so this port uses the
 # SSE/SSE2 ABI and links the SDK math runtime.
 # -fPIC, y no -fno-pic, porque el objetivo de este puerto es que FFmpeg acabe en
@@ -62,7 +67,7 @@ OUT="$WORK/out"
 # independent", y la siguiente linea compila las unidades del runtime con los mismos
 # flags, asi que dejarlos en -fno-pie mientras FFmpeg es PIC no describe nada real.
 SX_TARGET_CFLAGS="-ffreestanding -fstack-protector-strong -fPIC -mno-red-zone"
-SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -mcmodel=small -mno-mmx -msse -msse2"
+SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS ${SX_MCMODEL_SMALL:+$SX_MCMODEL_SMALL }-mno-mmx -msse -msse2"
 SX_TARGET_CFLAGS="$SX_TARGET_CFLAGS -isystem $SYSROOT/include"
 
 CLANG="${SAVANXP_CLANG:-clang}"
@@ -76,8 +81,8 @@ SIZE_CMD="${SAVANXP_SIZE:-llvm-size}"
 
 # The target compiler is freestanding. The link driver uses the Linux triple
 # so clang delegates to ld.lld.
-SX_CC="$CLANG -target x86_64-unknown-none-elf"
-SX_LD="$LINK_CC -target x86_64-unknown-linux-gnu"
+SX_CC="$CLANG -target $SX_TARGET_TRIPLE"
+SX_LD="$LINK_CC -target $SX_HOST_TRIPLE"
 
 # -no-pie is required with -fno-pic; -static keeps the SDK linker script's
 # PT_LOAD layout free of an ELF interpreter.

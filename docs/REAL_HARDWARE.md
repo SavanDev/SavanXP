@@ -156,7 +156,7 @@ from the MADT instead of Limine's `goto_address`), and paging itself.
 
 | Package | Size | Notes |
 | --- | --- | --- |
-| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | The triple is hardcoded in 8 places across 6 files: [`CMakeLists.txt:69`](../CMakeLists.txt:69), [`tools/build-user.sh:126`](../tools/build-user.sh), [`ports/ccleste/env.sh:71-72`](../ports/ccleste/env.sh), [`ports/doomgeneric/build.sh:110`](../ports/doomgeneric/build.sh), [`ports/ffmpeg/env.sh:62-63`](../ports/ffmpeg/env.sh), [`subsystems/native/build.sh:161`](../subsystems/native/build.sh) |
+| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | **Landed.** `SAVANXP_ARCH` (`x86_64` default, `i386`) picks the triple, the flags of each compile profile, the kernel script (`linker.ld`/`linker32.ld`) and the link emulation; [`tools/arch-env.sh`](../tools/arch-env.sh) carries the same mapping to the scripts outside CMake |
 | `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`) |
 | Paging bootstrap and a 1 GiB direct map, no NX | L | Nothing exists today; `EFER` does not exist in 32-bit mode |
 | VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |
@@ -177,7 +177,7 @@ The one real LP64 hole is the initial process stack, which is a native SysV argv
 array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
 
 Order of work, with each step independently bootable and testable:
-`build graph` -> `multiboot2 entry + paging bootstrap + serial console` ->
+`build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` ->
 `ATA and SxFS root` -> `ELF32 and a shell` -> `PS/2 and the desktop` ->
 `isolation features, if ever`.
 
@@ -263,11 +263,10 @@ behaviour, and the real timing of PIO reads against a spinning disk.
 - Whether Route A is worth doing at all. That is a project decision, and the
   answer changes if the goal is "SavanXP on real laptops" rather than "SavanXP
   on that laptop".
-- Whether Route A keeps both architectures in one tree or builds a 32-bit
-  variant. The current graph has no arch dimension at all
-  ([`CMakePresets.json`](../CMakePresets.json) has no arch axis), so that choice
-  is still open, and it is the difference between one `SAVANXP_ARCH` cache
-  variable and two source trees.
+- How much of the 32-bit port ends up shared behind `arch/x86` versus forked.
+  Route A started as one `SAVANXP_ARCH` axis in the existing tree and the build
+  graph has it now; where the sharing stops is decided as the packages above
+  land.
 - What the 32-bit isolation story is. Deferring per-process CR3 and section
   views is a suggestion for making the port tractable, not a design.
 - Whether the desktop is expected to be usable on 1 GB of shared video memory

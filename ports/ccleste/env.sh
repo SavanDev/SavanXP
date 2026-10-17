@@ -40,6 +40,11 @@ STAMPED="$OUTPUT_ROOT/ccleste/ccleste"
 # up front. The heap lives in .bss: it costs address space, not image bytes.
 SX_HEAP_SIZE="$((8 * 1024 * 1024))"
 
+# SAVANXP_ARCH (x86_64 por defecto) elige el triple y los modelos de memoria,
+# igual que en el arbol. Va antes de los arrays de flags: se expanden al
+# asignarse, y un SX_MCMODEL aun vacio desaparece del argv sin avisar.
+. "$REPO/tools/arch-env.sh"
+
 # Celeste Classic uses floating point (sin/cos/fmodf/floorf) in its update step,
 # so this port uses the SSE/SSE2 ABI and links the SDK math runtime, exactly
 # like the FFmpeg port. The non-SSE path only exposes four double x87 helpers.
@@ -53,7 +58,7 @@ SX_TARGET_CFLAGS=(
     -fstack-protector-strong
     -fPIC
     -mno-red-zone
-    -mcmodel=medium
+    ${SX_MCMODEL_MEDIUM}
     -mno-mmx
     -msse
     -msse2
@@ -76,8 +81,8 @@ PYTHON="${SAVANXP_PYTHON:-python3}"
 # with the path the interpreter would have as a file of its own (PT_INTERP is
 # recorded but not executed yet: the kernel maps the image and crt0 runs the
 # loader linked inside the program).
-SX_CC="$CLANG -target x86_64-unknown-none-elf"
-SX_LD="$LINK_CC -target x86_64-unknown-linux-gnu"
+SX_CC="$CLANG -target $SX_TARGET_TRIPLE"
+SX_LD="$LINK_CC -target $SX_HOST_TRIPLE"
 SX_TARGET_LDFLAGS=(
     -nostdlib -fuse-ld=lld -pie
     -Wl,-z,max-page-size=0x1000 -Wl,--dynamic-linker,/disk/lib/ld.so.0.4

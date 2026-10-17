@@ -18,6 +18,10 @@ Cut-off notes:
   and driver work transfers between profiles. `./build.sh smoke legacy-cpu` asserts
   the CPU over QMP with `tools/check_legacy_cpu.py` before any i386 guest exists.
 
+- **The build graph has an architecture axis.** `SAVANXP_ARCH` picks the triple, the
+  compile-profile flags, the kernel linker script and the link emulation; `x86_64` is the
+  default and `i386` the legacy target (`SAVANXP_ARCH=i386 ./build.sh build`).
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`
