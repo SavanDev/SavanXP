@@ -35,10 +35,12 @@
  * el WM ni el cliente abren un canal nuevo por ventana. Ver
  * docs/OWNED_WINDOWS.md.
  *
- * NOTA sobre el subsistema nativo: por diseno no comparte los headers del SDK
- * posix (ver docs/SYSTEM_LAYERING.md), asi que mantiene su espejo en
- * savanxp_native_gui.h. Este header es la fuente canonica: cualquier cambio
- * aca tiene que replicarse alla, y los valores deben coincidir.
+ * NOTA sobre el subsistema nativo: comparte estas structs (son el contrato
+ * en el alambre y no se duplican); lo que difiere es el transporte. Un
+ * cliente nativo no puede leer el pipe de eventos, asi que hoy es
+ * solo-salida: mapea la seccion, publica batches y senala eventos con
+ * syscalls SXN (ver sdk/nativedemo/main.c). La entrada por anillo sobre
+ * memoria compartida es trabajo futuro (docs/KERNEL_NATIVE_API.md).
  */
 
 /* Seccion compartida de la superficie: header + anillo de dirty-rect batches +
@@ -73,6 +75,15 @@
  * perder un submit a otro por mas de un timeout del loop. */
 #define SAVANXP_WM_FD_SUBMIT_EVENT 6
 
-/* Rango reservado: descriptores 0..2 son stdio y 3..6 este protocolo. */
+/* Anillo de entrada (solo clientes nativos): seccion con un struct
+ * savanxp_wm_input_ring que el WM mapea RW. El WM la crea en el launch si el
+ * binario es nativo (EI_OSABI) y la duplica al fd 7; el pipe de eventos
+ * sigue existiendo pero el cliente nativo lo ignora. El wake (fd 5) tambien
+ * se senala con entrada pendiente: quien espera resetea, mira el header Y el
+ * anillo, y recien ahi espera. Lleno se descarta igual que el pipe lleno. */
+#define SAVANXP_WM_FD_INPUT_RING 7
+
+/* Rango reservado: descriptores 0..2 son stdio, 3..6 este protocolo y 7 el
+ * anillo de entrada de un cliente nativo (ausente en los POSIX). */
 #define SAVANXP_WM_FD_FIRST SAVANXP_WM_FD_SECTION
 #define SAVANXP_WM_FD_LAST SAVANXP_WM_FD_SUBMIT_EVENT

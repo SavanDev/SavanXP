@@ -104,10 +104,9 @@ step.
 - `ports/ffmpeg/build.sh` preserves FFmpeg's configure and GNU Make flow and
   installs the shared library `/disk/lib/libffmpeg.so.0.4` and no program; the
   Media Player is built by the tree from `subsystems/posix/userland/mediaplayer/`.
-- `subsystems/native/build.sh` is the optional native Haxe builder.
 - `tools/limine/` is the ignored, pinned bootloader checkout.
 
-The Haxe subsystem and third-party ports remain outside the base CMake target.
+Third-party ports remain outside the base CMake target.
 They have independent build flows and must not become boot-time dependencies of
 the system image.
 

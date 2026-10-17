@@ -783,8 +783,7 @@ its place: it became exactly that, optional enrichment over an identity that
 already exists.
 
 Coverage is verified with `llvm-readelf` for the base image and the optional
-ports. The native AOT builder now uses the same Python generator and stamping
-path when it is explicitly requested; it remains outside the base target.
+ports.
 
 ### The generator
 
@@ -908,13 +907,10 @@ all build entry points.
    longer picks from a catalog", above.
 
 `INTERPRETER` has no phase: the field has been there since v1 and starts being
-honored the day the VM exists.
+honored the day a VM exists, if one ever does.
 
-## Optional native subsystem
+## Native subsystem value
 
-`subsystems/native/build.sh` is an optional standalone builder. It uses the
-same `gen_sxe_resources.py` and `stamp_sxe.py` implementation as the base
-tooling, and its validation apps have native `.sxres` manifests. The Haxe
-compiler and generated applications are still not part of the base CMake
-target or default image; the neutral ABI header and kernel dispatcher remain
-base compatibility infrastructure.
+The `subsystem` manifest field accepts `posix` or `native`, and the native
+OSABI value stays reserved in `include/abi/savanxp_native_abi.h` for the
+future NT-style kernel API. There is no standalone native builder today.

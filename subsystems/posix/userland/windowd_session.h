@@ -30,6 +30,11 @@ struct windowd_client
      * le resta ventanas simultaneas a la sesion (docs/WM_SUBSYSTEM.md). */
     int events_write_fd;
     int wake_event_fd;
+    /* Entrada nativa (sin pipe de eventos): anillo en seccion propia, creada
+     * en el launch si el binario es nativo y cerrada tras el fork como la
+     * superficie. El mapeo propio la mantiene viva. */
+    int native_input;
+    struct savanxp_wm_input_ring *input_ring;
     /* Rol de shell (savanxp/wm_shell_protocol.h): solo lo tiene el cliente de
      * la barra de tareas. En cualquier otro cliente queda en -1. */
     int shell_request_read_fd;

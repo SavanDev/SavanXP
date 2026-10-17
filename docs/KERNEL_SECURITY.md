@@ -134,7 +134,7 @@ creates W+X.
   with the parent's context and address space, while `exec` receives a new one.
 - `_start` seeds the kernel canary before the first protected frame and the
   kernel keeps it stable for the rest of boot; a detected failure panics.
-- The native and POSIX runtimes supply the compiler runtime symbols required by
+- The POSIX runtime supplies the compiler runtime symbols required by
   Clang.
 
 The TSC fallback is not cryptographic. The canaries improve corruption detection

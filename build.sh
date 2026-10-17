@@ -409,8 +409,6 @@ case "$COMMAND" in
             export SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT"
             export SAVANXP_DISK_IMAGE="$OUTPUT_ROOT/disk.img"
             export SAVANXP_SXFS_CLI="$OUTPUT_ROOT/tools/sxfs-cli"
-            export SAVANXP_NATIVE_BUILD_ROOT="$OUTPUT_ROOT/native"
-            export SAVANXP_HAXE_DEPS_ROOT="$OUTPUT_ROOT/ports/haxe/deps"
             while IFS= read -r prepare_command; do
                 [[ -n "$prepare_command" ]] || continue
                 echo "==> Preparing smoke scenario: $prepare_command"

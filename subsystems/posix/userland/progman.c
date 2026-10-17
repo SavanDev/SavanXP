@@ -869,9 +869,9 @@ static void build_catalog(void)
      * exista en el menu: si falta, el registro arranca vacio y lo llena el
      * escaneo. */
     (void)progman_registry_load_file();
-    /* Sacar del catalogo lo que no esta instalado: los ports en Haxe y Doom se
-     * construyen con builds APARTE, asi que en un arbol limpio sus entradas
-     * existen pero no lanzan nada. Aplica igual a los defaults y al .ini. */
+    /* Sacar del catalogo lo que no esta instalado: Doom se
+     * construye con un build APARTE, asi que en un arbol limpio su entrada
+     * existe pero no lanza nada. Aplica igual a los defaults y al .ini. */
     (void)progman_registry_prune_missing(path_is_launchable);
     /* "Todos los programas": todo binario instalado que declare categoria entra
      * aca, sin que nadie lo haya anotado en ningun lado. Va despues del pruning
@@ -1252,6 +1252,7 @@ static int progman_selftest(void)
          */
         {
             int progman_listed = 0;
+            int native_listed = 0;
 
             for (index = 0; index < progman_item_count(); ++index)
             {
@@ -1265,6 +1266,14 @@ static int progman_selftest(void)
                 {
                     progman_listed = 1;
                 }
+                /* Integracion del launcher nativo: el escaneo no mira el
+                 * subsistema, solo categoria declarada mas binario lanzable.
+                 * Si un nativo con .sxres no aparece, el menu lo esconde. */
+                if (strcmp(item->path, "/disk/bin/nativewidgets") == 0 ||
+                    strcmp(item->path, "/disk/bin/nativedemo") == 0)
+                {
+                    native_listed += 1;
+                }
                 if (strcmp(item->path, "/bin/busybox") == 0 ||
                     strcmp(item->path, "/bin/ls") == 0)
                 {
@@ -1275,6 +1284,12 @@ static int progman_selftest(void)
             if (!progman_listed)
             {
                 printf("PROGMAN SMOKE FAIL el escaneo no listo a progman con categoria declarada\n");
+                return 1;
+            }
+            printf("PROGMAN SMOKE native listed=%d\n", native_listed);
+            if (native_listed < 2)
+            {
+                printf("PROGMAN SMOKE FAIL el escaneo no listo las apps nativas del menu\n");
                 return 1;
             }
         }

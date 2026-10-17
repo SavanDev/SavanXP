@@ -1,20 +1,17 @@
 /*
- * SavanXP - contrato ABI del subsistema nativo (Haxe), v1.
+ * SavanXP - native subsystem ABI contract, v1.
  *
- * Este header es la UNICA fuente del contrato kernel <-> userland del
- * subsistema nativo: lo incluyen tanto el dispatcher del kernel
- * (kernel/native_syscall_dispatch.inc) como el runtime de userland
- * (savanxp_native.h). Es el contrato que heredara HashLink en la etapa VM:
- * AOT y HashLink apuntan a esta misma superficie.
+ * This header is the single source of the kernel <-> userland contract of
+ * the native subsystem: it is included by both the kernel dispatcher
+ * (kernel/native_dispatch.cpp) and native userland.
  *
- * Convencion de llamada (compartida con posix por ahora):
+ * Calling convention (shared with posix for now):
  *   int $0x80, numero en rax, args en rdi/rsi/rdx, resultado en rax
  *   (negativo = -errno de savanxp_error_code).
  *
- * Particion del espacio de numeros:
- *   [0x0000, 0x0fff]  baseline transitorio: se delega en la tabla posix
- *                     (READ/WRITE/EXIT/etc. de savanxp/syscall.h). Un proceso
- *                     nativo puede usarlas mientras el ABI propio crece.
+ * Number space:
+ *   [0x0000, 0x0fff]  reserved. A native process only speaks SXN: invoking
+ *                     any of these numbers returns ENOSYS.
  *   [0x1000, ...)     syscalls PROPIAS del subsistema nativo. Un proceso posix
  *                     que las invoque recibe ENOSYS: solo existen detras de
  *                     dispatch_native_syscall.
@@ -39,6 +36,38 @@ enum sxn_syscall_number {
     /* rdi = puntero a string NUL-terminado (lectura, se trunca a 255 bytes).
      * El kernel lo emite en su log con el pid como prefijo. Devuelve 0. */
     SXN_SYS_LOG = 0x1001,
+    /* rdi = codigo de salida. Termina el proceso actual; no retorna. Es el
+     * ciclo de vida minimo standalone: con INFO/LOG/GFX mas EXIT un proceso
+     * nativo ya no necesita la tabla posix para nada. */
+    SXN_SYS_EXIT = 0x1002,
+    /* rdi = path (string de usuario), rsi = argv (arreglo de strings de
+     * usuario), rdx = argc. Misma convencion que el spawn POSIX. Devuelve
+     * el pid del hijo o -errno. La imagen del hijo decide su subsistema por
+     * EI_OSABI, asi que un proceso nativo engendra hijos POSIX y nativos; a
+     * diferencia del spawn POSIX, el hijo hereda TODA la tabla de handles
+     * del padre (sin un fork nativo es el unico canal que los lleva). */
+    SXN_SYS_SPAWN = 0x1003,
+    /* rdi = pid o -1 (cualquier hijo), rsi = direccion de estado (0 ignora).
+     * Devuelve el pid cosechado o -errno; bloquea como el waitpid POSIX. */
+    SXN_SYS_WAITPID = 0x1004,
+    /* rdi = banderas (enum sxn_event_flags). Devuelve el handle o -errno.
+     * Los handles salen de la misma tabla por proceso que los fds POSIX,
+     * con granted access: un hijo los hereda al hacer spawn. */
+    SXN_SYS_EVENT_CREATE = 0x1005,
+    /* rdi = handle de evento. Devuelven 0 o -errno. */
+    SXN_SYS_EVENT_SET = 0x1006,
+    SXN_SYS_EVENT_RESET = 0x1007,
+    /* rdi = handle, rsi = plazo en ms (0 = sondeo, negativo = infinito).
+     * Devuelve 0, -ETIMEDOUT o -errno; bloquea como el wait POSIX. */
+    SXN_SYS_WAIT_ONE = 0x1008,
+    /* rdi = tamano en bytes, rsi = banderas (enum sxn_section_flags).
+     * Devuelve el handle de seccion o -errno. */
+    SXN_SYS_SECTION_CREATE = 0x1009,
+    /* rdi = handle de seccion, rsi = banderas (acceso + SXN_VIEW_PRIVATE).
+     * Devuelve la direccion base o -errno. */
+    SXN_SYS_MAP_VIEW = 0x100a,
+    /* rdi = direccion base. Devuelve 0 o -errno. */
+    SXN_SYS_UNMAP_VIEW = 0x100b,
 
     /* --- Graficos (bloque 0x1010) -----------------------------------------
      * Acceso de primera clase al display: un proceso nativo no abre /dev/gpu0
@@ -62,6 +91,26 @@ enum sxn_syscall_number {
     SXN_SYS_GFX_PRESENT = 0x1013,
 };
 
+/* Banderas de SXN_SYS_EVENT_CREATE. Los valores coinciden con los del lado
+ * POSIX a proposito (el kernel los consume por los mismos bits); el contrato
+ * nativo es dueno de estos nombres. */
+enum sxn_event_flags {
+    SXN_EVENT_MANUAL_RESET = 1u << 0,
+    SXN_EVENT_INITIAL_SET = 1u << 1,
+};
+
+/* Banderas de SXN_SYS_SECTION_CREATE y SXN_SYS_MAP_VIEW. Idem: mismos valores
+ * que el lado POSIX, nombres propios. SXN_VIEW_PRIVATE pide vista privada;
+ * sin el, la vista se comparte en el fork. */
+enum sxn_section_flags {
+    SXN_SECTION_READ = 1u << 0,
+    SXN_SECTION_WRITE = 1u << 1,
+    SXN_SECTION_EXEC = 1u << 2,
+};
+
+enum sxn_view_flags {
+    SXN_VIEW_PRIVATE = 1u << 8,
+};
 /* Identidad del proceso nativo y del contrato, reportada por SXN_SYS_INFO. */
 struct sxn_native_info {
     uint32_t abi_version;  /* SXN_ABI_VERSION del kernel */

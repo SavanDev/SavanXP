@@ -156,7 +156,7 @@ from the MADT instead of Limine's `goto_address`), and paging itself.
 
 | Package | Size | Notes |
 | --- | --- | --- |
-| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | The triple is hardcoded in 8 places across 6 files: [`CMakeLists.txt:69`](../CMakeLists.txt:69), [`tools/build-user.sh:126`](../tools/build-user.sh), [`ports/ccleste/env.sh:71-72`](../ports/ccleste/env.sh), [`ports/doomgeneric/build.sh:110`](../ports/doomgeneric/build.sh), [`ports/ffmpeg/env.sh:62-63`](../ports/ffmpeg/env.sh), [`subsystems/native/build.sh:161`](../subsystems/native/build.sh) |
+| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | The triple is hardcoded in 7 places across 5 files: [`CMakeLists.txt:69`](../CMakeLists.txt:69), [`tools/build-user.sh:126`](../tools/build-user.sh), [`ports/ccleste/env.sh:71-72`](../ports/ccleste/env.sh), [`ports/doomgeneric/build.sh:110`](../ports/doomgeneric/build.sh), [`ports/ffmpeg/env.sh:62-63`](../ports/ffmpeg/env.sh) |
 | `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`) |
 | Paging bootstrap and a 1 GiB direct map, no NX | L | Nothing exists today; `EFER` does not exist in 32-bit mode |
 | VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |

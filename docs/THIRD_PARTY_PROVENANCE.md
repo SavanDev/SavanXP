@@ -113,21 +113,6 @@ which is why both go into the registry.
 - Credit for the original game: Maddy Thorson and Noel Berry, per upstream's
   README
 
-### Haxe native AOT toolchain (optional)
-
-- Haxe compiler: https://github.com/HaxeFoundation/haxe, release `4.3.7`, commit
-  `e0b355c6be312c1b17382603f018cf52522ec651`
-- reflaxe: https://github.com/SomeRanDev/reflaxe, commit
-  `73a983112e039daad46b37912ab238df6bf0cf53`
-- reflaxe.CPP: https://github.com/SomeRanDev/reflaxe.CPP, commit
-  `e07ab05a32ab9d2e2717ad9bc7d1c4e18f88927b`
-- License reviewed: reflaxe and reflaxe.CPP are MIT at the pinned revisions;
-  the Haxe compiler is build-only and is not redistributed by this repository
-- Decision: `Selective port` for the optional AOT experiment
-- Distributed in: optional `/disk/bin/nativehello`, `/disk/bin/nativegui`,
-  and `/disk/bin/sxguiapp`; the Haxe compiler and reflaxe checkout remain
-  outside the image
-
 ## Bootloader
 
 ### Limine

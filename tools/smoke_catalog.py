@@ -103,6 +103,10 @@ SCENARIOS: dict[str, Scenario] = {
         "WINDOWD SMOKE PASS",
         "WINDOWD SMOKE FAIL",
         "Window manager and compositor self-test",
+        prepare=(
+            "./tools/build-user.sh --source sdk/nativedemo --name nativedemo --native",
+            "./tools/build-user.sh --source sdk/nativewidgets --name nativewidgets --native",
+        ),
     ),
     # Timeout de 900 s, y no es holgura: este smoke copia un programa entero
     # (390 KB) para tener una fixture con .sxmeta, y esa copia mide 365930 ms en esta
@@ -120,7 +124,23 @@ SCENARIOS: dict[str, Scenario] = {
         "PROGMAN SMOKE FAIL",
         "Program Manager registry self-test",
         900.0,
-        prepare=("./tools/restore_doom.sh",),
+        prepare=(
+            "./tools/restore_doom.sh",
+            "./tools/build-user.sh --source sdk/nativedemo --name nativedemo --native",
+            "./tools/build-user.sh --source sdk/nativewidgets --name nativewidgets --native",
+        ),
+    ),
+    "native-hw-smoke": _qemu_scenario(
+        "windowd-hw-native",
+        "NATIVE HW PASS",
+        "NATIVE HW FAIL",
+        "Real PS/2 keys through the production path into a native form",
+        180.0,
+        "NATIVE HW READY",
+        qmp_callback="./tools/qmp_native_hw.py",
+        prepare=(
+            "./tools/build-user.sh --source sdk/nativewidgets --name nativewidgets --native",
+        ),
     ),
     "appwiz-smoke": _qemu_scenario(
         "appwiz-selftest",
@@ -358,6 +378,15 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/floatsmoke --name floatsmoke --sse",
         ),
     ),
+    "native-test": _qemu_scenario(
+        "nativetest",
+        "NATIVE TEST PASS",
+        "NATIVE TEST FAIL",
+        "Standalone native syscall ABI test",
+        prepare=(
+            "./tools/build-user.sh --source sdk/nativetest --name nativetest --native",
+        ),
+    ),
     # Una dependencia DECLARADA que no esta en el volumen. Es el caso que decide
     # como va a funcionar el reproductor cuando FFmpeg sea libreria: el programa
     # tiene que SEGUIR VIVO y decir cual falta, en vez de desaparecer.
@@ -489,35 +518,6 @@ SCENARIOS: dict[str, Scenario] = {
         "CCLESTE SELFTEST FAIL",
         "Celeste Classic asset decoding and headless engine self-test",
         180.0,
-    ),
-    "native-guihost": _qemu_scenario(
-        "guihost",
-        "NATIVEGUI HOST PASS",
-        "NATIVEGUI HOST FAIL",
-        "Native GUI host smoke test",
-        prepare=(
-            "./subsystems/native/build.sh --name nativegui --source haxe-gui --install",
-            "./tools/build-user.sh --source subsystems/native/test/guihost.c --name nativeguihost",
-        ),
-    ),
-    "native-hello": _qemu_scenario(
-        "nativehello",
-        "NATIVE HELLO PASS",
-        "NATIVE HELLO FAIL",
-        "Native Haxe hello smoke test",
-        prepare=(
-            "./subsystems/native/build.sh --name nativehello --source haxe --install",
-        ),
-    ),
-    "native-sxgui": _qemu_scenario(
-        "sxguihost",
-        "SXGUI HOST PASS",
-        "SXGUI HOST FAIL",
-        "Native SXGUI host smoke test",
-        prepare=(
-            "./subsystems/native/build.sh --name sxguiapp --source haxe-sxgui --install",
-            "./tools/build-user.sh --source subsystems/native/test/sxguihost.c --name sxguihost",
-        ),
     ),
     "gfx2d-test": _host_scenario("gfx2d-test", "Host GFX2D test"),
     "audio-test": _host_scenario("audio-test", "Host audio mixer test"),

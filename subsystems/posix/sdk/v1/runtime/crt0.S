@@ -8,8 +8,8 @@ _start:
     # la depende.
     cld
     # Alinear el stack a 16 bytes antes del primer call: el ABI System V exige
-    # rsp alineado a 16 en cada call (rsp % 16 == 0), y SSE (doubles de Haxe en
-    # el subsistema nativo) puede emitir movaps que fallan con #GP si no lo esta.
+    # rsp alineado a 16 en cada call (rsp % 16 == 0), y SSE puede emitir
+    # movaps que fallan con #GP si no lo esta.
     andq $-16, %rsp
     # El kernel deja un canary nuevo en rdx al crear el proceso. rdx no forma
     # parte del ABI de entrada a main, asi que crt0 lo instala antes de la

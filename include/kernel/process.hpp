@@ -201,6 +201,108 @@ Process* find(uint32_t pid);
 bool copy_from_user(void* destination, uint64_t user_address, size_t count);
 bool copy_to_user(uint64_t user_address, const void* source, size_t count);
 bool validate_user_range(uint64_t user_address, size_t count, bool require_write);
+SavedContext* dispatch_posix_syscall(SavedContext* context);
+SavedContext* dispatch_native_syscall(SavedContext* context);
+// Frontera de traduccion POSIX: el dispatcher compila en su propia unidad
+// (subsystems/posix/kernel/posix_dispatch.cpp) contra estas declaraciones.
+// Los cuerpos POSIX-only viven en subsystems/posix/kernel/
+// posix_translation.cpp; kernel/process.cpp conserva el ciclo de vida, el
+// scheduler y los nucleos compartidos con el dispatcher nativo (spawn,
+// waitpid, eventos, secciones, espera simple). El detalle que la traduccion
+// necesita del kernel vive en kernel/process_detail.hpp, no aca.
+inline constexpr int kBlockedResult = -0x70000000;
+inline constexpr uint32_t kWaitAnyPid = 0xffffffffu;
+inline constexpr int kMaxSpawnArguments = 128;
+inline constexpr size_t kSpawnArgumentBytes = 8192;
+enum class ImageFailure : uint8_t {
+    none = 0,
+    not_found,
+    not_a_file,
+    read_failed,
+    bad_image,
+    no_staging_memory,
+    no_address_space,
+    no_load_memory,
+    no_process_slot,
+    no_handles,
+};
+struct SpawnArguments {
+    const char* argv[kMaxSpawnArguments + 1];
+    char storage[kSpawnArgumentBytes];
+    int argc;
+};
+uint64_t current_uptime_ms();
+void clear_wait_state(Process& proc);
+void switch_to_process(Process* target);
+bool resolve_process_path(const Process& proc, const char* input, char* output, size_t capacity);
+bool read_from_process_memory(const Process& proc, void* destination, uint64_t user_address, size_t count, bool require_write = false);
+bool write_to_process_memory(Process& proc, uint64_t user_address, const void* source, size_t count);
+bool copy_user_string(const Process& proc, uint64_t user_address, char* buffer, size_t capacity);
+void write_int_to_process_memory(Process& proc, uint64_t user_address, int value);
+savanxp_error_code image_failure_errno(ImageFailure failure);
+bool prepare_exec_image(Process& proc, const char* path, int argc, const char* const* argv, ImageFailure& failure);
+Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, ImageFailure& failure);
+// Clones the caller's handle table into a spawned child (native spawn only;
+// the POSIX spawn takes stdio). Reaps the child and reports false when the
+// clone fails, so the caller just sees the error.
+bool clone_handles_for_spawn(Process& child, const Process& parent);
+Process* child_of(uint32_t parent_pid, uint32_t pid);
+bool has_child(uint32_t parent_pid);
+Process* find_zombie_child(uint32_t parent_pid, uint32_t waited_pid);
+void reap_process(Process& proc);
+bool has_runnable_non_idle();
+SavedContext* choose_next_context(SavedContext* current_context);
+int fcntl_fd(Process& proc, uint64_t fd, uint64_t command, uint64_t value);
+int poll_fds(Process& proc, uint64_t user_fds, size_t count, int timeout_ms);
+Process* fork_process(Process& parent, const SavedContext& parent_context);
+int kill_process(Process& sender, int pid, int signal_number);
+int duplicate_fd(Process& proc, uint64_t oldfd);
+int duplicate_fd_to(Process& proc, uint64_t oldfd, uint64_t newfd);
+int close_fd(Process& proc, uint64_t fd);
+int open_node(Process& proc, const char* path, uint32_t flags);
+int create_socket_fd(Process& proc, uint64_t domain, uint64_t type, uint64_t protocol);
+int bind_fd(Process& proc, uint64_t fd, uint64_t user_address);
+int setsockopt_fd(Process& proc, uint64_t fd, uint64_t option, uint64_t value);
+int connect_fd(Process& proc, uint64_t fd, uint64_t user_address, uint32_t timeout_ms);
+int sendto_fd(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count, uint64_t user_address);
+int recvfrom_fd(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count, uint64_t user_address, uint32_t timeout_ms);
+int seek_fd(Process& proc, uint64_t fd, int64_t offset, uint64_t whence);
+int unlink_path(const char* path);
+int mkdir_path(const char* path);
+int rmdir_path(const char* path);
+int truncate_path(const char* path, uint64_t size);
+int rename_path(const char* old_path, const char* new_path);
+int stat_path(Process& proc, const char* path, uint64_t user_stat_address);
+int fstat_fd(Process& proc, uint64_t fd, uint64_t user_stat_address);
+int chdir_path(Process& proc, const char* path);
+int getcwd_path(Process& proc, uint64_t user_buffer, size_t capacity);
+int readdir_node(Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity);
+int ioctl_handle(Process& proc, uint64_t fd, uint64_t request, uint64_t argument);
+int read_handle(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count);
+int write_handle(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count);
+int create_pipe(Process& proc, uint64_t user_fd_array);
+int pipe_send_handle(Process& proc, uint64_t pipe_fd, uint64_t handle_fd);
+int pipe_receive_handle(Process& proc, uint64_t pipe_fd);
+int create_event_handle(Process& proc, uint32_t flags);
+int set_event_handle(Process& proc, uint64_t fd);
+int reset_event_handle(Process& proc, uint64_t fd);
+int create_timer_handle(Process& proc, uint32_t flags);
+int set_timer_handle(Process& proc, uint64_t fd, uint64_t due_ms, uint64_t period_ms);
+int cancel_timer_handle(Process& proc, uint64_t fd);
+int create_semaphore_handle(Process& proc, int32_t initial_count, int32_t max_count);
+int release_semaphore_handle(Process& proc, uint64_t fd, uint32_t release_count);
+int create_section_handle(Process& proc, uint64_t size, uint32_t flags);
+int open_range_section_handle(Process& proc, uint64_t fd, uint64_t offset, uint64_t length, uint32_t flags);
+int open_section_handle(Process& proc, uint64_t fd, uint32_t flags);
+int64_t map_view_base_handle(Process& proc, uint64_t fd, uint64_t base, uint32_t flags);
+int64_t map_view_handle(Process& proc, uint64_t fd, uint32_t flags);
+int unmap_view_address(Process& proc, uint64_t base_address);
+int wait_on_handle(Process& proc, uint64_t fd, int64_t timeout_ms);
+int wait_on_many_handles(Process& proc, uint64_t user_handles, size_t count, bool wait_all, int64_t timeout_ms);
+// Shared child-wait core behind both WAITPID paths (see kernel/process.cpp).
+int waitpid_child(Process& proc, int64_t waited_pid, uint64_t status_address);
+int sleep_via_timer(Process& proc, uint64_t milliseconds);
+bool copy_spawn_arguments(const Process& proc, const SavedContext& context, char* path, size_t path_capacity, SpawnArguments& arguments);
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid);
 [[noreturn]] void start_init(const char* path);
 // Entrada al scheduler de un AP, con el lock del kernel tomado y su timer ya

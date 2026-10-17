@@ -1161,6 +1161,25 @@ struct savanxp_wm_event {
     } payload;
 };
 
+/* Anillo de entrada WM -> cliente para procesos nativos, que no pueden leer
+ * el pipe (savanxp/wm_protocol.h). Mismo registro de 32 bytes, misma
+ * disciplina SPSC que la cola de launches: el WM escribe el registro y
+ * DESPUES publica head; el cliente drena hasta head y despues publica tail.
+ * Los dos contadores solo crecen (indice = secuencia % capacidad). Lleno es
+ * head - tail == capacidad y se descarta como el pipe lleno: preferimos
+ * perder input de un cliente que no drena antes que congelar la sesion. */
+#define SAVANXP_WM_INPUT_RING_CAPACITY 64u
+#define SAVANXP_WM_INPUT_RING_MAGIC 0x574D4952u
+#define SAVANXP_WM_INPUT_RING_VERSION_1 1u
+
+struct savanxp_wm_input_ring {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t head; /* lo escribe solo el WM */
+    uint64_t tail; /* lo escribe solo el cliente */
+    struct savanxp_wm_event records[SAVANXP_WM_INPUT_RING_CAPACITY];
+};
+
 struct savanxp_net_info {
     uint8_t present;
     uint8_t up;

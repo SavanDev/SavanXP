@@ -192,5 +192,3 @@ Two consequences worth remembering:
 - **One section per window.** A per-connection pool (`wl_shm_pool`) would relieve
   the 64-section limit, but sections are committed in full at creation and cannot
   grow, so a pool would only reserve memory up front.
-- **The native subsystem runtime** mirrors the new header fields but does not
-  open owned windows.

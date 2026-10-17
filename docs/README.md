@@ -31,6 +31,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`REAL_HARDWARE.md`](REAL_HARDWARE.md) — what stops SavanXP from booting real
   2003-era hardware: the 64-bit-only blockers, the driver gaps QEMU hides, and
   the routes for reaching a Compaq Evo N1020v.
+- [`KERNEL_NATIVE_API.md`](KERNEL_NATIVE_API.md) — the NT-style kernel API:
+  the native dispatcher boundary, the slice plan, and what stays invariant.
+- [`NATIVE_APPS.md`](NATIVE_APPS.md) — how to write a native Sx program:
+  headers, fixed fds, manifests, and the worked examples.
 - [`KERNEL_SECURITY.md`](KERNEL_SECURITY.md) — the kernel trust boundary and
   audit record.
 - [`SECTIONS.md`](SECTIONS.md) — section objects and views: the grant model,

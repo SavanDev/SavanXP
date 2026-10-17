@@ -1,0 +1,11 @@
+# Recursos SXE del formulario nativo. Ver docs/SXE_FORMAT.md.
+#
+# Con categoria: pide estar en el menu como cualquier app. El
+# `subsystem=native` es el espejo informativo (el loader marca por EI_OSABI,
+# que pone --native). Sin icono: usa el generico como los puertos sin arte.
+name=Native widgets
+description=Interactive native form: label, button and field (no POSIX)
+version=system
+vendor=SavanXP
+subsystem=native
+category=Accessories

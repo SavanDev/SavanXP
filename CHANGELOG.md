@@ -78,6 +78,97 @@ Cut-off notes:
   from `include/shared/version.h` instead of a hardcoded string, and the boot splash
   and the desktop stamp now show it alongside the system name.
 
+- **The native syscall dispatcher is a separate kernel unit.** It now compiles as
+  `kernel/native_dispatch.cpp` against the public process boundary instead of sharing
+  `process.cpp` internals; syscalls and the POSIX fallback behave as before.
+
+- **The kernel has an `sx::` native surface.** User-memory copy, current-process
+  identity and errors live once in `kernel/sx.cpp` (`include/kernel/sx.hpp`);
+  the native dispatcher speaks `sx::` and the `process::` wrappers keep drivers
+  compiling untouched.
+
+- **The POSIX dispatcher is a separate translation unit.** It now compiles as
+  `subsystems/posix/kernel/posix_dispatch.cpp` against the published
+  `process::` translation boundary instead of sharing `process.cpp`
+  internals; numbers, errors and the blocking protocol behave as before.
+
+- **The native ABI is standalone, with its first guest test.** `SXN_SYS_EXIT`
+  gives native processes their own minimal lifecycle via `sx::exit_current`,
+  the `< 0x1000` POSIX fallback is cut (any non-SXN number is ENOSYS), and
+  `sdk/nativetest` proves it from the guest over raw syscalls
+  (`./build.sh smoke native-test`, built with `tools/build-user.sh --native`).
+
+- **Neutral `sx::` sync primitives.** Event, timer and semaphore constructors
+  and signals live in `kernel/sx.cpp`; the `process::` translation keeps flag
+  parsing, access masks and handle allocation with identical errors and wakes.
+
+- **Native spawn/wait (`SXN_SYS_SPAWN`, `SXN_SYS_WAITPID`).** Backed by the
+  published `process::` machinery with `waitpid_child` as the shared core
+  behind both WAITPID paths; `sdk/nativetest` self-spawns and checks ECHILD,
+  reaped pid and child status.
+
+- **Native event/section/wait syscalls plus the `sxn.h` userland surface.**
+  `SXN_SYS_EVENT_CREATE/SET/RESET`, `SXN_SYS_WAIT_ONE` and
+  `SXN_SYS_SECTION_CREATE/MAP_VIEW/UNMAP_VIEW` ride the published cores over
+  the shared handle table; header-only typed wrappers in `include/sxn/sxn.h`
+  need no tool or link change, and `sdk/nativetest` proves cross-process
+  sync plus shared memory through them. Native spawn clones the caller's
+  handle table, so inherited handles arrive (POSIX spawn still takes stdio
+  only).
+
+- **First native window, proven inside real `windowd`.** `sdk/nativedemo`
+  paints a v4 client surface using SXN syscalls only (output-only: the
+  input pipe stays unread) and a new `windowd` selftest launches it through
+  the unchanged fork/dup2/exec path, composes it and samples the marker
+  from the framebuffer (`./build.sh smoke windowd-smoke`).
+
+- **Native input ring plus the `sxnwm.h` toolkit seed.** `windowd` sniffs
+  EI_OSABI at launch and routes input records to a shared ring on fd 7
+  for native clients (same 32-byte records, drop-when-full, wake signaled);
+  header-only attach/submit/composed-wait/drain over a context struct,
+  used by a demo that answers a key with green, proven end to end through
+  the real router.
+
+- **Native widgets with scripted interaction.** Label, Button and Field
+  over `sxnwm.h` with a hand 5x7 font in `include/sxn/sxnwidgets.h`;
+  `sdk/nativewidgets` counts button clicks and typed text into state
+  squares, and the selftest clicks, types and sends Esc through the real
+  router, sampling the squares from the framebuffer.
+
+- **Real PS/2 keys into a native form, native apps in the launcher.**
+  `windowd --hw-native-test` (scenario `native-hw-smoke`) drains
+  `/dev/input0` through the production path into `nativewidgets` while
+  the host taps `h`, `i`, `Esc` over QMP, asserting the typed square
+  from the framebuffer; both native demos ship `.sxres` with a menu
+  category and `progman --selftest` asserts the scan lists them.
+
+- **POSIX translation out of the kernel.** The 33 POSIX-only process
+  bodies (fds, fs, sockets, pipes, timers, semaphores, fork/kill, poll)
+  move to `subsystems/posix/kernel/posix_translation.cpp`, sharing
+  kernel machinery through the internal `kernel/process_detail.hpp`;
+  lifecycle, scheduler and shared cores stay in `kernel/process.cpp`.
+  `docs/NATIVE_APPS.md` guides native programs with examples.
+
+- **Native IPC proven over sections plus events.** `sdk/nativetest` runs a
+  50-round ping-pong ring between parent and child with strict alternation
+  (same shape as a WM submit/retire channel, no new syscalls); the
+  windowed-client design is rendezvous by inheritance, with `windowd`
+  native attach as slice 9 (see `docs/KERNEL_NATIVE_API.md`).
+
+- **Neutral `sx::` sections, views and waits.** Section constructors, view
+  map/unmap with the W^X and mask policy, and wait satisfaction/consumption
+  live in `kernel/sx.cpp`; the `process::` translation keeps flag parsing,
+  file checks, handle allocation and clock/parking orchestration. One shared
+  integer handle table per process, enforced by granted access, is the
+  decided handle model (see `docs/KERNEL_NATIVE_API.md`).
+
+### Removed
+
+- **The Haxe native experiment is removed.** `subsystems/native` (builder, SDK, apps,
+  smoke scenarios) is gone and userland is C on the POSIX SDK only. The neutral
+  `savanxp_native_abi.h` routing stays reserved for the future NT-style kernel API
+  (see `docs/SYSTEM_LAYERING.md`).
+
 ## [0.4.0] - 2026-10-08
 
 ### Added

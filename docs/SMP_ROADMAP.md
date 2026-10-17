@@ -44,15 +44,15 @@ already exists and making it hold across cores.
 
 **2. Syscalls never block on the kernel stack.** A syscall that cannot complete
 records a state and returns `kBlockedResult`
-([`process.cpp:47`](../kernel/process.cpp:47)); the waker then **retries the
+([`process.hpp:213`](../include/kernel/process.hpp:213)); the waker then **retries the
 operation on the sleeper's behalf** and completes it — see
 `wake_blocked_readers_for_pipe()`
-([`process.cpp:1377`](../kernel/process.cpp:1377)), which re-runs `try_pipe_read`
+([`process.cpp:726`](../kernel/process.cpp:726)), which re-runs `try_pipe_read`
 for every process parked on that pipe. There are no kernel threads halted
 halfway down a call stack, no sleep queues holding kernel context, and no
 stack-switching context switch: the scheduler picks a `SavedContext` and
 `iretq`s into it (`pick_next_runnable()`,
-[`process.cpp:1147`](../kernel/process.cpp:1147)). A second core therefore needs
+[`process.cpp:594`](../kernel/process.cpp:594)). A second core therefore needs
 no second copy of anything the scheduler owns — only its own idea of which
 process it is running.
 
@@ -86,7 +86,7 @@ process it is running.
 | uACPI's spinlocks and mutexes are stubs that only save and restore `IF` | [`uacpi_glue.cpp:428`](../kernel/uacpi_glue.cpp:428) |
 | The vendored `limine.h` is a 197-line subset with no `limine_mp_request` | [`vendor/limine.h`](../vendor/limine.h) |
 | QEMU is launched without `--smp`; every smoke runs on one core | [`build.sh`](../build.sh) |
-| Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:73`](../kernel/process.cpp:73) |
+| Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:61`](../kernel/process.cpp:61) |
 
 ## Phase 0 — bring the APs up — **DONE**
 

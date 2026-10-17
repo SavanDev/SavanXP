@@ -58,12 +58,6 @@ Ports are independent from the base CMake target and use the same SxFS image:
 `ccleste` downloads its pinned upstream archive and hash-verifies it, then
 installs the game assets from that same archive under `/disk/games/celeste`.
 
-The optional native Haxe experiment has its own entry point:
-
-```bash
-./subsystems/native/build.sh --name nativehello --source haxe --no-install
-```
-
 A port installer requires an existing valid image and the `sxfs-cli` produced by
 the base build. It never resets the image.
 

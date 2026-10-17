@@ -70,6 +70,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "soak")) {
         return "SOAK";
     }
+    if (spec != 0 && text_contains(spec, "windowd-hw-native")) {
+        return "NATIVE HW";
+    }
     if (spec != 0 && text_contains(spec, "windowd")) {
         return "WINDOWD SMOKE";
     }
@@ -97,14 +100,8 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "mediaplayer")) {
         return "MEDIAPLAYER SMOKE";
     }
-    if (spec != 0 && text_contains(spec, "sxgui")) {
-        return "SXGUI HOST";
-    }
-    if (spec != 0 && text_contains(spec, "guihost")) {
-        return "NATIVEGUI HOST";
-    }
-    if (spec != 0 && text_contains(spec, "hello")) {
-        return "NATIVE HELLO";
+    if (spec != 0 && text_contains(spec, "nativetest")) {
+        return "NATIVE TEST";
     }
     return "SMOKE";
 }
@@ -113,6 +110,7 @@ static int run_automation_spec(const char* spec) {
     const char* smoke_argv[] = {"/disk/bin/smoke", 0};
     const char* soak_argv[] = {"/disk/bin/gputest", "--soak", 0, 0};
     const char* windowd_argv[] = {"/bin/windowd", "--selftest", 0};
+    const char* windowd_hw_native_argv[] = {"/bin/windowd", "--hw-native-test", 0};
     const char* cursor_repro_argv[] = {"/bin/windowd", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* appwiz_selftest_argv[] = {"/bin/appwiz", "--selftest", 0};
@@ -142,10 +140,8 @@ static int run_automation_spec(const char* spec) {
     const char* tcptest_argv[] = {"/disk/bin/tcptest", 0, 0};
     const char* ntptest_argv[] = {"/disk/bin/ntptest", 0, 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
+    const char* nativetest_argv[] = {"/disk/bin/nativetest", 0};
     const char* ccleste_argv[] = {"/disk/bin/ccleste", "--selftest", 0};
-    const char* guihost_argv[] = {"/disk/bin/nativeguihost", 0};
-    const char* nativehello_argv[] = {"/disk/bin/nativehello", 0};
-    const char* sxguihost_argv[] = {"/disk/bin/sxguihost", 0};
     const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
     const char* mousetest_argv[] = {"/disk/bin/mousetest", "--selftest", 0};
     /* Tres caminos: audio solo (WAV), video solo sin contenedor (MJPEG crudo) y
@@ -163,6 +159,10 @@ static int run_automation_spec(const char* spec) {
         if (strcmp(spec, "windowd-selftest") == 0 || strcmp(spec, "windowd") == 0) {
             path = "/bin/windowd";
             argv = windowd_argv;
+            argc = 2;
+        } else if (strcmp(spec, "windowd-hw-native") == 0) {
+            path = "/bin/windowd";
+            argv = windowd_hw_native_argv;
             argc = 2;
         } else if (strcmp(spec, "progman-selftest") == 0 || strcmp(spec, "progman") == 0) {
             path = "/bin/progman";
@@ -249,6 +249,10 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/floatsmoke";
             argv = floatsmoke_argv;
             argc = 1;
+        } else if (strcmp(spec, "nativetest") == 0 || strcmp(spec, "native-test") == 0) {
+            path = "/disk/bin/nativetest";
+            argv = nativetest_argv;
+            argc = 1;
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
             path = "/disk/bin/ccleste";
             argv = ccleste_argv;
@@ -281,18 +285,6 @@ static int run_automation_spec(const char* spec) {
             path = "/disk/bin/audiotest";
             argv = audiorecord_argv;
             argc = 2;
-        } else if (strcmp(spec, "guihost") == 0 || strcmp(spec, "native-guihost") == 0) {
-            path = "/disk/bin/nativeguihost";
-            argv = guihost_argv;
-            argc = 1;
-        } else if (strcmp(spec, "nativehello") == 0 || strcmp(spec, "native-hello") == 0) {
-            path = "/disk/bin/nativehello";
-            argv = nativehello_argv;
-            argc = 1;
-        } else if (strcmp(spec, "sxguihost") == 0 || strcmp(spec, "native-sxgui") == 0) {
-            path = "/disk/bin/sxguihost";
-            argv = sxguihost_argv;
-            argc = 1;
         } else if (strcmp(spec, "kbdtest") == 0 || strcmp(spec, "kbd-selftest") == 0) {
             path = "/disk/bin/kbdtest";
             argv = kbdtest_argv;

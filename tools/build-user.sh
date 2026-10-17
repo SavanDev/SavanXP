@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build and optionally install a freestanding POSIX user program.
+# Build and optionally install a freestanding user program (POSIX by default,
+# native Sx with --native, which stamps EI_OSABI from the neutral ABI header).
 # This is intentionally separate from the in-tree CMake userland registry.
 set -euo pipefail
 
@@ -11,6 +12,7 @@ NAME=""
 SOURCE=""
 NO_INSTALL=0
 NO_COMPACT=0
+NATIVE=0
 SSE=0
 GUI=0
 AUDIO=0
@@ -34,6 +36,7 @@ Options:
   --heap-mib N      set the fixed heap size in MiB
   --no-install      build only
   --no-compact      pass --no-compact to SxFS installation
+  --native          stamp EI_OSABI as a native subsystem binary
   --output PATH     override the output ELF path
   --destination PATH install under /disk (default: /disk/bin/NAME)
 EOF
@@ -49,6 +52,7 @@ while (($#)); do
         --heap-mib) HEAP_MIB=${2:?--heap-mib requires a value}; shift 2 ;;
         --no-install) NO_INSTALL=1; shift ;;
         --no-compact) NO_COMPACT=1; shift ;;
+        --native) NATIVE=1; shift ;;
         --output) OUTPUT_PATH=${2:?--output requires a value}; shift 2 ;;
         --destination) DESTINATION=${2:?--destination requires a value}; shift 2 ;;
         -h|--help) usage; exit 0 ;;
@@ -203,6 +207,24 @@ fi
 "$LD" -nostdlib -static -T "$SDK/linker.ld" \
     -z max-page-size=0x1000 --build-id=none \
     -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
+
+if ((NATIVE)); then
+    OSABI_HEX=$(sed -n 's/^#define SXN_ELF_OSABI_NATIVE[[:space:]]\{1,\}0x\([0-9A-Fa-f][0-9A-Fa-f]*\).*/\1/p' "$ROOT/include/abi/savanxp_native_abi.h" | head -n 1)
+    [[ -n "$OSABI_HEX" ]] || {
+        echo "build-user.sh: neutral ABI header has no SXN_ELF_OSABI_NATIVE" >&2
+        exit 1
+    }
+    "$PYTHON" - "$RAW_OUTPUT" "$OSABI_HEX" <<'PY'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+if len(data) <= 7:
+    raise SystemExit("build-user.sh: generated ELF is too small for EI_OSABI")
+data[7] = int(sys.argv[2], 16)
+path.write_bytes(data)
+PY
+fi
 
 RESOURCE_ROOT="$OBJ_ROOT/sxe"
 rm -rf "$RESOURCE_ROOT"

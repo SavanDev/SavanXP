@@ -1,4 +1,5 @@
 #include "libc.h"
+#include "abi/savanxp_native_abi.h"
 #include "windowd_session.h"
 #include "windowd_appinfo.h"
 #include "desktop_wallpaper.h"
@@ -1121,11 +1122,55 @@ static int recover_compositor(struct windowd_session *session)
  * que lleva posicion absoluta -- el proximo evento corrige --, y aceptable para
  * el teclado, que se recupera solo en cuanto el cliente vuelve a leer. Siempre
  * se escribe un registro entero (ver savanxp_wm_event). */
+/* Entrada para un cliente nativo: el mismo registro va al anillo en vez de
+ * al pipe (el cliente no puede leerlo), con la misma disciplina SPSC que la
+ * cola de launches -- registro primero, head despues -- y el mismo descarte
+ * en lleno. El wake lo senala aca mismo porque, a diferencia del submit del
+ * cliente, la entrada no pasa por ningun otro aviso. */
+static int route_event_ring(const struct windowd_client *client, const struct savanxp_wm_event *event)
+{
+    struct savanxp_wm_input_ring *ring = 0;
+    uint64_t head = 0;
+
+    if (client == 0 || event == 0)
+    {
+        return 0;
+    }
+    ring = client->input_ring;
+    if (ring == 0 || ring->magic != SAVANXP_WM_INPUT_RING_MAGIC ||
+        ring->version != SAVANXP_WM_INPUT_RING_VERSION_1)
+    {
+        return 0;
+    }
+    head = ring->head;
+    if (head - ring->tail >= SAVANXP_WM_INPUT_RING_CAPACITY)
+    {
+        return 0;
+    }
+    ring->records[head % SAVANXP_WM_INPUT_RING_CAPACITY] = *event;
+    ring->records[head % SAVANXP_WM_INPUT_RING_CAPACITY].window_id = client->window_id;
+    __asm__ volatile("" ::: "memory");
+    ring->head = head + 1u;
+    if (client->wake_event_fd >= 0)
+    {
+        (void)event_set(client->wake_event_fd);
+    }
+    return 1;
+}
+
 static int route_event(const struct windowd_client *client, const struct savanxp_wm_event *event)
 {
     struct savanxp_wm_event tagged;
 
-    if (client == 0 || client->events_write_fd < 0 || event == 0)
+    if (client == 0 || event == 0)
+    {
+        return 0;
+    }
+    if (client->native_input)
+    {
+        return route_event_ring(client, event);
+    }
+    if (client->events_write_fd < 0)
     {
         return 0;
     }
@@ -1773,6 +1818,10 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     {
         (void)unmap_view(client->mapped_view);
     }
+    if (client->input_ring != 0)
+    {
+        (void)unmap_view(client->input_ring);
+    }
     if (client->window_list != 0)
     {
         (void)unmap_view(client->window_list);
@@ -1845,6 +1894,34 @@ static int create_client_surface(struct windowd_client *client)
     return section_fd;
 }
 
+/* El transporte de entrada se decide por el binario, no por el cliente: un
+ * ELF nativo (EI_OSABI) recibe el anillo en vez del pipe, sin negociacion.
+ * Lee solo la magia y el byte OSABI para no depender del formato entero. */
+static int client_binary_is_native(const char *path)
+{
+    unsigned char head[8] = {0};
+    long fd = -1;
+    long got = 0;
+
+    if (path == 0)
+    {
+        return 0;
+    }
+    fd = savanxp_open(path);
+    if (fd < 0)
+    {
+        return 0;
+    }
+    got = savanxp_read((int)fd, head, sizeof(head));
+    savanxp_close((int)fd);
+    if (got != (long)sizeof(head) || head[0] != 0x7fu || head[1] != 'E' ||
+        head[2] != 'L' || head[3] != 'F')
+    {
+        return 0;
+    }
+    return head[7] == SXN_ELF_OSABI_NATIVE;
+}
+
 static int start_client_process(
     struct windowd_client *client,
     const char *path,
@@ -1854,6 +1931,7 @@ static int start_client_process(
 {
     int section_fd = -1;
     int window_list_section_fd = -1;
+    int input_ring_fd = -1;
     int events_pipe[2] = {-1, -1};
     int shell_request_pipe[2] = {-1, -1};
     int wake_event = -1;
@@ -1871,6 +1949,33 @@ static int start_client_process(
     if (section_fd < 0)
     {
         return -1;
+    }
+
+    /* Transporte de entrada por binario: un nativo no puede leer el pipe,
+     * asi que recibe un anillo en seccion propia en vez de nada. El pipe se
+     * crea igual (el codigo de ruteo lo ignora para nativos) para no bifurcar
+     * el teardown. */
+    client->native_input = client_binary_is_native(path);
+    if (client->native_input)
+    {
+        input_ring_fd = (int)section_create(
+            sizeof(struct savanxp_wm_input_ring),
+            SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (input_ring_fd < 0)
+        {
+            goto fail;
+        }
+        client->input_ring = (struct savanxp_wm_input_ring *)map_view(
+            input_ring_fd,
+            SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (result_is_error((long)client->input_ring))
+        {
+            client->input_ring = 0;
+            goto fail;
+        }
+        memset(client->input_ring, 0, sizeof(*client->input_ring));
+        client->input_ring->magic = SAVANXP_WM_INPUT_RING_MAGIC;
+        client->input_ring->version = SAVANXP_WM_INPUT_RING_VERSION_1;
     }
 
     wake_event = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
@@ -1933,7 +2038,8 @@ static int start_client_process(
     }
     if (pid == 0)
     {
-        const int last_target = shell_role ? SAVANXP_WM_SHELL_FD_LAST : SAVANXP_WM_FD_LAST;
+        const int last_target = shell_role ? SAVANXP_WM_SHELL_FD_LAST :
+            (client->native_input ? SAVANXP_WM_FD_INPUT_RING : SAVANXP_WM_FD_LAST);
         int child_section = child_relocate_above(section_fd, last_target);
         int child_events = child_relocate_above(events_pipe[0], last_target);
         int child_wake = child_relocate_above(wake_event, last_target);
@@ -1946,6 +2052,19 @@ static int start_client_process(
             savanxp_dup2(child_submit, SAVANXP_WM_FD_SUBMIT_EVENT) < 0)
         {
             exit(1);
+        }
+        if (client->native_input)
+        {
+            /* El anillo viaja como la superficie: se duplica al fijo y lo de
+             * arriba se cierra. El hijo nativo lo mapea una sola vez al
+             * arrancar; el mapeo del padre lo mantiene vivo. */
+            int child_input_ring = child_relocate_above(input_ring_fd, last_target);
+
+            if (child_input_ring < 0 ||
+                savanxp_dup2(child_input_ring, SAVANXP_WM_FD_INPUT_RING) < 0)
+            {
+                exit(1);
+            }
         }
         if (shell_role)
         {
@@ -1975,6 +2094,7 @@ static int start_client_process(
      * sesion llena, cada fd transitorio cuenta. */
     close_fd_if_needed(&section_fd);
     close_fd_if_needed(&window_list_section_fd);
+    close_fd_if_needed(&input_ring_fd);
     close_fd_if_needed(&events_pipe[0]);
     close_fd_if_needed(&shell_request_pipe[1]);
 
@@ -2012,7 +2132,13 @@ fail:
         unmap_view(client->window_list);
         client->window_list = 0;
     }
+    if (client->input_ring != 0)
+    {
+        unmap_view(client->input_ring);
+        client->input_ring = 0;
+    }
     close_fd_if_needed(&window_list_section_fd);
+    close_fd_if_needed(&input_ring_fd);
     close_fd_if_needed(&events_pipe[0]);
     close_fd_if_needed(&events_pipe[1]);
     close_fd_if_needed(&wake_event);
@@ -4036,6 +4162,397 @@ static int windowd_owned_window_selftest(struct windowd_session *session, struct
     return 0;
 }
 
+/* Primera ventana nativa: sdk/nativedemo pinta solo con syscalls SXN (sin
+ * leer el pipe de eventos: es solo-salida) y este selftest la lanza como a
+ * cualquier cliente -- fork mas dup2 mas exec ya sirven a un binario nativo
+ * sin cambios --, compone su frame y muestrea el marcador en el
+ * framebuffer. Corre sobre la sesion principal (el compositor es exclusivo)
+ * y la ventana queda arriba por el raise del launch, asi que el centro es
+ * el pixel del demo. El color vive tambien en sdk/nativedemo/main.c
+ * (DEMO_MARKER).
+ */
+static int windowd_native_client_selftest(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    struct windowd_client *client = 0;
+    int slot = -1;
+    unsigned long deadline = 0;
+    int iteration = 0;
+    int magenta = 0;
+    int green = 0;
+    int presented = 0;
+
+    if (session == 0 || dirty == 0)
+    {
+        return 1;
+    }
+
+    slot = find_free_overlay_slot(session);
+    if (!overlay_slot_valid(slot) ||
+        launch_overlay_client(session, "/disk/bin/nativedemo", 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL native: no arranco nativedemo\n");
+        return 1;
+    }
+    client = &session->overlay_clients[slot];
+
+    deadline = uptime_ms() + 60000;
+    for (iteration = 0; iteration < 6000; ++iteration)
+    {
+        if (service_client_batches(session, dirty, client) < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL native: servicing client batches\n");
+            return 1;
+        }
+        (void)reap_dead_clients(session, dirty);
+        if (windowd_dirty_rect_valid(dirty))
+        {
+            struct sx_rect surface = windowd_client_surface_rect(client);
+            uint32_t stride = session->gfx.info.pitch / 4u;
+            uint32_t *fb = session->compositor.framebuffer;
+            uint32_t sample_x = (uint32_t)(surface.x + surface.width / 2);
+            uint32_t sample_y = (uint32_t)(surface.y + surface.height / 2);
+
+            windowd_draw_desktop(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty);
+            signal_composed_batches(session);
+            if (present_frame(session, dirty) < 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL native: present\n");
+                return 1;
+            }
+            windowd_dirty_rect_reset(dirty);
+            ++presented;
+            if (client->consumed_submit_sequence > 0 &&
+                sample_x < session->gfx.info.width && sample_y < session->gfx.info.height)
+            {
+                uint32_t sample = fb[sample_y * stride + sample_x];
+
+                if (!magenta && sample == 0x00E01050u)
+                {
+                    /* La demo espera una tecla: se la inyecta por el camino
+                     * real del router, que para nativos escribe al anillo. */
+                    struct savanxp_input_event key;
+
+                    magenta = 1;
+                    memset(&key, 0, sizeof(key));
+                    key.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+                    key.key = (uint32_t)'A';
+                    key.ascii = (int32_t)'A';
+                    (void)route_key(client, &key);
+                }
+                else if (magenta && !green && sample == 0x0000FF00u)
+                {
+                    green = 1;
+                }
+            }
+        }
+        if (green && client->pid <= 0)
+        {
+            break;
+        }
+        if (uptime_ms() >= deadline)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL native: timeout sin componer\n");
+            return 1;
+        }
+        sleep_ms(4);
+    }
+
+    if (!green)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL native: el verde no aparecio\n");
+        return 1;
+    }
+
+    printf("DESKTOP SMOKE native client ok presented=%d\n", presented);
+    return 0;
+}
+
+/* Muestra un pixel de la superficie ya compuesta, en coords locales a la
+ * ventana. Fuera de rango devuelve un valor imposible (los marcadores del
+ * test son opacos, sin alfa). */
+static uint32_t windowd_sample_surface_pixel(
+    const struct windowd_session *session,
+    const struct sx_rect *surface,
+    int local_x,
+    int local_y)
+{
+    uint32_t stride = 0;
+    uint32_t sample_x = 0;
+    uint32_t sample_y = 0;
+
+    if (session == 0 || surface == 0)
+    {
+        return 0xFFFFFFFFu;
+    }
+    stride = session->gfx.info.pitch / 4u;
+    sample_x = (uint32_t)(surface->x + local_x);
+    sample_y = (uint32_t)(surface->y + local_y);
+    if (sample_x >= session->gfx.info.width || sample_y >= session->gfx.info.height)
+    {
+        return 0xFFFFFFFFu;
+    }
+    return session->compositor.framebuffer[sample_y * stride + sample_x];
+}
+
+/* Layout de sdk/nativewidgets/main.c, en coords locales a la superficie. */
+#define NATIVE_WIDGETS_BUTTON_CX 80
+#define NATIVE_WIDGETS_BUTTON_CY 54
+#define NATIVE_WIDGETS_FIELD_CX 120
+#define NATIVE_WIDGETS_FIELD_CY 92
+#define NATIVE_WIDGETS_SQ_1_CX 28
+#define NATIVE_WIDGETS_SQ_2_CX 52
+#define NATIVE_WIDGETS_SQ_CY 128
+#define NATIVE_WIDGETS_SQ_OFF 0x00222222u
+#define NATIVE_WIDGETS_SQ_ON 0x0000FF00u
+
+/* Forma interactiva nativa: click en el boton, tipeo en el campo y Esc,
+ * todo por el anillo de entrada, con los cuadrados de estado muestreados
+ * del framebuffer. Corre despues del cliente solo-salida, en slot libre. */
+static int windowd_native_widgets_selftest(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    struct windowd_client *client = 0;
+    struct sx_rect surface = {0, 0, 0, 0};
+    int slot = -1;
+    unsigned long deadline = 0;
+    int iteration = 0;
+    int composed = 0;
+    int clicked = 0;
+    int typed = 0;
+    int presented = 0;
+
+    if (session == 0 || dirty == 0)
+    {
+        return 1;
+    }
+
+    slot = find_free_overlay_slot(session);
+    if (!overlay_slot_valid(slot) ||
+        launch_overlay_client(session, "/disk/bin/nativewidgets", 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL widgets: no arranco nativewidgets\n");
+        return 1;
+    }
+    client = &session->overlay_clients[slot];
+
+    deadline = uptime_ms() + 90000;
+    for (iteration = 0; iteration < 9000; ++iteration)
+    {
+        if (service_client_batches(session, dirty, client) < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL widgets: servicing client batches\n");
+            return 1;
+        }
+        (void)reap_dead_clients(session, dirty);
+        if (windowd_dirty_rect_valid(dirty))
+        {
+            surface = windowd_client_surface_rect(client);
+            windowd_draw_desktop(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty);
+            signal_composed_batches(session);
+            if (present_frame(session, dirty) < 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL widgets: present\n");
+                return 1;
+            }
+            windowd_dirty_rect_reset(dirty);
+            ++presented;
+            if (!composed && client->consumed_submit_sequence > 0)
+            {
+                /* Forma pintada: los cuadrados arrancan apagados. */
+                if (windowd_sample_surface_pixel(session, &surface, NATIVE_WIDGETS_SQ_1_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_OFF &&
+                    windowd_sample_surface_pixel(session, &surface, NATIVE_WIDGETS_SQ_2_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_OFF)
+                {
+                    struct savanxp_input_event key;
+
+                    composed = 1;
+                    /* Click en el boton: down y up en su centro. */
+                    (void)route_pointer(client,
+                        surface.x + NATIVE_WIDGETS_BUTTON_CX, surface.y + NATIVE_WIDGETS_BUTTON_CY,
+                        0, SAVANXP_MOUSE_BUTTON_LEFT);
+                    (void)route_pointer(client,
+                        surface.x + NATIVE_WIDGETS_BUTTON_CX, surface.y + NATIVE_WIDGETS_BUTTON_CY,
+                        0, 0);
+                    /* Foco al campo y dos letras. */
+                    (void)route_pointer(client,
+                        surface.x + NATIVE_WIDGETS_FIELD_CX, surface.y + NATIVE_WIDGETS_FIELD_CY,
+                        0, SAVANXP_MOUSE_BUTTON_LEFT);
+                    (void)route_pointer(client,
+                        surface.x + NATIVE_WIDGETS_FIELD_CX, surface.y + NATIVE_WIDGETS_FIELD_CY,
+                        0, 0);
+                    memset(&key, 0, sizeof(key));
+                    key.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+                    key.key = (uint32_t)'h';
+                    key.ascii = (int32_t)'h';
+                    (void)route_key(client, &key);
+                    memset(&key, 0, sizeof(key));
+                    key.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+                    key.key = (uint32_t)'i';
+                    key.ascii = (int32_t)'i';
+                    (void)route_key(client, &key);
+                }
+            }
+            if (composed && !clicked &&
+                windowd_sample_surface_pixel(session, &surface, NATIVE_WIDGETS_SQ_1_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_ON)
+            {
+                clicked = 1;
+                printf("DESKTOP SMOKE widgets click ok\n");
+            }
+            if (clicked && !typed &&
+                windowd_sample_surface_pixel(session, &surface, NATIVE_WIDGETS_SQ_2_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_ON)
+            {
+                struct savanxp_input_event key;
+
+                typed = 1;
+                printf("DESKTOP SMOKE widgets typed ok\n");
+                memset(&key, 0, sizeof(key));
+                key.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+                key.key = 27u;
+                key.ascii = 27;
+                (void)route_key(client, &key);
+            }
+        }
+        if (typed && client->pid <= 0)
+        {
+            break;
+        }
+        if (uptime_ms() >= deadline)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL widgets: timeout sin completar\n");
+            return 1;
+        }
+        sleep_ms(4);
+    }
+
+    if (!typed || client->pid > 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL widgets: no cerro\n");
+        return 1;
+    }
+
+    printf("DESKTOP SMOKE native widgets ok presented=%d\n", presented);
+    return 0;
+}
+
+/* Prueba de entrada de hardware real a un cliente nativo: la unica parte
+ * sintetizada es el click que enfoca el campo (el puntero ya tiene su propio
+ * pointer-smoke en el driver y comparte el mismo anillo). Las letras y el Esc
+ * llegan por QMP -> PS/2 -> /dev/input0 y se drenan por el camino de
+ * produccion (wm_handle_key al cliente activo), nunca por route_key directo:
+ * si el verde del cuadrado 2 sale del framebuffer, el anillo nativo habla con
+ * hardware de verdad. El host inyecta h, i, Esc al ver NATIVE HW READY. */
+static int windowd_native_hw_selftest(void)
+{
+    struct windowd_session session;
+    struct windowd_dirty_rect dirty = {0};
+    struct windowd_client *client = 0;
+    struct sx_rect surface = {0, 0, 0, 0};
+    struct savanxp_input_event key_event;
+    int slot = -1;
+    unsigned long deadline = 0;
+    int iteration = 0;
+    int ready = 0;
+    int typed = 0;
+    int presented = 0;
+    long count = 0;
+
+    memset(&session, 0, sizeof(session));
+    if (open_compositor_session(&session) < 0)
+    {
+        puts_fd(2, "NATIVE HW FAIL compositor startup\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+
+    slot = find_free_overlay_slot(&session);
+    if (!overlay_slot_valid(slot) ||
+        launch_overlay_client(&session, "/disk/bin/nativewidgets", 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
+    {
+        puts_fd(2, "NATIVE HW FAIL no arranco nativewidgets\n");
+        close_compositor_session(&session);
+        return 1;
+    }
+    client = &session.overlay_clients[slot];
+
+    deadline = uptime_ms() + 120000;
+    for (iteration = 0; iteration < 30000; ++iteration)
+    {
+        /* Camino de produccion: del driver al cliente activo, igual que en la
+         * sesion real. wm_handle_key consume hotkeys; lo demas va al activo,
+         * que tras el launch es nativewidgets (raise_overlay lo activa). */
+        while ((count = savanxp_read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
+        {
+            if (wm_handle_key(&session, &key_event, &dirty))
+            {
+                continue;
+            }
+            (void)route_key(active_client(&session), &key_event);
+        }
+        if (service_client_batches(&session, &dirty, client) < 0)
+        {
+            puts_fd(2, "NATIVE HW FAIL servicing client batches\n");
+            close_compositor_session(&session);
+            return 1;
+        }
+        (void)reap_dead_clients(&session, &dirty);
+        if (windowd_dirty_rect_valid(&dirty))
+        {
+            surface = windowd_client_surface_rect(client);
+            windowd_draw_desktop(&session, (int)session.gfx.info.width - 20, (int)session.gfx.info.height - 20, &dirty);
+            signal_composed_batches(&session);
+            if (present_frame(&session, &dirty) < 0)
+            {
+                puts_fd(2, "NATIVE HW FAIL present\n");
+                close_compositor_session(&session);
+                return 1;
+            }
+            windowd_dirty_rect_reset(&dirty);
+            ++presented;
+            if (!ready && client->consumed_submit_sequence > 0)
+            {
+                if (windowd_sample_surface_pixel(&session, &surface, NATIVE_WIDGETS_SQ_1_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_OFF &&
+                    windowd_sample_surface_pixel(&session, &surface, NATIVE_WIDGETS_SQ_2_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_OFF)
+                {
+                    ready = 1;
+                    /* Foco al campo por el camino sintetico; lo que se prueba
+                     * por hardware es el teclado, no el puntero. */
+                    (void)route_pointer(client,
+                        surface.x + NATIVE_WIDGETS_FIELD_CX, surface.y + NATIVE_WIDGETS_FIELD_CY,
+                        0, SAVANXP_MOUSE_BUTTON_LEFT);
+                    (void)route_pointer(client,
+                        surface.x + NATIVE_WIDGETS_FIELD_CX, surface.y + NATIVE_WIDGETS_FIELD_CY,
+                        0, 0);
+                    printf("NATIVE HW READY\n");
+                }
+            }
+            if (ready && !typed &&
+                windowd_sample_surface_pixel(&session, &surface, NATIVE_WIDGETS_SQ_2_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_ON)
+            {
+                typed = 1;
+                printf("NATIVE HW typed ok (real PS/2 through input ring)\n");
+            }
+        }
+        if (typed && client->pid <= 0)
+        {
+            break;
+        }
+        if (uptime_ms() >= deadline)
+        {
+            puts_fd(2, "NATIVE HW FAIL timeout sin completar\n");
+            close_compositor_session(&session);
+            return 1;
+        }
+        sleep_ms(4);
+    }
+
+    close_compositor_session(&session);
+    if (!typed)
+    {
+        puts_fd(2, "NATIVE HW FAIL sin verde por hardware\n");
+        return 1;
+    }
+    printf("NATIVE HW PASS presented=%d\n", presented);
+    return 0;
+}
+
 static int windowd_selftest(void)
 {
     struct windowd_session session;
@@ -4916,6 +5433,18 @@ static int windowd_selftest(void)
         failed = 1;
     }
 
+    /* Ventana nativa (sobre esta sesion: el compositor es exclusivo). */
+    if (!failed && windowd_native_client_selftest(&session, &dirty) != 0)
+    {
+        failed = 1;
+    }
+
+    /* Forma nativa interactiva, mismo slot libre despues del reap. */
+    if (!failed && windowd_native_widgets_selftest(&session, &dirty) != 0)
+    {
+        failed = 1;
+    }
+
     /* Ultimo: llena la sesion, y lo que queda despues ya no se compone. */
     if (!failed && windowd_capacity_selftest(&session) != 0)
     {
@@ -5673,6 +6202,11 @@ int main(int argc, char **argv)
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--cursor-repro") == 0)
     {
         return windowd_cursor_repro();
+    }
+
+    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--hw-native-test") == 0)
+    {
+        return windowd_native_hw_selftest();
     }
 
     if (open_compositor_session(&session) < 0)
