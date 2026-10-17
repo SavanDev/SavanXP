@@ -7,7 +7,7 @@
 #include "kernel/device.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 
@@ -30,31 +30,31 @@ uint32_t g_owner_pid = 0;
 // a otro reproducir, ni viceversa.
 uint32_t g_capture_owner_pid = 0;
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
 int audio_read(uint64_t user_buffer, size_t count) {
     savanxp_audio_info info = {};
     if (!audio::capture_ready() || !audio::get_info(info)) {
-        return negative_error(SAVANXP_ENODEV);
+        return negative_error(SX_ENODEV);
     }
     if (count == 0) {
         return 0;
     }
     if (info.frame_bytes == 0 || (count % info.frame_bytes) != 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (!process::validate_user_range(user_buffer, count, true)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     const uint32_t pid = process::current_pid();
     if (pid == 0) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (g_capture_owner_pid != 0 && g_capture_owner_pid != pid) {
-        return negative_error(SAVANXP_EBUSY);
+        return negative_error(SX_EBUSY);
     }
 
     const bool acquired_owner = g_capture_owner_pid == 0;
@@ -67,7 +67,7 @@ int audio_read(uint64_t user_buffer, size_t count) {
             g_capture_owner_pid = 0;
         }
         audio::capture_stop();
-        return negative_error(SAVANXP_EIO);
+        return negative_error(SX_EIO);
     }
 
     const uint32_t period = info.period_bytes != 0 ? info.period_bytes : static_cast<uint32_t>(count);
@@ -77,7 +77,7 @@ int audio_read(uint64_t user_buffer, size_t count) {
         const uint32_t chunk = static_cast<uint32_t>(remaining > period ? period : remaining);
         const int result = audio::capture_read_period(user_buffer + transferred, chunk);
         if (result != 0) {
-            return result < 0 ? result : negative_error(SAVANXP_EIO);
+            return result < 0 ? result : negative_error(SX_EIO);
         }
         transferred += chunk;
     }
@@ -88,24 +88,24 @@ int audio_read(uint64_t user_buffer, size_t count) {
 int audio_write(uint64_t user_buffer, size_t count) {
     savanxp_audio_info info = {};
     if (!audio::ready() || !audio::get_info(info)) {
-        return negative_error(SAVANXP_ENODEV);
+        return negative_error(SX_ENODEV);
     }
     if (count == 0) {
         return 0;
     }
     if (info.frame_bytes == 0 || (count % info.frame_bytes) != 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (!process::validate_user_range(user_buffer, count, false)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     const uint32_t pid = process::current_pid();
     if (pid == 0) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (g_owner_pid != 0 && g_owner_pid != pid) {
-        return negative_error(SAVANXP_EBUSY);
+        return negative_error(SX_EBUSY);
     }
 
     const bool acquired_owner = g_owner_pid == 0;
@@ -118,7 +118,7 @@ int audio_write(uint64_t user_buffer, size_t count) {
             g_owner_pid = 0;
         }
         audio::stop();
-        return negative_error(SAVANXP_EIO);
+        return negative_error(SX_EIO);
     }
 
     const uint32_t period = info.period_bytes != 0 ? info.period_bytes : static_cast<uint32_t>(count);
@@ -128,7 +128,7 @@ int audio_write(uint64_t user_buffer, size_t count) {
         const uint32_t chunk = static_cast<uint32_t>(remaining > period ? period : remaining);
         const int result = audio::submit_period(user_buffer + transferred, chunk);
         if (result != 0) {
-            return result < 0 ? result : negative_error(SAVANXP_EIO);
+            return result < 0 ? result : negative_error(SX_EIO);
         }
         transferred += chunk;
     }
@@ -141,30 +141,30 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
         case AUDIO_IOC_GET_INFO: {
             savanxp_audio_info info = {};
             if (!audio::ready() || !audio::get_info(info)) {
-                return negative_error(SAVANXP_ENODEV);
+                return negative_error(SX_ENODEV);
             }
             if (!process::validate_user_range(argument, sizeof(info), true)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             return process::copy_to_user(argument, &info, sizeof(info))
                 ? 0
-                : negative_error(SAVANXP_EINVAL);
+                : negative_error(SX_EINVAL);
         }
         case AUDIO_IOC_SET_VOLUME:
         case AUDIO_IOC_SET_MUTED: {
             // Mismo corte que INPUT_IOC_SET_LAYOUT: mutar el estado
             // compartido exige escritura. Leerlo, no.
             if ((granted_access & object::access_write) == 0) {
-                return negative_error(SAVANXP_EACCES);
+                return negative_error(SX_EACCES);
             }
             if (request == AUDIO_IOC_SET_VOLUME) {
                 if (!audio::set_master_volume(static_cast<uint32_t>(argument))) {
-                    return negative_error(SAVANXP_EINVAL);
+                    return negative_error(SX_EINVAL);
                 }
                 return 0;
             }
             if (argument != 0 && argument != 1) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             audio::set_master_muted(argument != 0);
             return 0;
@@ -174,7 +174,7 @@ int audio_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
         case AUDIO_IOC_GET_MUTED:
             return audio::master_muted() ? 1 : 0;
         default:
-            return negative_error(SAVANXP_ENOSYS);
+            return negative_error(SX_ENOSYS);
     }
 }
 

@@ -8,7 +8,7 @@
 #include "kernel/ps2.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 

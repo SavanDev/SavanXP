@@ -790,7 +790,7 @@ ports.
 [tools/gen_sxe_resources.py](../tools/gen_sxe_resources.py) turns the manifests
 into blobs. **It does not duplicate a single number**: magics, tags, versions,
 sizes and caps come from `include/sxe/sxe_format.h`; the launch flags from
-`savanxp/syscall.h`; the native OSABI from
+`include/abi/savanxp_abi.h`; the native OSABI from
 `include/abi/savanxp_native_abi.h`. It is the same criterion as the
 header-driven source-tree check: a format copied by hand between reader and
 generator drifts apart, and the failure is silent.

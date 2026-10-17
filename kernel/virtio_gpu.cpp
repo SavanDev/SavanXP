@@ -492,7 +492,7 @@ void fail_device(const char* reason);
 void gpu_irq();
 void pause_briefly();
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -611,7 +611,7 @@ void signal_driver_event(object::EventObject*& event_object) {
 int export_driver_event_handle(object::EventObject*& event_object) {
     const uint32_t access = object::access_query | object::access_modify | object::access_synchronize;
     if (!ensure_driver_event(event_object)) {
-        return negative_error(SAVANXP_ENOMEM);
+        return negative_error(SX_ENOMEM);
     }
     return process::export_handle(&event_object->header, access, object::handle_none);
 }

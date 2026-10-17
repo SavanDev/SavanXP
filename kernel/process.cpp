@@ -79,7 +79,7 @@ void write_cr3(uint64_t value) {
     asm volatile("mov %0, %%cr3" : : "r"(value) : "memory");
 }
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -185,14 +185,19 @@ void set_process_name(process::Process& proc, const char* path) {
     proc.name[index] = '\0';
 }
 
-void set_process_cwd_root(process::Process& proc) {
-    memset(proc.cwd, 0, sizeof(proc.cwd));
-    strcpy(proc.cwd, "/");
-}
-
-
-
-
+/*
+ * Estado privado del subsistema (rebanada B de aislamiento).
+ *
+ * El kernel reserva y libera estos bytes y NO mira dentro: lo unico que sabe
+ * es cuanto pide cada subsistema, declarado en
+ * subsystem::register_process_state_size. Por eso Process ya no tiene campo
+ * cwd: el directorio actual es estado de resolucion de rutas de POSIX y vive
+ * en el estado que POSIX declara (subsystems/posix/kernel/
+ * posix_process_state.hpp). Un kernel sin POSIX no gasta un byte en esto.
+ *
+ * ensure_subsystem_state, free_subsystem_state y copy_subsystem_state viven
+ * en namespace process, mas abajo, con el resto de la superficie publicada.
+ */
 
 void release_kernel_stack(process::Process& proc) {
     if (proc.kernel_stack_base == 0 || proc.kernel_stack_size == 0) {
@@ -244,7 +249,7 @@ void free_pipe_if_unused(process::Pipe* pipe) {
 
 void wake_blocked_readers_for_pipe(process::Pipe& pipe);
 void wake_blocked_writers_for_pipe(process::Pipe& pipe);
-void recheck_poll_waiters();
+void recheck_parked_processes(uint64_t current_tick, bool honour_deadline);
 void release_all_handles(process::Process& proc);
 
 
@@ -256,7 +261,7 @@ int allocate_fd_slot(process::Process& proc) {
             return static_cast<int>(fd);
         }
     }
-    return negative_error(SAVANXP_EBADF);
+    return negative_error(SX_EBADF);
 }
 
 
@@ -505,7 +510,7 @@ process::Process* create_idle_process() {
     proc->kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
     proc->kernel_stack_size = process::detail::kKernelStackPages * memory::kPageSize;
     set_process_name(*proc, "idle");
-    set_process_cwd_root(*proc);
+    process::ensure_subsystem_state(*proc);
 
     memory::PageAllocation code_page = {};
     memory::PageAllocation stack_page = {};
@@ -647,14 +652,6 @@ int complete_blocked_write(process::Process& proc, int result) {
     return result;
 }
 
-int complete_blocked_wait(process::Process& proc, int result) {
-    clear_wait_state(proc);
-    proc.context->rax = static_cast<uint64_t>(result);
-    proc.state = process::State::ready;
-    process::detail::reset_time_slice(proc);
-    note_woken(proc);
-    return result;
-}
 
 size_t pipe_copy_out(process::Process& proc, process::Pipe& pipe, uint64_t user_address, size_t count) {
     const size_t to_copy = count < pipe.size ? count : pipe.size;
@@ -718,7 +715,7 @@ void wake_wait_timeouts(uint64_t current_tick) {
             continue;
         }
 
-        complete_blocked_wait(proc, negative_error(SAVANXP_ETIMEDOUT));
+        process::detail::complete_blocked_wait(proc, negative_error(SX_ETIMEDOUT));
     }
 }
 
@@ -745,7 +742,7 @@ void wake_blocked_readers_for_pipe(process::Pipe& pipe) {
     }
 
     // Y los que esperaban ese pipe por poll en vez de por read.
-    recheck_poll_waiters();
+    recheck_parked_processes(0, false);
 }
 
 void wake_blocked_writers_for_pipe(process::Pipe& pipe) {
@@ -784,7 +781,7 @@ void wake_blocked_writers_for_pipe(process::Pipe& pipe) {
     }
 
     // Hacer lugar en el pipe es lo que un poll por POLLOUT esta esperando.
-    recheck_poll_waiters();
+    recheck_parked_processes(0, false);
 }
 
 
@@ -834,34 +831,9 @@ bool open_file_has_hangup(const object::IoObject& file) {
     }
 }
 
-short poll_open_file(const object::IoObject* file, short events) {
-    if (file == nullptr) {
-        return static_cast<short>(SAVANXP_POLLNVAL);
-    }
-
-    short revents = 0;
-    if ((events & SAVANXP_POLLIN) != 0 && open_file_can_read(*file)) {
-        revents = static_cast<short>(revents | SAVANXP_POLLIN);
-    }
-    if ((events & SAVANXP_POLLOUT) != 0 && open_file_can_write(*file)) {
-        revents = static_cast<short>(revents | SAVANXP_POLLOUT);
-    }
-    if (open_file_has_hangup(*file)) {
-        revents = static_cast<short>(revents | SAVANXP_POLLHUP);
-    }
-    return revents;
-}
 
 
 
-int complete_blocked_poll(process::Process& proc, int result) {
-    clear_wait_state(proc);
-    proc.context->rax = static_cast<uint64_t>(result);
-    proc.state = process::State::ready;
-    process::detail::reset_time_slice(proc);
-    note_woken(proc);
-    return result;
-}
 
 /*
  * poll() bloquea al proceso, no gira en su contexto.
@@ -874,25 +846,19 @@ int complete_blocked_poll(process::Process& proc, int result) {
  * de trabajo real. Ver docs/SYSTEM_MONITORING.md.
  *
  * Ahora se prueba una vez y, si no hay nada listo, el proceso se estaciona con
- * WaitReason::poll y lo despierta wake_poll_waiters() desde el tick. La
+ * su subsistema y lo despierta wake_parked_waiters() desde el tick. La
  * granularidad de la espera no cambia: el bucle viejo tampoco miraba mas
  * seguido que eso, porque entre chequeo y chequeo estaba halteado.
  */
-void complete_ready_poll_waiters(uint64_t current_tick, bool honour_deadline) {
+void recheck_parked_processes(uint64_t current_tick, bool honour_deadline) {
     for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_wait || proc.wait_reason != process::WaitReason::poll) {
+        // El kernel solo sabe que el proceso esta estacionado con vencimiento:
+        // QUE esta esperando es de la capa que lo estaciono (rebanada C). Antes
+        // decia wait_reason == poll y reevaluaba los descriptores aqui mismo.
+        if (proc.state != process::State::blocked_wait) {
             continue;
         }
-
-        const int ready = process::detail::evaluate_poll_entries(proc);
-        const bool expired = honour_deadline && proc.wake_deadline_ms != 0 && proc.wake_deadline_ms <= current_tick;
-        if (ready == 0 && !expired) {
-            continue;
-        }
-        // El commit puede fallar solo si el proceso dejo de tener mapeado su
-        // propio arreglo, que estando parado no puede pasar; si pasara, se lo
-        // despierta con el error en vez de dejarlo esperando para siempre.
-        complete_blocked_poll(proc, process::detail::commit_poll_entries(proc) ? ready : negative_error(SAVANXP_EINVAL));
+        subsystem::recheck_parked_process(proc, current_tick, honour_deadline);
     }
 }
 
@@ -910,15 +876,11 @@ void complete_ready_poll_waiters(uint64_t current_tick, bool honour_deadline) {
  * Esto lo devuelve, y de paso mejor que antes: se despierta por el evento y no
  * por la siguiente interrupcion cualquiera.
  */
-void recheck_poll_waiters() {
-    complete_ready_poll_waiters(0, false);
-}
-
-void wake_poll_waiters(uint64_t current_tick) {
+void wake_parked_waiters(uint64_t current_tick) {
     bool any_waiting = false;
 
     for (const process::Process& proc : g_processes) {
-        if (proc.state == process::State::blocked_wait && proc.wait_reason == process::WaitReason::poll) {
+        if (proc.state == process::State::blocked_wait) {
             any_waiting = true;
             break;
         }
@@ -928,12 +890,12 @@ void wake_poll_waiters(uint64_t current_tick) {
     }
 
     net::poll();
-    complete_ready_poll_waiters(current_tick, true);
+    recheck_parked_processes(current_tick, true);
 }
 
 /*
  * Re-intenta los read() estacionados sobre sockets. Es el gemelo de
- * wake_poll_waiters() y tiene el mismo motivo para llamar a net::poll(): el
+ * wake_parked_waiters() y tiene el mismo motivo para llamar a net::poll(): el
  * pump de red no tiene latido propio, y el que espera datos no puede ser el que
  * los va a buscar si esta dormido.
  *
@@ -981,12 +943,12 @@ void wake_blocked_socket_readers(uint64_t current_tick) {
         int result = net::read_socket_bytes(file->socket, scratch, want, true);
         if (result > 0 &&
             !write_to_process_memory(proc, proc.blocked_read_buffer, scratch, static_cast<size_t>(result))) {
-            result = negative_error(SAVANXP_EINVAL);
+            result = negative_error(SX_EINVAL);
         }
-        if (result == negative_error(SAVANXP_EAGAIN)) {
+        if (result == negative_error(SX_EAGAIN)) {
             if (proc.wake_deadline_ms != 0 && proc.wake_deadline_ms <= current_tick) {
                 proc.wake_deadline_ms = 0;
-                complete_blocked_read(proc, negative_error(SAVANXP_ETIMEDOUT));
+                complete_blocked_read(proc, negative_error(SX_ETIMEDOUT));
             }
             continue;
         }
@@ -996,12 +958,21 @@ void wake_blocked_socket_readers(uint64_t current_tick) {
 }
 
 
-void note_parent_sigchld(process::Process& child) {
-    process::Process* parent = process::find(child.parent_pid);
-    if (parent != nullptr) {
-        parent->pending_signals |= process::signal_sigchld;
-        parent->last_signal = SAVANXP_SIGCHLD;
-    }
+/*
+ * Aviso al padre de que su hijo termino (rebanada D de aislamiento).
+ *
+ * Antes esto marcaba los bits de senal pendiente del proceso con SIGCHLD y
+ * nada mas: ningun camino del kernel los leia, no hay entrega de senales a
+ * userland (no hay sigaction ni frame de senal), asi que eran estado muerto
+ * que solo servia para nombrar senales POSIX en el kernel. Lo que de verdad
+ * despierta a un padre esperando a su hijo es wake_waiting_parent(), que es
+ * neutro y se queda.
+ *
+ * El aviso de que un hijo termino, para el que espera, sigue siendo
+ * waitpid -- que el subsistema nativo tambien usa (SXN_SYS_WAITPID).
+ */
+void note_child_exited(process::Process& child) {
+    (void)child;
 }
 
 
@@ -1014,7 +985,6 @@ namespace detail {
 // Forward declarations; definitions follow in file order.
 uint64_t now_ms();
 void proc_log(const char* format, ...);
-uint32_t signal_flag_for(int signal_number);
 void reset_time_slice(Process& proc);
 uint32_t init_pid();
 Process* allocate_process_slot(bool idle);
@@ -1032,9 +1002,11 @@ object::Header* lookup_handle(Process& proc, uint64_t fd, uint32_t desired_acces
 Pipe* allocate_pipe();
 int try_pipe_read(Process& proc, object::IoObject& file, uint64_t user_address, size_t count);
 int pipe_write_chunk(Process& proc, Pipe& pipe, uint64_t user_address, size_t count, size_t progress);
-int evaluate_poll_entries(Process& proc);
-bool commit_poll_entries(Process& proc);
 int begin_object_wait(Process& proc, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
+// Los usa tambien la traduccion POSIX: el fin de un poll y la evaluacion de
+// un descriptor. El kernel no los llama para si (rebanada C).
+int complete_blocked_wait(Process& proc, int result);
+short poll_open_file(const object::IoObject* file, short events);
 void wake_waiters_for_object(object::Header* handle_object);
 void terminate_process(Process& proc, int exit_code);
 bool vnode_has_open_references(const vfs::Vnode& node);
@@ -1059,22 +1031,6 @@ void proc_log(const char* format, ...) {
     va_end(args);
 }
 
-uint32_t signal_flag_for(int signal_number) {
-    switch (signal_number) {
-        case SAVANXP_SIGINT:
-            return process::signal_sigint;
-        case SAVANXP_SIGKILL:
-            return process::signal_sigkill;
-        case SAVANXP_SIGPIPE:
-            return process::signal_sigpipe;
-        case SAVANXP_SIGTERM:
-            return process::signal_sigterm;
-        case SAVANXP_SIGCHLD:
-            return process::signal_sigchld;
-        default:
-            return process::signal_none;
-    }
-}
 
 void reset_time_slice(process::Process& proc) {
     proc.time_slice = proc.idle ? 1 : kDefaultTimeSlice;
@@ -1098,7 +1054,7 @@ process::Process* allocate_process_slot(bool idle) {
             slot.pid = g_next_pid++;
             slot.state = process::State::ready;
             slot.idle = idle;
-            reset_time_slice(slot);
+            process::detail::reset_time_slice(slot);
             arch::x86_64::fpu_init_area(slot.fpu_state);
             return &slot;
         }
@@ -1124,7 +1080,8 @@ void release_process_resources(process::Process& proc) {
         object::release(header);
         proc.sleep_timer = nullptr;
     }
-    release_address_space(proc);
+    free_subsystem_state(proc);
+    process::detail::release_address_space(proc);
     release_kernel_stack(proc);
 }
 
@@ -1141,7 +1098,7 @@ object::IoObject* allocate_io_object() {
 }
 
 process::Pipe* allocate_pipe() {
-    for (size_t index = 0; index < kMaxPipeCount; ++index) {
+    for (size_t index = 0; index < process::detail::kMaxPipeCount; ++index) {
         process::Pipe& pipe = g_pipes[index];
         if (!pipe.in_use) {
             memset(&pipe, 0, sizeof(pipe));
@@ -1164,7 +1121,7 @@ void discard_io_object(object::IoObject*& file_ptr) {
 
 int install_handle(process::Process& proc, int fd, object::Header* handle_object, uint32_t access, uint32_t flags) {
     if (fd < 0 || fd >= static_cast<int>(process::kMaxFileHandles) || handle_object == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
 
     if (proc.handles[fd].object != nullptr) {
@@ -1188,7 +1145,7 @@ int allocate_fd(process::Process& proc, object::Header* handle_object, uint32_t 
 int try_pipe_read(process::Process& proc, object::IoObject& file, uint64_t user_address, size_t count) {
     process::Pipe* pipe = file.pipe;
     if (pipe == nullptr || !pipe->in_use) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (count == 0) {
         return 0;
@@ -1199,7 +1156,7 @@ int try_pipe_read(process::Process& proc, object::IoObject& file, uint64_t user_
 
     const size_t copied = pipe_copy_out(proc, *pipe, user_address, count);
     if (copied == 0 && count != 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     wake_blocked_writers_for_pipe(*pipe);
     return static_cast<int>(copied);
@@ -1207,34 +1164,34 @@ int try_pipe_read(process::Process& proc, object::IoObject& file, uint64_t user_
 
 int pipe_write_chunk(process::Process& proc, process::Pipe& pipe, uint64_t user_address, size_t count, size_t progress) {
     if (pipe.reader_refs == 0) {
-        return negative_error(SAVANXP_EPIPE);
+        return negative_error(SX_EPIPE);
     }
     if (count == 0) {
         return 0;
     }
-    if (pipe.size == kPipeCapacity) {
+    if (pipe.size == process::detail::kPipeCapacity) {
         return process::kBlockedResult;
     }
 
     const size_t remaining = count - progress;
-    const size_t writable = kPipeCapacity - pipe.size;
+    const size_t writable = process::detail::kPipeCapacity - pipe.size;
     const size_t total = writable < remaining ? writable : remaining;
-    uint8_t scratch[kPipeChunkSize] = {};
+    uint8_t scratch[process::detail::kPipeChunkSize] = {};
     size_t written = 0;
 
     while (written < total) {
         const size_t step = (total - written) < sizeof(scratch) ? (total - written) : sizeof(scratch);
         if (!read_from_process_memory(proc, scratch, user_address + progress + written, step)) {
-            return negative_error(SAVANXP_EINVAL);
+            return negative_error(SX_EINVAL);
         }
 
         size_t copied = 0;
         while (copied < step) {
-            const size_t contiguous = pipe.write_pos + (step - copied) <= kPipeCapacity
+            const size_t contiguous = pipe.write_pos + (step - copied) <= process::detail::kPipeCapacity
                 ? (step - copied)
-                : (kPipeCapacity - pipe.write_pos);
+                : (process::detail::kPipeCapacity - pipe.write_pos);
             memcpy(pipe.buffer + pipe.write_pos, scratch + copied, contiguous);
-            pipe.write_pos = (pipe.write_pos + contiguous) % kPipeCapacity;
+            pipe.write_pos = (pipe.write_pos + contiguous) % process::detail::kPipeCapacity;
             pipe.size += contiguous;
             copied += contiguous;
         }
@@ -1271,13 +1228,13 @@ void wake_waiters_for_object(object::Header* handle_object) {
         if (result < 0) {
             continue;
         }
-        complete_blocked_wait(proc, result);
+        process::detail::complete_blocked_wait(proc, result);
     }
 
     // Un objeto senalizado tambien puede ser lo que espera un poll. El evento de
     // submit de un cliente grafico entra por aca, que es el camino por el que el
     // compositor se entera de que hay un frame.
-    recheck_poll_waiters();
+    recheck_parked_processes(0, false);
 }
 
 object::Header* lookup_handle(process::Process& proc, uint64_t fd, uint32_t desired_access) {
@@ -1295,51 +1252,9 @@ object::Header* lookup_handle(process::Process& proc, uint64_t fd, uint32_t desi
 }
 
 object::IoObject* fd_to_io_object(process::Process& proc, uint64_t fd, uint32_t desired_access) {
-    return object::as_io(lookup_handle(proc, fd, desired_access));
+    return object::as_io(process::detail::lookup_handle(proc, fd, desired_access));
 }
 
-// Recorre la copia en kernel del pedido y deja los revents ahi mismo. No toca
-// memoria de usuario ni el estado del proceso: sirve igual para el que esta
-// llamando a poll que para uno ya parado, que es de donde lo llama el tick.
-int evaluate_poll_entries(process::Process& proc) {
-    int ready = 0;
-
-    for (size_t index = 0; index < proc.poll_count; ++index) {
-        savanxp_pollfd& entry = proc.poll_entries[index];
-
-        entry.revents = 0;
-        if (entry.fd < 0) {
-            continue;
-        }
-
-        object::IoObject* file = fd_to_io_object(proc, static_cast<uint64_t>(entry.fd), object::access_synchronize);
-        if (file != nullptr) {
-            entry.revents = poll_open_file(file, entry.events);
-        } else if ((entry.events & SAVANXP_POLLIN) != 0) {
-            // Waitable kernel objects (events, timers) are not IoObjects but
-            // can still be polled: report POLLIN when the object is signaled.
-            object::Header* waitable =
-                lookup_handle(proc, static_cast<uint64_t>(entry.fd), object::access_synchronize);
-            if (waitable != nullptr && object::can_satisfy_wait(waitable)) {
-                entry.revents = static_cast<short>(SAVANXP_POLLIN);
-            }
-        }
-        if (entry.revents != 0) {
-            ++ready;
-        }
-    }
-    return ready;
-}
-
-// Devuelve los revents al arreglo del proceso. Es el unico momento en que el
-// camino de poll toca memoria de usuario de un proceso que no esta corriendo.
-bool commit_poll_entries(process::Process& proc) {
-    if (proc.poll_count == 0) {
-        return true;
-    }
-    return write_to_process_memory(
-        proc, proc.poll_user_fds, proc.poll_entries, proc.poll_count * sizeof(savanxp_pollfd));
-}
 
 bool inherit_all_handles(process::Process& child, const process::Process& parent) {
     for (size_t fd = 0; fd < process::kMaxFileHandles; ++fd) {
@@ -1350,7 +1265,7 @@ bool inherit_all_handles(process::Process& child, const process::Process& parent
         if (handle_object == nullptr) {
             continue;
         }
-        if (install_handle(
+        if (process::detail::install_handle(
                 child,
                 static_cast<int>(fd),
                 handle_object,
@@ -1382,9 +1297,9 @@ void terminate_process(process::Process& proc, int exit_code) {
     proc.kill_pending = false;
 
     const uint32_t exiting_pid = proc.pid;
-    proc_log("proc: terminate pid=%u status=%d\n", proc.pid, exit_code);
+    process::detail::proc_log("proc: terminate pid=%u status=%d\n", proc.pid, exit_code);
     proc.exit_code = exit_code;
-    note_parent_sigchld(proc);
+    note_child_exited(proc);
     release_all_handles(proc);
     /* A clean exit releases the GPU via the device close handler in the owner's
        own context; a kill runs that handler in the killer's context, where the
@@ -1402,17 +1317,44 @@ void terminate_process(process::Process& proc, int exit_code) {
 
 int begin_object_wait(process::Process& proc, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms) {
     const int consumed = sx::try_consume_objects(proc, handles, count, wait_all);
-    if (consumed != sx::negative_error(SAVANXP_EAGAIN)) {
+    if (consumed != sx::negative_error(SX_EAGAIN)) {
         return consumed;
     }
     if (timeout_ms == 0) {
         clear_wait_state(proc);
-        return negative_error(SAVANXP_ETIMEDOUT);
+        return negative_error(SX_ETIMEDOUT);
     }
 
-    proc.wake_deadline_ms = timeout_ms > 0 ? (now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
+    proc.wake_deadline_ms = timeout_ms > 0 ? (process::detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
     proc.state = process::State::blocked_wait;
     return process::kBlockedResult;
+}
+
+int complete_blocked_wait(process::Process& proc, int result) {
+    clear_wait_state(proc);
+    proc.context->rax = static_cast<uint64_t>(result);
+    proc.state = process::State::ready;
+    process::detail::reset_time_slice(proc);
+    note_woken(proc);
+    return result;
+}
+
+short poll_open_file(const object::IoObject* file, short events) {
+    if (file == nullptr) {
+        return static_cast<short>(SAVANXP_POLLNVAL);
+    }
+
+    short revents = 0;
+    if ((events & SAVANXP_POLLIN) != 0 && open_file_can_read(*file)) {
+        revents = static_cast<short>(revents | SAVANXP_POLLIN);
+    }
+    if ((events & SAVANXP_POLLOUT) != 0 && open_file_can_write(*file)) {
+        revents = static_cast<short>(revents | SAVANXP_POLLOUT);
+    }
+    if (open_file_has_hangup(*file)) {
+        revents = static_cast<short>(revents | SAVANXP_POLLHUP);
+    }
+    return revents;
 }
 
 uint32_t init_pid() {
@@ -1460,6 +1402,55 @@ uint64_t current_uptime_ms() {
     return process::detail::now_ms();
 }
 
+/*
+ * Estado privado del subsistema: el kernel reserva, copia y libera estos bytes
+ * sin interpretarlos (isolation slice B). Ver el comentario de la seccion
+ * anonima de arriba y subsystems/posix/kernel/posix_process_state.hpp.
+ *
+ * Las tres se llaman entre si y se declaran en process.hpp, asi que no hace
+ * falta adelantar nada aqui.
+ */
+
+void ensure_subsystem_state(Process& proc) {
+    const size_t needed = subsystem::process_state_size(proc.subsystem_id);
+    if (needed == 0) {
+        free_subsystem_state(proc);
+        return;
+    }
+    if (proc.subsystem_state != nullptr && proc.subsystem_state_bytes == needed) {
+        return;
+    }
+
+    uint8_t* fresh = static_cast<uint8_t*>(heap::allocate(needed));
+    // Sin memoria no es motivo para no crear el proceso: el subsistema ve
+    // estado vacio (nullptr), que POSIX trata igual que "/".
+    if (fresh != nullptr) {
+        memset(fresh, 0, needed);
+    }
+    free_subsystem_state(proc);
+    proc.subsystem_state = fresh;
+    proc.subsystem_state_bytes = fresh != nullptr ? needed : 0;
+}
+
+void free_subsystem_state(Process& proc) {
+    if (proc.subsystem_state != nullptr) {
+        heap::free(proc.subsystem_state);
+        proc.subsystem_state = nullptr;
+    }
+    proc.subsystem_state_bytes = 0;
+}
+
+// fork hereda el estado privado tal cual: el hijo arranca donde estaba el
+// padre, que para POSIX significa el mismo cwd.
+void copy_subsystem_state(Process& child, const process::Process& parent) {
+    child.subsystem_id = parent.subsystem_id;
+    ensure_subsystem_state(child);
+    if (child.subsystem_state != nullptr && parent.subsystem_state != nullptr &&
+        child.subsystem_state_bytes == parent.subsystem_state_bytes) {
+        memcpy(child.subsystem_state, parent.subsystem_state, parent.subsystem_state_bytes);
+    }
+}
+
 void clear_wait_state(process::Process& proc) {
     proc.wait_reason = process::WaitReason::none;
     proc.wait_handle_count = 0;
@@ -1470,8 +1461,6 @@ void clear_wait_state(process::Process& proc) {
     for (size_t index = 0; index < process::kMaxWaitHandles; ++index) {
         proc.waited_objects[index] = nullptr;
     }
-    proc.poll_user_fds = 0;
-    proc.poll_count = 0;
     proc.wake_deadline_ms = 0;
 }
 
@@ -1499,9 +1488,12 @@ void switch_to_process(process::Process* target) {
     write_cr3(target->address_space.pml4_physical);
 }
 
-bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
-    const char* cwd = proc.cwd[0] != '\0' ? proc.cwd : "/";
-    return vfs::normalize_path(cwd, input, output, capacity);
+// Resolucion NEUTRAL de una ruta: absoluta, o relativa a la raiz. No hay cwd
+// en el kernel (rebanada B), asi que esta es la unica resolucion que el
+// kernel ofrece, y la que usa el spawn nativo. La version con directorio
+// actual es de POSIX y vive en subsystems/posix/kernel/.
+bool resolve_path_from_root(const char* input, char* output, size_t capacity) {
+    return vfs::normalize_path("/", input, output, capacity);
 }
 
 bool read_from_process_memory(const process::Process& proc, void* destination, uint64_t user_address, size_t count, bool require_write) {
@@ -1522,27 +1514,27 @@ void write_int_to_process_memory(process::Process& proc, uint64_t user_address, 
     }
 }
 
-savanxp_error_code image_failure_errno(process::ImageFailure failure) {
+sx_status image_failure_errno(process::ImageFailure failure) {
     switch (failure) {
         case process::ImageFailure::none:
-            return SAVANXP_EIO;
+            return SX_EIO;
         case process::ImageFailure::not_found:
-            return SAVANXP_ENOENT;
+            return SX_ENOENT;
         case process::ImageFailure::not_a_file:
-            return SAVANXP_EACCES;
+            return SX_EACCES;
         case process::ImageFailure::read_failed:
-            return SAVANXP_EIO;
+            return SX_EIO;
         case process::ImageFailure::bad_image:
-            return SAVANXP_ENOEXEC;
+            return SX_ENOEXEC;
         case process::ImageFailure::no_staging_memory:
         case process::ImageFailure::no_address_space:
         case process::ImageFailure::no_load_memory:
         case process::ImageFailure::no_process_slot:
-            return SAVANXP_ENOMEM;
+            return SX_ENOMEM;
         case process::ImageFailure::no_handles:
-            return SAVANXP_EBADF;
+            return SX_EBADF;
     }
-    return SAVANXP_EIO;
+    return SX_EIO;
 }
 
 bool prepare_exec_image(
@@ -1601,6 +1593,10 @@ bool prepare_exec_image(
     proc.subsystem_id = load_result.os_abi == elf::kOsAbiNative
         ? subsystem::Id::native
         : subsystem::Id::posix;
+    // El exec puede cambiar de subsistema, asi que el estado privado se
+    // revisa: si el tamano no cambio se conserva (exec no cambia el cwd de
+    // POSIX), y si cambio llega a cero, que POSIX lee como "/".
+    ensure_subsystem_state(proc);
     set_process_name(proc, path);
     proc.blocked_io_fd = 0;
     proc.blocked_read_buffer = 0;
@@ -1655,10 +1651,14 @@ process::Process* create_process_internal(
     proc->parent_pid = parent != nullptr ? parent->pid : 0;
     proc->subsystem_id = parent != nullptr ? parent->subsystem_id : subsystem::Id::posix;
     set_process_name(*proc, path);
-    if (parent != nullptr && parent->cwd[0] != '\0') {
-        strcpy(proc->cwd, parent->cwd);
-    } else {
-        set_process_cwd_root(*proc);
+    if (parent != nullptr) {
+        // El hijo hereda el estado privado del padre, que para POSIX incluye
+        // el directorio actual.
+        process::copy_subsystem_state(*proc, *parent);
+    }
+    else
+    {
+        process::ensure_subsystem_state(*proc);
     }
     if (!vm::create_address_space(proc->address_space)) {
         process::detail::reset_process_slot(*proc);
@@ -1784,10 +1784,10 @@ int waitpid_child(process::Process& proc, int64_t waited, uint64_t status_addres
     }
 
     if (waited_pid != process::kWaitAnyPid && child_of(proc.pid, waited_pid) == nullptr) {
-        return negative_error(SAVANXP_ECHILD);
+        return negative_error(SX_ECHILD);
     }
     if (waited_pid == process::kWaitAnyPid && !has_child(proc.pid)) {
-        return negative_error(SAVANXP_ECHILD);
+        return negative_error(SX_ECHILD);
     }
 
     clear_wait_state(proc);
@@ -1850,7 +1850,7 @@ int create_event_handle(process::Process& proc, uint32_t flags) {
         (flags & SAVANXP_EVENT_MANUAL_RESET) != 0,
         (flags & SAVANXP_EVENT_INITIAL_SET) != 0);
     if (event_object == nullptr) {
-        return negative_error(SAVANXP_ENOMEM);
+        return negative_error(SX_ENOMEM);
     }
 
     const uint32_t access = object::access_query | object::access_modify | object::access_synchronize;
@@ -1867,7 +1867,7 @@ int set_event_handle(process::Process& proc, uint64_t fd) {
     object::Header* handle_object = process::detail::lookup_handle(proc, fd, object::access_modify);
     object::EventObject* event_object = object::as_event(handle_object);
     if (event_object == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
 
     sx::set_event(event_object);
@@ -1879,7 +1879,7 @@ int reset_event_handle(process::Process& proc, uint64_t fd) {
     object::Header* handle_object = process::detail::lookup_handle(proc, fd, object::access_modify);
     object::EventObject* event_object = object::as_event(handle_object);
     if (event_object == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
 
     sx::reset_event(event_object);
@@ -1888,7 +1888,7 @@ int reset_event_handle(process::Process& proc, uint64_t fd) {
 
 int create_section_handle(process::Process& proc, uint64_t size, uint32_t flags) {
     if (size == 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     const uint32_t section_access = object_access_for_section_flags(
@@ -1896,7 +1896,7 @@ int create_section_handle(process::Process& proc, uint64_t size, uint32_t flags)
         object::access_read | object::access_write);
     object::SectionObject* section_object = sx::create_section(size, section_access);
     if (section_object == nullptr) {
-        return negative_error(SAVANXP_ENOMEM);
+        return negative_error(SX_ENOMEM);
     }
 
     const uint32_t handle_access = object::access_query | object::access_synchronize | section_access;
@@ -1913,13 +1913,13 @@ int open_range_section_handle(process::Process& proc, uint64_t fd, uint64_t offs
     object::Header* handle_object = process::detail::lookup_handle(proc, fd, object::access_read);
     object::IoObject* file = object::as_io(handle_object);
     if (file == nullptr || file->node == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (file->node->type != vfs::NodeType::file) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if ((flags & SAVANXP_SECTION_WRITE) != 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     uint32_t section_access = object_access_for_section_flags(flags, object::access_read);
     section_access |= object::access_read;
@@ -1927,7 +1927,7 @@ int open_range_section_handle(process::Process& proc, uint64_t fd, uint64_t offs
     object::SectionObject* section_object =
         sx::open_file_section(*file->node, offset, length, section_access);
     if (section_object == nullptr) {
-        return negative_error(SAVANXP_ENOMEM);
+        return negative_error(SX_ENOMEM);
     }
     const uint32_t handle_access = object::access_query | object::access_synchronize | section_access;
     const int handle = process::detail::allocate_fd(proc, &section_object->header, handle_access, object::handle_none);
@@ -1947,7 +1947,7 @@ int64_t map_view_base_handle(process::Process& proc, uint64_t fd, uint64_t base,
     object::Header* handle_object = process::detail::lookup_handle(proc, fd, object::access_query);
     object::SectionObject* section_object = object::as_section(handle_object);
     if (section_object == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
 
     const uint32_t requested_access = object_access_for_section_flags(flags, section_object->access_mask);
@@ -1967,10 +1967,10 @@ int unmap_view_address(process::Process& proc, uint64_t base_address) {
 int wait_on_handle(process::Process& proc, uint64_t fd, int64_t timeout_ms) {
     object::Header* handle_object = process::detail::lookup_handle(proc, fd, object::access_synchronize);
     if (handle_object == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (!sx::is_waitable(handle_object)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     object::Header* handles[1] = {handle_object};
@@ -2051,6 +2051,10 @@ void initialize() {
     subsystem::reset();
     subsystem::register_dispatcher(subsystem::Id::posix, &dispatch_posix_syscall);
     subsystem::register_dispatcher(subsystem::Id::native, &dispatch_native_syscall);
+    // Cada subsistema declara cuanto estado privado por proceso necesita; el
+    // kernel lo reserva y lo libera sin mirar dentro (isolation slice B).
+    initialize_posix_subsystem();
+    initialize_native_subsystem();
 
     g_ready = true;
 }
@@ -2210,7 +2214,7 @@ bool validate_user_range(uint64_t user_address, size_t count, bool require_write
 
 int export_handle(object::Header* handle_object, uint32_t access, uint32_t flags) {
     if (this_cpu().current == nullptr || handle_object == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     return process::detail::allocate_fd(*this_cpu().current, handle_object, access, flags);
 }
@@ -2369,7 +2373,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
         object::poll_timers(current_tick, process::detail::wake_waiters_for_object);
         wake_sleepers(current_tick);
         wake_wait_timeouts(current_tick);
-        wake_poll_waiters(current_tick);
+        wake_parked_waiters(current_tick);
         wake_blocked_socket_readers(current_tick);
     }
     // The tick makes its own reschedule decision below, so any wakeups above
@@ -2438,7 +2442,7 @@ void notify_tty_line_ready() {
             ? tty::main().pending_length
             : static_cast<size_t>(proc.blocked_read_capacity);
         if (!write_to_process_memory(proc, proc.blocked_read_buffer, tty::main().pending_line, to_copy)) {
-            complete_blocked_read(proc, negative_error(SAVANXP_EINVAL));
+            complete_blocked_read(proc, negative_error(SX_EINVAL));
         } else {
             memset(tty::main().pending_line, 0, sizeof(tty::main().pending_line));
             tty::main().pending_length = 0;

@@ -61,6 +61,7 @@ def main() -> int:
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "startup.nsh" in cmake
     build_script = (root / "build.sh").read_text(encoding="utf-8")
+    cmake_text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "one-word smoke targets" in build_script
     assert "--gpu-soak-iterations" in build_script
     assert "between 1 and 32" in build_script
@@ -131,7 +132,7 @@ def main() -> int:
     # Slice 10: input ring transport plus the sxnwm seed.
     assert (root / "include" / "sxn" / "sxnwm.h").is_file()
     assert "SAVANXP_WM_FD_INPUT_RING" in (root / "subsystems" / "posix" / "sdk" / "v1" / "include" / "savanxp" / "wm_protocol.h").read_text(encoding="utf-8")
-    assert "savanxp_wm_input_ring" in (root / "subsystems" / "posix" / "sdk" / "v1" / "include" / "savanxp" / "syscall.h").read_text(encoding="utf-8")
+    assert "savanxp_wm_input_ring" in (root / "include" / "abi" / "savanxp_abi.h").read_text(encoding="utf-8")
     assert "route_event_ring" in windowd
     assert "sxnwm_poll_input" in (root / "sdk" / "nativedemo" / "main.c").read_text(encoding="utf-8")
     # Slice 11: widgets seed plus scripted click/type/Esc interaction.
@@ -191,6 +192,113 @@ def main() -> int:
         assert shared in process_cpp
     assert (root / "include" / "kernel" / "process_detail.hpp").is_file()
     assert "posix_translation" in (root / "include" / "kernel" / "process.hpp").read_text(encoding="utf-8")
+    # Isolation A: the kernel speaks the neutral wire contract, never the POSIX
+    # SDK header. This is the guard that keeps it that way.
+    kernel_sources = sorted((root / "kernel").glob("*.cpp")) + sorted((root / "kernel").glob("*.hpp"))
+    kernel_sources += sorted((root / "include" / "kernel").glob("*.hpp"))
+    offenders = [
+        path.relative_to(root).as_posix()
+        for path in kernel_sources
+        if '#include "savanxp/' in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"kernel must not include the POSIX SDK header: {offenders}"
+    # Isolation B: no POSIX per-process state in the kernel. The current
+    # directory lives in the state the POSIX subsystem declares.
+    assert "char cwd[" not in process_cpp
+    process_hpp = (root / "include" / "kernel" / "process.hpp").read_text(encoding="utf-8")
+    assert "char cwd[" not in process_hpp
+    assert "subsystem_state" in process_hpp
+    posix_state = (root / "subsystems" / "posix" / "kernel" / "posix_process_state.hpp").read_text(encoding="utf-8")
+    assert "char cwd[" in posix_state
+    assert "resolve_path_from_root" in process_cpp
+    assert "resolve_path_from_root" in (root / "kernel" / "native_dispatch.cpp").read_text(encoding="utf-8")
+    # Isolation C: no poll state in the kernel. The kernel only knows a
+    # process is parked with a deadline; which wait it is belongs to the
+    # subsystem that parked it.
+    for gone in ("poll_user_fds", "poll_count", "poll_entries", "WaitReason::poll",
+                 "kMaxPollDescriptors", "evaluate_poll_entries", "commit_poll_entries"):
+        assert gone not in process_cpp, f"{gone} still in kernel/process.cpp"
+        assert gone not in process_hpp, f"{gone} still in include/kernel/process.hpp"
+    subsystem_hpp = (root / "include" / "kernel" / "subsystem.hpp").read_text(encoding="utf-8")
+    assert "register_wait_recheck" in subsystem_hpp
+    assert "recheck_parked_process" in subsystem_hpp
+    assert "recheck_parked_poll" in posix_state
+    assert "register_wait_recheck" in (root / "subsystems" / "posix" / "kernel" / "posix_dispatch.cpp").read_text(encoding="utf-8")
+    # Isolation D: no POSIX signals in the kernel. This kernel has no signal
+    # delivery at all, so the pending flags were write-only state whose only
+    # purpose was naming POSIX signals; the signal vocabulary is POSIX-side.
+    # Prose about what was removed is fine; code is not. Comments and docs
+    # legitimately mention the old names.
+    process_code = "\n".join(
+        line.split("//", 1)[0] for line in process_cpp.split("\n")
+    )
+    for gone in ("SignalFlags", "signal_sigint", "signal_sigkill", "signal_sigchld",
+                 "pending_signals", "last_signal", "signal_flag_for"):
+        assert gone not in process_code, f"{gone} still in kernel/process.cpp code"
+        assert gone not in process_hpp, f"{gone} still in include/kernel/process.hpp"
+    posix_signals = (root / "subsystems" / "posix" / "kernel" / "posix_signals.hpp").read_text(encoding="utf-8")
+    assert "posix_signal_sigterm" in posix_signals
+    assert "posix_signal_flag_for" in (root / "subsystems" / "posix" / "kernel" / "posix_translation.cpp").read_text(encoding="utf-8")
+    abi_header = (root / "include" / "abi" / "savanxp_abi.h").read_text(encoding="utf-8")
+    # Isolation E: the error space belongs to the kernel, values unchanged.
+    kernel_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in list((root / "kernel").glob("*.cpp")) + list((root / "include" / "kernel").glob("*.hpp"))
+    )
+    assert "savanxp_error_code" not in kernel_text
+    # No POSIX error constant either (SAVANXP_EDITION / SAVANXP_EVENT_* are not
+    # errors and are allowed to stay).
+    for line in kernel_text.split("\n"):
+        if "SAVANXP_E" in line:
+            rest = line.split("SAVANXP_E", 1)[1]
+            assert rest.startswith(("DITION", "VENT_", "XP_")), f"POSIX error name in kernel: {line.strip()[:70]}"
+    assert "enum sx_status" in abi_header
+    assert "typedef enum sx_status savanxp_error_code" in abi_header
+    assert "#define SAVANXP_EINVAL SX_EINVAL" in abi_header
+    # The values must not move: that is what makes this observable as a no-op.
+    assert "SX_EINVAL = 22" in abi_header and "SX_EBADF = 9" in abi_header
+    assert "SX_ENOSYS = 38" in abi_header and "SX_ECONNRESET = 104" in abi_header
+    # The POSIX subsystem layer itself legitimately speaks the POSIX surface;
+    # nobody else may. This is the part that keeps the SDK header from
+    # creeping back into the kernel through a shared driver.
+    # Only the POSIX subsystem speaks the POSIX surface. The scanner above
+    # walks the whole tree, including build/ copies; restrict it to sources.
+    sdk_includers = {
+        path.relative_to(root).as_posix()
+        for pattern in ("*.c", "*.cpp", "*.h", "*.hpp")
+        for top in ("kernel", "include", "subsystems", "sdk", "tests")
+        for path in sorted((root / top).rglob(pattern))
+        if '#include "savanxp/' in path.read_text(encoding="utf-8", errors="ignore")
+    }
+    stray = [
+        path for path in sdk_includers
+        if not (
+            path.startswith("subsystems/posix/")
+            or path.startswith("sdk/")
+            or path.startswith("ports/")
+            or path.startswith("tests/host/")
+            or path.startswith("include/sxn/")
+        )
+    ]
+    assert not stray, f"only the POSIX subsystem may include the POSIX SDK: {sorted(stray)}"
+    assert (root / "include" / "abi" / "savanxp_abi.h").is_file()
+    sdk_header = (root / "subsystems" / "posix" / "sdk" / "v1" / "include" / "savanxp" / "syscall.h").read_text(encoding="utf-8")
+    # The POSIX vocabulary lives in the SDK; the data contract in the kernel's ABI.
+    assert '#include "abi/savanxp_abi.h"' in sdk_header
+    for posix_only in ("savanxp_syscall_number", "savanxp_mode_bits",
+                       "savanxp_seek_whence", "savanxp_fcntl_command"):
+        assert posix_only in sdk_header
+        assert posix_only not in abi_header
+    # Vocabularies the kernel still consumes as DATA. Isolation slices B-D
+    # remove them from the kernel; the guard below keeps them named, so the
+    # remaining debt is visible instead of forgotten.
+    for shared_data in ("savanxp_open_flags", "savanxp_poll_events",
+                        "savanxp_signal_number", "savanxp_pollfd",
+                        "savanxp_socket_domain", "savanxp_socket_type",
+                        "savanxp_process_state"):
+        assert shared_data in abi_header
+    # The SXE stamp must rerun when the neutral contract changes.
+    assert '"${CMAKE_SOURCE_DIR}/include/abi/savanxp_abi.h"' in cmake_text
     # pointer-smoke es el unico que exige la maquina virtio, y el runner tiene que
     # negarse a arrancarlo sin ella en vez de fallar por el device que falta.
     assert "requires_virtio=True" in catalog

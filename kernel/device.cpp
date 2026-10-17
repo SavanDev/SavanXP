@@ -2,13 +2,13 @@
 
 #include "kernel/display.hpp"
 #include "kernel/vfs.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 
 bool g_ready = false;
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -33,30 +33,30 @@ bool register_node(const char* path, Device* device, bool writable) {
 
 int read(Device* device, uint64_t user_buffer, size_t count) {
     if (device == nullptr) {
-        return negative_error(SAVANXP_ENODEV);
+        return negative_error(SX_ENODEV);
     }
     if (device->read == nullptr) {
-        return negative_error(SAVANXP_ENOSYS);
+        return negative_error(SX_ENOSYS);
     }
     return device->read(user_buffer, count);
 }
 
 int write(Device* device, uint64_t user_buffer, size_t count) {
     if (device == nullptr) {
-        return negative_error(SAVANXP_ENODEV);
+        return negative_error(SX_ENODEV);
     }
     if (device->write == nullptr) {
-        return negative_error(SAVANXP_ENOSYS);
+        return negative_error(SX_ENOSYS);
     }
     return device->write(user_buffer, count);
 }
 
 int ioctl(Device* device, uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (device == nullptr) {
-        return negative_error(SAVANXP_ENODEV);
+        return negative_error(SX_ENODEV);
     }
     if (device->ioctl == nullptr) {
-        return negative_error(SAVANXP_ENOSYS);
+        return negative_error(SX_ENOSYS);
     }
     return device->ioctl(request, argument, granted_access);
 }

@@ -1,5 +1,22 @@
 #include "kernel/process.hpp"
 
+// The POSIX layer speaks the POSIX surface. This is the ONLY place in the
+// kernel image allowed to include it: kernel/ and include/kernel/ use the
+// neutral contract instead, which is what keeps the two userland lanes
+// independent of each other.
+#include "savanxp/syscall.h"
+#include "posix_process_state.hpp"
+
+// POSIX per-process state lives here; register its size so the kernel
+// reserves and frees it without knowing what is inside (isolation slice B).
+// The wait hook is the other half (slice C): the kernel hands over any
+// process parked with a deadline and POSIX decides whether it was a poll and
+// whether it is ready now.
+static void register_posix_process_state(void) {
+    subsystem::register_process_state_size(subsystem::Id::posix, sizeof(posix::ProcessState));
+    subsystem::register_wait_recheck(subsystem::Id::posix, &posix::recheck_parked_poll);
+}
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -18,6 +35,14 @@ namespace process {
 // process:: boundary (frontera de traduccion POSIX). Same numbers, structs,
 // errors and blocking protocol as when it shared process.cpp's translation
 // unit; only the call path moved (see docs/KERNEL_NATIVE_API.md).
+//
+// The registration is deliberately NOT in a static initializer: it has to
+// happen before the first process is created, and static-init order across
+// translation units is not something to rely on for a kernel image.
+void initialize_posix_subsystem() {
+    register_posix_process_state();
+}
+
 SavedContext* dispatch_posix_syscall(SavedContext* context) {
     if (smp::this_cpu().current == nullptr) {
         return context;

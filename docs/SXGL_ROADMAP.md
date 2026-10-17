@@ -50,7 +50,7 @@ different thing from `glBlendFunc`.
 
 ### 3. The kernel has no 3D either
 
-`savanxp_gpu_ioctl` ([syscall.h:371](../subsystems/posix/sdk/v1/include/savanxp/syscall.h:371))
+`savanxp_gpu_ioctl` ([savanxp_abi.h:339](../include/abi/savanxp_abi.h:339))
 is 21 ioctls of strictly 2D work: import a section as a surface, present dirty
 rectangles, move a cursor plane, read a present timeline. `virtio_gpu` never
 negotiates `VIRTIO_GPU_F_VIRGL` and there is no `CTX_CREATE` anywhere in the
@@ -165,7 +165,7 @@ fast.
 
 Not an analogy — read the structs. The client surface header carries
 `submit_sequence`, `retired_sequence` and `composed_sequence`
-([syscall.h:728](../subsystems/posix/sdk/v1/include/savanxp/syscall.h:728)), and
+([savanxp_abi.h:876](../include/abi/savanxp_abi.h:876)), and
 every `savanxp_gpu_dirty_rect_batch` carries its own `submit_sequence`. That is
 a fence over a swapchain with numbered command lists.
 `savanxp_gpu_present_timeline` (`submitted`/`retired`/`pending_count`) is

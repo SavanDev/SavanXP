@@ -11,6 +11,14 @@
 
 namespace process {
 
+// El subsistema nativo declara su estado privado por proceso como cualquier
+// otro (rebanada B). Hoy declara cero: un proceso nativo no tiene estado propio,
+// y decirlo es lo que hace medible la afirmacion de que al kernel no le queda
+// nada de POSIX.
+void initialize_native_subsystem() {
+    subsystem::register_process_state_size(subsystem::Id::native, 0);
+}
+
 SavedContext* dispatch_native_syscall(SavedContext* context) {
     Process* const caller = sx::current();
     if (caller == nullptr) {
@@ -43,7 +51,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
     switch (context->rax) {
         case SXN_SYS_INFO: {
             if (!sx::validate_user_range(context->rdi, sizeof(sxn_native_info), true)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
@@ -52,7 +60,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             info.subsystem_id = static_cast<uint32_t>(caller->subsystem_id);
             info.pid = caller->pid;
             if (!sx::copy_to_user(context->rdi, &info, sizeof(info))) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
@@ -62,7 +70,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         case SXN_SYS_LOG: {
             char message[256] = {};
             if (!sx::copy_user_string(message, sizeof(message), context->rdi)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
@@ -81,13 +89,13 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             char resolved[process::kProcessPathLength] = {};
             auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
             if (arguments == nullptr) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
                 return context;
             }
             if (!copy_spawn_arguments(*caller, *context, path, sizeof(path), *arguments) ||
-                !resolve_process_path(*caller, path, resolved, sizeof(resolved))) {
+                !resolve_path_from_root(path, resolved, sizeof(resolved))) {
                 heap::free(arguments);
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_E2BIG));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_E2BIG));
                 return context;
             }
 
@@ -146,13 +154,13 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         // terminate).
         case SXN_SYS_GFX_INFO: {
             if (!sx::validate_user_range(context->rdi, sizeof(sxn_gfx_info), true)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
             savanxp_gpu_info gpu_info = {};
             if (!display::get_info(gpu_info)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENODEV));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENODEV));
                 return context;
             }
 
@@ -163,7 +171,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             info.bpp = gpu_info.bpp;
             info.buffer_size = gpu_info.buffer_size;
             if (!sx::copy_to_user(context->rdi, &info, sizeof(info))) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
@@ -172,12 +180,12 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         }
         case SXN_SYS_GFX_ACQUIRE: {
             context->rax = static_cast<uint64_t>(
-                display::acquire_session(caller->pid) ? 0 : sx::negative_error(SAVANXP_EBUSY));
+                display::acquire_session(caller->pid) ? 0 : sx::negative_error(SX_EBUSY));
             return context;
         }
         case SXN_SYS_GFX_RELEASE: {
             if (!display::owns_session(caller->pid)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EBUSY));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EBUSY));
                 return context;
             }
             display::release_session_resources();
@@ -187,14 +195,14 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         }
         case SXN_SYS_GFX_PRESENT: {
             if (!display::owns_session(caller->pid)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EBUSY));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EBUSY));
                 return context;
             }
 
             sxn_gfx_present region = {};
             if (!sx::validate_user_range(context->rdi, sizeof(region), false) ||
                 !sx::copy_from_user(&region, context->rdi, sizeof(region))) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
@@ -203,7 +211,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 region.height == 0 || region.x >= fb.width || region.y >= fb.height ||
                 region.width > (fb.width - region.x) ||
                 region.height > (fb.height - region.y)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
@@ -212,7 +220,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             const uint64_t touched_bytes = (last_row * region.source_pitch) +
                 (static_cast<uint64_t>(region.x) * sizeof(uint32_t)) + row_bytes;
             if (!sx::validate_user_range(region.pixels, touched_bytes, false)) {
-                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
 
@@ -224,7 +232,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 region.width,
                 region.height
             );
-            context->rax = static_cast<uint64_t>(presented ? 0 : sx::negative_error(SAVANXP_EIO));
+            context->rax = static_cast<uint64_t>(presented ? 0 : sx::negative_error(SX_EIO));
             return context;
         }
         default:
@@ -233,7 +241,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
 
     // Standalone native: un proceso nativo solo habla SXN. Cualquier numero
     // fuera del contrato (incluido el rango posix) es ENOSYS, sin delegacion.
-    context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOSYS));
+    context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOSYS));
     return context;
 }
 

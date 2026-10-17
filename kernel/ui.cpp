@@ -12,7 +12,7 @@
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_input.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 
@@ -51,7 +51,7 @@ uint32_t g_owner_pid = 0;
 bool g_ready = false;
 bool g_mouse_available = false;
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -119,18 +119,18 @@ bool input_device_can_read() {
 
 int input_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (request == INPUT_IOC_SET_LAYOUT && (granted_access & object::access_write) == 0) {
-        return negative_error(SAVANXP_EACCES);
+        return negative_error(SX_EACCES);
     }
     switch (request) {
         case INPUT_IOC_SET_LAYOUT:
             if (!ps2::set_layout(static_cast<int>(argument))) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             return 0;
         case INPUT_IOC_GET_LAYOUT:
             return ps2::get_layout();
         default:
-            return negative_error(SAVANXP_ENOSYS);
+            return negative_error(SX_ENOSYS);
     }
 }
 
@@ -151,17 +151,17 @@ void release_graphics_session() {
 
 int read_input_device(uint64_t user_buffer, size_t count) {
     if (count < sizeof(savanxp_input_event)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (!process::validate_user_range(user_buffer, count, true)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     size_t copied = 0;
     while (g_input_count != 0 && copied + sizeof(savanxp_input_event) <= count) {
         const savanxp_input_event& event = g_input_queue[g_input_read_index];
         if (!process::copy_to_user(user_buffer + copied, &event, sizeof(event))) {
-            return negative_error(SAVANXP_EINVAL);
+            return negative_error(SX_EINVAL);
         }
         g_input_read_index = (g_input_read_index + 1) % kInputQueueCapacity;
         g_input_count -= 1;
@@ -175,17 +175,17 @@ int read_mouse_device(uint64_t user_buffer, size_t count) {
     virtio_input::poll();
 
     if (count < sizeof(savanxp_mouse_event)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (!process::validate_user_range(user_buffer, count, true)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     size_t copied = 0;
     while (g_mouse_count != 0 && copied + sizeof(savanxp_mouse_event) <= count) {
         const savanxp_mouse_event& event = g_mouse_queue[g_mouse_read_index];
         if (!process::copy_to_user(user_buffer + copied, &event, sizeof(event))) {
-            return negative_error(SAVANXP_EINVAL);
+            return negative_error(SX_EINVAL);
         }
         g_mouse_read_index = (g_mouse_read_index + 1) % kMouseQueueCapacity;
         g_mouse_count -= 1;

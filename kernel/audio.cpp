@@ -1,6 +1,6 @@
 #include "kernel/audio.hpp"
 
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace audio {
 
@@ -61,7 +61,7 @@ bool configure() { return g_backend != nullptr && g_backend->configure(); }
 
 int submit_period(uint64_t user_buffer, uint32_t byte_count) {
     return g_backend != nullptr ? g_backend->submit_period(user_buffer, byte_count)
-                                : -static_cast<int>(SAVANXP_ENODEV);
+                                : -static_cast<int>(SX_ENODEV);
 }
 
 void stop() { if (g_backend != nullptr) { g_backend->stop(); } }
@@ -112,7 +112,7 @@ bool capture_configure() {
 
 int capture_read_period(uint64_t user_buffer, uint32_t byte_count) {
     if (g_backend == nullptr || g_backend->capture_read_period == nullptr) {
-        return -static_cast<int>(SAVANXP_ENODEV);
+        return -static_cast<int>(SX_ENODEV);
     }
     return g_backend->capture_read_period(user_buffer, byte_count);
 }

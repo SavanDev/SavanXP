@@ -153,8 +153,8 @@ What it actually took, against the plan below:
   read dozens of times per syscall. `ltr` is privileged, so user space cannot
   change the answer. Each AP reads its selector back at boot and the BSP checks
   it: `smp: TSS propio en 3/3 APs ok`.
-- **`smp::Cpu` holds `current`, `idle` and `resched_pending`.** The 162
-  references in `process.cpp` and both `syscall_dispatch.inc` now go through
+- **`smp::Cpu` holds `current`, `idle` and `resched_pending`.** The 148
+  references across `process.cpp` and both dispatchers now go through
   `this_cpu()`. `g_schedule_cursor` stays global on purpose: it is the cursor
   of the one shared queue that phase 2 puts under the lock.
 - **Deferred: an idle process per AP.** Only the BSP has one. Whether the idle

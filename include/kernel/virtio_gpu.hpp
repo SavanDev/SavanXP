@@ -4,7 +4,7 @@
 
 #include "boot/boot_info.hpp"
 #include "kernel/display.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace virtio_gpu {
 

@@ -6,7 +6,7 @@
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/process.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 /*
  * Salida de diagnostico solo-serial (`/dev/serial`).
@@ -37,7 +37,7 @@ int serial_write(uint64_t user_buffer, size_t count) {
         return 0;
     }
     if (!process::validate_user_range(user_buffer, count, false)) {
-        return -static_cast<int>(SAVANXP_EINVAL);
+        return -static_cast<int>(SX_EINVAL);
     }
 
     /* De a pedazos y por una copia intermedia: el buffer es de usuario y no se
@@ -49,7 +49,7 @@ int serial_write(uint64_t user_buffer, size_t count) {
         const size_t take = remaining < kChunkBytes ? remaining : kChunkBytes;
 
         if (!process::copy_from_user(chunk, user_buffer + written, take)) {
-            return written != 0 ? static_cast<int>(written) : -static_cast<int>(SAVANXP_EINVAL);
+            return written != 0 ? static_cast<int>(written) : -static_cast<int>(SX_EINVAL);
         }
         console::serial_write(chunk, take);
         written += take;

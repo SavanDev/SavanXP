@@ -6,8 +6,13 @@
 // Naming: Sx, not Nt. The shape is NT-inspired (subsystems talk to one native
 // surface instead of reaching into each other's internals) but the names are
 // this system's own: sx::current, sx::copy_from_user, sx::negative_error.
-// Errors stay -errno (savanxp_error_code) for now; a status type can come
-// with the object/process factoring, not before.
+//
+// Errors are the kernel's own space now (slice E): `sx_status`, returned
+// negative. The numbers still equal errno, because changing them would change
+// every userland-visible error for nothing; what changed is ownership -- POSIX
+// derives its error names from this space instead of the kernel borrowing
+// errno's. A userland with a different error vocabulary maps it in its own
+// translation.
 //
 // The current-process flavors cover syscalls and ioctls (the caller is
 // always current). The explicit-process flavors cover wake paths, fork and
@@ -19,7 +24,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace process {
 struct Process;
@@ -54,7 +59,7 @@ bool write_user_memory(process::Process& proc, uint64_t user_address,
 bool copy_user_string_from(const process::Process& proc, uint64_t user_address,
                            char* buffer, size_t capacity);
 
-int negative_error(savanxp_error_code code);
+int negative_error(sx_status code);
 
 // Minimal standalone lifecycle: terminate the calling process. Backed by the
 // same mechanism as the POSIX EXIT path; it does not return.

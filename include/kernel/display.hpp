@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 // Solo se pasa por referencia a los probes: los consumidores de display.hpp no
 // necesitan arrastrar la definicion completa de boot_info.

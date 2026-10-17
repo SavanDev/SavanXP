@@ -4,7 +4,7 @@
 
 #include "kernel/sxfs.hpp"
 #include "kernel/string.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 
@@ -29,7 +29,7 @@ NodeSlot g_nodes[kMaxNodes] = {};
 DynamicFile g_dynamic_files[kMaxDynamicFiles] = {};
 size_t g_node_count = 0;
 bool g_ready = false;
-int g_last_error = SAVANXP_ENOENT;
+int g_last_error = SX_ENOENT;
 
 bool parse_hex_u32(const char* text, size_t count, uint32_t& value_out) {
     uint32_t value = 0;
@@ -569,15 +569,15 @@ const Vnode* resolve(const char* path) {
 }
 
 Vnode* open(const char* path, uint32_t flags) {
-    g_last_error = SAVANXP_ENOENT;
+    g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0') {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     char normalized[kMaxPathLength] = {};
     if (!normalize_path("/", path, normalized, sizeof(normalized))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
@@ -591,23 +591,23 @@ Vnode* open(const char* path, uint32_t flags) {
         refresh_external_node(node);
         if ((wants_write || wants_truncate) && node.backend == Backend::memory) {
             if (!attach_dynamic_storage(node, wants_truncate)) {
-                g_last_error = SAVANXP_ENOMEM;
+                g_last_error = SX_ENOMEM;
                 return nullptr;
             }
         } else if ((wants_write || wants_truncate) && node.backend == Backend::sxfs) {
             if (!node.writable) {
-                g_last_error = SAVANXP_EBADF;
+                g_last_error = SX_EBADF;
                 return nullptr;
             }
             if (wants_truncate) {
                 sxfs::FileRecord* file = sxfs::file_from_vnode(node);
                 if (file == nullptr) {
-                    g_last_error = SAVANXP_EBADF;
+                    g_last_error = SX_EBADF;
                     return nullptr;
                 }
                 size_t written = 0;
                 if (!sxfs::write_file(*file, 0, nullptr, 0, true, written)) {
-                    g_last_error = SAVANXP_EINVAL;
+                    g_last_error = SX_EINVAL;
                     return nullptr;
                 }
                 node.size = file->size;
@@ -623,26 +623,26 @@ Vnode* open(const char* path, uint32_t flags) {
     char parent_path[kMaxPathLength] = {};
     char leaf_name[kMaxNameLength] = {};
     if (!split_parent_path(normalized, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     index = resolve_index(parent_path);
     if (index < 0) {
-        g_last_error = SAVANXP_ENOENT;
+        g_last_error = SX_ENOENT;
         return nullptr;
     }
 
     Vnode& parent = g_nodes[index].vnode;
     if (parent.type != NodeType::directory) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     if (is_sxfs_path(normalized)) {
         sxfs::FileRecord* file = sxfs::create_file(normalized);
         if (file == nullptr) {
-            g_last_error = SAVANXP_ENOSPC;
+            g_last_error = SX_ENOSPC;
             return nullptr;
         }
         if (file->vnode != nullptr) {
@@ -650,20 +650,20 @@ Vnode* open(const char* path, uint32_t flags) {
         }
         Vnode* node = install_external_file(normalized, Backend::sxfs, file, file->size, true);
         if (node == nullptr) {
-            g_last_error = SAVANXP_ENOMEM;
+            g_last_error = SX_ENOMEM;
         }
         return node;
     }
 
     const int node_index = add_node(NodeType::file, leaf_name, index);
     if (node_index < 0) {
-        g_last_error = SAVANXP_ENOMEM;
+        g_last_error = SX_ENOMEM;
         return nullptr;
     }
 
     Vnode& node = g_nodes[node_index].vnode;
     if (!attach_dynamic_storage(node, true)) {
-        g_last_error = SAVANXP_ENOMEM;
+        g_last_error = SX_ENOMEM;
         return nullptr;
     }
 
@@ -672,13 +672,13 @@ Vnode* open(const char* path, uint32_t flags) {
 
 Vnode* ensure_directory(const char* path) {
     if (!g_ready || path == nullptr || *path == '\0') {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     char normalized[kMaxPathLength] = {};
     if (!normalize_path("/", path, normalized, sizeof(normalized))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
@@ -710,7 +710,7 @@ Vnode* ensure_directory(const char* path) {
         component[length < sizeof(component) ? length : (sizeof(component) - 1)] = '\0';
         parent = ensure_directory_node(parent, component);
         if (parent < 0) {
-            g_last_error = SAVANXP_ENOMEM;
+            g_last_error = SX_ENOMEM;
             return nullptr;
         }
         if (cursor[length] == '\0') {
@@ -724,32 +724,32 @@ Vnode* ensure_directory(const char* path) {
 }
 
 Vnode* mkdir(const char* path) {
-    g_last_error = SAVANXP_ENOENT;
+    g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0') {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     char normalized[kMaxPathLength] = {};
     if (!normalize_path("/", path, normalized, sizeof(normalized))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     const int existing = resolve_index(normalized);
     if (existing >= 0) {
         if (g_nodes[existing].vnode.type == NodeType::directory) {
-            g_last_error = SAVANXP_EEXIST;
+            g_last_error = SX_EEXIST;
             return &g_nodes[existing].vnode;
         }
-        g_last_error = SAVANXP_EEXIST;
+        g_last_error = SX_EEXIST;
         return nullptr;
     }
 
     if (is_sxfs_path(normalized)) {
         sxfs::FileRecord* directory = sxfs::create_directory(normalized);
         if (directory == nullptr) {
-            g_last_error = SAVANXP_EINVAL;
+            g_last_error = SX_EINVAL;
             return nullptr;
         }
         return directory->vnode != nullptr ? directory->vnode : ensure_directory(normalized);
@@ -760,32 +760,32 @@ Vnode* mkdir(const char* path) {
 
 Vnode* install_external_file(const char* path, Backend backend, void* data, size_t size, bool writable) {
     if (!g_ready || path == nullptr || *path == '\0') {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     char normalized[kMaxPathLength] = {};
     if (!normalize_path("/", path, normalized, sizeof(normalized))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     char parent_path[kMaxPathLength] = {};
     char leaf_name[kMaxNameLength] = {};
     if (!split_parent_path(normalized, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return nullptr;
     }
 
     Vnode* parent = ensure_directory(parent_path);
     if (parent == nullptr || parent->type != NodeType::directory) {
-        g_last_error = SAVANXP_ENOENT;
+        g_last_error = SX_ENOENT;
         return nullptr;
     }
 
     const int parent_index = resolve_index(parent_path);
     if (parent_index < 0) {
-        g_last_error = SAVANXP_ENOENT;
+        g_last_error = SX_ENOENT;
         return nullptr;
     }
 
@@ -793,7 +793,7 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
     if (index < 0) {
         index = add_node(NodeType::file, leaf_name, parent_index);
         if (index < 0) {
-            g_last_error = SAVANXP_ENOMEM;
+            g_last_error = SX_ENOMEM;
             return nullptr;
         }
     }
@@ -808,15 +808,15 @@ Vnode* install_external_file(const char* path, Backend backend, void* data, size
 }
 
 bool unlink(const char* path) {
-    g_last_error = SAVANXP_ENOENT;
+    g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
     char normalized[kMaxPathLength] = {};
     if (!normalize_path("/", path, normalized, sizeof(normalized))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
@@ -827,7 +827,7 @@ bool unlink(const char* path) {
 
     Vnode& node = g_nodes[index].vnode;
     if (node.type == NodeType::directory) {
-        g_last_error = SAVANXP_EISDIR;
+        g_last_error = SX_EISDIR;
         return false;
     }
 
@@ -838,28 +838,28 @@ bool unlink(const char* path) {
         case Backend::sxfs: {
             sxfs::FileRecord* file = sxfs::file_from_vnode(node);
             if (file == nullptr || !sxfs::unlink_file(*file)) {
-                g_last_error = SAVANXP_EINVAL;
+                g_last_error = SX_EINVAL;
                 return false;
             }
             invalidate_node(node);
             return true;
         }
         default:
-            g_last_error = SAVANXP_EINVAL;
+            g_last_error = SX_EINVAL;
             return false;
     }
 }
 
 bool rmdir(const char* path) {
-    g_last_error = SAVANXP_ENOENT;
+    g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0' || strcmp(path, "/") == 0 || strcmp(path, "/disk") == 0) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
     char normalized[kMaxPathLength] = {};
     if (!normalize_path("/", path, normalized, sizeof(normalized))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
@@ -870,19 +870,19 @@ bool rmdir(const char* path) {
 
     Vnode& node = g_nodes[index].vnode;
     if (node.type != NodeType::directory) {
-        g_last_error = SAVANXP_ENOTDIR;
+        g_last_error = SX_ENOTDIR;
         return false;
     }
     if (node_has_valid_children(node)) {
-        g_last_error = SAVANXP_ENOTEMPTY;
+        g_last_error = SX_ENOTEMPTY;
         return false;
     }
 
     if (is_sxfs_path(normalized)) {
         sxfs::FileRecord* file = sxfs::file_from_vnode(node);
         if (file == nullptr || !sxfs::remove_directory(*file)) {
-            if (g_last_error == SAVANXP_ENOENT) {
-                g_last_error = SAVANXP_EINVAL;
+            if (g_last_error == SX_ENOENT) {
+                g_last_error = SX_EINVAL;
             }
             return false;
         }
@@ -893,15 +893,15 @@ bool rmdir(const char* path) {
 }
 
 bool truncate(const char* path, size_t size) {
-    g_last_error = SAVANXP_ENOENT;
+    g_last_error = SX_ENOENT;
     if (!g_ready || path == nullptr || *path == '\0') {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
     char normalized[kMaxPathLength] = {};
     if (!normalize_path("/", path, normalized, sizeof(normalized))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
@@ -912,22 +912,22 @@ bool truncate(const char* path, size_t size) {
 
     Vnode& node = g_nodes[index].vnode;
     if (node.type != NodeType::file) {
-        g_last_error = SAVANXP_EISDIR;
+        g_last_error = SX_EISDIR;
         return false;
     }
     if (!node.writable) {
-        g_last_error = SAVANXP_EBADF;
+        g_last_error = SX_EBADF;
         return false;
     }
 
     switch (node.backend) {
         case Backend::memory: {
             if (node.data == nullptr) {
-                g_last_error = SAVANXP_EBADF;
+                g_last_error = SX_EBADF;
                 return false;
             }
             if (size > kDynamicFileCapacity) {
-                g_last_error = SAVANXP_ENOSPC;
+                g_last_error = SX_ENOSPC;
                 return false;
             }
             if (size > node.size) {
@@ -939,26 +939,26 @@ bool truncate(const char* path, size_t size) {
         case Backend::sxfs: {
             sxfs::FileRecord* file = sxfs::file_from_vnode(node);
             if (file == nullptr || !sxfs::truncate_file(*file, size)) {
-                g_last_error = size > node.size ? SAVANXP_ENOSPC : SAVANXP_EINVAL;
+                g_last_error = size > node.size ? SX_ENOSPC : SX_EINVAL;
                 return false;
             }
             node.size = file->size;
             return true;
         }
         default:
-            g_last_error = SAVANXP_EINVAL;
+            g_last_error = SX_EINVAL;
             return false;
     }
 }
 
 bool rename(const char* old_path, const char* new_path) {
-    g_last_error = SAVANXP_ENOENT;
+    g_last_error = SX_ENOENT;
     if (!g_ready || old_path == nullptr || new_path == nullptr ||
         *old_path == '\0' || *new_path == '\0' ||
         strcmp(old_path, "/") == 0 || strcmp(new_path, "/") == 0 ||
         strcmp(old_path, new_path) == 0 ||
         strcmp(old_path, "/disk") == 0 || strcmp(new_path, "/disk") == 0) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
@@ -966,7 +966,7 @@ bool rename(const char* old_path, const char* new_path) {
     char normalized_new[kMaxPathLength] = {};
     if (!normalize_path("/", old_path, normalized_old, sizeof(normalized_old)) ||
         !normalize_path("/", new_path, normalized_new, sizeof(normalized_new))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
@@ -975,49 +975,49 @@ bool rename(const char* old_path, const char* new_path) {
         return false;
     }
     if (resolve_index(normalized_new) >= 0) {
-        g_last_error = SAVANXP_EEXIST;
+        g_last_error = SX_EEXIST;
         return false;
     }
 
     char parent_path[kMaxPathLength] = {};
     char leaf_name[kMaxNameLength] = {};
     if (!split_parent_path(normalized_new, parent_path, sizeof(parent_path), leaf_name, sizeof(leaf_name))) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
     const int new_parent = resolve_index(parent_path);
     if (new_parent < 0) {
-        g_last_error = SAVANXP_ENOENT;
+        g_last_error = SX_ENOENT;
         return false;
     }
     if (g_nodes[new_parent].vnode.type != NodeType::directory) {
-        g_last_error = SAVANXP_ENOTDIR;
+        g_last_error = SX_ENOTDIR;
         return false;
     }
     if (find_child(new_parent, leaf_name) >= 0) {
-        g_last_error = SAVANXP_EEXIST;
+        g_last_error = SX_EEXIST;
         return false;
     }
 
     Vnode& node = g_nodes[node_index].vnode;
     if (node.type == NodeType::directory && node_is_ancestor(node_index, new_parent)) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
     if (is_sxfs_path(normalized_old) != is_sxfs_path(normalized_new)) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
     if (is_sxfs_path(normalized_old) && !sxfs::rename_path(normalized_old, normalized_new)) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
 
     detach_node(node_index);
     if (!set_node_name(node_index, leaf_name)) {
-        g_last_error = SAVANXP_EINVAL;
+        g_last_error = SX_EINVAL;
         return false;
     }
     attach_node(node_index, new_parent);
@@ -1056,16 +1056,16 @@ size_t read(Vnode& node, size_t offset, void* buffer, size_t count) {
 }
 
 size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool truncate) {
-    g_last_error = SAVANXP_EINVAL;
+    g_last_error = SX_EINVAL;
     if (node.type != NodeType::file || !node.writable) {
-        g_last_error = SAVANXP_EBADF;
+        g_last_error = SX_EBADF;
         return 0;
     }
 
     switch (node.backend) {
         case Backend::memory: {
             if (node.data == nullptr || buffer == nullptr) {
-                g_last_error = SAVANXP_EBADF;
+                g_last_error = SX_EBADF;
                 return 0;
             }
             if (truncate) {
@@ -1074,7 +1074,7 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
             }
 
             if (offset > kDynamicFileCapacity) {
-                g_last_error = SAVANXP_ENOSPC;
+                g_last_error = SX_ENOSPC;
                 return 0;
             }
 
@@ -1091,19 +1091,19 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
         case Backend::sxfs: {
             sxfs::FileRecord* file = sxfs::file_from_vnode(node);
             if (file == nullptr) {
-                g_last_error = SAVANXP_EBADF;
+                g_last_error = SX_EBADF;
                 return 0;
             }
             size_t written = 0;
             if (!sxfs::write_file(*file, offset, buffer, count, truncate, written)) {
-                g_last_error = SAVANXP_ENOSPC;
+                g_last_error = SX_ENOSPC;
                 return 0;
             }
             node.size = file->size;
             return written;
         }
         default:
-            g_last_error = SAVANXP_EINVAL;
+            g_last_error = SX_EINVAL;
             return 0;
     }
 }

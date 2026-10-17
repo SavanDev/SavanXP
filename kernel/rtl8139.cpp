@@ -9,7 +9,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
 #include "kernel/uacpi_glue.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 

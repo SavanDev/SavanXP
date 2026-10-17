@@ -1,7 +1,7 @@
 #pragma once
 
 #include "boot/boot_info.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace ui {
 

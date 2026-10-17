@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace input {
 

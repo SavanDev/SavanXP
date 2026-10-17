@@ -8,7 +8,7 @@
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/timer.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 
@@ -38,7 +38,7 @@ inline uint8_t in8(uint16_t port) {
     return value;
 }
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -74,20 +74,20 @@ void wait_milliseconds(uint32_t duration_ms) {
 
 int speaker_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     if ((granted_access & object::access_write) == 0) {
-        return negative_error(SAVANXP_EACCES);
+        return negative_error(SX_EACCES);
     }
     switch (request) {
         case PCSPK_IOC_BEEP: {
             if (!process::validate_user_range(argument, sizeof(savanxp_pcspk_beep), false)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
 
             savanxp_pcspk_beep beep = {};
             if (!process::copy_from_user(&beep, argument, sizeof(beep))) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             if (beep.duration_ms == 0 || !start_tone(beep.frequency_hz)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
 
             wait_milliseconds(beep.duration_ms);
@@ -98,7 +98,7 @@ int speaker_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) 
             stop_tone();
             return 0;
         default:
-            return negative_error(SAVANXP_ENOSYS);
+            return negative_error(SX_ENOSYS);
     }
 }
 

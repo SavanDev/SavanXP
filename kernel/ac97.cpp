@@ -10,7 +10,7 @@
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 
@@ -363,10 +363,10 @@ void account_write() {
 
 int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
     if (!g_ready || !g_prepared) {
-        return -static_cast<int>(SAVANXP_ENODEV);
+        return -static_cast<int>(SX_ENODEV);
     }
     if (byte_count == 0 || byte_count > kPeriodBytes || (byte_count % kFrameBytes) != 0) {
-        return -static_cast<int>(SAVANXP_EINVAL);
+        return -static_cast<int>(SX_EINVAL);
     }
 
     reclaim_consumed();
@@ -393,7 +393,7 @@ int ac97_submit_period(uint64_t user_buffer, uint32_t byte_count) {
     }
 
     if (!copy_period(user_buffer, byte_count)) {
-        return -static_cast<int>(SAVANXP_EINVAL);
+        return -static_cast<int>(SX_EINVAL);
     }
 
     const uint8_t new_lvi = static_cast<uint8_t>(g_head);

@@ -7,7 +7,7 @@
 #include "kernel/subsystem.hpp"
 #include "kernel/vfs.hpp"
 #include "kernel/vmm.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace device {
 struct Device;
@@ -24,12 +24,6 @@ constexpr size_t kMaxFileHandles = 64;
 constexpr size_t kMaxWaitHandles = 16;
 constexpr size_t kProcessNameLength = 32;
 constexpr size_t kProcessPathLength = 256;
-// Descriptores que admite un poll. Es el tamano de la tabla de descriptores del
-// proceso porque no puede haber mas: pedir mas de kMaxFileHandles solo se logra
-// repitiendo un fd, que nadie hace. El tope importa porque la copia en kernel
-// del pedido vive en el Process (poll_entries): es lo que deja re-evaluar a un
-// proceso bloqueado sin tocar su memoria de usuario en cada tick.
-constexpr size_t kMaxPollDescriptors = kMaxFileHandles;
 
 enum class State : uint8_t {
     unused = 0,
@@ -80,6 +74,7 @@ enum OpenFlags : uint32_t {
     open_nonblock = 1u << 2,
 };
 
+
 // Handles en transito por el pipe (SAVANXP_SYS_PIPE_SEND_HANDLE). Es una cola
 // aparte del stream de bytes: el pipe solo los guarda, y quien los manda y quien
 // los recibe se ponen de acuerdo sobre el orden con sus propios registros. Cada
@@ -100,24 +95,11 @@ struct Pipe {
     uint32_t handle_count;
 };
 
-enum SignalFlags : uint32_t {
-    signal_none = 0,
-    signal_sigint = 1u << 0,
-    signal_sigkill = 1u << 1,
-    signal_sigpipe = 1u << 2,
-    signal_sigterm = 1u << 3,
-    signal_sigchld = 1u << 4,
-};
 
 enum class WaitReason : uint8_t {
     none = 0,
     child = 1,
     object = 2,
-    // Esperando en poll(). Comparte State::blocked_wait con la espera por
-    // objetos porque para el resto del kernel son lo mismo -- un proceso
-    // parado con vencimiento --; lo que cambia es quien lo despierta y con
-    // que resultado.
-    poll = 3,
 };
 
 struct HandleEntry {
@@ -147,14 +129,6 @@ struct Process {
     uint64_t blocked_write_buffer;
     uint64_t blocked_write_length;
     uint64_t blocked_write_progress;
-    // Pedido de poll en curso (WaitReason::poll). `poll_entries` es la COPIA EN
-    // KERNEL de lo que pidio el proceso, y existe para que la re-evaluacion por
-    // tick no tenga que leer su memoria de usuario: eso obligaria a cambiar de
-    // CR3 desde el handler del timer, mil veces por segundo y por proceso
-    // parado. La memoria de usuario se toca una sola vez, al completar, para
-    // devolver los revents en `poll_user_fds`.
-    uint64_t poll_user_fds;
-    uint32_t poll_count;
     // Vencimiento en milisegundos del reloj monotono (process::now_ms()), 0 =
     // sin vencimiento. NO son ticks: ver el comentario de now_ms().
     uint64_t wake_deadline_ms;
@@ -166,11 +140,15 @@ struct Process {
     // uso total del sistema.
     uint64_t cpu_ticks;
     uint32_t time_slice;
-    uint32_t pending_signals;
-    uint32_t last_signal;
-    savanxp_pollfd poll_entries[kMaxPollDescriptors];
     char name[kProcessNameLength];
-    char cwd[kProcessPathLength];
+    // Estado privado del subsistema al que pertenece este proceso (isolation
+    // slice B). El kernel reserva y libera estos bytes segun lo que el
+    // subsistema declara en subsystem::register_process_state_size, y NO
+    // interpreta su contenido: el directorio actual de POSIX vive ahi, no
+    // aqui. Sin ningun subsistema con estado, esto es nullptr y no ocupa
+    // memoria.
+    uint8_t* subsystem_state;
+    size_t subsystem_state_bytes;
     object::TimerObject* sleep_timer;
     vm::VmSpace address_space;
     uint64_t kernel_stack_base;
@@ -203,6 +181,10 @@ bool copy_to_user(uint64_t user_address, const void* source, size_t count);
 bool validate_user_range(uint64_t user_address, size_t count, bool require_write);
 SavedContext* dispatch_posix_syscall(SavedContext* context);
 SavedContext* dispatch_native_syscall(SavedContext* context);
+// Cada subsistema declara su estado privado por proceso. El kernel los reserva
+// y los libera sin interpretarlos (isolation slice B).
+void initialize_posix_subsystem();
+void initialize_native_subsystem();
 // Frontera de traduccion POSIX: el dispatcher compila en su propia unidad
 // (subsystems/posix/kernel/posix_dispatch.cpp) contra estas declaraciones.
 // Los cuerpos POSIX-only viven en subsystems/posix/kernel/
@@ -234,12 +216,21 @@ struct SpawnArguments {
 uint64_t current_uptime_ms();
 void clear_wait_state(Process& proc);
 void switch_to_process(Process* target);
-bool resolve_process_path(const Process& proc, const char* input, char* output, size_t capacity);
+// Resolucion NEUTRAL de ruta: absoluta, o relativa a la raiz. No hay cwd en el
+// kernel; la resolucion contra el directorio actual es de POSIX y vive en
+// subsystems/posix/kernel/posix_translation.cpp.
+bool resolve_path_from_root(const char* input, char* output, size_t capacity);
+// Estado privado del subsistema (isolation slice B). ensure es idempotente y
+// conserva los bytes si el tamano no cambio, para que un exec de POSIX a POSIX
+// no tire el cwd.
+void ensure_subsystem_state(Process& proc);
+void free_subsystem_state(Process& proc);
+void copy_subsystem_state(Process& child, const Process& parent);
 bool read_from_process_memory(const Process& proc, void* destination, uint64_t user_address, size_t count, bool require_write = false);
 bool write_to_process_memory(Process& proc, uint64_t user_address, const void* source, size_t count);
 bool copy_user_string(const Process& proc, uint64_t user_address, char* buffer, size_t capacity);
 void write_int_to_process_memory(Process& proc, uint64_t user_address, int value);
-savanxp_error_code image_failure_errno(ImageFailure failure);
+sx_status image_failure_errno(ImageFailure failure);
 bool prepare_exec_image(Process& proc, const char* path, int argc, const char* const* argv, ImageFailure& failure);
 Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, ImageFailure& failure);
 // Clones the caller's handle table into a spawned child (native spawn only;
@@ -276,6 +267,9 @@ int stat_path(Process& proc, const char* path, uint64_t user_stat_address);
 int fstat_fd(Process& proc, uint64_t fd, uint64_t user_stat_address);
 int chdir_path(Process& proc, const char* path);
 int getcwd_path(Process& proc, uint64_t user_buffer, size_t capacity);
+// POSIX-only path resolution: relative to the process's current directory,
+// which lives in the POSIX subsystem's private per-process state.
+bool resolve_process_path(const Process& proc, const char* input, char* output, size_t capacity);
 int readdir_node(Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity);
 int ioctl_handle(Process& proc, uint64_t fd, uint64_t request, uint64_t argument);
 int read_handle(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count);

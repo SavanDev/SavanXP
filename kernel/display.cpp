@@ -99,7 +99,7 @@ bool move_cursor(const savanxp_gpu_cursor_position& position) { return g_backend
 bool get_present_timeline(savanxp_gpu_present_timeline& timeline) { return g_backend != nullptr && g_backend->get_present_timeline(timeline); }
 bool wait_present(savanxp_gpu_present_wait& request) { return g_backend != nullptr && g_backend->wait_present(request); }
 void release_session_resources() { if (g_backend != nullptr) { g_backend->release_session_resources(); } }
-int create_present_event() { return g_backend != nullptr ? g_backend->create_present_event() : -static_cast<int>(SAVANXP_ENOSYS); }
-int create_scanout_event() { return g_backend != nullptr ? g_backend->create_scanout_event() : -static_cast<int>(SAVANXP_ENOSYS); }
+int create_present_event() { return g_backend != nullptr ? g_backend->create_present_event() : -static_cast<int>(SX_ENOSYS); }
+int create_scanout_event() { return g_backend != nullptr ? g_backend->create_scanout_event() : -static_cast<int>(SX_ENOSYS); }
 
 } // namespace display

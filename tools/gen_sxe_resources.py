@@ -138,7 +138,7 @@ def load_format(project_root):
 
 def load_launch_flags(project_root):
     """SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN -> {'fullscreen': 1}."""
-    path = os.path.join(project_root, "subsystems", "posix", "sdk", "v1", "include", "savanxp", "syscall.h")
+    path = os.path.join(project_root, "include", "abi", "savanxp_abi.h")
     defines = parse_defines(path, "SAVANXP_DESKTOP_LAUNCH_FLAG_")
     flags = {}
     for name, value in defines.items():
@@ -150,7 +150,7 @@ def load_launch_flags(project_root):
 
 def load_window_flags(project_root):
     """SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE -> {'fixed_size': 1}."""
-    path = os.path.join(project_root, "subsystems", "posix", "sdk", "v1", "include", "savanxp", "syscall.h")
+    path = os.path.join(project_root, "include", "abi", "savanxp_abi.h")
     defines = parse_defines(path, "SAVANXP_WM_WINDOW_STYLE_")
     flags = {}
     for name, value in defines.items():

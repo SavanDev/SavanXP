@@ -7,7 +7,7 @@
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 /*
  * Portapapeles del sistema (`/dev/clipboard`).
@@ -30,7 +30,7 @@
 
 namespace {
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -44,7 +44,7 @@ int clipboard_read(uint64_t user_buffer, size_t count) {
         return 0;
     }
     if (!process::validate_user_range(user_buffer, count, true)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     // Sin cursor: siempre desde el principio. Un buffer mas chico que el
@@ -52,7 +52,7 @@ int clipboard_read(uint64_t user_buffer, size_t count) {
     // CLIP_IOC_GET_INFO existe -- para poder dimensionar antes de leer.
     size_t copied = count < g_length ? count : g_length;
     if (copied != 0 && !process::copy_to_user(user_buffer, g_content, copied)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     return static_cast<int>(copied);
 }
@@ -61,10 +61,10 @@ int clipboard_write(uint64_t user_buffer, size_t count) {
     if (count > SAVANXP_CLIPBOARD_CAPACITY) {
         // Truncar en silencio dejaria al que pega con medio texto y sin forma
         // de enterarse; que falle el que copia es el error util.
-        return negative_error(SAVANXP_ENOSPC);
+        return negative_error(SX_ENOSPC);
     }
     if (count != 0 && !process::validate_user_range(user_buffer, count, false)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     // Se copia a un temporal antes de pisar el contenido vigente: si el puntero
@@ -75,7 +75,7 @@ int clipboard_write(uint64_t user_buffer, size_t count) {
     // solo frame -- el mismo error que tenia ensure_capacity en SxFS.
     static uint8_t g_staging[SAVANXP_CLIPBOARD_CAPACITY];
     if (count != 0 && !process::copy_from_user(g_staging, user_buffer, count)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     if (count != 0) {
@@ -98,20 +98,20 @@ int clipboard_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access
             info.sequence = g_sequence;
             if (!process::validate_user_range(argument, sizeof(info), true) ||
                 !process::copy_to_user(argument, &info, sizeof(info))) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             return 0;
         }
         case CLIP_IOC_CLEAR:
             if ((granted_access & object::access_write) == 0) {
-                return negative_error(SAVANXP_EACCES);
+                return negative_error(SX_EACCES);
             }
             g_length = 0;
             g_format = SAVANXP_CLIPBOARD_FORMAT_EMPTY;
             g_sequence += 1;
             return 0;
         default:
-            return negative_error(SAVANXP_ENOSYS);
+            return negative_error(SX_ENOSYS);
     }
 }
 

@@ -27,6 +27,12 @@
 #include "kernel/tty.hpp"
 #include "kernel/ui.hpp"
 #include "kernel/process_detail.hpp"
+// POSIX translation speaking the POSIX surface, like its dispatcher. The
+// kernel proper never includes this header.
+#include "savanxp/syscall.h"
+
+#include "posix_process_state.hpp"
+#include "posix_signals.hpp"
 
 namespace {
 
@@ -34,6 +40,26 @@ namespace {
 // says "this core" without repeating the namespace on every line.
 smp::Cpu& this_cpu() {
     return smp::this_cpu();
+}
+
+// Numero de senal -> bit de POSIX. Antes vivia en el kernel (signal_flag_for),
+// junto a un estado que nadie leia; con la rebanada D se vino aqui con el
+// vocabulario al que pertenece (posix_signals.hpp).
+uint32_t posix_signal_flag_for(int signal_number) {
+    switch (signal_number) {
+        case SAVANXP_SIGINT:
+            return posix_signal_sigint;
+        case SAVANXP_SIGKILL:
+            return posix_signal_sigkill;
+        case SAVANXP_SIGPIPE:
+            return posix_signal_sigpipe;
+        case SAVANXP_SIGTERM:
+            return posix_signal_sigterm;
+        case SAVANXP_SIGCHLD:
+            return posix_signal_sigchld;
+        default:
+            return posix_signal_none;
+    }
 }
 
 uint32_t exported_open_flags(const object::IoObject& file) {
@@ -115,7 +141,11 @@ int fcntl_fd(process::Process& proc, uint64_t fd, uint64_t command, uint64_t val
 }
 
 int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeout_ms) {
-    if (count > process::kMaxPollDescriptors) {
+    posix::ProcessState* const state = posix::state(proc);
+    if (state == nullptr) {
+        return sx::negative_error(SAVANXP_ENOMEM);
+    }
+    if (count > posix::POSIX_MAX_POLL_ENTRIES) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
     if (count != 0 && !vm::is_user_range_accessible(proc.address_space, user_fds, count * sizeof(savanxp_pollfd), true)) {
@@ -123,12 +153,13 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
     }
 
     clear_wait_state(proc);
-    proc.poll_user_fds = user_fds;
-    proc.poll_count = static_cast<uint32_t>(count);
+    state->poll_user_fds = user_fds;
+    state->poll_count = static_cast<uint32_t>(count);
+    state->poll_active = 0;
     if (count != 0 &&
-        !read_from_process_memory(proc, proc.poll_entries, user_fds, count * sizeof(savanxp_pollfd))) {
-        proc.poll_user_fds = 0;
-        proc.poll_count = 0;
+        !read_from_process_memory(proc, state->poll_entries, user_fds, count * sizeof(savanxp_pollfd))) {
+        state->poll_user_fds = 0;
+        state->poll_count = 0;
         return sx::negative_error(SAVANXP_EINVAL);
     }
 
@@ -139,40 +170,39 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
     input::poll();
     net::poll();
 
-    const int ready = detail::evaluate_poll_entries(proc);
+    const int ready = posix::evaluate_poll_entries(*state, proc);
     if (ready != 0 || timeout_ms == 0) {
-        const bool committed = detail::commit_poll_entries(proc);
-        proc.poll_user_fds = 0;
-        proc.poll_count = 0;
+        const bool committed = posix::commit_poll_entries(*state, proc);
+        state->poll_user_fds = 0;
+        state->poll_count = 0;
         if (!committed) {
             return sx::negative_error(SAVANXP_EINVAL);
         }
         return ready;
     }
 
-    // wake_deadline_ms 0 significa sin vencimiento, igual que en la espera por objetos:
-    // asi un timeout negativo (esperar para siempre) no necesita un caso aparte.
-    proc.wait_reason = process::WaitReason::poll;
+    // Se estaciona. El kernel solo sabe que hay un proceso parado con
+    // vencimiento: que lo que espera es un poll es cosa de POSIX (rebanada C).
+    state->poll_active = 1;
     proc.wake_deadline_ms = timeout_ms > 0 ? (detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
     proc.state = process::State::blocked_wait;
     return process::kBlockedResult;
 }
 
 /*
- * Re-evalua a los que estan parados en poll y despierta a los que ya tienen
- * algo o se les vencio el plazo. Corre en el tick, donde device::poll() e
- * input::poll() ya los atendio timer::handle_interrupt() un momento antes.
+ * Re-evaluacion de un proceso estacionado (rebanada C).
  *
- * net::poll() es el que hay que traer: el pump de red -- y con el, el reloj de
- * retransmision de TCP (docs/NETWORKING.md) -- no tiene ningun otro latido
- * periodico, y hasta ahora lo hacia girar el propio bucle de poll. Se llama una
- * vez por tick y SOLO si hay alguien esperando, que es exactamente la cadencia
- * que tenia antes: mientras nadie hace poll, nadie lo llamaba tampoco.
+ * Antes esto vivia en el kernel: el tick buscaba WaitReason::poll y
+ * reevaluaba los descriptores. Ahora el kernel solo entrega el proceso
+ * estacionado (subsystem::recheck_parked_process) y POSIX decide si era un
+ * poll, si ya hay algo, o si se le vencio el plazo.
+ *
+ * El pedido vive en una COPIA EN KERNEL (posix::ProcessState::poll_entries),
+ * no en un puntero a memoria de usuario: la reevaluacion por tick no puede
+ * cambiar de CR3 mil veces por segundo y por proceso parado. La memoria de
+ * usuario se toca una sola vez, al completar, para devolver los revents.
  */
 
-// Despierta a los que estan parados en poll y ya tienen algo que informar.
-// `honour_deadline` distingue las dos entradas: el tick tambien tiene que
-// vencer plazos, un evento solo mira si hay datos.
 process::Process* fork_process(process::Process& parent, const process::SavedContext& parent_context) {
     process::Process* child = detail::allocate_process_slot(false);
     if (child == nullptr) {
@@ -180,9 +210,10 @@ process::Process* fork_process(process::Process& parent, const process::SavedCon
     }
 
     child->parent_pid = parent.pid;
-    child->subsystem_id = parent.subsystem_id;
     memcpy(child->name, parent.name, sizeof(child->name));
-    memcpy(child->cwd, parent.cwd, sizeof(child->cwd));
+    // fork hereda el estado privado, cwd incluido: lo copia el nucleo, que no
+    // sabe que hay un cwd dentro.
+    process::copy_subsystem_state(*child, parent);
 
     // El hijo hereda los registros de punto flotante como hereda los enteros.
     // Mientras el padre corre, su FPU vive en los registros y el area guardada
@@ -218,8 +249,6 @@ process::Process* fork_process(process::Process& parent, const process::SavedCon
     memcpy(child_context, &parent_context, sizeof(*child_context));
     child_context->rax = 0;
     child->context = child_context;
-    child->pending_signals = process::signal_none;
-    child->last_signal = 0;
     child->blocked_io_fd = 0;
     child->blocked_read_buffer = 0;
     child->blocked_read_capacity = 0;
@@ -234,8 +263,8 @@ process::Process* fork_process(process::Process& parent, const process::SavedCon
 }
 
 int kill_process(process::Process& sender, int pid, int signal_number) {
-    const uint32_t flag = detail::signal_flag_for(signal_number);
-    if (flag == process::signal_none) {
+    const uint32_t flag = posix_signal_flag_for(signal_number);
+    if (flag == posix_signal_none) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
 
@@ -254,8 +283,8 @@ int kill_process(process::Process& sender, int pid, int signal_number) {
         return sx::negative_error(SAVANXP_EACCES);
     }
 
-    target->pending_signals |= flag;
-    target->last_signal = static_cast<uint32_t>(signal_number);
+    // No hay entrega de senales a userland (posix_signals.hpp): SIGCHLD es un
+    // no-op que devuelve exito, y el resto termina el proceso con 128+n.
     if (signal_number == SAVANXP_SIGCHLD) {
         return 0;
     }
@@ -553,21 +582,34 @@ int chdir_path(process::Process& proc, const char* path) {
     if (node->type != vfs::NodeType::directory) {
         return sx::negative_error(SAVANXP_ENOTDIR);
     }
-    if (strlen(path) >= sizeof(proc.cwd)) {
+    posix::ProcessState* const owned = posix::state(proc);
+    if (owned == nullptr) {
+        // Sin estado no hay donde guardar el cwd: el proceso no tiene donde
+        // estar, y quedarse en "/" es la respuesta que no inventa.
+        return sx::negative_error(SAVANXP_ENOMEM);
+    }
+    if (strlen(path) >= sizeof(owned->cwd)) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
-    strcpy(proc.cwd, path);
+    strcpy(owned->cwd, path);
     return 0;
 }
 
 int getcwd_path(process::Process& proc, uint64_t user_buffer, size_t capacity) {
-    const size_t length = strlen(proc.cwd) + 1;
+    const char* const cwd = posix::cwd_or_root(proc);
+    const size_t length = strlen(cwd) + 1;
     if (capacity < length || !vm::is_user_range_accessible(proc.address_space, user_buffer, capacity, true)) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
-    return write_to_process_memory(proc, user_buffer, proc.cwd, length)
+    return write_to_process_memory(proc, user_buffer, cwd, length)
         ? static_cast<int>(length - 1)
         : sx::negative_error(SAVANXP_EINVAL);
+}
+
+// Resolucion POSIX: relativa al directorio actual del proceso. La del kernel
+// (resolve_path_from_root) es la que se usa cuando no hay cwd que consultar.
+bool resolve_process_path(const process::Process& proc, const char* input, char* output, size_t capacity) {
+    return vfs::normalize_path(posix::cwd_or_root(proc), input, output, capacity);
 }
 
 int readdir_node(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity) {
@@ -1076,3 +1118,82 @@ int sleep_via_timer(process::Process& proc, uint64_t milliseconds) {
 }
 
 } // namespace process
+
+// --- poll() (rebanada C de aislamiento) --------------------------------------
+//
+// El pedido de poll es estado de POSIX y la reevaluacion tambien: el kernel
+// solo entrega cualquier proceso estacionado (subsystem::recheck_parked_process)
+// y aqui se decide si era un poll y si ya hay algo o se vencio el plazo.
+
+namespace posix {
+
+// Devuelve los revents al arreglo del proceso. Es el unico momento en que el
+// camino de poll toca memoria de usuario de un proceso que no esta corriendo.
+bool commit_poll_entries(ProcessState& state, process::Process& proc) {
+    if (state.poll_count == 0) {
+        return true;
+    }
+    return write_to_process_memory(
+        proc, state.poll_user_fds, state.poll_entries, state.poll_count * sizeof(savanxp_pollfd)) != 0;
+}
+
+// Recorre la copia en kernel del pedido y deja los revents ahi mismo. No toca
+// memoria de usuario ni el estado del proceso: sirve igual para el que esta
+// llamando a poll que para uno ya parado, que es de donde lo llama el tick.
+int evaluate_poll_entries(ProcessState& state, process::Process& proc) {
+    int ready = 0;
+
+    for (size_t index = 0; index < state.poll_count; ++index) {
+        savanxp_pollfd& entry = state.poll_entries[index];
+
+        entry.revents = 0;
+        if (entry.fd < 0) {
+            continue;
+        }
+
+        object::IoObject* file = process::detail::fd_to_io_object(proc, static_cast<uint64_t>(entry.fd), object::access_synchronize);
+        if (file != nullptr) {
+            entry.revents = process::detail::poll_open_file(file, entry.events);
+        } else if ((entry.events & SAVANXP_POLLIN) != 0) {
+            // Waitable kernel objects (events, timers) are not IoObjects but
+            // can still be polled: report POLLIN when the object is signaled.
+            object::Header* waitable =
+                process::detail::lookup_handle(proc, static_cast<uint64_t>(entry.fd), object::access_synchronize);
+            if (waitable != nullptr && object::can_satisfy_wait(waitable)) {
+                entry.revents = static_cast<short>(SAVANXP_POLLIN);
+            }
+        }
+        if (entry.revents != 0) {
+            ++ready;
+        }
+    }
+    return ready;
+}
+
+// El gancho que el kernel llama en el tick y en cada despertar por evento.
+// `honour_deadline` distingue las dos entradas: el tick tambien tiene que
+// vencer plazos, un evento solo mira si hay datos.
+void recheck_parked_poll(process::Process& proc, uint64_t now_ms, bool honour_deadline) {
+    ProcessState* const owned = posix::state(proc);
+    if (owned == nullptr || owned->poll_active == 0) {
+        return;
+    }
+
+    const int ready = posix::evaluate_poll_entries(*owned, proc);
+    const bool expired = honour_deadline && proc.wake_deadline_ms != 0 && proc.wake_deadline_ms <= now_ms;
+    if (ready == 0 && !expired) {
+        return;
+    }
+
+    // El commit puede fallar solo si el proceso dejo de tener mapeado su propio
+    // arreglo, que estando parado no puede pasar; si pasara, se lo despierta con
+    // el error en vez de dejarlo esperando para siempre.
+    const bool committed = posix::commit_poll_entries(*owned, proc);
+    owned->poll_user_fds = 0;
+    owned->poll_count = 0;
+    owned->poll_active = 0;
+    process::detail::complete_blocked_wait(proc, committed ? ready : sx::negative_error(SAVANXP_EINVAL));
+}
+
+} // namespace posix
+

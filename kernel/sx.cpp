@@ -126,7 +126,7 @@ bool copy_user_string(char* buffer, size_t capacity, uint64_t user_address) {
     return copy_user_string_from(*me, user_address, buffer, capacity);
 }
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -198,13 +198,13 @@ bool can_complete_object_wait(const process::Process& proc) {
 
 int consume_object_wait(process::Process& proc) {
     if (proc.wait_reason != process::WaitReason::object || proc.wait_handle_count == 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     if (proc.wait_all != 0) {
         for (size_t index = 0; index < proc.wait_handle_count; ++index) {
             if (!object::try_acquire_wait(proc.waited_objects[index])) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
         }
         return 0;
@@ -215,12 +215,12 @@ int consume_object_wait(process::Process& proc) {
             return static_cast<int>(index);
         }
     }
-    return negative_error(SAVANXP_EINVAL);
+    return negative_error(SX_EINVAL);
 }
 
 int try_consume_objects(process::Process& proc, object::Header* const* handles, size_t count, bool wait_all) {
     if (count == 0 || count > process::kMaxWaitHandles) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     process::clear_wait_state(proc);
@@ -234,7 +234,7 @@ int try_consume_objects(process::Process& proc, object::Header* const* handles, 
     if (can_complete_object_wait(proc)) {
         return consume_object_wait(proc);
     }
-    return negative_error(SAVANXP_EAGAIN);
+    return negative_error(SX_EAGAIN);
 }
 
 object::SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask) {
@@ -247,10 +247,10 @@ object::SectionObject* open_file_section(vfs::Vnode& node, uint64_t offset, uint
 
 int64_t map_view(process::Process& proc, object::SectionObject& section, uint32_t requested_access, uint32_t granted_access, uint64_t base, bool share_on_fork) {
     if ((requested_access & granted_access) != requested_access) {
-        return negative_error(SAVANXP_EACCES);
+        return negative_error(SX_EACCES);
     }
     if ((requested_access & section.access_mask) != requested_access) {
-        return negative_error(SAVANXP_EACCES);
+        return negative_error(SX_EACCES);
     }
     // W^X tambien se rechaza aca, y no solo en vm::map_section_view: alla el
     // rechazo llega como un ENOMEM que no dice por que fallo la vista. Un
@@ -258,7 +258,7 @@ int64_t map_view(process::Process& proc, object::SectionObject& section, uint32_
     // clasico de un segmento mal declarado -- merece un EINVAL que lo diga.
     if ((requested_access & object::access_execute) != 0 &&
         (requested_access & object::access_write) != 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     /* base == 0 deja que el kernel elija, como map_view. Con base fija, el
@@ -266,18 +266,18 @@ int64_t map_view(process::Process& proc, object::SectionObject& section, uint32_
      * alinea igual hacia abajo: el kernel mapea por paginas completas y no puede
      * mapear un parcial. */
     if (base != 0 && (base & (memory::kPageSize - 1)) != 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     uint64_t base_address = base;
     if (!vm::map_section_view(proc.address_space, section, requested_access, base_address, share_on_fork)) {
-        return negative_error(SAVANXP_ENOMEM);
+        return negative_error(SX_ENOMEM);
     }
     return static_cast<int64_t>(base_address);
 }
 
 int unmap_view(process::Process& proc, uint64_t base_address) {
     if (base_address == 0 || !vm::unmap_section_view(proc.address_space, base_address)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     return 0;
 }

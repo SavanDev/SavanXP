@@ -1,10 +1,11 @@
 # Kernel native API (Sx)
 
-Status: done (2026-10-16, slice 13). The layering stands: a native
-kernel API with POSIX as a translation subsystem on top and a Win32-like
-native userland beside it. See [`SYSTEM_LAYERING.md`](SYSTEM_LAYERING.md)
-for the layering and [`NATIVE_APPS.md`](NATIVE_APPS.md) for writing
-native programs.
+Status: done (2026-10-16, slice 13), isolation campaign complete (slices
+A-E). The layering stands: a native kernel API with POSIX as a translation
+subsystem on top and a Win32-like native userland beside it. The kernel now
+includes no userland header, keeps no POSIX per-process state, and returns its
+own status space. See [`SYSTEM_LAYERING.md`](SYSTEM_LAYERING.md) for the
+layering and [`NATIVE_APPS.md`](NATIVE_APPS.md) for writing native programs.
 
 ## Naming: Sx, not Nt
 
@@ -46,10 +47,87 @@ object/process factoring, not before.
 - Slice 10: native input ring plus toolkit seed.
 - Slice 11: widgets on `sxnwidgets.h`, scripted interaction.
 - Slice 12: real PS/2 keys plus launcher integration.
-- Slice 13 (this change): POSIX bodies out of the kernel, guide, close
-  (below).
+- Slice 13: POSIX bodies out of the kernel, guide, close.
+- Isolation A: the kernel stops including the POSIX SDK.
+- Isolation B: the current directory left `Process`.
+- Isolation C: poll parking left `Process`.
+- Isolation D: POSIX signals left `Process`.
+- Isolation E (this change): the error space belongs to the kernel. The
+  campaign is complete: the kernel includes no userland header, keeps no
+  POSIX per-process state, and returns its own status space.
 
-## Slice 13 (this change): POSIX translation lives in its subsystem
+## Isolation: making the kernel indifferent to userland
+
+The goal is not a second userland API. It is that deleting POSIX (or any
+userland) leaves the kernel untouched. Measured against that standard,
+slice 13 was necessary but not sufficient: the kernel still reached into
+the POSIX SDK header for every data struct, and it still kept POSIX state
+in `Process`.
+
+| Slice | Removes | Risk |
+|-------|---------|------|
+| **A** (done) | The POSIX SDK include from `kernel/` and `include/kernel/` | mechanical |
+| **B** (done) | `cwd` from `Process` (POSIX path resolution state) | medium |
+| **C** (done) | poll parking from `Process` | high |
+| **D** (done) | POSIX signals from the process state | medium |
+| **E** (done) | errno from the kernel's return path | semantic |
+| **C** | poll parking from `Process` (`poll_entries`, `WaitReason::poll`) | medium |
+| **D** | signals from the process state (`pending_signals`, `SignalFlags`) | medium |
+| **E** | errno from the return path (`savanxp_error_code`) | semantic |
+
+### Isolation A: the kernel speaks a neutral contract, not the POSIX SDK
+
+`include/abi/savanxp_abi.h` holds the wire contract the kernel and every
+userland layer share: the data structs (gpu, framebuffer, input, audio,
+net, sections, WM) and the vocabularies the kernel genuinely owns
+(open access, poll bits, signal numbers, socket kinds, process state).
+The SDK's `savanxp/syscall.h` keeps the POSIX vocabulary and includes it:
+system-call numbers, mode bits, seek, fcntl, socket options.
+
+`kernel/` and `include/kernel/` no longer include `savanxp/*`; only the
+POSIX layer (`subsystems/posix/kernel/`) does, which is where POSIX
+belongs. A layout guard asserts both halves, so the SDK header cannot
+creep back in through a driver.
+
+Two facts this exposed, worth recording because they are easy to
+mis-measure: the kernel used **no** POSIX *enum type names* but did use
+16 POSIX *enumerators* (`SAVANXP_PROC_*` in state reporting,
+`SAVANXP_SOCK_*`/`IPPROTO_*` in the network stack, `SAVANXP_SO_*` socket
+options, one syscall number in a comment). Measuring the enum names would
+have said "zero coupling" and been wrong; those enumerators are what
+slices B-E have to remove.
+
+### Isolation B: the current directory left the kernel
+
+`Process` had `char cwd[256]`: the kernel knew where each process stood in
+the filesystem. That is path-resolution state, so it belongs to the layer
+that resolves paths.
+
+The kernel now reserves, copies and frees **subsystem-private per-process
+state** without ever reading it: each subsystem registers the size it needs
+(`subsystem::register_process_state_size`), the kernel allocates in
+`ensure_subsystem_state` and frees in `release_process_resources`. POSIX
+declares `posix::ProcessState` (the cwd) in
+`subsystems/posix/kernel/posix_process_state.hpp`; native registers zero,
+which is what makes "no POSIX left in the kernel" measurable instead of
+hopeful.
+
+Two rules that are easy to get wrong and are why this is not mechanical:
+
+- **Same size, keep the bytes.** `exec` does not change the cwd, so a
+  POSIX-to-POSIX exec must preserve the state, not zero it. A size change
+  (native-to-POSIX) does get fresh zeroed state, which POSIX reads as `/`.
+- **`exec` re-checks the size.** The exec path sets `subsystem_id` from the
+  new image's OSABI, so it must call `ensure_subsystem_state` too. Without
+  that, a native process that execs a POSIX binary silently keeps a null
+  state and lands in `/`. The new `cwdtest` exists because of this.
+
+`cwdtest` is the assertion that was missing: nothing tested `chdir`/`getcwd`
+before this slice, and it is exactly the inheritance (`fork`) and
+preservation (`exec`) behaviour that moving state breaks quietly. It checks
+the initial cwd, chdir/getcwd round-trip, relative resolution against the
+cwd, the two failure paths, fork inheritance and exec preservation. Verified
+to fail with the preservation rule deliberately broken, so it has teeth.
 
 - `subsystems/posix/kernel/posix_translation.cpp` owns the 33 POSIX-only
   bodies (fd table, fs paths, sockets, pipes, timers, semaphores,
@@ -65,6 +143,94 @@ object/process factoring, not before.
 - What stays shared on purpose: the object cores both dispatchers call
   (events, sections, single waits) remain `process::` cores in the
   kernel; factoring them into `sx::` is future work, not leftover debt.
+
+### Isolation C: the kernel stopped parking processes for poll()
+
+This was the hardest of the set: poll was the last POSIX mechanism the kernel
+*executed*, not just stored.
+
+`Process` carried `poll_user_fds`, `poll_count` and a 64-entry
+`poll_entries` copy (512 bytes per process, 32 KiB of kernel BSS), plus a
+`WaitReason::poll`. The timer tick walked the table looking for those,
+re-evaluated each entry against the handle table, committed the revents to
+user memory and woke whoever became ready. Four separate wakeup paths did the
+same, which is what keeps compositor latency honest.
+
+What the kernel has now is the neutral statement "this process is parked with
+a deadline" (`wake_deadline_ms`, `State::blocked_wait`). What it *is* waiting
+for belongs to the layer that parked it:
+
+- `subsystem::register_wait_recheck` — the owning subsystem gets the parked
+  process and decides (`subsystem::recheck_parked_process`).
+- POSIX's answer is `posix::recheck_parked_poll`, which evaluates its own
+  request, which now lives in `posix::ProcessState` next to the cwd.
+- `WaitReason::poll`, the three fields and both evaluators are gone from the
+  kernel; `poll_open_file` survives only as a published helper POSIX calls.
+
+The copy-in-kernel rule survives the move unchanged and is why the state is
+still an array: a tick-driven re-evaluation cannot switch CR3 a thousand times
+a second per parked process. User memory is touched exactly once, at commit.
+
+Two measurements worth keeping:
+
+- 32 KiB of unconditional kernel BSS is now paid only by POSIX processes.
+- **Negative test:** unregistering the wait hook makes `polltest` hang
+  (timeout, not a clean failure). That is the shape a broken poll wakeup has,
+  and it is why `windowd-smoke` — a compositor that waits for every frame by
+  poll — is the real proof here, not the unit-level smoke.
+
+### Isolation D: the kernel has no signals
+
+Measuring first paid off here: `pending_signals` and `last_signal` were
+**written and never read**. No path in the kernel consulted them, there is no
+`sigaction` and no signal frame, so this kernel has no signal delivery at all.
+The two fields plus a `SignalFlags` enum plus `signal_flag_for` existed only to
+name POSIX signals inside the kernel.
+
+What actually happens on a signal is smaller and stays:
+
+- `kill(pid, n)` in the POSIX translation: SIGINT/SIGKILL/SIGTERM terminate the
+  process with `128+n`; SIGCHLD is a no-op that returns success.
+- The notification that a child exited, for a parent that is waiting, is
+  `waitpid` — which the native subsystem uses too (`SXN_SYS_WAITPID`), so the
+  wakeup it needs (`wake_waiting_parent`) is neutral and stays in the kernel.
+
+The vocabulary moved to `subsystems/posix/kernel/posix_signals.hpp` with the
+POSIX mapping beside it. `sigtest` is the check that the behaviour is intact:
+SIGKILL on init denied with EACCES, SIGTERM to a child observed as `128+15`.
+
+Worth recording: this is a smaller slice than B or C, and the reason is a
+measurement, not a shortcut. "Move the signal state to POSIX" would have been
+the wrong plan; the right one was "find out what the signal state is for",
+and the answer was: nothing.
+
+### Isolation E: the error space belongs to the kernel
+
+The last one, and the only semantic change of the set. The kernel returned
+`-errno` everywhere, named `savanxp_error_code`, and spelled every constant
+`SAVANXP_E*`: 345 of them across the kernel.
+
+Now `include/abi/savanxp_abi.h` declares `enum sx_status` as the canonical
+space, and POSIX is downstream of it:
+
+- the kernel writes `sx_status` and `SX_EINVAL` and never the POSIX names;
+- `typedef enum sx_status savanxp_error_code` plus `#define SAVANXP_EINVAL
+  SX_EINVAL` keep every existing userland source compiling untouched.
+
+The numbers did not move, on purpose. Renaming the space while keeping the
+values is what makes the change *observable as a no-op* -- any drift in an
+error becomes a smoke failure instead of something nobody can attribute. A
+userland with a different error vocabulary now maps `sx_status` in its own
+translation, which is the separable part that was missing before.
+
+Two things stayed on purpose, and the guard says so:
+
+- `SAVANXP_EDITION` and `SAVANXP_EVENT_*` are not errors; a mechanical rename
+  of the `SAVANXP_E` prefix would have taken them, and the revert pass had to
+  put them back. Renaming by prefix is exactly as unsafe as it sounds.
+- The constant names are shared wire vocabulary. Only the *ownership*
+  inverted; renaming 345 call sites to a name nobody else uses would be
+  cosmetics, not isolation.
 
 ## Slice 12: real PS/2 keys, native apps in the menu
 

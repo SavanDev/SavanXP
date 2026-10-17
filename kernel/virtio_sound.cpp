@@ -605,7 +605,7 @@ bool vs_configure() {
 
 int vs_submit_period(uint64_t user_buffer, uint32_t byte_count) {
     if (byte_count == 0 || byte_count > kAudioPeriodBytes) {
-        return -static_cast<int>(SAVANXP_EINVAL);
+        return -static_cast<int>(SX_EINVAL);
     }
 
     reclaim_tx();
@@ -625,7 +625,7 @@ int vs_submit_period(uint64_t user_buffer, uint32_t byte_count) {
         return 0;
     }
     if (!submit_tx_slot(static_cast<uint16_t>(slot), user_buffer, byte_count, false)) {
-        return -static_cast<int>(SAVANXP_EIO);
+        return -static_cast<int>(SX_EIO);
     }
     drain_event_queue();
     return 0;
@@ -668,17 +668,17 @@ bool vs_capture_configure() {
 // (polling acotado) hasta que el device complete un periodo.
 int vs_capture_read_period(uint64_t user_buffer, uint32_t byte_count) {
     if (byte_count == 0 || byte_count > kAudioPeriodBytes) {
-        return -static_cast<int>(SAVANXP_EINVAL);
+        return -static_cast<int>(SX_EINVAL);
     }
 
     virtio_pci::UsedElement element = {};
     if (!wait_for_used_element(g_rx_queue, element)) {
-        return -static_cast<int>(SAVANXP_EIO);
+        return -static_cast<int>(SX_EIO);
     }
 
     const uint16_t slot = static_cast<uint16_t>(element.id / kRxDescriptorsPerSlot);
     if (slot >= kRxSlots) {
-        return -static_cast<int>(SAVANXP_EIO);
+        return -static_cast<int>(SX_EIO);
     }
 
     // element.len es cuanto lleno realmente el device (<= kAudioPeriodBytes).
@@ -691,10 +691,10 @@ int vs_capture_read_period(uint64_t user_buffer, uint32_t byte_count) {
     const uint32_t usable = captured < byte_count ? captured : byte_count;
     const void* payload = virtio_pci::queue_extra(g_rx_queue, rx_slot_data_offset(slot));
     if (usable != 0 && !process::copy_to_user(user_buffer, payload, usable)) {
-        return -static_cast<int>(SAVANXP_EINVAL);
+        return -static_cast<int>(SX_EINVAL);
     }
 
-    return post_rx_slot(slot) ? 0 : -static_cast<int>(SAVANXP_EIO);
+    return post_rx_slot(slot) ? 0 : -static_cast<int>(SX_EIO);
 }
 
 void vs_capture_stop() {

@@ -8,7 +8,7 @@
 #include "kernel/input.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/virtio_input.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 

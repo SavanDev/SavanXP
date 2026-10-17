@@ -9,7 +9,7 @@
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace fb_gpu {
 namespace {
@@ -941,11 +941,11 @@ void release_session_resources() {
 }
 
 int create_present_event() {
-    return -static_cast<int>(SAVANXP_ENOSYS);
+    return -static_cast<int>(SX_ENOSYS);
 }
 
 int create_scanout_event() {
-    return -static_cast<int>(SAVANXP_ENOSYS);
+    return -static_cast<int>(SX_ENOSYS);
 }
 
 const display::Backend kBackend = {

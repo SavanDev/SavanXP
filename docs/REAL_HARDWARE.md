@@ -169,9 +169,9 @@ The good news for the ABI is specific and worth protecting. Syscalls are a
 DPL=3 `int $0x80` gate ([`abi/savanxp_native_abi.h:10-12`](../include/abi/savanxp_native_abi.h)),
 which exists identically in 32-bit protected mode; the dispatchers pass user
 addresses as explicit-width `uint64_t` rather than raw pointers
-([`syscall_dispatch.inc:9-25`](../subsystems/posix/kernel/syscall_dispatch.inc));
+([`posix_dispatch.cpp`](../subsystems/posix/kernel/posix_dispatch.cpp));
 and the shared SDK structs contain no pointers at all, only fixed-width integers
-([`savanxp/syscall.h`](../subsystems/posix/sdk/v1/include/savanxp/syscall.h)).
+([`savanxp_abi.h`](../include/abi/savanxp_abi.h)).
 So the ~440-line dispatcher and the whole SDK survive a port almost unchanged.
 The one real LP64 hole is the initial process stack, which is a native SysV argv
 array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).

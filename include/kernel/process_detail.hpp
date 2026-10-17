@@ -23,7 +23,6 @@ constexpr uint64_t kKernelStackPages = 8;
 
 uint64_t now_ms();
 void proc_log(const char* format, ...);
-uint32_t signal_flag_for(int signal_number);
 void reset_time_slice(Process& proc);
 // init's pid, for the kill guard. Published as an accessor so the mutable
 // slot counter state never leaves kernel/process.cpp.
@@ -52,6 +51,10 @@ int evaluate_poll_entries(Process& proc);
 bool commit_poll_entries(Process& proc);
 
 int begin_object_wait(Process& proc, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
+// Los usa tambien la traduccion POSIX (rebanada C): completar un poll y
+// avaliar un descriptor. El kernel no los llama para si.
+int complete_blocked_wait(Process& proc, int result);
+short poll_open_file(const object::IoObject* file, short events);
 void wake_waiters_for_object(object::Header* handle_object);
 void terminate_process(Process& proc, int exit_code);
 // True when some open file still references the vnode (unlink/rmdir/rename

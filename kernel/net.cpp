@@ -13,7 +13,7 @@
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace net {
 
@@ -267,7 +267,7 @@ constexpr uint32_t kConfiguredMask = (255u << 24) | (255u << 16) | (255u << 8) |
 constexpr uint32_t kConfiguredGateway = (10u << 24) | (0u << 16) | (2u << 8) | 2u;
 
 
-int negative_error(savanxp_error_code code) {
+int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
 
@@ -604,24 +604,24 @@ uint16_t allocate_ephemeral_port() {
 
 int bind_socket_port(net::Socket* socket, uint16_t port) {
     if (socket == nullptr || !socket->in_use) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (!((socket->type == SAVANXP_SOCK_DGRAM && socket->protocol == SAVANXP_IPPROTO_UDP) ||
         (socket->type == SAVANXP_SOCK_STREAM && socket->protocol == SAVANXP_IPPROTO_TCP))) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
 
     if (socket->bound) {
-        return negative_error(SAVANXP_EBUSY);
+        return negative_error(SX_EBUSY);
     }
 
     if (port == 0) {
         port = allocate_ephemeral_port();
         if (port == 0) {
-            return negative_error(SAVANXP_ENOSPC);
+            return negative_error(SX_ENOSPC);
         }
     } else if (find_bound_socket(port) != nullptr) {
-        return negative_error(SAVANXP_EBUSY);
+        return negative_error(SX_EBUSY);
     }
 
     socket->bound = true;
@@ -631,7 +631,7 @@ int bind_socket_port(net::Socket* socket, uint16_t port) {
 
 int ensure_socket_bound(net::Socket* socket) {
     if (socket == nullptr) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (socket->bound) {
         return 0;
@@ -999,7 +999,7 @@ void tcp_abort(net::Socket& socket, uint32_t status) {
 // de archivo, como se hacia antes, hace pasar por completo un cuerpo truncado.
 int tcp_abort_error(const net::Socket& socket) {
     return negative_error(
-        socket.abort_status == SAVANXP_NET_STATUS_TCP_TIMEOUT ? SAVANXP_ETIMEDOUT : SAVANXP_ECONNRESET
+        socket.abort_status == SAVANXP_NET_STATUS_TCP_TIMEOUT ? SX_ETIMEDOUT : SX_ECONNRESET
     );
 }
 
@@ -1456,12 +1456,12 @@ bool bring_up() {
 int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     if (request != NET_IOC_GET_INFO && request != NET_IOC_GET_TCP_STATS &&
         (granted_access & object::access_write) == 0) {
-        return negative_error(SAVANXP_EACCES);
+        return negative_error(SX_EACCES);
     }
     switch (request) {
         case NET_IOC_GET_INFO: {
             if (!process::validate_user_range(argument, sizeof(savanxp_net_info), true)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
 
             nic::Stats stats = {};
@@ -1483,21 +1483,21 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
             info.arp_timeouts = g_arp_timeouts;
             info.ping_requests = g_ping_requests;
             info.ping_timeouts = g_ping_timeouts;
-            return process::copy_to_user(argument, &info, sizeof(info)) ? 0 : negative_error(SAVANXP_EINVAL);
+            return process::copy_to_user(argument, &info, sizeof(info)) ? 0 : negative_error(SX_EINVAL);
         }
         case NET_IOC_GET_TCP_STATS: {
             if (!process::validate_user_range(argument, sizeof(savanxp_net_tcp_stats), true)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
-            return process::copy_to_user(argument, &g_tcp_stats, sizeof(g_tcp_stats)) ? 0 : negative_error(SAVANXP_EINVAL);
+            return process::copy_to_user(argument, &g_tcp_stats, sizeof(g_tcp_stats)) ? 0 : negative_error(SX_EINVAL);
         }
         case NET_IOC_SET_TCP_FAULT: {
             if (!process::validate_user_range(argument, sizeof(savanxp_net_tcp_fault), false)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             savanxp_net_tcp_fault fault = {};
             if (!process::copy_from_user(&fault, argument, sizeof(fault))) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             g_tcp_fault = fault;
             g_tcp_tx_counter = 0;
@@ -1515,27 +1515,27 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
             return 0;
         }
         case NET_IOC_UP:
-            return bring_up() ? 0 : negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
+            return bring_up() ? 0 : negative_error(nic::present() ? SX_EIO : SX_ENODEV);
         case NET_IOC_PING: {
             if (!process::validate_user_range(argument, sizeof(savanxp_net_ping_request), false)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
 
             savanxp_net_ping_request request_data = {};
             if (!process::copy_from_user(&request_data, argument, sizeof(request_data))) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             if (request_data.result_ptr == 0 || !process::validate_user_range(request_data.result_ptr, sizeof(savanxp_net_ping_result), true)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             if (!bring_up()) {
-                return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
+                return negative_error(nic::present() ? SX_EIO : SX_ENODEV);
             }
 
             const uint32_t next_hop = same_subnet(kConfiguredIpv4, request_data.ipv4) ? request_data.ipv4 : kConfiguredGateway;
             uint8_t next_hop_mac[6] = {};
             if (!resolve_arp(next_hop, request_data.timeout_ms != 0 ? request_data.timeout_ms : 1000u, next_hop_mac)) {
-                return negative_error(SAVANXP_ETIMEDOUT);
+                return negative_error(SX_ETIMEDOUT);
             }
 
             memset(&g_pending_ping_result, 0, sizeof(g_pending_ping_result));
@@ -1545,7 +1545,7 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
             ++g_ping_requests;
 
             if (!send_icmp_echo(request_data.ipv4, next_hop_mac, request_data.sequence, request_data.payload_size)) {
-                return negative_error(SAVANXP_EIO);
+                return negative_error(SX_EIO);
             }
 
             const uint64_t start_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
@@ -1557,20 +1557,20 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                     g_pending_ping_result.elapsed_ms = static_cast<uint32_t>(now_ms - start_ms);
                     return process::copy_to_user(request_data.result_ptr, &g_pending_ping_result, sizeof(g_pending_ping_result))
                         ? 0
-                        : negative_error(SAVANXP_EINVAL);
+                        : negative_error(SX_EINVAL);
                 }
 
                 const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
                 if (now_ms - start_ms >= timeout_ms) {
                     ++g_ping_timeouts;
                     set_status(SAVANXP_NET_STATUS_ICMP_TIMEOUT);
-                    return negative_error(SAVANXP_ETIMEDOUT);
+                    return negative_error(SX_ETIMEDOUT);
                 }
                 wait_for_tick();
             }
         }
         default:
-            return negative_error(SAVANXP_ENOSYS);
+            return negative_error(SX_ENOSYS);
     }
 }
 
@@ -1585,16 +1585,16 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
 int create_socket(uint32_t domain, uint32_t type, uint32_t protocol, Socket*& out_socket) {
     out_socket = nullptr;
     if (domain != SAVANXP_AF_INET) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (type != SAVANXP_SOCK_DGRAM && type != SAVANXP_SOCK_STREAM) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (type == SAVANXP_SOCK_DGRAM && protocol != 0 && protocol != SAVANXP_IPPROTO_UDP) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (type == SAVANXP_SOCK_STREAM && protocol != 0 && protocol != SAVANXP_IPPROTO_TCP) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     for (auto& socket : g_sockets) {
@@ -1609,7 +1609,7 @@ int create_socket(uint32_t domain, uint32_t type, uint32_t protocol, Socket*& ou
             return 0;
         }
     }
-    return negative_error(SAVANXP_ENOMEM);
+    return negative_error(SX_ENOMEM);
 }
 
 void close_socket(Socket* socket) {
@@ -1625,42 +1625,42 @@ void close_socket(Socket* socket) {
 
 int bind_socket(Socket* socket, uint64_t user_address) {
     if (socket == nullptr || !socket->in_use) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (user_address == 0 || !process::validate_user_range(user_address, sizeof(savanxp_sockaddr_in), false)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     savanxp_sockaddr_in address = {};
     if (!process::copy_from_user(&address, user_address, sizeof(address))) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (address.ipv4 != 0 && address.ipv4 != kConfiguredIpv4) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     return bind_socket_port(socket, address.port);
 }
 
 int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || socket->protocol != SAVANXP_IPPROTO_TCP) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (user_address == 0 || !process::validate_user_range(user_address, sizeof(savanxp_sockaddr_in), false)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (!bring_up()) {
-        return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
+        return negative_error(nic::present() ? SX_EIO : SX_ENODEV);
     }
 
     savanxp_sockaddr_in address = {};
     if (!process::copy_from_user(&address, user_address, sizeof(address))) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (address.ipv4 == 0 || address.port == 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (socket->connected || socket->tcp_state == net::TcpState::syn_sent) {
-        return negative_error(SAVANXP_EBUSY);
+        return negative_error(SX_EBUSY);
     }
 
     const int bind_result = ensure_socket_bound(socket);
@@ -1690,7 +1690,7 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
     // antes se mandaba una sola vez y un SYN perdido era un connect fallido.
     if (!tcp_arm_segment(*socket, kTcpFlagSyn, nullptr, 0, socket->initial_sequence, 1)) {
         socket->tcp_state = net::TcpState::closed;
-        return negative_error(SAVANXP_EIO);
+        return negative_error(SX_EIO);
     }
 
     const uint32_t effective_timeout = timeout_ms != 0 ? timeout_ms : 3000u;
@@ -1707,7 +1707,7 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
         if (now_ms - start_ms >= effective_timeout) {
             socket->tcp_state = net::TcpState::closed;
             set_status(SAVANXP_NET_STATUS_TCP_TIMEOUT);
-            return negative_error(SAVANXP_ETIMEDOUT);
+            return negative_error(SX_ETIMEDOUT);
         }
         wait_for_tick();
     }
@@ -1721,31 +1721,31 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
     // direccion explicita no tiene donde ir.
     if (socket != nullptr && socket->in_use && socket->type == SAVANXP_SOCK_STREAM) {
         if (user_address != 0) {
-            return negative_error(SAVANXP_EINVAL);
+            return negative_error(SX_EINVAL);
         }
         return write_socket(socket, user_buffer, count, nonblocking);
     }
 
     (void)nonblocking;
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_DGRAM || socket->protocol != SAVANXP_IPPROTO_UDP || count == 0 || count > 1024) {
-        return count == 0 ? 0 : negative_error(SAVANXP_EINVAL);
+        return count == 0 ? 0 : negative_error(SX_EINVAL);
     }
     if (user_address == 0 || !process::validate_user_range(user_address, sizeof(savanxp_sockaddr_in), false) ||
         !process::validate_user_range(user_buffer, count, false)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (!bring_up()) {
-        return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
+        return negative_error(nic::present() ? SX_EIO : SX_ENODEV);
     }
 
     savanxp_sockaddr_in address = {};
     uint8_t payload[1024] = {};
     if (!process::copy_from_user(&address, user_address, sizeof(address)) ||
         !process::copy_from_user(payload, user_buffer, count)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (address.port == 0 || address.ipv4 == 0) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     const int bind_result = ensure_socket_bound(socket);
@@ -1755,7 +1755,7 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
 
     if (address.ipv4 == kConfiguredIpv4) {
         if (!deliver_udp_payload(kConfiguredIpv4, socket->local_port, address.ipv4, address.port, payload, count)) {
-            return negative_error(SAVANXP_EIO);
+            return negative_error(SX_EIO);
         }
         return static_cast<int>(count);
     }
@@ -1763,10 +1763,10 @@ int sendto_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t u
     const uint32_t next_hop = same_subnet(kConfiguredIpv4, address.ipv4) ? address.ipv4 : kConfiguredGateway;
     uint8_t next_hop_mac[6] = {};
     if (!resolve_arp(next_hop, 1000u, next_hop_mac)) {
-        return negative_error(SAVANXP_ETIMEDOUT);
+        return negative_error(SX_ETIMEDOUT);
     }
     if (!send_udp_datagram(address.ipv4, next_hop_mac, socket->local_port, address.port, payload, count)) {
-        return negative_error(SAVANXP_EIO);
+        return negative_error(SX_EIO);
     }
     return static_cast<int>(count);
 }
@@ -1779,26 +1779,26 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
         const int received = read_socket(socket, user_buffer, count, nonblocking);
         if (received >= 0 && user_address != 0) {
             if (!process::validate_user_range(user_address, sizeof(savanxp_sockaddr_in), true)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             savanxp_sockaddr_in address = {};
             address.ipv4 = socket->remote_ip;
             address.port = socket->remote_port;
             if (!process::copy_to_user(user_address, &address, sizeof(address))) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
         }
         return received;
     }
 
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_DGRAM || socket->protocol != SAVANXP_IPPROTO_UDP || count == 0 || !process::validate_user_range(user_buffer, count, true)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (user_address != 0 && !process::validate_user_range(user_address, sizeof(savanxp_sockaddr_in), true)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     if (!bring_up()) {
-        return negative_error(nic::present() ? SAVANXP_EIO : SAVANXP_ENODEV);
+        return negative_error(nic::present() ? SX_EIO : SX_ENODEV);
     }
 
     const int bind_result = ensure_socket_bound(socket);
@@ -1814,27 +1814,27 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
         if (dequeue_udp_packet(*socket, packet)) {
             const size_t to_copy = packet.length < count ? packet.length : count;
             if (!process::copy_to_user(user_buffer, packet.data, to_copy)) {
-                return negative_error(SAVANXP_EINVAL);
+                return negative_error(SX_EINVAL);
             }
             if (user_address != 0) {
                 savanxp_sockaddr_in address = {};
                 address.ipv4 = packet.source_ip;
                 address.port = packet.source_port;
                 if (!process::copy_to_user(user_address, &address, sizeof(address))) {
-                    return negative_error(SAVANXP_EINVAL);
+                    return negative_error(SX_EINVAL);
                 }
             }
             return static_cast<int>(to_copy);
         }
 
         if (nonblocking) {
-            return negative_error(SAVANXP_EAGAIN);
+            return negative_error(SX_EAGAIN);
         }
 
         if (timeout_ms != 0) {
             const uint64_t now_ms = (timer::ticks() * 1000ULL) / (timer::frequency_hz() != 0 ? timer::frequency_hz() : 1);
             if (now_ms - start_ms >= timeout_ms) {
-                return negative_error(SAVANXP_ETIMEDOUT);
+                return negative_error(SX_ETIMEDOUT);
             }
         }
         wait_for_tick();
@@ -1857,7 +1857,7 @@ int wait_for_send_window(Socket& socket) {
         // Sin plazo de la app no hace falta uno propio: el que corta es el
         // abort del RTO, a los ~12 s, y ese sabe por que murio la conexion.
         if (socket.send_timeout_ms != 0 && monotonic_ms() - start_ms >= socket.send_timeout_ms) {
-            return negative_error(SAVANXP_ETIMEDOUT);
+            return negative_error(SX_ETIMEDOUT);
         }
         wait_for_tick();
     }
@@ -1875,7 +1875,7 @@ int wait_for_send_window(Socket& socket) {
  */
 int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblocking) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM || output == nullptr || count == 0) {
-        return count == 0 ? 0 : negative_error(SAVANXP_EBADF);
+        return count == 0 ? 0 : negative_error(SX_EBADF);
     }
     // Lo que ya esta en el buffer se entrega aunque la conexion se haya caido:
     // son bytes que llegaron y se confirmaron antes del cierre.
@@ -1886,7 +1886,7 @@ int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblo
         if (socket->fin_received) {
             return 0;
         }
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     const uint64_t start_ms = monotonic_ms();
     while (socket->rx_size == 0) {
@@ -1901,14 +1901,14 @@ int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblo
             return 0;
         }
         if (nonblocking) {
-            return negative_error(SAVANXP_EAGAIN);
+            return negative_error(SX_EAGAIN);
         }
         // Antes habia 5000 ms fijos aca, y no eran un plazo sino una trampa:
         // una respuesta que tardaba mas fallaba sobre una conexion sana. Un
         // cliente que hace long-poll -- pregunta y el servidor le retiene el
         // pedido -- es justamente el caso que no puede vivir con eso.
         if (socket->recv_timeout_ms != 0 && monotonic_ms() - start_ms >= socket->recv_timeout_ms) {
-            return negative_error(SAVANXP_ETIMEDOUT);
+            return negative_error(SX_ETIMEDOUT);
         }
         wait_for_tick();
     }
@@ -1934,7 +1934,7 @@ int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblo
 
 int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
     if (!process::validate_user_range(user_buffer, count, true)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     uint8_t scratch[kTcpSegmentMax] = {};
@@ -1943,26 +1943,26 @@ int read_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonbloc
         return received;
     }
     if (!process::copy_to_user(user_buffer, scratch, static_cast<size_t>(received))) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     return received;
 }
 
 int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblocking) {
     if (socket == nullptr || !socket->in_use || socket->type != SAVANXP_SOCK_STREAM) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (socket->aborted) {
         return tcp_abort_error(*socket);
     }
     if (!socket->connected) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (count == 0) {
         return 0;
     }
     if (!process::validate_user_range(user_buffer, count, false)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     // Escritura corta, que es el contrato de write(2): antes un write de mas de
     // un segmento devolvia EINVAL, y cualquier codigo portado que hiciera
@@ -1975,7 +1975,7 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
     // confirmado, la ranura de retransmision no se puede reusar.
     if (socket->tx_pending) {
         if (nonblocking) {
-            return negative_error(SAVANXP_EAGAIN);
+            return negative_error(SX_EAGAIN);
         }
         const int drained = wait_for_send_window(*socket);
         if (drained < 0) {
@@ -1985,11 +1985,11 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
 
     uint8_t payload[net::kTcpSegmentMax] = {};
     if (!process::copy_from_user(payload, user_buffer, count)) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
 
     if (!tcp_arm_segment(*socket, kTcpFlagAck | kTcpFlagPsh, payload, count, socket->send_next, static_cast<uint32_t>(count))) {
-        return negative_error(SAVANXP_EIO);
+        return negative_error(SX_EIO);
     }
     socket->send_next += static_cast<uint32_t>(count);
 
@@ -2009,10 +2009,10 @@ int write_socket(Socket* socket, uint64_t user_buffer, size_t count, bool nonblo
 
 int set_socket_option(Socket* socket, uint32_t option, uint64_t value) {
     if (socket == nullptr || !socket->in_use) {
-        return negative_error(SAVANXP_EBADF);
+        return negative_error(SX_EBADF);
     }
     if (value > 0xffffffffull) {
-        return negative_error(SAVANXP_EINVAL);
+        return negative_error(SX_EINVAL);
     }
     switch (option) {
         case SAVANXP_SO_RCVTIMEO:
@@ -2022,7 +2022,7 @@ int set_socket_option(Socket* socket, uint32_t option, uint64_t value) {
             socket->send_timeout_ms = static_cast<uint32_t>(value);
             return 0;
         default:
-            return negative_error(SAVANXP_ENOSYS);
+            return negative_error(SX_ENOSYS);
     }
 }
 

@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace audio {
 

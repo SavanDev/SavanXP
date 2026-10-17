@@ -149,6 +149,33 @@ Cut-off notes:
   lifecycle, scheduler and shared cores stay in `kernel/process.cpp`.
   `docs/NATIVE_APPS.md` guides native programs with examples.
 
+- **The kernel stops including the POSIX SDK.** The shared wire contract
+  moves to `include/abi/savanxp_abi.h`; the SDK keeps the POSIX
+  vocabulary and includes it. `kernel/` and `include/kernel/` now depend
+  on no userland header, and a layout guard keeps it that way.
+
+- **The current directory leaves the process state.** Each subsystem now
+  declares its per-process private state and the kernel reserves it without
+  reading it, so `Process` no longer carries a POSIX `cwd`; a native process
+  declares zero bytes. New `cwdtest` asserts chdir/getcwd, relative
+  resolution, fork inheritance and exec preservation.
+
+- **The kernel no longer parks processes for poll().** The timer tick walked
+  the process table re-evaluating POSIX poll requests; now a subsystem hook
+  receives any process parked with a deadline and decides what it was waiting
+  for. The request and its evaluation move to the POSIX subsystem's private
+  state, taking 32 KiB of unconditional kernel memory with them.
+
+- **POSIX signals leave the process state.** The kernel's pending-signal flags
+  were written and never read — this kernel has no signal delivery — so they
+  existed only to name POSIX signals. The signal vocabulary moves to the POSIX
+  subsystem; `kill` and `waitpid` behaviour is unchanged.
+
+- **The error space belongs to the kernel.** Errors returned by the kernel are
+  now `sx_status`/`SX_E*` rather than `savanxp_error_code`/`SAVANXP_E*`, with
+  the POSIX names kept as aliases so existing programs are unaffected. The
+  values are unchanged, so no userland-visible behaviour moves with this.
+
 - **Native IPC proven over sections plus events.** `sdk/nativetest` runs a
   50-round ping-pong ring between parent and child with strict alternation
   (same shape as a WM submit/retire channel, no new syscalls); the

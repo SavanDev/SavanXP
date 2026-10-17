@@ -7,7 +7,7 @@
 #include "kernel/process.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
-#include "savanxp/syscall.h"
+#include "abi/savanxp_abi.h"
 
 namespace {
 

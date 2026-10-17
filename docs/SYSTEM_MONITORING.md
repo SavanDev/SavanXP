@@ -21,7 +21,7 @@ The kernel exports **counters**, never percentages. A percentage is a property
 of an interval, and the kernel does not know which interval the caller cares
 about.
 
-Three fields carry the whole scheme (`savanxp/syscall.h`):
+Three fields carry the whole scheme (`include/abi/savanxp_abi.h`):
 
 | Field | Where | What it is |
 | --- | --- | --- |
