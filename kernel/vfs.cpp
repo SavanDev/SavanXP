@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include "kernel/ata.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/string.hpp"
 #include "abi/savanxp_abi.h"
@@ -1096,6 +1097,11 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
             }
             size_t written = 0;
             if (!sxfs::write_file(*file, offset, buffer, count, truncate, written)) {
+                // Este es el fallo que tumba la copia de la fixture del
+                // progman-smoke tras cinco minutos de escrituras. sxfs solo
+                // devuelve false si algo fallo de verdad, y lo mas probable es
+                // el sondeo ATA: el diagnostico dice cual de los dos.
+                ata::report_poll_failures();
                 g_last_error = SX_ENOSPC;
                 return 0;
             }

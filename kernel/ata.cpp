@@ -1,5 +1,7 @@
 #include "kernel/ata.hpp"
 
+#include "kernel/console.hpp"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -96,6 +98,25 @@ void select_drive(const Slot& slot, uint32_t lba) {
     wait_400ns(slot);
 }
 
+/*
+ * Por que fallo un sondeo. El sondeo tiene dos presupuestos ACOTADOS de spins
+ * y agotarlos se traduce en un fallo de E/S duro que sube hasta el usuario,
+ * porque no hay reintento en toda la cadena (block::write -> write_op ->
+ * rw_sectors -> rw_chunk). Eso convierte "el host va lento" en "una copia de
+ * 390 KB se pierde tras cinco minutos".
+ *
+ * Estos contadores separan las dos causas que de otro modo se confunden:
+ *
+ *   bsy=N   el dispositivo no solto BSY a tiempo
+ *   drq=N   BSY se solto pero DRQ no llego
+ *   err=N   el dispositivo puso ERR/DFQ: el fallo es del emulado
+ *
+ * Los dos primeros son el mismo diagnostico -- un timeout disfrazado de
+ * presupuesto de spins, cuyo verdugito depende de la velocidad del host.
+ */
+uint32_t g_poll_failures[3] = {0, 0, 0};
+uint32_t g_poll_failures_reported = 0;
+
 bool poll_status(const Slot& slot, bool require_drq) {
     uint8_t status = 0;
     uint32_t spins = 1000000;
@@ -103,10 +124,12 @@ bool poll_status(const Slot& slot, bool require_drq) {
         status = inb(static_cast<uint16_t>(slot.io_base + 7));
     } while ((status & kStatusBsy) != 0 && --spins != 0);
     if (spins == 0) {
+        ++g_poll_failures[0];
         return false;
     }
 
     if ((status & (kStatusErr | kStatusDfq)) != 0) {
+        ++g_poll_failures[2];
         return false;
     }
 
@@ -115,16 +138,19 @@ bool poll_status(const Slot& slot, bool require_drq) {
         while ((status & kStatusDrq) == 0 && --spins != 0) {
             status = inb(static_cast<uint16_t>(slot.io_base + 7));
             if ((status & (kStatusErr | kStatusDfq)) != 0) {
+                ++g_poll_failures[2];
                 return false;
             }
         }
         if ((status & kStatusDrq) == 0) {
+            ++g_poll_failures[1];
             return false;
         }
     }
 
     return true;
 }
+
 
 bool identify(Slot& slot) {
     slot.sector_count = 0;
@@ -294,6 +320,23 @@ const block::Driver kDriver = {
 } // namespace
 
 namespace ata {
+
+// Se informa desde el fallo que llega hasta userland, una sola vez, para que el
+// diagnostico aparezca junto al sintoma y no dentro de la copia.
+void report_poll_failures() {
+    const uint32_t total = g_poll_failures[0] + g_poll_failures[1] + g_poll_failures[2];
+    if (total == 0 || g_poll_failures_reported != 0) {
+        return;
+    }
+    g_poll_failures_reported = 1;
+    console::printf(
+        "ata: sondeo fallido bsy=%u drq=%u err=%u\n",
+        static_cast<unsigned>(g_poll_failures[0]),
+        static_cast<unsigned>(g_poll_failures[1]),
+        static_cast<unsigned>(g_poll_failures[2])
+    );
+}
+
 
 const block::Driver& driver() { return kDriver; }
 
