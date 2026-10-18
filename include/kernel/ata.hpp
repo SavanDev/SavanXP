@@ -12,5 +12,8 @@ const block::Driver& driver();
 // por que fallo un sondeo (presupuesto de spins agotado o error del
 // dispositivo). Ver kernel/ata.cpp.
 void report_poll_failures();
+// Curva de esperas que SI funcionan: cuanto margen le queda al presupuesto de
+// spins. No necesita que falle nada para decir algo.
+void report_poll_headroom();
 
 } // namespace ata

@@ -28,6 +28,23 @@ constexpr uint8_t kCommandCacheFlush = 0xe7;
 // conteo de sectores es de 8 bits, asi que un comando no puede pedir mas de 256
 // (o sea, 255 sin ambiguedad con el 0 que significa 256).
 constexpr uint32_t kMaxSectorsPerCommand = 255;
+// Intentos por comando PIO antes de rendirse. Tres es lo justo para un fallo
+// transitorio sin convertir un fallo real en una espera larga: el peor caso es
+// 3 veces el coste de un comando, y el caso normal ni lo nota.
+constexpr uint32_t kMaxChunkAttempts = 3;
+// Presupuesto de spins por espera de estado. Es un timeout vestido de otra
+// cosa: mide trabajo emulado, no tiempo, asi que su valor en reloj de pared
+// depende de la velocidad del host. Con el host tranquilo no se nota; con una
+// pausa larga, si.
+constexpr uint32_t kPollSpinBudget = 1000000;
+// Reset por software (ATA/ATAPI): SRST con nIEN limpio resetea los dos
+// dispositivos del canal; con nIEN puesto, solo el seleccionado.
+constexpr uint8_t kControlSrst = 0x04;
+constexpr uint8_t kControlSrstNien = 0x06;
+// Rondas de reintento por comando: la primera sin reset, la segunda tras un
+// reset por software. Tres intentos en cada una; el reset solo cuando los tres
+// fallan, porque resetear es un martillo: tira el estado del dispositivo.
+constexpr uint32_t kMaxChunkRounds = 2;
 
 // Prioridad alta: los ATA enumeran antes que el ramdisk, asi un disco IDE
 // persistente (dev) le gana a la imagen del LiveCD cuando sxfs elige que montar.
@@ -116,14 +133,41 @@ void select_drive(const Slot& slot, uint32_t lba) {
  */
 uint32_t g_poll_failures[3] = {0, 0, 0};
 uint32_t g_poll_failures_reported = 0;
+uint32_t g_poll_chunk_retries = 0;
+uint32_t g_poll_device_resets = 0;
+// Cuantos spins se gastaron en el peor agotamiento de BSY, y cuantos en el
+// peor caso que SI funciono. Esta medicion decide el arreglo, y no necesita un
+// fallo paraExistir: en una operacion larga hay miles de esperas que si
+// funcionan, y su maximo dice cuanto margen le queda al presupuesto.
+//
+//   agotamiento cercano al presupuesto -> el dispositivo se quedo en BSY y
+//     hace falta RESET (SRST).
+//   maximo de exito muy por debajo del presupuesto -> el presupuesto es
+//     corto y basta con subirlo.
+uint32_t g_poll_bsy_worst_spins = 0;
+uint32_t g_poll_bsy_max_ok_spins = 0;
+uint32_t g_poll_drq_max_ok_spins = 0;
+// Se informa cada vez que un maximo dobla, para no inundar el log y para que
+// una carrera larga deje la curva a la vista sin depender de ningun fallo.
+uint32_t g_poll_reported_threshold = 0;
 
 bool poll_status(const Slot& slot, bool require_drq) {
     uint8_t status = 0;
-    uint32_t spins = 1000000;
+    uint32_t spins = kPollSpinBudget;
     do {
         status = inb(static_cast<uint16_t>(slot.io_base + 7));
     } while ((status & kStatusBsy) != 0 && --spins != 0);
+    if (spins != 0 && spins < kPollSpinBudget) {
+        const uint32_t spent = kPollSpinBudget - spins;
+        if (spent > g_poll_bsy_max_ok_spins) {
+            g_poll_bsy_max_ok_spins = spent;
+        }
+    }
     if (spins == 0) {
+        const uint32_t spent = kPollSpinBudget - spins;
+        if (spent > g_poll_bsy_worst_spins) {
+            g_poll_bsy_worst_spins = spent;
+        }
         ++g_poll_failures[0];
         return false;
     }
@@ -134,12 +178,18 @@ bool poll_status(const Slot& slot, bool require_drq) {
     }
 
     if (require_drq) {
-        spins = 1000000;
+        spins = kPollSpinBudget;
         while ((status & kStatusDrq) == 0 && --spins != 0) {
             status = inb(static_cast<uint16_t>(slot.io_base + 7));
             if ((status & (kStatusErr | kStatusDfq)) != 0) {
                 ++g_poll_failures[2];
                 return false;
+            }
+        }
+        if (spins != 0 && spins < kPollSpinBudget) {
+            const uint32_t spent = kPollSpinBudget - spins;
+            if (spent > g_poll_drq_max_ok_spins) {
+                g_poll_drq_max_ok_spins = spent;
             }
         }
         if ((status & kStatusDrq) == 0) {
@@ -194,8 +244,8 @@ bool identify(Slot& slot) {
     return true;
 }
 
-// Una sola transferancia PIO de hasta kMaxSectorsPerCommand sectores.
-bool rw_chunk(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* bytes, bool write) {
+// Una sola transferencia PIO de hasta kMaxSectorsPerCommand sectores, sin reintentos.
+bool rw_chunk_once(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* bytes, bool write) {
     select_drive(slot, lba);
     outb(static_cast<uint16_t>(slot.io_base + 1), 0);
     outb(static_cast<uint16_t>(slot.io_base + 2), static_cast<uint8_t>(sector_count));
@@ -274,6 +324,97 @@ bool rw_chunk(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* bytes, b
 // mismo troceo que ya hace virtio-blk, con la diferencia de que hay que volver
 // a emitir select_drive con el LBA adelantado, porque el registro LBA es de 28
 // bits y no puede addressing mas alla de 128 GiB por si solo.
+/*
+ * Reset por software del dispositivo (SRST).
+ *
+ * Es lo que pide la especificacion cuando un comando se queda colgado, y lo
+ * que aqui hace falta: la medicion dio que la peor espera que FUNCIONA cuesta
+ * 412349 spins (41% del presupuesto) mientras el fallo agotaba los 1000000
+ * tres veces seguidas. Mas de 2,4 veces el peor caso legitimo no es impaciencia,
+ * es el dispositivo wedged, y reemitir el comando a un dispositivo wedged no
+ * lo desataca.
+ *
+ * La secuencia son dos escrituras, no una: la primera con nIEN limpio resetea
+ * los dos dispositivos del canal, y la segunda con nIEN puesto solo al que esta
+ * seleccionado, que es el que nos interesa no molestar.
+ *
+ * Limite que NO se resuelve aqui: sin cerrojo por dispositivo, un reset puede
+ * pisar una transferencia en curso de otro core. El driver hoy no serializa
+ * accesos y esta rebanada no introduce bloqueos; es el mismo supuesto que ya
+ * tiene el resto del camino de E/S.
+ */
+void software_reset(Slot& slot) {
+    ++g_poll_device_resets;
+    outb(static_cast<uint16_t>(slot.control_base), kControlSrst);
+    wait_400ns(slot);
+    (void)poll_status(slot, false);
+
+    select_drive(slot, 0);
+    outb(static_cast<uint16_t>(slot.control_base), kControlSrstNien);
+    wait_400ns(slot);
+    (void)poll_status(slot, false);
+
+    // Tras un reset el dispositivo vuelve a su estado de encendido y el
+    // IDENTIFY cacheado deja de valer. Si esto falla, el dispositivo no
+    // respondio ni al reset: se sigue adelante y el reintento que viene
+    // decidira.
+    if (!identify(slot)) {
+        const size_t index = static_cast<size_t>(&slot - &g_slots[0]);
+        console::printf(
+            "ata: el reset no devolvio el dispositivo %s\n",
+            index < kSlotCount ? kSlotNames[index] : "?"
+        );
+    }
+}
+
+/*
+ * Reintentos por comando PIO.
+ *
+ * Una transferencia fallida no se puede reanudar: el comando quedo a medias y
+ * el puerto de datos esta en un estado que solo se limpia reemitiendo el
+ * comando entero. Asi que el reintento es de aqui arriba, no del bucle de
+ * sectores, y es idempotente porque el buffer no cambia: los sectores ya
+ * escritos se vuelven a escribir con el mismo dato.
+ *
+ * Antes no habia ninguno en toda la cadena (block::write -> write_op ->
+ * rw_sectors -> rw_chunk -> poll_status), asi que un sondeo que se quedo sin
+ * aire a mitad de una escritura de cinco minutos la tiraba entera. El sondeo
+ * tiene presupuestos ACOTADOS de spins --un timeout vestido de otra cosa-- y
+ * agotarlos produce un fallo de E/S duro que sube hasta userland.
+ *
+ * lecturas tambien reintentan: el mismo razonamiento, y el camino de lectura
+ * comparte el sondeo. Lo que NO se hace aqui es el reset del controlador
+ * (SRST) que pediria la especificacion tras un timeout: es otra pieza, con su
+ * propio coste de temporizacion, y no hace falta para un fallo transitorio.
+ *
+ * El camino bueno no cambia: el reintento solo existe cuando algo fallo.
+ */
+bool rw_chunk(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* bytes, bool write) {
+    for (uint32_t round = 0; round < kMaxChunkRounds; ++round) {
+        if (round != 0) {
+            // Agotados los reintentos baratos. Aqui el dispositivo estaba
+            // wedged, no lento, y reemitir no lo arregla: reset y otra vez.
+            software_reset(slot);
+        }
+        for (uint32_t attempt = 1; ; ++attempt) {
+            if (rw_chunk_once(slot, lba, sector_count, bytes, write)) {
+                if (attempt > 1) {
+                    ++g_poll_chunk_retries;
+                }
+                return true;
+            }
+            if (attempt >= kMaxChunkAttempts) {
+                break;
+            }
+            ++g_poll_chunk_retries;
+            // Un select_drive limpio es parte del reintento: sin el, un comando
+            // a medias puede dejar el dispositivo apuntando a otro sector.
+            io_wait();
+        }
+    }
+    return false;
+}
+
 bool rw_sectors(Slot& slot, uint32_t lba, uint32_t sector_count, void* buffer, bool write) {
     auto* bytes = static_cast<uint8_t*>(buffer);
     while (sector_count != 0) {
@@ -321,6 +462,24 @@ const block::Driver kDriver = {
 
 namespace ata {
 
+// La curva de esperas que SI funcionan. Sin esto, un fallo raro no dice si el
+// presupuesto era corto o si el dispositivo se wedgeo.
+void report_poll_headroom() {
+    const uint32_t worst = g_poll_bsy_max_ok_spins > g_poll_drq_max_ok_spins
+        ? g_poll_bsy_max_ok_spins
+        : g_poll_drq_max_ok_spins;
+    if (worst < g_poll_reported_threshold * 2) {
+        return;
+    }
+    g_poll_reported_threshold = worst == 0 ? 1 : worst;
+    console::printf(
+        "ata: espera maxima ok bsy=%u drq=%u de %u spins\n",
+        static_cast<unsigned>(g_poll_bsy_max_ok_spins),
+        static_cast<unsigned>(g_poll_drq_max_ok_spins),
+        static_cast<unsigned>(kPollSpinBudget)
+    );
+}
+
 // Se informa desde el fallo que llega hasta userland, una sola vez, para que el
 // diagnostico aparezca junto al sintoma y no dentro de la copia.
 void report_poll_failures() {
@@ -330,10 +489,12 @@ void report_poll_failures() {
     }
     g_poll_failures_reported = 1;
     console::printf(
-        "ata: sondeo fallido bsy=%u drq=%u err=%u\n",
+        "ata: sondeo fallido bsy=%u drq=%u err=%u reintentos=%u resets=%u\n",
         static_cast<unsigned>(g_poll_failures[0]),
         static_cast<unsigned>(g_poll_failures[1]),
-        static_cast<unsigned>(g_poll_failures[2])
+        static_cast<unsigned>(g_poll_failures[2]),
+        static_cast<unsigned>(g_poll_chunk_retries),
+        static_cast<unsigned>(g_poll_device_resets)
     );
 }
 

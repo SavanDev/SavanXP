@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -306,6 +307,24 @@ def main() -> int:
     assert "preexec_fn=_die_with_parent" in runner_text
     assert "PR_SET_PDEATHSIG" in runner_text
     assert "libc.prctl" in runner_text
+    # A PIO command that fails must be re-issued whole, not resumed: the
+    # command is half-done and only a fresh select_drive + command clears the
+    # port. Bounded, and absent from the happy path.
+    ata_text = (root / "kernel" / "ata.cpp").read_text(encoding="utf-8")
+    assert "constexpr uint32_t kMaxChunkAttempts = 3;" in ata_text
+    assert "rw_chunk_once" in ata_text
+    assert re.search(r"bool rw_chunk\([^)]*\)[\s\S]{0,600}for \(uint32_t attempt = 1;", ata_text)
+    assert "if (attempt >= kMaxChunkAttempts)" in ata_text
+    # Agotados los reintentos baratos, el dispositivo estaba wedged y hace falta
+    # reset por software (SRST): dos escrituras, bus y luego dispositivo
+    # seleccionado, y re-IDENTIFY porque el cacheado deja de valer.
+    assert "void software_reset(Slot& slot)" in ata_text
+    assert "kControlSrst = 0x04" in ata_text
+    assert "kControlSrstNien = 0x06" in ata_text
+    assert "if (!identify(slot))" in ata_text
+    assert re.search(r"for \(uint32_t round = 0; round < kMaxChunkRounds;", ata_text)
+    assert "kPollSpinBudget = 1000000" in ata_text
+    assert "ANDAMIO" not in ata_text, "test scaffolding left in the ATA driver"
     # The SXE stamp must rerun when the neutral contract changes.
     assert '"${CMAKE_SOURCE_DIR}/include/abi/savanxp_abi.h"' in cmake_text
     # pointer-smoke es el unico que exige la maquina virtio, y el runner tiene que

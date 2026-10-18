@@ -177,6 +177,13 @@ Cut-off notes:
   indefinitely. QEMU now gets `PR_SET_PDEATHSIG`. Verified A/B: killing the
   runner mid-scenario leaves zero orphans with the fix and one without it.
 
+- **A wedged disk is reset instead of failing the operation.** A long write
+  (390 KB, ~16,000 sectors, five minutes) used to die on a single exhausted
+  status poll, with nothing in the whole chain retrying. Each command is now
+  re-issued whole up to three times, and if those all fail the controller is
+  reset by software and the command is retried again. Intermittent
+  `progman-smoke` copy failures on a loaded host should stop with it.
+
 - **The error space belongs to the kernel.** Errors returned by the kernel are
   now `sx_status`/`SX_E*` rather than `savanxp_error_code`/`SAVANXP_E*`, with
   the POSIX names kept as aliases so existing programs are unaffected. The

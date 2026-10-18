@@ -1096,6 +1096,10 @@ size_t write(Vnode& node, size_t offset, const void* buffer, size_t count, bool 
                 return 0;
             }
             size_t written = 0;
+            // La curva de esperas se informa periodicamente (cada vez que un
+            // maximo dobla), no por fallo: sirve precisamente cuando todo va
+            // bien, que es cuando nadie mira.
+            ata::report_poll_headroom();
             if (!sxfs::write_file(*file, offset, buffer, count, truncate, written)) {
                 // Este es el fallo que tumba la copia de la fixture del
                 // progman-smoke tras cinco minutos de escrituras. sxfs solo
