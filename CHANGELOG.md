@@ -22,6 +22,10 @@ Cut-off notes:
   compile-profile flags, the kernel linker script and the link emulation; `x86_64` is the
   default and `i386` the legacy target (`SAVANXP_ARCH=i386 ./build.sh build`).
 
+- **The i386 kernel boots.** `SAVANXP_ARCH=i386` builds a Multiboot2 kernel in `arch/x86`
+  (GRUB2 handoff, COM1 serial, 4 MiB-page identity map over the first 1 GiB) and
+  `./build.sh iso` emits the BIOS GRUB2 ISO; `tools/legacy_boot_test.py` asserts the boot.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

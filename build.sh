@@ -291,8 +291,9 @@ if ! python3 -c 'import PIL' >/dev/null 2>&1; then
     exit 1
 fi
 
+# El perfil x86_64 arranca con Limine; i386 usa GRUB2 (cmake/iso-grub.cmake).
 LIMINE_ROOT="$ROOT/tools/limine"
-if [[ ! -f "$LIMINE_ROOT/BOOTX64.EFI" ]]; then
+if [[ "${SAVANXP_ARCH:-x86_64}" == "x86_64" && ! -f "$LIMINE_ROOT/BOOTX64.EFI" ]]; then
     echo "==> Fetching Limine"
     rm -rf "$LIMINE_ROOT"
     git clone --depth 1 --branch v10.x-binary \
@@ -300,7 +301,7 @@ if [[ ! -f "$LIMINE_ROOT/BOOTX64.EFI" ]]; then
 fi
 
 # The ISO deployer is built from the checked-out Limine source when needed.
-if [[ "$COMMAND" == iso && ! -x "$LIMINE_ROOT/limine" ]]; then
+if [[ "${SAVANXP_ARCH:-x86_64}" == "x86_64" && "$COMMAND" == iso && ! -x "$LIMINE_ROOT/limine" ]]; then
     require_tool make
     echo "==> Building the Limine ISO deployer"
     make -C "$LIMINE_ROOT"

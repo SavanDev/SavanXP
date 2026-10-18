@@ -43,6 +43,7 @@ tools/*
 !tools/check_legacy_cpu.py
 !tools/check_shared_libs.py
 !tools/glyphs.py
+!tools/legacy_boot_test.py
 !tools/font/
 !tools/font/**
 *.log

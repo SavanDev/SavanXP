@@ -56,9 +56,10 @@ experiment has `./subsystems/native/build.sh`.
 ## Requirements
 
 On Linux, install Clang/LLVM, CMake, Ninja, GNU Make, Python 3 with Pillow,
-Git, QEMU, OVMF and xorriso. `build.sh` resolves these tools from `PATH` and
-fetches the pinned Limine checkout when needed. Distribution package names and
-QEMU backend details are in [Building on Linux](docs/BUILD_LINUX.md).
+Git, QEMU, OVMF, xorriso and `grub-mkrescue` (the i386 target boots through
+GRUB2). `build.sh` resolves these tools from `PATH` and fetches the pinned
+Limine checkout when needed. Distribution package names and QEMU backend
+details are in [Building on Linux](docs/BUILD_LINUX.md).
 
 Python (with `Pillow`) is used on every build to convert checked-in PNG assets
 into C headers and SXE resources. It does not regenerate desktop source icons;

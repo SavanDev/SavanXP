@@ -149,21 +149,21 @@ The only path to that laptop as it is. Limine is out, which in practice means
 **GRUB2 with the Multiboot2 protocol**: it is the well-trodden 32-bit legacy-BIOS
 loader, and the tags it provides (E820 map, framebuffer, modules, ACPI RSDP,
 cmdline) map almost one to one onto what `boot::BootInfo` already carries
-([`entry.cpp`](../arch/x86_64/entry.cpp) would become the Multiboot reader).
+([`arch/x86/entry32.S`](../arch/x86/entry32.S) is the Multiboot2 reader now).
 What is lost and has to be rebuilt by the kernel: the HHDM (a fixed 1 GiB
 direct map covers any of these machines), the AP start-up trampolines (INIT/SIPI
-from the MADT instead of Limine's `goto_address`), and paging itself.
+from the MADT instead of Limine's `goto_address`), and paging itself (bootstrapped in [`arch/x86/paging.cpp`](../arch/x86/paging.cpp)).
 
 | Package | Size | Notes |
 | --- | --- | --- |
 | Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | **Landed.** `SAVANXP_ARCH` (`x86_64` default, `i386`) picks the triple, the flags of each compile profile, the kernel script (`linker.ld`/`linker32.ld`) and the link emulation; [`tools/arch-env.sh`](../tools/arch-env.sh) carries the same mapping to the scripts outside CMake |
-| `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`) |
-| Paging bootstrap and a 1 GiB direct map, no NX | L | Nothing exists today; `EFER` does not exist in 32-bit mode |
+| `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`). **Started:** the Multiboot2 entry, the flat GDT and the COM1 console exist in [`arch/x86`](../arch/x86) |
+| Paging bootstrap and a 1 GiB direct map, no NX | L | **Landed.** The bootstrap maps the first 1 GiB identity with 4 MiB PSE pages and reports over serial; `EFER` does not exist in 32-bit mode |
 | VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |
 | `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](../arch/x86_64/context.S), [`elf.cpp:163-263`](../kernel/elf.cpp) |
 | Heap off HHDM pointers | S | [`heap.cpp:224-244`](../kernel/heap.cpp) builds arenas straight on the direct map |
 | Userland, SDK, ports, busybox | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
-| Harness: a second QEMU machine profile | S-M | See [A permanent harness](#a-permanent-harness-for-a-32-bit-target) |
+| Harness: a second QEMU machine profile | S-M | **Landed.** `--legacy` selects `qemu-system-i386`, [`tools/check_legacy_cpu.py`](../tools/check_legacy_cpu.py) asserts the CPU has no long mode or NX and [`tools/legacy_boot_test.py`](../tools/legacy_boot_test.py) boots the i386 ISO; see [A permanent harness](#a-permanent-harness-for-a-32-bit-target) |
 
 The good news for the ABI is specific and worth protecting. Syscalls are a
 DPL=3 `int $0x80` gate ([`abi/savanxp_native_abi.h:10-12`](../include/abi/savanxp_native_abi.h)),
@@ -177,9 +177,17 @@ The one real LP64 hole is the initial process stack, which is a native SysV argv
 array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
 
 Order of work, with each step independently bootable and testable:
-`build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` ->
+`build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` (landed) ->
 `ATA and SxFS root` -> `ELF32 and a shell` -> `PS/2 and the desktop` ->
 `isolation features, if ever`.
+
+The landed packages are exercised with:
+
+```sh
+SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
+  ./build.sh iso
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
+```
 
 ## Route B: target 64-bit hardware
 

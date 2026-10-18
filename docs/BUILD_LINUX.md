@@ -14,13 +14,14 @@ The host needs:
 - Git
 - QEMU with OVMF firmware
 - `xorriso` for ISO targets
+- `grub-mkrescue` with the `i386-pc` platform files for the i386 ISO target
 - GNU Make for the optional FFmpeg port
 
 On Arch Linux, the core set is:
 
 ```bash
 pacman -S clang lld llvm cmake ninja make python-pillow \
-  qemu-system-x86 edk2-ovmf libisoburn
+  qemu-system-x86 edk2-ovmf libisoburn grub
 ```
 
 CMake resolves tools from `PATH` and accepts cache overrides when a distribution
@@ -39,10 +40,23 @@ From the repository root:
 ./build.sh test
 ```
 
-The first configure downloads the pinned Limine checkout under `tools/limine`.
+The first configure of the `x86_64` build downloads the pinned Limine checkout
+under `tools/limine`; the `i386` build boots through `grub-mkrescue` instead.
 The normal build stages the internal userland and the EFI tree while preserving
 an existing valid `build/disk.img`. The image is updated through a validated
 sibling candidate and is replaced atomically only after validation succeeds.
+
+## The i386 target
+
+`SAVANXP_ARCH=i386` selects the 32-bit legacy target: the kernel is a Multiboot2
+image under `arch/x86` and the ISO is built with `grub-mkrescue` for legacy BIOS.
+It must not share a build directory with the `x86_64` build:
+
+```bash
+SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
+  ./build.sh iso
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
+```
 
 ## Official ports
 

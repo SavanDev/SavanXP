@@ -59,7 +59,12 @@ def main() -> int:
     startup = (root / "boot" / "startup.nsh").read_text(encoding="utf-8")
     assert startup == "fs0:\\EFI\\BOOT\\BOOTX64.EFI\n"
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    assert "startup.nsh" in cmake
+    # El arbol de arranque vive por arquitectura: x86_64 escribe startup.nsh
+    # (la consola UEFI) desde cmake/iso-limine.cmake; el i386 usa cmake/iso-grub.cmake.
+    assert "cmake/iso-limine.cmake" in cmake
+    assert "cmake/iso-grub.cmake" in cmake
+    limine_staging = (root / "cmake" / "iso-limine.cmake").read_text(encoding="utf-8")
+    assert "startup.nsh" in limine_staging
     build_script = (root / "build.sh").read_text(encoding="utf-8")
     assert "one-word smoke targets" in build_script
     assert "--gpu-soak-iterations" in build_script
