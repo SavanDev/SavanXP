@@ -1,4 +1,4 @@
-# SXE resources for the ccleste port. See docs/SXE_FORMAT.md.
+# SXE resources for the ccleste port. See docs/userland/SXE_FORMAT.md.
 #
 # The values below give the port an identity in the desktop. It is built by a
 # separate build (ports/ccleste/build.sh), so nothing on the host registers it

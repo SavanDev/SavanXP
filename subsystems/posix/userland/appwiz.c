@@ -1,7 +1,7 @@
 /*
  * Agregar o quitar programas.
  *
- * La contracara del alta automatica del launcher (docs/SXE_FORMAT.md, "All
+ * La contracara del alta automatica del launcher (docs/userland/SXE_FORMAT.md, "All
  * Programs"): ahi instalar es copiar el binario a /disk/bin y aparece solo, y
  * aca desinstalar es borrarlo y desaparece solo. No hay ninguna entrada de
  * registro que dar de baja, porque no hay ninguna que se haya dado de alta.

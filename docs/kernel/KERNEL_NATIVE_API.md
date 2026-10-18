@@ -4,8 +4,8 @@ Status: done (2026-10-16, slice 13), isolation campaign complete (slices
 A-E). The layering stands: a native kernel API with POSIX as a translation
 subsystem on top and a Win32-like native userland beside it. The kernel now
 includes no userland header, keeps no POSIX per-process state, and returns its
-own status space. See [`SYSTEM_LAYERING.md`](SYSTEM_LAYERING.md) for the
-layering and [`NATIVE_APPS.md`](NATIVE_APPS.md) for writing native programs.
+own status space. See [`SYSTEM_LAYERING.md`](../userland/SYSTEM_LAYERING.md) for the
+layering and [`NATIVE_APPS.md`](../userland/NATIVE_APPS.md) for writing native programs.
 
 ## Naming: Sx, not Nt
 
@@ -20,7 +20,7 @@ object/process factoring, not before.
 - No POSIX-visible behavior change per slice. Numbers, structs, errors and
   scheduling stay identical; only the call path moves.
 - The native dispatcher only uses the `sx::` surface
-  ([`sx.hpp`](../include/kernel/sx.hpp): current process, user-memory copy,
+  ([`sx.hpp`](../../include/kernel/sx.hpp): current process, user-memory copy,
   errors) plus `display::*` and `console::*`. It never reaches into
   `process.cpp` internals.
 - `kernel/process.cpp` no longer implements user-memory copy itself: the
@@ -138,7 +138,7 @@ to fail with the preservation rule deliberately broken, so it has teeth.
 - `include/kernel/process_detail.hpp` is the kernel-internal sharing the
   move needed (handle lookup/allocation, pipe pool, poll evaluation,
   waits, slot management): not subsystem API, no stability contract.
-- `docs/NATIVE_APPS.md` is the native-app guide (headers, fixed fds,
+- `docs/userland/NATIVE_APPS.md` is the native-app guide (headers, fixed fds,
   manifests, proof strategy, worked examples), listed in `docs/README`.
 - What stays shared on purpose: the object cores both dispatchers call
   (events, sections, single waits) remain `process::` cores in the

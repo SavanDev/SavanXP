@@ -1,4 +1,4 @@
-# Recursos SXE del Program Manager. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del Program Manager. Ver docs/userland/SXE_FORMAT.md.
 #
 # Los valores reproducen la presentacion que hoy vive hardcodeada en
 # windowd_appinfo.c y en los defaults de progman_registry.c: la idea de las

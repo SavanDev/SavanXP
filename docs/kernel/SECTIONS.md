@@ -227,7 +227,7 @@ has to be recompiled as PIC.
 ## The loader, and what it proved
 
 The decisions, the order of the remaining work and what blocks it are in
-[`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md).
+[`SHARED_LIBRARIES.md`](./SHARED_LIBRARIES.md).
 
 `ldso` is the smallest thing that can fail interesting: one `.so`, its `PT_LOAD`s
 placed where the ELF says, its relocations applied, its symbols resolved by name. `ldtest` calls `sqrt`, `fabs` and `floor`

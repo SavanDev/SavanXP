@@ -322,7 +322,7 @@ static void activate_shell(struct windowd_session *session)
     refresh_active_state(session);
 }
 
-/* --- Ventanas con dueno (docs/OWNED_WINDOWS.md) ------------------------------
+/* --- Ventanas con dueno (docs/desktop/OWNED_WINDOWS.md) ------------------------------
  *
  * Un dialogo es una ventana del mismo proceso que su dueno, en un slot de
  * overlay propio. El z-order, la activacion y el minimizado tratan a dueno y
@@ -2110,7 +2110,7 @@ static int start_client_process(
     /*
      * Unico lugar donde el WM toca disco por cliente: se lee el .sxe del
      * binario recien lanzado para sacar titulo, icono y accent
-     * (docs/SXE_FORMAT.md, fase 4). El costo esta acotado por la cantidad de
+     * (docs/userland/SXE_FORMAT.md, fase 4). El costo esta acotado por la cantidad de
      * ventanas abiertas, no por el tamano de un directorio, y se paga al crear
      * la ventana -- que ya es el momento mas caro del ciclo. No puede fallar:
      * sin recursos se queda con el fallback de la tabla.
@@ -2704,7 +2704,7 @@ static void destroy_overlay_client(struct windowd_session *session, int slot, in
  * - Una ventana principal se destruye con su proceso, como siempre hizo la X.
  * - Un dialogo (ventana con dueno) no se destruye: se le pide al proceso que lo
  *   cierre, igual que ESC. El proceso decide que significa cancelar y despues
- *   manda el CLOSE (docs/OWNED_WINDOWS.md).
+ *   manda el CLOSE (docs/desktop/OWNED_WINDOWS.md).
  *
  * Devuelve 1 si habia una ventana que cerrar.
  */
@@ -3312,7 +3312,7 @@ static void service_client_size_hints(
 
 /*
  * Crea la ventana con dueno que pide el cliente del slot `owner_slot`
- * (docs/OWNED_WINDOWS.md). Todo lo que cuesta sale de lo que ya existe: un slot
+ * (docs/desktop/OWNED_WINDOWS.md). Todo lo que cuesta sale de lo que ya existe: un slot
  * de overlay libre, una seccion para la superficie -- que viaja al cliente por
  * la cola de handles de SU pipe de eventos -- y duplicados del pipe y del wake
  * del dueno. Ningun pipe nuevo, ningun proceso nuevo.
@@ -3857,7 +3857,7 @@ static int selftest_handle_count(long pid, uint32_t *handles)
 }
 
 /*
- * Capacidad de la sesion (docs/WM_SUBSYSTEM.md, "Descriptor budget"): con la
+ * Capacidad de la sesion (docs/desktop/WM_SUBSYSTEM.md, "Descriptor budget"): con la
  * barra de tareas -- el cliente con mas canales -- y el popup de teclado vivos,
  * TODOS los slots de ventana se tienen que poder llenar, a windowd le tiene que
  * sobrar tabla, y cada app tiene que arrancar con la suya limpia. Con el
@@ -3999,7 +3999,7 @@ static int selftest_order_index(const struct windowd_session *session, int slot)
 }
 
 /*
- * Ventanas con dueno de punta a punta (docs/OWNED_WINDOWS.md): widgetsdemo abre
+ * Ventanas con dueno de punta a punta (docs/desktop/OWNED_WINDOWS.md): widgetsdemo abre
  * su About por el runtime real -- pedido en el header, seccion por la cola de
  * handles del pipe, eventos con window_id --, y aca se asertan las reglas del
  * WM: familia en el z-order, dueno deshabilitado, fuera de la lista de tareas,
@@ -4599,7 +4599,7 @@ static int windowd_selftest(void)
     }
 
     /* Antes de levantar la sesion: la presentacion se resuelve leyendo del
-     * disco y no depende del compositor (docs/SXE_FORMAT.md, fase 4). */
+     * disco y no depende del compositor (docs/userland/SXE_FORMAT.md, fase 4). */
     if (windowd_presentation_selftest() != 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL presentacion desde recursos SXE\n");
@@ -5829,7 +5829,7 @@ static int wm_pointer_handle_tasklist(
 }
 
 /*
- * Manejo de un evento de puntero coalescido (Fase A, ver docs/WM_SUBSYSTEM.md).
+ * Manejo de un evento de puntero coalescido (Fase A, ver docs/desktop/WM_SUBSYSTEM.md).
  * Saca el cuerpo per-evento del for(;;) de main() a una unidad nombrada con
  * contrato de estado explicito. Adentro, el update de cursor/hover es del WM,
  * los modales del shell (shell_pointer_handle_*) consumen, y el dispatch de

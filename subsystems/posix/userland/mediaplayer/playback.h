@@ -5,7 +5,7 @@
  * la llama, con el callback de playback_pump.
  *
  * El reloj es el de pared (monotonic_ns) y no el del dispositivo de audio,
- * porque /dev/audio0 no informa cuanto reprodujo. Ver docs/MEDIA_PLAYER.md,
+ * porque /dev/audio0 no informa cuanto reprodujo. Ver docs/media/MEDIA_PLAYER.md,
  * "The clock", para lo que eso implica y lo que falta para cambiarlo. */
 
 #include <stdint.h>

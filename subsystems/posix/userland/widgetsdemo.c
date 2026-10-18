@@ -152,7 +152,7 @@ static struct sxgui_menubar g_menubar = {
 
 /* --dialog-selftest: abre el About apenas corre el loop, sin que nadie haga
  * click. Es el cliente con el que `windowd --selftest` prueba las ventanas con
- * dueno de punta a punta (docs/OWNED_WINDOWS.md). Desde el primer tick y no
+ * dueno de punta a punta (docs/desktop/OWNED_WINDOWS.md). Desde el primer tick y no
  * antes: el dialogo tiene ventana propia solo adentro de sxgui_app_run. */
 static void open_about_on_first_tick(struct sxgui_app *app)
 {

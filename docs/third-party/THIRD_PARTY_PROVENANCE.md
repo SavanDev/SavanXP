@@ -4,7 +4,7 @@ This file records every third-party component that ends up inside a binary or
 an image that SavanXP distributes. That is the entry rule: one entry per
 distributed bit, not one per project that served as inspiration. The reasoning
 about what is adopted and under which category lives in
-`docs/THIRD_PARTY_ADOPTION.md`.
+`docs/third-party/THIRD_PARTY_ADOPTION.md`.
 
 Each entry declares origin, pinned version, verified license, decision, and
 where the distributed bit ends up. The `Versioned` field says whether the
@@ -220,7 +220,7 @@ which is why both go into the registry.
 - Distributed in: the image, as standalone `.sxicon` blobs in `/disk/icons`
   emitted by `tools/gen_mime_icons.py`. They are **not** baked into any binary,
   for the same reason `.sxicon` is a non-alloc section (see
-  `docs/SXE_FORMAT.md`)
+  `docs/userland/SXE_FORMAT.md`)
 - Reason: file-type icons are drawn over the WHITE field of a list, not over
   the gray face of the desktop. Measured against `C0C0C0` the Tango set loses
   to our own art (`input-keyboard` 27.1 against 52.2 mean luminance contrast),
@@ -242,7 +242,7 @@ cache overrides, and are not duplicated in this registry.
 
 These adoptions are of design, not of code: no lines are copied, so there is
 nothing to license or redistribute. The decision and the reason for each live
-in `docs/THIRD_PARTY_ADOPTION.md`.
+in `docs/third-party/THIRD_PARTY_ADOPTION.md`.
 
 - SerenityOS (BSD-2-Clause): `WindowServer` and `Compositor` for the
   compositor architecture, the dirty regions and the occlusion; `LibGfx`

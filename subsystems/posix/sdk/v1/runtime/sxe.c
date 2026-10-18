@@ -1,5 +1,5 @@
 /*
- * Lector de recursos SXE. Ver savanxp/sxe.h para la API y docs/SXE_FORMAT.md
+ * Lector de recursos SXE. Ver savanxp/sxe.h para la API y docs/userland/SXE_FORMAT.md
  * para el diseno.
  */
 
@@ -1400,7 +1400,7 @@ static void selftest_disk(void)
 
 /*
  * Estampado por default: TODO programa que este build linkea recibe un
- * .sxmeta, tenga o no un .sxres al lado del fuente (docs/SXE_FORMAT.md,
+ * .sxmeta, tenga o no un .sxres al lado del fuente (docs/userland/SXE_FORMAT.md,
  * "estampado por default"). init es el sujeto porque nunca declaro un
  * init.sxres -- es PID 1, sin ventana ni presentacion que valga la pena
  * escribir a mano -- asi que si tiene identidad, es PORQUE EL GENERADOR LA

@@ -6,7 +6,7 @@
  * for one interactive native form to prove keyboard plus pointer through
  * the input ring. A real toolkit binds the system fonts and theme later;
  * this font is small on purpose so deleting it costs nothing (see
- * docs/KERNEL_NATIVE_API.md, slice 11). Header-only like sxn.h/sxnwm.h.
+ * docs/kernel/KERNEL_NATIVE_API.md, slice 11). Header-only like sxn.h/sxnwm.h.
  * Colors are plain 32-bit XRGB; all drawing clips to the surface.
  */
 

@@ -1,4 +1,4 @@
-/* Demo de engranajes: el consumidor del batch 0 de docs/SXGL_ROADMAP.md.
+/* Demo de engranajes: el consumidor del batch 0 de docs/desktop/SXGL_ROADMAP.md.
  *
  * Rasteriza a mano, y ese es exactamente el punto. El archivo esta partido en
  * tres bloques, y la division no es estetica:
@@ -27,7 +27,7 @@
 
 #define GEARS_PI 3.14159265358979323846f
 
-/* El rasterizador es fill-rate bound (docs/SXGL_ROADMAP.md), asi que la escena
+/* El rasterizador es fill-rate bound (docs/desktop/SXGL_ROADMAP.md), asi que la escena
  * 3D vive en un viewport acotado y centrado en vez de ocupar la pantalla. Es la
  * decision honesta para software, y de paso ejercita el caso "glViewport dentro
  * de una ventana" que el roadmap da por gratis en el seam. */

@@ -132,7 +132,7 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags);
 bool ensure_user_stack_page(VmSpace& space, uint64_t address);
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write);
 
-/* --- TLB con varios cores (docs/SMP_ROADMAP.md, fase 3) ---------------------
+/* --- TLB con varios cores (docs/kernel/SMP_ROADMAP.md, fase 3) ---------------------
  *
  * La mitad de kernel del espacio de direcciones la comparten todos los cores:
  * cuando un core desmapea una pagina de kernel, el invlpg solo limpia SU TLB, y

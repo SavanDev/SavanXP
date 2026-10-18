@@ -1,4 +1,4 @@
-# Recursos SXE de la calculadora. Ver docs/SXE_FORMAT.md.
+# Recursos SXE de la calculadora. Ver docs/userland/SXE_FORMAT.md.
 #
 # Sin mime_open/ext_open: la calculadora no abre archivos, asi que no declara
 # ninguna capacidad para el registro de asociaciones.

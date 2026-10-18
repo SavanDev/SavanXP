@@ -13,7 +13,7 @@
  * contadores de LEDs y la cara en el medio, y abajo el tablero hundido.
  *
  * Es el primer juego que viene EN el sistema, no un port externo como Doom
- * (docs/SYSTEM_LAYERING.md, "Games, and the first one"). Las reglas viven en
+ * (docs/userland/SYSTEM_LAYERING.md, "Games, and the first one"). Las reglas viven en
  * mines_board.c -- este archivo es solo la ventana: layout, dibujo y entrada.
  *
  * La grilla NO son widgets. sxgui no tiene jerarquia y 480 celdas serian 480
@@ -82,7 +82,7 @@ static struct mines_board g_board;
  *
  * uptime_ms y no monotonic_ns: el reloj de pared del sistema es el que sigue al
  * tiempo de la MAQUINA, y el TSC adentro de un hipervisor mide el del host
- * (docs/TIME.md). Un cronometro que corre al 561% en VirtualBox no es un
+ * (docs/kernel/TIME.md). Un cronometro que corre al 561% en VirtualBox no es un
  * cronometro. */
 static unsigned long g_start_ms = 0;
 static int g_elapsed_seconds = 0;

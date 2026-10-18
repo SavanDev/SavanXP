@@ -2,7 +2,7 @@
 """Emite un blob .sxicon por cada icono del catalogo de tipos, para que la
 imagen los lleve como archivos sueltos en /disk/icons/.
 
-Por que archivos y no un set horneado en filesapp: docs/SXE_FORMAT.md decide
+Por que archivos y no un set horneado en filesapp: docs/userland/SXE_FORMAT.md decide
 que los KiB de iconos NO viajan en un segmento cargable (la BSS se mapea eager
 al exec, asi que cada KiB horneado es RAM residente por proceso). Los .sxicon
 sueltos se leen del disco cuando hacen falta y se cachean en runtime, igual que
@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gen_sxe_resources import build_icon_blob, load_format, read_icon_png, write_if_changed
 
 # Raiz del catalogo de tipos, separada del arte propio del repo justamente
-# porque su procedencia es distinta (ver docs/THIRD_PARTY_PROVENANCE.md).
+# porque su procedencia es distinta (ver docs/third-party/THIRD_PARTY_PROVENANCE.md).
 ICON_ROOT = ("assets", "desktop", "icons", "mime")
 
 

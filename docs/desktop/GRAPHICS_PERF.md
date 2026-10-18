@@ -372,7 +372,7 @@ any outstanding present first, so it absorbed that wait instead of the frame.
 ### Why it cannot help on one core
 
 SavanXP schedules on a single core: the application processors boot and park
-([SMP_ROADMAP.md](SMP_ROADMAP.md), phase 0). On one core, making an RPC
+([SMP_ROADMAP.md](../kernel/SMP_ROADMAP.md), phase 0). On one core, making an RPC
 asynchronous does not let `compositord`'s work overlap anyone else's -- it
 changes *when* that work runs, not *whether* it is paid. Two details make it
 concrete:

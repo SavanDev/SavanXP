@@ -1,10 +1,10 @@
 # The SXE format — executables carrying their own resources
 
 > **Status: all five phases COMPLETE, on master.** The canonical format lives in
-> [include/sxe/sxe_format.h](../include/sxe/sxe_format.h), the SDK reader in
-> [savanxp/sxe.h](../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
-> [runtime/sxe.c](../subsystems/posix/sdk/v1/runtime/sxe.c), the stamping in
-> [gen_sxe_resources.py](../tools/gen_sxe_resources.py) + `stamp_sxe.py`,
+> [include/sxe/sxe_format.h](../../include/sxe/sxe_format.h), the SDK reader in
+> [savanxp/sxe.h](../../subsystems/posix/sdk/v1/include/savanxp/sxe.h) +
+> [runtime/sxe.c](../../subsystems/posix/sdk/v1/runtime/sxe.c), the stamping in
+> [gen_sxe_resources.py](../../tools/gen_sxe_resources.py) + `stamp_sxe.py`,
 > and the consumers are `progman_registry_apply_sxe()` and
 > `progman_registry_scan_programs()` (launcher), `appwiz_catalog_scan()`
 > (uninstaller), `windowd_presentation_load()` (window chrome and Task List)
@@ -38,7 +38,7 @@
 >
 > **Crux decision:** SXE is **not a container**. It is a convention over ELF:
 > the file still starts with `7F 45 4C 46`, the same
-> [kernel/elf.cpp](../kernel/elf.cpp) loads it without touching a line, and
+> [kernel/elf.cpp](../../kernel/elf.cpp) loads it without touching a line, and
 > `llvm-readelf` opens it. All it adds is two **non-alloc** sections the kernel
 > never maps. "SXE" names the convention and the extension, not a new binary
 > format.
@@ -48,11 +48,11 @@
 Today an executable cannot speak about itself, and that is why three tables
 exist to compensate:
 
-1. [progman_registry.h:33](../subsystems/posix/userland/progman_registry.h:33) —
+1. [progman_registry.h:33](../../subsystems/posix/userland/progman_registry.h:33) —
    icons are referenced **by name** against a set baked at build time. Its own
    comment says: *"per-program icons would need an icon format + loader:
    separate work"*. This document is that work.
-2. [windowd_appinfo.h:16](../subsystems/posix/userland/windowd_appinfo.h:16) —
+2. [windowd_appinfo.h:16](../../subsystems/posix/userland/windowd_appinfo.h:16) —
    the WM **guesses** title/icon/accent from the path, and admits that *"the
    real fix is for each client to report its own title/icon"*.
 3. `desktop_icons.h` — application icons baked inside the WM binary: adding a
@@ -174,14 +174,14 @@ is defined now because afterwards would be too late.
 | `0x0103` | `CATEGORY` | utf8 | Launcher group. Its **presence** is what puts the program in the list — see [All Programs](#all-programs-the-catalog-discovers-itself). Recommended ≤ 31 bytes (`PROGMAN_NAME_CAPACITY`) |
 | `0x0104` | `WINDOW_FLAGS` | `uint32` | `SAVANXP_WM_WINDOW_STYLE_*`. Properties of the program's **window**, read by the WM itself — see [WINDOW_FLAGS is not LAUNCH_FLAGS](#window_flags-is-not-launch_flags) |
 | `0x0201` | `INTERPRETER` | utf8 | Absolute path of the program that executes this image. **Absent or empty = the kernel executes it directly** |
-| `0x0202` | `SUBSYSTEM` | `uint8` | An **informational** mirror of `EI_OSABI`. The authority is still the ELF byte ([elf.hpp:14](../include/kernel/elf.hpp:14)); this exists so a userland reader does not have to parse the ELF header |
+| `0x0202` | `SUBSYSTEM` | `uint8` | An **informational** mirror of `EI_OSABI`. The authority is still the ELF byte ([elf.hpp:14](../../include/kernel/elf.hpp:14)); this exists so a userland reader does not have to parse the ELF header |
 | `0x0401` | `DATA_DIR` | utf8 | Absolute directory holding the program's persistent data. A **declaration, not a permission**: whoever deletes validates it first — see [Uninstalling](#uninstalling-the-other-half-of-the-same-idea) |
 | `0x0301` | `MIME_OPEN` | utf8, NUL-separated entries | Types the program **declares it can** open |
 | `0x0302` | `EXT_OPEN` | utf8, NUL-separated entries | Extensions, with the dot: `.txt` |
 
 **`INTERPRETER` is in from v1 even though there is no VM**, and the managed
 layer that would have needed one is
-[deferred to after v1.0](SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
+[deferred to after v1.0](./SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
 It is the field for an image that the kernel does not execute itself — bytecode
 run by a `/bin/…` interpreter — the equivalent of a shebang / `binfmt_misc`,
 which does not fit in the `EI_OSABI` byte. It stays in the format because a tag
@@ -205,7 +205,7 @@ They look like the same idea and they are not, which is why they are two tags:
 - **`LAUNCH_FLAGS` says how to *start* the program** — what surface to give it.
   They are declared by *whoever asks for the launch* and travel in the launch
   request, because the WM
-  [knows no catalog of applications](WM_SUBSYSTEM.md). The launcher reads them
+  [knows no catalog of applications](../desktop/WM_SUBSYSTEM.md). The launcher reads them
   from the binary as a default and may override them.
 - **`WINDOW_FLAGS` describes the *window itself*.** The WM reads them straight
   from the binary when it creates the window, by the same path as `NAME` and
@@ -219,7 +219,7 @@ because the WM went and read it. A fixed-size window that became resizable
 depending on who double-clicked it would be a bug nobody could reproduce.
 
 The one flag in v1 is `SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE`, described in
-[WM_SUBSYSTEM.md](WM_SUBSYSTEM.md#fixed-size-windows).
+[WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md#fixed-size-windows).
 
 ### Size cap
 
@@ -255,14 +255,14 @@ struct sxe_icon_entry {
 
 The **value 2 is not arbitrary**: it deliberately matches
 `SX_PIXEL_FORMAT_BGRA8888` from
-[gfx2d.h:18](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:18), so the
+[gfx2d.h:18](../../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:18), so the
 pixels of a `.sxicon` can be handed to a `struct sx_bitmap` without translating
 anything. `sxe.c` has a `_Static_assert` that breaks the build if someone
 renumbers the gfx2d formats — the alternative failure mode would be swapped
 colors at runtime.
 
 That is **exactly** what
-[gen_desktop_icon_assets.py](../tools/gen_desktop_icon_assets.py) already
+[gen_desktop_icon_assets.py](../../tools/gen_desktop_icon_assets.py) already
 produces (`(a << 24) | (r << 16) | (g << 8) | b`) and what
 `struct desktop_embedded_bitmap` consumes. The blob's pixels are handed to the
 existing blitter **without conversion**.
@@ -374,7 +374,7 @@ The WM stops guessing from the path and starts reading; `windowd_appinfo.c`
 remains as a fallback for orphans, or disappears.
 
 This does **not** contradict the decision the WM already made in
-[wm_protocol.h:64](../subsystems/posix/sdk/v1/include/savanxp/wm_protocol.h:64)
+[wm_protocol.h:64](../../subsystems/posix/sdk/v1/include/savanxp/wm_protocol.h:64)
 (*"the requester declares the launch flags: the WM knows no app catalog"*).
 What was forbidden there is the WM having a **catalog**: a table of known apps
 maintained by hand. Reading the self-description of the binary it was just
@@ -387,7 +387,7 @@ are the *application* icons, which is what should never have been there.
 
 **The first to go was Doom.** `DESKTOP_ICON_DOOM` / `app-spider.png` no longer
 exist: the art moved, pixel by pixel, to
-[ports/doomgeneric/overlay/icon.png](../ports/doomgeneric/overlay/icon.png), and
+[ports/doomgeneric/overlay/icon.png](../../ports/doomgeneric/overlay/icon.png), and
 `doomgeneric.sxres` declares it with `icon_file=` instead of `icon=`. It is the
 same logic that already governed `ports/ccleste` — the icon travels *inside*
 the executable, not in the system tree — applied for the first time to a
@@ -605,7 +605,7 @@ button, and what `appwiz_catalog.h` decides.
 ```
 
 This is not a policy choice, it is the filesystem. `/bin` is the initramfs
-ramdisk (`Backend::memory` in [kernel/vfs.cpp:800](../kernel/vfs.cpp:800)), so
+ramdisk (`Backend::memory` in [kernel/vfs.cpp:800](../../kernel/vfs.cpp:800)), so
 `unlink()` there only invalidates the vnode in RAM and the file is back on the
 next boot. The only deletion that persists is on `/disk`, which is SxFS. And
 since the build copies all of `/bin` into `/disk/bin`, every system program
@@ -787,7 +787,7 @@ ports.
 
 ### The generator
 
-[tools/gen_sxe_resources.py](../tools/gen_sxe_resources.py) turns the manifests
+[tools/gen_sxe_resources.py](../../tools/gen_sxe_resources.py) turns the manifests
 into blobs. **It does not duplicate a single number**: magics, tags, versions,
 sizes and caps come from `include/sxe/sxe_format.h`; the launch flags from
 `include/abi/savanxp_abi.h`; the native OSABI from

@@ -19,7 +19,7 @@
  *
  * QUE NO ESTA. No hay pestania de Aplicaciones ni de Usuarios. La primera
  * necesita que el WM publique su lista de ventanas, que hoy no es parte del
- * protocolo (docs/WM_SUBSYSTEM.md); la segunda necesita cuentas de usuario, que
+ * protocolo (docs/desktop/WM_SUBSYSTEM.md); la segunda necesita cuentas de usuario, que
  * el sistema no tiene. Las dos son pestanias que faltan, no pestanias vacias.
  */
 

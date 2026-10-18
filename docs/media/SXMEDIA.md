@@ -158,7 +158,7 @@ In order, because each one removes a reason the last attempt failed:
    dynamic linker, or a codec service over the pipes the system already has. Without
    this there is no "one player", only N players. The dynamic linker is now a real
    project with decisions on record in
-   [`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md) — but note that this item needs
+   [`SHARED_LIBRARIES.md`](../kernel/SHARED_LIBRARIES.md) — but note that this item needs
    `dlopen`, loading a library by name, where that work is on `DT_NEEDED`. Those are
    different features, and a codec service over pipes may well be the cheaper answer.
 2. **A generated capability table**, which the attempt already proved is a good
@@ -192,7 +192,7 @@ own merits and none of them needs the layer that was withdrawn.
 | `42c12ca` | a build publishing what it can decode |
 
 The pinned `stb_vorbis` (`1ee679ca2ef753a528db5ba6801e1067b40481b8`, Unlicense/MIT)
-was vendored and never compiled into anything. `docs/THIRD_PARTY_PROVENANCE.md` no
+was vendored and never compiled into anything. `docs/third-party/THIRD_PARTY_PROVENANCE.md` no
 longer lists it, so the pin is recorded here instead.
 
 ## The tool that was built and thrown away with it

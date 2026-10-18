@@ -1,4 +1,4 @@
-# Recursos SXE del diagnostico de mouse. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del diagnostico de mouse. Ver docs/userland/SXE_FORMAT.md.
 name=Mouse Test
 description=Mouse diagnostics
 version=system

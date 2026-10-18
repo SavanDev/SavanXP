@@ -195,7 +195,7 @@ static int taskbar_snapshot(void)
  * El generico deja de ser lo unico que se ve: hasta que la entrada transporto
  * los pixeles, TODA ventana caia aca porque icon_id ya no distingue apps (el
  * set horneado se redujo al generico cuando cada binario consiguio su .sxicon,
- * ver docs/SXE_FORMAT.md).
+ * ver docs/userland/SXE_FORMAT.md).
  */
 static const struct desktop_embedded_bitmap *taskbar_entry_icon(
     const struct savanxp_wm_window_entry *entry,

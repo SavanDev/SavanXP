@@ -234,7 +234,7 @@ static const char *icon_reference_path(const char *value)
     {
         return "/bin/mousetest";
     }
-    /* "desktop", "doom" (se fue del set: ver docs/SXE_FORMAT.md), o
+    /* "desktop", "doom" (se fue del set: ver docs/userland/SXE_FORMAT.md), o
      * cualquier nombre que este lector no reconoce. */
     return 0;
 }
@@ -1383,7 +1383,7 @@ static int bitmaps_equal(const struct desktop_embedded_bitmap *a, const struct d
 }
 
 /*
- * Precedencia .ini > .sxe > default (docs/SXE_FORMAT.md, fase 3).
+ * Precedencia .ini > .sxe > default (docs/userland/SXE_FORMAT.md, fase 3).
  *
  * Corre contra los binarios REALES de la imagen, que es la unica forma de
  * probar esto: el paso que se valida es justamente el que abre el ejecutable.
@@ -1476,7 +1476,7 @@ static void selftest_sxe(void)
     /*
      * Item 2: icon=shell, un ALIAS LEGADO de antes de este cambio. Resuelve a
      * /bin/shellapp y presta SU .sxicon real. Ya no hay un DESKTOP_ICON_SHELL
-     * horneado contra el que comparar (docs/SXE_FORMAT.md, "icon= ya no elige
+     * horneado contra el que comparar (docs/userland/SXE_FORMAT.md, "icon= ya no elige
      * de un catalogo"): el cruce es contra el item 5, que lanza /bin/shellapp
      * SIN ningun override y por lo tanto adopta su propio .sxicon por el
      * camino normal -- dos aplicaciones independientes del mismo mecanismo

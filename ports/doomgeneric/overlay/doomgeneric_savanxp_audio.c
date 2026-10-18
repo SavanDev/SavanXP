@@ -24,7 +24,7 @@
  * por tema, que despues suena en loop en una voz dedicada. No hay streaming ni
  * callback nuevo en el mixer: es el mismo camino que ya usa ccleste, con la
  * diferencia de que el sintetizador es una libreria del sistema y no un decoder
- * de terceros. Ver docs/MIDI.md. */
+ * de terceros. Ver docs/media/MIDI.md. */
 #define DG_MUSIC_RATE SX_MIDI_DEFAULT_RATE
 #define DG_MUSIC_CENTRE 127
 

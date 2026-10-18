@@ -29,7 +29,7 @@ On Linux, from a clean checkout:
 ```
 
 The native path uses tools from `PATH` (or CMake cache overrides); see
-[Building with Bash and CMake](docs/BUILD_CMAKE.md). The versioned ports are
+[Building with Bash and CMake](docs/build/BUILD_CMAKE.md). The versioned ports are
 built independently with `./ports/doomgeneric/build.sh`,
 `./ports/ffmpeg/build.sh` and `./ports/ccleste/build.sh`.
 
@@ -45,8 +45,8 @@ built independently with `./ports/doomgeneric/build.sh`,
   keyboard layout selector.
 - Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties
   and a Task Manager with live CPU and memory per process
-  ([how it measures](docs/SYSTEM_MONITORING.md)). Media Player is an optional port
-  ([docs/MEDIA_PLAYER.md](docs/MEDIA_PLAYER.md)).
+  ([how it measures](docs/userland/SYSTEM_MONITORING.md)). Media Player is an optional port
+  ([docs/media/MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md)).
 - Persistent `SxFS` volume mounted at `/disk`.
 - POSIX base and SDK v1 for compiling external applications.
 - `sxgfx` 2D graphics layer for surfaces, painter and rect sets.
@@ -57,7 +57,7 @@ built independently with `./ports/doomgeneric/build.sh`,
 On Linux, install Clang/LLVM, CMake, Ninja, GNU Make, Python 3 with Pillow,
 Git, QEMU, OVMF and xorriso. `build.sh` resolves these tools from `PATH` and
 fetches the pinned Limine checkout when needed. Distribution package names and
-QEMU backend details are in [Building on Linux](docs/BUILD_LINUX.md).
+QEMU backend details are in [Building on Linux](docs/build/BUILD_LINUX.md).
 
 Python (with `Pillow`) is used on every build to convert checked-in PNG assets
 into C headers and SXE resources. It does not regenerate desktop source icons;
@@ -257,9 +257,9 @@ such as the ones `doomgeneric` uses.
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — index of every design document
-- [`docs/BUILD_CMAKE.md`](docs/BUILD_CMAKE.md) — native build graph and commands
-- [`docs/BUILD_LINUX.md`](docs/BUILD_LINUX.md) — native host requirements and QEMU setup
-- [`docs/SYSTEM_LAYERING.md`](docs/SYSTEM_LAYERING.md) — which layer is written
+- [`docs/build/BUILD_CMAKE.md`](docs/build/BUILD_CMAKE.md) — native build graph and commands
+- [`docs/build/BUILD_LINUX.md`](docs/build/BUILD_LINUX.md) — native host requirements and QEMU setup
+- [`docs/userland/SYSTEM_LAYERING.md`](docs/userland/SYSTEM_LAYERING.md) — which layer is written
   in which language, and why
 - [`AGENTS.md`](AGENTS.md) — working rules for this repository (changelog
   format, persistence guarantees, minimum verification)

@@ -21,13 +21,13 @@ struct windowd_client
      * request, so pointing at the caller's string would dangle. */
     char path[WINDOWD_CLIENT_PATH_CAPACITY];
     /* Titulo, icono y accent resueltos desde el .sxe del binario, una sola vez
-     * al crear la ventana (docs/SXE_FORMAT.md, fase 4). */
+     * al crear la ventana (docs/userland/SXE_FORMAT.md, fase 4). */
     struct windowd_presentation presentation;
     long pid;
     /* Los UNICOS descriptores que windowd guarda por cliente (savanxp/
      * wm_protocol.h v4). Todo lo demas vive en la seccion, que se cierra
      * despues del fork: a 64 descriptores por proceso, cada fd que se sume aca
-     * le resta ventanas simultaneas a la sesion (docs/WM_SUBSYSTEM.md). */
+     * le resta ventanas simultaneas a la sesion (docs/desktop/WM_SUBSYSTEM.md). */
     int events_write_fd;
     int wake_event_fd;
     /* Entrada nativa (sin pipe de eventos): anillo en seccion propia, creada
@@ -45,7 +45,7 @@ struct windowd_client
     uint32_t launch_tail;
     uint32_t size_hint_consumed_sequence;
     uint32_t window_request_consumed_sequence;
-    /* Ventana con dueno (docs/OWNED_WINDOWS.md): slot del overlay dueno, o -1 en
+    /* Ventana con dueno (docs/desktop/OWNED_WINDOWS.md): slot del overlay dueno, o -1 en
      * una ventana principal. Una con dueno es del MISMO proceso -- comparte pid
      * y, con duplicados propios, el pipe de eventos y el wake -- pero es una
      * ventana aparte: su superficie, su marco, su lugar en el z-order. No se
@@ -130,7 +130,7 @@ struct windowd_session
      * existe; el unico que le reserva lugar es el maximizar. */
     struct windowd_client taskbar_client;
     /* Cliente de fondo (shellui): superficie full-screen al fondo del z-order
-     * que dibuja el wallpaper (A2, ver docs/WM_SUBSYSTEM.md). Pasivo: no recibe
+     * que dibuja el wallpaper (A2, ver docs/desktop/WM_SUBSYSTEM.md). Pasivo: no recibe
      * foco ni input en A2.2. Distinto del shell_client (terminal on-demand). */
     struct windowd_client background_client;
     struct windowd_client shell_client;

@@ -226,7 +226,7 @@ struct sxgui_menubar {
  *
  * Where it is painted depends on the context's dialog host. Under
  * sxgui_app_run the dialog is its own window owned by the app's window
- * (docs/OWNED_WINDOWS.md): the WM draws its frame and title and keeps it above
+ * (docs/desktop/OWNED_WINDOWS.md): the WM draws its frame and title and keeps it above
  * the owner, so it no longer has to fit inside the app. Without a host, or if
  * the WM does not create the window, it falls back to a centred overlay inside
  * the app's own surface. The API is the same either way.
@@ -474,7 +474,7 @@ struct sxgui_app {
 
     void *user;
 
-    /* Owned by the frame: the window of the active dialog (docs/OWNED_WINDOWS.md). */
+    /* Owned by the frame: the window of the active dialog (docs/desktop/OWNED_WINDOWS.md). */
     struct sxgui_dialog_host dialog_host;
     struct savanxp_gfx_context dialog_gfx;
     int dialog_window_open;

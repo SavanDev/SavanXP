@@ -31,7 +31,7 @@ Every adoption has to be recorded under one of these categories:
 ## Requirements for any adoption
 
 - record the exact origin of the component in
-  `docs/THIRD_PARTY_PROVENANCE.md`
+  `docs/third-party/THIRD_PARTY_PROVENANCE.md`
 - note the verified license
 - justify the technical decision
 - preserve the original notices whenever there is a `Selective port`
@@ -109,7 +109,7 @@ losing them is the easy mistake to make.
 
 ## Traceability: the registry is the source of truth
 
-Traceability lives in `docs/THIRD_PARTY_PROVENANCE.md`, not in commit messages.
+Traceability lives in `docs/third-party/THIRD_PARTY_PROVENANCE.md`, not in commit messages.
 The previous rule asked every commit to cite its category; it is retired
 because it points at the wrong place: when you have to audit what is being
 distributed, what you look at is the current tree, not the history.

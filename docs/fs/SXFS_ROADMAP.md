@@ -6,7 +6,7 @@
 > each one whether it is reachable without moving the on-disk format. Where an
 > item is *not* reachable in v2, that is stated, because that is the boundary.
 >
-> The last line of defence for any of this is [`fscheck`](SXFS_CHECK.md), which
+> The last line of defence for any of this is [`fscheck`](./SXFS_CHECK.md), which
 > reports the volume's consistency from inside the system and is what makes a
 > change to the format verifiable without a second machine.
 
@@ -100,7 +100,7 @@ sectors of the 1537; the delta journal would write those handfuls.
 **Why it fits in v2.** The journal is transient — `clear_journal()` zeroes the
 header after every successful commit — so nothing about it survives in a clean
 image. `struct sxfs_journal_header` has 122 reserved bytes
-([`sxfs_format.h`](../include/sxfs/sxfs_format.h)), which is where a
+([`sxfs_format.h`](../../include/sxfs/sxfs_format.h)), which is where a
 discriminator goes: a v2 reader sees a header with no magic as "cleared", and one
 with magic and the full-copy discriminator as the format it already knows. A
 volume that crashed mid-commit can carry either shape and both must replay
@@ -119,7 +119,7 @@ way the compaction test tests the sync path, not just a happy-path commit.
 
 ## 2. `fscheck` reports, and nothing repairs
 
-**What exists.** [`fscheck`](SXFS_CHECK.md) reconciles the block bitmap against
+**What exists.** [`fscheck`](./SXFS_CHECK.md) reconciles the block bitmap against
 the inodes in both directions and walks the tree for unreachable inodes, aliased
 entries and duplicate names. It is read-only by construction and exits non-zero
 on findings.

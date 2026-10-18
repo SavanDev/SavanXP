@@ -4,7 +4,7 @@
 #include "desktop_icons.h"
 
 /*
- * Registro de programas del Program Manager (A2.3, ver docs/WM_SUBSYSTEM.md).
+ * Registro de programas del Program Manager (A2.3, ver docs/desktop/WM_SUBSYSTEM.md).
  *
  * Reemplaza la tabla hardcodeada k_menu_items de windowd_menu.c: los grupos y
  * items viven en un archivo de texto en /disk, editable sin recompilar el SO.
@@ -30,7 +30,7 @@
  *   - Sin malloc (esta libc no tiene): todo entra en arrays de capacidad fija y
  *     los strings se truncan en vez de desbordar.
  *
- * A PARTIR DE LA FASE 3 DE SXE (docs/SXE_FORMAT.md) este archivo cambio de rol:
+ * A PARTIR DE LA FASE 3 DE SXE (docs/userland/SXE_FORMAT.md) este archivo cambio de rol:
  * ya NO es el catalogo de identidad de los programas, es el ARREGLO del
  * usuario. Que grupos hay, que entra en cada uno, en que orden, y overrides
  * puntuales. Quien dice como se llama un programa, que hace y que icono tiene

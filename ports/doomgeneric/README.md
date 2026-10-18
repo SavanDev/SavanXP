@@ -42,7 +42,7 @@ The default WAD location is `ports/doomgeneric/wad/freedoom1.wad`. A missing
 WAD is reported but does not prevent the binary from being installed.
 
 The build requires the Linux host tools documented in
-`docs/BUILD_CMAKE.md`, plus `clang`, `ld.lld`, `llvm-objcopy`, `llvm-readelf`,
+`docs/build/BUILD_CMAKE.md`, plus `clang`, `ld.lld`, `llvm-objcopy`, `llvm-readelf`,
 Python/Pillow, and Git. It produces:
 
 ```text
@@ -85,7 +85,7 @@ per frame while the mixer loops that buffer on a dedicated voice. Without `GENMI
 the same song falls back to the built-in families; the log names the path
 (`(FM)` vs `(familias)`). Rendering it in one shot made every music change stall the
 game for about a second under TCG. The library is a `DT_NEEDED`; without it in the
-volume the game still runs, silent. See `docs/MIDI.md`.
+volume the game still runs, silent. See `docs/media/MIDI.md`.
 
 `./build.sh smoke doom-music-smoke` opens the port on the desktop, starts the
 level and asserts that the audio QEMU captured is not silent: it is the check

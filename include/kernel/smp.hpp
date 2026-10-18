@@ -7,7 +7,7 @@
 
 /* Los application processors y el estado de cada core.
  *
- * Fase 0 de docs/SMP_ROADMAP.md: los APs arrancan, se identifican y quedan
+ * Fase 0 de docs/kernel/SMP_ROADMAP.md: los APs arrancan, se identifican y quedan
  * estacionados en un bucle de hlt, y un ping IPI comprueba que el ICR entrega.
  *
  * Fase 1: cada core tiene su propio TSS y su propia entrada smp::Cpu, indexada

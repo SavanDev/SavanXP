@@ -37,7 +37,7 @@ constexpr size_t kMaxTimerObjects = 128;
  * sizeof(SectionObject) son 80 bytes, asi que el reparto son 20 KiB de BSS.
  *
  * Quien escriba el cargador de librerias deberia leer antes
- * docs/SECTIONS.md: por que esta tabla -- y no una sola para imagenes -- es el
+ * docs/kernel/SECTIONS.md: por que esta tabla -- y no una sola para imagenes -- es el
  * lugar donde va a vivir la identidad de un archivo respaldado. */
 constexpr size_t kMaxSectionObjects = 256;
 constexpr size_t kMaxSemaphoreObjects = 64;
@@ -120,7 +120,7 @@ struct SectionObject {
     uint32_t access_mask;
     // Solo valido con file_backed. Es la clave del cache: dos peticiones del
     // mismo archivo encuentran la misma seccion y por lo tanto las mismas
-    // paginas fisicas. Ver docs/SECTIONS.md para que NO alcanza como clave.
+    // paginas fisicas. Ver docs/kernel/SECTIONS.md para que NO alcanza como clave.
     uint32_t source_inode_id;
     /* Offset y largo de la parte del archivo que respaldo la seccion. Forman
      * parte de la clave del cache junto con inode_id: pedir el archivo entero y

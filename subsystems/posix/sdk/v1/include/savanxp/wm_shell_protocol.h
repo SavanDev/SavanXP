@@ -8,7 +8,7 @@
  * Extension OPCIONAL de savanxp/wm_protocol.h. Un cliente normal no tiene
  * estos descriptores abiertos: el WM los cablea unicamente al proceso que
  * lanza en el rol de shell. Eso importa porque los fds del protocolo se pagan
- * POR CLIENTE contra el limite de 64 por proceso (ver docs/WM_SUBSYSTEM.md),
+ * POR CLIENTE contra el limite de 64 por proceso (ver docs/desktop/WM_SUBSYSTEM.md),
  * asi que esto es un fd en todo el sistema y no uno por ventana: la seccion de
  * la lista el WM la cierra despues del fork, y le queda solo el pipe.
  *
@@ -19,7 +19,7 @@
  * se los cuenta.
  *
  * NOTA: el subsistema nativo mantiene su espejo aparte (ver
- * docs/SYSTEM_LAYERING.md). Este header es la fuente canonica.
+ * docs/userland/SYSTEM_LAYERING.md). Este header es la fuente canonica.
  */
 
 /*
@@ -77,7 +77,7 @@ struct savanxp_wm_window_entry {
     /* 0 = sin icono propio, se usa icon_id. Si no, el lado de icon_pixels.
      *
      * Los PIXELES viajan y no una referencia al binario porque el WM ya los
-     * leyo del .sxe al crear la ventana (docs/SXE_FORMAT.md): mandar el path
+     * leyo del .sxe al crear la ventana (docs/userland/SXE_FORMAT.md): mandar el path
      * obligaria al shell a reabrir y parsear cada ejecutable por su cuenta, y
      * a mantener su propia cache, para llegar exactamente al mismo bitmap.
      * Cuesta 1 KiB por entrada -- 13 KiB de seccion -- y esa es toda la deuda.

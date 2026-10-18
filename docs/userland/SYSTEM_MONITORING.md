@@ -97,7 +97,7 @@ Two clocks, two jobs, and mixing them up cost a long hunt:
 - `process::now_ms()` — behind `uptime_ms` and every deadline in the kernel —
   comes from a **free-running counter**, because counting interrupts does not
   measure time. Which counter, and why it is not always the TSC, is its own
-  story: [`TIME.md`](TIME.md).
+  story: [`TIME.md`](../kernel/TIME.md).
 
 `./build.sh smoke clock-smoke` is what settled it, by measuring both against the one
 reference that depends on neither: the RTC.
@@ -137,7 +137,7 @@ roughly 6.8x real time, and it was written off as a bad TSC calibration. It was
 not — the TSC runs ahead there whenever the guest is busy, which is also why the
 `perdido` column above read 52-62% where the truth was 2%. A measurement is only
 as good as the clock that took it: when a timing number looks absurd, re-run
-`clock-smoke` before believing it, and read [`TIME.md`](TIME.md).
+`clock-smoke` before believing it, and read [`TIME.md`](../kernel/TIME.md).
 
 ### Waiting is not running: what the first measurement found
 
@@ -167,7 +167,7 @@ Two details worth keeping:
   interrupt handler, a thousand times a second per waiter. User memory is
   touched once, on completion, to hand back the `revents`.
 - **`net::poll()` moved with it.** The network pump, and with it the TCP
-  retransmission clock ([`NETWORKING.md`](NETWORKING.md)), has no periodic
+  retransmission clock ([`NETWORKING.md`](../net/NETWORKING.md)), has no periodic
   heartbeat of its own — the poll spin was what drove it. `wake_poll_waiters()`
   calls it once per tick and only while someone is waiting, which is exactly the
   cadence it had before: with nobody polling, nobody called it either.
@@ -248,7 +248,7 @@ it:
 
 - **Applications.** Would list *windows*, not processes, and the WM does not
   publish its window list to clients: the protocol in
-  [`WM_SUBSYSTEM.md`](WM_SUBSYSTEM.md) is a fixed set of descriptors per client,
+  [`WM_SUBSYSTEM.md`](../desktop/WM_SUBSYSTEM.md) is a fixed set of descriptors per client,
   with no channel to ask the WM anything. Adding one also costs a descriptor per
   client, and the budget there is already tight.
 - **Users.** Would need user accounts, which do not exist. Every process runs

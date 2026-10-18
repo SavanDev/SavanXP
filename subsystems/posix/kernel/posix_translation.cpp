@@ -722,7 +722,7 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
             // proceso: el camino bloqueante de net:: gira con hlt en el contexto
             // del que llama, que es el mismo defecto que tenia poll() -- el
             // proceso nunca sale de running y se le carga cada tick de la
-            // espera. Ver docs/SYSTEM_MONITORING.md.
+            // espera. Ver docs/userland/SYSTEM_MONITORING.md.
             const int result = net::read_socket(file->socket, user_buffer, count, true);
             if (result != sx::negative_error(SAVANXP_EAGAIN)) {
                 return result;

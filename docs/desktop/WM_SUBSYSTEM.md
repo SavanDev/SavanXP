@@ -9,7 +9,7 @@
 > - The shell is a set of client processes: `shellui` draws the background,
 >   `progman` is the launcher: it lists every installed program that declares
 >   a category in its `.sxmeta` (see
->   [SXE_FORMAT.md](SXE_FORMAT.md#all-programs-the-catalog-discovers-itself)),
+>   [SXE_FORMAT.md](../userland/SXE_FORMAT.md#all-programs-the-catalog-discovers-itself)),
 >   with `/disk/progman.ini` on top as the user's arrangement.
 > - The WM↔client contract is `savanxp/wm_protocol.h` (protocol v4, fds 3..6;
 >   see [Descriptor budget](#descriptor-budget)).
@@ -332,7 +332,7 @@ The rules that keep it there:
 
 - **A window is not a channel.** A process's owned windows (dialogs) reuse its
   event pipe and wake event through duplicates, and their surfaces arrive by
-  handle passing on that pipe; see [OWNED_WINDOWS.md](OWNED_WINDOWS.md).
+  handle passing on that pipe; see [OWNED_WINDOWS.md](./OWNED_WINDOWS.md).
 - **A new per-client channel is a descriptor times every window.** Before
   adding one, see whether it fits in the surface header (state, or a small
   queue with a single producer) or in a device node the client opens and closes
@@ -377,7 +377,7 @@ a choice rather than a bug, and is still a workaround.
 
 A program declares itself fixed with `SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE`, via
 `window_flags=fixed_size` in its `.sxres`
-([SXE_FORMAT.md](SXE_FORMAT.md#window_flags-is-not-launch_flags)). The WM reads
+([SXE_FORMAT.md](../userland/SXE_FORMAT.md#window_flags-is-not-launch_flags)). The WM reads
 it from the binary when it creates the window, so it holds no matter who
 launched the program.
 
@@ -392,7 +392,7 @@ counts three buttons — and a title bar whose button count varies per app reads
 as inconsistent chrome rather than as a property of the window. So it stays,
 greyed with the same etched relief the toolkit gives a disabled control
 (`sxchrome_draw_glyph_disabled`, see
-[SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#the-two-layers)).
+[SYSTEM_LAYERING.md](../userland/SYSTEM_LAYERING.md#the-two-layers)).
 
 **What it forbids is the *user* resizing, not resizing.** The program keeps
 asking for its own size with `gfx_request_content_size`, and in a fixed window

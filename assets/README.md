@@ -25,7 +25,7 @@ source art shared with the optional FFmpeg port.
 `icons/mime/` is the exception, which is why it lives apart: those are icons
 from the Tango Icon Theme 0.8.90, in the **public domain**, used as the
 file-type catalog. Provenance and reasoning in
-[`docs/THIRD_PARTY_PROVENANCE.md`](../docs/THIRD_PARTY_PROVENANCE.md). The
+[`docs/third-party/THIRD_PARTY_PROVENANCE.md`](../docs/third-party/THIRD_PARTY_PROVENANCE.md). The
 directory split is what keeps "this is ours" a claim you can verify by looking
 at the tree.
 
@@ -95,7 +95,7 @@ They are used for two different things, and it is worth not confusing them:
 - **As a source for `.sxres` manifests.** A program's `icon=<name>` key points
   at one of these files, and the icon is stamped into the executable itself as
   a `.sxicon` section. This is the normal path — see
-  [`docs/SXE_FORMAT.md`](../docs/SXE_FORMAT.md).
+  [`docs/userland/SXE_FORMAT.md`](../docs/userland/SXE_FORMAT.md).
 - **As a baked asset.** Only `desktop.png` goes through
   `tools/gen_desktop_icon_assets.py` into `build/generated/desktop_icon_assets.h`
   and ends up compiled into the window manager. It is the universal fallback,
@@ -139,7 +139,7 @@ as an antialiased coverage atlas for the desktop body at 13px. Window captions
 use RetroSans at 18px with no faux-bold. PixelSans and ImpactfulBits are baked
 at 13px as committed spares (`gfx_font_pixelsans.inc`,
 `gfx_font_impactfulbits.inc`) and are not linked into any binary yet.
-Provenance and licenses in `docs/THIRD_PARTY_PROVENANCE.md`.
+Provenance and licenses in `docs/third-party/THIRD_PARTY_PROVENANCE.md`.
 
 To regenerate (from the repository root):
 

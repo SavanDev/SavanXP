@@ -389,7 +389,7 @@ savanxp_program(NAME paint DEPENDS libgfx2d libsxgui libsxgfx libsximg LINK_PROF
 # esos dos llaman sqrt y nada mas, y una llamada entra por un JUMP_SLOT que se
 # resuelve por nombre. Enseñar un programa real que escribe en stdout destapo
 # que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
-# lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
+# lld deja la casilla en cero. docs/kernel/SHARED_LIBRARIES.md tiene los numeros.
 #
 # El reproductor de medios es un programa de este arbol. Su motor --FFmpeg-- es un
 # port, asi que el programa se construye solo cuando el port esta (ver la deteccion en

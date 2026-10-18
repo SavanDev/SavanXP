@@ -10,7 +10,7 @@
  * Returns follow the kernel convention: 0 or a positive result on success,
  * a negative -errno on failure -- the savanxp_* raw layer style, not the
  * POSIX -1/errno one. No toolkit, no IPC yet: windows and the compositor
- * still need native IPC first (see docs/KERNEL_NATIVE_API.md).
+ * still need native IPC first (see docs/kernel/KERNEL_NATIVE_API.md).
  */
 
 #include <stdint.h>

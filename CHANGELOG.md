@@ -147,7 +147,7 @@ Cut-off notes:
   move to `subsystems/posix/kernel/posix_translation.cpp`, sharing
   kernel machinery through the internal `kernel/process_detail.hpp`;
   lifecycle, scheduler and shared cores stay in `kernel/process.cpp`.
-  `docs/NATIVE_APPS.md` guides native programs with examples.
+  `docs/userland/NATIVE_APPS.md` guides native programs with examples.
 
 - **The kernel stops including the POSIX SDK.** The shared wire contract
   moves to `include/abi/savanxp_abi.h`; the SDK keeps the POSIX
@@ -193,21 +193,21 @@ Cut-off notes:
   50-round ping-pong ring between parent and child with strict alternation
   (same shape as a WM submit/retire channel, no new syscalls); the
   windowed-client design is rendezvous by inheritance, with `windowd`
-  native attach as slice 9 (see `docs/KERNEL_NATIVE_API.md`).
+  native attach as slice 9 (see `docs/kernel/KERNEL_NATIVE_API.md`).
 
 - **Neutral `sx::` sections, views and waits.** Section constructors, view
   map/unmap with the W^X and mask policy, and wait satisfaction/consumption
   live in `kernel/sx.cpp`; the `process::` translation keeps flag parsing,
   file checks, handle allocation and clock/parking orchestration. One shared
   integer handle table per process, enforced by granted access, is the
-  decided handle model (see `docs/KERNEL_NATIVE_API.md`).
+  decided handle model (see `docs/kernel/KERNEL_NATIVE_API.md`).
 
 ### Removed
 
 - **The Haxe native experiment is removed.** `subsystems/native` (builder, SDK, apps,
   smoke scenarios) is gone and userland is C on the POSIX SDK only. The neutral
   `savanxp_native_abi.h` routing stays reserved for the future NT-style kernel API
-  (see `docs/SYSTEM_LAYERING.md`).
+  (see `docs/userland/SYSTEM_LAYERING.md`).
 
 ## [0.4.0] - 2026-10-08
 
@@ -215,13 +215,13 @@ Cut-off notes:
 
 - **Per-song `GENMIDI` bank in `libsxmidi`.** `sx_midi_song_create_with_bank` takes the lump
   with the MIDI, `sx_midi_song_uses_genmidi` reports the fallback, the port passes it always.
-  Host checks plus `doom-mus-test` on the real `D_E1M1` cover both paths (see `docs/MIDI.md`).
+  Host checks plus `doom-mus-test` on the real `D_E1M1` cover both paths (see `docs/media/MIDI.md`).
 
 - **`libsxmidi.so.0.4`, a General MIDI synthesizer the tree builds and installs
   in `/disk/lib`.** It parses a Standard MIDI File, plays it through a built-in
   16-family instrument bank and a drum kit, and renders mono PCM for the mixer.
   No soundfont and no `libm`; the public surface is `savanxp/midi.h` and the
-  design is in `docs/MIDI.md`.
+  design is in `docs/media/MIDI.md`.
 
 - **The DoomGeneric port has music.** Each MUS lump is converted to MIDI with
   the upstream `mus2mid.c`, `libsxmidi` synthesises it into the mixer's buffer as
@@ -526,7 +526,7 @@ Cut-off notes:
 
 - **Kernel security boundaries are documented and enforced.** NX/W^X, stack
   canaries, partial mapping ASLR and checked user/device/storage boundaries land
-  together with the [kernel audit](docs/KERNEL_SECURITY.md).
+  together with the [kernel audit](docs/kernel/KERNEL_SECURITY.md).
 
 - **Alt+F4 closes the active window,** the same as its X button: a dialog is
   cancelled, a main window closes with its process, and it also works for an app
@@ -541,13 +541,13 @@ Cut-off notes:
   no input meanwhile — so Minesweeper's About no longer gets cut off at Beginner.
   New `gfx_window_open`/`gfx_window_close` and `SAVANXP_SYS_PIPE_SEND_HANDLE`/
   `_RECEIVE_HANDLE` (handle passing over a pipe), tested by `handletest`.
-  [How it works](docs/OWNED_WINDOWS.md).
+  [How it works](docs/desktop/OWNED_WINDOWS.md).
 
 - **Media Player is now a system application in Accessories.** `/bin/mediaplayer`
   is always built, delegates to `/disk/bin/mediaplayer-ffmpeg` when installed,
   and otherwise opens an in-OS warning explaining that `ports/ffmpeg` must be
   built; the installed player keeps the audio/video controls and associations.
-  [How it plays](docs/MEDIA_PLAYER.md).
+  [How it plays](docs/media/MEDIA_PLAYER.md).
 
 - **The FFmpeg port decodes the common formats.** H.264, HEVC, VP8, VP9, MPEG-4,
   Theora and MPEG-1/2 video; AAC, MP3, Vorbis, Opus, FLAC and AC-3 audio; MP4,
@@ -557,21 +557,21 @@ Cut-off notes:
   rasterizer — matrices, viewport, z-buffer, backface culling and flat shading
   with one directional light — drawing the three meshed gears. It is the
   consumer that defines the subset of the future SxGL, not a port.
-  New `tools/shoot.sh --scenario gears`. [The plan it serves](docs/SXGL_ROADMAP.md#batch-0--the-consumer-before-any-api).
+  New `tools/shoot.sh --scenario gears`. [The plan it serves](docs/desktop/SXGL_ROADMAP.md#batch-0--the-consumer-before-any-api).
 
 - **Fixed-size windows: `window_flags=fixed_size` in a `.sxres`.** The edges
   stop grabbing and maximize is drawn disabled, so a layout that cannot stretch
   no longer gets an empty margin around it; Minesweeper and Calculator declare
   it. The program still sizes its own window — in a fixed one *every* size hint
   is honoured, so changing Minesweeper's level resizes the window.
-  [How it works](docs/WM_SUBSYSTEM.md#fixed-size-windows).
+  [How it works](docs/desktop/WM_SUBSYSTEM.md#fixed-size-windows).
 
 - **Floating point in every app of the image.** The in-tree userland compiles
   with `-msse2` and links the libm of `runtime/math.c`, so `double`, `%f`,
   `strtod` and `sqrt` work with no switch to remember; `--sse` stays for
-  external apps. [The rule it replaces](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
+  external apps. [The rule it replaces](docs/userland/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
 
-- **`docs/SXGL_ROADMAP.md`.** OpenGL does not grow out of SxGFX: SxGL would be a
+- **`docs/desktop/SXGL_ROADMAP.md`.** OpenGL does not grow out of SxGFX: SxGL would be a
   sibling layer binding to the window surface and `gfx_present_region`, as a
   runtime module of the SDK. Nothing is implemented.
 
@@ -579,14 +579,14 @@ Cut-off notes:
   `%`, `sqrt`, `1/x`, memory keys, copy/paste and the numeric keypad, over a
   decimal engine of 16 significant digits written in integers, so `0.1 + 0.2`
   is `0.3`. New `./build.sh smoke calc-smoke` and `tools/shoot.sh --scenario calc`.
-  [Why its engine is decimal and integer anyway](docs/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
+  [Why its engine is decimal and integer anyway](docs/userland/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point).
 
 - **Minesweeper (`/bin/mines`), in the Games group.** The first game that comes
   in the image instead of being installed like Doom: three levels, LED counters,
   the face button, `?` marks, chord with both buttons, keyboard play and best
   times in `/disk/mines.ini`. New `./build.sh smoke mines-smoke`, and apps that paint
   their own content now get the system 3D edges from `sxgui_draw_raised_edge()`.
-  [Why it is in C and not Haxe](docs/SYSTEM_LAYERING.md#games-and-the-first-one).
+  [Why it is in C and not Haxe](docs/userland/SYSTEM_LAYERING.md#games-and-the-first-one).
 
 - **System master volume and mute.** `AUDIO_IOC_SET/GET_VOLUME` (0..100, 100 is
   identity) and `SET/GET_MUTED` on `/dev/audio0` scale every writer's PCM in the
@@ -744,7 +744,7 @@ Cut-off notes:
   a wake event, one submit event per session, and hints and launches in the surface
   header (`gfx_should_close` is new). Apps no longer inherit `windowd`'s descriptors.
   **Breaks the client ABI:** rebuild external apps such as `doomgeneric`.
-  [Descriptor budget](docs/WM_SUBSYSTEM.md#descriptor-budget).
+  [Descriptor budget](docs/desktop/WM_SUBSYSTEM.md#descriptor-budget).
 
 - **The automated smokes honour `--accel`.** `./build.sh smoke smoke --accel kvm`
   runs the suite with KVM instead of TCG; the default remains `tcg`.
@@ -753,7 +753,7 @@ Cut-off notes:
   `sxchrome_draw_edge/_raised/_sunken/_inset/_etched`, `sxchrome_fill_raised`
   and the disabled relief (`_draw_text_disabled`, `_draw_glyph_disabled`) are in
   every binary's base runtime, so `windowd`, `calc` and `taskmgr` dropped their
-  private copies. [Why not in SXGUI-C](docs/SYSTEM_LAYERING.md#the-two-layers).
+  private copies. [Why not in SXGUI-C](docs/userland/SYSTEM_LAYERING.md#the-two-layers).
 
 - **The userland links with `--gc-sections`.** Each binary keeps only what it
   reaches from `_start` instead of whole runtime objects: the initramfs goes
@@ -763,7 +763,7 @@ Cut-off notes:
   then everything ships in C against the POSIX SDK; `subsystems/native` stays as
   a frozen, validated experiment that nothing in the image depends on. If it is
   ever needed, it arrives as a selective port, UWP-style, beside the native apps.
-  [The decision and the shape it would have to fit](docs/SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
+  [The decision and the shape it would have to fit](docs/userland/SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
 
 - **About is now System Properties.** General shows the edition, the version,
   where it is installed and the processor (brand, speed and features from
@@ -799,7 +799,7 @@ Cut-off notes:
   `timer::calibrate_monotonic()` instead of during the ACPI bring-up.
 
 - **All repository documentation is in English, and the README leads with a
-  quickstart.** The Linux requirements move to `docs/BUILD_LINUX.md`,
+  quickstart.** The Linux requirements move to `docs/build/BUILD_LINUX.md`,
   `docs/README.md` indexes the design docs, and `CLAUDE.md` points at
   `AGENTS.md`.
 
@@ -881,7 +881,7 @@ Cut-off notes:
   use the codec libraries it was built with, so "one player that plays whatever is
   installed" cannot be arranged without a dynamic linker or a codec service. The
   design, the findings and the prerequisites to try again are in
-  [docs/SXMEDIA.md](docs/SXMEDIA.md).
+  [docs/media/SXMEDIA.md](docs/media/SXMEDIA.md).
 
 - **The alternate host compatibility surface is removed.** Its entry points,
   bootstrap/toolchain cache, non-native accelerator selection, and TCP QMP
@@ -959,7 +959,7 @@ Cut-off notes:
 
 - **Moving the mouse over a virtio machine no longer freezes the VM.** Letting the
   cursor into the QEMU window was enough for the guest to take `#14 page fault` and
-  halt. [What the fix was about](docs/VIRTIO.md#a-capability-never-stores-a-pointer-into-its-own-device).
+  halt. [What the fix was about](docs/kernel/VIRTIO.md#a-capability-never-stores-a-pointer-into-its-own-device).
 
 - **`smoke_runner_layout_test.py` runs again.** It asserted two Media Player
   scenarios withdrawn with SxMedia, and a `remove_paths` entry from before
@@ -1007,53 +1007,53 @@ Cut-off notes:
   leaving it offset for good. `savanxp_mouse_event` grows `absolute_x`,
   `absolute_y` and `flags` (`SAVANXP_MOUSE_FLAG_ABSOLUTE`); `windowd` assigns
   that position and still sums deltas for a relative mouse (PS/2).
-  [The rule the event used to break](docs/VIRTIO.md#a-dropped-delta-is-not-a-dropped-position).
+  [The rule the event used to break](docs/kernel/VIRTIO.md#a-dropped-delta-is-not-a-dropped-position).
 
 - **The AC'97 driver measures its own feed.** An `ac97-stats:` line every
   ~11 s of audio over `/dev/serial`: wall time against audio actually
   delivered, periods discarded because the ring was full, underruns, and the
-  longest gap between two writes. [How to read it](docs/TIME.md#diagnosing-a-clock-problem).
+  longest gap between two writes. [How to read it](docs/kernel/TIME.md#diagnosing-a-clock-problem).
 
 - **`./build.sh smoke clock-smoke`.** Measures `uptime_ms` and `monotonic_ns` against
   the RTC while spinning and while idle, and fails only if a clock changes rate
-  with idleness. [What it measured](docs/SYSTEM_MONITORING.md#ticks-are-guest-time-not-wall-time).
+  with idleness. [What it measured](docs/userland/SYSTEM_MONITORING.md#ticks-are-guest-time-not-wall-time).
 
 - **Sockets that ported code can use.** `recv()`/`send()` work on streams,
   `SO_RCVTIMEO`/`SO_SNDTIMEO` govern the wait through the new `setsockopt()`
   (0 = wait forever, replacing a hardcoded 5 s cap on reads), and a `write()`
   larger than one segment writes what fits instead of failing. A blocking
   socket `read()` now parks the process instead of spinning.
-  [The contract](docs/NETWORKING.md#the-socket-contract).
+  [The contract](docs/net/NETWORKING.md#the-socket-contract).
 
 - **A network adapter with no driver is reported as such.** `system_info` gained
   `net_hardware` and the PCI id of the adapter it found, so System Properties and
   the Task Manager stop saying "no adapter" on a machine that has one SavanXP
   cannot drive — VirtualBox's default Intel PRO/1000, for one.
-  [What to do about it](docs/SYSTEM_MONITORING.md#a-network-adapter-can-exist-without-a-driver).
+  [What to do about it](docs/userland/SYSTEM_MONITORING.md#a-network-adapter-can-exist-without-a-driver).
 
 - **Task Manager (`/bin/taskmgr`), in the System group.** Live CPU, memory and
   handles per process with an End Process that asks first; meters, history
   graphs and totals in Performance; adapter throughput in Networking; `File >
   New Task` and `Shut Down`. `proc_info`/`system_info` gained the counters it
   reads (`cpu_ticks`, `memory_bytes`, `cpu_ticks_total`, `memory_free_bytes`).
-  New `./build.sh smoke taskmgr-smoke`. [How it measures](docs/SYSTEM_MONITORING.md).
+  New `./build.sh smoke taskmgr-smoke`. [How it measures](docs/userland/SYSTEM_MONITORING.md).
 
 - **TCP survives a network that loses and reorders.** Segments are kept and
   resent with backoff (`SYN` included), out-of-order data is reassembled, and a
   dead connection now reports `ECONNRESET`/`ETIMEDOUT` instead of a clean end of
   file. New `./build.sh smoke tcp-smoke`, `NET_IOC_GET_TCP_STATS` and
-  `NET_IOC_SET_TCP_FAULT`. [What it guarantees](docs/NETWORKING.md).
+  `NET_IOC_SET_TCP_FAULT`. [What it guarantees](docs/net/NETWORKING.md).
 
 - **The mouse wheel works.** PS/2 negotiates IntelliMouse 4-byte packets (`ps2:
   mouse wheel enabled`), virtio reads `REL_WHEEL`, and the new `wheel` field of
   `savanxp_gui_pointer_event` scrolls lists, text views and scrollbars under the
-  cursor. [Why it accumulates](docs/WM_SUBSYSTEM.md#the-pointer-channel-carries-a-wheel-and-it-accumulates).
+  cursor. [Why it accumulates](docs/desktop/WM_SUBSYSTEM.md#the-pointer-channel-carries-a-wheel-and-it-accumulates).
 
 - **The compositor measures itself.** `windowd` reports compose, sync and
   present times — present split into `ipc`/`svc`/`gpu`/`tl`, and `blk_us` for
   the total time blocked on `compositord` — plus damage area, over the new
   write-only `/dev/serial`. New `monotonic_ns()`; compositor protocol v2.
-  [How to read it](docs/GRAPHICS_PERF.md).
+  [How to read it](docs/desktop/GRAPHICS_PERF.md).
 
 - **Gfx Demo has an auto-motion mode.** `S` moves the box every frame without
   input, so the demo presents as fast as the compositor allows — the load that
@@ -1064,20 +1064,20 @@ Cut-off notes:
   planificando en N de M cores`); `/bin/smptest` in `./build.sh smoke` proves the
   overlap. Task Manager usage is now of all cores together. Unmapped kernel
   pages are flushed from every core's TLB (`smp: TLB perezosa ok`). `--smp <n>`
-  still defaults to 1. Phases 0-3 of [the SMP roadmap](docs/SMP_ROADMAP.md).
+  still defaults to 1. Phases 0-3 of [the SMP roadmap](docs/kernel/SMP_ROADMAP.md).
 
 - **Add or Remove Programs (`/bin/appwiz`), in the System group.** It lists what
   was installed outside the system image — in `/disk/bin` and not in `/bin` —
   and deletes the binary, optionally with the data directory the program
   declares as `data_dir=` in its `.sxres`. New `./build.sh smoke appwiz-smoke`.
-  [Why that is the rule](docs/SXE_FORMAT.md#uninstalling-the-other-half-of-the-same-idea).
+  [Why that is the rule](docs/userland/SXE_FORMAT.md#uninstalling-the-other-half-of-the-same-idea).
 
 - **Program Manager lists every installed program on its own.** A binary whose
   `.sxres` declares `category=` shows up under that group with nothing to
   register: installing is copying it to `/disk/bin`, uninstalling is deleting
   it. Without the key it stays launchable, just unlisted. `F5` (File >
   Actualizar) rebuilds the catalog, and launching an entry that is gone says so
-  instead of nothing. [How it works](docs/SXE_FORMAT.md#all-programs-the-catalog-discovers-itself).
+  instead of nothing. [How it works](docs/userland/SXE_FORMAT.md#all-programs-the-catalog-discovers-itself).
 
 - **`virtio-net` driver for the NIC.** With `--virtio`, `./build.sh` builds
   `virtio-net-pci` instead of `rtl8139`, and `nic::` prefers
@@ -1286,7 +1286,7 @@ Cut-off notes:
 
 - **`netinfo` over `virtio-net` no longer kills the machine on VirtualBox.** A
   64-bit virtio MMIO field now goes in two 32-bit halves: a single 64-bit access
-  is what VirtualBox answers with a guru meditation. [The rule](docs/VIRTIO.md).
+  is what VirtualBox answers with a guru meditation. [The rule](docs/kernel/VIRTIO.md).
 
 - **QEMU starts from a path with a space in it.** `./build.sh run`, smoke targets,
   and `tools/shoot.sh` now pass OVMF, disk, and log paths as quoted arguments,
@@ -1306,7 +1306,7 @@ Cut-off notes:
   VirtualBox under load it counted 561% of real time, and everything paced on
   it ran ahead — Doom offered three times the audio the device could take and
   the driver dropped the rest, which is what a chopped-up sound is. Needs a
-  32-bit PM timer; QEMU's is 24-bit and stays on the TSC. [Why](docs/TIME.md).
+  32-bit PM timer; QEMU's is 24-bit and stays on the TSC. [Why](docs/kernel/TIME.md).
 
 - **The kernel's wall clock is a free-running counter, not a count of timer
   interrupts.**
@@ -1314,7 +1314,7 @@ Cut-off notes:
   used to advance only when an interrupt was delivered, and on VirtualBox that
   delivery turns bursty once the machine idles: measured between 151 Hz and
   4000 Hz with the timer set to 1000. Anything paced on it stalled and then
-  fast-forwarded. [How it was found](docs/SYSTEM_MONITORING.md#the-wall-clock-is-a-free-running-counter-ticks-only-count-cpu).
+  fast-forwarded. [How it was found](docs/userland/SYSTEM_MONITORING.md#the-wall-clock-is-a-free-running-counter-ticks-only-count-cpu).
 
 - **A process waiting in `poll()` wakes on the event, not only on the next
   tick.** Blocking `poll()` left the compositor noticing a client's frame up to
@@ -1329,7 +1329,7 @@ Cut-off notes:
   process that only waits no longer books every tick of the wait: the idle
   desktop went from `windowd 99%` to `idle 99%`, `CPU Usage: 0%`, with average
   compose time ~4x lower. `yield` now halts for the idle process.
-  [What it found and how](docs/SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found).
+  [What it found and how](docs/userland/SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found).
 
 - **Notepad's editor ignored the mouse wheel and its own scrollbar.** The
   wheel dispatcher and the embedded-scrollbar hit test only knew about
@@ -1435,7 +1435,7 @@ Cut-off notes:
   manifest is stamped into non-alloc ELF sections (`.sxmeta`/`.sxicon`), so the
   binary declares its own title, version, icons, accent and the extensions it
   opens. Program Manager, `windowd` and Files read from there instead of
-  per-path tables that had to be recompiled. Format in `docs/SXE_FORMAT.md`; new
+  per-path tables that had to be recompiled. Format in `docs/userland/SXE_FORMAT.md`; new
   `build.ps1 sxe-smoke` and `filesapp-smoke`.
 
 - **Default button in dialogs** (`default_button` in `struct sxgui_dialog`).
@@ -2001,8 +2001,8 @@ Cut-off notes:
 - New desktop client apps: `filesapp` (browsing `/disk` with a preview) and
   `aboutapp` (a system summary), wired into the Start menu.
 - Explicit policy and traceability for adopting components inspired by
-  SerenityOS, with new documentation in `docs/THIRD_PARTY_ADOPTION.md` and
-  `docs/THIRD_PARTY_PROVENANCE.md`.
+  SerenityOS, with new documentation in `docs/third-party/THIRD_PARTY_ADOPTION.md` and
+  `docs/third-party/THIRD_PARTY_PROVENANCE.md`.
 - A reusable 2D graphics layer `sxgfx` in the POSIX SDK v1, with `sx_bitmap`,
   `sx_painter`, alpha blending, clipping and `sx_rect_set` for handling multiple
   damage rects from userland.

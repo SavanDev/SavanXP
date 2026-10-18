@@ -24,7 +24,7 @@
  * Sin pitch bend de precision, sin pan estereo y sin efectos (chorus/reverb).
  * Sin banco, el sintetizador usa una aproximacion por familias de programa, no
  * un GM completo; con el `GENMIDI` de un WAD de Doom suena el banco OPL2 de dos
- * operadores que el juego le programaba al chip. Ver docs/MIDI.md.
+ * operadores que el juego le programaba al chip. Ver docs/media/MIDI.md.
  */
 
 /* Rate por defecto para renderizar un tema entero. 22050 Hz mono u8 mantiene

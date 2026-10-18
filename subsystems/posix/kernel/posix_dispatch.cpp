@@ -34,7 +34,7 @@ namespace process {
 // POSIX translation dispatcher: runs in its own unit against the published
 // process:: boundary (frontera de traduccion POSIX). Same numbers, structs,
 // errors and blocking protocol as when it shared process.cpp's translation
-// unit; only the call path moved (see docs/KERNEL_NATIVE_API.md).
+// unit; only the call path moved (see docs/kernel/KERNEL_NATIVE_API.md).
 //
 // The registration is deliberately NOT in a static initializer: it has to
 // happen before the first process is created, and static-init order across

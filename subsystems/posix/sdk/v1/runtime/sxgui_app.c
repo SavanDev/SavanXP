@@ -152,7 +152,7 @@ void sxgui_app_quit(struct sxgui_app *app, int exit_code)
     }
 }
 
-/* --- dialogo en ventana propia (docs/OWNED_WINDOWS.md) ---------------------
+/* --- dialogo en ventana propia (docs/desktop/OWNED_WINDOWS.md) ---------------------
  *
  * El frame es el host de dialogos de su contexto: cada sxgui_dialog_begin pide
  * al WM una ventana con dueno para el dialogo, y el loop de abajo la pinta, la

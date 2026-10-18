@@ -6,7 +6,7 @@
 /*
  * Presentacion de ventanas: titulo, icono y accent de identidad.
  *
- * DESDE LA FASE 4 DE SXE (docs/SXE_FORMAT.md) el WM ya no adivina: lee el
+ * DESDE LA FASE 4 DE SXE (docs/userland/SXE_FORMAT.md) el WM ya no adivina: lee el
  * .sxmeta/.sxicon del binario que lanzo, una sola vez, al crear la ventana.
  * La tabla por path de abajo quedo como FALLBACK para lo que todavia no trae
  * recursos -- Doom, que se construye aparte -- y para los binarios que nunca

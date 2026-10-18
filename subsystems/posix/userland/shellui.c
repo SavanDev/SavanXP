@@ -5,7 +5,7 @@
 
 /*
  * shell-client de background (A2, modelo "Fondo + pivot NT 3.5"; ver
- * docs/WM_SUBSYSTEM.md).
+ * docs/desktop/WM_SUBSYSTEM.md).
  *
  * Paso A2.1: un proceso aparte que se conecta como cliente del WM y dibuja el
  * wallpaper en su superficie. En A2.2 windowd lo lanza como ROLE_SHELL y compone

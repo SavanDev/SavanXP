@@ -1,4 +1,4 @@
-# Recursos SXE del test nativo. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del test nativo. Ver docs/userland/SXE_FORMAT.md.
 #
 # Sin icono ni categoria: no es una app del launcher, solo el harness del
 # escenario `native-test`. El `subsystem=native` del manifiesto es el espejo

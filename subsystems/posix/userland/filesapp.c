@@ -17,7 +17,7 @@
  *
  * NO muestra el contenido de los archivos: eso es trabajo de un editor. Abrir
  * un archivo que no es un programa lo manda al programa ASOCIADO a su
- * extension (file_assoc, docs/SXE_FORMAT.md fase 5); sin asociacion cae a
+ * extension (file_assoc, docs/userland/SXE_FORMAT.md fase 5); sin asociacion cae a
  * /bin/notepad, que es donde vive ahora el preview que esta app tenia adentro.
  */
 
@@ -465,7 +465,7 @@ static void filesapp_activate_selected(void)
     }
     /*
      * Un archivo que no es programa lo abre quien este asociado a su extension
-     * (docs/SXE_FORMAT.md, fase 5): el binario declara que puede abrirla y
+     * (docs/userland/SXE_FORMAT.md, fase 5): el binario declara que puede abrirla y
      * /disk/assoc.ini decide cual gana. Sin asociacion queda el bloc de notas,
      * que es donde vive el preview que esta app tenia adentro -- no tener
      * asociacion no es un error, es el caso comun.

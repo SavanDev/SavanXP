@@ -8,7 +8,7 @@
  * buttons, and an app that paints its own content (a board of cells, a meter,
  * a calculator display) draws boxes that have to match the toolkit's. Before
  * this module each of them kept a private copy of the same eight lines --
- * docs/SYSTEM_LAYERING.md already states the rule this breaks ("SXGUI-C is the
+ * docs/userland/SYSTEM_LAYERING.md already states the rule this breaks ("SXGUI-C is the
  * canonical toolkit, and an app never reimplements a piece of it"), and
  * `sxgui_draw_raised_edge()` was the first patch on it.
  *

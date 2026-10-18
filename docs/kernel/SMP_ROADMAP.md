@@ -4,8 +4,8 @@
 > the measurement: what the kernel already has, what it is missing, and in what
 > order to attack it so that every phase boots and can be verified on its own.
 >
-> Phase 0 landed as `smp::` ([smp.hpp](../include/kernel/smp.hpp),
-> [smp.cpp](../arch/x86_64/smp.cpp)): the APs start, identify themselves by
+> Phase 0 landed as `smp::` ([smp.hpp](../../include/kernel/smp.hpp),
+> [smp.cpp](../../arch/x86_64/smp.cpp)): the APs start, identify themselves by
 > their own LAPIC ID and park in a `hlt` loop, and a ping IPI proves the ICR
 > delivers. Verified on 4 cores in **both** APIC modes — x2APIC (`-cpu max`)
 > and xAPIC (`-cpu qemu64`, the VirtualBox path). Nothing schedules on them:
@@ -35,7 +35,7 @@ Two decisions already in the tree make SMP far cheaper here than in a typical
 hobby kernel. Both should be defended rather than traded away.
 
 **1. The kernel is already non-preemptible.** Every IDT gate is an interrupt
-gate ([`cpu_init.cpp:16`](../arch/x86_64/cpu_init.cpp:16)), the syscall gate at
+gate ([`cpu_init.cpp:16`](../../arch/x86_64/cpu_init.cpp:16)), the syscall gate at
 vector `0x80` included, and nothing in the syscall path re-enables interrupts.
 `IF` is 0 from the moment a process enters the kernel until it leaves. That is
 a big kernel lock, implicitly held, with no code written to implement it. Phase
@@ -44,15 +44,15 @@ already exists and making it hold across cores.
 
 **2. Syscalls never block on the kernel stack.** A syscall that cannot complete
 records a state and returns `kBlockedResult`
-([`process.hpp:213`](../include/kernel/process.hpp:213)); the waker then **retries the
+([`process.hpp:213`](../../include/kernel/process.hpp:213)); the waker then **retries the
 operation on the sleeper's behalf** and completes it — see
 `wake_blocked_readers_for_pipe()`
-([`process.cpp:726`](../kernel/process.cpp:726)), which re-runs `try_pipe_read`
+([`process.cpp:726`](../../kernel/process.cpp:726)), which re-runs `try_pipe_read`
 for every process parked on that pipe. There are no kernel threads halted
 halfway down a call stack, no sleep queues holding kernel context, and no
 stack-switching context switch: the scheduler picks a `SavedContext` and
 `iretq`s into it (`pick_next_runnable()`,
-[`process.cpp:594`](../kernel/process.cpp:594)). A second core therefore needs
+[`process.cpp:594`](../../kernel/process.cpp:594)). A second core therefore needs
 no second copy of anything the scheduler owns — only its own idea of which
 process it is running.
 
@@ -62,31 +62,31 @@ process it is running.
 
 - **Local APIC**, in both modes: xAPIC through MMIO and x2APIC through MSRs,
   behind one pair of accessors
-  ([`cpu_init.cpp:191`](../arch/x86_64/cpu_init.cpp:191)). `local_apic_id()` is
+  ([`cpu_init.cpp:191`](../../arch/x86_64/cpu_init.cpp:191)). `local_apic_id()` is
   already exported.
 - **A calibrated periodic LAPIC timer** with a PIT fallback
-  ([`timer.cpp`](../arch/x86_64/timer.cpp)), and a tick handler that already
+  ([`timer.cpp`](../../arch/x86_64/timer.cpp)), and a tick handler that already
   returns the next context to run
-  ([`timer.cpp:210`](../arch/x86_64/timer.cpp:210)).
-- **MADT parsing and IOAPIC programming** ([`ioapic.cpp`](../kernel/ioapic.cpp)),
+  ([`timer.cpp:210`](../../arch/x86_64/timer.cpp:210)).
+- **MADT parsing and IOAPIC programming** ([`ioapic.cpp`](../../kernel/ioapic.cpp)),
   with interrupt source overrides resolved.
 - **FPU/SSE state per process**, saved and restored on switch
-  ([`cpu.hpp`](../include/kernel/cpu.hpp)) — already per-context, not per-CPU.
+  ([`cpu.hpp`](../../include/kernel/cpu.hpp)) — already per-context, not per-CPU.
 
 ### Missing
 
 | Gap | Where |
 | --- | --- |
-| No IPIs. The ICR is unimplemented, and the code says why: "no consumers while there is no SMP" | [`cpu_init.cpp:178`](../arch/x86_64/cpu_init.cpp:178) |
-| One global GDT, one global TSS. `set_kernel_stack()` writes the single `g_tss.rsp0` on every switch | [`cpu_init.cpp:117`](../arch/x86_64/cpu_init.cpp:117), [`cpu_init.cpp:768`](../arch/x86_64/cpu_init.cpp:768) |
+| No IPIs. The ICR is unimplemented, and the code says why: "no consumers while there is no SMP" | [`cpu_init.cpp:178`](../../arch/x86_64/cpu_init.cpp:178) |
+| One global GDT, one global TSS. `set_kernel_stack()` writes the single `g_tss.rsp0` on every switch | [`cpu_init.cpp:117`](../../arch/x86_64/cpu_init.cpp:117), [`cpu_init.cpp:768`](../../arch/x86_64/cpu_init.cpp:768) |
 | No per-CPU infrastructure: no `struct Cpu`, no GS base, no way to ask "which core am I" beyond the LAPIC ID | — |
-| `parse_madt()` only handles type 1 (IOAPIC) and type 2 (ISO). Type 0 (Local APIC) — the CPU list — is skipped | [`ioapic.cpp:57`](../kernel/ioapic.cpp:57), [`ioapic.cpp:143`](../kernel/ioapic.cpp:143) |
-| GSIs are routed to the BSP in physical mode, hardcoded | [`ioapic.cpp:262`](../kernel/ioapic.cpp:262) |
-| No spinlock primitive. The only lock in the kernel is a bare `__atomic_test_and_set` in SxFS | [`sxfs.cpp:148`](../kernel/sxfs.cpp:148) |
-| uACPI's spinlocks and mutexes are stubs that only save and restore `IF` | [`uacpi_glue.cpp:428`](../kernel/uacpi_glue.cpp:428) |
-| The vendored `limine.h` is a 197-line subset with no `limine_mp_request` | [`vendor/limine.h`](../vendor/limine.h) |
-| QEMU is launched without `--smp`; every smoke runs on one core | [`build.sh`](../build.sh) |
-| Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:61`](../kernel/process.cpp:61) |
+| `parse_madt()` only handles type 1 (IOAPIC) and type 2 (ISO). Type 0 (Local APIC) — the CPU list — is skipped | [`ioapic.cpp:57`](../../kernel/ioapic.cpp:57), [`ioapic.cpp:143`](../../kernel/ioapic.cpp:143) |
+| GSIs are routed to the BSP in physical mode, hardcoded | [`ioapic.cpp:262`](../../kernel/ioapic.cpp:262) |
+| No spinlock primitive. The only lock in the kernel is a bare `__atomic_test_and_set` in SxFS | [`sxfs.cpp:148`](../../kernel/sxfs.cpp:148) |
+| uACPI's spinlocks and mutexes are stubs that only save and restore `IF` | [`uacpi_glue.cpp:428`](../../kernel/uacpi_glue.cpp:428) |
+| The vendored `limine.h` is a 197-line subset with no `limine_mp_request` | [`vendor/limine.h`](../../vendor/limine.h) |
+| QEMU is launched without `--smp`; every smoke runs on one core | [`build.sh`](../../build.sh) |
+| Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:61`](../../kernel/process.cpp:61) |
 
 ## Phase 0 — bring the APs up — **DONE**
 
@@ -103,7 +103,7 @@ What it actually took, against the plan below:
 - **The MP structures survive the boot for free.** They live in
   bootloader-reclaimable memory, which this kernel never reclaims —
   `memory::initialize` takes only `usable` regions
-  ([`physical_memory.cpp:117`](../kernel/physical_memory.cpp:117)). That removed
+  ([`physical_memory.cpp:117`](../../kernel/physical_memory.cpp:117)). That removed
   the usual hazard of the bootloader's AP stacks being recycled underfoot.
 - **Two things an AP must not do**, both found by reading before writing:
   `ltr` on the shared TSS (its Busy bit makes the second load a #GP), and
@@ -176,11 +176,11 @@ The original plan follows.
 - **`struct Cpu`**, indexed by LAPIC ID. Reading the LAPIC ID on kernel entry is
   slower than `swapgs`, but it is correct, it needs no MSR discipline in the
   entry stubs, and the entry paths are three
-  ([`context.S`](../arch/x86_64/context.S)). Take the simple version first; a
+  ([`context.S`](../../arch/x86_64/context.S)). Take the simple version first; a
   GS-based fast path is an optimization for later, and one that has to be
   designed against interrupt gates rather than `syscall`/`sysret`.
 - **An idle process per CPU.** Today there is one `g_idle`
-  ([`process.cpp:75`](../kernel/process.cpp:75)); every core needs something to
+  ([`process.cpp:75`](../../kernel/process.cpp:75)); every core needs something to
   run when the ready queue is empty.
 - Move `g_current` into `struct Cpu`. This is the change that touches the most
   call sites, and it is mechanical.
@@ -194,9 +194,9 @@ The original plan follows.
 What it actually took, against the plan below:
 
 - **Five doors, not three.** The lock (`smp::lock_kernel()`, a ticket
-  spinlock from [`spinlock.hpp`](../include/kernel/spinlock.hpp)) is taken by
+  spinlock from [`spinlock.hpp`](../../include/kernel/spinlock.hpp)) is taken by
   the syscall, timer and reschedule-IPI stubs in
-  [`context.S`](../arch/x86_64/context.S), by `dispatch_external_vector` for
+  [`context.S`](../../arch/x86_64/context.S), by `dispatch_external_vector` for
   device vectors, and by `handle_exception` for faults from ring 3 — a
   user page fault grows the stack or kills the process, and both are kernel
   state. The ping IPI does not take it: the BSP sends it during boot and waits
@@ -218,7 +218,7 @@ What it actually took, against the plan below:
 - **A context preempted in ring 0 is pinned to its core.** A process sleeping
   in `wait_for_interrupt` can be preempted by the tick with its context in the
   middle of a syscall. That context is only resumed on the core it slept on
-  (`runnable_here()` in [`process.cpp`](../kernel/process.cpp)): the kernel code
+  (`runnable_here()` in [`process.cpp`](../../kernel/process.cpp)): the kernel code
   around it — `cpu_index()` is deliberately fusable by the compiler — assumes
   the core does not change during one kernel entry.
 - **The idle of an AP is a process, like the BSP's.** Deferred from phase 1.
@@ -243,7 +243,7 @@ What it actually took, against the plan below:
 - **CPU accounting counts every core.** `cpu_ticks_total` is now the ticks that
   found a process running on *any* core, so one tick still increments exactly
   one process; `cpu_online` is the number of cores that schedule, which is also
-  the number of idle processes. [Details](SYSTEM_MONITORING.md#more-than-one-core).
+  the number of idle processes. [Details](../userland/SYSTEM_MONITORING.md#more-than-one-core).
 
 **Delivered:** `smp: planificando en 4 de 4 cores` under
 `./build.sh smoke smoke --smp 4`,
@@ -274,18 +274,18 @@ The original plan follows.
 - **Take the BKL on kernel entry, release it on exit.** There are exactly three
   doors, which is why this is tractable: `savanxp_handle_syscall`,
   `savanxp_handle_timer_interrupt`
-  ([`timer.cpp:228`](../arch/x86_64/timer.cpp:228)) and
+  ([`timer.cpp:228`](../../arch/x86_64/timer.cpp:228)) and
   `dispatch_external_vector`
-  ([`cpu_init.cpp:280`](../arch/x86_64/cpu_init.cpp:280)).
+  ([`cpu_init.cpp:280`](../../arch/x86_64/cpu_init.cpp:280)).
 - **A shared ready queue under the BKL.** `pick_next_runnable()`
-  ([`process.cpp:1147`](../kernel/process.cpp:1147)) must skip processes already
+  ([`process.cpp:1147`](../../kernel/process.cpp:1147)) must skip processes already
   running on another core, so `Process` grows an owning-CPU field. Without it,
   two cores resume the same `SavedContext` and the process forks in place.
-  `has_runnable_non_idle()` ([`process.cpp:1138`](../kernel/process.cpp:1138))
+  `has_runnable_non_idle()` ([`process.cpp:1138`](../../kernel/process.cpp:1138))
   needs the same treatment, or an idle core spins waking itself for a process
   another core is already running.
 - **A reschedule IPI.** `resched_pending`
-  (per core since phase 1, in [`smp::Cpu`](../include/kernel/smp.hpp))
+  (per core since phase 1, in [`smp::Cpu`](../../include/kernel/smp.hpp))
   currently hands the CPU to a
   woken process on the syscall return path. When the waker and the target are on
   different cores, that becomes an IPI to the core running something less
@@ -295,7 +295,7 @@ The original plan follows.
   the machine stops.
 
 Once user processes run on more than one core,
-[asynchronous present](GRAPHICS_PERF.md#asynchronous-present) is ready to turn
+[asynchronous present](../desktop/GRAPHICS_PERF.md#asynchronous-present) is ready to turn
 the compositor round trip into real overlap. It was implemented and measured
 on one core, and reverted only because one core has nothing to overlap with.
 
@@ -328,7 +328,7 @@ What it actually took, against the plan below: **no IPI at all.**
   address space, nor the page tables under ranges that were unmapped.
 - **User space needs no mechanism, but the reasons are now rules.** The
   argument below holds, and is written down next to `sync_kernel_tlb()` in
-  [`vmm.hpp`](../include/kernel/vmm.hpp): an address space is loaded on at most
+  [`vmm.hpp`](../../include/kernel/vmm.hpp): an address space is loaded on at most
   one core, a process switch reloads `CR3`, and only the space of the process
   running *here* or of one running *nowhere* is ever unmapped. Deferring the
   kill of a process that runs on another core (phase 2) is what keeps the last
@@ -348,8 +348,8 @@ enabled.
 The original plan follows.
 
 `map_page`/`unmap_page` invalidate only when the current `CR3` matches the space
-being modified ([`vmm.cpp:473`](../kernel/vmm.cpp:473),
-[`vmm.cpp:499`](../kernel/vmm.cpp:499)). Two different exposures:
+being modified ([`vmm.cpp:473`](../../kernel/vmm.cpp:473),
+[`vmm.cpp:499`](../../kernel/vmm.cpp:499)). Two different exposures:
 
 - **User space: mostly safe by construction.** There are no threads, so an
   address space is loaded on at most one core at a time, and every unmap path
@@ -358,13 +358,13 @@ being modified ([`vmm.cpp:473`](../kernel/vmm.cpp:473),
   earlier does not keep stale entries.
 - **Kernel space: a real requirement.** `create_address_space()` copies the
   kernel PML4 entries into every new space
-  ([`vmm.cpp:406`](../kernel/vmm.cpp:406)) — those entries point at *shared*
+  ([`vmm.cpp:406`](../../kernel/vmm.cpp:406)) — those entries point at *shared*
   lower tables, so a kernel mapping change propagates to every space and every
   core. And `map_kernel_pages`/`unmap_kernel_pages`
-  ([`vmm.cpp:698`](../kernel/vmm.cpp:698)) are called **at runtime**, not only
+  ([`vmm.cpp:698`](../../kernel/vmm.cpp:698)) are called **at runtime**, not only
   during init: the GPU drivers map and unmap surface backing on every import and
-  destroy ([`virtio_gpu.cpp:2269`](../kernel/virtio_gpu.cpp:2269),
-  [`fb_gpu.cpp:667`](../kernel/fb_gpu.cpp:667)).
+  destroy ([`virtio_gpu.cpp:2269`](../../kernel/virtio_gpu.cpp:2269),
+  [`fb_gpu.cpp:667`](../../kernel/fb_gpu.cpp:667)).
 
 So: an invalidation IPI, broadcast on kernel-range changes, with the initiator
 waiting for acknowledgement before it reuses the physical page. **Estimate: 2-4
@@ -382,19 +382,19 @@ the handle table in `object`, pipes, `vfs`/`sxfs`, `tty`/`console`, `clipboard`,
 `net`, then the drivers.
 
 **The drivers are the bulk of the work, not the core kernel.**
-[`virtio_gpu.cpp`](../kernel/virtio_gpu.cpp) is 3876 lines with 47 globals, a
+[`virtio_gpu.cpp`](../../kernel/virtio_gpu.cpp) is 3876 lines with 47 globals, a
 hand-rolled `AtomicSectionGuard` whose spin limits have never actually contended
-([`virtio_gpu.cpp:577`](../kernel/virtio_gpu.cpp:577)) and a recovery path that
-assumes it is alone. [`ps2.cpp`](../kernel/ps2.cpp) has 40 globals.
-[`rtl8139.cpp:182`](../kernel/rtl8139.cpp:182) states outright that its critical
+([`virtio_gpu.cpp:577`](../../kernel/virtio_gpu.cpp:577)) and a recovery path that
+assumes it is alone. [`ps2.cpp`](../../kernel/ps2.cpp) has 40 globals.
+[`rtl8139.cpp:182`](../../kernel/rtl8139.cpp:182) states outright that its critical
 section is only atomic on a single core. The AC'97 driver is polling with no IRQ
 of its own, and its feed loop is written against a scheduler that cannot preempt
 it.
 
 Also in this phase: real spinlocks and mutexes for uACPI
-([`uacpi_glue.cpp:428`](../kernel/uacpi_glue.cpp:428)), and IOAPIC routing that
+([`uacpi_glue.cpp:428`](../../kernel/uacpi_glue.cpp:428)), and IOAPIC routing that
 picks a destination CPU instead of pinning to the BSP
-([`ioapic.cpp:262`](../kernel/ioapic.cpp:262)) — including logical destination
+([`ioapic.cpp:262`](../../kernel/ioapic.cpp:262)) — including logical destination
 mode, since an x2APIC ID does not necessarily fit in the 8 bits the current
 write uses.
 
@@ -437,11 +437,11 @@ being blind to every race introduced. Phases 0-3 need `--smp` variants:
   requested it, that round trip was 99% of the cost of a frame: 205 ms against
   127 µs of GPU work on a 672-pixel frame. After, present got ~470x faster
   and Doom went to 35 FPS in VirtualBox
-  ([numbers](GRAPHICS_PERF.md#what-that-bought)). If `windowd` and
+  ([numbers](../desktop/GRAPHICS_PERF.md#what-that-bought)). If `windowd` and
   `compositord` land on different cores and the wakeup waits for the next tick,
   that regression comes back. Implement the IPI in the same phase, or keep the
   two on one core until it exists, and rerun
-  [the `spin` scenario](GRAPHICS_PERF.md#which-workload-measures-what) to check.
+  [the `spin` scenario](../desktop/GRAPHICS_PERF.md#which-workload-measures-what) to check.
   Phase 1 kept the one-core half intact: `resched_pending` lives in
   `smp::Cpu`, the waker marks its own core, and that core still reschedules
   on the syscall return. What phase 2 adds is the cross-core half.
@@ -462,7 +462,7 @@ being blind to every race introduced. Phases 0-3 need `--smp` variants:
 Honestly: not yet, and the reason is worth writing down.
 
 **There are no threads.** A process is one context
-([`process.cpp`](../kernel/process.cpp) has no thread concept), so SMP
+([`process.cpp`](../../kernel/process.cpp) has no thread concept), so SMP
 parallelizes *distinct processes* and nothing else. The heaviest consumer in the
 system, Doom, is single-threaded — it does not get faster on four cores. What
 would genuinely improve is latency across the desktop: the compositor painting

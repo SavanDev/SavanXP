@@ -77,7 +77,7 @@ enum savanxp_syscall_number {
      * una seccion, un evento, un semaforo o un timer en una cola chica del pipe,
      * y el de lectura lo recibe como un fd nuevo con el mismo acceso. No
      * viajan fds de archivos, pipes ni sockets. Recibir nunca bloquea: con la
-     * cola vacia devuelve EAGAIN. Ver docs/OWNED_WINDOWS.md. */
+     * cola vacia devuelve EAGAIN. Ver docs/desktop/OWNED_WINDOWS.md. */
     SAVANXP_SYS_PIPE_SEND_HANDLE = 57,
     SAVANXP_SYS_PIPE_RECEIVE_HANDLE = 58,
     /* Informe de consistencia del volumen SxFS: solo lectura, sin reparacion.

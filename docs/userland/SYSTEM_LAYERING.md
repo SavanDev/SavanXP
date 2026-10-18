@@ -46,17 +46,25 @@ not being built.
 
 ## Direction: NT-style kernel API, Win32-like userland API
 
-Not built yet. When it is, the shape is fixed:
+> Status: **built (2026-10-16, slices 1-13 plus isolation A-E).** What follows
+> describes what landed, not what is planned. See
+> [`KERNEL_NATIVE_API.md`](../kernel/KERNEL_NATIVE_API.md) for the slice record
+> and [`NATIVE_APPS.md`](NATIVE_APPS.md) for writing native programs.
+
+The shape that was fixed in advance is what shipped:
 
 - The **kernel** exposes its own **native API, NT-style**: objects, handles,
   sections/views, waits, processes, VM and I/O. Subsystems talk to the kernel
-  through it.
-- **POSIX becomes one subsystem** on top of that API: a translation layer,
-  not the shape of the kernel.
-- The **userland native API, Win32-like**, arrives beside POSIX, not instead
-  of it: libraries and servers over the kernel native API that new apps can
-  consume directly. Nothing existing is rewritten for it to exist, and nothing
-  in the boot path depends on it.
+  through it (`sx::` surface plus the `SXN_SYS_*` dispatcher at `0x1000+`).
+- **POSIX is one subsystem** on top of that API: a translation layer
+  (`subsystems/posix/kernel/posix_translation.cpp`), not the shape of the
+  kernel. The kernel includes no userland header and keeps no POSIX
+  per-process state.
+- The **userland native API, Win32-like**, stands beside POSIX, not instead
+  of it: header-only `sxn.h` / `sxnwm.h` / `sxnwidgets.h` over the kernel
+  native API, proven by `sdk/nativetest`, `sdk/nativedemo` and
+  `sdk/nativewidgets`. Nothing existing was rewritten for it to exist, and
+  nothing in the boot path depends on it.
 
 ## What goes in C (all of it, today)
 
@@ -65,11 +73,11 @@ The platform, always:
 - **Kernel, drivers, HAL** (display/audio/GPU/network/storage).
 - **`compositord`** — owner of the GPU and of the single display surface.
 - **`windowd`** — the window manager (extracted from `desktop.c`; see
-  [WM_SUBSYSTEM.md](WM_SUBSYSTEM.md)).
+  [WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md)).
 - **SXGFX** — the SDK's 2D rasterization layer
   (`subsystems/posix/sdk/v1/.../gfx2d.*`): surfaces, painter, blit, clipping,
   damage. The analogue of GDI; the gaps against GDI32 and the order for closing
-  them are in [SXGFX_ROADMAP.md](SXGFX_ROADMAP.md).
+  them are in [SXGFX_ROADMAP.md](../desktop/SXGFX_ROADMAP.md).
 - **SXCHROME** — the system's 3D edges and the disabled relief
   (`subsystems/posix/sdk/v1/.../sxchrome.*`), between SXGFX and SXGUI-C. Not
   part of the toolkit because the toolkit is not the only thing that paints
@@ -168,7 +176,7 @@ inactive captions use the matching system gradients.
 
 ## Relationship with the WM extraction
 
-This decision and [WM_SUBSYSTEM.md](WM_SUBSYSTEM.md) are **compatible and
+This decision and [WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md) are **compatible and
 complementary**:
 
 - WM_SUBSYSTEM.md pulls `windowd` (the WM) out of `desktop.c`. That is platform

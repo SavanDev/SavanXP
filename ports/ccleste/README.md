@@ -32,7 +32,7 @@ there is no release signature to verify.
 2023-11-07 and the GitHub API reports no license for it, which means the code is
 under the default "all rights reserved" and is not licensed for redistribution
 by this repository. `UPSTREAM` records this as `license=Unlicensed` and
-`docs/THIRD_PARTY_PROVENANCE.md` carries the same finding. The practical
+`docs/third-party/THIRD_PARTY_PROVENANCE.md` carries the same finding. The practical
 consequences are deliberate:
 
 - no upstream source is committed here, so nothing unlicensed enters the Git
@@ -135,7 +135,7 @@ presentation size.
 The five tracks ship as OGG Vorbis and decode through `libffmpeg.so.0.4`,
 the shared library the FFmpeg port installs in `/disk/lib`. The OS grew the
 dynamic linker this port was waiting for (see
-[`docs/SXMEDIA.md`](../../docs/SXMEDIA.md) for why no workaround was built
+[`docs/media/SXMEDIA.md`](../../docs/media/SXMEDIA.md) for why no workaround was built
 before then), so this port links PIE with a `DT_NEEDED` on it, like
 mediaplayer. The build fails fast without the FFmpeg port; at runtime
 without it the game still runs and plays silent with one log line.

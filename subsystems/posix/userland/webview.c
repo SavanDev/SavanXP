@@ -4,7 +4,7 @@
  *
  * What this version does: everything before it did, plus a first CSS: tag rules
  * from <style> and style="" over colour, background, alignment, bold,
- * underline and a two-face size (see docs/WEBVIEWER.md for the subset).
+ * underline and a two-face size (see docs/desktop/WEBVIEWER.md for the subset).
  *
  * What it deliberately does NOT do: no TLS, no CSS
  * beyond that subset, no images (an [image] marker), no tables as grids, no

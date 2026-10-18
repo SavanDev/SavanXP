@@ -557,7 +557,7 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
  * teclas.
  *
  * El pipe es uno por PROCESO y las ventanas pueden ser varias (la principal y
- * las con dueno, docs/OWNED_WINDOWS.md), asi que lo guardado se separa tambien
+ * las con dueno, docs/desktop/OWNED_WINDOWS.md), asi que lo guardado se separa tambien
  * por window_id: un evento del dialogo leido mientras se drenaba la principal
  * espera en la bandeja del dialogo.
  */
@@ -906,7 +906,7 @@ long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long ti
     }
 }
 
-/* --- Ventanas con dueno (docs/OWNED_WINDOWS.md) ------------------------------
+/* --- Ventanas con dueno (docs/desktop/OWNED_WINDOWS.md) ------------------------------
  *
  * El pedido va por el header de la ventana principal y la superficie vuelve
  * como handle por la cola del pipe de eventos. La espera es acotada: un WM que

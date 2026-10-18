@@ -3,7 +3,7 @@
 Every paravirtualized device SavanXP drives — `virtio-net`, `virtio-blk`,
 `virtio-gpu`, `virtio-input`, `virtio-sound` — sits on the same modern
 virtio-pci transport, implemented once in
-[`kernel/virtio_pci.cpp`](../kernel/virtio_pci.cpp). This document records the
+[`kernel/virtio_pci.cpp`](../../kernel/virtio_pci.cpp). This document records the
 rules of that transport that are not visible from the code that uses it, and
 that cost a debugging session each time they are rediscovered.
 

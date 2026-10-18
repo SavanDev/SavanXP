@@ -11,7 +11,7 @@
  * file_assoc para "que programa lo abre":
  *
  *   - El MAPEO es un dato de la imagen, /disk/mimeicon.ini, no una tabla
- *     compilada. docs/SXE_FORMAT.md decide que el sistema no lleva una tabla
+ *     compilada. docs/userland/SXE_FORMAT.md decide que el sistema no lleva una tabla
  *     central de "que tipo es cada extension"; aca esa tabla existe pero es
  *     editable y no entra en ningun binario.
  *   - Los PIXELES son archivos .sxicon sueltos en /disk/icons, emitidos en

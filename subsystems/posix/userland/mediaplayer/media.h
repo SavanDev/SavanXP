@@ -7,7 +7,7 @@
  * o las proximas muestras de audio, y el motor demultiplexa lo que haga falta
  * para conseguirlos. Los paquetes del otro stream que aparecen en el camino
  * quedan en su cola, asi que pedir video no pierde audio ni al reves. Ver
- * docs/MEDIA_PLAYER.md.
+ * docs/media/MEDIA_PLAYER.md.
  *
  * Los tiempos salen en microsegundos desde el comienzo del archivo (el
  * start_time del contenedor ya descontado), que es la unica unidad que cruza

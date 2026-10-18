@@ -18,7 +18,7 @@
  * ausente no es un error -- la ventana usa defaults genericos.
  *
  * Icono generico en TODAS las filas: ya no hay ids horneados por app (el set
- * quedo reducido a DESKTOP_ICON_DESKTOP, docs/SXE_FORMAT.md). El icono real de
+ * quedo reducido a DESKTOP_ICON_DESKTOP, docs/userland/SXE_FORMAT.md). El icono real de
  * cada programa lo lee windowd_presentation_load() de su propio .sxicon antes
  * de llegar aca -- esta tabla es el escalon de abajo, solo entra en juego si
  * esa lectura no trae nada.
@@ -229,7 +229,7 @@ int windowd_presentation_selftest(void)
     /* Buffer de una lectura INDEPENDIENTE del mismo .sxicon, por la API
      * publica de sxe.h en vez del camino interno de windowd_presentation_load.
      * Es lo que reemplaza la comparacion contra el set horneado ahora que
-     * desktop_icons.h ya no tiene un id por app (docs/SXE_FORMAT.md, "icon= ya
+     * desktop_icons.h ya no tiene un id por app (docs/userland/SXE_FORMAT.md, "icon= ya
      * no elige de un catalogo"): no queda un SEGUNDO camino independiente que
      * hornee el mismo PNG para cruzar contra el primero. */
     _Alignas(4) uint8_t icon_buffer[SXE_ICON_MAX_BYTES];

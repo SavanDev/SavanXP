@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Lector de recursos SXE (fase 1 de docs/SXE_FORMAT.md).
+ * Lector de recursos SXE (fase 1 de docs/userland/SXE_FORMAT.md).
  *
  * El formato en si vive en include/sxe/sxe_format.h; esto es la API para
  * leerlo. Dos capas separadas a proposito:

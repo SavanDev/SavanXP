@@ -1,4 +1,4 @@
-# Recursos SXE de la demo nativa. Ver docs/SXE_FORMAT.md.
+# Recursos SXE de la demo nativa. Ver docs/userland/SXE_FORMAT.md.
 #
 # Con categoria: pide estar en el menu como cualquier app. El
 # `subsystem=native` es el espejo informativo (el loader marca por EI_OSABI,

@@ -12,7 +12,7 @@
  * `GENMIDI`, que el llamador pasa junto con el MIDI. Sin banco (o con uno
  * ilegible) el tema suena con las familias. El diseno y las decisiones (por que
  * familias y no 128 instrumentos, por que una voz por nota, por que Doom
- * pre-renderiza el tema) estan en docs/MIDI.md.
+ * pre-renderiza el tema) estan en docs/media/MIDI.md.
  *
  * Se compila dos veces: dentro de la libreria (PIC, target propio) y dentro del
  * test de host, con la libc de Linux. Por eso no incluye headers del runtime
@@ -95,7 +95,7 @@ struct sx_midi_instrument {
  *
  * Los valores estan escritos como intencion, no como medida: el piano
  * percusivo, la cuerda que ataca lento y respira, la lengueta con vibrato. Ese
- * es el margen de mejora que queda -- ver `docs/MIDI.md`. */
+ * es el margen de mejora que queda -- ver `docs/media/MIDI.md`. */
 static const struct sx_midi_instrument g_families[16] = {
     /* 0  Piano: sierra con un poco de seno encima, decaimiento largo y cola
      *    corta. Sin parcial 2: la afinacion de este programa se verifica por

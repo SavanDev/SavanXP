@@ -19,5 +19,5 @@ A different local WAD can be selected explicitly:
 
 The selected file is installed under `/disk/games/doom` in the persistent
 image. The WAD is not copied into the port source tree or committed to Git.
-Its provenance is recorded in `docs/THIRD_PARTY_PROVENANCE.md`. A missing WAD
+Its provenance is recorded in `docs/third-party/THIRD_PARTY_PROVENANCE.md`. A missing WAD
 is non-fatal: the binary is still built and installed.

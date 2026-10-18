@@ -38,6 +38,13 @@ system works and why*. Every document in `docs/` must be listed in
 `README.md`, `CHANGELOG.md`, `AGENTS.md`, `docs/`, `assets/README.md`. The
 project should be readable by anyone who finds it.
 
+### 3b. Code is written in English too
+
+Identifiers, log lines, user-visible strings, and comments. Spanish comments
+from earlier development are translated incrementally: every commit that
+touches a file translates the comments on the lines it changes, until only
+one language remains. No bulk rewrites.
+
 ### 4. Never break the persistence of `build/disk.img`
 
 `./build.sh build` must not delete or unconditionally recreate the image if
@@ -77,4 +84,4 @@ Native Linux path:
 ```
 
 `README.md` has the full list and the requirements;
-[`docs/BUILD_CMAKE.md`](docs/BUILD_CMAKE.md) covers the native build path.
+[`docs/build/BUILD_CMAKE.md`](docs/build/BUILD_CMAKE.md) covers the native build path.

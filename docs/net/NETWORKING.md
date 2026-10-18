@@ -97,7 +97,7 @@ is called from the blocking `connect`/`read`/`write` loops and from `net::poll()
 
 `net::poll()` used to be called by `poll_fds()`, which spun in the caller's
 context. Now that `poll()` parks its callers instead
-([`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found)),
+([`SYSTEM_MONITORING.md`](../userland/SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found)),
 `wake_poll_waiters()` calls it from the timer tick — but **only while at least
 one process is waiting in `poll`**, which is the same cadence as before: with
 nobody polling, nobody called it either. `wake_blocked_socket_readers()` does
@@ -146,7 +146,7 @@ This is what makes the indefinite default honest. The waiting loop inside
 `net::` never leaves `State::running`, so every tick of the wait is charged to
 the waiter: a program parked forever in a read would have shown 100% CPU
 forever, which is the defect `poll()` had before
-[its own fix](SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found).
+[its own fix](../userland/SYSTEM_MONITORING.md#waiting-is-not-running-what-the-first-measurement-found).
 `tcp-smoke` measures it rather than assuming it — the process samples its own
 `cpu_ticks` around a 7-second wait and requires its share to stay negligible
 (one tick out of some 4700).
@@ -194,13 +194,36 @@ failures happened. It is deterministic: the same counts on every run.
 `./build.sh smoke net-smoke` is the other half and covers the layer below — the NIC
 driver, ARP and ICMP against the slirp gateway.
 
+## Name resolution: the minimal DNS client
+
+Numeric IPv4 never touches the network. Anything else goes out as one A/IN
+question over UDP to the network's DNS (`10.0.2.3` under QEMU slirp), with
+CNAME chasing (up to 4 hops), NXDOMAIN told apart from other failures, and
+every overrun a rejection: the bytes are untrusted. Transaction IDs mix
+`uptime_ms` with a counter (the tree has no kernel RNG yet), and answers are
+trusted past TXID plus the echoed question — fine on a host bridge, not
+against an adversary. No cache, no search domains, no AAAA, no TCP fallback
+on truncation, 512-byte cap, 2 s timeout with 2 attempts: each gap says so in
+the caller's status line.
+
+The only consumer today is the Web Viewer (`subsystems/posix/userland/webview.c`,
+see [`WEBVIEWER.md`](../desktop/WEBVIEWER.md#names)): numeric addresses stay a
+local fast path, everything else resolves through this client. Two overrides
+exist for tests: `webview --dns 10.0.2.2:5353` at launch, and `dns://10.0.2.2:5353`
+typed in the address bar (config, never history). The stack itself takes no
+names — `ntpsync` and every other tool still want numeric IPv4 — so "No DNS"
+below means the syscall surface, not the machine: resolution lives in
+userland, one client at a time, until a shared resolver earns its place.
+
 ## What this does not do
 
 Not defects — scope. In rough order of when each would start to hurt:
 
 - **No `listen`/`accept`.** Client sockets only. Nothing in the guest can be a
   server.
-- **No DNS.** Addresses are numeric.
+- **No DNS in the syscall surface.** Addresses are numeric; `ntpsync` and every
+  other tool still want numeric IPv4. Resolution lives in userland — today one
+  minimal client inside the Web Viewer (see [above](#name-resolution-the-minimal-dns-client)).
 - **`setsockopt` understands only the two timeouts.** `SO_REUSEADDR` and
   `SO_BROADCAST` are accepted and ignored in userland; everything else is
   `ENOSYS`. `getsockopt` reads back a userland copy, not the kernel's.

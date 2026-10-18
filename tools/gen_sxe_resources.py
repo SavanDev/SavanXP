@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Genera los blobs de recursos SXE (.sxmeta y .sxicon) para CADA PROGRAMA que
-el build va a linkear. Ver docs/SXE_FORMAT.md (fases 2 y "estampado por
+el build va a linkear. Ver docs/userland/SXE_FORMAT.md (fases 2 y "estampado por
 default").
 
 `build.sh` lo invoca una sola vez por build, antes de linkear userland; después

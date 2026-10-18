@@ -1,4 +1,4 @@
-# Recursos SXE del Bloc de notas. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del Bloc de notas. Ver docs/userland/SXE_FORMAT.md.
 #
 # mime_open/ext_open declaran CAPACIDAD, no asociacion: que el Bloc de notas
 # diga que puede abrir text/plain no lo convierte en el que abre los .txt. Esa

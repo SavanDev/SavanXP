@@ -9,7 +9,7 @@
  * formato vive duplicado a mano, las copias se desincronizan y la corrupcion
  * es silenciosa.
  *
- * Ver docs/SXE_FORMAT.md para el diseno y el razonamiento.
+ * Ver docs/userland/SXE_FORMAT.md para el diseno y el razonamiento.
  *
  * Freestanding a proposito: solo depende de <stdint.h> y <stddef.h>, sin libc
  * ni headers del SDK, para compilar igual en userland y en un tool de host. Es

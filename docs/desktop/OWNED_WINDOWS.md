@@ -147,7 +147,7 @@ already in use, or when there is no free overlay slot.
 - **Descriptors in `windowd`:** an open dialog costs two (duplicates of the
   owner's event pipe and wake event). That is the same as an app window, and it
   uses the same slots, so the full-session assertion in
-  [WM_SUBSYSTEM.md](WM_SUBSYSTEM.md#descriptor-budget) still holds.
+  [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget) still holds.
 - **Pipes:** none. The dialog shares its process's event pipe.
 - **Sections:** two per open dialog, out of 64 in the whole system (the WM's
   surface and the client's private backbuffer, the same as any window).

@@ -58,7 +58,7 @@ The audit confirmed the following defenses were already present:
   bit 63 only on PTEs; the bit is removed before creating upper paging levels.
   It is a derived permission, not a constant: a section view maps without NX only
   when the view requests execution and the section grants it. See
-  [`SECTIONS.md`](SECTIONS.md).
+  [`SECTIONS.md`](./SECTIONS.md).
 - SavanXP now requires an NX-capable CPU and enables `EFER.NXE` on every logical
   processor during early CPU initialization. The static kernel image inherited
   from Limine is not yet repartitioned into executable and NX mappings, so this
@@ -274,7 +274,7 @@ Memory safety should then proceed in this order:
    RELRO. Dropping write on a view another process still holds writable would
    change that process's mapping without its consent, so the first `mprotect`
    cannot be a plain flag rewrite. `BIND_NOW` does not need either; lazy PLT
-   binding does. See [`SECTIONS.md`](SECTIONS.md).
+   binding does. See [`SECTIONS.md`](./SECTIONS.md).
 
 Firmware and hardware inputs need their own parser tests: fuzz CPIO, ACPI/MADT,
 SxFS and virtio rings; validate every PCI BAR against physical memory, reserved

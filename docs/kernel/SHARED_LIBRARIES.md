@@ -2,7 +2,7 @@
 
 The goal is a loader that maps `libSxGFX`, `libSxGUI` and `libFFmpeg` once,
 instead of the 70 of 82 programs in `/bin` carrying their own copy. The engine
-is described in [`SECTIONS.md`](SECTIONS.md); this file records the decisions and
+is described in [`SECTIONS.md`](./SECTIONS.md); this file records the decisions and
 the order, so the work is not reconstructed from commit messages.
 
 This is SDK v2 work. Breaking the existing SDK surface is acceptable and expected.
@@ -1335,7 +1335,7 @@ What was still standing from the original design:
 - a **closed** `CHANGELOG.md` section: *"`/bin/mediaplayer` is always built,
   delegates to `/disk/bin/mediaplayer-ffmpeg` when installed, and otherwise opens an
   in-OS warning"*
-- `docs/MEDIA_PLAYER.md`: *"`/bin/mediaplayer` is always built into the system image
+- `docs/media/MEDIA_PLAYER.md`: *"`/bin/mediaplayer` is always built into the system image
   and is the program shown by the launcher"*
 - the port's `.sxres`: *"The stable launcher (/bin/mediaplayer) owns the visible
   Accessories entry"*
@@ -1375,7 +1375,7 @@ no se pudieron cargar 4 librerias; la primera es libffmpeg.so.0.4
 
 The other half of this was the PIO data phase. `rw_chunk` delivers one sector per
 backend request and reaches it through the data port; the reasoning and the numbers
-are in [`SXFS_ROADMAP.md`](SXFS_ROADMAP.md) item 1, which concludes that DMA is the
+are in [`SXFS_ROADMAP.md`](../fs/SXFS_ROADMAP.md) item 1, which concludes that DMA is the
 only thing that removes the per-sector cost.
 
 It was written — descriptor table in kernel-contiguous pages, the BM registers, a

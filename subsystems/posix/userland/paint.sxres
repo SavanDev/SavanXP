@@ -1,4 +1,4 @@
-# Recursos SXE de Paint. Ver docs/SXE_FORMAT.md.
+# Recursos SXE de Paint. Ver docs/userland/SXE_FORMAT.md.
 #
 # mime_open/ext_open declaran CAPACIDAD, igual que en notepad: que pueda abrir
 # BMP no lo convierte en el visor por omision. Esa es politica del usuario y

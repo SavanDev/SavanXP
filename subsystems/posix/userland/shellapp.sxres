@@ -1,4 +1,4 @@
-# Recursos SXE del Shell. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del Shell. Ver docs/userland/SXE_FORMAT.md.
 name=Shell
 description=Terminal and builtins
 version=system

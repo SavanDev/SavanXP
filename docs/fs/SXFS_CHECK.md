@@ -6,7 +6,7 @@ from inside SavanXP: what does the volume think it is holding.
 It also records why the answer is a report and not a repair, and what would have
 to be true before a repair is possible. For the wider picture — what is left to
 do in SxFS and what each item costs — see
-[`SXFS_ROADMAP.md`](SXFS_ROADMAP.md).
+[`SXFS_ROADMAP.md`](./SXFS_ROADMAP.md).
 
 ## The gap that motivated it
 
@@ -95,7 +95,7 @@ result: clean
 The `metadata cost` block is what makes the journal's price a measurement rather
 than an inference: the journal copies the whole metadata on every commit, so
 commit cost tracks metadata size and not volume size. See
-[`BUILD_LINUX.md`](BUILD_LINUX.md#the-geometry).
+[`BUILD_LINUX.md`](../build/BUILD_LINUX.md#the-geometry).
 
 The two numbers that carry the most information are `data_used` and
 `data_claimed`. One counts sectors the bitmap marks occupied; the other counts

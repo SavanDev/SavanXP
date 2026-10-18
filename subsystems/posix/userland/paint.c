@@ -26,7 +26,7 @@
  * arbol y el escritor BMP son un header de 54 bytes mas filas con padding.
  *
  * Todo es de 1 px y opaco: no hay sx_pen, ni alpha, ni flood fill en sxgfx
- * (docs/SXGFX_ROADMAP.md).
+ * (docs/desktop/SXGFX_ROADMAP.md).
  */
 
 /* --- documento ------------------------------------------------------------ */

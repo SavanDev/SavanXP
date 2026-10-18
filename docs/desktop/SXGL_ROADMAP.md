@@ -11,7 +11,7 @@
 >
 > The question that produced it: *if SxGFX is the closest thing to GDI, do we
 > need a new API to implement OpenGL?* The answer is **yes**, and
-> [SXGFX_ROADMAP.md](SXGFX_ROADMAP.md) had already committed to it for the
+> [SXGFX_ROADMAP.md](./SXGFX_ROADMAP.md) had already committed to it for the
 > DirectX-shaped version of the same question — "*if that model is ever wanted,
 > it goes in a new layer beside, not inside, SxGFX*". This document is that
 > sentence worked out.
@@ -32,7 +32,7 @@ is the point. These are reasons about the model.
 ### 1. SxGFX has no state, and OpenGL *is* state
 
 `sx_painter` carries a bitmap, a clip stack of 16, an origin stack and a font id
-([gfx2d.h:110](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:110)). Colour
+([gfx2d.h:110](../../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:110)). Colour
 travels as a loose `uint32_t` per call. That is immediate mode on purpose: its
 consumer is SXGUI-C, and what a widget needs is `fill_rect`.
 
@@ -44,13 +44,13 @@ the painter does not extend SxGFX; it replaces the thing SxGFX is.
 
 No depth buffer. No textures with filtering, wrap or perspective correction. No
 matrix stack. And the blend is nailed to `SRC_OVER`
-([gfx2d.c:3](../subsystems/posix/sdk/v1/runtime/gfx2d.c:3)) — the raster ops
+([gfx2d.c:3](../../subsystems/posix/sdk/v1/runtime/gfx2d.c:3)) — the raster ops
 that landed in batch 3 (`SX_ROP_XOR` and company) are GDI's ROPs, which is a
 different thing from `glBlendFunc`.
 
 ### 3. The kernel has no 3D either
 
-`savanxp_gpu_ioctl` ([savanxp_abi.h:339](../include/abi/savanxp_abi.h:339))
+`savanxp_gpu_ioctl` ([savanxp_abi.h:339](../../include/abi/savanxp_abi.h:339))
 is 21 ioctls of strictly 2D work: import a section as a surface, present dirty
 rectangles, move a cursor plane, read a present timeline. `virtio_gpu` never
 negotiates `VIRTIO_GPU_F_VIRGL` and there is no `CTX_CREATE` anywhere in the
@@ -75,7 +75,7 @@ The Windows analogy is exact, and it is the one to hold on to:
 `opengl32.dll` is **not** built on GDI. It asks the `HDC` for a pixel format,
 writes its own colour buffer, and presents. The relationship here is the same
 one, and it extends
-[SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#analogy-to-fix-the-mental-model)'s table
+[SYSTEM_LAYERING.md](../userland/SYSTEM_LAYERING.md#analogy-to-fix-the-mental-model)'s table
 with one row rather than changing any of its existing ones.
 
 ## The seam: what SxGL would actually consume
@@ -86,16 +86,16 @@ start duplicating the platform.
 A GUI client already opens its surface with `gfx_open`, which maps the section
 `windowd` handed it, **creates a private section of its own**, and hands the app
 a plain `uint32_t*` to draw into
-([gfx_impl.inc:272](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:272)).
+([gfx_impl.inc:272](../../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:272)).
 `gfx_present_region` then waits for the compositor to be idle, copies the dirty
 region private → shared, and submits a dirty-rect batch
-([gfx_impl.inc:498](../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:498)).
+([gfx_impl.inc:498](../../subsystems/posix/sdk/v1/runtime/gfx_impl.inc:498)).
 
 So the whole binding is three facts:
 
 - **The GL colour buffer is that private buffer.** No allocation of its own, no
   copy, and `sx_bitmap_wrap`
-  ([gfx2d.h:191](../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:191)) already
+  ([gfx2d.h:191](../../subsystems/posix/sdk/v1/include/savanxp/gfx2d.h:191)) already
   describes it as an `sx_bitmap` — which means SXGUI-C chrome and GL content can
   share one buffer with a painter clipped to the client area. That is the
   `glViewport`-inside-a-window case for free, and the reason not to invent a
@@ -118,7 +118,7 @@ mean `--sse`, and `--sse` means `tools/build-user.sh` and a binary installed int
 `/disk/bin` instead of the image's `/bin`. The in-tree userland now compiles
 with `-msse2` and links the libm, so a `float` no longer decides where a binary
 lives — see
-[SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point). The
+[SYSTEM_LAYERING.md](../userland/SYSTEM_LAYERING.md#an-in-tree-app-has-floating-point). The
 OS side was already in place: the kernel saves and restores FPU/SSE per process
 (`fxsave64`/`fxrstor64`) and `crt0.S` aligns `rsp` to 16 before the first call.
 
@@ -165,7 +165,7 @@ fast.
 
 Not an analogy — read the structs. The client surface header carries
 `submit_sequence`, `retired_sequence` and `composed_sequence`
-([savanxp_abi.h:876](../include/abi/savanxp_abi.h:876)), and
+([savanxp_abi.h:876](../../include/abi/savanxp_abi.h:876)), and
 every `savanxp_gpu_dirty_rect_batch` carries its own `submit_sequence`. That is
 a fence over a swapchain with numbered command lists.
 `savanxp_gpu_present_timeline` (`submitted`/`retired`/`pending_count`) is
@@ -213,7 +213,7 @@ D3D's debug layer validates at the call and names it. In a system where you
 cannot attach a graphics debugger that matters more, not less, and it is cheap:
 a compile-time `SXGL_VALIDATE` writing to `/dev/serial`, the channel
 `windowd-stats` already uses precisely so that measuring does not corrupt what
-is being measured ([GRAPHICS_PERF.md](GRAPHICS_PERF.md#why-devserial-and-not-stderr)).
+is being measured ([GRAPHICS_PERF.md](./GRAPHICS_PERF.md#why-devserial-and-not-stderr)).
 
 ### And the precedent: WARP
 

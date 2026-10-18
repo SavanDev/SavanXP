@@ -19,7 +19,7 @@ from PIL import Image
 # assets/desktop/icons/ como PNG editables, pero ya no se hornean aca: son el
 # catalogo del sistema que
 # gen_sxe_resources.py lee para icon=<nombre>, un consumidor DISTINTO de este
-# header (ver docs/SXE_FORMAT.md, "icon= ya no elige de un catalogo").
+# header (ver docs/userland/SXE_FORMAT.md, "icon= ya no elige de un catalogo").
 MANIFEST = [
     {"symbol": "k_desktop_icon_desktop_16", "relative_path": "16x16/desktop.png"},
     {"symbol": "k_desktop_icon_desktop_32", "relative_path": "32x32/desktop.png"},

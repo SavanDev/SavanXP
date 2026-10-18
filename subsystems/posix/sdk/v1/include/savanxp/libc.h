@@ -156,7 +156,7 @@ struct savanxp_gfx_context {
     /* Ventana de este contexto dentro del proceso: 0 es la principal, la que
      * abre gfx_open; 1..SAVANXP_WM_MAX_OWNED_WINDOWS son ventanas con dueno
      * abiertas con gfx_window_open. Los eventos del pipe compartido se reparten
-     * por este id (docs/OWNED_WINDOWS.md). */
+     * por este id (docs/desktop/OWNED_WINDOWS.md). */
     uint32_t window_id;
 };
 
@@ -215,7 +215,7 @@ long gfx_request_content_size(const struct savanxp_gfx_context* context, uint32_
  * suyo; el evento RESIZED igual queda consumido, asi que no hace falta
  * volver a aplicarlo. */
 long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long timeout_ms);
-/* Ventanas con dueno (docs/OWNED_WINDOWS.md). gfx_window_open le pide al WM una
+/* Ventanas con dueno (docs/desktop/OWNED_WINDOWS.md). gfx_window_open le pide al WM una
  * ventana de `width` x `height` de area util, con `title`, cuyo dueno es la
  * ventana principal de `owner`; `window_id` la elige el llamador entre 1 y
  * SAVANXP_WM_MAX_OWNED_WINDOWS. Mientras exista, el WM la mantiene arriba de su

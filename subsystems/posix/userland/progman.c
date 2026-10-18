@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 /*
- * Program Manager (A2.3, ver docs/WM_SUBSYSTEM.md).
+ * Program Manager (A2.3, ver docs/desktop/WM_SUBSYSTEM.md).
  *
  * Cliente top-level normal del WM: no tiene z-rol especial ni extension de
  * protocolo -- recibe input por el mismo camino que cualquier app. Muestra los
@@ -475,7 +475,7 @@ static void paint_items(struct sx_painter *painter)
             sx_painter_fill_rect(painter, rect, SXGUI_COLOR_SELECT);
         }
         /* El icono del propio binario manda; el set horneado es el fallback
-         * para lo que todavia no trae recursos (docs/SXE_FORMAT.md). */
+         * para lo que todavia no trae recursos (docs/userland/SXE_FORMAT.md). */
         icon = progman_item_icon(item);
         if (icon == 0)
         {
@@ -887,7 +887,7 @@ static void build_catalog(void)
     }
     /* Recien aca se leen los recursos de cada binario: despues del pruning,
      * para no abrir ejecutables que se van a descartar y porque el pruning
-     * reordena los items (docs/SXE_FORMAT.md, fase 3). */
+     * reordena los items (docs/userland/SXE_FORMAT.md, fase 3). */
     (void)progman_registry_apply_sxe();
 }
 

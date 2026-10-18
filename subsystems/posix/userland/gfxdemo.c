@@ -140,7 +140,7 @@ int main(void) {
              * sin esperar teclas. Como gfx_present_region bloquea hasta que el
              * compositor consumio el frame anterior, en ese modo los fps son el
              * techo del camino de display y no el ritmo de la entrada, que es
-             * lo que hace falta para medirlo (docs/GRAPHICS_PERF.md). */
+             * lo que hace falta para medirlo (docs/desktop/GRAPHICS_PERF.md). */
             if (event.ascii == 's' || event.ascii == 'S') {
                 spin = !spin;
                 moved = 1;

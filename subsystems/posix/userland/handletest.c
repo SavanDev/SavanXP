@@ -3,7 +3,7 @@
 /*
  * Paso de handles por pipe (SAVANXP_SYS_PIPE_SEND_HANDLE / _RECEIVE_HANDLE).
  * Es el transporte con el que el WM le entrega a un proceso ya corriendo la
- * superficie de una ventana con dueno (docs/OWNED_WINDOWS.md), asi que lo que
+ * superficie de una ventana con dueno (docs/desktop/OWNED_WINDOWS.md), asi que lo que
  * se prueba es lo que ese camino necesita: que la memoria sea la misma de los
  * dos lados, que cruce un fork, que la cola tenga tope, que los extremos y los
  * tipos equivocados se rechacen, y que lo que nadie recibio no se pierda para

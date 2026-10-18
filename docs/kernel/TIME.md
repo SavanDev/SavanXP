@@ -11,7 +11,7 @@ what is written here.
 | --- | --- | --- |
 | What it is | how many timer interrupts arrived | the wall clock |
 | Source | the interrupt handler, `+1` per tick | a free-running counter (below) |
-| Good for | CPU accounting (`cpu_ticks`, see [`SYSTEM_MONITORING.md`](SYSTEM_MONITORING.md)) | every deadline in the system |
+| Good for | CPU accounting (`cpu_ticks`, see [`SYSTEM_MONITORING.md`](../userland/SYSTEM_MONITORING.md)) | every deadline in the system |
 | Never use it for | measuring time | deciding who got the CPU |
 
 Counting interrupts is not a clock: an interrupt that cannot be delivered --
@@ -108,3 +108,91 @@ The trap worth remembering: when the wall clock is the thing that is broken,
 every measurement taken with it is wrong in a way that looks like a different
 bug. `timer-stats` blamed lost interrupts, `windowd` reported plausible frame
 times, and the actual fault was that the ruler had changed length.
+
+## The other clock: the calendar date
+
+The wall clock above measures *intervals* -- how long until a deadline, how
+much audio one frame owes. It never says what day it is. The calendar date
+is a separate clock with a separate source: the CMOS RTC, read through ports
+`0x70`/`0x71` (`kernel/rtc.cpp`, `include/kernel/rtc.hpp`).
+
+Everything about the date is UTC. There are no time zones in the tree:
+`localtime` is `gmtime`.
+
+The read path distrusts the chip. It waits out the update cycle, reads twice,
+and only believes the value when both reads agree, so a date never mixes two
+seconds. It preserves whatever mode the chip is in (BCD or binary, 12 or 24
+hour) instead of forcing one. The year is two digits plus 2000, which is why
+the writable range below ends where it does.
+
+## Setting it: `date` and `SET_REALTIME`
+
+`SAVANXP_SYS_REALTIME` (37) reads the date into a `struct savanxp_realtime`
+(`include/abi/savanxp_abi.h`); `SAVANXP_SYS_SET_REALTIME` (63) writes it back
+(`realtime()` / `set_realtime()` in the SDK). The `valid` flag is output-only
+and is ignored on input.
+
+The kernel accepts years **2000..2099** with a leap-aware day check
+(`rtc::valid_time`): a bad date returns `-EINVAL` without touching the chip,
+and a chip that never leaves its update cycle returns `-EIO` instead of
+hanging the caller. The write freezes the chip with the SET bit so all seven
+registers land on the same second, recomputes the weekday, then releases it.
+
+`/bin/date` is the userland face: bare it prints `YYYY-MM-DD HH:MM:SS`, with
+six arguments it sets the clock and re-reads it:
+
+```bash
+date
+date YYYY MM DD HH MM SS   # UTC
+```
+
+`date-smoke` (`datetest`) sets a known date mid-minute, re-reads it (the
+second tolerates +1 for the tick boundary), proves month 13 comes back
+`-EINVAL` with the chip untouched, and restores whatever time was there.
+
+## Syncing it: `ntpsync` and SNTP
+
+`/bin/ntpsync` is a one-shot SNTP client (RFC 4330, mode 3) over UDP
+(`subsystems/posix/userland/ntpsync_lib.c`): numeric IPv4 only -- no DNS,
+like the rest of the stack -- default port 123, 5 s timeout.
+
+```bash
+ntpsync <ipv4> [port]   # UTC
+```
+
+Network time becomes system time with suspicion, because whatever arrives
+over UDP decides the machine's date. The reply must be mode 4, version 3 or
+4, stratum 1..15 (0 is kiss-of-death, 16 is unsynchronized), with a non-zero
+transmit stamp; the result lands in a sane window, 2020-01-01..2036-02-07,
+where the floor rejects garbage and the ceiling is the 32-bit era wrapping
+in 2036. Delay is compensated the cheap honest way -- transmit plus `rtt/2`,
+measured with `uptime_ms`, in integer milliseconds because userland runs
+without SSE. The tool applies the result through `SET_REALTIME` and reports
+the applied time, the round trip, and the adjustment in seconds.
+
+`ntp-smoke` (`ntptest`) syncs against the deterministic host fixture
+(`tools/ntp_server.py`), checks the RTC landed within a second of what was
+applied, checks a closed port fails instead of hanging or writing garbage,
+and restores the original time.
+
+## Showing it: the taskbar clock and calendar
+
+The taskbar (`subsystems/posix/userland/taskbar.c`) shows a sunken `HH:MM`
+readout taken from the RTC in UTC, with an `uptime_ms` fallback when no
+valid RTC exists -- the same split as `windowd_current_clock_stamp()`.
+Clicking it toggles `clockpopup` (178x180, no launcher entry, display-only):
+a W2K-style month grid, Monday-first with Spanish day labels, today
+highlighted, and a live `HH:MM:SS` footer. The WM opens and closes it
+(toggle or outside click); its clicks drain without action.
+
+## Which test proves which clock
+
+| Test | Proves | Against |
+| --- | --- | --- |
+| `clock-smoke` | the wall clock (intervals) | the RTC, spinning / sleeping / under load |
+| `date-smoke` | setting the date | a re-read, a rejection, and a restore |
+| `ntp-smoke` | syncing the date over the network | a host fixture plus a closed port |
+
+A bad wall clock looks like lost interrupts or chopped audio; a bad date
+looks like nothing at all until something stamps a file. That is why the
+first row compares two clocks and the other two restore the one they moved.

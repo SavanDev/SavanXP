@@ -27,11 +27,11 @@ Three things stand between that CPU and the kernel, and not one of them is a
 driver:
 
 1. the kernel, the userland, the SDK and every port are built for
-   `x86_64-unknown-none-elf` ([`CMakeLists.txt:69`](../CMakeLists.txt:69)) and
+   `x86_64-unknown-none-elf` ([`CMakeLists.txt:69`](../../CMakeLists.txt:69)) and
    the kernel links at `0xffffffff80000000` with `-mcmodel=kernel`
-   ([`linker.ld:13`](../linker.ld:13), [`CMakeLists.txt:80`](../CMakeLists.txt:80));
+   ([`linker.ld:13`](../../linker.ld:13), [`CMakeLists.txt:80`](../../CMakeLists.txt:80));
 2. NX is a hard requirement, not a feature
-   ([`KERNEL_SECURITY.md:59`](KERNEL_SECURITY.md)), and that CPU does not have it;
+   ([`KERNEL_SECURITY.md:59`](./KERNEL_SECURITY.md)), and that CPU does not have it;
 3. the `limine` boot protocol is **64-bit only** by specification, and Limine
    refuses to run on a CPU without long mode -- including its own IA-32 build,
    whose sole purpose is loading a 64-bit kernel from 32-bit firmware.
@@ -85,20 +85,20 @@ Everything else in the table is a driver question, and the answers are in
 ### The system is 64-bit in its bones, not just in its flags
 
 The compiler triple is set once
-([`CMakeLists.txt:69`](../CMakeLists.txt:69)) and feeds four profiles: kernel,
+([`CMakeLists.txt:69`](../../CMakeLists.txt:69)) and feeds four profiles: kernel,
 uACPI, in-tree userland and external apps/ports. Beyond the flags, the shapes
 assume a 64-bit address space:
 
 | Assumption | Where |
 | --- | --- |
-| Kernel at `0xffffffff80000000`, kernel PML4 slot 256 | [`linker.ld:13`](../linker.ld:13), [`vmm.cpp:16`](../kernel/vmm.cpp:16) |
-| 4-level paging, `sign_extend_48`, 48-bit page mask | [`vmm.cpp:15-67`](../kernel/vmm.cpp), [`elf.cpp:116-137`](../kernel/elf.cpp) |
-| User stack top at 512 GiB, section views at 16 GiB | [`vmm.hpp:14-15`](../include/kernel/vmm.hpp), [`vmm.hpp:37`](../include/kernel/vmm.hpp) |
-| NX bit 63 on every kernel mapping | [`vmm.hpp:49`](../include/kernel/vmm.hpp), [`vmm.cpp:810`](../kernel/vmm.cpp) |
-| ELF64 / `EM_X86_64` only | [`elf.cpp:10-12`](../kernel/elf.cpp) |
-| 64-bit syscall context, `iretq`, `pushq` | [`context.S:26-98`](../arch/x86_64/context.S), [`process.hpp:45-66`](../include/kernel/process.hpp) |
-| 64-bit GDT, TSS with 8 ISTs, 10-byte IDT gates, `fxsave64` | [`cpu_init.cpp:59-95`](../arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:755-764`](../arch/x86_64/cpu_init.cpp) |
-| HHDM as the only physical-address path | [`vmm.cpp:967-969`](../kernel/vmm.cpp), [`physical_memory.cpp:111-113`](../kernel/physical_memory.cpp) |
+| Kernel at `0xffffffff80000000`, kernel PML4 slot 256 | [`linker.ld:13`](../../linker.ld:13), [`vmm.cpp:16`](../../kernel/vmm.cpp:16) |
+| 4-level paging, `sign_extend_48`, 48-bit page mask | [`vmm.cpp:15-67`](../../kernel/vmm.cpp), [`elf.cpp:116-137`](../../kernel/elf.cpp) |
+| User stack top at 512 GiB, section views at 16 GiB | [`vmm.hpp:14-15`](../../include/kernel/vmm.hpp), [`vmm.hpp:37`](../../include/kernel/vmm.hpp) |
+| NX bit 63 on every kernel mapping | [`vmm.hpp:49`](../../include/kernel/vmm.hpp), [`vmm.cpp:810`](../../kernel/vmm.cpp) |
+| ELF64 / `EM_X86_64` only | [`elf.cpp:10-12`](../../kernel/elf.cpp) |
+| 64-bit syscall context, `iretq`, `pushq` | [`context.S:26-98`](../../arch/x86_64/context.S), [`process.hpp:45-66`](../../include/kernel/process.hpp) |
+| 64-bit GDT, TSS with 8 ISTs, 10-byte IDT gates, `fxsave64` | [`cpu_init.cpp:59-95`](../../arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:755-764`](../../arch/x86_64/cpu_init.cpp) |
+| HHDM as the only physical-address path | [`vmm.cpp:967-969`](../../kernel/vmm.cpp), [`physical_memory.cpp:111-113`](../../kernel/physical_memory.cpp) |
 
 That is roughly 26,700 lines of kernel, 19 files with inline assembly and three
 `.S` files, plus 70 in-tree programs and the ports, against
@@ -107,10 +107,10 @@ That is roughly 26,700 lines of kernel, 19 files with inline assembly and three
 
 ### NX is a boot requirement
 
-[`enable_nx()`](../arch/x86_64/cpu_init.cpp) reads `CPUID.80000001H:EDX[20]`
+[`enable_nx()`](../../arch/x86_64/cpu_init.cpp) reads `CPUID.80000001H:EDX[20]`
 and the BSP **panics** without it
-([`cpu_init.cpp:785-787`](../arch/x86_64/cpu_init.cpp)); an AP halts forever.
-`docs/KERNEL_SECURITY.md` records the policy, and it is a deliberate one. On
+([`cpu_init.cpp:785-787`](../../arch/x86_64/cpu_init.cpp)); an AP halts forever.
+`docs/kernel/KERNEL_SECURITY.md` records the policy, and it is a deliberate one. On
 this CPU it cannot be satisfied at all: the Northwood has no NX page-table bit,
 and in 32-bit protected mode without PAE there is no encoding for it. An i386
 port therefore has to relax the policy, or use PAE and say so.
@@ -136,7 +136,7 @@ implements neither.
 
 ### The kernel brings up no paging of its own
 
-[`vmm::initialize()`](../kernel/vmm.cpp) stores the HHDM offset and adopts
+[`vmm::initialize()`](../../kernel/vmm.cpp) stores the HHDM offset and adopts
 Limine's CR3 (`read_cr3() & kPageMask`); nothing anywhere writes `CR0.PG`,
 builds a page table or relocates the kernel. The page tables, the direct map
 and the long-mode entry are all the bootloader's. Whatever replaces Limine has
@@ -149,32 +149,32 @@ The only path to that laptop as it is. Limine is out, which in practice means
 **GRUB2 with the Multiboot2 protocol**: it is the well-trodden 32-bit legacy-BIOS
 loader, and the tags it provides (E820 map, framebuffer, modules, ACPI RSDP,
 cmdline) map almost one to one onto what `boot::BootInfo` already carries
-([`entry.cpp`](../arch/x86_64/entry.cpp) would become the Multiboot reader).
+([`entry.cpp`](../../arch/x86_64/entry.cpp) would become the Multiboot reader).
 What is lost and has to be rebuilt by the kernel: the HHDM (a fixed 1 GiB
 direct map covers any of these machines), the AP start-up trampolines (INIT/SIPI
 from the MADT instead of Limine's `goto_address`), and paging itself.
 
 | Package | Size | Notes |
 | --- | --- | --- |
-| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | The triple is hardcoded in 7 places across 5 files: [`CMakeLists.txt:69`](../CMakeLists.txt:69), [`tools/build-user.sh:126`](../tools/build-user.sh), [`ports/ccleste/env.sh:71-72`](../ports/ccleste/env.sh), [`ports/doomgeneric/build.sh:110`](../ports/doomgeneric/build.sh), [`ports/ffmpeg/env.sh:62-63`](../ports/ffmpeg/env.sh) |
+| Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | The triple is hardcoded in 7 places across 5 files: [`CMakeLists.txt:69`](../../CMakeLists.txt:69), [`tools/build-user.sh:126`](../../tools/build-user.sh), [`ports/ccleste/env.sh:71-72`](../../ports/ccleste/env.sh), [`ports/doomgeneric/build.sh:110`](../../ports/doomgeneric/build.sh), [`ports/ffmpeg/env.sh:62-63`](../../ports/ffmpeg/env.sh) |
 | `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`) |
 | Paging bootstrap and a 1 GiB direct map, no NX | L | Nothing exists today; `EFER` does not exist in 32-bit mode |
-| VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |
-| `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](../arch/x86_64/context.S), [`elf.cpp:163-263`](../kernel/elf.cpp) |
-| Heap off HHDM pointers | S | [`heap.cpp:224-244`](../kernel/heap.cpp) builds arenas straight on the direct map |
-| Userland, SDK, ports, busybox | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
+| VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |
+| `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](../../arch/x86_64/context.S), [`elf.cpp:163-263`](../../kernel/elf.cpp) |
+| Heap off HHDM pointers | S | [`heap.cpp:224-244`](../../kernel/heap.cpp) builds arenas straight on the direct map |
+| Userland, SDK, ports, busybox | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
 | Harness: a second QEMU machine profile | S-M | See [A permanent harness](#a-permanent-harness-for-a-32-bit-target) |
 
 The good news for the ABI is specific and worth protecting. Syscalls are a
-DPL=3 `int $0x80` gate ([`abi/savanxp_native_abi.h:10-12`](../include/abi/savanxp_native_abi.h)),
+DPL=3 `int $0x80` gate ([`abi/savanxp_native_abi.h:10-12`](../../include/abi/savanxp_native_abi.h)),
 which exists identically in 32-bit protected mode; the dispatchers pass user
 addresses as explicit-width `uint64_t` rather than raw pointers
-([`posix_dispatch.cpp`](../subsystems/posix/kernel/posix_dispatch.cpp));
+([`posix_dispatch.cpp`](../../subsystems/posix/kernel/posix_dispatch.cpp));
 and the shared SDK structs contain no pointers at all, only fixed-width integers
-([`savanxp_abi.h`](../include/abi/savanxp_abi.h)).
+([`savanxp_abi.h`](../../include/abi/savanxp_abi.h)).
 So the ~440-line dispatcher and the whole SDK survive a port almost unchanged.
 The one real LP64 hole is the initial process stack, which is a native SysV argv
-array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
+array of 8-byte slots ([`elf.cpp:170-239`](../../kernel/elf.cpp)).
 
 Order of work, with each step independently bootable and testable:
 `build graph` -> `multiboot2 entry + paging bootstrap + serial console` ->
@@ -185,7 +185,7 @@ Order of work, with each step independently bootable and testable:
 
 If the CPU had long mode, nothing above would be needed: the hybrid ISO already
 boots through a legacy BIOS, and
-[`tools/iso_boot_test.py`](../tools/iso_boot_test.py) proves both El Torito
+[`tools/iso_boot_test.py`](../../tools/iso_boot_test.py) proves both El Torito
 paths today. What Route B still needs is everything in the next section, plus
 some way to write the OS to a real device.
 
@@ -204,17 +204,17 @@ smokes as the guard.
 
 | # | Work | Where |
 | --- | --- | --- |
-| 1 | **32-bpp-only video.** `bpp == 32` is a hard gate in the driver, the console and the splash, and the userland blitter assumes a 4-byte stride. If the firmware's VESA implementation has no 32-bpp linear mode, there is no console, no splash, no `/dev/gpu0`, no desktop -- only serial. Either support 24/16 bpp end to end, or program a 32-bpp mode | [`fb_gpu.cpp:235`](../kernel/fb_gpu.cpp), [`console.cpp:86`](../kernel/console.cpp), [`boot_screen.cpp:359`](../kernel/boot_screen.cpp), [`gfx2d.c:1002-1005`](../subsystems/posix/sdk/v1/runtime/gfx2d.c) |
-| 2 | **No write-combining on the firmware framebuffer.** The WC remap through the PAT exists only for Bochs' `dispi` adapter. The scanout Limine hands over is used as mapped. On a 2.4 GHz Pentium 4 with uncached or write-through video memory the compositor would be unwatchable; remapping the aperture should not depend on `dispi` | [`fb_gpu.cpp:181-232`](../kernel/fb_gpu.cpp), [`vmm.cpp:924-957`](../kernel/vmm.cpp) |
-| 3 | **ATA never enables the PCI IDE function.** The driver hardcodes `0x1F0/0x170`, does not include `pci.hpp`, and nothing writes the IDE function's command register. On firmware that gates legacy IDE decode on PCI command bits 0 and 2, every port reads `0xFF` and no disk is found. PIO only, a 255-sector cap the block core does not chunk, and a million-iteration "timeout" with no SRST recovery | [`ata.cpp:8-11`](../kernel/ata.cpp), [`ata.cpp:87-115`](../kernel/ata.cpp), [`block.cpp:40-47`](../kernel/block.cpp) |
-| 4 | **AC'97 mixer writes assume an emulator.** `unmute_mixer()` writes `0x0000` to NAM offset `0x00`, whose real meaning is *System Power Down*; the reset bit is 15. QEMU ignores it, real codecs may go silent | [`ac97.cpp:185-191`](../kernel/ac97.cpp) |
-| 5 | **No trackpad.** AUX init insists on `0xFF` reset, `0xF6` defaults and the IntelliMouse sample-rate knock; many 2003-era PS/2 pads do not acknowledge those. The keyboard survives, the pointer does not. No absolute or digitizer mode either. And if the pad enumerates as USB there is nothing at all: the tree has no USB stack | [`ps2.cpp:1044-1066`](../kernel/ps2.cpp) |
-| 6 | **Wrong NIC coverage.** Only exact `10EC:8139` is claimed. The 10/100 chip in this family varies by SKU (8139C, 8110/8111, 82559, BCM44xx) | [`rtl8139.cpp:23-24`](../kernel/rtl8139.cpp), [`rtl8139.cpp:369`](../kernel/rtl8139.cpp) |
-| 7 | **Local APIC timer erratum on P4-class silicon.** The periodic timer runs at divide 16 with a calibrated ~7500-count period at 1 kHz, which is the configuration the "Local APIC Timer May Run at Intermittent Intervals" erratum warns about on Pentium 4 and ICH2-4. The PIT backend already exists and is the natural default on such a CPU | [`timer.cpp:123-154`](../arch/x86_64/timer.cpp), [`timer.cpp:227-230`](../arch/x86_64/timer.cpp), [`timer.cpp:156-183`](../arch/x86_64/timer.cpp) |
-| 8 | **SMEP asymmetry.** The BSP prints a warning when SMEP is missing; an AP that cannot enable it halts forever. Pre-Nehalem has no SMEP, so on a multi-core P4 every secondary core is lost at startup | [`cpu_init.cpp:788-790`](../arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:806-808`](../arch/x86_64/cpu_init.cpp) |
-| 9 | **ACPI on real firmware.** The SCI is routed without applying the MADT interrupt-source overrides, and every GPE is masked: no lid, no sleep, no wake, no battery. uACPI never runs `namespace_initialize`, so `_STA`/`_INI` never power anything up, and GPE work runs synchronously in interrupt context | [`acpi.cpp:275-288`](../kernel/acpi.cpp), [`acpi.cpp:479`](../kernel/acpi.cpp), [`uacpi_glue.cpp:125-160`](../kernel/uacpi_glue.cpp) |
-| 10 | **No way to install on metal.** Nothing in `tools/` writes to a device. The build already stages `limine-bios.sys` and the ISO target already runs `limine bios-install`, so a `--target /dev/sdX` target is plumbing, not new technology. Note Limine's BIOS stage 1 requires INT 13h extensions and has no CHS path | [`CMakeLists.txt:713-714`](../CMakeLists.txt), [`CMakeLists.txt:771`](../CMakeLists.txt) |
-| 11 | **Performance and capacity.** 256 MB-1 GB of RAM, PIO reads, no SpeedStep or thermal handling, a 256 KB static userland heap, and `resolution: 1280x800x32` hardcoded in the boot config for a panel that is not that | [`boot/limine.conf:12`](../boot/limine.conf), [`runtime/posix.c:43-44`](../subsystems/posix/sdk/v1/runtime/posix.c) |
+| 1 | **32-bpp-only video.** `bpp == 32` is a hard gate in the driver, the console and the splash, and the userland blitter assumes a 4-byte stride. If the firmware's VESA implementation has no 32-bpp linear mode, there is no console, no splash, no `/dev/gpu0`, no desktop -- only serial. Either support 24/16 bpp end to end, or program a 32-bpp mode | [`fb_gpu.cpp:235`](../../kernel/fb_gpu.cpp), [`console.cpp:86`](../../kernel/console.cpp), [`boot_screen.cpp:359`](../../kernel/boot_screen.cpp), [`gfx2d.c:1002-1005`](../../subsystems/posix/sdk/v1/runtime/gfx2d.c) |
+| 2 | **No write-combining on the firmware framebuffer.** The WC remap through the PAT exists only for Bochs' `dispi` adapter. The scanout Limine hands over is used as mapped. On a 2.4 GHz Pentium 4 with uncached or write-through video memory the compositor would be unwatchable; remapping the aperture should not depend on `dispi` | [`fb_gpu.cpp:181-232`](../../kernel/fb_gpu.cpp), [`vmm.cpp:924-957`](../../kernel/vmm.cpp) |
+| 3 | **ATA never enables the PCI IDE function.** The driver hardcodes `0x1F0/0x170`, does not include `pci.hpp`, and nothing writes the IDE function's command register. On firmware that gates legacy IDE decode on PCI command bits 0 and 2, every port reads `0xFF` and no disk is found. PIO only, a 255-sector cap the block core does not chunk, and a million-iteration "timeout" with no SRST recovery | [`ata.cpp:8-11`](../../kernel/ata.cpp), [`ata.cpp:87-115`](../../kernel/ata.cpp), [`block.cpp:40-47`](../../kernel/block.cpp) |
+| 4 | **AC'97 mixer writes assume an emulator.** `unmute_mixer()` writes `0x0000` to NAM offset `0x00`, whose real meaning is *System Power Down*; the reset bit is 15. QEMU ignores it, real codecs may go silent | [`ac97.cpp:185-191`](../../kernel/ac97.cpp) |
+| 5 | **No trackpad.** AUX init insists on `0xFF` reset, `0xF6` defaults and the IntelliMouse sample-rate knock; many 2003-era PS/2 pads do not acknowledge those. The keyboard survives, the pointer does not. No absolute or digitizer mode either. And if the pad enumerates as USB there is nothing at all: the tree has no USB stack | [`ps2.cpp:1044-1066`](../../kernel/ps2.cpp) |
+| 6 | **Wrong NIC coverage.** Only exact `10EC:8139` is claimed. The 10/100 chip in this family varies by SKU (8139C, 8110/8111, 82559, BCM44xx) | [`rtl8139.cpp:23-24`](../../kernel/rtl8139.cpp), [`rtl8139.cpp:369`](../../kernel/rtl8139.cpp) |
+| 7 | **Local APIC timer erratum on P4-class silicon.** The periodic timer runs at divide 16 with a calibrated ~7500-count period at 1 kHz, which is the configuration the "Local APIC Timer May Run at Intermittent Intervals" erratum warns about on Pentium 4 and ICH2-4. The PIT backend already exists and is the natural default on such a CPU | [`timer.cpp:123-154`](../../arch/x86_64/timer.cpp), [`timer.cpp:227-230`](../../arch/x86_64/timer.cpp), [`timer.cpp:156-183`](../../arch/x86_64/timer.cpp) |
+| 8 | **SMEP asymmetry.** The BSP prints a warning when SMEP is missing; an AP that cannot enable it halts forever. Pre-Nehalem has no SMEP, so on a multi-core P4 every secondary core is lost at startup | [`cpu_init.cpp:788-790`](../../arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:806-808`](../../arch/x86_64/cpu_init.cpp) |
+| 9 | **ACPI on real firmware.** The SCI is routed without applying the MADT interrupt-source overrides, and every GPE is masked: no lid, no sleep, no wake, no battery. uACPI never runs `namespace_initialize`, so `_STA`/`_INI` never power anything up, and GPE work runs synchronously in interrupt context | [`acpi.cpp:275-288`](../../kernel/acpi.cpp), [`acpi.cpp:479`](../../kernel/acpi.cpp), [`uacpi_glue.cpp:125-160`](../../kernel/uacpi_glue.cpp) |
+| 10 | **No way to install on metal.** Nothing in `tools/` writes to a device. The build already stages `limine-bios.sys` and the ISO target already runs `limine bios-install`, so a `--target /dev/sdX` target is plumbing, not new technology. Note Limine's BIOS stage 1 requires INT 13h extensions and has no CHS path | [`CMakeLists.txt:713-714`](../../CMakeLists.txt), [`CMakeLists.txt:771`](../../CMakeLists.txt) |
+| 11 | **Performance and capacity.** 256 MB-1 GB of RAM, PIO reads, no SpeedStep or thermal handling, a 256 KB static userland heap, and `resolution: 1280x800x32` hardcoded in the boot config for a panel that is not that | [`boot/limine.conf:12`](../../boot/limine.conf), [`runtime/posix.c:43-44`](../../subsystems/posix/sdk/v1/runtime/posix.c) |
 
 ## Settling the open questions before writing code
 
@@ -265,11 +265,11 @@ behaviour, and the real timing of PIO reads against a spinning disk.
   on that laptop".
 - Whether Route A keeps both architectures in one tree or builds a 32-bit
   variant. The current graph has no arch dimension at all
-  ([`CMakePresets.json`](../CMakePresets.json) has no arch axis), so that choice
+  ([`CMakePresets.json`](../../CMakePresets.json) has no arch axis), so that choice
   is still open, and it is the difference between one `SAVANXP_ARCH` cache
   variable and two source trees.
 - What the 32-bit isolation story is. Deferring per-process CR3 and section
   views is a suggestion for making the port tractable, not a design.
 - Whether the desktop is expected to be usable on 1 GB of shared video memory
   and a 2.4 GHz P4 without hardware 3D. That is a performance question, and
-  [`GRAPHICS_PERF.md`](GRAPHICS_PERF.md) is where it belongs.
+  [`GRAPHICS_PERF.md`](../desktop/GRAPHICS_PERF.md) is where it belongs.

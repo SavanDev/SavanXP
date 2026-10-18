@@ -4,7 +4,7 @@
  * Los tres primeros casos no paran nunca el proceso: preguntan por algo que ya
  * esta resuelto. Eran todo lo que habia, y por eso no dijeron nada el dia que
  * se descubrio que poll() giraba en el contexto del que llamaba en vez de
- * estacionarlo (docs/SYSTEM_MONITORING.md). Los cuatro que siguen son los que
+ * estacionarlo (docs/userland/SYSTEM_MONITORING.md). Los cuatro que siguen son los que
  * obligan al proceso a dormirse y a que alguien lo despierte: por vencimiento,
  * por un pipe que otro proceso escribe, sin vencimiento, y por un objeto del
  * kernel que se senaliza solo.

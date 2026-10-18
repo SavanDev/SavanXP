@@ -79,5 +79,5 @@ close just stop sending, and the stream expires on its own.
 
 Capture routing, resampling in the daemon, and real-time promises: slices are
 wall-clock sized and loss is counted, not hidden. See
-`docs/SXMEDIA.md` for the withdrawn layer this replaces the need for, and
-`docs/MEDIA_PLAYER.md` for the clock both sides still share.
+`docs/media/SXMEDIA.md` for the withdrawn layer this replaces the need for, and
+`docs/media/MEDIA_PLAYER.md` for the clock both sides still share.

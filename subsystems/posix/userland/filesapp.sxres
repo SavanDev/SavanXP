@@ -1,4 +1,4 @@
-# Recursos SXE del explorador de archivos. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del explorador de archivos. Ver docs/userland/SXE_FORMAT.md.
 name=Files
 description=Browse /disk and preview files
 version=system

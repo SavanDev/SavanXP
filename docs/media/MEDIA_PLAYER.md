@@ -3,7 +3,7 @@
 How the Media Player is built, what it needs from the optional FFmpeg port, what
 it can and cannot promise about audio/video sync on the devices SavanXP has today,
 and the order in which the missing pieces should arrive. Building the port is
-covered by [`ports/ffmpeg/README.md`](../ports/ffmpeg/README.md).
+covered by [`ports/ffmpeg/README.md`](../../ports/ffmpeg/README.md).
 
 ## Where it lives
 
@@ -75,7 +75,7 @@ single ~7 MB binary.
 The library also costs 17.25 MB of BSS, 16 MB of it FFmpeg's FFT tables, which the
 codec registry drags in whether or not any given file needs a transform. That is an
 FFmpeg build-configuration decision, not the loader's; see
-[`SHARED_LIBRARIES.md`](SHARED_LIBRARIES.md#ffmpeg-as-one-library-and-what-it-cost-to-find-out).
+[`SHARED_LIBRARIES.md`](../kernel/SHARED_LIBRARIES.md#ffmpeg-as-one-library-and-what-it-cost-to-find-out).
 
 It also carries **~18 MiB of BSS**, almost all of it `ff_tx_tab_*`: libavutil's
 transform tables, one static array per size up to 2^21 entries for each of
@@ -180,7 +180,7 @@ Tango 0.8.90 -- the set the file-type catalog adopted -- was tried first and
 rejected for this use: its `media-playback-*` and `media-seek-*` glyphs are light
 grey with an outline, drawn for a white background. On the grey button face an
 enabled Play reads the same as a disabled one. It is the same finding
-[`THIRD_PARTY_PROVENANCE.md`](THIRD_PARTY_PROVENANCE.md) records for Tango's
+[`THIRD_PARTY_PROVENANCE.md`](../third-party/THIRD_PARTY_PROVENANCE.md) records for Tango's
 `devices/` icons. The replacements use the system's app-icon palette: flat black
 glyphs like the toolkit's text and scrollbar arrows, ochre for the folder, red
 for the mute cross. A disabled icon is drawn with the toolkit's etched relief (the
@@ -216,7 +216,7 @@ In the order they unblock each other.
 2. **Threads.** Decode ahead on one thread, feed audio from another, and a slow
    frame stops freezing input. It also turns on FFmpeg's frame and slice
    threading, which is where most H.264/HEVC throughput on more cores comes
-   from. Blocked on the kernel ([`SMP_ROADMAP.md`](SMP_ROADMAP.md)).
+   from. Blocked on the kernel ([`SMP_ROADMAP.md`](../kernel/SMP_ROADMAP.md)).
 3. **Assembly.** `--disable-asm` leaves every DSP routine in scalar C: that is
    the other large throughput factor. Needs `nasm` pinned in the toolchain.
 4. **File dialog.** The Open dialog is a path field. A real one belongs in
@@ -228,4 +228,4 @@ In the order they unblock each other.
    PCM and the resampler, because Python + Pillow is all the host has. H.264,
    VP9, AAC and Opus are verified by hand with real files until there is an
    encoder on the host, or pinned public test streams with a license that
-   allows redistributing them ([`THIRD_PARTY_ADOPTION.md`](THIRD_PARTY_ADOPTION.md)).
+   allows redistributing them ([`THIRD_PARTY_ADOPTION.md`](../third-party/THIRD_PARTY_ADOPTION.md)).

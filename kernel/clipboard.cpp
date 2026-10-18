@@ -17,7 +17,7 @@
  * CLIENTE (hoy dos: el pipe de eventos y el evento de wake) contra el limite de
  * 64 por proceso de process::kMaxFileHandles. Sumarle un par de canales por
  * cliente para copiar y pegar le bajaria el techo de ventanas simultaneas, que
- * costo bastante subir (docs/WM_SUBSYSTEM.md). Como device node el
+ * costo bastante subir (docs/desktop/WM_SUBSYSTEM.md). Como device node el
  * cliente lo abre al copiar o pegar y lo cierra enseguida, no cuesta ningun fd
  * permanente, y ademas queda disponible para procesos sin ventana.
  *

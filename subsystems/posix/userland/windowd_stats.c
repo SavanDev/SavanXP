@@ -143,7 +143,7 @@ void windowd_stats_frame_end(
     if (timing != 0)
     {
         /* No se exige que service quede anidado adentro de present: con
-           present asincrono (medido y revertido, docs/GRAPHICS_PERF.md) no lo
+           present asincrono (medido y revertido, docs/desktop/GRAPHICS_PERF.md) no lo
            esta, y descartar la muestra borraria el desglose. El ipc se acota
            a cero en el reporte. */
         stats->service_ns_total += timing->service_ns;

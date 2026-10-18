@@ -24,7 +24,7 @@
  * una politica de permisos, es que no se puede: el proximo build lo repone.
  *
  * La identidad de cada entrada sale del .sxmeta del propio binario, igual que
- * en el launcher (docs/SXE_FORMAT.md). Un binario sin recursos no es un error:
+ * en el launcher (docs/userland/SXE_FORMAT.md). Un binario sin recursos no es un error:
  * se muestra con su basename y se desinstala igual.
  *
  * Sin malloc: capacidades fijas y truncado, igual que progman_registry.

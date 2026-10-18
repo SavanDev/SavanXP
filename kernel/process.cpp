@@ -95,7 +95,7 @@ int negative_error(sx_status code) {
  * no hace eso.
  *
  * timer::ticks() se queda para lo unico que mide bien: la contabilidad de CPU,
- * donde un tick ES un proceso (docs/SYSTEM_MONITORING.md).
+ * donde un tick ES un proceso (docs/userland/SYSTEM_MONITORING.md).
  *
  * El contador de interrupciones queda de reserva por si el TSC no llego a
  * calibrarse; como el calibrado corre al principio del arranque, eso solo pasa
@@ -627,7 +627,7 @@ void note_woken(process::Process& proc) {
 // sincrono -- escribir la request y bloquearse leyendo la reply, que es como
 // habla windowd con compositord -- despertaba al que esperaba pero lo dejaba
 // esperando su turno del round-robin. Medido en el camino de display eso era el
-// 99% del costo de poner un frame en pantalla (ver docs/GRAPHICS_PERF.md), con
+// 99% del costo de poner un frame en pantalla (ver docs/desktop/GRAPHICS_PERF.md), con
 // el trabajo de GPU real en dos ordenes de magnitud menos.
 int complete_blocked_read(process::Process& proc, int result) {
     proc.blocked_io_fd = 0;
@@ -843,7 +843,7 @@ bool open_file_has_hangup(const object::IoObject& file) {
  * -- cualquier programa que hiciera poll se veia al 100% de CPU, y el proceso
  * ocioso, lo unico que hace visible la ociosidad, casi no corria. windowd daba
  * 97-99% en QEMU y en VirtualBox mientras su propia instrumentacion media ~1%
- * de trabajo real. Ver docs/SYSTEM_MONITORING.md.
+ * de trabajo real. Ver docs/userland/SYSTEM_MONITORING.md.
  *
  * Ahora se prueba una vez y, si no hay nada listo, el proceso se estaciona con
  * su subsistema y lo despierta wake_parked_waiters() desde el tick. La
@@ -1801,7 +1801,7 @@ int waitpid_child(process::Process& proc, int64_t waited, uint64_t status_addres
 // Native spawn clones the caller's whole handle table into the child (the
 // POSIX spawn only takes stdio): without a native fork this is the only
 // channel that carries handles across, and per-handle opt-in stays future
-// work next to FD_CLOEXEC (see docs/KERNEL_SECURITY.md). On failure the
+// work next to FD_CLOEXEC (see docs/kernel/KERNEL_SECURITY.md). On failure the
 // fully created child is reaped here, so the caller only sees ENOMEM.
 bool clone_handles_for_spawn(process::Process& proc, const process::Process& parent) {
     if (!process::detail::inherit_all_handles(proc, parent)) {

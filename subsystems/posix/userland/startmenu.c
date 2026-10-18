@@ -267,7 +267,7 @@ static void startmenu_draw_icon(struct sx_painter *painter, const struct desktop
         return;
     }
     /* El registro hornea a 32: al achicar se promedia (bilineal), que es lo
-     * que pide docs/SXGFX_ROADMAP.md para iconos. */
+     * que pide docs/desktop/SXGFX_ROADMAP.md para iconos. */
     sx_painter_draw_scaled_bitmap(
         painter,
         &bitmap,

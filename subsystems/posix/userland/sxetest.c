@@ -1,5 +1,5 @@
 /*
- * Harness del lector de recursos SXE (fase 1 de docs/SXE_FORMAT.md).
+ * Harness del lector de recursos SXE (fase 1 de docs/userland/SXE_FORMAT.md).
  *
  * Todo el peso esta en sxe_selftest(), dentro del runtime del SDK: este
  * binario solo lo corre y traduce el resultado a los tokens que busca

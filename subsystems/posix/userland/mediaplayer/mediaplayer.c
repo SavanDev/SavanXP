@@ -8,7 +8,7 @@
  * Todo corre en un solo hilo: el loop atiende la entrada, le da una vuelta a la
  * reproduccion (playback_pump) y duerme en poll() lo que esta le diga, que
  * nunca es mas que lo que aguanta el colchon de audio. La arquitectura y sus
- * limites estan en docs/MEDIA_PLAYER.md. */
+ * limites estan en docs/media/MEDIA_PLAYER.md. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -186,7 +186,7 @@ static void on_resize(struct sxgui_app* app) {
  *
  * Una sola vez: en una ventana redimensionable el WM atiende solo el PRIMER
  * pedido, para que una app no le pelee la geometria al usuario (ver
- * docs/WM_SUBSYSTEM.md). Por eso la ventana vacia no pide nada -- gastaria el
+ * docs/desktop/WM_SUBSYSTEM.md). Por eso la ventana vacia no pide nada -- gastaria el
  * pedido en un tamano que no es el del video --, y los archivos que se abren
  * despues se acomodan con barras negras en la ventana que haya. */
 static void request_window_size(void) {

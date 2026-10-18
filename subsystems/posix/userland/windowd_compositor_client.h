@@ -26,7 +26,7 @@ struct windowd_compositor_connection
        sobre todas las que se leyeron -- un present con mas de 32 rects se
        parte en varias RPC -- hasta que windowd_stats_frame_end lo consume.
        No se resetea al empezar un present, asi funciona igual si la reply se
-       lee despues (ver "Asynchronous present" en docs/GRAPHICS_PERF.md). */
+       lee despues (ver "Asynchronous present" en docs/desktop/GRAPHICS_PERF.md). */
     struct savanxp_compositor_service_timing last_present_timing;
 };
 

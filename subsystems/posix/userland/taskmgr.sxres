@@ -1,4 +1,4 @@
-# Recursos SXE del administrador de tareas. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del administrador de tareas. Ver docs/userland/SXE_FORMAT.md.
 name=Task Manager
 description=Processes, performance and network
 version=system

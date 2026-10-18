@@ -56,6 +56,15 @@
   `docs/`, `assets/README.md`) is written in English, so the project is
   readable by anyone who finds it.
 
+## Code language
+
+- Code is written in English: identifiers, log lines, user-visible strings,
+  and comments.
+- Much of the tree still carries Spanish comments from earlier development.
+  Do not rewrite them in bulk: every commit that touches a file translates
+  the comments on the lines it changes — and any comment those lines make
+  stale — into English, until only one language remains.
+
 ## Repository rules
 
 - Do not break the persistence of external apps installed in `build/disk.img`.

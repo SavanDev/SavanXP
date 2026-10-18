@@ -1,4 +1,4 @@
-# Recursos SXE del port de DoomGeneric. Ver docs/SXE_FORMAT.md.
+# Recursos SXE del port de DoomGeneric. Ver docs/userland/SXE_FORMAT.md.
 #
 # Los valores reproducen la presentacion que hasta ahora vivia hardcodeada en
 # windowd_appinfo.c y en los defaults de progman_registry.c, que eran el unico

@@ -3,7 +3,7 @@
 #include "libc.h"
 
 /*
- * Asociaciones de archivo (docs/SXE_FORMAT.md, fase 5).
+ * Asociaciones de archivo (docs/userland/SXE_FORMAT.md, fase 5).
  *
  * Resuelve "que programa abre este archivo" con la division que fija el
  * documento:

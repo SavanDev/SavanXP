@@ -3,7 +3,7 @@
 #include "savanxp/syscall.h"
 
 /*
- * Protocolo WM <-> cliente, version 4 (ver docs/WM_SUBSYSTEM.md).
+ * Protocolo WM <-> cliente, version 4 (ver docs/desktop/WM_SUBSYSTEM.md).
  *
  * Contrato entre el window manager (windowd, subsystems/posix/userland/
  * windowd.c) y cada proceso cliente que tiene una ventana. El WM lo establece
@@ -33,14 +33,14 @@
  * el WM crea su seccion y se la entrega como handle por la cola de handles del
  * pipe de eventos, y sus eventos viajan por ese mismo pipe con su window_id. Ni
  * el WM ni el cliente abren un canal nuevo por ventana. Ver
- * docs/OWNED_WINDOWS.md.
+ * docs/desktop/OWNED_WINDOWS.md.
  *
  * NOTA sobre el subsistema nativo: comparte estas structs (son el contrato
  * en el alambre y no se duplican); lo que difiere es el transporte. Un
  * cliente nativo no puede leer el pipe de eventos, asi que hoy es
  * solo-salida: mapea la seccion, publica batches y senala eventos con
  * syscalls SXN (ver sdk/nativedemo/main.c). La entrada por anillo sobre
- * memoria compartida es trabajo futuro (docs/KERNEL_NATIVE_API.md).
+ * memoria compartida es trabajo futuro (docs/kernel/KERNEL_NATIVE_API.md).
  */
 
 /* Seccion compartida de la superficie: header + anillo de dirty-rect batches +

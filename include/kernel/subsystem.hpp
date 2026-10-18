@@ -28,7 +28,7 @@ process::SavedContext* dispatch(Id id, process::SavedContext* context);
 // The kernel allocates and frees the bytes and never looks inside: a
 // subsystem registers how much its per-process state needs, and that is all
 // the kernel knows about it. POSIX keeps its current directory there, which
-// is why the kernel no longer has a cwd field (docs/KERNEL_NATIVE_API.md,
+// is why the kernel no longer has a cwd field (docs/kernel/KERNEL_NATIVE_API.md,
 // isolation slice B). A subsystem with no state registers 0 and pays
 // nothing.
 void register_process_state_size(Id id, size_t bytes);

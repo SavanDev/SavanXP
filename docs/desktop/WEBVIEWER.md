@@ -37,13 +37,14 @@ parsed past and ignored.
 
 ## Names
 
-Numeric IPv4 never touches the network. Anything else goes out as one A/IN
-question over UDP to the network's DNS (10.0.2.3 under QEMU slirp), with
-CNAME chasing, NXDOMAIN told apart from other failures, and every overrun a
-rejection: the bytes are untrusted. Transaction IDs mix uptime with a counter
-(the tree has no kernel RNG yet), and answers are trusted past TXID plus the
-echoed question — fine on a host bridge, not against an adversary. No cache,
-no AAAA, no TCP fallback: each gap says so in the status line.
+Numeric IPv4 never touches the network. Anything else resolves through the
+minimal DNS client documented in [`NETWORKING.md`](../net/NETWORKING.md#name-resolution-the-minimal-dns-client):
+one A/IN question over UDP to the network's DNS (10.0.2.3 under QEMU slirp),
+with CNAME chasing, NXDOMAIN told apart from other failures, and every
+overrun a rejection. Transaction IDs mix uptime with a counter (the tree has
+no kernel RNG yet), and answers are trusted past TXID plus the echoed
+question — fine on a host bridge, not against an adversary. No cache, no
+AAAA, no TCP fallback: each gap says so in the status line.
 
 Two overrides exist for tests: `webview --dns 10.0.2.2:5353` at launch, and
 `dns://10.0.2.2:5353` typed in the address bar (config, never history).

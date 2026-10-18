@@ -237,7 +237,7 @@ class Session(object):
 
         EL ORDEN YA NO ES EL DE UNA TABLA HORNEADA. progman arma su catalogo
         escaneando los binarios instalados y los ordena alfabeticamente dentro
-        de cada grupo (docs/SXE_FORMAT.md, "All Programs"), asi que estos
+        de cada grupo (docs/userland/SXE_FORMAT.md, "All Programs"), asi que estos
         indices son posiciones en ese orden. Con las categorias de hoy:
 
             Accessories: Calculator, Files, [Media Player], Notepad, Paint, Shell, Web Viewer
@@ -626,7 +626,7 @@ def scenario_mines(s):
     s.shot("mines-bandera")
 
     # About en Principiante, el caso que motivo las ventanas con dueno
-    # (docs/OWNED_WINDOWS.md): el dialogo mide casi el doble que la ventana del
+    # (docs/desktop/OWNED_WINDOWS.md): el dialogo mide casi el doble que la ventana del
     # tablero. Lo que hay que mirar: sale ENTERO, con marco y titulo del WM,
     # centrado sobre el buscaminas y encima de el. ESC lo cierra desde el
     # teclado, que el WM le rutea al dialogo por ser la ventana activa.
@@ -647,7 +647,7 @@ def scenario_mines(s):
     # Lo que hay que mirar en las dos ultimas: la ventana tiene que CRECER con
     # el tablero de Experto en vez de quedarse del tamano de Principiante con
     # el tablero grande recortado. Es la mitad "el programa sigue eligiendo su
-    # tamano" del flag de ventana fija (docs/WM_SUBSYSTEM.md).
+    # tamano" del flag de ventana fija (docs/desktop/WM_SUBSYSTEM.md).
     s.qmp.move_to(613, 332)
     s.qmp.click()
     s.shot("mines-menu-nivel")

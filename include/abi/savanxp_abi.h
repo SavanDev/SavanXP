@@ -11,7 +11,7 @@
  * speaks this contract and is indifferent to which userland, if any, is
  * built on it.
  *
- * See docs/KERNEL_NATIVE_API.md for the isolation campaign.
+ * See docs/kernel/KERNEL_NATIVE_API.md for the isolation campaign.
  */
 
 #pragma once
@@ -760,7 +760,7 @@ enum savanxp_input_event_type {
 
 /* Flags de lanzamiento: quien pide el launch declara las necesidades del
  * programa, para que el WM no tenga que conocer un catalogo de aplicaciones
- * (ver docs/WM_SUBSYSTEM.md, A2.3). */
+ * (ver docs/desktop/WM_SUBSYSTEM.md, A2.3). */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_NONE 0x00000000u
 /* El programa renderiza a resolucion baja y usa fullscreen composited (F11):
  * el WM le asigna la superficie a ese tamano al lanzarlo. */
@@ -853,7 +853,7 @@ struct savanxp_desktop_launch_request {
  * solo crecen, asi que llena es head - tail == CAPACITY.
  */
 /*
- * Ventanas con dueno (docs/OWNED_WINDOWS.md). Un proceso tiene UNA conexion con
+ * Ventanas con dueno (docs/desktop/OWNED_WINDOWS.md). Un proceso tiene UNA conexion con
  * el WM -- estos canales -- y puede tener varias ventanas: la principal (id 0) y
  * hasta SAVANXP_WM_MAX_OWNED_WINDOWS con dueno, cuyo id elige el cliente. Crear
  * una es un pedido por el header de la PRINCIPAL; su superficie llega como
