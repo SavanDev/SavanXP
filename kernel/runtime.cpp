@@ -3,27 +3,43 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Acceso de 64 bits que no promete alineacion ni exclusividad de aliasing: x86
-// permite loads/stores desalineados y may_alias evita que el optimizador asuma
-// que este uint64_t no pisa los bytes de al lado.
-using UnalignedWord = uint64_t __attribute__((may_alias, aligned(1)));
+// La palabra de las instrucciones de string depende del modo: 8 bytes en
+// x86_64 y 4 en i386 (rep movsq/stosq no existen en modo de 32 bits).
+#if defined(__x86_64__)
+using CopyWord = uint64_t;
+#else
+using CopyWord = uint32_t;
+#endif
+
+// Desplazamiento de esa palabra (3 = 8 bytes, 2 = 4 bytes).
+constexpr unsigned kCopyWordShift = sizeof(CopyWord) == 8 ? 3 : 2;
+
+// Acceso que no promete alineacion ni exclusividad de aliasing: x86 permite
+// loads/stores desalineados y may_alias evita que el optimizador asuma que
+// esta palabra no pisa los bytes de al lado.
+using UnalignedWord = CopyWord __attribute__((may_alias, aligned(1)));
 
 // El kernel se compila con -mgeneral-regs-only (sin SSE), asi que la unidad de
-// copia mas ancha disponible son 8 bytes. En vez de un lazo en C -- que sin
+// copia mas ancha disponible es CopyWord. En vez de un lazo en C -- que sin
 // optimizacion cuesta media docena de instrucciones POR BYTE -- se usan las
-// instrucciones de string, que mueven 8 bytes por iteracion de microcodigo y no
-// pagan overhead de lazo. Es la diferencia entre arrastrar los 4 MiB de un
-// frame de 1280x800 de a un byte o de a ocho.
+// instrucciones de string, que mueven esa palabra por iteracion de microcodigo
+// y no pagan overhead de lazo. Es la diferencia entre arrastrar los 4 MiB de un
+// frame de 1280x800 de a un byte o de a palabra.
 //
 // Requisito: DF=0. Lo garantizan los cld de los puntos de entrada al kernel
-// (context.S y las macros DEFINE_ISR_* de cpu_init.cpp).
+// (entry32.S en i386; context.S y las macros DEFINE_ISR_* de cpu_init.cpp en
+// x86_64).
 extern "C" void* memcpy(void* destination, const void* source, size_t count) {
     void* cursor = destination;
     const void* origin = source;
-    size_t words = count >> 3;
-    size_t tail = count & 7u;
+    size_t words = count >> kCopyWordShift;
+    size_t tail = count & ((1u << kCopyWordShift) - 1u);
 
+#if defined(__x86_64__)
     asm volatile("rep movsq" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
+#else
+    asm volatile("rep movsl" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
+#endif
     asm volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
 
     return destination;
@@ -31,13 +47,22 @@ extern "C" void* memcpy(void* destination, const void* source, size_t count) {
 
 extern "C" void* memset(void* destination, int value, size_t count) {
     const uint8_t byte = static_cast<uint8_t>(value);
-    // Replica el byte en las 8 posiciones para que stosq escriba el mismo patron.
-    const uint64_t pattern = static_cast<uint64_t>(byte) * 0x0101010101010101ULL;
+    // Replica el byte en todas las posiciones para que la instruccion de string
+    // escriba el mismo patron.
+#if defined(__x86_64__)
+    const CopyWord pattern = static_cast<CopyWord>(byte) * 0x0101010101010101ULL;
+#else
+    const CopyWord pattern = static_cast<CopyWord>(byte) * 0x01010101u;
+#endif
     void* cursor = destination;
-    size_t words = count >> 3;
-    size_t tail = count & 7u;
+    size_t words = count >> kCopyWordShift;
+    size_t tail = count & ((1u << kCopyWordShift) - 1u);
 
+#if defined(__x86_64__)
     asm volatile("rep stosq" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
+#else
+    asm volatile("rep stosl" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
+#endif
     asm volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
 
     return destination;
@@ -56,12 +81,12 @@ extern "C" void* memmove(void* destination, const void* source, size_t count) {
         return memcpy(destination, source, count);
     }
 
-    // Solape hacia atras. Se copia descendente de a 8 bytes a mano en vez de
+    // Solape hacia atras. Se copia descendente de a palabra a mano en vez de
     // prender DF y usar rep movs: dejar la bandera prendida aunque sea un
     // instante rompe cualquier interrupcion que entre en el medio.
     size_t remaining = count;
-    while (remaining >= sizeof(uint64_t)) {
-        remaining -= sizeof(uint64_t);
+    while (remaining >= sizeof(CopyWord)) {
+        remaining -= sizeof(CopyWord);
         *reinterpret_cast<UnalignedWord*>(dst + remaining) =
             *reinterpret_cast<const UnalignedWord*>(src + remaining);
     }

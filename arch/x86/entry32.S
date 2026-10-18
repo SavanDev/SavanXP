@@ -27,8 +27,11 @@ multiboot2_header_end:
 
 .section .bss
 .align 16
+/* El montaje de SxFS recorre el arbol en profundidad (4 KiB de visited[] en
+ * una sola funcion mas hasta 32 niveles de recursion) y despues llega el
+ * ELF32; 128 KiB dan margen sobre la pila de 16 KiB del bootstrap. */
 boot_stack_bottom:
-    .skip 16384
+    .skip 131072
 boot_stack_top:
 
 .section .text

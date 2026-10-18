@@ -1,5 +1,12 @@
 #include <stdint.h>
 
+#include "kernel/ata.hpp"
+#include "kernel/block.hpp"
+#include "kernel/fs.hpp"
+#include "kernel/partition.hpp"
+#include "kernel/sxfs.hpp"
+#include "kernel/vfs.hpp"
+
 #include "multiboot2.hpp"
 #include "paging.hpp"
 #include "serial.hpp"
@@ -86,6 +93,91 @@ void report_framebuffer(const uint8_t* tag) {
     serial::write("\n");
 }
 
+void report_block_devices() {
+    const size_t count = block::device_count();
+    serial::write("block: ");
+    serial::write_dec(static_cast<uint32_t>(count));
+    serial::write(" dispositivo(s)\n");
+    for (size_t index = 0; index < count; ++index) {
+        block::DeviceInfo info = {};
+        if (!block::device_info(index, info) || !info.present) {
+            continue;
+        }
+        serial::write("  ");
+        serial::write(info.name);
+        serial::write(": ");
+        serial::write_dec(info.sector_count);
+        serial::write(" sectores, ");
+        serial::write(info.writable ? "rw" : "ro");
+        serial::write("\n");
+    }
+}
+
+/* Monta el SxFS persistente del primer disco que lo reconozca y lo publica
+ * bajo /disk. La pila de almacenamiento es la misma que la de x86_64: ATA PIO,
+ * registro de dispositivos de bloque, driver MBR y SxFS sobre el VFS. */
+void mount_root_filesystem() {
+    vfs::initialize(nullptr, 0);
+    block::register_driver(ata::driver());
+    block::register_driver(partition::driver());
+    block::probe_all();
+    report_block_devices();
+
+    fs::initialize();
+    sxfs::initialize();
+    fs::register_driver(sxfs::driver());
+
+    const size_t mount = fs::mount_any(sxfs::kRootMountPoint);
+    if (mount == fs::kInvalidMount || !fs::attach(mount) || !vfs::ready()) {
+        serial::write("sxfs: sin volumen montado en ");
+        serial::write(sxfs::kRootMountPoint);
+        serial::write("\n");
+        return;
+    }
+
+    fs::MountInfo info = {};
+    if (!fs::mount_info(mount, info)) {
+        serial::write("sxfs: el montaje no expone su volumen\n");
+        return;
+    }
+
+    serial::write("sxfs: ");
+    serial::write_dec(static_cast<uint32_t>(sxfs::file_count(info.volume)));
+    serial::write(" ficheros, ");
+    serial::write_dec(static_cast<uint32_t>(sxfs::used_bytes(info.volume) / 1024u));
+    serial::write(" KiB usados de ");
+    serial::write_dec(static_cast<uint32_t>(sxfs::total_bytes(info.volume) / 1024u));
+    serial::write(" KiB\n");
+
+    const vfs::Vnode* root = vfs::resolve(sxfs::kRootMountPoint);
+    if (root == nullptr) {
+        serial::write("sxfs: el montaje no aparece en el vfs\n");
+        return;
+    }
+    const size_t children = vfs::child_count(*root);
+    serial::write("sxfs: ");
+    serial::write_dec(static_cast<uint32_t>(children));
+    serial::write(" entrada(s) en ");
+    serial::write(sxfs::kRootMountPoint);
+    serial::write("\n");
+    for (size_t index = 0; index < children; ++index) {
+        const vfs::Vnode* child = vfs::child_at(*root, index);
+        if (child == nullptr) {
+            continue;
+        }
+        serial::write("  ");
+        serial::write(child->name);
+        if (child->type == vfs::NodeType::directory) {
+            serial::write("/\n");
+        } else {
+            serial::write(" (");
+            serial::write_dec(static_cast<uint32_t>(child->size));
+            serial::write(" B)\n");
+        }
+    }
+    serial::write("SXFS ROOT OK\n");
+}
+
 }
 
 /* -fstack-protector-strong viene en el perfil del kernel; en x86_64 estas dos
@@ -160,6 +252,8 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     }
     paging::enable_identity_1gib();
     serial::write("paginacion: identidad 0..1 GiB, 4 MiB por pagina, sin NX\n");
+
+    mount_root_filesystem();
 
     serial::write("I386 BOOT OK\n");
     for (;;) {

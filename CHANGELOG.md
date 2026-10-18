@@ -26,6 +26,10 @@ Cut-off notes:
   (GRUB2 handoff, COM1 serial, 4 MiB-page identity map over the first 1 GiB) and
   `./build.sh iso` emits the BIOS GRUB2 ISO; `tools/legacy_boot_test.py` asserts the boot.
 
+- **The i386 kernel mounts the SxFS root.** ATA PIO, partitions, SxFS and the VFS run in
+  the 32-bit kernel, and `tools/legacy_boot_test.py --disk-image` boots the ISO against
+  the persistent image (`snapshot=on`) and asserts `SXFS ROOT OK`.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

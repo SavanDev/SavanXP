@@ -295,6 +295,21 @@ set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES})
 if(SAVANXP_ARCH STREQUAL "x86_64")
     list(APPEND SAVANXP_KERNEL_SOURCES ${SAVANXP_X86_64_KERNEL_SOURCES})
     list(APPEND SAVANXP_KERNEL_SOURCES ${SAVANXP_POSIX_KERNEL_SOURCES})
+elseif(SAVANXP_ARCH STREQUAL "i386")
+    # La pila de almacenamiento no depende de la arquitectura: ATA PIO, el
+    # registro de dispositivos de bloque, el driver MBR y SxFS sobre el VFS.
+    # El kernel i386 la usa para montar el disco persistente; el heap, el
+    # resto del kernel de 64 bits y el userland llegan en pasos posteriores
+    # (docs/REAL_HARDWARE.md).
+    list(APPEND SAVANXP_KERNEL_SOURCES
+        kernel/ata.cpp
+        kernel/block.cpp
+        kernel/partition.cpp
+        kernel/fs.cpp
+        kernel/sxfs.cpp
+        kernel/vfs.cpp
+        kernel/runtime.cpp
+    )
 endif()
 
 include("${CMAKE_SOURCE_DIR}/vendor/uacpi/uacpi.cmake")

@@ -178,8 +178,13 @@ array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
 
 Order of work, with each step independently bootable and testable:
 `build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` (landed) ->
-`ATA and SxFS root` -> `ELF32 and a shell` -> `PS/2 and the desktop` ->
+`ATA and SxFS root` (landed) -> `ELF32 and a shell` -> `PS/2 and the desktop` ->
 `isolation features, if ever`.
+
+The storage stack is the first subsystem to cross over almost whole: `ata`, `block`,
+`partition` and `sxfs` compiled for `i386` untouched, `runtime.cpp` only needed the
+string-word width split by mode (32-bit mode has no `rep movsq`) and `vfs::initialize`
+now accepts a missing initramfs so the SxFS root can stand alone.
 
 The landed packages are exercised with:
 
@@ -187,7 +192,11 @@ The landed packages are exercised with:
 SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
   ./build.sh iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
 ```
+
+The `--disk-image` run attaches `build/disk.img` as IDE with `snapshot=on` (writes
+never reach the file) and asserts the mounted root listing.
 
 ## Route B: target 64-bit hardware
 

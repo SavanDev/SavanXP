@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the i386 GRUB2 ISO on the legacy machine and wait for the serial token."""
+"""Boot the i386 GRUB2 ISO on the legacy machine and wait for its serial tokens."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from pathlib import Path
 SUCCESS_TOKEN = "I386 BOOT OK"
 FAILURE_TOKEN = "I386 BOOT FAIL"
 PAGING_TOKEN = "paginacion: identidad 0..1 GiB"
+SXFS_TOKEN = "SXFS ROOT OK"
 
 
 def terminate(process: subprocess.Popen[bytes]) -> None:
@@ -34,13 +35,20 @@ def terminate(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
-def run_boot(qemu: str, args: list[str], serial: Path, timeout: float) -> None:
+def run_boot(
+    qemu: str,
+    args: list[str],
+    serial: Path,
+    timeout: float,
+    require: tuple[str, ...] = (),
+) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
     The token is printed after paging is on, so it alone already implies the
     bootstrap ran to the end. The paging line is asserted too: a token that
     shows up before the page tables are enabled is exactly the failure a
-    change to the entry path would cause.
+    change to the entry path would cause. With a disk attached, the SxFS
+    mount line is required as well.
     """
     serial.unlink(missing_ok=True)
     process = subprocess.Popen(
@@ -57,7 +65,13 @@ def run_boot(qemu: str, args: list[str], serial: Path, timeout: float) -> None:
             if SUCCESS_TOKEN in text:
                 if PAGING_TOKEN not in text:
                     raise RuntimeError(f"booted without enabling paging: {PAGING_TOKEN!r} missing")
-                print("i386 bootstrap: PASS")
+                missing = [token for token in require if token not in text]
+                if missing:
+                    raise RuntimeError(f"booted without {missing[0]!r}")
+                if require:
+                    print("i386 bootstrap: PASS (SxFS root mounted)")
+                else:
+                    print("i386 bootstrap: PASS")
                 return
             if FAILURE_TOKEN in text:
                 lines = [line for line in text.splitlines() if line.startswith("savanxp/i386")]
@@ -74,12 +88,21 @@ def run_boot(qemu: str, args: list[str], serial: Path, timeout: float) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iso", required=True, type=Path)
+    parser.add_argument(
+        "--disk-image",
+        type=Path,
+        default=None,
+        help="attach this image as the primary IDE disk and require the SxFS mount",
+    )
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     args = parser.parse_args()
     iso = args.iso.resolve()
     if not iso.is_file():
         raise SystemExit(f"ISO does not exist: {iso}")
+    disk_image = args.disk_image.resolve() if args.disk_image is not None else None
+    if disk_image is not None and not disk_image.is_file():
+        raise SystemExit(f"disk image does not exist: {disk_image}")
     qemu_override = os.environ.get("SAVANXP_QEMU")
     qemu = shutil.which(qemu_override or "qemu-system-i386")
     if qemu_override and not qemu:
@@ -111,7 +134,11 @@ def main() -> int:
             "-no-reboot",
             "-no-shutdown",
         ]
-        run_boot(qemu, command, serial, args.timeout)
+        if disk_image is not None:
+            # snapshot=on: el arranque nunca escribe en la imagen persistente.
+            command += ["-drive", f"file={disk_image},format=raw,if=ide,snapshot=on"]
+        require = (SXFS_TOKEN,) if disk_image is not None else ()
+        run_boot(qemu, command, serial, args.timeout, require)
     return 0
 
 

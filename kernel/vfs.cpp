@@ -466,7 +466,15 @@ void initialize(const void* archive, size_t size) {
         return;
     }
 
-    if (archive == nullptr || size < 110) {
+    if (archive == nullptr) {
+        /* Sin initramfs el arbol vacio tambien esta listo: el kernel i386
+         * monta SxFS sobre /disk y publica sus ficheros aqui. Un archivo
+         * truncado (size < 110) sigue siendo un error, no un arbol vacio. */
+        g_ready = true;
+        return;
+    }
+
+    if (size < 110) {
         return;
     }
 

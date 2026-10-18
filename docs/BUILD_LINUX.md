@@ -56,7 +56,12 @@ It must not share a build directory with the `x86_64` build:
 SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
   ./build.sh iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
 ```
+
+The third command is the full check: the guest attaches `build/disk.img` as an IDE
+disk, finds it over ATA PIO and mounts its SxFS root (`snapshot=on`, so the
+persistent image is never written).
 
 ## Official ports
 
