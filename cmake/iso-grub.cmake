@@ -35,6 +35,6 @@ else()
 endif()
 
 add_custom_target(savanxp
-    DEPENDS savanxp_kernel
-    COMMENT "Building the i386 bootstrap kernel"
+    DEPENDS savanxp_kernel savanxp_i386_disk
+    COMMENT "Building the i386 kernel and its disk image"
 )

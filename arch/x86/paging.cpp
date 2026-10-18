@@ -14,6 +14,7 @@ constexpr uint32_t kPageSize4Mib = 0x00400000;
 
 constexpr uint32_t kPdePresent = 1u << 0;
 constexpr uint32_t kPdeWritable = 1u << 1;
+constexpr uint32_t kPdeUser = 1u << 2;
 constexpr uint32_t kPdePageSize = 1u << 7;
 
 inline uint32_t read_cr0() {
@@ -57,6 +58,16 @@ bool paging::cpu_has_pse() {
 void paging::enable_identity_1gib() {
     for (uint32_t i = 0; i < kPageTableEntries; ++i) {
         g_page_directory[i] = (i * kPageSize4Mib) | kPdePresent | kPdeWritable | kPdePageSize;
+    }
+
+    /* La ventana de usuario es el mismo mapa de identidad con el bit de
+     * usuario en los PDEs que la cubren: el proceso y el kernel comparten
+     * pagina, asi que entrar en ring 3 no invalida TLB ni obliga a mapear
+     * paginas nuevas antes de que el proceso exista. */
+    const uint32_t first_user_pde = paging::kUserWindowBase / kPageSize4Mib;
+    const uint32_t last_user_pde = (paging::kUserWindowEnd - 1u) / kPageSize4Mib;
+    for (uint32_t i = first_user_pde; i <= last_user_pde; ++i) {
+        g_page_directory[i] |= kPdeUser;
     }
 
     /* Sin paginacion encendida la direccion del directorio es tambien su

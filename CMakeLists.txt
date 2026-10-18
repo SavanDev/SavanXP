@@ -174,12 +174,21 @@ set(SAVANXP_LIBRARY_COMPILE_OPTIONS
     -Wno-c23-extensions
 )
 
+# El script de enlace del userland tambien depende de la arquitectura: en
+# x86_64 la imagen vive en 0x400000 y en i386 dentro de la ventana de usuario
+# (0x08000000) que el mapa de paginacion marca con el bit de usuario.
+if(SAVANXP_ARCH STREQUAL "i386")
+    set(SAVANXP_USER_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker32.ld")
+else()
+    set(SAVANXP_USER_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld")
+endif()
+
 set(SAVANXP_USER_LINK_OPTIONS_STATIC
     -nostdlib
     -static
     -fuse-ld=lld
     "-Wl,-m,${SAVANXP_LINK_EMULATION}"
-    "-Wl,-T,${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld"
+    "-Wl,-T,${SAVANXP_USER_LINKER_SCRIPT}"
     "-Wl,-z,max-page-size=0x1000"
     -Wl,--gc-sections
     -Wl,--build-id=none
@@ -229,8 +238,12 @@ if(SAVANXP_ARCH STREQUAL "x86_64")
 elseif(SAVANXP_ARCH STREQUAL "i386")
     set(SAVANXP_KERNEL_ARCH_SOURCES
         arch/x86/entry32.S
+        arch/x86/interrupts32.S
         arch/x86/serial.cpp
         arch/x86/paging.cpp
+        arch/x86/cpu.cpp
+        arch/x86/syscall.cpp
+        arch/x86/user32.cpp
         arch/x86/main32.cpp
     )
 endif()
@@ -531,7 +544,7 @@ set(SAVANXP_EXTERNAL_LINK_OPTIONS
     -static
     -fuse-ld=lld
     "-Wl,-m,${SAVANXP_LINK_EMULATION}"
-    "-Wl,-T,${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld"
+    "-Wl,-T,${SAVANXP_USER_LINKER_SCRIPT}"
     "-Wl,-z,max-page-size=0x1000"
     -Wl,--build-id=none
 )
@@ -650,6 +663,11 @@ set_source_files_properties(${SAVANXP_GENERATED_HEADER_FILES} PROPERTIES HEADER_
 add_custom_target(savanxp_generated_headers DEPENDS ${SAVANXP_GENERATED_HEADER_FILES})
 target_sources(savanxp_kernel_objects PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
 
+# El grafo de userland es el de x86_64: sus programas se enlazan con linker.ld
+# en 0x400000 y el kernel los carga con el loader de 64 bits. En i386 lo
+# construye cmake/userland-i386.cmake.
+if(SAVANXP_ARCH STREQUAL "x86_64")
+
 include("${CMAKE_SOURCE_DIR}/cmake/UserPrograms.cmake")
 
 # BusyBox is an external-style port compiled against the same freestanding
@@ -740,6 +758,8 @@ foreach(target IN LISTS SAVANXP_USER_TARGETS)
 endforeach()
 add_dependencies(savanxp-busybox savanxp_sxe_resources)
 
+endif() # x86_64: programas de userland, busybox y recursos SXE
+
 # uACPI es parte del kernel grande: su object library entra en el enlace solo
 # en x86_64. En i386 el kernel de arranque no enlaza ACPI todavia.
 if(SAVANXP_ARCH STREQUAL "x86_64")
@@ -766,10 +786,14 @@ add_custom_target(savanxp_kernel
 )
 add_dependencies(savanxp_kernel_objects savanxp_generated_headers)
 
+if(SAVANXP_ARCH STREQUAL "x86_64")
+
 add_custom_target(savanxp_userland
     DEPENDS ${SAVANXP_USER_TARGETS} savanxp-busybox
     COMMENT "Linking SavanXP userland"
 )
+
+endif() # x86_64: el grafo de userland no existe en i386
 
 # Host tests deliberately use the normal Linux compiler and hosted linker;
 # they are not part of the freestanding target graph.
@@ -924,6 +948,12 @@ add_test(NAME tcp-echo-server-test
             --server "${CMAKE_SOURCE_DIR}/tools/tcp_echo_server.py")
 add_dependencies(savanxp_tests savanxp_sxfs_cli)
 
+# El staging del arbol de desarrollo y de la imagen persistente es de 64 bits:
+# sus fuentes son los programas de usuario de cmake/UserPrograms.cmake y busybox.
+# En i386 la imagen la monta cmake/userland-i386.cmake y solo lleva el programa
+# del MVP (docs/REAL_HARDWARE.md).
+if(SAVANXP_ARCH STREQUAL "x86_64")
+
 set(SAVANXP_APPLETS busybox ls cat echo mkdir rm mv cp ps true false sleep)
 set(SAVANXP_STAGE_COMMANDS
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
@@ -1055,12 +1085,15 @@ add_custom_target(savanxp_disk
     VERBATIM
 )
 
+endif() # x86_64: staging de rootfs, initramfs y de la imagen persistente
+
 # Cada arquitectura tiene su camino de arranque: x86_64 con Limine (arbol de
 # desarrollo y su ISO) e i386 con GRUB2 y Multiboot2 (docs/REAL_HARDWARE.md).
 # Ambos definen savanxp_iso_root, savanxp_iso y el agregado savanxp.
 if(SAVANXP_ARCH STREQUAL "x86_64")
     include("${CMAKE_SOURCE_DIR}/cmake/iso-limine.cmake")
 else()
+    include("${CMAKE_SOURCE_DIR}/cmake/userland-i386.cmake")
     include("${CMAKE_SOURCE_DIR}/cmake/iso-grub.cmake")
 endif()
 

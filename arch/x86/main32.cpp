@@ -7,9 +7,12 @@
 #include "kernel/sxfs.hpp"
 #include "kernel/vfs.hpp"
 
+#include "boot_state.hpp"
+#include "cpu.hpp"
 #include "multiboot2.hpp"
 #include "paging.hpp"
 #include "serial.hpp"
+#include "user32.hpp"
 
 /*
  * Bootstrap del kernel i386 (docs/REAL_HARDWARE.md).
@@ -50,6 +53,59 @@ void report_memory_info(const uint8_t* tag) {
     serial::write(" KiB bajos, ");
     serial::write_dec(info->upper_kib);
     serial::write(" KiB altos\n");
+    boot_state::state().memory_usable_bytes =
+        static_cast<uint64_t>(info->lower_kib + info->upper_kib) * 1024ull;
+}
+
+/* Las etiquetas de cadena de Multiboot2 son un bloque de NUL terminated: la
+ * longitud esta en el offset 4 de la etiqueta y el texto despues. */
+size_t copy_tag_text(const uint8_t* tag, uint32_t start, char* destination, size_t capacity) {
+    if (capacity == 0) {
+        return 0;
+    }
+    const uint32_t available = *(reinterpret_cast<const uint32_t*>(tag + 4));
+    const uint8_t* source = tag + start;
+    size_t written = 0;
+    while (written + 1 < capacity && written < available && source[written] != '\0') {
+        destination[written] = static_cast<char>(source[written]);
+        ++written;
+    }
+    destination[written] = '\0';
+    return written;
+}
+
+void store_bootloader(const uint8_t* tag) {
+    boot_state::State& state = boot_state::state();
+    const size_t name_length = copy_tag_text(tag, 8, state.bootloader_name, sizeof(state.bootloader_name));
+    copy_tag_text(tag, 8 + static_cast<uint32_t>(name_length) + 1u, state.bootloader_version,
+                  sizeof(state.bootloader_version));
+    /* GRUB2 escribe el nombre y la version como dos cadenas separadas, pero si
+     * la segunda no esta, al menos el nombre es honesto: se parte por el ultimo
+     * espacio para no dejar la version en "unknown" cuando si esta ahi. */
+    if (state.bootloader_version[0] == '\0') {
+        size_t split = 0;
+        for (size_t index = 0; state.bootloader_name[index] != '\0'; ++index) {
+            if (state.bootloader_name[index] == ' ') {
+                split = index;
+            }
+        }
+        if (split != 0) {
+            for (size_t index = split + 1; index < sizeof(state.bootloader_name); ++index) {
+                const size_t target = index - split - 1;
+                if (target >= sizeof(state.bootloader_version)) {
+                    break;
+                }
+                state.bootloader_version[target] = state.bootloader_name[index];
+            }
+            state.bootloader_name[split] = '\0';
+        }
+    }
+    /* "BIOS" porque esta ISO solo arranca por BIOS: GRUB2 no expone una
+     * etiqueta de firmware y el camino UEFI no existe todavia en i386. */
+    const char firmware[] = "BIOS";
+    for (size_t index = 0; index < sizeof(state.firmware) - 1 && firmware[index] != '\0'; ++index) {
+        state.firmware[index] = firmware[index];
+    }
 }
 
 void report_memory_map(const uint8_t* tag) {
@@ -73,6 +129,12 @@ void report_memory_map(const uint8_t* tag) {
         serial::write(" tipo ");
         serial::write_dec(entry->type);
         serial::write("\n");
+        /* Tipos 3 (ACPI reclaimable) y 4 (ACPI NVS): memoria que el firmware todavia
+     * usa y que el kernel podria reclaimar. Se acumula en el mismo recorrido
+     * que imprime, asi que cuenta hasta las 32 primeras entradas. */
+        if (entry->type == 3 || entry->type == 4) {
+            boot_state::state().memory_reclaimable_bytes += entry->length;
+        }
         entries += map->entry_size;
         ++count;
     }
@@ -91,6 +153,10 @@ void report_framebuffer(const uint8_t* tag) {
     serial::write(" en ");
     serial::write_hex64(framebuffer->address);
     serial::write("\n");
+    boot_state::state().framebuffer_ready = 1;
+    boot_state::state().framebuffer_width = framebuffer->width;
+    boot_state::state().framebuffer_height = framebuffer->height;
+    boot_state::state().framebuffer_bpp = framebuffer->bpp;
 }
 
 void report_block_devices() {
@@ -122,6 +188,7 @@ void mount_root_filesystem() {
     block::register_driver(partition::driver());
     block::probe_all();
     report_block_devices();
+    boot_state::state().block_ready = block::device_count() != 0 ? 1 : 0;
 
     fs::initialize();
     sxfs::initialize();
@@ -140,6 +207,7 @@ void mount_root_filesystem() {
         serial::write("sxfs: el montaje no expone su volumen\n");
         return;
     }
+    boot_state::state().sxfs_mounted = 1;
 
     serial::write("sxfs: ");
     serial::write_dec(static_cast<uint32_t>(sxfs::file_count(info.volume)));
@@ -183,6 +251,24 @@ void mount_root_filesystem() {
 /* -fstack-protector-strong viene en el perfil del kernel; en x86_64 estas dos
  * piezas las ponen cpu_init.cpp y panic.cpp. Aqui todavia no hay panic: el
  * fallo se informa por serie y se detiene la maquina. */
+namespace i386 {
+
+namespace boot_state {
+
+State g_state = {};
+
+}
+
+} // namespace i386
+
+namespace {
+
+/* Programa del MVP: es el primero que el kernel i386 ejecuta en ring 3, asi
+ * que tiene que ser uno que solo use syscalls de escritura y de consulta. */
+constexpr const char* kUserProgramPath = "/disk/bin/sysinfo";
+
+}
+
 extern "C" uintptr_t __stack_chk_guard = 0;
 
 extern "C" [[noreturn]] void __stack_chk_fail() {
@@ -191,6 +277,8 @@ extern "C" [[noreturn]] void __stack_chk_fail() {
 
 extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
     serial::init();
+    cpu::initialize();
+    serial::write("cpu: gdt de 32 bits con segmentos de usuario y tss, idt con int $0x80\n");
     serial::write("savanxp/i386: arranque multiboot2\n");
     serial::write("firma ");
     serial::write_hex(magic);
@@ -229,6 +317,7 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
             case TagType::bootloader_name:
                 serial::write("cargador: ");
                 write_tag_string(tag);
+                store_bootloader(tag);
                 serial::write("\n");
                 break;
             case TagType::memory_info:
@@ -256,6 +345,12 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     mount_root_filesystem();
 
     serial::write("I386 BOOT OK\n");
+
+    /* Primer salto a ring 3 del objetivo: el proceso vive hasta que llama a
+     * exit, y el kernel se para entonces. El token de arranque ya esta
+     * escrito, asi que un fallo al cargar el programa no lo oculta. */
+    user32::run(kUserProgramPath);
+
     for (;;) {
         asm volatile("hlt");
     }

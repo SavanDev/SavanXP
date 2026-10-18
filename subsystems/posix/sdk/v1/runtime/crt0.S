@@ -7,6 +7,31 @@ _start:
     # rflags=0x202, pero dejarlo explicito ata la precondicion al mismo lado que
     # la depende.
     cld
+#if defined(__i386__)
+    # El kernel entrega argc en edi, argv en esi, el canary en edx, la ruta del
+    # interprete en ecx y la cabecera ELF en ebp (no hay r8 en 32 bits). Los tres
+    # ultimos no sobreviven a una llamada, asi que se instalan antes de la
+    # primera, igual que en la rama de 64 bits.
+    andl $-16, %esp
+    movl %edx, __stack_chk_guard
+    movl %ecx, sx_interpreter_path
+    movl %ebp, sx_image_base
+    # ABI System V de 32 bits: los argumentos van en el stack, de derecha a
+    # izquierda, y el stack debe estar alineado a 16 en cada call. Los dos
+    # push de 4 bytes no reponen los 16, asi que hay un relleno de 8 delante y
+    # se retira con un add de 16 al volver.
+    subl $8, %esp
+    pushl %esi
+    pushl %edi
+    call sx_start_dynamic
+    addl $16, %esp
+    subl $8, %esp
+    pushl %esi
+    pushl %edi
+    call main
+    movl %eax, %edi
+    movl $7, %eax
+#else
     # Alinear el stack a 16 bytes antes del primer call: el ABI System V exige
     # rsp alineado a 16 en cada call (rsp % 16 == 0), y SSE (doubles de Haxe en
     # el subsistema nativo) puede emitir movaps que fallan con #GP si no lo esta.
@@ -23,7 +48,7 @@ _start:
     # al mapearla y es el dato exacto; antes el cargador lo adivinaba retrocediendo
     # pagina a pagina desde una funcion suya, lo que supone que toda pagina del
     # camino esta mapeada. Un enlazador puede dejar un hueco entre dos PT_LOAD, y
-    # con seltest --cuyo texto arranca en 0xc000 y su primer segmento termina en
+    # con selftest --cuyo texto arranca en 0xc000 y su primer segmento termina en
     # 0xaff3-- la pagina intermedia no existe y el escaneo moria alli.
     movq %r8, sx_image_base(%rip)
     # Correr el interprete antes de main. El hook vive en C, no aca: comprobar si
@@ -46,6 +71,7 @@ _start:
     call main
     movq %rax, %rdi
     movq $7, %rax
+#endif
     int $0x80
 1:
     hlt

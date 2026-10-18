@@ -178,7 +178,7 @@ array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
 
 Order of work, with each step independently bootable and testable:
 `build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` (landed) ->
-`ATA and SxFS root` (landed) -> `ELF32 and a shell` -> `PS/2 and the desktop` ->
+`ATA and SxFS root` (landed) -> `ELF32 and a shell` (landed) -> `PS/2 and the desktop` ->
 `isolation features, if ever`.
 
 The storage stack is the first subsystem to cross over almost whole: `ata`, `block`,
@@ -186,17 +186,38 @@ The storage stack is the first subsystem to cross over almost whole: `ata`, `blo
 string-word width split by mode (32-bit mode has no `rep movsq`) and `vfs::initialize`
 now accepts a missing initramfs so the SxFS root can stand alone.
 
+The ELF32 step landed the first ring 3. `arch/x86/cpu.cpp` builds a GDT with
+user segments and a 32-bit TSS, `arch/x86/interrupts32.S` holds the `int $0x80`
+stub plus one entry per exception vector (the processor does not push the vector,
+so each stub does), and `arch/x86/user32.cpp` reads an ELF32 image straight from
+the SxFS root into the `0x08000000` window and enters it. The userland for that
+target is the same SDK with the 32-bit branches of `crt0.S` and `libc.c`, a
+`linker32.ld` at that window's base, `__udivdi3`/`__umoddi3`, and it is staged by
+`cmake/userland-i386.cmake` into `disk-i386.img`. Only `write`, `exit`, `getpid`
+and `system_info` answer so far, which is exactly what the demo needs; the shell
+and the rest of the POSIX surface come with the next steps.
+
+Two things measured while getting there, worth keeping: the frame pointer the
+stub hands to the syscall handler arrives one word high, so the handler reads the
+frame from `esp0` instead of trusting it; and `mov %ax, %ds` has no 32-bit form,
+so clang's inline assembler turns it into a form that does not exist in 32-bit
+mode — the user data segments are loaded from an assembly routine.
+
 The landed packages are exercised with:
 
 ```sh
 SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
-  ./build.sh iso
+  ./build.sh
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
+  --disk-image build/i386/disk-i386.img --expect-user
 ```
 
 The `--disk-image` run attaches `build/disk.img` as IDE with `snapshot=on` (writes
-never reach the file) and asserts the mounted root listing.
+never reach the file) and asserts the mounted root listing. The `--expect-user`
+run does the same with `disk-i386.img` and asserts that the 32-bit `sysinfo`
+ran in ring 3, printed its report and exited.
 
 ## Route B: target 64-bit hardware
 

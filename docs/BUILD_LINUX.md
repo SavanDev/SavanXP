@@ -49,19 +49,27 @@ sibling candidate and is replaced atomically only after validation succeeds.
 ## The i386 target
 
 `SAVANXP_ARCH=i386` selects the 32-bit legacy target: the kernel is a Multiboot2
-image under `arch/x86` and the ISO is built with `grub-mkrescue` for legacy BIOS.
-It must not share a build directory with the `x86_64` build:
+image under `arch/x86`, the userland is a 32-bit build of the SDK and the ISO is
+built with `grub-mkrescue` for legacy BIOS. It must not share a build directory
+with the `x86_64` build:
 
 ```bash
 SAVANXP_ARCH=i386 SAVANXP_BUILD_DIR=build/i386-linux SAVANXP_OUTPUT_ROOT=build/i386 \
-  ./build.sh iso
+  ./build.sh
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
+  --disk-image build/i386/disk-i386.img --expect-user
 ```
 
-The third command is the full check: the guest attaches `build/disk.img` as an IDE
-disk, finds it over ATA PIO and mounts its SxFS root (`snapshot=on`, so the
+The third command is the storage check: the guest attaches `build/disk.img` as an
+IDE disk, finds it over ATA PIO and mounts its SxFS root (`snapshot=on`, so the
 persistent image is never written).
+
+The fourth is the userland check. `cmake/userland-i386.cmake` stages a 32-bit
+`sysinfo` into `build/i386/disk-i386.img`; the guest mounts that image, loads the
+ELF32 program into the `0x08000000` window and runs it in ring 3, and the tool
+asserts its report over serial and its clean exit.
 
 ## Official ports
 

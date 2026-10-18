@@ -30,6 +30,10 @@ Cut-off notes:
   the 32-bit kernel, and `tools/legacy_boot_test.py --disk-image` boots the ISO against
   the persistent image (`snapshot=on`) and asserts `SXFS ROOT OK`.
 
+- **The i386 kernel runs userland.** `SAVANXP_ARCH=i386` builds a 32-bit SDK runtime
+  and loads an ELF32 program from the mounted root into ring 3; `sysinfo` runs and
+  exits, and `tools/legacy_boot_test.py --expect-user` asserts exactly that.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

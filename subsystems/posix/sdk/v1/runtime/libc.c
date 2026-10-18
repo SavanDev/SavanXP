@@ -9,6 +9,14 @@ static long syscall3(unsigned long number, unsigned long a, unsigned long b, uns
 }
 
 static long syscall5(unsigned long number, unsigned long a, unsigned long b, unsigned long c, unsigned long d, unsigned long e) {
+#if defined(__i386__)
+    /* En 32 bits no hay r10 ni r8, pero ecx y ebx estan libres: el cuarto y el
+     * quinto argumento viajan en registros como los tres primeros y el kernel
+     * los lee de ahi. */
+    long result;
+    asm volatile("int $0x80" : "=a"(result) : "a"(number), "D"(a), "S"(b), "d"(c), "c"(d), "b"(e) : "memory");
+    return result;
+#else
     register unsigned long r10 asm("r10") = d;
     register unsigned long r8 asm("r8") = e;
     long result;
@@ -18,6 +26,7 @@ static long syscall5(unsigned long number, unsigned long a, unsigned long b, uns
         : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
         : "memory");
     return result;
+#endif
 }
 
 static long syscall2(unsigned long number, unsigned long a, unsigned long b) {
@@ -851,25 +860,45 @@ char* strcpy(char* destination, const char* source) {
 void* memcpy(void* destination, const void* source, size_t count) {
     void* cursor = destination;
     const void* origin = source;
+#if defined(__i386__)
+    /* La palabra de copia son 4 bytes: en modo 32 bits no existe movsq. */
+    size_t words = count >> 2;
+    size_t tail = count & 3u;
+
+    __asm__ volatile("rep movsl" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
+    __asm__ volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
+#else
     size_t words = count >> 3;
     size_t tail = count & 7u;
 
     __asm__ volatile("rep movsq" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
     __asm__ volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
+#endif
 
     return destination;
 }
 
 void* memset(void* destination, int value, size_t count) {
     unsigned char byte = (unsigned char)value;
+    void* cursor = destination;
+#if defined(__i386__)
+    /* El patron se replica en 4 posiciones porque la palabra de stosl son
+     * 4 bytes; en modo 32 bits no existe stosq. */
+    unsigned int pattern = (unsigned int)byte * 0x01010101u;
+    size_t words = count >> 2;
+    size_t tail = count & 3u;
+
+    __asm__ volatile("rep stosl" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
+    __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
+#else
     /* Replica el byte en las 8 posiciones para que stosq escriba el mismo patron. */
     unsigned long long pattern = (unsigned long long)byte * 0x0101010101010101ULL;
-    void* cursor = destination;
     size_t words = count >> 3;
     size_t tail = count & 7u;
 
     __asm__ volatile("rep stosq" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
     __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
+#endif
 
     return destination;
 }
