@@ -11,6 +11,7 @@
 #include "cpu.hpp"
 #include "multiboot2.hpp"
 #include "paging.hpp"
+#include "ps2_32.hpp"
 #include "serial.hpp"
 #include "user32.hpp"
 
@@ -279,6 +280,7 @@ extern "C" [[noreturn]] void savanxp_i386_bootstrap(uint32_t magic, uint32_t inf
     serial::init();
     cpu::initialize();
     serial::write("cpu: gdt de 32 bits con segmentos de usuario y tss, idt con int $0x80\n");
+    ps2_32::initialize();
     serial::write("savanxp/i386: arranque multiboot2\n");
     serial::write("firma ");
     serial::write_hex(magic);

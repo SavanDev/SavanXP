@@ -8,9 +8,14 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
+
+# Mismo directorio: el cliente QMP que ya usa el arranque de smokes.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from qmp_client import QmpClient
 
 SUCCESS_TOKEN = "I386 BOOT OK"
 FAILURE_TOKEN = "I386 BOOT FAIL"
@@ -19,6 +24,17 @@ SXFS_TOKEN = "SXFS ROOT OK"
 USER_LOADED_TOKEN = "user: /disk/bin/sysinfo cargado"
 USER_OUTPUT_TOKEN = "sxfs_files:"
 USER_EXIT_TOKEN = "proceso salio con codigo 0"
+PS2_TOKEN = "ps2: teclado listo"
+
+# Scancodes set 1 (make) de las teclas que el test sabe teclear. El kernel los
+# imprime tal cual, asi que la comprobacion no necesita saber decodificarlos.
+KEY_SCANCODES = {
+    "a": 0x1E,
+    "b": 0x30,
+    "c": 0x2E,
+    "enter": 0x1C,
+    "space": 0x39,
+}
 
 
 def terminate(process: subprocess.Popen[bytes]) -> None:
@@ -38,6 +54,19 @@ def terminate(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
+def type_keys(qmp_socket: Path | None, keys: tuple[tuple[str, int], ...]) -> None:
+    """Tap each key over QMP, leaving the guest time to echo every scancode."""
+    if qmp_socket is None:
+        raise RuntimeError("no QMP socket to type on")
+    deadline = time.monotonic() + 20
+    while not qmp_socket.exists() and time.monotonic() < deadline:
+        time.sleep(0.2)
+    with QmpClient(str(qmp_socket), timeout=10.0) as client:
+        for name, _scancode in keys:
+            client.tap(name)
+            time.sleep(0.2)
+
+
 def run_boot(
     qemu: str,
     args: list[str],
@@ -45,6 +74,8 @@ def run_boot(
     timeout: float,
     require: tuple[str, ...] = (),
     detail: str = "",
+    qmp_socket: Path | None = None,
+    keys: tuple[tuple[str, int], ...] = (),
 ) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
@@ -69,6 +100,7 @@ def run_boot(
     )
     deadline = time.monotonic() + timeout
     text = ""
+    typed = False
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
@@ -79,6 +111,14 @@ def run_boot(
             if SUCCESS_TOKEN in text:
                 if PAGING_TOKEN not in text:
                     raise RuntimeError(f"booted without enabling paging: {PAGING_TOKEN!r} missing")
+                if keys and not typed:
+                    # El teclado solo se consulta cuando el kernel lo ha
+                    # iniciado; el token lo dice, asi que no hay que adivinar un
+                    # retardo de arranque.
+                    if PS2_TOKEN not in text:
+                        raise RuntimeError(f"keyboard never came up: {PS2_TOKEN!r} missing")
+                    type_keys(qmp_socket, keys)
+                    typed = True
                 if not [token for token in require if token not in text]:
                     print(f"i386 bootstrap: PASS{detail}")
                     return
@@ -107,6 +147,16 @@ def main() -> int:
         help="require that the kernel loaded the userland program, that it printed and that it exited",
     )
     parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument(
+        "--expect-key",
+        action="append",
+        default=[],
+        metavar="KEY",
+        help=(
+            "tap KEY over QMP once the kernel reports the keyboard up and require "
+            "its scancode (repeatable): " + ", ".join(sorted(KEY_SCANCODES))
+        ),
+    )
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     args = parser.parse_args()
     iso = args.iso.resolve()
@@ -157,7 +207,21 @@ def main() -> int:
             # imagen, entrar, llamar al sistema y volver por EXIT.
             require += (USER_LOADED_TOKEN, USER_OUTPUT_TOKEN, USER_EXIT_TOKEN)
             detail = " (userland program ran)"
-        run_boot(qemu, command, serial, args.timeout, require, detail)
+        keys: tuple[tuple[str, int], ...] = ()
+        qmp_socket: Path | None = None
+        if args.expect_key:
+            unknown = [key for key in args.expect_key if key not in KEY_SCANCODES]
+            if unknown:
+                raise SystemExit(
+                    f"unknown key(s) {unknown}; supported: {', '.join(sorted(KEY_SCANCODES))}"
+                )
+            keys = tuple((key, KEY_SCANCODES[key]) for key in args.expect_key)
+            # El kernel imprime el scancode crudo en hexadecimal de ocho digitos.
+            require += tuple(f"ps2: scan 0x{scancode:08x}" for _key, scancode in keys)
+            detail = f" (keyboard: {', '.join(name for name, _code in keys)})"
+            qmp_socket = Path(temporary) / "qmp.sock"
+            command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
+        run_boot(qemu, command, serial, args.timeout, require, detail, qmp_socket, keys)
     return 0
 
 

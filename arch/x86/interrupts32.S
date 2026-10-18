@@ -138,6 +138,80 @@ i386_load_user_segments:
     ret
 .size i386_load_user_segments, . - i386_load_user_segments
 
+/* IRQ del PIC legacy. Las 16 vectores (0x20..0x2F tras el remapeo) tienen su
+ * propia entrada por el mismo motivo que las excepciones: el processor no
+ * apila el numero. El marco comun salva los registros y los segmentos, llama a
+ * i386_handle_irq (que despacha al driver y acusa al PIC) y devuelve con iret,
+ * igual que hacia el proceso. */
+.altmacro
+.macro i386_irq_stub number
+    .global i386_irq_\number
+    .type i386_irq_\number, @function
+i386_irq_\number:
+    cld
+    pushl $\number
+    jmp i386_irq_common
+.size i386_irq_\number, . - i386_irq_\number
+.endm
+.altmacro
+
+i386_irq_stub 0
+i386_irq_stub 1
+i386_irq_stub 2
+i386_irq_stub 3
+i386_irq_stub 4
+i386_irq_stub 5
+i386_irq_stub 6
+i386_irq_stub 7
+i386_irq_stub 8
+i386_irq_stub 9
+i386_irq_stub 10
+i386_irq_stub 11
+i386_irq_stub 12
+i386_irq_stub 13
+i386_irq_stub 14
+i386_irq_stub 15
+
+.global i386_irq_table
+i386_irq_table:
+    .long i386_irq_0
+    .long i386_irq_1
+    .long i386_irq_2
+    .long i386_irq_3
+    .long i386_irq_4
+    .long i386_irq_5
+    .long i386_irq_6
+    .long i386_irq_7
+    .long i386_irq_8
+    .long i386_irq_9
+    .long i386_irq_10
+    .long i386_irq_11
+    .long i386_irq_12
+    .long i386_irq_13
+    .long i386_irq_14
+    .long i386_irq_15
+
+i386_irq_common:
+    movl (%esp), %eax       /* el numero de IRQ */
+    pusha
+    push %ds
+    push %es
+    /* El manejador solo necesita el numero de IRQ. El marco se deshace con los
+     * pops y los dos add siguientes: dejar una palabra de mas hacia que el
+     * pop %es lea un valor de pila como selector y acabe en #GP. */
+    subl $4, %esp           /* relleno: elabi de 32 bits pide 16 en la llamada */
+    pushl %eax              /* unico argumento: el numero de IRQ */
+    call i386_handle_irq
+    addl $8, %esp           /* relleno y argumento */
+    pop %es
+    pop %ds
+    popa
+    addl $4, %esp           /* el numero de IRQ apilado por la entrada */
+    /* Sin suma antes del iret: el marco del processor (eflags, cs y eip, mas
+     * ss y esp si hubo cambio de privilegio) lo saca el propio iret, igual que
+     * iretq en x86_64 y que el iret del marco de excepcion de arriba. */
+    iret
+
 /* Marco comun: el vector esta en la cima; se copia a eax antes de pusha
  * (pusha lo sobrescribiria) y se pasa como segundo argumento. Detras del
  * puntero al marco queda lo que apilo el processor: codigo de error si lo hay,

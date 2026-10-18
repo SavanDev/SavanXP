@@ -103,6 +103,26 @@ constexpr bool kErrorCodeVectors[32] = {
 extern "C" void i386_syscall_entry();
 extern "C" const uint32_t i386_exception_table[32];
 
+/* Tabla de direcciones de las 16 stubs de IRQ (interrupts32.S). */
+extern "C" const uint32_t i386_irq_table[16];
+
+constexpr uint8_t kIrqCount = 16;
+
+cpu::IrqHandler g_irq_handlers[kIrqCount];
+
+/* Primer vector del PIC tras el remapeo de initialize(): los IRQ 0..15 viven
+ * en 0x20..0x2F. */
+constexpr uint32_t kPicVectorOffset = 0x20;
+
+/* Marco comun de los IRQ: el stub apilo el numero, el handler corre y luego
+ * se acusa al PIC. El llamador es interrupts32.S. */
+extern "C" void i386_handle_irq(uint32_t irq) {
+    if (irq < kIrqCount && g_irq_handlers[irq] != nullptr) {
+        g_irq_handlers[irq]();
+    }
+    cpu::acknowledge_irq(static_cast<uint8_t>(irq));
+}
+
 inline void outb(uint16_t port, uint8_t value) {
     asm volatile("outb %0, %1" : : "a"(value), "Nd"(port));
 }
@@ -125,6 +145,12 @@ inline uint32_t read_cr4() {
 
 inline void write_cr4(uint32_t value) {
     asm volatile("mov %0, %%cr4" : : "r"(value) : "memory");
+}
+
+inline uint8_t inb(uint16_t port) {
+    uint8_t value;
+    asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
 }
 
 inline uint32_t handler_address(void (*handler)()) {
@@ -204,11 +230,17 @@ void cpu::initialize() {
      * instala antes de recargar segmentos y cargar el TSS: un fallo a partir
      * de aqui se cuenta en vez de acabar en triple fault. */
     /* Cada excepcion tiene su propia puerta porque el processor no apila el
-     * numero de vector: lo apila el stub (interrupts32.S). Las IRQ 32..255
-     * caen en la puerta 0 como marcadores; el PIC esta enmascarado y el kernel
-     * corre con IF=0, asi que no deberia llegar ninguna. */
+     * numero de vector: lo apila el stub (interrupts32.S). Los vectores 32..47
+     * son las IRQ del PIC remapeado (0x20..0x2F) y apuntan a sus entradas
+     * aunque todavia no haya driver: el marco comun solo acusa al PIC cuando no
+     * hay handler, que es lo que evita que el PIT (IRQ0, sin instalar todavia)
+     * desalinee la pila al llegar. El resto son marcadores. */
     for (uint32_t vector = 0; vector < 256; ++vector) {
-        const uint32_t handler = vector < 32u ? i386_exception_table[vector] : i386_exception_table[0];
+        const uint32_t handler = vector < 32u
+                                     ? i386_exception_table[vector]
+                                     : (vector < kPicVectorOffset + kIrqCount
+                                            ? i386_irq_table[vector - kPicVectorOffset]
+                                            : i386_irq_table[0]);
         write_idt_gate(vector, handler, kTypeInterruptGate);
     }
     write_idt_gate(kSyscallVector, handler_address(i386_syscall_entry), kTypeUserInterruptGate);
@@ -228,10 +260,55 @@ void cpu::initialize() {
     const uint16_t tss_selector = kTssSelector;
     asm volatile("ltr %0" : : "r"(tss_selector));
 
-    /* Sin PIT todavia el kernel corre con las interrupciones apagadas; enmascarar
-     * el PIC evita que una IRQ llegue a una puerta que no representa nada. */
-    outb(0x21, 0xFF);
+    /* El PIC legacy arranca con los vectores en 0x08 y 0x70, que en modo
+     * protegido son excepcion 8 (#DF) y la 0x70. Se remapea a 0x20..0x2F y se
+     * deja todo enmascarado: cada IRQ abre su mascara cuando su driver esta
+     * listo. El teclado es el primero (ps2_32.cpp). */
+    outb(0x20, 0x11); /* ICW1: iniciar el cascade, se espera ICW4 */
+    outb(0xA0, 0x11);
+    outb(0x21, 0x20); /* ICW2: base de vectores del maestro */
+    outb(0xA1, 0x28); /* ICW2: base de vectores del esclavo */
+    outb(0x21, 0x04); /* ICW3: el maestro esta en el pin 2 del esclavo */
+    outb(0xA1, 0x02);
+    outb(0x21, 0x01); /* ICW4: modo 8086 */
+    outb(0xA1, 0x01);
+    outb(0x21, 0xFF); /* mascara: todo cerrado */
     outb(0xA1, 0xFF);
+}
+
+void cpu::register_irq_handler(uint8_t irq, IrqHandler handler) {
+    if (irq >= kIrqCount) {
+        return;
+    }
+    g_irq_handlers[irq] = handler;
+    write_idt_gate(kPicVectorOffset + irq, i386_irq_table[irq], kTypeInterruptGate);
+}
+
+void cpu::enable_irq(uint8_t irq) {
+    if (irq >= kIrqCount) {
+        return;
+    }
+    const uint8_t mask_register = irq < 8u ? 0x21u : 0xA1u;
+    const uint8_t bit = static_cast<uint8_t>(1u << (irq & 7u));
+    outb(mask_register, static_cast<uint8_t>(inb(mask_register) & ~bit));
+}
+
+void cpu::acknowledge_irq(uint8_t irq) {
+    /* El esclavo se acusa primero y con su EOI al maestro despues. */
+    if (irq >= 8u) {
+        outb(0xA0, 0x20);
+        outb(0x20, 0x20);
+        return;
+    }
+    outb(0x20, 0x20);
+}
+
+void cpu::disable_interrupts() {
+    asm volatile("cli");
+}
+
+void cpu::enable_interrupts() {
+    asm volatile("sti");
 }
 
 void cpu::set_ring0_stack(uint32_t stack_top) {
@@ -263,6 +340,12 @@ void cpu::enable_fpu() {
 void cpu::halt_forever() {
     for (;;) {
         asm volatile("cli\n\thlt");
+    }
+}
+
+void cpu::idle_with_interrupts() {
+    for (;;) {
+        asm volatile("sti\n\thlt");
     }
 }
 

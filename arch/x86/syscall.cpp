@@ -110,7 +110,10 @@ void handle(SyscallFrame& frame) {
             serial::write("i386: proceso salio con codigo ");
             serial::write_dec(frame.edi);
             serial::write("\n");
-            cpu::halt_forever();
+            /* Sin planificador todavia, el kernel se queda ocioso esperando
+             * IRQ con las interrupciones vivas: si se parase con cli el
+             * teclado dejaria de llegar. */
+            cpu::idle_with_interrupts();
         }
         default: {
             serial::write("i386: syscall ");

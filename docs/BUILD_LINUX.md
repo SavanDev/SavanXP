@@ -60,6 +60,8 @@ python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
   --disk-image build/i386/disk-i386.img --expect-user
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
+  --disk-image build/i386/disk-i386.img --expect-user --expect-key a --expect-key b
 ```
 
 The third command is the storage check: the guest attaches `build/disk.img` as an
@@ -70,6 +72,9 @@ The fourth is the userland check. `cmake/userland-i386.cmake` stages a 32-bit
 `sysinfo` into `build/i386/disk-i386.img`; the guest mounts that image, loads the
 ELF32 program into the `0x08000000` window and runs it in ring 3, and the tool
 asserts its report over serial and its clean exit.
+
+The fifth adds `--expect-key`, which types those keys over QMP once the guest has
+the PS/2 keyboard up and asserts the set 1 scancodes the kernel prints over serial.
 
 ## Official ports
 

@@ -244,6 +244,7 @@ elseif(SAVANXP_ARCH STREQUAL "i386")
         arch/x86/cpu.cpp
         arch/x86/syscall.cpp
         arch/x86/user32.cpp
+        arch/x86/ps2_32.cpp
         arch/x86/main32.cpp
     )
 endif()

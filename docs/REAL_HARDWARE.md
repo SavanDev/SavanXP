@@ -178,7 +178,8 @@ array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
 
 Order of work, with each step independently bootable and testable:
 `build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` (landed) ->
-`ATA and SxFS root` (landed) -> `ELF32 and a shell` (landed) -> `PS/2 and the desktop` ->
+`ATA and SxFS root` (landed) -> `ELF32 and a shell` (landed) ->
+`PS/2 and the desktop` (keyboard landed) ->
 `isolation features, if ever`.
 
 The storage stack is the first subsystem to cross over almost whole: `ata`, `block`,
@@ -203,6 +204,18 @@ frame from `esp0` instead of trusting it; and `mov %ax, %ds` has no 32-bit form,
 so clang's inline assembler turns it into a form that does not exist in 32-bit
 mode — the user data segments are loaded from an assembly routine.
 
+The keyboard landed next. `cpu::initialize()` now remaps the legacy PIC to
+vectors 0x20..0x2F and installs all sixteen gates (a IRQ without a driver just
+gets its EOI), `arch/x86/interrupts32.S` has one entry per IRQ beside the
+exception ones, and `arch/x86/ps2_32.cpp` drives the 8042 and echoes set 1
+scancodes over serial. The kernel does not `sti` during boot: the interrupts come
+up when the user program enters ring 3 or when the kernel goes idle after `exit`,
+so nothing arrives while SxFS is being mounted. `tools/legacy_boot_test.py
+--expect-key` types over QMP and asserts the scancode. The desktop half of the
+step is what is still missing: scancodes decoded to keys with the layout tables
+of `kernel/ps2.cpp`, the events delivered to userland, and a text console in the
+EGA framebuffer the bootloader reported.
+
 The landed packages are exercised with:
 
 ```sh
@@ -212,12 +225,15 @@ python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso --disk-image build/disk.img
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
   --disk-image build/i386/disk-i386.img --expect-user
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
+  --disk-image build/i386/disk-i386.img --expect-user --expect-key a --expect-key b
 ```
 
 The `--disk-image` run attaches `build/disk.img` as IDE with `snapshot=on` (writes
 never reach the file) and asserts the mounted root listing. The `--expect-user`
 run does the same with `disk-i386.img` and asserts that the 32-bit `sysinfo`
-ran in ring 3, printed its report and exited.
+ran in ring 3, printed its report and exited. `--expect-key` types those keys
+over QMP once the keyboard is up and asserts the scancodes the kernel prints.
 
 ## Route B: target 64-bit hardware
 

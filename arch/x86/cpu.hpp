@@ -43,9 +43,35 @@ void load_user_segments();
  * compila con -mno-sse y no toca el estado del FPU. */
 void enable_fpu();
 
-/* Bucle de parada del kernel. Lo usan el final de EXIT y las excepciones:
- * el proceso salio, no hay planificador todavia. */
+/* Bucle de parada del kernel con las interrupciones apagadas. Lo usan las
+ * excepciones y los fallos: la maquina se para y lo dice. */
 [[noreturn]] void halt_forever();
+
+/* Espera ociosa con las interrupciones vivas. Todavia no hay planificador,
+ * pero cuando el proceso unico termina el teclado (IRQ1) tiene que seguir
+ * llegando: parar la maquina con cli lo apagaria. */
+[[noreturn]] void idle_with_interrupts();
+
+/* Tipo de los manejadores de IRQ: void(void), como en kernel/cpu.hpp. Los IRQ
+ * 0..15 llegan por el PIC legacy, remapeado a 0x20..0x2F en initialize(). */
+using IrqHandler = void (*)();
+
+/* Registra el manejador de un IRQ y abre su puerta en la IDT. Si el IRQ ya
+ * tenia manejador, este lo sustituye. */
+void register_irq_handler(uint8_t irq, IrqHandler handler);
+
+/* Quita la mascara del PIC para ese IRQ. Las interrupciones siguen apagadas
+ * hasta que alguien las encienda con enable_interrupts(). */
+void enable_irq(uint8_t irq);
+
+/* Envia EOI al PIC. El kernel no reencola IRQ: quien recibe la interrupcion
+ * la termina y la da por buena. */
+void acknowledge_irq(uint8_t irq);
+
+/* cli / sti. El kernel arranca con las interrupciones apagadas (no hay PIT) y
+ * solo las enciende quien sabe lo que hace, como el teclado. */
+void disable_interrupts();
+void enable_interrupts();
 
 }
 

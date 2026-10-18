@@ -34,6 +34,10 @@ Cut-off notes:
   and loads an ELF32 program from the mounted root into ring 3; `sysinfo` runs and
   exits, and `tools/legacy_boot_test.py --expect-user` asserts exactly that.
 
+- **The i386 kernel reads the keyboard.** The legacy PIC is remapped with a gate per
+  IRQ, `arch/x86/ps2_32.cpp` drives the 8042 and reports set 1 scancodes over serial,
+  and `tools/legacy_boot_test.py --expect-key` types over QMP and asserts them.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`
