@@ -307,3 +307,30 @@ The repository provides a repeatable external-data regression:
 It verifies the Doom executable, the WAD, configuration files, and savegames
 across a normal rebuild. Never replace `build/disk.img` with a newly formatted
 image as part of routine cleanup.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request, on every
+branch. It is the guard against the failure mode the host suite already had:
+commits that passed on the author's machine (often from stale binaries left in
+`build/linux`) while `./build.sh test` no longer compiled from a clean checkout.
+
+The job runs inside an `archlinux:latest` container, not on the Ubuntu runner
+directly, so the toolchain matches the development host (current Clang/LLVM,
+QEMU and OVMF) and the packages are the same `pacman` list as in
+[Requirements](#requirements). Stage 1 is, in order:
+
+1. `./build.sh build` from a clean checkout (Limine is fetched as usual);
+2. `./build.sh test`, the whole host suite;
+3. `./tools/verify_doom_persistence.sh` with its deterministic WAD fixture, so
+   the `build/disk.img` persistence rule is checked on every push;
+4. the `smoke`, `native-test`, `windowd-smoke` and `sxgui-smoke` QEMU scenarios.
+
+The smokes run under TCG: the container has no `/dev/kvm`, and TCG is the
+portable path the harness is designed around. When a step fails,
+`build/smoke-logs/` (serial, debugcon and QEMU logs, plus screenshots) is
+uploaded as the `smoke-logs` artifact of the run.
+
+What it does not cover yet: the rest of the smoke catalog, the ISO, and the
+official ports (FFmpeg in particular is too heavy to rebuild per push). Those
+belong to a later scheduled stage, not to the per-push one.

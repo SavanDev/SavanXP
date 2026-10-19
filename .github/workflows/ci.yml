@@ -1,0 +1,69 @@
+# Stage 1 CI: build, host tests, the disk.img persistence check and the core
+# QEMU smokes, on every push and pull request. See docs/build/BUILD_LINUX.md.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Arch matches the development host: same Clang/LLVM, QEMU and OVMF.
+    container: archlinux:latest
+    steps:
+      # git first, so actions/checkout makes a real clone instead of a tarball.
+      # Retried: a single slow Arch mirror aborts the whole transaction.
+      - name: Install host dependencies
+        run: |
+          for attempt in 1 2 3; do
+            pacman -Syu --noconfirm --needed \
+              git clang lld llvm cmake ninja make python python-pillow \
+              qemu-system-x86 edk2-ovmf libisoburn && exit 0
+            echo "pacman failed (attempt $attempt), retrying" >&2
+            sleep 10
+          done
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          clang --version | head -n1
+          cmake --version | head -n1
+          qemu-system-x86_64 --version | head -n1
+
+      - name: Build
+        run: ./build.sh build
+
+      - name: Host tests
+        run: ./build.sh test
+
+      - name: disk.img persistence (Doom)
+        run: ./tools/verify_doom_persistence.sh
+
+      - name: Smoke - core POSIX userland
+        run: ./build.sh smoke smoke
+
+      - name: Smoke - native ABI
+        run: ./build.sh smoke native-test
+
+      - name: Smoke - window manager
+        run: ./build.sh smoke windowd-smoke
+
+      - name: Smoke - SxGUI drawing
+        run: ./build.sh smoke sxgui-smoke
+
+      - name: Upload smoke logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: build/smoke-logs/
+          if-no-files-found: ignore

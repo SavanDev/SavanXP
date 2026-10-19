@@ -72,6 +72,10 @@ Cut-off notes:
   was missing `sxchrome.c`, which the toolkit needs since the system 3D edges moved
   out of it, so no `--gui` binary outside the tree could link.
 
+- **GitHub Actions CI (`.github/workflows/ci.yml`) on every push and pull request.** In an
+  `archlinux:latest` container it runs `./build.sh build`, `./build.sh test`, the Doom persistence
+  check and the `smoke`, `native-test`, `windowd-smoke` and `sxgui-smoke` QEMU scenarios.
+
 ### Changed
 
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it
