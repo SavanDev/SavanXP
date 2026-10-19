@@ -23,9 +23,10 @@ target_include_directories(savanxp_i386_user_runtime PRIVATE
 )
 target_compile_options(savanxp_i386_user_runtime PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
 
-# El primer programa de usuario del objetivo i386: pregunta por el sistema con la
-# syscall 35 y sale. Es el mismo fuente que corre en x86_64, compilado otra vez
-# para 32 bits.
+# El userland del objetivo i386: sysinfo (el primero en correr) y keyecho (el
+# segundo, que el kernel lanza al salir el primero y que lee eventos de
+# teclado por la syscall READ). Mismo runtime del SDK, enlazado dentro de la
+# ventana de usuario (linker32.ld); int $0x80 es igual en los dos ABI.
 add_executable(savanxp-i386-sysinfo subsystems/posix/userland/sysinfo.c)
 target_include_directories(savanxp-i386-sysinfo PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -38,8 +39,21 @@ target_link_libraries(savanxp-i386-sysinfo PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-sysinfo PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-sysinfo PROPERTIES OUTPUT_NAME sysinfo SUFFIX "")
 
+# El lector de eventos de teclado: el kernel lo lanza cuando sysinfo sale.
+add_executable(savanxp-i386-keyecho subsystems/posix/userland/keyecho.c)
+target_include_directories(savanxp-i386-keyecho PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${SAVANXP_GENERATED_ROOT}"
+)
+target_compile_options(savanxp-i386-keyecho PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
+target_link_libraries(savanxp-i386-keyecho PRIVATE savanxp_i386_user_runtime)
+target_link_options(savanxp-i386-keyecho PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+set_target_properties(savanxp-i386-keyecho PROPERTIES OUTPUT_NAME keyecho SUFFIX "")
+
 add_custom_target(savanxp_i386_userland
-    DEPENDS savanxp-i386-sysinfo
+    DEPENDS savanxp-i386-sysinfo savanxp-i386-keyecho
     COMMENT "Linking the i386 userland"
 )
 
@@ -50,6 +64,8 @@ add_custom_target(savanxp_i386_diskfs
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_I386_DISKFS_ROOT}/bin"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "$<TARGET_FILE:savanxp-i386-sysinfo>" "${SAVANXP_I386_DISKFS_ROOT}/bin/sysinfo"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "$<TARGET_FILE:savanxp-i386-keyecho>" "${SAVANXP_I386_DISKFS_ROOT}/bin/keyecho"
     DEPENDS savanxp_i386_userland
     COMMENT "Staging the i386 disk tree"
     VERBATIM

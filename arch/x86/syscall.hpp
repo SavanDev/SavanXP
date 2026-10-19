@@ -35,12 +35,14 @@ constexpr size_t kSyscallFrameWords = 11;
 namespace syscall {
 
 /* Numeros que entiende este kernel, los mismos del SDK (savanxp/syscall.h):
- * solo los que el primer programa de usuario necesita. */
+ * solo los que los programas del objetivo i386 usan. */
+constexpr uint32_t kSysRead = 0;
 constexpr uint32_t kSysWrite = 1;
 constexpr uint32_t kSysExit = 7;
 constexpr uint32_t kSysGetPid = 30;
 constexpr uint32_t kSysSystemInfo = 35;
 
+constexpr uint32_t kStdinFd = 0;
 constexpr uint32_t kStdoutFd = 1;
 constexpr uint32_t kStderrFd = 2;
 constexpr uint32_t kInitPid = 1;

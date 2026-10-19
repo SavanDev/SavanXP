@@ -179,7 +179,8 @@ array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
 Order of work, with each step independently bootable and testable:
 `build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` (landed) ->
 `ATA and SxFS root` (landed) -> `ELF32 and a shell` (landed) ->
-`PS/2 and the desktop` (keyboard landed) ->
+`PS/2 and the desktop` (keyboard decode, userland delivery and the EGA text
+console landed) ->
 `isolation features, if ever`.
 
 The storage stack is the first subsystem to cross over almost whole: `ata`, `block`,
@@ -211,10 +212,14 @@ exception ones, and `arch/x86/ps2_32.cpp` drives the 8042 and echoes set 1
 scancodes over serial. The kernel does not `sti` during boot: the interrupts come
 up when the user program enters ring 3 or when the kernel goes idle after `exit`,
 so nothing arrives while SxFS is being mounted. `tools/legacy_boot_test.py
---expect-key` types over QMP and asserts the scancode. The desktop half of the
-step is what is still missing: scancodes decoded to keys with the layout tables
-of `kernel/ps2.cpp`, the events delivered to userland, and a text console in the
-EGA framebuffer the bootloader reported.
+--expect-key` types over QMP and asserts the scancode. The desktop half landed
+on top of that: `ps2_32` decodes set 1 into `savanxp_input_event` with the layout
+tables of `kernel/ps2.cpp` (ES by default, `set_layout` switches to EN), the `READ`
+syscall serves the queue on stdin with a blocking `sti;hlt` wait, and `keyecho` —
+launched by `EXIT` after `sysinfo` leaves — echoes each event back over serial.
+`serial::` mirrors every kernel and program write to the text console the
+bootloader reported (80x25 type 2 at `0xB8000`, `consola: texto EGA` on boot),
+which is the console half of the step.
 
 The landed packages are exercised with:
 
@@ -233,7 +238,9 @@ The `--disk-image` run attaches `build/disk.img` as IDE with `snapshot=on` (writ
 never reach the file) and asserts the mounted root listing. The `--expect-user`
 run does the same with `disk-i386.img` and asserts that the 32-bit `sysinfo`
 ran in ring 3, printed its report and exited. `--expect-key` types those keys
-over QMP once the keyboard is up and asserts the scancodes the kernel prints.
+over QMP once the keyboard is up and asserts the whole delivery path: the raw
+scancode, the EGA console token, `keyecho` started, and the decoded ascii that
+`keyecho` read from stdin through the `READ` syscall.
 
 ## Route B: target 64-bit hardware
 

@@ -25,15 +25,35 @@ USER_LOADED_TOKEN = "user: /disk/bin/sysinfo cargado"
 USER_OUTPUT_TOKEN = "sxfs_files:"
 USER_EXIT_TOKEN = "proceso salio con codigo 0"
 PS2_TOKEN = "ps2: teclado listo"
+# Consola de texto sobre el framebuffer EGA y el segundo programa (el que lee
+# eventos por la syscall READ): solo se exigen con --expect-key, que es el
+# escenario donde importan.
+EGA_TOKEN = "consola: texto EGA 80x25 en 0x000b8000"
+KEYECHO_TOKEN = "keyecho: leyendo stdin"
 
 # Scancodes set 1 (make) de las teclas que el test sabe teclear. El kernel los
-# imprime tal cual, asi que la comprobacion no necesita saber decodificarlos.
+# imprime tal cual (ps2: scan), y con la decodificacion encima exige el ascii
+# que keyecho reporta desde userland.
 KEY_SCANCODES = {
     "a": 0x1E,
     "b": 0x30,
     "c": 0x2E,
     "enter": 0x1C,
     "space": 0x39,
+}
+KEY_ASCII = {
+    "a": 97,
+    "b": 98,
+    "c": 99,
+    "enter": 10,
+    "space": 32,
+}
+# Nombre del test -> qcode de QEMU. La mayoria de los nombres coinciden (QEMU
+# llama a las letras como las llamamos aqui), pero Enter y Space no: el qcode
+# es `ret` y `spc`, y input-send-event rechaza el nombre nuestro.
+KEY_QMP_NAMES = {
+    "enter": "ret",
+    "space": "spc",
 }
 
 
@@ -63,7 +83,7 @@ def type_keys(qmp_socket: Path | None, keys: tuple[tuple[str, int], ...]) -> Non
         time.sleep(0.2)
     with QmpClient(str(qmp_socket), timeout=10.0) as client:
         for name, _scancode in keys:
-            client.tap(name)
+            client.tap(KEY_QMP_NAMES.get(name, name))
             time.sleep(0.2)
 
 
@@ -216,8 +236,12 @@ def main() -> int:
                     f"unknown key(s) {unknown}; supported: {', '.join(sorted(KEY_SCANCODES))}"
                 )
             keys = tuple((key, KEY_SCANCODES[key]) for key in args.expect_key)
-            # El kernel imprime el scancode crudo en hexadecimal de ocho digitos.
+            # El kernel imprime el scancode crudo en hexadecimal de ocho digitos,
+            # y ademas exige la entrega completa: consola EGA, keyecho lanzado y
+            # el ascii decodificado que keyecho leyo de stdin por la syscall READ.
             require += tuple(f"ps2: scan 0x{scancode:08x}" for _key, scancode in keys)
+            require += (EGA_TOKEN, KEYECHO_TOKEN)
+            require += tuple(f"ascii={KEY_ASCII[name]}" for name, _code in keys)
             detail = f" (keyboard: {', '.join(name for name, _code in keys)})"
             qmp_socket = Path(temporary) / "qmp.sock"
             command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]

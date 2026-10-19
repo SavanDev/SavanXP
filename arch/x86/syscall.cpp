@@ -6,8 +6,10 @@
 #include "cpu.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/string.hpp"
+#include "ps2_32.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
+#include "user32.hpp"
 
 namespace i386 {
 
@@ -20,6 +22,11 @@ namespace {
  * aqui antes de tocarlo. */
 constexpr uint32_t kUserWindowBase = 0x08000000u;
 constexpr uint32_t kUserWindowEnd = 0x09000000u;
+
+/* Segundo programa del objetivo: EXIT lo lanza una vez, despues de que el
+ * primero sale, para que la entrega de teclas por READ tenga un consumidor
+ * verificable en el test. Vive en el disk-i386 (cmake/userland-i386.cmake). */
+constexpr const char* kKeyEchoPath = "/disk/bin/keyecho";
 
 bool is_user_range(uint32_t address, uint32_t size) {
     if (address < kUserWindowBase || address >= kUserWindowEnd) {
@@ -48,6 +55,37 @@ void handle(SyscallFrame& frame) {
      * restricciones del SDK ("D", "S", "d") significan lo mismo en los dos
      * ABI, y el usuario pone el numero en eax. */
     switch (frame.eax) {
+        case kSysRead: {
+            /* stdin del objetivo i386 es la cola del teclado: un evento
+             * savanxp_input_event por lectura, sin flags O_NONBLOCK todavia.
+             * Solo existe el fd 0 (ningun archivo esta abierto por proceso). */
+            if (frame.edi != kStdinFd) {
+                frame.eax = failure(SAVANXP_EBADF);
+                return;
+            }
+            if (!is_user_range(frame.esi, frame.edx)) {
+                frame.eax = failure(SAVANXP_EFAULT);
+                return;
+            }
+            if (frame.edx < sizeof(savanxp_input_event)) {
+                frame.eax = failure(SAVANXP_EINVAL);
+                return;
+            }
+            /* Espera bloqueante con sti;hlt: el gate de int $0x80 llega con
+             * IF=0, asi que el chequeo y la espera son atomicos contra la
+             * IRQ1; y un IRQ pendiente en el sti despierta el hlt de
+             * inmediato (la sombra de sti lo entrega antes de dormir), asi
+             * que una tecla que llegue entre las dos instrucciones no se
+             * pierde. pop_event restaura el IF previo (0). */
+            savanxp_input_event event = {};
+            while (!ps2_32::pop_event(event)) {
+                asm volatile("sti\n\thlt");
+            }
+            memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(frame.esi)), &event,
+                   sizeof(event));
+            frame.eax = static_cast<uint32_t>(sizeof(event));
+            return;
+        }
         case kSysWrite: {
             if (frame.edi != kStdoutFd && frame.edi != kStderrFd) {
                 frame.eax = failure(SAVANXP_EBADF);
@@ -110,9 +148,16 @@ void handle(SyscallFrame& frame) {
             serial::write("i386: proceso salio con codigo ");
             serial::write_dec(frame.edi);
             serial::write("\n");
-            /* Sin planificador todavia, el kernel se queda ocioso esperando
-             * IRQ con las interrupciones vivas: si se parase con cli el
-             * teclado dejaria de llegar. */
+            /* Sin planificador: tras el primer programa el kernel lanza
+             * keyecho (una sola vez) para que la entrega de teclas por READ
+             * tenga un consumidor en el volumen, y si no hay mas programas
+             * se queda ocioso con las IRQ vivas -- con cli el teclado
+             * dejaria de llegar. */
+            static bool keyecho_launched = false;
+            if (!keyecho_launched) {
+                keyecho_launched = true;
+                user32::run(kKeyEchoPath);
+            }
             cpu::idle_with_interrupts();
         }
         default: {
@@ -122,14 +167,10 @@ void handle(SyscallFrame& frame) {
             frame.eax = failure(SAVANXP_ENOSYS);
             return;
         }
-            serial::write("i386: syscall ");
-            serial::write_dec(frame.eax);
-            serial::write(" sin implementar\n");
-            frame.eax = failure(SAVANXP_ENOSYS);
-            return;
-        }
     }
 }
+
+}  // namespace syscall
 
 /* El stub de interrupts32.S apila, por debajo de esp0 y en este orden: el
  * puntero al marco (4), %es (4), %ds (4), los ocho registros de pusha (32) y

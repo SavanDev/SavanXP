@@ -38,6 +38,12 @@ Cut-off notes:
   IRQ, `arch/x86/ps2_32.cpp` drives the 8042 and reports set 1 scancodes over serial,
   and `tools/legacy_boot_test.py --expect-key` types over QMP and asserts them.
 
+- **The i386 kernel decodes keys, delivers them to userland and prints on the EGA
+  text console.** `ps2_32` turns set 1 scancodes into `savanxp_input_event` (ES/EN
+  layouts from `kernel/ps2.cpp`), the `READ` syscall serves them on stdin, `keyecho`
+  (launched on `EXIT` after `sysinfo`) echoes them, and `serial::` mirrors to the
+  80x25 console at `0xB8000`; `--expect-key` now asserts all of it.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

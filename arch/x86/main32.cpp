@@ -9,6 +9,7 @@
 
 #include "boot_state.hpp"
 #include "cpu.hpp"
+#include "egatext.hpp"
 #include "multiboot2.hpp"
 #include "paging.hpp"
 #include "ps2_32.hpp"
@@ -158,6 +159,15 @@ void report_framebuffer(const uint8_t* tag) {
     boot_state::state().framebuffer_width = framebuffer->width;
     boot_state::state().framebuffer_height = framebuffer->height;
     boot_state::state().framebuffer_bpp = framebuffer->bpp;
+
+    /* Consola de texto: solo si el cargador dejo el modo texto EGA que este
+     * kernel sabe pintar (80x25 tipo 2 sobre 0xB8000). El token se emite
+     * despues del clear, porque el clear borra la pantalla pero no la serie. */
+    egatext::initialize(framebuffer->width, framebuffer->height, framebuffer->color_type,
+                        framebuffer->address);
+    if (egatext::ready()) {
+        serial::write("consola: texto EGA 80x25 en 0x000b8000\n");
+    }
 }
 
 void report_block_devices() {
