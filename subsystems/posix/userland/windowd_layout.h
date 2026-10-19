@@ -84,32 +84,11 @@ void windowd_clamp_overlay_frame_position(const struct savanxp_fb_info *display_
 int windowd_task_count(const struct windowd_session *session);
 /* Application windows (owned windows excluded) in z-order, bottom first. */
 const struct windowd_client *windowd_task_client(const struct windowd_session *session, int index, int *slot);
-/* Task List (Ctrl+Esc): dialogo del WM con las ventanas abiertas, estilo NT 3.5.
- * Es UI del WM -- no chrome del shell --, igual que los marcos y botones de
- * ventana: windowd es quien tiene la lista de clientes y el z-order. Reemplaza
- * las dos funciones del taskbar (restaurar minimizadas y cambiar de ventana).
- * Botones: 0 = Switch To, 1 = End Task, 2 = Cancel. */
-#define WINDOWD_TASKLIST_WIDTH 320
-#define WINDOWD_TASKLIST_ITEM_HEIGHT 20
-#define WINDOWD_TASKLIST_MAX_VISIBLE 8
-#define WINDOWD_TASKLIST_TITLE_HEIGHT 22
-#define WINDOWD_TASKLIST_BUTTON_HEIGHT 24
-#define WINDOWD_TASKLIST_BUTTON_WIDTH 92
-#define WINDOWD_TASKLIST_BUTTON_GAP 8
-#define WINDOWD_TASKLIST_PADDING 10
-#define WINDOWD_TASKLIST_BUTTON_COUNT 3
-
-/* Cuantos items entran a la vez, y desde cual arranca la ventana visible para
- * que el seleccionado siempre quede a la vista. */
-int windowd_tasklist_visible_count(int task_count);
-int windowd_tasklist_first_visible(int task_count, int selected);
-struct sx_rect windowd_tasklist_rect(const struct savanxp_fb_info *info, int task_count);
-struct sx_rect windowd_tasklist_list_rect(const struct savanxp_fb_info *info, int task_count);
-/* visible_index es relativo a windowd_tasklist_first_visible(), no absoluto. */
-struct sx_rect windowd_tasklist_item_rect(const struct savanxp_fb_info *info, int task_count, int visible_index);
-/* Devuelve el indice ABSOLUTO de tarea bajo el punto, o -1. */
-int windowd_tasklist_item_from_point(const struct savanxp_fb_info *info, int task_count, int selected, int x, int y);
-struct sx_rect windowd_tasklist_button_rect(const struct savanxp_fb_info *info, int task_count, int button_index);
-int windowd_tasklist_button_from_point(const struct savanxp_fb_info *info, int task_count, int x, int y);
+/* Alt+Tab switcher: NT's box in the middle of the screen with the icon and
+ * title of the window that releasing Alt would switch to. */
+#define WINDOWD_SWITCHER_WIDTH 360
+#define WINDOWD_SWITCHER_HEIGHT 56
+#define WINDOWD_SWITCHER_PADDING 14
+struct sx_rect windowd_switcher_rect(const struct savanxp_fb_info *info);
 
 void windowd_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height);

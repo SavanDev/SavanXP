@@ -19,7 +19,7 @@ static const char *k_progman_path = "/bin/progman";
 
 /* A desktop that exits within this long after starting counts as a crash
  * loop; after WINDOWD_DESKTOP_MAX_QUICK_EXITS in a row it is not restarted and
- * the session goes on without it (Alt+Tab and the Task List still work). */
+ * the session goes on without it (Alt+Tab still switches windows). */
 #define WINDOWD_DESKTOP_QUICK_EXIT_MS 10000ul
 #define WINDOWD_DESKTOP_MAX_QUICK_EXITS 3
 
@@ -28,10 +28,11 @@ static int launch_overlay_client(
     const char *path,
     const char *argument,
     uint32_t launch_flags);
-/* Definidas junto al resto del Task List, mas abajo; el selftest las usa antes. */
-static void tasklist_open(struct windowd_session *session, struct windowd_dirty_rect *dirty);
-static void tasklist_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index);
-static void tasklist_close(struct windowd_session *session, struct windowd_dirty_rect *dirty);
+/* Defined with the rest of the Alt+Tab switcher, further down; the selftest
+ * uses them first. */
+static void switcher_close(struct windowd_session *session, struct windowd_dirty_rect *dirty);
+static int recover_compositor(struct windowd_session *session);
+static void switcher_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index);
 static int wm_handle_key(
     struct windowd_session *session,
     const struct savanxp_input_event *key_event,
@@ -750,7 +751,16 @@ static int apply_display_mode(struct windowd_session *session, uint32_t width, u
     }
     if (windowd_compositor_set_mode(&session->compositor, width, height) != 0)
     {
-        return -1;
+        /* compositord may have died since the last present, which is where a
+         * fault is usually noticed: a mode change (F11, or leaving fullscreen)
+         * is then the first to find out. Recover as present does, and try once
+         * more, instead of leaving the scanout in the wrong mode. */
+        if (windowd_compositor_connected(&session->compositor) ||
+            recover_compositor(session) != 0 ||
+            windowd_compositor_set_mode(&session->compositor, width, height) != 0)
+        {
+            return -1;
+        }
     }
 
     session->gfx.info = session->compositor.display_info;
@@ -992,12 +1002,6 @@ static int resolve_cursor_shape(
     if (drag_active)
     {
         return SAVANXP_CURSOR_MOVE;
-    }
-    /* Sobre el Task List siempre flecha: es un dialogo del WM, no debe heredar
-     * el cursor que pida la ventana que quedo debajo. */
-    if (session != 0 && session->tasklist_open)
-    {
-        return SAVANXP_CURSOR_ARROW;
     }
     if (any_overlay_client_starting(session))
     {
@@ -2336,12 +2340,6 @@ static int hotkey_reserved(uint32_t key, uint32_t modifiers)
     {
         return 1;
     }
-    /* Ctrl+Esc opens the Task List until it is removed (phase 2 of
-     * docs/desktop/DESKTOP_ARCHITECTURE.md). */
-    if (key == SAVANXP_KEY_ESC && (modifiers & SAVANXP_KEY_MOD_CTRL) != 0)
-    {
-        return 1;
-    }
     return 0;
 }
 
@@ -2377,7 +2375,10 @@ static void register_hotkey(struct windowd_session *session, uint32_t key, uint3
 /* Delivers a registered hotkey to the desktop's main window instead of the
  * focused application. The KEY_UP of a key whose KEY_DOWN went there follows
  * it, so the application never sees half a key. Returns 1 if consumed. */
-static int deliver_hotkey(struct windowd_session *session, const struct savanxp_input_event *key_event)
+static int deliver_hotkey(
+    struct windowd_session *session,
+    const struct savanxp_input_event *key_event,
+    struct windowd_dirty_rect *dirty)
 {
     const struct windowd_client *desktop = &session->desktop_windows[0];
     int index;
@@ -2398,6 +2399,14 @@ static int deliver_hotkey(struct windowd_session *session, const struct savanxp_
         if (session->hotkeys[index].key == key_event->key &&
             session->hotkeys[index].modifiers == (key_event->modifiers & WINDOWD_HOTKEY_MODIFIERS))
         {
+            /* A hotkey hands control to the shell, whose windows are not drawn
+             * over a fullscreen app (and whose coordinates are the native
+             * mode's): leave fullscreen first, or the Start menu would open
+             * where nobody can see it. */
+            if (session->fullscreen_slot >= 0)
+            {
+                exit_overlay_fullscreen(session, dirty);
+            }
             session->hotkey_held_key = key_event->key;
             (void)route_key(desktop, key_event);
             return 1;
@@ -2628,9 +2637,7 @@ static int open_compositor_session(struct windowd_session *session)
     session->active_overlay_slot = -1;
     session->fullscreen_slot = -1;
     session->overlay_count = 0;
-    /* -1 y no 0: con 0 el primer click sobre la fila 0 pareceria doble click. */
-    session->tasklist_last_click_index = -1;
-    /* Idem: memset dejaria el slot 0 como "redimensionando". */
+    /* -1, not 0: memset would leave slot 0 "being resized". */
     session->resize_slot = -1;
     session->resize_edges = WINDOWD_RESIZE_EDGE_NONE;
     for (slot = 0; slot < WINDOWD_DESKTOP_WINDOW_COUNT; ++slot)
@@ -4030,6 +4037,79 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
         return 1;
     }
 
+    /* Hotkeys. The desktop registers Ctrl+Esc and Ctrl+Shift+Esc when it
+     * starts; windowd does not consume them itself, a reserved combination
+     * cannot be registered, and Ctrl+Esc delivered as a hotkey makes the
+     * desktop open its Start menu -- and again, close it. */
+    {
+        struct savanxp_input_event key_event;
+        int count_before = 0;
+
+        deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+        while (session->hotkey_count < 2 && uptime_ms() < deadline)
+        {
+            selftest_service_overlays(session, &dirty);
+            sleep_ms(20);
+        }
+        if (session->hotkey_count < 2)
+        {
+            printf("DESKTOP SMOKE FAIL hotkeys: the desktop registered %d\n", session->hotkey_count);
+            return 1;
+        }
+        count_before = session->hotkey_count;
+        register_hotkey(session, SAVANXP_KEY_TAB, SAVANXP_KEY_MOD_ALT);
+        if (session->hotkey_count != count_before)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: Alt+Tab could be registered\n");
+            return 1;
+        }
+
+        memset(&key_event, 0, sizeof(key_event));
+        key_event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+        key_event.key = SAVANXP_KEY_ESC;
+        if (wm_handle_key(session, &key_event, &dirty) || deliver_hotkey(session, &key_event, &dirty))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: a bare Esc did not reach the application\n");
+            return 1;
+        }
+        key_event.modifiers = SAVANXP_KEY_MOD_CTRL;
+        if (wm_handle_key(session, &key_event, &dirty) || !deliver_hotkey(session, &key_event, &dirty))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: Ctrl+Esc did not go to the desktop\n");
+            return 1;
+        }
+        /* Its KEY_UP follows it, even with Ctrl already released. */
+        key_event.type = SAVANXP_INPUT_EVENT_KEY_UP;
+        key_event.modifiers = 0;
+        if (!deliver_hotkey(session, &key_event, &dirty) || session->hotkey_held_key != 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: the KEY_UP did not follow the hotkey\n");
+            return 1;
+        }
+        if (selftest_wait_desktop_window(session, WINDOWD_ROLE_POPUP) == 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: Ctrl+Esc did not open the Start menu\n");
+            return 1;
+        }
+        key_event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+        key_event.modifiers = SAVANXP_KEY_MOD_CTRL;
+        (void)deliver_hotkey(session, &key_event, &dirty);
+        key_event.type = SAVANXP_INPUT_EVENT_KEY_UP;
+        key_event.modifiers = 0;
+        (void)deliver_hotkey(session, &key_event, &dirty);
+        deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+        while (selftest_desktop_window(session, WINDOWD_ROLE_POPUP) != 0 && uptime_ms() < deadline)
+        {
+            selftest_service_overlays(session, &dirty);
+            sleep_ms(20);
+        }
+        if (selftest_desktop_window(session, WINDOWD_ROLE_POPUP) != 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: Ctrl+Esc again did not close the Start menu\n");
+            return 1;
+        }
+    }
+
     /* An application may not ask for a role: the request is refused, as the
      * runtime would see it. */
     {
@@ -5019,10 +5099,10 @@ static int windowd_selftest(void)
         }
     }
 
-    /* Subtest Task List (A2.4b): sin taskbar, es la unica via de vuelta para una
-     * ventana minimizada. Minimizamos, verificamos que sigue enumerada, pintamos
-     * un frame con el dialogo abierto (ejercita la capa TASKLIST del compositor)
-     * y comprobamos que Switch To la restaura y cierra el dialogo. */
+    /* A minimized window is still a task, so Alt+Tab is a way back to it even
+     * without the taskbar: minimize, find it among the tasks, draw a frame with
+     * the switcher on it (the compositor's SWITCHER layer), and switching to
+     * it restores it and closes the switcher. */
     if (!failed)
     {
         struct windowd_client *client = &session.overlay_clients[kSlot];
@@ -5032,105 +5112,46 @@ static int windowd_selftest(void)
         minimize_overlay_client(&session, &dirty, kSlot);
         if (!client->minimized)
         {
-            puts_fd(2, "DESKTOP SMOKE FAIL tasklist: minimize no aplico\n");
+            puts_fd(2, "DESKTOP SMOKE FAIL switcher: minimize did not apply\n");
             failed = 1;
         }
-
-        if (!failed)
+        for (index = 0; !failed && index < windowd_task_count(&session); ++index)
         {
-            tasklist_open(&session, &dirty);
-            for (index = 0; index < windowd_task_count(&session); ++index)
-            {
-                int slot = -1;
+            int slot = -1;
 
-                if (windowd_task_client(&session, index, &slot) != 0 && slot == kSlot)
-                {
-                    task_index = index;
-                    break;
-                }
-            }
-            if (task_index < 0)
+            if (windowd_task_client(&session, index, &slot) != 0 && slot == kSlot)
             {
-                puts_fd(2, "DESKTOP SMOKE FAIL tasklist: ventana minimizada ausente de la lista\n");
-                failed = 1;
+                task_index = index;
             }
         }
-
+        if (!failed && task_index < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL switcher: the minimized window is not a task\n");
+            failed = 1;
+        }
         if (!failed)
         {
-            session.tasklist_selected = task_index;
+            session.switcher_open = 1;
+            session.switcher_selected = task_index;
             windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
             windowd_draw_desktop(&session, kCursorX, kCursorY, &dirty);
-
-            tasklist_switch_to(&session, &dirty, task_index);
+            switcher_switch_to(&session, &dirty, task_index);
             if (client->minimized)
             {
-                puts_fd(2, "DESKTOP SMOKE FAIL tasklist: Switch To no restauro la ventana\n");
+                puts_fd(2, "DESKTOP SMOKE FAIL switcher: switching did not restore the window\n");
                 failed = 1;
             }
-            else if (session.tasklist_open)
+            else if (session.switcher_open)
             {
-                puts_fd(2, "DESKTOP SMOKE FAIL tasklist: el dialogo quedo abierto tras Switch To\n");
+                puts_fd(2, "DESKTOP SMOKE FAIL switcher: the switcher stayed open\n");
                 failed = 1;
             }
         }
     }
 
-    /* Subtest del atajo Ctrl+Esc por el camino real de la tecla. El subtest de
-     * arriba llama tasklist_open() directo, asi que no cubre la deteccion del
-     * modificador -- que es justo lo que cambio al pasar de seguir Ctrl a mano
-     * a leerlo de savanxp_input_event.modifiers. Se prueban los dos lados: con
-     * el modificador abre, y sin el la tecla NO abre nada y se rutea al
-     * cliente, que es lo que hace que ESC a secas siga sirviendo para cerrar
-     * una ventana. */
-    if (!failed)
-    {
-        struct savanxp_input_event key_event;
-        int consumed;
-
-        if (session.tasklist_open)
-        {
-            tasklist_close(&session, &dirty);
-        }
-
-        key_event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
-        key_event.key = SAVANXP_KEY_ESC;
-        key_event.ascii = 0;
-        key_event.modifiers = 0;
-        consumed = wm_handle_key(&session, &key_event, &dirty);
-        if (consumed || session.tasklist_open)
-        {
-            puts_fd(2, "DESKTOP SMOKE FAIL ctrl+esc: ESC sin modificador no tendria que abrir el Task List\n");
-            failed = 1;
-        }
-
-        if (!failed)
-        {
-            key_event.modifiers = SAVANXP_KEY_MOD_CTRL;
-            consumed = wm_handle_key(&session, &key_event, &dirty);
-            if (!consumed || !session.tasklist_open)
-            {
-                puts_fd(2, "DESKTOP SMOKE FAIL ctrl+esc: el modificador no abrio el Task List\n");
-                failed = 1;
-            }
-        }
-
-        if (!failed)
-        {
-            /* Y vuelve a cerrar: el atajo alterna, no solo abre. */
-            consumed = wm_handle_key(&session, &key_event, &dirty);
-            if (!consumed || session.tasklist_open)
-            {
-                puts_fd(2, "DESKTOP SMOKE FAIL ctrl+esc: el atajo no cerro el Task List\n");
-                failed = 1;
-            }
-        }
-    }
-
-    /* Subtest de Alt+Tab. Mas alla del ciclado, cubre las dos cosas que lo
-     * separan del Ctrl+Esc: que arranca desde la ventana ACTIVA -- para que el
-     * primer Tab caiga en la ultima usada y no en una cualquiera -- y que
-     * soltar Alt confirma. */
+    /* Alt+Tab. Beyond cycling it covers that it starts from the ACTIVE window
+     * -- so the first Tab lands on the one used last, not on any one -- that
+     * releasing Alt confirms, and that Esc cancels without switching. */
     if (!failed)
     {
         struct savanxp_input_event key_event;
@@ -5138,11 +5159,7 @@ static int windowd_selftest(void)
         int active_index;
         int expected;
 
-        if (session.tasklist_open)
-        {
-            tasklist_close(&session, &dirty);
-        }
-        session.tasklist_alt_cycle = 0;
+        switcher_close(&session, &dirty);
 
         count = windowd_task_count(&session);
         active_index = windowd_active_task_index(&session);
@@ -5160,7 +5177,7 @@ static int windowd_selftest(void)
         if (!failed)
         {
             key_event.modifiers = 0;
-            if (wm_handle_key(&session, &key_event, &dirty) || session.tasklist_open)
+            if (wm_handle_key(&session, &key_event, &dirty) || session.switcher_open)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: Tab sin Alt no es del WM\n");
                 failed = 1;
@@ -5172,12 +5189,12 @@ static int windowd_selftest(void)
         {
             key_event.modifiers = SAVANXP_KEY_MOD_ALT;
             expected = (active_index + count - 1) % count;
-            if (!wm_handle_key(&session, &key_event, &dirty) || !session.tasklist_open)
+            if (!wm_handle_key(&session, &key_event, &dirty) || !session.switcher_open)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: no abrio el switcher\n");
                 failed = 1;
             }
-            else if (session.tasklist_selected != expected)
+            else if (session.switcher_selected != expected)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: no arranco desde la ventana activa\n");
                 failed = 1;
@@ -5187,9 +5204,9 @@ static int windowd_selftest(void)
         /* El segundo Tab sigue bajando. */
         if (!failed)
         {
-            expected = (session.tasklist_selected + count - 1) % count;
+            expected = (session.switcher_selected + count - 1) % count;
             (void)wm_handle_key(&session, &key_event, &dirty);
-            if (session.tasklist_selected != expected)
+            if (session.switcher_selected != expected)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: el segundo Tab no avanzo\n");
                 failed = 1;
@@ -5199,10 +5216,10 @@ static int windowd_selftest(void)
         /* Alt+Shift+Tab vuelve. */
         if (!failed)
         {
-            expected = (session.tasklist_selected + 1) % count;
+            expected = (session.switcher_selected + 1) % count;
             key_event.modifiers = SAVANXP_KEY_MOD_ALT | SAVANXP_KEY_MOD_SHIFT;
             (void)wm_handle_key(&session, &key_event, &dirty);
-            if (session.tasklist_selected != expected)
+            if (session.switcher_selected != expected)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: Alt+Shift+Tab no volvio\n");
                 failed = 1;
@@ -5213,14 +5230,14 @@ static int windowd_selftest(void)
          * del driver real, que baja su estado antes de emitir. */
         if (!failed)
         {
-            int target = session.tasklist_selected;
+            int target = session.switcher_selected;
             int slot = -1;
 
             (void)windowd_task_client(&session, target, &slot);
             key_event.type = SAVANXP_INPUT_EVENT_KEY_UP;
             key_event.key = SAVANXP_KEY_ALT;
             key_event.modifiers = 0;
-            if (!wm_handle_key(&session, &key_event, &dirty) || session.tasklist_open)
+            if (!wm_handle_key(&session, &key_event, &dirty) || session.switcher_open)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: soltar Alt no cerro el switcher\n");
                 failed = 1;
@@ -5228,6 +5245,36 @@ static int windowd_selftest(void)
             else if (session.active_overlay_slot != slot)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: no activo la ventana elegida\n");
+                failed = 1;
+            }
+        }
+
+        /* Esc cancels: the switcher closes and the active window stays. */
+        if (!failed)
+        {
+            int active_before = session.active_overlay_slot;
+
+            key_event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+            key_event.key = SAVANXP_KEY_TAB;
+            key_event.modifiers = SAVANXP_KEY_MOD_ALT;
+            (void)wm_handle_key(&session, &key_event, &dirty);
+            key_event.key = SAVANXP_KEY_ESC;
+            key_event.modifiers = SAVANXP_KEY_MOD_ALT;
+            if (!wm_handle_key(&session, &key_event, &dirty) || session.switcher_open ||
+                session.active_overlay_slot != active_before)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: Esc did not cancel the switcher\n");
+                failed = 1;
+            }
+            /* The Alt release that follows belongs to nobody now: it must not
+             * switch either. */
+            key_event.type = SAVANXP_INPUT_EVENT_KEY_UP;
+            key_event.key = SAVANXP_KEY_ALT;
+            key_event.modifiers = 0;
+            (void)wm_handle_key(&session, &key_event, &dirty);
+            if (!failed && session.active_overlay_slot != active_before)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: releasing Alt after Esc switched windows\n");
                 failed = 1;
             }
         }
@@ -5526,29 +5573,35 @@ static int windowd_selftest(void)
     return 0;
 }
 
-/* --- Task List (Ctrl+Esc) ------------------------------------------------
+/* --- Alt+Tab switcher -------------------------------------------------------
  *
- * Conmutador de ventanas del WM, estilo NT 3.5. Reemplaza las dos funciones que
- * daba el taskbar: restaurar una ventana minimizada y cambiar entre ventanas.
- * Enumera la misma lista que el taskbar (shell + overlays en z-order, incluidas
- * las minimizadas) via windowd_taskbar_button_*.
+ * NT's Alt+Tab: while Alt is held each Tab moves to the next window and a box
+ * in the middle of the screen names it; releasing Alt switches to it. Tasks
+ * are enumerated with windowd_task_client, minimized ones included, so Alt+Tab
+ * is also a way back to a minimized window when the taskbar is not there.
  */
 
-static void tasklist_close(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+static void dirty_switcher(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
-    if (!session->tasklist_open)
+    struct sx_rect box = windowd_switcher_rect(&session->gfx.info);
+
+    windowd_dirty_rect_add(dirty, &session->gfx.info, box.x, box.y, box.width, box.height);
+}
+
+static void switcher_close(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    if (!session->switcher_open)
     {
         return;
     }
-    session->tasklist_open = 0;
-    /* El dialogo desaparece: hay que repintar lo que tapaba. */
-    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    session->switcher_open = 0;
+    /* The box goes away: what it covered has to be repainted. */
+    dirty_switcher(session, dirty);
 }
 
-/* Indice de la ventana activa dentro de la lista de tareas. El orden de la
- * lista es shell primero y despues los overlays de ABAJO hacia arriba, asi que
- * la activa es la ultima y "la anterior" esta un lugar mas atras -- de ahi que
- * Alt+Tab avance con paso negativo. */
+/* Index of the active window among the tasks. Tasks are ordered from the
+ * BOTTOM of the z-order up, so the active one is the last and "the previous
+ * one" is one place back -- which is why Alt+Tab steps backwards. */
 static int windowd_active_task_index(const struct windowd_session *session)
 {
     int count = windowd_task_count(session);
@@ -5562,7 +5615,7 @@ static int windowd_active_task_index(const struct windowd_session *session)
         {
             continue;
         }
-        /* Con un dialogo activo, la tarea activa es la de su dueno. */
+        /* With a dialog active, the active task is its owner's. */
         if (session->active_client_kind == WINDOWD_CLIENT_APP &&
             slot == overlay_root_slot(session, session->active_overlay_slot))
         {
@@ -5572,30 +5625,14 @@ static int windowd_active_task_index(const struct windowd_session *session)
     return count > 0 ? count - 1 : 0;
 }
 
-static void tasklist_open(struct windowd_session *session, struct windowd_dirty_rect *dirty)
-{
-    int count = windowd_task_count(session);
-
-    session->tasklist_open = 1;
-    if (session->tasklist_selected < 0 || session->tasklist_selected >= count)
-    {
-        session->tasklist_selected = 0;
-    }
-    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-}
-
-/* Trae al frente la tarea seleccionada, restaurandola si estaba minimizada. */
-static void tasklist_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index)
+/* Brings the chosen task to the front, restoring it if it was minimized. */
+static void switcher_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index)
 {
     int slot = -1;
     const struct windowd_client *client = windowd_task_client(session, task_index, &slot);
 
-    if (client == 0)
-    {
-        return;
-    }
-    tasklist_close(session, dirty);
-    if (!overlay_slot_valid(slot))
+    switcher_close(session, dirty);
+    if (client == 0 || !overlay_slot_valid(slot))
     {
         return;
     }
@@ -5607,61 +5644,18 @@ static void tasklist_switch_to(struct windowd_session *session, struct windowd_d
     windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
-static void tasklist_end_task(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index)
-{
-    int slot = -1;
-    const struct windowd_client *client = windowd_task_client(session, task_index, &slot);
-
-    if (client == 0 || !overlay_slot_valid(slot))
-    {
-        return;
-    }
-    destroy_overlay_client(session, slot, 1);
-    if (session->tasklist_selected >= windowd_task_count(session))
-    {
-        session->tasklist_selected = windowd_task_count(session) - 1;
-    }
-    if (session->tasklist_selected < 0)
-    {
-        session->tasklist_selected = 0;
-    }
-    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-}
-
 /*
- * Teclado: el WM consume sus hotkeys globales (Ctrl+Esc, F11) y lo demas se
- * rutea al cliente activo. Retirado el chrome (A2.4c) ya no hay un segundo
- * turno: el shell es un proceso cliente y recibe input como cualquier app.
+ * Keyboard: the WM consumes its own keys (Alt+Tab, Alt+F4, F11) and everything
+ * else goes on, to a registered hotkey or to the focused client.
  */
 static int wm_handle_key(
     struct windowd_session *session,
     const struct savanxp_input_event *key_event,
     struct windowd_dirty_rect *dirty)
 {
-    /* El estado de Ctrl viene en el evento (savanxp_input_event.modifiers), no
-     * se sigue a mano: el driver es el que lo sabe de verdad, y el seguimiento
-     * por KEY_DOWN/KEY_UP se trababa si se perdia un KEY_UP. La tecla igual se
-     * rutea al cliente, que la necesita para sus propios atajos. */
-    if (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN &&
-        key_event->key == SAVANXP_KEY_ESC &&
-        (key_event->modifiers & SAVANXP_KEY_MOD_CTRL) != 0)
-    {
-        if (session->tasklist_open)
-        {
-            tasklist_close(session, dirty);
-        }
-        else
-        {
-            tasklist_open(session, dirty);
-        }
-        return 1;
-    }
-
-    /* Alt+Tab cicla por las ventanas usando el Task List como switcher, que es
-     * exactamente para lo que existe: ya enumera lo mismo y ya sabe pintarse.
-     * Mientras Alt siga apretado cada Tab mueve la seleccion, y al soltar Alt
-     * se confirma -- el gesto de Windows, sin UI nueva. Alt+Shift+Tab va al
-     * reves. */
+    /* Alt+Tab cycles through the windows. While Alt is held each Tab moves the
+     * selection, and releasing Alt confirms -- the Windows gesture.
+     * Alt+Shift+Tab goes the other way. */
     if (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN &&
         key_event->key == SAVANXP_KEY_TAB &&
         (key_event->modifiers & SAVANXP_KEY_MOD_ALT) != 0)
@@ -5673,65 +5667,36 @@ static int wm_handle_key(
         {
             return 1;
         }
-        if (!session->tasklist_open)
+        if (!session->switcher_open)
         {
-            /* Ciclo nuevo: se arranca desde la ventana activa para que el
-             * primer Tab caiga en la ultima que se uso, no en una cualquiera. */
-            tasklist_open(session, dirty);
-            session->tasklist_selected = windowd_active_task_index(session);
-            session->tasklist_alt_cycle = 1;
+            /* A new cycle starts from the active window, so the first Tab
+             * lands on the one used last, not on any one. */
+            session->switcher_open = 1;
+            session->switcher_selected = windowd_active_task_index(session);
         }
-        session->tasklist_selected = (session->tasklist_selected + count + step) % count;
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        session->switcher_selected = (session->switcher_selected + count + step) % count;
+        dirty_switcher(session, dirty);
         return 1;
     }
 
-    /* Soltar Alt confirma el ciclo. Se mira la TECLA y no el modificador: el
-     * driver baja su estado antes de emitir, asi que el KEY_UP de Alt llega ya
-     * sin el flag puesto. Se exige que el Task List siga abierto porque un ESC
-     * en el medio del ciclo lo cierra y ahi no hay nada que confirmar. */
-    if (key_event->type == SAVANXP_INPUT_EVENT_KEY_UP &&
-        key_event->key == SAVANXP_KEY_ALT &&
-        session->tasklist_alt_cycle)
+    /* Releasing Alt confirms. It looks at the KEY, not the modifier: the
+     * driver drops its state before emitting, so Alt's KEY_UP arrives without
+     * the flag. */
+    if (session->switcher_open &&
+        key_event->type == SAVANXP_INPUT_EVENT_KEY_UP &&
+        key_event->key == SAVANXP_KEY_ALT)
     {
-        session->tasklist_alt_cycle = 0;
-        if (session->tasklist_open)
-        {
-            tasklist_switch_to(session, dirty, session->tasklist_selected);
-        }
+        switcher_switch_to(session, dirty, session->switcher_selected);
         return 1;
     }
 
-    /* Mientras esta abierto, el Task List captura el teclado: es modal. */
-    if (session->tasklist_open)
+    /* While it is open the switcher owns the keyboard: Esc cancels, anything
+     * else is swallowed so it does not reach the window being left. */
+    if (session->switcher_open)
     {
-        int count = windowd_task_count(session);
-
-        if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+        if (key_event->type == SAVANXP_INPUT_EVENT_KEY_DOWN && key_event->key == SAVANXP_KEY_ESC)
         {
-            return 1;
-        }
-        if (key_event->key == SAVANXP_KEY_ESC)
-        {
-            tasklist_close(session, dirty);
-        }
-        else if (count > 0 && key_event->key == SAVANXP_KEY_UP)
-        {
-            session->tasklist_selected = (session->tasklist_selected + count - 1) % count;
-            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        }
-        else if (count > 0 && key_event->key == SAVANXP_KEY_DOWN)
-        {
-            session->tasklist_selected = (session->tasklist_selected + 1) % count;
-            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        }
-        else if (count > 0 && key_event->key == SAVANXP_KEY_ENTER)
-        {
-            tasklist_switch_to(session, dirty, session->tasklist_selected);
-        }
-        else if (count > 0 && key_event->key == SAVANXP_KEY_DELETE)
-        {
-            tasklist_end_task(session, dirty, session->tasklist_selected);
+            switcher_close(session, dirty);
         }
         return 1;
     }
@@ -5799,94 +5764,6 @@ static void refresh_cursor_after_move(
     }
 }
 
-/* Modal de puntero del WM: el Task List consume el evento entero mientras esta
- * abierto, y tiene precedencia sobre los modales del shell (es UI del WM).
- * Doble click sobre una fila equivale a Switch To. */
-static int wm_pointer_handle_tasklist(
-    struct windowd_session *session,
-    struct windowd_dirty_rect *dirty,
-    int cursor_x,
-    int cursor_y,
-    int previous_cursor_x,
-    int previous_cursor_y,
-    uint32_t left_pressed,
-    uint32_t left_was_pressed)
-{
-    int count;
-    int task_index;
-    int button_index;
-
-    if (!session->tasklist_open)
-    {
-        return 0;
-    }
-    /* Antes de cualquier salida: el dialogo consume todos los eventos, asi que
-     * si no repintamos aca el cursor se congela. */
-    refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
-    if (left_pressed == 0 || left_was_pressed != 0)
-    {
-        return 1; /* Consumido igual: el dialogo es modal. */
-    }
-
-    count = windowd_task_count(session);
-    button_index = windowd_tasklist_button_from_point(&session->gfx.info, count, cursor_x, cursor_y);
-    if (button_index >= 0)
-    {
-        if (button_index == 0)
-        {
-            tasklist_switch_to(session, dirty, session->tasklist_selected);
-        }
-        else if (button_index == 1)
-        {
-            tasklist_end_task(session, dirty, session->tasklist_selected);
-        }
-        else
-        {
-            tasklist_close(session, dirty);
-        }
-        return 1;
-    }
-
-    task_index = windowd_tasklist_item_from_point(
-        &session->gfx.info, count, session->tasklist_selected, cursor_x, cursor_y);
-    if (task_index >= 0)
-    {
-        unsigned long now = uptime_ms();
-        int double_click = (session->tasklist_last_click_index == task_index) &&
-            (now - session->tasklist_last_click_ms <= 450UL);
-
-        session->tasklist_selected = task_index;
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        if (double_click)
-        {
-            tasklist_switch_to(session, dirty, task_index);
-            session->tasklist_last_click_index = -1;
-        }
-        else
-        {
-            session->tasklist_last_click_index = task_index;
-            session->tasklist_last_click_ms = now;
-        }
-        return 1;
-    }
-
-    /* Click fuera del dialogo: cerrar, como cualquier modal. */
-    if (!sx_rect_contains_point(windowd_tasklist_rect(&session->gfx.info, count), cursor_x, cursor_y))
-    {
-        tasklist_close(session, dirty);
-    }
-    return 1;
-}
-
-/*
- * Manejo de un evento de puntero coalescido (Fase A, ver docs/desktop/WM_SUBSYSTEM.md).
- * Saca el cuerpo per-evento del for(;;) de main() a una unidad nombrada con
- * contrato de estado explicito. Adentro, el update de cursor/hover es del WM,
- * los modales del shell (shell_pointer_handle_*) consumen, y el dispatch de
- * click izquierdo sigue siendo el chain mixto chrome/ventana que A2 bisectara.
- * El estado que persiste entre eventos (cursor, botones, drag) entra y sale por
- * puntero; se copia a locales y se escribe de vuelta en 'done'.
- */
 static void handle_pointer_event(
     struct windowd_session *session,
     const struct savanxp_mouse_event *event,
@@ -5958,14 +5835,6 @@ static void handle_pointer_event(
     if (session->current_cursor_shape != session->previous_cursor_shape && session->hw_cursor_enabled)
     {
         (void)windowd_compositor_set_cursor_shape(&session->compositor, session->current_cursor_shape);
-    }
-
-    /* Unico modal que queda: el Task List (UI del WM). */
-    if (wm_pointer_handle_tasklist(session, dirty, cursor_x, cursor_y,
-            previous_cursor_x, previous_cursor_y, left_pressed, left_was_pressed))
-    {
-        last_buttons = pressed_buttons;
-        goto done;
     }
 
     /* A press outside the desktop's popups asks them to close; the press
@@ -6197,15 +6066,13 @@ int main(int argc, char **argv)
     }
     (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
     /* The desktop: optional. Without it the session lives on, with a solid
-     * background, and Alt+Tab and the Task List still switch windows. */
+     * background, and Alt+Tab still switches windows. */
     if (launch_desktop_client(&session) < 0)
     {
         puts_fd(2, "windowd: the desktop did not start\n");
     }
-    /* Program Manager: el launcher de la sesion. Es una ventana normal, sin
-     * trato especial -- pero ahora es el UNICO camino para lanzar programas, asi
-     * que si no arranca la sesion queda sin launcher (queda el Task List para
-     * manejar lo que ya este abierto). */
+    /* Program Manager: the session's launcher, an ordinary window with no
+     * special treatment. Without it the Start menu still launches programs. */
     if (launch_overlay_client(&session, k_progman_path, 0, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE) < 0)
     {
         puts_fd(2, "desktop: Program Manager no arranco; sesion sin launcher\n");
@@ -6270,7 +6137,7 @@ int main(int argc, char **argv)
                 /* Arbitration: the WM's own keys, then the hotkeys the
                  * desktop registered, then the focused application. */
                 if (wm_handle_key(&session, &key_event, &dirty) ||
-                    deliver_hotkey(&session, &key_event))
+                    deliver_hotkey(&session, &key_event, &dirty))
                 {
                     continue;
                 }

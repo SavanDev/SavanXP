@@ -142,14 +142,10 @@ struct windowd_session
     struct sx_rect resize_origin_frame;
     int resize_grab_x;
     int resize_grab_y;
-    /* Task List (Ctrl+Esc): estado de UI del WM, no del chrome del shell. */
-    int tasklist_open;
-    /* 1 mientras un Alt+Tab tiene el Task List abierto como switcher. Distingue
-     * ese caso del Ctrl+Esc, donde soltar Alt no tiene que confirmar nada. */
-    int tasklist_alt_cycle;
-    int tasklist_selected;
-    int tasklist_last_click_index;
-    unsigned long tasklist_last_click_ms;
+    /* Alt+Tab switcher: open while Alt is held after a Tab; switcher_selected
+     * is a task index (windowd_task_client). WM UI, like the window frames. */
+    int switcher_open;
+    int switcher_selected;
     int active_client_kind;
     int active_overlay_slot;
     int fullscreen_slot;

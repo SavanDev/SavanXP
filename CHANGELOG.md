@@ -89,6 +89,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Ctrl+Esc opens the Start menu, Ctrl+Shift+Esc opens Task Manager, and Alt+Tab shows
+  its own switcher.** The keys are hotkeys the desktop registers (a fullscreen app leaves
+  fullscreen first); the switcher is a box with the icon and title of the next window.
+
 - **The shell is one `/bin/desktop` process.** Wallpaper, taskbar, Start menu and the
   volume, clock and keyboard-layout popups are windows of it instead of six processes,
   so a popup opens without a launch; `windowd` no longer knows any of them, its
@@ -225,6 +229,9 @@ Cut-off notes:
 
 ### Removed
 
+- **The Task List.** The taskbar, Alt+Tab and Task Manager cover switching, restoring
+  and ending tasks (see `docs/desktop/DESKTOP_ARCHITECTURE.md`).
+
 - **`/bin/shellui`, `/bin/taskbar`, `/bin/startmenu`, `/bin/volumepopup`, `/bin/clockpopup`
   and `/bin/kbdlayoutpopup`, now part of `/bin/desktop`, and the four shell launch flags**
   (`SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP`, `_START_MENU`, `_VOLUME_POPUP`, `_CLOCK_POPUP`).
@@ -235,6 +242,10 @@ Cut-off notes:
   (see `docs/userland/SYSTEM_LAYERING.md`).
 
 ### Fixed
+
+- **Leaving fullscreen right after `compositord` died left the screen in the low mode.**
+  A mode change is now the first to notice a dead daemon and recovers it, as present does;
+  and `windowd` kills a `compositord` that does not confirm its shutdown instead of waiting forever.
 
 - **Minimizing a window from the taskbar left the next window's caption inactive.**
   The window below became active but kept its gray caption until something else

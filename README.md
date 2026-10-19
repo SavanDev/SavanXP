@@ -39,10 +39,10 @@ built independently with `./ports/doomgeneric/build.sh`,
 - Framebuffer console and early serial output.
 - Userland with `ELF64` processes, syscalls and a preemptive scheduler.
 - Shell with `pipes`, redirections and basic builtins.
-- NT 3.5-style graphical session: its own window manager (`windowd`), the
-  wallpaper and Program Manager as clients, and a Task List (Ctrl+Esc).
-- A taskbar listing the open windows, as a WM client of its own, with an ES/EN
-  keyboard layout selector.
+- NT-style graphical session: its own window manager (`windowd`) with an
+  Alt+Tab switcher, and the shell as clients of it: one `desktop` process
+  (wallpaper, a taskbar listing the open windows, the Start menu on Ctrl+Esc,
+  and volume, clock and ES/EN keyboard layout popups) plus Program Manager.
 - Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties
   and a Task Manager with live CPU and memory per process
   ([how it measures](docs/userland/SYSTEM_MONITORING.md)). Media Player is an optional port

@@ -644,8 +644,8 @@ enum windowd_layer_kind
     /* Only the fallback: the background is normally the desktop's window. */
     WINDOWD_LAYER_BACKGROUND = 0,
     WINDOWD_LAYER_CLIENT,
-    /* UI del WM (Ctrl+Esc): conmutador de ventanas, sobre todo salvo el cursor. */
-    WINDOWD_LAYER_TASKLIST,
+    /* WM UI: the Alt+Tab switcher, above everything but the cursor. */
+    WINDOWD_LAYER_SWITCHER,
     WINDOWD_LAYER_CURSOR,
 };
 
@@ -657,7 +657,7 @@ struct windowd_layer
     const struct windowd_client *client;
 };
 
-/* Every window of the desktop, every application window, the Task List and
+/* Every window of the desktop, every application window, the switcher and
  * the cursor. */
 #define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + WINDOWD_DESKTOP_WINDOW_COUNT + 2)
 
@@ -678,101 +678,44 @@ static struct sx_rect client_occluder_rect(const struct windowd_client *client)
     return client->frame_visible ? windowd_client_frame_rect(client) : windowd_client_surface_rect(client);
 }
 
-/* Task List (Ctrl+Esc): lista las ventanas abiertas -- incluidas las
- * minimizadas, que sin taskbar no tendrian otra via de vuelta -- con Switch To
- * / End Task, como el Task List de NT 3.5. */
-static void draw_tasklist(struct sx_painter *painter, struct windowd_session *session)
+/* Alt+Tab switcher: a raised box with the icon and title of the window that
+ * releasing Alt switches to, as NT's. A minimized window says so: switching
+ * to it restores it. */
+static void draw_switcher(struct sx_painter *painter, struct windowd_session *session)
 {
-    static const char *k_button_labels[WINDOWD_TASKLIST_BUTTON_COUNT] = {"Switch To", "End Task", "Cancel"};
-    const struct savanxp_fb_info *info = &session->gfx.info;
-    int task_count = windowd_task_count(session);
-    struct sx_rect dialog = windowd_tasklist_rect(info, task_count);
-    struct sx_rect caption = sx_rect_make(
-        dialog.x + 3,
-        dialog.y + 3,
-        dialog.width - 6,
-        WINDOWD_TASKLIST_TITLE_HEIGHT - 6);
-    struct sx_rect list = windowd_tasklist_list_rect(info, task_count);
-    int first = windowd_tasklist_first_visible(task_count, session->tasklist_selected);
-    int visible = windowd_tasklist_visible_count(task_count);
-    int index;
+    struct sx_rect box = windowd_switcher_rect(&session->gfx.info);
+    const struct windowd_client *client = windowd_task_client(session, session->switcher_selected, 0);
+    struct desktop_embedded_bitmap icon_storage;
+    const struct desktop_embedded_bitmap *icon = 0;
+    int text_x = box.x + WINDOWD_SWITCHER_PADDING;
+    int text_y = box.y + (box.height - gfx_text_height()) / 2;
 
-    sxchrome_fill_raised(painter, dialog, SXCHROME_COLOR_FACE, 0);
-    draw_caption(painter, caption, 1, 0u);
+    sxchrome_fill_raised(painter, box, SXCHROME_COLOR_FACE, 0);
+    if (client == 0)
     {
-        int previous_font = sx_painter_set_font(painter, SX_FONT_UI_TITLE);
-        int text_y = caption.y +
-            ((caption.height - sx_painter_text_height(painter)) / 2);
-        sx_painter_draw_text(
-            painter,
-            caption.x + 4,
-            text_y,
-            "Task List",
-            SXCHROME_COLOR_CAPTION_TEXT);
-        (void)sx_painter_set_font(painter, previous_font);
+        return;
     }
-
-    sxchrome_fill_raised(painter, list, SXCHROME_COLOR_FIELD, 1);
-    if (task_count == 0)
+    icon = windowd_presentation_icon(&client->presentation, &icon_storage);
+    if (icon != 0)
     {
-        sx_painter_draw_text(painter, list.x + 6, list.y + 3, "(sin ventanas abiertas)", SXCHROME_COLOR_DISABLED_TEXT);
+        draw_embedded_bitmap(painter, icon, text_x, box.y + (box.height - (int)icon->height) / 2);
+        text_x += (int)icon->width + 8;
     }
-
-    for (index = 0; index < visible; ++index)
+    if (sx_painter_push_clip(painter, sx_rect_make(text_x, box.y, box.x + box.width - WINDOWD_SWITCHER_PADDING - text_x, box.height)))
     {
-        int task_index = first + index;
-        int slot = -1;
-        const struct windowd_client *client = windowd_task_client(session, task_index, &slot);
-        struct sx_rect row = windowd_tasklist_item_rect(info, task_count, index);
-        const char *label = "Ventana";
-        int selected = (task_index == session->tasklist_selected);
+        const char *title = window_title_for_client(client);
 
-        if (client == 0 || sx_rect_is_empty(row))
-        {
-            continue;
-        }
-        label = window_title_for_client(client);
-
-        if (selected)
-        {
-            sx_painter_fill_rect(painter, row, SXCHROME_COLOR_SELECT);
-        }
-        if (sx_painter_push_clip(painter, row))
+        sx_painter_draw_text(painter, text_x, text_y, title, SXCHROME_COLOR_TEXT);
+        if (client->minimized)
         {
             sx_painter_draw_text(
                 painter,
-                row.x + 5,
-                row.y + ((row.height - gfx_text_height()) / 2),
-                label,
-                selected ? SXCHROME_COLOR_SELECT_TEXT : SXCHROME_COLOR_TEXT);
-            /* Marca las minimizadas: son las que sin taskbar quedarian perdidas. */
-            if (client->minimized)
-            {
-                sx_painter_draw_text(
-                    painter,
-                    row.x + row.width - gfx_text_width("(minimizada)") - 6,
-                    row.y + ((row.height - gfx_text_height()) / 2),
-                    "(minimizada)",
-                    selected
-                        ? SXCHROME_COLOR_CAPTION_INACTIVE_TEXT
-                        : SXCHROME_COLOR_DISABLED_TEXT);
-            }
-            sx_painter_pop_clip(painter);
+                text_x + gfx_text_width(title) + 8,
+                text_y,
+                "(minimized)",
+                SXCHROME_COLOR_DISABLED_TEXT);
         }
-    }
-
-    for (index = 0; index < WINDOWD_TASKLIST_BUTTON_COUNT; ++index)
-    {
-        struct sx_rect rect = windowd_tasklist_button_rect(info, task_count, index);
-        int label_width = gfx_text_width(k_button_labels[index]);
-
-        sxchrome_fill_raised(painter, rect, SXCHROME_COLOR_FACE, 0);
-        sx_painter_draw_text(
-            painter,
-            rect.x + ((rect.width - label_width) / 2),
-            rect.y + ((rect.height - gfx_text_height()) / 2),
-            k_button_labels[index],
-            SXCHROME_COLOR_TEXT);
+        sx_painter_pop_clip(painter);
     }
 }
 
@@ -797,8 +740,8 @@ static void wm_paint_layer(
     case WINDOWD_LAYER_CLIENT:
         draw_client(painter, layer->client);
         break;
-    case WINDOWD_LAYER_TASKLIST:
-        draw_tasklist(painter, session);
+    case WINDOWD_LAYER_SWITCHER:
+        draw_switcher(painter, session);
         break;
     case WINDOWD_LAYER_CURSOR:
         draw_cursor(painter, session->current_cursor_shape, cursor_x, cursor_y);
@@ -840,10 +783,10 @@ static int add_desktop_layers(
 
 /* Back-to-front layer list for the current frame:
  *
- *   background, application windows, panels, popups, Task List, cursor
+ *   background, application windows, panels, popups, switcher, cursor
  *
  * With an app in fullscreen only the background, the panels (behind it, so
- * occlusion drops them), the app, the Task List and the cursor take part. */
+ * occlusion drops them), the app, the switcher and the cursor take part. */
 static int build_layers(
     struct windowd_session *session,
     int cursor_x,
@@ -903,13 +846,13 @@ static int build_layers(
         count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_POPUP);
     }
 
-    /* Above everything, fullscreen included: otherwise Ctrl+Esc would open an
-     * invisible Task List and there would be no way out of a fullscreen app. */
-    if (session->tasklist_open)
+    /* Above everything, fullscreen included: Alt+Tab is a way out of a
+     * fullscreen app, so its switcher has to be seen there. */
+    if (session->switcher_open)
     {
-        layers[count].kind = WINDOWD_LAYER_TASKLIST;
+        layers[count].kind = WINDOWD_LAYER_SWITCHER;
         layers[count].opaque = 1;
-        layers[count].bounds = windowd_tasklist_rect(info, windowd_task_count(session));
+        layers[count].bounds = windowd_switcher_rect(info);
         layers[count].client = 0;
         ++count;
     }

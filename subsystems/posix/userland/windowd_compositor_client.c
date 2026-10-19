@@ -476,6 +476,8 @@ int windowd_compositor_reconnect(struct windowd_compositor_connection *connectio
 
 void windowd_compositor_close(struct windowd_compositor_connection *connection)
 {
+    int shut_down = 0;
+
     if (connection == 0)
     {
         return;
@@ -487,7 +489,7 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
         struct savanxp_compositor_reply reply;
         memset(&request, 0, sizeof(request));
         request.type = SAVANXP_COMPOSITOR_MSG_SHUTDOWN;
-        (void)compositor_rpc(connection, &request, &reply);
+        shut_down = compositor_rpc(connection, &request, &reply) == 0;
     }
 
     close_fd_if_needed(&connection->request_fd);
@@ -496,6 +498,13 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
     if (connection->pid > 0)
     {
         int status = 0;
+        /* A daemon that did not confirm the shutdown -- it timed out, or the
+         * link was already marked dead -- may never exit by itself: kill it,
+         * as reap_daemon does, so the wait below cannot block forever. */
+        if (!shut_down)
+        {
+            (void)savanxp_kill((int)connection->pid, SAVANXP_SIGKILL);
+        }
         (void)savanxp_waitpid((int)connection->pid, &status);
     }
 

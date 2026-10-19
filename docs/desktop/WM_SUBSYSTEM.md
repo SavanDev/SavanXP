@@ -2,10 +2,11 @@
 
 > **Superseded as the target (2026-10-19)** by
 > [DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md), which splits the stack
-> into `compositord`, `windowd` and `desktop` and removes the Task List. Two
+> into `compositord`, `windowd` and `desktop` and removes the Task List. Three
 > statements below no longer hold: the taskbar came back, now as a window of
-> the `desktop` process (with a Start menu and popups), and `shellui` is gone
-> into that same process. The descriptor budget, the wheel rules and
+> the `desktop` process (with a Start menu and popups); `shellui` is gone into
+> that same process; and the Task List is gone -- Alt+Tab has its own switcher
+> box, Ctrl+Esc opens the Start menu and End Task is Task Manager's. The descriptor budget, the wheel rules and
 > fixed-size windows below are still current.
 
 > **Status: Phase A COMPLETE (A1 + A2 + A3), on master.**

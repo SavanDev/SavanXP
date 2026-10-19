@@ -1,8 +1,9 @@
 # Desktop architecture: compositord, windowd, desktop
 
-> **Status: design accepted (2026-10-19). Phase 1 is built** (the `desktop`
-> process, window roles, hotkey registration); phases 2 to 4 are not. It is
-> the target for the graphics stack and the order for getting there.
+> **Status: design accepted (2026-10-19). Phases 1 and 2 are built** (the
+> `desktop` process, window roles, hotkeys, the Task List removed); phases 3
+> and 4 are not. It is the target for the graphics stack and the order for
+> getting there.
 > Where it disagrees with the "Target layering" of
 > [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md), this document wins; WM_SUBSYSTEM.md
 > stays as the record of how `windowd` was extracted from `desktop.c`.
@@ -208,9 +209,12 @@ it to that client even when another window has focus.
   its KEY_UP go to the desktop's main window, and the focused application sees
   neither.
 - `desktop` registers Ctrl+Esc (Start menu) and Ctrl+Shift+Esc (launch
-  `taskmgr`) in phase 2. `windowd` does not know what either means.
+  `taskmgr`). `windowd` does not know what either means.
 - Combinations `windowd` keeps for itself cannot be registered: Alt+Tab,
-  Alt+F4, F11, and Ctrl+Esc until the Task List is gone.
+  Alt+F4, F11.
+- Delivering a hotkey leaves composited fullscreen first: the shell's windows
+  are not drawn over a fullscreen app (and are laid out for the native mode),
+  so Ctrl+Esc would otherwise open a menu nobody can see.
 - Registering is a shell privilege at first. Whether ordinary applications
   may register hotkeys is an open question, not a default.
 
@@ -328,7 +332,12 @@ pixel by pixel.
    slot, the dead clock code. Removed from `include/abi/`: the four shell
    launch flags.
 
-### Phase 2: remove the Task List
+### Phase 2: remove the Task List (done)
+
+`windowd --selftest` covers the switcher (cycling, confirm on Alt release,
+Esc cancelling, a minimized window restored through it) and the hotkeys end to
+end against the real desktop; `shoot.sh --scenario startmenu` drives Ctrl+Esc
+and Ctrl+Shift+Esc with real keys.
 
 1. The Alt+Tab switcher UI in `windowd` (icon and title box).
 2. Ctrl+Esc and Ctrl+Shift+Esc registered by `desktop` (Start menu,
@@ -369,6 +378,20 @@ builds for it. Not a goal of this plan: a client in any subsystem is a valid
 client.
 
 ## Open questions
+
+- **`compositord` can take minutes to exit at session teardown.** Seen in
+  `windowd --selftest` after the capacity test, with the wallpaper in pattern
+  mode (`/disk/desktop.cfg` = `2`) and the phase 1+ desktop. Sometimes the
+  shutdown RPC times out (5 s); other times it is confirmed at once but
+  `waitpid` on `compositord` takes over 100 s or never returns, while the guest
+  loses ~87% of its timer ticks. That points at `compositord`'s exit path
+  (`compositor_state_close` -> `GPU_IOC_RELEASE`, `display::release_session*`
+  in the kernel), not at `windowd`. Neither the pre-phase-1 code with the same
+  config nor phase 1 with the default wallpaper reproduces it.
+  `windowd_compositor_close` now kills a daemon that did not confirm, which
+  covers the timeout case but not the slow exit. Reproduce: set
+  `/disk/desktop.cfg` to `2` and run `./build.sh smoke windowd-smoke` a few
+  times; a hang after `DESKTOP SMOKE capacity` is the symptom.
 
 - **POSIX access to native calls:** fall through in the POSIX dispatcher, or
   explicit POSIX wrappers in the translation layer. Falling through matches NT

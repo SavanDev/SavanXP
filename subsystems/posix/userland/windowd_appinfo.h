@@ -34,7 +34,7 @@ struct windowd_appinfo
 const struct windowd_appinfo *windowd_appinfo_for_path(const char *path);
 
 #define WINDOWD_PRESENTATION_LABEL_CAPACITY 32
-/* El chrome de ventana y el Task List dibujan el icono chico. */
+/* The window frame and the Alt+Tab switcher draw the small icon. */
 #define WINDOWD_PRESENTATION_ICON_EXTENT 16u
 #define WINDOWD_PRESENTATION_ICON_PIXELS \
     (WINDOWD_PRESENTATION_ICON_EXTENT * WINDOWD_PRESENTATION_ICON_EXTENT)

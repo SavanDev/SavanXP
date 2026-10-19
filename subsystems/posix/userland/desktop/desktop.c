@@ -24,6 +24,9 @@ _Static_assert(
  * without asking anyone.
  */
 
+/* Task Manager, which Ctrl+Shift+Esc opens. */
+static const char *k_task_manager_path = "/bin/taskmgr";
+
 /* How often the persisted wallpaper choice is re-read. progman's Options menu
  * changes it by writing the config; it is a rare, manual change, not worth an
  * open+read per pass. */
@@ -186,6 +189,36 @@ static void apply_actions(uint32_t actions, struct desktop_popup_slot *slot)
     }
 }
 
+static void register_hotkey(uint32_t key, uint32_t modifiers)
+{
+    struct savanxp_wm_shell_request request;
+
+    memset(&request, 0, sizeof(request));
+    request.action = SAVANXP_WM_SHELL_REGISTER_HOTKEY;
+    request.key = key;
+    request.modifiers = modifiers;
+    (void)savanxp_write(SAVANXP_WM_FD_SHELL_REQUEST, &request, sizeof(request));
+}
+
+/* The main window never has the focus, so every key it gets is a hotkey this
+ * process registered. */
+static void handle_hotkey(const struct savanxp_input_event *event)
+{
+    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || event->key != SAVANXP_KEY_ESC)
+    {
+        return;
+    }
+    if ((event->modifiers & SAVANXP_KEY_MOD_SHIFT) != 0)
+    {
+        desktop_close_popups();
+        (void)desktop_launch(k_task_manager_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+    }
+    else
+    {
+        desktop_toggle_popup(DESKTOP_POPUP_START_MENU);
+    }
+}
+
 static void paint_background(void)
 {
     struct sx_bitmap bitmap;
@@ -243,6 +276,10 @@ static void service_background(void)
         {
             (void)gfx_apply_resize_event(&g_background, &event);
             g_background_repaint = 1;
+        }
+        else
+        {
+            handle_hotkey(&event);
         }
     }
     while (gfx_poll_window_pointer(&g_background, &pointer) > 0)
@@ -381,6 +418,12 @@ int main(void)
     /* Without the shell channels (started by hand, not by windowd) there is
      * no window list to show: the desktop runs as a background only. */
     g_taskbar_available = desktop_taskbar_init() == 0;
+    if (g_taskbar_available)
+    {
+        /* NT 4: Ctrl+Esc opens the Start menu, Ctrl+Shift+Esc Task Manager. */
+        register_hotkey(SAVANXP_KEY_ESC, SAVANXP_KEY_MOD_CTRL);
+        register_hotkey(SAVANXP_KEY_ESC, SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_SHIFT);
+    }
 
     for (;;)
     {

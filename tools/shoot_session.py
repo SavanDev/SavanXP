@@ -1028,7 +1028,31 @@ def scenario_startmenu(s):
     s.qmp.move_to(*start_button_center(disarmed))
     s.qmp.click()
     time.sleep(2.0)
-    s.shot("menu-cerrado")
+    closed = s.shot("menu-cerrado")
+    # Ctrl+Esc is a hotkey the desktop registers: it opens the menu with the
+    # keyboard, whichever window has the focus, and closes it again. Closed is
+    # judged against the shot before opening, since what lies under the menu
+    # (the calculator launched above, the wallpaper) is not a fixed colour.
+    kx, ky, kw, kh = startmenu_rect(closed)
+    probe = (kx + 2 + STARTMENU_STRIP_WIDTH + 2, ky + 4)
+    s.qmp.chord("ctrl", "esc")
+    by_key = wait_menu_open(s, "menu-ctrl-esc")
+    expect_pixel(by_key, probe[0], probe[1], FACE, "Ctrl+Esc opened the menu")
+    s.qmp.chord("ctrl", "esc")
+    time.sleep(2.0)
+    reclosed = s.shot("menu-ctrl-esc-cerrado")
+    expect_pixel(reclosed, probe[0], probe[1], closed.getpixel(probe), "Ctrl+Esc again closed the menu")
+    # Ctrl+Shift+Esc opens Task Manager (for looking: its window has no fixed
+    # place to assert on).
+    s.qmp.key("ctrl", True)
+    s.qmp.key("shift", True)
+    time.sleep(0.15)
+    s.qmp.tap("esc")
+    time.sleep(0.15)
+    s.qmp.key("shift", False)
+    s.qmp.key("ctrl", False)
+    time.sleep(12.0)
+    s.shot("taskmgr-ctrl-shift-esc")
 
 
 def scenario_bench(s):

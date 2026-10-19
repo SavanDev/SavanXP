@@ -490,147 +490,23 @@ const struct windowd_client *windowd_task_client(const struct windowd_session *s
     return 0;
 }
 
-int windowd_tasklist_visible_count(int task_count)
+struct sx_rect windowd_switcher_rect(const struct savanxp_fb_info *info)
 {
-    if (task_count <= 0)
-    {
-        return 0;
-    }
-    return task_count < WINDOWD_TASKLIST_MAX_VISIBLE ? task_count : WINDOWD_TASKLIST_MAX_VISIBLE;
-}
-
-int windowd_tasklist_first_visible(int task_count, int selected)
-{
-    int visible = windowd_tasklist_visible_count(task_count);
-    int first;
-
-    if (visible <= 0 || task_count <= visible)
-    {
-        return 0;
-    }
-    /* Ventana deslizante minima que mantiene visible al seleccionado. */
-    first = selected - visible + 1;
-    if (first < 0)
-    {
-        first = 0;
-    }
-    if (first > task_count - visible)
-    {
-        first = task_count - visible;
-    }
-    return first;
-}
-
-static int tasklist_list_height(int task_count)
-{
-    int visible = windowd_tasklist_visible_count(task_count);
-
-    /* Con la lista vacia se reserva una fila para el texto de "sin ventanas". */
-    return (visible > 0 ? visible : 1) * WINDOWD_TASKLIST_ITEM_HEIGHT;
-}
-
-struct sx_rect windowd_tasklist_rect(const struct savanxp_fb_info *info, int task_count)
-{
-    const int width = WINDOWD_TASKLIST_WIDTH;
-    int height;
+    int width = WINDOWD_SWITCHER_WIDTH;
 
     if (info == 0)
     {
         return sx_rect_make(0, 0, 0, 0);
     }
-    height = WINDOWD_TASKLIST_TITLE_HEIGHT +
-        WINDOWD_TASKLIST_PADDING +
-        tasklist_list_height(task_count) +
-        WINDOWD_TASKLIST_PADDING +
-        WINDOWD_TASKLIST_BUTTON_HEIGHT +
-        WINDOWD_TASKLIST_PADDING;
-
+    if (width > (int)info->width)
+    {
+        width = (int)info->width;
+    }
     return sx_rect_make(
         ((int)info->width - width) / 2,
-        ((int)info->height - height) / 2,
+        ((int)info->height - WINDOWD_SWITCHER_HEIGHT) / 2,
         width,
-        height);
-}
-
-struct sx_rect windowd_tasklist_list_rect(const struct savanxp_fb_info *info, int task_count)
-{
-    struct sx_rect dialog = windowd_tasklist_rect(info, task_count);
-
-    if (dialog.width <= 0)
-    {
-        return dialog;
-    }
-    return sx_rect_make(
-        dialog.x + WINDOWD_TASKLIST_PADDING,
-        dialog.y + WINDOWD_TASKLIST_TITLE_HEIGHT + WINDOWD_TASKLIST_PADDING,
-        dialog.width - (2 * WINDOWD_TASKLIST_PADDING),
-        tasklist_list_height(task_count));
-}
-
-struct sx_rect windowd_tasklist_item_rect(const struct savanxp_fb_info *info, int task_count, int visible_index)
-{
-    struct sx_rect list = windowd_tasklist_list_rect(info, task_count);
-
-    if (list.width <= 0 || visible_index < 0 || visible_index >= windowd_tasklist_visible_count(task_count))
-    {
-        return sx_rect_make(0, 0, 0, 0);
-    }
-    return sx_rect_make(
-        list.x,
-        list.y + (visible_index * WINDOWD_TASKLIST_ITEM_HEIGHT),
-        list.width,
-        WINDOWD_TASKLIST_ITEM_HEIGHT);
-}
-
-int windowd_tasklist_item_from_point(const struct savanxp_fb_info *info, int task_count, int selected, int x, int y)
-{
-    int first = windowd_tasklist_first_visible(task_count, selected);
-    int visible = windowd_tasklist_visible_count(task_count);
-    int index;
-
-    for (index = 0; index < visible; ++index)
-    {
-        if (sx_rect_contains_point(windowd_tasklist_item_rect(info, task_count, index), x, y))
-        {
-            return first + index;
-        }
-    }
-    return -1;
-}
-
-struct sx_rect windowd_tasklist_button_rect(const struct savanxp_fb_info *info, int task_count, int button_index)
-{
-    struct sx_rect dialog = windowd_tasklist_rect(info, task_count);
-    int total;
-    int start_x;
-
-    if (dialog.width <= 0 || button_index < 0 || button_index >= WINDOWD_TASKLIST_BUTTON_COUNT)
-    {
-        return sx_rect_make(0, 0, 0, 0);
-    }
-    total = (WINDOWD_TASKLIST_BUTTON_COUNT * WINDOWD_TASKLIST_BUTTON_WIDTH) +
-        ((WINDOWD_TASKLIST_BUTTON_COUNT - 1) * WINDOWD_TASKLIST_BUTTON_GAP);
-    start_x = dialog.x + ((dialog.width - total) / 2);
-
-    return sx_rect_make(
-        start_x + (button_index * (WINDOWD_TASKLIST_BUTTON_WIDTH + WINDOWD_TASKLIST_BUTTON_GAP)),
-        dialog.y + dialog.height - WINDOWD_TASKLIST_PADDING - WINDOWD_TASKLIST_BUTTON_HEIGHT,
-        WINDOWD_TASKLIST_BUTTON_WIDTH,
-        WINDOWD_TASKLIST_BUTTON_HEIGHT);
-}
-
-int windowd_tasklist_button_from_point(const struct savanxp_fb_info *info, int task_count, int x, int y)
-{
-    int index;
-
-    for (index = 0; index < WINDOWD_TASKLIST_BUTTON_COUNT; ++index)
-    {
-        if (sx_rect_contains_point(windowd_tasklist_button_rect(info, task_count, index), x, y))
-        {
-            return index;
-        }
-    }
-    return -1;
+        WINDOWD_SWITCHER_HEIGHT);
 }
 
 void windowd_cursor_bounds(int cursor_x, int cursor_y, int shape, int *x, int *y, int *width, int *height)

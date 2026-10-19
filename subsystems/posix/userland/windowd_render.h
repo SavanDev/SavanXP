@@ -36,7 +36,7 @@ int windowd_dirty_rect_at(const struct windowd_dirty_rect *dirty, size_t index, 
  * failure. */
 int windowd_region_selftest(void);
 /* Composes the frame: the desktop's background (or a solid colour until it has
- * one), application windows, the desktop's panels and popups, the Task List
+ * one), application windows, the desktop's panels and popups, the Alt+Tab switcher
  * and the cursor. */
 void windowd_draw_desktop(
     struct windowd_session *session,
