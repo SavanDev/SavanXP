@@ -93,6 +93,7 @@ plan. The number in each row came out of `readelf`, `nm` or a script in `tools/`
 | A two-library dependency chain, proven by `libchaintop` → `libchainbase` | done |
 | A diamond in the dependency graph | handled, **not tested** |
 | `ldso_lookup()`, `ldso_loaded()`, `ldso_symbol_is_shared()` | done |
+| `<dlfcn.h>`: `dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, per-handle scopes | done, [see below](#dlopen) |
 | 32 library slots, 24 program headers per image | done |
 
 ### The libraries
@@ -190,8 +191,8 @@ at 0 of 228 and 0 of 284 glyph pixels.
 - **`DT_SONAME` is read and ignored**; a `DT_NEEDED` is looked up verbatim under
   `/disk/lib`.
 - **Global visibility only.** No `STV_HIDDEN`, `STV_PROTECTED`, or `.symver`.
-- **No `dlopen`, no unload, no reference counting.** The library array is fixed at
-  load time.
+- **No unload.** `dlclose` drops a reference and leaves the image mapped; see
+  [`dlopen`](#dlopen).
 - **3534 dead symbols inside 16 binaries** — 2359 `sxgui`, 731 `sx_*`, 444 `gfx` —
   because the PIE profile does not pass `--gc-sections`. Not a sharing problem; the
   check above passes.
@@ -1003,12 +1004,9 @@ it.
 - **File demand paging.** A file-backed section is read whole. Sharing saves
   resident memory, not mapped memory, and `memory_bytes` counts mapped-present
   pages, so Task Manager shows the same per-process figure either way.
-- **`dlopen` as a general feature.** Not on the critical path: this FFmpeg port
-  compiles its decoders into `libavcodec` and enables no external codec library, so
-  nothing is looked up by name at runtime. If a port ever does enable one, `dlopen`
-  arrives with it — a general `dlopen` with reference counting and unloading is a
-  much larger feature, and building that first would put a second subsystem between
-  here and a working player.
+- **Unloading in `dlclose`.** `dlopen` arrived with the port that needs it,
+  [Xash3D FWGS](../ports/XASH3D_ROADMAP.md), as predicted here; unloading did not,
+  because nothing needs it yet. See [`dlopen`](#dlopen).
 
 ## FFmpeg as one library, and what it cost to find out
 
@@ -1495,3 +1493,87 @@ finds 0 pixels.
 `mediaplayer.sxres` is a claim, and `.mp3`, `.avi` and `.flac` now have to resolve to
 `/bin/mediaplayer` against the stamped binaries in the real image — and to the
 player, which is a program of the tree, rather than to anything the port installs.
+
+## dlopen
+
+`<dlfcn.h>` is implemented in `ldso.c`, on the same slot table as the startup
+loader, so it exists in every PIE program and in no STATIC one — where a call is a
+link error rather than a silent no-op. It was built for
+[Xash3D FWGS](../ports/XASH3D_ROADMAP.md), whose engine loads its renderer, menu,
+client and game logic by name, and its shape is what that port calls:
+`dlopen(path, RTLD_NOW)`, `dlsym` through the handle's dependencies, `dlclose`,
+`dlerror`, `dladdr` for save/restore, and constructors for its C++ modules.
+`dltest` covers each of those, and was checked by breaking the scope rule and the
+rollback.
+
+### Scope: the one semantic change
+
+Before `dlopen`, every image was in one namespace, searched newest first with the
+executable last. That stays the **global scope**, and everything loaded at startup or
+through `ldso_load` is in it, so nothing that existed changes behaviour.
+
+A library opened without `RTLD_GLOBAL` is **local**: it answers only for itself and
+for images whose dependency tree contains it. A relocation of image *S* searches the
+global images plus *S*'s own tree (`Library.deps`, one bit per slot, closed
+transitively), in the same newest-first order. The case that requires it is Xash3D's:
+`client.so` and `hl.so` both define the HLSDK's `PM_*` functions, and with one
+namespace the second library loaded binds its calls into the first one's copy.
+`dltest` reproduces that with `libdlmod_one` and `libdlmod_base`.
+
+- `dlsym(handle, name)` searches the image, then its dependency tree in load order.
+- `dlsym(RTLD_DEFAULT, …)` and `dlsym(dlopen(NULL, …), …)` search the global scope.
+- `RTLD_GLOBAL` — at load, or later through `RTLD_NOLOAD` — makes the image and its
+  whole tree global, as on Linux.
+
+### A failed `dlopen` leaves nothing behind
+
+`ldso_load` publishes an image before walking its `DT_NEEDED` and relocating it,
+which is right at startup and wrong for `dlopen`: a library that failed would stay
+mapped and answer `dlsym(RTLD_DEFAULT)`. So `dlopen` rolls the table back to where it
+was — unmapping every image the call added — and puts back `ldso_missing()`'s state,
+which describes the program's startup and is not a `dlopen`'s to change.
+
+It also runs **strict**. At startup, once a dependency is missing, relocation turns
+tolerant and skips what cannot resolve, so the program can start and say what is
+missing. A `dlopen` caller has `dlerror()` for that, so an unresolvable symbol fails
+the load and `dlerror()` names it.
+
+### `dladdr` needed the symbol count
+
+`.dynsym` has no length field. `resolve_in` used to stop at the first entry whose
+name offset fell outside `.dynstr`, which works because what follows the table
+usually looks like that. A `dlsym` that misses — and Xash3D probes for optional
+exports on every load — walks into that guess, and `dladdr` has to scan every symbol.
+The count now comes from `DT_HASH` (its second word) or, for every library this tree
+builds, from `DT_GNU_HASH` (the highest bucket start followed down its chain to the
+end bit). That is the only use of either table: lookup stays a linear scan, for the
+reason in [Symbol lookup was tried and rejected](#symbol-lookup-was-tried-and-rejected).
+The count was checked against `readelf` for every library and two executables.
+
+### What `dlopen` deliberately does not do
+
+- **`dlclose` never unmaps.** It drops a reference; a later `dlopen` of the same path
+  returns the same image with its data as it was left. musl behaves the same, and
+  Xash3D supports musl. Unloading means unmapping, invalidating every pointer into the
+  image, running destructors, and freeing a slot in the middle of an ordered table —
+  real work with no consumer yet.
+- **No lazy binding.** `RTLD_LAZY` is `RTLD_NOW`, as at startup.
+- **One path, one image.** Identity is the path string `dlopen` was given, after
+  prefixing `/disk/lib/` to a bare name. Two spellings of one file load it twice.
+- **Constructors run for `dlopen` only.** `DT_INIT` then `DT_INIT_ARRAY`, for every
+  image the call brought, newest first so dependencies initialize before what needs
+  them; there are no destructors, since nothing unloads. Nothing at startup runs
+  constructors — not `crt0` for the program, not the loader for its `DT_NEEDED` —
+  because nothing in this tree has any. Xash3D's `client.so` and `hl.so` are C++
+  with global objects, which is why `dlopen` cannot wait for that.
+- **The budget is shared with startup.** 32 slots and the per-process limit of 64
+  section views ([SECTIONS.md](./SECTIONS.md#the-budget)), at roughly one view per
+  `PT_LOAD`. Xash3D's half-dozen modules fit; a port that loads dozens would not.
+
+### The descriptor that stayed open
+
+Writing the rollback found a leak older than `dlopen`: `place_segment` closed the
+section handle of a data segment after mapping it, but not of an executable one. A
+view holds its own reference to its section, so the handle served nothing, and every
+process kept one descriptor per library — out of 64 — for its whole life. It is
+closed now, and a load that fails after mapping its segments unmaps them.

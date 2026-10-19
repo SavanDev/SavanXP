@@ -466,6 +466,13 @@ SCENARIOS: dict[str, Scenario] = {
         "A diamond of four libraries loads the shared leaf exactly once",
         180.0,
     ),
+    "dltest": _qemu_scenario(
+        "dltest",
+        "DLTEST RESOLVED",
+        "DLTEST OK",
+        "dlopen/dlsym/dladdr keep RTLD_LOCAL libraries apart and roll back a failed load",
+        180.0,
+    ),
 
     # Cuanto tarda el cargador con libffmpeg: 6.8 MB, 2334 simbolos. Es lo unico
     # aqui que mide algo en vez de afirmar un resultado, y por eso es el escenario

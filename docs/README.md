@@ -93,6 +93,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`NETWORKING.md`](net/NETWORKING.md) — TCP guarantees, retransmission, windows,
   fault injection, and the minimal DNS client.
 
+## Ports — `ports/`
+
+- [`XASH3D_ROADMAP.md`](ports/XASH3D_ROADMAP.md) — porting Xash3D FWGS: what the
+  engine needs from the platform, and the order that makes it pay for `dlopen` and
+  SxGL without pulling in threads or SDL.
+
 ## Third-party code — `third-party/`
 
 - [`THIRD_PARTY_ADOPTION.md`](third-party/THIRD_PARTY_ADOPTION.md) — the policy for adopting

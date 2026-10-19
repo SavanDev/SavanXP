@@ -76,6 +76,12 @@ Cut-off notes:
   `archlinux:latest` container it runs `./build.sh build`, `./build.sh test`, the Doom persistence
   check and the `smoke`, `native-test`, `windowd-smoke` and `sxgui-smoke` QEMU scenarios.
 
+- **`<dlfcn.h>`: `dlopen`, `dlsym`, `dlclose`, `dlerror` and `dladdr` for PIE programs.**
+  Per-handle scopes with `RTLD_LOCAL`/`RTLD_GLOBAL`/`RTLD_NOLOAD`, `dlsym` through the handle's
+  `DT_NEEDED` tree, constructors run, and a failed `dlopen` rolls back with the reason in
+  `dlerror()`; `dlclose` never unmaps. New `dltest` scenario, also run by `smoke`. Step 1 of
+  [the Xash3D FWGS plan](docs/ports/XASH3D_ROADMAP.md).
+
 ### Changed
 
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it
@@ -225,6 +231,10 @@ Cut-off notes:
 - **`./build.sh test` builds and passes again.** The gfx2d, audio and ccleste-wav host
   tests find `abi/savanxp_abi.h`, the removed `native-port-layout-test` is no longer
   registered, and `smoke-runner-layout-test` reads `docs/kernel/KERNEL_NATIVE_API.md`.
+
+- **The loader no longer holds a descriptor per library, nor leaks a failed load's segments.**
+  The handle of each executable segment stayed open for the life of the process, and a load
+  that failed after mapping left its views in place.
 
 ## [0.4.0] - 2026-10-08
 

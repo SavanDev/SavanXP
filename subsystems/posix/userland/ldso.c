@@ -2,6 +2,7 @@
  * mapeada, mas la copia de los segmentos escribibles. */
 
 #include <savanxp/ldso.h>
+#include <dlfcn.h>
 
 #include "libc.h"
 
@@ -39,6 +40,17 @@ typedef uint64_t Elf64_Xword;
 #define DT_SYMTAB 6
 #define DT_JMPREL 23
 #define DT_PLTREL 20
+/* The two hash tables are read only for the symbol count they imply; lookup
+ * itself stays a linear scan (see "Symbol lookup was tried and rejected"). */
+#define DT_HASH 4
+#define DT_GNU_HASH 0x6ffffef5
+/* Constructors. Only dlopen runs them; see run_initializers. */
+#define DT_INIT 12
+#define DT_INIT_ARRAY 25
+#define DT_INIT_ARRAYSZ 27
+
+#define STT_OBJECT 1
+#define STT_FUNC 2
 
 #define R_X86_64_JUMP_SLOT 7
 #define R_X86_64_GLOB_DAT 6
@@ -150,6 +162,22 @@ typedef struct {
      * headers. Los indices son los de los headers, asi que un -1 es "este
      * segmento no se pudo mapear". */
     void* placed[kMaxProgramHeaders];
+    /* Whether this image answers lookups from images outside its own dependency
+     * tree. Everything loaded at startup or through ldso_load is global, which is
+     * what the loader always did; dlopen without RTLD_GLOBAL is not. */
+    int global;
+    /* dlopen references not yet dropped by dlclose. Images brought in at startup
+     * or as a dependency stay at zero: nothing can close them. */
+    unsigned refcount;
+    /* The slots of this image's direct DT_NEEDED, one bit each. Its lookup scope
+     * is itself plus the closure of these. */
+    uint64_t deps;
+    /* Entries in .dynsym, from DT_HASH or DT_GNU_HASH, or 0 when the image has
+     * neither and the end of the table has to be guessed. */
+    unsigned long symbol_count;
+    /* The path dlopen was given or DT_NEEDED resolved to, so a second dlopen of
+     * the same file finds this image, and dladdr has a name to report. */
+    char path[128];
 } Library;
 
 /* Cuantas librerias conviven. El ejecutable ocupa el hueco 0.
@@ -169,9 +197,18 @@ typedef struct {
 #define SAVANXP_LD_MAX_LIBRARIES 32
 #endif
 #define kMaxLibraries SAVANXP_LD_MAX_LIBRARIES
+/* Library.deps is a 64-bit mask indexed by slot. */
+_Static_assert(kMaxLibraries <= 64, "Library.deps holds one bit per slot");
 
 static Library g_libs[kMaxLibraries];
 static int g_lib_count;
+/* What a new image gets as Library.global. dlopen lowers it for the length of
+ * one call; everything else loads global. */
+static int g_load_global = 1;
+/* Set while dlopen runs. An unresolvable symbol then fails the load instead of
+ * being skipped: the tolerant mode exists so a program can start and report a
+ * missing dependency, and a dlopen caller has dlerror for that. */
+static int g_strict = 0;
 /* La dependencia cuyo DT_NEEDED no se pudo traer. Ver ldso_missing(). */
 static const char* g_missing_library = 0;
 /* Las dependencias DISTINTAS que no se pudieron traer, con su nombre.
@@ -256,6 +293,8 @@ static int read_dynamic_in(int slot);
 static int find_dynamic_in(int slot, Elf64_Sword wanted, void* out);
 static void* bias_in(int slot, Elf64_Addr value);
 static int resolve(const char* name, Elf64_Addr* value_out);
+static int resolve_for(int slot, const char* name, Elf64_Addr* value_out);
+static void count_symbols_in(int slot);
 static const char* next_needed(int slot);
 static int load_needed_chain(int parent_slot);
 
@@ -330,6 +369,11 @@ static int adopt_executable(void) {
 
     Library* exe = &g_libs[g_lib_count];
     exe->soname[0] = '\0';
+    exe->path[0] = '\0';
+    exe->global = 1;
+    exe->refcount = 0;
+    exe->deps = 0;
+    exe->symbol_count = 0;
     exe->header = header;
     exe->header_count = header.e_phnum;
     exe->dynsym = 0;
@@ -408,6 +452,17 @@ static Library* begin_load(void) {
     g_lib->dynstr = 0;
     g_lib->needed_done = 0;
     g_lib->soname[0] = '\0';
+    g_lib->path[0] = '\0';
+    g_lib->global = g_load_global;
+    g_lib->refcount = 0;
+    g_lib->deps = 0;
+    g_lib->symbol_count = 0;
+    /* placed[] is what a failed load unmaps, so it must not hold the views of
+     * whatever image had this slot before a rollback freed it. */
+    g_lib->header_count = 0;
+    for (int index = 0; index < kMaxProgramHeaders; ++index) {
+        g_lib->placed[index] = 0;
+    }
     /* Los handles del archivo tambien se ponen a cero. Este slot pudo ser el de
      * una libreria cargada antes --cargarla ocupa el hueco y lo deja--, asi que
      * un savanxp_open fallido dejaba los handles de la anterior puestos aca, y un
@@ -422,14 +477,27 @@ static Library* begin_load(void) {
  * libreria en curso, y con el puntero no hay forma de cerrarle nada. */
 static void close_file_handles(void);
 
+/* Unmaps every segment an image placed. For a load that failed before it was
+ * published, and for dlopen's rollback of one that failed after. */
+static void unmap_placed(Library* library) {
+    for (int index = 0; index < kMaxProgramHeaders; ++index) {
+        if (library->placed[index] != 0) {
+            (void)unmap_view(library->placed[index]);
+            library->placed[index] = 0;
+        }
+    }
+}
+
 static void end_load(int ok) {
     if (ok) {
         g_lib->loaded = 1;
         g_lib_count++;
     } else {
-        /* Un fallo a mitad de la carga dejo handles abiertos. Cerrarlos aca y no
-         * en el llamador es lo que los cierra en todos los caminos de error. */
+        /* A load that failed halfway left handles open, and from step -6 on,
+         * segments mapped. Releasing them here and not in the caller is what
+         * releases them on every error path. */
         close_file_handles();
+        unmap_placed(g_lib);
     }
     g_lib = 0;
 }
@@ -507,7 +575,7 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
      * Asi que en modo tolerante las entradas irresolubles se saltan y se cuentan. El
      * nombre de lo que falta ya lo da ldso_missing(), y repetirlo una vez por cada
      * av_* del programa seria ruido. */
-    const int tolerant = g_missing_library != 0;
+    const int tolerant = !g_strict && g_missing_library != 0;
     unsigned int skipped = 0;
     const unsigned char* table = (const unsigned char*)map_of(slot, elf_table);
     if (table == 0) {
@@ -557,12 +625,12 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         Elf64_Sym symbol;
         copy_bytes(g_libs[slot].dynsym + (name_index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
 
-        /* Por nombre, no por st_value. Un st_value es relativo a la libreria que
-         * DEFINIO el simbolo, y el que necesita la llamada puede ser otra: sin
-         * la busqueda, una llamada a una dependencia se resolveria con la
-         * direccion del simbolo dentro de la imagen que la invoca. */
+        /* By name, not by st_value: an st_value is relative to the image that
+         * DEFINED the symbol, which may be another one. And within this image's
+         * scope, so a library dlopened without RTLD_GLOBAL cannot capture the
+         * calls of one loaded after it. */
         Elf64_Addr target = 0;
-        const int owner = resolve(g_libs[slot].dynstr + symbol.st_name, &target);
+        const int owner = resolve_for(slot, g_libs[slot].dynstr + symbol.st_name, &target);
         if (owner < 0) {
             if (tolerant) {
                 skipped++;
@@ -630,7 +698,58 @@ static int read_dynamic_in(int slot) {
     library->dynstr_size = strsz != 0 ? strsz : 4096;
     library->dynsym = symbols;
     library->loaded = 1;
+    count_symbols_in(slot);
     return 1;
+}
+
+/* How many entries .dynsym has. ELF does not say it directly; the hash table
+ * does. Without the count the scan in resolve_in has to stop at the first entry
+ * whose name offset falls outside .dynstr, which works because what follows the
+ * table usually looks like that -- a dlsym that misses (and Xash probes for
+ * optional exports on every load) walks into whatever comes next.
+ *
+ * DT_HASH holds the count as its second word. DT_GNU_HASH does not: the highest
+ * symbol index any bucket starts at, followed along its chain to the entry with
+ * the end bit set, is the last one. Symbols below symoffset are not hashed but
+ * still count. */
+static void count_symbols_in(int slot) {
+    Library* library = &g_libs[slot];
+    library->symbol_count = 0;
+    unsigned long table = 0;
+    if (find_dynamic_in(slot, DT_HASH, &table)) {
+        const uint32_t* words = (const uint32_t*)map_of(slot, table);
+        if (words != 0) {
+            library->symbol_count = words[1];
+        }
+        return;
+    }
+    if (!find_dynamic_in(slot, DT_GNU_HASH, &table)) {
+        return;
+    }
+    const uint32_t* words = (const uint32_t*)map_of(slot, table);
+    if (words == 0) {
+        return;
+    }
+    const uint32_t bucket_count = words[0];
+    const uint32_t symoffset = words[1];
+    const uint32_t bloom_words = words[2];
+    /* The bloom filter is ELFCLASS-sized words: 64-bit here. */
+    const uint32_t* buckets = words + 4 + (bloom_words * 2);
+    const uint32_t* chain = buckets + bucket_count;
+    uint32_t last = 0;
+    for (uint32_t index = 0; index < bucket_count; ++index) {
+        if (buckets[index] > last) {
+            last = buckets[index];
+        }
+    }
+    if (last < symoffset) {
+        library->symbol_count = symoffset;
+        return;
+    }
+    while ((chain[last - symoffset] & 1u) == 0) {
+        last++;
+    }
+    library->symbol_count = (unsigned long)last + 1;
 }
 
 /* Las dos tablas son OPCIONALES. Una libreria que no llama a nada de fuera no
@@ -764,6 +883,12 @@ int ldso_load(const char* path) {
         i++;
     }
     g_lib->soname[i] = '\0';
+    i = 0;
+    while (path[i] != '\0' && i < sizeof(g_lib->path) - 1) {
+        g_lib->path[i] = path[i];
+        i++;
+    }
+    g_lib->path[i] = '\0';
 
     /* Mapa de trabajo: el archivo entero en una direccion que eligio el kernel,
      * solo para leerle la cabecera y los program headers. */
@@ -887,8 +1012,9 @@ static void close_file_handles(void) {
     g_lib->handles_open = 0;
 }
 
-/* ¿Ya esta cargada alguna libreria con este basename? */
-static int already_loaded(const char* soname) {
+/* The slot of a loaded image with this basename, or -1. The caller needs the
+ * slot and not just a yes: it is what goes into the dependent's deps mask. */
+static int loaded_slot_named(const char* soname) {
     for (int slot = 0; slot < g_lib_count; ++slot) {
         int i = 0;
         for (;; ++i) {
@@ -896,11 +1022,11 @@ static int already_loaded(const char* soname) {
                 break;
             }
             if (soname[i] == '\0') {
-                return 1;
+                return slot;
             }
         }
     }
-    return 0;
+    return -1;
 }
 
 /* Recorre la cadena de DT_NEEDED de una libreria. Carga lo que falte desde
@@ -922,7 +1048,9 @@ static int load_needed_chain(int parent_slot) {
                 break;
             }
             lib->needed_done++;
-            if (already_loaded(need)) {
+            const int existing = loaded_slot_named(need);
+            if (existing >= 0) {
+                lib->deps |= (uint64_t)1 << existing;
                 continue;
             }
             /* El nombre de DT_NEEDED es un basename, no una ruta: se busca en
@@ -947,7 +1075,12 @@ static int load_needed_chain(int parent_slot) {
                 }
                 full[i] = '\0';
             }
-            if (ldso_load(full) != 0) {
+            /* begin_load takes the next free slot, so this is where the
+             * dependency will land if it loads. */
+            const int dep_slot = g_lib_count;
+            if (ldso_load(full) == 0) {
+                lib->deps |= (uint64_t)1 << dep_slot;
+            } else {
                 /* Se guarda el NOMBRE, no solo el codigo de paso. El codigo dice
                  * donde fallo --y donde fallo es "en algun punto de la cadena"--
                  * y el nombre dice que falta. Sin el, un programa no puede ni
@@ -1061,10 +1194,14 @@ static void* place_segment(const Elf64_Phdr* ph) {
     void* view = map_view_at((int)segment_section, want, flags);
     if (view == 0 || result_is_error((long)view)) {
         g_lib_fail_errno = (long)view;
-        if (!wants_exec) {
-            (void)savanxp_close((int)segment_section);
-        }
+        (void)savanxp_close((int)segment_section);
         return 0;
+    }
+    if (wants_exec) {
+        /* The view holds its own reference to the section (SECTIONS.md, "The
+         * budget"), so the handle is done. It used to stay open: one descriptor
+         * per library for the life of the process, out of 64. */
+        (void)savanxp_close((int)segment_section);
     }
     if (!g_lib->bias_ready) {
         /* El kernel eligio; ese es el bias. Los segmentos siguientes se piden
@@ -1242,7 +1379,11 @@ static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {
         return -1;
     }
     const size_t limit = library->dynstr_size;
+    const unsigned long count = library->symbol_count;
     for (unsigned index = 0;; ++index) {
+        if (count != 0 && index >= count) {
+            return -1;
+        }
         Elf64_Sym symbol;
         copy_bytes(library->dynsym + (index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
         if (symbol.st_name >= limit) {
@@ -1262,10 +1403,50 @@ static int resolve_in(const char* name, int slot, Elf64_Addr* value_out) {
     }
 }
 
+/* An image and everything it depends on, transitively, as a slot mask. */
+static uint64_t scope_of(int slot) {
+    uint64_t scope = (uint64_t)1 << slot;
+    uint64_t grown = scope;
+    do {
+        scope = grown;
+        for (int index = 0; index < g_lib_count; ++index) {
+            if ((scope & ((uint64_t)1 << index)) != 0) {
+                grown |= g_libs[index].deps;
+            }
+        }
+    } while (grown != scope);
+    return scope;
+}
+
+/* The global scope: newest image first, the executable last. That order is the
+ * one this loader has always had -- a library wins over the one that loaded it
+ * and the program is the fallback -- and dlsym(RTLD_DEFAULT) keeps it. */
 static int resolve(const char* name, Elf64_Addr* value_out) {
     for (int slot = g_lib_count - 1; slot >= 0; --slot) {
+        if (!g_libs[slot].global) {
+            continue;
+        }
         if (resolve_in(name, slot, value_out) >= 0) {
             return slot;
+        }
+    }
+    return -1;
+}
+
+/* What a relocation of `slot` may bind to: every global image plus the image's
+ * own dependency tree, in the same newest-first order. Before dlopen every image
+ * was global, so this is the same walk as resolve() for everything loaded at
+ * startup. The difference is for a library dlopened RTLD_LOCAL: it can no
+ * longer answer for an image outside its tree. That is what keeps client.so and
+ * hl.so, which both define PM_Move, from calling into each other. */
+static int resolve_for(int slot, const char* name, Elf64_Addr* value_out) {
+    const uint64_t scope = scope_of(slot);
+    for (int index = g_lib_count - 1; index >= 0; --index) {
+        if (!g_libs[index].global && (scope & ((uint64_t)1 << index)) == 0) {
+            continue;
+        }
+        if (resolve_in(name, index, value_out) >= 0) {
+            return index;
         }
     }
     return -1;
@@ -1296,4 +1477,351 @@ void* ldso_lookup(const char* name) {
 int ldso_symbol_is_shared(const char* name) {
     Elf64_Addr value = 0;
     return resolve(name, &value) > 0;
+}
+
+/* ---- <dlfcn.h> ------------------------------------------------------------
+ *
+ * Built on the same slots as everything above. A handle is a pointer to the
+ * image's slot; the executable's slot stands for the global scope. What is
+ * deliberately missing and why is in SHARED_LIBRARIES.md#dlopen. */
+
+/* The last failure, until dlerror() hands it out once. */
+static char g_dl_error[256];
+static int g_dl_error_pending = 0;
+
+static void dl_error_append(size_t* used, const char* text) {
+    while (text != 0 && *text != '\0' && *used < sizeof(g_dl_error) - 1) {
+        g_dl_error[(*used)++] = *text++;
+    }
+    g_dl_error[*used] = '\0';
+}
+
+static void dl_fail(const char* first, const char* second, const char* third) {
+    size_t used = 0;
+    dl_error_append(&used, first);
+    dl_error_append(&used, second);
+    dl_error_append(&used, third);
+    g_dl_error_pending = 1;
+}
+
+char* dlerror(void) {
+    if (!g_dl_error_pending) {
+        return 0;
+    }
+    g_dl_error_pending = 0;
+    return g_dl_error;
+}
+
+/* The slot a handle names, or -1 when it is not one this loader gave out. */
+static int slot_of_handle(void* handle) {
+    Library* library = (Library*)handle;
+    if (library < &g_libs[0] || library >= &g_libs[g_lib_count]) {
+        return -1;
+    }
+    const int slot = (int)(library - g_libs);
+    if (&g_libs[slot] != library || !g_libs[slot].loaded) {
+        return -1;
+    }
+    return slot;
+}
+
+static int loaded_slot_at(const char* path) {
+    for (int slot = 1; slot < g_lib_count; ++slot) {
+        if (strcmp(g_libs[slot].path, path) == 0) {
+            return slot;
+        }
+    }
+    return -1;
+}
+
+/* RTLD_GLOBAL applies to the image and its whole tree, as on Linux: a symbol
+ * reachable through the library becomes reachable by everyone. */
+static void make_global(int slot) {
+    const uint64_t scope = scope_of(slot);
+    for (int index = 0; index < g_lib_count; ++index) {
+        if ((scope & ((uint64_t)1 << index)) != 0) {
+            g_libs[index].global = 1;
+        }
+    }
+}
+
+/* Puts the slot table back to how it was before a dlopen that failed.
+ *
+ * ldso_load publishes an image before walking its DT_NEEDED and relocating it,
+ * so a failure at either step leaves it -- and any dependency it brought -- in
+ * the table, mapped and visible to every later lookup. That is acceptable at
+ * startup, where the program reports the failure and goes on; for dlopen it
+ * would mean a library that "failed to load" still answers dlsym(RTLD_DEFAULT).
+ * Nothing else runs between, so everything from `start` up is this call's. */
+static void roll_back_to(int start) {
+    for (int slot = g_lib_count - 1; slot >= start; --slot) {
+        unmap_placed(&g_libs[slot]);
+        g_libs[slot].loaded = 0;
+    }
+    g_lib_count = start;
+}
+
+/* Runs an image's constructors: DT_INIT, then each DT_INIT_ARRAY entry in order,
+ * the order glibc uses. The array was filled by R_X86_64_RELATIVE, so its entries
+ * are already final addresses; 0 and -1 are the conventional empty markers.
+ *
+ * Only dlopen calls this. Nothing at startup runs constructors -- not crt0 for
+ * the program, not the loader for its DT_NEEDED -- because nothing in this tree
+ * has any; a C++ module opened at run time, like Xash3D's client.so with its
+ * global CHud, is the first thing that does. */
+typedef void (*initializer_fn)(void);
+
+static void run_initializers(int slot) {
+    unsigned long init = 0;
+    if (find_dynamic_in(slot, DT_INIT, &init) && init != 0) {
+        initializer_fn function = (initializer_fn)map_of(slot, init);
+        if (function != 0) {
+            function();
+        }
+    }
+    unsigned long array = 0;
+    unsigned long size = 0;
+    if (!find_dynamic_in(slot, DT_INIT_ARRAY, &array) ||
+        !find_dynamic_in(slot, DT_INIT_ARRAYSZ, &size)) {
+        return;
+    }
+    const unsigned long* entries = (const unsigned long*)map_of(slot, array);
+    if (entries == 0) {
+        return;
+    }
+    for (unsigned long index = 0; index < size / sizeof(unsigned long); ++index) {
+        if (entries[index] != 0 && entries[index] != ~0UL) {
+            ((initializer_fn)entries[index])();
+        }
+    }
+}
+
+static const char* dl_step_reason(int step) {
+    switch (step) {
+    case -1: return "no free library slot";
+    case -2: return "cannot open file";
+    case -3: return "cannot map file as an executable section";
+    case -4: return "file too short for an ELF header";
+    case -5: return "not an x86-64 ELF shared object";
+    case -6: return "cannot map a segment";
+    case -7: return "no dynamic symbol table";
+    case -8: return "a dependency failed to load";
+    case -9: return "relocation failed";
+    default: return "load failed";
+    }
+}
+
+void* dlopen(const char* path, int mode) {
+    adopt_executable_once();
+    if (path == 0) {
+        if (g_lib_count == 0) {
+            dl_fail("dlopen: the program image is not registered", 0, 0);
+            return 0;
+        }
+        g_libs[0].refcount++;
+        return &g_libs[0];
+    }
+
+    /* A bare name is looked up where DT_NEEDED is; anything with a '/' is a
+     * path, relative ones included. */
+    char full[sizeof(g_libs[0].path)];
+    size_t used = 0;
+    int has_slash = 0;
+    for (const char* ch = path; *ch != '\0'; ++ch) {
+        if (*ch == '/') {
+            has_slash = 1;
+            break;
+        }
+    }
+    const char* parts[2] = {has_slash ? "" : "/disk/lib/", path};
+    for (int part = 0; part < 2; ++part) {
+        for (const char* ch = parts[part]; *ch != '\0'; ++ch) {
+            if (used >= sizeof(full) - 1) {
+                dl_fail("dlopen: path too long: ", path, 0);
+                return 0;
+            }
+            full[used++] = *ch;
+        }
+    }
+    full[used] = '\0';
+
+    int slot = loaded_slot_at(full);
+    if (slot >= 0) {
+        if ((mode & RTLD_GLOBAL) != 0) {
+            make_global(slot);
+        }
+        g_libs[slot].refcount++;
+        return &g_libs[slot];
+    }
+    if ((mode & RTLD_NOLOAD) != 0) {
+        return 0;
+    }
+
+    /* ldso_missing() describes the program's startup and must not change
+     * because of a dlopen, so its state is put back however this ends. */
+    const int start = g_lib_count;
+    const char* missing_before = g_missing_library;
+    const unsigned missing_count_before = g_missing_count;
+    g_lib_fail_symbol = 0;
+    g_lib_fail_library = 0;
+    g_load_global = (mode & RTLD_GLOBAL) != 0;
+    g_strict = 1;
+    const int step = ldso_load(full);
+    g_strict = 0;
+    g_load_global = 1;
+
+    if (step != 0) {
+        if (step == -8 && g_missing_count > missing_count_before) {
+            dl_fail(full, ": a dependency failed to load: ", g_missing_names[missing_count_before]);
+        } else if (step == -9 && g_lib_fail_symbol != 0) {
+            size_t length = 0;
+            dl_error_append(&length, full);
+            dl_error_append(&length, ": unresolved symbol \"");
+            dl_error_append(&length, g_lib_fail_symbol);
+            dl_error_append(&length, "\" needed by ");
+            dl_error_append(&length, g_lib_fail_library);
+            g_dl_error_pending = 1;
+        } else {
+            dl_fail(full, ": ", dl_step_reason(step));
+        }
+        roll_back_to(start);
+        g_missing_library = missing_before;
+        g_missing_count = missing_count_before;
+        return 0;
+    }
+    g_missing_library = missing_before;
+    g_missing_count = missing_count_before;
+
+    /* begin_load gave the requested image the first free slot; its
+     * dependencies came after it. */
+    slot = start;
+    if ((mode & RTLD_GLOBAL) != 0) {
+        /* Dependencies that were already loaded RTLD_LOCAL become global too. */
+        make_global(slot);
+    }
+    g_libs[slot].refcount = 1;
+    /* Dependencies before dependents. A call's images occupy start.. upwards,
+     * each library ahead of the dependencies it brought, so walking down from
+     * the newest initializes every dependency before whatever needs it. */
+    const int newest = g_lib_count - 1;
+    for (int index = newest; index >= start; --index) {
+        run_initializers(index);
+    }
+    return &g_libs[slot];
+}
+
+void* dlsym(void* handle, const char* name) {
+    if (name == 0) {
+        dl_fail("dlsym: no symbol name", 0, 0);
+        return 0;
+    }
+    Elf64_Addr value = 0;
+    int owner = -1;
+    if (handle == RTLD_DEFAULT || handle == &g_libs[0]) {
+        owner = resolve(name, &value);
+    } else {
+        const int slot = slot_of_handle(handle);
+        if (slot < 0) {
+            dl_fail("dlsym: invalid handle", 0, 0);
+            return 0;
+        }
+        /* The image itself first, then its dependency tree in load order. */
+        if (resolve_in(name, slot, &value) >= 0) {
+            owner = slot;
+        } else {
+            const uint64_t scope = scope_of(slot);
+            for (int index = 0; index < g_lib_count; ++index) {
+                if (index == slot || (scope & ((uint64_t)1 << index)) == 0) {
+                    continue;
+                }
+                if (resolve_in(name, index, &value) >= 0) {
+                    owner = index;
+                    break;
+                }
+            }
+        }
+    }
+    void* address = owner >= 0 ? map_of(owner, value) : 0;
+    if (address == 0) {
+        dl_fail("dlsym: symbol not found: ", name, 0);
+        return 0;
+    }
+    return address;
+}
+
+int dlclose(void* handle) {
+    const int slot = slot_of_handle(handle);
+    if (slot < 0 || g_libs[slot].refcount == 0) {
+        dl_fail("dlclose: handle is not open", 0, 0);
+        return -1;
+    }
+    /* The image stays mapped: see the header. */
+    g_libs[slot].refcount--;
+    return 0;
+}
+
+/* Which image holds an address, and the nearest symbol at or below it.
+ *
+ * Xash3D's save/restore turns function pointers into names this way. A symbol
+ * matches when the address falls inside it; one with no size matches only its
+ * own address. Of the matches, the highest start wins. */
+int dladdr(const void* address, Dl_info* info) {
+    if (info == 0) {
+        return 0;
+    }
+    const unsigned long target = (unsigned long)address;
+    for (int slot = 0; slot < g_lib_count; ++slot) {
+        const Library* library = &g_libs[slot];
+        if (!library->loaded && slot != 0) {
+            continue;
+        }
+        if (!library->bias_ready || target < library->bias) {
+            continue;
+        }
+        const Elf64_Addr vaddr = (Elf64_Addr)(target - library->bias);
+        int inside = 0;
+        Elf64_Addr first = ~(Elf64_Addr)0;
+        for (Elf64_Half index = 0; index < library->header_count; ++index) {
+            const Elf64_Phdr* ph = &library->headers[index];
+            if (ph->p_type != PT_LOAD || library->placed[index] == 0) {
+                continue;
+            }
+            if (ph->p_vaddr < first) {
+                first = ph->p_vaddr;
+            }
+            if (vaddr >= ph->p_vaddr && vaddr < ph->p_vaddr + ph->p_memsz) {
+                inside = 1;
+            }
+        }
+        if (!inside) {
+            continue;
+        }
+        info->dli_fname = library->path;
+        info->dli_fbase = (void*)(library->bias + (first & ~(Elf64_Addr)4095));
+        info->dli_sname = 0;
+        info->dli_saddr = 0;
+        /* Without a count there is no safe end to the table, so no name. */
+        Elf64_Addr best = 0;
+        for (unsigned long index = 1; index < library->symbol_count; ++index) {
+            Elf64_Sym symbol;
+            copy_bytes(library->dynsym + (index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
+            const unsigned type = symbol.st_info & 0xfu;
+            if (symbol.st_shndx == SHN_UNDEF || (type != STT_FUNC && type != STT_OBJECT)) {
+                continue;
+            }
+            if (symbol.st_value > vaddr || symbol.st_name >= library->dynstr_size) {
+                continue;
+            }
+            const int covers = symbol.st_size != 0 ? vaddr < symbol.st_value + symbol.st_size
+                                                   : vaddr == symbol.st_value;
+            if (!covers || (info->dli_sname != 0 && symbol.st_value < best)) {
+                continue;
+            }
+            best = symbol.st_value;
+            info->dli_sname = library->dynstr + symbol.st_name;
+            info->dli_saddr = map_of(slot, symbol.st_value);
+        }
+        return 1;
+    }
+    return 0;
 }

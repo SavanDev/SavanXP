@@ -108,6 +108,7 @@ int main(void) {
     const char* brokentest_argv[] = {"/disk/bin/brokentest", 0};
     const char* missingtest_argv[] = {"/disk/bin/missingtest", 0};
     const char* diamondtest_argv[] = {"/disk/bin/diamondtest", 0};
+    const char* dltest_argv[] = {"/disk/bin/dltest", 0};
     const char* slottest_argv[] = {"/disk/bin/slottest", 0};
     const char* needstest_argv[] = {"/disk/bin/needstest", 0};
     const char* pietest_argv[] = {"/disk/bin/pietest", 0};
@@ -154,6 +155,8 @@ int main(void) {
         !file_exists("/disk/bin/brokentest") ||
         !file_exists("/disk/bin/missingtest") ||
         !file_exists("/disk/bin/diamondtest") ||
+        !file_exists("/disk/bin/dltest") ||
+        !file_exists("/disk/lib/libdlmod_two.so.0.4") ||
         !file_exists("/disk/bin/slottest") ||
         !file_exists("/disk/bin/needstest") ||
         !file_exists("/disk/lib/libdia_top.so.0.4") ||
@@ -203,6 +206,8 @@ int main(void) {
          * veces, y el limite de librerias. */
         !run_and_expect("/disk/bin/missingtest", missingtest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/diamondtest", diamondtest_argv, 1, 0) ||
+        /* dlopen: per-handle scopes, dladdr, and the rollback of a failed load. */
+        !run_and_expect("/disk/bin/dltest", dltest_argv, 1, 0) ||
         !run_and_expect("/disk/bin/slottest", slottest_argv, 1, 0) ||
         /* Con la libreria en su sitio: resuelve y finds todo. */
         !run_and_expect("/disk/bin/needstest", needstest_argv, 1, 0) ||

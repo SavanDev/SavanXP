@@ -130,6 +130,7 @@ static int run_automation_spec(const char* spec) {
     const char* missingtest_argv[] = {"/disk/bin/missingtest", 0};
     const char* slottest_argv[] = {"/disk/bin/slottest", 0};
     const char* diamondtest_argv[] = {"/disk/bin/diamondtest", 0};
+    const char* dltest_argv[] = {"/disk/bin/dltest", 0};
     const char* ffmpegload_argv[] = {"/disk/bin/ffmpegload", 0};
     const char* audiostream_argv[] = {"/disk/bin/audiotest", "--stream", 0};
     const char* audiostream_quiet_argv[] = {"/disk/bin/audiotest", "--stream-quiet", 0};
@@ -217,6 +218,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "diamondtest") == 0) {
             path = "/disk/bin/diamondtest";
             argv = diamondtest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "dltest") == 0) {
+            path = "/disk/bin/dltest";
+            argv = dltest_argv;
             argc = 1;
         } else if (strcmp(spec, "needstest") == 0) {
             /* El programa con una dependencia declarada. El escenario

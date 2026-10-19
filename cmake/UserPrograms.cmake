@@ -191,6 +191,18 @@ savanxp_library(NAME libdia_top TEST SONAME libdia_top.so.0.4
 savanxp_program(NAME diamondtest TEST LINK_PROFILE PIE
     SOURCES subsystems/posix/userland/diamondtest.c)
 
+# dlopen as Xash3D FWGS uses it. base and one both define dl_probe; two needs
+# base. None is a DEPENDS of dltest: the program opens them by name, which is
+# the feature under test, and it also opens libbroken to check the rollback.
+savanxp_library(NAME libdlmod_base TEST SONAME libdlmod_base.so.0.4
+    DEFINES DLMOD_BASE SOURCES subsystems/posix/userland/dlmodlib.c)
+savanxp_library(NAME libdlmod_one TEST SONAME libdlmod_one.so.0.4
+    DEFINES DLMOD_ONE SOURCES subsystems/posix/userland/dlmodlib.c)
+savanxp_library(NAME libdlmod_two TEST SONAME libdlmod_two.so.0.4 DEPENDS libdlmod_base
+    DEFINES DLMOD_TWO SOURCES subsystems/posix/userland/dlmodlib.c)
+savanxp_program(NAME dltest TEST LINK_PROFILE PIE
+    SOURCES subsystems/posix/userland/dltest.c)
+
 # El limite de librerias, con un tope de 4 en vez de 32 para no necesitar 33
 # libreras de prueba. Es el mismo ldso.c con otra constante: ldso.c se compila
 # dentro de cada programa, asi que un -D alcanza.
