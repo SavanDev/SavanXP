@@ -59,7 +59,7 @@ flock -n 8 || {
     exit 1
 }
 
-TEMP=$(mktemp -d /tmp/opencode/doom-persistence.XXXXXX)
+TEMP=$(mktemp -d "${TMPDIR:-/tmp}/savanxp-doom-persistence.XXXXXX")
 cleanup() {
     local status=$?
     trap - EXIT

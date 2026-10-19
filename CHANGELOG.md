@@ -211,6 +211,13 @@ Cut-off notes:
 
 ### Fixed
 
+- **A clean checkout builds again.** `tools/check_shared_libs.py` (run by every `./build.sh build`),
+  `tools/glyphs.py` (`sxgui-smoke`) and `tools/qmp_native_hw.py` (`native-hw-smoke`) were caught by
+  the `tools/*` rule in `.gitignore` and had never been committed.
+
+- **`tools/verify_doom_persistence.sh` runs on any host.** Its scratch directory was created
+  under a machine-specific `/tmp/opencode`; it now uses `$TMPDIR` (default `/tmp`).
+
 - **`./build.sh test` builds and passes again.** The gfx2d, audio and ccleste-wav host
   tests find `abi/savanxp_abi.h`, the removed `native-port-layout-test` is no longer
   registered, and `smoke-runner-layout-test` reads `docs/kernel/KERNEL_NATIVE_API.md`.

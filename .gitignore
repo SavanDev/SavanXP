@@ -1,4 +1,4 @@
-build/
+/build/
 __pycache__/
 
 # Una libreria compartida en la RAIZ del arbol es siempre un bug de un script que
@@ -44,6 +44,9 @@ tools/*
 !tools/iso_boot_test.py
 !tools/iso_volume.py
 !tools/write_smoke_spec.py
+!tools/check_shared_libs.py
+!tools/glyphs.py
+!tools/qmp_native_hw.py
 !tools/font/
 !tools/font/**
 *.log
