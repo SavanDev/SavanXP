@@ -50,6 +50,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Desktop and graphics — `desktop/`
 
+- [`DESKTOP_ARCHITECTURE.md`](desktop/DESKTOP_ARCHITECTURE.md) — the target split
+  between `compositord`, `windowd` and `desktop` (NT model), window roles,
+  global hotkeys, the Task List removal, the move onto the native API, and the
+  phases to get there.
 - [`WM_SUBSYSTEM.md`](desktop/WM_SUBSYSTEM.md) — the window-manager subsystem, its
   client protocol, and compositor model.
 - [`OWNED_WINDOWS.md`](desktop/OWNED_WINDOWS.md) — ownership rules for dialogs and

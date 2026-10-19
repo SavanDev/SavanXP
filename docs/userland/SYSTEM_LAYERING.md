@@ -198,3 +198,10 @@ complementary**:
 | Apps | **C on the POSIX SDK** | Win32 apps | (native) |
 | Kernel native API | **`sx::` + SXN syscalls** | NT | (native) |
 | Userland native API | **`sxn.h** (process/memory/sync; no toolkit yet) | Win32 (subset) | Java/Kotlin |
+
+The desktop rows describe today. The target is in
+[DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md): `compositord`
+takes over composition (today it only presents what `windowd` composed), one
+`desktop` process replaces `shellui` and `taskbar`, and `compositord` and
+`windowd` become native processes, while the shell and the apps stay clients
+in whatever subsystem they run in.

@@ -1,5 +1,13 @@
 # Extracting the window manager into a subsystem (NT 3.5 model)
 
+> **Superseded as the target (2026-10-19)** by
+> [DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md), which splits the stack
+> into `compositord`, `windowd` and `desktop` and removes the Task List. Two
+> statements below no longer hold: the taskbar came back as a client
+> (`/bin/taskbar`, with a Start menu and popups), and `windowd` does know the
+> shell today, which the new design undoes. The descriptor budget, the wheel
+> rules and fixed-size windows below are still current.
+
 > **Status: Phase A COMPLETE (A1 + A2 + A3), on master.**
 >
 > What was built:
