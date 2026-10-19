@@ -4,15 +4,8 @@
 #include "cursor_asset.h"
 #include "desktop_icons.h"
 #include "windowd_appinfo.h"
-#include "desktop_wallpaper.h"
 #include "windowd_layout.h"
 #include "windowd_render.h"
-
-/* El sello de version del fondo se levanta por encima de la barra con una copia
- * de su alto (desktop_wallpaper.h): si la barra cambia, el sello la sigue. */
-_Static_assert(
-    DESKTOP_WALLPAPER_TASKBAR_HEIGHT == WINDOWD_TASKBAR_HEIGHT,
-    "el alto de la barra que usa el fondo debe coincidir con el del WM");
 
 static uint32_t *g_backbuffer = 0;
 
@@ -152,35 +145,6 @@ int windowd_dirty_rect_at(const struct windowd_dirty_rect *dirty, size_t index, 
         return 0;
     }
     return sx_region_rect_at(&dirty->region, index, out);
-}
-
-static void format_clock_text(char *buffer, unsigned int hours, unsigned int minutes)
-{
-    buffer[0] = (char)('0' + (hours / 10u));
-    buffer[1] = (char)('0' + (hours % 10u));
-    buffer[2] = ':';
-    buffer[3] = (char)('0' + (minutes / 10u));
-    buffer[4] = (char)('0' + (minutes % 10u));
-    buffer[5] = '\0';
-}
-
-unsigned long windowd_current_clock_stamp(char *buffer)
-{
-    struct savanxp_realtime now = {0};
-
-    if (realtime(&now) == 0 && now.valid != 0)
-    {
-        format_clock_text(buffer, (unsigned int)now.hour, (unsigned int)now.minute);
-        return ((unsigned long)now.hour * 60UL) + (unsigned long)now.minute;
-    }
-
-    {
-        unsigned long total_minutes = uptime_ms() / 60000UL;
-        unsigned int hours = (unsigned int)((total_minutes / 60UL) % 24UL);
-        unsigned int minutes = (unsigned int)(total_minutes % 60UL);
-        format_clock_text(buffer, hours, minutes);
-        return total_minutes % (24UL * 60UL);
-    }
 }
 
 static const char *window_title_for_client(const struct windowd_client *client)
@@ -677,7 +641,7 @@ int windowd_region_selftest(void)
  * visible = damage ∩ bounds − (union of opaque bounds in front). */
 enum windowd_layer_kind
 {
-    /* Solo el fallback: normalmente el fondo lo provee el cliente shellui. */
+    /* Only the fallback: the background is normally the desktop's window. */
     WINDOWD_LAYER_BACKGROUND = 0,
     WINDOWD_LAYER_CLIENT,
     /* UI del WM (Ctrl+Esc): conmutador de ventanas, sobre todo salvo el cursor. */
@@ -693,10 +657,9 @@ struct windowd_layer
     const struct windowd_client *client;
 };
 
-/* Tope de capas no-overlay simultaneas: background client, background(iconos),
- * shell_client, taskbar, welcome, menu, confirm, context menu, tasklist,
- * popups y cursor; +12 deja margen para el popup del reloj. */
-#define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + 12)
+/* Every window of the desktop, every application window, the Task List and
+ * the cursor. */
+#define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + WINDOWD_DESKTOP_WINDOW_COUNT + 2)
 
 /* Un cliente se compone recien cuando publico su PRIMER frame. Antes de eso su
  * superficie esta en blanco y su geometria todavia puede cambiar -- una app
@@ -758,9 +721,8 @@ static void draw_tasklist(struct sx_painter *painter, struct windowd_session *se
     for (index = 0; index < visible; ++index)
     {
         int task_index = first + index;
-        int is_shell = 0;
         int slot = -1;
-        const struct windowd_client *client = windowd_task_client(session, task_index, &is_shell, &slot);
+        const struct windowd_client *client = windowd_task_client(session, task_index, &slot);
         struct sx_rect row = windowd_tasklist_item_rect(info, task_count, index);
         const char *label = "Ventana";
         int selected = (task_index == session->tasklist_selected);
@@ -826,11 +788,11 @@ static void wm_paint_layer(
     switch (layer->kind)
     {
     case WINDOWD_LAYER_BACKGROUND:
-        /* Fallback: el fondo normalmente lo provee shellui. Releemos el modo
-         * persistido para respetar el fondo que haya elegido progman, que es
-         * otro proceso y no puede tocar nuestro estado en memoria. */
-        (void)desktop_wallpaper_reload();
-        desktop_wallpaper_draw(painter, &session->gfx.info);
+        /* Only until the desktop draws its own: windowd knows no wallpaper. */
+        sx_painter_fill_rect(
+            painter,
+            sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height),
+            WINDOWD_FALLBACK_BACKGROUND);
         break;
     case WINDOWD_LAYER_CLIENT:
         draw_client(painter, layer->client);
@@ -846,11 +808,42 @@ static void wm_paint_layer(
     }
 }
 
-/* Ya no hay capas de shell: retirado el chrome Win95 (A2.4c), todo lo que
- * compone windowd es suyo -- fondo de fallback, superficies de clientes, Task
- * List y cursor. El chrome vive en procesos cliente: el fondo en shellui y el
- * launcher en progman. */
-/* Back-to-front layer list for the current frame. */
+static int add_client_layer(struct windowd_layer *layers, int count, const struct windowd_client *client)
+{
+    if (!client_is_drawable(client))
+    {
+        return count;
+    }
+    layers[count].kind = WINDOWD_LAYER_CLIENT;
+    layers[count].opaque = 1;
+    layers[count].bounds = client_occluder_rect(client);
+    layers[count].client = client;
+    return count + 1;
+}
+
+/* The desktop's windows of one role, lower ids first: a later window stacks
+ * above an earlier one, as the hit test sees them. */
+static int add_desktop_layers(
+    struct windowd_layer *layers, int count, const struct windowd_session *session, uint32_t role)
+{
+    int index;
+
+    for (index = 0; index < WINDOWD_DESKTOP_WINDOW_COUNT; ++index)
+    {
+        if (session->desktop_windows[index].role == role)
+        {
+            count = add_client_layer(layers, count, &session->desktop_windows[index]);
+        }
+    }
+    return count;
+}
+
+/* Back-to-front layer list for the current frame:
+ *
+ *   background, application windows, panels, popups, Task List, cursor
+ *
+ * With an app in fullscreen only the background, the panels (behind it, so
+ * occlusion drops them), the app, the Task List and the cursor take part. */
 static int build_layers(
     struct windowd_session *session,
     int cursor_x,
@@ -865,20 +858,11 @@ static int build_layers(
     int cur_w = 0;
     int cur_h = 0;
 
-    /* Fondo del z-order. Con el chrome retirado (A2.4c) el escritorio es solo
-     * wallpaper, y lo dibuja el cliente shellui: su superficie es la capa opaca
-     * de mas atras. Si no esta listo (boot antes del primer frame, o murio),
-     * windowd lo dibuja el mismo como fallback para no dejar el fondo sin
-     * pintar. Ya no hay capa de iconos ni taskbar encima. */
-    if (client_is_drawable(&session->background_client))
-    {
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->background_client);
-        layers[count].client = &session->background_client;
-        ++count;
-    }
-    else
+    /* The bottom of the stack is the desktop's background. Until it has
+     * presented a frame (at boot, or while the desktop restarts) windowd
+     * fills the screen itself so the background is never left unpainted. */
+    count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_BACKGROUND);
+    if (count == 0)
     {
         layers[count].kind = WINDOWD_LAYER_BACKGROUND;
         layers[count].opaque = 1;
@@ -890,19 +874,11 @@ static int build_layers(
     if (session->fullscreen_slot >= 0 && session->fullscreen_slot < WINDOWD_MAX_OVERLAY_CLIENTS)
     {
         const struct windowd_client *fullscreen_client = &session->overlay_clients[session->fullscreen_slot];
-        /* La barra entra ANTES de la app: a pantalla completa queda DETRAS y la
-         * oclusion la descarta sola. Una app fullscreen no tiene por que saber
-         * que existe una barra de tareas, y el usuario no quiere verla. Se
-         * agrega igual (en vez de omitirla) para que el frame siga siendo
-         * correcto en el instante en que la app todavia no es drawable. */
-        if (client_is_drawable(&session->taskbar_client))
-        {
-            layers[count].kind = WINDOWD_LAYER_CLIENT;
-            layers[count].opaque = 1;
-            layers[count].bounds = client_occluder_rect(&session->taskbar_client);
-            layers[count].client = &session->taskbar_client;
-            ++count;
-        }
+
+        /* The panels go in BEFORE the app, so it covers them and occlusion
+         * drops them. They are added anyway (rather than skipped) so the frame
+         * stays correct in the instant the app is not drawable yet. */
+        count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_PANEL);
         if (client_is_drawable(fullscreen_client))
         {
             layers[count].kind = WINDOWD_LAYER_CLIENT;
@@ -911,110 +887,24 @@ static int build_layers(
             layers[count].client = fullscreen_client;
             ++count;
         }
-        /* Tambien en fullscreen: si no, Ctrl+Esc abriria un Task List invisible
-         * y no habria forma de salir de una app a pantalla completa. */
-        if (session->tasklist_open)
+    }
+    else
+    {
+        for (order_index = 0; order_index < session->overlay_count; ++order_index)
         {
-            layers[count].kind = WINDOWD_LAYER_TASKLIST;
-            layers[count].opaque = 1;
-            layers[count].bounds = windowd_tasklist_rect(info, windowd_task_count(session));
-            layers[count].client = 0;
-            ++count;
+            int slot = session->overlay_order[order_index];
+            if (slot < 0 || slot >= WINDOWD_MAX_OVERLAY_CLIENTS)
+            {
+                continue;
+            }
+            count = add_client_layer(layers, count, &session->overlay_clients[slot]);
         }
-        if (!session->hw_cursor_enabled)
-        {
-            windowd_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
-            layers[count].kind = WINDOWD_LAYER_CURSOR;
-            layers[count].opaque = 0;
-            layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);
-            layers[count].client = 0;
-            ++count;
-        }
-        return count;
+        count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_PANEL);
+        count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_POPUP);
     }
 
-    if (client_is_drawable(&session->shell_client))
-    {
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->shell_client);
-        layers[count].client = &session->shell_client;
-        ++count;
-    }
-
-    for (order_index = 0; order_index < session->overlay_count; ++order_index)
-    {
-        int slot = session->overlay_order[order_index];
-        if (slot < 0 || slot >= WINDOWD_MAX_OVERLAY_CLIENTS)
-        {
-            continue;
-        }
-        if (!client_is_drawable(&session->overlay_clients[slot]))
-        {
-            continue;
-        }
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->overlay_clients[slot]);
-        layers[count].client = &session->overlay_clients[slot];
-        ++count;
-    }
-
-    /* La barra de tareas va sobre las ventanas normales: es shell, no una
-     * ventana mas, y no participa del z-order de las apps. */
-    if (client_is_drawable(&session->taskbar_client))
-    {
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->taskbar_client);
-        layers[count].client = &session->taskbar_client;
-        ++count;
-    }
-
-    /* Popup de layout de teclado: por encima de la taskbar (esta anclado
-     * arriba de ella), por debajo del Task List. */
-    if (client_is_drawable(&session->keyboard_popup_client))
-    {
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->keyboard_popup_client);
-        layers[count].client = &session->keyboard_popup_client;
-        ++count;
-    }
-
-    /* Popup de volumen: misma esquina que el de layout (son excluyentes) y
-     * misma altura en el z-order: sobre la taskbar, bajo el Task List. */
-    if (client_is_drawable(&session->volume_popup_client))
-    {
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->volume_popup_client);
-        layers[count].client = &session->volume_popup_client;
-        ++count;
-    }
-
-    /* Popup del reloj: misma esquina que los otros dos (son excluyentes) y
-     * misma altura: sobre la taskbar, bajo el Task List. */
-    if (client_is_drawable(&session->clock_popup_client))
-    {
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->clock_popup_client);
-        layers[count].client = &session->clock_popup_client;
-        ++count;
-    }
-
-    /* Menu Inicio: misma altura que el popup, otra esquina. */
-    if (client_is_drawable(&session->startmenu_client))
-    {
-        layers[count].kind = WINDOWD_LAYER_CLIENT;
-        layers[count].opaque = 1;
-        layers[count].bounds = client_occluder_rect(&session->startmenu_client);
-        layers[count].client = &session->startmenu_client;
-        ++count;
-    }
-
-    /* El Task List va sobre todo: es el conmutador de ventanas. */
+    /* Above everything, fullscreen included: otherwise Ctrl+Esc would open an
+     * invisible Task List and there would be no way out of a fullscreen app. */
     if (session->tasklist_open)
     {
         layers[count].kind = WINDOWD_LAYER_TASKLIST;

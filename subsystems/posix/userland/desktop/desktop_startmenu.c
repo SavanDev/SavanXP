@@ -1,26 +1,22 @@
-#include "libc.h"
-#include "savanxp/sxgui.h"
+#include "desktop.h"
 
 #include "progman_registry.h"
 #include "desktop_icons.h"
 #include "start_logo.h"
 
 /*
- * Menu Inicio (verson recortada): cliente aparte, lanzado on-demand por la
- * taskbar via SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU y anclado abajo a la
- * izquierda por windowd (ver launch_start_menu_client). Sin .sxres a
- * proposito: sin categoria queda lanzable pero fuera del launcher, igual que
- * kbdlayoutpopup.
- *
- * Cada apertura es un proceso nuevo que escanea el catalogo de progman al
- * arrancar, asi que siempre esta fresco sin cache que invalidar. Lista plana
- * por grupos (cabecera + items con icono y nombre), mas Apagar/Reiniciar con
- * confirmacion al pie; sin cascada y sin teclado -- solo mouse, como el popup
- * de layout. Se cierra solo (exit) al lanzar, por toggle del boton Start, o
- * por click afuera (el WM lo destruye). Lo que no entra se scrollea con la
- * rueda. El Si real apaga la VM y no se prueba en automation.
+ * The Start menu: a popup of the desktop, anchored at the bottom left above
+ * the taskbar. It scans progman's catalog every time it opens, so it is always
+ * fresh with no cache to invalidate. A flat list by group (header plus items
+ * with icon and name), and Shut Down/Restart with a confirmation at the bottom;
+ * no cascades and no keyboard -- mouse only. It closes when it launches a
+ * program, when the Start button is clicked again, or on a press outside it
+ * (windowd asks, the desktop closes it). What does not fit scrolls with the
+ * wheel. The real Yes powers the VM off and is not exercised in automation.
  */
 
+#define STARTMENU_WIDTH 232
+#define STARTMENU_HEIGHT 512
 #define STARTMENU_MARGIN 2
 #define STARTMENU_ROW_HEIGHT 24
 #define STARTMENU_HEADER_HEIGHT 20
@@ -48,19 +44,6 @@ struct startmenu_row
 
 static struct startmenu_row g_rows[STARTMENU_MAX_ROWS];
 static int g_row_count = 0;
-
-/* Misma red que taskbar_bevel/popup_bevel: ninguno de los tres linkea el
- * toolkit, y son tres lineas. */
-static void startmenu_bevel(struct sx_painter *painter, struct sx_rect rect, int sunken)
-{
-    uint32_t top_left = sunken ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
-    uint32_t bottom_right = sunken ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_SHADOW;
-
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), bottom_right);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
-}
 
 /* Franja lateral: degradado vertical en el tono de la base del titulo
  * (Windows Standard, sin acento), de oscuro arriba a claro abajo. 24 bandas
@@ -306,7 +289,7 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
 
     frame = sx_rect_make(0, 0, (int)gfx->info.width, (int)gfx->info.height);
     sx_painter_fill_rect(&painter, frame, SXGUI_COLOR_FACE);
-    startmenu_bevel(&painter, frame, 0);
+    desktop_bevel(&painter, frame, 0);
     startmenu_strip(
         &painter,
         frame.x + STARTMENU_MARGIN,
@@ -442,160 +425,141 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
     }
 }
 
-int main(void)
-{
-    struct savanxp_gfx_context gfx;
-    struct savanxp_input_event event;
-    struct savanxp_gui_pointer_event pointer;
-    int view_x = 0;
-    int view_y = 0;
-    int view_height = 0;
-    int scroll = 0;
-    int armed = -1;
-    int hot_row = -1;
-    int hot_footer = -1;
-    int pressed_row = -1;
-    int pressed_footer = -1;
-    int needs_repaint = 1;
-    uint32_t last_buttons = 0;
+static int g_view_x = 0;
+static int g_view_y = 0;
+static int g_view_height = 0;
+static int g_scroll = 0;
+static int g_armed = -1;
+static int g_hot_row = -1;
+static int g_hot_footer = -1;
+static int g_pressed_row = -1;
+static int g_pressed_footer = -1;
+static uint32_t g_last_buttons = 0;
 
-    if (gfx_open(&gfx) < 0)
-    {
-        puts_fd(2, "startmenu: gfx_open failed\n");
-        return 1;
-    }
-    if (gfx_acquire(&gfx) < 0)
-    {
-        puts_fd(2, "startmenu: gfx_acquire failed\n");
-        gfx_close(&gfx);
-        return 1;
-    }
+static int startmenu_open(void)
+{
+    struct savanxp_fb_info info;
 
     build_catalog();
-    startmenu_view(&gfx.info, &view_x, &view_y, &view_height);
-
-    for (;;)
-    {
-        while (gfx_poll_event(&gfx, &event) > 0)
-        {
-            if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
-            {
-                (void)gfx_apply_resize_event(&gfx, &event);
-                startmenu_view(&gfx.info, &view_x, &view_y, &view_height);
-                scroll = 0;
-                armed = -1;
-                hot_row = -1;
-                hot_footer = -1;
-                pressed_row = -1;
-                pressed_footer = -1;
-                needs_repaint = 1;
-            }
-        }
-
-        while (gfx_poll_pointer(SAVANXP_WM_FD_EVENTS, &pointer) > 0)
-        {
-            uint32_t down = pointer.buttons & ~last_buttons;
-            uint32_t up = last_buttons & ~pointer.buttons;
-            int view_bottom = view_y + view_height;
-            int view_width = (int)gfx.info.width - view_x - STARTMENU_MARGIN;
-            int row = startmenu_hit(pointer.x, pointer.y, scroll, view_x, view_y, view_height);
-            int footer = startmenu_footer_hit(pointer.x, pointer.y, view_x, view_bottom, view_width);
-
-            /* Solo las filas de programa se pueden apretar; las cabeceras
-             * solo se iluminan al pasar. */
-            if (row >= 0 && row < g_row_count && g_rows[row].kind != STARTMENU_ROW_ITEM)
-            {
-                row = -1;
-            }
-            if (pointer.wheel != 0)
-            {
-                /* Tres filas por muesca, como el editor. */
-                scroll -= pointer.wheel * 3 * STARTMENU_ROW_HEIGHT;
-                if (scroll < 0)
-                {
-                    scroll = 0;
-                }
-                if (scroll > startmenu_max_scroll(view_height))
-                {
-                    scroll = startmenu_max_scroll(view_height);
-                }
-                row = startmenu_hit(pointer.x, pointer.y, scroll, view_x, view_y, view_height);
-                if (row >= 0 && row < g_row_count && g_rows[row].kind != STARTMENU_ROW_ITEM)
-                {
-                    row = -1;
-                }
-                needs_repaint = 1;
-            }
-            if (row != hot_row || footer != hot_footer)
-            {
-                hot_row = row;
-                hot_footer = footer;
-                needs_repaint = 1;
-            }
-            if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
-            {
-                pressed_row = row;
-                pressed_footer = footer;
-            }
-            else if ((up & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
-            {
-                if (footer >= 0 && footer == pressed_footer)
-                {
-                    /* Confirmacion en dos pasos: el primer click arma, el
-                     * segundo sobre la fila 0 ejecuta y sobre la 1 cancela.
-                     * El Si real no se prueba en automation (apaga la VM). */
-                    if (armed < 0)
-                    {
-                        armed = footer;
-                    }
-                    else if (footer == 0)
-                    {
-                        if (armed == STARTMENU_ACTION_REBOOT)
-                        {
-                            (void)power_reboot();
-                        }
-                        else
-                        {
-                            (void)power_shutdown();
-                        }
-                    }
-                    else
-                    {
-                        armed = -1;
-                    }
-                    needs_repaint = 1;
-                }
-                else if (row >= 0 && row == pressed_row)
-                {
-                    const struct progman_item *item = progman_group_item_at(g_rows[row].group, g_rows[row].item);
-
-                    if (item != 0 && gfx_desktop_launch_ex(&gfx, item->path, item->launch_flags) == 0)
-                    {
-                        gfx_close(&gfx);
-                        return 0;
-                    }
-                }
-                pressed_row = -1;
-                pressed_footer = -1;
-            }
-            last_buttons = pointer.buttons;
-        }
-
-        if (needs_repaint)
-        {
-            startmenu_paint(&gfx, hot_row, hot_footer, armed, scroll);
-            if (gfx_present(&gfx, gfx.pixels) < 0)
-            {
-                break;
-            }
-            needs_repaint = 0;
-        }
-        else
-        {
-            sleep_ms(16);
-        }
-    }
-
-    gfx_close(&gfx);
+    memset(&info, 0, sizeof(info));
+    info.width = STARTMENU_WIDTH;
+    info.height = STARTMENU_HEIGHT;
+    startmenu_view(&info, &g_view_x, &g_view_y, &g_view_height);
+    g_scroll = 0;
+    g_armed = -1;
+    g_hot_row = -1;
+    g_hot_footer = -1;
+    g_pressed_row = -1;
+    g_pressed_footer = -1;
+    g_last_buttons = 0;
     return 0;
 }
+
+static void startmenu_close(void)
+{
+}
+
+static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+{
+    uint32_t down = pointer->buttons & ~g_last_buttons;
+    uint32_t up = g_last_buttons & ~pointer->buttons;
+    int view_bottom = g_view_y + g_view_height;
+    int view_width = (int)gfx->info.width - g_view_x - STARTMENU_MARGIN;
+    int row = startmenu_hit(pointer->x, pointer->y, g_scroll, g_view_x, g_view_y, g_view_height);
+    int footer = startmenu_footer_hit(pointer->x, pointer->y, g_view_x, view_bottom, view_width);
+    uint32_t actions = DESKTOP_ACTION_NONE;
+
+    g_last_buttons = pointer->buttons;
+    /* Only program rows can be pressed; headers only light up on hover. */
+    if (row >= 0 && row < g_row_count && g_rows[row].kind != STARTMENU_ROW_ITEM)
+    {
+        row = -1;
+    }
+    if (pointer->wheel != 0)
+    {
+        /* Three rows per notch, like the editor. */
+        g_scroll -= pointer->wheel * 3 * STARTMENU_ROW_HEIGHT;
+        if (g_scroll < 0)
+        {
+            g_scroll = 0;
+        }
+        if (g_scroll > startmenu_max_scroll(g_view_height))
+        {
+            g_scroll = startmenu_max_scroll(g_view_height);
+        }
+        row = startmenu_hit(pointer->x, pointer->y, g_scroll, g_view_x, g_view_y, g_view_height);
+        if (row >= 0 && row < g_row_count && g_rows[row].kind != STARTMENU_ROW_ITEM)
+        {
+            row = -1;
+        }
+        actions |= DESKTOP_ACTION_REPAINT;
+    }
+    if (row != g_hot_row || footer != g_hot_footer)
+    {
+        g_hot_row = row;
+        g_hot_footer = footer;
+        actions |= DESKTOP_ACTION_REPAINT;
+    }
+    if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
+    {
+        g_pressed_row = row;
+        g_pressed_footer = footer;
+    }
+    else if ((up & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
+    {
+        if (footer >= 0 && footer == g_pressed_footer)
+        {
+            /* Two-step confirmation: the first click arms, the second on row
+             * 0 runs it and on row 1 cancels. The real Yes is not exercised
+             * in automation (it powers the VM off). */
+            if (g_armed < 0)
+            {
+                g_armed = footer;
+            }
+            else if (footer == 0)
+            {
+                if (g_armed == STARTMENU_ACTION_REBOOT)
+                {
+                    (void)power_reboot();
+                }
+                else
+                {
+                    (void)power_shutdown();
+                }
+            }
+            else
+            {
+                g_armed = -1;
+            }
+            actions |= DESKTOP_ACTION_REPAINT;
+        }
+        else if (row >= 0 && row == g_pressed_row)
+        {
+            const struct progman_item *item = progman_group_item_at(g_rows[row].group, g_rows[row].item);
+
+            if (item != 0 && desktop_launch(item->path, item->launch_flags) == 0)
+            {
+                actions |= DESKTOP_ACTION_CLOSE;
+            }
+        }
+        g_pressed_row = -1;
+        g_pressed_footer = -1;
+    }
+    return actions;
+}
+
+static void startmenu_paint_window(struct savanxp_gfx_context *gfx)
+{
+    startmenu_paint(gfx, g_hot_row, g_hot_footer, g_armed, g_scroll);
+}
+
+const struct desktop_popup_ops desktop_startmenu_ops = {
+    STARTMENU_WIDTH,
+    STARTMENU_HEIGHT,
+    0,
+    startmenu_open,
+    startmenu_close,
+    startmenu_pointer,
+    0,
+    startmenu_paint_window,
+};

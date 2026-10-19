@@ -915,6 +915,14 @@ long gfx_wait_content_size(struct savanxp_gfx_context* context, unsigned long ti
 #define GFX_WINDOW_OPEN_WAIT_MS 1000ul
 #define GFX_WINDOW_CLOSE_WAIT_MS 250ul
 
+/* Where a role window goes (savanxp_wm_window_role). NORMAL ignores it. */
+struct gfx_window_placement {
+    uint32_t role;
+    uint32_t role_flags;
+    int32_t x;
+    int32_t y;
+};
+
 static long gfx_window_request(
     const struct savanxp_gfx_context* owner,
     uint32_t action,
@@ -922,6 +930,7 @@ static long gfx_window_request(
     uint32_t width,
     uint32_t height,
     const char* title,
+    const struct gfx_window_placement* placement,
     unsigned long timeout_ms) {
     struct savanxp_wm_client_requests* requests = &owner->header->requests;
     uint32_t sequence = 0;
@@ -940,6 +949,12 @@ static long gfx_window_request(
             length = SAVANXP_WM_WINDOW_TITLE_CAPACITY - 1u;
         }
         memcpy(requests->window.title, title, length);
+    }
+    if (placement != 0) {
+        requests->window.role = placement->role;
+        requests->window.role_flags = placement->role_flags;
+        requests->window.x = placement->x;
+        requests->window.y = placement->y;
     }
     requests->window_sequence += 1u;
     sequence = requests->window_sequence;
@@ -966,18 +981,24 @@ static long gfx_window_request(
     }
 }
 
-long gfx_window_open(
+static long gfx_window_open_with(
     const struct savanxp_gfx_context* owner,
     struct savanxp_gfx_context* window,
     uint32_t window_id,
     uint32_t width,
     uint32_t height,
-    const char* title) {
+    const char* title,
+    const struct gfx_window_placement* placement) {
     long section_fd = -1;
     long result = 0;
 
+    /* A panel's width is the WM's to decide (the whole edge): only its
+     * thickness comes from the client. */
+    int width_required = placement == 0 || placement->role != SAVANXP_WM_WINDOW_ROLE_PANEL;
+
     if (owner == 0 || owner->header == 0 || owner->window_id != 0 || owner->input_fd < 0 || window == 0 ||
-        window_id == 0 || window_id > SAVANXP_WM_MAX_OWNED_WINDOWS || width == 0 || height == 0) {
+        window_id == 0 || window_id > SAVANXP_WM_MAX_OWNED_WINDOWS || (width_required && width == 0) ||
+        height == 0) {
         return -SAVANXP_EINVAL;
     }
 
@@ -994,11 +1015,11 @@ long gfx_window_open(
     }
 
     result = gfx_window_request(
-        owner, SAVANXP_WM_WINDOW_ACTION_OPEN, window_id, width, height, title, GFX_WINDOW_OPEN_WAIT_MS);
+        owner, SAVANXP_WM_WINDOW_ACTION_OPEN, window_id, width, height, title, placement, GFX_WINDOW_OPEN_WAIT_MS);
     if (result < 0) {
         if (result == -SAVANXP_EAGAIN) {
             /* Vencio el plazo: si el WM la crea igual, que la destruya. */
-            (void)gfx_window_request(owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, 0);
+            (void)gfx_window_request(owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, 0, 0);
         }
         return result;
     }
@@ -1024,8 +1045,37 @@ long gfx_window_open(
 
 fail:
     (void)gfx_window_request(
-        owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, GFX_WINDOW_CLOSE_WAIT_MS);
+        owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, 0, GFX_WINDOW_CLOSE_WAIT_MS);
     return result;
+}
+
+long gfx_window_open(
+    const struct savanxp_gfx_context* owner,
+    struct savanxp_gfx_context* window,
+    uint32_t window_id,
+    uint32_t width,
+    uint32_t height,
+    const char* title) {
+    return gfx_window_open_with(owner, window, window_id, width, height, title, 0);
+}
+
+long gfx_window_open_role(
+    const struct savanxp_gfx_context* owner,
+    struct savanxp_gfx_context* window,
+    uint32_t window_id,
+    uint32_t role,
+    uint32_t role_flags,
+    int32_t x,
+    int32_t y,
+    uint32_t width,
+    uint32_t height) {
+    struct gfx_window_placement placement;
+
+    placement.role = role;
+    placement.role_flags = role_flags;
+    placement.x = x;
+    placement.y = y;
+    return gfx_window_open_with(owner, window, window_id, width, height, 0, &placement);
 }
 
 long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gfx_context* window) {
@@ -1038,7 +1088,7 @@ long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gf
     (void)gfx_close(window);
     if (owner != 0 && owner->header != 0) {
         (void)gfx_window_request(
-            owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, GFX_WINDOW_CLOSE_WAIT_MS);
+            owner, SAVANXP_WM_WINDOW_ACTION_CLOSE, window_id, 0, 0, 0, 0, GFX_WINDOW_CLOSE_WAIT_MS);
     }
     /* Despues del pedido y no antes: lo que el WM haya mandado hasta destruirla
      * cae en la bandeja y se tira aca. */

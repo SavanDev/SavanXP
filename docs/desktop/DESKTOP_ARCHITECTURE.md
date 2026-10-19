@@ -1,7 +1,8 @@
 # Desktop architecture: compositord, windowd, desktop
 
-> **Status: design accepted (2026-10-19). Nothing in it is built yet.**
-> It is the target for the graphics stack and the order for getting there.
+> **Status: design accepted (2026-10-19). Phase 1 is built** (the `desktop`
+> process, window roles, hotkey registration); phases 2 to 4 are not. It is
+> the target for the graphics stack and the order for getting there.
 > Where it disagrees with the "Target layering" of
 > [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md), this document wins; WM_SUBSYSTEM.md
 > stays as the record of how `windowd` was extracted from `desktop.c`.
@@ -9,7 +10,8 @@
 ## Why
 
 The WM extraction left the right processes but not the right boundaries.
-Several releases later, an audit of `compositord` and `windowd` found:
+Several releases later, an audit of `compositord` and `windowd` found (the
+shell knowledge listed here is what phase 1 removed):
 
 - **`compositord` composes nothing.** It owns the GPU, programs the video mode,
   imports the display section, forwards dirty rects to the present syscall,
@@ -122,8 +124,22 @@ The wallpaper belongs here, not in a `wallpaperd` of its own. A process that
 paints a bitmap which changes once a month would cost a channel and isolate
 nothing worth isolating.
 
-If `desktop` dies, `windowd` shows a solid colour background and the session
-launcher restarts it (NT's `AutoRestartShell`).
+If `desktop` dies, `windowd` shows a solid colour background and the desktop
+is restarted (NT's `AutoRestartShell`). Until the session launcher exists
+(phase 3), `windowd` restarts it, and gives up after three exits within ten
+seconds of starting, so a crash at startup cannot become a spin loop.
+
+Which windows the desktop has, and what each is:
+
+| Id | Window | Role |
+|---|---|---|
+| 0 | Background (wallpaper) | `background`, granted at launch |
+| 1 | Taskbar | `panel`, bottom edge, 28 px |
+| 2 | Start menu | `popup`, dismissable |
+| 3 | Volume, clock or keyboard-layout popup | `popup`, dismissable; the three share the tray corner, so one id |
+
+The modules are `subsystems/posix/userland/desktop/desktop_*.c`, one per
+window kind, behind a single loop in `desktop.c`.
 
 ### progman
 
@@ -156,7 +172,7 @@ not a client slot in `windowd`, and it is not a launch flag.
 |---|---|---|
 | `background` | Below every window | Full screen, never activated |
 | `panel` | Above normal windows, below a fullscreen app | Anchored to a screen edge; declares a reserved strip (the maximize area excludes it) |
-| `popup` | Above panels | Anchored to a rectangle the client gives; frameless; optional *dismiss on outside click*; optional *exclusive group* (opening one closes the others in the group) |
+| `popup` | Above panels | At the screen position the client gives, clamped to the display; frameless; never focused; optional *dismiss on outside click* |
 | `normal` | The ordinary z-order | Frame, cascade placement, owned dialogs |
 
 Rules:
@@ -167,21 +183,34 @@ Rules:
   through the port afterwards), never claimed by the client.
 - `windowd` keeps no per-role special cases in routing, reaping or stacking.
   One loop over windows, ordered by role and then by z-order.
-- Sizes, anchors and groups come from the client. The numbers that today live
-  in both `windowd.c` and the popup sources live only in `desktop`.
-- A click outside a dismissable popup closes it **and keeps going** to whatever
-  it landed on, as today. A click on the panel that owns the popup's toggle
-  button is the panel's to interpret.
+- Sizes and positions come from the client: the numbers that used to live in
+  both `windowd.c` and the popup sources live only in `desktop`. Which popups
+  exclude each other is the desktop's business too; `windowd` has no notion of
+  a group.
+- A press whose topmost window belongs to **another process** (or that lands on
+  nothing) asks every dismissable popup to close, through the same shutdown flag
+  a dialog's close button uses, **and keeps going** to whatever it landed on.
+  A press on another window of the popup's own process does not dismiss it:
+  the toggle button on the taskbar, but also the background, are the desktop's
+  to interpret (it closes its popups on a press on the background).
+- The fields are appended to `savanxp_wm_window_request` (`role`,
+  `role_flags`, `x`, `y`); clients built before them still map their surface,
+  since the header only grew at its end. The runtime call is
+  `gfx_window_open_role`.
 
 ## Global hotkeys
 
 A client may register a key combination (`RegisterHotKey`). `windowd` delivers
 it to that client even when another window has focus.
 
+- The request is `SAVANXP_WM_SHELL_REGISTER_HOTKEY` on the shell request pipe
+  (shell protocol v4): a key and an exact Shift/Ctrl/Alt mask. The KEY_DOWN and
+  its KEY_UP go to the desktop's main window, and the focused application sees
+  neither.
 - `desktop` registers Ctrl+Esc (Start menu) and Ctrl+Shift+Esc (launch
-  `taskmgr`). `windowd` does not know what either means.
+  `taskmgr`) in phase 2. `windowd` does not know what either means.
 - Combinations `windowd` keeps for itself cannot be registered: Alt+Tab,
-  Alt+F4, F11.
+  Alt+F4, F11, and Ctrl+Esc until the Task List is gone.
 - Registering is a shell privilege at first. Whether ordinary applications
   may register hotkeys is an open question, not a default.
 
@@ -190,8 +219,10 @@ it to that client even when another window has focus.
 The window list section of `wm_shell_protocol.h` (seqlock, one shared section,
 read-only for the client) stays: it is the right design. Two changes:
 
-- Window ids become real window ids, not pids. A process can have several
-  windows (`desktop` will; owned windows already carry a `window_id`).
+- Window ids stay pids for now: an entry is a task, a task is an
+  application's main window, and owned windows and the desktop's windows are
+  never tasks. They become real window ids the day one process can own more
+  than one task.
 - The request set grows from activate/minimize to what the taskbar needs, such
   as close for a button's context menu. Cascade and tile go here if a client
   ever needs them.
@@ -278,10 +309,14 @@ Each phase leaves a working desktop. The smoke and visual scenarios
 (`windowd-smoke`, `taskbar-smoke`, `progman-smoke`, `sxgui-smoke`,
 `tools/shoot.sh`) are the bar for each step.
 
-### Phase 1: extract `desktop`, generic primitives in `windowd`
+### Phase 1: extract `desktop`, generic primitives in `windowd` (done)
 
 No kernel change; every process still runs on POSIX. The new protocol pieces
 are built only on kernel objects, so they survive phase 3 unchanged.
+`windowd --selftest` asserts the roles end to end against the real desktop
+(panel geometry and strip, Start opening a popup, a press elsewhere closing
+it, an application refused a role); `taskbar-smoke` asserts the result
+pixel by pixel.
 
 1. Window roles, global hotkeys and the reserved strip in the WM protocol;
    `windowd` implements them generically.

@@ -1,25 +1,24 @@
-#include "libc.h"
-#include "savanxp/sxgui.h"
+#include "desktop.h"
 #include "savanxp/wm_shell_protocol.h"
 
 #include "desktop_icons.h"
 #include "start_logo.h"
 
 /*
- * Barra de tareas: un CLIENTE del WM, no chrome de windowd.
+ * The taskbar: the desktop's panel window, not windowd chrome.
  *
- * Es el modelo de explorer.exe y el mismo layering que separo a shellui y
- * progman del window manager: windowd maneja ventanas, el shell las muestra.
- * Lista las ventanas abiertas y lleva el boton Start, que abre el menu Inicio
- * (cliente aparte, ver startmenu.c) con el catalogo de progman en lista
- * plana. Sin area de notificaciones, que es lo que se retiro con el chrome
- * Win95 y no vuelve: el reloj de la esquina es un boton que abre el
- * calendario (cliente aparte, ver clockpopup.c), no una bandeja.
+ * The explorer.exe model: windowd manages windows, the shell shows them. It
+ * lists the open windows and carries the Start button, which opens the Start
+ * menu (desktop_startmenu.c) with progman's catalog as a flat list. No
+ * notification area: the clock in the corner is a button that opens the
+ * calendar (desktop_clock.c), and the speaker and layout buttons open their own
+ * popups (desktop_volume.c, desktop_keyboard.c).
  *
- * Lo que no puede saber por su cuenta -- que ventanas hay, cual esta activa,
- * cual minimizada -- se lo cuenta el WM por la seccion compartida del fd 12
- * (ver savanxp/wm_shell_protocol.h), y los clicks vuelven como pedidos por el
- * fd 13. La barra NUNCA activa una ventana por su cuenta: pide, y el WM decide.
+ * What it cannot know on its own -- which windows exist, which is active, which
+ * is minimized -- windowd tells it through the shared section on
+ * SAVANXP_WM_FD_WINDOW_LIST (savanxp/wm_shell_protocol.h), and clicks go back as
+ * requests on SAVANXP_WM_FD_SHELL_REQUEST. The taskbar NEVER activates a window
+ * by itself: it asks, and windowd decides.
  */
 
 #define TASKBAR_BUTTON_MAX_WIDTH 160
@@ -36,34 +35,18 @@
 #define TASKBAR_HIT_VOLUME (-4)
 #define TASKBAR_HIT_CLOCK (-5)
 
-/* g_active_layout se refresca por polling (mismo criterio que
- * desktop_wallpaper_reload): no hay push desde el popup, asi que taskbar
- * relee el layout activo cada tantos frames sobre un fd de /dev/input0
- * abierto una sola vez -- nunca se lee de el, solo se usa para el ioctl. */
+/* The indicators (layout, speaker) are read through ioctls on fds opened once
+ * and never read or written. The desktop's own popups ask for a refresh as
+ * soon as they change something (DESKTOP_ACTION_TASKBAR_CHANGED); the polling
+ * every TASKBAR_LAYOUT_POLL_FRAMES passes catches changes made elsewhere, such
+ * as the `volume` command. */
 #define TASKBAR_LAYOUT_POLL_FRAMES 30
 static const char *k_layout_labels[2] = {"ES", "EN"};
 
-/* Mismo criterio que el layout: el popup de volumen aplica directo en el
- * kernel, asi que el altavoz se refresca por polling sobre un fd de
- * /dev/audio0 abierto una sola vez -- nunca se escribe por el, solo ioctls
- * de lectura. */
+/* /dev/audio0, for the read ioctls only. */
 static long g_audio_fd = -1;
 static int g_audio_muted = 0;
 static int g_audio_volume = 100;
-
-/* Bisel 3D al estilo Win95, con las primitivas publicas del painter: sxgui solo
- * exporta widgets, y sus helpers de bisel son internos. La barra no usa ningun
- * widget, asi que no linkea el toolkit -- solo su paleta, que son macros. */
-static void taskbar_bevel(struct sx_painter *painter, struct sx_rect rect, int sunken)
-{
-    uint32_t top_left = sunken ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
-    uint32_t bottom_right = sunken ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_SHADOW;
-
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), bottom_right);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
-}
 
 /* El boton del altavoz usa el mismo arte que el reproductor (nombres de la
  * Icon Naming Specification): el generador lo empaqueta en start_logo.h y
@@ -94,13 +77,11 @@ static int g_pressed_index = -1;
 static int g_active_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
 static long g_input_fd = -1;
 
-/* Reloj estilo W2K, solo lectura en este paso: HH:MM del RTC (UTC, que es lo
- * que el RTC entrega, ver time.h), con fallback a uptime cuando no hay RTC
- * valido -- el mismo reparto que windowd_current_clock_stamp() en
- * windowd_render.c. g_clock_stamp son los minutos del dia que muestra el
- * texto; -1 fuerza el primer pintado. Se refresca en la misma vuelta de
- * polling que el layout y el volumen: el RTC solo tiene resolucion de un
- * segundo y el texto solo cambia una vez por minuto. */
+/* W2K-style clock: HH:MM from the RTC (UTC, which is what the RTC gives, see
+ * time.h), falling back to uptime when there is no valid RTC. g_clock_stamp
+ * is the minute of the day the text shows; -1 forces the first paint. It is
+ * refreshed in the same polling pass as the layout and the volume: the RTC
+ * has a resolution of one second and the text changes once a minute. */
 static char g_clock_text[6] = "00:00";
 static long g_clock_stamp = -1;
 
@@ -309,21 +290,20 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
     sx_painter_fill_rect(&painter, sx_rect_make(0, 0, (int)gfx->info.width, 1), SXGUI_COLOR_LIGHT);
 
     {
-        /* Boton Start, estilo Win: logo a la izquierda y texto, hundido
-         * mientras se aprieta. Si el menu esta abierto no lo sabe (el WM es
-         * quien hace el toggle), asi que no intenta quedar hundido. */
+        /* Start button, Windows style: logo on the left and text, sunken
+         * while it is pressed and while the Start menu is open. */
         struct sx_rect start_rect = taskbar_start_rect(&gfx->info);
         struct savanxp_fb_info logo_info;
         struct sx_bitmap logo_bitmap;
         const char *start_label = "Start";
-        int sunken = (g_pressed_index == TASKBAR_HIT_START);
+        int sunken = (g_pressed_index == TASKBAR_HIT_START) || desktop_popup_is_open(DESKTOP_POPUP_START_MENU);
         int logo_x = start_rect.x + 4 + (sunken ? 1 : 0);
         int logo_y = start_rect.y + (start_rect.height - (int)k_start_logo.height) / 2 + (sunken ? 1 : 0);
         int start_text_x = logo_x + (int)k_start_logo.width + 4;
         int start_text_y = start_rect.y + (start_rect.height - gfx_text_height()) / 2 + (sunken ? 1 : 0);
 
         sx_painter_fill_rect(&painter, start_rect, SXGUI_COLOR_FACE);
-        taskbar_bevel(&painter, start_rect, sunken);
+        desktop_bevel(&painter, start_rect, sunken);
 
         logo_info.width = k_start_logo.width;
         logo_info.height = k_start_logo.height;
@@ -351,7 +331,7 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         }
 
         sx_painter_fill_rect(&painter, rect, SXGUI_COLOR_FACE);
-        taskbar_bevel(&painter, rect, sunken);
+        desktop_bevel(&painter, rect, sunken);
 
         icon = taskbar_entry_icon(entry, &own_icon);
         if (icon != 0 && rect.width > TASKBAR_ICON_SIZE + 24)
@@ -405,7 +385,7 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         int text_y = layout_rect.y + (layout_rect.height - gfx_text_height()) / 2;
 
         sx_painter_fill_rect(&painter, layout_rect, SXGUI_COLOR_FACE);
-        taskbar_bevel(&painter, layout_rect, g_pressed_index == TASKBAR_HIT_LAYOUT);
+        desktop_bevel(&painter, layout_rect, g_pressed_index == TASKBAR_HIT_LAYOUT);
         sx_painter_draw_text(&painter, text_x, text_y, label, SXGUI_COLOR_TEXT);
     }
 
@@ -419,7 +399,7 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         int sunken = (g_pressed_index == TASKBAR_HIT_VOLUME);
 
         sx_painter_fill_rect(&painter, volume_rect, SXGUI_COLOR_FACE);
-        taskbar_bevel(&painter, volume_rect, sunken);
+        desktop_bevel(&painter, volume_rect, sunken);
         {
             int icon_x = volume_rect.x + (volume_rect.width - (int)glyph->width) / 2 + (sunken ? 1 : 0);
             int icon_y = volume_rect.y + (volume_rect.height - (int)glyph->height) / 2 + (sunken ? 1 : 0);
@@ -449,7 +429,7 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         int text_y = clock_rect.y + (clock_rect.height - gfx_text_height()) / 2 + text_shift;
 
         sx_painter_fill_rect(&painter, clock_rect, SXGUI_COLOR_FACE);
-        taskbar_bevel(&painter, clock_rect, 1);
+        desktop_bevel(&painter, clock_rect, 1);
         sx_painter_draw_text(&painter, text_x, text_y, g_clock_text, SXGUI_COLOR_TEXT);
     }
 }
@@ -503,237 +483,177 @@ static int taskbar_hit(const struct savanxp_fb_info *info, int x, int y)
     return -1;
 }
 
-/* Pide a windowd que abra el popup de layout, anclado arriba de la franja
- * (SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP). El path lo ignora windowd para
- * este pedido -- el binario es fijo -- pero el pedido exige uno absoluto. */
-static void taskbar_open_layout_popup(const struct savanxp_gfx_context *gfx)
-{
-    (void)gfx_desktop_launch_ex(gfx, "/bin/kbdlayoutpopup", SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP);
-}
-
-/* Igual que el popup de layout pero con toggle del lado del WM: el path lo
- * ignora windowd (el binario es fijo), el flag pide el popup de volumen y si
- * ya esta abierto el pedido lo cierra. */
-static void taskbar_open_volume_popup(const struct savanxp_gfx_context *gfx)
-{
-    (void)gfx_desktop_launch_ex(gfx, "/bin/volumepopup", SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP);
-}
-
-/* Igual que el popup de layout pero con toggle del lado del WM: el path lo
- * ignora windowd (el binario es fijo), el flag pide el popup del reloj y si
- * ya esta abierto el pedido lo cierra. */
-static void taskbar_open_clock_popup(const struct savanxp_gfx_context *gfx)
-{
-    (void)gfx_desktop_launch_ex(gfx, "/bin/clockpopup", SAVANXP_DESKTOP_LAUNCH_FLAG_CLOCK_POPUP);
-}
-
-/* Igual que el popup de layout pero con toggle del lado del WM: si el menu
- * ya esta abierto, el pedido lo cierra. */
-static void taskbar_toggle_start_menu(const struct savanxp_gfx_context *gfx)
-{
-    (void)gfx_desktop_launch_ex(gfx, "/bin/startmenu", SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU);
-}
-
 static void taskbar_request(uint32_t action, uint32_t window_id)
 {
     struct savanxp_wm_shell_request request;
 
+    memset(&request, 0, sizeof(request));
     request.action = action;
     request.window_id = window_id;
     (void)savanxp_write(SAVANXP_WM_FD_SHELL_REQUEST, &request, sizeof(request));
 }
 
-int main(void)
+/* Polling countdown for the indicators and the clock, in loop passes. */
+static unsigned int g_indicator_countdown = 0;
+static uint32_t g_last_buttons = 0;
+static uint64_t g_last_sequence = 0;
+
+int desktop_taskbar_init(void)
 {
-    struct savanxp_gfx_context gfx;
-    struct savanxp_input_event event;
-    struct savanxp_gui_pointer_event pointer;
-    uint64_t last_sequence = 0;
-    int needs_repaint = 1;
-    uint32_t last_buttons = 0;
-    unsigned int layout_poll_countdown = 0;
-
-    if (gfx_open(&gfx) < 0)
-    {
-        puts_fd(2, "taskbar: gfx_open failed\n");
-        return 1;
-    }
-    if (gfx_acquire(&gfx) < 0)
-    {
-        puts_fd(2, "taskbar: gfx_acquire failed\n");
-        gfx_close(&gfx);
-        return 1;
-    }
-
     g_list = (struct savanxp_wm_window_list *)map_view(
         SAVANXP_WM_FD_WINDOW_LIST, SAVANXP_SECTION_READ);
     if (g_list == 0 || result_is_error((long)g_list))
     {
-        puts_fd(2, "taskbar: no se pudo mapear la lista de ventanas\n");
-        gfx_close(&gfx);
-        return 1;
+        g_list = 0;
+        puts_fd(2, "desktop: could not map the window list\n");
+        return -1;
     }
 
-    /* Solo para el ioctl de layout -- jamas se lee de este fd. */
+    /* Only for the layout ioctl -- this fd is never read. */
     g_input_fd = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ);
-    if (g_input_fd >= 0)
-    {
-        long layout = input_get_layout((int)g_input_fd);
-        if (layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN)
-        {
-            g_active_layout = (int)layout;
-        }
-    }
-
-    /* Solo para los ioctl de lectura del volumen -- jamas se escribe por
-     * este fd. Sin audio no hay altavoz que pintar: el boton queda igual. */
+    /* Only for the volume read ioctls -- nothing is ever written through it.
+     * Without audio there is no speaker to show: the button stays as is. */
     g_audio_fd = (long)audio_open();
-    if (g_audio_fd >= 0)
-    {
-        long muted = audio_get_muted((int)g_audio_fd);
-        long volume = audio_get_volume((int)g_audio_fd);
-        if (muted == 0 || muted == 1)
-        {
-            g_audio_muted = (int)muted;
-        }
-        if (volume >= 0 && volume <= 100)
-        {
-            g_audio_volume = (int)volume;
-        }
-    }
+    (void)desktop_taskbar_refresh_indicators();
+    (void)taskbar_clock_refresh();
+    return 0;
+}
 
-    for (;;)
-    {
-        while (gfx_poll_event(&gfx, &event) > 0)
-        {
-            if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
-            {
-                (void)gfx_apply_resize_event(&gfx, &event);
-                needs_repaint = 1;
-            }
-        }
-
-        while (gfx_poll_pointer(SAVANXP_WM_FD_EVENTS, &pointer) > 0)
-        {
-            uint32_t down = pointer.buttons & ~last_buttons;
-            uint32_t up = last_buttons & ~pointer.buttons;
-            int index = taskbar_hit(&gfx.info, pointer.x, pointer.y);
-
-            if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
-            {
-                g_pressed_index = index;
-                needs_repaint = 1;
-            }
-            else if ((up & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
-            {
-                if (index == TASKBAR_HIT_START && index == g_pressed_index)
-                {
-                    taskbar_toggle_start_menu(&gfx);
-                }
-                else if (index == TASKBAR_HIT_LAYOUT && index == g_pressed_index)
-                {
-                    taskbar_open_layout_popup(&gfx);
-                }
-                else if (index == TASKBAR_HIT_VOLUME && index == g_pressed_index)
-                {
-                    taskbar_open_volume_popup(&gfx);
-                }
-                else if (index == TASKBAR_HIT_CLOCK && index == g_pressed_index)
-                {
-                    taskbar_open_clock_popup(&gfx);
-                }
-                else if (index >= 0 && index == g_pressed_index &&
-                    index < (int)g_snapshot.count)
-                {
-                    const struct savanxp_wm_window_entry *entry = &g_snapshot.windows[index];
-                    /* Click sobre la ventana YA activa la minimiza, como en
-                     * Win95: el boton es un toggle y no solo un "traeme esto". */
-                    int active = (entry->flags & SAVANXP_WM_WINDOW_FLAG_ACTIVE) != 0;
-                    int minimized = (entry->flags & SAVANXP_WM_WINDOW_FLAG_MINIMIZED) != 0;
-                    taskbar_request(
-                        (active && !minimized) ? SAVANXP_WM_SHELL_MINIMIZE : SAVANXP_WM_SHELL_ACTIVATE,
-                        entry->window_id);
-                }
-                g_pressed_index = -1;
-                needs_repaint = 1;
-            }
-            last_buttons = pointer.buttons;
-        }
-
-        if (g_list->sequence != last_sequence && taskbar_snapshot())
-        {
-            last_sequence = g_snapshot.sequence;
-            needs_repaint = 1;
-        }
-
-        /* El popup aplica el cambio directo en el kernel -- no le avisa a la
-         * taskbar --, asi que el indicador se refresca por polling cada
-         * TASKBAR_LAYOUT_POLL_FRAMES vueltas en vez de por push. El mute
-         * va en la misma vuelta: mismo costo, mismo criterio. El reloj va
-         * en la misma vuelta tambien: el RTC tiene resolucion de un segundo
-         * y el texto solo cambia una vez por minuto. */
-        if (layout_poll_countdown == 0)
-        {
-            if (taskbar_clock_refresh())
-            {
-                needs_repaint = 1;
-            }
-            if (g_input_fd >= 0)
-            {
-                long layout = input_get_layout((int)g_input_fd);
-                if ((layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN) &&
-                    (int)layout != g_active_layout)
-                {
-                    g_active_layout = (int)layout;
-                    needs_repaint = 1;
-                }
-            }
-            if (g_audio_fd >= 0)
-            {
-                long muted = audio_get_muted((int)g_audio_fd);
-                long volume = audio_get_volume((int)g_audio_fd);
-                if ((muted == 0 || muted == 1) && (int)muted != g_audio_muted)
-                {
-                    g_audio_muted = (int)muted;
-                    needs_repaint = 1;
-                }
-                if (volume >= 0 && volume <= 100 && (int)volume != g_audio_volume)
-                {
-                    g_audio_volume = (int)volume;
-                    needs_repaint = 1;
-                }
-            }
-            layout_poll_countdown = TASKBAR_LAYOUT_POLL_FRAMES;
-        }
-        else
-        {
-            layout_poll_countdown -= 1;
-        }
-
-        if (needs_repaint)
-        {
-            taskbar_paint(&gfx);
-            /* present falla cuando el WM cierra la sesion o el link cae. */
-            if (gfx_present(&gfx, gfx.pixels) < 0)
-            {
-                break;
-            }
-            needs_repaint = 0;
-        }
-        else
-        {
-            sleep_ms(16);
-        }
-    }
-
+void desktop_taskbar_shutdown(void)
+{
     if (g_input_fd >= 0)
     {
         savanxp_close((int)g_input_fd);
+        g_input_fd = -1;
     }
     if (g_audio_fd >= 0)
     {
         savanxp_close((int)g_audio_fd);
+        g_audio_fd = -1;
     }
-    gfx_close(&gfx);
-    return 0;
+    if (g_list != 0)
+    {
+        (void)unmap_view(g_list);
+        g_list = 0;
+    }
+}
+
+int desktop_taskbar_refresh_indicators(void)
+{
+    int changed = 0;
+
+    if (g_input_fd >= 0)
+    {
+        long layout = input_get_layout((int)g_input_fd);
+        if ((layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN) &&
+            (int)layout != g_active_layout)
+        {
+            g_active_layout = (int)layout;
+            changed = 1;
+        }
+    }
+    if (g_audio_fd >= 0)
+    {
+        long muted = audio_get_muted((int)g_audio_fd);
+        long volume = audio_get_volume((int)g_audio_fd);
+        if ((muted == 0 || muted == 1) && (int)muted != g_audio_muted)
+        {
+            g_audio_muted = (int)muted;
+            changed = 1;
+        }
+        if (volume >= 0 && volume <= 100 && (int)volume != g_audio_volume)
+        {
+            g_audio_volume = (int)volume;
+            changed = 1;
+        }
+    }
+    return changed;
+}
+
+uint32_t desktop_taskbar_pointer(const struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+{
+    uint32_t down = pointer->buttons & ~g_last_buttons;
+    uint32_t up = g_last_buttons & ~pointer->buttons;
+    int index = taskbar_hit(&gfx->info, pointer->x, pointer->y);
+    uint32_t actions = DESKTOP_ACTION_NONE;
+
+    g_last_buttons = pointer->buttons;
+    if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
+    {
+        g_pressed_index = index;
+        return DESKTOP_ACTION_REPAINT;
+    }
+    if ((up & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
+    {
+        return DESKTOP_ACTION_NONE;
+    }
+
+    if (index == TASKBAR_HIT_START && index == g_pressed_index)
+    {
+        desktop_toggle_popup(DESKTOP_POPUP_START_MENU);
+    }
+    else if (index == TASKBAR_HIT_LAYOUT && index == g_pressed_index)
+    {
+        desktop_toggle_popup(DESKTOP_POPUP_KEYBOARD);
+    }
+    else if (index == TASKBAR_HIT_VOLUME && index == g_pressed_index)
+    {
+        desktop_toggle_popup(DESKTOP_POPUP_VOLUME);
+    }
+    else if (index == TASKBAR_HIT_CLOCK && index == g_pressed_index)
+    {
+        desktop_toggle_popup(DESKTOP_POPUP_CLOCK);
+    }
+    else if (index >= 0 && index == g_pressed_index && index < (int)g_snapshot.count)
+    {
+        const struct savanxp_wm_window_entry *entry = &g_snapshot.windows[index];
+        /* A click on the window that is ALREADY active minimizes it, as in
+         * Win95: the button is a toggle, not just "bring this to me". */
+        int active = (entry->flags & SAVANXP_WM_WINDOW_FLAG_ACTIVE) != 0;
+        int minimized = (entry->flags & SAVANXP_WM_WINDOW_FLAG_MINIMIZED) != 0;
+
+        desktop_close_popups();
+        taskbar_request(
+            (active && !minimized) ? SAVANXP_WM_SHELL_MINIMIZE : SAVANXP_WM_SHELL_ACTIVATE,
+            entry->window_id);
+    }
+    g_pressed_index = -1;
+    actions |= DESKTOP_ACTION_REPAINT;
+    return actions;
+}
+
+uint32_t desktop_taskbar_tick(void)
+{
+    uint32_t actions = DESKTOP_ACTION_NONE;
+
+    if (g_list != 0 && g_list->sequence != g_last_sequence && taskbar_snapshot())
+    {
+        g_last_sequence = g_snapshot.sequence;
+        actions |= DESKTOP_ACTION_REPAINT;
+    }
+
+    /* Changes made outside the desktop are caught here. The clock goes in the
+     * same pass: the RTC has a resolution of one second and the text changes
+     * once a minute. */
+    if (g_indicator_countdown == 0)
+    {
+        int clock_changed = taskbar_clock_refresh();
+        int indicators_changed = desktop_taskbar_refresh_indicators();
+
+        if (clock_changed || indicators_changed)
+        {
+            actions |= DESKTOP_ACTION_REPAINT;
+        }
+        g_indicator_countdown = TASKBAR_LAYOUT_POLL_FRAMES;
+    }
+    else
+    {
+        g_indicator_countdown -= 1;
+    }
+    return actions;
+}
+
+void desktop_taskbar_paint(struct savanxp_gfx_context *gfx)
+{
+    taskbar_paint(gfx);
 }

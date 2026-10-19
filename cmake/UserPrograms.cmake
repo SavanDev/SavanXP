@@ -334,33 +334,22 @@ savanxp_program(NAME windowd DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/windowd_compositor_client.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/windowd_appinfo.c
-    subsystems/posix/userland/desktop_wallpaper.c
     subsystems/posix/userland/windowd_layout.c
     subsystems/posix/userland/windowd_render.c
     subsystems/posix/userland/windowd_stats.c)
-savanxp_program(NAME shellui DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/shellui.c
-    subsystems/posix/userland/desktop_wallpaper.c)
-savanxp_program(NAME taskbar DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/taskbar.c
-    subsystems/posix/userland/desktop_icons.c)
-savanxp_program(NAME kbdlayoutpopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/kbdlayoutpopup.c)
-# El popup de volumen: mismo molde que el de layout (cliente sin bordes,
-# anclado por windowd, sin .sxres para no salir en el launcher), pero con
-# slider y mute en vez de filas. Solo mouse, como el de layout.
-savanxp_program(NAME volumepopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/volumepopup.c)
-# El popup del reloj: mismo molde que el de volumen (cliente sin bordes,
-# anclado por windowd, sin .sxres para no salir en el launcher), pero con el
-# calendario del mes y la hora en vez de slider. Solo muestra, como el de
-# layout muestra filas: el WM lo abre y lo cierra.
-savanxp_program(NAME clockpopup DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES subsystems/posix/userland/clockpopup.c)
-# El menu Inicio: mismo molde que el popup de layout (cliente sin bordes,
-# anclado por windowd, sin .sxres para no salir en el launcher), pero con el
-# catalogo de progman enlazado. Solo mouse en la version recortada.
-savanxp_program(NAME startmenu DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/startmenu.c
-    subsystems/posix/userland/progman_registry.c
-    subsystems/posix/userland/desktop_icons.c)
+# The desktop: background, taskbar, Start menu and the taskbar's popups, as
+# windows of one process (docs/desktop/DESKTOP_ARCHITECTURE.md). windowd starts
+# it as the shell. No .sxres, so it stays out of the launcher.
+savanxp_program(NAME desktop DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
+    subsystems/posix/userland/desktop/desktop.c
+    subsystems/posix/userland/desktop/desktop_taskbar.c
+    subsystems/posix/userland/desktop/desktop_startmenu.c
+    subsystems/posix/userland/desktop/desktop_volume.c
+    subsystems/posix/userland/desktop/desktop_clock.c
+    subsystems/posix/userland/desktop/desktop_keyboard.c
+    subsystems/posix/userland/desktop_wallpaper.c
+    subsystems/posix/userland/desktop_icons.c
+    subsystems/posix/userland/progman_registry.c)
 savanxp_program(NAME progman DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c

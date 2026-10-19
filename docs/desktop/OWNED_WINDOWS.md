@@ -188,7 +188,10 @@ Two consequences worth remembering:
   (`xdg_popup` + `xdg_positioner`): the client describes an anchor rectangle and
   which adjustments it accepts (flip, slide), and the WM places the popup so it
   fits. Do not copy X11's `override-redirect`, where the client places its own
-  popups in global coordinates.
+  popups in global coordinates. The desktop's popups (Start menu, tray) are
+  not this: they use the shell-only `popup` role over the same transport
+  ([DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md#window-roles)), where the
+  shell does give a screen position, because it owns the whole screen layout.
 - **One section per window.** A per-connection pool (`wl_shm_pool`) would relieve
   the 64-section limit, but sections are committed in full at creation and cannot
   grow, so a pool would only reserve memory up front.

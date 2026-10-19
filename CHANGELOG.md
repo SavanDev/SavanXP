@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Window roles and global hotkeys for the shell.** `gfx_window_open_role` opens a
+  `panel` (a reserved screen edge) or a `popup` (dismissable on an outside press);
+  `SAVANXP_WM_SHELL_REGISTER_HOTKEY` (shell protocol v4) routes a key to the shell.
+  See `docs/desktop/DESKTOP_ARCHITECTURE.md`.
+
 - **Web Viewer (`/bin/webview`), a local HTML viewer in the spirit of IE 1.1.**
   Opens `.html`/`.htm` files from disk, renders headings, paragraphs, lists, rules
   and entities in vertical flow, and ships with `/disk/welcome.html` as its sample page.
@@ -83,6 +88,12 @@ Cut-off notes:
   [the Xash3D FWGS plan](docs/ports/XASH3D_ROADMAP.md).
 
 ### Changed
+
+- **The shell is one `/bin/desktop` process.** Wallpaper, taskbar, Start menu and the
+  volume, clock and keyboard-layout popups are windows of it instead of six processes,
+  so a popup opens without a launch; `windowd` no longer knows any of them, its
+  fallback background is a solid colour, and it restarts a desktop that exits. The
+  Start button stays sunken while the menu is open.
 
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it
   from `include/shared/version.h` instead of a hardcoded string, and the boot splash
@@ -214,12 +225,20 @@ Cut-off notes:
 
 ### Removed
 
+- **`/bin/shellui`, `/bin/taskbar`, `/bin/startmenu`, `/bin/volumepopup`, `/bin/clockpopup`
+  and `/bin/kbdlayoutpopup`, now part of `/bin/desktop`, and the four shell launch flags**
+  (`SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP`, `_START_MENU`, `_VOLUME_POPUP`, `_CLOCK_POPUP`).
+
 - **The Haxe native experiment is removed.** `subsystems/native` (builder, SDK, apps,
   smoke scenarios) is gone and userland is C on the POSIX SDK only. The neutral
   `savanxp_native_abi.h` routing stays reserved for the future NT-style kernel API
   (see `docs/userland/SYSTEM_LAYERING.md`).
 
 ### Fixed
+
+- **Minimizing a window from the taskbar left the next window's caption inactive.**
+  The window below became active but kept its gray caption until something else
+  repainted it; `taskbar-smoke` now asserts it.
 
 - **A clean checkout builds again.** `tools/check_shared_libs.py` (run by every `./build.sh build`),
   `tools/glyphs.py` (`sxgui-smoke`) and `tools/qmp_native_hw.py` (`native-hw-smoke`) were caught by

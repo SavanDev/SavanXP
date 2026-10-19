@@ -1,17 +1,12 @@
-#include "libc.h"
-#include "savanxp/sxgui.h"
+#include "desktop.h"
 
 #include <time.h>
 
 /*
- * Popup del reloj de la taskbar: calendario del mes en curso estilo W2K con
- * la hora abajo. Mismo molde que volumepopup (cliente sin bordes, anclado
- * por windowd en la esquina inferior derecha, sin .sxres para no salir en el
- * launcher): binario aparte, lanzado on-demand por windowd cuando la taskbar
- * pide SAVANXP_DESKTOP_LAUNCH_FLAG_CLOCK_POPUP. Solo muestra: no recibe foco
- * de teclado y sus clicks se drenan sin accion -- el WM lo abre y lo cierra
- * (toggle del reloj, click afuera). El tamano lo reserva windowd
- * (WINDOWD_CLOCK_POPUP_WIDTH/HEIGHT en windowd.c): si cambia ahi, cambia aca.
+ * The taskbar clock's popup: a W2K-style calendar of the current month with
+ * the time below. A popup of the desktop, anchored in the tray corner. Display
+ * only: its clicks are drained with no action; the clock button toggles it and
+ * a press outside closes it.
  */
 
 #define CLOCKPOPUP_WIDTH 178
@@ -30,19 +25,6 @@ static const char *k_month_names[12] = {
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 };
 static const char *k_dow_labels[7] = {"lu", "ma", "mi", "ju", "vi", "sa", "do"};
-
-/* Mismo bisel que taskbar_bevel (taskbar.c) -- copiado, no compartido: ninguno
- * de los dos linkea el toolkit, y es tres lineas. */
-static void popup_bevel(struct sx_painter *painter, struct sx_rect rect, int sunken)
-{
-    uint32_t top_left = sunken ? SXGUI_COLOR_SHADOW : SXGUI_COLOR_LIGHT;
-    uint32_t bottom_right = sunken ? SXGUI_COLOR_LIGHT : SXGUI_COLOR_SHADOW;
-
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, rect.width, 1), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y, 1, rect.height), top_left);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x, rect.y + rect.height - 1, rect.width, 1), bottom_right);
-    sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
-}
 
 static int is_leap_year(int year)
 {
@@ -126,7 +108,7 @@ static void popup_paint(struct savanxp_gfx_context *gfx, int year, int month, in
 
     frame = sx_rect_make(0, 0, (int)gfx->info.width, (int)gfx->info.height);
     sx_painter_fill_rect(&painter, frame, SXGUI_COLOR_FACE);
-    popup_bevel(&painter, frame, 0);
+    desktop_bevel(&painter, frame, 0);
 
     header = sx_rect_make(
         CLOCKPOPUP_MARGIN,
@@ -230,125 +212,113 @@ static void popup_paint(struct savanxp_gfx_context *gfx, int year, int month, in
     popup_draw_text_centered(&painter, footer, time_text, SXGUI_COLOR_TEXT);
 }
 
-int main(void)
+static int g_year = 0;
+static int g_month = 0;
+static int g_day = 0;
+static long g_stamp = -1;
+static char g_time_text[9] = "--:--:--";
+static int g_have_date = 0;
+static unsigned int g_poll_countdown = 0;
+
+static int clock_open(void)
 {
-    struct savanxp_gfx_context gfx;
-    struct savanxp_input_event event;
-    struct savanxp_gui_pointer_event pointer;
-    int year = 0;
-    int month = 0;
-    int day = 0;
-    long stamp = -1;
-    char time_text[9] = "--:--:--";
-    int have_date = 0;
-    int needs_repaint = 1;
-    unsigned int poll_countdown = 0;
-
-    if (gfx_open(&gfx) < 0)
-    {
-        puts_fd(2, "clockpopup: gfx_open failed\n");
-        return 1;
-    }
-    if (gfx_acquire(&gfx) < 0)
-    {
-        puts_fd(2, "clockpopup: gfx_acquire failed\n");
-        gfx_close(&gfx);
-        return 1;
-    }
-
-    for (;;)
-    {
-        while (gfx_poll_event(&gfx, &event) > 0)
-        {
-            if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
-            {
-                (void)gfx_apply_resize_event(&gfx, &event);
-                needs_repaint = 1;
-            }
-        }
-
-        /* Sin accion: el popup es de solo muestra y el WM lo cierra. Hay que
-         * drenar igual, o la cola del canal se llena y el WM se queda sin
-         * poder avisar. */
-        while (gfx_poll_pointer(SAVANXP_WM_FD_EVENTS, &pointer) > 0)
-        {
-        }
-
-        if (poll_countdown == 0)
-        {
-            struct savanxp_realtime now;
-            long current;
-
-            memset(&now, 0, sizeof(now));
-            if (realtime(&now) == 0 && now.valid != 0)
-            {
-                current = ((long)now.hour * 3600L) + ((long)now.minute * 60L) + (long)now.second;
-                time_text[0] = (char)('0' + now.hour / 10);
-                time_text[1] = (char)('0' + now.hour % 10);
-                time_text[2] = ':';
-                time_text[3] = (char)('0' + now.minute / 10);
-                time_text[4] = (char)('0' + now.minute % 10);
-                time_text[5] = ':';
-                time_text[6] = (char)('0' + now.second / 10);
-                time_text[7] = (char)('0' + now.second % 10);
-                time_text[8] = '\0';
-                /* El mes tambien puede cambiar con el popup abierto (medianoche
-                 * del 31): si el dia no es el mismo, la grilla se recalcula. */
-                if (!have_date || year != (int)now.year || month != (int)now.month ||
-                    day != (int)now.day)
-                {
-                    year = (int)now.year;
-                    month = (int)now.month;
-                    day = (int)now.day;
-                    have_date = 1;
-                }
-            }
-            else
-            {
-                unsigned long total_seconds = uptime_ms() / 1000UL;
-                unsigned int hours = (unsigned int)((total_seconds / 3600UL) % 24UL);
-                unsigned int minutes = (unsigned int)((total_seconds / 60UL) % 60UL);
-                unsigned int seconds = (unsigned int)(total_seconds % 60UL);
-
-                current = (long)total_seconds;
-                time_text[0] = (char)('0' + hours / 10);
-                time_text[1] = (char)('0' + hours % 10);
-                time_text[2] = ':';
-                time_text[3] = (char)('0' + minutes / 10);
-                time_text[4] = (char)('0' + minutes % 10);
-                time_text[5] = ':';
-                time_text[6] = (char)('0' + seconds / 10);
-                time_text[7] = (char)('0' + seconds % 10);
-                time_text[8] = '\0';
-            }
-            if (current != stamp)
-            {
-                stamp = current;
-                needs_repaint = 1;
-            }
-            poll_countdown = CLOCKPOPUP_POLL_FRAMES;
-        }
-        else
-        {
-            poll_countdown -= 1;
-        }
-
-        if (needs_repaint)
-        {
-            popup_paint(&gfx, year, month, day, time_text, have_date);
-            /* present falla cuando el WM cierra la sesion o el link cae. */
-            if (gfx_present(&gfx, gfx.pixels) < 0)
-            {
-                break;
-            }
-            needs_repaint = 0;
-        }
-        else
-        {
-            sleep_ms(16);
-        }
-    }
-
-    gfx_close(&gfx);
+    g_stamp = -1;
+    g_have_date = 0;
+    g_poll_countdown = 0;
+    memcpy(g_time_text, "--:--:--", sizeof(g_time_text));
     return 0;
 }
+
+static void clock_close(void)
+{
+}
+
+/* Display only: the pointer does nothing. */
+static uint32_t clock_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+{
+    (void)gfx;
+    (void)pointer;
+    return DESKTOP_ACTION_NONE;
+}
+
+static uint32_t clock_tick(void)
+{
+    uint32_t actions = DESKTOP_ACTION_NONE;
+
+    if (g_poll_countdown == 0)
+    {
+        struct savanxp_realtime now;
+        long current;
+
+        memset(&now, 0, sizeof(now));
+        if (realtime(&now) == 0 && now.valid != 0)
+        {
+            current = ((long)now.hour * 3600L) + ((long)now.minute * 60L) + (long)now.second;
+            g_time_text[0] = (char)('0' + now.hour / 10);
+            g_time_text[1] = (char)('0' + now.hour % 10);
+            g_time_text[2] = ':';
+            g_time_text[3] = (char)('0' + now.minute / 10);
+            g_time_text[4] = (char)('0' + now.minute % 10);
+            g_time_text[5] = ':';
+            g_time_text[6] = (char)('0' + now.second / 10);
+            g_time_text[7] = (char)('0' + now.second % 10);
+            g_time_text[8] = '\0';
+            /* El mes tambien puede cambiar con el popup abierto (medianoche
+             * del 31): si el dia no es el mismo, la grilla se recalcula. */
+            if (!g_have_date || g_year != (int)now.year || g_month != (int)now.month ||
+                g_day != (int)now.day)
+            {
+                g_year = (int)now.year;
+                g_month = (int)now.month;
+                g_day = (int)now.day;
+                g_have_date = 1;
+            }
+        }
+        else
+        {
+            unsigned long total_seconds = uptime_ms() / 1000UL;
+            unsigned int hours = (unsigned int)((total_seconds / 3600UL) % 24UL);
+            unsigned int minutes = (unsigned int)((total_seconds / 60UL) % 60UL);
+            unsigned int seconds = (unsigned int)(total_seconds % 60UL);
+
+            current = (long)total_seconds;
+            g_time_text[0] = (char)('0' + hours / 10);
+            g_time_text[1] = (char)('0' + hours % 10);
+            g_time_text[2] = ':';
+            g_time_text[3] = (char)('0' + minutes / 10);
+            g_time_text[4] = (char)('0' + minutes % 10);
+            g_time_text[5] = ':';
+            g_time_text[6] = (char)('0' + seconds / 10);
+            g_time_text[7] = (char)('0' + seconds % 10);
+            g_time_text[8] = '\0';
+        }
+        if (current != g_stamp)
+        {
+            g_stamp = current;
+            actions |= DESKTOP_ACTION_REPAINT;
+        }
+        g_poll_countdown = CLOCKPOPUP_POLL_FRAMES;
+    }
+    else
+    {
+        g_poll_countdown -= 1;
+    }
+
+    return actions;
+}
+
+static void clock_paint(struct savanxp_gfx_context *gfx)
+{
+    popup_paint(gfx, g_year, g_month, g_day, g_time_text, g_have_date);
+}
+
+const struct desktop_popup_ops desktop_clock_ops = {
+    CLOCKPOPUP_WIDTH,
+    CLOCKPOPUP_HEIGHT,
+    1,
+    clock_open,
+    clock_close,
+    clock_pointer,
+    clock_tick,
+    clock_paint,
+};

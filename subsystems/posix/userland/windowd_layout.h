@@ -52,15 +52,12 @@ int windowd_rects_intersect(int left_x, int left_y, int left_w, int left_h, int 
 
 void windowd_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y, int *width, int *height);
 
-/* Alto de la franja de la barra de tareas, y el rectangulo que ocupa al pie del
- * display. La barra es un CLIENTE (ver savanxp/wm_shell_protocol.h): el WM le
- * dimensiona y posiciona la superficie, pero no dibuja su contenido. */
-#define WINDOWD_TASKBAR_HEIGHT 28
-int windowd_taskbar_height(void);
-struct sx_rect windowd_taskbar_rect(const struct savanxp_fb_info *info);
+/* Area a MAXIMIZED window takes: the display minus the strips the desktop's
+ * panels reserve on the top and bottom edges. */
 void windowd_maximize_area_bounds(
     const struct savanxp_fb_info *info,
-    int taskbar_present,
+    int reserved_top,
+    int reserved_bottom,
     int *x,
     int *y,
     int *width,
@@ -85,7 +82,8 @@ int windowd_point_in_close_button(const struct windowd_client *client, int x, in
 void windowd_clamp_overlay_frame_position(const struct savanxp_fb_info *display_info, int frame_width, int frame_height, int *x, int *y);
 
 int windowd_task_count(const struct windowd_session *session);
-const struct windowd_client *windowd_task_client(const struct windowd_session *session, int index, int *is_shell, int *slot);
+/* Application windows (owned windows excluded) in z-order, bottom first. */
+const struct windowd_client *windowd_task_client(const struct windowd_session *session, int index, int *slot);
 /* Task List (Ctrl+Esc): dialogo del WM con las ventanas abiertas, estilo NT 3.5.
  * Es UI del WM -- no chrome del shell --, igual que los marcos y botones de
  * ventana: windowd es quien tiene la lista de clientes y el z-order. Reemplaza

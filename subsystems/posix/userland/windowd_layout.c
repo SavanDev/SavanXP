@@ -33,52 +33,36 @@ void windowd_work_area_bounds(const struct savanxp_fb_info *info, int *x, int *y
     {
         return;
     }
-    /* El area util es la pantalla ENTERA, taskbar o no. Define el tamano de las
-     * superficies de clientes, incluida la de fondo, y ni el fondo ni una app a
-     * pantalla completa tienen por que enterarse de que existe una barra de
-     * tareas. El unico que reserva la franja es el maximizar, y para eso esta
-     * windowd_maximize_area_bounds(). */
+    /* The work area is the WHOLE screen, panels or not. It sizes client
+     * surfaces, the background's included, and neither the background nor a
+     * fullscreen app needs to know a panel exists. Only maximizing leaves the
+     * panels' strips out: see windowd_maximize_area_bounds(). */
     *x = 0;
     *y = 0;
     *width = (int)info->width;
     *height = (int)info->height;
 }
 
-int windowd_taskbar_height(void)
-{
-    return WINDOWD_TASKBAR_HEIGHT;
-}
-
-struct sx_rect windowd_taskbar_rect(const struct savanxp_fb_info *info)
-{
-    int height = windowd_taskbar_height();
-
-    if (info == 0)
-    {
-        return sx_rect_make(0, 0, 0, 0);
-    }
-    return sx_rect_make(0, (int)info->height - height, (int)info->width, height);
-}
-
-/* Area que ocupa una ventana MAXIMIZADA. Es lo unico en todo el WM que sabe que
- * la barra de tareas existe: maximizar quiere decir "toda la pantalla que no le
- * pertenece al shell", mientras que el resto del layout sigue trabajando contra
- * el display entero. Con `taskbar_present` en 0 devuelve el area util pelada,
- * asi que una sesion sin barra maximiza como siempre. */
+/* Area a MAXIMIZED window takes. It is the only thing in the layout that
+ * leaves out the desktop's panels: maximizing means "all of the screen that
+ * does not belong to the shell", while everything else works against the whole
+ * display. Without panels it is the bare work area. */
 void windowd_maximize_area_bounds(
     const struct savanxp_fb_info *info,
-    int taskbar_present,
+    int reserved_top,
+    int reserved_bottom,
     int *x,
     int *y,
     int *width,
     int *height)
 {
     windowd_work_area_bounds(info, x, y, width, height);
-    if (!taskbar_present || info == 0)
+    if (info == 0)
     {
         return;
     }
-    *height -= windowd_taskbar_height();
+    *y += reserved_top;
+    *height -= reserved_top + reserved_bottom;
     if (*height < 0)
     {
         *height = 0;
@@ -457,10 +441,6 @@ int windowd_task_count(const struct windowd_session *session)
     {
         return 0;
     }
-    if (session->shell_client.pid > 0)
-    {
-        count += 1;
-    }
     for (index = 0; index < session->overlay_count; ++index)
     {
         int slot = session->overlay_order[index];
@@ -474,15 +454,11 @@ int windowd_task_count(const struct windowd_session *session)
     return count;
 }
 
-const struct windowd_client *windowd_task_client(const struct windowd_session *session, int index, int *is_shell, int *slot)
+const struct windowd_client *windowd_task_client(const struct windowd_session *session, int index, int *slot)
 {
-    int taskbar_index = 0;
+    int task_index = 0;
     int order_index;
 
-    if (is_shell != 0)
-    {
-        *is_shell = 0;
-    }
     if (slot != 0)
     {
         *slot = -1;
@@ -490,19 +466,6 @@ const struct windowd_client *windowd_task_client(const struct windowd_session *s
     if (session == 0 || index < 0)
     {
         return 0;
-    }
-
-    if (session->shell_client.pid > 0)
-    {
-        if (index == 0)
-        {
-            if (is_shell != 0)
-            {
-                *is_shell = 1;
-            }
-            return &session->shell_client;
-        }
-        taskbar_index = 1;
     }
 
     for (order_index = 0; order_index < session->overlay_count; ++order_index)
@@ -513,7 +476,7 @@ const struct windowd_client *windowd_task_client(const struct windowd_session *s
         {
             continue;
         }
-        if (taskbar_index == index)
+        if (task_index == index)
         {
             if (slot != 0)
             {
@@ -521,7 +484,7 @@ const struct windowd_client *windowd_task_client(const struct windowd_session *s
             }
             return &session->overlay_clients[overlay_slot];
         }
-        taskbar_index += 1;
+        task_index += 1;
     }
 
     return 0;

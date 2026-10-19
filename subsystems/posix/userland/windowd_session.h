@@ -7,10 +7,35 @@
 
 #define WINDOWD_MAX_OVERLAY_CLIENTS 12
 
+/* What has the keyboard: an application window, or nothing (the desktop). */
 enum windowd_client_kind
 {
-    WINDOWD_CLIENT_SHELL = 0,
+    WINDOWD_CLIENT_NONE = 0,
     WINDOWD_CLIENT_APP = 1,
+};
+
+/* Where a window sits in the stack and how input treats it
+ * (docs/desktop/DESKTOP_ARCHITECTURE.md#window-roles). Every window of the
+ * desktop process has one; application windows are NORMAL. */
+enum windowd_window_role
+{
+    WINDOWD_ROLE_NORMAL = 0,
+    WINDOWD_ROLE_BACKGROUND = 1,
+    WINDOWD_ROLE_PANEL = 2,
+    WINDOWD_ROLE_POPUP = 3,
+};
+
+/* The desktop process's windows: its main window (the background, id 0) and
+ * one per id it may ask for. Indexed by window_id. */
+#define WINDOWD_DESKTOP_WINDOW_COUNT ((int)(1u + SAVANXP_WM_MAX_OWNED_WINDOWS))
+
+/* Global hotkeys the shell registered (savanxp/wm_shell_protocol.h). */
+#define WINDOWD_MAX_HOTKEYS 8
+
+struct windowd_hotkey
+{
+    uint32_t key;
+    uint32_t modifiers;
 };
 
 #define WINDOWD_CLIENT_PATH_CAPACITY 192
@@ -35,8 +60,8 @@ struct windowd_client
      * superficie. El mapeo propio la mantiene viva. */
     int native_input;
     struct savanxp_wm_input_ring *input_ring;
-    /* Rol de shell (savanxp/wm_shell_protocol.h): solo lo tiene el cliente de
-     * la barra de tareas. En cualquier otro cliente queda en -1. */
+    /* Shell channels (savanxp/wm_shell_protocol.h): only the desktop's main
+     * window has them. -1 in any other client. */
     int shell_request_read_fd;
     struct savanxp_wm_window_list *window_list;
     int last_cursor_hint_shape;
@@ -53,6 +78,12 @@ struct windowd_client
      * dio el cliente, y viaja en cada evento que se le rutea. */
     int owner_slot;
     uint32_t window_id;
+    /* enum windowd_window_role, and the role's savanxp_wm_window_request
+     * role_flags. dismiss_requested: the WM already asked this popup to
+     * close; it is not asked again while the process gets to it. */
+    uint32_t role;
+    uint32_t role_flags;
+    int dismiss_requested;
     /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
      * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
      * el indice de cascada del launch para poder recolocarla despues de
@@ -124,38 +155,16 @@ struct windowd_session
     int fullscreen_slot;
     int overlay_count;
     int overlay_order[WINDOWD_MAX_OVERLAY_CLIENTS];
-    /* Barra de tareas: cliente con rol de shell, superficie al pie del display
-     * y por encima de las ventanas normales -- pero DEBAJO de una app a
-     * pantalla completa, que tapa todo. Ni el fondo ni las apps saben que
-     * existe; el unico que le reserva lugar es el maximizar. */
-    struct windowd_client taskbar_client;
-    /* Cliente de fondo (shellui): superficie full-screen al fondo del z-order
-     * que dibuja el wallpaper (A2, ver docs/desktop/WM_SUBSYSTEM.md). Pasivo: no recibe
-     * foco ni input en A2.2. Distinto del shell_client (terminal on-demand). */
-    struct windowd_client background_client;
-    struct windowd_client shell_client;
-    /* Popup de layout de teclado (ES/EN): lanzado on-demand por la taskbar via
-     * SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP, no por boot. Mismo patron que
-     * taskbar_client -- rect a mano, sin bordes -- pero anclado arriba de la
-     * franja en vez de ocuparla. Se cierra solo (exit) al elegir un layout. */
-    struct windowd_client keyboard_popup_client;
-    /* Menu Inicio: mismo patron que el popup de layout pero anclado abajo a
-     * la izquierda y con toggle en el pedido (si esta abierto, lo cierra).
-     * Escanea el catalogo de progman en cada apertura, asi que siempre esta
-     * fresco; se cierra solo (exit) al lanzar, por toggle del boton Start, o
-     * por click afuera (el WM lo destruye). Solo mouse, como el popup. */
-    struct windowd_client startmenu_client;
-    /* Popup de volumen: mismo patron que el de layout pero anclado arriba del
-     * boton del altavoz (misma esquina que el de layout) y con toggle como el
-     * menu: el pedido lo abre o lo cierra, y un click afuera lo destruye. No
-     * tiene accion terminal (el slider aplica en vivo), asi que nunca sale
-     * solo -- el WM lo mata al cerrarlo. Comparte la esquina con el popup de
-     * layout: abrir uno destruye al otro. */
-    struct windowd_client volume_popup_client;
-    /* Popup del reloj (calendario + hora): mismo patron que el de volumen pero
-     * con toggle como el menu: el pedido lo abre o lo cierra, y un click
-     * afuera lo destruye. Comparte la esquina con los otros dos popups:
-     * abrir uno destruye a los otros. */
-    struct windowd_client clock_popup_client;
+    /* The desktop process (docs/desktop/DESKTOP_ARCHITECTURE.md): background,
+     * taskbar and popups are its windows, told apart by role. windowd does not
+     * know what any of them shows. */
+    struct windowd_client desktop_windows[WINDOWD_DESKTOP_WINDOW_COUNT];
+    unsigned long desktop_started_ms;
+    int desktop_quick_exits;
+    struct windowd_hotkey hotkeys[WINDOWD_MAX_HOTKEYS];
+    int hotkey_count;
+    /* Key whose KEY_DOWN went to the desktop as a hotkey: its KEY_UP follows
+     * it there instead of landing in the focused app. 0 = none. */
+    uint32_t hotkey_held_key;
     struct windowd_client overlay_clients[WINDOWD_MAX_OVERLAY_CLIENTS];
 };

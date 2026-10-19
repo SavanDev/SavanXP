@@ -3,10 +3,10 @@
 > **Superseded as the target (2026-10-19)** by
 > [DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md), which splits the stack
 > into `compositord`, `windowd` and `desktop` and removes the Task List. Two
-> statements below no longer hold: the taskbar came back as a client
-> (`/bin/taskbar`, with a Start menu and popups), and `windowd` does know the
-> shell today, which the new design undoes. The descriptor budget, the wheel
-> rules and fixed-size windows below are still current.
+> statements below no longer hold: the taskbar came back, now as a window of
+> the `desktop` process (with a Start menu and popups), and `shellui` is gone
+> into that same process. The descriptor budget, the wheel rules and
+> fixed-size windows below are still current.
 
 > **Status: Phase A COMPLETE (A1 + A2 + A3), on master.**
 >
@@ -330,11 +330,13 @@ Protocol v4 (`savanxp/wm_protocol.h`) costs **two descriptors and one pipe**:
 | 4  | event pipe: `savanxp_wm_event` records, keyboard and pointer | the write end |
 | 5  | wake event: composed/retired advanced, or shutdown requested | the event |
 | 6  | submit event, **one for the whole session** | one descriptor in total |
-| 7, 8 | taskbar only: window list section, shell request pipe | the pipe's read end |
+| 7, 8 | the `desktop` only: window list section, shell request pipe | the pipe's read end |
 
-With every slot full — twelve windows plus background, taskbar and keyboard
-popup — `windowd --selftest` measures 40 descriptors, and asserts at least 8
-remain free for the terminal client and a launch in progress.
+With every slot full — twelve windows plus the desktop's background, taskbar
+and a popup — `windowd --selftest` measures 40 descriptors, and asserts at
+least 8 remain free for a launch in progress. The desktop's taskbar and popups
+are windows of one process, so like dialogs they cost two duplicates each and
+no pipe.
 
 The rules that keep it there:
 

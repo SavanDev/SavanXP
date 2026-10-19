@@ -177,13 +177,13 @@ and restores the original time.
 
 ## Showing it: the taskbar clock and calendar
 
-The taskbar (`subsystems/posix/userland/taskbar.c`) shows a sunken `HH:MM`
-readout taken from the RTC in UTC, with an `uptime_ms` fallback when no
-valid RTC exists -- the same split as `windowd_current_clock_stamp()`.
-Clicking it toggles `clockpopup` (178x180, no launcher entry, display-only):
-a W2K-style month grid, Monday-first with Spanish day labels, today
-highlighted, and a live `HH:MM:SS` footer. The WM opens and closes it
-(toggle or outside click); its clicks drain without action.
+The taskbar (`subsystems/posix/userland/desktop/desktop_taskbar.c`) shows a
+sunken `HH:MM` readout taken from the RTC in UTC, with an `uptime_ms` fallback
+when no valid RTC exists. Clicking it toggles the clock popup
+(`desktop_clock.c`, 178x180, display-only), a popup window of the `desktop`
+process: a W2K-style month grid, Monday-first with Spanish day labels, today
+highlighted, and a live `HH:MM:SS` footer. The clock button toggles it and a
+press outside closes it; its own clicks drain without action.
 
 ## Which test proves which clock
 

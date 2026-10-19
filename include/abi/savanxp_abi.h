@@ -758,31 +758,14 @@ enum savanxp_input_event_type {
 
 #define SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY 192u
 
-/* Flags de lanzamiento: quien pide el launch declara las necesidades del
- * programa, para que el WM no tenga que conocer un catalogo de aplicaciones
- * (ver docs/desktop/WM_SUBSYSTEM.md, A2.3). */
+/* Launch flags: whoever asks for the launch declares what the program needs,
+ * so the WM does not have to know a catalog of applications (see
+ * docs/desktop/WM_SUBSYSTEM.md, A2.3). They describe the program, never a
+ * piece of the shell: the shell's own windows are window roles. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_NONE 0x00000000u
-/* El programa renderiza a resolucion baja y usa fullscreen composited (F11):
- * el WM le asigna la superficie a ese tamano al lanzarlo. */
+/* The program renders at a low resolution and uses composited fullscreen
+ * (F11): the WM sizes its surface for that when it launches it. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN 0x00000001u
-/* El pedido es del popup de layout de teclado de la taskbar: el WM ignora
- * path/argument y lo posiciona anclado arriba de la franja, sin bordes, en
- * vez de como una ventana normal cascada/decorada. */
-#define SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP 0x00000002u
-/* El pedido es del menu Inicio de la taskbar: igual que TASKBAR_POPUP pero
- * anclado abajo a la izquierda y con toggle -- si ya esta abierto, el pedido
- * lo cierra en vez de relanzarlo. */
-#define SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU 0x00000004u
-/* El pedido es del popup de volumen de la taskbar: mismo molde que
- * TASKBAR_POPUP (binario fijo, anclado arriba de la franja, sin bordes) pero
- * con toggle como START_MENU y cierre por click afuera. Un click repetido en
- * el boton del altavoz lo cierra en vez de duplicarlo. */
-#define SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP 0x00000008u
-/* El pedido es del popup del reloj de la taskbar: mismo molde que
- * VOLUME_POPUP (binario fijo, anclado arriba de la franja, sin bordes, con
- * toggle y cierre por click afuera). Un click repetido en el reloj lo cierra
- * en vez de duplicarlo. */
-#define SAVANXP_DESKTOP_LAUNCH_FLAG_CLOCK_POPUP 0x00000010u
 
 /* Estilo de ventana: propiedades de la VENTANA de un programa, no de su
  * lanzamiento. El WM las lee del .sxe del binario al crear la ventana, por el
@@ -873,12 +856,49 @@ enum savanxp_wm_window_action {
     SAVANXP_WM_WINDOW_ACTION_CLOSE = 2,
 };
 
+/*
+ * Window roles (docs/desktop/DESKTOP_ARCHITECTURE.md#window-roles). A role is a
+ * property of the window, asked for when it is created. Only the shell client
+ * may ask for anything but NORMAL; for any other client the WM refuses the
+ * request. The shell's main window is the background, which is granted when
+ * the WM starts the shell, never requested.
+ */
+enum savanxp_wm_window_role {
+    /* An owned window (a dialog): framed, above its owner. */
+    SAVANXP_WM_WINDOW_ROLE_NORMAL = 0,
+    /* Anchored to a screen edge, full width, above normal windows and below a
+     * fullscreen app. Its strip is reserved: maximized windows stay out of it.
+     * `height` is the strip's thickness; `width`, `x` and `y` are ignored. */
+    SAVANXP_WM_WINDOW_ROLE_PANEL = 1,
+    /* Frameless, above panels, at `x`,`y` in screen coordinates (clamped to the
+     * display). Never takes keyboard focus. */
+    SAVANXP_WM_WINDOW_ROLE_POPUP = 2,
+};
+
+/* role_flags for SAVANXP_WM_WINDOW_ROLE_PANEL: the edge it sits on. */
+#define SAVANXP_WM_PANEL_EDGE_BOTTOM 0x00000000u
+#define SAVANXP_WM_PANEL_EDGE_TOP 0x00000001u
+
+/* role_flags for SAVANXP_WM_WINDOW_ROLE_POPUP. A press outside every window of
+ * the popup's process asks the process to close it, through the same
+ * SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN a dialog's close button uses. The
+ * press still reaches whatever it landed on. A press on another window of the
+ * same process does not dismiss: that process decides what it means. */
+#define SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE 0x00000001u
+
 struct savanxp_wm_window_request {
     uint32_t action; /* enum savanxp_wm_window_action */
     uint32_t window_id;
-    uint32_t width;  /* area util, como el size hint */
+    uint32_t width;  /* client area, like the size hint */
     uint32_t height;
     char title[SAVANXP_WM_WINDOW_TITLE_CAPACITY];
+    /* Appended after v4 shipped. The header only grows at its end and clients
+     * read every offset from it, so a client built before this still maps the
+     * surface; it never writes these fields, which stay 0 = NORMAL. */
+    uint32_t role; /* enum savanxp_wm_window_role */
+    uint32_t role_flags;
+    int32_t x;
+    int32_t y;
 };
 
 struct savanxp_wm_client_requests {

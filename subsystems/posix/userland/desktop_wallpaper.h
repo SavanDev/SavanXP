@@ -24,9 +24,9 @@ int desktop_wallpaper_mode(void);
 int desktop_wallpaper_cycle(void);
 
 /*
- * Desde A2 el fondo lo dibuja el cliente shellui, pero quien lo CAMBIA es
- * progman (menu Options): son procesos distintos, y el archivo de config es lo
- * que los sincroniza. Las dos entradas de abajo cubren cada lado.
+ * The desktop process draws the background, but progman (Options menu) is
+ * what CHANGES it: they are different processes, and the config file is what
+ * keeps them in step. The two entries below cover each side.
  */
 
 /* Cicla el modo persistido SIN decodificar la imagen: la disponibilidad del BMP
@@ -35,15 +35,15 @@ int desktop_wallpaper_cycle(void);
  * No toca el estado en memoria del proceso. Devuelve el modo nuevo. */
 int desktop_wallpaper_cycle_config(void);
 
-/* Relee el modo persistido y lo aplica si cambio. Devuelve 1 si hubo cambio (y
- * hay que repintar), 0 si no. Lo usa el cliente de fondo para reaccionar cuando
- * otro proceso cambia el wallpaper. */
+/* Re-reads the persisted mode and applies it if it changed. Returns 1 if it
+ * did (and a repaint is due), 0 if not. The desktop uses it to react when
+ * another process changes the wallpaper. */
 int desktop_wallpaper_reload(void);
 /* Pinta el fondo y, encima, el nombre y la version del sistema abajo a la
  * derecha. */
 void desktop_wallpaper_draw(struct sx_painter *painter, const struct savanxp_fb_info *info);
 
-/* Alto de la barra de tareas, para dejar el sello de version por encima. Este
- * modulo lo comparten clientes que no conocen el layout del WM, asi que es una
- * copia: windowd_render.c aserta que coincide con WINDOWD_TASKBAR_HEIGHT. */
+/* Height of the taskbar, to keep the version stamp above it. progman shares
+ * this module and does not know the desktop's layout, so it is a copy:
+ * desktop/desktop.c asserts it matches DESKTOP_TASKBAR_HEIGHT. */
 #define DESKTOP_WALLPAPER_TASKBAR_HEIGHT 28

@@ -229,6 +229,21 @@ long gfx_window_open(
     uint32_t width,
     uint32_t height,
     const char* title);
+/* A window with a role (savanxp_wm_window_role): a panel or a popup of the
+ * shell. Same id space, events and closing as gfx_window_open. The WM refuses
+ * it unless `owner` is the shell's main window. For a panel `height` is the
+ * strip's thickness and the WM places it; for a popup `x`,`y` is where it goes
+ * on screen. See docs/desktop/DESKTOP_ARCHITECTURE.md#window-roles. */
+long gfx_window_open_role(
+    const struct savanxp_gfx_context* owner,
+    struct savanxp_gfx_context* window,
+    uint32_t window_id,
+    uint32_t role,
+    uint32_t role_flags,
+    int32_t x,
+    int32_t y,
+    uint32_t width,
+    uint32_t height);
 long gfx_window_close(const struct savanxp_gfx_context* owner, struct savanxp_gfx_context* window);
 /* Puntero de la ventana de `context`, sea la principal o una con dueno. Comparte
  * el pipe y el reparto con gfx_poll_event/gfx_poll_pointer. */

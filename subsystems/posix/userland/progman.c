@@ -622,8 +622,8 @@ static void on_menu_command(int id, void *user)
         break;
     case PROGMAN_CMD_WALLPAPER:
     {
-        /* Solo persistimos el modo: el fondo lo dibuja shellui, que relee la
-         * config y repinta por su cuenta. */
+        /* Only the mode is persisted: the desktop draws the background, and
+         * it re-reads the config and repaints on its own. */
         static const char *k_mode_names[DESKTOP_WALLPAPER_MODE_COUNT] = {
             "teal", "degrade", "patron", "imagen"
         };

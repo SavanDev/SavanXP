@@ -2,7 +2,6 @@
 #include "abi/savanxp_native_abi.h"
 #include "windowd_session.h"
 #include "windowd_appinfo.h"
-#include "desktop_wallpaper.h"
 #include "windowd_layout.h"
 #include "windowd_render.h"
 #include "windowd_stats.h"
@@ -14,41 +13,15 @@
 #define WINDOWD_FULLSCREEN_MODE_WIDTH 640
 #define WINDOWD_FULLSCREEN_MODE_HEIGHT 400
 
-static const char *k_shellapp_path = "/bin/shellapp";
-static const char *k_background_client_path = "/bin/shellui";
-static const char *k_taskbar_client_path = "/bin/taskbar";
-static const char *k_keyboard_popup_client_path = "/bin/kbdlayoutpopup";
-static const char *k_startmenu_client_path = "/bin/startmenu";
-static const char *k_volume_popup_client_path = "/bin/volumepopup";
-static const char *k_clock_popup_client_path = "/bin/clockpopup";
+/* The session's two children. Everything else is launched by whoever asks. */
+static const char *k_desktop_path = "/bin/desktop";
 static const char *k_progman_path = "/bin/progman";
 
-/* Tamano del popup de layout de teclado (dos filas, ES/EN): fijo, no depende
- * de contenido -- lo que muestra el binario es un detalle suyo, windowd solo
- * le reserva el rect anclado arriba de la franja de la taskbar. */
-#define WINDOWD_KEYBOARD_POPUP_WIDTH 96
-#define WINDOWD_KEYBOARD_POPUP_HEIGHT 44
-
-/* Popup de volumen (slider + mute): fijo, mas ancho que el de layout porque
- * el slider necesita recorrido para 0..100. Misma esquina que el de layout
- * (abajo a la derecha, arriba de la franja); por eso son excluyentes. */
-#define WINDOWD_VOLUME_POPUP_WIDTH 144
-#define WINDOWD_VOLUME_POPUP_HEIGHT 140
-
-/* Popup del reloj (calendario + hora): fijo, mas ancho que el de volumen
- * porque la grilla es de 7 columnas. Misma esquina que los otros dos (abajo
- * a la derecha, arriba de la franja); por eso los tres son excluyentes. El
- * binario (clockpopup.c) repite estos numeros en su layout. */
-#define WINDOWD_CLOCK_POPUP_WIDTH 178
-#define WINDOWD_CLOCK_POPUP_HEIGHT 180
-
-/* Menu Inicio: superficie fija, ancha como dos botones de taskbar y alta para
- * ~24 filas (cabeceras + items). El contenido real varia con lo instalado;
- * lo que sobra queda en cara y lo que falta se scrollea con la rueda -- el
- * tamano no puede salir del catalogo porque windowd no lo lee (ver
- * launch_start_menu_client). */
-#define WINDOWD_STARTMENU_WIDTH 232
-#define WINDOWD_STARTMENU_HEIGHT 512
+/* A desktop that exits within this long after starting counts as a crash
+ * loop; after WINDOWD_DESKTOP_MAX_QUICK_EXITS in a row it is not restarted and
+ * the session goes on without it (Alt+Tab and the Task List still work). */
+#define WINDOWD_DESKTOP_QUICK_EXIT_MS 10000ul
+#define WINDOWD_DESKTOP_MAX_QUICK_EXITS 3
 
 static int launch_overlay_client(
     struct windowd_session *session,
@@ -279,28 +252,14 @@ static void refresh_active_state(struct windowd_session *session)
 
     visible_overlay_slot = top_visible_overlay_slot(session);
 
-    if (session->active_client_kind == WINDOWD_CLIENT_APP && session->active_overlay_slot < 0)
+    /* With no window active, the top visible one takes the focus; only an
+     * empty (or all minimized) desktop has none. */
+    if (session->active_client_kind != WINDOWD_CLIENT_APP || session->active_overlay_slot < 0)
     {
-        session->active_client_kind = WINDOWD_CLIENT_SHELL;
-    }
-
-    if (session->active_client_kind == WINDOWD_CLIENT_SHELL && visible_overlay_slot >= 0 && session->shell_client.pid <= 0)
-    {
-        session->active_client_kind = WINDOWD_CLIENT_APP;
+        session->active_client_kind = visible_overlay_slot >= 0 ? WINDOWD_CLIENT_APP : WINDOWD_CLIENT_NONE;
         session->active_overlay_slot = visible_overlay_slot;
     }
 
-    if (session->active_client_kind == WINDOWD_CLIENT_APP && session->active_overlay_slot < 0 && visible_overlay_slot >= 0)
-    {
-        session->active_overlay_slot = visible_overlay_slot;
-    }
-
-    if (session->active_client_kind == WINDOWD_CLIENT_SHELL)
-    {
-        session->active_overlay_slot = -1;
-    }
-
-    session->shell_client.active = session->shell_client.pid > 0 && session->active_client_kind == WINDOWD_CLIENT_SHELL;
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         session->overlay_clients[slot].active =
@@ -310,16 +269,55 @@ static void refresh_active_state(struct windowd_session *session)
     }
 }
 
-static void activate_shell(struct windowd_session *session)
-{
-    if (session == 0)
-    {
-        return;
-    }
+/* Every client the session has, desktop windows first, as one index space, for
+ * the passes that treat them all alike (frames, retire, reaping). */
+#define WINDOWD_SESSION_CLIENT_COUNT (WINDOWD_DESKTOP_WINDOW_COUNT + WINDOWD_MAX_OVERLAY_CLIENTS)
 
-    session->active_client_kind = WINDOWD_CLIENT_SHELL;
-    session->active_overlay_slot = -1;
-    refresh_active_state(session);
+static struct windowd_client *session_client_at(struct windowd_session *session, int index)
+{
+    if (session == 0 || index < 0 || index >= WINDOWD_SESSION_CLIENT_COUNT)
+    {
+        return 0;
+    }
+    if (index < WINDOWD_DESKTOP_WINDOW_COUNT)
+    {
+        return &session->desktop_windows[index];
+    }
+    return &session->overlay_clients[index - WINDOWD_DESKTOP_WINDOW_COUNT];
+}
+
+static int is_desktop_window(const struct windowd_session *session, const struct windowd_client *client)
+{
+    return session != 0 && client != 0 &&
+        client >= &session->desktop_windows[0] &&
+        client < &session->desktop_windows[WINDOWD_DESKTOP_WINDOW_COUNT];
+}
+
+/* Height of the strips the desktop's panels reserve on each edge: what a
+ * maximized window stays out of. */
+static void desktop_reserved_strips(const struct windowd_session *session, int *top, int *bottom)
+{
+    int index;
+
+    *top = 0;
+    *bottom = 0;
+    for (index = 1; index < WINDOWD_DESKTOP_WINDOW_COUNT; ++index)
+    {
+        const struct windowd_client *client = &session->desktop_windows[index];
+
+        if (client->pid <= 0 || client->role != WINDOWD_ROLE_PANEL)
+        {
+            continue;
+        }
+        if ((client->role_flags & SAVANXP_WM_PANEL_EDGE_TOP) != 0)
+        {
+            *top += client->window_height;
+        }
+        else
+        {
+            *bottom += client->window_height;
+        }
+    }
 }
 
 /* --- Ventanas con dueno (docs/desktop/OWNED_WINDOWS.md) ------------------------------
@@ -428,7 +426,7 @@ static struct windowd_client *active_client(struct windowd_session *session)
     {
         return &session->overlay_clients[session->active_overlay_slot];
     }
-    return session->shell_client.pid > 0 ? &session->shell_client : 0;
+    return 0;
 }
 
 static int drag_overlay_slot_active(const struct windowd_session *session, int slot)
@@ -524,11 +522,19 @@ static void toggle_overlay_client_maximized(struct windowd_session *session, str
         client->restore_window_y = client->window_y;
         client->restore_window_width = client->window_width;
         client->restore_window_height = client->window_height;
-        /* Unico lugar del WM que descuenta la barra de tareas. */
-        windowd_maximize_area_bounds(
-            &session->gfx.info,
-            session->taskbar_client.pid > 0,
-            &area_x, &area_y, &area_width, &area_height);
+        /* The only place the WM leaves out what the desktop's panels
+         * reserve. */
+        {
+            int reserved_top = 0;
+            int reserved_bottom = 0;
+
+            desktop_reserved_strips(session, &reserved_top, &reserved_bottom);
+            windowd_maximize_area_bounds(
+                &session->gfx.info,
+                reserved_top,
+                reserved_bottom,
+                &area_x, &area_y, &area_width, &area_height);
+        }
         client->window_x = area_x;
         client->window_y = area_y;
         client->window_width = area_width;
@@ -901,65 +907,54 @@ static const struct windowd_client *top_overlay_client_at_point(const struct win
     return 0;
 }
 
-static const struct windowd_client *top_client_at_point(const struct windowd_session *session, int x, int y)
+/* Topmost desktop window of `role` under the point, or 0. Higher ids stack
+ * above lower ones, as build_layers draws them. */
+static const struct windowd_client *top_desktop_window_at_point(
+    const struct windowd_session *session, uint32_t role, int x, int y)
 {
-    const struct windowd_client *overlay;
+    int index;
 
-    /* El popup de layout gana contra todo, incluso la taskbar: se dibuja
-     * arriba de la franja y es lo primero que hay que poder clickear. */
-    if (session != 0 && session->keyboard_popup_client.pid > 0 &&
-        windowd_point_in_client(&session->keyboard_popup_client, x, y))
+    for (index = WINDOWD_DESKTOP_WINDOW_COUNT - 1; index >= 0; --index)
     {
-        return &session->keyboard_popup_client;
-    }
+        const struct windowd_client *client = &session->desktop_windows[index];
 
-    /* El popup de volumen comparte la esquina con el de layout y va segundo:
-     * solo uno de los dos esta vivo a la vez, asi que el orden entre ellos
-     * no decide nada en la practica. */
-    if (session != 0 && session->volume_popup_client.pid > 0 &&
-        windowd_point_in_client(&session->volume_popup_client, x, y))
-    {
-        return &session->volume_popup_client;
-    }
-
-    /* El popup del reloj comparte la esquina con los dos anteriores y va
-     * tercero, por la misma razon. */
-    if (session != 0 && session->clock_popup_client.pid > 0 &&
-        windowd_point_in_client(&session->clock_popup_client, x, y))
-    {
-        return &session->clock_popup_client;
-    }
-
-    /* El menu Inicio va segundo: misma altura que el popup pero en la otra
-     * esquina, asi que el orden entre ellos no importa -- lo que importa es
-     * que ambos ganen a la taskbar y a las ventanas. */
-    if (session != 0 && session->startmenu_client.pid > 0 &&
-        windowd_point_in_client(&session->startmenu_client, x, y))
-    {
-        return &session->startmenu_client;
-    }
-
-    /* La barra de tareas se compone por ENCIMA de las ventanas normales, asi
-     * que gana el hit-test contra ellas. Con una app a pantalla completa queda
-     * detras y no recibe nada: coincide con como se arma el z-order. */
-    if (session != 0 && session->fullscreen_slot < 0 &&
-        session->taskbar_client.pid > 0 &&
-        windowd_point_in_client(&session->taskbar_client, x, y))
-    {
-        return &session->taskbar_client;
-    }
-
-    overlay = top_overlay_client_at_point(session, x, y);
-
-    if (overlay != 0)
-    {
-        return overlay;
-    }
-    if (session != 0 && session->shell_client.pid > 0 && windowd_point_in_client(&session->shell_client, x, y))
-    {
-        return &session->shell_client;
+        if (client->pid > 0 && client->role == role && windowd_point_in_client(client, x, y))
+        {
+            return client;
+        }
     }
     return 0;
+}
+
+/* Hit test in stacking order: popups, panels, application windows, background.
+ * A fullscreen app covers the desktop's panels and popups, so they are neither
+ * drawn nor hit while it is up. */
+static const struct windowd_client *top_client_at_point(const struct windowd_session *session, int x, int y)
+{
+    const struct windowd_client *client;
+
+    if (session == 0)
+    {
+        return 0;
+    }
+    if (session->fullscreen_slot < 0)
+    {
+        client = top_desktop_window_at_point(session, WINDOWD_ROLE_POPUP, x, y);
+        if (client == 0)
+        {
+            client = top_desktop_window_at_point(session, WINDOWD_ROLE_PANEL, x, y);
+        }
+        if (client != 0)
+        {
+            return client;
+        }
+    }
+    client = top_overlay_client_at_point(session, x, y);
+    if (client != 0)
+    {
+        return client;
+    }
+    return top_desktop_window_at_point(session, WINDOWD_ROLE_BACKGROUND, x, y);
 }
 
 /* An overlay client forked but that hasn't submitted its first frame yet is
@@ -1022,7 +1017,6 @@ static int resolve_cursor_shape(
     /* Un dueno deshabilitado no reacciona al puntero, asi que tampoco muestra
      * el cursor que pidieron sus widgets. */
     if (current_hover_client != 0 &&
-        current_hover_client != &session->shell_client &&
         !overlay_client_disabled(session, current_hover_client) &&
         windowd_point_in_client(current_hover_client, cursor_x, cursor_y))
     {
@@ -1438,81 +1432,28 @@ static void signal_client_composed(struct windowd_client *client, uint64_t compo
 
 static void signal_composed_batches(struct windowd_session *session)
 {
-    int slot;
+    int index;
 
-    if (session == 0)
+    for (index = 0; index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
     {
-        return;
-    }
+        struct windowd_client *client = session_client_at(session, index);
 
-    signal_client_composed(&session->background_client, session->background_client.consumed_submit_sequence);
-    signal_client_composed(&session->taskbar_client, session->taskbar_client.consumed_submit_sequence);
-    signal_client_composed(&session->keyboard_popup_client, session->keyboard_popup_client.consumed_submit_sequence);
-    signal_client_composed(&session->volume_popup_client, session->volume_popup_client.consumed_submit_sequence);
-    signal_client_composed(&session->clock_popup_client, session->clock_popup_client.consumed_submit_sequence);
-    signal_client_composed(&session->startmenu_client, session->startmenu_client.consumed_submit_sequence);
-    signal_client_composed(&session->shell_client, session->shell_client.consumed_submit_sequence);
-    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
-    {
-        signal_client_composed(&session->overlay_clients[slot], session->overlay_clients[slot].consumed_submit_sequence);
+        if (client != 0)
+        {
+            signal_client_composed(client, client->consumed_submit_sequence);
+        }
     }
 }
 
 static void retire_presented_batches(struct windowd_session *session)
 {
-    int slot;
+    int index;
 
-    if (session == 0)
+    for (index = 0; index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
     {
-        return;
-    }
+        struct windowd_client *client = session_client_at(session, index);
 
-    if (session->background_client.pending_retire_sequence != 0)
-    {
-        signal_client_retire(&session->background_client, session->background_client.pending_retire_sequence);
-        session->background_client.pending_retire_sequence = 0;
-    }
-
-    if (session->taskbar_client.pending_retire_sequence != 0)
-    {
-        signal_client_retire(&session->taskbar_client, session->taskbar_client.pending_retire_sequence);
-        session->taskbar_client.pending_retire_sequence = 0;
-    }
-
-    if (session->keyboard_popup_client.pending_retire_sequence != 0)
-    {
-        signal_client_retire(&session->keyboard_popup_client, session->keyboard_popup_client.pending_retire_sequence);
-        session->keyboard_popup_client.pending_retire_sequence = 0;
-    }
-
-    if (session->volume_popup_client.pending_retire_sequence != 0)
-    {
-        signal_client_retire(&session->volume_popup_client, session->volume_popup_client.pending_retire_sequence);
-        session->volume_popup_client.pending_retire_sequence = 0;
-    }
-
-    if (session->clock_popup_client.pending_retire_sequence != 0)
-    {
-        signal_client_retire(&session->clock_popup_client, session->clock_popup_client.pending_retire_sequence);
-        session->clock_popup_client.pending_retire_sequence = 0;
-    }
-
-    if (session->startmenu_client.pending_retire_sequence != 0)
-    {
-        signal_client_retire(&session->startmenu_client, session->startmenu_client.pending_retire_sequence);
-        session->startmenu_client.pending_retire_sequence = 0;
-    }
-
-    if (session->shell_client.pending_retire_sequence != 0)
-    {
-        signal_client_retire(&session->shell_client, session->shell_client.pending_retire_sequence);
-        session->shell_client.pending_retire_sequence = 0;
-    }
-
-    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
-    {
-        struct windowd_client *client = &session->overlay_clients[slot];
-        if (client->pending_retire_sequence != 0)
+        if (client != 0 && client->pending_retire_sequence != 0)
         {
             signal_client_retire(client, client->pending_retire_sequence);
             client->pending_retire_sequence = 0;
@@ -1622,22 +1563,16 @@ static int consume_client_present_batches(
 
 static void snapshot_pending_retire_sequences(struct windowd_session *session)
 {
-    int slot;
+    int index;
 
-    if (session == 0)
+    for (index = 0; index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
     {
-        return;
-    }
+        struct windowd_client *client = session_client_at(session, index);
 
-    session->background_client.pending_retire_sequence = session->background_client.consumed_submit_sequence;
-    session->taskbar_client.pending_retire_sequence = session->taskbar_client.consumed_submit_sequence;
-    session->keyboard_popup_client.pending_retire_sequence = session->keyboard_popup_client.consumed_submit_sequence;
-    session->volume_popup_client.pending_retire_sequence = session->volume_popup_client.consumed_submit_sequence;
-    session->clock_popup_client.pending_retire_sequence = session->clock_popup_client.consumed_submit_sequence;
-    session->shell_client.pending_retire_sequence = session->shell_client.consumed_submit_sequence;
-    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
-    {
-        session->overlay_clients[slot].pending_retire_sequence = session->overlay_clients[slot].consumed_submit_sequence;
+        if (client != 0)
+        {
+            client->pending_retire_sequence = client->consumed_submit_sequence;
+        }
     }
 }
 
@@ -1710,9 +1645,11 @@ static int present_frame(struct windowd_session *session, const struct windowd_d
     return 0;
 }
 
+/* `background`: the desktop's main window, full screen and frameless.
+ * Otherwise an application window. */
 static void fill_client_surface_info(
     const struct windowd_session *session,
-    enum windowd_client_kind kind,
+    int background,
     struct savanxp_fb_info *client_info)
 {
     if (session == 0 || client_info == 0)
@@ -1720,7 +1657,7 @@ static void fill_client_surface_info(
         return;
     }
 
-    if (kind == WINDOWD_CLIENT_APP)
+    if (!background)
     {
         windowd_fill_overlay_surface_info(&session->gfx.info, client_info);
     }
@@ -1733,7 +1670,7 @@ static void fill_client_surface_info(
 static void position_client_window(
     const struct windowd_session *session,
     struct windowd_client *client,
-    enum windowd_client_kind kind,
+    int background,
     int cascade_index)
 {
     if (session == 0 || client == 0)
@@ -1741,7 +1678,7 @@ static void position_client_window(
         return;
     }
 
-    if (kind == WINDOWD_CLIENT_APP)
+    if (!background)
     {
         windowd_place_overlay_window(
             &session->gfx.info,
@@ -1794,9 +1731,10 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     {
         (void)event_set(client->wake_event_fd);
     }
-    /* Una ventana con dueno comparte el pid del proceso, que sigue vivo y es de
-     * su ventana principal: ni se mata ni se espera. */
-    if (client->pid > 0 && client->owner_slot < 0)
+    /* Only a process's main window (id 0) owns the process. Any other window
+     * of it -- a dialog, or a panel or popup of the desktop -- shares the pid
+     * of a process that is still running: it is neither killed nor waited for. */
+    if (client->pid > 0 && client->window_id == 0)
     {
         if (terminate_client)
         {
@@ -1836,10 +1774,10 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
  * se cierra apenas el hijo la hereda -- el WM sigue usando su mapeo, que la
  * mantiene viva --, y el evento de submit es el de la sesion.
  *
- * `shell_role` cablea ademas los canales opcionales de
- * savanxp/wm_shell_protocol.h (lista de ventanas y pedidos). Solo lo pide la
- * barra de tareas, asi que su pipe de pedidos es un fd en todo el sistema y no
- * uno por ventana.
+ * `shell_role` also wires the optional channels of
+ * savanxp/wm_shell_protocol.h (window list and requests). Only the desktop
+ * gets them, so its request pipe is one fd in the whole system, not one per
+ * window.
  */
 /*
  * Crea la seccion de la superficie de `client` con el tamano de surface_info, la
@@ -2147,270 +2085,70 @@ fail:
     return -1;
 }
 
-static void destroy_shell_client(struct windowd_session *session, int terminate_client)
+/* Destroys every window of the desktop process, its role windows before its
+ * main window (which owns the process), and forgets its hotkeys. */
+static void destroy_desktop(struct windowd_session *session, int terminate_client)
 {
+    int index;
+
     if (session == 0)
     {
         return;
     }
-
-    destroy_client_instance(&session->shell_client, terminate_client);
-    activate_shell(session);
+    for (index = WINDOWD_DESKTOP_WINDOW_COUNT - 1; index >= 1; --index)
+    {
+        destroy_client_instance(&session->desktop_windows[index], 0);
+    }
+    destroy_client_instance(&session->desktop_windows[0], terminate_client);
+    session->hotkey_count = 0;
+    session->hotkey_held_key = 0;
 }
 
-static void destroy_background_client(struct windowd_session *session, int terminate_client)
+/* Starts the desktop as the shell: its main window is the background (full
+ * screen, frameless, bottom of the stack, never focused), and it gets the
+ * shell channels. Everything else it shows it asks for as role windows. */
+static int launch_desktop_client(struct windowd_session *session)
 {
+    struct windowd_client *client = 0;
+
     if (session == 0)
     {
+        return -1;
+    }
+
+    destroy_desktop(session, 1);
+    client = &session->desktop_windows[0];
+    reset_client(client);
+    fill_client_surface_info(session, 1, &client->surface_info);
+    position_client_window(session, client, 1, 0);
+    client->role = WINDOWD_ROLE_BACKGROUND;
+    session->desktop_started_ms = uptime_ms();
+    return start_client_process(client, k_desktop_path, 0, session->submit_event_fd, 1);
+}
+
+/* The desktop went away. Restart it unless it keeps dying right after
+ * starting, which would turn a crash at startup into a spin loop. */
+static void restart_desktop_after_exit(struct windowd_session *session)
+{
+    if (uptime_ms() - session->desktop_started_ms < WINDOWD_DESKTOP_QUICK_EXIT_MS)
+    {
+        session->desktop_quick_exits += 1;
+    }
+    else
+    {
+        session->desktop_quick_exits = 0;
+    }
+    if (session->desktop_quick_exits >= WINDOWD_DESKTOP_MAX_QUICK_EXITS)
+    {
+        if (session->desktop_quick_exits == WINDOWD_DESKTOP_MAX_QUICK_EXITS)
+        {
+            puts_fd(2, "windowd: the desktop keeps exiting at startup; going on without it\n");
+        }
         return;
     }
-
-    /* Pasivo: no toca foco ni active_client_kind (a diferencia del terminal). */
-    destroy_client_instance(&session->background_client, terminate_client);
-}
-
-/* Lanza shellui como cliente de fondo: superficie frameless full-screen al
- * origen (kind SHELL) compuesta al fondo del z-order. No activa foco. */
-static int launch_background_client(struct windowd_session *session)
-{
-    struct windowd_client *client = 0;
-
-    if (session == 0)
+    if (launch_desktop_client(session) < 0)
     {
-        return -1;
-    }
-
-    destroy_background_client(session, 1);
-    client = &session->background_client;
-    reset_client(client);
-    fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
-    position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    return start_client_process(client, k_background_client_path, 0, session->submit_event_fd, 0);
-}
-
-/* La barra de tareas es un cliente con rol de shell: su superficie ocupa la
- * franja al pie del display y se compone por encima de las ventanas normales,
- * pero por debajo de una app a pantalla completa. No recibe foco ni entra en la
- * lista de tareas: no es una ventana, es el shell. */
-static int launch_taskbar_client(struct windowd_session *session)
-{
-    struct windowd_client *client = 0;
-    struct sx_rect strip;
-
-    if (session == 0)
-    {
-        return -1;
-    }
-
-    destroy_client_instance(&session->taskbar_client, 1);
-    client = &session->taskbar_client;
-    reset_client(client);
-
-    strip = windowd_taskbar_rect(&session->gfx.info);
-    client->surface_info = session->gfx.info;
-    client->surface_info.width = (uint32_t)strip.width;
-    client->surface_info.height = (uint32_t)strip.height;
-    client->surface_info.pitch = (uint32_t)strip.width * 4u;
-    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)strip.height;
-    client->window_x = strip.x;
-    client->window_y = strip.y;
-    client->window_width = strip.width;
-    client->window_height = strip.height;
-    client->frame_visible = 0;
-
-    if (start_client_process(client, k_taskbar_client_path, 0, session->submit_event_fd, 1) < 0)
-    {
-        return -1;
-    }
-    return 0;
-}
-
-/* Popup de layout de teclado: mismo molde que la taskbar (rect a mano,
- * frame_visible=0, sin pasar por fill_client_surface_info/position_client_window
- * -- esas dos solo distinguen APP cascada-decorada de SHELL fullscreen/franja,
- * no sirven para un rect chico arbitrario). Anclado en la esquina inferior
- * derecha, pegado arriba de la franja de la taskbar. Un pedido repetido
- * reinicia la instancia en vez de duplicarla, igual que la taskbar. */
-static int launch_keyboard_popup_client(struct windowd_session *session)
-{
-    struct windowd_client *client = 0;
-    struct sx_rect strip;
-
-    if (session == 0)
-    {
-        return -1;
-    }
-
-    /* La esquina es compartida con los popups de volumen y reloj: ver
-     * launch_volume_popup_client y launch_clock_popup_client. */
-    destroy_client_instance(&session->keyboard_popup_client, 1);
-    destroy_client_instance(&session->volume_popup_client, 1);
-    destroy_client_instance(&session->clock_popup_client, 1);
-    client = &session->keyboard_popup_client;
-    reset_client(client);
-
-    strip = windowd_taskbar_rect(&session->gfx.info);
-    client->surface_info = session->gfx.info;
-    client->surface_info.width = (uint32_t)WINDOWD_KEYBOARD_POPUP_WIDTH;
-    client->surface_info.height = (uint32_t)WINDOWD_KEYBOARD_POPUP_HEIGHT;
-    client->surface_info.pitch = (uint32_t)WINDOWD_KEYBOARD_POPUP_WIDTH * 4u;
-    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)WINDOWD_KEYBOARD_POPUP_HEIGHT;
-    client->window_x = strip.x + strip.width - 4 - WINDOWD_KEYBOARD_POPUP_WIDTH;
-    client->window_y = strip.y - WINDOWD_KEYBOARD_POPUP_HEIGHT;
-    client->window_width = WINDOWD_KEYBOARD_POPUP_WIDTH;
-    client->window_height = WINDOWD_KEYBOARD_POPUP_HEIGHT;
-    client->frame_visible = 0;
-
-    return start_client_process(client, k_keyboard_popup_client_path, 0, session->submit_event_fd, 0);
-}
-
-/* Popup de volumen: mismo molde que el de layout (rect a mano,
- * frame_visible=0), anclado en la misma esquina inferior derecha. Por eso
- * son excluyentes: abrir uno destruye al otro en vez de apilarlos. Un pedido
- * repetido reinicia la instancia, igual que la taskbar. */
-static int launch_volume_popup_client(struct windowd_session *session)
-{
-    struct windowd_client *client = 0;
-    struct sx_rect strip;
-
-    if (session == 0)
-    {
-        return -1;
-    }
-
-    destroy_client_instance(&session->keyboard_popup_client, 1);
-    destroy_client_instance(&session->volume_popup_client, 1);
-    destroy_client_instance(&session->clock_popup_client, 1);
-    client = &session->volume_popup_client;
-    reset_client(client);
-
-    strip = windowd_taskbar_rect(&session->gfx.info);
-    client->surface_info = session->gfx.info;
-    client->surface_info.width = (uint32_t)WINDOWD_VOLUME_POPUP_WIDTH;
-    client->surface_info.height = (uint32_t)WINDOWD_VOLUME_POPUP_HEIGHT;
-    client->surface_info.pitch = (uint32_t)WINDOWD_VOLUME_POPUP_WIDTH * 4u;
-    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)WINDOWD_VOLUME_POPUP_HEIGHT;
-    client->window_x = strip.x + strip.width - 4 - WINDOWD_VOLUME_POPUP_WIDTH;
-    client->window_y = strip.y - WINDOWD_VOLUME_POPUP_HEIGHT;
-    client->window_width = WINDOWD_VOLUME_POPUP_WIDTH;
-    client->window_height = WINDOWD_VOLUME_POPUP_HEIGHT;
-    client->frame_visible = 0;
-
-    return start_client_process(client, k_volume_popup_client_path, 0, session->submit_event_fd, 0);
-}
-
-/* Popup del reloj: mismo molde que el de volumen (rect a mano,
- * frame_visible=0), anclado en la misma esquina inferior derecha y con
- * toggle como el menu: el pedido lo abre o lo cierra, y un click afuera lo
- * destruye. Como el de volumen, nunca sale solo -- el WM lo mata al
- * cerrarlo. Comparte la esquina con los otros dos popups: abrir uno destruye
- * a los otros. */
-static int launch_clock_popup_client(struct windowd_session *session)
-{
-    struct windowd_client *client = 0;
-    struct sx_rect strip;
-
-    if (session == 0)
-    {
-        return -1;
-    }
-
-    destroy_client_instance(&session->keyboard_popup_client, 1);
-    destroy_client_instance(&session->volume_popup_client, 1);
-    destroy_client_instance(&session->clock_popup_client, 1);
-    client = &session->clock_popup_client;
-    reset_client(client);
-
-    strip = windowd_taskbar_rect(&session->gfx.info);
-    client->surface_info = session->gfx.info;
-    client->surface_info.width = (uint32_t)WINDOWD_CLOCK_POPUP_WIDTH;
-    client->surface_info.height = (uint32_t)WINDOWD_CLOCK_POPUP_HEIGHT;
-    client->surface_info.pitch = (uint32_t)WINDOWD_CLOCK_POPUP_WIDTH * 4u;
-    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)WINDOWD_CLOCK_POPUP_HEIGHT;
-    client->window_x = strip.x + strip.width - 4 - WINDOWD_CLOCK_POPUP_WIDTH;
-    client->window_y = strip.y - WINDOWD_CLOCK_POPUP_HEIGHT;
-    client->window_width = WINDOWD_CLOCK_POPUP_WIDTH;
-    client->window_height = WINDOWD_CLOCK_POPUP_HEIGHT;
-    client->frame_visible = 0;
-
-    return start_client_process(client, k_clock_popup_client_path, 0, session->submit_event_fd, 0);
-}
-
-/* Menu Inicio: mismo molde que el popup de layout (rect a mano,
- * frame_visible=0), anclado en la esquina inferior izquierda, pegado arriba
- * de la franja. A diferencia del popup, el pedido es un toggle: si el menu
- * ya esta vivo, lo cierra en vez de relanzarlo. */
-static int launch_start_menu_client(struct windowd_session *session)
-{
-    struct windowd_client *client = 0;
-    struct sx_rect strip;
-
-    if (session == 0)
-    {
-        return -1;
-    }
-
-    destroy_client_instance(&session->startmenu_client, 1);
-    client = &session->startmenu_client;
-    reset_client(client);
-
-    strip = windowd_taskbar_rect(&session->gfx.info);
-    client->surface_info = session->gfx.info;
-    client->surface_info.width = (uint32_t)WINDOWD_STARTMENU_WIDTH;
-    client->surface_info.height = (uint32_t)WINDOWD_STARTMENU_HEIGHT;
-    client->surface_info.pitch = (uint32_t)WINDOWD_STARTMENU_WIDTH * 4u;
-    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)WINDOWD_STARTMENU_HEIGHT;
-    client->window_x = strip.x + 2;
-    client->window_y = strip.y - WINDOWD_STARTMENU_HEIGHT;
-    client->window_width = WINDOWD_STARTMENU_WIDTH;
-    client->window_height = WINDOWD_STARTMENU_HEIGHT;
-    client->frame_visible = 0;
-
-    return start_client_process(client, k_startmenu_client_path, 0, session->submit_event_fd, 0);
-}
-
-/* Cierra el menu sin importar quien lo pidio (toggle del boton Start o click
- * afuera). Ni el menu ni el popup de volumen salen solos: el WM los destruye. */
-static void close_start_menu_client(struct windowd_session *session, struct windowd_dirty_rect *dirty)
-{
-    if (session == 0 || session->startmenu_client.pid <= 0)
-    {
-        return;
-    }
-    destroy_client_instance(&session->startmenu_client, 1);
-    if (dirty != 0)
-    {
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-}
-
-/* Igual que el menu: el popup de volumen no sale solo, asi que el toggle y el
- * click afuera lo destruyen. */
-static void close_volume_popup_client(struct windowd_session *session, struct windowd_dirty_rect *dirty)
-{
-    if (session == 0 || session->volume_popup_client.pid <= 0)
-    {
-        return;
-    }
-    destroy_client_instance(&session->volume_popup_client, 1);
-    if (dirty != 0)
-    {
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-}
-
-/* Igual que el de volumen: el popup del reloj no sale solo, asi que el
- * toggle y el click afuera lo destruyen. */
-static void close_clock_popup_client(struct windowd_session *session, struct windowd_dirty_rect *dirty)
-{
-    if (session == 0 || session->clock_popup_client.pid <= 0)
-    {
-        return;
-    }
-    destroy_client_instance(&session->clock_popup_client, 1);
-    if (dirty != 0)
-    {
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        puts_fd(2, "windowd: failed to restart the desktop\n");
     }
 }
 
@@ -2467,11 +2205,11 @@ static void publish_window_list(struct windowd_session *session)
     int index;
     int written = 0;
 
-    if (session == 0 || session->taskbar_client.window_list == 0)
+    if (session == 0 || session->desktop_windows[0].window_list == 0)
     {
         return;
     }
-    list = session->taskbar_client.window_list;
+    list = session->desktop_windows[0].window_list;
 
     memset(&staging, 0, sizeof(staging));
 
@@ -2484,13 +2222,9 @@ static void publish_window_list(struct windowd_session *session)
      * el click siguiente cae sobre otra cosa. Win95 los deja fijos y aca
      * tambien: el slot de un overlay no cambia mientras la ventana viva.
      */
-    for (index = -1; index < WINDOWD_MAX_OVERLAY_CLIENTS && written < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
+    for (index = 0; index < WINDOWD_MAX_OVERLAY_CLIENTS && written < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
     {
-        int is_shell = index < 0;
-        int slot = is_shell ? -1 : index;
-        const struct windowd_client *client = is_shell
-            ? &session->shell_client
-            : &session->overlay_clients[index];
+        const struct windowd_client *client = &session->overlay_clients[index];
         struct savanxp_wm_window_entry *entry;
         const char *title;
         size_t length;
@@ -2508,24 +2242,14 @@ static void publish_window_list(struct windowd_session *session)
          * con un indice viejo activaria otra ventana. */
         entry->window_id = (uint32_t)client->pid;
         entry->flags = SAVANXP_WM_WINDOW_FLAG_NONE;
-        if (is_shell)
+        if (session->active_client_kind == WINDOWD_CLIENT_APP &&
+            index == overlay_root_slot(session, session->active_overlay_slot))
         {
-            if (session->active_client_kind == WINDOWD_CLIENT_SHELL)
-            {
-                entry->flags |= SAVANXP_WM_WINDOW_FLAG_ACTIVE;
-            }
+            entry->flags |= SAVANXP_WM_WINDOW_FLAG_ACTIVE;
         }
-        else
+        if (client->minimized)
         {
-            if (session->active_client_kind == WINDOWD_CLIENT_APP &&
-                slot == overlay_root_slot(session, session->active_overlay_slot))
-            {
-                entry->flags |= SAVANXP_WM_WINDOW_FLAG_ACTIVE;
-            }
-            if (client->minimized)
-            {
-                entry->flags |= SAVANXP_WM_WINDOW_FLAG_MINIMIZED;
-            }
+            entry->flags |= SAVANXP_WM_WINDOW_FLAG_MINIMIZED;
         }
         /* Icono: van los pixeles propios del .sxe cuando el binario los trajo,
          * y el id del set horneado como ultimo recurso. La barra no puede
@@ -2578,26 +2302,14 @@ static void publish_window_list(struct windowd_session *session)
     list->sequence += 1;
 }
 
-/* Resuelve un window_id (pid) a un cliente. Devuelve el slot del overlay, o -1
- * con is_shell en 1 si el id es el del shell. */
-static int resolve_window_id(const struct windowd_session *session, uint32_t window_id, int *is_shell)
+/* Resolves a window id from the window list (a pid) to the slot of that
+ * process's main window, or -1. */
+static int resolve_window_id(const struct windowd_session *session, uint32_t window_id)
 {
     int slot;
 
-    if (is_shell != 0)
-    {
-        *is_shell = 0;
-    }
     if (session == 0 || window_id == 0)
     {
-        return -1;
-    }
-    if (session->shell_client.pid > 0 && (uint32_t)session->shell_client.pid == window_id)
-    {
-        if (is_shell != 0)
-        {
-            *is_shell = 1;
-        }
         return -1;
     }
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
@@ -2612,45 +2324,142 @@ static int resolve_window_id(const struct windowd_session *session, uint32_t win
     return -1;
 }
 
+/* The combinations windowd keeps for itself. A hotkey on one of them would
+ * take Alt+Tab or Alt+F4 away from every application. */
+static int hotkey_reserved(uint32_t key, uint32_t modifiers)
+{
+    if (key == SAVANXP_KEY_F11)
+    {
+        return 1;
+    }
+    if ((key == SAVANXP_KEY_TAB || key == SAVANXP_KEY_F4) && (modifiers & SAVANXP_KEY_MOD_ALT) != 0)
+    {
+        return 1;
+    }
+    /* Ctrl+Esc opens the Task List until it is removed (phase 2 of
+     * docs/desktop/DESKTOP_ARCHITECTURE.md). */
+    if (key == SAVANXP_KEY_ESC && (modifiers & SAVANXP_KEY_MOD_CTRL) != 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+#define WINDOWD_HOTKEY_MODIFIERS (SAVANXP_KEY_MOD_SHIFT | SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_ALT)
+
+static void register_hotkey(struct windowd_session *session, uint32_t key, uint32_t modifiers)
+{
+    int index;
+
+    modifiers &= WINDOWD_HOTKEY_MODIFIERS;
+    if (key == SAVANXP_KEY_NONE || hotkey_reserved(key, modifiers))
+    {
+        eprintf("windowd: hotkey %u/%u refused\n", (unsigned)key, (unsigned)modifiers);
+        return;
+    }
+    for (index = 0; index < session->hotkey_count; ++index)
+    {
+        if (session->hotkeys[index].key == key && session->hotkeys[index].modifiers == modifiers)
+        {
+            return;
+        }
+    }
+    if (session->hotkey_count >= WINDOWD_MAX_HOTKEYS)
+    {
+        eprintf("windowd: hotkey %u/%u refused, table full\n", (unsigned)key, (unsigned)modifiers);
+        return;
+    }
+    session->hotkeys[session->hotkey_count].key = key;
+    session->hotkeys[session->hotkey_count].modifiers = modifiers;
+    session->hotkey_count += 1;
+}
+
+/* Delivers a registered hotkey to the desktop's main window instead of the
+ * focused application. The KEY_UP of a key whose KEY_DOWN went there follows
+ * it, so the application never sees half a key. Returns 1 if consumed. */
+static int deliver_hotkey(struct windowd_session *session, const struct savanxp_input_event *key_event)
+{
+    const struct windowd_client *desktop = &session->desktop_windows[0];
+    int index;
+
+    if (key_event->type == SAVANXP_INPUT_EVENT_KEY_UP &&
+        session->hotkey_held_key != 0 && key_event->key == session->hotkey_held_key)
+    {
+        session->hotkey_held_key = 0;
+        (void)route_key(desktop, key_event);
+        return 1;
+    }
+    if (key_event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || desktop->pid <= 0)
+    {
+        return 0;
+    }
+    for (index = 0; index < session->hotkey_count; ++index)
+    {
+        if (session->hotkeys[index].key == key_event->key &&
+            session->hotkeys[index].modifiers == (key_event->modifiers & WINDOWD_HOTKEY_MODIFIERS))
+        {
+            session->hotkey_held_key = key_event->key;
+            (void)route_key(desktop, key_event);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void service_shell_requests(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     struct savanxp_wm_shell_request request;
+    int request_fd;
 
-    if (session == 0 || session->taskbar_client.shell_request_read_fd < 0)
+    if (session == 0 || session->desktop_windows[0].shell_request_read_fd < 0)
     {
         return;
     }
+    request_fd = session->desktop_windows[0].shell_request_read_fd;
 
-    while (savanxp_read(session->taskbar_client.shell_request_read_fd, &request, sizeof(request)) ==
-           (long)sizeof(request))
+    while (savanxp_read(request_fd, &request, sizeof(request)) == (long)sizeof(request))
     {
-        int is_shell = 0;
-        int slot = resolve_window_id(session, request.window_id, &is_shell);
+        int slot;
+        int previous_active_slot = session->active_overlay_slot;
 
+        if (request.action == SAVANXP_WM_SHELL_REGISTER_HOTKEY)
+        {
+            register_hotkey(session, request.key, request.modifiers);
+            continue;
+        }
+        slot = resolve_window_id(session, request.window_id);
+        if (!overlay_slot_valid(slot))
+        {
+            continue;
+        }
         if (request.action == SAVANXP_WM_SHELL_ACTIVATE)
         {
-            if (is_shell)
+            if (session->overlay_clients[slot].minimized)
             {
-                activate_shell(session);
+                restore_overlay_client(session, dirty, slot);
             }
-            else if (overlay_slot_valid(slot))
-            {
-                if (session->overlay_clients[slot].minimized)
-                {
-                    restore_overlay_client(session, dirty, slot);
-                }
-                raise_overlay(session, slot);
-                windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-            }
+            raise_overlay(session, slot);
+            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
         }
-        else if (request.action == SAVANXP_WM_SHELL_MINIMIZE)
+        else if (request.action == SAVANXP_WM_SHELL_MINIMIZE && !session->overlay_clients[slot].minimized)
         {
-            if (!is_shell && overlay_slot_valid(slot) && !session->overlay_clients[slot].minimized)
+            minimize_overlay_client(session, dirty, slot);
+        }
+        /* Activation moved to another window, whose caption changes colour.
+         * The pointer path repaints that at the end of its event; a request
+         * from the taskbar has no such end, so it is done here. */
+        if (session->active_overlay_slot != previous_active_slot)
+        {
+            if (overlay_slot_valid(previous_active_slot))
             {
-                minimize_overlay_client(session, dirty, slot);
+                windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, previous_active_slot));
+            }
+            if (overlay_slot_valid(session->active_overlay_slot))
+            {
+                windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
             }
         }
-        }
+    }
 }
 
 static void destroy_overlay_client(struct windowd_session *session, int slot, int terminate_client)
@@ -2751,28 +2560,6 @@ static int close_overlay_window(struct windowd_session *session, struct windowd_
     return 1;
 }
 
-static int launch_shell_client(struct windowd_session *session, const char *path)
-{
-    struct windowd_client *client = 0;
-
-    if (session == 0 || path == 0)
-    {
-        return -1;
-    }
-
-    destroy_shell_client(session, 1);
-    client = &session->shell_client;
-    reset_client(client);
-    fill_client_surface_info(session, WINDOWD_CLIENT_SHELL, &client->surface_info);
-    position_client_window(session, client, WINDOWD_CLIENT_SHELL, 0);
-    if (start_client_process(client, path, 0, session->submit_event_fd, 0) < 0)
-    {
-        return -1;
-    }
-    activate_shell(session);
-    return 0;
-}
-
 /* launch_flags: SAVANXP_DESKTOP_LAUNCH_FLAG_*, declarados por quien pide el
  * launch. El WM ya no consulta ningun catalogo de aplicaciones para decidir
  * como dimensionar la superficie: si nadie declara el flag, la app arranca en
@@ -2803,7 +2590,7 @@ static int launch_overlay_client(
 
     client = &session->overlay_clients[slot];
     reset_client(client);
-    fill_client_surface_info(session, WINDOWD_CLIENT_APP, &client->surface_info);
+    fill_client_surface_info(session, 0, &client->surface_info);
     if ((launch_flags & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0)
     {
         /* Allocate the surface at the low fullscreen render size. The same
@@ -2816,7 +2603,7 @@ static int launch_overlay_client(
         client->surface_info.buffer_size = client->surface_info.pitch * WINDOWD_FULLSCREEN_MODE_HEIGHT;
     }
     client->cascade_index = session->overlay_count;
-    position_client_window(session, client, WINDOWD_CLIENT_APP, client->cascade_index);
+    position_client_window(session, client, 0, client->cascade_index);
     if (start_client_process(client, path, argument, session->submit_event_fd, 0) < 0)
     {
         return -1;
@@ -2824,11 +2611,6 @@ static int launch_overlay_client(
     append_overlay_to_order(session, slot);
     raise_overlay(session, slot);
     return 0;
-}
-
-static int relaunch_shell_client(struct windowd_session *session)
-{
-    return launch_shell_client(session, k_shellapp_path);
 }
 
 static int open_compositor_session(struct windowd_session *session)
@@ -2842,7 +2624,7 @@ static int open_compositor_session(struct windowd_session *session)
     session->mouse_fd = -1;
     session->submit_event_fd = -1;
     session->hw_cursor_enabled = 0;
-    session->active_client_kind = WINDOWD_CLIENT_SHELL;
+    session->active_client_kind = WINDOWD_CLIENT_NONE;
     session->active_overlay_slot = -1;
     session->fullscreen_slot = -1;
     session->overlay_count = 0;
@@ -2851,13 +2633,10 @@ static int open_compositor_session(struct windowd_session *session)
     /* Idem: memset dejaria el slot 0 como "redimensionando". */
     session->resize_slot = -1;
     session->resize_edges = WINDOWD_RESIZE_EDGE_NONE;
-    reset_client(&session->background_client);
-    reset_client(&session->taskbar_client);
-    reset_client(&session->shell_client);
-    reset_client(&session->keyboard_popup_client);
-    reset_client(&session->volume_popup_client);
-    reset_client(&session->clock_popup_client);
-    reset_client(&session->startmenu_client);
+    for (slot = 0; slot < WINDOWD_DESKTOP_WINDOW_COUNT; ++slot)
+    {
+        reset_client(&session->desktop_windows[slot]);
+    }
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         reset_client(&session->overlay_clients[slot]);
@@ -2912,8 +2691,7 @@ static void close_compositor_session(struct windowd_session *session)
     {
         destroy_overlay_client(session, slot, 1);
     }
-    destroy_shell_client(session, 1);
-    destroy_background_client(session, 1);
+    destroy_desktop(session, 1);
     close_fd_if_needed(&session->input_fd);
     close_fd_if_needed(&session->mouse_fd);
     close_fd_if_needed(&session->submit_event_fd);
@@ -2929,7 +2707,6 @@ static int service_client_batches(
     struct windowd_client *client)
 {
     int slot = -1;
-    int is_shell = 0;
 
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
     {
@@ -2937,17 +2714,14 @@ static int service_client_batches(
     }
 
     slot = overlay_slot_for_client_ptr(session, client);
-    is_shell = client == &session->shell_client;
     if (consume_client_present_batches(session, dirty, client) < 0)
     {
-        if (is_shell)
+        /* A malformed batch is a broken client. For the desktop that is the
+         * whole process: it is killed here and restarted when reaped. */
+        if (is_desktop_window(session, client))
         {
-            destroy_shell_client(session, 1);
-            if (relaunch_shell_client(session) < 0)
-            {
-                puts_fd(2, "desktop: failed to relaunch shellapp\n");
-                return -1;
-            }
+            destroy_desktop(session, 1);
+            restart_desktop_after_exit(session);
         }
         else if (overlay_slot_valid(slot))
         {
@@ -2968,61 +2742,17 @@ static int reap_dead_clients(struct windowd_session *session, struct windowd_dir
         return 0;
     }
 
-    if (session->background_client.pid > 0 && !windowd_process_alive(session->background_client.pid))
+    if (session->desktop_windows[0].pid > 0 && !windowd_process_alive(session->desktop_windows[0].pid))
     {
-        /* Sin relaunch en A2.2: al morir el cliente de fondo caemos al wallpaper
-         * dibujado por windowd (fallback), para no arriesgar un spin-loop si
-         * shellui crashea al arrancar. */
-        destroy_background_client(session, 0);
+        destroy_desktop(session, 0);
         windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-
-    if (session->shell_client.pid > 0 && !windowd_process_alive(session->shell_client.pid))
-    {
-        destroy_shell_client(session, 0);
-        if (relaunch_shell_client(session) < 0)
-        {
-            puts_fd(2, "desktop: failed to relaunch shellapp\n");
-            return -1;
-        }
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-
-    if (session->keyboard_popup_client.pid > 0 && !windowd_process_alive(session->keyboard_popup_client.pid))
-    {
-        /* Se cierra solo tras elegir un layout (exit(0)): esto es el camino
-         * normal de cierre, no una caida -- sin relaunch. */
-        destroy_client_instance(&session->keyboard_popup_client, 0);
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-
-    if (session->volume_popup_client.pid > 0 && !windowd_process_alive(session->volume_popup_client.pid))
-    {
-        /* El WM lo mata al cerrarlo por toggle o click afuera: la muerte del
-         * proceso es el cierre normal, no una caida -- sin relaunch. */
-        destroy_client_instance(&session->volume_popup_client, 0);
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-
-    if (session->clock_popup_client.pid > 0 && !windowd_process_alive(session->clock_popup_client.pid))
-    {
-        /* Igual que el de volumen: el WM lo mata al cerrarlo. */
-        destroy_client_instance(&session->clock_popup_client, 0);
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-
-    if (session->startmenu_client.pid > 0 && !windowd_process_alive(session->startmenu_client.pid))
-    {
-        /* Igual que el popup: exit(0) al lanzar un programa es el cierre
-         * normal, no una caida -- sin relaunch. */
-        destroy_client_instance(&session->startmenu_client, 0);
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+        restart_desktop_after_exit(session);
     }
 
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         struct windowd_client *client = &session->overlay_clients[slot];
-        if (client->pid > 0 && !windowd_process_alive(client->pid))
+        if (client->pid > 0 && client->owner_slot < 0 && !windowd_process_alive(client->pid))
         {
             destroy_overlay_client(session, slot, 0);
             windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
@@ -3072,71 +2802,6 @@ static int service_client_launch_requests(struct windowd_session *session, struc
 
         request.path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY - 1u] = '\0';
         request.argument[SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY - 1u] = '\0';
-        /* El popup de layout de teclado no es una ventana mas: se ignora
-         * path/argument (el binario es fijo, lo conoce el WM) y se posiciona
-         * anclado, no cascada/decorado. */
-        if ((request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_TASKBAR_POPUP) != 0)
-        {
-            if (launch_keyboard_popup_client(session) < 0)
-            {
-                eprintf("desktop: failed to launch keyboard layout popup\n");
-                continue;
-            }
-            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-            continue;
-        }
-        /* El menu Inicio es un toggle: con el menu vivo el pedido lo cierra.
-         * Sin esto el boton Start solo sabria abrir, y cerrar quedaria atado
-         * unicamente al click afuera. */
-        if ((request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_START_MENU) != 0)
-        {
-            if (session->startmenu_client.pid > 0)
-            {
-                close_start_menu_client(session, dirty);
-                continue;
-            }
-            if (launch_start_menu_client(session) < 0)
-            {
-                eprintf("desktop: failed to launch start menu\n");
-                continue;
-            }
-            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-            continue;
-        }
-        /* El popup de volumen es un toggle como el menu: con el popup vivo
-         * el pedido lo cierra. */
-        if ((request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_VOLUME_POPUP) != 0)
-        {
-            if (session->volume_popup_client.pid > 0)
-            {
-                close_volume_popup_client(session, dirty);
-                continue;
-            }
-            if (launch_volume_popup_client(session) < 0)
-            {
-                eprintf("desktop: failed to launch volume popup\n");
-                continue;
-            }
-            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-            continue;
-        }
-        /* El popup del reloj es un toggle como el de volumen: con el popup
-         * vivo el pedido lo cierra. */
-        if ((request.flags & SAVANXP_DESKTOP_LAUNCH_FLAG_CLOCK_POPUP) != 0)
-        {
-            if (session->clock_popup_client.pid > 0)
-            {
-                close_clock_popup_client(session, dirty);
-                continue;
-            }
-            if (launch_clock_popup_client(session) < 0)
-            {
-                eprintf("desktop: failed to launch clock popup\n");
-                continue;
-            }
-            windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-            continue;
-        }
         if (request.path[0] != '/')
         {
             eprintf("desktop: invalid launch request from %s\n", client->path[0] != '\0' ? client->path : "?");
@@ -3454,11 +3119,174 @@ static void close_owned_window(
     windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, owner_slot));
 }
 
-/* Drena el pedido de ventana del header (savanxp_wm_client_requests.window).
- * Como todo lo que viene del header: se copia, se valida y recien ahi se usa.
- * Solo la ventana PRINCIPAL de un overlay puede tener ventanas con dueno; para
- * cualquier otro cliente el pedido se contesta con error, que el runtime toma
- * como "segui dibujando el dialogo adentro". */
+/*
+ * Creates a role window of the desktop (docs/desktop/DESKTOP_ARCHITECTURE.md#
+ * window-roles): a panel on a screen edge or a popup where the desktop says.
+ * Same transport as an owned window -- a section queued on the process's event
+ * pipe, duplicates of its pipe and wake event -- and no family rules: a role
+ * window is never focused, never raised over the application windows by a
+ * click, and stacks by role. The desktop's main window is the background.
+ *
+ * Returns 0 with the handle queued, or -errno leaving nothing behind.
+ */
+static int open_desktop_window(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    const struct savanxp_wm_window_request *request)
+{
+    struct windowd_client *owner = &session->desktop_windows[0];
+    struct windowd_client *client = 0;
+    const struct savanxp_fb_info *display = &session->gfx.info;
+    int section_fd = -1;
+    long result = 0;
+    int width = 0;
+    int height = 0;
+    int x = 0;
+    int y = 0;
+
+    if (owner->pid <= 0 || owner->events_write_fd < 0 || owner->wake_event_fd < 0 ||
+        request->window_id == 0 || request->window_id >= (uint32_t)WINDOWD_DESKTOP_WINDOW_COUNT ||
+        session->desktop_windows[request->window_id].pid > 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+
+    if (request->role == SAVANXP_WM_WINDOW_ROLE_PANEL)
+    {
+        /* Full width on its edge; the thickness is the client's, and it may
+         * not take more than half of the screen. */
+        if (request->height == 0 || request->height > display->height / 2u)
+        {
+            return -SAVANXP_EINVAL;
+        }
+        width = (int)display->width;
+        height = (int)request->height;
+        x = 0;
+        y = (request->role_flags & SAVANXP_WM_PANEL_EDGE_TOP) != 0 ? 0 : (int)display->height - height;
+    }
+    else if (request->role == SAVANXP_WM_WINDOW_ROLE_POPUP)
+    {
+        if (request->width == 0 || request->height == 0 ||
+            request->width > display->width || request->height > display->height)
+        {
+            return -SAVANXP_EINVAL;
+        }
+        width = (int)request->width;
+        height = (int)request->height;
+        x = windowd_clamp_int(request->x, 0, (int)display->width - width);
+        y = windowd_clamp_int(request->y, 0, (int)display->height - height);
+    }
+    else
+    {
+        /* The desktop has no dialogs yet; a NORMAL window would need an owner
+         * among the application windows. */
+        return -SAVANXP_EINVAL;
+    }
+
+    client = &session->desktop_windows[request->window_id];
+    reset_client(client);
+    client->surface_info.width = (uint32_t)width;
+    client->surface_info.height = (uint32_t)height;
+    client->surface_info.pitch = (uint32_t)width * (uint32_t)sizeof(uint32_t);
+    client->surface_info.bpp = 32u;
+    client->surface_info.buffer_size = client->surface_info.pitch * (uint32_t)height;
+
+    section_fd = create_client_surface(client);
+    if (section_fd < 0)
+    {
+        reset_client(client);
+        return -SAVANXP_ENOMEM;
+    }
+    client->events_write_fd = (int)savanxp_dup(owner->events_write_fd);
+    client->wake_event_fd = (int)savanxp_dup(owner->wake_event_fd);
+    result = (client->events_write_fd < 0 || client->wake_event_fd < 0)
+        ? -SAVANXP_EBADF
+        : pipe_send_handle(owner->events_write_fd, section_fd);
+    close_fd_if_needed(&section_fd);
+    if (result < 0)
+    {
+        destroy_client_instance(client, 0);
+        return (int)result;
+    }
+
+    client->pid = owner->pid;
+    client->window_id = request->window_id;
+    client->role = request->role == SAVANXP_WM_WINDOW_ROLE_PANEL ? WINDOWD_ROLE_PANEL : WINDOWD_ROLE_POPUP;
+    client->role_flags = request->role_flags;
+    memcpy(client->path, owner->path, sizeof(client->path));
+    client->presentation = owner->presentation;
+    client->window_x = x;
+    client->window_y = y;
+    client->window_width = width;
+    client->window_height = height;
+    client->restore_window_x = x;
+    client->restore_window_y = y;
+    client->restore_window_width = width;
+    client->restore_window_height = height;
+    client->frame_visible = 0;
+    client->size_hint_applied = 1;
+    windowd_dirty_rect_add_client(dirty, client);
+    return 0;
+}
+
+static void close_desktop_window(struct windowd_session *session, struct windowd_dirty_rect *dirty, uint32_t window_id)
+{
+    struct windowd_client *client = 0;
+
+    if (window_id == 0 || window_id >= (uint32_t)WINDOWD_DESKTOP_WINDOW_COUNT)
+    {
+        return;
+    }
+    client = &session->desktop_windows[window_id];
+    if (client->pid <= 0)
+    {
+        return;
+    }
+    windowd_dirty_rect_add_client(dirty, client);
+    destroy_client_instance(client, 0);
+}
+
+/* A press at x,y asks every dismissable popup to close when it lands on
+ * nothing, or on a window of another process. A press on another window of
+ * the popup's own process is that process's to interpret: the toggle button
+ * that opened the popup, for instance. The press itself goes on as usual. */
+static void dismiss_popups_for_press(struct windowd_session *session, int x, int y)
+{
+    const struct windowd_client *hit = top_client_at_point(session, x, y);
+    int index;
+
+    for (index = 1; index < WINDOWD_DESKTOP_WINDOW_COUNT; ++index)
+    {
+        struct windowd_client *popup = &session->desktop_windows[index];
+
+        if (popup->pid <= 0 || popup->role != WINDOWD_ROLE_POPUP || popup->dismiss_requested ||
+            (popup->role_flags & SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE) == 0)
+        {
+            continue;
+        }
+        if (hit != 0 && hit->pid == popup->pid)
+        {
+            continue;
+        }
+        /* The flag first, then the wake: a client that resets the event and
+         * looks at the header again cannot miss it. */
+        if (popup->header != 0)
+        {
+            popup->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+        }
+        if (popup->wake_event_fd >= 0)
+        {
+            (void)event_set(popup->wake_event_fd);
+        }
+        popup->dismiss_requested = 1;
+    }
+}
+
+/* Drains the window request in the header (savanxp_wm_client_requests.window).
+ * Like everything in the header: copied, validated, and only then used. The
+ * desktop's main window may open role windows; the main window of an
+ * application may open owned (NORMAL) windows. Any other request is answered
+ * with an error, which the runtime takes as "keep drawing the dialog inside". */
 static void service_client_window_requests(
     struct windowd_session *session,
     struct windowd_dirty_rect *dirty,
@@ -3487,7 +3315,29 @@ static void service_client_window_requests(
     client->window_request_consumed_sequence = sequence;
     request.title[SAVANXP_WM_WINDOW_TITLE_CAPACITY - 1u] = '\0';
 
-    if (!overlay_slot_valid(slot) || client->owner_slot >= 0)
+    if (client == &session->desktop_windows[0])
+    {
+        if (request.action == SAVANXP_WM_WINDOW_ACTION_OPEN)
+        {
+            status = open_desktop_window(session, dirty, &request);
+            if (status < 0)
+            {
+                eprintf("windowd: desktop window %u (role %u) refused (%s)\n",
+                    (unsigned)request.window_id, (unsigned)request.role, result_error_string(status));
+            }
+        }
+        else if (request.action == SAVANXP_WM_WINDOW_ACTION_CLOSE)
+        {
+            close_desktop_window(session, dirty, request.window_id);
+        }
+        else
+        {
+            status = -SAVANXP_EINVAL;
+        }
+    }
+    /* Roles other than NORMAL belong to the shell. */
+    else if (!overlay_slot_valid(slot) || client->owner_slot >= 0 ||
+        request.role != SAVANXP_WM_WINDOW_ROLE_NORMAL)
     {
         status = -SAVANXP_EINVAL;
     }
@@ -3519,6 +3369,38 @@ static void service_client_window_requests(
     {
         (void)event_set(client->wake_event_fd);
     }
+}
+
+/* One pass over the desktop process: frames, launches and cursor hints of
+ * every window it has, then what only its main window carries -- window
+ * requests, shell requests -- and the window list it reads. */
+static void service_desktop(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    int index;
+
+    for (index = 0; index < WINDOWD_DESKTOP_WINDOW_COUNT; ++index)
+    {
+        struct windowd_client *client = &session->desktop_windows[index];
+
+        if (client->pid <= 0)
+        {
+            continue;
+        }
+        (void)service_client_batches(session, dirty, client);
+        /* A malformed batch takes the whole desktop down (and restarts it). */
+        if (client->pid <= 0)
+        {
+            continue;
+        }
+        (void)service_client_launch_requests(session, dirty, client);
+        service_client_cursor_hints(client);
+        /* A role window's size is the desktop's to ask for when it opens
+         * it, not a hint: consumed and dropped. */
+        service_client_size_hints(session, dirty, client, -1);
+    }
+    service_client_window_requests(session, dirty, &session->desktop_windows[0], -1);
+    service_shell_requests(session, dirty);
+    publish_window_list(session);
 }
 
 /*
@@ -3857,12 +3739,14 @@ static int selftest_handle_count(long pid, uint32_t *handles)
 }
 
 /*
- * Capacidad de la sesion (docs/desktop/WM_SUBSYSTEM.md, "Descriptor budget"): con la
- * barra de tareas -- el cliente con mas canales -- y el popup de teclado vivos,
- * TODOS los slots de ventana se tienen que poder llenar, a windowd le tiene que
- * sobrar tabla, y cada app tiene que arrancar con la suya limpia. Con el
- * protocolo v3 la sesion no pasaba de la mitad de los slots.
+ * Session capacity (docs/desktop/WM_SUBSYSTEM.md, "Descriptor budget"): with the
+ * desktop -- the client with the most channels -- showing its panel and a
+ * popup, EVERY window slot must fill, windowd must have table to spare, and
+ * every app must start with a clean one. With protocol v3 the session did not
+ * get past half of the slots.
  */
+static struct windowd_client *selftest_desktop_open_popup(struct windowd_session *session);
+
 static int windowd_capacity_selftest(struct windowd_session *session)
 {
     const char *filler_path = "/bin/aboutapp";
@@ -3874,9 +3758,11 @@ static int windowd_capacity_selftest(struct windowd_session *session)
     int windows = 0;
     int slot;
 
-    if (launch_taskbar_client(session) < 0 || launch_keyboard_popup_client(session) < 0)
+    /* The worst case the desktop takes: its background, its panel and a
+     * popup, all open while the session fills up. */
+    if (selftest_desktop_open_popup(session) == 0)
     {
-        puts_fd(2, "DESKTOP SMOKE FAIL capacidad: no arrancaron la barra y el popup\n");
+        puts_fd(2, "DESKTOP SMOKE FAIL capacity: the desktop did not open a popup\n");
         return 1;
     }
 
@@ -3961,8 +3847,6 @@ static int windowd_capacity_selftest(struct windowd_session *session)
     printf("DESKTOP SMOKE capacity windows=%d windowd_fds=%u app_fds=%u\n",
         windows, (unsigned)windowd_handles, (unsigned)app_handles);
 
-    destroy_client_instance(&session->keyboard_popup_client, 1);
-    destroy_client_instance(&session->taskbar_client, 1);
     return 0;
 }
 
@@ -3974,6 +3858,7 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
     int slot;
 
     (void)event_reset(session->submit_event_fd);
+    service_desktop(session, dirty);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         service_client_window_requests(session, dirty, &session->overlay_clients[slot], slot);
@@ -3982,6 +3867,194 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
     }
     signal_composed_batches(session);
     windowd_dirty_rect_reset(dirty);
+}
+
+/* First desktop window with `role` that has presented a frame, or 0. */
+static struct windowd_client *selftest_desktop_window(struct windowd_session *session, uint32_t role)
+{
+    int index;
+
+    for (index = 0; index < WINDOWD_DESKTOP_WINDOW_COUNT; ++index)
+    {
+        struct windowd_client *client = &session->desktop_windows[index];
+
+        if (client->pid > 0 && client->role == role && client->consumed_submit_sequence > 0)
+        {
+            return client;
+        }
+    }
+    return 0;
+}
+
+/* Services the session until the desktop has a window of `role` on screen,
+ * or the deadline passes. */
+static struct windowd_client *selftest_wait_desktop_window(struct windowd_session *session, uint32_t role)
+{
+    struct windowd_dirty_rect dirty = {0};
+    unsigned long deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+    struct windowd_client *client = 0;
+
+    while ((client = selftest_desktop_window(session, role)) == 0 && uptime_ms() < deadline)
+    {
+        selftest_service_overlays(session, &dirty);
+        sleep_ms(20);
+    }
+    return client;
+}
+
+/* Opens the desktop's Start menu the way a user does: a press and a release
+ * on the panel. Ten pixels in from the left edge is the Start button; that
+ * is the desktop's layout, which only this test assumes. Returns the popup, or
+ * 0. */
+static struct windowd_client *selftest_desktop_open_popup(struct windowd_session *session)
+{
+    struct windowd_client *panel = selftest_wait_desktop_window(session, WINDOWD_ROLE_PANEL);
+    struct windowd_client *popup = selftest_desktop_window(session, WINDOWD_ROLE_POPUP);
+
+    if (panel == 0 || popup != 0)
+    {
+        return popup;
+    }
+    (void)route_pointer(panel, panel->window_x + 10, panel->window_y + panel->window_height / 2, 0,
+        SAVANXP_MOUSE_BUTTON_LEFT);
+    (void)route_pointer(panel, panel->window_x + 10, panel->window_y + panel->window_height / 2, 0, 0);
+    return selftest_wait_desktop_window(session, WINDOWD_ROLE_POPUP);
+}
+
+/*
+ * Window roles end to end (docs/desktop/DESKTOP_ARCHITECTURE.md#window-roles),
+ * through the real desktop process: its panel sits on the bottom edge across
+ * the whole display and reserves its strip; a press on the Start button opens
+ * a popup above it; a press on an application window asks the popup to close
+ * and the desktop closes it; and an application asking for a role is refused.
+ */
+static int windowd_desktop_selftest(struct windowd_session *session, int app_slot)
+{
+    struct windowd_dirty_rect dirty = {0};
+    const struct savanxp_fb_info *display = &session->gfx.info;
+    struct windowd_client *panel = selftest_wait_desktop_window(session, WINDOWD_ROLE_PANEL);
+    struct windowd_client *popup = 0;
+    struct windowd_client *app = overlay_client_at(session, app_slot);
+    int reserved_top = 0;
+    int reserved_bottom = 0;
+    int popup_width = 0;
+    int popup_height = 0;
+    unsigned long deadline = 0;
+
+    if (panel == 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL roles: the desktop never showed a panel\n");
+        return 1;
+    }
+    if (panel->window_x != 0 || panel->window_width != (int)display->width ||
+        panel->window_y + panel->window_height != (int)display->height)
+    {
+        printf("DESKTOP SMOKE FAIL roles: panel at %d,%d %dx%d, not on the bottom edge\n",
+            panel->window_x, panel->window_y, panel->window_width, panel->window_height);
+        return 1;
+    }
+    desktop_reserved_strips(session, &reserved_top, &reserved_bottom);
+    if (reserved_top != 0 || reserved_bottom != panel->window_height)
+    {
+        printf("DESKTOP SMOKE FAIL roles: reserved strips %d/%d, panel is %d\n",
+            reserved_top, reserved_bottom, panel->window_height);
+        return 1;
+    }
+
+    popup = selftest_desktop_open_popup(session);
+    if (popup == 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL roles: Start did not open a popup\n");
+        return 1;
+    }
+    if ((popup->role_flags & SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE) == 0 ||
+        popup->window_y + popup->window_height > panel->window_y)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL roles: the popup is not a dismissable one above the panel\n");
+        return 1;
+    }
+    popup_width = popup->window_width;
+    popup_height = popup->window_height;
+
+    /* A press on an application window: the popup is asked to close, and the
+     * desktop closes it. */
+    if (app == 0 || app->pid <= 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL roles: no application window to press on\n");
+        return 1;
+    }
+    {
+        /* Any point where the application is the topmost window will do; the
+         * popup or the panel may cover part of it. */
+        struct sx_rect surface = windowd_client_surface_rect(app);
+        int found = 0;
+        int step_x;
+        int step_y;
+
+        for (step_y = 1; step_y < 8 && !found; ++step_y)
+        {
+            for (step_x = 1; step_x < 8 && !found; ++step_x)
+            {
+                int x = surface.x + (surface.width * step_x) / 8;
+                int y = surface.y + (surface.height * step_y) / 8;
+                const struct windowd_client *hit = top_client_at_point(session, x, y);
+
+                if (hit != 0 && !is_desktop_window(session, hit))
+                {
+                    dismiss_popups_for_press(session, x, y);
+                    found = 1;
+                }
+            }
+        }
+        if (!found)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: no application window to press on\n");
+            return 1;
+        }
+    }
+    if (!popup->dismiss_requested || popup->header == 0 ||
+        (popup->header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) == 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL roles: the press outside did not ask the popup to close\n");
+        return 1;
+    }
+    deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+    while (popup->pid > 0 && uptime_ms() < deadline)
+    {
+        selftest_service_overlays(session, &dirty);
+        sleep_ms(20);
+    }
+    if (popup->pid > 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL roles: the desktop did not close the dismissed popup\n");
+        return 1;
+    }
+
+    /* An application may not ask for a role: the request is refused, as the
+     * runtime would see it. */
+    {
+        struct savanxp_wm_client_requests *requests = &app->header->requests;
+        uint32_t sequence = (requests->window_sequence | 1u) + 1u;
+
+        memset(&requests->window, 0, sizeof(requests->window));
+        requests->window.action = SAVANXP_WM_WINDOW_ACTION_OPEN;
+        requests->window.window_id = 1;
+        requests->window.width = 64;
+        requests->window.height = 64;
+        requests->window.role = SAVANXP_WM_WINDOW_ROLE_POPUP;
+        requests->window_sequence = sequence;
+        service_client_window_requests(session, &dirty, app, app_slot);
+        if (requests->window_reply_sequence != sequence || requests->window_reply_status != -SAVANXP_EINVAL ||
+            owned_window_slot(session, app_slot, 0) >= 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL roles: an application got a popup\n");
+            return 1;
+        }
+    }
+
+    printf("DESKTOP SMOKE roles panel=%d popup=%dx%d\n", panel->window_height, popup_width, popup_height);
+    windowd_dirty_rect_reset(&dirty);
+    return 0;
 }
 
 static int selftest_order_index(const struct windowd_session *session, int slot)
@@ -4623,13 +4696,13 @@ static int windowd_selftest(void)
         return 1;
     }
 
-    /* A2.2: ejercitar el cliente de fondo (shellui) en el mismo soak. Lo
-     * lanzamos aca, lo servimos en el loop, y al final asertamos que compuso al
-     * menos un frame -> prueba end-to-end de que shellui conecta, renderiza el
-     * wallpaper, y windowd lo compone como capa de fondo. */
-    if (launch_background_client(&session) < 0)
+    /* The desktop in the same soak: launched here, serviced in the loop, and
+     * at the end its background must have composited at least one frame --
+     * end-to-end proof that it connects, draws, and windowd stacks it at the
+     * bottom. windowd_desktop_selftest covers its role windows. */
+    if (launch_desktop_client(&session) < 0)
     {
-        puts_fd(2, "DESKTOP SMOKE FAIL launch background client\n");
+        puts_fd(2, "DESKTOP SMOKE FAIL launch desktop\n");
         close_compositor_session(&session);
         return 1;
     }
@@ -4682,14 +4755,9 @@ static int windowd_selftest(void)
             failed = 1;
             break;
         }
-        /* Consumir los frames del cliente de fondo para que se vuelva drawable
-         * y windowd lo componga como capa de fondo. */
-        if (service_client_batches(&session, &dirty, &session.background_client) < 0)
-        {
-            puts_fd(2, "DESKTOP SMOKE FAIL servicing background client\n");
-            failed = 1;
-            break;
-        }
+        /* The desktop's frames and requests, so its background becomes
+         * drawable and its panel opens. */
+        service_desktop(&session, &dirty);
         /* Servir TODOS los overlays, como hace el windowd real: con un solo
          * cliente atendido, cualquier otro se quedaria esperando su composicion
          * y el escenario de dos instancias no se ejercitaria de verdad. */
@@ -4918,13 +4986,19 @@ static int windowd_selftest(void)
 
     (void)sync_pending_present(&session, 1, 0);
 
-    /* Subtest de contrapresion de input: el WM no debe bloquearse nunca por un
-     * cliente que no drena. shellui drena sus eventos una vez por frame, asi que
-     * entre dos pasadas le bombardeamos eventos hasta llenar el pipe y
-     * verificamos que el write FALLA en vez de bloquear. Sin los extremos de
-     * escritura en no-bloqueante esto congelaba windowd, y con el toda la
-     * sesion: es la regresion que colgaba el escritorio al lanzar una app
-     * mientras se movia el mouse. */
+    /* Before the back-pressure test below, which fills the desktop's event
+     * pipe: the roles test needs its presses to arrive. */
+    if (!failed && windowd_desktop_selftest(&session, kProgmanSlot) != 0)
+    {
+        failed = 1;
+    }
+
+    /* Input back-pressure: the WM must never block on a client that does not
+     * drain. The desktop drains its events once per loop, so between two
+     * passes it is flooded until the pipe is full, and the write must FAIL
+     * instead of blocking. Without non-blocking write ends this froze windowd,
+     * and with it the whole session: it is the regression that hung the
+     * desktop when an app was launched while the mouse moved. */
     if (!failed)
     {
         int dropped = 0;
@@ -4932,7 +5006,7 @@ static int windowd_selftest(void)
 
         for (index = 0; index < 65536; ++index)
         {
-            if (!route_pointer(&session.background_client, 10 + (index & 31), 10, 0, 0))
+            if (!route_pointer(&session.desktop_windows[0], 10 + (index & 31), 10, 0, 0))
             {
                 dropped = 1;
                 break;
@@ -4967,10 +5041,9 @@ static int windowd_selftest(void)
             tasklist_open(&session, &dirty);
             for (index = 0; index < windowd_task_count(&session); ++index)
             {
-                int is_shell = 0;
                 int slot = -1;
 
-                if (windowd_task_client(&session, index, &is_shell, &slot) != 0 && slot == kSlot)
+                if (windowd_task_client(&session, index, &slot) != 0 && slot == kSlot)
                 {
                     task_index = index;
                     break;
@@ -5141,10 +5214,9 @@ static int windowd_selftest(void)
         if (!failed)
         {
             int target = session.tasklist_selected;
-            int is_shell = 0;
             int slot = -1;
 
-            (void)windowd_task_client(&session, target, &is_shell, &slot);
+            (void)windowd_task_client(&session, target, &slot);
             key_event.type = SAVANXP_INPUT_EVENT_KEY_UP;
             key_event.key = SAVANXP_KEY_ALT;
             key_event.modifiers = 0;
@@ -5152,14 +5224,6 @@ static int windowd_selftest(void)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: soltar Alt no cerro el switcher\n");
                 failed = 1;
-            }
-            else if (is_shell)
-            {
-                if (session.active_client_kind != WINDOWD_CLIENT_SHELL)
-                {
-                    puts_fd(2, "DESKTOP SMOKE FAIL alt+tab: no activo el shell elegido\n");
-                    failed = 1;
-                }
             }
             else if (session.active_overlay_slot != slot)
             {
@@ -5399,9 +5463,9 @@ static int windowd_selftest(void)
         puts_fd(2, "DESKTOP SMOKE FAIL fullscreen reconnect not exercised\n");
         failed = 1;
     }
-    if (!failed && session.background_client.consumed_submit_sequence < 1)
+    if (!failed && session.desktop_windows[0].consumed_submit_sequence < 1)
     {
-        puts_fd(2, "DESKTOP SMOKE FAIL background client never composited\n");
+        puts_fd(2, "DESKTOP SMOKE FAIL desktop background never composited\n");
         failed = 1;
     }
     if (!failed && session.overlay_clients[kProgmanSlot].consumed_submit_sequence < 1)
@@ -5492,19 +5556,14 @@ static int windowd_active_task_index(const struct windowd_session *session)
 
     for (index = 0; index < count; ++index)
     {
-        int is_shell = 0;
         int slot = -1;
 
-        if (windowd_task_client(session, index, &is_shell, &slot) == 0)
+        if (windowd_task_client(session, index, &slot) == 0)
         {
             continue;
         }
-        if (session->active_client_kind == WINDOWD_CLIENT_SHELL && is_shell)
-        {
-            return index;
-        }
         /* Con un dialogo activo, la tarea activa es la de su dueno. */
-        if (session->active_client_kind == WINDOWD_CLIENT_APP && !is_shell &&
+        if (session->active_client_kind == WINDOWD_CLIENT_APP &&
             slot == overlay_root_slot(session, session->active_overlay_slot))
         {
             return index;
@@ -5528,20 +5587,14 @@ static void tasklist_open(struct windowd_session *session, struct windowd_dirty_
 /* Trae al frente la tarea seleccionada, restaurandola si estaba minimizada. */
 static void tasklist_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index)
 {
-    int is_shell = 0;
     int slot = -1;
-    const struct windowd_client *client = windowd_task_client(session, task_index, &is_shell, &slot);
+    const struct windowd_client *client = windowd_task_client(session, task_index, &slot);
 
     if (client == 0)
     {
         return;
     }
     tasklist_close(session, dirty);
-    if (is_shell)
-    {
-        activate_shell(session);
-        return;
-    }
     if (!overlay_slot_valid(slot))
     {
         return;
@@ -5554,15 +5607,12 @@ static void tasklist_switch_to(struct windowd_session *session, struct windowd_d
     windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
-/* End Task solo aplica a overlays: el shell_client se relanza solo, asi que
- * "terminarlo" desde aca no tendria efecto observable. */
 static void tasklist_end_task(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index)
 {
-    int is_shell = 0;
     int slot = -1;
-    const struct windowd_client *client = windowd_task_client(session, task_index, &is_shell, &slot);
+    const struct windowd_client *client = windowd_task_client(session, task_index, &slot);
 
-    if (client == 0 || is_shell || !overlay_slot_valid(slot))
+    if (client == 0 || !overlay_slot_valid(slot))
     {
         return;
     }
@@ -5918,92 +5968,27 @@ static void handle_pointer_event(
         goto done;
     }
 
-    /* Click afuera del menu lo cierra, pero el click SIGUE su curso hacia la
-     * ventana o el fondo que toco. La franja de la taskbar se excluye: ahi
-     * vive el boton Start y su pedido ya es un toggle. */
-    if (left_pressed != 0 && left_was_pressed == 0 && session->startmenu_client.pid > 0 &&
-        !windowd_point_in_client(&session->startmenu_client, cursor_x, cursor_y) &&
-        !windowd_point_in_client(&session->taskbar_client, cursor_x, cursor_y))
+    /* A press outside the desktop's popups asks them to close; the press
+     * still goes to whatever it landed on. */
+    if (left_pressed != 0 && left_was_pressed == 0)
     {
-        close_start_menu_client(session, dirty);
-    }
-
-    /* Igual para el popup de volumen: el boton del altavoz ya es un toggle,
-     * asi que la franja se excluye por la misma razon. */
-    if (left_pressed != 0 && left_was_pressed == 0 && session->volume_popup_client.pid > 0 &&
-        !windowd_point_in_client(&session->volume_popup_client, cursor_x, cursor_y) &&
-        !windowd_point_in_client(&session->taskbar_client, cursor_x, cursor_y))
-    {
-        close_volume_popup_client(session, dirty);
-    }
-
-    /* Igual para el popup del reloj: el reloj ya es un toggle, asi que la
-     * franja se excluye por la misma razon. */
-    if (left_pressed != 0 && left_was_pressed == 0 && session->clock_popup_client.pid > 0 &&
-        !windowd_point_in_client(&session->clock_popup_client, cursor_x, cursor_y) &&
-        !windowd_point_in_client(&session->taskbar_client, cursor_x, cursor_y))
-    {
-        close_clock_popup_client(session, dirty);
+        dismiss_popups_for_press(session, cursor_x, cursor_y);
     }
 
     if (left_pressed != 0 && left_was_pressed == 0)
     {
-        /* Sin chrome: un click solo puede caer sobre una ventana o sobre el
-         * fondo, y el fondo (shellui) no recibe input. */
         if (current_hover_client != 0)
         {
-            if (current_hover_client == &session->keyboard_popup_client)
+            if (current_hover_client->role != WINDOWD_ROLE_NORMAL)
             {
-                /* Mismo corte que la taskbar unas lineas mas abajo, y por la
-                 * misma razon: el popup tampoco es una ventana overlay, y sin
-                 * este caso especial el click caia en el camino generico de
-                 * ventana -- donde overlay_slot_for_client_ptr devuelve -1,
-                 * anula el hover, y se pierde el click entero. */
+                /* A window of the desktop (background, panel, popup) is not an
+                 * application window: it is not activated, not raised and has
+                 * no frame. It only gets the press. Without this cut it would
+                 * fall into the window path, where overlay_slot_for_client_ptr
+                 * returns -1, the hover is dropped and the press is lost. */
                 (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
                 mouse_routed = 1;
                 current_hover_client = 0;
-            }
-            else if (current_hover_client == &session->volume_popup_client)
-            {
-                /* Igual que el popup de layout: tampoco es una ventana y el
-                 * camino generico perderia el click. */
-                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
-                mouse_routed = 1;
-                current_hover_client = 0;
-            }
-            else if (current_hover_client == &session->clock_popup_client)
-            {
-                /* Igual que el de volumen: tampoco es una ventana y el camino
-                 * generico perderia el click (el popup lo drena sin accion). */
-                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
-                mouse_routed = 1;
-                current_hover_client = 0;
-            }
-            else if (current_hover_client == &session->startmenu_client)
-            {
-                /* Igual que el popup de layout: el menu no es una ventana (no
-                 * se activa ni entra al z-order), solo recibe el click. La
-                 * rueda tambien llega por este camino y el menu la usa para
-                 * scrollear cuando el catalogo no entra. */
-                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
-                mouse_routed = 1;
-                current_hover_client = 0;
-            }
-            else if (current_hover_client == &session->taskbar_client)
-            {
-                /* La barra de tareas no es una ventana: no se activa, no se
-                 * levanta en el z-order y no tiene botones de marco. Solo recibe
-                 * el click. Sin este corte caia en el camino de ventana, donde
-                 * overlay_slot_for_client_ptr devuelve -1 y el hover se anulaba
-                 * -- y con el se perdian TODAS las ramas siguientes, incluida la
-                 * que rutea el evento al cliente. */
-                (void)route_pointer(current_hover_client, cursor_x, cursor_y, mouse_event.wheel, pressed_buttons);
-                mouse_routed = 1;
-                current_hover_client = 0;
-            }
-            else if (current_hover_client == &session->shell_client)
-            {
-                activate_shell(session);
             }
             else
             {
@@ -6017,7 +6002,6 @@ static void handle_pointer_event(
                 current_hover_client = disabled ? 0 : overlay_client_at_const(session, target_slot);
             }
             if (current_hover_client != 0 &&
-                current_hover_client != &session->shell_client &&
                 windowd_point_in_minimize_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
@@ -6029,7 +6013,6 @@ static void handle_pointer_event(
                 }
             }
             else if (current_hover_client != 0 &&
-                     current_hover_client != &session->shell_client &&
                      windowd_point_in_maximize_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
@@ -6042,7 +6025,6 @@ static void handle_pointer_event(
                 }
             }
             else if (current_hover_client != 0 &&
-                     current_hover_client != &session->shell_client &&
                 windowd_point_in_close_button(current_hover_client, cursor_x, cursor_y))
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
@@ -6056,7 +6038,6 @@ static void handle_pointer_event(
             /* Antes que el arrastre de la barra de titulo: la franja superior
              * del marco redimensiona, el resto de la barra mueve. */
             else if (current_hover_client != 0 &&
-                     current_hover_client != &session->shell_client &&
                      windowd_resize_edge_from_point(current_hover_client, cursor_x, cursor_y) != WINDOWD_RESIZE_EDGE_NONE)
             {
                 int target_slot = overlay_slot_for_client_ptr(session, current_hover_client);
@@ -6070,7 +6051,6 @@ static void handle_pointer_event(
                 }
             }
             else if (current_hover_client != 0 &&
-                     current_hover_client != &session->shell_client &&
                      !current_hover_client->maximized &&
                      windowd_point_in_titlebar(current_hover_client, cursor_x, cursor_y))
             {
@@ -6216,20 +6196,11 @@ int main(int argc, char **argv)
         return 1;
     }
     (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
-    /* windowd conserva su propio wallpaper_init para el fallback (si el cliente
-     * de fondo no esta listo aun o murio, windowd dibuja el wallpaper). */
-    desktop_wallpaper_init();
-    /* Barra de tareas: opcional. Si no arranca, la sesion sigue viva y el Task
-     * List (Ctrl+Esc) con Alt+Tab siguen siendo la via para cambiar de ventana;
-     * no es motivo para tirar la sesion abajo. */
-    if (launch_taskbar_client(&session) < 0)
+    /* The desktop: optional. Without it the session lives on, with a solid
+     * background, and Alt+Tab and the Task List still switch windows. */
+    if (launch_desktop_client(&session) < 0)
     {
-        puts_fd(2, "desktop: la barra de tareas no arranco\n");
-    }
-    /* Cliente de fondo (shellui): no-fatal si falla; se usa el fallback. */
-    if (launch_background_client(&session) < 0)
-    {
-        puts_fd(2, "desktop: cliente de fondo (shellui) no arranco; uso fallback\n");
+        puts_fd(2, "windowd: the desktop did not start\n");
     }
     /* Program Manager: el launcher de la sesion. Es una ventana normal, sin
      * trato especial -- pero ahora es el UNICO camino para lanzar programas, asi
@@ -6296,9 +6267,10 @@ int main(int argc, char **argv)
         {
             while ((count = savanxp_read(session.input_fd, &key_event, sizeof(key_event))) == (long)sizeof(key_event))
             {
-                /* Sin chrome, la arbitracion se reduce a: hotkeys del WM y, si
-                 * no consume, ruteo al cliente activo. */
-                if (wm_handle_key(&session, &key_event, &dirty))
+                /* Arbitration: the WM's own keys, then the hotkeys the
+                 * desktop registered, then the focused application. */
+                if (wm_handle_key(&session, &key_event, &dirty) ||
+                    deliver_hotkey(&session, &key_event))
                 {
                     continue;
                 }
@@ -6351,69 +6323,7 @@ int main(int argc, char **argv)
         {
             break;
         }
-        /* Cliente de fondo (pasivo): consumimos sus frames y (a futuro, A2.3) sus
-         * launch requests desde los iconos del escritorio. */
-        if (service_client_batches(&session, &dirty, &session.background_client) < 0)
-        {
-            break;
-        }
-        if (service_client_launch_requests(&session, &dirty, &session.background_client) < 0)
-        {
-            break;
-        }
-        service_client_cursor_hints(&session.background_client);
-        service_client_size_hints(&session, &dirty, &session.background_client, -1);
-        /* Barra de tareas: sus frames, sus pedidos, y la lista republicada solo
-         * cuando algo cambio -- no en cada vuelta. */
-        if (service_client_batches(&session, &dirty, &session.taskbar_client) < 0)
-        {
-            break;
-        }
-        if (service_client_launch_requests(&session, &dirty, &session.taskbar_client) < 0)
-        {
-            break;
-        }
-        service_shell_requests(&session, &dirty);
-        publish_window_list(&session);
-        /* Popup de layout de teclado: solo presenta sus frames -- no lanza
-         * nada por su cuenta, no tiene cursor hints ni size hints (rect fijo,
-         * nunca los pide). */
-        if (service_client_batches(&session, &dirty, &session.keyboard_popup_client) < 0)
-        {
-            break;
-        }
-        /* Popup de volumen: igual que el de layout -- solo presenta frames. */
-        if (service_client_batches(&session, &dirty, &session.volume_popup_client) < 0)
-        {
-            break;
-        }
-        /* Popup del reloj: igual que el de volumen -- solo presenta frames. */
-        if (service_client_batches(&session, &dirty, &session.clock_popup_client) < 0)
-        {
-            break;
-        }
-        /* Menu Inicio: presenta sus frames y lanza programas por su propia
-         * cola (item->launch_flags, igual que progman). Sin cursor ni size
-         * hints: rect fijo que nunca los pide. */
-        if (service_client_batches(&session, &dirty, &session.startmenu_client) < 0)
-        {
-            break;
-        }
-        if (service_client_launch_requests(&session, &dirty, &session.startmenu_client) < 0)
-        {
-            break;
-        }
-        if (service_client_batches(&session, &dirty, &session.shell_client) < 0)
-        {
-            break;
-        }
-        if (service_client_launch_requests(&session, &dirty, &session.shell_client) < 0)
-        {
-            break;
-        }
-        service_client_cursor_hints(&session.shell_client);
-        service_client_size_hints(&session, &dirty, &session.shell_client, -1);
-        service_client_window_requests(&session, &dirty, &session.shell_client, -1);
+        service_desktop(&session, &dirty);
         for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
         {
             service_client_window_requests(&session, &dirty, &session.overlay_clients[slot], slot);

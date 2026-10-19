@@ -89,9 +89,10 @@ The platform, always:
 
 And the apps, all of them, against the POSIX SDK:
 
-- **Shell** — the desktop (`subsystems/posix/userland/shellui.c`, `taskbar.c`,
-  `progman.c`): taskbar, launcher, icons, wallpaper. Client of `windowd` since
-  the WM extraction, **and in C**.
+- **Shell** — the `desktop` process (`subsystems/posix/userland/desktop/`:
+  wallpaper, taskbar, Start menu and the taskbar's popups) and `progman.c`, the
+  launcher. Clients of `windowd` since the WM extraction, **and in C**. See
+  [DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md).
 - **File manager** — `subsystems/posix/userland/filesapp.c`.
 - **Notepad**, **Calculator**, **Task Manager**, **Minesweeper** — and whatever
   comes next, including games.
@@ -194,14 +195,13 @@ complementary**:
 | Control toolkit | **SXGUI-C** | USER32 / comctl32 | (native) |
 | Window manager | **windowd** | win32k / USER | WindowManager / SurfaceFlinger |
 | Display server | **compositord** | DWM | SurfaceFlinger |
-| Shell / launcher | **shellui + taskbar + progman** (C) | explorer.exe | SystemUI / Launcher |
+| Shell / launcher | **desktop + progman** (C) | explorer.exe | SystemUI / Launcher |
 | Apps | **C on the POSIX SDK** | Win32 apps | (native) |
 | Kernel native API | **`sx::` + SXN syscalls** | NT | (native) |
 | Userland native API | **`sxn.h** (process/memory/sync; no toolkit yet) | Win32 (subset) | Java/Kotlin |
 
 The desktop rows describe today. The target is in
 [DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md): `compositord`
-takes over composition (today it only presents what `windowd` composed), one
-`desktop` process replaces `shellui` and `taskbar`, and `compositord` and
-`windowd` become native processes, while the shell and the apps stay clients
-in whatever subsystem they run in.
+takes over composition (today it only presents what `windowd` composed), and
+`compositord` and `windowd` become native processes, while the shell and the
+apps stay clients in whatever subsystem they run in.

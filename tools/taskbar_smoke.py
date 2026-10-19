@@ -18,6 +18,8 @@ class TaskbarSmokeError(RuntimeError):
 FACE = (192, 192, 192)
 LIGHT = (255, 255, 255)
 SHADOW = (128, 128, 128)
+# A pixel in the middle of an inactive caption's gradient (Windows Standard).
+INACTIVE_CAPTION = (151, 151, 151)
 
 
 def _wait_screenshot(path: Path, timeout: float = 8.0) -> Image.Image:
@@ -204,6 +206,11 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         screenshots.append(output_dir / "05-minimizado.png")
         _expect_strip(fifth, "after second click")
         _expect_button(fifth, 0, False, "after second click")
+        # Minimizing from the taskbar hands activation to the window below,
+        # and its caption must be repainted active. Nothing else repaints it
+        # here, so a stale inactive caption is exactly the bug this catches.
+        if _pixel(fifth, 600, 91) == INACTIVE_CAPTION:
+            raise TaskbarSmokeError("after second click: the window left active kept an inactive caption")
 
         # Al reloj: a la esquina y despues al centro del pozo (1214..1278,
         # centro 1246,785). Abre el calendario; toggle lo cierra y lo reabre.
