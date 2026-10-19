@@ -700,6 +700,7 @@ add_executable(savanxp-gfx2d-test
     subsystems/posix/sdk/v1/runtime/gfx2d.c
     tests/host/gfx2d_test.cpp)
 target_include_directories(savanxp-gfx2d-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 set_target_properties(savanxp-gfx2d-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
@@ -707,6 +708,7 @@ add_executable(savanxp-audio-test
     subsystems/posix/sdk/v1/runtime/audio.c
     tests/host/audio_mixer_test.cpp)
 target_include_directories(savanxp-audio-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 set_target_properties(savanxp-audio-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
@@ -723,6 +725,7 @@ add_executable(savanxp-ccleste-wav-test
     ports/ccleste/overlay/ccleste_savanxp_assets.c
     tests/host/ccleste_wav_test.cpp)
 target_include_directories(savanxp-ccleste-wav-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/ports/ccleste/overlay"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 target_compile_options(savanxp-ccleste-wav-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
@@ -847,10 +850,6 @@ add_test(NAME ccleste-port-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/ccleste_port_layout_test.py"
             --port "${CMAKE_SOURCE_DIR}/ports/ccleste")
-add_test(NAME native-port-layout-test
-    COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_SOURCE_DIR}/tests/host/native_port_layout_test.py"
-            --root "${CMAKE_SOURCE_DIR}")
 add_test(NAME smoke-runner-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/smoke_runner_layout_test.py"

@@ -209,6 +209,12 @@ Cut-off notes:
   `savanxp_native_abi.h` routing stays reserved for the future NT-style kernel API
   (see `docs/userland/SYSTEM_LAYERING.md`).
 
+### Fixed
+
+- **`./build.sh test` builds and passes again.** The gfx2d, audio and ccleste-wav host
+  tests find `abi/savanxp_abi.h`, the removed `native-port-layout-test` is no longer
+  registered, and `smoke-runner-layout-test` reads `docs/kernel/KERNEL_NATIVE_API.md`.
+
 ## [0.4.0] - 2026-10-08
 
 ### Added

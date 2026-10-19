@@ -119,7 +119,7 @@ def main() -> int:
     assert "clone_handles_for_spawn" in native_dispatch
     # Slice 8: ring ping-pong over the shared section, rendezvous by design.
     assert "SXN_RING_ROUNDS" in nativetest
-    assert "rendezvous" in (root / "docs" / "KERNEL_NATIVE_API.md").read_text(encoding="utf-8")
+    assert "rendezvous" in (root / "docs" / "kernel" / "KERNEL_NATIVE_API.md").read_text(encoding="utf-8")
     # Slice 9: output-only native window inside real windowd.
     assert (root / "sdk" / "nativedemo" / "main.c").is_file()
     demo = (root / "sdk" / "nativedemo" / "main.c").read_text(encoding="utf-8")
