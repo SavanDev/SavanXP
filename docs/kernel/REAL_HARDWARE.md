@@ -1,16 +1,23 @@
 # Real hardware: the Compaq Evo N1020v case
 
-> **Status: analysis only, nothing implemented.** This document is the
+> **Status: analysis only on master.** This document is the
 > measurement: what stops SavanXP from booting a real 2003 laptop, which parts
 > of that answer are architecture and which are driver bugs that QEMU and
 > VirtualBox have been hiding, and in what order the work should be done.
+>
+> **The Compaq-specific work belongs to the `legacy` branch and is found
+> there, not on master.** That covers
+> [Route A](#route-a-port-the-system-to-i386) (the i386 port) and its
+> [32-bit harness](#a-permanent-harness-for-a-32-bit-target). Master stays
+> x86_64-only; what applies to it is [Route B](#route-b-target-64-bit-hardware)
+> and the [hardware work that is not about the CPU](#hardware-work-that-is-not-about-the-cpu).
 >
 > The reference machine is a **Compaq Evo N1020v** (2002), chosen because it is
 > the least forgiving machine a hobby OS is likely to meet: a 32-bit Pentium 4
 > with no long mode, a legacy BIOS, PATA storage, AC'97 audio, a PS/2 trackpad
 > and an LCD panel that may only exist in 24-bit video modes.
 >
-> Nothing here is implemented and nothing here is scheduled. The two sections
+> Nothing here is implemented or scheduled on master. The two sections
 > that matter for any other machine are
 > [Hardware work that is not about the CPU](#hardware-work-that-is-not-about-the-cpu)
 > (driver defects worth fixing regardless of architecture) and
@@ -145,6 +152,9 @@ paging bootstrap from scratch.
 
 ## Route A: port the system to i386
 
+> This work belongs to the `legacy` branch and is found there; master does not
+> carry it.
+
 The only path to that laptop as it is. Limine is out, which in practice means
 **GRUB2 with the Multiboot2 protocol**: it is the well-trodden 32-bit legacy-BIOS
 loader, and the tags it provides (E820 map, framebuffer, modules, ACPI RSDP,
@@ -240,6 +250,8 @@ single line is written.
 
 ## A permanent harness for a 32-bit target
 
+> Like Route A, this belongs to the `legacy` branch and is found there.
+
 If Route A is taken, the work needs the same guard rails the rest of the
 project has, and QEMU can provide them. `qemu-system-i386` boots through a
 legacy BIOS with no long mode available to the guest at all, and a `pc` machine
@@ -263,11 +275,9 @@ behaviour, and the real timing of PIO reads against a spinning disk.
 - Whether Route A is worth doing at all. That is a project decision, and the
   answer changes if the goal is "SavanXP on real laptops" rather than "SavanXP
   on that laptop".
-- Whether Route A keeps both architectures in one tree or builds a 32-bit
-  variant. The current graph has no arch dimension at all
-  ([`CMakePresets.json`](../../CMakePresets.json) has no arch axis), so that choice
-  is still open, and it is the difference between one `SAVANXP_ARCH` cache
-  variable and two source trees.
+- Where the 32-bit code lives. That is settled: on the `legacy` branch, not in
+  master's tree, which keeps no arch axis
+  ([`CMakePresets.json`](../../CMakePresets.json)).
 - What the 32-bit isolation story is. Deferring per-process CR3 and section
   views is a suggestion for making the port tractable, not a design.
 - Whether the desktop is expected to be usable on 1 GB of shared video memory

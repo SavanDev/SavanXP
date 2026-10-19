@@ -31,7 +31,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
 - [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — what stops SavanXP from booting real
   2003-era hardware: the 64-bit-only blockers, the driver gaps QEMU hides, and
-  the routes for reaching a Compaq Evo N1020v.
+  the routes for reaching a Compaq Evo N1020v. The Compaq-specific work (the
+  i386 port) belongs to the `legacy` branch.
 - [`TIME.md`](kernel/TIME.md) — kernel clocks, virtualization, and diagnosis; plus the
   calendar date: the CMOS RTC, manual setting (`date`, `SET_REALTIME`), network
   sync (`ntpsync`, SNTP), and the taskbar clock with its calendar popup.
