@@ -1103,6 +1103,12 @@ enum savanxp_wm_event_kind {
 /* The client wants its input on a shared ring instead of the event pipe
  * (what a native client without a POSIX read used to need). */
 #define SAVANXP_WM_HELLO_INPUT_RING 0x00000001u
+/* The client asks for the shell role (savanxp/wm_shell_protocol.h). Granted
+ * only to a process the session manager started -- its parent is the WM's
+ * parent, or the WM itself -- and to one at a time; otherwise the welcome
+ * carries -EACCES. See docs/desktop/DESKTOP_ARCHITECTURE.md#who-is-the-shell-
+ * decided-by-parentage. */
+#define SAVANXP_WM_HELLO_SHELL 0x00000002u
 
 struct savanxp_wm_hello {
     uint32_t magic;        /* SAVANXP_WM_HELLO_MAGIC */

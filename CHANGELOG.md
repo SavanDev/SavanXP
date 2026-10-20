@@ -101,6 +101,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The shell role goes to a process the session started.** The desktop asks for it with
+  `gfx_open_shell` (`SAVANXP_WM_HELLO_SHELL`); `windowd` grants it only when the client's parent is
+  its own parent or itself, one at a time. A client whose WM went away is asked to close.
+
 - **Programs connect to `windowd` for a window (WM protocol v5).** A client opens the port
   `windowd`, sends a hello with the launch flags its own `.sxe` declares, and gets its handles
   with the welcome; `gfx_desktop_launch*` now spawns the program in the caller, and `windowd`

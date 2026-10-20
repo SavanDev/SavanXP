@@ -246,10 +246,12 @@ only follow a death.
 ### Order of work
 
 1. Process termination in the native API (and `kill` for POSIX is already
-   there for `windowd`'s close button).
+   there for `windowd`'s close button). **Done:** `SXN_SYS_TERMINATE`.
 2. The shell flag in the hello and the parentage rule in `windowd`; `desktop`
    asks for the role. The runtime treats a hung-up event pipe as a close
-   request.
+   request. **Done:** `SAVANXP_WM_HELLO_SHELL`, `gfx_open_shell`; waits for
+   the WM look for the hang-up every 250 ms. `windowd --selftest` has the
+   desktop launch Task Manager and checks the rule refuses its parentage.
 3. `sessiond`, native, built in-tree with `NATIVE`; `init` starts it instead of
    `windowd`. `windowd` stops spawning `desktop` and `progman`, drops the
    desktop restart and its reservation; the selftests keep spawning their own
@@ -274,9 +276,8 @@ not a client slot in `windowd`, and it is not a launch flag.
 Rules:
 
 - Only a client holding the shell privilege may create anything but `normal`
-  windows. The privilege is granted when the connection is made (today to the
-  desktop `windowd` started, matched by pid; with `sessiond`, to a client
-  that asks for it and was started by the session manager -- see
+  windows. The privilege is granted when the connection is made, to a client
+  that asks for it and was started by the session manager (see
   [Who is the shell](#who-is-the-shell-decided-by-parentage)), never on the
   client's word alone.
 - `windowd` keeps no per-role special cases in routing, reaping or stacking.
@@ -479,8 +480,8 @@ Depends on the hotkeys of phase 1.
    it did not start by its process name. Still to do: the session manager,
    [`sessiond`](#the-session-manager-sessiond). Until it exists `windowd`
    spawns the desktop and Program Manager itself, holds a slot for each until
-   it connects, gives the shell role to the desktop by pid and reaps those two
-   children.
+   it connects and reaps those two children; the desktop passes the shell rule
+   because `windowd` is its parent.
 6. **`windowd` native.**
 
 ### Phase 4: composition moves into `compositord`

@@ -142,15 +142,40 @@ static void gfx_copy_present_region(
     }
 }
 
+/* 1 once the WM is gone: its end of the event pipe hung up. Nothing composes
+ * the surface any more, so the window is as good as closed. */
+static int g_gfx_wm_gone = 0;
+
 static int gfx_shutdown_requested(const struct savanxp_gfx_context* context) {
     return context != 0 && context->header != 0 &&
-        (context->header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0;
+        ((context->header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0 || g_gfx_wm_gone);
 }
 
-/* Espera a que `ready` se cumpla, con corte por pedido de cierre. El evento de
- * wake es uno para varias condiciones, asi que el orden importa: resetear,
- * volver a mirar el header y recien ahi dormir. Al reves, un wake que llega
- * entre la mirada y el reset se pierde y la espera no vuelve nunca. */
+/* Looks at the event pipe for a hang-up. A poll, so only where waiting or
+ * asking "should I close" already costs a call. */
+static int gfx_check_wm_gone(const struct savanxp_gfx_context* context) {
+    struct savanxp_pollfd pollfd;
+
+    if (g_gfx_wm_gone || context == 0 || context->input_fd < 0) {
+        return g_gfx_wm_gone;
+    }
+    pollfd.fd = context->input_fd;
+    pollfd.events = 0;
+    pollfd.revents = 0;
+    if (savanxp_poll(&pollfd, 1, 0) > 0 && (pollfd.revents & SAVANXP_POLLHUP) != 0) {
+        g_gfx_wm_gone = 1;
+    }
+    return g_gfx_wm_gone;
+}
+
+/* How long a wait for the WM sleeps before looking whether it is still there. */
+#define GFX_WM_ALIVE_CHECK_MS 250
+
+/* Waits until `ready` holds, cut short by a close request or by the WM going
+ * away. The wake event serves several conditions, so the order matters: reset,
+ * look at the header again, and only then sleep. The other way round, a wake
+ * that lands between the look and the reset is lost and the wait never
+ * returns. */
 static long gfx_wait_for_header(
     const struct savanxp_gfx_context* context,
     int (*ready)(const struct savanxp_gfx_context* context)) {
@@ -173,7 +198,13 @@ static long gfx_wait_for_header(
             return -SAVANXP_EPIPE;
         }
 
-        wait_result = wait_one(context->wake_event_fd, -1);
+        wait_result = wait_one(context->wake_event_fd, GFX_WM_ALIVE_CHECK_MS);
+        if (wait_result == -SAVANXP_ETIMEDOUT) {
+            if (gfx_check_wm_gone(context)) {
+                return -SAVANXP_EPIPE;
+            }
+            continue;
+        }
         if (wait_result < 0) {
             return wait_result;
         }
@@ -517,7 +548,7 @@ static long gfx_wait_welcome(int events_fd, struct savanxp_wm_welcome* welcome) 
     }
 }
 
-static long gfx_wm_connect(void) {
+static long gfx_wm_connect(uint32_t hello_flags) {
     int32_t handles[2] = {-1, -1};
     int received[4] = {-1, -1, -1, -1};
     struct savanxp_wm_hello hello;
@@ -547,6 +578,7 @@ static long gfx_wm_connect(void) {
     memset(&hello, 0, sizeof(hello));
     hello.magic = SAVANXP_WM_HELLO_MAGIC;
     hello.version = SAVANXP_WM_PROTOCOL_VERSION;
+    hello.flags = hello_flags;
     hello.launch_flags = gfx_own_launch_flags();
     if (savanxp_write(handles[0], &hello, sizeof(hello)) != (long)sizeof(hello)) {
         result = -SAVANXP_EPIPE;
@@ -607,8 +639,8 @@ int gfx_shell_window_list_fd(void) {
     return (g_gfx_wm.connected && (g_gfx_wm.welcome_flags & SAVANXP_WM_WELCOME_SHELL) != 0u) ? g_gfx_wm.window_list_fd : -1;
 }
 
-static long gfx_open_client(struct savanxp_gfx_context* context) {
-    long result = gfx_wm_connect();
+static long gfx_open_client(struct savanxp_gfx_context* context, uint32_t hello_flags) {
+    long result = gfx_wm_connect(hello_flags);
 
     if (result < 0) {
         return result;
@@ -635,7 +667,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
     return 0;
 }
 
-long gfx_open(struct savanxp_gfx_context* context) {
+static long gfx_open_with(struct savanxp_gfx_context* context, uint32_t hello_flags) {
     if (context == 0) {
         return -SAVANXP_EINVAL;
     }
@@ -646,7 +678,15 @@ long gfx_open(struct savanxp_gfx_context* context) {
     context->submit_event_fd = -1;
     context->wake_event_fd = -1;
 
-    return gfx_open_client(context);
+    return gfx_open_client(context, hello_flags);
+}
+
+long gfx_open(struct savanxp_gfx_context* context) {
+    return gfx_open_with(context, 0);
+}
+
+long gfx_open_shell(struct savanxp_gfx_context* context) {
+    return gfx_open_with(context, SAVANXP_WM_HELLO_SHELL);
 }
 
 long gfx_close(struct savanxp_gfx_context* context) {
@@ -893,7 +933,14 @@ static int gfx_read_wm_event(int fd, struct savanxp_wm_event* record) {
     pollfd.fd = fd;
     pollfd.events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
     pollfd.revents = 0;
-    if (savanxp_poll(&pollfd, 1, 0) <= 0 || (pollfd.revents & SAVANXP_POLLIN) == 0) {
+    if (savanxp_poll(&pollfd, 1, 0) <= 0) {
+        return 0;
+    }
+    /* Every fd read here is a duplicate of the one event pipe. */
+    if ((pollfd.revents & SAVANXP_POLLHUP) != 0) {
+        g_gfx_wm_gone = 1;
+    }
+    if ((pollfd.revents & SAVANXP_POLLIN) == 0) {
         return 0;
     }
     result = savanxp_read(fd, record, sizeof(*record));
@@ -989,7 +1036,7 @@ static int gfx_poll_pointer_for(int fd, uint32_t window_id, struct savanxp_gui_p
 }
 
 long gfx_pointer_open(void) {
-    long result = gfx_wm_connect();
+    long result = gfx_wm_connect(0);
 
     return result < 0 ? result : savanxp_dup(g_gfx_wm.events_fd);
 }
@@ -1007,7 +1054,7 @@ int gfx_poll_window_pointer(const struct savanxp_gfx_context* context, struct sa
 }
 
 int gfx_should_close(const struct savanxp_gfx_context* context) {
-    return gfx_shutdown_requested(context);
+    return gfx_shutdown_requested(context) || (context != 0 && context->header != 0 && gfx_check_wm_gone(context));
 }
 
 long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event) {

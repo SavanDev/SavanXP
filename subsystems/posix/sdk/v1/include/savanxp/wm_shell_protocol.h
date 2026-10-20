@@ -18,9 +18,10 @@
  *
  * Having the shell role is also what lets a process create windows with a
  * role other than NORMAL (savanxp_wm_window_role) and register global hotkeys.
- * The WM grants it to the process it started as the shell; until a session
- * launcher exists (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3) that is
- * windowd's own desktop child.
+ * A client asks for it in its hello (SAVANXP_WM_HELLO_SHELL, gfx_open_shell)
+ * and the WM grants it to a process the session started -- its parent is the
+ * WM's parent or the WM itself -- one at a time
+ * (docs/desktop/DESKTOP_ARCHITECTURE.md#who-is-the-shell-decided-by-parentage).
  */
 
 /*

@@ -2547,6 +2547,39 @@ static int launch_overlay_client(struct windowd_session *session, const char *pa
     return slot;
 }
 
+/* The parent of `pid` in the process table, or 0. */
+static long process_parent(long pid)
+{
+    struct savanxp_process_info info;
+    unsigned long index = 0;
+
+    while (proc_info(index, &info) > 0)
+    {
+        ++index;
+        if ((long)info.pid == pid && info.state != SAVANXP_PROC_UNUSED)
+        {
+            return (long)info.parent_pid;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Who may be the shell (docs/desktop/DESKTOP_ARCHITECTURE.md#who-is-the-shell-
+ * decided-by-parentage): a process the session manager started -- its parent
+ * is windowd's own parent -- or one windowd started itself (its selftests, and
+ * the desktop until sessiond exists). The pid comes from the port, which the
+ * client cannot forge. A program the desktop launches has the desktop as its
+ * parent, and an orphan is reparented to init, so neither passes.
+ */
+static int started_by_session(long pid)
+{
+    long self = savanxp_getpid();
+    long parent = process_parent(pid);
+
+    return parent > 0 && (parent == self || parent == process_parent(self));
+}
+
 /* 1 if `pid` already has a main window: a process gets one connection. */
 static int process_has_window(const struct windowd_session *session, long pid)
 {
@@ -2595,8 +2628,19 @@ static void admit_connection(
         return;
     }
 
-    if (session->desktop_windows[0].reserved_pid == connection->pid)
+    if ((hello->flags & SAVANXP_WM_HELLO_SHELL) != 0u)
     {
+        long reserved = session->desktop_windows[0].reserved_pid;
+
+        /* One shell at a time, and only one the session started. A desktop
+         * windowd spawned and is still waiting for holds the place too. */
+        if (!started_by_session(connection->pid) || session->desktop_windows[0].pid > 0 ||
+            (reserved > 0 && reserved != connection->pid))
+        {
+            eprintf("windowd: pid %ld may not be the shell\n", connection->pid);
+            refuse_connection(connection, -SAVANXP_EACCES);
+            return;
+        }
         client = &session->desktop_windows[0];
         client->reserved_pid = 0;
         fill_client_surface_info(session, 1, &client->surface_info);
@@ -4281,6 +4325,59 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
             puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: Ctrl+Esc again did not close the Start menu\n");
             return 1;
         }
+    }
+
+    /* Launching and the shell rule, end to end: Ctrl+Shift+Esc makes the
+     * desktop spawn Task Manager, which connects on its own into a free slot,
+     * labelled by its process name. Its parent is the desktop, so it could
+     * never be the shell; the desktop, started here, could. */
+    {
+        struct savanxp_input_event key_event;
+        long desktop_pid = session->desktop_windows[0].pid;
+        int taskmgr_slot = -1;
+        int slot;
+
+        memset(&key_event, 0, sizeof(key_event));
+        key_event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+        key_event.key = SAVANXP_KEY_ESC;
+        key_event.modifiers = SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_SHIFT;
+        (void)deliver_hotkey(session, &key_event, &dirty);
+        key_event.type = SAVANXP_INPUT_EVENT_KEY_UP;
+        key_event.modifiers = 0;
+        (void)deliver_hotkey(session, &key_event, &dirty);
+        deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+        while (taskmgr_slot < 0 && uptime_ms() < deadline)
+        {
+            selftest_service_overlays(session, &dirty);
+            for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+            {
+                const struct windowd_client *client = &session->overlay_clients[slot];
+
+                if (client->pid > 0 && client->owner_slot < 0 && strcmp(client->path, "taskmgr") == 0)
+                {
+                    taskmgr_slot = slot;
+                }
+            }
+            if (taskmgr_slot < 0)
+            {
+                sleep_ms(20);
+            }
+        }
+        if (taskmgr_slot < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL launch: Ctrl+Shift+Esc did not open Task Manager\n");
+            return 1;
+        }
+        if (process_parent(session->overlay_clients[taskmgr_slot].pid) != desktop_pid ||
+            started_by_session(session->overlay_clients[taskmgr_slot].pid) ||
+            !started_by_session(desktop_pid))
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL launch: the shell rule judged the parentage wrong\n");
+            return 1;
+        }
+        destroy_overlay_client(session, taskmgr_slot, 1);
+        windowd_dirty_rect_reset(&dirty);
+        printf("DESKTOP SMOKE launch: the desktop (pid %ld) started taskmgr\n", desktop_pid);
     }
 
     /* An application may not ask for a role: the request is refused, as the

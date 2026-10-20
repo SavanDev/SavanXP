@@ -339,7 +339,7 @@ the event pipe:
 | 1 | surface section: header, batches, pixels, **and the client's requests** (`savanxp_wm_client_requests`) | nothing — closed once sent, the mapping keeps it alive |
 | 2 | wake event: composed/retired advanced, or shutdown requested | the event |
 | 3 | submit event, **one for the whole session** | one descriptor in total |
-| 4 | the `desktop` only: window list section (its requests go on its request pipe) | the request pipe's read end |
+| 4 | the shell only (`SAVANXP_WM_HELLO_SHELL`, granted by parentage): window list section (its requests go on its request pipe) | the request pipe's read end |
 | 4 | a client that asked for `SAVANXP_WM_HELLO_INPUT_RING`: the input ring | nothing — closed once sent |
 
 Four handles at most: exactly the capacity of a pipe's handle queue. A

@@ -412,7 +412,7 @@ int main(void)
 {
     unsigned long next_wallpaper_check_ms = 0;
 
-    if (gfx_open(&g_background) < 0)
+    if (gfx_open_shell(&g_background) < 0)
     {
         puts_fd(2, "desktop: gfx_open failed\n");
         return 1;
@@ -426,8 +426,8 @@ int main(void)
 
     /* Loads the persisted choice and tries to decode /disk/wallpaper.bmp. */
     desktop_wallpaper_init();
-    /* Without the shell channels (started by hand, not by windowd) there is
-     * no window list to show: the desktop runs as a background only. */
+    /* Without the window list there is nothing for a taskbar to show: the
+     * desktop runs as a background only. */
     g_taskbar_available = desktop_taskbar_init() == 0;
     if (g_taskbar_available)
     {

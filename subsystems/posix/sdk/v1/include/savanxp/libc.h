@@ -180,6 +180,10 @@ int clipboard_clear(void);
 /* argv[0] as the program was started (0 if unknown), kept by crt0. */
 const char* sx_program_path(void);
 long gfx_open(struct savanxp_gfx_context* context);
+/* gfx_open for the shell: the hello asks for the shell role, which the WM
+ * grants only to a process the session manager started. Fails with -EACCES
+ * for anybody else. */
+long gfx_open_shell(struct savanxp_gfx_context* context);
 long gfx_close(struct savanxp_gfx_context* context);
 long gfx_acquire(struct savanxp_gfx_context* context);
 long gfx_release(struct savanxp_gfx_context* context);
