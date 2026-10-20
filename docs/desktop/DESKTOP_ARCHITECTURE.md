@@ -392,7 +392,7 @@ services need:
 | Open a device and send it control requests (`gpu0`, `input0`, `mouse0`) | `compositord`, `windowd` | done (slice 14) |
 | Close and duplicate a handle | everyone | done (slice 14) |
 | Monotonic clock | `compositord`, `windowd` (frame stats) | done (slice 14) |
-| Process termination and query | `sessiond` (ending the session), `windowd` (closing a main window ends its process) | missing (`waitpid` exists) |
+| Process termination and query | `sessiond` (ending the session), `windowd` (closing a main window ends its process) | termination of a child done (slice 16); query missing |
 | POSIX access to the native object calls | POSIX clients | done (slice 15) |
 | A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | header-only `sxn.h`; the stock `crt0` falls through to a POSIX exit |
 | Files | `desktop`, `progman` | missing, and not needed by the services |
@@ -450,8 +450,8 @@ Depends on the hotkeys of phase 1.
    POSIX access to the native object calls. **Done so far:** handle close and
    duplicate, pipe and device read/write, device open and control, the clock
    (`docs/kernel/KERNEL_NATIVE_API.md`, slice 14). The port and POSIX access
-   to the native object calls followed (slice 15). Still to do: multi-object
-   wait, process termination.
+   to the native object calls followed (slice 15), then a parent ending its
+   child (slice 16). Still to do: multi-object wait.
 2. **Runtime:** the native C runtime, the in-tree native CMake target, SXGFX
    and SXCHROME built for native.
 3. **`compositord` native.** The pilot: about 600 lines, no files, only the

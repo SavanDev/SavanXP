@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **`SXN_SYS_TERMINATE` ends a child.** A native process can end a process it spawned, with the
+  exit status its `waitpid` will report (`sxn_terminate`); any other pid is refused. See
+  `docs/kernel/KERNEL_NATIVE_API.md`.
+
 - **Ports, and POSIX on the native floor.** `SXN_SYS_PORT_CREATE`, `_CONNECT` and `_ACCEPT` let a
   process find a service by name (two pipes per connection), `SXN_SYS_PIPE_SEND/RECEIVE_HANDLE` pass
   handles natively, and POSIX processes can make the native object calls. See `docs/kernel/KERNEL_NATIVE_API.md`.

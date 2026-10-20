@@ -131,3 +131,8 @@ static inline long sxn_pipe_send_handle(long pipe_write, long handle) {
 static inline long sxn_pipe_receive_handle(long pipe_read) {
     return sxn_trap(SXN_SYS_PIPE_RECEIVE_HANDLE, (unsigned long)pipe_read, 0, 0);
 }
+
+/* Ends a child; its waitpid reports `status`. */
+static inline long sxn_terminate(long pid, int status) {
+    return sxn_trap(SXN_SYS_TERMINATE, (unsigned long)pid, (unsigned long)(long)status, 0);
+}

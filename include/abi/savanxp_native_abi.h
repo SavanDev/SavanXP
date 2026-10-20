@@ -161,6 +161,12 @@ enum sxn_syscall_number {
     /* rdi = pipe read end. Pops the oldest queued handle into the caller's
      * table. Returns the handle or -EAGAIN if none; never blocks. */
     SXN_SYS_PIPE_RECEIVE_HANDLE = 0x101b,
+    /* rdi = pid, rsi = exit status. Ends a child of the caller, which its
+     * waitpid then reaps with that status. Children only: having created the
+     * process is the right to end it, as NT asks for a handle with terminate
+     * access. Returns 0 (also for a child that already ended), -ENOENT if no
+     * such process, -ECHILD if it is not the caller's child. Native only. */
+    SXN_SYS_TERMINATE = 0x101c,
 };
 
 struct sxn_port_connection {

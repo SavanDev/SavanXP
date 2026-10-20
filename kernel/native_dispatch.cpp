@@ -261,6 +261,25 @@ int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles
     return 0;
 }
 
+// Ends a child of the caller. Children only: having created the process is
+// the right to end it (NT asks for a handle with terminate access; there are no
+// process handles yet). terminate_process already ignores a zombie, so a child
+// that ended on its own is not an error.
+int native_terminate(Process& proc, uint64_t pid_value, uint64_t status) {
+    if (pid_value == 0 || pid_value > 0xffffffffull) {
+        return sx::negative_error(SX_ENOENT);
+    }
+    Process* target = process::find(static_cast<uint32_t>(pid_value));
+    if (target == nullptr) {
+        return sx::negative_error(SX_ENOENT);
+    }
+    if (target->parent_pid != proc.pid) {
+        return sx::negative_error(SX_ECHILD);
+    }
+    detail::terminate_process(*target, static_cast<int>(status));
+    return 0;
+}
+
 int native_port_accept(Process& proc, uint64_t port_handle, uint64_t user_connection) {
     object::PortObject* port = object::as_port(detail::lookup_handle(proc, port_handle, object::access_query));
     object::PortConnection connection = {};
@@ -655,6 +674,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_PIPE_RECEIVE_HANDLE:
             context->rax = static_cast<uint64_t>(native_pipe_receive_handle(*caller, context->rdi));
+            return context;
+        case SXN_SYS_TERMINATE:
+            context->rax = static_cast<uint64_t>(native_terminate(*caller, context->rdi, context->rsi));
             return context;
         default:
             break;

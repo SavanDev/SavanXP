@@ -24,7 +24,9 @@
  * CLOSE on an event, READ refusing a non-stream handle, OPEN_DEVICE refusing
  * paths and unknown names, DEVICE_CONTROL on gpu0 and WRITE to serial; and a
  * port: a second child ("portchild") connects by name, exchanges a message
- * each way and signals an event handed over its reply pipe. The first
+ * each way and signals an event handed over its reply pipe; and TERMINATE:
+ * a third child ("sleeper") waits forever until the parent ends it, and
+ * waitpid reports the status the parent chose. The first
  * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
  */
@@ -154,6 +156,16 @@ static void run_child(int argc, char** argv) {
 }
 
 #define SXN_PORT_CHILD_STATUS 7
+#define SXN_TERMINATE_STATUS 99
+
+/* Sleeper child: blocks on an event nobody sets, so only TERMINATE ends it. */
+static void run_sleeper(void) {
+    long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+
+    for (;;) {
+        (void)sxn_wait_one(event, 60000);
+    }
+}
 
 /* Port child: connects to the parent's port by name, says ping, reads pong,
  * takes the event the parent handed over and signals it. Native calls only. */
@@ -184,6 +196,9 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1], "portchild")) {
         run_port_child();
+    }
+    if (argc > 1 && streq(argv[1], "sleeper")) {
+        run_sleeper();
     }
 
     check(sxn_info(&info) == 0);
@@ -360,6 +375,28 @@ int main(int argc, char** argv) {
             }
         }
         check(sxn_log("nativetest: ports done") == 0);
+    }
+
+    /* TERMINATE: a parent ends its child; anybody else's process is refused. */
+    {
+        char* child_argv[2];
+        long child = -1;
+        int status = -1;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "sleeper";
+        child = sxn_spawn("/disk/bin/nativetest", child_argv, 2);
+        check(child > 0);
+        if (child > 0) {
+            check(sxn_terminate(child, SXN_TERMINATE_STATUS) == 0);
+            check(sxn_waitpid(child, &status) == child && status == SXN_TERMINATE_STATUS);
+            /* Reaped: the pid names nothing any more. */
+            check(sxn_terminate(child, 1) == -SAVANXP_ENOENT);
+        }
+        /* pid 1 is the idle task: not this process's child. */
+        check(sxn_terminate(1, 1) == -SAVANXP_ECHILD);
+        check(sxn_terminate(0, 1) == -SAVANXP_ENOENT);
+        check(sxn_log("nativetest: terminate done") == 0);
     }
 
     sxn_exit(g_failures == 0 ? 0 : 1);

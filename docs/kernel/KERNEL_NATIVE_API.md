@@ -52,9 +52,12 @@ object/process factoring, not before.
 - Isolation B: the current directory left `Process`.
 - Isolation C: poll parking left `Process`.
 - Isolation D: POSIX signals left `Process`.
-- Isolation E (this change): the error space belongs to the kernel. The
+- Isolation E: the error space belongs to the kernel. The
   campaign is complete: the kernel includes no userland header, keeps no
   POSIX per-process state, and returns its own status space.
+- Slice 14: handles, devices and the clock for services.
+- Slice 15: ports, handle passing, POSIX on the native floor.
+- Slice 16: `SXN_SYS_TERMINATE`, a parent ending its child.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -231,6 +234,22 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 16: ending a child
+
+- `SXN_SYS_TERMINATE` (`0x101c`): rdi = pid, rsi = exit status. Ends a child of
+  the caller through the same `terminate_process` the POSIX `kill` uses, and
+  the parent's `waitpid` reports the status it chose. Only the caller's own
+  children: having created a process is the right to end it, the closest thing
+  to NT's handle with terminate access while there are no process handles. A
+  child that already ended is not an error; anything else's pid is `-ECHILD`.
+- Native only, like the other lifecycle calls: POSIX has `kill`, with its own
+  rules. The user is the session manager, `sessiond`, ending what is left of a
+  session (docs/desktop/DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond).
+
+`nativetest` spawns a child that blocks forever, ends it, checks the status
+`waitpid` reports, and that the reaped pid and a process that is not its child
+are refused.
 
 ## Slice 15: ports, handle passing, and POSIX on the native floor
 
