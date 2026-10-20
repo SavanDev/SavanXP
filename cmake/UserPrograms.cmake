@@ -307,6 +307,7 @@ savanxp_program(NAME ticker TEST SOURCES subsystems/posix/userland/ticker.c)
 savanxp_program(NAME demo TEST SOURCES subsystems/posix/userland/demo.c)
 savanxp_program(NAME fdtest TEST SOURCES subsystems/posix/userland/fdtest.c)
 savanxp_program(NAME waittest TEST SOURCES subsystems/posix/userland/waittest.c)
+savanxp_program(NAME sessiontest TEST SOURCES subsystems/posix/userland/sessiontest.c)
 savanxp_program(NAME pipestress TEST SOURCES subsystems/posix/userland/pipestress.c)
 savanxp_program(NAME spawnloop TEST SOURCES subsystems/posix/userland/spawnloop.c)
 savanxp_program(NAME badptr TEST SOURCES subsystems/posix/userland/badptr.c)
@@ -335,6 +336,9 @@ savanxp_program(NAME audiod SOURCES subsystems/posix/userland/audiod.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 # Native: speaks only SXN (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3).
 savanxp_program(NAME compositord NATIVE SOURCES subsystems/posix/userland/compositord.c)
+# The session manager: starts windowd, the desktop and progman, restarts them.
+# Native, no .sxres (not in the launcher); init starts it.
+savanxp_program(NAME sessiond NATIVE SOURCES subsystems/posix/userland/sessiond.c)
 # El compositor. Solo pide dos funciones de metrica de fuente, que son puras y
 # no abren superficie, asi que el riesgo es bajo; igual es el programa del que
 # depende todo lo que se ve en pantalla. init lo reinicia si sale y cae a /bin/sh

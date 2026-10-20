@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **`sessiond`, the session manager.** A native process `init` now starts instead of `windowd`: it
+  starts `windowd`, then the desktop and Program Manager, restarts the desktop, and restarts the
+  whole session when `windowd` dies; `session-smoke` kills both and checks they come back. See
+  `docs/desktop/DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond`.
+
 - **`SXN_SYS_TERMINATE` ends a child.** A native process can end a process it spawned, with the
   exit status its `waitpid` will report (`sxn_terminate`); any other pid is refused. See
   `docs/kernel/KERNEL_NATIVE_API.md`.
@@ -274,6 +279,9 @@ Cut-off notes:
   (see `docs/userland/SYSTEM_LAYERING.md`).
 
 ### Fixed
+
+- **A POSIX program started by a native one has its POSIX state.** Spawning kept the parent's
+  subsystem state even when the child's image is of another subsystem, so `poll` failed in it.
 
 - **The kernel's text console no longer stalls the machine when it scrolls.** It repainted
   the whole framebuffer for every line; it now writes only the glyph pixels that changed,

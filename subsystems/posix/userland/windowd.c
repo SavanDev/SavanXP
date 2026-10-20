@@ -13,15 +13,9 @@
 #define WINDOWD_FULLSCREEN_MODE_WIDTH 640
 #define WINDOWD_FULLSCREEN_MODE_HEIGHT 400
 
-/* The session's two children. Everything else is launched by whoever asks. */
+/* The session (the desktop, Program Manager, restarting them) belongs to
+ * sessiond; windowd starts a desktop only for its own selftest. */
 static const char *k_desktop_path = "/bin/desktop";
-static const char *k_progman_path = "/bin/progman";
-
-/* A desktop that exits within this long after starting counts as a crash
- * loop; after WINDOWD_DESKTOP_MAX_QUICK_EXITS in a row it is not restarted and
- * the session goes on without it (Alt+Tab still switches windows). */
-#define WINDOWD_DESKTOP_QUICK_EXIT_MS 10000ul
-#define WINDOWD_DESKTOP_MAX_QUICK_EXITS 3
 
 static int launch_overlay_client(struct windowd_session *session, const char *path, const char *argument);
 /* Defined with the rest of the Alt+Tab switcher, further down; the selftest
@@ -2043,11 +2037,12 @@ static void destroy_desktop(struct windowd_session *session, int terminate_clien
     session->hotkey_held_key = 0;
 }
 
-/* Starts the desktop. When it connects, its main window becomes the background
- * (full screen, frameless, bottom of the stack, never focused) and it gets
- * the shell channels; everything else it shows it asks for as role windows.
- * The shell role goes to the process windowd started, matched by pid, until a
- * session launcher owns that decision (docs/desktop/DESKTOP_ARCHITECTURE.md). */
+/* Starts a desktop for the selftest; in a session, sessiond does. When it
+ * connects asking for the shell role, its main window becomes the background
+ * (full screen, frameless, bottom of the stack, never focused); everything
+ * else it shows it asks for as role windows. windowd being its parent is what
+ * passes the shell rule (started_by_session). The slot is held so its death
+ * before connecting is still noticed. */
 static int launch_desktop_client(struct windowd_session *session)
 {
     struct windowd_client *client = 0;
@@ -2061,7 +2056,6 @@ static int launch_desktop_client(struct windowd_session *session)
     destroy_desktop(session, 1);
     client = &session->desktop_windows[0];
     reset_client(client);
-    session->desktop_started_ms = uptime_ms();
     pid = windowd_spawn(k_desktop_path, 0);
     if (pid < 0)
     {
@@ -2071,32 +2065,6 @@ static int launch_desktop_client(struct windowd_session *session)
     client->reserved_pid = pid;
     copy_client_path(client, k_desktop_path);
     return 0;
-}
-
-/* The desktop went away. Restart it unless it keeps dying right after
- * starting, which would turn a crash at startup into a spin loop. */
-static void restart_desktop_after_exit(struct windowd_session *session)
-{
-    if (uptime_ms() - session->desktop_started_ms < WINDOWD_DESKTOP_QUICK_EXIT_MS)
-    {
-        session->desktop_quick_exits += 1;
-    }
-    else
-    {
-        session->desktop_quick_exits = 0;
-    }
-    if (session->desktop_quick_exits >= WINDOWD_DESKTOP_MAX_QUICK_EXITS)
-    {
-        if (session->desktop_quick_exits == WINDOWD_DESKTOP_MAX_QUICK_EXITS)
-        {
-            puts_fd(2, "windowd: the desktop keeps exiting at startup; going on without it\n");
-        }
-        return;
-    }
-    if (launch_desktop_client(session) < 0)
-    {
-        puts_fd(2, "windowd: failed to restart the desktop\n");
-    }
 }
 
 /* Publica el estado de las ventanas en la seccion compartida.
@@ -2916,11 +2884,11 @@ static int service_client_batches(
     if (consume_client_present_batches(session, dirty, client) < 0)
     {
         /* A malformed batch is a broken client. For the desktop that is the
-         * whole process: it is killed here and restarted when reaped. */
+         * whole process: it is killed here, and the session manager starts a
+         * new one. */
         if (is_desktop_window(session, client))
         {
             destroy_desktop(session, 1);
-            restart_desktop_after_exit(session);
         }
         else if (overlay_slot_valid(slot))
         {
@@ -2944,9 +2912,10 @@ static int reap_dead_clients(struct windowd_session *session, struct windowd_dir
     if ((session->desktop_windows[0].pid > 0 && !windowd_process_alive(session->desktop_windows[0].pid)) ||
         (session->desktop_windows[0].reserved_pid > 0 && !windowd_process_alive(session->desktop_windows[0].reserved_pid)))
     {
+        /* A solid background until the session manager's new desktop
+         * connects. */
         destroy_desktop(session, 0);
         windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        restart_desktop_after_exit(session);
     }
 
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
@@ -6369,18 +6338,9 @@ int main(int argc, char **argv)
         return 1;
     }
     (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
-    /* The desktop: optional. Without it the session lives on, with a solid
-     * background, and Alt+Tab still switches windows. */
-    if (launch_desktop_client(&session) < 0)
-    {
-        puts_fd(2, "windowd: the desktop did not start\n");
-    }
-    /* Program Manager: the session's launcher, an ordinary window with no
-     * special treatment. Without it the Start menu still launches programs. */
-    if (launch_overlay_client(&session, k_progman_path, 0) < 0)
-    {
-        puts_fd(2, "windowd: Program Manager did not start; session without a launcher\n");
-    }
+    /* Nothing is started here: sessiond starts the desktop and Program Manager
+     * once the port exists, and they connect like anybody else. Without a
+     * desktop the session lives on with a solid background. */
     windowd_stats_open(&stats);
     windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 

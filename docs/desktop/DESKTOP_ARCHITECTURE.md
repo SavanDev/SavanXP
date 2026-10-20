@@ -2,8 +2,9 @@
 
 > **Status: design accepted (2026-10-19). Phases 1 and 2 are built** (the
 > `desktop` process, window roles, hotkeys, the Task List removed); phase 3 is
-> under way (`compositord` is native, clients connect to `windowd`'s port and
-> whoever launches a program spawns it); phase 4 is not. It is the target for the graphics stack and the order for
+> under way (`compositord` and the session manager `sessiond` are native,
+> clients connect to `windowd`'s port and whoever launches a program spawns
+> it); phase 4 is not. It is the target for the graphics stack and the order for
 > getting there.
 > Where it disagrees with the "Target layering" of
 > [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md), this document wins; WM_SUBSYSTEM.md
@@ -126,10 +127,10 @@ The wallpaper belongs here, not in a `wallpaperd` of its own. A process that
 paints a bitmap which changes once a month would cost a channel and isolate
 nothing worth isolating.
 
-If `desktop` dies, `windowd` shows a solid colour background and the desktop
-is restarted (NT's `AutoRestartShell`). Until [`sessiond`](#the-session-manager-sessiond)
-exists, `windowd` restarts it, and gives up after three exits within ten
-seconds of starting, so a crash at startup cannot become a spin loop.
+If `desktop` dies, `windowd` shows a solid colour background and
+[`sessiond`](#the-session-manager-sessiond) restarts the desktop (NT's
+`AutoRestartShell`), giving up after three exits within ten seconds of
+starting, so a crash at startup cannot become a spin loop.
 
 Which windows the desktop has, and what each is:
 
@@ -163,10 +164,15 @@ taskbar. With the taskbar back, everything it did has another owner:
 | Alt+Tab switcher UI | A small switcher drawn by `windowd`: icon and title of the candidate, as NT's Alt+Tab box |
 
 The Task List was also the fallback for switching windows when the taskbar
-failed to start. Afterwards Alt+Tab covers that, and the desktop is restarted
-(by `windowd` today, by `sessiond` once it exists).
+failed to start. Afterwards Alt+Tab covers that, and `sessiond` restarts the
+desktop.
 
 ## The session manager: sessiond
+
+> **Status: built** (`subsystems/posix/userland/sessiond.c`, native).
+> `session-smoke` kills the desktop and then `windowd` and checks the desktop
+> and then the whole session come back, the desktop each time with the shell
+> role.
 
 NT splits starting a session in two: SMSS starts the subsystem servers (CSRSS,
 where USER lived in 3.x) and Winlogon, and Winlogon runs Userinit, which starts
@@ -176,7 +182,7 @@ does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
 
 ### What it does
 
-1. `init` starts it, where it starts `windowd` today, and restarts it if it
+1. `init` starts it, where it used to start `windowd`, and restarts it if it
    dies. `init` keeps what is not part of the graphical session: `audiod`, and
    the fallback to `/bin/sh` when the session will not come up.
 2. It starts `windowd`, then `desktop` and `progman`. It is their parent, so a
@@ -255,11 +261,21 @@ only follow a death.
 3. `sessiond`, native, built in-tree with `NATIVE`; `init` starts it instead of
    `windowd`. `windowd` stops spawning `desktop` and `progman`, drops the
    desktop restart and its reservation; the selftests keep spawning their own
-   apps and desktop.
+   apps and desktop. **Done**, except the desktop reservation: `windowd`
+   still holds the desktop slot for the desktop its selftest spawns, so that
+   one's death before connecting is noticed. `sessiond` waits for `windowd`'s
+   port (probing it with a connection that never says hello) before starting
+   the shell, and exits with status 3 when the session will not come up,
+   which `init` reads as "fall back to the text shell".
 4. Smokes: `windowd-smoke` (the selftest's desktop still gets the role), a new
    `session-smoke` that kills the desktop and checks it comes back and that the
    session comes back when `windowd` is killed, `taskbar-smoke`, and
-   `shoot.sh --scenario startmenu`.
+   `shoot.sh --scenario startmenu`. **Done.**
+
+Building it found a kernel bug: a new process copied its parent's subsystem
+state and only then took the subsystem of its image, so a POSIX program
+started by a native one (`windowd` by `sessiond`) ran with no POSIX state and
+its `poll` failed. Spawning now resizes the state for the child's subsystem.
 
 ## Window roles
 
@@ -477,11 +493,10 @@ Depends on the hotkeys of phase 1.
    handles with the welcome. `gfx_desktop_launch*` is a `spawn` in the caller,
    which reaps its children; `windowd` no longer forks, `dup2`s, sweeps
    descriptors, sniffs `EI_OSABI` or keeps a launch queue, and labels a window
-   it did not start by its process name. Still to do: the session manager,
-   [`sessiond`](#the-session-manager-sessiond). Until it exists `windowd`
-   spawns the desktop and Program Manager itself, holds a slot for each until
-   it connects and reaps those two children; the desktop passes the shell rule
-   because `windowd` is its parent.
+   it did not start by its process name. Then the session manager,
+   [`sessiond`](#the-session-manager-sessiond): `windowd` starts nothing of
+   the session any more and restarts nothing; `compositord` is still its
+   child until phase 4. **Step 5 is done.**
 6. **`windowd` native.**
 
 ### Phase 4: composition moves into `compositord`

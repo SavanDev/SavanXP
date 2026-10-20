@@ -1757,6 +1757,11 @@ process::Process* create_process_internal(
     proc->subsystem_id = load_result.os_abi == elf::kOsAbiNative
         ? subsystem::Id::native
         : subsystem::Id::posix;
+    // The state copied from the parent belongs to the parent's subsystem. A
+    // POSIX program started by a native one (sessiond starting windowd) would
+    // otherwise run with no POSIX state at all, and poll fails on it. Same
+    // subsystem: kept as copied, which for POSIX is the parent's cwd.
+    process::ensure_subsystem_state(*proc);
     if (proc->subsystem_id == subsystem::Id::native) {
         console::printf("process: pid=%u marcado nativo\n", static_cast<unsigned>(proc->pid));
     }

@@ -39,7 +39,8 @@ built independently with `./ports/doomgeneric/build.sh`,
 - Framebuffer console and early serial output.
 - Userland with `ELF64` processes, syscalls and a preemptive scheduler.
 - Shell with `pipes`, redirections and basic builtins.
-- NT-style graphical session: its own window manager (`windowd`) with an
+- NT-style graphical session, started and kept alive by a native session
+  manager (`sessiond`): its own window manager (`windowd`) with an
   Alt+Tab switcher, and the shell as clients of it: one `desktop` process
   (wallpaper, a taskbar listing the open windows, the Start menu on Ctrl+Esc,
   and volume, clock and ES/EN keyboard layout popups) plus Program Manager.

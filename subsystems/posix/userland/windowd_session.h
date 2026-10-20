@@ -177,8 +177,6 @@ struct windowd_session
      * taskbar and popups are its windows, told apart by role. windowd does not
      * know what any of them shows. */
     struct windowd_client desktop_windows[WINDOWD_DESKTOP_WINDOW_COUNT];
-    unsigned long desktop_started_ms;
-    int desktop_quick_exits;
     struct windowd_hotkey hotkeys[WINDOWD_MAX_HOTKEYS];
     int hotkey_count;
     /* Key whose KEY_DOWN went to the desktop as a hotkey: its KEY_UP follows

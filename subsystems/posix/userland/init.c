@@ -100,6 +100,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "mediaplayer")) {
         return "MEDIAPLAYER SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "sessiontest")) {
+        return "SESSION SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "nativetest")) {
         return "NATIVE TEST";
     }
@@ -142,6 +145,7 @@ static int run_automation_spec(const char* spec) {
     const char* ntptest_argv[] = {"/disk/bin/ntptest", 0, 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
     const char* nativetest_argv[] = {"/disk/bin/nativetest", 0};
+    const char* sessiontest_argv[] = {"/disk/bin/sessiontest", 0};
     const char* ccleste_argv[] = {"/disk/bin/ccleste", "--selftest", 0};
     const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
     const char* mousetest_argv[] = {"/disk/bin/mousetest", "--selftest", 0};
@@ -253,6 +257,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "floatsmoke") == 0 || strcmp(spec, "float-smoke") == 0) {
             path = "/disk/bin/floatsmoke";
             argv = floatsmoke_argv;
+            argc = 1;
+        } else if (strcmp(spec, "sessiontest") == 0) {
+            path = "/disk/bin/sessiontest";
+            argv = sessiontest_argv;
             argc = 1;
         } else if (strcmp(spec, "nativetest") == 0 || strcmp(spec, "native-test") == 0) {
             path = "/disk/bin/nativetest";
@@ -464,9 +472,12 @@ static void apply_audio_preference(void) {
 }
 
 int main(void) {
-    const char* windowd_argv[] = {"/bin/windowd", 0};
+    /* The graphical session belongs to sessiond (docs/desktop/
+     * DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond); init keeps audiod
+     * and the fallback to the text shell. */
+    const char* sessiond_argv[] = {"/bin/sessiond", 0};
     const char* shell_argv[] = {"/bin/sh", 0};
-    unsigned long last_windowd_start_ms = 0;
+    unsigned long last_sessiond_start_ms = 0;
     int rapid_failures = 0;
 
     long smoke_trigger = savanxp_open("/SMOKE");
@@ -502,23 +513,23 @@ int main(void) {
         audiod_pid = 0;
     }
 
-    long windowd_pid = 0;
+    long sessiond_pid = 0;
     for (;;) {
         int status = 0;
         unsigned long runtime_ms = 0;
 
-        if (windowd_pid <= 0) {
-            windowd_pid = spawn("/bin/windowd", windowd_argv, 1);
-            if (windowd_pid < 0) {
-                printf("init: failed to spawn windowd (%s)\n", result_error_string(windowd_pid));
-                windowd_pid = 0;
+        if (sessiond_pid <= 0) {
+            sessiond_pid = spawn("/bin/sessiond", sessiond_argv, 1);
+            if (sessiond_pid < 0) {
+                printf("init: failed to spawn sessiond (%s)\n", result_error_string(sessiond_pid));
+                sessiond_pid = 0;
                 sleep_ms(1000);
             } else {
-                last_windowd_start_ms = uptime_ms();
+                last_sessiond_start_ms = uptime_ms();
             }
         }
 
-        if (audiod_pid <= 0 && windowd_pid <= 0) {
+        if (audiod_pid <= 0 && sessiond_pid <= 0) {
             sleep_ms(1000);
             continue;
         }
@@ -548,10 +559,10 @@ int main(void) {
             continue;
         }
 
-        if (pid == windowd_pid && windowd_pid != 0) {
-            runtime_ms = uptime_ms() - last_windowd_start_ms;
-            printf("init: windowd exited with %d, restarting\n", status);
-            windowd_pid = 0;
+        if (pid == sessiond_pid && sessiond_pid != 0) {
+            runtime_ms = uptime_ms() - last_sessiond_start_ms;
+            printf("init: sessiond exited with %d, restarting\n", status);
+            sessiond_pid = 0;
 
             if (status != 0 && runtime_ms < 2000UL) {
                 rapid_failures += 1;
@@ -559,8 +570,10 @@ int main(void) {
                 rapid_failures = 0;
             }
 
-            if (rapid_failures >= 3) {
-                printf("init: windowd unstable, falling back to /bin/sh\n");
+            /* SESSIOND_EXIT_GAVE_UP (3): it already retried windowd itself and
+             * the session will not come up. */
+            if (status == 3 || rapid_failures >= 3) {
+                printf("init: the graphical session is unstable, falling back to /bin/sh\n");
                 long shell_pid = spawn("/bin/sh", shell_argv, 1);
                 if (shell_pid < 0) {
                     printf("init: failed to spawn fallback shell (%s)\n", result_error_string(shell_pid));
@@ -568,7 +581,7 @@ int main(void) {
                 } else {
                     int shell_status = 0;
                     savanxp_waitpid((int)shell_pid, &shell_status);
-                    printf("init: fallback shell exited with %d, retrying windowd\n", shell_status);
+                    printf("init: fallback shell exited with %d, retrying the session\n", shell_status);
                 }
                 rapid_failures = 0;
             }
@@ -576,7 +589,7 @@ int main(void) {
             sleep_ms(250);
             continue;
         }
-        /* Un hijo que no es audiod ni windowd (una app reparentada al morir
-         * windowd, por ejemplo): se reapea y se sigue; a init no le toca. */
+        /* A child that is neither audiod nor sessiond (an app reparented when
+         * its launcher died, for instance): reaped and ignored. */
     }
 }

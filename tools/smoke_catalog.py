@@ -378,6 +378,13 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/floatsmoke --name floatsmoke --sse",
         ),
     ),
+    "session-smoke": _qemu_scenario(
+        "sessiontest",
+        "SESSION SMOKE PASS",
+        "SESSION SMOKE FAIL",
+        "Session manager: the desktop and the session come back when killed",
+        300.0,
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",
