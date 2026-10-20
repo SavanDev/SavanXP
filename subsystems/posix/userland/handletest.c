@@ -1,6 +1,9 @@
 #include "libc.h"
 #include "sxn/sxn.h"
 
+/* How many handles a pipe queues (process::kPipeHandleQueueCapacity). */
+#define HANDLETEST_PIPE_HANDLE_QUEUE 8
+
 /*
  * Paso de handles por pipe (SAVANXP_SYS_PIPE_SEND_HANDLE / _RECEIVE_HANDLE).
  * Es el transporte con el que el WM le entrega a un proceso ya corriendo la
@@ -95,8 +98,9 @@ static int test_rejections(void) {
         !expect_error(pipe_send_handle(fds[1], 60), SAVANXP_EBADF, "send a closed fd")) {
         return 0;
     }
-    /* La cola tiene tope y avisa en vez de crecer. */
-    for (index = 0; index < 4; ++index) {
+    /* The queue has a cap and says so instead of growing
+     * (process::kPipeHandleQueueCapacity). */
+    for (index = 0; index < HANDLETEST_PIPE_HANDLE_QUEUE; ++index) {
         if (!expect_success(pipe_send_handle(fds[1], (int)event), "fill queue")) {
             return 0;
         }
@@ -104,7 +108,7 @@ static int test_rejections(void) {
     if (!expect_error(pipe_send_handle(fds[1], (int)event), SAVANXP_EAGAIN, "send on full queue")) {
         return 0;
     }
-    for (index = 0; index < 4; ++index) {
+    for (index = 0; index < HANDLETEST_PIPE_HANDLE_QUEUE; ++index) {
         long received = pipe_receive_handle(fds[0]);
         if (!expect_success(received, "drain queue")) {
             return 0;

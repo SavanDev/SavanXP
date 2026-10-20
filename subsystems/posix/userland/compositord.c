@@ -1,4 +1,6 @@
+#include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "savanxp/compositor_protocol.h"
@@ -84,6 +86,9 @@ struct compositor_state
     uint64_t damage_px;
     uint64_t bounds_px;
     uint32_t damage_rects;
+    /* The session's submit event, handed to every client with its welcome:
+     * set after a frame, it wakes compositord, never windowd. */
+    long frame_event;
     /* The display memory, allocated at startup for the largest mode, and its
      * size: a mode whose buffer does not fit is refused. */
     long display_section;
@@ -147,6 +152,7 @@ static void compositor_state_init(struct compositor_state *state)
     state->gpu_fd = -1;
     state->present_event_fd = -1;
     state->display_section = -1;
+    state->frame_event = -1;
 }
 
 static void compositor_state_close(struct compositor_state *state)
@@ -167,6 +173,11 @@ static void compositor_state_close(struct compositor_state *state)
         close_fd_if_needed(&state->gpu_fd);
     }
     close_fd_if_needed(&state->present_event_fd);
+    if (state->frame_event >= 0)
+    {
+        (void)sxn_close(state->frame_event);
+        state->frame_event = -1;
+    }
     scene_reset();
     if (state->display_view != 0)
     {
@@ -366,6 +377,11 @@ static int compositor_startup(struct compositor_state *state)
     {
         state->present_event_fd = -1;
     }
+    state->frame_event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    if (state->frame_event < 0)
+    {
+        return (int)state->frame_event;
+    }
 
     result = compositor_apply_mode(state, width, height);
     if (result < 0)
@@ -378,7 +394,8 @@ static int compositor_startup(struct compositor_state *state)
 }
 
 /* INIT: the WM's scene section (queued before the request), and in return
- * what compositord set up at startup and the display section. */
+ * what compositord set up at startup, the display section and the frame
+ * event. */
 static int compositor_init(
     struct compositor_state *state,
     int request_fd,
@@ -396,7 +413,8 @@ static int compositor_init(
     {
         return -SAVANXP_EINVAL;
     }
-    if (sxn_pipe_send_handle(reply_fd, state->display_section) < 0)
+    if (sxn_pipe_send_handle(reply_fd, state->display_section) < 0 ||
+        sxn_pipe_send_handle(reply_fd, state->frame_event) < 0)
     {
         return -SAVANXP_EIO;
     }
@@ -495,6 +513,107 @@ static int present_region(struct compositor_state *state, const struct sx_region
     return 0;
 }
 
+/*
+ * compositord-stats (docs/desktop/GRAPHICS_PERF.md): one line on /dev/serial
+ * every two seconds in which a frame was presented. Never on stderr, which the
+ * kernel also paints on the framebuffer being measured; without the serial
+ * device it is a no-op.
+ */
+#define COMPOSITOR_STATS_INTERVAL_NS 2000000000ull
+
+struct compositor_stats
+{
+    long serial;
+    unsigned long long window_begin_ns;
+    unsigned long frames;
+    uint64_t compose_ns_total;
+    uint64_t compose_ns_max;
+    uint64_t present_ns_total;
+    uint64_t present_ns_max;
+    uint64_t gpu_ns_total;
+    uint64_t timeline_ns_total;
+    uint64_t damage_px_total;
+    uint64_t bounds_px_total;
+    uint64_t rects_total;
+};
+
+static struct compositor_stats g_stats = {-1, 0ull, 0ul, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+static void stats_open(void)
+{
+    g_stats.serial = sxn_open_device("serial", SXN_DEVICE_WRITE);
+    g_stats.window_begin_ns = monotonic_ns();
+}
+
+static void stats_frame(uint64_t compose_ns, uint64_t gpu_ns, uint64_t timeline_ns, uint64_t damage_px, uint64_t bounds_px, uint64_t rects)
+{
+    uint64_t present_ns = gpu_ns + timeline_ns;
+
+    if (g_stats.serial < 0 || compose_ns == 0)
+    {
+        return; /* no clock yet: not a sample */
+    }
+    g_stats.frames += 1u;
+    g_stats.compose_ns_total += compose_ns;
+    g_stats.present_ns_total += present_ns;
+    if (compose_ns > g_stats.compose_ns_max)
+    {
+        g_stats.compose_ns_max = compose_ns;
+    }
+    if (present_ns > g_stats.present_ns_max)
+    {
+        g_stats.present_ns_max = present_ns;
+    }
+    g_stats.gpu_ns_total += gpu_ns;
+    g_stats.timeline_ns_total += timeline_ns;
+    g_stats.damage_px_total += damage_px;
+    g_stats.bounds_px_total += bounds_px;
+    g_stats.rects_total += rects;
+}
+
+static void stats_report(void)
+{
+    char line[320];
+    unsigned long long now = monotonic_ns();
+    unsigned long long elapsed = now > g_stats.window_begin_ns ? now - g_stats.window_begin_ns : 0ull;
+    unsigned long frames = g_stats.frames;
+    unsigned long fps_tenths;
+    unsigned long rects_tenths;
+    int length;
+
+    if (g_stats.serial < 0 || elapsed < COMPOSITOR_STATS_INTERVAL_NS)
+    {
+        return;
+    }
+    if (frames != 0)
+    {
+        fps_tenths = (unsigned long)(((unsigned long long)frames * 10000000000ull) / elapsed);
+        rects_tenths = (unsigned long)((g_stats.rects_total * 10u) / frames);
+        length = snprintf(
+            line, sizeof(line),
+            "compositord-stats: window_ms=%lu frames=%lu fps=%lu.%lu compose_us=%lu/%lu present_us=%lu/%lu "
+            "gpu_us=%lu tl_us=%lu damage_px=%lu bounds_px=%lu rects=%lu.%lu\n",
+            (unsigned long)(elapsed / 1000000ull),
+            frames,
+            fps_tenths / 10ul, fps_tenths % 10ul,
+            (unsigned long)(g_stats.compose_ns_total / frames / 1000u),
+            (unsigned long)(g_stats.compose_ns_max / 1000u),
+            (unsigned long)(g_stats.present_ns_total / frames / 1000u),
+            (unsigned long)(g_stats.present_ns_max / 1000u),
+            (unsigned long)(g_stats.gpu_ns_total / frames / 1000u),
+            (unsigned long)(g_stats.timeline_ns_total / frames / 1000u),
+            (unsigned long)(g_stats.damage_px_total / frames),
+            (unsigned long)(g_stats.bounds_px_total / frames),
+            rects_tenths / 10ul, rects_tenths % 10ul);
+        if (length > 0)
+        {
+            (void)sxn_write(g_stats.serial, line, (unsigned long)length);
+        }
+    }
+    memset(&g_stats.frames, 0, sizeof(g_stats) - offsetof(struct compositor_stats, frames));
+    g_stats.window_begin_ns = now;
+}
+
 /* Composes and presents what is damaged, once the last present is on the
  * screen. `wait`: block for that, and for this frame to be on the screen too
  * (a COMMIT_WAIT). */
@@ -502,6 +621,12 @@ static int produce_frame(struct compositor_state *state, int wait)
 {
     static struct sx_region presented;
     unsigned long long mark;
+    uint64_t compose_ns;
+    uint64_t gpu_before = state->timing.gpu_ns;
+    uint64_t timeline_before = state->timing.timeline_ns;
+    uint64_t damage_before = state->damage_px;
+    uint64_t bounds_before = state->bounds_px;
+    uint32_t rects_before = state->damage_rects;
     int result;
 
     if (!finish_present(state, wait))
@@ -514,7 +639,8 @@ static int produce_frame(struct compositor_state *state, int wait)
     }
     mark = monotonic_ns();
     scene_compose(&presented);
-    state->timing.compose_ns += elapsed_since(mark);
+    compose_ns = elapsed_since(mark);
+    state->timing.compose_ns += compose_ns;
     if (sx_region_is_empty(&presented))
     {
         return 0;
@@ -524,6 +650,13 @@ static int produce_frame(struct compositor_state *state, int wait)
     {
         return result;
     }
+    stats_frame(
+        compose_ns,
+        state->timing.gpu_ns - gpu_before,
+        state->timing.timeline_ns - timeline_before,
+        state->damage_px - damage_before,
+        state->bounds_px - bounds_before,
+        state->damage_rects - rects_before);
     if (wait)
     {
         (void)finish_present(state, 1);
@@ -846,17 +979,19 @@ int main(int argc, char **argv)
         sxn_exit(1);
     }
 
+    stats_open();
     if (accept_wm(&state, port, &request_fd, &reply_fd) == 0)
     {
         for (;;)
         {
-            int32_t handles[3];
+            int32_t handles[4];
             unsigned long count = 0;
             long timeout = -1;
             long ready;
 
             handles[count++] = request_fd;
             handles[count++] = (int32_t)port;
+            handles[count++] = (int32_t)state.frame_event;
             /* Damage left over while a present was in flight is composed once
              * it is on the screen: wait for that too, on the GPU's present
              * event, or by polling where there is none. */
@@ -875,6 +1010,13 @@ int main(int argc, char **argv)
             if (ready < 0 && ready != -SAVANXP_ETIMEDOUT)
             {
                 break;
+            }
+            /* A client published a frame: reset BEFORE looking, so one
+             * published after this point wakes the next wait. */
+            if (sxn_wait_one(state.frame_event, 0) == 0)
+            {
+                (void)sxn_event_reset(state.frame_event);
+                scene_consume_frames();
             }
             if (produce_frame(&state, 0) < 0)
             {
@@ -901,6 +1043,7 @@ int main(int argc, char **argv)
             {
                 break;
             }
+            stats_report();
         }
     }
 

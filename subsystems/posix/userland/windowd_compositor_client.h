@@ -21,6 +21,9 @@ struct windowd_compositor_connection
      * fallback background, the size of the native mode. */
     void *wm_view;
     uint32_t wm_pitch;
+    /* compositord's frame event, from INIT, until the session takes it as
+     * the submit event it hands to clients; -1 after. */
+    int frame_event_fd;
     struct savanxp_fb_info requested_info;
     struct savanxp_fb_info display_info;
     struct savanxp_gpu_info gpu_info;

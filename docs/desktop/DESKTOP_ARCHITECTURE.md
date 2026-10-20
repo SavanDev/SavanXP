@@ -564,8 +564,8 @@ size hint, owned windows, presentation) need their own wake-up, so a client
 that says so in its hello (`SAVANXP_WM_HELLO_REQUEST_EVENT`) gets one more
 handle after the others: `windowd`'s request event, which its runtime sets
 after a request instead of the submit event. That is a fifth handle on the
-event pipe, whose handle queue holds four (`kPipeHandleQueueCapacity`); it grows
-to eight. The wire stays v5: a client built before has its requests seen on
+event pipe, whose handle queue held four (`kPipeHandleQueueCapacity`); it holds
+eight since. The wire stays v5: a client built before has its requests seen on
 `windowd`'s next tick (16 ms). `windowd` reads
 only the requests from the header, and the first submit: it is what puts a
 window in the scene and ends its "starting" cursor, and `windowd` notices it on
@@ -698,7 +698,7 @@ because it is the largest change and the one the work in
    switcher, the fallback background) and commits the scene. The cursor
    moves entirely into `compositord`. Client frames still pass through
    `windowd`, which forwards their damage with the commit.
-3. **Frames go straight to `compositord`.** The welcome's submit event becomes
+3. **Frames go straight to `compositord`. Done.** The welcome's submit event becomes
    `compositord`'s; requests get their own event; `compositord` validates the
    batches, signals composed and retired, and reports the frame statistics.
 4. **Measure and close:** the table above again, the descriptor budget in

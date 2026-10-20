@@ -338,18 +338,22 @@ the event pipe:
 | — | request pipe: the hello | nothing — closed once read, except the shell's |
 | 1 | surface section: header, batches, pixels, **and the client's requests** (`savanxp_wm_client_requests`) | nothing — closed once sent, the mapping keeps it alive |
 | 2 | wake event: composed/retired advanced, or shutdown requested | the event |
-| 3 | submit event, **one for the whole session** | one descriptor in total |
+| 3 | submit event, **one for the whole session**, set after a frame. Since phase 4 it is `compositord`'s ([DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md#frames)): frames wake `compositord`, not `windowd` | one descriptor in total, only to hand it out |
 | 4 | the shell only (`SAVANXP_WM_HELLO_SHELL`, granted by parentage): window list section (its requests go on its request pipe) | the request pipe's read end |
 | 4 | a client that asked for `SAVANXP_WM_HELLO_INPUT_RING`: the input ring | nothing — closed once sent |
+| last | a client that asked for `SAVANXP_WM_HELLO_REQUEST_EVENT` (the POSIX runtime always does): `windowd`'s request event, set after a request in the header (welcome flag `SAVANXP_WM_WELCOME_REQUEST_EVENT`) | one descriptor in total |
 
-Four handles at most: exactly the capacity of a pipe's handle queue. A
+Five handles at most, in a pipe handle queue of eight. A client built before the
+request event does not ask for it; its requests are seen on `windowd`'s 16 ms
+tick. A
 connection that has not said hello yet holds two descriptors for at most two
 seconds, and at most four wait at once; the rest wait in the port's backlog.
 
 With every slot full — twelve windows plus the desktop's background, taskbar
-and a popup — `windowd --selftest` measures 42 descriptors (its port, the serial device it
-writes text to and the event it sleeps on are three; the link to `compositord`
-is two pipes, and the display section is closed once mapped), and asserts at least 8 remain free for a connection in progress. The desktop's taskbar and popups
+and a popup — `windowd --selftest` measures 43 descriptors (its port, the serial device it
+writes text to, the event it sleeps on and its request event are four; the
+link to `compositord` is two pipes, and the display section is closed once
+mapped), and asserts at least 8 remain free for a connection in progress. The desktop's taskbar and popups
 are windows of one process, so like dialogs they cost two duplicates each and
 no pipe.
 

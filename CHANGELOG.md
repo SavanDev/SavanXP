@@ -117,6 +117,11 @@ Cut-off notes:
 
 ### Changed
 
+- **Application frames go straight to `compositord`.** The submit event in the WM welcome is
+  `compositord`'s; requests get `windowd`'s own event, asked for with `SAVANXP_WM_HELLO_REQUEST_EVENT`
+  (older clients still work, their requests seen on `windowd`'s tick). `compositord-stats` replaces
+  `windowd-stats`. A pipe's handle queue holds eight handles instead of four.
+
 - **`compositord` composes the desktop.** `windowd` paints only its own surface (frames, the
   Alt+Tab switcher, the fallback background) and commits the scene; `compositord` maps the client
   surfaces, composes, presents and draws the cursor (`compositor_protocol.h` v5: ATTACH, DETACH,

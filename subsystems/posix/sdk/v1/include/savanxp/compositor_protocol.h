@@ -17,8 +17,10 @@
  * One window manager per compositord. A connection becomes the WM with its
  * INIT, and only from a process whose parent is compositord's parent or that
  * is compositord's parent; a connection that hangs up before INIT (a readiness
- * probe) is dropped. The INIT reply follows the display section, queued as a
- * handle on the reply pipe. compositord exits when its WM hangs up: there is
+ * probe) is dropped. The INIT reply follows two handles queued on the reply
+ * pipe: the display section and the frame event -- the submit event the WM
+ * hands every client, which wakes compositord when a client publishes a
+ * frame (since v6). compositord exits when its WM hangs up: there is
  * no reconnection, the session is restarted instead.
  *
  * What compositord composes is the scene (docs/desktop/DESKTOP_ARCHITECTURE.md#
@@ -30,8 +32,9 @@
 /* v2 added savanxp_compositor_service_timing to the reply. v3: a port instead
  * of inherited descriptors 3, 4 and 5. v4: the port is compositord's, and so
  * is the display memory. v5: the scene -- compositord composes, the WM
- * commits layers instead of presenting a composed frame. */
-#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 5u
+ * commits layers instead of presenting a composed frame. v6: the frame event,
+ * so clients' frames reach compositord without the WM. */
+#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 6u
 
 #define SAVANXP_COMPOSITOR_PORT_NAME "compositord"
 #define SAVANXP_COMPOSITOR_PORT_PREFIX "wd-compositor-"
@@ -40,8 +43,8 @@ enum savanxp_compositor_message_type
 {
     /* Makes the connection the WM. The WM queues the scene section on its
      * request pipe before it; the reply carries the mode compositord set at
-     * startup (the native one) and the GPU's info, and the display section is
-     * queued on the reply pipe before it. */
+     * startup (the native one) and the GPU's info; the display section and the
+     * frame event are queued on the reply pipe before it. */
     SAVANXP_COMPOSITOR_MSG_INIT = 1,
     SAVANXP_COMPOSITOR_MSG_GET_TIMELINE = 4,
     SAVANXP_COMPOSITOR_MSG_SHUTDOWN = 7,

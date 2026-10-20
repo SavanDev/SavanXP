@@ -75,11 +75,12 @@ enum OpenFlags : uint32_t {
 };
 
 
-// Handles en transito por el pipe (SAVANXP_SYS_PIPE_SEND_HANDLE). Es una cola
-// aparte del stream de bytes: el pipe solo los guarda, y quien los manda y quien
-// los recibe se ponen de acuerdo sobre el orden con sus propios registros. Cada
-// entrada retiene una referencia al objeto, asi que no muere mientras viaja.
-constexpr size_t kPipeHandleQueueCapacity = 4;
+// Handles in transit through the pipe (SAVANXP_SYS_PIPE_SEND_HANDLE). A queue
+// apart from the byte stream: the pipe only holds them, and sender and receiver
+// agree on the order through their own records. Each entry holds a reference to
+// its object, so it does not die in transit. Eight: the WM welcome queues up to
+// five (savanxp/wm_protocol.h).
+constexpr size_t kPipeHandleQueueCapacity = 8;
 
 struct Pipe {
     bool in_use;

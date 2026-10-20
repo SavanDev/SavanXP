@@ -21,7 +21,8 @@
  *      (savanxp_wm_welcome). With status 0, the handles are already queued on
  *      that pipe, in this order: the surface section, the wake event, the
  *      session's submit event, then the input ring (if asked) or the window
- *      list section (for the shell, savanxp/wm_shell_protocol.h).
+ *      list section (for the shell, savanxp/wm_shell_protocol.h), then the
+ *      WM's request event (if asked, SAVANXP_WM_HELLO_REQUEST_EVENT).
  *
  * From then on everything is as in v4:
  *
@@ -34,7 +35,11 @@
  *   - the wake event is set when composed_sequence or retired_sequence
  *     advances and when the WM sets the shutdown flag in the header;
  *   - the submit event, one for the whole session, is set by the client after
- *     it publishes a frame or a request.
+ *     it publishes a frame. It is compositord's: frames wake compositord, not
+ *     the WM (docs/desktop/DESKTOP_ARCHITECTURE.md#frames);
+ *   - the request event, also one for the session, is set after a request in
+ *     the header. A client that did not ask for it sets the submit event
+ *     instead, and the WM sees its requests on its next tick.
  *
  * What it costs the WM: two descriptors per process (the write end of the
  * event pipe and the wake event); the section is closed once mapped and the

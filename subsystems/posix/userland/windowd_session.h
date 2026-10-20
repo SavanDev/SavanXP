@@ -157,8 +157,12 @@ struct windowd_session
     int input_fd;
     int mouse_fd;
     /* Submit event shared by ALL clients (sent with every welcome): one per
-     * session instead of one per window. */
+     * session instead of one per window. It is compositord's (the frame event
+     * of compositor_protocol.h): windowd only hands it out. */
     int submit_event_fd;
+    /* windowd's request event, shared the same way, for clients that asked
+     * for it in their hello (SAVANXP_WM_HELLO_REQUEST_EVENT). */
+    int request_event_fd;
     /* The port clients connect to (SAVANXP_WM_PORT_NAME), and the connections
      * still owing their hello. */
     int port_fd;

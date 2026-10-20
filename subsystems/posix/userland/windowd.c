@@ -7,7 +7,6 @@
 #include "windowd_presentation.h"
 #include "windowd_layout.h"
 #include "windowd_render.h"
-#include "windowd_stats.h"
 
 #define WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME 16
 #define WINDOWD_SURFACE_PAGE_SIZE 4096u
@@ -1347,8 +1346,7 @@ static int windowd_commit(
     int cursor_x,
     int cursor_y,
     struct windowd_dirty_rect *dirty,
-    int wait,
-    struct windowd_stats *stats)
+    int wait)
 {
     struct savanxp_compositor_scene *scene = session->compositor.scene;
     struct savanxp_compositor_reply reply;
@@ -1360,9 +1358,7 @@ static int windowd_commit(
     {
         return -1;
     }
-    windowd_stats_frame_begin(stats);
     windowd_paint_wm_surface(session, dirty);
-    windowd_stats_compose_done(stats);
 
     scene->magic = SAVANXP_COMPOSITOR_SCENE_MAGIC;
     scene->flags = 0;
@@ -1400,8 +1396,6 @@ static int windowd_commit(
     {
         return windowd_stage_failed("compositord commit", result);
     }
-    windowd_stats_frame_end(stats, &reply);
-    windowd_stats_report(stats, 0);
     drop_broken_clients(session, dirty, reply.broken_surfaces);
     return 0;
 }
@@ -1678,7 +1672,8 @@ static void refuse_connection(struct windowd_pending_connection *connection, int
 /*
  * Builds the channels of an admitted connection and hands them over: the
  * handles go into the event pipe's queue -- the surface section, the wake
- * event, the session's submit event, then the input ring or the window list --
+ * event, the session's submit event (compositord's), then the input ring or
+ * the window list, then windowd's request event if the hello asked for it --
  * and the welcome record after them. windowd keeps two descriptors: the
  * event pipe's write end and the wake event; the shell also keeps its request
  * pipe. `client` already has its surface_info and role. 0, or -1 leaving the
@@ -1689,7 +1684,8 @@ static int connect_client(
     struct windowd_pending_connection *connection,
     int submit_event_fd,
     int shell_role,
-    int input_ring)
+    int input_ring,
+    int request_event_fd)
 {
     struct savanxp_wm_event record;
     int section_fd = -1;
@@ -1770,8 +1766,8 @@ static int connect_client(
         goto fail;
     }
 
-    /* Four at most: exactly the pipe's handle queue. The client takes them
-     * all before it asks for an owned window, whose section uses that queue. */
+    /* Five at most, in a queue of eight. The client takes them all before it
+     * asks for an owned window, whose section uses that queue. */
     if (pipe_send_handle(connection->write_fd, section_fd) < 0 ||
         pipe_send_handle(connection->write_fd, wake_event) < 0 ||
         pipe_send_handle(connection->write_fd, submit_event_fd) < 0)
@@ -1787,12 +1783,21 @@ static int connect_client(
         }
         handle_count = 4u;
     }
+    if (request_event_fd >= 0)
+    {
+        if (pipe_send_handle(connection->write_fd, request_event_fd) < 0)
+        {
+            goto fail;
+        }
+        handle_count += 1u;
+    }
 
     memset(&record, 0, sizeof(record));
     record.kind = SAVANXP_WM_EVENT_WELCOME;
     record.payload.welcome.status = 0;
     record.payload.welcome.handle_count = handle_count;
-    record.payload.welcome.flags = shell_role ? SAVANXP_WM_WELCOME_SHELL : 0u;
+    record.payload.welcome.flags = (shell_role ? SAVANXP_WM_WELCOME_SHELL : 0u) |
+        (request_event_fd >= 0 ? SAVANXP_WM_WELCOME_REQUEST_EVENT : 0u);
     /* The pipe is empty: a whole record always fits. */
     if (savanxp_write(connection->write_fd, &record, sizeof(record)) != (long)sizeof(record))
     {
@@ -2497,7 +2502,8 @@ static void admit_connection(
     }
 
     if (connect_client(client, connection, session->submit_event_fd, shell_role,
-            (hello->flags & SAVANXP_WM_HELLO_INPUT_RING) != 0u) < 0)
+            (hello->flags & SAVANXP_WM_HELLO_INPUT_RING) != 0u,
+            (hello->flags & SAVANXP_WM_HELLO_REQUEST_EVENT) != 0u ? session->request_event_fd : -1) < 0)
     {
         eprintf("windowd: cannot set up the window of pid %ld\n", connection->pid);
         refuse_connection(connection, -SAVANXP_ENOMEM);
@@ -2616,6 +2622,7 @@ static int open_compositor_session(struct windowd_session *session, int own_daem
     session->input_fd = -1;
     session->mouse_fd = -1;
     session->submit_event_fd = -1;
+    session->request_event_fd = -1;
     session->port_fd = -1;
     for (slot = 0; slot < WINDOWD_MAX_PENDING_CONNECTIONS; ++slot)
     {
@@ -2660,12 +2667,17 @@ static int open_compositor_session(struct windowd_session *session, int own_daem
         session->mouse_fd = -1;
     }
 
-    /* One for the whole session: every client gets it with its welcome and
-     * the loop resets it before looking at all of them. */
-    session->submit_event_fd = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
-    if (session->submit_event_fd < 0)
+    /* The submit event every client gets with its welcome is compositord's:
+     * a frame wakes compositord, not windowd. windowd only hands it out. */
+    session->submit_event_fd = session->compositor.frame_event_fd;
+    session->compositor.frame_event_fd = -1;
+    /* windowd's own, for clients that set it after a request in their header
+     * (SAVANXP_WM_HELLO_REQUEST_EVENT); the loop resets it before looking at
+     * all of them. */
+    session->request_event_fd = (int)event_create(SAVANXP_EVENT_MANUAL_RESET);
+    if (session->request_event_fd < 0)
     {
-        return windowd_stage_failed("create submit event", session->submit_event_fd);
+        return windowd_stage_failed("create request event", session->request_event_fd);
     }
 
     /* Where programs connect to get a window. It must exist before the first
@@ -2705,6 +2717,7 @@ static void close_compositor_session(struct windowd_session *session)
     close_fd_if_needed(&session->input_fd);
     close_fd_if_needed(&session->mouse_fd);
     close_fd_if_needed(&session->submit_event_fd);
+    close_fd_if_needed(&session->request_event_fd);
     windowd_compositor_close(&session->compositor);
     windowd_set_wm_surface(0, 0);
     g_session = 0;
@@ -3436,7 +3449,7 @@ static int windowd_cursor_repro(void)
     /* Frame A: dialog visible, cursor parked far away (top-left corner, off the
      * dialog). Full repaint so the backbuffer holds the clean image. */
     windowd_dirty_rect_add_fullscreen(&dirty, info);
-    (void)windowd_commit(&session, 4, 4, &dirty, 1, 0);
+    (void)windowd_commit(&session, 4, 4, &dirty, 1);
     for (row = 0; row < fh; ++row)
     {
         for (col = 0; col < fw; ++col)
@@ -3446,7 +3459,7 @@ static int windowd_cursor_repro(void)
     }
 
     /* Frame B: move cursor ONTO Q, nothing else damaged. */
-    (void)windowd_commit(&session, qx, qy, &dirty, 1, 0);
+    (void)windowd_commit(&session, qx, qy, &dirty, 1);
     for (row = 0; row < fh; ++row)
     {
         for (col = 0; col < fw; ++col)
@@ -3462,7 +3475,7 @@ static int windowd_cursor_repro(void)
 
     /* Frame C: move cursor OFF Q to R. The display at Q must return to the
      * clean baseline. */
-    (void)windowd_commit(&session, rx, ry, &dirty, 1, 0);
+    (void)windowd_commit(&session, rx, ry, &dirty, 1);
     {
         int min_col = fw;
         int min_row = fh;
@@ -3858,7 +3871,7 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
 {
     int slot;
 
-    (void)event_reset(session->submit_event_fd);
+    (void)event_reset(session->request_event_fd);
     service_connections(session, dirty);
     service_close_requests(session, dirty);
     service_desktop(session, dirty);
@@ -3871,7 +3884,7 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
     service_client_starts(session, dirty);
     /* compositord consumes the clients' frames and composes; the cursor stays
      * parked where the soak keeps it. */
-    (void)windowd_commit(session, WINDOWD_SELFTEST_CURSOR_X, WINDOWD_SELFTEST_CURSOR_Y, dirty, 0, 0);
+    (void)windowd_commit(session, WINDOWD_SELFTEST_CURSOR_X, WINDOWD_SELFTEST_CURSOR_Y, dirty, 0);
 }
 
 /* First desktop window with `role` that has presented a frame, or 0. */
@@ -4504,7 +4517,6 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
     for (iteration = 0; iteration < 6000; ++iteration)
     {
         service_client_start(dirty, client);
-        (void)reap_dead_clients(session, dirty);
         /* Every pass commits: compositord consumes the client's frames then. */
         {
             struct sx_rect surface = windowd_client_surface_rect(client);
@@ -4513,7 +4525,7 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
             uint32_t sample_x = (uint32_t)(surface.x + surface.width / 2);
             uint32_t sample_y = (uint32_t)(surface.y + surface.height / 2);
 
-            if (windowd_commit(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty, 1, 0) < 0)
+            if (windowd_commit(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty, 1) < 0)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL native: commit\n");
                 return 1;
@@ -4543,6 +4555,9 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
                 }
             }
         }
+        /* After sampling: compositord composes on its own, and a client may
+         * show its last frame and end before windowd looks. */
+        (void)reap_dead_clients(session, dirty);
         if (green && client->pid <= 0)
         {
             break;
@@ -4636,10 +4651,9 @@ static int windowd_native_widgets_selftest(struct windowd_session *session, stru
     for (iteration = 0; iteration < 9000; ++iteration)
     {
         service_client_start(dirty, client);
-        (void)reap_dead_clients(session, dirty);
         {
             surface = windowd_client_surface_rect(client);
-            if (windowd_commit(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty, 1, 0) < 0)
+            if (windowd_commit(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty, 1) < 0)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL widgets: commit\n");
                 return 1;
@@ -4700,6 +4714,7 @@ static int windowd_native_widgets_selftest(struct windowd_session *session, stru
                 (void)route_key(client, &key);
             }
         }
+        (void)reap_dead_clients(session, dirty);
         if (typed && client->pid <= 0)
         {
             break;
@@ -4777,10 +4792,9 @@ static int windowd_native_hw_selftest(void)
             (void)route_key(active_client(&session), &key_event);
         }
         service_client_start(&dirty, client);
-        (void)reap_dead_clients(&session, &dirty);
         {
             surface = windowd_client_surface_rect(client);
-            if (windowd_commit(&session, (int)session.gfx.info.width - 20, (int)session.gfx.info.height - 20, &dirty, 1, 0) < 0)
+            if (windowd_commit(&session, (int)session.gfx.info.width - 20, (int)session.gfx.info.height - 20, &dirty, 1) < 0)
             {
                 puts_fd(2, "NATIVE HW FAIL commit\n");
                 close_compositor_session(&session);
@@ -4811,6 +4825,7 @@ static int windowd_native_hw_selftest(void)
                 printf("NATIVE HW typed ok (real PS/2 through input ring)\n");
             }
         }
+        (void)reap_dead_clients(&session, &dirty);
         if (typed && client->pid <= 0)
         {
             break;
@@ -5111,7 +5126,7 @@ static int windowd_selftest(void)
          * clients' frames, so none stalls waiting for a free batch slot. */
         if (!windowd_dirty_rect_valid(&dirty))
         {
-            if (windowd_commit(&session, kCursorX, kCursorY, &dirty, 0, 0) < 0)
+            if (windowd_commit(&session, kCursorX, kCursorY, &dirty, 0) < 0)
             {
                 puts_fd(2, "DESKTOP SMOKE FAIL commit\n");
                 failed = 1;
@@ -5122,7 +5137,7 @@ static int windowd_selftest(void)
         }
 
         /* Synchronous: the frame is on the screen when the commit returns. */
-        if (windowd_commit(&session, kCursorX, kCursorY, &dirty, 1, 0) < 0)
+        if (windowd_commit(&session, kCursorX, kCursorY, &dirty, 1) < 0)
         {
             puts_fd(2, "DESKTOP SMOKE FAIL commit\n");
             failed = 1;
@@ -5208,7 +5223,7 @@ static int windowd_selftest(void)
             session.switcher_open = 1;
             session.switcher_selected = task_index;
             windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-            (void)windowd_commit(&session, kCursorX, kCursorY, &dirty, 1, 0);
+            (void)windowd_commit(&session, kCursorX, kCursorY, &dirty, 1);
             switcher_switch_to(&session, &dirty, task_index);
             if (client->minimized)
             {
@@ -6113,7 +6128,6 @@ int main(int argc, char **argv)
     int drag_overlay_slot = -1;
     int drag_offset_x = 0;
     int drag_offset_y = 0;
-    struct windowd_stats stats;
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
     {
@@ -6140,7 +6154,6 @@ int main(int argc, char **argv)
     /* Nothing is started here: sessiond starts the desktop and Program Manager
      * once the port exists, and they connect like anybody else. Without a
      * desktop the session lives on with a solid background. */
-    windowd_stats_open(&stats);
     windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
 
     for (;;)
@@ -6150,10 +6163,9 @@ int main(int argc, char **argv)
         struct savanxp_pollfd poll_fds[4 + WINDOWD_MAX_PENDING_CONNECTIONS];
         int input_poll_index = -1;
         int mouse_poll_index = -1;
-        int submit_poll_index = -1;
+        int request_poll_index = -1;
         int poll_count = 0;
         int slot;
-        int submitted = 0;
         long count = 0;
 
         input_poll_index = poll_count;
@@ -6171,11 +6183,12 @@ int main(int argc, char **argv)
             ++poll_count;
         }
 
-        /* Wake on client frame submissions and header requests, not just the
-         * 16 ms timeout (kept as a backstop). The timeout still bounds latency
-         * if a wakeup is missed. */
-        submit_poll_index = poll_count;
-        poll_fds[poll_count].fd = session.submit_event_fd;
+        /* Wake on header requests, not just the 16 ms tick. Frames do not
+         * wake windowd: they are compositord's. The tick is what notices a
+         * window's first frame, and the requests of a client that did not ask
+         * for the request event. */
+        request_poll_index = poll_count;
+        poll_fds[poll_count].fd = session.request_event_fd;
         poll_fds[poll_count].events = SAVANXP_POLLIN;
         poll_fds[poll_count].revents = 0;
         ++poll_count;
@@ -6204,15 +6217,12 @@ int main(int argc, char **argv)
 
         sweep_pending_reaps();
 
-        /* Reset BEFORE servicing: a client that submits after this point
-         * re-arms the event and wakes the next poll. Every client is serviced
-         * below on every pass, so one shared event is enough. A submit is a
-         * frame or a request; either way the commit below lets compositord
-         * consume what was published. */
-        submitted = (poll_fds[submit_poll_index].revents & SAVANXP_POLLIN) != 0;
-        if (submitted)
+        /* Reset BEFORE servicing: a client that asks after this point re-arms
+         * the event and wakes the next poll. Every client is serviced below on
+         * every pass, so one shared event is enough. */
+        if ((poll_fds[request_poll_index].revents & SAVANXP_POLLIN) != 0)
         {
-            (void)event_reset(session.submit_event_fd);
+            (void)event_reset(session.request_event_fd);
         }
 
         if (input_poll_index >= 0 && (poll_fds[input_poll_index].revents & SAVANXP_POLLIN) != 0)
@@ -6287,20 +6297,18 @@ int main(int argc, char **argv)
         }
         service_client_starts(&session, &dirty);
 
-        if (!submitted && !session.cursor_moved && !windowd_dirty_rect_valid(&dirty))
+        if (!session.cursor_moved && !windowd_dirty_rect_valid(&dirty))
         {
             continue;
         }
         /* Without compositord the session is over: sessiond restarts all of
          * it. */
-        if (windowd_commit(&session, cursor_x, cursor_y, &dirty, 0, &stats) < 0)
+        if (windowd_commit(&session, cursor_x, cursor_y, &dirty, 0) < 0)
         {
             break;
         }
     }
 
-    windowd_stats_report(&stats, 1);
-    windowd_stats_close(&stats);
     close_compositor_session(&session);
     return 1;
 }

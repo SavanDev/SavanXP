@@ -509,10 +509,17 @@ struct gfx_wm_connection {
     int wake_fd;
     int submit_fd;
     int window_list_fd; /* the shell's only */
+    /* Set after a request in the header (SAVANXP_WM_HELLO_REQUEST_EVENT); the
+     * submit event is for frames only, which go to compositord. -1 if the WM
+     * did not give one: then requests go with the submit event, and the WM
+     * sees them on its next tick. */
+    int request_event_fd;
     uint32_t welcome_flags;
 };
 
-static struct gfx_wm_connection g_gfx_wm = {0, -1, -1, -1, -1, -1, -1, 0};
+static struct gfx_wm_connection g_gfx_wm = {0, -1, -1, -1, -1, -1, -1, -1, 0};
+
+static long gfx_notify_wm(const struct savanxp_gfx_context* context);
 
 static void gfx_close_fd(int* fd) {
     if (*fd >= 0) {
@@ -579,7 +586,9 @@ static long gfx_wait_welcome(int events_fd, struct savanxp_wm_welcome* welcome) 
 
 static long gfx_wm_connect(uint32_t hello_flags) {
     int32_t handles[2] = {-1, -1};
-    int received[4] = {-1, -1, -1, -1};
+    int received[5] = {-1, -1, -1, -1, -1};
+    uint32_t expected = 3u;
+    uint32_t next = 3u;
     struct savanxp_wm_hello hello;
     struct savanxp_wm_welcome welcome;
     unsigned long deadline = 0;
@@ -607,7 +616,7 @@ static long gfx_wm_connect(uint32_t hello_flags) {
     memset(&hello, 0, sizeof(hello));
     hello.magic = SAVANXP_WM_HELLO_MAGIC;
     hello.version = SAVANXP_WM_PROTOCOL_VERSION;
-    hello.flags = hello_flags;
+    hello.flags = hello_flags | SAVANXP_WM_HELLO_REQUEST_EVENT;
     hello.launch_flags = gfx_own_launch_flags();
     if (savanxp_write(handles[0], &hello, sizeof(hello)) != (long)sizeof(hello)) {
         result = -SAVANXP_EPIPE;
@@ -621,10 +630,16 @@ static long gfx_wm_connect(uint32_t hello_flags) {
         result = welcome.status < 0 ? welcome.status : -SAVANXP_EIO;
         goto fail;
     }
-    /* section, wake, submit, and the window list for the shell. A POSIX
-     * client reads its input from the pipe, so it never asks for the ring. */
-    if (welcome.handle_count < 3u || welcome.handle_count > 4u ||
-        (welcome.handle_count == 4u) != ((welcome.flags & SAVANXP_WM_WELCOME_SHELL) != 0u)) {
+    /* section, wake, submit, the window list for the shell, then the request
+     * event. A POSIX client reads its input from the pipe, so it never asks
+     * for the ring. */
+    if ((welcome.flags & SAVANXP_WM_WELCOME_SHELL) != 0u) {
+        expected += 1u;
+    }
+    if ((welcome.flags & SAVANXP_WM_WELCOME_REQUEST_EVENT) != 0u) {
+        expected += 1u;
+    }
+    if (welcome.handle_count != expected) {
         result = -SAVANXP_EIO;
         goto fail;
     }
@@ -640,7 +655,12 @@ static long gfx_wm_connect(uint32_t hello_flags) {
     g_gfx_wm.section_fd = received[0];
     g_gfx_wm.wake_fd = received[1];
     g_gfx_wm.submit_fd = received[2];
-    g_gfx_wm.window_list_fd = received[3];
+    if ((welcome.flags & SAVANXP_WM_WELCOME_SHELL) != 0u) {
+        g_gfx_wm.window_list_fd = received[next++];
+    }
+    if ((welcome.flags & SAVANXP_WM_WELCOME_REQUEST_EVENT) != 0u) {
+        g_gfx_wm.request_event_fd = received[next++];
+    }
     g_gfx_wm.welcome_flags = welcome.flags;
     if ((welcome.flags & SAVANXP_WM_WELCOME_SHELL) != 0u) {
         g_gfx_wm.request_fd = handles[0];
@@ -652,7 +672,7 @@ static long gfx_wm_connect(uint32_t hello_flags) {
     return 0;
 
 fail:
-    for (index = 0; index < 4u; ++index) {
+    for (index = 0; index < 5u; ++index) {
         gfx_close_fd(&received[index]);
     }
     gfx_close_fd(&handles[0]);
@@ -693,7 +713,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context, uint32_t hello_
     gfx_publish_presentation(context);
     /* Before the first frame the WM sees it on the next pass anyway; wake it
      * so the title is right from the start. */
-    (void)event_set(context->submit_event_fd);
+    (void)gfx_notify_wm(context);
     return 0;
 }
 
@@ -1118,9 +1138,13 @@ long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct sa
     return 0;
 }
 
-/* Los pedidos al WM se escriben en el header y se avisan con el mismo evento
- * de submit que los frames (savanxp_wm_client_requests). */
+/* Requests to the WM are written into the header (savanxp_wm_client_requests)
+ * and announced with the WM's request event; a WM that gave none gets the
+ * submit event, as before. */
 static long gfx_notify_wm(const struct savanxp_gfx_context* context) {
+    if (g_gfx_wm.request_event_fd >= 0) {
+        return event_set(g_gfx_wm.request_event_fd);
+    }
     return context->submit_event_fd >= 0 ? event_set(context->submit_event_fd) : 0;
 }
 

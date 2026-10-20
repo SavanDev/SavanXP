@@ -8,18 +8,12 @@ compose path was to look at the screen and form an opinion.
 This document defines what is measured, how to read it, and what it does not
 yet answer.
 
-> **Phase 4 moves composition into `compositord`**
-> ([DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md#composition-in-compositord)),
-> and the pipeline below is the one before it. Since phase 4 step 2, stages 2
-> and 3 are one *commit*: `windowd` paints only its own surface (frames,
-> switcher) and sends the scene; `compositord` composes and presents, pacing on
-> the GPU's present event instead of `windowd`'s 16 ms poll. `windowd-stats`
-> keeps its fields with these meanings: `compose_us` is `windowd` painting its
-> surface plus `compositord` composing; `sync_us` is 0 (there is no sync step);
-> `present_us` and `blk_us` are the commit round trip; `ipc_us` is that round
-> trip minus `compositord`'s service; a commit that presented nothing is not a
-> frame. `shoot.sh --scenario spin --accel kvm --virtio` went from ~61 to
-> ~970 fps with it.
+> **Phase 4 moved composition into `compositord`**
+> ([DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md#composition-in-compositord)).
+> The pipeline and the `windowd-stats` line described below are the ones
+> before it, kept because the measurements in this document were taken with
+> them; [After phase 4](#after-phase-4) is the pipeline now and its
+> `compositord-stats` line.
 
 ## The pipeline
 
@@ -436,3 +430,46 @@ frames. It was correct -- `windowd-smoke`, including the test that kills
 failure one frame later and made hardware-cursor moves absorb the wait, in
 exchange for nothing measurable. So it was reverted, and this section is
 where it waits for phase 2.
+
+## After phase 4
+
+A pixel drawn by an application now reaches the display like this:
+
+1. **The client draws** into its shared surface, as before, and sets the
+   session's submit event, which is `compositord`'s.
+2. **`compositord` consumes the batch**, damages it through the layers of the
+   scene that show that surface, **composes** (one pass per layer over
+   `damage ∩ dst − opaque layers in front`, `compositord_scene.c`) and
+   **presents** with the GPU calls it used to make on `windowd`'s behalf. No
+   process boundary is crossed between the frame and the GPU.
+3. **The backend** puts it on the screen, as before. `compositord` composes the
+   next frame once the previous present has retired, woken by the GPU's present
+   event rather than by a timeout.
+
+`windowd` is no longer on that path. It commits the scene when windows move,
+stack, open or close, or the cursor moves (`compositor_protocol.h` COMMIT), and
+paints only its own surface: frames, the Alt+Tab switcher, the fallback
+background.
+
+`compositord` reports on `/dev/serial` every two seconds in which it presented
+a frame:
+
+```
+compositord-stats: window_ms=2000 frames=10483 fps=5241.2 compose_us=16/107 \
+                   present_us=18/152 gpu_us=18 tl_us=0 damage_px=9984 \
+                   bounds_px=9984 rects=1.0
+```
+
+That is the `spin` scenario on KVM with virtio-gpu, the same workload as the
+`windowd-stats` line above (~61 fps before phase 4).
+
+| field | meaning |
+|---|---|
+| `compose_us` | average / worst microseconds composing the damage into the display. |
+| `present_us` | average / worst microseconds in the GPU calls of a frame: `gpu_us` plus `tl_us`. |
+| `gpu_us`, `tl_us` | the present-batch and timeline-query syscalls, as in `windowd-stats`. |
+| `damage_px`, `bounds_px`, `rects` | as in `windowd-stats`. |
+
+`sync_us`, `blk_us`, `ipc_us` and `svc_us` have no equivalent: they measured
+`windowd` waiting on `compositord`, and nothing waits on that round trip any
+more.

@@ -174,6 +174,7 @@ void windowd_compositor_connection_init(struct windowd_compositor_connection *co
     connection->pid = -1;
     connection->request_fd = -1;
     connection->reply_fd = -1;
+    connection->frame_event_fd = -1;
 }
 
 /* Starts a compositord of windowd's own, for the test modes that run without
@@ -315,6 +316,14 @@ int windowd_compositor_open(struct windowd_compositor_connection *connection, in
         return result;
     }
     connection->framebuffer = (uint32_t *)connection->display_view;
+    connection->frame_event_fd = (int)sxn_pipe_receive_handle(connection->reply_fd);
+    if (connection->frame_event_fd < 0)
+    {
+        result = connection->frame_event_fd;
+        connection->frame_event_fd = -1;
+        windowd_compositor_close(connection);
+        return result;
+    }
 
     /* windowd's own surface, at the native mode: every smaller mode fits. */
     {
@@ -379,6 +388,7 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
 
     close_fd_if_needed(&connection->request_fd);
     close_fd_if_needed(&connection->reply_fd);
+    close_fd_if_needed(&connection->frame_event_fd);
 
     /* compositord ends when its WM hangs up; one windowd started itself is
      * its child and is waited for. One that did not confirm the shutdown may

@@ -358,8 +358,7 @@ savanxp_program(NAME windowd NATIVE SOURCES
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/windowd_presentation.c
     subsystems/posix/userland/windowd_layout.c
-    subsystems/posix/userland/windowd_render.c
-    subsystems/posix/userland/windowd_stats.c)
+    subsystems/posix/userland/windowd_render.c)
 # The desktop: background, taskbar, Start menu and the taskbar's popups, as
 # windows of one process (docs/desktop/DESKTOP_ARCHITECTURE.md). windowd starts
 # it as the shell. No .sxres, so it stays out of the launcher.

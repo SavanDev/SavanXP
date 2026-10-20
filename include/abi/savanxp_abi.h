@@ -1095,7 +1095,8 @@ enum savanxp_wm_event_kind {
  * handles are already queued on the event pipe, in this order: the surface
  * section, the wake event, the session's submit event, then the input ring
  * (if SAVANXP_WM_HELLO_INPUT_RING was asked) or the window list section (for
- * the shell). 32 bytes, like an event record.
+ * the shell), then the request event (if SAVANXP_WM_HELLO_REQUEST_EVENT was
+ * asked). 32 bytes, like an event record.
  */
 #define SAVANXP_WM_HELLO_MAGIC 0x4f4c4548u /* "HELO" */
 #define SAVANXP_WM_PROTOCOL_VERSION 5u
@@ -1109,6 +1110,11 @@ enum savanxp_wm_event_kind {
  * carries -EACCES. See docs/desktop/DESKTOP_ARCHITECTURE.md#who-is-the-shell-
  * decided-by-parentage. */
 #define SAVANXP_WM_HELLO_SHELL 0x00000002u
+/* The client sets a request event of its own after a request in its header,
+ * and the submit event only after a frame: frames go to compositord, requests
+ * to the WM (docs/desktop/DESKTOP_ARCHITECTURE.md#frames). A client that does
+ * not ask has its requests seen on the WM's next tick. */
+#define SAVANXP_WM_HELLO_REQUEST_EVENT 0x00000004u
 
 struct savanxp_wm_hello {
     uint32_t magic;        /* SAVANXP_WM_HELLO_MAGIC */
@@ -1121,6 +1127,7 @@ struct savanxp_wm_hello {
 /* The welcome carries the outcome; the rest of the window (size, style) is in
  * the surface header as always. */
 #define SAVANXP_WM_WELCOME_SHELL 0x00000001u /* the connection has the shell role */
+#define SAVANXP_WM_WELCOME_REQUEST_EVENT 0x00000002u /* the request event is the last handle */
 
 struct savanxp_wm_welcome {
     int32_t status;        /* 0, or -errno and no handles */
