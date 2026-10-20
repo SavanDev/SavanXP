@@ -232,6 +232,30 @@ Two things stayed on purpose, and the guard says so:
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
 
+## Slice 14: handles, devices and the clock for services
+
+The calls a platform service needs to run without POSIX
+([DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md), phase 3):
+
+- `SXN_SYS_CLOSE`, `SXN_SYS_DUPLICATE` (`0x100c`, `0x100d`): on the shared
+  handle table, granted access carried over.
+- `SXN_SYS_READ`, `SXN_SYS_WRITE` (`0x100e`, `0x100f`): pipes and devices
+  only. They sit on the kernel's own cores (`try_pipe_read`,
+  `pipe_write_chunk`, `device::read/write`), not on the POSIX translation, and
+  park the process as `blocked_read`/`blocked_write` like the POSIX side, so
+  the same wakeups serve both. A pipe write up to the pipe's capacity is whole
+  or not at all.
+- `SXN_SYS_OPEN_DEVICE`, `SXN_SYS_DEVICE_CONTROL` (`0x1014`, `0x1015`): a
+  device by bare name (`gpu0`, `input0`, `serial`; letters and digits only, so
+  the call cannot reach outside `/dev`), then the same control requests the
+  POSIX side sends through `ioctl`. The `SXN_SYS_GFX_*` block stays as the
+  whole-screen path for a simple program; a service driving the hardware uses
+  the device.
+- `SXN_SYS_CLOCK` (`0x1016`): monotonic nanoseconds.
+
+`nativetest` covers all of them except pipe I/O, which a native process cannot
+create pipes for yet; native `compositord` exercises that path.
+
 ## Slice 12: real PS/2 keys, native apps in the menu
 
 - `windowd --hw-native-test` (scenario `native-hw-smoke`): launches

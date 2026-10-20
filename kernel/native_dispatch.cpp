@@ -5,11 +5,175 @@
 
 #include "abi/savanxp_native_abi.h"
 #include "kernel/console.hpp"
+#include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/heap.hpp"
+#include "kernel/object.hpp"
+#include "kernel/process_detail.hpp"
 #include "kernel/sx.hpp"
+#include "kernel/timer.hpp"
+#include "kernel/vfs.hpp"
 
 namespace process {
+
+namespace {
+
+/* --- Handles and I/O for native processes ---------------------------------
+ *
+ * Built on the kernel's own cores (handle table, pipe chunking, device
+ * dispatch), not on the POSIX translation: a native process reads a pipe the
+ * way the kernel defines a pipe, and the POSIX layer's tty, file and socket
+ * semantics stay where they belong. Blocking parks the process exactly as the
+ * POSIX side does (blocked_read/blocked_write), so the existing wakeups --
+ * a write making room, a reader appearing -- serve both. */
+
+int native_close(Process& proc, uint64_t handle) {
+    if (handle >= kMaxFileHandles || proc.handles[handle].object == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    object::release(proc.handles[handle].object);
+    proc.handles[handle].granted_access = object::access_none;
+    proc.handles[handle].flags = object::handle_none;
+    return 0;
+}
+
+int native_duplicate(Process& proc, uint64_t handle) {
+    object::Header* target = detail::lookup_handle(proc, handle, object::access_query);
+    if (target == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    return detail::allocate_fd(proc, target, proc.handles[handle].granted_access, proc.handles[handle].flags);
+}
+
+int native_read(Process& proc, uint64_t handle, uint64_t user_buffer, size_t count) {
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_read);
+    if (file == nullptr || (file->open_flags & open_read) == 0) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (count == 0) {
+        return 0;
+    }
+    if (!sx::validate_user_range(user_buffer, count, true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (file->kind == HandleKind::device) {
+        return device::read(file->device, user_buffer, count);
+    }
+    if (file->kind != HandleKind::pipe) {
+        return sx::negative_error(SX_EBADF);
+    }
+    const int result = detail::try_pipe_read(proc, *file, user_buffer, count);
+    if (result != kBlockedResult) {
+        return result;
+    }
+    if ((file->open_flags & open_nonblock) != 0) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    proc.blocked_io_fd = handle;
+    proc.blocked_read_buffer = user_buffer;
+    proc.blocked_read_capacity = count;
+    proc.state = State::blocked_read;
+    return kBlockedResult;
+}
+
+int native_write(Process& proc, uint64_t handle, uint64_t user_buffer, size_t count) {
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_write);
+    if (file == nullptr || (file->open_flags & open_write) == 0) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (count == 0) {
+        return 0;
+    }
+    if (!sx::validate_user_range(user_buffer, count, false)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (file->kind == HandleKind::device) {
+        return device::write(file->device, user_buffer, count);
+    }
+    if (file->kind != HandleKind::pipe || file->pipe == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+
+    const bool nonblocking = (file->open_flags & open_nonblock) != 0;
+    // Records up to the pipe's capacity are written whole or not at all, so a
+    // reader of fixed-size records never sees half of one.
+    if (nonblocking && count <= detail::kPipeCapacity && file->pipe->reader_refs != 0 &&
+        (detail::kPipeCapacity - file->pipe->size) < count) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    const int step = detail::pipe_write_chunk(proc, *file->pipe, user_buffer, count, 0);
+    if (step == kBlockedResult && nonblocking) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    if (step < 0 && step != kBlockedResult) {
+        return step;
+    }
+    if (step != kBlockedResult && (static_cast<size_t>(step) == count || nonblocking)) {
+        return step;
+    }
+    proc.blocked_io_fd = handle;
+    proc.blocked_write_buffer = user_buffer;
+    proc.blocked_write_length = count;
+    proc.blocked_write_progress = step == kBlockedResult ? 0 : static_cast<uint64_t>(step);
+    proc.state = State::blocked_write;
+    return kBlockedResult;
+}
+
+/* Devices live under /dev; a native process names them without the
+ * directory, so it cannot reach anything else through this call. */
+int native_open_device(Process& proc, uint64_t user_name, uint32_t access) {
+    char name[32] = {};
+    char path[40] = "/dev/";
+    size_t length = 0;
+
+    if (!sx::copy_user_string(name, sizeof(name), user_name) || name[0] == '\0' ||
+        (access & ~(SXN_DEVICE_READ | SXN_DEVICE_WRITE)) != 0 || access == 0) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    for (length = 0; name[length] != '\0'; ++length) {
+        const char c = name[length];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+            return sx::negative_error(SX_EINVAL);
+        }
+        path[5 + length] = c;
+    }
+
+    const uint32_t open_flags =
+        ((access & SXN_DEVICE_READ) != 0 ? SAVANXP_OPEN_READ : 0u) |
+        ((access & SXN_DEVICE_WRITE) != 0 ? SAVANXP_OPEN_WRITE : 0u);
+    vfs::Vnode* node = vfs::open(path, open_flags);
+    if (node == nullptr || node->backend != vfs::Backend::device) {
+        return sx::negative_error(SX_ENOENT);
+    }
+
+    object::IoObject* file = detail::allocate_io_object();
+    if (file == nullptr) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    file->kind = HandleKind::device;
+    file->open_flags =
+        ((access & SXN_DEVICE_READ) != 0 ? open_read : 0u) |
+        ((access & SXN_DEVICE_WRITE) != 0 ? open_write : 0u);
+    file->node = node;
+    file->device = static_cast<device::Device*>(node->data);
+    file->header.destroy = detail::destroy_io_object;
+    const int handle = detail::allocate_fd(
+        proc, &file->header, detail::object_access_for_open_flags(file->open_flags), object::handle_none);
+    if (handle < 0) {
+        detail::discard_io_object(file);
+    }
+    return handle;
+}
+
+int native_device_control(Process& proc, uint64_t handle, uint64_t code, uint64_t argument) {
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_query);
+    if (file == nullptr || file->kind != HandleKind::device || file->device == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    return device::ioctl(file->device, code, argument, proc.handles[handle].granted_access);
+}
+
+} // namespace
 
 // El subsistema nativo declara su estado privado por proceso como cualquier
 // otro (rebanada B). Hoy declara cero: un proceso nativo no tiene estado propio,
@@ -235,6 +399,37 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(presented ? 0 : sx::negative_error(SX_EIO));
             return context;
         }
+        case SXN_SYS_CLOSE:
+            context->rax = static_cast<uint64_t>(native_close(*caller, context->rdi));
+            return context;
+        case SXN_SYS_DUPLICATE:
+            context->rax = static_cast<uint64_t>(native_duplicate(*caller, context->rdi));
+            return context;
+        case SXN_SYS_READ: {
+            const int result = native_read(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
+            if (result == kBlockedResult) {
+                return choose_next_context(context);
+            }
+            context->rax = static_cast<uint64_t>(result);
+            return context;
+        }
+        case SXN_SYS_WRITE: {
+            const int result = native_write(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
+            if (result == kBlockedResult) {
+                return choose_next_context(context);
+            }
+            context->rax = static_cast<uint64_t>(result);
+            return context;
+        }
+        case SXN_SYS_OPEN_DEVICE:
+            context->rax = static_cast<uint64_t>(native_open_device(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
+        case SXN_SYS_DEVICE_CONTROL:
+            context->rax = static_cast<uint64_t>(native_device_control(*caller, context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_CLOCK:
+            context->rax = timer::monotonic_ns();
+            return context;
         default:
             break;
     }

@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Native calls for handles, devices and time.** `SXN_SYS_CLOSE`, `_DUPLICATE`, `_READ` and
+  `_WRITE` (pipes and devices), `_OPEN_DEVICE` and `_DEVICE_CONTROL` (a device by bare name,
+  the same control codes as `ioctl`) and `_CLOCK`, with `sxn.h` wrappers; `native-test` covers them.
+
 - **Window roles and global hotkeys for the shell.** `gfx_window_open_role` opens a
   `panel` (a reserved screen edge) or a `popup` (dismissable on an outside press);
   `SAVANXP_WM_SHELL_REGISTER_HOTKEY` (shell protocol v4) routes a key to the shell.

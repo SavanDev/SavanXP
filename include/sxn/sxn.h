@@ -9,8 +9,9 @@
  * the shared errno space and the POSIX numbers the negative checks use).
  * Returns follow the kernel convention: 0 or a positive result on success,
  * a negative -errno on failure -- the savanxp_* raw layer style, not the
- * POSIX -1/errno one. No toolkit, no IPC yet: windows and the compositor
- * still need native IPC first (see docs/kernel/KERNEL_NATIVE_API.md).
+ * POSIX -1/errno one. Handles, pipe and device I/O and the clock are what a
+ * platform service needs to run without POSIX (docs/desktop/
+ * DESKTOP_ARCHITECTURE.md, phase 3).
  */
 
 #include <stdint.h>
@@ -80,4 +81,32 @@ static inline long sxn_unmap_view(uint64_t base_address) {
 
 static inline long sxn_gfx_info(struct sxn_gfx_info* out) {
     return sxn_trap(SXN_SYS_GFX_INFO, (unsigned long)out, 0, 0);
+}
+
+static inline long sxn_close(long handle) {
+    return sxn_trap(SXN_SYS_CLOSE, (unsigned long)handle, 0, 0);
+}
+
+static inline long sxn_duplicate(long handle) {
+    return sxn_trap(SXN_SYS_DUPLICATE, (unsigned long)handle, 0, 0);
+}
+
+static inline long sxn_read(long handle, void* buffer, unsigned long count) {
+    return sxn_trap(SXN_SYS_READ, (unsigned long)handle, (unsigned long)buffer, count);
+}
+
+static inline long sxn_write(long handle, const void* buffer, unsigned long count) {
+    return sxn_trap(SXN_SYS_WRITE, (unsigned long)handle, (unsigned long)buffer, count);
+}
+
+static inline long sxn_open_device(const char* name, unsigned access) {
+    return sxn_trap(SXN_SYS_OPEN_DEVICE, (unsigned long)name, (unsigned long)access, 0);
+}
+
+static inline long sxn_device_control(long handle, unsigned long code, unsigned long argument) {
+    return sxn_trap(SXN_SYS_DEVICE_CONTROL, (unsigned long)handle, code, argument);
+}
+
+static inline uint64_t sxn_clock_ns(void) {
+    return (uint64_t)sxn_trap(SXN_SYS_CLOCK, 0, 0, 0);
 }

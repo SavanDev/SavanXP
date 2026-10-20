@@ -69,6 +69,27 @@ enum sxn_syscall_number {
     /* rdi = direccion base. Devuelve 0 o -errno. */
     SXN_SYS_UNMAP_VIEW = 0x100b,
 
+    /* --- Handles and I/O (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3) ---
+     * What a platform service needs to live without POSIX: closing and
+     * duplicating handles, reading and writing the pipes it inherits, talking
+     * to devices, and a clock. They work on the same per-process handle table
+     * as everything else, with the granted access checked at use. */
+
+    /* rdi = handle. Releases it. Returns 0 or -EBADF. */
+    SXN_SYS_CLOSE = 0x100c,
+    /* rdi = handle. A second handle to the same object with the same granted
+     * access. Returns the new handle or -errno. */
+    SXN_SYS_DUPLICATE = 0x100d,
+    /* rdi = handle, rsi = buffer, rdx = byte count. Pipes and devices only.
+     * A pipe read blocks until data arrives (unless the handle is
+     * non-blocking) and returns 0 at end of stream. Returns bytes or -errno. */
+    SXN_SYS_READ = 0x100e,
+    /* rdi = handle, rsi = buffer, rdx = byte count. Pipes and devices only.
+     * A pipe write blocks until it fits; up to the pipe's capacity it is
+     * written whole, never split. Returns bytes or -errno (-EPIPE with no
+     * reader). */
+    SXN_SYS_WRITE = 0x100f,
+
     /* --- Graficos (bloque 0x1010) -----------------------------------------
      * Acceso de primera clase al display: un proceso nativo no abre /dev/gpu0
      * ni hace ioctls; el display es parte del ABI. Kernel-side comparte los
@@ -89,6 +110,30 @@ enum sxn_syscall_number {
      * indicada del buffer del proceso a la pantalla. Requiere sesion.
      * Devuelve 0, -EBUSY sin sesion, -EINVAL con region/buffer invalidos. */
     SXN_SYS_GFX_PRESENT = 0x1013,
+
+    /* --- Devices and time (bloque 0x1014) ---------------------------------
+     * The GFX block above is the whole-screen path for a simple program. A
+     * service that drives the hardware -- compositord with the GPU, windowd
+     * with the input devices -- opens the device and sends it the same control
+     * requests the POSIX side sends through ioctl, as NT's
+     * NtDeviceIoControlFile does. */
+
+    /* rdi = device name (user string, letters and digits only: "gpu0",
+     * "input0", "mouse0"), rsi = access (SXN_DEVICE_READ | SXN_DEVICE_WRITE).
+     * Returns a device handle or -errno (-ENOENT if there is no such device). */
+    SXN_SYS_OPEN_DEVICE = 0x1014,
+    /* rdi = device handle, rsi = control code (the device's *_IOC_*), rdx =
+     * argument. Returns what the device returns: >= 0 or -errno. */
+    SXN_SYS_DEVICE_CONTROL = 0x1015,
+    /* No arguments. Monotonic time in nanoseconds since boot (0 before the
+     * clock is calibrated). */
+    SXN_SYS_CLOCK = 0x1016,
+};
+
+/* Access for SXN_SYS_OPEN_DEVICE. */
+enum sxn_device_access {
+    SXN_DEVICE_READ = 1u << 0,
+    SXN_DEVICE_WRITE = 1u << 1,
 };
 
 /* Banderas de SXN_SYS_EVENT_CREATE. Los valores coinciden con los del lado

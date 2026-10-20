@@ -22,8 +22,9 @@ tests, and future services that want the direct connection.
 
 All header-only, no link or tool changes needed:
 
-- `include/sxn/sxn.h` — typed wrappers for all 14 SXN syscalls: exit,
-  log, spawn, waitpid, events, sections, views, waits, gfx.
+- `include/sxn/sxn.h` — typed wrappers for every SXN syscall: exit, log,
+  spawn, waitpid, events, sections, views, waits, gfx, and handle close and
+  duplicate, pipe and device read/write, device open and control, the clock.
 - `include/sxn/sxnwm.h` — windowed-client substrate over a context
   struct: attach the surface (fd 3), submit full-surface batches, wait
   for composed, drain the input ring (fd 7).
@@ -105,6 +106,6 @@ from the menu, the manifest is the first suspect.
 
 ## Not there (deliberately)
 
-Native owned dialogs, native fork, native sockets/files, toolkit
+Native owned dialogs, native fork, native pipe creation, sockets and files, toolkit
 widgets beyond the seed, and per-handle spawn opt-in (next to
 `FD_CLOEXEC`). See `KERNEL_NATIVE_API.md` for the standing list.

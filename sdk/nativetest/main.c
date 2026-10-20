@@ -20,7 +20,10 @@
  * native numbers, self-spawn plus WAITPID, cross-process event plus
  * shared section (parent writes a marker, child answers, parent waits on
  * the event, then reset plus a zero-timeout poll), and EXIT with the
- * failure count as status. The child runs this same binary with
+ * failure count as status. Then the phase 3 calls: CLOCK, DUPLICATE and
+ * CLOSE on an event, READ refusing a non-stream handle, OPEN_DEVICE refusing
+ * paths and unknown names, DEVICE_CONTROL on gpu0 and WRITE to serial. The
+ * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
  */
 
@@ -254,6 +257,50 @@ int main(int argc, char** argv) {
 
     if (base > 0) {
         check(sxn_unmap_view((uint64_t)base) == 0);
+    }
+
+    /* Handles, devices and the clock (phase 3 of
+     * docs/desktop/DESKTOP_ARCHITECTURE.md). */
+    {
+        uint64_t first = sxn_clock_ns();
+        uint64_t second = sxn_clock_ns();
+        long duplicate = -1;
+        long gpu = -1;
+        long serial = -1;
+        struct savanxp_gpu_info gpu_info;
+        static const char k_serial_line[] = "nativetest: serial device\n";
+
+        check(first != 0u && second >= first);
+
+        duplicate = sxn_duplicate(event_handle);
+        check(duplicate >= 0 && duplicate != event_handle);
+        check(sxn_event_set(duplicate) == 0);
+        check(sxn_wait_one(event_handle, 0) == 0);
+        check(sxn_close(duplicate) == 0);
+        check(sxn_close(duplicate) == -SAVANXP_EBADF);
+        check(sxn_event_set(duplicate) == -SAVANXP_EBADF);
+        /* An event is not a stream. */
+        check(sxn_read(event_handle, &gpu_info, sizeof(gpu_info)) == -SAVANXP_EBADF);
+
+        check(sxn_open_device("../disk", SXN_DEVICE_READ) == -SAVANXP_EINVAL);
+        check(sxn_open_device("gpu0", 0) == -SAVANXP_EINVAL);
+        check(sxn_open_device("nosuchdevice", SXN_DEVICE_READ) == -SAVANXP_ENOENT);
+        gpu = sxn_open_device("gpu0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+        check(gpu >= 0);
+        if (gpu >= 0) {
+            gpu_info.width = 0;
+            check(sxn_device_control(gpu, GPU_IOC_GET_INFO, (unsigned long)&gpu_info) == 0);
+            check(gpu_info.width != 0u && gpu_info.height != 0u);
+            check(sxn_close(gpu) == 0);
+        }
+        serial = sxn_open_device("serial", SXN_DEVICE_WRITE);
+        check(serial >= 0);
+        if (serial >= 0) {
+            check(sxn_write(serial, k_serial_line, sizeof(k_serial_line) - 1u) ==
+                (long)(sizeof(k_serial_line) - 1u));
+            check(sxn_close(serial) == 0);
+        }
+        check(sxn_log("nativetest: handles, devices and clock done") == 0);
     }
 
     sxn_exit(g_failures == 0 ? 0 : 1);
