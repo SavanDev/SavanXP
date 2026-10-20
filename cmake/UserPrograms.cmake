@@ -343,7 +343,7 @@ savanxp_program(NAME windowd DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/windowd.c
     subsystems/posix/userland/windowd_compositor_client.c
     subsystems/posix/userland/desktop_icons.c
-    subsystems/posix/userland/windowd_appinfo.c
+    subsystems/posix/userland/windowd_presentation.c
     subsystems/posix/userland/windowd_layout.c
     subsystems/posix/userland/windowd_render.c
     subsystems/posix/userland/windowd_stats.c)

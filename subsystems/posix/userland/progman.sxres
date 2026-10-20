@@ -1,8 +1,8 @@
 # Recursos SXE del Program Manager. Ver docs/userland/SXE_FORMAT.md.
 #
-# Los valores reproducen la presentacion que hoy vive hardcodeada en
-# windowd_appinfo.c y en los defaults de progman_registry.c: la idea de las
-# fases 3 y 4 es borrar esas tablas y que la salida sea identica.
+# These values are what windows and the launcher show for progman: its own
+# runtime publishes them to windowd, and progman_registry.c's defaults
+# reproduce them.
 #
 # Con category= a proposito: el launcher se lista a si mismo en System, en
 # orden alfabetico entre Add/Remove Programs y System Properties. Sigue

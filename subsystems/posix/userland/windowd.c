@@ -1,7 +1,7 @@
 #include "libc.h"
 #include "abi/savanxp_native_abi.h"
 #include "windowd_session.h"
-#include "windowd_appinfo.h"
+#include "windowd_presentation.h"
 #include "windowd_layout.h"
 #include "windowd_render.h"
 #include "windowd_stats.h"
@@ -2049,15 +2049,9 @@ static int start_client_process(
         memcpy(client->path, path, path_length);
         client->path[path_length] = '\0';
     }
-    /*
-     * Unico lugar donde el WM toca disco por cliente: se lee el .sxe del
-     * binario recien lanzado para sacar titulo, icono y accent
-     * (docs/userland/SXE_FORMAT.md, fase 4). El costo esta acotado por la cantidad de
-     * ventanas abiertas, no por el tamano de un directorio, y se paga al crear
-     * la ventana -- que ya es el momento mas caro del ciclo. No puede fallar:
-     * sin recursos se queda con el fallback de la tabla.
-     */
-    windowd_presentation_load(&client->presentation, client->path);
+    /* The file name until the window publishes who it is: windowd does not
+     * open the binary for that (service_client_presentation). */
+    windowd_presentation_default(&client->presentation, client->path);
     client->pid = pid;
     client->events_write_fd = events_pipe[1];
     client->wake_event_fd = wake_event;
@@ -2834,6 +2828,40 @@ static int service_client_launch_requests(struct windowd_session *session, struc
         (void)event_set(client->wake_event_fd);
     }
     return 0;
+}
+
+/* Adopts the presentation the window published in its header (title, icon,
+ * accent, style), under the same seqlock reading as the size hint: an odd
+ * sequence is half written, and one that changed while copying is read again
+ * next pass, never retried here. */
+static void service_client_presentation(
+    struct windowd_session *session,
+    struct windowd_dirty_rect *dirty,
+    struct windowd_client *client)
+{
+    static struct savanxp_wm_presentation copy;
+    uint32_t sequence = 0;
+
+    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->header == 0)
+    {
+        return;
+    }
+    sequence = client->header->requests.presentation.sequence;
+    if ((sequence & 1u) != 0 || sequence == client->presentation_consumed_sequence)
+    {
+        return;
+    }
+    memcpy(&copy, &client->header->requests.presentation, sizeof(copy));
+    if (client->header->requests.presentation.sequence != sequence)
+    {
+        return;
+    }
+    client->presentation_consumed_sequence = sequence;
+    if (windowd_presentation_adopt(&client->presentation, &copy))
+    {
+        /* The caption shows title, icon and accent. */
+        windowd_dirty_rect_add_client(dirty, client);
+    }
 }
 
 /* Picks up the cursor shape an app requests for its own widgets (e.g. the
@@ -3870,6 +3898,7 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
     {
         service_client_window_requests(session, dirty, &session->overlay_clients[slot], slot);
         service_client_size_hints(session, dirty, &session->overlay_clients[slot], slot);
+        service_client_presentation(session, dirty, &session->overlay_clients[slot]);
         (void)service_client_batches(session, dirty, &session->overlay_clients[slot]);
     }
     signal_composed_batches(session);
@@ -4751,11 +4780,11 @@ static int windowd_selftest(void)
         return 1;
     }
 
-    /* Antes de levantar la sesion: la presentacion se resuelve leyendo del
-     * disco y no depende del compositor (docs/userland/SXE_FORMAT.md, fase 4). */
+    /* The presentation rules need no session; the end-to-end path (progman
+     * publishing its own) is checked after the soak. */
     if (windowd_presentation_selftest() != 0)
     {
-        puts_fd(2, "DESKTOP SMOKE FAIL presentacion desde recursos SXE\n");
+        puts_fd(2, "DESKTOP SMOKE FAIL presentation rules\n");
         return 1;
     }
 
@@ -4827,6 +4856,7 @@ static int windowd_selftest(void)
         }
 
         service_client_size_hints(&session, &dirty, client, kSlot);
+        service_client_presentation(&session, &dirty, client);
         service_client_cursor_hints(client);
         if (service_client_batches(&session, &dirty, client) < 0 ||
             service_client_launch_requests(&session, &dirty, client) < 0)
@@ -4852,6 +4882,7 @@ static int windowd_selftest(void)
                     continue; /* ya servido arriba */
                 }
                 service_client_size_hints(&session, &dirty, &session.overlay_clients[overlay_slot], overlay_slot);
+                service_client_presentation(&session, &dirty, &session.overlay_clients[overlay_slot]);
                 if (service_client_batches(&session, &dirty, &session.overlay_clients[overlay_slot]) < 0)
                 {
                     overlay_failed = 1;
@@ -5519,6 +5550,24 @@ static int windowd_selftest(void)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL progman never composited\n");
         failed = 1;
+    }
+    /* Presentation from the client, end to end: progman's runtime read its own
+     * .sxe (progman.sxres: name, accent 425c96, icon) and published it; windowd
+     * opened no file. Before it published, the title was "progman". */
+    if (!failed)
+    {
+        const struct windowd_presentation *shown = &session.overlay_clients[kProgmanSlot].presentation;
+
+        if (strcmp(windowd_presentation_label(shown, 0), "Program Manager") != 0 ||
+            !windowd_presentation_has_accent(shown) ||
+            windowd_presentation_accent(shown) != 0x00425c96u ||
+            shown->icon_extent != WINDOWD_PRESENTATION_ICON_EXTENT)
+        {
+            printf("DESKTOP SMOKE FAIL presentation: progman shows \"%s\" accent=%06x icon=%u\n",
+                windowd_presentation_label(shown, 0), (unsigned)windowd_presentation_accent(shown),
+                (unsigned)shown->icon_extent);
+            failed = 1;
+        }
     }
     if (!failed && session.overlay_clients[kProgmanSlot + 1].consumed_submit_sequence < 1)
     {
@@ -6195,6 +6244,7 @@ int main(int argc, char **argv)
         {
             service_client_window_requests(&session, &dirty, &session.overlay_clients[slot], slot);
             service_client_size_hints(&session, &dirty, &session.overlay_clients[slot], slot);
+            service_client_presentation(&session, &dirty, &session.overlay_clients[slot]);
             if (service_client_batches(&session, &dirty, &session.overlay_clients[slot]) < 0)
             {
                 break;

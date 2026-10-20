@@ -93,6 +93,11 @@ Cut-off notes:
 
 ### Changed
 
+- **Each window publishes its own title, icon, accent and style.** The runtime reads the
+  program's `.sxe` at `gfx_open` (`savanxp_wm_presentation` in the surface header); `windowd`
+  reads no binary for it and its per-path table is gone. External programs built earlier show
+  their file name until rebuilt.
+
 - **`compositord` is a native process.** It speaks only the SXN API -- the GPU as a device
   with control codes, its pipes through native read/write -- and no POSIX. In-tree programs
   can be built native with `NATIVE` in `cmake/UserPrograms.cmake` (`tools/stamp_osabi.py`).

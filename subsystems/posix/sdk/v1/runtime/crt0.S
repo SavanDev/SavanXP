@@ -43,6 +43,10 @@ _start:
     call sx_start_dynamic
     popq %rsi
     popq %rdi
+    /* The runtime keeps argv: the window runtime reads the program's own .sxe
+     * through argv[0] to publish its presentation. */
+    movq %rdi, sx_program_argc(%rip)
+    movq %rsi, sx_program_argv(%rip)
     call main
     movq %rax, %rdi
     movq $7, %rax

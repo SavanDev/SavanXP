@@ -177,6 +177,8 @@ int clipboard_get_text(char *buffer, int capacity);
 int clipboard_get_info(struct savanxp_clipboard_info *info);
 int clipboard_clear(void);
 
+/* argv[0] as the program was started (0 if unknown), kept by crt0. */
+const char* sx_program_path(void);
 long gfx_open(struct savanxp_gfx_context* context);
 long gfx_close(struct savanxp_gfx_context* context);
 long gfx_acquire(struct savanxp_gfx_context* context);

@@ -7,8 +7,9 @@
 > [gen_sxe_resources.py](../../tools/gen_sxe_resources.py) + `stamp_sxe.py`,
 > and the consumers are `progman_registry_apply_sxe()` and
 > `progman_registry_scan_programs()` (launcher), `appwiz_catalog_scan()`
-> (uninstaller), `windowd_presentation_load()` (window chrome and Task List)
-> and `file_assoc` (file associations in filesapp). Validated by `sxe-smoke`,
+> (uninstaller), the window runtime's `gfx_publish_presentation()` (window
+> chrome, taskbar and Alt+Tab: each client reads its **own** `.sxe` and
+> publishes it to windowd) and `file_assoc` (file associations in filesapp). Validated by `sxe-smoke`,
 > `progman-smoke`, `appwiz-smoke`, `windowd-smoke` and `filesapp-smoke`.
 >
 > **Stamping by default: every program the build links comes out with
@@ -333,7 +334,7 @@ There are numbers now, and they are of two very different orders:
 | consumer | what it opens | cost |
 |---|---|---|
 | progman | the binaries the catalog lists | ~9 files, imperceptible |
-| windowd | the binary of each window it creates | 1 per window, imperceptible |
+| each window's runtime | its own binary, once at `gfx_open` | 1 per window, imperceptible |
 | **`file_assoc`** | **every installed executable** | **141 files, ~220 ms** (TCG) |
 
 The first two are bounded by something small and need nothing. The third does
@@ -366,12 +367,18 @@ can be measured again when something changes.
       │
       │ launch queue in the surface header: path + flags
       ▼
-  windowd ──► re-reads the .sxe at that path when creating the window
-              title, window icon, declared accent, Task List
+  the program ──► its runtime reads ITS OWN .sxe (argv[0]) at gfx_open
+      │
+      │ savanxp_wm_presentation in the surface header (seqlock)
+      ▼
+  windowd ──► title, window icon, declared accent, window style
 ```
 
-The WM stops guessing from the path and starts reading; `windowd_appinfo.c`
-remains as a fallback for orphans, or disappears.
+The WM neither guesses from the path nor reads the binary: the window says who
+it is ([DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md#presentation-comes-from-the-client)).
+The per-path fallback table (`windowd_appinfo.c`) is gone; a window that
+publishes nothing shows its file name and the generic icon. That is also what
+an external program built before this change shows until it is rebuilt.
 
 This does **not** contradict the decision the WM already made in
 [wm_protocol.h:64](../../subsystems/posix/sdk/v1/include/savanxp/wm_protocol.h:64)
@@ -391,8 +398,8 @@ exist: the art moved, pixel by pixel, to
 `doomgeneric.sxres` declares it with `icon_file=` instead of `icon=`. It is the
 same logic that already governed `ports/ccleste` — the icon travels *inside*
 the executable, not in the system tree — applied for the first time to a
-program that **is** versioned in the repository. The `windowd_appinfo` fallback
-table and the `progman_registry` baked default now point at
+program that **is** versioned in the repository. The `progman_registry` baked
+default (and, until it was removed, windowd's per-path table) now point at
 `DESKTOP_ICON_DESKTOP` (generic): they only come into play if the Doom binary
 cannot be read at all, which is exactly what a fallback should cover.
 
@@ -839,10 +846,10 @@ all build entry points.
    whatever the `.ini` declared explicitly. **Nothing changes visually**, and
    that is correct: the manifests reproduce the presentation that used to live
    in the tables. What changed is where the data comes from.
-4. ~~**windowd consumes.**~~ **DONE.** `windowd_presentation_load()` resolves
-   title, 16×16 icon and accent by reading the `.sxe` of the binary it just
-   launched, once, in `start_client_process()`. **Zero protocol changes**, as
-   decided. `windowd_appinfo` remains as a fallback step.
+4. ~~**windowd consumes.**~~ **DONE**, and since moved to the client: each
+   window's runtime reads its own `.sxe` and publishes title, 16×16 icon,
+   accent and style in the surface header (`savanxp_wm_presentation`).
+   windowd reads no file and keeps no fallback table.
 5. ~~**Associations.**~~ **DONE** for `EXT_OPEN`. `file_assoc` resolves
    extension → program by combining user policy (`/disk/assoc.ini`) with what
    the installed binaries declare, and filesapp opens each file with the

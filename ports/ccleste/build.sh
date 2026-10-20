@@ -159,7 +159,8 @@ if ((SKIP_PORT == 0)); then
     echo "== compilando el runtime del SDK"
     compile_asm "$SDK/runtime/crt0.S" "$OBJ/crt0.o"
     compile_asm "$SDK/runtime/setjmp.S" "$OBJ/setjmp.o"
-    for unit in libc posix gfx gfx2d audio math; do
+    # sxe: the window runtime publishes its title and icon from its own .sxe.
+    for unit in libc posix gfx sxe gfx2d audio math; do
         compile_c "$SDK/runtime/$unit.c" "$OBJ/$unit.o" \
             -fno-builtin "${INCLUDE_FLAGS[@]}"
     done
@@ -170,7 +171,7 @@ if ((SKIP_PORT == 0)); then
 
     echo "== linkeando ccleste"
     LINK_ARGS=(
-        "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/gfx.o" "$OBJ/gfx2d.o"
+        "$OBJ/crt0.o" "$OBJ/libc.o" "$OBJ/posix.o" "$OBJ/gfx.o" "$OBJ/sxe.o" "$OBJ/gfx2d.o"
         "$OBJ/math.o" "$OBJ/setjmp.o" "$OBJ/audio.o" "$OBJ/ldso.o"
         "${OBJECTS[@]}"
     )

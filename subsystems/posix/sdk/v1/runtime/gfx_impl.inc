@@ -365,6 +365,75 @@ static long gfx_adopt_channels(
     return 0;
 }
 
+/*
+ * Presentation (docs/desktop/DESKTOP_ARCHITECTURE.md#presentation-comes-from-
+ * the-client): the window says who it is -- name, accent, window style, small
+ * icon -- read from the program's own .sxe through argv[0], published in the
+ * header under a seqlock before the first frame. The WM never opens the
+ * binary. A program without resources publishes nothing and gets its file
+ * name; so does one whose path is unknown.
+ */
+static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
+    _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
+    _Alignas(4) static uint8_t icon_buffer[SXE_ICON_MAX_BYTES];
+    struct savanxp_wm_presentation* out = 0;
+    struct savanxp_wm_presentation staging;
+    struct sxe_meta meta;
+    struct sxe_icons icons;
+    const char* path = sx_program_path();
+    uint32_t value = 0;
+    int have_any = 0;
+
+    if (context == 0 || context->header == 0 || path == 0 || path[0] == '\0') {
+        return;
+    }
+    out = &context->header->requests.presentation;
+    memset(&staging, 0, sizeof(staging));
+
+    if (sxe_load_meta(path, meta_buffer, sizeof(meta_buffer), &meta) == SXE_OK) {
+        if (sxe_meta_string(&meta, SXE_TAG_NAME, staging.title, sizeof(staging.title)) > 0u) {
+            have_any = 1;
+        }
+        if (sxe_meta_u32(&meta, SXE_TAG_ACCENT, &value)) {
+            staging.accent = value;
+            staging.flags |= SAVANXP_WM_PRESENTATION_HAS_ACCENT;
+            have_any = 1;
+        }
+        if (sxe_meta_u32(&meta, SXE_TAG_WINDOW_FLAGS, &value)) {
+            staging.window_style = value;
+            have_any = 1;
+        }
+    }
+    if (sxe_load_icons(path, icon_buffer, sizeof(icon_buffer), &icons) == SXE_OK) {
+        const struct sxe_icon_entry* entry = sxe_icons_best(&icons, SAVANXP_WM_PRESENTATION_ICON_EXTENT);
+        const uint32_t* pixels = entry != 0 ? sxe_icons_pixels(&icons, entry) : 0;
+
+        /* Only squares that fit the slot: the frame draws at 16. */
+        if (pixels != 0 && entry->width == entry->height &&
+            entry->width <= SAVANXP_WM_PRESENTATION_ICON_EXTENT) {
+            memcpy(staging.icon_pixels, pixels, (size_t)entry->width * entry->height * sizeof(uint32_t));
+            staging.icon_extent = entry->width;
+            have_any = 1;
+        }
+    }
+    if (!have_any) {
+        return;
+    }
+
+    /* Seqlock: odd while the fields are being written. */
+    staging.sequence = out->sequence | 1u;
+    out->sequence = staging.sequence;
+    __asm__ volatile("" ::: "memory");
+    out->flags = staging.flags;
+    out->accent = staging.accent;
+    out->window_style = staging.window_style;
+    out->icon_extent = staging.icon_extent;
+    memcpy(out->title, staging.title, sizeof(out->title));
+    memcpy(out->icon_pixels, staging.icon_pixels, sizeof(out->icon_pixels));
+    __asm__ volatile("" ::: "memory");
+    out->sequence = staging.sequence + 1u;
+}
+
 static long gfx_open_client(struct savanxp_gfx_context* context) {
     long result = gfx_map_client_surface(context, SAVANXP_WM_FD_SECTION);
 
@@ -382,6 +451,10 @@ static long gfx_open_client(struct savanxp_gfx_context* context) {
         return result;
     }
     context->window_id = 0;
+    gfx_publish_presentation(context);
+    /* Before the first frame the WM sees it on the next pass anyway; wake it
+     * so the title is right from the start. */
+    (void)event_set(context->submit_event_fd);
     return 0;
 }
 

@@ -7,7 +7,7 @@
  * Key Test y Mouse Test tenian su entrada aca; los seis salieron una vez que
  * cada uno consiguio su propio .sxicon (icon_file= o icon=<nombre> en su
  * .sxres, estampado en build) y las tablas que los citaban por id
- * (progman_registry.c, windowd_appinfo.c) pasaron a apuntar al generico como
+ * (progman_registry.c, and windowd's per-path table until it was removed) pasaron a apuntar al generico como
  * fallback -- docs/userland/SXE_FORMAT.md, "icon= ya no elige de un catalogo".
  *
  * Lo que queda es la red de seguridad universal: el icono para CUALQUIER

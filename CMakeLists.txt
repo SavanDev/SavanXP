@@ -477,10 +477,11 @@ set(SAVANXP_EXTERNAL_RUNTIME_SOURCES ${SAVANXP_USER_RUNTIME_SOURCES}
 list(REMOVE_ITEM SAVANXP_EXTERNAL_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/math.c
     subsystems/posix/sdk/v1/runtime/audio.c
-    subsystems/posix/sdk/v1/runtime/sxe.c
     subsystems/posix/sdk/v1/runtime/sxchrome.c
     subsystems/posix/sdk/v1/runtime/sxgui.c
     subsystems/posix/sdk/v1/runtime/sxgui_app.c)
+# sxe.c stays: gfx.c reads the program's own .sxe to publish its window
+# presentation (docs/desktop/DESKTOP_ARCHITECTURE.md).
 
 add_library(savanxp_external_runtime OBJECT ${SAVANXP_EXTERNAL_RUNTIME_SOURCES})
 target_include_directories(savanxp_external_runtime PRIVATE

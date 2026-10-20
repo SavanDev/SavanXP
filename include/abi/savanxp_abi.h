@@ -901,6 +901,30 @@ struct savanxp_wm_window_request {
     int32_t y;
 };
 
+/*
+ * Presentation: the title, icon, accent and style a window declares about
+ * itself (docs/desktop/DESKTOP_ARCHITECTURE.md#presentation-comes-from-the-
+ * client). The client runtime fills it from the program's own .sxe before the
+ * first frame, under a seqlock like the size hint: `sequence` odd while it is
+ * being written. The WM copies each new even value once and never reads
+ * files. A client that publishes nothing gets its file name as the title and
+ * the generic icon.
+ */
+#define SAVANXP_WM_PRESENTATION_TITLE_CAPACITY 32u
+#define SAVANXP_WM_PRESENTATION_ICON_EXTENT 16u
+#define SAVANXP_WM_PRESENTATION_HAS_ACCENT 0x00000001u
+
+struct savanxp_wm_presentation {
+    uint32_t sequence;     /* written only by the client */
+    uint32_t flags;        /* SAVANXP_WM_PRESENTATION_* */
+    uint32_t accent;       /* 0x00RRGGBB, valid with _HAS_ACCENT */
+    uint32_t window_style; /* SAVANXP_WM_WINDOW_STYLE_* */
+    uint32_t icon_extent;  /* 0 = no icon, else SAVANXP_WM_PRESENTATION_ICON_EXTENT */
+    uint32_t reserved;
+    char title[SAVANXP_WM_PRESENTATION_TITLE_CAPACITY];
+    uint32_t icon_pixels[SAVANXP_WM_PRESENTATION_ICON_EXTENT * SAVANXP_WM_PRESENTATION_ICON_EXTENT]; /* BGRA8888 */
+};
+
 struct savanxp_wm_client_requests {
     uint32_t cursor_shape;
     uint32_t size_hint_width;
@@ -920,6 +944,9 @@ struct savanxp_wm_client_requests {
     int32_t window_reply_status;    /* lo escribe solo el WM */
     uint32_t window_reserved;
     struct savanxp_wm_window_request window;
+    /* What the window says about itself, published by the client (appended
+     * after v4 shipped, like the window roles). */
+    struct savanxp_wm_presentation presentation;
 };
 
 struct savanxp_gpu_client_surface_header {

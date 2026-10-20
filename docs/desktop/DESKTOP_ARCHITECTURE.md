@@ -361,7 +361,14 @@ Depends on the hotkeys of phase 1.
    with control codes, its pipes through native read/write, the native clock),
    built in-tree with `NATIVE`. It needed no native C runtime: a static
    program links the usual runtime, whose call-free parts work unchanged.
-4. **Presentation from the client** (see above).
+4. **Presentation from the client** (see above). **Done:** the window runtime
+   reads the program's own `.sxe` through `argv[0]` (kept by `crt0`) and
+   publishes `savanxp_wm_presentation`; windowd starts every window with its
+   file name and adopts what it publishes. The per-path table is gone. Two
+   things still read the binary: windowd's 8-byte sniff of `EI_OSABI` to pick
+   the input transport, which leaves with launching (step 5), and native
+   clients, which have no file access to read their own `.sxe` and so show
+   their file name.
 5. **Launching moves to the caller.** `desktop` and `progman` spawn
    programs; the child connects to `windowd` through its port. A native
    session launcher, started by `init`, starts `compositord`, `windowd`,

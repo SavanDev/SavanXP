@@ -1,7 +1,7 @@
 #pragma once
 
 #include "windowd_session.h"
-#include "windowd_appinfo.h"
+#include "windowd_presentation.h"
 
 /* Danio acumulado del frame, como region EXACTA. Fue un sx_rect_set hasta que
  * se midio lo que costaba: sx_rect_set_add fusiona por bounding box en cuanto

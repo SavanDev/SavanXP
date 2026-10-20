@@ -267,6 +267,14 @@ extern int sx_run_interpreter(void) __attribute__((weak));
  * Que este sea el unico lugar donde se decide si el interprete corre es lo que
  * hace que sea automatico: un programa no necesita acordarse de llamarlo, y no
  * puede olvidarse. */
+/* Set by crt0 right before main. */
+long sx_program_argc = 0;
+char** sx_program_argv = 0;
+
+const char* sx_program_path(void) {
+    return (sx_program_argc > 0 && sx_program_argv != 0) ? sx_program_argv[0] : 0;
+}
+
 void sx_start_dynamic(void) {
     if (sx_run_interpreter != 0) {
         const int result = sx_run_interpreter();

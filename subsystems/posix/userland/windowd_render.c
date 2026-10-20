@@ -3,7 +3,7 @@
 #include "shared/version.h"
 #include "cursor_asset.h"
 #include "desktop_icons.h"
-#include "windowd_appinfo.h"
+#include "windowd_presentation.h"
 #include "windowd_layout.h"
 #include "windowd_render.h"
 
