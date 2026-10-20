@@ -3759,6 +3759,7 @@ static int windowd_capacity_selftest(struct windowd_session *session)
     uint32_t windowd_handles = 0;
     uint32_t handles_after_refusal = 0;
     uint32_t app_handles = 0;
+    uint32_t compositor_handles = 0;
     long last_pid = -1;
     int windows = 0;
     int slot;
@@ -3848,6 +3849,16 @@ static int windowd_capacity_selftest(struct windowd_session *session)
             (unsigned)app_handles);
         return 1;
     }
+    /* compositord holds a wake event per attached surface: it pays per
+     * window too, against the same 64-entry table. */
+    if (session->compositor.pid <= 0 ||
+        selftest_handle_count(session->compositor.pid, &compositor_handles) != 0 ||
+        compositor_handles + WINDOWD_SELFTEST_FD_HEADROOM > WINDOWD_PROCESS_FD_LIMIT)
+    {
+        printf("DESKTOP SMOKE FAIL capacity: compositord holds %u descriptors with the session full\n",
+            (unsigned)compositor_handles);
+        return 1;
+    }
 
     /* Con los slots llenos, un launch mas se rechaza sin dejar nada abierto. */
     if (launch_overlay_client(session, filler_path, 0) >= 0 ||
@@ -3858,8 +3869,8 @@ static int windowd_capacity_selftest(struct windowd_session *session)
         return 1;
     }
 
-    printf("DESKTOP SMOKE capacity windows=%d windowd_fds=%u app_fds=%u\n",
-        windows, (unsigned)windowd_handles, (unsigned)app_handles);
+    printf("DESKTOP SMOKE capacity windows=%d windowd_fds=%u compositord_fds=%u app_fds=%u\n",
+        windows, (unsigned)windowd_handles, (unsigned)compositor_handles, (unsigned)app_handles);
 
     return 0;
 }

@@ -4,9 +4,10 @@
 > `desktop` process, window roles, hotkeys, the Task List removed); phase 3 is
 > nearly done (`compositord`, `windowd` and the session manager `sessiond` are native,
 > clients connect to `windowd`'s port and whoever launches a program spawns
-> it); phase 4 is designed ([Composition in compositord](#composition-in-compositord))
-> and under way. It is the target for the graphics stack and the order for
-> getting there.
+> it); phase 4 is built: `compositord` is a session service that composes the
+> scene `windowd` commits and receives the clients' frames directly
+> ([Composition in compositord](#composition-in-compositord)). It is the target
+> for the graphics stack and the order for getting there.
 > Where it disagrees with the "Target layering" of
 > [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md), this document wins; WM_SUBSYSTEM.md
 > stays as the record of how `windowd` was extracted from `desktop.c`.
@@ -71,11 +72,11 @@ taskbar is back. NT 3.x had no compositor; that one layer is a later idea
 
 Owns:
 
-- The GPU, the video mode and the display memory (it allocates it; today
-  `windowd` does).
-- The scene: an ordered list of surfaces with a rectangle, a position in the
-  stack, visibility, opacity and an optional scale (for composited
-  fullscreen).
+- The GPU, the video mode and the display memory (it allocates it since
+  phase 4).
+- The scene: an ordered list of layers, each a rectangle of a surface shown at
+  a rectangle of the screen, opaque or not, scaled when the sizes differ (for
+  composited fullscreen). Per-layer opacity is not there yet.
 - Composition: occlusion, damage tracking, the present timeline.
 - The cursor, completely: hardware plane, software fallback, the cursor images.
   `windowd` only says which shape and where.
@@ -576,8 +577,8 @@ its tick.
 - **Descriptors.** `compositord`: one wake event per attached surface, besides
   the port, its WM's two pipes, the GPU, the present event and the frame
   event. `windowd`: one request event for the whole session; the display
-  section stays mapped and closed. Re-measured in step 4 against the
-  64-handle table.
+  section stays mapped and closed. Measured in step 4 with the session full:
+  26 in `compositord`, 43 in `windowd`, against a 64-handle table.
 - **Memory.** `windowd`'s surface and `compositord`'s staged copy are one
   largest-mode buffer each; `windowd` no longer composes into the display, so
   it holds no other.
@@ -696,13 +697,28 @@ because it is the largest change and the one the work in
 2. **The scene protocol. Done.** `compositord` maps the client surfaces and
    composes; `windowd` draws only its own surface (frames, the Alt+Tab
    switcher, the fallback background) and commits the scene. The cursor
-   moves entirely into `compositord`. Client frames still pass through
-   `windowd`, which forwards their damage with the commit.
+   moves entirely into `compositord`, which also consumes the client batches;
+   until step 3 the submit event still woke `windowd`, which committed so
+   `compositord` would look at them.
 3. **Frames go straight to `compositord`. Done.** The welcome's submit event becomes
    `compositord`'s; requests get their own event; `compositord` validates the
    batches, signals composed and retired, and reports the frame statistics.
-4. **Measure and close:** the table above again, the descriptor budget in
-   [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget), GRAPHICS_PERF.md.
+4. **Measure and close. Done.** The same scenario after step 3, reported by
+   `compositord-stats` (no round trip left to measure, so no `blk_us` or
+   `ipc_us`; `present_us` is the GPU calls of a frame):
+
+   | backend | fps | `compose_us` | `present_us` | `gpu_us` | `damage_px` |
+   |---|---|---|---|---|---|
+   | `virtio-gpu` (`--virtio`) | ~5300 | 16 | 18 | 18 | 9984 |
+   | `fb_gpu` | ~5850 | 13 | 53 | 51 | 9984 |
+   | TCG, `fb_gpu` | ~830 | 171 | 490 | 475 | 9984 |
+
+   virtio-gpu stopped being paced at 61 fps: `windowd` used to wait out its
+   16 ms poll when the last present had not retired, and `compositord` wakes on
+   the GPU's present event instead. With every slot full `windowd` holds 43
+   descriptors and `compositord` 26 (one wake event per attached surface), both
+   asserted by `windowd --selftest`
+   ([WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget)).
 
 ### Later, not required
 
@@ -735,10 +751,9 @@ client.
   and adds no surface to maintain; it needs a decision on which native calls
   are exposed (objects yes; `SXN_SYS_EXIT` would bypass POSIX process
   teardown).
-- **Descriptor budget after ports:** per-client cost in `windowd` and in
-  `compositord` has to be re-measured against the 64-handle table
-  ([WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget)) once frame traffic
-  goes to `compositord`.
+- **Descriptor budget after ports:** re-measured with frame traffic in
+  `compositord` -- 43 in `windowd`, 26 in `compositord` with the session full
+  (phase 4 step 4). Decided.
 - **Hotkeys for ordinary applications:** allowed or shell-only.
 - **Where the session manager ends and `init` begins:** decided --
   `sessiond` owns the graphical session, `init` keeps `audiod` and the text

@@ -353,7 +353,10 @@ With every slot full — twelve windows plus the desktop's background, taskbar
 and a popup — `windowd --selftest` measures 43 descriptors (its port, the serial device it
 writes text to, the event it sleeps on and its request event are four; the
 link to `compositord` is two pipes, and the display section is closed once
-mapped), and asserts at least 8 remain free for a connection in progress. The desktop's taskbar and popups
+mapped), and asserts at least 8 remain free for a connection in progress.
+`compositord` pays per window too -- the client's wake event, for every attached
+surface -- and holds 26 with the session full (`compositord_fds`), asserted
+against the same headroom. The desktop's taskbar and popups
 are windows of one process, so like dialogs they cost two duplicates each and
 no pipe.
 
