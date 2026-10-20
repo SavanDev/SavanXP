@@ -79,6 +79,11 @@ unsigned long wd_uptime_ms(void)
     return (unsigned long)(sxn_clock_ns() / 1000000ull);
 }
 
+unsigned long long wd_monotonic_ns(void)
+{
+    return (unsigned long long)sxn_clock_ns();
+}
+
 /* A sleep is a wait on an event nobody sets. */
 long wd_sleep_ms(unsigned long milliseconds)
 {

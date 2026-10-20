@@ -305,6 +305,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **`windowd-stats` lines are back.** Since `windowd` became native its clock read was a POSIX
+  call that failed, so every frame was discarded as unmeasured.
+
 - **A POSIX program started by a native one has its POSIX state.** Spawning kept the parent's
   subsystem state even when the child's image is of another subsystem, so `poll` failed in it.
 

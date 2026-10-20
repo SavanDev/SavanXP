@@ -22,6 +22,7 @@
 #define eprintf wd_eprintf
 #define puts_fd wd_puts_fd
 #define uptime_ms wd_uptime_ms
+#define monotonic_ns wd_monotonic_ns
 #define sleep_ms wd_sleep_ms
 #define savanxp_getpid wd_getpid
 #define event_create wd_event_create
