@@ -385,13 +385,15 @@ client.
   found two costs. The first was the kernel's text console, which takes the
   screen back when `compositord` releases the GPU and used to repaint the whole
   framebuffer on every scroll (fixed: it now repaints only the glyph pixels that
-  changed, and tick loss in that window fell from ~87% to ~10%). The second
-  remains: the per-tick work in the timer handler (`recheck_parked_processes`,
-  `object::poll_timers`, `wake_sleepers`, `net_pump`, PS/2 polling) costs about
-  as much as the 1 ms tick itself with this many processes, so `compositord`'s
-  exit can still take minutes. It shows more with some disk images (the
-  pattern wallpaper made it frequent) than others. `windowd_compositor_close`
-  kills a daemon that does not confirm its shutdown, which covers the timeout
+  changed, and tick loss in that window fell from ~87% to ~10%). The rest is
+  not the guest's work: timing each part of the tick handler showed every part
+  -- even `object::poll_timers`, a 128-entry loop with no I/O, 4 us at rest --
+  stretching 15-70x in the slow windows, which only happens when the vCPU is not
+  being run. It is host-side (KVM contention; a VirtualBox VM running on the
+  same host was one instance), so `compositord`'s exit can still take minutes
+  on a loaded host. It also showed far more often with the pattern wallpaper
+  (`/disk/desktop.cfg` = `2`) than with the default one, measured but not
+  explained. `windowd_compositor_close` kills a daemon that does not confirm its shutdown, which covers the timeout
   case. Reproduce: `./build.sh smoke windowd-smoke` a few times; a hang after
   `DESKTOP SMOKE capacity` is the symptom.
 
