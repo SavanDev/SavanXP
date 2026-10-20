@@ -38,6 +38,16 @@ size_t g_cursor_row = 0;
 size_t g_cursor_column = 0;
 bool g_cursor_drawn = false;
 bool g_batch_redraw = false;
+// What each cell shows on screen right now, so a redraw only touches what
+// changed. A scroll used to repaint the whole framebuffer -- the background
+// and then every cell, one call per pixel -- straight into video memory; when
+// that memory is slow to write (it varies under emulation), one log line cost
+// seconds with nothing else running. g_drawn_known[r][c] false means "unknown,
+// paint the whole cell"; g_screen_known false means the background is not ours
+// either (the console was hidden, the geometry changed, someone else drew).
+char g_drawn[kMaxRows][kMaxColumns] = {};
+bool g_drawn_known[kMaxRows][kMaxColumns] = {};
+bool g_screen_known = false;
 
 bool using_gpu_backend() {
     return display::ready() &&
@@ -82,26 +92,36 @@ void serial_write_char(char value) {
     out8(kCom1Port, static_cast<uint8_t>(value));
 }
 
-void plot_pixel(uint64_t x, uint64_t y, uint32_t colour) {
-    if (!g_framebuffer.available || g_framebuffer.address == nullptr || g_framebuffer.bpp != 32) {
-        return;
-    }
-    if (x >= g_framebuffer.width || y >= g_framebuffer.height) {
-        return;
-    }
+bool drawable() {
+    return g_framebuffer.available && g_framebuffer.address != nullptr && g_framebuffer.bpp == 32;
+}
 
-    auto* pixels = static_cast<uint8_t*>(g_framebuffer.address);
-    auto* row = reinterpret_cast<uint32_t*>(pixels + (y * g_framebuffer.pitch));
-    row[x] = colour;
+uint32_t* pixel_row(uint64_t y) {
+    return reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(g_framebuffer.address) + (y * g_framebuffer.pitch));
 }
 
 void fill_rect(uint64_t x, uint64_t y, uint64_t width, uint64_t height, uint32_t colour) {
+    if (!drawable() || x >= g_framebuffer.width || y >= g_framebuffer.height) {
+        return;
+    }
     const uint64_t end_x = (x + width) < g_framebuffer.width ? (x + width) : g_framebuffer.width;
     const uint64_t end_y = (y + height) < g_framebuffer.height ? (y + height) : g_framebuffer.height;
     for (uint64_t row = y; row < end_y; ++row) {
+        uint32_t* pixels = pixel_row(row);
         for (uint64_t column = x; column < end_x; ++column) {
-            plot_pixel(column, row, colour);
+            pixels[column] = colour;
         }
+    }
+}
+
+void forget_screen() {
+    g_screen_known = false;
+    memset(g_drawn_known, 0, sizeof(g_drawn_known));
+}
+
+void forget_cell(size_t row, size_t column) {
+    if (row < kMaxRows && column < kMaxColumns) {
+        g_drawn_known[row][column] = false;
     }
 }
 
@@ -119,20 +139,30 @@ const uint8_t* glyph_for(char character) {
     return sx_console_glyph(static_cast<unsigned char>(character));
 }
 
-void draw_glyph(uint64_t x, uint64_t y, char character, uint32_t colour) {
+// Paints the cell at x,y so it shows `character`. With `previous` known, only
+// the pixels where the two glyphs differ are written; otherwise the whole cell,
+// background included, in one pass.
+void paint_cell(uint64_t x, uint64_t y, char character, const char* previous) {
+    static_assert(kScale == 1, "paint_cell writes one pixel per glyph bit");
     const uint8_t* glyph = glyph_for(character);
+    const uint8_t* old_glyph = previous != nullptr ? glyph_for(*previous) : nullptr;
+
+    if (!drawable() || x + kCellWidth > g_framebuffer.width || y + kCellHeight > g_framebuffer.height) {
+        return;
+    }
     for (uint64_t row = 0; row < kGlyphHeight; ++row) {
+        uint32_t* pixels = pixel_row(y + row) + x;
+        const uint32_t bits = glyph[row];
+        const uint32_t changed = old_glyph != nullptr ? (bits ^ old_glyph[row]) : 0xffffffffu;
+
+        if (changed == 0) {
+            continue;
+        }
         for (uint64_t column = 0; column < kGlyphWidth; ++column) {
-            if ((glyph[row] & (1u << (kGlyphWidth - 1 - column))) == 0) {
-                continue;
+            const uint32_t mask = 1u << (kGlyphWidth - 1 - column);
+            if ((changed & mask) != 0) {
+                pixels[column] = (bits & mask) != 0 ? kText : kBackground;
             }
-            fill_rect(
-                x + (column * kScale),
-                y + (row * kScale),
-                kScale,
-                kScale,
-                colour
-            );
         }
     }
 }
@@ -146,6 +176,8 @@ void erase_cursor() {
     const uint64_t y = kPaddingY + (g_cursor_row * kCellHeight) + (kCellHeight - 3);
     fill_rect(x, y, kCellWidth - 2, 2, kBackground);
     flush_region(static_cast<uint32_t>(x), static_cast<uint32_t>(y), kCellWidth - 2, 2);
+    // The underline also wiped the bottom of whatever glyph was there.
+    forget_cell(g_cursor_row, g_cursor_column);
     g_cursor_drawn = false;
 }
 
@@ -156,8 +188,14 @@ void render_cell(size_t row, size_t column) {
 
     const uint64_t x = kPaddingX + (column * kCellWidth);
     const uint64_t y = kPaddingY + (row * kCellHeight);
-    fill_rect(x, y, kCellWidth, kCellHeight, kBackground);
-    draw_glyph(x, y, g_cells[row][column], kText);
+    const char character = g_cells[row][column];
+
+    if (g_drawn_known[row][column] && g_drawn[row][column] == character) {
+        return;
+    }
+    paint_cell(x, y, character, g_drawn_known[row][column] ? &g_drawn[row][column] : nullptr);
+    g_drawn[row][column] = character;
+    g_drawn_known[row][column] = true;
     flush_region(static_cast<uint32_t>(x), static_cast<uint32_t>(y), kCellWidth, kCellHeight);
 }
 
@@ -170,6 +208,8 @@ void draw_cursor() {
     const uint64_t y = kPaddingY + (g_cursor_row * kCellHeight) + (kCellHeight - 3);
     fill_rect(x, y, kCellWidth - 2, 2, kCursor);
     flush_region(static_cast<uint32_t>(x), static_cast<uint32_t>(y), kCellWidth - 2, 2);
+    // Painted over the glyph: the next render of this cell starts from scratch.
+    forget_cell(g_cursor_row, g_cursor_column);
     g_cursor_drawn = true;
 }
 
@@ -179,7 +219,13 @@ void redraw_all() {
     }
 
     g_batch_redraw = true;
-    draw_background();
+    // The background only when the screen is not known to be ours; after that
+    // a redraw (a scroll, mostly) touches only the cells that changed.
+    if (!g_screen_known) {
+        draw_background();
+        memset(g_drawn_known, 0, sizeof(g_drawn_known));
+        g_screen_known = true;
+    }
     for (size_t row = 0; row < g_rows; ++row) {
         for (size_t column = 0; column < g_columns; ++column) {
             render_cell(row, column);
@@ -261,6 +307,7 @@ void early_init() {
 void init(const boot::BootInfo& boot_info) {
     g_framebuffer = boot_info.framebuffer;
     g_boot_framebuffer = boot_info.framebuffer;
+    forget_screen();
     memset(g_cells, ' ', sizeof(g_cells));
     g_cursor_row = 0;
     g_cursor_column = 0;
@@ -290,6 +337,8 @@ bool framebuffer_ready() {
 
 void set_framebuffer_console_enabled(bool enabled) {
     g_console_visible = enabled;
+    // Hidden or shown, what is on screen is not the console's any more.
+    forget_screen();
     if (enabled) {
         g_cursor_drawn = false;
         redraw_all();
@@ -299,6 +348,7 @@ void set_framebuffer_console_enabled(bool enabled) {
 }
 
 void redraw() {
+    forget_screen();
     redraw_all();
 }
 
@@ -307,6 +357,7 @@ void set_external_framebuffer(void* address, const savanxp_fb_info& info) {
         return;
     }
 
+    forget_screen();
     g_framebuffer.address = address;
     g_framebuffer.width = info.width;
     g_framebuffer.height = info.height;
@@ -348,6 +399,7 @@ bool present_pixels(const void* pixels, size_t byte_count) {
     }
 
     memcpy(g_framebuffer.address, pixels, byte_count);
+    forget_screen();
     flush_full();
     return true;
 }
@@ -375,6 +427,7 @@ bool present_region(const void* pixels, uint32_t source_pitch, uint32_t x, uint3
         const size_t destination_offset = static_cast<size_t>(y + row) * g_framebuffer.pitch + (static_cast<size_t>(x) * sizeof(uint32_t));
         memcpy(destination + destination_offset, source + source_offset, row_bytes);
     }
+    forget_screen();
     flush_region(x, y, width, height);
     return true;
 }

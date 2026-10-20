@@ -243,6 +243,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **The kernel's text console no longer stalls the machine when it scrolls.** It repainted
+  the whole framebuffer for every line; it now writes only the glyph pixels that changed,
+  which matters when it takes the screen back from the desktop.
+
 - **Leaving fullscreen right after `compositord` died left the screen in the low mode.**
   A mode change is now the first to notice a dead daemon and recovers it, as present does;
   and `windowd` kills a `compositord` that does not confirm its shutdown instead of waiting forever.

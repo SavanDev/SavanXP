@@ -379,19 +379,21 @@ client.
 
 ## Open questions
 
-- **`compositord` can take minutes to exit at session teardown.** Seen in
-  `windowd --selftest` after the capacity test, with the wallpaper in pattern
-  mode (`/disk/desktop.cfg` = `2`) and the phase 1+ desktop. Sometimes the
-  shutdown RPC times out (5 s); other times it is confirmed at once but
-  `waitpid` on `compositord` takes over 100 s or never returns, while the guest
-  loses ~87% of its timer ticks. That points at `compositord`'s exit path
-  (`compositor_state_close` -> `GPU_IOC_RELEASE`, `display::release_session*`
-  in the kernel), not at `windowd`. Neither the pre-phase-1 code with the same
-  config nor phase 1 with the default wallpaper reproduces it.
-  `windowd_compositor_close` now kills a daemon that did not confirm, which
-  covers the timeout case but not the slow exit. Reproduce: set
-  `/disk/desktop.cfg` to `2` and run `./build.sh smoke windowd-smoke` a few
-  times; a hang after `DESKTOP SMOKE capacity` is the symptom.
+- **Session teardown can be slow enough to time out `windowd-smoke`.** After
+  the capacity test the selftest kills twelve applications and the desktop and
+  shuts `compositord` down. Sampling the guest's RIP over QMP while it stalled
+  found two costs. The first was the kernel's text console, which takes the
+  screen back when `compositord` releases the GPU and used to repaint the whole
+  framebuffer on every scroll (fixed: it now repaints only the glyph pixels that
+  changed, and tick loss in that window fell from ~87% to ~10%). The second
+  remains: the per-tick work in the timer handler (`recheck_parked_processes`,
+  `object::poll_timers`, `wake_sleepers`, `net_pump`, PS/2 polling) costs about
+  as much as the 1 ms tick itself with this many processes, so `compositord`'s
+  exit can still take minutes. It shows more with some disk images (the
+  pattern wallpaper made it frequent) than others. `windowd_compositor_close`
+  kills a daemon that does not confirm its shutdown, which covers the timeout
+  case. Reproduce: `./build.sh smoke windowd-smoke` a few times; a hang after
+  `DESKTOP SMOKE capacity` is the symptom.
 
 - **POSIX access to native calls:** fall through in the POSIX dispatcher, or
   explicit POSIX wrappers in the translation layer. Falling through matches NT
