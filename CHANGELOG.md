@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **`SXN_SYS_PROCESS_QUERY` tells a native process about any other.** Parent, whether it is
+  running or ended (with its exit code), handle count and name (`sxn_process_query`).
+
 - **`SXN_SYS_WAIT_MANY`, and pipes and devices can be waited on.** A native process waits for
   any of up to 16 handles (`sxn_wait_many`); a stream opened for reading counts as signaled while
   a read would not block, for native and POSIX waits alike. See `docs/kernel/KERNEL_NATIVE_API.md`.

@@ -59,6 +59,7 @@ object/process factoring, not before.
 - Slice 15: ports, handle passing, POSIX on the native floor.
 - Slice 16: `SXN_SYS_TERMINATE`, a parent ending its child.
 - Slice 17: `SXN_SYS_WAIT_MANY`, and streams as wait targets.
+- Slice 18: `SXN_SYS_PROCESS_QUERY`.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -235,6 +236,21 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 18: querying a process
+
+- `SXN_SYS_PROCESS_QUERY` (`0x101e`): rdi = pid, rsi = `struct
+  sxn_process_query` -- pid, parent, state (`SXN_PROCESS_RUNNING`, or
+  `SXN_PROCESS_ENDED` while waiting for its parent's `waitpid`, with its exit
+  code), open handle count and image name. `-ENOENT` for a pid that names
+  nothing, a reaped one included.
+- Any process may ask about any other: it is what a task list shows, and what
+  POSIX `proc_info` already exposes. Native only.
+
+`windowd` needs it to run native: whether a client is still alive, a client's
+parent for the shell rule, the name that labels a window it did not start,
+and its selftest's handle counts. `nativetest` sees its child running, then
+ended with the status it was given, then gone.
 
 ## Slice 17: waiting on several handles, streams included
 

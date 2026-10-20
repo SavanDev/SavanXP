@@ -27,7 +27,8 @@
  * each way and signals an event handed over its reply pipe; WAIT_MANY on
  * events and streams; and TERMINATE:
  * a third child ("sleeper") waits forever until the parent ends it, and
- * waitpid reports the status the parent chose. The first
+ * waitpid reports the status the parent chose; PROCESS_QUERY sees it running,
+ * then ended with that status, then gone. The first
  * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
  */
@@ -442,15 +443,31 @@ int main(int argc, char** argv) {
         child = sxn_spawn("/disk/bin/nativetest", child_argv, 2);
         check(child > 0);
         if (child > 0) {
+            struct sxn_process_query query;
+
+            check(sxn_process_query(child, &query) == 0);
+            check(query.pid == (uint32_t)child && query.parent_pid == info.pid &&
+                query.state == SXN_PROCESS_RUNNING && streq(query.name, "nativetest"));
             check(sxn_terminate(child, SXN_TERMINATE_STATUS) == 0);
+            /* Ended but not reaped: still there, with its status. */
+            check(sxn_process_query(child, &query) == 0);
+            check(query.state == SXN_PROCESS_ENDED && query.exit_code == SXN_TERMINATE_STATUS);
             check(sxn_waitpid(child, &status) == child && status == SXN_TERMINATE_STATUS);
             /* Reaped: the pid names nothing any more. */
             check(sxn_terminate(child, 1) == -SAVANXP_ENOENT);
+            check(sxn_process_query(child, &query) == -SAVANXP_ENOENT);
+        }
+        {
+            struct sxn_process_query self;
+
+            check(sxn_process_query(info.pid, &self) == 0);
+            check(self.pid == info.pid && self.state == SXN_PROCESS_RUNNING && self.handle_count >= 3u);
+            check(sxn_process_query(0, &self) == -SAVANXP_ENOENT);
         }
         /* pid 1 is the idle task: not this process's child. */
         check(sxn_terminate(1, 1) == -SAVANXP_ECHILD);
         check(sxn_terminate(0, 1) == -SAVANXP_ENOENT);
-        check(sxn_log("nativetest: terminate done") == 0);
+        check(sxn_log("nativetest: terminate and query done") == 0);
     }
 
     sxn_exit(g_failures == 0 ? 0 : 1);

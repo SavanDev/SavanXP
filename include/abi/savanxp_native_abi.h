@@ -174,6 +174,25 @@ enum sxn_syscall_number {
      * opened for reading (pipe, device, socket), signaled while a read would
      * not block: data, or end of stream. Streams consume nothing. */
     SXN_SYS_WAIT_MANY = 0x101d,
+    /* rdi = pid, rsi = struct sxn_process_query (written). Returns 0 or
+     * -ENOENT if no process has that pid (a reaped one included). Any process
+     * may ask about any other: it is what a task list shows anyway. */
+    SXN_SYS_PROCESS_QUERY = 0x101e,
+};
+
+enum sxn_process_state {
+    SXN_PROCESS_RUNNING = 1, /* alive: running, ready or blocked */
+    SXN_PROCESS_ENDED = 2,   /* exited or ended, waiting for its parent's waitpid */
+};
+
+struct sxn_process_query {
+    uint32_t pid;
+    uint32_t parent_pid;
+    uint32_t state;        /* enum sxn_process_state */
+    int32_t exit_code;     /* valid when SXN_PROCESS_ENDED */
+    uint32_t handle_count; /* open handles */
+    uint32_t reserved;
+    char name[32];         /* file name of its image */
 };
 
 struct sxn_port_connection {

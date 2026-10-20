@@ -10,6 +10,7 @@
 #include "kernel/heap.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process_detail.hpp"
+#include "kernel/string.hpp"
 #include "kernel/sx.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/vfs.hpp"
@@ -285,6 +286,35 @@ int native_wait_targets(Process& proc, uint64_t user_handles, uint64_t count, ob
         }
     }
     return static_cast<int>(count);
+}
+
+// Public facts about a process, as a task list shows them.
+int native_process_query(uint64_t pid_value, uint64_t user_out) {
+    sxn_process_query out = {};
+
+    if (pid_value == 0 || pid_value > 0xffffffffull) {
+        return sx::negative_error(SX_ENOENT);
+    }
+    if (!sx::validate_user_range(user_out, sizeof(out), true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    Process* target = process::find(static_cast<uint32_t>(pid_value));
+    if (target == nullptr) {
+        return sx::negative_error(SX_ENOENT);
+    }
+    out.pid = target->pid;
+    out.parent_pid = target->parent_pid;
+    out.state = target->state == State::zombie ? SXN_PROCESS_ENDED : SXN_PROCESS_RUNNING;
+    out.exit_code = target->state == State::zombie ? target->exit_code : 0;
+    for (size_t index = 0; index < kMaxFileHandles; ++index) {
+        if (target->handles[index].object != nullptr) {
+            out.handle_count += 1u;
+        }
+    }
+    static_assert(sizeof(out.name) <= sizeof(target->name), "process name capacity");
+    memcpy(out.name, target->name, sizeof(out.name));
+    out.name[sizeof(out.name) - 1u] = '\0';
+    return sx::copy_to_user(user_out, &out, sizeof(out)) ? 0 : sx::negative_error(SX_EINVAL);
 }
 
 // Ends a child of the caller. Children only: having created the process is
@@ -719,6 +749,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_TERMINATE:
             context->rax = static_cast<uint64_t>(native_terminate(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_PROCESS_QUERY:
+            context->rax = static_cast<uint64_t>(native_process_query(context->rdi, context->rsi));
             return context;
         default:
             break;

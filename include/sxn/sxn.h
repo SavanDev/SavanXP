@@ -137,6 +137,11 @@ static inline long sxn_wait_many(const int32_t* handles, unsigned long count, lo
     return sxn_trap(SXN_SYS_WAIT_MANY, (unsigned long)handles, count, (unsigned long)timeout_ms);
 }
 
+/* What the kernel knows about `pid`: parent, state, name. */
+static inline long sxn_process_query(long pid, struct sxn_process_query* out) {
+    return sxn_trap(SXN_SYS_PROCESS_QUERY, (unsigned long)pid, (unsigned long)out, 0);
+}
+
 /* Ends a child; its waitpid reports `status`. */
 static inline long sxn_terminate(long pid, int status) {
     return sxn_trap(SXN_SYS_TERMINATE, (unsigned long)pid, (unsigned long)(long)status, 0);
