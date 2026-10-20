@@ -60,7 +60,7 @@ taskbar is back. NT 3.x had no compositor; that one layer is a later idea
 | Explorer (NT 4) | **`desktop`** | Background and icons, taskbar, Start menu, taskbar popups |
 | `progman.exe` | **`progman`** | Launcher; an ordinary application |
 | `taskmgr.exe` | **`taskmgr`** | Process list, End Task |
-| SMSS → Winlogon → Userinit | **session launcher** | Starts the session, restarts the desktop if it dies |
+| SMSS → Winlogon → Userinit | **`sessiond`** (the session manager) | Starts the session in order, grants the shell role, restarts the desktop if it dies |
 | `\Windows\ApiPort` (CSRSS LPC port) | **kernel port object** | How a client finds a service |
 
 ## Responsibilities
@@ -127,8 +127,8 @@ paints a bitmap which changes once a month would cost a channel and isolate
 nothing worth isolating.
 
 If `desktop` dies, `windowd` shows a solid colour background and the desktop
-is restarted (NT's `AutoRestartShell`). Until the session launcher exists
-(phase 3), `windowd` restarts it, and gives up after three exits within ten
+is restarted (NT's `AutoRestartShell`). Until [`sessiond`](#the-session-manager-sessiond)
+exists, `windowd` restarts it, and gives up after three exits within ten
 seconds of starting, so a crash at startup cannot become a spin loop.
 
 Which windows the desktop has, and what each is:
@@ -163,8 +163,101 @@ taskbar. With the taskbar back, everything it did has another owner:
 | Alt+Tab switcher UI | A small switcher drawn by `windowd`: icon and title of the candidate, as NT's Alt+Tab box |
 
 The Task List was also the fallback for switching windows when the taskbar
-failed to start. Afterwards Alt+Tab covers that, and the session launcher
-restarts the desktop.
+failed to start. Afterwards Alt+Tab covers that, and the desktop is restarted
+(by `windowd` today, by `sessiond` once it exists).
+
+## The session manager: sessiond
+
+NT splits starting a session in two: SMSS starts the subsystem servers (CSRSS,
+where USER lived in 3.x) and Winlogon, and Winlogon runs Userinit, which starts
+the shell and restarts it when it dies. SavanXP has no logon, so one process
+does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
+`audiod`; it is a supervisor, not a server, and serves no requests.
+
+### What it does
+
+1. `init` starts it, where it starts `windowd` today, and restarts it if it
+   dies. `init` keeps what is not part of the graphical session: `audiod`, and
+   the fallback to `/bin/sh` when the session will not come up.
+2. It starts `windowd`, then `desktop` and `progman`. It is their parent, so a
+   blocking `waitpid(-1)` tells it when any of them ends; it needs no
+   multi-object wait and no polling.
+3. It restarts `desktop` when it dies, with the policy `windowd` has today:
+   given up after three exits within ten seconds of starting. `progman` is an
+   ordinary application and is not restarted: closing it is a user's choice.
+4. When `windowd` dies, the session is over: it ends `desktop` and `progman`
+   and starts the session again, with the same quick-exit limit; past it,
+   `sessiond` exits with an error and `init` falls back to the text shell, as
+   it does for `windowd` today.
+5. Later: ending the session and shutting down (the Shut Down of Task Manager
+   and the Start menu would ask `sessiond`, not kill processes themselves).
+
+`compositord` stays `windowd`'s child for now. They are joined by inherited
+descriptors (`compositor_protocol.h`) and `windowd` already restarts it when it
+dies. Phase 4 rewrites that protocol anyway -- clients submit to `compositord`
+directly, so it needs a port of its own -- and that is when `sessiond` starts
+it, before `windowd`.
+
+### Who is the shell: decided by parentage
+
+The shell role (window roles, hotkeys, the window list) must not go to
+whoever asks for it on the public port. It goes to the process **the session
+manager started** that asks for it:
+
+- The hello gets a flag, `SAVANXP_WM_HELLO_SHELL`. The desktop's runtime sets
+  it; no other program does.
+- `windowd` grants the role when the flag is set and the kernel says the
+  client's parent is `windowd`'s own parent (`sessiond`) or `windowd` itself
+  (its selftests start a desktop). The client pid comes from the port, which
+  the client cannot forge, and the parent from the process table. One shell
+  at a time: while a live process holds the role, a second request is refused.
+- A program the desktop launches has the desktop as its parent, and an orphan
+  is reparented to `init`, so neither can pass.
+
+That needs no control channel between `sessiond` and `windowd`, no fixed
+descriptors and no ordering: the desktop can connect before or after anything
+`sessiond` would have said. It also removes the pid matching and the slot
+reservation for the desktop from `windowd`. In NT the trust comes from who
+created you as well, not from what the client claims.
+
+A control channel becomes necessary only for something `sessiond` has to tell
+`windowd` -- "the session is ending, close every window". When that exists it
+is a connection to the same port with its own hello flag, granted under the
+same parentage rule.
+
+### Clients when the WM goes away
+
+When `windowd` dies, every client's event pipe hangs up. The runtime treats
+that as a close request (`gfx_should_close` returns 1), so an application ends
+the way it ends when its window is closed, instead of drawing into a surface
+nobody composes. `sessiond` ends what is left of the session after a grace
+period, which needs the process termination call phase 3 already lists.
+
+### Native
+
+`sessiond` is native from the start: it opens no file and only starts and
+watches processes. `SXN_SYS_SPAWN` starts binaries of any subsystem (the
+loader goes by the binary's stamp) and clones the caller's handle table, which
+for `sessiond` is stdio and nothing else. `SXN_SYS_WAITPID` already takes -1.
+The one call it lacks is process termination, for ending the session; the
+first version can restart the desktop and the session without it, since both
+only follow a death.
+
+### Order of work
+
+1. Process termination in the native API (and `kill` for POSIX is already
+   there for `windowd`'s close button).
+2. The shell flag in the hello and the parentage rule in `windowd`; `desktop`
+   asks for the role. The runtime treats a hung-up event pipe as a close
+   request.
+3. `sessiond`, native, built in-tree with `NATIVE`; `init` starts it instead of
+   `windowd`. `windowd` stops spawning `desktop` and `progman`, drops the
+   desktop restart and its reservation; the selftests keep spawning their own
+   apps and desktop.
+4. Smokes: `windowd-smoke` (the selftest's desktop still gets the role), a new
+   `session-smoke` that kills the desktop and checks it comes back and that the
+   session comes back when `windowd` is killed, `taskbar-smoke`, and
+   `shoot.sh --scenario startmenu`.
 
 ## Window roles
 
@@ -181,9 +274,11 @@ not a client slot in `windowd`, and it is not a launch flag.
 Rules:
 
 - Only a client holding the shell privilege may create anything but `normal`
-  windows. The privilege is granted when the connection is made (by
-  `windowd` when it starts the desktop in phase 1, by the session launcher
-  through the port afterwards), never claimed by the client.
+  windows. The privilege is granted when the connection is made (today to the
+  desktop `windowd` started, matched by pid; with `sessiond`, to a client
+  that asks for it and was started by the session manager -- see
+  [Who is the shell](#who-is-the-shell-decided-by-parentage)), never on the
+  client's word alone.
 - `windowd` keeps no per-role special cases in routing, reaping or stacking.
   One loop over windows, ordered by role and then by z-order.
 - Sizes and positions come from the client: the numbers that used to live in
@@ -255,7 +350,7 @@ The kernel has a native NT-style API (see
 [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)), and POSIX is one
 subsystem on top. The platform services move onto it:
 
-- **`compositord`, `windowd` and the session launcher become native
+- **`compositord`, `windowd` and `sessiond` become native
   processes** (`EI_OSABI=0x53`). In NT, CSRSS and SMSS are native
   applications.
 - **`desktop`, `progman` and applications are clients**, and may be POSIX or
@@ -297,7 +392,7 @@ services need:
 | Open a device and send it control requests (`gpu0`, `input0`, `mouse0`) | `compositord`, `windowd` | done (slice 14) |
 | Close and duplicate a handle | everyone | done (slice 14) |
 | Monotonic clock | `compositord`, `windowd` (frame stats) | done (slice 14) |
-| Process termination and query | session launcher, `windowd` (closing a main window ends its process) | missing (`waitpid` exists) |
+| Process termination and query | `sessiond` (ending the session), `windowd` (closing a main window ends its process) | missing (`waitpid` exists) |
 | POSIX access to the native object calls | POSIX clients | done (slice 15) |
 | A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | header-only `sxn.h`; the stock `crt0` falls through to a POSIX exit |
 | Files | `desktop`, `progman` | missing, and not needed by the services |
@@ -372,8 +467,8 @@ Depends on the hotkeys of phase 1.
    file name.
 5. **Launching moves to the caller.** `desktop` and `progman` spawn
    programs; the child connects to `windowd` through its port. A native
-   session launcher, started by `init`, starts `compositord`, `windowd`,
-   `desktop` and `progman`, and restarts `desktop`. `windowd` drops `fork`,
+   session manager, `sessiond`, started by `init`, starts `windowd`, `desktop`
+   and `progman` (and `compositord` from phase 4), and restarts `desktop`. `windowd` drops `fork`,
    `dup2`, `exec`, the descriptor sweep and reaping. **Done so far:** WM
    protocol v5 (`savanxp/wm_protocol.h`, [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget)):
    a client connects to the port `windowd`, says hello with the launch flags
@@ -381,10 +476,11 @@ Depends on the hotkeys of phase 1.
    handles with the welcome. `gfx_desktop_launch*` is a `spawn` in the caller,
    which reaps its children; `windowd` no longer forks, `dup2`s, sweeps
    descriptors, sniffs `EI_OSABI` or keeps a launch queue, and labels a window
-   it did not start by its process name. Still to do: the session launcher.
-   Until it exists `windowd` spawns the desktop and Program Manager itself,
-   holds a slot for each until it connects, gives the shell role to the
-   desktop by pid and reaps those two children.
+   it did not start by its process name. Still to do: the session manager,
+   [`sessiond`](#the-session-manager-sessiond). Until it exists `windowd`
+   spawns the desktop and Program Manager itself, holds a slot for each until
+   it connects, gives the shell role to the desktop by pid and reaps those two
+   children.
 6. **`windowd` native.**
 
 ### Phase 4: composition moves into `compositord`
@@ -431,6 +527,6 @@ client.
   ([WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget)) once frame traffic
   goes to `compositord`.
 - **Hotkeys for ordinary applications:** allowed or shell-only.
-- **Where the session launcher ends and `init` begins:** whether `init` keeps
-  restarting the window system (today it restarts `windowd`) or delegates all
-  of it to the session launcher.
+- **Where the session manager ends and `init` begins:** decided --
+  `sessiond` owns the graphical session, `init` keeps `audiod` and the text
+  fallback (see [The session manager](#the-session-manager-sessiond)).

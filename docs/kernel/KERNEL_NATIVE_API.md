@@ -254,7 +254,7 @@ Two things stayed on purpose, and the guard says so:
   application find windowd by port. The isolation is unchanged: the kernel
   still knows nothing of POSIX.
 - Port names are first come, first served; nothing stops a process from taking
-  a service's name before the service starts. The session launcher starting
+  a service's name before the service starts. The session manager (`sessiond`) starting
   services first is what keeps that from happening.
 
 `nativetest` covers ports between two native processes (connect by name, a
