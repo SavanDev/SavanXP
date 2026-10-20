@@ -1,3 +1,6 @@
+/* First: renames the POSIX calls to their native versions (windowd_sys.h). */
+#include "windowd_sys.h"
+
 #include <stdio.h>
 
 #include "libc.h"

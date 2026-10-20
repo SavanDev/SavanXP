@@ -2,7 +2,7 @@
 
 > **Status: design accepted (2026-10-19). Phases 1 and 2 are built** (the
 > `desktop` process, window roles, hotkeys, the Task List removed); phase 3 is
-> under way (`compositord` and the session manager `sessiond` are native,
+> nearly done (`compositord`, `windowd` and the session manager `sessiond` are native,
 > clients connect to `windowd`'s port and whoever launches a program spawns
 > it); phase 4 is not. It is the target for the graphics stack and the order for
 > getting there.
@@ -537,9 +537,17 @@ Depends on the hotkeys of phase 1.
    [`sessiond`](#the-session-manager-sessiond): `windowd` starts nothing of
    the session any more and restarts nothing; `compositord` is still its
    child until phase 4. **Step 5 is done.**
-6. **`windowd` native.** Its prerequisites are in place: multi-object wait
-   and process query in the kernel, and closing a window no longer needs to
-   end a process ([Closing a window](#closing-a-window)).
+6. **`windowd` native.** **Done.** Its prerequisites came first: multi-object
+   wait and process query in the kernel, closing a window that no longer ends
+   a process ([Closing a window](#closing-a-window)), a spawn that hands over
+   stdio only and non-blocking streams (slice 19), and `compositord` reached
+   through a private port instead of `fork` and fixed descriptors. Its sources
+   stay as written; `windowd_sys.h`, included first by every unit, renames the
+   few POSIX calls they make to `wd_*` functions on SXN (`windowd_sys.c`):
+   text goes to `/dev/serial`, `poll` is a wait-many plus a readiness look per
+   handle, a device is opened by its bare name, `kill` ends a child. Still
+   open from this phase: the platform services live in the POSIX tree, and
+   the runtime pieces (a native heap) nobody has needed yet.
 
 ### Phase 4: composition moves into `compositord`
 

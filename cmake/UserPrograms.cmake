@@ -343,8 +343,11 @@ savanxp_program(NAME sessiond NATIVE SOURCES subsystems/posix/userland/sessiond.
 # no abren superficie, asi que el riesgo es bajo; igual es el programa del que
 # depende todo lo que se ve en pantalla. init lo reinicia si sale y cae a /bin/sh
 # tras tres fallos rapidos, y shoot.sh --scenario desktop lo levanta de verdad.
-savanxp_program(NAME windowd DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
+# Native (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3): windowd_sys.c maps the
+# POSIX calls of its sources onto SXN. Static, so gfx2d and sxchrome link in.
+savanxp_program(NAME windowd NATIVE SOURCES
     subsystems/posix/userland/windowd.c
+    subsystems/posix/userland/windowd_sys.c
     subsystems/posix/userland/windowd_compositor_client.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/windowd_presentation.c

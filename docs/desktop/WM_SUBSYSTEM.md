@@ -347,8 +347,9 @@ connection that has not said hello yet holds two descriptors for at most two
 seconds, and at most four wait at once; the rest wait in the port's backlog.
 
 With every slot full — twelve windows plus the desktop's background, taskbar
-and a popup — `windowd --selftest` measures 41 descriptors (the port is one),
-and asserts at least 8 remain free for a connection in progress. The desktop's taskbar and popups
+and a popup — `windowd --selftest` measures 44 descriptors (its port, the private port to
+`compositord`, the serial device it writes text to and the event it sleeps on
+are four), and asserts at least 8 remain free for a connection in progress. The desktop's taskbar and popups
 are windows of one process, so like dialogs they cost two duplicates each and
 no pipe.
 

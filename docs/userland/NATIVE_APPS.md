@@ -51,10 +51,16 @@ A program built by the tree is native when `cmake/UserPrograms.cmake`
 registers it with `NATIVE`; it has to be `STATIC`. It links the same runtime as
 everyone else -- the parts that make no system call (`memset`, string
 functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
-in `sxn_exit`. `compositord` is the first one: the GPU through
-`SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, its link to `windowd` a port it
-connects to (`compositor_protocol.h`) read and written through
-`SXN_SYS_READ`/`_WRITE`.
+in `sxn_exit`. Three are:
+
+- `compositord`: the GPU through `SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, its
+  link to `windowd` a port it connects to (`compositor_protocol.h`) read and
+  written through `SXN_SYS_READ`/`_WRITE`.
+- `sessiond`: spawn, wait, terminate, the clock.
+- `windowd`: written against the POSIX SDK and kept that way; `windowd_sys.h`
+  renames its POSIX calls to SXN equivalents in `windowd_sys.c`. A large
+  program can move to the native API that way, one renamed call at a time,
+  as long as it needs no files and no heap.
 
 ## Build, manifest, launch
 

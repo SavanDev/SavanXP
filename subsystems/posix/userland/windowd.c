@@ -1,3 +1,6 @@
+/* First: renames the POSIX calls to their native versions (windowd_sys.h). */
+#include "windowd_sys.h"
+
 #include "libc.h"
 #include "sxn/sxn.h"
 #include "windowd_session.h"
@@ -1237,29 +1240,13 @@ static size_t coalesce_mouse_events(
     return coalesced_count;
 }
 
+/* Alive and not yet ended: a process that exited is "ended" until its parent
+ * reaps it, and gone after. */
 static int windowd_process_alive(long pid)
 {
-    struct savanxp_process_info info;
-    unsigned long index = 0;
+    struct sxn_process_query query;
 
-    if (pid <= 0)
-    {
-        return 0;
-    }
-
-    for (;;)
-    {
-        long result = proc_info(index, &info);
-        if (result <= 0)
-        {
-            return 0;
-        }
-        if ((long)info.pid == pid && info.state != SAVANXP_PROC_ZOMBIE)
-        {
-            return 1;
-        }
-        ++index;
-    }
+    return pid > 0 && sxn_process_query(pid, &query) == 0 && query.state == SXN_PROCESS_RUNNING;
 }
 
 /* Zombies pendientes de `waitpid`, para no bloquear el bucle de eventos.
@@ -1817,19 +1804,13 @@ static void copy_client_path(struct windowd_client *client, const char *path)
  * kernel keeps (the file name of its image). */
 static void client_path_from_process(struct windowd_client *client, long pid)
 {
-    struct savanxp_process_info info;
-    unsigned long index = 0;
+    struct sxn_process_query query;
 
     client->path[0] = '\0';
-    while (proc_info(index, &info) > 0)
+    if (sxn_process_query(pid, &query) == 0)
     {
-        ++index;
-        if ((long)info.pid == pid && info.state != SAVANXP_PROC_UNUSED)
-        {
-            info.name[sizeof(info.name) - 1u] = '\0';
-            copy_client_path(client, info.name);
-            return;
-        }
+        query.name[sizeof(query.name) - 1u] = '\0';
+        copy_client_path(client, query.name);
     }
 }
 
@@ -2565,18 +2546,9 @@ static int launch_overlay_client(struct windowd_session *session, const char *pa
 /* The parent of `pid` in the process table, or 0. */
 static long process_parent(long pid)
 {
-    struct savanxp_process_info info;
-    unsigned long index = 0;
+    struct sxn_process_query query;
 
-    while (proc_info(index, &info) > 0)
-    {
-        ++index;
-        if ((long)info.pid == pid && info.state != SAVANXP_PROC_UNUSED)
-        {
-            return (long)info.parent_pid;
-        }
-    }
-    return 0;
+    return sxn_process_query(pid, &query) == 0 ? (long)query.parent_pid : 0;
 }
 
 /*
@@ -3952,20 +3924,14 @@ static int selftest_launch(
 
 static int selftest_handle_count(long pid, uint32_t *handles)
 {
-    struct savanxp_process_info info;
-    unsigned long index = 0;
+    struct sxn_process_query query;
 
-    memset(&info, 0, sizeof(info));
-    while (proc_info(index, &info) > 0)
+    if (sxn_process_query(pid, &query) != 0)
     {
-        ++index;
-        if (info.state != SAVANXP_PROC_UNUSED && (long)info.pid == pid)
-        {
-            *handles = info.handle_count;
-            return 0;
-        }
+        return -1;
     }
-    return -1;
+    *handles = query.handle_count;
+    return 0;
 }
 
 /*

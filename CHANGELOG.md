@@ -117,6 +117,10 @@ Cut-off notes:
 
 ### Changed
 
+- **`windowd` is a native process.** It speaks only the SXN API: `windowd_sys.h` maps the POSIX
+  calls of its sources onto it (`windowd_sys.c`), text goes to `/dev/serial`. See
+  `docs/desktop/DESKTOP_ARCHITECTURE.md`, phase 3.
+
 - **`compositord` connects to `windowd` through a private port.** `windowd` names the port on
   `compositord`'s command line and hands over the display section as a handle, instead of a fork
   with descriptors 3, 4 and 5 (`compositor_protocol.h` v3).
