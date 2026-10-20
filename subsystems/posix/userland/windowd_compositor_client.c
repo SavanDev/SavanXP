@@ -1,5 +1,9 @@
 #include "windowd_compositor_client.h"
 
+#include <stdio.h>
+
+#include "sxn/sxn.h"
+
 static const char *k_compositord_path = "/bin/compositord";
 
 /* Watchdog for a single request/reply hop. A healthy daemon answers a present in
@@ -48,42 +52,6 @@ static void close_fd_if_needed(int *fd)
     {
         savanxp_close(*fd);
         *fd = -1;
-    }
-}
-
-/*
- * The compositor child remaps its inherited handles onto descriptors 3..5 (the
- * request pipe, reply pipe, and display section). A source handle may already
- * sit inside that 3..5 window, so dup-ing it straight onto a target could clobber
- * another source we still need. Both helpers below run only in the forked child:
- * first park every source above the window, then dup2 down cleanly. This makes the
- * handoff independent of the order fds were allocated in, which matters because a
- * reconnect reuses the long-lived section fd while the pipes are freshly created.
- */
-static int child_relocate_above_window(int fd)
-{
-    /* dup() returns the lowest free descriptor, so retry until the copy clears
-       the handoff window. */
-    while (fd >= 0 && fd <= SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD)
-    {
-        long moved = savanxp_dup(fd);
-        if (moved < 0)
-        {
-            break;
-        }
-        fd = (int)moved;
-    }
-    return fd;
-}
-
-static void child_close_above_window(void)
-{
-    /* Leave only stdio plus the three handoff fds; closing an unopened fd is a
-       harmless no-op, so a fixed sweep is enough for this tiny fd table. */
-    int fd;
-    for (fd = SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD + 1; fd < 64; ++fd)
-    {
-        savanxp_close(fd);
     }
 }
 
@@ -232,24 +200,28 @@ void windowd_compositor_connection_init(struct windowd_compositor_connection *co
     connection->request_fd = -1;
     connection->reply_fd = -1;
     connection->display_section_fd = -1;
+    connection->port_fd = -1;
 }
 
 /*
- * Fork + exec compositord and run the INIT handshake. The caller owns the
- * display section (connection->display_section_fd) and the requested geometry
- * (connection->requested_info); both are reused as-is, which lets a reconnect
- * respawn the daemon over the same framebuffer the shell is already rendering
- * into. On failure the daemon endpoints are reset but the section is left intact
- * for the caller to keep or tear down.
+ * Spawn compositord and run the INIT handshake (compositor_protocol.h v3):
+ * compositord connects to this windowd's private port, named on its command
+ * line, and gets the display section as a handle before INIT. Nothing is
+ * inherited, so neither fork nor fixed descriptors are involved. The caller
+ * owns the display section (connection->display_section_fd) and the requested
+ * geometry (connection->requested_info); both are reused as-is, which lets a
+ * reconnect respawn the daemon over the same framebuffer the shell is already
+ * rendering into. On failure the daemon endpoints are reset but the section
+ * and the port are left for the caller to keep or tear down.
  */
 static int spawn_compositor_daemon(struct windowd_compositor_connection *connection)
 {
     struct savanxp_compositor_request request;
     struct savanxp_compositor_reply reply;
-    int request_pipe[2] = {-1, -1};
-    int reply_pipe[2] = {-1, -1};
-    const char *argv[2] = {k_compositord_path, 0};
+    struct sxn_port_connection accepted;
+    const char *argv[3] = {k_compositord_path, 0, 0};
     long pid;
+    long waited;
     int result;
 
     if (connection == 0 || connection->display_section_fd < 0)
@@ -257,48 +229,57 @@ static int spawn_compositor_daemon(struct windowd_compositor_connection *connect
         return -SAVANXP_EINVAL;
     }
 
-    if (savanxp_pipe(request_pipe) < 0 || savanxp_pipe(reply_pipe) < 0)
+    if (connection->port_fd < 0)
+    {
+        long port;
+
+        snprintf(connection->port_name, sizeof(connection->port_name), "%s%ld",
+            SAVANXP_COMPOSITOR_PORT_PREFIX, savanxp_getpid());
+        port = sxn_port_create(connection->port_name);
+        if (port < 0)
+        {
+            return (int)port;
+        }
+        connection->port_fd = (int)port;
+    }
+
+    argv[1] = connection->port_name;
+    pid = spawn(k_compositord_path, argv, 2);
+    if (pid < 0)
+    {
+        eprintf("windowd: cannot start %s (%s)\n", k_compositord_path, result_error_string(pid));
+        return (int)pid;
+    }
+    connection->pid = pid;
+
+    /* Its connection, and nobody else's: the port's name is no secret. */
+    waited = wait_one(connection->port_fd, SAVANXP_COMPOSITOR_RPC_TIMEOUT_MS);
+    if (waited < 0)
+    {
+        result = waited == -SAVANXP_ETIMEDOUT ? -SAVANXP_ETIMEDOUT : (int)waited;
+        goto fail;
+    }
+    memset(&accepted, 0, sizeof(accepted));
+    if (sxn_port_accept(connection->port_fd, &accepted) < 0)
     {
         result = -SAVANXP_EIO;
         goto fail;
     }
-
-    pid = savanxp_fork();
-    if (pid < 0)
+    connection->request_fd = accepted.write_handle;
+    connection->reply_fd = accepted.read_handle;
+    if ((long)accepted.client_pid != pid)
     {
-        result = (int)pid;
+        result = -SAVANXP_EACCES;
         goto fail;
     }
-    if (pid == 0)
+    if (pipe_send_handle(connection->request_fd, connection->display_section_fd) < 0)
     {
-        int child_request = child_relocate_above_window(request_pipe[0]);
-        int child_reply = child_relocate_above_window(reply_pipe[1]);
-        int child_section = child_relocate_above_window(connection->display_section_fd);
-
-        if (savanxp_dup2(child_request, SAVANXP_COMPOSITOR_REQUEST_FD) < 0 ||
-            savanxp_dup2(child_reply, SAVANXP_COMPOSITOR_REPLY_FD) < 0 ||
-            savanxp_dup2(child_section, SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD) < 0)
-        {
-            exit(1);
-        }
-
-        child_close_above_window();
-
-        if (exec(k_compositord_path, argv, 1) < 0)
-        {
-            eprintf("desktop: exec failed for %s\n", k_compositord_path);
-        }
-        exit(1);
+        result = -SAVANXP_EIO;
+        goto fail;
     }
-
-    connection->pid = pid;
-    connection->request_fd = request_pipe[1];
-    connection->reply_fd = reply_pipe[0];
     connection->connected = 1;
     connection->next_serial = 0;
     connection->pending_present_sequence = 0;
-    close_fd_if_needed(&request_pipe[0]);
-    close_fd_if_needed(&reply_pipe[1]);
 
     memset(&request, 0, sizeof(request));
     request.type = SAVANXP_COMPOSITOR_MSG_INIT;
@@ -319,10 +300,6 @@ static int spawn_compositor_daemon(struct windowd_compositor_connection *connect
     return 0;
 
 fail:
-    close_fd_if_needed(&request_pipe[0]);
-    close_fd_if_needed(&request_pipe[1]);
-    close_fd_if_needed(&reply_pipe[0]);
-    close_fd_if_needed(&reply_pipe[1]);
     close_fd_if_needed(&connection->request_fd);
     close_fd_if_needed(&connection->reply_fd);
     if (connection->pid > 0)
@@ -513,6 +490,7 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
         (void)unmap_view(connection->display_view);
     }
     close_fd_if_needed(&connection->display_section_fd);
+    close_fd_if_needed(&connection->port_fd);
     windowd_compositor_connection_init(connection);
 }
 

@@ -9,6 +9,10 @@ struct windowd_compositor_connection
     int request_fd;
     int reply_fd;
     int display_section_fd;
+    /* The private port compositord connects to (compositor_protocol.h), kept
+     * across reconnects; -1 until the first spawn. */
+    int port_fd;
+    char port_name[32];
     void *display_view;
     uint32_t *framebuffer;
     struct savanxp_fb_info requested_info;

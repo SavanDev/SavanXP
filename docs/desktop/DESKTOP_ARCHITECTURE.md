@@ -198,11 +198,12 @@ does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
 5. Later: ending the session and shutting down (the Shut Down of Task Manager
    and the Start menu would ask `sessiond`, not kill processes themselves).
 
-`compositord` stays `windowd`'s child for now. They are joined by inherited
-descriptors (`compositor_protocol.h`) and `windowd` already restarts it when it
-dies. Phase 4 rewrites that protocol anyway -- clients submit to `compositord`
-directly, so it needs a port of its own -- and that is when `sessiond` starts
-it, before `windowd`.
+`compositord` stays `windowd`'s child for now, and `windowd` restarts it when
+it dies. They are joined by a private port `windowd` creates and names on
+`compositord`'s command line (`compositor_protocol.h` v3): nothing is
+inherited, which is what lets a native `windowd` start it. Phase 4 gives
+`compositord` a public port of its own -- clients submit to it directly -- and
+that is when `sessiond` starts it, before `windowd`.
 
 ### Who is the shell: decided by parentage
 

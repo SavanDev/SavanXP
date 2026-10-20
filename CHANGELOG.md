@@ -117,6 +117,10 @@ Cut-off notes:
 
 ### Changed
 
+- **`compositord` connects to `windowd` through a private port.** `windowd` names the port on
+  `compositord`'s command line and hands over the display section as a handle, instead of a fork
+  with descriptors 3, 4 and 5 (`compositor_protocol.h` v3).
+
 - **Closing a window asks the program; a hung one gets an End Program dialog.** The X and
   Alt+F4 request the close and the runtime ends a program that does not handle it
   (`gfx_handle_close` to answer yourself); `windowd` never kills. A program still running 5 s

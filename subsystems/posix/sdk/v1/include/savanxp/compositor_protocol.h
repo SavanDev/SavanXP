@@ -6,14 +6,15 @@
 /*
  * SavanXP compositor control protocol.
  *
- * Transport today is a pair of inherited pipes plus one inherited display
- * section:
- *   fd 3: client -> compositord requests
- *   fd 4: compositord -> client replies
- *   fd 5: shared display framebuffer section
- *
- * The format is fixed-size and versioned so the transport can later move to a
- * connectable local socket without changing message semantics.
+ * Transport (v3): a port the client creates for this one compositord and
+ * names on its command line (argv[1]; the client uses
+ * SAVANXP_COMPOSITOR_PORT_PREFIX plus its pid). compositord connects to it,
+ * so it reads requests from the reply end the port gives it and writes
+ * replies on the request end -- the client is the service of the rendezvous,
+ * compositord the one that answers. Before the INIT request the client queues
+ * the shared display section on its pipe as a handle; compositord takes it
+ * when it handles INIT. Nothing is inherited, so it needs neither fork nor
+ * fixed descriptors -- what lets a native windowd start it.
  */
 
 #define SAVANXP_COMPOSITOR_PROTOCOL_MAGIC 0x5358434fu /* SXCO */
@@ -22,11 +23,10 @@
  * puede pasar en la practica; la version igual sube porque el header promete
  * formato fijo y versionado, y asi un desajuste falla limpio en vez de
  * desincronizar el pipe. */
-#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 2u
+/* v3: a port instead of inherited descriptors 3, 4 and 5. */
+#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 3u
 
-#define SAVANXP_COMPOSITOR_REQUEST_FD 3
-#define SAVANXP_COMPOSITOR_REPLY_FD 4
-#define SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD 5
+#define SAVANXP_COMPOSITOR_PORT_PREFIX "wd-compositor-"
 
 enum savanxp_compositor_message_type
 {

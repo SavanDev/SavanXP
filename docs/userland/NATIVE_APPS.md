@@ -52,7 +52,8 @@ registers it with `NATIVE`; it has to be `STATIC`. It links the same runtime as
 everyone else -- the parts that make no system call (`memset`, string
 functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
 in `sxn_exit`. `compositord` is the first one: the GPU through
-`SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, its inherited pipes through
+`SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, its link to `windowd` a port it
+connects to (`compositor_protocol.h`) read and written through
 `SXN_SYS_READ`/`_WRITE`.
 
 ## Build, manifest, launch

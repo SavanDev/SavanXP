@@ -71,7 +71,7 @@ against a file that also draws the start menu.
 ```
   compositord          (owns the GPU, a single display surface; UNCHANGED)
       ▲
-      │ compositor_protocol.h  (fds 3/4/5: request/reply/display section)
+      │ compositor_protocol.h  (then fds 3/4/5; since v3 a private port)
       │
   windowd  (WM server)  ← new process = desktop.c MINUS the chrome
       ▲

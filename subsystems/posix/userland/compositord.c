@@ -54,6 +54,10 @@ struct compositor_state
     struct savanxp_gpu_info gpu_info;
     int initialized;
     int cursor_enabled;
+    /* The pipe requests arrive on, and the display section the client queued
+     * on it before INIT (compositor_protocol.h). -1 until taken. */
+    long request_fd;
+    long display_section;
 };
 
 static void close_fd_if_needed(int *fd)
@@ -112,6 +116,8 @@ static void compositor_state_init(struct compositor_state *state)
     memset(state, 0, sizeof(*state));
     state->gpu_fd = -1;
     state->present_event_fd = -1;
+    state->request_fd = -1;
+    state->display_section = -1;
 }
 
 static void compositor_state_close(struct compositor_state *state)
@@ -136,17 +142,26 @@ static void compositor_state_close(struct compositor_state *state)
     state->cursor_enabled = 0;
 }
 
-/* (Re)importa la seccion de display compartida como superficie de scanout con
- * la geometria que hay en state->display_info. La seccion es siempre la misma
- * -- la heredada por fd -- y esta dimensionada para el modo mas grande, asi que
- * un modo menor entra sin reasignar nada. */
+/* (Re)imports the shared display section as the scanout surface with the
+ * geometry in state->display_info. It is always the same section -- the one
+ * the client handed over before INIT -- sized for the largest mode, so a
+ * smaller mode fits without reallocating anything. */
 static int compositor_import_display(struct compositor_state *state)
 {
     struct savanxp_gpu_surface_import import_request;
     long result;
 
+    if (state->display_section < 0)
+    {
+        state->display_section = sxn_pipe_receive_handle(state->request_fd);
+        if (state->display_section < 0)
+        {
+            state->display_section = -1;
+            return -SAVANXP_EINVAL;
+        }
+    }
     memset(&import_request, 0, sizeof(import_request));
-    import_request.section_handle = SAVANXP_COMPOSITOR_DISPLAY_SECTION_FD;
+    import_request.section_handle = (int32_t)state->display_section;
     import_request.width = state->display_info.width;
     import_request.height = state->display_info.height;
     import_request.pitch = state->display_info.pitch;
@@ -591,19 +606,28 @@ static int handle_request(
     }
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     struct compositor_state state;
+    int32_t channel[2] = {-1, -1};
     int running = 1;
     unsigned long long service_begin = 0ull;
 
     compositor_state_init(&state);
+    /* The client's port (compositor_protocol.h): [0] carries replies to it,
+     * [1] brings its requests. */
+    if (argc < 2 || argv == 0 || argv[1] == 0 || sxn_port_connect(argv[1], channel) != 0)
+    {
+        (void)sxn_log("compositord: no client port to connect to");
+        sxn_exit(1);
+    }
+    state.request_fd = channel[1];
 
     while (running)
     {
         struct savanxp_compositor_request request;
         struct savanxp_compositor_reply reply;
-        int result = read_exact(SAVANXP_COMPOSITOR_REQUEST_FD, &request, sizeof(request));
+        int result = read_exact((int)state.request_fd, &request, sizeof(request));
         if (result < 0)
         {
             break;
@@ -624,7 +648,7 @@ int main(void)
             running = 0;
         }
 
-        if (write_exact(SAVANXP_COMPOSITOR_REPLY_FD, &reply, sizeof(reply)) < 0)
+        if (write_exact(channel[0], &reply, sizeof(reply)) < 0)
         {
             break;
         }
