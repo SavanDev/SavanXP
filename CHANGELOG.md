@@ -117,6 +117,12 @@ Cut-off notes:
 
 ### Changed
 
+- **`compositord` composes the desktop.** `windowd` paints only its own surface (frames, the
+  Alt+Tab switcher, the fallback background) and commits the scene; `compositord` maps the client
+  surfaces, composes, presents and draws the cursor (`compositor_protocol.h` v5: ATTACH, DETACH,
+  COMMIT). Frames now pace on the GPU's present event: `shoot.sh --scenario spin` on virtio-gpu
+  went from ~61 to ~970 fps. See `docs/desktop/DESKTOP_ARCHITECTURE.md#composition-in-compositord`.
+
 - **`compositord` is a session service.** `sessiond` starts it before `windowd`; it allocates the
   display memory and opens the port `compositord`, which `windowd` connects to
   (`compositor_protocol.h` v4). Either one ending restarts the whole session; `windowd` no longer

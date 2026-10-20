@@ -17,7 +17,9 @@ struct windowd_dirty_rect
  * frame, or while it is being restarted. */
 #define WINDOWD_FALLBACK_BACKGROUND 0x00008080u
 
-void windowd_set_backbuffer(uint32_t *pixels);
+/* windowd's own surface (compositor_protocol.h SAVANXP_COMPOSITOR_SURFACE_WM),
+ * which it paints in screen coordinates with `pitch`. */
+void windowd_set_wm_surface(uint32_t *pixels, uint32_t pitch);
 void windowd_dirty_rect_reset(struct windowd_dirty_rect *dirty);
 void windowd_dirty_rect_add(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info, int x, int y, int width, int height);
 void windowd_dirty_rect_add_fullscreen(struct windowd_dirty_rect *dirty, const struct savanxp_fb_info *info);
@@ -35,11 +37,15 @@ int windowd_dirty_rect_at(const struct windowd_dirty_rect *dirty, size_t index, 
  * region it accumulates damage into. Returns 0 on success, non-zero on
  * failure. */
 int windowd_region_selftest(void);
-/* Composes the frame: the desktop's background (or a solid colour until it has
- * one), application windows, the desktop's panels and popups, the Alt+Tab switcher
- * and the cursor. */
-void windowd_draw_desktop(
-    struct windowd_session *session,
-    int cursor_x,
-    int cursor_y,
-    const struct windowd_dirty_rect *dirty);
+/* Whether a window is in the scene: it exists, is not minimized, and has
+ * published its first frame. */
+int windowd_client_in_scene(const struct windowd_client *client);
+/* The layers of the scene, back to front (docs/desktop/DESKTOP_ARCHITECTURE.md#
+ * the-scene). Returns how many it wrote. */
+uint32_t windowd_build_scene(
+    const struct windowd_session *session,
+    struct savanxp_compositor_layer *layers,
+    uint32_t capacity);
+/* Repaints windowd's surface over `dirty`: fallback background, the frames of
+ * the windows in the scene, the switcher. */
+void windowd_paint_wm_surface(struct windowd_session *session, const struct windowd_dirty_rect *dirty);

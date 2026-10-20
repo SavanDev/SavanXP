@@ -3,6 +3,7 @@
 
 #include "savanxp/compositor_protocol.h"
 #include "sxn/sxn.h"
+#include "compositord_scene.h"
 /* After the SavanXP headers: it uses the cursor shape enum. */
 #include "cursor_asset.h"
 
@@ -11,7 +12,8 @@
  * (docs/desktop/DESKTOP_ARCHITECTURE.md#composition-in-compositord): sessiond
  * starts it before windowd, it takes the GPU and allocates the display memory
  * at startup, and serves one window manager through its port
- * (compositor_protocol.h). It speaks only SXN: the GPU is a device it opens by
+ * (compositor_protocol.h). It composes the scene the WM commits
+ * (compositord_scene.c) and presents it. It speaks only SXN: the GPU is a device it opens by
  * name, every GPU request is the control code the POSIX side sends through
  * ioctl. Nothing here may call into the POSIX runtime: from a native process
  * those calls are ENOSYS.
@@ -47,6 +49,18 @@ static unsigned long long monotonic_ns(void)
     return (unsigned long long)sxn_clock_ns();
 }
 
+/* Time since `mark`, 0 if the clock is not calibrated (monotonic_ns returns
+ * 0) or went backwards: the consumer reads 0 as "no sample". */
+static uint64_t elapsed_since(unsigned long long mark)
+{
+    unsigned long long now = monotonic_ns();
+    if (mark == 0ull || now <= mark)
+    {
+        return 0ull;
+    }
+    return (uint64_t)(now - mark);
+}
+
 struct compositor_state
 {
     int gpu_fd;
@@ -55,7 +69,21 @@ struct compositor_state
     struct savanxp_fb_info display_info;
     struct savanxp_gpu_info gpu_info;
     int initialized;
-    int cursor_enabled;
+    /* The cursor plane is in use; without one the scene draws the cursor. */
+    int hw_cursor;
+    struct scene_cursor cursor_applied;
+    /* compositord's own mapping of the display section, which it composes
+     * into. */
+    uint32_t *display_view;
+    /* The last present not yet on the screen (its timeline cookie), 0 when
+     * none: composing waits for it, so a frame never changes under a transfer
+     * in progress. */
+    uint64_t in_flight;
+    /* What the request being served measured (savanxp_compositor_reply). */
+    struct savanxp_compositor_service_timing timing;
+    uint64_t damage_px;
+    uint64_t bounds_px;
+    uint32_t damage_rects;
     /* The display memory, allocated at startup for the largest mode, and its
      * size: a mode whose buffer does not fit is refused. */
     long display_section;
@@ -139,13 +167,19 @@ static void compositor_state_close(struct compositor_state *state)
         close_fd_if_needed(&state->gpu_fd);
     }
     close_fd_if_needed(&state->present_event_fd);
+    scene_reset();
+    if (state->display_view != 0)
+    {
+        (void)sxn_unmap_view((uint64_t)(uintptr_t)state->display_view);
+        state->display_view = 0;
+    }
     if (state->display_section >= 0)
     {
         (void)sxn_close(state->display_section);
         state->display_section = -1;
     }
     state->initialized = 0;
-    state->cursor_enabled = 0;
+    state->hw_cursor = 0;
 }
 
 /* (Re)imports the display section as the scanout surface with the geometry in
@@ -180,6 +214,9 @@ static int compositor_import_display(struct compositor_state *state)
     return 0;
 }
 
+static int finish_present(struct compositor_state *state, int wait);
+static void setup_cursor(struct compositor_state *state);
+
 /* Programs a mode and leaves the display section imported against it. All or
  * nothing: on failure no surface is left imported, and the caller decides
  * whether to restore the previous mode. No surface may be live (SET_MODE
@@ -210,7 +247,12 @@ static int compositor_apply_mode(struct compositor_state *state, uint32_t width,
     state->gpu_info.bpp = mode.bpp;
     state->gpu_info.buffer_size = mode.buffer_size;
 
-    return compositor_import_display(state);
+    result = compositor_import_display(state);
+    if (result == 0 && state->display_view != 0)
+    {
+        scene_set_display(state->display_view, &state->display_info);
+    }
+    return (int)result;
 }
 
 /* Cambio de modo en caliente: suelta la superficie importada (apunta al modo
@@ -241,6 +283,8 @@ static int compositor_set_mode(
     }
 
     previous_info = state->display_info;
+    /* The scanout is rebuilt: nothing may still be reading the old one. */
+    (void)finish_present(state, 1);
     if (state->display_surface_id != 0)
     {
         (void)gpu_release_surface(state->gpu_fd, state->display_surface_id);
@@ -307,6 +351,16 @@ static int compositor_startup(struct compositor_state *state)
         return (int)state->display_section;
     }
 
+    {
+        long view = sxn_map_view(state->display_section, SXN_SECTION_READ | SXN_SECTION_WRITE);
+
+        if (view < 0 && view > -4096)
+        {
+            return (int)view;
+        }
+        state->display_view = (uint32_t *)(uintptr_t)view;
+    }
+
     state->present_event_fd = (int)gpu_create_present_event(state->gpu_fd);
     if (state->present_event_fd < 0)
     {
@@ -318,19 +372,29 @@ static int compositor_startup(struct compositor_state *state)
     {
         return (int)result;
     }
+    setup_cursor(state);
     state->initialized = 1;
     return 0;
 }
 
-/* INIT: what compositord set up at startup, and the display section. */
+/* INIT: the WM's scene section (queued before the request), and in return
+ * what compositord set up at startup and the display section. */
 static int compositor_init(
     struct compositor_state *state,
+    int request_fd,
     int reply_fd,
     struct savanxp_compositor_reply *reply)
 {
+    long scene_section;
+
     if (!state->initialized)
     {
         return -SAVANXP_ENODEV;
+    }
+    scene_section = sxn_pipe_receive_handle(request_fd);
+    if (scene_section < 0 || scene_map_scene_section(scene_section) < 0)
+    {
+        return -SAVANXP_EINVAL;
     }
     if (sxn_pipe_send_handle(reply_fd, state->display_section) < 0)
     {
@@ -341,135 +405,129 @@ static int compositor_init(
     return 0;
 }
 
-/* Delta contra un instante anterior, robusto al reloj sin calibrar: si
- * monotonic_ns devuelve 0 (o el reloj retrocede) el intervalo vale 0, que el
- * consumidor ya trata como 'sin muestra'. */
-static uint64_t elapsed_since(unsigned long long mark)
-{
-    unsigned long long now = monotonic_ns();
-    if (mark == 0ull || now <= mark)
-    {
-        return 0ull;
-    }
-    return (uint64_t)(now - mark);
-}
-
-static int compositor_present(
-    struct compositor_state *state,
-    const struct savanxp_compositor_request *request,
-    struct savanxp_compositor_reply *reply)
-{
-    struct savanxp_gpu_present_timeline timeline;
-    struct savanxp_gpu_surface_present_batch batch;
-    long result;
-    uint32_t index;
-    unsigned long long mark;
-
-    if (state == 0 || request == 0 || reply == 0 || !state->initialized)
-    {
-        return -SAVANXP_ENODEV;
-    }
-    if (request->surface_id != SAVANXP_COMPOSITOR_SURFACE_DISPLAY ||
-        request->rect_count == 0 ||
-        request->rect_count > SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS)
-    {
-        return -SAVANXP_EINVAL;
-    }
-
-    memset(&timeline, 0, sizeof(timeline));
-    mark = monotonic_ns();
-    result = gpu_get_present_timeline(state->gpu_fd, &timeline);
-    reply->service_timing.timeline_ns = elapsed_since(mark);
-    if (result < 0)
-    {
-        return (int)result;
-    }
-
-    memset(&batch, 0, sizeof(batch));
-    batch.surface_id = state->display_surface_id;
-    batch.rect_count = request->rect_count;
-    batch.flags = request->flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE;
-    batch.present_cookie = timeline.submitted_sequence + 1u;
-    for (index = 0; index < request->rect_count; ++index)
-    {
-        batch.rects[index] = request->rects[index];
-    }
-
-    mark = monotonic_ns();
-    result = gpu_present_surface_batch(state->gpu_fd, &batch);
-    reply->service_timing.gpu_ns = elapsed_since(mark);
-    if (result < 0)
-    {
-        return (int)result;
-    }
-
-    reply->present_sequence = batch.present_cookie;
-    return 0;
-}
-
-static int compositor_sync_present(
-    struct compositor_state *state,
-    const struct savanxp_compositor_request *request,
-    struct savanxp_compositor_reply *reply)
+/* The last present is on the screen, or (wait = 0) not yet. With `wait` it
+ * blocks until it is. 1 when nothing is in flight any more. */
+static int finish_present(struct compositor_state *state, int wait)
 {
     struct savanxp_gpu_present_timeline timeline;
     struct savanxp_gpu_present_wait wait_request;
-    long result;
 
-    if (state == 0 || request == 0 || reply == 0 || !state->initialized)
+    if (state->in_flight == 0)
     {
-        return -SAVANXP_ENODEV;
+        return 1;
     }
-
-    reply->ready = 1u;
-    if (request->target_sequence == 0)
+    if (!wait)
     {
-        return 0;
-    }
-
-    if (!request->wait_for_target)
-    {
-        if (state->present_event_fd >= 0)
-        {
-            result = sxn_wait_one(state->present_event_fd, 0);
-            if (result == -SAVANXP_ETIMEDOUT)
-            {
-                reply->ready = 0;
-                return 0;
-            }
-        }
-
         memset(&timeline, 0, sizeof(timeline));
-        result = gpu_get_present_timeline(state->gpu_fd, &timeline);
-        if (result < 0)
+        if (gpu_get_present_timeline(state->gpu_fd, &timeline) < 0 ||
+            timeline.retired_sequence < state->in_flight)
         {
-            return (int)result;
-        }
-        if (timeline.retired_sequence < request->target_sequence)
-        {
-            reply->ready = 0;
             return 0;
         }
     }
-
     memset(&wait_request, 0, sizeof(wait_request));
-    wait_request.target_sequence = request->target_sequence;
-    result = gpu_wait_present(state->gpu_fd, &wait_request);
-    if (result < 0)
-    {
-        return (int)result;
-    }
-    if ((wait_request.flags & SAVANXP_GPU_PRESENT_TIMELINE_FLAG_TARGET_FAILED) != 0)
-    {
-        return -SAVANXP_EIO;
-    }
+    wait_request.target_sequence = state->in_flight;
+    (void)gpu_wait_present(state->gpu_fd, &wait_request);
     if (state->present_event_fd >= 0)
     {
         (void)sxn_event_reset(state->present_event_fd);
     }
-    reply->timeline.retired_sequence = wait_request.retired_sequence;
-    reply->timeline.pending_count = wait_request.pending_count;
-    reply->timeline.flags = wait_request.flags;
+    state->in_flight = 0;
+    scene_retire();
+    return 1;
+}
+
+/* Hands a composed region to the GPU, in batches of its rectangle limit. */
+static int present_region(struct compositor_state *state, const struct sx_region *region)
+{
+    struct savanxp_gpu_surface_present_batch batch;
+    size_t count = sx_region_rect_count(region);
+    size_t index = 0;
+    struct sx_rect bounds = sx_region_bounds(region);
+
+    state->bounds_px += (uint64_t)bounds.width * (uint64_t)bounds.height;
+    while (index < count)
+    {
+        struct savanxp_gpu_present_timeline timeline;
+        unsigned long long mark;
+        long result;
+
+        memset(&batch, 0, sizeof(batch));
+        while (index < count && batch.rect_count < SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS)
+        {
+            struct sx_rect rect;
+
+            if (sx_region_rect_at(region, index++, &rect) && rect.width > 0 && rect.height > 0)
+            {
+                batch.rects[batch.rect_count].x = (uint32_t)rect.x;
+                batch.rects[batch.rect_count].y = (uint32_t)rect.y;
+                batch.rects[batch.rect_count].width = (uint32_t)rect.width;
+                batch.rects[batch.rect_count].height = (uint32_t)rect.height;
+                batch.rect_count += 1u;
+                state->damage_px += (uint64_t)rect.width * (uint64_t)rect.height;
+                state->damage_rects += 1u;
+            }
+        }
+        if (batch.rect_count == 0)
+        {
+            continue;
+        }
+
+        memset(&timeline, 0, sizeof(timeline));
+        mark = monotonic_ns();
+        result = gpu_get_present_timeline(state->gpu_fd, &timeline);
+        state->timing.timeline_ns += elapsed_since(mark);
+        if (result < 0)
+        {
+            return (int)result;
+        }
+        batch.surface_id = state->display_surface_id;
+        batch.present_cookie = timeline.submitted_sequence + 1u;
+        mark = monotonic_ns();
+        result = gpu_present_surface_batch(state->gpu_fd, &batch);
+        state->timing.gpu_ns += elapsed_since(mark);
+        if (result < 0)
+        {
+            return (int)result;
+        }
+        state->in_flight = batch.present_cookie;
+    }
+    return 0;
+}
+
+/* Composes and presents what is damaged, once the last present is on the
+ * screen. `wait`: block for that, and for this frame to be on the screen too
+ * (a COMMIT_WAIT). */
+static int produce_frame(struct compositor_state *state, int wait)
+{
+    static struct sx_region presented;
+    unsigned long long mark;
+    int result;
+
+    if (!finish_present(state, wait))
+    {
+        return 0;
+    }
+    if (!scene_has_damage())
+    {
+        return 0;
+    }
+    mark = monotonic_ns();
+    scene_compose(&presented);
+    state->timing.compose_ns += elapsed_since(mark);
+    if (sx_region_is_empty(&presented))
+    {
+        return 0;
+    }
+    result = present_region(state, &presented);
+    if (result < 0)
+    {
+        return result;
+    }
+    if (wait)
+    {
+        (void)finish_present(state, 1);
+    }
     return 0;
 }
 
@@ -524,53 +582,101 @@ static int upload_cursor_shape(struct compositor_state *state, uint32_t shape)
     return gpu_set_cursor(state->gpu_fd, &image) < 0 ? -SAVANXP_EIO : 0;
 }
 
-static int compositor_enable_cursor(
-    struct compositor_state *state,
-    const struct savanxp_compositor_request *request)
+/* The cursor of the last commit on the hardware plane: the shape when it
+ * changed, then where and whether it shows. Without a plane the scene draws
+ * it, and this does nothing. */
+static void apply_cursor(struct compositor_state *state)
 {
-    int result;
+    struct scene_cursor cursor = scene_current_cursor();
+    struct savanxp_gpu_cursor_position position;
 
-    if (state == 0 || request == 0 || !state->initialized)
+    if (!state->hw_cursor)
     {
-        return -SAVANXP_ENODEV;
+        return;
     }
+    if (cursor.shape != state->cursor_applied.shape)
+    {
+        (void)upload_cursor_shape(state, (uint32_t)cursor.shape);
+    }
+    if (cursor.x != state->cursor_applied.x || cursor.y != state->cursor_applied.y ||
+        cursor.visible != state->cursor_applied.visible || cursor.shape != state->cursor_applied.shape)
+    {
+        memset(&position, 0, sizeof(position));
+        position.x = (uint32_t)(cursor.x < 0 ? 0 : cursor.x);
+        position.y = (uint32_t)(cursor.y < 0 ? 0 : cursor.y);
+        position.visible = cursor.visible ? 1u : 0u;
+        position.shape = (uint32_t)cursor.shape;
+        (void)gpu_move_cursor(state->gpu_fd, &position);
+    }
+    state->cursor_applied = cursor;
+}
 
-    result = upload_cursor_shape(state, request->cursor_position.shape);
+/* The plane if the GPU has one, else the scene's software cursor. Hidden until
+ * the first commit says where. */
+static void setup_cursor(struct compositor_state *state)
+{
+    struct savanxp_gpu_cursor_position position;
+
+    state->hw_cursor = 0;
+    state->cursor_applied.x = 0;
+    state->cursor_applied.y = 0;
+    state->cursor_applied.shape = SAVANXP_CURSOR_ARROW;
+    state->cursor_applied.visible = 0;
+    if ((state->gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) != 0 &&
+        upload_cursor_shape(state, SAVANXP_CURSOR_ARROW) == 0)
+    {
+        memset(&position, 0, sizeof(position));
+        position.shape = SAVANXP_CURSOR_ARROW;
+        if (gpu_move_cursor(state->gpu_fd, &position) >= 0)
+        {
+            state->hw_cursor = 1;
+        }
+    }
+    scene_set_software_cursor(!state->hw_cursor);
+}
+
+static int compositor_attach(struct compositor_state *state, int request_fd, const struct savanxp_compositor_request *request)
+{
+    long section = sxn_pipe_receive_handle(request_fd);
+    long wake = -1;
+
+    (void)state;
+    if (section < 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if ((request->surface.flags & SAVANXP_COMPOSITOR_SURFACE_CLIENT) != 0)
+    {
+        wake = sxn_pipe_receive_handle(request_fd);
+        if (wake < 0)
+        {
+            (void)sxn_close(section);
+            return -SAVANXP_EINVAL;
+        }
+    }
+    return scene_attach(&request->surface, section, wake);
+}
+
+static int compositor_commit(
+    struct compositor_state *state,
+    const struct savanxp_compositor_request *request,
+    struct savanxp_compositor_reply *reply)
+{
+    int result = scene_commit();
+
     if (result < 0)
     {
         return result;
     }
-
-    state->cursor_enabled = 1;
-    return gpu_move_cursor(state->gpu_fd, &request->cursor_position) < 0 ? -SAVANXP_EIO : 0;
-}
-
-static int compositor_move_cursor(
-    struct compositor_state *state,
-    const struct savanxp_compositor_request *request)
-{
-    if (state == 0 || request == 0 || !state->initialized || !state->cursor_enabled)
-    {
-        return -SAVANXP_ENODEV;
-    }
-    return gpu_move_cursor(state->gpu_fd, &request->cursor_position) < 0 ? -SAVANXP_EIO : 0;
-}
-
-static int compositor_set_cursor_shape(
-    struct compositor_state *state,
-    const struct savanxp_compositor_request *request)
-{
-    if (state == 0 || request == 0 || !state->initialized || !state->cursor_enabled)
-    {
-        return -SAVANXP_ENODEV;
-    }
-    /* Shape swap only -- must not touch position/visibility, or every shape
-     * change would snap the hardware cursor to (0,0) and hide it. */
-    return upload_cursor_shape(state, request->cursor_position.shape);
+    apply_cursor(state);
+    result = produce_frame(state, (request->flags & SAVANXP_COMPOSITOR_COMMIT_WAIT) != 0);
+    reply->broken_surfaces = scene_take_broken();
+    return result;
 }
 
 static int handle_request(
     struct compositor_state *state,
+    int request_fd,
     int reply_fd,
     const struct savanxp_compositor_request *request,
     struct savanxp_compositor_reply *reply)
@@ -584,21 +690,18 @@ static int handle_request(
     switch (request->type)
     {
     case SAVANXP_COMPOSITOR_MSG_INIT:
-        return compositor_init(state, reply_fd, reply);
-    case SAVANXP_COMPOSITOR_MSG_PRESENT:
-        return compositor_present(state, request, reply);
-    case SAVANXP_COMPOSITOR_MSG_SYNC_PRESENT:
-        return compositor_sync_present(state, request, reply);
+        return compositor_init(state, request_fd, reply_fd, reply);
     case SAVANXP_COMPOSITOR_MSG_GET_TIMELINE:
         return compositor_get_timeline(state, reply);
-    case SAVANXP_COMPOSITOR_MSG_ENABLE_CURSOR:
-        return compositor_enable_cursor(state, request);
-    case SAVANXP_COMPOSITOR_MSG_MOVE_CURSOR:
-        return compositor_move_cursor(state, request);
-    case SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE:
-        return compositor_set_cursor_shape(state, request);
     case SAVANXP_COMPOSITOR_MSG_SET_MODE:
         return compositor_set_mode(state, &request->fb_info, reply);
+    case SAVANXP_COMPOSITOR_MSG_ATTACH:
+        return compositor_attach(state, request_fd, request);
+    case SAVANXP_COMPOSITOR_MSG_DETACH:
+        scene_detach(request->surface_id);
+        return 0;
+    case SAVANXP_COMPOSITOR_MSG_COMMIT:
+        return compositor_commit(state, request, reply);
     case SAVANXP_COMPOSITOR_MSG_SHUTDOWN:
         return 0;
     default:
@@ -627,8 +730,16 @@ static int serve_request(struct compositor_state *state, int request_fd, int rep
     reply.version = SAVANXP_COMPOSITOR_PROTOCOL_VERSION;
     reply.type = request.type;
     reply.serial = request.serial;
-    reply.status = handle_request(state, reply_fd, &request, &reply);
+    memset(&state->timing, 0, sizeof(state->timing));
+    state->damage_px = 0;
+    state->bounds_px = 0;
+    state->damage_rects = 0;
+    reply.status = handle_request(state, request_fd, reply_fd, &request, &reply);
+    reply.service_timing = state->timing;
     reply.service_timing.service_ns = elapsed_since(service_begin);
+    reply.damage_px = state->damage_px;
+    reply.bounds_px = state->bounds_px;
+    reply.damage_rects = state->damage_rects;
     if (write_exact(reply_fd, &reply, sizeof(reply)) < 0)
     {
         return -SAVANXP_EPIPE;
@@ -694,7 +805,7 @@ static int accept_wm(struct compositor_state *state, long port, int *request_fd,
             reply.version = SAVANXP_COMPOSITOR_PROTOCOL_VERSION;
             reply.type = request.type;
             reply.serial = request.serial;
-            reply.status = compositor_init(state, connection.write_handle, &reply);
+            reply.status = compositor_init(state, connection.read_handle, connection.write_handle, &reply);
             if (write_exact(connection.write_handle, &reply, sizeof(reply)) == 0 && reply.status == 0)
             {
                 *request_fd = connection.read_handle;
@@ -739,13 +850,33 @@ int main(int argc, char **argv)
     {
         for (;;)
         {
-            int32_t handles[2];
+            int32_t handles[3];
+            unsigned long count = 0;
+            long timeout = -1;
             long ready;
 
-            handles[0] = request_fd;
-            handles[1] = (int32_t)port;
-            ready = sxn_wait_many(handles, 2, -1);
-            if (ready < 0)
+            handles[count++] = request_fd;
+            handles[count++] = (int32_t)port;
+            /* Damage left over while a present was in flight is composed once
+             * it is on the screen: wait for that too, on the GPU's present
+             * event, or by polling where there is none. */
+            if (scene_has_damage() && state.in_flight != 0)
+            {
+                if (state.present_event_fd >= 0)
+                {
+                    handles[count++] = state.present_event_fd;
+                }
+                else
+                {
+                    timeout = 2;
+                }
+            }
+            ready = sxn_wait_many(handles, count, timeout);
+            if (ready < 0 && ready != -SAVANXP_ETIMEDOUT)
+            {
+                break;
+            }
+            if (produce_frame(&state, 0) < 0)
             {
                 break;
             }
@@ -762,6 +893,11 @@ int main(int argc, char **argv)
                 }
             }
             if (sxn_wait_one(request_fd, 0) == 0 && serve_request(&state, request_fd, reply_fd) <= 0)
+            {
+                break;
+            }
+            /* A frame a present in flight held back, now that it may go. */
+            if (produce_frame(&state, 0) < 0)
             {
                 break;
             }

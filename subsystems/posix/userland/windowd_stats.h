@@ -47,6 +47,7 @@ struct windowd_stats
     unsigned long long sync_ns_total;
     unsigned long long sync_ns_max;
     unsigned long long service_ns_total;
+    unsigned long long remote_compose_ns_total;
     unsigned long long gpu_ns_total;
     unsigned long long timeline_ns_total;
     unsigned long long damage_px_total;
@@ -63,13 +64,11 @@ void windowd_stats_frame_begin(struct windowd_stats *stats);
 void windowd_stats_compose_done(struct windowd_stats *stats);
 void windowd_stats_sync_begin(struct windowd_stats *stats);
 void windowd_stats_sync_end(struct windowd_stats *stats);
-/* Cierra el frame y le suma el danio que se acaba de presentar, mas el
- * desglose que estampo compositord. `timing` se CONSUME: se suma y se deja en
- * cero, asi un mismo desglose no se cuenta dos veces. Puede ser 0. */
-void windowd_stats_frame_end(
-    struct windowd_stats *stats,
-    const struct windowd_dirty_rect *dirty,
-    struct savanxp_compositor_service_timing *timing);
+/* Closes the frame with what compositord reported for the commit: its
+ * composition, the GPU calls, and the damage it presented. A commit that
+ * presented nothing (a cursor move on the hardware plane, a frame held back
+ * behind one in flight) is not a frame. */
+void windowd_stats_frame_end(struct windowd_stats *stats, const struct savanxp_compositor_reply *reply);
 
 /* Emite la linea de resumen si paso el intervalo (o si `force`), y reinicia la
  * ventana. Sin frames medidos no emite nada: un escritorio quieto no llena el

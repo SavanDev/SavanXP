@@ -257,6 +257,33 @@ int windowd_compositor_open(struct windowd_compositor_connection *connection, in
     }
     connection->connected = 1;
 
+    /* The scene section goes with INIT; windowd keeps only its mapping. */
+    {
+        long scene = section_create(sizeof(struct savanxp_compositor_scene), SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        void *view;
+
+        if (scene < 0)
+        {
+            windowd_compositor_close(connection);
+            return (int)scene;
+        }
+        view = map_view((int)scene, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        result = result_is_error((long)view) ? (int)(long)view : (int)pipe_send_handle(connection->request_fd, (int)scene);
+        (void)savanxp_close((int)scene);
+        if (result < 0)
+        {
+            if (!result_is_error((long)view))
+            {
+                (void)unmap_view(view);
+            }
+            windowd_compositor_close(connection);
+            return result;
+        }
+        connection->scene = (struct savanxp_compositor_scene *)view;
+        memset(connection->scene, 0, sizeof(*connection->scene));
+        connection->scene->magic = SAVANXP_COMPOSITOR_SCENE_MAGIC;
+    }
+
     memset(&request, 0, sizeof(request));
     request.type = SAVANXP_COMPOSITOR_MSG_INIT;
     result = compositor_rpc(connection, &request, &reply);
@@ -288,6 +315,42 @@ int windowd_compositor_open(struct windowd_compositor_connection *connection, in
         return result;
     }
     connection->framebuffer = (uint32_t *)connection->display_view;
+
+    /* windowd's own surface, at the native mode: every smaller mode fits. */
+    {
+        struct savanxp_compositor_surface surface;
+        long wm;
+
+        memset(&surface, 0, sizeof(surface));
+        surface.surface_id = SAVANXP_COMPOSITOR_SURFACE_WM;
+        surface.pitch = connection->display_info.width * (uint32_t)sizeof(uint32_t);
+        surface.capacity_width = connection->display_info.width;
+        surface.capacity_height = connection->display_info.height;
+        surface.section_size = (uint64_t)surface.pitch * surface.capacity_height;
+        wm = section_create((unsigned long)surface.section_size, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (wm < 0)
+        {
+            windowd_compositor_close(connection);
+            return (int)wm;
+        }
+        connection->wm_view = map_view((int)wm, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+        if (result_is_error((long)connection->wm_view))
+        {
+            result = (int)(long)connection->wm_view;
+            connection->wm_view = 0;
+            (void)savanxp_close((int)wm);
+            windowd_compositor_close(connection);
+            return result;
+        }
+        connection->wm_pitch = surface.pitch;
+        result = windowd_compositor_attach(connection, &surface, (int)wm, -1);
+        (void)savanxp_close((int)wm);
+        if (result < 0)
+        {
+            windowd_compositor_close(connection);
+            return result;
+        }
+    }
     return 0;
 }
 
@@ -335,107 +398,67 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
     {
         (void)unmap_view(connection->display_view);
     }
+    if (connection->scene != 0)
+    {
+        (void)unmap_view(connection->scene);
+    }
+    if (connection->wm_view != 0)
+    {
+        (void)unmap_view(connection->wm_view);
+    }
     windowd_compositor_connection_init(connection);
 }
 
-int windowd_compositor_present(
+int windowd_compositor_attach(
     struct windowd_compositor_connection *connection,
-    const struct sx_rect *rects,
-    size_t rect_count)
-{
-    size_t index = 0;
-
-    if (connection == 0 || rects == 0 || rect_count == 0)
-    {
-        return 0;
-    }
-
-    while (index < rect_count)
-    {
-        struct savanxp_compositor_request request;
-        struct savanxp_compositor_reply reply;
-        uint32_t request_rect_count = 0;
-        int result;
-
-        memset(&request, 0, sizeof(request));
-        request.type = SAVANXP_COMPOSITOR_MSG_PRESENT;
-        request.surface_id = SAVANXP_COMPOSITOR_SURFACE_DISPLAY;
-
-        while (index < rect_count && request_rect_count < SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS)
-        {
-            const struct sx_rect *rect = &rects[index++];
-            if (rect->width <= 0 || rect->height <= 0)
-            {
-                continue;
-            }
-            request.rects[request_rect_count].x = (uint32_t)rect->x;
-            request.rects[request_rect_count].y = (uint32_t)rect->y;
-            request.rects[request_rect_count].width = (uint32_t)rect->width;
-            request.rects[request_rect_count].height = (uint32_t)rect->height;
-            request_rect_count += 1u;
-        }
-
-        if (request_rect_count == 0)
-        {
-            continue;
-        }
-
-        request.rect_count = request_rect_count;
-        result = compositor_rpc(connection, &request, &reply);
-        if (result < 0)
-        {
-            return result;
-        }
-        if (reply.present_sequence != 0)
-        {
-            connection->pending_present_sequence = reply.present_sequence;
-        }
-        connection->last_present_timing.service_ns += reply.service_timing.service_ns;
-        connection->last_present_timing.gpu_ns += reply.service_timing.gpu_ns;
-        connection->last_present_timing.timeline_ns += reply.service_timing.timeline_ns;
-    }
-
-    return 0;
-}
-
-int windowd_compositor_sync_present(
-    struct windowd_compositor_connection *connection,
-    int wait_for_target,
-    int *ready)
+    const struct savanxp_compositor_surface *surface,
+    int section_fd,
+    int wake_event_fd)
 {
     struct savanxp_compositor_request request;
     struct savanxp_compositor_reply reply;
-    int result;
 
-    if (ready != 0)
+    if (connection == 0 || surface == 0 || section_fd < 0 || !connection->connected)
     {
-        *ready = 1;
+        return -SAVANXP_EINVAL;
     }
-    if (connection == 0 || connection->pending_present_sequence == 0)
+    /* The handles first, in the order compositord takes them. */
+    if (pipe_send_handle(connection->request_fd, section_fd) < 0 ||
+        ((surface->flags & SAVANXP_COMPOSITOR_SURFACE_CLIENT) != 0 &&
+         pipe_send_handle(connection->request_fd, wake_event_fd) < 0))
     {
-        return 0;
+        connection->connected = 0;
+        return -SAVANXP_EIO;
     }
+    memset(&request, 0, sizeof(request));
+    request.type = SAVANXP_COMPOSITOR_MSG_ATTACH;
+    request.surface = *surface;
+    return compositor_rpc(connection, &request, &reply);
+}
+
+int windowd_compositor_detach(struct windowd_compositor_connection *connection, uint32_t surface_id)
+{
+    struct savanxp_compositor_request request;
+    struct savanxp_compositor_reply reply;
 
     memset(&request, 0, sizeof(request));
-    request.type = SAVANXP_COMPOSITOR_MSG_SYNC_PRESENT;
-    request.target_sequence = connection->pending_present_sequence;
-    request.wait_for_target = wait_for_target ? 1u : 0u;
-    result = compositor_rpc(connection, &request, &reply);
-    if (result < 0)
-    {
-        return result;
-    }
-    if (!reply.ready)
-    {
-        if (ready != 0)
-        {
-            *ready = 0;
-        }
-        return 0;
-    }
+    request.type = SAVANXP_COMPOSITOR_MSG_DETACH;
+    request.surface_id = surface_id;
+    return compositor_rpc(connection, &request, &reply);
+}
 
-    connection->pending_present_sequence = 0;
-    return 0;
+int windowd_compositor_commit(
+    struct windowd_compositor_connection *connection,
+    uint32_t flags,
+    struct savanxp_compositor_reply *reply)
+{
+    struct savanxp_compositor_request request;
+    struct savanxp_compositor_reply local;
+
+    memset(&request, 0, sizeof(request));
+    request.type = SAVANXP_COMPOSITOR_MSG_COMMIT;
+    request.flags = flags;
+    return compositor_rpc(connection, &request, reply != 0 ? reply : &local);
 }
 
 int windowd_compositor_get_timeline(
@@ -504,74 +527,4 @@ int windowd_compositor_set_mode(
     connection->display_info = reply.fb_info;
     connection->gpu_info = reply.gpu_info;
     return 0;
-}
-
-int windowd_compositor_enable_cursor(
-    struct windowd_compositor_connection *connection,
-    int cursor_x,
-    int cursor_y)
-{
-    struct savanxp_compositor_request request;
-    struct savanxp_compositor_reply reply;
-    int result;
-
-    memset(&request, 0, sizeof(request));
-    request.type = SAVANXP_COMPOSITOR_MSG_ENABLE_CURSOR;
-    request.cursor_position.x = (uint32_t)cursor_x;
-    request.cursor_position.y = (uint32_t)cursor_y;
-    request.cursor_position.visible = 1u;
-    result = compositor_rpc(connection, &request, &reply);
-    if (result == 0 && connection != 0)
-    {
-        connection->cursor_enabled = 1;
-        connection->cursor_x = cursor_x;
-        connection->cursor_y = cursor_y;
-        connection->cursor_visible = 1;
-        connection->cursor_shape = SAVANXP_CURSOR_ARROW;
-    }
-    return result;
-}
-
-int windowd_compositor_move_cursor(
-    struct windowd_compositor_connection *connection,
-    int cursor_x,
-    int cursor_y,
-    int visible)
-{
-    struct savanxp_compositor_request request;
-    struct savanxp_compositor_reply reply;
-    int result;
-
-    memset(&request, 0, sizeof(request));
-    request.type = SAVANXP_COMPOSITOR_MSG_MOVE_CURSOR;
-    request.cursor_position.x = (uint32_t)cursor_x;
-    request.cursor_position.y = (uint32_t)cursor_y;
-    request.cursor_position.visible = visible ? 1u : 0u;
-    result = compositor_rpc(connection, &request, &reply);
-    if (result == 0 && connection != 0)
-    {
-        connection->cursor_x = cursor_x;
-        connection->cursor_y = cursor_y;
-        connection->cursor_visible = visible ? 1 : 0;
-    }
-    return result;
-}
-
-int windowd_compositor_set_cursor_shape(
-    struct windowd_compositor_connection *connection,
-    int shape)
-{
-    struct savanxp_compositor_request request;
-    struct savanxp_compositor_reply reply;
-    int result;
-
-    memset(&request, 0, sizeof(request));
-    request.type = SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE;
-    request.cursor_position.shape = (uint32_t)shape;
-    result = compositor_rpc(connection, &request, &reply);
-    if (result == 0 && connection != 0)
-    {
-        connection->cursor_shape = shape;
-    }
-    return result;
 }

@@ -49,6 +49,11 @@ static void close_fd_if_needed(int *fd)
     }
 }
 
+/* The session and its compositord link, for the paths that attach and detach
+ * client surfaces without a session at hand (connect_client,
+ * destroy_client_instance). One session per windowd. */
+static struct windowd_session *g_session = 0;
+
 /* Size of a process's descriptor table (process::kMaxFileHandles). */
 #define WINDOWD_PROCESS_FD_LIMIT 64
 
@@ -712,11 +717,8 @@ static int apply_display_mode(struct windowd_session *session, uint32_t width, u
         return -1;
     }
 
+    /* compositord composes the whole scene again in the new mode. */
     session->gfx.info = session->compositor.display_info;
-    /* La superficie compartida todavia tiene los pixeles del modo anterior, que
-     * con el stride nuevo se leen torcidos. Limpiarla evita mostrar un frame
-     * corrupto en la ventana entre el cambio de modo y el primer repintado. */
-    memset(session->compositor.framebuffer, 0, session->gfx.info.buffer_size);
     return 0;
 }
 
@@ -929,7 +931,7 @@ static int any_overlay_client_starting(const struct windowd_session *session)
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
         const struct windowd_client *client = &session->overlay_clients[slot];
-        if (client->pid > 0 && client->consumed_submit_sequence == 0)
+        if (client->pid > 0 && !client->started)
         {
             return 1;
         }
@@ -976,36 +978,6 @@ static int resolve_cursor_shape(
         return current_hover_client->last_cursor_hint_shape;
     }
     return SAVANXP_CURSOR_ARROW;
-}
-
-static int set_hw_cursor_position(struct windowd_session *session, int cursor_x, int cursor_y, int visible)
-{
-    if (session == 0 || !session->hw_cursor_enabled)
-    {
-        return -1;
-    }
-
-    return windowd_compositor_move_cursor(&session->compositor, cursor_x, cursor_y, visible) < 0 ? -1 : 0;
-}
-
-static int try_enable_hw_cursor(struct windowd_session *session, int cursor_x, int cursor_y)
-{
-    if (session == 0)
-    {
-        return 0;
-    }
-    if ((session->compositor.gpu_info.flags & SAVANXP_GPU_INFO_FLAG_CURSOR_PLANE) == 0)
-    {
-        return 0;
-    }
-
-    if (windowd_compositor_enable_cursor(&session->compositor, cursor_x, cursor_y) < 0)
-    {
-        return 0;
-    }
-
-    session->hw_cursor_enabled = 1;
-    return 1;
 }
 
 static int windowd_stage_failed(const char *stage, long result)
@@ -1251,292 +1223,186 @@ static void sweep_pending_reaps(void)
     }
 }
 
-static void add_client_present_damage(
-    struct windowd_session *session,
-    struct windowd_dirty_rect *dirty,
-    const struct windowd_client *client,
-    const struct savanxp_gpu_dirty_rect *rect)
+/* The first frame of a window is what puts it in the scene
+ * (windowd_client_in_scene): windowd sees it in its own mapping of the header
+ * and latches it, so a client cannot take it back. Its frame is repainted with
+ * it. */
+static void service_client_start(struct windowd_dirty_rect *dirty, struct windowd_client *client)
 {
-    struct sx_rect surface_rect;
-
-    if (session == 0 || dirty == 0 || client == 0 || rect == 0 || client->pid <= 0)
+    if (client == 0 || client->pid <= 0 || client->started || client->header == 0)
     {
         return;
     }
-
-    surface_rect = windowd_client_surface_rect(client);
-    if (client->fullscreen)
+    if (*(volatile uint64_t *)&client->header->submit_sequence != 0)
     {
-        windowd_dirty_rect_add(
-            dirty,
-            &session->gfx.info,
-            surface_rect.x,
-            surface_rect.y,
-            surface_rect.width,
-            surface_rect.height);
-        return;
-    }
-    windowd_dirty_rect_add(
-        dirty,
-        &session->gfx.info,
-        surface_rect.x + (int)rect->x,
-        surface_rect.y + (int)rect->y,
-        (int)rect->width,
-        (int)rect->height);
-}
-
-static void signal_client_retire(struct windowd_client *client, uint64_t retired_sequence)
-{
-    int advanced = 0;
-
-    if (client == 0 || client->header == 0 || retired_sequence == 0)
-    {
-        return;
-    }
-
-    if (client->header->retired_sequence < retired_sequence)
-    {
-        client->header->retired_sequence = retired_sequence;
-        advanced = 1;
-    }
-    if (advanced && client->wake_event_fd >= 0)
-    {
-        (void)event_set(client->wake_event_fd);
+        client->started = 1;
+        windowd_dirty_rect_add_client(dirty, client);
     }
 }
 
-static void signal_client_composed(struct windowd_client *client, uint64_t composed_sequence)
-{
-    int advanced = 0;
-
-    if (client == 0 || client->header == 0 || composed_sequence == 0)
-    {
-        return;
-    }
-
-    if (client->header->composed_sequence < composed_sequence)
-    {
-        client->header->composed_sequence = composed_sequence;
-        advanced = 1;
-    }
-    if (advanced && client->wake_event_fd >= 0)
-    {
-        (void)event_set(client->wake_event_fd);
-    }
-}
-
-static void signal_composed_batches(struct windowd_session *session)
+static void service_client_starts(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     int index;
 
     for (index = 0; index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
     {
-        struct windowd_client *client = session_client_at(session, index);
-
-        if (client != 0)
-        {
-            signal_client_composed(client, client->consumed_submit_sequence);
-        }
+        service_client_start(dirty, session_client_at(session, index));
     }
 }
 
-static void retire_presented_batches(struct windowd_session *session)
+/* A surface's id in compositord's scene: its slot in the session plus 2
+ * (1 is windowd's own surface). */
+static uint32_t session_surface_id(const struct windowd_session *session, const struct windowd_client *client)
 {
-    int index;
-
-    for (index = 0; index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
-    {
-        struct windowd_client *client = session_client_at(session, index);
-
-        if (client != 0 && client->pending_retire_sequence != 0)
-        {
-            signal_client_retire(client, client->pending_retire_sequence);
-            client->pending_retire_sequence = 0;
-        }
-    }
-}
-
-static int consume_client_present_batches(
-    struct windowd_session *session,
-    struct windowd_dirty_rect *dirty,
-    struct windowd_client *client)
-{
-    uint64_t next_sequence = 0;
-    int first_frame = 0;
-
-    if (session == 0 || dirty == 0 || client == 0 || client->header == 0 || client->command_batches == 0)
+    if (session == 0 || client == 0)
     {
         return 0;
     }
-
-    first_frame = (client->consumed_submit_sequence == 0);
-    next_sequence = client->consumed_submit_sequence + 1u;
-    while (next_sequence <= client->header->submit_sequence)
+    if (client >= &session->desktop_windows[0] && client < &session->desktop_windows[WINDOWD_DESKTOP_WINDOW_COUNT])
     {
-        struct savanxp_gpu_dirty_rect_batch *batch = 0;
-        uint32_t rect_index = 0;
-
-        if (client->header->batch_capacity == 0)
-        {
-            eprintf("desktop: invalid client batch capacity for %s\n", client->path[0] != '\0' ? client->path : "?");
-            return -1;
-        }
-
-        batch = &client->command_batches[(next_sequence - 1u) % client->header->batch_capacity];
-        if (batch->submit_sequence != next_sequence ||
-            batch->rect_count > client->header->rect_capacity ||
-            batch->rect_count > SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS)
-        {
-            eprintf(
-                "desktop: invalid client batch for %s seq=%u batch_seq=%u rects=%u\n",
-                client->path[0] != '\0' ? client->path : "?",
-                (unsigned int)next_sequence,
-                (unsigned int)batch->submit_sequence,
-                (unsigned int)batch->rect_count);
-            return -1;
-        }
-
-        if ((batch->flags & SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE) != 0)
-        {
-            struct sx_rect surface_rect = windowd_client_surface_rect(client);
-            windowd_dirty_rect_add(
-                dirty,
-                &session->gfx.info,
-                surface_rect.x,
-                surface_rect.y,
-                surface_rect.width,
-                surface_rect.height);
-        }
-        else
-        {
-            const uint32_t surface_capacity_width = client_surface_capacity_width(client);
-            const uint32_t surface_capacity_height = client_surface_capacity_height(client);
-            for (rect_index = 0; rect_index < batch->rect_count; ++rect_index)
-            {
-                const struct savanxp_gpu_dirty_rect *rect = &batch->rects[rect_index];
-
-                if (rect->width == 0 || rect->height == 0 ||
-                    rect->x >= surface_capacity_width ||
-                    rect->y >= surface_capacity_height ||
-                    rect->width > (surface_capacity_width - rect->x) ||
-                    rect->height > (surface_capacity_height - rect->y))
-                {
-                    eprintf(
-                        "desktop: invalid client rect for %s seq=%u rect=%u,%u %ux%u surface=%ux%u\n",
-                        client->path[0] != '\0' ? client->path : "?",
-                        (unsigned int)next_sequence,
-                        rect->x,
-                        rect->y,
-                        rect->width,
-                        rect->height,
-                        surface_capacity_width,
-                        surface_capacity_height);
-                    return -1;
-                }
-                add_client_present_damage(session, dirty, client, rect);
-            }
-        }
-
-        client->consumed_submit_sequence = next_sequence;
-        next_sequence += 1u;
+        return (uint32_t)(client - &session->desktop_windows[0]) + 2u;
     }
-
-    /* Primer frame: la ventana pasa de no componerse a componerse, asi que hay
-     * que repintar el MARCO entero. El damage de un batch cubre solo la
-     * superficie del cliente; la barra de titulo y el borde los dibuja el WM y
-     * nadie mas los ensuciaria. */
-    if (first_frame && client->consumed_submit_sequence > 0)
+    if (client >= &session->overlay_clients[0] && client < &session->overlay_clients[WINDOWD_MAX_OVERLAY_CLIENTS])
     {
-        struct sx_rect frame = windowd_client_frame_rect(client);
-        windowd_dirty_rect_add(dirty, &session->gfx.info, frame.x, frame.y, frame.width, frame.height);
-    }
-
-    /* El evento de submit es de la sesion, no de este cliente: lo resetea el
-     * loop principal antes de revisar a todos. */
-    return 0;
-}
-
-static void snapshot_pending_retire_sequences(struct windowd_session *session)
-{
-    int index;
-
-    for (index = 0; index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
-    {
-        struct windowd_client *client = session_client_at(session, index);
-
-        if (client != 0)
-        {
-            client->pending_retire_sequence = client->consumed_submit_sequence;
-        }
-    }
-}
-
-static int sync_pending_present(struct windowd_session *session, int wait_for_target, int *ready)
-{
-    int result;
-
-    if (ready != 0)
-    {
-        *ready = 1;
-    }
-    if (session == 0 || session->compositor.pending_present_sequence == 0)
-    {
-        return 0;
-    }
-
-    result = windowd_compositor_sync_present(&session->compositor, wait_for_target, ready);
-    if (result < 0)
-    {
-        return windowd_stage_failed("compositord sync present", result);
-    }
-    if (ready == 0 || *ready)
-    {
-        retire_presented_batches(session);
+        return (uint32_t)(client - &session->overlay_clients[0]) + 2u + (uint32_t)WINDOWD_DESKTOP_WINDOW_COUNT;
     }
     return 0;
 }
 
-static int present_frame(struct windowd_session *session, const struct windowd_dirty_rect *dirty)
+/* Hands a client surface to compositord (ATTACH): the section and the wake
+ * event it signals composed and retired on. windowd keeps both. */
+static int attach_client_surface(struct windowd_client *client, int section_fd, int wake_event_fd)
 {
-    struct sx_rect rects[SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS];
-    size_t rect_count = 0;
-    size_t index;
-    int result;
+    struct savanxp_compositor_surface surface;
+    uint32_t id = session_surface_id(g_session, client);
 
-    if (session == 0 || dirty == 0 || !windowd_dirty_rect_valid(dirty))
+    if (id == 0 || client->mapped_view == 0 || client->header == 0)
     {
-        return 0;
+        return -1;
     }
-
-    snapshot_pending_retire_sequences(session);
-    for (index = 0; index < windowd_dirty_rect_count(dirty); ++index)
+    memset(&surface, 0, sizeof(surface));
+    surface.surface_id = id;
+    surface.flags = SAVANXP_COMPOSITOR_SURFACE_CLIENT;
+    surface.section_size = (uint64_t)client->header->pixels_offset + client->surface_info.buffer_size;
+    surface.pixels_offset = (uint32_t)((unsigned char *)client->pixels - (unsigned char *)client->mapped_view);
+    surface.pitch = client->surface_info.pitch;
+    surface.capacity_width = client_surface_capacity_width(client);
+    surface.capacity_height = client_surface_capacity_height(client);
+    if (windowd_compositor_attach(&g_session->compositor, &surface, section_fd, wake_event_fd) < 0)
     {
-        struct sx_rect rect;
+        return -1;
+    }
+    client->surface_id = id;
+    return 0;
+}
 
-        if (!windowd_dirty_rect_at(dirty, index, &rect) || rect.width <= 0 || rect.height <= 0)
+static void detach_client_surface(struct windowd_client *client)
+{
+    if (client != 0 && client->surface_id != 0 && g_session != 0)
+    {
+        (void)windowd_compositor_detach(&g_session->compositor, client->surface_id);
+        client->surface_id = 0;
+    }
+}
+
+static void destroy_overlay_client(struct windowd_session *session, int slot, int terminate_client);
+static void destroy_desktop(struct windowd_session *session, int terminate_client);
+
+/* compositord found a client's batches malformed: a broken client. For the
+ * desktop that is the whole process, which the session manager restarts. */
+static void drop_broken_clients(struct windowd_session *session, struct windowd_dirty_rect *dirty, uint32_t broken)
+{
+    int index;
+
+    for (index = 0; broken != 0 && index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
+    {
+        struct windowd_client *client = session_client_at(session, index);
+        uint32_t id = session_surface_id(session, client);
+
+        if (client == 0 || client->surface_id == 0 || (broken & (1u << id)) == 0)
         {
             continue;
         }
-        rects[rect_count++] = rect;
-        if (rect_count >= SAVANXP_GPU_SURFACE_PRESENT_BATCH_MAX_RECTS)
+        eprintf("desktop: malformed frames from %s\n", client->path[0] != '\0' ? client->path : "?");
+        if (index < WINDOWD_DESKTOP_WINDOW_COUNT)
         {
-            result = windowd_compositor_present(&session->compositor, rects, rect_count);
-            if (result < 0)
-            {
-                return windowd_stage_failed("compositord present", result);
-            }
-            rect_count = 0;
+            destroy_desktop(session, 1);
         }
+        else
+        {
+            destroy_overlay_client(session, index - WINDOWD_DESKTOP_WINDOW_COUNT, 1);
+        }
+        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
     }
+}
 
-    if (rect_count != 0)
+/*
+ * Commits the scene (docs/desktop/DESKTOP_ARCHITECTURE.md#the-scene):
+ * repaints windowd's surface over `dirty`, writes the layers, that damage and
+ * the cursor into the scene section, and has compositord compose. `wait`: the
+ * reply comes once the frame is on the screen (the selftests sample it).
+ */
+static int windowd_commit(
+    struct windowd_session *session,
+    int cursor_x,
+    int cursor_y,
+    struct windowd_dirty_rect *dirty,
+    int wait,
+    struct windowd_stats *stats)
+{
+    struct savanxp_compositor_scene *scene = session->compositor.scene;
+    struct savanxp_compositor_reply reply;
+    size_t count = windowd_dirty_rect_count(dirty);
+    size_t index;
+    int result;
+
+    if (scene == 0)
     {
-        result = windowd_compositor_present(&session->compositor, rects, rect_count);
-        if (result < 0)
+        return -1;
+    }
+    windowd_stats_frame_begin(stats);
+    windowd_paint_wm_surface(session, dirty);
+    windowd_stats_compose_done(stats);
+
+    scene->magic = SAVANXP_COMPOSITOR_SCENE_MAGIC;
+    scene->flags = 0;
+    scene->layer_count = windowd_build_scene(session, scene->layers, SAVANXP_COMPOSITOR_MAX_LAYERS);
+    scene->damage_count = 0;
+    if (count > SAVANXP_COMPOSITOR_MAX_DAMAGE)
+    {
+        scene->flags |= SAVANXP_COMPOSITOR_SCENE_FULL_DAMAGE;
+    }
+    else
+    {
+        for (index = 0; index < count; ++index)
         {
-            return windowd_stage_failed("compositord present", result);
+            struct sx_rect rect;
+
+            if (windowd_dirty_rect_at(dirty, index, &rect))
+            {
+                scene->damage[scene->damage_count].x = rect.x;
+                scene->damage[scene->damage_count].y = rect.y;
+                scene->damage[scene->damage_count].width = rect.width;
+                scene->damage[scene->damage_count].height = rect.height;
+                scene->damage_count += 1u;
+            }
         }
     }
+    scene->cursor_x = cursor_x;
+    scene->cursor_y = cursor_y;
+    scene->cursor_shape = (uint32_t)session->current_cursor_shape;
+    scene->cursor_visible = 1u;
+
+    result = windowd_compositor_commit(&session->compositor, wait ? SAVANXP_COMPOSITOR_COMMIT_WAIT : 0u, &reply);
+    windowd_dirty_rect_reset(dirty);
+    session->cursor_moved = 0;
+    if (result < 0)
+    {
+        return windowd_stage_failed("compositord commit", result);
+    }
+    windowd_stats_frame_end(stats, &reply);
+    windowd_stats_report(stats, 0);
+    drop_broken_clients(session, dirty, reply.broken_surfaces);
     return 0;
 }
 
@@ -1616,8 +1482,11 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
         return;
     }
 
-    /* Pedido de cierre: primero el flag, despues el wake. En ese orden, un
-     * cliente que resetea el evento y vuelve a mirar el header no se lo pierde. */
+    /* Out of compositord first: it stops reading the section before it goes. */
+    detach_client_surface(client);
+
+    /* Shutdown request: the flag first, then the wake. In that order, a client
+     * that resets the event and looks at the header again does not miss it. */
     if (client->header != 0)
     {
         client->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
@@ -1894,6 +1763,11 @@ static int connect_client(
         }
         memset(client->window_list, 0, sizeof(*client->window_list));
         client->window_list->version = SAVANXP_WM_SHELL_PROTOCOL_VERSION;
+    }
+
+    if (attach_client_surface(client, section_fd, wake_event) < 0)
+    {
+        goto fail;
     }
 
     /* Four at most: exactly the pipe's handle queue. The client takes them
@@ -2748,7 +2622,6 @@ static int open_compositor_session(struct windowd_session *session, int own_daem
         session->pending[slot].read_fd = -1;
         session->pending[slot].write_fd = -1;
     }
-    session->hw_cursor_enabled = 0;
     session->active_client_kind = WINDOWD_CLIENT_NONE;
     session->active_overlay_slot = -1;
     session->fullscreen_slot = -1;
@@ -2803,8 +2676,8 @@ static int open_compositor_session(struct windowd_session *session, int own_daem
         return windowd_stage_failed("create the WM port", session->port_fd);
     }
 
-    memset(session->compositor.framebuffer, 0, session->gfx.info.buffer_size);
-    windowd_set_backbuffer(session->compositor.framebuffer);
+    windowd_set_wm_surface((uint32_t *)session->compositor.wm_view, session->compositor.wm_pitch);
+    g_session = session;
     refresh_active_state(session);
     return 0;
 }
@@ -2832,43 +2705,11 @@ static void close_compositor_session(struct windowd_session *session)
     close_fd_if_needed(&session->input_fd);
     close_fd_if_needed(&session->mouse_fd);
     close_fd_if_needed(&session->submit_event_fd);
-    (void)sync_pending_present(session, 1, 0);
     windowd_compositor_close(&session->compositor);
-    windowd_set_backbuffer(0);
+    windowd_set_wm_surface(0, 0);
+    g_session = 0;
 }
 
-
-static int service_client_batches(
-    struct windowd_session *session,
-    struct windowd_dirty_rect *dirty,
-    struct windowd_client *client)
-{
-    int slot = -1;
-
-    if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0)
-    {
-        return 0;
-    }
-
-    slot = overlay_slot_for_client_ptr(session, client);
-    if (consume_client_present_batches(session, dirty, client) < 0)
-    {
-        /* A malformed batch is a broken client. For the desktop that is the
-         * whole process: it is killed here, and the session manager starts a
-         * new one. */
-        if (is_desktop_window(session, client))
-        {
-            destroy_desktop(session, 1);
-        }
-        else if (overlay_slot_valid(slot))
-        {
-            destroy_overlay_client(session, slot, 1);
-        }
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-    }
-
-    return 0;
-}
 
 static int reap_dead_clients(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
@@ -3158,6 +2999,10 @@ static int open_owned_window(
     result = (client->events_write_fd < 0 || client->wake_event_fd < 0)
         ? -SAVANXP_EBADF
         : pipe_send_handle(owner->events_write_fd, section_fd);
+    if (result >= 0 && attach_client_surface(client, section_fd, client->wake_event_fd) < 0)
+    {
+        result = -SAVANXP_EIO;
+    }
     close_fd_if_needed(&section_fd);
     if (result < 0)
     {
@@ -3313,6 +3158,10 @@ static int open_desktop_window(
     result = (client->events_write_fd < 0 || client->wake_event_fd < 0)
         ? -SAVANXP_EBADF
         : pipe_send_handle(owner->events_write_fd, section_fd);
+    if (result >= 0 && attach_client_surface(client, section_fd, client->wake_event_fd) < 0)
+    {
+        result = -SAVANXP_EIO;
+    }
     close_fd_if_needed(&section_fd);
     if (result < 0)
     {
@@ -3497,12 +3346,7 @@ static void service_desktop(struct windowd_session *session, struct windowd_dirt
         {
             continue;
         }
-        (void)service_client_batches(session, dirty, client);
-        /* A malformed batch takes the whole desktop down (and restarts it). */
-        if (client->pid <= 0)
-        {
-            continue;
-        }
+        service_client_start(dirty, client);
         service_client_cursor_hints(client);
         /* A role window's size is the desktop's to ask for when it opens
          * it, not a hint: consumed and dropped. */
@@ -3524,11 +3368,11 @@ static void service_desktop(struct windowd_session *session, struct windowd_dirt
  * the build runner watches for and returns non-zero on any failure.
  */
 /* Instrumented reproduction of the "cursor leaves rectangular residue over
- * static compositor-drawn content" report. Drives the exact failing scenario
- * headlessly: a static power-confirm dialog, cursor moves ONTO a probe point,
- * then OFF it with only cursor-sized damage, and we read the backbuffer at the
- * old position back. If the compose restores it, backbuffer == clean baseline;
- * any residue means the old cursor footprint was not repainted. */
+ * static compositor-drawn content" report, now against compositord's software
+ * cursor: commits move the cursor ONTO a probe point, then OFF it with nothing
+ * else damaged, and we read the composed display at the old position back. If
+ * the compose restores it, display == clean baseline; any residue means
+ * compositord did not repaint the old cursor footprint. */
 static int windowd_cursor_repro(void)
 {
     struct windowd_session session;
@@ -3592,10 +3436,7 @@ static int windowd_cursor_repro(void)
     /* Frame A: dialog visible, cursor parked far away (top-left corner, off the
      * dialog). Full repaint so the backbuffer holds the clean image. */
     windowd_dirty_rect_add_fullscreen(&dirty, info);
-    windowd_draw_desktop(&session, 4, 4, &dirty);
-    (void)present_frame(&session, &dirty);
-    (void)sync_pending_present(&session, 1, 0);
-    windowd_dirty_rect_reset(&dirty);
+    (void)windowd_commit(&session, 4, 4, &dirty, 1, 0);
     for (row = 0; row < fh; ++row)
     {
         for (col = 0; col < fw; ++col)
@@ -3604,13 +3445,8 @@ static int windowd_cursor_repro(void)
         }
     }
 
-    /* Frame B: move cursor ONTO Q. Only cursor-sized damage (old corner + Q). */
-    windowd_dirty_rect_add_cursor(&dirty, info, 4, 4, SAVANXP_CURSOR_ARROW);
-    windowd_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
-    windowd_draw_desktop(&session, qx, qy, &dirty);
-    (void)present_frame(&session, &dirty);
-    (void)sync_pending_present(&session, 1, 0);
-    windowd_dirty_rect_reset(&dirty);
+    /* Frame B: move cursor ONTO Q, nothing else damaged. */
+    (void)windowd_commit(&session, qx, qy, &dirty, 1, 0);
     for (row = 0; row < fh; ++row)
     {
         for (col = 0; col < fw; ++col)
@@ -3624,14 +3460,9 @@ static int windowd_cursor_repro(void)
         }
     }
 
-    /* Frame C: move cursor OFF Q to R. Only cursor damage (old Q + new R). The
-     * backbuffer at Q must return to the clean baseline. */
-    windowd_dirty_rect_add_cursor(&dirty, info, qx, qy, SAVANXP_CURSOR_ARROW);
-    windowd_dirty_rect_add_cursor(&dirty, info, rx, ry, SAVANXP_CURSOR_ARROW);
-    windowd_draw_desktop(&session, rx, ry, &dirty);
-    (void)present_frame(&session, &dirty);
-    (void)sync_pending_present(&session, 1, 0);
-    windowd_dirty_rect_reset(&dirty);
+    /* Frame C: move cursor OFF Q to R. The display at Q must return to the
+     * clean baseline. */
+    (void)windowd_commit(&session, rx, ry, &dirty, 1, 0);
     {
         int min_col = fw;
         int min_row = fh;
@@ -3829,6 +3660,21 @@ static int windowd_pointer_coalesce_selftest(void)
  * su runtime. Si heredara la tabla de windowd serian decenas. */
 #define WINDOWD_SELFTEST_APP_FD_MAX 20
 #define WINDOWD_SELFTEST_START_DEADLINE_MS 15000ul
+/* How far compositord has composed a client's frames: the header's
+ * composed_sequence, which compositord writes. */
+static uint64_t selftest_composed_sequence(const struct windowd_client *client)
+{
+    return client != 0 && client->header != 0 ? client->header->composed_sequence : 0u;
+}
+
+static int selftest_composed(const struct windowd_client *client)
+{
+    return selftest_composed_sequence(client) > 0;
+}
+
+/* Where the selftests park the cursor while they drive the session. */
+#define WINDOWD_SELFTEST_CURSOR_X 40
+#define WINDOWD_SELFTEST_CURSOR_Y 40
 
 /* Launching is asynchronous since protocol v5: the slot is held until the
  * program connects. Waits for that, servicing connections like the loop does.
@@ -4021,10 +3867,11 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
         service_client_window_requests(session, dirty, &session->overlay_clients[slot], slot);
         service_client_size_hints(session, dirty, &session->overlay_clients[slot], slot);
         service_client_presentation(session, dirty, &session->overlay_clients[slot]);
-        (void)service_client_batches(session, dirty, &session->overlay_clients[slot]);
     }
-    signal_composed_batches(session);
-    windowd_dirty_rect_reset(dirty);
+    service_client_starts(session, dirty);
+    /* compositord consumes the clients' frames and composes; the cursor stays
+     * parked where the soak keeps it. */
+    (void)windowd_commit(session, WINDOWD_SELFTEST_CURSOR_X, WINDOWD_SELFTEST_CURSOR_Y, dirty, 0, 0);
 }
 
 /* First desktop window with `role` that has presented a frame, or 0. */
@@ -4036,7 +3883,7 @@ static struct windowd_client *selftest_desktop_window(struct windowd_session *se
     {
         struct windowd_client *client = &session->desktop_windows[index];
 
-        if (client->pid > 0 && client->role == role && client->consumed_submit_sequence > 0)
+        if (client->pid > 0 && client->role == role && client->started)
         {
             return client;
         }
@@ -4337,7 +4184,7 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
         hung = &session->overlay_clients[hung_slot];
         hung_pid = hung->pid;
         deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
-        while (hung->consumed_submit_sequence == 0 && uptime_ms() < deadline)
+        while (!hung->started && uptime_ms() < deadline)
         {
             selftest_service_overlays(session, &dirty);
             sleep_ms(10);
@@ -4350,7 +4197,7 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
 
             selftest_service_overlays(session, &dirty);
             (void)reap_dead_clients(session, &dirty);
-            dialog = (candidate->pid > 0 && candidate->consumed_submit_sequence > 0) ? candidate : 0;
+            dialog = (candidate->pid > 0 && candidate->started) ? candidate : 0;
             if (hung->pid != hung_pid || (hung->not_responding && dialog != 0))
             {
                 break;
@@ -4483,7 +4330,7 @@ static int windowd_owned_window_selftest(struct windowd_session *session, struct
     {
         selftest_service_overlays(session, dirty);
         dialog_slot = owned_window_slot(session, owner_slot, 0);
-        if (dialog_slot >= 0 && session->overlay_clients[dialog_slot].consumed_submit_sequence > 0)
+        if (dialog_slot >= 0 && session->overlay_clients[dialog_slot].started)
         {
             break;
         }
@@ -4656,13 +4503,9 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
     deadline = uptime_ms() + 60000;
     for (iteration = 0; iteration < 6000; ++iteration)
     {
-        if (service_client_batches(session, dirty, client) < 0)
-        {
-            puts_fd(2, "DESKTOP SMOKE FAIL native: servicing client batches\n");
-            return 1;
-        }
+        service_client_start(dirty, client);
         (void)reap_dead_clients(session, dirty);
-        if (windowd_dirty_rect_valid(dirty))
+        /* Every pass commits: compositord consumes the client's frames then. */
         {
             struct sx_rect surface = windowd_client_surface_rect(client);
             uint32_t stride = session->gfx.info.pitch / 4u;
@@ -4670,16 +4513,13 @@ static int windowd_native_client_selftest(struct windowd_session *session, struc
             uint32_t sample_x = (uint32_t)(surface.x + surface.width / 2);
             uint32_t sample_y = (uint32_t)(surface.y + surface.height / 2);
 
-            windowd_draw_desktop(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty);
-            signal_composed_batches(session);
-            if (present_frame(session, dirty) < 0)
+            if (windowd_commit(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty, 1, 0) < 0)
             {
-                puts_fd(2, "DESKTOP SMOKE FAIL native: present\n");
+                puts_fd(2, "DESKTOP SMOKE FAIL native: commit\n");
                 return 1;
             }
-            windowd_dirty_rect_reset(dirty);
             ++presented;
-            if (client->consumed_submit_sequence > 0 &&
+            if (selftest_composed(client) &&
                 sample_x < session->gfx.info.width && sample_y < session->gfx.info.height)
             {
                 uint32_t sample = fb[sample_y * stride + sample_x];
@@ -4795,25 +4635,17 @@ static int windowd_native_widgets_selftest(struct windowd_session *session, stru
     deadline = uptime_ms() + 90000;
     for (iteration = 0; iteration < 9000; ++iteration)
     {
-        if (service_client_batches(session, dirty, client) < 0)
-        {
-            puts_fd(2, "DESKTOP SMOKE FAIL widgets: servicing client batches\n");
-            return 1;
-        }
+        service_client_start(dirty, client);
         (void)reap_dead_clients(session, dirty);
-        if (windowd_dirty_rect_valid(dirty))
         {
             surface = windowd_client_surface_rect(client);
-            windowd_draw_desktop(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty);
-            signal_composed_batches(session);
-            if (present_frame(session, dirty) < 0)
+            if (windowd_commit(session, (int)session->gfx.info.width - 20, (int)session->gfx.info.height - 20, dirty, 1, 0) < 0)
             {
-                puts_fd(2, "DESKTOP SMOKE FAIL widgets: present\n");
+                puts_fd(2, "DESKTOP SMOKE FAIL widgets: commit\n");
                 return 1;
             }
-            windowd_dirty_rect_reset(dirty);
             ++presented;
-            if (!composed && client->consumed_submit_sequence > 0)
+            if (!composed && selftest_composed(client))
             {
                 /* Forma pintada: los cuadrados arrancan apagados. */
                 if (windowd_sample_surface_pixel(session, &surface, NATIVE_WIDGETS_SQ_1_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_OFF &&
@@ -4944,27 +4776,18 @@ static int windowd_native_hw_selftest(void)
             }
             (void)route_key(active_client(&session), &key_event);
         }
-        if (service_client_batches(&session, &dirty, client) < 0)
-        {
-            puts_fd(2, "NATIVE HW FAIL servicing client batches\n");
-            close_compositor_session(&session);
-            return 1;
-        }
+        service_client_start(&dirty, client);
         (void)reap_dead_clients(&session, &dirty);
-        if (windowd_dirty_rect_valid(&dirty))
         {
             surface = windowd_client_surface_rect(client);
-            windowd_draw_desktop(&session, (int)session.gfx.info.width - 20, (int)session.gfx.info.height - 20, &dirty);
-            signal_composed_batches(&session);
-            if (present_frame(&session, &dirty) < 0)
+            if (windowd_commit(&session, (int)session.gfx.info.width - 20, (int)session.gfx.info.height - 20, &dirty, 1, 0) < 0)
             {
-                puts_fd(2, "NATIVE HW FAIL present\n");
+                puts_fd(2, "NATIVE HW FAIL commit\n");
                 close_compositor_session(&session);
                 return 1;
             }
-            windowd_dirty_rect_reset(&dirty);
             ++presented;
-            if (!ready && client->consumed_submit_sequence > 0)
+            if (!ready && selftest_composed(client))
             {
                 if (windowd_sample_surface_pixel(&session, &surface, NATIVE_WIDGETS_SQ_1_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_OFF &&
                     windowd_sample_surface_pixel(&session, &surface, NATIVE_WIDGETS_SQ_2_CX, NATIVE_WIDGETS_SQ_CY) == NATIVE_WIDGETS_SQ_OFF)
@@ -5147,43 +4970,26 @@ static int windowd_selftest(void)
         service_client_size_hints(&session, &dirty, client, kSlot);
         service_client_presentation(&session, &dirty, client);
         service_client_cursor_hints(client);
-        if (service_client_batches(&session, &dirty, client) < 0)
-        {
-            puts_fd(2, "DESKTOP SMOKE FAIL servicing client batches\n");
-            failed = 1;
-            break;
-        }
         /* The desktop's frames and requests, so its background becomes
          * drawable and its panel opens. */
         service_desktop(&session, &dirty);
-        /* Servir TODOS los overlays, como hace el windowd real: con un solo
-         * cliente atendido, cualquier otro se quedaria esperando su composicion
-         * y el escenario de dos instancias no se ejercitaria de verdad. */
+        /* Serve EVERY overlay, as the real windowd does: with one client
+         * served, any other would sit waiting and the two-instance case would
+         * not be exercised. */
         {
             int overlay_slot;
-            int overlay_failed = 0;
 
             for (overlay_slot = 0; overlay_slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++overlay_slot)
             {
                 if (overlay_slot == kSlot)
                 {
-                    continue; /* ya servido arriba */
+                    continue; /* served above */
                 }
                 service_client_size_hints(&session, &dirty, &session.overlay_clients[overlay_slot], overlay_slot);
                 service_client_presentation(&session, &dirty, &session.overlay_clients[overlay_slot]);
-                if (service_client_batches(&session, &dirty, &session.overlay_clients[overlay_slot]) < 0)
-                {
-                    overlay_failed = 1;
-                    break;
-                }
-            }
-            if (overlay_failed)
-            {
-                puts_fd(2, "DESKTOP SMOKE FAIL servicing overlay clients\n");
-                failed = 1;
-                break;
             }
         }
+        service_client_starts(&session, &dirty);
 
         /*
          * Exercise the window-management paths once up front (maximize/restore,
@@ -5296,41 +5102,35 @@ static int windowd_selftest(void)
             break;
         }
 
-        /* Keep composed_sequence advancing so the client never stalls waiting
-           for a free batch slot. */
-        signal_composed_batches(&session);
-        if (session.overlay_clients[kSlot].consumed_submit_sequence > consumed_submit)
+        if (selftest_composed_sequence(&session.overlay_clients[kSlot]) > consumed_submit)
         {
-            consumed_submit = session.overlay_clients[kSlot].consumed_submit_sequence;
+            consumed_submit = selftest_composed_sequence(&session.overlay_clients[kSlot]);
         }
 
+        /* Without windowd damage, a commit still lets compositord consume the
+         * clients' frames, so none stalls waiting for a free batch slot. */
         if (!windowd_dirty_rect_valid(&dirty))
         {
+            if (windowd_commit(&session, kCursorX, kCursorY, &dirty, 0, 0) < 0)
+            {
+                puts_fd(2, "DESKTOP SMOKE FAIL commit\n");
+                failed = 1;
+                break;
+            }
             sleep_ms(4);
             continue;
         }
 
-        windowd_draw_desktop(&session, kCursorX, kCursorY, &dirty);
-        signal_composed_batches(&session);
-        if (present_frame(&session, &dirty) < 0)
+        /* Synchronous: the frame is on the screen when the commit returns. */
+        if (windowd_commit(&session, kCursorX, kCursorY, &dirty, 1, 0) < 0)
         {
-            puts_fd(2, "DESKTOP SMOKE FAIL present\n");
+            puts_fd(2, "DESKTOP SMOKE FAIL commit\n");
             failed = 1;
             break;
         }
         if (session.fullscreen_slot >= 0)
         {
             ++fullscreen_frames;
-        }
-        windowd_dirty_rect_reset(&dirty);
-
-        /* Drain synchronously: block until this present retires, which fires the
-           client retire event and frees its batch slots for the next frame. */
-        if (sync_pending_present(&session, 1, 0) < 0)
-        {
-            puts_fd(2, "DESKTOP SMOKE FAIL drain present\n");
-            failed = 1;
-            break;
         }
         ++frames_presented;
 
@@ -5339,8 +5139,6 @@ static int windowd_selftest(void)
             break;
         }
     }
-
-    (void)sync_pending_present(&session, 1, 0);
 
     /* Before the back-pressure test below, which fills the desktop's event
      * pipe: the roles test needs its presses to arrive. */
@@ -5410,7 +5208,7 @@ static int windowd_selftest(void)
             session.switcher_open = 1;
             session.switcher_selected = task_index;
             windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-            windowd_draw_desktop(&session, kCursorX, kCursorY, &dirty);
+            (void)windowd_commit(&session, kCursorX, kCursorY, &dirty, 1, 0);
             switcher_switch_to(&session, &dirty, task_index);
             if (client->minimized)
             {
@@ -5774,12 +5572,12 @@ static int windowd_selftest(void)
         puts_fd(2, "DESKTOP SMOKE FAIL fullscreen frame never presented\n");
         failed = 1;
     }
-    if (!failed && session.desktop_windows[0].consumed_submit_sequence < 1)
+    if (!failed && !selftest_composed(&session.desktop_windows[0]))
     {
         puts_fd(2, "DESKTOP SMOKE FAIL desktop background never composited\n");
         failed = 1;
     }
-    if (!failed && session.overlay_clients[kProgmanSlot].consumed_submit_sequence < 1)
+    if (!failed && !selftest_composed(&session.overlay_clients[kProgmanSlot]))
     {
         puts_fd(2, "DESKTOP SMOKE FAIL progman never composited\n");
         failed = 1;
@@ -5802,7 +5600,7 @@ static int windowd_selftest(void)
             failed = 1;
         }
     }
-    if (!failed && session.overlay_clients[kProgmanSlot + 1].consumed_submit_sequence < 1)
+    if (!failed && !selftest_composed(&session.overlay_clients[kProgmanSlot + 1]))
     {
         puts_fd(2, "DESKTOP SMOKE FAIL segunda instancia de progman never composited\n");
         failed = 1;
@@ -6029,21 +5827,14 @@ static void refresh_cursor_after_move(
     int previous_cursor_x,
     int previous_cursor_y)
 {
+    (void)dirty;
     if (previous_cursor_x == cursor_x && previous_cursor_y == cursor_y &&
         session->current_cursor_shape == session->previous_cursor_shape)
     {
         return;
     }
-
-    if (session->hw_cursor_enabled)
-    {
-        (void)set_hw_cursor_position(session, cursor_x, cursor_y, 1);
-    }
-    else
-    {
-        windowd_dirty_rect_add_cursor(dirty, &session->gfx.info, previous_cursor_x, previous_cursor_y, session->previous_cursor_shape);
-        windowd_dirty_rect_add_cursor(dirty, &session->gfx.info, cursor_x, cursor_y, session->current_cursor_shape);
-    }
+    /* compositord draws it: the next commit says where. */
+    session->cursor_moved = 1;
 }
 
 static void handle_pointer_event(
@@ -6114,9 +5905,9 @@ static void handle_pointer_event(
     session->previous_cursor_shape = session->current_cursor_shape;
     session->current_cursor_shape = resolve_cursor_shape(
         session, current_hover_client, cursor_x, cursor_y, drag_was_active);
-    if (session->current_cursor_shape != session->previous_cursor_shape && session->hw_cursor_enabled)
+    if (session->current_cursor_shape != session->previous_cursor_shape)
     {
-        (void)windowd_compositor_set_cursor_shape(&session->compositor, session->current_cursor_shape);
+        session->cursor_moved = 1;
     }
 
     /* A press outside the desktop's popups asks them to close; the press
@@ -6345,7 +6136,7 @@ int main(int argc, char **argv)
         close_compositor_session(&session);
         return 1;
     }
-    (void)try_enable_hw_cursor(&session, cursor_x, cursor_y);
+    session.cursor_moved = 1;
     /* Nothing is started here: sessiond starts the desktop and Program Manager
      * once the port exists, and they connect like anybody else. Without a
      * desktop the session lives on with a solid background. */
@@ -6362,6 +6153,7 @@ int main(int argc, char **argv)
         int submit_poll_index = -1;
         int poll_count = 0;
         int slot;
+        int submitted = 0;
         long count = 0;
 
         input_poll_index = poll_count;
@@ -6414,8 +6206,11 @@ int main(int argc, char **argv)
 
         /* Reset BEFORE servicing: a client that submits after this point
          * re-arms the event and wakes the next poll. Every client is serviced
-         * below on every pass, so one shared event is enough. */
-        if ((poll_fds[submit_poll_index].revents & SAVANXP_POLLIN) != 0)
+         * below on every pass, so one shared event is enough. A submit is a
+         * frame or a request; either way the commit below lets compositord
+         * consume what was published. */
+        submitted = (poll_fds[submit_poll_index].revents & SAVANXP_POLLIN) != 0;
+        if (submitted)
         {
             (void)event_reset(session.submit_event_fd);
         }
@@ -6446,7 +6241,7 @@ int main(int argc, char **argv)
         {
             cursor_x = windowd_clamp_int(cursor_x, 0, (int)session.gfx.info.width - 1);
             cursor_y = windowd_clamp_int(cursor_y, 0, (int)session.gfx.info.height - 1);
-            (void)set_hw_cursor_position(&session, cursor_x, cursor_y, 1);
+            session.cursor_moved = 1;
         }
 
         if (mouse_poll_index >= 0 && (poll_fds[mouse_poll_index].revents & SAVANXP_POLLIN) != 0)
@@ -6488,56 +6283,20 @@ int main(int argc, char **argv)
             service_client_window_requests(&session, &dirty, &session.overlay_clients[slot], slot);
             service_client_size_hints(&session, &dirty, &session.overlay_clients[slot], slot);
             service_client_presentation(&session, &dirty, &session.overlay_clients[slot]);
-            if (service_client_batches(&session, &dirty, &session.overlay_clients[slot]) < 0)
-            {
-                break;
-            }
             service_client_cursor_hints(&session.overlay_clients[slot]);
         }
-        if (slot < WINDOWD_MAX_OVERLAY_CLIENTS)
+        service_client_starts(&session, &dirty);
+
+        if (!submitted && !session.cursor_moved && !windowd_dirty_rect_valid(&dirty))
+        {
+            continue;
+        }
+        /* Without compositord the session is over: sessiond restarts all of
+         * it. */
+        if (windowd_commit(&session, cursor_x, cursor_y, &dirty, 0, &stats) < 0)
         {
             break;
         }
-
-
-        {
-            int frame_ready = 1;
-            int sync_result;
-
-            windowd_stats_sync_begin(&stats);
-            sync_result = sync_pending_present(&session, 0, &frame_ready);
-            windowd_stats_sync_end(&stats);
-            /* Without compositord the session is over: sessiond restarts
-             * all of it. */
-            if (sync_result < 0)
-            {
-                break;
-            }
-            if (!windowd_dirty_rect_valid(&dirty))
-            {
-                signal_composed_batches(&session);
-                continue;
-            }
-            if (!frame_ready)
-            {
-                continue;
-            }
-        }
-
-        windowd_stats_frame_begin(&stats);
-        windowd_draw_desktop(&session, cursor_x, cursor_y, &dirty);
-        windowd_stats_compose_done(&stats);
-        signal_composed_batches(&session);
-        if (present_frame(&session, &dirty) < 0)
-        {
-            puts_fd(2, "desktop: present failed\n");
-            break;
-        }
-        /* El danio se mide ANTES del reset: es el del frame que se acaba
-           de presentar. */
-        windowd_stats_frame_end(&stats, &dirty, &session.compositor.last_present_timing);
-        windowd_stats_report(&stats, 0);
-        windowd_dirty_rect_reset(&dirty);
     }
 
     windowd_stats_report(&stats, 1);

@@ -11,7 +11,11 @@
 #include "windowd_layout.h"
 #include "windowd_render.h"
 
-static uint32_t *g_backbuffer = 0;
+/* windowd's own surface (docs/desktop/DESKTOP_ARCHITECTURE.md#the-scene):
+ * frames, the switcher and the fallback background, in screen coordinates.
+ * compositord composes it with the clients'. */
+static uint32_t *g_wm_pixels = 0;
+static uint32_t g_wm_pitch = 0;
 
 static const char *window_title_for_client(const struct windowd_client *client);
 
@@ -77,9 +81,10 @@ static int clip_rect_to_framebuffer(const struct savanxp_fb_info *info, struct s
     return rect->width > 0 && rect->height > 0;
 }
 
-void windowd_set_backbuffer(uint32_t *pixels)
+void windowd_set_wm_surface(uint32_t *pixels, uint32_t pitch)
 {
-    g_backbuffer = pixels;
+    g_wm_pixels = pixels;
+    g_wm_pitch = pitch;
 }
 
 void windowd_dirty_rect_reset(struct windowd_dirty_rect *dirty)
@@ -375,32 +380,10 @@ static void draw_maximize_button(struct sx_painter *painter, const struct window
 }
 
 
-static void draw_cursor(struct sx_painter *painter, int shape, int x, int y)
+/* A window's frame -- caption, borders, buttons -- into windowd's surface. The
+ * client area inside it is the client's layer, above it in the scene. */
+static void draw_frame(struct sx_painter *painter, const struct windowd_client *client)
 {
-    const struct desktop_cursor_asset *asset;
-    struct sx_bitmap cursor_bitmap;
-    struct savanxp_fb_info info;
-
-    if (shape < 0 || shape >= SAVANXP_CURSOR_SHAPE_COUNT)
-    {
-        shape = SAVANXP_CURSOR_ARROW;
-    }
-    asset = &k_desktop_cursor_assets[shape];
-
-    info.width = (uint32_t)asset->width;
-    info.height = (uint32_t)asset->height;
-    info.pitch = (uint32_t)asset->width * sizeof(uint32_t);
-    info.bpp = 32u;
-    info.buffer_size = (uint32_t)(asset->width * asset->height) * sizeof(uint32_t);
-
-    sx_bitmap_wrap(&cursor_bitmap, (uint32_t *)asset->pixels, &info, SX_PIXEL_FORMAT_BGRA8888);
-    sx_painter_blit_bitmap(painter, &cursor_bitmap, x - asset->hotspot_x, y - asset->hotspot_y);
-}
-
-static void draw_client(struct sx_painter *painter, const struct windowd_client *client)
-{
-    struct sx_bitmap bitmap;
-    struct sx_rect surface_rect;
     struct sx_rect frame_rect;
     struct sx_rect titlebar_rect;
     struct sx_rect right_button;
@@ -411,16 +394,15 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
     int text_x;
     int text_right;
 
-    if (painter == 0 || client == 0 || client->pid <= 0 || client->pixels == 0 || client->minimized)
+    if (painter == 0 || client == 0 || client->pid <= 0 || client->pixels == 0 || client->minimized ||
+        !client->frame_visible)
     {
         return;
     }
 
-    surface_rect = windowd_client_surface_rect(client);
     frame_rect = windowd_client_frame_rect(client);
     icon = windowd_presentation_icon(&client->presentation, &icon_storage);
 
-    if (client->frame_visible)
     {
         titlebar_rect = windowd_client_titlebar_rect(client);
         sxchrome_fill_raised(painter, frame_rect, SXCHROME_COLOR_FACE, 0);
@@ -478,21 +460,6 @@ static void draw_client(struct sx_painter *painter, const struct windowd_client 
         draw_minimize_button(painter, client);
         draw_maximize_button(painter, client);
         draw_close_button(painter, client);
-    }
-
-    sx_bitmap_wrap(&bitmap, client->pixels, &client->surface_info, SX_PIXEL_FORMAT_BGRX8888);
-    if (surface_rect.width != (int)client->surface_info.width ||
-        surface_rect.height != (int)client->surface_info.height)
-    {
-        sx_painter_draw_scaled_bitmap_nearest(
-            painter,
-            &bitmap,
-            surface_rect,
-            sx_rect_make(0, 0, (int)client->surface_info.width, (int)client->surface_info.height));
-    }
-    else
-    {
-        sx_painter_blit_bitmap(painter, &bitmap, surface_rect.x, surface_rect.y);
     }
 }
 
@@ -648,53 +615,24 @@ int windowd_region_selftest(void)
     return windowd_dirty_region_selftest();
 }
 
-/* Compositor layers, back-to-front. Each layer carries its screen-space bounds
- * and whether it is fully opaque (a valid occluder for layers behind it). The
- * compose pass paints every layer exactly once over its visible region only:
- * visible = damage ∩ bounds − (union of opaque bounds in front). */
-enum windowd_layer_kind
+/* A window enters the scene with its first frame, not before: until then its
+ * surface is blank and its geometry may still change (a program asks for the
+ * size of its content while it starts, the size hint), so showing it would
+ * flash an empty window of the generic size. `started` is latched by windowd
+ * from the first submit it sees; compositord consumes every published batch
+ * at the start of a commit, so the frame is there when the window is. The
+ * user still gets feedback meanwhile: any_overlay_client_starting() sets the
+ * WAIT cursor. */
+int windowd_client_in_scene(const struct windowd_client *client)
 {
-    /* Only the fallback: the background is normally the desktop's window. */
-    WINDOWD_LAYER_BACKGROUND = 0,
-    WINDOWD_LAYER_CLIENT,
-    /* WM UI: the Alt+Tab switcher, above everything but the cursor. */
-    WINDOWD_LAYER_SWITCHER,
-    WINDOWD_LAYER_CURSOR,
-};
-
-struct windowd_layer
-{
-    int kind;
-    int opaque;
-    struct sx_rect bounds;
-    const struct windowd_client *client;
-};
-
-/* Every window of the desktop, every application window, the switcher and
- * the cursor. */
-#define WINDOWD_MAX_COMPOSE_LAYERS (WINDOWD_MAX_OVERLAY_CLIENTS + WINDOWD_DESKTOP_WINDOW_COUNT + 2)
-
-/* Un cliente se compone recien cuando publico su PRIMER frame. Antes de eso su
- * superficie esta en blanco y su geometria todavia puede cambiar -- una app
- * pide el tamano de su contenido durante el arranque (size hint, en el header) --, asi
- * que dibujarla antes muestra por unos milisegundos una ventana vacia del
- * tamano generico que enseguida encoge. Mientras tanto el usuario igual tiene
- * feedback: any_overlay_client_starting() pone el cursor en WAIT. */
-static int client_is_drawable(const struct windowd_client *client)
-{
-    return client != 0 && client->pid > 0 && client->pixels != 0 &&
-        !client->minimized && client->consumed_submit_sequence > 0;
-}
-
-static struct sx_rect client_occluder_rect(const struct windowd_client *client)
-{
-    return client->frame_visible ? windowd_client_frame_rect(client) : windowd_client_surface_rect(client);
+    return client != 0 && client->pid > 0 && client->pixels != 0 && client->surface_id != 0 &&
+        !client->minimized && client->started;
 }
 
 /* Alt+Tab switcher: a raised box with the icon and title of the window that
  * releasing Alt switches to, as NT's. A minimized window says so: switching
  * to it restores it. */
-static void draw_switcher(struct sx_painter *painter, struct windowd_session *session)
+static void draw_switcher(struct sx_painter *painter, const struct windowd_session *session)
 {
     struct sx_rect box = windowd_switcher_rect(&session->gfx.info);
     const struct windowd_client *client = windowd_task_client(session, session->switcher_selected, 0);
@@ -732,55 +670,69 @@ static void draw_switcher(struct sx_painter *painter, struct windowd_session *se
     }
 }
 
-/* Capas del WM: superficies de clientes y el cursor. Las compone el compositor
- * del WM y se quedan aca cuando el shell pase a ser un cliente aparte (A2). */
-static void wm_paint_layer(
-    struct sx_painter *painter,
-    struct windowd_session *session,
-    const struct windowd_layer *layer,
-    int cursor_x,
-    int cursor_y)
+static struct savanxp_compositor_rect scene_rect(struct sx_rect rect)
 {
-    switch (layer->kind)
-    {
-    case WINDOWD_LAYER_BACKGROUND:
-        /* Only until the desktop draws its own: windowd knows no wallpaper. */
-        sx_painter_fill_rect(
-            painter,
-            sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height),
-            WINDOWD_FALLBACK_BACKGROUND);
-        break;
-    case WINDOWD_LAYER_CLIENT:
-        draw_client(painter, layer->client);
-        break;
-    case WINDOWD_LAYER_SWITCHER:
-        draw_switcher(painter, session);
-        break;
-    case WINDOWD_LAYER_CURSOR:
-        draw_cursor(painter, session->current_cursor_shape, cursor_x, cursor_y);
-        break;
-    default:
-        break;
-    }
+    struct savanxp_compositor_rect out;
+
+    out.x = rect.x;
+    out.y = rect.y;
+    out.width = rect.width;
+    out.height = rect.height;
+    return out;
 }
 
-static int add_client_layer(struct windowd_layer *layers, int count, const struct windowd_client *client)
+/* A rectangle of windowd's own surface, shown where it is drawn. */
+static uint32_t add_wm_layer(struct savanxp_compositor_layer *layers, uint32_t count, uint32_t capacity, struct sx_rect rect)
 {
-    if (!client_is_drawable(client))
+    if (count >= capacity || sx_rect_is_empty(rect))
     {
         return count;
     }
-    layers[count].kind = WINDOWD_LAYER_CLIENT;
-    layers[count].opaque = 1;
-    layers[count].bounds = client_occluder_rect(client);
-    layers[count].client = client;
-    return count + 1;
+    layers[count].surface_id = SAVANXP_COMPOSITOR_SURFACE_WM;
+    layers[count].flags = SAVANXP_COMPOSITOR_LAYER_OPAQUE;
+    layers[count].src = scene_rect(rect);
+    layers[count].dst = scene_rect(rect);
+    return count + 1u;
+}
+
+/* A client's surface at its place on the screen; scaled when the place is not
+ * its size (composited fullscreen without a mode change). */
+static uint32_t add_surface_layer(
+    struct savanxp_compositor_layer *layers, uint32_t count, uint32_t capacity,
+    const struct windowd_client *client, struct sx_rect dst)
+{
+    if (count >= capacity)
+    {
+        return count;
+    }
+    layers[count].surface_id = client->surface_id;
+    layers[count].flags = SAVANXP_COMPOSITOR_LAYER_OPAQUE;
+    layers[count].src = scene_rect(sx_rect_make(0, 0, (int)client->surface_info.width, (int)client->surface_info.height));
+    layers[count].dst = scene_rect(dst);
+    return count + 1u;
+}
+
+/* A window: its frame from windowd's surface, then its client area. */
+static uint32_t add_window_layers(
+    struct savanxp_compositor_layer *layers, uint32_t count, uint32_t capacity,
+    const struct windowd_client *client)
+{
+    if (!windowd_client_in_scene(client))
+    {
+        return count;
+    }
+    if (client->frame_visible)
+    {
+        count = add_wm_layer(layers, count, capacity, windowd_client_frame_rect(client));
+    }
+    return add_surface_layer(layers, count, capacity, client, windowd_client_surface_rect(client));
 }
 
 /* The desktop's windows of one role, lower ids first: a later window stacks
  * above an earlier one, as the hit test sees them. */
-static int add_desktop_layers(
-    struct windowd_layer *layers, int count, const struct windowd_session *session, uint32_t role)
+static uint32_t add_desktop_layers(
+    struct savanxp_compositor_layer *layers, uint32_t count, uint32_t capacity,
+    const struct windowd_session *session, uint32_t role)
 {
     int index;
 
@@ -788,60 +740,43 @@ static int add_desktop_layers(
     {
         if (session->desktop_windows[index].role == role)
         {
-            count = add_client_layer(layers, count, &session->desktop_windows[index]);
+            count = add_window_layers(layers, count, capacity, &session->desktop_windows[index]);
         }
     }
     return count;
 }
 
-/* Back-to-front layer list for the current frame:
+/* The scene, back to front:
  *
- *   background, application windows, panels, popups, switcher, cursor
+ *   fallback background, the desktop's background, application windows,
+ *   panels, popups, switcher
  *
- * With an app in fullscreen only the background, the panels (behind it, so
- * occlusion drops them), the app, the switcher and the cursor take part. */
-static int build_layers(
-    struct windowd_session *session,
-    int cursor_x,
-    int cursor_y,
-    struct windowd_layer *layers)
+ * The fallback is windowd's surface over the whole screen: the desktop's
+ * background covers it once it has a frame, and until then (at boot, while
+ * the desktop restarts) the screen is never left unpainted. With an app in
+ * fullscreen only the backgrounds, the panels (behind it, so occlusion drops
+ * them), the app and the switcher take part. The cursor is compositord's. */
+uint32_t windowd_build_scene(
+    const struct windowd_session *session,
+    struct savanxp_compositor_layer *layers,
+    uint32_t capacity)
 {
     const struct savanxp_fb_info *info = &session->gfx.info;
-    int count = 0;
+    struct sx_rect screen = sx_rect_make(0, 0, (int)info->width, (int)info->height);
+    uint32_t count = 0;
     int order_index;
-    int cur_x = 0;
-    int cur_y = 0;
-    int cur_w = 0;
-    int cur_h = 0;
 
-    /* The bottom of the stack is the desktop's background. Until it has
-     * presented a frame (at boot, or while the desktop restarts) windowd
-     * fills the screen itself so the background is never left unpainted. */
-    count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_BACKGROUND);
-    if (count == 0)
-    {
-        layers[count].kind = WINDOWD_LAYER_BACKGROUND;
-        layers[count].opaque = 1;
-        layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
-        layers[count].client = 0;
-        ++count;
-    }
+    count = add_wm_layer(layers, count, capacity, screen);
+    count = add_desktop_layers(layers, count, capacity, session, WINDOWD_ROLE_BACKGROUND);
 
     if (session->fullscreen_slot >= 0 && session->fullscreen_slot < WINDOWD_MAX_OVERLAY_CLIENTS)
     {
         const struct windowd_client *fullscreen_client = &session->overlay_clients[session->fullscreen_slot];
 
-        /* The panels go in BEFORE the app, so it covers them and occlusion
-         * drops them. They are added anyway (rather than skipped) so the frame
-         * stays correct in the instant the app is not drawable yet. */
-        count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_PANEL);
-        if (client_is_drawable(fullscreen_client))
+        count = add_desktop_layers(layers, count, capacity, session, WINDOWD_ROLE_PANEL);
+        if (windowd_client_in_scene(fullscreen_client))
         {
-            layers[count].kind = WINDOWD_LAYER_CLIENT;
-            layers[count].opaque = 1;
-            layers[count].bounds = sx_rect_make(0, 0, (int)info->width, (int)info->height);
-            layers[count].client = fullscreen_client;
-            ++count;
+            count = add_surface_layer(layers, count, capacity, fullscreen_client, screen);
         }
     }
     else
@@ -849,114 +784,74 @@ static int build_layers(
         for (order_index = 0; order_index < session->overlay_count; ++order_index)
         {
             int slot = session->overlay_order[order_index];
-            if (slot < 0 || slot >= WINDOWD_MAX_OVERLAY_CLIENTS)
+
+            if (slot >= 0 && slot < WINDOWD_MAX_OVERLAY_CLIENTS)
             {
-                continue;
+                count = add_window_layers(layers, count, capacity, &session->overlay_clients[slot]);
             }
-            count = add_client_layer(layers, count, &session->overlay_clients[slot]);
         }
-        count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_PANEL);
-        count = add_desktop_layers(layers, count, session, WINDOWD_ROLE_POPUP);
+        count = add_desktop_layers(layers, count, capacity, session, WINDOWD_ROLE_PANEL);
+        count = add_desktop_layers(layers, count, capacity, session, WINDOWD_ROLE_POPUP);
     }
 
     /* Above everything, fullscreen included: Alt+Tab is a way out of a
      * fullscreen app, so its switcher has to be seen there. */
     if (session->switcher_open)
     {
-        layers[count].kind = WINDOWD_LAYER_SWITCHER;
-        layers[count].opaque = 1;
-        layers[count].bounds = windowd_switcher_rect(info);
-        layers[count].client = 0;
-        ++count;
+        count = add_wm_layer(layers, count, capacity, windowd_switcher_rect(info));
     }
-
-    if (!session->hw_cursor_enabled)
-    {
-        windowd_cursor_bounds(cursor_x, cursor_y, session->current_cursor_shape, &cur_x, &cur_y, &cur_w, &cur_h);
-        layers[count].kind = WINDOWD_LAYER_CURSOR;
-        layers[count].opaque = 0; /* BGRA cursor blends; never an occluder. */
-        layers[count].bounds = sx_rect_make(cur_x, cur_y, cur_w, cur_h);
-        layers[count].client = 0;
-        ++count;
-    }
-
     return count;
 }
 
-void windowd_draw_desktop(
-    struct windowd_session *session,
-    int cursor_x,
-    int cursor_y,
-    const struct windowd_dirty_rect *dirty)
+/*
+ * Repaints windowd's surface over `dirty`: the fallback colour, the frames of
+ * the windows in the scene in stacking order (where two overlap the upper one
+ * wins, which is the only one a layer shows there), and the switcher. The
+ * client areas are not windowd's: they are composed from the clients' own
+ * surfaces by compositord.
+ */
+void windowd_paint_wm_surface(struct windowd_session *session, const struct windowd_dirty_rect *dirty)
 {
-    /* Single-threaded compositor: keep the working sets off the stack. */
-    static struct windowd_layer layers[WINDOWD_MAX_COMPOSE_LAYERS];
-    static struct sx_region damage;
-    static struct sx_region visible;
-    struct sx_bitmap backbuffer_bitmap;
+    struct savanxp_fb_info info;
+    struct sx_bitmap bitmap;
     struct sx_painter painter;
-    int layer_count = 0;
-    int layer_index;
+    int order_index;
 
-    if (session == 0 || g_backbuffer == 0)
+    if (session == 0 || g_wm_pixels == 0 || dirty == 0 || !windowd_dirty_rect_valid(dirty))
     {
         return;
     }
 
-    sx_bitmap_wrap(&backbuffer_bitmap, g_backbuffer, &session->gfx.info, SX_PIXEL_FORMAT_BGRX8888);
-    sx_painter_init(&painter, &backbuffer_bitmap);
-
-    /* Damage region for this frame; an empty/invalid dirty set forces a full
-     * repaint (still occlusion-aware: each layer painted once). El danio ya
-     * viene acumulado como region exacta, asi que alcanza con copiarlo: no hay
-     * que re-unir rect por rect ni se pierde la forma al hacerlo. */
-    if (dirty != 0 && windowd_dirty_rect_valid(dirty))
+    info = session->gfx.info;
+    info.pitch = g_wm_pitch;
+    info.buffer_size = info.pitch * info.height;
+    sx_bitmap_wrap(&bitmap, g_wm_pixels, &info, SX_PIXEL_FORMAT_BGRX8888);
+    sx_painter_init(&painter, &bitmap);
+    if (!sx_painter_push_clip_region(&painter, &dirty->region))
     {
-        sx_region_copy(&damage, &dirty->region);
-    }
-    else
-    {
-        sx_region_set_rect(&damage, sx_rect_make(0, 0, (int)session->gfx.info.width, (int)session->gfx.info.height));
+        return;
     }
 
-    layer_count = build_layers(session, cursor_x, cursor_y, layers);
-
-    /* Paint back-to-front; each layer only over the area not covered by an
-     * opaque layer in front of it. */
-    for (layer_index = 0; layer_index < layer_count; ++layer_index)
+    sx_painter_fill_rect(
+        &painter,
+        sx_rect_make(0, 0, (int)info.width, (int)info.height),
+        WINDOWD_FALLBACK_BACKGROUND);
+    if (session->fullscreen_slot < 0)
     {
-        const struct windowd_layer *layer = &layers[layer_index];
-        int front;
-
-        /* visible = damage ∩ bounds − (opacas al frente), como region exacta.
-         * Antes esto era un sx_rect_set, que fusiona por bounding box: dos
-         * pedazos en L se volvian el rectangulo que los contiene y la capa se
-         * repintaba sobre area ya tapada. */
-        sx_region_copy(&visible, &damage);
-        sx_region_intersect_rect(&visible, layer->bounds);
-
-        for (front = layer_index + 1; front < layer_count && !sx_region_is_empty(&visible); ++front)
+        for (order_index = 0; order_index < session->overlay_count; ++order_index)
         {
-            if (layers[front].opaque)
+            int slot = session->overlay_order[order_index];
+
+            if (slot >= 0 && slot < WINDOWD_MAX_OVERLAY_CLIENTS &&
+                windowd_client_in_scene(&session->overlay_clients[slot]))
             {
-                sx_region_subtract_rect(&visible, layers[front].bounds);
+                draw_frame(&painter, &session->overlay_clients[slot]);
             }
         }
-
-        if (sx_region_is_empty(&visible))
-        {
-            continue;
-        }
-
-        /* Una sola pasada por capa: el clip por region se encarga de saltear los
-         * huecos. Antes se llamaba a wm_paint_layer una vez por sub-rect, y cada
-         * repintado parcial era una oportunidad de que una primitiva se dibujara
-         * distinto por fragmento. */
-        sx_painter_clear_clip(&painter);
-        if (sx_painter_push_clip_region(&painter, &visible))
-        {
-            wm_paint_layer(&painter, session, layer, cursor_x, cursor_y);
-            sx_painter_pop_clip(&painter);
-        }
     }
+    if (session->switcher_open)
+    {
+        draw_switcher(&painter, session);
+    }
+    sx_painter_pop_clip(&painter);
 }

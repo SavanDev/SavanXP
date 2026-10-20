@@ -335,8 +335,14 @@ savanxp_program(NAME volume SOURCES subsystems/posix/userland/volume.c)
 savanxp_program(NAME audiod SOURCES subsystems/posix/userland/audiod.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 # Native: speaks only SXN (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3).
-savanxp_program(NAME compositord NATIVE SOURCES subsystems/posix/userland/compositord.c)
-# The session manager: starts windowd, the desktop and progman, restarts them.
+# The compositor (docs/desktop/DESKTOP_ARCHITECTURE.md#composition-in-compositord):
+# a native session service that composes the scene windowd commits. Static, so
+# the gfx2d regions and painter it composes with link in.
+savanxp_program(NAME compositord NATIVE SOURCES
+    subsystems/posix/userland/compositord.c
+    subsystems/posix/userland/compositord_scene.c)
+# The session manager: starts compositord, windowd, the desktop and progman,
+# restarts them.
 # Native, no .sxres (not in the launcher); init starts it.
 savanxp_program(NAME sessiond NATIVE SOURCES subsystems/posix/userland/sessiond.c)
 # El compositor. Solo pide dos funciones de metrica de fuente, que son puras y

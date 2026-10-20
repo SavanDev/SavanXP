@@ -107,8 +107,12 @@ struct windowd_client
     struct savanxp_gpu_dirty_rect_batch *command_batches;
     uint32_t *pixels;
     struct savanxp_fb_info surface_info;
-    uint64_t consumed_submit_sequence;
-    uint64_t pending_retire_sequence;
+    /* The surface's id in compositord's scene (0 = not attached), and whether
+     * the client has published its first frame, which is what puts the window
+     * in the scene (windowd_client_in_scene). Frames themselves are
+     * compositord's to consume. */
+    uint32_t surface_id;
+    int started;
     int window_x;
     int window_y;
     int window_width;
@@ -162,7 +166,9 @@ struct windowd_session
     /* How long a window asked to close may keep running before it is shown as
      * not responding. A field so the selftest need not wait it out. */
     unsigned long hung_close_ms;
-    int hw_cursor_enabled;
+    /* The cursor moved or changed shape since the last commit: compositord
+     * draws it, so a commit has to tell it even with nothing else damaged. */
+    int cursor_moved;
     int current_cursor_shape;
     int previous_cursor_shape;
     /* Redimensionado por bordes en curso. Se guarda el marco al agarrar y el

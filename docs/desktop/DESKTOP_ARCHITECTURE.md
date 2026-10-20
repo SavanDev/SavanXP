@@ -693,7 +693,7 @@ because it is the largest change and the one the work in
    (except in its own test modes), and either of the two ending ends the
    session. `windowd` still composes, into the display section it now
    receives.
-2. **The scene protocol.** `compositord` maps the client surfaces and
+2. **The scene protocol. Done.** `compositord` maps the client surfaces and
    composes; `windowd` draws only its own surface (frames, the Alt+Tab
    switcher, the fallback background) and commits the scene. The cursor
    moves entirely into `compositord`. Client frames still pass through

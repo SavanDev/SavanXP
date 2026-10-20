@@ -8,6 +8,19 @@ compose path was to look at the screen and form an opinion.
 This document defines what is measured, how to read it, and what it does not
 yet answer.
 
+> **Phase 4 moves composition into `compositord`**
+> ([DESKTOP_ARCHITECTURE.md](./DESKTOP_ARCHITECTURE.md#composition-in-compositord)),
+> and the pipeline below is the one before it. Since phase 4 step 2, stages 2
+> and 3 are one *commit*: `windowd` paints only its own surface (frames,
+> switcher) and sends the scene; `compositord` composes and presents, pacing on
+> the GPU's present event instead of `windowd`'s 16 ms poll. `windowd-stats`
+> keeps its fields with these meanings: `compose_us` is `windowd` painting its
+> surface plus `compositord` composing; `sync_us` is 0 (there is no sync step);
+> `present_us` and `blk_us` are the commit round trip; `ipc_us` is that round
+> trip minus `compositord`'s service; a commit that presented nothing is not a
+> frame. `shoot.sh --scenario spin --accel kvm --virtio` went from ~61 to
+> ~970 fps with it.
+
 ## The pipeline
 
 A pixel drawn by an application reaches the display through four stages:

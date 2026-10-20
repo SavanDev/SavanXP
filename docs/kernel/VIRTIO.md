@@ -162,6 +162,6 @@ is boot-loader work rather than driver work.
 Until that exists, the two cursors agree on the pixel (the tablet is absolute,
 so the guest plane is placed at the position the host reported) and what
 remains is cosmetic. The guest cursor is a real hardware plane on `virtio-gpu`
-(`MOVE_CURSOR`, one RPC per pointer event); where the backend has no cursor
-plane, the desktop falls back to a software cursor.
+(`MOVE_CURSOR`, driven by `compositord` from the cursor in each scene commit);
+where the backend has no cursor plane, `compositord` draws a software cursor.
 
