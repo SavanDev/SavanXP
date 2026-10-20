@@ -39,6 +39,8 @@ namespace syscall {
 constexpr uint32_t kSysRead = 0;
 constexpr uint32_t kSysWrite = 1;
 constexpr uint32_t kSysExit = 7;
+constexpr uint32_t kSysUptimeMs = 9;
+constexpr uint32_t kSysSleepMs = 11;
 constexpr uint32_t kSysGetPid = 30;
 constexpr uint32_t kSysSystemInfo = 35;
 

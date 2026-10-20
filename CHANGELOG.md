@@ -48,6 +48,12 @@ Cut-off notes:
   reports `backend: pit`, `frequency_hz: 100` and `uptime_ms`, the exit line carries
   the uptime, and `tools/legacy_boot_test.py` asserts the boot token and those fields.
 
+- **The i386 kernel has a shell and a clock.** `sh32` (prompt, line editing, and
+  `help`, `sysinfo`, `uptime`, `sleep`, `echo`, `clear`, `exit`) runs after `sysinfo`
+  exits, the `UPTIME_MS` and `SLEEP_MS` syscalls answer from the PIT, every program
+  starts with an empty stdin, and `tools/legacy_boot_test.py --expect-sh` types
+  commands into the shell over QMP and asserts their echo and their answer.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

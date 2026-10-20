@@ -23,10 +23,11 @@ target_include_directories(savanxp_i386_user_runtime PRIVATE
 )
 target_compile_options(savanxp_i386_user_runtime PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
 
-# El userland del objetivo i386: sysinfo (el primero en correr) y keyecho (el
-# segundo, que el kernel lanza al salir el primero y que lee eventos de
-# teclado por la syscall READ). Mismo runtime del SDK, enlazado dentro de la
-# ventana de usuario (linker32.ld); int $0x80 es igual en los dos ABI.
+# El userland del objetivo i386: sysinfo (el primero en correr), sh32 (el
+# segundo, que el kernel lanza al salir el primero: la shell minima) y keyecho
+# (diagnostico manual de la entrega de eventos por la syscall READ). Mismo
+# runtime del SDK, enlazado dentro de la ventana de usuario (linker32.ld);
+# int $0x80 es igual en los dos ABI.
 add_executable(savanxp-i386-sysinfo subsystems/posix/userland/sysinfo.c)
 target_include_directories(savanxp-i386-sysinfo PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -39,7 +40,8 @@ target_link_libraries(savanxp-i386-sysinfo PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-sysinfo PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-sysinfo PROPERTIES OUTPUT_NAME sysinfo SUFFIX "")
 
-# El lector de eventos de teclado: el kernel lo lanza cuando sysinfo sale.
+# El lector de eventos de teclado: diagnostico manual de la entrega por READ
+# (fuera de la cadena sysinfo -> sh32: hace bucle infinito y bloquearia al shell).
 add_executable(savanxp-i386-keyecho subsystems/posix/userland/keyecho.c)
 target_include_directories(savanxp-i386-keyecho PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
@@ -52,8 +54,21 @@ target_link_libraries(savanxp-i386-keyecho PRIVATE savanxp_i386_user_runtime)
 target_link_options(savanxp-i386-keyecho PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
 set_target_properties(savanxp-i386-keyecho PROPERTIES OUTPUT_NAME keyecho SUFFIX "")
 
+# La shell minima: el segundo programa que el kernel lanza (sysinfo -> sh32).
+add_executable(savanxp-i386-sh32 subsystems/posix/userland/sh32.c)
+target_include_directories(savanxp-i386-sh32 PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
+    "${SAVANXP_GENERATED_ROOT}"
+)
+target_compile_options(savanxp-i386-sh32 PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS})
+target_link_libraries(savanxp-i386-sh32 PRIVATE savanxp_i386_user_runtime)
+target_link_options(savanxp-i386-sh32 PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+set_target_properties(savanxp-i386-sh32 PROPERTIES OUTPUT_NAME sh32 SUFFIX "")
+
 add_custom_target(savanxp_i386_userland
-    DEPENDS savanxp-i386-sysinfo savanxp-i386-keyecho
+    DEPENDS savanxp-i386-sysinfo savanxp-i386-keyecho savanxp-i386-sh32
     COMMENT "Linking the i386 userland"
 )
 
@@ -66,6 +81,8 @@ add_custom_target(savanxp_i386_diskfs
             "$<TARGET_FILE:savanxp-i386-sysinfo>" "${SAVANXP_I386_DISKFS_ROOT}/bin/sysinfo"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "$<TARGET_FILE:savanxp-i386-keyecho>" "${SAVANXP_I386_DISKFS_ROOT}/bin/keyecho"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+            "$<TARGET_FILE:savanxp-i386-sh32>" "${SAVANXP_I386_DISKFS_ROOT}/bin/sh32"
     DEPENDS savanxp_i386_userland
     COMMENT "Staging the i386 disk tree"
     VERBATIM

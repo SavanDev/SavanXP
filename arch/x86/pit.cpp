@@ -60,6 +60,13 @@ uint64_t uptime_ms() {
     return static_cast<uint64_t>(g_ticks) * kTickMs;
 }
 
+void sleep_ms(uint32_t milliseconds) {
+    const uint64_t deadline = uptime_ms() + milliseconds;
+    while (uptime_ms() < deadline) {
+        asm volatile("sti\n\thlt");
+    }
+}
+
 }  // namespace pit
 
 }  // namespace i386

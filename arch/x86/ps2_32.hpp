@@ -22,6 +22,11 @@ bool has_pending_event();
 /* Saca el evento mas viejo a `out`. false si no habia ninguno. */
 bool pop_event(struct savanxp_input_event& out);
 
+/* Vacia la cola. El cargador la llama al entrar en cada programa: stdin es
+ * estado por proceso y un programa nuevo empieza con la cola limpia, no con
+ * las teclas que el anterior dejo sin leer. */
+void clear_queue();
+
 /* Ultimo ASCII imprimible (para el eco de la consola EGA). 0 si ninguno. */
 char last_ascii();
 

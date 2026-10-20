@@ -352,6 +352,26 @@ bool pop_event(savanxp_input_event& out) {
     return true;
 }
 
+void clear_queue() {
+    /* El vaciado es atomico contra la IRQ1: se apagan las interrupciones
+     * mientras se mueven los indices y se restaura el IF previo, igual que
+     * en pop_event(). Asi el vaciado no depende de quien llame: el cargador
+     * lo llama con IF=0, pero el IF previo se restaura igual. */
+    const uint32_t flags = [&]() {
+        uint32_t value;
+        asm volatile("pushf; pop %0; cli" : "=r"(value) : : "memory");
+        return value;
+    }();
+    g_read_index = 0;
+    g_write_index = 0;
+    g_pending = 0;
+    g_last_ascii = 0;
+    g_last_key = SAVANXP_KEY_NONE;
+    if ((flags & (1u << 9)) != 0) {
+        asm volatile("sti");
+    }
+}
+
 char last_ascii() {
     return g_last_ascii;
 }

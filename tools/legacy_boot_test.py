@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -28,19 +29,42 @@ PS2_TOKEN = "ps2: teclado listo"
 # El PIT se programa en cada arranque (sin disco ni programa de por medio),
 # asi que su token se exige junto al de la paginacion.
 PIT_TOKEN = "pit: canal 0 a 100 Hz"
-# Consola de texto sobre el framebuffer EGA y el segundo programa (el que lee
-# eventos por la syscall READ): solo se exigen con --expect-key, que es el
-# escenario donde importan.
+# Consola de texto sobre el framebuffer EGA: se exige con --expect-key.
 EGA_TOKEN = "consola: texto EGA 80x25 en 0x000b8000"
-KEYECHO_TOKEN = "keyecho: leyendo stdin"
+# El shell anuncia su arranque: es la senal para la segunda fase de tecleado
+# (--expect-sh), porque el shell solo existe cuando llego a ring 3.
+SH32_TOKEN = "sh32: listo"
+# El prompt del shell: lo escribe al arrancar y al volver de cada comando.
+SH32_PROMPT = "sh32> "
 
 # Scancodes set 1 (make) de las teclas que el test sabe teclear. El kernel los
 # imprime tal cual (ps2: scan), y con la decodificacion encima exige el ascii
-# que keyecho reporta desde userland.
+# que el shell/userland reporta.
 KEY_SCANCODES = {
     "a": 0x1E,
     "b": 0x30,
     "c": 0x2E,
+    "d": 0x20,
+    "e": 0x12,
+    "f": 0x21,
+    "g": 0x22,
+    "h": 0x23,
+    "i": 0x17,
+    "k": 0x25,
+    "l": 0x26,
+    "m": 0x32,
+    "n": 0x31,
+    "o": 0x18,
+    "p": 0x19,
+    "r": 0x13,
+    "s": 0x1F,
+    "t": 0x14,
+    "u": 0x16,
+    "v": 0x2F,
+    "w": 0x11,
+    "y": 0x15,
+    "0": 0x0B,
+    "5": 0x06,
     "enter": 0x1C,
     "space": 0x39,
 }
@@ -48,6 +72,27 @@ KEY_ASCII = {
     "a": 97,
     "b": 98,
     "c": 99,
+    "d": 100,
+    "e": 101,
+    "f": 102,
+    "g": 103,
+    "h": 104,
+    "i": 105,
+    "k": 107,
+    "l": 108,
+    "m": 109,
+    "n": 110,
+    "o": 111,
+    "p": 112,
+    "r": 114,
+    "s": 115,
+    "t": 116,
+    "u": 117,
+    "v": 118,
+    "w": 119,
+    "y": 121,
+    "0": 48,
+    "5": 53,
     "enter": 10,
     "space": 32,
 }
@@ -57,6 +102,13 @@ KEY_ASCII = {
 KEY_QMP_NAMES = {
     "enter": "ret",
     "space": "spc",
+}
+# Comandos del shell que el test sabe teclear (--expect-sh), con el patron de
+# su respuesta (lo que el comando encontro en el sistema).
+SH32_COMMAND_ANSWERS = {
+    "uptime": r"uptime \d+ ms",
+    "echo hi": r"hi\r?\n",
+    "sysinfo": r"sh32: system_info ok, archivos \d+, uptime \d+ ms",
 }
 
 
@@ -90,6 +142,65 @@ def type_keys(qmp_socket: Path | None, keys: tuple[tuple[str, int], ...]) -> Non
             time.sleep(0.2)
 
 
+def command_to_keys(command: str) -> tuple[tuple[str, int], ...]:
+    """Un comando del shell a taps individuales: un tap por caracter, con el
+    enter del final. Letras y '0'/'5'/espacio ya estan en los mapas; cualquier
+    otra cosa es un error de programacion del propio test."""
+    out: list[tuple[str, int]] = []
+    for character in command:
+        if character == " ":
+            name = "space"
+        else:
+            name = character
+        if name not in KEY_SCANCODES:
+            raise RuntimeError(f"command character has no scancode mapping: {character!r}")
+        out.append((name, KEY_SCANCODES[name]))
+    out.append(("enter", KEY_SCANCODES["enter"]))
+    return tuple(out)
+
+
+def shell_transcript(text: str) -> str:
+    """Lo que escribio el shell, sin el log del teclado. El kernel y el shell
+    escriben en el mismo puerto serie, asi que el log del kernel ("ps2: ...")
+    se intercala con la salida del proceso y parte el eco de una linea en
+    trozos: quitarlo devuelve el eco entero, que es lo que el usuario ve en
+    la pantalla."""
+    return re.sub(r"ps2: [^\r\n]*\r?\n?", "", text)
+
+
+def shell_session_pattern(commands: tuple[str, ...]) -> str:
+    """La sesion completa del shell, sobre la transcripcion: por cada
+    comando, el prompt, el eco de lo tecleado, la linea que cierra el enter y
+    la respuesta del comando. El orden importa: sin el, la respuesta de un
+    comando podria satisfacerse con la de otro."""
+    parts: list[str] = []
+    for command in commands:
+        parts.append(re.escape(SH32_PROMPT))
+        parts.append(re.escape(command))
+        parts.append(r"\r?\n")
+        parts.append(SH32_COMMAND_ANSWERS[command])
+    return r".*?".join(parts)
+
+
+def type_shell(qmp_socket: Path | None, commands: tuple[str, ...]) -> None:
+    """Teclea cada comando del shell con su enter, dejando al proceso leer,
+    ejecutar y responder entre comando y comando (el shell es un proceso en
+    ring 3 con solo sti;hlt detras, no hay pipeline que llenar)."""
+    if qmp_socket is None:
+        raise RuntimeError("no QMP socket to type on")
+    deadline = time.monotonic() + 20
+    while not qmp_socket.exists() and time.monotonic() < deadline:
+        time.sleep(0.2)
+    with QmpClient(str(qmp_socket), timeout=10.0) as client:
+        for command in commands:
+            for name, _scancode in command_to_keys(command):
+                client.tap(KEY_QMP_NAMES.get(name, name))
+                time.sleep(0.2)
+            # El comando ya entro: el proceso tardo un par de ticks en leerlo
+            # y responder, y el siguiente no se teclea encima de esa respuesta.
+            time.sleep(1.0)
+
+
 def run_boot(
     qemu: str,
     args: list[str],
@@ -99,6 +210,8 @@ def run_boot(
     detail: str = "",
     qmp_socket: Path | None = None,
     keys: tuple[tuple[str, int], ...] = (),
+    shell_commands: tuple[str, ...] = (),
+    patterns: tuple[re.Pattern[str], ...] = (),
 ) -> None:
     """Boot the ISO and wait for the bootstrap token.
 
@@ -112,6 +225,12 @@ def run_boot(
     --expect-user the userland output and its exit line arrive *after*
     "I386 BOOT OK", so returning on the bootstrap token alone would report a
     program that is still running.
+
+    The keyboard comes in two phases because there are two consumers.
+    --expect-key taps scancodes as soon as the kernel reports the keyboard up,
+    which is before any program runs. Later, once the shell is up
+    (SH32_TOKEN), --expect-sh types shell commands: the shell only exists
+    then, and the program that ran before it left its stdin empty.
     """
     serial.unlink(missing_ok=True)
     process = subprocess.Popen(
@@ -124,6 +243,7 @@ def run_boot(
     deadline = time.monotonic() + timeout
     text = ""
     typed = False
+    shell_typed = False
     try:
         while time.monotonic() < deadline:
             text = serial.read_text(encoding="utf-8", errors="replace") if serial.exists() else ""
@@ -131,28 +251,56 @@ def run_boot(
                 lines = [line for line in text.splitlines() if line.startswith("savanxp/i386")]
                 reported = lines[-1] if lines else "no reason reported"
                 raise RuntimeError(f"bootstrap halted: {reported}")
+            if keys and not typed and PS2_TOKEN in text:
+                # El teclado se teclea en cuanto el kernel dice que esta listo,
+                # que es antes de que arranque cualquier programa: las teclas
+                # caen en la cola y el primer programa las descarta al entrar
+                # (stdin es estado por proceso). Teclearlas despues dejaria
+                # una ventana en la que el shell hereda una tecla de la fase
+                # anterior y la teclea como parte de su primera linea.
+                type_keys(qmp_socket, keys)
+                typed = True
             if SUCCESS_TOKEN in text:
                 if PAGING_TOKEN not in text:
                     raise RuntimeError(f"booted without enabling paging: {PAGING_TOKEN!r} missing")
                 if PIT_TOKEN not in text:
                     raise RuntimeError(f"booted without the timer: {PIT_TOKEN!r} missing")
-                if keys and not typed:
-                    # El teclado solo se consulta cuando el kernel lo ha
-                    # iniciado; el token lo dice, asi que no hay que adivinar un
-                    # retardo de arranque.
-                    if PS2_TOKEN not in text:
-                        raise RuntimeError(f"keyboard never came up: {PS2_TOKEN!r} missing")
-                    type_keys(qmp_socket, keys)
-                    typed = True
-                if not [token for token in require if token not in text]:
+                if shell_commands and not shell_typed:
+                    # Segunda fase: los comandos del shell entran cuando el
+                    # shell esta esperando stdin, ni un tap antes.
+                    if SH32_TOKEN not in text:
+                        time.sleep(0.2)
+                        continue
+                    type_shell(qmp_socket, shell_commands)
+                    shell_typed = True
+                if all(token in text for token in require) and all(
+                    pattern.search(shell_transcript(text)) for pattern in patterns
+                ):
                     print(f"i386 bootstrap: PASS{detail}")
                     return
             if process.poll() is not None:
                 raise RuntimeError(f"QEMU exited with {process.returncode} before the bootstrap token")
             time.sleep(0.2)
         missing = [token for token in (SUCCESS_TOKEN, *require) if token not in text]
-        suffix = f"; missing {missing[0]!r}" if missing else ""
-        raise RuntimeError(f"bootstrap did not reach its tokens within {timeout:g}s{suffix}")
+        if missing:
+            suffix = f"; missing {missing[0]!r}"
+        else:
+            unmatched = [
+                pattern.pattern
+                for pattern in patterns
+                if not pattern.search(shell_transcript(text))
+            ]
+            suffix = (
+                f"; the shell session did not complete (unmatched {unmatched[0][:60]!r})"
+                if unmatched
+                else ""
+            )
+        tail = " | ".join(
+            line.strip()[:80] for line in text.splitlines()[-6:] if line.strip()
+        )
+        raise RuntimeError(
+            f"bootstrap did not reach its tokens within {timeout:g}s{suffix}; last serial: {tail}"
+        )
     finally:
         terminate(process)
 
@@ -180,6 +328,16 @@ def main() -> int:
         help=(
             "tap KEY over QMP once the kernel reports the keyboard up and require "
             "its scancode (repeatable): " + ", ".join(sorted(KEY_SCANCODES))
+        ),
+    )
+    parser.add_argument(
+        "--expect-sh",
+        action="append",
+        default=[],
+        metavar="COMMAND",
+        help=(
+            "type COMMAND into the i386 shell once it reports ready and require "
+            "its echo plus its answer (repeatable): " + ", ".join(sorted(SH32_COMMAND_ANSWERS))
         ),
     )
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
@@ -243,16 +401,35 @@ def main() -> int:
                     f"unknown key(s) {unknown}; supported: {', '.join(sorted(KEY_SCANCODES))}"
                 )
             keys = tuple((key, KEY_SCANCODES[key]) for key in args.expect_key)
-            # El kernel imprime el scancode crudo en hexadecimal de ocho digitos,
-            # y ademas exige la entrega completa: consola EGA, keyecho lanzado y
-            # el ascii decodificado que keyecho leyo de stdin por la syscall READ.
+            # El kernel imprime el scancode crudo en hexadecimal de ocho digitos.
             require += tuple(f"ps2: scan 0x{scancode:08x}" for _key, scancode in keys)
-            require += (EGA_TOKEN, KEYECHO_TOKEN)
-            require += tuple(f"ascii={KEY_ASCII[name]}" for name, _code in keys)
+            require += (EGA_TOKEN,)
             detail = f" (keyboard: {', '.join(name for name, _code in keys)})"
             qmp_socket = Path(temporary) / "qmp.sock"
             command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
-        run_boot(qemu, command, serial, args.timeout, require, detail, qmp_socket, keys)
+        shell_commands: tuple[str, ...] = ()
+        patterns: tuple[re.Pattern[str], ...] = ()
+        if args.expect_sh:
+            # Cada comando trae su eco (lo que el shell repitio de stdin) y su
+            # respuesta (lo que el comando encontro en el sistema).
+            unknown = [cmd for cmd in args.expect_sh if cmd not in SH32_COMMAND_ANSWERS]
+            if unknown:
+                raise SystemExit(
+                    f"unknown command(s) {unknown}; supported: {', '.join(sorted(SH32_COMMAND_ANSWERS))}"
+                )
+            shell_commands = tuple(args.expect_sh)
+            if not qmp_socket:
+                qmp_socket = Path(temporary) / "qmp.sock"
+                command += ["-qmp", f"unix:{qmp_socket},server=on,wait=off"]
+            require += (SH32_TOKEN,)
+            # Una sola sesion: eco, respuesta y prompt de cada comando, en ese
+            # orden. La respuesta de un comando no puede valer para otro.
+            patterns = (re.compile(shell_session_pattern(shell_commands), re.DOTALL),)
+            detail = f" (shell: {', '.join(shell_commands)})"
+        run_boot(
+            qemu, command, serial, args.timeout, require, detail, qmp_socket, keys,
+            shell_commands, patterns,
+        )
     return 0
 
 

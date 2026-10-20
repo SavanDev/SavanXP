@@ -24,10 +24,11 @@ namespace {
 constexpr uint32_t kUserWindowBase = 0x08000000u;
 constexpr uint32_t kUserWindowEnd = 0x09000000u;
 
-/* Segundo programa del objetivo: EXIT lo lanza una vez, despues de que el
- * primero sale, para que la entrega de teclas por READ tenga un consumidor
- * verificable en el test. Vive en el disk-i386 (cmake/userland-i386.cmake). */
-constexpr const char* kKeyEchoPath = "/disk/bin/keyecho";
+/* Segundo programa del objetivo: sh32. keyecho queda en el volumen como
+ * diagnostico manual de la entrega de eventos, pero fuera de la cadena: hace
+ * bucle infinito y delante del shell este nunca llegaria. La cadena es
+ * sysinfo -> sh32. Vive en el disk-i386 (cmake/userland-i386.cmake). */
+constexpr const char* kShellPath = "/disk/bin/sh32";
 
 bool is_user_range(uint32_t address, uint32_t size) {
     if (address < kUserWindowBase || address >= kUserWindowEnd) {
@@ -85,6 +86,20 @@ void handle(SyscallFrame& frame) {
             memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(frame.esi)), &event,
                    sizeof(event));
             frame.eax = static_cast<uint32_t>(sizeof(event));
+            return;
+        }
+        case kSysUptimeMs: {
+            /* El SDK devuelve unsigned long: en i386 caben los primeros 49
+             * dias; el wrap completo se documenta antes que esconderse. */
+            frame.eax = static_cast<uint32_t>(pit::uptime_ms());
+            return;
+        }
+        case kSysSleepMs: {
+            /* frame.edi trae los ms como unsigned long del SDK. La espera la
+             * hace pit::sleep_ms con sti;hlt, que deja el IF previo (0) al
+             * volver; la read bloqueante de arriba usa el mismo patron. */
+            pit::sleep_ms(frame.edi);
+            frame.eax = 0;
             return;
         }
         case kSysWrite: {
@@ -156,15 +171,13 @@ void handle(SyscallFrame& frame) {
             serial::write(", uptime ");
             serial::write_dec(static_cast<uint32_t>(pit::uptime_ms()));
             serial::write(" ms\n");
-            /* Sin planificador: tras el primer programa el kernel lanza
-             * keyecho (una sola vez) para que la entrega de teclas por READ
-             * tenga un consumidor en el volumen, y si no hay mas programas
-             * se queda ocioso con las IRQ vivas -- con cli el teclado
-             * dejaria de llegar. */
-            static bool keyecho_launched = false;
-            if (!keyecho_launched) {
-                keyecho_launched = true;
-                user32::run(kKeyEchoPath);
+            /* Sin planificador: tras el primer programa el kernel lanza el shell
+             * (una sola vez) y si este sale se queda ocioso con las IRQ vivas
+             * -- con cli el teclado dejaria de llegar. */
+            static bool shell_launched = false;
+            if (!shell_launched) {
+                shell_launched = true;
+                user32::run(kShellPath);
             }
             cpu::idle_with_interrupts();
         }

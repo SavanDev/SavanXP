@@ -2,13 +2,11 @@
 
 #include "savanxp/syscall.h"
 
-/* keyecho: el segundo programa del objetivo i386. El kernel lo lanza cuando
- * sysinfo sale (arch/x86/syscall.cpp, kSysExit) y su unico trabajo es leer
- * eventos savanxp_input_event de stdin (syscall READ sobre la cola del
- * teclado) y escribirlos por stdout. Es lo que hace verificable la entrega
- * "evento decodificado -> syscall -> userland" en
- * tools/legacy_boot_test.py --expect-key. Se queda en el bucle para que el
- * teclado siga vivo hasta que el test cierre la maquina. */
+/* keyecho: diagnostico manual de la entrega de eventos de teclado. El kernel lo
+ * lanzo automaticamente en ed6dfd6; con sh32 en la cadena ya no hace falta y
+ * queda en el volumen para correrlo a mano (no hay exec todavia, asi que el
+ * shell no lo puede invocar: ahi queda). Lee eventos savanxp_input_event de
+ * stdin y los escribe por stdout hasta que el operador cierre la maquina. */
 
 static void print_u32(uint32_t value) {
     char buffer[10];

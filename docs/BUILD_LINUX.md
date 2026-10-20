@@ -62,6 +62,8 @@ python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
   --disk-image build/i386/disk-i386.img --expect-user
 python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
   --disk-image build/i386/disk-i386.img --expect-user --expect-key a --expect-key b
+python3 tools/legacy_boot_test.py --iso build/i386/SavanXP.iso \
+  --disk-image build/i386/disk-i386.img --expect-user --expect-sh uptime --expect-sh sysinfo
 ```
 
 The third command is the storage check: the guest attaches `build/disk.img` as an
@@ -75,6 +77,14 @@ asserts its report over serial and its clean exit.
 
 The fifth adds `--expect-key`, which types those keys over QMP once the guest has
 the PS/2 keyboard up and asserts the set 1 scancodes the kernel prints over serial.
+
+The sixth adds `--expect-sh`, which types commands into the shell the kernel
+launches after `sysinfo` exits, and asserts the shell's echo of each command and
+its answer. The shell reads the keyboard through the `READ` syscall, and every
+program starts with an empty stdin, so the keys typed before a program runs
+belong to nobody. The comparison is made against the shell's own output: the
+kernel logs the keyboard on the same serial port, so its lines are removed
+before the echo is looked for.
 
 ## Official ports
 

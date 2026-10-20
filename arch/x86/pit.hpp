@@ -28,6 +28,12 @@ uint32_t ticks();
 /* Milisegundos desde la primera interrupcion (ticks * kTickMs). */
 uint64_t uptime_ms();
 
+/* Espera bloqueante con sti;hlt hasta que uptime_ms() alcance los ms pedidos
+ * desde que se llama. La llamada en si corre con IF=0 (es el syscall handler),
+ * asi que el primer chequeo es atomico contra la IRQ0; despues, cada tick
+ * despierta el hlt y se vuelve a mirar. */
+void sleep_ms(uint32_t milliseconds);
+
 }  // namespace pit
 
 }  // namespace i386

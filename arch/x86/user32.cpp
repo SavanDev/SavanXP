@@ -6,6 +6,7 @@
 #include "kernel/string.hpp"
 #include "kernel/vfs.hpp"
 #include "paging.hpp"
+#include "ps2_32.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
 
@@ -284,6 +285,12 @@ void run(const char* path) {
     /* Los registros de datos los carga el proceso desde ring 0 justo antes
      * del iret; el iret en si solo cambia cs y ss. */
     cpu::load_user_segments();
+
+    /* stdin es estado por proceso: el programa entra con la cola del
+     * teclado limpia, no con las teclas que el anterior dejo sin leer. Sin
+     * esto, teclear antes de que el proceso arranque le entrega esas teclas
+     * como si fueran suyas. */
+    ps2_32::clear_queue();
 
     enter_user_mode(user_esp, image_base, entry_address);
 }
