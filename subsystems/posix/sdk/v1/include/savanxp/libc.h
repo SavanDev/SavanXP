@@ -84,10 +84,10 @@ long savanxp_sync(void);
 long fscheck(struct savanxp_fscheck_report* report);
 long mouse_open(void);
 int mouse_poll_event(int fd, struct savanxp_mouse_event* event);
-/* Duplicado del canal de eventos del WM, para leer el puntero con
- * gfx_poll_pointer. Negativo si el proceso no se lanzo como cliente del WM.
- * Teclado y puntero comparten el canal: lo que una de las dos funciones de
- * poll lea y no sea suyo queda guardado para la otra. */
+/* A duplicate of the WM's event pipe, to read the pointer with
+ * gfx_poll_pointer. Connects to the WM if the process has not yet; negative if
+ * it cannot. Keyboard and pointer share the pipe: whatever one of the two poll
+ * functions reads that is not its own is kept for the other. */
 long gfx_pointer_open(void);
 int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event);
 long audio_open(void);
@@ -133,14 +133,14 @@ void exit(int code) __attribute__((noreturn));
 
 struct savanxp_gfx_context {
     int fb_fd;
-    /* Canal de eventos del WM (SAVANXP_WM_FD_EVENTS): teclado y puntero. Se
-     * puede pasar a poll() para dormir hasta que llegue input, pero que quede
-     * legible NO garantiza una tecla: puede ser un evento de puntero, y
-     * entonces gfx_poll_event devuelve 0. Solo un negativo es un error. */
+    /* The WM's event pipe (savanxp/wm_protocol.h): keyboard and pointer. It
+     * can go to poll() to sleep until input arrives, but readable does NOT
+     * guarantee a key: it may be a pointer event, and then gfx_poll_event
+     * returns 0. Only a negative is an error. */
     int input_fd;
     struct savanxp_fb_info info;
     int submit_event_fd;
-    /* Frames compuestos y pedido de cierre (SAVANXP_WM_FD_WAKE_EVENT). */
+    /* Composed frames and the close request (the wake event). */
     int wake_event_fd;
     int mode;
     void* mapped_view;
@@ -191,20 +191,27 @@ long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct sa
 /* 1 si el WM pidio cerrar la ventana. Presentar despues de eso devuelve
  * -SAVANXP_EPIPE. */
 int gfx_should_close(const struct savanxp_gfx_context* context);
-/* Encola el pedido en el header. Si la cola ya esta llena espera un momento a
- * que el WM la drene y devuelve -SAVANXP_EAGAIN si no pasa. */
+/* Starts a program; it opens its own window by connecting to the WM (protocol
+ * v5). The caller does the spawn, the WM is not involved: the new process
+ * gets only stdio and is reaped by the runtime once it exits. Returns the pid
+ * or a negative error. `context` may be 0. */
 long gfx_desktop_launch(const struct savanxp_gfx_context* context, const char* path);
-/* Variante con flags SAVANXP_DESKTOP_LAUNCH_FLAG_*: el lanzador declara las
- * necesidades del programa (p.ej. fullscreen composited). gfx_desktop_launch
- * equivale a pasar SAVANXP_DESKTOP_LAUNCH_FLAG_NONE. */
+/* `flags` is ignored and kept for source compatibility: a program declares
+ * its own launch flags in its .sxe (SXE_TAG_LAUNCH_FLAGS) and sends them to
+ * the WM itself. */
 long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags);
-/* Como gfx_desktop_launch_ex pero pasandole un argumento al programa, que lo
- * recibe como argv[1] (p.ej. el archivo que tiene que abrir). */
+/* Like gfx_desktop_launch_ex, passing the program one argument it receives as
+ * argv[1] (e.g. the file to open). */
 long gfx_desktop_launch_arg(
     const struct savanxp_gfx_context* context,
     const char* path,
     const char* argument,
     uint32_t flags);
+/* The shell channels (savanxp/wm_shell_protocol.h) of a process the WM gave the
+ * shell role: the pipe its requests go on and the window list section. -1 for
+ * any other process, or before it connected. */
+int gfx_shell_request_fd(void);
+int gfx_shell_window_list_fd(void);
 long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape);
 /* Pide el tamano de area util que necesita el contenido de la ventana. Es una
  * sugerencia: el WM la recorta y solo la atiende mientras la ventana siga en

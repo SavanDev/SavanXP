@@ -2,9 +2,9 @@
 
 /* sxnwm: native window-client substrate (toolkit seed, not a toolkit).
  *
- * The first reusable layer over sxn.h for windowed native programs: attach
- * a v4 client surface, publish full-surface frames, wait for composition,
- * and drain the native input ring. Extracted from sdk/nativedemo, which
+ * The first reusable layer over sxn.h for windowed native programs: connect
+ * to windowd (protocol v5, savanxp/wm_protocol.h), publish full-surface
+ * frames, wait for composition, and drain the native input ring. Extracted from sdk/nativedemo, which
  * uses all of it -- one client proves the shape, widgets wait for a second.
  * Header-only like sxn.h: no tool or link change needed. Returns follow the
  * kernel convention (0 on success, negative -errno on failure), except
@@ -27,12 +27,12 @@ struct sxnwm_client {
     uint32_t batch_capacity;
     long submit_fd;
     long wake_fd;
-    /* Null until sxnwm_attach_input: output-only clients never set it. */
+    /* The event pipe: kept open, never read -- input comes on the ring. */
+    long events_fd;
     struct savanxp_wm_input_ring* ring;
 };
 
-/* Map fd 3 and validate the v4 surface, filling the context. Fixed channel
- * numbers come from the protocol, like the fds themselves. */
+/* Map the surface section and validate it, filling the context. */
 static inline long sxnwm_attach(struct sxnwm_client* ctx, long section_fd) {
     long base;
 
@@ -45,7 +45,7 @@ static inline long sxnwm_attach(struct sxnwm_client* ctx, long section_fd) {
     }
     ctx->header = (struct savanxp_gpu_client_surface_header*)base;
     if (ctx->header->magic != SAVANXP_GPU_CLIENT_SURFACE_MAGIC ||
-        ctx->header->version != SAVANXP_GPU_CLIENT_SURFACE_VERSION_4 ||
+        ctx->header->version != SAVANXP_GPU_CLIENT_SURFACE_VERSION_5 ||
         ctx->header->pixels_offset < sizeof(*ctx->header) ||
         ctx->header->command_offset < sizeof(*ctx->header) ||
         ctx->header->batch_capacity == 0u ||
@@ -63,13 +63,11 @@ static inline long sxnwm_attach(struct sxnwm_client* ctx, long section_fd) {
     ctx->pixels = (uint32_t*)((unsigned char*)ctx->header + ctx->header->pixels_offset);
     ctx->batches = (struct savanxp_gpu_dirty_rect_batch*)((unsigned char*)ctx->header + ctx->header->command_offset);
     ctx->batch_capacity = ctx->header->batch_capacity;
-    ctx->submit_fd = SAVANXP_WM_FD_SUBMIT_EVENT;
-    ctx->wake_fd = SAVANXP_WM_FD_WAKE_EVENT;
     ctx->ring = 0;
     return 0;
 }
 
-/* Map the input ring (fd 7) and validate its magic and version. */
+/* Map the input ring and validate its magic and version. */
 static inline long sxnwm_attach_input(struct sxnwm_client* ctx, long ring_fd) {
     long base;
 
@@ -86,6 +84,91 @@ static inline long sxnwm_attach_input(struct sxnwm_client* ctx, long ring_fd) {
         return -SAVANXP_EINVAL;
     }
     return 0;
+}
+
+/* Connect to windowd and get a window: the hello asks for input on a ring
+ * (a native client reads no pipe), the welcome brings the surface section,
+ * the wake and submit events and the ring, which are mapped here. The read
+ * of the welcome blocks: there is no native poll yet, and a WM that accepted
+ * the connection answers within a pass of its loop. 0 or negative -errno. */
+static inline long sxnwm_connect(struct sxnwm_client* ctx) {
+    int32_t handles[2] = {-1, -1};
+    long received[4] = {-1, -1, -1, -1};
+    struct savanxp_wm_hello hello = {0};
+    struct savanxp_wm_event record = {0};
+    uint32_t index = 0;
+    long result = 0;
+
+    if (ctx == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    ctx->header = 0;
+    ctx->ring = 0;
+    ctx->events_fd = -1;
+    result = sxn_port_connect(SAVANXP_WM_PORT_NAME, handles);
+    if (result < 0) {
+        return result;
+    }
+    hello.magic = SAVANXP_WM_HELLO_MAGIC;
+    hello.version = SAVANXP_WM_PROTOCOL_VERSION;
+    hello.flags = SAVANXP_WM_HELLO_INPUT_RING;
+    if (sxn_write(handles[0], &hello, sizeof(hello)) != (long)sizeof(hello)) {
+        result = -SAVANXP_EPIPE;
+        goto fail;
+    }
+    for (;;) {
+        result = sxn_read(handles[1], &record, sizeof(record));
+        if (result != (long)sizeof(record)) {
+            result = result < 0 ? result : -SAVANXP_EPIPE;
+            goto fail;
+        }
+        if (record.kind == SAVANXP_WM_EVENT_WELCOME) {
+            break;
+        }
+    }
+    if (record.payload.welcome.status != 0) {
+        result = record.payload.welcome.status;
+        goto fail;
+    }
+    /* section, wake, submit, ring */
+    if (record.payload.welcome.handle_count != 4u) {
+        result = -SAVANXP_EIO;
+        goto fail;
+    }
+    for (index = 0; index < 4u; index += 1) {
+        received[index] = sxn_pipe_receive_handle(handles[1]);
+        if (received[index] < 0) {
+            result = received[index];
+            goto fail;
+        }
+    }
+    result = sxnwm_attach(ctx, received[0]);
+    if (result == 0) {
+        result = sxnwm_attach_input(ctx, received[3]);
+    }
+    if (result != 0) {
+        goto fail;
+    }
+    /* The views keep the sections alive; only the channels stay open. */
+    (void)sxn_close(received[0]);
+    (void)sxn_close(received[3]);
+    (void)sxn_close(handles[0]);
+    ctx->wake_fd = received[1];
+    ctx->submit_fd = received[2];
+    ctx->events_fd = handles[1];
+    return 0;
+
+fail:
+    for (index = 0; index < 4u; index += 1) {
+        if (received[index] >= 0) {
+            (void)sxn_close(received[index]);
+        }
+    }
+    (void)sxn_close(handles[0]);
+    (void)sxn_close(handles[1]);
+    ctx->header = 0;
+    ctx->ring = 0;
+    return result;
 }
 
 /* Publish one full-surface batch. Returns the new submit sequence (>0), or

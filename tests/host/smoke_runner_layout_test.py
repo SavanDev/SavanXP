@@ -123,16 +123,15 @@ def main() -> int:
     # Slice 9: output-only native window inside real windowd.
     assert (root / "sdk" / "nativedemo" / "main.c").is_file()
     demo = (root / "sdk" / "nativedemo" / "main.c").read_text(encoding="utf-8")
-    assert "sxnwm_attach" in demo
+    assert "sxnwm_connect" in demo
     assert "sxnwm_poll_input" in demo
-    assert "SAVANXP_WM_FD_SECTION" in demo
     assert "savanxp_read" not in demo and "savanxp_open" not in demo
     windowd = (root / "subsystems" / "posix" / "userland" / "windowd.c").read_text(encoding="utf-8")
     assert "windowd_native_client_selftest" in windowd
     assert "/disk/bin/nativedemo" in windowd
     # Slice 10: input ring transport plus the sxnwm seed.
     assert (root / "include" / "sxn" / "sxnwm.h").is_file()
-    assert "SAVANXP_WM_FD_INPUT_RING" in (root / "subsystems" / "posix" / "sdk" / "v1" / "include" / "savanxp" / "wm_protocol.h").read_text(encoding="utf-8")
+    assert "SAVANXP_WM_HELLO_INPUT_RING" in (root / "include" / "abi" / "savanxp_abi.h").read_text(encoding="utf-8")
     assert "savanxp_wm_input_ring" in (root / "include" / "abi" / "savanxp_abi.h").read_text(encoding="utf-8")
     assert "route_event_ring" in windowd
     assert "sxnwm_poll_input" in (root / "sdk" / "nativedemo" / "main.c").read_text(encoding="utf-8")

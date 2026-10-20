@@ -42,32 +42,37 @@ struct windowd_hotkey
 
 struct windowd_client
 {
-    /* Owned copy: launch requests arrive in stack buffers that die with the
-     * request, so pointing at the caller's string would dangle. */
+    /* The program, for labels and logs: the path windowd spawned, or the
+     * process name for a client that connected on its own. */
     char path[WINDOWD_CLIENT_PATH_CAPACITY];
     /* Title, icon, accent and style: the file name until the window publishes
      * its own (windowd_presentation.h). */
     struct windowd_presentation presentation;
+    /* > 0 once the window exists: every pass over the slots keys on it. */
     long pid;
-    /* Los UNICOS descriptores que windowd guarda por cliente (savanxp/
-     * wm_protocol.h v4). Todo lo demas vive en la seccion, que se cierra
-     * despues del fork: a 64 descriptores por proceso, cada fd que se sume aca
-     * le resta ventanas simultaneas a la sesion (docs/desktop/WM_SUBSYSTEM.md). */
+    /* A slot held for a process windowd spawned (the desktop, the selftests'
+     * apps) until it connects; pid stays 0 meanwhile, so nothing treats the
+     * slot as a window. 0 = not reserved. */
+    long reserved_pid;
+    /* The ONLY descriptors windowd keeps per client (savanxp/wm_protocol.h).
+     * Everything else lives in the section, closed once sent: at 64
+     * descriptors per process, every fd added here takes simultaneous windows
+     * away from the session (docs/desktop/WM_SUBSYSTEM.md). */
     int events_write_fd;
     int wake_event_fd;
-    /* Entrada nativa (sin pipe de eventos): anillo en seccion propia, creada
-     * en el launch si el binario es nativo y cerrada tras el fork como la
-     * superficie. El mapeo propio la mantiene viva. */
+    /* Input on a ring in its own section instead of the event pipe, when the
+     * hello asked for it (SAVANXP_WM_HELLO_INPUT_RING). Closed once sent, like
+     * the surface; windowd's own mapping keeps it alive. */
     int native_input;
     struct savanxp_wm_input_ring *input_ring;
     /* Shell channels (savanxp/wm_shell_protocol.h): only the desktop's main
-     * window has them. -1 in any other client. */
+     * window has them -- the connection's request pipe and the window list.
+     * -1 in any other client. */
     int shell_request_read_fd;
     struct savanxp_wm_window_list *window_list;
     int last_cursor_hint_shape;
-    /* Estado del WM sobre los pedidos del header. Se guarda aca y no se relee
-     * del header porque el cliente puede escribir ahi lo que quiera. */
-    uint32_t launch_tail;
+    /* The WM's own state about the header requests. Kept here and never read
+     * back from the header, where the client may write whatever it likes. */
     uint32_t size_hint_consumed_sequence;
     uint32_t window_request_consumed_sequence;
     uint32_t presentation_consumed_sequence;
@@ -123,15 +128,31 @@ struct windowd_client
     int fs_restore_maximized;
 };
 
+/* A connection accepted on the WM's port whose hello has not arrived yet
+ * (savanxp/wm_protocol.h). read_fd < 0 = free. */
+#define WINDOWD_MAX_PENDING_CONNECTIONS 4
+
+struct windowd_pending_connection
+{
+    long pid;
+    int read_fd;
+    int write_fd;
+    unsigned long deadline_ms;
+};
+
 struct windowd_session
 {
     struct savanxp_gfx_context gfx;
     struct windowd_compositor_connection compositor;
     int input_fd;
     int mouse_fd;
-    /* Evento de submit compartido por TODOS los clientes (SAVANXP_WM_FD_SUBMIT_
-     * EVENT): uno por sesion en vez de uno por ventana. */
+    /* Submit event shared by ALL clients (sent with every welcome): one per
+     * session instead of one per window. */
     int submit_event_fd;
+    /* The port clients connect to (SAVANXP_WM_PORT_NAME), and the connections
+     * still owing their hello. */
+    int port_fd;
+    struct windowd_pending_connection pending[WINDOWD_MAX_PENDING_CONNECTIONS];
     int hw_cursor_enabled;
     int current_cursor_shape;
     int previous_cursor_shape;

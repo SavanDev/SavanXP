@@ -26,30 +26,24 @@ All header-only, no link or tool changes needed:
   spawn, waitpid, events, sections, views, waits, gfx, and handle close and
   duplicate, pipe and device read/write, device open and control, the clock.
 - `include/sxn/sxnwm.h` — windowed-client substrate over a context
-  struct: attach the surface (fd 3), submit full-surface batches, wait
-  for composed, drain the input ring (fd 7).
+  struct: connect to `windowd` (`sxnwm_connect`), submit full-surface
+  batches, wait for composed, drain the input ring.
 - `include/sxn/sxnwidgets.h` — widget seed, not a toolkit: Label,
   Button and single-line Field with a hand-drawn 5x7 font, hit-testing,
   focus and field editing. Enough for one form; a real toolkit binds
   the system fonts later.
 
-## Fixed file descriptors (windowed clients)
+## Connecting a window
 
-The launcher starts every client the same way, then `exec`s:
-
-| fd | use |
-|----|-----|
-| 3 | surface section (`SAVANXP_WM_FD_SECTION`) |
-| 4 | event pipe (unread by native clients) |
-| 5 | wake event (`SAVANXP_WM_FD_WAKE_EVENT`) |
-| 6 | submit event |
-| 7 | input ring section for native binaries, pipe for POSIX |
-
-`windowd` sniffs `EI_OSABI` at launch and hands native clients the
-ring; the v4 structs are shared, only the transport differs. Input
-records are the same 32-byte `savanxp_wm_event`s; the ring drops when
-full like the pipe. The wait pattern is: reset the wake event,
-re-check the header AND the ring, then wait.
+A native client connects to `windowd` like any other (WM protocol v5,
+`savanxp/wm_protocol.h`): `sxnwm_connect` opens the port `windowd`, writes
+the hello asking for `SAVANXP_WM_HELLO_INPUT_RING`, reads the welcome and
+receives four handles from the event pipe -- surface section, wake event,
+submit event, input ring -- mapping the two sections. The event pipe stays
+open but is never read: input records are the same 32-byte
+`savanxp_wm_event`s, on the ring, which drops when full like the pipe. The
+wait pattern is: reset the wake event, re-check the header AND the ring,
+then wait. The read of the welcome blocks (there is no native poll yet).
 
 ## In-tree native programs
 
@@ -107,7 +101,7 @@ from the menu, the manifest is the first suspect.
 - `sdk/nativetest` — no window: exit, log, spawn/waitpid, events,
   sections, views, waits, and a 50-round parent/child ring
   ping-pong. Scenario `native-test`.
-- `sdk/nativedemo` — output-only window answering a key with green.
+- `sdk/nativedemo` — window answering a key with green.
   Scenario `windowd-smoke`.
 - `sdk/nativewidgets` — the interactive form: counted button,
   editable field, two state squares, Esc composes the last frame.

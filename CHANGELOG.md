@@ -97,6 +97,13 @@ Cut-off notes:
 
 ### Changed
 
+- **Programs connect to `windowd` for a window (WM protocol v5).** A client opens the port
+  `windowd`, sends a hello with the launch flags its own `.sxe` declares, and gets its handles
+  with the welcome; `gfx_desktop_launch*` now spawns the program in the caller, and `windowd`
+  no longer forks clients, keeps a launch queue or uses fixed descriptors (surface header v5).
+  Native clients use `sxnwm_connect`. External programs must be rebuilt. See
+  `docs/desktop/WM_SUBSYSTEM.md#descriptor-budget`.
+
 - **Each window publishes its own title, icon, accent and style.** The runtime reads the
   program's `.sxe` at `gfx_open` (`savanxp_wm_presentation` in the surface header); `windowd`
   reads no binary for it and its per-path table is gone. External programs built earlier show

@@ -15,10 +15,10 @@
  * popups (desktop_volume.c, desktop_keyboard.c).
  *
  * What it cannot know on its own -- which windows exist, which is active, which
- * is minimized -- windowd tells it through the shared section on
- * SAVANXP_WM_FD_WINDOW_LIST (savanxp/wm_shell_protocol.h), and clicks go back as
- * requests on SAVANXP_WM_FD_SHELL_REQUEST. The taskbar NEVER activates a window
- * by itself: it asks, and windowd decides.
+ * is minimized -- windowd tells it through the window list section
+ * (savanxp/wm_shell_protocol.h), and clicks go back as requests on the shell's
+ * request pipe. The taskbar NEVER activates a window by itself: it asks, and
+ * windowd decides.
  */
 
 #define TASKBAR_BUTTON_MAX_WIDTH 160
@@ -490,7 +490,7 @@ static void taskbar_request(uint32_t action, uint32_t window_id)
     memset(&request, 0, sizeof(request));
     request.action = action;
     request.window_id = window_id;
-    (void)savanxp_write(SAVANXP_WM_FD_SHELL_REQUEST, &request, sizeof(request));
+    desktop_shell_request(&request);
 }
 
 /* Polling countdown for the indicators and the clock, in loop passes. */
@@ -500,8 +500,9 @@ static uint64_t g_last_sequence = 0;
 
 int desktop_taskbar_init(void)
 {
-    g_list = (struct savanxp_wm_window_list *)map_view(
-        SAVANXP_WM_FD_WINDOW_LIST, SAVANXP_SECTION_READ);
+    int list_fd = gfx_shell_window_list_fd();
+
+    g_list = list_fd >= 0 ? (struct savanxp_wm_window_list *)map_view(list_fd, SAVANXP_SECTION_READ) : 0;
     if (g_list == 0 || result_is_error((long)g_list))
     {
         g_list = 0;

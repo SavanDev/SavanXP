@@ -81,6 +81,17 @@ long desktop_launch(const char *path, uint32_t launch_flags)
     return gfx_desktop_launch_ex(&g_background, path, launch_flags);
 }
 
+void desktop_shell_request(const struct savanxp_wm_shell_request *request)
+{
+    int fd = gfx_shell_request_fd();
+
+    /* Without the shell role there is nobody to ask. */
+    if (fd >= 0)
+    {
+        (void)savanxp_write(fd, request, sizeof(*request));
+    }
+}
+
 static struct desktop_popup_slot *slot_for(enum desktop_popup popup)
 {
     return popup == DESKTOP_POPUP_START_MENU ? &g_start_menu : &g_tray;
@@ -197,7 +208,7 @@ static void register_hotkey(uint32_t key, uint32_t modifiers)
     request.action = SAVANXP_WM_SHELL_REGISTER_HOTKEY;
     request.key = key;
     request.modifiers = modifiers;
-    (void)savanxp_write(SAVANXP_WM_FD_SHELL_REQUEST, &request, sizeof(request));
+    desktop_shell_request(&request);
 }
 
 /* The main window never has the focus, so every key it gets is a hotkey this

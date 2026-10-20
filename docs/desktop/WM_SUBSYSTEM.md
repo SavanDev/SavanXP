@@ -6,7 +6,9 @@
 > statements below no longer hold: the taskbar came back, now as a window of
 > the `desktop` process (with a Start menu and popups); `shellui` is gone into
 > that same process; and the Task List is gone -- Alt+Tab has its own switcher
-> box, Ctrl+Esc opens the Start menu and End Task is Task Manager's. The descriptor budget, the wheel rules and
+> box, Ctrl+Esc opens the Start menu and End Task is Task Manager's. A fourth
+> one: clients no longer inherit fixed descriptors from `windowd`, they connect
+> to its port (protocol v5). The descriptor budget, the wheel rules and
 > fixed-size windows below are still current.
 
 > **Status: Phase A COMPLETE (A1 + A2 + A3), on master.**
@@ -323,19 +325,30 @@ and pointer pipes, submit/retire/shutdown events, launch/cursor/size-hint
 pipes). With the background client and the taskbar that left room for about
 four application windows, and the pipes ran out before twelve anyway.
 
-Protocol v4 (`savanxp/wm_protocol.h`) costs **two descriptors and one pipe**:
+Protocol v4 brought it to **two descriptors and one pipe**, and protocol v5
+(`savanxp/wm_protocol.h`) keeps that while changing how the channels arrive: a
+client connects to the port `windowd` (`SAVANXP_WM_PORT_NAME`), which gives it
+a request pipe and an event pipe, writes a `savanxp_wm_hello`, and the WM
+answers with a `SAVANXP_WM_EVENT_WELCOME` record after queuing the handles on
+the event pipe:
 
-| fd | v4 channel | what `windowd` keeps |
-|----|------------|----------------------|
-| 3  | surface section: header, batches, pixels, **and the client's requests** (`savanxp_wm_client_requests`) | nothing — closed after `fork`, the mapping keeps it alive |
-| 4  | event pipe: `savanxp_wm_event` records, keyboard and pointer | the write end |
-| 5  | wake event: composed/retired advanced, or shutdown requested | the event |
-| 6  | submit event, **one for the whole session** | one descriptor in total |
-| 7, 8 | the `desktop` only: window list section, shell request pipe | the pipe's read end |
+| order | v5 channel | what `windowd` keeps |
+|-------|------------|----------------------|
+| — | event pipe: `savanxp_wm_event` records, keyboard and pointer, and the handle queue | the write end |
+| — | request pipe: the hello | nothing — closed once read, except the shell's |
+| 1 | surface section: header, batches, pixels, **and the client's requests** (`savanxp_wm_client_requests`) | nothing — closed once sent, the mapping keeps it alive |
+| 2 | wake event: composed/retired advanced, or shutdown requested | the event |
+| 3 | submit event, **one for the whole session** | one descriptor in total |
+| 4 | the `desktop` only: window list section (its requests go on its request pipe) | the request pipe's read end |
+| 4 | a client that asked for `SAVANXP_WM_HELLO_INPUT_RING`: the input ring | nothing — closed once sent |
+
+Four handles at most: exactly the capacity of a pipe's handle queue. A
+connection that has not said hello yet holds two descriptors for at most two
+seconds, and at most four wait at once; the rest wait in the port's backlog.
 
 With every slot full — twelve windows plus the desktop's background, taskbar
-and a popup — `windowd --selftest` measures 40 descriptors, and asserts at
-least 8 remain free for a launch in progress. The desktop's taskbar and popups
+and a popup — `windowd --selftest` measures 41 descriptors (the port is one),
+and asserts at least 8 remain free for a connection in progress. The desktop's taskbar and popups
 are windows of one process, so like dialogs they cost two duplicates each and
 no pipe.
 
@@ -349,10 +362,12 @@ The rules that keep it there:
   queue with a single producer) or in a device node the client opens and closes
   (that is why the clipboard is `/dev/clipboard`).
 - **Client→WM data goes in the header.** The cursor shape is plain state; the
-  size hint is a seqlock (odd sequence = being written); launches are a ring
-  where the client writes the entry *before* publishing `launch_head`. The WM
-  copies each value before validating it and keeps its own `launch_tail`: the
-  header is memory another process writes at any time.
+  size hint, the window request and the presentation are seqlocks (odd
+  sequence = being written). The WM copies each value before validating it
+  and keeps its own consumed sequences: the header is memory another process
+  writes at any time. Launching is not a request at all: a client starts
+  programs itself (`gfx_desktop_launch*` is a `spawn`) and they connect on
+  their own.
 - **One wake event serves several conditions**, so every waiter resets it,
   re-reads the header and only then sleeps. Shutdown is a header flag
   (`SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN`) set before the wake, never the
@@ -368,14 +383,19 @@ The rules that keep it there:
   `poll`s `input_fd` may wake for a pointer record, so `gfx_poll_event`
   returning 0 after a readable `poll` is normal, not end of input. The desktop
   Shell treated it as end of input and closed as soon as the mouse crossed it.
-- **A child closes everything above the protocol before `exec`.** `fork`
-  copies `windowd`'s whole table and `exec` closes nothing; without the sweep
-  an app launched into a full session started with dozens of foreign
-  descriptors and little room to open files.
+- **`windowd` never forks a client.** With v4 it forked, `dup2`ed the channels
+  onto fixed descriptors and swept everything above them before `exec`,
+  because `fork` copies the whole table and `exec` closes nothing. Now the
+  programs it needs itself (the desktop, Program Manager) are `spawn`ed with
+  stdio only, like any program another client starts, and connect like
+  everyone else.
+- **A process has one connection.** The runtime connects once and every
+  `gfx_open` duplicates the channels; a second connection from a process that
+  already has a window is refused with `EBUSY`.
 
-A v3 client started by a v4 WM fails in `gfx_open` (the header version does
-not match) instead of talking to channels that no longer exist. External apps
-built against the SDK, such as `doomgeneric`, must be rebuilt.
+A v4 client finds no channels on fixed descriptors and fails in `gfx_open`;
+the surface header is version 5 now that the launch queue left it. External
+apps built against the SDK, such as `doomgeneric`, must be rebuilt.
 
 ## Fixed-size windows
 

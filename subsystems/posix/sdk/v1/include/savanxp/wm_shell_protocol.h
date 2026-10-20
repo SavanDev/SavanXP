@@ -5,50 +5,46 @@
 /*
  * WM <-> shell client protocol (the `desktop` process).
  *
- * An OPTIONAL extension of savanxp/wm_protocol.h. An ordinary client does not
- * have these descriptors open: the WM wires them only into the process it
- * starts as the shell. That matters because protocol fds are paid PER CLIENT
- * against the limit of 64 per process (see docs/desktop/WM_SUBSYSTEM.md), so
- * this is one fd for the whole system, not one per window: the WM closes the
- * list section after the fork and keeps only the pipe.
+ * An OPTIONAL extension of savanxp/wm_protocol.h. Only the connection the WM
+ * recognizes as the shell gets it: the window list section and a request pipe
+ * that stays open. Channels are paid PER CLIENT against the limit of 64 per
+ * process (see docs/desktop/WM_SUBSYSTEM.md), so this is one descriptor for
+ * the whole system, not one per window.
  *
  * Why it exists: the taskbar is a CLIENT, not WM chrome -- the explorer.exe
  * model (docs/desktop/DESKTOP_ARCHITECTURE.md). But a client cannot know which
  * windows exist: the z-order, the titles and the focus belong to the WM. This
  * is the channel through which it tells.
  *
- * Holding these descriptors is also what makes a process the shell: only it
- * may create windows with a role other than NORMAL (savanxp_wm_window_role)
- * and register global hotkeys.
+ * Having the shell role is also what lets a process create windows with a
+ * role other than NORMAL (savanxp_wm_window_role) and register global hotkeys.
+ * The WM grants it to the process it started as the shell; until a session
+ * launcher exists (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3) that is
+ * windowd's own desktop child.
  */
 
 /*
- * Lista de ventanas: SECCION compartida, no pipe.
+ * The window list: a shared SECTION, not a pipe.
  *
- * La lista pesa mas de diez KiB -- cada entrada lleva su icono -- y un pipe de
- * 8 KiB no la acepta entera. Una lectura parcial desincroniza el stream para
- * siempre, y este WM ya se colgo una vez por escrituras parciales a pipe. Con
- * una seccion no hay mensajes que puedan partirse: el WM pisa el contenido y el
- * cliente lee el ultimo estado, que es exactamente lo que una barra de tareas
- * necesita -- no le sirve el historico, solo el ahora.
+ * It weighs more than ten KiB -- every entry carries its icon -- and an 8 KiB
+ * pipe does not take it whole. A partial read desynchronizes the stream for
+ * good. With a section there are no messages to split: the WM overwrites the
+ * content and the client reads the latest state, which is exactly what a
+ * taskbar needs -- not the history, only the now.
  *
- * El cliente la mapea de SOLO LECTURA.
+ * Protocol v5: it arrives as the last handle before the welcome on the shell's
+ * event pipe (savanxp/wm_protocol.h). The client maps it READ-ONLY.
+ *
+ * The shell's requests (savanxp_wm_shell_request) go on its request pipe, the
+ * one the hello went on: small, sporadic messages produced by clicks, in the
+ * direction without the "the WM never blocks" restriction.
  */
-#define SAVANXP_WM_FD_WINDOW_LIST 7
-
-/*
- * Pedidos del shell al WM. Aca si un pipe es lo correcto: los mensajes son
- * chicos, esporadicos (los produce un click) y van en la direccion que no
- * tiene la restriccion de "el WM nunca bloquea".
- */
-#define SAVANXP_WM_FD_SHELL_REQUEST 8
-
-/* Ultimo descriptor del protocolo CON la extension de shell. */
-#define SAVANXP_WM_SHELL_FD_LAST SAVANXP_WM_FD_SHELL_REQUEST
 
 /* 3: the descriptors moved to 7 and 8 with v4 of savanxp/wm_protocol.h.
- * 4: hotkey registration; the request carries a key and its modifiers. */
-#define SAVANXP_WM_SHELL_PROTOCOL_VERSION 4u
+ * 4: hotkey registration; the request carries a key and its modifiers.
+ * 5: no fixed descriptors; the list arrives as a handle and requests go on the
+ *    connection's request pipe (protocol v5). */
+#define SAVANXP_WM_SHELL_PROTOCOL_VERSION 5u
 #define SAVANXP_WM_WINDOW_TITLE_CAPACITY 64u
 /* Same as WINDOWD_MAX_OVERLAY_CLIENTS: every task is an application window. */
 #define SAVANXP_WM_MAX_WINDOWS 12u

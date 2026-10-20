@@ -2,7 +2,8 @@
 
 > **Status: design accepted (2026-10-19). Phases 1 and 2 are built** (the
 > `desktop` process, window roles, hotkeys, the Task List removed); phase 3 is
-> under way (`compositord` is native); phase 4 is not. It is the target for the graphics stack and the order for
+> under way (`compositord` is native, clients connect to `windowd`'s port and
+> whoever launches a program spawns it); phase 4 is not. It is the target for the graphics stack and the order for
 > getting there.
 > Where it disagrees with the "Target layering" of
 > [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md), this document wins; WM_SUBSYSTEM.md
@@ -145,7 +146,8 @@ window kind, behind a single loop in `desktop.c`.
 ### progman
 
 Unchanged: an ordinary window that lists the installed programs. It launches
-programs itself once launching leaves `windowd` (phase 3).
+programs itself: `gfx_desktop_launch*` is a `spawn` in the caller, and the
+program connects to `windowd` on its own.
 
 ### The Task List is removed
 
@@ -290,13 +292,13 @@ services need:
 
 | Need | Used by | Today |
 |---|---|---|
-| Connectable named port (accept, connect, message, handle transfer) | everyone | missing; a new kernel object |
+| Connectable named port (accept, connect, message, handle transfer) | everyone | done (slice 15); the WM protocol v5 connects through it |
 | Wait on several objects at once | `windowd`, `compositord` | only `SXN_SYS_WAIT_ONE` |
-| Open a device and send it control requests (`gpu0`, `input0`, `mouse0`) | `compositord`, `windowd` | missing; `SXN_SYS_GFX_*` writes the framebuffer directly and would bypass `compositord` |
-| Close and duplicate a handle | everyone | missing |
-| Monotonic clock | `compositord`, `windowd` (frame stats) | missing |
+| Open a device and send it control requests (`gpu0`, `input0`, `mouse0`) | `compositord`, `windowd` | done (slice 14) |
+| Close and duplicate a handle | everyone | done (slice 14) |
+| Monotonic clock | `compositord`, `windowd` (frame stats) | done (slice 14) |
 | Process termination and query | session launcher, `windowd` (closing a main window ends its process) | missing (`waitpid` exists) |
-| POSIX access to the native object calls | POSIX clients | `ENOSYS` today |
+| POSIX access to the native object calls | POSIX clients | done (slice 15) |
 | A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | header-only `sxn.h`; the stock `crt0` falls through to a POSIX exit |
 | Files | `desktop`, `progman` | missing, and not needed by the services |
 
@@ -365,16 +367,24 @@ Depends on the hotkeys of phase 1.
 4. **Presentation from the client** (see above). **Done:** the window runtime
    reads the program's own `.sxe` through `argv[0]` (kept by `crt0`) and
    publishes `savanxp_wm_presentation`; windowd starts every window with its
-   file name and adopts what it publishes. The per-path table is gone. Two
-   things still read the binary: windowd's 8-byte sniff of `EI_OSABI` to pick
-   the input transport, which leaves with launching (step 5), and native
-   clients, which have no file access to read their own `.sxe` and so show
-   their file name.
+   file name and adopts what it publishes. The per-path table is gone. Native
+   clients have no file access to read their own `.sxe` and so show their
+   file name.
 5. **Launching moves to the caller.** `desktop` and `progman` spawn
    programs; the child connects to `windowd` through its port. A native
    session launcher, started by `init`, starts `compositord`, `windowd`,
    `desktop` and `progman`, and restarts `desktop`. `windowd` drops `fork`,
-   `dup2`, `exec`, the descriptor sweep and reaping.
+   `dup2`, `exec`, the descriptor sweep and reaping. **Done so far:** WM
+   protocol v5 (`savanxp/wm_protocol.h`, [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget)):
+   a client connects to the port `windowd`, says hello with the launch flags
+   its own `.sxe` declares and whether it wants an input ring, and gets its
+   handles with the welcome. `gfx_desktop_launch*` is a `spawn` in the caller,
+   which reaps its children; `windowd` no longer forks, `dup2`s, sweeps
+   descriptors, sniffs `EI_OSABI` or keeps a launch queue, and labels a window
+   it did not start by its process name. Still to do: the session launcher.
+   Until it exists `windowd` spawns the desktop and Program Manager itself,
+   holds a slot for each until it connects, gives the shell role to the
+   desktop by pid and reaps those two children.
 6. **`windowd` native.**
 
 ### Phase 4: composition moves into `compositord`

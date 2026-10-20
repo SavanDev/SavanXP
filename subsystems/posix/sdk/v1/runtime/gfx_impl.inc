@@ -250,9 +250,10 @@ static long gfx_submit_client_batch(
     return event_set(context->submit_event_fd);
 }
 
-/* Mapea y valida la seccion de una superficie del WM -- la principal que llega
- * en el fd 3 o la de una ventana con dueno que llega por la cola de handles -- y
- * llena los campos de mapeo del contexto. Los canales los pone el llamador. */
+/* Maps and validates the section of a WM surface -- the main one, which comes
+ * with the welcome, or an owned window's, which comes later through the handle
+ * queue -- and fills the context's mapping fields. The caller sets the
+ * channels. */
 static long gfx_map_client_surface(struct savanxp_gfx_context* context, int surface_fd) {
     struct savanxp_gpu_client_surface_header* header;
     void* mapped = map_view(surface_fd, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
@@ -266,7 +267,7 @@ static long gfx_map_client_surface(struct savanxp_gfx_context* context, int surf
 
     header = (struct savanxp_gpu_client_surface_header*)mapped;
     if (header->magic != SAVANXP_GPU_CLIENT_SURFACE_MAGIC ||
-        header->version != SAVANXP_GPU_CLIENT_SURFACE_VERSION_4 ||
+        header->version != SAVANXP_GPU_CLIENT_SURFACE_VERSION_5 ||
         header->pixels_offset < sizeof(*header) ||
         header->command_offset < sizeof(*header) ||
         header->batch_capacity == 0 ||
@@ -434,18 +435,194 @@ static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
     out->sequence = staging.sequence + 1u;
 }
 
-static long gfx_open_client(struct savanxp_gfx_context* context) {
-    long result = gfx_map_client_surface(context, SAVANXP_WM_FD_SECTION);
+/* --- Connection to the WM (protocol v5, savanxp/wm_protocol.h) -----------------
+ *
+ * One per process, made the first time something needs it (gfx_open,
+ * gfx_pointer_open) and kept until the process exits: the WM ties the window
+ * to the process, not to a context. Every context duplicates what it uses, so
+ * gfx_close on one never cuts the others off. */
+struct gfx_wm_connection {
+    int connected;
+    int events_fd;      /* read end of the event pipe */
+    int request_fd;     /* write end of the request pipe; the shell's only */
+    int section_fd;     /* the main window's surface */
+    int wake_fd;
+    int submit_fd;
+    int window_list_fd; /* the shell's only */
+    uint32_t welcome_flags;
+};
 
+static struct gfx_wm_connection g_gfx_wm = {0, -1, -1, -1, -1, -1, -1, 0};
+
+static void gfx_close_fd(int* fd) {
+    if (*fd >= 0) {
+        (void)savanxp_close(*fd);
+        *fd = -1;
+    }
+}
+
+/* What the program declares about itself in its .sxe: the WM sizes the surface
+ * of a low-resolution fullscreen program differently. Without resources,
+ * nothing. */
+static uint32_t gfx_own_launch_flags(void) {
+    _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
+    struct sxe_meta meta;
+    const char* path = sx_program_path();
+    uint32_t value = 0;
+
+    if (path == 0 || path[0] == '\0' ||
+        sxe_load_meta(path, meta_buffer, sizeof(meta_buffer), &meta) != SXE_OK ||
+        !sxe_meta_u32(&meta, SXE_TAG_LAUNCH_FLAGS, &value)) {
+        return SAVANXP_DESKTOP_LAUNCH_FLAG_NONE;
+    }
+    return value & SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN;
+}
+
+/* Waits for the welcome, bounded: a WM that never answers must not hang the
+ * program. Records before it are not expected and are dropped. */
+static long gfx_wait_welcome(int events_fd, struct savanxp_wm_welcome* welcome) {
+    unsigned long deadline = uptime_ms() + SAVANXP_WM_CONNECT_TIMEOUT_MS;
+
+    for (;;) {
+        struct savanxp_pollfd pollfd;
+        struct savanxp_wm_event record;
+        unsigned long now = uptime_ms();
+        long result = 0;
+
+        if (now >= deadline) {
+            return -SAVANXP_ETIMEDOUT;
+        }
+        pollfd.fd = events_fd;
+        pollfd.events = SAVANXP_POLLIN | SAVANXP_POLLHUP;
+        pollfd.revents = 0;
+        result = savanxp_poll(&pollfd, 1, (int)(deadline - now));
+        if (result < 0) {
+            return result;
+        }
+        if (result == 0) {
+            continue;
+        }
+        if ((pollfd.revents & SAVANXP_POLLIN) == 0) {
+            /* The WM closed the connection without a word. */
+            return -SAVANXP_EPIPE;
+        }
+        result = savanxp_read(events_fd, &record, sizeof(record));
+        if (result <= 0) {
+            return result < 0 ? result : -SAVANXP_EPIPE;
+        }
+        if (result == (long)sizeof(record) && record.kind == SAVANXP_WM_EVENT_WELCOME) {
+            *welcome = record.payload.welcome;
+            return 0;
+        }
+    }
+}
+
+static long gfx_wm_connect(void) {
+    int32_t handles[2] = {-1, -1};
+    int received[4] = {-1, -1, -1, -1};
+    struct savanxp_wm_hello hello;
+    struct savanxp_wm_welcome welcome;
+    unsigned long deadline = 0;
+    uint32_t index = 0;
+    long result = 0;
+
+    if (g_gfx_wm.connected) {
+        return 0;
+    }
+
+    /* A full backlog is momentary: the WM accepts every pass of its loop. */
+    deadline = uptime_ms() + SAVANXP_WM_CONNECT_TIMEOUT_MS;
+    for (;;) {
+        result = sxn_port_connect(SAVANXP_WM_PORT_NAME, handles);
+        if (result != -SAVANXP_EAGAIN || uptime_ms() >= deadline) {
+            break;
+        }
+        sleep_ms(10);
+    }
+    if (result < 0) {
+        /* No port: there is no WM to connect to. */
+        return result == -SAVANXP_ENOENT ? -SAVANXP_ENODEV : result;
+    }
+
+    memset(&hello, 0, sizeof(hello));
+    hello.magic = SAVANXP_WM_HELLO_MAGIC;
+    hello.version = SAVANXP_WM_PROTOCOL_VERSION;
+    hello.launch_flags = gfx_own_launch_flags();
+    if (savanxp_write(handles[0], &hello, sizeof(hello)) != (long)sizeof(hello)) {
+        result = -SAVANXP_EPIPE;
+        goto fail;
+    }
+    result = gfx_wait_welcome(handles[1], &welcome);
+    if (result < 0) {
+        goto fail;
+    }
+    if (welcome.status != 0) {
+        result = welcome.status < 0 ? welcome.status : -SAVANXP_EIO;
+        goto fail;
+    }
+    /* section, wake, submit, and the window list for the shell. A POSIX
+     * client reads its input from the pipe, so it never asks for the ring. */
+    if (welcome.handle_count < 3u || welcome.handle_count > 4u ||
+        (welcome.handle_count == 4u) != ((welcome.flags & SAVANXP_WM_WELCOME_SHELL) != 0u)) {
+        result = -SAVANXP_EIO;
+        goto fail;
+    }
+    for (index = 0; index < welcome.handle_count; ++index) {
+        result = pipe_receive_handle(handles[1]);
+        if (result < 0) {
+            goto fail;
+        }
+        received[index] = (int)result;
+    }
+
+    g_gfx_wm.events_fd = handles[1];
+    g_gfx_wm.section_fd = received[0];
+    g_gfx_wm.wake_fd = received[1];
+    g_gfx_wm.submit_fd = received[2];
+    g_gfx_wm.window_list_fd = received[3];
+    g_gfx_wm.welcome_flags = welcome.flags;
+    if ((welcome.flags & SAVANXP_WM_WELCOME_SHELL) != 0u) {
+        g_gfx_wm.request_fd = handles[0];
+    } else {
+        /* Only the shell has anything more to say. */
+        (void)savanxp_close(handles[0]);
+    }
+    g_gfx_wm.connected = 1;
+    return 0;
+
+fail:
+    for (index = 0; index < 4u; ++index) {
+        gfx_close_fd(&received[index]);
+    }
+    gfx_close_fd(&handles[0]);
+    gfx_close_fd(&handles[1]);
+    return result;
+}
+
+int gfx_shell_request_fd(void) {
+    return (g_gfx_wm.connected && (g_gfx_wm.welcome_flags & SAVANXP_WM_WELCOME_SHELL) != 0u) ? g_gfx_wm.request_fd : -1;
+}
+
+int gfx_shell_window_list_fd(void) {
+    return (g_gfx_wm.connected && (g_gfx_wm.welcome_flags & SAVANXP_WM_WELCOME_SHELL) != 0u) ? g_gfx_wm.window_list_fd : -1;
+}
+
+static long gfx_open_client(struct savanxp_gfx_context* context) {
+    long result = gfx_wm_connect();
+
+    if (result < 0) {
+        return result;
+    }
+    result = gfx_map_client_surface(context, g_gfx_wm.section_fd);
     if (result < 0) {
         return result;
     }
     result = gfx_adopt_channels(
         context,
-        savanxp_dup(SAVANXP_WM_FD_SECTION),
-        SAVANXP_WM_FD_EVENTS,
-        SAVANXP_WM_FD_SUBMIT_EVENT,
-        SAVANXP_WM_FD_WAKE_EVENT);
+        savanxp_dup(g_gfx_wm.section_fd),
+        g_gfx_wm.events_fd,
+        g_gfx_wm.submit_fd,
+        g_gfx_wm.wake_fd);
     if (result < 0) {
         gfx_unmap_client_surface(context);
         return result;
@@ -639,8 +816,10 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
 /* Tope de registros por llamada: un pipe lleno entero. Evita quedarse drenando
  * para siempre si el WM escribe tan rapido como se lee. */
 #define GFX_EVENT_DRAIN_LIMIT 256u
-/* Cuanto espera gfx_desktop_launch a que el WM le haga lugar en la cola. */
-#define GFX_LAUNCH_WAIT_MS 1000ul
+/* Programs started by gfx_desktop_launch that may still need reaping, and
+ * how often gfx_poll_event looks for them. */
+#define GFX_LAUNCHED_CAPACITY 16u
+#define GFX_REAP_INTERVAL_MS 1000ul
 
 struct gfx_key_stash {
     struct savanxp_input_event items[GFX_EVENT_STASH_CAPACITY];
@@ -747,6 +926,8 @@ static int gfx_drain_for(int fd, uint32_t window_id, uint32_t kind, struct savan
     return 0;
 }
 
+static void gfx_reap_launched_sometimes(void);
+
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event) {
     struct savanxp_wm_event record;
     struct gfx_key_stash* stash = 0;
@@ -755,6 +936,7 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
     if (context == 0 || context->input_fd < 0 || event == 0 || context->window_id >= GFX_EVENT_WINDOW_SLOTS) {
         return -SAVANXP_EINVAL;
     }
+    gfx_reap_launched_sometimes();
 
     if (gfx_header_dimensions_changed(context)) {
         struct savanxp_gfx_context* mutable_context = (struct savanxp_gfx_context*)context;
@@ -807,7 +989,9 @@ static int gfx_poll_pointer_for(int fd, uint32_t window_id, struct savanxp_gui_p
 }
 
 long gfx_pointer_open(void) {
-    return savanxp_dup(SAVANXP_WM_FD_EVENTS);
+    long result = gfx_wm_connect();
+
+    return result < 0 ? result : savanxp_dup(g_gfx_wm.events_fd);
 }
 
 /* El fd suelto no dice de que ventana es: es la principal, como siempre. */
@@ -854,9 +1038,64 @@ static long gfx_notify_wm(const struct savanxp_gfx_context* context) {
     return context->submit_event_fd >= 0 ? event_set(context->submit_event_fd) : 0;
 }
 
-static int gfx_launch_queue_has_room(const struct savanxp_gfx_context* context) {
-    const struct savanxp_wm_client_requests* requests = &context->header->requests;
-    return requests->launch_head - requests->launch_tail < SAVANXP_WM_LAUNCH_QUEUE_CAPACITY;
+/* --- Launching (protocol v5) ---------------------------------------------------
+ *
+ * The caller starts the program itself and the program connects to the WM on
+ * its own; the WM never forks. spawn gives the child only stdio, so none of
+ * the caller's channels leak into it. The child stays the caller's until it
+ * exits, and a zombie holds a process slot, so the runtime reaps it: at the
+ * next launch and every GFX_REAP_INTERVAL_MS from gfx_poll_event. */
+static long g_gfx_launched[GFX_LAUNCHED_CAPACITY];
+static uint32_t g_gfx_launched_count = 0;
+static unsigned long g_gfx_last_reap_ms = 0;
+
+static void gfx_reap_launched_now(void) {
+    struct savanxp_process_info info;
+    uint8_t state[GFX_LAUNCHED_CAPACITY]; /* 0 gone, 1 running, 2 zombie */
+    unsigned long index = 0;
+    uint32_t slot = 0;
+
+    if (g_gfx_launched_count == 0) {
+        return;
+    }
+    memset(state, 0, sizeof(state));
+    while (proc_info(index, &info) > 0) {
+        for (slot = 0; slot < g_gfx_launched_count; ++slot) {
+            if ((long)info.pid == g_gfx_launched[slot]) {
+                state[slot] = info.state == SAVANXP_PROC_ZOMBIE ? 2u : 1u;
+            }
+        }
+        ++index;
+    }
+    slot = 0;
+    while (slot < g_gfx_launched_count) {
+        if (state[slot] == 1u) {
+            ++slot;
+            continue;
+        }
+        if (state[slot] == 2u) {
+            int status = 0;
+            /* A zombie: waitpid returns at once. */
+            (void)savanxp_waitpid((int)g_gfx_launched[slot], &status);
+        }
+        g_gfx_launched_count -= 1u;
+        g_gfx_launched[slot] = g_gfx_launched[g_gfx_launched_count];
+        state[slot] = state[g_gfx_launched_count];
+    }
+}
+
+static void gfx_reap_launched_sometimes(void) {
+    unsigned long now = 0;
+
+    if (g_gfx_launched_count == 0) {
+        return;
+    }
+    now = uptime_ms();
+    if (now - g_gfx_last_reap_ms < GFX_REAP_INTERVAL_MS) {
+        return;
+    }
+    g_gfx_last_reap_ms = now;
+    gfx_reap_launched_now();
 }
 
 long gfx_desktop_launch_arg(
@@ -864,56 +1103,37 @@ long gfx_desktop_launch_arg(
         const char* path,
         const char* argument,
         uint32_t flags) {
-    struct savanxp_wm_client_requests* requests = 0;
-    unsigned long deadline = 0;
-    size_t length = 0;
-    uint32_t head = 0;
+    const char* argv[3];
+    int argc = 1;
+    long pid = 0;
 
-    if (context == 0 || context->header == 0 || path == 0 || path[0] != '/') {
-        return -SAVANXP_EINVAL;
-    }
-
-    length = strlen(path);
-    if (length == 0 || length >= SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY) {
+    (void)context;
+    (void)flags;
+    if (path == 0 || path[0] != '/' || strlen(path) >= SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY) {
         return -SAVANXP_EINVAL;
     }
     if (argument != 0 && strlen(argument) >= SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY) {
         return -SAVANXP_EINVAL;
     }
-
-    /* Cola llena: se le avisa al WM y se espera su wake, que manda cada vez que
-     * drena. Acotado, porque un WM que no atiende no puede colgar a la app. */
-    requests = &context->header->requests;
-    deadline = uptime_ms() + GFX_LAUNCH_WAIT_MS;
-    while (!gfx_launch_queue_has_room(context)) {
-        if (gfx_shutdown_requested(context)) {
-            return -SAVANXP_EPIPE;
-        }
-        if (context->wake_event_fd < 0 || uptime_ms() >= deadline) {
-            return -SAVANXP_EAGAIN;
-        }
-        (void)gfx_notify_wm(context);
-        (void)event_reset(context->wake_event_fd);
-        if (gfx_launch_queue_has_room(context)) {
-            break;
-        }
-        (void)wait_one(context->wake_event_fd, 50);
+    argv[0] = path;
+    argv[1] = 0;
+    argv[2] = 0;
+    if (argument != 0 && argument[0] != '\0') {
+        argv[1] = argument;
+        argc = 2;
     }
 
-    /* La entrada se escribe entera ANTES de publicar el head: el WM lee hasta
-     * el head, asi que nunca ve una a medio llenar. */
-    head = requests->launch_head;
-    {
-        struct savanxp_desktop_launch_request* request = &requests->launch[head % SAVANXP_WM_LAUNCH_QUEUE_CAPACITY];
-        memset(request, 0, sizeof(*request));
-        request->flags = flags;
-        memcpy(request->path, path, length + 1u);
-        if (argument != 0 && argument[0] != '\0') {
-            memcpy(request->argument, argument, strlen(argument) + 1u);
-        }
+    gfx_reap_launched_now();
+    pid = spawn(path, argv, argc);
+    if (pid < 0) {
+        return pid;
     }
-    requests->launch_head = head + 1u;
-    return gfx_notify_wm(context) < 0 ? -SAVANXP_EIO : 0;
+    /* With the table full of live children this one goes untracked: it is
+     * reaped when the caller exits, like any orphan. */
+    if (g_gfx_launched_count < GFX_LAUNCHED_CAPACITY) {
+        g_gfx_launched[g_gfx_launched_count++] = pid;
+    }
+    return pid;
 }
 
 long gfx_desktop_launch_ex(const struct savanxp_gfx_context* context, const char* path, uint32_t flags) {

@@ -4,10 +4,9 @@
  *
  *     ./tools/build-user.sh --source sdk/nativedemo --name nativedemo --native
  *
- * Launched by windowd itself like any other client (fork plus dup2 of the
- * fixed fds, then exec): fd 3 is the v4 client surface section, fd 5 the
- * wake event, fd 6 the session submit event, fd 7 the native input ring.
- * Speaks through include/sxn/sxnwm.h, the toolkit seed. Paints a marker,
+ * Connects to windowd like any other client (protocol v5): sxnwm_connect
+ * asks for its input on a ring and maps the surface and the ring that come
+ * with the welcome. Speaks through include/sxn/sxnwm.h, the toolkit seed. Paints a marker,
  * waits until composed, then drains input until a key arrives, paints
  * green, waits for that composed, and exits 10 (1 on any failure or
  * timeout). The windowd selftest injects the key and samples both colors
@@ -53,8 +52,7 @@ int main(void) {
     int got_key = 0;
     int round = 0;
 
-    check(sxnwm_attach(&wm, SAVANXP_WM_FD_SECTION) == 0);
-    check(sxnwm_attach_input(&wm, SAVANXP_WM_FD_INPUT_RING) == 0);
+    check(sxnwm_connect(&wm) == 0);
     if (g_failures != 0) {
         sxn_log("nativedemo: no surface");
         sxn_exit(1);
@@ -81,8 +79,8 @@ int main(void) {
         if (got_key) {
             break;
         }
-        check(sxn_event_reset(SAVANXP_WM_FD_WAKE_EVENT) == 0);
-        (void)sxn_wait_one(SAVANXP_WM_FD_WAKE_EVENT, DEMO_INPUT_WAIT_MS);
+        check(sxn_event_reset(wm.wake_fd) == 0);
+        (void)sxn_wait_one(wm.wake_fd, DEMO_INPUT_WAIT_MS);
     }
     check(got_key);
     if (!got_key) {

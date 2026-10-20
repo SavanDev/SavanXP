@@ -4,7 +4,7 @@
  *
  *     ./tools/build-user.sh --source sdk/nativewidgets --name nativewidgets --native
  *
- * Launched by windowd like any client (fixed fds, then exec) and driven
+ * Connects to windowd like any client (sxnwm_connect) and is driven
  * through include/sxn/sxnwidgets.h: a label, a button, a text field and
  * two state squares (button activations, field has text). Pointer clicks
  * and keys arrive on the native input ring; Esc ends the demo with a final
@@ -140,8 +140,7 @@ int main(void) {
     int dirty = 0;
     int round = 0;
 
-    check(sxnwm_attach(&wm, SAVANXP_WM_FD_SECTION) == 0);
-    check(sxnwm_attach_input(&wm, SAVANXP_WM_FD_INPUT_RING) == 0);
+    check(sxnwm_connect(&wm) == 0);
     if (g_failures != 0 || wm.width < 240u || wm.height < 170u) {
         sxn_log("nativewidgets: no surface");
         sxn_exit(1);
@@ -204,8 +203,8 @@ int main(void) {
         if (done) {
             break;
         }
-        check(sxn_event_reset(SAVANXP_WM_FD_WAKE_EVENT) == 0);
-        (void)sxn_wait_one(SAVANXP_WM_FD_WAKE_EVENT, WIDGET_WAIT_MS);
+        check(sxn_event_reset(wm.wake_fd) == 0);
+        (void)sxn_wait_one(wm.wake_fd, WIDGET_WAIT_MS);
     }
     check(done);
 

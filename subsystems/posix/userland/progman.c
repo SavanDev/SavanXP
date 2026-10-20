@@ -8,18 +8,17 @@
 #include <unistd.h>
 
 /*
- * Program Manager (A2.3, ver docs/desktop/WM_SUBSYSTEM.md).
+ * Program Manager (A2.3, see docs/desktop/WM_SUBSYSTEM.md).
  *
- * Cliente top-level normal del WM: no tiene z-rol especial ni extension de
- * protocolo -- recibe input por el mismo camino que cualquier app. Muestra los
- * grupos del registro (progman_registry) como pestanias y los programas del
- * grupo activo como grid de iconos; doble click o Enter lanzan via
- * gfx_desktop_launch_ex, pasando los launch flags que declara el registro.
+ * An ordinary top-level client of the WM: no special z-role and no protocol
+ * extension -- it gets input the same way as any app. It shows the registry's
+ * groups (progman_registry) as tabs and the active group's programs as an icon
+ * grid; double click or Enter launch through gfx_desktop_launch_ex, a spawn in
+ * this process (protocol v5).
  *
- * Version "proto": un grupo a la vez con pestanias. Los grupos como ventanas
- * hijas MDI con su propia barra de titulo, minimizables a icono -- el Progman
- * real -- necesitan una primitiva de child window que sxgui todavia no tiene:
- * es trabajo de Fase B.
+ * "Proto" version: one group at a time, with tabs. Groups as MDI child windows
+ * with their own caption, minimizable to an icon -- the real Progman -- need a
+ * child-window primitive sxgui does not have yet: that is Phase B work.
  */
 
 #define PROGMAN_STATUS_HEIGHT 22
@@ -234,15 +233,11 @@ static void launch_selected(void)
     }
 
     /*
-     * El catalogo se arma al arrancar y no se entera solo de lo que pasa
-     * despues: entre medio alguien pudo desinstalar esto con appwiz. Y el WM
-     * NO valida el path -- gfx_desktop_launch_ex escribe el pedido en un fd y
-     * devuelve 0 sin mirar si el archivo existe --, asi que sin este chequeo
-     * el item muerto se queda en la grilla contestando "Lanzando ..." y no
-     * pasa nada, que es exactamente el sintoma peor: silencio.
-     *
-     * Se aprovecha para actualizar: el que hizo clic ya descubrio que el
-     * catalogo esta viejo, no tiene sentido hacerlo apretar F5 ademas.
+     * The catalog is built at startup and does not notice what happens later:
+     * meanwhile somebody may have uninstalled this with appwiz. The spawn would
+     * fail anyway, but checking first also refreshes the catalog: whoever
+     * clicked already found out it is stale, there is no point making them
+     * press F5 too.
      */
     if (!path_is_launchable(item->path))
     {
@@ -256,7 +251,8 @@ static void launch_selected(void)
         return;
     }
 
-    /* Los launch flags salen del registro: el WM no conoce el catalogo (A2.3a). */
+    /* The program declares its own launch flags to the WM (protocol v5); the
+     * registry's are kept only for the catalog. */
     if (gfx_desktop_launch_ex(&g_app.gfx, item->path, item->launch_flags) < 0)
     {
         snprintf(g_status, sizeof(g_status), "No se pudo lanzar %s", item->path);

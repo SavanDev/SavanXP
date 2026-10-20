@@ -42,7 +42,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SYSTEM_LAYERING.md`](userland/SYSTEM_LAYERING.md) — the language layering: native
   POSIX SDK applications and the optional managed-app experiment.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a native Sx program:
-  headers, fixed fds, manifests, and the worked examples.
+  headers, connecting a window, manifests, and the worked examples.
 - [`SYSTEM_MONITORING.md`](userland/SYSTEM_MONITORING.md) — process, memory, and system
   metrics exposed by the kernel.
 - [`SXE_FORMAT.md`](userland/SXE_FORMAT.md) — the executable format, resource sections,

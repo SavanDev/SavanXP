@@ -2,6 +2,7 @@
 
 #include "libc.h"
 #include "savanxp/sxgui.h"
+#include "savanxp/wm_shell_protocol.h"
 
 /*
  * The desktop: one process that owns everything the shell shows -- the
@@ -75,8 +76,10 @@ extern const struct desktop_popup_ops desktop_keyboard_ops;
 void desktop_toggle_popup(enum desktop_popup popup);
 void desktop_close_popups(void);
 int desktop_popup_is_open(enum desktop_popup popup);
-/* Launches a program through the shell's connection (savanxp_desktop_launch_request). */
+/* Starts a program; it connects to windowd for its own window. */
 long desktop_launch(const char *path, uint32_t launch_flags);
+/* Sends a request on the shell's request pipe (savanxp/wm_shell_protocol.h). */
+void desktop_shell_request(const struct savanxp_wm_shell_request *request);
 
 /* The Win95 bevel every desktop surface draws with. */
 void desktop_bevel(struct sx_painter *painter, struct sx_rect rect, int sunken);

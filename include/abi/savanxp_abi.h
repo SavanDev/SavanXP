@@ -723,6 +723,9 @@ struct savanxp_gpu_stats {
  * cierre viajan en el header en vez de por descriptores propios. Ver
  * savanxp/wm_protocol.h. */
 #define SAVANXP_GPU_CLIENT_SURFACE_VERSION_4 4u
+/* v5: the launch queue left the header -- a client starts programs itself
+ * (protocol v5, savanxp/wm_protocol.h) -- so the requests that follow it moved. */
+#define SAVANXP_GPU_CLIENT_SURFACE_VERSION_5 5u
 #define SAVANXP_GPU_CLIENT_BATCH_CAPACITY 8u
 #define SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS 32u
 
@@ -758,13 +761,14 @@ enum savanxp_input_event_type {
 
 #define SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY 192u
 
-/* Launch flags: whoever asks for the launch declares what the program needs,
- * so the WM does not have to know a catalog of applications (see
- * docs/desktop/WM_SUBSYSTEM.md, A2.3). They describe the program, never a
- * piece of the shell: the shell's own windows are window roles. */
+/* Launch flags: what a program declares about itself in its .sxe
+ * (SXE_TAG_LAUNCH_FLAGS), sent to the WM in the hello of protocol v5
+ * (savanxp_wm_hello), so the WM does not have to know a catalog of
+ * applications. They describe the program, never a piece of the shell: the
+ * shell's own windows are window roles. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_NONE 0x00000000u
 /* The program renders at a low resolution and uses composited fullscreen
- * (F11): the WM sizes its surface for that when it launches it. */
+ * (F11): the WM sizes its surface for that when it connects. */
 #define SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN 0x00000001u
 
 /* Estilo de ventana: propiedades de la VENTANA de un programa, no de su
@@ -791,49 +795,35 @@ enum savanxp_input_event_type {
  */
 #define SAVANXP_WM_WINDOW_STYLE_FIXED_SIZE 0x00000001u
 
-/* Un unico argumento opcional para el programa lanzado, que llega como
- * argv[1]. Alcanza para el caso que lo motivo -- "abri este archivo" -- y deja
- * afuera la cola de argumentos entera, que el WM no tiene por que interpretar.
- * Vacio = se lanza sin argumentos. */
+/* The single optional argument gfx_desktop_launch_arg passes as argv[1]:
+ * enough for "open this file". */
 #define SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY 192u
-
-struct savanxp_desktop_launch_request {
-    uint32_t flags; /* SAVANXP_DESKTOP_LAUNCH_FLAG_* */
-    char path[SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY];
-    char argument[SAVANXP_DESKTOP_LAUNCH_ARG_CAPACITY];
-};
 
 /* Pedido de cierre del WM al cliente (bit de savanxp_gpu_client_surface_header
  * .flags). El WM lo prende y despues senala el evento de wake. */
 #define SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN 0x00000001u
 
-/* Launches pendientes que entran en el header a la vez. Un click produce uno;
- * si la cola esta llena el cliente espera a que el WM la drene. */
-#define SAVANXP_WM_LAUNCH_QUEUE_CAPACITY 4u
-
 /*
- * Pedidos del cliente al WM, dentro del header de superficie (v4). Antes eran
- * tres pipes por ventana; como seccion no cuestan ningun descriptor en el WM.
- * El cliente escribe y despues senala el evento de submit, el mismo que usa
- * para los frames. El WM trata todo esto como memoria hostil: copia, valida y
- * recien ahi usa.
+ * Client requests to the WM, inside the surface header (since v4). They used
+ * to be three pipes per window; as a section they cost the WM no descriptor.
+ * The client writes and then sets the submit event, the same one it uses for
+ * frames. The WM treats all of it as hostile memory: copy, validate, and only
+ * then use.
  *
- * cursor_shape: la ultima forma pedida (enum savanxp_cursor_shape). Es estado,
- * no cola: 0 es la flecha, que es tambien "sin pedido".
+ * cursor_shape: the last shape asked for (enum savanxp_cursor_shape). State,
+ * not a queue: 0 is the arrow, which is also "no request".
  *
- * size_hint_*: el tamano de area util (el "contenido") que el programa pide
- * para su ventana. Es una SUGERENCIA: el WM la recorta a la capacidad de la
- * superficie y la ignora una vez que la ventana dejo de estar en la geometria
- * de lanzamiento (maximizada, fullscreen o redimensionada a mano), porque a
- * partir de ahi manda el usuario. Existe porque el tamano natural de una
- * ventana lo sabe el programa -- es su layout --, no el WM. Seqlock: el cliente
- * pone size_hint_sequence en impar, escribe ancho y alto y lo vuelve a par; el
- * WM atiende cada valor par nuevo una vez, y si vale el ultimo.
+ * size_hint_*: the client-area size (the "content") the program asks for its
+ * window. A SUGGESTION: the WM clamps it to the surface capacity and ignores
+ * it once the window has left its launch geometry (maximized, fullscreen or
+ * resized by hand), because from then on the user decides. It exists because
+ * the program knows the natural size of its window -- it is its layout --,
+ * not the WM. Seqlock: the client makes size_hint_sequence odd, writes width
+ * and height and makes it even again; the WM serves each new even value once,
+ * and only the latest.
  *
- * launch: cola circular de un productor y un consumidor. El cliente escribe la
- * entrada launch[launch_head % CAPACITY] y DESPUES incrementa launch_head; el
- * WM consume hasta launch_head e incrementa launch_tail. Los dos contadores
- * solo crecen, asi que llena es head - tail == CAPACITY.
+ * Launching is not a request: since protocol v5 a client starts programs
+ * itself and they connect on their own.
  */
 /*
  * Ventanas con dueno (docs/desktop/OWNED_WINDOWS.md). Un proceso tiene UNA conexion con
@@ -930,9 +920,6 @@ struct savanxp_wm_client_requests {
     uint32_t size_hint_width;
     uint32_t size_hint_height;
     uint32_t size_hint_sequence;
-    uint32_t launch_head; /* lo escribe solo el cliente */
-    uint32_t launch_tail; /* lo escribe solo el WM */
-    struct savanxp_desktop_launch_request launch[SAVANXP_WM_LAUNCH_QUEUE_CAPACITY];
     /* Un pedido de ventana a la vez, con el mismo seqlock que el size hint: el
      * cliente pone window_sequence en impar, escribe `window` y lo vuelve a par.
      * El WM atiende cada valor par nuevo una vez, escribe el resultado en
@@ -1080,7 +1067,7 @@ struct savanxp_mouse_event {
 };
 
 /* Pointer event delivered by the compositor to a windowed client over its
- * event channel (SAVANXP_WM_FD_EVENTS). x,y are relative to the top-left of the
+ * event pipe (savanxp/wm_protocol.h). x,y are relative to the top-left of the
  * client's own surface (already accounting for window frame and position), so
  * apps can hit-test in their local coordinate space and stay aligned with the
  * system cursor the compositor draws. These are already absolute, so this one
@@ -1096,6 +1083,44 @@ struct savanxp_gui_pointer_event {
 enum savanxp_wm_event_kind {
     SAVANXP_WM_EVENT_KEY = 1,
     SAVANXP_WM_EVENT_POINTER = 2,
+    /* The first record a client reads after connecting (protocol v5): the
+     * WM's answer to its hello. payload.welcome. */
+    SAVANXP_WM_EVENT_WELCOME = 3,
+};
+
+/*
+ * Connecting to the WM, protocol v5 (savanxp/wm_protocol.h). A client opens the
+ * WM's port (SAVANXP_WM_PORT_NAME) and writes this hello on the request pipe;
+ * the WM answers on the event pipe with a WELCOME record. With status 0, the
+ * handles are already queued on the event pipe, in this order: the surface
+ * section, the wake event, the session's submit event, then the input ring
+ * (if SAVANXP_WM_HELLO_INPUT_RING was asked) or the window list section (for
+ * the shell). 32 bytes, like an event record.
+ */
+#define SAVANXP_WM_HELLO_MAGIC 0x4f4c4548u /* "HELO" */
+#define SAVANXP_WM_PROTOCOL_VERSION 5u
+
+/* The client wants its input on a shared ring instead of the event pipe
+ * (what a native client without a POSIX read used to need). */
+#define SAVANXP_WM_HELLO_INPUT_RING 0x00000001u
+
+struct savanxp_wm_hello {
+    uint32_t magic;        /* SAVANXP_WM_HELLO_MAGIC */
+    uint32_t version;      /* SAVANXP_WM_PROTOCOL_VERSION */
+    uint32_t flags;        /* SAVANXP_WM_HELLO_* */
+    uint32_t launch_flags; /* SAVANXP_DESKTOP_LAUNCH_FLAG_*, what the program declares about itself */
+    uint32_t reserved[4];
+};
+
+/* The welcome carries the outcome; the rest of the window (size, style) is in
+ * the surface header as always. */
+#define SAVANXP_WM_WELCOME_SHELL 0x00000001u /* the connection has the shell role */
+
+struct savanxp_wm_welcome {
+    int32_t status;        /* 0, or -errno and no handles */
+    uint32_t handle_count; /* handles queued before this record */
+    uint32_t flags;        /* SAVANXP_WM_WELCOME_* */
+    uint32_t reserved[3];
 };
 
 /* Registro del canal de eventos WM -> cliente (savanxp/wm_protocol.h). Teclado
@@ -1111,6 +1136,7 @@ struct savanxp_wm_event {
     union {
         struct savanxp_input_event key;
         struct savanxp_gui_pointer_event pointer;
+        struct savanxp_wm_welcome welcome;
         uint8_t bytes[24];
     } payload;
 };

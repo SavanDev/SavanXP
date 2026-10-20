@@ -61,7 +61,10 @@ def library_symbols(library_dir):
         symbols = set()
         for line in out.splitlines():
             parts = line.split()
-            if len(parts) >= 2 and parts[1] in "TtDdBbRrWwVv":
+            # Global or weak only: a static (t, d, b, r) is private to its unit
+            # and cannot be shared -- a static inline from a header such as
+            # sxn/sxn.h lands in the library and in the program alike.
+            if len(parts) >= 2 and parts[1] in "TDBRWV":
                 if parts[0] not in LINKER_SYMBOLS:
                     symbols.add(parts[0])
         found[path.name] = symbols

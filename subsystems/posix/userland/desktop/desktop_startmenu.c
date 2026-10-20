@@ -537,7 +537,7 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
         {
             const struct progman_item *item = progman_group_item_at(g_rows[row].group, g_rows[row].item);
 
-            if (item != 0 && desktop_launch(item->path, item->launch_flags) == 0)
+            if (item != 0 && desktop_launch(item->path, item->launch_flags) >= 0)
             {
                 actions |= DESKTOP_ACTION_CLOSE;
             }
