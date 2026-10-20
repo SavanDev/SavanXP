@@ -658,6 +658,9 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
 )
 add_custom_target(savanxp_sxe_resources DEPENDS "${SAVANXP_SXE_STAMP}")
 
+set(SAVANXP_NATIVE_TARGETS)
+get_property(SAVANXP_NATIVE_TARGETS GLOBAL PROPERTY SAVANXP_NATIVE_TARGETS)
+
 foreach(target IN LISTS SAVANXP_USER_TARGETS)
     add_dependencies(${target} savanxp_sxe_resources)
     set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${SAVANXP_SXE_STAMP}")
@@ -670,6 +673,16 @@ foreach(target IN LISTS SAVANXP_USER_TARGETS)
                 --readelf "${SAVANXP_READELF}"
         VERBATIM
     )
+    # After the resources: a native program is marked last, so nothing that
+    # rewrites the ELF afterwards can drop the mark.
+    if(target IN_LIST SAVANXP_NATIVE_TARGETS)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/stamp_osabi.py"
+                    --binary "$<TARGET_FILE:${target}>"
+                    --abi-header "${CMAKE_SOURCE_DIR}/include/abi/savanxp_native_abi.h"
+            VERBATIM
+        )
+    endif()
 endforeach()
 add_dependencies(savanxp-busybox savanxp_sxe_resources)
 

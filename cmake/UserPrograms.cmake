@@ -1,7 +1,10 @@
 # Every in-tree program is registered explicitly. Keeping this list in CMake
 # makes the target graph the single source of truth for the userland.
 function(savanxp_program)
-    set(options TEST)
+    # NATIVE: the program runs on the native (Sx) API, not POSIX -- EI_OSABI is
+    # stamped after linking. It has to be STATIC: the shared-library loader
+    # (ldso.c) speaks POSIX, which a native process does not have.
+    set(options TEST NATIVE)
     set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
     set(multiValueArgs SOURCES DEPENDS DEFINES)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -14,7 +17,13 @@ function(savanxp_program)
     if(NOT P_NAME OR NOT P_SOURCES)
         message(FATAL_ERROR "savanxp_program requires NAME and SOURCES")
     endif()
+    if(P_NATIVE AND P_LINK_PROFILE AND NOT P_LINK_PROFILE STREQUAL "STATIC")
+        message(FATAL_ERROR "savanxp_program(${P_NAME}): a NATIVE program must be STATIC")
+    endif()
     add_executable(${P_NAME} ${P_SOURCES})
+    if(P_NATIVE)
+        set_property(GLOBAL APPEND PROPERTY SAVANXP_NATIVE_TARGETS ${P_NAME})
+    endif()
     target_sources(${P_NAME} PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
     target_include_directories(${P_NAME} PRIVATE
         "${CMAKE_SOURCE_DIR}/include"
@@ -324,7 +333,8 @@ savanxp_program(NAME volume SOURCES subsystems/posix/userland/volume.c)
 # lo encuentran por su puerto UDP bien conocido.
 savanxp_program(NAME audiod SOURCES subsystems/posix/userland/audiod.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
-savanxp_program(NAME compositord SOURCES subsystems/posix/userland/compositord.c)
+# Native: speaks only SXN (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3).
+savanxp_program(NAME compositord NATIVE SOURCES subsystems/posix/userland/compositord.c)
 # El compositor. Solo pide dos funciones de metrica de fuente, que son puras y
 # no abren superficie, asi que el riesgo es bajo; igual es el programa del que
 # depende todo lo que se ve en pantalla. init lo reinicia si sale y cae a /bin/sh

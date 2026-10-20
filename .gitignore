@@ -21,6 +21,7 @@ tools/*
 !tools/mkinitramfs.py
 !tools/sxfs_sync.py
 !tools/stamp_sxe.py
+!tools/stamp_osabi.py
 !tools/GenerateDefaultWallpaper.py
 !tools/shoot_session.py
 !tools/run_qemu.py

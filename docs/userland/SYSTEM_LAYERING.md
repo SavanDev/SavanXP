@@ -71,7 +71,9 @@ The shape that was fixed in advance is what shipped:
 The platform, always:
 
 - **Kernel, drivers, HAL** (display/audio/GPU/network/storage).
-- **`compositord`** — owner of the GPU and of the single display surface.
+- **`compositord`** — owner of the GPU and of the single display surface. A
+  native process: it speaks only the SXN API, not POSIX
+  ([DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md), phase 3).
 - **`windowd`** — the window manager (extracted from `desktop.c`; see
   [WM_SUBSYSTEM.md](../desktop/WM_SUBSYSTEM.md)).
 - **SXGFX** — the SDK's 2D rasterization layer
@@ -203,5 +205,5 @@ complementary**:
 The desktop rows describe today. The target is in
 [DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md): `compositord`
 takes over composition (today it only presents what `windowd` composed), and
-`compositord` and `windowd` become native processes, while the shell and the
+`windowd` becomes a native process like `compositord` already is, while the shell and the
 apps stay clients in whatever subsystem they run in.

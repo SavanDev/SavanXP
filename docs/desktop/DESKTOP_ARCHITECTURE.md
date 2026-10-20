@@ -1,8 +1,8 @@
 # Desktop architecture: compositord, windowd, desktop
 
 > **Status: design accepted (2026-10-19). Phases 1 and 2 are built** (the
-> `desktop` process, window roles, hotkeys, the Task List removed); phases 3
-> and 4 are not. It is the target for the graphics stack and the order for
+> `desktop` process, window roles, hotkeys, the Task List removed); phase 3 is
+> under way (`compositord` is native); phase 4 is not. It is the target for the graphics stack and the order for
 > getting there.
 > Where it disagrees with the "Target layering" of
 > [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md), this document wins; WM_SUBSYSTEM.md
@@ -350,11 +350,17 @@ Depends on the hotkeys of phase 1.
 
 1. **Kernel:** the port object, multi-object wait, device open and control,
    handle close and duplicate, monotonic clock, process termination, and
-   POSIX access to the native object calls.
+   POSIX access to the native object calls. **Done so far:** handle close and
+   duplicate, pipe and device read/write, device open and control, the clock
+   (`docs/kernel/KERNEL_NATIVE_API.md`, slice 14). Still to do: the port,
+   multi-object wait, process termination, POSIX access to native calls.
 2. **Runtime:** the native C runtime, the in-tree native CMake target, SXGFX
    and SXCHROME built for native.
 3. **`compositord` native.** The pilot: about 600 lines, no files, only the
-   GPU, its IPC and a clock.
+   GPU, its IPC and a clock. **Done:** it speaks only SXN (the GPU as a device
+   with control codes, its pipes through native read/write, the native clock),
+   built in-tree with `NATIVE`. It needed no native C runtime: a static
+   program links the usual runtime, whose call-free parts work unchanged.
 4. **Presentation from the client** (see above).
 5. **Launching moves to the caller.** `desktop` and `progman` spawn
    programs; the child connects to `windowd` through its port. A native

@@ -93,6 +93,10 @@ Cut-off notes:
 
 ### Changed
 
+- **`compositord` is a native process.** It speaks only the SXN API -- the GPU as a device
+  with control codes, its pipes through native read/write -- and no POSIX. In-tree programs
+  can be built native with `NATIVE` in `cmake/UserPrograms.cmake` (`tools/stamp_osabi.py`).
+
 - **Ctrl+Esc opens the Start menu, Ctrl+Shift+Esc opens Task Manager, and Alt+Tab shows
   its own switcher.** The keys are hotkeys the desktop registers (a fullscreen app leaves
   fullscreen first); the switcher is a box with the icon and title of the next window.

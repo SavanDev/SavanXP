@@ -86,7 +86,11 @@ step.
 ## Layout
 
 - `CMakeLists.txt` defines the target graph and host-tool requirements.
-- `cmake/UserPrograms.cmake` is the explicit in-tree userland registry.
+- `cmake/UserPrograms.cmake` is the explicit in-tree userland registry. A
+  program registered with `NATIVE` runs on the native (Sx) API: it must be
+  `STATIC` (the shared-library loader speaks POSIX), and after the SXE
+  resources `tools/stamp_osabi.py` marks it with `EI_OSABI` from
+  `include/abi/savanxp_native_abi.h`. `compositord` is one.
 - `tools/mkinitramfs.py` writes the newc cpio archive.
 - `tools/run_smoke.py` runs one QEMU smoke scenario and records serial output.
 - `tools/qmp_client.py` provides the keyboard and taskbar QMP drivers.
@@ -98,6 +102,7 @@ step.
 - `tools/sxfs_sync.py` creates or additively updates `build/disk.img` under a
   lock, validates both sides, compacts when needed, and atomically retries.
 - `tools/stamp_sxe.py` stamps and verifies generated SXE sections.
+- `tools/stamp_osabi.py` marks a `NATIVE` program's ELF as native.
 - `tools/run_qemu.py` launches the staged image with OVMF and optional virtio.
 - `tools/shoot.sh` runs visual desktop scenarios through a Unix QMP socket.
 - `ports/doomgeneric/build.sh` builds the official Doom port independently.

@@ -51,6 +51,16 @@ records are the same 32-byte `savanxp_wm_event`s; the ring drops when
 full like the pipe. The wait pattern is: reset the wake event,
 re-check the header AND the ring, then wait.
 
+## In-tree native programs
+
+A program built by the tree is native when `cmake/UserPrograms.cmake`
+registers it with `NATIVE`; it has to be `STATIC`. It links the same runtime as
+everyone else -- the parts that make no system call (`memset`, string
+functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
+in `sxn_exit`. `compositord` is the first one: the GPU through
+`SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, its inherited pipes through
+`SXN_SYS_READ`/`_WRITE`.
+
 ## Build, manifest, launch
 
 ```bash

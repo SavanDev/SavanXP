@@ -1,6 +1,49 @@
-#include "libc.h"
-#include "cursor_asset.h"
+#include <stdint.h>
+#include <string.h>
+
 #include "savanxp/compositor_protocol.h"
+#include "sxn/sxn.h"
+/* After the SavanXP headers: it uses the cursor shape enum. */
+#include "cursor_asset.h"
+
+/*
+ * compositord is a native process (EI_OSABI 0x53, docs/desktop/
+ * DESKTOP_ARCHITECTURE.md phase 3): it speaks only SXN. Its channels are the
+ * handles windowd hands it (request and reply pipes, the display section), the
+ * GPU is a device it opens by name, and every GPU request is the same control
+ * code the POSIX side sends through ioctl. Nothing here may call into the
+ * POSIX runtime: from a native process those calls are ENOSYS.
+ */
+
+/* The GPU requests, as native device control. Same codes and structs as the
+ * POSIX gpu_* wrappers in the SDK. */
+static long gpu_open(void)
+{
+    return sxn_open_device("gpu0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+}
+
+static long gpu_control(int fd, unsigned long code, const void *argument)
+{
+    return sxn_device_control(fd, code, (unsigned long)argument);
+}
+
+#define gpu_get_info(fd, info) gpu_control((fd), GPU_IOC_GET_INFO, (info))
+#define gpu_acquire(fd) gpu_control((fd), GPU_IOC_ACQUIRE, 0)
+#define gpu_release(fd) gpu_control((fd), GPU_IOC_RELEASE, 0)
+#define gpu_set_mode(fd, mode) gpu_control((fd), GPU_IOC_SET_MODE, (mode))
+#define gpu_import_section(fd, request) gpu_control((fd), GPU_IOC_IMPORT_SECTION, (request))
+#define gpu_release_surface(fd, id) sxn_device_control((fd), GPU_IOC_RELEASE_SURFACE, (unsigned long)(id))
+#define gpu_create_present_event(fd) gpu_control((fd), GPU_IOC_CREATE_PRESENT_EVENT, 0)
+#define gpu_get_present_timeline(fd, timeline) gpu_control((fd), GPU_IOC_GET_PRESENT_TIMELINE, (timeline))
+#define gpu_present_surface_batch(fd, batch) gpu_control((fd), GPU_IOC_PRESENT_SURFACE_BATCH, (batch))
+#define gpu_wait_present(fd, request) gpu_control((fd), GPU_IOC_WAIT_PRESENT, (request))
+#define gpu_set_cursor(fd, image) gpu_control((fd), GPU_IOC_SET_CURSOR, (image))
+#define gpu_move_cursor(fd, position) gpu_control((fd), GPU_IOC_MOVE_CURSOR, (position))
+
+static unsigned long long monotonic_ns(void)
+{
+    return (unsigned long long)sxn_clock_ns();
+}
 
 struct compositor_state
 {
@@ -17,7 +60,7 @@ static void close_fd_if_needed(int *fd)
 {
     if (fd != 0 && *fd >= 0)
     {
-        savanxp_close(*fd);
+        (void)sxn_close(*fd);
         *fd = -1;
     }
 }
@@ -29,7 +72,7 @@ static int read_exact(int fd, void *buffer, size_t size)
 
     while (offset < size)
     {
-        long result = savanxp_read(fd, cursor + offset, size - offset);
+        long result = sxn_read(fd, cursor + offset, size - offset);
         if (result < 0)
         {
             return (int)result;
@@ -50,7 +93,7 @@ static int write_exact(int fd, const void *buffer, size_t size)
 
     while (offset < size)
     {
-        long result = savanxp_write(fd, cursor + offset, size - offset);
+        long result = sxn_write(fd, cursor + offset, size - offset);
         if (result < 0)
         {
             return (int)result;
@@ -374,8 +417,8 @@ static int compositor_sync_present(
     {
         if (state->present_event_fd >= 0)
         {
-            result = wait_one(state->present_event_fd, 0);
-            if (result_is_error(result) && result_error_code(result) == SAVANXP_ETIMEDOUT)
+            result = sxn_wait_one(state->present_event_fd, 0);
+            if (result == -SAVANXP_ETIMEDOUT)
             {
                 reply->ready = 0;
                 return 0;
@@ -408,7 +451,7 @@ static int compositor_sync_present(
     }
     if (state->present_event_fd >= 0)
     {
-        (void)event_reset(state->present_event_fd);
+        (void)sxn_event_reset(state->present_event_fd);
     }
     reply->timeline.retired_sequence = wait_request.retired_sequence;
     reply->timeline.pending_count = wait_request.pending_count;
@@ -588,5 +631,7 @@ int main(void)
     }
 
     compositor_state_close(&state);
-    return 0;
+    /* Never return: crt0 would end the process through POSIX EXIT, which a
+     * native process does not have. */
+    sxn_exit(0);
 }
