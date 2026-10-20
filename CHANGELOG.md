@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **`SXN_SYS_SPAWN_STDIO` and `SXN_SYS_SET_NONBLOCKING`.** A native process can start a child
+  that gets only stdio, and make a pipe or device stop blocking (`sxn_spawn_stdio`,
+  `sxn_set_nonblocking`); `sessiond` spawns that way.
+
 - **`SXN_SYS_PROCESS_QUERY` tells a native process about any other.** Parent, whether it is
   running or ended (with its exit code), handle count and name (`sxn_process_query`).
 

@@ -60,6 +60,7 @@ object/process factoring, not before.
 - Slice 16: `SXN_SYS_TERMINATE`, a parent ending its child.
 - Slice 17: `SXN_SYS_WAIT_MANY`, and streams as wait targets.
 - Slice 18: `SXN_SYS_PROCESS_QUERY`.
+- Slice 19: `SXN_SYS_SPAWN_STDIO`, `SXN_SYS_SET_NONBLOCKING`.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -236,6 +237,23 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 19: spawning with stdio only, non-blocking streams
+
+- `SXN_SYS_SPAWN_STDIO` (`0x101f`): `SXN_SYS_SPAWN` whose child gets only the
+  caller's stdio, as the POSIX spawn does. A service starting a program it has
+  nothing to give must not clone its table into it: a client's event pipe
+  write end living on in another process would keep that client from ever
+  seeing the service close it. `sessiond` uses it.
+- `SXN_SYS_SET_NONBLOCKING` (`0x1020`): rdi = a pipe or device handle, rsi =
+  1 or 0. The native read and write already honoured the stream's
+  non-blocking mode; this sets it, for every handle to the stream, as POSIX
+  `fcntl(O_NONBLOCK)` does. A non-blocking pipe write of a record that fits
+  goes whole or not at all.
+
+Both are what a native `windowd` needs: it starts `compositord` and its
+selftest's applications, and it never waits on a client's pipe.
+`nativetest` covers both, and its `check` now logs the line that failed.
 
 ## Slice 18: querying a process
 

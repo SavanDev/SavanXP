@@ -142,6 +142,16 @@ static inline long sxn_process_query(long pid, struct sxn_process_query* out) {
     return sxn_trap(SXN_SYS_PROCESS_QUERY, (unsigned long)pid, (unsigned long)out, 0);
 }
 
+/* Spawn whose child gets only stdio, not the caller's other handles. */
+static inline long sxn_spawn_stdio(const char* path, char* const* argv, int argc) {
+    return sxn_trap(SXN_SYS_SPAWN_STDIO, (unsigned long)path, (unsigned long)argv, (unsigned long)(long)argc);
+}
+
+/* Reads and writes on the stream stop blocking (1) or block again (0). */
+static inline long sxn_set_nonblocking(long handle, int on) {
+    return sxn_trap(SXN_SYS_SET_NONBLOCKING, (unsigned long)handle, (unsigned long)(on != 0), 0);
+}
+
 /* Ends a child; its waitpid reports `status`. */
 static inline long sxn_terminate(long pid, int status) {
     return sxn_trap(SXN_SYS_TERMINATE, (unsigned long)pid, (unsigned long)(long)status, 0);

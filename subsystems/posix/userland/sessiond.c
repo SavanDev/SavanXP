@@ -68,7 +68,8 @@ static long start_child(struct sessiond_child* child) {
 
     argv[0] = (char*)child->path;
     argv[1] = 0;
-    child->pid = sxn_spawn(child->path, argv, 1);
+    /* Stdio only: its own handles are nothing a session program should hold. */
+    child->pid = sxn_spawn_stdio(child->path, argv, 1);
     child->started_ns = sxn_clock_ns();
     if (child->pid < 0) {
         log_line("sessiond: a session program did not start");

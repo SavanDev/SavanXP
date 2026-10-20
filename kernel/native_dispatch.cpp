@@ -288,6 +288,21 @@ int native_wait_targets(Process& proc, uint64_t user_handles, uint64_t count, ob
     return static_cast<int>(count);
 }
 
+// The non-blocking mode of a stream: shared by every handle to it, as POSIX
+// O_NONBLOCK is.
+int native_set_nonblocking(Process& proc, uint64_t handle, uint64_t on) {
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_query);
+    if (file == nullptr || (file->kind != HandleKind::pipe && file->kind != HandleKind::device)) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (on != 0) {
+        file->open_flags |= open_nonblock;
+    } else {
+        file->open_flags &= ~static_cast<uint32_t>(open_nonblock);
+    }
+    return 0;
+}
+
 // Public facts about a process, as a task list shows them.
 int native_process_query(uint64_t pid_value, uint64_t user_out) {
     sxn_process_query out = {};
@@ -448,6 +463,7 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_EVENT_RESET:
         case SXN_SYS_WAIT_ONE:
         case SXN_SYS_WAIT_MANY:
+        case SXN_SYS_SET_NONBLOCKING:
         case SXN_SYS_SECTION_CREATE:
         case SXN_SYS_MAP_VIEW:
         case SXN_SYS_UNMAP_VIEW:
@@ -532,7 +548,8 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         case SXN_SYS_EXIT:
             sx::exit_current(static_cast<int>(context->rdi));
             return nullptr;
-        case SXN_SYS_SPAWN: {
+        case SXN_SYS_SPAWN:
+        case SXN_SYS_SPAWN_STDIO: {
             // Misma convencion de registros que el spawn POSIX: el hijo se
             // crea con create_process_internal y su subsistema lo decide el
             // EI_OSABI de su imagen, no el del padre.
@@ -552,7 +569,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
 
             ImageFailure failure = ImageFailure::none;
             Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, caller, -1, -1, failure);
-            if (child != nullptr && !clone_handles_for_spawn(*child, *caller)) {
+            // SPAWN_STDIO stops at the stdio create_process_internal already
+            // gave the child, like the POSIX spawn.
+            if (child != nullptr && context->rax == SXN_SYS_SPAWN && !clone_handles_for_spawn(*child, *caller)) {
                 failure = ImageFailure::no_handles;
                 child = nullptr;
             }
@@ -749,6 +768,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_TERMINATE:
             context->rax = static_cast<uint64_t>(native_terminate(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_SET_NONBLOCKING:
+            context->rax = static_cast<uint64_t>(native_set_nonblocking(*caller, context->rdi, context->rsi));
             return context;
         case SXN_SYS_PROCESS_QUERY:
             context->rax = static_cast<uint64_t>(native_process_query(context->rdi, context->rsi));

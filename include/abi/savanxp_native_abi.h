@@ -178,6 +178,18 @@ enum sxn_syscall_number {
      * -ENOENT if no process has that pid (a reaped one included). Any process
      * may ask about any other: it is what a task list shows anyway. */
     SXN_SYS_PROCESS_QUERY = 0x101e,
+    /* Like SXN_SYS_SPAWN, but the child gets only the caller's stdio (0, 1,
+     * 2), as the POSIX spawn does. What a service uses to start a program it
+     * has no handles to give: anything else it holds -- a client's channels,
+     * above all -- would stay alive in the child and outlive the service's
+     * own close. */
+    SXN_SYS_SPAWN_STDIO = 0x101f,
+    /* rdi = handle of a stream, rsi = 1 or 0. Reads and writes on it stop
+     * blocking: a read with nothing to read and a write with no room return
+     * -EAGAIN (a write that fits the pipe goes whole or not at all). The mode
+     * belongs to the stream, so every handle to it shares it, as POSIX
+     * O_NONBLOCK does. */
+    SXN_SYS_SET_NONBLOCKING = 0x1020,
 };
 
 enum sxn_process_state {

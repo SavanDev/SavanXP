@@ -57,11 +57,29 @@ static long raw_info(struct sxn_native_info* out) {
 
 static int g_failures = 0;
 
-static void check(int ok) {
-    if (!ok) {
-        g_failures += 1;
+/* A failed check logs its line, so a FAIL says where. */
+static void check_at(int ok, int line) {
+    char text[40] = "nativetest: check failed at line ";
+    char digits[12];
+    int count = 0;
+    int length = 33;
+
+    if (ok) {
+        return;
     }
+    g_failures += 1;
+    do {
+        digits[count++] = (char)('0' + line % 10);
+        line /= 10;
+    } while (line > 0 && count < 11);
+    while (count > 0 && length < (int)sizeof(text) - 1) {
+        text[length++] = digits[--count];
+    }
+    text[length] = '\0';
+    (void)sxn_log(text);
 }
+
+#define check(ok) check_at((ok), __LINE__)
 
 static int streq(const char* a, const char* b) {
     while (*a != '\0' && *a == *b) {
@@ -427,9 +445,48 @@ int main(int argc, char** argv) {
         targets[0] = self.write_handle;
         check(sxn_wait_many(targets, 1, 0) == -SAVANXP_EINVAL);
         check(sxn_wait_many(targets, 0, 0) == -SAVANXP_EINVAL);
+        /* SET_NONBLOCKING: an empty read and a write with no room say EAGAIN
+         * instead of parking the only thread of this process. */
+        {
+            static char fill[8192];
+            char byte = 0;
+
+            /* The reply direction: its writer is alive, so empty is EAGAIN
+             * (the request direction already reads as ended). */
+            check(sxn_set_nonblocking(pipes[1], 1) == 0);
+            check(sxn_read(pipes[1], &byte, 1) == -SAVANXP_EAGAIN);
+            check(sxn_set_nonblocking(self.write_handle, 1) == 0);
+            check(sxn_write(self.write_handle, fill, sizeof(fill)) == (long)sizeof(fill));
+            check(sxn_write(self.write_handle, fill, 1) == -SAVANXP_EAGAIN);
+            check(sxn_set_nonblocking(quiet, 1) == -SAVANXP_EBADF);
+        }
         check(sxn_close(pipes[1]) == 0 && sxn_close(self.read_handle) == 0 && sxn_close(self.write_handle) == 0);
         check(sxn_close(quiet) == 0 && sxn_close(loud) == 0 && sxn_close(port) == 0);
         check(sxn_log("nativetest: wait many done") == 0);
+    }
+
+    /* SPAWN_STDIO: the child gets stdio and nothing else this process holds;
+     * SPAWN clones the whole table. */
+    {
+        char* child_argv[2];
+        struct sxn_process_query whole;
+        struct sxn_process_query bare;
+        long cloned = -1;
+        long isolated = -1;
+        int status = 0;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "sleeper";
+        cloned = sxn_spawn("/disk/bin/nativetest", child_argv, 2);
+        isolated = sxn_spawn_stdio("/disk/bin/nativetest", child_argv, 2);
+        check(cloned > 0 && isolated > 0);
+        if (cloned > 0 && isolated > 0) {
+            check(sxn_process_query(cloned, &whole) == 0 && sxn_process_query(isolated, &bare) == 0);
+            check(bare.handle_count <= 3u && whole.handle_count > bare.handle_count);
+            check(sxn_terminate(cloned, 0) == 0 && sxn_waitpid(cloned, &status) == cloned);
+            check(sxn_terminate(isolated, 0) == 0 && sxn_waitpid(isolated, &status) == isolated);
+        }
+        check(sxn_log("nativetest: spawn stdio done") == 0);
     }
 
     /* TERMINATE: a parent ends its child; anybody else's process is refused. */
