@@ -15,6 +15,7 @@ EventObject g_event_objects[kMaxEventObjects] = {};
 TimerObject g_timer_objects[kMaxTimerObjects] = {};
 SectionObject g_section_objects[kMaxSectionObjects] = {};
 SemaphoreObject g_semaphore_objects[kMaxSemaphoreObjects] = {};
+PortObject g_port_objects[kMaxPortObjects] = {};
 constexpr uint64_t kMaxSectionBytes = 64ULL << 20;
 
 uint64_t align_up(uint64_t value, uint64_t alignment) {
@@ -54,6 +55,33 @@ void destroy_section(Header* header) {
     }
 
     memset(section_object, 0, sizeof(*section_object));
+}
+
+void destroy_port(Header* header) {
+    PortObject* port = reinterpret_cast<PortObject*>(header);
+    PortConnection connection = {};
+
+    // What was never accepted goes with the port: the client reading its pipe
+    // sees end of stream instead of waiting forever.
+    while (port_dequeue(port, connection)) {
+        release(connection.server_read);
+        release(connection.server_write);
+    }
+    memset(port, 0, sizeof(*port));
+}
+
+bool names_equal(const char* left, const char* right) {
+    size_t index = 0;
+
+    for (; index < kPortNameCapacity; ++index) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+        if (left[index] == '\0') {
+            return true;
+        }
+    }
+    return true;
 }
 
 void destroy_semaphore(Header* header) {
@@ -398,6 +426,79 @@ SectionObject* clone_section(const SectionObject& source) {
         remaining -= memory::kPageSize;
     }
     return section_object;
+}
+
+PortObject* as_port(Header* object) {
+    if (object == nullptr || object->type != Type::port) {
+        return nullptr;
+    }
+    return reinterpret_cast<PortObject*>(object);
+}
+
+PortObject* find_port(const char* name) {
+    if (name == nullptr || name[0] == '\0') {
+        return nullptr;
+    }
+    for (PortObject& port : g_port_objects) {
+        if (port.in_use && names_equal(port.name, name)) {
+            return &port;
+        }
+    }
+    return nullptr;
+}
+
+PortObject* create_port(const char* name) {
+    size_t length = 0;
+
+    if (name == nullptr || name[0] == '\0' || find_port(name) != nullptr) {
+        return nullptr;
+    }
+    while (name[length] != '\0') {
+        if (length + 1u >= kPortNameCapacity) {
+            return nullptr;
+        }
+        ++length;
+    }
+    for (PortObject& port : g_port_objects) {
+        if (port.in_use) {
+            continue;
+        }
+        memset(&port, 0, sizeof(port));
+        port.header.type = Type::port;
+        port.header.destroy = destroy_port;
+        port.header.waitable = true;
+        // Waiting does not consume: the count is the pending connections, and
+        // only accepting one takes it down.
+        port.header.manual_reset = true;
+        port.header.signal_count = 0;
+        memcpy(port.name, name, length);
+        port.in_use = true;
+        return &port;
+    }
+    return nullptr;
+}
+
+bool port_enqueue(PortObject* port, const PortConnection& connection) {
+    if (port == nullptr || port->pending_count >= kPortPendingCapacity) {
+        return false;
+    }
+    const uint32_t tail = (port->pending_head + port->pending_count) % kPortPendingCapacity;
+    port->pending[tail] = connection;
+    port->pending_count += 1u;
+    port->header.signal_count = static_cast<int32_t>(port->pending_count);
+    return true;
+}
+
+bool port_dequeue(PortObject* port, PortConnection& connection) {
+    if (port == nullptr || port->pending_count == 0) {
+        return false;
+    }
+    connection = port->pending[port->pending_head];
+    port->pending[port->pending_head] = {};
+    port->pending_head = (port->pending_head + 1u) % kPortPendingCapacity;
+    port->pending_count -= 1u;
+    port->header.signal_count = static_cast<int32_t>(port->pending_count);
+    return true;
 }
 
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count) {

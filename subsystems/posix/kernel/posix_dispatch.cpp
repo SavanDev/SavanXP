@@ -542,6 +542,12 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 static_cast<uint32_t>(context->rsi)));
             return context;
         default:
+            // The native object calls are the floor POSIX stands on: a POSIX
+            // process reaches them as it is, e.g. to connect to a service's
+            // port (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3).
+            if (native_call_open_to_all_subsystems(context->rax)) {
+                return dispatch_native_syscall(context);
+            }
             context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOSYS));
             return context;
     }

@@ -173,6 +173,184 @@ int native_device_control(Process& proc, uint64_t handle, uint64_t code, uint64_
     return device::ioctl(file->device, code, argument, proc.handles[handle].granted_access);
 }
 
+/* --- Ports -------------------------------------------------------------- */
+
+int native_port_create(Process& proc, uint64_t user_name) {
+    char name[object::kPortNameCapacity] = {};
+
+    if (!sx::copy_user_string(name, sizeof(name), user_name) || name[0] == '\0') {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (object::find_port(name) != nullptr) {
+        return sx::negative_error(SX_EEXIST);
+    }
+    object::PortObject* port = object::create_port(name);
+    if (port == nullptr) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    const int handle = detail::allocate_fd(
+        proc, &port->header, object::access_query | object::access_synchronize, object::handle_none);
+    if (handle < 0) {
+        // Never referenced: free the slot and the name directly.
+        object::Header* header = &port->header;
+        object::retain(header);
+        object::release(header);
+    }
+    return handle;
+}
+
+int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles) {
+    char name[object::kPortNameCapacity] = {};
+    object::IoObject* request_reader = nullptr;
+    object::IoObject* request_writer = nullptr;
+    object::IoObject* reply_reader = nullptr;
+    object::IoObject* reply_writer = nullptr;
+
+    if (!sx::copy_user_string(name, sizeof(name), user_name) || name[0] == '\0' ||
+        !sx::validate_user_range(user_handles, sizeof(int32_t) * 2, true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    object::PortObject* port = object::find_port(name);
+    if (port == nullptr) {
+        return sx::negative_error(SX_ENOENT);
+    }
+    if (port->pending_count >= object::kPortPendingCapacity) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    if (!detail::create_pipe_pair(request_reader, request_writer)) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    if (!detail::create_pipe_pair(reply_reader, reply_writer)) {
+        object::Header* a = &request_reader->header;
+        object::Header* b = &request_writer->header;
+        object::release(a);
+        object::release(b);
+        return sx::negative_error(SX_ENOMEM);
+    }
+
+    const int write_handle = detail::allocate_fd(
+        proc, &request_writer->header, detail::object_access_for_open_flags(open_write), object::handle_none);
+    const int read_handle = write_handle < 0 ? write_handle : detail::allocate_fd(
+        proc, &reply_reader->header, detail::object_access_for_open_flags(open_read), object::handle_none);
+    // The handle table took its own references; the creation ones go.
+    object::Header* owned_request_writer = &request_writer->header;
+    object::Header* owned_reply_reader = &reply_reader->header;
+    object::release(owned_request_writer);
+    object::release(owned_reply_reader);
+
+    object::PortConnection connection = {};
+    connection.client_pid = proc.pid;
+    connection.server_read = &request_reader->header;
+    connection.server_write = &reply_writer->header;
+    const int32_t values[2] = {write_handle, read_handle};
+
+    if (write_handle < 0 || read_handle < 0 ||
+        !sx::copy_to_user(user_handles, values, sizeof(values)) ||
+        !object::port_enqueue(port, connection)) {
+        if (write_handle >= 0) {
+            (void)native_close(proc, static_cast<uint64_t>(write_handle));
+        }
+        if (read_handle >= 0) {
+            (void)native_close(proc, static_cast<uint64_t>(read_handle));
+        }
+        object::release(connection.server_read);
+        object::release(connection.server_write);
+        return write_handle < 0 ? write_handle : (read_handle < 0 ? read_handle : sx::negative_error(SX_EAGAIN));
+    }
+    detail::wake_waiters_for_object(&port->header);
+    return 0;
+}
+
+int native_port_accept(Process& proc, uint64_t port_handle, uint64_t user_connection) {
+    object::PortObject* port = object::as_port(detail::lookup_handle(proc, port_handle, object::access_query));
+    object::PortConnection connection = {};
+    sxn_port_connection out = {};
+
+    if (port == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (!sx::validate_user_range(user_connection, sizeof(out), true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (!object::port_dequeue(port, connection)) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    const int read_handle = detail::allocate_fd(
+        proc, connection.server_read, detail::object_access_for_open_flags(open_read), object::handle_none);
+    const int write_handle = read_handle < 0 ? read_handle : detail::allocate_fd(
+        proc, connection.server_write, detail::object_access_for_open_flags(open_write), object::handle_none);
+    object::release(connection.server_read);
+    object::release(connection.server_write);
+    if (read_handle < 0 || write_handle < 0) {
+        if (read_handle >= 0) {
+            (void)native_close(proc, static_cast<uint64_t>(read_handle));
+        }
+        return read_handle < 0 ? read_handle : write_handle;
+    }
+    out.client_pid = connection.client_pid;
+    out.read_handle = read_handle;
+    out.write_handle = write_handle;
+    if (!sx::copy_to_user(user_connection, &out, sizeof(out))) {
+        (void)native_close(proc, static_cast<uint64_t>(read_handle));
+        (void)native_close(proc, static_cast<uint64_t>(write_handle));
+        return sx::negative_error(SX_EINVAL);
+    }
+    return 0;
+}
+
+/* Handle passing over a pipe: holding the write end is the permission. Only
+ * objects that are not streams travel -- a shared stream would drag its offset
+ * and its reader/writer counts along. Same queue as the POSIX side's. */
+int native_pipe_send_handle(Process& proc, uint64_t pipe_handle, uint64_t handle) {
+    object::IoObject* file = detail::fd_to_io_object(proc, pipe_handle, object::access_write);
+    if (file == nullptr || file->kind != HandleKind::pipe || file->pipe == nullptr ||
+        (file->open_flags & open_write) == 0) {
+        return sx::negative_error(SX_EBADF);
+    }
+    object::Header* target = detail::lookup_handle(proc, handle, object::access_none);
+    if (target == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (target->type == object::Type::io) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    Pipe& pipe = *file->pipe;
+    if (pipe.reader_refs == 0) {
+        return sx::negative_error(SX_EPIPE);
+    }
+    if (pipe.handle_count >= kPipeHandleQueueCapacity) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    const uint32_t tail = (pipe.handle_head + pipe.handle_count) % kPipeHandleQueueCapacity;
+    object::retain(target);
+    pipe.handles[tail] = target;
+    pipe.handle_access[tail] = proc.handles[handle].granted_access;
+    pipe.handle_count += 1u;
+    return 0;
+}
+
+int native_pipe_receive_handle(Process& proc, uint64_t pipe_handle) {
+    object::IoObject* file = detail::fd_to_io_object(proc, pipe_handle, object::access_read);
+    if (file == nullptr || file->kind != HandleKind::pipe || file->pipe == nullptr ||
+        (file->open_flags & open_read) == 0) {
+        return sx::negative_error(SX_EBADF);
+    }
+    Pipe& pipe = *file->pipe;
+    if (pipe.handle_count == 0) {
+        return sx::negative_error(SX_EAGAIN);
+    }
+    const int handle = detail::allocate_fd(
+        proc, pipe.handles[pipe.handle_head], pipe.handle_access[pipe.handle_head], object::handle_none);
+    if (handle < 0) {
+        return handle; // stays queued: the receiver can close something and retry
+    }
+    object::release(pipe.handles[pipe.handle_head]);
+    pipe.handle_access[pipe.handle_head] = object::access_none;
+    pipe.handle_head = (pipe.handle_head + 1u) % kPipeHandleQueueCapacity;
+    pipe.handle_count -= 1u;
+    return handle;
+}
+
 } // namespace
 
 // El subsistema nativo declara su estado privado por proceso como cualquier
@@ -181,6 +359,38 @@ int native_device_control(Process& proc, uint64_t handle, uint64_t code, uint64_
 // nada de POSIX.
 void initialize_native_subsystem() {
     subsystem::register_process_state_size(subsystem::Id::native, 0);
+}
+
+/* The native calls any subsystem's processes may make: the object floor
+ * (handles, events, sections, waits, pipes and devices, ports, the clock), as
+ * a Win32 process calls ntdll. Not the lifecycle ones -- EXIT, SPAWN, WAITPID
+ * -- which a subsystem defines in its own terms, nor INFO/LOG/GFX, which are a
+ * standalone native program's. */
+bool native_call_open_to_all_subsystems(uint64_t number) {
+    switch (number) {
+        case SXN_SYS_EVENT_CREATE:
+        case SXN_SYS_EVENT_SET:
+        case SXN_SYS_EVENT_RESET:
+        case SXN_SYS_WAIT_ONE:
+        case SXN_SYS_SECTION_CREATE:
+        case SXN_SYS_MAP_VIEW:
+        case SXN_SYS_UNMAP_VIEW:
+        case SXN_SYS_CLOSE:
+        case SXN_SYS_DUPLICATE:
+        case SXN_SYS_READ:
+        case SXN_SYS_WRITE:
+        case SXN_SYS_OPEN_DEVICE:
+        case SXN_SYS_DEVICE_CONTROL:
+        case SXN_SYS_CLOCK:
+        case SXN_SYS_PORT_CREATE:
+        case SXN_SYS_PORT_CONNECT:
+        case SXN_SYS_PORT_ACCEPT:
+        case SXN_SYS_PIPE_SEND_HANDLE:
+        case SXN_SYS_PIPE_RECEIVE_HANDLE:
+            return true;
+        default:
+            return false;
+    }
 }
 
 SavedContext* dispatch_native_syscall(SavedContext* context) {
@@ -205,9 +415,10 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         );
     }
 
-    // Syscalls PROPIAS del subsistema nativo (>= SXN_SYS_BASE). Solo existen
-    // aca: un proceso posix que invoque estos numeros recibe ENOSYS. El
-    // contrato vive en include/abi/savanxp_native_abi.h.
+    // The native subsystem's own calls (>= SXN_SYS_BASE); the contract lives
+    // in include/abi/savanxp_native_abi.h. Other subsystems forward the
+    // object calls here (native_call_open_to_all_subsystems); the lifecycle
+    // ones exist only for native processes.
     //
     // Esta unidad solo usa la superficie nativa sx:: (current, memoria de
     // usuario, errores) mas display:: y console::. No accede a los internals
@@ -429,6 +640,21 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_CLOCK:
             context->rax = timer::monotonic_ns();
+            return context;
+        case SXN_SYS_PORT_CREATE:
+            context->rax = static_cast<uint64_t>(native_port_create(*caller, context->rdi));
+            return context;
+        case SXN_SYS_PORT_CONNECT:
+            context->rax = static_cast<uint64_t>(native_port_connect(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_PORT_ACCEPT:
+            context->rax = static_cast<uint64_t>(native_port_accept(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_PIPE_SEND_HANDLE:
+            context->rax = static_cast<uint64_t>(native_pipe_send_handle(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_PIPE_RECEIVE_HANDLE:
+            context->rax = static_cast<uint64_t>(native_pipe_receive_handle(*caller, context->rdi));
             return context;
         default:
             break;

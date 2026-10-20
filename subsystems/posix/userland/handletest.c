@@ -1,4 +1,5 @@
 #include "libc.h"
+#include "sxn/sxn.h"
 
 /*
  * Paso de handles por pipe (SAVANXP_SYS_PIPE_SEND_HANDLE / _RECEIVE_HANDLE).
@@ -199,11 +200,91 @@ static int test_queue_released_with_pipe(void) {
     return 1;
 }
 
+/*
+ * A port, from a POSIX process: the native object calls are the floor POSIX
+ * stands on (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3), and a port is how
+ * an application will find windowd. A forked child connects by name, the
+ * parent accepts, they exchange a message each way and the parent hands the
+ * child an event over the reply pipe, which the child signals.
+ */
+static int test_port_from_posix(void) {
+    struct sxn_port_connection connection;
+    long port = -1;
+    long event = -1;
+    long pid = -1;
+    int status = -1;
+    char buffer[8] = {0};
+
+    if (!expect_success(port = sxn_port_create("handletest"), "port create") ||
+        !expect_error(sxn_port_create("handletest"), SAVANXP_EEXIST, "port create twice") ||
+        !expect_error(sxn_port_accept(port, &connection), SAVANXP_EAGAIN, "accept with nothing pending")) {
+        return 0;
+    }
+    {
+        int32_t none[2] = {-1, -1};
+        if (!expect_error(sxn_port_connect("nosuchport", none), SAVANXP_ENOENT, "connect to no port")) {
+            return 0;
+        }
+    }
+    if (!expect_success(event = event_create(SAVANXP_EVENT_MANUAL_RESET), "event")) {
+        return 0;
+    }
+
+    pid = savanxp_fork();
+    if (pid == 0) {
+        int32_t handles[2] = {-1, -1};
+        long received = -1;
+        char reply[8] = {0};
+
+        if (sxn_port_connect("handletest", handles) != 0 ||
+            savanxp_write(handles[0], "ping", 4) != 4 ||
+            savanxp_read(handles[1], reply, 4) != 4 ||
+            reply[0] != 'p' || reply[1] != 'o' ||
+            (received = pipe_receive_handle(handles[1])) < 0 ||
+            event_set((int)received) != 0) {
+            exit(3);
+        }
+        exit(0);
+    }
+    if (!expect_success(pid, "fork")) {
+        return 0;
+    }
+    if (!expect_success(wait_one((int)port, 5000), "wait for a connection") ||
+        !expect_success(sxn_port_accept(port, &connection), "accept") ||
+        connection.client_pid != (uint32_t)pid) {
+        eprintf("handletest: accepted pid %u, expected %ld\n", (unsigned)connection.client_pid, pid);
+        return 0;
+    }
+    if (savanxp_read(connection.read_handle, buffer, 4) != 4 || buffer[0] != 'p' || buffer[1] != 'i' ||
+        /* The handle first, then the record that announces it: the child
+         * receives once it has read the record. */
+        !expect_success(pipe_send_handle(connection.write_handle, (int)event), "hand the event over") ||
+        !expect_success(savanxp_write(connection.write_handle, "pong", 4), "reply") ||
+        !expect_success(wait_one((int)event, 5000), "the child signals the handed event") ||
+        savanxp_waitpid((int)pid, &status) != pid || status != 0) {
+        eprintf("handletest: port exchange failed (child status %d)\n", status);
+        return 0;
+    }
+    (void)savanxp_close(connection.read_handle);
+    (void)savanxp_close(connection.write_handle);
+    (void)savanxp_close((int)event);
+    (void)savanxp_close((int)port);
+    {
+        int32_t none[2] = {-1, -1};
+        /* The last handle closed frees the name. */
+        if (!expect_error(sxn_port_connect("handletest", none), SAVANXP_ENOENT, "connect after close")) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int main(void) {
     if (!test_section_round_trip() ||
         !test_rejections() ||
         !test_across_fork() ||
-        !test_queue_released_with_pipe()) {
+        !test_queue_released_with_pipe() ||
+        !test_port_from_posix()) {
         return 1;
     }
     puts_fd(1, "handletest: ok\n");

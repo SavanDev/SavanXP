@@ -232,6 +232,35 @@ Two things stayed on purpose, and the guard says so:
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
 
+## Slice 15: ports, handle passing, and POSIX on the native floor
+
+- `SXN_SYS_PORT_CREATE`, `_CONNECT`, `_ACCEPT` (`0x1017`-`0x1019`): a named
+  rendezvous point (`object::PortObject`, 16 in the system, names up to 31
+  bytes), CSRSS's `\Windows\ApiPort` in shape. Connecting creates two pipes
+  (`process::detail::create_pipe_pair`, a kernel core now, not a subsystem's):
+  the client gets the write end of one and the read end of the other; the other
+  two wait in the port with the client's pid until the service accepts. The
+  port is waitable and signaled while connections are pending (waiting does not
+  consume; accepting does). Closing the last handle frees the name and drops
+  what was never accepted, which the client sees as end of stream.
+- `SXN_SYS_PIPE_SEND_HANDLE`, `_RECEIVE_HANDLE` (`0x101a`, `0x101b`): the same
+  handle queue as the POSIX `pipe_send_handle`, for native processes.
+- **POSIX processes reach the native object calls.** The POSIX dispatcher
+  forwards every number in `native_call_open_to_all_subsystems` (handles,
+  events, sections, waits, pipe and device I/O, ports, the clock) to the native
+  dispatcher, as a Win32 process calls ntdll. The lifecycle calls (EXIT, SPAWN,
+  WAITPID) and the standalone ones (INFO, LOG, GFX) stay native-only: a
+  subsystem defines those in its own terms. This is what lets an ordinary
+  application find windowd by port. The isolation is unchanged: the kernel
+  still knows nothing of POSIX.
+- Port names are first come, first served; nothing stops a process from taking
+  a service's name before the service starts. The session launcher starting
+  services first is what keeps that from happening.
+
+`nativetest` covers ports between two native processes (connect by name, a
+message each way, an event handed over the reply pipe); `handletest` does the
+same from a POSIX process with `fork`, which also proves the forwarding.
+
 ## Slice 14: handles, devices and the clock for services
 
 The calls a platform service needs to run without POSIX

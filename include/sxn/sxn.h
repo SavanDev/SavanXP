@@ -110,3 +110,24 @@ static inline long sxn_device_control(long handle, unsigned long code, unsigned 
 static inline uint64_t sxn_clock_ns(void) {
     return (uint64_t)sxn_trap(SXN_SYS_CLOCK, 0, 0, 0);
 }
+
+static inline long sxn_port_create(const char* name) {
+    return sxn_trap(SXN_SYS_PORT_CREATE, (unsigned long)name, 0, 0);
+}
+
+/* handles[0]: write requests to the service; handles[1]: read its replies. */
+static inline long sxn_port_connect(const char* name, int32_t handles[2]) {
+    return sxn_trap(SXN_SYS_PORT_CONNECT, (unsigned long)name, (unsigned long)handles, 0);
+}
+
+static inline long sxn_port_accept(long port, struct sxn_port_connection* out) {
+    return sxn_trap(SXN_SYS_PORT_ACCEPT, (unsigned long)port, (unsigned long)out, 0);
+}
+
+static inline long sxn_pipe_send_handle(long pipe_write, long handle) {
+    return sxn_trap(SXN_SYS_PIPE_SEND_HANDLE, (unsigned long)pipe_write, (unsigned long)handle, 0);
+}
+
+static inline long sxn_pipe_receive_handle(long pipe_read) {
+    return sxn_trap(SXN_SYS_PIPE_RECEIVE_HANDLE, (unsigned long)pipe_read, 0, 0);
+}

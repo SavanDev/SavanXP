@@ -1110,6 +1110,42 @@ process::Pipe* allocate_pipe() {
     return nullptr;
 }
 
+/* A pipe and its two ends, each end holding one reference that the caller
+ * owns: install them in a handle table (which takes its own) and release, or
+ * just release. Shared by every caller that needs a fresh channel without
+ * going through a subsystem's notion of descriptors -- a port connection, for
+ * one. */
+bool create_pipe_pair(object::IoObject*& reader, object::IoObject*& writer) {
+    process::Pipe* pipe = allocate_pipe();
+
+    reader = nullptr;
+    writer = nullptr;
+    if (pipe == nullptr) {
+        return false;
+    }
+    reader = allocate_io_object();
+    writer = allocate_io_object();
+    if (reader == nullptr || writer == nullptr) {
+        discard_io_object(reader);
+        discard_io_object(writer);
+        memset(pipe, 0, sizeof(*pipe));
+        return false;
+    }
+    reader->kind = process::HandleKind::pipe;
+    reader->open_flags = process::open_read;
+    reader->pipe = pipe;
+    reader->header.destroy = destroy_io_object;
+    writer->kind = process::HandleKind::pipe;
+    writer->open_flags = process::open_write;
+    writer->pipe = pipe;
+    writer->header.destroy = destroy_io_object;
+    pipe->reader_refs = 1;
+    pipe->writer_refs = 1;
+    object::retain(&reader->header);
+    object::retain(&writer->header);
+    return true;
+}
+
 void discard_io_object(object::IoObject*& file_ptr) {
     if (file_ptr == nullptr) {
         return;

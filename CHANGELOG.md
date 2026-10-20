@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Ports, and POSIX on the native floor.** `SXN_SYS_PORT_CREATE`, `_CONNECT` and `_ACCEPT` let a
+  process find a service by name (two pipes per connection), `SXN_SYS_PIPE_SEND/RECEIVE_HANDLE` pass
+  handles natively, and POSIX processes can make the native object calls. See `docs/kernel/KERNEL_NATIVE_API.md`.
+
 - **Native calls for handles, devices and time.** `SXN_SYS_CLOSE`, `_DUPLICATE`, `_READ` and
   `_WRITE` (pipes and devices), `_OPEN_DEVICE` and `_DEVICE_CONTROL` (a device by bare name,
   the same control codes as `ioctl`) and `_CLOCK`, with `sxn.h` wrappers; `native-test` covers them.

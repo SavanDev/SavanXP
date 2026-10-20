@@ -352,8 +352,9 @@ Depends on the hotkeys of phase 1.
    handle close and duplicate, monotonic clock, process termination, and
    POSIX access to the native object calls. **Done so far:** handle close and
    duplicate, pipe and device read/write, device open and control, the clock
-   (`docs/kernel/KERNEL_NATIVE_API.md`, slice 14). Still to do: the port,
-   multi-object wait, process termination, POSIX access to native calls.
+   (`docs/kernel/KERNEL_NATIVE_API.md`, slice 14). The port and POSIX access
+   to the native object calls followed (slice 15). Still to do: multi-object
+   wait, process termination.
 2. **Runtime:** the native C runtime, the in-tree native CMake target, SXGFX
    and SXCHROME built for native.
 3. **`compositord` native.** The pilot: about 600 lines, no files, only the

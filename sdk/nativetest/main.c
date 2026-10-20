@@ -22,7 +22,9 @@
  * the event, then reset plus a zero-timeout poll), and EXIT with the
  * failure count as status. Then the phase 3 calls: CLOCK, DUPLICATE and
  * CLOSE on an event, READ refusing a non-stream handle, OPEN_DEVICE refusing
- * paths and unknown names, DEVICE_CONTROL on gpu0 and WRITE to serial. The
+ * paths and unknown names, DEVICE_CONTROL on gpu0 and WRITE to serial; and a
+ * port: a second child ("portchild") connects by name, exchanges a message
+ * each way and signals an event handed over its reply pipe. The first
  * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
  */
@@ -151,6 +153,25 @@ static void run_child(int argc, char** argv) {
     __builtin_unreachable();
 }
 
+#define SXN_PORT_CHILD_STATUS 7
+
+/* Port child: connects to the parent's port by name, says ping, reads pong,
+ * takes the event the parent handed over and signals it. Native calls only. */
+static void run_port_child(void) {
+    int32_t handles[2] = {-1, -1};
+    char reply[4] = {0};
+    long event = -1;
+
+    if (sxn_port_connect("nativetest", handles) != 0 ||
+        sxn_write(handles[0], "ping", 4) != 4 ||
+        sxn_read(handles[1], reply, 4) != 4 || reply[0] != 'p' || reply[1] != 'o' ||
+        (event = sxn_pipe_receive_handle(handles[1])) < 0 ||
+        sxn_event_set(event) != 0) {
+        sxn_exit(1);
+    }
+    sxn_exit(SXN_PORT_CHILD_STATUS);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -160,6 +181,9 @@ int main(int argc, char** argv) {
 
     if (argc > 1 && streq(argv[1], "child")) {
         run_child(argc, argv);
+    }
+    if (argc > 1 && streq(argv[1], "portchild")) {
+        run_port_child();
     }
 
     check(sxn_info(&info) == 0);
@@ -301,6 +325,41 @@ int main(int argc, char** argv) {
             check(sxn_close(serial) == 0);
         }
         check(sxn_log("nativetest: handles, devices and clock done") == 0);
+    }
+
+    /* Ports: a service found by name instead of an inherited channel. */
+    {
+        struct sxn_port_connection connection;
+        char* child_argv[2];
+        char request[4] = {0};
+        long port = sxn_port_create("nativetest");
+        long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+        long child = -1;
+        int status = -1;
+
+        check(port >= 0 && event >= 0);
+        check(sxn_port_create("nativetest") == -SAVANXP_EEXIST);
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "portchild";
+        child = sxn_spawn("/disk/bin/nativetest", child_argv, 2);
+        check(child > 0);
+        if (port >= 0 && event >= 0 && child > 0) {
+            check(sxn_wait_one(port, 5000) == 0);
+            check(sxn_port_accept(port, &connection) == 0);
+            check(connection.client_pid == (uint32_t)child);
+            check(sxn_read(connection.read_handle, request, 4) == 4 && request[0] == 'p' && request[1] == 'i');
+            check(sxn_pipe_send_handle(connection.write_handle, event) == 0);
+            check(sxn_write(connection.write_handle, "pong", 4) == 4);
+            check(sxn_wait_one(event, 5000) == 0);
+            check(sxn_waitpid(child, &status) == child && status == SXN_PORT_CHILD_STATUS);
+            check(sxn_close(connection.read_handle) == 0 && sxn_close(connection.write_handle) == 0);
+            check(sxn_close(port) == 0);
+            {
+                int32_t none[2] = {-1, -1};
+                check(sxn_port_connect("nativetest", none) == -SAVANXP_ENOENT);
+            }
+        }
+        check(sxn_log("nativetest: ports done") == 0);
     }
 
     sxn_exit(g_failures == 0 ? 0 : 1);

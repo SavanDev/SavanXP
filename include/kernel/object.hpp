@@ -41,6 +41,11 @@ constexpr size_t kMaxTimerObjects = 128;
  * lugar donde va a vivir la identidad de un archivo respaldado. */
 constexpr size_t kMaxSectionObjects = 256;
 constexpr size_t kMaxSemaphoreObjects = 64;
+/* Ports: named rendezvous points (docs/desktop/DESKTOP_ARCHITECTURE.md, phase
+ * 3). A handful of system services, not one per program. */
+constexpr size_t kMaxPortObjects = 16;
+constexpr size_t kPortNameCapacity = 32;
+constexpr size_t kPortPendingCapacity = 8;
 
 enum class Type : uint8_t {
     none = 0,
@@ -51,6 +56,7 @@ enum class Type : uint8_t {
     semaphore = 5,
     timer = 6,
     section = 7,
+    port = 8,
 };
 
 enum Access : uint32_t {
@@ -140,6 +146,30 @@ struct SemaphoreObject {
     int32_t max_count;
 };
 
+/*
+ * A port is how a process finds a service without inheriting a channel from it:
+ * the service creates the port under a name, a client connects by that name.
+ * Connecting creates two pipes; the client keeps one end of each and the other
+ * two wait in the port, with the client's pid, until the service accepts. The
+ * port is waitable: signaled while connections are pending. Closing the last
+ * handle to it frees the name and drops what was never accepted, which the
+ * client sees as end of stream.
+ */
+struct PortConnection {
+    uint32_t client_pid;
+    Header* server_read;  /* client -> server pipe, read end */
+    Header* server_write; /* server -> client pipe, write end */
+};
+
+struct PortObject {
+    Header header;
+    bool in_use;
+    char name[kPortNameCapacity];
+    uint32_t pending_head;
+    uint32_t pending_count;
+    PortConnection pending[kPortPendingCapacity];
+};
+
 void retain(Header* object);
 void release(Header*& object);
 IoObject* as_io(Header* object);
@@ -171,6 +201,15 @@ SectionObject* acquire_file_range_section(
     uint32_t access_mask);
 SectionObject* clone_section(const SectionObject& source);
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count);
+PortObject* as_port(Header* object);
+/* nullptr if the name is taken or the table is full. No reference is left on
+ * the object, as with create_section: the handle that installs it takes one. */
+PortObject* create_port(const char* name);
+PortObject* find_port(const char* name);
+/* Takes over the references in `connection`. false if the queue is full. */
+bool port_enqueue(PortObject* port, const PortConnection& connection);
+/* Hands over the oldest pending connection's references. false if none. */
+bool port_dequeue(PortObject* port, PortConnection& connection);
 void set_event(EventObject* event_object);
 void reset_event(EventObject* event_object);
 void set_timer(TimerObject* timer_object, uint64_t due_tick, uint64_t period_ticks);

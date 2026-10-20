@@ -44,6 +44,7 @@ object::IoObject* fd_to_io_object(Process& proc, uint64_t fd, uint32_t desired_a
 object::Header* lookup_handle(Process& proc, uint64_t fd, uint32_t desired_access);
 
 Pipe* allocate_pipe();
+bool create_pipe_pair(object::IoObject*& reader, object::IoObject*& writer);
 int try_pipe_read(Process& proc, object::IoObject& file, uint64_t user_address, size_t count);
 int pipe_write_chunk(Process& proc, Pipe& pipe, uint64_t user_address, size_t count, size_t progress);
 

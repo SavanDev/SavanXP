@@ -128,6 +128,46 @@ enum sxn_syscall_number {
     /* No arguments. Monotonic time in nanoseconds since boot (0 before the
      * clock is calibrated). */
     SXN_SYS_CLOCK = 0x1016,
+
+    /* --- Ports (bloque 0x1017) --------------------------------------------
+     * How a process finds a service without inheriting a channel from it, as
+     * CSRSS's \\Windows\\ApiPort does. The service creates a named port; a
+     * client connects by name and gets two pipes (one to write requests, one
+     * to read replies and receive handles); the service accepts and gets the
+     * other ends plus the client's pid. POSIX processes may make these calls
+     * too: the native object API is the floor every subsystem stands on. */
+
+    /* rdi = name (user string, 1..31 bytes). Returns a port handle or -errno
+     * (-EEXIST if the name is taken). The name lives until the last handle to
+     * the port is closed. The port is waitable: signaled while connections
+     * are pending. */
+    SXN_SYS_PORT_CREATE = 0x1017,
+    /* rdi = name, rsi = int32_t[2] (written): [0] the write end of the
+     * client->service pipe, [1] the read end of the service->client pipe.
+     * Returns 0 or -errno (-ENOENT if no such port). Does not wait for the
+     * service: reading [1] does. A port that goes away unaccepted shows as
+     * end of stream on [1]. */
+    SXN_SYS_PORT_CONNECT = 0x1018,
+    /* rdi = port handle, rsi = struct sxn_port_connection (written). Takes the
+     * oldest pending connection. Returns 0 or -EAGAIN if none; wait on the
+     * port to know when one arrives. */
+    SXN_SYS_PORT_ACCEPT = 0x1019,
+    /* rdi = pipe write end, rsi = handle. Queues a reference to the handle's
+     * object, with the sender's granted access, for whoever reads the pipe
+     * (sections, events, semaphores, timers, ports: never a stream). Returns
+     * 0, -EAGAIN with the queue full, -EPIPE with no reader. Same queue as
+     * the POSIX pipe_send_handle. */
+    SXN_SYS_PIPE_SEND_HANDLE = 0x101a,
+    /* rdi = pipe read end. Pops the oldest queued handle into the caller's
+     * table. Returns the handle or -EAGAIN if none; never blocks. */
+    SXN_SYS_PIPE_RECEIVE_HANDLE = 0x101b,
+};
+
+struct sxn_port_connection {
+    uint32_t client_pid;
+    int32_t read_handle;  /* client -> service pipe, read end */
+    int32_t write_handle; /* service -> client pipe, write end */
+    uint32_t reserved;
 };
 
 /* Access for SXN_SYS_OPEN_DEVICE. */

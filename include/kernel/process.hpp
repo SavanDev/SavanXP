@@ -181,6 +181,9 @@ bool copy_to_user(uint64_t user_address, const void* source, size_t count);
 bool validate_user_range(uint64_t user_address, size_t count, bool require_write);
 SavedContext* dispatch_posix_syscall(SavedContext* context);
 SavedContext* dispatch_native_syscall(SavedContext* context);
+/* True for the native calls other subsystems may forward to the native
+ * dispatcher (the object floor, not the lifecycle calls). */
+bool native_call_open_to_all_subsystems(uint64_t number);
 // Cada subsistema declara su estado privado por proceso. El kernel los reserva
 // y los libera sin interpretarlos (isolation slice B).
 void initialize_posix_subsystem();
