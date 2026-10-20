@@ -1094,7 +1094,7 @@ int wait_on_many_handles(process::Process& proc, uint64_t user_handles, size_t c
         if (handles[index] == nullptr) {
             return sx::negative_error(SAVANXP_EBADF);
         }
-        if (!sx::is_waitable(handles[index])) {
+        if (!sx::is_wait_target(handles[index])) {
             return sx::negative_error(SAVANXP_EINVAL);
         }
     }

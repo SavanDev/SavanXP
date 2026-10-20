@@ -85,6 +85,11 @@ bool release_semaphore(object::SemaphoreObject* semaphore_object, int32_t releas
 // -errno on misuse, -EAGAIN when nothing is signaled yet and the caller
 // should park (or time out immediately).
 bool is_waitable(const object::Header* handle_object);
+// What a wait may name: a waitable object (event, timer, semaphore, port), or
+// a stream opened for reading -- a pipe, a device, a socket -- which counts as
+// signaled while a read would not block (data, or end of stream). Streams are
+// level-triggered: waiting consumes nothing.
+bool is_wait_target(const object::Header* handle_object);
 bool can_complete_object_wait(const process::Process& proc);
 int consume_object_wait(process::Process& proc);
 int try_consume_objects(process::Process& proc, object::Header* const* handles, size_t count, bool wait_all);

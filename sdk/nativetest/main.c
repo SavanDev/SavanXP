@@ -24,7 +24,8 @@
  * CLOSE on an event, READ refusing a non-stream handle, OPEN_DEVICE refusing
  * paths and unknown names, DEVICE_CONTROL on gpu0 and WRITE to serial; and a
  * port: a second child ("portchild") connects by name, exchanges a message
- * each way and signals an event handed over its reply pipe; and TERMINATE:
+ * each way and signals an event handed over its reply pipe; WAIT_MANY on
+ * events and streams; and TERMINATE:
  * a third child ("sleeper") waits forever until the parent ends it, and
  * waitpid reports the status the parent chose. The first
  * child runs this same binary with
@@ -362,6 +363,16 @@ int main(int argc, char** argv) {
             check(sxn_wait_one(port, 5000) == 0);
             check(sxn_port_accept(port, &connection) == 0);
             check(connection.client_pid == (uint32_t)child);
+            /* WAIT_MANY on an event and a stream: the child's "ping" makes the
+             * pipe readable, which is index 1 (and may still be on its way:
+             * this also exercises waking a parked wait from a pipe write). */
+            {
+                int32_t targets[2];
+
+                targets[0] = (int32_t)event;
+                targets[1] = connection.read_handle;
+                check(sxn_wait_many(targets, 2, 5000) == 1);
+            }
             check(sxn_read(connection.read_handle, request, 4) == 4 && request[0] == 'p' && request[1] == 'i');
             check(sxn_pipe_send_handle(connection.write_handle, event) == 0);
             check(sxn_write(connection.write_handle, "pong", 4) == 4);
@@ -375,6 +386,49 @@ int main(int argc, char** argv) {
             }
         }
         check(sxn_log("nativetest: ports done") == 0);
+    }
+
+    /* WAIT_MANY without a second process: the index of what is signaled, a
+     * timeout when nothing is, and a stream that is readable or at its end.
+     * The port connects to itself to get a pipe. */
+    {
+        struct sxn_port_connection self;
+        int32_t pipes[2] = {-1, -1};
+        int32_t targets[3];
+        long port = sxn_port_create("nativetest-wait");
+        long quiet = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+        long loud = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+
+        check(port >= 0 && quiet >= 0 && loud >= 0);
+        check(sxn_port_connect("nativetest-wait", pipes) == 0);
+        check(sxn_port_accept(port, &self) == 0);
+        targets[0] = (int32_t)quiet;
+        targets[1] = (int32_t)loud;
+        targets[2] = self.read_handle;
+        check(sxn_wait_many(targets, 3, 0) == -SAVANXP_ETIMEDOUT);
+        check(sxn_wait_many(targets, 3, 20) == -SAVANXP_ETIMEDOUT);
+        check(sxn_event_set(loud) == 0);
+        check(sxn_wait_many(targets, 3, 0) == 1);
+        check(sxn_event_reset(loud) == 0);
+        check(sxn_write(pipes[0], "x", 1) == 1);
+        check(sxn_wait_many(targets, 3, 0) == 2);
+        /* Level-triggered: still readable until read. */
+        check(sxn_wait_many(targets, 3, 0) == 2);
+        {
+            char byte = 0;
+            check(sxn_read(self.read_handle, &byte, 1) == 1 && byte == 'x');
+        }
+        check(sxn_wait_many(targets, 3, 0) == -SAVANXP_ETIMEDOUT);
+        /* The writer gone: end of stream is readable too. */
+        check(sxn_close(pipes[0]) == 0);
+        check(sxn_wait_many(targets, 3, 0) == 2);
+        /* A write end cannot be waited on; neither can nothing. */
+        targets[0] = self.write_handle;
+        check(sxn_wait_many(targets, 1, 0) == -SAVANXP_EINVAL);
+        check(sxn_wait_many(targets, 0, 0) == -SAVANXP_EINVAL);
+        check(sxn_close(pipes[1]) == 0 && sxn_close(self.read_handle) == 0 && sxn_close(self.write_handle) == 0);
+        check(sxn_close(quiet) == 0 && sxn_close(loud) == 0 && sxn_close(port) == 0);
+        check(sxn_log("nativetest: wait many done") == 0);
     }
 
     /* TERMINATE: a parent ends its child; anybody else's process is refused. */

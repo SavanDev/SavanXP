@@ -167,6 +167,13 @@ enum sxn_syscall_number {
      * access. Returns 0 (also for a child that already ended), -ENOENT if no
      * such process, -ECHILD if it is not the caller's child. Native only. */
     SXN_SYS_TERMINATE = 0x101c,
+    /* rdi = const int32_t handles[], rsi = count (1..16), rdx = timeout in ms
+     * (0 = poll, negative = forever). Waits until ANY of them is signaled and
+     * returns its index, or -ETIMEDOUT. A handle is an event, timer,
+     * semaphore or port -- consumed as WAIT_ONE consumes it -- or a stream
+     * opened for reading (pipe, device, socket), signaled while a read would
+     * not block: data, or end of stream. Streams consume nothing. */
+    SXN_SYS_WAIT_MANY = 0x101d,
 };
 
 struct sxn_port_connection {

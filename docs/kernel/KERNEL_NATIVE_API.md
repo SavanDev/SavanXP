@@ -58,6 +58,7 @@ object/process factoring, not before.
 - Slice 14: handles, devices and the clock for services.
 - Slice 15: ports, handle passing, POSIX on the native floor.
 - Slice 16: `SXN_SYS_TERMINATE`, a parent ending its child.
+- Slice 17: `SXN_SYS_WAIT_MANY`, and streams as wait targets.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -234,6 +235,28 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 17: waiting on several handles, streams included
+
+- `SXN_SYS_WAIT_MANY` (`0x101d`): rdi = `int32_t` handles, rsi = count (1..16),
+  rdx = timeout. Wait-any: returns the index of the first handle signaled, or
+  `-ETIMEDOUT`. The same `begin_object_wait` core as POSIX `wait_many`.
+- **Streams are wait targets** (`sx::is_wait_target`), for WAIT_ONE, WAIT_MANY
+  and POSIX `wait_one`/`wait_many` alike: a pipe, device or socket opened for
+  reading is signaled while a read would not block -- data, or end of stream.
+  Level-triggered: waiting consumes nothing, reading does. A write end is
+  `-EINVAL`.
+- A stream has no signal of its own to wake a parked wait. The kernel's
+  recheck of parked processes, already run on every pipe write, every object
+  signal and every tick, now completes object waits too -- the path the POSIX
+  `poll` already took. So a pipe write wakes the waiter at once; a device
+  (keyboard, mouse) within a tick.
+
+This is what a service needs to run its loop on the native API: `windowd`
+waits on the keyboard, the mouse, the session's submit event, its port and
+the connections that still owe their hello. `nativetest` covers the index,
+timeouts, a readable and an ended pipe, the level-triggered rule, the
+refusals, and a parked wait woken by another process's write.
 
 ## Slice 16: ending a child
 

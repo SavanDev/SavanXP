@@ -132,6 +132,11 @@ static inline long sxn_pipe_receive_handle(long pipe_read) {
     return sxn_trap(SXN_SYS_PIPE_RECEIVE_HANDLE, (unsigned long)pipe_read, 0, 0);
 }
 
+/* Waits for any of `count` handles; returns the index of the one signaled. */
+static inline long sxn_wait_many(const int32_t* handles, unsigned long count, long timeout_ms) {
+    return sxn_trap(SXN_SYS_WAIT_MANY, (unsigned long)handles, count, (unsigned long)timeout_ms);
+}
+
 /* Ends a child; its waitpid reports `status`. */
 static inline long sxn_terminate(long pid, int status) {
     return sxn_trap(SXN_SYS_TERMINATE, (unsigned long)pid, (unsigned long)(long)status, 0);

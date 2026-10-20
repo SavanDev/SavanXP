@@ -6,6 +6,7 @@
 #include "kernel/object.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
+#include "kernel/process_detail.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
@@ -174,6 +175,36 @@ bool is_waitable(const object::Header* handle_object) {
     return handle_object != nullptr && handle_object->waitable;
 }
 
+namespace {
+
+// A stream a read would not block on: data, or the other end gone.
+bool stream_ready(const object::Header* handle_object) {
+    const object::IoObject* file = object::as_io(handle_object);
+    if (file == nullptr) {
+        return false;
+    }
+    const short revents = process::detail::poll_open_file(file, SAVANXP_POLLIN);
+    return (revents & (SAVANXP_POLLIN | SAVANXP_POLLHUP)) != 0;
+}
+
+bool target_ready(const object::Header* handle_object) {
+    return is_waitable(handle_object) ? object::can_satisfy_wait(handle_object) : stream_ready(handle_object);
+}
+
+bool acquire_target(object::Header* handle_object) {
+    return is_waitable(handle_object) ? object::try_acquire_wait(handle_object) : stream_ready(handle_object);
+}
+
+} // namespace
+
+bool is_wait_target(const object::Header* handle_object) {
+    if (is_waitable(handle_object)) {
+        return true;
+    }
+    const object::IoObject* file = object::as_io(handle_object);
+    return file != nullptr && (file->open_flags & process::open_read) != 0;
+}
+
 bool can_complete_object_wait(const process::Process& proc) {
     if (proc.wait_reason != process::WaitReason::object || proc.wait_handle_count == 0) {
         return false;
@@ -181,7 +212,7 @@ bool can_complete_object_wait(const process::Process& proc) {
 
     if (proc.wait_all != 0) {
         for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-            if (!object::can_satisfy_wait(proc.waited_objects[index])) {
+            if (!target_ready(proc.waited_objects[index])) {
                 return false;
             }
         }
@@ -189,7 +220,7 @@ bool can_complete_object_wait(const process::Process& proc) {
     }
 
     for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-        if (object::can_satisfy_wait(proc.waited_objects[index])) {
+        if (target_ready(proc.waited_objects[index])) {
             return true;
         }
     }
@@ -203,7 +234,7 @@ int consume_object_wait(process::Process& proc) {
 
     if (proc.wait_all != 0) {
         for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-            if (!object::try_acquire_wait(proc.waited_objects[index])) {
+            if (!acquire_target(proc.waited_objects[index])) {
                 return negative_error(SX_EINVAL);
             }
         }
@@ -211,7 +242,7 @@ int consume_object_wait(process::Process& proc) {
     }
 
     for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-        if (object::try_acquire_wait(proc.waited_objects[index])) {
+        if (acquire_target(proc.waited_objects[index])) {
             return static_cast<int>(index);
         }
     }

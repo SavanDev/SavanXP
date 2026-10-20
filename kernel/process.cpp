@@ -858,6 +858,16 @@ void recheck_parked_processes(uint64_t current_tick, bool honour_deadline) {
         if (proc.state != process::State::blocked_wait) {
             continue;
         }
+        // An object wait that names a stream has no signal to wake it: the
+        // stream becoming readable is noticed here, where pipe writes, object
+        // signals and the tick already come to look.
+        if (proc.wait_reason == process::WaitReason::object && sx::can_complete_object_wait(proc)) {
+            const int result = sx::consume_object_wait(proc);
+            if (result >= 0) {
+                process::detail::complete_blocked_wait(proc, result);
+                continue;
+            }
+        }
         subsystem::recheck_parked_process(proc, current_tick, honour_deadline);
     }
 }
@@ -2010,7 +2020,7 @@ int wait_on_handle(process::Process& proc, uint64_t fd, int64_t timeout_ms) {
     if (handle_object == nullptr) {
         return negative_error(SX_EBADF);
     }
-    if (!sx::is_waitable(handle_object)) {
+    if (!sx::is_wait_target(handle_object)) {
         return negative_error(SX_EINVAL);
     }
 

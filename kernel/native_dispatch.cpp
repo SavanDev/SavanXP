@@ -261,6 +261,32 @@ int native_port_connect(Process& proc, uint64_t user_name, uint64_t user_handles
     return 0;
 }
 
+// The handles of a WAIT_MANY: objects as WAIT_ONE takes them, or streams opened
+// for reading (sx::is_wait_target); the wait is the same core as POSIX
+// wait_many. Fills `handles` and returns the count, or -errno.
+int native_wait_targets(Process& proc, uint64_t user_handles, uint64_t count, object::Header** handles) {
+    if (count == 0 || count > kMaxWaitHandles) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    int32_t raw[kMaxWaitHandles] = {};
+    if (!sx::copy_from_user(raw, user_handles, static_cast<size_t>(count) * sizeof(int32_t))) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    for (size_t index = 0; index < count; ++index) {
+        if (raw[index] < 0) {
+            return sx::negative_error(SX_EBADF);
+        }
+        handles[index] = detail::lookup_handle(proc, static_cast<uint64_t>(raw[index]), object::access_synchronize);
+        if (handles[index] == nullptr) {
+            return sx::negative_error(SX_EBADF);
+        }
+        if (!sx::is_wait_target(handles[index])) {
+            return sx::negative_error(SX_EINVAL);
+        }
+    }
+    return static_cast<int>(count);
+}
+
 // Ends a child of the caller. Children only: having created the process is
 // the right to end it (NT asks for a handle with terminate access; there are no
 // process handles yet). terminate_process already ignores a zombie, so a child
@@ -391,6 +417,7 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_EVENT_SET:
         case SXN_SYS_EVENT_RESET:
         case SXN_SYS_WAIT_ONE:
+        case SXN_SYS_WAIT_MANY:
         case SXN_SYS_SECTION_CREATE:
         case SXN_SYS_MAP_VIEW:
         case SXN_SYS_UNMAP_VIEW:
@@ -527,6 +554,21 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_WAIT_ONE: {
             const int result = wait_on_handle(*caller, context->rdi, static_cast<int64_t>(context->rsi));
+            if (result == kBlockedResult) {
+                return choose_next_context(context);
+            }
+            context->rax = static_cast<uint64_t>(result);
+            return context;
+        }
+        case SXN_SYS_WAIT_MANY: {
+            object::Header* handles[kMaxWaitHandles] = {};
+            const int checked = native_wait_targets(*caller, context->rdi, context->rsi, handles);
+            if (checked < 0) {
+                context->rax = static_cast<uint64_t>(checked);
+                return context;
+            }
+            const int result = detail::begin_object_wait(*caller, handles, static_cast<size_t>(checked), false,
+                static_cast<int64_t>(context->rdx));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }

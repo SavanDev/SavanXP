@@ -405,7 +405,7 @@ services need:
 | Need | Used by | Today |
 |---|---|---|
 | Connectable named port (accept, connect, message, handle transfer) | everyone | done (slice 15); the WM protocol v5 connects through it |
-| Wait on several objects at once | `windowd`, `compositord` | only `SXN_SYS_WAIT_ONE` |
+| Wait on several objects at once | `windowd`, `compositord` | done (slice 17), streams included |
 | Open a device and send it control requests (`gpu0`, `input0`, `mouse0`) | `compositord`, `windowd` | done (slice 14) |
 | Close and duplicate a handle | everyone | done (slice 14) |
 | Monotonic clock | `compositord`, `windowd` (frame stats) | done (slice 14) |
@@ -468,7 +468,8 @@ Depends on the hotkeys of phase 1.
    duplicate, pipe and device read/write, device open and control, the clock
    (`docs/kernel/KERNEL_NATIVE_API.md`, slice 14). The port and POSIX access
    to the native object calls followed (slice 15), then a parent ending its
-   child (slice 16). Still to do: multi-object wait.
+   child (slice 16) and waiting on several handles, streams included
+   (slice 17). Still to do: querying a process (for `windowd`).
 2. **Runtime:** the native C runtime, the in-tree native CMake target, SXGFX
    and SXCHROME built for native.
 3. **`compositord` native.** The pilot: about 600 lines, no files, only the

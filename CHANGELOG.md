@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **`SXN_SYS_WAIT_MANY`, and pipes and devices can be waited on.** A native process waits for
+  any of up to 16 handles (`sxn_wait_many`); a stream opened for reading counts as signaled while
+  a read would not block, for native and POSIX waits alike. See `docs/kernel/KERNEL_NATIVE_API.md`.
+
 - **`sessiond`, the session manager.** A native process `init` now starts instead of `windowd`: it
   starts `windowd`, then the desktop and Program Manager, restarts the desktop, and restarts the
   whole session when `windowd` dies; `session-smoke` kills both and checks they come back. See
