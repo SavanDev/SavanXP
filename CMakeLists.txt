@@ -241,6 +241,7 @@ elseif(SAVANXP_ARCH STREQUAL "i386")
         arch/x86/interrupts32.S
         arch/x86/serial.cpp
         arch/x86/egatext.cpp
+        arch/x86/pit.cpp
         arch/x86/paging.cpp
         arch/x86/cpu.cpp
         arch/x86/syscall.cpp

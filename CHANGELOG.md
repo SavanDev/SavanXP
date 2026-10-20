@@ -44,6 +44,10 @@ Cut-off notes:
   (launched on `EXIT` after `sysinfo`) echoes them, and `serial::` mirrors to the
   80x25 console at `0xB8000`; `--expect-key` now asserts all of it.
 
+- **The i386 kernel has a timer: PIT channel 0 at 100 Hz on IRQ0.** `system_info`
+  reports `backend: pit`, `frequency_hz: 100` and `uptime_ms`, the exit line carries
+  the uptime, and `tools/legacy_boot_test.py` asserts the boot token and those fields.
+
 ### Changed
 
 - **The `legacy` branch identifies the system as the Legacy Edition.** `SAVANXP_EDITION`

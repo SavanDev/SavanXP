@@ -6,6 +6,7 @@
 #include "cpu.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/string.hpp"
+#include "pit.hpp"
 #include "ps2_32.hpp"
 #include "savanxp/syscall.h"
 #include "serial.hpp"
@@ -127,7 +128,9 @@ void handle(SyscallFrame& frame) {
             info.memory_usable_bytes = boot.memory_usable_bytes;
             info.memory_reclaimable_bytes = boot.memory_reclaimable_bytes;
             info.memory_total_pages = boot.memory_usable_bytes / 4096ull;
-            info.timer_backend = SAVANXP_TIMER_NONE;
+            info.timer_backend = SAVANXP_TIMER_PIT;
+            info.timer_frequency_hz = pit::kFrequencyHz;
+            info.uptime_ms = pit::uptime_ms();
             info.sxfs_file_count = static_cast<uint32_t>(sxfs::file_count(volume));
             info.sxfs_total_bytes = sxfs::total_bytes(volume);
             info.sxfs_used_bytes = sxfs::used_bytes(volume);
@@ -147,7 +150,12 @@ void handle(SyscallFrame& frame) {
         case kSysExit: {
             serial::write("i386: proceso salio con codigo ");
             serial::write_dec(frame.edi);
-            serial::write("\n");
+            /* El uptime en la misma linea: es la prueba mas directa de que el
+             * PIT corre (sysinfo sale con IF=1 desde ring 3, asi que ya hay
+             * ticks; el token del test no lo exige, solo lo deja a la vista). */
+            serial::write(", uptime ");
+            serial::write_dec(static_cast<uint32_t>(pit::uptime_ms()));
+            serial::write(" ms\n");
             /* Sin planificador: tras el primer programa el kernel lanza
              * keyecho (una sola vez) para que la entrega de teclas por READ
              * tenga un consumidor en el volumen, y si no hay mas programas

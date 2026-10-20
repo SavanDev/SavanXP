@@ -157,7 +157,7 @@ from the MADT instead of Limine's `goto_address`), and paging itself (bootstrapp
 | Package | Size | Notes |
 | --- | --- | --- |
 | Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | **Landed.** `SAVANXP_ARCH` (`x86_64` default, `i386`) picks the triple, the flags of each compile profile, the kernel script (`linker.ld`/`linker32.ld`) and the link emulation; [`tools/arch-env.sh`](../tools/arch-env.sh) carries the same mapping to the scripts outside CMake |
-| `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`). **Started:** the Multiboot2 entry, the flat GDT and the COM1 console exist in [`arch/x86`](../arch/x86) |
+| `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`). **Landed:** Multiboot2 entry, flat GDT/TSS, IDT with exceptions and IRQs, PIC+PIT, PS/2, COM1 and the EGA text console, ATA/SxFS mount, ELF32 ring 3 and syscalls live in [`arch/x86`](../arch/x86); `fxsave` context and the AP trampolines are not there yet |
 | Paging bootstrap and a 1 GiB direct map, no NX | L | **Landed.** The bootstrap maps the first 1 GiB identity with 4 MiB PSE pages and reports over serial; `EFER` does not exist in 32-bit mode |
 | VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |
 | `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](../arch/x86_64/context.S), [`elf.cpp:163-263`](../kernel/elf.cpp) |
@@ -220,6 +220,14 @@ launched by `EXIT` after `sysinfo` leaves — echoes each event back over serial
 `serial::` mirrors every kernel and program write to the text console the
 bootloader reported (80x25 type 2 at `0xB8000`, `consola: texto EGA` on boot),
 which is the console half of the step.
+
+The timer followed: `arch/x86/pit.cpp` programs PIT channel 0 as a 100 Hz square
+wave and takes IRQ0, so `system_info` answers `backend: pit`, `frequency_hz: 100`
+and a real `uptime_ms`, and the exit line prints the uptime beside the exit code.
+The boot runs with `IF=0` and the PIC holds one pending IRQ rather than a queue,
+so ticks are only counted from the first delivery: `uptime_ms` measures ring 3 and
+idle time, not the boot itself (counting the boot would mean polling the channel 0
+counter on every bootstrap pass).
 
 The landed packages are exercised with:
 

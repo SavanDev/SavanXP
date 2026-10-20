@@ -25,6 +25,9 @@ USER_LOADED_TOKEN = "user: /disk/bin/sysinfo cargado"
 USER_OUTPUT_TOKEN = "sxfs_files:"
 USER_EXIT_TOKEN = "proceso salio con codigo 0"
 PS2_TOKEN = "ps2: teclado listo"
+# El PIT se programa en cada arranque (sin disco ni programa de por medio),
+# asi que su token se exige junto al de la paginacion.
+PIT_TOKEN = "pit: canal 0 a 100 Hz"
 # Consola de texto sobre el framebuffer EGA y el segundo programa (el que lee
 # eventos por la syscall READ): solo se exigen con --expect-key, que es el
 # escenario donde importan.
@@ -131,6 +134,8 @@ def run_boot(
             if SUCCESS_TOKEN in text:
                 if PAGING_TOKEN not in text:
                     raise RuntimeError(f"booted without enabling paging: {PAGING_TOKEN!r} missing")
+                if PIT_TOKEN not in text:
+                    raise RuntimeError(f"booted without the timer: {PIT_TOKEN!r} missing")
                 if keys and not typed:
                     # El teclado solo se consulta cuando el kernel lo ha
                     # iniciado; el token lo dice, asi que no hay que adivinar un
@@ -224,8 +229,10 @@ def main() -> int:
         if args.expect_user:
             # El programa del MVP imprime su informe y sale; el kernel informa
             # de la salida. Las dos cosas son el anillo 3 entero: cargar la
-            # imagen, entrar, llamar al sistema y volver por EXIT.
-            require += (USER_LOADED_TOKEN, USER_OUTPUT_TOKEN, USER_EXIT_TOKEN)
+            # imagen, entrar, llamar al sistema y volver por EXIT. Los campos
+            # de timer prueban que system_info responde con el PIT real.
+            require += (USER_LOADED_TOKEN, USER_OUTPUT_TOKEN, USER_EXIT_TOKEN,
+                        "backend: pit", "frequency_hz: 100")
             detail = " (userland program ran)"
         keys: tuple[tuple[str, int], ...] = ()
         qmp_socket: Path | None = None
