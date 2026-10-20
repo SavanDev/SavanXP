@@ -4,7 +4,8 @@
 > `desktop` process, window roles, hotkeys, the Task List removed); phase 3 is
 > nearly done (`compositord`, `windowd` and the session manager `sessiond` are native,
 > clients connect to `windowd`'s port and whoever launches a program spawns
-> it); phase 4 is not. It is the target for the graphics stack and the order for
+> it); phase 4 is designed ([Composition in compositord](#composition-in-compositord))
+> and under way. It is the target for the graphics stack and the order for
 > getting there.
 > Where it disagrees with the "Target layering" of
 > [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md), this document wins; WM_SUBSYSTEM.md
@@ -202,8 +203,10 @@ does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
 it dies. They are joined by a private port `windowd` creates and names on
 `compositord`'s command line (`compositor_protocol.h` v3): nothing is
 inherited, which is what lets a native `windowd` start it. Phase 4 gives
-`compositord` a public port of its own -- clients submit to it directly -- and
-that is when `sessiond` starts it, before `windowd`.
+`compositord` a public port of its own, which `windowd` connects to, and that
+is when `sessiond` starts it, before `windowd`
+([Lifetime](#lifetime-a-session-service)). Clients never connect to it: their
+frames reach it through the submit event `windowd` hands them.
 
 ### Who is the shell: decided by parentage
 
@@ -460,6 +463,123 @@ that keeps `desktop` and `progman` on POSIX for now. For the services
 that is the point of the design: once launching and `.sxe` reading leave
 `windowd`, neither service opens a file.
 
+## Composition in compositord
+
+The design for phase 4. Today `windowd` composes everything into the display
+section and `compositord` forwards each present to the GPU over a synchronous
+RPC (`blk_us`, `ipc_us` in [GRAPHICS_PERF.md](./GRAPHICS_PERF.md)). After it,
+`compositord` composes and presents without asking anyone, and `windowd`
+tells it what the scene is.
+
+### Lifetime: a session service
+
+`sessiond` starts `compositord`, waits for its port `compositord` the way it
+waits for `windowd`'s, and only then starts `windowd`. `compositord` allocates
+the display memory (sized for the largest mode, as today) and picks the mode.
+
+- **One window manager, granted by parentage.** A connection becomes the WM
+  when its INIT arrives, and only from a process whose parent is
+  `compositord`'s parent (the session's `windowd`) or that is `compositord`'s
+  parent itself (a `windowd` that started its own, below). A connection that
+  hangs up before INIT -- `sessiond`'s readiness probe -- is dropped; once a WM
+  holds the session, any other connection is refused.
+- **No reconnection.** The scene is `windowd`'s state and the client surfaces
+  are mapped in both processes; rebuilding it in a new `compositord` would need
+  `windowd` to keep every section handle, against its descriptor budget. So
+  `compositord` exits when its WM hangs up, `windowd` exits when `compositord`
+  goes away, and `sessiond` restarts the whole session, as it already does when
+  `windowd` dies. `windowd`'s respawn-and-repaint path is deleted.
+- **Test modes start their own.** `windowd --selftest`, `--cursor-repro` and
+  `--hw-native-test` run without a session: they spawn `/bin/compositord` with a
+  private port name (`SAVANXP_COMPOSITOR_PORT_PREFIX` plus the pid) as
+  `argv[1]`, which `compositord` creates instead of `compositord`. In
+  production `windowd` never starts one: no port is a failure.
+
+### The scene
+
+What `compositord` composes, back to front, is a list of **layers**. A layer
+shows a rectangle of a **surface** at a rectangle of the screen:
+
+- `surface`: a client surface `windowd` attached, or surface 1, `windowd`'s
+  own (below).
+- `src` and `dst` rectangles. Different sizes mean a scaled layer (composited
+  fullscreen when the mode cannot change).
+- `opaque`: an occluder for the layers behind it, as in `windowd_render.c`.
+- `gate`: a surface that must have published a frame before the layer is
+  drawn. A window is not drawn before its first frame (its geometry may still
+  change through the size hint); gating its frame and its client area on its
+  own surface keeps that rule without `windowd` having to know when the frame
+  arrives.
+
+**Client surfaces** are created by `windowd`, as today, which then *attaches*
+them: it queues the section and the client's wake event on its pipe to
+`compositord` with the geometry it decided (section size, pixel offset, pitch,
+capacity). `compositord` maps the section and keeps the wake event; it never
+takes geometry from the header, which the client can write. Detaching unmaps
+and closes them.
+
+**`windowd`'s surface** is one section the size of the largest mode. `windowd`
+paints into it everything it draws: the frames (caption, borders, buttons,
+painted in stacking order, so where two frames overlap the upper one wins,
+which is the only one any layer shows there), the Alt+Tab switcher and the
+fallback background. A window is two layers: its frame (the frame rectangle
+of this surface; the interior is covered by the client layer above it) and its
+client area. The surface is **staged**: at each commit `compositord` copies
+the damaged part into a private copy, and composes from that copy. `windowd`
+may draw again as soon as the commit returns, and a composition triggered by a
+client frame never reads a frame half repainted.
+
+**A commit** is how `windowd` changes anything: it writes the layer list, the
+cursor (position, shape, visible) and the damage it caused (geometry changes,
+its own repaints) into a scene section shared with `compositord`, and sends
+COMMIT. `compositord` copies it, stages the damaged part of `windowd`'s
+surface, composes and presents, then replies. It is synchronous on purpose: it
+is what makes the staging safe, and it is what the selftests rely on to sample
+the composed result. It is not on the frame path of any application.
+
+**The cursor** is `compositord`'s entirely: the hardware plane when the GPU has
+one, a software layer above everything otherwise, and the cursor images
+(`cursor_asset.h`). `windowd` only says where and which shape.
+
+The **display section** is shared read-only with `windowd`, for the selftests
+that sample composed pixels. The mode is still `windowd`'s to ask for (F11);
+the reply carries the geometry that resulted.
+
+### Frames
+
+A client publishes a frame exactly as in WM protocol v5 (batches in its
+section, then the submit event). The submit event in the welcome is
+`compositord`'s, which validates the batch (the checks `windowd` does today),
+damages it through the layers that show that surface, composes, and signals
+`composed_sequence` and `retired_sequence` on the client's wake event. A surface
+with no layer (minimized) or whose layer is gated is still consumed and marked
+composed, so its client never stalls.
+
+`windowd` stops being woken by frames. Requests in the header (cursor shape,
+size hint, owned windows, presentation) need their own wake-up, so a client
+that says so in its hello (`SAVANXP_WM_HELLO_REQUEST_EVENT`) gets one more
+handle after the others: `windowd`'s request event, which its runtime sets
+after a request instead of the submit event. That is a fifth handle on the
+event pipe, whose handle queue holds four (`kPipeHandleQueueCapacity`); it grows
+to eight. The wire stays v5: a client built before has its requests seen on
+`windowd`'s next tick (16 ms). `windowd` reads
+only the requests from the header, and the first submit for its "starting"
+cursor.
+
+### Costs
+
+- **Descriptors.** `compositord`: one wake event per attached surface, besides
+  the port, its WM's two pipes, the GPU, the present event and the frame
+  event. `windowd`: one request event for the whole session; the display
+  section stays mapped and closed. Re-measured in step 4 against the
+  64-handle table.
+- **Memory.** `windowd`'s surface and `compositord`'s staged copy are one
+  largest-mode buffer each; `windowd` no longer composes into the display, so
+  it holds no other.
+- **Statistics.** `compositord` reports `compositord-stats` on `/dev/serial`,
+  with the compose and present fields of today's `windowd-stats`; the
+  `sync_us`/`ipc_us` round trip it replaces has no equivalent.
+
 ## Phases
 
 Each phase leaves a working desktop. The smoke and visual scenarios
@@ -551,11 +671,33 @@ Depends on the hotkeys of phase 1.
 
 ### Phase 4: composition moves into `compositord`
 
-The scene protocol, client surfaces mapped by `compositord`, submit and retire
-against `compositord` directly, the cursor entirely in `compositord`, frames as
-`windowd`-owned surfaces. Last because it is the largest change and the one the
-work in [GRAPHICS_PERF.md](./GRAPHICS_PERF.md) is most sensitive to: measure
-`blk_us`, `ipc_us` and damage before and after.
+Designed in [Composition in compositord](#composition-in-compositord). Last
+because it is the largest change and the one the work in
+[GRAPHICS_PERF.md](./GRAPHICS_PERF.md) is most sensitive to: `blk_us`,
+`ipc_us` and damage are measured before and after. Before, with
+`tools/shoot.sh --scenario spin --accel kvm` (2026-10-20):
+
+| backend | fps | `compose_us` | `blk_us` | `ipc_us` | `gpu_us` | `damage_px` |
+|---|---|---|---|---|---|---|
+| `virtio-gpu` (`--virtio`) | ~61 (paced) | 135 | 360 | 225 | 47 | 9984 |
+| `fb_gpu` | ~3850 | 56 | 183 | 112 | 51 | 9984 |
+
+1. **`compositord` is a session service.** `sessiond` starts it first; it
+   allocates the display memory and opens the port `compositord`; `windowd`
+   connects to it. `windowd` no longer spawns, supervises or respawns it
+   (except in its own test modes), and either of the two ending ends the
+   session. `windowd` still composes, into the display section it now
+   receives.
+2. **The scene protocol.** `compositord` maps the client surfaces and
+   composes; `windowd` draws only its own surface (frames, the Alt+Tab
+   switcher, the fallback background) and commits the scene. The cursor
+   moves entirely into `compositord`. Client frames still pass through
+   `windowd`, which forwards their damage with the commit.
+3. **Frames go straight to `compositord`.** The welcome's submit event becomes
+   `compositord`'s; requests get their own event; `compositord` validates the
+   batches, signals composed and retired, and reports the frame statistics.
+4. **Measure and close:** the table above again, the descriptor budget in
+   [WM_SUBSYSTEM.md](./WM_SUBSYSTEM.md#descriptor-budget), GRAPHICS_PERF.md.
 
 ### Later, not required
 
