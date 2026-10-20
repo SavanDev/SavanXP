@@ -117,6 +117,11 @@ Cut-off notes:
 
 ### Changed
 
+- **`compositord` is a session service.** `sessiond` starts it before `windowd`; it allocates the
+  display memory and opens the port `compositord`, which `windowd` connects to
+  (`compositor_protocol.h` v4). Either one ending restarts the whole session; `windowd` no longer
+  respawns `compositord`. See `docs/desktop/DESKTOP_ARCHITECTURE.md`, phase 4.
+
 - **`windowd` is a native process.** It speaks only the SXN API: `windowd_sys.h` maps the POSIX
   calls of its sources onto it (`windowd_sys.c`), text goes to `/dev/serial`. See
   `docs/desktop/DESKTOP_ARCHITECTURE.md`, phase 3.

@@ -4,32 +4,38 @@
 #include "savanxp/syscall.h"
 
 /*
- * SavanXP compositor control protocol.
+ * SavanXP compositor control protocol (docs/desktop/DESKTOP_ARCHITECTURE.md#
+ * composition-in-compositord).
  *
- * Transport (v3): a port the client creates for this one compositord and
- * names on its command line (argv[1]; the client uses
- * SAVANXP_COMPOSITOR_PORT_PREFIX plus its pid). compositord connects to it,
- * so it reads requests from the reply end the port gives it and writes
- * replies on the request end -- the client is the service of the rendezvous,
- * compositord the one that answers. Before the INIT request the client queues
- * the shared display section on its pipe as a handle; compositord takes it
- * when it handles INIT. Nothing is inherited, so it needs neither fork nor
- * fixed descriptors -- what lets a native windowd start it.
+ * Transport (v4): compositord is a session service. sessiond starts it before
+ * windowd; it allocates the display memory, picks the mode and creates the
+ * port SAVANXP_COMPOSITOR_PORT_NAME -- or the name in its argv[1], when a
+ * windowd in a test mode starts its own (SAVANXP_COMPOSITOR_PORT_PREFIX plus
+ * that windowd's pid). The window manager connects to it, writes requests on
+ * the first pipe sxn_port_connect gives and reads replies on the second.
+ *
+ * One window manager per compositord. A connection becomes the WM with its
+ * INIT, and only from a process whose parent is compositord's parent or that
+ * is compositord's parent; a connection that hangs up before INIT (a readiness
+ * probe) is dropped. The INIT reply follows the display section, queued as a
+ * handle on the reply pipe. compositord exits when its WM hangs up: there is
+ * no reconnection, the session is restarted instead.
  */
 
 #define SAVANXP_COMPOSITOR_PROTOCOL_MAGIC 0x5358434fu /* SXCO */
-/* v2 agrego savanxp_compositor_service_timing a la reply. Windowd y
- * compositord se construyen siempre juntos, asi que un desajuste de tamano no
- * puede pasar en la practica; la version igual sube porque el header promete
- * formato fijo y versionado, y asi un desajuste falla limpio en vez de
- * desincronizar el pipe. */
-/* v3: a port instead of inherited descriptors 3, 4 and 5. */
-#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 3u
+/* v2 added savanxp_compositor_service_timing to the reply. v3: a port instead
+ * of inherited descriptors 3, 4 and 5. v4: the port is compositord's, and so
+ * is the display memory. */
+#define SAVANXP_COMPOSITOR_PROTOCOL_VERSION 4u
 
+#define SAVANXP_COMPOSITOR_PORT_NAME "compositord"
 #define SAVANXP_COMPOSITOR_PORT_PREFIX "wd-compositor-"
 
 enum savanxp_compositor_message_type
 {
+    /* Makes the connection the WM. The reply carries the mode compositord set
+     * at startup (the native one) and the GPU's info; the display section is
+     * queued on the reply pipe before it. */
     SAVANXP_COMPOSITOR_MSG_INIT = 1,
     SAVANXP_COMPOSITOR_MSG_PRESENT = 2,
     SAVANXP_COMPOSITOR_MSG_SYNC_PRESENT = 3,
@@ -38,12 +44,12 @@ enum savanxp_compositor_message_type
     SAVANXP_COMPOSITOR_MSG_MOVE_CURSOR = 6,
     SAVANXP_COMPOSITOR_MSG_SHUTDOWN = 7,
     SAVANXP_COMPOSITOR_MSG_SET_CURSOR_SHAPE = 8,
-    /* Reprograma el modo de video y reimporta la seccion de display con la
-     * geometria nueva. fb_info de la request lleva el modo pedido; el de la
-     * reply, el que quedo -- que puede diferir, porque el pitch lo decide el
-     * dispositivo. La seccion no se reasigna: se dimensiona para el modo mas
-     * grande (el nativo), asi que un modo menor entra sin tocar el mapeo y el
-     * puntero al backbuffer del shell sigue siendo valido. */
+    /* Programs a video mode and re-imports the display section with it.
+     * fb_info in the request is the mode asked for; in the reply, the mode
+     * that resulted, which may differ (the device decides the pitch). The
+     * section is not reallocated: it is sized for the largest mode, so a
+     * smaller one fits and every mapping stays valid. A mode that would not
+     * fit is refused and the previous one kept. */
     SAVANXP_COMPOSITOR_MSG_SET_MODE = 9,
 };
 

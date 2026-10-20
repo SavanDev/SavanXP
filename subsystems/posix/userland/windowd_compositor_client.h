@@ -8,10 +8,8 @@ struct windowd_compositor_connection
     long pid;
     int request_fd;
     int reply_fd;
-    int display_section_fd;
-    /* The private port compositord connects to (compositor_protocol.h), kept
-     * across reconnects; -1 until the first spawn. */
-    int port_fd;
+    /* The private port of a compositord windowd started itself, in its test
+     * modes (compositor_protocol.h); pid is that child, -1 in the session. */
     char port_name[32];
     void *display_view;
     uint32_t *framebuffer;
@@ -35,14 +33,12 @@ struct windowd_compositor_connection
 };
 
 void windowd_compositor_connection_init(struct windowd_compositor_connection *connection);
-int windowd_compositor_open(struct windowd_compositor_connection *connection);
-/* Returns non-zero while the daemon link is live. After a present/sync error the
-   caller should consult this to decide between recovery and a hard failure. */
+/* Connects to the session's compositord, or to one it starts itself when
+   `own_daemon` (the test modes, which run without a session). */
+int windowd_compositor_open(struct windowd_compositor_connection *connection, int own_daemon);
+/* Returns non-zero while the daemon link is live. There is no reconnection:
+   without compositord the session is over (sessiond restarts it). */
 int windowd_compositor_connected(const struct windowd_compositor_connection *connection);
-/* Respawn compositord after it died mid-session, reusing the existing display
-   section so the shell's backbuffer pointer stays valid, then repaint the whole
-   surface and restore the hardware cursor. Returns 0 on success. */
-int windowd_compositor_reconnect(struct windowd_compositor_connection *connection);
 void windowd_compositor_close(struct windowd_compositor_connection *connection);
 int windowd_compositor_present(
     struct windowd_compositor_connection *connection,
@@ -55,10 +51,10 @@ int windowd_compositor_sync_present(
 int windowd_compositor_get_timeline(
     struct windowd_compositor_connection *connection,
     struct savanxp_gpu_present_timeline *timeline);
-/* Reprograma el modo de video y reimporta la seccion de display contra el.
-   El backbuffer del shell no se mueve: la seccion se dimensiona para el modo
-   mas grande. Al volver con 0, connection->display_info trae la geometria que
-   quedo -- puede no ser la pedida. */
+/* Programs a video mode; compositord re-imports the display section with it.
+   The mapping does not move: the section is sized for the largest mode. On 0,
+   connection->display_info holds the geometry that resulted, which may not be
+   the one asked for. */
 int windowd_compositor_set_mode(
     struct windowd_compositor_connection *connection,
     uint32_t width,

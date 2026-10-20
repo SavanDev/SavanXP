@@ -43,5 +43,4 @@
 #define savanxp_open_mode wd_open_mode
 #define spawn wd_spawn
 #define savanxp_close wd_close
-#define system_info wd_system_info
 #define main windowd_main

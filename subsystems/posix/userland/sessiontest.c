@@ -5,10 +5,11 @@
  * (docs/desktop/DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond).
  *
  * Starts /bin/sessiond and watches its children through the process table:
- * windowd, the desktop and Program Manager come up; the desktop stays up,
- * which it only does if windowd granted it the shell role (gfx_open_shell
- * fails otherwise and it exits); killed, the desktop comes back; killed,
- * windowd takes the session with it and the whole session comes back.
+ * compositord, windowd, the desktop and Program Manager come up; the desktop
+ * stays up, which it only does if windowd granted it the shell role
+ * (gfx_open_shell fails otherwise and it exits); killed, the desktop comes
+ * back; killed, windowd takes the session with it and the whole session comes
+ * back; and so does compositord.
  */
 
 #define SESSIONTEST_START_MS 60000ul
@@ -98,6 +99,7 @@ int main(void)
 {
     const char *argv[] = {"/bin/sessiond", 0};
     long sessiond = spawn("/bin/sessiond", argv, 1);
+    long compositord = 0;
     long windowd = 0;
     long desktop = 0;
     long progman = 0;
@@ -110,10 +112,11 @@ int main(void)
         return 1;
     }
 
+    compositord = wait_child(sessiond, "compositord", 0);
     windowd = wait_child(sessiond, "windowd", 0);
     desktop = wait_child(sessiond, "desktop", 0);
     progman = wait_child(sessiond, "progman", 0);
-    if (windowd <= 0 || desktop <= 0 || progman <= 0)
+    if (compositord <= 0 || windowd <= 0 || desktop <= 0 || progman <= 0)
     {
         fail("the session did not come up");
         return 1;
@@ -168,6 +171,35 @@ int main(void)
     progman = next;
     printf("SESSION SMOKE session restarted windowd=%ld desktop=%ld progman=%ld\n", windowd, desktop, progman);
 
+    /* compositord dies: windowd cannot go on without it, and the session
+     * starts again with a new pair. */
+    compositord = wait_child(sessiond, "compositord", compositord);
+    (void)savanxp_kill((int)compositord, SAVANXP_SIGKILL);
+    next = wait_child(sessiond, "compositord", compositord);
+    if (next <= 0)
+    {
+        fail("compositord did not come back");
+    }
+    compositord = next;
+    next = wait_child(sessiond, "windowd", windowd);
+    if (next <= 0)
+    {
+        fail("windowd did not come back with compositord");
+    }
+    else if (alive(windowd))
+    {
+        fail("the old windowd outlived its compositord");
+    }
+    windowd = next;
+    next = wait_child(sessiond, "desktop", desktop);
+    if (next <= 0 || !stays_up(next))
+    {
+        fail("the desktop did not come back after compositord");
+    }
+    desktop = next;
+    progman = wait_child(sessiond, "progman", progman);
+    printf("SESSION SMOKE compositord restarted compositord=%ld windowd=%ld\n", compositord, windowd);
+
     /* Done: sessiond first, so nothing is restarted; its children are orphans
      * then, reaped by init. */
     (void)savanxp_kill((int)sessiond, SAVANXP_SIGKILL);
@@ -175,6 +207,7 @@ int main(void)
     (void)savanxp_kill((int)progman, SAVANXP_SIGKILL);
     (void)savanxp_kill((int)desktop, SAVANXP_SIGKILL);
     (void)savanxp_kill((int)windowd, SAVANXP_SIGKILL);
+    (void)savanxp_kill((int)compositord, SAVANXP_SIGKILL);
 
     return g_failures == 0 ? 0 : 1;
 }

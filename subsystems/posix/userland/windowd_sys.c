@@ -290,27 +290,6 @@ long wd_kill(int pid, int signal_number)
     return sxn_terminate(pid, 128 + signal_number);
 }
 
-/* Only the framebuffer geometry, which is all windowd asks for. */
-long wd_system_info(struct savanxp_system_info *info)
-{
-    struct sxn_gfx_info gfx;
-
-    if (info == 0)
-    {
-        return -SAVANXP_EINVAL;
-    }
-    memset(info, 0, sizeof(*info));
-    if (sxn_gfx_info(&gfx) != 0)
-    {
-        return -SAVANXP_ENODEV;
-    }
-    info->framebuffer_ready = 1;
-    info->framebuffer_width = gfx.width;
-    info->framebuffer_height = gfx.height;
-    info->framebuffer_bpp = gfx.bpp;
-    return 0;
-}
-
 /* crt0 would end the process through POSIX EXIT, which a native process does
  * not have. */
 int main(int argc, char **argv)

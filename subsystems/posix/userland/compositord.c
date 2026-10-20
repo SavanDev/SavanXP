@@ -7,12 +7,14 @@
 #include "cursor_asset.h"
 
 /*
- * compositord is a native process (EI_OSABI 0x53, docs/desktop/
- * DESKTOP_ARCHITECTURE.md phase 3): it speaks only SXN. Its channels are the
- * handles windowd hands it (request and reply pipes, the display section), the
- * GPU is a device it opens by name, and every GPU request is the same control
- * code the POSIX side sends through ioctl. Nothing here may call into the
- * POSIX runtime: from a native process those calls are ENOSYS.
+ * compositord is a native process (EI_OSABI 0x53) and a session service
+ * (docs/desktop/DESKTOP_ARCHITECTURE.md#composition-in-compositord): sessiond
+ * starts it before windowd, it takes the GPU and allocates the display memory
+ * at startup, and serves one window manager through its port
+ * (compositor_protocol.h). It speaks only SXN: the GPU is a device it opens by
+ * name, every GPU request is the control code the POSIX side sends through
+ * ioctl. Nothing here may call into the POSIX runtime: from a native process
+ * those calls are ENOSYS.
  */
 
 /* The GPU requests, as native device control. Same codes and structs as the
@@ -54,10 +56,10 @@ struct compositor_state
     struct savanxp_gpu_info gpu_info;
     int initialized;
     int cursor_enabled;
-    /* The pipe requests arrive on, and the display section the client queued
-     * on it before INIT (compositor_protocol.h). -1 until taken. */
-    long request_fd;
+    /* The display memory, allocated at startup for the largest mode, and its
+     * size: a mode whose buffer does not fit is refused. */
     long display_section;
+    uint64_t display_capacity;
 };
 
 static void close_fd_if_needed(int *fd)
@@ -116,7 +118,6 @@ static void compositor_state_init(struct compositor_state *state)
     memset(state, 0, sizeof(*state));
     state->gpu_fd = -1;
     state->present_event_fd = -1;
-    state->request_fd = -1;
     state->display_section = -1;
 }
 
@@ -138,27 +139,27 @@ static void compositor_state_close(struct compositor_state *state)
         close_fd_if_needed(&state->gpu_fd);
     }
     close_fd_if_needed(&state->present_event_fd);
+    if (state->display_section >= 0)
+    {
+        (void)sxn_close(state->display_section);
+        state->display_section = -1;
+    }
     state->initialized = 0;
     state->cursor_enabled = 0;
 }
 
-/* (Re)imports the shared display section as the scanout surface with the
- * geometry in state->display_info. It is always the same section -- the one
- * the client handed over before INIT -- sized for the largest mode, so a
- * smaller mode fits without reallocating anything. */
+/* (Re)imports the display section as the scanout surface with the geometry in
+ * state->display_info. It is always the same section, sized for the largest
+ * mode, so a smaller mode fits without reallocating anything. */
 static int compositor_import_display(struct compositor_state *state)
 {
     struct savanxp_gpu_surface_import import_request;
     long result;
 
-    if (state->display_section < 0)
+    if (state->display_section < 0 ||
+        (uint64_t)state->display_info.buffer_size > state->display_capacity)
     {
-        state->display_section = sxn_pipe_receive_handle(state->request_fd);
-        if (state->display_section < 0)
-        {
-            state->display_section = -1;
-            return -SAVANXP_EINVAL;
-        }
+        return -SAVANXP_EINVAL;
     }
     memset(&import_request, 0, sizeof(import_request));
     import_request.section_handle = (int32_t)state->display_section;
@@ -179,10 +180,10 @@ static int compositor_import_display(struct compositor_state *state)
     return 0;
 }
 
-/* Programa un modo y deja la seccion de display importada contra el. Todo o
- * nada: si falla no queda superficie importada, y el que llama decide si
- * repone el modo anterior. Exige que no haya una superficie viva (SET_MODE
- * rehace el scanout). */
+/* Programs a mode and leaves the display section imported against it. All or
+ * nothing: on failure no surface is left imported, and the caller decides
+ * whether to restore the previous mode. No surface may be live (SET_MODE
+ * rebuilds the scanout). */
 static int compositor_apply_mode(struct compositor_state *state, uint32_t width, uint32_t height)
 {
     struct savanxp_gpu_mode mode;
@@ -264,21 +265,23 @@ static int compositor_set_mode(
     return 0;
 }
 
-static int compositor_init(
-    struct compositor_state *state,
-    const struct savanxp_fb_info *requested_info,
-    struct savanxp_compositor_reply *reply)
+/*
+ * Takes the GPU and the display at startup, before the port exists: a
+ * compositord that cannot drive the display never offers itself to a WM. The
+ * mode is the one the firmware left (the native one); the display section is
+ * sized for it plus slack, as the largest mode this session will use.
+ */
+static int compositor_startup(struct compositor_state *state)
 {
-    struct savanxp_gpu_mode mode;
+    struct sxn_gfx_info boot;
+    uint32_t width = 1024u;
+    uint32_t height = 768u;
     long result;
 
-    if (state == 0 || requested_info == 0 || requested_info->width == 0 || requested_info->height == 0)
+    if (sxn_gfx_info(&boot) == 0 && boot.width != 0 && boot.height != 0)
     {
-        return -SAVANXP_EINVAL;
-    }
-    if (state->initialized)
-    {
-        return 0;
+        width = boot.width;
+        height = boot.height;
     }
 
     state->gpu_fd = (int)gpu_open();
@@ -286,7 +289,6 @@ static int compositor_init(
     {
         return state->gpu_fd;
     }
-
     result = gpu_get_info(state->gpu_fd, &state->gpu_info);
     if (result < 0)
     {
@@ -298,30 +300,11 @@ static int compositor_init(
         return (int)result;
     }
 
-    memset(&mode, 0, sizeof(mode));
-    mode.width = requested_info->width;
-    mode.height = requested_info->height;
-    mode.bpp = 32u;
-    result = gpu_set_mode(state->gpu_fd, &mode);
-    if (result < 0)
+    state->display_capacity = ((uint64_t)width * 4u * height) + (4ull * 1024ull * 1024ull);
+    state->display_section = sxn_section_create(state->display_capacity, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    if (state->display_section < 0)
     {
-        return (int)result;
-    }
-
-    state->display_info.width = mode.width;
-    state->display_info.height = mode.height;
-    state->display_info.pitch = mode.pitch;
-    state->display_info.bpp = mode.bpp;
-    state->display_info.buffer_size = mode.buffer_size;
-
-    result = gpu_get_info(state->gpu_fd, &state->gpu_info);
-    if (result == 0)
-    {
-        state->gpu_info.width = state->display_info.width;
-        state->gpu_info.height = state->display_info.height;
-        state->gpu_info.pitch = state->display_info.pitch;
-        state->gpu_info.bpp = state->display_info.bpp;
-        state->gpu_info.buffer_size = state->display_info.buffer_size;
+        return (int)state->display_section;
     }
 
     state->present_event_fd = (int)gpu_create_present_event(state->gpu_fd);
@@ -330,13 +313,29 @@ static int compositor_init(
         state->present_event_fd = -1;
     }
 
-    result = compositor_import_display(state);
+    result = compositor_apply_mode(state, width, height);
     if (result < 0)
     {
         return (int)result;
     }
-
     state->initialized = 1;
+    return 0;
+}
+
+/* INIT: what compositord set up at startup, and the display section. */
+static int compositor_init(
+    struct compositor_state *state,
+    int reply_fd,
+    struct savanxp_compositor_reply *reply)
+{
+    if (!state->initialized)
+    {
+        return -SAVANXP_ENODEV;
+    }
+    if (sxn_pipe_send_handle(reply_fd, state->display_section) < 0)
+    {
+        return -SAVANXP_EIO;
+    }
     reply->fb_info = state->display_info;
     reply->gpu_info = state->gpu_info;
     return 0;
@@ -572,6 +571,7 @@ static int compositor_set_cursor_shape(
 
 static int handle_request(
     struct compositor_state *state,
+    int reply_fd,
     const struct savanxp_compositor_request *request,
     struct savanxp_compositor_reply *reply)
 {
@@ -584,7 +584,7 @@ static int handle_request(
     switch (request->type)
     {
     case SAVANXP_COMPOSITOR_MSG_INIT:
-        return compositor_init(state, &request->fb_info, reply);
+        return compositor_init(state, reply_fd, reply);
     case SAVANXP_COMPOSITOR_MSG_PRESENT:
         return compositor_present(state, request, reply);
     case SAVANXP_COMPOSITOR_MSG_SYNC_PRESENT:
@@ -606,55 +606,172 @@ static int handle_request(
     }
 }
 
+/* Serves one request read from `request_fd`: 1 to go on, 0 after SHUTDOWN,
+ * negative when the WM is gone. */
+static int serve_request(struct compositor_state *state, int request_fd, int reply_fd)
+{
+    struct savanxp_compositor_request request;
+    struct savanxp_compositor_reply reply;
+    unsigned long long service_begin;
+    int result = read_exact(request_fd, &request, sizeof(request));
+
+    if (result < 0)
+    {
+        return result;
+    }
+    /* The clock starts once the request is in: what is measured is the
+     * service, not the wait for a request that had not arrived. */
+    service_begin = monotonic_ns();
+    memset(&reply, 0, sizeof(reply));
+    reply.magic = SAVANXP_COMPOSITOR_PROTOCOL_MAGIC;
+    reply.version = SAVANXP_COMPOSITOR_PROTOCOL_VERSION;
+    reply.type = request.type;
+    reply.serial = request.serial;
+    reply.status = handle_request(state, reply_fd, &request, &reply);
+    reply.service_timing.service_ns = elapsed_since(service_begin);
+    if (write_exact(reply_fd, &reply, sizeof(reply)) < 0)
+    {
+        return -SAVANXP_EPIPE;
+    }
+    return request.type == SAVANXP_COMPOSITOR_MSG_SHUTDOWN ? 0 : 1;
+}
+
+/* Whether `pid` may be this compositord's window manager: the session's
+ * windowd (a sibling, started by the same parent) or a windowd that started
+ * this compositord for its tests (the parent itself). */
+static int may_be_wm(long pid)
+{
+    static long parent = -1;
+    struct sxn_process_query query;
+
+    if (parent < 0)
+    {
+        struct sxn_native_info self;
+
+        if (sxn_info(&self) != 0 || sxn_process_query((long)self.pid, &query) != 0)
+        {
+            return 0;
+        }
+        parent = (long)query.parent_pid;
+    }
+    if (pid == parent)
+    {
+        return 1;
+    }
+    return sxn_process_query(pid, &query) == 0 && (long)query.parent_pid == parent;
+}
+
+/*
+ * Waits for the WM: a connection from a process that may be it, whose first
+ * request is INIT. Anything else is closed and the wait goes on -- a
+ * connection that hangs up at once is sessiond probing for the port.
+ */
+static int accept_wm(struct compositor_state *state, long port, int *request_fd, int *reply_fd)
+{
+    for (;;)
+    {
+        struct sxn_port_connection connection;
+        struct savanxp_compositor_request request;
+        struct savanxp_compositor_reply reply;
+
+        if (sxn_wait_one(port, -1) < 0)
+        {
+            return -1;
+        }
+        memset(&connection, 0, sizeof(connection));
+        if (sxn_port_accept(port, &connection) < 0)
+        {
+            continue;
+        }
+        if (may_be_wm((long)connection.client_pid) &&
+            read_exact(connection.read_handle, &request, sizeof(request)) == 0 &&
+            request.magic == SAVANXP_COMPOSITOR_PROTOCOL_MAGIC &&
+            request.version == SAVANXP_COMPOSITOR_PROTOCOL_VERSION &&
+            request.type == SAVANXP_COMPOSITOR_MSG_INIT)
+        {
+            memset(&reply, 0, sizeof(reply));
+            reply.magic = SAVANXP_COMPOSITOR_PROTOCOL_MAGIC;
+            reply.version = SAVANXP_COMPOSITOR_PROTOCOL_VERSION;
+            reply.type = request.type;
+            reply.serial = request.serial;
+            reply.status = compositor_init(state, connection.write_handle, &reply);
+            if (write_exact(connection.write_handle, &reply, sizeof(reply)) == 0 && reply.status == 0)
+            {
+                *request_fd = connection.read_handle;
+                *reply_fd = connection.write_handle;
+                return 0;
+            }
+        }
+        (void)sxn_close(connection.read_handle);
+        (void)sxn_close(connection.write_handle);
+    }
+}
+
 int main(int argc, char **argv)
 {
     struct compositor_state state;
-    int32_t channel[2] = {-1, -1};
-    int running = 1;
-    unsigned long long service_begin = 0ull;
+    const char *port_name = SAVANXP_COMPOSITOR_PORT_NAME;
+    int request_fd = -1;
+    int reply_fd = -1;
+    long port;
 
     compositor_state_init(&state);
-    /* The client's port (compositor_protocol.h): [0] carries replies to it,
-     * [1] brings its requests. */
-    if (argc < 2 || argv == 0 || argv[1] == 0 || sxn_port_connect(argv[1], channel) != 0)
+    if (argc >= 2 && argv != 0 && argv[1] != 0 && argv[1][0] != '\0')
     {
-        (void)sxn_log("compositord: no client port to connect to");
+        port_name = argv[1];
+    }
+    if (compositor_startup(&state) < 0)
+    {
+        (void)sxn_log("compositord: cannot drive the display");
+        compositor_state_close(&state);
         sxn_exit(1);
     }
-    state.request_fd = channel[1];
-
-    while (running)
+    /* Last: the port existing is what tells sessiond the display is ready. */
+    port = sxn_port_create(port_name);
+    if (port < 0)
     {
-        struct savanxp_compositor_request request;
-        struct savanxp_compositor_reply reply;
-        int result = read_exact((int)state.request_fd, &request, sizeof(request));
-        if (result < 0)
-        {
-            break;
-        }
+        (void)sxn_log("compositord: cannot create its port");
+        compositor_state_close(&state);
+        sxn_exit(1);
+    }
 
-        /* El cronometro arranca apenas volvio read_exact: lo que se mide es el
-           servicio, no la espera por una request que todavia no llego. */
-        service_begin = monotonic_ns();
-        memset(&reply, 0, sizeof(reply));
-        reply.magic = SAVANXP_COMPOSITOR_PROTOCOL_MAGIC;
-        reply.version = SAVANXP_COMPOSITOR_PROTOCOL_VERSION;
-        reply.type = request.type;
-        reply.serial = request.serial;
-        reply.status = handle_request(&state, &request, &reply);
-        reply.service_timing.service_ns = elapsed_since(service_begin);
-        if (request.type == SAVANXP_COMPOSITOR_MSG_SHUTDOWN)
+    if (accept_wm(&state, port, &request_fd, &reply_fd) == 0)
+    {
+        for (;;)
         {
-            running = 0;
-        }
+            int32_t handles[2];
+            long ready;
 
-        if (write_exact(channel[0], &reply, sizeof(reply)) < 0)
-        {
-            break;
+            handles[0] = request_fd;
+            handles[1] = (int32_t)port;
+            ready = sxn_wait_many(handles, 2, -1);
+            if (ready < 0)
+            {
+                break;
+            }
+            /* One WM per compositord: anyone else is turned away. */
+            if (sxn_wait_one(port, 0) == 0)
+            {
+                struct sxn_port_connection other;
+
+                memset(&other, 0, sizeof(other));
+                if (sxn_port_accept(port, &other) == 0)
+                {
+                    (void)sxn_close(other.read_handle);
+                    (void)sxn_close(other.write_handle);
+                }
+            }
+            if (sxn_wait_one(request_fd, 0) == 0 && serve_request(&state, request_fd, reply_fd) <= 0)
+            {
+                break;
+            }
         }
     }
 
+    /* The WM hung up or shut the session down: there is no other to serve
+     * (no reconnection), so the display goes back to the kernel. */
     compositor_state_close(&state);
+    (void)sxn_close(port);
     /* Never return: crt0 would end the process through POSIX EXIT, which a
      * native process does not have. */
     sxn_exit(0);

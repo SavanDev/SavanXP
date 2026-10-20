@@ -186,27 +186,27 @@ does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
 1. `init` starts it, where it used to start `windowd`, and restarts it if it
    dies. `init` keeps what is not part of the graphical session: `audiod`, and
    the fallback to `/bin/sh` when the session will not come up.
-2. It starts `windowd`, then `desktop` and `progman`. It is their parent, so a
+2. It starts `compositord` (since phase 4), then `windowd`, then `desktop`
+   and `progman`, each once the one before has opened its port. It is their
+   parent, so a
    blocking `waitpid(-1)` tells it when any of them ends; it needs no
    multi-object wait and no polling.
 3. It restarts `desktop` when it dies, with the policy `windowd` has today:
    given up after three exits within ten seconds of starting. `progman` is an
    ordinary application and is not restarted: closing it is a user's choice.
-4. When `windowd` dies, the session is over: it ends `desktop` and `progman`
-   and starts the session again, with the same quick-exit limit; past it,
+4. When `windowd` or `compositord` dies, the session is over: it ends the
+   rest and starts the session again, with the same quick-exit limit; past it,
    `sessiond` exits with an error and `init` falls back to the text shell, as
    it does for `windowd` today.
 5. Later: ending the session and shutting down (the Shut Down of Task Manager
    and the Start menu would ask `sessiond`, not kill processes themselves).
 
-`compositord` stays `windowd`'s child for now, and `windowd` restarts it when
-it dies. They are joined by a private port `windowd` creates and names on
-`compositord`'s command line (`compositor_protocol.h` v3): nothing is
-inherited, which is what lets a native `windowd` start it. Phase 4 gives
-`compositord` a public port of its own, which `windowd` connects to, and that
-is when `sessiond` starts it, before `windowd`
-([Lifetime](#lifetime-a-session-service)). Clients never connect to it: their
-frames reach it through the submit event `windowd` hands them.
+`compositord` was `windowd`'s child until phase 3, joined by a private port
+`windowd` created and named on its command line. Since phase 4 step 1 it is
+the session's: it opens the port `compositord`, `windowd` connects to it, and
+neither restarts the other ([Lifetime](#lifetime-a-session-service)).
+Clients never connect to it: their frames reach it through the submit event
+`windowd` hands them.
 
 ### Who is the shell: decided by parentage
 
@@ -505,11 +505,15 @@ shows a rectangle of a **surface** at a rectangle of the screen:
 - `src` and `dst` rectangles. Different sizes mean a scaled layer (composited
   fullscreen when the mode cannot change).
 - `opaque`: an occluder for the layers behind it, as in `windowd_render.c`.
-- `gate`: a surface that must have published a frame before the layer is
-  drawn. A window is not drawn before its first frame (its geometry may still
-  change through the size hint); gating its frame and its client area on its
-  own surface keeps that rule without `windowd` having to know when the frame
-  arrives.
+
+A window is still not drawn before its first frame (its geometry may change
+through the size hint until then). `windowd` decides it, as today, from the
+first submit it sees in its own mapping of the header, and `compositord`
+consumes every published batch at the start of a commit, so a window enters
+the scene with its first frame already there. A rule in `compositord` instead
+(a layer gated on a surface's first frame) would let `windowd`'s surface show
+the frame of a window `compositord` still hides, wherever it overlaps a lower
+window.
 
 **Client surfaces** are created by `windowd`, as today, which then *attaches*
 them: it queues the section and the client's wake event on its pipe to
@@ -521,8 +525,8 @@ and closes them.
 **`windowd`'s surface** is one section the size of the largest mode. `windowd`
 paints into it everything it draws: the frames (caption, borders, buttons,
 painted in stacking order, so where two frames overlap the upper one wins,
-which is the only one any layer shows there), the Alt+Tab switcher and the
-fallback background. A window is two layers: its frame (the frame rectangle
+which is the only one any layer shows there; only windows in the scene are
+painted), the Alt+Tab switcher and the fallback background. A window is two layers: its frame (the frame rectangle
 of this surface; the interior is covered by the client layer above it) and its
 client area. The surface is **staged**: at each commit `compositord` copies
 the damaged part into a private copy, and composes from that copy. `windowd`
@@ -552,7 +556,7 @@ section, then the submit event). The submit event in the welcome is
 `compositord`'s, which validates the batch (the checks `windowd` does today),
 damages it through the layers that show that surface, composes, and signals
 `composed_sequence` and `retired_sequence` on the client's wake event. A surface
-with no layer (minimized) or whose layer is gated is still consumed and marked
+with no layer (minimized, or not in the scene yet) is still consumed and marked
 composed, so its client never stalls.
 
 `windowd` stops being woken by frames. Requests in the header (cursor shape,
@@ -563,8 +567,9 @@ after a request instead of the submit event. That is a fifth handle on the
 event pipe, whose handle queue holds four (`kPipeHandleQueueCapacity`); it grows
 to eight. The wire stays v5: a client built before has its requests seen on
 `windowd`'s next tick (16 ms). `windowd` reads
-only the requests from the header, and the first submit for its "starting"
-cursor.
+only the requests from the header, and the first submit: it is what puts a
+window in the scene and ends its "starting" cursor, and `windowd` notices it on
+its tick.
 
 ### Costs
 
@@ -682,7 +687,7 @@ because it is the largest change and the one the work in
 | `virtio-gpu` (`--virtio`) | ~61 (paced) | 135 | 360 | 225 | 47 | 9984 |
 | `fb_gpu` | ~3850 | 56 | 183 | 112 | 51 | 9984 |
 
-1. **`compositord` is a session service.** `sessiond` starts it first; it
+1. **`compositord` is a session service. Done.** `sessiond` starts it first; it
    allocates the display memory and opens the port `compositord`; `windowd`
    connects to it. `windowd` no longer spawns, supervises or respawns it
    (except in its own test modes), and either of the two ending ends the

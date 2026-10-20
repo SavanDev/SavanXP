@@ -1,22 +1,24 @@
 #include <stdint.h>
 
+#include "savanxp/compositor_protocol.h"
 #include "savanxp/wm_protocol.h"
 #include "sxn/sxn.h"
 
 /*
  * sessiond: the session manager (docs/desktop/DESKTOP_ARCHITECTURE.md#the-
  * session-manager-sessiond). SMSS and Winlogon/Userinit in one process: init
- * starts it, it starts windowd, then the desktop and Program Manager, restarts
- * the desktop when it dies and the whole session when windowd dies.
+ * starts it, it starts compositord, then windowd, then the desktop and Program
+ * Manager, restarts the desktop when it dies and the whole session when
+ * compositord or windowd dies.
  *
  * Native: it opens no file and only starts and watches its children, so it
  * needs nothing but spawn, waitpid, terminate, the clock and the log. Being
  * their parent is also what makes its desktop the shell: windowd grants the
- * role to a client whose parent is windowd's own parent.
- *
- * compositord stays windowd's child until phase 4 gives it a port.
+ * role to a client whose parent is windowd's own parent, and compositord
+ * takes as its window manager only a sibling.
  */
 
+static const char* const k_compositord_path = "/bin/compositord";
 static const char* const k_windowd_path = "/bin/windowd";
 static const char* const k_desktop_path = "/bin/desktop";
 static const char* const k_progman_path = "/bin/progman";
@@ -27,11 +29,12 @@ static const char* const k_progman_path = "/bin/progman";
 #define SESSIOND_QUICK_EXIT_NS (10ull * 1000000000ull)
 #define SESSIOND_MAX_QUICK_EXITS 3
 
-/* How long windowd gets to open its port before the session counts as failed. */
-#define SESSIOND_WINDOWD_READY_MS 20000ul
+/* How long compositord and windowd each get to open their port before the
+ * session counts as failed. */
+#define SESSIOND_READY_MS 20000ul
 #define SESSIOND_READY_POLL_MS 50ul
 
-/* After windowd dies, what is left of the session gets this long to notice
+/* After windowd or compositord dies, what is left of the session gets this long to notice
  * (the runtime treats the WM going away as a close request) before it is ended. */
 #define SESSIOND_GRACE_MS 1000ul
 
@@ -46,6 +49,7 @@ struct sessiond_child {
     int quick_exits;
 };
 
+static struct sessiond_child g_compositord = {0, 0, 0ull, 0};
 static struct sessiond_child g_windowd = {0, 0, 0ull, 0};
 static struct sessiond_child g_desktop = {0, 0, 0ull, 0};
 static struct sessiond_child g_progman = {0, 0, 0ull, 0};
@@ -90,16 +94,17 @@ static int may_restart(struct sessiond_child* child) {
 }
 
 /*
- * The session's clients connect to windowd's port, so they may only start once
- * it exists. A connection that never says hello is dropped by windowd, so
- * probing with one costs nothing. 0 when ready, -1 if windowd never got there.
+ * windowd connects to compositord's port and the session's clients to
+ * windowd's, so each may only start once the one before has opened its port.
+ * A connection that hangs up before its first message is dropped by both, so
+ * probing with one costs nothing. 0 when ready, -1 if it never got there.
  */
-static int wait_windowd_ready(void) {
+static int wait_port_ready(const char* name) {
     unsigned long waited = 0;
 
-    while (waited < SESSIOND_WINDOWD_READY_MS) {
+    while (waited < SESSIOND_READY_MS) {
         int32_t handles[2] = {-1, -1};
-        long result = sxn_port_connect(SAVANXP_WM_PORT_NAME, handles);
+        long result = sxn_port_connect(name, handles);
 
         if (result == 0) {
             (void)sxn_close(handles[0]);
@@ -131,14 +136,25 @@ static void start_shell(void) {
     (void)start_child(&g_progman);
 }
 
-/* 0 once windowd is up and the shell started, -1 if windowd did not come up. */
+/* 0 once compositord and windowd are up and the shell started, -1 if one of
+ * them did not come up. */
 static int start_session(void) {
-    if (start_child(&g_windowd) < 0) {
+    if (start_child(&g_compositord) < 0) {
         return -1;
     }
-    if (wait_windowd_ready() < 0) {
+    if (wait_port_ready(SAVANXP_COMPOSITOR_PORT_NAME) < 0) {
+        log_line("sessiond: compositord did not open its port");
+        end_child(&g_compositord);
+        return -1;
+    }
+    if (start_child(&g_windowd) < 0) {
+        end_child(&g_compositord);
+        return -1;
+    }
+    if (wait_port_ready(SAVANXP_WM_PORT_NAME) < 0) {
         log_line("sessiond: windowd did not open its port");
         end_child(&g_windowd);
+        end_child(&g_compositord);
         return -1;
     }
     start_shell();
@@ -146,14 +162,18 @@ static int start_session(void) {
     return 0;
 }
 
-/* windowd is gone: give the rest a moment to close on their own, then end it. */
+/* compositord or windowd is gone: give the rest a moment to close on their
+ * own (each of the two ends without the other), then end it. */
 static void end_session(void) {
     sessiond_sleep(SESSIOND_GRACE_MS);
     end_child(&g_desktop);
     end_child(&g_progman);
+    end_child(&g_windowd);
+    end_child(&g_compositord);
 }
 
 int main(void) {
+    g_compositord.path = k_compositord_path;
     g_windowd.path = k_windowd_path;
     g_desktop.path = k_desktop_path;
     g_progman.path = k_progman_path;
@@ -178,12 +198,20 @@ int main(void) {
             continue;
         }
 
-        if (pid == g_windowd.pid) {
-            log_line("sessiond: windowd exited; restarting the session");
-            g_windowd.pid = 0;
+        if (pid == g_windowd.pid || pid == g_compositord.pid) {
+            /* Either one takes the session with it: the scene lives in both
+             * and neither reconnects. Both count against the same limit, on
+             * windowd's record. */
+            log_line(pid == g_windowd.pid ? "sessiond: windowd exited; restarting the session"
+                                          : "sessiond: compositord exited; restarting the session");
+            if (pid == g_windowd.pid) {
+                g_windowd.pid = 0;
+            } else {
+                g_compositord.pid = 0;
+            }
             end_session();
             if (!may_restart(&g_windowd)) {
-                log_line("sessiond: windowd keeps exiting; giving up");
+                log_line("sessiond: the session keeps ending; giving up");
                 sxn_exit(SESSIOND_EXIT_GAVE_UP);
             }
             /* The new desktop is a new start, not one more crash of the old. */

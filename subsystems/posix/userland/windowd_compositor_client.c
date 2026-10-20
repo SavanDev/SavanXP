@@ -120,34 +120,6 @@ static int write_exact(int fd, const void *buffer, size_t size)
     return 0;
 }
 
-static void fill_default_display_info(struct savanxp_fb_info *info)
-{
-    struct savanxp_system_info system = {0};
-
-    memset(info, 0, sizeof(*info));
-    if (system_info(&system) == 0 &&
-        system.framebuffer_width != 0 &&
-        system.framebuffer_height != 0)
-    {
-        info->width = system.framebuffer_width;
-        info->height = system.framebuffer_height;
-        info->bpp = system.framebuffer_bpp != 0 ? system.framebuffer_bpp : 32u;
-    }
-    else
-    {
-        info->width = 1024u;
-        info->height = 768u;
-        info->bpp = 32u;
-    }
-
-    if (info->bpp != 32u)
-    {
-        info->bpp = 32u;
-    }
-    info->pitch = info->width * (uint32_t)sizeof(uint32_t);
-    info->buffer_size = (info->pitch * info->height) + (4u * 1024u * 1024u);
-}
-
 static int compositor_rpc(
     struct windowd_compositor_connection *connection,
     struct savanxp_compositor_request *request,
@@ -202,50 +174,17 @@ void windowd_compositor_connection_init(struct windowd_compositor_connection *co
     connection->pid = -1;
     connection->request_fd = -1;
     connection->reply_fd = -1;
-    connection->display_section_fd = -1;
-    connection->port_fd = -1;
 }
 
-/*
- * Spawn compositord and run the INIT handshake (compositor_protocol.h v3):
- * compositord connects to this windowd's private port, named on its command
- * line, and gets the display section as a handle before INIT. Nothing is
- * inherited, so neither fork nor fixed descriptors are involved. The caller
- * owns the display section (connection->display_section_fd) and the requested
- * geometry (connection->requested_info); both are reused as-is, which lets a
- * reconnect respawn the daemon over the same framebuffer the shell is already
- * rendering into. On failure the daemon endpoints are reset but the section
- * and the port are left for the caller to keep or tear down.
- */
-static int spawn_compositor_daemon(struct windowd_compositor_connection *connection)
+/* Starts a compositord of windowd's own, for the test modes that run without
+ * a session, on a private port it names on the command line. */
+static int spawn_own_compositor(struct windowd_compositor_connection *connection)
 {
-    struct savanxp_compositor_request request;
-    struct savanxp_compositor_reply reply;
-    struct sxn_port_connection accepted;
     const char *argv[3] = {k_compositord_path, 0, 0};
     long pid;
-    long waited;
-    int result;
 
-    if (connection == 0 || connection->display_section_fd < 0)
-    {
-        return -SAVANXP_EINVAL;
-    }
-
-    if (connection->port_fd < 0)
-    {
-        long port;
-
-        snprintf(connection->port_name, sizeof(connection->port_name), "%s%ld",
-            SAVANXP_COMPOSITOR_PORT_PREFIX, savanxp_getpid());
-        port = sxn_port_create(connection->port_name);
-        if (port < 0)
-        {
-            return (int)port;
-        }
-        connection->port_fd = (int)port;
-    }
-
+    snprintf(connection->port_name, sizeof(connection->port_name), "%s%ld",
+        SAVANXP_COMPOSITOR_PORT_PREFIX, savanxp_getpid());
     argv[1] = connection->port_name;
     pid = spawn(k_compositord_path, argv, 2);
     if (pid < 0)
@@ -254,146 +193,93 @@ static int spawn_compositor_daemon(struct windowd_compositor_connection *connect
         return (int)pid;
     }
     connection->pid = pid;
-
-    /* Its connection, and nobody else's: the port's name is no secret. */
-    waited = wait_one(connection->port_fd, SAVANXP_COMPOSITOR_RPC_TIMEOUT_MS);
-    if (waited < 0)
-    {
-        result = waited == -SAVANXP_ETIMEDOUT ? -SAVANXP_ETIMEDOUT : (int)waited;
-        goto fail;
-    }
-    memset(&accepted, 0, sizeof(accepted));
-    if (sxn_port_accept(connection->port_fd, &accepted) < 0)
-    {
-        result = -SAVANXP_EIO;
-        goto fail;
-    }
-    connection->request_fd = accepted.write_handle;
-    connection->reply_fd = accepted.read_handle;
-    if ((long)accepted.client_pid != pid)
-    {
-        result = -SAVANXP_EACCES;
-        goto fail;
-    }
-    if (pipe_send_handle(connection->request_fd, connection->display_section_fd) < 0)
-    {
-        result = -SAVANXP_EIO;
-        goto fail;
-    }
-    connection->connected = 1;
-    connection->next_serial = 0;
-    connection->pending_present_sequence = 0;
-
-    memset(&request, 0, sizeof(request));
-    request.type = SAVANXP_COMPOSITOR_MSG_INIT;
-    request.fb_info = connection->requested_info;
-    result = compositor_rpc(connection, &request, &reply);
-    if (result < 0)
-    {
-        goto fail;
-    }
-
-    connection->display_info = reply.fb_info;
-    connection->gpu_info = reply.gpu_info;
-    if (connection->display_info.buffer_size > connection->requested_info.buffer_size)
-    {
-        result = -SAVANXP_EIO;
-        goto fail;
-    }
     return 0;
-
-fail:
-    close_fd_if_needed(&connection->request_fd);
-    close_fd_if_needed(&connection->reply_fd);
-    if (connection->pid > 0)
-    {
-        int status = 0;
-        (void)savanxp_kill((int)connection->pid, SAVANXP_SIGKILL);
-        (void)savanxp_waitpid((int)connection->pid, &status);
-        connection->pid = -1;
-    }
-    connection->connected = 0;
-    return result;
 }
 
-/* Push the entire current framebuffer to the daemon's scanout. Used after a
-   reconnect to re-display the content the shell already has in memory. */
-static int present_full_surface(struct windowd_compositor_connection *connection)
+/* Connects to `name`, waiting up to the RPC watchdog for it to exist when
+ * windowd started that compositord itself. */
+static int connect_compositor(struct windowd_compositor_connection *connection, const char *name, int wait)
+{
+    unsigned long deadline = uptime_ms() + SAVANXP_COMPOSITOR_RPC_TIMEOUT_MS;
+
+    for (;;)
+    {
+        int32_t channel[2] = {-1, -1};
+        long result = sxn_port_connect(name, channel);
+
+        if (result == 0)
+        {
+            connection->request_fd = channel[0];
+            connection->reply_fd = channel[1];
+            return 0;
+        }
+        if (!wait || uptime_ms() >= deadline)
+        {
+            return (int)result;
+        }
+        sleep_ms(10);
+    }
+}
+
+/*
+ * Connects to compositord and runs INIT (compositor_protocol.h v4). In the
+ * session compositord is already there, started by sessiond; `own_daemon`
+ * starts one first, for windowd's test modes. The reply brings the mode and
+ * the display section, which windowd maps and composes into.
+ */
+int windowd_compositor_open(struct windowd_compositor_connection *connection, int own_daemon)
 {
     struct savanxp_compositor_request request;
     struct savanxp_compositor_reply reply;
-    int result;
-
-    memset(&request, 0, sizeof(request));
-    request.type = SAVANXP_COMPOSITOR_MSG_PRESENT;
-    request.surface_id = SAVANXP_COMPOSITOR_SURFACE_DISPLAY;
-    request.flags = SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_FULL_SURFACE;
-    request.rect_count = 1;
-    request.rects[0].x = 0;
-    request.rects[0].y = 0;
-    request.rects[0].width = connection->display_info.width;
-    request.rects[0].height = connection->display_info.height;
-
-    result = compositor_rpc(connection, &request, &reply);
-    if (result < 0)
-    {
-        return result;
-    }
-    if (reply.present_sequence != 0)
-    {
-        connection->pending_present_sequence = reply.present_sequence;
-    }
-    return 0;
-}
-
-/* Tear down a dead or wedged daemon while keeping the display section mapped.
-   A wedged-but-alive daemon is killed so waitpid does not block. */
-static void reap_daemon(struct windowd_compositor_connection *connection)
-{
-    if (connection == 0)
-    {
-        return;
-    }
-
-    close_fd_if_needed(&connection->request_fd);
-    close_fd_if_needed(&connection->reply_fd);
-
-    if (connection->pid > 0)
-    {
-        int status = 0;
-        (void)savanxp_kill((int)connection->pid, SAVANXP_SIGKILL);
-        (void)savanxp_waitpid((int)connection->pid, &status);
-    }
-    connection->pid = -1;
-    connection->connected = 0;
-    connection->pending_present_sequence = 0;
-}
-
-int windowd_compositor_open(struct windowd_compositor_connection *connection)
-{
+    long section;
     int result;
 
     if (connection == 0)
     {
         return -SAVANXP_EINVAL;
     }
-
     windowd_compositor_connection_init(connection);
-    fill_default_display_info(&connection->requested_info);
 
-    connection->display_section_fd = (int)section_create(
-        connection->requested_info.buffer_size,
-        SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-    if (connection->display_section_fd < 0)
+    if (own_daemon)
     {
-        result = connection->display_section_fd;
+        result = spawn_own_compositor(connection);
+        if (result < 0)
+        {
+            return result;
+        }
+    }
+    result = connect_compositor(
+        connection, own_daemon ? connection->port_name : SAVANXP_COMPOSITOR_PORT_NAME, own_daemon);
+    if (result < 0)
+    {
         windowd_compositor_close(connection);
         return result;
     }
+    connection->connected = 1;
 
-    connection->display_view = map_view(
-        connection->display_section_fd,
-        SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    memset(&request, 0, sizeof(request));
+    request.type = SAVANXP_COMPOSITOR_MSG_INIT;
+    result = compositor_rpc(connection, &request, &reply);
+    if (result < 0)
+    {
+        windowd_compositor_close(connection);
+        return result;
+    }
+    connection->display_info = reply.fb_info;
+    connection->gpu_info = reply.gpu_info;
+    /* The native mode: the one to go back to after a fullscreen mode. */
+    connection->requested_info = reply.fb_info;
+
+    section = sxn_pipe_receive_handle(connection->reply_fd);
+    if (section < 0)
+    {
+        windowd_compositor_close(connection);
+        return (int)section;
+    }
+    connection->display_view = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    /* The mapping keeps the section alive; the handle is one less in the
+     * 64-entry table. */
+    (void)savanxp_close((int)section);
     if (result_is_error((long)connection->display_view))
     {
         result = (int)(long)connection->display_view;
@@ -402,56 +288,12 @@ int windowd_compositor_open(struct windowd_compositor_connection *connection)
         return result;
     }
     connection->framebuffer = (uint32_t *)connection->display_view;
-    memset(connection->framebuffer, 0, connection->requested_info.buffer_size);
-
-    result = spawn_compositor_daemon(connection);
-    if (result < 0)
-    {
-        windowd_compositor_close(connection);
-        return result;
-    }
     return 0;
 }
 
 int windowd_compositor_connected(const struct windowd_compositor_connection *connection)
 {
     return connection != 0 && connection->connected;
-}
-
-int windowd_compositor_reconnect(struct windowd_compositor_connection *connection)
-{
-    int result;
-
-    if (connection == 0 || connection->display_section_fd < 0 || connection->framebuffer == 0)
-    {
-        return -SAVANXP_ENODEV;
-    }
-
-    reap_daemon(connection);
-
-    result = spawn_compositor_daemon(connection);
-    if (result < 0)
-    {
-        return result;
-    }
-
-    /* Restore the hardware cursor the shell had enabled before the crash. Best
-       effort: a missing cursor plane must not fail the reconnect. */
-    if (connection->cursor_enabled)
-    {
-        int restore_shape = connection->cursor_shape;
-
-        connection->cursor_enabled = 0;
-        (void)windowd_compositor_enable_cursor(connection, connection->cursor_x, connection->cursor_y);
-        (void)windowd_compositor_move_cursor(
-            connection, connection->cursor_x, connection->cursor_y, connection->cursor_visible);
-        if (restore_shape != SAVANXP_CURSOR_ARROW)
-        {
-            (void)windowd_compositor_set_cursor_shape(connection, restore_shape);
-        }
-    }
-
-    return present_full_surface(connection);
 }
 
 void windowd_compositor_close(struct windowd_compositor_connection *connection)
@@ -475,12 +317,13 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
     close_fd_if_needed(&connection->request_fd);
     close_fd_if_needed(&connection->reply_fd);
 
+    /* compositord ends when its WM hangs up; one windowd started itself is
+     * its child and is waited for. One that did not confirm the shutdown may
+     * be wedged: kill it so the wait cannot block forever. */
     if (connection->pid > 0)
     {
         int status = 0;
-        /* A daemon that did not confirm the shutdown -- it timed out, or the
-         * link was already marked dead -- may never exit by itself: kill it,
-         * as reap_daemon does, so the wait below cannot block forever. */
+
         if (!shut_down)
         {
             (void)savanxp_kill((int)connection->pid, SAVANXP_SIGKILL);
@@ -492,8 +335,6 @@ void windowd_compositor_close(struct windowd_compositor_connection *connection)
     {
         (void)unmap_view(connection->display_view);
     }
-    close_fd_if_needed(&connection->display_section_fd);
-    close_fd_if_needed(&connection->port_fd);
     windowd_compositor_connection_init(connection);
 }
 
@@ -644,7 +485,6 @@ int windowd_compositor_set_mode(
     uint32_t height)
 {
     struct savanxp_compositor_reply reply;
-    struct savanxp_fb_info previous_info;
     int result;
 
     if (connection == 0 || width == 0 || height == 0)
@@ -652,25 +492,15 @@ int windowd_compositor_set_mode(
         return -1;
     }
 
-    previous_info = connection->display_info;
     result = compositor_request_mode(connection, width, height, &reply);
     if (result != 0)
     {
         return result;
     }
 
-    /* La geometria que vale es la de la reply, no la pedida: el pitch lo decide
-     * el dispositivo y puede venir redondeado. Si por eso el modo no entra en
-     * la seccion de display, componer contra el escribiria fuera del mapeo.
-     * Se rechaza igual que en el INIT, pero volviendo primero al modo anterior:
-     * si el daemon quedara en uno y el shell creyera otro, cada present iria
-     * con rects de una geometria que no existe. */
-    if (reply.fb_info.buffer_size > connection->requested_info.buffer_size)
-    {
-        (void)compositor_request_mode(connection, previous_info.width, previous_info.height, &reply);
-        return -SAVANXP_EIO;
-    }
-
+    /* The geometry that counts is the reply's, not the one asked for: the
+     * device decides the pitch. compositord refuses a mode that would not fit
+     * the display section. */
     connection->display_info = reply.fb_info;
     connection->gpu_info = reply.gpu_info;
     return 0;

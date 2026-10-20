@@ -27,7 +27,6 @@ static int launch_overlay_client(struct windowd_session *session, const char *pa
 /* Defined with the rest of the Alt+Tab switcher, further down; the selftest
  * uses them first. */
 static void switcher_close(struct windowd_session *session, struct windowd_dirty_rect *dirty);
-static int recover_compositor(struct windowd_session *session);
 static void switcher_switch_to(struct windowd_session *session, struct windowd_dirty_rect *dirty, int task_index);
 static int wm_handle_key(
     struct windowd_session *session,
@@ -710,16 +709,7 @@ static int apply_display_mode(struct windowd_session *session, uint32_t width, u
     }
     if (windowd_compositor_set_mode(&session->compositor, width, height) != 0)
     {
-        /* compositord may have died since the last present, which is where a
-         * fault is usually noticed: a mode change (F11, or leaving fullscreen)
-         * is then the first to find out. Recover as present does, and try once
-         * more, instead of leaving the scanout in the wrong mode. */
-        if (windowd_compositor_connected(&session->compositor) ||
-            recover_compositor(session) != 0 ||
-            windowd_compositor_set_mode(&session->compositor, width, height) != 0)
-        {
-            return -1;
-        }
+        return -1;
     }
 
     session->gfx.info = session->compositor.display_info;
@@ -1029,48 +1019,6 @@ static int windowd_stage_failed(const char *stage, long result)
         eprintf("desktop: %s failed\n", stage);
     }
     return -1;
-}
-
-/* Cap on consecutive reconnects without a clean frame in between, so a daemon
-   that dies on every spawn surfaces as a hard failure instead of a spin loop. */
-#define WINDOWD_MAX_COMPOSITOR_RECOVERIES 8
-
-/* Respawn compositord after it died mid-session. The display section and the
-   shell's backbuffer outlive the daemon, so a successful reconnect re-displays
-   the current frame and restores the cursor without a re-render. Returns 0 on
-   success; the caller forces a full repaint so subsequent damage stays correct. */
-static int recover_compositor(struct windowd_session *session)
-{
-    int result;
-
-    if (session == 0)
-    {
-        return -1;
-    }
-
-    result = windowd_compositor_reconnect(&session->compositor);
-    if (result < 0)
-    {
-        return windowd_stage_failed("reconnect compositord", result);
-    }
-
-    eprintf("desktop: compositord reconnected after fault\n");
-
-    /* El daemon vuelve siempre en el modo nativo, porque su INIT pide
-     * requested_info. Si el shell estaba en el modo bajo de fullscreen hay que
-     * volver a pedirlo: componer con una geometria que el scanout ya no tiene
-     * manda rects que no existen. Se pida o no con exito, la que vale es la que
-     * quedo del lado del daemon, que es contra la que esta importada la
-     * superficie. */
-    if (session->gfx.info.width != session->compositor.display_info.width ||
-        session->gfx.info.height != session->compositor.display_info.height)
-    {
-        (void)windowd_compositor_set_mode(
-            &session->compositor, session->gfx.info.width, session->gfx.info.height);
-        session->gfx.info = session->compositor.display_info;
-        memset(session->compositor.framebuffer, 0, session->gfx.info.buffer_size);
-    }
-    return 0;
 }
 
 /* Devuelve 1 si el evento se entrego. Con el pipe lleno el write no bloquea
@@ -2782,7 +2730,9 @@ static void service_connections(struct windowd_session *session, struct windowd_
     }
 }
 
-static int open_compositor_session(struct windowd_session *session)
+/* `own_daemon`: start a compositord of its own (the test modes); otherwise
+ * connect to the session's. */
+static int open_compositor_session(struct windowd_session *session, int own_daemon)
 {
     int result = 0;
     int slot;
@@ -2817,7 +2767,7 @@ static int open_compositor_session(struct windowd_session *session)
         session->overlay_order[slot] = -1;
     }
 
-    result = windowd_compositor_open(&session->compositor);
+    result = windowd_compositor_open(&session->compositor, own_daemon);
     if (result < 0)
     {
         return windowd_stage_failed("open compositord", result);
@@ -3603,7 +3553,7 @@ static int windowd_cursor_repro(void)
     static uint32_t baseline_block[64 * 64];
     static uint32_t oncursor_block[64 * 64];
 
-    if (open_compositor_session(&session) < 0)
+    if (open_compositor_session(&session, 1) < 0)
     {
         puts_fd(2, "CURSOR REPRO FAIL compositor startup\n");
         close_compositor_session(&session);
@@ -4963,7 +4913,7 @@ static int windowd_native_hw_selftest(void)
     long count = 0;
 
     memset(&session, 0, sizeof(session));
-    if (open_compositor_session(&session) < 0)
+    if (open_compositor_session(&session, 1) < 0)
     {
         puts_fd(2, "NATIVE HW FAIL compositor startup\n");
         close_compositor_session(&session);
@@ -5073,14 +5023,10 @@ static int windowd_selftest(void)
     const int kTargetFrames = 60;
     const int kCursorX = 40;
     const int kCursorY = 40;
-    const int kKillDaemonAtFrame = 20;
     int frames_presented = 0;
     int fullscreen_frames = 0;
     int iteration = 0;
     int failed = 0;
-    int recovery_armed = 1;
-    int recovery_validated = 0;
-    int fullscreen_recovery_armed = 1;
     uint64_t baseline_retired = 0;
     uint64_t consumed_submit = 0;
     /* Tamano generico que el WM le asigna a un overlay al lanzarlo: la
@@ -5114,7 +5060,7 @@ static int windowd_selftest(void)
         return 1;
     }
 
-    if (open_compositor_session(&session) < 0)
+    if (open_compositor_session(&session, 1) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL compositor startup\n");
         close_compositor_session(&session);
@@ -5274,12 +5220,11 @@ static int windowd_selftest(void)
         }
         else if (iteration == 52)
         {
-            /* El modo bajo tiene que seguir puesto aun despues de la caida
-               inyectada del daemon en el medio del fullscreen. */
+            /* The low mode must still be set while the app is fullscreen. */
             if (session.gfx.info.width != WINDOWD_FULLSCREEN_MODE_WIDTH ||
                 session.gfx.info.height != WINDOWD_FULLSCREEN_MODE_HEIGHT)
             {
-                puts_fd(2, "DESKTOP SMOKE FAIL fullscreen mode after recovery\n");
+                puts_fd(2, "DESKTOP SMOKE FAIL fullscreen mode lost\n");
                 failed = 1;
                 break;
             }
@@ -5343,11 +5288,9 @@ static int windowd_selftest(void)
             }
             else if (session.fullscreen_slot >= 0)
             {
-                /* En fullscreen no hay movimiento de ventanas que genere dano, y
-                   sin dano el shell no presenta. Sin presentar tampoco se entera
-                   de que el daemon murio, porque la deteccion es por fallo de
-                   present: forzar dano por iteracion mantiene el pipeline vivo,
-                   que es lo que hace observable la recuperacion en modo bajo. */
+                /* In fullscreen no window moves to make damage, and without
+                   damage nothing is presented: force it, so frames are
+                   presented in the low mode. */
                 windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
             }
             break;
@@ -5371,15 +5314,6 @@ static int windowd_selftest(void)
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
-            /* A present that fails because the daemon link dropped (here, our own
-               injected kill below) must recover transparently and keep going. */
-            if (!windowd_compositor_connected(&session.compositor) &&
-                recover_compositor(&session) == 0)
-            {
-                recovery_validated = 1;
-                windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-                continue;
-            }
             puts_fd(2, "DESKTOP SMOKE FAIL present\n");
             failed = 1;
             break;
@@ -5394,42 +5328,11 @@ static int windowd_selftest(void)
            client retire event and frees its batch slots for the next frame. */
         if (sync_pending_present(&session, 1, 0) < 0)
         {
-            if (!windowd_compositor_connected(&session.compositor) &&
-                recover_compositor(&session) == 0)
-            {
-                recovery_validated = 1;
-                windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-                continue;
-            }
             puts_fd(2, "DESKTOP SMOKE FAIL drain present\n");
             failed = 1;
             break;
         }
         ++frames_presented;
-
-        /* Simulate a mid-session compositord crash once, then require the run to
-           still reach its frame target so recovery is proven, not just compiled. */
-        if (recovery_armed && frames_presented == kKillDaemonAtFrame)
-        {
-            recovery_armed = 0;
-            if (session.compositor.pid > 0)
-            {
-                (void)savanxp_kill((int)session.compositor.pid, SAVANXP_SIGKILL);
-            }
-        }
-
-        /* Segunda caida inyectada, esta vez con el scanout en el modo bajo de
-           fullscreen. El daemon respawnea siempre en el nativo, asi que el
-           shell tiene que volver a pedir su modo; si no, compondria contra una
-           geometria que el scanout ya no tiene. */
-        if (fullscreen_recovery_armed && session.fullscreen_slot >= 0)
-        {
-            fullscreen_recovery_armed = 0;
-            if (session.compositor.pid > 0)
-            {
-                (void)savanxp_kill((int)session.compositor.pid, SAVANXP_SIGKILL);
-            }
-        }
 
         if (frames_presented >= kTargetFrames)
         {
@@ -5869,18 +5772,6 @@ static int windowd_selftest(void)
     if (!failed && fullscreen_frames < 1)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL fullscreen frame never presented\n");
-        failed = 1;
-    }
-    if (!failed && !recovery_validated)
-    {
-        puts_fd(2, "DESKTOP SMOKE FAIL compositor reconnect not exercised\n");
-        failed = 1;
-    }
-    /* Si la caida en modo bajo nunca se disparo, la asercion de arriba paso
-       sin probar nada: la reconciliacion de modo quedaria sin cubrir. */
-    if (!failed && fullscreen_recovery_armed)
-    {
-        puts_fd(2, "DESKTOP SMOKE FAIL fullscreen reconnect not exercised\n");
         failed = 1;
     }
     if (!failed && session.desktop_windows[0].consumed_submit_sequence < 1)
@@ -6431,7 +6322,6 @@ int main(int argc, char **argv)
     int drag_overlay_slot = -1;
     int drag_offset_x = 0;
     int drag_offset_y = 0;
-    int compositor_recoveries = 0;
     struct windowd_stats stats;
 
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--selftest") == 0)
@@ -6449,7 +6339,7 @@ int main(int argc, char **argv)
         return windowd_native_hw_selftest();
     }
 
-    if (open_compositor_session(&session) < 0)
+    if (open_compositor_session(&session, 0) < 0)
     {
         puts_fd(2, "desktop: compositor startup failed\n");
         close_compositor_session(&session);
@@ -6617,20 +6507,11 @@ int main(int argc, char **argv)
             windowd_stats_sync_begin(&stats);
             sync_result = sync_pending_present(&session, 0, &frame_ready);
             windowd_stats_sync_end(&stats);
+            /* Without compositord the session is over: sessiond restarts
+             * all of it. */
             if (sync_result < 0)
             {
-                if (!windowd_compositor_connected(&session.compositor) &&
-                    compositor_recoveries < WINDOWD_MAX_COMPOSITOR_RECOVERIES &&
-                    recover_compositor(&session) == 0)
-                {
-                    ++compositor_recoveries;
-                    windowd_dirty_rect_add_fullscreen(&dirty, &session.gfx.info);
-                    frame_ready = 1;
-                }
-                else
-                {
-                    break;
-                }
+                break;
             }
             if (!windowd_dirty_rect_valid(&dirty))
             {
@@ -6649,18 +6530,9 @@ int main(int argc, char **argv)
         signal_composed_batches(&session);
         if (present_frame(&session, &dirty) < 0)
         {
-            if (!windowd_compositor_connected(&session.compositor) &&
-                compositor_recoveries < WINDOWD_MAX_COMPOSITOR_RECOVERIES &&
-                recover_compositor(&session) == 0)
-            {
-                ++compositor_recoveries;
-                windowd_dirty_rect_reset(&dirty);
-                continue;
-            }
             puts_fd(2, "desktop: present failed\n");
             break;
         }
-        compositor_recoveries = 0;
         /* El danio se mide ANTES del reset: es el del frame que se acaba
            de presentar. */
         windowd_stats_frame_end(&stats, &dirty, &session.compositor.last_present_timing);
