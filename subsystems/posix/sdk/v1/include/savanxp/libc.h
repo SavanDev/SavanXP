@@ -192,9 +192,15 @@ long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_
 long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t* pixels, const struct sx_rect* rects, size_t rect_count);
 int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_input_event* event);
 long gfx_apply_resize_event(struct savanxp_gfx_context* context, const struct savanxp_input_event* event);
-/* 1 si el WM pidio cerrar la ventana. Presentar despues de eso devuelve
- * -SAVANXP_EPIPE. */
+/* 1 if the WM asked to close the window, or went away. Presenting after that
+ * returns -SAVANXP_EPIPE. */
 int gfx_should_close(const struct savanxp_gfx_context* context);
+/* By default, a close request on the MAIN window (or the WM going away) ends
+ * the process at its next poll or present, as DefWindowProc closes a window
+ * nobody handles. A program that answers itself -- asks to save, stops its
+ * audio first -- calls gfx_handle_close(1) and then watches gfx_should_close;
+ * if it never exits, the shell offers to end it as not responding. */
+void gfx_handle_close(int handled);
 /* Starts a program; it opens its own window by connecting to the WM (protocol
  * v5). The caller does the spawn, the WM is not involved: the new process
  * gets only stdio and is reaped by the runtime once it exits. Returns the pid

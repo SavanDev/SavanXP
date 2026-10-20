@@ -777,6 +777,8 @@ static int run_window(const char* path) {
     build_widgets();
     update_controls_text();
 
+    /* It stops its playback and audio itself when asked to close. */
+    gfx_handle_close(1);
     if (sxgui_app_init(&g.app, "mediaplayer", g.widgets, W_COUNT) < 0) {
         return 1;
     }

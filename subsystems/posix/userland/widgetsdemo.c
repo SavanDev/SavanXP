@@ -241,6 +241,12 @@ int main(int argc, char **argv)
     g_about_dialog.widgets = g_about_widgets;
     g_about_dialog.widget_count = 3;
 
+    /* --hang-on-close: claims to handle the close request and then ignores
+     * it, the program `windowd --selftest` shows as not responding. */
+    if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--hang-on-close") == 0)
+    {
+        gfx_handle_close(1);
+    }
     if (sxgui_app_init(&g_app, "widgetsdemo", widgets, 13) < 0)
     {
         return 1;

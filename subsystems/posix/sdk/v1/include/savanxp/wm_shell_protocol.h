@@ -60,6 +60,9 @@ enum savanxp_wm_window_flags {
     SAVANXP_WM_WINDOW_FLAG_NONE = 0,
     SAVANXP_WM_WINDOW_FLAG_ACTIVE = 1u << 0,
     SAVANXP_WM_WINDOW_FLAG_MINIMIZED = 1u << 1,
+    /* Asked to close, and still running after a while (the WM never ends a
+     * process). The shell offers to end it; window_id is its pid. */
+    SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING = 1u << 2,
 };
 
 struct savanxp_wm_window_entry {

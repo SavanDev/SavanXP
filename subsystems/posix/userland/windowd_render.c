@@ -1,4 +1,5 @@
 #include "libc.h"
+#include <stdio.h>
 #include "savanxp/sxchrome.h"
 #include "shared/version.h"
 #include "cursor_asset.h"
@@ -153,7 +154,16 @@ static const char *window_title_for_client(const struct windowd_client *client)
     {
         return "App";
     }
-    /* Ya resuelto al crear la ventana: .sxmeta > tabla por path > el path. */
+    /* What the window published about itself, else its file name. A window
+     * asked to close that keeps running says so, as Windows does. */
+    if (client->not_responding)
+    {
+        static char title[96];
+
+        snprintf(title, sizeof(title), "%s (Not Responding)",
+            windowd_presentation_label(&client->presentation, client->path));
+        return title;
+    }
     return windowd_presentation_label(&client->presentation, client->path);
 }
 

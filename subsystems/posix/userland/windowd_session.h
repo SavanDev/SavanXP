@@ -90,6 +90,12 @@ struct windowd_client
     uint32_t role;
     uint32_t role_flags;
     int dismiss_requested;
+    /* A main window asked to close (its X, Alt+F4): when, and whether it has
+     * outlived WINDOWD_HUNG_CLOSE_MS still running -- "not responding". windowd
+     * never ends the process; the window goes when the process does
+     * (docs/desktop/DESKTOP_ARCHITECTURE.md#closing-a-window). 0 = not asked. */
+    unsigned long close_requested_ms;
+    int not_responding;
     /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
      * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
      * el indice de cascada del launch para poder recolocarla despues de
@@ -153,6 +159,9 @@ struct windowd_session
      * still owing their hello. */
     int port_fd;
     struct windowd_pending_connection pending[WINDOWD_MAX_PENDING_CONNECTIONS];
+    /* How long a window asked to close may keep running before it is shown as
+     * not responding. A field so the selftest need not wait it out. */
+    unsigned long hung_close_ms;
     int hw_cursor_enabled;
     int current_cursor_shape;
     int previous_cursor_shape;

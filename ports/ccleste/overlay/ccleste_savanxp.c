@@ -1178,6 +1178,8 @@ int main(int argc, char** argv) {
         return status;
     }
 
+    /* It releases its mixer and assets itself when asked to close. */
+    gfx_handle_close(1);
     opened = gfx_open(&ccleste_gfx);
     if (opened < 0) {
         eprintf("ccleste: gfx_open fallo (%s)\n", result_error_string(opened));

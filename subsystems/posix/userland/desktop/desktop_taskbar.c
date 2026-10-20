@@ -658,3 +658,31 @@ void desktop_taskbar_paint(struct savanxp_gfx_context *gfx)
 {
     taskbar_paint(gfx);
 }
+
+int desktop_taskbar_not_responding(uint32_t *window_id, char *title, size_t capacity)
+{
+    uint32_t index;
+
+    for (index = 0; index < g_snapshot.count && index < SAVANXP_WM_MAX_WINDOWS; ++index)
+    {
+        const struct savanxp_wm_window_entry *entry = &g_snapshot.windows[index];
+        size_t length = 0;
+
+        if ((entry->flags & SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING) == 0u)
+        {
+            continue;
+        }
+        *window_id = entry->window_id;
+        while (length + 1u < capacity && length < sizeof(entry->title) && entry->title[length] != '\0')
+        {
+            title[length] = entry->title[length];
+            length += 1u;
+        }
+        if (capacity != 0u)
+        {
+            title[length] = '\0';
+        }
+        return 1;
+    }
+    return 0;
+}

@@ -361,6 +361,7 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/desktop/desktop_volume.c
     subsystems/posix/userland/desktop/desktop_clock.c
     subsystems/posix/userland/desktop/desktop_keyboard.c
+    subsystems/posix/userland/desktop/desktop_hung.c
     subsystems/posix/userland/desktop_wallpaper.c
     subsystems/posix/userland/desktop_icons.c
     subsystems/posix/userland/progman_registry.c)

@@ -168,6 +168,32 @@ static int gfx_check_wm_gone(const struct savanxp_gfx_context* context) {
     return g_gfx_wm_gone;
 }
 
+/*
+ * The default answer to closing a window (DefWindowProc's WM_CLOSE): when the
+ * WM asks the MAIN window to close, or goes away, the process ends at its next
+ * poll or present. The WM no longer kills on close
+ * (docs/desktop/DESKTOP_ARCHITECTURE.md), so this is what makes a program that
+ * never looks at gfx_should_close still close. A program that wants to answer
+ * itself -- ask to save, stop its audio first -- calls gfx_handle_close(1) and
+ * then checks gfx_should_close. Owned windows (dialogs) never end the process.
+ */
+static int g_gfx_close_handled = 0;
+static struct savanxp_gpu_client_surface_header* g_gfx_main_header = 0;
+
+void gfx_handle_close(int handled) {
+    g_gfx_close_handled = handled != 0;
+}
+
+static void gfx_default_close(void) {
+    if (g_gfx_close_handled) {
+        return;
+    }
+    if (g_gfx_wm_gone ||
+        (g_gfx_main_header != 0 && (g_gfx_main_header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0)) {
+        exit(0);
+    }
+}
+
 /* How long a wait for the WM sleeps before looking whether it is still there. */
 #define GFX_WM_ALIVE_CHECK_MS 250
 
@@ -183,6 +209,7 @@ static long gfx_wait_for_header(
         long wait_result = 0;
 
         if (gfx_shutdown_requested(context)) {
+            gfx_default_close();
             return -SAVANXP_EPIPE;
         }
         if (context->wake_event_fd < 0) {
@@ -195,12 +222,14 @@ static long gfx_wait_for_header(
             break;
         }
         if (gfx_shutdown_requested(context)) {
+            gfx_default_close();
             return -SAVANXP_EPIPE;
         }
 
         wait_result = wait_one(context->wake_event_fd, GFX_WM_ALIVE_CHECK_MS);
         if (wait_result == -SAVANXP_ETIMEDOUT) {
             if (gfx_check_wm_gone(context)) {
+                gfx_default_close();
                 return -SAVANXP_EPIPE;
             }
             continue;
@@ -660,6 +689,7 @@ static long gfx_open_client(struct savanxp_gfx_context* context, uint32_t hello_
         return result;
     }
     context->window_id = 0;
+    g_gfx_main_header = context->header;
     gfx_publish_presentation(context);
     /* Before the first frame the WM sees it on the next pass anyway; wake it
      * so the title is right from the start. */
@@ -696,6 +726,9 @@ long gfx_close(struct savanxp_gfx_context* context) {
     }
 
     if (context->mode == kGfxModeClient && context->mapped_view != 0) {
+        if (context->header == g_gfx_main_header) {
+            g_gfx_main_header = 0;
+        }
         gfx_unmap_client_surface(context);
     }
 
@@ -736,6 +769,7 @@ long gfx_release(struct savanxp_gfx_context* context) {
 long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixels) {
     struct savanxp_gpu_dirty_rect rect;
     long result = 0;
+    gfx_default_close();
     if (context == 0 || context->fb_fd < 0 || pixels == 0) {
         return -SAVANXP_EINVAL;
     }
@@ -758,6 +792,7 @@ long gfx_present(const struct savanxp_gfx_context* context, const uint32_t* pixe
 
 long gfx_present_region(const struct savanxp_gfx_context* context, const uint32_t* pixels, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
     struct savanxp_gpu_dirty_rect rect;
+    gfx_default_close();
     if (context == 0 || context->fb_fd < 0 || pixels == 0 || width == 0 || height == 0) {
         return -SAVANXP_EINVAL;
     }
@@ -792,6 +827,8 @@ long gfx_present_rects(const struct savanxp_gfx_context* context, const uint32_t
     size_t index;
     uint32_t batch_count = 0;
     long result = 0;
+
+    gfx_default_close();
 
     if (context == 0 || pixels == 0 || rects == 0 || rect_count == 0) {
         return -SAVANXP_EINVAL;
@@ -984,6 +1021,7 @@ int gfx_poll_event(const struct savanxp_gfx_context* context, struct savanxp_inp
         return -SAVANXP_EINVAL;
     }
     gfx_reap_launched_sometimes();
+    gfx_default_close();
 
     if (gfx_header_dimensions_changed(context)) {
         struct savanxp_gfx_context* mutable_context = (struct savanxp_gfx_context*)context;
@@ -1043,6 +1081,7 @@ long gfx_pointer_open(void) {
 
 /* El fd suelto no dice de que ventana es: es la principal, como siempre. */
 int gfx_poll_pointer(int fd, struct savanxp_gui_pointer_event* event) {
+    gfx_default_close();
     return gfx_poll_pointer_for(fd, 0, event);
 }
 

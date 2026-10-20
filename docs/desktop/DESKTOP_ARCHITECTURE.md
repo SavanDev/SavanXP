@@ -105,7 +105,7 @@ Owns:
 
 Never: a binary path, the size or position of a shell element, the taskbar
 height, the wallpaper, a table of known applications, launching processes,
-reading files.
+ending processes ([Closing a window](#closing-a-window)), reading files.
 
 ### desktop: the desktop only
 
@@ -276,6 +276,44 @@ Building it found a kernel bug: a new process copied its parent's subsystem
 state and only then took the subsystem of its image, so a POSIX program
 started by a native one (`windowd` by `sessiond`) ran with no POSIX state and
 its `poll` failed. Spawning now resizes the state for the child's subsystem.
+
+## Closing a window
+
+`windowd` asks; it never ends a process. That is what NT's USER did --
+`WM_CLOSE`, and the program decides -- and what lets `windowd` run native,
+where `SXN_SYS_TERMINATE` reaches only a caller's own children.
+
+- **The X and Alt+F4 ask** the main window to close: the shutdown flag in its
+  header and its wake event, as for a dialog. The window stays until the
+  process ends, and goes when `windowd` sees it gone. A fullscreen window
+  gives the video mode back first.
+- **The runtime's default answer is to end the process**
+  (`DefWindowProc`'s `WM_CLOSE`): a close request on the main window, or the
+  WM going away (its event pipe hangs up), ends the process at its next poll
+  or present. A program that answers itself -- asks to save, stops its audio
+  -- calls `gfx_handle_close(1)` and watches `gfx_should_close`. The desktop,
+  the media player and ccleste do.
+- **Taking a client down is dropping its connection.** A client that sends a
+  malformed batch, or the session ending, has its event pipe closed: the
+  hang-up ends a well-behaved process the same way. Only a process `windowd`
+  started itself and that never connected (its selftest's) is killed.
+- **Not responding.** A window asked to close that still runs after 5 s
+  (`WINDOWD_HUNG_CLOSE_MS`) is marked: its caption says "(Not Responding)" and
+  its window-list entry carries `SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING`. The
+  desktop answers with an End Program dialog (window id 4, centred, not
+  dismissed by a press elsewhere): End Now ends the process -- the entry's id
+  is its pid -- and Wait leaves it alone until it is asked to close again,
+  which starts the wait over. Task Manager's End Process remains the other
+  way.
+
+What is detected is a program that does not close when asked, not one that
+stopped processing input while nobody asked it anything (Windows' ghost
+windows); the event pipe gives `windowd` no clean signal for the second.
+
+Ending the process is the desktop's act, through POSIX `kill`. When the
+desktop itself runs native it will need a right to end a process it did not
+start (process handles, or asking the session manager); that is left for
+then.
 
 ## Window roles
 
@@ -498,7 +536,9 @@ Depends on the hotkeys of phase 1.
    [`sessiond`](#the-session-manager-sessiond): `windowd` starts nothing of
    the session any more and restarts nothing; `compositord` is still its
    child until phase 4. **Step 5 is done.**
-6. **`windowd` native.**
+6. **`windowd` native.** Its prerequisites are in place: multi-object wait
+   and process query in the kernel, and closing a window no longer needs to
+   end a process ([Closing a window](#closing-a-window)).
 
 ### Phase 4: composition moves into `compositord`
 

@@ -562,4 +562,5 @@ const struct desktop_popup_ops desktop_startmenu_ops = {
     startmenu_pointer,
     0,
     startmenu_paint_window,
+    0,
 };

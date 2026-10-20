@@ -113,6 +113,12 @@ Cut-off notes:
 
 ### Changed
 
+- **Closing a window asks the program; a hung one gets an End Program dialog.** The X and
+  Alt+F4 request the close and the runtime ends a program that does not handle it
+  (`gfx_handle_close` to answer yourself); `windowd` never kills. A program still running 5 s
+  later shows "(Not Responding)" and the desktop offers End Now / Wait. See
+  `docs/desktop/DESKTOP_ARCHITECTURE.md#closing-a-window`.
+
 - **The shell role goes to a process the session started.** The desktop asks for it with
   `gfx_open_shell` (`SAVANXP_WM_HELLO_SHELL`); `windowd` grants it only when the client's parent is
   its own parent or itself, one at a time. A client whose WM went away is asked to close.

@@ -18,6 +18,7 @@ _Static_assert(
  *   id 1  taskbar     panel on the bottom edge
  *   id 2  Start menu  popup, bottom left above the taskbar
  *   id 3  tray popup  volume, clock or keyboard layout, bottom right
+ *   id 4  End Program a program asked to close is not responding (centred)
  *
  * One loop serves all of them. Popups open and close as windows of this
  * process -- no process per click -- and the taskbar knows what is open
@@ -50,6 +51,7 @@ static const struct desktop_popup_ops *const k_popup_ops[DESKTOP_POPUP_COUNT] = 
     &desktop_volume_ops,
     &desktop_clock_ops,
     &desktop_keyboard_ops,
+    &desktop_hung_ops,
 };
 
 static struct savanxp_gfx_context g_background;
@@ -64,6 +66,9 @@ static unsigned long g_taskbar_retry_ms = 0;
 
 static struct desktop_popup_slot g_start_menu = {DESKTOP_WINDOW_START_MENU, 0, DESKTOP_POPUP_START_MENU, 0, {0}, 0};
 static struct desktop_popup_slot g_tray = {DESKTOP_WINDOW_TRAY_POPUP, 0, DESKTOP_POPUP_VOLUME, 0, {0}, 0};
+static struct desktop_popup_slot g_hung = {DESKTOP_WINDOW_HUNG_DIALOG, 0, DESKTOP_POPUP_HUNG, 0, {0}, 0};
+/* The window whose "not responding" the user already answered. */
+static uint32_t g_hung_answered = 0;
 
 void desktop_bevel(struct sx_painter *painter, struct sx_rect rect, int sunken)
 {
@@ -94,6 +99,10 @@ void desktop_shell_request(const struct savanxp_wm_shell_request *request)
 
 static struct desktop_popup_slot *slot_for(enum desktop_popup popup)
 {
+    if (popup == DESKTOP_POPUP_HUNG)
+    {
+        return &g_hung;
+    }
     return popup == DESKTOP_POPUP_START_MENU ? &g_start_menu : &g_tray;
 }
 
@@ -120,16 +129,22 @@ static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
     int y = 0;
 
     /* Above the taskbar: the Start menu at its left end, the tray popups at
-     * its right end. */
-    if (ops->anchor_right)
+     * its right end. A dialog in the middle of the screen. */
+    if (ops->centered)
+    {
+        x = (display_width - ops->width) / 2;
+        y = (display_height - DESKTOP_TASKBAR_HEIGHT - ops->height) / 2;
+    }
+    else if (ops->anchor_right)
     {
         x = display_width - 4 - ops->width;
+        y = display_height - DESKTOP_TASKBAR_HEIGHT - ops->height;
     }
     else
     {
         x = 2;
+        y = display_height - DESKTOP_TASKBAR_HEIGHT - ops->height;
     }
-    y = display_height - DESKTOP_TASKBAR_HEIGHT - ops->height;
 
     if (ops->open() != 0)
     {
@@ -140,7 +155,7 @@ static void open_slot(struct desktop_popup_slot *slot, enum desktop_popup popup)
             &slot->gfx,
             slot->window_id,
             SAVANXP_WM_WINDOW_ROLE_POPUP,
-            SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE,
+            ops->centered ? 0u : SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE,
             x,
             y,
             (uint32_t)ops->width,
@@ -182,6 +197,38 @@ int desktop_popup_is_open(enum desktop_popup popup)
     const struct desktop_popup_slot *slot = slot_for(popup);
 
     return slot->open && slot->kind == popup;
+}
+
+void desktop_hung_dismissed(uint32_t window_id)
+{
+    g_hung_answered = window_id;
+}
+
+/* Follows windowd's "not responding" marks: opens the End Program dialog for
+ * the first marked window the user has not answered, and closes it when that
+ * window ends or is no longer marked. */
+static void service_hung(void)
+{
+    char title[SAVANXP_WM_WINDOW_TITLE_CAPACITY];
+    uint32_t window_id = 0;
+    int marked = desktop_taskbar_not_responding(&window_id, title, sizeof(title));
+
+    if (!marked)
+    {
+        /* Nothing marked: an answer only holds while its mark lasts. */
+        g_hung_answered = 0;
+        close_slot(&g_hung);
+        return;
+    }
+    if (g_hung.open && desktop_hung_target() != window_id)
+    {
+        close_slot(&g_hung);
+    }
+    if (!g_hung.open && window_id != g_hung_answered)
+    {
+        desktop_hung_set_target(window_id, title);
+        open_slot(&g_hung, DESKTOP_POPUP_HUNG);
+    }
 }
 
 static void apply_actions(uint32_t actions, struct desktop_popup_slot *slot)
@@ -368,7 +415,7 @@ static void service_popup(struct desktop_popup_slot *slot)
 static int present_windows(int *lost_session)
 {
     int presented = 0;
-    struct desktop_popup_slot *slots[2] = {&g_start_menu, &g_tray};
+    struct desktop_popup_slot *slots[3] = {&g_start_menu, &g_tray, &g_hung};
     int index;
 
     if (g_background_repaint)
@@ -391,7 +438,7 @@ static int present_windows(int *lost_session)
         }
         g_taskbar_repaint = 0;
     }
-    for (index = 0; index < 2; ++index)
+    for (index = 0; index < 3; ++index)
     {
         struct desktop_popup_slot *slot = slots[index];
 
@@ -412,6 +459,8 @@ int main(void)
 {
     unsigned long next_wallpaper_check_ms = 0;
 
+    /* It closes its popups and taskbar itself when windowd goes away. */
+    gfx_handle_close(1);
     if (gfx_open_shell(&g_background) < 0)
     {
         puts_fd(2, "desktop: gfx_open failed\n");
@@ -450,6 +499,8 @@ int main(void)
         service_taskbar();
         service_popup(&g_start_menu);
         service_popup(&g_tray);
+        service_hung();
+        service_popup(&g_hung);
 
         if (now >= next_wallpaper_check_ms)
         {
@@ -471,6 +522,7 @@ int main(void)
     }
 
     desktop_close_popups();
+    close_slot(&g_hung);
     if (g_taskbar_open)
     {
         (void)gfx_window_close(&g_background, &g_taskbar);

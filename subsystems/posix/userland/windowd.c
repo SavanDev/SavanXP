@@ -8,6 +8,9 @@
 
 #define WINDOWD_MAX_MOUSE_EVENTS_PER_FRAME 16
 #define WINDOWD_SURFACE_PAGE_SIZE 4096u
+/* A window asked to close that is still running after this long is shown as
+ * not responding (Windows waits about as long before it says so). */
+#define WINDOWD_HUNG_CLOSE_MS 5000ul
 /* Low render size used for composited fullscreen apps: the client renders here
  * and the shell scales it to the display when F11 fullscreen is active. */
 #define WINDOWD_FULLSCREEN_MODE_WIDTH 640
@@ -1707,13 +1710,14 @@ static void destroy_client_instance(struct windowd_client *client, int terminate
     }
     /* Only a process's main window (id 0) owns the process. Any other window
      * of it -- a dialog, or a panel or popup of the desktop -- shares the pid
-     * of a process that is still running: it is neither killed nor waited for. */
+     * of a process that is still running: it is not waited for.
+     *
+     * A connected process is never killed: closing its event pipe below is a
+     * hang-up its runtime answers by ending the process
+     * (docs/desktop/DESKTOP_ARCHITECTURE.md#closing-a-window). One that never
+     * reads it is not responding, and ending it is the shell's offer. */
     if (client->pid > 0 && client->window_id == 0)
     {
-        if (terminate_client)
-        {
-            (void)savanxp_kill((int)client->pid, SAVANXP_SIGKILL);
-        }
         if (windowd_process_alive(client->pid))
         {
             queue_pending_reap(client->pid);
@@ -2166,6 +2170,10 @@ static void publish_window_list(struct windowd_session *session)
         {
             entry->flags |= SAVANXP_WM_WINDOW_FLAG_MINIMIZED;
         }
+        if (client->not_responding)
+        {
+            entry->flags |= SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING;
+        }
         /* Icono: van los pixeles propios del .sxe cuando el binario los trajo,
          * y el id del set horneado como ultimo recurso. La barra no puede
          * resolverlos sola -- el fallback generico para todo el mundo era
@@ -2458,26 +2466,65 @@ static int close_overlay_window(struct windowd_session *session, struct windowd_
         return 1;
     }
 
-    /* A pantalla completa la ventana tapaba todo, y cerrarla ademas devuelve el
-     * modo de video: hay que repintar la pantalla entera, no su marco. */
+    /* A main window is asked, like a dialog: the window goes when the process
+     * ends (reap_dead_clients), and a process that does not end is shown as
+     * not responding (service_close_requests). A fullscreen one first gives
+     * the video mode back, so nothing waits behind a low resolution. */
     if (client->fullscreen)
     {
-        destroy_overlay_client(session, slot, 1);
-        windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
-        return 1;
+        exit_overlay_fullscreen(session, dirty);
     }
-    /* El danio se toma antes de destruir: con la ventana se van sus dialogos,
-     * que pueden quedar fuera de su marco. */
-    dirty_overlay_family(session, dirty, slot);
-    destroy_overlay_client(session, slot, 1);
-    /* La activacion pasa a otra ventana, y su barra de titulo cambia de color.
-     * El camino del mouse la repinta al final de su evento; Alt+F4 no tiene ese
-     * final, asi que se hace aca para los dos. */
-    if (session->active_client_kind == WINDOWD_CLIENT_APP && overlay_slot_valid(session->active_overlay_slot))
+    if (client->header != 0)
     {
-        windowd_dirty_rect_add_client(dirty, overlay_client_at_const(session, session->active_overlay_slot));
+        client->header->flags |= SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN;
+    }
+    if (client->wake_event_fd >= 0)
+    {
+        (void)event_set(client->wake_event_fd);
+    }
+    if (client->close_requested_ms == 0 || client->not_responding)
+    {
+        /* Asking again after "not responding" starts the wait over: the shell
+         * offers to end it again if it still does not close. */
+        if (client->not_responding)
+        {
+            client->not_responding = 0;
+            windowd_dirty_rect_add_client(dirty, client);
+        }
+        /* 0 means "not asked"; never a time in the future, which the
+         * unsigned difference in service_close_requests would read as a wait
+         * already over. */
+        client->close_requested_ms = uptime_ms();
+        if (client->close_requested_ms == 0)
+        {
+            client->close_requested_ms = 1;
+        }
     }
     return 1;
+}
+
+/* Windows asked to close that keep running become "not responding": their
+ * caption says so and the window list tells the shell, which offers to end
+ * the process. */
+static void service_close_requests(struct windowd_session *session, struct windowd_dirty_rect *dirty)
+{
+    unsigned long now = uptime_ms();
+    int slot;
+
+    for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
+    {
+        struct windowd_client *client = &session->overlay_clients[slot];
+
+        if (client->pid <= 0 || client->owner_slot >= 0 || client->close_requested_ms == 0 ||
+            client->not_responding || now - client->close_requested_ms < session->hung_close_ms)
+        {
+            continue;
+        }
+        client->not_responding = 1;
+        windowd_dirty_rect_add_client(dirty, client);
+        eprintf("windowd: %s (pid %ld) is not responding\n",
+            client->path[0] != '\0' ? client->path : "?", client->pid);
+    }
 }
 
 /* Starts a program the session needs and holds a window slot for it until it
@@ -2784,6 +2831,7 @@ static int open_compositor_session(struct windowd_session *session)
     session->active_overlay_slot = -1;
     session->fullscreen_slot = -1;
     session->overlay_count = 0;
+    session->hung_close_ms = WINDOWD_HUNG_CLOSE_MS;
     /* -1, not 0: memset would leave slot 0 "being resized". */
     session->resize_slot = -1;
     session->resize_edges = WINDOWD_RESIZE_EDGE_NONE;
@@ -4050,6 +4098,7 @@ static void selftest_service_overlays(struct windowd_session *session, struct wi
 
     (void)event_reset(session->submit_event_fd);
     service_connections(session, dirty);
+    service_close_requests(session, dirty);
     service_desktop(session, dirty);
     for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
     {
@@ -4349,6 +4398,96 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
         printf("DESKTOP SMOKE launch: the desktop (pid %ld) started taskmgr\n", desktop_pid);
     }
 
+    /* Closing does not kill (docs/desktop/DESKTOP_ARCHITECTURE.md#closing-a-
+     * window). A program that claims the close request and ignores it keeps
+     * its window; past the timeout windowd marks it not responding, the
+     * desktop opens its End Program dialog, and End Now ends it -- which
+     * windowd notices like any other exit. */
+    {
+        unsigned long saved_hung_ms = session->hung_close_ms;
+        const struct windowd_client *dialog = 0;
+        struct windowd_client *hung = 0;
+        int hung_slot;
+        long hung_pid = 0;
+        int listed = 0;
+
+        session->hung_close_ms = 300;
+        hung_slot = selftest_launch(session, &dirty, "/bin/widgetsdemo", "--hang-on-close");
+        if (hung_slot < 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hung: the test program did not start\n");
+            return 1;
+        }
+        hung = &session->overlay_clients[hung_slot];
+        hung_pid = hung->pid;
+        deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+        while (hung->consumed_submit_sequence == 0 && uptime_ms() < deadline)
+        {
+            selftest_service_overlays(session, &dirty);
+            sleep_ms(10);
+        }
+        (void)close_overlay_window(session, &dirty, hung_slot);
+        deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+        while (uptime_ms() < deadline)
+        {
+            const struct windowd_client *candidate = &session->desktop_windows[4];
+
+            selftest_service_overlays(session, &dirty);
+            (void)reap_dead_clients(session, &dirty);
+            dialog = (candidate->pid > 0 && candidate->consumed_submit_sequence > 0) ? candidate : 0;
+            if (hung->pid != hung_pid || (hung->not_responding && dialog != 0))
+            {
+                break;
+            }
+            sleep_ms(20);
+        }
+        if (session->desktop_windows[0].window_list != 0)
+        {
+            uint32_t index;
+            const struct savanxp_wm_window_list *list = session->desktop_windows[0].window_list;
+
+            for (index = 0; index < list->count && index < SAVANXP_WM_MAX_WINDOWS; ++index)
+            {
+                if (list->windows[index].window_id == (uint32_t)hung_pid &&
+                    (list->windows[index].flags & SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING) != 0u)
+                {
+                    listed = 1;
+                }
+            }
+        }
+        if (hung->pid != hung_pid || !hung->not_responding || !listed || dialog == 0)
+        {
+            printf("DESKTOP SMOKE FAIL hung: alive=%d marked=%d listed=%d dialog=%d\n",
+                hung->pid == hung_pid, hung->not_responding, listed, dialog != 0);
+            return 1;
+        }
+
+        /* End Now, clicked: the button sits at the bottom right, left of Wait. */
+        {
+            struct sx_rect surface = windowd_client_surface_rect(dialog);
+            int click_x = surface.x + surface.width - 12 - 84 - 8 - 84 / 2;
+            int click_y = surface.y + surface.height - 12 - 24 / 2;
+
+            (void)route_pointer(dialog, click_x, click_y, 0, SAVANXP_MOUSE_BUTTON_LEFT);
+            (void)route_pointer(dialog, click_x, click_y, 0, 0);
+        }
+        deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+        while ((hung->pid == hung_pid || session->desktop_windows[4].pid > 0) && uptime_ms() < deadline)
+        {
+            selftest_service_overlays(session, &dirty);
+            (void)reap_dead_clients(session, &dirty);
+            sleep_ms(20);
+        }
+        session->hung_close_ms = saved_hung_ms;
+        windowd_dirty_rect_reset(&dirty);
+        if (hung->pid == hung_pid || session->desktop_windows[4].pid > 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL hung: End Now did not end the program and close the dialog\n");
+            return 1;
+        }
+        puts_fd(1, "DESKTOP SMOKE hung: marked, dialog shown, End Now ended it\n");
+    }
+
     /* An application may not ask for a role: the request is refused, as the
      * runtime would see it. */
     {
@@ -4537,18 +4676,31 @@ static int windowd_owned_window_selftest(struct windowd_session *session, struct
         return 1;
     }
 
-    /* Alt+F4 sobre una ventana principal la cierra con su proceso, como su X. */
+    /* Alt+F4 on a main window, the same gesture as its X, ASKS the process to
+     * close: the window stays until the process ends, which the runtime does
+     * on its own for a program that does not handle the request. */
     if (selftest_launch(session, dirty, "/bin/widgetsdemo", 0) != owner_slot ||
         session->active_overlay_slot != owner_slot ||
-        !wm_handle_key(session, &alt_f4, dirty) ||
-        session->overlay_clients[owner_slot].pid > 0 ||
+        !wm_handle_key(session, &alt_f4, dirty))
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: Alt+F4 did not ask the main window to close\n");
+        return 1;
+    }
+    deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+    while (session->overlay_clients[owner_slot].pid > 0 && uptime_ms() < deadline)
+    {
+        selftest_service_overlays(session, dirty);
+        (void)reap_dead_clients(session, dirty);
+        sleep_ms(10);
+    }
+    windowd_dirty_rect_reset(dirty);
+    if (session->overlay_clients[owner_slot].pid > 0 ||
         selftest_handle_count(savanxp_getpid(), &handles_after) != 0 || handles_after != handles_before_launch)
     {
-        printf("DESKTOP SMOKE FAIL owned: Alt+F4 no cerro la ventana principal (fds=%u, esperados %u)\n",
+        printf("DESKTOP SMOKE FAIL owned: Alt+F4 did not close the main window (fds=%u, expected %u)\n",
             (unsigned)handles_after, (unsigned)handles_before_launch);
         return 1;
     }
-    windowd_dirty_rect_reset(dirty);
 
     printf("DESKTOP SMOKE owned windows ok windowd_fds=%u\n", (unsigned)handles_dialog);
     return 0;
@@ -6473,6 +6625,7 @@ int main(int argc, char **argv)
             break;
         }
         service_connections(&session, &dirty);
+        service_close_requests(&session, &dirty);
         service_desktop(&session, &dirty);
         for (slot = 0; slot < WINDOWD_MAX_OVERLAY_CLIENTS; ++slot)
         {
