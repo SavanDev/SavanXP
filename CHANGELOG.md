@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Native programs have a heap.** `system/runtime/sxn_runtime.c`, linked into every native target
+  (CMake `NATIVE` and `build-user.sh --native`), maps `malloc`'s arenas through SXN, so `malloc`
+  works past the 256 KiB bootstrap arena. See `docs/userland/NATIVE_HEAP.md`.
+
 - **`SXN_SYS_SPAWN_STDIO` and `SXN_SYS_SET_NONBLOCKING`.** A native process can start a child
   that gets only stdio, and make a pipe or device stop blocking (`sxn_spawn_stdio`,
   `sxn_set_nonblocking`); `sessiond` spawns that way.

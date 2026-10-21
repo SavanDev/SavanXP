@@ -64,8 +64,12 @@ in `sxn_exit`. Three are:
 - `windowd`: written against the POSIX SDK and kept that way; `windowd_sys.h`
   renames its POSIX calls to SXN equivalents in `windowd_sys.c`. A large
   program can move to the native API that way, one renamed call at a time,
-  as long as it needs no files and no more heap than the 256 KiB bootstrap
-  arena ([NATIVE_HEAP.md](NATIVE_HEAP.md)).
+  as long as it needs no files.
+
+Native programs have `malloc`, `free`, `realloc` and `calloc`: the allocator
+every program shares, with its arenas mapped through SXN by the native
+runtime (`system/runtime/sxn_runtime.c`, linked into every native target; see
+[NATIVE_HEAP.md](NATIVE_HEAP.md)).
 
 ## Build, manifest, launch
 

@@ -1,15 +1,14 @@
 # Native heap
 
-> **Status: prepared (2026-10-20), not built.** The allocator's page source is
-> a replaceable hook (`sx_heap_pages_map`, `sx_heap_pages_unmap`), and
-> `native-test` asserts what a native program has today: the bootstrap arena
-> and nothing more. The native definitions of the hook are the next step
-> below.
+> **Status: built (2026-10-20).** A native program has the whole heap: the
+> allocator every program shares, with its page source on SXN
+> (`system/runtime/sxn_runtime.c`). `native-test` holds several MiB across
+> arenas at once.
 
 A native program (`EI_OSABI` 0x53, [NATIVE_APPS.md](NATIVE_APPS.md)) has no
-POSIX calls. The platform services (`compositord`, `windowd`, `sessiond`) get
+POSIX calls. The platform services (`compositord`, `windowd`, `sessiond`) got
 by without a heap; SXGFX bitmaps, SXGUI-C and anything that builds a list at
-run time do not. This document is how `malloc` comes to native programs.
+run time do not. This document is how `malloc` came to native programs.
 
 ## What there is
 
@@ -40,16 +39,17 @@ and costs no descriptor), and unmapped on release. They sit apart from the
 allocator so that a program defining the same two functions strongly replaces
 only them, and the allocator stays one.
 
-## What a native program has today
+## What a native program had before
 
 Every static program links `posix.c` -- native ones too: its call-free parts
-(`snprintf`, string functions) are what they use. So the allocator is already
-there, and the bootstrap arena works in a native process: no system call is
-involved. The first arena it asks the page source for fails, because the
+(`snprintf`, string functions) are what they use. So the allocator was already
+there, and the bootstrap arena worked in a native process: no system call is
+involved. The first arena it asked the page source for failed, because the
 weak definitions issue POSIX `section_create`, which is `ENOSYS` from a native
-process, and `malloc` returns 0. A native program can allocate about 256 KiB
-today and not a byte more. `nativetest` asserts both halves: 64 KiB comes back
-(and returns to the same address after a free), 1 MiB is refused.
+process, and `malloc` returned 0: about 256 KiB and not a byte more.
+`nativetest` asserted exactly that before the native page source existed, and
+asserts the opposite now; a native program that ends up linking the weak
+definitions instead fails it with the 1 MiB block refused.
 
 ## The native page source
 
@@ -58,12 +58,15 @@ The same operations exist on the native API, with the same flag values:
 `sxn_unmap_view`. The native definitions of the hook are those four calls and
 nothing else.
 
-**Where they live:** a native runtime unit, `system/runtime/sxn_runtime.c`,
+**Where they live:** the native runtime unit, `system/runtime/sxn_runtime.c`,
 compiled into every native target -- `savanxp_program(... NATIVE ...)`, which
 `savanxp_system_service` uses, and `tools/build-user.sh --native` for external
-ones. It is the place for the rest of the native runtime as it is needed: the
-next candidate is `crt0` ending a native process with `sxn_exit` when `main`
-returns, which today every native program has to do itself.
+ones -- and into nothing else. Being strong, its definitions win over the
+runtime's weak ones at link time; the runtime is an object library, not an
+archive, so a strong definition is the only way to replace one of its
+functions. It is the place for the rest of the native runtime as it is
+needed: the next candidate is `crt0` ending a native process with `sxn_exit`
+when `main` returns, which today every native program has to do itself.
 
 Not chosen:
 
@@ -94,15 +97,16 @@ Not chosen:
 
 1. **The hook.** Done: `sx_heap_pages_map`/`sx_heap_pages_unmap`, weak in
    `posix.c`, the allocator calling only them.
-2. **Prove today's limit.** Done: `nativetest` (`native-test`) allocates inside
-   the bootstrap arena and expects past it 0 -- the baseline the next step
-   changes.
-3. **The native page source.** `system/runtime/sxn_runtime.c` with the strong
-   definitions, wired into native targets in CMake and in `build-user.sh
-   --native`. The check of step 2 then allocates several MiB across arenas,
-   frees them, and sees the arenas go back (the process's view count, through
-   `SXN_SYS_PROCESS_QUERY` if it reports views, or by allocating again to the
-   same addresses).
+2. **Prove the old limit.** Done: `nativetest` allocated inside the bootstrap
+   arena and expected 0 past it, the baseline the next step changed.
+3. **The native page source.** Done: `system/runtime/sxn_runtime.c`, wired into
+   native targets in CMake and in `build-user.sh --native`. `nativetest` holds
+   64 KiB, 1, 3 and 6 MiB at once, each with its own pattern, frees them with
+   its descriptor count unchanged, then allocates and frees 2 MiB 24 times.
+   That an emptied arena really goes back to the kernel is the allocator's
+   (`sx_arena_release`, unchanged and shared with POSIX); `native-test` cannot
+   see it, since `SXN_SYS_PROCESS_QUERY` reports no view count and an arena
+   kept would simply be reused.
 4. **Use it.** The first consumer is whatever moves next onto the native API;
    [DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md) names the
    desktop and Program Manager once they have files.

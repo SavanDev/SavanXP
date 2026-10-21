@@ -455,11 +455,11 @@ services need:
 | Monotonic clock | `compositord`, `windowd` (frame stats) | done (slice 14) |
 | Process termination and query | `sessiond` (ending the session), `windowd` (whether a client lives, its parent, its name) | done: ending a child (slice 16), querying any process (slice 18) |
 | POSIX access to the native object calls | POSIX clients | done (slice 15) |
-| A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | header-only `sxn.h`; the stock `crt0` falls through to a POSIX exit; the heap is prepared ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)) |
+| A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | header-only `sxn.h`; the stock `crt0` falls through to a POSIX exit; the heap is done ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)) |
 | Files | `desktop`, `progman` | missing, and not needed by the services |
 
 The graphics libraries are cheap to bring along. SXGFX (`gfx2d.c`) needs only
-`malloc`, `free` and `realloc`. SXCHROME needs nothing. The fonts are compiled
+`malloc`, `free` and `realloc`, which native programs have. SXCHROME needs nothing. The fonts are compiled
 in. SXGUI-C opens one file and reads the uptime. Files are the one need
 that keeps `desktop` and `progman` on POSIX for now. For the services
 that is the point of the design: once launching and `.sxe` reading leave
@@ -640,8 +640,8 @@ Depends on the hotkeys of phase 1.
    and SXCHROME built for native. **The target is done**
    (`savanxp_system_service`, the services in `system/`). SXGFX and SXCHROME
    needed nothing: a static native program links them and uses their
-   call-free parts. A native heap is prepared, not built
-   ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)).
+   call-free parts. The native heap is done: the shared allocator with its
+   page source on SXN ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)).
 3. **`compositord` native.** The pilot: about 600 lines, no files, only the
    GPU, its IPC and a clock. **Done:** it speaks only SXN (the GPU as a device
    with control codes, its pipes through native read/write, the native clock),
@@ -677,7 +677,7 @@ Depends on the hotkeys of phase 1.
    few POSIX calls they make to `wd_*` functions on SXN (`windowd_sys.c`):
    text goes to `/dev/serial`, `poll` is a wait-many plus a readiness look per
    handle, a device is opened by its bare name, `kill` ends a child. The services moved to
-   `system/` afterwards; the native heap is still to build
+   `system/` afterwards, and native programs got a heap
    ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)).
 
 ### Phase 4: composition moves into `compositord`

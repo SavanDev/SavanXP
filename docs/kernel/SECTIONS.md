@@ -17,7 +17,7 @@ Three callers, and they want different things from it:
 
 | Consumer | Wants | Lifetime |
 | --- | --- | --- |
-| Heap arenas (`sx_heap_pages_map`, `runtime/posix.c`) | anonymous, writable, private | per process |
+| Heap arenas (`sx_heap_pages_map`: `runtime/posix.c`, `system/runtime/sxn_runtime.c` for native programs) | anonymous, writable, private | per process |
 | GPU surfaces (`GPU_IOC_IMPORT_SECTION`) | shared with another process by handle | while a handle is open |
 | File images (`section_open`) | read-only, backed by a file's bytes, shared by inode | as long as one view exists |
 | Library images (not built yet) | the same; they are what file images exist for | as long as one view exists |

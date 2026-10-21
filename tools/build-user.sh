@@ -191,6 +191,12 @@ compile_c "$SDK/runtime/gfx2d.c" "$OBJ_ROOT/gfx2d.o"
 compile_asm "$SDK/runtime/setjmp.S" "$OBJ_ROOT/setjmp.o"
 compile_asm "$SDK/runtime/crt0.S" "$OBJ_ROOT/crt0.o"
 RUNTIME_OBJECTS=("$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/sxe.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/setjmp.o")
+if ((NATIVE)); then
+    # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page source
+    # on SXN, replacing the runtime's weak POSIX one.
+    compile_c "$ROOT/system/runtime/sxn_runtime.c" "$OBJ_ROOT/sxn_runtime.o"
+    RUNTIME_OBJECTS+=("$OBJ_ROOT/sxn_runtime.o")
+fi
 if ((SSE)); then
     compile_c "$SDK/runtime/math.c" "$OBJ_ROOT/math.o" -fno-builtin
     RUNTIME_OBJECTS+=("$OBJ_ROOT/math.o")

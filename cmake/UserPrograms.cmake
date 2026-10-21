@@ -23,6 +23,9 @@ function(savanxp_program)
     add_executable(${P_NAME} ${P_SOURCES})
     if(P_NATIVE)
         set_property(GLOBAL APPEND PROPERTY SAVANXP_NATIVE_TARGETS ${P_NAME})
+        # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page
+        # source on SXN, replacing the runtime's weak POSIX one.
+        target_sources(${P_NAME} PRIVATE system/runtime/sxn_runtime.c)
     endif()
     target_sources(${P_NAME} PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
     target_include_directories(${P_NAME} PRIVATE

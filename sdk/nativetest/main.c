@@ -28,9 +28,9 @@
  * events and streams; and TERMINATE:
  * a third child ("sleeper") waits forever until the parent ends it, and
  * waitpid reports the status the parent chose; PROCESS_QUERY sees it running,
- * then ended with that status, then gone. And the heap as it stands
- * (docs/userland/NATIVE_HEAP.md): malloc from the bootstrap arena works, and
- * nothing past it until the native page source exists. The first
+ * then ended with that status, then gone. And the heap
+ * (docs/userland/NATIVE_HEAP.md): several MiB across arenas from the native
+ * page source. The first
  * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
  */
@@ -530,30 +530,74 @@ int main(int argc, char** argv) {
         check(sxn_log("nativetest: terminate and query done") == 0);
     }
 
-    /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS
-     * and needs no system call, so an allocation inside it works and comes
-     * back on free. The first arena past it comes from the page source, whose
-     * runtime definitions are POSIX calls -- ENOSYS here -- so for now that
-     * request returns 0. The native page source turns this expectation round. */
+    /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS and
+     * needs no system call; the arenas past it come from the native page
+     * source (system/runtime/sxn_runtime.c): sections, mapped and their
+     * handles closed. Several MiB held at once, each block its own pattern so
+     * an overlap shows; no descriptor left behind; then allocate-and-free
+     * round after round, where every free empties an arena and gives it back
+     * (sx_arena_release) and the next allocation maps one again. A refused
+     * 1 MiB here would mean the runtime's weak POSIX page source is the one
+     * linked: ENOSYS. */
     {
-        unsigned char* small = (unsigned char*)malloc(64u * 1024u);
-        unsigned char* again = 0;
-        void* big = 0;
+        enum { HEAP_BLOCKS = 4 };
+        static const unsigned long sizes[HEAP_BLOCKS] = {
+            64ul * 1024ul, 1024ul * 1024ul, 3ul * 1024ul * 1024ul, 6ul * 1024ul * 1024ul};
+        unsigned char* blocks[HEAP_BLOCKS] = {0, 0, 0, 0};
+        struct sxn_process_query before;
+        struct sxn_process_query after;
+        unsigned long index;
+        unsigned long offset;
+        int round;
+        int intact = 1;
 
-        check(small != 0);
-        if (small != 0) {
-            small[0] = 1;
-            small[64u * 1024u - 1u] = 2;
-            check(small[0] == 1 && small[64u * 1024u - 1u] == 2);
+        check(sxn_process_query(info.pid, &before) == 0);
+        for (index = 0; index < HEAP_BLOCKS; ++index) {
+            blocks[index] = (unsigned char*)malloc(sizes[index]);
+            check(blocks[index] != 0);
         }
-        big = malloc(1024u * 1024u);
-        check(big == 0);
-        free(big);
-        free(small);
-        again = (unsigned char*)malloc(64u * 1024u);
-        check(again != 0 && again == small);
-        free(again);
-        check(sxn_log("nativetest: heap: bootstrap arena only") == 0);
+        for (index = 0; index < HEAP_BLOCKS; ++index) {
+            if (blocks[index] == 0) {
+                continue;
+            }
+            for (offset = 0; offset < sizes[index]; offset += 4096ul) {
+                blocks[index][offset] = (unsigned char)(index * 37u + (offset >> 12));
+            }
+            blocks[index][sizes[index] - 1u] = (unsigned char)(0xA0u + index);
+        }
+        for (index = 0; index < HEAP_BLOCKS; ++index) {
+            if (blocks[index] == 0) {
+                continue;
+            }
+            for (offset = 0; offset < sizes[index]; offset += 4096ul) {
+                if (blocks[index][offset] != (unsigned char)(index * 37u + (offset >> 12))) {
+                    intact = 0;
+                }
+            }
+            if (blocks[index][sizes[index] - 1u] != (unsigned char)(0xA0u + index)) {
+                intact = 0;
+            }
+        }
+        check(intact);
+        for (index = 0; index < HEAP_BLOCKS; ++index) {
+            free(blocks[index]);
+        }
+        check(sxn_process_query(info.pid, &after) == 0 && after.handle_count == before.handle_count);
+
+        for (round = 0; round < 24; ++round) {
+            unsigned long size = 2ul * 1024ul * 1024ul + (unsigned long)round * 4096ul;
+            unsigned char* block = (unsigned char*)malloc(size);
+
+            check(block != 0);
+            if (block == 0) {
+                break;
+            }
+            block[0] = (unsigned char)round;
+            block[size - 1u] = (unsigned char)~round;
+            check(block[0] == (unsigned char)round && block[size - 1u] == (unsigned char)~round);
+            free(block);
+        }
+        check(sxn_log("nativetest: heap: arenas from the native page source") == 0);
     }
 
     sxn_exit(g_failures == 0 ? 0 : 1);
