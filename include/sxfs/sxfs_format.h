@@ -75,11 +75,20 @@
 #define SXFS_MAX_TOTAL_SECTORS \
     (SXFS_BLOCK_BITMAP_SECTORS * SXFS_SECTOR_SIZE * 8u)
 
-/* El journal guarda una copia fija de la metadata (bitmaps + tabla de inodos) */
-/* mas su propio header de 1 sector. */
+/* The journal is a 1-sector header followed by a mirror of the metadata
+ * (bitmaps + inode table): metadata sector i is logged at journal_lba + 1 + i.
+ * A full journal fills the whole mirror; a sparse one only the sectors its
+ * header's sector_map names. See docs/fs/SXFS_JOURNAL.md. */
 #define SXFS_JOURNAL_METADATA_SECTORS \
     (SXFS_BLOCK_BITMAP_SECTORS + SXFS_INODE_BITMAP_SECTORS + SXFS_INODE_TABLE_SECTORS)
 #define SXFS_JOURNAL_SECTORS (1u + SXFS_JOURNAL_METADATA_SECTORS)
+/* One bit per metadata sector, rounded up to whole 32-bit words. */
+#define SXFS_JOURNAL_MAP_BYTES (((SXFS_JOURNAL_METADATA_SECTORS + 31u) / 32u) * 4u)
+
+/* Journal kinds. Every journal written before sparse journals has 0 here,
+ * because the field used to be reserved. */
+#define SXFS_JOURNAL_KIND_FULL 0u
+#define SXFS_JOURNAL_KIND_SPARSE 1u
 
 #define SXFS_BLOCK_BITMAP_LBA (SXFS_JOURNAL_LBA + SXFS_JOURNAL_SECTORS)
 #define SXFS_INODE_BITMAP_LBA (SXFS_BLOCK_BITMAP_LBA + SXFS_BLOCK_BITMAP_SECTORS)
@@ -154,7 +163,12 @@ struct sxfs_journal_header {
     uint32_t sequence;
     uint32_t pending;
     uint32_t metadata_sectors;
-    uint32_t reserved[122];
+    /* SXFS_JOURNAL_KIND_*. */
+    uint32_t kind;
+    /* Sparse journals only: bit i set means metadata sector i is in the
+     * payload and must be replayed. Same bit order as the on-disk bitmaps. */
+    uint8_t sector_map[SXFS_JOURNAL_MAP_BYTES];
+    uint8_t reserved[SXFS_SECTOR_SIZE - 28u - SXFS_JOURNAL_MAP_BYTES];
 };
 
 struct sxfs_dir_entry {
@@ -287,11 +301,13 @@ static inline int sxfs_superblock_valid(const struct sxfs_superblock* sb) {
         sb->checksum == sxfs_superblock_checksum(sb);
 }
 
-/* Valida un header de journal: magia, checksum y metadata_sectors esperados. */
+/* Validates a journal header: magic, checksum, the expected metadata_sectors
+ * and a known kind. */
 static inline int sxfs_journal_valid(const struct sxfs_journal_header* header) {
     return sxfs_magic_equals(header->magic, sxfs_journal_magic) &&
         header->checksum == sxfs_journal_checksum(header) &&
-        header->metadata_sectors == SXFS_JOURNAL_METADATA_SECTORS;
+        header->metadata_sectors == SXFS_JOURNAL_METADATA_SECTORS &&
+        (header->kind == SXFS_JOURNAL_KIND_FULL || header->kind == SXFS_JOURNAL_KIND_SPARSE);
 }
 
 /* Suma de sectores cubiertos por los extents de un inodo (su capacidad). */

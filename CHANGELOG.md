@@ -138,6 +138,12 @@ Cut-off notes:
 
 ### Changed
 
+- **SxFS commits write only the metadata sectors that changed.** The journal logs a sparse set
+  (`SXFS_JOURNAL_KIND_SPARSE`) instead of a full metadata copy, so `fscheck`'s `bytes_per_commit`
+  drops from 1575424 to about 3872 and saving a file no longer freezes the system for seconds
+  (Doom's in-game quit: 70.7 s → 0.53 s on IDE). Format stays v2; old full journals still replay,
+  and mount validates home metadata after the replay. See `docs/fs/SXFS_JOURNAL.md`.
+
 - **The taskbar's Start label uses the caption font.** "Start" is drawn in `SX_FONT_UI_TITLE`,
   the title-bar face, standing in for the bold label of Win9x.
 

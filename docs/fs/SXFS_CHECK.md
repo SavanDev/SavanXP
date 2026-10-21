@@ -93,9 +93,10 @@ result: clean
 ```
 
 The `metadata cost` block is what makes the journal's price a measurement rather
-than an inference: the journal copies the whole metadata on every commit, so
-commit cost tracks metadata size and not volume size. See
-[`BUILD_LINUX.md`](../build/BUILD_LINUX.md#the-geometry).
+than an inference. The sample above predates sparse journals, when every commit
+copied the whole metadata; since then a commit writes only the sectors it
+changed, and the same smoke reports `bytes_per_commit 3872`. See
+[`SXFS_JOURNAL.md`](SXFS_JOURNAL.md#what-it-costs).
 
 The two numbers that carry the most information are `data_used` and
 `data_claimed`. One counts sectors the bitmap marks occupied; the other counts

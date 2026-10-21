@@ -696,6 +696,250 @@ void case_transient_io_failure_rejects_writes(uint8_t* image, uint8_t* pristine)
     hoststub::detach_device();
 }
 
+// --- Sparse journal ---------------------------------------------------------
+// A commit logs and rewrites only the metadata sectors that changed. These cases
+// pin its cost and, above all, its crash safety: a power cut at ANY sector of a
+// transaction has to remount as the state before it or the state after it.
+
+constexpr uint32_t kPayloadBytes = 3000;
+
+uint8_t g_payload[kPayloadBytes];
+
+void fill_payload() {
+    for (uint32_t index = 0; index < kPayloadBytes; ++index) {
+        g_payload[index] = static_cast<uint8_t>((index * 31u + 7u) & 0xffu);
+    }
+}
+
+// Mounts `image` as the root volume on fresh driver state.
+sxfs::VolumeId mount_image(uint8_t* image) {
+    hoststub::reset_vfs();
+    hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
+    sxfs::initialize();
+    const sxfs::VolumeId volume = sxfs::probe(0, sxfs::kRootMountPoint);
+    if (volume != sxfs::kInvalidVolume && !sxfs::attach(volume)) {
+        return sxfs::kInvalidVolume;
+    }
+    return volume;
+}
+
+sxfs::FileRecord* record_for(const char* path) {
+    vfs::Vnode* node = hoststub::find_node(path);
+    return node != nullptr ? sxfs::file_from_vnode(*node) : nullptr;
+}
+
+// Whether `path` is published with exactly `size` bytes equal to `expected`.
+bool file_matches(const char* path, const void* expected, size_t size) {
+    sxfs::FileRecord* record = record_for(path);
+    vfs::Vnode* node = hoststub::find_node(path);
+    if (record == nullptr || node == nullptr || node->size != size) {
+        return false;
+    }
+    if (size == 0) {
+        return true;
+    }
+    uint8_t* buffer = static_cast<uint8_t*>(malloc(size));
+    const bool ok = buffer != nullptr && sxfs::read_file(*record, 0, buffer, size) &&
+        memcmp(buffer, expected, size) == 0;
+    free(buffer);
+    return ok;
+}
+
+bool volume_is_clean(sxfs::VolumeId volume) {
+    sxfs::CheckReport report = {};
+    return sxfs::check(volume, report) && report.clean() && report.journal_pending == 0 &&
+        report.data_used_sectors == report.data_claimed_sectors;
+}
+
+// The transaction under test: create a file (inode bitmap, inode table and the
+// parent directory) and grow it (block bitmap and inode table). Two commits.
+bool run_transaction() {
+    sxfs::FileRecord* created = sxfs::create_file(kNewPath);
+    if (created == nullptr) {
+        return false;
+    }
+    size_t written = 0;
+    return sxfs::write_file(*created, 0, g_payload, kPayloadBytes, true, written) &&
+        written == kPayloadBytes;
+}
+
+void case_sparse_commit_writes_only_changed_sectors(uint8_t* image) {
+    printf("case: a commit writes only the metadata sectors that changed\n");
+
+    if (!check(build_clean_image(image), "SxFS image built") ||
+        !check(mount_image(image) != sxfs::kInvalidVolume, "volume mounted")) {
+        hoststub::detach_device();
+        return;
+    }
+
+    const size_t before_create = hoststub::sectors_written();
+    sxfs::FileRecord* created = sxfs::create_file(kNewPath);
+    const size_t create_cost = hoststub::sectors_written() - before_create;
+    size_t written = 0;
+    const size_t before_write = hoststub::sectors_written();
+    const bool wrote = created != nullptr &&
+        sxfs::write_file(*created, 0, g_payload, kPayloadBytes, true, written);
+    const size_t write_cost = hoststub::sectors_written() - before_write;
+    printf("  create_file: %zu sectors, write_file of %u bytes: %zu sectors "
+           "(a full-copy commit alone was %u)\n",
+           create_cost, kPayloadBytes, write_cost, 2u * SXFS_JOURNAL_METADATA_SECTORS + 6u);
+
+    check(created != nullptr && wrote && written == kPayloadBytes, "create and write accepted");
+    // Each commit is a handful of metadata sectors twice, the header, four
+    // superblock sectors and the cleared header, plus the data itself.
+    check(create_cost < 32, "create_file writes a few dozen sectors at most");
+    check(write_cost < 48, "write_file writes a few dozen sectors at most");
+
+    // A write that neither grows the file nor needs new blocks commits nothing.
+    const size_t before_overwrite = hoststub::sectors_written();
+    check(created != nullptr && sxfs::write_file(*created, 0, g_payload, 512, false, written),
+          "in-place overwrite accepted");
+    check(hoststub::sectors_written() - before_overwrite == 1,
+          "an in-place overwrite writes only its data sector");
+
+    const sxfs::VolumeId volume = mount_image(image);
+    check(volume != sxfs::kInvalidVolume, "the volume remounts");
+    check(file_matches(kNewPath, g_payload, kPayloadBytes), "the file is there after remount");
+    check(volume_is_clean(volume), "fscheck finds nothing");
+
+    hoststub::detach_device();
+}
+
+// Cuts the power after k sectors for every k the transaction writes, and
+// remounts what is left. Each remount has to be clean and show either no file,
+// the empty file, or the whole file: never a torn one.
+void case_power_cut_at_every_sector(uint8_t* image, uint8_t* pristine) {
+    printf("case: power cut at every sector of a transaction\n");
+
+    if (!check(build_clean_image(image), "SxFS image built") ||
+        !check(mount_image(image) != sxfs::kInvalidVolume, "volume mounted")) {
+        hoststub::detach_device();
+        return;
+    }
+    memcpy(pristine, image, kImageBytes);
+
+    hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
+    // Re-attaching only reset the counter; the driver state is still mounted.
+    check(run_transaction(), "the uninterrupted transaction succeeds");
+    const size_t total = hoststub::sectors_written();
+    printf("  the transaction writes %zu sectors\n", total);
+
+    size_t unmountable = 0;
+    size_t dirty = 0;
+    size_t torn = 0;
+    size_t original_damaged = 0;
+    size_t saw_absent = 0;
+    size_t saw_empty = 0;
+    size_t saw_full = 0;
+    size_t first_bad = static_cast<size_t>(-1);
+
+    for (size_t cut = 0; cut <= total; ++cut) {
+        memcpy(image, pristine, kImageBytes);
+        if (mount_image(image) == sxfs::kInvalidVolume) {
+            ++unmountable;
+            continue;
+        }
+        hoststub::power_cut_after(cut);
+        (void)run_transaction();
+        hoststub::clear_power_cut();
+
+        const sxfs::VolumeId volume = mount_image(image);
+        bool bad = false;
+        if (volume == sxfs::kInvalidVolume || sxfs::status(volume) != sxfs::MountStatus::mounted) {
+            ++unmountable;
+            bad = true;
+        } else {
+            if (!volume_is_clean(volume)) {
+                ++dirty;
+                bad = true;
+            }
+            if (!file_matches(kFilePath, kFileContents, strlen(kFileContents))) {
+                ++original_damaged;
+                bad = true;
+            }
+            if (hoststub::find_node(kNewPath) == nullptr) {
+                ++saw_absent;
+            } else if (file_matches(kNewPath, g_payload, 0)) {
+                ++saw_empty;
+            } else if (file_matches(kNewPath, g_payload, kPayloadBytes)) {
+                ++saw_full;
+            } else {
+                ++torn;
+                bad = true;
+            }
+        }
+        if (bad && first_bad == static_cast<size_t>(-1)) {
+            first_bad = cut;
+        }
+    }
+    if (first_bad != static_cast<size_t>(-1)) {
+        printf("  first bad cut: after %zu sectors\n", first_bad);
+    }
+    printf("  outcomes: %zu absent, %zu empty, %zu complete\n", saw_absent, saw_empty, saw_full);
+
+    check(unmountable == 0, "every cut remounts writable");
+    check(dirty == 0, "every cut remounts with a clean fscheck");
+    check(original_damaged == 0, "the existing file survives every cut");
+    check(torn == 0, "the new file is never torn");
+    check(saw_absent > 0 && saw_empty > 0 && saw_full > 0,
+          "the cuts reach all three outcomes (the test exercises both commits)");
+
+    hoststub::detach_device();
+}
+
+// An I/O error in the middle of a commit leaves part of a transaction on disk
+// that memory has rolled back. The next commit must not log a delta against a
+// snapshot the disk no longer matches: disk and memory have to agree again.
+void case_failed_commit_is_reconciled(uint8_t* image, uint8_t* pristine) {
+    printf("case: a commit after a failed one reconciles disk and memory\n");
+
+    if (!check(build_clean_image(image), "SxFS image built") ||
+        !check(mount_image(image) != sxfs::kInvalidVolume, "volume mounted")) {
+        hoststub::detach_device();
+        return;
+    }
+    memcpy(pristine, image, kImageBytes);
+
+    hoststub::attach_device(image, kTotalSectors, /*writable=*/true);
+    check(sxfs::create_file(kNewPath) != nullptr, "the uninterrupted create succeeds");
+    const size_t total = hoststub::sectors_written();
+
+    static const char kGrown[] = "sxfs read-only mount test, grown by a later commit\n";
+    size_t disagreements = 0;
+    size_t failed_creates = 0;
+    for (size_t cut = 0; cut < total; ++cut) {
+        memcpy(image, pristine, kImageBytes);
+        if (mount_image(image) == sxfs::kInvalidVolume) {
+            ++disagreements;
+            continue;
+        }
+        hoststub::power_cut_after(cut);
+        const bool created = sxfs::create_file(kNewPath) != nullptr;
+        hoststub::clear_power_cut();
+        failed_creates += created ? 0u : 1u;
+
+        sxfs::FileRecord* original = record_for(kFilePath);
+        size_t written = 0;
+        const bool grown = original != nullptr &&
+            sxfs::write_file(*original, 0, kGrown, sizeof(kGrown) - 1u, true, written);
+
+        const sxfs::VolumeId volume = mount_image(image);
+        const bool agree = grown && volume != sxfs::kInvalidVolume && volume_is_clean(volume) &&
+            file_matches(kFilePath, kGrown, sizeof(kGrown) - 1u) &&
+            (hoststub::find_node(kNewPath) != nullptr) == created;
+        if (!agree) {
+            if (disagreements == 0) {
+                printf("  first disagreement: cut after %zu sectors\n", cut);
+            }
+            ++disagreements;
+        }
+    }
+    check(failed_creates == total, "every cut made the create fail");
+    check(disagreements == 0, "after every failed commit, the next one leaves disk == memory");
+
+    hoststub::detach_device();
+}
+
 } // namespace
 
 int main() {
@@ -716,6 +960,10 @@ int main() {
     case_transient_io_failure_rejects_writes(image, pristine);
     case_overlapping_inode_extents_are_rejected(image);
     case_recovered_journal_is_writable(image);
+    fill_payload();
+    case_sparse_commit_writes_only_changed_sectors(image);
+    case_power_cut_at_every_sector(image, pristine);
+    case_failed_commit_is_reconciled(image, pristine);
 
     free(image);
     free(pristine);

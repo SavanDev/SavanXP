@@ -85,11 +85,15 @@ struct Volume {
     // Por volumen y no global: escribir en el destino del instalador no tiene
     // por que serializar contra la raiz.
     volatile uint32_t mutation_lock;
-    // Contadores de costo de metadata. El journal copia TODA la metadata en
-    // cada commit y la vuelve a escribir, asi que el costo por commit es
-    // proporcional al tamano de la metadata: con la tabla de inodos de v2 un
-    // commit pasa de 97 a 1537 sectores. Estos dos numeros existen para que
-    // eso se pueda MEDIR en vez de deducirse del reloj de pared.
+    // While a mutation is in flight the snapshot is exactly what the home
+    // metadata holds on disk, so a commit only logs and rewrites the sectors
+    // that differ from it. Without a snapshot, or after a failed commit (the
+    // disk may then hold part of a transaction that was rolled back in
+    // memory), the next commit writes every metadata sector instead.
+    bool snapshot_valid;
+    bool full_commit_pending;
+    // Metadata cost counters, so the cost of a commit can be MEASURED (fscheck)
+    // rather than inferred from wall clock.
     uint32_t metadata_commits;
     uint64_t metadata_bytes_written;
 };
@@ -270,6 +274,7 @@ void snapshot_metadata(Volume& volume) {
     memcpy(volume.snapshot.block_bitmap, volume.block_bitmap, sizeof(volume.block_bitmap));
     memcpy(volume.snapshot.inode_bitmap, volume.inode_bitmap, sizeof(volume.inode_bitmap));
     memcpy(volume.snapshot.inodes, volume.inodes, sizeof(volume.inodes));
+    volume.snapshot_valid = true;
 }
 
 void restore_metadata(Volume& volume) {
@@ -304,15 +309,96 @@ bool clear_journal(Volume& volume) {
     return block::write(volume.device_index, volume.superblock.journal_lba, 1, &header);
 }
 
-bool write_journal_payload(Volume& volume) {
-    const uint32_t cursor = volume.superblock.journal_lba + 1;
-    return block::write(volume.device_index, cursor, volume.superblock.block_bitmap_sectors, volume.block_bitmap) &&
-        block::write(volume.device_index, cursor + volume.superblock.block_bitmap_sectors, volume.superblock.inode_bitmap_sectors, volume.inode_bitmap) &&
-        block::write(
-            volume.device_index,
-            cursor + volume.superblock.block_bitmap_sectors + volume.superblock.inode_bitmap_sectors,
-            volume.superblock.inode_table_sectors,
-            volume.inodes);
+// The metadata as one linear run of sectors, [block bitmap | inode bitmap |
+// inode table], which is both its on-disk order at home and its order in the
+// journal mirror. In memory the three regions are separate arrays, so a run of
+// sectors is only contiguous inside one region.
+static_assert(SXFS_INODE_BITMAP_LBA == SXFS_BLOCK_BITMAP_LBA + SXFS_BLOCK_BITMAP_SECTORS);
+static_assert(SXFS_INODE_TABLE_LBA == SXFS_INODE_BITMAP_LBA + SXFS_INODE_BITMAP_SECTORS);
+static_assert(sizeof(Inode) * kMaxInodes == static_cast<size_t>(SXFS_INODE_TABLE_SECTORS) * block::kSectorSize);
+
+constexpr uint32_t kInodeBitmapIndex = kBlockBitmapSectors;
+constexpr uint32_t kInodeTableIndex = kBlockBitmapSectors + kInodeBitmapSectors;
+
+struct MetadataView {
+    uint8_t* block_bitmap;
+    uint8_t* inode_bitmap;
+    uint8_t* inode_table;
+};
+
+MetadataView live_metadata(Volume& volume) {
+    return {volume.block_bitmap, volume.inode_bitmap, reinterpret_cast<uint8_t*>(volume.inodes)};
+}
+
+MetadataView snapshot_metadata_view(Volume& volume) {
+    return {volume.snapshot.block_bitmap, volume.snapshot.inode_bitmap,
+            reinterpret_cast<uint8_t*>(volume.snapshot.inodes)};
+}
+
+uint8_t* metadata_sector(const MetadataView& view, uint32_t index) {
+    if (index < kInodeBitmapIndex) {
+        return view.block_bitmap + static_cast<size_t>(index) * block::kSectorSize;
+    }
+    if (index < kInodeTableIndex) {
+        return view.inode_bitmap + static_cast<size_t>(index - kInodeBitmapIndex) * block::kSectorSize;
+    }
+    return view.inode_table + static_cast<size_t>(index - kInodeTableIndex) * block::kSectorSize;
+}
+
+// First index past the in-memory region that holds sector `index`.
+uint32_t metadata_region_end(uint32_t index) {
+    if (index < kInodeBitmapIndex) {
+        return kInodeBitmapIndex;
+    }
+    if (index < kInodeTableIndex) {
+        return kInodeTableIndex;
+    }
+    return kJournalMetadataSectors;
+}
+
+// Reads or writes every metadata sector set in `map`, against the disk run
+// that starts at `base_lba` (home or journal mirror), one command per run of
+// adjacent sectors.
+bool transfer_metadata_sectors(Volume& volume, const uint8_t* map, uint32_t base_lba, bool write) {
+    const MetadataView view = live_metadata(volume);
+    uint32_t index = 0;
+    while (index < kJournalMetadataSectors) {
+        if (!sxfs_bitmap_test(map, index)) {
+            ++index;
+            continue;
+        }
+        const uint32_t limit = metadata_region_end(index);
+        uint32_t end = index + 1u;
+        while (end < limit && sxfs_bitmap_test(map, end)) {
+            ++end;
+        }
+        uint8_t* data = metadata_sector(view, index);
+        const bool ok = write
+            ? block::write(volume.device_index, base_lba + index, end - index, data)
+            : block::read(volume.device_index, base_lba + index, end - index, data);
+        if (!ok) {
+            return false;
+        }
+        index = end;
+    }
+    return true;
+}
+
+// Marks in `map` the metadata sectors that differ from the snapshot, or all of
+// them when the snapshot cannot be trusted to match the disk. Returns how many.
+uint32_t build_dirty_map(Volume& volume, uint8_t* map) {
+    memset(map, 0, SXFS_JOURNAL_MAP_BYTES);
+    const bool full = !volume.snapshot_valid || volume.full_commit_pending;
+    const MetadataView live = live_metadata(volume);
+    const MetadataView before = snapshot_metadata_view(volume);
+    uint32_t dirty = 0;
+    for (uint32_t index = 0; index < kJournalMetadataSectors; ++index) {
+        if (full || memcmp(metadata_sector(live, index), metadata_sector(before, index), block::kSectorSize) != 0) {
+            sxfs_bitmap_set(map, index, 1);
+            ++dirty;
+        }
+    }
+    return dirty;
 }
 
 RecoveryState recover_journal(Volume& volume) {
@@ -321,6 +407,11 @@ RecoveryState recover_journal(Volume& volume) {
         return RecoveryState::failed;
     }
     if (!valid_journal(header) || header.pending == 0) {
+        // Nothing to replay, so home must already be whole before anything is
+        // written to the volume.
+        if (!home_metadata_is_valid(volume)) {
+            return RecoveryState::failed;
+        }
         if ((volume.superblock.flags & kFlagClean) != 0) {
             return RecoveryState::writable;
         }
@@ -329,14 +420,17 @@ RecoveryState recover_journal(Volume& volume) {
             : RecoveryState::read_only;
     }
 
-    const uint32_t cursor = volume.superblock.journal_lba + 1;
-    if (!block::read(volume.device_index, cursor, volume.superblock.block_bitmap_sectors, volume.block_bitmap) ||
-        !block::read(volume.device_index, cursor + volume.superblock.block_bitmap_sectors, volume.superblock.inode_bitmap_sectors, volume.inode_bitmap) ||
-        !block::read(
-            volume.device_index,
-            cursor + volume.superblock.block_bitmap_sectors + volume.superblock.inode_bitmap_sectors,
-            volume.superblock.inode_table_sectors,
-            volume.inodes)) {
+    // A full journal carries every metadata sector. A sparse one carries only
+    // the sectors the transaction changed and is applied ON TOP of the home
+    // metadata already in memory: every sector it does not name was the same
+    // before and after the transaction, whatever the crash left at home.
+    uint8_t map[SXFS_JOURNAL_MAP_BYTES];
+    if (header.kind == SXFS_JOURNAL_KIND_SPARSE) {
+        memcpy(map, header.sector_map, sizeof(map));
+    } else {
+        memset(map, 0xff, sizeof(map));
+    }
+    if (!transfer_metadata_sectors(volume, map, volume.superblock.journal_lba + 1u, /*write=*/false)) {
         return RecoveryState::failed;
     }
 
@@ -349,29 +443,44 @@ RecoveryState recover_journal(Volume& volume) {
     return RecoveryState::writable;
 }
 
+// Commits the in-memory metadata with a sparse journal: only the sectors that
+// changed since the snapshot are logged and then written home. Order matters
+// for crash safety: payload, then the header that makes it pending, then home,
+// then the clean superblocks and the cleared header.
 bool commit_metadata(Volume& volume) {
-    const uint32_t next_sequence = volume.superblock.sequence + 1u;
     JournalHeader journal = {};
+    const uint32_t dirty = build_dirty_map(volume, journal.sector_map);
+    if (dirty == 0) {
+        volume.snapshot_valid = false;
+        return true;
+    }
+
+    const uint32_t next_sequence = volume.superblock.sequence + 1u;
     memcpy(journal.magic, kJournalMagic, sizeof(journal.magic));
     journal.sequence = next_sequence;
     journal.pending = 1;
     journal.metadata_sectors = kJournalMetadataSectors;
+    journal.kind = SXFS_JOURNAL_KIND_SPARSE;
     journal.checksum = journal_checksum(journal);
 
-    if (!write_journal_payload(volume) ||
+    if (!transfer_metadata_sectors(volume, journal.sector_map, volume.superblock.journal_lba + 1u, /*write=*/true) ||
         !block::write(volume.device_index, volume.superblock.journal_lba, 1, &journal) ||
         !write_superblocks(volume, next_sequence, 0) ||
-        !write_home_metadata(volume) ||
+        !transfer_metadata_sectors(volume, journal.sector_map, volume.superblock.block_bitmap_lba, /*write=*/true) ||
         !write_superblocks(volume, next_sequence, kFlagClean) ||
         !clear_journal(volume)) {
+        // The caller rolls memory back to the snapshot, but some of this
+        // transaction may already be on disk: only a full commit reconciles.
+        volume.full_commit_pending = true;
         return false;
     }
+    volume.full_commit_pending = false;
+    volume.snapshot_valid = false;
 
-    // El payload del journal y la metadata en su lugar definitivo son la misma
-    // cosa escrita dos veces, y ahi esta el costo. Se cuenta lo que sale de
-    // verdad: los dos copiados mas el header del journal, los dos superblocks y
-    // el borrado del journal.
-    const uint64_t payload = static_cast<uint64_t>(kJournalMetadataSectors) * block::kSectorSize;
+    // The changed sectors are written twice (journal and home); the overhead
+    // is counted as before (journal header, superblocks, cleared header) so
+    // the numbers stay comparable with the full-copy baseline.
+    const uint64_t payload = static_cast<uint64_t>(dirty) * block::kSectorSize;
     const uint64_t overhead = 3u * static_cast<uint64_t>(block::kSectorSize);
     volume.metadata_commits += 1u;
     volume.metadata_bytes_written += 2u * payload + overhead;
@@ -1081,8 +1190,10 @@ bool load_filesystem_from_device(Volume& volume, size_t device_index) {
     volume.superblock = (!secondary_ok || (primary_ok && primary.sequence >= secondary.sequence)) ? primary : secondary;
     volume.device_index = device_index;
     block::DeviceInfo device_info = {};
+    // Home metadata is validated only after the journal is replayed: a crash
+    // in the middle of writing it home leaves it torn until then.
     if (!block::device_info(device_index, device_info) || volume.superblock.total_sectors > device_info.sector_count ||
-        !read_home_metadata(volume) || !home_metadata_is_valid(volume)) {
+        !read_home_metadata(volume)) {
         return false;
     }
     const RecoveryState recovery = recover_journal(volume);

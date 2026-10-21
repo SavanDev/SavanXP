@@ -265,7 +265,8 @@ That is 28.5 MiB of PIO writes per smoke, against 1.8 MiB in v1, and the smoke's
 wall clock went from about 7.4 s to 16.5 s. It is affordable but it is the wall
 for the next round of growth, and the fix is a delta journal: log which blocks
 changed instead of copying everything. The counters above exist so that decision
-rests on a measurement.
+rests on a measurement. That fix has landed: with sparse journals the same smoke
+reports `bytes_per_commit 3872` ([`SXFS_JOURNAL.md`](../fs/SXFS_JOURNAL.md)).
 
 ### The development machine and the LiveCD have different volumes
 

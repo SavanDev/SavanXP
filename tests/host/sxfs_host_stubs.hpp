@@ -27,6 +27,15 @@ void fail_next_writes(size_t count);
 // Cuantas escrituras rechazo el device por ser de solo lectura.
 size_t rejected_writes();
 
+// Power loss: once `sectors` more sectors have reached the image, every later
+// sector is lost and its write reported as failed. A write that crosses the
+// limit lands only in part, like a torn multi-sector write.
+void power_cut_after(size_t sectors);
+void clear_power_cut();
+
+// Sectors that reached the image since attach_device().
+size_t sectors_written();
+
 // Tabla de vnodes publicados por attach(). Sustituye al arbol del vfs.
 void reset_vfs();
 vfs::Vnode* find_node(const char* path);

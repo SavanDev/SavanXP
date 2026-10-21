@@ -14,8 +14,9 @@ The short version: **v2 removed the two ceilings that made the filesystem
 unusable, and left one bill unpaid.** The inode table was the binding constraint
 (256 inodes, 152 in use with one game installed) and the block bitmap capped the
 volume at 64 MiB; both moved. What grew in their place is metadata, and the
-journal copies all of it on every commit. That is now the most expensive thing
-the filesystem does, and it is the first item below.
+journal used to copy all of it on every commit. Item 1 below paid that bill;
+what a write still costs, and where, is in
+[Where the remaining cost is](#where-the-remaining-cost-is).
 
 ## The baseline to compare against
 
@@ -40,82 +41,81 @@ scales with **metadata size, not volume size**, so it is the thing that runs out
 of headroom first, and it is independent of how much of the 1 GiB is used.
 
 For reference, v1 spent 97 sectors per commit, so the same smoke wrote 1.8 MiB.
-v2 writes 16× that.
+v2 wrote 16× that. With sparse journals (item 1) the same measurement gives
+`bytes_per_commit 3872`.
 
-## 1. The journal should log deltas, not copies
+## 1. Done: the journal logs deltas, not copies
 
-**The bill.** 28.5 MiB of PIO writes per smoke, 1.5 MiB per metadata mutation,
-and it happens twice per commit because the journal and the home copy are the
-same bytes written to two places.
+A commit now logs and rewrites only the metadata sectors that changed since the
+mutation's snapshot, a sparse journal described in
+[`SXFS_JOURNAL.md`](SXFS_JOURNAL.md). `bytes_per_commit` went from 1 575 424 to
+3 872 on the core smoke, and quitting Doom from its menu (11 commits) went from a
+70.7 s system freeze to 0.53 s on the default IDE disk. The format stayed v2:
+the discriminator lives in what used to be a reserved header field, and old full
+journals still replay. The crash path is tested at every sector of a transaction
+(`sxfs_volume_test`).
 
-**What one write of a real file costs.** `progman-smoke` copies a whole stamped
-program to `/disk/bin` to get a fixture, and that copy is the most expensive
-single operation anywhere in the smoke suite: **365930 ms for 390664 bytes**, about
-1 KB/s, on the same host and with the same caveats as the numbers above (wall clock
-under TCG moves by 4× with host load). Everything else in that smoke — two catalog
-scans, the rebuild, the `unlink` and the rescan — adds up to about 3 s.
+## Where the remaining cost is
 
-The arithmetic matches the bill exactly. Growing a new file 390 KB means five
-metadata commits (64 → 128 → 256 → 512 → 1024 sectors), each writing 1537 sectors
-twice, which is 15 370 sectors of metadata for 768 sectors of actual data — a 20×
-write amplification on top of a transfer that is PIO word-at-a-time, 256 `outw` per
-sector, plus a cache flush per command.
+Measured on Doom's quit (11 commits, two small files), QEMU under KVM, `--smp 1`,
+disk image on a rotational host disk; the full table is in
+[`SXFS_JOURNAL.md`](SXFS_JOURNAL.md#what-it-costs):
 
-So the ledger is: **a single guest-side file write can cost six minutes**, and the
-first program to notice was a smoke that had been failing for 180 s and reading as
-"the launcher is broken". It was not. Its timeout was raised to 900 s and the cost
-is now printed by the smoke itself, because a red test that says nothing is worse
-than a slow one that says why.
+| | IDE (PIO) | virtio-blk |
+| --- | --- | --- |
+| sparse journal | 0.53 s | 2.1 s |
+| same, host flushes ignored | 0.53 s | 0.10 s |
 
-**Where the six minutes are not.** Three hypotheses, measured, and two of them wrong:
+**Every second of it is a frozen system, not a slow program.** The syscall gate
+is an interrupt gate and nothing re-enables interrupts in the syscall path
+(see [`SMP_ROADMAP.md`](../kernel/SMP_ROADMAP.md)), and both block drivers poll
+the device to completion inside the syscall. Until a write returns, no other
+process runs and no timer is serviced, cursor included.
 
-| change | ms for the same 390 KB |
+**IDE: the cost is per sector.** The full-copy quit moved about 33 900 sectors in
+70.7 s, about 2 ms per sector. QEMU's IDE model issues one backend request per
+sector in a PIO data phase, and earlier measurements here showed it is a fixed
+cost per sector, not the number of port accesses: going from 16-bit to 32-bit
+port writes bought 26% for half the accesses, and removing the cache flush
+changed nothing.
+
+| change, `progman-smoke` copying 390 KB under TCG | ms |
 | --- | --- |
-| as it was, 16 bits per port access | 365930, 401218 |
-| no cache flush — only the wait kept | 379989 |
+| 16 bits per port access | 365930, 401218 |
+| no cache flush, only the wait kept | 379989 |
 | 32 bits per port access | 280703, 278922 |
 
-The cache flush is free: ~143 of them per file, one per transfer command, and
-removing every one changed nothing. It stays, because it is also what waits for the
-device to go idle.
+The fix is DMA, but **not on this controller**: `isa-ide` is an ISA device and
+has no bus master. Bus-master IDE is a function of the PCI PIIX controller, and
+the `q35` machine the build boots already has an ICH9 AHCI controller on board.
+An AHCI driver (command list, FIS, PRDT, completion by polling the port's command
+issue register at first) is the DMA path; it would make a run of sectors one
+request instead of one per sector.
 
-Halving the port writes bought 26%, not 50%, and **that ratio is the finding**. If
-the cost were the number of `outw`, doubling their width would halve the time. It
-does not, so most of it is a fixed per-sector cost on the device side — QEMU's IDE
-model issues one backend request per sector in a PIO data phase. Nothing the guest
-does in that loop can remove it.
+**virtio-blk: the cost is per flush.** Its requests already carry many sectors,
+so sparse journals helped it far less (3.5 s → 2.1 s), and with flushes ignored
+the quit takes 0.10 s. Each `block::write` ends with a device flush, which QEMU
+turns into a `fsync` of the image file, and a commit makes about ten writes:
+payload runs, header, two superblock sectors twice, home runs, cleared header.
+Crash safety needs only the ordering points between steps (payload and header
+before home, home before the clean superblocks), about three per commit. A
+`block::write` that does not flush plus an explicit barrier would cut the flushes
+roughly by three.
 
-What removes it is **bus-master DMA**, which `isa-ide` offers and the kernel does
-not use: one backend request for a run of sectors instead of one per sector. It
-needs a descriptor table in kernel memory, the BM registers, and a way to know the
-device finished — a real feature, not a flag. That is the fix, and it is worth
-roughly an order of magnitude on every metadata mutation. Until then the honest
-summary is that the journal's cost per commit is the right thing to attack first,
-and this is second.
+**Userland multiplies commits.** The libc `FILE` buffer is 512 bytes
+(`SX_FILE_BUFFER_CAPACITY`), so a file rewritten with `fopen("w")` commits once
+for the truncate and once per 512 bytes of growth: Doom's 1.4 KB and 3 KB configs
+are 11 commits. A 4 KiB buffer would make them 4.
 
-**What it would be.** ext3's answer: log *which blocks changed* instead of
-copying the whole metadata. A metadata commit currently touches a handful of
-sectors of the 1537; the delta journal would write those handfuls.
-
-**Why it fits in v2.** The journal is transient — `clear_journal()` zeroes the
-header after every successful commit — so nothing about it survives in a clean
-image. `struct sxfs_journal_header` has 122 reserved bytes
-([`sxfs_format.h`](../../include/sxfs/sxfs_format.h)), which is where a
-discriminator goes: a v2 reader sees a header with no magic as "cleared", and one
-with magic and the full-copy discriminator as the format it already knows. A
-volume that crashed mid-commit can carry either shape and both must replay
-correctly, and that is the only compatibility case there is. No persistent
-structure changes, so `SXFS_VERSION` does not move.
-
-**What has to be decided first.** Whether the log records block ranges, inode
-deltas, or a redo intent per operation, and whether replay can be done without
-consulting the stale copy. The second question is the real one: the current
-recovery reads the journal payload *into* the live metadata, so a delta format has
-to be applied rather than read.
-
-**Risk.** This is the one item here that touches on-disk state, and the one where
-a mistake loses data rather than reporting it. It wants the crash path tested the
-way the compaction test tests the sync path, not just a happy-path commit.
+**Not freezing at all is a kernel change of a different size.** The kernel's
+model is that syscalls never block on a kernel stack: a syscall that cannot
+finish records a state and is completed later by whoever wakes it. A single
+interrupt-driven disk request fits that model, but an SxFS commit is about ten
+dependent writes, so it would have to become a resumable state machine, or the
+filesystem would need to run on a stack of its own, which the kernel does not
+have. A write-back cache drained in small slices while the CPU is idle is the
+middle road: syscalls return as soon as the data is cached, and the price is that
+durability then needs an explicit sync.
 
 ## 2. `fscheck` reports, and nothing repairs
 
@@ -140,8 +140,8 @@ unreachable-but-present inode *means*, and that is a policy decision, not an
 implementation detail. ext2's answer was to keep everything and tell the
 administrator; a hobby OS with no `fsck -y` probably wants the same.
 
-**Order.** Not before item 1: a repair path that runs over a journal whose cost
-is 1.5 MiB per commit is a repair path nobody will run.
+**Order.** It waited for item 1, which has landed: a repair path over a journal
+that cost 1.5 MiB per commit was a repair path nobody would run.
 
 ## 3. A directory with many entries is scanned in O(n²)
 
@@ -227,6 +227,3 @@ allocator. The second is more work and buys a ceiling nothing needs yet.
   `create_file` writes `link_count = 1` and nothing raises it — so a second path
   to one inode is a defect. The host validator fails the image on it; `fscheck`
   counts it.
-- **The journal stays whole until item 1.** A delta journal is the change with
-  the worst failure mode in this list, and doing it while the metadata is still
-  small keeps the regression surface as small as it can be.

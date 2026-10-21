@@ -218,10 +218,9 @@ struct savanxp_fscheck_report {
     uint32_t bad_dir_entries;
     uint32_t unreadable_dirs;
 
-    /* Costo de metadata desde el arranque. El journal copia toda la metadata en
-     * cada commit y la reescribe, asi que `metadata_bytes_written` crece con el
-     * tamano de la metadata y no con el del volumen: es el numero que decide si
-     * conviene un journal de delta. */
+    /* Metadata cost since boot. A commit writes the metadata sectors it
+     * changed twice (journal and home), so `metadata_bytes_written` grows with
+     * how much each transaction touches. See docs/fs/SXFS_JOURNAL.md. */
     uint32_t metadata_commits;
     uint32_t reserved1;
     uint64_t metadata_bytes_written;

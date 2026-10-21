@@ -98,6 +98,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SXFS_CHECK.md`](fs/SXFS_CHECK.md) — the `fscheck` consistency report: what
   mounting does not validate, what a leak looks like from the guest, and why
   there is no repair yet.
+- [`SXFS_JOURNAL.md`](fs/SXFS_JOURNAL.md) — the sparse metadata journal: format,
+  the write order that makes a commit crash-safe, and the snapshot invariant that
+  tells the driver which sectors changed.
 - [`SXFS_ROADMAP.md`](fs/SXFS_ROADMAP.md) — the SxFS work left after format v2, the
   measured baseline to compare against, and which of it can land without moving
   the on-disk format.

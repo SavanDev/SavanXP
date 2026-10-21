@@ -21,6 +21,9 @@ struct Device {
 Device g_device = {};
 size_t g_rejected_writes = 0;
 size_t g_pending_write_failures = 0;
+bool g_power_cut_armed = false;
+size_t g_power_cut_remaining = 0;
+size_t g_sectors_written = 0;
 
 constexpr size_t kMaxNodes = 256;
 constexpr size_t kPathCapacity = 264;
@@ -81,12 +84,18 @@ void attach_device(uint8_t* image, uint32_t sector_count, bool writable) {
     g_device.writable = writable;
     g_rejected_writes = 0;
     g_pending_write_failures = 0;
+    g_power_cut_armed = false;
+    g_power_cut_remaining = 0;
+    g_sectors_written = 0;
 }
 
 void detach_device() {
     g_device = {};
     g_rejected_writes = 0;
     g_pending_write_failures = 0;
+    g_power_cut_armed = false;
+    g_power_cut_remaining = 0;
+    g_sectors_written = 0;
 }
 
 void fail_next_writes(size_t count) {
@@ -95,6 +104,20 @@ void fail_next_writes(size_t count) {
 
 size_t rejected_writes() {
     return g_rejected_writes;
+}
+
+void power_cut_after(size_t sectors) {
+    g_power_cut_armed = true;
+    g_power_cut_remaining = sectors;
+}
+
+void clear_power_cut() {
+    g_power_cut_armed = false;
+    g_power_cut_remaining = 0;
+}
+
+size_t sectors_written() {
+    return g_sectors_written;
 }
 
 void reset_vfs() {
@@ -168,7 +191,21 @@ bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer
         ++g_rejected_writes;
         return false;
     }
-    memcpy(g_device.image + byte_offset(lba), buffer, byte_length(sector_count));
+    uint32_t landed = sector_count;
+    if (g_power_cut_armed && g_power_cut_remaining < landed) {
+        landed = static_cast<uint32_t>(g_power_cut_remaining);
+    }
+    if (landed != 0) {
+        memcpy(g_device.image + byte_offset(lba), buffer, byte_length(landed));
+    }
+    g_sectors_written += landed;
+    if (g_power_cut_armed) {
+        g_power_cut_remaining -= landed;
+    }
+    if (landed != sector_count) {
+        ++g_rejected_writes;
+        return false;
+    }
     return true;
 }
 
