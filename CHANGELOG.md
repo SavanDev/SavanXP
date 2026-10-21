@@ -143,6 +143,12 @@ Cut-off notes:
 
 ### Changed
 
+- **Disk writes are written back in the background.** Physical disks queue writes in the block
+  layer (`block::write_cached`, ordering points via `block::flush`) and the idle task drains them
+  one bounded step at a time, so a write syscall no longer freezes the system for the device's
+  duration (Doom's quit: 8–13 ms in write syscalls, was 247–293). Writes are durable once drained;
+  `sync`, shutdown and reboot wait for it (`block::sync_all`). See `docs/kernel/BLOCK_WRITEBACK.md`.
+
 - **Disk writes are ordered by explicit flushes.** `block::write_cached` and `block::flush` join
   `block::write`; an SxFS commit flushes at its four ordering points instead of after every write,
   and file writes reach SxFS in pieces of up to 64 KiB instead of 256 bytes. Doom's quit spends

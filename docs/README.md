@@ -31,6 +31,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
 - [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
   holds what, how a request runs, and what it measured against PIO.
+- [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the
+  queue's contract, how it keeps write order, when it drains, and what durability
+  it gives up.
 - [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — what stops SavanXP from booting real
   2003-era hardware: the 64-bit-only blockers, the driver gaps QEMU hides, and
   the routes for reaching a Compaq Evo N1020v. The Compaq-specific work (the

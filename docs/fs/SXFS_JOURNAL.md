@@ -42,24 +42,33 @@ set. `SXFS_VERSION` did not change: nothing in a clean image differs.
 
 ## Commit order
 
-Writes go to the device's write cache (`block::write_cached`), where they may
-land in any order, and `block::flush` is the only ordering point. A commit has
+Writes are cached (`block::write_cached`): between two ordering points they may
+land in any order, and `block::flush` is the only ordering point. On a physical
+disk they go to the block layer's writeback queue and reach the disk in the
+background ([`BLOCK_WRITEBACK.md`](../kernel/BLOCK_WRITEBACK.md)); the queue keeps
+the order and turns every ordering point into a device flush. A commit has
 four:
 
-1. Write the changed sectors into their journal slots. **Flush.** This also
-   makes durable the file data the mutation wrote before committing.
+1. Write the changed sectors into their journal slots. **Ordering point.** It
+   also orders the file data the mutation wrote before committing.
 2. Write the header (`pending = 1`, `kind = SPARSE`, the map) and both
-   superblocks with the new sequence and without `CLEAN`. **Flush.**
-3. Write the changed sectors home. **Flush.**
-4. Write both superblocks with `CLEAN` and zero the header. **Flush**, so the
-   commit is on the medium when the syscall returns.
+   superblocks with the new sequence and without `CLEAN`. **Ordering point.**
+3. Write the changed sectors home. **Ordering point.**
+4. Write both superblocks with `CLEAN` and zero the header. **Ordering point**,
+   so the next commit's payload, which reuses the journal slots, cannot land
+   while this header still points at them.
+
+**The syscall returns once the commit is queued, not once it is on the disk.**
+A power cut can lose the last commits, never their order: the volume remounts
+as the state after some prefix of the commits that were made. `sync` (the
+syscall and the command), shutdown and reboot wait for the queue.
 
 A cut at any point remounts as the state before the transaction or the state
 after it:
 
 - before the header is on the medium (a torn header fails its checksum): no
   valid pending journal, home untouched, the old state;
-- once it is: a valid pending journal whose payload is already durable.
+- once it is: a valid pending journal whose payload is already on the medium.
   Recovery replays the mapped slots over whatever home holds, which is the new
   state. Replaying twice is harmless, so it does not matter whether step 4
   landed in part.
@@ -68,7 +77,7 @@ Within a step the order does not matter: the superblocks of step 2 only clear
 `CLEAN`, and in step 4 either half alone still remounts correctly.
 
 A mutation that commits nothing (an overwrite inside a file's current size)
-flushes its data once. Before `block::flush` existed every `block::write`
+places one ordering point after its data. Before `block::flush` existed every `block::write`
 flushed, which made a commit about ten flushes, and on IDE none of them
 happened: see [the roadmap](SXFS_ROADMAP.md#where-the-remaining-cost-is).
 

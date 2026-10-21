@@ -736,6 +736,16 @@ target_include_directories(savanxp-partition-test PRIVATE
 target_compile_options(savanxp-partition-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
 set_target_properties(savanxp-partition-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+add_executable(savanxp-block-writeback-test
+    kernel/block.cpp
+    tests/host/kernel_string_stubs.cpp
+    tests/host/block_writeback_test.cpp)
+target_include_directories(savanxp-block-writeback-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/tests/host")
+target_compile_options(savanxp-block-writeback-test PRIVATE -O1 -Wall -Wextra -Wno-deprecated)
+set_target_properties(savanxp-block-writeback-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 add_executable(savanxp-sxfs-volume-test
     kernel/sxfs.cpp
     tests/host/kernel_string_stubs.cpp
@@ -750,7 +760,7 @@ target_compile_options(savanxp-sxfs-volume-test PRIVATE -O1 -Wall -Wextra -Wno-d
 set_target_properties(savanxp-sxfs-volume-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-gfx2d-test savanxp-audio-test savanxp-partition-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
@@ -760,6 +770,7 @@ add_test(NAME sxmidi-test COMMAND savanxp-sxmidi-test)
 add_test(NAME sximg-test COMMAND savanxp-sximg-test)
 add_test(NAME doom-mus-test COMMAND savanxp-doom-mus-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
+add_test(NAME block-writeback-test COMMAND savanxp-block-writeback-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
 
 add_custom_command(OUTPUT "${SAVANXP_SXFS_CLI}"

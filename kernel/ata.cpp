@@ -446,6 +446,7 @@ const block::DeviceOps kOps = {
     &read_op,
     &write_op,
     &flush_op,
+    /*deferred_writes=*/true,
 };
 
 void enumerate() {

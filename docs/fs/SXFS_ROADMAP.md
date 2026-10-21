@@ -62,9 +62,12 @@ Measured on Doom's quit, which rewrites two small config files: QEMU under KVM,
 `sxfs::write_file` as logged by the kernel. The full history is in
 [`SXFS_JOURNAL.md`](SXFS_JOURNAL.md#what-it-costs).
 
-| now | IDE (PIO) | virtio-blk |
+| before block writeback | IDE (PIO) | virtio-blk |
 | --- | --- | --- |
 | Doom's quit, 4 writes, 4 commits | 293 ms | 247 ms |
+
+The cost below is now paid in the background (see the last paragraph of this
+section), but it is still the cost of the work.
 
 **Every millisecond of it is a frozen system, not a slow program.** The syscall
 gate is an interrupt gate and nothing re-enables interrupts in the syscall path
@@ -110,15 +113,13 @@ heap buffer of up to 64 KiB (`kFileWriteChunk`), and the libc `FILE` buffer is
 4 KiB (`SX_FILE_BUFFER_CAPACITY`), allocated on first use. Reads still go
 through 256 bytes at a time, which costs sector reads, not commits.
 
-**Not freezing at all is a kernel change of a different size.** The kernel's
-model is that syscalls never block on a kernel stack: a syscall that cannot
-finish records a state and is completed later by whoever wakes it. A single
-interrupt-driven disk request fits that model, but an SxFS commit is several
-dependent writes, so it would have to become a resumable state machine, or the
-filesystem would need to run on a stack of its own, which the kernel does not
-have. A write-back cache drained in small slices while the CPU is idle is the
-middle road: syscalls return as soon as the data is cached, and the price is that
-durability then needs an explicit sync.
+**Writes no longer freeze the system for their whole length.** Physical disks
+now queue their writes in the block layer and drain them in bounded steps while
+the CPU is idle ([`BLOCK_WRITEBACK.md`](../kernel/BLOCK_WRITEBACK.md)): Doom's
+quit spends 8–13 ms in write syscalls, and the longest single stop is one device
+flush, 24–35 ms. Removing that last stop needs device I/O that does not poll
+inside the kernel, which is the non-preemptible kernel's limit, not the
+filesystem's.
 
 ## 2. `fscheck` reports, and nothing repairs
 

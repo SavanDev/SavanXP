@@ -42,6 +42,7 @@ const block::DeviceOps kOps = {
     &read_op,
     &write_op,
     nullptr, // memory has no write cache
+    /*deferred_writes=*/false,
 };
 
 void enumerate() {

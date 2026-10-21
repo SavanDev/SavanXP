@@ -28,6 +28,11 @@ struct DeviceOps {
     // Commits the device's write cache to the medium. nullptr when there is
     // no cache to commit (a ramdisk).
     bool (*flush)(void* context);
+    // Physical disks set this: block:: then queues their writes in memory and
+    // writes them back in the background (see write_cached). A device that
+    // forwards to another (a partition) or is memory (a ramdisk) leaves it
+    // false and is written through.
+    bool deferred_writes;
 };
 
 // Driver de almacenamiento. A diferencia de display y audio, aca NO se elige un
@@ -62,15 +67,42 @@ bool register_device(
 bool ready();
 size_t device_count();
 bool device_info(size_t index, DeviceInfo& info);
+// Sees every write issued so far, including those still queued.
 bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer);
-// Durable write: on the medium when it returns (write_cached + flush).
+// Durable write: on the medium when it returns (write_cached + flush + sync).
 bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer);
-// Write that may sit in the device's cache, and land in any order relative to
-// other cached writes, until the next flush(). For callers that batch writes
-// between their own ordering points, like the SxFS journal.
+// Write that may land in any order relative to other writes until the next
+// flush(). On a device with deferred_writes it is copied to the writeback
+// queue and returns at once; the queue reaches the disk in the background, in
+// order, with a device flush at every ordering point. See
+// docs/kernel/BLOCK_WRITEBACK.md.
 bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer);
-// Ordering point: every write issued before it is on the medium when it
-// returns. A device without a cache has nothing to do.
+// Ordering point: every write issued before it reaches the medium before any
+// write issued after it. It does not wait: durability is sync()'s job.
 bool flush(size_t index);
+// Everything issued so far is on the medium when it returns. Drains the whole
+// writeback queue, whatever device `index` is.
+bool sync(size_t index);
+bool sync_all();
+
+// Background writeback. writeback_step() moves one bounded piece of the queue
+// to its disk (up to 64 KiB of adjacent writes, or one device flush) and says
+// whether it did anything; the idle task calls it instead of halting.
+// writeback_tick() feeds the clock and, if queued data has waited too long
+// because no CPU went idle, does a step itself.
+bool writeback_step();
+void writeback_tick(uint64_t now_ms);
+bool writeback_pending();
+
+struct WritebackStats {
+    uint64_t queued_bytes;      // waiting in the queue now
+    uint64_t peak_queued_bytes;
+    uint64_t steps;
+    uint64_t device_writes;
+    uint64_t device_flushes;
+    uint64_t forced_drains;     // writes that had to wait for room in the queue
+    uint32_t failures;
+};
+WritebackStats writeback_stats();
 
 } // namespace block

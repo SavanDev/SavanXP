@@ -2444,6 +2444,9 @@ SavedContext* handle_timer_tick(SavedContext* context) {
         wake_wait_timeouts(current_tick);
         wake_parked_waiters(current_tick);
         wake_blocked_socket_readers(current_tick);
+        // The writeback queue's clock, and its drain of last resort when no
+        // core has gone idle for a while.
+        block::writeback_tick(current_tick);
     }
     // The tick makes its own reschedule decision below, so any wakeups above
     // must not leak a preemptive-resched request into the next syscall return.

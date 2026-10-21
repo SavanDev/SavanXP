@@ -1,4 +1,5 @@
 #include "kernel/process.hpp"
+#include "kernel/block.hpp"
 
 // The POSIX layer speaks the POSIX surface. This is the ONLY place in the
 // kernel image allowed to include it: kernel/ and include/kernel/ use the
@@ -154,18 +155,22 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             terminate_current(static_cast<int>(context->rdi));
             return nullptr;
         case SAVANXP_SYS_YIELD:
-            // El proceso ocioso es un bucle de yield en userland, que no puede
-            // haltear porque hlt es privilegiada. Si el que cede es EL y no hay
-            // nadie mas listo para este core, el core no tiene nada que hacer:
-            // se haltea aca, en su nombre, hasta la proxima interrupcion. Sin
-            // esto la ociosidad se gasta girando por el syscall a toda
-            // velocidad -- invisible mientras poll() se quedaba con la CPU, y
-            // el costo real apenas poll paso a bloquear.
+            // The idle process is a yield loop in user mode, which cannot halt
+            // because hlt is privileged. When IT yields and nothing else is
+            // ready for this core, the core has nothing to do: it halts here, on
+            // the idle's behalf, until the next interrupt. Without this, idle
+            // time is spent spinning through the syscall at full speed.
             //
-            // Con el lock del kernel soltado mientras duerme, o los demas cores
-            // se quedan esperandolo. Lo despierta su propio tick, que es el que
-            // se fija si en la cola aparecio algo para este core.
-            if (smp::this_cpu().current->idle && !has_runnable_non_idle()) {
+            // The kernel lock is released while it sleeps, or the other cores
+            // would wait for it. Its own tick wakes it, and that tick is what
+            // checks whether something showed up in the queue for this core.
+            //
+            // Before halting, an idle core moves one bounded piece of the disk
+            // writeback queue: that is where deferred writes reach the disk,
+            // in time nobody else wanted. One piece per yield, so a process
+            // that becomes runnable gets the core back within one step.
+            if (smp::this_cpu().current->idle && !has_runnable_non_idle() &&
+                !block::writeback_step()) {
                 smp::wait_for_interrupt();
             }
             smp::this_cpu().current->state = State::ready;
@@ -353,7 +358,10 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_SYNC:
-            context->rax = static_cast<uint64_t>(sxfs::sync(sxfs::root()) ? 0 : sx::negative_error(SAVANXP_EIO));
+            // sxfs::sync marks the volume clean; block::sync_all then waits
+            // for the writeback queue, so everything written is on the medium.
+            context->rax = static_cast<uint64_t>(
+                sxfs::sync(sxfs::root()) && block::sync_all() ? 0 : sx::negative_error(SAVANXP_EIO));
             return context;
         case SAVANXP_SYS_FSCHECK: {
             if (!vm::is_user_range_accessible(smp::this_cpu().current->address_space, context->rdi, sizeof(savanxp_fscheck_report), true)) {

@@ -286,6 +286,7 @@ const block::DeviceOps kOps = {
     &read_op,
     &write_op,
     &flush_op,
+    /*deferred_writes=*/true,
 };
 
 // Takes the HBA from the firmware if it advertises BIOS/OS handoff.

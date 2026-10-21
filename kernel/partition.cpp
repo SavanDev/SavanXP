@@ -115,6 +115,7 @@ const block::DeviceOps kOps = {
     &read_op,
     &write_op,
     &flush_op,
+    /*deferred_writes=*/false, // the disk underneath defers
 };
 
 // Recorta la particion contra el tamano real del padre antes de registrarla:

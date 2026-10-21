@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "kernel/acpi.hpp"
+#include "kernel/block.hpp"
 #include "kernel/device.hpp"
 #include "kernel/object.hpp"
 #include "abi/savanxp_abi.h"
@@ -25,10 +26,13 @@ int power_ioctl(uint64_t request, uint64_t /*argument*/, uint32_t granted_access
         return -static_cast<int>(SX_EACCES);
     }
     switch (request) {
+        // Writes still in the block writeback queue would die with the power.
         case POWER_IOC_SHUTDOWN:
-            acpi::shutdown(); // no retorna
+            (void)block::sync_all();
+            acpi::shutdown(); // does not return
         case POWER_IOC_REBOOT:
-            acpi::reboot(); // no retorna
+            (void)block::sync_all();
+            acpi::reboot(); // does not return
         default:
             return -static_cast<int>(SX_ENOSYS);
     }

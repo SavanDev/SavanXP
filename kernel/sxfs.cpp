@@ -460,13 +460,16 @@ RecoveryState recover_journal(Volume& volume) {
 }
 
 // Commits the in-memory metadata with a sparse journal: only the sectors that
-// changed since the snapshot are logged and then written home. Writes go to the
-// device cache and four flushes order them, which is all crash safety needs:
+// changed since the snapshot are logged and then written home. Writes are
+// cached (on a physical disk, queued for background writeback) and four
+// ordering points order them, which is all crash safety needs:
 //   1. the payload (and the transaction's file data) before the header;
 //   2. the pending header before anything is written home;
 //   3. home before the clean superblocks and the cleared header;
-//   4. the whole commit on the medium before the syscall returns.
-// Within each step the writes may land in any order.
+//   4. this commit's cleared header before the next commit's payload, which
+//      reuses the journal slots.
+// Within each step the writes may land in any order. The commit is durable
+// once the writeback queue reaches it, or at block::sync.
 bool commit_metadata(Volume& volume) {
     JournalHeader journal = {};
     const uint32_t dirty = build_dirty_map(volume, journal.sector_map);
@@ -886,6 +889,22 @@ bool locate_inode_offset(const Inode& inode, size_t offset, uint32_t& lba, size_
     return false;
 }
 
+// Sectors from `offset` to the end of the extent holding it: the longest run
+// that is contiguous on disk. 0 past the end of the inode.
+uint32_t contiguous_sectors_at(const Inode& inode, size_t offset) {
+    size_t remaining = offset;
+    const uint32_t extent_count = inode.extent_count < kMaxExtents ? inode.extent_count : kMaxExtents;
+    for (uint32_t index = 0; index < extent_count; ++index) {
+        const Extent& extent = inode.extents[index];
+        const size_t extent_bytes = static_cast<size_t>(extent.sector_count) * block::kSectorSize;
+        if (remaining < extent_bytes) {
+            return extent.sector_count - static_cast<uint32_t>(remaining / block::kSectorSize);
+        }
+        remaining -= extent_bytes;
+    }
+    return 0;
+}
+
 bool read_inode_bytes(Volume& volume, const Inode& inode, size_t offset, void* buffer, size_t count) {
     if (buffer == nullptr || count == 0) {
         return true;
@@ -935,6 +954,26 @@ bool write_inode_bytes(Volume& volume, const Inode& inode, size_t offset, const 
             return false;
         }
 
+        // Whole sectors that are contiguous on disk go out as one write
+        // straight from the caller's buffer: one queue record and one device
+        // command instead of one per sector.
+        if (sector_offset == 0 && remaining >= block::kSectorSize) {
+            uint32_t run = contiguous_sectors_at(inode, file_offset);
+            const size_t whole = remaining / block::kSectorSize;
+            if (run > whole) {
+                run = static_cast<uint32_t>(whole);
+            }
+            if (run > 1) {
+                if (!block::write_cached(volume.device_index, lba, run, bytes + (count - remaining))) {
+                    return false;
+                }
+                const size_t run_bytes = static_cast<size_t>(run) * block::kSectorSize;
+                file_offset += run_bytes;
+                remaining -= run_bytes;
+                continue;
+            }
+        }
+
         const size_t chunk = (block::kSectorSize - sector_offset) < remaining
             ? (block::kSectorSize - sector_offset)
             : remaining;
@@ -948,8 +987,8 @@ bool write_inode_bytes(Volume& volume, const Inode& inode, size_t offset, const 
         }
 
         memcpy(sector + sector_offset, bytes + (count - remaining), chunk);
-        // Cached: the mutation flushes at its end, or its commit's first
-        // ordering point makes the data durable before the journal header.
+        // Cached: the mutation places an ordering point after its data (its
+        // commit's first one, or its own for an overwrite in place).
         if (!block::write_cached(volume.device_index, lba, 1, sector)) {
             return false;
         }
@@ -1670,7 +1709,8 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
             return false;
         }
     } else if (count != 0 && !block::flush(volume->device_index)) {
-        // An overwrite in place commits nothing, so it flushes its own data.
+        // An overwrite in place commits nothing, so it places its own
+        // ordering point after its data.
         written = 0;
         return false;
     }
