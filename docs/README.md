@@ -66,6 +66,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   3D API.
 - [`GRAPHICS_PERF.md`](desktop/GRAPHICS_PERF.md) — graphics measurements and the
   interpretation of the performance tables.
+- [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
+  rule that every UI font is 1-bit, and how to change a face.
 - [`PAINT.md`](desktop/PAINT.md) — Paint, the Accessories sketchbook: toolbox
   layout without widgets, the 8 tools, 8-deep undo, BMP/PNG files, and the
   selftest plus visual scenario.

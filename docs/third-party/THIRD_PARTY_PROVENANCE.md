@@ -163,7 +163,28 @@ which is why both go into the registry.
   from the canonical `.hex` (ASCII, Latin-1, box drawing and blocks) because
   the TTF outline rasterizes off-grid
 
-### Noto Sans (desktop body text)
+### Wine MS Sans Serif (desktop body text)
+
+- Origin: the Wine project, `fonts/ms_sans_serif.sfd` at tag `wine-11.20`
+  (commit `7298a818b79446bae153b8d5aa27235ab3703bf9`), file SHA-256
+  `d8cc5e8e93d70478e810b9aa3272006da57e819a063c2b34f5cf92a233b0f3f3`.
+  Copyright (C) 2004 Huw D M Davies, Dmitry Timoshkov
+  (https://gitlab.winehq.org/wine/wine/-/blob/wine-11.20/fonts/ms_sans_serif.sfd)
+- Versioned: yes, `assets/desktop/fonts/ms_sans_serif.sfd`, unmodified
+- License reviewed: LGPL-2.1-or-later (Wine's `LICENSE`). Text in
+  `assets/desktop/fonts/LICENSE-LGPL-2.1.txt`. It is the Wine project's own
+  drawing, made as a free replacement for Microsoft's MS Sans Serif, which
+  Wine does not ship
+- Decision: `Adopt`
+- Distributed in: `libsxgfx.so.0.4` and statically linked programs, as the
+  13px bitmap strike baked to a C table by `tools/font/genfont.py sfd`
+  (`gfx_font_noto.inc`). The source and the generator are both in the
+  repository, so the table can be regenerated from a modified `.sfd` and the
+  library rebuilt
+- Reason: the Win9x/2000 UI face, drawn by hand at the pixel size the desktop
+  uses; full Latin-1 including Spanish accents. See `docs/desktop/UI_FONTS.md`
+
+### Noto Sans (boot screen wordmark)
 
 - Origin: Noto Sans Regular v1.06 (Copyright 2012 Google Inc.), the Noto
   project (https://fonts.google.com/noto)
@@ -171,9 +192,10 @@ which is why both go into the registry.
 - License reviewed: SIL OFL-1.1,
   `assets/desktop/fonts/LICENSE-OFL-1.1.txt`
 - Decision: `Adopt`
-- Distributed in: the binary, as an 8-bit antialiased coverage atlas baked by
-  `tools/font/genfont.py`: the 13px UI face (`gfx_font_noto.inc`)
-- Reason: a proportional typeface for the desktop chrome and the widgets
+- Distributed in: the kernel, as the antialiased "SavanXP" wordmark that
+  `tools/gen_boot_logo.py` rasterizes into the boot screen. It was the desktop
+  body face until Wine's MS Sans Serif replaced it
+- Reason: a smooth wordmark for the splash
 
 ### SpicyGame pixel fonts (captions and spares)
 
@@ -184,9 +206,9 @@ which is why both go into the registry.
   and `assets/desktop/fonts/readme.txt`
 - License reviewed: CC0, per `readme.txt`
 - Decision: `Adopt`
-- Distributed in: the binary, as an 8-bit coverage atlas baked by
-  `tools/font/genfont.py`: RetroSans at 18px for window captions
-  (`gfx_font_title.inc`). PixelSans and ImpactfulBits are baked at 13px as
+- Distributed in: the binary, as a coverage table baked by
+  `tools/font/genfont.py`: RetroSans at 17px, its native pixel grid, for
+  window captions (`gfx_font_title.inc`). PixelSans and ImpactfulBits are baked at 13px as
   committed spares (`gfx_font_pixelsans.inc`, `gfx_font_impactfulbits.inc`)
   and are not linked into any binary yet
 - Reason: a pixel face for window captions; the spares cover future chrome

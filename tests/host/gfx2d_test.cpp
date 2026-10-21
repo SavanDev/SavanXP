@@ -1101,9 +1101,44 @@ void case_font_table_has_the_codepoints_that_matter() {
     const struct sx_title_glyph* title_fallback = sx_title_glyph(0x1F642u);
     const struct sx_title_glyph* title_o = sx_title_glyph(0x00F3u);
     check(title_fallback->rows == 0 && title_fallback->advance > 0 &&
-              title_o->rows > 0 && title_o->advance > 0 &&
-              SX_TITLE_LINE_HEIGHT > 0 && SX_TITLE_LINE_HEIGHT <= SX_NOTO_LINE_HEIGHT,
-          "la tabla de titulo tiene fallback y linea no mayor que el cuerpo");
+              title_o->rows > 0 && title_o->advance > 0 && SX_TITLE_LINE_HEIGHT > 0,
+          "the title table has a fallback and a line height");
+}
+
+/* Both UI faces are pixel fonts baked at their native size: a grey coverage
+ * byte means an outline was rasterised off its grid (RetroSans at 18px left 38%
+ * of the caption ink grey) or the body went back to an antialiased face. */
+template <typename Glyph>
+bool font_table_is_crisp_and_fits(const char* name, const Glyph* glyphs, size_t glyph_count,
+                                  const unsigned char* coverage, unsigned int coverage_size,
+                                  int ascent, int descent) {
+    bool ok = true;
+    for (unsigned int index = 0; index < coverage_size; ++index) {
+        if (coverage[index] != 0x00u && coverage[index] != 0xFFu) {
+            printf("    %s: coverage byte %u is 0x%02x\n", name, index, coverage[index]);
+            ok = false;
+            break;
+        }
+    }
+    for (size_t index = 0; index < glyph_count; ++index) {
+        const Glyph& g = glyphs[index];
+        if (g.rows > 0 && (g.top > ascent || g.rows - g.top > descent)) {
+            printf("    %s: glyph slot %zu spills out of the line (top=%d rows=%d)\n",
+                   name, index, g.top, g.rows);
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+void case_ui_fonts_are_one_bit_and_fit_their_line() {
+    printf("case: the UI fonts are 1-bit and fit their line\n");
+    check(font_table_is_crisp_and_fits("body", kNotoGlyphs, sizeof(kNotoGlyphs) / sizeof(kNotoGlyphs[0]),
+                                       kNotoCoverage, kNotoCoverageSize, SX_NOTO_ASCENT, SX_NOTO_DESCENT),
+          "body face: only 0x00/0xff coverage, every glyph inside ascent+descent");
+    check(font_table_is_crisp_and_fits("title", kTitleGlyphs, sizeof(kTitleGlyphs) / sizeof(kTitleGlyphs[0]),
+                                       kTitleCoverage, kTitleCoverageSize, SX_TITLE_ASCENT, SX_TITLE_DESCENT),
+          "title face: only 0x00/0xff coverage, every glyph inside ascent+descent");
 }
 
 /* ---- objeto fuente ------------------------------------------------------ */
@@ -1928,6 +1963,7 @@ int main() {
     case_utf8_walks_a_whole_string();
     case_utf8_invalid_always_advances();
     case_font_table_has_the_codepoints_that_matter();
+    case_ui_fonts_are_one_bit_and_fit_their_line();
     case_font_selection_round_trips();
     case_font_drives_metrics_and_blit();
     case_font_survives_clip_and_region();

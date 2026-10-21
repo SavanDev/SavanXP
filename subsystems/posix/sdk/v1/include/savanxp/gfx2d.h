@@ -113,19 +113,18 @@ struct sx_brush {
  * del riel de las barras de scroll. */
 extern const uint8_t sx_pattern_checker_50[8];
 
-/* Las tres fuentes horneadas (tools/font/genfont.py). Antes la eleccion estaba
- * clavada en QUE FUNCION se llamaba -- gfx_blit_text contra gfx_blit_text_mono;
- * ahora es un valor que el painter selecciona, que es el equivalente de
- * SelectObject(hFont). La de UI es Noto Sans y la de captions RetroSans;
- * las tres se indexan por codepoint y el texto se decodifica
- * como UTF-8. */
+/* The three baked fonts (tools/font/genfont.py). The choice used to be nailed
+ * into WHICH FUNCTION was called -- gfx_blit_text against gfx_blit_text_mono;
+ * now it is a value the painter selects, the equivalent of SelectObject(hFont).
+ * All three are 1-bit, indexed by codepoint, and text is decoded as UTF-8.
+ * See docs/desktop/UI_FONTS.md. */
 enum sx_font_id {
-    /* Noto Sans, proporcional y antialiased. La de la UI. */
+    /* MS Sans Serif (Wine's), the 13px bitmap strike. The UI face. */
     SX_FONT_UI = 0,
     /* UniFont 8x16, monoespaciada y de 1 bit. La de la consola; ademas trae
      * box drawing y bloques. */
     SX_FONT_MONO = 1,
-    /* RetroSans at 18 px; the caption variant. */
+    /* RetroSans at 17 px, its native pixel grid; the caption variant. */
     SX_FONT_UI_TITLE = 2,
 };
 

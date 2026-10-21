@@ -121,6 +121,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The desktop's text is Wine's MS Sans Serif, crisp and 1-bit.** `SX_FONT_UI` is its hand-drawn
+  13px bitmap strike instead of antialiased Noto Sans, so lines are 13px tall and layouts tighten;
+  `genfont.py sfd` bakes it. Noto now only draws the boot wordmark. See `docs/desktop/UI_FONTS.md`.
+
 - **`malloc`'s page source is a replaceable hook.** The arenas past the bootstrap one come from
   `sx_heap_pages_map`/`sx_heap_pages_unmap` (weak, `savanxp/libc.h`), so a native runtime can supply
   them; `native-test` asserts a native program gets the bootstrap arena only. See
@@ -336,6 +340,9 @@ Cut-off notes:
   (see `docs/userland/SYSTEM_LAYERING.md`).
 
 ### Fixed
+
+- **Window titles are sharp.** RetroSans was baked at 18px, off its 17px pixel grid, so over a
+  third of every caption's pixels came out grey.
 
 - **`windowd-stats` lines are back.** Since `windowd` became native its clock read was a POSIX
   call that failed, so every frame was discarded as unmeasured.

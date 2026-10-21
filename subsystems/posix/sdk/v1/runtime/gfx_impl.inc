@@ -1,6 +1,7 @@
-/* Text rendering uses offline-baked fonts (tools/font/genfont.py):
- *   - Noto Sans, proportional and antialiased, for desktop/UI text.
- *   - RetroSans, proportional pixel face at 12px, for window captions.
+/* Text rendering uses offline-baked fonts (tools/font/genfont.py), all 1-bit:
+ *   - MS Sans Serif (Wine's 13px bitmap strike) for desktop/UI text. The
+ *     tables keep their historical SX_NOTO / kNoto names.
+ *   - RetroSans, proportional pixel face at 17px, for window captions.
  *   - UniFont, fixed 8x16 1-bit, for the monospace terminal path.
  * PixelSans and ImpactfulBits are baked as committed tables
  * (gfx_font_pixelsans.inc, gfx_font_impactfulbits.inc) but are not linked
@@ -1608,7 +1609,7 @@ void gfx_frame(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int 
     }
 }
 
-/* --- Proportional Noto Sans (default desktop/UI text) ------------------- */
+/* --- Proportional UI face (default desktop/UI text) --------------------- */
 
 int gfx_text_width(const char* text) {
     int width = 0;
