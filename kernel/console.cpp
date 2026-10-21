@@ -134,7 +134,7 @@ void draw_background() {
 }
 
 const uint8_t* glyph_for(char character) {
-    // busybox emits Latin-1 bytes, which map 1:1 onto codepoints 0x20-0xFF.
+    // Console text is Latin-1 bytes, which map 1:1 onto codepoints 0x20-0xFF.
     // Control bytes and anything unmapped fall back to .notdef inside the table.
     return sx_console_glyph(static_cast<unsigned char>(character));
 }

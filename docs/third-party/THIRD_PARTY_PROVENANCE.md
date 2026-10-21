@@ -27,22 +27,6 @@ which is why both go into the registry.
   (`SAVANXP_UACPI_COMPILE_OPTIONS`) and integrated through
   `kernel/uacpi_glue.cpp`
 
-### BusyBox
-
-- Origin: https://busybox.net, BusyBox 1.37.0
-- Versioned: yes, `vendor/busybox/` (full upstream tree)
-- License reviewed: GPLv2, `vendor/busybox/LICENSE`
-- Decision: `Adopt`, with replacement planned
-- Distributed in: `/bin/busybox` and one copy of the binary per applet
-  (`savanxp-busybox` CMake target)
-- Actual scope: only six applets are compiled from upstream (`cat`, `cp`,
-  `echo`, `mkdir`, `mv`, `rm`), through the one-line `#include`s in
-  `vendor/busybox-port/applet_*.c`. The other five (`ls`, `ps`, `true`,
-  `false`, `sleep`) are our own code in `legacy_applets.c`
-- Known debt: `vendor/busybox-port/busybox_compat.c` and `libbb.h` are
-  derivative works of BusyBox and still carry no license header, so they are
-  incorrectly covered by the repository's MIT
-
 ### Doom (DoomGeneric)
 
 - Origin: https://github.com/ozkl/doomgeneric, commit

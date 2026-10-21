@@ -177,9 +177,9 @@ Useful commands in the current userland:
 - `beep`
 - `audiotest`
 
-Several basic utilities also come out of the `busybox` multicall binary, for
-example `ls`, `cat`, `echo`, `mkdir`, `rm`, `mv`, `cp`, `ps`, `true`, `false`
-and `sleep`.
+The basic file utilities are small in-tree programs too
+(`subsystems/posix/userland/coreutils`): `ls`, `cat`, `echo`, `mkdir [-p]`,
+`rm [-rf]`, `mv`, `cp [-r]`, `ps`, `true`, `false` and `sleep`.
 
 ## External apps
 

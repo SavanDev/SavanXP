@@ -125,6 +125,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Program Manager no longer opens with the session.** `sessiond` starts only `compositord`,
+  `windowd` and `desktop`; Program Manager is opened from the Start menu (System), and
+  `session-smoke` asserts it is not started.
+
 - **The desktop's text is Wine's MS Sans Serif, crisp and 1-bit.** `SX_FONT_UI` is its hand-drawn
   13px bitmap strike instead of antialiased Noto Sans, so lines are 13px tall and layouts tighten;
   `genfont.py sfd` bakes it. Noto now only draws the boot wordmark. See `docs/desktop/UI_FONTS.md`.
@@ -330,6 +334,10 @@ Cut-off notes:
   decided handle model (see `docs/kernel/KERNEL_NATIVE_API.md`).
 
 ### Removed
+
+- **The BusyBox port.** `vendor/busybox`, `vendor/busybox-port` and `/bin/busybox` are gone;
+  `ls`, `cat`, `echo`, `mkdir [-p]`, `rm [-rf]`, `mv`, `cp [-r]`, `ps`, `true`, `false` and
+  `sleep` are small in-tree programs (`subsystems/posix/userland/coreutils`).
 
 - **The Task List.** The taskbar, Alt+Tab and Task Manager cover switching, restoring
   and ending tasks (see `docs/desktop/DESKTOP_ARCHITECTURE.md`).

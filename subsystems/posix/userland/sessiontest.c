@@ -5,7 +5,8 @@
  * (docs/desktop/DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond).
  *
  * Starts /bin/sessiond and watches its children through the process table:
- * compositord, windowd, the desktop and Program Manager come up; the desktop
+ * compositord, windowd and the desktop come up, and Program Manager does not
+ * (it is an ordinary application, started from the Start menu); the desktop
  * stays up, which it only does if windowd granted it the shell role
  * (gfx_open_shell fails otherwise and it exits); killed, the desktop comes
  * back; killed, windowd takes the session with it and the whole session comes
@@ -102,7 +103,6 @@ int main(void)
     long compositord = 0;
     long windowd = 0;
     long desktop = 0;
-    long progman = 0;
     long next = 0;
     int status = 0;
 
@@ -115,8 +115,7 @@ int main(void)
     compositord = wait_child(sessiond, "compositord", 0);
     windowd = wait_child(sessiond, "windowd", 0);
     desktop = wait_child(sessiond, "desktop", 0);
-    progman = wait_child(sessiond, "progman", 0);
-    if (compositord <= 0 || windowd <= 0 || desktop <= 0 || progman <= 0)
+    if (compositord <= 0 || windowd <= 0 || desktop <= 0)
     {
         fail("the session did not come up");
         return 1;
@@ -125,7 +124,11 @@ int main(void)
     {
         fail("the desktop did not stay up (shell role refused?)");
     }
-    printf("SESSION SMOKE up windowd=%ld desktop=%ld progman=%ld\n", windowd, desktop, progman);
+    if (find_child(sessiond, "progman", 0) > 0)
+    {
+        fail("the session started Program Manager");
+    }
+    printf("SESSION SMOKE up windowd=%ld desktop=%ld\n", windowd, desktop);
 
     /* The desktop dies: sessiond starts another, which becomes the shell. */
     (void)savanxp_kill((int)desktop, SAVANXP_SIGKILL);
@@ -159,17 +162,7 @@ int main(void)
         fail("the old desktop outlived its session");
     }
     desktop = next;
-    next = wait_child(sessiond, "progman", progman);
-    if (next <= 0)
-    {
-        fail("Program Manager did not come back with the session");
-    }
-    else if (alive(progman))
-    {
-        fail("the old Program Manager outlived its session");
-    }
-    progman = next;
-    printf("SESSION SMOKE session restarted windowd=%ld desktop=%ld progman=%ld\n", windowd, desktop, progman);
+    printf("SESSION SMOKE session restarted windowd=%ld desktop=%ld\n", windowd, desktop);
 
     /* compositord dies: windowd cannot go on without it, and the session
      * starts again with a new pair. */
@@ -197,14 +190,12 @@ int main(void)
         fail("the desktop did not come back after compositord");
     }
     desktop = next;
-    progman = wait_child(sessiond, "progman", progman);
     printf("SESSION SMOKE compositord restarted compositord=%ld windowd=%ld\n", compositord, windowd);
 
     /* Done: sessiond first, so nothing is restarted; its children are orphans
      * then, reaped by init. */
     (void)savanxp_kill((int)sessiond, SAVANXP_SIGKILL);
     (void)savanxp_waitpid((int)sessiond, &status);
-    (void)savanxp_kill((int)progman, SAVANXP_SIGKILL);
     (void)savanxp_kill((int)desktop, SAVANXP_SIGKILL);
     (void)savanxp_kill((int)windowd, SAVANXP_SIGKILL);
     (void)savanxp_kill((int)compositord, SAVANXP_SIGKILL);

@@ -378,7 +378,7 @@ create pipes for yet; native `compositord` exercises that path.
   `category=Accessories` (`subsystem=native` stays informational, the
   loader trusts EI_OSABI). The scan lists what declares a category, so
   both appear in the menu like any port; `progman --selftest` asserts
-  they are listed and keeps rejecting category-less busybox applets.
+  they are listed and keeps rejecting category-less tools such as `ls`.
 - `progman-smoke` prepares both native builds before asserting; the
   QMP callback lives in `tools/qmp_native_hw.py` next to the other
   host drivers.

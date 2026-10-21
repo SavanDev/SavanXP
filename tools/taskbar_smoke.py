@@ -9,6 +9,13 @@ from pathlib import Path
 from PIL import Image
 
 from qmp_client import QmpClient
+from shoot_session import (
+    STARTMENU_HEIGHT,
+    STARTMENU_STRIP_WIDTH,
+    STARTMENU_VIEW_HEIGHT,
+    STARTMENU_WIDTH,
+    find_text,
+)
 
 
 class TaskbarSmokeError(RuntimeError):
@@ -18,8 +25,9 @@ class TaskbarSmokeError(RuntimeError):
 FACE = (192, 192, 192)
 LIGHT = (255, 255, 255)
 SHADOW = (128, 128, 128)
-# A pixel in the middle of an inactive caption's gradient (Windows Standard).
-INACTIVE_CAPTION = (151, 151, 151)
+# A point on Calculator's caption: the WM centres the window, so its title bar
+# spans x=505..830 at y=308 on the 1280x800 screen.
+CALC_CAPTION = (600, 308)
 
 
 def _wait_screenshot(path: Path, timeout: float = 8.0) -> Image.Image:
@@ -147,6 +155,59 @@ def _expect_volume_popup(image: Image.Image, state: str) -> None:
         raise TaskbarSmokeError(f"{state}: volume trough expected {SHADOW}")
 
 
+def _move_to(client: QmpClient, x: int, y: int) -> None:
+    # The guest pointer is relative: park it in the top-left corner, then walk
+    # to the target in steps of 64 (no acceleration at that size).
+    for _ in range(22):
+        client.relative(-64, -64)
+        time.sleep(0.03)
+    for _ in range(x // 64):
+        client.relative(64, 0)
+        time.sleep(0.03)
+    for _ in range(y // 64):
+        client.relative(0, 64)
+        time.sleep(0.03)
+    client.relative(x % 64, y % 64)
+    time.sleep(0.5)
+
+
+def _open_progman(client: QmpClient, output_dir: Path) -> None:
+    """Opens Program Manager from the Start menu, as a user would.
+
+    The session does not start it. The menu is mouse only and its list may be
+    longer than the menu, so the row is found by its text: first as the menu
+    opens, then after resting the pointer on the down arrow strip, which
+    scrolls the list to its end (System, Program Manager's group, is last).
+    """
+    menu_x, menu_y = 2, 800 - 28 - STARTMENU_HEIGHT
+    view_x = menu_x + 2 + STARTMENU_STRIP_WIDTH
+    box = (view_x, menu_y + 2, menu_x + STARTMENU_WIDTH - 2, menu_y + 2 + STARTMENU_VIEW_HEIGHT)
+    _move_to(client, 2 + 32, 786)
+    _click(client)
+    image = None
+    for attempt in range(15):
+        time.sleep(2.0)
+        image = _capture(client, output_dir, f"00-menu-{attempt:02d}")
+        if _pixel(image, view_x + 2, menu_y + 4) == FACE:
+            break
+    else:
+        raise TaskbarSmokeError("the Start menu did not open")
+    origin = find_text(image, box, "Program Manager", (0, 0, 0), FACE, solid_only=True)[0]
+    if origin is None:
+        # Rest on the down strip's left end: on the strip, but off the arrow
+        # and off every row (a hovered row is repainted white on blue).
+        down_strip_y = menu_y + 2 + STARTMENU_VIEW_HEIGHT - 12
+        _move_to(client, view_x + 20, down_strip_y + 6)
+        time.sleep(10.0)
+        image = _capture(client, output_dir, "00-menu-scrolled")
+        origin = find_text(image, box, "Program Manager", (0, 0, 0), FACE, solid_only=True)[0]
+    if origin is None:
+        raise TaskbarSmokeError("the Start menu does not list Program Manager")
+    _move_to(client, origin[0] + 20, origin[1] + 6)
+    _click(client)
+    time.sleep(25.0)
+
+
 def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     if ready_wait:
@@ -154,19 +215,26 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
 
     screenshots: list[Path] = []
     with QmpClient(qmp_path, timeout=5.0) as client:
+        empty = _capture(client, output_dir, "00-sin-ventanas")
+        screenshots.append(output_dir / "00-sin-ventanas.png")
+        if empty.size != (1280, 800):
+            raise TaskbarSmokeError(f"unexpected initial screenshot size: {empty.size}")
+        _expect_strip(empty, "session start")
+        _expect_clock(empty, "session start")
+        # The session opens no window: Program Manager is started from the menu.
+        if _button(empty, 0) != (FACE, FACE):
+            raise TaskbarSmokeError("session start: a window button is already on the taskbar")
+
+        _open_progman(client, output_dir)
         first = _capture(client, output_dir, "01-solo-progman")
         screenshots.append(output_dir / "01-solo-progman.png")
-        if first.size != (1280, 800):
-            raise TaskbarSmokeError(f"unexpected initial screenshot size: {first.size}")
         _expect_strip(first, "initial")
         _expect_clock(first, "initial")
         _expect_button(first, 0, True, "initial")
 
-        # The normal desktop starts on Main, whose first three entries are
-        # Shell, Files, and Notepad. Navigate directly instead of relying on
-        # tab-group order, which changes when optional ports are installed.
-        client.tap("right", pause=0.4)
-        client.tap("right", pause=0.4)
+        # Enter on Program Manager's first icon, Calculator: the point is a
+        # second window. Not an icon further right, since that position
+        # depends on what is installed (a native demo there opens no window).
         client.tap("ret")
         time.sleep(25.0)
         second = _capture(client, output_dir, "02-dos-ventanas")
@@ -207,9 +275,11 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
         _expect_strip(fifth, "after second click")
         _expect_button(fifth, 0, False, "after second click")
         # Minimizing from the taskbar hands activation to the window below,
-        # and its caption must be repainted active. Nothing else repaints it
+        # and its caption must be repainted active: the same pixel it had when
+        # Calculator was freshly opened and active. Nothing else repaints it
         # here, so a stale inactive caption is exactly the bug this catches.
-        if _pixel(fifth, 600, 91) == INACTIVE_CAPTION:
+        active_caption = _pixel(second, *CALC_CAPTION)
+        if _pixel(fifth, *CALC_CAPTION) != active_caption:
             raise TaskbarSmokeError("after second click: the window left active kept an inactive caption")
 
         # Al reloj: a la esquina y despues al centro del pozo (1214..1278,

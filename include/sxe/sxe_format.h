@@ -136,12 +136,12 @@ struct sxe_record {
 #define SXE_TAG_ACCENT 0x0101u       /* uint32 0x00RRGGBB, formato de gfx_rgb */
 #define SXE_TAG_LAUNCH_FLAGS 0x0102u /* uint32 SAVANXP_DESKTOP_LAUNCH_FLAG_* */
 /*
- * utf8: grupo del launcher ("Games", "Accessories"). Declararlo es la forma en
- * que un programa PIDE aparecer en la lista de programas -- el equivalente de
- * "el instalador creo un acceso directo". Ausente = ejecutable de primera
- * clase que simplemente no se muestra en el menu (busybox y sus applets, los
- * binarios de diagnostico, el propio launcher). Es la unica alternativa a una
- * lista de exclusion horneada, que se desincroniza sola.
+ * utf8: launcher group ("Games", "Accessories"). Declaring it is how a program
+ * ASKS to appear in the program list -- the equivalent of "the installer
+ * created a shortcut". Absent = a first-class executable that is simply not
+ * shown in the menu (the command-line tools such as ls and cat, the diagnostic
+ * binaries). It is the only alternative to a baked-in exclusion list, which
+ * drifts on its own.
  */
 #define SXE_TAG_CATEGORY 0x0103u
 

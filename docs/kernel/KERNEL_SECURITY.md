@@ -125,10 +125,8 @@ creates W+X.
 
 ### Compiler hardening
 
-- Kernel, uACPI, in-tree POSIX userland, external SDK applications, BusyBox,
-  FFmpeg and the native SDK are compiled with `-fstack-protector-strong`. The
-  BusyBox port now boots and runs its applets with the same runtime canary
-  contract as the rest of userland.
+- Kernel, uACPI, in-tree POSIX userland, external SDK applications, FFmpeg
+  and the native SDK are compiled with `-fstack-protector-strong`.
 - `crt0` installs a fresh nonzero canary from a kernel register before calling
   `main`. The value is not stored in the executable image; `fork` inherits it
   with the parent's context and address space, while `exec` receives a new one.
@@ -233,7 +231,7 @@ loader restriction; it is not a reproduced runtime failure.
 | A4 | Fixed: every application processor establishes its own NX baseline. |
 | A5 | Fixed: the kernel canary hook uses the compiler builtin return address. |
 | B1 | Fixed: kernel boot and each new process receive a nonconstant canary; `fork` inherits it. |
-| B2 | Fixed: BusyBox builds and runs with the normal canary runtime. |
+| B2 | Fixed: BusyBox built and ran with the normal canary runtime. The port has since been removed. |
 | B3 | Fixed: SxFS validates a global per-volume extent-claim bitmap. |
 | B4 | Fixed for the current stack budget: directory recursion is capped at 32 levels. |
 | B5 | Fixed: over-capacity CPIO archives leave the VFS unready. |

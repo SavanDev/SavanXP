@@ -669,7 +669,7 @@ already rebuilt. `rootfs/bin/taskbar` was ten minutes older than
 
 Nothing failed. The build passed, `check_shared_libs` passed, and the visual
 scenarios passed — because they were testing the previous binary. The stamp now
-depends on `${SAVANXP_USER_TARGETS}` and `savanxp-busybox` directly.
+depends on `${SAVANXP_USER_TARGETS}` directly.
 
 Two things about how it was found are worth keeping. The first two "the assertion
 did not catch it" results were *correct*: Notepad's editor does not go through

@@ -118,14 +118,20 @@ int main(void) {
     const char* seltest_argv[] = {"/disk/bin/seltest", 0};
     const char* mmaptest_argv[] = {"/disk/bin/mmaptest", 0};
     const char* heaptest_argv[] = {"/disk/bin/heaptest", 0};
-    const char* sh_argv[] = {"/bin/sh", "-c", "echo busybox-shell > /disk/smoke/sh.txt", 0};
-    const char* echo_argv[] = {"/bin/echo", "busybox-echo", 0};
+    const char* sh_argv[] = {"/bin/sh", "-c", "echo shell-redirect > /disk/smoke/sh.txt", 0};
+    const char* echo_argv[] = {"/bin/echo", "smoke-echo", 0};
     const char* cat_argv[] = {"/bin/cat", "/disk/smoke/sh.txt", 0};
     const char* ls_argv[] = {"/bin/ls", "/disk/bin", 0};
     const char* cp_argv[] = {"/bin/cp", "/README", "/disk/smoke/readme.copy", 0};
     const char* mv_argv[] = {"/bin/mv", "/disk/smoke/readme.copy", "/disk/smoke/readme.moved", 0};
     const char* rm_argv[] = {"/bin/rm", "/disk/smoke/readme.moved", 0};
     const char* ps_argv[] = {"/bin/ps", 0};
+    /* The recursive forms: a tree made with mkdir -p, copied with cp -r and
+     * removed with rm -r, both copies. */
+    const char* mkdir_tree_argv[] = {"/bin/mkdir", "-p", "/disk/smoke/tree/sub", 0};
+    const char* cp_into_tree_argv[] = {"/bin/cp", "/README", "/disk/smoke/tree/sub", 0};
+    const char* cp_tree_argv[] = {"/bin/cp", "-r", "/disk/smoke/tree", "/disk/smoke/tree2", 0};
+    const char* rm_tree_argv[] = {"/bin/rm", "-r", "/disk/smoke/tree", "/disk/smoke/tree2", 0};
     const char* libctest_argv[] = {"/disk/bin/libctest", 0};
     const char* stacktest_argv[] = {"/bin/stacktest", 0};
     /* Los dos backends de imagen tienen lectores distintos en el kernel:
@@ -170,7 +176,6 @@ int main(void) {
         !file_exists("/disk/bin/seltest") ||
         !file_exists("/disk/bin/mmaptest") ||
         !file_exists("/disk/bin/heaptest") ||
-        !file_exists("/disk/bin/busybox") ||
         !file_exists("/disk/bin/sh") ||
         !file_exists("/disk/bin/ls") ||
         !file_exists("/disk/bin/cat") ||
@@ -220,7 +225,7 @@ int main(void) {
         !run_and_expect("/disk/bin/heaptest", heaptest_argv, 1, 0) ||
         !prepare_smoke_directory() ||
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
-        !validate_file_contains("/disk/smoke/sh.txt", "busybox-shell") ||
+        !validate_file_contains("/disk/smoke/sh.txt", "shell-redirect") ||
         !run_and_expect("/bin/echo", echo_argv, 2, 0) ||
         !run_and_expect("/bin/cat", cat_argv, 2, 0) ||
         !run_and_expect("/bin/ls", ls_argv, 2, 0) ||
@@ -230,6 +235,13 @@ int main(void) {
         !file_exists("/disk/smoke/readme.moved") ||
         !run_and_expect("/bin/rm", rm_argv, 2, 0) ||
         !file_missing("/disk/smoke/readme.moved") ||
+        !run_and_expect("/bin/mkdir", mkdir_tree_argv, 3, 0) ||
+        !run_and_expect("/bin/cp", cp_into_tree_argv, 3, 0) ||
+        !run_and_expect("/bin/cp", cp_tree_argv, 4, 0) ||
+        !validate_file_contains("/disk/smoke/tree2/sub/README", "SavanXP") ||
+        !run_and_expect("/bin/rm", rm_tree_argv, 4, 0) ||
+        !file_missing("/disk/smoke/tree") ||
+        !file_missing("/disk/smoke/tree2") ||
         !run_and_expect("/bin/ps", ps_argv, 1, 0) ||
         !run_and_expect("/disk/bin/libctest", libctest_argv, 1, 0) ||
         !run_and_expect("/bin/stacktest", stacktest_argv, 1, 0) ||

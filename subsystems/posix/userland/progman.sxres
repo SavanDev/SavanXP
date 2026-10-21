@@ -1,13 +1,13 @@
-# Recursos SXE del Program Manager. Ver docs/userland/SXE_FORMAT.md.
+# Program Manager's SXE resources. See docs/userland/SXE_FORMAT.md.
 #
 # These values are what windows and the launcher show for progman: its own
 # runtime publishes them to windowd, and progman_registry.c's defaults
 # reproduce them.
 #
-# Con category= a proposito: el launcher se lista a si mismo en System, en
-# orden alfabetico entre Add/Remove Programs y System Properties. Sigue
-# siendo opt-in -- busybox y los applets no declaran categoria y por eso no
-# aparecen -- y el selftest verifica ambos lados.
+# With category= on purpose: the launcher lists itself under System, in
+# alphabetical order between Add/Remove Programs and System Properties. It is
+# still opt-in -- the command-line tools (ls, cat, ...) declare no category
+# and so do not appear -- and the selftest checks both sides.
 name=Program Manager
 description=Launcher de programas
 version=system

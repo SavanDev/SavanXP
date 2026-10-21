@@ -184,33 +184,34 @@ int progman_registry_apply_sxe(void);
 #define PROGMAN_SCAN_DIR_SECONDARY "/disk/bin"
 
 /*
- * "Todos los programas": agrega al registro cada ejecutable instalado que PIDA
- * aparecer, o sea que declare SXE_TAG_CATEGORY en su .sxmeta. La categoria es
- * el nombre del grupo; el resto de la identidad (nombre, descripcion, icono,
- * flags) la completa progman_registry_apply_sxe() como para cualquier otro
- * item. Devuelve cuantos items agrego.
+ * "All Programs": adds to the registry every installed executable that ASKS
+ * to appear, that is, one that declares SXE_TAG_CATEGORY in its .sxmeta. The
+ * category is the group name; the rest of the identity (name, description,
+ * icon, flags) is filled in by progman_registry_apply_sxe(), as for any other
+ * item. Returns how many items it added.
  *
- * Que la categoria sea OPT-IN es la decision de diseno: el alta en el menu la
- * pide el programa, igual que en la era XP la pedia su instalador creando un
- * acceso directo. Lo contrario -- listar todo lo estampado -- obligaria a una
- * lista de exclusion horneada para busybox (30 copias del MISMO binario bajo
- * nombres distintos, ver CMake) y para los binarios de diagnostico, y esa
- * lista se desincroniza sola en cuanto alguien agrega un *test nuevo.
+ * The category being OPT-IN is the design decision: the program asks to be in
+ * the menu, as in the XP era its installer did by creating a shortcut. The
+ * opposite -- listing everything stamped -- would need a baked-in exclusion
+ * list for the command-line tools (ls, cat, cp, ...) and the diagnostic
+ * binaries, and that list drifts the moment someone adds a new *test.
  *
- * Reglas:
- *   - No pisa NADA de lo que ya haya en el registro: si un item existente ya
- *     apunta a un binario con el mismo BASENAME, el candidato se saltea. Asi
- *     el .ini del usuario siempre gana, y /disk/bin no duplica a /bin.
- *   - Los items que agrega entran sin overrides, para que apply_sxe complete
- *     su presentacion desde el propio binario.
- *   - Va DESPUES de progman_registry_prune_missing() y ANTES de
- *     progman_registry_apply_sxe(): el pruning reordena items y apply_sxe
- *     asigna los slots de icono contra los indices finales.
- *   - Los grupos que crea y los items que agrega quedan ordenados
- *     alfabeticamente, atras de los que ya estaban. El orden de readdir es el
- *     de la imagen, no uno que le sirva a nadie para buscar en una lista.
+ * Rules:
+ *   - It overrides NOTHING already in the registry: if an existing item
+ *     already points at a binary with the same BASENAME, the candidate is
+ *     skipped. So the user's .ini always wins, and /disk/bin does not
+ *     duplicate /bin.
+ *   - The items it adds carry no overrides, so apply_sxe fills in their
+ *     presentation from the binary itself.
+ *   - It runs AFTER progman_registry_prune_missing() and BEFORE
+ *     progman_registry_apply_sxe(): pruning reorders items, and apply_sxe
+ *     assigns icon slots against the final indices.
+ *   - The groups it creates and the items it adds are sorted alphabetically,
+ *     after the ones already there. readdir order is the image's order, not
+ *     one that helps anybody find something in a list.
  *
- * `exists` es el mismo predicado inyectable del pruning. Con 0 usa el propio.
+ * `exists` is the same injectable predicate as the pruning's. With 0 it uses
+ * its own.
  */
 int progman_registry_scan_programs(progman_path_exists_fn exists);
 

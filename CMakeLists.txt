@@ -442,58 +442,6 @@ savanxp_runtime_variant(NAME savanxp_user_runtime_pic PIC)
 add_custom_target(savanxp_user_runtime_pic_check ALL
     DEPENDS savanxp_user_runtime_pic
 )
-# trampoline that the in-tree userland runtime does not use.
-set(SAVANXP_EXTERNAL_COMPILE_OPTIONS
-    "-target;${SAVANXP_TARGET_TRIPLE}"
-    -ffreestanding
-    -fstack-protector-strong
-    -fno-pic
-    -fno-pie
-    -mno-red-zone
-    -mcmodel=small
-    -mno-mmx
-    -mno-sse
-    -mno-sse2
-    -mgeneral-regs-only
-    -Wall
-    -Wextra
-    -Wpedantic
-)
-set(SAVANXP_EXTERNAL_LINK_OPTIONS
-    -nostdlib
-    -static
-    -fuse-ld=lld
-    "-Wl,-T,${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld"
-    "-Wl,-z,max-page-size=0x1000"
-    -Wl,--build-id=none
-)
-# El runtime de las apps externas es el de los programas internos MENOS las unidades
-# del toolkit, mas setjmp. Se deriva en vez de restcribirse, porque son dos listas
-# que tienen que coincidir y que no coincidir no da ningun error: el enlazador se
-# queja de un simbolo indefinido que nadie sabe de donde deberia venir, mucho despues
-# del cambio que lo rompio.
-set(SAVANXP_EXTERNAL_RUNTIME_SOURCES ${SAVANXP_USER_RUNTIME_SOURCES}
-    subsystems/posix/sdk/v1/runtime/setjmp.S)
-list(REMOVE_ITEM SAVANXP_EXTERNAL_RUNTIME_SOURCES
-    subsystems/posix/sdk/v1/runtime/math.c
-    subsystems/posix/sdk/v1/runtime/audio.c
-    subsystems/posix/sdk/v1/runtime/sxchrome.c
-    subsystems/posix/sdk/v1/runtime/sxgui.c
-    subsystems/posix/sdk/v1/runtime/sxgui_app.c)
-# sxe.c stays: gfx.c reads the program's own .sxe to publish its window
-# presentation (docs/desktop/DESKTOP_ARCHITECTURE.md).
-
-add_library(savanxp_external_runtime OBJECT ${SAVANXP_EXTERNAL_RUNTIME_SOURCES})
-target_include_directories(savanxp_external_runtime PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland"
-    "${SAVANXP_GENERATED_ROOT}"
-)
-target_compile_options(savanxp_external_runtime PRIVATE ${SAVANXP_EXTERNAL_COMPILE_OPTIONS})
-set_target_properties(savanxp_external_runtime PROPERTIES
-    C_EXTENSIONS YES
-)
 
 # Desktop icon PNGs are checked-in, hand-editable source assets. Keep the
 # generator as an explicit target, but never let a normal build redraw or
@@ -586,25 +534,6 @@ target_sources(savanxp_kernel_objects PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
 include("${CMAKE_SOURCE_DIR}/cmake/UserPrograms.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/SystemServices.cmake")
 
-# BusyBox is an external-style port compiled against the same freestanding
-# runtime, but it is part of the base rootfs and therefore a normal target here.
-file(GLOB SAVANXP_BUSYBOX_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/vendor/busybox-port/*.c")
-list(SORT SAVANXP_BUSYBOX_SOURCES)
-add_executable(savanxp-busybox ${SAVANXP_BUSYBOX_SOURCES})
-target_include_directories(savanxp-busybox PRIVATE
-    "${CMAKE_SOURCE_DIR}/vendor/busybox-port"
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include"
-    "${CMAKE_SOURCE_DIR}/include"
-    "${SAVANXP_GENERATED_ROOT}"
-)
-target_link_libraries(savanxp-busybox PRIVATE savanxp_external_runtime)
-target_compile_definitions(savanxp-busybox PRIVATE
-    DESKTOP_INCLUDE_TEST_APPS=$<BOOL:${SAVANXP_INCLUDE_TEST_APPS}>)
-target_compile_options(savanxp-busybox PRIVATE ${SAVANXP_EXTERNAL_COMPILE_OPTIONS})
-target_link_options(savanxp-busybox PRIVATE ${SAVANXP_EXTERNAL_LINK_OPTIONS})
-set_target_properties(savanxp-busybox PROPERTIES OUTPUT_NAME busybox SUFFIX "")
-
 set(SAVANXP_USER_TARGETS)
 get_property(SAVANXP_USER_TARGETS GLOBAL PROPERTY SAVANXP_USER_TARGETS)
 set(SAVANXP_USER_PROGRAM_NAMES)
@@ -686,7 +615,6 @@ foreach(target IN LISTS SAVANXP_USER_TARGETS)
         )
     endif()
 endforeach()
-add_dependencies(savanxp-busybox savanxp_sxe_resources)
 
 add_custom_target(savanxp_kernel
     COMMAND "${SAVANXP_LD}"
@@ -705,7 +633,7 @@ add_custom_target(savanxp_kernel
 add_dependencies(savanxp_kernel_objects savanxp_generated_headers)
 
 add_custom_target(savanxp_userland
-    DEPENDS ${SAVANXP_USER_TARGETS} savanxp-busybox
+    DEPENDS ${SAVANXP_USER_TARGETS}
     COMMENT "Linking SavanXP userland"
 )
 
@@ -875,7 +803,6 @@ add_test(NAME tcp-echo-server-test
             --server "${CMAKE_SOURCE_DIR}/tools/tcp_echo_server.py")
 add_dependencies(savanxp_tests savanxp_sxfs_cli)
 
-set(SAVANXP_APPLETS busybox ls cat echo mkdir rm mv cp ps true false sleep)
 set(SAVANXP_STAGE_COMMANDS
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ROOTFS_ROOT}/bin"
@@ -889,20 +816,6 @@ foreach(target IN LISTS SAVANXP_USER_TARGETS)
                 "$<TARGET_FILE:${target}>"
                 "${SAVANXP_ROOTFS_ROOT}/bin/${target}"
     )
-endforeach()
-list(APPEND SAVANXP_STAGE_COMMANDS
-    COMMAND "${CMAKE_COMMAND}" -E copy
-            "$<TARGET_FILE:savanxp-busybox>"
-            "${SAVANXP_ROOTFS_ROOT}/bin/busybox"
-)
-foreach(applet IN LISTS SAVANXP_APPLETS)
-    if(NOT applet STREQUAL "busybox")
-        list(APPEND SAVANXP_STAGE_COMMANDS
-            COMMAND "${CMAKE_COMMAND}" -E copy
-                    "$<TARGET_FILE:savanxp-busybox>"
-                    "${SAVANXP_ROOTFS_ROOT}/bin/${applet}"
-        )
-    endif()
 endforeach()
 if(SAVANXP_SMOKE_COMMAND)
     list(APPEND SAVANXP_STAGE_COMMANDS
@@ -943,7 +856,7 @@ add_custom_command(OUTPUT "${SAVANXP_ROOTFS_STAMP}"
     # el texto de una etiqueta de la barra, build y escenario dan OK los dos,
     # porque los dos proban el programa viejo. Solo se nota al buscar el binario
     # extraido de la imagen.
-    DEPENDS ${SAVANXP_USER_TARGETS} savanxp-busybox
+    DEPENDS ${SAVANXP_USER_TARGETS}
             "${CMAKE_SOURCE_DIR}/rootfs/README"
             "${CMAKE_SOURCE_DIR}/tools/write_smoke_spec.py"
             "${SAVANXP_SMOKE_CONFIG_STAMP}"

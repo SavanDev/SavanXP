@@ -4947,9 +4947,9 @@ static int windowd_selftest(void)
         return 1;
     }
 
-    /* Segunda instancia: progman ya arranca con la sesion (A2.4a), asi que
-     * abrirlo de nuevo desde el launcher es un caso real. Cubrirlo aca porque
-     * una sola instancia no ejercita el camino de dos clientes iguales. */
+    /* A second instance: nothing stops the user from opening Program Manager
+     * twice from the Start menu. Covered here because a single instance never
+     * exercises two identical clients. */
     if (launch_overlay_client(&session, "/bin/progman", 0) < 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL launch segunda instancia de progman\n");

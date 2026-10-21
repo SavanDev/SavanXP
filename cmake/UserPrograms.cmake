@@ -14,7 +14,9 @@ function(savanxp_program)
     if(P_TEST AND NOT SAVANXP_INCLUDE_TEST_APPS)
         return()
     endif()
-    if(NOT P_NAME OR NOT P_SOURCES)
+    # Compared as a string: a plain if(NOT P_NAME) reads the program `false`
+    # as a boolean.
+    if("${P_NAME}" STREQUAL "" OR NOT P_SOURCES)
         message(FATAL_ERROR "savanxp_program requires NAME and SOURCES")
     endif()
     if(P_NATIVE AND P_LINK_PROFILE AND NOT P_LINK_PROFILE STREQUAL "STATIC")
@@ -314,6 +316,16 @@ savanxp_program(NAME sessiontest TEST SOURCES subsystems/posix/userland/sessiont
 savanxp_program(NAME pipestress TEST SOURCES subsystems/posix/userland/pipestress.c)
 savanxp_program(NAME spawnloop TEST SOURCES subsystems/posix/userland/spawnloop.c)
 savanxp_program(NAME badptr TEST SOURCES subsystems/posix/userland/badptr.c)
+# The basic file utilities. They replaced the BusyBox port: one small program
+# each, with the shared helpers compiled into every one that needs them.
+foreach(tool cat cp echo ls mkdir mv rm)
+    savanxp_program(NAME ${tool} SOURCES
+        subsystems/posix/userland/coreutils/${tool}.c
+        subsystems/posix/userland/coreutils/coreutils.c)
+endforeach()
+foreach(tool false ps sleep true)
+    savanxp_program(NAME ${tool} SOURCES subsystems/posix/userland/coreutils/${tool}.c)
+endforeach()
 savanxp_program(NAME rmdir SOURCES subsystems/posix/userland/rmdir.c)
 savanxp_program(NAME truncate SOURCES subsystems/posix/userland/truncate.c)
 savanxp_program(NAME sync SOURCES subsystems/posix/userland/sync.c)

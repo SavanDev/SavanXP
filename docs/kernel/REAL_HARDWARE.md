@@ -172,7 +172,7 @@ from the MADT instead of Limine's `goto_address`), and paging itself.
 | VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../../include/kernel/vmm.hpp)) does not fit in 32 bits. Cheapest credible MVP: one address space, per-process stacks, no per-process CR3, no section views, no ASLR -- that halves the work and defers the isolation story |
 | `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](../../arch/x86_64/context.S), [`elf.cpp:163-263`](../../kernel/elf.cpp) |
 | Heap off HHDM pointers | S | [`heap.cpp:224-244`](../../kernel/heap.cpp) builds arenas straight on the direct map |
-| Userland, SDK, ports, busybox | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
+| Userland, SDK, ports | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
 | Harness: a second QEMU machine profile | S-M | See [A permanent harness](#a-permanent-harness-for-a-32-bit-target) |
 
 The good news for the ABI is specific and worth protecting. Syscalls are a

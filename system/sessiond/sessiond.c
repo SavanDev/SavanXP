@@ -7,9 +7,10 @@
 /*
  * sessiond: the session manager (docs/desktop/DESKTOP_ARCHITECTURE.md#the-
  * session-manager-sessiond). SMSS and Winlogon/Userinit in one process: init
- * starts it, it starts compositord, then windowd, then the desktop and Program
- * Manager, restarts the desktop when it dies and the whole session when
- * compositord or windowd dies.
+ * starts it, it starts compositord, then windowd, then the desktop, restarts
+ * the desktop when it dies and the whole session when compositord or windowd
+ * dies. Program Manager is not part of the session: it is an ordinary
+ * application, reached from the Start menu.
  *
  * Native: it opens no file and only starts and watches its children, so it
  * needs nothing but spawn, waitpid, terminate, the clock and the log. Being
@@ -21,7 +22,6 @@
 static const char* const k_compositord_path = "/bin/compositord";
 static const char* const k_windowd_path = "/bin/windowd";
 static const char* const k_desktop_path = "/bin/desktop";
-static const char* const k_progman_path = "/bin/progman";
 
 /* A child that ends within this long after starting counts as a crash at
  * startup; after SESSIOND_MAX_QUICK_EXITS in a row it is not restarted, so a
@@ -52,7 +52,6 @@ struct sessiond_child {
 static struct sessiond_child g_compositord = {0, 0, 0ull, 0};
 static struct sessiond_child g_windowd = {0, 0, 0ull, 0};
 static struct sessiond_child g_desktop = {0, 0, 0ull, 0};
-static struct sessiond_child g_progman = {0, 0, 0ull, 0};
 
 /* One event nobody sets: waiting on it with a timeout is a sleep. */
 static long g_sleep_event = -1;
@@ -133,7 +132,6 @@ static void start_shell(void) {
     if (start_child(&g_desktop) < 0) {
         g_desktop.quick_exits += 1;
     }
-    (void)start_child(&g_progman);
 }
 
 /* 0 once compositord and windowd are up and the shell started, -1 if one of
@@ -167,7 +165,6 @@ static int start_session(void) {
 static void end_session(void) {
     sessiond_sleep(SESSIOND_GRACE_MS);
     end_child(&g_desktop);
-    end_child(&g_progman);
     end_child(&g_windowd);
     end_child(&g_compositord);
 }
@@ -176,7 +173,6 @@ int main(void) {
     g_compositord.path = k_compositord_path;
     g_windowd.path = k_windowd_path;
     g_desktop.path = k_desktop_path;
-    g_progman.path = k_progman_path;
     g_sleep_event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
 
     for (;;) {
@@ -225,9 +221,6 @@ int main(void) {
                 /* windowd lives on with a solid background; Alt+Tab still works. */
                 log_line("sessiond: the desktop keeps exiting at startup; going on without it");
             }
-        } else if (pid == g_progman.pid) {
-            /* An ordinary application: closing it is the user's choice. */
-            g_progman.pid = 0;
         }
     }
 }

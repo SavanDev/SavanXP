@@ -156,7 +156,8 @@ window kind, behind a single loop in `desktop.c`.
 
 ### progman
 
-Unchanged: an ordinary window that lists the installed programs. It launches
+An ordinary window that lists the installed programs, opened from the Start
+menu (System > Program Manager); the session does not start it. It launches
 programs itself: `gfx_desktop_launch*` is a `spawn` in the caller, and the
 program connects to `windowd` on its own.
 
@@ -195,14 +196,14 @@ does both jobs: **`sessiond`**. The name follows `windowd`, `compositord` and
 1. `init` starts it, where it used to start `windowd`, and restarts it if it
    dies. `init` keeps what is not part of the graphical session: `audiod`, and
    the fallback to `/bin/sh` when the session will not come up.
-2. It starts `compositord` (since phase 4), then `windowd`, then `desktop`
-   and `progman`, each once the one before has opened its port. It is their
-   parent, so a
+2. It starts `compositord` (since phase 4), then `windowd`, then `desktop`,
+   each once the one before has opened its port. Program Manager is not part
+   of the session: it is an ordinary application, started from the Start
+   menu. `sessiond` is their parent, so a
    blocking `waitpid(-1)` tells it when any of them ends; it needs no
    multi-object wait and no polling.
 3. It restarts `desktop` when it dies, with the policy `windowd` has today:
-   given up after three exits within ten seconds of starting. `progman` is an
-   ordinary application and is not restarted: closing it is a user's choice.
+   given up after three exits within ten seconds of starting.
 4. When `windowd` or `compositord` dies, the session is over: it ends the
    rest and starts the session again, with the same quick-exit limit; past it,
    `sessiond` exits with an error and `init` falls back to the text shell, as

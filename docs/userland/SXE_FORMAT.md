@@ -15,7 +15,7 @@
 > **Stamping by default: every program the build links comes out with
 > `.sxmeta`, whether or not it has a `.sxres`.** It is no longer opt-in.
 > `sxe-smoke` measures the whole image: **67/67 installed binaries stamped**,
-> in-tree and external (Doom, busybox) alike. See
+> in-tree and external (Doom) alike. See
 > [below](#default-stamping).
 >
 > **`icon=` in `progman.ini` points at a program, not at a catalog.** `icon=`
@@ -563,8 +563,8 @@ point at a tab the user never chose.
 **The category is opt-in, and that is the design decision.** A program asks to
 be in the menu the way its installer used to ask by creating a shortcut. The
 alternative — listing everything stamped — needs a baked exclusion list for
-busybox (**30 copies of the same binary under different names**, see the
-`savanxp-busybox` CMake target) and for the diagnostic binaries, and that list
+the command-line tools (`ls`, `cat`, `cp`, ...) and for the diagnostic
+binaries, and that list
 desynchronizes on its own the moment somebody adds a new `*test`. A binary
 without a category is still a first-class executable: launchable from the
 shell, from filesapp, and from any `.ini` item pointing at it by hand. `progman`

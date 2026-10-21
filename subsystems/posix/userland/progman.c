@@ -1241,10 +1241,9 @@ static int progman_selftest(void)
         }
 
         /*
-         * El opt-in, por los dos lados. progman declara categoria y por eso
-         * el escaneo LO lista; busybox y los applets no, y ahi importa de
-         * verdad, porque son 30 copias del mismo binario bajo nombres
-         * distintos.
+         * The opt-in, from both sides. progman declares a category, so the
+         * scan lists it; the command-line tools (ls, cat, ...) declare none,
+         * so it must not.
          */
         {
             int progman_listed = 0;
@@ -1270,10 +1269,10 @@ static int progman_selftest(void)
                 {
                     native_listed += 1;
                 }
-                if (strcmp(item->path, "/bin/busybox") == 0 ||
-                    strcmp(item->path, "/bin/ls") == 0)
+                if (strcmp(item->path, "/bin/ls") == 0 ||
+                    strcmp(item->path, "/bin/cat") == 0)
                 {
-                    printf("PROGMAN SMOKE FAIL el escaneo listo '%s' sin categoria declarada\n", item->path);
+                    printf("PROGMAN SMOKE FAIL the scan listed '%s', which declares no category\n", item->path);
                     return 1;
                 }
             }

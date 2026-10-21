@@ -610,7 +610,7 @@ static void selftest_catalog(void)
      */
     expect(!catalog_has_basename("notepad"), "catalogo: notepad es del sistema");
     expect(!catalog_has_basename("shellapp"), "catalogo: shellapp es del sistema");
-    expect(!catalog_has_basename("busybox"), "catalogo: busybox es del sistema");
+    expect(!catalog_has_basename("ls"), "catalog: ls is a system program");
     /* Y el juego que viene en la imagen: un desinstalador que ofrece borrar el
      * Buscaminas preinstalado esta ofreciendo borrar parte del sistema. */
     expect(!catalog_has_basename("mines"), "catalogo: mines viene con el sistema");

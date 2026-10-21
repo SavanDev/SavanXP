@@ -203,6 +203,44 @@ class Session(object):
         self.qmp = qmp
         self.out = out_dir
         self.index = 0
+        self.progman_open = False
+
+    def open_progman(self):
+        """Opens Program Manager from the Start menu, as a user would.
+
+        The session no longer starts it, and every launch() below drives its
+        keyboard navigation. The menu is mouse only and its list may be longer
+        than the menu, so the row is found by its text: first as the menu
+        opens, then after resting the pointer on the down arrow strip, which
+        scrolls the list to its end (System, where Program Manager lives, is the
+        last group).
+        """
+        if self.progman_open:
+            return
+        probe = self.shot("before-progman")
+        self.qmp.move_to(*start_button_center(probe))
+        self.qmp.click()
+        image = wait_menu_open(self, "menu-for-progman")
+        mx, my, mw, mh = startmenu_rect(image)
+        box = (mx + 2 + STARTMENU_STRIP_WIDTH, my + 2, mx + mw - 2, my + 2 + STARTMENU_VIEW_HEIGHT)
+        origin = find_text(image, box, "Program Manager", TEXT, FACE, solid_only=True)[0]
+        if origin is None:
+            up, down = startmenu_arrow_points(image)
+            # The strip's left end, so the cursor neither covers the arrow nor
+            # hovers a row (a hovered row is repainted white on blue).
+            self.qmp.move_to(down[0] - 90, down[1] + 2)
+            for _ in range(10):
+                time.sleep(1.0)
+                image = self.shot("menu-progman-scrolled")
+                if image.getpixel(down) == SHADOW:
+                    break
+            origin = find_text(image, box, "Program Manager", TEXT, FACE, solid_only=True)[0]
+        if origin is None:
+            raise Failure("the Start menu does not list Program Manager")
+        self.qmp.move_to(origin[0] + 20, origin[1] + 6)
+        self.qmp.click()
+        time.sleep(25)
+        self.progman_open = True
 
     def shot(self, name):
         self.index += 1
@@ -227,33 +265,37 @@ class Session(object):
         return image
 
     def launch(self, steps, groups=0):
-        """Lanza el icono que esta `steps` a la derecha del primero, `groups`
-        solapas a la derecha de la primera.
+        """Launches the icon `steps` to the right of the first one, `groups`
+        tabs to the right of the first tab.
 
-        La barra de menu de sxgui no tiene acceso por teclado, pero el launcher
-        si: TAB cambia de grupo, las flechas mueven la seleccion y Enter lanza
-        (progman.c on_key). Cambiar de grupo vuelve la seleccion al primer
-        icono, asi que los `groups` van antes que los `steps`.
+        sxgui's menu bar has no keyboard access, but the launcher does: TAB
+        changes group, the arrows move the selection and Enter launches
+        (progman.c on_key). Changing group puts the selection back on the first
+        icon, so the `groups` go before the `steps`.
 
-        EL ORDEN YA NO ES EL DE UNA TABLA HORNEADA. progman arma su catalogo
-        escaneando los binarios instalados y los ordena alfabeticamente dentro
-        de cada grupo (docs/userland/SXE_FORMAT.md, "All Programs"), asi que estos
-        indices son posiciones en ese orden. Con las categorias de hoy:
+        THE ORDER IS NO LONGER A BAKED TABLE'S. progman builds its catalog by
+        scanning the installed binaries and sorts them alphabetically within
+        each group (docs/userland/SXE_FORMAT.md, "All Programs"), so these
+        indices are positions in that order. With today's categories:
 
             Accessories: Calculator, Files, [Media Player], Notepad, Paint, Shell, Web Viewer
             Diagnostics: Gears, Gfx Demo, Key Test, Mouse Test, Widgets
-            Games:       Doom (solo si esta instalado), Minesweeper
-            System:      Add/Remove Programs, System Properties, Task Manager
+            Games:       Doom (only when installed), Minesweeper
+            System:      Add/Remove Programs, Program Manager, System Properties, Task Manager
 
-        El grupo Games ya no depende de que haya un port externo instalado: el
-        Buscaminas viene en la imagen, asi que la solapa existe siempre y System
-        es SIEMPRE la cuarta.
+        The Games group no longer depends on an external port being installed:
+        Minesweeper ships in the image, so the tab always exists and System is
+        ALWAYS the fourth.
 
-        Un `steps` negativo cuenta desde el ULTIMO icono: la seleccion da la
-        vuelta, asi que una flecha a la izquierda desde el primero cae en el
-        ultimo. Sirve para llegar a un icono que queda estable aunque se instale
-        un programa externo que se ordena antes que el.
+        A negative `steps` counts from the LAST icon: the selection wraps
+        around, so a left arrow from the first lands on the last. It reaches an
+        icon that stays put even when an external program that sorts before it
+        is installed.
+
+        Program Manager is opened from the Start menu on the first call: the
+        session does not start it.
         """
+        self.open_progman()
         for _ in range(groups):
             self.qmp.tap("tab", pause=0.6)
         for _ in range(abs(steps)):
@@ -883,22 +925,23 @@ def scenario_kbdlayout(s):
 
 
 def scenario_taskbar(s):
-    """Barra de tareas: clicks reales con VERIFICACION de pixeles.
+    """Taskbar: real clicks, with pixel VERIFICATION.
 
-    Los botones van en orden estable por slot, asi que el 0 es Program Manager
-    (lanzado con la sesion) y el 1 el bloc de notas. La franja esta al pie,
-    los botones de ventana miden 160 desde x=68 (despues del boton Start de
-    64) y el indicador de layout sigue a la derecha del todo.
+    The buttons keep a stable order by slot, so 0 is Program Manager (opened
+    first, from the Start menu) and 1 is Notepad. The strip is at the bottom,
+    window buttons are 160 wide from x=68 (after the 64-wide Start button) and
+    the layout indicator sits at the far right.
 
-    No alcanza con sacar capturas para que las mire alguien: los cuatro bugs que
-    tuvo esta barra -- dos de fds, dos de input -- pasaban todos los harnesses
-    headless. Lo que se asierta es el BISEL de cada boton, que codifica cual es
-    la ventana activa, asi que cada chequeo prueba la cadena entera: click,
-    pedido al WM, cambio de estado, republicacion de la lista y repintado.
+    Taking screenshots for someone to look at is not enough: the four bugs this
+    taskbar had -- two with fds, two with input -- passed every headless
+    harness. What is asserted is each button's BEVEL, which encodes which window
+    is active, so every check proves the whole chain: click, request to the WM,
+    state change, list republication and repaint.
     """
-    image = s.shot("solo-progman")
-    expect_taskbar_present(image, "sesion recien arrancada")
-    expect_button(image, 0, True, "sesion recien arrancada")
+    s.open_progman()
+    image = s.shot("progman-only")
+    expect_taskbar_present(image, "Program Manager only")
+    expect_button(image, 0, True, "Program Manager only")
 
     s.open_notepad()
     image = s.shot("dos-ventanas")
