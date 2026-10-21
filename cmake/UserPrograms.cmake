@@ -334,31 +334,7 @@ savanxp_program(NAME volume SOURCES subsystems/posix/userland/volume.c)
 # lo encuentran por su puerto UDP bien conocido.
 savanxp_program(NAME audiod SOURCES subsystems/posix/userland/audiod.c)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
-# Native: speaks only SXN (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3).
-# The compositor (docs/desktop/DESKTOP_ARCHITECTURE.md#composition-in-compositord):
-# a native session service that composes the scene windowd commits. Static, so
-# the gfx2d regions and painter it composes with link in.
-savanxp_program(NAME compositord NATIVE SOURCES
-    subsystems/posix/userland/compositord.c
-    subsystems/posix/userland/compositord_scene.c)
-# The session manager: starts compositord, windowd, the desktop and progman,
-# restarts them.
-# Native, no .sxres (not in the launcher); init starts it.
-savanxp_program(NAME sessiond NATIVE SOURCES subsystems/posix/userland/sessiond.c)
-# El compositor. Solo pide dos funciones de metrica de fuente, que son puras y
-# no abren superficie, asi que el riesgo es bajo; igual es el programa del que
-# depende todo lo que se ve en pantalla. init lo reinicia si sale y cae a /bin/sh
-# tras tres fallos rapidos, y shoot.sh --scenario desktop lo levanta de verdad.
-# Native (docs/desktop/DESKTOP_ARCHITECTURE.md, phase 3): windowd_sys.c maps the
-# POSIX calls of its sources onto SXN. Static, so gfx2d and sxchrome link in.
-savanxp_program(NAME windowd NATIVE SOURCES
-    subsystems/posix/userland/windowd.c
-    subsystems/posix/userland/windowd_sys.c
-    subsystems/posix/userland/windowd_compositor_client.c
-    subsystems/posix/userland/desktop_icons.c
-    subsystems/posix/userland/windowd_presentation.c
-    subsystems/posix/userland/windowd_layout.c
-    subsystems/posix/userland/windowd_render.c)
+# compositord, sessiond and windowd: cmake/SystemServices.cmake.
 # The desktop: background, taskbar, Start menu and the taskbar's popups, as
 # windows of one process (docs/desktop/DESKTOP_ARCHITECTURE.md). windowd starts
 # it as the shell. No .sxres, so it stays out of the launcher.

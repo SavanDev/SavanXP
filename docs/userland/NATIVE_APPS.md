@@ -48,7 +48,10 @@ then wait. The read of the welcome blocks (there is no native poll yet).
 ## In-tree native programs
 
 A program built by the tree is native when `cmake/UserPrograms.cmake`
-registers it with `NATIVE`; it has to be `STATIC`. It links the same runtime as
+registers it with `NATIVE`; it has to be `STATIC`. The platform services are
+native too, but they are not programs of the POSIX subsystem: they live in
+`system/<service>/` and `cmake/SystemServices.cmake` registers them with
+`savanxp_system_service`. It links the same runtime as
 everyone else -- the parts that make no system call (`memset`, string
 functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
 in `sxn_exit`. Three are:

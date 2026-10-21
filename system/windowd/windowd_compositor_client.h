@@ -1,7 +1,7 @@
 #pragma once
 
 #include "libc.h"
-#include "savanxp/compositor_protocol.h"
+#include "compositor_protocol.h"
 
 struct windowd_compositor_connection
 {

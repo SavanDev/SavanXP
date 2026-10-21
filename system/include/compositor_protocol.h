@@ -1,7 +1,8 @@
 #pragma once
 
 #include <stdint.h>
-#include "savanxp/syscall.h"
+/* The neutral ABI only: both ends are native platform services. */
+#include "abi/savanxp_abi.h"
 
 /*
  * SavanXP compositor control protocol (docs/desktop/DESKTOP_ARCHITECTURE.md#

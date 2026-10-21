@@ -584,6 +584,7 @@ add_custom_target(savanxp_generated_headers DEPENDS ${SAVANXP_GENERATED_HEADER_F
 target_sources(savanxp_kernel_objects PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
 
 include("${CMAKE_SOURCE_DIR}/cmake/UserPrograms.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/SystemServices.cmake")
 
 # BusyBox is an external-style port compiled against the same freestanding
 # runtime, but it is part of the base rootfs and therefore a normal target here.

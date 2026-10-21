@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-#include "savanxp/compositor_protocol.h"
+#include "compositor_protocol.h"
 #include "savanxp/wm_protocol.h"
 #include "sxn/sxn.h"
 

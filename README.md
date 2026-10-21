@@ -246,6 +246,7 @@ such as the ones `doomgeneric` uses.
 - `arch/`: architecture-specific code
 - `kernel/`: kernel and base subsystems
 - `subsystems/posix/`: POSIX layer, SDK and main userland
+- `system/`: native platform services (`compositord`, `windowd`, `sessiond`)
 - `libsxfs/`: portable core of the `SxFS` filesystem and `sxfs-cli`, the host
   tool that does all disk image writing
 - `rootfs/`: contents of the `initramfs`

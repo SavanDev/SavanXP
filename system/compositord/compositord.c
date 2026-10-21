@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "savanxp/compositor_protocol.h"
+#include "compositor_protocol.h"
 #include "sxn/sxn.h"
 #include "compositord_scene.h"
 /* After the SavanXP headers: it uses the cursor shape enum. */

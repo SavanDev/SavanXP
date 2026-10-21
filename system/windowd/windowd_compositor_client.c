@@ -223,7 +223,7 @@ static int connect_compositor(struct windowd_compositor_connection *connection, 
 }
 
 /*
- * Connects to compositord and runs INIT (compositor_protocol.h v4). In the
+ * Connects to compositord and runs INIT (compositor_protocol.h). In the
  * session compositord is already there, started by sessiond; `own_daemon`
  * starts one first, for windowd's test modes. The reply brings the mode and
  * the display section, which windowd maps and composes into.

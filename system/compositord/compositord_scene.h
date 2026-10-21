@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#include "savanxp/compositor_protocol.h"
+#include "compositor_protocol.h"
 #include "savanxp/gfx2d.h"
 
 /*

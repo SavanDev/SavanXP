@@ -10,6 +10,12 @@
 (`subsystems/posix`): the kernel, the drivers, the graphics stack and every
 app.**
 
+> **Since 2026-10-20 the platform services are the exception:**
+> `compositord`, `windowd` and `sessiond` are native processes (the SXN API,
+> no POSIX) and live in `system/`, not in `subsystems/posix`
+> ([DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md#native-from-the-start)).
+> Apps stay on the POSIX SDK.
+
 The layering is about *roles*, not languages: the platform (kernel, drivers,
 `compositord`, `windowd`, SXGFX, SXGUI-C) is one thing, and the apps that
 consume it are another. An app never reimplements a piece of the platform,

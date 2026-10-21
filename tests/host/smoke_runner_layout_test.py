@@ -126,7 +126,7 @@ def main() -> int:
     assert "sxnwm_connect" in demo
     assert "sxnwm_poll_input" in demo
     assert "savanxp_read" not in demo and "savanxp_open" not in demo
-    windowd = (root / "subsystems" / "posix" / "userland" / "windowd.c").read_text(encoding="utf-8")
+    windowd = (root / "system" / "windowd" / "windowd.c").read_text(encoding="utf-8")
     assert "windowd_native_client_selftest" in windowd
     assert "/disk/bin/nativedemo" in windowd
     # Slice 10: input ring transport plus the sxnwm seed.

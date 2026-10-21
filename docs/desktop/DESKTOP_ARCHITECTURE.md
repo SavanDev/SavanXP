@@ -171,7 +171,7 @@ desktop.
 
 ## The session manager: sessiond
 
-> **Status: built** (`subsystems/posix/userland/sessiond.c`, native).
+> **Status: built** (`system/sessiond/sessiond.c`, native).
 > `session-smoke` kills the desktop and then `windowd` and checks the desktop
 > and then the whole session come back, the desktop each time with the shell
 > role.
@@ -435,9 +435,10 @@ subsystem on top. The platform services move onto it:
 - **No shell vocabulary in `include/abi/`.** Window roles are generic; the
   words "taskbar", "start menu", "volume" or "clock" never appear in an ABI
   header.
-- **Platform services do not live in the POSIX tree.** They move out of
-  `subsystems/posix/userland/` into a tree of their own (for example
-  `system/`), built by an in-tree native CMake target.
+- **Platform services do not live in the POSIX tree.** They live in
+  `system/<service>/`, with the protocols only services speak in
+  `system/include/` (`compositor_protocol.h`), and are built by
+  `savanxp_system_service` (`cmake/SystemServices.cmake`). Done.
 
 ### What the native API lacks today
 
@@ -636,7 +637,10 @@ Depends on the hotkeys of phase 1.
    child (slice 16) and waiting on several handles, streams included
    (slice 17), and querying a process (slice 18). **Done.**
 2. **Runtime:** the native C runtime, the in-tree native CMake target, SXGFX
-   and SXCHROME built for native.
+   and SXCHROME built for native. **The target is done**
+   (`savanxp_system_service`, the services in `system/`). SXGFX and SXCHROME
+   needed nothing: a static native program links them and uses their
+   call-free parts. A native heap is still missing.
 3. **`compositord` native.** The pilot: about 600 lines, no files, only the
    GPU, its IPC and a clock. **Done:** it speaks only SXN (the GPU as a device
    with control codes, its pipes through native read/write, the native clock),
@@ -671,9 +675,8 @@ Depends on the hotkeys of phase 1.
    stay as written; `windowd_sys.h`, included first by every unit, renames the
    few POSIX calls they make to `wd_*` functions on SXN (`windowd_sys.c`):
    text goes to `/dev/serial`, `poll` is a wait-many plus a readiness look per
-   handle, a device is opened by its bare name, `kill` ends a child. Still
-   open from this phase: the platform services live in the POSIX tree, and
-   the runtime pieces (a native heap) nobody has needed yet.
+   handle, a device is opened by its bare name, `kill` ends a child. The services moved to
+   `system/` afterwards; the native heap is still to build.
 
 ### Phase 4: composition moves into `compositord`
 

@@ -117,6 +117,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The platform services live in `system/`.** `compositord`, `windowd` and `sessiond` moved out of
+  `subsystems/posix/userland/` into `system/<service>/`, built by `savanxp_system_service`
+  (`cmake/SystemServices.cmake`); `compositor_protocol.h` moved to `system/include/`.
+
 - **Application frames go straight to `compositord`.** The submit event in the WM welcome is
   `compositord`'s; requests get `windowd`'s own event, asked for with `SAVANXP_WM_HELLO_REQUEST_EVENT`
   (older clients still work, their requests seen on `windowd`'s tick). `compositord-stats` replaces
