@@ -300,12 +300,6 @@ savanxp_program(NAME init SOURCES subsystems/posix/userland/init.c)
 savanxp_program(NAME sh SOURCES
     subsystems/posix/userland/sh.c
     subsystems/posix/userland/shell_core.c)
-# El shell del escritorio. windowd lo lanza como su cliente principal, asi que
-# el escenario desktop lo levanta de verdad en cada corrida.
-savanxp_program(NAME shellapp DEPENDS libgfx2d libsxgfx LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/shellapp.c
-    subsystems/posix/userland/shell_core.c
-    subsystems/posix/userland/shellapp_stats.c)
 savanxp_program(NAME uname SOURCES subsystems/posix/userland/uname.c)
 savanxp_program(NAME df SOURCES subsystems/posix/userland/df.c)
 savanxp_program(NAME ticker TEST SOURCES subsystems/posix/userland/ticker.c)

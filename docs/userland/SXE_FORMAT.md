@@ -423,13 +423,13 @@ still wants to look distinct. Three shapes of the value:
 | value | resolves to |
 |---|---|
 | `/bin/aboutapp` (starts with `/`) | that path as-is — the main form |
-| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | legacy alias: the path of the program that draws that icon today (`/bin/shellapp`, ...) |
+| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | legacy alias: the path of the program that draws that icon today (`/bin/console`, ...) |
 | `desktop`, or any name without an alias | nothing — `icon_borrow_path` stays empty and the item keeps the generic `icon_id` |
 
 **The aliases are a bridge, not the new mechanism.** Before this change,
 `icon=shell` picked a baked pixel array because there was no other way for
-Shell to have an icon. Today `/bin/shellapp` already carries its own `.sxicon`
-(stamped from `icon=app-terminal` in `shellapp.sxres`), so the alias resolves to
+Shell to have an icon. Today the terminal, `/bin/console`, carries its own `.sxicon`
+(stamped from `icon=app-terminal` in `system/console/console.sxres`), so the alias resolves to
 the *same* path the item would get anyway with no `icon=` at all — it is purely
 backward compatibility for a `.ini` written before this redesign, not something
 a new `.ini` needs to write.
@@ -456,7 +456,7 @@ the binary already brings its own").
 >
 > The legacy aliases (`shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest`)
 > were not touched and **did not depend on this table to begin with** — they
-> resolve to *paths* (`/bin/shellapp`, ...), never to a `desktop_icons.h` id.
+> resolve to *paths* (`/bin/console`, ...), never to a `desktop_icons.h` id.
 > That is why emptying the enum breaks nothing for them: an old `.ini` with
 > `icon=shell` still shows Shell's real icon, now read from its `.sxicon`
 > through the same path as if the `.ini` had said nothing.
@@ -465,7 +465,7 @@ the binary already brings its own").
 > `app-keyboard-settings.png`, `app-mouse.png`, `app-notepad.png`) **are still
 > in `assets/desktop/icons/`** — unlike Doom's, they did not move anywhere.
 > They remain the source each `.sxres` references with `icon=<name>`
-> (`shellapp.sxres` says `icon=app-terminal`, etc.). They remain checked-in,
+> (`console.sxres` says `icon=app-terminal`, etc.). They remain checked-in,
 > editable PNGs; normal builds package them without calling
 > `tools/gen_desktop_source_art.py`. The only thing retired was the step that
 > *also* baked them into a second C array
@@ -651,7 +651,7 @@ association:
 ```ini
 # /disk/assoc.ini — who opens each extension
 .txt=/bin/notepad
-.log=/bin/shellapp
+.log=/bin/notepad
 ```
 
 Precedence: **user policy > first binary declaring the extension > nothing**.

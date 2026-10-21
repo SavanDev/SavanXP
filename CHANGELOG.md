@@ -355,6 +355,10 @@ Cut-off notes:
 
 ### Removed
 
+- **`shellapp`, the old terminal window.** The Command Prompt (`/bin/console`) replaces it in the
+  Start menu and Program Manager, and the legacy `icon=shell` alias now points at it. An existing
+  `build/disk.img` keeps its stale `/disk/bin/shellapp` until it is removed by hand.
+
 - **The BusyBox port.** `vendor/busybox`, `vendor/busybox-port` and `/bin/busybox` are gone;
   `ls`, `cat`, `echo`, `mkdir [-p]`, `rm [-rf]`, `mv`, `cp [-r]`, `ps`, `true`, `false` and
   `sleep` are small in-tree programs (`subsystems/posix/userland/coreutils`).

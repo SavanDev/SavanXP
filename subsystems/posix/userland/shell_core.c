@@ -4,8 +4,7 @@
 
 #define SHELL_MAX_STAGES 8
 #define SHELL_MAX_ARGS 16
-/* Entra el buffer de linea de los dos frentes: 256 en la consola (sh.c) y 160
- * en la ventana del escritorio (SHELLAPP_LINE_LENGTH). */
+/* Fits sh's line buffer (256 bytes). */
 #define SHELL_MAX_LINE 256
 
 struct shell_command_stage {

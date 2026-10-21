@@ -83,12 +83,17 @@ is TSC-based and calibrated in `uacpi_glue::bringup` before userland exists, so
 it is always available; a `0` return is treated as "no clock" and the frame is
 discarded rather than counted as noise.
 
-## What `shellapp-stats` reports
+## What `shellapp-stats` reported
+
+> Retired 2026-10-21 with `shellapp` itself. The Command Prompt that replaced
+> it ([CONSOLE.md](CONSOLE.md)) repaints per dirty row too, but prints no stats
+> line yet. What follows stays as the record of what deriving damage per row
+> bought.
 
 Stage 1 of the pipeline — *the client draws* — is measured separately, because
 the compositor cannot see it. `windowd` only learns how many pixels a client
 declared dirty; whether the client repainted ten times that area to produce them
-is invisible from there. The terminal (`/bin/shellapp`) carries the same kind of
+is invisible from there. The terminal (`/bin/shellapp`) carried the same kind of
 instrumentation, on the same channel and the same two-second cadence:
 
 ```

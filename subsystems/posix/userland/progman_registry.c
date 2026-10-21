@@ -84,6 +84,7 @@ static const struct progman_default_item k_default_items[] = {
      * tools/shoot_session.py no existia. Aqui es lo mismo: se lee de arriba abajo.
      */
     {"Accessories", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Accessories", "Command Prompt", "/bin/console", "Windows-style console running the shell", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     /* El reproductor SIEMPRE es una entrada cuando el port esta construido, porque
      * /bin/mediaplayer existe entonces. Si el port no esta, el pruning lo descarta
@@ -93,7 +94,6 @@ static const struct progman_default_item k_default_items[] = {
     {"Accessories", "Media Player", "/bin/mediaplayer", "Play video and audio files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Notepad", "/bin/notepad", "Edit text files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Paint", "/bin/paint", "Draw and edit bitmap pictures", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Accessories", "Shell", "/bin/shellapp", "Terminal and builtins", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Web Viewer", "/bin/webview", "Browse local and HTTP pages", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 #if DESKTOP_INCLUDE_TEST_APPS
     {"Diagnostics", "Gears", "/bin/gears", "3D rendering test", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN},
@@ -212,7 +212,7 @@ static const char *icon_reference_path(const char *value)
     }
     if (strcmp(value, "shell") == 0)
     {
-        return "/bin/shellapp";
+        return "/bin/console";
     }
     if (strcmp(value, "notepad") == 0)
     {
@@ -776,11 +776,11 @@ static int item_with_basename_exists(const char *basename)
  * Da de alta un candidato si su .sxmeta declara categoria. Devuelve 1 si lo
  * agrego.
  *
- * El nombre se copia ACA, y no se le deja el trabajo entero a apply_sxe, por
- * una razon concreta: el orden alfabetico del final tiene que ser el que ve el
- * usuario ("Shell"), no el del archivo ("shellapp"). El .sxmeta ya esta abierto
- * en este punto, asi que sale gratis. Igual entra sin overrides, asi que
- * apply_sxe despues lo vuelve a resolver por el camino normal.
+ * The name is copied HERE, rather than leaving it all to apply_sxe, for one
+ * reason: the final alphabetical order has to be the one the user sees
+ * ("Command Prompt"), not the file's ("console"). The .sxmeta is already open
+ * at this point, so it comes for free. The item still enters without
+ * overrides, so apply_sxe resolves it again by the normal path afterwards.
  */
 static int scan_candidate(const char *path, void *meta_buffer, size_t meta_capacity)
 {
@@ -1120,7 +1120,7 @@ static void selftest_well_formed(void)
         "\n"
         "[item]\n"
         "name=Shell\n"
-        "path=/bin/shellapp\n"
+        "path=/bin/console\n"
         "desc=Terminal\n"
         "icon=shell\n"
         "\n"
@@ -1156,9 +1156,9 @@ static void selftest_well_formed(void)
      * el bitmap final -- eso lo cubre selftest_sxe, contra binarios reales. */
     item = progman_item_at(0);
     expect(item != 0 && strcmp(item->name, "Shell") == 0, "item 0 nombre");
-    expect(item != 0 && strcmp(item->path, "/bin/shellapp") == 0, "item 0 path");
+    expect(item != 0 && strcmp(item->path, "/bin/console") == 0, "item 0 path");
     expect(item != 0 && strcmp(item->description, "Terminal") == 0, "item 0 desc");
-    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/shellapp") == 0, "item 0 icon= alias legado a path");
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/console") == 0, "item 0 icon= alias legado a path");
     expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_NONE, "item 0 flags");
 
     /* Espacios alrededor de clave y valor recortados. */
@@ -1422,7 +1422,7 @@ static void selftest_sxe(void)
         "desc=PID 1\n"
         "path=/bin/init\n"
         "[item]\n"
-        "path=/bin/shellapp\n";
+        "path=/bin/console\n";
     const struct progman_item *item;
     const struct desktop_embedded_bitmap *icon;
 
@@ -1441,10 +1441,10 @@ static void selftest_sxe(void)
     expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0, "item 1 sin override de desc");
     expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/aboutapp") == 0, "icon=/path se guarda tal cual");
 
-    /* item0 (icono propio), item1 y item2 (prestan icono), item3 (desc del
-     * binario aunque el icono quede generico) y item5 (shellapp, icono y
-     * nombre propios) suman 5; item4 (init, sin icon= y sin recursos propios
-     * que aportar) no toca nada. */
+    /* item0 (its own icon), item1 and item2 (borrow an icon), item3 (the
+     * binary's description although the icon stays generic) and item5 (the
+     * console, its own icon and name) make 5; item4 (init, no icon= and no
+     * resources of its own to give) changes nothing. */
     expect(progman_registry_apply_sxe() == 5, "apply_sxe toca 5 items");
 
     /* Item 0: sin overrides, todo sale del binario. */
@@ -1474,20 +1474,20 @@ static void selftest_sxe(void)
     expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc sin override viene del propio binario");
 
     /*
-     * Item 2: icon=shell, un ALIAS LEGADO de antes de este cambio. Resuelve a
-     * /bin/shellapp y presta SU .sxicon real. Ya no hay un DESKTOP_ICON_SHELL
-     * horneado contra el que comparar (docs/userland/SXE_FORMAT.md, "icon= ya no elige
-     * de un catalogo"): el cruce es contra el item 5, que lanza /bin/shellapp
-     * SIN ningun override y por lo tanto adopta su propio .sxicon por el
-     * camino normal -- dos aplicaciones independientes del mismo mecanismo
-     * tienen que llegar al mismo bitmap.
+     * Item 2: icon=shell, a LEGACY ALIAS from before icons came from the
+     * binaries. It resolves to the terminal, /bin/console today, and borrows
+     * ITS real .sxicon. There is no baked DESKTOP_ICON_SHELL to compare with
+     * (docs/userland/SXE_FORMAT.md): the cross-check is against item 5, which
+     * launches /bin/console WITHOUT any override and so adopts its own
+     * .sxicon by the normal path -- two independent uses of the same
+     * mechanism have to reach the same bitmap.
      */
     item = progman_item_at(2);
-    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/shellapp") == 0, "alias legado resuelve al path del programa");
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/console") == 0, "alias legado resuelve al path del programa");
     expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "alias legado tambien presta el .sxicon");
     icon = progman_item_icon(item);
     expect(bitmaps_equal(icon, progman_item_icon(progman_item_at(5))),
-        "el icono prestado por alias es el mismo que shellapp adopta para si mismo");
+        "el icono prestado por alias es el mismo que la consola adopta para si misma");
 
     /*
      * Item 3: icon=desktop, un nombre SIN alias -- "desktop" nunca lo tuvo,
@@ -1516,12 +1516,13 @@ static void selftest_sxe(void)
     expect(item != 0 && strcmp(item->description, "PID 1") == 0, "el .ini le gana la desc al automatico");
     expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "el automatico nunca trae icono propio");
 
-    /* Item 5: /bin/shellapp sin ningun override -- adopta su propio .sxicon
-     * por el camino normal (el mismo que usa el item 0 con notepad). Es el
-     * punto de comparacion del item 2. */
+    /* Item 5: /bin/console without any override -- it adopts its own .sxicon
+     * by the normal path (the one item 0 uses with notepad). It is what item
+     * 2 is compared against. A SUN program's .sxe is stamped like any other,
+     * so the launcher reads it the same way. */
     item = progman_item_at(5);
-    expect(item != 0 && strcmp(item->name, "Shell") == 0, "item 5 nombre desde el .sxmeta de shellapp");
-    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "item 5 icono propio de shellapp");
+    expect(item != 0 && strcmp(item->name, "Command Prompt") == 0, "item 5 name from the console's .sxmeta");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "item 5 the console's own icon");
     icon = progman_item_icon(item);
     expect(icon != 0 && icon->width == 32u && icon->height == 32u, "item 5 icono de 32x32");
 
