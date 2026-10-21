@@ -138,6 +138,9 @@ Cut-off notes:
 
 ### Changed
 
+- **The taskbar's Start label uses the caption font.** "Start" is drawn in `SX_FONT_UI_TITLE`,
+  the title-bar face, standing in for the bold label of Win9x.
+
 - **The visual harness opens programs through the Command Prompt.** `Session.run()` and
   `taskbar-smoke` type `start <program>; exit` instead of walking Start menu > Program Manager;
   `shoot.sh --scenario console` replaces `shell`.

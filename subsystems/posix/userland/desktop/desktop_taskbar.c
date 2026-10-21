@@ -300,7 +300,8 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         int logo_x = start_rect.x + 4 + (sunken ? 1 : 0);
         int logo_y = start_rect.y + (start_rect.height - (int)k_start_logo.height) / 2 + (sunken ? 1 : 0);
         int start_text_x = logo_x + (int)k_start_logo.width + 4;
-        int start_text_y = start_rect.y + (start_rect.height - gfx_text_height()) / 2 + (sunken ? 1 : 0);
+        int start_text_y;
+        int previous_font;
 
         sx_painter_fill_rect(&painter, start_rect, SXGUI_COLOR_FACE);
         desktop_bevel(&painter, start_rect, sunken);
@@ -312,7 +313,12 @@ static void taskbar_paint(struct savanxp_gfx_context *gfx)
         logo_info.buffer_size = logo_info.pitch * k_start_logo.height;
         sx_bitmap_wrap(&logo_bitmap, (uint32_t *)k_start_logo.pixels, &logo_info, SX_PIXEL_FORMAT_BGRA8888);
         sx_painter_blit_bitmap(&painter, &logo_bitmap, logo_x, logo_y);
+        /* The label uses the caption face, the closest thing to the bold
+         * "Start" of Win9x: there is no bold UI strike. */
+        previous_font = sx_painter_set_font(&painter, SX_FONT_UI_TITLE);
+        start_text_y = start_rect.y + (start_rect.height - sx_painter_text_height(&painter)) / 2 + (sunken ? 1 : 0);
         sx_painter_draw_text(&painter, start_text_x, start_text_y, start_label, SXGUI_COLOR_TEXT);
+        (void)sx_painter_set_font(&painter, previous_font);
     }
 
     for (index = 0; index < count && index < (int)SAVANXP_WM_MAX_WINDOWS; ++index)
