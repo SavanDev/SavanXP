@@ -374,8 +374,11 @@ it to that client even when another window has focus.
   (shell protocol v4): a key and an exact Shift/Ctrl/Alt mask. The KEY_DOWN and
   its KEY_UP go to the desktop's main window, and the focused application sees
   neither.
-- `desktop` registers Ctrl+Esc (Start menu) and Ctrl+Shift+Esc (launch
-  `taskmgr`). `windowd` does not know what either means.
+- `desktop` registers Ctrl+Esc (Start menu), Ctrl+Shift+Esc (launch
+  `taskmgr`) and Ctrl+Alt+T (launch the Command Prompt,
+  [CONSOLE.md](CONSOLE.md)). `windowd` does not know what any of them means.
+- A key typed with AltGr is never a hotkey: AltGr is Ctrl+Alt on many layouts,
+  and AltGr plus a letter is a character being typed.
 - Combinations `windowd` keeps for itself cannot be registered: Alt+Tab,
   Alt+F4, F11.
 - Delivering a hotkey leaves composited fullscreen first: the shell's windows

@@ -1,9 +1,9 @@
 # SUN — Savan Userland Native
 
-> Status: **named and scoped 2026-10-21.** SUN is the userland native API: what
-> a program that does not use POSIX writes against. The Command Prompt
-> ([CONSOLE.md](../desktop/CONSOLE.md)) is its first application and the
-> consumer that drives the next slices.
+> Status: **named 2026-10-21; first application built.** SUN is the userland
+> native API: what a program that does not use POSIX writes against. The
+> Command Prompt ([CONSOLE.md](../desktop/CONSOLE.md)) is its first application
+> and the consumer that drove slices 20-22 and the windowing additions.
 
 ## What SUN is
 
@@ -30,16 +30,30 @@ the name of the layer, not a rename of its symbols.
 | Piece | Header / source | Role | Windows analogue |
 |---|---|---|---|
 | Base | `include/sxn/sxn.h` | processes, handles, events, waits, sections and views, pipes, devices, ports, the clock | `kernel32` |
-| Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the surface, read input from the ring | `user32` (window + message loop) |
+| Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon | `user32` (window + message loop) |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
+| Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
 | Shared rendering | SXGFX, SXCHROME, SXGUI-C | 2D painting, system bevels, the Win9x toolkit; call-free code, usable from SUN | GDI, `DrawEdge`, `comctl32` |
 
 The rendering libraries are not SUN: they belong to the platform and both
-subsystems link them. Most of them make no system call at all, so they work
-unchanged in a native program. SXGUI-C makes three (clipboard read and write,
-and the uptime for double clicks); a SUN program provides those through
-`include/sxn/sxnsys.h` (see the slice list below).
+subsystems link them. SXGFX and SXCHROME make no system call at all, so they
+work unchanged in a native program; the Command Prompt draws its text with the
+painter's console face and its scroll bar with SXCHROME. SXGUI-C makes three
+(clipboard read and write, and the uptime for double clicks) through POSIX, so
+a SUN program cannot use the toolkit yet: the first one that needs it brings a
+SUN implementation of those three, by rule 1.
+
+### Resources compiled in
+
+A POSIX program's window reads its name and icon from its own `.sxe` at start
+(the `.sxmeta` and `.sxicon` sections). A SUN program cannot: SUN has no files.
+So the build compiles them in. `tools/gen_sxe_resources.py --native-program`
+writes `<program>.sunres.h` next to the `.sxe` resources for every program CMake
+registers as `NATIVE`, defining `sun_resources`, a `struct
+sxnwm_presentation_source`; the program includes it and publishes it with
+`sxnwm_set_presentation`. The `.sxe` sections are still stamped too, for the
+launcher and anything else that scans binaries.
 
 ## The direction: our own Win32
 
@@ -86,10 +100,12 @@ What exists, what the console adds, and what is still missing:
 | ALPC ports | `sxn_port_*`, `sxn_pipe_send_handle` | done |
 | `QueryPerformanceCounter` | `sxn_clock_ns` | done |
 | `CreateWindow` + message loop | `sxnwm_connect`, `sxnwm_poll_input` | done |
-| `InvalidateRect` / partial `BitBlt` to screen | `sxnwm_submit_rects` | console, userland |
-| Clipboard | `/dev/clipboard` through `sxn_open_device` | console, userland |
-| Console API (`SetConsoleTitle`, `GenerateConsoleCtrlEvent`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | console, userland |
-| `SetWindowText` | — | missing: the WM protocol has no runtime title |
+| `InvalidateRect` / partial `BitBlt` to screen | `sxnwm_submit_rects`, `sxnwm_wait_idle` | done |
+| `SetWindowPos` (size), `WM_SIZE`, `WM_CLOSE` | `sxnwm_request_size`, `sxnwm_check_resize`, `sxnwm_close_requested` | done |
+| `SetWindowText`, `WM_SETICON` | `sxnwm_set_title`, `sxnwm_set_presentation` | done |
+| `.rsrc` resources | `<program>.sunres.h` (above) | done |
+| Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
+| Clipboard | `/dev/clipboard` through `sxn_open_device` | missing: no consumer yet |
 | `CreateFile` and the file API | — | missing: SUN has no files |
 | Registry / profile settings | — | missing (needs files) |
 | Owned windows and dialogs | — | missing: SXGUI-C draws dialogs inside the window instead |
@@ -110,12 +126,14 @@ lands.
   process tree is the right to end any process in it, which is what a job
   object gives Windows. Used for Ctrl+C: the console ends the foreground job
   its shell reports, never the shell itself.
-- **Userland — `sxnwm_submit_rects`**, the partial present a terminal needs
-  so that a key costs a cell and not the window; and **`sxnsys.h`**, the three
-  services SXGUI-C asks of its host, implemented over SUN.
+- **Userland — `sxnwm.h`** grew the partial present a terminal needs so that
+  a key costs a row and not the window (`sxnwm_submit_rects`), size requests
+  and resizes, the close request, and the title and icon
+  (`sxnwm_set_title`, `sxnwm_set_presentation`); and the resources compiled in
+  (above).
 
 ## Not there (deliberately)
 
-Files, a registry, owned windows, a runtime window title, signals (the kernel
+Files, a registry, owned windows, the clipboard, the SXGUI-C toolkit, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
 and a native `fork`. Each one waits for a consumer, by rule 1.

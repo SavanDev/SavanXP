@@ -12,6 +12,15 @@ Cut-off notes:
 
 ### Added
 
+- **The Command Prompt, the first SUN application.** `/bin/console` (Start menu or Ctrl+Alt+T) runs
+  `/bin/sh --console 3` as a separate process over pipes: an 80x300 buffer with a scroll bar,
+  `doskey` line editing and history, and Ctrl+C that ends the foreground job. In that mode `sh`
+  prints `<cwd>>`, separates commands with `;` and has `start`. See `docs/desktop/CONSOLE.md`.
+
+- **SUN windows choose their size, title and icon, and present rectangles.** `sxnwm_submit_rects`,
+  `sxnwm_request_size`, `sxnwm_check_resize`, `sxnwm_close_requested`, `sxnwm_set_title`; a native
+  program's `.sxres` is compiled in as `<name>.sunres.h` (`gen_sxe_resources.py --native-program`).
+
 - **SUN gets `CreatePipe` and `CreateProcess` with chosen handles.** `SXN_SYS_PIPE_CREATE`
   (`sxn_pipe_create`) and `SXN_SYS_SPAWN_EX` (`sxn_spawn_ex`: stdio plus up to four handles at 3..6,
   nothing else), and `SXN_SYS_TERMINATE` now ends any descendant. See `docs/userland/SUN.md`.
@@ -128,6 +137,13 @@ Cut-off notes:
   [the Xash3D FWGS plan](docs/ports/XASH3D_ROADMAP.md).
 
 ### Changed
+
+- **The visual harness opens programs through the Command Prompt.** `Session.run()` and
+  `taskbar-smoke` type `start <program>; exit` instead of walking Start menu > Program Manager;
+  `shoot.sh --scenario console` replaces `shell`.
+
+- **AltGr never triggers a hotkey.** On layouts where it is Ctrl+Alt, AltGr plus a letter stays a
+  character.
 
 - **Program Manager no longer opens with the session.** `sessiond` starts only `compositord`,
   `windowd` and `desktop`; Program Manager is opened from the Start menu (System), and

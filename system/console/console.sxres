@@ -1,0 +1,10 @@
+# SXE resources of the Command Prompt. See docs/userland/SXE_FORMAT.md; as a
+# SUN program it also gets them compiled in (console.sunres.h).
+name=Command Prompt
+description=Windows-style console running the shell
+version=system
+vendor=SavanXP
+subsystem=native
+accent=007c60
+icon=app-terminal
+category=Accessories

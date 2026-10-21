@@ -31,9 +31,11 @@ The SUN headers, all header-only, no link or tool changes needed:
   events, sections, views, waits, gfx, handle close and duplicate, pipe
   creation (`sxn_pipe_create`), pipe and device read/write, device open and
   control, ports, the clock.
-- `include/sxn/sxnwm.h` — windowed-client substrate over a context
-  struct: connect to `windowd` (`sxnwm_connect`), submit full-surface
-  batches, wait for composed, drain the input ring.
+- `include/sxn/sxnwm.h` — the windowing of SUN over a context struct:
+  connect to `windowd` (`sxnwm_connect`), submit the whole surface or
+  rectangles, wait for composed or idle, drain the input ring, ask for a
+  size and follow resizes, see the close request, and publish the title and
+  icon (`sxnwm_set_title`, `sxnwm_set_presentation`).
 - `include/sxn/sxnwidgets.h` — widget seed, not a toolkit: Label,
   Button and single-line Field with a hand-drawn 5x7 font, hit-testing,
   focus and field editing. Enough for one form; a real toolkit binds
@@ -60,13 +62,18 @@ native too, but they are not programs of the POSIX subsystem: they live in
 `savanxp_system_service`. It links the same runtime as
 everyone else -- the parts that make no system call (`memset`, string
 functions) work unchanged -- but any POSIX call is `ENOSYS`, and `main` must end
-in `sxn_exit`. Three are:
+in `sxn_exit`. Four are:
 
 - `compositord`: the GPU through `SXN_SYS_OPEN_DEVICE`/`_DEVICE_CONTROL`, the
   display memory a section it creates, and a port of its own that `windowd`
   connects to (`compositor_protocol.h`), read and written through
   `SXN_SYS_READ`/`_WRITE`.
 - `sessiond`: spawn, wait, terminate, the clock, and probing ports.
+- `console`: the Command Prompt, an application rather than a service
+  ([CONSOLE.md](../desktop/CONSOLE.md)): a window through `sxnwm.h`, `/bin/sh`
+  started with `sxn_spawn_ex` over pipes from `sxn_pipe_create`, and one
+  `sxn_wait_many` over the window and the pipes. Its title and icon come from
+  `console.sunres.h` ([SUN.md](SUN.md#resources-compiled-in)).
 - `windowd`: written against the POSIX SDK and kept that way; `windowd_sys.h`
   renames its POSIX calls to SXN equivalents in `windowd_sys.c`. A large
   program can move to the native API that way, one renamed call at a time,

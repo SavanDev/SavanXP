@@ -539,9 +539,18 @@ get_property(SAVANXP_USER_TARGETS GLOBAL PROPERTY SAVANXP_USER_TARGETS)
 set(SAVANXP_USER_PROGRAM_NAMES)
 get_property(SAVANXP_USER_PROGRAM_NAMES GLOBAL PROPERTY SAVANXP_USER_PROGRAM_NAMES)
 
+set(SAVANXP_NATIVE_TARGETS)
+get_property(SAVANXP_NATIVE_TARGETS GLOBAL PROPERTY SAVANXP_NATIVE_TARGETS)
+
 set(SAVANXP_SXE_ARGUMENTS)
 foreach(program IN LISTS SAVANXP_USER_PROGRAM_NAMES)
     list(APPEND SAVANXP_SXE_ARGUMENTS --program "${program}")
+endforeach()
+# A SUN program gets its resources as C too (<name>.sunres.h): it has no
+# files to read its own .sxe with (docs/userland/SUN.md).
+foreach(program IN LISTS SAVANXP_NATIVE_TARGETS)
+    list(APPEND SAVANXP_SXE_ARGUMENTS --native-program "${program}")
+    target_include_directories(${program} PRIVATE "${SAVANXP_SXE_ROOT}")
 endforeach()
 set(SAVANXP_SXE_STAMP "${SAVANXP_GENERATED_ROOT}/sxe-resources.stamp")
 set(SAVANXP_SXE_CONFIG_STAMP "${CMAKE_BINARY_DIR}/sxe-programs.stamp")
@@ -555,7 +564,8 @@ if(NOT SAVANXP_SXE_CONFIG_OLD STREQUAL SAVANXP_SXE_CONFIG_CONTENT)
     file(WRITE "${SAVANXP_SXE_CONFIG_STAMP}" "${SAVANXP_SXE_CONFIG_CONTENT}")
 endif()
 file(GLOB_RECURSE SAVANXP_SXE_MANIFESTS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.sxres")
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.sxres"
+    "${CMAKE_SOURCE_DIR}/system/*.sxres")
 file(GLOB_RECURSE SAVANXP_SXE_ASSETS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png")
 add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
@@ -570,6 +580,8 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             # el binario queda sin estampar, el escaneo del lanzador no le ve categoria
             # y desaparece del catalogo sin decir nada.
             --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/mediaplayer"
+            # The SUN programs that ship with the system, each in system/<name>.
+            --manifest-dir "${CMAKE_SOURCE_DIR}/system/console"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS
@@ -588,9 +600,6 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
     VERBATIM
 )
 add_custom_target(savanxp_sxe_resources DEPENDS "${SAVANXP_SXE_STAMP}")
-
-set(SAVANXP_NATIVE_TARGETS)
-get_property(SAVANXP_NATIVE_TARGETS GLOBAL PROPERTY SAVANXP_NATIVE_TARGETS)
 
 foreach(target IN LISTS SAVANXP_USER_TARGETS)
     add_dependencies(${target} savanxp_sxe_resources)

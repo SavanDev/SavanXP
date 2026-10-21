@@ -2121,6 +2121,12 @@ static int deliver_hotkey(
     {
         return 0;
     }
+    /* AltGr is Ctrl+Alt on many layouts, and AltGr plus a letter is a
+     * character someone is typing, never a hotkey. */
+    if ((key_event->modifiers & SAVANXP_KEY_MOD_ALT_GR) != 0)
+    {
+        return 0;
+    }
     for (index = 0; index < session->hotkey_count; ++index)
     {
         if (session->hotkeys[index].key == key_event->key &&

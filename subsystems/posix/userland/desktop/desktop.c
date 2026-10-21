@@ -27,6 +27,8 @@ _Static_assert(
 
 /* Task Manager, which Ctrl+Shift+Esc opens. */
 static const char *k_task_manager_path = "/bin/taskmgr";
+/* The Command Prompt, which Ctrl+Alt+T opens (docs/desktop/CONSOLE.md). */
+static const char *k_console_path = "/bin/console";
 
 /* How often the persisted wallpaper choice is re-read. progman's Options menu
  * changes it by writing the config; it is a rare, manual change, not worth an
@@ -262,7 +264,17 @@ static void register_hotkey(uint32_t key, uint32_t modifiers)
  * process registered. */
 static void handle_hotkey(const struct savanxp_input_event *event)
 {
-    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN || event->key != SAVANXP_KEY_ESC)
+    if (event->type != SAVANXP_INPUT_EVENT_KEY_DOWN)
+    {
+        return;
+    }
+    if (event->key == 't' || event->key == 'T')
+    {
+        desktop_close_popups();
+        (void)desktop_launch(k_console_path, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+        return;
+    }
+    if (event->key != SAVANXP_KEY_ESC)
     {
         return;
     }
@@ -506,6 +518,9 @@ int main(void)
         /* NT 4: Ctrl+Esc opens the Start menu, Ctrl+Shift+Esc Task Manager. */
         register_hotkey(SAVANXP_KEY_ESC, SAVANXP_KEY_MOD_CTRL);
         register_hotkey(SAVANXP_KEY_ESC, SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_SHIFT);
+        /* The Command Prompt's shortcut key, as a Windows shortcut can carry
+         * one. AltGr+T stays a character: windowd never takes AltGr. */
+        register_hotkey('t', SAVANXP_KEY_MOD_CTRL | SAVANXP_KEY_MOD_ALT);
     }
 
     for (;;)

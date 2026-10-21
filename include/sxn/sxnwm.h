@@ -1,10 +1,11 @@
 #pragma once
 
-/* sxnwm: native window-client substrate (toolkit seed, not a toolkit).
+/* sxnwm: SUN windowing (docs/userland/SUN.md), the user32 of SUN.
  *
- * The first reusable layer over sxn.h for windowed native programs: connect
- * to windowd (protocol v5, savanxp/wm_protocol.h), publish full-surface
- * frames, wait for composition, and drain the native input ring. Extracted from sdk/nativedemo, which
+ * The reusable layer over sxn.h for windowed native programs: connect to
+ * windowd (protocol v5, savanxp/wm_protocol.h), publish full or partial
+ * frames, wait for composition, drain the native input ring, ask for a size,
+ * follow resizes and closing, and publish the title and icon. Extracted from sdk/nativedemo, which
  * uses all of it -- one client proves the shape, widgets wait for a second.
  * Header-only like sxn.h: no tool or link change needed. Returns follow the
  * kernel convention (0 on success, negative -errno on failure), except
@@ -29,7 +30,24 @@ struct sxnwm_client {
     long wake_fd;
     /* The event pipe: kept open, never read -- input comes on the ring. */
     long events_fd;
+    /* Set after a request in the header (size, presentation); -1 when the WM
+     * gave none, and then the submit event carries requests too. */
+    long request_fd;
     struct savanxp_wm_input_ring* ring;
+};
+
+/* What a window says about itself: the title on its caption and its taskbar
+ * button, the caption accent, its style and its 16x16 icon. A SUN program
+ * cannot read its own .sxe (SUN has no files), so the build compiles its
+ * .sxres into <program>.sunres.h, which defines `sun_resources` of this type:
+ * the program's resources linked into it, as .rsrc is into a Windows .exe. */
+struct sxnwm_presentation_source {
+    const char* title;
+    uint32_t flags;          /* SAVANXP_WM_PRESENTATION_* */
+    uint32_t accent;         /* 0x00RRGGBB, with SAVANXP_WM_PRESENTATION_HAS_ACCENT */
+    uint32_t window_style;   /* SAVANXP_WM_WINDOW_STYLE_* */
+    uint32_t icon_extent;    /* 0 = no icon, else SAVANXP_WM_PRESENTATION_ICON_EXTENT */
+    const uint32_t* icon_pixels; /* icon_extent squared, BGRA8888 */
 };
 
 /* Map the surface section and validate it, filling the context. */
@@ -105,13 +123,14 @@ static inline long sxnwm_connect(struct sxnwm_client* ctx) {
     ctx->header = 0;
     ctx->ring = 0;
     ctx->events_fd = -1;
+    ctx->request_fd = -1;
     result = sxn_port_connect(SAVANXP_WM_PORT_NAME, handles);
     if (result < 0) {
         return result;
     }
     hello.magic = SAVANXP_WM_HELLO_MAGIC;
     hello.version = SAVANXP_WM_PROTOCOL_VERSION;
-    hello.flags = SAVANXP_WM_HELLO_INPUT_RING;
+    hello.flags = SAVANXP_WM_HELLO_INPUT_RING | SAVANXP_WM_HELLO_REQUEST_EVENT;
     if (sxn_write(handles[0], &hello, sizeof(hello)) != (long)sizeof(hello)) {
         result = -SAVANXP_EPIPE;
         goto fail;
@@ -130,8 +149,10 @@ static inline long sxnwm_connect(struct sxnwm_client* ctx) {
         result = record.payload.welcome.status;
         goto fail;
     }
-    /* section, wake, submit, ring */
-    if (record.payload.welcome.handle_count != 4u) {
+    /* section, wake, submit, ring, and the request event when the welcome
+     * says it is there */
+    if (record.payload.welcome.handle_count !=
+        ((record.payload.welcome.flags & SAVANXP_WM_WELCOME_REQUEST_EVENT) != 0u ? 5u : 4u)) {
         result = -SAVANXP_EIO;
         goto fail;
     }
@@ -139,6 +160,14 @@ static inline long sxnwm_connect(struct sxnwm_client* ctx) {
         received[index] = sxn_pipe_receive_handle(handles[1]);
         if (received[index] < 0) {
             result = received[index];
+            goto fail;
+        }
+    }
+    if ((record.payload.welcome.flags & SAVANXP_WM_WELCOME_REQUEST_EVENT) != 0u) {
+        ctx->request_fd = sxn_pipe_receive_handle(handles[1]);
+        if (ctx->request_fd < 0) {
+            result = ctx->request_fd;
+            ctx->request_fd = -1;
             goto fail;
         }
     }
@@ -163,6 +192,10 @@ fail:
         if (received[index] >= 0) {
             (void)sxn_close(received[index]);
         }
+    }
+    if (ctx->request_fd >= 0) {
+        (void)sxn_close(ctx->request_fd);
+        ctx->request_fd = -1;
     }
     (void)sxn_close(handles[0]);
     (void)sxn_close(handles[1]);
@@ -251,4 +284,230 @@ static inline long sxnwm_poll_input(struct sxnwm_client* ctx, struct savanxp_wm_
     __asm__ volatile("" ::: "memory");
     ctx->ring->tail = tail + 1u;
     return 0;
+}
+
+/* Publish a batch of up to rect_capacity rectangles already painted on the
+ * surface (InvalidateRect plus the paint). Rectangles are clipped to the
+ * window; an empty one is skipped. Returns the submit sequence (>0), 0 when
+ * nothing was left after clipping, or negative -errno (-EAGAIN with every
+ * batch slot unretired, as sxnwm_submit_full). More rectangles than a batch
+ * holds become one full-surface batch. */
+static inline long sxnwm_submit_rects(
+    struct sxnwm_client* ctx, const struct savanxp_gpu_dirty_rect* rects, uint32_t count) {
+    struct savanxp_gpu_dirty_rect_batch* batch = 0;
+    uint64_t sequence = 0;
+    uint32_t used = 0;
+    uint32_t index = 0;
+    uint32_t capacity = 0;
+    long result = 0;
+
+    if (ctx == 0 || ctx->header == 0 || ctx->batches == 0 || (rects == 0 && count != 0)) {
+        return -SAVANXP_EINVAL;
+    }
+    capacity = ctx->header->rect_capacity < SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS
+        ? ctx->header->rect_capacity
+        : SAVANXP_GPU_CLIENT_BATCH_MAX_RECTS;
+    if (count > capacity) {
+        return sxnwm_submit_full(ctx);
+    }
+    if (ctx->header->submit_sequence - ctx->header->composed_sequence >= ctx->batch_capacity) {
+        return -SAVANXP_EAGAIN;
+    }
+    sequence = ctx->header->submit_sequence + 1u;
+    batch = &ctx->batches[(sequence - 1u) % ctx->batch_capacity];
+    for (index = 0; index < count; index += 1) {
+        uint32_t x = rects[index].x;
+        uint32_t y = rects[index].y;
+        uint32_t width = rects[index].width;
+        uint32_t height = rects[index].height;
+
+        if (x >= ctx->width || y >= ctx->height || width == 0 || height == 0) {
+            continue;
+        }
+        if (width > ctx->width - x) {
+            width = ctx->width - x;
+        }
+        if (height > ctx->height - y) {
+            height = ctx->height - y;
+        }
+        batch->rects[used].x = x;
+        batch->rects[used].y = y;
+        batch->rects[used].width = width;
+        batch->rects[used].height = height;
+        used += 1;
+    }
+    if (used == 0) {
+        return 0;
+    }
+    for (index = used; index < capacity; index += 1) {
+        batch->rects[index].x = 0;
+        batch->rects[index].y = 0;
+        batch->rects[index].width = 0;
+        batch->rects[index].height = 0;
+    }
+    batch->rect_count = used;
+    batch->flags = SAVANXP_GPU_SURFACE_PRESENT_BATCH_FLAG_NONE;
+    batch->submit_sequence = sequence;
+    __asm__ volatile("" ::: "memory");
+    ctx->header->submit_sequence = sequence;
+    result = sxn_event_set(ctx->submit_fd);
+    if (result != 0) {
+        return result;
+    }
+    return (long)sequence;
+}
+
+/* 1 once everything submitted has been composed: the surface may be painted
+ * again without the compositor reading a half-drawn frame. */
+static inline int sxnwm_idle(const struct sxnwm_client* ctx) {
+    return ctx != 0 && ctx->header != 0 && ctx->header->composed_sequence >= ctx->header->submit_sequence;
+}
+
+/* Wait (up to timeout_ms, negative = forever) until sxnwm_idle. 0 or
+ * -ETIMEDOUT. */
+static inline long sxnwm_wait_idle(struct sxnwm_client* ctx, long timeout_ms) {
+    uint64_t deadline = 0;
+
+    if (ctx == 0 || ctx->header == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    deadline = timeout_ms < 0 ? 0 : sxn_clock_ns() + (uint64_t)timeout_ms * 1000000ull;
+    for (;;) {
+        long wait_ms = 50;
+
+        (void)sxn_event_reset(ctx->wake_fd);
+        if (sxnwm_idle(ctx)) {
+            return 0;
+        }
+        if (timeout_ms >= 0) {
+            const uint64_t now = sxn_clock_ns();
+            if (now >= deadline) {
+                return -SAVANXP_ETIMEDOUT;
+            }
+            if ((deadline - now) / 1000000ull < (uint64_t)wait_ms) {
+                wait_ms = (long)((deadline - now) / 1000000ull) + 1;
+            }
+        }
+        (void)sxn_wait_one(ctx->wake_fd, wait_ms);
+    }
+}
+
+/* Tell the WM the header carries a new request. */
+static inline long sxnwm_notify(struct sxnwm_client* ctx) {
+    if (ctx == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return sxn_event_set(ctx->request_fd >= 0 ? ctx->request_fd : ctx->submit_fd);
+}
+
+/* Ask for a client area of width x height. A hint: the WM clips it, and the
+ * answer arrives in the surface header (sxnwm_check_resize). */
+static inline long sxnwm_request_size(struct sxnwm_client* ctx, uint32_t width, uint32_t height) {
+    struct savanxp_wm_client_requests* requests = 0;
+
+    if (ctx == 0 || ctx->header == 0 || width == 0 || height == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    /* Seqlock: odd while the pair is half written. */
+    requests = &ctx->header->requests;
+    requests->size_hint_sequence |= 1u;
+    __asm__ volatile("" ::: "memory");
+    requests->size_hint_width = width;
+    requests->size_hint_height = height;
+    __asm__ volatile("" ::: "memory");
+    requests->size_hint_sequence += 1u;
+    return sxnwm_notify(ctx);
+}
+
+/* Follow a resize: the WM writes the new client size into the surface header
+ * (the POSIX runtime turns the same change into a RESIZED event). 1 if the
+ * size changed and ctx->width/height now hold it, 0 if not. */
+static inline long sxnwm_check_resize(struct sxnwm_client* ctx) {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t max_height = 0;
+
+    if (ctx == 0 || ctx->header == 0) {
+        return 0;
+    }
+    width = ctx->header->info.width;
+    height = ctx->header->info.height;
+    max_height = ctx->header->info.pitch != 0u ? ctx->header->info.buffer_size / ctx->header->info.pitch : 0u;
+    if (width == 0 || height == 0 || width > ctx->stride || height > max_height ||
+        (width == ctx->width && height == ctx->height)) {
+        return 0;
+    }
+    ctx->width = width;
+    ctx->height = height;
+    return 1;
+}
+
+/* 1 when the WM asks the window to close (its close button, Alt+F4). */
+static inline int sxnwm_close_requested(const struct sxnwm_client* ctx) {
+    return ctx != 0 && ctx->header != 0 &&
+        (ctx->header->flags & SAVANXP_GPU_CLIENT_SURFACE_FLAG_SHUTDOWN) != 0u;
+}
+
+/* Copies `title` into a presentation title field, cut to fit. */
+static inline void sxnwm_copy_title(char* out, const char* title) {
+    uint32_t index = 0;
+
+    for (index = 0; index < SAVANXP_WM_PRESENTATION_TITLE_CAPACITY; index += 1) {
+        out[index] = 0;
+    }
+    for (index = 0; title != 0 && title[index] != '\0' &&
+            index + 1u < SAVANXP_WM_PRESENTATION_TITLE_CAPACITY; index += 1) {
+        out[index] = title[index];
+    }
+}
+
+/* Publish what the window says about itself (see struct
+ * sxnwm_presentation_source); the WM copies each new version once. */
+static inline long sxnwm_set_presentation(struct sxnwm_client* ctx, const struct sxnwm_presentation_source* source) {
+    struct savanxp_wm_presentation* out = 0;
+    uint32_t sequence = 0;
+    uint32_t index = 0;
+    uint32_t pixels = 0;
+
+    if (ctx == 0 || ctx->header == 0 || source == 0 ||
+        source->icon_extent > SAVANXP_WM_PRESENTATION_ICON_EXTENT ||
+        (source->icon_extent != 0u && source->icon_pixels == 0)) {
+        return -SAVANXP_EINVAL;
+    }
+    out = &ctx->header->requests.presentation;
+    /* Seqlock: odd while the fields are being written. */
+    sequence = out->sequence | 1u;
+    out->sequence = sequence;
+    __asm__ volatile("" ::: "memory");
+    out->flags = source->flags;
+    out->accent = source->accent;
+    out->window_style = source->window_style;
+    out->icon_extent = source->icon_extent;
+    sxnwm_copy_title(out->title, source->title);
+    pixels = source->icon_extent * source->icon_extent;
+    for (index = 0; index < SAVANXP_WM_PRESENTATION_ICON_EXTENT * SAVANXP_WM_PRESENTATION_ICON_EXTENT; index += 1) {
+        out->icon_pixels[index] = index < pixels ? source->icon_pixels[index] : 0u;
+    }
+    __asm__ volatile("" ::: "memory");
+    out->sequence = sequence + 1u;
+    return sxnwm_notify(ctx);
+}
+
+/* SetWindowText: a new title, everything else as last published. Titles
+ * longer than SAVANXP_WM_PRESENTATION_TITLE_CAPACITY - 1 are cut. */
+static inline long sxnwm_set_title(struct sxnwm_client* ctx, const char* title) {
+    struct savanxp_wm_presentation* out = 0;
+    uint32_t sequence = 0;
+
+    if (ctx == 0 || ctx->header == 0 || title == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    out = &ctx->header->requests.presentation;
+    sequence = out->sequence | 1u;
+    out->sequence = sequence;
+    __asm__ volatile("" ::: "memory");
+    sxnwm_copy_title(out->title, title);
+    __asm__ volatile("" ::: "memory");
+    out->sequence = sequence + 1u;
+    return sxnwm_notify(ctx);
 }

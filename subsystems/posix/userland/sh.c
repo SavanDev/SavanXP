@@ -1,5 +1,7 @@
 #include "shell_core.h"
 
+#include <string.h>
+
 #include "shared/version.h"
 
 #define SH_MAX_STAGES 8
@@ -24,6 +26,16 @@ enum sh_pending_redirect {
     SH_REDIRECT_STDERR = 4,
     SH_REDIRECT_STDERR_APPEND = 5,
 };
+
+/* Console mode (docs/desktop/CONSOLE.md): `sh --console <fd>` runs under the
+ * Command Prompt, which reads lines from us on 0, shows 1 and 2, and listens
+ * on <fd> for the control channel. -1 on the kernel console. */
+static int g_console_fd = -1;
+
+/* Programs `start` launched and has not reaped yet. */
+#define SH_MAX_STARTED 32
+static long g_started[SH_MAX_STARTED];
+static int g_started_count = 0;
 
 static int sh_is_space(char character) {
     return character == ' ' || character == '\t';
@@ -271,6 +283,110 @@ static int sh_parse_pipeline(char* line, struct sh_command_stage* stages, int ca
     return stage_count;
 }
 
+/* One line on the control channel. Nothing on the kernel console. */
+static void sh_console_send(const char* text) {
+    if (g_console_fd >= 0) {
+        (void)savanxp_write(g_console_fd, text, strlen(text));
+    }
+}
+
+/* Tells the console which processes the foreground job is (count 0: none), so
+ * Ctrl+C can end them. */
+static void sh_report_foreground(const long* pids, int count) {
+    char line[16 + (SH_MAX_STAGES * 12)];
+    size_t length = 0;
+    int index = 0;
+
+    if (g_console_fd < 0) {
+        return;
+    }
+    memcpy(line, "fg", 2);
+    length = 2;
+    for (index = 0; index < count; ++index) {
+        char number[24];
+        size_t digits = 0;
+        long value = pids[index];
+
+        line[length++] = ' ';
+        do {
+            number[digits++] = (char)('0' + (value % 10));
+            value /= 10;
+        } while (value > 0 && digits < sizeof(number));
+        while (digits > 0) {
+            line[length++] = number[--digits];
+        }
+    }
+    line[length++] = '\n';
+    line[length] = '\0';
+    sh_console_send(line);
+}
+
+/* Reaps the programs `start` launched that have ended: a zombie holds a
+ * process slot until its parent waits for it. Same scan as the gfx runtime's
+ * launcher (gfx_reap_launched_now). */
+static void sh_reap_started(void) {
+    struct savanxp_process_info info;
+    unsigned long index = 0;
+    int slot = 0;
+    char alive[SH_MAX_STARTED];
+
+    if (g_started_count == 0) {
+        return;
+    }
+    memset(alive, 0, sizeof(alive));
+    while (proc_info(index, &info) > 0) {
+        for (slot = 0; slot < g_started_count; ++slot) {
+            if ((long)info.pid == g_started[slot]) {
+                alive[slot] = info.state == SAVANXP_PROC_ZOMBIE ? 2 : 1;
+            }
+        }
+        ++index;
+    }
+    slot = 0;
+    while (slot < g_started_count) {
+        if (alive[slot] == 1) {
+            ++slot;
+            continue;
+        }
+        if (alive[slot] == 2) {
+            int status = 0;
+            (void)savanxp_waitpid((int)g_started[slot], &status);
+        }
+        --g_started_count;
+        g_started[slot] = g_started[g_started_count];
+        alive[slot] = alive[g_started_count];
+    }
+}
+
+/* `start <program> [args]`: launch and do not wait, as cmd's start does. The
+ * program is not part of the foreground job, so Ctrl+C does not reach it. */
+static int sh_start(char* line) {
+    struct sh_command_stage stages[SH_MAX_STAGES];
+    char path[256];
+    int stage_count = sh_parse_pipeline(line, stages, SH_MAX_STAGES);
+    long pid = -1;
+
+    if (stage_count != 1 || stages[0].argc < 2 || stages[0].input_path != 0 ||
+        stages[0].stdout_path != 0 || stages[0].stderr_path != 0) {
+        puts_fd(2, "usage: start <program> [arguments]\n");
+        return 1;
+    }
+    if (!sh_resolve_command_path(stages[0].argv[1], path, sizeof(path))) {
+        puts_fd(2, "start: program not found\n");
+        return 1;
+    }
+    pid = spawn(path, (const char* const*)&stages[0].argv[1], stages[0].argc - 1);
+    if (pid < 0) {
+        puts_fd(2, "start: cannot start the program\n");
+        return 1;
+    }
+    sh_reap_started();
+    if (g_started_count < SH_MAX_STARTED) {
+        g_started[g_started_count++] = pid;
+    }
+    return 0;
+}
+
 static int sh_wait_for_children(const long* pids, int count) {
     int index = 0;
     int last_status = 0;
@@ -379,7 +495,12 @@ static int sh_execute_pipeline(char* line) {
     if (previous_read_fd >= 0) {
         savanxp_close(previous_read_fd);
     }
-    return sh_wait_for_children(pids, pid_count);
+    sh_report_foreground(pids, pid_count);
+    {
+        const int status = sh_wait_for_children(pids, pid_count);
+        sh_report_foreground(0, 0);
+        return status;
+    }
 }
 
 static int sh_line_is_builtin(const char* line) {
@@ -407,9 +528,136 @@ static int sh_line_is_builtin(const char* line) {
 static void shell_print_prompt(void) {
     char cwd[256] = {};
     shell_current_directory(cwd, sizeof(cwd));
+    if (g_console_fd >= 0) {
+        /* cmd's default prompt, $P$G. */
+        puts_out(cwd);
+        puts_out(">");
+        return;
+    }
     puts_out("savanxp:");
     puts_out(cwd);
     puts_out("$ ");
+}
+
+/* The builtins' output goes to 1 and 2 as always; `clear` asks the console to
+ * clear its screen buffer, since there is no kernel screen behind a pipe. */
+static void sh_console_emit(void* context, int fd, const char* bytes, size_t length) {
+    (void)context;
+    (void)savanxp_write(fd, bytes, length);
+}
+
+static void sh_console_clear(void* context) {
+    (void)context;
+    sh_console_send("cls\n");
+}
+
+/* Runs one command of a line. 1 when it was `exit`. */
+static int sh_run_command(char* command) {
+    struct shell_capture_sink console_sink = {
+        .emit = sh_console_emit,
+        .clear = sh_console_clear,
+        .context = 0,
+    };
+    char* start = command;
+
+    while (sh_is_space(*start)) {
+        ++start;
+    }
+    if (*start == '\0') {
+        return 0;
+    }
+    if (strncmp(start, "start", 5) == 0 && (start[5] == '\0' || sh_is_space(start[5]))) {
+        (void)sh_start(start);
+        return 0;
+    }
+    if (sh_line_is_builtin(start)) {
+        return shell_execute_line(start, SHELL_EXEC_STDIO, g_console_fd >= 0 ? &console_sink : 0) ==
+            SHELL_EXEC_RESULT_EXIT;
+    }
+    (void)sh_execute_pipeline(start);
+    return 0;
+}
+
+/* Runs a line: commands separated by `;`, one after the other. A `;` inside
+ * quotes is part of a word. 1 when one of them was `exit`. */
+static int sh_run_line(char* line) {
+    char* command = line;
+    char quote = 0;
+    char* cursor = line;
+
+    for (;;) {
+        const char current = *cursor;
+        if (quote != 0) {
+            if (current == quote) {
+                quote = 0;
+            } else if (current == '\0') {
+                return sh_run_command(command);
+            }
+            ++cursor;
+            continue;
+        }
+        if (current == '\'' || current == '"') {
+            quote = current;
+            ++cursor;
+            continue;
+        }
+        if (current == ';' || current == '\0') {
+            *cursor = '\0';
+            if (sh_run_command(command)) {
+                return 1;
+            }
+            if (current == '\0') {
+                return 0;
+            }
+            command = cursor + 1;
+        }
+        ++cursor;
+    }
+}
+
+/* Lines from fd 0, which may hold several per read (a pipe) or one (the
+ * kernel tty). 1 with a line in `line`, 0 at end of input. */
+static char g_input[512];
+static size_t g_input_length = 0;
+
+static int sh_read_line(char* line, size_t capacity) {
+    for (;;) {
+        size_t index = 0;
+        long count = 0;
+
+        while (index < g_input_length && g_input[index] != '\n') {
+            ++index;
+        }
+        if (index < g_input_length || g_input_length == sizeof(g_input)) {
+            const size_t take = index < capacity - 1 ? index : capacity - 1;
+            const size_t consumed = index < g_input_length ? index + 1 : g_input_length;
+
+            memcpy(line, g_input, take);
+            line[take] = '\0';
+            memmove(g_input, g_input + consumed, g_input_length - consumed);
+            g_input_length -= consumed;
+            shell_trim_newline(line);
+            return 1;
+        }
+        count = savanxp_read(0, g_input + g_input_length, sizeof(g_input) - g_input_length);
+        if (count > 0) {
+            g_input_length += (size_t)count;
+            continue;
+        }
+        /* End of input is only real on a pipe: the kernel console never has
+         * one, and used to come back here forever. */
+        if (g_console_fd >= 0) {
+            if (g_input_length == 0) {
+                return 0;
+            }
+            /* A last line without its newline. */
+            g_input[g_input_length] = '\0';
+            memcpy(line, g_input, g_input_length < capacity ? g_input_length + 1 : capacity);
+            line[capacity - 1] = '\0';
+            g_input_length = 0;
+            return 1;
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -431,26 +679,43 @@ int main(int argc, char** argv) {
         return sh_execute_pipeline(line);
     }
 
-    printf("%s\n", SAVANXP_DISPLAY_NAME);
-    puts_out("Type 'help' for commands and 'sysinfo' for diagnostics.\n");
+    if (argc >= 3 && strcmp(argv[1], "--console") == 0) {
+        long fd = 0;
+        const char* digit = argv[2];
+        while (*digit >= '0' && *digit <= '9') {
+            fd = fd * 10 + (*digit - '0');
+            ++digit;
+        }
+        g_console_fd = *digit == '\0' && digit != argv[2] ? (int)fd : -1;
+    }
+
+    if (g_console_fd >= 0) {
+        /* The banner of the Windows 2000 console, with our name. */
+        printf("%s [Version %d.%d.%d]\n", SAVANXP_SYSTEM_NAME,
+            SAVANXP_VERSION_MAJOR, SAVANXP_VERSION_MINOR, SAVANXP_VERSION_PATCH);
+        puts_out("Type 'help' for commands. 'start <program>' opens a program.\n\n");
+    } else {
+        printf("%s\n", SAVANXP_DISPLAY_NAME);
+        puts_out("Type 'help' for commands and 'sysinfo' for diagnostics.\n");
+    }
 
     for (;;) {
-        long count = 0;
-
+        sh_reap_started();
         shell_print_prompt();
         memset(line, 0, sizeof(line));
-        count = savanxp_read(0, line, sizeof(line) - 1);
-        if (count <= 0) {
-            continue;
+        if (!sh_read_line(line, sizeof(line))) {
+            return 0;
         }
-
-        shell_trim_newline(line);
-        if (sh_line_is_builtin(line)) {
-            if (shell_execute_line(line, SHELL_EXEC_STDIO, 0) == SHELL_EXEC_RESULT_EXIT) {
+        {
+            const int had_command = line[0] != '\0';
+            if (sh_run_line(line)) {
                 return 0;
             }
-            continue;
+            if (g_console_fd >= 0 && had_command) {
+                /* A blank line between one command's output and the next
+                 * prompt, as cmd prints. */
+                puts_out("\n");
+            }
         }
-        (void)sh_execute_pipeline(line);
     }
 }

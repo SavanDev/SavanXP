@@ -44,7 +44,9 @@ built independently with `./ports/doomgeneric/build.sh`,
   Alt+Tab switcher, and the shell as clients of it: one `desktop` process
   (wallpaper, a taskbar listing the open windows, the Start menu on Ctrl+Esc,
   and volume, clock and ES/EN keyboard layout popups) plus Program Manager.
-- Built-in apps: Files, Notepad, Shell, Add/Remove Programs, System Properties
+- Built-in apps: Files, Notepad, a Command Prompt in the style of Windows 2000
+  ([docs/desktop/CONSOLE.md](docs/desktop/CONSOLE.md), Ctrl+Alt+T), Add/Remove
+  Programs, System Properties
   and a Task Manager with live CPU and memory per process
   ([how it measures](docs/userland/SYSTEM_MONITORING.md)). Media Player is an optional port
   ([docs/media/MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md)).

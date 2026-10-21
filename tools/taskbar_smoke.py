@@ -9,13 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 from qmp_client import QmpClient
-from shoot_session import (
-    STARTMENU_HEIGHT,
-    STARTMENU_STRIP_WIDTH,
-    STARTMENU_VIEW_HEIGHT,
-    STARTMENU_WIDTH,
-    find_text,
-)
+from shoot_session import Qmp
 
 
 class TaskbarSmokeError(RuntimeError):
@@ -171,40 +165,49 @@ def _move_to(client: QmpClient, x: int, y: int) -> None:
     time.sleep(0.5)
 
 
-def _open_progman(client: QmpClient, output_dir: Path) -> None:
-    """Opens Program Manager from the Start menu, as a user would.
+def _type_line(client: QmpClient, text: str) -> None:
+    """Types a command line on the guest's ES layout (Qmp.ES_KEYS)."""
+    for ch in text:
+        if ch in Qmp.ES_KEYS:
+            qcode, shifted = Qmp.ES_KEYS[ch]
+        else:
+            qcode, shifted = ch, False
+        if shifted:
+            client.key("shift", True)
+            time.sleep(0.05)
+            client.tap(qcode, pause=0.05)
+            client.key("shift", False)
+            time.sleep(0.1)
+        else:
+            client.tap(qcode)
 
-    The session does not start it. The menu is mouse only and its list may be
-    longer than the menu, so the row is found by its text: first as the menu
-    opens, then after resting the pointer on the down arrow strip, which
-    scrolls the list to its end (System, Program Manager's group, is last).
+
+def _run_from_console(client: QmpClient, output_dir: Path, command: str) -> None:
+    """Starts `command` from a Command Prompt that closes behind it.
+
+    Ctrl+Alt+T opens the console (docs/desktop/CONSOLE.md); it is ready when
+    the middle of the screen, where the WM centres it, turns black. Then
+    `start <command>; exit` launches the program and closes the console, so
+    the program is the only new window and has the focus.
     """
-    menu_x, menu_y = 2, 800 - 28 - STARTMENU_HEIGHT
-    view_x = menu_x + 2 + STARTMENU_STRIP_WIDTH
-    box = (view_x, menu_y + 2, menu_x + STARTMENU_WIDTH - 2, menu_y + 2 + STARTMENU_VIEW_HEIGHT)
-    _move_to(client, 2 + 32, 786)
-    _click(client)
-    image = None
-    for attempt in range(15):
-        time.sleep(2.0)
-        image = _capture(client, output_dir, f"00-menu-{attempt:02d}")
-        if _pixel(image, view_x + 2, menu_y + 4) == FACE:
+    client.key("ctrl", True)
+    client.key("alt", True)
+    time.sleep(0.15)
+    client.tap("t")
+    time.sleep(0.15)
+    client.key("alt", False)
+    client.key("ctrl", False)
+    for attempt in range(40):
+        time.sleep(1.0)
+        image = _capture(client, output_dir, f"00-console-{command}-{attempt:02d}")
+        centre = [_pixel(image, 640 + dx, 380 + dy) for dx in (-40, 0, 40) for dy in (-20, 0, 20)]
+        if all(pixel == (0, 0, 0) for pixel in centre):
             break
     else:
-        raise TaskbarSmokeError("the Start menu did not open")
-    origin = find_text(image, box, "Program Manager", (0, 0, 0), FACE, solid_only=True)[0]
-    if origin is None:
-        # Rest on the down strip's left end: on the strip, but off the arrow
-        # and off every row (a hovered row is repainted white on blue).
-        down_strip_y = menu_y + 2 + STARTMENU_VIEW_HEIGHT - 12
-        _move_to(client, view_x + 20, down_strip_y + 6)
-        time.sleep(10.0)
-        image = _capture(client, output_dir, "00-menu-scrolled")
-        origin = find_text(image, box, "Program Manager", (0, 0, 0), FACE, solid_only=True)[0]
-    if origin is None:
-        raise TaskbarSmokeError("the Start menu does not list Program Manager")
-    _move_to(client, origin[0] + 20, origin[1] + 6)
-    _click(client)
+        raise TaskbarSmokeError("the Command Prompt did not open with Ctrl+Alt+T")
+    time.sleep(1.0)
+    _type_line(client, f"start {command}; exit")
+    client.tap("ret")
     time.sleep(25.0)
 
 
@@ -221,22 +224,21 @@ def run_taskbar_actions(qmp_path: Path, output_dir: Path, ready_wait: float) -> 
             raise TaskbarSmokeError(f"unexpected initial screenshot size: {empty.size}")
         _expect_strip(empty, "session start")
         _expect_clock(empty, "session start")
-        # The session opens no window: Program Manager is started from the menu.
+        # The session opens no window.
         if _button(empty, 0) != (FACE, FACE):
             raise TaskbarSmokeError("session start: a window button is already on the taskbar")
 
-        _open_progman(client, output_dir)
-        first = _capture(client, output_dir, "01-solo-progman")
-        screenshots.append(output_dir / "01-solo-progman.png")
+        # Two windows, each started by name from a console that closes behind
+        # it: Notepad first, then Calculator, whose caption the minimize check
+        # below reads.
+        _run_from_console(client, output_dir, "notepad")
+        first = _capture(client, output_dir, "01-solo-notepad")
+        screenshots.append(output_dir / "01-solo-notepad.png")
         _expect_strip(first, "initial")
         _expect_clock(first, "initial")
         _expect_button(first, 0, True, "initial")
 
-        # Enter on Program Manager's first icon, Calculator: the point is a
-        # second window. Not an icon further right, since that position
-        # depends on what is installed (a native demo there opens no window).
-        client.tap("ret")
-        time.sleep(25.0)
+        _run_from_console(client, output_dir, "calc")
         second = _capture(client, output_dir, "02-dos-ventanas")
         screenshots.append(output_dir / "02-dos-ventanas.png")
         _expect_strip(second, "two windows")

@@ -197,6 +197,45 @@ class Qmp(object):
         for ch in text:
             self.tap("spc" if ch == " " else ch, pause=0.12)
 
+    # The keys of the guest's default layout (Spanish) for the punctuation a
+    # command line needs: (qcode, shifted). A qcode is the physical key, so a
+    # symbol is wherever ES puts it, not where a US keyboard does.
+    ES_KEYS = {
+        " ": ("spc", False),
+        ";": ("comma", True),
+        ":": ("dot", True),
+        ".": ("dot", False),
+        ",": ("comma", False),
+        "-": ("slash", False),
+        "_": ("slash", True),
+        "/": ("7", True),
+        "=": ("0", True),
+        '"': ("2", True),
+        ">": ("less", True),
+        "<": ("less", False),
+    }
+
+    def type_line(self, text):
+        """Types a command line on the guest's ES layout: letters, digits and
+        the punctuation in ES_KEYS. Upper case letters go with Shift."""
+        for ch in text:
+            if ch in self.ES_KEYS:
+                qcode, shifted = self.ES_KEYS[ch]
+            elif ch.isalpha() and ch.isupper():
+                qcode, shifted = ch.lower(), True
+            elif ch.isalnum():
+                qcode, shifted = ch, False
+            else:
+                raise ValueError("type_line: no key for %r on the ES layout" % ch)
+            if shifted:
+                self.key("shift", True)
+                time.sleep(0.05)
+                self.tap(qcode, pause=0.05)
+                self.key("shift", False)
+                time.sleep(0.1)
+            else:
+                self.tap(qcode, pause=0.12)
+
 
 class Session(object):
     def __init__(self, qmp, out_dir):
@@ -208,12 +247,12 @@ class Session(object):
     def open_progman(self):
         """Opens Program Manager from the Start menu, as a user would.
 
-        The session no longer starts it, and every launch() below drives its
-        keyboard navigation. The menu is mouse only and its list may be longer
-        than the menu, so the row is found by its text: first as the menu
-        opens, then after resting the pointer on the down arrow strip, which
-        scrolls the list to its end (System, where Program Manager lives, is the
-        last group).
+        Only what tests the Start menu or Program Manager themselves goes this
+        way; every other program is opened by name through the console (run).
+        The menu is mouse only and its list may be longer than the menu, so the
+        row is found by its text: first as the menu opens, then after resting
+        the pointer on the down arrow strip, which scrolls the list to its end
+        (System, where Program Manager lives, is the last group).
         """
         if self.progman_open:
             return
@@ -242,6 +281,53 @@ class Session(object):
         time.sleep(25)
         self.progman_open = True
 
+    def open_console(self, timeout=40.0):
+        """Opens a Command Prompt with Ctrl+Alt+T and waits until it shows.
+
+        The console is the way into every program now (docs/desktop/CONSOLE.md,
+        "In the smokes"): one hotkey, no menu to find by its text and no icon
+        grid to count. It is ready when the middle of the screen, where the WM
+        centres it, turns into the black of its screen buffer.
+        """
+        def centre_black(image):
+            centre = [image.getpixel((640 + dx, 380 + dy)) for dx in (-40, 0, 40) for dy in (-20, 0, 20)]
+            return all(pixel == (0, 0, 0) for pixel in centre)
+
+        # A program that already paints the middle black (Doom, a demo) would
+        # make the check pass before the console is there: then only time says
+        # when it is.
+        already_black = centre_black(self.shot("before-console"))
+        self.qmp.key("ctrl", True)
+        self.qmp.key("alt", True)
+        time.sleep(0.15)
+        self.qmp.tap("t")
+        time.sleep(0.15)
+        self.qmp.key("alt", False)
+        self.qmp.key("ctrl", False)
+        if already_black:
+            time.sleep(10.0)
+            return self.shot("console-open")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(1.0)
+            image = self.shot("console-wait")
+            if centre_black(image):
+                time.sleep(1.0)
+                return image
+        raise Failure("the Command Prompt did not open with Ctrl+Alt+T")
+
+    def run(self, command, wait=25):
+        """Starts `command` from a Command Prompt that closes behind it.
+
+        `start <command>; exit`: the console opens, launches the program
+        without waiting for it, and exits, so the program is the only new
+        window and has the focus.
+        """
+        self.open_console()
+        self.qmp.type_line("start %s; exit" % command)
+        self.qmp.tap("ret")
+        time.sleep(wait)
+
     def shot(self, name):
         self.index += 1
         stem = "%02d-%s" % (self.index, name)
@@ -264,117 +350,46 @@ class Session(object):
         print("  captura:", os.path.basename(png))
         return image
 
-    def launch(self, steps, groups=0):
-        """Launches the icon `steps` to the right of the first one, `groups`
-        tabs to the right of the first tab.
-
-        sxgui's menu bar has no keyboard access, but the launcher does: TAB
-        changes group, the arrows move the selection and Enter launches
-        (progman.c on_key). Changing group puts the selection back on the first
-        icon, so the `groups` go before the `steps`.
-
-        THE ORDER IS NO LONGER A BAKED TABLE'S. progman builds its catalog by
-        scanning the installed binaries and sorts them alphabetically within
-        each group (docs/userland/SXE_FORMAT.md, "All Programs"), so these
-        indices are positions in that order. With today's categories:
-
-            Accessories: Calculator, Files, [Media Player], Notepad, Paint, Shell, Web Viewer
-            Diagnostics: Gears, Gfx Demo, Key Test, Mouse Test, Widgets
-            Games:       Doom (only when installed), Minesweeper
-            System:      Add/Remove Programs, Program Manager, System Properties, Task Manager
-
-        The Games group no longer depends on an external port being installed:
-        Minesweeper ships in the image, so the tab always exists and System is
-        ALWAYS the fourth.
-
-        A negative `steps` counts from the LAST icon: the selection wraps
-        around, so a left arrow from the first lands on the last. It reaches an
-        icon that stays put even when an external program that sorts before it
-        is installed.
-
-        Program Manager is opened from the Start menu on the first call: the
-        session does not start it.
-        """
-        self.open_progman()
-        for _ in range(groups):
-            self.qmp.tap("tab", pause=0.6)
-        for _ in range(abs(steps)):
-            self.qmp.tap("right" if steps > 0 else "left", pause=0.4)
-        self.qmp.tap("ret")
-        time.sleep(25)
-
+    # Every program by its name, through the Command Prompt (run). Before the
+    # console these walked Program Manager's icon grid and counted positions
+    # in a list sorted by name, which moved whenever a program was added.
     def open_calc(self):
-        self.launch(0)
+        self.run("calc")
 
     def open_files(self):
-        self.launch(1)
+        self.run("filesapp")
 
-    # Notepad, Shell y Web Viewer se cuentan desde el final: Media Player
-    # siempre está en Accessories cuando el port FFmpeg esta construido, asi
-    # que solo los indices negativos sobreviven a su presencia o ausencia.
-    # Orden: ..., Notepad, Paint, Shell, Web Viewer (Paint se ordena entre
-    # Notepad y Shell, asi que Notepad es el cuarto desde el final).
     def open_notepad(self):
-        self.launch(-4)
+        self.run("notepad")
 
     def open_paint(self):
-        # Accessories, tercero desde el final: ..., Notepad, Paint, Shell,
-        # Web Viewer. Como open_notepad: el indice negativo sobrevive a que
-        # Media Player este o no, porque va delante de Notepad.
-        self.launch(-3)
-
-    def open_shell(self):
-        self.launch(-2)
+        self.run("paint")
 
     def open_webview(self):
-        self.launch(-1)
+        self.run("webview")
 
     def open_mediaplayer(self):
-        self.launch(2)
+        self.run("mediaplayer")
 
     def open_mines(self):
-        # Grupo Games (tercera solapa), segundo icono. El `right` sirve con Doom
-        # instalado y sin el: progman mueve la seleccion en modulo, asi que en un
-        # grupo de un solo icono vuelve al mismo. Por eso este escenario no
-        # necesita la precondicion de programa externo que piden appwiz y system.
-        self.launch(1, groups=2)
+        self.run("mines")
 
     def open_ccleste(self):
-        # Grupo Games (tercera solapa), primer icono: el launcher ordena los
-        # nombres alfabeticamente y "Celeste Classic" va antes que Doom y que
-        # Minesweeper. Sin steps no hay flecha que pueda dar la vuelta.
-        self.launch(0, groups=2)
+        # An external port: sh finds it in /disk/bin.
+        self.run("ccleste")
 
     def open_doom(self):
-        # Grupo Games (tercera solapa). Con celeste instalado el orden es
-        # Celeste Classic, Doom, Minesweeper, asi que Doom es el segundo icono;
-        # en una imagen sin Celeste la seleccion da la vuelta y el mismo step
-        # cae igual en Minesweeper, no en Doom. El escenario que necesita Doom
-        # lo exige antes (equal to appwiz/system).
-        self.launch(1, groups=2)
+        # External too. The scenario that needs Doom checks it is installed.
+        self.run("doomgeneric")
 
     def open_appwiz(self):
-        # Grupo System: la cuarta solapa. Games existe siempre desde que el
-        # Buscaminas viene en la imagen; el escenario sigue exigiendo antes
-        # de este escenario es Doom, pero por otro motivo -- sin un programa
-        # externo instalado la lista de desinstalables sale vacia.
-        self.launch(0, groups=3)
+        self.run("appwiz")
 
     def open_system_properties(self):
-        self.launch(1, groups=3)
+        self.run("aboutapp")
 
-    def launch_sibling(self, steps):
-        """Lanza otro icono del grupo en el que el launcher ya quedo parado.
-
-        `launch()` solo sirve para el PRIMER lanzamiento de una sesion: cuenta
-        solapas desde la primera, y el launcher se queda donde lo dejaron. Para
-        abrir una segunda ventana hay que moverse desde donde esta, no desde el
-        principio -- contar solapas de nuevo termina en otro grupo.
-        """
-        for _ in range(steps):
-            self.qmp.tap("right", pause=0.4)
-        self.qmp.tap("ret")
-        time.sleep(25)
+    def open_task_manager(self):
+        self.run("taskmgr")
 
 
 # Paleta de sxgui, para leer los pixeles con el mismo vocabulario con el que se
@@ -778,47 +793,49 @@ def scenario_files(s):
     s.shot("files-disk")
 
 
-def scenario_shell(s):
-    """Terminal: los tres repintados que hace, uno por captura.
-
-    El prompt se repinta por cada tecla, la salida de un comando entra por el
-    sink y empuja el historial, y una salida larga lo hace desbordar. Los tres
-    caminos dibujan recortados contra la banda sucia, asi que un error de clip
-    deja residuos o texto faltante que se ve directo en la captura.
-    """
-    s.open_shell()
-    s.shot("shell-abierta")
-    s.qmp.type_text("help")
+def scenario_console(s):
+    """Command Prompt: opened with its hotkey, a builtin, a program's output,
+    the history, scrolling past a screen, and Ctrl+C on a program that would
+    never end."""
+    s.open_console()
+    s.shot("console-open")
+    s.qmp.type_line("help")
     time.sleep(1.0)
-    s.shot("shell-tipeando")
+    s.shot("console-typing")
     s.qmp.tap("ret", pause=3.0)
-    s.shot("shell-salida")
-    # Un segundo `help` pasa de largo las lineas visibles: fuerza el descarte
-    # por el anillo del historial y el repintado del area de contenido entera.
-    s.qmp.type_text("help")
+    s.shot("console-help")
+    s.qmp.type_line("ls /bin")
     s.qmp.tap("ret", pause=4.0)
-    s.shot("shell-scroll")
+    s.shot("console-ls")
+    s.qmp.tap("up", pause=0.8)
+    s.qmp.tap("up", pause=0.8)
+    s.shot("console-history")
+    s.qmp.tap("esc", pause=0.5)
+    s.qmp.tap("pgup", pause=1.0)
+    s.shot("console-scrolled")
+    s.qmp.type_line("ticker A 1000 300")
+    s.qmp.tap("ret", pause=4.0)
+    s.shot("console-ticker")
+    s.qmp.key("ctrl", True)
+    time.sleep(0.1)
+    s.qmp.tap("c")
+    s.qmp.key("ctrl", False)
+    time.sleep(3.0)
+    s.shot("console-interrupted")
 
 
 def scenario_system(s):
-    """Propiedades del sistema y administrador de tareas, sus dos pantallas.
+    """System Properties and Task Manager, two pages of each.
 
-    Las dos viven en el grupo System del launcher, que con Doom instalado es la
-    cuarta solapa -- la misma precondicion que 'appwiz', y por el mismo motivo:
-    la cantidad de grupos depende de lo que haya instalado.
+    Both are opened by name through the console. The pages are walked by
+    keyboard, the only way that does not depend on where the WM put the
+    window: in System Properties the focus starts on the tab control, so the
+    arrow is enough; in Task Manager it starts on the process list and goes up
+    to the tabs with SHIFT+TAB.
 
-    Se navega por teclado porque es lo unico que no depende de donde el WM puso
-    la ventana. En Propiedades el foco arranca en el control de pestanias, asi
-    que la flecha alcanza; en el administrador arranca en la lista de procesos
-    y se sube a las pestanias con SHIFT+TAB.
-
-    La segunda ventana NO se abre con launch(): despues del primer lanzamiento
-    el launcher se quedo en el grupo System, y volver a contar solapas desde la
-    primera caeria en otro grupo.
-
-    NO se confirma el fin de un proceso: este harness saca fotos. Se abre el
-    dialogo para ver la advertencia y se cancela con ESC, que ademas es lo que
-    hace el boton por defecto.
+    No process is ever ended: this harness takes pictures. The dialog is
+    opened to see the warning and cancelled with ESC, which is also what its
+    default button does.
     """
     s.open_system_properties()
     s.shot("system-general")
@@ -826,9 +843,7 @@ def scenario_system(s):
     s.shot("system-hardware")
     s.qmp.tap("esc", pause=6.0)
 
-    # El launcher quedo en System con la seleccion en Propiedades del sistema:
-    # el administrador de tareas es el que sigue.
-    s.launch_sibling(1)
+    s.open_task_manager()
     s.shot("taskmgr-processes")
     # De la lista al control de pestanias con SHIFT+TAB, que va al widget
     # ANTERIOR. Contar TABs hacia adelante no sirve: el boton End Process se
@@ -927,8 +942,9 @@ def scenario_kbdlayout(s):
 def scenario_taskbar(s):
     """Taskbar: real clicks, with pixel VERIFICATION.
 
-    The buttons keep a stable order by slot, so 0 is Program Manager (opened
-    first, from the Start menu) and 1 is Notepad. The strip is at the bottom,
+    The buttons keep a stable order by slot, so 0 is Calculator (opened
+    first) and 1 is Notepad, both through the console, which has closed by
+    the time either is captured. The strip is at the bottom,
     window buttons are 160 wide from x=68 (after the 64-wide Start button) and
     the layout indicator sits at the far right.
 
@@ -938,10 +954,10 @@ def scenario_taskbar(s):
     is active, so every check proves the whole chain: click, request to the WM,
     state change, list republication and repaint.
     """
-    s.open_progman()
-    image = s.shot("progman-only")
-    expect_taskbar_present(image, "Program Manager only")
-    expect_button(image, 0, True, "Program Manager only")
+    s.open_calc()
+    image = s.shot("calc-only")
+    expect_taskbar_present(image, "Calculator only")
+    expect_button(image, 0, True, "Calculator only")
 
     s.open_notepad()
     image = s.shot("dos-ventanas")
@@ -968,7 +984,7 @@ def scenario_taskbar(s):
     )
 
 
-    # Click sobre el boton de Program Manager: lo activa.
+    # A click on Calculator's button activates it.
     x, y, w, h = button_rect(image, 0)
     s.qmp.move_to(x + w // 2, y + h // 2)
     s.shot("cursor-sobre-boton")
@@ -1159,7 +1175,7 @@ def scenario_bench(s):
     Las teclas van sin la pausa de tap(): con 50 ms entre bajar y subir el
     techo serian 20 frames por segundo impuestos por el harness.
     """
-    s.launch(1, groups=1)            # Diagnostics -> Gfx Demo
+    s.run("gfxdemo")
     start = time.time()
     deadline = start + 20.0
     direction = "right"
@@ -1193,7 +1209,7 @@ def scenario_saturate(s):
     La prueba de que se salio del regimen limitado por la entrada no es esa
     cifra sino la ocupacion de windowd en la linea de stats.
     """
-    s.launch(1, groups=1)            # Diagnostics -> Gfx Demo
+    s.run("gfxdemo")
     start = time.time()
     deadline = start + 20.0
     direction = "right"
@@ -1287,7 +1303,7 @@ def scenario_wheel(s):
     direcciones, el signo, y que no se pierde ni se duplica ningun tick -- un
     tick de mas o de menos deja la lista corrida y los pixeles no coinciden.
     """
-    s.launch(4, groups=1)            # Diagnostics -> Widgets
+    s.run("widgetsdemo")
     image = s.shot("wheel-ventana")
     area = find_list_area(image)
     print("  lista en", area)
@@ -1651,15 +1667,9 @@ def scenario_gears(s):
     Tres capturas: girando, pausada y rotada, porque las flechas mueven la
     camara y ahi es donde se ve si la silueta se arma bien desde otro angulo.
     """
-    # El lanzamiento va desarmado y no por s.launch() para poder sacar una
-    # captura del launcher ANTES de entrar: ahi se ve la entrada del catalogo
-    # con su icono, que es lo unico que prueba que el .sxres llego entero.
-    # Gears es el primero de Diagnostics por orden alfabetico, asi que no hay
-    # flechas de por medio.
-    s.qmp.tap("tab", pause=0.6)      # Main -> Diagnostics
-    s.shot("gears-launcher")
-    s.qmp.tap("ret")
-    time.sleep(25)
+    # Its .sxres shows on the window it opens: the caption and the taskbar
+    # button carry the icon and the name the manifest declares.
+    s.run("gears")
     time.sleep(3.0)
     s.shot("gears-girando")
     s.qmp.tap("s")                   # pausa: la captura queda estable
@@ -1681,7 +1691,7 @@ def scenario_spin(s):
     bloquea hasta que el compositor consumio el frame anterior, asi que los
     fps son el techo del camino de display y nada mas.
     """
-    s.launch(1, groups=1)            # Diagnostics -> Gfx Demo
+    s.run("gfxdemo")
     s.qmp.tap("s")                   # modo automatico: encendido
     time.sleep(20.0)
     s.qmp.tap("s")                   # apagado: la sesion vuelve a quedar quieta
@@ -1891,7 +1901,7 @@ SCENARIOS = {
     "mines": scenario_mines,
     "paint": scenario_paint,
     "files": scenario_files,
-    "shell": scenario_shell,
+    "console": scenario_console,
     "appwiz": scenario_appwiz,
     "system": scenario_system,
     "taskbar": scenario_taskbar,

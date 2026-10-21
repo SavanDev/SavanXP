@@ -1,8 +1,9 @@
 # Command Prompt (`/bin/console`)
 
-> Status: **design 2026-10-21.** The Command Prompt is the first application
-> written against SUN ([SUN.md](../userland/SUN.md)). It replaces the POSIX
-> `shellapp`, whose window could not take a key while a command ran.
+> Status: **built 2026-10-21.** The Command Prompt is the first application
+> written against SUN ([SUN.md](../userland/SUN.md)), in `system/console`. It
+> replaces the POSIX `shellapp`, whose window could not take a key while a
+> command ran.
 
 The Command Prompt looks and behaves like the console of Windows 2000: light
 grey on black, an 80-column screen buffer with scrollback, the line editing of
@@ -84,6 +85,20 @@ Fd 3 of `sh` carries text lines, one request each:
 The console drains the output pipe before it acts on a control line, so a
 `cls` never overtakes output written before it.
 
+## Output
+
+Bytes from the output pipe are UTF-8, drawn with the console face. `\n`,
+`\r`, `\b` and `\t` (to the next multiple of 8) do what they do on a
+terminal, and a line wraps at column 80 when the next character arrives, so a
+line of exactly 80 characters followed by `\n` leaves no blank line, as in
+Windows. There are no colours yet. Escape sequences are skipped rather than
+printed (`ESC [ ... final`, `ESC ] ... BEL`), and `ESC [ 2 J` clears the
+buffer, so a program written for a VT terminal does not leave garbage.
+
+When output arrives while a line is being edited, the echo steps aside, the
+output lands where the line was being typed, and the line is echoed again
+after it.
+
 ## Ctrl+C
 
 The kernel delivers no signals (Isolation D in
@@ -124,8 +139,10 @@ end of input did not exist.
   the Windows 2000 defaults.
 - Cursor: the small underscore that blinks every 500 ms; a block in overwrite
   mode.
-- The title bar says `Command Prompt`; the WM protocol has no runtime title
-  yet, so the window cannot show the running command the way Windows does.
+- The title bar says `Command Prompt`, and `Command Prompt - <program>` while
+  a foreground job runs, as Windows names the running program. The name comes
+  from `sxn_process_query`; the title from `sxnwm_set_title`, the icon and
+  accent from the resources compiled in.
 
 ## Opening it
 
@@ -144,6 +161,10 @@ name. It broke whenever an app was added or renamed.
 Now `Session.run(command)` in `tools/shoot_session.py` presses Ctrl+Alt+T,
 waits for the console, types `start <program>; exit` and Enter. The console
 closes, the program opens with the focus, and no other window stays behind.
+`taskbar-smoke` does the same from `tools/taskbar_smoke.py`. Typing goes
+through `Qmp.type_line`, which knows where the guest's default ES layout puts
+`;`, `/` and the rest. `shoot.sh --scenario console` exercises the console
+itself: a builtin, a long listing, the history, scrolling and Ctrl+C.
 The program's parent is a shell that already exited, so it is re-parented to
 `init` like any orphan; nothing in `windowd` depends on who started a normal
 window ([DESKTOP_ARCHITECTURE.md](DESKTOP_ARCHITECTURE.md#who-is-the-shell-decided-by-parentage)
