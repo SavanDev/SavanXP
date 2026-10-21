@@ -357,6 +357,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **`waitpid` returns to the parent that is waiting, not to whoever waits first.** A process in
+  `waitpid(-1)` (`init` and `sessiond` always are) took any process's exiting child, so a shell
+  waiting for its command in the graphical session waited forever.
+
 - **Window titles are sharp.** RetroSans was baked at 18px, off its 17px pixel grid, so over a
   third of every caption's pixels came out grey.
 

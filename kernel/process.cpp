@@ -552,12 +552,19 @@ process::Process* create_idle_process() {
     return proc;
 }
 
-process::Process* find_waiting_parent_for(uint32_t child_pid) {
+// The child's own parent, if it is blocked in a waitpid that this child
+// satisfies. Only the parent: a waitpid(-1) somewhere else (init and sessiond
+// sit in one all the time) must not take a child that is not theirs, or the
+// real parent waits forever for a pid that was reaped under it.
+process::Process* find_waiting_parent_for(const process::Process& child) {
     for (process::Process& proc : g_processes) {
         if (proc.state != process::State::blocked_wait || proc.wait_reason != process::WaitReason::child) {
             continue;
         }
-        if (proc.waiting_for_pid == process::kWaitAnyPid || proc.waiting_for_pid == child_pid) {
+        if (proc.pid != child.parent_pid) {
+            continue;
+        }
+        if (proc.waiting_for_pid == process::kWaitAnyPid || proc.waiting_for_pid == child.pid) {
             return &proc;
         }
     }
@@ -677,7 +684,7 @@ size_t pipe_copy_out(process::Process& proc, process::Pipe& pipe, uint64_t user_
 
 
 void wake_waiting_parent(process::Process& child) {
-    process::Process* parent = find_waiting_parent_for(child.pid);
+    process::Process* parent = find_waiting_parent_for(child);
     if (parent == nullptr) {
         if (child.orphaned) {
             reap_process(child);
