@@ -12,7 +12,9 @@
  * no cascades and no keyboard -- mouse only. It closes when it launches a
  * program, when the Start button is clicked again, or on a press outside it
  * (windowd asks, the desktop closes it). What does not fit scrolls with the
- * wheel. The real Yes powers the VM off and is not exercised in automation.
+ * wheel, or, as in Windows 98, by resting the pointer on the arrow strips the
+ * list grows at its top and bottom when it overflows. The real Yes powers the
+ * VM off and is not exercised in automation.
  */
 
 #define STARTMENU_WIDTH 232
@@ -27,6 +29,14 @@
 #define STARTMENU_FOOTER_GAP 6
 #define STARTMENU_FOOTER_HEIGHT (STARTMENU_FOOTER_GAP + 1 + STARTMENU_FOOTER_ROWS * STARTMENU_ROW_HEIGHT)
 #define STARTMENU_MAX_ROWS (PROGMAN_MAX_GROUPS + PROGMAN_MAX_ITEMS)
+/* The arrow strips of an overflowing list, and how fast resting on one
+ * scrolls it: 8 pixels every 40 ms, a 24px row in about a tenth of a second. */
+#define STARTMENU_SCROLL_STRIP_HEIGHT 12
+#define STARTMENU_SCROLL_STEP 8
+#define STARTMENU_SCROLL_INTERVAL_MS 40ul
+#define STARTMENU_ARROW_NONE (-1)
+#define STARTMENU_ARROW_UP 0
+#define STARTMENU_ARROW_DOWN 1
 
 #define STARTMENU_ROW_HEADER 0
 #define STARTMENU_ROW_ITEM 1
@@ -101,6 +111,77 @@ static void startmenu_view(const struct savanxp_fb_info *info, int *x, int *y, i
     if (height != 0)
     {
         *height = (int)info->height - (STARTMENU_MARGIN * 2) - STARTMENU_FOOTER_HEIGHT;
+    }
+}
+
+/* The part of the view the rows scroll in. When the catalog does not fit, the
+ * view gives up a strip at the top and one at the bottom for the arrows. */
+static int startmenu_overflows(int view_height)
+{
+    return startmenu_content_height() > view_height;
+}
+
+static void startmenu_list(int view_y, int view_height, int *list_y, int *list_height)
+{
+    int strip = startmenu_overflows(view_height) ? STARTMENU_SCROLL_STRIP_HEIGHT : 0;
+
+    *list_y = view_y + strip;
+    *list_height = view_height - strip * 2;
+}
+
+static struct sx_rect startmenu_arrow_rect(int view_x, int view_y, int view_width, int view_height, int arrow)
+{
+    int y = arrow == STARTMENU_ARROW_UP ? view_y : view_y + view_height - STARTMENU_SCROLL_STRIP_HEIGHT;
+
+    return sx_rect_make(view_x, y, view_width, STARTMENU_SCROLL_STRIP_HEIGHT);
+}
+
+/* The arrow strip under the point, or STARTMENU_ARROW_NONE (also when the list
+ * fits and there are no strips). */
+static int startmenu_arrow_hit(int x, int y, int view_x, int view_y, int view_width, int view_height)
+{
+    int arrow;
+
+    if (!startmenu_overflows(view_height))
+    {
+        return STARTMENU_ARROW_NONE;
+    }
+    for (arrow = STARTMENU_ARROW_UP; arrow <= STARTMENU_ARROW_DOWN; ++arrow)
+    {
+        struct sx_rect rect = startmenu_arrow_rect(view_x, view_y, view_width, view_height, arrow);
+
+        if (x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height)
+        {
+            return arrow;
+        }
+    }
+    return STARTMENU_ARROW_NONE;
+}
+
+static void startmenu_draw_up_arrow(struct sx_painter *painter, struct sx_rect rect, uint32_t colour)
+{
+    sxchrome_draw_arrow(painter, rect, SXCHROME_ARROW_UP, colour);
+}
+
+static void startmenu_draw_down_arrow(struct sx_painter *painter, struct sx_rect rect, uint32_t colour)
+{
+    sxchrome_draw_arrow(painter, rect, SXCHROME_ARROW_DOWN, colour);
+}
+
+/* An arrow that can still scroll is black; one at its end of the list is
+ * etched grey, the way Windows greys a menu arrow that has nothing left. */
+static void startmenu_paint_arrow(struct sx_painter *painter, struct sx_rect rect, int arrow, int enabled)
+{
+    sxchrome_glyph_fn draw = arrow == STARTMENU_ARROW_UP ? startmenu_draw_up_arrow : startmenu_draw_down_arrow;
+
+    sx_painter_fill_rect(painter, rect, SXGUI_COLOR_FACE);
+    if (enabled)
+    {
+        draw(painter, rect, SXGUI_COLOR_TEXT);
+    }
+    else
+    {
+        sxchrome_draw_glyph_disabled(painter, rect, draw);
     }
 }
 
@@ -281,6 +362,9 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
     struct sx_painter painter;
     struct sx_rect frame;
     struct sx_rect view;
+    struct sx_rect list;
+    int list_y;
+    int list_height;
     int action;
     int index;
 
@@ -301,7 +385,22 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         frame.y + STARTMENU_MARGIN,
         frame.width - (STARTMENU_MARGIN * 2) - STARTMENU_STRIP_WIDTH,
         frame.height - (STARTMENU_MARGIN * 2) - STARTMENU_FOOTER_HEIGHT);
-    if (!sx_painter_push_clip(&painter, view))
+    startmenu_list(view.y, view.height, &list_y, &list_height);
+    list = sx_rect_make(view.x, list_y, view.width, list_height);
+    if (startmenu_overflows(view.height))
+    {
+        startmenu_paint_arrow(
+            &painter,
+            startmenu_arrow_rect(view.x, view.y, view.width, view.height, STARTMENU_ARROW_UP),
+            STARTMENU_ARROW_UP,
+            scroll > 0);
+        startmenu_paint_arrow(
+            &painter,
+            startmenu_arrow_rect(view.x, view.y, view.width, view.height, STARTMENU_ARROW_DOWN),
+            STARTMENU_ARROW_DOWN,
+            scroll < startmenu_max_scroll(list_height));
+    }
+    if (!sx_painter_push_clip(&painter, list))
     {
         return;
     }
@@ -319,11 +418,11 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
         {
             const struct startmenu_row *row = &g_rows[index];
             int height = startmenu_row_height(row);
-            int y = view.y + startmenu_row_top(index) - scroll;
-            struct sx_rect rect = sx_rect_make(view.x, y, view.width, height);
+            int y = list.y + startmenu_row_top(index) - scroll;
+            struct sx_rect rect = sx_rect_make(list.x, y, list.width, height);
 
-            /* Fila entera fuera del area util: ni se dibuja. */
-            if (y + height <= view.y || y >= view.y + view.height)
+            /* A row entirely outside the list is not drawn at all. */
+            if (y + height <= list.y || y >= list.y + list.height)
             {
                 continue;
             }
@@ -428,7 +527,13 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
 static int g_view_x = 0;
 static int g_view_y = 0;
 static int g_view_height = 0;
+/* Where the rows scroll: the view minus the arrow strips, if any. */
+static int g_list_y = 0;
+static int g_list_height = 0;
 static int g_scroll = 0;
+/* The arrow strip the pointer rests on, and when it scrolls next. */
+static int g_hot_arrow = STARTMENU_ARROW_NONE;
+static unsigned long g_next_scroll_ms = 0;
 static int g_armed = -1;
 static int g_hot_row = -1;
 static int g_hot_footer = -1;
@@ -445,7 +550,10 @@ static int startmenu_open(void)
     info.width = STARTMENU_WIDTH;
     info.height = STARTMENU_HEIGHT;
     startmenu_view(&info, &g_view_x, &g_view_y, &g_view_height);
+    startmenu_list(g_view_y, g_view_height, &g_list_y, &g_list_height);
     g_scroll = 0;
+    g_hot_arrow = STARTMENU_ARROW_NONE;
+    g_next_scroll_ms = 0;
     g_armed = -1;
     g_hot_row = -1;
     g_hot_footer = -1;
@@ -465,11 +573,18 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
     uint32_t up = g_last_buttons & ~pointer->buttons;
     int view_bottom = g_view_y + g_view_height;
     int view_width = (int)gfx->info.width - g_view_x - STARTMENU_MARGIN;
-    int row = startmenu_hit(pointer->x, pointer->y, g_scroll, g_view_x, g_view_y, g_view_height);
+    int row = startmenu_hit(pointer->x, pointer->y, g_scroll, g_view_x, g_list_y, g_list_height);
     int footer = startmenu_footer_hit(pointer->x, pointer->y, g_view_x, view_bottom, view_width);
+    int arrow = startmenu_arrow_hit(pointer->x, pointer->y, g_view_x, g_view_y, view_width, g_view_height);
     uint32_t actions = DESKTOP_ACTION_NONE;
 
     g_last_buttons = pointer->buttons;
+    if (arrow != g_hot_arrow)
+    {
+        /* Arriving on a strip scrolls at once; startmenu_tick keeps going. */
+        g_hot_arrow = arrow;
+        g_next_scroll_ms = 0;
+    }
     /* Only program rows can be pressed; headers only light up on hover. */
     if (row >= 0 && row < g_row_count && g_rows[row].kind != STARTMENU_ROW_ITEM)
     {
@@ -483,11 +598,11 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
         {
             g_scroll = 0;
         }
-        if (g_scroll > startmenu_max_scroll(g_view_height))
+        if (g_scroll > startmenu_max_scroll(g_list_height))
         {
-            g_scroll = startmenu_max_scroll(g_view_height);
+            g_scroll = startmenu_max_scroll(g_list_height);
         }
-        row = startmenu_hit(pointer->x, pointer->y, g_scroll, g_view_x, g_view_y, g_view_height);
+        row = startmenu_hit(pointer->x, pointer->y, g_scroll, g_view_x, g_list_y, g_list_height);
         if (row >= 0 && row < g_row_count && g_rows[row].kind != STARTMENU_ROW_ITEM)
         {
             row = -1;
@@ -548,6 +663,49 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
     return actions;
 }
 
+/* Resting on an arrow strip scrolls without any pointer event arriving, so the
+ * step is driven from the desktop loop. It stops at the end of the list. */
+static uint32_t startmenu_tick(void)
+{
+    unsigned long now;
+    int target;
+    int limit;
+
+    if (g_hot_arrow == STARTMENU_ARROW_NONE)
+    {
+        return DESKTOP_ACTION_NONE;
+    }
+    now = uptime_ms();
+    if (now < g_next_scroll_ms)
+    {
+        return DESKTOP_ACTION_NONE;
+    }
+    limit = startmenu_max_scroll(g_list_height);
+    target = g_scroll + (g_hot_arrow == STARTMENU_ARROW_UP ? -STARTMENU_SCROLL_STEP : STARTMENU_SCROLL_STEP);
+    if (target < 0)
+    {
+        target = 0;
+    }
+    if (target > limit)
+    {
+        target = limit;
+    }
+    if (target == g_scroll)
+    {
+        return DESKTOP_ACTION_NONE;
+    }
+    g_scroll = target;
+    g_next_scroll_ms = now + STARTMENU_SCROLL_INTERVAL_MS;
+    return DESKTOP_ACTION_REPAINT;
+}
+
+/* The pointer went to the background or the taskbar: stop scrolling. */
+static uint32_t startmenu_pointer_left(void)
+{
+    g_hot_arrow = STARTMENU_ARROW_NONE;
+    return DESKTOP_ACTION_NONE;
+}
+
 static void startmenu_paint_window(struct savanxp_gfx_context *gfx)
 {
     startmenu_paint(gfx, g_hot_row, g_hot_footer, g_armed, g_scroll);
@@ -560,7 +718,8 @@ const struct desktop_popup_ops desktop_startmenu_ops = {
     startmenu_open,
     startmenu_close,
     startmenu_pointer,
-    0,
+    startmenu_tick,
     startmenu_paint_window,
     0,
+    startmenu_pointer_left,
 };

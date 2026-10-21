@@ -71,6 +71,11 @@ struct desktop_popup_ops
     /* 1: centred on the screen and not dismissed by a press elsewhere (a
      * dialog); 0: anchored to the taskbar, closed by a press elsewhere. */
     int centered;
+    /* The pointer is over the desktop background or the taskbar now, so it is
+     * no longer over this popup. windowd sends no such event: there is always
+     * a window under the pointer, so the popup is simply not told any more.
+     * Moving onto an application window is not reported. May be 0. */
+    uint32_t (*pointer_left)(void);
 };
 
 extern const struct desktop_popup_ops desktop_startmenu_ops;

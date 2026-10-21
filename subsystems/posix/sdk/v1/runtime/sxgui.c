@@ -183,33 +183,6 @@ static void sxgui_scroll_metrics_init(
     }
 }
 
-/* direction: 0 = up, 1 = down, 2 = left, 3 = right */
-static void sxgui_paint_arrow(struct sx_painter *painter, struct sx_rect box, int direction, uint32_t colour)
-{
-    int rows = 4;
-    int row;
-
-    for (row = 0; row < rows; ++row)
-    {
-        int width = row * 2 + 1;
-        switch (direction)
-        {
-        case 0:
-            sx_painter_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + row, width, colour);
-            break;
-        case 1:
-            sx_painter_hline(painter, box.x + (box.width - width) / 2, box.y + (box.height - rows) / 2 + rows - 1 - row, width, colour);
-            break;
-        case 2:
-            sx_painter_vline(painter, box.x + (box.width - rows) / 2 + row, box.y + (box.height - width) / 2, width, colour);
-            break;
-        default:
-            sx_painter_vline(painter, box.x + (box.width - rows) / 2 + rows - 1 - row, box.y + (box.height - width) / 2, width, colour);
-            break;
-        }
-    }
-}
-
 static void sxgui_paint_scroll_metrics(struct sx_painter *painter, const struct sxgui_scroll_metrics *metrics, int enabled)
 {
     uint32_t arrow_colour = enabled ? SXGUI_COLOR_TEXT : SXGUI_COLOR_DISABLED_TEXT;
@@ -222,13 +195,13 @@ static void sxgui_paint_scroll_metrics(struct sx_painter *painter, const struct 
     sxgui_draw_raised(painter, metrics->button_forward);
     if (metrics->horizontal)
     {
-        sxgui_paint_arrow(painter, metrics->button_back, 2, arrow_colour);
-        sxgui_paint_arrow(painter, metrics->button_forward, 3, arrow_colour);
+        sxchrome_draw_arrow(painter, metrics->button_back, SXCHROME_ARROW_LEFT, arrow_colour);
+        sxchrome_draw_arrow(painter, metrics->button_forward, SXCHROME_ARROW_RIGHT, arrow_colour);
     }
     else
     {
-        sxgui_paint_arrow(painter, metrics->button_back, 0, arrow_colour);
-        sxgui_paint_arrow(painter, metrics->button_forward, 1, arrow_colour);
+        sxchrome_draw_arrow(painter, metrics->button_back, SXCHROME_ARROW_UP, arrow_colour);
+        sxchrome_draw_arrow(painter, metrics->button_forward, SXCHROME_ARROW_DOWN, arrow_colour);
     }
 
     if (metrics->range_max > metrics->range_min)
@@ -1223,7 +1196,7 @@ static void sxgui_paint_combobox(struct sx_painter *painter, const struct sxgui_
     {
         sxgui_draw_raised(painter, button);
     }
-    sxgui_paint_arrow(painter, button, 1, colour);
+    sxchrome_draw_arrow(painter, button, SXCHROME_ARROW_DOWN, colour);
 }
 
 /* Dropdown overlay; painted after every widget so it stays on top. */

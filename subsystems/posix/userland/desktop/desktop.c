@@ -320,6 +320,24 @@ static void try_open_taskbar(void)
     g_taskbar_repaint = 1;
 }
 
+/* The pointer reached the background or the taskbar: tell the open popups it
+ * left them (desktop_popup_ops.pointer_left). */
+static void notify_pointer_left_popups(void)
+{
+    struct desktop_popup_slot *slots[3] = {&g_start_menu, &g_tray, &g_hung};
+    int index;
+
+    for (index = 0; index < 3; ++index)
+    {
+        struct desktop_popup_slot *slot = slots[index];
+
+        if (slot->open && slot->ops != 0 && slot->ops->pointer_left != 0)
+        {
+            apply_actions(slot->ops->pointer_left(), slot);
+        }
+    }
+}
+
 /* Background: resize, and a press on it closes the popups. windowd only asks
  * a popup to close for a press on another process; the background is ours. */
 static void service_background(void)
@@ -348,6 +366,10 @@ static void service_background(void)
         {
             desktop_close_popups();
         }
+        else
+        {
+            notify_pointer_left_popups();
+        }
         g_background_buttons = pointer.buttons;
     }
 }
@@ -371,6 +393,7 @@ static void service_taskbar(void)
     }
     while (gfx_poll_window_pointer(&g_taskbar, &pointer) > 0)
     {
+        notify_pointer_left_popups();
         if ((desktop_taskbar_pointer(&g_taskbar, &pointer) & DESKTOP_ACTION_REPAINT) != 0)
         {
             g_taskbar_repaint = 1;

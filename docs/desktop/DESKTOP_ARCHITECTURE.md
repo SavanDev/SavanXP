@@ -120,6 +120,14 @@ One process, several surfaces:
   [OWNED_WINDOWS.md](./OWNED_WINDOWS.md) already lets one process hold several
   surfaces over a single event channel.
 
+A popup is not told when the pointer leaves it: `windowd` only routes a last
+event to the previous window when the pointer lands on no window at all, and
+the background is always there. Because the background and the taskbar are
+this same process, a pointer event on either is the leave signal, passed on
+through `desktop_popup_ops.pointer_left`. Moving straight onto an application
+window is still not reported, so anything a popup keeps doing on hover (the
+Start menu's arrow strips scrolling) must stop on its own at a natural end.
+
 It replaces six processes (`shellui`, `taskbar`, `startmenu`, `volumepopup`,
 `clockpopup`, `kbdlayoutpopup`). The popups open without spawning a process.
 The launch flags leave the ABI, and the descriptor budget recovers what those

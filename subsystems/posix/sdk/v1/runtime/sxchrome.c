@@ -115,3 +115,30 @@ void sxchrome_draw_glyph_disabled(struct sx_painter *painter, struct sx_rect rec
     draw(painter, sx_rect_translate(rect, 1, 1), SXCHROME_COLOR_LIGHT);
     draw(painter, rect, SXCHROME_COLOR_DISABLED_TEXT);
 }
+
+void sxchrome_draw_arrow(struct sx_painter *painter, struct sx_rect rect, enum sxchrome_arrow direction, uint32_t colour)
+{
+    const int rows = 4;
+    int row;
+
+    for (row = 0; row < rows; ++row)
+    {
+        int width = row * 2 + 1;
+
+        switch (direction)
+        {
+        case SXCHROME_ARROW_UP:
+            sx_painter_hline(painter, rect.x + (rect.width - width) / 2, rect.y + (rect.height - rows) / 2 + row, width, colour);
+            break;
+        case SXCHROME_ARROW_DOWN:
+            sx_painter_hline(painter, rect.x + (rect.width - width) / 2, rect.y + (rect.height - rows) / 2 + rows - 1 - row, width, colour);
+            break;
+        case SXCHROME_ARROW_LEFT:
+            sx_painter_vline(painter, rect.x + (rect.width - rows) / 2 + row, rect.y + (rect.height - width) / 2, width, colour);
+            break;
+        default:
+            sx_painter_vline(painter, rect.x + (rect.width - rows) / 2 + rows - 1 - row, rect.y + (rect.height - width) / 2, width, colour);
+            break;
+        }
+    }
+}

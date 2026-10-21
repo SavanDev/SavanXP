@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The Start menu shows ▲/▼ arrows when its list does not fit.** As in Windows 98, resting the
+  pointer on a strip scrolls the list, and the arrow at an end is greyed. The scroll bar arrow is
+  now shared as `sxchrome_draw_arrow`.
+
 - **Native programs have a heap.** `system/runtime/sxn_runtime.c`, linked into every native target
   (CMake `NATIVE` and `build-user.sh --native`), maps `malloc`'s arenas through SXN, so `malloc`
   works past the 256 KiB bootstrap arena. See `docs/userland/NATIVE_HEAP.md`.

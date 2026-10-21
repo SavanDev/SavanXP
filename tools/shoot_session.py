@@ -370,6 +370,11 @@ TASKBAR_BUTTON_GAP = 2
 STARTMENU_WIDTH = 232
 STARTMENU_HEIGHT = 512
 STARTMENU_STRIP_WIDTH = 24
+# desktop_startmenu.c: the view is the menu minus its 2px margins and the
+# 55px footer; when the catalog overflows it, a 12px arrow strip sits at its
+# top and bottom, each arrow 7px wide centred in the strip.
+STARTMENU_VIEW_HEIGHT = STARTMENU_HEIGHT - 4 - 55
+STARTMENU_SCROLL_STRIP_HEIGHT = 12
 
 
 class Failure(Exception):
@@ -955,6 +960,47 @@ def wait_menu_open(s, stem="menu-abierto"):
     return image
 
 
+def startmenu_arrow_points(image):
+    """Centre of the 7px base row of the up and down arrows.
+
+    The arrow is 4 rows tall, centred in its 12px strip: the up arrow's base is
+    its last row (strip top + 7), the down arrow's its first (strip top + 4).
+    """
+    mx, my, mw, mh = startmenu_rect(image)
+    view_x = mx + 2 + STARTMENU_STRIP_WIDTH
+    view_width = STARTMENU_WIDTH - 4 - STARTMENU_STRIP_WIDTH
+    centre_x = view_x + (view_width - 7) // 2 + 3
+    up_strip_y = my + 2
+    down_strip_y = my + 2 + STARTMENU_VIEW_HEIGHT - STARTMENU_SCROLL_STRIP_HEIGHT
+    return (centre_x, up_strip_y + 7), (centre_x, down_strip_y + 4)
+
+
+def check_startmenu_arrows(s, opened):
+    """The arrow strips of a Start menu whose catalog does not fit.
+
+    Freshly opened, the list is at the top: the up arrow is etched grey and the
+    down arrow black. Resting the pointer on the down strip scrolls on its own
+    (no further pointer events arrive) until the end, where the two swap. A
+    catalog that fits has no strips, and then there is nothing to check.
+    """
+    up, down = startmenu_arrow_points(opened)
+    if opened.getpixel(up) == FACE and opened.getpixel(down) == FACE:
+        print("startmenu: the catalog fits, no arrow strips to check")
+        return
+    expect_pixel(opened, up[0], up[1], SHADOW, "menu just opened: the up arrow is greyed")
+    expect_pixel(opened, down[0], down[1], TEXT, "menu just opened: the down arrow is live")
+    # On the strip's left end, so the cursor does not cover the arrow.
+    s.qmp.move_to(down[0] - 90, down[1] + 2)
+    image = None
+    for _ in range(10):
+        time.sleep(1.0)
+        image = s.shot("menu-flecha-abajo")
+        if image.getpixel(down) == SHADOW:
+            break
+    expect_pixel(image, down[0], down[1], SHADOW, "rested on the down arrow: the list reached its end")
+    expect_pixel(image, up[0], up[1], TEXT, "rested on the down arrow: the up arrow is live")
+
+
 def scenario_startmenu(s):
     """Menu Inicio recortado: boton Start, lista plana y toggle.
 
@@ -977,9 +1023,10 @@ def scenario_startmenu(s):
     image = wait_menu_open(s)
     mx, my, mw, mh = startmenu_rect(image)
     expect_pixel(image, mx + 2 + STARTMENU_STRIP_WIDTH + 2, my + 4, FACE, "menu abierto: contenido en cara")
-    # Primera fila de programa (Calculator, primer item de Accessories):
-    # cabecera de 20 + mitad de fila de 24, desde el margen 2.
-    s.qmp.move_to(mx + 100, my + 2 + 20 + 12)
+    # First program row (Calculator, the first Accessories item), below the
+    # 20px header from the 2px margin. A list that overflows puts a 12px arrow
+    # strip above it, so the row is [22,46) or [34,58): y 40 is in both.
+    s.qmp.move_to(mx + 100, my + 40)
     s.qmp.click()
     time.sleep(3.0)
     launched = s.shot("menu-lanzo")
@@ -997,6 +1044,7 @@ def scenario_startmenu(s):
     reopened = wait_menu_open(s, "menu-reabierto")
     rx, ry, rw, rh = startmenu_rect(reopened)
     expect_pixel(reopened, rx + 2 + STARTMENU_STRIP_WIDTH + 2, ry + 4, FACE, "menu reabierto: contenido en cara")
+    check_startmenu_arrows(s, reopened)
     # Confirmacion en dos pasos: click en Shut Down arma ("Yes, shut down"),
     # click en No desarma. El Si real apaga la VM y no se clickea.
     footer_y = ry + 2 + (512 - 4 - 55)

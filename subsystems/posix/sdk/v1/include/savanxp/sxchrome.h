@@ -129,6 +129,22 @@ void sxchrome_draw_text_disabled(struct sx_painter *painter, int x, int y, const
 typedef void (*sxchrome_glyph_fn)(struct sx_painter *painter, struct sx_rect rect, uint32_t colour);
 void sxchrome_draw_glyph_disabled(struct sx_painter *painter, struct sx_rect rect, sxchrome_glyph_fn draw);
 
+/* Which way sxchrome_draw_arrow points. */
+enum sxchrome_arrow
+{
+    SXCHROME_ARROW_UP = 0,
+    SXCHROME_ARROW_DOWN = 1,
+    SXCHROME_ARROW_LEFT = 2,
+    SXCHROME_ARROW_RIGHT = 3,
+};
+
+/*
+ * The small solid triangle of the period: four rows, seven pixels at the
+ * base, centred in `rect`. Scroll bar buttons, combo boxes and the scroll
+ * strips of a menu that does not fit all draw this one, so they match.
+ */
+void sxchrome_draw_arrow(struct sx_painter *painter, struct sx_rect rect, enum sxchrome_arrow direction, uint32_t colour);
+
 #ifdef __cplusplus
 }
 #endif

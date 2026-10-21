@@ -322,4 +322,5 @@ const struct desktop_popup_ops desktop_clock_ops = {
     clock_tick,
     clock_paint,
     0,
+    0,
 };
