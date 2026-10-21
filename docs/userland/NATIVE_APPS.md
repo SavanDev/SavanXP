@@ -1,9 +1,11 @@
-# Native apps (Sx)
+# Native apps (SUN)
 
-How to write a program that speaks the kernel's native API directly,
+How to write a program against SUN, the userland native API
+([SUN.md](SUN.md)), which speaks the kernel's native API (Sx) directly
 with no POSIX in between. POSIX remains the translated subsystem most
-software uses; this document is for the standalone sidecar: demos,
-tests, and future services that want the direct connection.
+software uses; this document is the practical guide: headers, build,
+manifest, launch and debugging. What SUN is, where it is going and
+which Win32 piece each call stands for is in [SUN.md](SUN.md).
 
 ## What "native" means here
 
@@ -18,9 +20,9 @@ tests, and future services that want the direct connection.
 - `main` must never return: the stock `crt0` falls through to a POSIX
   EXIT that is `ENOSYS` for native. Every example ends in `sxn_exit`.
 
-## The three headers
+## The headers
 
-All header-only, no link or tool changes needed:
+The SUN headers, all header-only, no link or tool changes needed:
 
 - `include/sxn/sxn.h` — typed wrappers for every SXN syscall: exit, log,
   spawn, waitpid, events, sections, views, waits, gfx, and handle close and

@@ -39,9 +39,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Userland — `userland/`
 
-- [`SYSTEM_LAYERING.md`](userland/SYSTEM_LAYERING.md) — the language layering: native
-  POSIX SDK applications and the optional managed-app experiment.
-- [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a native Sx program:
+- [`SYSTEM_LAYERING.md`](userland/SYSTEM_LAYERING.md) — the layering: the platform,
+  apps on the POSIX SDK, and when an app may be a SUN program instead.
+- [`SUN.md`](userland/SUN.md) — SUN, the Savan Userland Native API: what it is
+  next to Sx and POSIX, its pieces, the rules that grow it into our own Win32,
+  the Win32 map, and the slices the Command Prompt drives.
+- [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a SUN program:
   headers, connecting a window, manifests, and the worked examples.
 - [`NATIVE_HEAP.md`](userland/NATIVE_HEAP.md) — `malloc` for native programs: the
   allocator's replaceable page source, what a native process has today, the plan.
@@ -68,6 +71,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
   rule that every UI font is 1-bit, and how to change a face.
+- [`CONSOLE.md`](desktop/CONSOLE.md) — the Command Prompt: the console host (SUN)
+  and `sh` as two programs, their handles and control channel, line editing,
+  Ctrl+C without signals, and how the smokes open programs through it.
 - [`PAINT.md`](desktop/PAINT.md) — Paint, the Accessories sketchbook: toolbox
   layout without widgets, the 8 tools, 8-deep undo, BMP/PNG files, and the
   selftest plus visual scenario.

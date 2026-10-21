@@ -14,7 +14,12 @@ app.**
 > `compositord`, `windowd` and `sessiond` are native processes (the SXN API,
 > no POSIX) and live in `system/`, not in `subsystems/posix`
 > ([DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md#native-from-the-start)).
-> Apps stay on the POSIX SDK.
+>
+> **Since 2026-10-21 an app may be a SUN program too**
+> ([SUN.md](SUN.md), rule 5): when SUN already has what it needs, or when the
+> app is the consumer of the slice that adds it. The Command Prompt
+> (`system/console`, [CONSOLE.md](../desktop/CONSOLE.md)) is the first. Every
+> other app stays on the POSIX SDK.
 
 The layering is about *roles*, not languages: the platform (kernel, drivers,
 `compositord`, `windowd`, SXGFX, SXGUI-C) is one thing, and the apps that
@@ -66,7 +71,8 @@ The shape that was fixed in advance is what shipped:
   (`subsystems/posix/kernel/posix_translation.cpp`), not the shape of the
   kernel. The kernel includes no userland header and keeps no POSIX
   per-process state.
-- The **userland native API, Win32-like**, stands beside POSIX, not instead
+- The **userland native API, Win32-like** — named **SUN** (Savan Userland
+  Native, [SUN.md](SUN.md)) — stands beside POSIX, not instead
   of it: header-only `sxn.h` / `sxnwm.h` / `sxnwidgets.h` over the kernel
   native API, proven by `sdk/nativetest`, `sdk/nativedemo` and
   `sdk/nativewidgets`. Nothing existing was rewritten for it to exist, and
@@ -206,7 +212,7 @@ complementary**:
 | Shell / launcher | **desktop + progman** (C) | explorer.exe | SystemUI / Launcher |
 | Apps | **C on the POSIX SDK** | Win32 apps | (native) |
 | Kernel native API | **`sx::` + SXN syscalls** | NT | (native) |
-| Userland native API | **`sxn.h** (process/memory/sync; no toolkit yet) | Win32 (subset) | Java/Kotlin |
+| Userland native API | **SUN**: `sxn.h`, `sxnwm.h` ([SUN.md](SUN.md)) | Win32 (subset) | Java/Kotlin |
 
 The desktop rows describe today. The target is in
 [DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md): `compositord`
