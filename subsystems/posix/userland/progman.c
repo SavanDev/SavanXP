@@ -1361,18 +1361,16 @@ static int progman_selftest(void)
      * archivo cualquiera no serviria -- sin categoria no se lista, y el test no
      * probaria nada.
      */
-    /* La copia es LA operacion cara de este smoke, y se cronometra por eso.
+    /* The copy is THE expensive operation of this smoke, so it is timed.
      *
-     * Medido en esta imagen: 365930 ms para 390664 bytes, o sea ~1 KB/s. Todo lo
-     * demas del smoke --los dos escaneos del catalogo, el rehacerlo, el unlink y el
-     * reescaneo-- suma unos 3 s. No es el escaneo, que era lo que parecía: el
-     * grow-in de un fichero nuevo hace ~5 commits de metadata, cada uno escribe dos
-     * veces la region entera (SXFS_BLOCK_BITMAP_SECTORS + INODE_BITMAP +
-     * INODE_TABLE = 1537 sectores), y la transferencia del dispositivo emulado es
-     * PIO palabra a palabra, 256 outw por sector, con un cache flush por comando.
+     * It once took 365930 ms for 390664 bytes under TCG, when every metadata
+     * commit rewrote the whole 1537-sector metadata region over PIO. Under KVM
+     * it now takes about 5 s on AHCI or IDE, most of it the four host fsyncs
+     * of each of the ~48 commits (one per 8 KiB append); with flushes ignored
+     * it is 0.33 s on AHCI and 2 s on IDE. See docs/fs/SXFS_ROADMAP.md.
      *
-     * El numero se imprime porque sin el esto era un smoke que "no terminaba" y
-     * nadie podia decir donde. */
+     * The number is printed because without it this was a smoke that "did not
+     * finish" and nobody could say where. */
     {
         unsigned long t0 = uptime_ms();
         if (copy_file("/bin/notepad", PROGMAN_FIXTURE_APP) != 0)

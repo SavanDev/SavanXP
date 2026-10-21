@@ -6,6 +6,7 @@
 #include "kernel/ac97.hpp"
 #include "kernel/acpi.hpp"
 #include "kernel/audio.hpp"
+#include "kernel/ahci.hpp"
 #include "kernel/ata.hpp"
 #include "kernel/audio_device.hpp"
 #include "kernel/block.hpp"
@@ -254,16 +255,16 @@ namespace
         console::write("nic: ningun driver reclamo el hardware\n");
     }
     net::initialize();
-    // Almacenamiento: mismo registro de drivers que display y audio, pero aca
-    // los devices de todos COEXISTEN, asi que probe_all corre todos los
-    // enumerate en vez de cortar en el primero. La prioridad define el orden de
-    // los indices: virtio-blk y ATA enumeran antes que el ramdisk (uno de los
-    // dos, nunca los dos a la vez: la configuración de QEMU usa virtio-blk-pci
-    // O isa-ide+ide-hd sobre el mismo disk.img, segun --virtio), asi que un disco
-    // persistente tiene prioridad y en la ISO pura montamos el ramdisk. Cual de
-    // estos devices termina siendo la raiz lo decide fs::mount_any mas abajo,
-    // recorriendolos en este mismo orden.
+    // Storage: the same driver registry as display and audio, except that the
+    // devices of every driver COEXIST, so probe_all runs every enumerate
+    // instead of stopping at the first. Priority fixes the device order:
+    // virtio-blk, AHCI and ATA come before the ramdisk (QEMU attaches disk.img
+    // through exactly one of them: virtio-blk-pci with --virtio, otherwise the
+    // q35 AHCI controller, or isa-ide with SAVANXP_DISK_BUS=ide), so a
+    // persistent disk wins and a pure ISO boot mounts the ramdisk. Which device
+    // becomes the root is decided by fs::mount_any below, in this same order.
     block::register_driver(virtio_blk::driver());
+    block::register_driver(ahci::driver());
     block::register_driver(ata::driver());
     block::register_driver(ramdisk::driver());
     // Ultimo en la fila (prioridad negativa): rebana en devices propios

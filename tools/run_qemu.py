@@ -37,6 +37,9 @@ def find_ovmf(name: str) -> Path | None:
     return None
 
 
+DISK_BUSES = ("ahci", "ide")
+
+
 def build_qemu_args(
     *,
     image_root: Path,
@@ -54,8 +57,16 @@ def build_qemu_args(
     qmp_path: Path | None = None,
     audio_device: str = "auto",
     wav_path: Path | None = None,
+    disk_bus: str | None = None,
 ) -> list[str]:
-    """Build the common QEMU command used by normal and smoke launches."""
+    """Build the common QEMU command used by normal and smoke launches.
+
+    Without --virtio the disk image goes on the q35 AHCI controller (DMA), or
+    on isa-ide (PIO) when disk_bus or SAVANXP_DISK_BUS is "ide".
+    """
+    disk_bus = disk_bus or os.environ.get("SAVANXP_DISK_BUS", "ahci")
+    if disk_bus not in DISK_BUSES:
+        raise SystemExit(f"unknown disk bus {disk_bus!r}; expected one of {', '.join(DISK_BUSES)}")
     args_list = [
         "qemu-system-x86_64",
         "-machine",
@@ -118,15 +129,26 @@ def build_qemu_args(
             "virtio-keyboard-pci",
         ]
     else:
+        if disk_bus == "ide":
+            disk_devices = [
+                "-device",
+                "isa-ide,id=svide",
+                "-device",
+                "ide-hd,drive=svdisk,bus=svide.0",
+            ]
+        else:
+            # Port 1 of the board's AHCI controller; port 0 holds the FAT boot
+            # drive (`-drive file=fat:...` defaults to the first AHCI port).
+            disk_devices = [
+                "-device",
+                "ide-hd,drive=svdisk,bus=ide.1",
+            ]
         args_list += [
             "-device",
             "rtl8139,netdev=net0",
             "-drive",
             drive,
-            "-device",
-            "isa-ide,id=svide",
-            "-device",
-            "ide-hd,drive=svdisk,bus=svide.0",
+            *disk_devices,
             "-device",
             "VGA,edid=on,xres=1280,yres=800",
         ]
@@ -183,6 +205,8 @@ def main() -> int:
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
     parser.add_argument("--smp", type=int, default=1)
     parser.add_argument("--virtio", action="store_true")
+    parser.add_argument("--disk-bus", choices=DISK_BUSES,
+                        help="disk controller without --virtio (default: SAVANXP_DISK_BUS or ahci)")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--qmp-path", type=Path, help="QMP Unix socket path")
@@ -216,6 +240,7 @@ def main() -> int:
         virtio=args.virtio,
         headless=args.headless,
         debug=args.debug,
+        disk_bus=args.disk_bus,
         qmp_path=args.qmp_path,
         monitor_path=args.monitor_path,
         serial_path=args.serial_log,

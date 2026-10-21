@@ -29,6 +29,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SMP_ROADMAP.md`](kernel/SMP_ROADMAP.md) — multi-core startup, scheduler locking,
   and TLB shootdown work.
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
+- [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
+  holds what, how a request runs, and what it measured against PIO.
 - [`REAL_HARDWARE.md`](kernel/REAL_HARDWARE.md) — what stops SavanXP from booting real
   2003-era hardware: the 64-bit-only blockers, the driver gaps QEMU hides, and
   the routes for reaching a Compaq Evo N1020v. The Compaq-specific work (the

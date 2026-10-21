@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **AHCI (SATA) disk driver with DMA.** `kernel/ahci.cpp` registers SATA disks as `ahciN`, and
+  QEMU now attaches `disk.img` to the q35 AHCI controller by default (`SAVANXP_DISK_BUS=ide` or
+  `run_qemu.py --disk-bus ide` keeps legacy IDE). Up to 256 sectors per command: a 390 KB copy
+  moves in 0.33 s instead of 1.99 s. See `docs/kernel/AHCI.md`.
+
 - **The Command Prompt, the first SUN application.** `/bin/console` (Start menu or Ctrl+Alt+T) runs
   `/bin/sh --console 3` as a separate process over pipes: an 80x300 buffer with a scroll bar,
   `doskey` line editing and history, and Ctrl+C that ends the foreground job. In that mode `sh`

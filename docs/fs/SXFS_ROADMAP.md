@@ -85,7 +85,7 @@ earlier measurement found the flush free, and why IDE looked several times faste
 than virtio: with the flush issued after BSY clears, the same kernel took 582 ms
 where it had taken 88. The flush is now issued only when the drive is idle.
 
-**Large writes are bound by sectors on IDE.** The full-copy journal moved about
+**Large writes were bound by sectors on IDE.** The full-copy journal moved about
 68 000 sectors in 70.7 s on Doom's quit, about 1 ms per sector: QEMU's IDE model
 issues one backend request per sector in a PIO data phase. Earlier measurements
 point the same way: going from 16-bit to 32-bit port writes bought 26% for half
@@ -96,12 +96,12 @@ the port accesses.
 | 16 bits per port access | 365930, 401218 |
 | 32 bits per port access | 280703, 278922 |
 
-The fix is DMA, but **not on this controller**: `isa-ide` is an ISA device and
-has no bus master. Bus-master IDE is a function of the PCI PIIX controller, and
-the `q35` machine the build boots already has an ICH9 AHCI controller on board.
-An AHCI driver (command list, FIS, PRDT, completion by polling the port's command
-issue register at first) is the DMA path; it would make a run of sectors one
-request instead of one per sector.
+The fix was DMA, and **not on that controller**: `isa-ide` is an ISA device and
+has no bus master. The default QEMU disk is now on the `q35` board's AHCI
+controller ([`AHCI.md`](../kernel/AHCI.md)), where a command moves up to 256
+sectors. With host flushes ignored, `progman-smoke`'s 390 KB copy takes 0.33 s on
+AHCI against 1.99 s on IDE; with flushes honoured both take about 5 s, so large
+writes are now bound by flushes too.
 
 **Writes reach SxFS in large pieces.** The write syscall used to copy user memory
 through a 256-byte stack buffer and hand each piece to `vfs::write`, so every

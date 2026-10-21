@@ -195,6 +195,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/device.cpp
     kernel/serial_dev.cpp
     kernel/display.cpp
+    kernel/ahci.cpp
     kernel/ata.cpp
     kernel/virtio_blk.cpp
     kernel/partition.cpp

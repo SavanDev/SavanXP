@@ -271,9 +271,9 @@ bool rw_chunk_once(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* byt
          * is a fixed cost per sector in QEMU's IDE model, which issues one
          * backend request per sector of a PIO data phase.
          *
-         * Only DMA removes that, and isa-ide has no bus master: it would take
-         * an AHCI driver (q35 has an ICH9 AHCI controller on board). See
-         * docs/fs/SXFS_ROADMAP.md, "Where the remaining cost is". */
+         * Only DMA removes that, and isa-ide has no bus master: the default
+         * QEMU disk is on the q35 AHCI controller instead (kernel/ahci.cpp),
+         * and this driver serves SAVANXP_DISK_BUS=ide. */
         if (write) {
             for (size_t dword = 0; dword < (block::kSectorSize / sizeof(uint32_t)); ++dword) {
                 const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + dword * sizeof(uint32_t);

@@ -104,6 +104,8 @@ step.
 - `tools/stamp_sxe.py` stamps and verifies generated SXE sections.
 - `tools/stamp_osabi.py` marks a `NATIVE` program's ELF as native.
 - `tools/run_qemu.py` launches the staged image with OVMF and optional virtio.
+  Without virtio the disk goes on the q35 AHCI controller, or on `isa-ide` with
+  `--disk-bus ide` / `SAVANXP_DISK_BUS=ide`, which every launcher honours.
 - `tools/shoot.sh` runs visual desktop scenarios through a Unix QMP socket.
 - `ports/doomgeneric/build.sh` builds the official Doom port independently.
 - `ports/ffmpeg/build.sh` preserves FFmpeg's configure and GNU Make flow and

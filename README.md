@@ -119,9 +119,10 @@ attach `build/disk.img` as an extra disk as well.
 The native launcher uses TCG by default and KVM when requested.
 
 The QEMU machine is assembled with "base" hardware by default: standard VGA,
-PS/2 mouse and keyboard, AC'97 audio, IDE disk and an rtl8139 NIC — the same
-set VirtualBox emulates. This way the kernel exercises the fallback backends
-(`fb_gpu`, `ps2`, `ac97`, `ata`, `rtl8139`) without leaving QEMU. Bringing the
+PS/2 mouse and keyboard, AC'97 audio, an AHCI (SATA) disk and an rtl8139 NIC —
+the same set VirtualBox emulates. This way the kernel exercises the fallback
+backends (`fb_gpu`, `ps2`, `ac97`, `ahci`, `rtl8139`) without leaving QEMU.
+`SAVANXP_DISK_BUS=ide` puts the disk on legacy IDE instead, for the `ata` driver. Bringing the
 machine up with paravirtualized devices (virtio-vga, virtio-tablet,
 virtio-keyboard, virtio-sound, virtio-blk, virtio-net) has to be asked for
 explicitly:

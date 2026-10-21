@@ -44,7 +44,7 @@ struct Driver {
     void (*enumerate)();
 };
 
-constexpr size_t kMaxDrivers = 4;
+constexpr size_t kMaxDrivers = 8;
 
 // false si la tabla esta llena o el driver viene incompleto.
 bool register_driver(const Driver& driver);

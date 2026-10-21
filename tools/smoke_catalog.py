@@ -108,16 +108,12 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/nativewidgets --name nativewidgets --native",
         ),
     ),
-    # Timeout de 900 s, y no es holgura: este smoke copia un programa entero
-    # (390 KB) para tener una fixture con .sxmeta, y esa copia mide 365930 ms en esta
-    # imagen. El resto del smoke suma 3 s. A 180 s expiraba siempre y se leia como
-    # "el launcher esta roto", que no era el caso: solo faltaba tiempo.
-    #
-    # La causa esta en el grow-in del fichero, no en el smoke: cada crecimiento
-    # commit de metadata, y cada commit escribe dos veces los 1537 sectores de la
-    # region, y la transferencia del dispositivo emulado es PIO palabra a palabra.
-    # Arreglar eso es otra cosa --ver ATA rw_chunk-- y hasta que se haga, este
-    # escenario es lento por construccion.
+    # This smoke copies a whole program (390 KB) to get a fixture with .sxmeta,
+    # and prints how long the copy took. It used to take 365930 ms under TCG,
+    # when every metadata commit rewrote the whole metadata region over PIO;
+    # with sparse journals and AHCI it is a few seconds under KVM, most of it
+    # host fsyncs (see docs/fs/SXFS_ROADMAP.md). The 900 s timeout is kept as
+    # margin for TCG on a loaded host and for SAVANXP_DISK_BUS=ide.
     "progman-smoke": _qemu_scenario(
         "progman-selftest",
         "PROGMAN SMOKE PASS",
