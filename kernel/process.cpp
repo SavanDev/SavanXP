@@ -1663,6 +1663,7 @@ process::Process* create_process_internal(
     process::Process* parent,
     int stdin_fd,
     int stdout_fd,
+    int stderr_fd,
     process::ImageFailure& failure
 ) {
     failure = process::ImageFailure::none;
@@ -1738,7 +1739,7 @@ process::Process* create_process_internal(
     } else {
         if (!inherit_handle(*proc, 0, *parent, stdin_fd >= 0 ? stdin_fd : 0) ||
             !inherit_handle(*proc, 1, *parent, stdout_fd >= 0 ? stdout_fd : 1) ||
-            !inherit_handle(*proc, 2, *parent, 2)) {
+            !inherit_handle(*proc, 2, *parent, stderr_fd >= 0 ? stderr_fd : 2)) {
             release_all_handles(*proc);
             process::detail::release_process_resources(*proc);
             process::detail::reset_process_slot(*proc);
@@ -1858,6 +1859,16 @@ bool clone_handles_for_spawn(process::Process& proc, const process::Process& par
     if (!process::detail::inherit_all_handles(proc, parent)) {
         reap_process(proc);
         return false;
+    }
+    return true;
+}
+
+bool add_spawn_handles(process::Process& proc, const process::Process& parent, const int32_t* handles, uint32_t count) {
+    for (uint32_t index = 0; index < count; ++index) {
+        if (!inherit_handle(proc, static_cast<int>(3 + index), parent, handles[index])) {
+            reap_process(proc);
+            return false;
+        }
     }
     return true;
 }
@@ -2276,7 +2287,7 @@ void notify_object_signal(object::Header* handle_object) {
 
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid) {
     process::ImageFailure failure = process::ImageFailure::none;
-    return create_process_internal(path, argc, argv, find(parent_pid), -1, -1, failure);
+    return create_process_internal(path, argc, argv, find(parent_pid), -1, -1, -1, failure);
 }
 
 [[noreturn]] void start_init(const char* path) {
@@ -2306,7 +2317,7 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 
     const char* argv[] = {path, nullptr};
     process::ImageFailure init_failure = process::ImageFailure::none;
-    Process* init = create_process_internal(path, 1, argv, nullptr, -1, -1, init_failure);
+    Process* init = create_process_internal(path, 1, argv, nullptr, -1, -1, -1, init_failure);
     if (init == nullptr) {
         panic("process: unable to start init");
     }

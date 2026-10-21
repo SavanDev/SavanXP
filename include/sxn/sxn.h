@@ -152,7 +152,38 @@ static inline long sxn_set_nonblocking(long handle, int on) {
     return sxn_trap(SXN_SYS_SET_NONBLOCKING, (unsigned long)handle, (unsigned long)(on != 0), 0);
 }
 
-/* Ends a child; its waitpid reports `status`. */
+/* Ends a descendant (child, grandchild, ...); its parent's waitpid reports
+ * `status`. */
 static inline long sxn_terminate(long pid, int status) {
     return sxn_trap(SXN_SYS_TERMINATE, (unsigned long)pid, (unsigned long)(long)status, 0);
+}
+
+/* CreatePipe: handles[0] is the read end, handles[1] the write end. */
+static inline long sxn_pipe_create(int32_t handles[2]) {
+    return sxn_trap(SXN_SYS_PIPE_CREATE, (unsigned long)handles, 0, 0);
+}
+
+/* CreateProcess with chosen handles: the child gets request->std_handles as
+ * 0, 1, 2 and request->handles as 3, 4, ... and nothing else. Returns the
+ * pid. Start from sxn_spawn_request_init so unused fields are right. */
+static inline long sxn_spawn_ex(const struct sxn_spawn_request* request) {
+    return sxn_trap(SXN_SYS_SPAWN_EX, (unsigned long)request, 0, 0);
+}
+
+/* A request for `path` with `argc` arguments, the caller's own stdio and no
+ * extra handles. */
+static inline void sxn_spawn_request_init(
+    struct sxn_spawn_request* request, const char* path, char* const* argv, int argc) {
+    request->path = (uint64_t)(unsigned long)path;
+    request->argv = (uint64_t)(unsigned long)argv;
+    request->argc = argc;
+    request->std_handles[0] = -1;
+    request->std_handles[1] = -1;
+    request->std_handles[2] = -1;
+    request->handles[0] = -1;
+    request->handles[1] = -1;
+    request->handles[2] = -1;
+    request->handles[3] = -1;
+    request->handle_count = 0;
+    request->flags = 0;
 }

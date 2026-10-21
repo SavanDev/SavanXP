@@ -161,11 +161,12 @@ enum sxn_syscall_number {
     /* rdi = pipe read end. Pops the oldest queued handle into the caller's
      * table. Returns the handle or -EAGAIN if none; never blocks. */
     SXN_SYS_PIPE_RECEIVE_HANDLE = 0x101b,
-    /* rdi = pid, rsi = exit status. Ends a child of the caller, which its
-     * waitpid then reaps with that status. Children only: having created the
-     * process is the right to end it, as NT asks for a handle with terminate
-     * access. Returns 0 (also for a child that already ended), -ENOENT if no
-     * such process, -ECHILD if it is not the caller's child. Native only. */
+    /* rdi = pid, rsi = exit status. Ends a descendant of the caller (a child,
+     * or a child's child, and so on), which its parent's waitpid then reaps
+     * with that status. Having started the process tree is the right to end
+     * any process in it, as a job object gives Windows. Returns 0 (also for a
+     * process that already ended), -ENOENT if no such process, -ECHILD if the
+     * caller is not one of its ancestors. Native only. */
     SXN_SYS_TERMINATE = 0x101c,
     /* rdi = const int32_t handles[], rsi = count (1..16), rdx = timeout in ms
      * (0 = poll, negative = forever). Waits until ANY of them is signaled and
@@ -190,6 +191,30 @@ enum sxn_syscall_number {
      * belongs to the stream, so every handle to it shares it, as POSIX
      * O_NONBLOCK does. */
     SXN_SYS_SET_NONBLOCKING = 0x1020,
+    /* rdi = int32_t[2] (written): [0] the read end, [1] the write end of a new
+     * anonymous pipe. Returns 0 or -errno. CreatePipe. An object call, so
+     * every subsystem may make it. */
+    SXN_SYS_PIPE_CREATE = 0x1021,
+    /* rdi = const struct sxn_spawn_request*. Starts a child with exactly the
+     * handles the request names: std_handles as its 0, 1 and 2 (-1 = the
+     * caller's own 0, 1 or 2) and handles[0..handle_count) as its 3, 4, ...
+     * Nothing else crosses. CreateProcess with STARTUPINFO's standard handles
+     * and an inherit list. Returns the pid or -errno (-EBADF when a named
+     * handle is not open). Native only. */
+    SXN_SYS_SPAWN_EX = 0x1022,
+};
+
+/* Most handles SXN_SYS_SPAWN_EX places after stdio (at 3, 4, 5 and 6). */
+#define SXN_SPAWN_MAX_HANDLES 4u
+
+struct sxn_spawn_request {
+    uint64_t path;            /* const char*, an absolute path */
+    uint64_t argv;            /* char* const*, argc entries */
+    int32_t argc;
+    int32_t std_handles[3];   /* the child's 0, 1, 2; -1 = the caller's own */
+    int32_t handles[SXN_SPAWN_MAX_HANDLES]; /* the child's 3, 4, ... */
+    uint32_t handle_count;    /* entries used in handles[] */
+    uint32_t flags;           /* none yet: must be 0 */
 };
 
 enum sxn_process_state {

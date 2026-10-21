@@ -344,10 +344,67 @@ int native_terminate(Process& proc, uint64_t pid_value, uint64_t status) {
     if (target == nullptr) {
         return sx::negative_error(SX_ENOENT);
     }
-    if (target->parent_pid != proc.pid) {
+    // Any descendant, not only a child: walk up from the target. The chain
+    // ends at init (an orphan is re-parented there) and is never longer than
+    // the process table, which bounds the walk if a parent link ever loops.
+    uint32_t ancestor = target->parent_pid;
+    bool descendant = false;
+    for (size_t depth = 0; ancestor != 0 && depth < process::kMaxProcesses; ++depth) {
+        if (ancestor == proc.pid) {
+            descendant = true;
+            break;
+        }
+        const Process* step = process::find(ancestor);
+        if (step == nullptr) {
+            break;
+        }
+        ancestor = step->parent_pid;
+    }
+    if (!descendant) {
         return sx::negative_error(SX_ECHILD);
     }
     detail::terminate_process(*target, static_cast<int>(status));
+    return 0;
+}
+
+// Whether `handle` names an open entry of the caller's table.
+bool handle_is_open(const Process& proc, int32_t handle) {
+    return handle >= 0 && handle < static_cast<int32_t>(process::kMaxFileHandles) &&
+        proc.handles[handle].object != nullptr;
+}
+
+// CreatePipe: both ends of a fresh pipe into the caller's table, the same
+// pair a port connection makes.
+int native_pipe_create(Process& proc, uint64_t user_handles) {
+    object::IoObject* reader = nullptr;
+    object::IoObject* writer = nullptr;
+
+    if (!sx::validate_user_range(user_handles, sizeof(int32_t) * 2, true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (!detail::create_pipe_pair(reader, writer)) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    const int read_handle = detail::allocate_fd(
+        proc, &reader->header, detail::object_access_for_open_flags(open_read), object::handle_none);
+    const int write_handle = read_handle < 0 ? read_handle : detail::allocate_fd(
+        proc, &writer->header, detail::object_access_for_open_flags(open_write), object::handle_none);
+    // The handle table took its own references; the creation ones go.
+    object::Header* owned_reader = &reader->header;
+    object::Header* owned_writer = &writer->header;
+    object::release(owned_reader);
+    object::release(owned_writer);
+
+    const int32_t values[2] = {read_handle, write_handle};
+    if (read_handle < 0 || write_handle < 0 || !sx::copy_to_user(user_handles, values, sizeof(values))) {
+        if (read_handle >= 0) {
+            (void)native_close(proc, static_cast<uint64_t>(read_handle));
+        }
+        if (write_handle >= 0) {
+            (void)native_close(proc, static_cast<uint64_t>(write_handle));
+        }
+        return read_handle < 0 ? read_handle : (write_handle < 0 ? write_handle : sx::negative_error(SX_EINVAL));
+    }
     return 0;
 }
 
@@ -479,6 +536,7 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_PORT_ACCEPT:
         case SXN_SYS_PIPE_SEND_HANDLE:
         case SXN_SYS_PIPE_RECEIVE_HANDLE:
+        case SXN_SYS_PIPE_CREATE:
             return true;
         default:
             return false;
@@ -550,9 +608,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return nullptr;
         case SXN_SYS_SPAWN:
         case SXN_SYS_SPAWN_STDIO: {
-            // Misma convencion de registros que el spawn POSIX: el hijo se
-            // crea con create_process_internal y su subsistema lo decide el
-            // EI_OSABI de su imagen, no el del padre.
+            // Same register convention as the POSIX spawn: the child comes
+            // from create_process_internal, and the EI_OSABI of its image,
+            // not its parent's subsystem, decides which subsystem it runs in.
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
             auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
@@ -568,10 +626,69 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             }
 
             ImageFailure failure = ImageFailure::none;
-            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, caller, -1, -1, failure);
+            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, caller, -1, -1, -1, failure);
             // SPAWN_STDIO stops at the stdio create_process_internal already
             // gave the child, like the POSIX spawn.
             if (child != nullptr && context->rax == SXN_SYS_SPAWN && !clone_handles_for_spawn(*child, *caller)) {
+                failure = ImageFailure::no_handles;
+                child = nullptr;
+            }
+            heap::free(arguments);
+            context->rax = static_cast<uint64_t>(child != nullptr
+                ? static_cast<int>(child->pid)
+                : sx::negative_error(image_failure_errno(failure)));
+            return context;
+        }
+        case SXN_SYS_SPAWN_EX: {
+            // The request carries what SPAWN takes in registers plus the
+            // handles. Its path and argv go through the same copy as SPAWN's,
+            // fed from a context built out of the request.
+            sxn_spawn_request request = {};
+            if (!sx::validate_user_range(context->rdi, sizeof(request), false) ||
+                !sx::copy_from_user(&request, context->rdi, sizeof(request))) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                return context;
+            }
+            if (request.flags != 0 || request.handle_count > SXN_SPAWN_MAX_HANDLES) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                return context;
+            }
+            for (int index = 0; index < 3; ++index) {
+                const int32_t handle = request.std_handles[index];
+                if (handle < -1 || (handle >= 0 && !handle_is_open(*caller, handle))) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_EBADF));
+                    return context;
+                }
+            }
+            for (uint32_t index = 0; index < request.handle_count; ++index) {
+                if (request.handles[index] < 0 || !handle_is_open(*caller, request.handles[index])) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_EBADF));
+                    return context;
+                }
+            }
+
+            SavedContext spawn_context = *context;
+            spawn_context.rdi = request.path;
+            spawn_context.rsi = request.argv;
+            spawn_context.rdx = static_cast<uint64_t>(static_cast<int64_t>(request.argc));
+            char path[process::kProcessPathLength] = {};
+            char resolved[process::kProcessPathLength] = {};
+            auto* arguments = static_cast<SpawnArguments*>(heap::allocate(sizeof(SpawnArguments)));
+            if (arguments == nullptr) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
+                return context;
+            }
+            if (!copy_spawn_arguments(*caller, spawn_context, path, sizeof(path), *arguments) ||
+                !resolve_path_from_root(path, resolved, sizeof(resolved))) {
+                heap::free(arguments);
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_E2BIG));
+                return context;
+            }
+
+            ImageFailure failure = ImageFailure::none;
+            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, caller,
+                request.std_handles[0], request.std_handles[1], request.std_handles[2], failure);
+            if (child != nullptr && !add_spawn_handles(*child, *caller, request.handles, request.handle_count)) {
                 failure = ImageFailure::no_handles;
                 child = nullptr;
             }
@@ -768,6 +885,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_TERMINATE:
             context->rax = static_cast<uint64_t>(native_terminate(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_PIPE_CREATE:
+            context->rax = static_cast<uint64_t>(native_pipe_create(*caller, context->rdi));
             return context;
         case SXN_SYS_SET_NONBLOCKING:
             context->rax = static_cast<uint64_t>(native_set_nonblocking(*caller, context->rdi, context->rsi));

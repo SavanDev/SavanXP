@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SUN gets `CreatePipe` and `CreateProcess` with chosen handles.** `SXN_SYS_PIPE_CREATE`
+  (`sxn_pipe_create`) and `SXN_SYS_SPAWN_EX` (`sxn_spawn_ex`: stdio plus up to four handles at 3..6,
+  nothing else), and `SXN_SYS_TERMINATE` now ends any descendant. See `docs/userland/SUN.md`.
+
 - **The Start menu shows ▲/▼ arrows when its list does not fit.** As in Windows 98, resting the
   pointer on a strip scrolls the list, and the arrow at an end is greyed. The scroll bar arrow is
   now shared as `sxchrome_draw_arrow`.

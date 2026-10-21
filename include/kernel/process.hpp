@@ -236,7 +236,13 @@ bool copy_user_string(const Process& proc, uint64_t user_address, char* buffer, 
 void write_int_to_process_memory(Process& proc, uint64_t user_address, int value);
 sx_status image_failure_errno(ImageFailure failure);
 bool prepare_exec_image(Process& proc, const char* path, int argc, const char* const* argv, ImageFailure& failure);
-Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, ImageFailure& failure);
+// The child's 0, 1 and 2 are the parent's stdin_fd, stdout_fd and stderr_fd,
+// each one the parent's own 0, 1 or 2 when it is negative.
+Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, int stderr_fd, ImageFailure& failure);
+// Gives a spawned child the parent's handles[i] as handle 3 + i (native
+// SPAWN_EX). Reaps the child and reports false when one is not a handle, like
+// clone_handles_for_spawn.
+bool add_spawn_handles(Process& child, const Process& parent, const int32_t* handles, uint32_t count);
 // Clones the caller's handle table into a spawned child (native spawn only;
 // the POSIX spawn takes stdio). Reaps the child and reports false when the
 // clone fails, so the caller just sees the error.

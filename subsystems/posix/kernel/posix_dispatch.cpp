@@ -109,7 +109,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             }
 
             ImageFailure failure = ImageFailure::none;
-            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, smp::this_cpu().current, stdin_fd, stdout_fd, failure);
+            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, smp::this_cpu().current, stdin_fd, stdout_fd, -1, failure);
             heap::free(arguments);
             context->rax = static_cast<uint64_t>(child != nullptr
                 ? static_cast<int>(child->pid)

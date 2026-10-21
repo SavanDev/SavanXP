@@ -74,9 +74,9 @@ What exists, what the console adds, and what is still missing:
 | Win32 | SUN | Status |
 |---|---|---|
 | `CreateProcess` | `sxn_spawn` (clones the table), `sxn_spawn_stdio` (stdio only) | done |
-| `CreateProcess` + `STARTUPINFO.hStd*` + handle list | `sxn_spawn_ex` (`struct sxn_spawn_request`) | console, slice 21 |
-| `CreatePipe` | `sxn_pipe_create` | console, slice 20 |
-| `TerminateProcess` / `TerminateJobObject` | `sxn_terminate` (any descendant, not only a child) | console, slice 22 |
+| `CreateProcess` + `STARTUPINFO.hStd*` + handle list | `sxn_spawn_ex` (`struct sxn_spawn_request`) | done (slice 21) |
+| `CreatePipe` | `sxn_pipe_create` | done (slice 20) |
+| `TerminateProcess` / `TerminateJobObject` | `sxn_terminate` (any descendant, not only a child) | done (slice 22) |
 | `WaitForSingleObject` / `WaitForMultipleObjects` | `sxn_wait_one`, `sxn_wait_many` (pipes and devices included) | done |
 | `GetExitCodeProcess`, Toolhelp | `sxn_process_query` | done |
 | `CreateEvent`, `SetEvent`, `ResetEvent` | `sxn_event_*` | done |

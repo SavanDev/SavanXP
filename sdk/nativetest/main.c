@@ -207,6 +207,49 @@ static void run_port_child(void) {
     sxn_exit(SXN_PORT_CHILD_STATUS);
 }
 
+/* SPAWN_EX child: owns exactly 0, 1, 2 and 3. Echoes the line read on 0 to
+ * 1, says "err" on 2 and "x3" on 3, so the parent can tell every handle
+ * landed where the request put it. */
+static void run_stdio_child(void) {
+    struct sxn_native_info self_info;
+    struct sxn_process_query self;
+    char line[16] = {0};
+    long count = 0;
+
+    if (sxn_info(&self_info) != 0 || sxn_process_query(self_info.pid, &self) != 0 ||
+        self.handle_count != 4u) {
+        sxn_exit(2);
+    }
+    count = sxn_read(0, line, sizeof(line));
+    if (count <= 0 || sxn_write(1, line, (unsigned long)count) != count ||
+        sxn_write(2, "err", 3) != 3 || sxn_write(3, "x3", 2) != 2) {
+        sxn_exit(3);
+    }
+    sxn_exit(0);
+}
+
+/* TERMINATE across a generation: starts a sleeper, tells the parent its pid
+ * on 1, and exits with whatever status the sleeper ends with. */
+static void run_middle_child(void) {
+    char* sleeper_argv[2];
+    long sleeper = -1;
+    int32_t pid_value = 0;
+    int status = -1;
+
+    sleeper_argv[0] = "/disk/bin/nativetest";
+    sleeper_argv[1] = "sleeper";
+    sleeper = sxn_spawn_stdio("/disk/bin/nativetest", sleeper_argv, 2);
+    if (sleeper <= 0) {
+        sxn_exit(2);
+    }
+    pid_value = (int32_t)sleeper;
+    if (sxn_write(1, &pid_value, sizeof(pid_value)) != (long)sizeof(pid_value) ||
+        sxn_waitpid(sleeper, &status) != sleeper) {
+        sxn_exit(3);
+    }
+    sxn_exit(status);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -222,6 +265,12 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1], "sleeper")) {
         run_sleeper();
+    }
+    if (argc > 1 && streq(argv[1], "stdiochild")) {
+        run_stdio_child();
+    }
+    if (argc > 1 && streq(argv[1], "middle")) {
+        run_middle_child();
     }
 
     check(sxn_info(&info) == 0);
@@ -528,6 +577,123 @@ int main(int argc, char** argv) {
         check(sxn_terminate(1, 1) == -SAVANXP_ECHILD);
         check(sxn_terminate(0, 1) == -SAVANXP_ENOENT);
         check(sxn_log("nativetest: terminate and query done") == 0);
+    }
+
+    /* PIPE_CREATE: a pipe made by a native process, both ends in its table.
+     * Data crosses, the read end is a wait target, and closing the write end
+     * is end of stream. */
+    {
+        int32_t pipe_handles[2] = {-1, -1};
+        char buffer[8] = {0};
+
+        check(sxn_pipe_create(pipe_handles) == 0);
+        check(pipe_handles[0] >= 0 && pipe_handles[1] >= 0 && pipe_handles[0] != pipe_handles[1]);
+        check(sxn_wait_one(pipe_handles[0], 0) == -SAVANXP_ETIMEDOUT);
+        check(sxn_write(pipe_handles[1], "abc", 3) == 3);
+        check(sxn_wait_many(&pipe_handles[0], 1, 100) == 0);
+        check(sxn_read(pipe_handles[0], buffer, sizeof(buffer)) == 3 && buffer[0] == 'a' && buffer[2] == 'c');
+        check(sxn_write(pipe_handles[0], "z", 1) < 0);
+        check(sxn_close(pipe_handles[1]) == 0);
+        check(sxn_read(pipe_handles[0], buffer, sizeof(buffer)) == 0);
+        check(sxn_close(pipe_handles[0]) == 0);
+        check(sxn_pipe_create(0) == -SAVANXP_EINVAL);
+        check(sxn_log("nativetest: pipe create done") == 0);
+    }
+
+    /* SPAWN_EX: the child's 0, 1, 2 and 3 are exactly the handles named, and
+     * it holds nothing else. Two pipes for stdio (stderr shares stdout, as a
+     * console host does) and a third as handle 3. */
+    {
+        char* child_argv[2];
+        struct sxn_spawn_request request;
+        int32_t input[2] = {-1, -1};
+        int32_t output[2] = {-1, -1};
+        int32_t extra[2] = {-1, -1};
+        char buffer[16] = {0};
+        long child = -1;
+        long total = 0;
+        int status = -1;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "stdiochild";
+        check(sxn_pipe_create(input) == 0 && sxn_pipe_create(output) == 0 && sxn_pipe_create(extra) == 0);
+        sxn_spawn_request_init(&request, "/disk/bin/nativetest", child_argv, 2);
+        request.std_handles[0] = input[0];
+        request.std_handles[1] = output[1];
+        request.std_handles[2] = output[1];
+        request.handles[0] = extra[1];
+        request.handle_count = 1;
+        child = sxn_spawn_ex(&request);
+        check(child > 0);
+        /* The child holds its own references: the parent's copies of the ends
+         * it gave away go, so end of stream reaches the parent. */
+        (void)sxn_close(input[0]);
+        (void)sxn_close(output[1]);
+        (void)sxn_close(extra[1]);
+        if (child > 0) {
+            check(sxn_write(input[1], "hi\n", 3) == 3);
+            for (;;) {
+                long count = sxn_read(output[0], buffer + total, sizeof(buffer) - 1u - (unsigned long)total);
+                if (count <= 0) {
+                    break;
+                }
+                total += count;
+            }
+            buffer[total] = '\0';
+            check(streq(buffer, "hi\nerr"));
+            check(sxn_read(extra[0], buffer, sizeof(buffer)) == 2 && buffer[0] == 'x' && buffer[1] == '3');
+            check(sxn_waitpid(child, &status) == child && status == 0);
+        }
+        (void)sxn_close(input[1]);
+        (void)sxn_close(output[0]);
+        (void)sxn_close(extra[0]);
+
+        /* Refusals: a handle that is not open, a flag that does not exist,
+         * more extra handles than fit. */
+        sxn_spawn_request_init(&request, "/disk/bin/nativetest", child_argv, 2);
+        request.std_handles[1] = 60;
+        check(sxn_spawn_ex(&request) == -SAVANXP_EBADF);
+        sxn_spawn_request_init(&request, "/disk/bin/nativetest", child_argv, 2);
+        request.flags = 1;
+        check(sxn_spawn_ex(&request) == -SAVANXP_EINVAL);
+        sxn_spawn_request_init(&request, "/disk/bin/nativetest", child_argv, 2);
+        request.handle_count = SXN_SPAWN_MAX_HANDLES + 1u;
+        check(sxn_spawn_ex(&request) == -SAVANXP_EINVAL);
+        check(sxn_log("nativetest: spawn ex done") == 0);
+    }
+
+    /* TERMINATE reaches a grandchild: the middle child reports its sleeper's
+     * pid, this process ends the sleeper, and the middle child exits with the
+     * status its waitpid saw. */
+    {
+        char* child_argv[2];
+        struct sxn_spawn_request request;
+        int32_t report[2] = {-1, -1};
+        int32_t grandchild = 0;
+        long middle = -1;
+        int status = -1;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "middle";
+        check(sxn_pipe_create(report) == 0);
+        sxn_spawn_request_init(&request, "/disk/bin/nativetest", child_argv, 2);
+        request.std_handles[1] = report[1];
+        middle = sxn_spawn_ex(&request);
+        check(middle > 0);
+        (void)sxn_close(report[1]);
+        if (middle > 0) {
+            check(sxn_read(report[0], &grandchild, sizeof(grandchild)) == (long)sizeof(grandchild));
+            check(grandchild > 0 && grandchild != (int32_t)middle);
+            if (grandchild > 0) {
+                struct sxn_process_query query;
+
+                check(sxn_process_query(grandchild, &query) == 0 && query.parent_pid == (uint32_t)middle);
+                check(sxn_terminate(grandchild, SXN_TERMINATE_STATUS) == 0);
+            }
+            check(sxn_waitpid(middle, &status) == middle && status == SXN_TERMINATE_STATUS);
+        }
+        (void)sxn_close(report[0]);
+        check(sxn_log("nativetest: terminate descendant done") == 0);
     }
 
     /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS and

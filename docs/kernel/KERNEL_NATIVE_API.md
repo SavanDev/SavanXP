@@ -61,6 +61,9 @@ object/process factoring, not before.
 - Slice 17: `SXN_SYS_WAIT_MANY`, and streams as wait targets.
 - Slice 18: `SXN_SYS_PROCESS_QUERY`.
 - Slice 19: `SXN_SYS_SPAWN_STDIO`, `SXN_SYS_SET_NONBLOCKING`.
+- Slice 20: `SXN_SYS_PIPE_CREATE`.
+- Slice 21: `SXN_SYS_SPAWN_EX`, a child with chosen handles.
+- Slice 22: `SXN_SYS_TERMINATE` reaches descendants.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -238,6 +241,41 @@ Two things stayed on purpose, and the guard says so:
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
 
+## Slices 20-22: what a console host needs
+
+The first SUN application, the Command Prompt
+([CONSOLE.md](../desktop/CONSOLE.md)), runs `/bin/sh` as a separate POSIX
+child and talks to it over pipes. Three calls were missing for that; each one
+has the Win32 shape it stands for ([SUN.md](../userland/SUN.md#win32-map)).
+
+- **Slice 20 — `SXN_SYS_PIPE_CREATE` (`0x1021`)**: rdi = `int32_t[2]`,
+  written with the read end and the write end of a new anonymous pipe, the
+  same `create_pipe_pair` a port connection uses. `CreatePipe`. An object
+  call, open to every subsystem like the pipe I/O it pairs with. Before it, a
+  native process could get a pipe only by connecting to a port.
+- **Slice 21 — `SXN_SYS_SPAWN_EX` (`0x1022`)**: rdi = `struct
+  sxn_spawn_request` (path, argv, argc, three standard handles, up to
+  `SXN_SPAWN_MAX_HANDLES` (4) more and a flags word that must be 0). The child
+  gets the standard handles as 0, 1 and 2 (-1 keeps the caller's own) and the
+  others as 3, 4, ... in order; nothing else crosses. `CreateProcess` with
+  `STARTUPINFO.hStd*` and an inherit list in one request. A handle that is not
+  open is `-EBADF`, checked before anything is created. To serve it,
+  `create_process_internal` takes a `stderr_fd` next to `stdin_fd` and
+  `stdout_fd`; the POSIX spawn still passes -1 there and keeps its behavior.
+- **Slice 22 — `SXN_SYS_TERMINATE` reaches descendants.** A process may end
+  any process below it in the tree, not only its children: the kernel walks
+  the target's parent chain looking for the caller. Having started the tree is
+  the right to end any of it, which is what a job object gives Windows. The
+  console uses it for Ctrl+C: the foreground job is its shell's children, so
+  its grandchildren. An orphan is re-parented to init and leaves the tree of
+  whoever started it.
+
+`nativetest` covers all three: a pipe's data, wait readiness and end of
+stream; a `stdiochild` that must hold exactly four handles and answers on each
+one; a `middle` child whose sleeper the test ends from two generations up,
+seen through the middle child's `waitpid`; and the refusals (a closed handle,
+an unknown flag, too many handles).
+
 ## Slice 19: spawning with stdio only, non-blocking streams
 
 - `SXN_SYS_SPAWN_STDIO` (`0x101f`): `SXN_SYS_SPAWN` whose child gets only the
@@ -358,8 +396,8 @@ The calls a platform service needs to run without POSIX
   the device.
 - `SXN_SYS_CLOCK` (`0x1016`): monotonic nanoseconds.
 
-`nativetest` covers all of them except pipe I/O, which a native process cannot
-create pipes for yet; native `compositord` exercises that path.
+`nativetest` covers all of them; pipe I/O since slice 20 let it create the
+pipes itself, and native `compositord` exercises that path too.
 
 ## Slice 12: real PS/2 keys, native apps in the menu
 

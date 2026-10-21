@@ -15,7 +15,9 @@ which Win32 piece each call stands for is in [SUN.md](SUN.md).
   process are `ENOSYS`; there is no fallback.
 - The process still gets the 0/1/2 stdio convention and one shared
   integer handle table with granted access. `SXN_SYS_SPAWN` clones the
-  caller's table into the child; the POSIX spawn takes stdio only.
+  caller's table into the child, `SXN_SYS_SPAWN_STDIO` gives it stdio only,
+  and `SXN_SYS_SPAWN_EX` gives it exactly the handles a request names; the
+  POSIX spawn takes stdio only.
 - Errors are `-errno` (`savanxp_error_code`), same values as POSIX.
 - `main` must never return: the stock `crt0` falls through to a POSIX
   EXIT that is `ENOSYS` for native. Every example ends in `sxn_exit`.
@@ -25,8 +27,10 @@ which Win32 piece each call stands for is in [SUN.md](SUN.md).
 The SUN headers, all header-only, no link or tool changes needed:
 
 - `include/sxn/sxn.h` — typed wrappers for every SXN syscall: exit, log,
-  spawn, waitpid, events, sections, views, waits, gfx, and handle close and
-  duplicate, pipe and device read/write, device open and control, the clock.
+  spawn (also with chosen handles, `sxn_spawn_ex`), waitpid, terminate,
+  events, sections, views, waits, gfx, handle close and duplicate, pipe
+  creation (`sxn_pipe_create`), pipe and device read/write, device open and
+  control, ports, the clock.
 - `include/sxn/sxnwm.h` — windowed-client substrate over a context
   struct: connect to `windowd` (`sxnwm_connect`), submit full-surface
   batches, wait for composed, drain the input ring.
@@ -128,6 +132,7 @@ from the menu, the manifest is the first suspect.
 
 ## Not there (deliberately)
 
-Native owned dialogs, native fork, native pipe creation, sockets and files, toolkit
-widgets beyond the seed, and per-handle spawn opt-in (next to
-`FD_CLOEXEC`). See `KERNEL_NATIVE_API.md` for the standing list.
+Native owned dialogs, native fork, sockets and files, and toolkit
+widgets beyond the seed. Per-handle inheritance is `sxn_spawn_ex`, by
+naming the handles; there is no `FD_CLOEXEC`-style flag on a handle. See
+`KERNEL_NATIVE_API.md` and [SUN.md](SUN.md) for the standing list.
