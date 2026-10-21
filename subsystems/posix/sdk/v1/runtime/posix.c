@@ -34,12 +34,12 @@
 #define DT_DIR 4
 #define DT_REG 8
 #define DT_SOCK 12
-/* Arena de bootstrap del malloc. Vive en la BSS y el kernel mapea la BSS entera
- * al exec, asi que cada byte de aca es RAM residente por proceso aunque la app
- * no lo toque: se queda chica a proposito. El resto del heap crece con arenas
- * respaldadas por secciones (section_create + map_view), que solo cuestan RAM
- * cuando hacen falta y se devuelven al kernel cuando quedan vacias.
- * -DSX_HEAP_SIZE sigue siendo el knob para pedir mas arena adelantada. */
+/* malloc's bootstrap arena. It lives in the BSS, which the kernel maps whole at
+ * exec, so every byte here is resident RAM per process even if the program
+ * never touches it: it stays small on purpose. The rest of the heap grows by
+ * arenas from the page source (sx_heap_pages_map: sections), which cost RAM
+ * only when needed and go back to the kernel once empty. -DSX_HEAP_SIZE is
+ * still the knob for more arena up front. */
 #ifndef SX_HEAP_SIZE
 #define SX_HEAP_SIZE (256u * 1024u)
 #endif
@@ -408,13 +408,37 @@ static size_t sx_arena_growth_floor(void) {
     return floor_bytes;
 }
 
-/* Pide una arena nueva al kernel. La vista es PRIVATE: en fork el kernel clona
- * la seccion con su contenido, que es la misma semantica que tenia la arena de
- * BSS (cada proceso se lleva su copia). */
+/* The heap's page source (savanxp/libc.h, docs/userland/NATIVE_HEAP.md): an
+ * anonymous section, mapped and its handle closed -- the view keeps it alive
+ * and costs no descriptor. The view is PRIVATE: on fork the kernel clones the
+ * section with its contents, the same semantics the BSS arena has (each
+ * process takes its own copy). Weak, and kept apart from the allocator, so a
+ * runtime without these POSIX calls replaces only this. */
+__attribute__((weak)) void* sx_heap_pages_map(size_t bytes) {
+    long section = section_create((unsigned long)bytes, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    void* mapped = 0;
+
+    if (section < 0) {
+        return 0;
+    }
+    mapped = map_view((int)section,
+        SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_VIEW_PRIVATE);
+    (void)savanxp_close((int)section);
+    if (mapped == 0 || result_is_error((long)mapped)) {
+        return 0;
+    }
+    return mapped;
+}
+
+__attribute__((weak)) void sx_heap_pages_unmap(void* base, size_t bytes) {
+    (void)bytes;
+    (void)unmap_view(base);
+}
+
+/* Asks the page source for a new arena. */
 static sx_arena* sx_arena_acquire(size_t payload_bytes) {
     const size_t mask = SX_ARENA_PAGE_SIZE - 1u;
     size_t wanted = 0;
-    long section = 0;
     void* mapped = 0;
     sx_arena* arena = 0;
 
@@ -431,21 +455,14 @@ static sx_arena* sx_arena_acquire(size_t payload_bytes) {
     }
     wanted = (wanted + mask) & ~mask;
 
-    section = section_create((unsigned long)wanted, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
-    if (section < 0) {
-        return 0;
-    }
-
-    mapped = map_view((int)section,
-        SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_VIEW_PRIVATE);
-    (void)savanxp_close((int)section);
-    if (mapped == 0 || result_is_error((long)mapped)) {
+    mapped = sx_heap_pages_map(wanted);
+    if (mapped == 0) {
         return 0;
     }
 
     arena = sx_arena_stamp(mapped, wanted, 1);
     if (arena == 0) {
-        (void)unmap_view(mapped);
+        sx_heap_pages_unmap(mapped, wanted);
         return 0;
     }
 
@@ -496,7 +513,7 @@ static void sx_arena_release(sx_arena* arena) {
     *link = arena->next;
     --g_mapped_arena_count;
     g_mapped_bytes -= arena->size;
-    (void)unmap_view(arena);
+    sx_heap_pages_unmap(arena, arena->size);
 }
 
 static int sx_block_is_valid(const sx_alloc_header* block) {

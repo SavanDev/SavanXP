@@ -43,6 +43,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   POSIX SDK applications and the optional managed-app experiment.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a native Sx program:
   headers, connecting a window, manifests, and the worked examples.
+- [`NATIVE_HEAP.md`](userland/NATIVE_HEAP.md) — `malloc` for native programs: the
+  allocator's replaceable page source, what a native process has today, the plan.
 - [`SYSTEM_MONITORING.md`](userland/SYSTEM_MONITORING.md) — process, memory, and system
   metrics exposed by the kernel.
 - [`SXE_FORMAT.md`](userland/SXE_FORMAT.md) — the executable format, resource sections,

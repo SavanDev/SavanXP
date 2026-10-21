@@ -59,6 +59,15 @@ long section_open_range(int handle, unsigned long offset, unsigned long length, 
 void* map_view(int handle, unsigned long flags);
 void* map_view_at(int handle, unsigned long base, unsigned long flags);
 long unmap_view(void* base);
+
+/* The heap's page source (docs/userland/NATIVE_HEAP.md): where malloc gets
+ * the arenas it grows by, and gives them back. The runtime's definitions are
+ * weak and use the calls above; a runtime for another subsystem (a native
+ * program, which has no POSIX calls) defines its own with the same contract.
+ * map: `bytes` (a multiple of 4 KiB) of zeroed, private, read-write memory, or
+ * 0. unmap: what one map returned, with the same `bytes`. */
+void* sx_heap_pages_map(size_t bytes);
+void sx_heap_pages_unmap(void* base, size_t bytes);
 /* Deja una seccion, evento, semaforo o timer en la cola de handles del pipe;
  * `pipe_fd` es el extremo de escritura. -SAVANXP_EAGAIN con la cola llena. */
 long pipe_send_handle(int pipe_fd, int handle);

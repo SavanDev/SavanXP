@@ -117,6 +117,11 @@ Cut-off notes:
 
 ### Changed
 
+- **`malloc`'s page source is a replaceable hook.** The arenas past the bootstrap one come from
+  `sx_heap_pages_map`/`sx_heap_pages_unmap` (weak, `savanxp/libc.h`), so a native runtime can supply
+  them; `native-test` asserts a native program gets the bootstrap arena only. See
+  `docs/userland/NATIVE_HEAP.md`.
+
 - **The platform services live in `system/`.** `compositord`, `windowd` and `sessiond` moved out of
   `subsystems/posix/userland/` into `system/<service>/`, built by `savanxp_system_service`
   (`cmake/SystemServices.cmake`); `compositor_protocol.h` moved to `system/include/`.

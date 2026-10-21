@@ -28,12 +28,15 @@
  * events and streams; and TERMINATE:
  * a third child ("sleeper") waits forever until the parent ends it, and
  * waitpid reports the status the parent chose; PROCESS_QUERY sees it running,
- * then ended with that status, then gone. The first
+ * then ended with that status, then gone. And the heap as it stands
+ * (docs/userland/NATIVE_HEAP.md): malloc from the bootstrap arena works, and
+ * nothing past it until the native page source exists. The first
  * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "abi/savanxp_native_abi.h"
 #include "savanxp/syscall.h"
@@ -525,6 +528,32 @@ int main(int argc, char** argv) {
         check(sxn_terminate(1, 1) == -SAVANXP_ECHILD);
         check(sxn_terminate(0, 1) == -SAVANXP_ENOENT);
         check(sxn_log("nativetest: terminate and query done") == 0);
+    }
+
+    /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS
+     * and needs no system call, so an allocation inside it works and comes
+     * back on free. The first arena past it comes from the page source, whose
+     * runtime definitions are POSIX calls -- ENOSYS here -- so for now that
+     * request returns 0. The native page source turns this expectation round. */
+    {
+        unsigned char* small = (unsigned char*)malloc(64u * 1024u);
+        unsigned char* again = 0;
+        void* big = 0;
+
+        check(small != 0);
+        if (small != 0) {
+            small[0] = 1;
+            small[64u * 1024u - 1u] = 2;
+            check(small[0] == 1 && small[64u * 1024u - 1u] == 2);
+        }
+        big = malloc(1024u * 1024u);
+        check(big == 0);
+        free(big);
+        free(small);
+        again = (unsigned char*)malloc(64u * 1024u);
+        check(again != 0 && again == small);
+        free(again);
+        check(sxn_log("nativetest: heap: bootstrap arena only") == 0);
     }
 
     sxn_exit(g_failures == 0 ? 0 : 1);
