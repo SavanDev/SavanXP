@@ -43,7 +43,9 @@ project should be readable by anyone who finds it.
 Identifiers, log lines, user-visible strings, and comments. Spanish comments
 from earlier development are translated incrementally: every commit that
 touches a file translates the comments on the lines it changes, until only
-one language remains. No bulk rewrites.
+one language remains. No bulk rewrites. The unit is the whole comment: touching
+any part of a Spanish comment block or docstring rewrites all of it in English,
+never half and half.
 
 ### 4. Never break the persistence of `build/disk.img`
 

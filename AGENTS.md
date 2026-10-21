@@ -64,6 +64,10 @@
   Do not rewrite them in bulk: every commit that touches a file translates
   the comments on the lines it changes — and any comment those lines make
   stale — into English, until only one language remains.
+- The unit of translation is the whole comment, not the line. A change that
+  touches any part of a Spanish comment (a `/* */` or `//` block, a run of
+  `#` lines, a docstring) rewrites that entire comment in English. Never leave
+  a comment half in Spanish and half in English.
 
 ## Repository rules
 
