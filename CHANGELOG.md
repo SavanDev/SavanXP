@@ -190,6 +190,9 @@ Cut-off notes:
   fallback background is a solid colour, and it restarts a desktop that exits. The
   Start button stays sunken while the menu is open.
 
+- **New `app-paint` and `app-webview` icons.** Paint shows a palette with a brush and
+  pencil in a cup, after the classic Windows Paint icon; Web Viewer is now a shaded globe.
+
 - **The system edition is centralized as `SAVANXP_EDITION`.** System Properties reads it
   from `include/shared/version.h` instead of a hardcoded string, and the boot splash
   and the desktop stamp now show it alongside the system name.
