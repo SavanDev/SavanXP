@@ -195,10 +195,10 @@ bool rw_sectors(void* context, uint32_t lba, uint32_t sector_count, void* buffer
         bytes += chunk_bytes;
     }
 
-    // Mismo motivo que kCommandCacheFlush en ata::rw_sectors: sin esto una
-    // escritura "exitosa" puede quedar solo en la write-cache del backend de
-    // QEMU y perderse ante un corte, corrompiendo el journal de SxFS.
-    return !write || flush();
+    // A write may now sit in the backend's write cache: block:: calls
+    // flush_op at its ordering points. On QEMU each flush is an fsync of the
+    // image file, the dominant cost of a write on this device.
+    return true;
 }
 
 bool read_op(void* context, uint32_t lba, uint32_t sector_count, void* buffer) {
@@ -209,9 +209,15 @@ bool write_op(void* context, uint32_t lba, uint32_t sector_count, const void* bu
     return rw_sectors(context, lba, sector_count, const_cast<void*>(buffer), true);
 }
 
+bool flush_op(void* context) {
+    (void)context;
+    return flush();
+}
+
 const block::DeviceOps kOps = {
     &read_op,
     &write_op,
+    &flush_op,
 };
 
 void fail_device(const char* reason) {

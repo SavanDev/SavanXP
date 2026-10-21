@@ -41,6 +41,7 @@ bool write_op(void* context, uint32_t lba, uint32_t sector_count, const void* bu
 const block::DeviceOps kOps = {
     &read_op,
     &write_op,
+    nullptr, // memory has no write cache
 };
 
 void enumerate() {

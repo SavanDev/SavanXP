@@ -296,17 +296,31 @@ bool write_home_metadata(Volume& volume) {
         block::write(volume.device_index, volume.superblock.inode_table_lba, volume.superblock.inode_table_sectors, volume.inodes);
 }
 
-bool write_superblocks(Volume& volume, uint32_t sequence, uint32_t flags) {
+// Whether a write is on the medium when it returns (durable) or may wait in
+// the device cache for the caller's next block::flush (cached). The commit
+// path batches cached writes between its own ordering points.
+enum class Durability : uint8_t {
+    durable,
+    cached,
+};
+
+bool write_sectors(Volume& volume, uint32_t lba, uint32_t count, const void* data, Durability durability) {
+    return durability == Durability::cached
+        ? block::write_cached(volume.device_index, lba, count, data)
+        : block::write(volume.device_index, lba, count, data);
+}
+
+bool write_superblocks(Volume& volume, uint32_t sequence, uint32_t flags, Durability durability) {
     volume.superblock.sequence = sequence;
     volume.superblock.flags = flags;
     volume.superblock.checksum = superblock_checksum(volume.superblock);
-    return block::write(volume.device_index, kPrimarySuperblockLba, 1, &volume.superblock) &&
-        block::write(volume.device_index, kSecondarySuperblockLba, 1, &volume.superblock);
+    return write_sectors(volume, kPrimarySuperblockLba, 1, &volume.superblock, durability) &&
+        write_sectors(volume, kSecondarySuperblockLba, 1, &volume.superblock, durability);
 }
 
-bool clear_journal(Volume& volume) {
+bool clear_journal(Volume& volume, Durability durability) {
     JournalHeader header = {};
-    return block::write(volume.device_index, volume.superblock.journal_lba, 1, &header);
+    return write_sectors(volume, volume.superblock.journal_lba, 1, &header, durability);
 }
 
 // The metadata as one linear run of sectors, [block bitmap | inode bitmap |
@@ -358,7 +372,7 @@ uint32_t metadata_region_end(uint32_t index) {
 
 // Reads or writes every metadata sector set in `map`, against the disk run
 // that starts at `base_lba` (home or journal mirror), one command per run of
-// adjacent sectors.
+// adjacent sectors. Writes are cached: the caller places the flush.
 bool transfer_metadata_sectors(Volume& volume, const uint8_t* map, uint32_t base_lba, bool write) {
     const MetadataView view = live_metadata(volume);
     uint32_t index = 0;
@@ -374,7 +388,7 @@ bool transfer_metadata_sectors(Volume& volume, const uint8_t* map, uint32_t base
         }
         uint8_t* data = metadata_sector(view, index);
         const bool ok = write
-            ? block::write(volume.device_index, base_lba + index, end - index, data)
+            ? block::write_cached(volume.device_index, base_lba + index, end - index, data)
             : block::read(volume.device_index, base_lba + index, end - index, data);
         if (!ok) {
             return false;
@@ -415,7 +429,7 @@ RecoveryState recover_journal(Volume& volume) {
         if ((volume.superblock.flags & kFlagClean) != 0) {
             return RecoveryState::writable;
         }
-        return write_superblocks(volume, volume.superblock.sequence, kFlagClean)
+        return write_superblocks(volume, volume.superblock.sequence, kFlagClean, Durability::durable)
             ? RecoveryState::writable
             : RecoveryState::read_only;
     }
@@ -437,22 +451,29 @@ RecoveryState recover_journal(Volume& volume) {
     if (!home_metadata_is_valid(volume)) {
         return RecoveryState::failed;
     }
-    if (!write_home_metadata(volume) || !write_superblocks(volume, header.sequence, kFlagClean) || !clear_journal(volume)) {
+    if (!write_home_metadata(volume) ||
+        !write_superblocks(volume, header.sequence, kFlagClean, Durability::durable) ||
+        !clear_journal(volume, Durability::durable)) {
         return RecoveryState::read_only;
     }
     return RecoveryState::writable;
 }
 
 // Commits the in-memory metadata with a sparse journal: only the sectors that
-// changed since the snapshot are logged and then written home. Order matters
-// for crash safety: payload, then the header that makes it pending, then home,
-// then the clean superblocks and the cleared header.
+// changed since the snapshot are logged and then written home. Writes go to the
+// device cache and four flushes order them, which is all crash safety needs:
+//   1. the payload (and the transaction's file data) before the header;
+//   2. the pending header before anything is written home;
+//   3. home before the clean superblocks and the cleared header;
+//   4. the whole commit on the medium before the syscall returns.
+// Within each step the writes may land in any order.
 bool commit_metadata(Volume& volume) {
     JournalHeader journal = {};
     const uint32_t dirty = build_dirty_map(volume, journal.sector_map);
     if (dirty == 0) {
         volume.snapshot_valid = false;
-        return true;
+        // Nothing to log, but the mutation's file data may still be cached.
+        return block::flush(volume.device_index);
     }
 
     const uint32_t next_sequence = volume.superblock.sequence + 1u;
@@ -463,12 +484,17 @@ bool commit_metadata(Volume& volume) {
     journal.kind = SXFS_JOURNAL_KIND_SPARSE;
     journal.checksum = journal_checksum(journal);
 
+    const size_t device = volume.device_index;
     if (!transfer_metadata_sectors(volume, journal.sector_map, volume.superblock.journal_lba + 1u, /*write=*/true) ||
-        !block::write(volume.device_index, volume.superblock.journal_lba, 1, &journal) ||
-        !write_superblocks(volume, next_sequence, 0) ||
+        !block::flush(device) ||
+        !block::write_cached(device, volume.superblock.journal_lba, 1, &journal) ||
+        !write_superblocks(volume, next_sequence, 0, Durability::cached) ||
+        !block::flush(device) ||
         !transfer_metadata_sectors(volume, journal.sector_map, volume.superblock.block_bitmap_lba, /*write=*/true) ||
-        !write_superblocks(volume, next_sequence, kFlagClean) ||
-        !clear_journal(volume)) {
+        !block::flush(device) ||
+        !write_superblocks(volume, next_sequence, kFlagClean, Durability::cached) ||
+        !clear_journal(volume, Durability::cached) ||
+        !block::flush(device)) {
         // The caller rolls memory back to the snapshot, but some of this
         // transaction may already be on disk: only a full commit reconciles.
         volume.full_commit_pending = true;
@@ -922,7 +948,9 @@ bool write_inode_bytes(Volume& volume, const Inode& inode, size_t offset, const 
         }
 
         memcpy(sector + sector_offset, bytes + (count - remaining), chunk);
-        if (!block::write(volume.device_index, lba, 1, sector)) {
+        // Cached: the mutation flushes at its end, or its commit's first
+        // ordering point makes the data durable before the journal header.
+        if (!block::write_cached(volume.device_index, lba, 1, sector)) {
             return false;
         }
 
@@ -1561,7 +1589,8 @@ bool sync(VolumeId id) {
         return true;
     }
     MutationGuard guard(*volume);
-    return write_superblocks(*volume, volume->superblock.sequence, kFlagClean) && clear_journal(*volume);
+    return write_superblocks(*volume, volume->superblock.sequence, kFlagClean, Durability::durable) &&
+        clear_journal(*volume, Durability::durable);
 }
 
 bool read_file(FileRecord& file, size_t offset, void* buffer, size_t count) {
@@ -1640,6 +1669,10 @@ bool write_file(FileRecord& file, size_t offset, const void* buffer, size_t coun
             restore_metadata(*volume);
             return false;
         }
+    } else if (count != 0 && !block::flush(volume->device_index)) {
+        // An overwrite in place commits nothing, so it flushes its own data.
+        written = 0;
+        return false;
     }
 
     refresh_record_size(*volume, file.inode_id);

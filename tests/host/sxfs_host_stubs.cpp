@@ -24,6 +24,26 @@ size_t g_pending_write_failures = 0;
 bool g_power_cut_armed = false;
 size_t g_power_cut_remaining = 0;
 size_t g_sectors_written = 0;
+size_t g_flushes = 0;
+
+// The device's volatile write cache: block::write_cached queues here, reads see
+// the queue, and block::flush lands it on the image. Losing power drops it.
+struct PendingWrite {
+    uint32_t lba;
+    uint32_t sector_count;
+    size_t arena_offset;
+};
+constexpr size_t kMaxPendingWrites = 8192;
+constexpr size_t kPendingArenaBytes = 4u << 20;
+PendingWrite g_pending[kMaxPendingWrites] = {};
+size_t g_pending_count = 0;
+uint8_t g_pending_arena[kPendingArenaBytes];
+size_t g_pending_arena_used = 0;
+
+void drop_pending_writes() {
+    g_pending_count = 0;
+    g_pending_arena_used = 0;
+}
 
 constexpr size_t kMaxNodes = 256;
 constexpr size_t kPathCapacity = 264;
@@ -87,6 +107,8 @@ void attach_device(uint8_t* image, uint32_t sector_count, bool writable) {
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
     g_sectors_written = 0;
+    g_flushes = 0;
+    drop_pending_writes();
 }
 
 void detach_device() {
@@ -96,6 +118,8 @@ void detach_device() {
     g_power_cut_armed = false;
     g_power_cut_remaining = 0;
     g_sectors_written = 0;
+    g_flushes = 0;
+    drop_pending_writes();
 }
 
 void fail_next_writes(size_t count) {
@@ -118,6 +142,10 @@ void clear_power_cut() {
 
 size_t sectors_written() {
     return g_sectors_written;
+}
+
+size_t flushes() {
+    return g_flushes;
 }
 
 void reset_vfs() {
@@ -176,11 +204,27 @@ bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
     if (buffer == nullptr || !range_ok(index, lba, sector_count)) {
         return false;
     }
-    memcpy(buffer, g_device.image + byte_offset(lba), byte_length(sector_count));
+    auto* out = static_cast<uint8_t*>(buffer);
+    memcpy(out, g_device.image + byte_offset(lba), byte_length(sector_count));
+    // A real device answers reads from its cache, so queued writes are seen,
+    // later ones over earlier ones.
+    for (size_t index_pending = 0; index_pending < g_pending_count; ++index_pending) {
+        const PendingWrite& pending = g_pending[index_pending];
+        const uint32_t first = pending.lba > lba ? pending.lba : lba;
+        const uint32_t pending_end = pending.lba + pending.sector_count;
+        const uint32_t read_end = lba + sector_count;
+        const uint32_t last = pending_end < read_end ? pending_end : read_end;
+        if (first >= last) {
+            continue;
+        }
+        memcpy(out + byte_offset(first - lba),
+               g_pending_arena + pending.arena_offset + byte_offset(first - pending.lba),
+               byte_length(last - first));
+    }
     return true;
 }
 
-bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
+bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
     if (buffer == nullptr || !range_ok(index, lba, sector_count)) {
         return false;
     }
@@ -191,22 +235,56 @@ bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer
         ++g_rejected_writes;
         return false;
     }
-    uint32_t landed = sector_count;
-    if (g_power_cut_armed && g_power_cut_remaining < landed) {
-        landed = static_cast<uint32_t>(g_power_cut_remaining);
+    if (g_pending_count == kMaxPendingWrites ||
+        byte_length(sector_count) > kPendingArenaBytes - g_pending_arena_used) {
+        return false; // the stub's cache is full: a test bug, not a device one
     }
-    if (landed != 0) {
-        memcpy(g_device.image + byte_offset(lba), buffer, byte_length(landed));
-    }
-    g_sectors_written += landed;
-    if (g_power_cut_armed) {
-        g_power_cut_remaining -= landed;
-    }
-    if (landed != sector_count) {
-        ++g_rejected_writes;
+    PendingWrite& pending = g_pending[g_pending_count++];
+    pending.lba = lba;
+    pending.sector_count = sector_count;
+    pending.arena_offset = g_pending_arena_used;
+    memcpy(g_pending_arena + g_pending_arena_used, buffer, byte_length(sector_count));
+    g_pending_arena_used += byte_length(sector_count);
+    return true;
+}
+
+// Lands the queue on the image in REVERSE order: the worst reordering a cache
+// may do, so a power cut in the middle of a flush leaves exactly what a missing
+// ordering point would let through. The cut counts sectors as they land.
+bool flush(size_t index) {
+    if (index != 0 || !g_device.present || !g_device.writable) {
         return false;
     }
-    return true;
+    ++g_flushes;
+    bool complete = true;
+    for (size_t step = g_pending_count; step > 0; --step) {
+        const PendingWrite& pending = g_pending[step - 1u];
+        uint32_t landed = pending.sector_count;
+        if (g_power_cut_armed && g_power_cut_remaining < landed) {
+            landed = static_cast<uint32_t>(g_power_cut_remaining);
+        }
+        if (landed != 0) {
+            memcpy(g_device.image + byte_offset(pending.lba),
+                   g_pending_arena + pending.arena_offset, byte_length(landed));
+        }
+        g_sectors_written += landed;
+        if (g_power_cut_armed) {
+            g_power_cut_remaining -= landed;
+        }
+        if (landed != pending.sector_count) {
+            complete = false;
+            break;
+        }
+    }
+    drop_pending_writes();
+    if (!complete) {
+        ++g_rejected_writes;
+    }
+    return complete;
+}
+
+bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
+    return write_cached(index, lba, sector_count, buffer) && flush(index);
 }
 
 } // namespace block

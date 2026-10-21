@@ -28,13 +28,17 @@ void fail_next_writes(size_t count);
 size_t rejected_writes();
 
 // Power loss: once `sectors` more sectors have reached the image, every later
-// sector is lost and its write reported as failed. A write that crosses the
-// limit lands only in part, like a torn multi-sector write.
+// sector is lost and its flush reported as failed. A write that crosses the
+// limit lands only in part, like a torn multi-sector write, and writes still
+// in the cache when the device is re-attached are lost.
 void power_cut_after(size_t sectors);
 void clear_power_cut();
 
-// Sectors that reached the image since attach_device().
+// Sectors that reached the image since attach_device(). Cached writes reach
+// it only when flushed.
 size_t sectors_written();
+// block::flush calls since attach_device().
+size_t flushes();
 
 // Tabla de vnodes publicados por attach(). Sustituye al arbol del vfs.
 void reset_vfs();

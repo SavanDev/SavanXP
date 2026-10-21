@@ -773,29 +773,40 @@ void case_sparse_commit_writes_only_changed_sectors(uint8_t* image) {
     }
 
     const size_t before_create = hoststub::sectors_written();
+    const size_t flushes_before_create = hoststub::flushes();
     sxfs::FileRecord* created = sxfs::create_file(kNewPath);
     const size_t create_cost = hoststub::sectors_written() - before_create;
+    const size_t create_flushes = hoststub::flushes() - flushes_before_create;
     size_t written = 0;
     const size_t before_write = hoststub::sectors_written();
+    const size_t flushes_before_write = hoststub::flushes();
     const bool wrote = created != nullptr &&
         sxfs::write_file(*created, 0, g_payload, kPayloadBytes, true, written);
     const size_t write_cost = hoststub::sectors_written() - before_write;
-    printf("  create_file: %zu sectors, write_file of %u bytes: %zu sectors "
-           "(a full-copy commit alone was %u)\n",
-           create_cost, kPayloadBytes, write_cost, 2u * SXFS_JOURNAL_METADATA_SECTORS + 6u);
+    const size_t write_flushes = hoststub::flushes() - flushes_before_write;
+    printf("  create_file: %zu sectors, %zu flushes; write_file of %u bytes: %zu sectors, "
+           "%zu flushes (a full-copy commit alone was %u sectors)\n",
+           create_cost, create_flushes, kPayloadBytes, write_cost, write_flushes,
+           2u * SXFS_JOURNAL_METADATA_SECTORS + 6u);
 
     check(created != nullptr && wrote && written == kPayloadBytes, "create and write accepted");
     // Each commit is a handful of metadata sectors twice, the header, four
     // superblock sectors and the cleared header, plus the data itself.
     check(create_cost < 32, "create_file writes a few dozen sectors at most");
     check(write_cost < 48, "write_file writes a few dozen sectors at most");
+    // The commit's four ordering points, and the file data rides the first.
+    check(create_flushes == 4, "create_file flushes exactly at the commit's four ordering points");
+    check(write_flushes == 4, "write_file flushes exactly at the commit's four ordering points");
 
     // A write that neither grows the file nor needs new blocks commits nothing.
     const size_t before_overwrite = hoststub::sectors_written();
+    const size_t flushes_before_overwrite = hoststub::flushes();
     check(created != nullptr && sxfs::write_file(*created, 0, g_payload, 512, false, written),
           "in-place overwrite accepted");
     check(hoststub::sectors_written() - before_overwrite == 1,
           "an in-place overwrite writes only its data sector");
+    check(hoststub::flushes() - flushes_before_overwrite == 1,
+          "an in-place overwrite flushes its data once");
 
     const sxfs::VolumeId volume = mount_image(image);
     check(volume != sxfs::kInvalidVolume, "the volume remounts");

@@ -142,13 +142,25 @@ bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
     return device->ops->read(device->context, lba, sector_count, buffer);
 }
 
-bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
+bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
     Device* device = nullptr;
     if (!device_for_index(index, device) || !device->writable ||
         !request_in_range(*device, lba, sector_count, buffer)) {
         return false;
     }
     return device->ops->write(device->context, lba, sector_count, buffer);
+}
+
+bool flush(size_t index) {
+    Device* device = nullptr;
+    if (!device_for_index(index, device) || !device->writable) {
+        return false;
+    }
+    return device->ops->flush == nullptr || device->ops->flush(device->context);
+}
+
+bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
+    return write_cached(index, lba, sector_count, buffer) && flush(index);
 }
 
 } // namespace block

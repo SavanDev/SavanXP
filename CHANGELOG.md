@@ -138,6 +138,14 @@ Cut-off notes:
 
 ### Changed
 
+- **Disk writes are ordered by explicit flushes.** `block::write_cached` and `block::flush` join
+  `block::write`; an SxFS commit flushes at its four ordering points instead of after every write,
+  and file writes reach SxFS in pieces of up to 64 KiB instead of 256 bytes. Doom's quit spends
+  247 ms inside SxFS on virtio-blk instead of 522 ms. See `docs/fs/SXFS_JOURNAL.md`.
+
+- **The libc `FILE` buffer is 4 KiB**, allocated on first use instead of embedded in the stream
+  pool, so `fopen("w")` plus `fprintf` grows a file in fewer, larger writes.
+
 - **SxFS commits write only the metadata sectors that changed.** The journal logs a sparse set
   (`SXFS_JOURNAL_KIND_SPARSE`) instead of a full metadata copy, so `fscheck`'s `bytes_per_commit`
   drops from 1575424 to about 3872 and saving a file no longer freezes the system for seconds
@@ -385,6 +393,10 @@ Cut-off notes:
   (see `docs/userland/SYSTEM_LAYERING.md`).
 
 ### Fixed
+
+- **IDE flushes reach the drive.** `FLUSH CACHE` was written while the drive was still busy with
+  the write before it, and dropped; it is now issued once BSY clears, so a commit is on the medium
+  when it returns.
 
 - **`waitpid` returns to the parent that is waiting, not to whoever waits first.** A process in
   `waitpid(-1)` (`init` and `sessiond` always are) took any process's exiting child, so a shell

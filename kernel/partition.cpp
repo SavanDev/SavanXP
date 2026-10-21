@@ -102,12 +102,19 @@ bool read_op(void* context, uint32_t lba, uint32_t sector_count, void* buffer) {
 
 bool write_op(void* context, uint32_t lba, uint32_t sector_count, const void* buffer) {
     const Slice& slice = *static_cast<Slice*>(context);
-    return block::write(slice.parent_index, slice.start_lba + lba, sector_count, buffer);
+    return block::write_cached(slice.parent_index, slice.start_lba + lba, sector_count, buffer);
+}
+
+// A partition has no cache of its own: flushing it flushes the disk.
+bool flush_op(void* context) {
+    const Slice& slice = *static_cast<Slice*>(context);
+    return block::flush(slice.parent_index);
 }
 
 const block::DeviceOps kOps = {
     &read_op,
     &write_op,
+    &flush_op,
 };
 
 // Recorta la particion contra el tamano real del padre antes de registrarla:

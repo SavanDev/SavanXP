@@ -426,6 +426,20 @@ bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer
     return true;
 }
 
+// The in-memory disks have no cache: a cached write is a write, and flushing
+// a partition only has to reach its parent.
+bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer) {
+    return write(index, lba, sector_count, buffer);
+}
+
+bool flush(size_t index) {
+    if (index >= g_device_count || !g_devices[index].writable) {
+        return false;
+    }
+    Device& device = g_devices[index];
+    return device.ops == nullptr || device.ops->flush == nullptr || device.ops->flush(device.context);
+}
+
 bool ready() {
     return g_device_count != 0;
 }

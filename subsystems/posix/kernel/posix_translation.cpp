@@ -746,6 +746,9 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
     }
 }
 
+// Largest piece of a write handed to a file in one vfs::write.
+constexpr size_t kFileWriteChunk = 64u * 1024u;
+
 int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t count) {
     object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_write);
     if (file == nullptr || count == 0) {
@@ -779,27 +782,41 @@ int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
                 return sx::negative_error(SAVANXP_EBADF);
             }
 
-            uint8_t scratch[detail::kPipeChunkSize] = {};
+            // The file sees one vfs::write per chunk, and on SxFS every write
+            // that grows a file is a metadata commit: with the 256-byte stack
+            // scratch, a 3 KB file was 12 commits. The heap buffer makes it
+            // one per kFileWriteChunk; the stack scratch is the fallback when
+            // the heap cannot spare one.
+            uint8_t stack_scratch[detail::kPipeChunkSize] = {};
+            const size_t heap_size = count < kFileWriteChunk ? count : kFileWriteChunk;
+            uint8_t* heap_scratch = static_cast<uint8_t*>(heap::allocate(heap_size));
+            uint8_t* scratch = heap_scratch != nullptr ? heap_scratch : stack_scratch;
+            const size_t scratch_size = heap_scratch != nullptr ? heap_size : sizeof(stack_scratch);
             size_t written = 0;
+            int result = 0;
             while (written < count) {
-                const size_t step = (count - written) < sizeof(scratch) ? (count - written) : sizeof(scratch);
+                const size_t step = (count - written) < scratch_size ? (count - written) : scratch_size;
                 if (!read_from_process_memory(proc, scratch, user_buffer + written, step)) {
-                    return sx::negative_error(SAVANXP_EINVAL);
+                    result = sx::negative_error(SAVANXP_EINVAL);
+                    break;
                 }
                 const size_t produced = vfs::write(*file->node, file->offset, scratch, step, false);
                 if (produced == 0 && step != 0) {
                     const int error = vfs::last_error();
-                    return written != 0
+                    result = written != 0
                         ? static_cast<int>(written)
                         : sx::negative_error(static_cast<savanxp_error_code>(error != 0 ? error : SAVANXP_EIO));
+                    break;
                 }
                 file->offset += produced;
                 written += produced;
+                result = static_cast<int>(written);
                 if (produced < step) {
                     break;
                 }
             }
-            return static_cast<int>(written);
+            heap::free(heap_scratch);
+            return result;
         }
         case process::HandleKind::pipe: {
             const bool nonblocking = (file->open_flags & process::open_nonblock) != 0;

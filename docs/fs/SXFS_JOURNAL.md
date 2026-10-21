@@ -42,23 +42,35 @@ set. `SXFS_VERSION` did not change: nothing in a clean image differs.
 
 ## Commit order
 
-1. Write the changed sectors into their journal slots.
-2. Write the header: `pending = 1`, `kind = SPARSE`, the map.
-3. Write both superblocks with the new sequence and without `CLEAN`.
-4. Write the changed sectors home.
-5. Write both superblocks with `CLEAN`.
-6. Zero the header.
+Writes go to the device's write cache (`block::write_cached`), where they may
+land in any order, and `block::flush` is the only ordering point. A commit has
+four:
+
+1. Write the changed sectors into their journal slots. **Flush.** This also
+   makes durable the file data the mutation wrote before committing.
+2. Write the header (`pending = 1`, `kind = SPARSE`, the map) and both
+   superblocks with the new sequence and without `CLEAN`. **Flush.**
+3. Write the changed sectors home. **Flush.**
+4. Write both superblocks with `CLEAN` and zero the header. **Flush**, so the
+   commit is on the medium when the syscall returns.
 
 A cut at any point remounts as the state before the transaction or the state
 after it:
 
-- before or during 2 (a torn header fails its checksum): no valid pending
-  journal, home untouched, the old state;
-- from 2 to 6: a valid pending journal. Recovery replays the mapped slots over
-  whatever home holds, which is the new state. Replaying twice is harmless.
+- before the header is on the medium (a torn header fails its checksum): no
+  valid pending journal, home untouched, the old state;
+- once it is: a valid pending journal whose payload is already durable.
+  Recovery replays the mapped slots over whatever home holds, which is the new
+  state. Replaying twice is harmless, so it does not matter whether step 4
+  landed in part.
 
-Every `block::write` waits for the device and flushes its cache before
-returning, so each step is on the medium before the next one starts.
+Within a step the order does not matter: the superblocks of step 2 only clear
+`CLEAN`, and in step 4 either half alone still remounts correctly.
+
+A mutation that commits nothing (an overwrite inside a file's current size)
+flushes its data once. Before `block::flush` existed every `block::write`
+flushed, which made a commit about ten flushes, and on IDE none of them
+happened: see [the roadmap](SXFS_ROADMAP.md#where-the-remaining-cost-is).
 
 ## Recovery
 
@@ -105,9 +117,11 @@ invisible to the diff and never reaches the disk.
 | | bytes per commit |
 | --- | --- |
 | full copy | 1 575 424 (2 × 1537 sectors + 3) |
-| sparse | 3 872 (about 2 changed sectors, twice, + 3) |
+| sparse | 3 872 (about 2 changed sectors, twice, + 3), 39 commits |
+| sparse, 64 KiB write chunks | 4 266, 30 commits |
 
-Quitting Doom from its menu saves two config files, which is 11 commits. Time
+Quitting Doom from its menu saves two config files: 22 commits at the time of
+these measurements, because the write syscall split them into 256-byte pieces. Time
 from confirming the quit to the window disappearing, measured with QEMU under KVM,
 `--smp 1`, the disk image on a rotational host disk:
 
@@ -117,18 +131,38 @@ from confirming the quit to the window disappearing, measured with QEMU under KV
 | sparse | 0.53 s | 2.1 s |
 | sparse, host flushes ignored (`cache=unsafe`) | 0.53 s | 0.10 s |
 
+(The IDE column predates the fix that made its flushes reach the drive.)
+
 The kernel is non-preemptible and syscalls run with `IF=0`, so the whole system
-is frozen for those seconds, cursor included. What is left after sparse
-journals is a different cost per device; see
+is frozen for those seconds, cursor included.
+
+Those numbers are the time until the window closes, which also depends on when
+Doom and the compositor redraw; repeated runs of the same build spread from 0.1
+to 0.7 s. Time spent inside `sxfs::write_file`, logged by the kernel, is the
+measure that does not move:
+
+| Doom's quit, time inside SxFS | IDE | virtio-blk |
+| --- | --- | --- |
+| sparse journal, 256-byte write chunks, a flush per write | 350 ms (20 writes) | — |
+| same, 64 KiB write chunks | 88 ms (4 writes) | 522 ms |
+| same, flushes that actually reach the IDE drive | 582 ms | 522 ms |
+| four ordering points per commit | 293 ms | 247 ms |
+
+The 88 ms row is not a cost that was later lost: it is what IDE took while its
+flushes were being dropped. With the flushes honoured the four ordering points
+halve the cost on both devices. Where the rest goes is in
 [the roadmap](SXFS_ROADMAP.md#where-the-remaining-cost-is).
 
 ## Tests
 
 `tests/host/sxfs_volume_test.cpp` runs the real driver against an in-memory
-device whose `block::write` can be cut after any number of sectors (a write
-crossing the cut lands in part):
+device with a write cache that behaves as badly as it is allowed to: cached
+writes are seen by reads but reach the image only at a flush, and a flush lands
+them in **reverse** order. The power can be cut after any number of sectors
+reach the image (a write crossing the cut lands in part), and whatever is still
+cached is lost:
 
-- the cost of a create and a write, in sectors;
+- the cost of a create and a write, in sectors and in flushes (exactly four);
 - a power cut at every sector of a create-and-write transaction: each one
   remounts writable and clean, the existing file intact, the new file absent,
   empty or complete, never torn;
@@ -136,4 +170,5 @@ crossing the cut lands in part):
   memory agree after every failed commit.
 
 Each of these fails if the write order, the sparse replay or the full commit
-after a failure is broken.
+after a failure is broken, and removing any one of the first three ordering
+points fails the power-cut case, not just the flush count.

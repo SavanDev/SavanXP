@@ -49,7 +49,7 @@ v2 wrote 16× that. With sparse journals (item 1) the same measurement gives
 A commit now logs and rewrites only the metadata sectors that changed since the
 mutation's snapshot, a sparse journal described in
 [`SXFS_JOURNAL.md`](SXFS_JOURNAL.md). `bytes_per_commit` went from 1 575 424 to
-3 872 on the core smoke, and quitting Doom from its menu (11 commits) went from a
+3 872 on the core smoke, and quitting Doom from its menu (22 commits then) went from a
 70.7 s system freeze to 0.53 s on the default IDE disk. The format stayed v2:
 the discriminator lives in what used to be a reserved header field, and old full
 journals still replay. The crash path is tested at every sector of a transaction
@@ -57,32 +57,43 @@ journals still replay. The crash path is tested at every sector of a transaction
 
 ## Where the remaining cost is
 
-Measured on Doom's quit (11 commits, two small files), QEMU under KVM, `--smp 1`,
-disk image on a rotational host disk; the full table is in
-[`SXFS_JOURNAL.md`](SXFS_JOURNAL.md#what-it-costs):
+Measured on Doom's quit, which rewrites two small config files: QEMU under KVM,
+`--smp 1`, disk image on a rotational host disk, time spent inside
+`sxfs::write_file` as logged by the kernel. The full history is in
+[`SXFS_JOURNAL.md`](SXFS_JOURNAL.md#what-it-costs).
 
-| | IDE (PIO) | virtio-blk |
+| now | IDE (PIO) | virtio-blk |
 | --- | --- | --- |
-| sparse journal | 0.53 s | 2.1 s |
-| same, host flushes ignored | 0.53 s | 0.10 s |
+| Doom's quit, 4 writes, 4 commits | 293 ms | 247 ms |
 
-**Every second of it is a frozen system, not a slow program.** The syscall gate
-is an interrupt gate and nothing re-enables interrupts in the syscall path
+**Every millisecond of it is a frozen system, not a slow program.** The syscall
+gate is an interrupt gate and nothing re-enables interrupts in the syscall path
 (see [`SMP_ROADMAP.md`](../kernel/SMP_ROADMAP.md)), and both block drivers poll
 the device to completion inside the syscall. Until a write returns, no other
 process runs and no timer is serviced, cursor included.
 
-**IDE: the cost is per sector.** The full-copy quit moved about 33 900 sectors in
-70.7 s, about 2 ms per sector. QEMU's IDE model issues one backend request per
-sector in a PIO data phase, and earlier measurements here showed it is a fixed
-cost per sector, not the number of port accesses: going from 16-bit to 32-bit
-port writes bought 26% for half the accesses, and removing the cache flush
-changed nothing.
+**Small writes are bound by flushes.** A commit has four ordering points and
+QEMU turns each device flush into an `fsync` of the image file, so on this host a
+commit costs about 60–75 ms whatever the device. What would lower it further is
+fewer commits per user-visible operation, not fewer sectors: a truncate and the
+rewrite that follows it are two commits today.
+
+**The IDE flush never ran until the ordering points.** The driver wrote FLUSH
+CACHE straight after a command's last sector, while the drive was still busy
+with it, and a command written while BSY is set is dropped. That is why an
+earlier measurement found the flush free, and why IDE looked several times faster
+than virtio: with the flush issued after BSY clears, the same kernel took 582 ms
+where it had taken 88. The flush is now issued only when the drive is idle.
+
+**Large writes are bound by sectors on IDE.** The full-copy journal moved about
+68 000 sectors in 70.7 s on Doom's quit, about 1 ms per sector: QEMU's IDE model
+issues one backend request per sector in a PIO data phase. Earlier measurements
+point the same way: going from 16-bit to 32-bit port writes bought 26% for half
+the port accesses.
 
 | change, `progman-smoke` copying 390 KB under TCG | ms |
 | --- | --- |
 | 16 bits per port access | 365930, 401218 |
-| no cache flush, only the wait kept | 379989 |
 | 32 bits per port access | 280703, 278922 |
 
 The fix is DMA, but **not on this controller**: `isa-ide` is an ISA device and
@@ -92,25 +103,17 @@ An AHCI driver (command list, FIS, PRDT, completion by polling the port's comman
 issue register at first) is the DMA path; it would make a run of sectors one
 request instead of one per sector.
 
-**virtio-blk: the cost is per flush.** Its requests already carry many sectors,
-so sparse journals helped it far less (3.5 s → 2.1 s), and with flushes ignored
-the quit takes 0.10 s. Each `block::write` ends with a device flush, which QEMU
-turns into a `fsync` of the image file, and a commit makes about ten writes:
-payload runs, header, two superblock sectors twice, home runs, cleared header.
-Crash safety needs only the ordering points between steps (payload and header
-before home, home before the clean superblocks), about three per commit. A
-`block::write` that does not flush plus an explicit barrier would cut the flushes
-roughly by three.
-
-**Userland multiplies commits.** The libc `FILE` buffer is 512 bytes
-(`SX_FILE_BUFFER_CAPACITY`), so a file rewritten with `fopen("w")` commits once
-for the truncate and once per 512 bytes of growth: Doom's 1.4 KB and 3 KB configs
-are 11 commits. A 4 KiB buffer would make them 4.
+**Writes reach SxFS in large pieces.** The write syscall used to copy user memory
+through a 256-byte stack buffer and hand each piece to `vfs::write`, so every
+256 bytes of file growth was a commit (a 3 KB file, 12). It now copies through a
+heap buffer of up to 64 KiB (`kFileWriteChunk`), and the libc `FILE` buffer is
+4 KiB (`SX_FILE_BUFFER_CAPACITY`), allocated on first use. Reads still go
+through 256 bytes at a time, which costs sector reads, not commits.
 
 **Not freezing at all is a kernel change of a different size.** The kernel's
 model is that syscalls never block on a kernel stack: a syscall that cannot
 finish records a state and is completed later by whoever wakes it. A single
-interrupt-driven disk request fits that model, but an SxFS commit is about ten
+interrupt-driven disk request fits that model, but an SxFS commit is several
 dependent writes, so it would have to become a resumable state machine, or the
 filesystem would need to run on a stack of its own, which the kernel does not
 have. A write-back cache drained in small slices while the CPU is idle is the

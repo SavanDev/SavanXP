@@ -67,7 +67,15 @@
 #define SX_DIR_POOL_CAPACITY 64
 #define SX_SOCKET_STATE_CAPACITY 128
 #define SX_PATH_CAPACITY 256
-#define SX_FILE_BUFFER_CAPACITY 512
+/* Read and write buffers of a file stream. They live on the heap, allocated
+ * on first use, because the pool holds 64 streams and embedding them would put
+ * 64 x 8 KiB in every process's BSS. 4 KiB because on SxFS every write that
+ * grows a file is a metadata commit: with 512 bytes, a 3 KB config file is six
+ * writes and six commits, with 4 KiB it is one. */
+#define SX_FILE_BUFFER_CAPACITY 4096
+/* Stack buffer of the printf sinks, which batch formatted output into one
+ * write. Independent of the stream buffers. */
+#define SX_FORMAT_SINK_CAPACITY 512
 #define SX_IOFBF 0
 #define SX_IOLBF 1
 #define SX_IONBF 2
@@ -218,8 +226,10 @@ struct sx_FILE {
     size_t read_buffer_used;
     size_t read_buffer_pos;
     int pushback;
-    unsigned char write_buffer[SX_FILE_BUFFER_CAPACITY];
-    unsigned char read_buffer[SX_FILE_BUFFER_CAPACITY];
+    /* SX_FILE_BUFFER_CAPACITY bytes each, or 0 until first used (see
+     * sx_stream_buffer). Stdio streams never get one. */
+    unsigned char* write_buffer;
+    unsigned char* read_buffer;
 };
 
 struct sx_DIR {
@@ -2418,6 +2428,8 @@ static FILE* sx_allocate_file(void) {
 
 static void sx_release_file(FILE* stream) {
     if (stream != 0 && !stream->is_stdio) {
+        sx_free(stream->write_buffer);
+        sx_free(stream->read_buffer);
         memset(stream, 0, sizeof(*stream));
         stream->fd = -1;
         stream->pushback = -1;
@@ -2434,7 +2446,7 @@ static void sx_release_file(FILE* stream) {
 typedef struct sx_stream_sink {
     FILE* stream;
     size_t used;
-    char bytes[SX_FILE_BUFFER_CAPACITY];
+    char bytes[SX_FORMAT_SINK_CAPACITY];
 } sx_stream_sink;
 
 static int sx_stream_sink_flush(sx_stream_sink* sink) {
@@ -2463,7 +2475,7 @@ typedef struct sx_fd_sink {
     int fd;
     int failed;
     size_t used;
-    char bytes[SX_FILE_BUFFER_CAPACITY];
+    char bytes[SX_FORMAT_SINK_CAPACITY];
 } sx_fd_sink;
 
 static int sx_fd_sink_flush(sx_fd_sink* sink) {
@@ -2534,10 +2546,24 @@ static int sx_flush_stream(FILE* stream) {
     return 0;
 }
 
+static size_t sx_direct_write(FILE* stream, const unsigned char* buffer, size_t total);
+
+/* The stream buffer in `slot`, allocated on first use. 0 when the heap is
+ * exhausted: the caller then goes unbuffered, which is slower but correct. */
+static unsigned char* sx_stream_buffer(unsigned char** slot) {
+    if (*slot == 0) {
+        *slot = (unsigned char*)sx_malloc(SX_FILE_BUFFER_CAPACITY);
+    }
+    return *slot;
+}
+
 static size_t sx_buffered_write(FILE* stream, const unsigned char* buffer, size_t total) {
     size_t consumed = 0;
     if (stream == 0 || buffer == 0) {
         return 0;
+    }
+    if (sx_stream_buffer(&stream->write_buffer) == 0) {
+        return sx_direct_write(stream, buffer, total);
     }
 
     while (consumed < total) {
@@ -2933,7 +2959,7 @@ static size_t sx_fill_read_buffer(FILE* stream) {
     }
     stream->read_buffer_pos = 0;
     stream->read_buffer_used = 0;
-    result = sx_read(stream->fd, stream->read_buffer, sizeof(stream->read_buffer));
+    result = sx_read(stream->fd, stream->read_buffer, SX_FILE_BUFFER_CAPACITY);
     if (result < 0) {
         stream->error = 1;
         return 0;
@@ -2969,8 +2995,9 @@ size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
         size_t chunk = 0;
 
         if (available == 0) {
-            if (stream->is_stdio) {
-                /* Sin buffer: una sola bajada por lo que falte. */
+            if (stream->is_stdio || sx_stream_buffer(&stream->read_buffer) == 0) {
+                /* Unbuffered (stdio, or no heap for a buffer): a single read
+                 * for whatever is missing. */
                 const ssize_t direct = sx_read(stream->fd, output + filled, wanted - filled);
                 if (direct < 0) {
                     stream->error = 1;

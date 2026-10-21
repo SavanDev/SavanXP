@@ -259,29 +259,21 @@ bool rw_chunk_once(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* byt
             return false;
         }
 
-        /* 32 bits por acceso al puerto de datos, no 16.
+        /* 32 bits per data-port access, not 16.
          *
-         * El puerto de datos es una ventana de 16 bits sobre el sector, asi que la
-         * forma canonica es ir de palabra en palabra. Se puede de doble en doble, y el
-         * protocolo lo permite: el dispositivo ve dos mitades del mismo dword y las
-         * entrega en orden. Menos la mitad de las salidas a puerto para los mismos
-         * bytes.
+         * The data port is a 16-bit window on the sector, so the canonical
+         * transfer is word by word, but the protocol allows dwords: the device
+         * sees both halves in order. Half the port accesses for the same bytes.
          *
-         * Medido con la fixture de progman-smoke, que escribe 390 KB y por lo tanto
-         * pasa por ~16.000 sectores: 365930 y 401218 ms con 16 bits, 280703 y 278922
-         * con 32. Un 26% menos, reproducible en dos muestras de cada.
+         * Measured with progman-smoke's 390 KB fixture under TCG: 365930 and
+         * 401218 ms with 16 bits, 280703 and 278922 with 32. 26% less, not the
+         * half it would be if the cost were the number of accesses: most of it
+         * is a fixed cost per sector in QEMU's IDE model, which issues one
+         * backend request per sector of a PIO data phase.
          *
-         * Y 26% es mucho menos que la mitad, que es lo que haria falta si el coste
-         * estuviese en el numero de escrituras. No esta: esta en algo FIJO por sector,
-         * del lado del dispositivo emulado, que cobra una peticion al medio de
-         * almacenamiento por sector. Medido aparte: quitar el cache flush --143 por
-         * este mismo fichero-- no cambio nada (379989 ms), y tampoco es el numero de
-         * escrituras, porque duplicarlo solo dio el 26%.
-         *
-         * Lo que si lo quita es DMA de bus master, que entrega los sectores en una
-         * sola peticion. isa-ide lo ofrece y el kernel no lo usa. Es la pieza que
-         * falta, y no se escribe aqui porque es otra cosa: una tabla de descriptores
-         * en memoria del kernel, barreras, y esperar a que el dispositivo la recorra. */
+         * Only DMA removes that, and isa-ide has no bus master: it would take
+         * an AHCI driver (q35 has an ICH9 AHCI controller on board). See
+         * docs/fs/SXFS_ROADMAP.md, "Where the remaining cost is". */
         if (write) {
             for (size_t dword = 0; dword < (block::kSectorSize / sizeof(uint32_t)); ++dword) {
                 const size_t byte_index = static_cast<size_t>(sector) * block::kSectorSize + dword * sizeof(uint32_t);
@@ -304,11 +296,10 @@ bool rw_chunk_once(Slot& slot, uint32_t lba, uint32_t sector_count, uint8_t* byt
         }
     }
 
-    if (write) {
-        outb(static_cast<uint16_t>(slot.io_base + 7), kCommandCacheFlush);
-        if (!poll_status(slot, false)) {
-            return false;
-        }
+    // The data may now sit in the drive's write cache; flush_op commits it.
+    // Waiting for BSY to clear is what lets the next command be issued.
+    if (write && !poll_status(slot, false)) {
+        return false;
     }
 
     return true;
@@ -437,9 +428,24 @@ bool write_op(void* context, uint32_t lba, uint32_t sector_count, const void* bu
     return rw_sectors(*static_cast<Slot*>(context), lba, sector_count, const_cast<void*>(buffer), true);
 }
 
+// FLUSH CACHE, issued by block:: at each ordering point. Only once the drive
+// is idle: a command written while BSY is set is dropped. The flush used to be
+// written straight after each command's last sector, while the drive was still
+// busy with it, so QEMU discarded every one of them.
+bool flush_op(void* context) {
+    Slot& slot = *static_cast<Slot*>(context);
+    select_drive(slot, 0);
+    if (!poll_status(slot, false)) {
+        return false;
+    }
+    outb(static_cast<uint16_t>(slot.io_base + 7), kCommandCacheFlush);
+    return poll_status(slot, false);
+}
+
 const block::DeviceOps kOps = {
     &read_op,
     &write_op,
+    &flush_op,
 };
 
 void enumerate() {

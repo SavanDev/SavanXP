@@ -22,8 +22,12 @@ struct DeviceInfo {
 // asi que los drivers se quedan solo con lo especifico de su protocolo.
 struct DeviceOps {
     bool (*read)(void* context, uint32_t lba, uint32_t sector_count, void* buffer);
-    // Puede ser nullptr: el device queda como solo-lectura.
+    // May be nullptr: the device is then read-only. Returns once the device
+    // has the data, which may still be in its volatile write cache.
     bool (*write)(void* context, uint32_t lba, uint32_t sector_count, const void* buffer);
+    // Commits the device's write cache to the medium. nullptr when there is
+    // no cache to commit (a ramdisk).
+    bool (*flush)(void* context);
 };
 
 // Driver de almacenamiento. A diferencia de display y audio, aca NO se elige un
@@ -59,6 +63,14 @@ bool ready();
 size_t device_count();
 bool device_info(size_t index, DeviceInfo& info);
 bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer);
+// Durable write: on the medium when it returns (write_cached + flush).
 bool write(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer);
+// Write that may sit in the device's cache, and land in any order relative to
+// other cached writes, until the next flush(). For callers that batch writes
+// between their own ordering points, like the SxFS journal.
+bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void* buffer);
+// Ordering point: every write issued before it is on the medium when it
+// returns. A device without a cache has nothing to do.
+bool flush(size_t index);
 
 } // namespace block
