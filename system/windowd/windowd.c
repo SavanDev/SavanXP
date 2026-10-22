@@ -332,6 +332,24 @@ static int owned_window_slot(const struct windowd_session *session, int owner_sl
 /* Deshabilitado = tiene una ventana con dueno abierta. No recibe input: un click
  * sobre el solo levanta la familia, y el dialogo queda activo. Es el
  * EnableWindow(owner, FALSE) de DialogBox, decidido por el WM. */
+/*
+ * The display windows are laid out on: the native mode, whatever the scanout
+ * runs at right now. While an application is fullscreen the scanout drops to
+ * a low mode (apply_display_mode), but every window keeps native coordinates
+ * -- exit_overlay_fullscreen restores them untouched -- so a window opened,
+ * moved or resized meanwhile has to be measured against the native mode too.
+ * Measured against the low mode, it kept the low mode's geometry after the
+ * restore: a desktop started during a fullscreen game got a 640-pixel
+ * taskbar. Drawing, damage and the cursor still use session->gfx.info, the
+ * mode actually on screen.
+ */
+static const struct savanxp_fb_info *layout_display(const struct windowd_session *session)
+{
+    const struct savanxp_fb_info *native = &session->compositor.requested_info;
+
+    return native->width != 0 && native->height != 0 ? native : &session->gfx.info;
+}
+
 static int overlay_client_disabled(const struct windowd_session *session, const struct windowd_client *client)
 {
     int slot = overlay_slot_for_client_ptr(session, client);
@@ -493,7 +511,7 @@ static void toggle_overlay_client_maximized(struct windowd_session *session, str
 
             desktop_reserved_strips(session, &reserved_top, &reserved_bottom);
             windowd_maximize_area_bounds(
-                &session->gfx.info,
+                layout_display(session),
                 reserved_top,
                 reserved_bottom,
                 &area_x, &area_y, &area_width, &area_height);
@@ -597,7 +615,7 @@ static void resize_overlay_client_surface(
             client->restore_window_height = client->window_height;
         }
         windowd_clamp_overlay_frame_position(
-            &session->gfx.info,
+            layout_display(session),
             client->window_width,
             client->window_height,
             &client->window_x,
@@ -817,7 +835,7 @@ static void move_overlay_client_window(
 
     previous_frame = windowd_client_frame_rect(client);
     windowd_clamp_overlay_frame_position(
-        &session->gfx.info,
+        layout_display(session),
         previous_frame.width,
         previous_frame.height,
         &window_x,
@@ -1414,11 +1432,11 @@ static void fill_client_surface_info(
 
     if (!background)
     {
-        windowd_fill_overlay_surface_info(&session->gfx.info, client_info);
+        windowd_fill_overlay_surface_info(layout_display(session), client_info);
     }
     else
     {
-        windowd_fill_shell_surface_info(&session->gfx.info, client_info);
+        windowd_fill_shell_surface_info(layout_display(session), client_info);
     }
 }
 
@@ -1436,7 +1454,7 @@ static void position_client_window(
     if (!background)
     {
         windowd_place_overlay_window(
-            &session->gfx.info,
+            layout_display(session),
             &client->surface_info,
             cascade_index,
             &client->window_x,
@@ -2842,7 +2860,7 @@ static void reposition_overlay_client_window(
         return;
     }
 
-    windowd_place_overlay_window(&session->gfx.info, &client->surface_info, client->cascade_index, &x, &y, &width, &height);
+    windowd_place_overlay_window(layout_display(session), &client->surface_info, client->cascade_index, &x, &y, &width, &height);
     if (x == client->window_x && y == client->window_y)
     {
         return;
@@ -2981,8 +2999,8 @@ static int open_owned_window(
     /* Un dialogo que no entra en la pantalla con su marco no se puede usar;
      * mejor que el cliente lo dibuje adentro de su ventana como antes. */
     if (request->width == 0 || request->height == 0 ||
-        request->width + (uint32_t)(WINDOWD_WINDOW_BORDER * 2) > session->gfx.info.width ||
-        request->height + (uint32_t)(WINDOWD_WINDOW_TITLEBAR_HEIGHT + WINDOWD_WINDOW_BORDER) > session->gfx.info.height)
+        request->width + (uint32_t)(WINDOWD_WINDOW_BORDER * 2) > layout_display(session)->width ||
+        request->height + (uint32_t)(WINDOWD_WINDOW_TITLEBAR_HEIGHT + WINDOWD_WINDOW_BORDER) > layout_display(session)->height)
     {
         return -SAVANXP_EINVAL;
     }
@@ -3052,7 +3070,7 @@ static int open_owned_window(
     client->window_x = owner_frame.x + (owner_frame.width - client->window_width) / 2;
     client->window_y = owner_frame.y + (owner_frame.height - client->window_height) / 2;
     windowd_clamp_overlay_frame_position(
-        &session->gfx.info, client->window_width, client->window_height, &client->window_x, &client->window_y);
+        layout_display(session), client->window_width, client->window_height, &client->window_x, &client->window_y);
     client->restore_window_x = client->window_x;
     client->restore_window_y = client->window_y;
     client->restore_window_width = client->window_width;
@@ -3111,7 +3129,7 @@ static int open_desktop_window(
 {
     struct windowd_client *owner = &session->desktop_windows[0];
     struct windowd_client *client = 0;
-    const struct savanxp_fb_info *display = &session->gfx.info;
+    const struct savanxp_fb_info *display = layout_display(session);
     int section_fd = -1;
     long result = 0;
     int width = 0;
@@ -3963,7 +3981,7 @@ static struct windowd_client *selftest_desktop_open_popup(struct windowd_session
  * a popup above it; a press on an application window asks the popup to close
  * and the desktop closes it; and an application asking for a role is refused.
  */
-static int windowd_desktop_selftest(struct windowd_session *session, int app_slot)
+static int windowd_desktop_selftest(struct windowd_session *session, int app_slot, int fullscreen_slot)
 {
     struct windowd_dirty_rect dirty = {0};
     const struct savanxp_fb_info *display = &session->gfx.info;
@@ -3972,6 +3990,8 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
     struct windowd_client *app = overlay_client_at(session, app_slot);
     int reserved_top = 0;
     int reserved_bottom = 0;
+    int popup_x = 0;
+    int popup_y = 0;
     int popup_width = 0;
     int popup_height = 0;
     unsigned long deadline = 0;
@@ -4008,6 +4028,8 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
         puts_fd(2, "DESKTOP SMOKE FAIL roles: the popup is not a dismissable one above the panel\n");
         return 1;
     }
+    popup_x = popup->window_x;
+    popup_y = popup->window_y;
     popup_width = popup->window_width;
     popup_height = popup->window_height;
 
@@ -4134,6 +4156,67 @@ static int windowd_desktop_selftest(struct windowd_session *session, int app_slo
         if (selftest_desktop_window(session, WINDOWD_ROLE_POPUP) != 0)
         {
             puts_fd(2, "DESKTOP SMOKE FAIL hotkeys: Ctrl+Esc again did not close the Start menu\n");
+            return 1;
+        }
+    }
+
+    /* A window opened while an application is fullscreen is laid out on the
+     * native mode, not on the low one the scanout runs at (layout_display):
+     * the Start menu opened in fullscreen lands where it lands on the desktop.
+     * Measured against the low mode it was clamped into 640x400, and a
+     * desktop started during a fullscreen game kept a 640-pixel taskbar. */
+    {
+        struct savanxp_input_event key_event;
+        struct windowd_client *fullscreen_popup = 0;
+        int same_place = 0;
+
+        if (enter_overlay_fullscreen(session, &dirty, fullscreen_slot) != 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL layout: could not enter fullscreen\n");
+            return 1;
+        }
+        fullscreen_popup = selftest_desktop_open_popup(session);
+        if (fullscreen_popup != 0)
+        {
+            same_place = fullscreen_popup->window_x == popup_x && fullscreen_popup->window_y == popup_y &&
+                fullscreen_popup->window_width == popup_width && fullscreen_popup->window_height == popup_height;
+            if (!same_place)
+            {
+                printf("DESKTOP SMOKE FAIL layout: Start menu at %d,%d %dx%d in fullscreen, %d,%d %dx%d on the desktop\n",
+                    fullscreen_popup->window_x, fullscreen_popup->window_y,
+                    fullscreen_popup->window_width, fullscreen_popup->window_height,
+                    popup_x, popup_y, popup_width, popup_height);
+            }
+            /* Ctrl+Esc toggles it closed. Delivering a hotkey also leaves
+             * fullscreen, which makes the exit below a no-op. */
+            memset(&key_event, 0, sizeof(key_event));
+            key_event.type = SAVANXP_INPUT_EVENT_KEY_DOWN;
+            key_event.key = SAVANXP_KEY_ESC;
+            key_event.modifiers = SAVANXP_KEY_MOD_CTRL;
+            (void)deliver_hotkey(session, &key_event, &dirty);
+            key_event.type = SAVANXP_INPUT_EVENT_KEY_UP;
+            key_event.modifiers = 0;
+            (void)deliver_hotkey(session, &key_event, &dirty);
+            deadline = uptime_ms() + WINDOWD_SELFTEST_START_DEADLINE_MS;
+            while (selftest_desktop_window(session, WINDOWD_ROLE_POPUP) != 0 && uptime_ms() < deadline)
+            {
+                selftest_service_overlays(session, &dirty);
+                sleep_ms(20);
+            }
+        }
+        exit_overlay_fullscreen(session, &dirty);
+        if (fullscreen_popup == 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL layout: Start did not open a popup in fullscreen\n");
+            return 1;
+        }
+        if (!same_place)
+        {
+            return 1;
+        }
+        if (selftest_desktop_window(session, WINDOWD_ROLE_POPUP) != 0)
+        {
+            puts_fd(2, "DESKTOP SMOKE FAIL layout: the Start menu opened in fullscreen did not close\n");
             return 1;
         }
     }
@@ -5174,7 +5257,7 @@ static int windowd_selftest(void)
 
     /* Before the back-pressure test below, which fills the desktop's event
      * pipe: the roles test needs its presses to arrive. */
-    if (!failed && windowd_desktop_selftest(&session, kProgmanSlot) != 0)
+    if (!failed && windowd_desktop_selftest(&session, kProgmanSlot, kSlot) != 0)
     {
         failed = 1;
     }

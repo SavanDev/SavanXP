@@ -416,6 +416,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Windows opened during a fullscreen app get the desktop's size.** A taskbar, Start menu or window
+  created while the screen ran in the 640x400 fullscreen mode kept that geometry after the restore,
+  or was refused; `windowd` now lays every window out on the native mode (`layout_display`).
+
 - **Paint no longer overwrites PNG files or resizes what it opens.** Save on a PNG asks for a
   `.bmp` name instead of writing BMP bytes into the `.png`; opened images keep their own size; top-down
   BMPs load; a failed Save As keeps the old name; no-op strokes push no undo step.

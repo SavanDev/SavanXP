@@ -360,6 +360,14 @@ Rules:
   A press on another window of the popup's own process does not dismiss it:
   the toggle button on the taskbar, but also the background, are the desktop's
   to interpret (it closes its popups on a press on the background).
+- Geometry is decided on the **native mode**, never on the mode the scanout
+  runs at (`layout_display()` in `windowd.c`). Composited fullscreen drops the
+  scanout to a low mode, but every window keeps native coordinates and
+  `exit_overlay_fullscreen` restores them untouched, so a window opened, moved
+  or resized meanwhile is measured against the native mode too. Drawing, damage
+  and the cursor use the live mode. Measured against the low mode, a desktop
+  started during a fullscreen game kept a 640-pixel taskbar, and the Start menu
+  could not open at all.
 - The fields are appended to `savanxp_wm_window_request` (`role`,
   `role_flags`, `x`, `y`); clients built before them still map their surface,
   since the header only grew at its end. The runtime call is
