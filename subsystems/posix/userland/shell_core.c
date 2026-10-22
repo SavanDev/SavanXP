@@ -91,9 +91,9 @@ void shell_current_directory(char* buffer, size_t capacity) {
 void shell_print_help(const struct shell_capture_sink* sink) {
     shell_emit_text(sink, 1, SAVANXP_DISPLAY_NAME " shell\n");
     shell_emit_text(sink, 1, "Builtins: help clear exit exec which mkdir cd pwd start\n");
-    shell_emit_text(sink, 1, "Core: sysinfo uname ps ls cat df echo sleep ticker demo true false\n");
-    shell_emit_text(sink, 1, "Storage: mkdir mv rm rmdir truncate sync fscheck seektest renametest truncatetest\n");
-    shell_emit_text(sink, 1, "Diagnostics: sysinfo errtest fdtest waittest pipestress spawnloop badptr\n");
+    shell_emit_text(sink, 1, "Core: sysinfo uname ps ls cat df echo sleep ticker true false\n");
+    shell_emit_text(sink, 1, "Storage: mkdir mv rm rmdir truncate sync fscheck\n");
+    shell_emit_text(sink, 1, "Diagnostics: sysinfo fdtest badptr\n");
     shell_emit_text(sink, 1, "Network: netinfo ping udptest udpsend udprecv tcpget\n");
     shell_emit_text(sink, 1, "Graphics/audio: desktop console gfxdemo gputest keytest mousetest beep\n");
     shell_emit_text(sink, 1, "Examples: sysinfo\n");
@@ -103,7 +103,7 @@ void shell_print_help(const struct shell_capture_sink* sink) {
     shell_emit_text(sink, 1, "          echo \"hola mundo\" | cat\n");
     shell_emit_text(sink, 1, "          cat < /README\n");
     shell_emit_text(sink, 1, "          echo hola > /disk/out.txt\n");
-    shell_emit_text(sink, 1, "          errtest > /disk/mixed.txt 2>&1\n");
+    shell_emit_text(sink, 1, "          cat /missing > /disk/mixed.txt 2>&1\n");
     shell_emit_text(sink, 1, "          fscheck\n");
     shell_emit_text(sink, 1, "          start notepad\n");
     shell_emit_text(sink, 1, "          ping 10.0.2.2  (QEMU user-net smoke test)\n");

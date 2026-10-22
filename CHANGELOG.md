@@ -383,6 +383,10 @@ Cut-off notes:
 
 ### Removed
 
+- **Eight redundant test programs.** `spawnloop`, `pipestress`, `waittest`, `errtest`, `demo`,
+  `seektest`, `renametest` and `truncatetest` are gone: `sh`, `init`, `mv`, `truncate` and the
+  `smoke` suite already exercise the same paths. An existing `build/disk.img` keeps the stale copies.
+
 - **`shellapp`, the old terminal window.** The Command Prompt (`/bin/console`) replaces it in the
   Start menu and Program Manager, and the legacy `icon=shell` alias now points at it. An existing
   `build/disk.img` keeps its stale `/disk/bin/shellapp` until it is removed by hand.
