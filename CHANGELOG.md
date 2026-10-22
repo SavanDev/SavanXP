@@ -18,6 +18,10 @@ Cut-off notes:
   run on several cores at once: unmapping a view other cores may hold sends them a TLB shootdown
   IPI, and its pages are freed only once they have flushed. See `docs/kernel/THREADS_ROADMAP.md`.
 
+- **Each native thread has its own `%fs` and `%gs`.** `SXN_SYS_SET_THREAD_BASE`
+  (`sxn_set_thread_base`, `SXN_THREAD_BASE_FS`/`_GS`) sets the calling thread's segment base, the
+  anchor of thread-local storage and of a future Win64 TEB. See `docs/kernel/KERNEL_NATIVE_API.md`.
+
 - **AHCI (SATA) disk driver with DMA.** `kernel/ahci.cpp` registers SATA disks as `ahciN`, and
   QEMU now attaches `disk.img` to the q35 AHCI controller by default (`SAVANXP_DISK_BUS=ide` or
   `run_qemu.py --disk-bus ide` keeps legacy IDE). Up to 256 sectors per command: a 390 KB copy

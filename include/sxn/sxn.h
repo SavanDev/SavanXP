@@ -207,6 +207,13 @@ static inline long sxn_thread_exit_code(long handle, int32_t* code) {
     return sxn_trap(SXN_SYS_THREAD_EXIT_CODE, (unsigned long)handle, (unsigned long)code, 0);
 }
 
+/* The calling thread's %fs (SXN_THREAD_BASE_FS) or %gs (SXN_THREAD_BASE_GS)
+ * base: thread-local storage. A new thread starts with both at 0 and sets its
+ * own. 0, or -EINVAL. */
+static inline long sxn_set_thread_base(unsigned which, void* address) {
+    return sxn_trap(SXN_SYS_SET_THREAD_BASE, (unsigned long)which, (unsigned long)address, 0);
+}
+
 static inline void sxn_spawn_request_init(
     struct sxn_spawn_request* request, const char* path, char* const* argv, int argc) {
     request->path = (uint64_t)(unsigned long)path;

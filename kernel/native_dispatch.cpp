@@ -932,6 +932,10 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(result);
             return context;
         }
+        case SXN_SYS_SET_THREAD_BASE:
+            context->rax = static_cast<uint64_t>(
+                set_thread_base(*self, static_cast<uint32_t>(context->rdi), context->rsi));
+            return context;
         case SXN_SYS_PIPE_CREATE:
             context->rax = static_cast<uint64_t>(native_pipe_create(*caller, context->rdi));
             return context;

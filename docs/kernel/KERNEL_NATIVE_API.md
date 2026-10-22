@@ -65,6 +65,7 @@ object/process factoring, not before.
 - Slice 21: `SXN_SYS_SPAWN_EX`, a child with chosen handles.
 - Slice 22: `SXN_SYS_TERMINATE` reaches descendants.
 - Slice 23: threads (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`).
+- Slice 24: `SXN_SYS_SET_THREAD_BASE`, per-thread `%fs` / `%gs`.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -274,6 +275,29 @@ whose last thread ends the process with its code; `SXN_SYS_EXIT` from a
 second thread ending them all while the main one spins; and a view unmapped
 while a sibling reads it, which must fault the reader instead of letting it
 read on through a stale translation on another core.
+
+## Slice 24: per-thread `%fs` and `%gs`
+
+Phase 3 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md): the base of
+thread-local storage.
+
+- `SXN_SYS_SET_THREAD_BASE` (`0x1026`): rdi = `SXN_THREAD_BASE_FS` (1) or
+  `SXN_THREAD_BASE_GS` (2), rsi = an address in user space, or 0. Sets that
+  segment base of the calling thread. 0, or `-EINVAL` for another base or an
+  address at or above `1 << 47` (a non-canonical one would make the kernel's
+  `wrmsr` fault). `arch_prctl(ARCH_SET_FS)`; Win64 keeps its TEB at `%gs`.
+  Native only for now, like the other thread calls.
+
+Every thread starts with both bases at 0 and sets its own: there is no TLS
+argument to `SXN_SYS_THREAD_CREATE`, so a thread must not touch `%fs` or `%gs`
+before its first call. `exec` resets them; `fork` copies the calling thread's.
+There is no call to read a base back: user code reads its block through a
+self-pointer at `%fs:0` / `%gs:0x30`, as POSIX and Win64 both do.
+
+`nativetest` covers it: three threads and the main one each point both bases
+at blocks of their own and read them back 2000 times, giving their core away
+every 64 rounds, then the refusals. With the swap in `switch_to_thread`
+removed, the test fails on one core and on four.
 
 ## Slices 20-22: what a console host needs
 

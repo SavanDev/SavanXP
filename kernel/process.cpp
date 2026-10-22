@@ -1,6 +1,8 @@
 #include "kernel/process.hpp"
 #include "kernel/process_detail.hpp"
 
+#include "abi/savanxp_native_abi.h"
+
 #include <stdarg.h>
 #include <stdint.h>
 
@@ -1654,11 +1656,14 @@ void switch_to_thread(process::Thread* target) {
     // keeps running and its FPU is still live in the registers -- an FXRSTOR
     // here would overwrite it with a stale copy, so it is skipped. The kernel
     // is -mno-sse and does not touch the FPU in between.
+    // The user FS/GS bases go the same way, for the same reason.
     if (this_cpu().current != target) {
         if (this_cpu().current != nullptr) {
             arch::x86_64::fpu_save(this_cpu().current->fpu_state);
+            arch::x86_64::save_user_segment_bases(this_cpu().current->fs_base, this_cpu().current->gs_base);
         }
         arch::x86_64::fpu_restore(target->fpu_state);
+        arch::x86_64::load_user_segment_bases(target->fs_base, target->gs_base);
     }
 
     this_cpu().current = target;
@@ -1795,6 +1800,12 @@ bool prepare_exec_image(
     self.blocked_write_progress = 0;
     clear_wait_state(self);
     process::detail::reset_time_slice(self);
+    // The new image starts without thread-local storage, as a new thread does.
+    self.fs_base = 0;
+    self.gs_base = 0;
+    if (this_cpu().current == &self) {
+        arch::x86_64::load_user_segment_bases(0, 0);
+    }
     fabricate_initial_context(self, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
     return true;
 }
@@ -2614,6 +2625,32 @@ void exit_current_thread(int exit_code) {
     this_cpu().retired = self;
     SavedContext* next = choose_next_context(nullptr);
     arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
+}
+
+int set_thread_base(Thread& self, uint32_t which, uint64_t address) {
+    // wrmsr of a non-canonical base is a #GP in the kernel; a kernel address
+    // would be harmless (user accesses through it fault) but means nothing.
+    if (address >= (1ULL << 47) || (which != SXN_THREAD_BASE_FS && which != SXN_THREAD_BASE_GS)) {
+        return negative_error(SX_EINVAL);
+    }
+    if (which == SXN_THREAD_BASE_FS) {
+        self.fs_base = address;
+    } else {
+        self.gs_base = address;
+    }
+    if (this_cpu().current == &self) {
+        arch::x86_64::load_user_segment_bases(self.fs_base, self.gs_base);
+    }
+    return 0;
+}
+
+void thread_bases(const Thread& thread, uint64_t& fs_base, uint64_t& gs_base) {
+    if (this_cpu().current == &thread) {
+        arch::x86_64::save_user_segment_bases(fs_base, gs_base);
+        return;
+    }
+    fs_base = thread.fs_base;
+    gs_base = thread.gs_base;
 }
 
 int thread_exit_code(Process& proc, uint64_t handle, int& exit_code) {

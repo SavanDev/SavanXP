@@ -221,7 +221,19 @@ enum sxn_syscall_number {
      * thread: returns 0, -EAGAIN while it still runs, -EBADF when the handle
      * is not a thread. GetExitCodeThread. */
     SXN_SYS_THREAD_EXIT_CODE = 0x1025,
+    /* rdi = which base (SXN_THREAD_BASE_FS or SXN_THREAD_BASE_GS), rsi = an
+     * address in user space, or 0. Sets that segment base of the calling
+     * thread: %fs- or %gs-relative accesses read from there, on whichever
+     * core the thread runs. Every thread starts with both at 0, exec resets
+     * them and fork copies them. Returns 0, or -EINVAL for another `which` or
+     * an address outside user space. arch_prctl(ARCH_SET_FS) for POSIX TLS;
+     * Win64 keeps its TEB at %gs. Native only for now. */
+    SXN_SYS_SET_THREAD_BASE = 0x1026,
 };
+
+/* Bases of SXN_SYS_SET_THREAD_BASE. */
+#define SXN_THREAD_BASE_FS 1u
+#define SXN_THREAD_BASE_GS 2u
 
 /* Most handles SXN_SYS_SPAWN_EX places after stdio (at 3, 4, 5 and 6). */
 #define SXN_SPAWN_MAX_HANDLES 4u

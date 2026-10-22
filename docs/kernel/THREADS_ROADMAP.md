@@ -1,6 +1,6 @@
 # Threads — more than one execution context per process
 
-> **Status: phases 0, 1 and 2 done (2026-10-22), phases 3-5 not started.** This
+> **Status: phases 0-3 done (2026-10-22), phases 4 and 5 not started.** This
 > document is the inventory: what the kernel assumed about "one process, one
 > context", what had to move, and the order in which to move it so that every
 > phase boots and can be verified on its own.
@@ -15,7 +15,8 @@
 > (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`, slice 23 of
 > [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)), taking turns on the CPU.
 > Phase 2 lets them run on several cores at once, with a user-space TLB
-> shootdown that never waits for the other cores.
+> shootdown that never waits for the other cores. Phase 3 gives each thread
+> its own `%fs` and `%gs` (`SXN_SYS_SET_THREAD_BASE`, slice 24).
 
 Threads are the first kernel prerequisite of a future Win32 subsystem — the
 others are per-thread TLS registers, exceptions delivered to user mode and
@@ -356,13 +357,41 @@ Verified by `native-test` on 1, 2 and 4 cores (25 runs in a row on 4), and
 the regular smokes unchanged, the desktop ones on 4 cores (`smoke`,
 `windowd-smoke`, `session-smoke`, `taskbar-smoke`).
 
-### Phase 3 — per-thread `FS_BASE` / `GS_BASE`
+### Phase 3 — per-thread `FS_BASE` / `GS_BASE` — **DONE**
 
-Two fields in `Thread`, written to the MSRs on every switch into a thread of
-user mode, and a native call to set them (the `arch_prctl` of this system).
-`CR4.FSGSBASE` (user-mode `wrfsbase`) is optional and can come later. POSIX
-TLS uses `%fs`; Win64's TEB uses `%gs`, so both are needed and neither
-conflicts with the kernel.
+What landed:
+
+- `Thread::fs_base` and `gs_base`, swapped by `switch_to_thread` on a real
+  switch next to the FPU state (`arch::x86_64::save_user_segment_bases` /
+  `load_user_segment_bases`). **The kernel uses neither segment** —
+  `cpu_index()` reads `TR` and there is no `swapgs` — so the MSRs hold the
+  running thread's values across every kernel entry and nothing has to be
+  saved on the way in.
+- **Saved by reading the MSRs, not trusted from the fields.** While a thread
+  runs, the MSRs are the live copy. A user `mov` to `%fs` can change the base
+  without the kernel knowing, and `CR4.FSGSBASE` would let `wrfsbase` do it
+  too; reading them back on the way out keeps either from going stale.
+- `SXN_SYS_SET_THREAD_BASE` (slice 24 of
+  [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)): user addresses or 0 only,
+  since a non-canonical base is a `#GP` on the kernel's `wrmsr`.
+- `exec` resets both to 0; POSIX `fork` copies them from the calling thread
+  (from the MSRs when it is the one running, as with the FPU).
+
+Where it differs from the plan:
+
+- **No TLS argument to thread creation.** Linux's `CLONE_SETTLS` sets the base
+  before the thread runs; here a new thread starts at 0 and sets its own, so it
+  must not touch `%fs`/`%gs` before that call. pthreads can wrap that in its
+  start routine; if a race ever matters, a fifth argument is the fix.
+- **No call to read a base back.** TLS blocks start with a self-pointer
+  (`%fs:0` on x86-64 System V, `%gs:0x30` in the Win64 TEB), which is how
+  user code finds them.
+- `CR4.FSGSBASE` stays off.
+
+Verified by `native-test` on 1, 2 and 4 cores: three threads and the main one
+point both bases at blocks of their own and read them back 2000 times each,
+yielding every 64 rounds. With the swap removed from `switch_to_thread` the
+test fails on one core and on four.
 
 ### Phase 4 — wait on an address
 

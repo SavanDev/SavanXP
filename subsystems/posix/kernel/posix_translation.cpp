@@ -240,6 +240,9 @@ process::Process* fork_process(process::Thread& parent_thread, const process::Sa
         arch::x86_64::fpu_save(parent_thread.fpu_state);
     }
     memcpy(child_thread->fpu_state, parent_thread.fpu_state, sizeof(child_thread->fpu_state));
+    // So do the segment bases: the child's thread-local storage is the
+    // parent's, at the same addresses of the copied address space.
+    process::thread_bases(parent_thread, child_thread->fs_base, child_thread->gs_base);
 
     if (!detail::inherit_all_handles(*child, parent)) {
         detail::release_process_resources(*child);

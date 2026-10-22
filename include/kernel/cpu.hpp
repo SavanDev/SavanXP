@@ -122,6 +122,15 @@ void enable_fpu();
 void fpu_save(void* area);
 void fpu_restore(const void* area);
 void fpu_init_area(void* area);
+
+/* --- user FS/GS bases (docs/kernel/THREADS_ROADMAP.md, phase 3) -------------
+ * IA32_FS_BASE and IA32_GS_BASE belong to the user thread running on this
+ * core, like the FPU: the kernel never uses either segment (cpu_index() reads
+ * TR, and there is no swapgs), so they stay loaded across kernel entries and
+ * the scheduler swaps them on a real thread switch. POSIX TLS lives at %fs,
+ * Win64's TEB at %gs. */
+void save_user_segment_bases(uint64_t& fs_base, uint64_t& gs_base);
+void load_user_segment_bases(uint64_t fs_base, uint64_t gs_base);
 /* --- identidad del CPU (CPUID) -----------------------------------------------
  * Quien es este procesador, tal como el propio procesador se presenta. Lo pide
  * la ventana de propiedades del sistema, que muestra la marca y la velocidad

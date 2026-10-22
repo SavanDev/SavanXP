@@ -763,6 +763,20 @@ void fpu_restore(const void* area) {
     asm volatile("fxrstor64 (%0)" ::"r"(area) : "memory");
 }
 
+void save_user_segment_bases(uint64_t& fs_base, uint64_t& gs_base) {
+    constexpr uint32_t kFsBaseMsr = 0xc0000100;
+    constexpr uint32_t kGsBaseMsr = 0xc0000101;
+    fs_base = read_msr(kFsBaseMsr);
+    gs_base = read_msr(kGsBaseMsr);
+}
+
+void load_user_segment_bases(uint64_t fs_base, uint64_t gs_base) {
+    constexpr uint32_t kFsBaseMsr = 0xc0000100;
+    constexpr uint32_t kGsBaseMsr = 0xc0000101;
+    write_msr(kFsBaseMsr, fs_base);
+    write_msr(kGsBaseMsr, gs_base);
+}
+
 void fpu_init_area(void* area) {
     auto* destination = static_cast<uint64_t*>(area);
     const auto* source = reinterpret_cast<const uint64_t*>(g_default_fpu_state);

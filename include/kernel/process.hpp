@@ -193,6 +193,11 @@ struct Thread {
     uint64_t kernel_stack_base;
     uint64_t kernel_stack_size;
     SavedContext* context;
+    // User FS and GS bases (SXN_SYS_SET_THREAD_BASE). While the thread runs
+    // the MSRs are the live copy; switch_to_thread saves them here when it
+    // switches away, the way it saves the FPU. 0 at creation and after exec.
+    uint64_t fs_base;
+    uint64_t gs_base;
     // FPU/SSE state (FXSAVE format, 512 bytes aligned to 16). The scheduler
     // saves and restores it on a real switch; it is seeded with a clean state
     // when the thread is allocated. alignas(16) aligns the whole struct.
@@ -355,6 +360,12 @@ void terminate_current(int exit_code);
 int create_thread(Process& proc, uint64_t entry, uint64_t argument, uint64_t stack_top, uint32_t& tid);
 [[noreturn]] void exit_current_thread(int exit_code);
 int thread_exit_code(Process& proc, uint64_t handle, int& exit_code);
+// Sets the user FS (which = SXN_THREAD_BASE_FS) or GS base of the calling
+// thread to `address`, a user-space address or 0. 0, or -EINVAL.
+int set_thread_base(Thread& self, uint32_t which, uint64_t address);
+// The current FS and GS bases of `thread`, read from the MSRs when it is the
+// one running here. fork copies them from the parent thread this way.
+void thread_bases(const Thread& thread, uint64_t& fs_base, uint64_t& gs_base);
 // Threads of `proc` that have not ended.
 uint32_t live_thread_count(const Process& proc);
 // Asked to end while one of its threads ran on another core (exit_requested):

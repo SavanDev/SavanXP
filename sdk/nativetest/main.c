@@ -439,6 +439,97 @@ static void run_exit_all_child(void) {
     }
 }
 
+/* Thread-local storage through the segment bases. Each thread points %fs and
+ * %gs at blocks of its own and reads them back many times, giving its core
+ * away now and then: whichever core it resumes on, and whoever ran there in
+ * between, it must see its own values. */
+#define SXN_TLS_THREADS 3
+#define SXN_TLS_ROUNDS 2000
+
+struct tls_block {
+    struct tls_block* self;
+    uint64_t value;
+};
+
+static struct tls_block g_tls_blocks[SXN_TLS_THREADS + 1][2];
+static long g_tls_pause = -1;
+
+static uint64_t fs_value(void) {
+    uint64_t value;
+    __asm__ volatile("movq %%fs:8, %0" : "=r"(value));
+    return value;
+}
+
+static uint64_t gs_value(void) {
+    uint64_t value;
+    __asm__ volatile("movq %%gs:8, %0" : "=r"(value));
+    return value;
+}
+
+static int tls_round_trips(long index) {
+    struct tls_block* fs = &g_tls_blocks[index][0];
+    struct tls_block* gs = &g_tls_blocks[index][1];
+    long round;
+
+    if (sxn_set_thread_base(SXN_THREAD_BASE_FS, fs) != 0 ||
+        sxn_set_thread_base(SXN_THREAD_BASE_GS, gs) != 0) {
+        return 0;
+    }
+    for (round = 0; round < SXN_TLS_ROUNDS; ++round) {
+        if (fs_value() != fs->value || gs_value() != gs->value) {
+            return 0;
+        }
+        if ((round % 64) == 0) {
+            (void)sxn_wait_one(g_tls_pause, 1);
+        }
+    }
+    return 1;
+}
+
+static void thread_tls(void* argument) {
+    sxn_thread_exit(tls_round_trips((long)argument) ? 0 : 1);
+}
+
+static void test_thread_bases(void) {
+    int32_t handles[SXN_TLS_THREADS];
+    int32_t code = -1;
+    long index;
+
+    for (index = 0; index <= SXN_TLS_THREADS; ++index) {
+        g_tls_blocks[index][0].self = &g_tls_blocks[index][0];
+        g_tls_blocks[index][0].value = 0xf5000000u + (uint64_t)index;
+        g_tls_blocks[index][1].self = &g_tls_blocks[index][1];
+        g_tls_blocks[index][1].value = 0x65000000u + (uint64_t)index;
+    }
+    g_tls_pause = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    check(g_tls_pause >= 0);
+
+    for (index = 0; index < SXN_TLS_THREADS; ++index) {
+        void* stack = thread_stack();
+
+        check(stack != 0);
+        handles[index] = (int32_t)sxn_thread_create(thread_tls, (void*)index, stack, 0);
+        check(handles[index] >= 0);
+    }
+    /* The main thread takes part too, with the last pair of blocks. */
+    check(tls_round_trips(SXN_TLS_THREADS));
+    for (index = 0; index < SXN_TLS_THREADS; ++index) {
+        check(sxn_wait_one(handles[index], 10000) == 0);
+        check(sxn_thread_exit_code(handles[index], &code) == 0 && code == 0);
+        (void)sxn_close(handles[index]);
+    }
+
+    /* Refusals: an unknown base, a non-canonical address, a kernel one. */
+    check(sxn_set_thread_base(0, &g_tls_blocks[0][0]) == -SAVANXP_EINVAL);
+    check(sxn_set_thread_base(SXN_THREAD_BASE_FS, (void*)0x0000800000000000ul) == -SAVANXP_EINVAL);
+    check(sxn_set_thread_base(SXN_THREAD_BASE_GS, (void*)0xffff800000000000ul) == -SAVANXP_EINVAL);
+    /* Still its own after the refusals. */
+    check(fs_value() == g_tls_blocks[SXN_TLS_THREADS][0].value);
+    check(sxn_set_thread_base(SXN_THREAD_BASE_FS, 0) == 0 && sxn_set_thread_base(SXN_THREAD_BASE_GS, 0) == 0);
+    (void)sxn_close(g_tls_pause);
+    check(sxn_log("nativetest: thread bases done") == 0);
+}
+
 static void test_threads(const struct sxn_native_info* info) {
     int32_t handles[SXN_THREAD_WORKERS] = {-1, -1, -1};
     uint32_t tids[SXN_THREAD_WORKERS] = {0, 0, 0};
@@ -1015,6 +1106,7 @@ int main(int argc, char** argv) {
     }
 
     test_threads(&info);
+    test_thread_bases();
 
     /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS and
      * needs no system call; the arenas past it come from the native page
