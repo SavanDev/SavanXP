@@ -93,6 +93,7 @@ What exists, what the console adds, and what is still missing:
 | `TerminateProcess` / `TerminateJobObject` | `sxn_terminate` (any descendant, not only a child) | done (slice 22) |
 | `WaitForSingleObject` / `WaitForMultipleObjects` | `sxn_wait_one`, `sxn_wait_many` (pipes and devices included) | done |
 | `GetExitCodeProcess`, Toolhelp | `sxn_process_query` | done |
+| `CreateThread`, `ExitThread`, `GetExitCodeThread` | `sxn_thread_create`, `sxn_thread_exit`, `sxn_thread_exit_code`; the stack is the caller's | done (slice 23); threads of one process take turns, not yet parallel |
 | `CreateEvent`, `SetEvent`, `ResetEvent` | `sxn_event_*` | done |
 | `CreateFileMapping`, `MapViewOfFile` | `sxn_section_create`, `sxn_map_view` | done |
 | `ReadFile` / `WriteFile` on pipes and devices | `sxn_read`, `sxn_write`, `sxn_set_nonblocking` | done |

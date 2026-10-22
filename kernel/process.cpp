@@ -616,14 +616,28 @@ void reparent_orphaned_children(uint32_t parent_pid) {
 // Threads running on another core need no filtering: they are in
 // State::running, not ready. And idles never enter, each core returns to its
 // own separately.
+// Another thread of the same process running on another core. Until user
+// space has a TLB shootdown, an address space must be loaded on one core at a
+// time (SMP_ROADMAP.md, phase 3): threads of one process take turns, they do
+// not run in parallel (THREADS_ROADMAP.md, phase 1, the interim rule).
+bool sibling_running_elsewhere(const process::Thread& thread) {
+    for (const process::Thread& other : used_thread_slots()) {
+        if (&other != &thread && other.process == thread.process &&
+            other.state == process::State::running && other.cpu != this_cpu().index) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool runnable_here(const process::Thread& thread) {
     if (thread.state != process::State::ready || thread.process->idle) {
         return false;
     }
-    if (thread.context != nullptr && (thread.context->cs & 0x3) == 0) {
-        return thread.cpu == this_cpu().index;
+    if (thread.context != nullptr && (thread.context->cs & 0x3) == 0 && thread.cpu != this_cpu().index) {
+        return false;
     }
-    return true;
+    return thread.process->thread_count <= 1 || !sibling_running_elsewhere(thread);
 }
 
 process::Thread* pick_next_runnable() {
@@ -1118,12 +1132,25 @@ process::Thread* allocate_thread(process::Process& proc) {
             continue;
         }
 
-        memory::PageAllocation kernel_stack = {};
-        if (!memory::allocate_contiguous_pages(kKernelStackPages, kernel_stack)) {
+        const uint32_t tid = proc.thread_count == 0 ? proc.pid : g_next_pid;
+        object::ThreadObject* const thread_object = object::create_thread_object(tid, proc.pid);
+        if (thread_object == nullptr) {
             return nullptr;
         }
+        memory::PageAllocation kernel_stack = {};
+        if (!memory::allocate_contiguous_pages(kKernelStackPages, kernel_stack)) {
+            // Nobody holds a reference yet: destroy it the way the last
+            // release would.
+            thread_object->header.destroy(&thread_object->header);
+            return nullptr;
+        }
+        if (tid == g_next_pid) {
+            g_next_pid += 1;
+        }
         memset(&slot, 0, sizeof(slot));
-        slot.tid = proc.thread_count == 0 ? proc.pid : g_next_pid++;
+        slot.tid = tid;
+        slot.object = thread_object;
+        object::retain(&thread_object->header);
         slot.state = process::State::ready;
         slot.process = &proc;
         slot.kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
@@ -1147,12 +1174,28 @@ process::Thread* allocate_thread(process::Process& proc) {
 // resume_context has left this stack. A thread that exits on its own while
 // its process lives on must not rely on that (THREADS_ROADMAP.md, phase 1).
 void release_thread(process::Thread& thread) {
+    // Another core still running on it would be resuming freed memory: a
+    // thread is released only once every core has left it.
+    for (uint32_t index = 0; index < smp::kMaxCpus; ++index) {
+        process_assert(index == this_cpu().index || smp::g_cpu_state[index].current != &thread,
+            "process: releasing a thread another core is running");
+    }
     if (thread.sleep_timer != nullptr) {
         object::Header* header = &thread.sleep_timer->header;
         object::release(header);
         thread.sleep_timer = nullptr;
     }
     release_kernel_stack(thread);
+    if (thread.object != nullptr) {
+        object::Header* header = &thread.object->header;
+        object::release(header);
+        thread.object = nullptr;
+    }
+    for (smp::Cpu& cpu : smp::g_cpu_state) {
+        if (cpu.retired == &thread) {
+            cpu.retired = nullptr;
+        }
+    }
     if (thread.process != nullptr && thread.process->thread_count != 0) {
         thread.process->thread_count -= 1;
     }
@@ -1452,8 +1495,17 @@ void terminate_process(process::Process& proc, int exit_code) {
         clear_wait_state(thread);
         thread.kill_pending = false;
         thread.state = process::State::zombie;
+        object::end_thread_object(thread.object, exit_code);
     }
     proc.life = process::Lifecycle::zombie;
+    // A handle to one of these threads may be waited on elsewhere: another
+    // process that inherited it, or nobody yet. Only after every thread is a
+    // zombie, so a sibling cannot be woken by its own process's end.
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state == process::State::zombie && thread.process == &proc && thread.object != nullptr) {
+            wake_waiters_for_object(&thread.object->header);
+        }
+    }
     wake_waiting_parent(proc);
     reparent_orphaned_children(exiting_pid);
 }
@@ -1992,6 +2044,11 @@ process::SavedContext* choose_next_context(process::SavedContext* current_contex
     if (this_cpu().current != nullptr && current_context != nullptr) {
         this_cpu().current->context = current_context;
     }
+    // A thread that ended here earlier is off its kernel stack now, unless it
+    // is the one still running this very code (exit_current_thread).
+    if (this_cpu().retired != nullptr && this_cpu().retired != this_cpu().current) {
+        process::detail::release_thread(*this_cpu().retired);
+    }
 
     // Pasar por aca atiende cualquier IPI de replanificar que ande en vuelo:
     // el que llegue despues encuentra la decision ya tomada y no hace nada.
@@ -2479,12 +2536,108 @@ void terminate_current(int exit_code) {
     }
 
     process::detail::terminate_process(*proc, exit_code);
-    // With one thread per process nothing can defer this: the only thread is
-    // the one running here.
+    // Nothing can defer this while threads of one process take turns (the
+    // interim rule in runnable_here): no sibling runs on another core while
+    // this one does. Phase 2 lifts that rule and has to handle the deferral.
     process_assert(proc->life != Lifecycle::alive, "process: exit deferred by another thread");
 
     SavedContext* next = choose_next_context(nullptr);
     arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
+}
+
+bool exit_pending(const Process& proc, int& exit_code) {
+    for (const Thread& thread : used_thread_slots()) {
+        if (thread.process == &proc && thread.state != State::unused && thread.kill_pending) {
+            exit_code = thread.kill_exit_code;
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t live_thread_count(const Process& proc) {
+    uint32_t live = 0;
+    for (const Thread& thread : used_thread_slots()) {
+        if (thread.process == &proc && thread.state != State::unused && thread.state != State::zombie) {
+            live += 1;
+        }
+    }
+    return live;
+}
+
+int create_thread(Process& proc, uint64_t entry, uint64_t argument, uint64_t stack_top, uint32_t& tid) {
+    // The entry is reached as if by a call: rsp is 8 below a 16-byte boundary,
+    // where the return address would be. A thread that returns from its entry
+    // has nowhere to go; it ends with SXN_SYS_THREAD_EXIT.
+    const uint64_t stack_pointer = (stack_top & ~static_cast<uint64_t>(0xf)) - sizeof(uint64_t);
+
+    if (proc.idle || proc.life != Lifecycle::alive || entry == 0 || stack_top < 16) {
+        return negative_error(SX_EINVAL);
+    }
+    if (!vm::is_user_range_accessible(proc.address_space, entry, 1, false) ||
+        !vm::is_user_range_accessible(proc.address_space, stack_pointer, sizeof(uint64_t), true)) {
+        return negative_error(SX_EINVAL);
+    }
+
+    Thread* const thread = process::detail::allocate_thread(proc);
+    if (thread == nullptr) {
+        return negative_error(SX_ENOMEM);
+    }
+    const int handle = process::detail::allocate_fd(
+        proc, &thread->object->header, object::access_synchronize | object::access_query, object::handle_none);
+    if (handle < 0) {
+        process::detail::release_thread(*thread);
+        return handle;
+    }
+
+    SavedContext* const context = fabricate_initial_context(*thread, entry, stack_pointer, 0, 0, 0, 0);
+    context->rdi = argument;
+    context->rdx = 0;
+    tid = thread->tid;
+    process::detail::proc_log("proc: thread %u of pid %u created\n", thread->tid, proc.pid);
+    return handle;
+}
+
+void exit_current_thread(int exit_code) {
+    Thread* const self = this_cpu().current;
+    if (self == nullptr || self->process->idle) {
+        panic("process: invalid current thread on thread exit");
+    }
+
+    // The last live thread takes the process with it, as returning from main
+    // or ExitThread on the last thread does.
+    if (live_thread_count(*self->process) <= 1) {
+        terminate_current(exit_code);
+    }
+
+    clear_wait_state(*self);
+    self->kill_pending = false;
+    self->state = State::zombie;
+    object::end_thread_object(self->object, exit_code);
+    process::detail::wake_waiters_for_object(&self->object->header);
+    process::detail::proc_log("proc: thread %u of pid %u exited %d\n", self->tid, self->process->pid, exit_code);
+
+    // Its kernel stack is the one in use: the next pass through the scheduler
+    // on this core frees it, from another stack.
+    if (this_cpu().retired != nullptr) {
+        process::detail::release_thread(*this_cpu().retired);
+    }
+    this_cpu().retired = self;
+    SavedContext* next = choose_next_context(nullptr);
+    arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
+}
+
+int thread_exit_code(Process& proc, uint64_t handle, int& exit_code) {
+    object::ThreadObject* const thread_object =
+        object::as_thread(process::detail::lookup_handle(proc, handle, object::access_query));
+    if (thread_object == nullptr) {
+        return negative_error(SX_EBADF);
+    }
+    if (!thread_object->ended) {
+        return negative_error(SX_EAGAIN);
+    }
+    exit_code = thread_object->exit_code;
+    return 0;
 }
 
 /* Crecimiento por demanda del stack.
@@ -2537,6 +2690,14 @@ SavedContext* handle_syscall(SavedContext* context) {
             terminate_current(caller->kill_exit_code);
         }
         process::detail::terminate_process(*caller->process, caller->kill_exit_code);
+        // The syscall blocked the caller and handed this core to a sibling of
+        // the same process, which just ended with it (or was released with it,
+        // if the parent was already waiting). Resuming it would run a dead
+        // thread in user mode, and its process may be reaped from another core
+        // while it is still the one on this core.
+        if (this_cpu().current != nullptr && this_cpu().current->state != State::running) {
+            return choose_next_context(nullptr);
+        }
     }
 
     // Preemptive event wakeup: if this syscall made another process runnable

@@ -29,6 +29,19 @@ static inline long sxn_trap(unsigned long number, unsigned long a, unsigned long
     return result;
 }
 
+/* The fourth argument travels in r10, as in the POSIX syscalls. */
+static inline long sxn_trap4(
+    unsigned long number, unsigned long a, unsigned long b, unsigned long c, unsigned long d) {
+    long result;
+    register unsigned long r10 __asm__("r10") = d;
+
+    __asm__ volatile("int $0x80"
+                     : "=a"(result)
+                     : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10)
+                     : "rcx", "r11", "cc", "memory");
+    return result;
+}
+
 static inline long sxn_info(struct sxn_native_info* out) {
     return sxn_trap(SXN_SYS_INFO, (unsigned long)out, 0, 0);
 }
@@ -172,6 +185,28 @@ static inline long sxn_spawn_ex(const struct sxn_spawn_request* request) {
 
 /* A request for `path` with `argc` arguments, the caller's own stdio and no
  * extra handles. */
+/* CreateThread: a thread of this process starts at `entry` with `argument`,
+ * on a stack the caller allocated (its top, the highest address). `entry`
+ * must end with sxn_thread_exit, never return. Returns a handle that
+ * sxn_wait_one/sxn_wait_many see signaled when the thread ends; *tid (if not
+ * null) gets its id. Threads of one process take turns on the CPU for now. */
+static inline long sxn_thread_create(void (*entry)(void*), void* argument, void* stack_top, uint32_t* tid) {
+    return sxn_trap4(SXN_SYS_THREAD_CREATE, (unsigned long)entry, (unsigned long)argument,
+                     (unsigned long)stack_top, (unsigned long)tid);
+}
+
+/* ExitThread. The last thread of the process ends the process with `code`. */
+static inline void sxn_thread_exit(int code) __attribute__((noreturn));
+static inline void sxn_thread_exit(int code) {
+    sxn_trap(SXN_SYS_THREAD_EXIT, (unsigned long)(long)code, 0, 0);
+    __builtin_unreachable();
+}
+
+/* GetExitCodeThread: 0 with *code set, -EAGAIN while the thread runs. */
+static inline long sxn_thread_exit_code(long handle, int32_t* code) {
+    return sxn_trap(SXN_SYS_THREAD_EXIT_CODE, (unsigned long)handle, (unsigned long)code, 0);
+}
+
 static inline void sxn_spawn_request_init(
     struct sxn_spawn_request* request, const char* path, char* const* argv, int argc) {
     request->path = (uint64_t)(unsigned long)path;

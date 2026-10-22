@@ -1,6 +1,6 @@
 # Threads — more than one execution context per process
 
-> **Status: phase 0 done (2026-10-22), phases 1-5 not started.** This
+> **Status: phases 0 and 1 done (2026-10-22), phases 2-5 not started.** This
 > document is the inventory: what the kernel assumed about "one process, one
 > context", what had to move, and the order in which to move it so that every
 > phase boots and can be verified on its own.
@@ -10,6 +10,11 @@
 > and every blocking call work on threads, and a process has exactly one.
 > [What it took](#phase-0--the-split-one-thread-per-process--done) differs from
 > the plan in three small ways, recorded there.
+>
+> Phase 1 gave native processes more than one thread
+> (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`, slice 23 of
+> [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)). Threads of one process take
+> turns on the CPU: they do not run in parallel until phase 2.
 
 Threads are the first kernel prerequisite of a future Win32 subsystem — the
 others are per-thread TLS registers, exceptions delivered to user mode and
@@ -232,25 +237,63 @@ Where it differs from the plan:
 
 Verified with no new check, as planned: the existing scenarios pass unchanged.
 
-### Phase 1 — a second thread, one core per address space
+### Phase 1 — a second thread, one core per address space — **DONE**
 
-- `SXN_SYS_THREAD_CREATE` (entry, argument, stack top → thread handle),
-  `SXN_SYS_THREAD_EXIT`, and the thread object signalled on exit.
-- Process exit ends every thread; last thread exit ends the process.
-  `terminate_current` asserts that nothing deferred the exit, which holds
-  only while a process has one thread: with several, the exiting thread may
-  find a sibling running on another core.
-- A thread that exits while its process lives on cannot free its own kernel
-  stack: the release is deferred to the next scheduler pass on another stack.
-- `register_thread_state_size`, and POSIX `poll` state moved into it.
-- **Interim rule:** a thread is runnable on a core only if no *other* thread of
-  its address space is running on another core. That keeps the SMP rule "one
-  address space, one core" literally true, so user-space TLB coherence still
-  needs nothing, and it is correct on any number of cores. Threads interleave
-  but do not yet run in parallel.
-- Check: a native guest test that creates threads, has them write to shared
-  memory and signal events, joins them with `WAIT_MANY`, and kills a process
-  with threads blocked, ready and running.
+What landed:
+
+- `SXN_SYS_THREAD_CREATE` (entry, argument, stack top, tid out → handle),
+  `SXN_SYS_THREAD_EXIT`, and `SXN_SYS_THREAD_EXIT_CODE`, which the plan did
+  not have: a waitable handle says *that* a thread ended, `GetExitCodeThread`
+  says *how*. Wrappers in `sxn.h`; `sxn_trap4` carries a fourth argument in
+  r10.
+- `object::ThreadObject`: one per thread, created with it, waitable and
+  manual-reset, signaled once with the exit code. The thread and each handle
+  hold a reference, so a handle outlives the thread.
+- The last live thread's exit ends the process with its code
+  (`live_thread_count`); `SXN_SYS_EXIT` from any thread, a kill and a fault end
+  every thread, and every thread object is signaled after all of them are
+  zombies, so a sibling is never woken by its own process's end.
+- **A thread that ends while its process lives on is retired, not freed.**
+  Its kernel stack is the one in use, so it goes to `smp::Cpu::retired` and
+  the next `choose_next_context` on that core frees it from another stack.
+  Releasing a thread clears any core's pointer to it, so a reap that comes
+  first cannot free it twice.
+- **The interim rule** is `sibling_running_elsewhere` in `runnable_here`:
+  checked only for processes with more than one thread slot, so a
+  single-threaded process pays nothing. It keeps "at most one thread of a
+  process is running" true at every scheduling decision, which is also what
+  keeps `terminate_current`'s assertion (nothing deferred the exit) true.
+  A thread asleep in ring 0 that the tick preempted is *ready*, not running,
+  so a sibling may run elsewhere meanwhile; that thread then resumes only when
+  no sibling runs, and the rule holds again before it can exit.
+
+- **A kill can end the thread this core just switched to.** A thread with a
+  kill pending that blocks in a syscall hands its core to the next thread,
+  which may be a sibling; the kill then ends the process at the syscall's
+  exit, sibling included. `handle_syscall` used to return to that sibling
+  anyway, so a dead thread ran in user mode, and when the parent reaped the
+  process from another core, its slot was freed under the core still running
+  it (a kernel page fault in `handle_reschedule_ipi`, about once in ten
+  `native-test` runs on 4 cores). It now picks another thread when the one on
+  this core is no longer running. `release_thread` asserts that no other core
+  is running the thread it frees, which is how the bug was caught.
+- **`SXN_SYS_PROCESS_QUERY` reports a process with a kill pending as ended.**
+  `TERMINATE` of a process running on another core returns before that core
+  tears it down; the query said "running" until then, and `native-test`
+  failed on several cores. It was so before threads.
+
+Where it differs from the plan:
+
+- **Native only.** The calls are not in the set open to every subsystem, so a
+  POSIX process still has exactly one thread. That made two items of the plan
+  moot until phase 5, where they move: per-thread subsystem state
+  (`register_thread_state_size`, and POSIX `poll` state in it) and the rule
+  that `exec` ends the other threads.
+
+Verified by `native-test` on 1, 2 and 4 cores (25 runs in a row on 4): workers sharing memory and
+ending with their own codes, joined through their handles; a child killed with
+a thread blocked, one spinning and its main thread blocked; a child whose main
+thread ends first; `SXN_SYS_EXIT` from a second thread.
 
 ### Phase 2 — the address space on many cores
 
@@ -289,7 +332,11 @@ the same word only if they agree on the address — the same limitation
 `pthread_create/join/detach/self/exit`, mutexes, condition variables, `once`
 and keys on top of phases 1-4; `PT_TLS` in `crt0` and `ldso` for static TLS;
 `errno` per thread; locks in the heap and in stdio; the POSIX translation's
-`fork`/`exec` rules above. Check: a pthread test that hammers `malloc`,
+`fork`/`exec` rules above. Two kernel items moved here from phase 1, because a
+POSIX process cannot have a second thread before this: per-thread subsystem
+state (`register_thread_state_size`, with POSIX `poll` state in it) and `exec`
+ending the other threads. The thread calls join the set open to every
+subsystem (`native_call_open_to_all_subsystems`). Check: a pthread test that hammers `malloc`,
 `errno` and a mutex-protected counter from several threads on several cores.
 
 ### Afterwards

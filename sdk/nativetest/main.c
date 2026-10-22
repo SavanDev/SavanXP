@@ -30,7 +30,10 @@
  * waitpid reports the status the parent chose; PROCESS_QUERY sees it running,
  * then ended with that status, then gone. And the heap
  * (docs/userland/NATIVE_HEAP.md): several MiB across arenas from the native
- * page source. The first
+ * page source. And threads (docs/kernel/THREADS_ROADMAP.md): workers that
+ * share memory and end with their own codes, joined through their handles; a
+ * process killed with threads blocked and running; the last thread ending the
+ * process; SXN_SYS_EXIT from a second thread ending them all. The first
  * child runs this same binary with
  * argv = ["nativetest", "child", ev, sec] and exits 42.
  */
@@ -250,6 +253,228 @@ static void run_middle_child(void) {
     sxn_exit(status);
 }
 
+/* --- threads (docs/kernel/THREADS_ROADMAP.md, phase 1) ------------------ */
+
+#define SXN_THREAD_STACK_BYTES (64ul * 1024ul)
+#define SXN_THREAD_WORKERS 3
+#define SXN_THREAD_KILL_STATUS 77
+#define SXN_THREAD_LAST_STATUS 55
+#define SXN_THREAD_EXITALL_STATUS 66
+
+/* A thread's stack: a private section, mapped, its handle closed (the view
+ * keeps it). Returns the top, or 0. */
+static void* thread_stack(void) {
+    long section = sxn_section_create(SXN_THREAD_STACK_BYTES, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    long base;
+
+    if (section < 0) {
+        return 0;
+    }
+    base = sxn_map_view(section, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    (void)sxn_close(section);
+    return base > 0 ? (void*)(base + (long)SXN_THREAD_STACK_BYTES) : 0;
+}
+
+static volatile uint32_t g_thread_marks[SXN_THREAD_WORKERS];
+static long g_thread_go = -1;
+
+/* Waits for the go event, leaves its mark in memory the whole process sees,
+ * and ends with a code of its own. */
+static void thread_worker(void* argument) {
+    long index = (long)argument;
+
+    if (sxn_wait_one(g_thread_go, 5000) != 0) {
+        sxn_thread_exit(1);
+    }
+    g_thread_marks[index] = 0x7700u + (uint32_t)index;
+    sxn_thread_exit(100 + (int)index);
+}
+
+/* Blocked forever: only the end of its process ends it. */
+static void thread_blocked(void* argument) {
+    long event = (long)argument;
+
+    for (;;) {
+        (void)sxn_wait_one(event, 60000);
+    }
+}
+
+/* Never enters the kernel: ready or running whenever it is looked at. */
+static void thread_spinning(void* argument) {
+    volatile unsigned long* counter = (volatile unsigned long*)argument;
+
+    for (;;) {
+        *counter += 1;
+    }
+}
+
+/* Outlives the main thread a little, then ends the process as its last
+ * thread. */
+static void thread_last(void* argument) {
+    long event = (long)argument;
+
+    (void)sxn_wait_one(event, 50);
+    sxn_thread_exit(SXN_THREAD_LAST_STATUS);
+}
+
+/* SXN_SYS_EXIT from a thread that is not the first ends every thread. */
+static void thread_exit_all(void* argument) {
+    (void)argument;
+    sxn_exit(SXN_THREAD_EXITALL_STATUS);
+}
+
+/* "threads" child: one thread blocked, one spinning, and the main thread
+ * blocked too, once it told the parent (on 1) they all exist. */
+static void run_threads_child(void) {
+    static volatile unsigned long spins = 0;
+    long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    void* blocked_stack = thread_stack();
+    void* spinning_stack = thread_stack();
+    char ready = 'T';
+
+    if (event < 0 || blocked_stack == 0 || spinning_stack == 0 ||
+        sxn_thread_create(thread_blocked, (void*)event, blocked_stack, 0) < 0 ||
+        sxn_thread_create(thread_spinning, (void*)&spins, spinning_stack, 0) < 0) {
+        sxn_exit(2);
+    }
+    while (spins == 0) {
+        (void)sxn_wait_one(event, 1);
+    }
+    if (sxn_write(1, &ready, 1) != 1) {
+        sxn_exit(3);
+    }
+    for (;;) {
+        (void)sxn_wait_one(event, 60000);
+    }
+}
+
+/* "lastexit" child: the main thread ends first; the other one ends the
+ * process. */
+static void run_last_exit_child(void) {
+    long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    void* stack = thread_stack();
+
+    if (event < 0 || stack == 0 || sxn_thread_create(thread_last, (void*)event, stack, 0) < 0) {
+        sxn_exit(2);
+    }
+    sxn_thread_exit(1);
+}
+
+/* "exitall" child: a second thread calls SXN_SYS_EXIT while the main thread
+ * waits forever. */
+static void run_exit_all_child(void) {
+    long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    void* stack = thread_stack();
+
+    if (event < 0 || stack == 0 || sxn_thread_create(thread_exit_all, 0, stack, 0) < 0) {
+        sxn_exit(2);
+    }
+    for (;;) {
+        (void)sxn_wait_one(event, 60000);
+    }
+}
+
+static void test_threads(const struct sxn_native_info* info) {
+    int32_t handles[SXN_THREAD_WORKERS] = {-1, -1, -1};
+    uint32_t tids[SXN_THREAD_WORKERS] = {0, 0, 0};
+    struct sxn_process_query before;
+    struct sxn_process_query after;
+    int32_t code = 0;
+    long index;
+
+    check(sxn_process_query(info->pid, &before) == 0);
+    g_thread_go = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    check(g_thread_go >= 0);
+
+    for (index = 0; index < SXN_THREAD_WORKERS; ++index) {
+        void* stack = thread_stack();
+
+        check(stack != 0);
+        handles[index] = (int32_t)sxn_thread_create(thread_worker, (void*)index, stack, &tids[index]);
+        check(handles[index] >= 0);
+        check(tids[index] != 0u && tids[index] != info->pid);
+    }
+    check(tids[0] != tids[1] && tids[1] != tids[2] && tids[0] != tids[2]);
+
+    /* Nothing ended yet: no exit code, and a zero-timeout wait times out. */
+    check(sxn_thread_exit_code(handles[0], &code) == -SAVANXP_EAGAIN);
+    check(sxn_wait_many(handles, SXN_THREAD_WORKERS, 0) == -SAVANXP_ETIMEDOUT);
+
+    check(sxn_event_set(g_thread_go) == 0);
+    for (index = 0; index < SXN_THREAD_WORKERS; ++index) {
+        check(sxn_wait_one(handles[index], 5000) == 0);
+        check(sxn_thread_exit_code(handles[index], &code) == 0 && code == 100 + (int32_t)index);
+        check(g_thread_marks[index] == 0x7700u + (uint32_t)index);
+        /* Manual reset: an ended thread stays signaled. */
+        check(sxn_wait_one(handles[index], 0) == 0);
+    }
+
+    /* Refusals: no entry, no stack, a handle that is not a thread. */
+    check(sxn_thread_create(0, 0, thread_stack(), 0) == -SAVANXP_EINVAL);
+    check(sxn_thread_create(thread_worker, 0, 0, 0) == -SAVANXP_EINVAL);
+    check(sxn_thread_exit_code(g_thread_go, &code) == -SAVANXP_EBADF);
+
+    for (index = 0; index < SXN_THREAD_WORKERS; ++index) {
+        (void)sxn_close(handles[index]);
+    }
+    (void)sxn_close(g_thread_go);
+    check(sxn_process_query(info->pid, &after) == 0 && after.handle_count == before.handle_count);
+
+    /* A process killed with a thread blocked, one spinning and the main one
+     * blocked: TERMINATE ends them all and waitpid sees the status. */
+    {
+        char* child_argv[2];
+        struct sxn_spawn_request request;
+        int32_t report[2] = {-1, -1};
+        char ready = 0;
+        long child = -1;
+        int status = -1;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "threads";
+        check(sxn_pipe_create(report) == 0);
+        sxn_spawn_request_init(&request, "/disk/bin/nativetest", child_argv, 2);
+        request.std_handles[1] = report[1];
+        child = sxn_spawn_ex(&request);
+        check(child > 0);
+        (void)sxn_close(report[1]);
+        if (child > 0) {
+            check(sxn_read(report[0], &ready, 1) == 1 && ready == 'T');
+            check(sxn_terminate(child, SXN_THREAD_KILL_STATUS) == 0);
+            check(sxn_waitpid(child, &status) == child && status == SXN_THREAD_KILL_STATUS);
+        }
+        (void)sxn_close(report[0]);
+    }
+
+    /* The last live thread ends the process, with its own code. */
+    {
+        char* child_argv[2];
+        long child;
+        int status = -1;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "lastexit";
+        child = sxn_spawn_stdio("/disk/bin/nativetest", child_argv, 2);
+        check(child > 0);
+        check(child <= 0 || (sxn_waitpid(child, &status) == child && status == SXN_THREAD_LAST_STATUS));
+    }
+
+    /* SXN_SYS_EXIT from any thread ends them all. */
+    {
+        char* child_argv[2];
+        long child;
+        int status = -1;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "exitall";
+        child = sxn_spawn_stdio("/disk/bin/nativetest", child_argv, 2);
+        check(child > 0);
+        check(child <= 0 || (sxn_waitpid(child, &status) == child && status == SXN_THREAD_EXITALL_STATUS));
+    }
+
+    check(sxn_log("nativetest: threads done") == 0);
+}
+
 int main(int argc, char** argv) {
     struct sxn_native_info info;
     struct sxn_native_info raw;
@@ -271,6 +496,15 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1], "middle")) {
         run_middle_child();
+    }
+    if (argc > 1 && streq(argv[1], "threads")) {
+        run_threads_child();
+    }
+    if (argc > 1 && streq(argv[1], "lastexit")) {
+        run_last_exit_child();
+    }
+    if (argc > 1 && streq(argv[1], "exitall")) {
+        run_exit_all_child();
     }
 
     check(sxn_info(&info) == 0);
@@ -534,7 +768,9 @@ int main(int argc, char** argv) {
         check(cloned > 0 && isolated > 0);
         if (cloned > 0 && isolated > 0) {
             check(sxn_process_query(cloned, &whole) == 0 && sxn_process_query(isolated, &bare) == 0);
-            check(bare.handle_count <= 3u && whole.handle_count > bare.handle_count);
+            /* stdio, plus the event a sleeper creates as soon as it runs: on
+             * several cores it may already be running here. */
+            check(bare.handle_count <= 4u && whole.handle_count > bare.handle_count);
             check(sxn_terminate(cloned, 0) == 0 && sxn_waitpid(cloned, &status) == cloned);
             check(sxn_terminate(isolated, 0) == 0 && sxn_waitpid(isolated, &status) == isolated);
         }
@@ -695,6 +931,8 @@ int main(int argc, char** argv) {
         (void)sxn_close(report[0]);
         check(sxn_log("nativetest: terminate descendant done") == 0);
     }
+
+    test_threads(&info);
 
     /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS and
      * needs no system call; the arenas past it come from the native page

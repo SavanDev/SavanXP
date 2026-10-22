@@ -28,6 +28,7 @@ The SUN headers, all header-only, no link or tool changes needed:
 
 - `include/sxn/sxn.h` — typed wrappers for every SXN syscall: exit, log,
   spawn (also with chosen handles, `sxn_spawn_ex`), waitpid, terminate,
+  threads (`sxn_thread_create`, `sxn_thread_exit`, `sxn_thread_exit_code`),
   events, sections, views, waits, gfx, handle close and duplicate, pipe
   creation (`sxn_pipe_create`), pipe and device read/write, device open and
   control, ports, the clock.

@@ -321,8 +321,21 @@ int native_process_query(uint64_t pid_value, uint64_t user_out) {
     }
     out.pid = target->pid;
     out.parent_pid = target->parent_pid;
-    out.state = target->life == Lifecycle::zombie ? SXN_PROCESS_ENDED : SXN_PROCESS_RUNNING;
-    out.exit_code = target->life == Lifecycle::zombie ? target->exit_code : 0;
+    out.state = SXN_PROCESS_RUNNING;
+    out.exit_code = 0;
+    if (target->life == Lifecycle::zombie) {
+        out.state = SXN_PROCESS_ENDED;
+        out.exit_code = target->exit_code;
+    } else {
+        // Killed while it ran on another core: TERMINATE returned before that
+        // core could tear it down, but it will never run user code again. A
+        // caller that just ended it must not see it running.
+        int pending_code = 0;
+        if (exit_pending(*target, pending_code)) {
+            out.state = SXN_PROCESS_ENDED;
+            out.exit_code = pending_code;
+        }
+    }
     for (size_t index = 0; index < kMaxFileHandles; ++index) {
         if (target->handles[index].object != nullptr) {
             out.handle_count += 1u;
@@ -889,6 +902,36 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         case SXN_SYS_TERMINATE:
             context->rax = static_cast<uint64_t>(native_terminate(*caller, context->rdi, context->rsi));
             return context;
+        case SXN_SYS_THREAD_CREATE: {
+            uint32_t tid = 0;
+            const uint64_t tid_out = context->r10;
+            if (tid_out != 0 && !sx::validate_user_range(tid_out, sizeof(tid), true)) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                return context;
+            }
+            const int handle = create_thread(*caller, context->rdi, context->rsi, context->rdx, tid);
+            if (handle >= 0 && tid_out != 0) {
+                (void)sx::copy_to_user(tid_out, &tid, sizeof(tid));
+            }
+            context->rax = static_cast<uint64_t>(handle);
+            return context;
+        }
+        case SXN_SYS_THREAD_EXIT:
+            exit_current_thread(static_cast<int>(context->rdi));
+        case SXN_SYS_THREAD_EXIT_CODE: {
+            int exit_code = 0;
+            if (!sx::validate_user_range(context->rsi, sizeof(int32_t), true)) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                return context;
+            }
+            const int result = thread_exit_code(*caller, context->rdi, exit_code);
+            if (result == 0) {
+                const int32_t value = exit_code;
+                (void)sx::copy_to_user(context->rsi, &value, sizeof(value));
+            }
+            context->rax = static_cast<uint64_t>(result);
+            return context;
+        }
         case SXN_SYS_PIPE_CREATE:
             context->rax = static_cast<uint64_t>(native_pipe_create(*caller, context->rdi));
             return context;

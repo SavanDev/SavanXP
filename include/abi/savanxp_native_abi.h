@@ -177,7 +177,9 @@ enum sxn_syscall_number {
     SXN_SYS_WAIT_MANY = 0x101d,
     /* rdi = pid, rsi = struct sxn_process_query (written). Returns 0 or
      * -ENOENT if no process has that pid (a reaped one included). Any process
-     * may ask about any other: it is what a task list shows anyway. */
+     * may ask about any other: it is what a task list shows anyway. A process
+     * ended by SXN_SYS_TERMINATE reads as ended at once, with that status,
+     * even while the core it was running on is still tearing it down. */
     SXN_SYS_PROCESS_QUERY = 0x101e,
     /* Like SXN_SYS_SPAWN, but the child gets only the caller's stdio (0, 1,
      * 2), as the POSIX spawn does. What a service uses to start a program it
@@ -202,6 +204,24 @@ enum sxn_syscall_number {
      * and an inherit list. Returns the pid or -errno (-EBADF when a named
      * handle is not open). Native only. */
     SXN_SYS_SPAWN_EX = 0x1022,
+    /* rdi = entry point, rsi = argument (the new thread's rdi), rdx = top of
+     * a stack the caller allocated, r10 = uint32_t* for the thread id (0 =
+     * not wanted). Starts a thread of the calling process at the entry, as if
+     * called: rsp is 8 below a 16-byte boundary under the given top. The
+     * entry never returns; the thread ends with SXN_SYS_THREAD_EXIT. Returns a
+     * handle to the thread (synchronize + query), signaled when it ends, or
+     * -errno. CreateThread. Native only for now (docs/kernel/THREADS_ROADMAP.md).
+     * Threads of one process take turns on the CPU; they do not run in
+     * parallel on several cores yet. */
+    SXN_SYS_THREAD_CREATE = 0x1023,
+    /* rdi = exit code. Ends the calling thread; does not return. The last
+     * thread of a process ends the process with that code, as SXN_SYS_EXIT
+     * would. SXN_SYS_EXIT from any thread ends them all. ExitThread. */
+    SXN_SYS_THREAD_EXIT = 0x1024,
+    /* rdi = thread handle, rsi = int32_t* (written). The exit code of an ended
+     * thread: returns 0, -EAGAIN while it still runs, -EBADF when the handle
+     * is not a thread. GetExitCodeThread. */
+    SXN_SYS_THREAD_EXIT_CODE = 0x1025,
 };
 
 /* Most handles SXN_SYS_SPAWN_EX places after stdio (at 3, 4, 5 and 6). */

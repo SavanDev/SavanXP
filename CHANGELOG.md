@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Native processes can have threads.** `SXN_SYS_THREAD_CREATE`, `SXN_SYS_THREAD_EXIT` and
+  `SXN_SYS_THREAD_EXIT_CODE` (`sxn_thread_create`, `sxn_thread_exit`, `sxn_thread_exit_code`): a
+  waitable handle per thread, and the last thread's exit ends the process. Threads of one process
+  take turns on the CPU for now. See `docs/kernel/THREADS_ROADMAP.md`.
+
 - **AHCI (SATA) disk driver with DMA.** `kernel/ahci.cpp` registers SATA disks as `ahciN`, and
   QEMU now attaches `disk.img` to the q35 AHCI controller by default (`SAVANXP_DISK_BUS=ide` or
   `run_qemu.py --disk-bus ide` keeps legacy IDE). Up to 256 sectors per command: a 390 KB copy
@@ -415,6 +420,10 @@ Cut-off notes:
   (see `docs/userland/SYSTEM_LAYERING.md`).
 
 ### Fixed
+
+- **A process ended by `SXN_SYS_TERMINATE` no longer reads as running.** When it was running on
+  another core, `SXN_SYS_PROCESS_QUERY` reported it running until that core tore it down; it now
+  reports it ended, with its status, as soon as `TERMINATE` returns.
 
 - **Windows opened during a fullscreen app get the desktop's size.** A taskbar, Start menu or window
   created while the screen ran in the 640x400 fullscreen mode kept that geometry after the restore,

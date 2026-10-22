@@ -44,6 +44,9 @@ constexpr size_t kMaxSemaphoreObjects = 64;
 /* Ports: named rendezvous points (docs/desktop/DESKTOP_ARCHITECTURE.md, phase
  * 3). A handful of system services, not one per program. */
 constexpr size_t kMaxPortObjects = 16;
+/* One per thread slot (process::kMaxThreads): every thread has its object
+ * from the moment it exists, and a handle can keep it after the thread ends. */
+constexpr size_t kMaxThreadObjects = 256;
 constexpr size_t kPortNameCapacity = 32;
 constexpr size_t kPortPendingCapacity = 8;
 
@@ -146,6 +149,20 @@ struct SemaphoreObject {
     int32_t max_count;
 };
 
+/* What a handle to a thread names (docs/kernel/THREADS_ROADMAP.md). The
+ * thread holds one reference while it exists and each handle another, so the
+ * object outlives the thread: it is how a waiter learns the thread ended and
+ * with which code. Waitable and manual-reset: signaled once, at the end, and
+ * waiting consumes nothing -- pthread_join and WaitForSingleObject(hThread). */
+struct ThreadObject {
+    Header header;
+    bool in_use;
+    bool ended;
+    uint32_t tid;
+    uint32_t pid;
+    int32_t exit_code;
+};
+
 /*
  * A port is how a process finds a service without inheriting a channel from it:
  * the service creates the port under a name, a client connects by that name.
@@ -202,6 +219,13 @@ SectionObject* acquire_file_range_section(
 SectionObject* clone_section(const SectionObject& source);
 SemaphoreObject* create_semaphore(int32_t initial_count, int32_t max_count);
 PortObject* as_port(Header* object);
+ThreadObject* as_thread(Header* object);
+/* nullptr if the table is full. No reference is left on the object, as with
+ * create_event: whoever keeps it takes one. */
+ThreadObject* create_thread_object(uint32_t tid, uint32_t pid);
+/* Marks the thread ended with `exit_code` and signals the object. The caller
+ * wakes the waiters (process::notify_object_signal). Once only. */
+void end_thread_object(ThreadObject* thread_object, int32_t exit_code);
 /* nullptr if the name is taken or the table is full. No reference is left on
  * the object, as with create_section: the handle that installs it takes one. */
 PortObject* create_port(const char* name);

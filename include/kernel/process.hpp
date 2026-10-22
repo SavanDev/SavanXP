@@ -130,8 +130,8 @@ struct Process {
     bool orphaned;  // reparented to init; reaps itself when it dies
     subsystem::Id subsystem_id;  // posix(0) by default, via the memset in allocate_process_slot
     int exit_code;
-    // Live threads (ready, running, blocked or sleeping). Zero once the
-    // process is a zombie.
+        // Thread slots the process owns, ended ones not yet released included.
+    // Live threads are counted by walking the table (live_thread_count).
     uint32_t thread_count;
     // Timer ticks that found one of this process's threads running. The
     // cheapest possible CPU accounting -- one increment per tick, on a path
@@ -164,6 +164,9 @@ struct Thread {
     bool kill_pending;
     int kill_exit_code;
     Process* process;
+    // What handles to this thread name. The thread holds a reference from its
+    // allocation to its release; the object is signaled when it ends.
+    object::ThreadObject* object;
     WaitReason wait_reason;
     uint8_t wait_handle_count;
     uint8_t wait_all;
@@ -341,6 +344,22 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 // corriendo. Arranca por su idle o por lo que haya listo.
 [[noreturn]] void run_secondary_core();
 void terminate_current(int exit_code);
+// Native thread calls (docs/kernel/THREADS_ROADMAP.md, phase 1). create_thread
+// starts a thread of `proc` at `entry` with `argument` in rdi and its stack at
+// `stack_top`, and returns a handle to it (synchronize + query) or -errno;
+// *tid gets its id. exit_current_thread ends the calling thread; the last
+// live thread ends the process with that code. thread_exit_code reads the
+// code of an ended thread: 0, -EAGAIN while it runs, -EBADF for anything
+// that is not a thread handle.
+int create_thread(Process& proc, uint64_t entry, uint64_t argument, uint64_t stack_top, uint32_t& tid);
+[[noreturn]] void exit_current_thread(int exit_code);
+int thread_exit_code(Process& proc, uint64_t handle, int& exit_code);
+// Threads of `proc` that have not ended.
+uint32_t live_thread_count(const Process& proc);
+// Killed while one of its threads ran on another core: that core ends it on
+// its next return to ring 3, so it will never run user code again. True with
+// the exit code it will end with.
+bool exit_pending(const Process& proc, int& exit_code);
 void terminate_current_from_exception(uint8_t vector);
 // Atiende un #PF del proceso actual que caiga adentro de la region reservada
 // del stack: mapea la pagina que falta y devuelve true para que se reintente la

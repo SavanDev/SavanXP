@@ -33,6 +33,10 @@ struct Cpu {
     // like any other (a yield loop in ring 3) for the same reason as on the
     // BSP: the scheduler cannot return to anything but a SavedContext.
     process::Thread* idle;
+    // A thread that ended on this core while its process lives on. It cannot
+    // free its own kernel stack, which is the one in use until the scheduler
+    // switches away; the next pass through the scheduler here frees it.
+    process::Thread* retired;
     // Una syscall de este core desperto a otro proceso: la vuelta de esa
     // syscall tiene que entregarle la CPU ya, en vez de esperar al proximo tick.
     bool resched_pending;

@@ -64,6 +64,7 @@ object/process factoring, not before.
 - Slice 20: `SXN_SYS_PIPE_CREATE`.
 - Slice 21: `SXN_SYS_SPAWN_EX`, a child with chosen handles.
 - Slice 22: `SXN_SYS_TERMINATE` reaches descendants.
+- Slice 23: threads (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`).
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -240,6 +241,36 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 23: threads
+
+Phase 1 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md). Native only for now: a
+POSIX process gets threads with pthreads, in phase 5.
+
+- `SXN_SYS_THREAD_CREATE` (`0x1023`): rdi = entry, rsi = argument (the new
+  thread's rdi), rdx = top of a stack the caller allocated, r10 = `uint32_t*`
+  for the thread id or 0. The entry is reached as if called (rsp 8 below a
+  16-byte boundary) and never returns. Returns a handle to the thread with
+  synchronize and query access. `CreateThread`.
+- `SXN_SYS_THREAD_EXIT` (`0x1024`): rdi = exit code. Ends the calling thread;
+  the last live thread ends the process with that code. `SXN_SYS_EXIT` from
+  any thread ends every thread. `ExitThread`.
+- `SXN_SYS_THREAD_EXIT_CODE` (`0x1025`): rdi = thread handle, rsi =
+  `int32_t*`. 0 with the code, `-EAGAIN` while the thread runs, `-EBADF` for
+  a handle that is not a thread. `GetExitCodeThread`.
+
+A thread is an `object::ThreadObject`: waitable, manual-reset, signaled once
+when the thread ends, whether by its own exit or with its process. The thread
+holds one reference and each handle another, so a handle outlives the thread
+it names. A thread id comes from the pid counter; the first thread's id is
+the pid.
+
+`nativetest` covers it: three workers that wait on one event, write to shared
+memory and end with their own codes, joined through `WAIT_ONE` and
+`THREAD_EXIT_CODE`; the refusals; a child killed with one thread blocked, one
+spinning and its main thread blocked; a child whose main thread ends first and
+whose last thread ends the process with its code; and `SXN_SYS_EXIT` from a
+second thread ending them all.
 
 ## Slices 20-22: what a console host needs
 

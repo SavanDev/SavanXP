@@ -16,6 +16,7 @@ TimerObject g_timer_objects[kMaxTimerObjects] = {};
 SectionObject g_section_objects[kMaxSectionObjects] = {};
 SemaphoreObject g_semaphore_objects[kMaxSemaphoreObjects] = {};
 PortObject g_port_objects[kMaxPortObjects] = {};
+ThreadObject g_thread_objects[kMaxThreadObjects] = {};
 constexpr uint64_t kMaxSectionBytes = 64ULL << 20;
 
 uint64_t align_up(uint64_t value, uint64_t alignment) {
@@ -29,6 +30,14 @@ void destroy_event(Header* header) {
         return;
     }
     memset(event_object, 0, sizeof(*event_object));
+}
+
+void destroy_thread_object(Header* header) {
+    ThreadObject* thread_object = as_thread(header);
+    if (thread_object == nullptr) {
+        return;
+    }
+    memset(thread_object, 0, sizeof(*thread_object));
 }
 
 void destroy_timer(Header* header) {
@@ -592,6 +601,40 @@ void poll_timers(uint64_t now_ms, void (*on_signal)(Header* object)) {
             on_signal(&timer_object.header);
         }
     }
+}
+
+ThreadObject* as_thread(Header* object) {
+    if (object == nullptr || object->type != Type::thread) {
+        return nullptr;
+    }
+    return reinterpret_cast<ThreadObject*>(object);
+}
+
+ThreadObject* create_thread_object(uint32_t tid, uint32_t pid) {
+    for (ThreadObject& thread_object : g_thread_objects) {
+        if (thread_object.in_use) {
+            continue;
+        }
+        memset(&thread_object, 0, sizeof(thread_object));
+        thread_object.header.type = Type::thread;
+        thread_object.header.destroy = destroy_thread_object;
+        thread_object.header.waitable = true;
+        thread_object.header.manual_reset = true;
+        thread_object.in_use = true;
+        thread_object.tid = tid;
+        thread_object.pid = pid;
+        return &thread_object;
+    }
+    return nullptr;
+}
+
+void end_thread_object(ThreadObject* thread_object, int32_t exit_code) {
+    if (thread_object == nullptr || thread_object->ended) {
+        return;
+    }
+    thread_object->ended = true;
+    thread_object->exit_code = exit_code;
+    thread_object->header.signal_count = 1;
 }
 
 bool can_satisfy_wait(const Header* object) {
