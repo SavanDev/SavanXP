@@ -51,26 +51,46 @@ constexpr uint8_t kIdleCode[] = {
 // traduccion POSIX que usa el dispatcher en su propia unidad.)
 
 process::Process g_processes[process::kMaxProcesses] = {};
+process::Thread g_threads[process::kMaxThreads] = {};
+// One past the highest thread slot ever handed out. The table is sized for
+// many threads per process, but the scheduler and every waker walk it under
+// the big kernel lock on each tick and each pipe write: stopping here keeps
+// those walks as long as the live population, not as the table.
+size_t g_thread_bound = 0;
+
+struct ThreadSlots {
+    process::Thread* first;
+    process::Thread* last;
+    process::Thread* begin() const { return first; }
+    process::Thread* end() const { return last; }
+};
+
+ThreadSlots used_thread_slots() {
+    return {&g_threads[0], &g_threads[0] + g_thread_bound};
+}
 process::Pipe g_pipes[process::detail::kMaxPipeCount] = {};
 uint8_t g_pipe_storage[process::detail::kMaxPipeCount][process::detail::kPipeCapacity] = {};
 object::IoObject g_io_objects[object::kMaxIoObjects] = {};
+// One counter for pids and tids: a process's first thread takes the pid as
+// its tid, and every other thread draws a fresh id, so no tid ever equals
+// another process's pid (docs/kernel/THREADS_ROADMAP.md).
 uint32_t g_next_pid = 1;
 uint32_t g_init_pid = 0;
-// Compartido entre cores a proposito: es el cursor de la cola de listos unica,
-// que vive bajo el lock grande del kernel.
+// Shared between cores on purpose: it is the cursor of the single ready queue
+// (an index into g_threads), which lives under the big kernel lock.
 size_t g_schedule_cursor = 0;
-// Ticks que encontraron a un proceso corriendo, en cualquier core. Es el
-// denominador de la contabilidad de CPU (cpu_ticks_total): cada uno incrementa
-// exactamente un cpu_ticks, asi que los dos lados suman igual con N cores. No es
-// timer::ticks(), que cuenta solo los del BSP porque es un reloj.
+// Ticks that found a thread running, on any core. It is the denominator of
+// CPU accounting (cpu_ticks_total): each one increments exactly one process's
+// cpu_ticks, so both sides add up the same with N cores. It is not
+// timer::ticks(), which counts only the BSP's because it is a clock.
 uint64_t g_cpu_ticks_total = 0;
 bool g_ready = false;
 savanxp_system_info g_boot_system_info = {};
 bool g_boot_system_info_ready = false;
 
-// El proceso en curso, el idle y el pedido de replanificar son de cada core y
-// viven en smp::Cpu (kernel/smp.hpp). Este atajo deja que el scheduler y los
-// syscalls digan "el de este core" sin repetir el namespace en cada linea.
+// The current thread, the idle and the reschedule request belong to each core
+// and live in smp::Cpu (kernel/smp.hpp). This shortcut lets the scheduler and
+// the syscalls say "this core's" without repeating the namespace every line.
 smp::Cpu& this_cpu() {
     return smp::this_cpu();
 }
@@ -137,8 +157,14 @@ uint32_t exported_timer_backend(timer::Backend backend) {
 
 
 
-size_t process_index(const process::Process* proc) {
-    return proc != nullptr ? static_cast<size_t>(proc - &g_processes[0]) : 0;
+size_t thread_index(const process::Thread* thread) {
+    return thread != nullptr ? static_cast<size_t>(thread - &g_threads[0]) : 0;
+}
+
+uint64_t read_cr3() {
+    uint64_t value = 0;
+    asm volatile("mov %%cr3, %0" : "=r"(value));
+    return value;
 }
 
 
@@ -199,17 +225,17 @@ void set_process_name(process::Process& proc, const char* path) {
  * en namespace process, mas abajo, con el resto de la superficie publicada.
  */
 
-void release_kernel_stack(process::Process& proc) {
-    if (proc.kernel_stack_base == 0 || proc.kernel_stack_size == 0) {
+void release_kernel_stack(process::Thread& thread) {
+    if (thread.kernel_stack_base == 0 || thread.kernel_stack_size == 0) {
         return;
     }
 
-    const uint64_t physical_base = proc.kernel_stack_base - vm::hhdm_offset();
-    const uint64_t page_count = proc.kernel_stack_size / memory::kPageSize;
+    const uint64_t physical_base = thread.kernel_stack_base - vm::hhdm_offset();
+    const uint64_t page_count = thread.kernel_stack_size / memory::kPageSize;
     (void)memory::free_pages(physical_base, page_count);
-    proc.kernel_stack_base = 0;
-    proc.kernel_stack_size = 0;
-    proc.context = nullptr;
+    thread.kernel_stack_base = 0;
+    thread.kernel_stack_size = 0;
+    thread.context = nullptr;
 }
 
 
@@ -249,7 +275,7 @@ void free_pipe_if_unused(process::Pipe* pipe) {
 
 void wake_blocked_readers_for_pipe(process::Pipe& pipe);
 void wake_blocked_writers_for_pipe(process::Pipe& pipe);
-void recheck_parked_processes(uint64_t current_tick, bool honour_deadline);
+void recheck_parked_threads(uint64_t current_tick, bool honour_deadline);
 void release_all_handles(process::Process& proc);
 
 
@@ -357,7 +383,7 @@ uint64_t initial_stack_guard() {
 }
 
 process::SavedContext* fabricate_initial_context(
-    process::Process& proc,
+    process::Thread& thread,
     uint64_t entry_point,
     uint64_t stack_pointer,
     int argc,
@@ -365,7 +391,7 @@ process::SavedContext* fabricate_initial_context(
     uint64_t interpreter_address,
     uint64_t image_base
 ) {
-    auto* stack_top = reinterpret_cast<uint8_t*>(proc.kernel_stack_base + proc.kernel_stack_size);
+    auto* stack_top = reinterpret_cast<uint8_t*>(thread.kernel_stack_base + thread.kernel_stack_size);
     auto* context = reinterpret_cast<process::SavedContext*>(stack_top - sizeof(process::SavedContext));
     memset(context, 0, sizeof(*context));
     context->rip = entry_point;
@@ -386,7 +412,7 @@ process::SavedContext* fabricate_initial_context(
     // cargador la usa en vez de buscarla: el recorrido hacia atras que se hacia
     // antes leia paginas que un PT_LOAD puede dejar sin mapear.
     context->r8 = image_base;
-    proc.context = context;
+    thread.context = context;
     return context;
 }
 
@@ -489,7 +515,7 @@ void report_image_failure(const char* what, const char* path, process::ImageFail
         static_cast<unsigned>(memory::free_page_count()));
 }
 
-process::Process* create_idle_process() {
+process::Thread* create_idle_process() {
     process::Process* proc = process::detail::allocate_process_slot(true);
     if (proc == nullptr) {
         return nullptr;
@@ -500,15 +526,12 @@ process::Process* create_idle_process() {
         return nullptr;
     }
 
-    memory::PageAllocation kernel_stack = {};
-    if (!memory::allocate_contiguous_pages(process::detail::kKernelStackPages, kernel_stack)) {
+    process::Thread* thread = process::detail::allocate_thread(*proc);
+    if (thread == nullptr) {
         process::detail::release_address_space(*proc);
         process::detail::reset_process_slot(*proc);
         return nullptr;
     }
-
-    proc->kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
-    proc->kernel_stack_size = process::detail::kKernelStackPages * memory::kPageSize;
     set_process_name(*proc, "idle");
     process::ensure_subsystem_state(*proc);
 
@@ -548,24 +571,24 @@ process::Process* create_idle_process() {
         return nullptr;
     }
 
-    fabricate_initial_context(*proc, kIdleCodeAddress, vm::kUserStackTop, 0, 0, 0, 0);
-    return proc;
+    fabricate_initial_context(*thread, kIdleCodeAddress, vm::kUserStackTop, 0, 0, 0, 0);
+    return thread;
 }
 
-// The child's own parent, if it is blocked in a waitpid that this child
-// satisfies. Only the parent: a waitpid(-1) somewhere else (init and sessiond
-// sit in one all the time) must not take a child that is not theirs, or the
-// real parent waits forever for a pid that was reaped under it.
-process::Process* find_waiting_parent_for(const process::Process& child) {
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_wait || proc.wait_reason != process::WaitReason::child) {
+// A thread of the child's own parent, if it is blocked in a waitpid that this
+// child satisfies. Only the parent: a waitpid(-1) somewhere else (init and
+// sessiond sit in one all the time) must not take a child that is not theirs,
+// or the real parent waits forever for a pid that was reaped under it.
+process::Thread* find_waiting_parent_for(const process::Process& child) {
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_wait || thread.wait_reason != process::WaitReason::child) {
             continue;
         }
-        if (proc.pid != child.parent_pid) {
+        if (thread.process->pid != child.parent_pid) {
             continue;
         }
-        if (proc.waiting_for_pid == process::kWaitAnyPid || proc.waiting_for_pid == child.pid) {
-            return &proc;
+        if (thread.waiting_for_pid == process::kWaitAnyPid || thread.waiting_for_pid == child.pid) {
+            return &thread;
         }
     }
     return nullptr;
@@ -573,10 +596,10 @@ process::Process* find_waiting_parent_for(const process::Process& child) {
 
 void reparent_orphaned_children(uint32_t parent_pid) {
     for (process::Process& proc : g_processes) {
-        if (proc.state == process::State::unused || proc.parent_pid != parent_pid) {
+        if (proc.life == process::Lifecycle::unused || proc.parent_pid != parent_pid) {
             continue;
         }
-        if (proc.state == process::State::zombie) {
+        if (proc.life == process::Lifecycle::zombie) {
             reap_process(proc);
             continue;
         }
@@ -585,45 +608,45 @@ void reparent_orphaned_children(uint32_t parent_pid) {
     }
 }
 
-// Listo para correr en ESTE core. La cola es una sola y cualquier core toma de
-// ella, con una excepcion: un proceso desalojado mientras dormia adentro del
-// kernel (smp::wait_for_interrupt) tiene el contexto en ring 0, en la mitad de
-// una syscall, y solo lo retoma el core donde se durmio.
+// Ready to run on THIS core. There is a single queue and any core takes from
+// it, with one exception: a thread preempted while asleep inside the kernel
+// (smp::wait_for_interrupt) has its context in ring 0, halfway through a
+// syscall, and only the core where it went to sleep resumes it.
 //
-// Los que corren en otro core no hace falta filtrarlos: estan en
-// State::running, no en ready. Y los idles no entran nunca, cada core vuelve al
-// suyo por separado.
-bool runnable_here(const process::Process& proc) {
-    if (proc.idle || proc.state != process::State::ready) {
+// Threads running on another core need no filtering: they are in
+// State::running, not ready. And idles never enter, each core returns to its
+// own separately.
+bool runnable_here(const process::Thread& thread) {
+    if (thread.state != process::State::ready || thread.process->idle) {
         return false;
     }
-    if (proc.context != nullptr && (proc.context->cs & 0x3) == 0) {
-        return proc.cpu == this_cpu().index;
+    if (thread.context != nullptr && (thread.context->cs & 0x3) == 0) {
+        return thread.cpu == this_cpu().index;
     }
     return true;
 }
 
-process::Process* pick_next_runnable() {
-    for (size_t offset = 1; offset <= process::kMaxProcesses; ++offset) {
-        const size_t index = (g_schedule_cursor + offset) % process::kMaxProcesses;
-        process::Process& proc = g_processes[index];
-        if (runnable_here(proc)) {
+process::Thread* pick_next_runnable() {
+    for (size_t offset = 1; offset <= g_thread_bound; ++offset) {
+        const size_t index = (g_schedule_cursor + offset) % g_thread_bound;
+        process::Thread& thread = g_threads[index];
+        if (runnable_here(thread)) {
             g_schedule_cursor = index;
-            return &proc;
+            return &thread;
         }
     }
 
     if (this_cpu().idle != nullptr &&
         (this_cpu().idle->state == process::State::ready || this_cpu().idle->state == process::State::running)) {
-        g_schedule_cursor = process_index(this_cpu().idle);
+        g_schedule_cursor = thread_index(this_cpu().idle);
         return this_cpu().idle;
     }
 
     return nullptr;
 }
 
-void note_woken(process::Process& proc) {
-    if (&proc == this_cpu().current) {
+void note_woken(process::Thread& thread) {
+    if (&thread == this_cpu().current) {
         return;
     }
     this_cpu().resched_pending = true;
@@ -636,26 +659,26 @@ void note_woken(process::Process& proc) {
 // esperando su turno del round-robin. Medido en el camino de display eso era el
 // 99% del costo de poner un frame en pantalla (ver docs/desktop/GRAPHICS_PERF.md), con
 // el trabajo de GPU real en dos ordenes de magnitud menos.
-int complete_blocked_read(process::Process& proc, int result) {
-    proc.blocked_io_fd = 0;
-    proc.blocked_read_buffer = 0;
-    proc.blocked_read_capacity = 0;
-    proc.context->rax = static_cast<uint64_t>(result);
-    proc.state = process::State::ready;
-    process::detail::reset_time_slice(proc);
-    note_woken(proc);
+int complete_blocked_read(process::Thread& thread, int result) {
+    thread.blocked_io_fd = 0;
+    thread.blocked_read_buffer = 0;
+    thread.blocked_read_capacity = 0;
+    thread.context->rax = static_cast<uint64_t>(result);
+    thread.state = process::State::ready;
+    process::detail::reset_time_slice(thread);
+    note_woken(thread);
     return result;
 }
 
-int complete_blocked_write(process::Process& proc, int result) {
-    proc.blocked_io_fd = 0;
-    proc.blocked_write_buffer = 0;
-    proc.blocked_write_length = 0;
-    proc.blocked_write_progress = 0;
-    proc.context->rax = static_cast<uint64_t>(result);
-    proc.state = process::State::ready;
-    process::detail::reset_time_slice(proc);
-    note_woken(proc);
+int complete_blocked_write(process::Thread& thread, int result) {
+    thread.blocked_io_fd = 0;
+    thread.blocked_write_buffer = 0;
+    thread.blocked_write_length = 0;
+    thread.blocked_write_progress = 0;
+    thread.context->rax = static_cast<uint64_t>(result);
+    thread.state = process::State::ready;
+    process::detail::reset_time_slice(thread);
+    note_woken(thread);
     return result;
 }
 
@@ -684,7 +707,7 @@ size_t pipe_copy_out(process::Process& proc, process::Pipe& pipe, uint64_t user_
 
 
 void wake_waiting_parent(process::Process& child) {
-    process::Process* parent = find_waiting_parent_for(child);
+    process::Thread* parent = find_waiting_parent_for(child);
     if (parent == nullptr) {
         if (child.orphaned) {
             reap_process(child);
@@ -692,7 +715,7 @@ void wake_waiting_parent(process::Process& child) {
         return;
     }
 
-    write_int_to_process_memory(*parent, parent->wait_status_address, child.exit_code);
+    write_int_to_process_memory(*parent->process, parent->wait_status_address, child.exit_code);
     clear_wait_state(*parent);
     parent->context->rax = child.pid;
     parent->state = process::State::ready;
@@ -701,67 +724,69 @@ void wake_waiting_parent(process::Process& child) {
 }
 
 void wake_sleepers(uint64_t current_tick) {
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::sleeping || proc.wake_deadline_ms > current_tick) {
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::sleeping || thread.wake_deadline_ms > current_tick) {
             continue;
         }
 
-        proc.wake_deadline_ms = 0;
-        proc.context->rax = 0;
-        proc.state = process::State::ready;
-        process::detail::reset_time_slice(proc);
+        thread.wake_deadline_ms = 0;
+        thread.context->rax = 0;
+        thread.state = process::State::ready;
+        process::detail::reset_time_slice(thread);
     }
 }
 
 void wake_wait_timeouts(uint64_t current_tick) {
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_wait ||
-            proc.wait_reason != process::WaitReason::object ||
-            proc.wake_deadline_ms == 0 ||
-            proc.wake_deadline_ms > current_tick) {
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_wait ||
+            thread.wait_reason != process::WaitReason::object ||
+            thread.wake_deadline_ms == 0 ||
+            thread.wake_deadline_ms > current_tick) {
             continue;
         }
 
-        process::detail::complete_blocked_wait(proc, negative_error(SX_ETIMEDOUT));
+        process::detail::complete_blocked_wait(thread, negative_error(SX_ETIMEDOUT));
     }
 }
 
 
 void wake_blocked_readers_for_pipe(process::Pipe& pipe) {
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_read) {
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_read) {
             continue;
         }
-        if (proc.blocked_io_fd >= process::kMaxFileHandles) {
+        if (thread.blocked_io_fd >= process::kMaxFileHandles) {
             continue;
         }
 
-        object::IoObject* file = object::as_io(proc.handles[proc.blocked_io_fd].object);
+        process::Process& proc = *thread.process;
+        object::IoObject* file = object::as_io(proc.handles[thread.blocked_io_fd].object);
         if (file == nullptr || file->kind != process::HandleKind::pipe || file->pipe != &pipe) {
             continue;
         }
 
-        const int result = process::detail::try_pipe_read(proc, *file, proc.blocked_read_buffer, static_cast<size_t>(proc.blocked_read_capacity));
+        const int result = process::detail::try_pipe_read(proc, *file, thread.blocked_read_buffer, static_cast<size_t>(thread.blocked_read_capacity));
         if (result == process::kBlockedResult) {
             continue;
         }
-        complete_blocked_read(proc, result);
+        complete_blocked_read(thread, result);
     }
 
     // Y los que esperaban ese pipe por poll en vez de por read.
-    recheck_parked_processes(0, false);
+    recheck_parked_threads(0, false);
 }
 
 void wake_blocked_writers_for_pipe(process::Pipe& pipe) {
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_write) {
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_write) {
             continue;
         }
-        if (proc.blocked_io_fd >= process::kMaxFileHandles) {
+        if (thread.blocked_io_fd >= process::kMaxFileHandles) {
             continue;
         }
 
-        object::IoObject* file = object::as_io(proc.handles[proc.blocked_io_fd].object);
+        process::Process& proc = *thread.process;
+        object::IoObject* file = object::as_io(proc.handles[thread.blocked_io_fd].object);
         if (file == nullptr || file->kind != process::HandleKind::pipe || file->pipe != &pipe) {
             continue;
         }
@@ -769,26 +794,26 @@ void wake_blocked_writers_for_pipe(process::Pipe& pipe) {
         const int step = process::detail::pipe_write_chunk(
             proc,
             pipe,
-            proc.blocked_write_buffer,
-            static_cast<size_t>(proc.blocked_write_length),
-            static_cast<size_t>(proc.blocked_write_progress));
+            thread.blocked_write_buffer,
+            static_cast<size_t>(thread.blocked_write_length),
+            static_cast<size_t>(thread.blocked_write_progress));
 
         if (step == process::kBlockedResult) {
             continue;
         }
         if (step < 0) {
-            complete_blocked_write(proc, step);
+            complete_blocked_write(thread, step);
             continue;
         }
 
-        proc.blocked_write_progress += static_cast<uint64_t>(step);
-        if (proc.blocked_write_progress >= proc.blocked_write_length) {
-            complete_blocked_write(proc, static_cast<int>(proc.blocked_write_length));
+        thread.blocked_write_progress += static_cast<uint64_t>(step);
+        if (thread.blocked_write_progress >= thread.blocked_write_length) {
+            complete_blocked_write(thread, static_cast<int>(thread.blocked_write_length));
         }
     }
 
     // Hacer lugar en el pipe es lo que un poll por POLLOUT esta esperando.
-    recheck_parked_processes(0, false);
+    recheck_parked_threads(0, false);
 }
 
 
@@ -857,25 +882,25 @@ bool open_file_has_hangup(const object::IoObject& file) {
  * granularidad de la espera no cambia: el bucle viejo tampoco miraba mas
  * seguido que eso, porque entre chequeo y chequeo estaba halteado.
  */
-void recheck_parked_processes(uint64_t current_tick, bool honour_deadline) {
-    for (process::Process& proc : g_processes) {
-        // El kernel solo sabe que el proceso esta estacionado con vencimiento:
-        // QUE esta esperando es de la capa que lo estaciono (rebanada C). Antes
-        // decia wait_reason == poll y reevaluaba los descriptores aqui mismo.
-        if (proc.state != process::State::blocked_wait) {
+void recheck_parked_threads(uint64_t current_tick, bool honour_deadline) {
+    for (process::Thread& thread : used_thread_slots()) {
+        // The kernel only knows the thread is parked with a deadline: WHAT it
+        // waits for belongs to the layer that parked it (slice C). It used to
+        // say wait_reason == poll and re-evaluate the descriptors right here.
+        if (thread.state != process::State::blocked_wait) {
             continue;
         }
         // An object wait that names a stream has no signal to wake it: the
         // stream becoming readable is noticed here, where pipe writes, object
         // signals and the tick already come to look.
-        if (proc.wait_reason == process::WaitReason::object && sx::can_complete_object_wait(proc)) {
-            const int result = sx::consume_object_wait(proc);
+        if (thread.wait_reason == process::WaitReason::object && sx::can_complete_object_wait(thread)) {
+            const int result = sx::consume_object_wait(thread);
             if (result >= 0) {
-                process::detail::complete_blocked_wait(proc, result);
+                process::detail::complete_blocked_wait(thread, result);
                 continue;
             }
         }
-        subsystem::recheck_parked_process(proc, current_tick, honour_deadline);
+        subsystem::recheck_parked_thread(thread, current_tick, honour_deadline);
     }
 }
 
@@ -896,8 +921,8 @@ void recheck_parked_processes(uint64_t current_tick, bool honour_deadline) {
 void wake_parked_waiters(uint64_t current_tick) {
     bool any_waiting = false;
 
-    for (const process::Process& proc : g_processes) {
-        if (proc.state == process::State::blocked_wait) {
+    for (const process::Thread& thread : used_thread_slots()) {
+        if (thread.state == process::State::blocked_wait) {
             any_waiting = true;
             break;
         }
@@ -907,7 +932,7 @@ void wake_parked_waiters(uint64_t current_tick) {
     }
 
     net::poll();
-    recheck_parked_processes(current_tick, true);
+    recheck_parked_threads(current_tick, true);
 }
 
 /*
@@ -928,11 +953,11 @@ constexpr size_t kSocketReadChunk = 1024;
 void wake_blocked_socket_readers(uint64_t current_tick) {
     bool any_waiting = false;
 
-    for (const process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_read || proc.blocked_io_fd >= process::kMaxFileHandles) {
+    for (const process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_read || thread.blocked_io_fd >= process::kMaxFileHandles) {
             continue;
         }
-        const object::IoObject* file = object::as_io(proc.handles[proc.blocked_io_fd].object);
+        const object::IoObject* file = object::as_io(thread.process->handles[thread.blocked_io_fd].object);
         if (file != nullptr && file->kind == process::HandleKind::socket) {
             any_waiting = true;
             break;
@@ -944,33 +969,34 @@ void wake_blocked_socket_readers(uint64_t current_tick) {
 
     net::poll();
 
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_read || proc.blocked_io_fd >= process::kMaxFileHandles) {
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_read || thread.blocked_io_fd >= process::kMaxFileHandles) {
             continue;
         }
-        object::IoObject* file = object::as_io(proc.handles[proc.blocked_io_fd].object);
+        process::Process& proc = *thread.process;
+        object::IoObject* file = object::as_io(proc.handles[thread.blocked_io_fd].object);
         if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
             continue;
         }
 
         uint8_t scratch[kSocketReadChunk] = {};
-        const size_t want = proc.blocked_read_capacity < sizeof(scratch)
-            ? static_cast<size_t>(proc.blocked_read_capacity)
+        const size_t want = thread.blocked_read_capacity < sizeof(scratch)
+            ? static_cast<size_t>(thread.blocked_read_capacity)
             : sizeof(scratch);
         int result = net::read_socket_bytes(file->socket, scratch, want, true);
         if (result > 0 &&
-            !write_to_process_memory(proc, proc.blocked_read_buffer, scratch, static_cast<size_t>(result))) {
+            !write_to_process_memory(proc, thread.blocked_read_buffer, scratch, static_cast<size_t>(result))) {
             result = negative_error(SX_EINVAL);
         }
         if (result == negative_error(SX_EAGAIN)) {
-            if (proc.wake_deadline_ms != 0 && proc.wake_deadline_ms <= current_tick) {
-                proc.wake_deadline_ms = 0;
-                complete_blocked_read(proc, negative_error(SX_ETIMEDOUT));
+            if (thread.wake_deadline_ms != 0 && thread.wake_deadline_ms <= current_tick) {
+                thread.wake_deadline_ms = 0;
+                complete_blocked_read(thread, negative_error(SX_ETIMEDOUT));
             }
             continue;
         }
-        proc.wake_deadline_ms = 0;
-        complete_blocked_read(proc, result);
+        thread.wake_deadline_ms = 0;
+        complete_blocked_read(thread, result);
     }
 }
 
@@ -1002,9 +1028,11 @@ namespace detail {
 // Forward declarations; definitions follow in file order.
 uint64_t now_ms();
 void proc_log(const char* format, ...);
-void reset_time_slice(Process& proc);
+void reset_time_slice(Thread& thread);
 uint32_t init_pid();
 Process* allocate_process_slot(bool idle);
+Thread* allocate_thread(Process& proc);
+void release_thread(Thread& thread);
 void reset_process_slot(Process& proc);
 void release_address_space(Process& proc);
 void release_process_resources(Process& proc);
@@ -1019,10 +1047,10 @@ object::Header* lookup_handle(Process& proc, uint64_t fd, uint32_t desired_acces
 Pipe* allocate_pipe();
 int try_pipe_read(Process& proc, object::IoObject& file, uint64_t user_address, size_t count);
 int pipe_write_chunk(Process& proc, Pipe& pipe, uint64_t user_address, size_t count, size_t progress);
-int begin_object_wait(Process& proc, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
-// Los usa tambien la traduccion POSIX: el fin de un poll y la evaluacion de
-// un descriptor. El kernel no los llama para si (rebanada C).
-int complete_blocked_wait(Process& proc, int result);
+int begin_object_wait(Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
+// The POSIX translation uses these too: the end of a poll and the evaluation
+// of a descriptor (slice C).
+int complete_blocked_wait(Thread& thread, int result);
 short poll_open_file(const object::IoObject* file, short events);
 void wake_waiters_for_object(object::Header* handle_object);
 void terminate_process(Process& proc, int exit_code);
@@ -1049,8 +1077,8 @@ void proc_log(const char* format, ...) {
 }
 
 
-void reset_time_slice(process::Process& proc) {
-    proc.time_slice = proc.idle ? 1 : kDefaultTimeSlice;
+void reset_time_slice(process::Thread& thread) {
+    thread.time_slice = thread.process->idle ? 1 : kDefaultTimeSlice;
 }
 
 uint32_t object_access_for_open_flags(uint32_t open_flags) {
@@ -1066,13 +1094,11 @@ uint32_t object_access_for_open_flags(uint32_t open_flags) {
 
 process::Process* allocate_process_slot(bool idle) {
     for (process::Process& slot : g_processes) {
-        if (slot.state == process::State::unused) {
+        if (slot.life == process::Lifecycle::unused) {
             memset(&slot, 0, sizeof(slot));
             slot.pid = g_next_pid++;
-            slot.state = process::State::ready;
+            slot.life = process::Lifecycle::alive;
             slot.idle = idle;
-            process::detail::reset_time_slice(slot);
-            arch::x86_64::fpu_init_area(slot.fpu_state);
             return &slot;
         }
     }
@@ -1083,23 +1109,69 @@ void reset_process_slot(process::Process& proc) {
     const bool idle = proc.idle;
     memset(&proc, 0, sizeof(proc));
     proc.idle = idle;
-    proc.state = process::State::unused;
+    proc.life = process::Lifecycle::unused;
+}
+
+process::Thread* allocate_thread(process::Process& proc) {
+    for (process::Thread& slot : g_threads) {
+        if (slot.state != process::State::unused) {
+            continue;
+        }
+
+        memory::PageAllocation kernel_stack = {};
+        if (!memory::allocate_contiguous_pages(kKernelStackPages, kernel_stack)) {
+            return nullptr;
+        }
+        memset(&slot, 0, sizeof(slot));
+        slot.tid = proc.thread_count == 0 ? proc.pid : g_next_pid++;
+        slot.state = process::State::ready;
+        slot.process = &proc;
+        slot.kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
+        slot.kernel_stack_size = kKernelStackPages * memory::kPageSize;
+        reset_time_slice(slot);
+        arch::x86_64::fpu_init_area(slot.fpu_state);
+        proc.thread_count += 1;
+        const size_t index = thread_index(&slot);
+        if (index >= g_thread_bound) {
+            g_thread_bound = index + 1;
+        }
+        return &slot;
+    }
+    return nullptr;
+}
+
+// The thread running here can be released too: a process that exits reaps
+// itself when it is an orphan or its parent is already waiting. Its kernel
+// stack stays in use until the scheduler switches away, which is safe only
+// because nothing allocates in between and the big kernel lock is held until
+// resume_context has left this stack. A thread that exits on its own while
+// its process lives on must not rely on that (THREADS_ROADMAP.md, phase 1).
+void release_thread(process::Thread& thread) {
+    if (thread.sleep_timer != nullptr) {
+        object::Header* header = &thread.sleep_timer->header;
+        object::release(header);
+        thread.sleep_timer = nullptr;
+    }
+    release_kernel_stack(thread);
+    if (thread.process != nullptr && thread.process->thread_count != 0) {
+        thread.process->thread_count -= 1;
+    }
+    memset(&thread, 0, sizeof(thread));
+    thread.state = process::State::unused;
 }
 
 void release_address_space(process::Process& proc) {
     vm::destroy_address_space(proc.address_space);
-    proc.context = nullptr;
 }
 
 void release_process_resources(process::Process& proc) {
-    if (proc.sleep_timer != nullptr) {
-        object::Header* header = &proc.sleep_timer->header;
-        object::release(header);
-        proc.sleep_timer = nullptr;
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::unused && thread.process == &proc) {
+            release_thread(thread);
+        }
     }
     free_subsystem_state(proc);
     process::detail::release_address_space(proc);
-    release_kernel_stack(proc);
 }
 
 object::IoObject* allocate_io_object() {
@@ -1261,33 +1333,33 @@ void wake_waiters_for_object(object::Header* handle_object) {
         return;
     }
 
-    for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::blocked_wait ||
-            proc.wait_reason != process::WaitReason::object) {
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_wait ||
+            thread.wait_reason != process::WaitReason::object) {
             continue;
         }
         bool references_object = false;
-        for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-            if (proc.waited_objects[index] == handle_object) {
+        for (size_t index = 0; index < thread.wait_handle_count; ++index) {
+            if (thread.waited_objects[index] == handle_object) {
                 references_object = true;
                 break;
             }
         }
-        if (!references_object || !sx::can_complete_object_wait(proc)) {
+        if (!references_object || !sx::can_complete_object_wait(thread)) {
             continue;
         }
 
-        const int result = sx::consume_object_wait(proc);
+        const int result = sx::consume_object_wait(thread);
         if (result < 0) {
             continue;
         }
-        process::detail::complete_blocked_wait(proc, result);
+        process::detail::complete_blocked_wait(thread, result);
     }
 
     // Un objeto senalizado tambien puede ser lo que espera un poll. El evento de
     // submit de un cliente grafico entra por aca, que es el camino por el que el
     // compositor se entera de que hay un frame.
-    recheck_parked_processes(0, false);
+    recheck_parked_threads(0, false);
 }
 
 object::Header* lookup_handle(process::Process& proc, uint64_t fd, uint32_t desired_access) {
@@ -1332,22 +1404,30 @@ bool inherit_all_handles(process::Process& child, const process::Process& parent
 }
 
 void terminate_process(process::Process& proc, int exit_code) {
-    if (proc.idle || proc.state == process::State::unused || proc.state == process::State::zombie) {
+    if (proc.idle || proc.life != process::Lifecycle::alive) {
         return;
     }
 
-    // Corriendo en otro core: su pila de kernel y sus tablas de paginas estan
-    // en uso ahi mismo, y liberarlas ahora es pisarselas. Lo termina su propio
-    // core en la proxima vuelta a ring 3 (tick, IPI o fin de syscall).
-    if (proc.state == process::State::running && &proc != this_cpu().current) {
-        if (!proc.kill_pending) {
-            proc.kill_pending = true;
-            proc.kill_exit_code = exit_code;
+    // A thread running on another core: its kernel stack and the process's
+    // page tables are in use right there, and releasing them now would pull
+    // them out from under it. Its own core finishes the process on the next
+    // return to ring 3 (tick, IPI or end of syscall).
+    bool deferred = false;
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.process != &proc || thread.state != process::State::running ||
+            &thread == this_cpu().current) {
+            continue;
         }
-        smp::kick(proc.cpu);
+        if (!thread.kill_pending) {
+            thread.kill_pending = true;
+            thread.kill_exit_code = exit_code;
+        }
+        smp::kick(thread.cpu);
+        deferred = true;
+    }
+    if (deferred) {
         return;
     }
-    proc.kill_pending = false;
 
     const uint32_t exiting_pid = proc.pid;
     process::detail::proc_log("proc: terminate pid=%u status=%d\n", proc.pid, exit_code);
@@ -1363,32 +1443,42 @@ void terminate_process(process::Process& proc, int exit_code) {
        al cliente cuando cierran la ventana, asi que sin esto la sesion queda
        tomada por un pid muerto y el proximo programa con sonido recibe EBUSY. */
     audio_device::release_session_for(exiting_pid);
-    proc.state = process::State::zombie;
+    // Every thread ends with the process. Their slots and kernel stacks stay
+    // until the reap: one of them may be the stack this code is running on.
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state == process::State::unused || thread.process != &proc) {
+            continue;
+        }
+        clear_wait_state(thread);
+        thread.kill_pending = false;
+        thread.state = process::State::zombie;
+    }
+    proc.life = process::Lifecycle::zombie;
     wake_waiting_parent(proc);
     reparent_orphaned_children(exiting_pid);
 }
 
-int begin_object_wait(process::Process& proc, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms) {
-    const int consumed = sx::try_consume_objects(proc, handles, count, wait_all);
+int begin_object_wait(process::Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms) {
+    const int consumed = sx::try_consume_objects(self, handles, count, wait_all);
     if (consumed != sx::negative_error(SX_EAGAIN)) {
         return consumed;
     }
     if (timeout_ms == 0) {
-        clear_wait_state(proc);
+        clear_wait_state(self);
         return negative_error(SX_ETIMEDOUT);
     }
 
-    proc.wake_deadline_ms = timeout_ms > 0 ? (process::detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
-    proc.state = process::State::blocked_wait;
+    self.wake_deadline_ms = timeout_ms > 0 ? (process::detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
+    self.state = process::State::blocked_wait;
     return process::kBlockedResult;
 }
 
-int complete_blocked_wait(process::Process& proc, int result) {
-    clear_wait_state(proc);
-    proc.context->rax = static_cast<uint64_t>(result);
-    proc.state = process::State::ready;
-    process::detail::reset_time_slice(proc);
-    note_woken(proc);
+int complete_blocked_wait(process::Thread& thread, int result) {
+    clear_wait_state(thread);
+    thread.context->rax = static_cast<uint64_t>(result);
+    thread.state = process::State::ready;
+    process::detail::reset_time_slice(thread);
+    note_woken(thread);
     return result;
 }
 
@@ -1504,29 +1594,29 @@ void copy_subsystem_state(Process& child, const process::Process& parent) {
     }
 }
 
-void clear_wait_state(process::Process& proc) {
-    proc.wait_reason = process::WaitReason::none;
-    proc.wait_handle_count = 0;
-    proc.wait_all = 0;
-    proc.wait_reserved = 0;
-    proc.waiting_for_pid = 0;
-    proc.wait_status_address = 0;
+void clear_wait_state(process::Thread& thread) {
+    thread.wait_reason = process::WaitReason::none;
+    thread.wait_handle_count = 0;
+    thread.wait_all = 0;
+    thread.wait_reserved = 0;
+    thread.waiting_for_pid = 0;
+    thread.wait_status_address = 0;
     for (size_t index = 0; index < process::kMaxWaitHandles; ++index) {
-        proc.waited_objects[index] = nullptr;
+        thread.waited_objects[index] = nullptr;
     }
-    proc.wake_deadline_ms = 0;
+    thread.wake_deadline_ms = 0;
 }
 
-void switch_to_process(process::Process* target) {
+void switch_to_thread(process::Thread* target) {
     if (target == nullptr) {
         return;
     }
 
-    // Cambio real de proceso: guardar el estado FPU/SSE del saliente y restaurar
-    // el del entrante. Si target ya es this_cpu().current, el proceso sigue
-    // corriendo y su FPU ya esta viva en registros -- un FXRSTOR aqui la pisaria
-    // con una copia vieja, asi que se omite. El kernel es -mno-sse, no toca la
-    // FPU entremedio.
+    // A real thread switch: save the outgoing thread's FPU/SSE state and
+    // restore the incoming one's. If target already is this_cpu().current, it
+    // keeps running and its FPU is still live in the registers -- an FXRSTOR
+    // here would overwrite it with a stale copy, so it is skipped. The kernel
+    // is -mno-sse and does not touch the FPU in between.
     if (this_cpu().current != target) {
         if (this_cpu().current != nullptr) {
             arch::x86_64::fpu_save(this_cpu().current->fpu_state);
@@ -1538,7 +1628,14 @@ void switch_to_process(process::Process* target) {
     target->state = process::State::running;
     target->cpu = this_cpu().index;
     arch::x86_64::set_kernel_stack(target->kernel_stack_base + target->kernel_stack_size);
-    write_cr3(target->address_space.pml4_physical);
+    // Two threads of one process share the address space: switching between
+    // them keeps CR3, and with it the TLB. Comparing against the live CR3 and
+    // not against the previous thread's process also covers an exec, which
+    // swaps the address space under the same thread.
+    const uint64_t pml4 = target->process->address_space.pml4_physical;
+    if ((read_cr3() & ~static_cast<uint64_t>(0xfff)) != pml4) {
+        write_cr3(pml4);
+    }
 }
 
 // Resolucion NEUTRAL de una ruta: absoluta, o relativa a la raiz. No hay cwd
@@ -1591,13 +1688,14 @@ sx_status image_failure_errno(process::ImageFailure failure) {
 }
 
 bool prepare_exec_image(
-    process::Process& proc,
+    process::Thread& self,
     const char* path,
     int argc,
     const char* const* argv,
     process::ImageFailure& failure
 ) {
     failure = process::ImageFailure::none;
+    process::Process& proc = *self.process;
 
     const vfs::Vnode* image = vfs::resolve(path);
     if (image == nullptr) {
@@ -1651,15 +1749,18 @@ bool prepare_exec_image(
     // POSIX), y si cambio llega a cero, que POSIX lee como "/".
     ensure_subsystem_state(proc);
     set_process_name(proc, path);
-    proc.blocked_io_fd = 0;
-    proc.blocked_read_buffer = 0;
-    proc.blocked_read_capacity = 0;
-    proc.blocked_write_buffer = 0;
-    proc.blocked_write_length = 0;
-    proc.blocked_write_progress = 0;
-    clear_wait_state(proc);
-    process::detail::reset_time_slice(proc);
-    fabricate_initial_context(proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
+    // The image is replaced under the calling thread, which starts over at the
+    // new entry point. With one thread per process there is no other thread to
+    // end; a multithreaded exec has to end them first (THREADS_ROADMAP.md).
+    self.blocked_io_fd = 0;
+    self.blocked_read_buffer = 0;
+    self.blocked_read_capacity = 0;
+    self.blocked_write_buffer = 0;
+    self.blocked_write_length = 0;
+    self.blocked_write_progress = 0;
+    clear_wait_state(self);
+    process::detail::reset_time_slice(self);
+    fabricate_initial_context(self, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
     return true;
 }
 
@@ -1723,17 +1824,14 @@ process::Process* create_process_internal(
     vm::randomize_section_base(proc->address_space,
         arch::x86_64::random_u64() ^ static_cast<uint64_t>(proc->pid));
 
-    memory::PageAllocation kernel_stack = {};
-    if (!memory::allocate_contiguous_pages(process::detail::kKernelStackPages, kernel_stack)) {
-        process::detail::release_address_space(*proc);
+    process::Thread* thread = process::detail::allocate_thread(*proc);
+    if (thread == nullptr) {
+        process::detail::release_process_resources(*proc);
         process::detail::reset_process_slot(*proc);
         failure = process::ImageFailure::no_address_space;
         report_image_failure("spawn", path, failure, reported_size);
         return nullptr;
     }
-
-    proc->kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
-    proc->kernel_stack_size = process::detail::kKernelStackPages * memory::kPageSize;
 
     if (parent == nullptr) {
         if (!initialize_standard_handles(*proc)) {
@@ -1784,13 +1882,13 @@ process::Process* create_process_internal(
         console::printf("process: pid=%u marcado nativo\n", static_cast<unsigned>(proc->pid));
     }
 
-    fabricate_initial_context(*proc, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
+    fabricate_initial_context(*thread, load_result.entry_point, load_result.stack_pointer, load_result.accepted_argc, load_result.stack_pointer, load_result.interpreter_address, load_result.image_base);
     return proc;
 }
 
 process::Process* child_of(uint32_t parent_pid, uint32_t pid) {
     for (process::Process& proc : g_processes) {
-        if (proc.state == process::State::unused) {
+        if (proc.life == process::Lifecycle::unused) {
             continue;
         }
         if (proc.parent_pid == parent_pid && proc.pid == pid) {
@@ -1802,7 +1900,7 @@ process::Process* child_of(uint32_t parent_pid, uint32_t pid) {
 
 bool has_child(uint32_t parent_pid) {
     for (const process::Process& proc : g_processes) {
-        if (proc.state != process::State::unused && proc.parent_pid == parent_pid) {
+        if (proc.life != process::Lifecycle::unused && proc.parent_pid == parent_pid) {
             return true;
         }
     }
@@ -1811,7 +1909,7 @@ bool has_child(uint32_t parent_pid) {
 
 process::Process* find_zombie_child(uint32_t parent_pid, uint32_t waited_pid) {
     for (process::Process& proc : g_processes) {
-        if (proc.state != process::State::zombie || proc.parent_pid != parent_pid) {
+        if (proc.life != process::Lifecycle::zombie || proc.parent_pid != parent_pid) {
             continue;
         }
         if (waited_pid == process::kWaitAnyPid || proc.pid == waited_pid) {
@@ -1832,7 +1930,8 @@ void reap_process(process::Process& proc) {
 // zombie child, rejects an unrelated pid, or parks the caller until a child
 // appears. Returns the child pid (or negative errno), or kBlockedResult when
 // the caller was parked and the scheduler already picked the next context.
-int waitpid_child(process::Process& proc, int64_t waited, uint64_t status_address) {
+int waitpid_child(process::Thread& self, int64_t waited, uint64_t status_address) {
+    process::Process& proc = *self.process;
     const uint32_t waited_pid = waited == -1 ? process::kWaitAnyPid : static_cast<uint32_t>(waited);
     process::Process* child = find_zombie_child(proc.pid, waited_pid);
     if (child != nullptr) {
@@ -1849,11 +1948,11 @@ int waitpid_child(process::Process& proc, int64_t waited, uint64_t status_addres
         return negative_error(SX_ECHILD);
     }
 
-    clear_wait_state(proc);
-    proc.wait_reason = process::WaitReason::child;
-    proc.waiting_for_pid = waited_pid;
-    proc.wait_status_address = status_address;
-    proc.state = process::State::blocked_wait;
+    clear_wait_state(self);
+    self.wait_reason = process::WaitReason::child;
+    self.waiting_for_pid = waited_pid;
+    self.wait_status_address = status_address;
+    self.state = process::State::blocked_wait;
     return process::kBlockedResult;
 }
 
@@ -1881,8 +1980,8 @@ bool add_spawn_handles(process::Process& proc, const process::Process& parent, c
 }
 
 bool has_runnable_non_idle() {
-    for (const process::Process& proc : g_processes) {
-        if (runnable_here(proc)) {
+    for (const process::Thread& thread : used_thread_slots()) {
+        if (runnable_here(thread)) {
             return true;
         }
     }
@@ -1898,13 +1997,13 @@ process::SavedContext* choose_next_context(process::SavedContext* current_contex
     // el que llegue despues encuentra la decision ya tomada y no hace nada.
     this_cpu().kicked = false;
 
-    process::Process* next = pick_next_runnable();
+    process::Thread* next = pick_next_runnable();
     if (next == nullptr) {
-        panic("scheduler: no runnable process");
+        panic("scheduler: no runnable thread");
     }
 
     process::detail::reset_time_slice(*next);
-    switch_to_process(next);
+    switch_to_thread(next);
     return next->context;
 }
 
@@ -2033,8 +2132,8 @@ int unmap_view_address(process::Process& proc, uint64_t base_address) {
     return sx::unmap_view(proc, base_address);
 }
 
-int wait_on_handle(process::Process& proc, uint64_t fd, int64_t timeout_ms) {
-    object::Header* handle_object = process::detail::lookup_handle(proc, fd, object::access_synchronize);
+int wait_on_handle(process::Thread& self, uint64_t fd, int64_t timeout_ms) {
+    object::Header* handle_object = process::detail::lookup_handle(*self.process, fd, object::access_synchronize);
     if (handle_object == nullptr) {
         return negative_error(SX_EBADF);
     }
@@ -2043,7 +2142,7 @@ int wait_on_handle(process::Process& proc, uint64_t fd, int64_t timeout_ms) {
     }
 
     object::Header* handles[1] = {handle_object};
-    return process::detail::begin_object_wait(proc, handles, 1, false, timeout_ms);
+    return process::detail::begin_object_wait(self, handles, 1, false, timeout_ms);
 }
 
 
@@ -2106,6 +2205,8 @@ bool copy_spawn_arguments(
 
 void initialize() {
     memset(g_processes, 0, sizeof(g_processes));
+    memset(g_threads, 0, sizeof(g_threads));
+    g_thread_bound = 0;
     memset(g_pipes, 0, sizeof(g_pipes));
     memset(g_pipe_storage, 0, sizeof(g_pipe_storage));
     memset(g_io_objects, 0, sizeof(g_io_objects));
@@ -2133,16 +2234,37 @@ bool ready() {
 }
 
 Process* current() {
+    return this_cpu().current != nullptr ? this_cpu().current->process : nullptr;
+}
+
+Thread* current_thread() {
     return this_cpu().current;
 }
 
 uint32_t current_pid() {
-    return this_cpu().current != nullptr ? this_cpu().current->pid : 0;
+    Process* const proc = current();
+    return proc != nullptr ? proc->pid : 0;
+}
+
+Thread* primary_thread(const Process& proc) {
+    Thread* ended = nullptr;
+    for (Thread& thread : used_thread_slots()) {
+        if (thread.state == State::unused || thread.process != &proc) {
+            continue;
+        }
+        if (thread.state != State::zombie) {
+            return &thread;
+        }
+        if (ended == nullptr) {
+            ended = &thread;
+        }
+    }
+    return ended;
 }
 
 Process* find(uint32_t pid) {
     for (Process& proc : g_processes) {
-        if (proc.state != State::unused && proc.pid == pid) {
+        if (proc.life != Lifecycle::unused && proc.pid == pid) {
             return &proc;
         }
     }
@@ -2152,7 +2274,7 @@ Process* find(uint32_t pid) {
 bool snapshot_process(size_t index, savanxp_process_info& info) {
     size_t visible = 0;
     for (const Process& proc : g_processes) {
-        if (proc.state == State::unused) {
+        if (proc.life == Lifecycle::unused) {
             continue;
         }
         if (visible++ != index) {
@@ -2163,13 +2285,17 @@ bool snapshot_process(size_t index, savanxp_process_info& info) {
         info.pid = proc.pid;
         info.parent_pid = proc.parent_pid;
         info.exit_code = proc.exit_code;
-        info.state = exported_state(proc.state);
+        // A live process shows what its first thread is doing.
+        const Thread* const thread = primary_thread(proc);
+        info.state = exported_state(proc.life == Lifecycle::zombie || thread == nullptr
+            ? State::zombie
+            : thread->state);
         memcpy(info.name, proc.name, sizeof(info.name));
         info.cpu_ticks = proc.cpu_ticks;
-        // Un zombie ya solto su espacio de direcciones: preguntarle la memoria
-        // devolveria 0 igual, pero recorrer tablas que ya no son suyas no es
-        // algo que convenga ni intentar.
-        info.memory_bytes = proc.state == State::zombie
+        // A zombie already let go of its address space: asking it for memory
+        // would return 0 anyway, but walking tables that are no longer its own
+        // is not worth even trying.
+        info.memory_bytes = proc.life == Lifecycle::zombie
             ? 0
             : vm::resident_user_bytes(proc.address_space);
         for (const HandleEntry& handle : proc.handles) {
@@ -2216,7 +2342,7 @@ bool snapshot_system_info(savanxp_system_info& info) {
     info.cpu_ticks_total = g_cpu_ticks_total;
     info.process_count = 0;
     for (const Process& proc : g_processes) {
-        if (proc.state != State::unused) {
+        if (proc.life != Lifecycle::unused) {
             info.process_count += 1;
         }
     }
@@ -2282,10 +2408,11 @@ bool validate_user_range(uint64_t user_address, size_t count, bool require_write
 }
 
 int export_handle(object::Header* handle_object, uint32_t access, uint32_t flags) {
-    if (this_cpu().current == nullptr || handle_object == nullptr) {
+    Process* const proc = current();
+    if (proc == nullptr || handle_object == nullptr) {
         return negative_error(SX_EBADF);
     }
-    return process::detail::allocate_fd(*this_cpu().current, handle_object, access, flags);
+    return process::detail::allocate_fd(*proc, handle_object, access, flags);
 }
 
 void notify_object_signal(object::Header* handle_object) {
@@ -2310,7 +2437,7 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
         if (!smp::may_schedule(index)) {
             continue;
         }
-        Process* idle = create_idle_process();
+        Thread* idle = create_idle_process();
         if (idle == nullptr) {
             if (index == 0) {
                 panic("scheduler: unable to create idle task");
@@ -2334,25 +2461,30 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
     // retomar init.
     smp::start_scheduling();
 
-    g_schedule_cursor = process_index(init);
-    switch_to_process(init);
-    arch::x86_64::resume_context(init->context, init->address_space.pml4_physical);
+    Thread* const init_thread = primary_thread(*init);
+    g_schedule_cursor = thread_index(init_thread);
+    switch_to_thread(init_thread);
+    arch::x86_64::resume_context(init_thread->context, init->address_space.pml4_physical);
 }
 
 [[noreturn]] void run_secondary_core() {
     SavedContext* next = choose_next_context(nullptr);
-    arch::x86_64::resume_context(next, this_cpu().current->address_space.pml4_physical);
+    arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
 }
 
 void terminate_current(int exit_code) {
-    if (this_cpu().current == nullptr || this_cpu().current->idle) {
+    Process* const proc = current();
+    if (proc == nullptr || proc->idle) {
         panic("process: invalid current task on exit");
     }
 
-    process::detail::terminate_process(*this_cpu().current, exit_code);
+    process::detail::terminate_process(*proc, exit_code);
+    // With one thread per process nothing can defer this: the only thread is
+    // the one running here.
+    process_assert(proc->life != Lifecycle::alive, "process: exit deferred by another thread");
 
     SavedContext* next = choose_next_context(nullptr);
-    arch::x86_64::resume_context(next, this_cpu().current->address_space.pml4_physical);
+    arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
 }
 
 /* Crecimiento por demanda del stack.
@@ -2366,10 +2498,10 @@ void terminate_current(int exit_code) {
  * fault legible en vez de pisar en silencio lo que hubiera abajo.
  */
 bool grow_user_stack(uint64_t fault_address) {
-    process::Process* proc = this_cpu().current;
+    process::Process* proc = current();
     uint64_t page_address = 0;
 
-    if (proc == nullptr || proc->state == process::State::unused) {
+    if (proc == nullptr || proc->life == process::Lifecycle::unused) {
         return false;
     }
     if (fault_address < vm::kUserStackBottom || fault_address >= vm::kUserStackTop) {
@@ -2386,25 +2518,25 @@ void terminate_current_from_exception(uint8_t vector) {
     console::printf(
         "user: exception #%u killed pid=%u\n",
         static_cast<unsigned>(vector),
-        this_cpu().current != nullptr ? this_cpu().current->pid : 0
+        current_pid()
     );
     terminate_current(128 + vector);
 }
 
 SavedContext* handle_syscall(SavedContext* context) {
-    Process* const caller = this_cpu().current;
-    const subsystem::Id id = caller != nullptr ? caller->subsystem_id : subsystem::Id::posix;
+    Thread* const caller = this_cpu().current;
+    const subsystem::Id id = caller != nullptr ? caller->process->subsystem_id : subsystem::Id::posix;
     SavedContext* result = subsystem::dispatch(id, context);
 
-    // Lo mataron desde otro core mientras estaba en esta syscall. Si todavia es
-    // el que corre aca, termina ahora, antes de volver a ring 3. Si la syscall
-    // lo bloqueo o le cedio la CPU a otro, ya no corre en ningun lado y se lo
-    // puede desarmar como a cualquier proceso parado.
-    if (caller != nullptr && caller->kill_pending) {
+    // Killed from another core while it was in this syscall. If it is still
+    // the thread running here, it ends now, before returning to ring 3. If the
+    // syscall blocked it or gave the CPU to someone else, it no longer runs
+    // anywhere and its process can be torn down like any stopped one.
+    if (caller != nullptr && caller->state != State::unused && caller->kill_pending) {
         if (caller == this_cpu().current && caller->state == State::running) {
             terminate_current(caller->kill_exit_code);
         }
-        process::detail::terminate_process(*caller, caller->kill_exit_code);
+        process::detail::terminate_process(*caller->process, caller->kill_exit_code);
     }
 
     // Preemptive event wakeup: if this syscall made another process runnable
@@ -2428,9 +2560,9 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     }
 
     this_cpu().current->context = context;
-    // Este tick lo consumio el que estaba corriendo cuando llego, antes de que
-    // nada de abajo pueda reemplazarlo.
-    this_cpu().current->cpu_ticks += 1;
+    // This tick was consumed by whoever was running when it arrived, before
+    // anything below can replace it.
+    this_cpu().current->process->cpu_ticks += 1;
     g_cpu_ticks_total += 1;
 
     // Los vencimientos se miden con el reloj monotono, no con el contador de
@@ -2460,7 +2592,7 @@ SavedContext* handle_timer_tick(SavedContext* context) {
         return choose_next_context(context);
     }
 
-    if (this_cpu().current->idle) {
+    if (this_cpu().current->process->idle) {
         if (has_runnable_non_idle()) {
             this_cpu().current->state = State::ready;
             return choose_next_context(context);
@@ -2489,7 +2621,7 @@ SavedContext* handle_reschedule_ipi(SavedContext* context) {
     if (this_cpu().current->kill_pending && (context->cs & 0x3) == 0x3) {
         terminate_current(this_cpu().current->kill_exit_code);
     }
-    if (this_cpu().current->idle && has_runnable_non_idle()) {
+    if (this_cpu().current->process->idle && has_runnable_non_idle()) {
         this_cpu().current->state = State::ready;
         return choose_next_context(context);
     }
@@ -2497,29 +2629,30 @@ SavedContext* handle_reschedule_ipi(SavedContext* context) {
 }
 
 void notify_tty_line_ready() {
-    for (Process& proc : g_processes) {
-        if (proc.state != State::blocked_read) {
+    for (Thread& thread : used_thread_slots()) {
+        if (thread.state != State::blocked_read) {
             continue;
         }
-        if (proc.blocked_io_fd >= kMaxFileHandles) {
+        if (thread.blocked_io_fd >= kMaxFileHandles) {
             continue;
         }
 
-        object::IoObject* file = object::as_io(proc.handles[proc.blocked_io_fd].object);
+        Process& proc = *thread.process;
+        object::IoObject* file = object::as_io(proc.handles[thread.blocked_io_fd].object);
         if (file == nullptr || file->kind != HandleKind::tty) {
             continue;
         }
 
-        const size_t to_copy = tty::main().pending_length < proc.blocked_read_capacity
+        const size_t to_copy = tty::main().pending_length < thread.blocked_read_capacity
             ? tty::main().pending_length
-            : static_cast<size_t>(proc.blocked_read_capacity);
-        if (!write_to_process_memory(proc, proc.blocked_read_buffer, tty::main().pending_line, to_copy)) {
-            complete_blocked_read(proc, negative_error(SX_EINVAL));
+            : static_cast<size_t>(thread.blocked_read_capacity);
+        if (!write_to_process_memory(proc, thread.blocked_read_buffer, tty::main().pending_line, to_copy)) {
+            complete_blocked_read(thread, negative_error(SX_EINVAL));
         } else {
             memset(tty::main().pending_line, 0, sizeof(tty::main().pending_line));
             tty::main().pending_length = 0;
             tty::main().line_ready = false;
-            complete_blocked_read(proc, static_cast<int>(to_copy));
+            complete_blocked_read(thread, static_cast<int>(to_copy));
         }
         break;
     }

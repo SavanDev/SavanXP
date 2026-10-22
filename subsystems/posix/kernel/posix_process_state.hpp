@@ -61,9 +61,9 @@ inline const char* cwd_or_root(const process::Process& proc) {
     return owned->cwd;
 }
 
-// El camino de poll (rebanada C), implementado en posix_translation.cpp.
+// The poll path (slice C), implemented in posix_translation.cpp.
 bool commit_poll_entries(ProcessState& state, process::Process& proc);
 int evaluate_poll_entries(ProcessState& state, process::Process& proc);
-void recheck_parked_poll(process::Process& proc, uint64_t now_ms, bool honour_deadline);
+void recheck_parked_poll(process::Thread& thread, uint64_t now_ms, bool honour_deadline);
 
 } // namespace posix

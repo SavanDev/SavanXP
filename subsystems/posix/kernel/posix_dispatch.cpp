@@ -49,12 +49,16 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         return context;
     }
 
-    smp::this_cpu().current->context = context;
-    smp::this_cpu().current->state = State::running;
+    // The calling thread blocks, sleeps and resumes; the process it belongs
+    // to owns the handles, the address space and the POSIX state.
+    Thread& self = *smp::this_cpu().current;
+    Process& caller = *self.process;
+    self.context = context;
+    self.state = State::running;
 
     switch (context->rax) {
         case SAVANXP_SYS_READ: {
-            const int result = read_handle(*smp::this_cpu().current, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
+            const int result = read_handle(self, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -62,7 +66,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_WRITE: {
-            const int result = write_handle(*smp::this_cpu().current, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
+            const int result = write_handle(self, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -72,19 +76,19 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_OPEN: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(open_node(*smp::this_cpu().current, resolved, static_cast<uint32_t>(context->rsi)));
+            context->rax = static_cast<uint64_t>(open_node(caller, resolved, static_cast<uint32_t>(context->rsi)));
             return context;
         }
         case SAVANXP_SYS_CLOSE:
-            context->rax = static_cast<uint64_t>(close_fd(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(close_fd(caller, context->rdi));
             return context;
         case SAVANXP_SYS_READDIR:
-            context->rax = static_cast<uint64_t>(readdir_node(*smp::this_cpu().current, context->rdi, context->rsi, static_cast<size_t>(context->rdx)));
+            context->rax = static_cast<uint64_t>(readdir_node(caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx)));
             return context;
         case SAVANXP_SYS_SPAWN:
         case SAVANXP_SYS_SPAWN_FD: {
@@ -95,8 +99,8 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_spawn_arguments(*smp::this_cpu().current, *context, path, sizeof(path), *arguments) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_spawn_arguments(caller, *context, path, sizeof(path), *arguments) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 heap::free(arguments);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_E2BIG));
                 return context;
@@ -110,7 +114,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             }
 
             ImageFailure failure = ImageFailure::none;
-            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, smp::this_cpu().current, stdin_fd, stdout_fd, -1, failure);
+            Process* child = create_process_internal(resolved, arguments->argc, arguments->argv, &caller, stdin_fd, stdout_fd, -1, failure);
             heap::free(arguments);
             context->rax = static_cast<uint64_t>(child != nullptr
                 ? static_cast<int>(child->pid)
@@ -125,26 +129,26 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_ENOMEM));
                 return context;
             }
-            if (!copy_spawn_arguments(*smp::this_cpu().current, *context, path, sizeof(path), *arguments) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_spawn_arguments(caller, *context, path, sizeof(path), *arguments) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 heap::free(arguments);
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_E2BIG));
                 return context;
             }
 
             ImageFailure failure = ImageFailure::none;
-            const bool prepared = prepare_exec_image(*smp::this_cpu().current, resolved, arguments->argc, arguments->argv, failure);
+            const bool prepared = prepare_exec_image(self, resolved, arguments->argc, arguments->argv, failure);
             heap::free(arguments);
             if (!prepared) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(image_failure_errno(failure)));
                 return context;
             }
 
-            switch_to_process(smp::this_cpu().current);
-            return smp::this_cpu().current->context;
+            switch_to_thread(&self);
+            return self.context;
         }
         case SAVANXP_SYS_WAITPID: {
-            const int result = waitpid_child(*smp::this_cpu().current, static_cast<int64_t>(context->rdi), context->rsi);
+            const int result = waitpid_child(self, static_cast<int64_t>(context->rdi), context->rsi);
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -169,11 +173,11 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             // writeback queue: that is where deferred writes reach the disk,
             // in time nobody else wanted. One piece per yield, so a process
             // that becomes runnable gets the core back within one step.
-            if (smp::this_cpu().current->idle && !has_runnable_non_idle() &&
+            if (caller.idle && !has_runnable_non_idle() &&
                 !block::writeback_step()) {
                 smp::wait_for_interrupt();
             }
-            smp::this_cpu().current->state = State::ready;
+            self.state = State::ready;
             context->rax = 0;
             return choose_next_context(context);
         case SAVANXP_SYS_UPTIME_MS:
@@ -187,7 +191,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = 0;
             return context;
         case SAVANXP_SYS_SLEEP_MS: {
-            const int result = sleep_via_timer(*smp::this_cpu().current, context->rdi);
+            const int result = sleep_via_timer(self, context->rdi);
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -195,16 +199,16 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_PIPE:
-            context->rax = static_cast<uint64_t>(create_pipe(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(create_pipe(caller, context->rdi));
             return context;
         case SAVANXP_SYS_DUP:
-            context->rax = static_cast<uint64_t>(duplicate_fd(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(duplicate_fd(caller, context->rdi));
             return context;
         case SAVANXP_SYS_DUP2:
-            context->rax = static_cast<uint64_t>(duplicate_fd_to(*smp::this_cpu().current, context->rdi, context->rsi));
+            context->rax = static_cast<uint64_t>(duplicate_fd_to(caller, context->rdi, context->rsi));
             return context;
         case SAVANXP_SYS_PROC_INFO: {
-            if (!vm::is_user_range_accessible(smp::this_cpu().current->address_space, context->rsi, sizeof(savanxp_process_info), true)) {
+            if (!vm::is_user_range_accessible(caller.address_space, context->rsi, sizeof(savanxp_process_info), true)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -214,7 +218,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 context->rax = 0;
                 return context;
             }
-            if (!write_to_process_memory(*smp::this_cpu().current, context->rsi, &info, sizeof(info))) {
+            if (!write_to_process_memory(caller, context->rsi, &info, sizeof(info))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -222,13 +226,13 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_SEEK:
-            context->rax = static_cast<uint64_t>(seek_fd(*smp::this_cpu().current, context->rdi, static_cast<int64_t>(context->rsi), context->rdx));
+            context->rax = static_cast<uint64_t>(seek_fd(caller, context->rdi, static_cast<int64_t>(context->rsi), context->rdx));
             return context;
         case SAVANXP_SYS_UNLINK: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -238,8 +242,8 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_MKDIR: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -249,8 +253,8 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_RMDIR: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -260,8 +264,8 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_TRUNCATE: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -273,10 +277,10 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             char new_path[process::kProcessPathLength] = {};
             char resolved_old[process::kProcessPathLength] = {};
             char resolved_new[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, old_path, sizeof(old_path)) ||
-                !copy_user_string(*smp::this_cpu().current, context->rsi, new_path, sizeof(new_path)) ||
-                !resolve_process_path(*smp::this_cpu().current, old_path, resolved_old, sizeof(resolved_old)) ||
-                !resolve_process_path(*smp::this_cpu().current, new_path, resolved_new, sizeof(resolved_new))) {
+            if (!copy_user_string(caller, context->rdi, old_path, sizeof(old_path)) ||
+                !copy_user_string(caller, context->rsi, new_path, sizeof(new_path)) ||
+                !resolve_process_path(caller, old_path, resolved_old, sizeof(resolved_old)) ||
+                !resolve_process_path(caller, new_path, resolved_new, sizeof(resolved_new))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -284,20 +288,20 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_IOCTL:
-            context->rax = static_cast<uint64_t>(ioctl_handle(*smp::this_cpu().current, context->rdi, context->rsi, context->rdx));
+            context->rax = static_cast<uint64_t>(ioctl_handle(caller, context->rdi, context->rsi, context->rdx));
             return context;
         case SAVANXP_SYS_SOCKET:
-            context->rax = static_cast<uint64_t>(create_socket_fd(*smp::this_cpu().current, context->rdi, context->rsi, context->rdx));
+            context->rax = static_cast<uint64_t>(create_socket_fd(caller, context->rdi, context->rsi, context->rdx));
             return context;
         case SAVANXP_SYS_BIND:
-            context->rax = static_cast<uint64_t>(bind_fd(*smp::this_cpu().current, context->rdi, context->rsi));
+            context->rax = static_cast<uint64_t>(bind_fd(caller, context->rdi, context->rsi));
             return context;
         case SAVANXP_SYS_SENDTO:
-            context->rax = static_cast<uint64_t>(sendto_fd(*smp::this_cpu().current, context->rdi, context->rsi, static_cast<size_t>(context->rdx), context->r10));
+            context->rax = static_cast<uint64_t>(sendto_fd(caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx), context->r10));
             return context;
         case SAVANXP_SYS_RECVFROM:
             context->rax = static_cast<uint64_t>(recvfrom_fd(
-                *smp::this_cpu().current,
+                caller,
                 context->rdi,
                 context->rsi,
                 static_cast<size_t>(context->rdx),
@@ -305,10 +309,10 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 static_cast<uint32_t>(context->r8)));
             return context;
         case SAVANXP_SYS_SETSOCKOPT:
-            context->rax = static_cast<uint64_t>(setsockopt_fd(*smp::this_cpu().current, context->rdi, context->rsi, context->rdx));
+            context->rax = static_cast<uint64_t>(setsockopt_fd(caller, context->rdi, context->rsi, context->rdx));
             return context;
         case SAVANXP_SYS_CONNECT:
-            context->rax = static_cast<uint64_t>(connect_fd(*smp::this_cpu().current, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
+            context->rax = static_cast<uint64_t>(connect_fd(caller, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
             return context;
         case SAVANXP_SYS_GETPID:
             context->rax = current_pid();
@@ -316,40 +320,40 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_STAT: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(stat_path(*smp::this_cpu().current, resolved, context->rsi));
+            context->rax = static_cast<uint64_t>(stat_path(caller, resolved, context->rsi));
             return context;
         }
         case SAVANXP_SYS_FSTAT:
-            context->rax = static_cast<uint64_t>(fstat_fd(*smp::this_cpu().current, context->rdi, context->rsi));
+            context->rax = static_cast<uint64_t>(fstat_fd(caller, context->rdi, context->rsi));
             return context;
         case SAVANXP_SYS_CHDIR: {
             char path[process::kProcessPathLength] = {};
             char resolved[process::kProcessPathLength] = {};
-            if (!copy_user_string(*smp::this_cpu().current, context->rdi, path, sizeof(path)) ||
-                !resolve_process_path(*smp::this_cpu().current, path, resolved, sizeof(resolved))) {
+            if (!copy_user_string(caller, context->rdi, path, sizeof(path)) ||
+                !resolve_process_path(caller, path, resolved, sizeof(resolved))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            context->rax = static_cast<uint64_t>(chdir_path(*smp::this_cpu().current, resolved));
+            context->rax = static_cast<uint64_t>(chdir_path(caller, resolved));
             return context;
         }
         case SAVANXP_SYS_GETCWD:
-            context->rax = static_cast<uint64_t>(getcwd_path(*smp::this_cpu().current, context->rdi, static_cast<size_t>(context->rsi)));
+            context->rax = static_cast<uint64_t>(getcwd_path(caller, context->rdi, static_cast<size_t>(context->rsi)));
             return context;
         case SAVANXP_SYS_SYSTEM_INFO: {
-            if (!vm::is_user_range_accessible(smp::this_cpu().current->address_space, context->rdi, sizeof(savanxp_system_info), true)) {
+            if (!vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(savanxp_system_info), true)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
 
             savanxp_system_info info = {};
             if (!snapshot_system_info(info) ||
-                !write_to_process_memory(*smp::this_cpu().current, context->rdi, &info, sizeof(info))) {
+                !write_to_process_memory(caller, context->rdi, &info, sizeof(info))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -364,7 +368,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                 sxfs::sync(sxfs::root()) && block::sync_all() ? 0 : sx::negative_error(SAVANXP_EIO));
             return context;
         case SAVANXP_SYS_FSCHECK: {
-            if (!vm::is_user_range_accessible(smp::this_cpu().current->address_space, context->rdi, sizeof(savanxp_fscheck_report), true)) {
+            if (!vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(savanxp_fscheck_report), true)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -402,7 +406,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             out.metadata_commits = report.metadata_commits;
             out.metadata_bytes_written = report.metadata_bytes_written;
 
-            if (!write_to_process_memory(*smp::this_cpu().current, context->rdi, &out, sizeof(out))) {
+            if (!write_to_process_memory(caller, context->rdi, &out, sizeof(out))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -411,14 +415,14 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_REALTIME: {
-            if (!vm::is_user_range_accessible(smp::this_cpu().current->address_space, context->rdi, sizeof(savanxp_realtime), true)) {
+            if (!vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(savanxp_realtime), true)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
 
             savanxp_realtime value = {};
             if (!rtc::read_time(&value) ||
-                !write_to_process_memory(*smp::this_cpu().current, context->rdi, &value, sizeof(value))) {
+                !write_to_process_memory(caller, context->rdi, &value, sizeof(value))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EIO));
                 return context;
             }
@@ -429,11 +433,11 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_SET_REALTIME: {
             savanxp_realtime value = {};
 
-            if (!vm::is_user_range_accessible(smp::this_cpu().current->address_space, context->rdi, sizeof(value), false)) {
+            if (!vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(value), false)) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
-            if (!read_from_process_memory(*smp::this_cpu().current, &value, context->rdi, sizeof(value))) {
+            if (!read_from_process_memory(caller, &value, context->rdi, sizeof(value))) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
                 return context;
             }
@@ -452,11 +456,11 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_FCNTL:
-            context->rax = static_cast<uint64_t>(fcntl_fd(*smp::this_cpu().current, context->rdi, context->rsi, context->rdx));
+            context->rax = static_cast<uint64_t>(fcntl_fd(caller, context->rdi, context->rsi, context->rdx));
             return context;
         case SAVANXP_SYS_POLL: {
             const int result = poll_fds(
-                *smp::this_cpu().current,
+                self,
                 context->rdi,
                 static_cast<size_t>(context->rsi),
                 static_cast<int32_t>(context->rdx));
@@ -467,24 +471,24 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_FORK: {
-            Process* child = fork_process(*smp::this_cpu().current, *context);
+            Process* child = fork_process(self, *context);
             context->rax = static_cast<uint64_t>(child != nullptr ? static_cast<int>(child->pid) : sx::negative_error(SAVANXP_ENOMEM));
             return context;
         }
         case SAVANXP_SYS_KILL:
-            context->rax = static_cast<uint64_t>(kill_process(*smp::this_cpu().current, static_cast<int>(context->rdi), static_cast<int>(context->rsi)));
+            context->rax = static_cast<uint64_t>(kill_process(caller, static_cast<int>(context->rdi), static_cast<int>(context->rsi)));
             return context;
         case SAVANXP_SYS_EVENT_CREATE:
-            context->rax = static_cast<uint64_t>(create_event_handle(*smp::this_cpu().current, static_cast<uint32_t>(context->rdi)));
+            context->rax = static_cast<uint64_t>(create_event_handle(caller, static_cast<uint32_t>(context->rdi)));
             return context;
         case SAVANXP_SYS_EVENT_SET:
-            context->rax = static_cast<uint64_t>(set_event_handle(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(set_event_handle(caller, context->rdi));
             return context;
         case SAVANXP_SYS_EVENT_RESET:
-            context->rax = static_cast<uint64_t>(reset_event_handle(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(reset_event_handle(caller, context->rdi));
             return context;
         case SAVANXP_SYS_WAIT_ONE: {
-            const int result = wait_on_handle(*smp::this_cpu().current, context->rdi, static_cast<int64_t>(context->rsi));
+            const int result = wait_on_handle(self, context->rdi, static_cast<int64_t>(context->rsi));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -493,7 +497,7 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         }
         case SAVANXP_SYS_WAIT_MANY: {
             const int result = wait_on_many_handles(
-                *smp::this_cpu().current,
+                self,
                 context->rdi,
                 static_cast<size_t>(context->rsi),
                 (context->rdx & SAVANXP_WAIT_FLAG_ALL) != 0,
@@ -505,47 +509,47 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             return context;
         }
         case SAVANXP_SYS_TIMER_CREATE:
-            context->rax = static_cast<uint64_t>(create_timer_handle(*smp::this_cpu().current, static_cast<uint32_t>(context->rdi)));
+            context->rax = static_cast<uint64_t>(create_timer_handle(caller, static_cast<uint32_t>(context->rdi)));
             return context;
         case SAVANXP_SYS_TIMER_SET:
-            context->rax = static_cast<uint64_t>(set_timer_handle(*smp::this_cpu().current, context->rdi, context->rsi, context->rdx));
+            context->rax = static_cast<uint64_t>(set_timer_handle(caller, context->rdi, context->rsi, context->rdx));
             return context;
         case SAVANXP_SYS_TIMER_CANCEL:
-            context->rax = static_cast<uint64_t>(cancel_timer_handle(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(cancel_timer_handle(caller, context->rdi));
             return context;
         case SAVANXP_SYS_SECTION_CREATE:
-            context->rax = static_cast<uint64_t>(create_section_handle(*smp::this_cpu().current, context->rdi, static_cast<uint32_t>(context->rsi)));
+            context->rax = static_cast<uint64_t>(create_section_handle(caller, context->rdi, static_cast<uint32_t>(context->rsi)));
             return context;
         case SAVANXP_SYS_SECTION_OPEN:
-            context->rax = static_cast<uint64_t>(open_section_handle(*smp::this_cpu().current, context->rdi, static_cast<uint32_t>(context->rsi)));
+            context->rax = static_cast<uint64_t>(open_section_handle(caller, context->rdi, static_cast<uint32_t>(context->rsi)));
             return context;
         case SAVANXP_SYS_SECTION_OPEN_RANGE:
-            context->rax = static_cast<uint64_t>(open_range_section_handle(*smp::this_cpu().current, context->rdi, context->rsi, context->rdx, static_cast<uint32_t>(context->r10)));
+            context->rax = static_cast<uint64_t>(open_range_section_handle(caller, context->rdi, context->rsi, context->rdx, static_cast<uint32_t>(context->r10)));
             return context;
         case SAVANXP_SYS_MAP_VIEW:
-            context->rax = static_cast<uint64_t>(map_view_handle(*smp::this_cpu().current, context->rdi, static_cast<uint32_t>(context->rsi)));
+            context->rax = static_cast<uint64_t>(map_view_handle(caller, context->rdi, static_cast<uint32_t>(context->rsi)));
             return context;
         case SAVANXP_SYS_MAP_VIEW_AT:
-            context->rax = static_cast<uint64_t>(map_view_base_handle(*smp::this_cpu().current, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
+            context->rax = static_cast<uint64_t>(map_view_base_handle(caller, context->rdi, context->rsi, static_cast<uint32_t>(context->rdx)));
             return context;
         case SAVANXP_SYS_UNMAP_VIEW:
-            context->rax = static_cast<uint64_t>(unmap_view_address(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(unmap_view_address(caller, context->rdi));
             return context;
         case SAVANXP_SYS_PIPE_SEND_HANDLE:
-            context->rax = static_cast<uint64_t>(pipe_send_handle(*smp::this_cpu().current, context->rdi, context->rsi));
+            context->rax = static_cast<uint64_t>(pipe_send_handle(caller, context->rdi, context->rsi));
             return context;
         case SAVANXP_SYS_PIPE_RECEIVE_HANDLE:
-            context->rax = static_cast<uint64_t>(pipe_receive_handle(*smp::this_cpu().current, context->rdi));
+            context->rax = static_cast<uint64_t>(pipe_receive_handle(caller, context->rdi));
             return context;
         case SAVANXP_SYS_SEMAPHORE_CREATE:
             context->rax = static_cast<uint64_t>(create_semaphore_handle(
-                *smp::this_cpu().current,
+                caller,
                 static_cast<int32_t>(context->rdi),
                 static_cast<int32_t>(context->rsi)));
             return context;
         case SAVANXP_SYS_SEMAPHORE_RELEASE:
             context->rax = static_cast<uint64_t>(release_semaphore_handle(
-                *smp::this_cpu().current,
+                caller,
                 context->rdi,
                 static_cast<uint32_t>(context->rsi)));
             return context;

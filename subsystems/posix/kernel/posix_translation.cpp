@@ -140,7 +140,8 @@ int fcntl_fd(process::Process& proc, uint64_t fd, uint64_t command, uint64_t val
     }
 }
 
-int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeout_ms) {
+int poll_fds(process::Thread& self, uint64_t user_fds, size_t count, int timeout_ms) {
+    process::Process& proc = *self.process;
     posix::ProcessState* const state = posix::state(proc);
     if (state == nullptr) {
         return sx::negative_error(SAVANXP_ENOMEM);
@@ -152,7 +153,7 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
         return sx::negative_error(SAVANXP_EINVAL);
     }
 
-    clear_wait_state(proc);
+    clear_wait_state(self);
     state->poll_user_fds = user_fds;
     state->poll_count = static_cast<uint32_t>(count);
     state->poll_active = 0;
@@ -181,11 +182,11 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
         return ready;
     }
 
-    // Se estaciona. El kernel solo sabe que hay un proceso parado con
-    // vencimiento: que lo que espera es un poll es cosa de POSIX (rebanada C).
+    // It parks. The kernel only knows a thread is stopped with a deadline:
+    // that what it waits for is a poll is POSIX's business (slice C).
     state->poll_active = 1;
-    proc.wake_deadline_ms = timeout_ms > 0 ? (detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
-    proc.state = process::State::blocked_wait;
+    self.wake_deadline_ms = timeout_ms > 0 ? (detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
+    self.state = process::State::blocked_wait;
     return process::kBlockedResult;
 }
 
@@ -203,7 +204,10 @@ int poll_fds(process::Process& proc, uint64_t user_fds, size_t count, int timeou
  * usuario se toca una sola vez, al completar, para devolver los revents.
  */
 
-process::Process* fork_process(process::Process& parent, const process::SavedContext& parent_context) {
+// fork copies the calling thread only: the child is a process with one
+// thread, resuming where the caller made the call (THREADS_ROADMAP.md).
+process::Process* fork_process(process::Thread& parent_thread, const process::SavedContext& parent_context) {
+    process::Process& parent = *parent_thread.process;
     process::Process* child = detail::allocate_process_slot(false);
     if (child == nullptr) {
         return nullptr;
@@ -215,28 +219,27 @@ process::Process* fork_process(process::Process& parent, const process::SavedCon
     // sabe que hay un cwd dentro.
     process::copy_subsystem_state(*child, parent);
 
-    // El hijo hereda los registros de punto flotante como hereda los enteros.
-    // Mientras el padre corre, su FPU vive en los registros y el area guardada
-    // esta vieja (switch_to_process solo vuelca en el cambio real), asi que hay
-    // que volcarla antes de copiarla.
-    if (this_cpu().current == &parent) {
-        arch::x86_64::fpu_save(parent.fpu_state);
-    }
-    memcpy(child->fpu_state, parent.fpu_state, sizeof(child->fpu_state));
-
     if (!vm::clone_address_space(parent.address_space, child->address_space)) {
+        process::free_subsystem_state(*child);
         detail::reset_process_slot(*child);
         return nullptr;
     }
 
-    memory::PageAllocation kernel_stack = {};
-    if (!memory::allocate_contiguous_pages(detail::kKernelStackPages, kernel_stack)) {
-        detail::release_address_space(*child);
+    process::Thread* const child_thread = detail::allocate_thread(*child);
+    if (child_thread == nullptr) {
+        detail::release_process_resources(*child);
         detail::reset_process_slot(*child);
         return nullptr;
     }
-    child->kernel_stack_base = reinterpret_cast<uint64_t>(kernel_stack.virtual_address);
-    child->kernel_stack_size = detail::kKernelStackPages * memory::kPageSize;
+
+    // The child inherits the floating-point registers the way it inherits the
+    // integer ones. While the parent runs, its FPU lives in the registers and
+    // the saved area is stale (switch_to_thread only dumps it on a real
+    // switch), so it has to be dumped before it is copied.
+    if (this_cpu().current == &parent_thread) {
+        arch::x86_64::fpu_save(parent_thread.fpu_state);
+    }
+    memcpy(child_thread->fpu_state, parent_thread.fpu_state, sizeof(child_thread->fpu_state));
 
     if (!detail::inherit_all_handles(*child, parent)) {
         detail::release_process_resources(*child);
@@ -244,20 +247,11 @@ process::Process* fork_process(process::Process& parent, const process::SavedCon
         return nullptr;
     }
 
-    auto* stack_top = reinterpret_cast<uint8_t*>(child->kernel_stack_base + child->kernel_stack_size);
+    auto* stack_top = reinterpret_cast<uint8_t*>(child_thread->kernel_stack_base + child_thread->kernel_stack_size);
     auto* child_context = reinterpret_cast<process::SavedContext*>(stack_top - sizeof(process::SavedContext));
     memcpy(child_context, &parent_context, sizeof(*child_context));
     child_context->rax = 0;
-    child->context = child_context;
-    child->blocked_io_fd = 0;
-    child->blocked_read_buffer = 0;
-    child->blocked_read_capacity = 0;
-    child->blocked_write_buffer = 0;
-    child->blocked_write_length = 0;
-    child->blocked_write_progress = 0;
-    clear_wait_state(*child);
-    child->state = process::State::ready;
-    detail::reset_time_slice(*child);
+    child_thread->context = child_context;
     detail::proc_log("proc: fork parent=%u child=%u\n", parent.pid, child->pid);
     return child;
 }
@@ -288,7 +282,7 @@ int kill_process(process::Process& sender, int pid, int signal_number) {
     if (signal_number == SAVANXP_SIGCHLD) {
         return 0;
     }
-    if (target == this_cpu().current) {
+    if (target == process::current()) {
         process::terminate_current(128 + signal_number);
         return 0;
     }
@@ -647,7 +641,8 @@ int ioctl_handle(process::Process& proc, uint64_t fd, uint64_t request, uint64_t
     return device::ioctl(file->device, request, argument, proc.handles[fd].granted_access);
 }
 
-int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t count) {
+int read_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_t count) {
+    process::Process& proc = *self.process;
     object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_read);
     if (file == nullptr || count == 0) {
         return file == nullptr ? sx::negative_error(SAVANXP_EBADF) : 0;
@@ -674,10 +669,10 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
             if ((file->open_flags & process::open_nonblock) != 0) {
                 return sx::negative_error(SAVANXP_EAGAIN);
             }
-            proc.blocked_io_fd = fd;
-            proc.blocked_read_buffer = user_buffer;
-            proc.blocked_read_capacity = count;
-            proc.state = process::State::blocked_read;
+            self.blocked_io_fd = fd;
+            self.blocked_read_buffer = user_buffer;
+            self.blocked_read_capacity = count;
+            self.state = process::State::blocked_read;
             return process::kBlockedResult;
         case process::HandleKind::vnode: {
             if (file->node == nullptr || file->node->type != vfs::NodeType::file) {
@@ -708,10 +703,10 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
                 return sx::negative_error(SAVANXP_EAGAIN);
             }
             if (result == process::kBlockedResult) {
-                proc.blocked_io_fd = fd;
-                proc.blocked_read_buffer = user_buffer;
-                proc.blocked_read_capacity = count;
-                proc.state = process::State::blocked_read;
+                self.blocked_io_fd = fd;
+                self.blocked_read_buffer = user_buffer;
+                self.blocked_read_capacity = count;
+                self.state = process::State::blocked_read;
             }
             return result;
         }
@@ -731,14 +726,14 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
                 return result;
             }
             const uint32_t timeout_ms = net::socket_recv_timeout_ms(file->socket);
-            proc.blocked_io_fd = fd;
-            proc.blocked_read_buffer = user_buffer;
-            proc.blocked_read_capacity = count;
+            self.blocked_io_fd = fd;
+            self.blocked_read_buffer = user_buffer;
+            self.blocked_read_capacity = count;
             // wake_deadline_ms 0 = sin vencimiento, igual que en poll y en la espera
             // por objetos; asi SO_RCVTIMEO en 0 (esperar para siempre, que es
             // lo que manda POSIX) no necesita un caso aparte.
-            proc.wake_deadline_ms = timeout_ms != 0 ? (detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
-            proc.state = process::State::blocked_read;
+            self.wake_deadline_ms = timeout_ms != 0 ? (detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
+            self.state = process::State::blocked_read;
             return process::kBlockedResult;
         }
         default:
@@ -749,7 +744,8 @@ int read_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
 // Largest piece of a write handed to a file in one vfs::write.
 constexpr size_t kFileWriteChunk = 64u * 1024u;
 
-int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t count) {
+int write_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_t count) {
+    process::Process& proc = *self.process;
     object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_write);
     if (file == nullptr || count == 0) {
         return file == nullptr ? sx::negative_error(SAVANXP_EBADF) : 0;
@@ -834,11 +830,11 @@ int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
                 return sx::negative_error(SAVANXP_EAGAIN);
             }
             if (step == process::kBlockedResult) {
-                proc.blocked_io_fd = fd;
-                proc.blocked_write_buffer = user_buffer;
-                proc.blocked_write_length = count;
-                proc.blocked_write_progress = 0;
-                proc.state = process::State::blocked_write;
+                self.blocked_io_fd = fd;
+                self.blocked_write_buffer = user_buffer;
+                self.blocked_write_length = count;
+                self.blocked_write_progress = 0;
+                self.state = process::State::blocked_write;
                 return process::kBlockedResult;
             }
             if (step < 0) {
@@ -855,11 +851,11 @@ int write_handle(process::Process& proc, uint64_t fd, uint64_t user_buffer, size
                 return step;
             }
 
-            proc.blocked_io_fd = fd;
-            proc.blocked_write_buffer = user_buffer;
-            proc.blocked_write_length = count;
-            proc.blocked_write_progress = static_cast<uint64_t>(step);
-            proc.state = process::State::blocked_write;
+            self.blocked_io_fd = fd;
+            self.blocked_write_buffer = user_buffer;
+            self.blocked_write_length = count;
+            self.blocked_write_progress = static_cast<uint64_t>(step);
+            self.state = process::State::blocked_write;
             return process::kBlockedResult;
         }
         case process::HandleKind::device:
@@ -995,9 +991,9 @@ int pipe_receive_handle(process::Process& proc, uint64_t pipe_fd) {
     return fd;
 }
 
-object::TimerObject* ensure_sleep_timer(process::Process& proc) {
-    if (proc.sleep_timer != nullptr) {
-        return proc.sleep_timer;
+object::TimerObject* ensure_sleep_timer(process::Thread& thread) {
+    if (thread.sleep_timer != nullptr) {
+        return thread.sleep_timer;
     }
 
     object::TimerObject* timer_object = object::create_timer(false);
@@ -1005,7 +1001,7 @@ object::TimerObject* ensure_sleep_timer(process::Process& proc) {
         return nullptr;
     }
     object::retain(&timer_object->header);
-    proc.sleep_timer = timer_object;
+    thread.sleep_timer = timer_object;
     return timer_object;
 }
 
@@ -1089,7 +1085,8 @@ int release_semaphore_handle(process::Process& proc, uint64_t fd, uint32_t relea
     return previous_count;
 }
 
-int wait_on_many_handles(process::Process& proc, uint64_t user_handles, size_t count, bool wait_all, int64_t timeout_ms) {
+int wait_on_many_handles(process::Thread& self, uint64_t user_handles, size_t count, bool wait_all, int64_t timeout_ms) {
+    process::Process& proc = *self.process;
     if (count == 0 || count > process::kMaxWaitHandles) {
         return sx::negative_error(SAVANXP_EINVAL);
     }
@@ -1116,11 +1113,11 @@ int wait_on_many_handles(process::Process& proc, uint64_t user_handles, size_t c
         }
     }
 
-    return detail::begin_object_wait(proc, handles, count, wait_all, timeout_ms);
+    return detail::begin_object_wait(self, handles, count, wait_all, timeout_ms);
 }
 
-int sleep_via_timer(process::Process& proc, uint64_t milliseconds) {
-    object::TimerObject* timer_object = ensure_sleep_timer(proc);
+int sleep_via_timer(process::Thread& self, uint64_t milliseconds) {
+    object::TimerObject* timer_object = ensure_sleep_timer(self);
     if (timer_object == nullptr) {
         return sx::negative_error(SAVANXP_ENOMEM);
     }
@@ -1131,7 +1128,7 @@ int sleep_via_timer(process::Process& proc, uint64_t milliseconds) {
     if (milliseconds == 0) {
         object::poll_timers(now, detail::wake_waiters_for_object);
     }
-    return detail::begin_object_wait(proc, &handle_object, 1, false, -1);
+    return detail::begin_object_wait(self, &handle_object, 1, false, -1);
 }
 
 } // namespace process
@@ -1187,17 +1184,18 @@ int evaluate_poll_entries(ProcessState& state, process::Process& proc) {
     return ready;
 }
 
-// El gancho que el kernel llama en el tick y en cada despertar por evento.
-// `honour_deadline` distingue las dos entradas: el tick tambien tiene que
-// vencer plazos, un evento solo mira si hay datos.
-void recheck_parked_poll(process::Process& proc, uint64_t now_ms, bool honour_deadline) {
+// The hook the kernel calls on the tick and on every wakeup by event.
+// `honour_deadline` tells the two entries apart: the tick also has to expire
+// deadlines, an event only looks for data.
+void recheck_parked_poll(process::Thread& thread, uint64_t now_ms, bool honour_deadline) {
+    process::Process& proc = *thread.process;
     ProcessState* const owned = posix::state(proc);
     if (owned == nullptr || owned->poll_active == 0) {
         return;
     }
 
     const int ready = posix::evaluate_poll_entries(*owned, proc);
-    const bool expired = honour_deadline && proc.wake_deadline_ms != 0 && proc.wake_deadline_ms <= now_ms;
+    const bool expired = honour_deadline && thread.wake_deadline_ms != 0 && thread.wake_deadline_ms <= now_ms;
     if (ready == 0 && !expired) {
         return;
     }
@@ -1209,7 +1207,7 @@ void recheck_parked_poll(process::Process& proc, uint64_t now_ms, bool honour_de
     owned->poll_user_fds = 0;
     owned->poll_count = 0;
     owned->poll_active = 0;
-    process::detail::complete_blocked_wait(proc, committed ? ready : sx::negative_error(SAVANXP_EINVAL));
+    process::detail::complete_blocked_wait(thread, committed ? ready : sx::negative_error(SAVANXP_EINVAL));
 }
 
 } // namespace posix

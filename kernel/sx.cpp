@@ -26,12 +26,18 @@ void write_cr3(uint64_t value) {
 
 } // namespace
 
-process::Process* current() {
+process::Thread* current_thread() {
     return smp::this_cpu().current;
 }
 
+process::Process* current() {
+    process::Thread* const thread = smp::this_cpu().current;
+    return thread != nullptr ? thread->process : nullptr;
+}
+
 uint32_t current_pid() {
-    return smp::this_cpu().current != nullptr ? smp::this_cpu().current->pid : 0;
+    process::Process* const proc = current();
+    return proc != nullptr ? proc->pid : 0;
 }
 
 bool read_user_memory(const process::Process& proc, void* destination, uint64_t user_address, size_t count, bool require_write) {
@@ -42,7 +48,7 @@ bool read_user_memory(const process::Process& proc, void* destination, uint64_t 
         return false;
     }
 
-    if (&proc == smp::this_cpu().current) {
+    if (&proc == current()) {
         memcpy(destination, reinterpret_cast<const void*>(user_address), count);
         return true;
     }
@@ -62,7 +68,7 @@ bool write_user_memory(process::Process& proc, uint64_t user_address, const void
         return false;
     }
 
-    if (&proc == smp::this_cpu().current) {
+    if (&proc == current()) {
         memcpy(reinterpret_cast<void*>(user_address), source, count);
         return true;
     }
@@ -205,65 +211,65 @@ bool is_wait_target(const object::Header* handle_object) {
     return file != nullptr && (file->open_flags & process::open_read) != 0;
 }
 
-bool can_complete_object_wait(const process::Process& proc) {
-    if (proc.wait_reason != process::WaitReason::object || proc.wait_handle_count == 0) {
+bool can_complete_object_wait(const process::Thread& thread) {
+    if (thread.wait_reason != process::WaitReason::object || thread.wait_handle_count == 0) {
         return false;
     }
 
-    if (proc.wait_all != 0) {
-        for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-            if (!target_ready(proc.waited_objects[index])) {
+    if (thread.wait_all != 0) {
+        for (size_t index = 0; index < thread.wait_handle_count; ++index) {
+            if (!target_ready(thread.waited_objects[index])) {
                 return false;
             }
         }
         return true;
     }
 
-    for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-        if (target_ready(proc.waited_objects[index])) {
+    for (size_t index = 0; index < thread.wait_handle_count; ++index) {
+        if (target_ready(thread.waited_objects[index])) {
             return true;
         }
     }
     return false;
 }
 
-int consume_object_wait(process::Process& proc) {
-    if (proc.wait_reason != process::WaitReason::object || proc.wait_handle_count == 0) {
+int consume_object_wait(process::Thread& thread) {
+    if (thread.wait_reason != process::WaitReason::object || thread.wait_handle_count == 0) {
         return negative_error(SX_EINVAL);
     }
 
-    if (proc.wait_all != 0) {
-        for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-            if (!acquire_target(proc.waited_objects[index])) {
+    if (thread.wait_all != 0) {
+        for (size_t index = 0; index < thread.wait_handle_count; ++index) {
+            if (!acquire_target(thread.waited_objects[index])) {
                 return negative_error(SX_EINVAL);
             }
         }
         return 0;
     }
 
-    for (size_t index = 0; index < proc.wait_handle_count; ++index) {
-        if (acquire_target(proc.waited_objects[index])) {
+    for (size_t index = 0; index < thread.wait_handle_count; ++index) {
+        if (acquire_target(thread.waited_objects[index])) {
             return static_cast<int>(index);
         }
     }
     return negative_error(SX_EINVAL);
 }
 
-int try_consume_objects(process::Process& proc, object::Header* const* handles, size_t count, bool wait_all) {
+int try_consume_objects(process::Thread& thread, object::Header* const* handles, size_t count, bool wait_all) {
     if (count == 0 || count > process::kMaxWaitHandles) {
         return negative_error(SX_EINVAL);
     }
 
-    process::clear_wait_state(proc);
-    proc.wait_reason = process::WaitReason::object;
-    proc.wait_handle_count = static_cast<uint8_t>(count);
-    proc.wait_all = wait_all ? 1u : 0u;
+    process::clear_wait_state(thread);
+    thread.wait_reason = process::WaitReason::object;
+    thread.wait_handle_count = static_cast<uint8_t>(count);
+    thread.wait_all = wait_all ? 1u : 0u;
     for (size_t index = 0; index < count; ++index) {
-        proc.waited_objects[index] = handles[index];
+        thread.waited_objects[index] = handles[index];
     }
 
-    if (can_complete_object_wait(proc)) {
-        return consume_object_wait(proc);
+    if (can_complete_object_wait(thread)) {
+        return consume_object_wait(thread);
     }
     return negative_error(SX_EAGAIN);
 }

@@ -26,13 +26,13 @@ constexpr uint32_t kMaxCpus = arch::x86_64::kMaxCpus;
 struct Cpu {
     uint32_t index;
     uint32_t lapic_id;
-    // El proceso que corre en este core. Nulo mientras el core no planifica.
-    process::Process* current;
-    // A que volver cuando no hay nada listo. Uno por core que planifica, y de
-    // ese core nada mas: nunca migra. Es un proceso como cualquier otro (un
-    // bucle de yield en ring 3) por la misma razon que en el BSP: el scheduler
-    // no sabe volver a nada que no sea un SavedContext.
-    process::Process* idle;
+    // The thread running on this core. Null while the core does not schedule.
+    process::Thread* current;
+    // What to fall back to when nothing is ready. One per scheduling core,
+    // and of that core only: it never migrates. It is the thread of a process
+    // like any other (a yield loop in ring 3) for the same reason as on the
+    // BSP: the scheduler cannot return to anything but a SavedContext.
+    process::Thread* idle;
     // Una syscall de este core desperto a otro proceso: la vuelta de esa
     // syscall tiene que entregarle la CPU ya, en vez de esperar al proximo tick.
     bool resched_pending;

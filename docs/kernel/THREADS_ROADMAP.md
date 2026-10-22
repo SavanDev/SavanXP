@@ -1,9 +1,15 @@
 # Threads — more than one execution context per process
 
-> **Status: measured, not started (2026-10-21).** This document is the
-> inventory: what the kernel assumes today about "one process, one context",
-> what has to move, and the order in which to move it so that every phase
-> boots and can be verified on its own.
+> **Status: phase 0 done (2026-10-22), phases 1-5 not started.** This
+> document is the inventory: what the kernel assumed about "one process, one
+> context", what had to move, and the order in which to move it so that every
+> phase boots and can be verified on its own.
+>
+> Phase 0 landed as `process::Thread` in
+> [process.hpp](../../include/kernel/process.hpp): the scheduler, every waker
+> and every blocking call work on threads, and a process has exactly one.
+> [What it took](#phase-0--the-split-one-thread-per-process--done) differs from
+> the plan in three small ways, recorded there.
 
 Threads are the first kernel prerequisite of a future Win32 subsystem — the
 others are per-thread TLS registers, exceptions delivered to user mode and
@@ -180,23 +186,63 @@ deadline machinery as every other wait.
 Each phase boots, runs every existing smoke unchanged, and adds a check of its
 own.
 
-### Phase 0 — the split, one thread per process
+### Phase 0 — the split, one thread per process — **DONE**
 
-`Thread` and its table, every moved field, `smp::Cpu::current` as `Thread*`,
-the wakers and the scheduler over threads, `register_thread_state_size` and
-POSIX poll state moved into it. Every process has exactly one thread, created
-and destroyed with it.
+What landed:
 
-No new syscall and no visible change: this phase is measured by everything that
-already exists still passing (`smoke`, `windowd-smoke`, `sxgui-smoke`, the
-Doom persistence check) and by a switch between two processes still costing
-what it did.
+- `process::Thread` and a static table of `kMaxThreads` (256). A process's
+  lifecycle is `Process::life` (`unused`, `alive`, `zombie`); a thread's
+  scheduling state is `Thread::state`, whose `zombie` means "ended, slot not
+  released yet".
+- `smp::Cpu::current` and `smp::Cpu::idle` are `Thread*`. `process::current()`
+  and `sx::current()` still return the process; `current_thread()` is new.
+- Every call that can return `kBlockedResult` takes the calling `Thread&`
+  (`read_handle`, `write_handle`, `wait_on_handle`, `wait_on_many_handles`,
+  `waitpid_child`, `sleep_via_timer`, `poll_fds`, `prepare_exec_image`,
+  `fork_process`, `begin_object_wait`, the native read and write). Everything
+  else keeps taking the `Process&` that owns the handles.
+- `detail::allocate_thread` / `release_thread` own the kernel stacks, which no
+  longer appear in process creation, `fork` or the idle.
+- **Walks stop at the highest slot ever used** (`g_thread_bound`). The
+  scheduler and the wakers walk the table under the big kernel lock on every
+  tick and every pipe write; walking all 256 slots instead of the 64 process
+  slots slowed the desktop's startup enough on 4 cores for `windowd-smoke` to
+  catch it (the panel opened during the test's 640x400 fullscreen phase and
+  kept that width: 2 failures in 10 runs, against 0 in 10 before the split).
+- `switch_to_thread` reloads `CR3` only when the live value differs, so a
+  switch between two threads of one process keeps the TLB. Comparing against
+  the live register rather than the previous thread's process also covers
+  `exec`, which swaps the address space under the same thread.
+- The wait-recheck hook is `subsystem::recheck_parked_thread(Thread&, ...)`.
+
+Where it differs from the plan:
+
+- **POSIX `poll` state stays per process.** With one thread per process it
+  is equivalent, and moving it needs `register_thread_state_size`, which has
+  no other user yet. It moves in phase 1, when it starts to matter.
+- **CPU accounting stays per process** (`Process::cpu_ticks`): the Task
+  Manager reads processes, and a per-thread counter has no reader yet.
+- **A process that reaps itself releases the thread running the exit.** An
+  exiting orphan, or one whose parent already waits, is reaped inside its own
+  `terminate_current`, so its kernel stack is freed while still in use until
+  the scheduler leaves it. That was already true before the split; it is safe
+  only because nothing allocates in between and the big kernel lock is held
+  until `resume_context` has switched stacks. Phase 1's `THREAD_EXIT` must not
+  rely on it.
+
+Verified with no new check, as planned: the existing scenarios pass unchanged.
 
 ### Phase 1 — a second thread, one core per address space
 
 - `SXN_SYS_THREAD_CREATE` (entry, argument, stack top → thread handle),
   `SXN_SYS_THREAD_EXIT`, and the thread object signalled on exit.
 - Process exit ends every thread; last thread exit ends the process.
+  `terminate_current` asserts that nothing deferred the exit, which holds
+  only while a process has one thread: with several, the exiting thread may
+  find a sibling running on another core.
+- A thread that exits while its process lives on cannot free its own kernel
+  stack: the release is deferred to the next scheduler pass on another stack.
+- `register_thread_state_size`, and POSIX `poll` state moved into it.
 - **Interim rule:** a thread is runnable on a core only if no *other* thread of
   its address space is running on another core. That keeps the SMP rule "one
   address space, one core" literally true, so user-space TLB coherence still

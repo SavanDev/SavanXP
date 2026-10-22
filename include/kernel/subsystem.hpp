@@ -6,6 +6,7 @@
 namespace process {
 struct SavedContext;
 struct Process;
+struct Thread;
 }
 
 namespace subsystem {
@@ -43,9 +44,9 @@ size_t process_state_size(Id id);
 // descriptors on every tick and every wakeup. Now the owning subsystem gets
 // the parked process and decides. A subsystem with nothing parked registers
 // nothing and the hook is a single null check.
-using WaitRecheck = void (*)(process::Process& proc, uint64_t now_ms, bool honour_deadline);
+using WaitRecheck = void (*)(process::Thread& thread, uint64_t now_ms, bool honour_deadline);
 
 void register_wait_recheck(Id id, WaitRecheck fn);
-void recheck_parked_process(process::Process& proc, uint64_t now_ms, bool honour_deadline);
+void recheck_parked_thread(process::Thread& thread, uint64_t now_ms, bool honour_deadline);
 
 } // namespace subsystem

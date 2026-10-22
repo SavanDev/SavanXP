@@ -23,12 +23,18 @@ constexpr uint64_t kKernelStackPages = 8;
 
 uint64_t now_ms();
 void proc_log(const char* format, ...);
-void reset_time_slice(Process& proc);
+void reset_time_slice(Thread& thread);
 // init's pid, for the kill guard. Published as an accessor so the mutable
 // slot counter state never leaves kernel/process.cpp.
 uint32_t init_pid();
 
 Process* allocate_process_slot(bool idle);
+// A new thread of `proc`: a tid, a kernel stack and a clean FPU area, in
+// State::ready with no context yet. nullptr when the table or the memory
+// ran out.
+Thread* allocate_thread(Process& proc);
+// Frees the thread's kernel stack and timer and returns its slot.
+void release_thread(Thread& thread);
 void reset_process_slot(Process& proc);
 void release_address_space(Process& proc);
 void release_process_resources(Process& proc);
@@ -48,13 +54,11 @@ bool create_pipe_pair(object::IoObject*& reader, object::IoObject*& writer);
 int try_pipe_read(Process& proc, object::IoObject& file, uint64_t user_address, size_t count);
 int pipe_write_chunk(Process& proc, Pipe& pipe, uint64_t user_address, size_t count, size_t progress);
 
-int evaluate_poll_entries(Process& proc);
-bool commit_poll_entries(Process& proc);
 
-int begin_object_wait(Process& proc, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
-// Los usa tambien la traduccion POSIX (rebanada C): completar un poll y
-// avaliar un descriptor. El kernel no los llama para si.
-int complete_blocked_wait(Process& proc, int result);
+int begin_object_wait(Thread& self, object::Header* const* handles, size_t count, bool wait_all, int64_t timeout_ms);
+// The POSIX translation uses these too (slice C): to complete a poll and to
+// evaluate a descriptor.
+int complete_blocked_wait(Thread& thread, int result);
 short poll_open_file(const object::IoObject* file, short events);
 void wake_waiters_for_object(object::Header* handle_object);
 void terminate_process(Process& proc, int exit_code);

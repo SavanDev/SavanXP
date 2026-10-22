@@ -73,14 +73,14 @@ void register_wait_recheck(Id id, WaitRecheck fn) {
     g_wait_recheck[index] = fn;
 }
 
-void recheck_parked_process(process::Process& proc, uint64_t now_ms, bool honour_deadline) {
-    const auto index = static_cast<size_t>(proc.subsystem_id);
+void recheck_parked_thread(process::Thread& thread, uint64_t now_ms, bool honour_deadline) {
+    const auto index = static_cast<size_t>(thread.process->subsystem_id);
     if (index >= static_cast<size_t>(Id::count)) {
         return;
     }
     const WaitRecheck hook = g_wait_recheck[index];
     if (hook != nullptr) {
-        hook(proc, now_ms, honour_deadline);
+        hook(thread, now_ms, honour_deadline);
     }
 }
 

@@ -46,7 +46,8 @@ int native_duplicate(Process& proc, uint64_t handle) {
     return detail::allocate_fd(proc, target, proc.handles[handle].granted_access, proc.handles[handle].flags);
 }
 
-int native_read(Process& proc, uint64_t handle, uint64_t user_buffer, size_t count) {
+int native_read(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count) {
+    Process& proc = *self.process;
     object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_read);
     if (file == nullptr || (file->open_flags & open_read) == 0) {
         return sx::negative_error(SX_EBADF);
@@ -70,14 +71,15 @@ int native_read(Process& proc, uint64_t handle, uint64_t user_buffer, size_t cou
     if ((file->open_flags & open_nonblock) != 0) {
         return sx::negative_error(SX_EAGAIN);
     }
-    proc.blocked_io_fd = handle;
-    proc.blocked_read_buffer = user_buffer;
-    proc.blocked_read_capacity = count;
-    proc.state = State::blocked_read;
+    self.blocked_io_fd = handle;
+    self.blocked_read_buffer = user_buffer;
+    self.blocked_read_capacity = count;
+    self.state = State::blocked_read;
     return kBlockedResult;
 }
 
-int native_write(Process& proc, uint64_t handle, uint64_t user_buffer, size_t count) {
+int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t count) {
+    Process& proc = *self.process;
     object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_write);
     if (file == nullptr || (file->open_flags & open_write) == 0) {
         return sx::negative_error(SX_EBADF);
@@ -112,11 +114,11 @@ int native_write(Process& proc, uint64_t handle, uint64_t user_buffer, size_t co
     if (step != kBlockedResult && (static_cast<size_t>(step) == count || nonblocking)) {
         return step;
     }
-    proc.blocked_io_fd = handle;
-    proc.blocked_write_buffer = user_buffer;
-    proc.blocked_write_length = count;
-    proc.blocked_write_progress = step == kBlockedResult ? 0 : static_cast<uint64_t>(step);
-    proc.state = State::blocked_write;
+    self.blocked_io_fd = handle;
+    self.blocked_write_buffer = user_buffer;
+    self.blocked_write_length = count;
+    self.blocked_write_progress = step == kBlockedResult ? 0 : static_cast<uint64_t>(step);
+    self.state = State::blocked_write;
     return kBlockedResult;
 }
 
@@ -319,8 +321,8 @@ int native_process_query(uint64_t pid_value, uint64_t user_out) {
     }
     out.pid = target->pid;
     out.parent_pid = target->parent_pid;
-    out.state = target->state == State::zombie ? SXN_PROCESS_ENDED : SXN_PROCESS_RUNNING;
-    out.exit_code = target->state == State::zombie ? target->exit_code : 0;
+    out.state = target->life == Lifecycle::zombie ? SXN_PROCESS_ENDED : SXN_PROCESS_RUNNING;
+    out.exit_code = target->life == Lifecycle::zombie ? target->exit_code : 0;
     for (size_t index = 0; index < kMaxFileHandles; ++index) {
         if (target->handles[index].object != nullptr) {
             out.handle_count += 1u;
@@ -544,13 +546,14 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
 }
 
 SavedContext* dispatch_native_syscall(SavedContext* context) {
-    Process* const caller = sx::current();
-    if (caller == nullptr) {
+    Thread* const self = sx::current_thread();
+    if (self == nullptr) {
         return context;
     }
+    Process* const caller = self->process;
 
-    caller->context = context;
-    caller->state = State::running;
+    self->context = context;
+    self->state = State::running;
 
     // Prueba observable de que el camino nativo esta vivo. Se emite una
     // sola vez (la primera syscall nativa de todo el sistema); confirma que un
@@ -699,7 +702,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         }
         case SXN_SYS_WAITPID: {
-            const int result = waitpid_child(*caller, static_cast<int64_t>(context->rdi), context->rsi);
+            const int result = waitpid_child(*self, static_cast<int64_t>(context->rdi), context->rsi);
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -719,7 +722,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(reset_event_handle(*caller, context->rdi));
             return context;
         case SXN_SYS_WAIT_ONE: {
-            const int result = wait_on_handle(*caller, context->rdi, static_cast<int64_t>(context->rsi));
+            const int result = wait_on_handle(*self, context->rdi, static_cast<int64_t>(context->rsi));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -733,7 +736,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(checked);
                 return context;
             }
-            const int result = detail::begin_object_wait(*caller, handles, static_cast<size_t>(checked), false,
+            const int result = detail::begin_object_wait(*self, handles, static_cast<size_t>(checked), false,
                 static_cast<int64_t>(context->rdx));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
@@ -844,7 +847,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(native_duplicate(*caller, context->rdi));
             return context;
         case SXN_SYS_READ: {
-            const int result = native_read(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
+            const int result = native_read(*self, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }
@@ -852,7 +855,7 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         }
         case SXN_SYS_WRITE: {
-            const int result = native_write(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
+            const int result = native_write(*self, context->rdi, context->rsi, static_cast<size_t>(context->rdx));
             if (result == kBlockedResult) {
                 return choose_next_context(context);
             }

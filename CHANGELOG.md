@@ -143,6 +143,10 @@ Cut-off notes:
 
 ### Changed
 
+- **The kernel schedules threads, not processes.** `process::Thread` owns the saved context, kernel
+  stack, FPU state and every wait; a process is the container. Each process has exactly one thread,
+  so nothing visible changes yet: phase 0 of `docs/kernel/THREADS_ROADMAP.md`.
+
 - **Disk writes are written back in the background.** Physical disks queue writes in the block
   layer (`block::write_cached`, ordering points via `block::flush`) and the idle task drains them
   one bounded step at a time, so a write syscall no longer freezes the system for the device's

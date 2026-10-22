@@ -28,6 +28,7 @@
 
 namespace process {
 struct Process;
+struct Thread;
 }
 
 namespace object {
@@ -45,6 +46,7 @@ struct Vnode;
 namespace sx {
 
 process::Process* current();
+process::Thread* current_thread();
 uint32_t current_pid();
 
 bool copy_from_user(void* destination, uint64_t user_address, size_t count);
@@ -90,9 +92,9 @@ bool is_waitable(const object::Header* handle_object);
 // signaled while a read would not block (data, or end of stream). Streams are
 // level-triggered: waiting consumes nothing.
 bool is_wait_target(const object::Header* handle_object);
-bool can_complete_object_wait(const process::Process& proc);
-int consume_object_wait(process::Process& proc);
-int try_consume_objects(process::Process& proc, object::Header* const* handles, size_t count, bool wait_all);
+bool can_complete_object_wait(const process::Thread& thread);
+int consume_object_wait(process::Thread& thread);
+int try_consume_objects(process::Thread& thread, object::Header* const* handles, size_t count, bool wait_all);
 
 // Sections and views: neutral constructors plus the W^X and mask policy.
 // Flag translation (SAVANXP_SECTION_*/VIEW_*), file checks and handle

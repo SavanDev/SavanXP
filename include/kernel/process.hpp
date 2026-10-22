@@ -20,11 +20,16 @@ struct Socket;
 namespace process {
 
 constexpr size_t kMaxProcesses = 64;
+// Threads in the whole system. One per process today; the table is sized for
+// the multithreaded processes of docs/kernel/THREADS_ROADMAP.md, phase 1.
+constexpr size_t kMaxThreads = 256;
 constexpr size_t kMaxFileHandles = 64;
 constexpr size_t kMaxWaitHandles = 16;
 constexpr size_t kProcessNameLength = 32;
 constexpr size_t kProcessPathLength = 256;
 
+// A thread's scheduling state. zombie: the thread ended and its slot (and
+// kernel stack) is not released yet.
 enum class State : uint8_t {
     unused = 0,
     ready = 1,
@@ -109,14 +114,56 @@ struct HandleEntry {
     uint32_t flags;
 };
 
+// A process is the container: an address space, a handle table, an identity
+// and a lifecycle. What runs is a Thread (docs/kernel/THREADS_ROADMAP.md).
+enum class Lifecycle : uint8_t {
+    unused = 0,
+    alive = 1,
+    zombie = 2,
+};
+
 struct Process {
     uint32_t pid;
     uint32_t parent_pid;
-    State state;
+    Lifecycle life;
     bool idle;
-    bool orphaned;  // reparentado a init; al morir se auto-reapea
-    subsystem::Id subsystem_id;  // posix(0) por defecto via memset en allocate_process_slot
+    bool orphaned;  // reparented to init; reaps itself when it dies
+    subsystem::Id subsystem_id;  // posix(0) by default, via the memset in allocate_process_slot
     int exit_code;
+    // Live threads (ready, running, blocked or sleeping). Zero once the
+    // process is a zombie.
+    uint32_t thread_count;
+    // Timer ticks that found one of this process's threads running. The
+    // cheapest possible CPU accounting -- one increment per tick, on a path
+    // that already exists -- and enough for a percentage: the task manager
+    // compares it against timer::ticks() between two samples. The idle counts
+    // like any other process, which is exactly what makes total system usage
+    // computable.
+    uint64_t cpu_ticks;
+    char name[kProcessNameLength];
+    // Private state of the subsystem this process belongs to (isolation
+    // slice B). The kernel reserves and frees these bytes according to what
+    // the subsystem declares in subsystem::register_process_state_size, and
+    // does NOT interpret them: the POSIX current directory lives there, not
+    // here. With no subsystem holding state, this is nullptr and costs no
+    // memory.
+    uint8_t* subsystem_state;
+    size_t subsystem_state_bytes;
+    vm::VmSpace address_space;
+    HandleEntry handles[kMaxFileHandles];
+};
+
+// One execution context: what the scheduler picks, what blocks in a syscall
+// and what a waker completes. Every live process has at least one.
+struct Thread {
+    uint32_t tid;
+    State state;
+    // Killed while it ran on another core. It cannot be torn down there (that
+    // core is using its stack and its page tables): its own core finishes it,
+    // on the next return to ring 3, with this exit code.
+    bool kill_pending;
+    int kill_exit_code;
+    Process* process;
     WaitReason wait_reason;
     uint8_t wait_handle_count;
     uint8_t wait_all;
@@ -130,52 +177,33 @@ struct Process {
     uint64_t blocked_write_buffer;
     uint64_t blocked_write_length;
     uint64_t blocked_write_progress;
-    // Vencimiento en milisegundos del reloj monotono (process::now_ms()), 0 =
-    // sin vencimiento. NO son ticks: ver el comentario de now_ms().
+    // Deadline in milliseconds of the monotonic clock (process::now_ms()),
+    // 0 = no deadline. These are NOT ticks: see the comment on now_ms().
     uint64_t wake_deadline_ms;
-    // Ticks del timer del sistema que encontraron a este proceso corriendo. Es
-    // la contabilidad de CPU mas barata posible -- un incremento por tick, en el
-    // camino que ya existe -- y alcanza para un porcentaje: el administrador de
-    // tareas compara este contador contra timer::ticks() entre dos muestras. El
-    // idle suma como cualquier otro, que es justamente lo que hace calculable el
-    // uso total del sistema.
-    uint64_t cpu_ticks;
     uint32_t time_slice;
-    char name[kProcessNameLength];
-    // Estado privado del subsistema al que pertenece este proceso (isolation
-    // slice B). El kernel reserva y libera estos bytes segun lo que el
-    // subsistema declara en subsystem::register_process_state_size, y NO
-    // interpreta su contenido: el directorio actual de POSIX vive ahi, no
-    // aqui. Sin ningun subsistema con estado, esto es nullptr y no ocupa
-    // memoria.
-    uint8_t* subsystem_state;
-    size_t subsystem_state_bytes;
+    // The core that ran it last (an index from cpu_index()). It only decides
+    // anything when `context` was left in ring 0 -- preempted while asleep
+    // inside a syscall --: that context resumes on this core and no other.
+    uint32_t cpu;
     object::TimerObject* sleep_timer;
-    vm::VmSpace address_space;
     uint64_t kernel_stack_base;
     uint64_t kernel_stack_size;
     SavedContext* context;
-    // El core que lo corrio por ultima vez (indice de cpu_index()). Solo decide
-    // algo cuando `context` quedo en ring 0 -- desalojado mientras dormia
-    // adentro de una syscall --: ese contexto se retoma en este core y en
-    // ningun otro.
-    uint32_t cpu;
-    // Lo mataron mientras corria en otro core. No se lo puede desarmar ahi
-    // mismo (su core esta usando su pila y sus tablas de paginas): lo termina
-    // su propio core, en la proxima vuelta a ring 3, con este codigo de salida.
-    bool kill_pending;
-    int kill_exit_code;
-    HandleEntry handles[kMaxFileHandles];
-    // Estado FPU/SSE (formato FXSAVE, 512 bytes alineados a 16). El scheduler lo
-    // guarda/restaura al cambiar de proceso; se siembra con un estado limpio en
-    // allocate_process_slot. alignas(16) fuerza la alineacion del struct entero.
+    // FPU/SSE state (FXSAVE format, 512 bytes aligned to 16). The scheduler
+    // saves and restores it on a real switch; it is seeded with a clean state
+    // when the thread is allocated. alignas(16) aligns the whole struct.
     alignas(16) uint8_t fpu_state[512];
 };
+
 
 void initialize();
 bool ready();
 Process* current();
+Thread* current_thread();
 uint32_t current_pid();
+// The process's first live thread, or its ended one while it is a zombie.
+// nullptr only for a slot with no thread at all.
+Thread* primary_thread(const Process& proc);
 Process* find(uint32_t pid);
 bool copy_from_user(void* destination, uint64_t user_address, size_t count);
 bool copy_to_user(uint64_t user_address, const void* source, size_t count);
@@ -218,8 +246,8 @@ struct SpawnArguments {
     int argc;
 };
 uint64_t current_uptime_ms();
-void clear_wait_state(Process& proc);
-void switch_to_process(Process* target);
+void clear_wait_state(Thread& thread);
+void switch_to_thread(Thread* target);
 // Resolucion NEUTRAL de ruta: absoluta, o relativa a la raiz. No hay cwd en el
 // kernel; la resolucion contra el directorio actual es de POSIX y vive en
 // subsystems/posix/kernel/posix_translation.cpp.
@@ -235,7 +263,7 @@ bool write_to_process_memory(Process& proc, uint64_t user_address, const void* s
 bool copy_user_string(const Process& proc, uint64_t user_address, char* buffer, size_t capacity);
 void write_int_to_process_memory(Process& proc, uint64_t user_address, int value);
 sx_status image_failure_errno(ImageFailure failure);
-bool prepare_exec_image(Process& proc, const char* path, int argc, const char* const* argv, ImageFailure& failure);
+bool prepare_exec_image(Thread& self, const char* path, int argc, const char* const* argv, ImageFailure& failure);
 // The child's 0, 1 and 2 are the parent's stdin_fd, stdout_fd and stderr_fd,
 // each one the parent's own 0, 1 or 2 when it is negative.
 Process* create_process_internal(const char* path, int argc, const char* const* argv, Process* parent, int stdin_fd, int stdout_fd, int stderr_fd, ImageFailure& failure);
@@ -254,8 +282,8 @@ void reap_process(Process& proc);
 bool has_runnable_non_idle();
 SavedContext* choose_next_context(SavedContext* current_context);
 int fcntl_fd(Process& proc, uint64_t fd, uint64_t command, uint64_t value);
-int poll_fds(Process& proc, uint64_t user_fds, size_t count, int timeout_ms);
-Process* fork_process(Process& parent, const SavedContext& parent_context);
+int poll_fds(Thread& self, uint64_t user_fds, size_t count, int timeout_ms);
+Process* fork_process(Thread& parent, const SavedContext& parent_context);
 int kill_process(Process& sender, int pid, int signal_number);
 int duplicate_fd(Process& proc, uint64_t oldfd);
 int duplicate_fd_to(Process& proc, uint64_t oldfd, uint64_t newfd);
@@ -282,8 +310,8 @@ int getcwd_path(Process& proc, uint64_t user_buffer, size_t capacity);
 bool resolve_process_path(const Process& proc, const char* input, char* output, size_t capacity);
 int readdir_node(Process& proc, uint64_t fd, uint64_t user_buffer, size_t capacity);
 int ioctl_handle(Process& proc, uint64_t fd, uint64_t request, uint64_t argument);
-int read_handle(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count);
-int write_handle(Process& proc, uint64_t fd, uint64_t user_buffer, size_t count);
+int read_handle(Thread& self, uint64_t fd, uint64_t user_buffer, size_t count);
+int write_handle(Thread& self, uint64_t fd, uint64_t user_buffer, size_t count);
 int create_pipe(Process& proc, uint64_t user_fd_array);
 int pipe_send_handle(Process& proc, uint64_t pipe_fd, uint64_t handle_fd);
 int pipe_receive_handle(Process& proc, uint64_t pipe_fd);
@@ -301,11 +329,11 @@ int open_section_handle(Process& proc, uint64_t fd, uint32_t flags);
 int64_t map_view_base_handle(Process& proc, uint64_t fd, uint64_t base, uint32_t flags);
 int64_t map_view_handle(Process& proc, uint64_t fd, uint32_t flags);
 int unmap_view_address(Process& proc, uint64_t base_address);
-int wait_on_handle(Process& proc, uint64_t fd, int64_t timeout_ms);
-int wait_on_many_handles(Process& proc, uint64_t user_handles, size_t count, bool wait_all, int64_t timeout_ms);
+int wait_on_handle(Thread& self, uint64_t fd, int64_t timeout_ms);
+int wait_on_many_handles(Thread& self, uint64_t user_handles, size_t count, bool wait_all, int64_t timeout_ms);
 // Shared child-wait core behind both WAITPID paths (see kernel/process.cpp).
-int waitpid_child(Process& proc, int64_t waited_pid, uint64_t status_address);
-int sleep_via_timer(Process& proc, uint64_t milliseconds);
+int waitpid_child(Thread& self, int64_t waited_pid, uint64_t status_address);
+int sleep_via_timer(Thread& self, uint64_t milliseconds);
 bool copy_spawn_arguments(const Process& proc, const SavedContext& context, char* path, size_t path_capacity, SpawnArguments& arguments);
 Process* create_user_process(const char* path, int argc, const char* const* argv, uint32_t parent_pid);
 [[noreturn]] void start_init(const char* path);
