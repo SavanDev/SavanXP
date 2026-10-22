@@ -233,9 +233,10 @@ What it actually took, against the plan below:
   adding to it, everything paced in ticks would run N times too fast.
 - **Killing a process that runs on another core is deferred.** Its kernel
   stack and page tables are live over there. `terminate_process` marks it
-  `kill_pending` and sends the reschedule IPI; the owning core terminates it on
-  its next return to ring 3 — the IPI itself, the next tick, or the end of the
-  syscall it was in.
+  (`exit_requested` since threads; a per-thread `kill_pending` before) and
+  sends the reschedule IPI; the owning core terminates it on its next return
+  to ring 3 — the IPI itself, the next tick, or the end of the syscall it was
+  in.
 - **No reschedule IPI for wakeups.** See
   [the trap below](#known-traps): the same-core handoff stays, and an idle core
   picks up whatever is left in the queue on its own tick, at most 1 ms later.
@@ -339,6 +340,13 @@ What it actually took, against the plan below: **no IPI at all.**
   0xa1, sin sincronizar 0xa1, sincronizando 0xb2)`. The unsynchronized read
   returning the old byte is the stale translation, observed under the supported
   accelerators; the synchronized one is the fix.
+
+**Threads ended the user-space half of that argument.** Two threads of one
+process on two cores share an address space, so "loaded on at most one core"
+no longer holds; phase 2 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md) replaced
+it with a user shootdown built the same way: an IPI that nobody waits for, a
+flush at the next `lock_kernel()`, and pages freed only after every core
+involved has flushed.
 
 **The rule this leaves for phase 4:** the moment any code touches unmappable
 kernel memory without the lock, the lazy flush stops being enough, and the IPI
@@ -461,9 +469,10 @@ being blind to every race introduced. Phases 0-3 need `--smp` variants:
 
 Honestly: not yet, and the reason is worth writing down.
 
-**There are no threads.** A process is one context
-([`process.cpp`](../../kernel/process.cpp) has no thread concept), so SMP
-parallelizes *distinct processes* and nothing else. The heaviest consumer in the
+**There were no threads** when this was written. A process was one context,
+so SMP parallelized *distinct processes* and nothing else; native threads
+([THREADS_ROADMAP.md](THREADS_ROADMAP.md)) now run in parallel too, and POSIX
+gets them with pthreads. The heaviest consumer in the
 system, Doom, is single-threaded — it does not get faster on four cores. What
 would genuinely improve is latency across the desktop: the compositor painting
 on one core while an application computes on another, instead of taking turns

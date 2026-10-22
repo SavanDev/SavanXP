@@ -189,7 +189,7 @@ static inline long sxn_spawn_ex(const struct sxn_spawn_request* request) {
  * on a stack the caller allocated (its top, the highest address). `entry`
  * must end with sxn_thread_exit, never return. Returns a handle that
  * sxn_wait_one/sxn_wait_many see signaled when the thread ends; *tid (if not
- * null) gets its id. Threads of one process take turns on the CPU for now. */
+ * null) gets its id. Threads of one process run on several cores at once. */
 static inline long sxn_thread_create(void (*entry)(void*), void* argument, void* stack_top, uint32_t* tid) {
     return sxn_trap4(SXN_SYS_THREAD_CREATE, (unsigned long)entry, (unsigned long)argument,
                      (unsigned long)stack_top, (unsigned long)tid);

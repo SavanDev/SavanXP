@@ -129,6 +129,12 @@ struct Process {
     bool idle;
     bool orphaned;  // reparented to init; reaps itself when it dies
     subsystem::Id subsystem_id;  // posix(0) by default, via the memset in allocate_process_slot
+    // Asked to end while one of its threads ran on another core. That core's
+    // page tables and kernel stack are in use, so the process cannot be torn
+    // down yet: every thread that runs stops at its next entry to the kernel,
+    // and the last one to stop finishes it. exit_code holds the code from
+    // the moment this is set; the first request wins.
+    bool exit_requested;
     int exit_code;
         // Thread slots the process owns, ended ones not yet released included.
     // Live threads are counted by walking the table (live_thread_count).
@@ -158,11 +164,6 @@ struct Process {
 struct Thread {
     uint32_t tid;
     State state;
-    // Killed while it ran on another core. It cannot be torn down there (that
-    // core is using its stack and its page tables): its own core finishes it,
-    // on the next return to ring 3, with this exit code.
-    bool kill_pending;
-    int kill_exit_code;
     Process* process;
     // What handles to this thread name. The thread holds a reference from its
     // allocation to its release; the object is signaled when it ends.
@@ -356,9 +357,8 @@ int create_thread(Process& proc, uint64_t entry, uint64_t argument, uint64_t sta
 int thread_exit_code(Process& proc, uint64_t handle, int& exit_code);
 // Threads of `proc` that have not ended.
 uint32_t live_thread_count(const Process& proc);
-// Killed while one of its threads ran on another core: that core ends it on
-// its next return to ring 3, so it will never run user code again. True with
-// the exit code it will end with.
+// Asked to end while one of its threads ran on another core (exit_requested):
+// it will never run user code again. True with the code it will end with.
 bool exit_pending(const Process& proc, int& exit_code);
 void terminate_current_from_exception(uint8_t vector);
 // Atiende un #PF del proceso actual que caiga adentro de la region reservada

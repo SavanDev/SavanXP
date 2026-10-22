@@ -552,9 +552,11 @@ void lock_kernel() {
         panic("smp: el lock del kernel se tomo dos veces en el mismo core");
     }
     sync::acquire(g_kernel_lock);
-    // Antes de tocar cualquier cosa del kernel: si otro core desmapeo paginas
-    // del kernel mientras este no tenia el lock, su TLB puede tenerlas todavia.
+    // Before touching anything: pages another core unmapped while this one
+    // did not hold the lock may still be in this core's TLB -- kernel pages,
+    // or user pages of the address space it shares with a thread over there.
     vm::sync_kernel_tlb();
+    vm::sync_user_tlb();
 }
 
 void unlock_kernel() {

@@ -15,7 +15,8 @@ Cut-off notes:
 - **Native processes can have threads.** `SXN_SYS_THREAD_CREATE`, `SXN_SYS_THREAD_EXIT` and
   `SXN_SYS_THREAD_EXIT_CODE` (`sxn_thread_create`, `sxn_thread_exit`, `sxn_thread_exit_code`): a
   waitable handle per thread, and the last thread's exit ends the process. Threads of one process
-  take turns on the CPU for now. See `docs/kernel/THREADS_ROADMAP.md`.
+  run on several cores at once: unmapping a view other cores may hold sends them a TLB shootdown
+  IPI, and its pages are freed only once they have flushed. See `docs/kernel/THREADS_ROADMAP.md`.
 
 - **AHCI (SATA) disk driver with DMA.** `kernel/ahci.cpp` registers SATA disks as `ahciN`, and
   QEMU now attaches `disk.img` to the q35 AHCI controller by default (`SAVANXP_DISK_BUS=ide` or

@@ -2,7 +2,9 @@
 
 #include "kernel/cpu.hpp"
 #include "kernel/object.hpp"
+#include "kernel/panic.hpp"
 #include "kernel/physical_memory.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/string.hpp"
 
 /* vmm.hpp no puede incluir physical_memory.hpp (la dependencia va al reves),
@@ -29,6 +31,22 @@ bool g_ready = false;
 uint64_t g_kernel_tlb_generation = 0;
 // La generacion con la que quedo al dia la TLB de cada core.
 uint64_t g_kernel_tlb_synced[arch::x86_64::kMaxCpus] = {};
+
+// User-half shootdown (see vmm.hpp). All of it changes with the kernel lock
+// held, and every core reads it with the lock held too.
+static_assert(arch::x86_64::kMaxCpus <= 32, "deferred_cpus is a 32-bit mask");
+// The user address space each core has in CR3 (its PML4), 0 for none yet.
+uint64_t g_loaded_pml4[arch::x86_64::kMaxCpus] = {};
+// Shootdown numbers: the last one that asked each core to flush, and the last
+// one each core has flushed for. Equal means up to date.
+uint64_t g_shootdown_sequence = 0;
+uint64_t g_flush_requested[arch::x86_64::kMaxCpus] = {};
+uint64_t g_flush_done[arch::x86_64::kMaxCpus] = {};
+// Other cores holding a space this batch of unmaps touched. unmap_page adds
+// to it; finish_shootdown() asks them to flush and clears it.
+uint32_t g_stale_cpus = 0;
+// Section references that wait for g_flush_done to catch up.
+object::SectionObject* g_deferred_views = nullptr;
 
 uint64_t pml4_index(uint64_t virtual_address) {
     return (virtual_address >> 39) & 0x1ff;
@@ -389,6 +407,70 @@ bool unmap_kernel_page(uint64_t virtual_address) {
     return true;
 }
 
+// A user page of `space` stopped being mapped, or lost permissions: this core
+// invalidates it if it holds the space, and every other core holding it is
+// noted for finish_shootdown().
+void note_user_unmap(const vm::VmSpace& space, uint64_t virtual_address) {
+    const uint32_t self = arch::x86_64::cpu_index();
+    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+        invalidate_page(virtual_address);
+    }
+    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+        if (cpu != self && g_loaded_pml4[cpu] == space.pml4_physical) {
+            g_stale_cpus |= 1u << cpu;
+        }
+    }
+}
+
+bool flushed_since(uint32_t cpus, uint64_t sequence) {
+    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+        if ((cpus & (1u << cpu)) != 0 && g_flush_done[cpu] < sequence) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Ends a batch of user unmaps. The cores noted stale get a new shootdown
+// number and a reschedule IPI; nobody waits for them. Returns the number, or
+// 0 when no other core held the space, which also leaves *cpus at 0.
+uint64_t finish_shootdown(uint32_t& cpus) {
+    cpus = g_stale_cpus;
+    g_stale_cpus = 0;
+    if (cpus == 0) {
+        return 0;
+    }
+    g_shootdown_sequence += 1;
+    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+        if ((cpus & (1u << cpu)) != 0) {
+            g_flush_requested[cpu] = g_shootdown_sequence;
+            smp::kick(cpu);
+        }
+    }
+    return g_shootdown_sequence;
+}
+
+// Gives up one reference to `section` whose pages were just unmapped. Released
+// now when no other core can reach them; otherwise queued until the cores of
+// this shootdown have flushed. A section already queued waits for the newer
+// shootdown too, which is later than the one it waited for.
+void release_after_shootdown(object::SectionObject& section) {
+    uint32_t cpus = 0;
+    const uint64_t sequence = finish_shootdown(cpus);
+    if (sequence == 0) {
+        object::Header* header = &section.header;
+        object::release(header);
+        return;
+    }
+    if (section.deferred_refs == 0) {
+        section.deferred_next = g_deferred_views;
+        g_deferred_views = &section;
+    }
+    section.deferred_refs += 1;
+    section.deferred_cpus |= cpus;
+    section.deferred_sequence = sequence;
+}
+
 } // namespace
 
 namespace vm {
@@ -454,6 +536,20 @@ void randomize_section_base(VmSpace& space, uint64_t seed) {
 void destroy_address_space(VmSpace& space) {
     if (!g_ready || space.pml4_physical == 0 || space.pml4_virtual == nullptr) {
         return;
+    }
+
+    // Its process runs nowhere else by now, and the cores that ran it loaded
+    // another space since. This core may still hold it (a process that reaps
+    // itself), until the scheduler switches away before dropping the lock.
+    const uint32_t self = arch::x86_64::cpu_index();
+    for (uint32_t cpu = 0; cpu < arch::x86_64::kMaxCpus; ++cpu) {
+        if (g_loaded_pml4[cpu] != space.pml4_physical) {
+            continue;
+        }
+        if (cpu != self) {
+            panic("vm: destroying an address space another core has loaded");
+        }
+        g_loaded_pml4[cpu] = 0;
     }
 
     for (size_t index = 0; index < kMaxSectionViews; ++index) {
@@ -596,9 +692,7 @@ bool unmap_page(VmSpace& space, uint64_t virtual_address, uint64_t* physical_add
         *physical_address = entry & kPageMask;
     }
     pt[entry_index] = 0;
-    if ((read_cr3() & kPageMask) == space.pml4_physical) {
-        invalidate_page(virtual_address);
-    }
+    note_user_unmap(space, virtual_address);
     return true;
 }
 
@@ -787,6 +881,11 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
             for (uint64_t rollback = 0; rollback < page_index; ++rollback) {
                 (void)unmap_page(space, base_address + (rollback * memory::kPageSize), nullptr);
             }
+            // A sibling thread on another core may already have touched the
+            // pages: the caller's reference must not be the one that frees
+            // them before that core flushes.
+            object::retain(&section.header);
+            release_after_shootdown(section);
             return false;
         }
     }
@@ -816,8 +915,8 @@ bool unmap_section_view(VmSpace& space, uint64_t base_address) {
         (void)unmap_page(space, view->base_address + (page_index * memory::kPageSize), nullptr);
     }
 
-    object::Header* header = &view->section->header;
-    object::release(header);
+    reclaim_deferred_views();
+    release_after_shootdown(*view->section);
     memset(view, 0, sizeof(*view));
     return true;
 }
@@ -1047,6 +1146,49 @@ void sync_kernel_tlb() {
     }
     arch::x86_64::flush_tlb();
     g_kernel_tlb_synced[cpu] = generation;
+}
+
+void load_address_space(const VmSpace& space) {
+    const uint32_t cpu = arch::x86_64::cpu_index();
+    g_loaded_pml4[cpu] = space.pml4_physical;
+    if ((read_cr3() & kPageMask) == space.pml4_physical) {
+        return;
+    }
+    asm volatile("mov %0, %%cr3" : : "r"(space.pml4_physical) : "memory");
+    // Reloading CR3 drops every user translation: whatever shootdown was asked
+    // of this core is done.
+    g_flush_done[cpu] = g_flush_requested[cpu];
+}
+
+void sync_user_tlb() {
+    const uint32_t cpu = arch::x86_64::cpu_index();
+    if (g_flush_done[cpu] == g_flush_requested[cpu]) {
+        return;
+    }
+    const uint64_t cr3 = read_cr3();
+    asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+    g_flush_done[cpu] = g_flush_requested[cpu];
+}
+
+void reclaim_deferred_views() {
+    object::SectionObject** link = &g_deferred_views;
+    while (*link != nullptr) {
+        object::SectionObject* const section = *link;
+        if (!flushed_since(section->deferred_cpus, section->deferred_sequence)) {
+            link = &section->deferred_next;
+            continue;
+        }
+        *link = section->deferred_next;
+        uint32_t refs = section->deferred_refs;
+        section->deferred_next = nullptr;
+        section->deferred_refs = 0;
+        section->deferred_cpus = 0;
+        section->deferred_sequence = 0;
+        while (refs-- > 0) {
+            object::Header* header = &section->header;
+            object::release(header);
+        }
+    }
 }
 
 bool ensure_user_stack_page(VmSpace& space, uint64_t address) {

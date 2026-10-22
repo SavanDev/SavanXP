@@ -141,6 +141,13 @@ struct SectionObject {
     uint64_t page_count;
     memory::PageAllocation allocation;
     uint64_t* physical_pages;
+    // Views of this section unmapped from an address space that other cores
+    // had loaded: their references wait on vm's deferred list until those
+    // cores flush their TLB (docs/kernel/THREADS_ROADMAP.md, phase 2).
+    SectionObject* deferred_next;
+    uint32_t deferred_refs;
+    uint32_t deferred_cpus;
+    uint64_t deferred_sequence;
 };
 
 struct SemaphoreObject {

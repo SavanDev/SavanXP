@@ -1,6 +1,6 @@
 # Threads — more than one execution context per process
 
-> **Status: phases 0 and 1 done (2026-10-22), phases 2-5 not started.** This
+> **Status: phases 0, 1 and 2 done (2026-10-22), phases 3-5 not started.** This
 > document is the inventory: what the kernel assumed about "one process, one
 > context", what had to move, and the order in which to move it so that every
 > phase boots and can be verified on its own.
@@ -13,8 +13,9 @@
 >
 > Phase 1 gave native processes more than one thread
 > (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`, slice 23 of
-> [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)). Threads of one process take
-> turns on the CPU: they do not run in parallel until phase 2.
+> [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)), taking turns on the CPU.
+> Phase 2 lets them run on several cores at once, with a user-space TLB
+> shootdown that never waits for the other cores.
 
 Threads are the first kernel prerequisite of a future Win32 subsystem — the
 others are per-thread TLS registers, exceptions delivered to user mode and
@@ -258,7 +259,7 @@ What landed:
   the next `choose_next_context` on that core frees it from another stack.
   Releasing a thread clears any core's pointer to it, so a reap that comes
   first cannot free it twice.
-- **The interim rule** is `sibling_running_elsewhere` in `runnable_here`:
+- **The interim rule** (lifted in phase 2) was `sibling_running_elsewhere` in `runnable_here`:
   checked only for processes with more than one thread slot, so a
   single-threaded process pays nothing. It keeps "at most one thread of a
   process is running" true at every scheduling decision, which is also what
@@ -295,21 +296,65 @@ ending with their own codes, joined through their handles; a child killed with
 a thread blocked, one spinning and its main thread blocked; a child whose main
 thread ends first; `SXN_SYS_EXIT` from a second thread.
 
-### Phase 2 — the address space on many cores
+### Phase 2 — the address space on many cores — **DONE**
 
-- `vm::VmSpace` records which cores have it loaded.
-- Every user-space unmap or permission downgrade sends a shootdown IPI to those
-  cores. **It does not wait for the acknowledgement** — that is the deadlock
-  phase 3 of SMP found: the cores it waits on may be spinning for the kernel
-  lock with `IF=0`. Instead the physical pages are **freed late**: they go to a
-  deferred list and return to the allocator only once every core in the mask
-  has flushed, either in the IPI handler (it was in user mode, `IF=1`) or at
-  its next `smp::lock_kernel()` (it was spinning, and flushes before touching
-  anything). A stale translation can then only ever point at a page that is
-  still owned by the process.
-- Lift the interim rule of phase 1.
-- Check: a boot self-test in the style of `smp::selftest_tlb`, with two threads
-  of one process on two cores, one unmapping a view the other is reading.
+What landed:
+
+- **The kernel records which address space each core holds.**
+  `vm::load_address_space` is now the only way a thread's space gets into
+  CR3 (`switch_to_thread`), and it notes the PML4 per core. `resume_context`
+  reloads the same value; `sx`'s copy to another process's memory loads a
+  space for one `memcpy` within one hold of the lock, so it records nothing.
+- **Unmapping asks, and does not wait.** `unmap_page` invalidates locally and
+  notes every other core holding the space; at the end of the batch (the
+  whole view) those cores get a new shootdown number and a reschedule IPI
+  (`smp::kick`). `smp::lock_kernel()` calls `vm::sync_user_tlb()`, which
+  reloads CR3 when this core's number is behind. A core in user mode takes
+  the IPI and enters the kernel; one spinning for the lock or asleep in
+  `wait_for_interrupt` catches up when it gets the lock, before it can touch
+  user memory. A CR3 reload by a thread switch counts as a flush.
+- **Pages are freed late, by section reference.** The unmapped view's
+  reference to its section goes on an intrusive list in `SectionObject`
+  (`deferred_next`, `_refs`, `_cpus`, `_sequence`), not its raw pages: a
+  file-backed section on the list is still a live, cached section that
+  another mapping may pick up. `vm::reclaim_deferred_views` releases it once
+  every core in the mask has flushed; the BSP's tick and every unmap call it.
+  No capacity limit: a section queued twice keeps one node and waits for the
+  later shootdown. The rollback of a failed `map_section_view` goes through
+  the same path, since a sibling may already have touched the pages.
+- **Nothing changes for a single-threaded process.** Its space is loaded on
+  no other core, so the reference is released on the spot, as before.
+- **The interim rule is gone**, and with it what it guaranteed: that a
+  thread ending its process never finds a sibling running elsewhere.
+  `kill_pending`/`kill_exit_code` moved from `Thread` to
+  `Process::exit_requested` (with `exit_code`, first request wins).
+  `terminate_process` kicks every thread running on another core and returns;
+  `terminate_current` then **parks** the calling thread — a zombie whose
+  object is signaled with the rest — and switches away. Each running sibling
+  stops at its next entry to the kernel (IPI, tick, end of syscall) and calls
+  back in; the last one to stop finds nobody running and tears the process
+  down. A ready thread of an ending process is not scheduled again
+  (`runnable_here`), unless its context is in ring 0, halfway through a
+  syscall that must finish.
+- `destroy_address_space` panics if another core still has the space loaded.
+
+Where it differs from the plan:
+
+- **The check is in `native-test`, not a boot self-test.** A `shootdown`
+  child reads a view in a loop that never enters the kernel while its main
+  thread unmaps the view (and drops the section's last reference); the reader
+  has to die with a #PF. With `sync_user_tlb` disabled, the same test fails
+  on 4 cores — the reader reads on through the stale translation — which is
+  the proof that the test sees what it is meant to. Two more children make the
+  exit paths race running threads: `exitall` ends the process from a second
+  thread while the main one spins, and `threads` is killed with two spinning
+  threads.
+- **No new IPI vector.** The reschedule IPI already enters the kernel through
+  `lock_kernel()`, which is where the flush happens.
+
+Verified by `native-test` on 1, 2 and 4 cores (25 runs in a row on 4), and
+the regular smokes unchanged, the desktop ones on 4 cores (`smoke`,
+`windowd-smoke`, `session-smoke`, `taskbar-smoke`).
 
 ### Phase 3 — per-thread `FS_BASE` / `GS_BASE`
 
@@ -335,7 +380,14 @@ and keys on top of phases 1-4; `PT_TLS` in `crt0` and `ldso` for static TLS;
 `fork`/`exec` rules above. Two kernel items moved here from phase 1, because a
 POSIX process cannot have a second thread before this: per-thread subsystem
 state (`register_thread_state_size`, with POSIX `poll` state in it) and `exec`
-ending the other threads. The thread calls join the set open to every
+ending the other threads. And one that phase 2 left in sight: the paths that
+sleep in ring 0 (`smp::wait_for_interrupt`) — the blocking socket loops in
+`net.cpp` are the ones with an object in hand — keep a raw pointer to an
+object a sibling thread can close meanwhile. The user memory they write after
+waking is revalidated (`sx::write_user_memory`), the object is not. Sockets
+are POSIX's (a native process only meets one through an inherited handle), so
+before POSIX processes get a second thread these loops must hold a reference
+across the sleep, or block the `kBlockedResult` way. The thread calls join the set open to every
 subsystem (`native_call_open_to_all_subsystems`). Check: a pthread test that hammers `malloc`,
 `errno` and a mutex-protected counter from several threads on several cores.
 

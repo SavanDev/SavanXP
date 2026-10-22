@@ -98,6 +98,8 @@ void destroy_address_space(VmSpace& space);
 // siempre la misma secuencia de direcciones.
 void randomize_section_base(VmSpace& space, uint64_t seed);
 bool map_page(VmSpace& space, uint64_t virtual_address, uint64_t physical_address, uint64_t flags);
+// Only for pages of section views: the other cores holding the space are
+// asked to flush when the view is released (see "TLB coherence" below).
 bool unmap_page(VmSpace& space, uint64_t virtual_address, uint64_t* physical_address);
 bool clone_address_space(const VmSpace& source, VmSpace& destination);
 // Bytes de usuario mapeados en este espacio ahora mismo. Es lo que el
@@ -132,40 +134,67 @@ bool add_user_page_flags(VmSpace& space, uint64_t address, uint64_t flags);
 bool ensure_user_stack_page(VmSpace& space, uint64_t address);
 bool is_user_range_accessible(const VmSpace& space, uint64_t virtual_address, size_t size, bool require_write);
 
-/* --- TLB con varios cores (docs/kernel/SMP_ROADMAP.md, fase 3) ---------------------
+/* --- TLB coherence across cores ----------------------------------------------
  *
- * La mitad de kernel del espacio de direcciones la comparten todos los cores:
- * cuando un core desmapea una pagina de kernel, el invlpg solo limpia SU TLB, y
- * los demas conservan la traduccion vieja.
+ * KERNEL HALF (docs/kernel/SMP_ROADMAP.md, phase 3). Every core shares it, and
+ * an invlpg only clears the TLB of the core that runs it. It is solved without
+ * IPIs, on top of the big kernel lock: every access to kernel memory that can
+ * be unmapped happens with the lock held, so a core only has to catch up
+ * before it touches anything. Unmapping bumps a global generation, and
+ * smp::lock_kernel() calls sync_kernel_tlb(), which flushes this core's TLB
+ * when its generation is behind. An IPI waiting for an acknowledgement would
+ * deadlock instead: the unmapper holds the lock, and the cores it waits on
+ * spin for that lock with IF=0 and never take the IPI. If unmappable kernel
+ * memory is ever touched without the lock (SMP phase 4), this stops being
+ * enough.
  *
- * Se resuelve sin IPIs, apoyado en el lock grande del kernel. Todo acceso a
- * memoria del kernel que pueda desmapearse ocurre con el lock tomado, asi que
- * alcanza con que cada core se ponga al dia ANTES de tocar nada: desmapear sube
- * una generacion global, y smp::lock_kernel() llama a sync_kernel_tlb(), que
- * vacia la TLB de este core si su generacion quedo atras. Un IPI con espera de
- * acuse, en cambio, no funciona mientras haya un solo lock: el que desmapea lo
- * tiene, y los cores que esperan ese lock giran con IF=0 y nunca atienden el
- * IPI.
+ * USER HALF (docs/kernel/THREADS_ROADMAP.md, phase 2). Threads of one process
+ * run on several cores at once, so one address space can be loaded on several
+ * cores. Every CR3 load of a thread's space goes through load_address_space(),
+ * which records which space each core holds. Unmapping a user page from a
+ * space that other cores hold marks those cores stale and sends each one a
+ * reschedule IPI, without waiting: any entry to the kernel takes the lock, and
+ * smp::lock_kernel() calls sync_user_tlb(), which reloads CR3 when this core
+ * was marked. A core in user mode takes the IPI; one spinning for the lock or
+ * asleep in the kernel catches up when it gets the lock, before it can touch
+ * user memory. (sx's copy to or from another process's memory loads that
+ * space for one memcpy and reloads the previous one, all within one hold of
+ * the lock, so no unmap can fall in between and nothing is recorded.)
  *
- * La mitad de usuario no necesita nada de esto, y conviene saber por que para
- * no romperlo: un espacio de usuario esta cargado en un solo core a la vez (no
- * hay threads), cambiar de proceso recarga CR3 -- lo que vacia las traducciones
- * no globales --, y solo se desmapea el espacio del proceso que corre en este
- * core o el de uno que no corre en ninguno (un proceso muerto; matar a uno que
- * corre en otro core se difiere). Cualquier camino nuevo que toque el espacio de
- * un proceso que puede estar corriendo en otro core rompe esa regla.
+ * Since nobody waits, the physical pages are freed late. The unmapped view's
+ * reference to its section goes on a deferred list with the cores that must
+ * flush, and is released by reclaim_deferred_views() only once they all
+ * have. Until then a stale translation on another core still points at
+ * memory the section owns, never at a page handed to someone else. A space
+ * loaded on no other core -- every single-threaded process -- releases right
+ * away, as before.
  *
- * La regla del lado del kernel es la de arriba: si algun dia se toca memoria del
- * kernel desmapeable sin el lock (fase 4), esto deja de alcanzar. */
+ * Mapping needs none of this: x86 never caches a translation that is not
+ * present. Nor does destroying a space: its process runs on no core by then
+ * (terminate_process defers until it does not), which destroy_address_space
+ * asserts. */
 
-// Vacia la TLB de este core si una pagina del kernel se desmapeo desde la ultima
-// vez. La llama smp::lock_kernel() apenas toma el lock.
+// Flushes this core's TLB if a kernel page was unmapped since its last sync.
+// smp::lock_kernel() calls it as soon as it holds the lock.
 void sync_kernel_tlb();
 
-// Apunta una pagina de kernel ya mapeada a otra pagina fisica, en la misma
-// direccion virtual. Es exactamente el caso que deja una traduccion vieja en los
-// otros cores, y hoy solo lo usa el autotest de arranque que lo comprueba
-// (smp::selftest_tlb): el resto del kernel nunca reusa una VA.
+// Loads `space` into CR3 on this core unless it already is, and records it.
+// The only way a thread's address space is loaded (process::switch_to_thread).
+void load_address_space(const VmSpace& space);
+
+// Reloads CR3 if another core unmapped user pages of the space loaded here.
+// smp::lock_kernel() calls it right after sync_kernel_tlb().
+void sync_user_tlb();
+
+// Releases the section references of unmapped views whose pages no core can
+// still reach through its TLB. The BSP's timer tick calls it; unmapping a view
+// does too.
+void reclaim_deferred_views();
+
+// Points an already mapped kernel page at another physical page, at the same
+// virtual address. That is exactly the case that leaves a stale translation on
+// the other cores, and today only the boot self-test that checks it uses it
+// (smp::selftest_tlb): the rest of the kernel never reuses a VA.
 bool retarget_kernel_page(void* virtual_address, uint64_t physical_address, uint64_t flags);
 
 } // namespace vm

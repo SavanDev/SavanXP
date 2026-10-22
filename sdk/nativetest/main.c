@@ -260,6 +260,10 @@ static void run_middle_child(void) {
 #define SXN_THREAD_KILL_STATUS 77
 #define SXN_THREAD_LAST_STATUS 55
 #define SXN_THREAD_EXITALL_STATUS 66
+#define SXN_SHOOTDOWN_STALE_STATUS 44
+/* What a #PF ends a process with: 128 + the vector. */
+#define SXN_PAGE_FAULT_STATUS (128 + 14)
+#define SXN_SHOOTDOWN_WORD 0x5eedu
 
 /* A thread's stack: a private section, mapped, its handle closed (the view
  * keeps it). Returns the top, or 0. */
@@ -323,21 +327,81 @@ static void thread_exit_all(void* argument) {
     sxn_exit(SXN_THREAD_EXITALL_STATUS);
 }
 
-/* "threads" child: one thread blocked, one spinning, and the main thread
- * blocked too, once it told the parent (on 1) they all exist. */
+/* Reads a view in a loop that never enters the kernel. Unmapping the view
+ * under it has to fault it, even when it runs on another core, whose TLB
+ * still holds the translation until the kernel makes it flush. */
+static volatile unsigned long g_shootdown_reads = 0;
+
+static void thread_reader(void* argument) {
+    volatile uint32_t* word = (volatile uint32_t*)argument;
+
+    for (;;) {
+        if (*word != SXN_SHOOTDOWN_WORD) {
+            sxn_exit(4);
+        }
+        g_shootdown_reads += 1;
+    }
+}
+
+/* "shootdown" child: the main thread unmaps the view a reader is reading,
+ * while the reader runs (on another core, when there is one). The view holds
+ * the section's last reference, so its pages are freed too -- which must not
+ * happen while that core can still reach them. The reader faulting ends the
+ * process with SXN_PAGE_FAULT_STATUS; a reader that keeps going on a stale
+ * translation leaves the main thread to end it with
+ * SXN_SHOOTDOWN_STALE_STATUS. */
+static void run_shootdown_child(void) {
+    long section = sxn_section_create(4096, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    void* stack = thread_stack();
+    long base;
+    unsigned long seen;
+
+    if (section < 0 || event < 0 || stack == 0) {
+        sxn_exit(2);
+    }
+    base = sxn_map_view(section, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    (void)sxn_close(section);
+    if (base <= 0) {
+        sxn_exit(2);
+    }
+    *(volatile uint32_t*)base = SXN_SHOOTDOWN_WORD;
+    if (sxn_thread_create(thread_reader, (void*)base, stack, 0) < 0) {
+        sxn_exit(2);
+    }
+    while (g_shootdown_reads < 1000u) {
+        (void)sxn_wait_one(event, 1);
+    }
+    /* Running right now: the count moves while this thread stays in user
+     * mode. */
+    seen = g_shootdown_reads;
+    while (g_shootdown_reads == seen) {
+    }
+    if (sxn_unmap_view((uint64_t)base) != 0) {
+        sxn_exit(3);
+    }
+    (void)sxn_wait_one(event, 2000);
+    sxn_exit(SXN_SHOOTDOWN_STALE_STATUS);
+}
+
+/* "threads" child: one thread blocked, two spinning (on two cores, when
+ * there are), and the main thread blocked too, once it told the parent (on 1)
+ * they all exist. */
 static void run_threads_child(void) {
-    static volatile unsigned long spins = 0;
+    static volatile unsigned long spins[2] = {0, 0};
     long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
     void* blocked_stack = thread_stack();
     void* spinning_stack = thread_stack();
+    void* second_spinning_stack = thread_stack();
     char ready = 'T';
 
-    if (event < 0 || blocked_stack == 0 || spinning_stack == 0 ||
+    if (event < 0 || blocked_stack == 0 || spinning_stack == 0 || second_spinning_stack == 0 ||
         sxn_thread_create(thread_blocked, (void*)event, blocked_stack, 0) < 0 ||
-        sxn_thread_create(thread_spinning, (void*)&spins, spinning_stack, 0) < 0) {
+        sxn_thread_create(thread_spinning, (void*)&spins[0], spinning_stack, 0) < 0 ||
+        sxn_thread_create(thread_spinning, (void*)&spins[1], second_spinning_stack, 0) < 0) {
         sxn_exit(2);
     }
-    while (spins == 0) {
+    while (spins[0] == 0 || spins[1] == 0) {
         (void)sxn_wait_one(event, 1);
     }
     if (sxn_write(1, &ready, 1) != 1) {
@@ -361,16 +425,17 @@ static void run_last_exit_child(void) {
 }
 
 /* "exitall" child: a second thread calls SXN_SYS_EXIT while the main thread
- * waits forever. */
+ * spins, on another core when there is one: the exit has to wait for that
+ * core to stop it. */
 static void run_exit_all_child(void) {
-    long event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    static volatile unsigned long spins = 0;
     void* stack = thread_stack();
 
-    if (event < 0 || stack == 0 || sxn_thread_create(thread_exit_all, 0, stack, 0) < 0) {
+    if (stack == 0 || sxn_thread_create(thread_exit_all, 0, stack, 0) < 0) {
         sxn_exit(2);
     }
     for (;;) {
-        (void)sxn_wait_one(event, 60000);
+        spins += 1;
     }
 }
 
@@ -472,6 +537,20 @@ static void test_threads(const struct sxn_native_info* info) {
         check(child <= 0 || (sxn_waitpid(child, &status) == child && status == SXN_THREAD_EXITALL_STATUS));
     }
 
+    /* A view unmapped while a sibling reads it on another core: the reader
+     * faults instead of reading on through a stale translation. */
+    {
+        char* child_argv[2];
+        long child;
+        int status = -1;
+
+        child_argv[0] = "/disk/bin/nativetest";
+        child_argv[1] = "shootdown";
+        child = sxn_spawn_stdio("/disk/bin/nativetest", child_argv, 2);
+        check(child > 0);
+        check(child <= 0 || (sxn_waitpid(child, &status) == child && status == SXN_PAGE_FAULT_STATUS));
+    }
+
     check(sxn_log("nativetest: threads done") == 0);
 }
 
@@ -505,6 +584,9 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && streq(argv[1], "exitall")) {
         run_exit_all_child();
+    }
+    if (argc > 1 && streq(argv[1], "shootdown")) {
+        run_shootdown_child();
     }
 
     check(sxn_info(&info) == 0);

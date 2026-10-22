@@ -95,10 +95,6 @@ smp::Cpu& this_cpu() {
     return smp::this_cpu();
 }
 
-void write_cr3(uint64_t value) {
-    asm volatile("mov %0, %%cr3" : : "r"(value) : "memory");
-}
-
 int negative_error(sx_status code) {
     return -static_cast<int>(code);
 }
@@ -159,12 +155,6 @@ uint32_t exported_timer_backend(timer::Backend backend) {
 
 size_t thread_index(const process::Thread* thread) {
     return thread != nullptr ? static_cast<size_t>(thread - &g_threads[0]) : 0;
-}
-
-uint64_t read_cr3() {
-    uint64_t value = 0;
-    asm volatile("mov %%cr3, %0" : "=r"(value));
-    return value;
 }
 
 
@@ -614,30 +604,24 @@ void reparent_orphaned_children(uint32_t parent_pid) {
 // syscall, and only the core where it went to sleep resumes it.
 //
 // Threads running on another core need no filtering: they are in
-// State::running, not ready. And idles never enter, each core returns to its
-// own separately.
-// Another thread of the same process running on another core. Until user
-// space has a TLB shootdown, an address space must be loaded on one core at a
-// time (SMP_ROADMAP.md, phase 3): threads of one process take turns, they do
-// not run in parallel (THREADS_ROADMAP.md, phase 1, the interim rule).
-bool sibling_running_elsewhere(const process::Thread& thread) {
-    for (const process::Thread& other : used_thread_slots()) {
-        if (&other != &thread && other.process == thread.process &&
-            other.state == process::State::running && other.cpu != this_cpu().index) {
-            return true;
-        }
-    }
-    return false;
-}
-
+// State::running, not ready. Siblings of a running thread are not filtered
+// either: threads of one process run on several cores at once, which the user
+// TLB shootdown makes safe (THREADS_ROADMAP.md, phase 2). And idles never
+// enter, each core returns to its own separately.
+//
+// A thread whose process is ending would only run user code it must not run:
+// it waits in ready until the process is torn down. Unless it is halfway
+// through a syscall in ring 0, which must finish to release what it holds;
+// handle_syscall then ends it.
 bool runnable_here(const process::Thread& thread) {
     if (thread.state != process::State::ready || thread.process->idle) {
         return false;
     }
-    if (thread.context != nullptr && (thread.context->cs & 0x3) == 0 && thread.cpu != this_cpu().index) {
+    const bool in_kernel = thread.context != nullptr && (thread.context->cs & 0x3) == 0;
+    if (in_kernel && thread.cpu != this_cpu().index) {
         return false;
     }
-    return thread.process->thread_count <= 1 || !sibling_running_elsewhere(thread);
+    return in_kernel || !thread.process->exit_requested;
 }
 
 process::Thread* pick_next_runnable() {
@@ -1450,20 +1434,23 @@ void terminate_process(process::Process& proc, int exit_code) {
     if (proc.idle || proc.life != process::Lifecycle::alive) {
         return;
     }
+    // The first request decides the code, whichever thread finishes the job.
+    if (!proc.exit_requested) {
+        proc.exit_requested = true;
+        proc.exit_code = exit_code;
+    }
+    exit_code = proc.exit_code;
 
     // A thread running on another core: its kernel stack and the process's
     // page tables are in use right there, and releasing them now would pull
-    // them out from under it. Its own core finishes the process on the next
-    // return to ring 3 (tick, IPI or end of syscall).
+    // them out from under it. That core stops it at its next entry to the
+    // kernel (tick, IPI or end of syscall) and calls back here; the last
+    // thread to stop finds none running and finishes the process.
     bool deferred = false;
     for (process::Thread& thread : used_thread_slots()) {
         if (thread.process != &proc || thread.state != process::State::running ||
             &thread == this_cpu().current) {
             continue;
-        }
-        if (!thread.kill_pending) {
-            thread.kill_pending = true;
-            thread.kill_exit_code = exit_code;
         }
         smp::kick(thread.cpu);
         deferred = true;
@@ -1474,7 +1461,6 @@ void terminate_process(process::Process& proc, int exit_code) {
 
     const uint32_t exiting_pid = proc.pid;
     process::detail::proc_log("proc: terminate pid=%u status=%d\n", proc.pid, exit_code);
-    proc.exit_code = exit_code;
     note_child_exited(proc);
     release_all_handles(proc);
     /* A clean exit releases the GPU via the device close handler in the owner's
@@ -1493,7 +1479,6 @@ void terminate_process(process::Process& proc, int exit_code) {
             continue;
         }
         clear_wait_state(thread);
-        thread.kill_pending = false;
         thread.state = process::State::zombie;
         object::end_thread_object(thread.object, exit_code);
     }
@@ -1681,13 +1666,11 @@ void switch_to_thread(process::Thread* target) {
     target->cpu = this_cpu().index;
     arch::x86_64::set_kernel_stack(target->kernel_stack_base + target->kernel_stack_size);
     // Two threads of one process share the address space: switching between
-    // them keeps CR3, and with it the TLB. Comparing against the live CR3 and
-    // not against the previous thread's process also covers an exec, which
-    // swaps the address space under the same thread.
-    const uint64_t pml4 = target->process->address_space.pml4_physical;
-    if ((read_cr3() & ~static_cast<uint64_t>(0xfff)) != pml4) {
-        write_cr3(pml4);
-    }
+    // them keeps CR3, and with it the TLB. load_address_space compares against
+    // the live CR3, not against the previous thread's process, which also
+    // covers an exec swapping the space under the same thread; and it records
+    // the space for the TLB shootdown.
+    vm::load_address_space(target->process->address_space);
 }
 
 // Resolucion NEUTRAL de una ruta: absoluta, o relativa a la raiz. No hay cwd
@@ -2530,29 +2513,32 @@ Process* create_user_process(const char* path, int argc, const char* const* argv
 }
 
 void terminate_current(int exit_code) {
-    Process* const proc = current();
+    Thread* const self = this_cpu().current;
+    Process* const proc = self != nullptr ? self->process : nullptr;
     if (proc == nullptr || proc->idle) {
         panic("process: invalid current task on exit");
     }
 
     process::detail::terminate_process(*proc, exit_code);
-    // Nothing can defer this while threads of one process take turns (the
-    // interim rule in runnable_here): no sibling runs on another core while
-    // this one does. Phase 2 lifts that rule and has to handle the deferral.
-    process_assert(proc->life != Lifecycle::alive, "process: exit deferred by another thread");
+    // A sibling still runs on another core, so the process lives on until it
+    // stops. This thread stops here: it is a zombie whose object is signaled
+    // with the others when the last one finishes the process, and it never
+    // runs again. Its slot and stack stay until the reap.
+    if (proc->life == Lifecycle::alive) {
+        clear_wait_state(*self);
+        self->state = State::zombie;
+    }
 
     SavedContext* next = choose_next_context(nullptr);
     arch::x86_64::resume_context(next, this_cpu().current->process->address_space.pml4_physical);
 }
 
 bool exit_pending(const Process& proc, int& exit_code) {
-    for (const Thread& thread : used_thread_slots()) {
-        if (thread.process == &proc && thread.state != State::unused && thread.kill_pending) {
-            exit_code = thread.kill_exit_code;
-            return true;
-        }
+    if (proc.life != Lifecycle::alive || !proc.exit_requested) {
+        return false;
     }
-    return false;
+    exit_code = proc.exit_code;
+    return true;
 }
 
 uint32_t live_thread_count(const Process& proc) {
@@ -2604,14 +2590,17 @@ void exit_current_thread(int exit_code) {
         panic("process: invalid current thread on thread exit");
     }
 
-    // The last live thread takes the process with it, as returning from main
-    // or ExitThread on the last thread does.
+    // A process already ending decides the code. Otherwise the last live
+    // thread takes the process with it, as returning from main or ExitThread
+    // on the last thread does.
+    if (self->process->exit_requested) {
+        terminate_current(self->process->exit_code);
+    }
     if (live_thread_count(*self->process) <= 1) {
         terminate_current(exit_code);
     }
 
     clear_wait_state(*self);
-    self->kill_pending = false;
     self->state = State::zombie;
     object::end_thread_object(self->object, exit_code);
     process::detail::wake_waiters_for_object(&self->object->header);
@@ -2681,15 +2670,15 @@ SavedContext* handle_syscall(SavedContext* context) {
     const subsystem::Id id = caller != nullptr ? caller->process->subsystem_id : subsystem::Id::posix;
     SavedContext* result = subsystem::dispatch(id, context);
 
-    // Killed from another core while it was in this syscall. If it is still
-    // the thread running here, it ends now, before returning to ring 3. If the
-    // syscall blocked it or gave the CPU to someone else, it no longer runs
-    // anywhere and its process can be torn down like any stopped one.
-    if (caller != nullptr && caller->state != State::unused && caller->kill_pending) {
+    // Its process was asked to end while it was in this syscall. If it is
+    // still the thread running here, it stops now, before returning to ring
+    // 3. If the syscall blocked it or gave the CPU to someone else, it no
+    // longer runs anywhere, which may be what the process was waiting for.
+    if (caller != nullptr && caller->state != State::unused && caller->process->exit_requested) {
         if (caller == this_cpu().current && caller->state == State::running) {
-            terminate_current(caller->kill_exit_code);
+            terminate_current(caller->process->exit_code);
         }
-        process::detail::terminate_process(*caller->process, caller->kill_exit_code);
+        process::detail::terminate_process(*caller->process, caller->process->exit_code);
         // The syscall blocked the caller and handed this core to a sibling of
         // the same process, which just ended with it (or was released with it,
         // if the parent was already waiting). Resuming it would run a dead
@@ -2740,13 +2729,16 @@ SavedContext* handle_timer_tick(SavedContext* context) {
         // The writeback queue's clock, and its drain of last resort when no
         // core has gone idle for a while.
         block::writeback_tick(current_tick);
+        // Sections of views unmapped while another core shared the address
+        // space, once every such core has flushed.
+        vm::reclaim_deferred_views();
     }
     // The tick makes its own reschedule decision below, so any wakeups above
     // must not leak a preemptive-resched request into the next syscall return.
     this_cpu().resched_pending = false;
 
-    if (this_cpu().current->kill_pending && (context->cs & 0x3) == 0x3) {
-        terminate_current(this_cpu().current->kill_exit_code);
+    if (this_cpu().current->process->exit_requested && (context->cs & 0x3) == 0x3) {
+        terminate_current(this_cpu().current->process->exit_code);
     }
 
     if (this_cpu().current->state != State::running) {
@@ -2779,8 +2771,8 @@ SavedContext* handle_reschedule_ipi(SavedContext* context) {
     this_cpu().current->context = context;
     // Solo desde ring 3: en ring 0 esta dormido adentro de una syscall, y el
     // final de esa syscall es quien lo termina.
-    if (this_cpu().current->kill_pending && (context->cs & 0x3) == 0x3) {
-        terminate_current(this_cpu().current->kill_exit_code);
+    if (this_cpu().current->process->exit_requested && (context->cs & 0x3) == 0x3) {
+        terminate_current(this_cpu().current->process->exit_code);
     }
     if (this_cpu().current->process->idle && has_runnable_non_idle()) {
         this_cpu().current->state = State::ready;

@@ -109,10 +109,11 @@ uint32_t scheduling_count();
 // del kernel tomado y los idles ya creados: cada AP lo espera antes de entrar.
 void start_scheduling();
 
-// Pide al core `index` que pase por el scheduler ahora, sin esperar su tick. Hoy
-// lo usa terminate_process() para que el core de un proceso que mataron desde
-// otro lo termine en el acto. No hace nada si el core ya tiene un pedido
-// pendiente o si es este mismo core.
+// Asks core `index` to enter the kernel now instead of at its next tick.
+// terminate_process() uses it so the core of a process killed from another
+// one ends it right away, and the user TLB shootdown so a core sharing an
+// address space flushes (vm::sync_user_tlb, on taking the lock). Does nothing
+// if the core already has a request in flight or is this core.
 void kick(uint32_t index);
 
 /* --- el lock grande del kernel ----------------------------------------------

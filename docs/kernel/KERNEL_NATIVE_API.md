@@ -244,8 +244,9 @@ Two things stayed on purpose, and the guard says so:
 
 ## Slice 23: threads
 
-Phase 1 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md). Native only for now: a
-POSIX process gets threads with pthreads, in phase 5.
+Phases 1 and 2 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md): threads of one
+process run on several cores at once. Native only for now: a POSIX process
+gets threads with pthreads, in phase 5.
 
 - `SXN_SYS_THREAD_CREATE` (`0x1023`): rdi = entry, rsi = argument (the new
   thread's rdi), rdx = top of a stack the caller allocated, r10 = `uint32_t*`
@@ -269,8 +270,10 @@ the pid.
 memory and end with their own codes, joined through `WAIT_ONE` and
 `THREAD_EXIT_CODE`; the refusals; a child killed with one thread blocked, one
 spinning and its main thread blocked; a child whose main thread ends first and
-whose last thread ends the process with its code; and `SXN_SYS_EXIT` from a
-second thread ending them all.
+whose last thread ends the process with its code; `SXN_SYS_EXIT` from a
+second thread ending them all while the main one spins; and a view unmapped
+while a sibling reads it, which must fault the reader instead of letting it
+read on through a stale translation on another core.
 
 ## Slices 20-22: what a console host needs
 

@@ -211,8 +211,7 @@ enum sxn_syscall_number {
      * entry never returns; the thread ends with SXN_SYS_THREAD_EXIT. Returns a
      * handle to the thread (synchronize + query), signaled when it ends, or
      * -errno. CreateThread. Native only for now (docs/kernel/THREADS_ROADMAP.md).
-     * Threads of one process take turns on the CPU; they do not run in
-     * parallel on several cores yet. */
+     * Threads of one process run on several cores at once. */
     SXN_SYS_THREAD_CREATE = 0x1023,
     /* rdi = exit code. Ends the calling thread; does not return. The last
      * thread of a process ends the process with that code, as SXN_SYS_EXIT
