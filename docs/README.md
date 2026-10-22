@@ -28,6 +28,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   work as ordered phases with the dependencies between them.
 - [`SMP_ROADMAP.md`](kernel/SMP_ROADMAP.md) — multi-core startup, scheduler locking,
   and TLB shootdown work.
+- [`THREADS_ROADMAP.md`](kernel/THREADS_ROADMAP.md) — threads: what moves from the
+  process to the thread, the decisions taken, and the phases to get there.
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
 - [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
   holds what, how a request runs, and what it measured against PIO.
