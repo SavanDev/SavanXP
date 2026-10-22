@@ -22,6 +22,10 @@ Cut-off notes:
   (`sxn_set_thread_base`, `SXN_THREAD_BASE_FS`/`_GS`) sets the calling thread's segment base, the
   anchor of thread-local storage and of a future Win64 TEB. See `docs/kernel/KERNEL_NATIVE_API.md`.
 
+- **Native threads can sleep on a word of memory.** `SXN_SYS_WAIT_ADDRESS` and
+  `SXN_SYS_WAKE_ADDRESS` (`sxn_wait_address`, `sxn_wake_address`): a futex / `WaitOnAddress` for
+  building locks, keyed by process and address. See `docs/kernel/KERNEL_NATIVE_API.md`.
+
 - **AHCI (SATA) disk driver with DMA.** `kernel/ahci.cpp` registers SATA disks as `ahciN`, and
   QEMU now attaches `disk.img` to the q35 AHCI controller by default (`SAVANXP_DISK_BUS=ide` or
   `run_qemu.py --disk-bus ide` keeps legacy IDE). Up to 256 sectors per command: a 390 KB copy

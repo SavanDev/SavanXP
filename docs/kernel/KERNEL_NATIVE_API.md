@@ -66,6 +66,7 @@ object/process factoring, not before.
 - Slice 22: `SXN_SYS_TERMINATE` reaches descendants.
 - Slice 23: threads (`SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`).
 - Slice 24: `SXN_SYS_SET_THREAD_BASE`, per-thread `%fs` / `%gs`.
+- Slice 25: `SXN_SYS_WAIT_ADDRESS` and `SXN_SYS_WAKE_ADDRESS`.
 
 ## Isolation: making the kernel indifferent to userland
 
@@ -275,6 +276,33 @@ whose last thread ends the process with its code; `SXN_SYS_EXIT` from a
 second thread ending them all while the main one spins; and a view unmapped
 while a sibling reads it, which must fault the reader instead of letting it
 read on through a stale translation on another core.
+
+## Slice 25: wait on an address
+
+Phase 4 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md): what a user-space lock
+sleeps on. The uncontended path never enters the kernel; a thread calls in
+only to sleep until another one changes the word and says so.
+
+- `SXN_SYS_WAIT_ADDRESS` (`0x1027`): rdi = address of a word, rsi = the value
+  it is expected to hold, rdx = its size (1, 2, 4 or 8; the address aligned to
+  it), r10 = timeout in ms (negative = none, 0 = do not park). Parks the
+  calling thread while the word holds that value. 0 once woken, `-EAGAIN`
+  when the word already differs, `-ETIMEDOUT`, or `-EINVAL` for a bad size,
+  alignment or address. Being woken says the word may have changed, not that
+  it did: the caller re-reads it. `WaitOnAddress`, `futex(FUTEX_WAIT)`.
+- `SXN_SYS_WAKE_ADDRESS` (`0x1028`): rdi = address, rsi = how many to release
+  (`SXN_WAKE_ALL` for every one). Releases threads of the calling process
+  parked on that address, oldest first; returns how many.
+  `WakeByAddressSingle`/`All`, `futex(FUTEX_WAKE)`.
+
+Waiters are keyed by process and virtual address, so a wake reaches only the
+caller's own threads: two processes sharing a section never meet here, even at
+the same address. Cross-process waits stay with events until a consumer needs
+more. Native only for now, like the other thread calls.
+
+`nativetest` covers it: the immediate returns and the refusals, three waiters
+on one word released by count, and a futex mutex holding a counter exact
+under four threads.
 
 ## Slice 24: per-thread `%fs` and `%gs`
 

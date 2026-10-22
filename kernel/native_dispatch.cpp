@@ -936,6 +936,19 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             context->rax = static_cast<uint64_t>(
                 set_thread_base(*self, static_cast<uint32_t>(context->rdi), context->rsi));
             return context;
+        case SXN_SYS_WAIT_ADDRESS: {
+            const int result = wait_on_address(*self, context->rdi, context->rsi, context->rdx,
+                static_cast<int64_t>(context->r10));
+            if (result == kBlockedResult) {
+                return choose_next_context(context);
+            }
+            context->rax = static_cast<uint64_t>(result);
+            return context;
+        }
+        case SXN_SYS_WAKE_ADDRESS:
+            context->rax = static_cast<uint64_t>(
+                wake_address(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
         case SXN_SYS_PIPE_CREATE:
             context->rax = static_cast<uint64_t>(native_pipe_create(*caller, context->rdi));
             return context;

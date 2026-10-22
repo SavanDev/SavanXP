@@ -739,7 +739,8 @@ void wake_sleepers(uint64_t current_tick) {
 void wake_wait_timeouts(uint64_t current_tick) {
     for (process::Thread& thread : used_thread_slots()) {
         if (thread.state != process::State::blocked_wait ||
-            thread.wait_reason != process::WaitReason::object ||
+            (thread.wait_reason != process::WaitReason::object &&
+             thread.wait_reason != process::WaitReason::address) ||
             thread.wake_deadline_ms == 0 ||
             thread.wake_deadline_ms > current_tick) {
             continue;
@@ -888,6 +889,11 @@ void recheck_parked_threads(uint64_t current_tick, bool honour_deadline) {
         // waits for belongs to the layer that parked it (slice C). It used to
         // say wait_reason == poll and re-evaluate the descriptors right here.
         if (thread.state != process::State::blocked_wait) {
+            continue;
+        }
+        // Only a wake or its deadline ends an address wait; it is no
+        // subsystem's park either.
+        if (thread.wait_reason == process::WaitReason::address) {
             continue;
         }
         // An object wait that names a stream has no signal to wake it: the
@@ -1640,6 +1646,8 @@ void clear_wait_state(process::Thread& thread) {
     thread.wait_reserved = 0;
     thread.waiting_for_pid = 0;
     thread.wait_status_address = 0;
+    thread.wait_address = 0;
+    thread.wait_ticket = 0;
     for (size_t index = 0; index < process::kMaxWaitHandles; ++index) {
         thread.waited_objects[index] = nullptr;
     }
@@ -2550,6 +2558,98 @@ bool exit_pending(const Process& proc, int& exit_code) {
     }
     exit_code = proc.exit_code;
     return true;
+}
+
+/*
+ * Wait on an address: the primitive user-space locks park on (a futex,
+ * WaitOnAddress). The fast path never enters the kernel; a thread comes here
+ * only to sleep until another one changes the word and says so.
+ *
+ * No wake is lost because both calls run under the kernel lock: a waker
+ * stores the new value and then takes the lock, so either it finds this
+ * thread already parked, or this thread reads the word after the store and
+ * does not park. Parked threads are a scan of the thread table keyed by
+ * (process, address): one address space per process, so that is the
+ * (address space, virtual address) of the roadmap. Threads of two processes
+ * sharing a section never meet here.
+ */
+namespace {
+
+uint64_t g_address_wait_tickets = 0;
+
+bool read_wait_word(const Process& proc, uint64_t address, uint64_t size, uint64_t& value) {
+    if (!vm::is_user_range_accessible(proc.address_space, address, static_cast<size_t>(size), false)) {
+        return false;
+    }
+    // The caller's address space is the loaded one, and the kernel lock keeps
+    // the page mapped while it is read. One load of the word's own size, the
+    // same access the user side makes.
+    switch (size) {
+        case 1: value = __atomic_load_n(reinterpret_cast<const volatile uint8_t*>(address), __ATOMIC_SEQ_CST); return true;
+        case 2: value = __atomic_load_n(reinterpret_cast<const volatile uint16_t*>(address), __ATOMIC_SEQ_CST); return true;
+        case 4: value = __atomic_load_n(reinterpret_cast<const volatile uint32_t*>(address), __ATOMIC_SEQ_CST); return true;
+        default: value = __atomic_load_n(reinterpret_cast<const volatile uint64_t*>(address), __ATOMIC_SEQ_CST); return true;
+    }
+}
+
+} // namespace
+
+int wait_on_address(Thread& self, uint64_t address, uint64_t expected, uint64_t size, int64_t timeout_ms) {
+    if ((size != 1 && size != 2 && size != 4 && size != 8) || (address & (size - 1)) != 0) {
+        return negative_error(SX_EINVAL);
+    }
+    uint64_t value = 0;
+    if (&self != this_cpu().current || !read_wait_word(*self.process, address, size, value)) {
+        return negative_error(SX_EINVAL);
+    }
+    const uint64_t mask = size == 8 ? ~0ULL : ((1ULL << (size * 8)) - 1);
+    if (value != (expected & mask)) {
+        return negative_error(SX_EAGAIN);
+    }
+    if (timeout_ms == 0) {
+        return negative_error(SX_ETIMEDOUT);
+    }
+
+    clear_wait_state(self);
+    self.wait_reason = WaitReason::address;
+    self.wait_address = address;
+    self.wait_ticket = ++g_address_wait_tickets;
+    self.wake_deadline_ms = timeout_ms > 0 ? (process::detail::now_ms() + static_cast<uint64_t>(timeout_ms)) : 0;
+    self.state = State::blocked_wait;
+    return kBlockedResult;
+}
+
+int wake_address(Process& proc, uint64_t address, uint32_t count) {
+    uint32_t woken = 0;
+    // Releasing them all needs no order: one pass.
+    if (count == SXN_WAKE_ALL) {
+        for (Thread& thread : used_thread_slots()) {
+            if (thread.state == State::blocked_wait && thread.wait_reason == WaitReason::address &&
+                thread.process == &proc && thread.wait_address == address) {
+                process::detail::complete_blocked_wait(thread, 0);
+                ++woken;
+            }
+        }
+        return static_cast<int>(woken);
+    }
+    while (woken < count) {
+        Thread* oldest = nullptr;
+        for (Thread& thread : used_thread_slots()) {
+            if (thread.state != State::blocked_wait || thread.wait_reason != WaitReason::address ||
+                thread.process != &proc || thread.wait_address != address) {
+                continue;
+            }
+            if (oldest == nullptr || thread.wait_ticket < oldest->wait_ticket) {
+                oldest = &thread;
+            }
+        }
+        if (oldest == nullptr) {
+            break;
+        }
+        process::detail::complete_blocked_wait(*oldest, 0);
+        ++woken;
+    }
+    return static_cast<int>(woken);
 }
 
 uint32_t live_thread_count(const Process& proc) {

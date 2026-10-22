@@ -229,7 +229,26 @@ enum sxn_syscall_number {
      * an address outside user space. arch_prctl(ARCH_SET_FS) for POSIX TLS;
      * Win64 keeps its TEB at %gs. Native only for now. */
     SXN_SYS_SET_THREAD_BASE = 0x1026,
+    /* rdi = address of a word of rdx bytes (1, 2, 4 or 8, aligned to its
+     * size), rsi = the value it is expected to hold, r10 = timeout in ms
+     * (negative = none, 0 = do not park). Parks the calling thread while the
+     * word holds that value, until SXN_SYS_WAKE_ADDRESS names it. Returns 0
+     * once woken, -EAGAIN when the word already differs, -ETIMEDOUT, or
+     * -EINVAL for a bad size, alignment or address. A woken thread re-reads
+     * the word: being woken says the word may have changed, not that it did.
+     * WaitOnAddress, futex(FUTEX_WAIT). Native only for now. */
+    SXN_SYS_WAIT_ADDRESS = 0x1027,
+    /* rdi = address, rsi = how many waiters to release (SXN_WAKE_ALL for
+     * every one). Releases threads of the calling process parked on that
+     * address, oldest first, and returns how many. Waiters are keyed by
+     * process and virtual address: a thread of another process is never
+     * reached, wherever it maps the word. WakeByAddressSingle/All,
+     * futex(FUTEX_WAKE). Native only for now. */
+    SXN_SYS_WAKE_ADDRESS = 0x1028,
 };
+
+/* SXN_SYS_WAKE_ADDRESS: release every waiter. */
+#define SXN_WAKE_ALL 0xffffffffu
 
 /* Bases of SXN_SYS_SET_THREAD_BASE. */
 #define SXN_THREAD_BASE_FS 1u

@@ -530,6 +530,201 @@ static void test_thread_bases(void) {
     check(sxn_log("nativetest: thread bases done") == 0);
 }
 
+/* Wait on an address (threads phase 4). Waiters parked on a word are
+ * released by count, an address wait that times out or finds the word changed
+ * comes straight back, and a three-state mutex built on the pair (the classic
+ * futex mutex) keeps a counter exact while four threads hammer it. */
+#define SXN_GATE_THREADS 3
+#define SXN_LOCK_THREADS 4
+#define SXN_LOCK_ROUNDS 5000
+
+static volatile uint32_t g_gate;
+static volatile uint32_t g_gate_ready;
+static volatile long g_gate_results[SXN_GATE_THREADS];
+static volatile uint32_t g_lock;
+static volatile uint64_t g_locked_counter;
+static volatile uint32_t g_lock_parks;
+static volatile uint64_t g_wide = 0x1122334455667788ull;
+static long g_address_pause = -1;
+
+static void address_pause(long ms) {
+    (void)sxn_wait_one(g_address_pause, ms);
+}
+
+static void gate_waiter(void* argument) {
+    long index = (long)argument;
+
+    __atomic_fetch_add(&g_gate_ready, 1u, __ATOMIC_SEQ_CST);
+    g_gate_results[index] = sxn_wait_address(&g_gate, 0, sizeof(g_gate), 10000);
+    sxn_thread_exit(0);
+}
+
+/* 0 free, 1 taken, 2 taken with waiters. */
+static void futex_lock(volatile uint32_t* word) {
+    uint32_t seen = 0;
+
+    if (__atomic_compare_exchange_n(word, &seen, 1u, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        return;
+    }
+    if (seen != 2u) {
+        seen = __atomic_exchange_n(word, 2u, __ATOMIC_SEQ_CST);
+    }
+    while (seen != 0u) {
+        __atomic_fetch_add(&g_lock_parks, 1u, __ATOMIC_RELAXED);
+        (void)sxn_wait_address(word, 2u, sizeof(*word), -1);
+        seen = __atomic_exchange_n(word, 2u, __ATOMIC_SEQ_CST);
+    }
+}
+
+static void futex_unlock(volatile uint32_t* word) {
+    if (__atomic_fetch_sub(word, 1u, __ATOMIC_SEQ_CST) != 1u) {
+        __atomic_store_n(word, 0u, __ATOMIC_SEQ_CST);
+        (void)sxn_wake_address(word, 1);
+    }
+}
+
+static void lock_worker(void* argument) {
+    long round;
+    int spin;
+
+    (void)argument;
+    for (round = 0; round < SXN_LOCK_ROUNDS; ++round) {
+        uint64_t value;
+
+        futex_lock(&g_lock);
+        /* A read-modify-write wide enough to lose updates without the lock. */
+        value = g_locked_counter;
+        for (spin = 0; spin < 16; ++spin) {
+            __asm__ volatile("pause");
+        }
+        g_locked_counter = value + 1u;
+        /* Now and then sleep holding it, so the others park even on one core. */
+        if ((round % 500) == 250) {
+            address_pause(1);
+        }
+        futex_unlock(&g_lock);
+    }
+    sxn_thread_exit(0);
+}
+
+static void test_address_waits(void) {
+    int32_t handles[SXN_LOCK_THREADS];
+    volatile uint8_t* wide_bytes = (volatile uint8_t*)&g_wide;
+    int32_t code = -1;
+    uint64_t started;
+    long woken = 0;
+    long index;
+    int tries;
+
+    g_address_pause = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    check(g_address_pause >= 0);
+
+    /* Straight back: the word differs, a zero timeout, a timeout that runs
+     * out, the low `size` bytes compared and nothing else, bad requests. */
+    g_gate = 5u;
+    check(sxn_wait_address(&g_gate, 0, 4, -1) == -SAVANXP_EAGAIN);
+    check(sxn_wait_address(&g_gate, 5, 4, 0) == -SAVANXP_ETIMEDOUT);
+    started = sxn_clock_ns();
+    check(sxn_wait_address(&g_gate, 5, 4, 30) == -SAVANXP_ETIMEDOUT);
+    check(sxn_clock_ns() - started >= 25000000ull);
+    check(sxn_wait_address(&g_wide, 0x1122334455667788ull, 8, 0) == -SAVANXP_ETIMEDOUT);
+    check(sxn_wait_address(&g_wide, 0x1122334400000000ull, 8, 0) == -SAVANXP_EAGAIN);
+    check(sxn_wait_address(wide_bytes, 0xff88u, 1, 0) == -SAVANXP_ETIMEDOUT);
+    check(sxn_wait_address(wide_bytes, 0x0011u, 2, 0) == -SAVANXP_EAGAIN);
+    check(sxn_wait_address(&g_gate, 5, 3, 0) == -SAVANXP_EINVAL);
+    check(sxn_wait_address(wide_bytes + 1, 0, 4, 0) == -SAVANXP_EINVAL);
+    check(sxn_wait_address((void*)0, 0, 4, 0) == -SAVANXP_EINVAL);
+    check(sxn_wait_address((void*)0xffff800000000000ul, 0, 4, 0) == -SAVANXP_EINVAL);
+    check(sxn_wake_address(&g_gate, SXN_WAKE_ALL) == 0);
+
+    /* Three waiters on one word: one released alone, then the other two. The
+     * word never changes, so only a wake lets a waiter go; a wake that finds
+     * fewer parked than expected is retried after a pause. */
+    g_gate = 0u;
+    g_gate_ready = 0u;
+    for (index = 0; index < SXN_GATE_THREADS; ++index) {
+        void* stack = thread_stack();
+
+        g_gate_results[index] = 1;
+        check(stack != 0);
+        handles[index] = (int32_t)sxn_thread_create(gate_waiter, (void*)index, stack, 0);
+        check(handles[index] >= 0);
+    }
+    for (tries = 0; tries < 2000 && g_gate_ready != SXN_GATE_THREADS; ++tries) {
+        address_pause(1);
+    }
+    check(g_gate_ready == SXN_GATE_THREADS);
+    address_pause(20);
+    for (tries = 0; tries < 500 && woken < 1; ++tries) {
+        long step = sxn_wake_address(&g_gate, 1);
+
+        check(step == 0 || step == 1);
+        woken += step;
+        if (step == 0) {
+            address_pause(2);
+        }
+    }
+    check(woken == 1);
+    for (tries = 0; tries < 500 && woken < SXN_GATE_THREADS; ++tries) {
+        long step = sxn_wake_address(&g_gate, SXN_WAKE_ALL);
+
+        check(step >= 0 && step <= SXN_GATE_THREADS - woken);
+        woken += step;
+        if (woken < SXN_GATE_THREADS) {
+            address_pause(2);
+        }
+    }
+    check(woken == SXN_GATE_THREADS);
+    for (index = 0; index < SXN_GATE_THREADS; ++index) {
+        check(sxn_wait_one(handles[index], 10000) == 0);
+        check(g_gate_results[index] == 0);
+        (void)sxn_close(handles[index]);
+    }
+
+    /* The futex mutex. */
+    g_lock = 0u;
+    g_locked_counter = 0u;
+    g_lock_parks = 0u;
+    for (index = 0; index < SXN_LOCK_THREADS; ++index) {
+        void* stack = thread_stack();
+
+        check(stack != 0);
+        handles[index] = (int32_t)sxn_thread_create(lock_worker, 0, stack, 0);
+        check(handles[index] >= 0);
+    }
+    for (index = 0; index < SXN_LOCK_THREADS; ++index) {
+        check(sxn_wait_one(handles[index], 60000) == 0);
+        check(sxn_thread_exit_code(handles[index], &code) == 0 && code == 0);
+        (void)sxn_close(handles[index]);
+    }
+    check(g_locked_counter == (uint64_t)SXN_LOCK_THREADS * SXN_LOCK_ROUNDS);
+    check(g_lock == 0u);
+    check(g_lock_parks != 0u);
+    (void)sxn_close(g_address_pause);
+    {
+        /* How many times a locker parked: contention reached the kernel. */
+        static const char prefix[] = "nativetest: address waits done, parks=";
+        char line[sizeof(prefix) + 12];
+        char digits[12];
+        unsigned parks = g_lock_parks;
+        unsigned count = 0;
+        unsigned at;
+
+        for (at = 0; at < sizeof(prefix) - 1u; ++at) {
+            line[at] = prefix[at];
+        }
+        do {
+            digits[count++] = (char)('0' + parks % 10u);
+            parks /= 10u;
+        } while (parks != 0u);
+        while (count != 0u) {
+            line[at++] = digits[--count];
+        }
+        line[at] = '\0';
+        check(sxn_log(line) == 0);
+    }
+}
+
 static void test_threads(const struct sxn_native_info* info) {
     int32_t handles[SXN_THREAD_WORKERS] = {-1, -1, -1};
     uint32_t tids[SXN_THREAD_WORKERS] = {0, 0, 0};
@@ -1107,6 +1302,7 @@ int main(int argc, char** argv) {
 
     test_threads(&info);
     test_thread_bases();
+    test_address_waits();
 
     /* The heap (docs/userland/NATIVE_HEAP.md). The bootstrap arena is BSS and
      * needs no system call; the arenas past it come from the native page

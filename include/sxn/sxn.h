@@ -214,6 +214,23 @@ static inline long sxn_set_thread_base(unsigned which, void* address) {
     return sxn_trap(SXN_SYS_SET_THREAD_BASE, (unsigned long)which, (unsigned long)address, 0);
 }
 
+/* WaitOnAddress: parks the calling thread while the `size`-byte word at
+ * `address` (1, 2, 4 or 8, aligned) holds `expected`, until a
+ * sxn_wake_address names it. 0 when woken (re-read the word: it may not have
+ * changed), -EAGAIN when it already differs, -ETIMEDOUT after `timeout_ms`
+ * (negative = no timeout), -EINVAL. */
+static inline long sxn_wait_address(
+    const volatile void* address, uint64_t expected, unsigned long size, long timeout_ms) {
+    return sxn_trap4(SXN_SYS_WAIT_ADDRESS, (unsigned long)address, (unsigned long)expected, size,
+                     (unsigned long)timeout_ms);
+}
+
+/* WakeByAddressSingle/All: releases up to `count` threads of this process
+ * parked on `address` (SXN_WAKE_ALL for all), oldest first. How many. */
+static inline long sxn_wake_address(const volatile void* address, unsigned count) {
+    return sxn_trap(SXN_SYS_WAKE_ADDRESS, (unsigned long)address, (unsigned long)count, 0);
+}
+
 static inline void sxn_spawn_request_init(
     struct sxn_spawn_request* request, const char* path, char* const* argv, int argc) {
     request->path = (uint64_t)(unsigned long)path;

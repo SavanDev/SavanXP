@@ -1,6 +1,6 @@
 # Threads — more than one execution context per process
 
-> **Status: phases 0-3 done (2026-10-22), phases 4 and 5 not started.** This
+> **Status: phases 0-4 done (2026-10-22), phase 5 not started.** This
 > document is the inventory: what the kernel assumed about "one process, one
 > context", what had to move, and the order in which to move it so that every
 > phase boots and can be verified on its own.
@@ -16,7 +16,9 @@
 > [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)), taking turns on the CPU.
 > Phase 2 lets them run on several cores at once, with a user-space TLB
 > shootdown that never waits for the other cores. Phase 3 gives each thread
-> its own `%fs` and `%gs` (`SXN_SYS_SET_THREAD_BASE`, slice 24).
+> its own `%fs` and `%gs` (`SXN_SYS_SET_THREAD_BASE`, slice 24). Phase 4
+> lets them sleep on a word of memory (`SXN_SYS_WAIT_ADDRESS` and
+> `SXN_SYS_WAKE_ADDRESS`, slice 25), the primitive locks are built on.
 
 Threads are the first kernel prerequisite of a future Win32 subsystem — the
 others are per-thread TLS registers, exceptions delivered to user mode and
@@ -393,13 +395,47 @@ point both bases at blocks of their own and read them back 2000 times each,
 yielding every 64 rounds. With the swap removed from `switch_to_thread` the
 test fails on one core and on four.
 
-### Phase 4 — wait on an address
+### Phase 4 — wait on an address — **DONE**
 
-`SXN_SYS_WAIT_ADDRESS` (address, expected value, timeout) and
-`SXN_SYS_WAKE_ADDRESS` (address, count). The parked set is keyed by
-(address space, virtual address), so two processes sharing a section wait on
-the same word only if they agree on the address — the same limitation
-`WaitOnAddress` has, and the private case is the one every lock needs.
+What landed:
+
+- `SXN_SYS_WAIT_ADDRESS` (address, expected value, size, timeout) and
+  `SXN_SYS_WAKE_ADDRESS` (address, count), slice 25 of
+  [KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md). A parked thread is
+  `State::blocked_wait` with `WaitReason::address`, the address in
+  `Thread::wait_address`; the tick's `wake_wait_timeouts` expires its
+  deadline like an object wait's.
+- **No lost wake, by the kernel lock.** The waiter reads the word and parks
+  under the lock; a waker stores its new value and then takes the lock to
+  wake. Either the waker finds the thread parked, or the waiter's read comes
+  after the store and sees the change (`-EAGAIN`). When the big lock is
+  split (SMP phase 4), the parked set needs a lock of its own that the
+  read-and-park holds across.
+- **The parked set is the thread table**, scanned by (process, address) —
+  one address space per process, so that is the (address space, virtual
+  address) key of the plan. That key is private: two processes sharing a
+  section never meet, even at the same address, which is `WaitOnAddress`'s
+  rule too. The private case is the one every lock needs.
+- **Oldest first.** Each wait takes a ticket; a wake releases the lowest
+  tickets, so a lock handed over one waiter at a time is fair.
+
+Where it differs from the plan:
+
+- **Sizes 1, 2, 4 and 8**, as `WaitOnAddress` takes them, not only the 32-bit
+  word of a futex. The size is an argument, the word must be aligned to it,
+  and only its bytes are compared.
+- **A word already changed is `-EAGAIN`**, as `futex` reports it;
+  `WaitOnAddress` calls it success. The caller loops on the word either way.
+- No bitset, requeue or priority-inheritance variants. pthreads condition
+  variables can do without requeue (wake all and let them retry), at the
+  price of a thundering herd that only matters with many waiters.
+
+Verified by `native-test` on 1, 2 and 4 cores: the immediate returns and the
+refusals, three waiters on one word released one and then the rest, and a
+three-state mutex built on the pair keeping a counter exact while four threads
+take it 5000 times each (and sleep holding it now and then, so the others park
+even on one core). With the wake turned into a no-op the test fails, and so
+it does with a wait that never parks.
 
 ### Phase 5 — pthreads in the POSIX SDK
 
@@ -416,7 +452,7 @@ object a sibling thread can close meanwhile. The user memory they write after
 waking is revalidated (`sx::write_user_memory`), the object is not. Sockets
 are POSIX's (a native process only meets one through an inherited handle), so
 before POSIX processes get a second thread these loops must hold a reference
-across the sleep, or block the `kBlockedResult` way. The thread calls join the set open to every
+across the sleep, or block the `kBlockedResult` way. The thread calls and the address waits join the set open to every
 subsystem (`native_call_open_to_all_subsystems`). Check: a pthread test that hammers `malloc`,
 `errno` and a mutex-protected counter from several threads on several cores.
 

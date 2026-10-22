@@ -106,6 +106,8 @@ enum class WaitReason : uint8_t {
     none = 0,
     child = 1,
     object = 2,
+    // SXN_SYS_WAIT_ADDRESS: parked on (process, wait_address).
+    address = 3,
 };
 
 struct HandleEntry {
@@ -174,6 +176,10 @@ struct Thread {
     uint16_t wait_reserved;
     uint32_t waiting_for_pid;
     uint64_t wait_status_address;
+    // The word an address wait parks on, and the order it parked in: a wake
+    // releases the oldest waiters first.
+    uint64_t wait_address;
+    uint64_t wait_ticket;
     object::Header* waited_objects[kMaxWaitHandles];
     uint64_t blocked_io_fd;
     uint64_t blocked_read_buffer;
@@ -366,6 +372,14 @@ int set_thread_base(Thread& self, uint32_t which, uint64_t address);
 // The current FS and GS bases of `thread`, read from the MSRs when it is the
 // one running here. fork copies them from the parent thread this way.
 void thread_bases(const Thread& thread, uint64_t& fs_base, uint64_t& gs_base);
+// Wait on an address (THREADS_ROADMAP phase 4). wait_on_address parks the
+// calling thread while the `size`-byte word at `address` (1, 2, 4 or 8,
+// aligned to its size) still holds `expected`: 0 once woken, -EAGAIN when the
+// word already differs, -ETIMEDOUT, or -EINVAL. wake_address releases up to
+// `count` threads of `proc` parked on `address`, oldest first, and returns
+// how many.
+int wait_on_address(Thread& self, uint64_t address, uint64_t expected, uint64_t size, int64_t timeout_ms);
+int wake_address(Process& proc, uint64_t address, uint32_t count);
 // Threads of `proc` that have not ended.
 uint32_t live_thread_count(const Process& proc);
 // Asked to end while one of its threads ran on another core (exit_requested):
