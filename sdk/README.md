@@ -30,15 +30,12 @@ sources and local headers. A directory source is compiled recursively, with
 ## Included examples
 
 - `sdk/hello/main.c`: simple stdout output
-- `sdk/errdemo/main.c`: simple stderr output
 - `sdk/fsdemo/main.c`: create/write/read under `/disk/tmp`
 - `sdk/pathops/main.c`: `mkdir`/`rename`/`truncate`/`unlink`/`rmdir`
 - `sdk/procpeek/main.c`: simple process snapshots
 - `sdk/spawnwait/main.c`: `spawn` and `waitpid`
 - `sdk/statusdemo/main.c`: errors, process states, and SDK metadata
 - `sdk/gfxhello/main.c`: a fullscreen application using `gfx_*`
-- `sdk/udptest/main.c`: local IPv4 UDP self-test
-- `sdk/tcpget/main.c`: minimal HTTP client over IPv4 TCP
 - `sdk/multifile/`: an external application with several source files
 - `sdk/template/main.c`: minimal starting point for a new application
 
@@ -94,7 +91,7 @@ every external binary by default.
 `tools/run-user.sh` builds, installs, and boots one application:
 
 ```bash
-./tools/run-user.sh --source sdk/errdemo --name errdemo
+./tools/run-user.sh --source sdk/hello --name hello
 ```
 
 The official Doom and FFmpeg integrations live under [`ports/`](../ports/README.md)

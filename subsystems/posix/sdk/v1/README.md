@@ -209,8 +209,6 @@ Ejemplo externo recomendado para GUI:
 
 ```bash
 ./tools/build-user.sh --source sdk/gfxhello --name gfxhello
-./tools/build-user.sh --source sdk/udptest --name udptest
-./tools/build-user.sh --source sdk/tcpget --name tcpget
 ```
 
 Nota de red:

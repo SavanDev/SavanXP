@@ -210,13 +210,12 @@ There is also a wrapper that compiles, installs and boots the system in one
 step:
 
 ```bash
-./tools/run-user.sh --source sdk/errdemo/main.c --name errdemo
+./tools/run-user.sh --source sdk/hello/main.c --name hello
 ```
 
 Included examples:
 
 - `sdk/hello`
-- `sdk/errdemo`
 - `sdk/fsdemo`
 - `sdk/gfxhello`
 - `ports/doomgeneric`
