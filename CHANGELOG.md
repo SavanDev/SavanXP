@@ -405,6 +405,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **Paint no longer overwrites PNG files or resizes what it opens.** Save on a PNG asks for a
+  `.bmp` name instead of writing BMP bytes into the `.png`; opened images keep their own size; top-down
+  BMPs load; a failed Save As keeps the old name; no-op strokes push no undo step.
+
 - **IDE flushes reach the drive.** `FLUSH CACHE` was written while the drive was still busy with
   the write before it, and dropped; it is now issued once BSY clears, so a commit is on the medium
   when it returns.

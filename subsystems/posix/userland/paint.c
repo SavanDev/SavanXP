@@ -5,32 +5,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 
 #include "shared/version.h"
 
 /*
- * Paint, con la planta del de la era WinXP: la caja de herramientas a la
- * izquierda, los colores arriba y el lienzo al centro sobre la barra de
- * estado.
+ * Paint, laid out like the WinXP-era one: toolbox on the left, colours on
+ * top and the canvas in the middle over the status bar.
  *
- * Nada de eso son widgets: sxgui no tiene toolbar ni paleta, asi que la caja
- * y la tira se pintan en on_paint y el hit-testing va en on_pointer, igual
- * que la grilla de minas de mines.c. El unico widget de la ventana es la
- * etiqueta de estado. La seleccion de herramienta se lee hundida, como un
- * boton que quedo apretado.
+ * None of that is widgets: sxgui has no toolbar or palette, so the toolbox
+ * and the colour strip paint in on_paint and hit-test in on_pointer, like the
+ * Mines grid in mines.c. The only widget in the window is the status label.
+ * The selected tool reads sunken, like a button left pressed.
  *
- * El documento vive en un sx_bitmap propio (el WM no guarda nada: sin backing
- * store no hay Expose, asi que la app es duena del original y lo blitea en
- * on_paint). Solo BMP de 24 bpp BI_RGB: no hay decodificador de PNG en el
- * arbol y el escritor BMP son un header de 54 bytes mas filas con padding.
+ * The document lives in an sx_bitmap the app owns (the WM keeps nothing:
+ * without a backing store there is no Expose, so the app owns the original
+ * and blits it in on_paint). It takes the size of the image it opened, up to
+ * PAINT_DOC_W x PAINT_DOC_H. It saves only 24 bpp BI_RGB BMP (a 54-byte
+ * header plus padded rows) and opens BMP or PNG, the latter through
+ * libsximg. There is no PNG encoder, so a .png name never receives BMP bytes.
  *
- * Todo es de 1 px y opaco: no hay sx_pen, ni alpha, ni flood fill en sxgfx
- * (docs/desktop/SXGFX_ROADMAP.md).
+ * Everything is 1 px and opaque: there is no sx_pen, no alpha and no flood
+ * fill in sxgfx (docs/desktop/SXGFX_ROADMAP.md).
  */
 
-/* --- documento ------------------------------------------------------------ */
+/* --- document ------------------------------------------------------------- */
 
+/* Size of a new document, and the largest image Paint opens: the window
+ * layout is sized for it. */
 #define PAINT_DOC_W 512
 #define PAINT_DOC_H 384
 
@@ -114,6 +117,23 @@ static struct sxgui_widget g_widgets[1];
 
 static struct sx_bitmap g_doc;
 static struct sx_painter g_doc_painter;
+
+/* Rows are packed (sx_bitmap_create sets pitch = width * 4), so a pixel is
+ * pixels[y * doc_w() + x]. */
+static int doc_w(void)
+{
+    return (int)g_doc.info.width;
+}
+
+static int doc_h(void)
+{
+    return (int)g_doc.info.height;
+}
+
+static size_t doc_bytes(void)
+{
+    return (size_t)doc_w() * (size_t)doc_h() * 4u;
+}
 
 static int g_tool = PAINT_TOOL_PENCIL;
 static uint32_t g_color = SXGUI_RGB(0x00, 0x00, 0x00);
@@ -257,16 +277,31 @@ static int read_all(int fd, unsigned char *data, size_t size)
     return 0;
 }
 
+/* Paint writes BMP only. A name ending in .png must never receive BMP bytes:
+ * other programs trust the extension, and the original PNG would be lost. */
+static int path_is_png(const char *path)
+{
+    const char *dot = path != 0 ? strrchr(path, '.') : 0;
+
+    return dot != 0 && strchr(dot, '/') == 0 && strcasecmp(dot, ".png") == 0;
+}
+
 static int paint_save_bmp(const char *path)
 {
-    uint32_t stride = ((uint32_t)PAINT_DOC_W * 3u + 3u) & ~3u;
-    uint32_t image_size = stride * (uint32_t)PAINT_DOC_H;
+    int width = doc_w();
+    int height = doc_h();
+    uint32_t stride = ((uint32_t)width * 3u + 3u) & ~3u;
+    uint32_t image_size = stride * (uint32_t)height;
     uint32_t file_size = 54u + image_size;
     unsigned char *image = 0;
     long fd = -1;
     int result = -1;
     int y;
 
+    if (path == 0 || path[0] == '\0' || path_is_png(path))
+    {
+        return -1;
+    }
     image = (unsigned char *)malloc(file_size);
     if (image == 0)
     {
@@ -278,21 +313,21 @@ static int paint_save_bmp(const char *path)
     write_le32(image + 2, file_size);
     write_le32(image + 10, 54u);
     write_le32(image + 14, 40u);
-    write_le32(image + 18, (uint32_t)PAINT_DOC_W);
-    write_le32(image + 22, (uint32_t)PAINT_DOC_H);
+    write_le32(image + 18, (uint32_t)width);
+    write_le32(image + 22, (uint32_t)height);
     write_le16(image + 26, 1u);
     write_le16(image + 28, 24u);
     write_le32(image + 34, image_size);
 
-    /* Altura positiva = bottom-up: la primera fila del archivo es la de
-     * abajo del dibujo. */
-    for (y = PAINT_DOC_H - 1; y >= 0; --y)
+    /* Positive height = bottom-up: the first row in the file is the bottom
+     * row of the picture. */
+    for (y = height - 1; y >= 0; --y)
     {
-        uint32_t *source = g_doc.pixels + ((size_t)y * (size_t)PAINT_DOC_W);
-        unsigned char *target = image + 54u + ((uint32_t)(PAINT_DOC_H - 1 - y) * stride);
+        uint32_t *source = g_doc.pixels + ((size_t)y * (size_t)width);
+        unsigned char *target = image + 54u + ((uint32_t)(height - 1 - y) * stride);
         size_t x;
 
-        for (x = 0; x < (size_t)PAINT_DOC_W; ++x)
+        for (x = 0; x < (size_t)width; ++x)
         {
             uint32_t pixel = source[x];
 
@@ -329,28 +364,38 @@ static int paint_save_bmp(const char *path)
     return result;
 }
 
-/* Pega un PNG decodificado arriba a la izquierda sobre blanco. */
+static void undo_clear(void);
+
+/* Makes `next` the document. The old bitmap is freed, and so are the undo
+ * snapshots: they have the old size and could not be restored into this one. */
+static void paint_adopt_doc(struct sx_bitmap *next)
+{
+    undo_clear();
+    sx_bitmap_destroy(&g_doc);
+    g_doc = *next;
+    sx_painter_init(&g_doc_painter, &g_doc);
+}
+
+/* Opens a decoded PNG as a document of its own size. */
 static int paint_insert_png(const unsigned char *data, uint32_t size)
 {
     struct sx_png_image image = {0, 0u, 0u};
-    uint32_t y;
+    struct sx_bitmap next;
 
     if (sx_png_decode(data, (size_t)size, &image) != 0)
     {
         return -1;
     }
-    if (image.width > (uint32_t)PAINT_DOC_W || image.height > (uint32_t)PAINT_DOC_H)
+    if (image.width == 0u || image.height == 0u || image.width > (uint32_t)PAINT_DOC_W ||
+        image.height > (uint32_t)PAINT_DOC_H ||
+        !sx_bitmap_create(&next, (int)image.width, (int)image.height, SX_PIXEL_FORMAT_BGRX8888))
     {
         sx_png_free(&image);
         return -1;
     }
-    paint_clear(SXGUI_RGB(0xFF, 0xFF, 0xFF));
-    for (y = 0u; y < image.height; ++y)
-    {
-        memcpy(g_doc.pixels + (size_t)y * (size_t)PAINT_DOC_W, image.pixels + (size_t)y * image.width,
-               (size_t)image.width * 4u);
-    }
+    memcpy(next.pixels, image.pixels, (size_t)image.width * (size_t)image.height * 4u);
     sx_png_free(&image);
+    paint_adopt_doc(&next);
     return 0;
 }
 
@@ -358,6 +403,7 @@ static int paint_load_image(const char *path)
 {
     static const unsigned char k_png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
     struct savanxp_stat info = {0};
+    struct sx_bitmap next;
     long fd = -1;
     unsigned char *data = 0;
     uint32_t pixel_offset;
@@ -410,8 +456,11 @@ static int paint_load_image(const char *path)
     }
     pixel_offset = read_le32(data + 10);
     header_size = read_le32(data + 14);
-    width = (long)read_le32(data + 18);
-    height = (long)read_le32(data + 22);
+    /* Both fields are signed in the format: a negative height means the rows
+     * are stored top-down. Read straight into a 64-bit long they would never
+     * come out negative. */
+    width = (long)(int32_t)read_le32(data + 18);
+    height = (long)(int32_t)read_le32(data + 22);
     if (header_size < 40u || read_le16(data + 26) != 1u || read_le16(data + 28) != 24u ||
         read_le32(data + 30) != 0u)
     {
@@ -431,18 +480,18 @@ static int paint_load_image(const char *path)
         return -1;
     }
     stride = (((uint32_t)width * 3u + 3u) & ~3u);
-    if (pixel_offset > info.st_size || stride * (uint32_t)height > info.st_size - pixel_offset)
+    if (pixel_offset > info.st_size || stride * (uint32_t)height > info.st_size - pixel_offset ||
+        !sx_bitmap_create(&next, (int)width, (int)height, SX_PIXEL_FORMAT_BGRX8888))
     {
         free(data);
         return -1;
     }
 
-    paint_clear(SXGUI_RGB(0xFF, 0xFF, 0xFF));
     for (y = 0; y < height; ++y)
     {
         long source_row = top_down ? y : (height - 1 - y);
         const unsigned char *source = data + pixel_offset + ((uint32_t)source_row * stride);
-        uint32_t *target = g_doc.pixels + ((size_t)y * (size_t)PAINT_DOC_W);
+        uint32_t *target = next.pixels + ((size_t)y * (size_t)width);
         long x;
 
         for (x = 0; x < width; ++x)
@@ -451,6 +500,7 @@ static int paint_load_image(const char *path)
         }
     }
     free(data);
+    paint_adopt_doc(&next);
     return 0;
 }
 
@@ -479,7 +529,7 @@ static void undo_push(void)
     }
     else
     {
-        slot = (uint32_t *)malloc((size_t)PAINT_DOC_W * (size_t)PAINT_DOC_H * 4u);
+        slot = (uint32_t *)malloc(doc_bytes());
         if (slot == 0)
         {
             return;
@@ -487,7 +537,7 @@ static void undo_push(void)
         g_undo[g_undo_count] = slot;
         g_undo_count += 1;
     }
-    memcpy(slot, g_doc.pixels, (size_t)PAINT_DOC_W * (size_t)PAINT_DOC_H * 4u);
+    memcpy(slot, g_doc.pixels, doc_bytes());
 }
 
 static int undo_pop(void)
@@ -497,23 +547,34 @@ static int undo_pop(void)
         return 0;
     }
     g_undo_count -= 1;
-    memcpy(g_doc.pixels, g_undo[g_undo_count],
-           (size_t)PAINT_DOC_W * (size_t)PAINT_DOC_H * 4u);
+    memcpy(g_doc.pixels, g_undo[g_undo_count], doc_bytes());
     free(g_undo[g_undo_count]);
     g_undo[g_undo_count] = 0;
     g_dirty = 1;
     return 1;
 }
 
-/* --- acciones ------------------------------------------------------------- */
+/* --- actions -------------------------------------------------------------- */
+
+static void paint_layout(void);
 
 static void paint_new(void)
 {
+    struct sx_bitmap next;
+
+    /* An opened image may have left a smaller document: go back to the
+     * default size. If that allocation fails, keep the current one. */
+    if ((doc_w() != PAINT_DOC_W || doc_h() != PAINT_DOC_H) &&
+        sx_bitmap_create(&next, PAINT_DOC_W, PAINT_DOC_H, SX_PIXEL_FORMAT_BGRX8888))
+    {
+        paint_adopt_doc(&next);
+    }
     paint_clear(SXGUI_RGB(0xFF, 0xFF, 0xFF));
     g_path[0] = '\0';
     g_dirty = 0;
     g_dragging = 0;
     undo_clear();
+    paint_layout();
     update_status(0);
 }
 
@@ -535,6 +596,7 @@ static int paint_open_file(const char *path)
     g_dirty = 0;
     g_dragging = 0;
     undo_clear();
+    paint_layout();
     update_status(0);
     return 0;
 }
@@ -543,7 +605,8 @@ static void paint_path_dialog(int save_as);
 
 static int paint_save(void)
 {
-    if (g_path[0] == '\0')
+    /* No name yet, or a PNG Paint cannot write back: ask for a BMP name. */
+    if (g_path[0] == '\0' || path_is_png(g_path))
     {
         paint_path_dialog(1);
         return -1;
@@ -581,9 +644,17 @@ static void on_open_accept(struct sxgui_widget *widget, void *user)
     }
     if (g_open_mode == 1)
     {
-        snprintf(g_path, sizeof(g_path), "%s", g_open_path);
-        if (paint_save_bmp(g_path) == 0)
+        if (path_is_png(g_open_path))
         {
+            /* Keep the dialog open: the name is the thing to fix. */
+            g_open_widgets[0].text = "Paint saves BMP only. Use a .bmp name:";
+            sxgui_app_request_repaint(&g_app);
+            return;
+        }
+        /* The document takes the new name only once it is really there. */
+        if (paint_save_bmp(g_open_path) == 0)
+        {
+            snprintf(g_path, sizeof(g_path), "%s", g_open_path);
             g_dirty = 0;
             update_status("Saved.");
         }
@@ -610,6 +681,12 @@ static void paint_path_dialog(int save_as)
 {
     g_open_mode = save_as;
     snprintf(g_open_path, sizeof(g_open_path), "%s", g_path);
+    if (save_as && path_is_png(g_open_path))
+    {
+        /* Offer the same name as a BMP: same length, so it always fits. */
+        memcpy(strrchr(g_open_path, '.'), ".bmp", 4);
+    }
+    g_open_widgets[0].text = "File name:";
     g_open_widgets[1].caret = (int)strlen(g_open_path);
     g_open_dialog.title = save_as ? "Save As" : "Open";
     g_open_widgets[2].text = save_as ? "Save" : "Open";
@@ -764,10 +841,10 @@ static void paint_layout(void)
                                            PAINT_CELL_SIZE, PAINT_CELL_SIZE);
     }
 
-    g_canvas_outer = sx_rect_make(canvas_x, tools_y, PAINT_DOC_W + SXGUI_BORDER_SUNKEN * 2,
-                                  PAINT_DOC_H + SXGUI_BORDER_SUNKEN * 2);
+    g_canvas_outer = sx_rect_make(canvas_x, tools_y, doc_w() + SXGUI_BORDER_SUNKEN * 2,
+                                  doc_h() + SXGUI_BORDER_SUNKEN * 2);
     g_canvas_inner = sx_rect_make(g_canvas_outer.x + SXGUI_BORDER_SUNKEN,
-                                  g_canvas_outer.y + SXGUI_BORDER_SUNKEN, PAINT_DOC_W, PAINT_DOC_H);
+                                  g_canvas_outer.y + SXGUI_BORDER_SUNKEN, doc_w(), doc_h());
 
     if (status_y < tools_y + g_canvas_outer.height + SXGUI_GAP &&
         status_y < tools_y + g_tool_panel.height + SXGUI_GAP)
@@ -920,37 +997,60 @@ static void paint_stamp_walk(int x0, int y0, int x1, int y1, uint32_t colour, in
 
 static void paint_pick_color(int doc_x, int doc_y)
 {
-    if (doc_x < 0 || doc_y < 0 || doc_x >= PAINT_DOC_W || doc_y >= PAINT_DOC_H)
+    if (doc_x < 0 || doc_y < 0 || doc_x >= doc_w() || doc_y >= doc_h())
     {
         return;
     }
-    g_color = g_doc.pixels[(size_t)doc_y * (size_t)PAINT_DOC_W + (size_t)doc_x] & 0x00FFFFFFu;
+    g_color = g_doc.pixels[(size_t)doc_y * (size_t)doc_w() + (size_t)doc_x] & 0x00FFFFFFu;
     update_status(0);
 }
 
-/* Cubo: relleno por difusion 4-conexo con pila explicita y visitados, sin
- * recursion (la pila de llamadas no aguanta 196608 pixeles). Cada pixel entra
- * a la pila una sola vez como maximo, asi que la pila de W*H alcanza siempre
- * y el algoritmo termina: o pinta pixeles nuevos o no hace nada. Coincidencia
- * exacta, como el original: todo lo que dibuja este programa es de borde
- * duro, asi que no hay tolerancia que calibrar. */
+/* True when a fill at (x, y) would change something: inside the document
+ * and on a colour other than the new one. The caller pushes undo only then. */
+static int paint_fill_changes(int x, int y, uint32_t colour)
+{
+    if (x < 0 || y < 0 || x >= doc_w() || y >= doc_h())
+    {
+        return 0;
+    }
+    return g_doc.pixels[(size_t)y * (size_t)doc_w() + (size_t)x] != colour;
+}
+
+/* Queues pixel `index` if nobody has seen it yet and it has the target
+ * colour. Marking it seen on the way in is what bounds the stack. */
+static void paint_fill_visit(int index, uint32_t target, int *stack, size_t *top,
+                             unsigned char *seen)
+{
+    unsigned char bit = (unsigned char)(1u << (index % 8));
+
+    if ((seen[(size_t)index / 8u] & bit) == 0 && g_doc.pixels[(size_t)index] == target)
+    {
+        seen[(size_t)index / 8u] |= bit;
+        stack[(*top)++] = index;
+    }
+}
+
+/* Bucket: 4-connected flood fill with an explicit stack and a visited set,
+ * no recursion (the call stack cannot hold a whole document of pixels). Each
+ * pixel enters the stack at most once, so a stack of W*H always suffices and
+ * the loop ends: it either paints new pixels or does nothing. Exact match, as
+ * in the original: everything this program draws has hard edges, so there is
+ * no tolerance to tune. */
 static void paint_flood_fill(int seed_x, int seed_y, uint32_t colour)
 {
+    int width = doc_w();
+    int height = doc_h();
     uint32_t target;
     int *stack = 0;
     unsigned char *seen = 0;
-    size_t area = (size_t)PAINT_DOC_W * (size_t)PAINT_DOC_H;
+    size_t area = (size_t)width * (size_t)height;
     size_t top = 0;
 
-    if (seed_x < 0 || seed_y < 0 || seed_x >= PAINT_DOC_W || seed_y >= PAINT_DOC_H)
+    if (!paint_fill_changes(seed_x, seed_y, colour))
     {
         return;
     }
-    target = g_doc.pixels[(size_t)seed_y * (size_t)PAINT_DOC_W + (size_t)seed_x];
-    if (target == colour)
-    {
-        return;
-    }
+    target = g_doc.pixels[(size_t)seed_y * (size_t)width + (size_t)seed_x];
     stack = (int *)malloc(area * sizeof(int));
     seen = (unsigned char *)malloc((area + 7u) / 8u);
     if (stack == 0 || seen == 0)
@@ -961,68 +1061,29 @@ static void paint_flood_fill(int seed_x, int seed_y, uint32_t colour)
     }
     memset(seen, 0, (area + 7u) / 8u);
 
-    stack[top++] = seed_y * PAINT_DOC_W + seed_x;
-    seen[(size_t)(seed_y * PAINT_DOC_W + seed_x) / 8u] |=
-        (unsigned char)(1u << ((seed_y * PAINT_DOC_W + seed_x) % 8));
+    paint_fill_visit(seed_y * width + seed_x, target, stack, &top, seen);
     while (top > 0)
     {
         int index = stack[--top];
-        int x = index % PAINT_DOC_W;
-        int y = index / PAINT_DOC_W;
-        int nx;
-        int ny;
+        int x = index % width;
+        int y = index / width;
 
         g_doc.pixels[(size_t)index] = colour;
-        /* Cuatro vecinos: dentro, no visto y del color objetivo. */
-        nx = x - 1;
-        ny = y;
-        if (nx >= 0)
+        if (x > 0)
         {
-            int ni = ny * PAINT_DOC_W + nx;
-
-            if ((seen[(size_t)ni / 8u] & (1u << (ni % 8))) == 0 &&
-                g_doc.pixels[(size_t)ni] == target)
-            {
-                seen[(size_t)ni / 8u] |= (unsigned char)(1u << (ni % 8));
-                stack[top++] = ni;
-            }
+            paint_fill_visit(index - 1, target, stack, &top, seen);
         }
-        nx = x + 1;
-        if (nx < PAINT_DOC_W)
+        if (x + 1 < width)
         {
-            int ni = ny * PAINT_DOC_W + nx;
-
-            if ((seen[(size_t)ni / 8u] & (1u << (ni % 8))) == 0 &&
-                g_doc.pixels[(size_t)ni] == target)
-            {
-                seen[(size_t)ni / 8u] |= (unsigned char)(1u << (ni % 8));
-                stack[top++] = ni;
-            }
+            paint_fill_visit(index + 1, target, stack, &top, seen);
         }
-        nx = x;
-        ny = y - 1;
-        if (ny >= 0)
+        if (y > 0)
         {
-            int ni = ny * PAINT_DOC_W + nx;
-
-            if ((seen[(size_t)ni / 8u] & (1u << (ni % 8))) == 0 &&
-                g_doc.pixels[(size_t)ni] == target)
-            {
-                seen[(size_t)ni / 8u] |= (unsigned char)(1u << (ni % 8));
-                stack[top++] = ni;
-            }
+            paint_fill_visit(index - width, target, stack, &top, seen);
         }
-        ny = y + 1;
-        if (ny < PAINT_DOC_H)
+        if (y + 1 < height)
         {
-            int ni = ny * PAINT_DOC_W + nx;
-
-            if ((seen[(size_t)ni / 8u] & (1u << (ni % 8))) == 0 &&
-                g_doc.pixels[(size_t)ni] == target)
-            {
-                seen[(size_t)ni / 8u] |= (unsigned char)(1u << (ni % 8));
-                stack[top++] = ni;
-            }
+            paint_fill_visit(index + width, target, stack, &top, seen);
         }
     }
     free(stack);
@@ -1061,6 +1122,15 @@ static void commit_drag(void)
     {
         return;
     }
+    /* A rectangle or ellipse with no width or no height draws nothing (a
+     * line always draws at least its endpoint): no undo step, no '*'. */
+    if (g_tool != PAINT_TOOL_LINE && (g_anchor_x == g_current_x || g_anchor_y == g_current_y))
+    {
+        return;
+    }
+    /* Shapes touch the document only here, on release, so this is where
+     * the undo snapshot goes. */
+    undo_push();
     paint_shape(&g_doc_painter, g_tool, g_anchor_x - g_canvas_inner.x, g_anchor_y - g_canvas_inner.y,
                 g_current_x - g_canvas_inner.x, g_current_y - g_canvas_inner.y, g_color);
     g_dirty = 1;
@@ -1179,8 +1249,10 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
 
         if (left && !left_before)
         {
-            /* Cae el boton: arranca el trazo. El cuentagotas no muta, asi
-             * que no empuja undo. */
+            /* Button down: the stroke starts. Each tool pushes undo only
+             * when it is about to change the document: the picker never
+             * does, the bucket only on another colour, and shapes on
+             * release (commit_drag). */
             g_dragging = 1;
             g_anchor_x = event->x;
             g_anchor_y = event->y;
@@ -1194,28 +1266,30 @@ static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_ev
             }
             else if (g_tool == PAINT_TOOL_FILL)
             {
+                if (paint_fill_changes(doc_x, doc_y, g_color))
+                {
+                    undo_push();
+                    paint_flood_fill(doc_x, doc_y, g_color);
+                    g_dirty = 1;
+                }
+                update_status(0);
+            }
+            else if (g_tool == PAINT_TOOL_PENCIL)
+            {
                 undo_push();
-                paint_flood_fill(doc_x, doc_y, g_color);
+                sx_painter_set_pixel(&g_doc_painter, doc_x, doc_y, g_color);
                 g_dirty = 1;
                 update_status(0);
             }
-            else
+            else if (g_tool == PAINT_TOOL_BRUSH || g_tool == PAINT_TOOL_ERASER)
             {
-                undo_push();
-                if (g_tool == PAINT_TOOL_PENCIL)
-                {
-                    sx_painter_set_pixel(&g_doc_painter, doc_x, doc_y, g_color);
-                    g_dirty = 1;
-                }
-                else if (g_tool == PAINT_TOOL_BRUSH || g_tool == PAINT_TOOL_ERASER)
-                {
-                    uint32_t ink = g_tool == PAINT_TOOL_BRUSH
-                        ? g_color
-                        : SXGUI_RGB(0xFF, 0xFF, 0xFF);
+                uint32_t ink = g_tool == PAINT_TOOL_BRUSH
+                    ? g_color
+                    : SXGUI_RGB(0xFF, 0xFF, 0xFF);
 
-                    paint_stamp(&g_doc_painter, doc_x, doc_y, ink, g_brush_radius);
-                    g_dirty = 1;
-                }
+                undo_push();
+                paint_stamp(&g_doc_painter, doc_x, doc_y, ink, g_brush_radius);
+                g_dirty = 1;
                 update_status(0);
             }
         }
@@ -1336,6 +1410,7 @@ static int on_key(struct sxgui_app *app, const struct savanxp_input_event *event
 
 #define PAINT_SELFTEST_PATH "/disk/paint-selftest.bmp"
 #define PAINT_SELFTEST_BAD "/disk/paint-selftest-bad.bin"
+#define PAINT_SELFTEST_PNG "/disk/paint-selftest.PNG"
 
 static int paint_selftest_fail(const char *what)
 {
@@ -1538,20 +1613,101 @@ static int paint_selftest(void)
         return paint_selftest_fail("garbage accepted");
     }
 
-    /* PNG real del volumen (libsximg por el camino de la UI): dimensiones y
-     * pixeles conocidos del asset horneado en diskfs. */
+    /* The real PNG on the volume (libsximg, through the UI path): the
+     * document takes the image's own size, and known pixels come through. */
     if (paint_load_image("/disk/paint-test.png") != 0)
     {
         free(reference);
         sx_bitmap_destroy(&g_doc);
         return paint_selftest_fail("png asset");
     }
-    if (g_doc.pixels[0] != 0x000000u || g_doc.pixels[15 * PAINT_DOC_W + 15] != 0xBE90C0u ||
-        g_doc.pixels[3 * PAINT_DOC_W + 7] != 0x1AC4ECu)
+    if (doc_w() != 16 || doc_h() != 16)
+    {
+        free(reference);
+        sx_bitmap_destroy(&g_doc);
+        return paint_selftest_fail("png size");
+    }
+    if (g_doc.pixels[0] != 0x000000u || g_doc.pixels[15 * doc_w() + 15] != 0xBE90C0u ||
+        g_doc.pixels[3 * doc_w() + 7] != 0x1AC4ECu)
     {
         free(reference);
         sx_bitmap_destroy(&g_doc);
         return paint_selftest_fail("png pixels");
+    }
+
+    /* A .png name never receives BMP bytes, whatever its case. */
+    (void)remove(PAINT_SELFTEST_PNG);
+    if (paint_save_bmp(PAINT_SELFTEST_PNG) == 0 || savanxp_stat(PAINT_SELFTEST_PNG, &info) == 0)
+    {
+        free(reference);
+        sx_bitmap_destroy(&g_doc);
+        return paint_selftest_fail("png overwritten");
+    }
+
+    /* Saving keeps the opened size: 16x16 out, 16x16 back, same pixels. */
+    memcpy(reference, g_doc.pixels, doc_bytes());
+    if (paint_save_bmp(PAINT_SELFTEST_PATH) != 0 || savanxp_stat(PAINT_SELFTEST_PATH, &info) != 0 ||
+        info.st_size != 54u + 48u * 16u)
+    {
+        free(reference);
+        sx_bitmap_destroy(&g_doc);
+        return paint_selftest_fail("small save");
+    }
+    if (paint_load_image(PAINT_SELFTEST_PATH) != 0 || doc_w() != 16 || doc_h() != 16 ||
+        memcmp(g_doc.pixels, reference, doc_bytes()) != 0)
+    {
+        free(reference);
+        sx_bitmap_destroy(&g_doc);
+        return paint_selftest_fail("small round-trip");
+    }
+
+    /* Top-down BMP (negative height), 2x2: the first row in the file is the
+     * top row of the picture. Rows are 6 bytes padded to 8. */
+    {
+        unsigned char bmp[54 + 16];
+
+        memset(bmp, 0, sizeof(bmp));
+        bmp[0] = 'B';
+        bmp[1] = 'M';
+        write_le32(bmp + 2, sizeof(bmp));
+        write_le32(bmp + 10, 54u);
+        write_le32(bmp + 14, 40u);
+        write_le32(bmp + 18, 2u);
+        write_le32(bmp + 22, (uint32_t)-2);
+        write_le16(bmp + 26, 1u);
+        write_le16(bmp + 28, 24u);
+        write_le32(bmp + 34, 16u);
+        bmp[54 + 2] = 0xFF; /* (0, 0) red, stored as B G R */
+        bmp[62 + 0] = 0xFF; /* (0, 1) blue */
+        probe = fopen(PAINT_SELFTEST_PATH, "wb");
+        if (probe == 0 || fwrite(bmp, 1, sizeof(bmp), probe) != sizeof(bmp))
+        {
+            if (probe != 0)
+            {
+                fclose(probe);
+            }
+            free(reference);
+            sx_bitmap_destroy(&g_doc);
+            return paint_selftest_fail("top-down setup");
+        }
+        fclose(probe);
+        if (paint_load_image(PAINT_SELFTEST_PATH) != 0 || doc_w() != 2 || doc_h() != 2 ||
+            g_doc.pixels[0] != SXGUI_RGB(0xFF, 0x00, 0x00) ||
+            g_doc.pixels[2] != SXGUI_RGB(0x00, 0x00, 0xFF))
+        {
+            free(reference);
+            sx_bitmap_destroy(&g_doc);
+            return paint_selftest_fail("top-down bmp");
+        }
+    }
+
+    /* The bucket on its own colour changes nothing, so it pushes no undo. */
+    if (paint_fill_changes(0, 0, g_doc.pixels[0]) ||
+        !paint_fill_changes(0, 0, SXGUI_RGB(0x00, 0xFF, 0x00)))
+    {
+        free(reference);
+        sx_bitmap_destroy(&g_doc);
+        return paint_selftest_fail("fill no-op");
     }
 
     (void)remove(PAINT_SELFTEST_PATH);
