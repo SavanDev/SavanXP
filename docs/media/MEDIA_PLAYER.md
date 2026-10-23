@@ -51,7 +51,8 @@ knows nothing about windows. The split is what lets the headless selftest drive
 exactly the engine the window uses, and what a second front end (a fullscreen
 mode, a command-line player) would reuse.
 
-Everything is **one thread**, because the kernel has no threads. The loop is:
+Everything is **one thread**: the player was written before the kernel had
+threads and has not been moved to them. The loop is:
 
 1. drain keyboard and pointer events;
 2. `playback_pump()`: top up the audio device, present the frame that is due;
@@ -61,7 +62,7 @@ Everything is **one thread**, because the kernel has no threads. The loop is:
    allows.
 
 A decode that takes longer than a frame stalls the whole loop, input included.
-That is the price of no threads, and the first thing threads would buy.
+That is the price of a single thread, and the first thing threads would buy.
 
 ## What a binary costs
 
@@ -216,7 +217,9 @@ In the order they unblock each other.
 2. **Threads.** Decode ahead on one thread, feed audio from another, and a slow
    frame stops freezing input. It also turns on FFmpeg's frame and slice
    threading, which is where most H.264/HEVC throughput on more cores comes
-   from. Blocked on the kernel ([`SMP_ROADMAP.md`](../kernel/SMP_ROADMAP.md)).
+   from. No longer blocked on the kernel, which has pthreads
+   ([`THREADS_ROADMAP.md`](../kernel/THREADS_ROADMAP.md)); the player does not
+   use them yet and the FFmpeg port is configured with `--disable-pthreads`.
 3. **Assembly.** `--disable-asm` leaves every DSP routine in scalar C: that is
    the other large throughput factor. Needs `nasm` pinned in the toolchain.
 4. **File dialog.** The Open dialog is a path field. A real one belongs in

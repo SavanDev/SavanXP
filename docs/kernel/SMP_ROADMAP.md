@@ -359,11 +359,13 @@ The original plan follows.
 being modified ([`vmm.cpp:473`](../../kernel/vmm.cpp:473),
 [`vmm.cpp:499`](../../kernel/vmm.cpp:499)). Two different exposures:
 
-- **User space: mostly safe by construction.** There are no threads, so an
-  address space is loaded on at most one core at a time, and every unmap path
-  runs on behalf of the process that owns the space while holding the BKL. A
-  `CR3` reload flushes non-global entries, so a core that ran the process
-  earlier does not keep stale entries.
+- **User space: mostly safe by construction.** There were no threads when this
+  was planned, so an address space was loaded on at most one core at a time, and
+  every unmap path runs on behalf of the process that owns the space while
+  holding the BKL. A `CR3` reload flushes non-global entries, so a core that ran
+  the process earlier does not keep stale entries. Native threads lifted the
+  one-core rule with a user-space shootdown
+  ([THREADS_ROADMAP.md](THREADS_ROADMAP.md#phase-2--the-address-space-on-many-cores--done)).
 - **Kernel space: a real requirement.** `create_address_space()` copies the
   kernel PML4 entries into every new space
   ([`vmm.cpp:406`](../../kernel/vmm.cpp:406)) — those entries point at *shared*

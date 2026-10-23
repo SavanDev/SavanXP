@@ -29,9 +29,9 @@ compositor all want the same thing.
 
 ## The short version
 
-**The kernel has no thread concept: `Process` is the unit of scheduling.**
-`object::Type::thread` exists in the enum and nothing uses it. The work splits
-in two very different halves:
+**Before phase 0 the kernel had no thread concept: `Process` was the unit of
+scheduling.** `object::Type::thread` was in the enum and nothing used it. The
+work split in two very different halves, and all of it has landed since:
 
 - **The split itself is mechanical but wide.** Every field that describes "what
   the CPU is doing" — saved context, kernel stack, FPU area, the core it last ran
