@@ -221,7 +221,7 @@ def main() -> int:
         assert gone not in process_hpp, f"{gone} still in include/kernel/process.hpp"
     subsystem_hpp = (root / "include" / "kernel" / "subsystem.hpp").read_text(encoding="utf-8")
     assert "register_wait_recheck" in subsystem_hpp
-    assert "recheck_parked_process" in subsystem_hpp
+    assert "recheck_parked_thread" in subsystem_hpp
     assert "recheck_parked_poll" in posix_state
     assert "register_wait_recheck" in (root / "subsystems" / "posix" / "kernel" / "posix_dispatch.cpp").read_text(encoding="utf-8")
     # Isolation D: no POSIX signals in the kernel. This kernel has no signal
