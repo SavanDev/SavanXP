@@ -6,13 +6,12 @@
 # (ports/doomgeneric/build.sh), asi que era el ultimo que seguia cayendo al
 # fallback del set horneado.
 #
-# El icono se declara con icon_file=, o sea un PNG RELATIVO a este manifiesto
-# (icon.png, al lado de este archivo): es el mismo arte que antes vivia
-# horneado en el set del sistema (DESKTOP_ICON_DOOM / app-spider.png), sacado
-# de ahi para que Doom deje de depender del catalogo general -- el icono viaja
-# DENTRO del ejecutable, que es para lo que existe el formato. La otra forma,
-# icon=<nombre>, resuelve contra assets/desktop/icons/, y ese catalogo ya no
-# tiene entrada para Doom.
+# The icon is declared with icon_file=, PNGs RELATIVE to this manifest:
+# icon.png (16x16) and icon-32.png (32x32), next to this file, drawn in the
+# house style (docs/desktop/ICON_STYLE.md). Doom does not depend on
+# the general catalog -- the icon travels INSIDE the executable, which is what
+# the format exists for. The other form, icon=<name>, resolves against
+# assets/desktop/icons/, and that catalog has no entry for Doom.
 #
 # category= es lo que da de alta el port en la lista de programas del sistema:
 # el binario se instala con un build aparte, nadie lo anota en ningun registro
@@ -26,7 +25,7 @@ version=0.1
 version_string=Doom Generic 0.1
 vendor=doomgeneric
 accent=b55137
-icon_file=icon.png
+icon_file=icon.png,icon-32.png
 launch_flags=fullscreen
 category=Games
 

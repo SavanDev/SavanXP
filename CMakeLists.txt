@@ -445,16 +445,18 @@ add_custom_target(savanxp_user_runtime_pic_check ALL
     DEPENDS savanxp_user_runtime_pic
 )
 
-# Desktop icon PNGs are checked-in, hand-editable source assets. Keep the
-# generator as an explicit target, but never let a normal build redraw or
-# overwrite artwork that an app author has replaced.
-add_custom_target(savanxp_desktop_source_art
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_desktop_source_art.py"
-            --project-root "${CMAKE_SOURCE_DIR}"
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Generating optional desktop source art"
-    VERBATIM
-)
+# Desktop icon PNGs are checked-in, hand-editable source assets. The art
+# generator is not part of the repository; where a local copy exists it is an
+# explicit target, and a normal build never redraws or overwrites the artwork.
+if(EXISTS "${CMAKE_SOURCE_DIR}/tools/gen_desktop_source_art.py")
+    add_custom_target(savanxp_desktop_source_art
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_desktop_source_art.py"
+                --project-root "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Generating optional desktop source art"
+        VERBATIM
+    )
+endif()
 set(SAVANXP_BOOT_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/boot_logo.h")
 set(SAVANXP_BRAND_LOGO_HEADER "${SAVANXP_GENERATED_ROOT}/brand_logo.h")
 set(SAVANXP_CURSOR_HEADER "${SAVANXP_GENERATED_ROOT}/cursor_asset.h")
@@ -569,7 +571,8 @@ file(GLOB_RECURSE SAVANXP_SXE_MANIFESTS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.sxres"
     "${CMAKE_SOURCE_DIR}/system/*.sxres")
 file(GLOB_RECURSE SAVANXP_SXE_ASSETS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png")
+    "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.png")
 add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_SXE_ROOT}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_sxe_resources.py"

@@ -78,6 +78,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
   rule that every UI font is 1-bit, and how to change a face.
+- [`ICON_STYLE.md`](desktop/ICON_STYLE.md) — the Windows 2000 look of the house
+  icon set: the drawing rules, the shared kit and generator, and what is exempt.
 - [`CONSOLE.md`](desktop/CONSOLE.md) — the Command Prompt: the console host (SUN)
   and `sh` as two programs, their handles and control channel, line editing,
   Ctrl+C without signals, and how the smokes open programs through it.

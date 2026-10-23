@@ -161,6 +161,14 @@ Cut-off notes:
 
 ### Changed
 
+- **Every house icon is redrawn in a Windows 2000 look**, each size drawn on its own: the system
+  catalog, Shut Down, the media player, the Doom and Celeste ports and the tray speaker. The Tango
+  file-type icons are unchanged. `icon_file=` now takes one PNG per size
+  (`icon_file=icon.png,icon-32.png`). See `docs/desktop/ICON_STYLE.md`.
+
+- **The Start menu draws each program's own 16x16 icon** (`progman_item_icon_small`) instead of
+  shrinking its 32x32 one; a binary with only a large icon is still shrunk.
+
 - **Static programs map their ELF headers.** `linker.ld` puts them at `0x400000` with the text
   right after, so `sx_image_base` is the header for every program; editing the script now relinks
   every static program.
@@ -408,6 +416,10 @@ Cut-off notes:
   decided handle model (see `docs/kernel/KERNEL_NATIVE_API.md`).
 
 ### Removed
+
+- **The icon generators are no longer in the repository** (`tools/gen_desktop_source_art.py`, the
+  player's `gen_icons.py`): the checked-in PNGs are the source of the art, and the
+  `savanxp_desktop_source_art` target exists only where a local copy of the generator does.
 
 - **Eight redundant test programs.** `spawnloop`, `pipestress`, `waittest`, `errtest`, `demo`,
   `seektest`, `renametest` and `truncatetest` are gone: `sh`, `init`, `mv`, `truncate` and the

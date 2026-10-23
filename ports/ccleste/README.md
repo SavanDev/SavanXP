@@ -158,13 +158,11 @@ under `/disk`.
 
 ## Icon
 
-`overlay/icon.png` is a 16x16 face in the same construction as the Doom port
-icon: an object on transparency with a dark outline, filling the frame, in
-colours taken from the game's own default palette. It is authored at 16x16
-because `gen_sxe_resources.py` derives the 32x32 from it with NEAREST, which is
-the rule the house set follows (nine of its ten 32x32 icons are the 16x16
-scaled by two). There is no background plate, since no icon in
-`assets/desktop/icons/` has one.
+`overlay/icon.png` (16x16) and `overlay/icon-32.png` (32x32) show Madeline's
+face and red hair, in colours taken from the game's own default palette, drawn
+in the house style (`docs/desktop/ICON_STYLE.md`). Each size is drawn on its own and the
+manifest names both (`icon_file=icon.png,icon-32.png`). There is no background
+plate, since no icon in `assets/desktop/icons/` has one.
 
 ## Test
 

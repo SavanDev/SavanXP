@@ -330,8 +330,8 @@ static void startmenu_draw_icon(struct sx_painter *painter, const struct desktop
         sx_painter_blit_bitmap(painter, &bitmap, x, y);
         return;
     }
-    /* El registro hornea a 32: al achicar se promedia (bilineal), que es lo
-     * que pide docs/desktop/SXGFX_ROADMAP.md para iconos. */
+    /* A binary with only a large icon: shrinking averages (bilinear), which
+     * is what docs/desktop/SXGFX_ROADMAP.md asks for icons. */
     sx_painter_draw_scaled_bitmap(
         painter,
         &bitmap,
@@ -451,7 +451,13 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx, int hot_row, int ho
                     continue;
                 }
                 sx_painter_fill_rect(&painter, rect, background);
-                icon = progman_item_icon(item);
+                /* The 16x16 drawing first; the 32x32 shrunk only when the
+                 * binary has no small icon of its own. */
+                icon = progman_item_icon_small(item);
+                if (icon == 0)
+                {
+                    icon = progman_item_icon(item);
+                }
                 if (icon == 0)
                 {
                     icon = desktop_icon_small((enum desktop_icon_id)item->icon_id);

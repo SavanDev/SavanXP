@@ -66,6 +66,7 @@ def main() -> int:
         "doomgeneric_savanxp.c",
         "doomgeneric_savanxp_audio.c",
         "icon.png",
+        "icon-32.png",
         "net_stubs.c",
         "savanxp_compat.c",
         "savanxp_compat.h",

@@ -63,8 +63,8 @@ fetches the pinned Limine checkout when needed. Distribution package names and
 QEMU backend details are in [Building on Linux](docs/build/BUILD_LINUX.md).
 
 Python (with `Pillow`) is used on every build to convert checked-in PNG assets
-into C headers and SXE resources. It does not regenerate desktop source icons;
-`tools/gen_desktop_source_art.py` remains available as an explicit art generator.
+into C headers and SXE resources. It never redraws the icons: the checked-in
+PNGs are the source of the art.
 
 CMake tool locations can be overridden in the cache or with the corresponding
 `SAVANXP_*` environment variables.

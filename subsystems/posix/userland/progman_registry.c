@@ -26,23 +26,31 @@ static int g_item_count = 0;
 static int g_source = PROGMAN_REGISTRY_SOURCE_DEFAULTS;
 
 /*
- * Pool de iconos traidos de los .sxicon de los binarios.
+ * Pools of icons taken from the binaries' .sxicon sections: the large one
+ * (up to 32x32, for the Program Manager grid) and, beside it, the 16x16
+ * drawing when the binary carries one (for the Start menu). The small icon is
+ * drawn separately from the large one (docs/desktop/ICON_STYLE.md), so
+ * shrinking the 32x32 would lose exactly that work.
  *
- * Cuesta PROGMAN_MAX_ITEMS * 32 * 32 * 4 = 192 KiB de BSS, y es una eleccion
- * consciente: sin malloc hay que reservar el peor caso, y 192 KiB al lado de
- * los 8 MiB de arena que el proceso ya tiene mapeados es ruido. La alternativa
- * -- releer el .sxicon cuando hay que pintar -- pondria I/O de disco adentro
- * del ciclo de repintado, que es exactamente donde no va.
+ * They cost PROGMAN_MAX_ITEMS * (32 * 32 + 16 * 16) * 4 = 240 KiB of BSS, a
+ * deliberate choice: without malloc the worst case has to be reserved, and
+ * 240 KiB next to the 8 MiB arena the process already maps is noise. The
+ * alternative -- rereading the .sxicon when painting -- would put disk I/O
+ * inside the repaint loop, which is exactly where it must not go.
  *
- * Se llena una sola vez, en progman_registry_apply_sxe(), DESPUES del pruning:
- * el pruning mueve items de indice y dejaria los slots apuntando al item
- * equivocado.
+ * They are filled once, in progman_registry_apply_sxe(), AFTER pruning:
+ * pruning moves items between indices and would leave the slots pointing at
+ * the wrong item.
  */
 #define PROGMAN_ICON_MAX_EXTENT 32u
 #define PROGMAN_ICON_SLOT_PIXELS (PROGMAN_ICON_MAX_EXTENT * PROGMAN_ICON_MAX_EXTENT)
+#define PROGMAN_ICON_SMALL_EXTENT 16u
+#define PROGMAN_ICON_SMALL_PIXELS (PROGMAN_ICON_SMALL_EXTENT * PROGMAN_ICON_SMALL_EXTENT)
 
 static uint32_t g_icon_pixels[PROGMAN_MAX_ITEMS][PROGMAN_ICON_SLOT_PIXELS];
 static struct desktop_embedded_bitmap g_icon_bitmaps[PROGMAN_MAX_ITEMS];
+static uint32_t g_icon_small_pixels[PROGMAN_MAX_ITEMS][PROGMAN_ICON_SMALL_PIXELS];
+static struct desktop_embedded_bitmap g_icon_small_bitmaps[PROGMAN_MAX_ITEMS];
 
 struct progman_default_item
 {
@@ -592,13 +600,18 @@ int progman_registry_prune_missing(progman_path_exists_fn exists)
 /* --- recursos SXE --------------------------------------------------------- */
 
 /*
- * Copia el mejor icono del blob al slot del item. Solo acepta imagenes
- * cuadradas que entren en el slot: agrandar el pool para un icono gigante
- * costaria memoria en TODOS los slots, y la grilla dibuja a 32 igual.
+ * Copies the best icon in the blob into the item's slot. Only square images
+ * that fit the slot are accepted: growing the pool for a giant icon would cost
+ * memory in EVERY slot, and the grid draws at 32 anyway.
+ *
+ * An exact 16x16 image, if the blob has one, also goes into the small slot.
+ * Only an exact one: a smaller size derived here would be the large icon
+ * shrunk, which is what the Start menu already does when there is none.
  */
 static int adopt_icon(struct progman_item *item, int slot, const struct sxe_icons *icons)
 {
     const struct sxe_icon_entry *entry = sxe_icons_best(icons, PROGMAN_ICON_MAX_EXTENT);
+    const struct sxe_icon_entry *small = sxe_icons_best(icons, PROGMAN_ICON_SMALL_EXTENT);
     const uint32_t *pixels = 0;
 
     if (entry == 0 || entry->width != entry->height || entry->width > PROGMAN_ICON_MAX_EXTENT)
@@ -615,6 +628,19 @@ static int adopt_icon(struct progman_item *item, int slot, const struct sxe_icon
     g_icon_bitmaps[slot].width = entry->width;
     g_icon_bitmaps[slot].height = entry->height;
     g_icon_bitmaps[slot].pixels = g_icon_pixels[slot];
+
+    g_icon_small_bitmaps[slot].pixels = 0;
+    if (small != 0 && small->width == PROGMAN_ICON_SMALL_EXTENT && small->height == PROGMAN_ICON_SMALL_EXTENT)
+    {
+        pixels = sxe_icons_pixels(icons, small);
+        if (pixels != 0)
+        {
+            memcpy(g_icon_small_pixels[slot], pixels, PROGMAN_ICON_SMALL_PIXELS * sizeof(uint32_t));
+            g_icon_small_bitmaps[slot].width = PROGMAN_ICON_SMALL_EXTENT;
+            g_icon_small_bitmaps[slot].height = PROGMAN_ICON_SMALL_EXTENT;
+            g_icon_small_bitmaps[slot].pixels = g_icon_small_pixels[slot];
+        }
+    }
     item->icon_slot = slot;
     return 1;
 }
@@ -993,6 +1019,19 @@ const struct desktop_embedded_bitmap *progman_item_icon(const struct progman_ite
         return 0;
     }
     return &g_icon_bitmaps[item->icon_slot];
+}
+
+const struct desktop_embedded_bitmap *progman_item_icon_small(const struct progman_item *item)
+{
+    if (item == 0 || item->icon_slot < 0 || item->icon_slot >= PROGMAN_MAX_ITEMS)
+    {
+        return 0;
+    }
+    if (g_icon_small_bitmaps[item->icon_slot].pixels == 0)
+    {
+        return 0;
+    }
+    return &g_icon_small_bitmaps[item->icon_slot];
 }
 
 int progman_registry_source(void)
@@ -1455,6 +1494,10 @@ static void selftest_sxe(void)
     icon = progman_item_icon(item);
     expect(icon != 0 && icon->pixels != 0, "bitmap del icono disponible");
     expect(icon != 0 && icon->width == 32u && icon->height == 32u, "icono de 32x32");
+    /* The Start menu's icon is the binary's own 16x16 drawing, not the 32x32. */
+    icon = progman_item_icon_small(item);
+    expect(icon != 0 && icon->pixels != 0 && icon->width == 16u && icon->height == 16u,
+        "16x16 icon from the .sxicon");
 
     /*
      * Item 1: icon=/bin/aboutapp, un PATH explicito -- la forma nueva y

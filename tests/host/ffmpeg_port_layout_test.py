@@ -72,8 +72,8 @@ def main() -> int:
     # mime_open, ext_open) and an icon that travels with the sources.
     player = root / "subsystems" / "posix" / "userland" / "mediaplayer"
     expected_player = {
-        "gen_icons.py",
         "icon.png",
+        "icon-32.png",
         "icons.inc",
         "media.c",
         "media.h",
@@ -84,7 +84,8 @@ def main() -> int:
         "selftest.c",
         "selftest.h",
     }
-    actual_player = {path.name for path in player.iterdir() if path.is_file()}
+    # gen_icons.py may exist locally but is not versioned (see .gitignore).
+    actual_player = {path.name for path in player.iterdir() if path.is_file()} - {"gen_icons.py"}
     assert actual_player == expected_player
     assert not (player / "mediaplayer-ffmpeg.sxres").exists()
     manifest = (player / "mediaplayer.sxres").read_text(encoding="utf-8")
@@ -92,7 +93,7 @@ def main() -> int:
     assert "mime_open=" in manifest
     assert "ext_open=" in manifest
     assert "category=Accessories" in manifest
-    assert "icon_file=icon.png" in manifest
+    assert "icon_file=icon.png,icon-32.png" in manifest
     assert len(list((player / "icons").glob("*.png"))) == 10
 
     assert {path.name for path in (port / "tests").glob("*.py")} == {

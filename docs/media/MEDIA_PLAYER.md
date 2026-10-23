@@ -173,7 +173,7 @@ dropping everything would freeze the picture while the sound goes on.
 ## Control icons
 
 The transport buttons, Open and the volume speaker are icon buttons with **our
-own 16x16 art**, drawn by `subsystems/posix/userland/mediaplayer/gen_icons.py`
+own 16x16 art**, kept as PNGs in `subsystems/posix/userland/mediaplayer/icons/`
 and embedded as `icons.inc` (~4 KiB, useless outside this program, so not
 `.sxicon` files on disk). The app icon is separate and also our own.
 

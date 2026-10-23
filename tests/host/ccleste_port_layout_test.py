@@ -51,6 +51,7 @@ def main() -> int:
         "ccleste_savanxp_assets.c",
         "ccleste_savanxp_assets.h",
         "icon.png",
+        "icon-32.png",
     }
     assert {path.name for path in (port / "overlay").iterdir() if path.is_file()} == expected_overlay
 

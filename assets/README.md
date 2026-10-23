@@ -18,9 +18,10 @@ assets/
 ```
 
 The art in `icons/16x16` and `icons/32x32` belongs to this repository. It is
-checked in as editable source and does not depend on external icons; some sets
-were created with `tools/gen_desktop_source_art.py`. `app-mediaplayer.png` is
-source art shared with the optional FFmpeg port.
+checked in as editable source and does not depend on external icons. The whole
+set is drawn in a Windows 2000 look; the rules are in
+[`docs/desktop/ICON_STYLE.md`](../docs/desktop/ICON_STYLE.md).
+`app-mediaplayer.png` is the same art as the media player's own `icon.png`.
 
 `icons/mime/` is the exception, which is why it lives apart: those are icons
 from the Tango Icon Theme 0.8.90, in the **public domain**, used as the
@@ -80,6 +81,7 @@ The desktop's PNG icons live in `assets/desktop/icons/16x16` and
 `assets/desktop/icons/32x32`:
 
 - `desktop.png`
+- `shutdown.png`
 - `app-terminal.png`
 - `app-libgfx-demo.png`
 - `app-keyboard-settings.png`
@@ -89,6 +91,8 @@ The desktop's PNG icons live in `assets/desktop/icons/16x16` and
 - `app-calc.png`
 - `app-gears.png`
 - `app-mediaplayer.png`
+- `app-paint.png`
+- `app-webview.png`
 
 They are used for two different things, and it is worth not confusing them:
 
@@ -96,25 +100,21 @@ They are used for two different things, and it is worth not confusing them:
   at one of these files, and the icon is stamped into the executable itself as
   a `.sxicon` section. This is the normal path — see
   [`docs/userland/SXE_FORMAT.md`](../docs/userland/SXE_FORMAT.md).
-- **As a baked asset.** Only `desktop.png` goes through
+- **As a baked asset.** `desktop.png` goes through
   `tools/gen_desktop_icon_assets.py` into `build/generated/desktop_icon_assets.h`
   and ends up compiled into the window manager. It is the universal fallback,
-  shown when a binary cannot be read at all.
+  shown when a binary cannot be read at all. The 16x16 `shutdown.png` is baked
+  into the Start menu by `tools/gen_start_logo.py`.
 
-Normal builds only convert and package these checked-in PNGs; they never call
-`tools/gen_desktop_source_art.py` or overwrite the artwork. The generator stays
-available as the `savanxp_desktop_source_art` CMake target, or can be run
-directly when the generated set is intentionally being replaced:
-
-```bash
-cmake --build build/linux --target savanxp_desktop_source_art
-# or: python3 tools/gen_desktop_source_art.py --project-root .
-```
+Normal builds only convert and package these checked-in PNGs; they never
+redraw or overwrite the artwork. The PNGs are the source: the generator they
+were drawn with is not part of the repository.
 
 Hand-authored replacements use the same paths and are picked up by the next
 build. A catalog entry referenced by `icon=<name>` needs matching 16x16 and
-32x32 PNGs; a port can instead keep one PNG beside its `.sxres` and use
-`icon_file=`.
+32x32 PNGs; a port can instead keep its PNGs beside its `.sxres` and use
+`icon_file=icon.png,icon-32.png`, as the media player and the Doom and Celeste
+ports do.
 
 ## Fonts
 

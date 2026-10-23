@@ -466,8 +466,8 @@ the binary already brings its own").
 > in `assets/desktop/icons/`** — unlike Doom's, they did not move anywhere.
 > They remain the source each `.sxres` references with `icon=<name>`
 > (`console.sxres` says `icon=app-terminal`, etc.). They remain checked-in,
-> editable PNGs; normal builds package them without calling
-> `tools/gen_desktop_source_art.py`. The only thing retired was the step that
+> editable PNGs; normal builds package them without redrawing them. The only
+> thing retired was the step that
 > *also* baked them into a second C array
 > inside `desktop_icons.c` — `tools/gen_desktop_icon_assets.py` no longer lists
 > them. Two catalogs that shared PNGs by coincidence, not one catalog with two
@@ -722,7 +722,7 @@ ext_open=.txt,.ini,.cfg,.md
 | `launch_flags` | comma-separated list; the names come from `SAVANXP_DESKTOP_LAUNCH_FLAG_*` |
 | `subsystem` | `posix` or `native` |
 | `icon` | asset name under `assets/desktop/icons/{16x16,32x32}/<icon>.png` — the same way `progman.ini` references it today |
-| `icon_file` | the program's own PNG, resolved **relative to the `.sxres`**. The two sizes the runtime requires are derived from that file |
+| `icon_file` | the program's own PNG, or a comma-separated list of PNGs, resolved **relative to the `.sxres`** |
 | `category` | launcher group (`Games`, `Accessories`). Declaring it is how a program **asks** to be listed — see "All Programs" below |
 | `data_dir` | absolute directory of the program's persistent data, offered for deletion when uninstalling |
 | `mime_open`, `ext_open` | comma-separated lists |
@@ -736,8 +736,12 @@ all a third-party port, whose icon has no business entering
 `icon_file` the art ends up **only inside the executable**, which is exactly
 what this format exists for.
 
-`icon_file` accepts **a single PNG** of any size and derives the two that are
-needed. If it is an integer multiple of the target in either direction —
+`icon_file` accepts **one PNG per size** (`icon_file=icon.png,icon-32.png`):
+a PNG that is exactly 16x16 or 32x32 is used as is for that size, which is how
+the house style wants it (each size drawn on its own, see
+[`ICON_STYLE.md`](../desktop/ICON_STYLE.md)). A size with no exact PNG is derived
+from the first one in the list, so a single PNG of any size still works. If it
+is an integer multiple of the target in either direction —
 shrinking (48→16) or enlarging (16→32, the most common case: a pixel-art icon
 is usually drawn once, at the small size) — it uses `NEAREST` so as not to
 touch a single pixel of the original. If there is no clean multiple, it uses

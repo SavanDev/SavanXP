@@ -201,8 +201,7 @@ which is why both go into the registry.
 
 ### Desktop icons and art
 
-- Origin: the repository's own checked-in art; some sets were created with
-  `tools/gen_desktop_source_art.py`
+- Origin: the repository's own checked-in art, drawn for this project
 - Decision: out of the third-party registry since its replacement
 - Reason: the desktop no longer depends on icons copied from or derived from
   other projects

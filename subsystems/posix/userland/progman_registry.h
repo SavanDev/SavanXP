@@ -225,6 +225,12 @@ int progman_registry_scan_examined(void);
  */
 const struct desktop_embedded_bitmap *progman_item_icon(const struct progman_item *item);
 
+/*
+ * The item's own 16x16 icon, when its .sxicon carries one at exactly that
+ * size. Returns 0 otherwise; the caller then shrinks progman_item_icon().
+ */
+const struct desktop_embedded_bitmap *progman_item_icon_small(const struct progman_item *item);
+
 int progman_registry_source(void);
 int progman_group_count(void);
 const struct progman_group *progman_group_at(int index);

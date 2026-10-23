@@ -11,7 +11,6 @@ __pycache__/
 *.pyc
 tools/*
 !tools/gen_cursor_asset.py
-!tools/gen_desktop_source_art.py
 !tools/gen_desktop_icon_assets.py
 !tools/gen_sxe_resources.py
 !tools/gen_mime_icons.py
@@ -63,3 +62,7 @@ ports/*
 ports/doomgeneric/wad/*.wad
 !ports/doomgeneric/wad/
 !ports/doomgeneric/wad/README.md
+
+# The icon art generators are kept on the maintainer's machine only: the
+# checked-in PNGs (and the player's icons.inc) are the source of the art.
+subsystems/posix/userland/mediaplayer/gen_icons.py

@@ -416,36 +416,44 @@ def build_icon_blob(fmt, images, label):
     return bytes(header) + bytes(entries) + bytes(payload)
 
 
-def collect_icons_from_file(fmt, manifest_path, relative_path, label):
-    """Icono propio del programa: un PNG resuelto RELATIVO al .sxres.
+def collect_icons_from_file(fmt, manifest_path, relative_paths, label):
+    """The program's own icon: PNGs resolved RELATIVE to the .sxres.
 
-    Es lo que hace falta para que el arte no tenga que pasar por
-    assets/desktop/icons/. Ese set es el catalogo del sistema -- se versiona y se
-    hornea en la imagen --, asi que obligar a pasar por ahi para estampar un
-    icono contradice el sentido del formato: en SXE el icono viaja DENTRO del
-    ejecutable, y un port de terceros tiene que poder traer el suyo sin dejar
-    nada en el arbol del sistema.
+    This is what lets the art skip assets/desktop/icons/. That set is the
+    system catalog -- versioned and baked into the image --, so forcing an
+    icon through it would defeat the point of the format: in SXE the icon
+    travels INSIDE the executable, and a third-party port must be able to
+    bring its own without leaving anything in the system tree.
 
-    De un solo PNG se derivan los dos tamanos que el runtime exige.
+    `relative_paths` is one PNG or a comma-separated list. A PNG whose size is
+    exactly one of the two the runtime requires is used as is for that size;
+    a size with no exact PNG is derived from the first one in the list.
     """
-    path = os.path.normpath(os.path.join(os.path.dirname(manifest_path), relative_path))
-    if not os.path.isfile(path):
-        raise SystemExit(f"{label}: no se encuentra el icono '{path}'.")
+    sources = []
+    for relative_path in (part.strip() for part in relative_paths.split(",")):
+        if not relative_path:
+            continue
+        path = os.path.normpath(os.path.join(os.path.dirname(manifest_path), relative_path))
+        if not os.path.isfile(path):
+            raise SystemExit(f"{label}: icon '{path}' not found.")
+        sources.append(Image.open(path).convert("RGBA"))
+    if not sources:
+        raise SystemExit(f"{label}: icon_file names no PNG.")
 
-    source = Image.open(path).convert("RGBA")
     images = []
     for size in (fmt["SXE_ICON_SIZE_SMALL"], fmt["SXE_ICON_SIZE_LARGE"]):
+        exact_match = [source for source in sources if source.size == (size, size)]
+        source = exact_match[0] if exact_match else sources[0]
         if source.size == (size, size):
             scaled = source
         else:
-            # Multiplo entero en CUALQUIER sentido -- el original mas grande
-            # que el destino (baja de tamano) o mas chico (sube, el caso mas
-            # comun para un icono de pixel art dibujado a 16x16 que necesita
-            # el 32x32) -- usa NEAREST para conservar el pixel art tal cual.
-            # source%size cubre bajar; size%source cubre subir. Si no hay
-            # multiplo limpio en ninguna direccion, NEAREST se comeria filas o
-            # dejaria bloques irregulares, asi que ahi conviene un remuestreo
-            # suave.
+            # An integer multiple in EITHER direction -- a source larger than
+            # the target (shrinking) or smaller (enlarging, the usual case for a
+            # pixel-art icon drawn at 16x16 that needs a 32x32) -- uses NEAREST
+            # so the pixel art stays exact. source%size covers shrinking;
+            # size%source covers enlarging. With no clean multiple either way,
+            # NEAREST would drop rows or leave uneven blocks, so a smooth
+            # resample is the better choice there.
             exact = (
                 (source.width % size == 0 and source.height % size == 0) or
                 (source.width != 0 and source.height != 0 and
