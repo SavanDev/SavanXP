@@ -393,8 +393,13 @@ uint16_t compute_transport_checksum(uint32_t source_ip, uint32_t destination_ip,
     }
 }
 
-void wait_for_tick() {
+// Sleeps until the next interrupt. True when the calling thread must give
+// up its call instead of looping again: its process is ending, or an exec of a
+// sibling asked it to end (process::current_thread_must_stop). The loops
+// below return -EINTR then, which nobody in user mode ever sees.
+bool wait_for_tick() {
     smp::wait_for_interrupt();
+    return process::current_thread_must_stop();
 }
 
 // Los loops de espera de este archivo ya calculaban esto a mano; la cache ARP
@@ -1424,7 +1429,9 @@ bool resolve_arp(uint32_t target_ip, uint32_t timeout_ms, uint8_t out_mac[6]) {
             set_status(SAVANXP_NET_STATUS_ARP_TIMEOUT);
             return false;
         }
-        wait_for_tick();
+        if (wait_for_tick()) {
+            return false;
+        }
     }
 }
 
@@ -1566,7 +1573,9 @@ int net_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
                     set_status(SAVANXP_NET_STATUS_ICMP_TIMEOUT);
                     return negative_error(SX_ETIMEDOUT);
                 }
-                wait_for_tick();
+                if (wait_for_tick()) {
+                    return negative_error(SX_EINTR);
+                }
             }
         }
         default:
@@ -1709,7 +1718,9 @@ int connect_socket(Socket* socket, uint64_t user_address, uint32_t timeout_ms) {
             set_status(SAVANXP_NET_STATUS_TCP_TIMEOUT);
             return negative_error(SX_ETIMEDOUT);
         }
-        wait_for_tick();
+        if (wait_for_tick()) {
+            return negative_error(SX_EINTR);
+        }
     }
     return 0;
 }
@@ -1837,7 +1848,9 @@ int recvfrom_socket(Socket* socket, uint64_t user_buffer, size_t count, uint64_t
                 return negative_error(SX_ETIMEDOUT);
             }
         }
-        wait_for_tick();
+        if (wait_for_tick()) {
+            return negative_error(SX_EINTR);
+        }
     }
 }
 
@@ -1859,7 +1872,9 @@ int wait_for_send_window(Socket& socket) {
         if (socket.send_timeout_ms != 0 && monotonic_ms() - start_ms >= socket.send_timeout_ms) {
             return negative_error(SX_ETIMEDOUT);
         }
-        wait_for_tick();
+        if (wait_for_tick()) {
+            return negative_error(SX_EINTR);
+        }
     }
     return 0;
 }
@@ -1910,7 +1925,9 @@ int read_socket_bytes(Socket* socket, uint8_t* output, size_t count, bool nonblo
         if (socket->recv_timeout_ms != 0 && monotonic_ms() - start_ms >= socket->recv_timeout_ms) {
             return negative_error(SX_ETIMEDOUT);
         }
-        wait_for_tick();
+        if (wait_for_tick()) {
+            return negative_error(SX_EINTR);
+        }
     }
 
     const uint16_t window_before = socket->advertised_window;

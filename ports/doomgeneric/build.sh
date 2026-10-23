@@ -198,6 +198,7 @@ done
 crt0="$OBJ/crt0.o"
 libc="$OBJ/libc.o"
 posix="$OBJ/posix.o"
+pthread_object="$OBJ/pthread.o"
 gfx="$OBJ/gfx.o"
 # The window runtime reads the program's own .sxe to publish its title and
 # icon (docs/desktop/DESKTOP_ARCHITECTURE.md), so the SXE reader comes along.
@@ -210,6 +211,7 @@ ldso_object="$OBJ/ldso.o"
 compile_asm "$SDK/runtime/crt0.S" "$crt0"
 compile_c "$SDK/runtime/libc.c" "$libc"
 compile_c "$SDK/runtime/posix.c" "$posix"
+compile_c "$SDK/runtime/pthread.c" "$pthread_object"
 compile_c "$SDK/runtime/gfx.c" "$gfx"
 compile_c "$SDK/runtime/sxe.c" "$sxe"
 compile_c "$SDK/runtime/gfx2d.c" "$gfx2d"
@@ -222,7 +224,7 @@ compile_c "$ROOT/subsystems/posix/userland/ldso.c" "$ldso_object" -Wall -Wextra 
 
 "$LINK_CC" -target x86_64-unknown-linux-gnu "${LINK_FLAGS[@]}" \
     -o "$FRESH_ELF" \
-    "$crt0" "$libc" "$posix" "$gfx" "$sxe" "$gfx2d" "$math" "$setjmp_object" "$audio" \
+    "$crt0" "$libc" "$posix" "$pthread_object" "$gfx" "$sxe" "$gfx2d" "$math" "$setjmp_object" "$audio" \
     "$ldso_object" \
     "${APP_OBJECTS[@]}" \
     "$SX_MIDI_LIB"

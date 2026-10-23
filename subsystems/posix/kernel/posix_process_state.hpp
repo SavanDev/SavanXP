@@ -28,21 +28,36 @@ constexpr size_t POSIX_MAX_POLL_ENTRIES = process::kMaxFileHandles;
 
 struct ProcessState {
     char cwd[process::kProcessPathLength];
-    // Pedido de poll() en curso (rebanada C de aislamiento).
-    //
-    // Antes vivia en Process, en el kernel, y el kernel lo reevaluaba en cada
-    // tick. Ahora es de POSIX: el kernel solo sabe que el proceso esta
-    // estacionado con vencimiento, y POSIX decide si eso era un poll.
-    //
-    // Es una copia EN KERNEL del pedido (no un puntero a memoria de usuario)
-    // porque la reevaluacion por tick no puede cambiar de CR3 mil veces por
-    // segundo. La memoria de usuario se toca una sola vez, al completar, para
-    // devolver los revents.
+};
+
+// POSIX per-thread state (subsystem::register_thread_state_size): the poll()
+// request in progress (isolation slice C). It was per process while a POSIX
+// process had one thread; two threads polling at once need one each.
+//
+// The kernel only knows the thread is parked with a deadline; POSIX decides
+// whether that was a poll. The request is a copy IN THE KERNEL, not a pointer
+// to user memory, because the per-tick re-evaluation cannot switch CR3 a
+// thousand times a second. User memory is touched once, on completion, to
+// return the revents.
+struct ThreadState {
     uint64_t poll_user_fds;
     uint32_t poll_count;
     uint32_t poll_active;
     savanxp_pollfd poll_entries[POSIX_MAX_POLL_ENTRIES];
 };
+
+// The thread's state, allocated on first use; nullptr without memory.
+inline ThreadState* thread_state(process::Thread& thread) {
+    return reinterpret_cast<ThreadState*>(process::thread_subsystem_state(thread));
+}
+
+// The state a parked thread already has, without allocating: the wait hook
+// runs for every parked thread, and one that never polled has nothing to see.
+inline ThreadState* existing_thread_state(const process::Thread& thread) {
+    return thread.subsystem_state_bytes == sizeof(ThreadState)
+        ? reinterpret_cast<ThreadState*>(thread.subsystem_state)
+        : nullptr;
+}
 
 // El estado del proceso actual, o nullptr si no hay (nativo, o sin memoria).
 // El heap devuelve memoria alineada a 16 (heap::allocate), pero el puntero
@@ -62,8 +77,8 @@ inline const char* cwd_or_root(const process::Process& proc) {
 }
 
 // The poll path (slice C), implemented in posix_translation.cpp.
-bool commit_poll_entries(ProcessState& state, process::Process& proc);
-int evaluate_poll_entries(ProcessState& state, process::Process& proc);
+bool commit_poll_entries(ThreadState& state, process::Process& proc);
+int evaluate_poll_entries(ThreadState& state, process::Process& proc);
 void recheck_parked_poll(process::Thread& thread, uint64_t now_ms, bool honour_deadline);
 
 } // namespace posix

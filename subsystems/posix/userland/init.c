@@ -145,6 +145,7 @@ static int run_automation_spec(const char* spec) {
     const char* ntptest_argv[] = {"/disk/bin/ntptest", 0, 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
     const char* nativetest_argv[] = {"/disk/bin/nativetest", 0};
+    const char* pthreadtest_argv[] = {"/disk/bin/pthreadtest", 0};
     const char* sessiontest_argv[] = {"/disk/bin/sessiontest", 0};
     const char* ccleste_argv[] = {"/disk/bin/ccleste", "--selftest", 0};
     const char* kbdtest_argv[] = {"/disk/bin/kbdtest", "--selftest", 0};
@@ -261,6 +262,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "sessiontest") == 0) {
             path = "/disk/bin/sessiontest";
             argv = sessiontest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "pthreadtest") == 0 || strcmp(spec, "pthread-test") == 0) {
+            path = "/disk/bin/pthreadtest";
+            argv = pthreadtest_argv;
             argc = 1;
         } else if (strcmp(spec, "nativetest") == 0 || strcmp(spec, "native-test") == 0) {
             path = "/disk/bin/nativetest";

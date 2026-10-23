@@ -142,7 +142,7 @@ int fcntl_fd(process::Process& proc, uint64_t fd, uint64_t command, uint64_t val
 
 int poll_fds(process::Thread& self, uint64_t user_fds, size_t count, int timeout_ms) {
     process::Process& proc = *self.process;
-    posix::ProcessState* const state = posix::state(proc);
+    posix::ThreadState* const state = posix::thread_state(self);
     if (state == nullptr) {
         return sx::negative_error(SAVANXP_ENOMEM);
     }
@@ -191,17 +191,17 @@ int poll_fds(process::Thread& self, uint64_t user_fds, size_t count, int timeout
 }
 
 /*
- * Re-evaluacion de un proceso estacionado (rebanada C).
+ * Re-evaluating a parked thread (isolation slice C).
  *
- * Antes esto vivia en el kernel: el tick buscaba WaitReason::poll y
- * reevaluaba los descriptores. Ahora el kernel solo entrega el proceso
- * estacionado (subsystem::recheck_parked_process) y POSIX decide si era un
- * poll, si ya hay algo, o si se le vencio el plazo.
+ * This used to live in the kernel: the tick looked for WaitReason::poll and
+ * re-evaluated the descriptors. Now the kernel only hands over the parked
+ * thread (subsystem::recheck_parked_thread) and POSIX decides whether it was
+ * a poll, whether something is ready, or whether its deadline passed.
  *
- * El pedido vive en una COPIA EN KERNEL (posix::ProcessState::poll_entries),
- * no en un puntero a memoria de usuario: la reevaluacion por tick no puede
- * cambiar de CR3 mil veces por segundo y por proceso parado. La memoria de
- * usuario se toca una sola vez, al completar, para devolver los revents.
+ * The request lives in a COPY IN THE KERNEL (posix::ThreadState::poll_entries),
+ * not behind a pointer to user memory: the per-tick re-evaluation cannot
+ * switch CR3 a thousand times a second for every parked thread. User memory
+ * is touched once, on completion, to return the revents.
  */
 
 // fork copies the calling thread only: the child is a process with one
@@ -388,6 +388,33 @@ int create_socket_fd(process::Process& proc, uint64_t domain, uint64_t type, uin
     return fd;
 }
 
+namespace {
+
+// A socket call that may sleep in ring 0 (connect, send, UDP receive) keeps a
+// pointer to the socket across the sleep. A sibling thread may close the
+// handle meanwhile; holding a reference to the handle's object for the length
+// of the call keeps the socket alive until the call is done with it.
+class HeldObject {
+public:
+    explicit HeldObject(object::IoObject* file) : header_(file != nullptr ? &file->header : nullptr) {
+        if (header_ != nullptr) {
+            object::retain(header_);
+        }
+    }
+    ~HeldObject() {
+        if (header_ != nullptr) {
+            object::release(header_);
+        }
+    }
+    HeldObject(const HeldObject&) = delete;
+    HeldObject& operator=(const HeldObject&) = delete;
+
+private:
+    object::Header* header_;
+};
+
+} // namespace
+
 int bind_fd(process::Process& proc, uint64_t fd, uint64_t user_address) {
     object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_write);
     if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
@@ -409,6 +436,7 @@ int connect_fd(process::Process& proc, uint64_t fd, uint64_t user_address, uint3
     if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);
     }
+    const HeldObject held(file);
     return net::connect_socket(file->socket, user_address, timeout_ms);
 }
 
@@ -417,6 +445,7 @@ int sendto_fd(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_t 
     if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);
     }
+    const HeldObject held(file);
     return net::sendto_socket(file->socket, user_buffer, count, user_address, (file->open_flags & process::open_nonblock) != 0);
 }
 
@@ -425,6 +454,7 @@ int recvfrom_fd(process::Process& proc, uint64_t fd, uint64_t user_buffer, size_
     if (file == nullptr || file->kind != process::HandleKind::socket || file->socket == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);
     }
+    const HeldObject held(file);
     return net::recvfrom_socket(
         file->socket,
         user_buffer,
@@ -863,8 +893,10 @@ int write_handle(process::Thread& self, uint64_t fd, uint64_t user_buffer, size_
         }
         case process::HandleKind::device:
             return device::write(file->device, user_buffer, count);
-        case process::HandleKind::socket:
+        case process::HandleKind::socket: {
+            const HeldObject held(file);
             return net::write_socket(file->socket, user_buffer, count, (file->open_flags & process::open_nonblock) != 0);
+        }
         default:
             return sx::negative_error(SAVANXP_EBADF);
     }
@@ -1146,7 +1178,7 @@ namespace posix {
 
 // Devuelve los revents al arreglo del proceso. Es el unico momento en que el
 // camino de poll toca memoria de usuario de un proceso que no esta corriendo.
-bool commit_poll_entries(ProcessState& state, process::Process& proc) {
+bool commit_poll_entries(ThreadState& state, process::Process& proc) {
     if (state.poll_count == 0) {
         return true;
     }
@@ -1157,7 +1189,7 @@ bool commit_poll_entries(ProcessState& state, process::Process& proc) {
 // Recorre la copia en kernel del pedido y deja los revents ahi mismo. No toca
 // memoria de usuario ni el estado del proceso: sirve igual para el que esta
 // llamando a poll que para uno ya parado, que es de donde lo llama el tick.
-int evaluate_poll_entries(ProcessState& state, process::Process& proc) {
+int evaluate_poll_entries(ThreadState& state, process::Process& proc) {
     int ready = 0;
 
     for (size_t index = 0; index < state.poll_count; ++index) {
@@ -1192,7 +1224,7 @@ int evaluate_poll_entries(ProcessState& state, process::Process& proc) {
 // deadlines, an event only looks for data.
 void recheck_parked_poll(process::Thread& thread, uint64_t now_ms, bool honour_deadline) {
     process::Process& proc = *thread.process;
-    ProcessState* const owned = posix::state(proc);
+    ThreadState* const owned = posix::existing_thread_state(thread);
     if (owned == nullptr || owned->poll_active == 0) {
         return;
     }

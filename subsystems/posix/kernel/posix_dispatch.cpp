@@ -15,6 +15,7 @@
 // whether it is ready now.
 static void register_posix_process_state(void) {
     subsystem::register_process_state_size(subsystem::Id::posix, sizeof(posix::ProcessState));
+    subsystem::register_thread_state_size(subsystem::Id::posix, sizeof(posix::ThreadState));
     subsystem::register_wait_recheck(subsystem::Id::posix, &posix::recheck_parked_poll);
 }
 
@@ -139,6 +140,15 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             ImageFailure failure = ImageFailure::none;
             const bool prepared = prepare_exec_image(self, resolved, arguments->argc, arguments->argv, failure);
             heap::free(arguments);
+            if (!prepared && failure == ImageFailure::threads_running) {
+                // Other threads are still stopping on other cores. Run the
+                // same int $0x80 again once this core has turned around:
+                // nothing was changed yet, and the arguments are still in
+                // the registers.
+                context->rip -= 2;
+                self.state = State::ready;
+                return choose_next_context(context);
+            }
             if (!prepared) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(image_failure_errno(failure)));
                 return context;

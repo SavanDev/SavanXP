@@ -1,18 +1,19 @@
 # SDK v1.2 Reference
 
-## Estabilidad
+## Stability
 
-La carpeta `subsystems/posix/sdk/v1` es la superficie pública congelada del SDK externo de
-SavanXP. El nivel vigente documentado en esta carpeta es `SDK 1.2`.
+The `subsystems/posix/sdk/v1` folder is the frozen public surface of the
+SavanXP external SDK. The level documented here is `SDK 1.2`.
 
-Se consideran parte del contrato:
+Part of the contract:
 
 - `include/savanxp/libc.h`
 - `include/savanxp/syscall.h`
-- headers estandar bajo `include/`
+- the standard headers under `include/`
 - `runtime/crt0.S`
 - `runtime/libc.c`
 - `runtime/posix.c`
+- `runtime/pthread.c`
 - `linker.ld`
 - `tools/build-user.sh`
 - `tools/new-user-app.sh`
@@ -208,32 +209,42 @@ Audio PCM v1.2:
 3. Instalar en `/disk/bin`
 4. Ejecutar desde la shell por nombre o ruta
 
-## Capa POSIX
+## POSIX layer
 
-Headers estándar nuevos expuestos en `subsystems/posix/sdk/v1/include`:
+Standard headers exposed in `subsystems/posix/sdk/v1/include`:
 
 - `unistd.h`, `fcntl.h`, `poll.h`, `sys/select.h`, `signal.h`, `errno.h`
 - `stdio.h`, `stdlib.h`, `string.h`, `strings.h`, `ctype.h`, `math.h`, `time.h`
 - `dirent.h`, `sys/types.h`, `sys/stat.h`, `sys/wait.h`
 - `sys/socket.h`, `sys/mman.h`, `netinet/in.h`, `arpa/inet.h`
+- `pthread.h`, `sched.h`
 
-Convención de compatibilidad:
+Compatibility convention:
 
-- `savanxp/*` se conserva como capa baja.
-- la capa POSIX/libc vive en `runtime/posix.c` y se usa desde los headers estándar.
+- `savanxp/*` stays as the low layer.
+- the POSIX/libc layer lives in `runtime/posix.c` (threads in
+  `runtime/pthread.c`) and is reached through the standard headers.
 
-Límites prácticos de esta primera ola POSIX:
+Practical limits of the POSIX layer:
 
-- allocator de heap fijo dentro del runtime; `free()` recicla bloques y
-  `realloc()` libera el bloque viejo cuando necesita moverlo.
-- `DIR->d_type` se informa por `stat()` best-effort.
-- `setsockopt`/`getsockopt` cubren solo timeouts y flags básicos de cliente.
-- `mmap` / `munmap` cubren solo mappings anónimos; no hay file-backed
-  mappings, offsets arbitrarios ni copy-on-write real.
-- `fork()` y `kill()` ya existen, pero las señales siguen siendo de accion por
-  defecto; no hay `sigaction`, `signal()`, `sigprocmask` ni masks completas.
-- `select`/`poll` buscan coherencia de uso antes que compatibilidad POSIX
-  exhaustiva; no todos los tipos de descriptor tienen semantica Unix completa.
+- a fixed heap allocator inside the runtime; `free()` recycles blocks and
+  `realloc()` frees the old block when it has to move it.
+- `DIR->d_type` is filled from `stat()`, best effort.
+- `setsockopt`/`getsockopt` cover only timeouts and basic client flags.
+- `mmap` / `munmap` cover only anonymous mappings: no file-backed mappings,
+  arbitrary offsets or real copy-on-write.
+- `fork()` and `kill()` exist, but signals keep their default action.
+- `select`/`poll` aim for consistent use rather than exhaustive POSIX
+  compatibility; not every descriptor type has full Unix semantics.
+- threads (`pthread.h`): create, join, detach, exit, mutexes (normal,
+  recursive, error-checking), condition variables, once and keys, plus
+  `__thread` variables in the executable. No cancellation, read-write locks,
+  barriers or process-shared objects, and a shared library cannot have TLS.
+  Stacks are committed up front (256 KiB unless the attributes ask for
+  more), and each thread holds one of the process's 64 handles while it
+  exists. `errno` is per thread; the heap and stdio take a lock once a second
+  thread exists. `fork` copies only the calling thread and `exec` ends the
+  others. See `docs/kernel/THREADS_ROADMAP.md`.
 
 ## No incluido en v1
 

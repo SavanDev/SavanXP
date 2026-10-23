@@ -7,6 +7,7 @@ namespace {
 
 Dispatcher g_table[static_cast<size_t>(Id::count)] = {};
 size_t g_state_size[static_cast<size_t>(Id::count)] = {};
+size_t g_thread_state_size[static_cast<size_t>(Id::count)] = {};
 WaitRecheck g_wait_recheck[static_cast<size_t>(Id::count)] = {};
 
 } // namespace
@@ -16,6 +17,9 @@ void reset() {
         entry = nullptr;
     }
     for (auto& bytes : g_state_size) {
+        bytes = 0;
+    }
+    for (auto& bytes : g_thread_state_size) {
         bytes = 0;
     }
     for (auto& hook : g_wait_recheck) {
@@ -63,6 +67,22 @@ size_t process_state_size(Id id) {
         return 0;
     }
     return g_state_size[index];
+}
+
+void register_thread_state_size(Id id, size_t bytes) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(Id::count)) {
+        return;
+    }
+    g_thread_state_size[index] = bytes;
+}
+
+size_t thread_state_size(Id id) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(Id::count)) {
+        return 0;
+    }
+    return g_thread_state_size[index];
 }
 
 void register_wait_recheck(Id id, WaitRecheck fn) {

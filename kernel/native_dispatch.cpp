@@ -525,9 +525,10 @@ void initialize_native_subsystem() {
 
 /* The native calls any subsystem's processes may make: the object floor
  * (handles, events, sections, waits, pipes and devices, ports, the clock), as
- * a Win32 process calls ntdll. Not the lifecycle ones -- EXIT, SPAWN, WAITPID
- * -- which a subsystem defines in its own terms, nor INFO/LOG/GFX, which are a
- * standalone native program's. */
+ * a Win32 process calls ntdll, and threads with what they need (the segment
+ * bases, wait on an address), which POSIX builds pthreads on. Not the process
+ * lifecycle ones -- EXIT, SPAWN, WAITPID -- which a subsystem defines in its
+ * own terms, nor INFO/LOG/GFX, which are a standalone native program's. */
 bool native_call_open_to_all_subsystems(uint64_t number) {
     switch (number) {
         case SXN_SYS_EVENT_CREATE:
@@ -552,6 +553,12 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_PIPE_SEND_HANDLE:
         case SXN_SYS_PIPE_RECEIVE_HANDLE:
         case SXN_SYS_PIPE_CREATE:
+        case SXN_SYS_THREAD_CREATE:
+        case SXN_SYS_THREAD_EXIT:
+        case SXN_SYS_THREAD_EXIT_CODE:
+        case SXN_SYS_SET_THREAD_BASE:
+        case SXN_SYS_WAIT_ADDRESS:
+        case SXN_SYS_WAKE_ADDRESS:
             return true;
         default:
             return false;

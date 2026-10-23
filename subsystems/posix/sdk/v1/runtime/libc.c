@@ -275,6 +275,8 @@ const char* sx_program_path(void) {
     return (sx_program_argc > 0 && sx_program_argv != 0) ? sx_program_argv[0] : 0;
 }
 
+void sx_tls_init(void);
+
 void sx_start_dynamic(void) {
     if (sx_run_interpreter != 0) {
         const int result = sx_run_interpreter();
@@ -286,6 +288,9 @@ void sx_start_dynamic(void) {
             eprintf("sx_start_dynamic: el interprete fallo (paso %d)\n", -result);
         }
     }
+    /* Thread-local storage after the loader: the executable's TLS image may
+     * hold pointers the loader just relocated. */
+    sx_tls_init();
 }
 
 long section_create(unsigned long size, unsigned long flags) {    return syscall2(SAVANXP_SYS_SECTION_CREATE, size, flags);

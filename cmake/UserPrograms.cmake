@@ -116,6 +116,10 @@ function(savanxp_program)
         message(FATAL_ERROR "savanxp_program(${P_NAME}): LINK_PROFILE desconocido '${P_LINK_PROFILE}'")
     else()
         target_link_options(${P_NAME} PRIVATE ${SAVANXP_USER_LINK_OPTIONS_STATIC})
+        # The script decides the layout every static program is linked with:
+        # changing it has to relink them all.
+        set_property(TARGET ${P_NAME} APPEND PROPERTY
+            LINK_DEPENDS "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld")
     endif()
     set_target_properties(${P_NAME} PROPERTIES OUTPUT_NAME "${P_NAME}" SUFFIX "")
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_TARGETS ${P_NAME})
@@ -436,6 +440,7 @@ savanxp_program(NAME forktest TEST SOURCES subsystems/posix/userland/forktest.c)
 # (isolation slice B). El binario esta en /disk porque se reejecuta a si mismo.
 savanxp_program(NAME cwdtest TEST SOURCES subsystems/posix/userland/cwdtest.c)
 savanxp_program(NAME smptest TEST SOURCES subsystems/posix/userland/smptest.c)
+savanxp_program(NAME pthreadtest TEST SOURCES subsystems/posix/userland/pthreadtest.c)
 savanxp_program(NAME polltest TEST SOURCES subsystems/posix/userland/polltest.c)
 savanxp_program(NAME clocktest TEST SOURCES subsystems/posix/userland/clocktest.c)
 savanxp_program(NAME date SOURCES subsystems/posix/userland/date.c)

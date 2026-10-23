@@ -10,6 +10,8 @@
 #include <sys/mman.h>
 #include <termios.h>
 
+#include "sx_thread.h"
+
 #define EOF (-1)
 #define O_RDONLY 0x0000
 #define O_WRONLY 0x0001
@@ -305,7 +307,9 @@ FILE* stdout = &g_stdout_file;
 FILE* stderr = &g_stderr_file;
 char** environ = g_environ_storage;
 
-static int g_errno = 0;
+/* errno before the main thread's TLS block exists (sx_tls_init). From then
+ * on every thread has its own, in its TCB. */
+static int g_errno_early = 0;
 
 void* sx_malloc(size_t size);
 void* sx_calloc(size_t count, size_t size);
@@ -314,8 +318,33 @@ int sx_usleep(unsigned long microseconds);
 int sx_vsnprintf(char* buffer, size_t size, const char* format, va_list args);
 
 int* sx_errno_location(void) {
-    return &g_errno;
+    return sx_tls_ready ? &sx_tcb_self()->errno_value : &g_errno_early;
 }
+
+/* The heap, the FILE table and every FILE, and the socket table are shared by
+ * the process's threads. One recursive lock each, taken by the public entry
+ * points; free until the first pthread_create (sx_thread.h). stdio has one
+ * lock for all streams: simple, and contention on it is a program writing
+ * from many threads at once. */
+static struct sx_lock g_heap_lock = SX_LOCK_INIT;
+static struct sx_lock g_stdio_lock = SX_LOCK_INIT;
+static struct sx_lock g_socket_lock = SX_LOCK_INIT;
+
+void* sx_realloc(void* pointer, size_t size);
+int sx_posix_memalign(void** out_pointer, size_t alignment, size_t size);
+void* sx_aligned_alloc(size_t alignment, size_t size);
+void* sx_memalign(size_t alignment, size_t size);
+FILE* sx_fopen(const char* path, const char* mode);
+int sx_fclose(FILE* stream);
+size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream);
+int sx_fseek(FILE* stream, long offset, int whence);
+long sx_ftell(FILE* stream);
+int sx_fflush(FILE* stream);
+int sx_vfprintf(FILE* stream, const char* format, va_list args);
+char* sx_fgets(char* buffer, int size, FILE* stream);
+int sx_ungetc(int character, FILE* stream);
+FILE* sx_fdopen(int fd, const char* mode);
+void sx_clearerr(FILE* stream);
 
 size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream);
 
@@ -324,7 +353,7 @@ static int sx_result_to_errno(long result) {
 }
 
 static void sx_set_errno_from_result(long result) {
-    g_errno = sx_result_to_errno(result);
+    errno = sx_result_to_errno(result);
 }
 
 static size_t sx_min_size(size_t left, size_t right) {
@@ -628,22 +657,26 @@ static struct sx_socket_state* sx_find_socket_state(int fd) {
 }
 
 static void sx_track_socket(int fd) {
+    sx_lock_acquire(&g_socket_lock);
     for (size_t index = 0; index < SX_SOCKET_STATE_CAPACITY; ++index) {
         if (!g_socket_states[index].in_use) {
             g_socket_states[index].in_use = 1;
             g_socket_states[index].fd = fd;
             g_socket_states[index].recv_timeout_ms = 0;
             g_socket_states[index].send_timeout_ms = 5000;
-            return;
+            break;
         }
     }
+    sx_lock_release(&g_socket_lock);
 }
 
 static void sx_untrack_socket(int fd) {
+    sx_lock_acquire(&g_socket_lock);
     struct sx_socket_state* state = sx_find_socket_state(fd);
     if (state != 0) {
         memset(state, 0, sizeof(*state));
     }
+    sx_lock_release(&g_socket_lock);
 }
 
 static unsigned char sx_dtype_from_mode(unsigned int mode) {
@@ -1104,18 +1137,18 @@ char* sx_strcasestr(const char* haystack, const char* needle) {
     return 0;
 }
 
-void* sx_malloc(size_t size) {
+static void* sx_malloc_unlocked(size_t size) {
     sx_alloc_header* header = 0;
     const size_t aligned = sx_align_size(size);
 
     if (aligned == 0) {
-        g_errno = SAVANXP_ENOMEM;
+        errno = SAVANXP_ENOMEM;
         return 0;
     }
 
     header = sx_find_free_block(aligned);
     if (header == 0) {
-        g_errno = SAVANXP_ENOMEM;
+        errno = SAVANXP_ENOMEM;
         return 0;
     }
 
@@ -1124,12 +1157,12 @@ void* sx_malloc(size_t size) {
     return (void*)(header + 1);
 }
 
-void* sx_calloc(size_t count, size_t size) {
+static void* sx_calloc_unlocked(size_t count, size_t size) {
     const size_t max_size = (size_t)-1;
     const size_t total = count * size;
 
     if (count != 0 && size > max_size / count) {
-        g_errno = SAVANXP_ENOMEM;
+        errno = SAVANXP_ENOMEM;
         return 0;
     }
 
@@ -1140,7 +1173,7 @@ void* sx_calloc(size_t count, size_t size) {
     return pointer;
 }
 
-void* sx_realloc(void* pointer, size_t size) {
+static void* sx_realloc_unlocked(void* pointer, size_t size) {
     sx_alloc_header* header = 0;
     void* replacement = 0;
     size_t aligned = 0;
@@ -1155,13 +1188,13 @@ void* sx_realloc(void* pointer, size_t size) {
 
     header = ((sx_alloc_header*)pointer) - 1;
     if (!sx_block_is_valid(header) || header->free) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0;
     }
 
     aligned = sx_align_size(size);
     if (aligned == 0) {
-        g_errno = SAVANXP_ENOMEM;
+        errno = SAVANXP_ENOMEM;
         return 0;
     }
 
@@ -1233,7 +1266,7 @@ static void* sx_resolve_aligned(void* pointer) {
     return tag->base;
 }
 
-int sx_posix_memalign(void** out_pointer, size_t alignment, size_t size) {
+static int sx_posix_memalign_unlocked(void** out_pointer, size_t alignment, size_t size) {
     void* block = 0;
     if (out_pointer == 0) {
         return SAVANXP_EINVAL;
@@ -1249,19 +1282,19 @@ int sx_posix_memalign(void** out_pointer, size_t alignment, size_t size) {
     return 0;
 }
 
-void* sx_aligned_alloc(size_t alignment, size_t size) {
+static void* sx_aligned_alloc_unlocked(size_t alignment, size_t size) {
     if (alignment == 0 || (alignment & (alignment - 1u)) != 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0;
     }
     return sx_allocate_aligned(alignment, size);
 }
 
-void* sx_memalign(size_t alignment, size_t size) {
+static void* sx_memalign_unlocked(size_t alignment, size_t size) {
     return sx_aligned_alloc(alignment, size);
 }
 
-void sx_free(void* pointer) {
+static void sx_free_unlocked(void* pointer) {
     sx_alloc_header* header = 0;
 
     if (pointer == 0) {
@@ -1271,7 +1304,7 @@ void sx_free(void* pointer) {
     pointer = sx_resolve_aligned(pointer);
     header = ((sx_alloc_header*)pointer) - 1;
     if (!sx_block_is_valid(header) || header->free) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return;
     }
 
@@ -1333,7 +1366,7 @@ static unsigned long sx_parse_unsigned(const char* text, char** endptr, int base
     *success = digits != 0;
     if (overflow) {
         /* El estandar pide saturar y avisar por ERANGE, no envolver. */
-        g_errno = ERANGE;
+        errno = ERANGE;
         return ~0ul;
     }
     return value;
@@ -1355,7 +1388,7 @@ long sx_strtol(const char* text, char** endptr, int base) {
     }
     value = sx_parse_unsigned(cursor, endptr, base, &success);
     if (!success) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         if (endptr != 0) {
             *endptr = (char*)text;
         }
@@ -1368,7 +1401,7 @@ unsigned long sx_strtoul(const char* text, char** endptr, int base) {
     int success = 0;
     unsigned long value = sx_parse_unsigned(text, endptr, base, &success);
     if (!success) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         if (endptr != 0) {
             *endptr = (char*)text;
         }
@@ -1746,7 +1779,7 @@ double sx_strtod(const char* text, char** endptr) {
         }
     }
     if (!seen_digit) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0.0;
     }
 
@@ -1830,7 +1863,7 @@ char* sx_getenv(const char* name) {
 
 int sx_system(const char* command) {
     (void)command;
-    g_errno = SAVANXP_EINVAL;
+    errno = SAVANXP_EINVAL;
     return -1;
 }
 
@@ -2001,7 +2034,7 @@ int sx_fcntl(int fd, int command, ...) {
         size_t scratch_count = 0;
 
         if (minimum_fd < 0) {
-            g_errno = SAVANXP_EINVAL;
+            errno = SAVANXP_EINVAL;
             return -1;
         }
 
@@ -2024,7 +2057,7 @@ int sx_fcntl(int fd, int command, ...) {
                 for (size_t index = 0; index < scratch_count; ++index) {
                     sx_close(scratch[index]);
                 }
-                g_errno = SAVANXP_EINVAL;
+                errno = SAVANXP_EINVAL;
                 return -1;
             }
             scratch[scratch_count++] = duplicated;
@@ -2071,13 +2104,13 @@ int sx_poll(struct pollfd* fds, unsigned long count, int timeout_ms) {
     long result = 0;
 
     if (count != 0 && fds == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
 
     raw = (struct savanxp_pollfd*)sx_calloc(count != 0 ? (size_t)count : 1u, sizeof(*raw));
     if (raw == 0) {
-        g_errno = SAVANXP_ENOMEM;
+        errno = SAVANXP_ENOMEM;
         return -1;
     }
 
@@ -2110,7 +2143,7 @@ int sx_select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, st
     int result = 0;
 
     if (nfds < 0 || nfds > SX_FD_SETSIZE) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
 
@@ -2225,11 +2258,11 @@ int sx_access(const char* path, int mode) {
         return -1;
     }
     if ((mode & W_OK) != 0 && (info.st_mode & 0222u) == 0) {
-        g_errno = SAVANXP_EACCES;
+        errno = SAVANXP_EACCES;
         return -1;
     }
     if ((mode & X_OK) != 0 && (info.st_mode & 0111u) == 0) {
-        g_errno = SAVANXP_EACCES;
+        errno = SAVANXP_EACCES;
         return -1;
     }
     return 0;
@@ -2243,7 +2276,7 @@ int sx_isatty(int fd) {
     if ((info.st_mode & SAVANXP_S_IFMT) == SAVANXP_S_IFCHR) {
         return 1;
     }
-    g_errno = SAVANXP_ENOTTY;
+    errno = SAVANXP_ENOTTY;
     return 0;
 }
 
@@ -2285,7 +2318,7 @@ pid_t sx_getpgrp(void) {
 int sx_setpgid(pid_t pid, pid_t pgrp) {
     pid_t self = sx_getpid();
     if ((pid != 0 && pid != self) || (pgrp != 0 && pgrp != self)) {
-        g_errno = SAVANXP_ENOSYS;
+        errno = SAVANXP_ENOSYS;
         return -1;
     }
     return 0;
@@ -2307,7 +2340,7 @@ int sx_sync(void) {
 int sx_tcgetattr(int fd, struct termios* value) {
     (void)fd;
     if (value == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     memset(value, 0, sizeof(*value));
@@ -2342,7 +2375,7 @@ DIR* sx_opendir(const char* path) {
         return 0;
     }
     if ((info.st_mode & SAVANXP_S_IFMT) != SAVANXP_S_IFDIR) {
-        g_errno = SAVANXP_ENOTDIR;
+        errno = SAVANXP_ENOTDIR;
         return 0;
     }
     fd = sx_open(path, O_RDONLY);
@@ -2359,7 +2392,7 @@ DIR* sx_opendir(const char* path) {
         }
     }
     sx_close(fd);
-    g_errno = SAVANXP_ENOMEM;
+    errno = SAVANXP_ENOMEM;
     return 0;
 }
 
@@ -2369,7 +2402,7 @@ struct dirent* sx_readdir(DIR* directory) {
     struct stat info = {};
     long result = 0;
     if (directory == 0 || !directory->in_use) {
-        g_errno = SAVANXP_EBADF;
+        errno = SAVANXP_EBADF;
         return 0;
     }
     result = savanxp_readdir(directory->fd, name, sizeof(name));
@@ -2391,7 +2424,7 @@ struct dirent* sx_readdir(DIR* directory) {
 
 int sx_closedir(DIR* directory) {
     if (directory == 0 || !directory->in_use) {
-        g_errno = SAVANXP_EBADF;
+        errno = SAVANXP_EBADF;
         return -1;
     }
     sx_close(directory->fd);
@@ -2520,7 +2553,7 @@ static int sx_emit_buffer_char(char character, void* context) {
 static int sx_flush_stream(FILE* stream) {
     size_t written = 0;
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return EOF;
     }
     if (stream->write_buffer_used == 0) {
@@ -2535,7 +2568,7 @@ static int sx_flush_stream(FILE* stream) {
         if (result <= 0) {
             stream->error = 1;
             if (result == 0) {
-                g_errno = SAVANXP_EIO;
+                errno = SAVANXP_EIO;
             }
             return EOF;
         }
@@ -2572,7 +2605,7 @@ static size_t sx_buffered_write(FILE* stream, const unsigned char* buffer, size_
             if (direct <= 0) {
                 stream->error = 1;
                 if (direct == 0) {
-                    g_errno = SAVANXP_EIO;
+                    errno = SAVANXP_EIO;
                 }
                 break;
             }
@@ -2607,7 +2640,7 @@ static size_t sx_direct_write(FILE* stream, const unsigned char* buffer, size_t 
         if (result <= 0) {
             stream->error = 1;
             if (result == 0) {
-                g_errno = SAVANXP_EIO;
+                errno = SAVANXP_EIO;
             }
             break;
         }
@@ -2900,12 +2933,12 @@ static int sx_vformat(int (*emit)(char, void*), void* context, const char* forma
     return written;
 }
 
-FILE* sx_fopen(const char* path, const char* mode) {
+static FILE* sx_fopen_unlocked(const char* path, const char* mode) {
     int flags = O_RDONLY;
     int fd = -1;
     FILE* stream = 0;
     if (path == 0 || mode == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0;
     }
     if (mode[0] == 'w') {
@@ -2924,7 +2957,7 @@ FILE* sx_fopen(const char* path, const char* mode) {
     stream = sx_allocate_file();
     if (stream == 0) {
         sx_close(fd);
-        g_errno = SAVANXP_ENOMEM;
+        errno = SAVANXP_ENOMEM;
         return 0;
     }
     stream->fd = fd;
@@ -2933,11 +2966,11 @@ FILE* sx_fopen(const char* path, const char* mode) {
     return stream;
 }
 
-int sx_fclose(FILE* stream) {
+static int sx_fclose_unlocked(FILE* stream) {
     int flush_result = 0;
     int close_result = 0;
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return EOF;
     }
     if (stream->is_stdio) {
@@ -2972,7 +3005,7 @@ static size_t sx_fill_read_buffer(FILE* stream) {
     return stream->read_buffer_used;
 }
 
-size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
+static size_t sx_fread_unlocked(void* buffer, size_t size, size_t count, FILE* stream) {
     unsigned char* output = (unsigned char*)buffer;
     size_t wanted = 0;
     size_t filled = 0;
@@ -3025,12 +3058,12 @@ size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
     return filled / size;
 }
 
-size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream) {
+static size_t sx_fwrite_unlocked(const void* buffer, size_t size, size_t count, FILE* stream) {
     if (stream == 0 || buffer == 0 || size == 0 || count == 0) {
         return 0;
     }
     if (!stream->can_write) {
-        g_errno = SAVANXP_EBADF;
+        errno = SAVANXP_EBADF;
         stream->error = 1;
         return 0;
     }
@@ -3043,9 +3076,9 @@ size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream) {
     }
 }
 
-int sx_fseek(FILE* stream, long offset, int whence) {
+static int sx_fseek_unlocked(FILE* stream, long offset, int whence) {
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     if (stream->write_buffer_used != 0 && sx_flush_stream(stream) == EOF) {
@@ -3065,10 +3098,10 @@ int sx_fseek(FILE* stream, long offset, int whence) {
     return sx_lseek(stream->fd, offset, whence) < 0 ? -1 : 0;
 }
 
-long sx_ftell(FILE* stream) {
+static long sx_ftell_unlocked(FILE* stream) {
     long position = 0;
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     position = sx_lseek(stream->fd, 0, SEEK_CUR);
@@ -3087,19 +3120,19 @@ long sx_ftell(FILE* stream) {
     return position;
 }
 
-int sx_fflush(FILE* stream) {
+static int sx_fflush_unlocked(FILE* stream) {
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return EOF;
     }
     return sx_flush_stream(stream);
 }
 
-int sx_vfprintf(FILE* stream, const char* format, va_list args) {
+static int sx_vfprintf_unlocked(FILE* stream, const char* format, va_list args) {
     sx_stream_sink sink;
     int written = 0;
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     sink.stream = stream;
@@ -3180,7 +3213,7 @@ int sx_snprintf(char* buffer, size_t size, const char* format, ...) {
     return written;
 }
 
-char* sx_fgets(char* buffer, int size, FILE* stream) {
+static char* sx_fgets_unlocked(char* buffer, int size, FILE* stream) {
     int index = 0;
     if (buffer == 0 || size <= 1 || stream == 0) {
         return 0;
@@ -3210,7 +3243,7 @@ int sx_ferror(FILE* stream) {
     return stream != 0 ? stream->error : 1;
 }
 
-void sx_clearerr(FILE* stream) {
+static void sx_clearerr_unlocked(FILE* stream) {
     if (stream == 0) {
         return;
     }
@@ -3221,7 +3254,7 @@ void sx_clearerr(FILE* stream) {
 int sx_fputs(const char* text, FILE* stream) {
     size_t length = 0;
     if (text == 0 || stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return EOF;
     }
     length = sx_strlen(text);
@@ -3231,7 +3264,7 @@ int sx_fputs(const char* text, FILE* stream) {
 int sx_putc(int character, FILE* stream) {
     unsigned char value = (unsigned char)character;
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return EOF;
     }
     return sx_fwrite(&value, 1, 1, stream) == 1 ? character : EOF;
@@ -3635,7 +3668,7 @@ int sx_sscanf(const char* input, const char* format, ...) {
 int sx_fgetc(FILE* stream) {
     unsigned char value = 0;
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return EOF;
     }
     return sx_fread(&value, 1, 1, stream) == 1 ? (int)value : EOF;
@@ -3654,7 +3687,7 @@ int sx_fputc(int character, FILE* stream) {
 }
 
 /* Un solo byte de pushback, que es lo unico que el estandar garantiza. */
-int sx_ungetc(int character, FILE* stream) {
+static int sx_ungetc_unlocked(int character, FILE* stream) {
     if (stream == 0 || character == EOF || stream->pushback >= 0) {
         return EOF;
     }
@@ -3665,21 +3698,21 @@ int sx_ungetc(int character, FILE* stream) {
 
 int sx_fileno(FILE* stream) {
     if (stream == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     return stream->fd;
 }
 
-FILE* sx_fdopen(int fd, const char* mode) {
+static FILE* sx_fdopen_unlocked(int fd, const char* mode) {
     FILE* stream = 0;
     if (fd < 0 || mode == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0;
     }
     stream = sx_allocate_file();
     if (stream == 0) {
-        g_errno = SAVANXP_ENOMEM;
+        errno = SAVANXP_ENOMEM;
         return 0;
     }
     stream->fd = fd;
@@ -3696,7 +3729,7 @@ int sx_setvbuf(FILE* stream, char* buffer, int mode, size_t size) {
     (void)buffer;
     (void)size;
     if (stream == 0 || (mode != SX_IOFBF && mode != SX_IOLBF && mode != SX_IONBF)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     return 0;
@@ -3733,7 +3766,7 @@ void sx_assert_failed(const char* expression, const char* file, int line) {
 }
 
 void sx_perror(const char* prefix) {
-    const char* reason = sx_strerror(g_errno);
+    const char* reason = sx_strerror(errno);
     if (prefix != 0 && prefix[0] != 0) {
         (void)sx_fprintf(stderr, "%s: %s\n", prefix, reason);
     } else {
@@ -3757,11 +3790,11 @@ int sx_rename(const char* old_path, const char* new_path) {
 pid_t sx_waitpid(pid_t pid, int* status, int options) {
     long result = 0;
     if ((options & ~(WNOHANG | WUNTRACED | WCONTINUED)) != 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     if ((options & WNOHANG) != 0) {
-        g_errno = SAVANXP_ENOSYS;
+        errno = SAVANXP_ENOSYS;
         return 0;
     }
     result = savanxp_waitpid(pid, status);
@@ -3773,7 +3806,17 @@ pid_t sx_waitpid(pid_t pid, int* status, int options) {
 }
 
 pid_t sx_fork(void) {
-    long result = savanxp_fork();
+    long result;
+
+    /* fork copies only the calling thread. With the heap and stdio locks
+     * held across the call, no other thread can be holding them in the copy,
+     * where nobody would ever release them. The child is still their owner
+     * (same TCB, same address) and releases them like the parent. */
+    sx_lock_acquire(&g_heap_lock);
+    sx_lock_acquire(&g_stdio_lock);
+    result = savanxp_fork();
+    sx_lock_release(&g_stdio_lock);
+    sx_lock_release(&g_heap_lock);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -3792,15 +3835,15 @@ void* sx_mmap(void* address, size_t length, int prot, int flags, int fd, off_t o
     void* mapped = MAP_FAILED;
 
     if (address != 0 || length == 0 || fd != -1 || offset != 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return MAP_FAILED;
     }
     if ((flags & MAP_ANONYMOUS) == 0 || ((flags & MAP_SHARED) == 0) == ((flags & MAP_PRIVATE) == 0)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return MAP_FAILED;
     }
     if ((prot & ~(PROT_READ | PROT_WRITE)) != 0 || (prot & (PROT_READ | PROT_WRITE)) == 0) {
-        g_errno = SAVANXP_ENOSYS;
+        errno = SAVANXP_ENOSYS;
         return MAP_FAILED;
     }
 
@@ -3835,7 +3878,7 @@ void* sx_mmap(void* address, size_t length, int prot, int flags, int fd, off_t o
 int sx_munmap(void* address, size_t length) {
     long result = 0;
     if (address == 0 || address == MAP_FAILED || length == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
 
@@ -3874,7 +3917,7 @@ static int sx_try_exec_search(const char* prefix, const char* file, char* const 
         ++written;
     }
     if (written + 1 >= sizeof(path)) {
-        g_errno = SAVANXP_ENOENT;
+        errno = SAVANXP_ENOENT;
         return -1;
     }
     if (written == 0 || path[written - 1] != '/') {
@@ -3890,7 +3933,7 @@ static int sx_try_exec_search(const char* prefix, const char* file, char* const 
 int sx_execvp(const char* file, char* const argv[]) {
     int has_separator = 0;
     if (file == 0 || file[0] == '\0') {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     for (const char* cursor = file; *cursor != '\0'; ++cursor) {
@@ -3905,7 +3948,7 @@ int sx_execvp(const char* file, char* const argv[]) {
     if (sx_try_exec_search("/disk/bin", file, argv) == 0) {
         return 0;
     }
-    if (g_errno != SAVANXP_ENOENT) {
+    if (errno != SAVANXP_ENOENT) {
         return -1;
     }
     return sx_try_exec_search("/bin", file, argv);
@@ -3956,7 +3999,7 @@ int sx_usleep(unsigned long microseconds) {
         ++milliseconds;
     }
     if (sleep_ms(milliseconds) < 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     return 0;
@@ -4037,7 +4080,7 @@ struct tm* sx_gmtime_r(const time_t* value, struct tm* result) {
     int day = 0;
 
     if (value == 0 || result == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0;
     }
     seconds = (long)*value;
@@ -4075,7 +4118,7 @@ time_t sx_timegm(struct tm* value) {
     long days = 0;
     long seconds = 0;
     if (value == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return (time_t)-1;
     }
     days = sx_days_from_civil((long)value->tm_year + 1900, (long)value->tm_mon + 1,
@@ -4259,7 +4302,7 @@ int sx_clock_gettime(int clock_id, struct timespec* value) {
     unsigned long milliseconds = uptime_ms();
     (void)clock_id;
     if (value == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     value->tv_sec = (time_t)(milliseconds / 1000UL);
@@ -4271,7 +4314,7 @@ int sx_nanosleep(const struct timespec* request, struct timespec* remaining) {
     unsigned long milliseconds = 0;
     (void)remaining;
     if (request == 0 || request->tv_sec < 0 || request->tv_nsec < 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     milliseconds = (unsigned long)request->tv_sec * 1000UL;
@@ -4283,7 +4326,7 @@ int sx_gettimeofday(struct timeval* value, void* timezone_ptr) {
     unsigned long milliseconds = uptime_ms();
     (void)timezone_ptr;
     if (value == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     value->tv_sec = (long)(milliseconds / 1000UL);
@@ -4316,7 +4359,7 @@ static void sx_copy_uname_field(char* destination, size_t capacity, const char* 
 
 int sx_uname(struct utsname* value) {
     if (value == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
 
@@ -4330,7 +4373,7 @@ int sx_uname(struct utsname* value) {
 
 struct passwd* sx_getpwnam(const char* name) {
     if (name == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0;
     }
     if (sx_strcmp(name, "root") == 0) {
@@ -4444,7 +4487,7 @@ static int sx_fnmatch_internal(const char* pattern, const char* string, int flag
 
 int sx_fnmatch(const char* pattern, const char* string, int flags) {
     if (pattern == 0 || string == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 1;
     }
     return sx_fnmatch_internal(pattern, string, flags);
@@ -4505,7 +4548,7 @@ char* sx_inet_ntoa(struct in_addr address) {
 int sx_inet_pton(int family, const char* source, void* destination) {
     in_addr_t value = 0;
     if (family != 1 || source == 0 || destination == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     value = sx_inet_addr(source);
@@ -4519,7 +4562,7 @@ int sx_inet_pton(int family, const char* source, void* destination) {
 const char* sx_inet_ntop(int family, const void* source, char* destination, unsigned long size) {
     unsigned long value = 0;
     if (family != 1 || source == 0 || destination == 0 || size < 16) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return 0;
     }
     value = sx_ntohl(*(const unsigned long*)source);
@@ -4546,7 +4589,7 @@ int sx_bind(int fd, const struct sockaddr* address, socklen_t address_length) {
     struct savanxp_sockaddr_in raw = {};
     long result = 0;
     if (address == 0 || address_length < sizeof(*in_address) || in_address->sin_family != 1) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     raw.ipv4 = (uint32_t)sx_ntohl(in_address->sin_addr.s_addr);
@@ -4565,7 +4608,7 @@ int sx_connect(int fd, const struct sockaddr* address, socklen_t address_length)
     struct sx_socket_state* state = sx_find_socket_state(fd);
     long result = 0;
     if (address == 0 || address_length < sizeof(*in_address) || in_address->sin_family != 1) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     raw.ipv4 = (uint32_t)sx_ntohl(in_address->sin_addr.s_addr);
@@ -4585,7 +4628,7 @@ ssize_t sx_sendto(int fd, const void* buffer, size_t count, int flags, const str
     (void)flags;
     if (address != 0) {
         if (address_length < sizeof(*in_address) || in_address->sin_family != 1) {
-            g_errno = SAVANXP_EINVAL;
+            errno = SAVANXP_EINVAL;
             return -1;
         }
         raw.ipv4 = (uint32_t)sx_ntohl(in_address->sin_addr.s_addr);
@@ -4637,7 +4680,7 @@ int sx_setsockopt(int fd, int level, int option_name, const void* option_value, 
     struct sx_socket_state* state = sx_find_socket_state(fd);
     unsigned long value = 0;
     if (level != 1 || state == 0) {
-        g_errno = SAVANXP_ENOSYS;
+        errno = SAVANXP_ENOSYS;
         return -1;
     }
     if (option_value != 0 && option_length >= sizeof(unsigned long)) {
@@ -4662,7 +4705,7 @@ int sx_setsockopt(int fd, int level, int option_name, const void* option_value, 
     if (option_name == 2 || option_name == 6) {
         return 0;
     }
-    g_errno = SAVANXP_ENOSYS;
+    errno = SAVANXP_ENOSYS;
     return -1;
 }
 
@@ -4670,7 +4713,7 @@ int sx_getsockopt(int fd, int level, int option_name, void* option_value, sockle
     struct sx_socket_state* state = sx_find_socket_state(fd);
     unsigned long value = 0;
     if (level != 1 || state == 0 || option_value == 0 || option_length == 0 || *option_length < sizeof(unsigned long)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     if (option_name == 20) {
@@ -4680,7 +4723,7 @@ int sx_getsockopt(int fd, int level, int option_name, void* option_value, sockle
     } else if (option_name == 2 || option_name == 6) {
         value = 1;
     } else {
-        g_errno = SAVANXP_ENOSYS;
+        errno = SAVANXP_ENOSYS;
         return -1;
     }
     *(unsigned long*)option_value = value;
@@ -4710,7 +4753,7 @@ int sx_raise(int signal_number) {
 sighandler_t sx_signal(int signal_number, sighandler_t handler) {
     sighandler_t previous = SIG_DFL;
     if (!sx_valid_signal_number(signal_number)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return SIG_ERR;
     }
     previous = g_signal_actions[signal_number].sa_handler;
@@ -4722,7 +4765,7 @@ sighandler_t sx_signal(int signal_number, sighandler_t handler) {
 
 int sx_sigaction(int signal_number, const struct sigaction* action, struct sigaction* old_action) {
     if (!sx_valid_signal_number(signal_number)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     if (old_action != 0) {
@@ -4739,7 +4782,7 @@ int sx_sigaction(int signal_number, const struct sigaction* action, struct sigac
 
 int sx_sigemptyset(sigset_t* set) {
     if (set == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     *set = 0;
@@ -4748,7 +4791,7 @@ int sx_sigemptyset(sigset_t* set) {
 
 int sx_sigfillset(sigset_t* set) {
     if (set == 0) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     *set = ~0ul;
@@ -4757,7 +4800,7 @@ int sx_sigfillset(sigset_t* set) {
 
 int sx_sigaddset(sigset_t* set, int signal_number) {
     if (set == 0 || !sx_valid_signal_number(signal_number)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     *set |= (1ul << signal_number);
@@ -4766,7 +4809,7 @@ int sx_sigaddset(sigset_t* set, int signal_number) {
 
 int sx_sigdelset(sigset_t* set, int signal_number) {
     if (set == 0 || !sx_valid_signal_number(signal_number)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     *set &= ~(1ul << signal_number);
@@ -4775,7 +4818,7 @@ int sx_sigdelset(sigset_t* set, int signal_number) {
 
 int sx_sigismember(const sigset_t* set, int signal_number) {
     if (set == 0 || !sx_valid_signal_number(signal_number)) {
-        g_errno = SAVANXP_EINVAL;
+        errno = SAVANXP_EINVAL;
         return -1;
     }
     return ((*set & (1ul << signal_number)) != 0) ? 1 : 0;
@@ -4799,14 +4842,14 @@ int sx_sigprocmask(int how, const sigset_t* set, sigset_t* old_set) {
             g_signal_mask = *set;
             return 0;
         default:
-            g_errno = SAVANXP_EINVAL;
+            errno = SAVANXP_EINVAL;
             return -1;
     }
 }
 
 int sx_sigsuspend(const sigset_t* mask) {
     (void)mask;
-    g_errno = EINTR;
+    errno = EINTR;
     return -1;
 }
 
@@ -4877,6 +4920,155 @@ void sx_qsort(void* base, size_t count, size_t size, int (*compar)(const void*, 
 
 void sx_exit(int code) {
     exit(code);
+}
+
+/* Locked entry points (see g_heap_lock and g_stdio_lock). */
+void* sx_malloc(size_t size) {
+    void* result;
+    sx_lock_acquire(&g_heap_lock);
+    result = sx_malloc_unlocked(size);
+    sx_lock_release(&g_heap_lock);
+    return result;
+}
+
+void* sx_calloc(size_t count, size_t size) {
+    void* result;
+    sx_lock_acquire(&g_heap_lock);
+    result = sx_calloc_unlocked(count, size);
+    sx_lock_release(&g_heap_lock);
+    return result;
+}
+
+void* sx_realloc(void* pointer, size_t size) {
+    void* result;
+    sx_lock_acquire(&g_heap_lock);
+    result = sx_realloc_unlocked(pointer, size);
+    sx_lock_release(&g_heap_lock);
+    return result;
+}
+
+int sx_posix_memalign(void** out_pointer, size_t alignment, size_t size) {
+    int result;
+    sx_lock_acquire(&g_heap_lock);
+    result = sx_posix_memalign_unlocked(out_pointer, alignment, size);
+    sx_lock_release(&g_heap_lock);
+    return result;
+}
+
+void* sx_aligned_alloc(size_t alignment, size_t size) {
+    void* result;
+    sx_lock_acquire(&g_heap_lock);
+    result = sx_aligned_alloc_unlocked(alignment, size);
+    sx_lock_release(&g_heap_lock);
+    return result;
+}
+
+void* sx_memalign(size_t alignment, size_t size) {
+    void* result;
+    sx_lock_acquire(&g_heap_lock);
+    result = sx_memalign_unlocked(alignment, size);
+    sx_lock_release(&g_heap_lock);
+    return result;
+}
+
+void sx_free(void* pointer) {
+    sx_lock_acquire(&g_heap_lock);
+    sx_free_unlocked(pointer);
+    sx_lock_release(&g_heap_lock);
+}
+
+FILE* sx_fopen(const char* path, const char* mode) {
+    FILE* result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fopen_unlocked(path, mode);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+int sx_fclose(FILE* stream) {
+    int result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fclose_unlocked(stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+size_t sx_fread(void* buffer, size_t size, size_t count, FILE* stream) {
+    size_t result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fread_unlocked(buffer, size, count, stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+size_t sx_fwrite(const void* buffer, size_t size, size_t count, FILE* stream) {
+    size_t result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fwrite_unlocked(buffer, size, count, stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+int sx_fseek(FILE* stream, long offset, int whence) {
+    int result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fseek_unlocked(stream, offset, whence);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+long sx_ftell(FILE* stream) {
+    long result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_ftell_unlocked(stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+int sx_fflush(FILE* stream) {
+    int result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fflush_unlocked(stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+int sx_vfprintf(FILE* stream, const char* format, va_list args) {
+    int result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_vfprintf_unlocked(stream, format, args);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+char* sx_fgets(char* buffer, int size, FILE* stream) {
+    char* result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fgets_unlocked(buffer, size, stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+int sx_ungetc(int character, FILE* stream) {
+    int result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_ungetc_unlocked(character, stream);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+FILE* sx_fdopen(int fd, const char* mode) {
+    FILE* result;
+    sx_lock_acquire(&g_stdio_lock);
+    result = sx_fdopen_unlocked(fd, mode);
+    sx_lock_release(&g_stdio_lock);
+    return result;
+}
+
+void sx_clearerr(FILE* stream) {
+    sx_lock_acquire(&g_stdio_lock);
+    sx_clearerr_unlocked(stream);
+    sx_lock_release(&g_stdio_lock);
 }
 
 /* Nombres estandar como alias debiles de la implementacion sx_*.

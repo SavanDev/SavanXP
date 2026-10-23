@@ -26,6 +26,10 @@ Cut-off notes:
   `SXN_SYS_WAKE_ADDRESS` (`sxn_wait_address`, `sxn_wake_address`): a futex / `WaitOnAddress` for
   building locks, keyed by process and address. See `docs/kernel/KERNEL_NATIVE_API.md`.
 
+- **POSIX programs can use threads.** `pthread.h` (create/join/detach, mutexes, condition variables,
+  once, keys), `sched.h` and `__thread` variables; `errno` is per thread, the heap and stdio lock,
+  `exec` ends the other threads. `pthread-test` smoke. See `docs/kernel/THREADS_ROADMAP.md`.
+
 - **AHCI (SATA) disk driver with DMA.** `kernel/ahci.cpp` registers SATA disks as `ahciN`, and
   QEMU now attaches `disk.img` to the q35 AHCI controller by default (`SAVANXP_DISK_BUS=ide` or
   `run_qemu.py --disk-bus ide` keeps legacy IDE). Up to 256 sectors per command: a 390 KB copy
@@ -156,6 +160,10 @@ Cut-off notes:
   [the Xash3D FWGS plan](docs/ports/XASH3D_ROADMAP.md).
 
 ### Changed
+
+- **Static programs map their ELF headers.** `linker.ld` puts them at `0x400000` with the text
+  right after, so `sx_image_base` is the header for every program; editing the script now relinks
+  every static program.
 
 - **The kernel schedules threads, not processes.** `process::Thread` owns the saved context, kernel
   stack, FPU state and every wait; a process is the container. Each process has exactly one thread,

@@ -491,6 +491,8 @@ const char* image_failure_string(process::ImageFailure failure) {
             return "no free process slot";
         case process::ImageFailure::no_handles:
             return "handle setup failed";
+        case process::ImageFailure::threads_running:
+            return "other threads still running";
     }
     return "unknown";
 }
@@ -615,6 +617,13 @@ void reparent_orphaned_children(uint32_t parent_pid) {
 // it waits in ready until the process is torn down. Unless it is halfway
 // through a syscall in ring 0, which must finish to release what it holds;
 // handle_syscall then ends it.
+// Preempted while asleep inside a syscall (smp::wait_for_interrupt): ready,
+// but with its context in ring 0, halfway through kernel code.
+bool stopped_in_kernel(const process::Thread& thread) {
+    return thread.state == process::State::ready && thread.context != nullptr &&
+        (thread.context->cs & 0x3) == 0;
+}
+
 bool runnable_here(const process::Thread& thread) {
     if (thread.state != process::State::ready || thread.process->idle) {
         return false;
@@ -623,7 +632,7 @@ bool runnable_here(const process::Thread& thread) {
     if (in_kernel && thread.cpu != this_cpu().index) {
         return false;
     }
-    return in_kernel || !thread.process->exit_requested;
+    return in_kernel || (!thread.process->exit_requested && !thread.end_requested);
 }
 
 process::Thread* pick_next_runnable() {
@@ -1178,6 +1187,7 @@ void release_thread(process::Thread& thread) {
         thread.sleep_timer = nullptr;
     }
     release_kernel_stack(thread);
+    process::free_thread_subsystem_state(thread);
     if (thread.object != nullptr) {
         object::Header* header = &thread.object->header;
         object::release(header);
@@ -1454,10 +1464,15 @@ void terminate_process(process::Process& proc, int exit_code) {
     // them out from under it. That core stops it at its next entry to the
     // kernel (tick, IPI or end of syscall) and calls back here; the last
     // thread to stop finds none running and finishes the process.
+    //
+    // So does one preempted while asleep inside a syscall (ready, with its
+    // context in ring 0): it resumes on its own core, gives up the call
+    // (current_thread_must_stop) and releases what the call held -- a socket
+    // call holds a reference to its handle's object -- before it stops.
     bool deferred = false;
     for (process::Thread& thread : used_thread_slots()) {
-        if (thread.process != &proc || thread.state != process::State::running ||
-            &thread == this_cpu().current) {
+        if (thread.process != &proc || &thread == this_cpu().current ||
+            (thread.state != process::State::running && !stopped_in_kernel(thread))) {
             continue;
         }
         smp::kick(thread.cpu);
@@ -1628,6 +1643,33 @@ void free_subsystem_state(Process& proc) {
     proc.subsystem_state_bytes = 0;
 }
 
+uint8_t* thread_subsystem_state(Thread& thread) {
+    const size_t needed = subsystem::thread_state_size(thread.process->subsystem_id);
+    if (needed == 0) {
+        free_thread_subsystem_state(thread);
+        return nullptr;
+    }
+    if (thread.subsystem_state != nullptr && thread.subsystem_state_bytes == needed) {
+        return thread.subsystem_state;
+    }
+    free_thread_subsystem_state(thread);
+    uint8_t* fresh = static_cast<uint8_t*>(heap::allocate(needed));
+    if (fresh != nullptr) {
+        memset(fresh, 0, needed);
+        thread.subsystem_state = fresh;
+        thread.subsystem_state_bytes = needed;
+    }
+    return fresh;
+}
+
+void free_thread_subsystem_state(Thread& thread) {
+    if (thread.subsystem_state != nullptr) {
+        heap::free(thread.subsystem_state);
+        thread.subsystem_state = nullptr;
+    }
+    thread.subsystem_state_bytes = 0;
+}
+
 // fork hereda el estado privado tal cual: el hijo arranca donde estaba el
 // padre, que para POSIX significa el mismo cwd.
 void copy_subsystem_state(Process& child, const process::Process& parent) {
@@ -1731,6 +1773,8 @@ sx_status image_failure_errno(process::ImageFailure failure) {
             return SX_ENOMEM;
         case process::ImageFailure::no_handles:
             return SX_EBADF;
+        case process::ImageFailure::threads_running:
+            return SX_EAGAIN;
     }
     return SX_EIO;
 }
@@ -1754,6 +1798,15 @@ bool prepare_exec_image(
     if (image->type != vfs::NodeType::file) {
         failure = process::ImageFailure::not_a_file;
         report_image_failure("exec", path, failure, image->size);
+        return false;
+    }
+
+    // Every other thread ends before the image goes, so none can be running
+    // on the address space about to be destroyed. After the cheap checks, so
+    // a path that does not exist leaves the threads alone; a load that fails
+    // past this point returns to a process left with only the caller.
+    if (!end_other_threads(self)) {
+        failure = process::ImageFailure::threads_running;
         return false;
     }
 
@@ -1798,8 +1851,8 @@ bool prepare_exec_image(
     ensure_subsystem_state(proc);
     set_process_name(proc, path);
     // The image is replaced under the calling thread, which starts over at the
-    // new entry point. With one thread per process there is no other thread to
-    // end; a multithreaded exec has to end them first (THREADS_ROADMAP.md).
+    // new entry point; end_other_threads already ended the rest.
+    process::free_thread_subsystem_state(self);
     self.blocked_io_fd = 0;
     self.blocked_read_buffer = 0;
     self.blocked_read_capacity = 0;
@@ -2652,6 +2705,41 @@ int wake_address(Process& proc, uint64_t address, uint32_t count) {
     return static_cast<int>(woken);
 }
 
+bool end_other_threads(Thread& self) {
+    // Two threads calling exec at once: the one asked to end first loses,
+    // and ends on its way out of the call instead of taking the process.
+    if (self.end_requested) {
+        return false;
+    }
+    bool waiting = false;
+    for (Thread& thread : used_thread_slots()) {
+        if (&thread == &self || thread.process != self.process ||
+            thread.state == State::unused || thread.state == State::zombie) {
+            continue;
+        }
+        // Running elsewhere, or asleep in a syscall: only it can stop itself.
+        if (thread.state == State::running || stopped_in_kernel(thread)) {
+            thread.end_requested = true;
+            smp::kick(thread.cpu);
+            waiting = true;
+            continue;
+        }
+        // Stopped in user mode, or parked by a syscall that blocked the
+        // kBlockedResult way: nothing of it is on any core, so it ends here.
+        clear_wait_state(thread);
+        thread.state = State::zombie;
+        object::end_thread_object(thread.object, 0);
+        process::detail::wake_waiters_for_object(&thread.object->header);
+        process::detail::release_thread(thread);
+    }
+    return !waiting;
+}
+
+bool current_thread_must_stop() {
+    const Thread* const thread = this_cpu().current;
+    return thread != nullptr && (thread->process->exit_requested || thread->end_requested);
+}
+
 uint32_t live_thread_count(const Process& proc) {
     uint32_t live = 0;
     for (const Thread& thread : used_thread_slots()) {
@@ -2826,6 +2914,21 @@ SavedContext* handle_syscall(SavedContext* context) {
         }
     }
 
+    // An exec of a sibling asked this thread to end while it was in this
+    // syscall. Running here: it exits now. Blocked or parked by the call: it
+    // runs nowhere, so it ends in place and the next thread here goes on.
+    if (caller != nullptr && caller->state != State::unused && caller->state != State::zombie &&
+        caller->end_requested) {
+        if (caller == this_cpu().current && caller->state == State::running) {
+            exit_current_thread(0);
+        }
+        clear_wait_state(*caller);
+        caller->state = State::zombie;
+        object::end_thread_object(caller->object, 0);
+        process::detail::wake_waiters_for_object(&caller->object->header);
+        process::detail::release_thread(*caller);
+    }
+
     // Preemptive event wakeup: if this syscall made another process runnable
     // and we are still the running caller (i.e. the syscall did not itself
     // block), hand the CPU over now so the woken waiter runs without waiting
@@ -2877,6 +2980,9 @@ SavedContext* handle_timer_tick(SavedContext* context) {
     if (this_cpu().current->process->exit_requested && (context->cs & 0x3) == 0x3) {
         terminate_current(this_cpu().current->process->exit_code);
     }
+    if (this_cpu().current->end_requested && (context->cs & 0x3) == 0x3) {
+        exit_current_thread(0);
+    }
 
     if (this_cpu().current->state != State::running) {
         return choose_next_context(context);
@@ -2906,10 +3012,13 @@ SavedContext* handle_reschedule_ipi(SavedContext* context) {
     }
 
     this_cpu().current->context = context;
-    // Solo desde ring 3: en ring 0 esta dormido adentro de una syscall, y el
-    // final de esa syscall es quien lo termina.
+    // Only from ring 3: in ring 0 it is asleep inside a syscall, and the end
+    // of that syscall is what stops it.
     if (this_cpu().current->process->exit_requested && (context->cs & 0x3) == 0x3) {
         terminate_current(this_cpu().current->process->exit_code);
+    }
+    if (this_cpu().current->end_requested && (context->cs & 0x3) == 0x3) {
+        exit_current_thread(0);
     }
     if (this_cpu().current->process->idle && has_runnable_non_idle()) {
         this_cpu().current->state = State::ready;

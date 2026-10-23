@@ -1,6 +1,6 @@
 # Threads — more than one execution context per process
 
-> **Status: phases 0-4 done (2026-10-22), phase 5 not started.** This
+> **Status: phases 0-5 done (2026-10-22).** This
 > document is the inventory: what the kernel assumed about "one process, one
 > context", what had to move, and the order in which to move it so that every
 > phase boots and can be verified on its own.
@@ -19,6 +19,7 @@
 > its own `%fs` and `%gs` (`SXN_SYS_SET_THREAD_BASE`, slice 24). Phase 4
 > lets them sleep on a word of memory (`SXN_SYS_WAIT_ADDRESS` and
 > `SXN_SYS_WAKE_ADDRESS`, slice 25), the primitive locks are built on.
+> Phase 5 gives POSIX programs `pthread.h` on top of all of it.
 
 Threads are the first kernel prerequisite of a future Win32 subsystem — the
 others are per-thread TLS registers, exceptions delivered to user mode and
@@ -437,24 +438,99 @@ take it 5000 times each (and sleep holding it now and then, so the others park
 even on one core). With the wake turned into a no-op the test fails, and so
 it does with a wait that never parks.
 
-### Phase 5 — pthreads in the POSIX SDK
+### Phase 5 — pthreads in the POSIX SDK — **DONE**
 
-`pthread_create/join/detach/self/exit`, mutexes, condition variables, `once`
-and keys on top of phases 1-4; `PT_TLS` in `crt0` and `ldso` for static TLS;
-`errno` per thread; locks in the heap and in stdio; the POSIX translation's
-`fork`/`exec` rules above. Two kernel items moved here from phase 1, because a
-POSIX process cannot have a second thread before this: per-thread subsystem
-state (`register_thread_state_size`, with POSIX `poll` state in it) and `exec`
-ending the other threads. And one that phase 2 left in sight: the paths that
-sleep in ring 0 (`smp::wait_for_interrupt`) — the blocking socket loops in
-`net.cpp` are the ones with an object in hand — keep a raw pointer to an
-object a sibling thread can close meanwhile. The user memory they write after
-waking is revalidated (`sx::write_user_memory`), the object is not. Sockets
-are POSIX's (a native process only meets one through an inherited handle), so
-before POSIX processes get a second thread these loops must hold a reference
-across the sleep, or block the `kBlockedResult` way. The thread calls and the address waits join the set open to every
-subsystem (`native_call_open_to_all_subsystems`). Check: a pthread test that hammers `malloc`,
-`errno` and a mutex-protected counter from several threads on several cores.
+What landed, in the kernel:
+
+- **The thread calls and the address waits are open to every subsystem**
+  (`native_call_open_to_all_subsystems`): a POSIX process reaches
+  `SXN_SYS_THREAD_CREATE`, `_EXIT`, `_EXIT_CODE`, `SET_THREAD_BASE`,
+  `WAIT_ADDRESS` and `WAKE_ADDRESS` as it already reached the object floor.
+- **Per-thread subsystem state.** `subsystem::register_thread_state_size`,
+  allocated on first use by `process::thread_subsystem_state` and freed with
+  the thread. POSIX keeps a thread's `poll()` request there
+  (`posix::ThreadState`); the current directory stays per process. Before
+  this, two threads polling at once shared one request.
+- **`exec` ends the other threads** (`end_other_threads`), after the path is
+  resolved and before the image is loaded. Siblings stopped in user mode or
+  parked by a `kBlockedResult` call end in place. One running on another core,
+  or asleep in ring 0, gets `Thread::end_requested` and a kick, and ends at its
+  next kernel entry, as a process with `exit_requested` does; the exec rewinds
+  `rip` over its `int $0x80` and runs again once the core turns around
+  (`ImageFailure::threads_running`, never reported to the caller). When two
+  threads exec at once, the one asked to end first loses.
+- **Ring-0 sleeps give up.** The blocking loops in `net.cpp` (connect, send
+  window, UDP receive, ARP, ping) check `process::current_thread_must_stop`
+  after every wake and return `-EINTR` (`SX_EINTR`, new) when the process is
+  ending or an exec asked the thread to end. `terminate_process` now waits
+  for a thread preempted inside such a call, as it waits for one running
+  elsewhere, so the call releases what it holds before the process goes.
+- **Socket calls that sleep hold their object.** `connect_fd`, `sendto_fd`,
+  `recvfrom_fd` and the socket case of `write_handle` keep a reference to the
+  handle's object across the call (`HeldObject`), so a sibling closing the
+  handle cannot free the socket under it. The blocking `read` already parked
+  the `kBlockedResult` way and looks the handle up again on each wake.
+
+What landed, in the POSIX SDK (`runtime/pthread.c`, `pthread.h`, `sched.h`):
+
+- create, join, detach, self, equal, exit; stack size and detach state
+  attributes; normal, recursive and error-checking mutexes; condition
+  variables (with `CLOCK_MONOTONIC` through `pthread_condattr_setclock`);
+  once; keys with destructors; `sched_yield`.
+- **A thread is one anonymous mapping**: stack, static TLS block, TCB and the
+  descriptor. A joinable thread's mapping and handle are released by the
+  join; a detached one goes on a list when it ends and is released by the next
+  create, join or detach once its handle is signaled.
+- **TLS, variant II.** `%fs` points at a TCB (`sx_thread.h`): `%fs:0` is its own
+  address, `%fs:0x28` a copy of the stack guard. The executable's `PT_TLS` is
+  copied below it. The main thread's block is built by `sx_tls_init`, called
+  from `sx_start_dynamic` after the loader, which finds `PT_TLS` through
+  `sx_image_base`.
+- **`errno` per thread**, in the TCB; a global until `sx_tls_init` runs.
+- **The heap, stdio and the socket table take a recursive lock** at their
+  public entry points (`sx_lock`), free until the first `pthread_create`. One
+  lock for all of stdio. `fork` takes the heap and stdio locks across the
+  call, so the child never inherits one held by a thread it does not have.
+
+Where it differs from the plan:
+
+- **The static link layout changed.** The kernel passes the start of the
+  first `PT_LOAD` as the ELF header's address, which was only true for PIE
+  images: the static linker script left the headers unmapped and the text at
+  `0x400000`. It now maps them there (`0x400000 + SIZEOF_HEADERS`) with the
+  text right after, so `sx_image_base` is the header for every program. The
+  script is a `LINK_DEPENDS` of every static program now; it was not, and
+  editing it relinked nothing.
+- **Native programs get no TLS from the runtime.** They link the same runtime
+  but own their segment bases: `sx_tls_init` returns when `EI_OSABI` is
+  native, so errno stays global and the runtime's locks stay off there.
+- **Only the executable has TLS.** The loader refuses the TLS relocations, so
+  a shared library with `__thread` does not load; dynamic TLS
+  (`__tls_get_addr`) waits for a library that needs it.
+- **`runtime/pthread.c` is a runtime unit** like `posix.c`, which needs it:
+  CMake, `tools/build-user.sh` and the ports that compile the runtime
+  themselves (`doomgeneric`, `ccleste`, `ffmpeg/runtime.sh`) all list it. A
+  port script that compiles `posix.c` without it fails to link
+  (`sx_lock_acquire` undefined), which is how `verify_doom_persistence.sh`
+  found the first one.
+- **No requeue.** A broadcast wakes every waiter and they contend for the
+  mutex; see phase 4.
+- **A blocked `read` on a socket whose handle a sibling closed** stays parked
+  (it looks the handle up again and finds nothing), as a pipe read does. It
+  ends with the thread or the process.
+
+Verified by `pthread-test` (`subsystems/posix/userland/pthreadtest.c`) on 1, 2
+and 4 cores: four workers each take a mutex 20000 times around a counter,
+churn `malloc`/`free` with patterns, flip and check `errno` and `__thread`
+variables while yielding, run a `pthread_once` together and leave key values
+for destructors; a producer and three consumers through a condition
+variable; a timed wait on the monotonic clock; two threads in `poll()` at
+once; 80 detached threads, more than the process's handles; ten forks while
+two threads allocate and print; an exec from a child with threads spinning,
+blocked and asleep; `exit()` from a second thread. Each of these was broken on
+purpose and the test caught it: without the runtime locks and with one `poll`
+request per process it hangs (the smoke times out), with a global `errno` it
+fails, and with an exec that leaves the threads running the kernel panics.
 
 ### Afterwards
 

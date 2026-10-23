@@ -298,6 +298,7 @@ set(SAVANXP_USER_RUNTIME_SOURCES
     subsystems/posix/sdk/v1/runtime/crt0.S
     subsystems/posix/sdk/v1/runtime/libc.c
     subsystems/posix/sdk/v1/runtime/posix.c
+    subsystems/posix/sdk/v1/runtime/pthread.c
     subsystems/posix/sdk/v1/runtime/math.c
     subsystems/posix/sdk/v1/runtime/gfx.c
     subsystems/posix/sdk/v1/runtime/gfx2d.c

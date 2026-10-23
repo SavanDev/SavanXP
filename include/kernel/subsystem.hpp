@@ -35,6 +35,13 @@ process::SavedContext* dispatch(Id id, process::SavedContext* context);
 void register_process_state_size(Id id, size_t bytes);
 size_t process_state_size(Id id);
 
+// Per-thread private state, the same way: a subsystem declares how much each
+// of its threads needs and the kernel allocates it on first use
+// (process::thread_subsystem_state) and frees it with the thread. POSIX keeps
+// a thread's poll() request there, so two threads may poll at once.
+void register_thread_state_size(Id id, size_t bytes);
+size_t thread_state_size(Id id);
+
 // Re-evaluation hook for processes parked with a deadline.
 //
 // The kernel's neutral concept is "this process is parked and something may

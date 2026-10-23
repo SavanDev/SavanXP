@@ -204,6 +204,15 @@ struct Thread {
     // switches away, the way it saves the FPU. 0 at creation and after exec.
     uint64_t fs_base;
     uint64_t gs_base;
+    // Private state of the process's subsystem for this thread
+    // (subsystem::register_thread_state_size), allocated on first use by
+    // thread_subsystem_state and freed with the thread. nullptr until then.
+    uint8_t* subsystem_state;
+    size_t subsystem_state_bytes;
+    // An exec of a sibling asked this thread to end while it ran on another
+    // core (end_other_threads). It ends at its next entry to the kernel, as
+    // exit_requested ends a whole process.
+    bool end_requested;
     // FPU/SSE state (FXSAVE format, 512 bytes aligned to 16). The scheduler
     // saves and restores it on a real switch; it is seeded with a clean state
     // when the thread is allocated. alignas(16) aligns the whole struct.
@@ -254,6 +263,9 @@ enum class ImageFailure : uint8_t {
     no_load_memory,
     no_process_slot,
     no_handles,
+    // exec: other threads of the process still run on other cores. They were
+    // asked to stop; the caller retries the call (not an error it reports).
+    threads_running,
 };
 struct SpawnArguments {
     const char* argv[kMaxSpawnArguments + 1];
@@ -272,6 +284,11 @@ bool resolve_path_from_root(const char* input, char* output, size_t capacity);
 // no tire el cwd.
 void ensure_subsystem_state(Process& proc);
 void free_subsystem_state(Process& proc);
+// The calling subsystem's per-thread state, allocated (zeroed) on first use
+// and reallocated if the process's subsystem changed size since. nullptr when
+// the subsystem keeps none or the heap is out of memory.
+uint8_t* thread_subsystem_state(Thread& thread);
+void free_thread_subsystem_state(Thread& thread);
 void copy_subsystem_state(Process& child, const Process& parent);
 bool read_from_process_memory(const Process& proc, void* destination, uint64_t user_address, size_t count, bool require_write = false);
 bool write_to_process_memory(Process& proc, uint64_t user_address, const void* source, size_t count);
@@ -380,6 +397,16 @@ void thread_bases(const Thread& thread, uint64_t& fs_base, uint64_t& gs_base);
 // how many.
 int wait_on_address(Thread& self, uint64_t address, uint64_t expected, uint64_t size, int64_t timeout_ms);
 int wake_address(Process& proc, uint64_t address, uint32_t count);
+// exec's rule: the image is replaced under the calling thread and every other
+// thread of the process ends. Siblings that are stopped end here; one that
+// runs on another core, or sleeps inside a syscall, is asked to end and
+// kicked. True when none is left; false when the caller must retry.
+bool end_other_threads(Thread& self);
+// The thread running here must stop: its process is ending, or an exec asked
+// it to. A syscall that sleeps in ring 0 (smp::wait_for_interrupt) checks it
+// after every wake and gives up with -EINTR, so a kill or an exec does not
+// wait for its timeout.
+bool current_thread_must_stop();
 // Threads of `proc` that have not ended.
 uint32_t live_thread_count(const Process& proc);
 // Asked to end while one of its threads ran on another core (exit_requested):

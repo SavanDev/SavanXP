@@ -184,13 +184,14 @@ if ((HEAP_MIB > 0)); then
     POSIX_EXTRA=("-DSX_HEAP_SIZE=(${HEAP_MIB}u*1024u*1024u)")
 fi
 compile_c "$SDK/runtime/posix.c" "$OBJ_ROOT/posix.o" "${POSIX_EXTRA[@]}"
+compile_c "$SDK/runtime/pthread.c" "$OBJ_ROOT/pthread.o"
 compile_c "$SDK/runtime/gfx.c" "$OBJ_ROOT/gfx.o"
 # gfx.c publishes the window's presentation from its own .sxe.
 compile_c "$SDK/runtime/sxe.c" "$OBJ_ROOT/sxe.o"
 compile_c "$SDK/runtime/gfx2d.c" "$OBJ_ROOT/gfx2d.o"
 compile_asm "$SDK/runtime/setjmp.S" "$OBJ_ROOT/setjmp.o"
 compile_asm "$SDK/runtime/crt0.S" "$OBJ_ROOT/crt0.o"
-RUNTIME_OBJECTS=("$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/sxe.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/setjmp.o")
+RUNTIME_OBJECTS=("$OBJ_ROOT/crt0.o" "$OBJ_ROOT/libc.o" "$OBJ_ROOT/posix.o" "$OBJ_ROOT/pthread.o" "$OBJ_ROOT/gfx.o" "$OBJ_ROOT/sxe.o" "$OBJ_ROOT/gfx2d.o" "$OBJ_ROOT/setjmp.o")
 if ((NATIVE)); then
     # The native runtime (docs/userland/NATIVE_HEAP.md): the heap's page source
     # on SXN, replacing the runtime's weak POSIX one.

@@ -175,7 +175,10 @@ for belongs to the layer that parked it:
 - `subsystem::register_wait_recheck` — the owning subsystem gets the parked
   process and decides (`subsystem::recheck_parked_process`).
 - POSIX's answer is `posix::recheck_parked_poll`, which evaluates its own
-  request, which now lives in `posix::ProcessState` next to the cwd.
+  request. It lived in `posix::ProcessState` next to the cwd until POSIX
+  processes had threads; it is per thread now (`posix::ThreadState`, through
+  `subsystem::register_thread_state_size`), allocated the first time a thread
+  polls.
 - `WaitReason::poll`, the three fields and both evaluators are gone from the
   kernel; `poll_open_file` survives only as a published helper POSIX calls.
 
@@ -247,8 +250,8 @@ Two things stayed on purpose, and the guard says so:
 ## Slice 23: threads
 
 Phases 1 and 2 of [THREADS_ROADMAP.md](THREADS_ROADMAP.md): threads of one
-process run on several cores at once. Native only for now: a POSIX process
-gets threads with pthreads, in phase 5.
+process run on several cores at once. Open to every subsystem since phase 5:
+POSIX builds `pthread.h` on these calls and slices 24 and 25.
 
 - `SXN_SYS_THREAD_CREATE` (`0x1023`): rdi = entry, rsi = argument (the new
   thread's rdi), rdx = top of a stack the caller allocated, r10 = `uint32_t*`
@@ -298,7 +301,7 @@ only to sleep until another one changes the word and says so.
 Waiters are keyed by process and virtual address, so a wake reaches only the
 caller's own threads: two processes sharing a section never meet here, even at
 the same address. Cross-process waits stay with events until a consumer needs
-more. Native only for now, like the other thread calls.
+more. Open to every subsystem, like the other thread calls.
 
 `nativetest` covers it: the immediate returns and the refusals, three waiters
 on one word released by count, and a futex mutex holding a counter exact
@@ -314,7 +317,8 @@ thread-local storage.
   segment base of the calling thread. 0, or `-EINVAL` for another base or an
   address at or above `1 << 47` (a non-canonical one would make the kernel's
   `wrmsr` fault). `arch_prctl(ARCH_SET_FS)`; Win64 keeps its TEB at `%gs`.
-  Native only for now, like the other thread calls.
+  Open to every subsystem, like the other thread calls; the POSIX runtime
+  points `%fs` at each thread's TCB.
 
 Every thread starts with both bases at 0 and sets its own: there is no TLS
 argument to `SXN_SYS_THREAD_CREATE`, so a thread must not touch `%fs` or `%gs`

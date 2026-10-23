@@ -381,6 +381,13 @@ SCENARIOS: dict[str, Scenario] = {
         "Session manager: the desktop and the session come back when killed",
         300.0,
     ),
+    "pthread-test": _qemu_scenario(
+        "pthreadtest",
+        "PTHREAD TEST PASS",
+        "PTHREAD TEST FAIL",
+        "POSIX threads: locks, malloc, errno, TLS, poll, exec and fork with threads",
+        240.0,
+    ),
     "native-test": _qemu_scenario(
         "nativetest",
         "NATIVE TEST PASS",
