@@ -525,6 +525,10 @@ static int sh_line_is_builtin(const char* line) {
         strcmp(token, "pwd") == 0;
 }
 
+/* Set when the line just run cleared the screen: the next prompt then sits on
+ * the top row, with no blank line before it. */
+static int g_screen_cleared;
+
 static void shell_print_prompt(void) {
     char cwd[256] = {};
     shell_current_directory(cwd, sizeof(cwd));
@@ -539,8 +543,10 @@ static void shell_print_prompt(void) {
     puts_out("$ ");
 }
 
-/* The builtins' output goes to 1 and 2 as always; `clear` asks the console to
- * clear its screen buffer, since there is no kernel screen behind a pipe. */
+/* The builtins' output goes to 1 and 2 as always; `clear` sends the console
+ * ESC [ 2 J in band. It has to travel on the output pipe, not the control
+ * channel: the prompt that follows is written to that pipe, and a separate
+ * channel lets the console clear after the prompt has been drawn. */
 static void sh_console_emit(void* context, int fd, const char* bytes, size_t length) {
     (void)context;
     (void)savanxp_write(fd, bytes, length);
@@ -548,7 +554,8 @@ static void sh_console_emit(void* context, int fd, const char* bytes, size_t len
 
 static void sh_console_clear(void* context) {
     (void)context;
-    sh_console_send("cls\n");
+    g_screen_cleared = 1;
+    (void)savanxp_write(1, "\x1b[2J", 4);
 }
 
 /* Runs one command of a line. 1 when it was `exit`. */
@@ -708,10 +715,11 @@ int main(int argc, char** argv) {
         }
         {
             const int had_command = line[0] != '\0';
+            g_screen_cleared = 0;
             if (sh_run_line(line)) {
                 return 0;
             }
-            if (g_console_fd >= 0 && had_command) {
+            if (g_console_fd >= 0 && had_command && !g_screen_cleared) {
                 /* A blank line between one command's output and the next
                  * prompt, as cmd prints. */
                 puts_out("\n");

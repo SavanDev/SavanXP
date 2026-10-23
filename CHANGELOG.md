@@ -438,6 +438,10 @@ Cut-off notes:
 
 ### Fixed
 
+- **`clear` in the Command Prompt no longer loses the prompt.** The clear now travels in band
+  (`ESC [ 2 J`) on the output pipe instead of the control channel; the `cls` control line is gone.
+  The prompt lands on the top row, with no blank line before it, as after `cls` in cmd.
+
 - **A process ended by `SXN_SYS_TERMINATE` no longer reads as running.** When it was running on
   another core, `SXN_SYS_PROCESS_QUERY` reported it running until that core tore it down; it now
   reports it ended, with its status, as soon as `TERMINATE` returns.

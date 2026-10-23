@@ -8,7 +8,7 @@
  *   sh's 0  <- input pipe    the lines the user enters
  *   sh's 1  -> output pipe   what sh and its children write
  *   sh's 2  -> output pipe   the same, so stdout and stderr keep their order
- *   sh's 3  -> control pipe  "fg <pids>", "fg", "cls"
+ *   sh's 3  -> control pipe  "fg <pids>", "fg"
  *
  * One sxn_wait_many covers the window, the output and the control channel,
  * so the window answers while a command runs.
@@ -897,13 +897,6 @@ static void set_title_for_foreground(void) {
 }
 
 static void control_line(char* line) {
-    if (strcmp(line, "cls") == 0) {
-        mark_caret();
-        echo_erase();
-        clear_buffer();
-        echo_write();
-        return;
-    }
     if (line[0] == 'f' && line[1] == 'g' && (line[2] == '\0' || line[2] == ' ')) {
         const char* cursor = line + 2;
         g_con.foreground_count = 0;
@@ -925,9 +918,8 @@ static void control_line(char* line) {
     }
 }
 
-/* Reads what the shell side wrote. Output first, then the control channel:
- * a `cls` must not overtake output written before it. Returns 0 once the
- * control channel ended, which is the shell exiting (its children do not
+/* Reads what the shell side wrote: the output, then the control channel.
+ * Returns 0 once the control channel ended, which is the shell exiting (its children do not
  * inherit fd 3, so nothing else holds it open). */
 static int drain_shell(void) {
     uint8_t buffer[2048];

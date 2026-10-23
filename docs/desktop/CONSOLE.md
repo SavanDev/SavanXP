@@ -80,10 +80,10 @@ Fd 3 of `sh` carries text lines, one request each:
 |---|---|---|
 | `fg <pid> [<pid>...]` | a foreground job started: these processes | the processes attached to the console |
 | `fg` | the foreground job ended | — |
-| `cls` | clear the screen buffer | `cls` via `FillConsoleOutputCharacter` |
 
-The console drains the output pipe before it acts on a control line, so a
-`cls` never overtakes output written before it.
+`cls` is not a control line: `sh` sends `ESC [ 2 J` down the output pipe, so
+the clear stays ordered with the prompt written right after it. A separate
+channel cannot guarantee that order, and the prompt used to be lost.
 
 ## Output
 
@@ -123,7 +123,7 @@ which is how a GUI program started from `cmd` behaves.
 - The prompt is `<cwd>>` (`/disk>`), the default `$P$G` of `cmd`.
 - `start <program> [args]` starts a program without waiting for it.
 - `;` separates commands on one line (`start notepad; exit`).
-- The foreground job and `cls` go to the control channel; `sh` reaps the
+- The foreground job goes to the control channel; `sh` reaps the
   programs it `start`ed once they end (it finds them with `proc_info`).
 
 `sh` also stops on end of input, which it never could: reading the kernel tty,
