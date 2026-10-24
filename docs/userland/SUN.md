@@ -4,6 +4,8 @@
 > native API: what a program that does not use POSIX writes against. The
 > Command Prompt ([CONSOLE.md](../desktop/CONSOLE.md)) is its first application
 > and the consumer that drove slices 20-22 and the windowing additions.
+> **Direction clarified 2026-10-24:** SUN is the system's own API, not a
+> replica of Win32 ([below](#the-direction-the-systems-own-api)).
 
 ## What SUN is
 
@@ -21,6 +23,10 @@ program includes: typed calls over Sx and the conventions that turn them into
 an application platform. A SUN program is a native program
 (`EI_OSABI=0x53`); how to build, stamp and launch one is in
 [NATIVE_APPS.md](NATIVE_APPS.md).
+
+The Windows column is an analogy of *role*: SUN sits where Win32 sits in
+Windows, as the API the system itself is written against. It says nothing about
+what SUN's calls look like.
 
 The identifiers keep the `sxn_` prefix (`sxn_spawn`, `sxnwm_connect`). SUN is
 the name of the layer, not a rename of its symbols.
@@ -55,22 +61,34 @@ sxnwm_presentation_source`; the program includes it and publishes it with
 `sxnwm_set_presentation`. The `.sxe` sections are still stamped too, for the
 launcher and anything else that scans binaries.
 
-## The direction: our own Win32
+## The direction: the system's own API
 
-SUN grows into a Win32 of our own: the same *shape* — handles, waitable
-objects, processes started with explicit standard handles, a console that is
-a separate program from the shell — with our names and our error space. It is
-not a Win32 clone and it will not run Windows binaries.
+SUN is what Win32 is to Windows in one sense only: the native API of the
+operating system, its own language, and the subsystem that knows the kernel
+best. The other subsystems translate a foreign contract onto Sx. SUN has no
+foreign contract to translate. It exposes the kernel's objects (handles,
+waitable objects, sections, ports, processes with explicit standard handles)
+in the form SavanXP programs want.
+
+**SUN is not a replica of Win32.** It does not follow Win32's calls,
+structures, names or behaviour. Being "Win32-like" never meant that, and
+nothing in SUN exists to make Windows programs easier to run. Running
+programs built for other systems is the job of the binary-compatibility
+subsystems (Win32 and Linux, planned), which stand on Sx next to POSIX and SUN
+([SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#planned-binary-compatibility-subsystems)).
 
 Rules that keep it honest:
 
 1. **Every call has a consumer.** A new SUN call lands together with the
    program that needs it and a `nativetest` assertion that proves it. No call
-   is added because Win32 has one.
-2. **Shape from Win32, names from SavanXP.** When a need has a Win32 answer,
-   that answer is the default design (`CreateProcess` with `STARTUPINFO` std
-   handles, `CreatePipe`, `WaitForMultipleObjects`, job-style termination).
-   The deviation, when there is one, is written next to the call.
+   is added because another system has one.
+2. **Designed from Sx and the consumer.** A SUN call is shaped by what the
+   kernel object offers and what the program needs. Other systems' answers
+   (Win32, POSIX, Plan 9) are prior art worth reading, not a default to copy.
+   Several existing calls ended up close to their Win32 counterparts
+   (`sxn_spawn_ex` with explicit standard handles, `sxn_pipe_create`,
+   `sxn_wait_many`, job-style `sxn_terminate`) because that answer fit the
+   consumer, not to stay compatible with Win32.
 3. **Errors stay `-errno`** (`enum sx_status`) until there is a reason for a
    status type; a SUN call returns the value or a negative status.
 4. **POSIX keeps working.** SUN stands beside POSIX, not instead of it. A SUN
@@ -81,9 +99,12 @@ Rules that keep it honest:
    written against SUN when SUN already has what it needs, or when the app is
    the consumer of the slice that adds it. The Command Prompt is the first.
 
-### Win32 map
+### Win32 counterparts
 
-What exists, what the console adds, and what is still missing:
+A reading aid for anyone who knows Windows: the closest Win32 piece to each
+SUN call. It is not a checklist. A Win32 row with no SUN call is not a gap by
+itself, because SUN gains a call when a consumer needs one (rule 1). Covering
+the Win32 API belongs to the planned Win32 subsystem, not to this table.
 
 | Win32 | SUN | Status |
 |---|---|---|

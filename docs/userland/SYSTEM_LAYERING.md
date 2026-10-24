@@ -55,7 +55,7 @@ app goes in **C against the POSIX SDK**, whatever kind of app it is. Platform
 interfaces are designed for the C apps that exist, not for a runtime that is
 not being built.
 
-## Direction: NT-style kernel API, Win32-like userland API
+## Direction: NT-style kernel API, a native userland API of its own
 
 > Status: **built (2026-10-16, slices 1-13 plus isolation A-E).** What follows
 > describes what landed, not what is planned. See
@@ -71,12 +71,55 @@ The shape that was fixed in advance is what shipped:
   (`subsystems/posix/kernel/posix_translation.cpp`), not the shape of the
   kernel. The kernel includes no userland header and keeps no POSIX
   per-process state.
-- The **userland native API, Win32-like** — named **SUN** (Savan Userland
-  Native, [SUN.md](SUN.md)) — stands beside POSIX, not instead
+- The **userland native API**, named **SUN** (Savan Userland Native,
+  [SUN.md](SUN.md)), is the system's own API. It plays the role Win32 plays in
+  Windows but is not a copy of Win32. It stands beside POSIX, not instead
   of it: header-only `sxn.h` / `sxnwm.h` / `sxnwidgets.h` over the kernel
   native API, proven by `sdk/nativetest`, `sdk/nativedemo` and
   `sdk/nativewidgets`. Nothing existing was rewritten for it to exist, and
   nothing in the boot path depends on it.
+
+## Planned: binary-compatibility subsystems
+
+> Status: **planned (2026-10-24), nothing built.** This records the direction
+> so that SUN is not designed toward it by mistake.
+
+SavanXP will run programs built for other systems through subsystems of their
+own, one per foreign ABI:
+
+- **Win32 subsystem**: runs unmodified Windows programs (PE images). The first
+  approach is Wine-style, reimplementing the Windows user-mode libraries on
+  top of SavanXP. The approach may change.
+- **Linux subsystem**: runs unmodified Linux binaries (ELF with the Linux
+  system call numbers and process start-up). This is binary compatibility.
+  The POSIX subsystem is a different thing: it is SavanXP's own SDK, with its
+  own system call numbers, and programs are compiled for it.
+
+What holds for both, by the same rules that hold for POSIX:
+
+- **They stand on Sx, beside POSIX and SUN.** They are neither built from SUN
+  nor a reason for SUN to grow toward their API
+  ([SUN.md](SUN.md#the-direction-the-systems-own-api)). A compatibility layer
+  may reuse SavanXP pieces internally; that is its own design decision.
+- **The kernel stays indifferent.** Their per-process state goes through the
+  subsystem state the kernel reserves without reading
+  ([KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md), isolation B). How a
+  binary is routed to its subsystem, by `EI_OSABI` today, has to learn to
+  recognise PE images and Linux ELF.
+- **Kernel prerequisites come first and are not subsystem work.** The ones
+  already named in [THREADS_ROADMAP.md](../kernel/THREADS_ROADMAP.md): threads
+  and per-thread `%fs`/`%gs` (done), exceptions delivered to user mode, and
+  reserve/commit virtual memory. Each lands with a SavanXP consumer of its
+  own.
+
+Prior art worth reading, with the licence in mind (SavanXP is MIT):
+[Wine](https://gitlab.winehq.org/wine/wine) (LGPL-2.1, so its libraries can ship
+as separate components) and [sogen](https://github.com/momo5502/sogen)
+(GPL-2.0, read only, never copied). Sogen emulates Windows and Linux programs at
+the system call level, so it shows the minimum kernel surface a real `ntdll` or a
+real Linux binary needs. Its traces can also serve as an oracle: run the same
+binary in sogen and on SavanXP, and the first system call that diverges points to
+the bug.
 
 ## What goes in C (all of it, today)
 
@@ -212,7 +255,8 @@ complementary**:
 | Shell / launcher | **desktop + progman** (C) | explorer.exe | SystemUI / Launcher |
 | Apps | **C on the POSIX SDK** | Win32 apps | (native) |
 | Kernel native API | **`sx::` + SXN syscalls** | NT | (native) |
-| Userland native API | **SUN**: `sxn.h`, `sxnwm.h` ([SUN.md](SUN.md)) | Win32 (subset) | Java/Kotlin |
+| Userland native API | **SUN**: `sxn.h`, `sxnwm.h` ([SUN.md](SUN.md)) | Win32 (the role, not the API) | Java/Kotlin |
+| Foreign-binary subsystems | **Win32, Linux** (planned) | OS/2 and POSIX subsystems, WSL1 | — |
 
 The desktop rows describe today. The target is in
 [DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md): `compositord`

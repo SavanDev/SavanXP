@@ -5,7 +5,7 @@ How to write a program against SUN, the userland native API
 with no POSIX in between. POSIX remains the translated subsystem most
 software uses; this document is the practical guide: headers, build,
 manifest, launch and debugging. What SUN is, where it is going and
-which Win32 piece each call stands for is in [SUN.md](SUN.md).
+the closest Win32 counterpart of each call are in [SUN.md](SUN.md).
 
 ## What "native" means here
 

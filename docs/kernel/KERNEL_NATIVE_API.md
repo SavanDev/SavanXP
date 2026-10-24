@@ -2,7 +2,7 @@
 
 Status: done (2026-10-16, slice 13), isolation campaign complete (slices
 A-E). The layering stands: a native kernel API with POSIX as a translation
-subsystem on top and a Win32-like native userland beside it. The kernel now
+subsystem on top and the system's own native userland API, SUN, beside it. The kernel now
 includes no userland header, keeps no POSIX per-process state, and returns its
 own status space. See [`SYSTEM_LAYERING.md`](../userland/SYSTEM_LAYERING.md) for the
 layering and [`NATIVE_APPS.md`](../userland/NATIVE_APPS.md) for writing native programs.
@@ -336,7 +336,7 @@ removed, the test fails on one core and on four.
 The first SUN application, the Command Prompt
 ([CONSOLE.md](../desktop/CONSOLE.md)), runs `/bin/sh` as a separate POSIX
 child and talks to it over pipes. Three calls were missing for that; each one
-has the Win32 shape it stands for ([SUN.md](../userland/SUN.md#win32-map)).
+names its closest Win32 counterpart ([SUN.md](../userland/SUN.md#win32-counterparts)).
 
 - **Slice 20 — `SXN_SYS_PIPE_CREATE` (`0x1021`)**: rdi = `int32_t[2]`,
   written with the read end and the write end of a new anonymous pipe, the

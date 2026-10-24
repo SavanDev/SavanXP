@@ -47,10 +47,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 ## Userland — `userland/`
 
 - [`SYSTEM_LAYERING.md`](userland/SYSTEM_LAYERING.md) — the layering: the platform,
-  apps on the POSIX SDK, and when an app may be a SUN program instead.
+  apps on the POSIX SDK, when an app may be a SUN program instead, and the
+  planned Win32 and Linux binary-compatibility subsystems.
 - [`SUN.md`](userland/SUN.md) — SUN, the Savan Userland Native API: what it is
-  next to Sx and POSIX, its pieces, the rules that grow it into our own Win32,
-  the Win32 map, and the slices the Command Prompt drives.
+  next to Sx and POSIX, its pieces, the system's own API rather than a Win32
+  replica, the rules that grow it, its Win32 counterparts as a reading aid, and
+  the slices the Command Prompt drives.
 - [`NATIVE_APPS.md`](userland/NATIVE_APPS.md) — how to write a SUN program:
   headers, connecting a window, manifests, and the worked examples.
 - [`NATIVE_HEAP.md`](userland/NATIVE_HEAP.md) — `malloc` for native programs: the
