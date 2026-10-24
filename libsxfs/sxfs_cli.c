@@ -636,11 +636,13 @@ static int cmd_apply(const char* image_path, const char* manifest_path) {
     return status;
 }
 
-/* Borra una o mas rutas de la imagen. Las rutas siguen la convencion del
- * manifiesto -- relativas a la raiz de SxFS, sin el prefijo /disk del guest --
- * y se tolera una '/' inicial por comodidad: "bin/x" y "/bin/x" son lo mismo,
- * y ambos son el "/disk/bin/x" que ve el SO. */
-static int cmd_rm(const char* image_path, char** paths, int path_count) {
+/* Removes one or more paths from the image. Paths follow the manifest
+ * convention -- relative to the SxFS root, without the guest's /disk prefix --
+ * and a leading '/' is tolerated: "bin/x" and "/bin/x" are the same, and both
+ * are the "/disk/bin/x" the OS sees. With force, a path that does not exist is
+ * not an error (rm -f), which is what retiring a file that may or may not be
+ * there needs. */
+static int cmd_rm(const char* image_path, char** paths, int path_count, int force) {
     FILE* image = fopen(image_path, "rb+");
     if (image == NULL) {
         fprintf(stderr, "sxfs-cli: no existe la imagen '%s'.\n", image_path);
@@ -671,6 +673,9 @@ static int cmd_rm(const char* image_path, char** paths, int path_count) {
         }
 
         rc = sxfs_remove(&ctx, relpath);
+        if (rc == SXFS_ERR_NOT_FOUND && force) {
+            continue;
+        }
         if (rc != SXFS_OK) {
             fprintf(stderr, "sxfs-cli: rm '%s': %s.\n", paths[i], sxfs_strerror(rc));
             status = exit_code_for(rc);
@@ -695,13 +700,13 @@ static int cmd_rm(const char* image_path, char** paths, int path_count) {
 
 static void usage(void) {
     fprintf(stderr,
-        "Uso:\n"
-        "  sxfs-cli check   <imagen>\n"
-        "  sxfs-cli info    <imagen>\n"
-        "  sxfs-cli extract <imagen> <directorio_destino>\n"
-        "  sxfs-cli create  <imagen> <total_sectores>\n"
-        "  sxfs-cli apply   <imagen> <manifiesto>\n"
-        "  sxfs-cli rm      <imagen> <ruta> [<ruta>...]\n");
+        "Usage:\n"
+        "  sxfs-cli check   <image>\n"
+        "  sxfs-cli info    <image>\n"
+        "  sxfs-cli extract <image> <destination_directory>\n"
+        "  sxfs-cli create  <image> <total_sectors>\n"
+        "  sxfs-cli apply   <image> <manifest>\n"
+        "  sxfs-cli rm [-f] <image> <path> [<path>...]\n");
 }
 
 int main(int argc, char** argv) {
@@ -751,11 +756,13 @@ int main(int argc, char** argv) {
         return cmd_apply(argv[2], argv[3]);
     }
     if (strcmp(argv[1], "rm") == 0) {
-        if (argc < 4) {
+        const int force = argc > 2 && strcmp(argv[2], "-f") == 0;
+        const int first = force ? 3 : 2;
+        if (argc < first + 2) {
             usage();
             return 2;
         }
-        return cmd_rm(argv[2], &argv[3], argc - 3);
+        return cmd_rm(argv[first], &argv[first + 1], argc - first - 1, force);
     }
     usage();
     return 2;

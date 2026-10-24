@@ -22,6 +22,13 @@ function(savanxp_program)
     if(P_NATIVE AND P_LINK_PROFILE AND NOT P_LINK_PROFILE STREQUAL "STATIC")
         message(FATAL_ERROR "savanxp_program(${P_NAME}): a NATIVE program must be STATIC")
     endif()
+    # .sxe names a SUN program on disk (docs/userland/SXE_FORMAT.md, "SUN
+    # programs are named .sxe"). The build adds it to a NATIVE program, so NAME
+    # never carries it, and a POSIX program may not take it.
+    if("${P_NAME}" MATCHES "[.]sxe$")
+        message(FATAL_ERROR "savanxp_program(${P_NAME}): NAME is given without .sxe; "
+            "the build adds it to NATIVE programs and POSIX programs have no extension")
+    endif()
     add_executable(${P_NAME} ${P_SOURCES})
     if(P_NATIVE)
         set_property(GLOBAL APPEND PROPERTY SAVANXP_NATIVE_TARGETS ${P_NAME})
@@ -121,7 +128,11 @@ function(savanxp_program)
         set_property(TARGET ${P_NAME} APPEND PROPERTY
             LINK_DEPENDS "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/linker.ld")
     endif()
-    set_target_properties(${P_NAME} PROPERTIES OUTPUT_NAME "${P_NAME}" SUFFIX "")
+    if(P_NATIVE)
+        set_target_properties(${P_NAME} PROPERTIES OUTPUT_NAME "${P_NAME}" SUFFIX ".sxe")
+    else()
+        set_target_properties(${P_NAME} PROPERTIES OUTPUT_NAME "${P_NAME}" SUFFIX "")
+    endif()
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_TARGETS ${P_NAME})
     set_property(GLOBAL APPEND PROPERTY SAVANXP_USER_PROGRAM_NAMES ${P_NAME})
 endfunction()

@@ -19,6 +19,26 @@ static int run_and_expect(const char* path, const char* const* argv, int argc, i
     return 1;
 }
 
+/* Runs a program with its standard output in a file, for the checks that
+ * have to read what it printed. */
+static int run_to_file(const char* path, const char* const* argv, int argc, const char* output_path) {
+    int status = -1;
+    long fd = savanxp_open_mode(output_path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    long pid;
+    if (fd < 0) {
+        printf("SMOKE FAIL open %s\n", output_path);
+        return 0;
+    }
+    pid = spawn_fds(path, argv, argc, 0, (int)fd, 2);
+    savanxp_close((int)fd);
+    if (pid < 0 || savanxp_waitpid((int)pid, &status) < 0 || status != 0) {
+        printf("SMOKE FAIL run %s > %s\n", path, output_path);
+        return 0;
+    }
+    printf("smoke: ok %s > %s\n", path, output_path);
+    return 1;
+}
+
 static int file_exists(const char* path) {
     long fd = savanxp_open(path);
     if (fd < 0) {
@@ -88,6 +108,7 @@ static int prepare_smoke_directory(void) {
 
 static void cleanup_smoke_directory(void) {
     (void)savanxp_unlink("/disk/smoke/sh.txt");
+    (void)savanxp_unlink("/disk/smoke/which.txt");
     (void)savanxp_unlink("/disk/smoke/readme.copy");
     (void)savanxp_unlink("/disk/smoke/readme.moved");
     (void)savanxp_rmdir("/disk/smoke");
@@ -119,6 +140,8 @@ int main(void) {
     const char* mmaptest_argv[] = {"/disk/bin/mmaptest", 0};
     const char* heaptest_argv[] = {"/disk/bin/heaptest", 0};
     const char* sh_argv[] = {"/bin/sh", "-c", "echo shell-redirect > /disk/smoke/sh.txt", 0};
+    /* A SUN program is console.sxe on disk; the shell finds it as `console`. */
+    const char* which_argv[] = {"/bin/sh", "-c", "which console", 0};
     const char* echo_argv[] = {"/bin/echo", "smoke-echo", 0};
     const char* cat_argv[] = {"/bin/cat", "/disk/smoke/sh.txt", 0};
     const char* ls_argv[] = {"/bin/ls", "/disk/bin", 0};
@@ -226,6 +249,8 @@ int main(void) {
         !prepare_smoke_directory() ||
         !run_and_expect("/bin/sh", sh_argv, 3, 0) ||
         !validate_file_contains("/disk/smoke/sh.txt", "shell-redirect") ||
+        !run_to_file("/bin/sh", which_argv, 3, "/disk/smoke/which.txt") ||
+        !validate_file_contains("/disk/smoke/which.txt", "/bin/console.sxe") ||
         !run_and_expect("/bin/echo", echo_argv, 2, 0) ||
         !run_and_expect("/bin/cat", cat_argv, 2, 0) ||
         !run_and_expect("/bin/ls", ls_argv, 2, 0) ||

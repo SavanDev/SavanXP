@@ -92,7 +92,7 @@ static const struct progman_default_item k_default_items[] = {
      * tools/shoot_session.py no existia. Aqui es lo mismo: se lee de arriba abajo.
      */
     {"Accessories", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"Accessories", "Command Prompt", "/bin/console", "Windows-style console running the shell", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"Accessories", "Command Prompt", "/bin/console.sxe", "Windows-style console running the shell", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Files", "/bin/filesapp", "Browse /disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     /* El reproductor SIEMPRE es una entrada cuando el port esta construido, porque
      * /bin/mediaplayer existe entonces. Si el port no esta, el pruning lo descarta
@@ -220,7 +220,7 @@ static const char *icon_reference_path(const char *value)
     }
     if (strcmp(value, "shell") == 0)
     {
-        return "/bin/console";
+        return "/bin/console.sxe";
     }
     if (strcmp(value, "notepad") == 0)
     {
@@ -534,6 +534,35 @@ int progman_registry_load_file(void)
     return 0;
 }
 
+/*
+ * A SUN program is <name>.sxe on disk (docs/userland/SXE_FORMAT.md). A
+ * hand-written progman.ini from before the rename still says /bin/console:
+ * when that path is gone and /bin/console.sxe exists, the item follows the
+ * program instead of leaving the menu. Returns 1 if the path was rewritten.
+ */
+static int adopt_sxe_name(char *path, progman_path_exists_fn exists)
+{
+    char candidate[PROGMAN_PATH_CAPACITY];
+    size_t length = strlen(path);
+
+    if (length >= 4u && strcmp(path + length - 4u, ".sxe") == 0)
+    {
+        return 0;
+    }
+    if (length + 5u > sizeof(candidate))
+    {
+        return 0;
+    }
+    memcpy(candidate, path, length);
+    memcpy(candidate + length, ".sxe", 5u);
+    if (!exists(candidate))
+    {
+        return 0;
+    }
+    memcpy(path, candidate, length + 5u);
+    return 1;
+}
+
 int progman_registry_prune_missing(progman_path_exists_fn exists)
 {
     int group_remap[PROGMAN_MAX_GROUPS];
@@ -556,7 +585,7 @@ int progman_registry_prune_missing(progman_path_exists_fn exists)
 
     for (read_index = 0; read_index < g_item_count; ++read_index)
     {
-        if (!exists(g_items[read_index].path))
+        if (!exists(g_items[read_index].path) && !adopt_sxe_name(g_items[read_index].path, exists))
         {
             dropped += 1;
             continue;
@@ -851,7 +880,16 @@ static int scan_candidate(const char *path, void *meta_buffer, size_t meta_capac
     }
     else
     {
+        /* The program's name rather than its file name: without NAME, a SUN
+         * program listed as console.sxe is shown as console. */
+        size_t length;
+
         copy_field(item.name, sizeof(item.name), path_basename(path));
+        length = strlen(item.name);
+        if (length > 4u && strcmp(item.name + length - 4u, ".sxe") == 0)
+        {
+            item.name[length - 4u] = '\0';
+        }
     }
     return append_item(&item);
 }
@@ -1159,7 +1197,7 @@ static void selftest_well_formed(void)
         "\n"
         "[item]\n"
         "name=Shell\n"
-        "path=/bin/console\n"
+        "path=/bin/console.sxe\n"
         "desc=Terminal\n"
         "icon=shell\n"
         "\n"
@@ -1195,9 +1233,9 @@ static void selftest_well_formed(void)
      * el bitmap final -- eso lo cubre selftest_sxe, contra binarios reales. */
     item = progman_item_at(0);
     expect(item != 0 && strcmp(item->name, "Shell") == 0, "item 0 nombre");
-    expect(item != 0 && strcmp(item->path, "/bin/console") == 0, "item 0 path");
+    expect(item != 0 && strcmp(item->path, "/bin/console.sxe") == 0, "item 0 path");
     expect(item != 0 && strcmp(item->description, "Terminal") == 0, "item 0 desc");
-    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/console") == 0, "item 0 icon= alias legado a path");
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/console.sxe") == 0, "item 0 icon= legacy alias resolves to a path");
     expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_NONE, "item 0 flags");
 
     /* Espacios alrededor de clave y valor recortados. */
@@ -1394,6 +1432,32 @@ static void selftest_prune(void)
     expect(progman_item_count() == 2 && progman_group_count() == 2, "prune idempotente conserva");
 }
 
+static int fake_exists_renamed(const char *path)
+{
+    return strcmp(path, "/bin/old.sxe") == 0;
+}
+
+/* An item written before the .sxe rename follows the program to its new name
+ * instead of leaving the menu; a name that exists under neither still goes. */
+static void selftest_prune_follows_sxe_name(void)
+{
+    static const char kText[] =
+        "[group]\n"
+        "name=Accessories\n"
+        "[item]\n"
+        "name=Old\n"
+        "path=/bin/old\n"
+        "[item]\n"
+        "name=Gone\n"
+        "path=/bin/gone\n";
+    const struct progman_item *item;
+
+    expect(progman_registry_parse(kText, sizeof(kText) - 1) == 2, "sxe rename fixture 2 items");
+    expect(progman_registry_prune_missing(fake_exists_renamed) == 1, "sxe rename drops only the missing one");
+    item = progman_item_at(0);
+    expect(item != 0 && strcmp(item->path, "/bin/old.sxe") == 0, "sxe rename follows the program");
+}
+
 /* Compara dos bitmaps por contenido, no por puntero: es lo que hace falta
  * para probar que un icono PRESTADO es de verdad el del programa referenciado
  * y no cualquier otra cosa que haya quedado en el slot. */
@@ -1461,7 +1525,7 @@ static void selftest_sxe(void)
         "desc=PID 1\n"
         "path=/bin/init\n"
         "[item]\n"
-        "path=/bin/console\n";
+        "path=/bin/console.sxe\n";
     const struct progman_item *item;
     const struct desktop_embedded_bitmap *icon;
 
@@ -1518,15 +1582,15 @@ static void selftest_sxe(void)
 
     /*
      * Item 2: icon=shell, a LEGACY ALIAS from before icons came from the
-     * binaries. It resolves to the terminal, /bin/console today, and borrows
+     * binaries. It resolves to the terminal, /bin/console.sxe today, and borrows
      * ITS real .sxicon. There is no baked DESKTOP_ICON_SHELL to compare with
      * (docs/userland/SXE_FORMAT.md): the cross-check is against item 5, which
-     * launches /bin/console WITHOUT any override and so adopts its own
+     * launches /bin/console.sxe WITHOUT any override and so adopts its own
      * .sxicon by the normal path -- two independent uses of the same
      * mechanism have to reach the same bitmap.
      */
     item = progman_item_at(2);
-    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/console") == 0, "alias legado resuelve al path del programa");
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/console.sxe") == 0, "legacy alias resolves to the program's path");
     expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "alias legado tambien presta el .sxicon");
     icon = progman_item_icon(item);
     expect(bitmaps_equal(icon, progman_item_icon(progman_item_at(5))),
@@ -1559,7 +1623,7 @@ static void selftest_sxe(void)
     expect(item != 0 && strcmp(item->description, "PID 1") == 0, "el .ini le gana la desc al automatico");
     expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "el automatico nunca trae icono propio");
 
-    /* Item 5: /bin/console without any override -- it adopts its own .sxicon
+    /* Item 5: /bin/console.sxe without any override -- it adopts its own .sxicon
      * by the normal path (the one item 0 uses with notepad). It is what item
      * 2 is compared against. A SUN program's .sxe is stamped like any other,
      * so the launcher reads it the same way. */
@@ -1611,6 +1675,7 @@ int progman_registry_selftest(void)
 
     selftest_defaults();
     selftest_prune();
+    selftest_prune_follows_sxe_name();
     selftest_well_formed();
     selftest_crlf_and_unknown();
     selftest_invalid_items();

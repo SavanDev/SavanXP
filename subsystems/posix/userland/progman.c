@@ -1264,8 +1264,8 @@ static int progman_selftest(void)
                 /* Integracion del launcher nativo: el escaneo no mira el
                  * subsistema, solo categoria declarada mas binario lanzable.
                  * Si un nativo con .sxres no aparece, el menu lo esconde. */
-                if (strcmp(item->path, "/disk/bin/nativewidgets") == 0 ||
-                    strcmp(item->path, "/disk/bin/nativedemo") == 0)
+                if (strcmp(item->path, "/disk/bin/nativewidgets.sxe") == 0 ||
+                    strcmp(item->path, "/disk/bin/nativedemo.sxe") == 0)
                 {
                     native_listed += 1;
                 }

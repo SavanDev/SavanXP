@@ -128,7 +128,7 @@ def main() -> int:
     assert "savanxp_read" not in demo and "savanxp_open" not in demo
     windowd = (root / "system" / "windowd" / "windowd.c").read_text(encoding="utf-8")
     assert "windowd_native_client_selftest" in windowd
-    assert "/disk/bin/nativedemo" in windowd
+    assert "/disk/bin/nativedemo.sxe" in windowd
     # Slice 10: input ring transport plus the sxnwm seed.
     assert (root / "include" / "sxn" / "sxnwm.h").is_file()
     assert "SAVANXP_WM_HELLO_INPUT_RING" in (root / "include" / "abi" / "savanxp_abi.h").read_text(encoding="utf-8")
@@ -141,7 +141,7 @@ def main() -> int:
     widgets_test = (root / "sdk" / "nativewidgets" / "main.c").read_text(encoding="utf-8")
     assert "sxnw_field_key" in widgets_test
     assert "windowd_native_widgets_selftest" in windowd
-    assert "/disk/bin/nativewidgets" in windowd
+    assert "/disk/bin/nativewidgets.sxe" in windowd
     # Slice 12: real PS/2 keyboard through the production path plus launcher.
     assert "windowd_native_hw_selftest" in windowd
     assert "NATIVE HW READY" in windowd

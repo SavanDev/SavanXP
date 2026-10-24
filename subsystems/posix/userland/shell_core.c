@@ -133,19 +133,37 @@ static int shell_path_exists(const char* path) {
     return 1;
 }
 
-static int shell_resolve_command_path(const char* command, char* path, size_t capacity) {
-    if (command[0] == '/') {
-        shell_copy_path(path, capacity, "", command);
-        return shell_path_exists(path);
-    }
-
-    shell_copy_path(path, capacity, "/disk/bin/", command);
+/* The command as typed, then with .sxe: a SUN program is <name>.sxe on disk
+ * (docs/userland/SXE_FORMAT.md), and `console` has to find console.sxe the way
+ * PATHEXT lets Windows find a .exe. */
+static int shell_try_command_path(const char* prefix, const char* command, char* path, size_t capacity) {
+    const size_t length = strlen(command);
+    shell_copy_path(path, capacity, prefix, command);
     if (shell_path_exists(path)) {
         return 1;
     }
-
-    shell_copy_path(path, capacity, "/bin/", command);
+    if (length >= 4 && strcmp(command + length - 4, ".sxe") == 0) {
+        return 0;
+    }
+    {
+        const size_t end = strlen(path);
+        if (end + 4 >= capacity) {
+            return 0;
+        }
+        shell_copy_path(path + end, capacity - end, "", ".sxe");
+    }
     return shell_path_exists(path);
+}
+
+static int shell_resolve_command_path(const char* command, char* path, size_t capacity) {
+    if (command[0] == '/') {
+        return shell_try_command_path("", command, path, capacity);
+    }
+
+    if (shell_try_command_path("/disk/bin/", command, path, capacity)) {
+        return 1;
+    }
+    return shell_try_command_path("/bin/", command, path, capacity);
 }
 
 static void shell_initialize_stage(struct shell_command_stage* stage) {

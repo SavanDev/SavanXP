@@ -19,8 +19,8 @@
  * takes as its window manager only a sibling.
  */
 
-static const char* const k_compositord_path = "/bin/compositord";
-static const char* const k_windowd_path = "/bin/windowd";
+static const char* const k_compositord_path = "/bin/compositord.sxe";
+static const char* const k_windowd_path = "/bin/windowd.sxe";
 static const char* const k_desktop_path = "/bin/desktop";
 
 /* A child that ends within this long after starting counts as a crash at

@@ -625,6 +625,7 @@ foreach(target IN LISTS SAVANXP_USER_TARGETS)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/stamp_osabi.py"
                     --binary "$<TARGET_FILE:${target}>"
                     --abi-header "${CMAKE_SOURCE_DIR}/include/abi/savanxp_native_abi.h"
+                    --installed-name "$<TARGET_FILE_NAME:${target}>"
             VERBATIM
         )
     endif()
@@ -839,7 +840,7 @@ foreach(target IN LISTS SAVANXP_USER_TARGETS)
     list(APPEND SAVANXP_STAGE_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E copy
                 "$<TARGET_FILE:${target}>"
-                "${SAVANXP_ROOTFS_ROOT}/bin/${target}"
+                "${SAVANXP_ROOTFS_ROOT}/bin/$<TARGET_FILE_NAME:${target}>"
     )
 endforeach()
 if(SAVANXP_SMOKE_COMMAND)

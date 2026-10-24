@@ -199,6 +199,57 @@ def assert_grown_image_stays_sparse_on_ordinary_sync(cli: Path, sync: Path, root
         raise RuntimeError("the applied file differs after an ordinary sync on a grown image")
 
 
+def assert_sync_retires_renamed_programs(cli: Path, sync: Path, root: Path) -> None:
+    """Installing a program retires its other name under bin/.
+
+    A SUN program is bin/<name>.sxe and a POSIX one is bin/<name>, and they are
+    the same program. An image from before the rename keeps bin/console next to
+    the new bin/console.sxe unless the sync removes it: the shell would run the
+    stale copy and the launcher would list it twice. The reverse direction (a
+    program that becomes POSIX again) and data outside bin/ are covered too.
+    """
+    seed = root / "rename-seed"
+    source = root / "rename-source"
+    (seed / "bin").mkdir(parents=True)
+    (seed / "data").mkdir()
+    (source / "bin").mkdir(parents=True)
+    (source / "data").mkdir()
+    for relative in ("bin/console", "bin/tool.sxe", "bin/keep", "data/notes.sxe"):
+        (seed / relative).write_bytes(b"old " + relative.encode() + b"\n")
+    for relative in ("bin/console.sxe", "bin/tool", "data/notes"):
+        (source / relative).write_bytes(b"new " + relative.encode() + b"\n")
+
+    image = root / "rename.img"
+    manifest = root / "rename.manifest"
+    manifest.write_text(
+        "mkdir\tbin\nmkdir\tdata\n"
+        + "".join(
+            f"file\t{relative}\t{seed / relative}\n"
+            for relative in ("bin/console", "bin/tool.sxe", "bin/keep", "data/notes.sxe")
+        ),
+        encoding="utf-8",
+    )
+    run([str(cli), "create", str(image), "8192"], root)
+    run([str(cli), "apply", str(image), str(manifest)], root)
+    run(
+        [sys.executable, str(sync), "--image", str(image), "--source", str(source),
+         "--cli", str(cli), "--sectors", "8192"],
+        root,
+    )
+
+    extracted = root / "rename-extracted"
+    run([str(cli), "extract", str(image), str(extracted)], root)
+    for relative in ("bin/console", "bin/tool.sxe"):
+        if (extracted / relative).exists():
+            raise RuntimeError(f"the sync kept the replaced program {relative}")
+    for relative in ("bin/console.sxe", "bin/tool", "data/notes"):
+        if digest(source / relative) != digest(extracted / relative):
+            raise RuntimeError(f"the installed file differs: {relative}")
+    for relative in ("bin/keep", "data/notes.sxe"):
+        if digest(seed / relative) != digest(extracted / relative):
+            raise RuntimeError(f"the sync touched an unrelated file: {relative}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cli", required=True, type=Path)
@@ -312,6 +363,7 @@ def main() -> int:
 
         assert_grown_image_survives_compaction(cli, sync, root)
         assert_grown_image_stays_sparse_on_ordinary_sync(cli, sync, root)
+        assert_sync_retires_renamed_programs(cli, sync, root)
 
     print("sxfs compaction regression: PASS")
     return 0

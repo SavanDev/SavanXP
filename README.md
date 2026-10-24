@@ -197,7 +197,9 @@ straight into `build/disk.img`, normally under `/disk/bin`.
 ```
 
 Use `--destination /disk/bin/NAME` (or another path below `/disk`) when the
-program should not use the default `/disk/bin/NAME` location.
+program should not use the default `/disk/bin/NAME` location. A SUN program,
+built with `--native`, installs as `/disk/bin/NAME.sxe`; the shell runs it as
+`NAME` too ([`docs/userland/SXE_FORMAT.md`](docs/userland/SXE_FORMAT.md#sun-programs-are-named-sxe)).
 
 Inside SavanXP:
 

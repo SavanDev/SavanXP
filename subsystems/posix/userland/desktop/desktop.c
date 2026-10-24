@@ -28,7 +28,7 @@ _Static_assert(
 /* Task Manager, which Ctrl+Shift+Esc opens. */
 static const char *k_task_manager_path = "/bin/taskmgr";
 /* The Command Prompt, which Ctrl+Alt+T opens (docs/desktop/CONSOLE.md). */
-static const char *k_console_path = "/bin/console";
+static const char *k_console_path = "/bin/console.sxe";
 
 /* How often the persisted wallpaper choice is re-read. progman's Options menu
  * changes it by writing the config; it is a rare, manual change, not worth an

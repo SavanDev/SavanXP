@@ -56,6 +56,44 @@ def manifest_for(source: Path) -> tuple[str, set[str]]:
     return "\n".join(lines) + "\n", produced
 
 
+SXE_SUFFIX = ".sxe"
+
+
+def retired_counterparts(produced: set[str]) -> list[str]:
+    """Return the program paths that the produced ones replace.
+
+    A SUN program is named <name>.sxe on disk and a POSIX one has no extension
+    (docs/userland/SXE_FORMAT.md, "SUN programs are named .sxe"). Both are the
+    same program under one name, so installing one retires the other: bin/x.sxe
+    retires bin/x and bin/x retires bin/x.sxe. Before the rule, installing over
+    a name replaced it, and this keeps that. Without it, a program that changes
+    subsystem, or a disk image from before the rename, would keep the old copy.
+    The shell would still run that copy, and the launcher would list it a second
+    time.
+
+    Only files directly under bin/ are programs. Elsewhere a name is just data.
+    """
+    retired: set[str] = set()
+    for relative in produced:
+        directory, _, name = relative.rpartition("/")
+        if directory != "bin" or not name:
+            continue
+        if name.endswith(SXE_SUFFIX):
+            counterpart = relative[: -len(SXE_SUFFIX)]
+        else:
+            counterpart = relative + SXE_SUFFIX
+        if counterpart in produced:
+            raise SystemExit(f"sxfs: {relative} and {counterpart} are the same program under two names")
+        retired.add(counterpart)
+    return sorted(retired)
+
+
+def retire_in_image(cli: Path, image: Path, retired: list[str]) -> int:
+    if not retired:
+        return 0
+    return run([str(cli), "rm", "-f", str(image), *retired])
+
+
 def remove_produced_files(carry_root: Path, produced: set[str]) -> None:
     """Drop build-owned files, but retain directories that contain user data."""
     for relative in sorted(produced, key=lambda value: (value.count("/"), value), reverse=True):
@@ -258,6 +296,7 @@ def compact_image(
         if run([str(cli), "extract", str(image), str(carry_root)]) != 0:
             return 1
         remove_produced_files(carry_root, produced)
+        remove_produced_files(carry_root, set(retired_counterparts(produced)))
         carry_manifest, _ = manifest_for(carry_root)
         combined_manifest = carry_manifest + source_manifest
         with tempfile.NamedTemporaryFile(
@@ -312,6 +351,7 @@ def sync_image(args: argparse.Namespace, image: Path, source: Path, cli: Path) -
         image.unlink()
 
     manifest, produced = manifest_for(source)
+    retired = retired_counterparts(produced)
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", prefix="savanxp-sxfs-", suffix=".manifest", delete=False
     ) as handle:
@@ -338,6 +378,9 @@ def sync_image(args: argparse.Namespace, image: Path, source: Path, cli: Path) -
         try:
             result = run([str(cli), "apply", str(candidate), str(manifest_path)])
             if result == 0:
+                if retire_in_image(cli, candidate, retired) != 0:
+                    print("sxfs: retiring replaced programs failed; the original image was not modified", file=sys.stderr)
+                    return 1
                 return install_candidate(candidate, image, cli)
             if result != 3:
                 print("sxfs: apply failed; the original image was not modified", file=sys.stderr)

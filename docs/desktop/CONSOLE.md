@@ -1,4 +1,4 @@
-# Command Prompt (`/bin/console`)
+# Command Prompt (`/bin/console.sxe`)
 
 > Status: **built 2026-10-21.** The Command Prompt is the first application
 > written against SUN ([SUN.md](../userland/SUN.md)), in `system/console`. It

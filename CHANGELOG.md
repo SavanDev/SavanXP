@@ -8,6 +8,15 @@ Cut-off notes:
 - `v0.1.1` covers the changes after `v0.1.0`, including work already merged into
   the tree but not yet tagged in git.
 
+## [Unreleased]
+
+### Changed
+
+- **SUN programs are named `<name>.sxe` on disk** (`/bin/console.sxe`, `/bin/windowd.sxe`), and the
+  shell finds them without the extension. `tools/stamp_osabi.py` refuses a native image without `.sxe`
+  or `.sxmeta`, and `build-user.sh --native` installs `NAME.sxe`. Installing a program retires its other
+  name in `/disk/bin` (`sxfs-cli rm -f`). See `docs/userland/SXE_FORMAT.md`.
+
 ## [0.4.1] - 2026-10-23
 
 ### Added

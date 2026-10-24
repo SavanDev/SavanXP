@@ -16,7 +16,7 @@
 > What was built:
 >
 > - The WM is `windowd.c` + the `windowd_*` modules (`_session`, `_render`,
->   `_layout`, `_compositor_client`, `_appinfo`). Binary `/bin/windowd`.
+>   `_layout`, `_compositor_client`, `_appinfo`). Binary `/bin/windowd.sxe`.
 > - The shell is a set of client processes: `shellui` draws the background,
 >   `progman` is the launcher: it lists every installed program that declares
 >   a category in its `.sxmeta` (see

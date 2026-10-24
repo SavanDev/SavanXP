@@ -60,7 +60,17 @@ void windowd_presentation_default(struct windowd_presentation *presentation, con
             name = cursor + 1;
         }
     }
-    copy_label(presentation->label, sizeof(presentation->label), name, (size_t)-1);
+    /* The program's name, not its file name: a SUN program is <name>.sxe on
+     * disk (docs/userland/SXE_FORMAT.md), and its window says <name>. */
+    {
+        size_t length = strlen(name);
+
+        if (length > 4u && strcmp(name + length - 4u, ".sxe") == 0)
+        {
+            length -= 4u;
+        }
+        copy_label(presentation->label, sizeof(presentation->label), name, length);
+    }
 }
 
 int windowd_presentation_adopt(
@@ -182,6 +192,9 @@ int windowd_presentation_selftest(void)
     expect(presentation.window_flags == 0u, "presentation: default is an ordinary window");
     expect(windowd_presentation_icon(&presentation, &storage) == desktop_icon_small(DESKTOP_ICON_DESKTOP),
         "presentation: default icon is the generic one");
+    windowd_presentation_default(&presentation, "/bin/console.sxe");
+    expect(strcmp(windowd_presentation_label(&presentation, "/bin/console.sxe"), "console") == 0,
+        "presentation: a SUN program's default title drops .sxe");
     windowd_presentation_default(&presentation, 0);
     expect(strcmp(windowd_presentation_label(&presentation, 0), "App") == 0, "presentation: no path gives App");
 

@@ -112,9 +112,9 @@ static const char* automation_label_for_spec(const char* spec) {
 static int run_automation_spec(const char* spec) {
     const char* smoke_argv[] = {"/disk/bin/smoke", 0};
     const char* soak_argv[] = {"/disk/bin/gputest", "--soak", 0, 0};
-    const char* windowd_argv[] = {"/bin/windowd", "--selftest", 0};
-    const char* windowd_hw_native_argv[] = {"/bin/windowd", "--hw-native-test", 0};
-    const char* cursor_repro_argv[] = {"/bin/windowd", "--cursor-repro", 0};
+    const char* windowd_argv[] = {"/bin/windowd.sxe", "--selftest", 0};
+    const char* windowd_hw_native_argv[] = {"/bin/windowd.sxe", "--hw-native-test", 0};
+    const char* cursor_repro_argv[] = {"/bin/windowd.sxe", "--cursor-repro", 0};
     const char* progman_selftest_argv[] = {"/bin/progman", "--selftest", 0};
     const char* appwiz_selftest_argv[] = {"/bin/appwiz", "--selftest", 0};
     const char* sxetest_argv[] = {"/disk/bin/sxetest", 0};
@@ -144,7 +144,7 @@ static int run_automation_spec(const char* spec) {
     const char* tcptest_argv[] = {"/disk/bin/tcptest", 0, 0};
     const char* ntptest_argv[] = {"/disk/bin/ntptest", 0, 0};
     const char* floatsmoke_argv[] = {"/disk/bin/floatsmoke", 0};
-    const char* nativetest_argv[] = {"/disk/bin/nativetest", 0};
+    const char* nativetest_argv[] = {"/disk/bin/nativetest.sxe", 0};
     const char* pthreadtest_argv[] = {"/disk/bin/pthreadtest", 0};
     const char* sessiontest_argv[] = {"/disk/bin/sessiontest", 0};
     const char* ccleste_argv[] = {"/disk/bin/ccleste", "--selftest", 0};
@@ -163,11 +163,11 @@ static int run_automation_spec(const char* spec) {
 
     if (spec != 0 && strcmp(spec, "smoke") != 0 && spec[0] != '\0') {
         if (strcmp(spec, "windowd-selftest") == 0 || strcmp(spec, "windowd") == 0) {
-            path = "/bin/windowd";
+            path = "/bin/windowd.sxe";
             argv = windowd_argv;
             argc = 2;
         } else if (strcmp(spec, "windowd-hw-native") == 0) {
-            path = "/bin/windowd";
+            path = "/bin/windowd.sxe";
             argv = windowd_hw_native_argv;
             argc = 2;
         } else if (strcmp(spec, "progman-selftest") == 0 || strcmp(spec, "progman") == 0) {
@@ -268,7 +268,7 @@ static int run_automation_spec(const char* spec) {
             argv = pthreadtest_argv;
             argc = 1;
         } else if (strcmp(spec, "nativetest") == 0 || strcmp(spec, "native-test") == 0) {
-            path = "/disk/bin/nativetest";
+            path = "/disk/bin/nativetest.sxe";
             argv = nativetest_argv;
             argc = 1;
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
@@ -276,7 +276,7 @@ static int run_automation_spec(const char* spec) {
             argv = ccleste_argv;
             argc = 2;
         } else if (strcmp(spec, "windowd-cursor-repro") == 0) {
-            path = "/bin/windowd";
+            path = "/bin/windowd.sxe";
             argv = cursor_repro_argv;
             argc = 2;
         } else if (strcmp(spec, "soak") == 0 || strcmp(spec, "gputest --soak") == 0) {
@@ -480,7 +480,7 @@ int main(void) {
     /* The graphical session belongs to sessiond (docs/desktop/
      * DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond); init keeps audiod
      * and the fallback to the text shell. */
-    const char* sessiond_argv[] = {"/bin/sessiond", 0};
+    const char* sessiond_argv[] = {"/bin/sessiond.sxe", 0};
     const char* shell_argv[] = {"/bin/sh", 0};
     unsigned long last_sessiond_start_ms = 0;
     int rapid_failures = 0;
@@ -524,7 +524,7 @@ int main(void) {
         unsigned long runtime_ms = 0;
 
         if (sessiond_pid <= 0) {
-            sessiond_pid = spawn("/bin/sessiond", sessiond_argv, 1);
+            sessiond_pid = spawn("/bin/sessiond.sxe", sessiond_argv, 1);
             if (sessiond_pid < 0) {
                 printf("init: failed to spawn sessiond (%s)\n", result_error_string(sessiond_pid));
                 sessiond_pid = 0;

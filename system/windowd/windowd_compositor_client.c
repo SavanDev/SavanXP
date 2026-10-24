@@ -7,7 +7,7 @@
 
 #include "sxn/sxn.h"
 
-static const char *k_compositord_path = "/bin/compositord";
+static const char *k_compositord_path = "/bin/compositord.sxe";
 
 /* Watchdog for a single request/reply hop. A healthy daemon answers a present in
    well under a frame; a blocking drain (gpu_wait_present) still retires quickly.

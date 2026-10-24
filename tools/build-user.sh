@@ -36,9 +36,11 @@ Options:
   --heap-mib N      set the fixed heap size in MiB
   --no-install      build only
   --no-compact      pass --no-compact to SxFS installation
-  --native          stamp EI_OSABI as a native subsystem binary
+  --native          build a SUN program: stamp EI_OSABI as a native subsystem
+                    binary and install it as NAME.sxe
   --output PATH     override the output ELF path
-  --destination PATH install under /disk (default: /disk/bin/NAME)
+  --destination PATH install under /disk (default: /disk/bin/NAME, or
+                    /disk/bin/NAME.sxe with --native)
 EOF
 }
 
@@ -71,8 +73,30 @@ fi
     echo "build-user.sh: name must be a simple file name" >&2
     exit 2
 }
+# A SUN program is <name>.sxe on disk and a POSIX one has no extension
+# (docs/userland/SXE_FORMAT.md, "SUN programs are named .sxe"). NAME is the
+# program's name, which finds its .sxres, so it never keeps the extension.
+if ((NATIVE)); then
+    NAME=${NAME%.sxe}
+    [[ -n "$NAME" ]] || { echo "build-user.sh: --name is required" >&2; exit 2; }
+elif [[ "$NAME" == *.sxe ]]; then
+    echo "build-user.sh: .sxe names a SUN program; build it with --native" >&2
+    exit 2
+fi
 if [[ -z "$DESTINATION" ]]; then
-    DESTINATION="/disk/bin/$NAME"
+    if ((NATIVE)); then
+        DESTINATION="/disk/bin/$NAME.sxe"
+    else
+        DESTINATION="/disk/bin/$NAME"
+    fi
+fi
+if ((NATIVE)) && [[ "$DESTINATION" != *.sxe ]]; then
+    echo "build-user.sh: a SUN program installs as <name>.sxe, not $DESTINATION" >&2
+    exit 2
+fi
+if ((NATIVE == 0)) && [[ "$DESTINATION" == *.sxe ]]; then
+    echo "build-user.sh: .sxe names a SUN program; build it with --native" >&2
+    exit 2
 fi
 case "$DESTINATION" in
     /disk/*) DESTINATION_RELATIVE=${DESTINATION#/disk/} ;;
@@ -217,24 +241,6 @@ fi
     -z max-page-size=0x1000 --build-id=none \
     -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}"
 
-if ((NATIVE)); then
-    OSABI_HEX=$(sed -n 's/^#define SXN_ELF_OSABI_NATIVE[[:space:]]\{1,\}0x\([0-9A-Fa-f][0-9A-Fa-f]*\).*/\1/p' "$ROOT/include/abi/savanxp_native_abi.h" | head -n 1)
-    [[ -n "$OSABI_HEX" ]] || {
-        echo "build-user.sh: neutral ABI header has no SXN_ELF_OSABI_NATIVE" >&2
-        exit 1
-    }
-    "$PYTHON" - "$RAW_OUTPUT" "$OSABI_HEX" <<'PY'
-import sys
-from pathlib import Path
-path = Path(sys.argv[1])
-data = bytearray(path.read_bytes())
-if len(data) <= 7:
-    raise SystemExit("build-user.sh: generated ELF is too small for EI_OSABI")
-data[7] = int(sys.argv[2], 16)
-path.write_bytes(data)
-PY
-fi
-
 RESOURCE_ROOT="$OBJ_ROOT/sxe"
 rm -rf "$RESOURCE_ROOT"
 mkdir -p "$RESOURCE_ROOT"
@@ -252,6 +258,14 @@ BUILD_ID=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || true)
     --resource-dir "$RESOURCE_ROOT" \
     --objcopy "$OBJCOPY" \
     --readelf "$READELF"
+if ((NATIVE)); then
+    # Last, as in the CMake build, so nothing that rewrites the ELF afterwards
+    # can drop the mark. It also refuses a SUN program without .sxmeta or .sxe.
+    "$PYTHON" "$ROOT/tools/stamp_osabi.py" \
+        --binary "$RAW_OUTPUT" \
+        --abi-header "$ROOT/include/abi/savanxp_native_abi.h" \
+        --installed-name "$(basename -- "$DESTINATION")"
+fi
 if [[ "$RAW_OUTPUT" != "$EXTERNAL_ROOT/$NAME.elf" ]]; then
     cp "$RAW_OUTPUT" "$EXTERNAL_ROOT/$NAME.elf"
 fi

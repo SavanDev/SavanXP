@@ -4,7 +4,7 @@
  * session-smoke: the session manager end to end
  * (docs/desktop/DESKTOP_ARCHITECTURE.md#the-session-manager-sessiond).
  *
- * Starts /bin/sessiond and watches its children through the process table:
+ * Starts /bin/sessiond.sxe and watches its children through the process table:
  * compositord, windowd and the desktop come up, and Program Manager does not
  * (it is an ordinary application, started from the Start menu); the desktop
  * stays up, which it only does if windowd granted it the shell role
@@ -98,8 +98,8 @@ static int stays_up(long pid)
 
 int main(void)
 {
-    const char *argv[] = {"/bin/sessiond", 0};
-    long sessiond = spawn("/bin/sessiond", argv, 1);
+    const char *argv[] = {"/bin/sessiond.sxe", 0};
+    long sessiond = spawn("/bin/sessiond.sxe", argv, 1);
     long compositord = 0;
     long windowd = 0;
     long desktop = 0;
@@ -112,8 +112,8 @@ int main(void)
         return 1;
     }
 
-    compositord = wait_child(sessiond, "compositord", 0);
-    windowd = wait_child(sessiond, "windowd", 0);
+    compositord = wait_child(sessiond, "compositord.sxe", 0);
+    windowd = wait_child(sessiond, "windowd.sxe", 0);
     desktop = wait_child(sessiond, "desktop", 0);
     if (compositord <= 0 || windowd <= 0 || desktop <= 0)
     {
@@ -146,7 +146,7 @@ int main(void)
 
     /* windowd dies: the session is over and starts again, all of it. */
     (void)savanxp_kill((int)windowd, SAVANXP_SIGKILL);
-    next = wait_child(sessiond, "windowd", windowd);
+    next = wait_child(sessiond, "windowd.sxe", windowd);
     if (next <= 0)
     {
         fail("windowd did not come back");
@@ -166,15 +166,15 @@ int main(void)
 
     /* compositord dies: windowd cannot go on without it, and the session
      * starts again with a new pair. */
-    compositord = wait_child(sessiond, "compositord", compositord);
+    compositord = wait_child(sessiond, "compositord.sxe", compositord);
     (void)savanxp_kill((int)compositord, SAVANXP_SIGKILL);
-    next = wait_child(sessiond, "compositord", compositord);
+    next = wait_child(sessiond, "compositord.sxe", compositord);
     if (next <= 0)
     {
         fail("compositord did not come back");
     }
     compositord = next;
-    next = wait_child(sessiond, "windowd", windowd);
+    next = wait_child(sessiond, "windowd.sxe", windowd);
     if (next <= 0)
     {
         fail("windowd did not come back with compositord");

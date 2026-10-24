@@ -34,7 +34,7 @@
 > already measured — and the **rename to `.sxe`**, which was never done and
 > which lost the argument in its favor once stamping became universal (see that
 > section). That still holds for POSIX programs. **For SUN programs the `.sxe`
-> name became a rule on 2026-10-24**, decided but not applied yet (see
+> name became a rule on 2026-10-24** and is applied (see
 > [SUN programs are named `.sxe`](#sun-programs-are-named-sxe)).
 >
 > Where this document and `sxe_format.h` disagree, **the header wins**.
@@ -326,18 +326,26 @@ get scanned — not in the name.
 
 ### SUN programs are named `.sxe`
 
-> Status: **decided 2026-10-24, not applied yet.** Native programs are still
-> installed without an extension (`/bin/console`).
+> Status: **applied 2026-10-24.** `/bin/console.sxe`, `/bin/windowd.sxe`,
+> `/disk/bin/nativetest.sxe`.
 
 A SUN program ([SUN.md](SUN.md)) runs only as an SXE image, and nothing else
 runs as SUN:
 
 - **The image**: ELF, `EI_OSABI=0x53`, `.sxmeta` stamped.
-- **The name on disk** ends in `.sxe`.
+- **The name on disk** ends in `.sxe`. The extension is mandatory.
 - **Foreign formats never run as SUN.** A PE image or a Linux ELF goes to its
   own subsystem
   ([SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#planned-binary-compatibility-subsystems)),
   whatever its name.
+
+The rule covers every native program, the platform services included
+(`compositord`, `sessiond`, `windowd`). They are also the proof that the
+**menu metadata is optional**: they carry the default `.sxmeta` (build id and
+little else) but no `category`, name or icon, so the launcher does not list
+them, and they are SUN programs all the same. What makes a program SUN is the
+stamp and the name. What puts it in the menu is `category=`
+([All Programs](#all-programs-the-catalog-discovers-itself)).
 
 The argument above was about pruning a scan, and it still holds: the extension
 prunes nothing. This rule has another reason. Once foreign subsystems exist,
@@ -346,27 +354,38 @@ program belongs to, as `.exe` does on Windows.
 
 The authority does not move. The loader keeps trusting `EI_OSABI` and never
 reads a name or a resource section ([the crux decision](#the-sxe-format--executables-carrying-their-own-resources)).
-The build and the tooling enforce the rule, not the kernel: the native
-builders will name their output `.sxe` and refuse a native image without
-`.sxmeta`. POSIX programs keep
-their names without an extension.
+The build and the tooling enforce the rule, not the kernel. POSIX programs
+keep their names without an extension.
 
-Applying it needs, in one change:
+How it is held in place:
 
-- `savanxp_program(... NATIVE)`, `savanxp_system_service` and
-  `tools/build-user.sh --native` produce `<name>.sxe`.
-- Every path that names a native program by hand follows the rename:
-  `sessiond`, `init`, `windowd`'s compositor client, `desktop`, `progman`'s
-  registry and self-tests, `file_assoc`'s self-tests, `sessiontest` and the
-  smoke scenarios.
-- A rule for typing a command without its extension (`console` finds
-  `console.sxe`), the shell's equivalent of `PATHEXT`.
-- Native programs already installed in `/disk/bin` under the old name, without
-  breaking the persistent image ([AGENTS.md](../../AGENTS.md)).
-
-Open point: whether the platform services (`compositord`, `sessiond`,
-`windowd`) count as SUN programs for this rule. They are native processes but
-not applications.
+- **The builders name the output.** `savanxp_program(... NATIVE)` (and so
+  `savanxp_system_service`) sets the `.sxe` suffix; `NAME` never carries it,
+  and a POSIX `NAME` ending in `.sxe` fails at configure time.
+  `tools/build-user.sh --native` installs `/disk/bin/<name>.sxe` by default,
+  and refuses a native destination without `.sxe` or a POSIX one with it.
+- **`tools/stamp_osabi.py` refuses the image.** It is the last step of every
+  native build, CMake and `build-user.sh` alike. It takes the name the program
+  will have on disk (`--installed-name`) and fails unless it ends in `.sxe` and
+  the ELF carries `.sxmeta`.
+- **The shell finds the program without the extension.** `sh` and the shell
+  core try `<command>` and then `<command>.sxe` in each directory, as `PATHEXT`
+  does on Windows: `console` runs `console.sxe`.
+- **One program per name on the persistent disk.** `tools/sxfs_sync.py`
+  retires the other name under `bin/` when it installs a program: `bin/x.sxe`
+  removes `bin/x`, and `bin/x` removes `bin/x.sxe` (`sxfs-cli rm -f`). Before
+  the rule, installing over a name replaced the program, and this keeps that.
+  It is also what cleaned the images from before the rename, which still held
+  `/disk/bin/console` next to the new `console.sxe`. The shell would have run
+  the stale copy, and the launcher, which tells programs apart by file name,
+  would have listed it twice.
+- **Names the user wrote by hand.** A `progman.ini` item whose path is gone
+  follows the program to `<path>.sxe` when that exists. `assoc.ini` has no
+  such fallback: a policy line naming `/bin/console` has to be updated.
+- **Display names drop the extension.** A window that publishes no title is
+  labelled with the program's name (`console`), and so is a menu entry whose
+  `.sxmeta` has no `name`. The process name is still the file name
+  (`console.sxe`), as Task Manager shows `explorer.exe` on Windows.
 
 ## No cache — and now with the measurement
 
@@ -469,12 +488,12 @@ still wants to look distinct. Three shapes of the value:
 | value | resolves to |
 |---|---|
 | `/bin/aboutapp` (starts with `/`) | that path as-is — the main form |
-| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | legacy alias: the path of the program that draws that icon today (`/bin/console`, ...) |
+| `shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest` | legacy alias: the path of the program that draws that icon today (`/bin/console.sxe`, ...) |
 | `desktop`, or any name without an alias | nothing — `icon_borrow_path` stays empty and the item keeps the generic `icon_id` |
 
 **The aliases are a bridge, not the new mechanism.** Before this change,
 `icon=shell` picked a baked pixel array because there was no other way for
-Shell to have an icon. Today the terminal, `/bin/console`, carries its own `.sxicon`
+Shell to have an icon. Today the terminal, `/bin/console.sxe`, carries its own `.sxicon`
 (stamped from `icon=app-terminal` in `system/console/console.sxres`), so the alias resolves to
 the *same* path the item would get anyway with no `icon=` at all — it is purely
 backward compatibility for a `.ini` written before this redesign, not something
@@ -502,7 +521,7 @@ the binary already brings its own").
 >
 > The legacy aliases (`shell`, `notepad`, `gfxdemo`, `keytest`, `mousetest`)
 > were not touched and **did not depend on this table to begin with** — they
-> resolve to *paths* (`/bin/console`, ...), never to a `desktop_icons.h` id.
+> resolve to *paths* (`/bin/console.sxe`, ...), never to a `desktop_icons.h` id.
 > That is why emptying the enum breaks nothing for them: an old `.ini` with
 > `icon=shell` still shows Shell's real icon, now read from its `.sxicon`
 > through the same path as if the `.ini` had said nothing.
