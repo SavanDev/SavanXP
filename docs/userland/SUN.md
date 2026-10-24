@@ -24,6 +24,13 @@ an application platform. A SUN program is a native program
 (`EI_OSABI=0x53`); how to build, stamp and launch one is in
 [NATIVE_APPS.md](NATIVE_APPS.md).
 
+**A SUN program is always an SXE image, named `<program>.sxe` on disk, and
+nothing else runs as SUN.** Foreign formats go to their own subsystem. The
+loader still decides by `EI_OSABI` alone; the name is a rule of the build and
+the tooling. The rule is decided (2026-10-24) but not applied yet:
+[SXE_FORMAT.md](SXE_FORMAT.md#sun-programs-are-named-sxe) has it and what
+applying it needs.
+
 The Windows column is an analogy of *role*: SUN sits where Win32 sits in
 Windows, as the API the system itself is written against. It says nothing about
 what SUN's calls look like.

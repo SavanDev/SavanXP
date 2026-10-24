@@ -112,14 +112,26 @@ What holds for both, by the same rules that hold for POSIX:
   reserve/commit virtual memory. Each lands with a SavanXP consumer of its
   own.
 
-Prior art worth reading, with the licence in mind (SavanXP is MIT):
-[Wine](https://gitlab.winehq.org/wine/wine) (LGPL-2.1, so its libraries can ship
-as separate components) and [sogen](https://github.com/momo5502/sogen)
-(GPL-2.0, read only, never copied). Sogen emulates Windows and Linux programs at
-the system call level, so it shows the minimum kernel surface a real `ntdll` or a
-real Linux binary needs. Its traces can also serve as an oracle: run the same
-binary in sogen and on SavanXP, and the first system call that diverges points to
-the bug.
+**Each subsystem may carry its own licence.** The project stays MIT, but a
+compatibility subsystem is a component of its own. It may be GPL or LGPL when
+the code it adopts requires that, just as the Doom port is GPL-2.0 today. The
+rules are the ones in
+[THIRD_PARTY_ADOPTION.md](../third-party/THIRD_PARTY_ADOPTION.md): adopted code
+keeps its licence, and so does our code that wraps or adapts it. The
+subsystem's directory states its licence, and every piece that ships has an
+entry in [THIRD_PARTY_PROVENANCE.md](../third-party/THIRD_PARTY_PROVENANCE.md).
+One boundary to watch: a subsystem with a kernel half compiled into the kernel
+image (as POSIX has `subsystems/posix/kernel/`) would put that half's licence
+into the kernel binary. Copyleft code belongs on the user side of the system
+call. A copyleft kernel half has to be a deliberate decision.
+
+Prior art: [Wine](https://gitlab.winehq.org/wine/wine) (LGPL-2.1) and
+[sogen](https://github.com/momo5502/sogen) (GPL-2.0). A subsystem under a
+compatible licence can adopt their code. An MIT one can only take them as
+`Reference`. Sogen emulates Windows and Linux programs at the system call level,
+so it shows the minimum kernel surface a real `ntdll` or a real Linux binary
+needs. Its traces can also serve as an oracle: run the same binary in sogen and
+on SavanXP, and the first system call that diverges points to the bug.
 
 ## What goes in C (all of it, today)
 

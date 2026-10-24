@@ -33,7 +33,9 @@
 > detection layer that does not exist), the **cost of the association scan** —
 > already measured — and the **rename to `.sxe`**, which was never done and
 > which lost the argument in its favor once stamping became universal (see that
-> section).
+> section). That still holds for POSIX programs. **For SUN programs the `.sxe`
+> name became a rule on 2026-10-24**, decided but not applied yet (see
+> [SUN programs are named `.sxe`](#sun-programs-are-named-sxe)).
 >
 > Where this document and `sxe_format.h` disagree, **the header wins**.
 >
@@ -181,8 +183,8 @@ is defined now because afterwards would be too late.
 | `0x0302` | `EXT_OPEN` | utf8, NUL-separated entries | Extensions, with the dot: `.txt` |
 
 **`INTERPRETER` is in from v1 even though there is no VM**, and the managed
-layer that would have needed one is
-[deferred to after v1.0](./SYSTEM_LAYERING.md#the-managed-layer-is-deferred-to-after-v10).
+layer that would have needed one was
+[removed](./SYSTEM_LAYERING.md#the-haxe-experiment-is-removed).
 It is the field for an image that the kernel does not execute itself — bytecode
 run by a `/bin/…` interpreter — the equivalent of a shebang / `binfmt_misc`,
 which does not fit in the `EI_OSABI` byte. It stays in the format because a tag
@@ -321,6 +323,50 @@ backward-compatible contract requires it (a third party can still use it as a
 file convention), but it is no longer the lever for `file_assoc`'s cost. That
 lever has to be found somewhere else — an index, or bounding which directories
 get scanned — not in the name.
+
+### SUN programs are named `.sxe`
+
+> Status: **decided 2026-10-24, not applied yet.** Native programs are still
+> installed without an extension (`/bin/console`).
+
+A SUN program ([SUN.md](SUN.md)) runs only as an SXE image, and nothing else
+runs as SUN:
+
+- **The image**: ELF, `EI_OSABI=0x53`, `.sxmeta` stamped.
+- **The name on disk** ends in `.sxe`.
+- **Foreign formats never run as SUN.** A PE image or a Linux ELF goes to its
+  own subsystem
+  ([SYSTEM_LAYERING.md](SYSTEM_LAYERING.md#planned-binary-compatibility-subsystems)),
+  whatever its name.
+
+The argument above was about pruning a scan, and it still holds: the extension
+prunes nothing. This rule has another reason. Once foreign subsystems exist,
+programs of three worlds share the disk, and the name says which world a
+program belongs to, as `.exe` does on Windows.
+
+The authority does not move. The loader keeps trusting `EI_OSABI` and never
+reads a name or a resource section ([the crux decision](#the-sxe-format--executables-carrying-their-own-resources)).
+The build and the tooling enforce the rule, not the kernel: the native
+builders will name their output `.sxe` and refuse a native image without
+`.sxmeta`. POSIX programs keep
+their names without an extension.
+
+Applying it needs, in one change:
+
+- `savanxp_program(... NATIVE)`, `savanxp_system_service` and
+  `tools/build-user.sh --native` produce `<name>.sxe`.
+- Every path that names a native program by hand follows the rename:
+  `sessiond`, `init`, `windowd`'s compositor client, `desktop`, `progman`'s
+  registry and self-tests, `file_assoc`'s self-tests, `sessiontest` and the
+  smoke scenarios.
+- A rule for typing a command without its extension (`console` finds
+  `console.sxe`), the shell's equivalent of `PATHEXT`.
+- Native programs already installed in `/disk/bin` under the old name, without
+  breaking the persistent image ([AGENTS.md](../../AGENTS.md)).
+
+Open point: whether the platform services (`compositord`, `sessiond`,
+`windowd`) count as SUN programs for this rule. They are native processes but
+not applications.
 
 ## No cache — and now with the measurement
 
@@ -919,6 +965,11 @@ honored the day a VM exists, if one ever does.
 
 ## Native subsystem value
 
-The `subsystem` manifest field accepts `posix` or `native`, and the native
-OSABI value stays reserved in `include/abi/savanxp_native_abi.h` for the
-future NT-style kernel API. There is no standalone native builder today.
+The `subsystem` manifest field accepts `posix` or `native`. It is
+informational: the loader trusts the `EI_OSABI` stamp, and the native value
+(`0x53`) comes from `include/abi/savanxp_native_abi.h`. Native images come from
+`savanxp_program(... NATIVE)`, `savanxp_system_service` and
+`tools/build-user.sh --native` ([NATIVE_APPS.md](NATIVE_APPS.md)). They all
+stamp through the same generator, and a SUN program additionally compiles its
+resources in ([SUN.md](SUN.md#resources-compiled-in)). Their name on disk is in
+[SUN programs are named `.sxe`](#sun-programs-are-named-sxe).

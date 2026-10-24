@@ -60,7 +60,7 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`SYSTEM_MONITORING.md`](userland/SYSTEM_MONITORING.md) — process, memory, and system
   metrics exposed by the kernel.
 - [`SXE_FORMAT.md`](userland/SXE_FORMAT.md) — the executable format, resource sections,
-  generator, stamping, and runtime rules.
+  generator, stamping, runtime rules, and why SUN programs are named `.sxe`.
 
 ## Desktop and graphics — `desktop/`
 
