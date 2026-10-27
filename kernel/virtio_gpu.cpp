@@ -12,7 +12,7 @@
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
 #include "kernel/ui.hpp"
-#include "kernel/virtio_input.hpp"
+#include "kernel/input.hpp"
 #include "kernel/virtio_pci.hpp"
 #include "kernel/vmm.hpp"
 
@@ -3602,7 +3602,7 @@ bool set_mode(savanxp_gpu_mode& mode) {
         return false;
     }
 
-    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
+    input::set_screen_extent(g_framebuffer_info.width, g_framebuffer_info.height);
     fill_mode_info(mode);
     return true;
 }

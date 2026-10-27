@@ -4,12 +4,8 @@
 
 namespace virtio_input {
 
+// Finds the virtio tablet and keyboard and registers them with the input
+// layer. Runs before ps2::initialize, so on a virtio machine it wins.
 void initialize(const boot::FramebufferInfo& framebuffer);
-void poll();
-bool mouse_ready();
-bool keyboard_ready();
-void set_framebuffer_extent(uint32_t width, uint32_t height);
-void begin_graphics_session();
-void end_graphics_session();
 
 } // namespace virtio_input

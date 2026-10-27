@@ -5,7 +5,6 @@
 
 #include "kernel/console.hpp"
 #include "kernel/input.hpp"
-#include "kernel/ps2.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
 #include "abi/savanxp_abi.h"
@@ -32,18 +31,16 @@ constexpr uint16_t kBtnLeft = 0x110;
 constexpr uint16_t kBtnRight = 0x111;
 constexpr uint16_t kBtnMiddle = 0x112;
 
-// Codigos evdev (Linux input-event-codes.h) que manda un device
-// virtio-keyboard en VirtioInputEvent.code cuando type == kEvKey. Del 1 al
-// 0x58 son, a proposito de Linux desde siempre, el mismo numero que el byte
-// de scancode set 1 no extendido (KEY_ESC=1=0x01, KEY_A=30=0x1e, ...
-// KEY_F12=88=0x58): alcanza con pasarlos derecho a ps2::inject_scancode y
-// reusar toda su tabla de layout/mayusculas/AltGr en vez de duplicarla. Las
-// teclas que en un teclado fisico salen con el prefijo 0xE0 (ctrl/alt
-// derechos, flechas, home/end/...) Linux las renumero mas arriba (>=96): esas
-// hay que mapearlas a mano al byte de scancode que representan bajo ese
-// prefijo. SysRq/Pause quedan afuera de la tabla: virtio-input las entrega
-// como un evento de press/release limpio, sin la secuencia multi-byte sin
-// release que manda el hardware PS/2 real para esas mismas teclas.
+// evdev codes (Linux input-event-codes.h) that a virtio-keyboard sends in
+// VirtioInputEvent.code when type == kEvKey. From 1 to 0x58 Linux has always
+// used, on purpose, the same number as the non-extended set 1 scancode
+// (KEY_ESC=1=0x01, KEY_A=30=0x1e, ... KEY_F12=88=0x58), so they go straight
+// to input::submit_scancode. Keys that a physical keyboard sends with the
+// 0xE0 prefix (right ctrl/alt, arrows, home/end...) Linux renumbered higher
+// (>=96): those are mapped by hand to the scancode they stand for under that
+// prefix. SysRq and Pause stay out of the table: virtio-input delivers them as
+// a clean press/release, without the multi-byte sequence real PS/2 hardware
+// sends for them, so they go to input::submit_key.
 constexpr uint16_t kEvdevScancodeIdentityMax = 0x58;
 constexpr uint16_t kEvdevSysRq = 99;
 constexpr uint16_t kEvdevPause = 119;
@@ -276,8 +273,7 @@ void submit_screen_position(int32_t screen_x, int32_t screen_y, int32_t wheel) {
             .absolute_x = screen_x,
             .absolute_y = screen_y,
             .has_absolute = true,
-            .source = input::MouseSource::virtio_tablet,
-        });
+            });
         return;
     }
 
@@ -289,7 +285,6 @@ void submit_screen_position(int32_t screen_x, int32_t screen_y, int32_t wheel) {
         .absolute_x = screen_x,
         .absolute_y = screen_y,
         .has_absolute = true,
-        .source = input::MouseSource::virtio_tablet,
     });
 
     g_last_screen_x = screen_x;
@@ -357,8 +352,7 @@ void process_pointer_event(const VirtioInputEvent& event) {
                 .absolute_x = 0,
                 .absolute_y = 0,
                 .has_absolute = false,
-                .source = input::MouseSource::virtio_tablet,
-            });
+                    });
         }
         return;
     }
@@ -370,10 +364,10 @@ void process_pointer_event(const VirtioInputEvent& event) {
     );
 }
 
-// A diferencia del puntero, un teclado no tiene estado que sincronizar entre
-// eventos (nada equivalente a "esperar el EV_SYN antes de emitir"): cada
-// EV_KEY es una tecla de una, se reenvia apenas llega. ps2::inject_scancode
-// hace el trabajo de layout/mayusculas/modificadores.
+// Unlike the pointer, a keyboard has no state to gather across events
+// (nothing like waiting for EV_SYN before emitting): each EV_KEY is a whole
+// key and goes out as soon as it arrives. The keyboard core applies the
+// layout, case and modifiers.
 void process_keyboard_event(const VirtioInputEvent& event) {
     if (event.type != kEvKey) {
         return;
@@ -381,18 +375,18 @@ void process_keyboard_event(const VirtioInputEvent& event) {
 
     const bool pressed = event.value != 0;
     if (event.code == kEvdevSysRq) {
-        ps2::inject_key_event(SAVANXP_KEY_PRINT_SCREEN, pressed);
+        input::submit_key(SAVANXP_KEY_PRINT_SCREEN, pressed);
         return;
     }
     if (event.code == kEvdevPause) {
-        ps2::inject_key_event(SAVANXP_KEY_PAUSE, pressed);
+        input::submit_key(SAVANXP_KEY_PAUSE, pressed);
         return;
     }
 
     uint8_t scancode = 0;
     bool extended = false;
     if (map_evdev_keycode(event.code, scancode, extended)) {
-        ps2::inject_scancode(static_cast<uint8_t>(scancode | (pressed ? 0u : 0x80u)), extended);
+        input::submit_scancode(scancode, extended, pressed);
     }
 }
 
@@ -559,6 +553,10 @@ void poll_keyboard_queue() {
 
 namespace virtio_input {
 
+void poll();
+void set_screen_extent(uint32_t width, uint32_t height);
+void reset_pointer();
+
 void initialize(const boot::FramebufferInfo& framebuffer) {
     memset(&g_device, 0, sizeof(g_device));
     memset(&g_event_queue, 0, sizeof(g_event_queue));
@@ -595,6 +593,18 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
             try_initialize_keyboard(pci_device);
         }
     }
+
+    if (g_ready || g_keyboard_ready) {
+        (void)input::register_driver({
+            .name = "virtio-input",
+            .keyboard = g_keyboard_ready,
+            .pointer = g_ready,
+            .poll = poll,
+            .set_keyboard_leds = nullptr,
+            .set_screen_extent = g_ready ? set_screen_extent : nullptr,
+            .reset_pointer = g_ready ? reset_pointer : nullptr,
+        });
+    }
 }
 
 void poll() {
@@ -602,25 +612,13 @@ void poll() {
     poll_keyboard_queue();
 }
 
-bool mouse_ready() {
-    return g_ready;
-}
-
-bool keyboard_ready() {
-    return g_keyboard_ready;
-}
-
-void set_framebuffer_extent(uint32_t width, uint32_t height) {
+void set_screen_extent(uint32_t width, uint32_t height) {
     g_framebuffer_width = width;
     g_framebuffer_height = height;
     refresh_pointer_range();
 }
 
-void begin_graphics_session() {
-    g_have_screen_position = false;
-}
-
-void end_graphics_session() {
+void reset_pointer() {
     g_have_screen_position = false;
 }
 

@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Changed
 
+- **Input drivers register with the kernel's input layer** (`input::register_driver`), and the
+  keyboard logic (modifiers, locks, ES/EN layouts) is shared instead of living in the PS/2 driver.
+  virtio-input no longer poses as PS/2, and `input_ready` is true with any keyboard. `kbd-smoke` also
+  checks Caps Lock and AltGr. See `docs/kernel/INPUT.md`.
+
 - **SUN programs are named `<name>.sxe` on disk** (`/bin/console.sxe`, `/bin/windowd.sxe`), and the
   shell finds them without the extension. `tools/stamp_osabi.py` refuses a native image without `.sxe`
   or `.sxmeta`, and `build-user.sh --native` installs `NAME.sxe`. Installing a program retires its other

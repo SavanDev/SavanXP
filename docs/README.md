@@ -31,6 +31,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`THREADS_ROADMAP.md`](kernel/THREADS_ROADMAP.md) — threads: what moves from the
   process to the thread, the decisions taken, and the phases to get there.
 - [`VIRTIO.md`](kernel/VIRTIO.md) — the virtio-pci transport and its MMIO rules.
+- [`INPUT.md`](kernel/INPUT.md) — the input layer: how drivers register, why
+  registration order decides which keyboard and pointer win, and the keyboard
+  core that turns set 1 key positions into keys, text and modifiers.
 - [`AHCI.md`](kernel/AHCI.md) — the AHCI (SATA, DMA) disk driver: which QEMU port
   holds what, how a request runs, and what it measured against PIO.
 - [`BLOCK_WRITEBACK.md`](kernel/BLOCK_WRITEBACK.md) — deferred disk writes: the

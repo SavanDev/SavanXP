@@ -1,12 +1,14 @@
 #include "libc.h"
 
-/* Smoke test automatizado del driver de teclado: a diferencia de keytest.c
- * (manual, requiere un humano) y de windowd_selftest (que inyecta un
- * savanxp_input_event a mano sin tocar PS/2), este binario adquiere la sesion
- * grafica igual que gputest.c en modo interactivo y lee /dev/input0 de
- * verdad, mientras el harness host (`./build.sh smoke kbd-smoke`) mueve el teclado
- * emulado por QMP. Verifica make/break, la tabla shifted, el bit de
- * modificador de Ctrl y el camino de tecla extendida (0xE0) de una sola vez. */
+/* Automated smoke test of the keyboard path: unlike keytest.c (manual, needs
+ * a person) and windowd_selftest (which injects a savanxp_input_event by hand
+ * without touching a driver), this binary acquires the graphics session like
+ * gputest.c in interactive mode and really reads /dev/input0, while the host
+ * harness (`./build.sh smoke kbd-smoke`) drives the emulated keyboard over
+ * QMP. It checks make/break, the shifted table, the Ctrl modifier bit, the
+ * extended-key (0xE0) path, Caps Lock on and off (the lock state and the
+ * driver's LED callback) and AltGr on the default Spanish layout. It runs on
+ * both PS/2 and virtio-keyboard. */
 
 #define KBDTEST_TIMEOUT_MS 20000u
 
@@ -25,6 +27,9 @@ static const struct kbd_checkpoint g_checkpoints[] = {
     { "ctrl+c", 0, 0, 'c', SAVANXP_KEY_MOD_CTRL, 0 },
     { "flecha derecha", 1, SAVANXP_KEY_RIGHT, 0, 0, 0 },
     { "enter", 1, SAVANXP_KEY_ENTER, 0, 0, 0 },
+    { "caps lock + b", 0, 0, 'B', SAVANXP_KEY_MOD_CAPS_LOCK, SAVANXP_KEY_MOD_SHIFT },
+    { "caps lock off + b", 0, 0, 'b', 0, SAVANXP_KEY_MOD_CAPS_LOCK | SAVANXP_KEY_MOD_SHIFT },
+    { "altgr+q", 0, 0, '@', SAVANXP_KEY_MOD_ALT_GR, 0 },
 };
 
 static int checkpoint_matches(const struct kbd_checkpoint* cp, const struct savanxp_input_event* event) {

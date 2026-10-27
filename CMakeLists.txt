@@ -206,6 +206,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/virtio_net.cpp
     kernel/pci.cpp
     kernel/input.cpp
+    kernel/keyboard.cpp
     kernel/tty.cpp
     kernel/ui.cpp
     kernel/virtio_pci.cpp

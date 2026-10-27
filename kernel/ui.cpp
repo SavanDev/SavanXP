@@ -7,11 +7,10 @@
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
+#include "kernel/input.hpp"
 #include "kernel/object.hpp"
-#include "kernel/ps2.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
-#include "kernel/virtio_input.hpp"
 #include "abi/savanxp_abi.h"
 
 namespace {
@@ -123,12 +122,12 @@ int input_ioctl(uint64_t request, uint64_t argument, uint32_t granted_access) {
     }
     switch (request) {
         case INPUT_IOC_SET_LAYOUT:
-            if (!ps2::set_layout(static_cast<int>(argument))) {
+            if (!input::set_keyboard_layout(static_cast<int>(argument))) {
                 return negative_error(SX_EINVAL);
             }
             return 0;
         case INPUT_IOC_GET_LAYOUT:
-            return ps2::get_layout();
+            return input::keyboard_layout();
         default:
             return negative_error(SX_ENOSYS);
     }
@@ -172,7 +171,7 @@ int read_input_device(uint64_t user_buffer, size_t count) {
 }
 
 int read_mouse_device(uint64_t user_buffer, size_t count) {
-    virtio_input::poll();
+    input::poll_pointers();
 
     if (count < sizeof(savanxp_mouse_event)) {
         return negative_error(SX_EINVAL);
@@ -216,7 +215,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     if (display::ready()) {
         g_framebuffer_info = display::framebuffer_info();
     }
-    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
+    input::set_screen_extent(g_framebuffer_info.width, g_framebuffer_info.height);
 
     g_input_device.read = read_input_device;
     g_input_device.can_read = input_device_can_read;
@@ -228,7 +227,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     if (!device::register_node("/dev/input0", &g_input_device, false)) {
         return;
     }
-    if (ps2::mouse_ready() || virtio_input::mouse_ready()) {
+    if (input::pointer_available()) {
         if (!device::register_node("/dev/mouse0", &g_mouse_device, false)) {
             return;
         }
@@ -257,7 +256,7 @@ bool acquire_graphics_session(uint32_t pid) {
     g_owner_pid = pid;
     reset_input_queue();
     reset_mouse_queue();
-    virtio_input::begin_graphics_session();
+    input::reset_pointers();
     console::set_framebuffer_console_enabled(false);
     // A partir de aca la pantalla es del cliente grafico: el splash del
     // arranque tiene que dejar de repintar su barra por debajo.
@@ -272,7 +271,7 @@ void release_graphics_session(uint32_t pid) {
     if (display::ready()) {
         display::wait_for_idle();
     }
-    virtio_input::end_graphics_session();
+    input::reset_pointers();
     ::release_graphics_session();
 }
 
@@ -304,10 +303,9 @@ void sync_framebuffer_geometry() {
         return;
     }
     g_framebuffer_info = display::framebuffer_info();
-    // El puntero absoluto (tablet virtio) mapea su rango contra el tamano de
-    // pantalla: con la extension vieja, despues de un cambio de modo el cursor
-    // apuntaria a otro lado.
-    virtio_input::set_framebuffer_extent(g_framebuffer_info.width, g_framebuffer_info.height);
+    // An absolute pointer maps its range onto the screen size: with the old
+    // extent, after a mode change the cursor would point somewhere else.
+    input::set_screen_extent(g_framebuffer_info.width, g_framebuffer_info.height);
 }
 
 bool framebuffer_available() {

@@ -17,7 +17,6 @@
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
-#include "kernel/ps2.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"

@@ -20,7 +20,6 @@
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
 #include "kernel/physical_memory.hpp"
-#include "kernel/ps2.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
 #include "kernel/string.hpp"
@@ -2432,7 +2431,7 @@ bool snapshot_system_info(savanxp_system_info& info) {
         memcpy(&info, &g_boot_system_info, sizeof(info));
     }
 
-    info.input_ready = ps2::ready() ? 1u : 0u;
+    info.input_ready = input::keyboard_available() ? 1u : 0u;
     info.framebuffer_ready = ui::framebuffer_available() ? 1u : 0u;
     info.net_present = net::present() ? 1u : 0u;
     info.speaker_ready = pcspeaker::ready() ? 1u : 0u;

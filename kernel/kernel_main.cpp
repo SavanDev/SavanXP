@@ -323,7 +323,7 @@ namespace
     copy_string_field(system_info.bootloader_name, sizeof(system_info.bootloader_name), boot_info.bootloader_name);
     copy_string_field(system_info.bootloader_version, sizeof(system_info.bootloader_version), boot_info.bootloader_version);
     copy_string_field(system_info.firmware, sizeof(system_info.firmware), firmware_type_name(boot_info.firmware_type));
-    system_info.input_ready = ps2::ready() ? 1u : 0u;
+    system_info.input_ready = input::keyboard_available() ? 1u : 0u;
     system_info.framebuffer_ready = ui::framebuffer_available() ? 1u : 0u;
     system_info.net_present = net::present() ? 1u : 0u;
     system_info.speaker_ready = pcspeaker::ready() ? 1u : 0u;

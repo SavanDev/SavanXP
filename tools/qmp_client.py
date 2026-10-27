@@ -170,6 +170,11 @@ def send_kbd_smoke_actions(client: QmpClient) -> None:
     client.chord("ctrl", "c")
     client.tap("right")
     client.tap("ret")
+    client.tap("caps_lock")
+    client.tap("b")
+    client.tap("caps_lock")
+    client.tap("b")
+    client.chord("alt_r", "q")
 
 
 # The range virtio-tablet publishes: 0 at one corner, 32767 at the other, and
